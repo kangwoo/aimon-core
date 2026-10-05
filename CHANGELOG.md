@@ -7,13 +7,24 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Policy: `internal` packages are not public API, and the build says so
+
+- **`docs/project/api-stability.md` §2 now names `<package>.internal` beside `*.impl`.** The five `internal` packages
+  (`at.aimon.core.memory.file.internal`, `at.aimon.session.{mongodb,postgres,redis,routing}.internal`) already
+  described themselves that way and every public entry point sits outside them — `SessionRouterBuilder`, not
+  `DefaultSessionRouter` — but the policy only listed `impl`, so by its letter they were public. Code that imports one
+  of them from another module may break in any release.
+- **`InternalPackageBoundaryTest` enforces it.** No main source may import an `internal` package from outside the tree
+  that owns it. It reads `import` lines across every module, since four of the five live outside `aimon-core`. One
+  accepted exception: the unpublished `aimon-session-testkit` casts to `DefaultSessionRouter`.
+
 ### Build: `checkAll` holds undocumented public API to a per-module baseline
 
 - **New `checkJavadocCoverage`, part of `checkAll` (so of CI and the release gate).** Each published module's
   `javadocCoverage` count must equal its line in `config/javadoc/coverage-baseline.properties`; a module with no line
   is held to 0, so a new published module starts fully documented. It fails both ways: above the baseline, with the
   path of the module's warning list; below it, naming the number to lower the line to, so the gain is kept in the same
-  change. The baseline starts at the first count, 2,737.
+  change. The baseline starts at the current count, 2,628.
 - **What it does not catch.** It compares totals, so documenting one element and adding an undocumented one passes.
 
 ### Build: `./gradlew javadocCoverage` counts the public API that has no javadoc
@@ -21,10 +32,10 @@ Central is versioned independently).
 - **A report-only task that measures one of the `1.0` conditions.** The published `javadoc` task runs with
   `-Xdoclint:none`, so nothing could say how far the code was from "javadoc on every public API"
   (`docs/project/api-stability.md` §6). Every published module now has `javadocCoverage`: it runs the toolchain's
-  `javadoc` over the module's sources outside `*.impl` with only doclint's `missing` group, writes each warning to
+  `javadoc` over the module's sources outside `*.impl` and `*.internal` with only doclint's `missing` group, writes each warning to
   `build/reports/javadoc-coverage/warnings.txt` and the counts by kind to `summary.properties`, and never fails. The
   root task of the same name prints one line per module and the total. The published javadoc jar is unchanged.
-- **First count: 2,737** across 16 modules — 2,237 of them in `aimon-core`; `aimon-bootstrap`, `aimon-llm-anthropic`
+- **First count: 2,628** across 16 modules — 2,218 of them in `aimon-core`; `aimon-bootstrap`, `aimon-llm-anthropic`
   and `aimon-memory-testkit` have none.
 
 ### Fixed: a Markdown, HTML or CSV attachment no longer fails the turn on Anthropic

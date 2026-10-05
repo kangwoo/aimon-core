@@ -38,15 +38,23 @@ Semantic Versioning 은 `0.x` 를 "아직 안정을 약속하지 않은 구간"�
 |-------------|------|
 | `at.aimon.core.<domain>` | **공개 API** — 인터페이스, 도메인 타입, 불변 값 객체 |
 | `at.aimon.core.<domain>.impl` | **내부 구현** — 예고 없이 바뀐다 |
+| `<package>.internal` (어느 모듈이든) | **내부 구현** — `impl` 과 같다. 그 패키지를 품은 트리(`<package>..`) 안에서만 쓴다 |
 | `at.aimon.core.agent.orca` | **공개 SPI** — 외부 모듈이 구현하는 확장점 |
 | 그 외 모듈의 `at.aimon.<module>` | 해당 모듈의 공개 API |
 
 이 경계는 문서상의 권고가 아니라 **빌드가 강제한다**. `PackageDependencyArchitectureTest`
 (`aimon-core`) 가 `*.impl` 패키지를 그 도메인 트리 밖에서 import 하는 것을 막는다. 즉
 `at.aimon.core.filesystem.impl` 을 다른 곳에서 쓰려고 하면 리뷰가 아니라 빌드가 먼저 거절한다.
+`internal` 은 `InternalPackageBoundaryTest`(`aimon-core`) 가 같은 일을 한다 — 다섯 개 중 넷이 `aimon-core` 밖
+모듈에 있어 ArchUnit 이 아니라 모든 모듈의 main 소스 import 를 읽는다. 받아들인 예외는 그 테스트의 `ALLOWED`
+에 이유와 함께 있다(지금은 배포되지 않는 `aimon-session-testkit` 하나).
 
 현재 `impl` 로 격리된 도메인은 일곱 개다 — `tracing`, `shell`, `agent`, `filesystem`, `workflow`,
-`hook`, `hook.rewake`.
+`hook`, `hook.rewake`. `internal` 패키지는 다섯 개다 — `at.aimon.core.memory.file.internal` 과
+`at.aimon.session.{mongodb,postgres,redis,routing}.internal`.
+
+두 이름이 함께 있는 것은 `impl` 이 **도메인의 구현**(`Default*`, `Local*`)을 담는 자리이고, `internal` 은 공개
+타입이 쓰는 **도우미**(코덱, 디스패처, 설정 값)를 담는 자리라서다. 공개 API 경계로서는 같다.
 
 > 이 프로젝트에는 아직 `@Experimental` · `@Beta` · `@Internal` 애노테이션이 **없다**. 만들지 않은
 > 이유는 패키지 경계가 이미 그 일을 하고 있고, 강제되지 않는 애노테이션은 지켜지지 않는 표식이 되기
@@ -56,6 +64,7 @@ Semantic Versioning 은 `0.x` 를 "아직 안정을 약속하지 않은 구간"�
 ### 공개 API 가 *아닌* 것
 
 - `*.impl` 아래의 모든 것
+- `*.internal` 아래의 모든 것
 - 테스트 소스, `aimon-filesystem-testkit` 이 노출하는 계약 테스트의 내부 구조
 - `aimon-cli` 전체 — 애플리케이션이지 라이브러리가 아니며 배포 대상도 아니다
 - `samples/` 아래 모듈 — 예제이며 배포하지 않는다
