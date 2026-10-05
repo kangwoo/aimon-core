@@ -176,7 +176,7 @@ caffeine = "3.3.0"
 lettuce = "7.8.0.RELEASE"
 
 # Utilities
-guava = "33.7.1-jre"
+guava = "33.7.2-jre"
 commons-lang3 = "3.20.0"
 jackson = "2.22.3"
 snakeyaml = "2.7"
@@ -225,13 +225,13 @@ slf4j = "2.0.20"
 # aimon-session-testkit's shipped and tested versions part again (backlog D-2); below it, aimon-sample-app would pack
 # an older Logback than Boot manages. logback-classic 1.6.3 builds against slf4j 2.0.18, the version above;
 # logback-core follows logback-classic.
-logback = "1.6.4"
+logback = "1.6.5"
 
 # Code quality tools
 checkstyle = "10.12.5"
-spotbugs = "6.5.11"
+spotbugs = "6.5.12"
 jacoco = "0.8.11"
-spotless = "8.10.2"
+spotless = "8.10.3"
 
 # Publishing
 # 0.32.0 rather than 0.30.0 because 0.30.0 refuses to publish a snapshot at all when the host is the Central
