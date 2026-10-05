@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 75건 (열림 40 · 닫힘 35)
+# 실행 환경 — 등록 항목 77건 (열림 40 · 닫힘 37)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -2561,3 +2561,59 @@ LLM 을 부르지 않을 수도 있고, 그 안에서 다시 스폰한 포크는
 (워크플로의 재시도 정책, 대시보드)가 나올 때.
 
 출처: [`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md) §9 Q5 · Q6.
+
+---
+
+## EE-76 — `Edit` 은 고치지 않은 줄의 줄바꿈까지 다시 쓴다 · **닫힘** *(2026-10-05)*
+
+*(2026-10-05 등록하고 같은 날 닫았다. 출처는 EE-31 착수 — 그 재현 테스트가 이 결함을 피하려고 끝 줄바꿈 없는 파일을 썼다.)*
+
+**무엇을.** `EditTool` 이 `old_string` 이 가리킨 부분만 바꾸고, 나머지 바이트는 그대로 둔다.
+
+**왜.** `readFileContent` 가 파일을 `BufferedReader.readLine` 으로 한 줄씩 읽어 `\n` 으로 다시 이었고, 끝의 `\n` 하나를 지웠다.
+관측 가능한 결과는 둘이다 — 편집할 때마다 **끝 줄바꿈 하나가 사라지고**, CRLF 파일은 **전체가 LF 로 바뀐다.** 한 줄을 고친 diff 가
+파일 전체를 바꾼 diff 가 된다.
+
+**어디** *(2026-10-05)* — `modules/aimon-core/src/main/java/at/aimon/core/tools/file/EditTool.java` 의 `readFileContent`.
+
+### 닫힘 (2026-10-05)
+
+**파일을 저장된 바이트 그대로 읽는다.** 그러면 끝 줄바꿈 문제는 사라지지만, 한 줄씩 읽기가 덤으로 해 주던 일이 하나 있었다 —
+모델은 `old_string` 을 `\n` 으로 쓰므로 CRLF 파일에서도 여러 줄 `old_string` 이 맞았다. 그것을 잃지 않으려고 **모든 줄이 CRLF 인
+파일**은 LF 로 맞춰 찾고 바꾼 뒤 CRLF 로 되돌려 쓴다. 편집이 더하는 줄도 그 파일의 줄바꿈을 따른다. 그 밖의 파일(LF, 섞인 파일,
+줄바꿈 없는 파일)은 바이트 그대로 편집한다. 섞인 파일에서 LF 로 쓴 여러 줄 `old_string` 이 CRLF 구간에 맞지 않는 것은 받아들였다 —
+"찾지 못함" 오류가 줄바꿈을 확인하라고 이미 말하고, 섞인 파일을 한쪽으로 정규화하는 것은 이 결함을 반대로 되풀이하는 일이다.
+
+**처방은 실패하는 테스트로 먼저 확인했다 (규칙 다섯).** `EditToolTest` 의 다섯 건 — 끝 줄바꿈 하나, 끝 빈 줄 여럿, CRLF 유지,
+LF 로 쓴 여러 줄 `old_string` 이 CRLF 파일에 맞고 CRLF 로 쓰임, 섞인 파일의 편집 밖 줄 유지 — 이 옛 코드에서 모두 실패했다.
+
+---
+
+## EE-77 — S3 는 경로별 사용량을 셀 줄 몰라서, 감싼 VFS 의 합계가 버킷 전체를 센다 · **닫힘** *(2026-10-05)*
+
+*(2026-10-05 등록하고 같은 날 닫았다. 출처는 EE-34 착수.)*
+
+**무엇을.** `S3FileSystem` 이 `getUsageSummary(String path)` 를 구현한다.
+
+**왜.** S3 는 인자 없는 `getUsageSummary()` 만 구현했고, 경로판은 `VirtualFileSystem` 의 기본 구현 — **경로를 무시하고 전체를 보고** —
+을 탔다. EE-34 이후 `PathRuleVirtualFileSystem` 은 보이는 디렉터리마다 `delegate.getUsageSummary(directory)` 를 더하므로, S3 를 감싸면
+디렉터리마다 버킷 전체가 더해지고 컨트롤 스토어도 다시 들어간다. 접두어로 테넌트를 나누는 `ScopedVirtualFileSystem` 도 한 테넌트의
+사용량을 모든 테넌트의 것으로 보고한다. 로컬 워크스페이스는 영향이 없다.
+
+**어디** *(2026-10-05)* — `modules/aimon-filesystem-s3/src/main/java/at/aimon/filesystem/core/s3/S3FileSystem.java`.
+
+### 닫힘 (2026-10-05)
+
+GridFS 와 같은 모양이다 — 경로를 검증·정규화하고, 디렉터리인지 확인한 뒤(`isDirectory` 와 같은 규칙: 그 이름의 객체가 있으면
+`InvalidPathException`, 접두어 아래 키가 하나도 없으면 `FileNotFoundException`), 공유 헬퍼 `usageUnder(prefix)` 가
+`ListObjectsV2` 의 `prefix` 로 센다. 인자 없는 판도 `usageUnder("")` 가 되었다. 요청한 디렉터리 자신과 그 마커는 세지 않고,
+`dir/` 과 `dir2/` 는 서로 섞이지 않는다.
+
+**루트의 셈이 한 가지 바뀌었다.** `createDirectory` 로 만든 빈 디렉터리(마커만 있는 것)가 이제 디렉터리로 센다. 전에는 파일 경로에서
+추론한 디렉터리만 셌다. 루트와 경로판이 같은 규칙을 쓰게 하려는 것이고, GridFS 도 마커를 그렇게 센다. CHANGELOG 에 적었다.
+
+**처방은 실패하는 테스트로 먼저 확인했다 (규칙 다섯).** `S3FileSystemGetUsageSummaryTest`(`@Tag("docker")`, LocalStack)의 열다섯 건 중
+여섯이 옛 코드에서 기본 구현 때문에 실패했다(예: 2 · 1 을 기대한 자리에 4 · 3). 수정 뒤 `:aimon-filesystem-s3:integrationTest` 142건이
+초록이다. S3 는 여전히 공유 VFS 계약 스위트(`AbstractVirtualFileSystemContractTest`)를 쓰지 않는다 — 다른 디렉터리 목록 경우를
+만족하는지 재지 않았으므로 이 항목에서 붙이지 않았다.
+

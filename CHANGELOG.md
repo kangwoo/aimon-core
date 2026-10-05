@@ -7,6 +7,20 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: `Edit` no longer rewrites line endings it was not asked to touch (EE-76)
+
+- **`Edit` keeps the file's bytes outside `old_string`.** It read files line by line, so every edit dropped one
+  trailing newline and turned a CRLF file into LF throughout. A file whose every line ends in CRLF is still matched
+  with an `old_string` written in `\n`, and the lines an edit adds take CRLF; any other file is edited byte for byte.
+
+### Fixed: `S3FileSystem.getUsageSummary(path)` counts only that subtree (EE-77)
+
+- **It used the interface default, which reports the whole bucket.** Wrapped in `PathRuleVirtualFileSystem` or
+  `ScopedVirtualFileSystem`, an S3 backend therefore counted every tenant and the control store. It now lists under the
+  path's prefix, throws `FileNotFoundException` for a missing path and `InvalidPathException` for a file.
+- **Behaviour change at the root:** `getUsageSummary()` now counts empty directories made with `createDirectory`, as
+  GridFS does, so the root and per-path counts follow one rule.
+
 ### Fixed: messages that did not say what they knew, a REPL renderer that could die mid-turn, stale model examples
 
 - **The CLI's `Invalid configuration structure in: <file>` now names the key.** It appends `(at <dotted.key>: <Jackson's
