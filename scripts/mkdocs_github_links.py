@@ -19,11 +19,24 @@ they get the same treatment. The list is read from ``exclude_docs`` rather than
 repeated here -- excluding one more directory is then a one-line change in
 ``mkdocs.yml``, and this hook cannot fall out of step with it.
 
+What this hook leaves alone, something else has to answer for. A link that stays
+inside ``docs/`` and points at a *directory the site builds* is not rewritten --
+there is no GitHub-only tree to send it to -- and MkDocs cannot resolve it either
+(it logs ``unrecognized relative link`` at INFO and ``--strict`` stays green).
+``scripts/check-doc-links.py`` fails those (backlog T-5), using
+``docs_tree.site_tree()``'s reading of ``mkdocs.yml`` to decide what "built"
+means. That reading is a regex one, because the check runs with no pip install;
+this hook holds MkDocs' own parsed ``exclude_docs``. ``on_config`` below asks
+both about every directory under ``docs_dir`` and stops the build when they
+differ, so the link the check accepts as "the hook rewrites it" is one this hook
+does rewrite.
+
 Registered from ``mkdocs.yml`` under ``hooks:``. No plugin dependency.
 """
 
 import posixpath
 import re
+import sys
 from pathlib import Path
 
 # Same shape as scripts/check-doc-links.py -- a link inside a fence or backticks
@@ -44,6 +57,46 @@ def _github_url(repo_url, relative_path):
     """blob/ for a file, tree/ for a directory -- GitHub 404s on the wrong one."""
     kind = "tree" if (_repo_root / relative_path).is_dir() else "blob"
     return f"{repo_url.rstrip('/')}/{kind}/{BRANCH}/{relative_path}"
+
+
+def on_config(config, **kwargs):
+    """Stop the build when docs_tree.site_tree() and MkDocs disagree on what is built."""
+    from mkdocs.exceptions import PluginError
+
+    config_file = config.get("config_file_path")
+    if not config_file or Path(config_file).resolve().parent != _repo_root:
+        # Some other mkdocs.yml is being built with this hook; docs_tree reads ours.
+        return config
+
+    # MkDocs loads a hook by file path, so its directory is not importable yet.
+    scripts = str(Path(__file__).resolve().parent)
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import docs_tree
+
+    try:
+        site = docs_tree.site_tree(_repo_root)
+    except ValueError as unreadable:
+        raise PluginError(f"scripts/docs_tree.py cannot read exclude_docs: {unreadable}")
+
+    docs_dir = Path(config["docs_dir"]).resolve()
+    if site.docs_dir != docs_dir:
+        raise PluginError(
+            f"scripts/docs_tree.py reads docs_dir as {site.docs_dir}, MkDocs as {docs_dir}")
+
+    spec = config.get("exclude_docs")
+    differ = []
+    for directory in sorted(p for p in docs_dir.rglob("*") if p.is_dir()):
+        relative = directory.relative_to(docs_dir).as_posix()
+        if site.excluded(relative) != bool(spec and spec.match_file(relative + "/")):
+            differ.append(relative + "/")
+    if differ:
+        raise PluginError(
+            "scripts/docs_tree.py and MkDocs disagree on whether exclude_docs keeps these "
+            f"directories off the site: {', '.join(differ)}. scripts/check-doc-links.py "
+            "decides which directory links to fail from the first reading and this hook "
+            "rewrites links from the second -- make SiteTree.excluded match.")
+    return config
 
 
 def on_page_markdown(markdown, page, config, files, **kwargs):

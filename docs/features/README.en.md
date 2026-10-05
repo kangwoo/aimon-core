@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/README.md
-source_commit: 8c8de45
+source_commit: bc8715e
 ---
 
 # Feature Documentation (Features)
@@ -12,7 +12,7 @@ This is where you come in when you have to go deep on one feature. Each director
 
 ---
 
-## [`agent-execution/`](agent-execution/) — agent execution
+## `agent-execution/` — agent execution
 
 The ReAct loop, turn handling, interruption, the input queue.
 
@@ -31,7 +31,7 @@ Design rationale: [`agent-runtime-scope.md`](../design/agent-execution/agent-run
 [`context-engine.md`](../design/agent-execution/context-engine.md) ·
 [`artifact.md`](../design/agent-execution/artifact.md)
 
-## [`session/`](session/) — sessions
+## `session/` — sessions
 
 Conversation persistence, the live session handle, multi-node deployment.
 
@@ -50,7 +50,7 @@ Design rationale: [`session-model.md`](../design/session/session-model.md) ·
 [`backends.md`](../design/session/backends.md) ·
 [`backends.md`](../design/session/backends.md)
 
-## [`tool/`](tool/) — tools
+## `tool/` — tools
 
 The unit through which an agent interacts with the outside world.
 
@@ -63,7 +63,7 @@ The unit through which an agent interacts with the outside world.
 Design rationale: [`parallel-execution.md`](../design/tool/parallel-execution.md) ·
 [`tool-search.md`](../design/tool/tool-search.md)
 
-## [`skill/`](skill/) — skills
+## `skill/` — skills
 
 A declarative capability package bundling prompts, tools and hooks.
 
@@ -79,7 +79,7 @@ Design rationale: [`command-unification.md`](../design/skill/command-unification
 
 Migration: [`custom-command-to-skill.md`](../migration/custom-command-to-skill.md)
 
-## [`hook/`](hook/) — hooks
+## `hook/` — hooks
 
 Intervening at thirteen points in the lifecycle.
 
@@ -93,7 +93,7 @@ The parity boundary: [`hooks-specification.md`](../references/hooks-specificatio
 Design rationale: [`hook-system.md`](../design/hook/hook-system.md) ·
 [`async-rewake.md`](../design/hook/async-rewake.md)
 
-## [`subagent/`](subagent/) — subagents
+## `subagent/` — subagents
 
 A sub-agent running in an isolated context.
 
@@ -104,7 +104,7 @@ A sub-agent running in an isolated context.
 Design rationale: [`code-defined-registration.md`](../design/subagent/code-defined-registration.md) ·
 [`execution.md`](../design/subagent/execution.md)
 
-## [`workflow/`](workflow/) — workflows
+## `workflow/` — workflows
 
 Deterministic orchestration of several subagents.
 
@@ -118,7 +118,7 @@ phase [3](../design/workflow/workflow.md) ·
 [4](../design/workflow/workflow.md) ·
 [5](../design/workflow/workflow.md)
 
-## [`llm/`](llm/) — LLM integration
+## `llm/` — LLM integration
 
 The provider abstraction and its instrumentation.
 
@@ -131,7 +131,7 @@ Design rationale: [`streaming.md`](../design/llm/streaming.md) ·
 [`multimodal-content.md`](../design/llm/multimodal-content.md) ·
 [`cancellation.md`](../design/llm/cancellation.md)
 
-## [`memory/`](memory/) — memory
+## `memory/` — memory
 
 Long-term memory that persists across sessions.
 
@@ -141,7 +141,7 @@ Long-term memory that persists across sessions.
 
 Design rationale: [`peer-memory.md`](../design/memory/peer-memory.md)
 
-## [`knowledge/`](knowledge/) — knowledge / wiki
+## `knowledge/` — knowledge / wiki
 
 Indexing and searching documents fed in from outside.
 
@@ -154,7 +154,7 @@ A reference pattern: [`llm-wiki.md`](../references/llm-wiki.md)
 Design rationale: [`knowledge-and-rag.md`](../design/knowledge/knowledge-and-rag.md) (the interface + keyword search) ·
 [`knowledge-and-rag.md`](../design/knowledge/knowledge-and-rag.md) (vector/RAG — supersedes the Phase 2 proposal of the previous document)
 
-## [`scheduling/`](scheduling/) — scheduling
+## `scheduling/` — scheduling
 
 Cron and one-shot scheduled execution, and routines.
 
@@ -164,7 +164,7 @@ Cron and one-shot scheduled execution, and routines.
 
 Design rationale: [`llm-scheduling-agent.md`](../design/scheduling/llm-scheduling-agent.md)
 
-## [`observability/`](observability/) — observability
+## `observability/` — observability
 
 | Document | Contents |
 |------|------|
@@ -192,4 +192,4 @@ Features that are in the catalogue but have no separate guide document. For now 
 - Put it in the feature-area directory. Create one if it does not exist (name the directory after the area name in the catalogue).
 - Add one line to the matching section of this index.
 - If that feature is not in the [`../overview/features.en.md`](../overview/features.en.md) catalogue, add it there too.
-- **Design rationale does not go here** — put it under [`../design/`](../design/) and link to it.
+- **Design rationale does not go here** — put it under [`../design/`](../design/README.md) and link to it.

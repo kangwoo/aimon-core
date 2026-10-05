@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/architecture.md
-source_commit: 79d78a7
+source_commit: ad0acfb
 ---
 
 # Architecture
@@ -694,7 +694,7 @@ Several of these exist because they caught something, and what they caught is re
 - [`deployment.en.md`](deployment.en.md) — the multi-node deployment view
 - [`glossary.en.md`](glossary.en.md) — the dictionary of terms and lifetimes
 - [`scope-model.en.md`](scope-model.en.md) — the lifetime, ownership and teardown rules
-- [`../features/`](../features/) — the per-feature guides
+- [`../features/`](../features/README.en.md) — the per-feature guides
 - [tool development guide](../features/tool/tool-development-guide.en.md)
 - [hook development guide](../features/hook/hook-development-guide.en.md)
 - [LLM Provider development guide](../features/llm/llm-provider-development-guide.en.md)

@@ -173,18 +173,21 @@ python3 scripts/check-translation-structure.py # does each translation still hav
 python3 scripts/check-backlog-registers.py     # docs/backlog/: duplicate item IDs, and counts that disagree with the items
 ```
 
-The first walks every `*.md` in the repository and fails on two things: a link to a path
-that does not exist, and a `#fragment` that matches no heading in the file it points at.
+The first walks every `*.md` in the repository and fails on three things: a link to a path
+that does not exist, a `#fragment` that matches no heading in the file it points at, and a
+link from a page on the docs site to a directory the site builds (`../features/` — write
+`../features/README.md`; GitHub opens the tree view, the site has no page for a directory).
 The anchor failure matters more than it sounds — a wrong anchor still loads the page, so the
 reader lands at the top and never learns they were sent to the wrong section. External
 URLs are deliberately not checked; a gate that goes red because someone else's host is
 down stops being read. CI runs this, and then `python3 scripts/check-doc-links.py --self-test`,
-in the same step: the first step of the `docs-links` job. The self-test reads no tree: for
+in the same step: the first step of the `docs-links` job. The self-test does not read the repository's tree: for
 each heading shape it holds — places where `docs_tree.anchors_of` reads a heading
 differently from the page, from the backlog check, or both — it builds a small page and
 checks that a link to the heading still resolves, or still fails to, as that case's expected
-answer says. Those expected answers follow that function's docstring. Run it too when you
-change how `scripts/docs_tree.py` reads headings or fences.
+answer says. Those expected answers follow that function's docstring. It then does the same
+for the directory rule, one link per case in a small temporary tree. Run it too when you
+change how `scripts/docs_tree.py` reads headings, fences or `mkdocs.yml`.
 
 The second and third are about translations and run together as the `translations` job;
 what each fails on, and why one of them mostly does not, is under
