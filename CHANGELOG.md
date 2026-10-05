@@ -7,6 +7,15 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: a Markdown, HTML or CSV attachment no longer fails the turn on Anthropic
+
+- **`AnthropicMessageConverter` now sends every text document with `media_type: "text/plain"`.** It used to copy the
+  block's own MIME type into the plain-text source, but `text/plain` is the only value the API accepts there, so a
+  `text/markdown`, `text/html` or `text/csv` attachment — three of the four text types `DocumentContentBlock` allows —
+  answered 400 `media_type: Input should be 'text/plain'` (measured live on 2026-10-05). The SDK does not check its
+  schema before sending, so nothing caught it locally; a converter test even pinned `text/markdown` on the wire. The
+  file name still reaches the model as the document's `title`.
+
 ### Fixed: follow-ups from #164 — `text/*` attachments, a thinking-only stream that fails, OpenAI's traffic warnings
 
 - **A `FileInput` with a `text/*` MIME type the document block does not accept is sent as text instead of

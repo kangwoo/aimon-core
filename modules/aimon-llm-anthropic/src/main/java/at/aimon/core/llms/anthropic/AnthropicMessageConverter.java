@@ -408,7 +408,8 @@ public class AnthropicMessageConverter {
      * Converts a DocumentContentBlock to an Anthropic DocumentBlockParam.
      *
      * <p>
-     * Text-based documents use {@link PlainTextSource}, while binary documents (PDF) use {@link Base64PdfSource}.
+     * Text-based documents use {@link PlainTextSource} with {@code media_type: "text/plain"} whatever their own MIME
+     * type, while binary documents (PDF) use {@link Base64PdfSource}.
      *
      * @param documentBlock
      *            The document content block
@@ -418,9 +419,11 @@ public class AnthropicMessageConverter {
         final DocumentBlockParam.Builder docBuilder;
 
         if (documentBlock.isTextBased()) {
+            // media_type is left at the builder's default, "text/plain": it is the only value the API accepts for a
+            // text source, and every other text/* the document block allows (markdown, html, csv) was a 400. The
+            // file name still reaches the model through the title below.
             final PlainTextSource source = PlainTextSource.builder()
-                    .data(new String(documentBlock.getData(), StandardCharsets.UTF_8))
-                    .mediaType(JsonValue.from(documentBlock.getMimeType())).build();
+                    .data(new String(documentBlock.getData(), StandardCharsets.UTF_8)).build();
             docBuilder = DocumentBlockParam.builder().source(DocumentBlockParam.Source.ofText(source));
         } else {
             final Base64PdfSource source = Base64PdfSource.builder()
