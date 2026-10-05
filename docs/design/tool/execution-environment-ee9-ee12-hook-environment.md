@@ -442,3 +442,39 @@ EE-49 의 "언제 다시 볼까" 는 리뷰대로 "샌드박스 제공자를 붙
 - **"포크 모드 스킬" 종단 테스트**는 스킬 활성화까지 거치지 않는다. 포크 실행기에 `DeclarativePreToolHook` +
   `DefaultShellActionExecutor` 를 파서가 만드는 모양 그대로 등록하고, 스폰한 쪽과 포크가 서로 다른 환경을 받는 제공자로
   돌린다(`DefaultSubagentExecutorHookEnvironmentTest.aSkillShellHookRunsInTheForksShell`).
+
+### 10.6 EE-50 — 스킬 훅은 `AIMON_SKILL_DIR` 를 받는다 (2026-10-05)
+
+§8 이 "이 변경 밖으로 번지는 것" 으로 올린 EE-50 을 구현했다. §8 의 문장은 그 시점 기록으로 두고 지금의 사실을 여기 적는다
+(열림/닫힘의 정본은 백로그 등록부다).
+
+- **무엇이 바뀌었나.** 스킬이 선언한 셸 훅의 환경에 `AIMON_SKILL_DIR` 가 생겼다(stdin JSON 의 `skill_dir`). 값은 훅이
+  발화한 실행의 `ExecutionEnvironment.stage(...)` 가 돌려준 경로다. `bash "$AIMON_SKILL_DIR/scripts/guard.sh"` 가 명령이
+  실제로 도는 환경의 사본을 가리킨다.
+- **이벤트마다 어느 환경인가.** §2 표의 "안" 인 열 이벤트 전부에서 답이 같다 — 명령은 `context.getExecutionEnvironment()`
+  의 셸에서 돌고(§3.2), 스테이징도 **같은 객체**에 한다. `subagentStart` · `subagentStop` 은 스폰한 쪽 실행의 환경에서
+  돌므로 거기에 스테이징한다. 발화 시점에 그 환경에 사본이 있으리라는 보장은 어느 이벤트에도 없다(스킬을 호출한 쪽이
+  스테이징한 곳은 **호출한 실행의** 환경이다). 그래서 물려받지 않고 매번 `stage()` 를 부른다 — 이미 있으면 마커 확인 한
+  번이다.
+- **스킬의 자원을 훅에 어떻게 닿게 했나.** 훅 객체는 스킬을 파싱할 때 만들어지고 `StagedResource` 는 그 뒤 레지스트리가
+  싣는다. 훅을 다시 만들지 않고, 활성화가 fork 에 넘기는 `SkillScopedHookRegistry` 에 자원을 함께 싣는다. 훅은 발화할 때
+  `context.getHookRegistry()` 에서 **자기 자신(동일성)** 이 든 층을 찾아 그 자원을 얻는다. 이름으로 찾지 않는 이유:
+  `hooks.json` 훅의 가짜 스킬 이름이 활성 스킬과 겹쳐도 그 스킬의 디렉터리를 받으면 안 된다.
+- **변수가 없는 경우**(빈 값이 아니라 unset). `hooks.json` 훅, `StagedResource` 가 없는 손조립 스킬,
+  `requiresExecutionEnvironment() == false` 인 실행기(컨텍스트의 환경이 아닌 곳에서 도므로 그 환경의 경로를 주지 않는다),
+  환경이 없는 컨텍스트(실행기가 어차피 `NO_ENVIRONMENT` 로 거절한다).
+- **스테이징 실패.** 명령을 돌리지 않고 `ShellHookOutcome.notRun(Unrun.STAGING_FAILED, …)` 을 낸다. 가드 이벤트(`preTool` ·
+  `onStart` · `preCompact` · `permissionRequest`)는 EE-51 · EE-70 의 규칙 그대로 거부하고 `failOpen` 이면 통과한다. 관찰
+  이벤트는 WARN 만 남긴다. 어느 쪽이든 명령은 돌지 않는다 — 변수 없이 돌리면 `/scripts/guard.sh` 를 부르는 다른 명령이
+  되고, 그 exit 127 은 가드에서 "허용" 으로 읽힌다(EE-20 과 같은 모양). 사유에는 `StagingException` 의 메시지를 싣는다
+  (`Skill` 도구가 같은 실패에 모델에게 주는 문장이다). 그 밖의 예외는 타입 이름만 싣는다.
+- **자르지 않는다.** `SkillHookEnv.truncateValue`(2000자)는 모델·사용자가 쓴 글을 위한 것이다. 경로를 자르면 다른 경로가
+  되므로 적용하지 않는다.
+- **EE-66 에 미치는 영향.** 종료 코드 계약은 그대로다(126 · 127 은 허용). 다만 실제로는 좁아졌다 — 전에는 스킬 훅이 자기
+  스크립트를 부를 안정된 경로가 없어 127 이 흔한 결과였고, 이제 127 은 스크립트 이름을 틀렸거나 인터프리터가 없을 때만
+  난다.
+- **남은 것.** 스킬 **본문**의 `${AIMON_SKILL_DIR}` 는 여전히 호출한 실행의 환경에 스테이징한 경로다. fork 가 다른 환경에
+  놓이면 본문 속 경로는 fork 에 없다 — 이 변경은 훅만 고쳤다. 돌려서 확인했다: fork 를 다른 로컬 작업 공간에 놓으면 본문은
+  `<호출한 쪽>/.aimon-staged/<스킬>/<키>` 로, 같은 fork 의 훅은 `<fork 쪽>/.aimon-staged/<스킬>/<키>` 로 렌더된다.
+- **테스트.** `SkillHookSkillDirIntegrationTest`(실제 조립: 스킬 레지스트리 → `Skill` 도구 → fork → 훅 → 로컬 환경) 넷,
+  `SkillHookDirectoryTest` 열다섯.

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: 2bfe9a9
+source_commit: 2beae91
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -259,7 +259,10 @@ type usable on every event** (`http` / `mcp` are `preTool`/`postTool`-only and `
 the only place that can declare the events that fire outside any execution (`onSessionStart`, `onSessionEnd`,
 `onConfigReload`) (`HostShellActionExecutor`). A `shell` action declared by a skill's frontmatter is different: it
 runs in the **execution environment's shell** of the execution the hook fires in, which is why it cannot be declared
-on an event outside an execution.
+on an event outside an execution. There is also one environment variable only a skill's hook receives:
+`AIMON_SKILL_DIR` (the path that skill's directory was staged to in the environment the hook runs in). A `hooks.json`
+command has no skill directory, so the variable is **not set** there — unset, not an empty string, and the stdin
+payload carries no `skill_dir` field either.
 
 **How input is passed.** The command string is **not template-rendered** — it goes to the shell
 verbatim, so writing `${tool_input.x}` in a command gives you an (empty) shell variable rather

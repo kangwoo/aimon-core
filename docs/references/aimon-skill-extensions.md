@@ -147,12 +147,15 @@ action-def := { type: "deny", reason: string }
 
 - 모든 셸 액션은 동일 스킬 호출 안에서 **동기·순차** 실행된다(병렬 발화 없음).
 - **어디서 도는가.** 명령은 호스트 JVM 이 아니라 **hook 이 발화한 실행의 실행 환경**(`HookContext.getExecutionEnvironment()`)의 셸에서 돈다 — 같은 스킬의 `Bash` 호출이 도는 바로 그 셸이다. fork 모드에서는 **fork 자신의** 환경이다. 실행자(`DefaultShellActionExecutor`)는 셸을 쥐지 않고 발화할 때마다 컨텍스트에서 얻는다.
-  - **작업 디렉터리는 워크스페이스다.** 로컬 환경에서도 그렇다 — 예전에는 호스트 JVM 의 작업 디렉터리였다. 상대 경로로 스크립트를 부르는 명령은 워크스페이스 기준으로 풀린다. hook 명령에는 `${AIMON_SKILL_DIR}` 가 주어지지 않는다(백로그 EE-50).
+  - **작업 디렉터리는 워크스페이스다.** 로컬 환경에서도 그렇다 — 예전에는 호스트 JVM 의 작업 디렉터리였다. 상대 경로로 스크립트를 부르는 명령은 워크스페이스 기준으로 풀린다. 자기 스킬 디렉터리의 스크립트는 환경 변수 `AIMON_SKILL_DIR` 로 부른다 — `bash "$AIMON_SKILL_DIR/scripts/guard.sh"`. 사본에는 실행 비트가 없으므로 인터프리터로 실행한다.
+  - **`AIMON_SKILL_DIR` 는 발화할 때마다, hook 이 도는 환경에 스테이징해서 얻는다.** 값은 그 실행의 `ExecutionEnvironment.stage(...)` 가 돌려준 경로다. 스킬을 호출한 쪽에서 본문을 렌더하며 스테이징한 경로를 물려받지 않는다 — hook 은 fork(와 fork 가 띄운 실행)에서 발화하고, fork 가 다른 환경에 놓이면 호출한 쪽의 사본은 거기에 없다. 이미 사본이 있는 환경에서는 마커 하나를 확인하는 비용이다.
+  - **스테이징하지 못하면 명령은 돌지 않는다**(크기 상한 초과, 적재 뒤 디스크에서 바뀐 스킬 등). 변수 없이 돌리면 `"$AIMON_SKILL_DIR/scripts/guard.sh"` 가 `/scripts/guard.sh` 가 되어 다른 명령이 된다. 그 다음은 아래 "명령을 돌리지 못했을 때" 와 같다 — 가드 이벤트는 막고(`failOpen: true` 면 통과), 나머지는 WARN 만 남긴다.
+  - **변수가 없는 경우**(빈 문자열이 아니라 unset): `hooks.json` 의 hook(스킬 디렉터리가 없다), 레지스트리를 거치지 않고 손으로 조립해 `StagedResource` 가 없는 스킬, 그리고 발화한 실행의 환경이 아닌 곳에서 명령을 돌리는 실행기(`HostShellActionExecutor`)를 스킬 파서에 물린 호스트.
   - **실행 환경이 없거나 사용 불가면 명령은 돌지 않는다.** 호스트로 되돌아가지 않는다. WARN 로그가 남고, 그 다음은 이벤트에 달렸다 — 아래 "명령을 돌리지 못했을 때" 를 볼 것.
   - 그래서 실행 밖에서 발화하는 이벤트(`onSessionStart` · `onSessionEnd` · `onConfigReload`)는 스킬 frontmatter 에 선언할 수 없다 — 실행 환경이 없어 셸 액션이 돌 곳이 없다. 파서가 스킬 로드 시점에 이유와 함께 거부한다. 그 이벤트는 `hooks.json` 에 선언한다(운영자 설정이며 호스트 셸에서 돈다).
 - **종료 코드의 계약.** 스킬 fork 안에서 거부 채널이 있는 이벤트는 넷이다(`onStart` · `preTool` · `preCompact` 는 block, `permissionRequest` 는 deny). 거기서 **exit 2 는 거부**이고 stderr 가 사유로 LLM 에 surface 된다(`deny` 와 같은 경로). exit 0 은 허용이다. **그 밖의 종료 코드(1 · 126 · 127 …)는 허용**이다 — 깨진 스크립트가 조용한 게이트키퍼가 되면 안 되므로 WARN 만 남는다.
   - **`onStart` 의 거부는 fork 를 시작하지 않는다.** exit 2 든 아래의 "돌리지 못함" 이든, fork 는 LLM 을 한 번도 부르지 않고 끝나고 `Skill` 도구의 결과는 `Skill fork failed for '<스킬>': Execution blocked by OnStart hook [SUBAGENT/<에이전트>]: <사유>` 다. 그 fork 의 `onStop` 은 발화하지 않는다(시작하지 않은 실행에는 멈춤도 없다 — 메인 실행과 같다). 스킬 fork 가 띄운 하위 fork 도 시작할 때 같은 hook 을 맞는다.
-- **명령을 돌리지 못했을 때 — 가드는 막는다(fail-closed).** 종료 코드를 얻지 못하면 — 실행 환경 없음, 환경 사용 불가, **timeout**, 셸 실패, 실행기가 던진 예외 — 위 네 이벤트의 hook 은 **거부**한다. 판단하지 못한 가드는 통과시키지 않는다. 사유는 `Blocked: guard hook '<skill>' (<event>) could not run its command — <cause>: <detail>. …` 꼴이고 명령 문자열은 싣지 않는다 — 셸 실패와 예외는 `<detail>` 에 예외의 타입 이름만 싣는다(메시지는 명령을 담을 수 있어 로그에만 남는다).
+- **명령을 돌리지 못했을 때 — 가드는 막는다(fail-closed).** 종료 코드를 얻지 못하면 — 실행 환경 없음, 환경 사용 불가, 스킬 디렉터리 스테이징 실패, **timeout**, 셸 실패, 실행기가 던진 예외 — 위 네 이벤트의 hook 은 **거부**한다. 판단하지 못한 가드는 통과시키지 않는다. 사유는 `Blocked: guard hook '<skill>' (<event>) could not run its command — <cause>: <detail>. …` 꼴이고 명령 문자열은 싣지 않는다 — 셸 실패와 예외는 `<detail>` 에 예외의 타입 이름만 싣는다(메시지는 명령을 담을 수 있어 로그에만 남는다).
   - 가드가 아니라 **관찰** 용도의 hook 이면 항목에 `failOpen: true` 를 선언한다(아래 예). 그러면 명령을 돌리지 못했을 때 WARN 만 남기고 통과한다. exit 2 는 `failOpen` 과 무관하게 여전히 거부다.
   - `failOpen` 은 YAML 불리언(`true` / `false`)만 받는다. `"true"` 나 `1` 은 스킬 로드 시점의 파싱 오류다 — 가드를 푸는 키라서 느슨하게 읽지 않는다. `shell` 이 아닌 액션에 쓰면 WARN 후 무시된다.
   - 환경 제공자가 실패한 실행에서는 가드가 걸린 도구가 **환경을 쓰지 않는 것까지** 막힌다. `preCompact` 에 관찰 hook 을 걸었다면 `failOpen: true` 를 권한다 — 아니면 환경 장애 동안 자동 compaction 이 계속 건너뛰어진다.
@@ -165,12 +168,13 @@ hooks:
       action: { type: shell, command: "audit.sh", timeoutMs: 5000 }
       failOpen: true   # 관찰용 — audit.sh 를 돌리지 못해도 Bash 는 실행된다
 ```
-- 환경 변수가 매 발화마다 주입된다. 아래 표는 `SkillHookEnv` 상수와 1:1 대응한다(이름을 바꾸는 것은 break change).
+- 환경 변수가 매 발화마다 주입된다. 아래 표는 `SkillHookEnv` 상수와 1:1 대응한다(이름을 바꾸는 것은 break change). 같은 값이 stdin 의 JSON 에도 접두어를 떼고 소문자로 실린다(`AIMON_SKILL_DIR` → `skill_dir`).
 
 | 변수 | 값 | 발화 이벤트 |
 |------|----|------------|
 | `AIMON_HOOK_EVENT` | `preTool` / `postTool` / `onStart` / `onStop` | 모든 이벤트 |
 | `AIMON_SKILL_NAME` | `SkillMetadata.name` | 모든 이벤트 |
+| `AIMON_SKILL_DIR` | 스킬 디렉터리를 hook 이 도는 환경에 스테이징한 절대 경로. 자르지 않는다 | 모든 이벤트 (스킬이 선언한 hook 만. `hooks.json` 에서는 unset) |
 | `AIMON_INVOKER_NAME` | 호출 에이전트 이름 | 모든 이벤트 |
 | `AIMON_INVOKER_TYPE` | `MAIN_AGENT` / `SUBAGENT` | 모든 이벤트 |
 | `AIMON_TOOL_NAME` | 발화 대상 도구 이름 | `preTool`, `postTool` |

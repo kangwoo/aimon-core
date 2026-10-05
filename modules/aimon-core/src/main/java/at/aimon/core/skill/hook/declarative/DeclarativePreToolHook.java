@@ -32,7 +32,8 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * document on standard input (see {@code ShellHookPayload}). Exit code
  * {@link ShellHookOutcome#DENY_EXIT_CODE} vetoes the tool and feeds stderr back to the model as the reason; any other
  * exit code allows it (Claude Code parity). A command that produced <em>no</em> exit status — no execution
- * environment, a timeout, a shell failure — blocks the tool as well (fail-closed), unless the hook declared
+ * environment, a timeout, a shell failure, a skill directory that could not be staged for {@code AIMON_SKILL_DIR}
+ * (see {@link SkillHookDirectory}) — blocks the tool as well (fail-closed), unless the hook declared
  * {@code failOpen}; see {@link ShellHookVerdicts}.
  * <li>{@link HttpAction} → request issued via {@link HttpActionExecutor}; the JSON response can carry an
  * {@code allow}/{@code deny}/{@code defer} decision and an optional {@code updatedInput}.
@@ -179,6 +180,10 @@ public final class DeclarativePreToolHook implements PreToolHook {
     private ShellHookOutcome runShell(ShellAction shell, PreToolContext context, String toolName, ToolInput toolInput) {
         try {
             final Map<String, String> env = buildShellEnv(context, toolName);
+            final Optional<ShellHookOutcome> unstaged = SkillHookDirectory.export(env, context, this, shellExecutor);
+            if (unstaged.isPresent()) {
+                return unstaged.get();
+            }
             return shellExecutor.run(shell, context, env, ShellHookPayload.render(env, toolInput.toMap()));
         } catch (RuntimeException | LinkageError e) {
             log.warn("Skill '{}' preTool shell hook for tool '{}' threw instead of reporting an outcome", skillName,

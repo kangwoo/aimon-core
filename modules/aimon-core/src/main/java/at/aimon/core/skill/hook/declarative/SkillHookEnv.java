@@ -25,6 +25,8 @@ package at.aimon.core.skill.hook.declarative;
  * <ul>
  * <li>{@link #AIMON_HOOK_EVENT}, {@link #AIMON_SKILL_NAME}, {@link #AIMON_INVOKER_NAME},
  * {@link #AIMON_INVOKER_TYPE} — set on every event.
+ * <li>{@link #AIMON_SKILL_DIR} — set on every event, but only for a hook a skill declared, and only when there is a
+ * staged copy to point at. Absent (not empty) for a {@code hooks.json} hook.
  * <li>{@link #AIMON_TOOL_NAME} — set on {@code preTool}, {@code postTool}, {@code permissionRequest} and
  * {@code permissionDenied}.
  * <li>{@link #AIMON_ITERATION} — set on {@code preTool} and {@code postTool}.
@@ -68,6 +70,33 @@ public final class SkillHookEnv {
 
     /** Skill name (verbatim from {@code SkillMetadata.name}). */
     public static final String AIMON_SKILL_NAME = "AIMON_SKILL_NAME";
+
+    /**
+     * Absolute path of the declaring skill's directory, as the shell running the hook command sees it &mdash; so a
+     * hook can run its own script with {@code bash "$AIMON_SKILL_DIR/scripts/guard.sh"}.
+     *
+     * <p>
+     * The value is what the firing execution's {@code ExecutionEnvironment.stage(...)} returned for the skill: a
+     * staged copy in the environment the command runs in, the same kind of path a skill body gets as
+     * {@code ${AIMON_SKILL_DIR}}. It is staged when the hook fires, not carried over from the skill's activation,
+     * because the hook fires in the skill's fork (or an execution that fork started), which may be placed in a
+     * different environment from the one that invoked the skill.
+     *
+     * <p>
+     * <b>Set only for skill-declared hooks.</b> The variable is <em>absent</em> &mdash; not empty &mdash; for a
+     * {@code hooks.json} hook (there is no skill directory), for a skill assembled by hand without a staging
+     * resource, and when the hook's executor runs commands somewhere other than the firing execution's environment.
+     * A script shared between the two front-ends should test for it ({@code [ -n "${AIMON_SKILL_DIR:-}" ]}).
+     *
+     * <p>
+     * <b>If the skill cannot be staged, the command is not run</b> rather than run without the variable: see
+     * {@code SkillHookDirectory}. On an event that can block that is a block unless the hook declared
+     * {@code failOpen}.
+     *
+     * <p>
+     * Never truncated: {@link #truncateValue(String)} is not applied, because a path cut short is another path.
+     */
+    public static final String AIMON_SKILL_DIR = "AIMON_SKILL_DIR";
 
     /** Invoker name (typically the agent name). */
     public static final String AIMON_INVOKER_NAME = "AIMON_INVOKER_NAME";

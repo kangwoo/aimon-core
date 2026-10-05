@@ -336,6 +336,15 @@ public interface ExecutionEnvironmentProvider {
 의 결과(제어 저장소 쪽 경로) 대신 `env.stage(...)` 의 반환값을 `skillBaseDir` 로 넣으면 된다. `skill.render` 는
 환경을 모르는 채로 남는다.
 
+**스킬이 선언한 셸 훅도 거친다 (EE-50).** 훅 명령의 환경 변수 `AIMON_SKILL_DIR` 도 `stage()` 의 반환값이다. 다만 본문과
+**시점과 환경이 다르다**: 본문은 스킬을 호출한 실행의 환경에 렌더할 때 한 번 스테이징하고, 훅은 **발화할 때마다 발화한
+실행의 환경**에 스테이징한다(`skill.hook.declarative.SkillHookDirectory`). 훅은 스킬의 fork 와 그 fork 가 띄운 실행에서
+발화하고 그 실행은 환경을 따로 해석하므로, 호출한 쪽에서 얻은 경로를 물려주면 fork 가 다른 환경에 놓였을 때 없는 경로가
+된다. 그래서 활성화가 fork 에 넘기는 것은 경로가 아니라 `StagedResource` 다 — `SkillScopedHookRegistry` 가 스킬의 훅과
+함께 싣고, 훅은 자기가 속한 층을 **동일성**으로 찾는다(`hooks.json` 훅은 어느 층에도 없어 변수를 받지 않는다). 스테이징에
+실패하면 명령을 돌리지 않는다(변수 없이 돌리면 다른 명령이 된다). 가드 이벤트에서는 그것이 거부이고 `failOpen` 이면
+통과다.
+
 **모든 스킬 저장소가 스테이징 소스를 낸다.** `SkillRepository` 는 스킬마다 `stage()` 에 넘길 소스 — 읽기만 하는
 `VirtualFileSystem` 과 그 안의 스킬 디렉터리 — 를 돌려준다(`resolveSource`). VFS 저장소는 자기 VFS 를, 호스트
 경로 저장소(`PathSkillRepository`)는 그 루트 위의 읽기 전용 로컬 파일 시스템(`ReadOnlyLocalFileSystem`)을, 클래스패스 저장소
