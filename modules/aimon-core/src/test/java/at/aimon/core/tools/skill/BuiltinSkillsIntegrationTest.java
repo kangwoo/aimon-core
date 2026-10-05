@@ -20,6 +20,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.skill.DefaultSkillRegistry;
@@ -99,12 +100,20 @@ class BuiltinSkillsIntegrationTest {
                 ? ToolInput.of("skill", skillName)
                 : ToolInput.of("skill", skillName, "args", args);
 
-        final ToolResult result = tool.execute(input, ToolContext.empty());
+        final ToolResult result = tool.execute(input, skillContext());
 
         assertThat(result.isSuccess()).as("repo=%s skill=%s args=\"%s\"", repoKind, skillName, args).isTrue();
         assertThat(result.getContent()).contains("=== Skill Activated ===").contains("Skill: " + skillName)
                 .contains("Description: ").contains("Allowed Tools: No restrictions").contains("Instructions:")
                 .contains(expectedBodyMarker(skillName));
+    }
+
+    /**
+     * A context with an execution environment to stage the skill into, as every executor builds one. A registry-loaded
+     * skill carries a staged resource, and staging it without an environment is an error (EE-20).
+     */
+    private static ToolContext skillContext() {
+        return TestExecutionEnvironments.withoutStamps(TestExecutionEnvironments.builder().build());
     }
 
     private SkillRegistry buildRegistry(String repoKind) {

@@ -822,7 +822,7 @@ notice 를 넘겨야 실제로 보인다. 테스트는 `BashToolTest` 와 `BashO
 
 출처: 빌드 리뷰 3.
 
-## EE-20 — 실행 환경 키가 없는 컨텍스트에서 `Skill` 이 성공한다 · **열림**
+## EE-20 — 실행 환경 키가 없는 컨텍스트에서 `Skill` 이 성공한다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** `EXECUTION_ENVIRONMENT` 가 없는 `ToolContext` 에서 `Skill` 이 오류를 돌려주게 한다.
 
@@ -834,6 +834,39 @@ notice 를 넘겨야 실제로 보인다. 테스트는 `BashToolTest` 와 `BashO
 **언제 다시 볼까.** 손으로 만든 컨텍스트로 `Skill` 을 부르는 임베더가 생길 때.
 
 출처: 빌드 리뷰 3.
+
+### 닫힘 (2026-10-05)
+
+`SkillRenderContextAccess.builderFor` 가 스테이징할 자원이 있는 스킬에 대해 환경을 `ExecutionEnvironmentAccess.require` 로
+꺼낸다. 컨텍스트에 `EXECUTION_ENVIRONMENT` 가 없으면 WARN 대신 `IllegalStateException("No execution environment in tool
+context")` 을 던지고, 두 호출처가 그것을 오류로 바꾼다 — `Skill` 도구는 `ToolResult.error("Failed to stage skill '<name>': No
+execution environment in tool context")`, 슬래시 명령은 같은 문구의 실패 결과다. 문구와 예외는 환경이 필요한 다른 도구(파일
+도구 · `Bash`)가 키가 없을 때 내는 것과 같다. 두 호출처가 그 예외를 오류로 받는 것은 EE-15 가 catch 를 넓힌 덕이다 — 그 전에도
+`Skill` 은 바깥 catch 가 `Skill activation failed: …` 로 받았겠지만 슬래시 경로에서는 `SkillBackedCommandExecutor` 밖으로
+예외가 새어 나갔을 것이다.
+
+**자원이 없는 스킬은 그대로다.** 손으로 만든 `Skill`(`StagedResource` 없음)은 스테이징할 것이 없으므로 환경을 보지 않고,
+`${AIMON_SKILL_DIR}` 를 비운 채 WARN 으로 렌더한다. 환경이 필요한 순간에만 묻는 것은 사용 불가 환경과 같은 선이다 — 사용 불가
+환경도 `stage()` 를 부를 때에야 실패하고, 자원 없는 스킬은 사용 불가 환경에서도 성공한다. 키가 없다고 그 스킬까지 막으면 호스트
+폴백을 막는 것이 아니라 아무 일도 하지 않을 스킬을 막는 것이다. 그래서 바뀐 것은 정확히 "스테이징이 필요한데 환경이 없는"
+한 칸이다.
+
+착수해 보니 항목의 서술과 달랐던 것.
+
+1. **근거(규칙 둘 · 여섯)는 참이었다.** main 소스에서 `ToolContext` 를 조립해 `Skill` 이나 슬래시 명령에 닿는 곳 —
+   `OrcaAgentExecutor.createToolContext` 와 `executeCommand`, `DefaultSubagentExecutor`, `RoutineExecutor` — 은 넷 다 키를
+   싣는다(제공자가 없거나 실패하면 사용 불가 환경으로라도). `ReActLlmDeriver` 도 컨텍스트를 만들지만 도구가 메모리 관찰 도구뿐이라
+   `Skill` 에 닿지 않는다. 그러니 키가 없는 컨텍스트는 정말로 손으로 만든 것뿐이다.
+2. **심각도(규칙 셋)는 적힌 대로 테스트와 임베더에 한정됐고, 그 "테스트" 가 실제로 있었다.** 고친 뒤 `aimon-core` 테스트에서
+   13건이 깨졌는데(`BuiltinSkillsIntegrationTest` 8건, `BuiltinSkillToolIntegrationTest` 5건), 전부 레지스트리로 적재한 스킬을
+   `ToolContext.empty()` 로 부르고 성공을 단언하던 것이었다 — 고치기 전에는 `${AIMON_SKILL_DIR}` 를 빈 문자열로 렌더한 본문을
+   성공으로 보고 있었다. 두 클래스에 환경을 실은 컨텍스트를 주었다. 프로덕션 경로에서 깨진 것은 없었다.
+3. **처방(규칙 다섯)은 그대로 들었다.**
+
+테스트: `SkillRenderContextAccessTest` — 자원이 있고 환경이 없으면 `NO_ENVIRONMENT_MESSAGE` 로 던진다(이전의 "디렉터리를 비워
+둔다" 테스트를 대신한다), 자원도 환경도 없으면 빈 컨텍스트다(그대로). `SkillToolTest` — 환경 없는 컨텍스트에서 스테이징할
+스킬을 부르면 오류이고 본문이 `bash /run.sh` 로 렌더되지 않는다. `SkillBackedCommandExecutorTest` — 같은 경우가 명령의 실패
+결과이고 스킬 실행기는 불리지 않는다. 셋 다 고치기 전 코드에서 실패한다.
 
 ## EE-21 — 제공자 팩토리로 만든 제공자는 소유자가 없다 · **닫힘** *(2026-09-30)*
 

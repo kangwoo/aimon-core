@@ -1089,6 +1089,24 @@ class SkillToolTest {
     }
 
     @Test
+    void testExecute_StagedSkillWithoutEnvironment_ReturnsError() {
+        // EE-20: no environment in the context is an error (design §3), not a success with ${AIMON_SKILL_DIR} empty
+        StagedResource resource = StagedResource.builder().sourceFileSystem(new NoFileSystemStub())
+                .sourceDir("skills/deploy").contentKey("k1").name("deploy").build();
+        Skill skill = Skill.builder().name("deploy")
+                .metadata(SkillMetadata.builder().name("deploy").description("deploys").build())
+                .content(SkillContent.of("bash ${AIMON_SKILL_DIR}/run.sh")).stagedResource(resource).build();
+        mockRegistry.addSkill(skill);
+
+        ToolResult result = new SkillTool(mockRegistry, new DefaultSkillContentRenderer())
+                .execute(ToolInput.of(Map.of("skill", "deploy")), ToolContext.empty());
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("Failed to stage skill 'deploy'")
+                .contains("No execution environment in tool context").doesNotContain("bash /run.sh");
+    }
+
+    @Test
     void testExecute_StagingFails_ReturnsError() {
         StagedResource resource = StagedResource.builder().sourceFileSystem(new NoFileSystemStub())
                 .sourceDir("skills/big").contentKey("k1").name("big").totalBytes(1).build();

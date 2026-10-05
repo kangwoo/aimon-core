@@ -7,6 +7,19 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed: staging a skill with no execution environment in the context is an error (EE-20)
+
+- **`Skill` and a skill-backed slash command no longer succeed with `${AIMON_SKILL_DIR}` empty when the tool context
+  has no `ToolContextKeys.EXECUTION_ENVIRONMENT`.** They logged a WARN and rendered the body anyway, so
+  `bash ${AIMON_SKILL_DIR}/x.sh` became `bash /x.sh` and the call reported success. They now fail with `Failed to stage
+  skill '<name>': No execution environment in tool context` — the message the file tools and `Bash` give for the same
+  missing key (execution-environment design §3: no host fallback). `SkillRenderContextAccess.builderFor` throws the
+  `IllegalStateException` that `ExecutionEnvironmentAccess.require` throws.
+- **Who notices.** Only a hand-built tool context: every executor (turn, slash command, fork, scheduled routine)
+  publishes the key, as an unavailable environment if nothing else. A skill with no staged resource (a hand-built
+  `Skill`) needs no environment and still renders with `${AIMON_SKILL_DIR}` empty. Tests that call `SkillTool` with
+  `ToolContext.empty()` on a registry-loaded skill need a context carrying an environment.
+
 ### Fixed: every skill staging failure is reported as one (EE-15)
 
 - **`SkillBackedCommandExecutor` turns any exception from staging into a failed `CommandExecutionResult`.** It caught

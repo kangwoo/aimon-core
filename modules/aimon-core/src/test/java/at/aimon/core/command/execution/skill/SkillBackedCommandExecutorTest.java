@@ -262,6 +262,26 @@ class SkillBackedCommandExecutorTest {
     }
 
     @Test
+    @DisplayName("EE-20: a skill to stage and no execution environment in the context is the command's error")
+    void shouldReportMissingEnvironmentAsCommandError() {
+        AtomicReference<SkillExecutionRequest> ran = new AtomicReference<>();
+        Skill skill = skillBuilder("deploy", "bash ${AIMON_SKILL_DIR}/scripts/x.sh").stagedResource(resource("deploy"))
+                .build();
+
+        CommandExecutionResult result = new SkillBackedCommandExecutor((c, r) -> {
+            ran.set(r);
+            return SkillExecutionResult.success("ok");
+        }).execute(CommandExecutionContext.builder().command(new SkillBackedCommand(skill))
+                .defaultModel(LlmModel.builder().build()).toolRegistry(new DefaultToolRegistry())
+                .toolContext(ToolContext.empty()).build(), CommandExecutionRequest.builder().build());
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.getResponse()).contains("Failed to stage skill 'deploy'")
+                .contains("No execution environment in tool context");
+        assertThat(ran).hasNullValue();
+    }
+
+    @Test
     @DisplayName("a staging failure is the command's error, not a crash")
     void shouldReportStagingFailureAsCommandError() {
         Skill skill = skillBuilder("deploy", "bash ${AIMON_SKILL_DIR}/scripts/x.sh").stagedResource(resource("deploy"))

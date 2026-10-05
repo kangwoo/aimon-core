@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.skill.parser.MarkdownSkillParser;
 import at.aimon.core.skill.render.DefaultSkillContentRenderer;
 import at.aimon.core.skill.repository.ClasspathSkillRepository;
@@ -35,12 +36,20 @@ class BuiltinSkillToolIntegrationTest {
         return new SkillTool(registry, new DefaultSkillContentRenderer());
     }
 
+    /**
+     * A context with an execution environment to stage the skill into, as every executor builds one. A registry-loaded
+     * skill carries a staged resource, and staging it without an environment is an error (EE-20).
+     */
+    private static ToolContext skillContext() {
+        return TestExecutionEnvironments.withoutStamps(TestExecutionEnvironments.builder().build());
+    }
+
     @Test
     @DisplayName("commit skill — no args returns original instructions without trailer")
     void commit_NoArgs_OriginalInstructionsNoTrailer() {
         final SkillTool tool = builtinSkillTool();
 
-        final ToolResult result = tool.execute(ToolInput.of(Map.of("skill", "commit")), ToolContext.empty());
+        final ToolResult result = tool.execute(ToolInput.of(Map.of("skill", "commit")), skillContext());
 
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getContent()).contains("Skill: commit").contains("Commit Message Guide")
@@ -53,7 +62,7 @@ class BuiltinSkillToolIntegrationTest {
         final SkillTool tool = builtinSkillTool();
 
         final ToolResult result = tool.execute(ToolInput.of(Map.of("skill", "commit", "args", "scope: agent fix")),
-                ToolContext.empty());
+                skillContext());
 
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getContent()).contains("Commit Message Guide").contains("ARGUMENTS: scope: agent fix");
@@ -64,7 +73,7 @@ class BuiltinSkillToolIntegrationTest {
     void summarize_NoArgs_OriginalInstructionsNoTrailer() {
         final SkillTool tool = builtinSkillTool();
 
-        final ToolResult result = tool.execute(ToolInput.of(Map.of("skill", "summarize")), ToolContext.empty());
+        final ToolResult result = tool.execute(ToolInput.of(Map.of("skill", "summarize")), skillContext());
 
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getContent()).contains("Skill: summarize").contains("Summarization Guide")
@@ -76,8 +85,8 @@ class BuiltinSkillToolIntegrationTest {
     void summarize_WithArgs_TrailerAppended() {
         final SkillTool tool = builtinSkillTool();
 
-        final ToolResult result = tool.execute(
-                ToolInput.of(Map.of("skill", "summarize", "args", "\"meeting notes\" 5min")), ToolContext.empty());
+        final ToolResult result = tool
+                .execute(ToolInput.of(Map.of("skill", "summarize", "args", "\"meeting notes\" 5min")), skillContext());
 
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getContent()).contains("Summarization Guide").contains("ARGUMENTS: \"meeting notes\" 5min");
@@ -88,10 +97,9 @@ class BuiltinSkillToolIntegrationTest {
     void emptyArgsString_BehavesAsNoArgs() {
         final SkillTool tool = builtinSkillTool();
 
-        final ToolResult commit = tool.execute(ToolInput.of(Map.of("skill", "commit", "args", "")),
-                ToolContext.empty());
+        final ToolResult commit = tool.execute(ToolInput.of(Map.of("skill", "commit", "args", "")), skillContext());
         final ToolResult summarize = tool.execute(ToolInput.of(Map.of("skill", "summarize", "args", "")),
-                ToolContext.empty());
+                skillContext());
 
         assertThat(commit.isSuccess()).isTrue();
         assertThat(commit.getContent()).doesNotContain("ARGUMENTS:");
