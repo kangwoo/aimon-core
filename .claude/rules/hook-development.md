@@ -121,6 +121,18 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   message it does carry is `StagingException`'s on `STAGING_FAILED`: that text is the staging
   layer's own (over the limit, changed since scanned) and is what the `Skill` tool already tells the
   model for the same failure. Any new detail must be a fixed string or a type name.
+- **A hook command is tied to the execution's cancellation signal, and a cancelled one blocks even
+  with `failOpen`.** `ShellActionRunner` registers a per-call listener on
+  `HookContext#getExecutionCancellation()` and removes it in `finally` (the signal outlives the
+  command). `ShellCancelledException`, and a `ShellExecutionException` caused by
+  `InterruptedException` (how `LocalShell` ends on a thread interrupt), are both `Unrun.CANCELLED`,
+  which `ShellHookVerdicts` blocks regardless of `failOpen` — "allow and continue" is not an answer
+  for an execution that is ending. The signal is an *execution* concept (turn, fork, routine), named
+  accordingly. A firing site passes it only where it holds one: `SingleToolInvoker` for the four
+  tool-scoped events (`postTool` / `permissionDenied` only while not yet cancelled, so an audit
+  command fired after the interrupt still runs) and `DefaultSubagentExecutor` for a fork's
+  `onStart`. A main turn's `onStart` fires before the turn's signal exists; `onStop`, compaction and
+  subagent-lifecycle sites carry none.
 - **`http` / `mcp` actions follow the same rule on `preTool`** (the only guard event they can sit on).
   `HttpActionExecutor#attempt` / `McpActionExecutor#attempt` return an `ActionCallOutcome`: a
   *verdict* (any readable 2xx / non-error answer — only `decision: deny` blocks) or *no verdict*,

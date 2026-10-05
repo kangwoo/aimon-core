@@ -475,6 +475,7 @@ verdict.** On the other 9 events no row blocks (a WARN, then the event proceeds)
 | `http` or `mcp` gives any other readable answer (`allow`, `defer`, no decision, an empty body, plain text) | verdict: allow | proceeds | proceeds |
 | `http` or `mcp` gets no verdict — a connection failure, a timeout, a non-2xx status, an MCP server that is not registered or not connected or answers `isError`, an answer that cannot be read, an executor that is not wired, an executor that throws | no verdict | **blocks** | proceeds (WARN) |
 | the handler runs past its own timeout and is cut off by the hook executor's outer net (declared timeout + 5 seconds) | no verdict | **blocks** | follows the event policy — the default policy proceeds (WARN) |
+| the execution is interrupted and the `command` is stopped (or the hook fires in an execution that is already cancelled) | execution cancelled | **blocks** | **blocks** — an execution that is ending does not take another step |
 
 "Blocks" is a block on `preTool`, `onStart` and `preCompact` and a deny on `permissionRequest`. The reason for a guard
 that could not run has the form `Blocked: guard hook '<name>' (<event>) could not run its command — <cause>. A guard that
@@ -482,6 +483,15 @@ cannot decide blocks (fail-closed).` (for `http` and `mcp`: `could not get a ver
 call`), and it never carries the command string, the shell's stderr, a URL, a header, a response body, an exception
 message or the name `failOpen` — the reader of that reason is the party the guard constrains. `http` and `mcp` handlers
 can only be placed on `preTool` and `postTool`, so the one guard event those three rows apply to is `preTool`.
+
+**Interrupts.** When the user interrupts an execution, a `command` that is running is stopped **through the execution's
+cancellation signal** — so it does not run on to its own timeout even on a shell that does not answer a thread interrupt
+(a remote shell). The reason is `Blocked: hook '<name>' (<event>) was stopped — execution cancelled. An interrupted
+execution does not proceed.`, with or without `failOpen`. The events that carry the signal are `permissionRequest` and
+`preTool` (always), `postTool` and `permissionDenied` (only while the execution has not been cancelled — an audit
+command fired after the cancellation runs to its end), and a fork's `onStart`. Commands on a main turn's `onStart`, on
+`onStop`, on the compaction and subagent events and on the events outside any execution (`onSessionStart`,
+`onSessionEnd`, `onConfigReload`) get no signal and stop, as before, only if the shell answers a thread interrupt.
 
 ---
 

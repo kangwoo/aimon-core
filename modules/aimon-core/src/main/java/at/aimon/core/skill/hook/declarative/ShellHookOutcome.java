@@ -82,6 +82,14 @@ public final class ShellHookOutcome {
         EXECUTION_FAILED("shell execution failed"),
 
         /**
+         * The execution the hook fired in was interrupted while the action ran: the command was stopped through the
+         * execution's cancellation signal, or the thread running it was interrupted. Unlike every other cause this
+         * one blocks on a guard event <em>whatever</em> {@code failOpen} says &mdash; the execution is ending, so
+         * "allow and continue" is not an answer (see {@code ShellHookVerdicts}).
+         */
+        CANCELLED("execution cancelled"),
+
+        /**
          * The shell found the command but could not execute it (exit
          * {@value ShellHookOutcome#NOT_EXECUTABLE_EXIT_CODE}:
          * no execute permission, or not an executable). Only a guard event reads the exit code this way — see

@@ -6,6 +6,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
@@ -56,6 +57,7 @@ public final class PostToolContext implements HookContext {
     private final HookRegistry hookRegistry;
     private final UserLocale userLocale;
     private final ExecutionEnvironment executionEnvironment;
+    private final CancellationSignal executionCancellation;
     private final ToolUse toolUse;
     private final ToolUseResult originalToolUseResult;
     private final ToolUseResult currentToolUseResult;
@@ -69,6 +71,7 @@ public final class PostToolContext implements HookContext {
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
         userLocale = Objects.requireNonNull(builder.userLocale, "UserLocale cannot be null");
         executionEnvironment = builder.executionEnvironment;
+        executionCancellation = builder.executionCancellation;
         toolUse = Objects.requireNonNull(builder.toolUse, "Tool use cannot be null");
         originalToolUseResult = Objects.requireNonNull(builder.toolUseResult, "Tool use result cannot be null");
         currentToolUseResult = builder.currentToolUseResult != null
@@ -102,6 +105,11 @@ public final class PostToolContext implements HookContext {
     @Override
     public Optional<ExecutionEnvironment> getExecutionEnvironment() {
         return Optional.ofNullable(executionEnvironment);
+    }
+
+    @Override
+    public Optional<CancellationSignal> getExecutionCancellation() {
+        return Optional.ofNullable(executionCancellation);
     }
 
     /**
@@ -194,9 +202,9 @@ public final class PostToolContext implements HookContext {
                 ? ToolUseResult.error(toolUse.getId(), newOutput.getContent())
                 : ToolUseResult.success(toolUse.getId(), newOutput.getContent());
         final Builder b = new Builder().executorType(invokerType).invokerName(invokerName).hookRegistry(hookRegistry)
-                .userLocale(userLocale).executionEnvironment(executionEnvironment).toolUse(toolUse)
-                .toolUseResult(originalToolUseResult).iterationCount(iterationCount).timestamp(timestamp)
-                .executionAttributes(executionAttributes);
+                .userLocale(userLocale).executionEnvironment(executionEnvironment)
+                .executionCancellation(executionCancellation).toolUse(toolUse).toolUseResult(originalToolUseResult)
+                .iterationCount(iterationCount).timestamp(timestamp).executionAttributes(executionAttributes);
         b.currentToolUseResult = rebuilt;
         return new PostToolContext(b);
     }
@@ -216,6 +224,7 @@ public final class PostToolContext implements HookContext {
         private HookRegistry hookRegistry;
         private UserLocale userLocale;
         private ExecutionEnvironment executionEnvironment;
+        private CancellationSignal executionCancellation;
         private ToolUse toolUse;
         private ToolUseResult toolUseResult;
         private ToolUseResult currentToolUseResult;
@@ -283,6 +292,19 @@ public final class PostToolContext implements HookContext {
          */
         public Builder executionEnvironment(ExecutionEnvironment executionEnvironment) {
             this.executionEnvironment = executionEnvironment;
+            return this;
+        }
+
+        /**
+         * Sets the cancellation signal of the execution this event fires in, so a hook's shell command stops when
+         * the execution is interrupted.
+         *
+         * @param executionCancellation
+         *            the execution's signal (nullable — absent when the firing site has none in reach)
+         * @return This builder
+         */
+        public Builder executionCancellation(CancellationSignal executionCancellation) {
+            this.executionCancellation = executionCancellation;
             return this;
         }
 

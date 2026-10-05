@@ -19,6 +19,12 @@ import org.slf4j.LoggerFactory;
  * being guards.
  *
  * <p>
+ * One cause is outside that opt-out: {@link ShellHookOutcome.Unrun#CANCELLED}. A hook stopped because its execution
+ * was interrupted blocks with or without {@code failOpen} &mdash; the same answer the hook executor gives when the
+ * thread waiting on a hook is interrupted, for the same reason: no verdict is no permission to proceed, and the
+ * path is reachable only when the execution is ending anyway.
+ *
+ * <p>
  * Shared by {@link DeclarativePreToolHook} and {@link AbstractDeclarativeShellHook} so the two cannot word or decide
  * this differently. Every other exit status is not a block here: 2 is the caller's veto, and the rest are allowed.
  */
@@ -82,6 +88,15 @@ final class ShellHookVerdicts {
         final ShellHookOutcome outcome = reported.asGuardAnswer();
         if (outcome.getUnrunCause().isEmpty()) {
             return Optional.empty();
+        }
+        if (outcome.getUnrunCause().get() == ShellHookOutcome.Unrun.CANCELLED) {
+            // Not a guard that failed to decide: the execution it guards is being cancelled. failOpen opens "the
+            // hook could not run", and that is not what happened; letting the operation go on would have an
+            // interrupted execution take one more step.
+            log.warn("Hook '{}' ({}) was stopped because its execution was interrupted; blocking", skillName,
+                    eventName);
+            return Optional.of("Blocked: hook '" + skillName + "' (" + eventName
+                    + ") was stopped — execution cancelled. An interrupted execution does not proceed.");
         }
         if (failOpen) {
             log.warn("Hook '{}' ({}) could not {} ({}); it declares failOpen, so the operation proceeds", skillName,

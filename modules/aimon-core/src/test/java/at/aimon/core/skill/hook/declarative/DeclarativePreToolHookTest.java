@@ -86,7 +86,7 @@ class DeclarativePreToolHookTest {
     }
 
     @ParameterizedTest
-    @EnumSource(ShellHookOutcome.Unrun.class)
+    @EnumSource(value = ShellHookOutcome.Unrun.class, mode = EnumSource.Mode.EXCLUDE, names = "CANCELLED")
     void execute_shellCommandThatCouldNotRun_blocksWithTheCause(ShellHookOutcome.Unrun cause) {
         DeclarativePreToolHook hook = new DeclarativePreToolHook("my-skill", NameOnlyPredicate.ANY,
                 new ShellAction("guard.sh --token s3cret", Duration.ofSeconds(1)),
@@ -102,7 +102,7 @@ class DeclarativePreToolHookTest {
     }
 
     @ParameterizedTest
-    @EnumSource(ShellHookOutcome.Unrun.class)
+    @EnumSource(value = ShellHookOutcome.Unrun.class, mode = EnumSource.Mode.EXCLUDE, names = "CANCELLED")
     void execute_failOpen_letsAShellCommandThatCouldNotRunPass(ShellHookOutcome.Unrun cause) {
         DeclarativePreToolHook hook = new DeclarativePreToolHook("my-skill", NameOnlyPredicate.ANY,
                 new ShellAction("audit.sh", Duration.ofSeconds(1)),

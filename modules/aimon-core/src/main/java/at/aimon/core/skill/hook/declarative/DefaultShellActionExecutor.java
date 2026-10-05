@@ -89,6 +89,7 @@ public final class DefaultShellActionExecutor implements ShellActionExecutor {
             return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE,
                     "the environment gave no shell (" + ShellActionRunner.failureDetail(e) + ")");
         }
-        return ShellActionRunner.run(shell, action, environmentOverrides, stdinPayload);
+        return ShellActionRunner.run(shell, action, environmentOverrides, stdinPayload,
+                context.getExecutionCancellation());
     }
 }

@@ -449,6 +449,7 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 | `http` · `mcp` 가 그 밖의 읽을 수 있는 답을 함 (`allow` · `defer` · 결정 없음 · 빈 본문 · 일반 텍스트) | 판정: 허용 | 진행 | 진행 |
 | `http` · `mcp` 가 판정을 받지 못함 — 연결 실패, timeout, non-2xx, MCP 서버 미등록 · 미연결 · `isError`, 읽을 수 없는 답, 실행기 미배선, 실행기가 던진 예외 | 판정 없음 | **막는다** | 진행 (WARN) |
 | handler 가 자기 timeout 을 넘겨 돌다가 hook 실행기의 바깥 그물(선언 timeout + 5초)에 끊김 | 판정 없음 | **막는다** | 이벤트 정책을 따른다 — 기본 정책은 진행 (WARN) |
+| 실행이 인터럽트되어 `command` 가 중단됨 (또는 이미 취소된 실행에서 발화) | 실행 취소 | **막는다** | **막는다** — 끝나는 실행은 다음 단계로 가지 않는다 |
 
 "막는다" 는 `preTool` · `onStart` · `preCompact` 에서는 block, `permissionRequest` 에서는 deny 다. 돌리지 못해 막힌 사유는
 `Blocked: guard hook '<이름>' (<이벤트>) could not run its command — <원인>. A guard that cannot decide blocks
@@ -456,6 +457,14 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 셸의 stderr · URL · 헤더 · 응답 본문 · 예외 메시지 · `failOpen` 이라는 이름은 싣지 않는다 — 그 사유를 읽는 쪽이 가드가
 제약하는 당사자이기 때문이다. `http` · `mcp` handler 는 `preTool` 과 `postTool` 에만 둘 수 있으므로, 이 표에서 그 세 행이
 해당하는 가드 이벤트는 `preTool` 하나다.
+
+**인터럽트.** 사용자가 실행을 중단하면 돌고 있던 `command` 는 **실행의 취소 신호로** 멈춘다 — 스레드 인터럽트에 반응하지
+않는 셸(원격 셸)에서도 자기 timeout 까지 돌지 않는다. 사유는 `Blocked: hook '<이름>' (<이벤트>) was stopped — execution
+cancelled. An interrupted execution does not proceed.` 이고 `failOpen` 과 무관하다. 신호를 싣는 이벤트는 `permissionRequest` ·
+`preTool`(항상), `postTool` · `permissionDenied`(실행이 아직 취소되지 않았을 때만 — 취소된 뒤에 발화한 감사 커맨드는 끝까지
+돈다), fork 의 `onStart` 다. 메인 턴의 `onStart`, `onStop`, compaction · 서브에이전트 이벤트, 실행 밖 이벤트
+(`onSessionStart` · `onSessionEnd` · `onConfigReload`)의 커맨드는 신호를 받지 않아 전처럼 셸이 스레드 인터럽트에 반응해야
+멈춘다.
 
 ---
 

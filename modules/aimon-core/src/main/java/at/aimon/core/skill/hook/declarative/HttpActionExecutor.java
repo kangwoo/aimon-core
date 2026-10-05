@@ -159,7 +159,7 @@ public final class HttpActionExecutor {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.warn("HTTP hook to {} interrupted", url);
-            return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.CALL_FAILED, "interrupted");
+            return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.CANCELLED, "");
         }
     }
 

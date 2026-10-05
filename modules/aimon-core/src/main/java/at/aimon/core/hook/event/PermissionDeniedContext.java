@@ -6,6 +6,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.base.Principal;
 import at.aimon.core.base.UserLocale;
@@ -40,6 +41,7 @@ public final class PermissionDeniedContext implements HookContext {
     private final HookRegistry hookRegistry;
     private final UserLocale userLocale;
     private final ExecutionEnvironment executionEnvironment;
+    private final CancellationSignal executionCancellation;
     private final String toolName;
     private final ToolInput toolInput;
     private final Principal principal;
@@ -53,6 +55,7 @@ public final class PermissionDeniedContext implements HookContext {
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
         userLocale = Objects.requireNonNull(builder.userLocale, "UserLocale cannot be null");
         executionEnvironment = builder.executionEnvironment;
+        executionCancellation = builder.executionCancellation;
         toolName = Objects.requireNonNull(builder.toolName, "Tool name cannot be null");
         toolInput = Objects.requireNonNull(builder.toolInput, "Tool input cannot be null");
         principal = builder.principal;
@@ -84,6 +87,11 @@ public final class PermissionDeniedContext implements HookContext {
     @Override
     public Optional<ExecutionEnvironment> getExecutionEnvironment() {
         return Optional.ofNullable(executionEnvironment);
+    }
+
+    @Override
+    public Optional<CancellationSignal> getExecutionCancellation() {
+        return Optional.ofNullable(executionCancellation);
     }
 
     /**
@@ -146,6 +154,7 @@ public final class PermissionDeniedContext implements HookContext {
         private HookRegistry hookRegistry;
         private UserLocale userLocale;
         private ExecutionEnvironment executionEnvironment;
+        private CancellationSignal executionCancellation;
         private String toolName;
         private ToolInput toolInput;
         private Principal principal;
@@ -213,6 +222,19 @@ public final class PermissionDeniedContext implements HookContext {
          */
         public Builder executionEnvironment(ExecutionEnvironment executionEnvironment) {
             this.executionEnvironment = executionEnvironment;
+            return this;
+        }
+
+        /**
+         * Sets the cancellation signal of the execution this event fires in, so a hook's shell command stops when
+         * the execution is interrupted.
+         *
+         * @param executionCancellation
+         *            the execution's signal (nullable — absent when the firing site has none in reach)
+         * @return This builder
+         */
+        public Builder executionCancellation(CancellationSignal executionCancellation) {
+            this.executionCancellation = executionCancellation;
             return this;
         }
 

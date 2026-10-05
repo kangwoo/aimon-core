@@ -219,6 +219,72 @@ class SingleToolInvokerTest {
         assertThat(post.getValue().getExecutionEnvironment()).isEmpty();
     }
 
+    @Test
+    @DisplayName("tool-scoped hook chains carry the execution's cancellation signal, as the tool reads it (EE-80)")
+    void toolScopedHooksCarryTheExecutionsCancellationSignal() {
+        givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
+        when(toolExecutionManager.execute(any(), any(), any(), any()))
+                .thenReturn(ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("done")));
+        try (at.aimon.core.agent.interrupt.DefaultInterruptCoordinator execution = new at.aimon.core.agent.interrupt.DefaultInterruptCoordinator()) {
+            invoker.invoke(specIn(
+                    ToolContext.builder().put(InterruptToolKeys.CANCELLATION_SIGNAL, execution.getSignal()).build()));
+
+            final ArgumentCaptor<PermissionRequestContext> permission = ArgumentCaptor
+                    .forClass(PermissionRequestContext.class);
+            final ArgumentCaptor<PreToolContext> pre = ArgumentCaptor.forClass(PreToolContext.class);
+            final ArgumentCaptor<PostToolContext> post = ArgumentCaptor.forClass(PostToolContext.class);
+            verify(hookExecutionManager).executePermissionRequest(permission.capture());
+            verify(hookExecutionManager).executePreTool(pre.capture());
+            verify(hookExecutionManager).executePostTool(post.capture());
+            assertThat(permission.getValue().getExecutionCancellation()).containsSame(execution.getSignal());
+            assertThat(pre.getValue().getExecutionCancellation()).containsSame(execution.getSignal());
+            assertThat(post.getValue().getExecutionCancellation()).containsSame(execution.getSignal());
+            // A PreTool input rewrite and a PostTool output rewrite thread a copied context; the signal survives.
+            assertThat(
+                    pre.getValue().withCurrentInput(ToolInput.of(Map.of("file_path", "/y"))).getExecutionCancellation())
+                    .containsSame(execution.getSignal());
+            assertThat(post.getValue().withCurrentOutput(ToolResult.success("masked")).getExecutionCancellation())
+                    .containsSame(execution.getSignal());
+        }
+    }
+
+    @Test
+    @DisplayName("after the execution is cancelled, the guard chains still carry the signal and PostTool does not")
+    void postToolFiredAfterCancellationCarriesNoSignal() {
+        givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
+        when(toolExecutionManager.execute(any(), any(), any(), any()))
+                .thenReturn(ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("done")));
+        try (at.aimon.core.agent.interrupt.DefaultInterruptCoordinator execution = new at.aimon.core.agent.interrupt.DefaultInterruptCoordinator()) {
+            execution.requestInterrupt(at.aimon.core.agent.interrupt.InterruptReason.USER_SIGINT);
+
+            invoker.invoke(specIn(
+                    ToolContext.builder().put(InterruptToolKeys.CANCELLATION_SIGNAL, execution.getSignal()).build()));
+
+            final ArgumentCaptor<PreToolContext> pre = ArgumentCaptor.forClass(PreToolContext.class);
+            final ArgumentCaptor<PostToolContext> post = ArgumentCaptor.forClass(PostToolContext.class);
+            verify(hookExecutionManager).executePreTool(pre.capture());
+            verify(hookExecutionManager).executePostTool(post.capture());
+            // A guard fired after the interrupt must not start its command: it gets the tripped signal.
+            assertThat(pre.getValue().getExecutionCancellation()).containsSame(execution.getSignal());
+            // A PostTool command reports on what already happened, and must still be able to run.
+            assertThat(post.getValue().getExecutionCancellation()).isEmpty();
+        }
+    }
+
+    @Test
+    @DisplayName("a tool context without a cancellation signal leaves the hook contexts without one")
+    void toolScopedHooksCarryNoSignalWhenTheToolContextHasNone() {
+        givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
+        when(toolExecutionManager.execute(any(), any(), any(), any()))
+                .thenReturn(ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("done")));
+
+        invoker.invoke(specIn(ToolContext.empty()));
+
+        final ArgumentCaptor<PreToolContext> pre = ArgumentCaptor.forClass(PreToolContext.class);
+        verify(hookExecutionManager).executePreTool(pre.capture());
+        assertThat(pre.getValue().getExecutionCancellation()).isEmpty();
+    }
+
     private ToolInvocationSpec specIn(ToolContext context) {
         return ToolInvocationSpec.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("agent")
                 .hookRegistry(hookRegistry).userLocale(mock(UserLocale.class)).executionAttributes(Map.of())

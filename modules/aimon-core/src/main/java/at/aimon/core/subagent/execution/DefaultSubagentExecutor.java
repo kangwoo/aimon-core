@@ -625,8 +625,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     private void checkOnStartHooks(LoopContext lc) {
         final OnStartContext onStartContext = OnStartContext.builder().executorType(InvokerType.SUBAGENT)
                 .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry()).userLocale(lc.userLocale())
-                .executionEnvironment(lc.executionEnvironment()).userMessage(lc.goal)
-                .executionAttributes(lc.executionAttributes).build();
+                .executionEnvironment(lc.executionEnvironment()).executionCancellation(lc.coordinator.getSignal())
+                .userMessage(lc.goal).executionAttributes(lc.executionAttributes).build();
         final List<HookResult> onStartResults = hookExecutionManager.executeOnStart(onStartContext);
         if (hookExecutionManager.hasBlockedResult(onStartResults)) {
             final List<String> blockReasons = hookExecutionManager.collectBlockedReasons(onStartResults);

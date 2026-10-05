@@ -202,6 +202,15 @@ Claude Code 풍 `if` 문법은 `PredicateParser` 가 위 구현들로 번역한�
 판정 없음은 셸의 "종료 코드 없음" 과 같은 자리(`ShellHookVerdicts`)에서 같은 규칙으로 읽는다: 막고, `failOpen: true` 면
 통과한다. `postTool` 은 전처럼 WARN 후 진행한다.
 
+**취소는 "돌리지 못함" 이 아니다(EE-80).** 훅의 셸 명령은 실행의 취소 신호(`HookContext.getExecutionCancellation()`)에
+묶여 돌고, 인터럽트가 오면 그 신호로 멈춘다 — 포그라운드 `Bash` 와 같은 길이다(EE-54). 그렇게 멈춘 명령은
+`Unrun.CANCELLED` 로 보고되고, 가드 이벤트에서는 `failOpen` 이어도 막는다. 훅 실행기가 기다리던 스레드의 인터럽트를
+정책과 무관하게 BLOCKED 로 답하는 것(§3.3)과 같은 이유다: 판정이 없으면 진행 허가도 없고, 이 경로는 실행이 어차피 끝나는
+중일 때만 닿는다. 스레드 인터럽트에 반응하는 셸(`LocalShell`)이 `InterruptedException` 으로 끝낸 것도 같은 원인으로 읽어
+두 종류의 셸에서 결과가 같다. 신호는 그것을 쥐고 있는 발화 지점만 싣는다 — 도구 범위 이벤트와 fork 의 `onStart`. 이미
+일어난 일을 알리는 `postTool` · `permissionDenied` 는 실행이 취소되기 전까지만 싣는다(취소 뒤의 감사 명령이 시작조차 못 하는
+것을 막는다).
+
 사유 문자열은 `MAX_DENY_REASON_LENGTH`(4000자)로 자른다 — 훅이 스택트레이스를 통째로 뱉어 대화 컨텍스트에
 무제한 주입되는 것을 막는다.
 
