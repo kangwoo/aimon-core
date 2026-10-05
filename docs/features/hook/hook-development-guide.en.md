@@ -385,7 +385,7 @@ may sit between a `tool_use` and its `tool_result`.
 | Item | Default | Description |
 |------|--------|------|
 | `timeout` | 30 seconds | The outer safety net for a single hook |
-| `timeoutBehavior` | `FAIL_OPEN` | On timeout, pass (`FAIL_OPEN`) or block (`FAIL_CLOSED`) |
+| `timeoutBehavior` | `FAIL_OPEN` | On timeout, pass (`FAIL_OPEN`) or block (`FAIL_CLOSED`). The default for the chain; a hook that declares its own wins for that hook |
 | `executionMode` | `SEQUENTIAL` | Parallel execution is opt-in |
 | `stopOnBlocked` | Policy-dependent | Short-circuits the remaining hooks once a blocking result appears |
 | `dedupKeyExtractor` | None | Removes duplicate hooks sharing a key |
@@ -402,6 +402,15 @@ may sit between a `tool_use` and its `tool_result`.
   without a ceiling one hook could hold a turn indefinitely, and values near `Long.MAX_VALUE`
   overflow the executor's nanosecond conversion. Anything larger is truncated to 10 minutes with
   a WARN log.
+- **`timeoutBehaviorFor(hook)`** is what actually applies when the net fires. If a hook declares
+  `FAIL_CLOSED` or `FAIL_OPEN` through `getTimeoutBehavior()`, that declaration takes precedence
+  over the policy's `timeoutBehavior`. A declarative guard hook (`preTool`, `onStart`,
+  `preCompact`, `permissionRequest`, without `failOpen`) declares `FAIL_CLOSED`, so it blocks when
+  the net cuts it off even under the default policy. **A hook registered in code follows the
+  policy unless it declares otherwise** — under the default policies a `PreToolHook` or
+  `OnStartHook` cut off by the net reads as a pass, and an exception thrown by an `OnStartHook` is
+  a success under the `onStart` policy too. A hook whose purpose is to refuse should override
+  `getTimeoutBehavior()` to declare `FAIL_CLOSED` and catch its own exceptions.
 - **In parallel mode** a timeout **bounds the wait; it does not discard work that already
   finished.** Results are always reassembled in registration order.
 - **`stopOnBlocked` is meaningful only under `SEQUENTIAL`.** Under `PARALLEL` an already

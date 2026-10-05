@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.hook.event.PreToolContext;
 import at.aimon.core.hook.event.PreToolHook;
+import at.aimon.core.hook.execution.HookExecutionPolicy.TimeoutBehavior;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.hook.rewake.RewakeSpec;
 import at.aimon.core.skill.hook.action.DenyAction;
@@ -181,6 +182,17 @@ public final class DeclarativePreToolHook implements PreToolHook {
     @Override
     public Optional<Duration> getExecutionBudget() {
         return action.getExecutionBudget();
+    }
+
+    /**
+     * A guard cut off by the executor's outer net blocks: this hook declares {@link TimeoutBehavior#FAIL_CLOSED}, so
+     * an action that does not keep its own deadline — a shell without cancellation, an MCP call that never returns
+     * (the MCP executor enforces no timeout of its own) — cannot turn the guard into a pass under the event policy's
+     * {@code FAIL_OPEN}. A hook that declared {@code failOpen} declares nothing and takes the policy's answer.
+     */
+    @Override
+    public Optional<TimeoutBehavior> getTimeoutBehavior() {
+        return failOpen ? Optional.empty() : Optional.of(TimeoutBehavior.FAIL_CLOSED);
     }
 
     /**

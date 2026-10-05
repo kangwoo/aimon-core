@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 
 import at.aimon.core.hook.execution.ExecutionHook;
 import at.aimon.core.hook.execution.HookContext;
+import at.aimon.core.hook.execution.HookExecutionPolicy.TimeoutBehavior;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.hook.rewake.RewakeSpec;
 import at.aimon.core.skill.hook.action.ShellAction;
@@ -94,6 +95,18 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
     @Override
     public final Optional<Duration> getExecutionBudget() {
         return action.getExecutionBudget();
+    }
+
+    /**
+     * A guard cut off by the executor's outer net blocks: on an event with a decision channel this hook declares
+     * {@link TimeoutBehavior#FAIL_CLOSED}, so a shell that does not honour its own timeout — a remote shell without
+     * cancellation, a stuck read — cannot turn the guard into a pass under the event policy's {@code FAIL_OPEN}. A
+     * hook that declared {@code failOpen}, and every hook on an advisory event, declares nothing and takes the
+     * policy's answer.
+     */
+    @Override
+    public final Optional<TimeoutBehavior> getTimeoutBehavior() {
+        return canVeto() && !failOpen ? Optional.of(TimeoutBehavior.FAIL_CLOSED) : Optional.empty();
     }
 
     @Override

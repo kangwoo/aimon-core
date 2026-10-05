@@ -14,7 +14,8 @@ import org.slf4j.LoggerFactory;
  *
  * <p>
  * <b>TimeoutBehavior</b>: 타임아웃 발생 시 정책. 기본값 {@link TimeoutBehavior#FAIL_OPEN} — 운영 안전성을 위해 타임아웃을 SUCCESS 로 처리해 다음 훅으로
- * 진행한다. 보안 민감 훅은 {@link TimeoutBehavior#FAIL_CLOSED} 로 BLOCKED 처리할 수 있다.
+ * 진행한다. 보안 민감 훅은 {@link TimeoutBehavior#FAIL_CLOSED} 로 BLOCKED 처리할 수 있다. 이 값은 체인의 기본값이고, 훅이
+ * {@link ExecutionHook#getTimeoutBehavior()} 로 자기 동작을 선언하면 그 훅에는 선언이 이긴다({@link #timeoutBehaviorFor}).
  */
 public final class HookExecutionPolicy {
 
@@ -176,6 +177,28 @@ public final class HookExecutionPolicy {
     /** Timeout 발생 시 동작 모드. */
     public TimeoutBehavior timeoutBehavior() {
         return timeoutBehavior;
+    }
+
+    /**
+     * Returns what an outer timeout means for one specific hook: the hook's own
+     * {@linkplain ExecutionHook#getTimeoutBehavior() declaration} when it made one, otherwise this policy's
+     * {@link #timeoutBehavior()}.
+     *
+     * <p>
+     * The policy value is the default for the chain, not a ceiling or a floor: a hook that declares
+     * {@link TimeoutBehavior#FAIL_CLOSED} blocks on timeout under a {@code FAIL_OPEN} policy, which is how a
+     * declarative guard stays closed without changing what every programmatically registered hook of the same event
+     * gets.
+     *
+     * @param hook
+     *            the hook that timed out (must not be null)
+     * @return the behaviour to apply (never null)
+     * @throws NullPointerException
+     *             if hook is null
+     */
+    public TimeoutBehavior timeoutBehaviorFor(ExecutionHook<?> hook) {
+        Objects.requireNonNull(hook, "hook cannot be null");
+        return hook.getTimeoutBehavior().orElse(timeoutBehavior);
     }
 
     /** 실행 모드. */

@@ -355,6 +355,14 @@ handler's own deadline. A declared budget is **clamped to 10 minutes
 (`MAX_DECLARED_BUDGET`)**, so a configuration mistake cannot hold a turn indefinitely (anything
 larger is truncated to 10 minutes after a WARN log).
 
+**When the outer net fires first.** If a handler does not keep its own timeout — a remote shell that does not implement
+cancellation, stuck I/O, an MCP call that takes no timeout — and the outer net cuts the hook off, a declarative hook on
+one of the four events with a decision channel **blocks** (`Hook timed out after …ms (limit=…ms)`). The event policy's
+`timeoutBehavior` defaults to `FAIL_OPEN`, but a declarative guard declares `FAIL_CLOSED` per hook and the executor
+follows that declaration over the policy (`ExecutionHook#getTimeoutBehavior()`). A handler with `"failOpen": true`, and
+every handler on the other 9 events, declares nothing and so follows the event policy (`FAIL_OPEN` by default — it
+proceeds). Hooks registered in code behave as they did.
+
 ### `http`
 
 Calls an HTTP webhook. `HttpAction` + `HttpActionExecutor`.
@@ -466,6 +474,7 @@ verdict.** On the other 9 events no row blocks (a WARN, then the event proceeds)
 | `http` or `mcp` answers `decision: deny` | verdict: refuse (`reason` is the reason) | **blocks** | **blocks** |
 | `http` or `mcp` gives any other readable answer (`allow`, `defer`, no decision, an empty body, plain text) | verdict: allow | proceeds | proceeds |
 | `http` or `mcp` gets no verdict — a connection failure, a timeout, a non-2xx status, an MCP server that is not registered or not connected or answers `isError`, an answer that cannot be read, an executor that is not wired, an executor that throws | no verdict | **blocks** | proceeds (WARN) |
+| the handler runs past its own timeout and is cut off by the hook executor's outer net (declared timeout + 5 seconds) | no verdict | **blocks** | follows the event policy — the default policy proceeds (WARN) |
 
 "Blocks" is a block on `preTool`, `onStart` and `preCompact` and a deny on `permissionRequest`. The reason for a guard
 that could not run has the form `Blocked: guard hook '<name>' (<event>) could not run its command — <cause>. A guard that

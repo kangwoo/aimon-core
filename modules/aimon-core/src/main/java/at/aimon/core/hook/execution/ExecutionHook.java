@@ -90,4 +90,28 @@ public interface ExecutionHook<C extends HookContext> {
     default Optional<Duration> getExecutionBudget() {
         return Optional.empty();
     }
+
+    /**
+     * Returns what the executor's outer timeout must mean for this hook, when the hook knows.
+     *
+     * <p>
+     * The event's {@link HookExecutionPolicy#timeoutBehavior() policy} answers that question for every hook of the
+     * chain at once, and the shipped policies answer {@link HookExecutionPolicy.TimeoutBehavior#FAIL_OPEN}:
+     * availability first. That is the wrong answer for a hook that exists to veto — a guard cut off by the net said
+     * nothing, and letting the operation through makes "be slow" the way to switch the guard off. Such a hook
+     * declares {@link HookExecutionPolicy.TimeoutBehavior#FAIL_CLOSED} here and the executor honours it over the
+     * policy ({@link HookExecutionPolicy#timeoutBehaviorFor(ExecutionHook)}).
+     *
+     * <p>
+     * The declaration only matters when the hook failed to keep its own deadline: a hook that returns in time is
+     * never asked. The in-tree declarers are the declarative guard hooks ({@code hooks.json} / skill frontmatter on
+     * {@code preTool}, {@code onStart}, {@code preCompact}, {@code permissionRequest}) that did not declare
+     * {@code failOpen}. A hook registered in code is free to declare one as well.
+     *
+     * @return the behaviour this hook asks for on an outer timeout, or {@link Optional#empty()} to accept the event
+     *         policy's
+     */
+    default Optional<HookExecutionPolicy.TimeoutBehavior> getTimeoutBehavior() {
+        return Optional.empty();
+    }
 }

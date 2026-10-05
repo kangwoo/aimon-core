@@ -335,6 +335,13 @@ budget 이 정책보다 짧으면 무시된다 — 그물을 좁혀 봐야 handl
 선언 budget 은 **10분(`MAX_DECLARED_BUDGET`)으로 클램프**되므로, 설정 실수가 턴을 무한정
 붙잡아 둘 수 없다 (초과 시 WARN 로그 후 10분으로 잘림).
 
+**바깥 그물이 먼저 터지면.** handler 가 자기 timeout 을 지키지 못해 — 취소를 구현하지 않은 원격 셸, 멈춘 I/O, timeout 을
+받지 않는 MCP 호출 — 바깥 그물이 그 hook 을 끊으면, 결정 채널이 있는 네 이벤트의 선언적 hook 은 **막는다**(`Hook timed out
+after …ms (limit=…ms)`). 이벤트 정책의 `timeoutBehavior` 기본값은 `FAIL_OPEN` 이지만, 선언적 가드는 hook 마다 `FAIL_CLOSED` 를
+선언하고 실행기는 정책보다 그 선언을 따른다(`ExecutionHook#getTimeoutBehavior()`). `"failOpen": true` 인 handler 와 나머지
+9개 이벤트의 handler 는 아무것도 선언하지 않으므로 이벤트 정책(기본 `FAIL_OPEN` — 진행)을 따른다. 코드로 등록한 hook 의
+동작은 바뀌지 않았다.
+
 ### `http`
 
 HTTP 웹훅을 호출한다. `HttpAction` + `HttpActionExecutor`.
@@ -441,6 +448,7 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 | `http` · `mcp` 가 `decision: deny` 로 답함 | 판정: 거부 (`reason` 이 사유) | **막는다** | **막는다** |
 | `http` · `mcp` 가 그 밖의 읽을 수 있는 답을 함 (`allow` · `defer` · 결정 없음 · 빈 본문 · 일반 텍스트) | 판정: 허용 | 진행 | 진행 |
 | `http` · `mcp` 가 판정을 받지 못함 — 연결 실패, timeout, non-2xx, MCP 서버 미등록 · 미연결 · `isError`, 읽을 수 없는 답, 실행기 미배선, 실행기가 던진 예외 | 판정 없음 | **막는다** | 진행 (WARN) |
+| handler 가 자기 timeout 을 넘겨 돌다가 hook 실행기의 바깥 그물(선언 timeout + 5초)에 끊김 | 판정 없음 | **막는다** | 이벤트 정책을 따른다 — 기본 정책은 진행 (WARN) |
 
 "막는다" 는 `preTool` · `onStart` · `preCompact` 에서는 block, `permissionRequest` 에서는 deny 다. 돌리지 못해 막힌 사유는
 `Blocked: guard hook '<이름>' (<이벤트>) could not run its command — <원인>. A guard that cannot decide blocks
