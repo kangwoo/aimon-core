@@ -265,6 +265,29 @@ class LocalExecutionEnvironmentProviderStagingTest {
     }
 
     @Test
+    @DisplayName("EE-17: the sweep deletes a temporary staging directory a dead stager left, and keeps a recent one")
+    void sweepRemovesAbandonedTemporaryDirectories() throws Exception {
+        final Instant now = Instant.parse("2026-09-28T12:00:00Z");
+        final Path report = workspace.resolve(".aimon-staged/report");
+        final Path newest = stagedCopy(report, "00000000000e0e0e", now.minus(Duration.ofHours(1)));
+        final String suffix = LocalStaging.TEMPORARY_INFIX + "0123456789abcdef0123456789abcdef";
+        // Complete, marker and all, and never renamed: its stager died between the copy and the rename.
+        final Path abandoned = stagedCopy(report, "00000000000e0e0e" + suffix, now.minus(Duration.ofHours(48)));
+        Files.setLastModifiedTime(abandoned, FileTime.from(now.minus(Duration.ofHours(48))));
+        final Path inProgress = report.resolve("00000000000a0a0a" + suffix);
+        Files.createDirectories(inProgress);
+        Files.writeString(inProgress.resolve("SKILL.md"), "x");
+        Files.setLastModifiedTime(inProgress, FileTime.from(now.minus(Duration.ofMinutes(5))));
+
+        ownedEnv(LocalExecutionEnvironmentProvider.builder().clock(Clock.fixed(now, ZoneOffset.UTC))
+                .stagingSweepGrace(Duration.ofHours(24)));
+
+        assertThat(abandoned).doesNotExist();
+        assertThat(inProgress).exists();
+        assertThat(newest).as("a temporary directory's marker never makes it the newest copy").exists();
+    }
+
+    @Test
     @DisplayName("a background ceiling longer than the sweep grace keeps copies a running command may still read")
     void sweepGraceFollowsALongerBackgroundCeiling() throws Exception {
         final Instant now = Instant.parse("2026-09-28T12:00:00Z");
