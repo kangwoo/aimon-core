@@ -1489,3 +1489,8 @@ plan:
   longer nest the branch inside itself past its rules. It also leaves out of its listings any branch-local entry under
   a shared prefix — a staging directory a shell made in the branch root, which no caller path reaches.
 - **The shared staging prefix matches ignoring case**, like the path rules it sits beside.
+- **Later (EE-46, 2026-10-05): a branch cannot address `.worktrees/`.** `ScopedVirtualFileSystem` takes a fourth
+  constructor argument, `reservedPrefixes`; the local branch passes `.worktrees`. A branch-relative path at or under it
+  is refused by every operation (`InvalidPathException`), and a branch-local entry there is left out of listings, so a
+  merge never promotes into another branch's directory or the branch's own. It is not a path rule: the branch rules
+  are still the parent's. See [`workflow-isolation-hardening.md`](workflow-isolation-hardening.md) §8.5.

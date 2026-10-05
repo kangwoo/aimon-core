@@ -561,6 +561,9 @@ AgentTask.builder().subagent(migrator).goal(...).isolate(true).build();
 - 브랜치의 파일은 `WorktreeMerge.promote(parent, branches, policy)` 로 부모에 올린다. 키만 아는 조립 코드는
   `parent.isolate(key).orElseThrow()` 로 같은 브랜치를 다시 얻는다. 브랜치 안에서는 `.aimon/` 에 쓸 수 없다 —
   부모의 제어 저장소 보호가 브랜치 루트에도 걸려 쓰는 시점에 거절되므로, 병합이 그런 파일을 만나지 않는다.
+  `.worktrees/` 도 가리킬 수 없다 — `.worktrees/other/x` 처럼 다른 브랜치의 디렉터리든 자기 것이든 거절되고, 파일은
+  브랜치 루트 기준 경로로 적는다. 다만 브랜치 키는 실행마다 같으므로(첫 격리 스텝은 언제나 `a0`) 한 워크스페이스에서
+  잇달아 도는 두 실행은 같은 브랜치 디렉터리를 쓴다 — 실행 사이에 병합하거나 지운다.
   `promote` 에는 브랜치를 만든 **그 부모 인스턴스**와 각 브랜치를 한 번씩 넘긴다 — 부모 자신, 다른 부모의 브랜치,
   중복은 `IllegalArgumentException` 이다.
 - `isolate(true)`는 캐시 불가다 (부수효과 재생 불가).

@@ -31,6 +31,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.impl.orca.environment.MergeReport;
+import at.aimon.core.agent.impl.orca.environment.WorktreeMerge;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptReason;
@@ -155,6 +157,52 @@ class WorkflowPhase4Test {
                     .isInstanceOf(WorkflowException.class).hasMessageContaining("nested isolation is not supported")
                     .hasMessageContaining("'k'").hasCauseInstanceOf(UnsupportedOperationException.class);
             assertThat(executeCount.get()).isZero();
+        }
+    }
+
+    /**
+     * EE-46, the part that is still open — a measurement, not a requirement. The branch key is the step's structural
+     * path and nothing else, so the first isolated step of every run is {@code a0}: neither the run id nor the runner
+     * enters it. Nothing in the framework merges or removes a branch directory, so a later run's step works in what an
+     * earlier run left, and an assembler that merges after the second run promotes the first run's files with it.
+     * Whoever makes the key distinguish runs changes these assertions; until then they say what happens.
+     */
+    @Test
+    @DisplayName("EE-46 (open): two runs' first isolated steps share one branch directory, .worktrees/a0")
+    void successiveRunsShareTheFirstIsolatedBranch(@TempDir Path workspace) {
+        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+                .thenAnswer(invocation -> {
+                    final SubagentExecutionEnvironment stepEnv = invocation.getArgument(0);
+                    final String goal = invocation.getArgument(2, String.class);
+                    stepEnv.getExecutionEnvironment().orElseThrow().fileSystem().write(goal + ".txt", goal);
+                    return success("wrote " + goal);
+                });
+        try (LocalExecutionEnvironmentProvider provider = LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(workspace).contentSearch(false).build()) {
+            final ExecutionEnvironment parent = provider
+                    .resolve(EnvironmentRequest.builder().agentRuntimeId(AgentRuntimeId.fromName("shared")).build());
+            final SubagentExecutionEnvironment base = env.toBuilder().executionEnvironment(parent).build();
+            // Two runners with their own run ids: as separate as two runs in one workspace get.
+            final DefaultWorkflowRunner one = DefaultWorkflowRunner.builder(manager, base)
+                    .stepResultCache(new InMemoryStepResultCache()).build();
+            final DefaultWorkflowRunner two = DefaultWorkflowRunner.builder(manager, base)
+                    .stepResultCache(new InMemoryStepResultCache()).build();
+            runners.add(one);
+            runners.add(two);
+
+            one.run(ctx -> ctx.agent(AgentTask.builder().subagent(sub).goal("first").isolate(true).build()),
+                    RunId.of("run:one"));
+            two.run(ctx -> ctx.agent(AgentTask.builder().subagent(sub).goal("second").isolate(true).build()),
+                    RunId.of("run:two"));
+
+            assertThat(workspace.resolve(".worktrees/a0/first.txt")).hasContent("first");
+            assertThat(workspace.resolve(".worktrees/a0/second.txt")).hasContent("second");
+            assertThat(workspace.resolve(".worktrees")).isDirectoryContaining(p -> true)
+                    .isDirectoryNotContaining(p -> !p.getFileName().toString().equals("a0"));
+            final MergeReport merged = WorktreeMerge.promote(parent, List.of(parent.isolate("a0").orElseThrow()),
+                    WorktreeMerge.Policy.FAIL);
+            assertThat(merged.promoted()).as("the second run's merge carries the first run's file")
+                    .containsExactlyInAnyOrder("first.txt", "second.txt");
         }
     }
 
