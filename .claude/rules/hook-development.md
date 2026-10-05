@@ -145,13 +145,17 @@ for side effects only. Wiring one up is a feature, not a bug fix.
 - The user-facing table of what blocks and what `failOpen` changes lives in **one** place,
   `docs/features/hook/hook-config-guide.md` › "가드가 막는 경우" (and its `.en.md`). A change to guard
   semantics updates that table; other docs link to it rather than restating it.
-- **An `onStart` block stops a fork as it stops a turn.** `DefaultSubagentExecutor.checkOnStartHooks`
-  mirrors `OrcaAgentExecutor.checkOnStartHooks`: a blocked result ends the fork before its first LLM
-  call as a failed `SubagentExecutionResult` (`CompletionReason.ERROR`, the
-  `ExecutionBlockedByHookException` message) and fires no `onStop`. So an `onStart` in `hooks.json`
-  gates every fork, not only the main turn — a script that means the user's input branches on
-  `AIMON_INVOKER_TYPE` — and `onStart` is one of `SkillHookSet.guardEvents()`. A code-behavior
-  subagent (`SubagentBehavior`) fires no `onStart` at all (EE-73).
+- **An `onStart` block stops a fork as it stops a turn.** Both fork paths go through
+  `SubagentOnStartGate` — `DefaultSubagentExecutor.checkOnStartHooks` for a ReAct fork and
+  `SubagentBehaviorRunner` for a code-behavior subagent (`SubagentBehavior`, EE-73) — mirroring
+  `OrcaAgentExecutor.checkOnStartHooks`: a blocked result ends the fork before its first LLM call
+  (or before the behavior runs) as a failed `SubagentExecutionResult` (`CompletionReason.BLOCKED`
+  since EE-75, the `ExecutionBlockedByHookException` message) and fires no `onStop`. So an
+  `onStart` in `hooks.json` gates every fork, not only the main turn — a script that means the
+  user's input branches on `AIMON_INVOKER_TYPE` — and `onStart` is one of
+  `SkillHookSet.guardEvents()`. A behavior fork resolves no environment of its own, so its hooks see
+  the spawning execution's, and its non-blocking feedback is dropped (there is no transcript to
+  append it to).
 - **A `hooks.json` that does not load stops startup.** `HookRegistryReloader.bootstrap()` and
   `HookHotReloadBootstrap.start()` propagate `HookConfigParseException` (file path, layer, cause) for
   a file that does not parse *or cannot be read*; only a missing file is an absent layer. Do not
