@@ -23,7 +23,6 @@ import at.aimon.core.agent.tool.ToolContextEnrichmentInfo;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
@@ -149,8 +148,8 @@ class DefaultSubagentExecutorEnrichmentTest {
         final SubagentExecutionContext context = SubagentExecutionContext.builder()
                 .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent())
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(toolRegistry)
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .toolContextEnrichers(enrichers).parentCancellationSignal(NoopCancellationSignal.INSTANCE).build();
+                .hookRegistry(new DefaultHookRegistry()).toolContextEnrichers(enrichers)
+                .parentCancellationSignal(NoopCancellationSignal.INSTANCE).build();
 
         final SubagentExecutionRequest request = SubagentExecutionRequest.builder().taskId("task-1").goal("recall it")
                 .invokingSessionId(invokingSessionId).build();

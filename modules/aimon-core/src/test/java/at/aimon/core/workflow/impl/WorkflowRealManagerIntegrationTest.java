@@ -19,7 +19,6 @@ import org.junit.jupiter.api.Test;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -113,8 +112,7 @@ class WorkflowRealManagerIntegrationTest {
         final SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder()
                 .agentRuntimeId(AgentRuntimeId.of("agent:workflow-test"))
                 .subagentRegistry(new InMemorySubagentRegistry()).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(hooks).userLocale(UserLocale.createDefault())
-                .defaultModel(LlmModel.builder().name("gpt-4").build()).build();
+                .hookRegistry(hooks).defaultModel(LlmModel.builder().name("gpt-4").build()).build();
         final DefaultWorkflowRunner runner = new DefaultWorkflowRunner(hooked, env,
                 WorkflowConcurrencyConfig.enabled(4), WorkflowEventSink.NO_OP, WorkflowBudget.defaults());
 
@@ -133,7 +131,6 @@ class WorkflowRealManagerIntegrationTest {
     private static SubagentExecutionEnvironment env() {
         return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:workflow-test"))
                 .subagentRegistry(new InMemorySubagentRegistry()).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .defaultModel(LlmModel.builder().name("gpt-4").build()).build();
+                .hookRegistry(new DefaultHookRegistry()).defaultModel(LlmModel.builder().name("gpt-4").build()).build();
     }
 }

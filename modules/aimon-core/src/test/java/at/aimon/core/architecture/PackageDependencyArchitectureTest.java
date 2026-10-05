@@ -569,8 +569,7 @@ class PackageDependencyArchitectureTest {
     void configHookOutboundDependenciesAreCurated() {
         // The bootstrap/reload layer materialises hooks.json into Declarative*Hook instances and registers them
         // on the live HookRegistry. Allowed inbound references:
-        // - at.aimon.core.base — AimonException base class for HookConfigParseException, and the UserLocale value type
-        // embedded in OnConfigReloadContext
+        // - at.aimon.core.base — AimonException base class for HookConfigParseException
         // - at.aimon.core.agent — the InvokerType value type embedded in OnConfigReloadContext
         // - at.aimon.core.hook.. — HookRegistry + HookExecutionManager + at.aimon.core.hook.event.* hook types
         // - at.aimon.core.skill.hook — Declarative*Hook builders and HookAction value types

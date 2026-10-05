@@ -18,7 +18,6 @@ import org.junit.jupiter.api.Test;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.event.OnSessionStartContext;
@@ -88,8 +87,7 @@ class HookRegistryApplierTest {
                 ]}]}}"""), registry);
 
         final OnStartContext context = OnStartContext.builder().executorType(InvokerType.MAIN_AGENT)
-                .invokerName("agent").hookRegistry(registry).userLocale(UserLocale.createDefault()).userMessage("hi")
-                .build();
+                .invokerName("agent").hookRegistry(registry).userMessage("hi").build();
         final HookResult guard = registry.getHooks(HookEventType.ON_START).get(0).execute(context);
         final HookResult audit = registry.getHooks(HookEventType.ON_START).get(1).execute(context);
 
@@ -231,9 +229,8 @@ class HookRegistryApplierTest {
         assertThat(registry.getHooks(HookEventType.ON_START)).hasSize(1);
 
         // And it actually runs there: the session-start context has no execution environment, yet the command fires.
-        registry.getHooks(HookEventType.ON_SESSION_START).get(0)
-                .execute(OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("agent")
-                        .hookRegistry(registry).userLocale(UserLocale.createDefault()).build());
+        registry.getHooks(HookEventType.ON_SESSION_START).get(0).execute(OnSessionStartContext.builder()
+                .invokerType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(registry).build());
         verify(hostShell).execute(any(ShellCommand.class), any(ExecutionOptions.class));
     }
 
@@ -260,8 +257,7 @@ class HookRegistryApplierTest {
 
     private static PreToolContext preToolContext(DefaultHookRegistry registry) {
         return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(registry)
-                .userLocale(UserLocale.createDefault()).toolUse(ToolUse.of("call-1", "Bash", Map.of()))
-                .iterationCount(1).build();
+                .toolUse(ToolUse.of("call-1", "Bash", Map.of())).iterationCount(1).build();
     }
 
     @Test

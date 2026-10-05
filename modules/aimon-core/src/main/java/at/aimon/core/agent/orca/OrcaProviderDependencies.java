@@ -4,7 +4,6 @@ import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionGuard;
 import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.tool.ToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.credential.CredentialStore;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.HookRegistry;
@@ -40,7 +39,7 @@ import at.aimon.core.subagent.task.TaskResultStore;
  *     OrcaProviderDependencies deps = OrcaProviderDependencies.builder().subagentRegistry(subagentRegistry)
  *             .subagentExecutionManager(subagentExecutionManager).skillRegistry(skillRegistry)
  *             .toolRegistry(toolRegistry).hookRegistry(hookRegistry).scheduledTaskManager(scheduledTaskManager)
- *             .credentialStore(credentialStore).userLocale(userLocale).compactionEngine(engine)
+ *             .credentialStore(credentialStore).compactionEngine(engine)
  *             .compactionGuard(guard).build();
  * }
  * </pre>
@@ -68,7 +67,6 @@ public final class OrcaProviderDependencies {
     private final HookExecutionManager hookExecutionManager;
     private final ScheduledTaskManager scheduledTaskManager;
     private final CredentialStore credentialStore;
-    private final UserLocale userLocale;
     private final CompactionEngine compactionEngine;
     private final CompactionGuard compactionGuard;
     private final ContextEngine contextEngine;
@@ -90,7 +88,6 @@ public final class OrcaProviderDependencies {
         hookExecutionManager = builder.hookExecutionManager;
         scheduledTaskManager = builder.scheduledTaskManager;
         credentialStore = builder.credentialStore;
-        userLocale = builder.userLocale;
         compactionEngine = builder.compactionEngine;
         compactionGuard = builder.compactionGuard;
         contextEngine = builder.contextEngine;
@@ -205,15 +202,6 @@ public final class OrcaProviderDependencies {
     }
 
     /**
-     * Returns the user locale.
-     *
-     * @return the user locale, may be null
-     */
-    public UserLocale getUserLocale() {
-        return userLocale;
-    }
-
-    /**
      * Returns the conversation compaction engine.
      *
      * @return the compaction engine, may be null when compaction is not configured
@@ -317,7 +305,6 @@ public final class OrcaProviderDependencies {
         private HookExecutionManager hookExecutionManager;
         private ScheduledTaskManager scheduledTaskManager;
         private CredentialStore credentialStore;
-        private UserLocale userLocale;
         private CompactionEngine compactionEngine;
         private CompactionGuard compactionGuard;
         private ContextEngine contextEngine;
@@ -459,18 +446,6 @@ public final class OrcaProviderDependencies {
          */
         public Builder credentialStore(CredentialStore credentialStore) {
             this.credentialStore = credentialStore;
-            return this;
-        }
-
-        /**
-         * Sets the user locale.
-         *
-         * @param userLocale
-         *            the user locale
-         * @return this builder
-         */
-        public Builder userLocale(UserLocale userLocale) {
-            this.userLocale = userLocale;
             return this;
         }
 

@@ -349,7 +349,7 @@ public interface SubagentBehavior {
 - `support` (`SubagentBehaviorSupport`) supplies the cancellation signal and the result builders:
   `cancellationSignal()`, `isCancelledOrInterrupted()`, `success(finalAnswer)`, `failure(errorMessage)` — there is no
   need to assemble the conversation snapshot or the metadata yourself.
-- An implementation **may** use tools and the LLM through `context.getToolRegistry()`/`getUserLocale()` and the like,
+- An implementation **may** use tools and the LLM through `context.getToolRegistry()`/`getDefaultModel()` and the like,
   but the baseline expectation is pure code. As with `Tool.execute()`, returning `support.failure(...)` rather than
   throwing is recommended (the runner does provide a safety net that shapes a throw or a null into a failure).
 

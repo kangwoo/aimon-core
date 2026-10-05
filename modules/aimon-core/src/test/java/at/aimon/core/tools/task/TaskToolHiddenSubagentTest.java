@@ -22,7 +22,6 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
@@ -47,7 +46,7 @@ class TaskToolHiddenSubagentTest {
     private final InMemorySubagentRegistry registry = new InMemorySubagentRegistry();
     private final SubagentExecutionManager executionManager = mock(SubagentExecutionManager.class);
     private final TaskTool tool = new TaskTool(mock(LlmModel.class), registry, mock(ToolRegistry.class),
-            mock(HookRegistry.class), mock(UserLocale.class), executionManager);
+            mock(HookRegistry.class), executionManager);
 
     TaskToolHiddenSubagentTest() {
         registry.register(
@@ -71,7 +70,7 @@ class TaskToolHiddenSubagentTest {
         final InMemorySubagentRegistry onlyHidden = new InMemorySubagentRegistry();
         onlyHidden.register(Subagent.builder().name(HIDDEN).systemPrompt("x").hidden(true).build());
         final TaskTool onlyHiddenTool = new TaskTool(mock(LlmModel.class), onlyHidden, mock(ToolRegistry.class),
-                mock(HookRegistry.class), mock(UserLocale.class), executionManager);
+                mock(HookRegistry.class), executionManager);
 
         assertThat(onlyHiddenTool.getDefinition().getDescription()).contains("No subagents currently available")
                 .doesNotContain(HIDDEN);

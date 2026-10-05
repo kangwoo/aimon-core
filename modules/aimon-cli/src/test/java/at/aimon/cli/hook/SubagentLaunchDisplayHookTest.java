@@ -9,7 +9,6 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.cli.repl.OutputFormatter;
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.event.SubagentStartContext;
 import at.aimon.core.hook.execution.HookResult;
@@ -24,8 +23,7 @@ class SubagentLaunchDisplayHookTest {
         final SubagentLaunchDisplayHook hook = new SubagentLaunchDisplayHook(formatter);
         final SubagentStartContext context = SubagentStartContext.builder().invokerType(InvokerType.MAIN_AGENT)
                 .invokerName("workflow:perspective:risk").hookRegistry(new DefaultHookRegistry())
-                .userLocale(UserLocale.createDefault()).subagentName("workflow:perspective:risk").taskId("task-1")
-                .goal("assess the rollout risk").build();
+                .subagentName("workflow:perspective:risk").taskId("task-1").goal("assess the rollout risk").build();
 
         final HookResult result = hook.execute(context);
 

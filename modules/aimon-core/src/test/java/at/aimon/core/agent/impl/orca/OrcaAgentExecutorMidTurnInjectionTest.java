@@ -27,7 +27,6 @@ import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.environment.TestExecutionEnvironments;
@@ -223,8 +222,7 @@ class OrcaAgentExecutorMidTurnInjectionTest {
                 .commandRegistry(new DefaultCommandRegistry(fileSystem, ".aimon/commands"))
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
                 .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
-                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
-                .userLocale(UserLocale.createDefault()).build();
+                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem)).build();
     }
 
     private OrcaAgentExecutor createExecutor(LlmClient client, MessageQueueManager queueManager) {

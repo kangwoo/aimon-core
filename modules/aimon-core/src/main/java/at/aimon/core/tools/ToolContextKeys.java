@@ -15,7 +15,6 @@ import at.aimon.core.agent.tool.ToolContextKey;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.agent.tool.search.ToolSearchRegistry;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.hook.HookRegistry;
@@ -42,14 +41,12 @@ import at.aimon.core.skill.hook.SkillHookActivator;
  * <pre>
  * {
  *     &#64;code
- *     Optional<UserLocale> userLocale = context.get(ToolContextKeys.USER_LOCALE);
  *     Optional<Principal> principal = context.get(ToolContextKeys.PRINCIPAL);
  * }
  * </pre>
  *
  * @see ToolContext
  * @see ToolContextKey
- * @see UserLocale
  */
 public final class ToolContextKeys {
 
@@ -97,16 +94,6 @@ public final class ToolContextKeys {
      */
     public static final ToolContextKey<HookRegistry> HOOK_REGISTRY = ToolContextKey.writeOnce("hookRegistry",
             HookRegistry.class);
-
-    /**
-     * Typed key for the {@link UserLocale} — the user- and application-side settings, today the time zone.
-     *
-     * <p>
-     * It carries no working directory and no environment variables: where this execution's commands run is
-     * {@link #EXECUTION_ENVIRONMENT}. The name follows {@link #PRINCIPAL}, the other property of the user, rather than
-     * the {@code _KEY}-suffixed constants.
-     */
-    public static final ToolContextKey<UserLocale> USER_LOCALE = ToolContextKey.of("userLocale", UserLocale.class);
 
     /**
      * Typed key for {@link Principal} identity.

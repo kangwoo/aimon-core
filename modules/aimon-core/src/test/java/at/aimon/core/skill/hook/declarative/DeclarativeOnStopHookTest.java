@@ -12,7 +12,6 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
@@ -25,7 +24,6 @@ import at.aimon.core.skill.hook.action.ShellAction;
 class DeclarativeOnStopHookTest {
 
     private static final HookRegistry REGISTRY = new DefaultHookRegistry();
-    private static final UserLocale ENV = UserLocale.createDefault();
 
     @Test
     void execute_runsExecutorWithExpectedEnv() {
@@ -82,7 +80,7 @@ class DeclarativeOnStopHookTest {
         ExecutionMetadata metadata = ExecutionMetadata.builder().iterationCount(iterations)
                 .duration(Duration.ofMillis(50)).startTime(now.minusMillis(50)).endTime(now).build();
         return OnStopContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENV).success(success).finalAnswer("done").metadata(metadata).build();
+                .hookRegistry(REGISTRY).success(success).finalAnswer("done").metadata(metadata).build();
     }
 
     private static final class RecordingExecutor implements ShellActionExecutor {

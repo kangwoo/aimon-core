@@ -6,7 +6,6 @@ import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.orca.tool.OrcaToolProvider;
 import at.aimon.core.agent.orca.tool.OrcaToolProviderContext;
 import at.aimon.core.agent.tool.ToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentRegistry;
@@ -20,7 +19,7 @@ import at.aimon.workflow.graaljs.GraalJsWorkflowTool;
  * This provider lives in the CLI assembly layer (not {@code aimon-core}) because {@code aimon-core} must never depend
  * on the {@code aimon-workflow-graaljs} implementation module (dependency-direction rule). It is the scripted mirror of
  * {@code OrcaSubagentToolProvider}'s opt-in {@code WorkflowTool} registration: it pulls the same collaborators (default
- * model, registries, user locale, execution manager, context enrichers) from the {@link OrcaToolProviderContext} and
+ * model, registries, execution manager, context enrichers) from the {@link OrcaToolProviderContext} and
  * adds the app-scoped {@link GraalJsEngineHolder} plus the per-context {@code WorkflowRunner} (for background mode).
  *
  * <p>
@@ -62,19 +61,17 @@ public final class GraalJsWorkflowToolProvider implements OrcaToolProvider {
         final SubagentRegistry subagentRegistry = context.getSubagentRegistry();
         final ToolRegistry toolRegistry = context.getToolRegistry();
         final HookRegistry hookRegistry = context.getHookRegistry();
-        final UserLocale userLocale = context.getUserLocale();
         final SubagentExecutionManager subagentExecutionManager = context.getSubagentExecutionManager();
 
         Objects.requireNonNull(agent, "agent must not be null in context");
         Objects.requireNonNull(subagentRegistry, "subagentRegistry must not be null in context");
         Objects.requireNonNull(toolRegistry, "toolRegistry must not be null in context");
         Objects.requireNonNull(hookRegistry, "hookRegistry must not be null in context");
-        Objects.requireNonNull(userLocale, "userLocale must not be null in context");
         Objects.requireNonNull(subagentExecutionManager, "subagentExecutionManager must not be null in context");
 
         final GraalJsWorkflowTool.Builder builder = GraalJsWorkflowTool.builder()
                 .defaultModel(agent.getMetadata().getModel()).subagentRegistry(subagentRegistry)
-                .toolRegistry(toolRegistry).hookRegistry(hookRegistry).userLocale(userLocale)
+                .toolRegistry(toolRegistry).hookRegistry(hookRegistry)
                 .subagentExecutionManager(subagentExecutionManager)
                 .toolContextEnrichers(context.getToolContextEnrichers()).engines(engines)
                 // Background mode reuses the same per-context runner as the Java WorkflowTool (null when neither

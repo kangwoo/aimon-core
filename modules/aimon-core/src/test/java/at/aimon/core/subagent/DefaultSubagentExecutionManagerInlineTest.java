@@ -21,7 +21,6 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.LlmModel;
@@ -136,8 +135,7 @@ class DefaultSubagentExecutionManagerInlineTest {
     private static SubagentExecutionEnvironment env(SubagentRegistry subagentRegistry) {
         return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
                 .subagentRegistry(subagentRegistry).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .defaultModel(LlmModel.builder().name("gpt-4").build()).build();
+                .hookRegistry(new DefaultHookRegistry()).defaultModel(LlmModel.builder().name("gpt-4").build()).build();
     }
 
     private static SubagentExecutionResult reactResult(String answer) {

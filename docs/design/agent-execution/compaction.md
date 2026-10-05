@@ -50,7 +50,7 @@ Compaction 은 그 벽에 닿기 **전에** 오래된 메시지를 요약본으�
 ```
 OrcaAgentExecutor.executeReActLoop()
   └─ (매 iteration 머리에서)
-     CompactionGuard.maybeCompact(transcriptBuffer, model, hookRegistry, environment)
+     CompactionGuard.maybeCompact(transcriptBuffer, model, hookRegistry)
         │  임계값 판정 · 세션 락 · circuit breaker
         └─ CompactionEngine.compact(CompactionRequest)
              │  PreCompact 훅 → strip → 요약 LLM 호출 → replaceWith → PostCompact 훅

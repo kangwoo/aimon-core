@@ -13,7 +13,8 @@
 
 > **Note (2026-10-03, EE-14).** The `Environment` this document names no longer exists: its one remaining field moved to
 > `at.aimon.core.base.UserLocale`, and `getEnvironment()` / `ENVIRONMENT_KEY` became `getUserLocale()` /
-> `USER_LOCALE`. The body is left as approved; the mapping is in
+> `USER_LOCALE` -- and on 2026-10-05 `UserLocale` and those accessors were removed outright, because nothing read the
+> value (EE-60). The body is left as approved; the mapping is in
 > [`../../migration/rename-maps.md`](../../migration/rename-maps.md).
 
 Spec: `docs/design/tool/execution-environment.md` (580 lines, Status PROPOSED). The spec decides the behaviour; this

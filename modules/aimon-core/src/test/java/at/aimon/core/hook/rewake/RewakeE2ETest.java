@@ -23,7 +23,6 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.DefaultAgentRuntimeRegistry;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.tool.Tool;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -185,14 +184,12 @@ class RewakeE2ETest {
     private PreToolContext buildPreToolContext(String toolName, String command) {
         final ToolUse tu = ToolUse.of("e2e-tool-call-1", toolName, java.util.Map.of("command", command));
         return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName(AGENT_NAME)
-                .hookRegistry(hookRegistry).userLocale(UserLocale.createDefault()).toolUse(tu).iterationCount(0)
-                .timestamp(Instant.now()).build();
+                .hookRegistry(hookRegistry).toolUse(tu).iterationCount(0).timestamp(Instant.now()).build();
     }
 
     /** Minimal {@link AgentRuntime} that opts into rewake re-dispatch. */
     private static final class CapableContext implements AgentRuntime, RewakeCapableRuntime {
         private final HookRegistry hookRegistry;
-        private final UserLocale userLocale = UserLocale.createDefault();
 
         CapableContext(HookRegistry hookRegistry) {
             this.hookRegistry = hookRegistry;
@@ -218,9 +215,5 @@ class RewakeE2ETest {
             return hookRegistry;
         }
 
-        @Override
-        public UserLocale getUserLocale() {
-            return userLocale;
-        }
     }
 }

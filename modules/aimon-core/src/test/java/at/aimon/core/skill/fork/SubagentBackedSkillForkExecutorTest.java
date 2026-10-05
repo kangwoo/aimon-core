@@ -26,7 +26,6 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
@@ -57,10 +56,9 @@ class SubagentBackedSkillForkExecutorTest {
         subagentRegistry = mock(SubagentRegistry.class);
         final ToolRegistry toolRegistry = mock(ToolRegistry.class);
         hookRegistry = mock(HookRegistry.class);
-        final UserLocale userLocale = mock(UserLocale.class);
         subagentExecutionManager = mock(SubagentExecutionManager.class);
 
-        executor = new SubagentBackedSkillForkExecutor(model, subagentRegistry, toolRegistry, hookRegistry, userLocale,
+        executor = new SubagentBackedSkillForkExecutor(model, subagentRegistry, toolRegistry, hookRegistry,
                 subagentExecutionManager);
     }
 
@@ -86,20 +84,17 @@ class SubagentBackedSkillForkExecutorTest {
         final SubagentRegistry reg = mock(SubagentRegistry.class);
         final ToolRegistry tools = mock(ToolRegistry.class);
         final HookRegistry hooks = mock(HookRegistry.class);
-        final UserLocale env = mock(UserLocale.class);
         final SubagentExecutionManager mgr = mock(SubagentExecutionManager.class);
 
-        assertThatThrownBy(() -> new SubagentBackedSkillForkExecutor(null, reg, tools, hooks, env, mgr))
+        assertThatThrownBy(() -> new SubagentBackedSkillForkExecutor(null, reg, tools, hooks, mgr))
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("Default model");
-        assertThatThrownBy(() -> new SubagentBackedSkillForkExecutor(model, null, tools, hooks, env, mgr))
+        assertThatThrownBy(() -> new SubagentBackedSkillForkExecutor(model, null, tools, hooks, mgr))
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("Subagent registry");
-        assertThatThrownBy(() -> new SubagentBackedSkillForkExecutor(model, reg, null, hooks, env, mgr))
+        assertThatThrownBy(() -> new SubagentBackedSkillForkExecutor(model, reg, null, hooks, mgr))
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("Tool registry");
-        assertThatThrownBy(() -> new SubagentBackedSkillForkExecutor(model, reg, tools, null, env, mgr))
+        assertThatThrownBy(() -> new SubagentBackedSkillForkExecutor(model, reg, tools, null, mgr))
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("Hook registry");
-        assertThatThrownBy(() -> new SubagentBackedSkillForkExecutor(model, reg, tools, hooks, null, mgr))
-                .isInstanceOf(NullPointerException.class).hasMessageContaining("UserLocale");
-        assertThatThrownBy(() -> new SubagentBackedSkillForkExecutor(model, reg, tools, hooks, env, null))
+        assertThatThrownBy(() -> new SubagentBackedSkillForkExecutor(model, reg, tools, hooks, null))
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("Subagent execution manager");
     }
 

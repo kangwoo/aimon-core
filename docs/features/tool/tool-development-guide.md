@@ -388,7 +388,7 @@ VirtualFileSystem vfs = env.fileSystem();
 VirtualShell shell = env.shell();
 
 // 존재 여부 확인
-if (context.containsKey("userLocale")) {
+if (context.containsKey("principal")) {
     // 처리
 }
 
@@ -401,7 +401,7 @@ Map<String, Object> all = context.getContext();
 | 키 | 타입 | 설명 |
 |----|------|------|
 | `executionEnvironment` (`ToolContextKeys.EXECUTION_ENVIRONMENT`) | `ExecutionEnvironment` | 이 실행의 파일 시스템·셸·서술자. **write-once** — 실행기가 넣고, enricher 는 읽을 수 있지만 바꿀 수 없다(두 번째 쓰기는 `IllegalStateException`) |
-| `userLocale` (`ToolContextKeys.USER_LOCALE`) | `UserLocale` | 사용자 로케일 (시간대). 작업 디렉토리·플랫폼은 여기가 아니라 `executionEnvironment` 의 서술자에 있다 |
+| `principal` (`ToolContextKeys.PRINCIPAL`) | `Principal` | 이 실행을 요청한 주체. 요청이 주체를 싣지 않았으면 키가 없다 |
 | `executorType` | `InvokerType` | 실행자 유형 (MAIN_AGENT, SUBAGENT 등) |
 | `read_tool.file_stamps` (`ReadTool.FILE_STAMPS_KEY`) | `Map<String, FileStamp>` | 이 실행에서 읽은 파일의 stamp (ReadTool 이 기록, Edit/Write 가 대조) |
 
@@ -429,7 +429,7 @@ ToolContext empty = ToolContext.empty();
 // Builder 패턴
 ToolContext context = ToolContext.builder()
     .put(ToolContextKeys.EXECUTION_ENVIRONMENT, env)
-    .put(ToolContextKeys.USER_LOCALE, UserLocale.createDefault())
+    .put(ToolContextKeys.PRINCIPAL, Principal.user("u-1"))
     .put("executorType", InvokerType.MAIN_AGENT)
     .build();
 ```

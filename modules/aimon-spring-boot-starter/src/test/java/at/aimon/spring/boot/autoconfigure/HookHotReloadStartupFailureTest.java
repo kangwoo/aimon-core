@@ -16,7 +16,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.config.hook.HookConfigParseException;
 import at.aimon.core.config.hook.HookHotReloadBootstrap;
 import at.aimon.core.config.hook.ReloadInvoker;
@@ -71,8 +70,8 @@ class HookHotReloadStartupFailureTest {
             final Path root = Path.of(environment.getRequiredProperty("test.hooks.root"));
             return HookHotReloadBootstrap.builder().userHome(root.resolve("home")).projectRoot(root)
                     .shellExecutor(new DefaultShellActionExecutor()).processEnv(Map.of())
-                    .registry(new DefaultHookRegistry())
-                    .invoker(new ReloadInvoker(InvokerType.MAIN_AGENT, "host", UserLocale.createDefault())).start();
+                    .registry(new DefaultHookRegistry()).invoker(new ReloadInvoker(InvokerType.MAIN_AGENT, "host"))
+                    .start();
         }
     }
 }

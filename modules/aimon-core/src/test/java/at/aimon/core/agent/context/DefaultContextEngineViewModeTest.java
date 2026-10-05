@@ -30,7 +30,6 @@ import at.aimon.core.agent.session.transcript.LogOrigin;
 import at.aimon.core.agent.session.transcript.SeqRange;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.InMemoryModelContextWindowRegistry;
 import at.aimon.core.llm.LlmModel;
@@ -79,7 +78,7 @@ class DefaultContextEngineViewModeTest {
 
     private ContextRequest request() {
         return ContextRequest.builder().transcriptBuffer(buffer).model(MODEL).hookRegistry(new DefaultHookRegistry())
-                .userLocale(UserLocale.createDefault()).build();
+                .build();
     }
 
     private void fillPastTheAutoThreshold() {
@@ -331,8 +330,7 @@ class DefaultContextEngineViewModeTest {
             buffer.addAssistantMessage("on it");
             buffer.addUserMessage("x".repeat(4000));
             final ContextRequest forced = ContextRequest.builder().transcriptBuffer(buffer).model(MODEL)
-                    .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault()).budgetForced(true)
-                    .build();
+                    .hookRegistry(new DefaultHookRegistry()).budgetForced(true).build();
 
             final ContextDecision decision = engine().prepare(forced);
 
@@ -554,7 +552,7 @@ class DefaultContextEngineViewModeTest {
 
         @Test
         void aVersionTwoNodeRefusesACustomGuard() {
-            final CompactionGuard custom = (memory, model, hookRegistry, userLocale) -> CompactionDecision.none();
+            final CompactionGuard custom = (memory, model, hookRegistry) -> CompactionDecision.none();
 
             assertThatThrownBy(() -> DefaultContextEngine.builder().compactionGuard(custom).compactionEngine(summarizer)
                     .writeFormat(SessionLogFormat.V2).build()).isInstanceOf(IllegalStateException.class)
@@ -573,7 +571,7 @@ class DefaultContextEngineViewModeTest {
         @Test
         void aVersionOneNodeWithACustomGuardCompactsAnUpgradedRecordInPlace() {
             fillPastTheAutoThreshold();
-            final CompactionGuard rewriting = (memory, model, hookRegistry, userLocale) -> {
+            final CompactionGuard rewriting = (memory, model, hookRegistry) -> {
                 memory.replaceWith(List.of(Message.user("rewritten")));
                 return CompactionDecision.compact(CompactionResult.success("s", metadata()), "custom", 1, 2);
             };
@@ -612,7 +610,7 @@ class DefaultContextEngineViewModeTest {
         @Test
         void theViewIsSentAndNothingIsCompactedInPlace() {
             summarizedLog();
-            final CompactionGuard rewriting = (memory, model, hookRegistry, userLocale) -> {
+            final CompactionGuard rewriting = (memory, model, hookRegistry) -> {
                 throw new AssertionError("the guard must not be asked to rewrite a log that carries a view");
             };
             final List<Message> logBefore = buffer.getMessages();
@@ -632,7 +630,7 @@ class DefaultContextEngineViewModeTest {
         @Test
         void compactNowFailsRatherThanErasingTheSpan() {
             summarizedLog();
-            final CompactionGuard custom = (memory, model, hookRegistry, userLocale) -> CompactionDecision.none();
+            final CompactionGuard custom = (memory, model, hookRegistry) -> CompactionDecision.none();
 
             final CompactionResult result = inPlaceOnly(custom).compactNow(request(), null);
 
@@ -645,7 +643,7 @@ class DefaultContextEngineViewModeTest {
         @Test
         void recoveryDropsFromTheViewInsteadOfReplacingTheBuffer() {
             summarizedLog();
-            final CompactionGuard custom = (memory, model, hookRegistry, userLocale) -> CompactionDecision.none();
+            final CompactionGuard custom = (memory, model, hookRegistry) -> CompactionDecision.none();
             final List<Message> logBefore = buffer.getMessages();
 
             final var recovered = inPlaceOnly(custom).recover(request(), new LlmPromptTooLongException("too long"));
@@ -659,7 +657,7 @@ class DefaultContextEngineViewModeTest {
         @Test
         void aVersionTwoLogWithoutAViewIsStillCompactedInPlace() {
             fillPastTheAutoThreshold();
-            final CompactionGuard rewriting = (memory, model, hookRegistry, userLocale) -> {
+            final CompactionGuard rewriting = (memory, model, hookRegistry) -> {
                 memory.replaceWith(List.of(Message.user("rewritten")));
                 return CompactionDecision.compact(CompactionResult.success("s", metadata()), "custom", 1, 2);
             };

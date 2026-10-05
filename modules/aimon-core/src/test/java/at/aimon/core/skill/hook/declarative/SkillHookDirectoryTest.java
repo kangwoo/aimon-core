@@ -18,7 +18,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.StagedResource;
@@ -52,7 +51,6 @@ import at.aimon.core.skill.hook.declarative.predicate.NameOnlyPredicate;
 @DisplayName("AIMON_SKILL_DIR for declarative shell hooks")
 class SkillHookDirectoryTest {
 
-    private static final UserLocale LOCALE = UserLocale.createDefault();
     private static final ShellAction ACTION = new ShellAction("bash \"$AIMON_SKILL_DIR/scripts/guard.sh\"",
             Duration.ofSeconds(1));
     private static final String STAGED = "/workspace/.aimon-staged/review/0123456789abcdef";
@@ -78,8 +76,8 @@ class SkillHookDirectoryTest {
 
     private PreToolContext preTool(HookRegistry registry, ExecutionEnvironment env) {
         return PreToolContext.builder().executorType(InvokerType.SUBAGENT).invokerName("worker").hookRegistry(registry)
-                .userLocale(LOCALE).executionEnvironment(env).toolUse(ToolUse.of("call-1", "TodoWrite", Map.of()))
-                .iterationCount(1).build();
+                .executionEnvironment(env).toolUse(ToolUse.of("call-1", "TodoWrite", Map.of())).iterationCount(1)
+                .build();
     }
 
     // --- when the variable is exported -----------------------------------------------------------------------
@@ -235,9 +233,8 @@ class SkillHookDirectoryTest {
                 SkillHookSet.builder().addOnStart(hook).build(), review);
         when(environment.stage(review)).thenThrow(new StagingException("over the limit"));
 
-        final HookResult result = hook.execute(
-                OnStartContext.builder().executorType(InvokerType.SUBAGENT).invokerName("worker").hookRegistry(view)
-                        .userLocale(LOCALE).executionEnvironment(environment).userMessage("go").build());
+        final HookResult result = hook.execute(OnStartContext.builder().executorType(InvokerType.SUBAGENT)
+                .invokerName("worker").hookRegistry(view).executionEnvironment(environment).userMessage("go").build());
 
         assertThat(result.getStatus()).isEqualTo(HookStatus.BLOCKED);
         assertThat(result.getFeedback()).hasValueSatisfying(
@@ -257,8 +254,8 @@ class SkillHookDirectoryTest {
                 .startTime(java.time.Instant.EPOCH).endTime(java.time.Instant.EPOCH).build();
 
         final HookResult result = hook.execute(OnStopContext.builder().executorType(InvokerType.SUBAGENT)
-                .invokerName("worker").hookRegistry(view).userLocale(LOCALE).executionEnvironment(environment)
-                .success(true).finalAnswer("done").metadata(metadata).build());
+                .invokerName("worker").hookRegistry(view).executionEnvironment(environment).success(true)
+                .finalAnswer("done").metadata(metadata).build());
 
         assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
         assertThat(executor.calls).isEmpty();
@@ -274,10 +271,10 @@ class SkillHookDirectoryTest {
                 SkillHookSet.builder().addPostTool(hook).build(), review);
         when(environment.stage(review)).thenThrow(new StagingException("over the limit"));
 
-        final HookResult result = hook.execute(PostToolContext.builder().executorType(InvokerType.SUBAGENT)
-                .invokerName("worker").hookRegistry(view).userLocale(LOCALE).executionEnvironment(environment)
-                .toolUse(ToolUse.of("call-1", "Read", Map.of())).toolUseResult(ToolUseResult.success("call-1", "ok"))
-                .iterationCount(1).build());
+        final HookResult result = hook.execute(
+                PostToolContext.builder().executorType(InvokerType.SUBAGENT).invokerName("worker").hookRegistry(view)
+                        .executionEnvironment(environment).toolUse(ToolUse.of("call-1", "Read", Map.of()))
+                        .toolUseResult(ToolUseResult.success("call-1", "ok")).iterationCount(1).build());
 
         assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
         assertThat(executor.calls).isEmpty();

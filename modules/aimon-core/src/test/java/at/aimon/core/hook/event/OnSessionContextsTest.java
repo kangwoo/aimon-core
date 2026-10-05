@@ -11,7 +11,6 @@ import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.compact.CompactionTrigger;
 import at.aimon.core.agent.session.SessionId;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 
@@ -22,14 +21,13 @@ import at.aimon.core.hook.HookRegistry;
  */
 class OnSessionContextsTest {
 
-    private static final UserLocale ENV = UserLocale.createDefault();
     private static final SessionId CID = SessionId.generate();
 
     @Test
     void onSessionStartContextRequiresMandatoryFields() {
         final HookRegistry registry = new DefaultHookRegistry();
         assertThatNullPointerException().isThrownBy(() -> OnSessionStartContext.builder()
-                .invokerType(InvokerType.MAIN_AGENT).invokerName("main").userLocale(ENV).sessionId(CID).build());
+                .invokerType(InvokerType.MAIN_AGENT).invokerName("main").sessionId(CID).build());
     }
 
     /**
@@ -43,12 +41,12 @@ class OnSessionContextsTest {
         final ExecutionId run = ExecutionId.of("rewake:env-1");
 
         final OnSessionStartContext start = OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).userLocale(ENV).executionId(run).build();
+                .invokerName("main").hookRegistry(registry).executionId(run).build();
         assertThat(start.getSessionId()).isEmpty();
         assertThat(start.getExecutionId()).contains(run);
 
         final OnSessionEndContext end = OnSessionEndContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).userLocale(ENV).executionId(run).build();
+                .invokerName("main").hookRegistry(registry).executionId(run).build();
         assertThat(end.getSessionId()).isEmpty();
         assertThat(end.getExecutionId()).contains(run);
     }
@@ -59,12 +57,12 @@ class OnSessionContextsTest {
         final HookRegistry registry = new DefaultHookRegistry();
 
         final OnSessionStartContext start = OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).userLocale(ENV).sessionId(CID).build();
+                .invokerName("main").hookRegistry(registry).sessionId(CID).build();
         assertThat(start.getExecutionEnvironment()).isEmpty();
         assertThat(start.getEnvironmentDescriptor()).isEmpty();
 
         final OnSessionEndContext end = OnSessionEndContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).userLocale(ENV).sessionId(CID).build();
+                .invokerName("main").hookRegistry(registry).sessionId(CID).build();
         assertThat(end.getExecutionEnvironment()).isEmpty();
         assertThat(end.getEnvironmentDescriptor()).isEmpty();
     }
@@ -74,11 +72,11 @@ class OnSessionContextsTest {
         final HookRegistry registry = new DefaultHookRegistry();
 
         final OnSessionStartContext start = OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).userLocale(ENV).sessionId(CID).build();
+                .invokerName("main").hookRegistry(registry).sessionId(CID).build();
         assertThat(start.getExecutionId()).isEmpty();
 
         final OnSessionEndContext end = OnSessionEndContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).userLocale(ENV).sessionId(CID).build();
+                .invokerName("main").hookRegistry(registry).sessionId(CID).build();
         assertThat(end.getExecutionId()).isEmpty();
     }
 
@@ -88,8 +86,8 @@ class OnSessionContextsTest {
         final Instant ts = Instant.parse("2026-05-08T00:00:00Z");
 
         final OnSessionStartContext ctx = OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).userLocale(ENV).sessionId(CID)
-                .agentRuntimeId("agent:default").timestamp(ts).build();
+                .invokerName("main").hookRegistry(registry).sessionId(CID).agentRuntimeId("agent:default").timestamp(ts)
+                .build();
 
         assertThat(ctx.getInvokerType()).isEqualTo(InvokerType.MAIN_AGENT);
         assertThat(ctx.getInvokerName()).isEqualTo("main");
@@ -102,7 +100,7 @@ class OnSessionContextsTest {
     void onSessionStartRuntimeIdDefaultsToEmpty() {
         final HookRegistry registry = new DefaultHookRegistry();
         final OnSessionStartContext ctx = OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).userLocale(ENV).sessionId(CID).build();
+                .invokerName("main").hookRegistry(registry).sessionId(CID).build();
         assertThat(ctx.getAgentRuntimeId()).isEmpty();
     }
 
@@ -111,13 +109,13 @@ class OnSessionContextsTest {
         final HookRegistry registry = new DefaultHookRegistry();
 
         final OnSessionEndContext clean = OnSessionEndContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).userLocale(ENV).sessionId(CID).clean(true).build();
+                .invokerName("main").hookRegistry(registry).sessionId(CID).clean(true).build();
         assertThat(clean.isClean()).isTrue();
         assertThat(clean.getTerminationReason()).isEmpty();
 
         final OnSessionEndContext abnormal = OnSessionEndContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).userLocale(ENV).sessionId(CID).clean(false)
-                .terminationReason("crashed").build();
+                .invokerName("main").hookRegistry(registry).sessionId(CID).clean(false).terminationReason("crashed")
+                .build();
         assertThat(abnormal.isClean()).isFalse();
         assertThat(abnormal.getTerminationReason()).contains("crashed");
     }
@@ -132,8 +130,7 @@ class OnSessionContextsTest {
         final ExecutionId run = ExecutionId.of("rewake:env-1");
 
         final PreCompactContext ctx = PreCompactContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).userLocale(ENV).trigger(CompactionTrigger.MANUAL)
-                .executionId(run).build();
+                .invokerName("main").hookRegistry(registry).trigger(CompactionTrigger.MANUAL).executionId(run).build();
 
         assertThat(ctx.getSessionIdValue()).isEmpty();
         assertThat(ctx.getExecutionId()).contains(run);

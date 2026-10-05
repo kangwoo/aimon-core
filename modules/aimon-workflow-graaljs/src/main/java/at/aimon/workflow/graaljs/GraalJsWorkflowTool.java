@@ -29,7 +29,6 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
@@ -75,7 +74,6 @@ public final class GraalJsWorkflowTool extends AbstractTool {
     private final SubagentRegistry subagentRegistry;
     private final ToolRegistry toolRegistry;
     private final HookRegistry hookRegistry;
-    private final UserLocale userLocale;
     private final SubagentExecutionManager subagentExecutionManager;
     private final List<ToolContextEnricher> toolContextEnrichers;
 
@@ -95,7 +93,6 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         this.subagentRegistry = Objects.requireNonNull(builder.subagentRegistry, "subagentRegistry must not be null");
         this.toolRegistry = Objects.requireNonNull(builder.toolRegistry, "toolRegistry must not be null");
         this.hookRegistry = Objects.requireNonNull(builder.hookRegistry, "hookRegistry must not be null");
-        this.userLocale = Objects.requireNonNull(builder.userLocale, "userLocale must not be null");
         this.subagentExecutionManager = Objects.requireNonNull(builder.subagentExecutionManager,
                 "subagentExecutionManager must not be null");
         this.toolContextEnrichers = builder.toolContextEnrichers != null
@@ -270,10 +267,10 @@ public final class GraalJsWorkflowTool extends AbstractTool {
                 .toolRegistry(toolRegistry)
                 // The caller's registry first: inside a forked skill it carries the skill's hooks, and the workflow's
                 // subagents must stay under them.
-                .hookRegistry(HookRegistryAccess.of(context).orElse(hookRegistry)).userLocale(userLocale)
-                .defaultModel(defaultModel).executionAttributes(executionAttributes)
-                .parentLlmCallMetadata(parentMetadata).cancellationSignal(parentSignal).principal(principal)
-                .toolContextEnrichers(toolContextEnrichers).callerAllowedTools(CallerAllowedTools.of(context))
+                .hookRegistry(HookRegistryAccess.of(context).orElse(hookRegistry)).defaultModel(defaultModel)
+                .executionAttributes(executionAttributes).parentLlmCallMetadata(parentMetadata)
+                .cancellationSignal(parentSignal).principal(principal).toolContextEnrichers(toolContextEnrichers)
+                .callerAllowedTools(CallerAllowedTools.of(context))
                 .invokingSessionId(InvokingSessionAccess.idToPropagate(context).orElse(null))
                 // The fork resolves its own environment from the spawning runtime's provider, with this execution's
                 // environment as its parent (execution-environment design §5.2).
@@ -309,7 +306,6 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         private SubagentRegistry subagentRegistry;
         private ToolRegistry toolRegistry;
         private HookRegistry hookRegistry;
-        private UserLocale userLocale;
         private SubagentExecutionManager subagentExecutionManager;
         private List<ToolContextEnricher> toolContextEnrichers;
         private GraalJsEngineHolder engines;
@@ -338,11 +334,6 @@ public final class GraalJsWorkflowTool extends AbstractTool {
 
         public Builder hookRegistry(HookRegistry hookRegistry) {
             this.hookRegistry = hookRegistry;
-            return this;
-        }
-
-        public Builder userLocale(UserLocale userLocale) {
-            this.userLocale = userLocale;
             return this;
         }
 

@@ -16,7 +16,6 @@ import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
@@ -26,7 +25,6 @@ class SubagentExecutionEnvironmentTest {
     private static final AgentRuntimeId CONTEXT_ID = AgentRuntimeId.of("agent:test-1");
     private static final ToolRegistry TOOL_REGISTRY = new DefaultToolRegistry();
     private static final HookRegistry HOOK_REGISTRY = new DefaultHookRegistry();
-    private static final UserLocale ENVIRONMENT = UserLocale.createDefault();
     private static final LlmModel DEFAULT_MODEL = LlmModel.builder().name("test-model").build();
     private static final SubagentRegistry SUBAGENT_REGISTRY = new EmptySubagentRegistry();
     private static final SessionId INVOKING_CONVERSATION = SessionId.generate();
@@ -37,13 +35,12 @@ class SubagentExecutionEnvironmentTest {
 
         SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder().agentRuntimeId(CONTEXT_ID)
                 .subagentRegistry(SUBAGENT_REGISTRY).toolRegistry(TOOL_REGISTRY).hookRegistry(HOOK_REGISTRY)
-                .userLocale(ENVIRONMENT).defaultModel(DEFAULT_MODEL).executionAttributes(attrs).build();
+                .defaultModel(DEFAULT_MODEL).executionAttributes(attrs).build();
 
         assertThat(env.getAgentRuntimeId()).isEqualTo(CONTEXT_ID);
         assertThat(env.getSubagentRegistry()).isEqualTo(SUBAGENT_REGISTRY);
         assertThat(env.getToolRegistry()).isEqualTo(TOOL_REGISTRY);
         assertThat(env.getHookRegistry()).isEqualTo(HOOK_REGISTRY);
-        assertThat(env.getUserLocale()).isEqualTo(ENVIRONMENT);
         assertThat(env.getDefaultModel()).isEqualTo(DEFAULT_MODEL);
         assertThat(env.getExecutionAttributes()).isEqualTo(attrs);
     }
@@ -53,9 +50,8 @@ class SubagentExecutionEnvironmentTest {
         final CancellationSignal signal = mock(CancellationSignal.class);
         final SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder().agentRuntimeId(CONTEXT_ID)
                 .subagentRegistry(SUBAGENT_REGISTRY).toolRegistry(TOOL_REGISTRY).hookRegistry(HOOK_REGISTRY)
-                .userLocale(ENVIRONMENT).defaultModel(DEFAULT_MODEL).modelOverride("override")
-                .executionAttributes(Map.of("k", "v")).cancellationSignal(signal)
-                .invokingSessionId(INVOKING_CONVERSATION).build();
+                .defaultModel(DEFAULT_MODEL).modelOverride("override").executionAttributes(Map.of("k", "v"))
+                .cancellationSignal(signal).invokingSessionId(INVOKING_CONVERSATION).build();
 
         final SubagentExecutionEnvironment rebuilt = env.toBuilder().build();
 
@@ -64,7 +60,6 @@ class SubagentExecutionEnvironmentTest {
         assertThat(rebuilt.getSubagentRegistry()).isSameAs(SUBAGENT_REGISTRY);
         assertThat(rebuilt.getToolRegistry()).isSameAs(TOOL_REGISTRY);
         assertThat(rebuilt.getHookRegistry()).isSameAs(HOOK_REGISTRY);
-        assertThat(rebuilt.getUserLocale()).isSameAs(ENVIRONMENT);
         assertThat(rebuilt.getDefaultModel()).isSameAs(DEFAULT_MODEL);
         assertThat(rebuilt.getModelOverride()).contains("override");
         assertThat(rebuilt.getExecutionAttributes()).containsEntry("k", "v");
@@ -80,7 +75,7 @@ class SubagentExecutionEnvironmentTest {
         final CancellationSignal perRun = mock(CancellationSignal.class);
         final SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder().agentRuntimeId(CONTEXT_ID)
                 .subagentRegistry(SUBAGENT_REGISTRY).toolRegistry(TOOL_REGISTRY).hookRegistry(HOOK_REGISTRY)
-                .userLocale(ENVIRONMENT).defaultModel(DEFAULT_MODEL).cancellationSignal(original).build();
+                .defaultModel(DEFAULT_MODEL).cancellationSignal(original).build();
 
         final SubagentExecutionEnvironment derived = env.toBuilder().cancellationSignal(perRun).build();
 
@@ -95,49 +90,36 @@ class SubagentExecutionEnvironmentTest {
     @Test
     void builder_nullRuntimeId_throwsNullPointerException() {
         assertThatThrownBy(() -> SubagentExecutionEnvironment.builder().subagentRegistry(SUBAGENT_REGISTRY)
-                .toolRegistry(TOOL_REGISTRY).hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT)
-                .defaultModel(DEFAULT_MODEL).build()).isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("Agent runtime ID");
+                .toolRegistry(TOOL_REGISTRY).hookRegistry(HOOK_REGISTRY).defaultModel(DEFAULT_MODEL).build())
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("Agent runtime ID");
     }
 
     @Test
     void builder_nullSubagentRegistry_throwsNullPointerException() {
-        assertThatThrownBy(
-                () -> SubagentExecutionEnvironment.builder().agentRuntimeId(CONTEXT_ID).toolRegistry(TOOL_REGISTRY)
-                        .hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT).defaultModel(DEFAULT_MODEL).build())
+        assertThatThrownBy(() -> SubagentExecutionEnvironment.builder().agentRuntimeId(CONTEXT_ID)
+                .toolRegistry(TOOL_REGISTRY).hookRegistry(HOOK_REGISTRY).defaultModel(DEFAULT_MODEL).build())
                 .isInstanceOf(NullPointerException.class).hasMessageContaining("Subagent registry");
     }
 
     @Test
     void builder_nullToolRegistry_throwsNullPointerException() {
         assertThatThrownBy(() -> SubagentExecutionEnvironment.builder().agentRuntimeId(CONTEXT_ID)
-                .subagentRegistry(SUBAGENT_REGISTRY).hookRegistry(HOOK_REGISTRY).userLocale(ENVIRONMENT)
-                .defaultModel(DEFAULT_MODEL).build()).isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("Tool registry");
+                .subagentRegistry(SUBAGENT_REGISTRY).hookRegistry(HOOK_REGISTRY).defaultModel(DEFAULT_MODEL).build())
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("Tool registry");
     }
 
     @Test
     void builder_nullHookRegistry_throwsNullPointerException() {
         assertThatThrownBy(() -> SubagentExecutionEnvironment.builder().agentRuntimeId(CONTEXT_ID)
-                .subagentRegistry(SUBAGENT_REGISTRY).toolRegistry(TOOL_REGISTRY).userLocale(ENVIRONMENT)
-                .defaultModel(DEFAULT_MODEL).build()).isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("Hook registry");
-    }
-
-    @Test
-    void builder_nullEnvironment_throwsNullPointerException() {
-        assertThatThrownBy(() -> SubagentExecutionEnvironment.builder().agentRuntimeId(CONTEXT_ID)
-                .subagentRegistry(SUBAGENT_REGISTRY).toolRegistry(TOOL_REGISTRY).hookRegistry(HOOK_REGISTRY)
-                .defaultModel(DEFAULT_MODEL).build()).isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("UserLocale");
+                .subagentRegistry(SUBAGENT_REGISTRY).toolRegistry(TOOL_REGISTRY).defaultModel(DEFAULT_MODEL).build())
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("Hook registry");
     }
 
     @Test
     void builder_nullDefaultModel_throwsNullPointerException() {
         assertThatThrownBy(() -> SubagentExecutionEnvironment.builder().agentRuntimeId(CONTEXT_ID)
-                .subagentRegistry(SUBAGENT_REGISTRY).toolRegistry(TOOL_REGISTRY).hookRegistry(HOOK_REGISTRY)
-                .userLocale(ENVIRONMENT).build()).isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("Default model");
+                .subagentRegistry(SUBAGENT_REGISTRY).toolRegistry(TOOL_REGISTRY).hookRegistry(HOOK_REGISTRY).build())
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("Default model");
     }
 
     @Test
@@ -147,7 +129,7 @@ class SubagentExecutionEnvironmentTest {
 
         SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder().agentRuntimeId(CONTEXT_ID)
                 .subagentRegistry(SUBAGENT_REGISTRY).toolRegistry(TOOL_REGISTRY).hookRegistry(HOOK_REGISTRY)
-                .userLocale(ENVIRONMENT).defaultModel(DEFAULT_MODEL).executionAttributes(mutableMap).build();
+                .defaultModel(DEFAULT_MODEL).executionAttributes(mutableMap).build();
 
         mutableMap.put("newKey", "newValue");
 
@@ -158,7 +140,7 @@ class SubagentExecutionEnvironmentTest {
     void executionAttributes_nullReturnsEmptyMap() {
         SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder().agentRuntimeId(CONTEXT_ID)
                 .subagentRegistry(SUBAGENT_REGISTRY).toolRegistry(TOOL_REGISTRY).hookRegistry(HOOK_REGISTRY)
-                .userLocale(ENVIRONMENT).defaultModel(DEFAULT_MODEL).executionAttributes(null).build();
+                .defaultModel(DEFAULT_MODEL).executionAttributes(null).build();
 
         assertThat(env.getExecutionAttributes()).isEmpty();
     }
@@ -167,7 +149,7 @@ class SubagentExecutionEnvironmentTest {
     void executionAttributes_notSet_returnsEmptyMap() {
         SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder().agentRuntimeId(CONTEXT_ID)
                 .subagentRegistry(SUBAGENT_REGISTRY).toolRegistry(TOOL_REGISTRY).hookRegistry(HOOK_REGISTRY)
-                .userLocale(ENVIRONMENT).defaultModel(DEFAULT_MODEL).build();
+                .defaultModel(DEFAULT_MODEL).build();
 
         assertThat(env.getExecutionAttributes()).isEmpty();
     }
@@ -176,8 +158,7 @@ class SubagentExecutionEnvironmentTest {
     void toString_containsMeaningfulOutput() {
         SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder().agentRuntimeId(CONTEXT_ID)
                 .subagentRegistry(SUBAGENT_REGISTRY).toolRegistry(TOOL_REGISTRY).hookRegistry(HOOK_REGISTRY)
-                .userLocale(ENVIRONMENT).defaultModel(DEFAULT_MODEL).executionAttributes(Map.of("key", "value"))
-                .build();
+                .defaultModel(DEFAULT_MODEL).executionAttributes(Map.of("key", "value")).build();
 
         String result = env.toString();
         assertThat(result).contains("SubagentExecutionEnvironment").contains("agentRuntimeId")

@@ -16,7 +16,7 @@ import at.aimon.core.subagent.execution.SubagentExecutionResult;
  *
  * <p>
  * <b>Contract parity with the ReAct path.</b> An implementation receives the SAME immutable
- * {@link SubagentExecutionContext} (subagent value object, tool/hook registries, user locale, parent cancellation
+ * {@link SubagentExecutionContext} (subagent value object, tool/hook registries, parent cancellation
  * signal, knowledge store/scope, tool-context enrichers) and {@link SubagentExecutionRequest} (goal, principal,
  * attributes, LLM metadata, budget) that the {@link at.aimon.core.subagent.execution.SubagentExecutor} receives, and
  * MUST return a {@link SubagentExecutionResult} — the same value object the ReAct path returns. For the result fields
@@ -27,7 +27,7 @@ import at.aimon.core.subagent.execution.SubagentExecutionResult;
  *
  * <p>
  * An implementation is free to use the context's collaborators — {@code context.getToolRegistry()},
- * {@code context.getUserLocale()}, {@code context.getDefaultModel()} — but the default expectation is deterministic
+ * {@code context.getHookRegistry()}, {@code context.getDefaultModel()} — but the default expectation is deterministic
  * Java logic. To call the model, the {@code support} facade exposes the retry/fallback-aware
  * {@link SubagentBehaviorSupport#llmGateway()} (configured like the ReAct path) and
  * {@link SubagentBehaviorSupport#effectiveLlmCallMetadata()} for subagent usage attribution. The facade also provides
@@ -55,7 +55,7 @@ public interface SubagentBehavior {
      * Executes the subagent's behavior.
      *
      * @param context
-     *            the immutable execution context (subagent, registries, user locale, cancellation, knowledge)
+     *            the immutable execution context (subagent, registries, cancellation, knowledge)
      * @param request
      *            the immutable execution request (goal, principal, attributes, metadata, budget)
      * @param support

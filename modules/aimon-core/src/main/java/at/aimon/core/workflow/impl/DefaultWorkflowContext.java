@@ -380,9 +380,9 @@ public final class DefaultWorkflowContext implements WorkflowContext {
     private static String inputHash(AgentTask task) {
         final Subagent sa = task.getSubagent();
         final StringBuilder sb = new StringBuilder(256);
-        sb.append(task.getGoal()).append('\0').append(sa.getName()).append('\0').append(sa.getMaxIterations()).append('\0')
-                .append(sa.hashCode()).append('\0').append(sa.getAllowedTools()).append('\0').append(task.isIsolate())
-                .append('\0').append(task.isNonCacheable()).append('\0');
+        sb.append(task.getGoal()).append('\0').append(sa.getName()).append('\0').append(sa.getMaxIterations())
+                .append('\0').append(sa.hashCode()).append('\0').append(sa.getAllowedTools()).append('\0')
+                .append(task.isIsolate()).append('\0').append(task.isNonCacheable()).append('\0');
         try {
             sb.append(HASH_MAPPER.writeValueAsString(task.getResultSchema().orElse(Map.of())));
         } catch (JsonProcessingException e) {

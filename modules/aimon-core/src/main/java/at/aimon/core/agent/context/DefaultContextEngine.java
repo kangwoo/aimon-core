@@ -33,7 +33,6 @@ import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.SessionLogState;
 import at.aimon.core.agent.session.transcript.SummarySpan;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.exception.LlmPromptTooLongException;
@@ -165,7 +164,6 @@ public final class DefaultContextEngine implements ContextEngine {
         Objects.requireNonNull(request, "request cannot be null");
         final TranscriptBuffer buffer = request.getTranscriptBuffer();
         final HookRegistry hookRegistry = requireHookRegistry(request);
-        final UserLocale userLocale = requireUserLocale(request);
         final ExecutionId executionId = request.getCaller().getExecutionId().orElse(null);
         if (inViewMode(buffer)) {
             return prepareView(request);
@@ -179,8 +177,8 @@ public final class DefaultContextEngine implements ContextEngine {
         // execution environment to the compaction hooks, and its default still selects the positional method a
         // guard written against those expects.
         final CompactionDecision decision = compactionGuard.maybeCompact(CompactionGuardRequest.builder()
-                .transcriptBuffer(buffer).model(request.getModel()).hookRegistry(hookRegistry).userLocale(userLocale)
-                .executionId(executionId).executionEnvironment(request.getExecutionEnvironment().orElse(null))
+                .transcriptBuffer(buffer).model(request.getModel()).hookRegistry(hookRegistry).executionId(executionId)
+                .executionEnvironment(request.getExecutionEnvironment().orElse(null))
                 .budgetForced(request.isBudgetForced()).build());
         // Read after the guard: a compaction rewrote the buffer in place, and the view is what it left behind.
         return ContextDecision.from(decision, viewOf(request), sizeBefore);
@@ -328,7 +326,6 @@ public final class DefaultContextEngine implements ContextEngine {
         }
         final CompactionRequest compactionRequest = CompactionRequest.builder().transcriptBuffer(buffer)
                 .trigger(CompactionTrigger.MANUAL).model(request.getModel()).hookRegistry(requireHookRegistry(request))
-                .userLocale(requireUserLocale(request))
                 .executionEnvironment(request.getExecutionEnvironment().orElse(null)).customInstructions(instructions)
                 .callMetadata(request.getCallMetadata().orElse(null))
                 .executionId(request.getCaller().getExecutionId().orElse(null)).build();
@@ -420,7 +417,6 @@ public final class DefaultContextEngine implements ContextEngine {
                 .systemPrompt(request.getSystemPrompt()).sessionId(buffer.getSessionId())
                 .executionId(request.getCaller().getExecutionId().orElse(null)).trigger(trigger)
                 .model(request.getModel()).hookRegistry(requireHookRegistry(request))
-                .userLocale(requireUserLocale(request))
                 .executionEnvironment(request.getExecutionEnvironment().orElse(null)).customInstructions(instructions)
                 .callMetadata(request.getCallMetadata().orElse(null)).build();
         final CompactionResult summarized = compactionEngine.summarize(summaryRequest);
@@ -523,11 +519,6 @@ public final class DefaultContextEngine implements ContextEngine {
     private static HookRegistry requireHookRegistry(ContextRequest request) {
         return request.getHookRegistry()
                 .orElseThrow(() -> new IllegalArgumentException("DefaultContextEngine requires a HookRegistry"));
-    }
-
-    private static UserLocale requireUserLocale(ContextRequest request) {
-        return request.getUserLocale()
-                .orElseThrow(() -> new IllegalArgumentException("DefaultContextEngine requires a UserLocale"));
     }
 
     @Override

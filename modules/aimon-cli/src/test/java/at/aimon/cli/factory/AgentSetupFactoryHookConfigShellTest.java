@@ -14,7 +14,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -60,7 +59,7 @@ class AgentSetupFactoryHookConfigShellTest {
 
         final ShellHookOutcome outcome = executor.run(new ShellAction("echo hi", Duration.ofSeconds(1)),
                 OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("agent")
-                        .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault()).build(),
+                        .hookRegistry(new DefaultHookRegistry()).build(),
                 Map.of(), null);
 
         verify(host).execute(any(ShellCommand.class), any(ExecutionOptions.class));
@@ -79,8 +78,8 @@ class AgentSetupFactoryHookConfigShellTest {
 
         executor.run(new ShellAction("echo hi", Duration.ofSeconds(1)),
                 OnStartContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent")
-                        .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                        .executionEnvironment(environment).userMessage("hi").build(),
+                        .hookRegistry(new DefaultHookRegistry()).executionEnvironment(environment).userMessage("hi")
+                        .build(),
                 Map.of(), null);
 
         verify(host).execute(any(ShellCommand.class), any(ExecutionOptions.class));

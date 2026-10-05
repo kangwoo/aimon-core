@@ -6,7 +6,6 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
@@ -28,7 +27,7 @@ import at.aimon.core.hook.execution.HookContext;
  * {
  *     &#64;code
  *     OnStopContext context = OnStopContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("default-agent")
- *             .userLocale(userLocale).success(true).finalAnswer("The files in the current directory are...")
+ *             .success(true).finalAnswer("The files in the current directory are...")
  *             .metadata(metadata).build();
  * }
  * </pre>
@@ -46,7 +45,6 @@ public final class OnStopContext implements HookContext {
     private final InvokerType invokerType;
     private final String invokerName;
     private final HookRegistry hookRegistry;
-    private final UserLocale userLocale;
     private final ExecutionEnvironment executionEnvironment;
     private final boolean success;
     private final String finalAnswer;
@@ -58,7 +56,6 @@ public final class OnStopContext implements HookContext {
         invokerType = Objects.requireNonNull(builder.invokerType, "Executor type cannot be null");
         invokerName = Objects.requireNonNull(builder.invokerName, "Executor name cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
-        userLocale = Objects.requireNonNull(builder.userLocale, "UserLocale cannot be null");
         executionEnvironment = builder.executionEnvironment;
         success = builder.success;
         finalAnswer = builder.finalAnswer;
@@ -80,11 +77,6 @@ public final class OnStopContext implements HookContext {
     @Override
     public HookRegistry getHookRegistry() {
         return hookRegistry;
-    }
-
-    @Override
-    public UserLocale getUserLocale() {
-        return userLocale;
     }
 
     @Override
@@ -141,7 +133,6 @@ public final class OnStopContext implements HookContext {
         private InvokerType invokerType;
         private String invokerName;
         private HookRegistry hookRegistry;
-        private UserLocale userLocale;
         private ExecutionEnvironment executionEnvironment;
         private boolean success;
         private String finalAnswer;
@@ -185,18 +176,6 @@ public final class OnStopContext implements HookContext {
          */
         public Builder hookRegistry(HookRegistry hookRegistry) {
             this.hookRegistry = hookRegistry;
-            return this;
-        }
-
-        /**
-         * Sets the user locale.
-         *
-         * @param userLocale
-         *            the user locale (must not be null)
-         * @return This builder
-         */
-        public Builder userLocale(UserLocale userLocale) {
-            this.userLocale = userLocale;
             return this;
         }
 

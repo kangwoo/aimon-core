@@ -16,7 +16,6 @@ import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.agent.tool.permission.AllowedTools;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
@@ -53,7 +52,6 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
     private final SubagentRegistry subagentRegistry;
     private final ToolRegistry toolRegistry;
     private final HookRegistry hookRegistry;
-    private final UserLocale userLocale;
     private final SubagentExecutionManager subagentExecutionManager;
 
     /**
@@ -68,19 +66,15 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
      *            Tool registry exposed to the forked subagent (must not be null)
      * @param hookRegistry
      *            Hook registry exposed to the forked subagent (must not be null)
-     * @param userLocale
-     *            User locale passed to the forked subagent (must not be null)
      * @param subagentExecutionManager
      *            Manager that performs the actual subagent execution (must not be null)
      */
     public SubagentBackedSkillForkExecutor(LlmModel defaultModel, SubagentRegistry subagentRegistry,
-            ToolRegistry toolRegistry, HookRegistry hookRegistry, UserLocale userLocale,
-            SubagentExecutionManager subagentExecutionManager) {
+            ToolRegistry toolRegistry, HookRegistry hookRegistry, SubagentExecutionManager subagentExecutionManager) {
         this.defaultModel = Objects.requireNonNull(defaultModel, "Default model cannot be null");
         this.subagentRegistry = Objects.requireNonNull(subagentRegistry, "Subagent registry cannot be null");
         this.toolRegistry = Objects.requireNonNull(toolRegistry, "Tool registry cannot be null");
         this.hookRegistry = Objects.requireNonNull(hookRegistry, "Hook registry cannot be null");
-        this.userLocale = Objects.requireNonNull(userLocale, "UserLocale cannot be null");
         this.subagentExecutionManager = Objects.requireNonNull(subagentExecutionManager,
                 "Subagent execution manager cannot be null");
     }
@@ -145,9 +139,8 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
         final SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder().agentRuntimeId(agentRuntimeId)
                 .subagentRegistry(subagentRegistry).toolRegistry(toolRegistry)
                 // The caller's registry, which for a skill with hooks is the view SkillTool layered them onto.
-                .hookRegistry(HookRegistryAccess.of(toolContext).orElse(hookRegistry)).userLocale(userLocale)
-                .defaultModel(defaultModel).executionAttributes(executionAttributes)
-                .parentLlmCallMetadata(parentMetadata).principal(principal)
+                .hookRegistry(HookRegistryAccess.of(toolContext).orElse(hookRegistry)).defaultModel(defaultModel)
+                .executionAttributes(executionAttributes).parentLlmCallMetadata(parentMetadata).principal(principal)
                 .callerAllowedTools(CallerAllowedTools.of(toolContext))
                 .invokingSessionId(InvokingSessionAccess.idToPropagate(toolContext).orElse(null))
                 // The fork resolves its own environment from the spawning runtime's provider, with this execution's

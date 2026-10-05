@@ -16,7 +16,6 @@ import org.junit.jupiter.api.Test;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.EnvironmentRequest;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.environment.UnavailableExecutionEnvironment;
@@ -123,8 +122,8 @@ class GraalJsEnvironmentRequestTest {
             ExecutionEnvironmentProvider provider) {
         return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
                 .subagentRegistry(registry).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .defaultModel(LlmModel.builder().name("gpt-4").build()).executionEnvironmentProvider(provider).build();
+                .hookRegistry(new DefaultHookRegistry()).defaultModel(LlmModel.builder().name("gpt-4").build())
+                .executionEnvironmentProvider(provider).build();
     }
 
     /** An LLM that answers every call with a final "done". */

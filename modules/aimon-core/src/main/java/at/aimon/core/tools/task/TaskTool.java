@@ -32,7 +32,6 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.knowledge.KnowledgeScope;
 import at.aimon.core.knowledge.KnowledgeStore;
@@ -87,7 +86,7 @@ import at.aimon.core.tools.ToolContextKeys;
  *     SubagentRegistry registry = new DefaultSubagentRegistry(repository, parser);
  *     SubagentExecutionManager executionManager = new DefaultSubagentExecutionManager(llmClient, toolExecutionManager,
  *             hookExecutionManager);
- *     Tool taskTool = new TaskTool(defaultModel, registry, toolRegistry, hookRegistry, userLocale, executionManager);
+ *     Tool taskTool = new TaskTool(defaultModel, registry, toolRegistry, hookRegistry, executionManager);
  *
  *     ToolContext context = ToolContext.empty();
  *
@@ -119,7 +118,6 @@ public class TaskTool extends AbstractTool {
     private final SubagentRegistry subagentRegistry;
     private final ToolRegistry toolRegistry;
     private final HookRegistry hookRegistry;
-    private final UserLocale userLocale;
 
     private final SubagentExecutionManager subagentExecutionManager;
     private final List<ToolContextEnricher> toolContextEnrichers;
@@ -138,15 +136,12 @@ public class TaskTool extends AbstractTool {
      *            the tool registry available to subagents (must not be null)
      * @param hookRegistry
      *            the hook registry (must not be null)
-     * @param userLocale
-     *            the user locale (must not be null)
      * @param subagentExecutionManager
      *            the subagent execution manager (must not be null)
      */
     public TaskTool(LlmModel defaultModel, SubagentRegistry subagentRegistry, ToolRegistry toolRegistry,
-            HookRegistry hookRegistry, UserLocale userLocale, SubagentExecutionManager subagentExecutionManager) {
-        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale, subagentExecutionManager,
-                List.of());
+            HookRegistry hookRegistry, SubagentExecutionManager subagentExecutionManager) {
+        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, subagentExecutionManager, List.of());
     }
 
     /**
@@ -162,18 +157,16 @@ public class TaskTool extends AbstractTool {
      *            the tool registry available to subagents (must not be null)
      * @param hookRegistry
      *            the hook registry (must not be null)
-     * @param userLocale
-     *            the user locale (must not be null)
      * @param subagentExecutionManager
      *            the subagent execution manager (must not be null)
      * @param toolContextEnrichers
      *            the enrichers to forward (nullable; treated as empty when absent)
      */
     public TaskTool(LlmModel defaultModel, SubagentRegistry subagentRegistry, ToolRegistry toolRegistry,
-            HookRegistry hookRegistry, UserLocale userLocale, SubagentExecutionManager subagentExecutionManager,
+            HookRegistry hookRegistry, SubagentExecutionManager subagentExecutionManager,
             List<ToolContextEnricher> toolContextEnrichers) {
-        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale, subagentExecutionManager,
-                toolContextEnrichers, null);
+        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, subagentExecutionManager, toolContextEnrichers,
+                null);
     }
 
     /**
@@ -189,8 +182,6 @@ public class TaskTool extends AbstractTool {
      *            the tool registry available to subagents (must not be null)
      * @param hookRegistry
      *            the hook registry (must not be null)
-     * @param userLocale
-     *            the user locale (must not be null)
      * @param subagentExecutionManager
      *            the subagent execution manager (must not be null)
      * @param toolContextEnrichers
@@ -201,10 +192,10 @@ public class TaskTool extends AbstractTool {
      */
     @SuppressWarnings("checkstyle:ParameterNumber")
     public TaskTool(LlmModel defaultModel, SubagentRegistry subagentRegistry, ToolRegistry toolRegistry,
-            HookRegistry hookRegistry, UserLocale userLocale, SubagentExecutionManager subagentExecutionManager,
+            HookRegistry hookRegistry, SubagentExecutionManager subagentExecutionManager,
             List<ToolContextEnricher> toolContextEnrichers, TaskOutputStore taskOutputStore) {
-        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale, subagentExecutionManager,
-                toolContextEnrichers, taskOutputStore, null);
+        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, subagentExecutionManager, toolContextEnrichers,
+                taskOutputStore, null);
     }
 
     /**
@@ -219,8 +210,6 @@ public class TaskTool extends AbstractTool {
      *            the tool registry available to subagents (must not be null)
      * @param hookRegistry
      *            the hook registry (must not be null)
-     * @param userLocale
-     *            the user locale (must not be null)
      * @param subagentExecutionManager
      *            the subagent execution manager (must not be null)
      * @param toolContextEnrichers
@@ -234,11 +223,11 @@ public class TaskTool extends AbstractTool {
      */
     @SuppressWarnings("checkstyle:ParameterNumber")
     public TaskTool(LlmModel defaultModel, SubagentRegistry subagentRegistry, ToolRegistry toolRegistry,
-            HookRegistry hookRegistry, UserLocale userLocale, SubagentExecutionManager subagentExecutionManager,
+            HookRegistry hookRegistry, SubagentExecutionManager subagentExecutionManager,
             List<ToolContextEnricher> toolContextEnrichers, TaskOutputStore taskOutputStore,
             SessionSnapshotStore sessionSnapshotStore) {
-        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale, subagentExecutionManager,
-                toolContextEnrichers, taskOutputStore, sessionSnapshotStore, null);
+        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, subagentExecutionManager, toolContextEnrichers,
+                taskOutputStore, sessionSnapshotStore, null);
     }
 
     /**
@@ -254,8 +243,6 @@ public class TaskTool extends AbstractTool {
      *            the tool registry available to subagents (must not be null)
      * @param hookRegistry
      *            the hook registry (must not be null)
-     * @param userLocale
-     *            the user locale (must not be null)
      * @param subagentExecutionManager
      *            the subagent execution manager (must not be null)
      * @param toolContextEnrichers
@@ -271,7 +258,7 @@ public class TaskTool extends AbstractTool {
      */
     @SuppressWarnings("checkstyle:ParameterNumber")
     public TaskTool(LlmModel defaultModel, SubagentRegistry subagentRegistry, ToolRegistry toolRegistry,
-            HookRegistry hookRegistry, UserLocale userLocale, SubagentExecutionManager subagentExecutionManager,
+            HookRegistry hookRegistry, SubagentExecutionManager subagentExecutionManager,
             List<ToolContextEnricher> toolContextEnrichers, TaskOutputStore taskOutputStore,
             SessionSnapshotStore sessionSnapshotStore, TaskResultStore taskResultStore) {
         super(new DynamicToolDefinitionProvider(TOOL_NAME, ToolCategories.EXECUTION,
@@ -281,7 +268,6 @@ public class TaskTool extends AbstractTool {
         this.subagentRegistry = Objects.requireNonNull(subagentRegistry, "Subagent registry cannot be null");
         this.toolRegistry = Objects.requireNonNull(toolRegistry, "Tool registry bundle cannot be null");
         this.hookRegistry = Objects.requireNonNull(hookRegistry, "Hook registry cannot be null");
-        this.userLocale = Objects.requireNonNull(userLocale, "UserLocale cannot be null");
         this.subagentExecutionManager = Objects.requireNonNull(subagentExecutionManager,
                 "Subagent execution manager cannot be null");
         this.toolContextEnrichers = toolContextEnrichers != null ? List.copyOf(toolContextEnrichers) : List.of();
@@ -581,14 +567,14 @@ public class TaskTool extends AbstractTool {
                 .toolRegistry(toolRegistry)
                 // The caller's registry first: inside a forked skill it carries the skill's hooks, and a subagent
                 // started from there must stay under them.
-                .hookRegistry(HookRegistryAccess.of(context).orElse(hookRegistry)).userLocale(userLocale)
-                .defaultModel(defaultModel).modelOverride(model).executionAttributes(executionAttributes)
-                .parentLlmCallMetadata(parentMetadata).cancellationSignal(parentSignal).principal(principal)
-                .knowledgeStore(knowledgeStore).knowledgeScope(knowledgeScope)
-                .toolContextEnrichers(toolContextEnrichers).taskOutputStore(taskOutputStore)
-                .taskResultStore(taskResultStore).sessionSnapshotStore(sessionSnapshotStore)
-                .previousSnapshot(previousSnapshot).messageQueueManager(messageQueueManager)
-                .parentEventSink(parentEventSink).callerAllowedTools(CallerAllowedTools.of(context))
+                .hookRegistry(HookRegistryAccess.of(context).orElse(hookRegistry)).defaultModel(defaultModel)
+                .modelOverride(model).executionAttributes(executionAttributes).parentLlmCallMetadata(parentMetadata)
+                .cancellationSignal(parentSignal).principal(principal).knowledgeStore(knowledgeStore)
+                .knowledgeScope(knowledgeScope).toolContextEnrichers(toolContextEnrichers)
+                .taskOutputStore(taskOutputStore).taskResultStore(taskResultStore)
+                .sessionSnapshotStore(sessionSnapshotStore).previousSnapshot(previousSnapshot)
+                .messageQueueManager(messageQueueManager).parentEventSink(parentEventSink)
+                .callerAllowedTools(CallerAllowedTools.of(context))
                 .invokingSessionId(InvokingSessionAccess.idToPropagate(context).orElse(null))
                 // The fork resolves its own environment from the spawning runtime's provider, with this execution's
                 // environment as its parent (execution-environment design §5.2).

@@ -13,7 +13,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -34,8 +33,7 @@ class HookHotReloadBootstrapTest {
     private static final ShellActionExecutor SHELL_EXECUTOR = new HostShellActionExecutor(
             org.mockito.Mockito.mock(VirtualShell.class));
 
-    private static final ReloadInvoker INVOKER = new ReloadInvoker(InvokerType.MAIN_AGENT, "main",
-            UserLocale.createDefault());
+    private static final ReloadInvoker INVOKER = new ReloadInvoker(InvokerType.MAIN_AGENT, "main");
 
     @TempDir
     Path userDir;

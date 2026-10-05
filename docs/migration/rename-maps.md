@@ -457,6 +457,9 @@ running on the last release that contained it, or starts empty on the service.
 
 ## `Environment` → `UserLocale`
 
+(`UserLocale` itself was **removed** on 2026-10-05 -- see the next section. The mapping below is kept for anyone
+reading older code: a name in the right-hand column no longer resolves either.)
+
 The mistake being corrected is a name that outlived what it named. `at.aimon.core.agent.Environment` once described
 the host -- working directory, platform, OS version. Those moved to the execution's `EnvironmentDescriptor`, and
 what was left was a time zone: a property of the user and the application, not of where commands run. It kept the
@@ -493,13 +496,56 @@ set of overloads on thirty-five types would have doubled the name the change exi
 | `ExecutionOptions.getEnvironment()` / `Builder.environment(Map)` | a shell command's environment variables |
 | `AimonProperties.getEnvironment()`, `aimon.environment.*` | the starter's execution-environment settings -- no configuration key changed |
 | `EnvironmentBlocks`, `EnvironmentContextProvider`, the `"environment"` prompt block | the prompt's description of the execution environment |
-| `SubagentExecutionEnvironment`, `AgentEnvironmentSnapshot` | type names unchanged; only their `getEnvironment()` accessor became `getUserLocale()` (`AgentEnvironmentSnapshot` itself was removed on 2026-10-05) |
+| `SubagentExecutionEnvironment`, `AgentEnvironmentSnapshot` | type names unchanged by this rename; only their `getEnvironment()` accessor became `getUserLocale()` (`AgentEnvironmentSnapshot` itself was removed on 2026-10-05) |
 
 **Not a data migration, and no frozen name moved.** The type never reached a wire or stored format: no session
 record, transcript, subagent task codec or shell-hook payload carries it, and the `ToolContext` key name is a key of
 an in-process map that [`frozen-names.md`](frozen-names.md) never listed. The one place the old name leaked as text
 was `toString()`, which nothing parses. The prompt is also unchanged -- it did not carry the time zone before and
 does not now.
+
+---
+
+## `UserLocale` was removed, not renamed
+
+Searching for these will find nothing, and that is the answer rather than a missing row. `UserLocale` held one
+value, a time zone; nothing in the framework read it (the only callers of `getTimeZone()` were unit tests), nothing
+could supply one other than the JVM default, and the user-context block that might have consumed it was removed.
+What remained was a parameter threaded through some sixty main-source files that carried a value to nowhere. (Backlog EE-60;
+the census is in [`execution-environment-ee14-user-locale.md`](../design/tool/execution-environment-ee14-user-locale.md) §12.)
+
+| Gone | What to do |
+|-----|-----|
+| `at.aimon.core.base.UserLocale` (`createDefault()`, `builder()`, `getTimeZone()`) | delete the usage. A deployment that needs a time zone keeps its own `java.time.ZoneId` |
+| `X.getUserLocale()` | delete the call -- there is no replacement accessor |
+| `X.Builder.userLocale(UserLocale)` | delete the call from the builder chain |
+| `ToolContextKeys.USER_LOCALE`, key name `"userLocale"` | no executor puts it any more; `context.get(...)` would be empty. Delete the lookup |
+| `CompactionGuard.maybeCompact(buffer, model, hooks, userLocale[, executionId])`, `forceCompact(...)` likewise | the same methods without the `userLocale` argument: `maybeCompact(buffer, model, hooks[, executionId])`. An implementor drops the parameter from its override |
+| `new ReloadInvoker(type, name, userLocale)` | `new ReloadInvoker(type, name)` |
+| `new TaskTool(model, subagents, tools, hooks, userLocale, manager, ...)`, `new WorkflowTool(...)`, `new SubagentBackedSkillForkExecutor(...)` | the same constructors without the `userLocale` argument; the other arguments keep their order |
+| `new CompactCommand(engine, hooks, hookManager, userLocale)`, `new CompactCommand(engine, guard, hooks, hookManager, userLocale)` | the same constructors without the last argument |
+| messages `"UserLocale cannot be null"`, `"userLocale cannot be null"`, `"userLocale must not be null"`, `"userLocale must not be null in context"`, `"DefaultContextEngine requires a UserLocale"`, `"RollingContextEngine requires a UserLocale"` | no longer thrown |
+
+`X` is every type the previous section lists, minus the removed `AgentEnvironmentSnapshot`: `HookContext` and its
+thirteen event contexts, `RewakeCapableRuntime`, `OrcaToolProviderContext`, `OrcaProviderDependencies`,
+`OrcaCommandProviderContext`, `OrcaAgentRuntime`, `ContextRequest`, `CompactionRequest`, `CompactionGuardRequest`,
+`SummaryRequest`, `SubagentExecutionEnvironment`, `SubagentExecutionContext`, `ToolInvocationSpec`, `ReloadInvoker`,
+and the builder of `GraalJsWorkflowTool`.
+
+IMPORTANT: this is **removal, not migration**, and there is no deprecated alias -- a getter that returned a default
+value nobody reads would have kept the plumbing the change exists to remove. A `HookContext` implemented outside the
+repository drops its `getUserLocale()` override (it no longer overrides anything, so an `@Override` on it stops
+compiling).
+
+**Not a data migration.** The value never reached a wire or stored format -- no session record, transcript,
+subagent task codec, inbox frame or shell-hook payload carried it -- so an older node and an older record are
+unaffected, and a rolling upgrade needs no ordering. The prompt is unchanged: it never carried a time zone or a date
+from this type. A deployment that wants the model to know the date renders it in its own time zone and passes it as
+a system-prompt variable.
+
+Three behaviours changed with the null checks that went away: `/compact` is registered, a skill fork gets its
+subagent-backed executor, and `DefaultContextEngine` / `RollingContextEngine` accept a request, without a
+`UserLocale` having been supplied. Both shipped assemblies always supplied one, so nothing observable changes there.
 
 ---
 

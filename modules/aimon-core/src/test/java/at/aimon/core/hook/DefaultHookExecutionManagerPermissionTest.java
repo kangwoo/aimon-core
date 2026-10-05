@@ -11,7 +11,6 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.tool.ToolInput;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.event.PermissionDeniedContext;
 import at.aimon.core.hook.event.PermissionDeniedHook;
 import at.aimon.core.hook.event.PermissionRequestContext;
@@ -28,8 +27,6 @@ import at.aimon.core.hook.execution.HookResult;
  */
 class DefaultHookExecutionManagerPermissionTest {
 
-    private static final UserLocale ENV = UserLocale.createDefault();
-
     @Test
     void executePermissionRequestRoutesToPermissionRequestHooks() {
         final HookExecutor executor = mock(HookExecutor.class);
@@ -40,8 +37,7 @@ class DefaultHookExecutionManagerPermissionTest {
         when(registry.getHooks(HookEventType.PERMISSION_REQUEST)).thenReturn(List.<PermissionRequestHook>of());
 
         final PermissionRequestContext ctx = PermissionRequestContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).userLocale(ENV).toolName("Bash").toolInput(ToolInput.of())
-                .build();
+                .invokerName("main").hookRegistry(registry).toolName("Bash").toolInput(ToolInput.of()).build();
 
         final List<HookResult> results = manager.executePermissionRequest(ctx);
         assertThat(results).hasSize(1);
@@ -58,8 +54,7 @@ class DefaultHookExecutionManagerPermissionTest {
         when(registry.getHooks(HookEventType.PERMISSION_REQUEST)).thenReturn(List.<PermissionRequestHook>of());
 
         final PermissionRequestContext ctx = PermissionRequestContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).userLocale(ENV).toolName("Bash").toolInput(ToolInput.of())
-                .build();
+                .invokerName("main").hookRegistry(registry).toolName("Bash").toolInput(ToolInput.of()).build();
 
         final List<HookResult> results = manager.executePermissionRequest(ctx);
 
@@ -81,7 +76,7 @@ class DefaultHookExecutionManagerPermissionTest {
         when(registry.getHooks(HookEventType.PERMISSION_DENIED)).thenReturn(List.<PermissionDeniedHook>of());
 
         final PermissionDeniedContext ctx = PermissionDeniedContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).userLocale(ENV).toolName("Bash").toolInput(ToolInput.of())
+                .invokerName("main").hookRegistry(registry).toolName("Bash").toolInput(ToolInput.of())
                 .denyReason("policy").build();
 
         final List<HookResult> results = manager.executePermissionDenied(ctx);

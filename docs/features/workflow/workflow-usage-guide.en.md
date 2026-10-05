@@ -83,7 +83,6 @@ SubagentExecutionEnvironment baseEnv = SubagentExecutionEnvironment.builder()
         .subagentRegistry(subagentRegistry)
         .toolRegistry(toolRegistry)
         .hookRegistry(hookRegistry)
-        .userLocale(userLocale)
         .defaultModel(agent.getMetadata().getModel())
         .build();
 

@@ -28,7 +28,6 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.PostToolContext;
@@ -239,7 +238,7 @@ class SubagentResultDisplayHookTest {
             lenient().when(subagentRegistry.getAllSubagents()).thenReturn(List.of());
             executionManager = mock(SubagentExecutionManager.class);
             taskTool = new TaskTool(mock(LlmModel.class), subagentRegistry, mock(ToolRegistry.class),
-                    mock(HookRegistry.class), mock(UserLocale.class), executionManager);
+                    mock(HookRegistry.class), executionManager);
         }
 
         @Test

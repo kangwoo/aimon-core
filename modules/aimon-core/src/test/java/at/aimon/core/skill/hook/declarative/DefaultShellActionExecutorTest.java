@@ -16,7 +16,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.environment.UnavailableExecutionEnvironment;
@@ -137,7 +136,7 @@ class DefaultShellActionExecutorTest {
     void run_noExecutionEnvironmentInContext_doesNotRunAndReportsNotObserved() {
         // An out-of-execution context: there is no environment, and there must be no host fallback.
         HookContext context = OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault()).build();
+                .hookRegistry(new DefaultHookRegistry()).build();
         assertThat(context.getExecutionEnvironment()).isEmpty();
 
         ShellHookOutcome outcome = executor.run(new ShellAction("touch /tmp/should-not-exist", Duration.ofSeconds(1)),
@@ -152,8 +151,7 @@ class DefaultShellActionExecutorTest {
     @Test
     void run_inExecutionContextBuiltWithoutEnvironment_doesNotRun() {
         HookContext context = OnStartContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault()).userMessage("hi")
-                .build();
+                .hookRegistry(new DefaultHookRegistry()).userMessage("hi").build();
 
         ShellHookOutcome outcome = executor.run(new ShellAction("true", Duration.ofSeconds(1)), context, Map.of(),
                 null);
@@ -272,7 +270,7 @@ class DefaultShellActionExecutorTest {
 
     private static HookContext contextIn(ExecutionEnvironment executionEnvironment) {
         return OnStartContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .executionEnvironment(executionEnvironment).userMessage("hi").build();
+                .hookRegistry(new DefaultHookRegistry()).executionEnvironment(executionEnvironment).userMessage("hi")
+                .build();
     }
 }

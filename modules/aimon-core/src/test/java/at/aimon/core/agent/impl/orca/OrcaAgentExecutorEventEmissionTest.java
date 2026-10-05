@@ -49,7 +49,6 @@ import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.environment.TestExecutionEnvironments;
@@ -601,7 +600,7 @@ class OrcaAgentExecutorEventEmissionTest {
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
                 .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
                 .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
-                .compactionGuard(compactionGuard).userLocale(UserLocale.createDefault()).build();
+                .compactionGuard(compactionGuard).build();
     }
 
     private OrcaAgentExecutor createExecutor(LlmClient client) {
@@ -736,7 +735,7 @@ class OrcaAgentExecutorEventEmissionTest {
 
         @Override
         public synchronized CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model,
-                HookRegistry hookRegistry, UserLocale userLocale) {
+                HookRegistry hookRegistry) {
             calls++;
             if (calls != compactOnCall) {
                 return nonCompactAction == CompactionDecision.Action.WARN

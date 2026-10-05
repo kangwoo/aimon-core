@@ -10,7 +10,6 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.event.SubagentStartContext;
 import at.aimon.core.hook.event.SubagentStartHook;
 import at.aimon.core.hook.event.SubagentStopContext;
@@ -25,8 +24,6 @@ import at.aimon.core.hook.execution.HookResult;
  */
 class DefaultHookExecutionManagerSubagentTest {
 
-    private static final UserLocale ENV = UserLocale.createDefault();
-
     @Test
     void executeSubagentStartRoutesToSubagentStartHooks() {
         final HookExecutor executor = mock(HookExecutor.class);
@@ -37,8 +34,7 @@ class DefaultHookExecutionManagerSubagentTest {
         when(registry.getHooks(HookEventType.SUBAGENT_START)).thenReturn(List.<SubagentStartHook>of());
 
         final SubagentStartContext ctx = SubagentStartContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).userLocale(ENV).subagentName("Explore").taskId("t-1")
-                .goal("g").build();
+                .invokerName("main").hookRegistry(registry).subagentName("Explore").taskId("t-1").goal("g").build();
 
         final List<HookResult> results = manager.executeSubagentStart(ctx);
         assertThat(results).hasSize(1);
@@ -55,8 +51,7 @@ class DefaultHookExecutionManagerSubagentTest {
         when(registry.getHooks(HookEventType.SUBAGENT_STOP)).thenReturn(List.<SubagentStopHook>of());
 
         final SubagentStopContext ctx = SubagentStopContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).userLocale(ENV).subagentName("Explore").taskId("t-1")
-                .success(true).build();
+                .invokerName("main").hookRegistry(registry).subagentName("Explore").taskId("t-1").success(true).build();
 
         final List<HookResult> results = manager.executeSubagentStop(ctx);
         assertThat(results).hasSize(1);

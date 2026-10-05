@@ -247,7 +247,7 @@ sessions.submit(sessionId, "ops-agent", req.getInput(),
 | 읽는 것 | 서버에서의 문제 |
 |--------|---------------|
 | jar 위치 또는 `user.dir` (CLI 의 `getJarDirectory()`) | Boot jar 에서 code source URI 가 **opaque** 라 `toURI().getPath()` 가 null → `jarPath.endsWith(".jar")` 가 **NPE** → `catch(Exception)` 이 삼키고 `user.dir` 로 조용히 폴백한다. 실제 repackage 된 jar 로 확인됨 |
-| `Environment.createDefault()` 의 `user.dir` (이 표를 쓴 때의 이름이다 — 작업 디렉터리는 그 뒤 실행의 `EnvironmentDescriptor` 로 옮겨 갔고, `Environment` 는 시간대만 든 `UserLocale` 이 되었다) | 컨테이너의 CWD 는 의미 없는 값 |
+| `Environment.createDefault()` 의 `user.dir` (이 표를 쓴 때의 이름이다 — 작업 디렉터리는 그 뒤 실행의 `EnvironmentDescriptor` 로 옮겨 갔고, `Environment` 는 시간대만 든 `UserLocale` 이 되었다가 읽는 곳이 없어 EE-60 으로 지워졌다) | 컨테이너의 CWD 는 의미 없는 값 |
 | `HookConfigLoader.createDefault()` / hook hot reload 의 `user.home` | 컨테이너에서 `/` 또는 `/root` |
 | `BundledSkillMaterializer` 의 `.aimon/bundled-skills` **기동 시 디스크 쓰기** | 읽기 전용 루트 파일시스템에서 실패 |
 | `DefaultCommandRegistry.initialize()` 의 `.aimon/commands/*.md` | 무관한 파일 하나가 컨텍스트 기동 실패로 |

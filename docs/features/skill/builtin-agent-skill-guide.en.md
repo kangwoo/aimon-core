@@ -208,7 +208,7 @@ What happens when the `review` example above (`execution.mode: fork`, `agent: co
 ### Preconditions
 
 1. A SubAgent named `code-reviewer` must be registered (`.aimon/agents/code-reviewer.md`, or a built-in bundle). If it is not, the fork fails immediately without any LLM or SubAgent call.
-2. The host must wire the whole SubAgent infrastructure (the six pieces: `Agent`, `SubagentRegistry`, `ToolRegistry`, `HookRegistry`, `UserLocale`, `SubagentExecutionManager`). `aimon-cli` satisfies this by default. Miss any one of them and a fork-mode skill invocation fails with `fork execution is not configured` — deliberate behaviour, so that an inline-only deployment remains possible.
+2. The host must wire the whole SubAgent infrastructure (the five pieces: `Agent`, `SubagentRegistry`, `ToolRegistry`, `HookRegistry`, `SubagentExecutionManager`). `aimon-cli` satisfies this by default. Miss any one of them and a fork-mode skill invocation fails with `fork execution is not configured` — deliberate behaviour, so that an inline-only deployment remains possible.
 
 ### A fork applies both allow-lists together
 

@@ -13,7 +13,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.PreToolContext;
@@ -29,7 +28,6 @@ import at.aimon.core.skill.hook.declarative.predicate.NameOnlyPredicate;
 class DeclarativePreToolHookTest {
 
     private static final HookRegistry REGISTRY = new DefaultHookRegistry();
-    private static final UserLocale ENV = UserLocale.createDefault();
 
     @Test
     void execute_matchingDenyAction_returnsBlockWithReason() {
@@ -332,8 +330,7 @@ class DeclarativePreToolHookTest {
 
     private static PreToolContext contextFor(String toolName) {
         return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENV).toolUse(ToolUse.of("call-1", toolName, Map.of()))
-                .iterationCount(3).build();
+                .hookRegistry(REGISTRY).toolUse(ToolUse.of("call-1", toolName, Map.of())).iterationCount(3).build();
     }
 
     private static final class RecordingExecutor implements ShellActionExecutor {

@@ -32,7 +32,6 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.permission.AllowedTool;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
@@ -59,7 +58,6 @@ class TaskToolTest {
     private SubagentRegistry subagentRegistry;
     private ToolRegistry toolRegistry;
     private HookRegistry hookRegistry;
-    private UserLocale userLocale;
     private SubagentExecutionManager executionManager;
     private TaskTool tool;
 
@@ -69,10 +67,9 @@ class TaskToolTest {
         subagentRegistry = mock(SubagentRegistry.class);
         toolRegistry = mock(ToolRegistry.class);
         hookRegistry = mock(HookRegistry.class);
-        userLocale = mock(UserLocale.class);
         executionManager = mock(SubagentExecutionManager.class);
         lenient().when(subagentRegistry.getAllSubagents()).thenReturn(List.of());
-        tool = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale, executionManager);
+        tool = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, executionManager);
     }
 
     private SubagentExecutionResult successResult() {
@@ -93,18 +90,16 @@ class TaskToolTest {
 
     @Test
     void constructorRejectsNullArguments() {
-        assertThatNullPointerException().isThrownBy(
-                () -> new TaskTool(null, subagentRegistry, toolRegistry, hookRegistry, userLocale, executionManager));
-        assertThatNullPointerException().isThrownBy(
-                () -> new TaskTool(defaultModel, null, toolRegistry, hookRegistry, userLocale, executionManager));
-        assertThatNullPointerException().isThrownBy(
-                () -> new TaskTool(defaultModel, subagentRegistry, null, hookRegistry, userLocale, executionManager));
-        assertThatNullPointerException().isThrownBy(
-                () -> new TaskTool(defaultModel, subagentRegistry, toolRegistry, null, userLocale, executionManager));
-        assertThatNullPointerException().isThrownBy(
-                () -> new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, null, executionManager));
-        assertThatNullPointerException().isThrownBy(
-                () -> new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale, null));
+        assertThatNullPointerException()
+                .isThrownBy(() -> new TaskTool(null, subagentRegistry, toolRegistry, hookRegistry, executionManager));
+        assertThatNullPointerException()
+                .isThrownBy(() -> new TaskTool(defaultModel, null, toolRegistry, hookRegistry, executionManager));
+        assertThatNullPointerException()
+                .isThrownBy(() -> new TaskTool(defaultModel, subagentRegistry, null, hookRegistry, executionManager));
+        assertThatNullPointerException()
+                .isThrownBy(() -> new TaskTool(defaultModel, subagentRegistry, toolRegistry, null, executionManager));
+        assertThatNullPointerException()
+                .isThrownBy(() -> new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, null));
     }
 
     @Test
@@ -179,8 +174,8 @@ class TaskToolTest {
     @Test
     void executeRejectsResumeWhenSnapshotNotFound() {
         SessionSnapshotStore store = new InMemorySessionSnapshotStore();
-        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale,
-                executionManager, List.of(), null, store);
+        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, executionManager,
+                List.of(), null, store);
         ToolInput input = ToolInput
                 .of(Map.of("subagent_name", "Explore", "prompt", "p", "description", "d", "resume", "missing"));
 
@@ -279,8 +274,8 @@ class TaskToolTest {
         SessionSnapshot saved = SessionSnapshot.of(SessionId.generate(), "sys", List.of());
         // The transcript is tagged with the caller's own context, so the scoped resume load surfaces it.
         store.save("task-123", "Explore", AgentRuntimeId.of("agent:test"), saved);
-        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale,
-                executionManager, List.of(), null, store);
+        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, executionManager,
+                List.of(), null, store);
         when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"), anyString(),
                 anyString())).thenReturn(successResult());
         ToolInput input = ToolInput
@@ -303,8 +298,8 @@ class TaskToolTest {
         // The snapshot was recorded by "Explore" in the caller's own context; resuming it as "Plan" must be rejected on
         // the subagent-name check (the context check passes, so we reach the mismatch branch), not silently grafted.
         store.save("task-123", "Explore", AgentRuntimeId.of("agent:test"), saved);
-        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale,
-                executionManager, List.of(), null, store);
+        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, executionManager,
+                List.of(), null, store);
         ToolInput input = ToolInput
                 .of(Map.of("subagent_name", "Plan", "prompt", "p", "description", "d", "resume", "task-123"));
 
@@ -323,8 +318,8 @@ class TaskToolTest {
         // The transcript belongs to a different agent's runtime. Even though the id is known, the caller
         // (agent:test) must not be able to resume — and thereby read — another agent's transcript.
         store.save("task-123", "Explore", AgentRuntimeId.of("agent:other"), saved);
-        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale,
-                executionManager, List.of(), null, store);
+        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, executionManager,
+                List.of(), null, store);
         ToolInput input = ToolInput
                 .of(Map.of("subagent_name", "Explore", "prompt", "p", "description", "d", "resume", "task-123"));
 
@@ -341,8 +336,8 @@ class TaskToolTest {
     void nineArgConstructorAcceptsConversationSnapshotStore() {
         SessionSnapshotStore store = new InMemorySessionSnapshotStore();
 
-        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale,
-                executionManager, List.of(), null, store);
+        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, executionManager,
+                List.of(), null, store);
 
         assertThat(withStore.getDefinition().getName()).isEqualTo(TaskTool.TOOL_NAME);
     }
@@ -567,8 +562,8 @@ class TaskToolTest {
     void eightArgConstructorAcceptsTaskOutputStore() {
         TaskOutputStore store = new InMemoryTaskOutputStore();
 
-        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale,
-                executionManager, List.of(), store);
+        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, executionManager,
+                List.of(), store);
 
         assertThat(withStore.getDefinition().getName()).isEqualTo(TaskTool.TOOL_NAME);
     }

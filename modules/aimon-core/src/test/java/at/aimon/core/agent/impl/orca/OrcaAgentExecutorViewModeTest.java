@@ -28,7 +28,6 @@ import at.aimon.core.agent.session.transcript.SessionLogState;
 import at.aimon.core.agent.session.transcript.SessionLogStorage;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
@@ -224,8 +223,8 @@ class OrcaAgentExecutorViewModeTest {
                 .commandRegistry(new DefaultCommandRegistry(fileSystem, ".aimon/commands"))
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
                 .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
-                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
-                .userLocale(UserLocale.createDefault()).contextEngine(engine).build();
+                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem)).contextEngine(engine)
+                .build();
     }
 
     /** Answers from a script, in order, and records the messages of every call. */

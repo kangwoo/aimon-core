@@ -26,7 +26,6 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.AgentRuntimeRegistry;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.tool.ToolInput;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.OnConfigReloadContext;
@@ -531,8 +530,7 @@ class DefaultRewakeFireListenerTest {
 
     /** Stub context implementing both {@link AgentRuntime} and {@link RewakeCapableRuntime}. */
     private static AgentRuntime stubCapableContext(HookRegistry hookRegistry) {
-        final UserLocale env = UserLocale.createDefault();
-        return new CapableStub(hookRegistry, env);
+        return new CapableStub(hookRegistry);
     }
 
     @FunctionalInterface
@@ -556,11 +554,9 @@ class DefaultRewakeFireListenerTest {
 
     private static final class CapableStub implements AgentRuntime, RewakeCapableRuntime {
         private final HookRegistry hookRegistry;
-        private final UserLocale userLocale;
 
-        CapableStub(HookRegistry hookRegistry, UserLocale userLocale) {
+        CapableStub(HookRegistry hookRegistry) {
             this.hookRegistry = hookRegistry;
-            this.userLocale = userLocale;
         }
 
         @Override
@@ -583,9 +579,5 @@ class DefaultRewakeFireListenerTest {
             return hookRegistry;
         }
 
-        @Override
-        public UserLocale getUserLocale() {
-            return userLocale;
-        }
     }
 }

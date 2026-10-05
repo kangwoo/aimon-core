@@ -33,7 +33,6 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.EnvironmentRequest;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.environment.UnavailableExecutionEnvironment;
@@ -172,8 +171,6 @@ class DefaultSubagentExecutorTest {
         final ToolContext captured = probe.captured.get();
         assertThat(captured).isNotNull();
         assertThat(captured.get(ToolContextKeys.AGENT_RUNTIME_ID)).isPresent();
-        assertThat(captured.get(ToolContextKeys.USER_LOCALE)).containsSame(context.getUserLocale());
-        assertThat(captured.get("userLocale", UserLocale.class)).containsSame(context.getUserLocale());
         assertThat(captured.get(ToolContextKeys.LLM_CALL_METADATA_KEY)).isPresent();
         assertThat(captured.get(ToolContextKeys.ARTIFACT_COLLECTOR)).isPresent();
         assertThat(captured.get(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY)).isPresent();
@@ -220,8 +217,8 @@ class DefaultSubagentExecutorTest {
         final SubagentExecutionContext context = SubagentExecutionContext.builder()
                 .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent("explorer", 5))
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(registry)
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .knowledgeStore(knowledgeStore).knowledgeScope(knowledgeScope).build();
+                .hookRegistry(new DefaultHookRegistry()).knowledgeStore(knowledgeStore).knowledgeScope(knowledgeScope)
+                .build();
 
         final SubagentExecutionResult result = newExecutor(llm).execute(context, request("probe"));
 
@@ -248,8 +245,7 @@ class DefaultSubagentExecutorTest {
         final SubagentExecutionContext context = SubagentExecutionContext.builder()
                 .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent("explorer", 5))
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(registry)
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .toolContextEnrichers(List.of(enricher)).build();
+                .hookRegistry(new DefaultHookRegistry()).toolContextEnrichers(List.of(enricher)).build();
 
         final SubagentExecutionResult result = newExecutor(llm).execute(context, request("probe"));
 
@@ -273,8 +269,7 @@ class DefaultSubagentExecutorTest {
         final SubagentExecutionContext context = SubagentExecutionContext.builder()
                 .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(builder)
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .executionEnvironmentProvider(provider).build();
+                .hookRegistry(new DefaultHookRegistry()).executionEnvironmentProvider(provider).build();
 
         newExecutor(llm).execute(context, request("build it"));
 
@@ -345,8 +340,7 @@ class DefaultSubagentExecutorTest {
         final SubagentExecutionContext context = SubagentExecutionContext.builder()
                 .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent("explorer", 5))
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(registry)
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault()).outputSink(sink)
-                .build();
+                .hookRegistry(new DefaultHookRegistry()).outputSink(sink).build();
 
         final SubagentExecutionResult result = newExecutor(llm).execute(context, request("probe"));
 
@@ -434,8 +428,7 @@ class DefaultSubagentExecutorTest {
             final SubagentExecutionContext context = SubagentExecutionContext.builder()
                     .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent("explorer", 5))
                     .defaultModel(LlmModel.builder().name("parent-model").reasoningSummary(summary).build())
-                    .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry())
-                    .userLocale(UserLocale.createDefault()).build();
+                    .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry()).build();
 
             assertThat(newExecutor(llm).execute(context, request("go")).isSuccess()).isTrue();
 
@@ -461,7 +454,7 @@ class DefaultSubagentExecutorTest {
         return SubagentExecutionContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test-1"))
                 .subagent(subagent(subagentName, maxIterations)).defaultModel(LlmModel.builder().name("gpt-4").build())
                 .toolRegistry(toolRegistry).hookRegistry(new DefaultHookRegistry())
-                .userLocale(UserLocale.createDefault()).parentCancellationSignal(parentSignal).build();
+                .parentCancellationSignal(parentSignal).build();
     }
 
     private Subagent subagent(String subagentName, int maxIterations) {

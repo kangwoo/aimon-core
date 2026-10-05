@@ -10,7 +10,6 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.event.OnConfigReloadContext;
 import at.aimon.core.hook.event.OnConfigReloadHook;
 import at.aimon.core.hook.execution.AskPromptHandler;
@@ -24,8 +23,6 @@ import at.aimon.core.hook.execution.HookResult;
  */
 class DefaultHookExecutionManagerConfigReloadTest {
 
-    private static final UserLocale ENV = UserLocale.createDefault();
-
     @Test
     void executeOnConfigReloadRoutesToOnConfigReloadHooks() {
         final HookExecutor executor = mock(HookExecutor.class);
@@ -36,7 +33,7 @@ class DefaultHookExecutionManagerConfigReloadTest {
         when(registry.getHooks(HookEventType.ON_CONFIG_RELOAD)).thenReturn(List.<OnConfigReloadHook>of());
 
         final OnConfigReloadContext ctx = OnConfigReloadContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("config-watcher").hookRegistry(registry).userLocale(ENV).reloadCounter(1L)
+                .invokerName("config-watcher").hookRegistry(registry).reloadCounter(1L)
                 .configSource("/etc/aimon/hooks.json").build();
 
         final List<HookResult> results = manager.executeOnConfigReload(ctx);

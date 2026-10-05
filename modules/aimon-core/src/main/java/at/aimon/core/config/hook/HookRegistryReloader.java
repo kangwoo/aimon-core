@@ -90,7 +90,7 @@ public final class HookRegistryReloader {
      *            the manager used to fire {@link at.aimon.core.hook.event.OnConfigReloadHook OnConfigReload}; may be
      *            {@code null} to suppress event firing (e.g. during initial bootstrap before hooks are wired)
      * @param invoker
-     *            invoker identity (type / name / user locale) embedded in the {@link OnConfigReloadContext} (must not
+     *            invoker identity (type / name) embedded in the {@link OnConfigReloadContext} (must not
      *            be null)
      */
     public HookRegistryReloader(HookConfigLoader loader, HookConfigMerger merger, HookRegistryApplier bootstrap,
@@ -117,7 +117,7 @@ public final class HookRegistryReloader {
      *            the manager used to fire {@link at.aimon.core.hook.event.OnConfigReloadHook OnConfigReload}; may be
      *            {@code null} to suppress event firing
      * @param invoker
-     *            invoker identity (type / name / user locale) embedded in the {@link OnConfigReloadContext} (must not
+     *            invoker identity (type / name) embedded in the {@link OnConfigReloadContext} (must not
      *            be null)
      * @param rewakeService
      *            the application-scoped rewake service used to cancel envelopes for removed hooks; pass
@@ -344,8 +344,8 @@ public final class HookRegistryReloader {
         }
         try {
             final OnConfigReloadContext.Builder b = OnConfigReloadContext.builder().invokerType(invoker.getType())
-                    .invokerName(invoker.getName()).hookRegistry(registry).userLocale(invoker.getUserLocale())
-                    .reloadCounter(counter).successful(successful);
+                    .invokerName(invoker.getName()).hookRegistry(registry).reloadCounter(counter)
+                    .successful(successful);
             if (!configSource.isEmpty()) {
                 b.configSource(configSource);
             }
