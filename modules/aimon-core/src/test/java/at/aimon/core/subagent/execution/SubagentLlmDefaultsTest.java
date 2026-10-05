@@ -7,6 +7,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.llm.LlmModel;
+import at.aimon.core.llm.ReasoningSummary;
 import at.aimon.core.subagent.Subagent;
 
 @DisplayName("SubagentLlmDefaults.resolveModel — model resolution priority")
@@ -114,5 +115,37 @@ class SubagentLlmDefaultsTest {
         Subagent subagent = subagentWithModel(null);
         assertThatNullPointerException().isThrownBy(() -> SubagentLlmDefaults.resolveModel(null, DEFAULT_MODEL, "x"));
         assertThatNullPointerException().isThrownBy(() -> SubagentLlmDefaults.resolveModel(subagent, null, "x"));
+    }
+
+    @Test
+    @DisplayName("the spawning agent's reasoningSummary is carried onto the subagent's model, none included")
+    void parentReasoningSummaryIsCarried() {
+        for (ReasoningSummary summary : ReasoningSummary.values()) {
+            LlmModel parent = LlmModel.builder().name("parent-model").reasoningSummary(summary).build();
+
+            assertThat(SubagentLlmDefaults.resolveModel(subagentWithModel("frontmatter-model"), parent)
+                    .getReasoningSummary()).as("frontmatter model, parent %s", summary).contains(summary);
+            assertThat(SubagentLlmDefaults.resolveModel(subagentWithModel(null), parent, "override-model")
+                    .getReasoningSummary()).as("override model, parent %s", summary).contains(summary);
+        }
+    }
+
+    @Test
+    @DisplayName("a parent that states no reasoningSummary leaves the subagent's unset, so the deployment key decides")
+    void anUnsetParentReasoningSummaryStaysUnset() {
+        LlmModel resolved = SubagentLlmDefaults.resolveModel(subagentWithModel("frontmatter-model"), DEFAULT_MODEL);
+
+        assertThat(resolved.getReasoningSummary()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a nested fork resolved from an already-resolved subagent model keeps the value")
+    void aNestedForkKeepsTheReasoningSummary() {
+        LlmModel parent = LlmModel.builder().name("parent-model").reasoningSummary(ReasoningSummary.NONE).build();
+        LlmModel child = SubagentLlmDefaults.resolveModel(subagentWithModel("child-model"), parent);
+
+        LlmModel grandchild = SubagentLlmDefaults.resolveModel(subagentWithModel("grandchild-model"), child);
+
+        assertThat(grandchild.getReasoningSummary()).contains(ReasoningSummary.NONE);
     }
 }

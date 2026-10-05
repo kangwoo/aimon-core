@@ -12,8 +12,12 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.ReasoningEffort;
+import at.aimon.core.llm.ReasoningSummary;
 
 class AgentDefinitionVersionTest {
+
+    /** Recorded from the tree before {@code model.reasoningSummary} existed. */
+    private static final String VERSION_BEFORE_REASONING_SUMMARY = "48b1808b2ef83048";
 
     @Test
     void sameDefinitionYieldsSameVersion() {
@@ -84,6 +88,32 @@ class AgentDefinitionVersionTest {
 
         assertThat(AgentDefinitionVersion.from(low)).isNotEqualTo(AgentDefinitionVersion.from(high));
         assertThat(AgentDefinitionVersion.from(low)).isNotEqualTo(AgentDefinitionVersion.from(unset));
+    }
+
+    @Test
+    void changedReasoningSummaryChangesVersion() {
+        final Agent none = DefaultAgent.builder().name("a").systemPrompt("p")
+                .model(LlmModel.builder().name("m").reasoningSummary(ReasoningSummary.NONE).build()).build();
+        final Agent detailed = DefaultAgent.builder().name("a").systemPrompt("p")
+                .model(LlmModel.builder().name("m").reasoningSummary(ReasoningSummary.DETAILED).build()).build();
+        final Agent unset = DefaultAgent.builder().name("a").systemPrompt("p")
+                .model(LlmModel.builder().name("m").build()).build();
+
+        assertThat(AgentDefinitionVersion.from(none)).isNotEqualTo(AgentDefinitionVersion.from(detailed));
+        // none is a statement, not the absence of one: it overrides a deployment that asks for a summary.
+        assertThat(AgentDefinitionVersion.from(none)).isNotEqualTo(AgentDefinitionVersion.from(unset));
+    }
+
+    /**
+     * The line is written only when the key is set, so a definition that does not use the key keeps the version it
+     * had before the key existed — a scheduled task recorded against it does not report a drift that did not happen.
+     */
+    @Test
+    void aDefinitionWithoutAReasoningSummaryKeepsItsVersion() {
+        final Agent agent = DefaultAgent.builder().name("orca").systemPrompt("You are Orca.")
+                .model(LlmModel.builder().name("gpt-5.1").build()).build();
+
+        assertThat(AgentDefinitionVersion.from(agent).value()).isEqualTo(VERSION_BEFORE_REASONING_SUMMARY);
     }
 
     @Test

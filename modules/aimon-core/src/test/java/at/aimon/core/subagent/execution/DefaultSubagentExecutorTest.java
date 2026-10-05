@@ -47,6 +47,7 @@ import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.ReasoningSummary;
 import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.Role;
 import at.aimon.core.llm.ToolDefinition;
@@ -420,6 +421,41 @@ class DefaultSubagentExecutorTest {
                 .satisfies(m -> assertThat(m.getReasoningTraces()).containsExactly(trace));
     }
 
+    /**
+     * A fork's LLM calls carry the spawning agent's {@code reasoningSummary}. A subagent definition names its model
+     * as a bare string, so this is the only place the value can come from; without it the fork follows the
+     * deployment's setting where its parent had overridden it.
+     */
+    @Test
+    @DisplayName("the fork's LLM call carries the spawning agent's reasoningSummary, none included")
+    void theForkCarriesTheParentReasoningSummary() {
+        for (ReasoningSummary summary : new ReasoningSummary[]{ReasoningSummary.NONE, ReasoningSummary.DETAILED}) {
+            final StubLlmClient llm = new StubLlmClient();
+            final SubagentExecutionContext context = SubagentExecutionContext.builder()
+                    .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent("explorer", 5))
+                    .defaultModel(LlmModel.builder().name("parent-model").reasoningSummary(summary).build())
+                    .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry())
+                    .userLocale(UserLocale.createDefault()).build();
+
+            assertThat(newExecutor(llm).execute(context, request("go")).isSuccess()).isTrue();
+
+            assertThat(llm.models).isNotEmpty().allSatisfy(
+                    model -> assertThat(model.getReasoningSummary()).as("parent %s", summary).contains(summary));
+        }
+    }
+
+    @Test
+    @DisplayName("a parent that states no reasoningSummary leaves the fork's call without one")
+    void theForkOfAParentWithoutAReasoningSummaryCarriesNone() {
+        final StubLlmClient llm = new StubLlmClient();
+        final SubagentExecutionContext context = createContext("explorer", NoopCancellationSignal.INSTANCE,
+                new DefaultToolRegistry(), 5);
+
+        assertThat(newExecutor(llm).execute(context, request("go")).isSuccess()).isTrue();
+
+        assertThat(llm.models).isNotEmpty().allSatisfy(model -> assertThat(model.getReasoningSummary()).isEmpty());
+    }
+
     private SubagentExecutionContext createContext(String subagentName, CancellationSignal parentSignal,
             ToolRegistry toolRegistry, int maxIterations) {
         return SubagentExecutionContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test-1"))
@@ -522,6 +558,8 @@ class DefaultSubagentExecutorTest {
         private final Deque<LlmResponse> responses = new ArrayDeque<>();
         /** The message list of every call, so a test can read what the NEXT request was actually handed. */
         private final List<List<Message>> seen = new ArrayList<>();
+        /** The model config of every call. */
+        private final List<LlmModel> models = new ArrayList<>();
         private int calls;
         private boolean alwaysToolUse;
 
@@ -536,6 +574,7 @@ class DefaultSubagentExecutorTest {
                 LlmModel modelConfig, LlmCallMetadata metadata) {
             calls++;
             seen.add(List.copyOf(messages));
+            models.add(modelConfig);
             if (!responses.isEmpty()) {
                 return responses.poll();
             }

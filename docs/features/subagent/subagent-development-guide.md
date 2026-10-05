@@ -347,7 +347,7 @@ public interface SubagentBehavior {
 
 | `support` accessor | ReAct가 쓰는 값과 동일? | 설명 |
 |--------------------|--------------------------|------|
-| `resolvedModel()` | ✅ | 호출별 override, 없으면 서브에이전트 `model`, 없으면 default 의 이름에 default 의 temperature·max tokens 를 합친 **해석된 모델**. 이름은 쓰인 그대로 보내고(별칭을 풀지 않는다) 비어 있을 수 있으며, 그러면 클라이언트가 자기 기본 모델을 보낸다. (raw `ctx.getDefaultModel()`은 override 도 `model` 도 미반영) |
+| `resolvedModel()` | ✅ | 호출별 override, 없으면 서브에이전트 `model`, 없으면 default 의 이름에 default 의 temperature·max tokens 를 합친 **해석된 모델**. 이름은 쓰인 그대로 보내고(별칭을 풀지 않는다) 비어 있을 수 있으며, 그러면 클라이언트가 자기 기본 모델을 보낸다. 띄운 에이전트의 `model.reasoningSummary` 도 물려받는다(`none` 포함, 중첩 포크도) — 서브에이전트 정의의 `model` 은 이름 하나라 자기 값을 적을 자리가 없고, 띄운 에이전트가 적지 않았으면 배포의 키를 따른다. `reasoningEffort` 는 물려받지 않는다. (raw `ctx.getDefaultModel()`은 override 도 `model` 도 미반영) |
 | `scopedToolRegistry()` | ✅ | 서브에이전트 allow-list로 필터된 registry (**노출만, 강제 아님** — trusted code는 `ctx.getToolRegistry()`로 전체 접근 가능) |
 | `effectiveLlmCallMetadata()` | ✅ | 서브에이전트 사용량 귀속 metadata (component=이름, feature="subagent") |
 | `llmGateway()` | ✅ | ReAct와 동일 config(기본 재시도, 폴백 없음)의 게이트웨이. `LlmClient` 미배선 시 `Optional.empty()` |

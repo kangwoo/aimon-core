@@ -575,6 +575,16 @@ On this vendor the reasoning itself is `encrypted_content` — ciphertext by des
 human-readable surrogate there is.** That is why this key has a different name from Anthropic's
 `thinkingDisplay`.
 
+**An agent definition's `model.reasoningSummary` wins over this key.** Its values are `none` \| `auto` \|
+`concise` \| `detailed`, case-insensitive. The last three are spelled as this key spells them, and `none` exists in
+the agent definition only — this key is turned off by leaving it out, but an agent needs a word to turn off a
+summary the deployment turned on. `off`, a boolean, an empty value or an unknown word fails loading the agent with
+an error that lists the four values. The order is the agent definition's value > this key > nothing asked for, and
+whether the model accepts a summary (`supportsReasoningSummary`) is checked after that. A subagent has nowhere to
+state a value of its own (its `model` is a single name), so it inherits the value of the agent that started it.
+Under `provider: anthropic`, `model.reasoningSummary` is ignored and the client says so once at WARN — what
+decides thinking text there is `thinkingDisplay`.
+
 **Responses API only.** If the model does not support the reasoning trace round trip, or that endpoint is
 switched off, the request goes to Chat Completions, which has no such parameter — and in that case the client
 says so once at WARN (rather than doing nothing in silence).

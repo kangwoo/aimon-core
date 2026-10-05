@@ -30,6 +30,7 @@ import com.openai.services.blocking.chat.ChatCompletionService;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ReasoningEffort;
+import at.aimon.core.llm.ReasoningSummary;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.capability.ModelCapabilityRegistry;
 import ch.qos.logback.classic.Level;
@@ -299,5 +300,66 @@ class OpenAIResponsesParameterDivergenceTest {
         send(client, LlmModel.builder().build(), List.of());
 
         assertThat(warnings()).noneMatch(warning -> warning.contains("reasoningSummary"));
+    }
+
+    // ---- the agent's model.reasoningSummary, which takes precedence over the client's key ----
+
+    @Test
+    @DisplayName("an agent's summary level on a model routed to Chat Completions is reported like the client key")
+    void anAgentSummaryOnAChatOnlyModelIsReported() {
+        lenient().when(mockOpenAIClient.chat()).thenReturn(mockChatService);
+        lenient().when(mockChatService.completions()).thenReturn(mockChatCompletionService);
+        lenient()
+                .when(mockChatCompletionService
+                        .create(any(com.openai.models.chat.completions.ChatCompletionCreateParams.class)))
+                .thenThrow(new RuntimeException("create-invoked"));
+        final OpenAILlmClient client = new OpenAILlmClient(
+                OpenAIConfig.builder().apiKey("test-key").model("gpt-4o").build(), mockOpenAIClient);
+        final LlmModel agentModel = LlmModel.builder().reasoningSummary(ReasoningSummary.DETAILED).build();
+
+        // Twice: said once per signature, so a subagent that inherits the value on every call does not repeat it.
+        assertThatThrownBy(() -> send(client, agentModel, List.of())).hasRootCauseMessage("create-invoked");
+        assertThatThrownBy(() -> send(client, agentModel, List.of())).hasRootCauseMessage("create-invoked");
+
+        assertThat(warnings()).filteredOn(
+                warning -> warning.contains("reasoningSummary") && warning.contains("not routed to the Responses API"))
+                .hasSize(1);
+    }
+
+    @Test
+    @DisplayName("an agent's none silences that report: nothing was asked for, so nothing is inert")
+    void anAgentNoneOnAChatOnlyModelIsSilent() {
+        lenient().when(mockOpenAIClient.chat()).thenReturn(mockChatService);
+        lenient().when(mockChatService.completions()).thenReturn(mockChatCompletionService);
+        lenient()
+                .when(mockChatCompletionService
+                        .create(any(com.openai.models.chat.completions.ChatCompletionCreateParams.class)))
+                .thenThrow(new RuntimeException("create-invoked"));
+        final OpenAILlmClient client = new OpenAILlmClient(OpenAIConfig.builder().apiKey("test-key").model("gpt-4o")
+                .reasoningSummary(OpenAiReasoningSummary.DETAILED).build(), mockOpenAIClient);
+
+        assertThatThrownBy(
+                () -> send(client, LlmModel.builder().reasoningSummary(ReasoningSummary.NONE).build(), List.of()))
+                .hasRootCauseMessage("create-invoked");
+
+        assertThat(warnings()).noneMatch(warning -> warning.contains("reasoningSummary"));
+    }
+
+    @Test
+    @DisplayName("the agent's value reaches the Responses request the client sends, over the client's own key")
+    void theAgentValueReachesTheRequestTheClientSends() {
+        final OpenAILlmClient client = client(config().reasoningSummary(OpenAiReasoningSummary.DETAILED).build());
+        final ArgumentCaptor<ResponseCreateParams> captor = ArgumentCaptor.forClass(ResponseCreateParams.class);
+
+        send(client, LlmModel.builder().reasoningSummary(ReasoningSummary.NONE).build(), List.of());
+        send(client, LlmModel.builder().reasoningSummary(ReasoningSummary.CONCISE).build(), List.of());
+        send(client, LlmModel.builder().build(), List.of());
+
+        org.mockito.Mockito.verify(mockResponseService, org.mockito.Mockito.times(3)).create(captor.capture());
+        assertThat(ResponsesFixtures.bodyOf(captor.getAllValues().get(0))).doesNotContain("summary");
+        assertThat(ResponsesFixtures.bodyTreeOf(captor.getAllValues().get(1)).get("reasoning").get("summary").asText())
+                .isEqualTo("concise");
+        assertThat(ResponsesFixtures.bodyTreeOf(captor.getAllValues().get(2)).get("reasoning").get("summary").asText())
+                .isEqualTo("detailed");
     }
 }

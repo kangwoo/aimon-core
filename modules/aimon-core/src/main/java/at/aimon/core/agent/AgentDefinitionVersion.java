@@ -121,6 +121,10 @@ public final class AgentDefinitionVersion {
         lines.add("model.presencePenalty=" + render(model.getPresencePenalty()));
         lines.add("model.frequencyPenalty=" + render(model.getFrequencyPenalty()));
         lines.add("model.reasoningEffort=" + render(model.getReasoningEffort()));
+        // Decides whether a request asks for a reasoning summary, so a change to it is a definition change. Only
+        // written when present, so every definition that does not set it keeps the digest it had before the key
+        // existed, and a task scheduled against one does not report a drift that did not happen.
+        model.getReasoningSummary().ifPresent(summary -> lines.add("model.reasoningSummary=" + summary));
         lines.add("model.requestTimeout=" + render(model.getRequestTimeout()));
         lines.add("tags=" + String.join(",", new TreeSet<>(metadata.getTags())));
         for (Map.Entry<String, Object> variable : new TreeMap<>(content.getVariables()).entrySet()) {

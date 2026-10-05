@@ -52,6 +52,14 @@ public final class SubagentLlmDefaults {
      * and the client applies its own default model at request time rather than a name invented here. Temperature and
      * max-tokens are always inherited from {@code defaultModel} — only the model name is overridden.
      *
+     * <p>
+     * The spawning agent's {@code reasoningSummary} is inherited as well,
+     * {@link at.aimon.core.llm.ReasoningSummary#NONE}
+     * included: a subagent definition names its model as a bare string and has nowhere to state one of its own, so
+     * without this a fork would follow the deployment's setting where its parent had overridden it. Left unset when
+     * the parent states none. Whether the subagent's model can carry the request is still decided by the provider,
+     * from that model's capabilities. {@code reasoningEffort} is not inherited.
+     *
      * @param subagent
      *            the subagent (must not be null)
      * @param defaultModel
@@ -75,7 +83,8 @@ public final class SubagentLlmDefaults {
             modelName = defaultModel.getName().orElse(null);
         }
         return LlmModel.builder().name(modelName).temperature(defaultModel.getTemperature().orElse(DEFAULT_TEMPERATURE))
-                .maxTokens(defaultModel.getMaxTokens().orElse(DEFAULT_MAX_TOKENS)).build();
+                .maxTokens(defaultModel.getMaxTokens().orElse(DEFAULT_MAX_TOKENS))
+                .reasoningSummary(defaultModel.getReasoningSummary().orElse(null)).build();
     }
 
     /**

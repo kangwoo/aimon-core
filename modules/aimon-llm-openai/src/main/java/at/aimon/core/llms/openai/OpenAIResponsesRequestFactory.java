@@ -186,7 +186,7 @@ final class OpenAIResponsesRequestFactory {
             any = true;
         }
 
-        final Optional<OpenAiReasoningSummary> summary = config.getReasoningSummary();
+        final Optional<OpenAiReasoningSummary> summary = OpenAiRequestParameters.requestedSummary(modelConfig, config);
         if (summary.isPresent()) {
             if (capabilities.supportsReasoningSummary()) {
                 reasoning.summary(OpenAiReasoningSummaries.toWire(summary.get()));

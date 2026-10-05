@@ -24,6 +24,7 @@ import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.base.DefinitionAttributes;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.ReasoningEffort;
+import at.aimon.core.llm.ReasoningSummary;
 
 /**
  * Parses agent loader files with YAML frontmatter.
@@ -42,6 +43,7 @@ import at.aimon.core.llm.ReasoningEffort;
  *   name: gpt5.1
  *   temperature: 0.7
  *   reasoningEffort: high
+ *   reasoningSummary: auto
  * tags:
  *   - coding
  *   - java
@@ -232,6 +234,9 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
         if (configMap.containsKey("reasoningEffort")) {
             builder.reasoningEffort(extractReasoningEffort(configMap));
         }
+        if (configMap.containsKey("reasoningSummary")) {
+            builder.reasoningSummary(extractReasoningSummary(configMap));
+        }
 
         return builder.build();
     }
@@ -271,6 +276,43 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
         }
         throw new AgentDefinitionParseException(
                 "Invalid model.reasoningEffort: " + value + ". Accepted values: " + accepted + ".");
+    }
+
+    /**
+     * Reads {@code model.reasoningSummary} onto the neutral enum, ignoring case.
+     *
+     * <p>
+     * Read the way {@link #extractReasoningEffort} reads its key: a value that is not one of the constants is an
+     * error naming the key, the value and every accepted spelling, never a substituted default. Three of the four
+     * words are the ones the OpenAI deployment key accepts; {@code none} is the fourth, and it is what an agent writes
+     * to ask for no summary where the deployment asks for one.
+     *
+     * <p>
+     * {@code off} is not accepted. YAML reads an unquoted {@code off} as the boolean {@code false}, so accepting the
+     * quoted word would make the key behave differently with and without quotes; a boolean, an empty value and
+     * {@code ~} are refused for the same reason — none of them is guessed to mean {@code none}.
+     *
+     * @param configMap
+     *            the {@code model} block
+     * @return the matching constant
+     * @throws AgentDefinitionParseException
+     *             naming the key and every accepted spelling when nothing matches
+     */
+    private ReasoningSummary extractReasoningSummary(Map<String, Object> configMap) {
+        final Object value = configMap.get("reasoningSummary");
+        if (value instanceof String written) {
+            for (ReasoningSummary candidate : ReasoningSummary.values()) {
+                if (candidate.name().equalsIgnoreCase(written.trim())) {
+                    return candidate;
+                }
+            }
+        }
+        final StringBuilder accepted = new StringBuilder();
+        for (ReasoningSummary candidate : ReasoningSummary.values()) {
+            accepted.append(accepted.length() == 0 ? "" : ", ").append(candidate.name().toLowerCase(Locale.ROOT));
+        }
+        throw new AgentDefinitionParseException(
+                "Invalid model.reasoningSummary: " + value + ". Accepted values: " + accepted + ".");
     }
 
     /**

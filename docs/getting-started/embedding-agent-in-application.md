@@ -506,6 +506,10 @@ aimon:
   미지정) 아래에 적힌 이 블록은 무시되지 않고 **기동을 실패시킵니다**. 키는 둘입니다.
   `aimon.llm.openai.reasoning-summary` 는 `auto` · `concise` · `detailed` 중 하나로, 모델의 추론 요약을
   요청하고 그 텍스트를 흘려보냅니다(Responses API 전용이고, 적지 않으면 요청은 글자 하나 바뀌지 않습니다).
+  에이전트 정의의 `model.reasoningSummary`(`none` · `auto` · `concise` · `detailed`)가 이 프로퍼티를 이깁니다. `none` 은
+  에이전트 정의에만 있는 값으로, 프로퍼티가 켠 요약을 그 에이전트에서만 끕니다 — 프로퍼티 자체는 세 값만 받고 적지 않는
+  것으로 끕니다. 서브에이전트는 자기를 띄운 에이전트의 값을 물려받고, anthropic 분기는 그 값을 무시하며 한 번 WARN 으로
+  말합니다.
   `aimon.llm.openai.responses-api-enabled` 는 Responses API(`/v1/responses`) 경로를 쓸지 정하며, 적지 않으면
   `true` 입니다.
 

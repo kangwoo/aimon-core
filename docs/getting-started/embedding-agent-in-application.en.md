@@ -534,7 +534,12 @@ aimon:
   alone** — written under `provider: anthropic` (or no provider at all) it is not ignored, it **fails
   startup**. It has two keys. `aimon.llm.openai.reasoning-summary` is one of `auto` · `concise` · `detailed`:
   it asks for a summary of the model's reasoning and streams that text (Responses API only, and left unset the
-  request does not change by a character). `aimon.llm.openai.responses-api-enabled` decides whether the
+  request does not change by a character).
+  An agent definition's `model.reasoningSummary` (`none` · `auto` · `concise` · `detailed`) wins over this property.
+  `none` exists in the agent definition only: it turns off, for that agent, a summary the property turned on — the
+  property itself takes the three values and is turned off by leaving it out. A subagent inherits the value of the
+  agent that started it, and the anthropic branch ignores the value and says so once at WARN.
+  `aimon.llm.openai.responses-api-enabled` decides whether the
   Responses API (`/v1/responses`) path is used, and is `true` when unset.
 
   ```yaml
