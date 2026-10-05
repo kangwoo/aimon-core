@@ -367,4 +367,58 @@ class OpenAIReasoningLiveTest {
             assertThat(response.getStopReason()).contains(StopReason.END_TURN);
         }
     }
+
+    /**
+     * RD-8: the {@code status: "incomplete"} half of {@link OpenAiResponseStopReasons#fromStatus}, which every probe
+     * before this one missed because every probe ended normally.
+     *
+     * <p>
+     * <strong>What a wrong mapping would look like is nothing.</strong> A reason string the mapper does not know falls
+     * through to {@link StopReason#UNKNOWN}, and a caller then cannot tell a response cut by its budget from one that
+     * simply ended. So the vocabulary has to come off the wire once, on both paths, since the streaming mapper reads
+     * it from the terminal event rather than from a response body.
+     *
+     * <p>
+     * <strong>Only the budget branch is reachable on demand.</strong> {@code content_filter} needs the server to
+     * refuse its own output, which a test cannot ask for; that branch stays read from the documentation.
+     *
+     * <p>
+     * <strong>Cost.</strong> Two calls of 16 output tokens each — the endpoint's minimum — on the cheaper model.
+     * Measured on 2026-10-05: both spend the whole budget on reasoning and return no text.
+     */
+    @Nested
+    @DisplayName("RD-8: a response cut at max_output_tokens says so")
+    class TheBudgetRunsOut {
+
+        /** The smallest {@code max_output_tokens} the endpoint accepts; anything lower is a 400, not a cut. */
+        private static final int SMALLEST_BUDGET = 16;
+
+        private static final String LONG_ANSWER_PROMPT = "Write a 500 word essay about rivers.";
+
+        @Test
+        @DisplayName("non-streaming: incomplete + max_output_tokens arrives as MAX_TOKENS")
+        void aCutResponseIsMaxTokens() {
+            final OpenAILlmClient client = new OpenAILlmClient(
+                    config(SUMMARY_MODEL).maxTokens(SMALLEST_BUDGET).build());
+
+            final LlmResponse response = client.sendMessage(SYSTEM, List.of(Message.user(LONG_ANSWER_PROMPT)),
+                    List.of(), LlmModel.builder().build());
+
+            assertThat(response.getStopReason()).contains(StopReason.MAX_TOKENS);
+        }
+
+        @Test
+        @DisplayName("streaming: the terminal event carries the same status and reason")
+        void aCutStreamIsMaxTokens() {
+            final List<LlmStreamChunk> chunks = new ArrayList<>();
+            final OpenAILlmClient client = new OpenAILlmClient(
+                    config(SUMMARY_MODEL).maxTokens(SMALLEST_BUDGET).build());
+
+            final LlmResponse response = client.sendMessageStreaming(SystemPromptParts.empty(),
+                    List.of(Message.user(LONG_ANSWER_PROMPT)), List.of(), LlmModel.builder().build(),
+                    LlmCallMetadata.empty(), LlmStreamingOptions.defaults(), chunks::add);
+
+            assertThat(response.getStopReason()).contains(StopReason.MAX_TOKENS);
+        }
+    }
 }
