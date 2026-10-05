@@ -461,7 +461,7 @@ public final class OpenAIConfig {
          * {@code gpt-5.6-terra} is the row that does list {@code NONE}, and on Chat Completions it is the rung that
          * matters: measured against {@code api.openai.com}, a tools request with no effort is a 400 there
          * (2026-09-10) and the same request with {@code reasoning_effort: "none"} is a 200 (2026-10-05). The other
-         * rungs of that row were measured on {@code /v1/responses} only. The tables are in
+         * rungs of that row are a 400 alongside tools and a 200 without them (2026-10-05). The tables are in
          * {@code docs/design/llm/model-capabilities.md} §6.3 and §6.4.
          *
          * <p>

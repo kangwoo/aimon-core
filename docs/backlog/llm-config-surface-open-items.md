@@ -1,4 +1,4 @@
-# LLM 설정 표면 — 등록 항목 27건 (열림 10 · 닫힘 17)
+# LLM 설정 표면 — 등록 항목 28건 (열림 10 · 닫힘 18)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
 설계는 옛 `model-capability-config-key.md`(지금은 [`../design/llm/configuration-surface.md`](../design/llm/configuration-surface.md)) 이고,
@@ -189,6 +189,29 @@ N-1 을 여기 적는 이유는 그것이 답이라고 보아서가 아니라 **
 >
 > **위 2026-09-10 (#61) 칸은 그대로 이 항목의 것이다** — 터라의 `none` 을 Chat Completions 에서
 > 재는 일은 이 라운드가 하지 않았고, 그 스위치는 여전히 자바로만 켤 수 있다.
+
+> **2026-10-05 — `responsesApiEnabled` 절반이 내려왔다. 항목은 샘플링 절반으로 열려 있다.** 위 표의 첫 행 그대로다 —
+> CLI `llm.openai.responsesApiEnabled`, 스타터 `aimon.llm.openai.responses-api-enabled`. 표면에서는 nullable `Boolean` 이라
+> 적지 않으면 `OpenAIConfig` 의 기본값(`true`)이 그대로이고, provider 가 openai 가 아니면 이 키 하나만 적힌 블록도
+> `refuseOpenAiBlock` 이 이름으로 거절한다. 실패하는 테스트를 먼저 썼다 — `LlmClientFactoryTest` 의
+> `yamlTurnsTheResponsesPathOff` · `theSwitchBindsBothWays` · `theSwitchAloneUnderAnthropicIsRefused`, `CliConfigLoaderTest.bindsResponsesApiEnabled`,
+> `AimonAutoConfigurationTest` 의 `responsesApiEnabledReachesTheOpenAiClient` · `responsesApiEnabledUnderAnthropicIsRefused`.
+>
+> **위 2026-09-10 (#61) 칸을 쟀다.** 이 항목은 스위치를 내리는 사람에게 터라의 `none` 을 Chat 에서 재거나 재지 않았다고
+> 적으라고 했다. 쟀다(`api.openai.com` `/v1/chat/completions`, 2026-10-05): `reasoning_effort: "none"` 은 도구가 없을 때도
+> 함수 도구 하나를 실었을 때도 **200** 이다 — 행의 `NONE` 은 그 엔드포인트에서도 옳다. 전제도 소스로 확인했다:
+> `OpenAiRequestParameters.maySendEffort` 는 두 엔드포인트가 함께 부른다(`OpenAILlmClient.applyReasoningEffort`,
+> `OpenAIResponsesRequestFactory.acceptedEffort`).
+>
+> **그 칸의 옆에서 새 항목이 나왔다 (L-28).** 같은 날 나머지 rung 도 쟀더니 `low` · `medium` · `high` 는 도구와 함께면 400 이다.
+> 이 스위치가 설정으로 내려오면서 그 조합이 운영자 경로가 되었다.
+>
+> **착수하며 틀렸던 것 (규칙 둘).** `AimonDocumentedPropertiesTest` 는 문서 → 프로퍼티 방향만 본다 — 프로퍼티가 문서에
+> 있어야 한다고 요구하지 않는다. 그래서 #62 의 `aimon.llm.openai.reasoning-summary` 는 스타터 가이드에 적힌 적이 없었고,
+> 이번에 두 키를 함께 적었다.
+>
+> **남은 것.** 샘플링 파라미터 넷(`temperature` · `topP` · 두 penalty)은 여전히 자바 전용이다. 유효범위가 벤더마다 다르다는
+> 질문이 붙어 있어 함께 내리지 않았다.
 
 ---
 
@@ -824,6 +847,31 @@ setter 를 갖고 있다(2026-09-10 확인, 불리언은 원시형이라 값이 
 
 **언제 다시 볼까.** 다음에 선언 키를 더하는 사람이 `hasSize(8)` 을 고칠 때 — 이 구멍이 실제로 열리는 순간이
 그때다. 그보다 먼저 하면 더 싸다.
+
+### 닫힘 (2026-10-05)
+
+`ModelCapabilityDeclarationTest.everyDeclarableKeyReachesTheDescriptor` 가 그 가드다 — `@TestFactory` 이고 키마다 동적 테스트
+하나, **테스트 안에 키 이름이 하나도 없다.** 키마다 합성한 값 둘에 대해 (1) 그 키만 적은 선언의 `capabilities()` 가
+`ModelCapabilities.builder().<같은 이름>(값).build()` 와 같은지(setter 는 이름으로 리플렉션해 찾는다), (2) 두 값이 서로 다른
+descriptor 를 내는지 본다. (2) 가 없으면 빠진 `Boolean` 키가 probe 값이 fail-open 기본값과 같을 때 통과하고,
+`ModelCapabilities.equals` 에서 빠진 필드도 못 잡는다. 같은 이름의 setter 가 없는 키는 건너뛰지 않고 이름을 대며 실패한다.
+
+**항목이 열어 둔 선택 — testkit 을 그대로 쓴다.** `aimon-core` 의 테스트가 `aimon-llm-capability-testkit` 을
+`testImplementation` 으로 받는다. 사이클은 없다(`aimon-core:test` → testkit:main → `aimon-core:main`, 파일 시스템 · 메모리
+testkit 과 같은 모양이고 아키텍처 테스트가 통과한다). testkit 이 필요한 것을 이미 공개하고 있었고(`DeclarableKeys.names()`,
+`ProbeValues.distinctPairFor(key)`), 사본은 두 표면 계약이 말하는 "모든 선언 키" 와 어긋날 수 있는 150줄이 된다.
+
+**사다리 짝은 특별 취급하지 않았다.** 두 키 모두 `ModelCapabilities.Builder` 에 같은 이름의 setter 가 있고 접기는 그 setter 가
+하므로 일반 규칙을 그대로 지난다. 둘을 함께 적는 경우는 `build()` 가 거절하고 `bothLadderKeysAreRefused` 가 이미 고정한다.
+
+**처방을 변이로 확인했다 (규칙 다섯).** `resolve(Builder)` 에서 `supportsReasoningSummary` 의 복사 한 줄을 지우고 돌렸더니 그
+키의 동적 테스트가 빨개졌고 메시지가 빠진 줄을 이름으로 가리켰다(*"the line for `supportsReasoningSummary` is missing or forwards
+something other than the declared value"*). 나머지 일곱은 초록이었다. 줄은 되돌렸다.
+
+**그 증명의 한계.** 같은 변이에 손으로 쓴 테스트 둘(`theReasoningSummaryIsDeclarableOnItsOwn`, `everyFlagRoundTrips`)도
+빨개졌다 — 지금의 여덟 키에는 키별 단언이 이미 있기 때문이다. 변이가 보인 것은 가드가 빠진 줄을 잡고 이름을 댄다는 것이지,
+**아홉 번째 키** 자체를 흉내 낸 것은 아니다. `theRefusalMessageNamesEveryDeclarableKey` 의 `hasSize(8)` 은 그대로다. descriptor
+쪽에서 일부러 다른 이름을 쓰는 키가 생기면 이 가드는 누가 그 대응을 테스트에 적을 때까지 실패한다 — 의도한 동작이다.
 
 ---
 
@@ -1747,6 +1795,52 @@ javadoc 의 `model: sonnet` 은 부모 에이전트의 모델을 쓴다고 적�
 
 **어디** *(2026-10-05)* — `modules/aimon-llm-anthropic/README.md` 의 빠른 시작과 동적 모델 예시, `AnthropicConfig` 의 클래스
 javadoc 과 `Builder.model`, `AnthropicLlmClient` 의 클래스 javadoc, `MarkdownSubagentParser` · `SubagentParser` 의 형식 예시.
+
+---
+
+## L-28 — Chat Completions 로 강제한 `gpt-5.6-terra` 는 도구 요청에 `none` 이 아닌 effort 를 실으면 400 이고, 클라이언트는 그대로 싣는다
+
+*(2026-10-05 등록. 출처는 L-2 의 `responsesApiEnabled` 절반 — 그 스위치를 설정으로 내리면서 잰 것.)*
+
+**무엇을.** `responsesApiEnabled=false` 아래에서 내장 `gpt-5.6-terra` 행을 가진 모델에 도구와 effort 가 함께 실릴 때 클라이언트가
+무엇을 할지 정한다. 후보는 셋이 보인다 — (a) `supportsToolsWithReasoning` 을 엔드포인트별 사실로 만들어 Chat 에서는 effort 를
+보고하고 생략한다(다른 모델의 행이 이미 하는 일이다), (b) 기동 시 그 조합을 거절하거나 WARN 한다, (c) 지금처럼 서버의 400 에
+맡기고 문서로 알린다.
+
+**왜.** 실측이다(`api.openai.com` `/v1/chat/completions`, 2026-10-05, `max_completion_tokens: 64`, 한 단어짜리 프롬프트).
+
+| `reasoning_effort` | 도구 없음 | 함수 도구 하나 |
+|---|---|---|
+| (없음) | — | **400** *(2026-09-10)* |
+| `none` | 200 | 200 |
+| `low` | 200 | **400** |
+| `medium` | 200 | **400** |
+| `high` | 200 | **400** |
+
+400 의 본문은 넷 다 같다 — *"Function tools with reasoning_effort are not supported for gpt-5.6-terra in /v1/chat/completions. To use
+function tools, use /v1/responses or set reasoning_effort to 'none'."*(`param: reasoning_effort`). 터라의 행은
+`supportsToolsWithReasoning: true` 이고 그것은 `/v1/responses` 에서 잰 사실이다. 판정 지점 `OpenAiRequestParameters.maySendEffort`
+는 두 엔드포인트가 함께 부르므로, Chat 으로 강제한 터라에 `reasoningEffort: low` 와 도구가 있으면 클라이언트는 그대로 내보내고
+**에이전트의 모든 턴이 400 으로 끝난다.** effort 를 적지 않아도 400 이다. 듣는 설정은 `reasoningEffort: none` 하나다.
+
+**L-2 전에는 자바로만 닿았다.** 스위치가 설정 키가 된 지금은 yaml 두 줄로 닿는다. 두 가이드와 `default-config.yaml` 의 주석,
+`OpenAIConfig.Builder.responsesApiEnabled` 의 javadoc 이 그 사실과 출구(`none`)를 적는다 — 오늘의 처방은 (c) 다.
+
+**심각도 (규칙 셋).** 좁다. 이 스위치의 문서화된 대상은 Chat 전용 **게이트웨이**이고, 게이트웨이 뒤의 모델이 무엇을 받는지는 그
+게이트웨이가 정한다. 위 표는 `api.openai.com` 자신에 대고 스위치를 끈 경우다 — 그럴 이유가 있는 배포는 드물다. 그리고 실패는
+조용하지 않다: 400 이고 본문이 출구를 말한다.
+
+**처방은 적용해 보지 않았다 (규칙 다섯).** (a) 는 capability 행의 플래그 하나를 엔드포인트의 함수로 만드는 일이라
+`ModelCapabilities` 의 모양을 건드린다 — 그리고 "게이트웨이 뒤의 터라" 가 같은 답을 하는지는 모른다. 행이 왜 지금 그 값인지는
+[`../design/llm/model-capabilities.md`](../design/llm/model-capabilities.md) §6.1 · §6.3 에 있다.
+
+**어디** *(2026-10-05)* — `modules/aimon-llm-openai/src/main/java/at/aimon/core/llms/openai/OpenAiRequestParameters.java` 의
+`maySendEffort`(170행), `OpenAILlmClient.applyReasoningEffort`(514행), 내장 표의 `gpt-5.6-terra` exact 행. 예시
+`modules/aimon-cli/examples/gpt-5.6-terra.yaml` 의 주석 블록(35~41행)은 Chat 전용 게이트웨이에서 왕복을 끄라고 안내하면서
+`supportsToolsWithReasoning: true` 를 그대로 다시 적는다 — 따라 하면 effort 가 `none` 이 아닌 한 위 400 에 닿는다.
+
+**언제 다시 볼까.** `api.openai.com` 에 대고 이 스위치를 끈 배포가 400 을 보고할 때, 또는 `gpt-5.6` 가족의 다른 이름
+(`luna` · `sol`)에 행을 줄 때 — 같은 구멍이 있는지 그때 함께 잰다.
 
 ---
 

@@ -336,6 +336,18 @@ Spring 서비스와 스케줄 루틴이 함께 읽는다. #61 이 `model.reasoni
 [#81](https://github.com/kangwoo/aimon-core/issues/81)(라이브 테스트 계층에 CI 신호가 없다)이 어느 쪽으로
 결정되든 그 결정이 이 프로브를 실을 자리를 만든다.
 
+> **2026-10-05 — 첫 갈래를 쟀다. 항목은 둘째 갈래로 열려 있다.** `max_output_tokens: 16`(그 엔드포인트의 최솟값)을 준 요청은
+> `gpt-5-mini` 와 `gpt-5.6-terra` 둘 다 HTTP 200 에 `status: "incomplete"`, `incomplete_details: {"reason": "max_output_tokens"}`
+> 로 답한다 — 매퍼가 읽는 두 문자열 그대로다. 출력은 `reasoning` 항목 하나뿐이고 텍스트는 없다(예산이 전부 추론에 쓰인다).
+> 그 응답이 클라이언트를 지나 `StopReason.MAX_TOKENS` 가 되는 것을 **두 경로 모두** 라이브로 확인했다 — 응답 본문을 읽는
+> `OpenAIResponsesExchange` 와, 종료 이벤트에서 읽는 `OpenAIResponsesStreamingMapper`. 테스트는
+> `OpenAIReasoningLiveTest.TheBudgetRunsOut` 의 `aCutResponseIsMaxTokens` · `aCutStreamIsMaxTokens` 이고 `OPENAI_KEY` 가 있을 때만
+> 돈다(호출 둘, 각 16 출력 토큰).
+>
+> **`content_filter` 갈래는 재지 못했다.** 서버가 자기 출력을 거부해야 나오는 값이라 요청으로 유발할 방법이 없다. 그 분기는
+> 여전히 문서로만 참이다 — "두 갈래 다 실측됐다" 로 읽으면 안 된다. 트리거의 #81 은 이미 닫혔고(라이브 계층에는 CI 신호를 두지
+> 않기로 했다), 이 프로브가 실린 자리는 그 결정이 남긴 수동 계층이다.
+
 ---
 
 ## RD-9 — #43 의 "포팅할 때 보존할 것" 다섯은 코드로 답했지 실측하지 않았다

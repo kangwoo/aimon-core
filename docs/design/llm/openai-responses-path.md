@@ -472,7 +472,7 @@ rung 집합, `temperature` 값 거부 — 은 내장 표의 근거이므로 [`mo
 |---|---|---|
 | `/v1/responses` 가 도구와 reasoning 을 한 요청에 받는가 | 받는다(200) — `gpt-5-nano`, `o4-mini`, `o3-mini`, `o3`, `o1`, `gpt-5.6-terra` | 2026-09-09 |
 | 같은 도구 요청을 Chat Completions 로 강제하면 | `gpt-5.6-terra` 에 `responsesApiEnabled(false)` 로 Chat 을 강제하고 `temperature` 도 `reasoning_effort` 도 없이 도구만 실은 요청이 **HTTP 400** — *"Function tools with reasoning_effort are not supported for gpt-5.6-terra in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'."* 기본 설정(Responses 로 라우팅)의 같은 요청은 수용. 파라미터를 바꾸는 것이 아니라 **라우팅이 수정이다** | 2026-09-10 |
-| Chat Completions 로 강제한 `gpt-5.6-terra` 에 `reasoning_effort: "none"` 을 실으면 | **200** — 도구 없이 한 번, 함수 도구 하나를 실어 한 번(`max_completion_tokens: 64`, `finish_reason: stop`, `reasoning_tokens: 0`). 윗줄의 오류 본문이 말한 출구가 실제로 열려 있다. `low` · `medium` · `high` 는 Chat 에서 보내지 않았다 | 2026-10-05 |
+| Chat Completions 로 강제한 `gpt-5.6-terra` 에 `reasoning_effort: "none"` 을 실으면 | **200** — 도구 없이 한 번, 함수 도구 하나를 실어 한 번(`max_completion_tokens: 64`, `finish_reason: stop`, `reasoning_tokens: 0`). 윗줄의 오류 본문이 말한 출구가 실제로 열려 있다. `low` · `medium` · `high` 는 도구 없이는 200, 함수 도구 하나와 함께는 셋 다 윗줄과 같은 문구의 **400**(`param: reasoning_effort`) | 2026-10-05 |
 | `store: false` 에서 `encrypted_content` 가 오는가 | 온다 | 2026-09-09 |
 | 되실은 reasoning item 을 서버가 소비하는가 | 온전한 item 은 수용, `encrypted_content` 의 40자를 덮어쓴 대조군은 400(*"could not be verified"*) — 수용은 무시가 아니라 검증된 소비다. 손상 대조군은 `o4-mini` · `gpt-5.6-terra` 에서만 돌렸고, 이것이 모델별이 아닌 플랫폼 수준 검사라는 해석은 추론이다 | 2026-09-09 · 2026-09-10 |
 | reasoning item 을 빼고 다시 보내면 | 200 — item 은 요청의 개선이지 전제조건이 아니다. 그래서 trace 왕복을 켜도, 되던 요청이 item 부족으로 실패하지 않는다 | 2026-09-09 |

@@ -574,12 +574,13 @@ llm:
 `reasoningSummary` 는 아무 데도 닿지 않는다.
 
 **`gpt-5.6-terra` 를 `api.openai.com` 의 Chat Completions 로 강제하면 도구 요청에는 `reasoningEffort: none` 이
-필요하다.** 실측한 칸은 셋이다. effort 를 적지 않고 도구를 실은 요청은 **HTTP 400** 이다(2026-09-10) —
+필요하다.** 실측한 칸은 다섯이다. effort 를 적지 않고 도구를 실은 요청은 **HTTP 400** 이다(2026-09-10) —
 *"Function tools with reasoning_effort are not supported for gpt-5.6-terra in /v1/chat/completions. To use
 function tools, use /v1/responses or set reasoning_effort to 'none'."* `reasoning_effort: "none"` 을 실은 요청은
 도구가 없을 때도, 함수 도구 하나를 실었을 때도 **200** 이다(2026-10-05, `finish_reason: stop`,
-`reasoning_tokens: 0`). **그 밖의 rung(`low` · `medium` · `high`)을 Chat Completions 에서 보낸 적은 없다** —
-그 사다리는 `/v1/responses` 에서 잰 것이고, 위 오류 문구대로라면 도구와 함께는 거절된다. 에이전트 정의의
+`reasoning_tokens: 0`). **그 밖의 rung(`low` · `medium` · `high`)은 도구와 함께 보내면
+같은 문구의 400 이고, 도구가 없으면 200 이다**(2026-10-05, 여섯 요청). 클라이언트는 그 rung 을 그대로 내보내므로
+(백로그 L-28) 거절은 서버가 한다. 에이전트 정의의
 `model.reasoningEffort` 가 `llm.reasoningEffort` 를 이기므로 `none` 은 실제로 요청에 닿는 쪽에 적는다. 이것은
 그 모델 하나의 사정이다 — 게이트웨이 뒤의 모델이 무엇을 받는지는 그 게이트웨이가 정한다.
 
