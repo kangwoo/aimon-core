@@ -50,7 +50,8 @@ the orphaned line would go unreported in the one run that was collecting everyth
 
 ## 3. What a failure says
 
-Each of the three failures prints the line to write or delete.
+Each of the three failures prints the line to write or delete. A fourth, described at the end of this section,
+prints none on purpose.
 
 ```text
 aimon-session-redis: the versions its tests run on and the versions it ships differ from what is recorded.
@@ -67,6 +68,31 @@ The other two read *"recorded as 12.0 -> 17.0.0 (file:line), and is now 13.0 -> 
 reason and a second line for the same module and coordinate each fail with the file and line number.
 
 Every module also writes what it found to `build/reports/test-classpath-versions/differences.txt`.
+
+**A dependency that does not resolve fails first, and with no advice about the record.**
+`resolutionResult.rootComponent` is lenient: where a library cannot be found it hands over the graph with an
+unresolved edge in it instead of throwing. The task as first written followed resolved edges only, so it compared
+two partial graphs, and both ways of getting that wrong were measured on this tree: two coordinates that do not
+exist, added to `aimon-session-redis`, passed; and `org.testcontainers` forced to a version that does not exist on
+`aimon-filesystem-gridfs` produced *"both classpaths resolve 13.0. Delete the line"* for a recorded line that is
+true. The walk now collects unresolved edges from both graphs and, when there is one, stops before the report is
+written and before any add, rewrite or delete advice:
+
+```text
+aimon-filesystem-gridfs: could not resolve every dependency; nothing was compared.
+
+  testRuntimeClasspath: could not resolve org.testcontainers:mongodb:99.99.99 (Could not find org.testcontainers:mongodb:99.99.99.)
+
+  A library that does not resolve is missing from the graph, and a graph with a hole in it compares as though
+  the library were on neither classpath. Nothing above says anything about gradle/test-classpath-version-differences.txt:
+  leave it as it is until this resolves.
+  What was asked for and by whom: ./gradlew :aimon-filesystem-gridfs:dependencies --configuration <runtimeClasspath|testRuntimeClasspath>
+```
+
+Each line names the configuration and the coordinate as it was last asked for (after any substitution or forced
+version), with the first line of Gradle's reason. The unresolved edge travels in the same `rootComponent` value, so
+this added no resolution at configuration time: with a dependency that does not resolve, the configuration cache
+entry is stored and reused, and the reused run fails with the same text (Gradle 9.8.0).
 
 ## 4. The compile axis is left out
 
@@ -95,6 +121,8 @@ here so the next person does not measure it again.
 - **Do not resolve a configuration while the project is being configured.** The task takes
   `resolutionResult.rootComponent` providers; Gradle resolves them when the task runs or when it stores the
   configuration cache entry (stored and reused with no problems reported, Gradle 9.8.0).
+- **Do not walk the graph by resolved edges alone.** An `UnresolvedDependencyResult` is not "no dependency"; dropping
+  it makes the comparison pass, or advise deleting a true line, exactly when something is wrong (section 3).
 - **Do not record a difference without reading where it comes from.** `dependencyInsight` on both configurations is
   two commands, and the failure prints one of them.
 - **Do not treat the four UNDECIDED lines as accepted.** They are in the file so the check can gate the *next*
