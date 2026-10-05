@@ -63,6 +63,58 @@ class YamlDuplicateKeysTest {
         assertThat(loaded).hasSize(2);
     }
 
+    private static Map<Object, Object> load(String yaml) {
+        return new Yaml(new SafeConstructor(new LoaderOptions())).load(yaml);
+    }
+
+    @Test
+    @DisplayName("Should report two spellings snakeyaml constructs one key from: booleans, nulls, numbers, dates")
+    void spellingsOfOneValueAreOneKey() {
+        // Each pair is one entry after snakeyaml's load, the first value gone. The path is the later spelling.
+        final String[][] pairs = {{"yes", "true"}, {"true", "True"}, {"on", "TRUE"}, {"no", "false"}, {"~", "null"},
+                {"null", "Null"}, {"1", "0x1"}, {"10", "1_0"}, {"1.0", "1.00"}, {"2001-01-01", "2001-01-01T00:00:00Z"}};
+        for (String[] pair : pairs) {
+            final String yaml = pair[0] + ": first\n" + pair[1] + ": second\n";
+
+            assertThat(load(yaml)).as("what snakeyaml keeps of %s and %s", pair[0], pair[1]).hasSize(1)
+                    .containsValue("second");
+            assertThat(YamlDuplicateKeys.find(yaml)).as("%s and %s", pair[0], pair[1]).containsExactly(pair[1]);
+        }
+    }
+
+    @Test
+    @DisplayName("Should not report two keys snakeyaml keeps apart, however alike they are written")
+    void keysSnakeyamlKeepsApartAreNotDuplicates() {
+        final String[][] pairs = {{"true", "\"true\""}, {"yes", "no"}, {"null", "\"null\""}, {"1", "1.0"}, {"1", "2"},
+                {"~", "\"\""}, {"!!binary aGk=", "!!binary aGk="}};
+        for (String[] pair : pairs) {
+            final String yaml = pair[0] + ": first\n" + pair[1] + ": second\n";
+
+            assertThat(load(yaml)).as("what snakeyaml keeps of %s and %s", pair[0], pair[1]).hasSize(2);
+            assertThat(YamlDuplicateKeys.find(yaml)).as("%s and %s", pair[0], pair[1]).isEmpty();
+        }
+    }
+
+    @Test
+    @DisplayName("Should still compare by tag and text a key whose value it cannot construct, and go on")
+    void aKeyThatCannotBeConstructedIsComparedAsWritten() {
+        // `!custom` has no constructor in a SafeConstructor: the caller's own load is what reports that.
+        assertThat(YamlDuplicateKeys.find("!custom a: 1\n!custom a: 2\nname: x\nname: y\n")).containsExactly("a",
+                "name");
+        assertThat(YamlDuplicateKeys.find("!custom a: 1\n!custom b: 2\n")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Should leave what the document parses to exactly as it was")
+    void findingDoesNotChangeTheParse() {
+        final String yaml = "yes: 1\ntrue: 2\n~: 3\nnull: 4\nmodel:\n  1: a\n  0x1: b\n";
+        final Map<Object, Object> before = load(yaml);
+
+        assertThat(YamlDuplicateKeys.find(yaml)).containsExactly("true", "null", "model.0x1");
+
+        assertThat(load(yaml)).isEqualTo(before);
+    }
+
     @Test
     @DisplayName("Should not report the same name in two different mappings")
     void theSameNameInTwoMappingsIsNotADuplicate() {
