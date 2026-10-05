@@ -49,7 +49,7 @@ import at.aimon.core.hook.event.OnSessionStartContext;
  * session's fixed {@link SessionId} and injects the session default {@link ExecutionBudget} from the options.
  * Because the same {@code SessionId} is reused across every turn, the executor's transcript manager
  * transparently
- * loads and appends to the same {@code TranscriptBuffer} — preserving history, artifacts, CTX-06 injection state,
+ * loads and appends to the same {@code TranscriptBuffer} — preserving history, artifacts,
  * and CQ-03 mid-turn queue semantics between turns.
  *
  * <h2>Resource ownership</h2>
@@ -781,7 +781,6 @@ public final class DefaultLiveSession implements LiveSession {
             builder.executionAttributes(submitOptions.getExecutionAttributes());
         }
         submitOptions.getLlmCallMetadata().ifPresent(builder::llmCallMetadata);
-        submitOptions.getUserContextInjection().ifPresent(builder::userContextInjection);
         return builder.build();
     }
 

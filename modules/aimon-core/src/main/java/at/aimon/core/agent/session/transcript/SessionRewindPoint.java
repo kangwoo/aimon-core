@@ -33,8 +33,8 @@ import at.aimon.core.agent.input.UserInput;
  *
  * <p>
  * <b>And the options it was submitted with.</b> A turn is not only what was asked but how it was submitted — under
- * which {@link at.aimon.core.base.Principal}, with which system-prompt variables, with user-context injection forced
- * on or off. Those arrive as a {@link SubmitOptions} and are folded into the request, so a retry that dropped them
+ * which {@link at.aimon.core.base.Principal}, with which system-prompt variables and execution attributes.
+ * Those arrive as a {@link SubmitOptions} and are folded into the request, so a retry that dropped them
  * would run the same words as a different caller, against differently assembled context. The point keeps them for the
  * same reason it keeps the input: a retry is meant to be the turn again, not a turn like it.
  *

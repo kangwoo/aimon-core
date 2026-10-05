@@ -187,7 +187,6 @@ public interface AgentExecutor<
 | `AgentRuntimeRegistry` | 런타임 조회 | **application-scoped** |
 | `AgentExecutionRequest` / `AgentExecutionResult` | 턴 입력 / 출력 | 턴 |
 | `InterceptingAgentExecutor` | 횡단 관심사 데코레이터 | — |
-| `AgentEnvironmentSnapshot` | 환경 스냅샷 — 수집 시각·`UserLocale`·확장 맵 (`AgentRuntimeId` 로 memoize) | agent |
 
 IMPORTANT: `AgentRuntime` 은 **세션마다 만들지 않는다.** 부트스트랩에서 1회 등록하고, 앱 종료 또는
 명시적 agent 제거 시에만 닫는다. `LiveSession.close()` 가 `AgentRuntime.close()` 를 부르면 같은

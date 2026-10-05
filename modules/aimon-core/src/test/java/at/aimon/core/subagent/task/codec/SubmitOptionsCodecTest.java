@@ -53,9 +53,26 @@ class SubmitOptionsCodecTest {
                 .executionAttributes(Map.of("ticket", "INC-42"))
                 .llmCallMetadata(LlmCallMetadata.builder().component("incident-bot").feature("triage")
                         .traceId("trace-1").principal(Principal.user("operator-7")).tags(Map.of("env", "prod")).build())
-                .userContextInjection(false).build();
+                .build();
 
         assertThat(SubmitOptionsCodec.decode(SubmitOptionsCodec.encode(options))).isEqualTo(options);
+    }
+
+    /**
+     * Documents written before the user-context block was removed can carry its per-turn opt-out. They sit in session
+     * snapshots and inboxes, so they have to keep decoding — to the same options without it.
+     */
+    @Test
+    @DisplayName("a stored document that still carries the retired userContextInjection field decodes without it")
+    void theRetiredUserContextInjectionFieldIsPassedOver() {
+        final SubmitOptions onlyPrincipal = SubmitOptions.builder().principal(Principal.user("operator-7")).build();
+        final com.fasterxml.jackson.databind.node.ObjectNode stored = SubmitOptionsCodec.encode(onlyPrincipal);
+        stored.put("userContextInjection", false);
+
+        assertThat(SubmitOptionsCodec.decode(stored)).isEqualTo(onlyPrincipal);
+        // And nothing writes it any more, alone or beside other fields.
+        assertThat(SubmitOptionsCodec.encode(onlyPrincipal).has("userContextInjection")).isFalse();
+        assertThat(SubmitOptionsCodec.TOP_LEVEL_FIELDS).doesNotContain("userContextInjection");
     }
 
     /**
@@ -70,7 +87,6 @@ class SubmitOptionsCodecTest {
 
         assertThat(decoded.getLlmCallMetadata()).as("an unset metadata must not materialise as a default one")
                 .isEmpty();
-        assertThat(decoded.getUserContextInjection()).as("the tri-state must stay tri-state").isEmpty();
         assertThat(decoded.getSystemPromptVariables()).isEmpty();
         assertThat(decoded.getExecutionAttributes()).isEmpty();
         assertThat(decoded).isEqualTo(onlyPrincipal);
@@ -139,7 +155,7 @@ class SubmitOptionsCodecTest {
                 .llmCallMetadata(LlmCallMetadata.builder().component("incident-bot").parentComponent("dispatcher")
                         .feature("triage").principal(Principal.user("operator-7", "Operator Seven")).traceId("trace-1")
                         .tags(Map.of("env", "prod")).build())
-                .userContextInjection(false).build();
+                .build();
     }
 
     private static Set<String> declaredFieldNames(Class<?> type) {

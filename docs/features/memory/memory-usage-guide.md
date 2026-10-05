@@ -246,7 +246,7 @@ IMPORTANT: `execution-end` 의 델타는 로그의 **seq** 에 걸린 기준점�
 다시 보내는 것보다 싸기 때문이다. 근거는 [교체 가능한 메모리 백엔드](../../design/memory/pluggable-memory-backend.md)
 §7.2 와 [Context Engine](../../design/agent-execution/context-engine.md) §7 에 있다.
 
-두 값 모두 런타임이 주입한 항목(`LogOrigin.SYNTHETIC` — user-context 블록, 조립된 `<system-reminder>`, 복원 훅이 붙인
+두 값 모두 런타임이 주입한 항목(`LogOrigin.SYNTHETIC` — 조립된 `<system-reminder>`, 복원 훅이 붙인
 파일·스킬 목록)은 보내지 않는다. 한 번에 보내는 양은 추정 32K 토큰(`IngestChunks.DEFAULT_MAX_INGEST_TOKENS`) 단위로
 나누며, 청크 경계는 `tool_use` 와 그 `tool_result` 를 가르지 않는 곳이다 — 압축이 더 이상 페이로드를 창 크기로 묶어
 주지 않기 때문이다.

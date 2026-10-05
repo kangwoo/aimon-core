@@ -59,7 +59,7 @@ class InMemorySessionInboxTest {
     @Test
     @DisplayName("the rest of the envelope survives the rebuild too")
     void remainingFieldsSurviveDelivery() {
-        final SubmitOptions options = SubmitOptions.builder().userContextInjection(true).build();
+        final SubmitOptions options = SubmitOptions.builder().executionAttribute("ab.x", true).build();
         inbox.deliver(baseMessage().turnId(TurnId.of("turn-7")).idempotencyKey("idem-1").submitOptions(options)
                 .contextDiscriminator("tenant-a").metadata(Map.of("origin", "node-b")).build());
 

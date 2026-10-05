@@ -84,10 +84,7 @@
  * <ul>
  * <li>{@link at.aimon.core.agent.AgentMetadata} - Agent configuration metadata (max iterations, model config)
  * <li>{@link at.aimon.core.agent.AgentContent} - Agent content (system prompt, variables)
- * <li>{@link at.aimon.core.base.UserLocale} - User- and application-side settings (the time zone)
- * <li>{@link at.aimon.core.agent.AgentEnvironmentSnapshot} - Collect-once snapshot of the ambient environment, keyed
- * by {@link at.aimon.core.agent.AgentRuntimeId} and served by
- * {@link at.aimon.core.agent.AgentEnvironmentSnapshotProvider}
+ * <li>{@link at.aimon.core.base.UserLocale} - User- and application-side settings (the time zone)*
  * <li>{@link at.aimon.core.base.Principal} - Identity representation (user, group, system, service)
  * <li>{@link at.aimon.core.agent.Version} - Semantic version representation
  * <li>{@link at.aimon.core.agent.Constants} - Core constants used throughout the system

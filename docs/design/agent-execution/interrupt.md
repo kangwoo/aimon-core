@@ -595,8 +595,8 @@ IMPORTANT: **이 목록은 미룬 근거이지 현재 상태가 아니다.** 무
 ### 15.1 경계를 어떻게 아는가
 
 되감으려면 "이 턴이 어디서 시작했는가" 를 알아야 하는데, 전사에는 턴 경계가 없었다. **마지막 user
-메시지를 찾는 휴리스틱은 이 코드베이스에서 틀린다** — `checkOnStartHooks` 의 훅 조언과 CTX-06 의 합성
-컨텍스트 블록이 둘 다 `Message.user(...)` 로 들어가므로, 마지막 user 메시지가 턴 경계가 아니다.
+메시지를 찾는 휴리스틱은 이 코드베이스에서 틀린다** — `checkOnStartHooks` 의 훅 조언과 조립된 합성
+컨텍스트 블록(`injectAssembledUserContext`)이 둘 다 `Message.user(...)` 로 들어가므로, 마지막 user 메시지가 턴 경계가 아니다.
 
 그래서 경계를 **기록한다**. `SessionRewindPoint`(`agent.session.transcript`)는 턴이 시작하기 전의
 메시지 개수와 그 턴을 시작한 `UserInput` 을 담는다. 후자를 인덱스로 찾지 않고 통째로 들고 있는 이유가
@@ -701,8 +701,7 @@ CLI)의 것이고, 인박스를 거쳐 다른 노드로 넘어가는 제출은 �
 ### 15.7 턴은 요청만이 아니라 **누가 어떤 맥락에서** 제출했는지까지다
 
 입력을 기억하게 하고 나서 같은 축이 하나 더 남아 있는 것이 드러났다. 되감기 지점은 `UserInput` 을
-기억했지만 그 턴의 `SubmitOptions` — principal, 시스템 프롬프트 변수, 실행 속성, LLM 호출 메타데이터,
-user-context 주입 여부 — 는 기억하지 않았고, 무인자 `retryLastTurn()` 은 `SubmitOptions.empty()` 로
+기억했지만 그 턴의 `SubmitOptions` — principal, 시스템 프롬프트 변수, 실행 속성, LLM 호출 메타데이터 — 는 기억하지 않았고, 무인자 `retryLastTurn()` 은 `SubmitOptions.empty()` 로
 돌았다.
 
 **결과가 조용하다.** principal 은 `ToolContextKeys.PRINCIPAL` 로 도구 컨텍스트에 실리고

@@ -16,7 +16,7 @@ document as the reference when naming a new type or reading someone else's code.
 | Scope | Representative types | Identifier | Lifetime |
 |-------|----------|--------|----------|
 | **Application** | `SchedulingEngine`, `ScheduledTaskManager`, `RoutineExecutor`, `AgentRuntimeRegistry`, `SessionRecordStore`, `SessionLeaseStore`, `SessionInbox`, `SessionSignalBus`, `IdempotencyStore`, `KnowledgeStore`, `CredentialStore` | — | app start ~ shutdown |
-| **Agent** | `AgentRuntime` and what it owns — `ToolRegistry` / `HookRegistry` / `McpClientManager`, `AgentEnvironmentSnapshot` | `AgentRuntimeId` (`agent:<name>[:<discriminator>]`) | held across sessions |
+| **Agent** | `AgentRuntime` and what it owns — `ToolRegistry` / `HookRegistry` / `McpClientManager` | `AgentRuntimeId` (`agent:<name>[:<discriminator>]`) | held across sessions |
 | **Session** | `SessionRecord`, `SessionTranscript`, `SessionTotals`, `budgetOverride` | `SessionId` | as long as the session exists — **persistent** |
 | **Live session** | `LiveSession`, the message queue, the event publisher | (bound `SessionId`) | inside one node's process, **transient** |
 | **Execution** | one unit of agent work in general — **there may be no session** (subagent fork, skill fork, rewake replay, scheduled routine) | `ExecutionId` (issued **only for sessionless executions** — §4) | the concept above turn |
@@ -166,9 +166,6 @@ the rule fallback's `ASK`, and a fork has no channel to ask on, which makes it e
   re-fire or a different node produces the same value. Issued via `from(Agent)` / `from(Agent, String)`;
   `generate()` does not exist.
 - **`discriminator`** — a string appended to the context id when you want to split the same `Agent` definition by tenant, user and so on.
-- **`AgentEnvironmentSnapshot`** — an immutable value holding the snapshot time, the `UserLocale`, and a user extension map. It does not hold the working directory — that differs per execution, so it is read from the execution environment's descriptor.
-  Memoized by `AgentRuntimeId`, so it is **agent-scoped** (not re-collected per session).
-  `AgentEnvironmentSnapshotProvider` guarantees collect-once.
 - **`AgentExecutor`** — the executor that takes a context plus a request and runs the ReAct loop. The default implementation is `OrcaAgentExecutor`.
 
 ### The Session tier (persistent)

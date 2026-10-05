@@ -456,8 +456,7 @@ class PackageDependencyArchitectureTest {
             + " reach the execution-environment packages")
     void onlyAgentContextAndCompactMayReachEnvironmentFromAgentTree() {
         // Bounds the agent -> environment half of the agent <-> environment baseline cycle. AgentRuntime stays
-        // untouched — OrcaAgentRuntime (agent.impl) implements EnvironmentProviding instead — and the user-context
-        // builder takes the working directory as a String.
+        // untouched — OrcaAgentRuntime (agent.impl) implements EnvironmentProviding instead.
         ArchRule rule = noClasses().that().resideInAPackage(PKG_AGENT_CORE).and()
                 .resideOutsideOfPackage(PKG_AGENT_CONTEXT).and().resideOutsideOfPackage(PKG_AGENT_COMPACT).and()
                 .resideOutsideOfPackage(PKG_AGENTS).should().dependOnClassesThat().resideInAPackage(PKG_ENVIRONMENT);

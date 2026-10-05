@@ -459,6 +459,10 @@ v1 쓰기 모드에서 `DefaultContextEngine` 은 기록을 고쳐 쓰는 지금
 
 ## 12. 구현과의 차이
 
+> **2026-10-05 — CTX-06 user-context 블록은 없어졌다**(백로그 EE-78). 위 §1 ~ §11 이 `maybeInjectUserContextMessage` 와 그 블록을
+> `SYNTHETIC` 항목의 예로 드는 자리는 설계 시점의 기록이다. 조립된 컨텍스트(`injectAssembledUserContext`)는 그대로이고,
+> `hasConversation()` 은 그 블록의 재개 판정에 쓰이던 메서드라 지금 main 에 호출자가 없다.
+
 §1 ~ §11 과 부록은 리뷰를 통과한 설계 그대로다(`f09d891`). 이 절은 구현이 그 글에서 갈라진 자리와, 구현을 마친 뒤에도
 열려 있는 결과를 적는다. 뷰를 만드는 쪽의 차이는
 [`context-engine.md` §13](../agent-execution/context-engine.md#13-구현과의-차이) 에 있다.

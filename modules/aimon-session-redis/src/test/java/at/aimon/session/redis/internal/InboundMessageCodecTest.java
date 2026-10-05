@@ -63,11 +63,10 @@ class InboundMessageCodecTest {
                 .systemPromptVariable("region", "eu").systemPromptVariable("attempt", 3)
                 .executionAttribute("ab.x", true).executionAttribute("rollout", "on")
                 .llmCallMetadata(LlmCallMetadata.builder().component("orca-agent").parentComponent("web-facade")
-                        .feature(LlmCallMetadata.Feature.REACT_LOOP).traceId("trace-9")
-                        .principal(Principal.builder().type(Principal.Type.SERVICE).id("svc-1")
-                                .displayName("dispatcher").build())
+                        .feature(LlmCallMetadata.Feature.REACT_LOOP).traceId("trace-9").principal(Principal.builder()
+                                .type(Principal.Type.SERVICE).id("svc-1").displayName("dispatcher").build())
                         .tag("tenant", "acme").build())
-                .userContextInjection(false).build();
+                .build();
         final InboundMessage message = baseMessage().submitOptions(options).build();
 
         final String json = codec.encode(message);
@@ -95,18 +94,17 @@ class InboundMessageCodecTest {
     }
 
     @Test
-    @DisplayName("partial SubmitOptions: only userContextInjection override is preserved")
-    void onlyUserContextInjection() {
-        final SubmitOptions options = SubmitOptions.builder().userContextInjection(true).build();
+    @DisplayName("partial SubmitOptions: a lone execution attribute is preserved")
+    void onlyAnExecutionAttribute() {
+        final SubmitOptions options = SubmitOptions.builder().executionAttribute("ab.x", true).build();
         final InboundMessage message = baseMessage().submitOptions(options).build();
 
         final InboundMessage decoded = codec.decode(codec.encode(message), "1700000000000-0");
 
-        assertThat(decoded.getSubmitOptions().getUserContextInjection()).contains(Boolean.TRUE);
+        assertThat(decoded.getSubmitOptions().getExecutionAttributes()).containsExactly(Map.entry("ab.x", true));
         assertThat(decoded.getSubmitOptions().getPrincipal()).isEmpty();
         assertThat(decoded.getSubmitOptions().getLlmCallMetadata()).isEmpty();
         assertThat(decoded.getSubmitOptions().getSystemPromptVariables()).isEmpty();
-        assertThat(decoded.getSubmitOptions().getExecutionAttributes()).isEmpty();
     }
 
     @Test

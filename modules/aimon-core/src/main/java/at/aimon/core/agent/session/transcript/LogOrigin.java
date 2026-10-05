@@ -26,7 +26,7 @@ public enum LogOrigin {
     CONVERSATION,
 
     /**
-     * Put there by the runtime — the user-context block, an assembled {@code <system-reminder>}, advisory hook
+     * Put there by the runtime — an assembled {@code <system-reminder>}, advisory hook
      * feedback, a command's response, a file or skill list re-attached after compaction.
      */
     SYNTHETIC

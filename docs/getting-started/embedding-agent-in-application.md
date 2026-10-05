@@ -678,6 +678,27 @@ sessions.submitAsync(sessions.newRequest(sessionId, input).build());
 유일한 방법은 호출자가 직접 `image.asText()` 로 납작하게 만드는 것이었고, 그러면 모델이 받는 것은
 `[Image: image/png, 41231 bytes]` 라는 텍스트뿐이었습니다. 지금은 그럴 필요가 없습니다.
 
+### 6.2.2 모델은 오늘 날짜를 모릅니다
+
+프레임워크는 날짜나 시각을 프롬프트에 넣지 않습니다. 넣어야 한다면 값을 아는 쪽 — 여러분의 앱 — 이 턴마다
+건넵니다. 에이전트 정의의 시스템 프롬프트에 자리를 두고, 제출할 때 그 변수를 채우세요.
+
+```java
+// agent.md 의 시스템 프롬프트: "오늘은 {{currentDate}} 입니다."
+sessions.submitAsync(
+        sessions.newRequest(sessionId, input)
+                .submitOptions(SubmitOptions.builder()
+                        .systemPromptVariable("currentDate", LocalDate.now(userZone).toString())
+                        .build())
+                .build());
+```
+
+**날짜를 어느 시간대로, 어느 정밀도로 줄지는 여러분이 정합니다.** 초 단위 시각을 시스템 프롬프트에 넣으면
+턴마다 프롬프트가 달라져 프롬프트 캐시가 깨집니다. 날짜까지만 주는 편이 대개 맞습니다. **변수를 채우지 않은
+턴에는 그 자리가 빈 문자열로 렌더됩니다** — 오류 없이 "오늘은 입니다." 가 나갑니다. 변수 없이 제출하는 경로
+(`submit(sessionId, input)` 같은 단축 메서드)가 있다면 `{{#currentDate}}오늘은 {{currentDate}} 입니다.{{/currentDate}}`
+처럼 문장째 감싸 두세요.
+
 ### 6.3 `SubmitDisposition` 읽기
 
 ```java

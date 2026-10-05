@@ -26,7 +26,7 @@ import at.aimon.core.llm.Role;
  *
  * <p>
  * <b>Origin.</b> {@link #addMessage(Message)} and the other plain appenders record
- * {@link LogOrigin#CONVERSATION}. Anything the runtime puts into the log on its own — the user-context block, an
+ * {@link LogOrigin#CONVERSATION}. Anything the runtime puts into the log on its own — an
  * assembled reminder, hook feedback, a command's reply, a file list re-attached after compaction — goes through
  * {@link #addMessage(Message, LogOrigin)} with {@link LogOrigin#SYNTHETIC}, so that readers of the log as <em>what was
  * said</em> can tell the two apart.
@@ -345,7 +345,9 @@ public class TranscriptBuffer {
      * the user role.
      *
      * <p>
-     * This is the "is this session being resumed" question. Synthetic user messages do not answer it, and neither
+     * This is the "is this session being resumed" question. Nothing in the framework asks it at present — its one
+     * caller, the user-context block, is gone — and it is kept as part of the public transcript API. Synthetic user
+     * messages do not answer it, and neither
      * does the number of seqs handed out: a new session whose first turn was interrupted and rewound has used seqs
      * but holds no conversation.
      *

@@ -685,8 +685,6 @@ class DefaultLiveSessionTest {
                 assertThat(captured.getSystemPromptVariables()).isEmpty();
                 assertThat(captured.getExecutionAttributes()).isEmpty();
                 assertThat(captured.getLlmCallMetadata()).isEqualTo(LlmCallMetadata.empty());
-                // Executor's compile-time default is true; an empty SubmitOptions must not flip it.
-                assertThat(captured.isUserContextInjectionEnabled()).isTrue();
             } finally {
                 session.close();
             }
@@ -704,8 +702,7 @@ class DefaultLiveSessionTest {
                 final LlmCallMetadata metadata = LlmCallMetadata.builder().traceId("trace-9").tag("tenant", "acme")
                         .build();
                 final SubmitOptions options = SubmitOptions.builder().principal(principal).llmCallMetadata(metadata)
-                        .systemPromptVariable("region", "eu").executionAttribute("ab.x", true)
-                        .userContextInjection(false).build();
+                        .systemPromptVariable("region", "eu").executionAttribute("ab.x", true).build();
 
                 session.submit("hi", options);
 
@@ -714,7 +711,6 @@ class DefaultLiveSessionTest {
                 assertThat(captured.getLlmCallMetadata()).isSameAs(metadata);
                 assertThat(captured.getSystemPromptVariables()).containsEntry("region", "eu");
                 assertThat(captured.getExecutionAttributes()).containsEntry("ab.x", true);
-                assertThat(captured.isUserContextInjectionEnabled()).isFalse();
             } finally {
                 session.close();
             }
@@ -728,30 +724,13 @@ class DefaultLiveSessionTest {
             final DefaultLiveSession session = new DefaultLiveSession(SessionId.generate(), context, executor,
                     LiveSessionOptions.defaults());
             try {
-                final SubmitOptions options = SubmitOptions.builder().executionAttribute("trace.id", "abc")
-                        .userContextInjection(false).build();
+                final SubmitOptions options = SubmitOptions.builder().executionAttribute("trace.id", "abc").build();
 
                 session.submitAsync("hello", options, e -> {
                 }).toCompletableFuture().get();
 
                 final OrcaAgentExecutionRequest captured = executor.lastRequest();
                 assertThat(captured.getExecutionAttributes()).containsEntry("trace.id", "abc");
-                assertThat(captured.isUserContextInjectionEnabled()).isFalse();
-            } finally {
-                session.close();
-            }
-        }
-
-        @Test
-        @DisplayName("explicit userContextInjection(true) round-trips even when the executor default already matches")
-        void userContextInjectionTrueRoundTrip() {
-            final RequestCapturingExecutorStub executor = new RequestCapturingExecutorStub();
-            final OrcaAgentRuntime context = createContext();
-            final DefaultLiveSession session = new DefaultLiveSession(SessionId.generate(), context, executor,
-                    LiveSessionOptions.defaults());
-            try {
-                session.submit("hi", SubmitOptions.builder().userContextInjection(true).build());
-                assertThat(executor.lastRequest().isUserContextInjectionEnabled()).isTrue();
             } finally {
                 session.close();
             }
@@ -771,7 +750,6 @@ class DefaultLiveSessionTest {
                 assertThat(captured.getPrincipal()).isEmpty();
                 assertThat(captured.getSystemPromptVariables()).isEmpty();
                 assertThat(captured.getExecutionAttributes()).isEmpty();
-                assertThat(captured.isUserContextInjectionEnabled()).isTrue();
             } finally {
                 session.close();
             }

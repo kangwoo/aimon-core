@@ -229,7 +229,7 @@ class JsonSessionSnapshotCodecTest {
     @Test
     void roundTripsTheOptionsARewindPointsTurnWasSubmittedUnder() {
         final SubmitOptions options = SubmitOptions.builder().principal(Principal.user("operator-7"))
-                .systemPromptVariables(Map.of("tenant", "acme")).userContextInjection(false).build();
+                .systemPromptVariables(Map.of("tenant", "acme")).build();
         final SessionSnapshot snapshot = SessionSnapshot.of(SessionId.of("c"), "prompt", List.of(),
                 SessionRewindPoint.of(0, TextInput.of("summarise the incident"), options));
 
