@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/knowledge/opensearch-knowledge-store-guide.md
-source_commit: eec9ccd
+source_commit: 93a4909
 ---
 
 # OpenSearch Knowledge Store Guide
@@ -266,6 +266,11 @@ Inject a `KnowledgeStore` into the `OrcaAgentRuntime` and the agent can search a
 ### Injecting a KnowledgeStore into the ExecutionContext
 
 ```java
+// The workspace the tools (Read, Write, Bash …) run in. The runtime only borrows it; whoever builds it closes it.
+LocalExecutionEnvironmentProvider environmentProvider = LocalExecutionEnvironmentProvider.builder()
+        .workspaceRoot(workspaceRoot)
+        .build();
+
 OrcaAgentRuntime context = OrcaAgentRuntime.builder()
         .agent(agent)
         .toolRegistry(toolRegistry)
@@ -274,10 +279,19 @@ OrcaAgentRuntime context = OrcaAgentRuntime.builder()
         .subagentRegistry(subagentRegistry)
         .skillRegistry(skillRegistry)
         .controlFileSystem(controlFileSystem)
+        .executionEnvironmentProvider(environmentProvider)
         .userLocale(userLocale)
         .knowledgeStore(store)       // inject the KnowledgeStore
         .build();
 ```
+
+The builder does not require `executionEnvironmentProvider`, so leaving it out still builds. Without it, though, every
+execution gets an unavailable environment: `KnowledgeSearch` still runs, but the file tools and `Bash` fail on every
+call with "Execution environment unavailable: no ExecutionEnvironmentProvider is configured". The runtime does not close
+the provider (unless given `ownsExecutionEnvironmentProvider(true)`), so call `environmentProvider.close()` at
+application shutdown. For the rest
+of the assembly (the LLM client, the executor, registering the runtime), follow
+[`embedding-agent-in-application.en.md`](../../getting-started/embedding-agent-in-application.en.md).
 
 ### The agent's RAG flow
 

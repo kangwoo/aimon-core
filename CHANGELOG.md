@@ -7,6 +7,16 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Docs: the knowledge store guide's runtime example sets an execution environment provider (EE-62)
+
+- **`opensearch-knowledge-store-guide.md` (and its `.en.md`) now builds a `LocalExecutionEnvironmentProvider` and
+  passes it to `OrcaAgentRuntime.builder().executionEnvironmentProvider(…)`.** The example filled in the control
+  filesystem, the user locale and the knowledge store but not the provider, which the builder does not require. Copied
+  as it stood, it built a runtime whose every execution got an unavailable environment: `KnowledgeSearch` worked, and
+  every file tool and `Bash` call failed with `Execution environment unavailable: no ExecutionEnvironmentProvider is
+  configured`. The guide now says so, says who closes the provider, and points to the embedding guide for the rest of
+  the assembly.
+
 ### Changed: staging a skill with no execution environment in the context is an error (EE-20)
 
 - **`Skill` and a skill-backed slash command no longer succeed with `${AIMON_SKILL_DIR}` empty when the tool context

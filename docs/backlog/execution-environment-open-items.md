@@ -1989,7 +1989,7 @@ environment" 라고 부른다(`DefaultSubagentExecutionManager`, `TaskTool`). `E
 
 출처: [`../design/tool/execution-environment-ee14-user-locale.md`](../design/tool/execution-environment-ee14-user-locale.md) §3.4 · §10 Q7.
 
-## EE-62 — 지식 저장소 가이드의 런타임 예제에 실행 환경 제공자가 없다 · **열림**
+## EE-62 — 지식 저장소 가이드의 런타임 예제에 실행 환경 제공자가 없다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** `opensearch-knowledge-store-guide.md` 의 `OrcaAgentRuntime.builder()` 예제에
 `.executionEnvironmentProvider(…)` 를 넣거나, 그 예제가 일부만 보여 준다는 것을 적는다. 번역본
@@ -2005,6 +2005,32 @@ Javadoc). 예제를 그대로 옮긴 사용자는 빌드는 되지만 셸 · 파
 **언제 다시 볼까.** 지식 저장소 가이드를 다음에 고칠 때, 또는 기능 가이드의 런타임 조립 예제를 한꺼번에 점검할 때.
 
 출처: PR #206 리뷰.
+
+### 닫힘 (2026-10-05)
+
+항목이 연 두 갈래("예제에 넣는다" · "일부만 보여 준다고 적는다") 가운데 앞쪽을 골랐고, 뒤쪽도 함께 적었다. 예제는 이제
+`LocalExecutionEnvironmentProvider.builder().workspaceRoot(workspaceRoot).build()` 로 제공자를 만들어
+`.executionEnvironmentProvider(environmentProvider)` 로 넘긴다. 예제 바로 아래 문단이 세 가지를 말한다 — 빌더가 그 값을
+요구하지 않아 빠뜨려도 빌드된다는 것과 그때 무엇이 실패하는지, 런타임은 제공자를 닫지 않으니(`ownsExecutionEnvironmentProvider(true)`
+가 아니면) 만든 쪽이 닫는다는 것, 나머지 조립은 `embedding-agent-in-application.md` 를 따른다는 것. 번역본
+`opensearch-knowledge-store-guide.en.md` 도 같은 커밋에서 고쳤고 `source_commit` 은 이 수정 직전의 정본 커밋(`93a4909`)이다.
+제목(`ExecutionContext에 KnowledgeStore 주입`)은 옛 타입 이름을 담고 있지만 앵커가 바뀌므로 이 항목에서는 두었다.
+
+착수해 보니 항목의 서술과 달랐던 것.
+
+1. **근거(규칙 둘)는 참이었다.** 예제의 빌더 호출에 `executionEnvironmentProvider` 가 없고, 빌더 Javadoc 이 그것을 nullable
+   로 적으며, 없으면 `ExecutionEnvironments.resolveOrUnavailable` 이 `no ExecutionEnvironmentProvider is configured` 를 원인으로
+   단 사용 불가 환경을 돌려준다. 줄 번호는 정본 264–275행, 번역본 269–279행 그대로였다.
+2. **심각도(규칙 셋)는 적힌 대로였다 — 돌려서 확인했다.** 예제의 빌더 호출을 그대로(지식 저장소만 빼고) 옮긴 런타임으로 실제
+   `OrcaAgentExecutor` 턴을 돌려 `Read` 를 부르게 하자, 도구 결과가 "Execution environment unavailable: no
+   ExecutionEnvironmentProvider is configured" 였다. 빌드와 런타임 생성은 아무 경고 없이 통과한다. 이 확인은 일회성 프로브
+   테스트로 했고 커밋하지 않았다 — 문서 예제를 컴파일하거나 실행하는 장치는 이 저장소에 없다.
+3. **처방(규칙 다섯)에는 빠진 것이 하나 있었다.** 제공자를 예제에 넣으면 그 제공자를 **누가 닫는가**가 새로 생긴다.
+   `LocalExecutionEnvironmentProvider` 는 `workspaceRoot` 모드에서 파일 시스템과 셸을 소유하는 `AutoCloseable` 이고, 런타임은
+   기본값에서 그것을 닫지 않는다. 그래서 닫는 책임을 같은 문단에 적었다.
+
+검증: `python3 scripts/check-doc-links.py`(깨진 링크 0), `python3 scripts/check-translation-structure.py`(32쌍 모두 구조 일치),
+`python3 scripts/check-translation-staleness.py`(낡은 번역 0).
 
 ## EE-63 — 백그라운드 워크플로는 호출 컨텍스트의 스킬 훅을 물려받지 못한다 · **열림**
 
