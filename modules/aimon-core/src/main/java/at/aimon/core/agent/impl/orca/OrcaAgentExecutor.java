@@ -1389,9 +1389,9 @@ public class OrcaAgentExecutor
      * </ul>
      *
      * <p>
-     * Otherwise, a user-role message built by {@link UserContextMessageBuilder#build(AgentEnvironmentSnapshot)} is
-     * appended
-     * BEFORE the real user message, so the LLM sees the synthetic block as {@code messages[0]}.
+     * Otherwise, a user-role message built by
+     * {@link UserContextMessageBuilder#build(AgentEnvironmentSnapshot, String)} is appended BEFORE the real user
+     * message, so the LLM sees the synthetic block as {@code messages[0]}.
      *
      * @param agentRuntime
      *            the agent runtime used to resolve the provider entry (must not be null)
@@ -1400,7 +1400,8 @@ public class OrcaAgentExecutor
      * @param transcriptBuffer
      *            the freshly initialised memory to append the synthetic block to (must not be null)
      * @param executionWorkingDirectory
-     *            the working directory of this execution's environment, which replaces the snapshot's
+     *            the working directory of this execution's environment; blank for an unavailable environment, and
+     *            then the block has no working-directory entry
      */
     private void maybeInjectUserContextMessage(OrcaAgentRuntime agentRuntime,
             OrcaAgentExecutionRequest executionRequest, TranscriptBuffer transcriptBuffer,

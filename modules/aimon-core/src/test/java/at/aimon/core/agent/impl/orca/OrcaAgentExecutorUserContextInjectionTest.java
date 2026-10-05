@@ -32,6 +32,7 @@ import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
+import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
@@ -91,6 +92,23 @@ class OrcaAgentExecutorUserContextInjectionTest {
                 .contains("<system-reminder key=\"current-date\">").contains("2026-04-23T12:34:56Z");
 
         assertThat(firstCall.get(1).getRole()).isEqualTo(Role.USER);
+        assertThat(firstCall.get(1).getContent()).isEqualTo("Hello");
+    }
+
+    @Test
+    @DisplayName("unavailable environment: the block carries no working directory, not the snapshot's (EE-24)")
+    void unavailableEnvironmentShowsNoWorkingDirectory() {
+        final OrcaAgentExecutor executor = createExecutor(llmClient, repository, fixedProvider("/workspace/proj"));
+
+        // A provider that fails yields an unavailable environment, whose descriptor has no working directory.
+        executor.execute(createContext(request -> {
+            throw new IllegalStateException("sandbox is down");
+        }), OrcaAgentExecutionRequest.builder().userInput("Hello").sessionId(SessionId.generate()).build());
+
+        final List<Message> firstCall = llmClient.capturedMessages.get(0);
+        assertThat(firstCall).hasSize(2);
+        assertThat(firstCall.get(0).getContent()).isEqualTo(
+                "<system-reminder key=\"current-date\">\n" + "2026-04-23T12:34:56Z\n" + "</system-reminder>");
         assertThat(firstCall.get(1).getContent()).isEqualTo("Hello");
     }
 
@@ -189,6 +207,14 @@ class OrcaAgentExecutorUserContextInjectionTest {
     }
 
     private OrcaAgentRuntime createContext() {
+        return createContext(null);
+    }
+
+    /**
+     * @param environmentProvider
+     *            the provider to bind, or null for one that resolves to the temp directory
+     */
+    private OrcaAgentRuntime createContext(ExecutionEnvironmentProvider environmentProvider) {
         final LocalFileSystem fileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
         fileSystem.initialize();
         return OrcaAgentRuntime.builder()
@@ -198,7 +224,9 @@ class OrcaAgentExecutorUserContextInjectionTest {
                 .commandRegistry(new DefaultCommandRegistry(fileSystem, ".aimon/commands"))
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
                 .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
-                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
+                .executionEnvironmentProvider(environmentProvider != null
+                        ? environmentProvider
+                        : TestExecutionEnvironments.provider(fileSystem))
                 .userLocale(UserLocale.createDefault()).build();
     }
 

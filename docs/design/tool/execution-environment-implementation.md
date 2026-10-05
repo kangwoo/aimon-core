@@ -1260,9 +1260,11 @@ and why. Entries marked **(open)** are also tracked in
   would start failing without a preceding `Read`, and deployed routines would break. Without it, routines behave as
   before: `Edit` always refuses and `Write` does not check.
 - **`AgentEnvironmentSnapshot` keeps `workingDirectory` (open, EE-10).** §6 stage 5d takes the working directory out of
-  the snapshot. Instead, `UserContextMessageBuilder.build(snapshot, executionWorkingDirectory)` lets the execution's
-  descriptor win, and the snapshot's value is used only when the descriptor has none. This avoided churning every
-  snapshot collector.
+  the snapshot. Instead, `UserContextMessageBuilder.build(snapshot, executionWorkingDirectory)` takes the working
+  directory from the execution's descriptor. This avoided churning every snapshot collector. Until 2026-10-05 the
+  snapshot's value was the fallback when the descriptor had none — which is the unavailable environment, so the block
+  could show a directory of the host (EE-24). It is no longer read: a blank descriptor means no `working-directory`
+  entry (`UserContextMessageBuilderTest`, `OrcaAgentExecutorUserContextInjectionTest`).
 - **Hook contexts (closed 2026-10-03, EE-9).** `HookContext.getEnvironmentDescriptor()` exists (default empty) and is
   filled for `PreToolContext` and `PostToolContext` (from the tool context in `SingleToolInvoker`). `CompactionRequest`
   did not gain a descriptor, and the compaction, lifecycle, subagent and permission contexts stay empty, so

@@ -29,7 +29,7 @@ class UserContextMessageBuilderTest {
     private static final Instant FIXED_INSTANT = Instant.parse("2026-04-23T12:34:56Z");
 
     @Nested
-    @DisplayName("build(AgentEnvironmentSnapshot)")
+    @DisplayName("build(AgentEnvironmentSnapshot, executionWorkingDirectory)")
     class Build {
 
         @Test
@@ -43,10 +43,10 @@ class UserContextMessageBuilderTest {
         @DisplayName("emits working-directory and current-date reminders in a user-role message")
         void happyPathEmitsRequiredReminders() {
             final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder()
-                    .workingDirectory("/workspace/project").currentDate(FIXED_INSTANT)
+                    .workingDirectory("/snapshot/is/not/the/source").currentDate(FIXED_INSTANT)
                     .userLocale(UserLocale.createDefault()).build();
 
-            final Optional<Message> result = UserContextMessageBuilder.build(snapshot);
+            final Optional<Message> result = UserContextMessageBuilder.build(snapshot, "/workspace/project");
 
             assertThat(result).isPresent();
             final Message message = result.get();
@@ -66,7 +66,7 @@ class UserContextMessageBuilderTest {
             final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory("/ws")
                     .currentDate(FIXED_INSTANT).userLocale(UserLocale.createDefault()).extensions(extensions).build();
 
-            final Optional<Message> result = UserContextMessageBuilder.build(snapshot);
+            final Optional<Message> result = UserContextMessageBuilder.build(snapshot, "/ws");
 
             assertThat(result).isPresent();
             assertThat(result.get().getContent()).isEqualTo("<system-reminder key=\"working-directory\">\n" + "/ws\n"
@@ -77,9 +77,9 @@ class UserContextMessageBuilderTest {
         }
 
         @Test
-        @DisplayName("skips blank working directory but still emits current-date reminder")
-        void blankWorkingDirectorySkipped() {
-            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory("   ")
+        @DisplayName("without an execution there is no working-directory entry; current-date is still emitted")
+        void snapshotAloneHasNoWorkingDirectory() {
+            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory("/ws")
                     .currentDate(FIXED_INSTANT).userLocale(UserLocale.createDefault()).build();
 
             final Optional<Message> result = UserContextMessageBuilder.build(snapshot);
@@ -88,6 +88,25 @@ class UserContextMessageBuilderTest {
             assertThat(result.get().getContent()).isEqualTo(
                     "<system-reminder key=\"current-date\">\n" + "2026-04-23T12:34:56Z\n" + "</system-reminder>");
             assertThat(result.get().getContent()).doesNotContain("working-directory");
+        }
+
+        @Test
+        @DisplayName("an execution without a working directory gets no entry — the snapshot's is not a fallback (EE-24)")
+        void blankExecutionWorkingDirectoryDoesNotFallBackToTheSnapshot() {
+            // An unavailable environment's descriptor has a blank working directory. The snapshot's value is
+            // collected once per agent — on the default collector's advice, the JVM's user.dir, a host path — and
+            // must not be shown in its place (execution-environment design §5.1).
+            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder()
+                    .workingDirectory("/host/user/dir").currentDate(FIXED_INSTANT)
+                    .userLocale(UserLocale.createDefault()).build();
+
+            for (final String blank : new String[]{"", "   ", null}) {
+                final Optional<Message> result = UserContextMessageBuilder.build(snapshot, blank);
+
+                assertThat(result).isPresent();
+                assertThat(result.get().getContent()).as("execution working directory [%s]", blank).isEqualTo(
+                        "<system-reminder key=\"current-date\">\n" + "2026-04-23T12:34:56Z\n" + "</system-reminder>");
+            }
         }
 
         @Test
