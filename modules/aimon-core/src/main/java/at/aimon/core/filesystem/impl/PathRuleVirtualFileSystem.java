@@ -13,6 +13,7 @@ import at.aimon.core.filesystem.PathRule;
 import at.aimon.core.filesystem.VfsPaths;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.exception.FileAccessDeniedException;
+import at.aimon.core.filesystem.exception.InvalidPathException;
 
 /**
  * A {@link VirtualFileSystem} decorator that applies {@link PathRule}s by root-anchored prefix
@@ -279,8 +280,21 @@ public final class PathRuleVirtualFileSystem implements VirtualFileSystem {
                 addUsage(child, totals);
             } else {
                 totals.files++;
-                totals.size += delegate.getMetadata(child).getSize();
+                totals.size += sizeOf(child);
             }
+        }
+    }
+
+    /**
+     * The size of a listed non-directory entry, or 0 for one the delegate will not describe. A local delegate refuses
+     * any path through a symbolic link, while its own usage walk counts the link as a file without following it; a
+     * link on the way down to a {@code DENY} prefix is counted the same way here rather than failing the whole total.
+     */
+    private long sizeOf(String entry) {
+        try {
+            return delegate.getMetadata(entry).getSize();
+        } catch (InvalidPathException e) {
+            return 0;
         }
     }
 

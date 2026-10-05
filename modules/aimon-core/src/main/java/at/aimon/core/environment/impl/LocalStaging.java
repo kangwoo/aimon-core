@@ -114,6 +114,8 @@ final class LocalStaging {
             return absolute(target);
         }
         synchronized (locks.computeIfAbsent(target, k -> new Object())) {
+            // Also on the reuse path: a workspace whose copies predate EE-4 would otherwise never get the file.
+            ensureGitignore();
             if (rawFileSystem.exists(marker)) {
                 if (verified.contains(target) || matchesContentKey(resource, target)) {
                     verified.add(target);
@@ -126,7 +128,6 @@ final class LocalStaging {
                         + " bytes exceeds the staging limit of " + maxStagedBytes + " bytes; exclude large files with "
                         + StagedResource.STAGE_IGNORE_FILE);
             }
-            ensureGitignore();
             copy(resource, reader, target);
             rawFileSystem.write(marker, resource.getContentKey().getBytes(StandardCharsets.UTF_8));
             verified.add(target);
@@ -136,10 +137,15 @@ final class LocalStaging {
     }
 
     /**
-     * Whether a copy already on disk is the one its path names: the marker holds the content key, the files are
-     * exactly the resource's files (and the marker), and they hash to the content key. The key is predictable, so
-     * the path and the marker alone are no evidence — a copy committed to a repository or planted through the shell
-     * has both (EE-37).
+     * Whether a copy already on disk is the one its path names: the marker holds the content key, every resource file
+     * is there, and they hash to the content key. The key is predictable, so the path and the marker alone are no
+     * evidence — a copy committed to a repository or planted through the shell has both (EE-37).
+     *
+     * <p>
+     * A file that is not the resource's is removed, not taken as a mismatch. It is not harmless — a planted sibling
+     * module is what a staged script would import — but it is also what running a staged script leaves behind
+     * ({@code __pycache__}, {@code .DS_Store}), and re-copying the whole tree for it would delete the copy under any
+     * process still using it, on every start. Removing only the extra files closes the same hole without that.
      */
     private boolean matchesContentKey(StagedResource resource, String target) {
         try {
@@ -153,7 +159,7 @@ final class LocalStaging {
             }
             final Set<String> expected = new HashSet<>(resource.getFiles());
             expected.add(MARKER);
-            if (!onDisk.equals(expected)) {
+            if (!onDisk.containsAll(expected)) {
                 return false;
             }
             final StagedResource.ContentKeyBuilder hasher = new StagedResource.ContentKeyBuilder();
@@ -162,7 +168,15 @@ final class LocalStaging {
                     hasher.add(relPath, in.readAllBytes());
                 }
             }
-            return hasher.build().equals(resource.getContentKey());
+            if (!hasher.build().equals(resource.getContentKey())) {
+                return false;
+            }
+            onDisk.removeAll(expected);
+            for (String extra : onDisk) {
+                log.info("Removing {} from staged copy {}: it is not one of the resource's files", extra, target);
+                rawFileSystem.delete(prefix + extra);
+            }
+            return true;
         } catch (IOException | RuntimeException e) {
             log.debug("Could not verify staged copy {}: {}", target, e.getMessage());
             return false;

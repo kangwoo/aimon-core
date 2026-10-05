@@ -3,6 +3,8 @@ package at.aimon.cli.config;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Locale;
+import java.util.StringJoiner;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 
@@ -11,6 +13,7 @@ import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
@@ -141,9 +144,30 @@ public class CliConfigLoader {
         // The original message without Jackson's location suffix; its first line is the reason, the rest lists every
         // known property, which the key already makes unnecessary to read here. The "(class ...)" aside names a Java
         // type the operator never wrote, so it goes too; the full text stays on the cause for --verbose.
-        final String original = e.getOriginalMessage() == null ? "" : e.getOriginalMessage();
-        final String reason = JAVA_TYPE_ASIDE.matcher(original.lines().findFirst().orElse("")).replaceAll("").trim();
+        final String reason;
+        if (e instanceof InvalidFormatException invalid) {
+            // Jackson's own text quotes the rejected value, and this sentence reaches stderr without --verbose. The
+            // value may be a secret expanded from ${ENV} into the wrong key, so only the expected shape is named.
+            reason = describeExpected(invalid.getTargetType());
+        } else {
+            final String original = e.getOriginalMessage() == null ? "" : e.getOriginalMessage();
+            reason = JAVA_TYPE_ASIDE.matcher(original.lines().findFirst().orElse("")).replaceAll("").trim();
+        }
         return reason.isEmpty() ? " (at " + key + ")" : " (at " + key + ": " + reason + ")";
+    }
+
+    private static String describeExpected(Class<?> targetType) {
+        if (targetType == null) {
+            return "invalid value";
+        }
+        if (targetType.isEnum()) {
+            final StringJoiner accepted = new StringJoiner(", ", "invalid value; expected one of: ", "");
+            for (Object constant : targetType.getEnumConstants()) {
+                accepted.add(((Enum<?>) constant).name().toLowerCase(Locale.ROOT));
+            }
+            return accepted.toString();
+        }
+        return "invalid value; expected " + targetType.getSimpleName();
     }
 
     private String expandPath(String path) {

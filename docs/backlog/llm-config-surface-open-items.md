@@ -353,6 +353,12 @@ marked as ignorable)`. 두 번째 줄부터는 알려진 프로퍼티 목록이�
 **어디** *(2026-10-05)* — `CliConfigLoader.describeMappingFailure`, `CliConfigLoaderTest.SharedReasoningEffort` 의
 `rejectsAnUnusableValue` · `rejectsAMisspelledKey`.
 
+> **보강 (2026-10-05, PR #225 리뷰).** 위의 "Jackson 의 사유 첫 줄" 을 값 오류에서는 쓰지 않는다. 그 줄은 거절된 값을 인용하고
+> (`from String "mediumish"`), 이 문장은 `--verbose` 없이 stderr 로 나간다 — `${ENV}` 로 펼친 비밀이 잘못된 키에 들어가면 그대로
+> 찍힌다. `InvalidFormatException` 이면 기대한 모양만 댄다: 열거형은 받아들이는 값 목록, 그 밖에는 타입 이름(`expected
+> Integer`). 위 "남은 것" 의 열거형 타입 이름 문제도 이것으로 사라졌다. 리스트 안 키의 경로(`mcp.servers[0].comand`)와 값을
+> 찍지 않음을 테스트가 더 못박는다.
+
 ---
 
 ## L-6 — `BUDGETED` 쪽 절반이 선언된 행 없이 서 있는데, 이제 실측된 행이 셋 있다

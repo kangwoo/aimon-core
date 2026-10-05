@@ -1307,6 +1307,13 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 테스트: `PathRuleVirtualFileSystemTest` — `usageLeavesDeniedOut`(인자 없음 · `"."` · 절대 경로 모두 보이는 것만, 가린 경로는
 `FileAccessDeniedException`), `usageLeavesNestedDeniedOut`(중첩 접두어). 둘 다 고치기 전 코드에서 실패했다.
 
+> **보강 (2026-10-05, PR #225 리뷰).** 두 가지를 이 닫힘에 더한다. ① 위 셋째 항목이 경로를 무시하는 위임의 예로 든
+> `S3FileSystem` 은 같은 날 EE-77 이 고쳤다 — 그 문장은 이 항목을 닫던 시점의 사실이다. ② 리뷰가 **재현한** 회귀가 있었다:
+> 숨긴 접두어 위로 내려가는 새 경로는 항목마다 위임에 `isDirectory` · `getMetadata` 를 묻는데, 로컬 위임은 심볼릭 링크를 지나는
+> 경로를 거절하므로 워크스페이스 루트에 링크 하나(`CLAUDE.md -> AGENTS.md`)만 있어도 합계 전체가 `InvalidPathException` 으로
+> 실패했다. 옛 코드는 위임의 `walkUsage` 를 그대로 썼고 그것은 링크를 따라가지 않고 파일로 센다. 이제 위임이 설명을 거절한
+> 항목은 크기 0 인 파일로 센다(`PathRuleVirtualFileSystemTest.usageCountsASymlinkInsteadOfThrowing`, 고치기 전 실패).
+
 ## EE-35 — 링크 허용 루트를 설정 파일로 정할 수 없다 · **열림**
 
 **무엇을.** `PathSkillRepository` 의 허용 링크 루트(`allowedLinkRoot(s)`)를 에이전트 번들 로더, CLI, 부트스트랩, 스타터
@@ -1381,6 +1388,14 @@ EE-4 와 한 변경에서 닫았다. `LocalStaging` 은 이제 디스크에 있�
 덤으로 심은 파일), `intactCopyWithAnExtraFileIsReplaced`(파일은 온전하고 하나가 더 있다), `markerWithoutTheKeyIsNotTrusted`(빈
 마커), `intactCopyReusedAndVerifiedOnce`(이전 프로세스가 남긴 온전한 사본은 쓰기 없이 재사용되고, 두 번째부터는 읽지도 않는다).
 넷 다 고치기 전 코드에서 실패했고, 항목의 처방만 적용한 코드에서는 `markerWithoutTheKeyIsNotTrusted` 만 통과했다.
+
+> **보강 (2026-10-05, PR #225 리뷰).** 위 처방의 "파일 목록이 정확히 일치해야 한다" 를 고쳤다. 리뷰가 짚은 대로, 스테이징된
+> 파이썬 스크립트를 한 번 돌리면 `__pycache__/*.pyc` 가, macOS 는 `.DS_Store` 가 생기고, 그러면 다음 프로세스마다 사본 전체를
+> 지우고 다시 복사했다 — 그 사본을 쓰고 있는 다른 프로세스 밑에서. 그렇다고 남는 파일을 무시할 수는 없다: 심은 형제 모듈은
+> 스테이징된 스크립트가 import 할 바로 그것이다. 그래서 **자원의 파일이 모두 있고 키로 해시되면, 자원의 파일이 아닌 것만
+> 지우고** 사본은 그대로 쓴다. 테스트 `intactCopyWithAnExtraFileLosesTheExtraOnly` 는 남는 파일이 사라지고 원래 파일의 수정
+> 시각이 그대로임(재복사가 없었음)을 단언한다. 같은 리뷰가 짚은 EE-4 의 틈 — `.gitignore` 는 복사 경로에서만 써서 이미 사본이
+> 있는 워크스페이스는 영영 받지 못한다 — 도 함께 닫았다(`reusedCopyGetsTheGitignore`).
 
 ## EE-38 — 대소문자를 구분하는 소스를 구분하지 않는 디스크에 스테이징하면 파일이 합쳐진다 · **열림**
 
@@ -2586,6 +2601,15 @@ LLM 을 부르지 않을 수도 있고, 그 안에서 다시 스폰한 포크는
 
 **처방은 실패하는 테스트로 먼저 확인했다 (규칙 다섯).** `EditToolTest` 의 다섯 건 — 끝 줄바꿈 하나, 끝 빈 줄 여럿, CRLF 유지,
 LF 로 쓴 여러 줄 `old_string` 이 CRLF 파일에 맞고 CRLF 로 쓰임, 섞인 파일의 편집 밖 줄 유지 — 이 옛 코드에서 모두 실패했다.
+
+> **보강 (2026-10-05, PR #225 리뷰).** 위 처방("모든 줄이 CRLF 인 파일만 LF 로 맞춰 찾고, 나머지는 바이트 그대로") 은
+> 절반만 맞았다. `Read` 는 CRLF · LF · 홀로 선 CR 을 가리지 않고 줄로 나누므로 모델은 줄바꿈 종류를 볼 수 없고, 여러 줄
+> `old_string` 을 언제나 `\n` 으로 잇는다. 그러니 섞인 파일이나 CR 만 쓰는 파일에서 여러 줄 편집이 "찾지 못함" 이 되었다 — 옛
+> 코드에서는 되던 편집이다. 이제 **모든 줄바꿈을 `\n` 으로 접은 보기**에서 찾고, 그 보기의 위치마다 원래 바이트 위치를 기억해
+> 바꿀 구간만 원본에 끼워 넣는다. 구간 밖은 줄바꿈까지 그대로이고, 편집이 더하는 줄은 파일에서 가장 많은 줄바꿈을 따른다. 같은
+> 리뷰의 두 가지도 막았다: 줄바꿈만 다른 `old_string` · `new_string` 은 아무것도 바꾸지 않으면서 성공을 보고했고, 빈
+> `old_string` 은 `countOccurrences` 를 끝없이 돌렸다(그 무한 루프는 이 PR 이전부터 있었다). 테스트: 섞인 파일의 여러 줄 편집,
+> CR 파일, 줄바꿈만 다른 편집 거절, 빈 `old_string` 거절, CRLF 파일의 `replace_all`.
 
 ---
 

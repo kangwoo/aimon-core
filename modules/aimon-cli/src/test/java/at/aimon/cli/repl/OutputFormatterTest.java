@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.fusesource.jansi.Ansi.ansi;
+import static org.mockito.Mockito.mock;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
@@ -544,6 +545,25 @@ class OutputFormatterTest {
                         .filter(m -> m.getName().startsWith("display") && m.getParameterCount() == 1)
                         .anyMatch(m -> m.getParameterTypes()[0] == subtype))
                         .as("OutputFormatter has a display method for %s", subtype.getSimpleName()).isTrue();
+            }
+        }
+
+        @Test
+        @DisplayName("displayEvent dispatches every permitted subtype instead of reaching the throwing else")
+        void displayEventDispatchesEverySubtype() {
+            // A display method that exists but is not wired into the instanceof chain is the RD-3 defect too. A mock of
+            // each (final) subtype reaches the chain; its null getters may break the display method, which is fine --
+            // only the "Unhandled" fall-through is a failure.
+            for (Class<?> subtype : AgentExecutionEvent.class.getPermittedSubclasses()) {
+                final AgentExecutionEvent event = (AgentExecutionEvent) mock(subtype);
+                try {
+                    formatter.displayEvent(event);
+                } catch (IllegalStateException e) {
+                    assertThat(e.getMessage()).as("dispatch of %s", subtype.getSimpleName())
+                            .doesNotStartWith("Unhandled AgentExecutionEvent subtype");
+                } catch (RuntimeException e) {
+                    // reached the display method
+                }
             }
         }
 

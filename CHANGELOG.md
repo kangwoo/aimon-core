@@ -10,8 +10,11 @@ Central is versioned independently).
 ### Fixed: `Edit` no longer rewrites line endings it was not asked to touch (EE-76)
 
 - **`Edit` keeps the file's bytes outside `old_string`.** It read files line by line, so every edit dropped one
-  trailing newline and turned a CRLF file into LF throughout. A file whose every line ends in CRLF is still matched
-  with an `old_string` written in `\n`, and the lines an edit adds take CRLF; any other file is edited byte for byte.
+  trailing newline and turned a CRLF file into LF throughout. It now matches on a view of the file with every line
+  break (CRLF, LF, lone CR) folded to `\n` — what `Read` shows, and so what the model writes — and splices the
+  replacement into the stored bytes at the matched span only. Lines the edit adds take the file's prevailing ending.
+- **Two new refusals.** An empty `old_string` is an error (it used to loop forever counting occurrences), and so is an
+  edit whose `old_string` and `new_string` differ only in line endings, which would change nothing.
 
 ### Fixed: `S3FileSystem.getUsageSummary(path)` counts only that subtree (EE-77)
 
@@ -25,7 +28,9 @@ Central is versioned independently).
 
 - **The CLI's `Invalid configuration structure in: <file>` now names the key.** It appends `(at <dotted.key>: <Jackson's
   reason>)` — `llm.reasoningEffor: Unrecognized field "reasoningEffor", not marked as ignorable` — so a typo or a bad
-  value no longer needs `--verbose` to locate. The full cause is still attached. Backlog L-5.
+  value no longer needs `--verbose` to locate. For a value the key cannot take it names the expected type or the
+  accepted values instead of Jackson's text, which quotes the value — a secret expanded from `${ENV}` into the wrong
+  key would otherwise reach stderr. The full cause is still attached. Backlog L-5.
 - **The Anthropic thinking-budget clamp warning reads `only 1 token` and names both remedies.** Besides "Raise
   maxTokens" it names the effort rungs that fit under that `maxTokens` (`low (2048) or minimal (1024)`), or, when the
   budget came from `thinkingBudgetTokens`, says to lower that instead — a configured budget wins over the effort, so
@@ -70,21 +75,30 @@ Central is versioned independently).
 - **A staged copy is reused only when it is the copy its path names.** The marker used to be checked for existence
   alone, and the path is predictable (`{name}/{contentKey}`), so a copy committed to a repository or planted through
   the shell — with a marker holding the right key and other bytes — was served as is. The first time a provider meets
-  a copy it did not make, it now checks that the marker holds the key, that the files are exactly the resource's,
-  and that they hash to the key; otherwise it copies again. The check is remembered per copy, so a copy is read once
-  per process. A shell can still change a copy after that check (design §2 non-goals).
+  a copy it did not make, it now checks that the marker holds the key, that every resource file is there, and that
+  they hash to the key; otherwise it copies again. A file that is not the resource's is deleted rather than causing a
+  re-copy, so what running a staged script leaves (`__pycache__`) does not delete the copy under a running process on
+  every start. The check is remembered per copy, so a copy is read once per process. A shell can still change a copy
+  after that check (design §2 non-goals). The `.gitignore` is also written on the reuse path, so copies staged before
+  this change get it.
 
 ### Fixed: `PathRuleVirtualFileSystem` hides its `DENY`ed subtrees from usage and fills `search` (EE-34, EE-39)
 
 - **`getUsageSummary()` and `getUsageSummary(path)` leave `DENY`ed subtrees out.** The no-arg call was delegated as
   is, and so was a path naming the root or a directory above a hidden prefix, so the local environment's totals
   counted the `.aimon/` control store. Above a hidden prefix the decorator now lists its way down and sums the
-  visible entries; elsewhere it still asks the delegate's path-scoped overload, so a backend that ignores the path
-  there still over-reports.
+  visible entries; elsewhere it still asks the delegate's path-scoped overload. An entry the delegate will not
+  describe — on a local workspace, a symbolic link — is counted as a zero-size file, as the delegate's own walk counts
+  it, instead of failing the whole total.
 - **`search` returns up to `maxResults` visible hits.** It passed `maxResults` to the delegate and then dropped
   hidden hits, so a search whose walk met `.aimon/` first could come back short or empty while visible matches
   existed (reproduced on the local file system). It now repeats the search with a doubled limit until it has enough
   visible hits or the delegate runs out. A directory with no hidden prefix beneath it is searched once, as before.
+
+### Docs: `StackAgentRuntimeProvisioner.Assembly.getFileSystem()` says what it returns (EE-22)
+
+- **Its javadoc now says when the result is the control store** — a local setup with a caller-supplied provider — and
+  that a supplied or factory-made file system is returned whole, with `.aimon/` not hidden.
 
 ### Fixed: the framework's write-once `ToolContext` keys are checked before `ToolContextKeys` is loaded (EE-32)
 

@@ -19,6 +19,8 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.environment.StagedResource;
+import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
+import at.aimon.core.environment.exception.StagingException;
 import at.aimon.core.llm.DynamicToolDefinitionProvider;
 import at.aimon.core.skill.ExecutionMode;
 import at.aimon.core.skill.Skill;
@@ -37,6 +39,7 @@ import at.aimon.core.skill.policy.SkillInvocationRequest;
 import at.aimon.core.skill.render.NoOpSkillContentRenderer;
 import at.aimon.core.skill.render.RenderContext;
 import at.aimon.core.skill.render.SkillContentRenderer;
+import at.aimon.core.tools.ExecutionEnvironmentAccess;
 import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.SkillRenderContextAccess;
@@ -356,8 +359,16 @@ public class SkillTool extends AbstractTool {
                 final RenderContext renderContext;
                 try {
                     renderContext = SkillRenderContextAccess.builderFor(skill, context).build();
-                } catch (RuntimeException e) {
+                } catch (StagingException | ExecutionEnvironmentUnavailableException e) {
+                    // Expected answers: over the limit, changed since loaded, environment down.
                     log.warn("Failed to stage skill '{}': {}", skill.getName(), e.getMessage());
+                    return ToolResult.error("Failed to stage skill '" + skill.getName() + "': " + e.getMessage());
+                } catch (RuntimeException e) {
+                    if (ExecutionEnvironmentAccess.NO_ENVIRONMENT_MESSAGE.equals(e.getMessage())) {
+                        log.warn("Failed to stage skill '{}': {}", skill.getName(), e.getMessage());
+                    } else {
+                        log.error("Failed to stage skill '{}': {}", skill.getName(), e.getMessage(), e);
+                    }
                     return ToolResult.error("Failed to stage skill '" + skill.getName() + "': " + e.getMessage());
                 }
                 final String renderedInstructions;

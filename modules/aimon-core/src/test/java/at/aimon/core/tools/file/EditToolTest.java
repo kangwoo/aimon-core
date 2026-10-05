@@ -502,4 +502,58 @@ class EditToolTest {
     void testExecute_LeavesMixedLineEndingsOutsideTheEditAlone() throws IOException {
         assertThat(editFile("mixed.txt", "one\r\ntwo\nthree\r\n", "two", "dos")).isEqualTo("one\r\ndos\nthree\r\n");
     }
+
+    @Test
+    void testExecute_MultiLineOldStringMatchesAMixedEndingFileAndTouchesOnlyTheSpan() throws IOException {
+        // Read shows clean lines whatever the endings, so the model joins them with \n. Only the matched span changes;
+        // the CRLF on the untouched last line stays.
+        assertThat(editFile("mixed-multi.txt", "one\r\ntwo\nthree\r\n", "one\ntwo", "uno\ndos"))
+                .isEqualTo("uno\r\ndos\nthree\r\n");
+    }
+
+    @Test
+    void testExecute_MatchesAndKeepsALoneCrFile() throws IOException {
+        assertThat(editFile("cr.txt", "one\rtwo\rthree\r", "one\ntwo", "uno\ndos")).isEqualTo("uno\rdos\rthree\r");
+    }
+
+    @Test
+    void testExecute_RejectsAnEditThatOnlyChangesLineEndings() throws IOException {
+        Path file = tempDir.resolve("endings-only.txt");
+        Files.writeString(file, "a\r\nb\r\n");
+
+        ToolResult result = editTool.execute(
+                ToolInput.of("file_path", file.toString(), "old_string", "a\r\nb", "new_string", "a\nb"),
+                createContextWithReadFile(file.toString()));
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("differ only in line endings");
+        assertThat(Files.readString(file)).isEqualTo("a\r\nb\r\n");
+    }
+
+    @Test
+    void testExecute_RejectsAnEmptyOldString() throws IOException {
+        Path file = tempDir.resolve("empty-old.txt");
+        Files.writeString(file, "content");
+
+        ToolResult result = editTool.execute(
+                ToolInput.of("file_path", file.toString(), "old_string", "", "new_string", "x"),
+                createContextWithReadFile(file.toString()));
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("must not be empty");
+    }
+
+    @Test
+    void testExecute_ReplaceAllSplicesEveryMatchIntoTheRawContent() throws IOException {
+        Path file = tempDir.resolve("crlf-all.txt");
+        Files.writeString(file, "x=1\r\ny=2\r\nx=1\r\n");
+
+        ToolResult result = editTool.execute(ToolInput.of(
+                Map.of("file_path", file.toString(), "old_string", "x=1", "new_string", "x=3", "replace_all", true)),
+                createContextWithReadFile(file.toString()));
+
+        assertThat(result.isSuccess()).as(result.getContent()).isTrue();
+        assertThat(result.getContent()).contains("2 occurrence(s)");
+        assertThat(Files.readString(file)).isEqualTo("x=3\r\ny=2\r\nx=3\r\n");
+    }
 }

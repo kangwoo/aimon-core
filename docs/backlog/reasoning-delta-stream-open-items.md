@@ -234,6 +234,11 @@
 **어디** *(2026-10-05)* — `OutputFormatter.displayEvent` · `displayInterruptedAt` · `displayRejectedAt`,
 `OutputFormatterTest.DisplayEventExhaustiveness`.
 
+> **보강 (2026-10-05, PR #225 리뷰).** 위 망라 검사는 서브타입마다 `display*` 메서드가 **있음**만 보았고, 메서드는 있는데
+> `displayEvent` 의 instanceof 체인에 분기가 없는 경우 — RD-3 의 원래 결함과 같은 모양 — 를 통과시켰다.
+> `displayEventDispatchesEverySubtype` 가 각 서브타입의 목을 `displayEvent` 에 넣고 "Unhandled" 로 떨어지지 않는지 본다.
+> `RejectedAt` 분기를 지워 보면 실패한다.
+
 ---
 
 ## RD-4 — 중립 `llm.streamReasoning` 우산 키를 열 것인가

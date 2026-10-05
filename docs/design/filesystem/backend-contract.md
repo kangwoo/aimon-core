@@ -38,7 +38,7 @@
 | **GFS-01** | 디렉토리 시맨틱을 `VirtualFileSystem` 계약으로 명문화하고, GridFS 는 마커 문서로 그것을 표현한다 |
 | **GFS-02** | 업로드가 성공한 **뒤에** 이전 리비전을 회수한다. 실패하면 원본이 그대로 남는다 |
 | **GFS-03** | `filename` 접두 범위 쿼리 + projection. 합계는 서버 사이드 `$group` |
-| **GFS-04** | `getUsageSummary(String path)` 를 계약에 추가하고 Local · Scoped · GridFS 가 구현한다 |
+| **GFS-04** | `getUsageSummary(String path)` 를 계약에 추가하고 Local · Scoped · GridFS 가 구현한다. S3 는 2026-10-05 에 구현했다(EE-77) |
 | **GFS-05** | `GridFSFileSystem(GridFSConfig, MongoClient)` 로 외부 클라이언트를 빌려 쓴다. `ownsClient` 가 소멸 책임을 가른다 |
 | **GFS-06** | **기각** — 릴리스 스크립트에 GridFS 테스트 제외가 이미 없었고, `ReleaseGateMatchesCiGateTest` 가 그것을 지키고 있었다 |
 | **GFS-07** | `FileSystemFactory` 의 기본 DB 이름 `at/aimon` → `aimon` |
@@ -124,6 +124,9 @@ id 를 스냅샷하고(그 뒤에 찍으면 방금 쓴 리비전이 목록에 �
 계약에 추가된 것은 `default` 메서드다. 기본 구현은 `path` 를 무시하고 백엔드 전체 합계를 돌려준다.
 `abstract` 로 두면 트리 밖의 모든 백엔드 구현이 컴파일되지 않고, 무엇보다 **쿼터에서 과대 보고는 안전한
 방향**이기 때문이다 — 덜 보고하면 한도를 넘겨 쓰게 되지만, 더 보고하면 일찍 막힐 뿐이다.
+
+이 기본 구현을 타는 백엔드는 트리 안에 더 없다 — S3 가 마지막이었고 2026-10-05 에 구현했다(EE-77). 그때까지 S3 를
+`PathRuleVirtualFileSystem` 이나 `ScopedVirtualFileSystem` 으로 감싸면 경로마다 버킷 전체가 보고되었다.
 
 `directoryCount` 는 **마커와 유도 디렉토리를 합쳐** 센다. 마커만 세면 `docs/a.txt` 하나뿐인 버킷의
 디렉토리 수가 0 이 되어, `list` 가 보여 주는 것과 요약이 서로 다른 말을 하게 된다.
@@ -291,7 +294,7 @@ GFS-07 은 배선 기본값 하나다. `FileSystemFactory.createFromEnvironment(
 
 | 항목 | 상태 |
 |---|---|
-| S3 가 공유 계약 테스트를 돌지 않는다 | 열림 — `aimon-filesystem-s3` 는 `S3FileSystemMaxFileSizeTest` 만 갖고 있다. 계약 테스트를 붙이려면 디렉토리 마커를 S3 에서 어떻게 표현할지부터 정해야 하고, 그것은 §2 를 이 백엔드에 다시 적용하는 별도 작업이다 |
+| S3 가 공유 계약 테스트를 돌지 않는다 | 열림 — `aimon-filesystem-s3` 는 공유 계약 스위트를 쓰지 않고 자기 테스트(`S3FileSystemGetUsageSummaryTest` 등, `@Tag("docker")`)만 갖고 있다. 계약 테스트를 붙이려면 디렉토리 마커를 S3 에서 어떻게 표현할지부터 정해야 하고, 그것은 §2 를 이 백엔드에 다시 적용하는 별도 작업이다 |
 | S3 스트리밍 경로가 전량 메모리 버퍼링 | 열림 — 큰 파일에 취약하다. 멀티파트 업로드로 바꾸면 거부 시 abort 가 필요해지고, 지금의 "아무것도 보내지 않는다" 라는 강한 보장이 GridFS 와 같은 모양으로 약해진다 |
 | GridFS 접두 범위 쿼리가 기대는 인덱스 | 열림 — 드라이버가 버킷 초기화 시 만드는 `fs.files` 인덱스에 의존하고 있고, 코드는 자기 쿼리 모양에 맞는 인덱스를 스스로 보장하지 않는다 |
 | 테넌트별로 다른 캡 | 열림 — `ScopedVirtualFileSystem` 은 쓰기를 위임하므로 캡은 언제나 delegate 의 것이다. 스코프마다 다른 캡을 주려면 이 계층에 자체 필드가 필요하다 |

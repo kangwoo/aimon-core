@@ -592,15 +592,33 @@ class LocalExecutionEnvironmentProviderStagingTest {
     }
 
     @Test
-    @DisplayName("EE-37: a copy with every file intact but an extra one planted beside them is staged again")
-    void intactCopyWithAnExtraFileIsReplaced() throws Exception {
+    @DisplayName("EE-37: a file planted beside an intact copy is removed, and the copy itself is kept, not re-made")
+    void intactCopyWithAnExtraFileLosesTheExtraOnly() throws Exception {
         final StagedResource resource = scan();
         final String first = ownedEnv().stage(resource);
-        Files.writeString(Path.of(first, "extra.sh"), "echo extra");
+        Files.createDirectories(Path.of(first, "scripts/__pycache__"));
+        Files.writeString(Path.of(first, "scripts/__pycache__/run.pyc"), "bytecode");
+        final Path kept = Path.of(first, "scripts/run.sh");
+        final FileTime before = Files.getLastModifiedTime(kept);
+        Thread.sleep(20);
 
         final ExecutionEnvironment restarted = borrowedEnv(rawWorkspace());
         assertThat(restarted.stage(resource)).isEqualTo(first);
-        assertThat(Path.of(first, "extra.sh")).doesNotExist();
+        assertThat(Path.of(first, "scripts/__pycache__/run.pyc")).doesNotExist();
+        // Not re-copied: a re-copy would delete the tree under whatever is still running from it.
+        assertThat(Files.getLastModifiedTime(kept)).isEqualTo(before);
+    }
+
+    @Test
+    @DisplayName("EE-4: a copy staged before the ignore file existed gets it on the reuse path too")
+    void reusedCopyGetsTheGitignore() throws Exception {
+        final StagedResource resource = scan();
+        ownedEnv().stage(resource);
+        Files.delete(workspace.resolve(".aimon-staged/" + LocalStaging.GITIGNORE));
+
+        borrowedEnv(rawWorkspace()).stage(resource);
+
+        assertThat(workspace.resolve(".aimon-staged/" + LocalStaging.GITIGNORE)).hasContent("*");
     }
 
     @Test

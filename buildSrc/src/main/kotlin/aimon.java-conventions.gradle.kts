@@ -263,4 +263,5 @@ dependencies {
 // in what it does, it can pass without failing anything — so the comment has to name the command that shows whether
 // the call still holds.
 //
-// aimon-cli's `shouldResolveConsistentlyWith` is called on these terms, and its comment is the worked example.
+// The `shouldResolveConsistentlyWith` calls in aimon-cli, aimon-scheduling-quartz and aimon-knowledge-opensearch are
+// made on these terms; aimon-cli's comment is the worked example.

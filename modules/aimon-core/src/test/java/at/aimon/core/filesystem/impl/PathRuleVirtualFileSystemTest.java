@@ -242,6 +242,17 @@ class PathRuleVirtualFileSystemTest {
     }
 
     @Test
+    @DisplayName("EE-34: a symbolic link on the way down to a DENY prefix is counted, not thrown on")
+    void usageCountsASymlinkInsteadOfThrowing() throws IOException {
+        // The delegate refuses any path through a link, so asking it about the entry would throw; the raw walk counts
+        // the link as a file without following it, and so does the guarded total.
+        Files.createSymbolicLink(tempDir.resolve("link.txt"), tempDir.resolve("src/a.txt"));
+
+        assertThat(fs.getUsageSummary().getFileCount()).isEqualTo(raw.getUsageSummary().getFileCount() - 1);
+        assertThat(fs.getUsageSummary(".").getFileCount()).isEqualTo(fs.getUsageSummary().getFileCount());
+    }
+
+    @Test
     @DisplayName("EE-39: search keeps asking until it has maxResults visible hits when DENYed hits come first")
     void searchFillsMaxResults() {
         for (int i = 0; i < 5; i++) {
