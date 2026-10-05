@@ -2,6 +2,10 @@
 
 This document defines the JSON schemas used by skill-creator.
 
+> **Modified by AIMON.** This file differs from the upstream skill-creator: in the `benchmark.json` sample below,
+> `metadata.executor_model` reads `"<model-name>"` instead of a dated model name (aimon-core #132). Nothing else in
+> this file was changed. See `../LICENSE.txt` §4(b).
+
 ---
 
 ## evals.json
