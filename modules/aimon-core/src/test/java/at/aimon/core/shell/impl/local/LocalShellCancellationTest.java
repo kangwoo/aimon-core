@@ -3,6 +3,7 @@ package at.aimon.core.shell.impl.local;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -27,6 +28,7 @@ import at.aimon.core.shell.ShellCancellationSource;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.ShellFeature;
 import at.aimon.core.shell.exception.ShellCancelledException;
+import at.aimon.core.shell.exception.ShellTimeoutException;
 
 @DisplayName("LocalShell — stopping a running command through its cancellation signal")
 @DisabledOnOs(OS.WINDOWS)
@@ -100,6 +102,77 @@ class LocalShellCancellationTest {
         assertThat(outcome.get(10, TimeUnit.SECONDS)).isInstanceOf(ShellCancelledException.class);
         awaitDead(child);
         awaitDead(grandchild);
+    }
+
+    @Test
+    @DisplayName("a process the command forks in answer to the stop request is killed with it (EE-55)")
+    void cancelKillsAProcessBornAfterTheStopRequest(@TempDir Path dir) throws Exception {
+        final ShellCancellationSource source = ShellCancellationSource.create();
+        final Path parentPid = dir.resolve("parent.pid");
+        final Path latePid = dir.resolve("late.pid");
+        // The shell answers TERM by forking: the new sleep did not exist when the tree was first enumerated, so it
+        // gets neither the polite request nor a place in that snapshot. The shell then stays in `wait`, alive when
+        // the grace period runs out, which is what lets the second enumeration find its late child. The loop keeps a
+        // foreground child around so the trap runs as soon as that child is terminated.
+        final String command = "trap 'sleep 300 & echo $! > " + latePid + "; wait' TERM; echo $$ > " + parentPid
+                + "; while :; do sleep 1; done";
+
+        final CompletableFuture<Throwable> outcome = CompletableFuture
+                .supplyAsync(() -> catchThrowable(() -> shell.execute(() -> command, options(source))));
+        final long parent = awaitPid(parentPid);
+        try {
+            assertThat(source.cancel()).isTrue();
+
+            assertThat(outcome.get(10, TimeUnit.SECONDS)).isInstanceOf(ShellCancelledException.class);
+            awaitDead(parent);
+            awaitDead(lateProcess(latePid));
+        } finally {
+            killLeftover(latePid);
+        }
+    }
+
+    @Test
+    @DisplayName("the late process is found through a surviving child even when the command's own shell has exited (EE-55)")
+    void cancelKillsAProcessBornUnderASurvivingChild(@TempDir Path dir) throws Exception {
+        final ShellCancellationSource source = ShellCancellationSource.create();
+        final Path childPid = dir.resolve("child.pid");
+        final Path latePid = dir.resolve("late.pid");
+        // The outer shell honours TERM and is gone inside the grace period, so nothing can be enumerated from it any
+        // more. The inner shell forks on TERM and stays: the late sleep is reachable only from that inner handle.
+        final String command = "bash -c 'trap \"sleep 300 & echo \\$! > " + latePid + "; wait\" TERM; echo $$ > "
+                + childPid + "; while :; do sleep 1; done' & wait";
+
+        final CompletableFuture<Throwable> outcome = CompletableFuture
+                .supplyAsync(() -> catchThrowable(() -> shell.execute(() -> command, options(source))));
+        final long child = awaitPid(childPid);
+        try {
+            assertThat(source.cancel()).isTrue();
+
+            assertThat(outcome.get(10, TimeUnit.SECONDS)).isInstanceOf(ShellCancelledException.class);
+            awaitDead(child);
+            awaitDead(lateProcess(latePid));
+        } finally {
+            killLeftover(latePid);
+        }
+    }
+
+    @Test
+    @DisplayName("a timeout kills the late process the same way — it is the same code path (EE-55)")
+    void timeoutKillsAProcessBornAfterTheStopRequest(@TempDir Path dir) throws Exception {
+        final Path parentPid = dir.resolve("parent.pid");
+        final Path latePid = dir.resolve("late.pid");
+        final String command = "trap 'sleep 300 & echo $! > " + latePid + "; wait' TERM; echo $$ > " + parentPid
+                + "; while :; do sleep 1; done";
+
+        try {
+            assertThatThrownBy(() -> shell.execute(() -> command,
+                    ExecutionOptions.builder().timeout(Duration.ofSeconds(2)).build()))
+                    .isInstanceOf(ShellTimeoutException.class);
+            awaitDead(awaitPid(parentPid));
+            awaitDead(lateProcess(latePid));
+        } finally {
+            killLeftover(latePid);
+        }
     }
 
     @Test
@@ -196,6 +269,29 @@ class LocalShellCancellationTest {
                 throw new AssertionError("process " + pid + " is still alive");
             }
             Thread.sleep(20);
+        }
+    }
+
+    /**
+     * The pid of the process the TERM trap forked. Read only after the shell that writes the file is dead, so the file
+     * is final. On a machine so loaded that the shell never got to run its trap inside the grace period there is no
+     * late process and nothing to assert: the run is reported as skipped, not as green.
+     */
+    private static long lateProcess(Path pidFile) throws IOException {
+        final String text = Files.exists(pidFile) ? Files.readString(pidFile).trim() : "";
+        assumeTrue(!text.isEmpty(), "the shell was killed before its TERM trap forked anything");
+        return Long.parseLong(text);
+    }
+
+    /** Keeps a failing run from leaving a five-minute sleep behind: the assertion already recorded the failure. */
+    private static void killLeftover(Path pidFile) {
+        try {
+            if (Files.exists(pidFile)) {
+                ProcessHandle.of(Long.parseLong(Files.readString(pidFile).trim()))
+                        .ifPresent(ProcessHandle::destroyForcibly);
+            }
+        } catch (IOException | RuntimeException ignored) {
+            // Nothing was written, or it is already gone
         }
     }
 

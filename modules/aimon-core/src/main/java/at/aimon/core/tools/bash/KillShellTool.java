@@ -64,7 +64,8 @@ public class KillShellTool extends AbstractTool {
      */
     public KillShellTool(BackgroundBashManager backgroundManager) {
         super(TOOL_NAME,
-                "Stops a running background bash shell by its ID, including everything the command started. "
+                "Stops a running background bash shell by its ID, together with the processes still attached to it. "
+                        + "A process the command detached from itself (a daemon it launched) is not stopped. "
                         + "Use the ID returned by the Bash call that started the background task. "
                         + "Output the command produced before it was stopped can still be read with BashOutput. "
                         + "Fails if the environment's shell cannot stop a running command.",
@@ -158,10 +159,14 @@ public class KillShellTool extends AbstractTool {
                         + statusName(task.getStatus()) + ")." + readOutput);
             }
             // The shell reported the command cancelled. A local shell has by then terminated the process tree it could
-            // enumerate (forcibly, for anything that ignored the polite request); a process the command detached
-            // from that tree (nohup, setsid, a double fork) is outside its reach, so say what was stopped, no more.
+            // enumerate — forcibly, for anything that ignored the polite request, and including what was forked
+            // while it waited. What it cannot enumerate is a process whose parent has exited (a double fork, a
+            // daemon): that one is no longer attached to the command. nohup and setsid alone do not detach — the
+            // parent is unchanged. So say what was stopped and name what was not, no more.
             return ToolResult.success("Shell " + taskId
-                    + " stopped: the command and the processes it was running were terminated." + readOutput);
+                    + " stopped: the command and the processes still attached to it were terminated."
+                    + " A process it detached (a daemon, anything started with a double fork) is not stopped by this"
+                    + " and may still be running." + readOutput);
 
         } catch (IllegalArgumentException e) {
             log.warn("Invalid parameter: {}", e.getMessage());
