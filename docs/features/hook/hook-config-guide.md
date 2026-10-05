@@ -460,6 +460,8 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 | `http` · `mcp` 가 그 밖의 읽을 수 있는 답을 함 (`allow` · `defer` · 결정 없음 · 빈 본문 · 일반 텍스트) | 판정: 허용 | 진행 | 진행 |
 | `http` · `mcp` 가 판정을 받지 못함 — 연결 실패, timeout, non-2xx, MCP 서버 미등록 · 미연결 · `isError`, 읽을 수 없는 답, 실행기 미배선, 실행기가 던진 예외 | 판정 없음 | **막는다** | 진행 (WARN) |
 | handler 가 자기 timeout 을 넘겨 돌다가 hook 실행기의 바깥 그물(선언 timeout + 5초)에 끊김 | 판정 없음 | **막는다** | 이벤트 정책을 따른다 — 기본 정책은 진행 (WARN) |
+| hook 실행기의 풀이 hook 을 받지 않음 — 포화, 또는 스택 종료로 풀이 닫힘 | 돌리지 못함 | **막는다** (`Hook could not be run (the hook executor rejected it) …`) | 이벤트 정책을 따른다 — 기본 정책은 진행 (WARN) |
+| hook 이 handler 를 부르기 전에 예외로 끝남 — `matcher` 평가 중의 예외 · `StackOverflowError` 등 | 판정 없음 | **막는다** (`Hook failed before it returned a verdict (<예외 타입>)`) | 이벤트 정책을 따른다 — 기본 정책은 진행 (WARN) |
 | 실행이 인터럽트되어 `command` 가 중단됨 (또는 이미 취소된 실행에서 발화) | 실행 취소 | **막는다** | **막는다** — 끝나는 실행은 다음 단계로 가지 않는다 |
 
 "막는다" 는 `preTool` · `onStart` · `preCompact` 에서는 block, `permissionRequest` 에서는 deny 다. 돌리지 못해 막힌 사유는
@@ -468,6 +470,13 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 셸의 stderr · URL · 헤더 · 응답 본문 · 예외 메시지 · `failOpen` 이라는 이름은 싣지 않는다 — 그 사유를 읽는 쪽이 가드가
 제약하는 당사자이기 때문이다. `http` · `mcp` handler 는 `preTool` 과 `postTool` 에만 둘 수 있으므로, 이 표에서 그 세 행이
 해당하는 가드 이벤트는 `preTool` 하나다.
+
+풀이 받지 않은 hook 과 handler 밖에서 예외로 끝난 hook 은 바깥 그물에 끊긴 hook 과 **같은 선언**으로 막힌다 — 선언적 가드가
+hook 마다 내는 `FAIL_CLOSED`(`ExecutionHook#getTimeoutBehavior()`)다. "느렸다" · "시작하지 못했다" · "죽었다" 는 호출한 쪽에서
+보면 같은 일(가드가 아무 말도 하지 않았다)이라, 하나에만 닫혀 있으면 나머지가 가드를 끄는 방법이 된다. 스택을 내릴 때 풀은
+일부러 닫히지만 그 시점에는 가드를 발화시킬 턴이 이미 끝나 있고, 종료 중에 발화하는 `onStop` · `onSessionEnd` 는 가드 이벤트가
+아니어서 막히지 않는다. 그래도 도착한 도구 호출은 기다리지 않고 곧바로 막힌다. 코드로 등록한 hook 은 스스로 `FAIL_CLOSED` 를
+선언하지 않는 한 전처럼 이벤트 정책의 `onException` 을 따른다.
 
 ### 시작할 때 막는 경우
 

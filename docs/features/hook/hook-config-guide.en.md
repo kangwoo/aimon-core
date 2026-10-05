@@ -488,6 +488,8 @@ verdict.** On the other 9 events no row blocks (a WARN, then the event proceeds)
 | `http` or `mcp` gives any other readable answer (`allow`, `defer`, no decision, an empty body, plain text) | verdict: allow | proceeds | proceeds |
 | `http` or `mcp` gets no verdict — a connection failure, a timeout, a non-2xx status, an MCP server that is not registered or not connected or answers `isError`, an answer that cannot be read, an executor that is not wired, an executor that throws | no verdict | **blocks** | proceeds (WARN) |
 | the handler runs past its own timeout and is cut off by the hook executor's outer net (declared timeout + 5 seconds) | no verdict | **blocks** | follows the event policy — the default policy proceeds (WARN) |
+| the hook executor's pool does not take the hook — it is saturated, or closed because the stack is shutting down | could not run | **blocks** (`Hook could not be run (the hook executor rejected it) …`) | follows the event policy — the default policy proceeds (WARN) |
+| the hook ends with an exception before it calls its handler — an exception while evaluating the `matcher`, a `StackOverflowError`, and the like | no verdict | **blocks** (`Hook failed before it returned a verdict (<exception type>)`) | follows the event policy — the default policy proceeds (WARN) |
 | the execution is interrupted and the `command` is stopped (or the hook fires in an execution that is already cancelled) | execution cancelled | **blocks** | **blocks** — an execution that is ending does not take another step |
 
 "Blocks" is a block on `preTool`, `onStart` and `preCompact` and a deny on `permissionRequest`. The reason for a guard
@@ -496,6 +498,15 @@ cannot decide blocks (fail-closed).` (for `http` and `mcp`: `could not get a ver
 call`), and it never carries the command string, the shell's stderr, a URL, a header, a response body, an exception
 message or the name `failOpen` — the reader of that reason is the party the guard constrains. `http` and `mcp` handlers
 can only be placed on `preTool` and `postTool`, so the one guard event those three rows apply to is `preTool`.
+
+A hook the pool did not take, and a hook that ended with an exception outside its handler, block by **the same
+declaration** as a hook cut off by the outer net — the `FAIL_CLOSED` a declarative guard declares per hook
+(`ExecutionHook#getTimeoutBehavior()`). "Slow", "never started" and "died" are one event from the caller's side (the
+guard said nothing), so a guard closed against only one of them would leave the others as the way to switch it off. The
+pool is closed on purpose when the stack shuts down, but by then the turns that fire a guard have ended, and the events
+a shutdown does fire, `onStop` and `onSessionEnd`, are not guard events and are not blocked. A tool call that arrives
+anyway is blocked at once, without waiting. A hook registered in code still follows the event policy's `onException`,
+as before, unless it declares `FAIL_CLOSED` itself.
 
 ### What stops startup
 

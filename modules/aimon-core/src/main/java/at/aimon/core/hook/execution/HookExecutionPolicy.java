@@ -201,6 +201,34 @@ public final class HookExecutionPolicy {
         return hook.getTimeoutBehavior().orElse(timeoutBehavior);
     }
 
+    /**
+     * Returns whether a hook that produced <em>no verdict without timing out</em> — the pool refused to run it, or
+     * its body threw — must be read as a block rather than through {@link #onException(Exception)}.
+     *
+     * <p>
+     * True exactly when the hook itself {@linkplain ExecutionHook#getTimeoutBehavior() declares}
+     * {@link TimeoutBehavior#FAIL_CLOSED}. It is the same declaration as for an outer timeout, deliberately: "cut
+     * off", "never started" and "died" are one event from the caller's side — the guard said nothing — and a hook
+     * that is closed for one and open for another names its own bypass.
+     *
+     * <p>
+     * Unlike {@link #timeoutBehaviorFor(ExecutionHook)} this does <b>not</b> fall back to {@link #timeoutBehavior()}.
+     * What a failure means for a hook that declares nothing is the {@link ExceptionMapper}'s question, and a policy
+     * may well pair a {@code FAIL_CLOSED} timeout with a lenient mapper; reading the policy's timeout behaviour here
+     * would silently change every programmatically registered hook under such a policy. A hook that declares
+     * {@code FAIL_OPEN} is not loosened either: it keeps the mapper's answer.
+     *
+     * @param hook
+     *            the hook that gave no verdict (must not be null)
+     * @return true when the hook declares fail-closed
+     * @throws NullPointerException
+     *             if hook is null
+     */
+    public boolean failsClosedWithoutVerdict(ExecutionHook<?> hook) {
+        Objects.requireNonNull(hook, "hook cannot be null");
+        return hook.getTimeoutBehavior().filter(behavior -> behavior == TimeoutBehavior.FAIL_CLOSED).isPresent();
+    }
+
     /** 실행 모드. */
     public ExecutionMode executionMode() {
         return executionMode;

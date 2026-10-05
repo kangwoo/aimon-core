@@ -392,7 +392,10 @@ HookResult.builder()...build();              // 여러 축을 동시에 설정
   그물에 끊기면 막습니다. **코드로 등록한 hook 은 선언하지 않는 한 정책을 따릅니다** — 기본
   정책에서 그물에 끊긴 `PreToolHook` · `OnStartHook` 은 통과로 읽히고, `OnStartHook` 이 던진
   예외도 `onStart` 정책에서는 성공입니다. 거부가 목적인 hook 이라면 `getTimeoutBehavior()` 를
-  오버라이드해 `FAIL_CLOSED` 를 선언하고 예외를 직접 잡으세요.
+  오버라이드해 `FAIL_CLOSED` 를 선언하세요. 그 선언은 그물뿐 아니라 판정 없이 끝나는 나머지 두
+  경우에도 적용됩니다 — 실행기의 풀이 hook 을 받지 않았을 때(포화 · 종료)와 hook 본문이 예외를
+  던졌을 때도 `onException` 대신 BLOCKED 입니다(`failsClosedWithoutVerdict`). 선언하지 않은 hook 은
+  두 경우 모두 전처럼 `onException` 을 따릅니다.
 - **병렬 모드**에서 timeout 은 **대기를 제한할 뿐, 이미 끝난 작업을 버리지 않습니다.** 결과는 항상
   등록 순서대로 재조립됩니다.
 - **`stopOnBlocked` 는 `SEQUENTIAL` 에서만 의미가 있습니다.** `PARALLEL` 에서는 이미 제출된

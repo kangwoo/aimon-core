@@ -73,7 +73,8 @@ for side effects only. Wiring one up is a feature, not a bug fix.
 - Hooks must be **thread-safe** — the same instance runs across agents, and `PARALLEL` mode plus
   parallel tool dispatch run chains on shared worker threads.
 - Hooks should **not throw**. The executor maps an escaping exception through
-  `HookExecutionPolicy#onException`, which under `failClosedStopOnBlocked` turns a bug into a block.
+  `HookExecutionPolicy#onException`, which under `failClosedStopOnBlocked` turns a bug into a block —
+  and blocks outright, whatever the policy, for a hook that declares `FAIL_CLOSED` (next rule but one).
 - Each hook gets `HookExecutionPolicy#timeout()` (30s default) as an outer net. A hook that owns a
   longer deadline of its own must declare it via `ExecutionHook#getExecutionBudget()`, otherwise the
   net cuts it off first and its graceful outcome is lost. A declared budget is a **floor, not an
@@ -89,6 +90,18 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   that event. A programmatic `PreToolHook` / `OnStartHook` that declares nothing still reads as a
   pass when the net cuts it off, and a throwing `OnStartHook` is a success under the `onStart`
   policy.
+- **The same declaration closes the two other roads to "no verdict"**
+  (`HookExecutionPolicy#failsClosedWithoutVerdict`): a hook the pool refused to run
+  (`RejectedExecutionException` — saturated or shut down) and a hook whose body threw. A declarative
+  guard catches what its *action* throws itself, so what arrives here is from outside that — the
+  matcher predicate, an `Error` (the Bash sub-command splitter recurses per nested `$(`, so the model
+  picks the depth). Both went through `onException`, i.e. success. This reads only the hook's own
+  declaration and never falls back to the policy's `timeoutBehavior()` — a policy may pair a
+  `FAIL_CLOSED` timeout with a lenient mapper, and a hook that declares nothing keeps the mapper. The
+  block reason is a fixed string plus, for a throw, the throwable's simple type name (the deny-reason
+  rule below). Rejection answers at once, so a pool closed by teardown (`TeardownPhase.HOOK_EXECUTOR`,
+  after `SESSIONS` and `AGENT_RUNTIMES`) cannot make a caller wait; the events an orderly shutdown
+  fires (`onStop`, `onSessionEnd`) are advisory, declare nothing and are not blocked.
 - Override `getHookId()` whenever several instances of one class can be registered — async-rewake
   routing and hot-reload cancellation key off it. Ids must be **content-derived and reload-stable**;
   see `DeclarativeHookId`.
