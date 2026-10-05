@@ -156,8 +156,21 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   `HookHotReloadBootstrap.start()` propagate `HookConfigParseException` (file path, layer, cause) for
   a file that does not parse *or cannot be read*; only a missing file is an absent layer. Do not
   catch it to "start anyway" — that runs with every file guard off. A failed *reload* keeps the
-  previous config instead. Handler-level problems found at apply time (missing `command`, unknown
-  event name) are still WARN-and-skip (EE-72).
+  previous config instead.
+- **An entry that parses but cannot be applied stops startup too — under a guard event only.**
+  `HookRegistryApplier` throws the same `HookConfigParseException` (file, layer, `<event> entry #n,
+  handler #m`, reason) for an entry under `preTool` / `onStart` / `preCompact` / `permissionRequest`
+  that it used to skip: a missing or bad field, a handler type the event does not accept, an empty
+  handler list, an unparseable `preTool` matcher, and a handler that cannot run in this assembly (a
+  `command` with no shell support, an `http` / `mcp` with no executor wired). Under any other event
+  the same entry is still WARN-and-skip — do not turn those into failures. A handler with
+  `failOpen: true` is not a guard, so "cannot run here" keeps its old handling. The message never
+  quotes the command or URL. `HookConfigMerger` applies the same line to event names: unknown names
+  are WARN-and-skip on purpose (forward compatibility; `HookEventName.UNSUPPORTED` exists so Claude
+  Code configs import), with the nearest known name in the WARN — but a name within
+  `HookEventName.NEAR_MISS_DISTANCE` (2) of a *guard* event is a typo and fails the load. When adding
+  an event, check that no deliberately-accepted name sits that close to a guard name. Skill
+  frontmatter needs none of this: `SkillHookSetParser` throws on every such case already.
 - **Skill hooks are not registered with the runtime's `HookRegistry`.** `ScopedSkillHookActivator`
   layers them over the registry the skill's fork dispatches against (`SkillScopedHookRegistry`), so
   they fire in that fork and its descendants only. Code that spawns a fork passes

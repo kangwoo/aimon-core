@@ -69,6 +69,10 @@
 
 `notification` · `userpromptsubmit` · `stop_hook_active`
 
+`UNSUPPORTED` 에도 매핑에도 없는 이름은 "모르는 이벤트" 로 WARN 후 스킵한다. 아는 이름과 두 글자 이내로 다르면 WARN 에 가장
+가까운 이름이 붙고, 그 이름이 **가드 이벤트**면 스킵이 아니라 로드 실패다 — `preTol` 은 미래의 이벤트가 아니라 오타다
+(`HookEventName.nearest`, `NEAR_MISS_DISTANCE` = 2).
+
 여기에 없는 상류 이벤트(`PostToolUseFailure`, `TeammateIdle`, `TaskCompleted` 등)는 매핑에도
 UNSUPPORTED 에도 없으므로 **알 수 없는 이벤트로 스킵**된다.
 

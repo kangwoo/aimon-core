@@ -53,15 +53,17 @@ class HookRegistryApplierTest {
     // --- failOpen and executors without shell support (EE-51) -------------------------------------------------------
 
     @Test
-    @DisplayName("an executor without shell support registers no command handler, instead of one that always blocks")
+    @DisplayName("an executor without shell support registers no command handler that is not a guard")
     void shellUnsupportedExecutorSkipsCommandHandlers() {
         final DefaultHookRegistry registry = new DefaultHookRegistry();
 
+        // The handlers that may be skipped: those on an event that cannot block, and those that declared failOpen.
+        // A command *guard* in the same position stops the load instead (EE-72, HookConfigGuardEntryStrictnessTest).
         new HookRegistryApplier(NoOpShellActionExecutor.INSTANCE, null, null, Map.of()).apply(merged("""
                 {"hooks":{
-                  "preTool":[{"hooks":[{"type":"command","command":"guard.sh"},
+                  "preTool":[{"hooks":[{"type":"command","command":"audit.sh","failOpen":true},
                                        {"type":"deny","reason":"no"}]}],
-                  "onStart":[{"hooks":[{"type":"command","command":"gate.sh"}]}],
+                  "onStart":[{"hooks":[{"type":"command","command":"note.sh","failOpen":true}]}],
                   "postTool":[{"hooks":[{"type":"command","command":"audit.sh"}]}]
                 }}"""), registry);
 
@@ -288,23 +290,23 @@ class HookRegistryApplierTest {
     }
 
     @Test
-    @DisplayName("empty handler list is skipped with WARN (no hooks registered)")
+    @DisplayName("empty handler list on an event that cannot block is skipped with WARN (no hooks registered)")
     void emptyHandlersSkipped() {
         final HookConfigDocument doc = parser
-                .parse("{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"Bash\",\"hooks\":[]}]}}");
+                .parse("{\"hooks\":{\"PostToolUse\":[{\"matcher\":\"Bash\",\"hooks\":[]}]}}");
         final MergedHookConfig merged = merger
                 .merge(LayeredHookConfig.builder().put(HookConfigSource.PROJECT, doc).build());
 
         final DefaultHookRegistry registry = new DefaultHookRegistry();
         bootstrap().apply(merged, registry);
 
-        assertThat(registry.getHooks(HookEventType.PRE_TOOL)).isEmpty();
+        assertThat(registry.getHooks(HookEventType.POST_TOOL)).isEmpty();
     }
 
     @Test
-    @DisplayName("invalid handler (command without 'command' field) is skipped, others survive")
+    @DisplayName("invalid handler (command without 'command' field) on postTool is skipped, others survive")
     void invalidHandlerSkipped() {
-        final HookConfigDocument doc = parser.parse("{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"Bash\",\"hooks\":["
+        final HookConfigDocument doc = parser.parse("{\"hooks\":{\"PostToolUse\":[{\"matcher\":\"Bash\",\"hooks\":["
                 + "{\"type\":\"command\"}," + "{\"type\":\"command\",\"command\":\"ok\"}" + "]}]}}");
         final MergedHookConfig merged = merger
                 .merge(LayeredHookConfig.builder().put(HookConfigSource.PROJECT, doc).build());
@@ -312,7 +314,7 @@ class HookRegistryApplierTest {
         final DefaultHookRegistry registry = new DefaultHookRegistry();
         bootstrap().apply(merged, registry);
 
-        assertThat(registry.getHooks(HookEventType.PRE_TOOL)).hasSize(1);
+        assertThat(registry.getHooks(HookEventType.POST_TOOL)).hasSize(1);
     }
 
     @Test
@@ -349,9 +351,9 @@ class HookRegistryApplierTest {
     }
 
     @Test
-    @DisplayName("invalid matcher falls back to name-only without throwing")
+    @DisplayName("invalid matcher on postTool falls back to name-only without throwing")
     void invalidMatcherFallback() {
-        final HookConfigDocument doc = parser.parse("{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"\\u0000(\","
+        final HookConfigDocument doc = parser.parse("{\"hooks\":{\"PostToolUse\":[{\"matcher\":\"\\u0000(\","
                 + "\"hooks\":[{\"type\":\"command\",\"command\":\"x\"}]}]}}");
         final MergedHookConfig merged = merger
                 .merge(LayeredHookConfig.builder().put(HookConfigSource.PROJECT, doc).build());
@@ -359,7 +361,7 @@ class HookRegistryApplierTest {
         final DefaultHookRegistry registry = new DefaultHookRegistry();
         bootstrap().apply(merged, registry);
 
-        assertThat(registry.getHooks(HookEventType.PRE_TOOL)).hasSize(1);
+        assertThat(registry.getHooks(HookEventType.POST_TOOL)).hasSize(1);
     }
 
     /**

@@ -103,8 +103,8 @@ CLI 부트스트랩(`AgentSetupFactory`)은 `HookConfigWatcher` + `HookRegistryR
 
 | 상황                              | 동작                                                          |
 |-----------------------------------|---------------------------------------------------------------|
-| **시작 시** `hooks.json` 이 파싱 실패 · 읽기 실패 | **시작 중단.** 예외 메시지에 파일 경로 · 계층 · 원인. 다른 계층이 멀쩡해도 뜨지 않는다 — 한 계층을 빼고 띄우면 그 계층의 가드가 꺼진 채 돈다 |
-| 새 `hooks.json` 이 파싱 실패 · 읽기 실패 (리로드) | swap 하지 않음. **이전 설정이 그대로 유지**된다(이전 hook · 가드 그대로). `OnConfigReload(failed)` 발사, `failureReason` 에 파일 경로 · 계층 |
+| **시작 시** `hooks.json` 이 파싱 실패 · 읽기 실패, 또는 가드 이벤트에 **적용할 수 없는 항목**이 있음 | **시작 중단.** 예외 메시지에 파일 경로 · 계층 · 원인(적용 불가 항목이면 이벤트 · entry 번호 · handler 번호까지). 다른 계층이 멀쩡해도 뜨지 않는다 — 한 계층을 빼고 띄우면 그 계층의 가드가 꺼진 채 돈다 |
+| 새 `hooks.json` 이 파싱 실패 · 읽기 실패, 또는 가드 이벤트에 적용할 수 없는 항목이 있음 (리로드) | swap 하지 않음. **이전 설정이 그대로 유지**된다(이전 hook · 가드 그대로). `OnConfigReload(failed)` 발사, `failureReason` 에 파일 경로 · 계층 |
 | swap 도중 일부 hook 등록 실패      | LIFO undo 로 새 hook 제거 + 원래 순서로 이전 hook 재등록      |
 | listener 가 예외를 던짐            | 로그만 남기고 watcher 는 계속 동작 (poison 방지)              |
 | watcher 시작 자체가 실패           | CLI 는 핫리로드 없이 계속 동작 (WARN 로그)                    |
@@ -194,6 +194,12 @@ AIMON 고유 이벤트는 `hooks.json` 에 AIMON 내부 이름을 그대로 적�
 다음 이벤트는 **현재 미지원**이며 entry 가 있으면 WARN 로그와 함께 무시된다:
 `Notification`, `UserPromptSubmit`, `stop_hook_active`.
 
+**모르는 이벤트 이름**도 WARN 후 무시된다 — 더 새로운 AIMON 이나 Claude Code 의 이벤트일 수 있기 때문이다. 다만 아는
+이름과 **두 글자 이내**로 다르면 오타로 본다: WARN 이 가장 가까운 이름을 알려 주고(`unknown event 'postTol' … did you mean
+'postTool'?`), 그 가까운 이름이 **가드 이벤트**(`preTool` · `PreToolUse` · `onStart` · `preCompact` · `permissionRequest`)면
+WARN 이 아니라 **시작 실패**다(`… is invalid: unknown event 'preTol' - did you mean 'preTool'? …`). `preTol` 은 미래의
+이벤트가 아니고, 건너뛰면 적어 둔 가드가 빠진 채 뜬다.
+
 > `permissionRequest` / `subagentStart` 의 "(없음)" 은 `HookEventName` 의 역매핑을 그대로 옮긴
 > 것인데, 상류 스펙에는 두 이벤트가 존재한다. 정방향 resolve 는 정상이고 역방향만 비어 있다 —
 > 자세한 사정은 [`hooks-specification.md` §4](../../references/hooks-specification.md) 참고.
@@ -205,7 +211,7 @@ AIMON 고유 이벤트는 `hooks.json` 에 AIMON 내부 이름을 그대로 적�
 >
 > 선언적 hook 에서 이 네 이벤트의 거부는 `command` handler 의 **exit 2** 로 표현한다
 > ([종료 코드](#command) 참조). `type: "deny"` 는 그중에서도 `preTool` 전용이며, 다른
-> 이벤트에 두면 부트스트랩이 entry 를 건너뛴다.
+> 이벤트에 두면 적용할 수 없는 항목이다 — 가드 이벤트에서는 시작 실패, 나머지에서는 건너뛴다.
 
 ---
 
@@ -222,8 +228,8 @@ AIMON 고유 이벤트는 `hooks.json` 에 AIMON 내부 이름을 그대로 적�
 | `Bash(command=^git\\s+push)`          | 도구 이름 + 입력 필드 매칭 (`PredicateParser`)                      |
 | `Bash & input.command~^npm`           | 합성 — 이름과 입력 술어를 `&`/`\|` 로 결합                          |
 
-- `PredicateParser` 가 해석하지 못하는 패턴은 `name-only` fallback 으로 떨어지고
-  WARN 로그가 남는다.
+- `PredicateParser` 가 해석하지 못하는 패턴은 `postTool` 에서는 `name-only` fallback 으로 떨어지고
+  WARN 로그가 남는다. `preTool` 에서는 **시작 실패**다 — fallback 은 실제 도구 이름과 맞지 않아 가드가 조용히 꺼진다.
 - 정규식은 Java `Pattern` 문법을 따른다.
 
 ---
@@ -234,7 +240,8 @@ AIMON 고유 이벤트는 `hooks.json` 에 AIMON 내부 이름을 그대로 적�
 
 쉘 명령을 실행한다. `ShellAction` + `ShellActionExecutor` 가 처리. **모든 이벤트에서
 사용할 수 있는 유일한 handler 타입**이다 (`http` / `mcp` 는 `preTool`·`postTool` 전용,
-`deny` 는 `preTool` 전용 — 다른 이벤트에 두면 entry skip + WARN).
+`deny` 는 `preTool` 전용 — 다른 이벤트에 두면 적용할 수 없는 항목이다: 가드 이벤트에서는 시작 실패,
+나머지 이벤트에서는 skip + WARN. 아래 "시작할 때 막는 경우").
 
 ```jsonc
 {
@@ -378,8 +385,9 @@ JSON 스키마를 따르면 `HookResult` 로 자동 매핑된다. `preTool` 에�
 `postTool` 에서는 판정 없음이 전처럼 WARN 후 정상 진행이다.
 
 > ⚠️ **`aimon-cli` 는 `http` · `mcp` 실행기를 배선하지 않는다.** CLI 의 `hooks.json` 에 둔 `http` · `mcp` handler 는 호출되지
-> 않는다 — `preTool` 에서는 "실행기 미배선" 으로 매번 **막고**(`failOpen: true` 면 WARN 후 통과), `postTool` 에서는 WARN 만
-> 남긴다. 임베딩 호스트는 `HookHotReloadBootstrap.builder().httpExecutor(…).mcpExecutor(…)` 로 배선한다.
+> 않는다 — `preTool` 에 두면 CLI 가 **뜨지 않고**(`… type=http cannot run: no HttpActionExecutor is wired in this assembly`;
+> `failOpen: true` 면 등록되어 매 호출 WARN 후 통과), `postTool` 에서는 WARN 만 남긴다. 임베딩 호스트는
+> `HookHotReloadBootstrap.builder().httpExecutor(…).mcpExecutor(…)` 로 배선한다.
 
 > 🔒 환경 변수 참조는 **화이트리스트(`allowedEnvVars`)에 있는 키만** 치환된다.
 > 화이트리스트에 없는 변수는 빈 문자열로 처리되고 WARN 로그가 남는다.
@@ -419,14 +427,15 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 }
 ```
 
-- `preTool` 외의 이벤트에 두면 부트스트랩이 handler 를 건너뛰고 WARN 로그를 남긴다.
+- `preTool` 외의 이벤트에 두면 적용할 수 없는 항목이다 — 가드 이벤트(`onStart` · `preCompact` ·
+  `permissionRequest`)에서는 시작 실패, 나머지에서는 handler 를 건너뛰고 WARN 로그를 남긴다.
 - 다른 이벤트에서 거부하려면 `command` handler 의 exit 2 를 쓴다. 단 exit 2 가 실제 결정으로
   이어지는 이벤트는 **`preTool` / `onStart` / `preCompact` (block) 와 `permissionRequest`
   (deny) 네 개뿐**이다. `postTool`, `onStop`, `onSessionStart`, `onSessionEnd`,
   `subagentStart`, `subagentStop`, `postCompact`, `permissionDenied`, `onConfigReload`
   에서는 exit 2 가 WARN 로그만 남기고 무시된다 — 이 아홉 이벤트에는 거부를 실을 결정 채널이
   아예 없다.
-- `reason` 은 비어 있을 수 없다 (validation 실패 시 entry skip).
+- `reason` 은 비어 있을 수 없다 (`preTool` 의 가드이므로 validation 실패는 시작 실패다).
 
 ---
 
@@ -457,6 +466,25 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 셸의 stderr · URL · 헤더 · 응답 본문 · 예외 메시지 · `failOpen` 이라는 이름은 싣지 않는다 — 그 사유를 읽는 쪽이 가드가
 제약하는 당사자이기 때문이다. `http` · `mcp` handler 는 `preTool` 과 `postTool` 에만 둘 수 있으므로, 이 표에서 그 세 행이
 해당하는 가드 이벤트는 `preTool` 하나다.
+
+### 시작할 때 막는 경우
+
+위 표는 hook 이 **발화했을 때**의 일이다. 그 앞 단계가 하나 더 있다 — 파싱은 됐지만 **적용할 수 없는 항목**. 가드
+이벤트 아래에서는 그런 항목을 건너뛰지 않고 **시작을 멈춘다**(리로드라면 이전 설정 유지). 건너뛰면 적어 둔 가드가 빠진 채
+뜨기 때문이고, 깨진 파일과 같은 통로 · 같은 문구로 실패한다: `hooks config <경로> (<계층> layer) is invalid: <이벤트> entry
+#<n>, handler #<m>: <사유>`. 번호는 그 계층 · 그 이벤트 안에서 0부터 센다. 커맨드나 URL 은 메시지에 싣지 않는다.
+
+| 적용할 수 없는 항목 | 가드 이벤트 (`preTool` · `onStart` · `preCompact` · `permissionRequest`) | 나머지 이벤트 |
+|---------------------|------------------------------------------------------------------------|---------------|
+| 필수 필드 누락 · 잘못된 값 — `command` 없는 `command`, `reason` 없는 `deny`, URI 가 아닌 `url`, 모르는 `method`, `server` · `tool` 없는 `mcp` | **시작 실패** | skip + WARN |
+| 그 이벤트가 받지 않는 handler 타입 — `preTool` 밖의 `deny`, `preTool` · `postTool` 밖의 `http` · `mcp` | **시작 실패** | skip + WARN |
+| handler 가 하나도 없는 entry | **시작 실패** | skip + WARN |
+| 해석되지 않는 `matcher` | `preTool`: **시작 실패** | `postTool`: name-only fallback + WARN |
+| 이 호스트에서 돌 수 없는 handler — 셸을 지원하지 않는 실행기의 `command`, 실행기가 배선되지 않은 `http` · `mcp` | **시작 실패** (`"failOpen": true` 인 handler 는 가드가 아니므로 전처럼 처리 — `command` 는 skip + WARN, `http` · `mcp` 는 등록) | `command` 는 skip + WARN, `http` · `mcp` 는 등록되어 호출 때 WARN |
+| 가드 이벤트와 두 글자 이내로 다른 이벤트 이름 (`preTol`) | **시작 실패** | — |
+| 그 밖의 모르는 이벤트 이름 · 미지원 이벤트 | — | skip + WARN (가까운 이름이 있으면 알려 준다) |
+
+스킬 frontmatter 의 hook 에는 이 표가 필요 없다 — 그쪽 파서는 처음부터 엄격해서 위 경우가 전부 그 스킬의 로드 실패다.
 
 **인터럽트.** 사용자가 실행을 중단하면 돌고 있던 `command` 는 **실행의 취소 신호로** 멈춘다 — 스레드 인터럽트에 반응하지
 않는 셸(원격 셸)에서도 자기 timeout 까지 돌지 않는다. 사유는 `Blocked: hook '<이름>' (<이벤트>) was stopped — execution
@@ -658,7 +686,8 @@ placeholder 는 `${<prefix>.<name>}` 세 종류뿐이다.
             "headers": { "X-Auth": "${env.AUDIT_TOKEN}" },
             "body": "{\"cmd\":\"${tool_input.command}\",\"invoker\":\"${context.invoker_name}\",\"iteration\":\"${context.iteration}\"}",
             "allowedEnvVars": ["AUDIT_TOKEN"],
-            "timeout": 2
+            "timeout": 2,
+            "failOpen": true
           }
         ]
       }
@@ -666,6 +695,9 @@ placeholder 는 `${<prefix>.<name>}` 세 종류뿐이다.
   }
 }
 ```
+
+감사 hook 은 가드가 아니므로 `"failOpen": true` 를 둔다 — 없으면 감사 서버에 닿지 못할 때마다 `Bash` 가 막힌다
+([가드가 막는 경우](#가드가-막는-경우)). `http` handler 는 실행기를 배선한 호스트에서만 돈다(`aimon-cli` 는 배선하지 않는다).
 
 ### 2. 위험한 명령을 즉시 차단
 
@@ -855,13 +887,14 @@ fork 가 없어 발화하지 않는다. 전체 규칙은 [`aimon-skill-extension
 | `OnConfigReload` 가 `failed=true` 로 발사됨                              | `failureReason` 의 파서 에러를 보고 JSON 문법/필수 필드를 검증. 라이브 registry 는 이전 상태 유지. |
 | 시작 시 `Configuration error: hooks config … (… layer) is invalid: …` / `… could not be read: …` 로 종료 | 메시지가 가리키는 파일의 그 위치를 고치거나 파일을 치운다. 깨진 JSON · 알 수 없는 `type` · 0 이하 `timeout` · 읽을 수 없는 파일 · 파일 자리에 있는 디렉터리가 모두 여기로 온다. 파일 hook 없이 뜨는 일은 없다. |
 | fork 가 `Execution blocked by OnStart hook [SUBAGENT/…]` 로 끝남          | `hooks.json`(또는 스킬 frontmatter)의 `onStart` hook 이 그 fork 를 막았다. 사용자 입력용 hook 이라면 `AIMON_INVOKER_TYPE` 이 `SUBAGENT` 일 때 exit 0 으로 빠지게 한다. |
-| `WARN hooks: matcher '...' could not be parsed`                          | `PredicateParser` 문법 오류. fallback 으로 name-only 적용 중.                 |
-| `WARN hooks: invalid handler in PROJECT on event 'preTool': ...`         | 필수 필드 누락 (`command`/`url`/`server+tool`/`reason`). 해당 entry 만 스킵. |
+| `Configuration error: hooks config … is invalid: <event> entry #n, handler #m: …` 로 CLI 가 뜨지 않음 | 가드 이벤트 아래에 적용할 수 없는 항목이 있다. 메시지가 가리키는 handler 를 고치거나 지운다. 관찰용이라 못 돌아도 되는 handler 라면 `"failOpen": true`. 전체 표는 [시작할 때 막는 경우](#시작할-때-막는-경우). |
+| `WARN hooks: matcher '...' could not be parsed`                          | `postTool` 의 `PredicateParser` 문법 오류. fallback 으로 name-only 적용 중. (`preTool` 에서는 시작 실패.) |
+| `WARN hooks: invalid handler in PROJECT on event 'postTool': ...`        | 가드가 아닌 이벤트에서 필수 필드 누락 (`command`/`url`/`server+tool`/`reason`). 해당 handler 만 스킵. |
 | `WARN hooks: 'deny' is not valid on postTool ...`                        | `deny` 는 `preTool` 전용. 다른 이벤트에서는 handler 가 무시됨.                |
 | `WARN hooks: '...' event is not supported by AIMON in this phase`        | `Notification` / `UserPromptSubmit` / `stop_hook_active` 뿐이다. 나머지는 모두 지원. |
-| `WARN hooks: unknown event '...'`                                        | 오타. [지원 이벤트 표](#지원-이벤트와-매핑)의 이름을 사용 (대소문자 무시).    |
-| `WARN hooks: only 'command' actions are valid on ...`                    | `preTool`/`postTool` 외의 이벤트는 셸 handler 전용.                          |
-| `WARN hooks: 'command' on ... cannot run: the configured shell executor does not support shell actions` | 셸을 지원하지 않는 실행기(`NoOpShellActionExecutor`)로 `hooks.json` 을 적용했다. `command` handler 는 등록되지 않는다 — `HostShellActionExecutor` 를 배선할 것. |
+| `WARN hooks: unknown event '...'`                                        | 오타이거나 AIMON 이 모르는 이벤트. [지원 이벤트 표](#지원-이벤트와-매핑)의 이름을 사용 (대소문자 무시). 가까운 이름이 있으면 `did you mean '…'?` 가 붙고, 그것이 가드 이벤트면 WARN 이 아니라 시작 실패다. |
+| `WARN hooks: only 'command' actions are valid on ...`                    | `preTool`/`postTool` 외의 이벤트는 셸 handler 전용. 가드가 아닌 이벤트일 때만 WARN 이다. |
+| `WARN hooks: 'command' on ... cannot run: the configured shell executor does not support shell actions` | 셸을 지원하지 않는 실행기(`NoOpShellActionExecutor`)로 `hooks.json` 을 적용했다. 가드가 아닌 `command` handler(가드가 아닌 이벤트, 또는 `failOpen: true`)는 등록되지 않는다 — `HostShellActionExecutor` 를 배선한다. 가드 이벤트의 `command` 라면 WARN 이 아니라 시작 실패다. |
 | `WARN hooks config at ...: ... has a 'failOpen' that is not a JSON boolean (...); it is read as false` | `failOpen` 에 `"true"` · `1` · `null` 을 썼다. 그 handler 는 `failOpen: false` 로 등록된다(커맨드를 못 돌리면 막는다). 관찰용이라면 `true` 로 고칠 것. |
 | 도구가 `Blocked: guard hook '...' could not run its command` 로 막힘      | 결정 채널이 있는 이벤트의 `command` handler 가 종료 코드를 내지 못했거나(timeout 등) 셸이 커맨드를 시작하지 못했다(`command not found: exit code 127` · `command not executable: exit code 126` — 스크립트 경로와 실행 권한을 확인). 사유의 원인을 고치거나, 관찰용 handler 라면 `"failOpen": true` 를 선언. 전체 표는 [가드가 막는 경우](#가드가-막는-경우). |
 | 도구가 `Blocked: guard hook '...' could not get a verdict from its http call` (또는 `mcp call`) 로 막힘 | `preTool` 의 `http` · `mcp` handler 가 판정을 받지 못했다. 사유의 원인을 본다 — `action executor not wired`(호스트가 실행기를 배선하지 않았다. `aimon-cli` 가 그렇다), `call failed: HTTP 503` · `call failed: ConnectException`(정책 서버), `timed out`, `response could not be read`(`decision` 값이 `allow` · `deny` · `defer` 가 아니다). 관찰용 handler 라면 `"failOpen": true`. |

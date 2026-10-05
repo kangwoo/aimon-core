@@ -1,6 +1,8 @@
 package at.aimon.core.config.hook;
 
+import java.nio.file.Path;
 import java.util.Collections;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,11 +22,45 @@ import java.util.Objects;
 public final class MergedHookConfig {
 
     private final Map<String, List<MergedHookEntry>> entriesByAimonEvent;
+    private final Map<HookConfigSource, Path> origins;
 
-    private MergedHookConfig(Map<String, List<MergedHookEntry>> entriesByAimonEvent) {
+    private MergedHookConfig(Map<String, List<MergedHookEntry>> entriesByAimonEvent,
+            Map<HookConfigSource, Path> origins) {
         final Map<String, List<MergedHookEntry>> copy = new LinkedHashMap<>();
         entriesByAimonEvent.forEach((k, v) -> copy.put(k, List.copyOf(v)));
         this.entriesByAimonEvent = Collections.unmodifiableMap(copy);
+        final Map<HookConfigSource, Path> originCopy = new EnumMap<>(HookConfigSource.class);
+        originCopy.putAll(origins);
+        this.origins = Collections.unmodifiableMap(originCopy);
+    }
+
+    /**
+     * Names a layer the way every {@code hooks.json} failure does: {@code hooks config <absolute path> (<LAYER>
+     * layer)}, or without the path when the layer's file is not known (a config assembled in code).
+     *
+     * @param source
+     *            the layer (must not be null)
+     * @return the label (never null)
+     */
+    public String describe(HookConfigSource source) {
+        Objects.requireNonNull(source, "source cannot be null");
+        return fileLabel(origins.get(source), source);
+    }
+
+    /**
+     * The one wording for "which file": shared by the loader (a file that does not parse) and by the stages after
+     * it (an entry that cannot be applied), so the two failures read alike.
+     *
+     * @param path
+     *            the file, or null when it is not known
+     * @param source
+     *            the layer (must not be null)
+     * @return the label (never null)
+     */
+    static String fileLabel(Path path, HookConfigSource source) {
+        return path == null
+                ? "hooks config (" + source + " layer)"
+                : "hooks config " + path.toAbsolutePath() + " (" + source + " layer)";
     }
 
     /**
@@ -52,13 +88,26 @@ public final class MergedHookConfig {
      * @return new merged config (never null)
      */
     public static MergedHookConfig of(Map<String, List<MergedHookEntry>> entriesByAimonEvent) {
+        return of(entriesByAimonEvent, Map.of());
+    }
+
+    /**
+     * @param entriesByAimonEvent
+     *            already-merged map (must not be null; defensively copied)
+     * @param origins
+     *            the file each layer was read from, for the layers where it is known (must not be null)
+     * @return new merged config (never null)
+     */
+    public static MergedHookConfig of(Map<String, List<MergedHookEntry>> entriesByAimonEvent,
+            Map<HookConfigSource, Path> origins) {
         Objects.requireNonNull(entriesByAimonEvent, "entriesByAimonEvent cannot be null");
-        return new MergedHookConfig(entriesByAimonEvent);
+        Objects.requireNonNull(origins, "origins cannot be null");
+        return new MergedHookConfig(entriesByAimonEvent, origins);
     }
 
     /** @return empty config */
     public static MergedHookConfig empty() {
-        return new MergedHookConfig(Map.of());
+        return new MergedHookConfig(Map.of(), Map.of());
     }
 
     /**
