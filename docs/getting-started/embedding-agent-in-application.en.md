@@ -387,7 +387,7 @@ aimon:
   more agent.
 - `aimon.llm.provider: none` means "the starter does not create an `LlmClient`". If you register an
   `LlmClient` bean yourself, that one is used (this is the shape the sample app takes). If nobody
-  registers one, the starter's fallback remains, and it fails on call **naming the properties you have to
+  registers one, the starter's fallback remains, and it fails at startup **naming the properties you have to
   fill in**.
 - **The `Bash` tool is off by default** — a point where this differs from the CLI. The CLI simply hands
   over the shell because a human approves each command; a server process has nobody to ask, so arbitrary

@@ -99,7 +99,7 @@ whenever it produced no verdict, and `failOpen: true` is the one opt-out. The gu
   `aimon.llm.openai`** (breaking), naming the key, instead of ignoring it. Unknown keys elsewhere under `aimon.*` are
   still ignored. An application with its own keys in those subtrees can exclude `AimonPropertiesBindingAutoConfiguration`.
 - **Default sampling parameters can be set from configuration:** `aimon.llm.openai.{temperature,top-p,presence-penalty,frequency-penalty}`
-  and `aimon.llm.anthropic.temperature` (CLI: `llm.openai.*`, `llm.anthropic.temperature`). An agent definition's value
+  and `aimon.llm.anthropic.temperature` (CLI, in camelCase: `llm.openai.{temperature,topP,presencePenalty,frequencyPenalty}`, `llm.anthropic.temperature`). An agent definition's value
   wins, and a value outside the vendor's range fails startup naming the key.
 - **A model-capability declaration that shadows a built-in row without restating one of its flags logs one WARN** at
   startup naming the row, the dropped flags and what to add. The declaration is still registered as written.
