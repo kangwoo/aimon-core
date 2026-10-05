@@ -1,5 +1,6 @@
 package at.aimon.bootstrap;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -461,8 +462,8 @@ public final class AimonStackBuilder {
                 .credentialStoreFactory(spec.getCredentialStoreFactory().orElse(null))
                 .agentCustomizers(spec.getAgentCustomizers());
         for (AgentSpec agentSpec : spec.getAgents()) {
-            final AgentBundle agentBundle = agentSpec.getBundle()
-                    .orElseGet(() -> loadBundle(agentSpec.getBundleName(), skillParser));
+            final AgentBundle agentBundle = agentSpec.getBundle().orElseGet(
+                    () -> loadBundle(agentSpec.getBundleName(), skillParser, spec.getAllowedSkillLinkRoots()));
             // The ref decides the id, not the name inside the bundle. Deriving it from the definition would mean
             // a caller cannot know what to route on without opening the file, and an edit to a frontmatter line
             // would silently move an agent out from under every session, schedule and approval that named it.
@@ -577,9 +578,11 @@ public final class AimonStackBuilder {
         return stack;
     }
 
-    private static AgentBundle loadBundle(String bundleName, SkillParser skillParser) {
+    private static AgentBundle loadBundle(String bundleName, SkillParser skillParser,
+            List<Path> allowedSkillLinkRoots) {
         final AgentBundleLoader loader = new AdaptiveAgentBundleLoader(StackPaths.AGENT_BUNDLE_BASE_PATH,
-                new MarkdownAgentDefinitionParser(), Thread.currentThread().getContextClassLoader(), skillParser);
+                new MarkdownAgentDefinitionParser(), Thread.currentThread().getContextClassLoader(), skillParser,
+                allowedSkillLinkRoots);
         return loader.load(bundleName);
     }
 

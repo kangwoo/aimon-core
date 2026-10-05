@@ -412,6 +412,14 @@ modules/aimon-core/src/main/resources/
 - **`.stageignore`** (gitignore 문법의 부분집합: glob, `dir/`, `!`, `#`)를 스킬 디렉터리에 두면 큰 에셋을 복사
   대상에서 뺄 수 있다. 스킬 디렉터리 하나의 스테이징 총량은 기본 50 MB 로 제한된다(스타터 속성
   `aimon.environment.staging.max-bytes`).
+- **링크로 설치한 스킬.** 디스크에서 읽는 번들의 `skills/` 에서는 스킬 디렉터리나 그 안의 파일·디렉터리가 심볼릭
+  링크여도 된다. 링크는 그 실제 경로가 `skills/` 안이거나 **허용 루트** 안일 때만 따라가고, 그 밖을 가리키는 링크가 있는
+  스킬은 적재되지 않는다(그 스킬만 빠지고 경고가 링크를 이름으로 든다). 허용 루트는 기본이 비어 있고, 공유 헬퍼를
+  `skills/foo -> /opt/shared-skills/foo` 로 링크했다면 그 디렉터리를 적는다 — 스타터 `aimon.skill.allowed-link-roots`,
+  CLI `agent.allowedSkillLinkRoots`, 직접 조립할 때는 `AimonStackSpec.builder().allowedSkillLinkRoots(...)`. 절대 경로만
+  받는다. 상대 경로, 빈 항목, `/` 는 기동이 실패하고, 없는 디렉터리는 받아들이되 아무것도 허용하지 않는다. jar 안의
+  번들에는 링크가 없으므로 이 설정이 닿지 않고, `.aimon/skills` 의 사용자 스킬은 워크스페이스 파일 시스템으로 읽으므로
+  링크를 아예 따라가지 않는다.
 - `.aimon-staged/` 는 사본일 뿐이다. 로컬 제공자가 첫 복사 때 `.aimon-staged/.gitignore`(`*`)를 써 두므로
   프로젝트의 `.gitignore` 에 따로 넣지 않아도 된다(이미 있는 파일은 건드리지 않는다).
 

@@ -1,5 +1,7 @@
 package at.aimon.spring.boot.autoconfigure;
 
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -18,6 +20,7 @@ import at.aimon.bootstrap.spec.ExecutionEnvironmentSpec;
 import at.aimon.bootstrap.spec.SessionSpec;
 import at.aimon.core.agent.ContextEngineKind;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
+import at.aimon.core.filesystem.VirtualFileSystems;
 import at.aimon.core.knowledge.SimpleDocumentChunker;
 import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
@@ -248,6 +251,9 @@ public class AimonProperties implements InitializingBean {
 
     /** How long a suspended turn waits for an out-of-band approval. */
     public static final String SKILL_APPROVAL_PENDING_TURN_TTL = PREFIX + ".skill.approval.pending-turn-ttl";
+
+    /** Directories a symbolic link in an on-disk agent bundle's {@code skills/} directory may resolve into. */
+    public static final String SKILL_ALLOWED_LINK_ROOTS = PREFIX + ".skill.allowed-link-roots";
 
     /** Engine that runs scheduled tasks. */
     public static final String SCHEDULING_BACKEND = PREFIX + ".scheduling.backend";
@@ -855,6 +861,7 @@ public class AimonProperties implements InitializingBean {
         requirePositive(agentRuntime.getSweepInterval(), AGENT_RUNTIME_SWEEP_INTERVAL);
         requirePositive(skill.getApproval().getPendingTurnTtl(), SKILL_APPROVAL_PENDING_TURN_TTL);
         requireNoBlankEntry(skill.getApproval().getAllow(), SKILL_APPROVAL_ALLOW);
+        skill.toAllowedLinkRoots();
         // Checked here, not only when a rolling runtime is built: an agent can pick rolling in its AGENT.md later,
         // and a bad ratio should not wait for that agent to be the one that fails.
         final ContextProperties.Rolling rolling = context.getRolling();
@@ -2268,13 +2275,84 @@ public class AimonProperties implements InitializingBean {
         }
     }
 
-    /** Skill invocation policy. */
+    /** Skill loading and invocation policy. */
     public static class Skill {
 
         private final Approval approval = new Approval();
 
+        /**
+         * Directories a symbolic link in an agent bundle's skills/ directory may resolve into, besides that directory
+         * itself. Absolute paths; a relative path, a blank entry or a filesystem root (/) fails startup. Empty by
+         * default: a skill with a link that leaves skills/ is not loaded. Reaches bundles read from a directory on
+         * the class path, not ones inside a jar.
+         */
+        private List<String> allowedLinkRoots = new ArrayList<>();
+
         public Approval getApproval() {
             return approval;
+        }
+
+        /**
+         * Returns {@code aimon.skill.allowed-link-roots} as written; {@link #toAllowedLinkRoots()} checks it.
+         *
+         * @return the entries, possibly empty, never null
+         */
+        public List<String> getAllowedLinkRoots() {
+            return allowedLinkRoots;
+        }
+
+        /**
+         * Sets {@code aimon.skill.allowed-link-roots}.
+         *
+         * @param allowedLinkRoots
+         *            the entries, or null for none
+         */
+        public void setAllowedLinkRoots(List<String> allowedLinkRoots) {
+            this.allowedLinkRoots = (allowedLinkRoots == null) ? new ArrayList<>() : allowedLinkRoots;
+        }
+
+        /**
+         * Turns {@code aimon.skill.allowed-link-roots} into the paths the stack spec takes, refusing an entry the
+         * link rule cannot use — by property and index, at startup, rather than when the first bundle is read (a
+         * bundle in a jar never reads the list at all).
+         *
+         * <p>
+         * An entry must be an absolute path: a relative one would name a different directory depending on where the
+         * application is started, and a blank one is a gap in an indexed property or a stray comma. A filesystem root
+         * is refused because every path lies under it, which would switch the rule off while it still looks
+         * configured. A directory that does not exist is accepted and matches nothing.
+         *
+         * @return the allowed link roots, normalised, in the order written
+         * @throws IllegalStateException
+         *             if an entry is blank, not a path, not absolute, or a filesystem root
+         */
+        public List<Path> toAllowedLinkRoots() {
+            final List<Path> roots = new ArrayList<>(allowedLinkRoots.size());
+            for (int i = 0; i < allowedLinkRoots.size(); i++) {
+                final String property = SKILL_ALLOWED_LINK_ROOTS + "[" + i + "]";
+                final String value = allowedLinkRoots.get(i);
+                if (isBlank(value)) {
+                    throw new IllegalStateException(property + " is blank. Remove the entry — it is either a gap in"
+                            + " an indexed property or a stray comma, and it allows no directory.");
+                }
+                final Path root;
+                try {
+                    root = Path.of(value);
+                } catch (InvalidPathException e) {
+                    throw new IllegalStateException(property + "=" + value + " is not a valid path.", e);
+                }
+                if (!root.isAbsolute()) {
+                    throw new IllegalStateException(property + "=" + value + " must be an absolute path. A relative"
+                            + " path would name a different directory wherever the application is started.");
+                }
+                try {
+                    roots.addAll(VirtualFileSystems.checkedLinkRoots(List.of(root)));
+                } catch (IllegalArgumentException e) {
+                    throw new IllegalStateException(property + "=" + value + " must not be a filesystem root: every"
+                            + " path lies under it, so it would allow a skill link to resolve anywhere.", e);
+                }
+            }
+            return List.copyOf(roots);
         }
 
         /**

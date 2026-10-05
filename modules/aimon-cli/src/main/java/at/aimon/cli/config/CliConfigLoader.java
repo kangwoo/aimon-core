@@ -3,6 +3,10 @@ package at.aimon.cli.config;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.StringJoiner;
 import java.util.function.Function;
@@ -19,6 +23,7 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
 import at.aimon.cli.exception.ConfigurationException;
+import at.aimon.core.filesystem.VirtualFileSystems;
 
 public class CliConfigLoader {
     private static final Pattern JAVA_TYPE_ASIDE = Pattern.compile("\\s*\\((?:class|enum class) [^)]*\\)");
@@ -188,6 +193,54 @@ public class CliConfigLoader {
         return path;
     }
 
+    /**
+     * Turns {@code agent.allowedSkillLinkRoots} into paths, refusing an entry the link rule cannot use — and saying
+     * which one, by key and index, here rather than when the agent bundle is loaded.
+     *
+     * <p>
+     * An entry must be an absolute path. A relative one, the empty string included, would name a different directory
+     * depending on where the CLI is started; {@code ~} is not expanded, so write {@code ${HOME}/...}. A filesystem
+     * root ({@code /}) is refused because every path lies under it. A directory that does not exist is accepted and
+     * matches nothing. The message carries no value: this sentence reaches stderr without {@code --verbose}, and the
+     * value may have been expanded from the environment.
+     *
+     * @param agentConfig
+     *            the {@code agent} block (must not be null)
+     * @return the allowed link roots, normalised, in the order written
+     * @throws ConfigurationException
+     *             if an entry is empty, not a path, not absolute, or a filesystem root
+     */
+    public static List<Path> allowedSkillLinkRoots(AgentConfig agentConfig) {
+        final List<String> written = agentConfig.getAllowedSkillLinkRoots();
+        final List<Path> roots = new ArrayList<>(written.size());
+        for (int i = 0; i < written.size(); i++) {
+            final String key = "agent.allowedSkillLinkRoots[" + i + "]";
+            final String value = written.get(i);
+            if (value == null || value.isBlank()) {
+                throw new ConfigurationException(key + " is empty. Remove the entry, or write the absolute path of"
+                        + " a directory skills may be linked into.");
+            }
+            final Path root;
+            try {
+                root = Path.of(value);
+            } catch (InvalidPathException e) {
+                throw new ConfigurationException(key + " is not a valid path.", e);
+            }
+            if (!root.isAbsolute()) {
+                throw new ConfigurationException(key + " must be an absolute path. A relative path (and `~`, which is"
+                        + " not expanded -- write ${HOME}) would name a different directory wherever the CLI is"
+                        + " started.");
+            }
+            try {
+                roots.addAll(VirtualFileSystems.checkedLinkRoots(List.of(root)));
+            } catch (IllegalArgumentException e) {
+                throw new ConfigurationException(key + " must not be a filesystem root: every path lies under it, so"
+                        + " it would allow a skill link to resolve anywhere.", e);
+            }
+        }
+        return List.copyOf(roots);
+    }
+
     private void validateConfig(CliConfig config) {
         LlmProviderConfig llmConfig = config.getLlmConfig();
         if (llmConfig == null) {
@@ -205,6 +258,7 @@ public class CliConfigLoader {
         if (config.getAgentConfig() == null) {
             config.setAgentConfig(new AgentConfig());
         }
+        allowedSkillLinkRoots(config.getAgentConfig());
 
         if (config.getCliSettings() == null) {
             config.setCliSettings(new CliSettings());

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 89a8ed4
+source_commit: 389e066
 ---
 
 # Embedding an AIMON agent in your application
@@ -337,6 +337,7 @@ aimon:
       mode: deny                    # deny (default) | allow-list | suspend | channel
       allow: []
       pending-turn-ttl: 10m
+    allowed-link-roots: []          # directories (absolute) a symbolic link in an on-disk bundle's skills/ may point into
 
   scheduling:
     backend: none                   # none (default) | in-memory | quartz

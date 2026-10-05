@@ -605,14 +605,15 @@ final AgentBundleLoader effectiveBundleLoader = (this.agentBundleLoader != null)
         ? this.agentBundleLoader
         : new AdaptiveAgentBundleLoader(DEFAULT_AGENT_BUNDLE_BASE_PATH,
                 new MarkdownAgentDefinitionParser(),
-                Thread.currentThread().getContextClassLoader(), skillParser);
+                Thread.currentThread().getContextClassLoader(), skillParser,
+                allowedSkillLinkRoots(config));
 final AgentBundle agentBundle = effectiveBundleLoader.load(extractAgentName(config));
 ```
 
 - **`OutputFormatter`** — 콘솔 색상/포매팅 담당. 자신의 앱에서는 SSE 스트리머, 로그 어펜더, WebSocket 송신기 등으로 대체한다.
 - **`LocalShell`** — `hooks.json` 에 선언한 `command` 핸들러를 돌리는 **호스트 셸**이다(`HostShellActionExecutor` 로 감싸 핫리로드에 넘긴다). 스킬 훅용이 아니다. `AutoCloseable`로 `AgentSetup.close()`에서 정리된다.
 - **`SkillParser`** — 마크다운 스킬 정의 파서. `DefaultShellActionExecutor`(인자 없음)를 물려 `shell` 훅을 받아들이되 **셸은 주입하지 않는다** — 스킬 훅의 셸 액션은 훅이 발화한 실행의 실행 환경 셸에서 돈다.
-- **`AgentBundleLoader`** — `agents/<name>/agent.md`와 그 하위의 서브에이전트, 스킬을 한 번에 로드한다. 클래스패스에서 읽으므로 jar로 패키징된다.
+- **`AgentBundleLoader`** — `agents/<name>/agent.md`와 그 하위의 서브에이전트, 스킬을 한 번에 로드한다. 클래스패스에서 읽으므로 jar로 패키징된다. 마지막 인자는 설정의 `agent.allowedSkillLinkRoots` 다 — 번들이 jar 가 아니라 **디스크의 디렉터리**에서 읽힐 때, 그 `skills/` 안의 심볼릭 링크가 가리켜도 되는 디렉터리 목록이다(기본은 비어 있어 `skills/` 밖을 가리키는 링크가 있는 스킬은 적재되지 않는다). 절대 경로만 받는다. 상대 경로, 빈 항목, `~`(풀지 않는다 — `${HOME}` 을 쓴다), `/` 는 설정을 읽는 시점에 항목 번호를 대며 실패한다. `.aimon/skills` 의 사용자 스킬에는 닿지 않는다.
 
 **여러분의 적응 포인트:**
 - Agent 정의를 코드/DB에서 동적으로 만들고 싶으면 `AgentBundle`을 직접 빌드해서 `AgentSetupFactory`의 패키지-프라이빗 생성자로 주입한다.

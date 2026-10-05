@@ -321,6 +321,7 @@ aimon:
       mode: deny                    # deny(기본) | allow-list | suspend | channel
       allow: []
       pending-turn-ttl: 10m
+    allowed-link-roots: []          # 디스크에서 읽는 번들의 skills/ 안 심볼릭 링크가 가리켜도 되는 디렉터리(절대 경로)
 
   scheduling:
     backend: none                   # none(기본) | in-memory | quartz

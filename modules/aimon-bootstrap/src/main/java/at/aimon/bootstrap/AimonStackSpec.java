@@ -1,6 +1,8 @@
 package at.aimon.bootstrap;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -23,6 +25,7 @@ import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.queue.MessageQueueRepository;
 import at.aimon.core.base.ExternallyManaged;
 import at.aimon.core.credential.CredentialStore;
+import at.aimon.core.filesystem.VirtualFileSystems;
 import at.aimon.core.knowledge.KnowledgeStore;
 import at.aimon.core.skill.parser.SkillParser;
 
@@ -80,6 +83,7 @@ public final class AimonStackSpec {
     private final KnowledgeStoreFactory knowledgeStoreFactory;
     private final MemorySpec memory;
     private final SkillParser skillParser;
+    private final List<Path> allowedSkillLinkRoots;
     private final MessageQueueRepository messageQueueRepository;
 
     private AimonStackSpec(Builder builder) {
@@ -101,6 +105,9 @@ public final class AimonStackSpec {
         this.knowledgeStoreFactory = builder.knowledgeStoreFactory;
         this.memory = builder.memory;
         this.skillParser = builder.skillParser;
+        // Checked here, not when the first bundle is read: a bundle in a jar never reads the list at all, and a bad
+        // entry should not wait for the deployment that unpacks one.
+        this.allowedSkillLinkRoots = VirtualFileSystems.checkedLinkRoots(builder.allowedSkillLinkRoots);
         this.messageQueueRepository = builder.messageQueueRepository;
 
         if (this.agents.isEmpty()) {
@@ -327,6 +334,18 @@ public final class AimonStackSpec {
     }
 
     /**
+     * Returns the directories a symbolic link in an on-disk agent bundle's {@code skills/} directory may resolve
+     * into, besides that directory itself.
+     *
+     * @return the allowed link roots, absolute and normalised; empty (the default) when a link must stay inside the
+     *         bundle's {@code skills/} directory
+     * @see Builder#allowedSkillLinkRoots(Collection)
+     */
+    public List<Path> getAllowedSkillLinkRoots() {
+        return allowedSkillLinkRoots;
+    }
+
+    /**
      * Returns the store the mid-turn input queue is kept in.
      *
      * <p>
@@ -411,6 +430,7 @@ public final class AimonStackSpec {
         private KnowledgeStoreFactory knowledgeStoreFactory;
         private MemorySpec memory;
         private SkillParser skillParser;
+        private final List<Path> allowedSkillLinkRoots = new ArrayList<>();
         private MessageQueueRepository messageQueueRepository;
 
         private Builder() {
@@ -562,6 +582,40 @@ public final class AimonStackSpec {
          */
         public Builder skillParser(SkillParser skillParser) {
             this.skillParser = skillParser;
+            return this;
+        }
+
+        /**
+         * Lets a skill of an on-disk agent bundle be a symbolic link into one of these directories — a shared
+         * helper installed as {@code agents/<bundle>/skills/foo -> /opt/shared-skills/foo}.
+         *
+         * <p>
+         * A skill directory, or anything inside one, may be a link. It is followed when it resolves inside the
+         * bundle's own {@code skills/} directory or inside one of these roots; a skill with a link that resolves
+         * anywhere else does not load, and only that skill (execution-environment design §4.4). The default is no
+         * roots: links must stay inside {@code skills/}.
+         *
+         * <p>
+         * <b>What it reaches.</b> Agents the stack loads by name ({@link AgentSpec#named}), and of those only a
+         * bundle whose {@code agent.md} is a file on disk — a directory on the class path. A bundle in a jar has no
+         * links, a bundle supplied pre-built ({@link AgentSpec#of}) was loaded by its owner, and the skills an agent
+         * keeps in its workspace ({@code .aimon/skills}) are read through the workspace file system, which follows
+         * no link at all.
+         *
+         * <p>
+         * <b>What is refused</b>, when the spec is built: a root that is not an absolute path (a relative one, the
+         * empty string included, would depend on the directory the process is started in) and a filesystem root such
+         * as {@code /} (it would allow a link to resolve anywhere). A root that does not exist is accepted and
+         * matches nothing. Replaces the roots set by an earlier call.
+         *
+         * @param allowedSkillLinkRoots
+         *            the directories (must not be null; may be empty; no null element)
+         * @return this builder
+         */
+        public Builder allowedSkillLinkRoots(Collection<Path> allowedSkillLinkRoots) {
+            Objects.requireNonNull(allowedSkillLinkRoots, "allowedSkillLinkRoots must not be null");
+            this.allowedSkillLinkRoots.clear();
+            this.allowedSkillLinkRoots.addAll(allowedSkillLinkRoots);
             return this;
         }
 

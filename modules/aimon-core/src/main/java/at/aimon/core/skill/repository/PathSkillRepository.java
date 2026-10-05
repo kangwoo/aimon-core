@@ -62,7 +62,8 @@ import at.aimon.core.skill.exception.SkillRepositoryException;
  * may be a symbolic link. Staging follows it when its real path lies inside {@code skillsBasePath} or inside one of
  * the {@linkplain Builder#allowedLinkRoot allowed link roots}; a link that resolves anywhere else makes the skill fail
  * to load with an error naming the link, rather than stage without the files behind it. By default there are no
- * allowed link roots, so only links within the skills directory are followed:
+ * allowed link roots, so only links within the skills directory are followed. An agent bundle read from disk takes
+ * the list from configuration (see {@code FileSystemAgentBundleLoader}); built by hand it is:
  *
  * <pre>
  * {
@@ -319,6 +320,12 @@ public class PathSkillRepository implements SkillRepository {
          * Allows a symbolic link in the skills directory to resolve into {@code root} when a skill is staged. The
          * skills directory itself is always allowed.
          *
+         * <p>
+         * {@link #build()} refuses a root that is not an absolute path (a relative one, the empty string included,
+         * would depend on the directory the process is started in) or that is a filesystem root such as {@code /}
+         * (every path lies under it, so the link rule would be off). A root that does not exist is accepted and
+         * matches nothing.
+         *
          * @param root
          *            the directory a link may resolve into (must not be null)
          * @return this builder
@@ -340,7 +347,13 @@ public class PathSkillRepository implements SkillRepository {
             return this;
         }
 
-        /** @return the repository */
+        /**
+         * Builds the repository.
+         *
+         * @return the repository
+         * @throws IllegalArgumentException
+         *             if an allowed link root is not an absolute path or is a filesystem root
+         */
         public PathSkillRepository build() {
             return new PathSkillRepository(skillsBasePath, List.copyOf(allowedLinkRoots));
         }

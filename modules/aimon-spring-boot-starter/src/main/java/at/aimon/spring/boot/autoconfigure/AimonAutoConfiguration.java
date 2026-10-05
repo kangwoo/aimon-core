@@ -438,6 +438,7 @@ public class AimonAutoConfiguration {
                             .build())
                     .knowledgeStore(slices.getKnowledgeStore()).memory(slices.getMemory()).fileSystem(fileSystemSpec)
                     .session(sessionSpec).scheduling(schedulingSpec).agents(toAgentSpecs(properties))
+                    .allowedSkillLinkRoots(properties.getSkill().toAllowedLinkRoots())
                     .agentRuntimes(toAgentRuntimeSpec(properties.getAgentRuntime()))
                     .agentCustomizers(contributions.getAgentCustomizers())
                     .defaultBudget(toBudget(properties.getBudget()))

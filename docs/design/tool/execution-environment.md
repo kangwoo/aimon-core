@@ -371,7 +371,14 @@ public interface ExecutionEnvironmentProvider {
 (`getAllSkills`, `reloadAll`)은 그 스킬을 경고 로그와 함께 빼고 나머지를 돌려주므로, 목록으로 만드는 `Skill` 도구의
 정의, `/skills`, 스킬 기반 슬래시 커맨드, REPL 배너는 그대로 뜬다. 그 스킬을 이름으로 부르면(`getSkill`) 같은 오류가
 난다. 허용 루트는
-`PathSkillRepository.builder(root).allowedLinkRoot(...)` 로 정하고, 기본값은 비어 있어 저장소 루트만 허용한다. 조상으로
+`PathSkillRepository.builder(root).allowedLinkRoot(...)` 로 정하고, 기본값은 비어 있어 저장소 루트만 허용한다.
+*2026-10-05 (EE-35) 이후:* 디스크에서 읽는 에이전트 번들의 `skills/` 에는 그 목록을 **설정으로** 준다 — 스타터
+`aimon.skill.allowed-link-roots`, CLI `agent.allowedSkillLinkRoots`, 부트스트랩 `AimonStackSpec.allowedSkillLinkRoots`
+가 `AdaptiveAgentBundleLoader` → `FileSystemAgentBundleLoader` 를 거쳐 그 빌더에 닿는다. 허용 루트는 **절대 경로**여야
+하고(상대 경로와 빈 문자열은 프로세스를 띄운 디렉터리에 따라 뜻이 달라진다) **파일 시스템 루트**(`/`, 정규화하면 루트가
+되는 `/opt/..`)일 수 없다 — 모든 경로가 그 아래라 규칙이 꺼진다. 둘 다 목록을 받는 자리에서 거부하며, 빌더와
+`VirtualFileSystems.readOnlyLocal` 로 직접 조립할 때도 같다. 없는 디렉터리는 받아들이고 아무것도 허용하지 않는다. 루트로
+가는 링크인 허용 루트도 아무것도 허용하지 않는다. 조상으로
 되돌아가는 링크는 경고와 함께 건너뛰고, 끊긴 링크는 일반 파일이 아니므로 목록에 없다. 마지막 안전망으로, 소스에서
 `SKILL.md` 가 보이는 디렉터리가 파일 0개로 스캔되고 소스의 목록에도 아무 파일이 없으면 레지스트리가 적재를 실패시킨다 —
 소스가 디렉터리 안을 보지 못한 것이고, 그대로 두면 빈 사본이 스테이징된다. 목록에는 파일이 있는데 `.stageignore` 가 전부

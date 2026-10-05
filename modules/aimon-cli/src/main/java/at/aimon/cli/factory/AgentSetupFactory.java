@@ -34,6 +34,7 @@ import at.aimon.bootstrap.spec.SkillApprovalSpec;
 import at.aimon.bootstrap.spec.ToolSpec;
 import at.aimon.cli.config.AgentConfig;
 import at.aimon.cli.config.CliConfig;
+import at.aimon.cli.config.CliConfigLoader;
 import at.aimon.cli.config.CliSettings;
 import at.aimon.cli.config.McpConfig;
 import at.aimon.cli.config.MemoryConfig;
@@ -551,7 +552,7 @@ public class AgentSetupFactory {
         final AgentBundleLoader effectiveBundleLoader = (this.agentBundleLoader != null)
                 ? this.agentBundleLoader
                 : new AdaptiveAgentBundleLoader(DEFAULT_AGENT_BUNDLE_BASE_PATH, new MarkdownAgentDefinitionParser(),
-                        Thread.currentThread().getContextClassLoader(), skillParser);
+                        Thread.currentThread().getContextClassLoader(), skillParser, allowedSkillLinkRoots(config));
         final AgentBundle agentBundle = effectiveBundleLoader.load(extractAgentName(config));
         final LocalFileSystem fileSystem = createFileSystem();
 
@@ -1005,6 +1006,15 @@ public class AgentSetupFactory {
      */
     private OutputFormatter createOutputFormatter(CliConfig config) {
         return new OutputFormatter(config.getCliSettings());
+    }
+
+    /**
+     * Reads {@code agent.allowedSkillLinkRoots}: where a symbolic link in the bundle's {@code skills/} directory may
+     * resolve besides that directory itself. Empty when the block or the key is absent.
+     */
+    private static List<Path> allowedSkillLinkRoots(CliConfig config) {
+        return Optional.ofNullable(config.getAgentConfig()).map(CliConfigLoader::allowedSkillLinkRoots)
+                .orElse(List.of());
     }
 
     /**
