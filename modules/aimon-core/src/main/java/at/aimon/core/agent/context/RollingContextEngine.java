@@ -124,7 +124,7 @@ public final class RollingContextEngine implements ContextEngine {
      * (context-engine §13.10). The same fact reaches the execution result as
      * {@link CompactionMetadata#isOverBlockingLimit()} on that compaction's record.
      */
-    public static final String STILL_OVER_BLOCKING = "the view is still at or above the blocking limit";
+    public static final String STILL_OVER_BLOCKING = DefaultCompactionGuard.STILL_OVER_BLOCKING;
 
     /** Stands before an absorbed range that does not start with a user message, so the summary call's does. */
     static final String CONTINUATION_NOTE = "[The earlier part of this conversation is covered by the previous"

@@ -170,6 +170,7 @@ engine 은 저장소를 모른다.
 | `DefaultCompactionGuard` 의 판정(blocking → breaker → auto → warning), 세션 락, 사전조건 | 그대로 |
 | 전체 compaction = `replaceWith([B, S])` | `summarize(뷰 시작, 미응답 부분의 시작, S)` — 뷰는 `[B, S]` 와 그 뒤의 미응답 메시지(원문)이고 로그는 그대로. 미응답 부분이 없으면(뷰가 assistant 메시지로 끝난다) `[B, S]` 만 남는다 |
 | 복구 = `DefaultPromptSizeRecoveryStrategy` 가 **가장 오래된 USER 메시지 하나**(마지막 USER 와 압축 마커 제외)를 뺀 목록으로 `replaceWith` | 그 메시지 하나를 `drop(s, s + 1)` — USER 메시지 앞뒤는 합법 절단면이므로 불변식을 지킨다 |
+| blocking 한계의 강제 압축 = 전체 compaction | 미응답 부분을 남겨서 한계 아래로 내려가면 위와 같은 절단면. 내려가지 못하면 **같은 `prepare` 에서 뷰 전체를 요약**한다 — 실행기는 `prepare` 를 iteration 마다 한 번만 부른다. 그래도 한계 이상이면 사유와 기록에 그 사실을 싣는다(§13.10) |
 | `/compact` = 엔진 직접 호출 | `compactNow` — 같은 절단면의 compaction. 턴 사이에는 뷰가 assistant 메시지로 끝나므로 전체다 |
 | budget-forced 패스 | `ContextRequest.budgetForced` — 유효 임계값을 warning 밴드로 |
 
@@ -722,23 +723,51 @@ live 테스트의 keyless 쌍둥이가 처음 돌 때 드러난 결함이다. �
     compact: …`)으로 돌려준다 — `COMPACT` 가 아니므로 `CompactBoundary` 이벤트와 압축 기록이 생기지 않고, breaker 에도 세지
     않는다. 모델이 답할 때까지 iteration 마다 같은 `WARN` 이 나올 뿐 요약을 되풀이하지 않는다. 이전 요약의 마커만 다시
     요약하지 않는 것은 그것이 아무것도 줄이지 못하기 때문이다
-  - **blocking 한계.** 먼저 같은 규칙으로 미응답 부분 앞을 요약한다. 그것으로 내려가지 못해도 그 호출은 그대로 보낸다
-    (`COMPACT`). 미응답 부분만 남은 채 blocking 한계에 있으면 — 처음부터 그랬든, 방금의 압축 뒤든 — **미응답 부분까지 전부
-    요약한다**(WARN 로그 한 줄). 한계를 넘는 요청은 보낼 수 없고, 접는 것이 실행을 실패시키는 것의 유일한 대안이기 때문이다.
-    이것이 이 engine 에서 모델이 읽지 않은 것을 요약자의 말로 받는 단 하나의 자리다. 한 번으로 끝난다 — 그 뒤의 뷰는
-    `[B, S]` 뿐이다. 롤링은 같은 자리에서 `BLOCK` 으로 끝낸다. 기본 engine 이 다르게 한 것은 이 engine 에는 접힌 원문을
+  - **blocking 한계.** 실행기는 iteration 마다 `prepare` 를 한 번 부르고 받은 뷰를 그대로 보낸다. 그래서 한계에서 강제된
+    압축은 **그 한 번의 `prepare` 안에서** 뷰를 한계 아래로 내려야 한다. 성공이라고 답하고 한계를 넘는 뷰를 내면 provider 가
+    거절하고, 복구는 미응답 부분도 마커도 뺄 수 없으므로 실행이 `LlmPromptTooLongException` 으로 끝난다. 미응답 부분을
+    남겨서는 내려가지 못할 때 **미응답 부분까지 전부 요약한다** — 접는 것이 실행을 실패시키는 것의 유일한 대안이고, 이것이
+    이 engine 에서 모델이 읽지 않은 것을 요약자의 말로 받는 단 하나의 자리다. 크기는 판정한 guard 의 추정기와 한계로 잰다
+    (`DefaultCompactionGuard.estimateTokens` · `blockingLimit`, 시스템 프롬프트 포함)
+    - **미응답 부분만으로는 한계 아래다** → 그 앞만 요약하고 미응답 부분은 원문으로 남긴다. 요약 호출 한 번
+    - **미응답 부분 앞에 아무것도 없거나, 미응답 부분만으로 한계 이상이다** → 뷰 전체를 요약한다(WARN 로그 한 줄). 요약
+      호출 **한 번** — 한계 아래로 내려가지 못할 앞부분 요약에 호출을 먼저 쓰지 않는다. 그 뒤의 뷰는 `[B, S]` 뿐이다
+    - **앞부분의 요약이 길어 뷰가 다시 한계 이상이다** → 같은 `prepare` 에서 뷰 전체를 한 번 더 요약한다(호출 두 번).
+      두 번째 요약이 실패하면 첫 압축은 그대로 남고, 아래의 "한계를 넘은 채 보낸다"로 보고한다
+    - **전체를 요약해야 하는데 뷰의 끝이 합법 절단면이 아니다**(미응답 메시지 가운데 결과가 없는 `tool_use` 가 있다) →
+      요약 호출도 훅도 없이 실패하고 guard 가 `BLOCK` 으로 답한다. 실행기로는 닿지 않는 상태다 — 두 실행기 모두 한 응답의
+      `tool_use` 마다 결과 하나를 만들어(중단되어 건너뛴 것은 오류 결과) TOOL 메시지 **하나**로 붙이고, `prepare` 는 그 뒤
+      다음 iteration 의 머리에서만 부른다. 손으로 만든 버퍼나 다른 곳에서 쓴 레코드에 대한 방어다
+  - **blocking 한계에서 성공이 아닌 것을 성공이라 하지 않는다.** 전체를 요약하고도 한계 이상일 수 있다 — 요약문, 시스템
+    프롬프트, PostCompact 훅이 붙인 메시지 때문이다. 더 요약할 것이 없으므로 뷰는 그대로 보내고 결정은 `COMPACT` 이지만,
+    롤링과 같은 방식으로 그 사실을 싣는다: 사유가 `blocking-limit forced compaction; the view is still at or above the
+    blocking limit (post=…, blocking=…); sending it as it is`(`DefaultCompactionGuard.STILL_OVER_BLOCKING`,
+    `RollingContextEngine.STILL_OVER_BLOCKING` 은 같은 상수다)이고 기록의 `isOverBlockingLimit()` 가 참이다. 한계에서 강제된
+    압축의 기록에는 언제나 `getBlockingLimit()` 가 실리고 `postCompactTokenCount` 는 훅이 돈 뒤의 뷰를 guard 의 추정기로 센
+    값이다. 요약 호출이 실패하면 압축 실패이고 guard 는 전과 같이 `BLOCK`(`compaction failed at blocking limit: …`)이다.
+    롤링은 미응답 부분만 남은 자리에서 `BLOCK` 으로 끝낸다. 기본 engine 이 다르게 한 것은 이 engine 에는 접힌 원문을
     되찾을 `SessionHistory` 가 없고, 바꾸기 전에도 이 자리에서는 실행이 살아남았기 때문이다
+  - **고친 것(2026-10-05, 같은 날).** 처음 구현은 미응답 부분 앞에 **무엇이든** 있으면 그것만 요약하고 `COMPACT` 로 답했다 —
+    뷰가 한계 아래인지 보지 않았다. `[user, assistant(tool_use), 한계보다 큰 tool_result]` 에서 user 메시지 하나에 요약
+    호출을 쓰고 한계를 넘는 요청을 보내 턴이 실패했다(SL-6 이전에는 전체를 요약해 살아남던 자리다). 전체 요약 분기는
+    `prepare` 를 모델 호출 없이 두 번 불러야만 닿았는데 실행기는 그렇게 부르지 않는다
   - **수동 `/compact`.** 롤링과 같다. 중단된 턴의 미응답 입력 앞에서 멈추고, 미응답 입력뿐이면 `nothing to compact` 실패다
     (breaker 는 리셋하지 않는다)
   - **in-place(v1 로그와 §13.2 의 폴백)는 바꾸지 않았다.** `replaceWith` 로 전부 요약한다. v1 쓰기 형식은 deprecated 경로이고,
     거기에는 뷰도 절단면의 seq 도 없다
   - **span 장부.** span 은 `[floorSeq, cut)` 이고 다음 압축이 넓힌다. 봉인(session-log §5)은 span 이 가린 구간만 가져가므로
     미응답 메시지는 레코드에 남는다. 턴의 rewind 지점은 대개 `cut` 과 같은 자리다(그 턴의 입력이 미응답 부분의 시작이다)
-  - **테스트.** `DefaultContextEngineViewModeTest.Unanswered` 의 열 개와
-    `OrcaAgentExecutorViewModeTest.anUnansweredInputAloneIsNotCompactedAndNotReportedAsOne`. v1 과의 동일성을 못 박았던
-    테스트 일곱은 고쳤다 — `aCompactionRecordsASpanAndLeavesTheLogAlone` · `postCompactHooks…` · `aSecondCompactionAbsorbsTheFirstSpan`
-    · `InPlaceFallbackOverAView` 의 준비 메서드 · `DefaultContextEngineSummaryRequestTest` 의 도구 결과로 끝나는 요청 ·
-    `OrcaAgentExecutorViewModeTest` 의 둘
+  - **테스트.** `DefaultContextEngineViewModeTest.Unanswered` 의 열여덟 개와
+    `OrcaAgentExecutorViewModeTest` 의 `anUnansweredInputAloneIsNotCompactedAndNotReportedAsOne` ·
+    `aToolResultOverTheBlockingLimitDoesNotFailTheTurn`(한계 이상의 요청을 거절하는 provider 대역으로 턴이 끝까지 가는 것).
+    blocking 의 경우마다 하나씩 있다 — 앞부분만(`…IsAbsorbedWhenThatBringsTheViewUnderTheLimit`), 한 번에 전체
+    (`…AnUnansweredResultOverTheLimit…InOnePass`, `…APastedInputOverTheLimit…InOnePass`, `…WithNothingBeforeTheUnansweredPart…`),
+    두 번째 호출(`whenTheSummaryOfThePrefixPutsTheViewBackOverTheLimit…`, `whenThatSecondSummaryFails…`), 전체를 요약하고도
+    넘는 것(`aWholeViewSummaryThatIsItselfOverTheLimit…`), 요약 실패(`aFailedLastResortSummaryBlocksAndRecordsNothing`), 끝이
+    합법 절단면이 아닌 뷰(`aViewWhoseEndSplitsAToolPair…`, `aSmallPrefixBeforeAPairThatCannotBeClosed…`). v1 과의 동일성을 못
+    박았던 테스트 일곱은 고쳤다 — `aCompactionRecordsASpanAndLeavesTheLogAlone` · `postCompactHooks…` ·
+    `aSecondCompactionAbsorbsTheFirstSpan` · `InPlaceFallbackOverAView` 의 준비 메서드 ·
+    `DefaultContextEngineSummaryRequestTest` 의 도구 결과로 끝나는 요청 · `OrcaAgentExecutorViewModeTest` 의 둘
 - **`SessionHistory` 의 상한.** `seq` 읽기는 메시지와 이웃 넷, 각 `maxResultChars`(2000자)까지다. 검색은 일치마다 그만큼을
   더했으므로 `limit` 20 이면 20만 자까지 갈 수 있었다. 이제 결과가 `SEARCH_RESULT_PARTS`(10) × `maxResultChars` 에 닿으면 더
   일치를 붙이지 않고 그 사실을 적는다(첫 일치는 언제나 보인다). 방금 받은 도구 결과는 위 규칙으로 보호되므로, 큰 원문을

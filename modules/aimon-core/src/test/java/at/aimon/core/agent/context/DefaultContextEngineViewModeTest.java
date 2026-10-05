@@ -153,7 +153,9 @@ class DefaultContextEngineViewModeTest {
             final DefaultContextEngine engine = engine();
             engine.prepare(request());
             buffer.addAssistantMessage("answer");
-            buffer.addUserMessage("y".repeat(4600));
+            // Short enough to fit under the blocking limit beside the new summary: with 4600 characters the view
+            // would stay at the limit after this compaction, and the whole view would be summarized instead.
+            buffer.addUserMessage("y".repeat(4000));
 
             final ContextDecision decision = engine.prepare(request());
 
@@ -204,6 +206,11 @@ class DefaultContextEngineViewModeTest {
 
         private static final String BIG = "x".repeat(4300);
         private static final String OVER_BLOCKING = "x".repeat(6000);
+        private static final int BLOCKING_LIMIT = TINY.getBlockingLimit();
+
+        private int tokensOf(ContextDecision decision) {
+            return estimator.estimate(buffer.getSystemPrompt(), decision.getView().getMessages());
+        }
 
         private void callAndResult(String id, String result) {
             buffer.addMessage(Message.assistant("", List.of(ToolUse.of(id, "Read", Map.of()))));
@@ -340,7 +347,55 @@ class DefaultContextEngineViewModeTest {
         }
 
         @Test
-        void atTheBlockingLimitWhatPrecedesTheUnansweredPartIsAbsorbedFirst() {
+        void atTheBlockingLimitWhatPrecedesTheUnansweredPartIsAbsorbedWhenThatBringsTheViewUnderTheLimit() {
+            buffer.addUserMessage(BIG);
+            buffer.addAssistantMessage("on it");
+            buffer.addUserMessage("x".repeat(1000));
+            final List<Message> log = buffer.getMessages();
+
+            final ContextDecision decision = engine().prepare(request());
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            assertThat(decision.getReason()).isEqualTo("blocking-limit forced compaction");
+            assertThat(buffer.getViewState().getSummarySpan())
+                    .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 2)));
+            assertThat(decision.getView().getMessages()).hasSize(3);
+            assertThat(decision.getView().getMessages().get(2)).isSameAs(log.get(2));
+            assertThat(tokensOf(decision)).isLessThan(BLOCKING_LIMIT);
+            assertThat(summarizer.summarized).hasSize(1);
+            assertThat(decision.getCompactionMetadata())
+                    .hasValueSatisfying(metadata -> assertThat(metadata.isOverBlockingLimit()).isFalse());
+        }
+
+        /**
+         * The executor asks once per iteration and sends what it is given: a blocking-limit compaction that summarized
+         * one small message and left a tool result over the limit would be reported as a success and then rejected by
+         * the provider, with nothing recovery may drop.
+         */
+        @Test
+        void atTheBlockingLimitAnUnansweredResultOverTheLimitIsSummarizedWithWhatPrecedesItInOnePass() {
+            buffer.addUserMessage("read the report");
+            callAndResult("t1", OVER_BLOCKING);
+            final List<Message> log = buffer.getMessages();
+
+            final ContextDecision decision = engine().prepare(request());
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            assertThat(tokensOf(decision)).as("a forced compaction reported as a success fits under the limit")
+                    .isLessThan(BLOCKING_LIMIT);
+            assertThat(summarizer.summarized).as("one summary call, not one for the prefix and one for the rest")
+                    .singleElement().satisfies(request -> assertThat(request.getMessages()).isEqualTo(log));
+            assertThat(buffer.getViewState().getSummarySpan()).hasValueSatisfying(span -> {
+                assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 3));
+                assertThat(span.getMessagesSummarized()).isEqualTo(3);
+            });
+            assertThat(decision.getView().getMessages()).hasSize(2);
+            assertThat(decision.getReason()).isEqualTo("blocking-limit forced compaction");
+            assertThat(buffer.getMessages()).as("the log still holds the result").isEqualTo(log);
+        }
+
+        @Test
+        void atTheBlockingLimitAPastedInputOverTheLimitAfterEarlierConversationIsSummarizedInOnePass() {
             buffer.addUserMessage("go");
             buffer.addAssistantMessage("on it");
             buffer.addUserMessage(OVER_BLOCKING);
@@ -348,31 +403,142 @@ class DefaultContextEngineViewModeTest {
             final ContextDecision decision = engine().prepare(request());
 
             assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
-            assertThat(decision.getReason()).contains("blocking-limit");
+            assertThat(tokensOf(decision)).isLessThan(BLOCKING_LIMIT);
             assertThat(buffer.getViewState().getSummarySpan())
-                    .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 2)));
-            assertThat(decision.getView().getMessages()).hasSize(3);
+                    .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 3)));
+            assertThat(decision.getView().getMessages()).hasSize(2);
+            assertThat(summarizer.summarized).hasSize(1);
         }
 
         @Test
-        void atTheBlockingLimitWithNothingElseLeftTheUnansweredPartIsSummarizedAsTheLastResort() {
-            buffer.addUserMessage("go");
-            buffer.addAssistantMessage("on it");
+        void atTheBlockingLimitWithNothingBeforeTheUnansweredPartItIsSummarizedAsTheLastResort() {
             buffer.addUserMessage(OVER_BLOCKING);
             final DefaultContextEngine engine = engine();
-            engine.prepare(request());
 
-            // Still at the blocking limit and only the unanswered input is left: sending it cannot succeed, so the
-            // whole view is summarized, as it was before the unanswered part was protected. Once, not per iteration.
-            final ContextDecision second = engine.prepare(request());
-            final ContextDecision third = engine.prepare(request());
+            // One prepare, as the executor makes: the request cannot be sent as it is, so the whole view is summarized.
+            final ContextDecision decision = engine.prepare(request());
 
-            assertThat(second.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            assertThat(buffer.getViewState().getSummarySpan())
+                    .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 1)));
+            assertThat(decision.getView().getMessages()).hasSize(2);
+            assertThat(tokensOf(decision)).isLessThan(BLOCKING_LIMIT);
+            // Once, not per iteration.
+            assertThat(engine.prepare(request()).getAction()).isEqualTo(CompactionDecision.Action.NONE);
+            assertThat(summarizer.summarized).hasSize(1);
+        }
+
+        @Test
+        void whenTheSummaryOfThePrefixPutsTheViewBackOverTheLimitTheWholeViewIsSummarizedInTheSamePrepare() {
+            // The unanswered input alone is under the limit (about 1290 of 1400), so the prefix is summarized first;
+            // the summary that comes back is long enough to put the view over it again.
+            buffer.addUserMessage("x".repeat(600));
+            buffer.addAssistantMessage("on it");
+            buffer.addUserMessage("x".repeat(4500));
+            summarizer.text = "S".repeat(800);
+
+            final ContextDecision decision = engine().prepare(request());
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            assertThat(summarizer.summarized).hasSize(2);
+            assertThat(summarizer.summarized.get(0).getMessages()).hasSize(2);
+            assertThat(summarizer.summarized.get(1).getMessages()).as("markers and the unanswered input").hasSize(3);
             assertThat(buffer.getViewState().getSummarySpan())
                     .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 3)));
-            assertThat(second.getView().getMessages()).hasSize(2);
-            assertThat(third.getAction()).isEqualTo(CompactionDecision.Action.NONE);
-            assertThat(summarizer.summarized).hasSize(2);
+            assertThat(decision.getView().getMessages()).hasSize(2);
+            assertThat(tokensOf(decision)).isLessThan(BLOCKING_LIMIT);
+            assertThat(decision.getReason()).isEqualTo("blocking-limit forced compaction");
+        }
+
+        @Test
+        void whenThatSecondSummaryFailsTheFirstIsReportedAsLeavingTheViewOverTheLimit() {
+            buffer.addUserMessage("x".repeat(600));
+            buffer.addAssistantMessage("on it");
+            buffer.addUserMessage("x".repeat(4500));
+            summarizer.text = "S".repeat(800);
+            summarizer.failFromCall = 2;
+
+            final ContextDecision decision = engine().prepare(request());
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            assertThat(decision.getReason()).contains(DefaultCompactionGuard.STILL_OVER_BLOCKING);
+            assertThat(decision.getCompactionMetadata()).hasValueSatisfying(metadata -> {
+                assertThat(metadata.getBlockingLimit()).isEqualTo(BLOCKING_LIMIT);
+                assertThat(metadata.isOverBlockingLimit()).isTrue();
+            });
+            assertThat(buffer.getViewState().getSummarySpan())
+                    .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 2)));
+            assertThat(tokensOf(decision)).isGreaterThanOrEqualTo(BLOCKING_LIMIT);
+        }
+
+        @Test
+        void aWholeViewSummaryThatIsItselfOverTheLimitIsNotReportedAsAPlainSuccess() {
+            buffer.addUserMessage("read the report");
+            callAndResult("t1", OVER_BLOCKING);
+            summarizer.text = "S".repeat(6000);
+
+            final ContextDecision decision = engine().prepare(request());
+
+            // Nothing is left to summarize: the view goes out as it is and the decision says where it stands, the way
+            // the rolling engine reports the same state.
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            assertThat(decision.getReason()).startsWith("blocking-limit forced compaction")
+                    .contains(DefaultCompactionGuard.STILL_OVER_BLOCKING);
+            assertThat(decision.getCompactionMetadata()).hasValueSatisfying(metadata -> {
+                assertThat(metadata.getBlockingLimit()).isEqualTo(BLOCKING_LIMIT);
+                assertThat(metadata.getPostCompactTokenCount()).isGreaterThanOrEqualTo(BLOCKING_LIMIT);
+                assertThat(metadata.isOverBlockingLimit()).isTrue();
+            });
+            assertThat(summarizer.summarized).hasSize(1);
+            assertThat(buffer.getViewState().getSummarySpan())
+                    .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 3)));
+        }
+
+        @Test
+        void aFailedLastResortSummaryBlocksAndRecordsNothing() {
+            buffer.addUserMessage("read the report");
+            callAndResult("t1", OVER_BLOCKING);
+            summarizer.fail = true;
+
+            final ContextDecision decision = engine().prepare(request());
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.BLOCK);
+            assertThat(decision.getReason()).contains("compaction failed at blocking limit");
+            assertThat(summarizer.summarized).hasSize(1);
+            assertThat(buffer.getViewState().isEmpty()).isTrue();
+            assertThat(failures.get(buffer.getSessionId())).isEqualTo(1);
+            assertThat(decision.getView().getMessages()).isEqualTo(buffer.getMessages());
+        }
+
+        @Test
+        void aViewWhoseEndSplitsAToolPairIsNotSummarizedWholeAndNoSummaryCallIsSpentFindingOut() {
+            // Two parallel calls, one result: the view cannot end a span here, and nothing precedes the call.
+            buffer.addMessage(Message.assistant("",
+                    List.of(ToolUse.of("t1", "Read", Map.of()), ToolUse.of("t2", "Read", Map.of()))));
+            buffer.addMessage(Message.toolUseResults(List.of(ToolUseResult.success("t1", OVER_BLOCKING))));
+
+            final ContextDecision decision = engine().prepare(request());
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.BLOCK);
+            assertThat(decision.getReason()).contains("tool call");
+            assertThat(summarizer.summarized).isEmpty();
+            assertThat(summarizer.installed).isEmpty();
+            assertThat(buffer.getViewState().isEmpty()).isTrue();
+        }
+
+        @Test
+        void aSmallPrefixBeforeAPairThatCannotBeClosedIsNotSpentOn() {
+            buffer.addUserMessage("go");
+            buffer.addMessage(Message.assistant("",
+                    List.of(ToolUse.of("t1", "Read", Map.of()), ToolUse.of("t2", "Read", Map.of()))));
+            buffer.addMessage(Message.toolUseResults(List.of(ToolUseResult.success("t1", OVER_BLOCKING))));
+
+            final ContextDecision decision = engine().prepare(request());
+
+            // Summarizing "go" cannot bring the view under the limit, and the whole view cannot be a span.
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.BLOCK);
+            assertThat(summarizer.summarized).isEmpty();
+            assertThat(buffer.getViewState().isEmpty()).isTrue();
         }
 
         @Test
@@ -690,6 +856,8 @@ class DefaultContextEngineViewModeTest {
         private final List<CompactionResult> installed = new ArrayList<>();
         private boolean fail;
         private boolean returnNull;
+        private String text = "SUMMARY";
+        private int failFromCall = Integer.MAX_VALUE;
         private java.util.function.Consumer<TranscriptBuffer> onInstalled = memory -> {
         };
 
@@ -713,9 +881,9 @@ class DefaultContextEngineViewModeTest {
             final CompactionMetadata metadata = CompactionMetadata.builder().trigger(request.getTrigger())
                     .preCompactTokenCount(100).messagesSummarized(request.getMessages().size()).startedAt(now)
                     .completedAt(now).build();
-            return fail
+            return fail || summarized.size() >= failFromCall
                     ? CompactionResult.failure(new IllegalStateException("provider down"), metadata)
-                    : CompactionResult.success("SUMMARY", metadata);
+                    : CompactionResult.success(text, metadata);
         }
 
         @Override
