@@ -1,5 +1,6 @@
 package at.aimon.core.llm.capability;
 
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -7,7 +8,11 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import at.aimon.core.llm.ReasoningEffort;
 
@@ -111,6 +116,25 @@ import at.aimon.core.llm.ReasoningEffort;
  * </pre>
  */
 public final class InMemoryModelCapabilityRegistry implements ModelCapabilityRegistry {
+
+    private static final Logger log = LoggerFactory.getLogger(InMemoryModelCapabilityRegistry.class);
+
+    /**
+     * The shadow warnings this process has already logged, so that one finding is said once.
+     *
+     * <p>
+     * Process-wide rather than per registry because the unit an operator reads is the process: the Spring Boot starter
+     * builds a registry from the same properties twice — once to validate them, once to hand to the client — and an
+     * application that brings its own client builds a third. Keyed by the full message, which carries the name, the
+     * row and every dropped flag, so a different finding is never mistaken for a repeat.
+     */
+    private static final Set<String> REPORTED_SHADOWS = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Past this many distinct findings the set stops growing and every further one is logged each time. A caller that
+     * generates declarations without bound gets repetition rather than either a leak or silence.
+     */
+    private static final int MAX_REMEMBERED_SHADOWS = 1024;
 
     // The o-series request surface, in the two variants that differ by exactly one bit. Both are stated once rather
     // than eleven times so that "the exact rows are the prefix rows plus a measured round trip" is a fact of the
@@ -432,11 +456,26 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
      * <li><strong>An omitted flag stays fail-open</strong>, by way of
      * {@link ModelCapabilityDeclaration#capabilities()}. A declaration is the whole row for that name, not a patch on
      * one: declaring a name the built-in table already carries — {@code o4-mini}, say — replaces every flag of it,
-     * so the undeclared ones fall back to fail-open rather than to what the built-in row said. That is the safe
-     * direction (the request keeps today's shape and stays on Chat Completions), but for the measured o-series names
-     * it does cost {@code supportsReasoningTraceRoundTrip} and the {@code LOW} floor, which is worth restating in
-     * the declaration if the deployment behind the name is the model that was measured.
+     * so the undeclared ones fall back to fail-open rather than to what the built-in row said. <strong>That is the safe
+     * direction for one flag and not for the row.</strong> Dropping {@code supportsReasoningTraceRoundTrip} keeps the
+     * name on Chat Completions, which costs reasoning replay rather than the request (one measured exception:
+     * {@code gpt-5.6-terra}, whose tools requests that endpoint refuses unless the effort is {@code none}). For the
+     * other flags fail-open
+     * means "send what the caller configured", and the rows that say otherwise say it because the model answers HTTP
+     * 400: dropping {@code supportsSamplingParameters(false)} — which the o-series rows, the {@code gpt-5} rows and
+     * six of the {@code claude-*} rows all state — puts a configured {@code temperature} back on the wire, and an
+     * o-series declaration that keeps {@code supportsReasoningEffort} but drops the {@code LOW} floor lets
+     * {@code minimal} through. Restate every flag the built-in row sets if the deployment behind the name is the
+     * model that row describes.
      * </ul>
+     *
+     * <p>
+     * <strong>That last rule is reported when it bites.</strong> A declaration that names a model a built-in row
+     * (exact or prefix) already covers, and leaves unstated a flag that row sets to something other than its fail-open
+     * value, produces one WARN naming the model, the row, each dropped flag with the value it had, and the lines to
+     * add. Nothing is merged and nothing is refused — the declaration is registered exactly as written. A flag the
+     * declaration states is never reported, whatever value it states, so writing the fail-open value explicitly is how
+     * an operator who means it says so. The same finding is logged once per process.
      *
      * <p>
      * Names are rejected rather than repaired. Each rejected shape is one whose failure would otherwise be silent: a
@@ -458,6 +497,9 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
         if (declarations == null || declarations.isEmpty()) {
             return builder.build();
         }
+        // The table as it stands before any declaration lands on it: what each declared name resolved to until now.
+        final InMemoryModelCapabilityRegistry builtIn = builder.build();
+        final List<String> shadows = new ArrayList<>();
         final Map<String, String> seen = new LinkedHashMap<>();
         for (Map.Entry<String, ModelCapabilityDeclaration> entry : declarations.entrySet()) {
             final String name = requireUsableName(entry.getKey());
@@ -475,9 +517,26 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
                         + " entry registers the same fail-open capabilities the model already had, so it would bind"
                         + " and do nothing; state at least one flag, or remove it.");
             }
+            builtIn.matchedRow(name)
+                    .flatMap(
+                            row -> ShadowedBuiltInRow.warningFor(name, row.label(), row.capabilities, entry.getValue()))
+                    .ifPresent(shadows::add);
             builder.register(name, entry.getValue().capabilities());
         }
+        // After the loop, so that a set of declarations a later entry gets refused does not warn first and fail second.
+        shadows.forEach(InMemoryModelCapabilityRegistry::reportShadowOnce);
         return builder.build();
+    }
+
+    private static void reportShadowOnce(String warning) {
+        if (REPORTED_SHADOWS.size() >= MAX_REMEMBERED_SHADOWS || REPORTED_SHADOWS.add(warning)) {
+            log.warn(warning);
+        }
+    }
+
+    /** Test hook: forgets which shadow warnings this process has already logged. */
+    static void forgetReportedShadows() {
+        REPORTED_SHADOWS.clear();
     }
 
     private static String requireUsableName(String modelName) {
@@ -496,6 +555,19 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
 
     @Override
     public Optional<ModelCapabilities> capabilitiesOf(String modelName) {
+        return matchedRow(modelName).map(row -> row.capabilities);
+    }
+
+    /**
+     * The one look-up rule, with the row that answered kept beside its answer.
+     *
+     * <p>
+     * {@link #capabilitiesOf(String)} needs only the answer. The shadow warning in
+     * {@link #withDefaultsExtendedBy(Map)} also has to name the row, and it must find it by exactly this rule — a
+     * second copy of "exact first, then prefixes in registration order, case folded" would be free to disagree with
+     * the one requests are served by.
+     */
+    private Optional<MatchedRow> matchedRow(String modelName) {
         if (modelName == null || modelName.isEmpty()) {
             return Optional.empty();
         }
@@ -505,14 +577,34 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
         final String lower = modelName.toLowerCase(Locale.ROOT);
         final ModelCapabilities exact = exactEntries.get(lower);
         if (exact != null) {
-            return Optional.of(exact);
+            return Optional.of(new MatchedRow(true, lower, exact));
         }
         for (Map.Entry<String, ModelCapabilities> entry : prefixEntries.entrySet()) {
             if (lower.startsWith(entry.getKey())) {
-                return Optional.of(entry.getValue());
+                return Optional.of(new MatchedRow(false, entry.getKey(), entry.getValue()));
             }
         }
         return Optional.empty();
+    }
+
+    /** A row of this table together with how it was reached. */
+    private static final class MatchedRow {
+
+        private final boolean exact;
+
+        private final String key;
+
+        private final ModelCapabilities capabilities;
+
+        private MatchedRow(boolean exact, String key, ModelCapabilities capabilities) {
+            this.exact = exact;
+            this.key = key;
+            this.capabilities = capabilities;
+        }
+
+        private String label() {
+            return (exact ? "exact row '" : "prefix row '") + key + "'";
+        }
     }
 
     /** Builder for {@link InMemoryModelCapabilityRegistry}. */

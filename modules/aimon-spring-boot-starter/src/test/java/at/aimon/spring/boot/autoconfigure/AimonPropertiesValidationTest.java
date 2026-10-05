@@ -6,8 +6,12 @@ import java.util.Map;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.MapPropertySource;
 
@@ -634,9 +638,12 @@ class AimonPropertiesValidationTest {
                 });
 
         // And the other half, which is why the documentation says brackets rather than suggesting them: without them
-        // the entry does not arrive at all. Nothing reports that -- so this assertion is the report.
+        // Boot keys the entry `gpt-5` and looks on it for a property called `7-x`. That used to bind nothing and say
+        // nothing; it is now an unbound element under a strict subtree (backlog L-1), so the context fails and the
+        // failure quotes the line as it was written.
         runner.withPropertyValues("aimon.llm.model-capabilities.gpt-5.7-x.supports-sampling-parameters=false")
-                .run(ctx -> assertThat(ctx.getBean(AimonProperties.class).getLlm().getModelCapabilities()).isEmpty());
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure().hasStackTraceContaining(
+                        "aimon.llm.model-capabilities.gpt-5.7-x.supports-sampling-parameters"));
     }
 
     @Test
@@ -692,37 +699,30 @@ class AimonPropertiesValidationTest {
     }
 
     @Test
-    @DisplayName("a misspelled anthropic key is silent here too, which widens the same limit by three keys")
-    void aMisspelledAnthropicKeyIsSilentInTheStarter() {
-        // The same limitation record as aMisspelledFlagIsSilentInTheStarter below, on the keys this round adds.
-        // Backlog L-1: Boot's ignoreUnknownFields default makes the starter quiet where the CLI's mapper throws.
-        // Closing it turns both of these red, which is the correct outcome -- they are records, not guarantees.
-        runner.withPropertyValues("aimon.llm.anthropic.thinking-mod=auto").run(ctx -> {
-            assertThat(ctx).hasNotFailed();
-            assertThat(ctx.getBean(AimonProperties.class).getLlm().getAnthropic().isEmpty()).isTrue();
-        });
+    @DisplayName("a misspelled anthropic key fails the context, naming the key")
+    void aMisspelledAnthropicKeyFailsTheContext() {
+        // Until backlog L-1 was closed for this subtree this test was aMisspelledAnthropicKeyIsSilentInTheStarter, a
+        // limitation record asserting the opposite: the context started and the block stayed empty. It went red when
+        // AimonPropertiesBindingAutoConfiguration arrived, which is what its own comment said should happen.
+        runner.withPropertyValues("aimon.llm.anthropic.thinking-mod=auto").run(ctx -> assertThat(ctx).hasFailed()
+                .getFailure().hasStackTraceContaining("aimon.llm.anthropic.thinking-mod"));
     }
 
     @Test
-    @DisplayName("a misspelled flag is silent here, and that limit is measured rather than assumed")
-    void aMisspelledFlagIsSilentInTheStarter() {
-        // @ConfigurationProperties ignores unknown fields by default, and Boot's JavaBeanBinder does not instantiate
-        // a value whose every leaf failed to bind -- so an entry whose only flag is misspelled does not arrive as an
-        // empty declaration the check above would catch. It does not arrive at all.
+    @DisplayName("a misspelled flag fails the context, naming the key — the starter is as loud as the CLI here")
+    void aMisspelledFlagFailsTheContext() {
+        // Was aMisspelledFlagIsSilentInTheStarter: @ConfigurationProperties ignores unknown fields by default, and
+        // Boot's JavaBeanBinder does not instantiate a value whose every leaf failed to bind, so this entry did not
+        // even arrive as the empty declaration the check above would catch. It bound nothing and the deployment kept
+        // the HTTP 400 the key exists to remove.
         //
-        // This is asserted rather than left implicit because it is the one acceptance criterion this feature does not
-        // fully meet on this surface: "invalid configuration does not pass silently" holds for values and for meaning,
-        // and not for a misspelled field name. Closing it means either turning off ignoreUnknownFields for the whole
-        // aimon.* tree or binding these entries as raw string maps, and both were weighed and declined -- see the
-        // design note. The CLI half is noisy for free, because its mapper fails on an unknown property.
-        //
-        // If someone does close it, this test goes red, which is the correct outcome: it is a limitation record, not
-        // a guarantee.
+        // What closed it is neither of the two roads that comment weighed and declined (ignoreUnknownFields for the
+        // whole aimon.* tree; raw string maps) but a third: a bind-handler advisor that refuses an unbound element
+        // under this subtree only. The measurement -- that it leaves the rest of the tree, the metadata and a host
+        // application's own beans alone -- is AimonStrictSubtreeBindingTest.
         runner.withPropertyValues("aimon.llm.model-capabilities.prod-assistant.supports-sampling-parameter=false")
-                .run(ctx -> {
-                    assertThat(ctx).hasNotFailed();
-                    assertThat(ctx.getBean(AimonProperties.class).getLlm().getModelCapabilities()).isEmpty();
-                });
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure().hasStackTraceContaining(
+                        "aimon.llm.model-capabilities.prod-assistant.supports-sampling-parameter"));
     }
 
     @Test
@@ -801,13 +801,47 @@ class AimonPropertiesValidationTest {
                         .resolve("prod-assistant").supportsReasoningSummary()).isFalse());
     }
 
+    // The three Boolean keys below had no property-string test on this surface (backlog L-14): the binding contract in
+    // AimonPropertiesBindingCoverageTest writes through bean setters and so never passes through Boot's binder, and
+    // the only place these names appeared here was as result assertions. Each is written alone, as text, with the
+    // value that is NOT ModelCapabilities.unknown()'s, so a name that failed to bind could not pass by default.
+
+    @Test
+    @DisplayName("supports-reasoning-effort binds from text and reaches the descriptor a client reads")
+    void theReasoningEffortFlagBinds() {
+        runner.withPropertyValues("aimon.llm.model-capabilities.prod-assistant.supports-reasoning-effort=true").run(
+                ctx -> assertThat(AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm())
+                        .resolve("prod-assistant").supportsReasoningEffort()).isTrue());
+    }
+
+    @Test
+    @DisplayName("supports-tools-with-reasoning binds from text and reaches the descriptor a client reads")
+    void theToolsWithReasoningFlagBinds() {
+        runner.withPropertyValues("aimon.llm.model-capabilities.prod-assistant.supports-tools-with-reasoning=false")
+                .run(ctx -> assertThat(
+                        AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm())
+                                .resolve("prod-assistant").supportsToolsWithReasoning())
+                        .isFalse());
+    }
+
+    @Test
+    @DisplayName("supports-reasoning-trace-round-trip binds from text and reaches the descriptor a client reads")
+    void theReasoningTraceRoundTripFlagBinds() {
+        runner.withPropertyValues(
+                "aimon.llm.model-capabilities.prod-assistant.supports-reasoning-trace-round-trip=true")
+                .run(ctx -> assertThat(
+                        AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm())
+                                .resolve("prod-assistant").supportsReasoningTraceRoundTrip())
+                        .isTrue());
+    }
+
     @Test
     @DisplayName("a declaration replaces the built-in row for its name, and the full form is what keeps it")
     void aDeclarationReplacesTheBuiltInRowRatherThanPatchingIt() {
         // The starter half of the pair in LlmClientFactoryTest, so neither surface can drift from the yaml the two
         // operator guides print. An entry is the whole row: naming only the dialect for a claude-* name hands the
         // sampling suppression back at its fail-open true, and restating it is what the guides now prescribe.
-        // The mechanism is #46's; the general remedy is L-8.
+        // The mechanism is #46's. L-8 made it audible -- theShadowWarningIsLoggedOnceOnThisSurface below.
         runner.withPropertyValues("aimon.llm.model-capabilities.claude-sonnet-5.thinking-dialect=unknown").run(
                 ctx -> assertThat(AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm())
                         .resolve("claude-sonnet-5").supportsSamplingParameters()).isTrue());
@@ -818,6 +852,32 @@ class AimonPropertiesValidationTest {
                         AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm())
                                 .resolve("claude-sonnet-5").supportsSamplingParameters())
                         .isFalse());
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    @DisplayName("a declaration that shadows a built-in row it does not restate warns once, however often it is read")
+    void theShadowWarningIsLoggedOnceOnThisSurface(CapturedOutput output) {
+        // L-8, on this surface. The judgement and the sentence are the core's; what is specific here is the count.
+        // This surface builds the registry from the same properties more than once -- afterPropertiesSet builds one
+        // to validate and throws it away, then the LLM slice (or an application's own bean method, through the public
+        // accessor) builds the one that is used -- and the operator should read one line, not one per construction.
+        // A name no other test in this module declares, because "once" is per process.
+        final String warning = "Model capability declaration 'claude-opus-4-7'";
+
+        runner.withPropertyValues("aimon.llm.model-capabilities.claude-opus-4-7.thinking-dialect=unknown",
+                "aimon.llm.model-capabilities.claude-opus-4-7.supports-sampling-parameters=false").run(ctx -> {
+                    assertThat(ctx).hasNotFailed();
+                    AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm());
+                });
+        assertThat(output.getAll()).doesNotContain(warning);
+
+        runner.withPropertyValues("aimon.llm.model-capabilities.claude-opus-4-7.thinking-dialect=unknown").run(ctx -> {
+            assertThat(ctx).hasNotFailed();
+            AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm());
+        });
+        assertThat(output.getAll()).containsOnlyOnce(warning).contains("prefix row 'claude-opus-4-7'")
+                .contains("supportsSamplingParameters=false (now true)");
     }
 
     @Test
@@ -879,15 +939,17 @@ class AimonPropertiesValidationTest {
     }
 
     @Test
-    @DisplayName("a misspelled aimon.llm.reasoning-effort is silent here too — the same limitation, one key wider")
+    @DisplayName("a misspelled aimon.llm.reasoning-effort is still silent — a scalar leaf no strict subtree covers")
     void aMisspelledReasoningEffortIsSilentInTheStarter() {
-        // The third limitation record of the same shape, and the one that widens
-        // docs/backlog/llm-config-surface-open-items.md item L-1 by a fourth key. Its two siblings pin a
-        // map-of-object leaf and a nested-object leaf; this one pins a SCALAR leaf on a bean that binds regardless
-        // of this key -- so nothing here fails to instantiate and the misspelling simply leaves the field null.
+        // The one limitation record of three that is still one. Its two former siblings pinned a map-of-object leaf
+        // and a nested-object leaf, and both now fail the context (aMisspelledFlagFailsTheContext,
+        // aMisspelledAnthropicKeyFailsTheContext). This one pins a SCALAR leaf directly on aimon.llm, and the
+        // mechanism that closed the other two is a list of strict subtrees: the only prefix that covers this key is
+        // aimon.llm itself, which would also refuse every key a host application keeps there. So
+        // docs/backlog/llm-config-surface-open-items.md item L-1 stays open for exactly this shape.
         //
-        // The CLI throws for the same typo. If someone closes L-1, this test goes red with its two siblings, which
-        // is the correct outcome: it is a limitation record, not a guarantee.
+        // The CLI throws for the same typo. If someone closes the rest of L-1, this test goes red, which is the
+        // correct outcome: it is a limitation record, not a guarantee.
         runner.withPropertyValues("aimon.llm.reasoning-effor=medium").run(ctx -> {
             assertThat(ctx).hasNotFailed();
             assertThat(ctx.getBean(AimonProperties.class).getLlm().getReasoningEffort()).isNull();
@@ -915,9 +977,17 @@ class AimonPropertiesValidationTest {
         assertThat(AimonProperties.asPropertyValue(AgentRuntimeEviction.IDLE)).isEqualTo("idle");
     }
 
-    /** The binding target on its own — no slice, no stack, nothing that could fail for another reason. */
+    /**
+     * The binding target on its own — no stack, nothing that could fail for another reason.
+     *
+     * <p>
+     * With the one slice that changes how the target binds: {@code AimonPropertiesBindingAutoConfiguration} makes an
+     * unbound property under three subtrees a startup failure, and every deployment has it, so a binding test
+     * without it would be measuring a context no application runs.
+     */
     @Configuration(proxyBeanMethods = false)
     @EnableConfigurationProperties(AimonProperties.class)
+    @ImportAutoConfiguration(AimonPropertiesBindingAutoConfiguration.class)
     static class PropertiesOnly {
     }
 }

@@ -393,7 +393,9 @@ modelCapabilities:
 ```
 
 위쪽은 `supportsSamplingParameters` 를 fail-open 인 `true` 로 되돌리므로 `temperature` 가 400 을 내는 모델로
-나간다 — 그리고 **경고가 없다.** 억제 WARN 은 플래그가 `false` 일 때만 울리기 때문이다. `thinkingMode: extended`
+나간다. 요청 시점에는 **경고가 없다** — 억제 WARN 은 플래그가 `false` 일 때만 울리기 때문이다. 대신
+**기동 시 WARN 한 줄**이 나온다: 선언이 가린 내장 행, 떨어진 플래그와 그 행이 주던 값, 옮겨 적을 줄을 부른다.
+fail-open 값이 의도라면 그 값을 직접 적으면(`supportsSamplingParameters: true`) 멈춘다. `thinkingMode: extended`
 로 피할 수도 없다: 그 분기는 `temperature` 는 빼지만 `top_p` 는 여전히 싣는다.
 
 **규칙은 한 줄이다 — 항목이 행 전체이므로, 내장 행이 말하던 플래그를 전부 옮겨 적는다.** `claude-*` 이름에
