@@ -76,7 +76,8 @@ IMPORTANT: 같은 기능의 "개발자용"과 "운영자용" 문서를 서로 �
 `plan/` 디렉토리는 **진행 중인 계획이 있을 때만 존재한다.** 끝나면 문서를 지우고, 남길 가치가 있던
 근거는 design 문서나 규칙 문서로 옮긴다 — `OrcaAgentRuntime` 통합 테스트 계층은
 [`design/agent-execution/integration-test-layers.md`](../design/agent-execution/integration-test-layers.md)
-로, `turn` 용어 정리는 [`overview/glossary.md`](../overview/glossary.md) §4 의 규칙으로 옮겨 갔다.
+로, `turn` 용어 정리는 [`overview/glossary.md`](../overview/glossary.md) §4 의 규칙으로, 오픈소스 전환 계획의 사이트
+구조 근거는 [`design/documentation/docs-site.md`](../design/documentation/docs-site.md) 로 옮겨 갔다.
 
 ### 3.2 `backlog/` 와 `design/backlog/`
 

@@ -90,7 +90,7 @@ plugins:
       # Korean sources carry no suffix, so Korean must be the default locale --
       # the default locale is what builds at the site root. Making English the
       # root is not a preference we gave up, it is a build error. See
-      # docs/plan/open-source-readiness.md §0.2.
+      # docs/design/documentation/docs-site.md §3.
       languages:
         - locale: ko
           default: true

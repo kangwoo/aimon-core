@@ -179,15 +179,19 @@ publish 를 거절한다.
 
 `1.0` 은 날짜가 아니라 **상태**로 정한다. 아래가 모두 참일 때 올린다.
 
-- [ ] **핵심 SPI 가 한 릴리스 주기 동안 변경 없이 유지됨** — `Tool`, `Hook`, `LlmClient`,
-      `VirtualFileSystem`, `SessionRecordStore`, `AgentExecutor`
+- [ ] **핵심 SPI 가 한 릴리스 주기 동안 변경 없이 유지됨** — `Tool`, `ExecutionHook`, `LlmClient`,
+      `VirtualFileSystem`, `SessionRecordStore`, `AgentExecutor`. `ExecutionHook` 은 이벤트별 하위 인터페이스
+      (`PreToolHook` …)와 그것이 받는 `HookContext` 까지 포함한다 — 훅 구현체가 실제로 의존하는 표면이 그 셋이다.
+      문서에서 개념어로 쓰는 "Hook" 이라는 이름의 타입은 없다
 - [ ] **`aimon-core` 밖에서 온 백엔드 구현이 하나 이상 존재** — SPI 가 정말 구현 가능한지는 이 프로젝트가
       직접 쓴 구현체만으로는 증명되지 않는다
 - [ ] **스코프 모델이 이름 변경 없이 한 주기를 넘김** — 최근 두 번의 파괴적 변경이 모두 여기서 나왔다
 - [ ] **Spring Boot starter 의 미결 항목이 정리됨**
       ([`../backlog/spring-boot-starter-open-items.md`](../backlog/spring-boot-starter-open-items.md))
 - [ ] **공개 API 에 대한 javadoc 이 빠짐없이 존재**
-- [ ] **번역된 문서가 코드와 어긋나지 않음을 검사하는 CI 가 동작** — 문서가 API 의 일부인 프로젝트이므로
+- [x] **번역된 문서가 정본과 어긋나지 않음을 검사하는 CI 가 동작** — 문서가 API 의 일부인 프로젝트이므로.
+      `build.yml` 의 `translations` 잡이다. 번역의 짝은 코드가 아니라 정본이다 — 정본이 코드와 맞는지는 번역
+      검사의 일이 아니라 정본을 고치는 쪽의 일이다
 
 이 목록은 [`roadmap.md`](roadmap.md) 와 함께 읽는다.
 

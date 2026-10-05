@@ -21,17 +21,6 @@
 있는지의 정본은 [`../backlog/execution-environment-open-items.md`](../backlog/execution-environment-open-items.md)
 이고, 여기에 목록을 옮겨 적지 않는다(§5).
 
-오픈소스 준비 스트림은 **코드로 할 일이 끝났다.** Phase 0~5 가 전부 완료되었고, 저장소는 public 이며
-문서 사이트가 GitHub Pages 에서 배포된다. 남은 것은 메인테이너가 저장소 설정에서 해야 하는 둘이다.
-
-| 설정 | 왜 필요한가 |
-|------|-----------|
-| **Discussions** | 꺼져 있는데 `CONTRIBUTING.md` 가 두 곳에서 "Discussion 을 열라" 고 안내한다(`CONTRIBUTING.ko.md` 도 같다). 켜거나, 그 문장을 이슈 안내로 바꾼다 |
-| **Private vulnerability reporting** | 꺼져 있는데 `SECURITY.md` 가 `/security/advisories/new` 를 신고 경로로 안내한다. 이 설정 없이는 그 경로가 동작하지 않는다 |
-
-둘이 끝나면 [`../plan/open-source-readiness.md`](../plan/open-source-readiness.md) 는 삭제한다(진행 추적
-문서의 수명 규칙 — [`../README.md`](../README.md)).
-
 ---
 
 ## 2. 다음 — 무엇이 큐에 있는가
@@ -64,12 +53,12 @@ starter 밖의 등록부에는 열린 항목이 있다. 어느 등록부에 몇 
 
 | 조건 | 지금 상태 |
 |------|----------|
-| 핵심 SPI 가 한 릴리스 주기 동안 무변경 | `0.2.x` 는 무변경 주기가 되지 못했다 — `0.3.0` 이 `LlmClient` 에 기본 메서드 `getDefaultModelName()` 을 더했다(소스 호환이지만 변경이다). `Tool` · `LlmClient` · `VirtualFileSystem` · `SessionRecordStore` · `AgentExecutor` 는 `0.3.0` 이후 바뀌지 않았으므로 지금 세는 주기는 `0.3.x` 다. 목록의 `Hook` 은 **그 이름의 타입이 없다** — 무엇을 가리키는지부터 정해야 이 조건을 셀 수 있다 |
+| 핵심 SPI 가 한 릴리스 주기 동안 무변경 | **아직 한 주기도 지나지 않았다.** `0.2.x` 는 `0.3.0` 이 `LlmClient` 에 기본 메서드 `getDefaultModelName()` 을 더하면서(소스 호환이지만 변경이다), `0.3.x` 는 `0.3.1` 이 `HookContext` 의 `getEnvironment()` 를 `getUserLocale()` 로 바꾸면서(EE-14, 파괴적) 끊겼다. 나머지 넷(`Tool` · `VirtualFileSystem` · `SessionRecordStore` · `AgentExecutor`)은 `0.2.4` 이후 바뀌지 않았다. 다음으로 셀 수 있는 주기는 `0.4.x` 다 |
 | `aimon-core` 밖에서 온 백엔드 구현이 하나 이상 | **0건.** `0.3.0` 이후 이 저장소 밖에도 SPI 구현이 생겼지만(`at.aimon.sandbox:*`, aimon-memory 의 `RemotePeerMemory`) 둘 다 같은 메인테이너의 저장소라, 이 조건이 묻는 것 — 남이 구현할 수 있는가 — 에는 답하지 못한다. B-23 이 여기에 걸려 있다 |
 | 스코프 모델이 개명 없이 한 주기를 넘김 | 최근 두 번의 파괴적 변경이 **둘 다** 여기서 나왔다(`AgentExecutionContext` → `AgentRuntime`, `Conversation`/`AgentSession` → `SessionRecord`/`LiveSession`). `0.3.0` · `0.3.1` 의 CHANGELOG 에는 수명 타입의 개명이 없다 — `0.3.1` 의 `Environment` → `UserLocale`(EE-14)은 수명 타입이 아니다. 세 번째가 없어야 한다 |
 | starter 미결 항목 정리 | 4건 남음 — 전부 외부 조건 대기(§2) |
 | 공개 API javadoc 완비 | **측정 장치가 없다.** 빌드는 `-Xdoclint:none` 으로 javadoc 린트를 끄고 있다(`buildSrc/src/main/kotlin/aimon.java-conventions.gradle.kts` 의 `tasks.withType<Javadoc>()` 블록). 완비 여부를 말하려면 그 스위치부터 켜야 한다 |
-| 번역 신선도 CI 동작 | **동작한다.** `build.yml` 의 `translations` 잡이 낡은 번역은 경고로, 해석 불가한 `source_commit` 은 실패로 보고하고, 구조 검사가 함께 돈다. 다만 `api-stability.md` §6 의 문구는 번역이 **코드와** 어긋나지 않는지를 말하고, 이 잡이 보는 것은 번역이 **정본과** 어긋나는지다. 정본이 코드와 맞는지는 검사하지 않으므로 그쪽 체크박스는 비워 둔다 |
+| 번역 신선도 CI 동작 | **충족.** `build.yml` 의 `translations` 잡이 낡은 번역은 경고로, 해석 불가한 `source_commit` 은 실패로 보고하고, 구조 검사가 함께 돈다. 이 조건이 묻는 것은 번역이 **정본과** 어긋나지 않는가이고, 정본이 코드와 맞는지는 번역 검사의 범위가 아니다 |
 
 **`1.0` 은 날짜가 아니라 상태다.** 위 여섯이 전부 참이 되기 전에는 올리지 않고, 참이 되면 그 이상
 기다리지 않는다.
@@ -122,5 +111,4 @@ patch 는 호환되고, minor 는 깨질 수 있으며, 깨질 때는 옛 이름
 - [`api-stability.md`](api-stability.md) — `0.x` 가 무엇을 약속하고 무엇을 약속하지 않는가
 - [`../../CHANGELOG.md`](../../CHANGELOG.md) — 실제로 무엇이 바뀌었는가
 - [`../../MAINTAINERS.md`](../../MAINTAINERS.md) — 누가 결정하는가
-- [`../plan/open-source-readiness.md`](../plan/open-source-readiness.md) — 진행 중인 문서 작업의 계획
 - [`../backlog/README.md`](../backlog/README.md) — 등록부를 읽는 법
