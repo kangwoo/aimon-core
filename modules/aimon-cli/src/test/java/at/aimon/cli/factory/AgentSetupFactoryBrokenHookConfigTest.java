@@ -146,10 +146,11 @@ class AgentSetupFactoryBrokenHookConfigTest {
             "an event name one letter off a guard event"
                     + " | {\"hooks\":{\"preTol\":[{\"hooks\":[{\"type\":\"deny\",\"reason\":\"no\"}]}]}}"
                     + " | did you mean 'preTool'",
-            // The CLI wires no http executor: this guard was never asked, and used to be registered all the same.
-            "an http guard, which the CLI cannot run"
-                    + " | {\"hooks\":{\"preTool\":[{\"hooks\":[{\"type\":\"http\",\"url\":\"https://example.test/h\"}]}]}}"
-                    + " | no HttpActionExecutor is wired"})
+            // The CLI runs http handlers, and mcp handlers when it has MCP servers. This configuration has none, so
+            // the guard could never ask (AgentSetupFactoryRemoteHookTest covers the handlers that do run).
+            "an mcp guard, which a CLI with no MCP server cannot run"
+                    + " | {\"hooks\":{\"preTool\":[{\"hooks\":[{\"type\":\"mcp\",\"server\":\"policy\",\"tool\":\"evaluate\"}]}]}}"
+                    + " | no McpActionExecutor is wired"})
     @DisplayName("a hooks.json that parses but has a guard entry that cannot be applied stops create() the same way")
     void inapplicableGuardEntryStopsCreate(String what, String json, String expected, @TempDir Path work)
             throws Exception {

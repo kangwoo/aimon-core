@@ -105,7 +105,7 @@ class DeclarativeGuardOuterTimeoutTest {
         });
         final McpClientManager servers = mock(McpClientManager.class);
         when(servers.getClient("policy")).thenReturn(Optional.of(client));
-        // McpActionExecutor does not enforce the action's timeout: the net is the only thing that ends this call.
+        // This client ignores the interrupt McpActionExecutor's deadline sends, so the net is what ends the call.
         registry.register(HookEventType.PRE_TOOL,
                 new DeclarativePreToolHook("ops", NameOnlyPredicate.ANY,
                         McpToolAction.builder().serverName("policy").toolName("evaluate").timeout(Duration.ofMillis(50))

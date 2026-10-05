@@ -73,7 +73,8 @@ for side effects only. Wiring one up is a feature, not a bug fix.
 - Hooks must be **thread-safe** — the same instance runs across agents, and `PARALLEL` mode plus
   parallel tool dispatch run chains on shared worker threads.
 - Hooks should **not throw**. The executor maps an escaping exception through
-  `HookExecutionPolicy#onException`, which under `failClosedStopOnBlocked` turns a bug into a block.
+  `HookExecutionPolicy#onException`, which under `failClosedStopOnBlocked` turns a bug into a block —
+  and blocks outright, whatever the policy, for a hook that declares `FAIL_CLOSED` (next rule but one).
 - Each hook gets `HookExecutionPolicy#timeout()` (30s default) as an outer net. A hook that owns a
   longer deadline of its own must declare it via `ExecutionHook#getExecutionBudget()`, otherwise the
   net cuts it off first and its graceful outcome is lost. A declared budget is a **floor, not an
@@ -89,6 +90,18 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   that event. A programmatic `PreToolHook` / `OnStartHook` that declares nothing still reads as a
   pass when the net cuts it off, and a throwing `OnStartHook` is a success under the `onStart`
   policy.
+- **The same declaration closes the two other roads to "no verdict"**
+  (`HookExecutionPolicy#failsClosedWithoutVerdict`): a hook the pool refused to run
+  (`RejectedExecutionException` — saturated or shut down) and a hook whose body threw. A declarative
+  guard catches what its *action* throws itself, so what arrives here is from outside that — the
+  matcher predicate, an `Error` (the Bash sub-command splitter recurses per nested `$(`, so the model
+  picks the depth). Both went through `onException`, i.e. success. This reads only the hook's own
+  declaration and never falls back to the policy's `timeoutBehavior()` — a policy may pair a
+  `FAIL_CLOSED` timeout with a lenient mapper, and a hook that declares nothing keeps the mapper. The
+  block reason is a fixed string plus, for a throw, the throwable's simple type name (the deny-reason
+  rule below). Rejection answers at once, so a pool closed by teardown (`TeardownPhase.HOOK_EXECUTOR`,
+  after `SESSIONS` and `AGENT_RUNTIMES`) cannot make a caller wait; the events an orderly shutdown
+  fires (`onStop`, `onSessionEnd`) are advisory, declare nothing and are not blocked.
 - Override `getHookId()` whenever several instances of one class can be registered — async-rewake
   routing and hot-reload cancellation key off it. Ids must be **content-derived and reload-stable**;
   see `DeclarativeHookId`.
@@ -141,7 +154,24 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   says, and neither is a `decision` outside `allow` / `deny` / `defer`. `run(...)` is the advisory
   reading (`attempt(...).orSuccess()`) and is what `postTool` calls — do not call `run` from a guard
   event. `failOpen` is read for `command`, `http` and `mcp` alike; only on `deny` is it ignored with
-  a WARN. Neither in-tree assembly (`aimon-cli`, `aimon-bootstrap`) wires an http or mcp executor.
+  a WARN.
+- **Who wires the http / mcp executors.** `aimon-cli` does, for both sources: `HookActionExecutors`
+  hands one `HttpActionExecutor` and one late-bound `McpActionExecutor` to the hot-reload bootstrap
+  (`hooks.json`) and to the skill parser (frontmatter). The skill parser is built before the runtime
+  exists and a parsed hook keeps its executors, hence `McpActionExecutor.lateBound(supplier)`, bound
+  to the runtime's `McpClientManager` once the stack is up; when the CLI configures no MCP server the
+  MCP executor is `null`, so an `mcp` guard stops startup / fails the skill load instead of loading
+  and blocking every call. The executors own nothing and are on no teardown phase: the manager is
+  agent-scoped and its runtime closes it, and a Java 17 `HttpClient` has no `close()`.
+  `aimon-bootstrap` and the starter wire neither — a stack can hold several runtimes and an executor
+  resolves one manager without the firing context, and host-side HTTP from skill frontmatter crosses
+  the sandbox boundary where the environment provider is a sandbox. Hosts wire them through
+  `HookHotReloadBootstrap.Builder` and `AimonStackSpec#skillParser`.
+- **`HttpActionExecutor.createDefault()` does not follow redirects and reads at most
+  `MAX_RESPONSE_BYTES`.** The JDK client re-sends request headers to a redirect target, and hook
+  headers are where `${env.X}` puts tokens. Do not relax either to make an endpoint work; a 3xx and an
+  oversized body are both "no verdict". The URL is never templated; `allowedEnvVars` is declared by
+  the same file that uses it, so it bounds templates, not authors.
 - The user-facing table of what blocks and what `failOpen` changes lives in **one** place,
   `docs/features/hook/hook-config-guide.md` › "가드가 막는 경우" (and its `.en.md`). A change to guard
   semantics updates that table; other docs link to it rather than restating it.
@@ -191,7 +221,14 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   `SkillScopedHookRegistry` — a decorator around it disables these refusals.
 - A handler's declared timeout is enforced by the action executor and, via
   `ExecutionHook#getExecutionBudget()`, widens the hook's outer net — subject to the same floor,
-  +5s grace and 10-minute clamp as any other declared budget. In `hooks.json` the `timeout` field is
+  +5s grace and 10-minute clamp as any other declared budget. "Enforced by the executor" holds for all
+  three transports: the shell's `ExecutionOptions` timeout, `HttpRequest.timeout`, and for `mcp` a
+  deadline `McpActionExecutor` keeps itself (`McpClient.callTool` takes none) by interrupting the
+  calling thread, reported as `TIMEOUT` with the interrupt cleared. The per-server `requestTimeout`
+  still bounds the request underneath, so the smaller of the two wins; an interrupt that is not the
+  executor's own is `CANCELLED`. Do not move the call to another thread to bound it — the hook already
+  runs on a pool thread whose wait the outer net bounds, and that net is the fallback for a client that
+  ignores the interrupt. In `hooks.json` the `timeout` field is
   **seconds** (Claude Code parity) with `timeoutMs` as a millisecond alias that wins when both are
   present; SKILL.md frontmatter accepts `action.timeoutMs` only.
 - A declarative hook re-attaches its `asyncRewake` spec on **every** fire — `DeclarativeRewake.attach`

@@ -130,6 +130,23 @@ interrupt 하고, 풀 스레드가 다른 풀 스레드를 기다리지 않으�
 `failClosedStopOnBlocked` 정책에서는 그 매핑이 버그를 block 으로 바꾼다 — 의도된 선택이며, 그래서 기본
 정책은 fail-open 이다.
 
+**`FAIL_CLOSED` 를 선언한 훅은 이 매퍼도 타지 않는다.** §3.2 의 선언은 처음에 그물(timeout)에만 걸렸고, 판정 없이 끝나는
+길이 둘 더 남아 있었다 — 풀이 훅을 받지 않는 것(`RejectedExecutionException`: 포화, 또는 닫힌 풀)과 훅 본문이 던지는
+것이다. 선언적 가드는 **액션**이 던진 것은 스스로 잡아 fail-closed 로 읽지만 그 `try` 밖 — matcher 술어, 컨텍스트 접근,
+`Error` — 은 실행기까지 올라왔고, 출하 정책의 매퍼는 그것을 성공으로 읽었다. 재현된 경로가 하나 있다:
+`BashSubcommandPredicate` 는 중첩된 `$(` 마다 재귀하므로 깊이를 모델이 고르고, `StackOverflowError` 가 난 `Bash(rm *)` 가드는
+그 호출을 통과시켰다. 그래서 `failsClosedWithoutVerdict(hook)` 이 참이면 두 경우 모두 BLOCKED 다.
+
+같은 선언을 쓰고 새 선언을 만들지 않았다 — "느렸다" · "시작하지 못했다" · "죽었다" 가 서로 다른 값을 가질 수 있으면 열린
+쪽이 곧 우회로이기 때문이다. 반대로 정책의 `timeoutBehavior()` 로는 **떨어지지 않는다**: 아무것도 선언하지 않은 훅의 실패는
+매퍼의 질문이고, `FAIL_CLOSED` timeout 과 관대한 매퍼를 함께 쓰는 정책에서 프로그램 훅의 동작이 바뀌면 안 된다. 사유는
+고정 문자열에 예외의 **타입 이름**만 붙는다(메시지는 싣지 않는다).
+
+닫힌 풀은 종료 순서가 일부러 만드는 상태다(`TeardownPhase.HOOK_EXECUTOR`). 그 단계는 `SESSIONS` · `AGENT_RUNTIMES` 뒤라
+가드를 발화시킬 턴이 남아 있지 않고, 종료 중에 발화하는 `onStop` · `onSessionEnd` 는 아무것도 선언하지 않는 advisory
+이벤트다. 드레인 시한을 넘겨 살아남은 실행의 도구 호출이 그래도 도착하면 거절은 즉시 돌아오므로 기다림은 생기지 않고,
+그 호출은 가드 없이 실행되는 대신 막힌다.
+
 **인터럽트는 이 매퍼를 타지 않는다.** 매퍼가 답하는 질문은 "훅이 *실패*하면 어떻게 할 것인가" 인데,
 인터럽트는 훅의 실패가 아니라 **그 판정을 기다릴 이쪽의 능력**이 끊긴 것이다. 넘겨 버리면 묻지도 않은
 질문에 fail-open 이 적용되고, 결과는 보안 사고다 — 플래그가 살아 있는 스레드에서 `future.get` 은 기다리지
@@ -153,7 +170,12 @@ allow 로 강등된다. 그래서 인터럽트로 끊긴 대기는 정책과 무
 | `PathGlobPredicate` | 경로 파라미터의 글로브 |
 | `CompositePredicate` | 위의 AND/OR 조합 |
 
-Claude Code 풍 `if` 문법은 `PredicateParser` 가 위 구현들로 번역한다. `…declarative.predicate` 하위 패키지는 SPI 가 아니라 **impl** 이다. 바깥에서 닿을 수 있는 것은 부모
+Claude Code 풍 `if` 문법은 `PredicateParser` 가 위 구현들로 번역한다. 그 문법이 만드는 것은 **이름 · `도구(글롭)` · 그 둘의
+OR(`|`)** 뿐이다 — `CompositePredicate.and` 는 코드에서만 닿고, 정규식과 입력 필드 지정은 어느 구현에도 없다. 문법에 없는
+표기는 대개 파싱 오류가 아니라 **아무것도 맞추지 못하는 이름이나 글롭**이 되므로(괄호 없는 항은 통째로 이름이다), 사용자
+문서가 문법을 틀리게 적으면 그대로 옮긴 가드는 조용히 꺼진다. 사용자 쪽 정본은
+[`hook-config-guide.md` › Matcher 문법](../../features/hook/hook-config-guide.md#matcher-문법)이고,
+`DocumentedMatcherGrammarTest` 가 그 표의 각 행을 파서에 고정한다. `…declarative.predicate` 하위 패키지는 SPI 가 아니라 **impl** 이다. 바깥에서 닿을 수 있는 것은 부모
 패키지의 `ToolInputPredicate` 인터페이스뿐이며, `PackageDependencyArchitectureTest`
 가 이 두 규칙(하위 클래스는 전부 `ToolInputPredicate` 구현일 것 · 허용된 호출자 밖에서 import 금지)을 빌드에서
 강제한다.
@@ -201,6 +223,28 @@ Claude Code 풍 `if` 문법은 `PredicateParser` 가 위 구현들로 번역한�
 (`ActionCallOutcome`) — 정책 서버가 `deny` 라고 답한 것은 판정이고, 닿지 못했거나 답을 읽을 수 없는 것은 판정 없음이다.
 판정 없음은 셸의 "종료 코드 없음" 과 같은 자리(`ShellHookVerdicts`)에서 같은 규칙으로 읽는다: 막고, `failOpen: true` 면
 통과한다. `postTool` 은 전처럼 WARN 후 진행한다.
+
+**두 실행기를 누가 배선하는가.** 코어는 실행기를 만들지 않는다 — `HookRegistryApplier` 와 `SkillHookSetParser` 가 받은 것을
+훅에 넘길 뿐이다. 트리 안에서 배선하는 조립은 `aimon-cli` 하나이고(`HookActionExecutors`), `hooks.json` 과 스킬 frontmatter
+양쪽에 같은 실행기를 준다. 순서가 문제였다: 스킬 파서는 번들을 읽기 위해 스택보다 먼저 만들어지고 파싱된 훅은 그때 받은
+실행기를 계속 쥐는데, `McpClientManager` 는 런타임이 만들어진 뒤에야 있다. 그래서 `McpActionExecutor.lateBound(supplier)` 로
+만들어 두고 런타임이 서면 묶는다. 매니저는 agent-scoped 이고 런타임이 닫는다(`AGENT_RUNTIMES`) — 실행기는 빌려 쓸 뿐 닫지
+않으며, Java 17 의 `HttpClient` 에는 닫을 것이 없어 종료 순서에 올릴 항목도 없다. CLI 설정에 MCP 서버가 없으면 MCP 실행기는
+`null` 이다: 항상 실패하는 실행기를 주면 `mcp` 가드가 로드된 뒤 걸리는 호출을 전부 막지만, 없다고 말하면 시작에서 멈춘다.
+
+`aimon-bootstrap` 과 스타터는 배선하지 않는다. 이유는 둘이다. (1) 스택은 런타임을 여러 개 가질 수 있고 `McpClientManager` 는
+런타임마다 하나인데, 실행기는 **발화한 런타임**을 모른다(`attempt` 가 `HookContext` 를 받지 않는다) — 스택 전역 실행기는
+엉뚱한 에이전트의 서버를 부르게 된다. (2) 스킬의 `http` 액션은 호스트 JVM 에서, 호스트의 환경 변수와 네트워크로 나간다.
+CLI 에서는 스킬의 `shell` 액션이 이미 같은 권한으로 도므로 새로 주는 것이 없지만, 실행 환경이 샌드박스인 호스트에서는 스킬
+파일이 샌드박스 밖으로 요청을 보내는 길이 된다. 그 선택은 호스트가 `AimonStackSpec.skillParser` 와
+`HookHotReloadBootstrap.Builder` 로 직접 한다.
+
+**기본 HTTP 클라이언트는 좁게 잡았다.** `HttpActionExecutor.createDefault()` 는 리다이렉트를 따라가지 않고(JDK 클라이언트는
+리다이렉트 대상에 요청 헤더를 다시 보낸다 — `${env.X}` 로 채운 토큰이 설정에 없는 호스트로 가고 그 호스트의 답이 판정이
+된다), 응답 본문을 `MAX_RESPONSE_BYTES`(1 MiB)까지만 읽는다. 둘 다 "판정 없음" 으로 떨어지므로 가드는 닫힌 채 남는다.
+남겨 둔 것은 결정이 필요한 것들이다 — 평문 `http://` 허용, `allowedEnvVars` 가 그 선언 자신이 적는 목록이라는 점, 템플릿
+값이 이스케이프되지 않아 JSON 본문에 모델의 텍스트가 그대로 들어간다는 점. 사용자 문서는 셋을 그대로 적는다
+([`hook-config-guide.md` › `http`](../../features/hook/hook-config-guide.md#http)).
 
 **취소는 "돌리지 못함" 이 아니다(EE-80).** 훅의 셸 명령은 실행의 취소 신호(`HookContext.getExecutionCancellation()`)에
 묶여 돌고, 인터럽트가 오면 그 신호로 멈춘다 — 포그라운드 `Bash` 와 같은 길이다(EE-54). 그렇게 멈춘 명령은

@@ -544,7 +544,10 @@ public class AgentSetupFactory {
         // SK-13: build the shell-aware skill parser here rather than letting the stack default it, so the bundle
         // loader below shares the same parser. It holds no shell — a skill hook's shell action runs in the execution
         // environment it fires in.
-        final SkillParser skillParser = createShellAwareSkillParser();
+        // The http and mcp hook executors are built here too, for the same reason: a parsed skill hook keeps the
+        // executors its parser had. The mcp one is bound to the runtime's MCP clients in decorate().
+        final HookActionExecutors hookActions = HookActionExecutors.create(hasMcpServers(config));
+        final SkillParser skillParser = createSkillParser(hookActions);
         // The host shell is for hooks.json only: operator configuration, and the one place that can declare events
         // firing outside any execution, where there is no execution environment to run in.
         final LocalShell hookConfigShell = new LocalShell();
@@ -644,7 +647,7 @@ public class AgentSetupFactory {
         }
         try {
             return decorate(config, stack, agentBundle, fileSystem, hookConfigShell, graalJsEngines,
-                    new CliDecorations(outputFormatter, approvalChannel.get(), traceSpanStore, llmClient,
+                    new CliDecorations(outputFormatter, approvalChannel.get(), traceSpanStore, llmClient, hookActions,
                             new CliMemoryDecorations(memoryWiring, representationStore, observationStore, memoryQueue,
                                     memoryModelName)));
         } catch (RuntimeException | Error e) {
@@ -678,8 +681,11 @@ public class AgentSetupFactory {
                 () -> new IllegalStateException("Stack published no runtime for " + stack.primaryRuntimeId()));
         // Closed before hookConfigShell: the reload callback fires shell-backed declarative hooks, so a debounced
         // reload landing between the two closes would otherwise hit a closed shell.
+        // Before the hooks are loaded, so the first reload already applies mcp handlers that can reach their server.
+        // Nothing is enrolled for the executors themselves: they own no resource (see HookActionExecutors).
+        cli.hookActions.bind(agentRuntime);
         stack.own(TeardownPhase.HOOK_HOT_RELOAD, "hookHotReload", startHookHotReload(agentRuntime, agentExecutor,
-                hookConfigShell, fileSystem, agentBundle.getAgent().getName()));
+                hookConfigShell, fileSystem, agentBundle.getAgent().getName(), cli.hookActions));
         stack.schedulingEngine().ifPresent(
                 engine -> engine.addEventListener(new ScheduledTaskEventDisplayListener(config.getCliSettings())));
 
@@ -812,11 +818,19 @@ public class AgentSetupFactory {
             // branch from the execution environment (ExecutionEnvironment.isolate).
             builder.addProvider(new GraalJsWorkflowToolProvider(graalJsEngines));
         }
-        final McpConfig mcpConfig = config.getMcpConfig();
-        if (mcpConfig != null && mcpConfig.hasServers()) {
-            builder.mcp(mcpClientFactory, mcpConfig.toConfigProvider());
+        if (hasMcpServers(config)) {
+            builder.mcp(mcpClientFactory, config.getMcpConfig().toConfigProvider());
         }
         return builder.build();
+    }
+
+    /**
+     * Whether the configuration declares an MCP server. It decides two things that must agree: whether the runtime
+     * gets an {@code McpClientManager} ({@link #buildToolSpec}) and whether {@code mcp} hook actions have an executor.
+     */
+    private static boolean hasMcpServers(CliConfig config) {
+        final McpConfig mcpConfig = config.getMcpConfig();
+        return mcpConfig != null && mcpConfig.hasServers();
     }
 
     /**
@@ -887,6 +901,7 @@ public class AgentSetupFactory {
         private final InteractiveSkillApprovalChannel skillApprovalChannel;
         private final TraceSpanStore traceSpanStore;
         private final LlmClient llmClient;
+        private final HookActionExecutors hookActions;
         private final MemoryWiring memoryWiring;
         private final RepresentationStore representationStore;
         private final ObservationStore observationStore;
@@ -894,11 +909,13 @@ public class AgentSetupFactory {
         private final String memoryModelName;
 
         private CliDecorations(OutputFormatter outputFormatter, InteractiveSkillApprovalChannel skillApprovalChannel,
-                TraceSpanStore traceSpanStore, LlmClient llmClient, CliMemoryDecorations memory) {
+                TraceSpanStore traceSpanStore, LlmClient llmClient, HookActionExecutors hookActions,
+                CliMemoryDecorations memory) {
             this.outputFormatter = outputFormatter;
             this.skillApprovalChannel = skillApprovalChannel;
             this.traceSpanStore = traceSpanStore;
             this.llmClient = llmClient;
+            this.hookActions = hookActions;
             this.memoryWiring = memory.memoryWiring;
             this.representationStore = memory.representationStore;
             this.observationStore = memory.observationStore;
@@ -994,6 +1011,21 @@ public class AgentSetupFactory {
     }
 
     /**
+     * {@link #createShellAwareSkillParser()} with the CLI's {@code http} and {@code mcp} hook executors, so a skill
+     * can declare those action types too. {@code ${env.X}} in such an action reads the CLI's own environment, for
+     * the names the action whitelists. Without an MCP executor (no MCP server configured) a skill declaring an
+     * {@code mcp} action fails to load, as one declaring {@code shell} does where there is no shell support.
+     *
+     * @param hookActions
+     *            the CLI's hook action executors (must not be null)
+     * @return the skill parser the CLI loads bundled and user skills with
+     */
+    static SkillParser createSkillParser(HookActionExecutors hookActions) {
+        return new MarkdownSkillParser(new ShellArgumentTokenizer(), new SkillHookSetParser(
+                new DefaultShellActionExecutor(), hookActions.http(), hookActions.mcpOrNull(), System.getenv()));
+    }
+
+    /**
      * Creates an LLM client based on the configuration.
      */
     private LlmClient createLlmClient(CliConfig config) {
@@ -1056,17 +1088,22 @@ public class AgentSetupFactory {
      * skill-declared ones: the file is operator configuration and can declare session- and config-lifecycle events,
      * which have no execution environment.
      *
+     * <p>
+     * {@code http} and {@code mcp} handlers run through the CLI's {@link HookActionExecutors}; the {@code mcp} one is
+     * absent when the CLI configures no MCP server, and an {@code mcp} guard then stops startup.
+     *
      * @return the {@link HookHotReloadBootstrap.Started} handle owned by {@code AgentSetup}; closed during
      *         {@link AgentSetup#close()}
      * @throws HookConfigParseException
      *             if a {@code hooks.json} that is present fails to parse or cannot be read
      */
     private HookHotReloadBootstrap.Started setupHookHotReload(OrcaAgentRuntime agentRuntime,
-            OrcaAgentExecutor agentExecutor, VirtualShell hookConfigShell, LocalFileSystem fileSystem,
-            String agentName) {
+            OrcaAgentExecutor agentExecutor, VirtualShell hookConfigShell, LocalFileSystem fileSystem, String agentName,
+            HookActionExecutors hookActions) {
         return HookHotReloadBootstrap.builder().userHome(Paths.get(System.getProperty("user.home")))
                 .projectRoot(Paths.get(fileSystem.getWorkingDirectory()))
-                .shellExecutor(createHookConfigShellExecutor(hookConfigShell)).processEnv(System.getenv())
+                .shellExecutor(createHookConfigShellExecutor(hookConfigShell)).httpExecutor(hookActions.http())
+                .mcpExecutor(hookActions.mcpOrNull()).processEnv(System.getenv())
                 .registry(agentRuntime.getHookRegistry()).executionManager(agentExecutor.getHookExecutionManager())
                 .invoker(new ReloadInvoker(InvokerType.MAIN_AGENT, agentName)).start();
     }
@@ -1080,10 +1117,10 @@ public class AgentSetupFactory {
      *             if a {@code hooks.json} that is present fails to parse or cannot be read
      */
     private HookHotReloadBootstrap.Started startHookHotReload(OrcaAgentRuntime agentRuntime,
-            OrcaAgentExecutor agentExecutor, VirtualShell hookConfigShell, LocalFileSystem fileSystem,
-            String agentName) {
+            OrcaAgentExecutor agentExecutor, VirtualShell hookConfigShell, LocalFileSystem fileSystem, String agentName,
+            HookActionExecutors hookActions) {
         try {
-            return setupHookHotReload(agentRuntime, agentExecutor, hookConfigShell, fileSystem, agentName);
+            return setupHookHotReload(agentRuntime, agentExecutor, hookConfigShell, fileSystem, agentName, hookActions);
         } catch (HookConfigParseException e) {
             throw new ConfigurationException(e.getMessage() + " - fix or remove the file and start again", e);
         }

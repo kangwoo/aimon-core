@@ -409,7 +409,11 @@ may sit between a `tool_use` and its `tool_result`.
   policy unless it declares otherwise** — under the default policies a `PreToolHook` or
   `OnStartHook` cut off by the net reads as a pass, and an exception thrown by an `OnStartHook` is
   a success under the `onStart` policy too. A hook whose purpose is to refuse should override
-  `getTimeoutBehavior()` to declare `FAIL_CLOSED` and catch its own exceptions.
+  `getTimeoutBehavior()` to declare `FAIL_CLOSED`. That declaration covers not only the net but
+  the two other ways a hook ends without a verdict — when the executor's pool does not take the
+  hook (saturated, or shut down) and when the hook body throws, the result is BLOCKED instead of
+  `onException` (`failsClosedWithoutVerdict`). A hook that declares nothing follows `onException`
+  in both cases, as before.
 - **In parallel mode** a timeout **bounds the wait; it does not discard work that already
   finished.** Results are always reassembled in registration order.
 - **`stopOnBlocked` is meaningful only under `SEQUENTIAL`.** Under `PARALLEL` an already

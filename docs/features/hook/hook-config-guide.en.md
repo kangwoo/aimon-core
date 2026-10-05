@@ -233,17 +233,44 @@ that was written.
 `matcher` decides which tool calls a hook applies to. When it is empty or `"*"` it matches every
 tool (`NameOnlyPredicate.ANY`).
 
+The grammar is exactly what `PredicateParser` accepts: a **tool name**, **`Tool(glob)`**, and **`|`** (OR) joining them.
+
 | Pattern                               | Meaning                                                             |
 |---------------------------------------|---------------------------------------------------------------------|
-| `Bash`                                | The tool name is exactly `Bash`                                     |
-| `Read\|Write\|Edit`                   | Any one of the three                                                |
-| `mcp__.*`                             | A regular expression — every tool starting with `mcp__`             |
-| `Bash(command=^git\\s+push)`          | Tool name plus an input-field match (`PredicateParser`)             |
-| `Bash & input.command~^npm`           | Composition — name and input predicates joined with `&` / `\|`      |
+| `Bash`                                | The tool name is exactly `Bash` (case-sensitive)                    |
+| `Read\|Write\|Edit`                   | Any one of the three — `\|` is OR, and spaces around it are ignored |
+| `mcp__*`                              | A name glob — every tool starting with `mcp__`. `*` is the only wildcard |
+| `Bash(git push*)`                     | A sub-command glob for `Bash` — one of the pieces `command` splits into matches the **whole** glob |
+| `Edit(*.env)`                         | A path glob — the path argument of `Edit` matches the **whole** glob |
+| `Bash(rm -rf*)\|Write(*.env)`         | The terms above joined with `\|`. A `\|` **inside** parentheses is part of the pattern |
 
-- A pattern `PredicateParser` cannot interpret falls back to `name-only` on `postTool` and leaves a WARN log.
-  On `preTool` it is a **startup failure** — the fallback matches no real tool name, so the guard would silently be off.
-- Regular expressions follow Java `Pattern` syntax.
+- **Globs.** `*` is zero or more arbitrary characters (it crosses `/` too) and **every other character is a literal** —
+  `.`, `?`, `^`, `\s` and `**` have no special meaning. The comparison is anchored at both ends, so "starts with" is
+  written `git push*` and "contains" is written `*--force*`.
+- **`Bash(glob)`.** The `command` string is split at `&&`, `||`, `;`, `|` and newlines, and the contents of backticks,
+  `$(…)` and double quotes are looked at as pieces of their own (the `git push` in `bash -c "git push"`). The matcher
+  matches when any one piece matches the glob. It **compares text**; it does not interpret the shell — `git  push` (two
+  spaces) and `sudo git push` are not caught by `git push*`. A guard that has to hold against evasion should not lean
+  on the glob: have a `command` handler inspect `tool_input.command` from stdin itself.
+- **The tools that take `Tool(glob)`** are `Bash` and the eight path tools (`Read`, `Edit`, `Write`, `MultiEdit`, `Glob`,
+  `Grep`, `LS`, `NotebookEdit`), and no others. A path tool looks at the path string exactly as the model passed it
+  (`file_path` for `Read`, `Edit`, `Write` and `MultiEdit`; `pattern` then `path` for `Glob`; `path` then `pattern` for
+  `Grep`; `path` for `LS`; `notebook_path` for `NotebookEdit`). It may be absolute or relative, so start the glob with
+  `*`, as in `*.env`, to match whatever directory precedes it. Parentheses on any other tool (`WebFetch(…)`,
+  `mcp__x(…)`) do not parse.
+- **What is not there.** Regular expressions, AND (`&`), naming an input field (`command=…`) and negation are not part
+  of the grammar. It is also **not the grammar** of tool-permission patterns (`Bash(git:*)` and `Read(/tmp/**)` in
+  `allowed-tools`) — in a matcher `:` and `**` are literals.
+- **A matcher that does not parse** — unbalanced parentheses, an empty pattern (`Bash()`), an empty term (`Read|`), text
+  after the closing parenthesis, a tool that takes no parentheses — is a **startup failure** on `preTool`
+  ([What stops startup](#what-stops-startup)). On `postTool` it falls back to `name-only`, reading the whole string as
+  a tool name, and leaves a WARN (no tool has that name, so the hook does not fire).
+- **A matcher that parses but can match nothing is not caught.** A term without parentheses is a tool name in its
+  entirety and whatever is inside parentheses is a glob in its entirety, so a matcher written in a grammar that is not
+  listed above registers without an error and **never fires**: `mcp__.*` matches only names starting with `mcp__.`,
+  `Bash & input.command~^npm` matches only a tool with literally that name, and `Bash(command=^git\s+push)` matches only
+  a command that is literally that text. This guide once listed those three forms as grammar — a `deny` guard copied
+  from it has never fired, and should be rewritten in one of the forms in the table.
 
 ---
 
@@ -368,7 +395,7 @@ handler's own deadline. A declared budget is **clamped to 10 minutes
 larger is truncated to 10 minutes after a WARN log).
 
 **When the outer net fires first.** If a handler does not keep its own timeout — a remote shell that does not implement
-cancellation, stuck I/O, an MCP call that takes no timeout — and the outer net cuts the hook off, a declarative hook on
+cancellation, stuck I/O, an MCP client that does not answer the stop signal — and the outer net cuts the hook off, a declarative hook on
 one of the four events with a decision channel **blocks** (`Hook timed out after …ms (limit=…ms)`). The event policy's
 `timeoutBehavior` defaults to `FAIL_OPEN`, but a declarative guard declares `FAIL_CLOSED` per hook and the executor
 follows that declaration over the policy (`ExecutionHook#getTimeoutBehavior()`). A handler with `"failOpen": true`, and
@@ -411,11 +438,37 @@ If the response body follows the JSON schema
 
 On `postTool` a missing verdict still leaves a WARN and proceeds, as before.
 
-> ⚠️ **`aimon-cli` wires no `http` or `mcp` executor.** An `http` or `mcp` handler in the CLI's `hooks.json` is never
-> called — placed on `preTool` it **keeps the CLI from starting** (`… type=http cannot run: no HttpActionExecutor is wired
-> in this assembly`; with `failOpen: true` it is registered and every call leaves a WARN and proceeds), and on `postTool`
-> it only leaves a WARN. An embedding host wires them with
-> `HookHotReloadBootstrap.builder().httpExecutor(…).mcpExecutor(…)`.
+> ℹ️ **`aimon-cli` runs `http` and `mcp` handlers** — those in `hooks.json` and those in skill frontmatter. `http` always;
+> `mcp` when the CLI configuration (`mcp.servers`) has at least one server. In a CLI with no server at all an `mcp`
+> handler is an entry that cannot run — on `preTool` in `hooks.json` it **keeps the CLI from starting** (`… type=mcp cannot
+> run: no McpActionExecutor is wired in this assembly`; with `failOpen: true` it is registered and every call leaves a
+> WARN and proceeds), and a skill that declares such an action does not load.
+> `aimon-bootstrap` and the Spring Boot starter **wire neither**: an embedding host wires them itself, with
+> `HookHotReloadBootstrap.builder().httpExecutor(…).mcpExecutor(…)` and the `skillParser` of `AimonStackSpec`.
+
+**What an `http` handler sends and receives.** This handler is where a configuration file makes the host process send a request out.
+
+- **The URL is used as written** (it is not templated). Both `https://` and `http://` are accepted — use `https://` when
+  a header carries a token.
+- **Redirects are not followed.** A 3xx is no verdict, like any other non-2xx (`call failed: HTTP 307`). Following it
+  would send the headers filled from `${env.X}` to a host the configuration never named, and make that host's answer the
+  verdict. Write the final address in `url`.
+- **At most 1 MiB of response body is read.** A larger one is not truncated and guessed at: it is no verdict (`response
+  could not be read: response larger than 1048576 bytes`).
+- **`timeout` is measured until the response headers arrive.** If the body stalls after that, the hook executor's outer
+  net cuts it off. The connect timeout is fixed at 5 seconds.
+- **The proxy is the JVM default** — system properties such as `https.proxyHost` apply; the `HTTPS_PROXY` environment
+  variable is not read.
+- **`${env.X}` reads the host process's environment.** The names it may read are the `allowedEnvVars` the handler lists
+  **for itself**. The list keeps a template from reading a variable it did not name; it does not limit what the author
+  of the configuration can send out. An `http` action in skill frontmatter reads it the same way — the same authority a
+  skill's `shell` action already has in the CLI, where it runs with that environment and network. Skill approval is per
+  skill **name** and does not show what its hooks do, so do not install a skill you do not trust.
+- **Template values are not escaped.** With `"${tool_input.command}"` in a JSON body, a command containing a quote goes
+  out as broken JSON (if the server answers 4xx that is no verdict — an audit hook with `failOpen` then lets the call
+  through **unrecorded**), and the model can insert fields into the body. To hand a guard a value the model chooses, the
+  `args` of an `mcp` handler (each value is substituted on its own, so the structure cannot break) or a `command`
+  handler reading JSON from stdin is the safe route.
 
 > 🔒 Environment-variable references are substituted **only for keys on the whitelist
 > (`allowedEnvVars`)**. A variable that is not on it becomes an empty string, with a WARN log.
@@ -442,8 +495,16 @@ between a verdict and "no verdict" is the same as for `http`: a result that came
 (empty content, plain text and JSON that is not an object allow; a JSON object is read as a decision document), while a
 server that is not registered or not connected, a transport error, an `isError` result (`call failed`), a decision
 document that cannot be read (`response could not be read`) and an executor that is not wired are **no verdict** — on
-`preTool` that blocks, and `"failOpen": true` lets it through. The `timeout` of an `mcp` handler is not applied to the
-call itself (`McpClient.callTool` takes none) — what cuts off a call that hangs is the hook executor's outer net.
+`preTool` that blocks, and `"failOpen": true` lets it through.
+The `timeout` of an `mcp` handler (10 seconds by default) **ends the call.** When it passes, the request in flight is
+stopped and the result is **no verdict** (`timed out: no response within <n>ms`) — on `preTool` that blocks
+(`"failOpen": true` lets it through), on `postTool` it leaves a WARN and proceeds. The `requestTimeout` configured per
+MCP server (30 seconds by default) still applies underneath, so **the shorter of the two ends the call**: a long handler
+`timeout` does not make a request wait past the server's `requestTimeout`, and when that one ends it first the reason
+is `call failed`. Nothing goes on waiting for a request that was cut off — a stdio server has already received it, so
+the server may keep working, and an answer that arrives late is discarded (no `notifications/cancelled` is sent). A call
+that was still waiting for another request to the same server to finish is not cut off by this timeout; the hook
+executor's outer net cuts it off, and a guard blocks then too.
 
 ### `deny`
 
@@ -488,6 +549,8 @@ verdict.** On the other 9 events no row blocks (a WARN, then the event proceeds)
 | `http` or `mcp` gives any other readable answer (`allow`, `defer`, no decision, an empty body, plain text) | verdict: allow | proceeds | proceeds |
 | `http` or `mcp` gets no verdict — a connection failure, a timeout, a non-2xx status, an MCP server that is not registered or not connected or answers `isError`, an answer that cannot be read, an executor that is not wired, an executor that throws | no verdict | **blocks** | proceeds (WARN) |
 | the handler runs past its own timeout and is cut off by the hook executor's outer net (declared timeout + 5 seconds) | no verdict | **blocks** | follows the event policy — the default policy proceeds (WARN) |
+| the hook executor's pool does not take the hook — it is saturated, or closed because the stack is shutting down | could not run | **blocks** (`Hook could not be run (the hook executor rejected it) …`) | follows the event policy — the default policy proceeds (WARN) |
+| the hook ends with an exception before it calls its handler — an exception while evaluating the `matcher`, a `StackOverflowError`, and the like | no verdict | **blocks** (`Hook failed before it returned a verdict (<exception type>)`) | follows the event policy — the default policy proceeds (WARN) |
 | the execution is interrupted and the `command` is stopped (or the hook fires in an execution that is already cancelled) | execution cancelled | **blocks** | **blocks** — an execution that is ending does not take another step |
 
 "Blocks" is a block on `preTool`, `onStart` and `preCompact` and a deny on `permissionRequest`. The reason for a guard
@@ -496,6 +559,15 @@ cannot decide blocks (fail-closed).` (for `http` and `mcp`: `could not get a ver
 call`), and it never carries the command string, the shell's stderr, a URL, a header, a response body, an exception
 message or the name `failOpen` — the reader of that reason is the party the guard constrains. `http` and `mcp` handlers
 can only be placed on `preTool` and `postTool`, so the one guard event those three rows apply to is `preTool`.
+
+A hook the pool did not take, and a hook that ended with an exception outside its handler, block by **the same
+declaration** as a hook cut off by the outer net — the `FAIL_CLOSED` a declarative guard declares per hook
+(`ExecutionHook#getTimeoutBehavior()`). "Slow", "never started" and "died" are one event from the caller's side (the
+guard said nothing), so a guard closed against only one of them would leave the others as the way to switch it off. The
+pool is closed on purpose when the stack shuts down, but by then the turns that fire a guard have ended, and the events
+a shutdown does fire, `onStop` and `onSessionEnd`, are not guard events and are not blocked. A tool call that arrives
+anyway is blocked at once, without waiting. A hook registered in code still follows the event policy's `onException`,
+as before, unless it declares `FAIL_CLOSED` itself.
 
 ### What stops startup
 
@@ -740,8 +812,9 @@ string — the `asyncRewake` block does not go through template rendering, so wr
 ```
 
 An audit hook is not a guard, so it declares `"failOpen": true` — without it, `Bash` is blocked whenever the audit
-server cannot be reached ([What a guard blocks](#what-a-guard-blocks)). An `http` handler only runs on a host that wired
-its executor (`aimon-cli` does not).
+server cannot be reached ([What a guard blocks](#what-a-guard-blocks)). `aimon-cli` runs this handler. The body template
+does not escape values, so a command containing a quote goes out as broken JSON — see "What an `http` handler sends and
+receives" under [`http`](#http).
 
 ### 2. Blocking a dangerous command outright
 
@@ -750,7 +823,7 @@ its executor (`aimon-cli` does not).
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash(command=^rm\\s+-rf\\s+/)",
+        "matcher": "Bash(rm -rf /*)",
         "hooks": [
           { "type": "deny", "reason": "Dangerous rm -rf commands are blocked." }
         ]
@@ -759,6 +832,11 @@ its executor (`aimon-cli` does not).
   }
 }
 ```
+
+The matcher looks at the **text** of each sub-command — `rm -rf /` and `cd /tmp && rm -rf /var/lib` are caught, while
+`rm -fr /` and `sudo rm -rf /` are not (`Bash(*rm -rf /*)` catches the latter as well). A block that must not be
+avoidable by spelling the command differently belongs in a `command` handler that inspects `tool_input.command`
+itself — see [Matcher syntax](#matcher-syntax).
 
 ### 3. Collecting metrics only, on PostTool (fail-soft)
 
@@ -819,6 +897,12 @@ from the same map, so they never drift:
 }
 ```
 
+`policy-server` is the name of an MCP server the host connected to that agent — in `aimon-cli`, an `mcp.servers[].name`
+in the configuration file. It is a guard, so `Edit` and `Write` are blocked when the server cannot be reached or gives
+no answer within `timeout` (10 seconds by default). A server name that is not configured is not caught as an error; it
+is no verdict on every call (`call failed: MCP server not registered`), so spell the name as configured. That server's
+tools appear in the model's tool list too, like any other MCP tool.
+
 ### 5. Combining the 4-tier layers (USER + PROJECT + LOCAL)
 
 `~/.aimon/hooks.json` (USER, broad audit):
@@ -828,7 +912,7 @@ from the same map, so they never drift:
 
 `<project>/.aimon/hooks.json` (PROJECT, team policy):
 ```json
-{ "hooks": { "PreToolUse": [{ "matcher": "Bash(command=^git\\s+push.*--force)", "hooks": [{ "type": "deny", "reason": "force push is not allowed" }] }] } }
+{ "hooks": { "PreToolUse": [{ "matcher": "Bash(git push*--force*)", "hooks": [{ "type": "deny", "reason": "force push is not allowed" }] }] } }
 ```
 
 `<project>/.aimon/hooks.local.json` (LOCAL, personal debugging):
@@ -849,7 +933,7 @@ hour.
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash(command=^kubectl\\s+apply.*-prod)",
+        "matcher": "Bash(kubectl apply*-prod*)",
         "hooks": [
           {
             "type": "mcp",
@@ -936,6 +1020,7 @@ are in [`aimon-skill-extensions.md`](../../references/aimon-skill-extensions.md)
 | A fork ends with `Execution blocked by OnStart hook [SUBAGENT/…]`         | An `onStart` hook in `hooks.json` (or in skill frontmatter) blocked that fork. If the hook is meant for user input, make it exit 0 when `AIMON_INVOKER_TYPE` is `SUBAGENT`. |
 | The CLI does not start: `Configuration error: hooks config … is invalid: <event> entry #n, handler #m: …` | An entry under a guard event cannot be applied. Fix or remove the handler the message points at. If the handler only observes and may be left out when it cannot run, declare `"failOpen": true`. The full table is in [What stops startup](#what-stops-startup). |
 | `WARN hooks: matcher '...' could not be parsed`                          | A `PredicateParser` syntax error on `postTool`. It is running with the name-only fallback. (On `preTool` this is a startup failure.) |
+| A `deny` or guard hook is registered and never fires                     | Its matcher parses but matches no call — a regular expression (`mcp__.*`, `\s+`), `&`, `command=…` and a permission pattern (`Bash(git:*)`) are not matcher grammar, and none of them raises an error. Rewrite it in one of the forms under [Matcher syntax](#matcher-syntax). |
 | `WARN hooks: invalid handler in PROJECT on event 'postTool': ...`        | A required field is missing (`command`/`url`/`server+tool`/`reason`) on an event that is not a guard event. Only that handler is skipped. |
 | `WARN hooks: 'deny' is not valid on postTool ...`                        | `deny` is `preTool`-only. The handler is ignored on other events.             |
 | `WARN hooks: '...' event is not supported by AIMON in this phase`        | Only `Notification` / `UserPromptSubmit` / `stop_hook_active`. Everything else is supported. |
@@ -944,7 +1029,7 @@ are in [`aimon-skill-extensions.md`](../../references/aimon-skill-extensions.md)
 | `WARN hooks: 'command' on ... cannot run: the configured shell executor does not support shell actions` | `hooks.json` was applied with an executor that has no shell support (`NoOpShellActionExecutor`). A `command` handler that is not a guard (an event that is not a guard event, or `failOpen: true`) is not registered — wire a `HostShellActionExecutor`. For a `command` on a guard event this is a startup failure, not a WARN. |
 | `WARN hooks config at ...: ... has a 'failOpen' that is not a JSON boolean (...); it is read as false` | `failOpen` was written as `"true"`, `1` or `null`. The handler is registered with `failOpen: false` (it blocks when its command cannot run). If it only observes, change the value to `true`. |
 | A tool is refused with `Blocked: guard hook '...' could not run its command` | A `command` handler on an event with a decision channel produced no exit code (a timeout, for one), or the shell could not start the command (`command not found: exit code 127`, `command not executable: exit code 126` — check the script path and its execute permission). Fix the cause named in the reason, or declare `"failOpen": true` if the handler only observes. The full table is in [What a guard blocks](#what-a-guard-blocks). |
-| A tool is refused with `Blocked: guard hook '...' could not get a verdict from its http call` (or `mcp call`) | An `http` or `mcp` handler on `preTool` got no verdict. Read the cause in the reason — `action executor not wired` (the host wired no executor; `aimon-cli` is such a host), `call failed: HTTP 503` or `call failed: ConnectException` (the policy server), `timed out`, `response could not be read` (the `decision` value is not `allow`, `deny` or `defer`). Declare `"failOpen": true` if the handler only observes. |
+| A tool is refused with `Blocked: guard hook '...' could not get a verdict from its http call` (or `mcp call`) | An `http` or `mcp` handler on `preTool` got no verdict. Read the cause in the reason — `action executor not wired` (the host wired no executor — `aimon-cli` wires them, so this is an embedding host), `call failed: MCP server not registered` (`server` is not the name of a configured MCP server), `call failed: HTTP 307` (redirects are not followed), `call failed: HTTP 503` or `call failed: ConnectException` (the policy server), `timed out`, `response could not be read` (the `decision` value is not `allow`, `deny` or `defer`). Declare `"failOpen": true` if the handler only observes. |
 | `WARN hooks: 'asyncRewake' is not supported on event '...'`              | Rewake-capable events are `preTool`/`preCompact`/`onSessionStart`/`onSessionEnd`/`onConfigReload`. The hook itself registers normally. |
 | A shell hook exited 2 but nothing was blocked                             | That event has no decision channel. A veto is effective only on `preTool`/`onStart`/`preCompact` (block) and `permissionRequest` (deny). |
 | `${tool_input.x}` / `${tool_name}` inside a command is empty              | Intended behaviour. Commands are not rendered — use the stdin JSON payload or the `AIMON_*` env (`$AIMON_TOOL_NAME` and so on). |

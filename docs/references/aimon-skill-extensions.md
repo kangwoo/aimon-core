@@ -127,6 +127,8 @@ hooks:
 hook-def := { matcher?: string, action: action-def }
 action-def := { type: "deny", reason: string }
             | { type: "shell", command: string, timeoutMs?: integer }
+            | { type: "http", url: string, method?, headers?, body?, allowedEnvVars?, timeoutMs? }   # preTool · postTool
+            | { type: "mcp", server: string, tool: string, args?, timeoutMs? }                       # preTool · postTool
 ```
 
 - `matcher` (선택)
@@ -134,9 +136,9 @@ action-def := { type: "deny", reason: string }
   - 생략 또는 `"*"` 은 모든 도구에 매칭된다(`NameOnlyPredicate.ANY`).
   - `*` 가 섞여 있으면 **글롭 매처**(SK-13 Phase 2)다. `*` 는 0개 이상의 임의 문자에 대응하고, 그 밖의 모든 문자(정규식 메타문자 포함: `.`, `(`, `+` 등)는 리터럴로 취급된다. 예: `"Read*"` → `Read`/`ReadTool`/`Readme` 매칭, `"*Tool"` → `Tool`/`BashTool` 매칭, `"*Tool*"` → 부분 문자열 매칭.
   - `*` 가 없는 문자열은 **정확한 이름 매칭**이다.
-  - 인자 패턴(`"Bash(git:*)"`, `"Edit(**/*.java)"`)은 SK-13 Phase 3 으로 보류 — 이름만 받던 매처 API 자체를 도구 입력까지 받도록 넓혀야 하므로 별도 WU 다. Phase 2 글롭은 매처 시그니처를 그대로 두므로 `Declarative*Hook` / `SkillHookSetParser` 변경 없이 추가됐다.
-  - 다만 **문법과 매칭기는 이미 있다.** 도구 권한 계층(`at.aimon.core.agent.tool.permission`)이 같은 표기를 쓰며, 값의 종류에 따라 매처가 갈린다 — 명령은 `ToolPattern`(`git:*` 처럼 `:*` 로 끝나면 접두사, 아니면 완전 일치), 경로는 `PathPattern`(글롭. `**` 는 임의 깊이, `*` 는 `/` 를 넘지 않는다). Phase 3 는 세 번째 문법을 만들지 말고 이 둘을 재사용해야 한다. 위 예시를 `"Edit(*.java)"` 가 아니라 `"Edit(**/*.java)"` 로 적은 것도 그 규칙에 맞춘 것이다 — `*` 가 `/` 를 넘지 않으므로 `*.java` 는 디렉토리 없는 파일명에만 걸린다.
-  - 이 표기는 **후크 매처**에만 해당하는 보류다. 도구 권한 쪽 인자 패턴(`AllowedTool`)은 보류가 아니라 동작하며, 경로 패턴까지 포함한다 — [도구 개발 가이드 › 권한 시스템](../features/tool/tool-development-guide.md) 참조.
+  - **인자 패턴은 `도구(글롭)` 꼴로 받는다** — `"Bash(git push*)"` 는 `Bash` 의 서브커맨드 글롭, `"Edit(*.java)"` 는 경로 글롭이고, 항을 `|` 로 이으면 OR 다(`PredicateParser`). 글롭의 규칙은 이름 글롭과 같다: `*` 만 와일드카드이고 `/` 도 넘는다. 괄호를 받는 도구는 `Bash` 와 경로 도구(`Read` · `Edit` · `Write` · `MultiEdit` · `Glob` · `Grep` · `LS` · `NotebookEdit`)뿐이고, 다른 도구에 붙이면 스킬 로드가 실패한다. 문법 전체와 한계는 [hook 설정 가이드 › Matcher 문법](../features/hook/hook-config-guide.md#matcher-문법)에 있다.
+  - **도구 권한의 패턴 문법과는 다른 문법이다.** `allowed-tools` 는 같은 괄호 표기를 쓰지만 명령은 `ToolPattern`(`git:*` 처럼 `:*` 로 끝나면 접두사), 경로는 `PathPattern`(`**` 는 임의 깊이, `*` 는 `/` 를 넘지 않는다)으로 읽는다. 매처에서는 `:` 와 `**` 가 리터럴이므로 `"Bash(git:*)"` 를 매처로 쓰면 오류 없이 로드되고 **아무 호출과도 맞지 않는다** — `git:` 로 시작하는 커맨드는 없다. 이 문서는 한때 인자 패턴을 "보류" 로 적고 그 예시를 권한 문법으로 들었다; 그 표기를 매처에 옮겨 적었다면 `"Bash(git *)"` 로 고친다. 정규식 · `&` · 입력 필드 지정도 매처 문법이 아니며 마찬가지로 조용히 빗나간다.
+  - 도구 권한 쪽 인자 패턴(`AllowedTool`)은 [도구 개발 가이드 › 권한 시스템](../features/tool/tool-development-guide.md) 참조.
 - `action.type: deny` — `preTool` 에서만 허용된다. `reason` 문자열은 LLM이 보는 차단 메시지가 되며 비어 있을 수 없다. `postTool` / `onStart` / `onStop` 은 인터페이스 계약상 비차단이라 `deny` 를 두면 파서가 거부한다.
 - `action.type: shell`
   - `command` 는 비어 있지 않은 단일 문자열이며, 그대로 **실행 환경의 셸**에 전달된다(아래 "셸 실행 시맨틱" 참고).

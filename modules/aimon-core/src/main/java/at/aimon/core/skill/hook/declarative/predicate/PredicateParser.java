@@ -35,6 +35,16 @@ import at.aimon.core.skill.hook.declarative.ToolInputPredicate;
  * The {@code |} pipe combines terms via {@link CompositePredicate#or(ToolInputPredicate...)} — this matches the
  * Claude Code "any of" semantics.
  *
+ * <h2>What the grammar does not have</h2>
+ *
+ * <p>
+ * No regular expressions, no AND, no negation, no way to name an input field. None of those is rejected as such:
+ * a term without parentheses is taken whole as a tool name ({@code "Bash & input.command~^npm"} is a name-only
+ * predicate for a tool of that name, {@code "mcp__.*"} is a glob that needs a literal dot) and whatever stands inside
+ * parentheses is taken whole as a glob ({@code "Bash(command=^git\s+push)"} matches only a command that is that
+ * text). Such a matcher parses and matches nothing. The permission-pattern spelling {@code "Bash(git:*)"} is one of
+ * them: here the colon is a literal.
+ *
  * <p>
  * Stateless and thread-safe.
  */

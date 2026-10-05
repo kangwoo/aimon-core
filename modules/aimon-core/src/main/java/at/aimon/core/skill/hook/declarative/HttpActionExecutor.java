@@ -1,16 +1,25 @@
 package at.aimon.core.skill.hook.declarative;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
+import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Flow;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,11 +69,39 @@ import at.aimon.core.skill.hook.action.HttpMethod;
  * {@link HookResult#success()}, so a {@code postTool} webhook stays fail-soft for transport problems.
  *
  * <p>
+ * <b>What a request can reach and carry.</b> The URL is the configured one, never templated. Headers and body are
+ * templated, and {@code ${env.X}} reads the process environment for the names the same declaration lists in
+ * {@code allowedEnvVars} &mdash; the list keeps a template from reading a variable its author did not name; it is not
+ * a limit on what the author of the declaration can send. Template values are substituted without escaping
+ * ({@link TemplateRenderer}), so a {@code ${tool_input.X}} inside a JSON body is the model's text placed inside the
+ * document. {@code http://} URLs are accepted as well as {@code https://}.
+ *
+ * <p>
+ * <b>What a response can do.</b> At most {@link #MAX_RESPONSE_BYTES} of body are read; a larger one is no verdict.
+ * The client {@link #createDefault()} builds does not follow redirects, so a 3xx is a non-2xx like any other: no
+ * verdict.
+ *
+ * <p>
+ * <b>Lifetime.</b> The executor holds an {@link HttpClient} and nothing else. On the Java 17 baseline a client has
+ * no {@code close()}: its selector thread is a daemon and ends when the client is no longer reachable, so there is
+ * nothing for an assembly to enrol on a teardown plan.
+ *
+ * <p>
  * Thread-safe: the underlying {@code HttpClient} and {@code ObjectMapper} are safe to share across threads.
  */
 public final class HttpActionExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(HttpActionExecutor.class);
+
+    /**
+     * The largest response body the executor reads, in bytes (1 MiB).
+     *
+     * <p>
+     * A decision document is a few hundred bytes; the largest legitimate answer carries an {@code updatedInput}. The
+     * endpoint is whatever the configuration names, and without a bound one answer could exhaust the host's heap. A
+     * larger body is not truncated and guessed at: the call has no verdict ({@code INVALID_RESPONSE}).
+     */
+    public static final int MAX_RESPONSE_BYTES = 1024 * 1024;
 
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
@@ -83,14 +120,25 @@ public final class HttpActionExecutor {
     }
 
     /**
-     * Convenience factory that builds a default {@link HttpClient} (no proxy, follow normal redirects, 5s connect
-     * timeout) and a fresh {@link ObjectMapper}.
+     * Convenience factory that builds a default {@link HttpClient} (5s connect timeout, redirects not followed) and
+     * a fresh {@link ObjectMapper}.
+     *
+     * <p>
+     * <b>Redirects are not followed.</b> The JDK client re-sends the request's headers to the redirect target, and a
+     * hook's headers are where {@code ${env.X}} puts its tokens: following a redirect hands them to a host the
+     * configuration never named, and makes that host's answer the hook's verdict. A 3xx is therefore read as any other
+     * non-2xx &mdash; no verdict &mdash; and the URL in the configuration has to be the final one.
+     *
+     * <p>
+     * <b>Proxy.</b> No proxy is configured here, which for the JDK client means the JVM's default
+     * {@link java.net.ProxySelector}: the {@code http.proxyHost} / {@code https.proxyHost} system properties apply,
+     * the {@code HTTPS_PROXY} environment variables do not.
      *
      * @return a new executor (never null)
      */
     public static HttpActionExecutor createDefault() {
         return new HttpActionExecutor(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
-                .followRedirects(HttpClient.Redirect.NORMAL).build(), new ObjectMapper());
+                .followRedirects(HttpClient.Redirect.NEVER).build(), new ObjectMapper());
     }
 
     /**
@@ -146,13 +194,19 @@ public final class HttpActionExecutor {
         }
 
         try {
-            final HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            final HttpResponse<String> response = httpClient.send(request, HttpActionExecutor::cappedBody);
             return mapResponse(action, response);
         } catch (HttpTimeoutException e) {
             log.warn("HTTP hook to {} timed out after {}: {}", url, action.getTimeout(), e.getMessage());
             return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.TIMEOUT,
                     "no response within " + action.getTimeout().toMillis() + "ms");
         } catch (IOException e) {
+            if (isResponseTooLarge(e)) {
+                log.warn("HTTP hook to {} answered with more than {} bytes; the body was not read", url,
+                        MAX_RESPONSE_BYTES);
+                return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.INVALID_RESPONSE,
+                        "response larger than " + MAX_RESPONSE_BYTES + " bytes");
+            }
             // The type only: a transport message routinely names the host and port.
             log.warn("HTTP hook to {} failed (transport): {}", url, e.getMessage());
             return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.CALL_FAILED, ShellActionRunner.failureDetail(e));
@@ -246,6 +300,106 @@ public final class HttpActionExecutor {
 
     private static boolean declaresJson(HttpResponse<String> response) {
         return response.headers().firstValue("Content-Type")
-                .map(value -> value.toLowerCase(java.util.Locale.ROOT).contains("json")).orElse(false);
+                .map(value -> value.toLowerCase(Locale.ROOT).contains("json")).orElse(false);
+    }
+
+    /**
+     * The body handler: {@code BodyHandlers.ofString()} with {@link #MAX_RESPONSE_BYTES} as an upper bound.
+     */
+    private static HttpResponse.BodySubscriber<String> cappedBody(HttpResponse.ResponseInfo info) {
+        return new CappedStringSubscriber(charsetOf(info));
+    }
+
+    /** The charset the response declares in {@code Content-Type}, or UTF-8 when it declares none it can name. */
+    private static Charset charsetOf(HttpResponse.ResponseInfo info) {
+        final String contentType = info.headers().firstValue("Content-Type").orElse("");
+        for (String parameter : contentType.split(";")) {
+            final String trimmed = parameter.strip();
+            if (trimmed.regionMatches(true, 0, "charset=", 0, "charset=".length())) {
+                final String name = trimmed.substring("charset=".length()).replace("\"", "").strip();
+                try {
+                    return Charset.forName(name);
+                } catch (IllegalArgumentException unknown) {
+                    return StandardCharsets.UTF_8;
+                }
+            }
+        }
+        return StandardCharsets.UTF_8;
+    }
+
+    private static boolean isResponseTooLarge(Throwable thrown) {
+        for (Throwable t = thrown; t != null; t = t.getCause()) {
+            if (t instanceof ResponseTooLargeException) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    /** Raised inside the client when a body passes {@link #MAX_RESPONSE_BYTES}; {@code send} wraps it. */
+    private static final class ResponseTooLargeException extends IOException {
+
+        private static final long serialVersionUID = 1L;
+
+        ResponseTooLargeException() {
+            super("response body exceeds " + MAX_RESPONSE_BYTES + " bytes");
+        }
+    }
+
+    /**
+     * Collects a response body as a string and gives up, cancelling the exchange, once it passes
+     * {@link #MAX_RESPONSE_BYTES}. The JDK only gained a limiting handler in a release newer than the baseline.
+     */
+    private static final class CappedStringSubscriber implements HttpResponse.BodySubscriber<String> {
+
+        private final Charset charset;
+        private final CompletableFuture<String> body = new CompletableFuture<>();
+        private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        private Flow.Subscription subscription;
+
+        CappedStringSubscriber(Charset charset) {
+            this.charset = charset;
+        }
+
+        @Override
+        public CompletionStage<String> getBody() {
+            return body;
+        }
+
+        @Override
+        public void onSubscribe(Flow.Subscription newSubscription) {
+            this.subscription = newSubscription;
+            newSubscription.request(Long.MAX_VALUE);
+        }
+
+        @Override
+        public void onNext(List<ByteBuffer> buffers) {
+            if (body.isDone()) {
+                return;
+            }
+            for (ByteBuffer buffer : buffers) {
+                if ((long) bytes.size() + buffer.remaining() > MAX_RESPONSE_BYTES) {
+                    subscription.cancel();
+                    body.completeExceptionally(new ResponseTooLargeException());
+                    return;
+                }
+                final byte[] chunk = new byte[buffer.remaining()];
+                buffer.get(chunk);
+                bytes.write(chunk, 0, chunk.length);
+            }
+        }
+
+        @Override
+        public void onError(Throwable throwable) {
+            body.completeExceptionally(throwable);
+        }
+
+        @Override
+        public void onComplete() {
+            body.complete(bytes.toString(charset));
+        }
     }
 }

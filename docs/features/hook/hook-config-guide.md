@@ -220,17 +220,38 @@ WARN 이 아니라 **시작 실패**다(`… is invalid: unknown event 'preTol' 
 `matcher` 는 어떤 도구 호출에 hook 을 적용할지를 결정한다. 비어 있거나
 `"*"` 이면 모든 도구에 매치된다 (`NameOnlyPredicate.ANY`).
 
+문법은 `PredicateParser` 가 받는 것이 전부다: **도구 이름**, **`도구(글롭)`**, 그리고 그 둘을 잇는 **`|`**(OR).
+
 | 패턴                                  | 의미                                                                |
 |---------------------------------------|---------------------------------------------------------------------|
-| `Bash`                                | 도구 이름이 정확히 `Bash`                                           |
-| `Read\|Write\|Edit`                   | 셋 중 하나                                                          |
-| `mcp__.*`                             | 정규식 — `mcp__` 으로 시작하는 모든 도구                            |
-| `Bash(command=^git\\s+push)`          | 도구 이름 + 입력 필드 매칭 (`PredicateParser`)                      |
-| `Bash & input.command~^npm`           | 합성 — 이름과 입력 술어를 `&`/`\|` 로 결합                          |
+| `Bash`                                | 도구 이름이 정확히 `Bash` (대소문자 구분)                           |
+| `Read\|Write\|Edit`                   | 셋 중 하나 — `\|` 는 OR 이고 양옆 공백은 무시된다                    |
+| `mcp__*`                              | 이름 글롭 — `mcp__` 으로 시작하는 모든 도구. 와일드카드는 `*` 하나뿐이다 |
+| `Bash(git push*)`                     | `Bash` 의 서브커맨드 글롭 — `command` 를 나눈 조각 중 하나가 글롭 **전체**와 일치 |
+| `Edit(*.env)`                         | 경로 글롭 — `Edit` 의 경로 인자가 글롭 **전체**와 일치               |
+| `Bash(rm -rf*)\|Write(*.env)`         | 위 항들을 `\|` 로 묶은 것. 괄호 **안**의 `\|` 는 패턴의 일부다       |
 
-- `PredicateParser` 가 해석하지 못하는 패턴은 `postTool` 에서는 `name-only` fallback 으로 떨어지고
-  WARN 로그가 남는다. `preTool` 에서는 **시작 실패**다 — fallback 은 실제 도구 이름과 맞지 않아 가드가 조용히 꺼진다.
-- 정규식은 Java `Pattern` 문법을 따른다.
+- **글롭.** `*` 는 0개 이상의 임의 문자(`/` 도 넘는다)이고 **그 밖의 모든 문자는 리터럴**이다 — `.` · `?` · `^` · `\s` ·
+  `**` 에 특별한 뜻이 없다. 앞뒤를 고정해 비교하므로 "…로 시작" 은 `git push*`, "…를 포함" 은 `*--force*` 로 적는다.
+- **`Bash(글롭)`.** `command` 문자열을 `&&` · `||` · `;` · `|` · 줄바꿈에서 나누고, 백틱 · `$(…)` · 큰따옴표 안의 내용도 따로
+  조각으로 본다(`bash -c "git push"` 의 `git push`). 조각 하나라도 글롭과 일치하면 매치다. 셸을 해석하는 것이 아니라
+  **글자를 비교**한다 — `git  push`(공백 두 칸) · `sudo git push` 는 `git push*` 에 걸리지 않는다. 우회를 막아야 하는
+  가드라면 글롭에 기대지 말고 `command` handler 가 stdin 의 `tool_input.command` 를 직접 검사하게 한다.
+- **`도구(글롭)` 을 받는 도구**는 `Bash` 와 경로 도구 여덟(`Read` · `Edit` · `Write` · `MultiEdit` · `Glob` · `Grep` · `LS` ·
+  `NotebookEdit`)뿐이다. 경로 도구는 모델이 넘긴 경로 문자열 그대로를 본다(`Read` · `Edit` · `Write` · `MultiEdit` 는
+  `file_path`, `Glob` 은 `pattern` · `path`, `Grep` 은 `path` · `pattern`, `LS` 는 `path`, `NotebookEdit` 는 `notebook_path`).
+  절대 경로일 수도 상대 경로일 수도 있으므로 디렉터리가 붙어도 걸리게 `*.env` 처럼 `*` 로 시작한다. 그 밖의 도구에
+  괄호를 붙이면(`WebFetch(…)`, `mcp__x(…)`) 해석되지 않는다.
+- **없는 것.** 정규식, AND(`&`), 입력 필드 지정(`command=…`), 부정은 문법에 없다. 도구 권한의 패턴 문법
+  (`allowed-tools` 의 `Bash(git:*)` · `Read(/tmp/**)`)과도 **다른 문법**이다 — 매처에서 `:` 와 `**` 는 리터럴이다.
+- **해석되지 않는 매처** — 짝이 맞지 않는 괄호, 빈 패턴(`Bash()`), 빈 항(`Read|`), 닫는 괄호 뒤의 글자, 괄호를 받지 않는
+  도구 — 는 `preTool` 에서 **시작 실패**다([시작할 때 막는 경우](#시작할-때-막는-경우)). `postTool` 에서는 문자열 전체를 도구
+  이름으로 보는 `name-only` fallback 으로 떨어지고 WARN 이 남는다(그 이름의 도구는 없으므로 hook 은 발화하지 않는다).
+- **해석은 되지만 아무것도 맞추지 못하는 매처는 잡히지 않는다.** 괄호가 없는 항은 통째로 도구 이름이고 괄호 안은 통째로
+  글롭이라, 위에 없는 문법으로 적은 매처는 오류 없이 등록되어 **한 번도 발화하지 않는다**: `mcp__.*` 는 `mcp__.` 으로
+  시작하는 이름만, `Bash & input.command~^npm` 은 그 글자 그대로의 이름만, `Bash(command=^git\s+push)` 는 그 글자 그대로의
+  커맨드만 맞춘다. 이 가이드는 한때 그 세 형태를 문법으로 실었다 — 그대로 옮겨 적은 `deny` 가드가 있다면 지금까지 걸린
+  적이 없으니 위 표의 형태로 고쳐 쓴다.
 
 ---
 
@@ -344,8 +365,8 @@ budget 이 정책보다 짧으면 무시된다 — 그물을 좁혀 봐야 handl
 선언 budget 은 **10분(`MAX_DECLARED_BUDGET`)으로 클램프**되므로, 설정 실수가 턴을 무한정
 붙잡아 둘 수 없다 (초과 시 WARN 로그 후 10분으로 잘림).
 
-**바깥 그물이 먼저 터지면.** handler 가 자기 timeout 을 지키지 못해 — 취소를 구현하지 않은 원격 셸, 멈춘 I/O, timeout 을
-받지 않는 MCP 호출 — 바깥 그물이 그 hook 을 끊으면, 결정 채널이 있는 네 이벤트의 선언적 hook 은 **막는다**(`Hook timed out
+**바깥 그물이 먼저 터지면.** handler 가 자기 timeout 을 지키지 못해 — 취소를 구현하지 않은 원격 셸, 멈춘 I/O, 중단 신호에
+반응하지 않는 MCP 클라이언트 — 바깥 그물이 그 hook 을 끊으면, 결정 채널이 있는 네 이벤트의 선언적 hook 은 **막는다**(`Hook timed out
 after …ms (limit=…ms)`). 이벤트 정책의 `timeoutBehavior` 기본값은 `FAIL_OPEN` 이지만, 선언적 가드는 hook 마다 `FAIL_CLOSED` 를
 선언하고 실행기는 정책보다 그 선언을 따른다(`ExecutionHook#getTimeoutBehavior()`). `"failOpen": true` 인 handler 와 나머지
 9개 이벤트의 handler 는 아무것도 선언하지 않으므로 이벤트 정책(기본 `FAIL_OPEN` — 진행)을 따른다. 코드로 등록한 hook 의
@@ -386,10 +407,32 @@ JSON 스키마를 따르면 `HookResult` 로 자동 매핑된다. `preTool` 에�
 
 `postTool` 에서는 판정 없음이 전처럼 WARN 후 정상 진행이다.
 
-> ⚠️ **`aimon-cli` 는 `http` · `mcp` 실행기를 배선하지 않는다.** CLI 의 `hooks.json` 에 둔 `http` · `mcp` handler 는 호출되지
-> 않는다 — `preTool` 에 두면 CLI 가 **뜨지 않고**(`… type=http cannot run: no HttpActionExecutor is wired in this assembly`;
-> `failOpen: true` 면 등록되어 매 호출 WARN 후 통과), `postTool` 에서는 WARN 만 남긴다. 임베딩 호스트는
-> `HookHotReloadBootstrap.builder().httpExecutor(…).mcpExecutor(…)` 로 배선한다.
+> ℹ️ **`aimon-cli` 는 `http` · `mcp` handler 를 실행한다** — `hooks.json` 의 것도, 스킬 frontmatter 의 것도. `http` 는 언제나,
+> `mcp` 는 CLI 설정(`mcp.servers`)에 서버가 하나라도 있을 때다. 서버가 하나도 없는 CLI 에서 `mcp` handler 는 돌 수 없는
+> 항목이다 — `hooks.json` 의 `preTool` 에 있으면 CLI 가 **뜨지 않고**(`… type=mcp cannot run: no McpActionExecutor is wired in
+> this assembly`; `failOpen: true` 면 등록되어 매 호출 WARN 후 통과), 그 액션을 선언한 스킬은 로드되지 않는다.
+> `aimon-bootstrap` 과 Spring Boot 스타터는 **배선하지 않는다**: 임베딩 호스트가
+> `HookHotReloadBootstrap.builder().httpExecutor(…).mcpExecutor(…)` 와 `AimonStackSpec` 의 `skillParser` 로 직접 배선한다.
+
+**`http` handler 가 보내고 받는 것.** 이 handler 는 설정 파일이 호스트 프로세스에게 바깥으로 요청을 보내게 하는 자리다.
+
+- **URL 은 적힌 그대로다** (템플릿 대상이 아니다). `https://` 와 `http://` 를 모두 받는다 — 헤더에 토큰을 싣는다면 `https://` 를
+  쓴다.
+- **리다이렉트는 따라가지 않는다.** 3xx 는 다른 non-2xx 와 같이 판정 없음이다(`call failed: HTTP 307`). 따라가면 `${env.X}` 로
+  채운 헤더가 설정에 없는 호스트로 함께 가고, 그 호스트의 답이 판정이 된다. `url` 에는 최종 주소를 적는다.
+- **응답 본문은 1 MiB 까지 읽는다.** 넘으면 잘라서 추측하지 않고 판정 없음이다(`response could not be read: response larger
+  than 1048576 bytes`).
+- **`timeout` 은 응답 헤더가 도착할 때까지를 잰다.** 그 뒤 본문이 멈추면 hook 실행기의 바깥 그물이 끊는다. 연결 timeout 은
+  5초로 고정이다.
+- **프록시는 JVM 기본값이다** — `https.proxyHost` 같은 시스템 프로퍼티는 적용되고 `HTTPS_PROXY` 환경 변수는 보지 않는다.
+- **`${env.X}` 는 호스트 프로세스의 환경을 읽는다.** 읽을 수 있는 이름은 그 handler 가 **스스로 적은** `allowedEnvVars` 다. 이
+  목록은 템플릿이 적어 두지 않은 변수를 읽지 못하게 할 뿐, 설정을 쓴 사람이 무엇을 내보낼 수 있는지를 제한하지 않는다. 스킬
+  frontmatter 의 `http` 액션도 똑같이 읽는다 — CLI 에서 스킬의 `shell` 액션이 이미 같은 환경과 네트워크로 도는 것과 같은
+  권한이다. 스킬 승인은 스킬 **이름** 단위이고 hook 의 내용을 보여 주지 않으므로, 믿지 않는 스킬은 설치하지 않는다.
+- **템플릿 값은 이스케이프되지 않는다.** JSON 본문에 `"${tool_input.command}"` 를 쓰면 따옴표가 든 명령은 깨진 JSON 이 되고
+  (서버가 4xx 로 답하면 판정 없음 — `failOpen` 인 감사 hook 은 그 호출을 **기록하지 못한 채 통과**시킨다), 모델이 본문에
+  필드를 끼워 넣을 수도 있다. 모델이 고르는 값을 가드에 넘길 때는 값마다 따로 치환되어 구조가 깨지지 않는 `mcp` handler 의
+  `args` 나, stdin 으로 JSON 을 받는 `command` handler 가 안전하다.
 
 > 🔒 환경 변수 참조는 **화이트리스트(`allowedEnvVars`)에 있는 키만** 치환된다.
 > 화이트리스트에 없는 변수는 빈 문자열로 처리되고 WARN 로그가 남는다.
@@ -415,8 +458,13 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 `http` 와 같다: 오류 없이 돌아온 결과는 판정이고(빈 내용 · 일반 텍스트 · 객체가 아닌 JSON 은 허용, JSON 객체는 결정 문서로
 읽는다), 서버가 등록되지 않았거나 연결되지 않았을 때 · 전송 오류 · `isError` 결과(`call failed`), 읽을 수 없는 결정
 문서(`response could not be read`), 실행기 미배선은 **판정 없음**이다 — `preTool` 에서는 막고 `"failOpen": true` 면 통과한다.
-`mcp` handler 의 `timeout` 은 호출 자체에 걸리지 않는다(`McpClient.callTool` 이 timeout 을 받지 않는다) — 멈춘 호출을 끊는
-것은 hook 실행기의 바깥 그물이다.
+`mcp` handler 의 `timeout`(기본 10초)은 **호출을 끊는다.** 시한이 지나면 호출하던 요청이 중단되고 결과는 **판정 없음**
+(`timed out: no response within <n>ms`)이다 — `preTool` 에서는 막고(`"failOpen": true` 면 통과), `postTool` 에서는 WARN 후
+진행한다. MCP 서버마다 설정하는 `requestTimeout`(기본 30초)은 그 아래에서 그대로 적용되므로 **둘 중 짧은 쪽이 호출을
+끝낸다**: handler 의 `timeout` 을 길게 적어도 요청은 서버의 `requestTimeout` 을 넘겨 기다리지 않고, 그쪽이 먼저 끝내면 사유는
+`call failed` 다. 끊긴 요청은 이쪽에서 더 기다리지 않는다 — stdio 서버에는 요청이 이미 전달되어 있으므로 서버는 일을
+계속할 수 있고, 늦게 온 응답은 버려진다(`notifications/cancelled` 는 보내지 않는다). 같은 서버로 가는 다른 요청이 끝나기를
+기다리는 중이었다면 이 시한으로는 끊기지 않고 hook 실행기의 바깥 그물이 끊는다 — 가드는 그때도 막는다.
 
 ### `deny`
 
@@ -460,6 +508,8 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 | `http` · `mcp` 가 그 밖의 읽을 수 있는 답을 함 (`allow` · `defer` · 결정 없음 · 빈 본문 · 일반 텍스트) | 판정: 허용 | 진행 | 진행 |
 | `http` · `mcp` 가 판정을 받지 못함 — 연결 실패, timeout, non-2xx, MCP 서버 미등록 · 미연결 · `isError`, 읽을 수 없는 답, 실행기 미배선, 실행기가 던진 예외 | 판정 없음 | **막는다** | 진행 (WARN) |
 | handler 가 자기 timeout 을 넘겨 돌다가 hook 실행기의 바깥 그물(선언 timeout + 5초)에 끊김 | 판정 없음 | **막는다** | 이벤트 정책을 따른다 — 기본 정책은 진행 (WARN) |
+| hook 실행기의 풀이 hook 을 받지 않음 — 포화, 또는 스택 종료로 풀이 닫힘 | 돌리지 못함 | **막는다** (`Hook could not be run (the hook executor rejected it) …`) | 이벤트 정책을 따른다 — 기본 정책은 진행 (WARN) |
+| hook 이 handler 를 부르기 전에 예외로 끝남 — `matcher` 평가 중의 예외 · `StackOverflowError` 등 | 판정 없음 | **막는다** (`Hook failed before it returned a verdict (<예외 타입>)`) | 이벤트 정책을 따른다 — 기본 정책은 진행 (WARN) |
 | 실행이 인터럽트되어 `command` 가 중단됨 (또는 이미 취소된 실행에서 발화) | 실행 취소 | **막는다** | **막는다** — 끝나는 실행은 다음 단계로 가지 않는다 |
 
 "막는다" 는 `preTool` · `onStart` · `preCompact` 에서는 block, `permissionRequest` 에서는 deny 다. 돌리지 못해 막힌 사유는
@@ -468,6 +518,13 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 셸의 stderr · URL · 헤더 · 응답 본문 · 예외 메시지 · `failOpen` 이라는 이름은 싣지 않는다 — 그 사유를 읽는 쪽이 가드가
 제약하는 당사자이기 때문이다. `http` · `mcp` handler 는 `preTool` 과 `postTool` 에만 둘 수 있으므로, 이 표에서 그 세 행이
 해당하는 가드 이벤트는 `preTool` 하나다.
+
+풀이 받지 않은 hook 과 handler 밖에서 예외로 끝난 hook 은 바깥 그물에 끊긴 hook 과 **같은 선언**으로 막힌다 — 선언적 가드가
+hook 마다 내는 `FAIL_CLOSED`(`ExecutionHook#getTimeoutBehavior()`)다. "느렸다" · "시작하지 못했다" · "죽었다" 는 호출한 쪽에서
+보면 같은 일(가드가 아무 말도 하지 않았다)이라, 하나에만 닫혀 있으면 나머지가 가드를 끄는 방법이 된다. 스택을 내릴 때 풀은
+일부러 닫히지만 그 시점에는 가드를 발화시킬 턴이 이미 끝나 있고, 종료 중에 발화하는 `onStop` · `onSessionEnd` 는 가드 이벤트가
+아니어서 막히지 않는다. 그래도 도착한 도구 호출은 기다리지 않고 곧바로 막힌다. 코드로 등록한 hook 은 스스로 `FAIL_CLOSED` 를
+선언하지 않는 한 전처럼 이벤트 정책의 `onException` 을 따른다.
 
 ### 시작할 때 막는 경우
 
@@ -699,7 +756,8 @@ placeholder 는 `${<prefix>.<name>}` 세 종류뿐이다.
 ```
 
 감사 hook 은 가드가 아니므로 `"failOpen": true` 를 둔다 — 없으면 감사 서버에 닿지 못할 때마다 `Bash` 가 막힌다
-([가드가 막는 경우](#가드가-막는-경우)). `http` handler 는 실행기를 배선한 호스트에서만 돈다(`aimon-cli` 는 배선하지 않는다).
+([가드가 막는 경우](#가드가-막는-경우)). `aimon-cli` 는 이 handler 를 실행한다. 본문 템플릿은 값을 이스케이프하지 않으므로
+따옴표가 든 명령은 깨진 JSON 으로 나간다 — [`http`](#http) 절의 "보내고 받는 것" 참조.
 
 ### 2. 위험한 명령을 즉시 차단
 
@@ -708,7 +766,7 @@ placeholder 는 `${<prefix>.<name>}` 세 종류뿐이다.
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash(command=^rm\\s+-rf\\s+/)",
+        "matcher": "Bash(rm -rf /*)",
         "hooks": [
           { "type": "deny", "reason": "위험한 rm -rf 명령은 차단됩니다." }
         ]
@@ -717,6 +775,10 @@ placeholder 는 `${<prefix>.<name>}` 세 종류뿐이다.
   }
 }
 ```
+
+매처는 서브커맨드의 **글자**를 본다 — `rm -rf /` 와 `cd /tmp && rm -rf /var/lib` 는 걸리지만 `rm -fr /` 나
+`sudo rm -rf /` 는 걸리지 않는다(뒤쪽까지 잡으려면 `Bash(*rm -rf /*)`). 표기를 바꿔 피할 수 있으면 안 되는 차단은 `command`
+handler 가 `tool_input.command` 를 직접 검사하게 한다 — [Matcher 문법](#matcher-문법).
 
 ### 3. PostTool 에서 메트릭만 수집 (fail-soft)
 
@@ -777,6 +839,11 @@ placeholder 는 `${<prefix>.<name>}` 세 종류뿐이다.
 }
 ```
 
+`policy-server` 는 호스트가 그 에이전트에 연결한 MCP 서버의 이름이다 — `aimon-cli` 에서는 설정 파일의 `mcp.servers[].name`
+이다. 가드이므로 서버에 닿지 못하거나 `timeout`(기본 10초) 안에 답이 없으면 `Edit` · `Write` 는 막힌다. 설정에 없는 서버
+이름은 오류로 잡히지 않고 매 호출 판정 없음(`call failed: MCP server not registered`)이 되므로 이름을 맞춰 적는다. 그 서버의
+도구는 다른 MCP 도구와 마찬가지로 모델의 도구 목록에도 올라간다.
+
 ### 5. 4-tier 레이어 결합 (USER + PROJECT + LOCAL)
 
 `~/.aimon/hooks.json` (USER, 광역 audit):
@@ -786,7 +853,7 @@ placeholder 는 `${<prefix>.<name>}` 세 종류뿐이다.
 
 `<project>/.aimon/hooks.json` (PROJECT, 팀 정책):
 ```json
-{ "hooks": { "PreToolUse": [{ "matcher": "Bash(command=^git\\s+push.*--force)", "hooks": [{ "type": "deny", "reason": "force push 금지" }] }] } }
+{ "hooks": { "PreToolUse": [{ "matcher": "Bash(git push*--force*)", "hooks": [{ "type": "deny", "reason": "force push 금지" }] }] } }
 ```
 
 `<project>/.aimon/hooks.local.json` (LOCAL, 개인 디버그):
@@ -806,7 +873,7 @@ placeholder 는 `${<prefix>.<name>}` 세 종류뿐이다.
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash(command=^kubectl\\s+apply.*-prod)",
+        "matcher": "Bash(kubectl apply*-prod*)",
         "hooks": [
           {
             "type": "mcp",
@@ -891,6 +958,7 @@ fork 가 없어 발화하지 않는다. 전체 규칙은 [`aimon-skill-extension
 | fork 가 `Execution blocked by OnStart hook [SUBAGENT/…]` 로 끝남          | `hooks.json`(또는 스킬 frontmatter)의 `onStart` hook 이 그 fork 를 막았다. 사용자 입력용 hook 이라면 `AIMON_INVOKER_TYPE` 이 `SUBAGENT` 일 때 exit 0 으로 빠지게 한다. |
 | `Configuration error: hooks config … is invalid: <event> entry #n, handler #m: …` 로 CLI 가 뜨지 않음 | 가드 이벤트 아래에 적용할 수 없는 항목이 있다. 메시지가 가리키는 handler 를 고치거나 지운다. 관찰용이라 못 돌아도 되는 handler 라면 `"failOpen": true`. 전체 표는 [시작할 때 막는 경우](#시작할-때-막는-경우). |
 | `WARN hooks: matcher '...' could not be parsed`                          | `postTool` 의 `PredicateParser` 문법 오류. fallback 으로 name-only 적용 중. (`preTool` 에서는 시작 실패.) |
+| `deny` · 가드 hook 이 등록됐는데 한 번도 걸리지 않음                       | 매처가 해석은 되지만 아무 호출과도 맞지 않는다 — 정규식(`mcp__.*`, `\s+`) · `&` · `command=…` · 권한 패턴(`Bash(git:*)`)은 매처 문법이 아니고 오류도 나지 않는다. [Matcher 문법](#matcher-문법)의 형태로 고친다. |
 | `WARN hooks: invalid handler in PROJECT on event 'postTool': ...`        | 가드가 아닌 이벤트에서 필수 필드 누락 (`command`/`url`/`server+tool`/`reason`). 해당 handler 만 스킵. |
 | `WARN hooks: 'deny' is not valid on postTool ...`                        | `deny` 는 `preTool` 전용. 다른 이벤트에서는 handler 가 무시됨.                |
 | `WARN hooks: '...' event is not supported by AIMON in this phase`        | `Notification` / `UserPromptSubmit` / `stop_hook_active` 뿐이다. 나머지는 모두 지원. |
@@ -899,7 +967,7 @@ fork 가 없어 발화하지 않는다. 전체 규칙은 [`aimon-skill-extension
 | `WARN hooks: 'command' on ... cannot run: the configured shell executor does not support shell actions` | 셸을 지원하지 않는 실행기(`NoOpShellActionExecutor`)로 `hooks.json` 을 적용했다. 가드가 아닌 `command` handler(가드가 아닌 이벤트, 또는 `failOpen: true`)는 등록되지 않는다 — `HostShellActionExecutor` 를 배선한다. 가드 이벤트의 `command` 라면 WARN 이 아니라 시작 실패다. |
 | `WARN hooks config at ...: ... has a 'failOpen' that is not a JSON boolean (...); it is read as false` | `failOpen` 에 `"true"` · `1` · `null` 을 썼다. 그 handler 는 `failOpen: false` 로 등록된다(커맨드를 못 돌리면 막는다). 관찰용이라면 `true` 로 고칠 것. |
 | 도구가 `Blocked: guard hook '...' could not run its command` 로 막힘      | 결정 채널이 있는 이벤트의 `command` handler 가 종료 코드를 내지 못했거나(timeout 등) 셸이 커맨드를 시작하지 못했다(`command not found: exit code 127` · `command not executable: exit code 126` — 스크립트 경로와 실행 권한을 확인). 사유의 원인을 고치거나, 관찰용 handler 라면 `"failOpen": true` 를 선언. 전체 표는 [가드가 막는 경우](#가드가-막는-경우). |
-| 도구가 `Blocked: guard hook '...' could not get a verdict from its http call` (또는 `mcp call`) 로 막힘 | `preTool` 의 `http` · `mcp` handler 가 판정을 받지 못했다. 사유의 원인을 본다 — `action executor not wired`(호스트가 실행기를 배선하지 않았다. `aimon-cli` 가 그렇다), `call failed: HTTP 503` · `call failed: ConnectException`(정책 서버), `timed out`, `response could not be read`(`decision` 값이 `allow` · `deny` · `defer` 가 아니다). 관찰용 handler 라면 `"failOpen": true`. |
+| 도구가 `Blocked: guard hook '...' could not get a verdict from its http call` (또는 `mcp call`) 로 막힘 | `preTool` 의 `http` · `mcp` handler 가 판정을 받지 못했다. 사유의 원인을 본다 — `action executor not wired`(호스트가 실행기를 배선하지 않았다 — `aimon-cli` 는 배선하므로 임베딩 호스트의 경우다), `call failed: MCP server not registered`(`server` 가 설정된 MCP 서버 이름이 아니다), `call failed: HTTP 307`(리다이렉트는 따라가지 않는다), `call failed: HTTP 503` · `call failed: ConnectException`(정책 서버), `timed out`, `response could not be read`(`decision` 값이 `allow` · `deny` · `defer` 가 아니다). 관찰용 handler 라면 `"failOpen": true`. |
 | `WARN hooks: 'asyncRewake' is not supported on event '...'`              | rewake 가능한 이벤트는 `preTool`/`preCompact`/`onSessionStart`/`onSessionEnd`/`onConfigReload`. hook 자체는 정상 등록됨. |
 | 셸 hook 이 exit 2 로 끝났는데 차단되지 않음                                | 해당 이벤트에 결정 채널이 없음. veto 는 `preTool`/`onStart`/`preCompact`(block), `permissionRequest`(deny) 에서만 유효. |
 | 커맨드 안의 `${tool_input.x}` / `${tool_name}` 이 빈 문자열                | 의도된 동작. 커맨드는 렌더링되지 않는다 — stdin JSON payload 나 `AIMON_*` env(`$AIMON_TOOL_NAME` 등) 를 사용. |

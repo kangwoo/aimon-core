@@ -103,12 +103,20 @@ public interface ExecutionHook<C extends HookContext> {
      * policy ({@link HookExecutionPolicy#timeoutBehaviorFor(ExecutionHook)}).
      *
      * <p>
-     * The declaration only matters when the hook failed to keep its own deadline: a hook that returns in time is
+     * A {@code FAIL_CLOSED} declaration covers the two other ways a hook ends without a verdict as well
+     * ({@link HookExecutionPolicy#failsClosedWithoutVerdict(ExecutionHook)}): the executor's pool refused to run it
+     * (saturated, or shut down), and its body threw. Without that a guard closed against "slow" would stay open
+     * against "never started" and "crashed". A hook that declares nothing keeps
+     * {@link HookExecutionPolicy#onException(Exception)} for both, and so does one that declares {@code FAIL_OPEN}.
+     *
+     * <p>
+     * The declaration only matters when the hook returned no result: a hook that returns in time is
      * never asked. The in-tree declarers are the declarative guard hooks ({@code hooks.json} / skill frontmatter on
      * {@code preTool}, {@code onStart}, {@code preCompact}, {@code permissionRequest}) that did not declare
      * {@code failOpen}. A hook registered in code is free to declare one as well.
      *
-     * @return the behaviour this hook asks for on an outer timeout, or {@link Optional#empty()} to accept the event
+     * @return the behaviour this hook asks for when it ends without a verdict (an outer timeout; for
+     *         {@code FAIL_CLOSED} also a rejection or a throw), or {@link Optional#empty()} to accept the event
      *         policy's
      */
     default Optional<HookExecutionPolicy.TimeoutBehavior> getTimeoutBehavior() {
