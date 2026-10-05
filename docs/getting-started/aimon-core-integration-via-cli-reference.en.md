@@ -217,7 +217,14 @@ The other half of the rule:
 - **Two sibling keys that expand to the same name are refused.** yaml stops you writing the same key twice, but it
   cannot stop `${A}` and `${B}` from expanding to one value, and nobody reports it when the later one wins.
 - **Expansion is a single pass.** If a variable's value is itself `${OTHER}`, it stays literal.
-- **There is no escape for writing a literal `${`.**
+- **`$${NAME}` is the literal text `${NAME}`.** The variable is not looked up, so startup does not need it to be
+  set. Use it for a placeholder that **the child process** is meant to expand, in the `args` or `env` of a stdio
+  MCP server — `args: ["-c", "exec server --token $${TOKEN}"]` hands the child `${TOKEN}` as written. The escape
+  exists only **directly in front of** a placeholder: `pa$$word` and a lone `$$` are unchanged. In front of one,
+  each `$$` is one literal `$` and an odd `$` left over opens the placeholder — `$$${PRICE}` is a `$` followed by
+  the variable's value (what `$${PRICE}` meant before it became the escape), and `$$$${NAME}` is the literal
+  `$${NAME}`. There is no default syntax such as `${NAME:default}` — written without the escape, the whole of
+  `NAME:default` is the variable name.
 - **A scalar carrying no placeholder is never touched.** The text the parser read reaches the deserializer as
   written, so `thinkingMode: off` still means `off` — `off` is a YAML 1.1 boolean, and only the written text tells
   it apart from `no` and `false`.

@@ -202,6 +202,141 @@ class PlaceholderExpandingParserTest {
     }
 
     @Nested
+    @DisplayName("Literal placeholders")
+    class LiteralPlaceholders {
+
+        /** Fails the test if the decorator looks a variable up: an escaped placeholder names no variable. */
+        private final Function<String, String> noLookup = name -> {
+            throw new AssertionError("Looked up " + name);
+        };
+
+        private String valueOf(String written, Function<String, String> envVarResolver) throws IOException {
+            // Single-quoted yaml: nothing in it is an escape, so the scalar is exactly `written`.
+            try (PlaceholderExpandingParser parser = advanceToValueOf(parse("key: '" + written + "'\n", envVarResolver),
+                    "key")) {
+                return parser.getText();
+            }
+        }
+
+        @Test
+        @DisplayName("Should write a literal placeholder for $${NAME}, without reading the variable")
+        void aDoubledDollarIsALiteralPlaceholder() throws IOException {
+            assertThat(valueOf("$${NAME}", noLookup)).isEqualTo("${NAME}");
+        }
+
+        @Test
+        @DisplayName("Should start whether or not the variable an escaped placeholder names is set")
+        void anEscapedPlaceholderNeedsNoVariable() throws IOException {
+            assertThat(valueOf("$${MISSING}", name -> null)).isEqualTo("${MISSING}");
+        }
+
+        @Test
+        @DisplayName("Should keep the text around an escaped placeholder and expand its neighbours")
+        void escapedAndExpandedPlaceholdersShareAValue() throws IOException {
+            assertThat(valueOf("a-$${LEFT}-${MID}-$${RIGHT}-z", STUB)).isEqualTo("a-${LEFT}-stub-MID-${RIGHT}-z");
+        }
+
+        @Test
+        @DisplayName("Should read $$${NAME} as a literal $ followed by the expansion")
+        void threeDollarsAreADollarAndAnExpansion() throws IOException {
+            // `$${NAME}` used to mean this -- a `$`, then the variable. The escape took that spelling, so the
+            // meaning needs another one or a value like `$5` built from a variable could no longer be written.
+            assertThat(valueOf("$$${NAME}", STUB)).isEqualTo("$stub-NAME");
+        }
+
+        @Test
+        @DisplayName("Should read $$$${NAME} as a literal $ followed by a literal placeholder")
+        void fourDollarsAreADollarAndALiteralPlaceholder() throws IOException {
+            assertThat(valueOf("$$$${NAME}", noLookup)).isEqualTo("$${NAME}");
+        }
+
+        @Test
+        @DisplayName("Should leave $$ alone when no placeholder follows it")
+        void aDoubledDollarElsewhereIsUntouched() throws IOException {
+            assertThat(valueOf("pa$$word", noLookup)).isEqualTo("pa$$word");
+            assertThat(valueOf("$$", noLookup)).isEqualTo("$$");
+            assertThat(valueOf("$${", noLookup)).isEqualTo("$${");
+            assertThat(valueOf("$${}", noLookup)).isEqualTo("$${}");
+            assertThat(valueOf("$$ ${NAME}", STUB)).isEqualTo("$$ stub-NAME");
+        }
+
+        @Test
+        @DisplayName("Should not pass a token carrying only an escape through as untouched")
+        void aTokenWithOnlyAnEscapeIsStillRewritten() throws IOException {
+            try (PlaceholderExpandingParser parser = advanceToValueOf(parse("key: '$${NAME}'\n", noLookup), "key")) {
+                assertThat(parser.hasTextCharacters()).isFalse();
+                assertThat(parser.getTextCharacters()).containsExactly("${NAME}".toCharArray());
+                assertThat(parser.getValueAsString()).isEqualTo("${NAME}");
+            }
+        }
+
+        @Test
+        @DisplayName("Should keep shell default syntax meant for a child process")
+        void aShellDefaultSurvivesEscaped() throws IOException {
+            // There is no `${NAME:default}` here: unescaped, the whole of `HOME:-/tmp` is the variable name.
+            assertThat(valueOf("$${HOME:-/tmp}/cache", noLookup)).isEqualTo("${HOME:-/tmp}/cache");
+            try (PlaceholderExpandingParser parser = parse("key: '${HOME:-/tmp}'\n", name -> null)) {
+                assertThatThrownBy(() -> tokensOf(parser)).isInstanceOf(ConfigurationException.class)
+                        .hasMessage("Environment variable not set: HOME:-/tmp (at key)");
+            }
+        }
+
+        @Test
+        @DisplayName("Should end an escaped placeholder at the first closing brace, like an expanded one")
+        void anEscapedPlaceholderIsNotNested() throws IOException {
+            // `${A${B}` is one placeholder to this class -- the name runs to the first `}` -- so the escape covers
+            // exactly that much and the inner `${B}` is not expanded on its own.
+            assertThat(valueOf("$${A${B}}", noLookup)).isEqualTo("${A${B}}");
+        }
+
+        @Test
+        @DisplayName("Should not rescan what a variable expanded to")
+        void anExpansionCarryingAnEscapeStaysAsItIs() throws IOException {
+            assertThat(valueOf("${A}", name -> "$${B}")).isEqualTo("$${B}");
+        }
+
+        @Test
+        @DisplayName("Should write a literal placeholder in a mapping key")
+        void anEscapedKeyIsALiteralKey() throws IOException {
+            try (PlaceholderExpandingParser parser = parse("outer:\n  $${NAME}: value\n", noLookup)) {
+                parser.nextToken();
+                parser.nextToken();
+                parser.nextToken();
+                assertThat(parser.nextToken()).isEqualTo(JsonToken.FIELD_NAME);
+                assertThat(parser.getText()).isEqualTo("${NAME}");
+                assertThat(parser.currentName()).isEqualTo("${NAME}");
+            }
+        }
+
+        @Test
+        @DisplayName("Should not report an escaped key as colliding with the same placeholder expanded")
+        void anEscapedKeyDoesNotCollideWithItsExpansion() throws IOException {
+            final List<String> names = new ArrayList<>();
+            try (PlaceholderExpandingParser parser = parse("outer:\n  $${P}: one\n  ${P}: two\n", name -> "prod")) {
+                JsonToken token = parser.nextToken();
+                while (token != null) {
+                    if (token == JsonToken.FIELD_NAME) {
+                        names.add(parser.currentName());
+                    }
+                    token = parser.nextToken();
+                }
+            }
+
+            assertThat(names).containsExactly("outer", "${P}", "prod");
+        }
+
+        @Test
+        @DisplayName("Should refuse an escaped key beside a variable whose value is that literal text")
+        void anEscapedKeyCollidesWithAKeyThatExpandsToTheSameText() throws IOException {
+            try (PlaceholderExpandingParser parser = parse("outer:\n  $${P}: one\n  ${Q}: two\n", name -> "${P}")) {
+                assertThatThrownBy(() -> tokensOf(parser)).isInstanceOf(ConfigurationException.class)
+                        .hasMessage("Configuration keys `$${P}` and `${Q}` both expand to `${P}`, so one would"
+                                + " silently replace the other. Keep one of them under `outer`.");
+            }
+        }
+    }
+
+    @Nested
     @DisplayName("Sibling key collisions")
     class SiblingKeyCollisions {
 

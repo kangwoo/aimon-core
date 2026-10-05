@@ -55,7 +55,17 @@ import at.aimon.cli.exception.ConfigurationException;
  *
  * <p>
  * Expansion is a single pass: a variable whose value is itself {@code ${OTHER}} stays literal, as it always has.
- * There is no escape syntax for a literal placeholder; nothing in the tree needs one.
+ *
+ * <p>
+ * <b>{@code $${NAME}} is the literal text {@code ${NAME}}.</b> Under a rule that reaches every scalar there was
+ * otherwise no way to write one: set, the variable was substituted; unset, startup failed. The value that needs it is
+ * an argument or environment entry of a stdio MCP server that the <em>child</em> process is meant to expand. The
+ * escape exists only directly in front of a placeholder, so {@code pa$$word} and a lone {@code $$} are still what
+ * they were. Directly in front of one, each {@code $$} is one literal {@code $} and an odd {@code $} left over opens
+ * the placeholder: {@code $$${NAME}} is a {@code $} followed by the variable's value — the meaning {@code $${NAME}}
+ * had before it became the escape — and {@code $$$${NAME}} is the text {@code $${NAME}}. An escaped placeholder ends
+ * where an expanded one would, at the first <code>}</code>, and names no variable: nothing is looked up, so nothing
+ * has to be set. What a variable expands to is not scanned again, for the escape any more than for a placeholder.
  *
  * <p>
  * <b>Two sibling keys that end up with the same name are refused</b> rather than letting the later one silently
@@ -65,7 +75,12 @@ import at.aimon.cli.exception.ConfigurationException;
  * class is not the place to start failing on it.
  */
 final class PlaceholderExpandingParser extends JsonParserDelegate {
-    private static final Pattern ENV_VAR_PATTERN = Pattern.compile("\\$\\{([^}]+)}");
+    /**
+     * A placeholder and every {@code $} written directly in front of it. Group 1 is those leading dollars, group 2
+     * the name. Matching the whole run at once is what makes the escape a property of the placeholder rather than of
+     * the {@code $} character: a {@code $$} that no placeholder follows is never matched, so it is never changed.
+     */
+    private static final Pattern ENV_VAR_PATTERN = Pattern.compile("(\\$*)\\$\\{([^}]+)}");
 
     private final Function<String, String> envVarResolver;
 
@@ -320,13 +335,22 @@ final class PlaceholderExpandingParser extends JsonParserDelegate {
         final Matcher matcher = ENV_VAR_PATTERN.matcher(written);
         final StringBuilder expanded = new StringBuilder();
         while (matcher.find()) {
-            final String name = matcher.group(1);
+            // The dollars written in front of `{NAME}`: the one that opens the placeholder and any before it.
+            final int dollars = matcher.group(1).length() + 1;
+            final String name = matcher.group(2);
+            final String literalDollars = "$".repeat(dollars / 2);
+            if (dollars % 2 == 0) {
+                // Every `$$` is one literal `$`, and none is left to open a placeholder: `$${NAME}` is the text
+                // `${NAME}`. The variable is not looked up, so it does not have to be set.
+                matcher.appendReplacement(expanded, Matcher.quoteReplacement(literalDollars + "{" + name + "}"));
+                continue;
+            }
             final String value = envVarResolver.apply(name);
             if (value == null) {
                 throw new ConfigurationException(
                         "Environment variable not set: " + name + " (at " + currentPath() + ")");
             }
-            matcher.appendReplacement(expanded, Matcher.quoteReplacement(value));
+            matcher.appendReplacement(expanded, Matcher.quoteReplacement(literalDollars + value));
         }
         matcher.appendTail(expanded);
         return expanded.toString();
