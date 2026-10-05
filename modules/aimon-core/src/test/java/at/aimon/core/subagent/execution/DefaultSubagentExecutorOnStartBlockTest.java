@@ -54,7 +54,7 @@ import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentContent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentMetadata;
 import at.aimon.core.subagent.behavior.InMemorySubagentBehaviorRegistry;
 import at.aimon.core.subagent.task.InMemorySessionSnapshotStore;
@@ -186,7 +186,7 @@ class DefaultSubagentExecutorOnStartBlockTest {
         try {
             final DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(executor(), pool,
                     new DefaultHookExecutionManager(), new InMemorySubagentBehaviorRegistry());
-            final SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder()
+            final SubagentLaunchContext env = SubagentLaunchContext.builder()
                     .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagentRegistry(subagents)
                     .toolRegistry(new DefaultToolRegistry()).hookRegistry(hooks)
                     .defaultModel(LlmModel.builder().name("gpt-4").build()).executionEnvironment(forkEnvironment)

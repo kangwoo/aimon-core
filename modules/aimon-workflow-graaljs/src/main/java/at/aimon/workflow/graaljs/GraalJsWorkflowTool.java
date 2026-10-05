@@ -32,8 +32,8 @@ import at.aimon.core.base.Principal;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.tools.CallerAllowedTools;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
@@ -54,7 +54,7 @@ import at.aimon.workflow.graaljs.exception.JsScriptException;
  * <p>
  * Foreground runs build a per-call, budget-bearing runner from the invoking execution's agent runtime
  * (agentRuntimeId, principal, execution attributes, parent LLM metadata, cancellation signal) and block for the
- * result. Background runs reuse the injected app-scoped runner and its own base environment (they do <b>not</b>
+ * result. Background runs reuse the injected app-scoped runner and its own base launch context (they do <b>not</b>
  * inherit the invoking execution's context or signal), returning a run id trackable via {@code /runs}. The tool
  * never throws: guest errors and cancellation ({@link JsScriptException}) and any other failure become
  * {@link ToolResult#error}.
@@ -196,9 +196,9 @@ public final class GraalJsWorkflowTool extends AbstractTool {
             log.warn("WorkflowJs (background): the hooks of skill(s) {} do not fire for this run's subagents",
                     hookSkills);
         }
-        // Fire-and-forget on the shared runner's own base environment and bootstrap budget: a background run does NOT
-        // inherit the invoking execution's context id, principal, or cancellation signal (mirrors WorkflowTool). The
-        // run id is derived from the full request so an identical in-flight request is joined idempotently.
+        // Fire-and-forget on the shared runner's own base launch context and bootstrap budget: a background run does
+        // NOT inherit the invoking execution's context id, principal, or cancellation signal (mirrors WorkflowTool).
+        // The run id is derived from the full request so an identical in-flight request is joined idempotently.
         final RunId runId = RunId.from(RUN_SCRIPT_NAME, discriminator(source, args));
         final GraalJsWorkflowScript script = new GraalJsWorkflowScript(source, args, sandbox, engines, subagentResolver,
                 NoopCancellationSignal.INSTANCE);
@@ -225,7 +225,7 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         final CancellationSignal.Registration cascade = parentSignal
                 .onCancel(() -> runCoordinator.requestInterrupt(InterruptReason.PARENT_CANCELLED));
         try {
-            final SubagentExecutionEnvironment env = buildEnvironment(agentRuntimeId, context, runSignal);
+            final SubagentLaunchContext launchContext = buildLaunchContext(agentRuntimeId, context, runSignal);
             final GraalJsWorkflowScript script = new GraalJsWorkflowScript(source, args, sandbox, engines,
                     subagentResolver, runSignal,
                     () -> runCoordinator.requestInterrupt(InterruptReason.BUDGET_EXCEEDED));
@@ -235,7 +235,7 @@ public final class GraalJsWorkflowTool extends AbstractTool {
             log.debug("WorkflowJs (foreground): runId='{}'", runId.value());
             // The per-call foreground runner owns a lazily-created fan-out pool; close it once run() returns so a
             // long-lived process does not leak a worker pool per invocation.
-            try (WorkflowRunner runner = WorkflowRunners.create(subagentExecutionManager, env, options)) {
+            try (WorkflowRunner runner = WorkflowRunners.create(subagentExecutionManager, launchContext, options)) {
                 return ToolResult.success(runner.run(script, runId));
             }
         } finally {
@@ -255,7 +255,7 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         return options.build();
     }
 
-    private SubagentExecutionEnvironment buildEnvironment(AgentRuntimeId agentRuntimeId, ToolContext context,
+    private SubagentLaunchContext buildLaunchContext(AgentRuntimeId agentRuntimeId, ToolContext context,
             CancellationSignal parentSignal) {
         final Map<String, Object> executionAttributes = context.get(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY)
                 .orElse(Map.of());
@@ -263,7 +263,7 @@ public final class GraalJsWorkflowTool extends AbstractTool {
                 .orElse(LlmCallMetadata.empty());
         final Principal principal = context.get(ToolContextKeys.PRINCIPAL).orElse(null);
 
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry)
+        return SubagentLaunchContext.builder().agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry)
                 .toolRegistry(toolRegistry)
                 // The caller's registry first: inside a forked skill it carries the skill's hooks, and the workflow's
                 // subagents must stay under them.
@@ -299,7 +299,7 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         }
     }
 
-    /** Builder for the tool's environment-building and execution dependencies. */
+    /** Builder for the tool's launch-context-building and execution dependencies. */
     public static final class Builder {
 
         private LlmModel defaultModel;

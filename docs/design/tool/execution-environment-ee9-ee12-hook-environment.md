@@ -20,7 +20,7 @@
 >
 > **덧붙임 (2026-10-03, EE-14).** 이 문서가 말하는 `Environment`(`agent.Environment`)는 이제 없다. 하나 남았던 필드는
 > `at.aimon.core.base.UserLocale` 로 옮겨 갔다가, 읽는 곳이 없어 2026-10-05 에 그 타입과 `getUserLocale()` 도 지워졌다(EE-60).
-> 본문은 승인본 그대로 두었고, 대응표는
+> 본문의 `SubagentExecutionEnvironment` 는 같은 날 `SubagentLaunchContext` 로 개명되었다(EE-61). 본문은 승인본 그대로 두었고, 대응표는
 > [`../../migration/rename-maps.md`](../../migration/rename-maps.md) 에 있다.
 
 기준 커밋 `7915560` (`main`). 줄 번호는 모두 2026-10-03 에 이 워크트리에서 확인한 것이다.

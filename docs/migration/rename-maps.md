@@ -496,7 +496,7 @@ set of overloads on thirty-five types would have doubled the name the change exi
 | `ExecutionOptions.getEnvironment()` / `Builder.environment(Map)` | a shell command's environment variables |
 | `AimonProperties.getEnvironment()`, `aimon.environment.*` | the starter's execution-environment settings -- no configuration key changed |
 | `EnvironmentBlocks`, `EnvironmentContextProvider`, the `"environment"` prompt block | the prompt's description of the execution environment |
-| `SubagentExecutionEnvironment`, `AgentEnvironmentSnapshot` | type names unchanged by this rename; only their `getEnvironment()` accessor became `getUserLocale()` (`AgentEnvironmentSnapshot` itself was removed on 2026-10-05) |
+| `SubagentExecutionEnvironment`, `AgentEnvironmentSnapshot` | type names unchanged by this rename; only their `getEnvironment()` accessor became `getUserLocale()` (on 2026-10-05 `AgentEnvironmentSnapshot` was removed and `SubagentExecutionEnvironment` became `SubagentLaunchContext` -- see below) |
 
 **Not a data migration, and no frozen name moved.** The type never reached a wire or stored format: no session
 record, transcript, subagent task codec or shell-hook payload carries it, and the `ToolContext` key name is a key of
@@ -529,8 +529,8 @@ the census is in [`execution-environment-ee14-user-locale.md`](../design/tool/ex
 `X` is every type the previous section lists, minus the removed `AgentEnvironmentSnapshot`: `HookContext` and its
 thirteen event contexts, `RewakeCapableRuntime`, `OrcaToolProviderContext`, `OrcaProviderDependencies`,
 `OrcaCommandProviderContext`, `OrcaAgentRuntime`, `ContextRequest`, `CompactionRequest`, `CompactionGuardRequest`,
-`SummaryRequest`, `SubagentExecutionEnvironment`, `SubagentExecutionContext`, `ToolInvocationSpec`, `ReloadInvoker`,
-and the builder of `GraalJsWorkflowTool`.
+`SummaryRequest`, `SubagentLaunchContext` (then still `SubagentExecutionEnvironment`), `SubagentExecutionContext`,
+`ToolInvocationSpec`, `ReloadInvoker`, and the builder of `GraalJsWorkflowTool`.
 
 IMPORTANT: this is **removal, not migration**, and there is no deprecated alias -- a getter that returned a default
 value nobody reads would have kept the plumbing the change exists to remove. A `HookContext` implemented outside the
@@ -546,6 +546,41 @@ a system-prompt variable.
 Three behaviours changed with the null checks that went away: `/compact` is registered, a skill fork gets its
 subagent-backed executor, and `DefaultContextEngine` / `RollingContextEngine` accept a request, without a
 `UserLocale` having been supplied. Both shipped assemblies always supplied one, so nothing observable changes there.
+
+---
+
+## `SubagentExecutionEnvironment` → `SubagentLaunchContext`
+
+The mistake being corrected is the last homonym of `ExecutionEnvironment`. The type is not an execution environment:
+it is the bundle of collaborators a caller hands `SubagentExecutionManager` to launch a subagent (runtime id,
+registries, default model, execution attributes, stores, ...). One of the things it carries is the spawning
+execution's `ExecutionEnvironment`, so `SubagentExecutionEnvironment.getExecutionEnvironment()` put both in one
+expression, and the code's comments called each of them "the environment". (Backlog EE-61.)
+
+| Old | New |
+|-----|-----|
+| `at.aimon.core.subagent.SubagentExecutionEnvironment` | `at.aimon.core.subagent.SubagentLaunchContext` |
+| `SubagentExecutionEnvironment.Builder`, `builder()`, `toBuilder()` | the same members on `SubagentLaunchContext` -- no accessor or builder method changed name |
+| `SubagentExecutionManager.execute(SubagentExecutionEnvironment env, ...)`, `executeInline(...)`, `executeInBackground(...)` | the same methods taking `SubagentLaunchContext launchContext` |
+| `WorkflowRunners.create(manager, SubagentExecutionEnvironment baseEnv, ...)` | `WorkflowRunners.create(manager, SubagentLaunchContext baseLaunchContext, ...)` |
+| `toString()` prefix `SubagentExecutionEnvironment{` | `SubagentLaunchContext{` |
+| message `"Execution environment cannot be null"` (thrown by `DefaultSubagentExecutionManager` for a null bundle) | `"Launch context cannot be null"` |
+| message `"baseEnv cannot be null"` (`DefaultWorkflowRunner`) | `"baseLaunchContext cannot be null"` |
+
+Only the type name breaks a caller; parameter names do not. There is no deprecated alias: the type is a `final`
+value object, so the old name could only have stayed as a second, unrelated class.
+
+**How it differs from `SubagentExecutionContext`.** The two are the two ends of a launch. A `SubagentLaunchContext`
+is what the *caller* gives the manager, before the subagent is resolved. The manager turns it into a
+`SubagentExecutionContext` (`at.aimon.core.subagent.execution`), which is what the *executor* receives for the one
+fork it runs.
+
+**Same word, not renamed.** `SubagentLaunchContext.getExecutionEnvironment()` and
+`getExecutionEnvironmentProvider()` keep their names: they return a real `ExecutionEnvironment` (the spawning
+execution's) and its provider. `ExecutionEnvironment`, `EnvironmentDescriptor`, `EnvironmentRequest` and
+`ToolContextKeys.EXECUTION_ENVIRONMENT*` are untouched.
+
+**Not a data migration.** The type holds live collaborators and was never serialized.
 
 ---
 

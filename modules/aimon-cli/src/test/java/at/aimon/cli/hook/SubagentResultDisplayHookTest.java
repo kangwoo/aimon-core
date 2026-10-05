@@ -37,8 +37,8 @@ import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.ToolUseResult;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.tools.ToolContextKeys;
@@ -336,8 +336,8 @@ class SubagentResultDisplayHookTest {
 
         /** Runs {@link TaskTool} in the foreground over a subagent returning {@code result}, and returns its text. */
         private String printedByTaskTool(SubagentExecutionResult result) {
-            when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq(subagent),
-                    anyString(), eq(description))).thenReturn(result);
+            when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq(subagent), anyString(),
+                    eq(description))).thenReturn(result);
             ToolResult toolResult = taskTool.execute(
                     ToolInput.of(Map.of("subagent_name", subagent, "prompt", "map it", "description", description)),
                     ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeId.of("agent:test"))

@@ -54,8 +54,8 @@ import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.workflow.AgentStepResult;
 import at.aimon.core.workflow.AgentTask;
@@ -74,14 +74,14 @@ class WorkflowPhase4Test {
 
     private final List<DefaultWorkflowRunner> runners = new ArrayList<>();
     private SubagentExecutionManager manager;
-    private SubagentExecutionEnvironment env;
+    private SubagentLaunchContext env;
     private Subagent sub;
     private final AtomicInteger executeCount = new AtomicInteger();
 
     @BeforeEach
     void setUp() {
         manager = mock(SubagentExecutionManager.class);
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> {
                     executeCount.incrementAndGet();
                     return success("ans:" + invocation.getArgument(2, String.class));
@@ -169,9 +169,9 @@ class WorkflowPhase4Test {
     @Test
     @DisplayName("EE-46 (open): two runs' first isolated steps share one branch directory, .worktrees/a0")
     void successiveRunsShareTheFirstIsolatedBranch(@TempDir Path workspace) {
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> {
-                    final SubagentExecutionEnvironment stepEnv = invocation.getArgument(0);
+                    final SubagentLaunchContext stepEnv = invocation.getArgument(0);
                     final String goal = invocation.getArgument(2, String.class);
                     stepEnv.getExecutionEnvironment().orElseThrow().fileSystem().write(goal + ".txt", goal);
                     return success("wrote " + goal);
@@ -180,7 +180,7 @@ class WorkflowPhase4Test {
                 .workspaceRoot(workspace).contentSearch(false).build()) {
             final ExecutionEnvironment parent = provider
                     .resolve(EnvironmentRequest.builder().agentRuntimeId(AgentRuntimeId.fromName("shared")).build());
-            final SubagentExecutionEnvironment base = env.toBuilder().executionEnvironment(parent).build();
+            final SubagentLaunchContext base = env.toBuilder().executionEnvironment(parent).build();
             // Two runners with their own run ids: as separate as two runs in one workspace get.
             final DefaultWorkflowRunner one = DefaultWorkflowRunner.builder(manager, base)
                     .stepResultCache(new InMemoryStepResultCache()).build();
@@ -223,14 +223,14 @@ class WorkflowPhase4Test {
     @Test
     @DisplayName("The isolated leaf gets the branch environment, the same tool registry and the run's signal")
     void isolatedLeafRunsInTheBranchEnvironment() {
-        final AtomicReference<SubagentExecutionEnvironment> seen = new AtomicReference<>();
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        final AtomicReference<SubagentLaunchContext> seen = new AtomicReference<>();
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> {
                     seen.set(invocation.getArgument(0));
                     return success("ok");
                 });
         final RecordingEnvironment isolating = new RecordingEnvironment();
-        final SubagentExecutionEnvironment base = isolating.attachTo(env);
+        final SubagentLaunchContext base = isolating.attachTo(env);
         final DefaultWorkflowRunner runner = DefaultWorkflowRunner.builder(manager, base).build();
         runners.add(runner);
 
@@ -335,7 +335,7 @@ class WorkflowPhase4Test {
         // serialized (depth cap), the latch would never release and the timeout would fire.
         final CountDownLatch latch = new CountDownLatch(3);
         final ConcurrentLinkedQueue<Boolean> allInFlight = new ConcurrentLinkedQueue<>();
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> {
                     latch.countDown();
                     allInFlight.add(latch.await(5, TimeUnit.SECONDS));
@@ -441,16 +441,15 @@ class WorkflowPhase4Test {
     @DisplayName("A foreground run-fatal abort trips the per-run signal, never the borrowed base env's signal")
     void runFatalTripsPerRunSignal() {
         final AtomicReference<CancellationSignal> perRunSignal = new AtomicReference<>();
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> {
                     executeCount.incrementAndGet();
-                    perRunSignal
-                            .set(invocation.getArgument(0, SubagentExecutionEnvironment.class).getCancellationSignal());
+                    perRunSignal.set(invocation.getArgument(0, SubagentLaunchContext.class).getCancellationSignal());
                     return success("ok");
                 });
         // A REAL (trippable) base signal, so the negative assertion below is falsifiable — the shared env() helper's
         // default is NoopCancellationSignal, whose isCancelled() is constant false and can never catch a regression.
-        final SubagentExecutionEnvironment realSignalBase = env.toBuilder()
+        final SubagentLaunchContext realSignalBase = env.toBuilder()
                 .cancellationSignal(new DefaultInterruptCoordinator().getSignal()).build();
         // No execution environment to isolate, so the second step below is run-fatal (C30).
         final DefaultWorkflowRunner runner = DefaultWorkflowRunner.builder(manager, realSignalBase).build();
@@ -473,11 +472,10 @@ class WorkflowPhase4Test {
     @DisplayName("A background run-fatal abort trips the per-run signal and settles FAILED, not KILLED")
     void backgroundRunFatalTripsSignalAndStaysFailed() {
         final AtomicReference<CancellationSignal> perRunSignal = new AtomicReference<>();
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> {
                     executeCount.incrementAndGet();
-                    perRunSignal
-                            .set(invocation.getArgument(0, SubagentExecutionEnvironment.class).getCancellationSignal());
+                    perRunSignal.set(invocation.getArgument(0, SubagentLaunchContext.class).getCancellationSignal());
                     return success("ok");
                 });
         // No execution environment to isolate, so the isolate step below is run-fatal (C30).
@@ -502,14 +500,13 @@ class WorkflowPhase4Test {
     @DisplayName("Cascade: tripping the base env's signal mid-run cancels the foreground run's per-run signal")
     void baseEnvTripCascadesToPerRunSignal() throws Exception {
         final DefaultInterruptCoordinator baseCoordinator = new DefaultInterruptCoordinator();
-        final SubagentExecutionEnvironment cancellableBase = env.toBuilder()
-                .cancellationSignal(baseCoordinator.getSignal()).build();
+        final SubagentLaunchContext cancellableBase = env.toBuilder().cancellationSignal(baseCoordinator.getSignal())
+                .build();
         final CountDownLatch leafStarted = new CountDownLatch(1);
         final CountDownLatch perRunTripped = new CountDownLatch(1);
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> {
-                    final SubagentExecutionEnvironment perRun = invocation.getArgument(0,
-                            SubagentExecutionEnvironment.class);
+                    final SubagentLaunchContext perRun = invocation.getArgument(0, SubagentLaunchContext.class);
                     perRun.getCancellationSignal().onCancel(perRunTripped::countDown);
                     leafStarted.countDown();
                     // Block until the app-wide trip cascades into THIS run's signal (cooperative stop), then return.
@@ -560,8 +557,8 @@ class WorkflowPhase4Test {
                 .builder().iterationCount(1).tokenUsage(TokenUsage.empty()).timestamps(now, now).build());
     }
 
-    private static SubagentExecutionEnvironment env() {
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
+    private static SubagentLaunchContext env() {
+        return SubagentLaunchContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
                 .subagentRegistry(new InMemorySubagentRegistry()).toolRegistry(new DefaultToolRegistry())
                 .hookRegistry(new DefaultHookRegistry()).defaultModel(LlmModel.builder().name("gpt-4").build()).build();
     }
@@ -572,7 +569,7 @@ class WorkflowPhase4Test {
         private final ConcurrentLinkedQueue<String> branchKeys = new ConcurrentLinkedQueue<>();
         private final ConcurrentLinkedQueue<ExecutionEnvironment> branches = new ConcurrentLinkedQueue<>();
 
-        SubagentExecutionEnvironment attachTo(SubagentExecutionEnvironment base) {
+        SubagentLaunchContext attachTo(SubagentLaunchContext base) {
             return base.toBuilder().executionEnvironment(this).build();
         }
 

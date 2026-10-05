@@ -22,8 +22,8 @@ import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.workflow.RunId;
 import at.aimon.core.workflow.WorkflowRunner;
@@ -50,7 +50,7 @@ abstract class AbstractGraalJsRunTest {
     void baseSetUp() {
         engines = GraalJsEngineHolder.create();
         manager = mock(SubagentExecutionManager.class);
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> {
                     final Subagent subagent = invocation.getArgument(1, Subagent.class);
                     final String goal = invocation.getArgument(2, String.class);
@@ -97,8 +97,8 @@ abstract class AbstractGraalJsRunTest {
                 .builder().iterationCount(1).tokenUsage(TokenUsage.empty()).timestamps(now, now).build());
     }
 
-    protected static SubagentExecutionEnvironment env() {
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
+    protected static SubagentLaunchContext env() {
+        return SubagentLaunchContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
                 .subagentRegistry(new InMemorySubagentRegistry()).toolRegistry(new DefaultToolRegistry())
                 .hookRegistry(new DefaultHookRegistry()).defaultModel(LlmModel.builder().name("gpt-4").build()).build();
     }

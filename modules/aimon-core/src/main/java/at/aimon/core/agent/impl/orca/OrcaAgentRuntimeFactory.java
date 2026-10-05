@@ -67,8 +67,8 @@ import at.aimon.core.skill.policy.session.SessionApprovalStore;
 import at.aimon.core.skill.repository.BundledSkillMaterializer;
 import at.aimon.core.subagent.CompositeSubagentRegistry;
 import at.aimon.core.subagent.DefaultSubagentRegistry;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.subagent.task.InMemorySessionSnapshotStore;
 import at.aimon.core.subagent.task.InMemoryTaskResultStore;
@@ -645,8 +645,7 @@ public class OrcaAgentRuntimeFactory {
      * <p>
      * The bundled-skill registry inside {@code agentBundle} is used as-is; if the bundle was loaded with a no-shell
      * parser (the default for {@link at.aimon.core.agent.impl.AdaptiveAgentBundleLoader}), bundle-side {@code shell}
-     * hooks
-     * will still fail at parse time. Inject the same shell-aware parser into the loader to lift that restriction.
+     * hooks will still fail at parse time. Inject the same shell-aware parser into the loader to lift that restriction.
      *
      * @param agentBundle
      *            the agent bundle (must not be null)
@@ -996,12 +995,11 @@ public class OrcaAgentRuntimeFactory {
                 .sessionApprovalStore(sessionApprovalStore).skillInvocationPolicy(skillInvocationPolicy)
                 .rewakeService(rewakeService).build();
 
-        // When enabled, build ONE per-context (agent-scoped) workflow runner so the Workflow tool can
-        // submit background runs and the CLI /runs command can inspect them. It borrows the context's
-        // registries/manager
-        // via a base environment; the context owns it and closes it in close(). Disabled => null (no hosting pool
-        // created). Background runs are fire-and-forget: they run under this base environment and do not carry the
-        // invoking execution's principal or trace attribution.
+        // When enabled, build ONE per-context (agent-scoped) workflow runner so the Workflow tool can submit background
+        // runs and the CLI /runs command can inspect them. It borrows the context's registries/manager via a base
+        // launch context; the context owns it and closes it in close(). Disabled => null (no hosting pool created).
+        // Background runs are fire-and-forget: they run under this base launch context and do not carry the invoking
+        // execution's principal or trace attribution.
         final WorkflowRunner workflowRunner = workflowRunnerEnabled
                 ? buildWorkflowRunner(agentRuntimeId, agent, subagentRegistry, toolRegistry, hookRegistry,
                         subagentExecutionManager, toolContextEnrichers, executionEnvironmentProvider)
@@ -1139,9 +1137,9 @@ public class OrcaAgentRuntimeFactory {
 
     /**
      * Builds the per-context (agent-scoped) {@link WorkflowRunner}. It borrows this context's registries /
-     * manager through a base {@link SubagentExecutionEnvironment} (never owning or closing them) and is configured with
+     * manager through a base {@link SubagentLaunchContext} (never owning or closing them) and is configured with
      * an in-memory resume step cache; the run store and background hosting pool take their in-memory defaults. The base
-     * environment carries the runtime's execution environment provider but no parent environment — there is no
+     * launch context carries the runtime's execution environment provider but no parent environment — there is no
      * calling execution — so an isolated step resolves one and derives its branch with {@code isolate()}.
      */
     @SuppressWarnings("checkstyle:ParameterNumber")
@@ -1156,12 +1154,12 @@ public class OrcaAgentRuntimeFactory {
         // The agent's allow-list is read from the agent rather than from a ToolContext, unlike the per-call runners:
         // this one is agent-scoped and has no calling execution to read from. Same ceiling either way — every run it
         // spawns is a run of this agent's.
-        final SubagentExecutionEnvironment baseEnv = SubagentExecutionEnvironment.builder()
-                .agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry).toolRegistry(toolRegistry)
-                .hookRegistry(hookRegistry).defaultModel(agent.getMetadata().getModel())
-                .toolContextEnrichers(toolContextEnrichers).callerAllowedTools(agent.getAllowedTools())
-                .executionEnvironmentProvider(executionEnvironmentProvider).build();
-        return WorkflowRunners.create(subagentExecutionManager, baseEnv,
+        final SubagentLaunchContext baseLaunchContext = SubagentLaunchContext.builder().agentRuntimeId(agentRuntimeId)
+                .subagentRegistry(subagentRegistry).toolRegistry(toolRegistry).hookRegistry(hookRegistry)
+                .defaultModel(agent.getMetadata().getModel()).toolContextEnrichers(toolContextEnrichers)
+                .callerAllowedTools(agent.getAllowedTools()).executionEnvironmentProvider(executionEnvironmentProvider)
+                .build();
+        return WorkflowRunners.create(subagentExecutionManager, baseLaunchContext,
                 WorkflowRunnerOptions.builder().stepResultCache(WorkflowRunners.inMemoryStepResultCache()).build());
     }
 

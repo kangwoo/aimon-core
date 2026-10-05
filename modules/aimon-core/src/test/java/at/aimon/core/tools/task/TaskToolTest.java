@@ -38,8 +38,8 @@ import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentMetadata;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.subagent.exception.SubagentNotFoundException;
@@ -189,7 +189,7 @@ class TaskToolTest {
     void executeForwardsTheCallersConversationAsTheInvoker() {
         final SessionId caller = SessionId.generate();
 
-        final SubagentExecutionEnvironment env = captureEnvFor(
+        final SubagentLaunchContext env = captureEnvFor(
                 ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeId.of("agent:test"))
                         .put(ToolContextKeys.SESSION_ID, caller).build());
 
@@ -203,7 +203,7 @@ class TaskToolTest {
         final SessionId user = SessionId.generate();
         final SessionId intermediateFork = SessionId.generate();
 
-        final SubagentExecutionEnvironment env = captureEnvFor(
+        final SubagentLaunchContext env = captureEnvFor(
                 ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeId.of("agent:test"))
                         .put(ToolContextKeys.SESSION_ID, intermediateFork)
                         .put(ToolContextKeys.INVOKING_SESSION_ID, user).build());
@@ -244,7 +244,7 @@ class TaskToolTest {
         // Inside a forked skill the caller's registry carries the skill's hooks; the constructor's does not (EE-49).
         final HookRegistry fromContext = new DefaultHookRegistry();
 
-        final SubagentExecutionEnvironment env = captureEnvFor(
+        final SubagentLaunchContext env = captureEnvFor(
                 HookRegistryAccess.withHookRegistry(contextWithId(), fromContext));
 
         assertThat(env.getHookRegistry()).isSameAs(fromContext);
@@ -256,14 +256,13 @@ class TaskToolTest {
     }
 
     /** Runs a successful foreground Task against the given context and returns the environment it built. */
-    private SubagentExecutionEnvironment captureEnvFor(ToolContext context) {
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"), anyString(),
+    private SubagentLaunchContext captureEnvFor(ToolContext context) {
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"), anyString(),
                 anyString())).thenReturn(successResult());
 
         tool.execute(ToolInput.of(Map.of("subagent_name", "Explore", "prompt", "p", "description", "d")), context);
 
-        final ArgumentCaptor<SubagentExecutionEnvironment> captor = ArgumentCaptor
-                .forClass(SubagentExecutionEnvironment.class);
+        final ArgumentCaptor<SubagentLaunchContext> captor = ArgumentCaptor.forClass(SubagentLaunchContext.class);
         verify(executionManager).execute(captor.capture(), anyString(), eq("Explore"), anyString(), anyString());
         return captor.getValue();
     }
@@ -276,7 +275,7 @@ class TaskToolTest {
         store.save("task-123", "Explore", AgentRuntimeId.of("agent:test"), saved);
         TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, executionManager,
                 List.of(), null, store);
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"), anyString(),
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"), anyString(),
                 anyString())).thenReturn(successResult());
         ToolInput input = ToolInput
                 .of(Map.of("subagent_name", "Explore", "prompt", "p", "description", "d", "resume", "task-123"));
@@ -284,8 +283,7 @@ class TaskToolTest {
         ToolResult result = withStore.execute(input, contextWithId());
 
         assertThat(result.isSuccess()).isTrue();
-        ArgumentCaptor<SubagentExecutionEnvironment> envCaptor = ArgumentCaptor
-                .forClass(SubagentExecutionEnvironment.class);
+        ArgumentCaptor<SubagentLaunchContext> envCaptor = ArgumentCaptor.forClass(SubagentLaunchContext.class);
         verify(executionManager).execute(envCaptor.capture(), anyString(), eq("Explore"), anyString(), anyString());
         assertThat(envCaptor.getValue().getPreviousSnapshot()).contains(saved);
         assertThat(envCaptor.getValue().getSessionSnapshotStore()).contains(store);
@@ -307,7 +305,7 @@ class TaskToolTest {
 
         assertThat(result.isError()).isTrue();
         assertThat(result.getContent()).contains("belongs to subagent 'Explore'").contains("not 'Plan'");
-        verify(executionManager, never()).execute(any(SubagentExecutionEnvironment.class), anyString(), anyString(),
+        verify(executionManager, never()).execute(any(SubagentLaunchContext.class), anyString(), anyString(),
                 anyString(), anyString());
     }
 
@@ -328,7 +326,7 @@ class TaskToolTest {
         assertThat(result.isError()).isTrue();
         // Reported as unknown id — the foreign transcript's existence is not leaked.
         assertThat(result.getContent()).contains("No resumable task found for id: task-123");
-        verify(executionManager, never()).execute(any(SubagentExecutionEnvironment.class), anyString(), anyString(),
+        verify(executionManager, never()).execute(any(SubagentLaunchContext.class), anyString(), anyString(),
                 anyString(), anyString());
     }
 
@@ -355,7 +353,7 @@ class TaskToolTest {
         Subagent gp = stubSubagent("general-purpose", "general");
         Subagent explore = stubSubagent("Explore", "explore files");
         when(subagentRegistry.getAllSubagents()).thenReturn(List.of(gp, explore));
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"), anyString(),
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"), anyString(),
                 anyString())).thenThrow(new SubagentNotFoundException("Explore"));
 
         ToolResult result = tool.execute(validInput(), contextWithId());
@@ -366,7 +364,7 @@ class TaskToolTest {
 
     @Test
     void executeReturnsFormattedResultOnSuccess() {
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"),
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"),
                 eq("Find auth files"), eq("auth"))).thenReturn(successResult());
 
         ToolResult result = tool.execute(validInput(), contextWithId());
@@ -380,7 +378,7 @@ class TaskToolTest {
 
     @Test
     void executeReturnsBackgroundLaunchMessageWhenRunInBackground() {
-        when(executionManager.executeInBackground(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"),
+        when(executionManager.executeInBackground(any(SubagentLaunchContext.class), anyString(), eq("Explore"),
                 anyString(), anyString())).thenReturn(CompletableFuture.completedFuture(successResult()));
 
         ToolInput input = ToolInput.of(Map.of("subagent_name", "Explore", "prompt", "Find auth files", "description",
@@ -430,7 +428,7 @@ class TaskToolTest {
 
     @Test
     void foregroundIsNotRefusedWhileASkillsGuardHooksAreActive() {
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"), anyString(),
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"), anyString(),
                 anyString())).thenReturn(successResult());
         final at.aimon.core.skill.hook.SkillScopedHookRegistry view = new at.aimon.core.skill.hook.SkillScopedHookRegistry(
                 new at.aimon.core.hook.DefaultHookRegistry(), "deploy", at.aimon.core.skill.hook.SkillHookSet.builder()
@@ -441,7 +439,7 @@ class TaskToolTest {
 
     @Test
     void backgroundRunsOnceTheSkillsLayerIsClosed_andWhenTheSkillOnlyObserves() {
-        when(executionManager.executeInBackground(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"),
+        when(executionManager.executeInBackground(any(SubagentLaunchContext.class), anyString(), eq("Explore"),
                 anyString(), anyString())).thenReturn(CompletableFuture.completedFuture(successResult()));
         final HookRegistry runtime = new at.aimon.core.hook.DefaultHookRegistry();
         final at.aimon.core.skill.hook.SkillScopedHookRegistry closed = new at.aimon.core.skill.hook.SkillScopedHookRegistry(
@@ -472,7 +470,7 @@ class TaskToolTest {
     @Test
     void executeNamesTheCompletionReasonAfterTheResultWhenTheForksAnswerWasCut() {
         final String partial = "The module has three packages: api, impl, and" + TruncatedResponses.TRUNCATION_MARKER;
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"),
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"),
                 eq("Find auth files"), eq("auth")))
                 .thenReturn(SubagentExecutionResult.success(partial, emptySnapshot(), metadata(),
                         CompletionReason.TRUNCATED));
@@ -488,7 +486,7 @@ class TaskToolTest {
 
     @Test
     void executeLeavesACompletedResultExactlyAsItWas() {
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"),
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"),
                 eq("Find auth files"), eq("auth"))).thenReturn(successResult());
 
         ToolResult result = tool.execute(validInput(), contextWithId());
@@ -501,7 +499,7 @@ class TaskToolTest {
     void executeNamesTheCompletionReasonOfAFailedForkWithNoGloss() {
         final String stopMessage = "Execution aborted: 3 consecutive tool-only iterations made no progress (all tool "
                 + "calls failed)";
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"),
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"),
                 eq("Find auth files"), eq("auth")))
                 .thenReturn(SubagentExecutionResult.failure(stopMessage, emptySnapshot(), metadata(),
                         CompletionReason.ERROR));
@@ -515,7 +513,7 @@ class TaskToolTest {
     @Test
     void executeNamesAForkAnOnStartHookBlocked() {
         final String refusal = "Execution blocked by OnStart hook [SUBAGENT/Explore]: no forks today";
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"),
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"),
                 eq("Find auth files"), eq("auth")))
                 .thenReturn(SubagentExecutionResult.failure(refusal, emptySnapshot(), metadata(),
                         CompletionReason.BLOCKED));
@@ -546,7 +544,7 @@ class TaskToolTest {
                 .timestamps(now, now).build();
         SessionSnapshot snapshot = SessionSnapshot.of(SessionId.generate(), "sys", List.of());
         SubagentExecutionResult huge = SubagentExecutionResult.success(hugeSummary, snapshot, metadata);
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"),
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"),
                 eq("Find auth files"), eq("auth"))).thenReturn(huge);
 
         ToolResult result = tool.execute(validInput(), contextWithId());

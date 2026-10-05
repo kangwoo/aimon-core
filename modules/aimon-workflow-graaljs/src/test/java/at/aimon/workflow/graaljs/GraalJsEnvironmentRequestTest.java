@@ -29,7 +29,7 @@ import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.execution.DefaultSubagentExecutor;
 import at.aimon.core.workflow.RunId;
 import at.aimon.core.workflow.WorkflowRunner;
@@ -118,9 +118,8 @@ class GraalJsEnvironmentRequestTest {
         return requests;
     }
 
-    private static SubagentExecutionEnvironment env(InMemorySubagentRegistry registry,
-            ExecutionEnvironmentProvider provider) {
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
+    private static SubagentLaunchContext env(InMemorySubagentRegistry registry, ExecutionEnvironmentProvider provider) {
+        return SubagentLaunchContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
                 .subagentRegistry(registry).toolRegistry(new DefaultToolRegistry())
                 .hookRegistry(new DefaultHookRegistry()).defaultModel(LlmModel.builder().name("gpt-4").build())
                 .executionEnvironmentProvider(provider).build();

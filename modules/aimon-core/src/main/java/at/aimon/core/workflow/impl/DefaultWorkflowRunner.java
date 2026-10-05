@@ -23,8 +23,8 @@ import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptReason;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.workflow.RunHandle;
 import at.aimon.core.workflow.RunId;
 import at.aimon.core.workflow.RunQuery;
@@ -41,7 +41,7 @@ import at.aimon.core.workflow.WorkflowScript;
 
 /**
  * Default {@link WorkflowRunner}. Application-scoped: constructed once at bootstrap with borrowed collaborators (a
- * {@link SubagentExecutionManager} and a base {@link SubagentExecutionEnvironment}) which it never closes.
+ * {@link SubagentExecutionManager} and a base {@link SubagentLaunchContext}) which it never closes.
  *
  * <p>
  * Both foreground {@link #run(WorkflowScript, RunId)} and background {@link #runInBackground(WorkflowScript, RunId)}
@@ -55,7 +55,7 @@ import at.aimon.core.workflow.WorkflowScript;
  * A background run clones the subagent {@code executeInBackground} lifecycle at run granularity: a durable PENDING
  * {@code RunStore} record up front, then the script body on the run-hosting pool, a {@code whenComplete} finalizer that
  * records the terminal state and releases per-run resources, and a pool-rejection path that settles the run FAILED.
- * Each background run gets a <b>per-run environment</b> whose cancellation signal is its own coordinator's, so
+ * Each background run gets a <b>per-run launch context</b> whose cancellation signal is its own coordinator's, so
  * {@link #stop(RunId)} reaches the run's in-flight subagents (design §5.1). {@link #close()} shuts down the
  * runner-owned pools (shared fan-out + run-hosting); after close the fan-out dispatcher degrades to sequential, so
  * {@code run()} stays usable.
@@ -69,7 +69,7 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
     private static final int RESUBMIT_REGISTRY_SPINS = 256;
 
     private final SubagentExecutionManager manager;
-    private final SubagentExecutionEnvironment baseEnv;
+    private final SubagentLaunchContext baseLaunchContext;
     private final WorkflowConcurrencyConfig concurrency;
     private final WorkflowEventSink eventSink;
     private final WorkflowBudget budget;
@@ -87,11 +87,11 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
      *
      * @param manager
      *            the borrowed subagent execution manager (must not be null)
-     * @param baseEnv
-     *            the borrowed base execution environment (must not be null)
+     * @param baseLaunchContext
+     *            the borrowed base launch context (must not be null)
      */
-    public DefaultWorkflowRunner(SubagentExecutionManager manager, SubagentExecutionEnvironment baseEnv) {
-        this(builder(manager, baseEnv));
+    public DefaultWorkflowRunner(SubagentExecutionManager manager, SubagentLaunchContext baseLaunchContext) {
+        this(builder(manager, baseLaunchContext));
     }
 
     /**
@@ -99,8 +99,8 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
      *
      * @param manager
      *            the borrowed subagent execution manager (must not be null)
-     * @param baseEnv
-     *            the borrowed base execution environment (must not be null)
+     * @param baseLaunchContext
+     *            the borrowed base launch context (must not be null)
      * @param concurrency
      *            the fan-out concurrency configuration (must not be null)
      * @param eventSink
@@ -108,10 +108,11 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
      * @param budget
      *            the run-scoped agent-count/token backstops (must not be null)
      */
-    public DefaultWorkflowRunner(SubagentExecutionManager manager, SubagentExecutionEnvironment baseEnv,
+    public DefaultWorkflowRunner(SubagentExecutionManager manager, SubagentLaunchContext baseLaunchContext,
             WorkflowConcurrencyConfig concurrency, WorkflowEventSink eventSink, WorkflowBudget budget) {
-        this(builder(manager, baseEnv).concurrency(Objects.requireNonNull(concurrency, "concurrency cannot be null"))
-                .eventSink(eventSink).budget(Objects.requireNonNull(budget, "budget cannot be null")));
+        this(builder(manager, baseLaunchContext)
+                .concurrency(Objects.requireNonNull(concurrency, "concurrency cannot be null")).eventSink(eventSink)
+                .budget(Objects.requireNonNull(budget, "budget cannot be null")));
     }
 
     /**
@@ -119,8 +120,8 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
      *
      * @param manager
      *            the borrowed subagent execution manager (must not be null)
-     * @param baseEnv
-     *            the borrowed base execution environment (must not be null)
+     * @param baseLaunchContext
+     *            the borrowed base launch context (must not be null)
      * @param concurrency
      *            the fan-out concurrency configuration (must not be null)
      * @param eventSink
@@ -130,17 +131,17 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
      * @param stepResultCache
      *            the resume step cache; null is treated as {@link StepResultCache#NO_OP} (no resume)
      */
-    public DefaultWorkflowRunner(SubagentExecutionManager manager, SubagentExecutionEnvironment baseEnv,
+    public DefaultWorkflowRunner(SubagentExecutionManager manager, SubagentLaunchContext baseLaunchContext,
             WorkflowConcurrencyConfig concurrency, WorkflowEventSink eventSink, WorkflowBudget budget,
             StepResultCache stepResultCache) {
-        this(builder(manager, baseEnv).concurrency(Objects.requireNonNull(concurrency, "concurrency cannot be null"))
-                .eventSink(eventSink).budget(Objects.requireNonNull(budget, "budget cannot be null"))
-                .stepResultCache(stepResultCache));
+        this(builder(manager, baseLaunchContext)
+                .concurrency(Objects.requireNonNull(concurrency, "concurrency cannot be null")).eventSink(eventSink)
+                .budget(Objects.requireNonNull(budget, "budget cannot be null")).stepResultCache(stepResultCache));
     }
 
     private DefaultWorkflowRunner(Builder b) {
         this.manager = Objects.requireNonNull(b.manager, "manager cannot be null");
-        this.baseEnv = Objects.requireNonNull(b.baseEnv, "baseEnv cannot be null");
+        this.baseLaunchContext = Objects.requireNonNull(b.baseLaunchContext, "baseLaunchContext cannot be null");
         this.concurrency = b.concurrency != null ? b.concurrency : WorkflowConcurrencyConfig.defaults();
         this.eventSink = b.eventSink != null ? b.eventSink : WorkflowEventSink.NO_OP;
         this.budget = b.budget != null ? b.budget : WorkflowBudget.defaults();
@@ -165,12 +166,12 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
     /**
      * @param manager
      *            the borrowed subagent execution manager (must not be null)
-     * @param baseEnv
-     *            the borrowed base execution environment (must not be null)
+     * @param baseLaunchContext
+     *            the borrowed base launch context (must not be null)
      * @return a new builder for a fully configured runner (run store, background pool, resume cache, ...)
      */
-    public static Builder builder(SubagentExecutionManager manager, SubagentExecutionEnvironment baseEnv) {
-        return new Builder(manager, baseEnv);
+    public static Builder builder(SubagentExecutionManager manager, SubagentLaunchContext baseLaunchContext) {
+        return new Builder(manager, baseLaunchContext);
     }
 
     @Override
@@ -178,20 +179,21 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
         Objects.requireNonNull(script, "script cannot be null");
         Objects.requireNonNull(runId, "runId cannot be null");
         // Fan out onto the shared runner-owned pool. Foreground runs carry no owning agent-context yet (null
-        // agentRuntimeId); background runs use baseEnv's context. The shared DEFAULT_RUN_ID is documented as ephemeral
-        // ("no meaningful resume"), so it must never touch the step cache — otherwise every no-arg run() of every
-        // script would share one key space (same id, null context) and could replay each other's outcomes.
+        // agentRuntimeId); background runs use the base launch context's. The shared DEFAULT_RUN_ID is documented as
+        // ephemeral ("no meaningful resume"), so it must never touch the step cache — otherwise every no-arg run() of
+        // every script would share one key space (same id, null context) and could replay each other's outcomes.
         final StepResultCache cache = DEFAULT_RUN_ID.equals(runId) ? StepResultCache.NO_OP : stepResultCache;
         // Per-run coordinator for the foreground path too: a run-fatal abort must trip a signal the run's
-        // in-flight fan-out branches observe, and the borrowed baseEnv's app-wide signal must never be tripped by one
+        // in-flight fan-out branches observe, and the borrowed base launch context's app-wide signal must never be
+        // tripped by one
         // run's failure. The cascade registration keeps an app-wide stop reaching this run's subagents.
         final InterruptCoordinator coordinator = new DefaultInterruptCoordinator();
-        final CancellationSignal.Registration parentReg = baseEnv.getCancellationSignal()
+        final CancellationSignal.Registration parentReg = baseLaunchContext.getCancellationSignal()
                 .onCancel(() -> coordinator.requestInterrupt(InterruptReason.PARENT_CANCELLED));
-        final SubagentExecutionEnvironment perRunEnv = baseEnv.toBuilder().cancellationSignal(coordinator.getSignal())
-                .build();
-        final DefaultWorkflowContext ctx = new DefaultWorkflowContext(manager, perRunEnv, fanout, eventSink, budget,
-                new ResumeBinding(runId, null, cache), executionOptions);
+        final SubagentLaunchContext perRunLaunchContext = baseLaunchContext.toBuilder()
+                .cancellationSignal(coordinator.getSignal()).build();
+        final DefaultWorkflowContext ctx = new DefaultWorkflowContext(manager, perRunLaunchContext, fanout, eventSink,
+                budget, new ResumeBinding(runId, null, cache), executionOptions);
         try {
             return script.run(ctx);
         } finally {
@@ -218,8 +220,8 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
         // store is not hammered: the store claim is re-attempted only a handful of times, while the cheap node-local
         // registry lookup absorbs the spinning in between. Only a genuine cross-node owner (a shared store with no
         // local entry) exhausts the attempts and surfaces a clear error.
-        final WorkflowRun pending = WorkflowRun.pending(runId, runId.scriptName(), baseEnv.getPrincipal().orElse(null),
-                baseEnv.getAgentRuntimeId(), Instant.now());
+        final WorkflowRun pending = WorkflowRun.pending(runId, runId.scriptName(),
+                baseLaunchContext.getPrincipal().orElse(null), baseLaunchContext.getAgentRuntimeId(), Instant.now());
         for (int attempts = 0; attempts < MAX_RESUBMIT_STORE_ATTEMPTS; attempts++) {
             if (runStore.putIfAbsentOrTerminal(pending)) {
                 return dispatch(script, runId);
@@ -236,10 +238,10 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
     }
 
     private <T> RunHandle<T> dispatch(WorkflowScript<T> script, RunId runId) {
-        // Per-run coordinator + environment: the run's fan-out subagents observe THIS run's cancellation signal.
+        // Per-run coordinator + launch context: the run's fan-out subagents observe THIS run's cancellation signal.
         final InterruptCoordinator coordinator = new DefaultInterruptCoordinator();
-        final SubagentExecutionEnvironment perRunEnv = baseEnv.toBuilder().cancellationSignal(coordinator.getSignal())
-                .build();
+        final SubagentLaunchContext perRunLaunchContext = baseLaunchContext.toBuilder()
+                .cancellationSignal(coordinator.getSignal()).build();
         final RunControl control = new RunControl(coordinator, null);
         final CompletableFuture<T> future = new CompletableFuture<>();
         final RunHandle<T> handle = new RunHandle<>(runId, future);
@@ -253,7 +255,7 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
         final StepResultCache runCache = stepResultCache == StepResultCache.NO_OP
                 ? stepResultCache
                 : ScopedStepResultCache.scopeOrPassThrough(stepResultCache,
-                        Optional.ofNullable(perRunEnv.getAgentRuntimeId()));
+                        Optional.ofNullable(perRunLaunchContext.getAgentRuntimeId()));
 
         final Runnable body = () -> {
             // Stopped while still queued: settle KILLED without ever starting the script body — the documented
@@ -266,8 +268,9 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
             control.attachWorker(Thread.currentThread());
             runStore.transition(runId, WorkflowRunState.RUNNING);
             // Fan out onto the shared runner-owned pool (separate from this run-hosting worker).
-            final DefaultWorkflowContext ctx = new DefaultWorkflowContext(manager, perRunEnv, fanout, eventSink, budget,
-                    new ResumeBinding(runId, perRunEnv.getAgentRuntimeId(), runCache), executionOptions);
+            final DefaultWorkflowContext ctx = new DefaultWorkflowContext(manager, perRunLaunchContext, fanout,
+                    eventSink, budget, new ResumeBinding(runId, perRunLaunchContext.getAgentRuntimeId(), runCache),
+                    executionOptions);
             try {
                 future.complete(script.run(ctx));
             } catch (Throwable t) {
@@ -346,10 +349,10 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
 
     @Override
     public void close() {
-        // Shut down ONLY the runner-owned pools (run-hosting + shared fan-out). Borrowed manager/baseEnv are never
-        // closed. Drain the hosting pool first (stop starting new script bodies), then close the shared fan-out
-        // dispatcher — which is idempotent and thereafter degrades dispatch to sequential, so foreground run() stays
-        // usable after close().
+        // Shut down ONLY the runner-owned pools (run-hosting + shared fan-out). Borrowed manager/base launch context
+        // are never closed. Drain the hosting pool first (stop starting new script bodies), then close the shared
+        // fan-out dispatcher — which is idempotent and thereafter degrades dispatch to sequential, so foreground run()
+        // stays usable after close().
         runHostingExecutor.shutdown();
         try {
             if (!runHostingExecutor.awaitTermination(shutdownDrain.toMillis(), TimeUnit.MILLISECONDS)) {
@@ -398,7 +401,7 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
     /** Builder for a fully configured {@link DefaultWorkflowRunner}. */
     public static final class Builder {
         private final SubagentExecutionManager manager;
-        private final SubagentExecutionEnvironment baseEnv;
+        private final SubagentLaunchContext baseLaunchContext;
         private WorkflowConcurrencyConfig concurrency;
         private WorkflowEventSink eventSink;
         private WorkflowBudget budget;
@@ -406,9 +409,9 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
         private RunStore runStore;
         private WorkflowBackgroundConfig backgroundConfig;
 
-        private Builder(SubagentExecutionManager manager, SubagentExecutionEnvironment baseEnv) {
+        private Builder(SubagentExecutionManager manager, SubagentLaunchContext baseLaunchContext) {
             this.manager = manager;
-            this.baseEnv = baseEnv;
+            this.baseLaunchContext = baseLaunchContext;
         }
 
         /** Sets the fan-out concurrency config (default {@link WorkflowConcurrencyConfig#defaults()}). */

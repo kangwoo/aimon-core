@@ -82,8 +82,8 @@ class DefaultSubagentExecutionManagerBackgroundTest {
         return registry;
     }
 
-    private static SubagentExecutionEnvironment.Builder envBuilder(SubagentRegistry registry) {
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
+    private static SubagentLaunchContext.Builder envBuilder(SubagentRegistry registry) {
+        return SubagentLaunchContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
                 .subagentRegistry(registry).toolRegistry(new DefaultToolRegistry())
                 .hookRegistry(new DefaultHookRegistry()).defaultModel(LlmModel.builder().name("gpt-4").build());
     }
@@ -537,7 +537,7 @@ class DefaultSubagentExecutionManagerBackgroundTest {
         TerminalOrderingProbe probe = new TerminalOrderingProbe(new InMemoryBackgroundTaskStore(), resultStore);
         DefaultSubagentExecutionManager manager = newManager(
                 DefaultSubagentExecutionManager.newBackgroundExecutor(SubagentBackgroundConfig.of(1, 1)), probe);
-        SubagentExecutionEnvironment env = envBuilder(registryWithExplore()).taskResultStore(resultStore).build();
+        SubagentLaunchContext env = envBuilder(registryWithExplore()).taskResultStore(resultStore).build();
 
         manager.executeInBackground(env, "t1", SUBAGENT, "go", "");
         assertThat(running.await(2, TimeUnit.SECONDS)).isTrue();

@@ -10,8 +10,8 @@ import java.util.Optional;
  * <p>
  * {@link #list}/{@link #status} read the {@code RunStore}, so they observe runs across a scale-out deployment.
  * {@link #stop} is cooperative and node-local in effect: it trips the owning node's run coordinator so the run's
- * in-flight fan-out subagents observe the stop (via their per-run environment's cancellation signal) and unwind, after
- * which the run settles as {@link WorkflowRunState#KILLED}.
+ * in-flight fan-out subagents observe the stop (via their per-run launch context's cancellation signal) and unwind,
+ * after which the run settles as {@link WorkflowRunState#KILLED}.
  */
 public interface WorkflowRunController {
 

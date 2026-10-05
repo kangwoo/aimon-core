@@ -21,8 +21,8 @@ import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.skill.Skill;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.subagent.SubagentToolScope;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
@@ -136,7 +136,7 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
         // tools refused as "not permitted" even though the same skill ran inline without trouble.
         final Principal principal = toolContext.get(ToolContextKeys.PRINCIPAL).orElse(null);
 
-        final SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder().agentRuntimeId(agentRuntimeId)
+        final SubagentLaunchContext launchContext = SubagentLaunchContext.builder().agentRuntimeId(agentRuntimeId)
                 .subagentRegistry(subagentRegistry).toolRegistry(toolRegistry)
                 // The caller's registry, which for a skill with hooks is the view SkillTool layered them onto.
                 .hookRegistry(HookRegistryAccess.of(toolContext).orElse(hookRegistry)).defaultModel(defaultModel)
@@ -152,8 +152,8 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
         final String description = "skill:" + skill.getName();
 
         try {
-            final SubagentExecutionResult result = subagentExecutionManager.executeInline(env, taskId, effectiveTarget,
-                    goal, description);
+            final SubagentExecutionResult result = subagentExecutionManager.executeInline(launchContext, taskId,
+                    effectiveTarget, goal, description);
             if (result.isSuccess()) {
                 // A fork cut at max_tokens is a success whose answer is partial; say so by type, not only by the
                 // marker its text ends in, so a slash invocation can end its turn TRUNCATED (L-26).

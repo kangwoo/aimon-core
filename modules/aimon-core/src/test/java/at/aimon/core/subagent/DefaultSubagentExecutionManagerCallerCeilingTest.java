@@ -169,16 +169,16 @@ class DefaultSubagentExecutionManagerCallerCeilingTest {
         return Subagent.builder().name(name).systemPrompt("(inline)").tools(allowedTools).build();
     }
 
-    private static SubagentExecutionEnvironment env() {
+    private static SubagentLaunchContext env() {
         return baseEnv().build();
     }
 
-    private static SubagentExecutionEnvironment envAllowing(List<String> callerAllowedTools) {
+    private static SubagentLaunchContext envAllowing(List<String> callerAllowedTools) {
         return baseEnv().callerAllowedTools(callerAllowedTools.stream().map(AllowedTool::parse).toList()).build();
     }
 
-    private static SubagentExecutionEnvironment.Builder baseEnv() {
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
+    private static SubagentLaunchContext.Builder baseEnv() {
+        return SubagentLaunchContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
                 .subagentRegistry(new InMemorySubagentRegistry()).toolRegistry(new DefaultToolRegistry())
                 .hookRegistry(new DefaultHookRegistry()).defaultModel(LlmModel.builder().name("gpt-4").build());
     }

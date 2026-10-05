@@ -15,7 +15,8 @@
 >
 > **덧붙임 (2026-10-05, EE-60).** 이 설계가 만든 `UserLocale` 은 **지워졌다** — 타입, `getUserLocale()` / `userLocale(…)`,
 > `ToolContextKeys.USER_LOCALE` 전부다. §2.3 이 찾은 "읽는 곳이 없다" 가 Q1 의 답이 되었다. 본문은 그대로 두었고, 지운
-> 범위와 그렇게 정한 근거는 §12 에 있다.
+> 범위와 그렇게 정한 근거는 §12 에 있다. Q7 이 남긴 `SubagentExecutionEnvironment` 도 같은 날 `SubagentLaunchContext` 로
+> 개명되었다(EE-61, §13) — 본문과 §12 의 그 이름은 당시의 것이다.
 
 - 대상 브랜치: `herdr/ee14-environment-to-user-locale` (HEAD `89a8ed4`, PR #205 위)
 - 근거를 확인한 날짜: 2026-10-03. 아래의 파일 수·줄 번호는 모두 이 날짜, 이 브랜치 기준이다.
@@ -619,3 +620,32 @@ Q1 의 답이 나왔다. §2.3 이 찾은 것 — `timeZone` 을 읽는 운영 �
 이 변경은 저장소 밖을 깬다: `HookContext` 를 구현하거나 `getUserLocale()` 을 읽는 훅, `userLocale(…)` 을 부르는 조립 코드는
 그 호출을 지워야 한다. aimon-sandbox 의 `OrcaRuntimeSandboxE2ETest`(§2.5)가 EE-14 를 따라와 `.userLocale(…)` 을 부르고 있다면
 그 한 줄도 지운다 — 이 저장소에서 확인할 수 있는 것은 아니다.
+
+## 13. 그 뒤 — `SubagentExecutionEnvironment` 는 `SubagentLaunchContext` 가 되었다 (EE-61, 2026-10-05)
+
+Q7 이 백로그로 넘긴 인접한 관찰도 같은 날 닫혔다. 결정은 "지금 개명한다" 였고, 이 설계는 새 이름의 후보를 적어 두지 않았으므로
+(§3.4 는 "이번에 개명하지 않는다" 만 말한다) 이름은 착수할 때 골랐다.
+
+- **무엇인가.** 서브에이전트를 띄우는 쪽이 `SubagentExecutionManager` 에 넘기는 협력자 묶음이다 — 런타임 id, 레지스트리 셋,
+  기본 모델, 실행 속성, 저장소들, 그리고 **스폰한 실행의** `ExecutionEnvironment` 와 제공자. 실행 환경이 아니라 실행 환경을
+  **나르는** 것이다.
+- **왜 `LaunchContext` 인가.** 이 저장소에서 `*Context` 는 실행 하나에 딸린 값이다. 이 타입의 인스턴스 하나는 띄우기 한 번에
+  쓰인다 — 도구(`TaskTool` · `WorkflowTool` · `GraalJsWorkflowTool` · `SubagentBackedSkillForkExecutor`)는 호출마다 새로 만든다.
+  워크플로 러너만 **base** 를 러너 수명 동안 들고 있는데, 그것은 틀이고 런마다 · 격리 스텝마다 `toBuilder()` 로 파생한 인스턴스가
+  실제로 넘어간다. 값 객체라 자기 수명이 없고 들고 있는 쪽의 수명을 따른다는 것을 타입 Javadoc 에 적었다.
+- **`SubagentExecutionContext` 와의 차이.** 띄우기의 양 끝이다. launch context 는 **호출자가 매니저에게** 주는 것이고(서브에이전트가
+  아직 풀리지 않았다), execution context 는 **매니저가 실행기에게** 주는 것이다(풀린 `Subagent` 와 그 포크의 협력자). 이름의
+  앞 단어가 그 차이를 말한다.
+- **바꾼 것.** 타입과 빌더, main 소스의 매개변수 · 필드 · 지역 변수(`env` → `launchContext`, `baseEnv` → `baseLaunchContext`,
+  `perRunEnv` → `perRunLaunchContext`), 내부 메서드(`buildEnvironment` → `buildLaunchContext`, `resolveEnv` →
+  `resolveLaunchContext`), 그것을 "the environment" 라고 부르던 Javadoc 과 주석, 예외 메시지 둘
+  (`"Execution environment cannot be null"` → `"Launch context cannot be null"`, `"baseEnv cannot be null"` →
+  `"baseLaunchContext cannot be null"`). 접근자와 빌더 메서드의 이름은 하나도 바뀌지 않았다.
+- **바꾸지 않은 것.** `getExecutionEnvironment()` / `getExecutionEnvironmentProvider()` — 진짜 `ExecutionEnvironment` 를 돌려준다.
+  다만 돌려주는 것이 포크의 환경이 아니라 **스폰한 실행의** 환경이라는 것은 이름에 없다(Javadoc 에만 있다). 백로그 EE-61 본문은
+  이 접근자를 `getParentExecutionEnvironment()` 라고 적었는데 그런 이름은 코드에 있은 적이 없다. 테스트의 지역 변수 이름(`env`)도
+  그대로 두었다.
+
+대응표는 [`../../migration/rename-maps.md`](../../migration/rename-maps.md) 의
+"`SubagentExecutionEnvironment` → `SubagentLaunchContext`" 절에 있다. 이 문서의 본문과 §12, 그리고 다른 승인본 설계 문서
+(`execution-environment-implementation.md`, EE-9/12, EE-49/51/58)의 본문은 옛 이름 그대로다.

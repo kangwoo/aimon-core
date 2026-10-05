@@ -101,7 +101,7 @@ This effective metadata applies to every LLM call in the ReAct loop, and propaga
 
 ### 3.2 Subagents
 
-When Orca runs a subagent through TaskTool, the parent metadata propagates automatically as `SubagentExecutionEnvironment.parentLlmCallMetadata`. `DefaultSubagentExecutor` builds its effective metadata like this:
+When Orca runs a subagent through TaskTool, the parent metadata propagates automatically as `SubagentLaunchContext.parentLlmCallMetadata`. `DefaultSubagentExecutor` builds its effective metadata like this:
 
 | Field | Value |
 |------|---|

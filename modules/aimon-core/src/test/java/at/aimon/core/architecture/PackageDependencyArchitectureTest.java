@@ -52,8 +52,8 @@ import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.shell.ShellCorePackage;
 import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 
 /**
@@ -287,7 +287,7 @@ class PackageDependencyArchitectureTest {
 
     @Test
     @DisplayName("at.aimon.core.workflow may depend only on the subagent SPI types (SubagentExecutionManager,"
-            + " SubagentExecutionEnvironment, Subagent, SubagentExecutionResult) and the execution-environment SPI"
+            + " SubagentLaunchContext, Subagent, SubagentExecutionResult) and the execution-environment SPI"
             + " types it isolates branches with — not on the Default* impls that share the subagent package (WU-6,"
             + " subagent-workflow design §3.3 / B4)")
     void workflowMayDependOnlyOnSubagentSpiTypes() {
@@ -308,7 +308,7 @@ class PackageDependencyArchitectureTest {
         // resolving the parent environment through the run's provider when the run has none (§5.2) — the SPI types
         // and the resolve helper, never environment.impl.
         ArchRule rule = classes().that().resideInAPackage(PKG_WORKFLOW).should().onlyDependOnClassesThat(
-                JavaClass.Predicates.belongToAnyOf(SubagentExecutionManager.class, SubagentExecutionEnvironment.class,
+                JavaClass.Predicates.belongToAnyOf(SubagentExecutionManager.class, SubagentLaunchContext.class,
                         Subagent.class, SubagentExecutionResult.class, CompletionReason.class, ExecutionMetadata.class,
                         TokenUsage.class, AgentRuntimeId.class, ExecutionEnvironment.class,
                         ExecutionEnvironmentProvider.class, EnvironmentRequest.class, ExecutionEnvironments.class)

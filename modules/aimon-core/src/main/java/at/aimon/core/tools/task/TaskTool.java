@@ -39,8 +39,8 @@ import at.aimon.core.llm.DynamicToolDefinitionProvider;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.subagent.exception.SubagentNotFoundException;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
@@ -422,11 +422,10 @@ public class TaskTool extends AbstractTool {
                 if (sessionSnapshotStore == null) {
                     return ToolResult.error("Resume is not available: no session snapshot store is configured.");
                 }
-                // Confine the load to the caller's own runtime: background task ids are globally unique but
-                // shared across agents in one snapshot store, so without scoping any agent could resume — and thereby
-                // read — another agent's transcript just by knowing its id. A foreign-context or untagged transcript
-                // loads as empty, indistinguishable from an unknown id. Non-Orca paths without a context id pass
-                // through
+                // Confine the load to the caller's own runtime: background task ids are globally unique but shared
+                // across agents in one snapshot store, so without scoping any agent could resume — and thereby read —
+                // another agent's transcript just by knowing its id. A foreign-context or untagged transcript loads as
+                // empty, indistinguishable from an unknown id. Non-Orca paths without a context id pass through
                 // unscoped (see ScopedSessionSnapshotStore#scopeOrPassThrough).
                 final SessionSnapshotStore scopedStore = ScopedSessionSnapshotStore
                         .scopeOrPassThrough(sessionSnapshotStore, maybeAgentRuntimeId);
@@ -444,12 +443,14 @@ public class TaskTool extends AbstractTool {
                 previousSnapshot = resumable.getSnapshot();
             }
 
-            // Require the agent runtime id to spawn the subagent (resolved above; scopes resume + stamps the env).
+            // Require the agent runtime id to spawn the subagent (resolved above; scopes resume + stamps the launch
+            // context).
             final AgentRuntimeId agentRuntimeId = maybeAgentRuntimeId
                     .orElseThrow(() -> new IllegalStateException("Agent runtime ID not found in tool context"));
 
-            // Build execution environment once for reuse
-            final SubagentExecutionEnvironment env = buildEnvironment(context, agentRuntimeId, model, previousSnapshot);
+            // Build the launch context once for reuse
+            final SubagentLaunchContext launchContext = buildLaunchContext(context, agentRuntimeId, model,
+                    previousSnapshot);
 
             // Generate unique task ID
             final String taskId = UUID.randomUUID().toString();
@@ -469,11 +470,11 @@ public class TaskTool extends AbstractTool {
                     log.warn("Task (background): the hooks of skill(s) {} stop firing for this subagent once the"
                             + " skill returns", hookSkills);
                 }
-                // Launch subagent in background. The cancellation signal carried on env still cooperatively stops the
-                // background subagent while the parent execution is alive; once that execution ends, cancellation of
-                // the background task is owned by the execution manager's TaskStop control plane.
+                // Launch subagent in background. The cancellation signal carried on launchContext still cooperatively
+                // stops the background subagent while the parent execution is alive; once that execution ends,
+                // cancellation of the background task is owned by the execution manager's TaskStop control plane.
                 final CompletableFuture<SubagentExecutionResult> future = subagentExecutionManager
-                        .executeInBackground(env, taskId, subagentName, prompt, description);
+                        .executeInBackground(launchContext, taskId, subagentName, prompt, description);
 
                 return ToolResult.success(String.format(
                         "Background task launched successfully.\n" + "Task ID: %s\n" + "Subagent: %s\n" + "Task: %s\n\n"
@@ -484,8 +485,8 @@ public class TaskTool extends AbstractTool {
 
             // Synchronous (foreground) launch: the subagent runs on this tool's thread. Register a thread-interrupt
             // terminator on the parent-issued registrar (EXTERNALLY_TERMINATED) so a parent cancel can break a blocking
-            // subagent call out-of-band, in addition to the cooperative signal carried on env.
-            final SubagentExecutionResult result = runForeground(context, env, taskId, subagentName, prompt,
+            // subagent call out-of-band, in addition to the cooperative signal carried on launchContext.
+            final SubagentExecutionResult result = runForeground(context, launchContext, taskId, subagentName, prompt,
                     description);
 
             // Format result
@@ -504,7 +505,7 @@ public class TaskTool extends AbstractTool {
     }
 
     /**
-     * Collects everything the spawned subagent inherits from the calling execution into one environment.
+     * Collects everything the spawned subagent inherits from the calling execution into one launch context.
      *
      * <p>
      * Every value read here is optional: {@code TaskTool} is reachable from non-Orca paths that populate little or
@@ -519,10 +520,10 @@ public class TaskTool extends AbstractTool {
      *            the caller's model override, or null to use the subagent's own frontmatter
      * @param previousSnapshot
      *            the transcript to resume from, or null for a fresh run
-     * @return the environment to launch the subagent with
+     * @return the launch context to launch the subagent with
      */
-    private SubagentExecutionEnvironment buildEnvironment(ToolContext context, AgentRuntimeId agentRuntimeId,
-            String model, SessionSnapshot previousSnapshot) {
+    private SubagentLaunchContext buildLaunchContext(ToolContext context, AgentRuntimeId agentRuntimeId, String model,
+            SessionSnapshot previousSnapshot) {
 
         // Extract execution attributes from tool context for subagent propagation
         final Map<String, Object> executionAttributes = context.get(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY)
@@ -563,7 +564,7 @@ public class TaskTool extends AbstractTool {
         final Consumer<AgentExecutionEvent> parentEventSink = context.get(ToolContextKeys.AGENT_EVENT_SINK)
                 .orElse(null);
 
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry)
+        return SubagentLaunchContext.builder().agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry)
                 .toolRegistry(toolRegistry)
                 // The caller's registry first: inside a forked skill it carries the skill's hooks, and a subagent
                 // started from there must stay under them.
@@ -589,12 +590,13 @@ public class TaskTool extends AbstractTool {
      * <p>
      * The terminator is unregistered in a finally block so it cannot leak into a later tool invocation should the
      * parent re-use the registrar. When no registrar is present (non-Orca call paths), the subagent simply runs to
-     * completion and cancellation falls back to the cooperative {@code parentSignal} forwarded into {@code env}.
+     * completion and cancellation falls back to the cooperative {@code parentSignal} forwarded into
+     * {@code launchContext}.
      *
      * @param context
      *            the tool context (used to read the optional {@link InterruptToolKeys#TERMINATOR_REGISTRAR})
-     * @param env
-     *            the subagent execution environment
+     * @param launchContext
+     *            the launch context
      * @param taskId
      *            the generated task id
      * @param subagentName
@@ -605,17 +607,17 @@ public class TaskTool extends AbstractTool {
      *            the short task description
      * @return the subagent execution result (never null)
      */
-    private SubagentExecutionResult runForeground(ToolContext context, SubagentExecutionEnvironment env, String taskId,
-            String subagentName, String prompt, String description) {
+    private SubagentExecutionResult runForeground(ToolContext context, SubagentLaunchContext launchContext,
+            String taskId, String subagentName, String prompt, String description) {
         final TerminatorRegistrar registrar = context.get(InterruptToolKeys.TERMINATOR_REGISTRAR).orElse(null);
         if (registrar == null) {
-            return subagentExecutionManager.execute(env, taskId, subagentName, prompt, description);
+            return subagentExecutionManager.execute(launchContext, taskId, subagentName, prompt, description);
         }
         final Thread toolThread = Thread.currentThread();
         final Terminator terminator = toolThread::interrupt;
         registrar.register(terminator);
         try {
-            return subagentExecutionManager.execute(env, taskId, subagentName, prompt, description);
+            return subagentExecutionManager.execute(launchContext, taskId, subagentName, prompt, description);
         } finally {
             registrar.unregister(terminator);
         }

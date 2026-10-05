@@ -31,8 +31,8 @@ import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 
 @DisplayName("WorkflowPatterns / Verdict — quality-pattern helpers (Phase 4 §4.4)")
@@ -48,7 +48,7 @@ class WorkflowPatternsTest {
             Map.of("verified", Map.of("type", "boolean")), "required", List.of("verified"));
 
     private SubagentExecutionManager manager;
-    private SubagentExecutionEnvironment env;
+    private SubagentLaunchContext env;
     private Subagent sub;
     private WorkflowRunner runner;
 
@@ -241,7 +241,7 @@ class WorkflowPatternsTest {
 
         assertThat(out).isSameAs(draft);
         // One critique + one failed revision, then the loop breaks — the remaining budget is not burned.
-        verify(manager, times(2)).execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString());
+        verify(manager, times(2)).execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString());
     }
 
     @Test
@@ -255,7 +255,7 @@ class WorkflowPatternsTest {
                 ctx -> WorkflowPatterns.completenessCritic(ctx, draft, subagent("critic"), subagent("reviser"), 3));
 
         assertThat(out).isSameAs(draft);
-        verify(manager, times(1)).execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString());
+        verify(manager, times(1)).execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString());
     }
 
     @Test
@@ -323,12 +323,12 @@ class WorkflowPatternsTest {
     }
 
     private void stubJson(String finalAnswer) {
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> success(finalAnswer));
     }
 
     private void stubEcho() {
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> success("ans:" + invocation.getArgument(2, String.class)));
     }
 
@@ -337,7 +337,7 @@ class WorkflowPatternsTest {
      * producer/judge/critic/reviser roles from a single mock.
      */
     private void stubByGoal(Function<String, SubagentExecutionResult> responder) {
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> responder.apply(invocation.getArgument(2, String.class)));
     }
 
@@ -372,8 +372,8 @@ class WorkflowPatternsTest {
                 .build();
     }
 
-    private static SubagentExecutionEnvironment env() {
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
+    private static SubagentLaunchContext env() {
+        return SubagentLaunchContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
                 .subagentRegistry(new InMemorySubagentRegistry()).toolRegistry(new DefaultToolRegistry())
                 .hookRegistry(new DefaultHookRegistry()).defaultModel(LlmModel.builder().name("gpt-4").build()).build();
     }

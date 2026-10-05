@@ -32,7 +32,7 @@ import at.aimon.core.skill.hook.SkillHookSet;
 import at.aimon.core.skill.hook.SkillScopedHookRegistry;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.workflow.WorkflowBackgroundConfig;
@@ -224,8 +224,7 @@ class GraalJsWorkflowToolTest extends AbstractGraalJsRunTest {
                 insideSkill(fromContext));
 
         assertThat(result.isSuccess()).as(result.getContent()).isTrue();
-        final ArgumentCaptor<SubagentExecutionEnvironment> env = ArgumentCaptor
-                .forClass(SubagentExecutionEnvironment.class);
+        final ArgumentCaptor<SubagentLaunchContext> env = ArgumentCaptor.forClass(SubagentLaunchContext.class);
         verify(manager).execute(env.capture(), any(Subagent.class), anyString());
         assertThat(env.getValue().getHookRegistry()).isSameAs(fromContext);
     }

@@ -33,7 +33,7 @@ import at.aimon.core.subagent.execution.SubagentExecutor;
 
 /**
  * Covers the inline single-subagent execution primitive
- * {@link SubagentExecutionManager#execute(SubagentExecutionEnvironment, Subagent, String)}: running a code-defined
+ * {@link SubagentExecutionManager#execute(SubagentLaunchContext, Subagent, String)}: running a code-defined
  * {@link Subagent} once without registering it in the environment's {@link SubagentRegistry}. This is the foundation
  * the
  * workflow layer's {@code agent()} call builds on.
@@ -116,7 +116,7 @@ class DefaultSubagentExecutionManagerInlineTest {
     @DisplayName("rejects null env / subagent / goal")
     void rejectsNullArguments() {
         final DefaultSubagentExecutionManager manager = newManager();
-        final SubagentExecutionEnvironment env = env(new InMemorySubagentRegistry());
+        final SubagentLaunchContext env = env(new InMemorySubagentRegistry());
         final Subagent inline = Subagent.builder().name("poet").systemPrompt("(inline)").build();
 
         assertThatNullPointerException().isThrownBy(() -> manager.execute(null, inline, "go"));
@@ -132,8 +132,8 @@ class DefaultSubagentExecutionManagerInlineTest {
         return new DefaultSubagentExecutionManager(reactExecutor, bgPool, null, behaviorRegistry);
     }
 
-    private static SubagentExecutionEnvironment env(SubagentRegistry subagentRegistry) {
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
+    private static SubagentLaunchContext env(SubagentRegistry subagentRegistry) {
+        return SubagentLaunchContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
                 .subagentRegistry(subagentRegistry).toolRegistry(new DefaultToolRegistry())
                 .hookRegistry(new DefaultHookRegistry()).defaultModel(LlmModel.builder().name("gpt-4").build()).build();
     }

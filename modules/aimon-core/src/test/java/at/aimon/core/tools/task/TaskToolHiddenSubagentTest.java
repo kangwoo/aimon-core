@@ -28,8 +28,8 @@ import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.exception.SubagentNotFoundException;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.tools.ToolContextKeys;
@@ -99,7 +99,7 @@ class TaskToolHiddenSubagentTest {
     @Test
     @DisplayName("the names offered after an unknown subagent leave the hidden one out")
     void theNotFoundListOmitsAHiddenSubagent() {
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("ghost"), anyString(),
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("ghost"), anyString(),
                 anyString())).thenThrow(new SubagentNotFoundException("ghost"));
 
         final ToolResult result = tool.execute(input("ghost", false), context());
@@ -112,7 +112,7 @@ class TaskToolHiddenSubagentTest {
     @DisplayName("a visible subagent is launched as before")
     void aVisibleSubagentStillRuns() {
         final Instant now = Instant.now();
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"), anyString(),
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"), anyString(),
                 anyString()))
                 .thenReturn(SubagentExecutionResult.success("done",
                         SessionSnapshot.of(SessionId.generate(), "sys", List.of()), ExecutionMetadata.builder()

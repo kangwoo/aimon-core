@@ -28,8 +28,8 @@ import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.tools.CallerAllowedTools;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
@@ -148,12 +148,12 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
      * @param defaultModel
      *            the default model for sub-agents (must not be null)
      * @param subagentRegistry
-     *            the subagent registry forwarded to the execution environment, and looked up for the built-in roles'
+     *            the subagent registry forwarded to the launch context, and looked up for the built-in roles'
      *            attributes (must not be null)
      * @param toolRegistry
-     *            the tool registry forwarded to the execution environment (must not be null)
+     *            the tool registry forwarded to the launch context (must not be null)
      * @param hookRegistry
-     *            the hook registry forwarded to the execution environment (must not be null)
+     *            the hook registry forwarded to the launch context (must not be null)
      * @param subagentExecutionManager
      *            the borrowed subagent execution manager (must not be null)
      * @param toolContextEnrichers
@@ -172,12 +172,12 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
      * @param defaultModel
      *            the default model for sub-agents (must not be null)
      * @param subagentRegistry
-     *            the subagent registry forwarded to the execution environment, and looked up for the built-in roles'
+     *            the subagent registry forwarded to the launch context, and looked up for the built-in roles'
      *            attributes (must not be null)
      * @param toolRegistry
-     *            the tool registry forwarded to the execution environment (must not be null)
+     *            the tool registry forwarded to the launch context (must not be null)
      * @param hookRegistry
-     *            the hook registry forwarded to the execution environment (must not be null)
+     *            the hook registry forwarded to the launch context (must not be null)
      * @param subagentExecutionManager
      *            the borrowed subagent execution manager (must not be null)
      * @param toolContextEnrichers
@@ -249,12 +249,12 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
                         + " must run within an " + "agent runtime.");
             }
 
-            final SubagentExecutionEnvironment env = buildEnvironment(agentRuntimeId, context);
+            final SubagentLaunchContext launchContext = buildLaunchContext(agentRuntimeId, context);
             log.debug("Workflow: strategy={} prompt='{}' perspectives={} synthesize={}", strategy, prompt, perspectives,
                     synthesize);
             // The per-call foreground runner owns a lazily-created fan-out pool; close it once the synchronous run()
             // returns so a long-lived process does not leak a worker pool per invocation.
-            try (WorkflowRunner runner = WorkflowRunners.create(subagentExecutionManager, env)) {
+            try (WorkflowRunner runner = WorkflowRunners.create(subagentExecutionManager, launchContext)) {
                 return runner.run(script(prompt, perspectives, synthesize, strategy));
             }
 
@@ -296,7 +296,7 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
             log.warn("Workflow (background): the hooks of skill(s) {} do not fire for this run's subagents",
                     hookSkills);
         }
-        // Fire-and-forget on the shared runner's own base environment: a background run does NOT inherit the
+        // Fire-and-forget on the shared runner's own base launch context: a background run does NOT inherit the
         // invoking execution's agent runtime id, principal, or trace attribution. The run id is derived from
         // the full request (prompt + perspectives + synthesize) so distinct requests get distinct runs, while
         // an identical request that is still in flight is joined idempotently rather than duplicated.
@@ -506,7 +506,7 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
         }
     }
 
-    private SubagentExecutionEnvironment buildEnvironment(AgentRuntimeId agentRuntimeId, ToolContext context) {
+    private SubagentLaunchContext buildLaunchContext(AgentRuntimeId agentRuntimeId, ToolContext context) {
         final Map<String, Object> executionAttributes = context.get(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY)
                 .orElse(Map.of());
         final LlmCallMetadata parentMetadata = context.get(ToolContextKeys.LLM_CALL_METADATA_KEY)
@@ -515,7 +515,7 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
                 .orElse(NoopCancellationSignal.INSTANCE);
         final Principal principal = context.get(ToolContextKeys.PRINCIPAL).orElse(null);
 
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry)
+        return SubagentLaunchContext.builder().agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry)
                 .toolRegistry(toolRegistry)
                 // The caller's registry first: inside a forked skill it carries the skill's hooks, and the workflow's
                 // subagents must stay under them.

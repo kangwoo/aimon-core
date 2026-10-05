@@ -472,7 +472,7 @@ public interface ExecutionEnvironmentProvider {
   같은 샌드박스다. 코어가 약속하는 것은 "포크는 부모의 격리 단위(작업 공간) 밖으로 나가지 않는다"이고, "부모와
   같은 파일 시스템"은 기본 제공자의 성질이지 계약이 아니다. 부모가 사용 불가 환경이면 제공자는 포크도 사용 불가로
   돌려줘야 한다 — 부모를 만들지 못한 이유(주체 거부 등)를 포크가 새 해석으로 우회하면 안 된다.
-  `SubagentExecutionEnvironment` 에 부모 `ExecutionEnvironment` 필드를 더한다. 포크의 요청에는 포크 자신의 정의도
+  `SubagentLaunchContext`(이 설계를 쓸 때의 이름은 `SubagentExecutionEnvironment` — EE-61 로 개명) 에 부모 `ExecutionEnvironment` 필드를 더한다. 포크의 요청에는 포크 자신의 정의도
   실린다 — `EnvironmentRequest.fork()` 가 서브에이전트 이름과 정의 파일의 `attributes`(점 표기로 펼친
   `Map<String, String>`, 예: `sandbox.slot`)를 담은 `ForkDefinition` 을 준다. 제공자가 포크마다 다른 슬롯을 고르는
   근거가 이것이다. 메인 턴은 `agent()` 의 `getAttributes()` 에서 같은 값을 읽는다. 두 경우를 한 번에 푸는 것이
@@ -495,7 +495,7 @@ public interface ExecutionEnvironmentProvider {
   서로의 파일을 덮는다. `isolate()` 가 던지면(격리를 여기서 거절한다 — 사용 불가 환경, 이미 브랜치인 환경) 러너는
   그 메시지를 오류에 싣고 예외를 원인으로 잇는다. 사용 불가 환경은 빈 값이 아니라 자기 원인(제공자 없음, 샌드박스
   다운)을 담은 `ExecutionEnvironmentUnavailableException` 을 던진다
-- `SubagentExecutionEnvironment.toolRegistry` 는 부모 레지스트리 그대로다. 브랜치별 레지스트리가 없어진다
+- `SubagentLaunchContext.toolRegistry` 는 부모 레지스트리 그대로다. 브랜치별 레지스트리가 없어진다
 - `WorktreeMerge.promote(baseVfs, branchKeys, policy)` 는 지금 베이스 VFS 하나와 브랜치 키 목록을 받아
   `.worktrees/{key}/` 를 스스로 찾아간다. 브랜치 위치를 아는 것이 환경이 되므로, 부모 환경과 브랜치 환경 목록을
   받는 형태로 바뀐다. 동작(브랜치 간 충돌을 먼저 훑고 `Policy` 로 고른 뒤 VFS 복사로 올리는 병합)은 그대로다.

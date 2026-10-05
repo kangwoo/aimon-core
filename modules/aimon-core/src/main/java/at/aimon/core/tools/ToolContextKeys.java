@@ -70,7 +70,7 @@ public final class ToolContextKeys {
      * {@link #EXECUTION_ENVIRONMENT}.
      *
      * <p>
-     * Tools that spawn a fork (Task, Workflow, a forked skill) copy it onto the fork's environment together with the
+     * Tools that spawn a fork (Task, Workflow, a forked skill) copy it onto the fork's launch context together with the
      * parent environment, so the fork resolves its own environment from the same per-runtime provider without any
      * registration-time handle to an environment source.
      */
@@ -336,7 +336,7 @@ public final class ToolContextKeys {
      *
      * <p>
      * Injected into {@link ToolContext} by the agent executor when a message queue is configured. The {@code Task} tool
-     * forwards it onto the subagent execution environment so a <b>background</b> subagent completion can push a
+     * forwards it onto the subagent launch context so a <b>background</b> subagent completion can push a
      * guaranteed {@code <task-notification>} back to the launching agent, delivered no later than the parent's
      * next ReAct iteration.
      */
@@ -348,7 +348,7 @@ public final class ToolContextKeys {
      *
      * <p>
      * Injected into {@link ToolContext} by the agent executor as a bound reference to its {@code EventEmitter}. The
-     * {@code Task} tool forwards it onto the subagent execution environment so a <b>background</b> subagent completion
+     * {@code Task} tool forwards it onto the subagent launch context so a <b>background</b> subagent completion
      * can emit a {@code SubagentTaskCompleted} event for live display / observability. This is best-effort:
      * events raised while the parent has no attached listener are dropped (the queued notification remains the
      * guaranteed path).
@@ -367,7 +367,7 @@ public final class ToolContextKeys {
      *
      * <p>
      * Read it only to <b>pass it on</b>. Spawning code &mdash; {@code Task}, the workflow tools, the skill fork
-     * executor &mdash; puts it on the {@code SubagentExecutionEnvironment} it builds so the spawned run cannot be
+     * executor &mdash; puts it on the {@code SubagentLaunchContext} it builds so the spawned run cannot be
      * granted what the spawner was refused; {@code DefaultSubagentExecutor} then intersects it with the target's own
      * list. Because each run republishes its own effective list here, the ceiling follows nesting to any depth
      * without a spawn site having to know how deep it is &mdash; the same property

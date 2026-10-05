@@ -77,8 +77,8 @@ class SubagentBackgroundPoolBoundednessTest {
         return registry;
     }
 
-    private static SubagentExecutionEnvironment.Builder envBuilder(SubagentRegistry registry) {
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
+    private static SubagentLaunchContext.Builder envBuilder(SubagentRegistry registry) {
+        return SubagentLaunchContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
                 .subagentRegistry(registry).toolRegistry(new DefaultToolRegistry())
                 .hookRegistry(new DefaultHookRegistry()).defaultModel(LlmModel.builder().name("gpt-4").build());
     }

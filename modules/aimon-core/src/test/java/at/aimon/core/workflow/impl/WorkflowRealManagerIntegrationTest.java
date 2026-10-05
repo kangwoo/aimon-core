@@ -28,7 +28,7 @@ import at.aimon.core.llm.LlmModel;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.behavior.InMemorySubagentBehaviorRegistry;
 import at.aimon.core.subagent.execution.SubagentExecutor;
 import at.aimon.core.workflow.AgentStepResult;
@@ -43,7 +43,7 @@ import at.aimon.core.workflow.WorkflowEventSink;
  * with <b>no LLM</b>. The ReAct/LLM executor is verified to never be touched.
  *
  * <p>
- * This exercises the wiring a bootstrap performs (build a base {@link SubagentExecutionEnvironment}, hand it plus the
+ * This exercises the wiring a bootstrap performs (build a base {@link SubagentLaunchContext}, hand it plus the
  * manager to the runner) without needing an API key.
  */
 @DisplayName("Workflow ↔ real DefaultSubagentExecutionManager (code behaviors, no LLM)")
@@ -109,7 +109,7 @@ class WorkflowRealManagerIntegrationTest {
         behaviors.register("upper", (ctx, req, support) -> support.success(req.getGoal().toUpperCase(Locale.ROOT)));
         final DefaultSubagentExecutionManager hooked = new DefaultSubagentExecutionManager(reactExecutor, bgPool,
                 new DefaultHookExecutionManager(), behaviors);
-        final SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder()
+        final SubagentLaunchContext env = SubagentLaunchContext.builder()
                 .agentRuntimeId(AgentRuntimeId.of("agent:workflow-test"))
                 .subagentRegistry(new InMemorySubagentRegistry()).toolRegistry(new DefaultToolRegistry())
                 .hookRegistry(hooks).defaultModel(LlmModel.builder().name("gpt-4").build()).build();
@@ -128,8 +128,8 @@ class WorkflowRealManagerIntegrationTest {
         return Subagent.builder().name(name).systemPrompt("(code behavior)").build();
     }
 
-    private static SubagentExecutionEnvironment env() {
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:workflow-test"))
+    private static SubagentLaunchContext env() {
+        return SubagentLaunchContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:workflow-test"))
                 .subagentRegistry(new InMemorySubagentRegistry()).toolRegistry(new DefaultToolRegistry())
                 .hookRegistry(new DefaultHookRegistry()).defaultModel(LlmModel.builder().name("gpt-4").build()).build();
     }

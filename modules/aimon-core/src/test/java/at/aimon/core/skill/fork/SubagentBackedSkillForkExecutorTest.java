@@ -36,8 +36,8 @@ import at.aimon.core.skill.Skill;
 import at.aimon.core.skill.SkillContent;
 import at.aimon.core.skill.SkillMetadata;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.tools.HookRegistryAccess;
@@ -106,8 +106,8 @@ class SubagentBackedSkillForkExecutorTest {
                 SessionSnapshot.of(SessionId.generate(), "sys", List.of()),
                 ExecutionMetadata.builder().iterationCount(1).tokenUsage(TokenUsage.empty())
                         .timestamps(Instant.now(), Instant.now()).build());
-        when(subagentExecutionManager.executeInline(any(SubagentExecutionEnvironment.class), any(), any(),
-                eq("rendered body"), any())).thenReturn(success);
+        when(subagentExecutionManager.executeInline(any(SubagentLaunchContext.class), any(), any(), eq("rendered body"),
+                any())).thenReturn(success);
 
         // Act
         SkillForkOutcome outcome = executor.fork(forkSkill("code-reviewer"), "rendered body",
@@ -117,8 +117,7 @@ class SubagentBackedSkillForkExecutorTest {
         assertThat(outcome.isSuccess()).isTrue();
         assertThat(outcome.getFinalAnswer()).contains("LGTM");
 
-        ArgumentCaptor<SubagentExecutionEnvironment> envCaptor = ArgumentCaptor
-                .forClass(SubagentExecutionEnvironment.class);
+        ArgumentCaptor<SubagentLaunchContext> envCaptor = ArgumentCaptor.forClass(SubagentLaunchContext.class);
         verify(subagentExecutionManager).executeInline(envCaptor.capture(), any(), any(), eq("rendered body"), any());
         assertThat(envCaptor.getValue().getAgentRuntimeId()).isEqualTo(AgentRuntimeIds.testCtx("ctx-42"));
     }
@@ -129,8 +128,8 @@ class SubagentBackedSkillForkExecutorTest {
         // its turn TRUNCATED without reading the marker out of the text.
         when(subagentRegistry.getSubagent("code-reviewer")).thenReturn(Optional.of(subagent("code-reviewer")));
         final String cut = "LGT" + TruncatedResponses.TRUNCATION_MARKER;
-        when(subagentExecutionManager.executeInline(any(SubagentExecutionEnvironment.class), any(), any(),
-                eq("rendered body"), any())).thenReturn(
+        when(subagentExecutionManager.executeInline(any(SubagentLaunchContext.class), any(), any(), eq("rendered body"),
+                any())).thenReturn(
                         SubagentExecutionResult
                                 .success(cut, SessionSnapshot.of(SessionId.generate(), "sys", List.of()),
                                         ExecutionMetadata.builder().iterationCount(1).tokenUsage(TokenUsage.empty())
@@ -149,7 +148,7 @@ class SubagentBackedSkillForkExecutorTest {
     void fork_ForwardsTheCallersConversationAsTheInvoker() {
         final SessionId caller = SessionId.generate();
 
-        final SubagentExecutionEnvironment env = captureEnvFor(
+        final SubagentLaunchContext env = captureEnvFor(
                 ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeIds.testCtx("ctx-42"))
                         .put(ToolContextKeys.SESSION_ID, caller).build());
 
@@ -163,7 +162,7 @@ class SubagentBackedSkillForkExecutorTest {
         final SessionId user = SessionId.generate();
         final SessionId intermediateFork = SessionId.generate();
 
-        final SubagentExecutionEnvironment env = captureEnvFor(
+        final SubagentLaunchContext env = captureEnvFor(
                 ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeIds.testCtx("ctx-42"))
                         .put(ToolContextKeys.SESSION_ID, intermediateFork)
                         .put(ToolContextKeys.INVOKING_SESSION_ID, user).build());
@@ -174,7 +173,7 @@ class SubagentBackedSkillForkExecutorTest {
 
     @Test
     void fork_WithoutAnyConversation_LeavesTheInvokerEmpty() {
-        final SubagentExecutionEnvironment env = captureEnvFor(contextWithExecutionId("ctx-42"));
+        final SubagentLaunchContext env = captureEnvFor(contextWithExecutionId("ctx-42"));
 
         assertThat(env.getInvokingSessionId()).isEmpty();
     }
@@ -187,7 +186,7 @@ class SubagentBackedSkillForkExecutorTest {
         // context with no tool call above it. Without this hop a `/my-skill` fork ran with no ceiling at all.
         final List<AllowedTool> callerAllowed = List.of(AllowedTool.parse("Read"), AllowedTool.parse("Bash(git:*)"));
 
-        final SubagentExecutionEnvironment env = captureEnvFor(
+        final SubagentLaunchContext env = captureEnvFor(
                 ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeIds.testCtx("ctx-42"))
                         .put(ToolContextKeys.CALLER_ALLOWED_TOOLS, callerAllowed).build());
 
@@ -205,7 +204,7 @@ class SubagentBackedSkillForkExecutorTest {
         // refused as "not permitted" while the same skill ran inline.
         final Principal alice = Principal.user("alice");
 
-        final SubagentExecutionEnvironment env = captureEnvFor(
+        final SubagentLaunchContext env = captureEnvFor(
                 ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeIds.testCtx("ctx-42"))
                         .put(ToolContextKeys.PRINCIPAL, alice).build());
 
@@ -222,7 +221,7 @@ class SubagentBackedSkillForkExecutorTest {
         // The context's registry is where SkillTool layers the skill's hooks; ignoring it would drop them (EE-49).
         final HookRegistry fromContext = new DefaultHookRegistry();
 
-        final SubagentExecutionEnvironment env = captureEnvFor(
+        final SubagentLaunchContext env = captureEnvFor(
                 HookRegistryAccess.withHookRegistry(contextWithExecutionId("ctx-42"), fromContext));
 
         assertThat(env.getHookRegistry()).isSameAs(fromContext);
@@ -234,10 +233,10 @@ class SubagentBackedSkillForkExecutorTest {
     }
 
     /** Runs a successful fork against the given context and returns the environment the manager was handed. */
-    private SubagentExecutionEnvironment captureEnvFor(ToolContext context) {
+    private SubagentLaunchContext captureEnvFor(ToolContext context) {
         when(subagentRegistry.getSubagent("code-reviewer")).thenReturn(Optional.of(subagent("code-reviewer")));
-        when(subagentExecutionManager.executeInline(any(SubagentExecutionEnvironment.class), any(), any(),
-                eq("rendered body"), any()))
+        when(subagentExecutionManager.executeInline(any(SubagentLaunchContext.class), any(), any(), eq("rendered body"),
+                any()))
                 .thenReturn(SubagentExecutionResult.success("LGTM",
                         SessionSnapshot.of(SessionId.generate(), "sys", List.of()),
                         ExecutionMetadata.builder().iterationCount(1).tokenUsage(TokenUsage.empty())
@@ -245,8 +244,7 @@ class SubagentBackedSkillForkExecutorTest {
 
         executor.fork(forkSkill("code-reviewer"), "rendered body", context);
 
-        final ArgumentCaptor<SubagentExecutionEnvironment> captor = ArgumentCaptor
-                .forClass(SubagentExecutionEnvironment.class);
+        final ArgumentCaptor<SubagentLaunchContext> captor = ArgumentCaptor.forClass(SubagentLaunchContext.class);
         verify(subagentExecutionManager).executeInline(captor.capture(), any(), any(), eq("rendered body"), any());
         return captor.getValue();
     }

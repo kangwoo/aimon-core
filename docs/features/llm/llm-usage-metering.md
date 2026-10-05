@@ -95,7 +95,7 @@ executor.execute(context, request);
 
 ### 3.2 Subagent
 
-Orca 가 TaskTool 을 통해 subagent 를 실행하면, 부모 metadata 가 `SubagentExecutionEnvironment.parentLlmCallMetadata` 로 자동 전파된다. `DefaultSubagentExecutor` 는 다음과 같이 effective metadata 를 만든다:
+Orca 가 TaskTool 을 통해 subagent 를 실행하면, 부모 metadata 가 `SubagentLaunchContext.parentLlmCallMetadata` 로 자동 전파된다. `DefaultSubagentExecutor` 는 다음과 같이 effective metadata 를 만든다:
 
 | 필드 | 값 |
 |------|---|
