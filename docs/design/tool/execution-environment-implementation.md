@@ -1294,8 +1294,9 @@ and why. Entries marked **(open)** are also tracked in
 
 - **Review 3, second note (staging mismatch).** The error when a skill changed on disk after it was loaded now says
   what the user can do: "Restart the application, or reload the skill registry". There is no re-keying. See EE-3.
-- **`.gitignore` for `.aimon-staged/`.** This follows Q4's default: no code writes it, and the skill guide tells users
-  to add it (EE-4).
+- **`.gitignore` for `.aimon-staged/`.** This followed Q4's default: no code wrote it, and the skill guide told users
+  to add it (EE-4). *Superseded 2026-10-05:* EE-4 took Q4's recommended alternative — the local provider writes
+  `.aimon-staged/.gitignore` containing `*` on the first copy.
 - **`ClasspathSkillRepository.findAllFiles`** keys each file by its path relative to the skill directory, with the
   classpath resource path as the value, as planned. Classpath skills are not split into the root/scripts/references/
   assets categories, so in `SkillTool`'s "Available Files" they appear under "Other Files".

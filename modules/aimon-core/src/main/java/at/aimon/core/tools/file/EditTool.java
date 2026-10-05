@@ -1,10 +1,8 @@
 package at.aimon.core.tools.file;
 
-import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -176,19 +174,25 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
             }
 
             // Extract old_string and new_string parameters
-            final String oldString = input.getRequiredString("old_string");
-            final String newString = input.getRequiredString("new_string");
+            final String requestedOldString = input.getRequiredString("old_string");
+            final String requestedNewString = input.getRequiredString("new_string");
 
             // Validate old_string and new_string are different
-            if (oldString.equals(newString)) {
+            if (requestedOldString.equals(requestedNewString)) {
                 return ToolResult.error("old_string and new_string must be different. They are currently identical.");
             }
 
             // Extract optional replace_all parameter (default: false)
             final boolean replaceAll = input.getBoolean("replace_all", false);
 
-            // Read current file content
-            final String fileContent = readFileContent(fileSystem, filePath);
+            // Read current file content. A file whose every line ends in CRLF is matched and edited as LF, so an
+            // old_string the model wrote with \n still matches, and is written back as CRLF — the lines the edit
+            // adds take the file's ending. Any other file is edited byte for byte.
+            final String rawContent = readFileContent(fileSystem, filePath);
+            final boolean crlf = usesCrlfThroughout(rawContent);
+            final String fileContent = crlf ? toLf(rawContent) : rawContent;
+            final String oldString = crlf ? toLf(requestedOldString) : requestedOldString;
+            final String newString = crlf ? toLf(requestedNewString) : requestedNewString;
 
             // Check if old_string exists in file
             if (!fileContent.contains(oldString)) {
@@ -222,7 +226,7 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
             }
 
             // Write modified content back to file
-            writeFileContent(fileSystem, filePath, newContent);
+            writeFileContent(fileSystem, filePath, crlf ? newContent.replace("\n", "\r\n") : newContent);
             FileStamps.refresh(context, env, filePath);
 
             // Return success message
@@ -251,7 +255,9 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
     }
 
     /**
-     * Reads the complete file content as a string.
+     * Reads the complete file content exactly as stored — line endings and trailing newlines included. Reading it
+     * line by line once dropped the last newline and turned every CRLF into LF, so each edit rewrote lines it did not
+     * name.
      *
      * @param fileSystem
      *            The execution environment's filesystem
@@ -262,24 +268,28 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
      *             if an I/O error occurs
      */
     private String readFileContent(VirtualFileSystem fileSystem, String filePath) throws IOException {
-        final StringBuilder content = new StringBuilder();
+        try (InputStream inputStream = fileSystem.read(filePath)) {
+            return new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+        }
+    }
 
-        try (InputStream inputStream = fileSystem.read(filePath);
-                BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
-
-            String line;
-            while ((line = reader.readLine()) != null) {
-                content.append(line).append('\n');
+    /** Whether the content has line breaks and every one of them is CRLF. */
+    private static boolean usesCrlfThroughout(String content) {
+        int index = content.indexOf('\n');
+        if (index < 0) {
+            return false;
+        }
+        while (index >= 0) {
+            if (index == 0 || content.charAt(index - 1) != '\r') {
+                return false;
             }
+            index = content.indexOf('\n', index + 1);
         }
+        return true;
+    }
 
-        // Remove trailing newline if present (to match exact file content)
-        if (content.length() > 0 && content.charAt(content.length() - 1) == '\n') {
-            content.setLength(content.length() - 1);
-        }
-
-        return content.toString();
+    private static String toLf(String text) {
+        return text.replace("\r\n", "\n");
     }
 
     /**
