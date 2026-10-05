@@ -9,9 +9,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -40,7 +43,8 @@ import at.aimon.core.shell.exception.ShellTimeoutException;
  * <li>Working directory and environment variable control
  * <li>Bounded in-memory capture with truncation reporting
  * <li>Cancellation of a running command ({@link ShellFeature#CANCELLATION}): the process and its descendants are
- * terminated the same way a timeout terminates them
+ * terminated the same way a timeout terminates them. A process the command detached from itself (its parent has
+ * exited: a double fork, a daemon) is not a descendant any more and is not reached
  * </ul>
  *
  * <p>
@@ -161,27 +165,52 @@ public final class LocalShell implements VirtualShell {
      * the caller was told the command stopped.
      *
      * <p>
-     * The descendant snapshot is inherently racy: a grandchild born after the snapshot is not enumerated and survives.
-     * Closing that gap needs a process group ({@code setsid} + {@code kill(-pgid)}), which is platform-specific and out
-     * of {@link ProcessBuilder}'s reach.
+     * The tree is enumerated twice, because one snapshot misses whatever is forked after it: once before the polite
+     * request, and again when the grace period has run out, just before the forcible kill
+     * ({@link #sweepLateDescendants}). The second enumeration walks from the processes that are <em>still alive</em>
+     * &mdash; a process that has exited has no enumerable children any more, they were re-parented the moment it died
+     * &mdash; and adds what it finds to the set that is killed. So a process forked during the grace period (by a
+     * {@code TERM} trap, or by a loop that ignores {@code TERM}) is killed too, as long as its parent, or any
+     * ancestor between it and the command, outlived the grace period. A process found only by the second enumeration
+     * was born after the stop was requested; it gets no polite request and no grace of its own.
+     *
+     * <p>
+     * What still escapes, exactly:
+     * <ul>
+     * <li>a process whose parent has exited &mdash; it is no longer a descendant of anything this method holds a
+     * handle to. That is a double fork or {@code ( cmd & )} at any time, a daemonizing program, and equally a process
+     * forked by a {@code TERM} handler that then exits inside the grace period. ({@code nohup} and {@code setsid} do
+     * <em>not</em> escape by themselves: they change the signal disposition or the session, not the parent, so such a
+     * process is still enumerated and killed while its parent lives.)
+     * <li>a process forked between the second enumeration and the kill of its parent &mdash; about one read of the
+     * process table, on the order of a millisecond. A command that forks once in answer to {@code TERM} never lands
+     * there; one that ignores {@code TERM} and forks in a loop occasionally does, and leaves one process when it does.
+     * </ul>
+     * Closing both needs the kernel to hold the membership, i.e. a process group ({@code setsid} +
+     * {@code kill(-pgid)}) &mdash; and even a group is left by a process that calls {@code setsid} itself.
+     * {@link ProcessBuilder} cannot start a process in a new group, and the wrapper that could ({@code setsid(1)})
+     * does not exist on macOS and would change how every command is launched, so that is left to shells that own their
+     * process model (a sandbox's).
      */
     private static void destroyForciblyQuietly(Process p) {
         // Order matters: kill the descendants first. Destroying the parent first re-parents its children to init,
         // after which descendants() no longer enumerates them at all.
         //
         // Snapshot the handles now, too. The forcible sweep below runs after p.destroy(), and calling descendants()
-        // at that point may already return an empty stream.
-        final List<ProcessHandle> descendants = snapshotDescendants(p);
-        descendants.forEach(LocalShell::destroyQuietly);
+        // on a parent that has exited by then returns an empty stream.
+        final Set<ProcessHandle> tree = new LinkedHashSet<>(snapshotDescendants(p));
+        tree.forEach(LocalShell::destroyQuietly);
         try {
             p.destroy();
-            awaitGrace(descendants, p);
+            awaitGrace(List.copyOf(tree), p);
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
         } catch (Exception ignored) {
             // Fall through to the forcible sweep
         }
-        destroyForciblyAll(descendants, p);
+        // Neither step below blocks, so both are safe with the interrupt flag restored above.
+        sweepLateDescendants(tree, p);
+        destroyForciblyAll(tree, p);
     }
 
     private static void destroyForciblyQuietly(ProcessHandle handle) {
@@ -190,6 +219,34 @@ public final class LocalShell implements VirtualShell {
         } catch (Exception ignored) {
             // Best effort - the handle may already refer to a process that exited
         }
+    }
+
+    /**
+     * Adds to {@code tree} every process forked since it was snapshotted that can still be reached: the descendants of
+     * the parent, if it is alive, and of each handle in the tree that is alive and was not already reached through an
+     * ancestor.
+     *
+     * <p>
+     * One pass, deliberately. {@link ProcessHandle#descendants()} reads the whole process table at one instant, so a
+     * single walk from a live root is complete as of that instant; repeating it "until nothing new turns up" does not
+     * close the remaining gap, it only moves it &mdash; what matters is the time between the <em>last</em> walk and
+     * the kill, and every extra walk is one more process-table read in that slot. For the same reason a handle whose
+     * ancestor was already walked is skipped: the snapshot lists a parent before its children, so the usual cost is
+     * one read, and none at all when the whole tree died on the polite request.
+     */
+    private static void sweepLateDescendants(Set<ProcessHandle> tree, Process p) {
+        final Set<ProcessHandle> reached = new LinkedHashSet<>();
+        if (isAliveQuietly(p)) {
+            reached.addAll(snapshotDescendants(p));
+        }
+        for (ProcessHandle handle : tree) {
+            // isAlive() is also what keeps a recycled pid out: a handle whose process exited is not alive, so the
+            // children of whatever reused its pid are never walked.
+            if (!reached.contains(handle) && isAliveQuietly(handle)) {
+                reached.addAll(snapshotDescendants(handle));
+            }
+        }
+        tree.addAll(reached);
     }
 
     /**
@@ -229,11 +286,20 @@ public final class LocalShell implements VirtualShell {
         }
     }
 
+    private static List<ProcessHandle> snapshotDescendants(ProcessHandle handle) {
+        try {
+            return handle.descendants().toList();
+        } catch (Exception e) {
+            log.debug("Failed to enumerate descendants of process {} ({}).", handle.pid(), e.toString());
+            return List.of();
+        }
+    }
+
     /**
-     * Forcibly kills every handle of the snapshot, and the parent, that is still alive. {@link ProcessHandle#isAlive()}
+     * Forcibly kills every handle of the tree, and the parent, that is still alive. {@link ProcessHandle#isAlive()}
      * also guards against a recycled pid: a handle whose process exited does not report a newer process as alive.
      */
-    private static void destroyForciblyAll(List<ProcessHandle> descendants, Process p) {
+    private static void destroyForciblyAll(Collection<ProcessHandle> descendants, Process p) {
         descendants.stream().filter(LocalShell::isAliveQuietly).forEach(LocalShell::destroyForciblyQuietly);
         try {
             if (p.isAlive()) {
@@ -242,6 +308,14 @@ public final class LocalShell implements VirtualShell {
         } catch (Exception ignored) {
             // Best effort cleanup - no action needed
             // Process cleanup failed, but we can't do anything about it
+        }
+    }
+
+    private static boolean isAliveQuietly(Process p) {
+        try {
+            return p.isAlive();
+        } catch (Exception e) {
+            return false;
         }
     }
 

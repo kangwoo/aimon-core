@@ -199,7 +199,7 @@ hooks:
 Review the following: $1
 ```
 
-> The `shell` action only works in an environment where the host has wired `DefaultShellActionExecutor` (aimon-cli, for instance). The command runs not on the host but in **the execution environment's shell of the execution the hook fires in** — where the same skill's `Bash` calls run, with the workspace as its working directory. The hooks fire **only in the agent this skill forks (and in forks that agent starts)** — not in another session of the same agent, and not for the caller of the skill. A `shell` hook on a guard event such as `preTool` blocks when its command **could not run** (no execution environment, a timeout, a shell failure); for a hook that only observes, put `failOpen: true` on the entry. For the available environment variables and the action semantics, see [AIMON Skill Extensions / hooks](../../references/aimon-skill-extensions.md#hooks--스킬-단위-hook-스코프).
+> The `shell` action only works in an environment where the host has wired `DefaultShellActionExecutor` (aimon-cli, for instance). The command runs not on the host but in **the execution environment's shell of the execution the hook fires in** — where the same skill's `Bash` calls run, with the workspace as its working directory. The hooks fire **only in the agent this skill forks (and in forks that agent starts)** — not in another session of the same agent, and not for the caller of the skill. A `shell` hook on a guard event such as `preTool` blocks when its command **could not run** (no execution environment, a timeout, a shell failure); for a hook that only observes, put `failOpen: true` on the entry. A hook command reaches the scripts in its own skill directory through the environment variable `$AIMON_SKILL_DIR` (`bash "$AIMON_SKILL_DIR/scripts/guard.sh"`) — the path the skill was staged to in the environment the hook runs in; if it cannot be staged, the command does not run. For the available environment variables and the action semantics, see [AIMON Skill Extensions / hooks](../../references/aimon-skill-extensions.md#hooks--스킬-단위-hook-스코프).
 
 ## Invoking a fork-mode skill
 
@@ -437,7 +437,11 @@ that path as well.
 
 The five below are all the built-in variables `DefaultSkillContentRenderer` substitutes in a skill body. They are for
 **substitution in the body text**, and are an entirely separate channel from the shell process environment variables
-injected into declarative hooks (`SkillHookEnv`'s `AIMON_*`) — the renderer never reads `System.getenv`.
+injected into declarative hooks (`SkillHookEnv`'s `AIMON_*`) — the renderer never reads `System.getenv`. One name
+exists on both sides, `AIMON_SKILL_DIR`: in the body, `${AIMON_SKILL_DIR}` is replaced with the path staged into the
+environment of the execution that invoked the skill, and in a hook command the environment variable `$AIMON_SKILL_DIR`
+is the path staged into the environment of **the execution the hook fires in** (the skill's fork). When the fork is
+placed in another environment the two values differ.
 
 | Variable | Value | Scope |
 |------|----|------|

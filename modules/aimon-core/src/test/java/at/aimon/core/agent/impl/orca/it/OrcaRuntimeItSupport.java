@@ -224,6 +224,11 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
         seedFile(nodeName, ".aimon/skills/" + skillName + "/SKILL.md", markdown);
     }
 
+    /** Writes one more file of a skill, at {@code <baseDir>/<nodeName>/.aimon/skills/<skillName>/<relativePath>}. */
+    void seedSkillFile(String nodeName, String skillName, String relativePath, String content) {
+        seedFile(nodeName, ".aimon/skills/" + skillName + "/" + relativePath, content);
+    }
+
     /**
      * Seeds a file under a node's root before the node exists. Raw {@code java.nio} on purpose — the node's
      * {@code VirtualFileSystem} has not been built yet, and this is fixture setup rather than behaviour under test.

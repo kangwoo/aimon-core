@@ -194,7 +194,7 @@ hooks:
 Review the following: $1
 ```
 
-> `shell` 액션은 호스트가 `DefaultShellActionExecutor` 로 와이어된 환경(예: aimon-cli)에서만 동작한다. 명령은 호스트가 아니라 **훅이 발화한 실행의 실행 환경 셸**에서 돈다 — 같은 스킬의 `Bash` 호출이 도는 곳이고, 작업 디렉터리는 워크스페이스다. 훅은 **이 스킬이 fork 한 에이전트(와 그 에이전트가 띄운 fork)에서만** 발화한다 — 같은 에이전트의 다른 세션이나 스킬을 호출한 쪽에는 발화하지 않는다. `preTool` 같은 가드 이벤트의 `shell` 훅은 명령을 **돌리지 못하면**(실행 환경 없음 · timeout · 셸 실패) 막는다. 관찰용이면 항목에 `failOpen: true` 를 둔다. 사용 가능한 환경 변수와 액션 시맨틱은 [AIMON Skill Extensions / hooks](../../references/aimon-skill-extensions.md#hooks--스킬-단위-hook-스코프) 를 참고한다.
+> `shell` 액션은 호스트가 `DefaultShellActionExecutor` 로 와이어된 환경(예: aimon-cli)에서만 동작한다. 명령은 호스트가 아니라 **훅이 발화한 실행의 실행 환경 셸**에서 돈다 — 같은 스킬의 `Bash` 호출이 도는 곳이고, 작업 디렉터리는 워크스페이스다. 훅은 **이 스킬이 fork 한 에이전트(와 그 에이전트가 띄운 fork)에서만** 발화한다 — 같은 에이전트의 다른 세션이나 스킬을 호출한 쪽에는 발화하지 않는다. `preTool` 같은 가드 이벤트의 `shell` 훅은 명령을 **돌리지 못하면**(실행 환경 없음 · timeout · 셸 실패) 막는다. 관찰용이면 항목에 `failOpen: true` 를 둔다. 훅 명령은 자기 스킬 디렉터리의 스크립트를 환경 변수 `$AIMON_SKILL_DIR` 로 부른다(`bash "$AIMON_SKILL_DIR/scripts/guard.sh"`) — 훅이 도는 환경에 스테이징한 경로이고, 스테이징하지 못하면 명령은 돌지 않는다. 사용 가능한 환경 변수와 액션 시맨틱은 [AIMON Skill Extensions / hooks](../../references/aimon-skill-extensions.md#hooks--스킬-단위-hook-스코프) 를 참고한다.
 
 ## Fork-mode 스킬 호출하기
 
@@ -427,7 +427,10 @@ modules/aimon-core/src/main/resources/
 
 `DefaultSkillContentRenderer` 가 스킬 본문에서 치환하는 내장 변수는 아래 5개가 전부다. 이들은 **본문 텍스트
 치환용**이며, 선언적 hook 에 주입되는 셸 프로세스 환경변수(`SkillHookEnv` 의 `AIMON_*`)와는 완전히 별개의
-채널이다 — 렌더러는 `System.getenv` 를 읽지 않는다.
+채널이다 — 렌더러는 `System.getenv` 를 읽지 않는다. 이름이 양쪽에 다 있는 것은 `AIMON_SKILL_DIR` 하나다: 본문에서는
+`${AIMON_SKILL_DIR}` 가 스킬을 호출한 실행의 환경에 스테이징한 경로로 치환되고, 훅 명령에서는 환경 변수
+`$AIMON_SKILL_DIR` 가 **훅이 발화한 실행**(스킬의 fork)의 환경에 스테이징한 경로다. fork 가 다른 환경에 놓이면 두 값은
+다르다.
 
 | 변수 | 값 | 범위 |
 |------|----|------|

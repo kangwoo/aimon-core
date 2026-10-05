@@ -150,6 +150,27 @@ public final class SkillHookSet {
         return get(HookEventType.ON_STOP);
     }
 
+    /**
+     * Returns whether this set holds the given hook instance &mdash; the instance itself, not one equal to it. This
+     * is how a firing hook is traced back to the skill that declared it: a hook from {@code hooks.json}, or from
+     * another skill, is never in this set.
+     *
+     * @param hook
+     *            the hook to look for (must not be null)
+     * @return true when {@code hook} is one of this set's hooks
+     */
+    public boolean contains(ExecutionHook<?> hook) {
+        Objects.requireNonNull(hook, "Hook cannot be null");
+        for (List<ExecutionHook<?>> hooks : byEvent.values()) {
+            for (ExecutionHook<?> candidate : hooks) {
+                if (candidate == hook) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     /** Returns true when no hooks of any type are registered. */
     public boolean isEmpty() {
         return byEvent.isEmpty();

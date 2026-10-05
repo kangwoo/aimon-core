@@ -56,6 +56,13 @@ public final class ShellHookOutcome {
         /** The execution environment is there but could not be used (or gave no shell). */
         ENVIRONMENT_UNAVAILABLE("execution environment unavailable"),
 
+        /**
+         * The declaring skill's directory could not be staged into the environment the command runs in, so
+         * {@code AIMON_SKILL_DIR} has no value. The command is not run without it: a command written against
+         * {@code "$AIMON_SKILL_DIR/scripts/x.sh"} would otherwise run {@code /scripts/x.sh}.
+         */
+        STAGING_FAILED("skill directory could not be staged"),
+
         /** The executor does not run shell actions at all. */
         SHELL_UNSUPPORTED("shell actions not supported"),
 

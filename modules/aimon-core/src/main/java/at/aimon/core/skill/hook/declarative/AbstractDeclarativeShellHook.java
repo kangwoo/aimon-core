@@ -22,7 +22,8 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * Every event outside the tool-input pair ({@code onStart}, {@code onStop}, {@code onSessionStart},
  * {@code onSessionEnd}, {@code subagentStart}, {@code subagentStop}, {@code preCompact}, {@code postCompact},
  * {@code permissionRequest}, {@code permissionDenied}, {@code onConfigReload}) does exactly the same three things —
- * export the shared {@code AIMON_*} environment, run the command with a JSON payload on stdin, re-attach any
+ * export the shared {@code AIMON_*} environment (with {@code AIMON_SKILL_DIR} when a skill declared the hook, see
+ * {@link SkillHookDirectory}), run the command with a JSON payload on stdin, re-attach any
  * configured rewake spec — and differs only in the event name and the handful of event-specific variables.
  * Subclasses supply those two things, plus a {@link #vetoResult(String)} override on the three that can act on a
  * veto ({@code onStart} and {@code preCompact} block, {@code permissionRequest} denies), and nothing else. On those
@@ -119,6 +120,10 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
     private ShellHookOutcome runShell(C context, Map<String, String> env) {
         try {
             contributeEnv(context, env);
+            final Optional<ShellHookOutcome> unstaged = SkillHookDirectory.export(env, context, this, shellExecutor);
+            if (unstaged.isPresent()) {
+                return unstaged.get();
+            }
             return shellExecutor.run(action, context, env,
                     ShellHookPayload.render(env, payloadToolInput(context).orElse(null)));
         } catch (RuntimeException | LinkageError e) {

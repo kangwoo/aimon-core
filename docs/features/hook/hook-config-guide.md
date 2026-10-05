@@ -248,7 +248,9 @@ AIMON 고유 이벤트는 `hooks.json` 에 AIMON 내부 이름을 그대로 적�
 **어디서 도는가.** `hooks.json` 의 커맨드는 **호스트 셸**에서 돈다 — 이 파일은 운영자 설정이고, 실행 밖에서
 발화하는 이벤트(`onSessionStart` · `onSessionEnd` · `onConfigReload`)를 선언할 수 있는 유일한 자리이기 때문이다
 (`HostShellActionExecutor`). 스킬 frontmatter 가 선언한 훅의 `shell` 액션은 다르다 — 그것은 훅이 발화한 실행의
-**실행 환경 셸**에서 돌고, 그래서 실행 밖 이벤트에는 선언할 수 없다.
+**실행 환경 셸**에서 돌고, 그래서 실행 밖 이벤트에는 선언할 수 없다. 스킬 훅만 받는 환경 변수도 하나 있다:
+`AIMON_SKILL_DIR`(그 스킬 디렉터리를 훅이 도는 환경에 스테이징한 경로)이다. `hooks.json` 의 커맨드에는 스킬 디렉터리가
+없으므로 그 변수가 **설정되지 않는다** — 빈 문자열이 아니라 unset 이고, stdin payload 에도 `skill_dir` 필드가 없다.
 
 **입력 전달.** 커맨드 문자열은 **템플릿 렌더링되지 않는다** — 셸에 verbatim 으로 전달되므로
 `${tool_input.x}` 를 커맨드에 써도 placeholder 가 아니라 (비어 있는) 셸 변수일 뿐이다.
