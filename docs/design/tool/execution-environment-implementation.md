@@ -593,7 +593,9 @@ that test only checks names.
     source *is* the workspace fs. Otherwise the target is `{stagingRoot}/{name}/{contentKey}/`: if the `.staged`
     marker `exists` on the raw fs, return; if `totalBytes > maxStagedBytes`, throw `StagingException`; copy file by
     file (skipping `.stageignore` matches with `environment.StageIgnore`) via `openInputStream`→raw `write`; write the
-    marker last.
+    marker last. *(As built, EE-17: the copy and its marker go to a sibling `{contentKey}.tmp-{random}` directory and
+    are then given the target's name — one atomic rename where the workspace is a host directory, a file-by-file
+    `move` with the marker last where it is not. Design §4.4 states what each is guaranteed.)*
   - **Startup sweep (§4.4) — restricted so it cannot delete a copy another runtime or process is still using**
     (review-2). The spec allows the sweep only "when no execution can reference those paths". The provider can know
     that only when it owns the staging area privately, so:
