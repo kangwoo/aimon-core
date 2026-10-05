@@ -207,6 +207,11 @@ IMPORTANT: **"이름에 들어간 스코프 명사 = 그 타입의 수명" 은 �
   여전히 `"conversationId"` 이고, Mongo 컬렉션은 `conversation_locks` / `conversation_inbox` /
   `conversation_signals`, Postgres 테이블·채널도 `conversation_*` 다. **의도적으로 동결**한 것이다(§7).
   자바 식별자만 개명되었으므로 이름이 어긋나 보이는 것이 정상이다.
+- **`AssistantTextStreamReset` / `AssistantTextStreamCompleted`** — 텍스트 채널이 아니라 **시도(attempt)
+  하나 전체**를 경계 짓는다. 추론 채널(`AssistantReasoningDelta`)도 여기서 함께 닫히므로, 두 채널을 그리는
+  렌더러는 `Reset` 에서 둘 다 지우고 `Completed` 에서 둘 다 닫는다. 이름대로 읽으면 "텍스트만 리셋됐다" 로
+  오해하게 된다. 공개 이벤트 타입이자 노드 경계를 넘는 페이로드 프레임 이름이라 **개명하지 않았다**
+  (두 클래스의 javadoc 에 명시).
 
 `Session` 이라는 단어는 여전히 여러 수명을 가리킨다 — 영속 `SessionRecord`,
 `LiveSessionCache` 의 캐시 항목, `ReplSession`(CLI 실행 1회), `BrowserSession`(Playwright 컨텍스트).

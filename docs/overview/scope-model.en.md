@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/scope-model.md
-source_commit: 89a8ed4
+source_commit: ad0acfb
 ---
 
 # Scope Model
@@ -225,6 +225,12 @@ code.
   `conversation_locks` / `conversation_inbox` / `conversation_signals`, and the Postgres tables
   and channels are `conversation_*`. This was **deliberately frozen** (§7). Only the Java
   identifiers were renamed, so the names looking mismatched is the normal state.
+- **`AssistantTextStreamReset` / `AssistantTextStreamCompleted`** — they bound **one whole
+  attempt**, not the text channel. The reasoning channel (`AssistantReasoningDelta`) closes here
+  too, so a renderer drawing both channels clears both on `Reset` and closes both on `Completed`.
+  Read literally, the names suggest "only the text was reset", which is wrong. They are public
+  event types and the payload frame names that cross a node boundary, so they were **not
+  renamed** (noted in the javadoc of both classes).
 
 The word `Session` still points at several lifetimes — the persistent `SessionRecord`, a
 `LiveSessionCache` entry, `ReplSession` (one CLI run), `BrowserSession` (a Playwright context).
