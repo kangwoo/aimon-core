@@ -7,7 +7,7 @@ Central is versioned independently).
 
 ## [Unreleased]
 
-### Fixed: four messages that did not say what they knew, and a REPL renderer that could die mid-turn
+### Fixed: messages that did not say what they knew, a REPL renderer that could die mid-turn, stale model examples
 
 - **The CLI's `Invalid configuration structure in: <file>` now names the key.** It appends `(at <dotted.key>: <Jackson's
   reason>)` — `llm.reasoningEffor: Unrecognized field "reasoningEffor", not marked as ignorable` — so a typo or a bad
@@ -28,6 +28,23 @@ Central is versioned independently).
 - **Copyable examples no longer name models the API answers 404.** The `aimon-llm-anthropic` README, the
   `AnthropicConfig` / `AnthropicLlmClient` javadoc and the subagent parser format examples drop the model line and say
   what runs without one. Backlog L-27.
+### Build: Quartz and OpenSearch tests run on the versions those modules ship (backlog D-2)
+
+- **`aimon-scheduling-quartz` and `aimon-knowledge-opensearch` resolve both test classpaths consistently with
+  `runtimeClasspath`**, the block `aimon-cli` has carried since #99. `spring-boot-starter-test` had raised
+  `jakarta.xml.bind-api` 4.0.4 → 4.0.5 on the first and `jakarta.annotation-api` 1.3.5 → 3.0.0 on the second, and
+  `snakeyaml` 2.7 → 2.6 on both test compile classpaths; all four differences are now 0. Published POMs are unchanged.
+- **The annotation jar was inert on both sides** — nothing on the OpenSearch runtime classpath references a class in
+  1.3.5, and only `spring-context`, which no test there loads, names 3.0.0 — and it is aligned anyway so the next
+  client or Spring Boot bump cannot reopen the gap unseen. Why it is aligned rather than accepted like the
+  Testcontainers annotations is in `gradle/libs.versions.toml` and `docs/backlog/module-dependency-scope.md`.
+
+### Docs CI: the link check no longer anchors `#` comments in YAML front matter (backlog T-6)
+
+- **`docs_tree.anchors_of` blanks the front matter before reading headings**, the block
+  `check-translation-structure.py` already strips. Seventeen anchors in eight bundled agent files under
+  `modules/aimon-cli/src/main/resources/agents/` disappear; none was linked and no `docs/` anchor changed.
+  `check-doc-links.py --self-test` gains the case.
 
 ### Policy: `internal` packages are not public API, and the build says so
 

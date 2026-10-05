@@ -50,10 +50,13 @@ aws-sdk = "2.55.10"
 # - spring-boot-starter-test, which aimon.java-conventions gives every module's tests: ALIGNED on aimon-cli, whose
 #   runtimeClasspath is its distribution. It raised jakarta.xml.bind-api (4.0.4 -> 4.0.5) there and, until `logback`
 #   below moved past it (#114), logback-classic and logback-core (1.5.13 -> 1.5.34); aimon-cli/build.gradle.kts
-#   resolves both test classpaths consistently with runtimeClasspath, and says why. NOT DECIDED on two other modules,
-#   where the same source raises jakarta.xml.bind-api (4.0.4 -> 4.0.5) on aimon-scheduling-quartz and
-#   jakarta.annotation-api (1.3.5 -> 2.1.1) on aimon-knowledge-opensearch: backlog D-2,
-#   docs/backlog/module-dependency-scope.md. It raised the Logback pair on aimon-session-testkit as well, until #114.
+#   resolves both test classpaths consistently with runtimeClasspath, and says why. ALIGNED the same way on two other
+#   modules (backlog D-2, docs/backlog/module-dependency-scope.md, 2026-10-05), where the same source raised
+#   jakarta.xml.bind-api (4.0.4 -> 4.0.5) on aimon-scheduling-quartz and jakarta.annotation-api (1.3.5 -> 3.0.0; it
+#   read 2.1.1 before the Boot 4 move) on aimon-knowledge-opensearch, plus snakeyaml (2.7 -> 2.6) on both modules'
+#   test compile classpaths. The annotation jar is inert on both sides, as the Testcontainers jars below are; it is
+#   aligned rather than accepted because the cost lands on spring-boot-starter, which no test in that module loads,
+#   not on a library its tests run on. It raised the Logback pair on aimon-session-testkit as well, until #114.
 # - Testcontainers (duct-tape): ACCEPTED. org.jetbrains:annotations 13.0 shipped (kotlin-stdlib, via okhttp), 17.0.0
 #   under test, on aimon-spring-boot-starter, aimon-filesystem-gridfs, aimon-filesystem-s3 and
 #   aimon-session-{mongodb,postgres,redis}. Both jars are CLASS-retention annotations and constant holders — nothing a

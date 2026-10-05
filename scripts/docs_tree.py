@@ -86,7 +86,9 @@ def anchors_of(text):
     """Every fragment that resolves inside one markdown file.
 
     A heading is an ATX_HEADING line at the start of a line in unfence()'s
-    output; a hand-written anchor is an `<a name|id>` anywhere in the raw text.
+    output, read after the YAML front matter at the top of the file (FRONT_MATTER,
+    the block check-translation-structure.py strips too) is blanked; a hand-written
+    anchor is an `<a name|id>` anywhere in the raw text.
 
     WHERE THE LINK CHECK AND THE BACKLOG CHECK READ HEADINGS DIFFERENTLY.
     check-backlog-registers.py starts from the same lines and does two things
@@ -144,18 +146,24 @@ def anchors_of(text):
     Where both checks read the same lines and both differ from the page, they
     do not differ from each other: unfence()'s pairing, a heading inside a raw
     HTML block other than a comment (decision 6 in check-backlog-registers.py
-    names those blocks), and YAML front matter read as text (backlog T-6). In
-    the shapes the link self-test holds, two of unfence()'s pairings hide a
+    names those blocks). YAML front matter is no longer one of them: this blanks
+    it (backlog T-6, closed 2026-10-05) and the backlog check does not, which
+    differs on no file today because no register under docs/backlog/ has front
+    matter. In the shapes the link self-test holds, two of unfence()'s pairings hide a
     heading the page shows: one after the closer of a fence opened on a `- `
     marker's line, and one between two backtick fence markers indented four
     spaces, which the page reads there as an indented code block.
 
     `check-doc-links.py --self-test` has a case for this function's side of
-    each of the three shapes, of a raw HTML block and of each of those two
-    pairings; the backlog check's `--self-test` has cases for its side.
+    each of the three shapes, of a raw HTML block, of each of those two
+    pairings and of a `#` comment in front matter; the backlog check's
+    `--self-test` has cases for its side.
     """
     found, seen = set(), {}
-    body = unfence(text)
+    # Front matter is not page text: the site drops it and github.com renders it as a
+    # table, so a `# ` comment inside it is no heading (backlog T-6). Blanked rather than
+    # cut, the way unfence() blanks a fence, so line numbering survives.
+    body = unfence(FRONT_MATTER.sub(lambda m: "\n" * m.group(0).count("\n"), text, count=1))
     for line in body.splitlines():
         m = ATX_HEADING.match(line)
         if not m:

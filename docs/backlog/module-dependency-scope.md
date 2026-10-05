@@ -107,7 +107,7 @@ least one LLM provider"* 라고 안내하고 예제가 둘 다 선언하며, BOM
 측정은 [`../design/testing/shipped-logback-and-test-classpath-followups.md`](../design/testing/shipped-logback-and-test-classpath-followups.md)
 에 있다.
 
-### D-2 — `spring-boot-starter-test` 가 #99 가 결정하지 않은 모듈에서 발행 버전을 테스트 아래 올린다 · **열림 · 결정 대기**
+### D-2 — `spring-boot-starter-test` 가 #99 가 결정하지 않은 모듈에서 발행 버전을 테스트 아래 올린다 · ~~열림 · 결정 대기~~ **닫힘 (2026-10-05)**
 
 **무엇** — 아래 두 모듈의 차이를 `aimon-cli` 처럼 맞출지(두 테스트 클래스패스를 `runtimeClasspath` 와 일관되게
 해석), 이유를 적고 받아들일지 모듈별로 결정한다.
@@ -146,6 +146,50 @@ RUNTIME-retention 주석을 담고, 1.3.5 와 2.1.1 사이에 패키지가 `java
 - D-3 의 검사를 만들 때 — 그 검사는 이 둘을 목록에 올리거나 없애라고 먼저 요구한다
 - `spring-boot` 올림이 카탈로그 `logback` 보다 높은 Logback 을 가져올 때 — `aimon-session-testkit` 의 쌍이 이 표로
   돌아온다
+
+#### 닫힘 (2026-10-05)
+
+**결정 — 두 모듈 다 맞췄다.** 둘 다 `aimon-cli` 와 같은 블록을 받았다 — 두 테스트 클래스패스가
+`shouldResolveConsistentlyWith(runtimeClasspath)` 로 해석된다(`modules/aimon-scheduling-quartz/build.gradle.kts`,
+`modules/aimon-knowledge-opensearch/build.gradle.kts`). `gradle/libs.versions.toml` 의 결정문에서 "NOT DECIDED" 문장은
+"ALIGNED" 로 바뀌었다. `shouldResolveConsistentlyWith` 는 Gradle 9.8.0 에서도 여전히 `@Incubating` 이고(javap), 두 블록의
+주석은 `aimon.java-conventions.gradle.kts` 끝이 요구하는 세 가지를 적는다. 붙든 것, 확인한 버전, 업그레이드 뒤에 칠
+`dependencyInsight` 명령이다.
+
+**측정 — 규칙 셋.** `runtimeClasspath` 와 두 테스트 클래스패스를 고치기 전과 뒤로 맞대었다(`dependencies`, 2026-10-05).
+
+| 모듈 | 고치기 전 `testRuntimeClasspath` | 고치기 전 `testCompileClasspath` | 고친 뒤 |
+|------|-------------------------------|-------------------------------|--------|
+| `aimon-scheduling-quartz` | `jakarta.xml.bind-api` 4.0.4 → 4.0.5 | 그것과 `snakeyaml` 2.7 → 2.6 | 0 · 0 |
+| `aimon-knowledge-opensearch` | `jakarta.annotation-api` 1.3.5 → **3.0.0** | 그것과 `snakeyaml` 2.7 → 2.6 | 0 · 0 |
+
+`dependencyInsight` 는 이제 두 jar 모두 발행 버전을 *"by consistent resolution"* 으로 답한다. `:aimon-scheduling-quartz:test`
+147건, `:aimon-knowledge-opensearch:test` 47건이 실패 없이 돈다(docker 태그 제외, 기본값).
+
+**착수해서 알게 된 것 — 규칙 둘·셋.**
+
+- **표의 숫자 하나가 낡았다.** `jakarta.annotation-api` 의 테스트 쪽 버전은 2.1.1 이 아니라 **3.0.0** 이다. Spring Boot 4.1
+  로 올라가며 `spring-boot-starter` 가 요구하는 버전이 바뀌었고, 표는 그 전(`c561e17`)의 측정이다. 출처도 정확히는
+  `spring-boot-starter-test` 를 거쳐 들어오는 `spring-boot-starter` 다. 결론에는 영향이 없다.
+- **표에 없는 차이가 하나 더 있었다.** 두 모듈 모두 `testCompileClasspath` 에서 `snakeyaml` 이 2.7 → 2.6 으로 내려가 있었다.
+  §2 의 측정이 런타임 축만 비교했기 때문이다(D-3 이 적은 사각지대와 같은 것이다). 같은 블록이 이것도 맞췄다.
+- **`jakarta.annotation-api` 는 항목이 적은 것보다 가볍다.** 항목은 *"발행되는 클래스가 테스트 클래스패스에는 아예 없다"*
+  를 버전 차이보다 나쁜 일로 적고, 그 경로가 그 클래스를 필요로 하는지는 실측하지 않았다고 했다. 이번에 쟀다.
+  `runtimeClasspath` 의 jar 25개 어디에도 1.3.5 의 클래스(`javax.annotation.Generated` · `PostConstruct` · `Resource` …)를
+  참조하는 클래스 파일이 없다. `opensearch-java` 의 `javax/annotation` 참조는 전부 JSR-305 의 `Nonnull` ·
+  `Nullable` · `CheckForNull` 이고, 그 셋은 어느 버전에도 들어 있지 않다. 테스트 쪽 3.0.0 을 부르는 것도 `spring-context`
+  하나뿐이며 이 모듈의 테스트는 Spring 을 띄우지 않는다. 즉 양쪽 다 **아무것도 관측하지 않는 숫자**였다.
+
+**그런데도 받아들이지 않고 맞춘 이유.** 위 마지막 줄은 #99 가 Testcontainers 의 `org.jetbrains:annotations` 를 받아들인
+근거와 같은 모양이다. 갈린 것은 맞추는 비용이 어디에 떨어지는가다. Testcontainers 쪽은 여섯 docker 계층이 **실제로 돌리는**
+라이브러리를 그것이 요구하는 버전 아래로 누르는 일이었다. 여기서 눌리는 것은 이 모듈의 테스트가 싣기만 하고 쓰지 않는
+`spring-boot-starter` 다. 그리고 블록은 오늘의 차이 하나를 지우는 데서 끝나지 않는다. 다음 `opensearch-java` 나 Spring
+Boot 올림이 여는 차이를 테스트가 발행 버전을 따라가게 해서 막는다. D-3 의 검사가 없는 동안 그 차이를 알릴 것이 없으므로
+이쪽이 더 싸다. 대가는 `aimon-cli` 블록 주석이 적은 조용한 쪽과 같다. 언젠가 이 모듈에 Spring 을 띄우는 테스트가 생기면
+그 테스트는 `jakarta.annotation.*` 이 없는 1.3.5 를 메시지 없이 받는다. opensearch 블록의 주석이 그 문장을 적는다.
+
+**D-3 에 미치는 것.** 받아들인 목록은 늘지 않았다. `aimon-cli` 를 포함해 같은 블록을 가진 모듈이 셋이 되었으므로, D-3 의
+마지막 트리거(Gradle 올림이 `shouldResolveConsistentlyWith` 를 바꿀 때)가 닿는 자리도 셋이 되었다.
 
 ### D-3 — 테스트와 발행 버전의 차이를 적은 기록을 아무것도 검사하지 않는다 · **열림 · 결정 대기**
 
