@@ -7,6 +7,16 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: an inline skill invoked as `/my-skill` can `Edit` what it `Read` (EE-31)
+
+- **The slash command's tool context now carries a read-stamp map (`ReadTool.FILE_STAMPS_KEY`).** It is built by hand in
+  `OrcaAgentExecutor.executeCommand` and never had one, so an inline skill's `Edit` answered "Read the file before
+  modifying it" to every call, even right after a `Read` of the same file. The map is fresh per command, as a turn's is
+  fresh per execution: a file read in an earlier turn or an earlier slash command must be read again.
+- **What an operator may notice.** The same gap switched `Write`'s stale-write guard off on that path, so an inline
+  slash skill could overwrite an existing file it had never read. That is now refused, as it is in a turn. Fork-mode
+  skills are unchanged; their fork already had its own map.
+
 ### Policy: `internal` packages are not public API, and the build says so
 
 - **`docs/project/api-stability.md` §2 now names `<package>.internal` beside `*.impl`.** The five `internal` packages

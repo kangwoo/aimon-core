@@ -1058,7 +1058,7 @@ not supported: this environment is already the isolated workflow branch 'k' (.wo
 
 출처: 빌드 리뷰 4.
 
-## EE-31 — 슬래시 커맨드 인라인 스킬에는 read stamp 가 없다 · **열림**
+## EE-31 — 슬래시 커맨드 인라인 스킬에는 read stamp 가 없다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 스킬 기반 슬래시 커맨드가 만드는 `ToolContext` 에 `FILE_STAMPS_KEY` 를 싣는다.
 
@@ -1071,6 +1071,33 @@ not supported: this environment is already the isolated workflow branch 'k' (.wo
 **언제 다시 볼까.** EE-11 을 다룰 때, 또는 슬래시 커맨드 스킬이 파일을 고쳐야 할 때.
 
 출처: 빌드 리뷰 4.
+
+### 닫힘 (2026-10-05)
+
+`OrcaAgentExecutor.executeCommand` 가 명령 툴 컨텍스트에 `ReadTool.FILE_STAMPS_KEY` 를 새 `ConcurrentHashMap` 으로 싣는다.
+`PRINCIPAL` · `HOOK_REGISTRY` 처럼 손으로 싣는 키다 — 이 컨텍스트는 `createToolContext` 를 거치지 않는다. 맵은 명령마다 새로
+만든다. `createToolContext` 가 실행마다 새로 만드는 것과 같은 선이고, 앞 턴이나 앞 슬래시 명령에서 읽은 파일은 다시 읽어야
+고칠 수 있다. 포크 모드 스킬은 바뀌지 않았다 — 포크의 컨텍스트는 `DefaultSubagentExecutor` 가 자기 맵과 함께 만든다. 같은
+종류의 빈틈인 EE-11(스케줄 루틴)은 이 변경이 건드리지 않았다.
+
+착수해 보니 항목의 서술과 달랐던 것.
+
+1. **근거(규칙 둘 · 여섯)는 참이었다.** 인라인 스킬의 도구 호출은 `LlmSkillExecutor` → `SKILL_TOOL_DISPATCHER_KEY` 의
+   디스패처 → `SingleToolInvoker` 로 가고, 셋 다 받은 컨텍스트에 맵을 더하지 않는다. main 소스에서 맵을 싣는 곳은
+   `OrcaAgentExecutor.createToolContext` 와 `DefaultSubagentExecutor` 둘뿐이었다(`FILE_STAMPS_KEY` 의 `put` 호출처를 셌다).
+   고치기 전 코드에서 같은 슬래시 호출 안에 `Read` 다음 `Edit` 를 돌리면 `Edit` 가 "Read the file before modifying it" 로
+   실패했다.
+2. **심각도(규칙 셋)는 적힌 것보다 무거웠다.** 항목은 `Edit` 가 언제나 실패한다고만 적었는데, 같은 원인이 반대 방향으로도
+   작동했다. `Write` 는 맵이 없는 컨텍스트에서 낡은 쓰기 검사를 통째로 건너뛰므로(`FileStamps.checkBeforeModify` 의
+   `requireTracking=false`), 슬래시 인라인 스킬의 `Write` 는 **읽지 않은 기존 파일을 확인 없이 덮어썼다.** 턴에서는 거부되는
+   쓰기다. 재현 테스트가 고치기 전 코드에서 덮어쓰기를 확인했고, 이 변경 뒤로는 거부된다. 운영자가 알아챌 수 있는 동작
+   변화라 CHANGELOG 에 적었다.
+3. **처방(규칙 다섯)은 그대로 들었다.** 키 하나를 싣는 것으로 두 테스트가 초록이 됐다.
+
+테스트: `SlashSkillToolDispatchE2EIntegrationTest` — 실제 `OrcaAgentExecutor` 슬래시 흐름에서, 인라인 스킬이 `Read` 한 파일을
+같은 호출에서 `Edit` 할 수 있다, `Read` 없는 `Edit` 는 여전히 거부된다, 읽지 않은 기존 파일 위의 `Write` 가 거부된다, stamp 는
+다음 슬래시 호출로 넘어가지 않는다. 첫째와 셋째는 고치기 전 코드에서 실패한다. 그 테스트의 `ScriptedLlmClient.script` 는
+호출 카운터를 되돌리지 않아 한 테스트 안에서 스크립트를 두 번 걸 수 없었으므로 함께 고쳤다.
 
 ## EE-32 — `ToolContextKey` 의 한 번만 쓰는 이름 집합이 클래스 초기화에 기댄다 · **열림**
 
