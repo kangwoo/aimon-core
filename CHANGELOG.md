@@ -7,6 +7,18 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: every skill staging failure is reported as one (EE-15)
+
+- **`SkillBackedCommandExecutor` turns any exception from staging into a failed `CommandExecutionResult`.** It caught
+  only `StagingException` and `ExecutionEnvironmentUnavailableException`, but `stage()` can also throw what the
+  workspace's filesystem throws mid-copy (`InvalidPathException`, `BackendConnectionException`, …) or whatever a
+  provider's own environment throws. Those escaped the executor as exceptions. Through `DefaultCommandExecutionManager`
+  they still ended as a failure, but as `Command execution error: …` rather than `Failed to stage skill '<name>': …`;
+  a caller of the executor directly got the exception.
+- **The `Skill` tool no longer reports a refused skill directory as `Invalid parameter`.** An `InvalidPathException` from
+  staging is an `IllegalArgumentException`, so it fell into the tool's input-error branch. It now reads `Failed to stage
+  skill '<name>': …` like every other staging failure.
+
 ### Fixed: an inline skill invoked as `/my-skill` can `Edit` what it `Read` (EE-31)
 
 - **The slash command's tool context now carries a read-stamp map (`ReadTool.FILE_STAMPS_KEY`).** It is built by hand in

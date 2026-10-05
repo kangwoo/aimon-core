@@ -704,7 +704,7 @@ AIMON 패키지에 기대지 못하게 하는 것은 전부터 있던 규칙이�
 
 설계와 구현이 설계에서 벗어난 점: [`../design/tool/execution-environment-ee14-user-locale.md`](../design/tool/execution-environment-ee14-user-locale.md).
 
-## EE-15 — 스킬 명령 경로는 스테이징 예외 두 종류만 잡는다 · **열림**
+## EE-15 — 스킬 명령 경로는 스테이징 예외 두 종류만 잡는다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** `SkillBackedCommandExecutor` 가 `stage()` 에서 나오는 모든 실패를 `CommandExecutionResult.failure` 로 바꾸게 한다.
 
@@ -718,6 +718,34 @@ AIMON 패키지에 기대지 못하게 하는 것은 전부터 있던 규칙이�
 **언제 다시 볼까.** 슬래시 명령이 스킬 스테이징 중 예외로 끝났다는 보고가 있을 때, 또는 `stage()` 의 예외 계약을 좁힐 때.
 
 출처: 빌드 리뷰 3.
+
+### 닫힘 (2026-10-05)
+
+`SkillBackedCommandExecutor` 의 스테이징 catch 가 `StagingException | ExecutionEnvironmentUnavailableException` 에서
+`RuntimeException` 으로 넓어졌다. `stage()` 에서 무엇이 나오든 `Failed to stage skill '<name>': …` 실패 결과가 되고, 스킬은
+돌지 않는다. `SkillTool` 의 같은 자리도 같은 모양으로 넓혔다(아래 2).
+
+착수해 보니 항목의 서술과 달랐던 것.
+
+1. **근거(규칙 둘)는 참이었다.** `ExecutionEnvironment.stage` 의 계약은 `StagingException` 만 적지만, `LocalStaging.stage` 는
+   소스 읽기 실패만 `StagingException` 으로 감싸고, 사본을 쓰는 쪽(`rawFileSystem.write` · `deleteRecursive` · `exists`)의
+   실패는 그대로 던진다 — `VirtualFileSystem.write` 가 선언한 것만 해도 `InvalidPathException` · `BackendConnectionException` ·
+   `InsufficientStorageException` 이다. 제공자가 만든 환경(샌드박스)의 `stage()` 는 무엇이든 던질 수 있다. 테스트에서는 그런
+   예외를 던지는 `stage()` 를 직접 세웠고, 고치기 전 코드에서 둘 다 이 클래스 밖으로 새어 나왔다.
+2. **심각도(규칙 셋)는 경로마다 달랐다.** 프레임워크 안의 슬래시 경로에서는 적힌 것보다 가벼웠다 —
+   `DefaultCommandExecutionManager.execute` 의 바깥 `catch (Exception)` 이 받아 `Command execution error: …` 실패로 바꾸므로
+   예외로 끝나지는 않았다(읽어서 확인했고 돌려 보지는 않았다). 새어 나가는 것은 이 클래스나 `CompositeCommandExecutor` 를
+   직접 부르는 임베더에게만이고, 프레임워크 사용자가 보는 차이는 "스테이징 실패" 라는 이름이 빠진 메시지였다. 대신 항목이
+   "바깥 catch 가 막아 준다" 고 적은 **`SkillTool` 쪽이 틀렸다.** `InvalidPathException` 은 `IllegalArgumentException` 이라
+   바깥 catch 의 첫 갈래에 걸려 `Invalid parameter: …` 로 보고됐다 — 모델의 입력은 멀쩡한데 입력 탓을 하는 오류다. 재현
+   테스트로 확인했고 같은 변경에서 고쳤다.
+3. **처방(규칙 다섯)은 그대로 들었다.** catch 를 넓힌 자리에서 감싸는 호출은 컨텍스트 읽기와 `stage()` 뿐이라 다른 실패를
+   삼킬 범위가 없다.
+
+테스트: `SkillBackedCommandExecutorTest` — `stage()` 가 `InvalidPathException` 을 던지면 명령의 실패 결과가 되고 원인이
+보존된다, `BackendConnectionException` 을 던지면 실패 결과가 되고 스킬 실행기는 불리지 않는다. `SkillToolTest` —
+`InvalidPathException` 이 `Invalid parameter` 가 아니라 `Failed to stage skill '<name>'` 로 보고된다. 셋 다 고치기 전 코드에서
+실패한다.
 
 ## EE-16 — 호스트 경로 스킬 안의 심볼릭 링크 파일이 스테이징된다 · **닫힘** *(2026-09-29)*
 

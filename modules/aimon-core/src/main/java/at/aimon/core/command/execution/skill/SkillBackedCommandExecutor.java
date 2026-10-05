@@ -12,8 +12,6 @@ import at.aimon.core.command.execution.CommandExecutionResult;
 import at.aimon.core.command.execution.CommandExecutor;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.command.skill.SkillBackedCommand;
-import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
-import at.aimon.core.environment.exception.StagingException;
 import at.aimon.core.skill.Skill;
 import at.aimon.core.skill.execution.SkillExecutionContext;
 import at.aimon.core.skill.execution.SkillExecutionMetadata;
@@ -82,10 +80,13 @@ public final class SkillBackedCommandExecutor implements CommandExecutor {
 
         // Staging the skill into the run's environment (${AIMON_SKILL_DIR}) can fail — over the size limit, the
         // source changed since it was loaded, no usable environment. That is this command's error, not a crash.
+        // Every failure, not only the two types stage()'s contract names (EE-15): a directory name the workspace's
+        // filesystem refuses (InvalidPathException), a backend write that fails mid-copy, or whatever a provider's
+        // own environment throws must still come back as this command's result rather than escape it.
         final RenderContext renderContext;
         try {
             renderContext = buildRenderContext(skill, context.getToolContext(), request, executionId);
-        } catch (StagingException | ExecutionEnvironmentUnavailableException e) {
+        } catch (RuntimeException e) {
             return CommandExecutionResult.failure("Failed to stage skill '" + skill.getName() + "': " + e.getMessage(),
                     e);
         }
