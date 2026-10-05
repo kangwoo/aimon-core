@@ -432,6 +432,55 @@ class AimonAutoConfigurationTest {
     }
 
     @Test
+    @DisplayName("responses-api-enabled reaches the vendor config, and false turns the Responses path off (L-2)")
+    void responsesApiEnabledReachesTheOpenAiClient(@TempDir Path workspace) {
+        // L-2: base-url is a property and a real gpt-5* name routes to /v1/responses through the built-in row, so
+        // a Chat-Completions-only gateway could reach a 404 through properties alone. This is the way back out.
+        for (String written : new String[]{"false", "true"}) {
+            minimal(workspace)
+                    .withPropertyValues("aimon.llm.provider=openai", "aimon.llm.model=gpt-5.1",
+                            "aimon.llm.base-url=https://gateway.internal/v1",
+                            "aimon.llm.openai.responses-api-enabled=" + written)
+                    .run(ctx -> assertThat(AimonLlmAutoConfiguration.OpenAiConfiguration
+                            .openAiConfig(ctx.getBean(AimonProperties.class).getLlm()).isResponsesApiEnabled())
+                            .as("responses-api-enabled written as `%s`", written)
+                            .isEqualTo(Boolean.parseBoolean(written)));
+        }
+    }
+
+    @Test
+    @DisplayName("an unwritten responses-api-enabled leaves OpenAIConfig's own default standing")
+    void anUnwrittenResponsesApiEnabledKeepsTheVendorDefault(@TempDir Path workspace) {
+        // Nullable on the properties bean so the default lives in one place. The second run is the case a
+        // primitive field would have got wrong: the block is present, this key is not.
+        minimal(workspace).withPropertyValues("aimon.llm.provider=openai", "aimon.llm.model=gpt-5.1")
+                .run(ctx -> assertThat(AimonLlmAutoConfiguration.OpenAiConfiguration
+                        .openAiConfig(ctx.getBean(AimonProperties.class).getLlm()).isResponsesApiEnabled()).isTrue());
+        minimal(workspace)
+                .withPropertyValues("aimon.llm.provider=openai", "aimon.llm.model=gpt-5.1",
+                        "aimon.llm.openai.reasoning-summary=auto")
+                .run(ctx -> assertThat(AimonLlmAutoConfiguration.OpenAiConfiguration
+                        .openAiConfig(ctx.getBean(AimonProperties.class).getLlm()).isResponsesApiEnabled()).isTrue());
+    }
+
+    @Test
+    @DisplayName("responses-api-enabled alone under the anthropic provider is refused, naming both properties")
+    void responsesApiEnabledUnderAnthropicIsRefused(@TempDir Path workspace) {
+        // Either value: `true` restates the default and is still a line the anthropic branch never reads. And
+        // once more without the OpenAI module, which is the classpath the refusal actually has to run on.
+        for (String written : new String[]{"false", "true"}) {
+            minimal(workspace).withPropertyValues("aimon.llm.openai.responses-api-enabled=" + written)
+                    .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                            .hasStackTraceContaining(AimonProperties.LLM_OPENAI)
+                            .hasStackTraceContaining(AimonProperties.LLM_PROVIDER));
+        }
+        minimal(workspace).withClassLoader(new FilteredClassLoader("at.aimon.core.llms.openai"))
+                .withPropertyValues("aimon.llm.openai.responses-api-enabled=false")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure().hasStackTraceContaining(AimonProperties.LLM_OPENAI)
+                        .hasStackTraceContaining(AimonProperties.LLM_PROVIDER));
+    }
+
+    @Test
     @DisplayName("an empty openai block does not trip the anthropic branch")
     void anEmptyOpenAiBlockDoesNotTripTheAnthropicBranch(@TempDir Path workspace) {
         minimal(workspace).run(ctx -> assertThat(ctx).hasNotFailed());

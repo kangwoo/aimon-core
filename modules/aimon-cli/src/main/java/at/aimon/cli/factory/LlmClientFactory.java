@@ -189,6 +189,10 @@ public class LlmClientFactory {
         if (openai.getReasoningSummary() != null) {
             builder.reasoningSummary(openai.getReasoningSummary());
         }
+        // null 은 "적지 않음" 이고, 그때 기본값(true)은 OpenAIConfig 가 정한다 — 여기서 다시 적지 않는다.
+        if (openai.getResponsesApiEnabled() != null) {
+            builder.responsesApiEnabled(openai.getResponsesApiEnabled());
+        }
     }
 
     /**

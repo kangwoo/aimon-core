@@ -453,9 +453,20 @@ public final class OpenAIConfig {
          * to its built-in capability row, is routed to {@code /v1/responses}, and gets a 404 on a deployment that
          * works today. Turning it off puts such a model back on Chat Completions, where a configured reasoning effort
          * is <em>omitted</em> whenever tools are present and the model's capability row says the two cannot be
-         * combined. Nothing is substituted for it: {@code none} is not a value any OpenAI model accepts, and sending
-         * it was itself a 400 — a request that asks for {@link ReasoningEffort#NONE} is likewise reported and
-         * omitted, on either endpoint.
+         * combined. Nothing is substituted for it, and a rung the model's capability row does not list — for most
+         * OpenAI models that includes {@link ReasoningEffort#NONE}, which they answer with a 400 — is likewise
+         * reported and omitted, on either endpoint.
+         *
+         * <p>
+         * {@code gpt-5.6-terra} is the row that does list {@code NONE}, and on Chat Completions it is the rung that
+         * matters: measured against {@code api.openai.com}, a tools request with no effort is a 400 there
+         * (2026-09-10) and the same request with {@code reasoning_effort: "none"} is a 200 (2026-10-05). The other
+         * rungs of that row were measured on {@code /v1/responses} only. The tables are in
+         * {@code docs/design/llm/model-capabilities.md} §6.3 and §6.4.
+         *
+         * <p>
+         * Both configuration surfaces carry this switch: {@code llm.openai.responsesApiEnabled} in the CLI's yaml
+         * and {@code aimon.llm.openai.responses-api-enabled} in the starter.
          *
          * @param responsesApiEnabled
          *            {@code false} when this endpoint has no {@code /v1/responses}

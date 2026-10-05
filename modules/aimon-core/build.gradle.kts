@@ -43,6 +43,12 @@ dependencies {
     // backend is the one every other backend will be compared against, so it is the first thing the suite has to
     // hold.
     testImplementation(project(":aimon-memory-testkit"))
+
+    // Key discovery and probe-value synthesis for the declaration -> descriptor guard (backlog L-13), reused from the
+    // contract #82 put on the two configuration surfaces rather than copied: that contract guards surface ->
+    // declaration, this module's test guards the next link, and both have to agree on what "every declarable key"
+    // means. Same (non-)cycle as the two above. Not published, so it reaches no consumer.
+    testImplementation(project(":aimon-llm-capability-testkit"))
 }
 
 // Checkstyle baseline: locks the existing warning count so new violations fail the build.

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: 1f8b53f
+source_commit: 2bfe9a9
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -553,7 +553,7 @@ either — `thinkingMode` on the CLI, `thinking-mode` in the starter.
 #### The OpenAI-only block — `llm.openai`
 
 The counterpart of `llm.anthropic`, following the same rule. **The openai branch alone reads it**, so this
-block written under `provider: anthropic` fails startup rather than being ignored. Today it has one key.
+block written under `provider: anthropic` fails startup rather than being ignored. It has two keys.
 
 ```yaml
 llm:
@@ -567,6 +567,7 @@ llm:
 | Key | Meaning | If omitted |
 |---|---|---|
 | `reasoningSummary` | Whether to ask for a summary of the model's reasoning and stream it (`auto` \| `concise` \| `detailed`) | Neither is asked for and nothing is streamed |
+| `responsesApiEnabled` | Whether the Responses API (`/v1/responses`) path is used. `false` sends every request to Chat Completions | `true` — a model that does the reasoning trace round trip goes to `/v1/responses` |
 
 On this vendor the reasoning itself is `encrypted_content` — ciphertext by design — so **a summary is the only
 human-readable surrogate there is.** That is why this key has a different name from Anthropic's
@@ -575,6 +576,38 @@ human-readable surrogate there is.** That is why this key has a different name f
 **Responses API only.** If the model does not support the reasoning trace round trip, or that endpoint is
 switched off, the request goes to Chat Completions, which has no such parameter — and in that case the client
 says so once at WARN (rather than doing nothing in silence).
+
+**`responsesApiEnabled: false` is the switch for a gateway that implements Chat Completions only.** Point
+`baseUrl` at such an OpenAI-compatible gateway while keeping real model names, and a `gpt-5*` or o-series name
+resolves to its built-in capability row, is routed to `/v1/responses`, and gets a 404 from the gateway. That
+situation is produced by configuration alone, so the way out is in configuration too. It tells no lie about the
+model and only turns the routing off, so the rest of that row (sampling suppression, the effort ladder) keeps
+applying. If the gateway exposes the model under a **different** name you do not need this key — that name is
+not in the built-in table and goes to Chat Completions from the start.
+
+```yaml
+llm:
+  provider: openai
+  apiKey: "${OPENAI_API_KEY}"
+  baseUrl: https://gateway.internal/v1
+  model: gpt-5.1
+  openai:
+    responsesApiEnabled: false
+```
+
+Two things go off with it. There is no reasoning-item round trip, so the model rebuilds its reasoning on every
+call, and `reasoningSummary` above reaches nothing.
+
+**Forcing `gpt-5.6-terra` onto Chat Completions at `api.openai.com` means tool requests need
+`reasoningEffort: none`.** Three cells have been measured. A request carrying tools and no effort is an
+**HTTP 400** (2026-09-10) — *"Function tools with reasoning_effort are not supported for gpt-5.6-terra in
+/v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'."* A request
+carrying `reasoning_effort: "none"` is a **200** both without tools and with one function tool (2026-10-05,
+`finish_reason: stop`, `reasoning_tokens: 0`). **No other rung (`low` · `medium` · `high`) has ever been sent
+on Chat Completions** — that ladder was measured on `/v1/responses`, and by the error text above those rungs
+are refused alongside tools. An agent definition's `model.reasoningEffort` wins over `llm.reasoningEffort`, so
+write `none` on whichever one actually reaches the request. This is that one model's situation — what a model
+behind a gateway accepts is the gateway's to decide.
 
 If `cli.tracing` is on, one more layer goes on top (line 697-712) — `TracingLlmClient` wraps the original
 client, and the same `Tracer` is injected into the executor factory as well, so turn/iteration/tool spans
