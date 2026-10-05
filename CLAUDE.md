@@ -120,7 +120,8 @@ Within `aimon-core`, top-level packages follow a domain + impl split:
   (e.g. `at.aimon.core.agent.Agent`, `at.aimon.core.filesystem.VirtualFileSystem`)
 - **`at.aimon.core.<domain>.impl`** — concrete implementations (`Default*`, `Local*`, `Orca*` ...)
   Direct imports of `*.impl` from outside the `at.aimon.core.<domain>..` tree are blocked by
-  ArchUnit. External modules and other core packages must depend on neutral SPI packages instead.
+  ArchUnit. `<package>.internal` (any module) is internal too — helpers such as codecs — and only code under
+  `<package>..` may import it (`InternalPackageBoundaryTest`). External modules and other core packages must depend on neutral SPI packages instead.
 - **`at.aimon.core.agent.orca`** — public Orca tool-provider SPI surface
   (`OrcaToolProvider`, `OrcaToolProviderContext`, `OrcaProviderDependencies`). External modules
   (the external `aimon-sandbox` and `aimon-browser-playwright`, ...) and other core packages
