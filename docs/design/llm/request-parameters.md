@@ -52,6 +52,12 @@ provider 클라이언트는 요청마다 세 입력으로 와이어 요청을 �
 | `topP` · `presencePenalty` · `frequencyPenalty` | `LlmModel` → `OpenAIConfig` | `LlmModel` 만 — `AnthropicConfig` 에는 필드가 없다 |
 | `reasoningEffort` | `LlmModel` → `OpenAIConfig` | `LlmModel` → `AnthropicConfig` |
 
+**서브에이전트의 `LlmModel` 은 띄운 에이전트의 `reasoningEffort` 를 물려받는다.** 서브에이전트 정의의 `model` 은 이름 하나라
+자기 effort 를 적을 자리가 없고, `SubagentLlmDefaults.resolveModel` 이 띄운 에이전트의 값을 싣는다(`NONE` 포함, 중첩 포크도).
+적지 않았으면 비워 두므로 위 표의 다음 칸(클라이언트 설정)이 적용된다. 물려받은 값도 요청마다 **서브에이전트 자신의 모델**의
+능력으로 판정한다 — effort 파라미터가 없는 모델, 사다리에 없는 rung, Chat 도구 규칙(§4.3 · §4.4)은 생략하고 보고하며 그대로
+보내지 않는다.
+
 `AnthropicConfig` 도 `reasoningEffort` 를 갖고 우선순위가 같은 이유: `reasoningEffort` 는 두 provider 가 공유하는
 설정 키이고, 공유 키가 한 provider 에만 닿으면 그 키는 절반의 배포에게 거짓이 된다.
 

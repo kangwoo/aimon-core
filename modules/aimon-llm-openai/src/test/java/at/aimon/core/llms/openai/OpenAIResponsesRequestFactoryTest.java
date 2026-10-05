@@ -508,6 +508,61 @@ class OpenAIResponsesRequestFactoryTest {
         assertThat(reported).containsOnly("reasoningSummary=AUTO@gateway-model");
     }
 
+    // ---- a subagent's inherited reasoningEffort goes through the subagent model's own gates ----
+
+    private static LlmModel subagentModelOnWithParentEffort(String subagentModelName, ReasoningEffort parentEffort) {
+        return SubagentLlmDefaults.resolveModel(
+                Subagent.builder().name("explore").systemPrompt("(prompt)").model(subagentModelName).build(),
+                LlmModel.builder().name("parent-model").reasoningEffort(parentEffort).build());
+    }
+
+    @Test
+    @DisplayName("subagent: an inherited effort the subagent's model accepts is sent")
+    void anInheritedEffortOnTheLadderIsSent() {
+        final JsonNode reasoning = ResponsesFixtures
+                .bodyTreeOf(
+                        build(config(), subagentModelOnWithParentEffort(GPT5_NAME, ReasoningEffort.HIGH), List.of()))
+                .get("reasoning");
+
+        assertThat(reasoning.get("effort").asText()).isEqualTo("high");
+    }
+
+    @Test
+    @DisplayName("subagent: an inherited effort off the subagent model's ladder is omitted and reported, never sent raw")
+    void anInheritedEffortOffTheLadderIsOmitted() {
+        // The parent's model may accept a rung the subagent's does not: terra takes none and not minimal, gpt-5-mini
+        // the reverse. Each is judged against the model the request actually names.
+        final List<String> reported = new ArrayList<>();
+
+        final ResponseCreateParams onTerra = build(config(),
+                subagentModelOnWithParentEffort(TERRA_NAME, ReasoningEffort.MINIMAL), List.of(), TERRA,
+                (signature, message, args) -> reported.add(signature), TERRA_NAME);
+        final ResponseCreateParams onGpt5 = build(config(),
+                subagentModelOnWithParentEffort(GPT5_NAME, ReasoningEffort.NONE), List.of(), GPT5,
+                (signature, message, args) -> reported.add(signature), GPT5_NAME);
+
+        assertThat(ResponsesFixtures.bodyOf(onTerra)).doesNotContain("effort");
+        assertThat(ResponsesFixtures.bodyOf(onGpt5)).doesNotContain("effort");
+        // (The subagent default temperature is reported as suppressed on these models too; that is not this test's.)
+        assertThat(reported).filteredOn(signature -> signature.startsWith("reasoningEffort")).containsExactly(
+                "reasoningEffortOffLadder=MINIMAL@" + TERRA_NAME, "reasoningEffortOffLadder=NONE@" + GPT5_NAME);
+    }
+
+    @Test
+    @DisplayName("subagent: an inherited effort on a model with no effort parameter is omitted and reported")
+    void anInheritedEffortOnAModelWithoutTheParameterIsOmitted() {
+        final ModelCapabilities noEffort = InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-4o");
+        assertThat(noEffort.supportsReasoningEffort()).as("fixture precondition").isFalse();
+        final List<String> reported = new ArrayList<>();
+
+        final ResponseCreateParams params = build(config(),
+                subagentModelOnWithParentEffort("gpt-4o", ReasoningEffort.HIGH), List.of(), noEffort,
+                (signature, message, args) -> reported.add(signature), "gpt-4o");
+
+        assertThat(params._reasoning()).isInstanceOf(JsonMissing.class);
+        assertThat(reported).containsExactly("reasoningEffort=HIGH@gpt-4o");
+    }
+
     private String summaryOnTheWire(OpenAiReasoningSummary deployment, ReasoningSummary agent) {
         final LlmModel model = agent == null ? LlmModel.builder().build() : modelWithSummary(agent);
         return ResponsesFixtures.bodyTreeOf(build(configWithSummary(deployment), model, List.of())).get("reasoning")

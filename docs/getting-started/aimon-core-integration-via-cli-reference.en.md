@@ -328,7 +328,8 @@ Unlike the `llm.anthropic` block, **both providers read this one.** The name is 
 something different per vendor. What each *does* with the answer differs — OpenAI sends a rung parameter,
 Anthropic translates it to a token budget — and that translation is what a neutral enum is for.
 
-An agent definition's `model.reasoningEffort` wins over this one. A rung that is not on this model's ladder is
+An agent definition's `model.reasoningEffort` wins over this one. A subagent inherits the value of the agent that
+started it. A rung that is not on this model's ladder is
 **omitted and reported**, never raised to the nearest one it has: a clamp is a request the operator did not
 make, and it would arrive silently.
 
