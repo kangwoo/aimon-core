@@ -2051,12 +2051,13 @@ WARN 후 성공("degrading to success")이고 `McpToolAction` 도 같다. 정책
 
 슬래시 명령으로 부른 fork 모드 스킬도 이제 자기 훅을 그 포크에 얹는다. 두 군데를 고쳤다.
 
-- **`LlmSkillExecutor.executeFork`** 가 포크 앞뒤를 `SkillHookScope` 로 감싼다 — 툴 컨텍스트의 레지스트리
-  (`HookRegistryAccess.of`) 위에 `ScopedSkillHookActivator` 로 스킬 훅 층을 얹고, 그 뷰를 실은 컨텍스트를 포크 실행기에
-  넘기고, 포크가 끝나면 닫는다. `SkillTool` 의 FORK 분기와 같은 모양이다. 컨텍스트에 레지스트리가 없으면 얹을 곳이 없어
-  아무것도 하지 않는다 — `OrcaSkillToolProvider` 가 레지스트리가 없을 때 `NoOpSkillHookActivator` 를 고르는 것과 같은 판단이다.
-- **`OrcaAgentExecutor.executeCommand`** 가 명령 툴 컨텍스트에 `ToolContextKeys.HOOK_REGISTRY` 를 싣는다. 이 컨텍스트는
-  손으로 조립되므로(`PRINCIPAL` · `CALLER_ALLOWED_TOOLS` 와 같은 이유) 싣지 않으면 위의 활성화가 얹을 레지스트리를 찾지 못한다.
+- **`LlmSkillExecutor.executeFork`** 가 포크 앞뒤를 `SkillHookScope` 로 감싼다 — 툴 컨텍스트의
+  `ToolContextKeys.SKILL_HOOK_ACTIVATOR_KEY`(새 키) 활성화기로 스킬 훅 층을 얹고, 그 뷰를 실은 컨텍스트를 포크 실행기에
+  넘기고, 포크가 끝나면(던져도) 닫는다. `SkillTool` 의 FORK 분기와 같은 모양이다. 키가 없으면 아무것도 활성화하지 않는다.
+- **`OrcaAgentExecutor.executeCommand`** 가 명령 툴 컨텍스트에 그 활성화기와 `ToolContextKeys.HOOK_REGISTRY` 를 싣는다. 이
+  컨텍스트는 손으로 조립되므로(`PRINCIPAL` · `CALLER_ALLOWED_TOOLS` 와 같은 이유) 싣지 않으면 활성화도, 얹을 레지스트리도 없다.
+  활성화기는 `SkillTool` 과 같은 `OrcaSkillHookActivatorResolver` 로 고른다 — 레지스트리가 있으면 `ScopedSkillHookActivator`,
+  없으면 `NoOpSkillHookActivator`. 포크 실행기를 `OrcaSkillForkExecutorResolver` 로 공유하는 것과 같은 방식이다.
 
 INLINE 스킬은 바뀌지 않았다 — `Skill` 도구로 부르든 슬래시로 부르든 얹을 포크가 없어 발화하지 않는다. 활성화는 여전히 어디에도
 등록하지 않으므로(EE-49) 런타임 레지스트리는 비어 있다.
@@ -2072,10 +2073,17 @@ INLINE 스킬은 바뀌지 않았다 — `Skill` 도구로 부르든 슬래시�
    돌려줬다. 같은 스킬을 모델이 `Skill` 로 부르면 포크가 시작 전에 멈춘다(EE-70). 가드가 느슨해진 것이 아니라 없었다.
 3. **처방(규칙 다섯)은 반쪽이면 듣지 않는다.** 활성화만 더하면 컨텍스트에 레지스트리가 없어 얹을 곳이 없고, 레지스트리만
    실으면 포크가 런타임 훅만 본다. 재현 테스트가 둘 다 있어야 초록이 된다.
+4. **첫 구현은 활성화기를 `LlmSkillExecutor` 안에 박아 넣었다**(`new ScopedSkillHookActivator`). PR #218 리뷰가 짚었다 —
+   `SkillTool` 은 활성화기를 주입받는데 슬래시 경로만 고정이면 두 경로의 판단이 따로 논다. 공용 resolver 와 컨텍스트 키로
+   바꿨다. 남은 비대칭 하나: 슬래시 경로의 활성화기는 런타임에서 고르므로, 직접 등록한 `SkillTool` 에 `NoOpSkillHookActivator`
+   를 준 호스트도 `/skill` 에서는 훅이 켜진다. 포크 실행기도 이미 그렇게 고르고 있어 같은 선에 맞췄고 CHANGELOG 에 적었다.
 
 테스트: `SlashSkillForkE2EIntegrationTest` — 실제 `OrcaAgentExecutor` 명령 흐름을 통해 스킬의 `onStart` 훅이 슬래시 포크에서
-발화한다, 막는 가드가 포크를 첫 LLM 호출 전에 멈추고 `Skill fork failed for '<skill>'` 로 실패한다, 슬래시 경로를 지난 뒤에도
-런타임 레지스트리에 스킬 훅이 없다. 앞의 둘은 고치기 전 코드에서 실패했다.
+발화한다, 막는 `onStart` 가드가 포크를 첫 LLM 호출 전에 멈추고 `Skill fork failed for '<skill>'` 로 실패한다, `preTool` 가드가
+포크 안의 도구 호출을 막는다, 슬래시 경로를 지난 뒤에도 런타임 레지스트리에 스킬 훅이 없다. 앞의 셋은 활성화기를 싣지 않은
+코드에서 실패한다. `LlmSkillExecutorTest` — 포크가 도는 동안 `HookRegistryAccess.activeSkillGuards` 가 그 스킬을 돌려준다
+(백그라운드 `Workflow` · `WorkflowJs` 와 `ScheduleTask` 가 거절 전에 읽는 값), 포크가 끝나거나 던지면 층이 꺼진다, 키가
+없으면 포크가 호출자의 컨텍스트를 그대로 받는다.
 
 ## EE-69 — 스킬 포크가 띄운 백그라운드 서브에이전트는 스킬이 끝난 뒤 가드 없이 돈다 · **열림**
 

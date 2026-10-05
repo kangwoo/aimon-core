@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -25,6 +26,8 @@ import at.aimon.core.agent.tool.exception.ToolPermissionViolationException;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.agent.tool.permission.PermissionSubject;
 import at.aimon.core.agent.tool.permission.ToolPermissionSubjectAware;
+import at.aimon.core.hook.DefaultHookRegistry;
+import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
@@ -46,7 +49,10 @@ import at.aimon.core.skill.execution.SkillToolDispatcher;
 import at.aimon.core.skill.fork.NoOpSkillForkExecutor;
 import at.aimon.core.skill.fork.SkillForkExecutor;
 import at.aimon.core.skill.fork.SkillForkOutcome;
+import at.aimon.core.skill.hook.ScopedSkillHookActivator;
+import at.aimon.core.skill.hook.SkillHookSet;
 import at.aimon.core.skill.render.DefaultSkillContentRenderer;
+import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
 @DisplayName("LlmSkillExecutor Tests")
@@ -392,6 +398,81 @@ class LlmSkillExecutorTest {
     }
 
     @Test
+    @DisplayName("EE-68: the bound activator layers the skill's hooks over the fork's registry for as long as it runs")
+    void boundActivatorLayersSkillHooksOverTheForkOnly() {
+        final AtomicReference<List<String>> guardsDuringFork = new AtomicReference<>();
+        final RecordingSkillForkExecutor recordingFork = new RecordingSkillForkExecutor(
+                SkillForkOutcome.success("ok")) {
+            @Override
+            public SkillForkOutcome fork(Skill skill, String goal, ToolContext toolContext) {
+                guardsDuringFork.set(HookRegistryAccess.activeSkillGuards(toolContext));
+                return super.fork(skill, goal, toolContext);
+            }
+        };
+        final DefaultHookRegistry runtimeRegistry = new DefaultHookRegistry();
+        final ToolContext toolContext = ToolContext.builder()
+                .put(ToolContextKeys.SKILL_FORK_EXECUTOR_KEY, recordingFork)
+                .put(ToolContextKeys.HOOK_REGISTRY, runtimeRegistry)
+                .put(ToolContextKeys.SKILL_HOOK_ACTIVATOR_KEY, new ScopedSkillHookActivator(runtimeRegistry)).build();
+
+        final SkillExecutionResult result = executeFork(guardedForkSkill(), toolContext);
+
+        assertThat(result.isSuccess()).isTrue();
+        // What Workflow/WorkflowJs background mode and ScheduleTask read before refusing inside a guarded fork.
+        assertThat(guardsDuringFork.get()).containsExactly("test");
+        assertThat(HookRegistryAccess.activeSkillGuards(recordingFork.lastToolContext)).isEmpty();
+        assertThat(HookRegistryAccess.activeSkillGuards(toolContext)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("EE-68: the skill's hooks end even when the fork executor throws")
+    void boundActivatorScopeClosesWhenTheForkThrows() {
+        final AtomicReference<ToolContext> forkContext = new AtomicReference<>();
+        final SkillForkExecutor throwingFork = (skill, goal, ctx) -> {
+            forkContext.set(ctx);
+            throw new IllegalStateException("fork blew up");
+        };
+        final DefaultHookRegistry runtimeRegistry = new DefaultHookRegistry();
+        final ToolContext toolContext = ToolContext.builder().put(ToolContextKeys.SKILL_FORK_EXECUTOR_KEY, throwingFork)
+                .put(ToolContextKeys.HOOK_REGISTRY, runtimeRegistry)
+                .put(ToolContextKeys.SKILL_HOOK_ACTIVATOR_KEY, new ScopedSkillHookActivator(runtimeRegistry)).build();
+
+        final SkillExecutionResult result = executeFork(guardedForkSkill(), toolContext);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(HookRegistryAccess.activeSkillGuards(forkContext.get())).isEmpty();
+    }
+
+    @Test
+    @DisplayName("EE-68: with no bound activator the fork gets the caller's context unchanged, registry or not")
+    void absentActivatorActivatesNothing() {
+        final RecordingSkillForkExecutor recordingFork = new RecordingSkillForkExecutor(SkillForkOutcome.success("ok"));
+        final ToolContext toolContext = ToolContext.builder()
+                .put(ToolContextKeys.SKILL_FORK_EXECUTOR_KEY, recordingFork)
+                .put(ToolContextKeys.HOOK_REGISTRY, new DefaultHookRegistry()).build();
+
+        final SkillExecutionResult result = executeFork(guardedForkSkill(), toolContext);
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(recordingFork.lastToolContext).isSameAs(toolContext);
+    }
+
+    private SkillExecutionResult executeFork(Skill skill, ToolContext toolContext) {
+        final SkillExecutionContext context = SkillExecutionContext.builder().skill(skill)
+                .defaultModel(LlmModel.builder().build()).toolRegistry(new DefaultToolRegistry()).executionId(runId())
+                .toolContext(toolContext).build();
+        return executor.execute(context, SkillExecutionRequest.builder().build());
+    }
+
+    private static Skill guardedForkSkill() {
+        return Skill.builder().name("test")
+                .metadata(SkillMetadata.builder().name("test").description("Test").executionMode(ExecutionMode.FORK)
+                        .forkAgentName("researcher")
+                        .hooks(SkillHookSet.builder().addPreTool(ctx -> HookResult.deny("no")).build()).build())
+                .content(SkillContent.of("Forked body")).build();
+    }
+
+    @Test
     @DisplayName("ToolContext-supplied SkillToolDispatcher runs the batch instead of the execution manager")
     void toolContextDispatcherRunsTheBatch() {
         final ToolUse counterUse = ToolUse.of("id", "Counter", Map.of("n", 1));
@@ -555,7 +636,7 @@ class LlmSkillExecutorTest {
 
     }
 
-    private static final class RecordingSkillForkExecutor implements SkillForkExecutor {
+    private static class RecordingSkillForkExecutor implements SkillForkExecutor {
         private final SkillForkOutcome outcome;
         Skill lastSkill;
         String lastGoal;

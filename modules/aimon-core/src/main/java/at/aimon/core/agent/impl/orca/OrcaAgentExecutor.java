@@ -53,6 +53,7 @@ import at.aimon.core.agent.context.ContextRequest;
 import at.aimon.core.agent.context.ContextView;
 import at.aimon.core.agent.exception.ContextWindowExceededException;
 import at.aimon.core.agent.impl.orca.tool.OrcaSkillForkExecutorResolver;
+import at.aimon.core.agent.impl.orca.tool.OrcaSkillHookActivatorResolver;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.CancellationSignals;
 import at.aimon.core.agent.interrupt.CancelledExecutionException;
@@ -2125,8 +2126,8 @@ public class OrcaAgentExecutor
                 commandContextBuilder.put(ToolContextKeys.PRINCIPAL, scope.getPrincipal());
             }
             // The registry this execution dispatches against, published by hand like the caller's identity: a
-            // `/my-skill` fork layers the skill's own hooks over it, and without it the user's slash command started a
-            // fork none of the skill's guards covered while the Skill tool-call path (createToolContext) did (EE-68).
+            // `/my-skill` fork layers the skill's own hooks over it (EE-68), as a Skill tool call's fork does over the
+            // one createToolContext publishes.
             if (scope.getHookRegistry() != null) {
                 commandContextBuilder.put(ToolContextKeys.HOOK_REGISTRY, scope.getHookRegistry());
             }
@@ -2140,6 +2141,9 @@ public class OrcaAgentExecutor
                     .put(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY, scope.getExecutionAttributes())
                     .put(ToolContextKeys.LLM_CALL_METADATA_KEY, scope.llmCallMetadata)
                     .put(ToolContextKeys.SKILL_FORK_EXECUTOR_KEY, skillForkExecutor)
+                    // The activator SkillTool is given, so a `/my-skill` fork runs under the skill's own hooks (EE-68).
+                    .put(ToolContextKeys.SKILL_HOOK_ACTIVATOR_KEY,
+                            OrcaSkillHookActivatorResolver.resolve(agentRuntime.getHookRegistry()))
                     // The agent's allow-list, as the ceiling on everything this command causes. This context is
                     // hand-built rather than enriched by SingleToolInvoker — the slash path has no tool call above
                     // it — so it is the one place the key has to be published by hand, and without it a user-typed

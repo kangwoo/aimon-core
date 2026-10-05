@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +25,10 @@ import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.agent.tool.Tool;
+import at.aimon.core.agent.tool.ToolContext;
+import at.aimon.core.agent.tool.ToolInput;
+import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
 import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.DefaultCommandExecutionManager;
@@ -46,6 +52,7 @@ import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.Role;
 import at.aimon.core.llm.ToolDefinition;
+import at.aimon.core.llm.ToolUse;
 import at.aimon.core.skill.ExecutionMode;
 import at.aimon.core.skill.InvokePolicy;
 import at.aimon.core.skill.Skill;
@@ -266,6 +273,27 @@ class SlashSkillForkE2EIntegrationTest {
     }
 
     /**
+     * EE-68: a {@code preTool} guard — the other event the CHANGELOG names — keeps the slash fork's subagent from
+     * running the tool it asked for. The fork itself still answers: a denied tool call is an observation, not a stop.
+     */
+    @Test
+    @DisplayName("a skill's preTool guard denies the tool call made inside the fork started by /<skill>")
+    void slashForkSkill_SkillPreToolGuardDeniesTheForksToolCall() {
+        final CountingTool probe = new CountingTool();
+        toolRegistry.register(probe);
+        llmClient.queue(LlmResponse.of("probing", List.of(ToolUse.of("t1", CountingTool.NAME, Map.of()))));
+        skillRegistry.add(forkSkill("review", "code-reviewer", "Review: $ARGUMENTS",
+                SkillHookSet.builder().addPreTool(ctx -> HookResult.deny("probe is off limits")).build()));
+        subagentRegistry.add(simpleSubagent("code-reviewer"));
+
+        final OrcaAgentExecutionResult result = executor.execute(createContext(), createRequest("/review Foo.java"));
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(probe.executions).isZero();
+        assertThat(llmClient.callCount()).isEqualTo(2);
+    }
+
+    /**
      * EE-68: activating on the slash path must not do it by registering with the runtime's registry — that is the
      * agent-scoped registry every other session of the agent dispatches against (EE-49).
      */
@@ -337,6 +365,23 @@ class SlashSkillForkE2EIntegrationTest {
                 SubagentContent.of("you are " + name));
     }
 
+    /** A tool that only counts how often it actually ran. */
+    private static final class CountingTool implements Tool {
+        static final String NAME = "Probe";
+        int executions;
+
+        @Override
+        public ToolDefinition getDefinition() {
+            return ToolDefinition.of(NAME, "Counts executions", Map.of("type", "object"));
+        }
+
+        @Override
+        public ToolResult execute(ToolInput input, ToolContext context) {
+            executions++;
+            return ToolResult.success("probed");
+        }
+    }
+
     /** In-memory {@link SkillRegistry} so the test does not depend on classpath fixtures. */
     private static final class InMemorySkillRegistry implements SkillRegistry {
         private final Map<String, Skill> skills = new HashMap<>();
@@ -403,9 +448,15 @@ class SlashSkillForkE2EIntegrationTest {
     private static final class RecordingLlmClient implements LlmClient {
         private final String finalAnswer;
         private final List<String> userMessages = new ArrayList<>();
+        private final Deque<LlmResponse> queued = new ArrayDeque<>();
 
         RecordingLlmClient(String finalAnswer) {
             this.finalAnswer = finalAnswer;
+        }
+
+        /** Answers the next call with {@code response} instead of the fixed final answer. */
+        void queue(LlmResponse response) {
+            queued.add(response);
         }
 
         int callCount() {
@@ -433,7 +484,8 @@ class SlashSkillForkE2EIntegrationTest {
                     userMessages.add(m.getContent());
                 }
             }
-            return LlmResponse.text(finalAnswer);
+            final LlmResponse next = queued.poll();
+            return next != null ? next : LlmResponse.text(finalAnswer);
         }
 
         @Override

@@ -121,7 +121,8 @@ public final class HookRegistryAccess {
      * <p>
      * The key is write-once, so the registry cannot be replaced in place; this assembles a new context instead, and
      * is the only place that does. It is for the code that starts a fork with a different registry than its own —
-     * {@code SkillTool} handing a forked skill the view with the skill's hooks.
+     * {@code SkillTool} and, on the user-slash path, {@code LlmSkillExecutor} handing a forked skill the view with the
+     * skill's hooks.
      *
      * @param context
      *            the context to copy (must not be null)
