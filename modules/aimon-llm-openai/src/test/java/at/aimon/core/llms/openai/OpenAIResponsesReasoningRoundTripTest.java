@@ -231,6 +231,78 @@ class OpenAIResponsesReasoningRoundTripTest {
     }
 
     @Test
+    @DisplayName("a drop that keeps happening says so again at the tenth occurrence, with the count")
+    void aRecurringDropIsReportedAgainWithItsCount() {
+        final OpenAILlmClient client = client();
+        when(mockResponseService.create(any(ResponseCreateParams.class))).thenReturn(responseWithOutput());
+        final ReasoningTrace foreign = ReasoningTrace.builder().providerName("Anthropic")
+                .payload("{\"type\":\"thinking\",\"thinking\":\"...\",\"signature\":\"abc\"}").build();
+
+        final List<String> warnings = warningsWhile(() -> {
+            for (int i = 0; i < 12; i++) {
+                client.sendMessage("sys", List.of(Message.assistant("hi").withReasoningTraces(List.of(foreign))),
+                        List.of(), LlmModel.builder().build());
+            }
+        });
+
+        // A dropped trace is a property of the traffic, not of a config file, so once-per-process would describe the
+        // first turn and then stay silent while every following turn lost its reasoning too (#164, the rule in
+        // request-parameters.md §5.3). Twelve occurrences, two lines: the 1st and the 10th.
+        final List<String> foreignWarnings = warnings.stream().filter(w -> w.contains("Anthropic")).toList();
+        assertThat(foreignWarnings).hasSize(2);
+        assertThat(foreignWarnings.get(0)).doesNotContain("occurrence");
+        assertThat(foreignWarnings.get(1)).contains("occurrence 10");
+    }
+
+    @Test
+    @DisplayName("reasoning that comes back without encrypted_content is counted, not said once")
+    void reasoningWithoutEncryptedContentIsRecurring() {
+        final OpenAILlmClient client = client();
+        when(mockResponseService.create(any(ResponseCreateParams.class)))
+                .thenReturn(responseWithOutput("{\"type\":\"reasoning\",\"id\":\"rs_1\",\"summary\":[]}"));
+
+        final List<String> warnings = warningsWhile(() -> {
+            for (int i = 0; i < 10; i++) {
+                client.sendMessage("sys", List.of(Message.user("hi")), List.of(), LlmModel.builder().build());
+            }
+        });
+
+        final List<String> missing = warnings.stream().filter(w -> w.contains("encrypted_content")).toList();
+        assertThat(missing).hasSize(2);
+        assertThat(missing.get(1)).contains("occurrence 10");
+    }
+
+    @Test
+    @DisplayName("a sampling divergence stays once-only — it describes a config value, not the traffic")
+    void aConfigurationDivergenceIsStillReportedOnlyOnce() {
+        final OpenAILlmClient client = client();
+        when(mockResponseService.create(any(ResponseCreateParams.class))).thenReturn(responseWithOutput());
+
+        final List<String> warnings = warningsWhile(() -> {
+            for (int i = 0; i < 12; i++) {
+                client.sendMessage("sys", List.of(Message.user("hi")), List.of(),
+                        LlmModel.builder().presencePenalty(0.5).build());
+            }
+        });
+
+        assertThat(warnings).filteredOn(w -> w.contains("presencePenalty")).hasSize(1);
+    }
+
+    private static List<String> warningsWhile(Runnable action) {
+        final Logger clientLogger = (Logger) LoggerFactory.getLogger(OpenAILlmClient.class);
+        final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        clientLogger.addAppender(appender);
+        try {
+            action.run();
+            return appender.list.stream().filter(e -> e.getLevel() == Level.WARN)
+                    .map(ILoggingEvent::getFormattedMessage).toList();
+        } finally {
+            clientLogger.detachAppender(appender);
+        }
+    }
+
+    @Test
     @DisplayName("a stored payload this build cannot parse costs the trace, not the turn")
     void anUnparseablePayloadIsDroppedNotThrown() {
         final OpenAILlmClient client = client();

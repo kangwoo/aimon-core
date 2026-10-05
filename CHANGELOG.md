@@ -7,7 +7,7 @@ Central is versioned independently).
 
 ## [Unreleased]
 
-### Fixed: a `text/*` attachment outside the document allow-list no longer breaks the message; a thinking-only stream that fails is closed (#164)
+### Fixed: follow-ups from #164 — `text/*` attachments, a thinking-only stream that fails, OpenAI's traffic warnings
 
 - **A `FileInput` with a `text/*` MIME type the document block does not accept is sent as text instead of
   throwing.** `UserInputConverter` routed every `text/*` file to `DocumentContentBlock`, which accepts five types
@@ -19,6 +19,14 @@ Central is versioned independently).
   executor decided whether a subscriber had seen a stream start from the text channel's counter alone, so an attempt
   that streamed only thinking and then failed left its `AssistantReasoningDelta`s with nothing closing them — in the
   REPL, an open `[thinking]` line. Either channel now counts. `totalLength` stays the answer text's length, `0` here.
+- **The OpenAI client keeps reporting a dropped reasoning trace while it keeps happening.** A stored trace authored by
+  another provider, one this build cannot parse, one anchored to a tool call that is gone, and reasoning that comes back
+  without `encrypted_content` were reported through the once-per-signature set, so the first occurrence got a `WARN`
+  and every later one was silent. They now go through a recurring counter, as they already did on `AnthropicLlmClient`:
+  a line at the 1st, 10th, 100th … occurrence, the count appended from the second line on. Configuration divergences
+  (sampling, effort, penalties) stay once-only.
+- **The bundled `skill-creator` now says where it was changed.** `references/schemas.md` carries a notice that its
+  `benchmark.json` sample was edited by #132, as the skill's Apache-2.0 licence §4(b) asks of modified files.
 - **Docs.** The `AnthropicConfig` / `AnthropicLlmClient` javadoc examples and the module README read
   `ANTHROPIC_API_KEY`; they now read `ANTHROPIC_KEY`, the name the live tests, `CONTRIBUTING.md` and the CLI's sample
   config use.

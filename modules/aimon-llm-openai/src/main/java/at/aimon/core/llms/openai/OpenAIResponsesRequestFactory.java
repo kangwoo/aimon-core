@@ -72,6 +72,7 @@ final class OpenAIResponsesRequestFactory {
     private final OpenAIResponsesMessageConverter converter;
     private final OpenAIConfig config;
     private final OpenAIDivergenceReporter reporter;
+    private final OpenAIDivergenceReporter trafficReporter;
 
     /**
      * @param converter
@@ -81,12 +82,16 @@ final class OpenAIResponsesRequestFactory {
      * @param reporter
      *            where divergences are reported; the client's own method, so the WARN keeps its logger and its
      *            once-per-signature dedup set (must not be null)
+     * @param trafficReporter
+     *            where the converter reports stored traces it drops — conditions of the traffic rather than of the
+     *            configuration, so the client's recurring counter rather than its once set (must not be null)
      */
     OpenAIResponsesRequestFactory(OpenAIResponsesMessageConverter converter, OpenAIConfig config,
-            OpenAIDivergenceReporter reporter) {
+            OpenAIDivergenceReporter reporter, OpenAIDivergenceReporter trafficReporter) {
         this.converter = Objects.requireNonNull(converter, "converter");
         this.config = Objects.requireNonNull(config, "config");
         this.reporter = Objects.requireNonNull(reporter, "reporter");
+        this.trafficReporter = Objects.requireNonNull(trafficReporter, "trafficReporter");
     }
 
     /**
@@ -117,7 +122,7 @@ final class OpenAIResponsesRequestFactory {
      */
     ResponseCreateParams build(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
             LlmModel modelConfig, ModelCapabilities capabilities, String modelName, String providerName) {
-        final List<ResponseInputItem> input = converter.convertMessages(messages, providerName, reporter);
+        final List<ResponseInputItem> input = converter.convertMessages(messages, providerName, trafficReporter);
 
         final ResponseCreateParams.Builder builder = ResponseCreateParams.builder().model(modelName)
                 .instructions(systemPrompt).input(ResponseCreateParams.Input.ofResponse(input))
