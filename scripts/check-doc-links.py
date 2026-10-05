@@ -19,7 +19,7 @@ a heading inside an HTML comment block gets an anchor, and one behind indentatio
 or a list marker does not. That docstring names each shape, says how
 check-backlog-registers.py reads the same shape, and why the two are left different.
 `--self-test` has cases for this side of those differences, for a raw HTML block, for
-two ways unfence() pairs fence markers and for a `#` comment in YAML front matter,
+ways unfence() pairs fence markers and for a `#` comment in YAML front matter,
 which is not read, one page per case, so a change that
 alters one of those cases' answers goes red there until that case's expected answer
 changes too.
@@ -101,9 +101,10 @@ def main(root_arg="."):
 #
 # Cases for these heading shapes, one page each: this side of each difference
 # from the backlog check that docs_tree.anchors_of's docstring names, a raw HTML
-# block, and two ways unfence() pairs fence markers that hide a heading the page
-# shows. Each asks what main() asks of a link to the heading: does `#target`
-# resolve? The expected answer is the reading's, which is not always the page's.
+# block, two ways unfence() pairs fence markers that hide a heading the page
+# shows, and two ways it closes a fence -- on a marker of the other character,
+# or one with an info string. Each asks what main() asks of a link to the
+# heading: does `#target` resolve? The expected answer is the reading's, which is not always the page's.
 # Nothing here reads the real tree, so a red case can only mean the reading
 # changed.
 
@@ -133,6 +134,26 @@ SHAPES = [
     ("a heading between two backtick fence markers indented four spaces does not resolve, "
      "though the page shows one",
      ["문단", "", "    " + FENCE3, "", TARGET, "", "    " + FENCE3], False),
+    # Backlog T-9: the shapes its one-line changes to docs_tree.FENCE move here, and one
+    # for a reading it named without trying (an info string on the closing marker).
+    ("a heading after a `~~~` marker that closes a backtick fence resolves -- the next "
+     "marker closes a fence whatever its character",
+     [FENCE3, "~~~", "", TARGET], True),
+    ("a heading after the closer of a fence opened on a `1. ` marker's line does not resolve, "
+     "though the page shows one",
+     ["1. " + FENCE3 + "bash", "   한 줄", "   " + FENCE3, "", TARGET], False),
+    ("a heading after the closer of a fence opened on a `* ` marker's line does not resolve, "
+     "though the page shows one",
+     ["* " + FENCE3 + "bash", "  한 줄", "  " + FENCE3, "", TARGET], False),
+    ("a heading after the closer of a fence opened on a `+ ` marker's line does not resolve, "
+     "though the page shows one",
+     ["+ " + FENCE3 + "bash", "  한 줄", "  " + FENCE3, "", TARGET], False),
+    ("a heading between two `~~~` fence markers indented four spaces does not resolve, "
+     "though the page shows one",
+     ["문단", "", "    ~~~", "", TARGET, "", "    ~~~"], False),
+    ("a heading after a marker with an info string that closes a fence resolves -- the next "
+     "marker closes a fence whatever its info string",
+     [FENCE3, FENCE3 + "bash", "", TARGET], True),
 ]
 
 # Shapes that exist only at the top of a file, so the page is these lines with `# Page`
