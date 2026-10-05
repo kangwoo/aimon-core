@@ -59,7 +59,7 @@ class OpenAIResponsesRequestFactoryTest {
     };
 
     private static OpenAIResponsesRequestFactory factoryFor(OpenAIConfig config, OpenAIDivergenceReporter reporter) {
-        return new OpenAIResponsesRequestFactory(new OpenAIResponsesMessageConverter(), config, reporter);
+        return new OpenAIResponsesRequestFactory(new OpenAIResponsesMessageConverter(), config, reporter, reporter);
     }
 
     private ResponseCreateParams build(OpenAIConfig config, LlmModel model, List<ToolDefinition> tools) {

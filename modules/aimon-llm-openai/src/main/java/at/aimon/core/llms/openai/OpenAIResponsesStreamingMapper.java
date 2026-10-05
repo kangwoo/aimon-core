@@ -217,7 +217,8 @@ final class OpenAIResponsesStreamingMapper {
         }
         if (output.reasoningWithoutEncryptedContent()) {
             // A feature that quietly does nothing is the failure this whole path exists to fix; it should at least
-            // say so once.
+            // say so — and keep saying so while it lasts, which is why the client hands this mapper its recurring
+            // counter rather than its once set.
             reporter.report("reasoningWithoutEncryptedContent@" + providerName,
                     "This turn produced reasoning items but none carried encrypted_content, so nothing can be "
                             + "replayed on the next turn and the model will re-derive its reasoning. Check that the "

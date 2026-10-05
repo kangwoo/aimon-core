@@ -1,11 +1,14 @@
 package at.aimon.core.llms.openai;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -79,7 +82,8 @@ public class OpenAILlmClient implements LlmClient {
     private static final Logger log = LoggerFactory.getLogger(OpenAILlmClient.class);
 
     /**
-     * Ceiling on how many distinct request divergences {@link #reportedDivergences} remembers.
+     * Ceiling on how many distinct divergences either register — {@link #reportedDivergences} or
+     * {@link #recurringDivergences} — remembers.
      *
      * <p>
      * Distinct values come from configuration — an agent definition's frontmatter, a starter property — so in any real
@@ -109,6 +113,20 @@ public class OpenAILlmClient implements LlmClient {
     private final Set<String> reportedDivergences = ConcurrentHashMap.newKeySet();
 
     /**
+     * Occurrence counts for divergences that are <strong>not</strong> configuration facts.
+     *
+     * <p>
+     * {@link #reportDivergence} says a thing once because what it describes was set once, in a config file. Four of
+     * the conditions this client reports are not like that: a stored trace authored by another provider, a stored
+     * payload this build cannot parse, a trace anchored to a tool call that is gone, and reasoning that came back
+     * without {@code encrypted_content}. Those are properties of the traffic, they can start halfway through a
+     * process, and their signatures are constant — so once-per-signature would report the first occurrence and then
+     * be silent for every one after it. They are counted instead and reported on the 1st, 10th, 100th … occurrence,
+     * the same register {@code AnthropicLlmClient} keeps for the same conditions.
+     */
+    private final Map<String, AtomicLong> recurringDivergences = new ConcurrentHashMap<>();
+
+    /**
      * Creates a new OpenAILlmClient.
      *
      * @param config
@@ -122,7 +140,7 @@ public class OpenAILlmClient implements LlmClient {
         this.converter = new OpenAIMessageConverter();
         this.responsesConverter = new OpenAIResponsesMessageConverter();
         this.responsesRequestFactory = new OpenAIResponsesRequestFactory(this.responsesConverter, this.config,
-                this::reportDivergence);
+                this::reportDivergence, this::reportRecurringDivergence);
     }
 
     /**
@@ -158,7 +176,7 @@ public class OpenAILlmClient implements LlmClient {
         this.converter = new OpenAIMessageConverter();
         this.responsesConverter = new OpenAIResponsesMessageConverter();
         this.responsesRequestFactory = new OpenAIResponsesRequestFactory(this.responsesConverter, this.config,
-                this::reportDivergence);
+                this::reportDivergence, this::reportRecurringDivergence);
     }
 
     @Override
@@ -321,7 +339,7 @@ public class OpenAILlmClient implements LlmClient {
             return new OpenAIResponsesExchange(client, responsesConverter,
                     responsesRequestFactory.build(systemPrompt, messages, tools, modelConfig, capabilities, modelName,
                             providerName),
-                    providerName, this::reportDivergence, config.getReasoningSummary().isPresent());
+                    providerName, this::reportRecurringDivergence, config.getReasoningSummary().isPresent());
         }
         reportInertReasoningSummary(capabilities, modelName);
         return new OpenAIChatCompletionsExchange(client, converter, buildChatRequest(systemPrompt, messages, tools,
@@ -545,8 +563,9 @@ public class OpenAILlmClient implements LlmClient {
      *
      * <p>
      * Once per signature rather than once per call because its callers — {@link #exchangeFor} and everything it
-     * builds a request through, plus the converters and the stream mapper — all run on every ReAct iteration: a value
-     * set once in an agent definition would otherwise warn for the lifetime of the process.
+     * builds a request through — all run on every ReAct iteration: a value set once in an agent definition would
+     * otherwise warn for the lifetime of the process. Conditions of the traffic rather than of the configuration go
+     * through {@link #reportRecurringDivergence} instead.
      *
      * @param signature
      *            parameter, value and model, the key that decides whether this has already been said
@@ -563,6 +582,64 @@ public class OpenAILlmClient implements LlmClient {
             return;
         }
         log.warn(message, args);
+    }
+
+    /**
+     * Reports a divergence that is a property of the <em>traffic</em> rather than of the configuration, on the 1st,
+     * 10th, 100th … occurrence.
+     *
+     * <p>
+     * {@link #reportDivergence}'s once-per-signature rule is right for a value someone typed into an agent definition
+     * and wrong for a dropped reasoning trace: those signatures are constant, so once-only would describe the first
+     * occurrence and then say nothing while the condition ran for the rest of the process. The count in the message is
+     * the point — one line means it happened once, and a line saying "occurrence 100" means the feature is off.
+     *
+     * <p>
+     * Deliberately a copy of {@code AnthropicLlmClient}'s rather than a shared helper: the WARN has to come from this
+     * client's logger and the register is per client (request-parameters.md §6).
+     *
+     * @param signature
+     *            the condition, the key that decides whether this has already been said
+     * @param message
+     *            SLF4J-formatted message; one extra {@code {}} placeholder is appended for the count past the first
+     * @param args
+     *            values for the message placeholders
+     */
+    private void reportRecurringDivergence(String signature, String message, Object... args) {
+        final AtomicLong counter = recurringDivergences.get(signature);
+        if (counter == null && recurringDivergences.size() >= MAX_REPORTED_DIVERGENCES) {
+            return;
+        }
+        final long count = recurringDivergences.computeIfAbsent(signature, key -> new AtomicLong()).incrementAndGet();
+        if (!isReportableOccurrence(count)) {
+            return;
+        }
+        if (count == 1) {
+            log.warn(message, args);
+            return;
+        }
+        final Object[] withCount = Arrays.copyOf(args, args.length + 1);
+        withCount[args.length] = count;
+        log.warn(message + " (occurrence {}; this condition is reported at 1, 10, 100 … so the gaps are silent)",
+                withCount);
+    }
+
+    /**
+     * Whether this occurrence is one of the ones that gets a line: 1, 10, 100, 1000 …
+     *
+     * <p>
+     * Computed by dividing rather than by multiplying up to the count, because {@code threshold *= 10} overflows to a
+     * negative on a long-lived process and a loop guarded on {@code <= count} would then never end.
+     */
+    private static boolean isReportableOccurrence(long count) {
+        if (count <= 0) {
+            return false;
+        }
+        long remaining = count;
+        while (remaining % 10 == 0) {
+            remaining /= 10;
+        }
+        return remaining == 1;
     }
 
     /**

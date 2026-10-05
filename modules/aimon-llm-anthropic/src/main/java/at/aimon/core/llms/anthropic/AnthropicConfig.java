@@ -30,7 +30,7 @@ import at.aimon.core.llm.capability.ModelCapabilityRegistry;
  * <pre>
  * {
  *     &#64;code
- *     AnthropicConfig config = AnthropicConfig.builder().apiKey(System.getenv("ANTHROPIC_API_KEY"))
+ *     AnthropicConfig config = AnthropicConfig.builder().apiKey(System.getenv("ANTHROPIC_KEY"))
  *             .model("claude-sonnet-4-20250514").temperature(0.7).timeout(Duration.ofSeconds(30)).build();
  * }
  * </pre>

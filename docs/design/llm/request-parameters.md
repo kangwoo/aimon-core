@@ -361,12 +361,17 @@ sampling parameters; it is being omitted and the call will succeed without it."`
 | 장치 | 무엇을 | 언제 로그를 남기나 | 왜 |
 |---|---|---|---|
 | **보고 집합(once)** — `reportDivergence` | **설정의 사실**: 위 표의 보고 전부 | 클라이언트 인스턴스당 signature 마다 한 번 | 요청 조립은 매 iteration 마다 돈다. 에이전트 정의에 한 번 적힌 값이 프로세스 수명 내내 경고하면 소음이다 |
-| **반복 보고 카운터(recurring)** — `reportRecurringDivergence` | **트래픽의 사실**: 서명을 잃은 스트림, 이 빌드가 해석하지 못하는 저장된 payload, 도구 호출이 사라진 trace, 다른 provider 의 trace | signature 마다 1 · 10 · 100 … 번째, 두 번째 줄부터 발생 횟수를 붙인다 | 트래픽 조건은 프로세스 중간에 시작될 수 있고 signature 가 일정하다. once 로 보고하면 첫 발생만 말하고 조건이 계속되는 동안 침묵한다. 한 줄은 한 번 일어났다는 뜻이고 `occurrence 100` 은 기능이 꺼져 있다는 뜻이다 |
+| **반복 보고 카운터(recurring)** — `reportRecurringDivergence` | **트래픽의 사실**: 서명을 잃은 스트림, `encrypted_content` 없이 돌아온 reasoning, 이 빌드가 해석하지 못하는 저장된 payload, 도구 호출이 사라진 trace, 다른 provider 의 trace | signature 마다 1 · 10 · 100 … 번째, 두 번째 줄부터 발생 횟수를 붙인다 | 트래픽 조건은 프로세스 중간에 시작될 수 있고 signature 가 일정하다. once 로 보고하면 첫 발생만 말하고 조건이 계속되는 동안 침묵한다. 한 줄은 한 번 일어났다는 뜻이고 `occurrence 100` 은 기능이 꺼져 있다는 뜻이다 |
 
-- **나누는 기준은 플래그가 아니라 호출 지점이다.** Anthropic 클라이언트는 메시지 변환기와 스트리밍 매퍼에 반복 보고
-  함수를 넘기고, 자기 샘플링·예산 보고는 once 집합으로 한다. 보고 인터페이스(`AnthropicDivergenceReporter`)의 모양은
-  같고, 협력자는 자기가 어느 장치에 쓰는지 알 필요가 없다. 반복 보고 카운터는 Anthropic 클라이언트에만 있다 — OpenAI
-  클라이언트는 once 집합 하나로 모든 보고를 한다.
+- **나누는 기준은 플래그가 아니라 호출 지점이다.** 두 클라이언트 모두 트래픽을 보는 협력자에 반복 보고 함수를 넘기고,
+  자기 샘플링·예산 보고는 once 집합으로 한다. Anthropic 은 메시지 변환기와 스트리밍 매퍼에, OpenAI 는 Responses 요청
+  팩토리가 메시지 변환기에 넘기는 보고 함수와 Responses 교환(블로킹 응답 변환과 스트리밍 매퍼)에 넘긴다 — 요청 팩토리는
+  두 함수를 함께 받아, 자기 파라미터 보고는 once 로, 변환기의 trace 드롭은 recurring 으로 보낸다. 보고 인터페이스
+  (`AnthropicDivergenceReporter` · `OpenAIDivergenceReporter`)의 모양은 같고, 협력자는 자기가 어느 장치에 쓰는지 알
+  필요가 없다.
+- **횟수는 턴이 아니라 발생을 센다.** trace 드롭은 요청마다 이력 속 trace 하나하나가 한 번씩 센다. 그래서 다른 provider 의
+  trace 를 K 개 품은 긴 세션을 넘겨받으면 첫 요청에서 이미 `occurrence 10` 이 찍힐 수 있다 — 그 줄은 "기능이 꺼져 있다"
+  보다 "이력에 되실을 수 없는 trace 가 계속 실려 간다" 로 읽어야 한다. 두 클라이언트가 같다.
 - **상한은 32 signature 다.** 두 장치 모두 클라이언트당 `MAX_REPORTED_DIVERGENCES`(32)개의 signature 를 넘으면 새
   signature 를 기록하지 않는다. signature 에 모델 이름이 들어가므로 모델 이름을 많이 바꾸는 배포는 상한에 더 빨리
   닿는다 — 두 클라이언트가 같은 노출을 갖고, 장치를 다시 설계할 만큼 넓지 않다. 상한 검사는 잠금 없이 해서 동시에 처음
@@ -439,8 +444,6 @@ sampling parameters; it is being omitted and the call will succeed without it."`
   사용자 보고가 없어 등록하지 않았다
 - **`top_k` 는 실제 값(`5`)에서만 거절이 측정되었다** — `top_p` 처럼 존재로 거절되는지는 재지 않았다. 지금은 보낼
   경로가 없어 설계에 영향이 없지만, `LlmModel` 에 `topK` 가 생기면 "존재로 거절" 을 가정으로 물려받지 않아야 한다. 백로그 미등록
-- **OpenAI 클라이언트에는 반복 보고 카운터가 없다** — reasoning trace 드롭 같은 트래픽 사실도 once 집합으로 보고되어, 조건이
-  계속되는 동안 첫 발생 뒤로 침묵한다. §5.3 의 기준과 §7 의 규칙에 어긋나는 현재 코드다. 백로그 미등록
 - **미설정 temperature 가 서버 기본값(1.0)으로 샘플링되는 것이 에이전트 동작에 주는 영향은 측정되지 않았다** — 값을
   원하는 배포가 설정할 판단으로 남긴다. 백로그 미등록
 
@@ -456,7 +459,7 @@ sampling parameters; it is being omitted and the call will succeed without it."`
 | `aimon-core/…/llm/capability/InMemoryModelCapabilityRegistry.java` | terra exact 행, `registerPrefix("gpt-5", …)` 가 terra 에 닿지 않는다는 좁힌 약속 |
 | `aimon-core/…/subagent/execution/SubagentLlmDefaults.java` | 서브에이전트 temperature 상속과 `0.7` |
 | `aimon-llm-openai/…/OpenAiRequestParameters.java` | `applySampling`, `requestedEffort`, `maySendEffort`, 억제·ladder 보고 문구, `SamplingSink` |
-| `aimon-llm-openai/…/OpenAILlmClient.java` | `applyReasoningEffort`(도구 규칙이 여기 남는 이유), `reportDivergence`(once 집합, 상한 32) |
+| `aimon-llm-openai/…/OpenAILlmClient.java` | `applyReasoningEffort`(도구 규칙이 여기 남는 이유), `reportDivergence`(once 집합, 상한 32) · `reportRecurringDivergence` |
 | `aimon-llm-openai/…/OpenAIResponsesRequestFactory.java` | 같은 effort 게이트(도구 규칙 없음), penalty 를 보고하는 Responses `SamplingSink` |
 | `aimon-llm-openai/…/OpenAiReasoningEfforts.java` | 중립 rung → 와이어 값 번역의 유일한 자리 |
 | `aimon-llm-openai/…/OpenAIConfig.java` | 선택 샘플링·effort 필드, 값이 있을 때만 범위 검사 |

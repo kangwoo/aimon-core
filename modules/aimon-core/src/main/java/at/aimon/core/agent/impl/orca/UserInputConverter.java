@@ -81,11 +81,20 @@ final class UserInputConverter {
             return ImageContentBlock.ofBase64(imageInput.getData(), imageInput.getMimeType());
         } else if (userInput instanceof FileInput fileInput) {
             String mime = fileInput.getMimeType();
-            if (mime.startsWith("text/") || mime.equals("application/pdf")) {
+            // Each block is asked whether it takes the type rather than matched on a prefix: both factories throw on
+            // a type outside their allow-list, and a throw here fails the whole turn (#164).
+            if (DocumentContentBlock.isSupportedMimeType(mime)) {
                 return DocumentContentBlock.of(fileInput.getData(), mime, fileInput.getFileName());
-            } else if (mime.startsWith("image/")) {
+            } else if (ImageContentBlock.isSupportedMimeType(mime)) {
                 return ImageContentBlock.ofBase64(fileInput.getData(), mime);
+            } else if (mime.startsWith("text/")) {
+                // An unlisted text type (text/yaml, text/x-java, ...): send the content, under the same header the
+                // provider converters put on a text document, so two attachments stay distinguishable by name.
+                return TextContentBlock
+                        .of("[File: " + fileInput.getFileName() + " (" + mime + ")]\n" + fileInput.asText());
             } else {
+                // Anything else, an unlisted image/* (svg, bmp, heic) included: FileInput.asText() is a placeholder
+                // naming the file, its type and its size.
                 return TextContentBlock.of(fileInput.asText());
             }
         } else if (userInput instanceof AudioInput audioInput) {

@@ -391,10 +391,9 @@ orphaned 는 트리 안의 코드로는 도달하지 않는다. `MessageStripper
 `DefaultCompactionEngine` 은 살아남은 메시지를 통째로 운반한다. 손으로 `Message` 를 조립한 호출자만 닿는다. 그래도
 보고하는 것은 조용한 누락이 바깥에서 진단할 수 없는 유일한 모양이기 때문이다.
 
-**보고 기록부는 provider 마다 다르다.** Anthropic 클라이언트는 이 조건들을 recurring 카운터(1 · 10 · 100 … 번째)로
-보고한다. 이 조건들은 설정 사실이 아니라 트래픽 사실이어서 프로세스 중간에 시작될 수 있고, 서명당 한 번만 말하면 첫
-발생 뒤 기능이 꺼진 채 침묵하기 때문이다. OpenAI 클라이언트는 같은 조건을 once 집합으로 보고한다 — 서명마다 첫 발생만
-남는다. 두 기록부의 규칙은 [`request-parameters.md`](request-parameters.md) 가 정본이다.
+**두 provider 모두 이 조건들을 recurring 카운터(1 · 10 · 100 … 번째)로 보고한다.** 이 조건들은 설정 사실이 아니라
+트래픽 사실이어서 프로세스 중간에 시작될 수 있고, 서명당 한 번만 말하면 첫 발생 뒤 기능이 꺼진 채 침묵하기 때문이다.
+두 번째 줄부터는 발생 횟수가 붙는다. 기록부의 규칙은 [`request-parameters.md`](request-parameters.md) 가 정본이다.
 
 ### 6.1 호출을 잃는 유일한 자리 — 캡처 쪽 직렬화 실패
 
@@ -598,7 +597,7 @@ provider 이름을 받지 않는 1인자 `convertMessages` 는 `@Deprecated` 로
 | `modules/aimon-llm-openai/…/OpenAiReasoningTraces.java` | SDK 매퍼, 빌더 재구성 금지, foreign / unparseable 판별 |
 | `modules/aimon-llm-openai/…/OpenAIResponsesMessageConverter.java` | 재전송 규칙, 캡처 스캔(첫 뒤따르는 호출), 드롭 보고 |
 | `modules/aimon-llm-openai/…/OpenAIResponsesStreamingMapper.java`, `OpenAIResponsesExchange.java` | `output_item.done` 에서 모은 항목, `encrypted_content` 없음 경고 |
-| `modules/aimon-llm-openai/…/OpenAILlmClient.java` | 요청당 provider 이름 1회 해석, 드롭 보고가 쓰는 once 집합 |
+| `modules/aimon-llm-openai/…/OpenAILlmClient.java` | 요청당 provider 이름 1회 해석, 드롭 보고가 쓰는 반복 보고 카운터(`reportRecurringDivergence`) |
 | `modules/aimon-llm-openai/…/OpenAiResponseUsages.java` | `reasoning_tokens` 읽기와 강등 |
 | `modules/aimon-llm-anthropic/…/AnthropicReasoningTraces.java` | `payloadOf`, 합집합 파싱, JSON 객체 검사 |
 | `modules/aimon-llm-anthropic/…/AnthropicOutputBlocks.java` | 캡처 규칙, 재배열되는 세 모양, 서버 측 도구 블록 사각지대 |

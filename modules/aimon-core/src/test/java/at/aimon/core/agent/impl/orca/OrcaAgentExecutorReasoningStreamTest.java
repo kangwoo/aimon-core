@@ -19,6 +19,7 @@ import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.stream.AssistantReasoningDelta;
 import at.aimon.core.agent.stream.AssistantTextDelta;
+import at.aimon.core.agent.stream.AssistantTextStreamCompleted;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.base.UserLocale;
@@ -96,6 +97,30 @@ class OrcaAgentExecutorReasoningStreamTest {
                 .containsExactly("Answer part one. ", "Answer part two.");
     }
 
+    @Test
+    @DisplayName("a provider error after reasoning-only deltas still closes the stream with an error completion")
+    void reasoningOnlyThenError_emitsErrorCompletion() {
+        final OrcaAgentExecutor executor = createStreamingExecutor(new ReasoningThenFailingLlmClient());
+        final List<AgentExecutionEvent> seen = new ArrayList<>();
+        executor.addEventListener(seen::add);
+
+        final OrcaAgentExecutionResult result = executor.execute(createContext(),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.generate()).build());
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(seen).filteredOn(AssistantReasoningDelta.class::isInstance).hasSize(1);
+        assertThat(seen).filteredOn(AssistantTextDelta.class::isInstance).isEmpty();
+
+        // The subscriber saw a stream start on the reasoning channel, so it must see it end. Before #164 the
+        // synthetic completion followed the text counter alone and nothing closed a thinking-only attempt.
+        final List<AssistantTextStreamCompleted> completions = seen.stream()
+                .filter(AssistantTextStreamCompleted.class::isInstance).map(AssistantTextStreamCompleted.class::cast)
+                .toList();
+        assertThat(completions).hasSize(1);
+        assertThat(completions.get(0).getFinishReason()).contains("error");
+        assertThat(completions.get(0).getTotalLength()).isZero();
+    }
+
     // ---------- helpers ----------
 
     private OrcaAgentRuntime createContext() {
@@ -151,6 +176,29 @@ class OrcaAgentExecutorReasoningStreamTest {
         @Override
         public String getProviderName() {
             return "ReasoningStreaming";
+        }
+    }
+
+    /** Streams one reasoning delta and then fails the way a provider error does — the sink never sees STREAM_END. */
+    private static final class ReasoningThenFailingLlmClient implements LlmClient {
+
+        @Override
+        public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
+                LlmModel modelConfig) {
+            throw new UnsupportedOperationException("streaming-only fake");
+        }
+
+        @Override
+        public LlmResponse sendMessageStreaming(SystemPromptParts systemPromptParts, List<Message> messages,
+                List<ToolDefinition> tools, LlmModel modelConfig, LlmCallMetadata metadata, LlmStreamingOptions options,
+                LlmStreamSink sink, LlmCancellation cancellation) {
+            sink.accept(LlmStreamChunk.reasoningDelta(0, "thinking it over"));
+            throw new IllegalStateException("provider failed mid-stream");
+        }
+
+        @Override
+        public String getProviderName() {
+            return "ReasoningThenFailing";
         }
     }
 }

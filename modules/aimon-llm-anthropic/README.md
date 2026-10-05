@@ -51,7 +51,7 @@ dependencies {
 ```java
 // 1. 설정
 AnthropicConfig config = AnthropicConfig.builder()
-    .apiKey(System.getenv("ANTHROPIC_API_KEY"))
+    .apiKey(System.getenv("ANTHROPIC_KEY"))
     .model("claude-sonnet-4-20250514")
     .build();
 

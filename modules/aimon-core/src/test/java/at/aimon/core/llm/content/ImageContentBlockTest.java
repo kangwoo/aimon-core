@@ -50,6 +50,17 @@ class ImageContentBlockTest {
     }
 
     @Test
+    @DisplayName("isSupportedMimeType should agree with what the factories accept")
+    void isSupportedMimeType_matchesFactories() {
+        assertThat(ImageContentBlock.isSupportedMimeType("image/png")).isTrue();
+        assertThat(ImageContentBlock.isSupportedMimeType("image/webp")).isTrue();
+        assertThat(ImageContentBlock.isSupportedMimeType("image/svg+xml")).isFalse();
+        assertThat(ImageContentBlock.isSupportedMimeType(null)).isFalse();
+        assertThatThrownBy(() -> ImageContentBlock.ofBase64(new byte[]{1}, "image/svg+xml"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     @DisplayName("Should reject null data for base64")
     void shouldRejectNullDataForBase64() {
         assertThatThrownBy(() -> ImageContentBlock.ofBase64(null, "image/png"))

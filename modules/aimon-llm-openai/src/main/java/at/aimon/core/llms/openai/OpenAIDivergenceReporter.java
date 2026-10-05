@@ -1,7 +1,8 @@
 package at.aimon.core.llms.openai;
 
 /**
- * Reports, at most once per distinct signature, that the provider is not sending a configured value as given.
+ * Reports that the provider is not sending a configured value as given, or that the traffic lost something it should
+ * have carried.
  *
  * <p>
  * This exists so that the reporting behaviour stays in {@link OpenAILlmClient} while the code that <em>notices</em> a
@@ -11,7 +12,10 @@ package at.aimon.core.llms.openai;
  * itself would have neither.
  *
  * <p>
- * The single implementation is {@code OpenAILlmClient::reportDivergence}.
+ * Two implementations, chosen by the call site rather than by a flag: {@code OpenAILlmClient::reportDivergence} (once
+ * per signature, for configuration facts) and {@code OpenAILlmClient::reportRecurringDivergence} (1st, 10th, 100th …
+ * occurrence, for traffic facts such as a dropped reasoning trace). The collaborator does not need to know which one it
+ * was handed.
  */
 @FunctionalInterface
 interface OpenAIDivergenceReporter {
