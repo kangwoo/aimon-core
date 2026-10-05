@@ -473,11 +473,25 @@ OpenAI 의 넷이 한 `build()` 를 지나고, Anthropic 의 `temperature` 는 �
 | 스타터 `provider=openai` | `aimon.llm.anthropic` | `IllegalStateException` — 두 프로퍼티를 부른다 |
 | 스타터 `provider=anthropic`(또는 미지정) | `aimon.llm.openai` | `IllegalStateException` — 두 프로퍼티를 부른다 |
 | 스타터 `provider=openai`, Anthropic 모듈이 클래스패스에 없음 | `aimon.llm.anthropic` | 위와 같은 메시지. 스타터 vendor 키가 `String` 이어서 가능하다 — 벤더 enum 이었다면 `NoClassDefFoundError` |
-| 스타터 `provider=none`, 또는 애플리케이션이 자기 `LlmClient` 빈을 준 배포 | 어느 것이든 | **읽지도 거절하지도 않는다** — L-3 |
+| 스타터, 애플리케이션이 자기 `LlmClient` 빈을 준 배포 — `provider` 가 `none` 이든 내장 값이든 서드파티 값이든 | 어느 것이든 | **읽지도 거절하지도 않는다.** 결정이다(아래) |
+| 스타터 `provider=none`, 애플리케이션 `LlmClient` 빈 없음 | 어느 것이든 | 블록과 무관하게 **기동하지 않는다** — `aimonUnresolvedLlmClient` 가 `aimon.llm.provider=none` 을 부르며 실패한다 |
 | 어느 표면이든 | 빈 블록(`anthropic:` 만 적음) | 거절하지 않는다 |
 
 거절은 **실제로 도는 분기 안에서만** 한다(`requireApiKey` 와 같은 자리). 분기 밖에서 검사하면 `provider=none` 이나 자기
-`LlmClient` 빈을 쓰는 배포의 유효한 설정이 기동 실패가 된다. 그 두 모양에서 선언과 블록이 조용히 읽히지 않는 것은 L-3 이다.
+`LlmClient` 빈을 쓰는 배포의 유효한 설정이 기동 실패가 된다.
+
+**자기 `LlmClient` 빈을 준 배포에서는 `aimon.llm` 아래의 어떤 키도 거절하지 않는다.** 그 배포에서는 벤더 분기가 돌지
+않으므로 스타터는 `provider` 를 뺀 `aimon.llm.*` 을 하나도 읽지 않는다 — `api-key` · `model` · `base-url` · `timeout`,
+공유 키 둘(`reasoning-effort` · `model-capabilities`), 두 벤더 블록. 그래도 거절하지 않는 이유는 그 값들의 소비자가
+애플리케이션일 수 있어서다: 능력 선언은 `AimonProperties.modelCapabilityRegistry(...)` 로 자기 클라이언트에 넘길 수
+있고, 나머지는 프로퍼티 빈의 접근자로 읽어 자기 벤더 config 를 지을 수 있다. 스타터는 그 빈이 그것을 읽는지 알 수
+없으므로, 여기서의 거절은 "읽히지 않는 설정" 이 아니라 **유효한 설정**을 기동 실패로 만든다. 읽히지 않더라도 능력
+선언은 `validateLlm()` 이 여전히 검증한다 — 깨진 선언은 이 배포에서도 기동을 실패시킨다.
+
+**`provider=none` 은 별개의 모양이 아니다.** 빈이 없는 `provider=none` 은 실행되는 배포가 아니라 기동 실패이고
+(`aimonUnresolvedLlmClient` — `LlmClient` 빈의 부재를 알 수 있는 유일한 자리, 곧 LLM 슬라이스의 빈 정의가 등록된 뒤),
+그 메시지가 권하는 처방(빈을 정의하라)을 따르면 위 문단의 배포가 된다. 그래서 "선언이 조용히 읽히지 않는" 모양은
+둘이 아니라 하나이고, 그 하나에 대한 답이 위의 결정이다(L-3).
 능력 선언은 두 벤더 분기가 모두 읽으므로 이 거절의 대상이 아니다.
 
 ### 6.4 표면별 실패
@@ -740,7 +754,8 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
 - **L-2** — 두 절반(`responsesApiEnabled` · 샘플링 파라미터)이 모두 표면을 얻었다(2026-10-05). 샘플링 기본값은 §3.3 의
   다섯 키다. 남은 것은 Anthropic 의 `topP` 기본값이고, 그것은 키가 아니라 클라이언트 변경이다(§3.3). `responsesApiEnabled` 에 붙어 있던
   `gpt-5.6-terra` 를 Chat Completions 로 강제한 칸은 같은 날 쟀다([`model-capabilities.md`](model-capabilities.md) §6.3)
-- **L-3** — `provider=none` 과 애플리케이션 자체 `LlmClient` 빈 배포에서 선언과 벤더 블록이 조용히 읽히지 않는다
+- **L-3** — 애플리케이션 자체 `LlmClient` 빈 배포에서 `aimon.llm.*` 이 읽히지 않는 것은 거절하지 않기로 했다(§6.3).
+  항목이 따로 센 `provider=none` + 빈 없음은 실행되는 배포가 아니라 이미 기동 실패다
 - **L-4** — 설정에서 prefix 를 선언할 길을 열 것인가(코어 쪽이 순수 추가가 아니다)
 - ~~**L-5** — CLI 매핑 오류 메시지가 어느 키인지 말하지 않는다~~ — 2026-10-05 닫힘
 - ~~**L-8** — 선언이 내장 행을 가리면서 그 행의 플래그를 적지 않았을 때 알리지 않는다~~ — 2026-10-05 닫힘(기동 시 WARN, §4)
