@@ -15,15 +15,16 @@ import at.aimon.core.llm.Message;
  * Mirrors the reference implementation's behavior: the LLM's very first user-role message is a synthetic block
  * containing
  * {@code <system-reminder>}-wrapped entries describing the working directory, the current date, and any user-defined
- * extensions (e.g. {@code CLAUDE.md} contents) sourced from a {@link AgentEnvironmentSnapshot}. Because the entries are
- * wrapped
- * via {@link SystemReminderFormatter}, the model cannot mistake them for genuine end-user intent.
+ * extensions (e.g. {@code CLAUDE.md} contents). The date and the extensions come from an
+ * {@link AgentEnvironmentSnapshot}; the working directory does not — it is a fact of the execution that is running,
+ * so the caller passes it in from that execution's environment. Because the entries are wrapped via
+ * {@link SystemReminderFormatter}, the model cannot mistake them for genuine end-user intent.
  *
  * <p>
  * The emitted ordering is stable:
  *
  * <ol>
- * <li>{@code working-directory} — when non-blank
+ * <li>{@code working-directory} — the execution's, when the caller passed a non-blank one
  * <li>{@code current-date} — the instant's canonical {@link java.time.Instant#toString() ISO-8601} form
  * <li>each entry in {@link AgentEnvironmentSnapshot#getExtensions() extensions}, in the map's iteration order;
  * extension keys are
@@ -33,10 +34,9 @@ import at.aimon.core.llm.Message;
  *
  * <p>
  * Returns {@link Optional#empty() empty} when no entry would be emitted (e.g. the working directory is blank, the
- * session's extensions map is empty, and {@code currentDate} is somehow absent). Ordinary
- * {@link AgentEnvironmentSnapshot}
- * instances always yield at least the working directory and current date, so {@link Optional#empty()} is primarily a
- * defensive guard against degenerate inputs.
+ * snapshot's extensions map is empty, and {@code currentDate} is somehow absent). Ordinary
+ * {@link AgentEnvironmentSnapshot} instances always yield at least the current date, so {@link Optional#empty()} is
+ * primarily a defensive guard against degenerate inputs.
  *
  * <p>
  * This builder holds no state and is thread-safe.
@@ -51,7 +51,8 @@ public final class UserContextMessageBuilder {
     }
 
     /**
-     * Builds the synthetic user-context message for the given {@link AgentEnvironmentSnapshot}.
+     * Builds the synthetic user-context message for the given {@link AgentEnvironmentSnapshot} alone, with no
+     * execution behind it — so the message has no {@code working-directory} entry.
      *
      * <p>
      * The returned message, if present, is a user-role {@link Message} whose content is the concatenation of
@@ -59,7 +60,7 @@ public final class UserContextMessageBuilder {
      * skipped; if no entry remains, {@link Optional#empty()} is returned.
      *
      * @param agentEnvironmentSnapshot
-     *            the session context to materialise into a user message (must not be null)
+     *            the agent's environment snapshot to materialise into a user message (must not be null)
      * @return the synthetic user-context message, or {@link Optional#empty()} if no entry would be emitted
      * @throws NullPointerException
      *             if {@code agentEnvironmentSnapshot} is null
@@ -69,15 +70,21 @@ public final class UserContextMessageBuilder {
     }
 
     /**
-     * As {@link #build(AgentEnvironmentSnapshot)}, but with the working directory of the execution that is running —
-     * the directory its environment's shell and file tools resolve against — in place of the snapshot's, which is
-     * collected once per agent and cannot know where a given execution runs (execution-environment design §10).
+     * As {@link #build(AgentEnvironmentSnapshot)}, plus the working directory of the execution that is running — the
+     * directory its environment's shell and file tools resolve against (execution-environment design §10).
+     *
+     * <p>
+     * That directory is the only source of the {@code working-directory} entry. An execution whose environment is
+     * unavailable has none, and then the entry is left out: nothing else stands in for it, least of all a directory
+     * of the host the framework runs on (design §5.1).
      *
      * @param agentEnvironmentSnapshot
-     *            the session context to materialise into a user message (must not be null)
+     *            the agent's environment snapshot to materialise into a user message (must not be null)
      * @param executionWorkingDirectory
-     *            the execution's working directory, or null/blank to use the snapshot's
+     *            the execution's working directory; null or blank emits no {@code working-directory} entry
      * @return the synthetic user-context message, or {@link Optional#empty()} if no entry would be emitted
+     * @throws NullPointerException
+     *             if {@code agentEnvironmentSnapshot} is null
      */
     public static Optional<Message> build(AgentEnvironmentSnapshot agentEnvironmentSnapshot,
             String executionWorkingDirectory) {
@@ -85,11 +92,8 @@ public final class UserContextMessageBuilder {
 
         final Map<String, String> entries = new LinkedHashMap<>();
 
-        final String workingDirectory = executionWorkingDirectory != null && !executionWorkingDirectory.isBlank()
-                ? executionWorkingDirectory
-                : agentEnvironmentSnapshot.getWorkingDirectory();
-        if (workingDirectory != null && !workingDirectory.isBlank()) {
-            entries.put(KEY_WORKING_DIRECTORY, workingDirectory);
+        if (executionWorkingDirectory != null && !executionWorkingDirectory.isBlank()) {
+            entries.put(KEY_WORKING_DIRECTORY, executionWorkingDirectory);
         }
 
         if (agentEnvironmentSnapshot.getCurrentDate() != null) {

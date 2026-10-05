@@ -32,6 +32,7 @@ import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
+import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
@@ -73,7 +74,7 @@ class OrcaAgentExecutorUserContextInjectionTest {
     @Test
     @DisplayName("fresh conversation with provider: synthetic user-context message precedes the real user input")
     void freshConversationInjectsSyntheticBlock() {
-        final OrcaAgentExecutor executor = createExecutor(llmClient, repository, fixedProvider("/workspace/proj"));
+        final OrcaAgentExecutor executor = createExecutor(llmClient, repository, fixedProvider());
 
         executor.execute(createContext(),
                 OrcaAgentExecutionRequest.builder().userInput("Hello").sessionId(SessionId.generate()).build());
@@ -84,20 +85,37 @@ class OrcaAgentExecutorUserContextInjectionTest {
         // First call should contain two USER messages in order: synthetic context, then the real user input.
         assertThat(firstCall).hasSize(2);
         assertThat(firstCall.get(0).getRole()).isEqualTo(Role.USER);
-        // The working directory is the execution environment's, not the per-agent snapshot's "/workspace/proj":
-        // the snapshot is collected once per agent and cannot know where this execution runs (design §10).
+        // The working directory is the execution environment's: the per-agent snapshot carries none, because it is
+        // collected once per agent and cannot know where this execution runs (design §10).
         assertThat(firstCall.get(0).getContent()).contains("<system-reminder key=\"working-directory\">")
-                .contains(tempDir.toString()).doesNotContain("/workspace/proj")
-                .contains("<system-reminder key=\"current-date\">").contains("2026-04-23T12:34:56Z");
+                .contains(tempDir.toString()).contains("<system-reminder key=\"current-date\">")
+                .contains("2026-04-23T12:34:56Z");
 
         assertThat(firstCall.get(1).getRole()).isEqualTo(Role.USER);
         assertThat(firstCall.get(1).getContent()).isEqualTo("Hello");
     }
 
     @Test
+    @DisplayName("unavailable environment: the block carries no working directory (EE-24)")
+    void unavailableEnvironmentShowsNoWorkingDirectory() {
+        final OrcaAgentExecutor executor = createExecutor(llmClient, repository, fixedProvider());
+
+        // A provider that fails yields an unavailable environment, whose descriptor has no working directory.
+        executor.execute(createContext(request -> {
+            throw new IllegalStateException("sandbox is down");
+        }), OrcaAgentExecutionRequest.builder().userInput("Hello").sessionId(SessionId.generate()).build());
+
+        final List<Message> firstCall = llmClient.capturedMessages.get(0);
+        assertThat(firstCall).hasSize(2);
+        assertThat(firstCall.get(0).getContent()).isEqualTo(
+                "<system-reminder key=\"current-date\">\n" + "2026-04-23T12:34:56Z\n" + "</system-reminder>");
+        assertThat(firstCall.get(1).getContent()).isEqualTo("Hello");
+    }
+
+    @Test
     @DisplayName("userContextInjection(false) opts out: only the real user message is sent")
     void optOutSkipsInjection() {
-        final OrcaAgentExecutor executor = createExecutor(llmClient, repository, fixedProvider("/workspace/proj"));
+        final OrcaAgentExecutor executor = createExecutor(llmClient, repository, fixedProvider());
 
         executor.execute(createContext(), OrcaAgentExecutionRequest.builder().userInput("Hello")
                 .sessionId(SessionId.generate()).userContextInjection(false).build());
@@ -119,7 +137,7 @@ class OrcaAgentExecutorUserContextInjectionTest {
                 List.of(Message.user("Earlier question"), Message.assistant("Earlier answer")));
         repository.save(persisted);
 
-        final OrcaAgentExecutor executor = createExecutor(llmClient, repository, fixedProvider("/workspace/proj"));
+        final OrcaAgentExecutor executor = createExecutor(llmClient, repository, fixedProvider());
 
         executor.execute(createContext(),
                 OrcaAgentExecutionRequest.builder().userInput("Follow-up").sessionId(existingId).build());
@@ -138,7 +156,7 @@ class OrcaAgentExecutorUserContextInjectionTest {
     @DisplayName("the injected block is logged as SYNTHETIC, the user's input and the answer as CONVERSATION")
     void injectedBlockIsLoggedAsSynthetic() {
         final SessionId sessionId = SessionId.generate();
-        final OrcaAgentExecutor executor = createExecutor(llmClient, repository, fixedProvider("/workspace/proj"));
+        final OrcaAgentExecutor executor = createExecutor(llmClient, repository, fixedProvider());
 
         executor.execute(createContext(),
                 OrcaAgentExecutionRequest.builder().userInput("Hello").sessionId(sessionId).build());
@@ -162,7 +180,7 @@ class OrcaAgentExecutorUserContextInjectionTest {
                 .nextSeq(3).format(SessionLogFormat.V2).build();
         repository.save(new SessionRecord(sessionId, SessionTranscript.fromLog("prior", syntheticOnly), 0, null,
                 SessionTotals.empty(), null));
-        final OrcaAgentExecutor executor = createExecutor(llmClient, repository, fixedProvider("/workspace/proj"));
+        final OrcaAgentExecutor executor = createExecutor(llmClient, repository, fixedProvider());
 
         executor.execute(createContext(),
                 OrcaAgentExecutionRequest.builder().userInput("Hello").sessionId(sessionId).build());
@@ -189,6 +207,14 @@ class OrcaAgentExecutorUserContextInjectionTest {
     }
 
     private OrcaAgentRuntime createContext() {
+        return createContext(null);
+    }
+
+    /**
+     * @param environmentProvider
+     *            the provider to bind, or null for one that resolves to the temp directory
+     */
+    private OrcaAgentRuntime createContext(ExecutionEnvironmentProvider environmentProvider) {
         final LocalFileSystem fileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
         fileSystem.initialize();
         return OrcaAgentRuntime.builder()
@@ -198,7 +224,9 @@ class OrcaAgentExecutorUserContextInjectionTest {
                 .commandRegistry(new DefaultCommandRegistry(fileSystem, ".aimon/commands"))
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
                 .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
-                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
+                .executionEnvironmentProvider(environmentProvider != null
+                        ? environmentProvider
+                        : TestExecutionEnvironments.provider(fileSystem))
                 .userLocale(UserLocale.createDefault()).build();
     }
 
@@ -214,9 +242,9 @@ class OrcaAgentExecutorUserContextInjectionTest {
                         subagentManager);
     }
 
-    private static AgentEnvironmentSnapshotProvider fixedProvider(String workingDirectory) {
-        final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory(workingDirectory)
-                .currentDate(FIXED_INSTANT).userLocale(UserLocale.createDefault()).build();
+    private static AgentEnvironmentSnapshotProvider fixedProvider() {
+        final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().currentDate(FIXED_INSTANT)
+                .userLocale(UserLocale.createDefault()).build();
         return new AgentEnvironmentSnapshotProvider() {
             @Override
             public AgentEnvironmentSnapshot get(AgentRuntime context) {

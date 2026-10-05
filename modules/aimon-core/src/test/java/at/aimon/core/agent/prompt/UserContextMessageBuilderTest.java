@@ -29,7 +29,7 @@ class UserContextMessageBuilderTest {
     private static final Instant FIXED_INSTANT = Instant.parse("2026-04-23T12:34:56Z");
 
     @Nested
-    @DisplayName("build(AgentEnvironmentSnapshot)")
+    @DisplayName("build(AgentEnvironmentSnapshot, executionWorkingDirectory)")
     class Build {
 
         @Test
@@ -42,11 +42,10 @@ class UserContextMessageBuilderTest {
         @Test
         @DisplayName("emits working-directory and current-date reminders in a user-role message")
         void happyPathEmitsRequiredReminders() {
-            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder()
-                    .workingDirectory("/workspace/project").currentDate(FIXED_INSTANT)
+            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().currentDate(FIXED_INSTANT)
                     .userLocale(UserLocale.createDefault()).build();
 
-            final Optional<Message> result = UserContextMessageBuilder.build(snapshot);
+            final Optional<Message> result = UserContextMessageBuilder.build(snapshot, "/workspace/project");
 
             assertThat(result).isPresent();
             final Message message = result.get();
@@ -63,10 +62,10 @@ class UserContextMessageBuilderTest {
             extensions.put("claude-md", "# Project Rules\n- be concise");
             extensions.put("git-branch", "main");
 
-            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory("/ws")
-                    .currentDate(FIXED_INSTANT).userLocale(UserLocale.createDefault()).extensions(extensions).build();
+            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().currentDate(FIXED_INSTANT)
+                    .userLocale(UserLocale.createDefault()).extensions(extensions).build();
 
-            final Optional<Message> result = UserContextMessageBuilder.build(snapshot);
+            final Optional<Message> result = UserContextMessageBuilder.build(snapshot, "/ws");
 
             assertThat(result).isPresent();
             assertThat(result.get().getContent()).isEqualTo("<system-reminder key=\"working-directory\">\n" + "/ws\n"
@@ -77,10 +76,10 @@ class UserContextMessageBuilderTest {
         }
 
         @Test
-        @DisplayName("skips blank working directory but still emits current-date reminder")
-        void blankWorkingDirectorySkipped() {
-            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory("   ")
-                    .currentDate(FIXED_INSTANT).userLocale(UserLocale.createDefault()).build();
+        @DisplayName("without an execution there is no working-directory entry; current-date is still emitted")
+        void snapshotAloneHasNoWorkingDirectory() {
+            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().currentDate(FIXED_INSTANT)
+                    .userLocale(UserLocale.createDefault()).build();
 
             final Optional<Message> result = UserContextMessageBuilder.build(snapshot);
 
@@ -88,6 +87,24 @@ class UserContextMessageBuilderTest {
             assertThat(result.get().getContent()).isEqualTo(
                     "<system-reminder key=\"current-date\">\n" + "2026-04-23T12:34:56Z\n" + "</system-reminder>");
             assertThat(result.get().getContent()).doesNotContain("working-directory");
+        }
+
+        @Test
+        @DisplayName("an execution without a working directory gets no entry — the snapshot's is not a fallback (EE-24)")
+        void blankExecutionWorkingDirectoryDoesNotFallBackToTheSnapshot() {
+            // An unavailable environment's descriptor has a blank working directory, and nothing stands in for it
+            // (execution-environment design §5.1). The snapshot used to: it carried a working directory of its own,
+            // collected once per agent, which is why it no longer has one (EE-10).
+            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().currentDate(FIXED_INSTANT)
+                    .userLocale(UserLocale.createDefault()).build();
+
+            for (final String blank : new String[]{"", "   ", null}) {
+                final Optional<Message> result = UserContextMessageBuilder.build(snapshot, blank);
+
+                assertThat(result).isPresent();
+                assertThat(result.get().getContent()).as("execution working directory [%s]", blank).isEqualTo(
+                        "<system-reminder key=\"current-date\">\n" + "2026-04-23T12:34:56Z\n" + "</system-reminder>");
+            }
         }
 
         @Test
@@ -101,8 +118,8 @@ class UserContextMessageBuilderTest {
             extensions.put("kept", "value");
             extensions.put("   ", "blank-key-skipped");
 
-            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().workingDirectory("/ws")
-                    .currentDate(FIXED_INSTANT).userLocale(UserLocale.createDefault()).extensions(extensions).build();
+            final AgentEnvironmentSnapshot snapshot = AgentEnvironmentSnapshot.builder().currentDate(FIXED_INSTANT)
+                    .userLocale(UserLocale.createDefault()).extensions(extensions).build();
 
             final Optional<Message> result = UserContextMessageBuilder.build(snapshot);
 
