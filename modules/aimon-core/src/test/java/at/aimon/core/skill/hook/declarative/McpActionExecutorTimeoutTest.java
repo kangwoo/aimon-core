@@ -22,7 +22,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.tool.ToolInput;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -217,7 +216,6 @@ class McpActionExecutorTimeoutTest {
 
     private static PreToolContext preToolContext(HookRegistry registry) {
         return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(registry)
-                .userLocale(UserLocale.createDefault()).toolUse(ToolUse.of("call-1", "Bash", Map.of()))
-                .iterationCount(1).build();
+                .toolUse(ToolUse.of("call-1", "Bash", Map.of())).iterationCount(1).build();
     }
 }
