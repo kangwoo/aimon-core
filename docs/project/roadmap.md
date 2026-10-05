@@ -57,7 +57,7 @@ starter 밖의 등록부에는 열린 항목이 있다. 어느 등록부에 몇 
 | `aimon-core` 밖에서 온 백엔드 구현이 하나 이상 | **0건.** `0.3.0` 이후 이 저장소 밖에도 SPI 구현이 생겼지만(`at.aimon.sandbox:*`, aimon-memory 의 `RemotePeerMemory`) 둘 다 같은 메인테이너의 저장소라, 이 조건이 묻는 것 — 남이 구현할 수 있는가 — 에는 답하지 못한다. B-23 이 여기에 걸려 있다 |
 | 스코프 모델이 개명 없이 한 주기를 넘김 | 최근 두 번의 파괴적 변경이 **둘 다** 여기서 나왔다(`AgentExecutionContext` → `AgentRuntime`, `Conversation`/`AgentSession` → `SessionRecord`/`LiveSession`). `0.3.0` · `0.3.1` 의 CHANGELOG 에는 수명 타입의 개명이 없다 — `0.3.1` 의 `Environment` → `UserLocale`(EE-14)은 수명 타입이 아니다. 세 번째가 없어야 한다 |
 | starter 미결 항목 정리 | 4건 남음 — 전부 외부 조건 대기(§2) |
-| 공개 API javadoc 완비 | **측정 장치가 없다.** 빌드는 `-Xdoclint:none` 으로 javadoc 린트를 끄고 있다(`buildSrc/src/main/kotlin/aimon.java-conventions.gradle.kts` 의 `tasks.withType<Javadoc>()` 블록). 완비 여부를 말하려면 그 스위치부터 켜야 한다 |
+| 공개 API javadoc 완비 | **2,737건 남음** (2026-10-05, 배포 모듈 16개). `./gradlew javadocCoverage` 가 각 배포 모듈의 `*.impl` 밖 소스에서 doclint `missing` 경고를 세고, 실패시키지는 않는다. `aimon-core` 가 2,237건으로 대부분이고, `aimon-bootstrap` · `aimon-llm-anthropic` · `aimon-memory-testkit` 은 0건이다. 배포되는 javadoc jar 는 여전히 `-Xdoclint:none` 이다 — 측정과 배포를 섞지 않았다. 수가 늘지 않게 막는 래칫은 아직 없다 |
 | 번역 신선도 CI 동작 | **충족.** `build.yml` 의 `translations` 잡이 낡은 번역은 경고로, 해석 불가한 `source_commit` 은 실패로 보고하고, 구조 검사가 함께 돈다. 이 조건이 묻는 것은 번역이 **정본과** 어긋나지 않는가이고, 정본이 코드와 맞는지는 번역 검사의 범위가 아니다 |
 
 **`1.0` 은 날짜가 아니라 상태다.** 위 여섯이 전부 참이 되기 전에는 올리지 않고, 참이 되면 그 이상
