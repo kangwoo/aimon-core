@@ -22,7 +22,6 @@ import at.aimon.core.agent.interrupt.NoopCancellationSignal;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
@@ -246,16 +245,15 @@ class SubagentBehaviorRunnerTest {
     private static SubagentExecutionContext contextWith(Subagent subagent, ToolRegistry toolRegistry) {
         return SubagentExecutionContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test")).subagent(subagent)
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(toolRegistry)
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .parentCancellationSignal(NoopCancellationSignal.INSTANCE).build();
+                .hookRegistry(new DefaultHookRegistry()).parentCancellationSignal(NoopCancellationSignal.INSTANCE)
+                .build();
     }
 
     private static SubagentExecutionContext context(CancellationSignal parentSignal) {
         return SubagentExecutionContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
                 .subagent(Subagent.builder().name("clock").systemPrompt("(code behavior)").build())
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .parentCancellationSignal(parentSignal).build();
+                .hookRegistry(new DefaultHookRegistry()).parentCancellationSignal(parentSignal).build();
     }
 
     private static SubagentExecutionRequest request() {

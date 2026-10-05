@@ -21,7 +21,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -511,7 +510,6 @@ class SkillHookSetParserTest {
         final at.aimon.core.hook.event.PreToolContext context = at.aimon.core.hook.event.PreToolContext.builder()
                 .executorType(at.aimon.core.agent.InvokerType.MAIN_AGENT).invokerName("agent")
                 .hookRegistry(new at.aimon.core.hook.DefaultHookRegistry())
-                .userLocale(at.aimon.core.base.UserLocale.createDefault())
                 .toolUse(at.aimon.core.llm.ToolUse.of("call-1", "Bash", Map.of())).iterationCount(1).build();
         assertThat(set.getPreToolHooks().get(0).execute(context).getStatus()).isEqualTo(HookStatus.BLOCKED);
         assertThat(set.getPreToolHooks().get(1).execute(context).getStatus()).isEqualTo(HookStatus.SUCCESS);
@@ -582,7 +580,7 @@ class SkillHookSetParserTest {
 
     private static OnStartContext onStartContext() {
         return OnStartContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENVIRONMENT).userMessage("go").build();
+                .hookRegistry(REGISTRY).userMessage("go").build();
     }
 
     private static OnStopContext onStopContext() {
@@ -590,12 +588,10 @@ class SkillHookSetParserTest {
         final ExecutionMetadata metadata = ExecutionMetadata.builder().iterationCount(1).duration(Duration.ofMillis(5))
                 .startTime(now.minusMillis(5)).endTime(now).build();
         return OnStopContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENVIRONMENT).success(true).finalAnswer("done").metadata(metadata)
-                .build();
+                .hookRegistry(REGISTRY).success(true).finalAnswer("done").metadata(metadata).build();
     }
 
     private static final HookRegistry REGISTRY = new DefaultHookRegistry();
-    private static final UserLocale ENVIRONMENT = UserLocale.createDefault();
 
     /** Shell executor stub that reports a clean exit so parsed hooks can actually be fired. */
     private static final class RecordingShellExecutor implements ShellActionExecutor {

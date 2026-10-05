@@ -150,7 +150,7 @@ Every item on this list is actually written into a code comment somewhere.
 - **Do not close `WorkflowRunner` from the application shell.** And conversely, do not leave it
   unclosed on the assumption that some other layer will — whoever created it closes it.
 - **Do not close a borrowed collaborator.** `WorkflowRunner` borrows `SubagentExecutionManager`
-  and the base `SubagentExecutionEnvironment`, and closes only the pool it owns.
+  and the base `SubagentLaunchContext`, and closes only the pool it owns.
 - **Do not mint a new `AgentRuntimeId` per execution.** It is deterministic, of the form
   `agent:<name>` / `agent:<name>:<discriminator>`, and is issued via `from(Agent)` /
   `from(Agent, String)`. `generate()` **does not exist** — had it existed, a cron re-fire could

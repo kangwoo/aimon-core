@@ -21,15 +21,14 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.workflow.AgentStepResult;
 import at.aimon.core.workflow.RunId;
@@ -47,13 +46,13 @@ class DefaultWorkflowResumeTest {
     private final AtomicInteger execCount = new AtomicInteger();
     private final List<WorkflowRunner> runners = new ArrayList<>();
     private SubagentExecutionManager manager;
-    private SubagentExecutionEnvironment env;
+    private SubagentLaunchContext env;
     private Subagent sub;
 
     @BeforeEach
     void setUp() {
         manager = mock(SubagentExecutionManager.class);
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> {
                     execCount.incrementAndGet();
                     final String goal = invocation.getArgument(2, String.class);
@@ -236,10 +235,9 @@ class DefaultWorkflowResumeTest {
                 .builder().iterationCount(1).tokenUsage(TokenUsage.of(5, 5, 10)).timestamps(now, now).build());
     }
 
-    private static SubagentExecutionEnvironment env() {
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
+    private static SubagentLaunchContext env() {
+        return SubagentLaunchContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
                 .subagentRegistry(new InMemorySubagentRegistry()).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .defaultModel(LlmModel.builder().name("gpt-4").build()).build();
+                .hookRegistry(new DefaultHookRegistry()).defaultModel(LlmModel.builder().name("gpt-4").build()).build();
     }
 }

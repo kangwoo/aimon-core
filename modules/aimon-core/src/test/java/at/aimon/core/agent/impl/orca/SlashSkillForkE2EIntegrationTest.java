@@ -30,7 +30,6 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.environment.EnvironmentRequest;
@@ -334,7 +333,7 @@ class SlashSkillForkE2EIntegrationTest {
                         .model(LlmModel.builder().name("gpt-4").build()).build())
                 .toolRegistry(toolRegistry).hookRegistry(new DefaultHookRegistry()).commandRegistry(commandRegistry)
                 .subagentRegistry(subagentRegistry).skillRegistry(skillRegistry).controlFileSystem(fileSystem)
-                .userLocale(UserLocale.createDefault()).executionEnvironmentProvider(recording(requests)).build();
+                .executionEnvironmentProvider(recording(requests)).build();
     }
 
     private ExecutionEnvironmentProvider recording(List<EnvironmentRequest> requests) {

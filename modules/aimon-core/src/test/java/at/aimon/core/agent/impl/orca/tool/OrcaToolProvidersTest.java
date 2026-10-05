@@ -25,7 +25,6 @@ import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.search.KeywordToolSearchStrategy;
 import at.aimon.core.agent.tool.search.ToolSearchCatalog;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.scheduling.ScheduledTaskManager;
@@ -54,8 +53,7 @@ class OrcaToolProvidersTest {
     }
 
     private OrcaToolProviderContext context(OrcaProviderDependencies deps, Agent agent) {
-        return OrcaToolProviderContext.builder().agent(agent).userLocale(deps.getUserLocale()).dependencies(deps)
-                .build();
+        return OrcaToolProviderContext.builder().agent(agent).dependencies(deps).build();
     }
 
     // ---- OrcaBashToolProvider ---------------------------------------------------------------------
@@ -259,8 +257,7 @@ class OrcaToolProvidersTest {
 
         OrcaProviderDependencies deps = OrcaProviderDependencies.builder()
                 .subagentRegistry(mock(SubagentRegistry.class)).toolRegistry(mock(ToolRegistry.class))
-                .hookRegistry(mock(HookRegistry.class)).userLocale(mock(UserLocale.class))
-                .subagentExecutionManager(execMgr).build();
+                .hookRegistry(mock(HookRegistry.class)).subagentExecutionManager(execMgr).build();
 
         OrcaSubagentToolProvider provider = new OrcaSubagentToolProvider();
         ToolRegistry registry = new DefaultToolRegistry();
@@ -282,8 +279,7 @@ class OrcaToolProvidersTest {
 
         OrcaProviderDependencies deps = OrcaProviderDependencies.builder()
                 .subagentRegistry(mock(SubagentRegistry.class)).toolRegistry(mock(ToolRegistry.class))
-                .hookRegistry(mock(HookRegistry.class)).userLocale(mock(UserLocale.class))
-                .subagentExecutionManager(execMgr).build();
+                .hookRegistry(mock(HookRegistry.class)).subagentExecutionManager(execMgr).build();
 
         ToolRegistry registry = new DefaultToolRegistry();
 
@@ -301,8 +297,7 @@ class OrcaToolProvidersTest {
         SubagentExecutionManager execMgr = mock(SubagentExecutionManager.class);
         OrcaProviderDependencies deps = OrcaProviderDependencies.builder()
                 .subagentRegistry(mock(SubagentRegistry.class)).toolRegistry(mock(ToolRegistry.class))
-                .hookRegistry(mock(HookRegistry.class)).userLocale(mock(UserLocale.class))
-                .subagentExecutionManager(execMgr).build();
+                .hookRegistry(mock(HookRegistry.class)).subagentExecutionManager(execMgr).build();
         OrcaToolProviderContext ctx = context(deps, agent);
 
         ToolRegistry enabled = new DefaultToolRegistry();
@@ -323,8 +318,8 @@ class OrcaToolProvidersTest {
     void subagentProviderRequiresAgentInContext() {
         OrcaProviderDependencies deps = OrcaProviderDependencies.builder()
                 .subagentRegistry(mock(SubagentRegistry.class)).toolRegistry(mock(ToolRegistry.class))
-                .hookRegistry(mock(HookRegistry.class)).userLocale(mock(UserLocale.class))
-                .subagentExecutionManager(mock(SubagentExecutionManager.class)).build();
+                .hookRegistry(mock(HookRegistry.class)).subagentExecutionManager(mock(SubagentExecutionManager.class))
+                .build();
 
         OrcaSubagentToolProvider provider = new OrcaSubagentToolProvider();
         ToolRegistry registry = new DefaultToolRegistry();
@@ -338,7 +333,7 @@ class OrcaToolProvidersTest {
         Agent agent = stubAgent();
         OrcaProviderDependencies deps = OrcaProviderDependencies.builder()
                 .subagentRegistry(mock(SubagentRegistry.class)).toolRegistry(mock(ToolRegistry.class))
-                .hookRegistry(mock(HookRegistry.class)).userLocale(mock(UserLocale.class)).build();
+                .hookRegistry(mock(HookRegistry.class)).build();
 
         OrcaSubagentToolProvider provider = new OrcaSubagentToolProvider();
         ToolRegistry registry = new DefaultToolRegistry();

@@ -15,7 +15,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.compact.CompactionTrigger;
 import at.aimon.core.agent.tool.ToolInput;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
@@ -42,7 +41,6 @@ import at.aimon.core.skill.hook.action.ShellAction;
 class AbstractDeclarativeShellHookTest {
 
     private static final HookRegistry REGISTRY = new DefaultHookRegistry();
-    private static final UserLocale ENV = UserLocale.createDefault();
     private static final ShellAction ACTION = new ShellAction("gate.sh", Duration.ofSeconds(1));
 
     // --- onStart: blocks (OrcaAgentExecutor aborts the turn) -----------------------------------------------------
@@ -248,19 +246,18 @@ class AbstractDeclarativeShellHookTest {
 
     private static OnStartContext onStartContext() {
         return OnStartContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENV).userMessage("deploy please").build();
+                .hookRegistry(REGISTRY).userMessage("deploy please").build();
     }
 
     private static PreCompactContext preCompactContext() {
         return PreCompactContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENV).trigger(CompactionTrigger.AUTO).sessionIdValue("conv-1")
-                .messageCount(42).estimatedTokens(120_000).build();
+                .hookRegistry(REGISTRY).trigger(CompactionTrigger.AUTO).sessionIdValue("conv-1").messageCount(42)
+                .estimatedTokens(120_000).build();
     }
 
     private static PermissionRequestContext permissionRequestContext() {
         return PermissionRequestContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENV).toolName("Bash")
-                .toolInput(ToolInput.of(Map.of("command", "ls"))).build();
+                .hookRegistry(REGISTRY).toolName("Bash").toolInput(ToolInput.of(Map.of("command", "ls"))).build();
     }
 
     private static OnStopContext onStopContext() {
@@ -268,12 +265,12 @@ class AbstractDeclarativeShellHookTest {
         final ExecutionMetadata metadata = ExecutionMetadata.builder().iterationCount(3).duration(Duration.ofMillis(50))
                 .startTime(now.minusMillis(50)).endTime(now).build();
         return OnStopContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENV).success(true).finalAnswer("done").metadata(metadata).build();
+                .hookRegistry(REGISTRY).success(true).finalAnswer("done").metadata(metadata).build();
     }
 
     private static SubagentStopContext subagentStopContext() {
         return SubagentStopContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENV).subagentName("Explore").taskId("t-1").success(true).build();
+                .hookRegistry(REGISTRY).subagentName("Explore").taskId("t-1").success(true).build();
     }
 
     /**

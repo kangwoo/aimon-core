@@ -390,7 +390,7 @@ VirtualFileSystem vfs = env.fileSystem();
 VirtualShell shell = env.shell();
 
 // check for presence
-if (context.containsKey("userLocale")) {
+if (context.containsKey("principal")) {
     // handle it
 }
 
@@ -403,7 +403,7 @@ Map<String, Object> all = context.getContext();
 | Key | Type | Description |
 |-----|------|-------------|
 | `executionEnvironment` (`ToolContextKeys.EXECUTION_ENVIRONMENT`) | `ExecutionEnvironment` | this execution's file system, shell and descriptor. **Write-once** — the executor puts it; an enricher may read it but not replace it (a second write throws `IllegalStateException`) |
-| `userLocale` (`ToolContextKeys.USER_LOCALE`) | `UserLocale` | the user locale (time zone). The working directory and platform are not here; they are on the descriptor of `executionEnvironment` |
+| `principal` (`ToolContextKeys.PRINCIPAL`) | `Principal` | who asked for this execution. The key is absent when the request carried no principal |
 | `executorType` | `InvokerType` | the kind of invoker (MAIN_AGENT, SUBAGENT …) |
 | `read_tool.file_stamps` (`ReadTool.FILE_STAMPS_KEY`) | `Map<String, FileStamp>` | stamps of the files read in this execution (recorded by ReadTool, checked by Edit/Write) |
 
@@ -432,7 +432,7 @@ ToolContext empty = ToolContext.empty();
 // the builder pattern
 ToolContext context = ToolContext.builder()
     .put(ToolContextKeys.EXECUTION_ENVIRONMENT, env)
-    .put(ToolContextKeys.USER_LOCALE, UserLocale.createDefault())
+    .put(ToolContextKeys.PRINCIPAL, Principal.user("u-1"))
     .put("executorType", InvokerType.MAIN_AGENT)
     .build();
 ```

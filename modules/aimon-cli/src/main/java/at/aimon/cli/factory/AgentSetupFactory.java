@@ -69,7 +69,6 @@ import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.SessionLogPage;
 import at.aimon.core.agent.session.transcript.SessionLogReader;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.config.hook.HookConfigParseException;
 import at.aimon.core.config.hook.HookHotReloadBootstrap;
 import at.aimon.core.config.hook.ReloadInvoker;
@@ -1069,7 +1068,7 @@ public class AgentSetupFactory {
                 .projectRoot(Paths.get(fileSystem.getWorkingDirectory()))
                 .shellExecutor(createHookConfigShellExecutor(hookConfigShell)).processEnv(System.getenv())
                 .registry(agentRuntime.getHookRegistry()).executionManager(agentExecutor.getHookExecutionManager())
-                .invoker(new ReloadInvoker(InvokerType.MAIN_AGENT, agentName, UserLocale.createDefault())).start();
+                .invoker(new ReloadInvoker(InvokerType.MAIN_AGENT, agentName)).start();
     }
 
     /**

@@ -2,7 +2,7 @@
 
 > **한 줄 요약**: 결정론적 스크립트가 다수의 LLM 서브에이전트를 팬아웃/조인하는 오케스트레이션
 > 서브시스템. 제어흐름은 **순수 Java 함수형 DSL**(`WorkflowScript`)로 표현하고, 실행 기층은
-> **인라인 서브에이전트 실행 프리미티브**(`SubagentExecutionManager.execute(env, Subagent, goal)`)
+> **인라인 서브에이전트 실행 프리미티브**(`SubagentExecutionManager.execute(launchContext, Subagent, goal)`)
 > 위에 얹는다.
 >
 > 적용 대상: `aimon-core` (`at.aimon.core.workflow`), `aimon-workflow-graaljs`
@@ -34,7 +34,7 @@
 
 - AIMON 은 이미 `TaskTool` 로 **런타임 LLM-driven** 서브에이전트 스폰을 지원한다. 그러나 이는 메인
   에이전트가 매 턴 판단해 부르는 것이지 **결정론적 스크립트**가 아니다.
-- `SubagentExecutionManager.execute(SubagentExecutionEnvironment, Subagent, String)` — 레지스트리
+- `SubagentExecutionManager.execute(SubagentLaunchContext, Subagent, String)` — 레지스트리
   등록 없이 코드로 정의한 `Subagent` 를 한 줄로 실행하는 프리미티브 — 가 `agent()` 의 실행 단위다.
 - 병렬 실행에 필요한 바운디드 풀·2-tier bound·입력순 재조립 패턴은 이미
   `DefaultParallelToolDispatcher` 에 존재했다(단, `ToolUse`/`ToolUseResult` 에 결합 → §6.2).
@@ -104,10 +104,10 @@ at.aimon.workflow.graaljs/             # 별도 모듈 aimon-workflow-graaljs
 
 - **Application** — `DefaultWorkflowRunner`. 부트스트랩에서 1회 생성, 앱 shutdown 시 close.
   공용 팬아웃 풀과 run-hosting 풀 **둘 다** 러너가 소유하며 `close()` 가 닫는다.
-- **Agent** — 러너가 주입받는 base `SubagentExecutionEnvironment` 는 특정 `(Agent, discriminator)` 의
+- **Agent** — 러너가 주입받는 base `SubagentLaunchContext` 는 특정 `(Agent, discriminator)` 의
   agent-scoped 자원(`ToolRegistry`/`HookRegistry`/context)을 참조한다. **빌리며 close 하지 않는다.**
 - **Run** — `run()` / `runInBackground()` 1회당 별도 컨텍스트. 예산 카운터, 구조 경로 스택,
-  취소 coordinator, 파생 env 가 여기에 격리된다. run 은 **세션이 아니다** — `SessionId` 를 갖지 않고
+  취소 coordinator, 파생 launch context 가 여기에 격리된다. run 은 **세션이 아니다** — `SessionId` 를 갖지 않고
   실행 정체성은 `RunId` 다.
 
 > **pool 공유 ≠ run-state 공유.** 공용 팬아웃 풀을 공유해도 `agentCount`/`tokensSpent`/`costSpent`/
@@ -115,8 +115,8 @@ at.aimon.workflow.graaljs/             # 별도 모듈 aimon-workflow-graaljs
 
 ### 2.3 의존 방향 (ArchUnit)
 
-오케스트레이션은 base env 를 opaque 하게 pass-through 하므로 실제 임포트는 **subagent SPI 와 값 타입**
-뿐이다: `SubagentExecutionManager`, `SubagentExecutionEnvironment`, `Subagent`,
+오케스트레이션은 base launch context 를 opaque 하게 pass-through 하므로 실제 임포트는 **subagent SPI 와 값 타입**
+뿐이다: `SubagentExecutionManager`, `SubagentLaunchContext`, `Subagent`,
 `SubagentExecutionResult`, `CompletionReason`/`ExecutionMetadata`/`TokenUsage`.
 
 > **강제 방식 주의** — `at.aimon.core.subagent` 도메인은 `.impl` 분리 관례를 따르지 않아
@@ -183,7 +183,7 @@ tool-domain 게이트(`shouldParallelize`/`isParallelizableInterrupt`/eager-stre
 ### 3.3 값객체
 
 `AgentTask` — 불변 + 빌더. `subagent`(인라인 정의), `goal`, `label`, `phase`, `resultSchema`,
-`isolate`, `nonCacheable`. per-task 모델은 subagent frontmatter 로 표현하므로 base env 는
+`isolate`, `nonCacheable`. per-task 모델은 subagent frontmatter 로 표현하므로 base launch context 는
 `modelOverride` 를 설정하지 않아야 한다(설정 시 frontmatter 를 outrank).
 
 `AgentStepResult` — 정적 팩토리. `isSuccess()`, `completionReason()`, `isComplete()`, `text()`,
@@ -282,10 +282,10 @@ reject 한다.
 
 **취소 전파** — leaf 가 run 의 취소를 관측하려면 그 run 의 신호가 leaf 까지 가야 한다:
 
-1. **per-run env** — `runInBackground` 는 run 마다 `InterruptCoordinator` 를 만들고, 빌려온 baseEnv
-   협력자를 공유하되 `cancellationSignal` 만 교체한 **파생 env** 를 만들어 그 run 의 컨텍스트에 넘긴다.
-   `agent()` 는 shared baseEnv 가 아니라 **이 per-run env** 로 `manager.execute` 를 호출한다.
-   `SubagentExecutionEnvironment.toBuilder()` 가 그 seam 이며, 협력자를 공유하므로 소유권 규칙을
+1. **per-run launch context** — `runInBackground` 는 run 마다 `InterruptCoordinator` 를 만들고, 빌려온 base launch context 의
+   협력자를 공유하되 `cancellationSignal` 만 교체한 **파생 launch context** 를 만들어 그 run 의 컨텍스트에 넘긴다.
+   `agent()` 는 shared base 가 아니라 **이 per-run launch context** 로 `manager.execute` 를 호출한다.
+   `SubagentLaunchContext.toBuilder()` 가 그 seam 이며, 협력자를 공유하므로 소유권 규칙을
    깨지 않는다.
 2. **부모→run cascade** — baseEnv 는 application-scoped 라 live 턴 신호를 담지 않는다. 취소 신호원은
    제출 시 호출자가 넘기는 live `CancellationSignal`(제출 턴/세션)이며, `onCancel(...)` 으로 run

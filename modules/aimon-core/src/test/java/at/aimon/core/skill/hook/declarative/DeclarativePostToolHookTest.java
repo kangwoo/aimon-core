@@ -11,7 +11,6 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.PostToolContext;
@@ -26,7 +25,6 @@ import at.aimon.core.skill.hook.declarative.predicate.NameOnlyPredicate;
 class DeclarativePostToolHookTest {
 
     private static final HookRegistry REGISTRY = new DefaultHookRegistry();
-    private static final UserLocale ENV = UserLocale.createDefault();
 
     @Test
     void execute_matching_runsExecutorWithSuccessStatusEnv() {
@@ -100,8 +98,8 @@ class DeclarativePostToolHookTest {
 
     private static PostToolContext contextFor(String toolName, ToolUseResult result) {
         return PostToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENV).toolUse(ToolUse.of("call-1", toolName, Map.of()))
-                .toolUseResult(result).iterationCount(5).build();
+                .hookRegistry(REGISTRY).toolUse(ToolUse.of("call-1", toolName, Map.of())).toolUseResult(result)
+                .iterationCount(5).build();
     }
 
     private static final class RecordingExecutor implements ShellActionExecutor {

@@ -8,7 +8,6 @@ import java.util.Optional;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.session.SessionId;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.execution.HookContext;
 
@@ -45,7 +44,6 @@ public final class OnSessionEndContext implements HookContext {
     private final InvokerType invokerType;
     private final String invokerName;
     private final HookRegistry hookRegistry;
-    private final UserLocale userLocale;
     private final SessionId sessionId;
     private final ExecutionId executionId;
     private final String agentRuntimeId;
@@ -58,7 +56,6 @@ public final class OnSessionEndContext implements HookContext {
         invokerType = Objects.requireNonNull(builder.invokerType, "Invoker type cannot be null");
         invokerName = Objects.requireNonNull(builder.invokerName, "Invoker name cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
-        userLocale = Objects.requireNonNull(builder.userLocale, "UserLocale cannot be null");
         sessionId = builder.sessionId;
         executionId = builder.executionId;
         agentRuntimeId = builder.agentRuntimeId != null ? builder.agentRuntimeId : "";
@@ -81,11 +78,6 @@ public final class OnSessionEndContext implements HookContext {
     @Override
     public HookRegistry getHookRegistry() {
         return hookRegistry;
-    }
-
-    @Override
-    public UserLocale getUserLocale() {
-        return userLocale;
     }
 
     /**
@@ -157,7 +149,6 @@ public final class OnSessionEndContext implements HookContext {
         private InvokerType invokerType;
         private String invokerName;
         private HookRegistry hookRegistry;
-        private UserLocale userLocale;
         private SessionId sessionId;
         private ExecutionId executionId;
         private String agentRuntimeId;
@@ -202,18 +193,6 @@ public final class OnSessionEndContext implements HookContext {
          */
         public Builder hookRegistry(HookRegistry hookRegistry) {
             this.hookRegistry = hookRegistry;
-            return this;
-        }
-
-        /**
-         * Sets the user locale.
-         *
-         * @param userLocale
-         *            the user locale (must not be null)
-         * @return this builder
-         */
-        public Builder userLocale(UserLocale userLocale) {
-            this.userLocale = userLocale;
             return this;
         }
 

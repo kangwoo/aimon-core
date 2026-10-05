@@ -23,7 +23,6 @@ import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.environment.TestExecutionEnvironments;
@@ -41,73 +40,57 @@ import at.aimon.core.llm.ToolUse;
 import at.aimon.core.skill.DefaultSkillRegistry;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.DefaultSubagentRegistry;
-import at.aimon.core.tools.ToolContextKeys;
 
 /**
- * What the {@link UserLocale} of a runtime does and does not reach in {@link OrcaAgentExecutor}.
+ * What {@link OrcaAgentExecutor} sends the model for a plain user input, and what it does not add to it.
  *
  * <p>
- * The first test is a characterization test, not a requirement: nothing reads {@link UserLocale#getTimeZone()} today,
- * so what the model is sent cannot depend on it. It pins that, because replacing {@code Environment} with
- * {@code UserLocale} was meant to change no prompt byte. If the time zone is ever put into the prompt
- * (execution-environment backlog EE-60), this is the test that is supposed to break.
+ * The framework puts no date, time zone or other user-side setting in the prompt: a deployment that wants the model to
+ * know the date renders it in its own time zone and passes it as a system-prompt variable. These tests pin that, and
+ * that a tool finds no such value in its context either (the {@code UserLocale} that used to travel there was read by
+ * nobody and is gone &mdash; execution-environment backlog EE-60, EE-78).
  */
-@DisplayName("OrcaAgentExecutor and the runtime's UserLocale")
-class OrcaAgentExecutorUserLocaleTest {
+@DisplayName("What OrcaAgentExecutor sends the model")
+class OrcaAgentExecutorSentPromptTest {
 
     @TempDir
     Path tempDir;
 
     @Test
-    @DisplayName("the system prompt and the messages are the same in every time zone")
-    void promptDoesNotDependOnTheTimeZone() {
-        // The last two are 26 hours apart (UTC+14 and UTC-12), so at no instant do they share a calendar date: a
-        // prompt that rendered the date in the user's zone would differ between them whenever this runs.
-        final Sent utc = send(ZoneId.of("UTC"));
-        final Sent kiritimati = send(ZoneId.of("Pacific/Kiritimati"));
-        final Sent bakerIsland = send(ZoneId.of("Etc/GMT+12"));
+    @DisplayName("the model is sent the agent's system prompt and the user's input, with nothing in front of it")
+    void nothingIsAddedToTheUsersInput() {
+        final CapturingLlmClient client = new CapturingLlmClient();
 
-        assertThat(kiritimati.systemPrompt).isEqualTo(utc.systemPrompt);
-        assertThat(bakerIsland.systemPrompt).isEqualTo(utc.systemPrompt);
-        assertThat(kiritimati.messages).isEqualTo(utc.messages);
-        assertThat(bakerIsland.messages).isEqualTo(utc.messages);
+        createExecutor(client).execute(createRuntime(new DefaultToolRegistry()),
+                OrcaAgentExecutionRequest.builder().userInput("Hello").sessionId(SessionId.generate()).build());
 
-        assertThat(utc.systemPrompt).startsWith("You are a test agent").doesNotContain("UTC");
+        assertThat(client.sent).hasSize(1);
+        final Sent sent = client.sent.get(0);
+        assertThat(sent.systemPrompt).startsWith("You are a test agent").doesNotContain("UTC")
+                .doesNotContain(ZoneId.systemDefault().getId());
         // Nothing is put in front of the user's message: the framework injects no date of its own.
-        assertThat(utc.messages).containsExactly("Hello");
+        assertThat(sent.messages).containsExactly("Hello");
     }
 
     @Test
-    @DisplayName("a tool finds the runtime's UserLocale under USER_LOCALE, whose name is \"userLocale\"")
-    void toolContextCarriesTheUserLocale() {
-        final UserLocale userLocale = UserLocale.builder().timeZone(ZoneId.of("Asia/Seoul")).build();
+    @DisplayName("a tool's context carries no user locale, under either name it has had")
+    void toolContextCarriesNoUserLocale() {
         final ProbeTool probe = new ProbeTool();
         final DefaultToolRegistry toolRegistry = new DefaultToolRegistry();
         toolRegistry.register(probe);
         final CapturingLlmClient client = new CapturingLlmClient();
         client.responses.add(LlmResponse.of("", List.of(ToolUse.of("p1", "Probe", Map.of()))));
 
-        createExecutor(client).execute(createRuntime(userLocale, toolRegistry),
+        createExecutor(client).execute(createRuntime(toolRegistry),
                 OrcaAgentExecutionRequest.builder().userInput("probe").sessionId(SessionId.generate()).build());
 
         final ToolContext captured = probe.captured.get();
         assertThat(captured).isNotNull();
-        assertThat(captured.get(ToolContextKeys.USER_LOCALE)).containsSame(userLocale);
-        // The key's name is public: a tool may look the value up by string.
-        assertThat(captured.get("userLocale", UserLocale.class)).containsSame(userLocale);
+        assertThat(captured.containsKey("userLocale")).isFalse();
         assertThat(captured.containsKey("environment")).isFalse();
     }
 
-    private Sent send(ZoneId timeZone) {
-        final CapturingLlmClient client = new CapturingLlmClient();
-        createExecutor(client).execute(
-                createRuntime(UserLocale.builder().timeZone(timeZone).build(), new DefaultToolRegistry()),
-                OrcaAgentExecutionRequest.builder().userInput("Hello").sessionId(SessionId.generate()).build());
-        assertThat(client.sent).hasSize(1);
-        return client.sent.get(0);
-    }
-
-    private OrcaAgentRuntime createRuntime(UserLocale userLocale, DefaultToolRegistry toolRegistry) {
+    private OrcaAgentRuntime createRuntime(DefaultToolRegistry toolRegistry) {
         final LocalFileSystem fileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
         fileSystem.initialize();
         return OrcaAgentRuntime.builder()
@@ -117,8 +100,7 @@ class OrcaAgentExecutorUserLocaleTest {
                 .commandRegistry(new DefaultCommandRegistry(fileSystem, ".aimon/commands"))
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
                 .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
-                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem)).userLocale(userLocale)
-                .build();
+                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem)).build();
     }
 
     private OrcaAgentExecutor createExecutor(LlmClient client) {

@@ -5,7 +5,6 @@ import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.tool.ToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.skill.fork.NoOpSkillForkExecutor;
 import at.aimon.core.skill.fork.SkillForkExecutor;
@@ -50,21 +49,19 @@ public final class OrcaSkillForkExecutorResolver {
      *            Tool registry exposed to forked subagents (nullable)
      * @param hookRegistry
      *            Hook registry exposed to forked subagents (nullable)
-     * @param userLocale
-     *            User locale passed to forked subagents (nullable)
      * @param subagentExecutionManager
      *            Manager that performs the actual subagent execution (nullable)
      * @return A {@link SubagentBackedSkillForkExecutor} when all dependencies are non-null; otherwise a
      *         {@link NoOpSkillForkExecutor}
      */
     public static SkillForkExecutor resolve(Agent agent, SubagentRegistry subagentRegistry, ToolRegistry toolRegistry,
-            HookRegistry hookRegistry, UserLocale userLocale, SubagentExecutionManager subagentExecutionManager) {
+            HookRegistry hookRegistry, SubagentExecutionManager subagentExecutionManager) {
         if (agent == null || subagentRegistry == null || toolRegistry == null || hookRegistry == null
-                || userLocale == null || subagentExecutionManager == null) {
+                || subagentExecutionManager == null) {
             log.debug("Resolved NoOpSkillForkExecutor: subagent infrastructure incomplete");
             return new NoOpSkillForkExecutor();
         }
         return new SubagentBackedSkillForkExecutor(agent.getMetadata().getModel(), subagentRegistry, toolRegistry,
-                hookRegistry, userLocale, subagentExecutionManager);
+                hookRegistry, subagentExecutionManager);
     }
 }

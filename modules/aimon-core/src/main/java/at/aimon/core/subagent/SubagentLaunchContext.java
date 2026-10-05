@@ -17,7 +17,6 @@ import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.hook.HookRegistry;
@@ -30,11 +29,8 @@ import at.aimon.core.subagent.task.TaskOutputStore;
 import at.aimon.core.subagent.task.TaskResultStore;
 
 /**
- * Groups the common environment parameters needed for subagent execution.
- *
- * <p>
- * This class encapsulates the shared execution environment that is passed to {@link SubagentExecutionManager} methods,
- * reducing parameter count and improving readability.
+ * What a caller hands {@link SubagentExecutionManager} to launch a subagent: the collaborators the launch borrows from
+ * the spawning side, bundled so the manager's methods take one argument instead of a long parameter list.
  *
  * <p>
  * Contains:
@@ -42,10 +38,28 @@ import at.aimon.core.subagent.task.TaskResultStore;
  * <ul>
  * <li>Agent runtime ID for tracking the parent runtime
  * <li>Registries for subagents, tools, and hooks
- * <li>User locale
  * <li>Default LLM model configuration
  * <li>Execution attributes for propagation
+ * <li>The spawning execution's {@link ExecutionEnvironment} and the provider the fork resolves its own from
  * </ul>
+ *
+ * <p>
+ * <b>This is not an execution environment.</b> Where a fork's commands run is the {@link ExecutionEnvironment} its
+ * provider resolves; this type only carries the spawner's environment to that provider
+ * ({@link #getExecutionEnvironment()}). It was called {@code SubagentExecutionEnvironment} until the two were being
+ * called "the environment" in the same sentence.
+ *
+ * <p>
+ * <b>Launch context and execution context.</b> A launch context is what the <em>caller</em> gives the manager, before
+ * the subagent is resolved. The manager turns it into a
+ * {@link at.aimon.core.subagent.execution.SubagentExecutionContext}, which is what the <em>executor</em> receives for
+ * the one fork it runs: the resolved {@link Subagent} and the fork's own collaborators.
+ *
+ * <p>
+ * <b>Lifetime.</b> A value object, so it lives as long as whatever holds it. A tool builds one per call and the
+ * manager reads it for that one launch. A workflow runner keeps a <em>base</em> launch context for as long as the
+ * runner lives and derives each run's and each isolated step's from it with {@link #toBuilder()}; the base is a
+ * template, and every launch still gets its own instance.
  *
  * <p>
  * Immutable value object. Use builder to create instances.
@@ -56,13 +70,13 @@ import at.aimon.core.subagent.task.TaskResultStore;
  * <pre>
  * {
  *     &#64;code
- *     SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder().agentRuntimeId(agentRuntimeId)
+ *     SubagentLaunchContext launchContext = SubagentLaunchContext.builder().agentRuntimeId(agentRuntimeId)
  *             .subagentRegistry(subagentRegistry).toolRegistry(toolRegistry).hookRegistry(hookRegistry)
- *             .userLocale(userLocale).defaultModel(defaultModel).executionAttributes(attributes).build();
+ *             .defaultModel(defaultModel).executionAttributes(attributes).build();
  * }
  * </pre>
  */
-public final class SubagentExecutionEnvironment {
+public final class SubagentLaunchContext {
     /**
      * Creates a new builder.
      *
@@ -76,7 +90,6 @@ public final class SubagentExecutionEnvironment {
     private final SubagentRegistry subagentRegistry;
     private final ToolRegistry toolRegistry;
     private final HookRegistry hookRegistry;
-    private final UserLocale userLocale;
     private final LlmModel defaultModel;
     private final String modelOverride;
     private final Map<String, Object> executionAttributes;
@@ -97,12 +110,11 @@ public final class SubagentExecutionEnvironment {
     private final ExecutionEnvironment executionEnvironment;
     private final ExecutionEnvironmentProvider executionEnvironmentProvider;
 
-    private SubagentExecutionEnvironment(Builder builder) {
+    private SubagentLaunchContext(Builder builder) {
         agentRuntimeId = Objects.requireNonNull(builder.agentRuntimeId, "Agent runtime ID cannot be null");
         subagentRegistry = Objects.requireNonNull(builder.subagentRegistry, "Subagent registry cannot be null");
         toolRegistry = Objects.requireNonNull(builder.toolRegistry, "Tool registry cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
-        userLocale = Objects.requireNonNull(builder.userLocale, "UserLocale cannot be null");
         defaultModel = Objects.requireNonNull(builder.defaultModel, "Default model cannot be null");
         modelOverride = builder.modelOverride;
         executionAttributes = builder.executionAttributes != null ? Map.copyOf(builder.executionAttributes) : Map.of();
@@ -164,15 +176,6 @@ public final class SubagentExecutionEnvironment {
      */
     public HookRegistry getHookRegistry() {
         return hookRegistry;
-    }
-
-    /**
-     * Gets the user locale.
-     *
-     * @return The user locale (never null)
-     */
-    public UserLocale getUserLocale() {
-        return userLocale;
     }
 
     /**
@@ -352,9 +355,8 @@ public final class SubagentExecutionEnvironment {
      * <p>
      * When present, {@code DefaultSubagentExecutionManager} enqueues a {@code NEXT}-priority {@code QueuedInput} scoped
      * to {@link #getAgentRuntimeId()} at terminal completion, so the parent's ReAct loop drains and injects it on its
-     * next
-     * iteration; when absent, no queued notification is pushed (the model only learns of the completion when it polls
-     * with {@code AgentOutput}). Foreground execution never consults this.
+     * next iteration; when absent, no queued notification is pushed (the model only learns of the completion when it
+     * polls with {@code AgentOutput}). Foreground execution never consults this.
      *
      * @return an {@link Optional} holding the message queue manager, or empty if none was forwarded
      */
@@ -387,7 +389,7 @@ public final class SubagentExecutionEnvironment {
      * <p>
      * A ceiling, not a grant: {@code DefaultSubagentExecutor} intersects it with the target's own
      * {@code allowed-tools}, so the fork ends up bound by both and a delegation cannot widen what its caller may do.
-     * Spawning code fills it from {@link at.aimon.core.tools.CallerAllowedTools#of}; an environment built without it
+     * Spawning code fills it from {@link at.aimon.core.tools.CallerAllowedTools#of}; a launch context built without it
      * imposes no ceiling, which is what every caller did before this field existed.
      *
      * @return An immutable list (never null); <b>empty means unrestricted</b>
@@ -419,12 +421,13 @@ public final class SubagentExecutionEnvironment {
     }
 
     /**
-     * Returns a builder seeded with every field of this environment, for deriving a variant that shares all borrowed
+     * Returns a builder seeded with every field of this launch context, for deriving a variant that shares all borrowed
      * collaborators (registries, stores, model, ...) but overrides selected fields.
      *
      * <p>
      * The primary use is a <b>per-run</b> derivation in background workflow (design §5.1): a run derives
-     * {@code baseEnv.toBuilder().cancellationSignal(runCoordinatorSignal).build()} so its fan-out subagents observe
+     * {@code baseLaunchContext.toBuilder().cancellationSignal(runCoordinatorSignal).build()} so its fan-out subagents
+     * observe
      * that run's stop signal — sharing the borrowed collaborators unchanged, so the runner still never owns or closes
      * them.
      *
@@ -432,7 +435,7 @@ public final class SubagentExecutionEnvironment {
      */
     public Builder toBuilder() {
         return new Builder().agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry)
-                .toolRegistry(toolRegistry).hookRegistry(hookRegistry).userLocale(userLocale).defaultModel(defaultModel)
+                .toolRegistry(toolRegistry).hookRegistry(hookRegistry).defaultModel(defaultModel)
                 .modelOverride(modelOverride).executionAttributes(executionAttributes)
                 .parentLlmCallMetadata(parentLlmCallMetadata).cancellationSignal(cancellationSignal)
                 .principal(principal).invokingSessionId(invokingSessionId).knowledgeStore(knowledgeStore)
@@ -446,19 +449,17 @@ public final class SubagentExecutionEnvironment {
 
     @Override
     public String toString() {
-        return "SubagentExecutionEnvironment{" + "agentRuntimeId=" + agentRuntimeId + ", subagentRegistry="
-                + subagentRegistry + ", toolRegistry=" + toolRegistry + ", hookRegistry=" + hookRegistry
-                + ", userLocale=" + userLocale + ", defaultModel=" + defaultModel + ", executionAttributes="
-                + executionAttributes + '}';
+        return "SubagentLaunchContext{" + "agentRuntimeId=" + agentRuntimeId + ", subagentRegistry=" + subagentRegistry
+                + ", toolRegistry=" + toolRegistry + ", hookRegistry=" + hookRegistry + ", defaultModel=" + defaultModel
+                + ", executionAttributes=" + executionAttributes + '}';
     }
 
-    /** Builder for SubagentExecutionEnvironment. */
+    /** Builder for SubagentLaunchContext. */
     public static final class Builder {
         private AgentRuntimeId agentRuntimeId;
         private SubagentRegistry subagentRegistry;
         private ToolRegistry toolRegistry;
         private HookRegistry hookRegistry;
-        private UserLocale userLocale;
         private LlmModel defaultModel;
         private String modelOverride;
         private Map<String, Object> executionAttributes;
@@ -531,18 +532,6 @@ public final class SubagentExecutionEnvironment {
         }
 
         /**
-         * Sets the user locale.
-         *
-         * @param userLocale
-         *            the user locale (must not be null)
-         * @return This builder
-         */
-        public Builder userLocale(UserLocale userLocale) {
-            this.userLocale = userLocale;
-            return this;
-        }
-
-        /**
          * Sets the default LLM model configuration.
          *
          * @param defaultModel
@@ -588,8 +577,7 @@ public final class SubagentExecutionEnvironment {
          *
          * <p>
          * The subagent executor merges this with subagent-derived defaults (component=subagent name,
-         * feature="subagent")
-         * before passing the result to the LLM client.
+         * feature="subagent") before passing the result to the LLM client.
          *
          * @param parentLlmCallMetadata
          *            the parent metadata (can be null, defaults to {@link LlmCallMetadata#empty()})
@@ -727,8 +715,7 @@ public final class SubagentExecutionEnvironment {
         }
 
         /**
-         * Sets the parent session's message queue used to push a guaranteed {@code <task-notification>} back to
-         * the
+         * Sets the parent session's message queue used to push a guaranteed {@code <task-notification>} back to the
          * launching agent when a background subagent task settles.
          *
          * @param messageQueueManager
@@ -754,7 +741,7 @@ public final class SubagentExecutionEnvironment {
         }
 
         /**
-         * Sets the allow-list of the spawning run, imposed as a ceiling on the run this environment describes.
+         * Sets the allow-list of the spawning run, imposed as a ceiling on the run this launch context describes.
          *
          * @param callerAllowedTools
          *            the caller's allow-list (must not be null; an empty list imposes no ceiling)
@@ -793,14 +780,14 @@ public final class SubagentExecutionEnvironment {
         }
 
         /**
-         * Builds the SubagentExecutionEnvironment.
+         * Builds the SubagentLaunchContext.
          *
-         * @return A new SubagentExecutionEnvironment (never null)
+         * @return A new SubagentLaunchContext (never null)
          * @throws NullPointerException
          *             if any required field is null
          */
-        public SubagentExecutionEnvironment build() {
-            return new SubagentExecutionEnvironment(this);
+        public SubagentLaunchContext build() {
+            return new SubagentLaunchContext(this);
         }
     }
 }

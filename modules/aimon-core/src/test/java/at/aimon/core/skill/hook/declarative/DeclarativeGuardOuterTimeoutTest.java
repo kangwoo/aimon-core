@@ -20,7 +20,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.compact.CompactionTrigger;
 import at.aimon.core.agent.tool.ToolInput;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -263,24 +262,22 @@ class DeclarativeGuardOuterTimeoutTest {
 
     private PreToolContext preToolContext() {
         return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(registry)
-                .userLocale(UserLocale.createDefault()).toolUse(ToolUse.of("call-1", "Bash", Map.of()))
-                .iterationCount(1).build();
+                .toolUse(ToolUse.of("call-1", "Bash", Map.of())).iterationCount(1).build();
     }
 
     private OnStartContext onStartContext() {
         return OnStartContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(registry)
-                .userLocale(UserLocale.createDefault()).userMessage("deploy please").build();
+                .userMessage("deploy please").build();
     }
 
     private PreCompactContext preCompactContext(CompactionTrigger trigger) {
         return PreCompactContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(registry).userLocale(UserLocale.createDefault()).trigger(trigger).sessionIdValue("conv-1")
-                .messageCount(42).estimatedTokens(120_000).build();
+                .hookRegistry(registry).trigger(trigger).sessionIdValue("conv-1").messageCount(42)
+                .estimatedTokens(120_000).build();
     }
 
     private PermissionRequestContext permissionRequestContext() {
         return PermissionRequestContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(registry).userLocale(UserLocale.createDefault()).toolName("Bash")
-                .toolInput(ToolInput.of(Map.of("command", "ls"))).build();
+                .hookRegistry(registry).toolName("Bash").toolInput(ToolInput.of(Map.of("command", "ls"))).build();
     }
 }

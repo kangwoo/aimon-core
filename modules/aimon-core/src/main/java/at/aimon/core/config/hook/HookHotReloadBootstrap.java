@@ -52,7 +52,7 @@ import at.aimon.core.skill.hook.declarative.ShellActionExecutor;
  *         .processEnv(System.getenv())
  *         .registry(agentRuntime.getHookRegistry())
  *         .executionManager(agentExecutor.getHookExecutionManager())
- *         .invoker(new ReloadInvoker(InvokerType.MAIN_AGENT, agentName, UserLocale.createDefault()))
+ *         .invoker(new ReloadInvoker(InvokerType.MAIN_AGENT, agentName))
  *         .rewakeService(rewakeService)
  *         .start();
  * }</pre>

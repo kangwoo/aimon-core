@@ -199,7 +199,7 @@ public interface ExecutionEnvironmentProvider {
 
 - `descriptor()` — 호스트를 읽어 만든 `EnvironmentDescriptor`(작업 디렉터리·platform·OS 버전·셸 이름). 로컬에서는
   호스트가 곧 실행 환경이므로 참이다. 이 설계를 쓸 때는 같은 값을 옛 `Environment.createDefault()` 가 들고 있었고,
-  그 타입은 그 뒤 시간대만 든 `UserLocale` 이 되었다(EE-14)
+  그 타입은 그 뒤 시간대만 든 `UserLocale` 이 되었다가(EE-14) 읽는 곳이 없어 지워졌다(EE-60)
 - `contentSearch()` — `rg` 가 PATH 에 있으면 그것을, 없으면 비어 있음(→ `GrepTool` 이 기존 방식으로 돈다)
 - `stage()` — 소스가 작업 환경과 **같은 `VirtualFileSystem` 인스턴스**면(제어 저장소를 가르기 전인 §11 1·2단계)
   그 경로를 그대로 돌려준다. 아니면 §4.4 의 규칙대로 작업 환경의 스테이징 영역에 복사한다. 스테이징 영역은 파일
@@ -472,7 +472,7 @@ public interface ExecutionEnvironmentProvider {
   같은 샌드박스다. 코어가 약속하는 것은 "포크는 부모의 격리 단위(작업 공간) 밖으로 나가지 않는다"이고, "부모와
   같은 파일 시스템"은 기본 제공자의 성질이지 계약이 아니다. 부모가 사용 불가 환경이면 제공자는 포크도 사용 불가로
   돌려줘야 한다 — 부모를 만들지 못한 이유(주체 거부 등)를 포크가 새 해석으로 우회하면 안 된다.
-  `SubagentExecutionEnvironment` 에 부모 `ExecutionEnvironment` 필드를 더한다. 포크의 요청에는 포크 자신의 정의도
+  `SubagentLaunchContext`(이 설계를 쓸 때의 이름은 `SubagentExecutionEnvironment` — EE-61 로 개명) 에 부모 `ExecutionEnvironment` 필드를 더한다. 포크의 요청에는 포크 자신의 정의도
   실린다 — `EnvironmentRequest.fork()` 가 서브에이전트 이름과 정의 파일의 `attributes`(점 표기로 펼친
   `Map<String, String>`, 예: `sandbox.slot`)를 담은 `ForkDefinition` 을 준다. 제공자가 포크마다 다른 슬롯을 고르는
   근거가 이것이다. 메인 턴은 `agent()` 의 `getAttributes()` 에서 같은 값을 읽는다. 두 경우를 한 번에 푸는 것이
@@ -495,7 +495,7 @@ public interface ExecutionEnvironmentProvider {
   서로의 파일을 덮는다. `isolate()` 가 던지면(격리를 여기서 거절한다 — 사용 불가 환경, 이미 브랜치인 환경) 러너는
   그 메시지를 오류에 싣고 예외를 원인으로 잇는다. 사용 불가 환경은 빈 값이 아니라 자기 원인(제공자 없음, 샌드박스
   다운)을 담은 `ExecutionEnvironmentUnavailableException` 을 던진다
-- `SubagentExecutionEnvironment.toolRegistry` 는 부모 레지스트리 그대로다. 브랜치별 레지스트리가 없어진다
+- `SubagentLaunchContext.toolRegistry` 는 부모 레지스트리 그대로다. 브랜치별 레지스트리가 없어진다
 - `WorktreeMerge.promote(baseVfs, branchKeys, policy)` 는 지금 베이스 VFS 하나와 브랜치 키 목록을 받아
   `.worktrees/{key}/` 를 스스로 찾아간다. 브랜치 위치를 아는 것이 환경이 되므로, 부모 환경과 브랜치 환경 목록을
   받는 형태로 바뀐다. 동작(브랜치 간 충돌을 먼저 훑고 `Policy` 로 고른 뒤 VFS 복사로 올리는 병합)은 그대로다.
@@ -594,8 +594,8 @@ public interface ExecutionEnvironmentProvider {
 `OrcaToolProviderContext` 에서 `getFileSystem()` 과 `getShell()` 을 **삭제**하고 `getControlFileSystem()` 을
 더한다. 도구 등록 시점에 작업 환경을 붙잡을 수 있는 통로를 남겨 두면, 외부 프로바이더가 그것을 생성자에 넣어
 §1.1 을 다시 만든다. `getEnvironment()` 는 §10 이후 `timeZone` 만 남은 값을 돌려주게 되므로 그 결정(§14)을
-따른다 — 그 결정은 내려졌고(EE-14), 지금 이 접근자는 `getUserLocale()` 이며 `at.aimon.core.base.UserLocale` 을
-돌려준다. 외부 소비자 둘의 영향:
+따른다 — 그 결정은 내려졌고(EE-14) 접근자는 `getUserLocale()` 이 되었다가, 값을 읽는 곳이 없어 접근자째 지워졌다(EE-60).
+외부 소비자 둘의 영향:
 
 - `OrcaSandboxToolProvider`(aimon-sandbox) — 워크스페이스 샌드박스 설계에서 샌드박스 전용 실행 도구는 모두
   없어진다. 명령과 파일은 코어의 `Bash`·파일 도구가 샌드박스 환경에서 처리한다. 남는 것은 슬롯의 수명을 다루는
@@ -759,9 +759,9 @@ CLI 처럼 "사용자 프로젝트 디렉터리에서 돈다"는 배치에서는
 아니라 사용자·애플리케이션의 속성이므로 `Environment` 에 남긴다(→ 이름을 바꿀지는 §14).
 
 이 문단과 아래 문단의 `Environment` 는 그 뒤 **없어졌다**(EE-14). `timeZone` 은 `at.aimon.core.base.UserLocale` 로 옮겨
-갔고, 훅 컨텍스트 · 도구 프로바이더 컨텍스트 · 런타임의 접근자는 `getUserLocale()`, `ToolContext` 의 키는
-`ToolContextKeys.USER_LOCALE`(`"userLocale"`)이다. 옮긴 것은 이름과 위치뿐이다 — 프롬프트는 전에도 지금도 시간대를 싣지
-않고, `timeZone` 을 읽는 운영 코드는 없다(백로그 EE-60). 옛 이름과 새 이름의 대응은
+갔다가, 읽는 운영 코드가 하나도 없어 2026-10-05 에 **값과 배관이 함께 지워졌다**(EE-60) — `UserLocale`, 훅 컨텍스트 · 도구
+프로바이더 컨텍스트 · 런타임의 `getUserLocale()`, `ToolContextKeys.USER_LOCALE`(`"userLocale"`)은 이제 없다. 프롬프트는 전에도
+지금도 시간대를 싣지 않는다 — 날짜가 필요한 배포는 자기 시간대로 계산해 시스템 프롬프트 변수로 건넨다. 옛 이름과 새 이름의 대응은
 [`../../migration/rename-maps.md`](../../migration/rename-maps.md), 설계는
 [`execution-environment-ee14-user-locale.md`](execution-environment-ee14-user-locale.md) 에 있다.
 
@@ -892,7 +892,7 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 > 형식)은 아직 열려 있다. **백그라운드 명령을 끝낼 수단도 2026-10-03 에 닫혔다**(EE-13, 작업 목록의 수명을 다룬 EE-7 과
 > 함께) — 아래 불릿의 "끝내는 도구가 없다" 는 더는 사실이 아니고, 지금의 동작은 §5.3 에 있다. **`Environment` 의 남은 필드도
 > 2026-10-03 에 닫혔다**(EE-14) — 아래 불릿의 "옮기고 없앨지" 는 더는 질문이 아니다. `Environment` 는 없어졌고 `timeZone` 은
-> `at.aimon.core.base.UserLocale` 에 있다. 지금의 이름은 §10 에, 설계는
+> `at.aimon.core.base.UserLocale` 로 옮겨 갔다가 읽는 곳이 없어 지워졌다(EE-60, 2026-10-05). 경위는 §10 에, 설계는
 > [`execution-environment-ee14-user-locale.md`](execution-environment-ee14-user-locale.md) 에 있다.
 
 - **`Environment` 의 남은 필드** — `platform`/`osVersion`/`workingDirectory` 가 서술자로 가면 `timeZone` 만 남는다.
@@ -952,7 +952,7 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 - [`execution-environment-implementation.md`](execution-environment-implementation.md) — 이 설계의 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점
 - [`execution-environment-ee9-ee12-hook-environment.md`](execution-environment-ee9-ee12-hook-environment.md) — 훅 컨텍스트에 실행 환경을 싣고 스킬 선언 훅의 셸을 실행 환경으로 옮긴 설계(EE-9 · EE-12)
 - [`execution-environment-ee13-ee7-background-lifecycle.md`](execution-environment-ee13-ee7-background-lifecycle.md) — 백그라운드 `Bash` 종료(`KillShell`, 셸 취소 계약, 환경이 정하는 상한)와 제공자 · 작업 목록의 수명 상향 설계(EE-13 · EE-7)
-- [`execution-environment-ee14-user-locale.md`](execution-environment-ee14-user-locale.md) — `Environment` 를 없애고 `timeZone` 을 `UserLocale` 로 옮긴 설계(EE-14)
+- [`execution-environment-ee14-user-locale.md`](execution-environment-ee14-user-locale.md) — `Environment` 를 없애고 `timeZone` 을 `UserLocale` 로 옮긴 설계(EE-14). 그 `UserLocale` 을 지운 기록(EE-60)은 §12
 - [`execution-environment-ee49-ee51-ee58-isolation-boundary.md`](execution-environment-ee49-ee51-ee58-isolation-boundary.md) — 한 런타임을 나눠 쓰는 실행들 사이의 경계 셋: 스킬 훅의 발화 범위, 명령을 돌리지 못한 가드의 fail-closed, 백그라운드 작업의 가시 범위(EE-49 · EE-51 · EE-58)
 - [`execution-environment-ee70-ee71-fail-closed.md`](execution-environment-ee70-ee71-fail-closed.md) — 그 fail-closed 를 두 곳에 더 이은 설계: `onStart` 훅이 막으면 포크가 시작하지 않는다, 로드되지 않는 `hooks.json` 으로는 뜨지 않는다(EE-70 · EE-71)
 - [`../workflow/workflow.md`](../workflow/workflow.md) §6.3 — worktree 격리

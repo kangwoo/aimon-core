@@ -23,7 +23,6 @@ import at.aimon.core.agent.interrupt.NoopCancellationSignal;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.config.hook.HookConfigMerger;
 import at.aimon.core.config.hook.HookConfigSource;
 import at.aimon.core.config.hook.HookRegistryApplier;
@@ -55,7 +54,7 @@ import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentContent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentMetadata;
 import at.aimon.core.subagent.behavior.InMemorySubagentBehaviorRegistry;
 import at.aimon.core.subagent.task.InMemorySessionSnapshotStore;
@@ -187,9 +186,9 @@ class DefaultSubagentExecutorOnStartBlockTest {
         try {
             final DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(executor(), pool,
                     new DefaultHookExecutionManager(), new InMemorySubagentBehaviorRegistry());
-            final SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder()
+            final SubagentLaunchContext env = SubagentLaunchContext.builder()
                     .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagentRegistry(subagents)
-                    .toolRegistry(new DefaultToolRegistry()).hookRegistry(hooks).userLocale(UserLocale.createDefault())
+                    .toolRegistry(new DefaultToolRegistry()).hookRegistry(hooks)
                     .defaultModel(LlmModel.builder().name("gpt-4").build()).executionEnvironment(forkEnvironment)
                     .executionEnvironmentProvider(request -> forkEnvironment).sessionSnapshotStore(snapshots).build();
 
@@ -289,7 +288,7 @@ class DefaultSubagentExecutorOnStartBlockTest {
         final SubagentExecutionContext context = SubagentExecutionContext.builder()
                 .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent())
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(hooks).userLocale(UserLocale.createDefault()).executionEnvironment(forkEnvironment)
+                .hookRegistry(hooks).executionEnvironment(forkEnvironment)
                 .executionEnvironmentProvider(request -> forkEnvironment).outputSink(streamed::append)
                 .parentCancellationSignal(NoopCancellationSignal.INSTANCE).build();
         return executor().execute(context, SubagentExecutionRequest.builder().taskId("task-1").goal(goal)

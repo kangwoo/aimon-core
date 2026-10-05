@@ -54,7 +54,7 @@ Application  ─ SchedulingEngine, ScheduledTaskManager, RoutineExecutor
       │
    Agent     ─ AgentRuntime  (id = "agent:<name>[:<discriminator>]")
              ─ ToolRegistry, HookRegistry, CommandRegistry, SubagentRegistry,
-               SkillRegistry, UserLocale, CompactionEngine/Guard, Enrichers,
+               SkillRegistry, CompactionEngine/Guard, Enrichers,
                McpClientManager
       ▲
       │ 참조 (read-only)

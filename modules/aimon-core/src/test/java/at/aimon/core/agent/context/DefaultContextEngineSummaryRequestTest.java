@@ -17,7 +17,6 @@ import at.aimon.core.agent.compact.DefaultCompactionGuard;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.InMemoryModelContextWindowRegistry;
@@ -62,7 +61,7 @@ class DefaultContextEngineSummaryRequestTest {
 
     private static ContextRequest request(TranscriptBuffer buffer) {
         return ContextRequest.builder().transcriptBuffer(buffer).systemPrompt("system prompt").model(MODEL)
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault()).build();
+                .hookRegistry(new DefaultHookRegistry()).build();
     }
 
     private static TranscriptBuffer twoCompletedTurns(SessionLogFormat format) {

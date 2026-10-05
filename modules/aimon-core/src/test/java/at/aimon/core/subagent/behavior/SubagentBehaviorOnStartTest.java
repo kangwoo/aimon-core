@@ -23,7 +23,6 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.config.hook.HookConfigMerger;
 import at.aimon.core.config.hook.HookConfigSource;
 import at.aimon.core.config.hook.HookRegistryApplier;
@@ -49,7 +48,7 @@ import at.aimon.core.skill.hook.declarative.HostShellActionExecutor;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.subagent.execution.SubagentExecutor;
 
@@ -210,12 +209,12 @@ class SubagentBehaviorOnStartTest {
         return behaviors;
     }
 
-    private SubagentExecutionEnvironment env() {
+    private SubagentLaunchContext env() {
         final InMemorySubagentRegistry subagents = new InMemorySubagentRegistry();
         subagents.register(Subagent.builder().name("clock").systemPrompt("(code)").build());
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
+        return SubagentLaunchContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
                 .subagentRegistry(subagents).toolRegistry(new DefaultToolRegistry()).hookRegistry(hooks)
-                .userLocale(UserLocale.createDefault()).defaultModel(LlmModel.builder().name("gpt-4").build())
-                .executionEnvironment(spawner).executionAttributes(Map.of("tenant", "acme")).build();
+                .defaultModel(LlmModel.builder().name("gpt-4").build()).executionEnvironment(spawner)
+                .executionAttributes(Map.of("tenant", "acme")).build();
     }
 }

@@ -24,7 +24,6 @@ import at.aimon.core.agent.compact.PromptSizeRecoveryDecision;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
@@ -43,7 +42,6 @@ class DefaultContextEngineTest {
 
     private TranscriptBuffer buffer;
     private HookRegistry hookRegistry;
-    private UserLocale userLocale;
 
     @BeforeEach
     void setUp() {
@@ -52,12 +50,10 @@ class DefaultContextEngineTest {
         buffer.addAssistantMessage("one");
         buffer.addUserMessage("second");
         hookRegistry = new DefaultHookRegistry();
-        userLocale = UserLocale.createDefault();
     }
 
     private ContextRequest.Builder request() {
-        return ContextRequest.builder().transcriptBuffer(buffer).model(MODEL).hookRegistry(hookRegistry)
-                .userLocale(userLocale);
+        return ContextRequest.builder().transcriptBuffer(buffer).model(MODEL).hookRegistry(hookRegistry);
     }
 
     @Nested
@@ -158,12 +154,9 @@ class DefaultContextEngineTest {
         void refusesARequestWithoutTheHookPlumbingACompactionNeeds() {
             final DefaultContextEngine engine = DefaultContextEngine.builder().build();
 
-            assertThatThrownBy(() -> engine.prepare(
-                    ContextRequest.builder().transcriptBuffer(buffer).model(MODEL).userLocale(userLocale).build()))
+            assertThatThrownBy(
+                    () -> engine.prepare(ContextRequest.builder().transcriptBuffer(buffer).model(MODEL).build()))
                     .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("HookRegistry");
-            assertThatThrownBy(() -> engine.prepare(
-                    ContextRequest.builder().transcriptBuffer(buffer).model(MODEL).hookRegistry(hookRegistry).build()))
-                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("UserLocale");
         }
     }
 
@@ -234,7 +227,6 @@ class DefaultContextEngineTest {
             assertThat(seen.getTranscriptBuffer()).isSameAs(buffer);
             assertThat(seen.getModel()).isSameAs(MODEL);
             assertThat(seen.getHookRegistry()).isSameAs(hookRegistry);
-            assertThat(seen.getUserLocale()).isSameAs(userLocale);
             assertThat(seen.getCustomInstructions()).hasValue("focus on the api");
             assertThat(seen.getCallMetadata()).hasValue(callMetadata);
             assertThat(seen.getExecutionId()).isEmpty();
@@ -331,8 +323,7 @@ class DefaultContextEngineTest {
         }
 
         @Override
-        public CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-                UserLocale userLocale) {
+        public CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry) {
             calls.add("maybeCompact");
             onCall(memory);
             return decision;
@@ -340,7 +331,7 @@ class DefaultContextEngineTest {
 
         @Override
         public CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-                UserLocale userLocale, ExecutionId executionId) {
+                ExecutionId executionId) {
             calls.add("maybeCompact+id");
             lastExecutionId.set(executionId);
             onCall(memory);
@@ -348,8 +339,7 @@ class DefaultContextEngineTest {
         }
 
         @Override
-        public CompactionDecision forceCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-                UserLocale userLocale) {
+        public CompactionDecision forceCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry) {
             calls.add("forceCompact");
             onCall(memory);
             return decision;
@@ -357,7 +347,7 @@ class DefaultContextEngineTest {
 
         @Override
         public CompactionDecision forceCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-                UserLocale userLocale, ExecutionId executionId) {
+                ExecutionId executionId) {
             calls.add("forceCompact+id");
             lastExecutionId.set(executionId);
             onCall(memory);

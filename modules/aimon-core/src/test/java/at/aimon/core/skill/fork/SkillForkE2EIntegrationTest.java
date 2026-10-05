@@ -20,7 +20,6 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
@@ -79,11 +78,10 @@ class SkillForkE2EIntegrationTest {
 
         final ToolRegistry toolRegistry = new DefaultToolRegistry();
         final HookRegistry hookRegistry = new DefaultHookRegistry();
-        final UserLocale userLocale = UserLocale.createDefault();
         final LlmModel defaultModel = LlmModel.builder().name("gpt-4").build();
 
         final SkillForkExecutor forkExecutor = new SubagentBackedSkillForkExecutor(defaultModel, subagentRegistry,
-                toolRegistry, hookRegistry, userLocale, subagentManager);
+                toolRegistry, hookRegistry, subagentManager);
 
         skillTool = new SkillTool(skillRegistry, new DefaultSkillContentRenderer(), forkExecutor);
     }

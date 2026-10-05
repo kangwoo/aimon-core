@@ -8,7 +8,6 @@ import java.util.Optional;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.tool.ToolInput;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.execution.HookContext;
@@ -36,7 +35,7 @@ import at.aimon.core.llm.ToolUse;
  * {
  *     &#64;code
  *     PreToolContext context = PreToolContext.builder().invokerType(InvokerType.MAIN_AGENT)
- *             .invokerName("default-agent").userLocale(userLocale).toolUse(toolUse).iterationCount(3).build();
+ *             .invokerName("default-agent").toolUse(toolUse).iterationCount(3).build();
  * }
  * </pre>
  */
@@ -53,7 +52,6 @@ public final class PreToolContext implements HookContext {
     private final InvokerType invokerType;
     private final String invokerName;
     private final HookRegistry hookRegistry;
-    private final UserLocale userLocale;
     private final ExecutionEnvironment executionEnvironment;
     private final CancellationSignal executionCancellation;
     private final ToolUse originalToolUse;
@@ -66,7 +64,6 @@ public final class PreToolContext implements HookContext {
         invokerType = Objects.requireNonNull(builder.invokerType, "Executor type cannot be null");
         invokerName = Objects.requireNonNull(builder.invokerName, "Executor name cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
-        userLocale = Objects.requireNonNull(builder.userLocale, "UserLocale cannot be null");
         executionEnvironment = builder.executionEnvironment;
         executionCancellation = builder.executionCancellation;
         originalToolUse = Objects.requireNonNull(builder.toolUse, "Tool use cannot be null");
@@ -89,11 +86,6 @@ public final class PreToolContext implements HookContext {
     @Override
     public HookRegistry getHookRegistry() {
         return hookRegistry;
-    }
-
-    @Override
-    public UserLocale getUserLocale() {
-        return userLocale;
     }
 
     @Override
@@ -168,7 +160,7 @@ public final class PreToolContext implements HookContext {
      * Returns a copy of this context with the given current input applied.
      *
      * <p>
-     * The original tool use, registry, user locale and timestamp are preserved. Used by the hook executor to thread an
+     * The original tool use, registry and timestamp are preserved. Used by the hook executor to thread an
      * updated input to subsequent PreTool hooks.
      *
      * @param newInput
@@ -181,9 +173,9 @@ public final class PreToolContext implements HookContext {
         Objects.requireNonNull(newInput, "newInput cannot be null");
         final ToolUse rebuilt = ToolUse.of(originalToolUse.getId(), originalToolUse.getName(), newInput.toMap());
         final Builder b = new Builder().executorType(invokerType).invokerName(invokerName).hookRegistry(hookRegistry)
-                .userLocale(userLocale).executionEnvironment(executionEnvironment)
-                .executionCancellation(executionCancellation).toolUse(originalToolUse).iterationCount(iterationCount)
-                .timestamp(timestamp).executionAttributes(executionAttributes);
+                .executionEnvironment(executionEnvironment).executionCancellation(executionCancellation)
+                .toolUse(originalToolUse).iterationCount(iterationCount).timestamp(timestamp)
+                .executionAttributes(executionAttributes);
         b.currentToolUse = rebuilt;
         return new PreToolContext(b);
     }
@@ -200,7 +192,6 @@ public final class PreToolContext implements HookContext {
         private InvokerType invokerType;
         private String invokerName;
         private HookRegistry hookRegistry;
-        private UserLocale userLocale;
         private ExecutionEnvironment executionEnvironment;
         private CancellationSignal executionCancellation;
         private ToolUse toolUse;
@@ -245,18 +236,6 @@ public final class PreToolContext implements HookContext {
          */
         public Builder hookRegistry(HookRegistry hookRegistry) {
             this.hookRegistry = hookRegistry;
-            return this;
-        }
-
-        /**
-         * Sets the user locale.
-         *
-         * @param userLocale
-         *            the user locale (must not be null)
-         * @return This builder
-         */
-        public Builder userLocale(UserLocale userLocale) {
-            this.userLocale = userLocale;
             return this;
         }
 

@@ -137,7 +137,7 @@ one SessionRecord (영속, SessionId 로 식별)  :  0..N LiveSession (일시적
 - **`WorkflowRunner` 를 애플리케이션 셸에서 닫지 말 것.** 반대로, 다른 계층이 닫아줄 거라
   가정하고 안 닫아서도 안 된다 — 만든 쪽이 닫는다.
 - **빌려온 협력자를 닫지 말 것.** `WorkflowRunner` 는 `SubagentExecutionManager` 와
-  base `SubagentExecutionEnvironment` 를 빌려 쓰며, 자기 소유 풀만 닫는다.
+  base `SubagentLaunchContext` 를 빌려 쓰며, 자기 소유 풀만 닫는다.
 - **`AgentRuntimeId` 를 실행마다 새로 만들지 말 것.** `agent:<name>` /
   `agent:<name>:<discriminator>` 형식으로 결정론적이며 `from(Agent)` / `from(Agent, String)`
   으로 발급한다. `generate()` 는 **존재하지 않는다** — 있었다면 cron 재발화가

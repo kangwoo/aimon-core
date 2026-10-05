@@ -19,7 +19,6 @@ import at.aimon.core.agent.context.DefaultContextEngine;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.CommandRegistry;
 import at.aimon.core.environment.EnvironmentProviding;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
@@ -50,7 +49,7 @@ import at.aimon.core.workflow.WorkflowRunner;
  * {
  *     &#64;code
  *     ExecutionContext context = ExecutionContext.builder().config(config).toolHandler(toolHandler)
- *             .commandHandler(commandHandler).hookExecutor(hookExecutor).userLocale(UserLocale.createDefault())
+ *             .commandHandler(commandHandler).hookExecutor(hookExecutor)
  *             .build();
  *
  *     AgentExecutionResult result = agent.execute("user message", context);
@@ -75,7 +74,6 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
     private final SubagentRegistry subagentRegistry;
     private final SkillRegistry skillRegistry;
     private final VirtualFileSystem controlFileSystem;
-    private final UserLocale userLocale;
     private final McpClientManager mcpClientManager; // nullable - only present when MCP is configured
     private final KnowledgeStore knowledgeStore; // nullable - only present when knowledge directory is configured
     private final CompactionEngine compactionEngine; // nullable - opt-in conversation compaction
@@ -95,8 +93,8 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
     @SuppressWarnings("checkstyle:ParameterNumber")
     private OrcaAgentRuntime(AgentRuntimeId id, Agent agent, ToolRegistry toolRegistry, HookRegistry hookRegistry,
             CommandRegistry commandRegistry, SubagentRegistry subagentRegistry, SkillRegistry skillRegistry,
-            VirtualFileSystem controlFileSystem, UserLocale userLocale, McpClientManager mcpClientManager,
-            KnowledgeStore knowledgeStore, CompactionEngine compactionEngine, CompactionGuard compactionGuard,
+            VirtualFileSystem controlFileSystem, McpClientManager mcpClientManager, KnowledgeStore knowledgeStore,
+            CompactionEngine compactionEngine, CompactionGuard compactionGuard,
             PromptSizeRecoveryStrategy promptSizeRecoveryStrategy, ContextEngine contextEngine,
             List<ToolContextEnricher> toolContextEnrichers, WorkflowRunner workflowRunner,
             ExecutionEnvironmentProvider executionEnvironmentProvider, boolean executionEnvironmentProviderOwned) {
@@ -108,7 +106,6 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
         this.subagentRegistry = Objects.requireNonNull(subagentRegistry, "Subagent registry cannot be null");
         this.skillRegistry = Objects.requireNonNull(skillRegistry, "Skill registry cannot be null");
         this.controlFileSystem = Objects.requireNonNull(controlFileSystem, "Control file system cannot be null");
-        this.userLocale = Objects.requireNonNull(userLocale, "UserLocale cannot be null");
         this.mcpClientManager = mcpClientManager; // nullable
         this.knowledgeStore = knowledgeStore; // nullable
         this.compactionEngine = compactionEngine; // nullable
@@ -194,16 +191,6 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
     @Override
     public Agent getAgent() {
         return agent;
-    }
-
-    /**
-     * Gets the user locale.
-     *
-     * @return The user locale (never null)
-     */
-    @Override
-    public UserLocale getUserLocale() {
-        return userLocale;
     }
 
     /**
@@ -363,7 +350,7 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
 
     @Override
     public String toString() {
-        return "ExecutionContext{" + "id=" + id + ", agent=" + agent + ", userLocale=" + userLocale + '}';
+        return "ExecutionContext{" + "id=" + id + ", agent=" + agent + '}';
     }
 
     public static class Builder {
@@ -375,7 +362,6 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
         private SubagentRegistry subagentRegistry;
         private SkillRegistry skillRegistry;
         private VirtualFileSystem controlFileSystem;
-        private UserLocale userLocale;
         private McpClientManager mcpClientManager;
         private KnowledgeStore knowledgeStore;
         private CompactionEngine compactionEngine;
@@ -435,12 +421,6 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
         /** VirtualFileSystem을 설정한다. */
         public Builder controlFileSystem(VirtualFileSystem controlFileSystem) {
             this.controlFileSystem = controlFileSystem;
-            return this;
-        }
-
-        /** UserLocale 을 설정한다. */
-        public Builder userLocale(UserLocale userLocale) {
-            this.userLocale = userLocale;
             return this;
         }
 
@@ -530,7 +510,7 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
                     : DefaultContextEngine.builder().compactionGuard(compactionGuard)
                             .recoveryStrategy(promptSizeRecoveryStrategy).compactionEngine(compactionEngine).build();
             return new OrcaAgentRuntime(id, agent, toolRegistry, hookRegistry, commandRegistry, subagentRegistry,
-                    skillRegistry, controlFileSystem, userLocale, mcpClientManager, knowledgeStore, compactionEngine,
+                    skillRegistry, controlFileSystem, mcpClientManager, knowledgeStore, compactionEngine,
                     compactionGuard, promptSizeRecoveryStrategy, effectiveEngine, toolContextEnrichers, workflowRunner,
                     executionEnvironmentProvider, executionEnvironmentProviderOwned);
         }

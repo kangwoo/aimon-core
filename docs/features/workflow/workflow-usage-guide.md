@@ -68,22 +68,21 @@ Workflow는 **제어 흐름을 LLM이 아니라 코드가 결정하는** 서브�
 
 ```java
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.workflow.WorkflowRunner;
 import at.aimon.core.workflow.WorkflowRunners;
 
-// 1) 서브에이전트가 실행될 기반 환경 (모든 스텝이 이 환경을 상속한다)
-SubagentExecutionEnvironment baseEnv = SubagentExecutionEnvironment.builder()
+// 1) 서브에이전트를 띄울 때 넘기는 기반 launch context (모든 스텝이 이것을 물려받는다)
+SubagentLaunchContext baseLaunchContext = SubagentLaunchContext.builder()
         .agentRuntimeId(agentRuntimeId)       // AgentRuntimeId
         .subagentRegistry(subagentRegistry)
         .toolRegistry(toolRegistry)
         .hookRegistry(hookRegistry)
-        .userLocale(userLocale)
         .defaultModel(agent.getMetadata().getModel())
         .build();
 
 // 2) 러너 조립 (subagentExecutionManager는 빌려 쓰는 것 — 러너가 닫지 않는다)
-try (WorkflowRunner runner = WorkflowRunners.create(subagentExecutionManager, baseEnv)) {
+try (WorkflowRunner runner = WorkflowRunners.create(subagentExecutionManager, baseLaunchContext)) {
 
     // 3) 스크립트 실행
     String answer = runner.run(ctx -> {
@@ -119,16 +118,16 @@ Subagent technical = Subagent.builder()
 
 ```java
 // 최소 — 기본 동시성, 이벤트 싱크 없음, 기본 예산
-WorkflowRunners.create(manager, baseEnv);
+WorkflowRunners.create(manager, baseLaunchContext);
 
 // 동시성 / 이벤트 / 예산 지정
-WorkflowRunners.create(manager, baseEnv, concurrency, eventSink, budget);
+WorkflowRunners.create(manager, baseLaunchContext, concurrency, eventSink, budget);
 
 // 위 + 스텝 결과 캐시(재개용)
-WorkflowRunners.create(manager, baseEnv, concurrency, eventSink, budget, stepResultCache);
+WorkflowRunners.create(manager, baseLaunchContext, concurrency, eventSink, budget, stepResultCache);
 
 // 전체 옵션 (권장)
-WorkflowRunners.create(manager, baseEnv, options);
+WorkflowRunners.create(manager, baseLaunchContext, options);
 ```
 
 ### WorkflowRunnerOptions
@@ -162,7 +161,7 @@ WorkflowRunnerOptions options = WorkflowRunnerOptions.builder()
 환경에서 브랜치를 파생한다(아래 "워크트리 격리").
 
 ```java
-return WorkflowRunners.create(subagentExecutionManager, baseEnv,
+return WorkflowRunners.create(subagentExecutionManager, baseLaunchContext,
         WorkflowRunnerOptions.builder()
                 .stepResultCache(WorkflowRunners.inMemoryStepResultCache())
                 .build());
@@ -581,10 +580,10 @@ AgentTask.builder().subagent(migrator).goal(...).isolate(true).build();
 | 규칙 | 이유 |
 |------|------|
 | `WorkflowRunner`는 **application-scoped** 로 두고 재사용한다 | 워커 풀을 런마다 만들면 누수 |
-| 러너는 `SubagentExecutionManager`와 `baseEnv`를 **빌려 쓴다. 절대 닫지 않는다** | 소유자는 호출자 |
+| 러너는 `SubagentExecutionManager`와 `baseLaunchContext`를 **빌려 쓴다. 절대 닫지 않는다** | 소유자는 호출자 |
 | 호출당 러너를 만들었다면 **반드시 닫는다** (try-with-resources) | 팬아웃 풀이 런마다 남는다 |
 | `RunHandle.future()` 취소는 런을 멈추지 않는다 → `stop(runId)` | future는 방어적 복사본 |
-| 백그라운드 런은 호출 턴의 컨텍스트/주체/취소 신호를 **상속하지 않는다** | 러너 자체의 base 환경에서 돈다 |
+| 백그라운드 런은 호출 턴의 컨텍스트/주체/취소 신호를 **상속하지 않는다** | 러너 자체의 base launch context 로 돈다 |
 
 코어 내부 예시(`WorkflowTool`)를 보면 포그라운드 경로는 호출당 러너를 만들고 즉시 닫는다:
 

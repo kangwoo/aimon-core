@@ -113,7 +113,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
     private final SubagentExecutor subagentExecutor;
     private final ExecutorService executorService;
     /**
-     * Optional. When present, {@link #execute(SubagentExecutionEnvironment, String, String, String, String)} fires
+     * Optional. When present, {@link #execute(SubagentLaunchContext, String, String, String, String)} fires
      * SubagentStart / SubagentStop hooks around the dispatch.
      */
     private final HookExecutionManager hookExecutionManager;
@@ -151,11 +151,10 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
     private final TaskStopSignal.Subscription stopSubscription;
 
     /**
-     * Lease-recovery machinery (design §4), created only when a {@link TaskLeaseConfig} is injected. The
-     * publisher renews the heartbeat of every task this node owns; the reaper transitions heartbeat-expired
-     * non-terminal
-     * tasks to {@code FAILED}. Both are {@code null} (no threads, unchanged behaviour) when lease recovery is not opted
-     * in. Closed on {@link #close()}.
+     * Lease-recovery machinery (design §4), created only when a {@link TaskLeaseConfig} is injected. The publisher
+     * renews the heartbeat of every task this node owns; the reaper transitions heartbeat-expired non-terminal tasks to
+     * {@code FAILED}. Both are {@code null} (no threads, unchanged behaviour) when lease recovery is not opted in.
+     * Closed on {@link #close()}.
      */
     private final TaskHeartbeatPublisher heartbeatPublisher;
     private final ZombieTaskReaper zombieReaper;
@@ -215,11 +214,10 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
 
     /**
      * Canonical constructor. {@code llmClient}, when non-null, is wrapped into the {@link SubagentBehaviorRunner}'s
-     * gateway
-     * so code behaviors can call the model
-     * ({@link at.aimon.core.subagent.behavior.SubagentBehaviorSupport#llmGateway()});
-     * null disables LLM access for behaviors. The {@code SubagentExecutor} is the ReAct path and is independent of this
-     * client — pass the same client used to build the executor when LLM access for behaviors is wanted.
+     * gateway so code behaviors can call the model ({@link
+     * at.aimon.core.subagent.behavior.SubagentBehaviorSupport#llmGateway()}); null disables LLM access for behaviors.
+     * The {@code SubagentExecutor} is the ReAct path and is independent of this client — pass the same client used to
+     * build the executor when LLM access for behaviors is wanted.
      *
      * @param subagentExecutor
      *            The subagent executor (must not be null)
@@ -275,10 +273,9 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
     /**
      * Canonical constructor (with an explicit {@link BackgroundTaskStore}, {@link TaskStopSignal} and optional
      * {@link TaskLeaseConfig}). Use this overload in a scale-out deployment to inject a shared, multi-instance-ready
-     * task
-     * store, a cross-node stop signal, and — when {@code leaseConfig} is non-null — zombie-task lease recovery; the
-     * other
-     * constructors default the signal to {@link NoopTaskStopSignal} (local stops only) and leave lease recovery off.
+     * task store, a cross-node stop signal, and — when {@code leaseConfig} is non-null — zombie-task lease recovery;
+     * the other constructors default the signal to {@link NoopTaskStopSignal} (local stops only) and leave lease
+     * recovery off.
      *
      * <p>
      * This constructor subscribes to {@code taskStopSignal} for the manager's lifetime so a stop broadcast from another
@@ -322,9 +319,8 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         // Subscribe last: runningTasks is field-initialized before this body runs and onRemoteStop touches nothing
         // else, so a stop delivered mid-construction (impossible for loopback, async for a real bus) is safe.
         this.stopSubscription = taskStopSignal.subscribe(this::onRemoteStop);
-        // §4: opt-in lease recovery. The publisher heartbeats exactly the tasks this node owns (runningTasks
-        // holds
-        // a handle from submission through terminal removal), so a live node never lets its own tasks be reaped.
+        // §4: opt-in lease recovery. The publisher heartbeats exactly the tasks this node owns (runningTasks holds a
+        // handle from submission through terminal removal), so a live node never lets its own tasks be reaped.
         if (leaseConfig != null) {
             this.heartbeatPublisher = new TaskHeartbeatPublisher(taskStore, runningTasks::taskIds, leaseConfig);
             this.zombieReaper = new ZombieTaskReaper(taskStore, leaseConfig);
@@ -380,9 +376,8 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
     /**
      * Creates a new DefaultSubagentExecutionManager (LlmClient convenience) with an explicit, caller-supplied
      * {@link ExecutorService} (typically a bounded pool from {@link #newBackgroundExecutor(SubagentBackgroundConfig)},
-     * and {@link BackgroundTaskStore}. This is the constructor the factory uses to bound background fan-out
-     * and
-     * to plug in a multi-instance-ready task store.
+     * and {@link BackgroundTaskStore}. This is the constructor the factory uses to bound background fan-out and to plug
+     * in a multi-instance-ready task store.
      *
      * @param llmClient
      *            The LLM client used to build the default {@link DefaultSubagentExecutor} (must not be null)
@@ -487,22 +482,22 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
      * <li>Goal: Everything after the first space
      * </ul>
      *
-     * @param env
-     *            The execution environment (must not be null)
+     * @param launchContext
+     *            The launch context (must not be null)
      * @param agentExecutionRequest
      *            The agent execution request containing user input and context (must not be null)
      * @param transcriptBuffer
      *            The transcript buffer (must not be null)
      * @return The subagent execution result (never null)
      * @throws NullPointerException
-     *             if env or agentExecutionRequest is null
+     *             if launchContext or agentExecutionRequest is null
      * @throws IllegalArgumentException
      *             if user input doesn't start with '@'
      */
     @Override
-    public SubagentExecutionResult execute(SubagentExecutionEnvironment env,
+    public SubagentExecutionResult execute(SubagentLaunchContext launchContext,
             AgentExecutionRequest agentExecutionRequest, TranscriptBuffer transcriptBuffer) {
-        Objects.requireNonNull(env, "Execution environment cannot be null");
+        Objects.requireNonNull(launchContext, "Launch context cannot be null");
         Objects.requireNonNull(agentExecutionRequest, "Agent execution request cannot be null");
 
         final String userInput = agentExecutionRequest.getUserInput().asText();
@@ -517,47 +512,46 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         final String taskId = UUID.randomUUID().toString();
 
         // This overload is the only entry point handed the caller's TranscriptBuffer, so it is the only one that can
-        // name the invoking session when the environment did not already carry it. Binding it here lets the
+        // name the invoking session when the launch context did not already carry it. Binding it here lets the
         // subagent inherit the approvals the user granted in that session; a null memory (callers that have no
-        // session) leaves the environment untouched and the run inherits nothing.
-        final SubagentExecutionEnvironment effectiveEnv = transcriptBuffer == null
-                ? env
-                : env.toBuilder().invokingSessionId(transcriptBuffer.getSessionId()).build();
+        // session) leaves the launch context untouched and the run inherits nothing.
+        final SubagentLaunchContext effectiveLaunchContext = transcriptBuffer == null
+                ? launchContext
+                : launchContext.toBuilder().invokingSessionId(transcriptBuffer.getSessionId()).build();
 
-        return execute(effectiveEnv, taskId, parsed.name(), parsed.goal(), "");
+        return execute(effectiveLaunchContext, taskId, parsed.name(), parsed.goal(), "");
     }
 
     @Override
-    public SubagentExecutionResult execute(SubagentExecutionEnvironment env, String taskId, String subagentName,
+    public SubagentExecutionResult execute(SubagentLaunchContext launchContext, String taskId, String subagentName,
             String goal, String description) {
-        Objects.requireNonNull(env, "Execution environment cannot be null");
+        Objects.requireNonNull(launchContext, "Launch context cannot be null");
         // Foreground execution observes the parent execution's cancellation signal directly (the parent is a session's
-        // turn on the main loop, or another fork when a subagent launches one). Its output is returned
-        // inline (not tailed), so it streams to a no-op sink. The subagent is resolved by name from the environment's
-        // registry.
-        return runExecute(env, taskId, SubagentTarget.byName(subagentName), goal, description,
-                env.getCancellationSignal(), SubagentOutputSink.NO_OP);
+        // turn on the main loop, or another fork when a subagent launches one). Its output is returned inline (not
+        // tailed), so it streams to a no-op sink. The subagent is resolved by name from the launch context's registry.
+        return runExecute(launchContext, taskId, SubagentTarget.byName(subagentName), goal, description,
+                launchContext.getCancellationSignal(), SubagentOutputSink.NO_OP);
     }
 
     @Override
-    public SubagentExecutionResult execute(SubagentExecutionEnvironment env, Subagent subagent, String goal) {
-        Objects.requireNonNull(env, "Execution environment cannot be null");
+    public SubagentExecutionResult execute(SubagentLaunchContext launchContext, Subagent subagent, String goal) {
+        Objects.requireNonNull(launchContext, "Launch context cannot be null");
         Objects.requireNonNull(subagent, "Subagent cannot be null");
         Objects.requireNonNull(goal, "Goal cannot be null");
         // Inline (code-defined) subagent: run it once in the foreground without a registry lookup. A unique task id is
-        // generated for hook/attribution tracking; cancellation follows the environment's parent-execution signal; the
-        // result is returned inline, so the output streams to a no-op sink. A SubagentTarget.inline(...) makes
-        // runExecute skip env.getSubagentRegistry() while sharing every other forwarding/dispatch detail with the
-        // name-based path.
+        // generated for hook/attribution tracking; cancellation follows the launch context's parent-execution signal;
+        // the result is returned inline, so the output streams to a no-op sink. A SubagentTarget.inline(...) makes
+        // runExecute skip launchContext.getSubagentRegistry() while sharing every other forwarding/dispatch detail with
+        // the name-based path.
         final String taskId = UUID.randomUUID().toString();
-        return runExecute(env, taskId, SubagentTarget.inline(subagent), goal, "", env.getCancellationSignal(),
-                SubagentOutputSink.NO_OP);
+        return runExecute(launchContext, taskId, SubagentTarget.inline(subagent), goal, "",
+                launchContext.getCancellationSignal(), SubagentOutputSink.NO_OP);
     }
 
     @Override
-    public SubagentExecutionResult executeInline(SubagentExecutionEnvironment env, String taskId, Subagent subagent,
+    public SubagentExecutionResult executeInline(SubagentLaunchContext launchContext, String taskId, Subagent subagent,
             String goal, String description) {
-        Objects.requireNonNull(env, "Execution environment cannot be null");
+        Objects.requireNonNull(launchContext, "Launch context cannot be null");
         Objects.requireNonNull(taskId, "Task id cannot be null");
         Objects.requireNonNull(subagent, "Subagent cannot be null");
         Objects.requireNonNull(goal, "Goal cannot be null");
@@ -565,31 +559,32 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         // The name-based foreground path with the lookup already done: same signal, same no-op sink, same taskId and
         // description into hooks and task records. Only the resolution differs, which is the point — the caller hands
         // over a definition it has already adjusted.
-        return runExecute(env, taskId, SubagentTarget.inline(subagent), goal, description, env.getCancellationSignal(),
-                SubagentOutputSink.NO_OP);
+        return runExecute(launchContext, taskId, SubagentTarget.inline(subagent), goal, description,
+                launchContext.getCancellationSignal(), SubagentOutputSink.NO_OP);
     }
 
     /**
      * Shared execution body for the foreground and background paths. The effective cancellation signal is injected as
-     * the subagent's parent signal: foreground passes the environment's signal; background passes the per-task
+     * the subagent's parent signal: foreground passes the launch context's signal; background passes the per-task
      * coordinator's signal so a {@code Task.stop} can cancel just that task.
      *
      * @param target
      *            identifies the subagent to run: an inline (code-defined) instance used as-is, or a registry name
-     *            resolved against the environment's {@link SubagentRegistry}
+     *            resolved against the launch context's {@link SubagentRegistry}
      * @param cancellationSignal
      *            the effective cancellation signal to inject as the subagent's parent signal (must not be null)
      * @param outputSink
      *            the live output sink to stream progress to (must not be null; {@link SubagentOutputSink#NO_OP} for
      *            foreground)
      */
-    private SubagentExecutionResult runExecute(SubagentExecutionEnvironment env, String taskId, SubagentTarget target,
-            String goal, String description, CancellationSignal cancellationSignal, SubagentOutputSink outputSink) {
+    private SubagentExecutionResult runExecute(SubagentLaunchContext launchContext, String taskId,
+            SubagentTarget target, String goal, String description, CancellationSignal cancellationSignal,
+            SubagentOutputSink outputSink) {
         // Foreground path: fire SubagentStart on the calling thread, then run the body. The background path
         // (executeInBackground) fires SubagentStart itself BEFORE dispatch — so the launch is observed on the launching
         // thread, immediately and in order, rather than late on a pool worker — and calls runResolvedSubagent directly.
-        fireSubagentStart(env, taskId, target.name(), goal, description);
-        return runResolvedSubagent(env, taskId, target, goal, cancellationSignal, outputSink);
+        fireSubagentStart(launchContext, taskId, target.name(), goal, description);
+        return runResolvedSubagent(launchContext, taskId, target, goal, cancellationSignal, outputSink);
     }
 
     /**
@@ -597,7 +592,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
      * hook is fired by the caller — {@link #runExecute} for the foreground path, {@link #executeInBackground} for the
      * background path — so a background launch can be observed on the launching thread rather than a pool worker.
      */
-    private SubagentExecutionResult runResolvedSubagent(SubagentExecutionEnvironment env, String taskId,
+    private SubagentExecutionResult runResolvedSubagent(SubagentLaunchContext launchContext, String taskId,
             SubagentTarget target, String goal, CancellationSignal cancellationSignal, SubagentOutputSink outputSink) {
         final Instant startTime = Instant.now();
         final String subagentName = target.name();
@@ -605,11 +600,11 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         SubagentExecutionResult result;
         try {
             // Resolve the subagent: an inline (code-defined) subagent is used as-is; otherwise look it up by name in
-            // the environment's registry. The lookup stays inside this try so an unknown name still yields a failure
+            // the launch context's registry. The lookup stays inside this try so an unknown name still yields a failure
             // result with SubagentStart/Stop hooks fired around it (unchanged registry-path behaviour).
             final Subagent resolved = target.inline() != null
                     ? target.inline()
-                    : env.getSubagentRegistry().getSubagent(subagentName)
+                    : launchContext.getSubagentRegistry().getSubagent(subagentName)
                             .orElseThrow(() -> new SubagentNotFoundException(subagentName));
 
             // Impose the spawning run's allow-list as a ceiling. Without this a delegation is an escalation: an agent
@@ -617,7 +612,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             // describe only what the agent does itself rather than what it can cause. Applied here rather than at
             // either branch below because this is the one place both of them pass through — the ReAct loop and a
             // registered code behavior receive the same narrowed definition.
-            final Subagent subagent = applyCallerCeiling(env, resolved);
+            final Subagent subagent = applyCallerCeiling(launchContext, resolved);
 
             // Build execution context (how to execute). The effective cancellation signal is forwarded so a
             // parent-initiated (or per-task stop) cancel cascades into the subagent's ReAct loop and its cooperative
@@ -625,14 +620,16 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             // and default model. The knowledge store/scope and tool-context enrichers are forwarded so subagent tools
             // run with the same context keys as the main-agent tools.
             final SubagentExecutionContext executionContext = SubagentExecutionContext.builder()
-                    .agentRuntimeId(env.getAgentRuntimeId()).subagent(subagent).userLocale(env.getUserLocale())
-                    .toolRegistry(env.getToolRegistry()).hookRegistry(env.getHookRegistry())
-                    .defaultModel(env.getDefaultModel()).modelOverride(env.getModelOverride().orElse(null))
-                    .parentCancellationSignal(cancellationSignal).knowledgeStore(env.getKnowledgeStore().orElse(null))
-                    .knowledgeScope(env.getKnowledgeScope().orElse(null))
-                    .toolContextEnrichers(env.getToolContextEnrichers()).outputSink(outputSink)
-                    .executionEnvironment(env.getExecutionEnvironment().orElse(null))
-                    .executionEnvironmentProvider(env.getExecutionEnvironmentProvider().orElse(null)).build();
+                    .agentRuntimeId(launchContext.getAgentRuntimeId()).subagent(subagent)
+                    .toolRegistry(launchContext.getToolRegistry()).hookRegistry(launchContext.getHookRegistry())
+                    .defaultModel(launchContext.getDefaultModel())
+                    .modelOverride(launchContext.getModelOverride().orElse(null))
+                    .parentCancellationSignal(cancellationSignal)
+                    .knowledgeStore(launchContext.getKnowledgeStore().orElse(null))
+                    .knowledgeScope(launchContext.getKnowledgeScope().orElse(null))
+                    .toolContextEnrichers(launchContext.getToolContextEnrichers()).outputSink(outputSink)
+                    .executionEnvironment(launchContext.getExecutionEnvironment().orElse(null))
+                    .executionEnvironmentProvider(launchContext.getExecutionEnvironmentProvider().orElse(null)).build();
 
             // Build execution request (what to execute). The parent's LLM call metadata is forwarded so the subagent
             // executor can merge it with subagent-derived defaults (component/feature) and emit attributed usage. The
@@ -643,16 +640,16 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             // spawned this run apply to it: the fork mints its own session id, under which nothing was ever
             // granted, and it can never prompt for one of its own.
             final SubagentExecutionRequest request = SubagentExecutionRequest.builder().taskId(taskId).goal(goal)
-                    .executionAttributes(env.getExecutionAttributes()).llmCallMetadata(env.getParentLlmCallMetadata())
-                    .principal(env.getPrincipal().orElse(null))
-                    .invokingSessionId(env.getInvokingSessionId().orElse(null))
-                    .previousSnapshot(env.getPreviousSnapshot().orElse(null)).build();
+                    .executionAttributes(launchContext.getExecutionAttributes())
+                    .llmCallMetadata(launchContext.getParentLlmCallMetadata())
+                    .principal(launchContext.getPrincipal().orElse(null))
+                    .invokingSessionId(launchContext.getInvokingSessionId().orElse(null))
+                    .previousSnapshot(launchContext.getPreviousSnapshot().orElse(null)).build();
 
             // Execute subagent. A code behavior registered for this name REPLACES the ReAct loop, receiving the SAME
             // context/request (cancellation signal, principal, metadata, tools). When absent, the data subagent runs
-            // the
-            // unchanged ReAct path — origin-agnostic execution among data subagents is preserved. SubagentStart/Stop
-            // hooks and this try/catch error shaping apply to both branches.
+            // the unchanged ReAct path — origin-agnostic execution among data subagents is preserved.
+            // SubagentStart/Stop hooks and this try/catch error shaping apply to both branches.
             final Optional<SubagentBehavior> behavior = subagentBehaviorRegistry.getBehavior(subagentName);
             result = behavior.isPresent()
                     ? subagentBehaviorRunner.run(behavior.get(), executionContext, request)
@@ -663,7 +660,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             result = createFailureResult(startTime, "Subagent execution error: " + e.getMessage());
         }
 
-        fireSubagentStop(env, taskId, subagentName, result);
+        fireSubagentStop(launchContext, taskId, subagentName, result);
         return result;
     }
 
@@ -682,16 +679,16 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
      * A caller that imposes no ceiling leaves the subagent exactly as resolved, which is what every caller did before
      * the ceiling existed.
      *
-     * @param env
-     *            the execution environment carrying the caller's allow-list
+     * @param launchContext
+     *            the launch context carrying the caller's allow-list
      * @param subagent
      *            the resolved subagent
      * @return the subagent bound by both lists
      * @throws SubagentSpawnException
      *             if the two allow-lists have nothing in common
      */
-    private Subagent applyCallerCeiling(SubagentExecutionEnvironment env, Subagent subagent) {
-        final List<AllowedTool> ceiling = env.getCallerAllowedTools();
+    private Subagent applyCallerCeiling(SubagentLaunchContext launchContext, Subagent subagent) {
+        final List<AllowedTool> ceiling = launchContext.getCallerAllowedTools();
         if (ceiling.isEmpty()) {
             return subagent;
         }
@@ -721,19 +718,19 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
      * Best-effort: a snapshot-store failure must never change the returned result, so routine backend errors are logged
      * and swallowed. No-op when no snapshot store was configured (resume disabled).
      */
-    private void saveSessionSnapshot(SubagentExecutionEnvironment env, String taskId, String subagentName,
+    private void saveSessionSnapshot(SubagentLaunchContext launchContext, String taskId, String subagentName,
             SubagentExecutionResult result) {
         final SessionSnapshot snapshot = result.getSnapshot();
         if (snapshot.getConversationHistory().isEmpty()) {
             // Nothing resumable to persist (dispatch failure / no iterations ran); leave the id unresumable.
             return;
         }
-        env.getSessionSnapshotStore().ifPresent(store -> {
+        launchContext.getSessionSnapshotStore().ifPresent(store -> {
             try {
                 // Tag the transcript with the owning agent runtime so a later Task(resume=<taskId>) can be
                 // confined to the caller's own context — one agent must not resume (and thereby read) another's
                 // transcript merely by knowing its globally-unique task id.
-                store.save(taskId, subagentName, env.getAgentRuntimeId(), snapshot);
+                store.save(taskId, subagentName, launchContext.getAgentRuntimeId(), snapshot);
             } catch (RuntimeException e) {
                 log.warn("Failed to save session snapshot for taskId={}: {}", taskId, e.getMessage());
             }
@@ -756,11 +753,11 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
      * result lived in a future. Best-effort: a store failure must never change the result the task hands back, so
      * routine backend errors are logged and swallowed. No-op when no result store was configured.
      */
-    private void saveTaskResult(SubagentExecutionEnvironment env, String taskId, SubagentExecutionResult result) {
+    private void saveTaskResult(SubagentLaunchContext launchContext, String taskId, SubagentExecutionResult result) {
         if (result == null) {
             return;
         }
-        env.getTaskResultStore().ifPresent(store -> {
+        launchContext.getTaskResultStore().ifPresent(store -> {
             try {
                 store.save(taskId, TaskResult.from(result));
             } catch (RuntimeException e) {
@@ -770,19 +767,19 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
     }
 
     // Both subagent hooks fire in the spawning execution's registry, so the environment they carry is the spawner's
-    // (SubagentExecutionEnvironment#getExecutionEnvironment), not the fork's — at subagentStart the fork's has not been
+    // (SubagentLaunchContext#getExecutionEnvironment), not the fork's — at subagentStart the fork's has not been
     // resolved yet. Empty when a runtime-level runner spawned the fork.
-    private void fireSubagentStart(SubagentExecutionEnvironment env, String taskId, String subagentName, String goal,
+    private void fireSubagentStart(SubagentLaunchContext launchContext, String taskId, String subagentName, String goal,
             String description) {
         if (hookExecutionManager == null) {
             return;
         }
         try {
             final SubagentStartContext ctx = SubagentStartContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                    .invokerName(subagentName).hookRegistry(env.getHookRegistry()).userLocale(env.getUserLocale())
-                    .executionEnvironment(env.getExecutionEnvironment().orElse(null)).subagentName(subagentName)
-                    .taskId(taskId).goal(goal).description(description)
-                    .executionAttributes(env.getExecutionAttributes()).build();
+                    .invokerName(subagentName).hookRegistry(launchContext.getHookRegistry())
+                    .executionEnvironment(launchContext.getExecutionEnvironment().orElse(null))
+                    .subagentName(subagentName).taskId(taskId).goal(goal).description(description)
+                    .executionAttributes(launchContext.getExecutionAttributes()).build();
             hookExecutionManager.executeSubagentStart(ctx);
         } catch (Exception e) {
             log.warn("SubagentStart hook failed for subagent '{}', taskId={}: {}", subagentName, taskId,
@@ -790,18 +787,18 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         }
     }
 
-    private void fireSubagentStop(SubagentExecutionEnvironment env, String taskId, String subagentName,
+    private void fireSubagentStop(SubagentLaunchContext launchContext, String taskId, String subagentName,
             SubagentExecutionResult result) {
         if (hookExecutionManager == null) {
             return;
         }
         try {
             final SubagentStopContext ctx = SubagentStopContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                    .invokerName(subagentName).hookRegistry(env.getHookRegistry()).userLocale(env.getUserLocale())
-                    .executionEnvironment(env.getExecutionEnvironment().orElse(null)).subagentName(subagentName)
-                    .taskId(taskId).success(result.isSuccess())
+                    .invokerName(subagentName).hookRegistry(launchContext.getHookRegistry())
+                    .executionEnvironment(launchContext.getExecutionEnvironment().orElse(null))
+                    .subagentName(subagentName).taskId(taskId).success(result.isSuccess())
                     .errorMessage(result.isSuccess() ? null : result.getErrorMessage())
-                    .executionAttributes(env.getExecutionAttributes()).build();
+                    .executionAttributes(launchContext.getExecutionAttributes()).build();
             hookExecutionManager.executeSubagentStop(ctx);
         } catch (Exception e) {
             log.warn("SubagentStop hook failed for subagent '{}', taskId={}: {}", subagentName, taskId, e.getMessage());
@@ -809,46 +806,44 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
     }
 
     @Override
-    public CompletableFuture<SubagentExecutionResult> executeInBackground(SubagentExecutionEnvironment env,
+    public CompletableFuture<SubagentExecutionResult> executeInBackground(SubagentLaunchContext launchContext,
             String taskId, String subagentName, String goal, String description) {
-        Objects.requireNonNull(env, "Execution environment cannot be null");
+        Objects.requireNonNull(launchContext, "Launch context cannot be null");
         final Instant startTime = Instant.now();
 
         // Record a durable PENDING snapshot up front so the task is listable/queryable even while it waits for a
         // worker (bounded pool). The worker flips it to RUNNING when it actually starts.
         final BackgroundTask snapshot = BackgroundTask.builder().taskId(taskId).subagentName(subagentName)
                 .description(description).state(BackgroundTaskState.PENDING).startTime(startTime)
-                .lastHeartbeat(startTime).owner(env.getPrincipal().orElse(null)).agentRuntimeId(env.getAgentRuntimeId())
-                .build();
+                .lastHeartbeat(startTime).owner(launchContext.getPrincipal().orElse(null))
+                .agentRuntimeId(launchContext.getAgentRuntimeId()).build();
         taskStore.put(snapshot);
 
         // Per-task interrupt coordinator whose signal is injected as the subagent's parent signal, so Task.stop can
-        // cancel just this task. Cascade the environment's parent-execution signal into it so a parent cancel still
+        // cancel just this task. Cascade the launch context's parent-execution signal into it so a parent cancel still
         // propagates.
         final InterruptCoordinator coordinator = new DefaultInterruptCoordinator();
-        // Cascade the environment's parent-execution signal into this task's coordinator. Retain the registration so
+        // Cascade the launch context's parent-execution signal into this task's coordinator. Retain the registration so
         // both terminal paths (finalizeBackgroundTask and the pool-rejection path) can deregister it — otherwise each
         // background Task launched in an execution would leave a listener on the per-execution signal, accumulating
         // one closed coordinator per task for the rest of that execution.
-        final CancellationSignal.Registration parentCancelReg = env.getCancellationSignal().onCancel(
+        final CancellationSignal.Registration parentCancelReg = launchContext.getCancellationSignal().onCancel(
                 () -> coordinator.requestInterrupt(at.aimon.core.agent.interrupt.InterruptReason.PARENT_CANCELLED));
         final RunningTaskHandle handle = new RunningTaskHandle(taskId, coordinator);
         runningTasks.register(handle);
 
-        // Bind a live output sink to the shared task output store (when configured) so the AgentOutput tool can
-        // tail
+        // Bind a live output sink to the shared task output store (when configured) so the AgentOutput tool can tail
         // this background task's progress. Absent a store the sink is a no-op (no regression). The store's append is
         // thread-safe, so parallel tool-result callbacks streaming to it are safe.
-        final TaskOutputStore outputStore = env.getTaskOutputStore().orElse(null);
+        final TaskOutputStore outputStore = launchContext.getTaskOutputStore().orElse(null);
         final SubagentOutputSink outputSink = outputStore != null
                 ? text -> outputStore.append(taskId, text)
                 : SubagentOutputSink.NO_OP;
 
         // Fire SubagentStart on THIS (launching) thread, before the task is queued to a worker, so the launch is
         // observed immediately and in turn order (e.g. the CLI's SubagentLaunchDisplayHook) — including when the
-        // bounded
-        // pool later rejects the task. The worker then runs runResolvedSubagent, which does NOT re-fire start.
-        fireSubagentStart(env, taskId, subagentName, goal, description);
+        // bounded pool later rejects the task. The worker then runs runResolvedSubagent, which does NOT re-fire start.
+        fireSubagentStart(launchContext, taskId, subagentName, goal, description);
 
         final CompletableFuture<SubagentExecutionResult> future;
         try {
@@ -856,11 +851,11 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
                 handle.attachWorker(Thread.currentThread());
                 taskStore.transition(taskId, BackgroundTaskState.RUNNING);
                 // Background tasks are always dispatched by registered name. SubagentStart already fired above.
-                final SubagentExecutionResult result = runResolvedSubagent(env, taskId,
+                final SubagentExecutionResult result = runResolvedSubagent(launchContext, taskId,
                         SubagentTarget.byName(subagentName), goal, handle.getSignal(), outputSink);
                 // Persist the finished transcript so Task(resume=<taskId>) can continue it. Background-only —
                 // a foreground run's taskId is never surfaced, so its snapshot would be unreachable.
-                saveSessionSnapshot(env, taskId, subagentName, result);
+                saveSessionSnapshot(launchContext, taskId, subagentName, result);
                 return result;
             }, executorService);
         } catch (RejectedExecutionException rex) {
@@ -870,7 +865,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
                     .emptyFailure("Background task rejected: subagent pool saturated", startTime);
             // Save before the terminal transition, per the TaskResultStore ordering contract: a reader that sees
             // FAILED must already be able to see why.
-            saveTaskResult(env, taskId, failure);
+            saveTaskResult(launchContext, taskId, failure);
             taskStore.transition(taskId, BackgroundTaskState.FAILED);
             runningTasks.remove(taskId);
             coordinator.close();
@@ -878,17 +873,17 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             // SubagentStart fired on the launching thread above; balance it with a Stop for this reject-before-run path
             // (the runResolvedSubagent path fires its own Stop). Advisory; failures are swallowed inside
             // fireSubagentStop.
-            fireSubagentStop(env, taskId, subagentName, failure);
+            fireSubagentStop(launchContext, taskId, subagentName, failure);
             // This path never registers a whenComplete finalizer, so notify the parent here. It is mutually
             // exclusive with the finalizeBackgroundTask path, so the completion is still signalled exactly once.
-            notifyParentOfCompletion(env, taskId, subagentName, BackgroundTaskState.FAILED, failure, rex);
+            notifyParentOfCompletion(launchContext, taskId, subagentName, BackgroundTaskState.FAILED, failure, rex);
             return CompletableFuture.completedFuture(failure);
         }
 
         handle.attachFuture(future);
         future.whenComplete((result, error) -> {
             try {
-                finalizeBackgroundTask(env, handle, coordinator, taskId, subagentName, result, error);
+                finalizeBackgroundTask(launchContext, handle, coordinator, taskId, subagentName, result, error);
             } finally {
                 // Deregister the parent-cancel cascade listener so it does not accumulate on the per-execution signal.
                 parentCancelReg.remove();
@@ -914,12 +909,12 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
      * outcome (best-effort; see {@link #notifyParentOfCompletion}). This runs exactly once per task (a single
      * {@code whenComplete} per future).
      */
-    private void finalizeBackgroundTask(SubagentExecutionEnvironment env, RunningTaskHandle handle,
+    private void finalizeBackgroundTask(SubagentLaunchContext launchContext, RunningTaskHandle handle,
             InterruptCoordinator coordinator, String taskId, String subagentName, SubagentExecutionResult result,
             Throwable error) {
         try {
             // Before the terminal transition, so that observing a terminal state implies the result is readable.
-            saveTaskResult(env, taskId, result);
+            saveTaskResult(launchContext, taskId, result);
             final boolean cancelled = handle.isStopRequested() || handle.getSignal().isCancelled();
             final BackgroundTaskState finalState;
             if (cancelled) {
@@ -933,7 +928,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             // task the ZombieTaskReaper already flipped to FAILED (or one reaped and then evicted under
             // terminal-retention overflow) must not be mis-reported as COMPLETED. See resolveNotifiedState.
             final BackgroundTaskState notifiedState = resolveNotifiedState(taskStore, taskId, finalState);
-            notifyParentOfCompletion(env, taskId, subagentName, notifiedState, result, error);
+            notifyParentOfCompletion(launchContext, taskId, subagentName, notifiedState, result, error);
         } finally {
             coordinator.close();
             runningTasks.remove(taskId);
@@ -980,11 +975,12 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
      * Both are best-effort and fully guarded so a notification failure can never disturb task finalization:
      *
      * <ul>
-     * <li><b>Message queue (guaranteed, model-facing):</b> when the environment carries a {@link MessageQueueManager},
+     * <li><b>Message queue (guaranteed, model-facing):</b> when the launch context carries a
+     * {@link MessageQueueManager},
      * a
      * {@link QueuedInputPriority#NEXT}-priority notification scoped to the parent {@link AgentRuntimeId} is
      * enqueued, so the parent's ReAct loop drains and injects it on its next iteration.
-     * <li><b>Stream event (best-effort, observability):</b> when the environment carries a parent event sink, a
+     * <li><b>Stream event (best-effort, observability):</b> when the launch context carries a parent event sink, a
      * {@link SubagentTaskCompleted} event is emitted for live CLI display / web SSE. It is dropped when no listener is
      * attached (the parent is idle) — the queued notification remains the guaranteed path.
      * </ul>
@@ -993,8 +989,8 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
      * Called exactly once per task: from {@link #finalizeBackgroundTask} on the normal path, or from the pool-rejection
      * path — the two are mutually exclusive, so no de-duplication flag is required.
      *
-     * @param env
-     *            the subagent execution environment (carries the parent's queue, event sink, and context id)
+     * @param launchContext
+     *            the launch context (carries the parent's queue, event sink, and agent runtime id)
      * @param taskId
      *            the background task id
      * @param subagentName
@@ -1006,15 +1002,15 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
      * @param error
      *            the throwable that terminated the task, or {@code null} on a normal settle
      */
-    private void notifyParentOfCompletion(SubagentExecutionEnvironment env, String taskId, String subagentName,
+    private void notifyParentOfCompletion(SubagentLaunchContext launchContext, String taskId, String subagentName,
             BackgroundTaskState finalState, SubagentExecutionResult result, Throwable error) {
         final SubagentTaskCompleted.Outcome outcome = toOutcome(finalState);
         final String detail = completionDetail(outcome, result, error);
 
-        env.getMessageQueueManager().ifPresent(queue -> enqueueCompletionNotification(queue, env.getAgentRuntimeId(),
-                taskId, subagentName, outcome, detail));
-        env.getParentEventSink().ifPresent(
-                sink -> emitCompletionEvent(sink, env.getAgentRuntimeId(), taskId, subagentName, outcome, detail));
+        launchContext.getMessageQueueManager().ifPresent(queue -> enqueueCompletionNotification(queue,
+                launchContext.getAgentRuntimeId(), taskId, subagentName, outcome, detail));
+        launchContext.getParentEventSink().ifPresent(sink -> emitCompletionEvent(sink,
+                launchContext.getAgentRuntimeId(), taskId, subagentName, outcome, detail));
     }
 
     /** Maps a terminal {@link BackgroundTaskState} to the stream event's {@link SubagentTaskCompleted.Outcome}. */
@@ -1135,9 +1131,9 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         }
         // No live handle on this node. In a scale-out deployment the task may be running on another instance: when the
         // shared store shows it known and non-terminal, broadcast a cross-node stop so the owning node trips its
-        // handle.
-        // With the default NoopTaskStopSignal this branch is effectively unreachable on a single node (a non-terminal
-        // task always has its handle registered here before its taskId becomes observable), so behaviour is unchanged.
+        // handle. With the default NoopTaskStopSignal this branch is effectively unreachable on a single node (a
+        // non-terminal task always has its handle registered here before its taskId becomes observable), so behaviour
+        // is unchanged.
         final boolean stoppableElsewhere = taskStore.find(taskId).filter(task -> !task.getState().isTerminal())
                 .isPresent();
         if (stoppableElsewhere) {
@@ -1296,7 +1292,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
      *            the subagent name used for hook firing and behavior-registry lookup (never null)
      * @param inline
      *            the pre-resolved inline subagent to run directly, or {@code null} to resolve {@code name} against the
-     *            environment's {@link SubagentRegistry}
+     *            launch context's {@link SubagentRegistry}
      */
     private record SubagentTarget(String name, Subagent inline) {
         private SubagentTarget {

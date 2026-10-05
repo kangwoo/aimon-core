@@ -28,7 +28,6 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.PostToolContext;
@@ -38,8 +37,8 @@ import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.ToolUseResult;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.tools.ToolContextKeys;
@@ -239,7 +238,7 @@ class SubagentResultDisplayHookTest {
             lenient().when(subagentRegistry.getAllSubagents()).thenReturn(List.of());
             executionManager = mock(SubagentExecutionManager.class);
             taskTool = new TaskTool(mock(LlmModel.class), subagentRegistry, mock(ToolRegistry.class),
-                    mock(HookRegistry.class), mock(UserLocale.class), executionManager);
+                    mock(HookRegistry.class), executionManager);
         }
 
         @Test
@@ -337,8 +336,8 @@ class SubagentResultDisplayHookTest {
 
         /** Runs {@link TaskTool} in the foreground over a subagent returning {@code result}, and returns its text. */
         private String printedByTaskTool(SubagentExecutionResult result) {
-            when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq(subagent),
-                    anyString(), eq(description))).thenReturn(result);
+            when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq(subagent), anyString(),
+                    eq(description))).thenReturn(result);
             ToolResult toolResult = taskTool.execute(
                     ToolInput.of(Map.of("subagent_name", subagent, "prompt", "map it", "description", description)),
                     ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeId.of("agent:test"))

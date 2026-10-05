@@ -8,7 +8,6 @@ import java.time.Instant;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 
@@ -18,14 +17,12 @@ import at.aimon.core.hook.HookRegistry;
  */
 class SubagentContextsTest {
 
-    private static final UserLocale ENV = UserLocale.createDefault();
-
     @Test
     void subagentStartContextRequiresMandatoryFields() {
         final HookRegistry registry = new DefaultHookRegistry();
         assertThatNullPointerException()
                 .isThrownBy(() -> SubagentStartContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("main")
-                        .hookRegistry(registry).userLocale(ENV).subagentName("Explore").goal("find auth").build());
+                        .hookRegistry(registry).subagentName("Explore").goal("find auth").build());
     }
 
     @Test
@@ -34,7 +31,7 @@ class SubagentContextsTest {
         final Instant ts = Instant.parse("2026-05-08T00:00:00Z");
 
         final SubagentStartContext ctx = SubagentStartContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).userLocale(ENV).subagentName("Explore").taskId("t-1")
+                .invokerName("main").hookRegistry(registry).subagentName("Explore").taskId("t-1")
                 .goal("find auth files").description("auth audit").timestamp(ts).build();
 
         assertThat(ctx.getInvokerType()).isEqualTo(InvokerType.MAIN_AGENT);
@@ -50,8 +47,7 @@ class SubagentContextsTest {
     void subagentStartDescriptionDefaultsToEmpty() {
         final HookRegistry registry = new DefaultHookRegistry();
         final SubagentStartContext ctx = SubagentStartContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).userLocale(ENV).subagentName("Explore").taskId("t-1")
-                .goal("g").build();
+                .invokerName("main").hookRegistry(registry).subagentName("Explore").taskId("t-1").goal("g").build();
         assertThat(ctx.getDescription()).isEmpty();
     }
 
@@ -60,14 +56,13 @@ class SubagentContextsTest {
         final HookRegistry registry = new DefaultHookRegistry();
 
         final SubagentStopContext success = SubagentStopContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).userLocale(ENV).subagentName("Explore").taskId("t-1")
-                .success(true).build();
+                .invokerName("main").hookRegistry(registry).subagentName("Explore").taskId("t-1").success(true).build();
         assertThat(success.isSuccess()).isTrue();
         assertThat(success.getErrorMessage()).isEmpty();
 
         final SubagentStopContext failure = SubagentStopContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).userLocale(ENV).subagentName("Explore").taskId("t-1")
-                .success(false).errorMessage("LLM timeout").build();
+                .invokerName("main").hookRegistry(registry).subagentName("Explore").taskId("t-1").success(false)
+                .errorMessage("LLM timeout").build();
         assertThat(failure.isSuccess()).isFalse();
         assertThat(failure.getErrorMessage()).contains("LLM timeout");
     }

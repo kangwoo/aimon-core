@@ -116,7 +116,6 @@
  *
  * <ul>
  * <li>{@link at.aimon.core.filesystem.VirtualFileSystem} - Abstract file system operations
- * <li>{@link at.aimon.core.base.UserLocale} - User- and application-side settings (the time zone)
  * <li>{@link at.aimon.core.agent.Agent} - The agent using the tools
  * <li>{@link at.aimon.core.subagent.SubagentRegistry} - Registry of available subagents
  * <li>{@link at.aimon.core.subagent.SubagentExecutionManager} - Manager for subagent execution

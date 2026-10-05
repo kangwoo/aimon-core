@@ -11,8 +11,8 @@ import at.aimon.core.subagent.Subagent;
  *
  * <p>
  * Immutable value object. A task carries only inline subagents (named registry lookup is deferred — see the design's
- * non-goals). The per-task model is expressed via the subagent's own frontmatter; the run's base environment must not
- * set a {@code modelOverride}, which would outrank it.
+ * non-goals). The per-task model is expressed via the subagent's own frontmatter; the run's base launch context must
+ * not set a {@code modelOverride}, which would outrank it.
  */
 public final class AgentTask {
 

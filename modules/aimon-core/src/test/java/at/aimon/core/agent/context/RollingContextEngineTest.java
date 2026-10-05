@@ -35,7 +35,6 @@ import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.SessionLogManifestEntry;
 import at.aimon.core.agent.session.transcript.SummarySpan;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.hook.DefaultHookRegistry;
@@ -92,8 +91,8 @@ class RollingContextEngineTest {
 
     private ContextRequest request(String systemPrompt, boolean budgetForced) {
         return ContextRequest.builder().transcriptBuffer(buffer).systemPrompt(systemPrompt).model(MODEL)
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .executionEnvironment(EXECUTION_ENVIRONMENT).budgetForced(budgetForced).build();
+                .hookRegistry(new DefaultHookRegistry()).executionEnvironment(EXECUTION_ENVIRONMENT)
+                .budgetForced(budgetForced).build();
     }
 
     /** seq 0 = "goal", then {@code count} messages of {@code size} characters, alternating assistant / user. */

@@ -24,7 +24,6 @@ import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptReason;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.event.OnSessionStartContext;
 import at.aimon.core.hook.event.PostToolContext;
@@ -109,7 +108,7 @@ class DeclarativeHookCancellationTest {
             final DeclarativePostToolHook hook = new DeclarativePostToolHook("ops", NameOnlyPredicate.ANY, ACTION,
                     new HostShellActionExecutor(cancellationOnlyShell()));
             final PostToolContext context = PostToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("agent").hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
+                    .invokerName("agent").hookRegistry(new DefaultHookRegistry())
                     .executionCancellation(coordinator.getSignal()).toolUse(ToolUse.of("call-1", "Bash", Map.of()))
                     .toolUseResult(ToolUseResult.success("call-1", "ok")).iterationCount(1).build();
 
@@ -177,8 +176,7 @@ class DeclarativeHookCancellationTest {
             return new ShellCommandResult(0, "", "", Duration.ofMillis(1));
         });
         final OnSessionStartContext context = OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("agent").hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .build();
+                .invokerName("agent").hookRegistry(new DefaultHookRegistry()).build();
 
         new DeclarativeOnSessionStartHook("ops", ACTION, new HostShellActionExecutor(shell)).execute(context);
 
@@ -231,8 +229,7 @@ class DeclarativeHookCancellationTest {
 
     private static PreToolContext preTool(CancellationSignal signal) {
         return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .executionCancellation(signal).toolUse(ToolUse.of("call-1", "Bash", Map.of())).iterationCount(1)
-                .build();
+                .hookRegistry(new DefaultHookRegistry()).executionCancellation(signal)
+                .toolUse(ToolUse.of("call-1", "Bash", Map.of())).iterationCount(1).build();
     }
 }

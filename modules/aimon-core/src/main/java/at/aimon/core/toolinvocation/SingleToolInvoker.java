@@ -186,10 +186,10 @@ public final class SingleToolInvoker {
                 // PermissionDenied advisory chain — PreTool/tool execution is skipped.
                 final PermissionRequestContext permissionRequestContext = PermissionRequestContext.builder()
                         .invokerType(spec.getInvokerType()).invokerName(spec.getInvokerName())
-                        .hookRegistry(spec.getHookRegistry()).userLocale(spec.getUserLocale())
-                        .executionEnvironment(environmentOf(spec)).executionCancellation(cancellationOf(spec))
-                        .toolName(toolUse.getName()).toolInput(ToolInput.of(toolUse.getInput()))
-                        .executionAttributes(spec.getExecutionAttributes()).build();
+                        .hookRegistry(spec.getHookRegistry()).executionEnvironment(environmentOf(spec))
+                        .executionCancellation(cancellationOf(spec)).toolName(toolUse.getName())
+                        .toolInput(ToolInput.of(toolUse.getInput())).executionAttributes(spec.getExecutionAttributes())
+                        .build();
                 final List<HookResult> permissionResults = hookExecutionManager
                         .executePermissionRequest(permissionRequestContext);
                 feedback.addAll(HookFeedback.collectAdvisory(permissionResults));
@@ -211,10 +211,9 @@ public final class SingleToolInvoker {
                 // Execute PreTool hooks
                 final PreToolContext preToolContext = PreToolContext.builder().executorType(spec.getInvokerType())
                         .invokerName(spec.getInvokerName()).hookRegistry(spec.getHookRegistry())
-                        .userLocale(spec.getUserLocale()).executionEnvironment(environmentOf(spec))
-                        .executionCancellation(cancellationOf(spec)).toolUse(toolUse)
-                        .iterationCount(spec.getIterationCount()).executionAttributes(spec.getExecutionAttributes())
-                        .build();
+                        .executionEnvironment(environmentOf(spec)).executionCancellation(cancellationOf(spec))
+                        .toolUse(toolUse).iterationCount(spec.getIterationCount())
+                        .executionAttributes(spec.getExecutionAttributes()).build();
                 final List<HookResult> preToolResults = hookExecutionManager.executePreTool(preToolContext);
                 feedback.addAll(HookFeedback.collectAdvisory(preToolResults));
 
@@ -317,9 +316,9 @@ public final class SingleToolInvoker {
         try {
             final PermissionDeniedContext deniedContext = PermissionDeniedContext.builder()
                     .invokerType(spec.getInvokerType()).invokerName(spec.getInvokerName())
-                    .hookRegistry(spec.getHookRegistry()).userLocale(spec.getUserLocale())
-                    .executionEnvironment(environmentOf(spec)).executionCancellation(liveCancellationOf(spec))
-                    .toolName(toolUse.getName()).toolInput(ToolInput.of(toolUse.getInput())).denyReason(combinedReason)
+                    .hookRegistry(spec.getHookRegistry()).executionEnvironment(environmentOf(spec))
+                    .executionCancellation(liveCancellationOf(spec)).toolName(toolUse.getName())
+                    .toolInput(ToolInput.of(toolUse.getInput())).denyReason(combinedReason)
                     .executionAttributes(spec.getExecutionAttributes()).build();
             hookExecutionManager.executePermissionDenied(deniedContext);
         } catch (Exception e) {
@@ -341,9 +340,8 @@ public final class SingleToolInvoker {
         try {
             final PostToolContext postToolContext = PostToolContext.builder().executorType(spec.getInvokerType())
                     .invokerName(spec.getInvokerName()).hookRegistry(spec.getHookRegistry())
-                    .userLocale(spec.getUserLocale()).executionEnvironment(environmentOf(spec))
-                    .executionCancellation(liveCancellationOf(spec)).toolUse(effectiveToolUse)
-                    .toolUseResult(toolUseResult).iterationCount(spec.getIterationCount())
+                    .executionEnvironment(environmentOf(spec)).executionCancellation(liveCancellationOf(spec))
+                    .toolUse(effectiveToolUse).toolUseResult(toolUseResult).iterationCount(spec.getIterationCount())
                     .executionAttributes(spec.getExecutionAttributes()).build();
             final List<HookResult> postToolResults = hookExecutionManager.executePostTool(postToolContext);
             feedback.addAll(HookFeedback.collectAdvisory(postToolResults));

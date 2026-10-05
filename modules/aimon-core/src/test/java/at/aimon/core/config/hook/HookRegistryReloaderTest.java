@@ -25,7 +25,6 @@ import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.HookExecutionManager;
@@ -50,8 +49,7 @@ class HookRegistryReloaderTest {
     private static final ShellActionExecutor SHELL_EXECUTOR = new HostShellActionExecutor(
             org.mockito.Mockito.mock(VirtualShell.class));
 
-    private static final UserLocale ENV = UserLocale.createDefault();
-    private static final ReloadInvoker INVOKER = new ReloadInvoker(InvokerType.MAIN_AGENT, "main", ENV);
+    private static final ReloadInvoker INVOKER = new ReloadInvoker(InvokerType.MAIN_AGENT, "main");
 
     @TempDir
     Path userDir;

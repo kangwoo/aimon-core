@@ -8,7 +8,6 @@ import java.util.Optional;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.execution.HookContext;
@@ -37,7 +36,7 @@ import at.aimon.core.llm.ToolUseResult;
  * {
  *     &#64;code
  *     PostToolContext context = PostToolContext.builder().invokerType(InvokerType.MAIN_AGENT)
- *             .invokerName("default-agent").userLocale(userLocale).toolUse(toolUse).toolResult(toolResult)
+ *             .invokerName("default-agent").toolUse(toolUse).toolResult(toolResult)
  *             .iterationCount(3).build();
  * }
  * </pre>
@@ -55,7 +54,6 @@ public final class PostToolContext implements HookContext {
     private final InvokerType invokerType;
     private final String invokerName;
     private final HookRegistry hookRegistry;
-    private final UserLocale userLocale;
     private final ExecutionEnvironment executionEnvironment;
     private final CancellationSignal executionCancellation;
     private final ToolUse toolUse;
@@ -69,7 +67,6 @@ public final class PostToolContext implements HookContext {
         invokerType = Objects.requireNonNull(builder.invokerType, "Executor type cannot be null");
         invokerName = Objects.requireNonNull(builder.invokerName, "Executor name cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
-        userLocale = Objects.requireNonNull(builder.userLocale, "UserLocale cannot be null");
         executionEnvironment = builder.executionEnvironment;
         executionCancellation = builder.executionCancellation;
         toolUse = Objects.requireNonNull(builder.toolUse, "Tool use cannot be null");
@@ -95,11 +92,6 @@ public final class PostToolContext implements HookContext {
     @Override
     public HookRegistry getHookRegistry() {
         return hookRegistry;
-    }
-
-    @Override
-    public UserLocale getUserLocale() {
-        return userLocale;
     }
 
     @Override
@@ -187,7 +179,7 @@ public final class PostToolContext implements HookContext {
      * Returns a copy of this context with the given current output applied.
      *
      * <p>
-     * The original tool use result, registry, user locale and timestamp are preserved. Used by the hook executor to
+     * The original tool use result, registry and timestamp are preserved. Used by the hook executor to
      * thread an updated output to subsequent PostTool hooks.
      *
      * @param newOutput
@@ -202,9 +194,9 @@ public final class PostToolContext implements HookContext {
                 ? ToolUseResult.error(toolUse.getId(), newOutput.getContent())
                 : ToolUseResult.success(toolUse.getId(), newOutput.getContent());
         final Builder b = new Builder().executorType(invokerType).invokerName(invokerName).hookRegistry(hookRegistry)
-                .userLocale(userLocale).executionEnvironment(executionEnvironment)
-                .executionCancellation(executionCancellation).toolUse(toolUse).toolUseResult(originalToolUseResult)
-                .iterationCount(iterationCount).timestamp(timestamp).executionAttributes(executionAttributes);
+                .executionEnvironment(executionEnvironment).executionCancellation(executionCancellation)
+                .toolUse(toolUse).toolUseResult(originalToolUseResult).iterationCount(iterationCount)
+                .timestamp(timestamp).executionAttributes(executionAttributes);
         b.currentToolUseResult = rebuilt;
         return new PostToolContext(b);
     }
@@ -222,7 +214,6 @@ public final class PostToolContext implements HookContext {
         private InvokerType invokerType;
         private String invokerName;
         private HookRegistry hookRegistry;
-        private UserLocale userLocale;
         private ExecutionEnvironment executionEnvironment;
         private CancellationSignal executionCancellation;
         private ToolUse toolUse;
@@ -268,18 +259,6 @@ public final class PostToolContext implements HookContext {
          */
         public Builder hookRegistry(HookRegistry hookRegistry) {
             this.hookRegistry = hookRegistry;
-            return this;
-        }
-
-        /**
-         * Sets the user locale.
-         *
-         * @param userLocale
-         *            the user locale (must not be null)
-         * @return This builder
-         */
-        public Builder userLocale(UserLocale userLocale) {
-            this.userLocale = userLocale;
             return this;
         }
 

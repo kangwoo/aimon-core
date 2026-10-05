@@ -22,7 +22,6 @@ import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.PostToolHook;
@@ -33,7 +32,7 @@ import at.aimon.core.skill.hook.SkillHookSet;
 import at.aimon.core.skill.hook.SkillScopedHookRegistry;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.workflow.WorkflowBackgroundConfig;
@@ -61,8 +60,7 @@ class GraalJsWorkflowToolTest extends AbstractGraalJsRunTest {
         final GraalJsWorkflowTool.Builder builder = GraalJsWorkflowTool.builder()
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).subagentRegistry(registry)
                 .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry())
-                .userLocale(UserLocale.createDefault()).subagentExecutionManager(manager).engines(engines)
-                .backgroundRunner(backgroundRunner);
+                .subagentExecutionManager(manager).engines(engines).backgroundRunner(backgroundRunner);
         if (sandbox != null) {
             builder.sandbox(sandbox);
         }
@@ -123,8 +121,8 @@ class GraalJsWorkflowToolTest extends AbstractGraalJsRunTest {
         final GraalJsWorkflowTool allowing = GraalJsWorkflowTool.builder()
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).subagentRegistry(new InMemorySubagentRegistry())
                 .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry())
-                .userLocale(UserLocale.createDefault()).subagentExecutionManager(manager).engines(engines)
-                .scriptAttributeKeys(List.of("sandbox.profile")).build();
+                .subagentExecutionManager(manager).engines(engines).scriptAttributeKeys(List.of("sandbox.profile"))
+                .build();
 
         final ToolResult allowed = allowing.execute(ToolInput.of(Map.of("script",
                 "return agent({ agentType: 'a', goal: 'g', attributes: { sandbox: { profile: 'ro' } } }).text;")),
@@ -145,8 +143,8 @@ class GraalJsWorkflowToolTest extends AbstractGraalJsRunTest {
         final GraalJsWorkflowTool.Builder builder = GraalJsWorkflowTool.builder()
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).subagentRegistry(new InMemorySubagentRegistry())
                 .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry())
-                .userLocale(UserLocale.createDefault()).subagentExecutionManager(manager).engines(engines)
-                .subagentResolver(SubagentResolver.inline()).scriptAttributeKeys(List.of("gpu"));
+                .subagentExecutionManager(manager).engines(engines).subagentResolver(SubagentResolver.inline())
+                .scriptAttributeKeys(List.of("gpu"));
 
         org.assertj.core.api.Assertions.assertThatThrownBy(builder::build).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("scriptAttributeKeys");
@@ -226,8 +224,7 @@ class GraalJsWorkflowToolTest extends AbstractGraalJsRunTest {
                 insideSkill(fromContext));
 
         assertThat(result.isSuccess()).as(result.getContent()).isTrue();
-        final ArgumentCaptor<SubagentExecutionEnvironment> env = ArgumentCaptor
-                .forClass(SubagentExecutionEnvironment.class);
+        final ArgumentCaptor<SubagentLaunchContext> env = ArgumentCaptor.forClass(SubagentLaunchContext.class);
         verify(manager).execute(env.capture(), any(Subagent.class), anyString());
         assertThat(env.getValue().getHookRegistry()).isSameAs(fromContext);
     }

@@ -2,7 +2,7 @@ package at.aimon.core.workflow;
 
 /**
  * Neutral, fully-optional configuration bundle for building an {@link WorkflowRunner} via
- * {@code WorkflowRunners.create(manager, baseEnv, options)} (design §5.1).
+ * {@code WorkflowRunners.create(manager, baseLaunchContext, options)} (design §5.1).
  *
  * <p>
  * This is the assembly seam that lets a consumer (CLI / web bootstrap) configure resume, background hosting, and the
@@ -20,7 +20,7 @@ public final class WorkflowRunnerOptions {
 
     /**
      * @return options with every field defaulted (equivalent to the two-arg
-     *         {@code WorkflowRunners.create(manager, baseEnv)})
+     *         {@code WorkflowRunners.create(manager, baseLaunchContext)})
      */
     public static WorkflowRunnerOptions defaults() {
         return builder().build();

@@ -5,7 +5,6 @@ import java.util.Optional;
 
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
@@ -23,7 +22,6 @@ public final class CompactionRequest {
     private final CompactionTrigger trigger;
     private final LlmModel model;
     private final HookRegistry hookRegistry;
-    private final UserLocale userLocale;
     private final ExecutionEnvironment executionEnvironment;
     private final String customInstructions;
     private final boolean forced;
@@ -36,7 +34,6 @@ public final class CompactionRequest {
         this.trigger = Objects.requireNonNull(builder.trigger, "Trigger cannot be null");
         this.model = Objects.requireNonNull(builder.model, "Model cannot be null");
         this.hookRegistry = Objects.requireNonNull(builder.hookRegistry, "HookRegistry cannot be null");
-        this.userLocale = Objects.requireNonNull(builder.userLocale, "UserLocale cannot be null");
         this.executionEnvironment = builder.executionEnvironment;
         this.customInstructions = builder.customInstructions;
         this.forced = builder.forced;
@@ -63,10 +60,6 @@ public final class CompactionRequest {
 
     public HookRegistry getHookRegistry() {
         return hookRegistry;
-    }
-
-    public UserLocale getUserLocale() {
-        return userLocale;
     }
 
     /**
@@ -139,7 +132,6 @@ public final class CompactionRequest {
         private CompactionTrigger trigger;
         private LlmModel model;
         private HookRegistry hookRegistry;
-        private UserLocale userLocale;
         private ExecutionEnvironment executionEnvironment;
         private String customInstructions;
         private boolean forced;
@@ -167,11 +159,6 @@ public final class CompactionRequest {
 
         public Builder hookRegistry(HookRegistry hookRegistry) {
             this.hookRegistry = hookRegistry;
-            return this;
-        }
-
-        public Builder userLocale(UserLocale userLocale) {
-            this.userLocale = userLocale;
             return this;
         }
 

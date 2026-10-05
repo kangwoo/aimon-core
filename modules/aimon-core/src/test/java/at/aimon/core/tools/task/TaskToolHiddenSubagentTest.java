@@ -22,15 +22,14 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.exception.SubagentNotFoundException;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.tools.ToolContextKeys;
@@ -47,7 +46,7 @@ class TaskToolHiddenSubagentTest {
     private final InMemorySubagentRegistry registry = new InMemorySubagentRegistry();
     private final SubagentExecutionManager executionManager = mock(SubagentExecutionManager.class);
     private final TaskTool tool = new TaskTool(mock(LlmModel.class), registry, mock(ToolRegistry.class),
-            mock(HookRegistry.class), mock(UserLocale.class), executionManager);
+            mock(HookRegistry.class), executionManager);
 
     TaskToolHiddenSubagentTest() {
         registry.register(
@@ -71,7 +70,7 @@ class TaskToolHiddenSubagentTest {
         final InMemorySubagentRegistry onlyHidden = new InMemorySubagentRegistry();
         onlyHidden.register(Subagent.builder().name(HIDDEN).systemPrompt("x").hidden(true).build());
         final TaskTool onlyHiddenTool = new TaskTool(mock(LlmModel.class), onlyHidden, mock(ToolRegistry.class),
-                mock(HookRegistry.class), mock(UserLocale.class), executionManager);
+                mock(HookRegistry.class), executionManager);
 
         assertThat(onlyHiddenTool.getDefinition().getDescription()).contains("No subagents currently available")
                 .doesNotContain(HIDDEN);
@@ -100,7 +99,7 @@ class TaskToolHiddenSubagentTest {
     @Test
     @DisplayName("the names offered after an unknown subagent leave the hidden one out")
     void theNotFoundListOmitsAHiddenSubagent() {
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("ghost"), anyString(),
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("ghost"), anyString(),
                 anyString())).thenThrow(new SubagentNotFoundException("ghost"));
 
         final ToolResult result = tool.execute(input("ghost", false), context());
@@ -113,7 +112,7 @@ class TaskToolHiddenSubagentTest {
     @DisplayName("a visible subagent is launched as before")
     void aVisibleSubagentStillRuns() {
         final Instant now = Instant.now();
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"), anyString(),
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"), anyString(),
                 anyString()))
                 .thenReturn(SubagentExecutionResult.success("done",
                         SessionSnapshot.of(SessionId.generate(), "sys", List.of()), ExecutionMetadata.builder()

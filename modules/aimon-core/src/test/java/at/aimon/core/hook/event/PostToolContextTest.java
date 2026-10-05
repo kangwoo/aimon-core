@@ -8,7 +8,6 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.ToolUse;
@@ -18,11 +17,9 @@ class PostToolContextTest {
 
     private static PostToolContext newContext(ToolUseResult result) {
         final HookRegistry registry = new DefaultHookRegistry();
-        final UserLocale env = UserLocale.createDefault();
         final ToolUse toolUse = ToolUse.of("id", "Bash", Map.of("command", "echo"));
         return PostToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(registry).userLocale(env).toolUse(toolUse).toolUseResult(result).iterationCount(1)
-                .build();
+                .hookRegistry(registry).toolUse(toolUse).toolUseResult(result).iterationCount(1).build();
     }
 
     @Test

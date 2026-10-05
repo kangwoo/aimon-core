@@ -6,7 +6,6 @@ import java.util.Optional;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.interrupt.CancellationSignal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.EnvironmentDescriptor;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
@@ -20,8 +19,8 @@ import at.aimon.core.hook.HookRegistry;
  * <ul>
  * <li>Executor type (MAIN_AGENT or SUBAGENT)
  * <li>Executor name
- * <li>User locale (the time zone) — where commands run is {@link #getExecutionEnvironment()} and what that place
- * looks like is {@link #getEnvironmentDescriptor()}
+ * <li>Where commands run ({@link #getExecutionEnvironment()}) and what that place looks like
+ * ({@link #getEnvironmentDescriptor()})
  * <li>Timestamp of the event
  * </ul>
  *
@@ -49,15 +48,6 @@ public interface HookContext {
      * @return The hook registry (never null)
      */
     HookRegistry getHookRegistry();
-
-    /**
-     * Gets the user locale — the user- and application-side settings, today the time zone. It says nothing about
-     * where commands run: the working directory, platform and OS version are on {@link #getEnvironmentDescriptor()},
-     * and the place itself is {@link #getExecutionEnvironment()}.
-     *
-     * @return The user locale (never null)
-     */
-    UserLocale getUserLocale();
 
     /**
      * The execution environment the firing execution runs in — the same instance its tools reach through

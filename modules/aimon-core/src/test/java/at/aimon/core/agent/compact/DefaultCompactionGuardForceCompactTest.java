@@ -11,7 +11,6 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.InMemoryModelContextWindowRegistry;
@@ -53,13 +52,11 @@ class DefaultCompactionGuardForceCompactTest {
     private static final int AUTO_BAND_ESTIMATE = 7_500;
 
     private HookRegistry hookRegistry;
-    private UserLocale userLocale;
     private ModelContextWindowRegistry modelContextWindowRegistry;
 
     @BeforeEach
     void setUp() {
         hookRegistry = new DefaultHookRegistry();
-        userLocale = UserLocale.createDefault();
         modelContextWindowRegistry = InMemoryModelContextWindowRegistry.builder()
                 .defaultLimits(ModelContextLimits.builder().contextWindow(10_000).reservedOutputTokens(1_000)
                         .autoCompactBuffer(2_000).warningBuffer(1_000).blockingBuffer(500).build())
@@ -74,14 +71,14 @@ class DefaultCompactionGuardForceCompactTest {
 
         // maybeCompact: estimate is in the warning band but below the model's own auto-compact threshold -> WARN,
         // no compaction performed.
-        CompactionDecision maybeDecision = guard.maybeCompact(memory, model(), hookRegistry, userLocale);
+        CompactionDecision maybeDecision = guard.maybeCompact(memory, model(), hookRegistry);
         assertThat(maybeDecision.getAction()).isEqualTo(CompactionDecision.Action.WARN);
         assertThat(maybeDecision.getCompactionResult()).isEmpty();
         assertThat(engine.callCount.get()).isZero();
 
         // forceCompact: same session, same estimate, but the effective trigger is lowered to the warning
         // threshold -> COMPACT is performed. This is the core new behaviour.
-        CompactionDecision forceDecision = guard.forceCompact(memory, model(), hookRegistry, userLocale);
+        CompactionDecision forceDecision = guard.forceCompact(memory, model(), hookRegistry);
         assertThat(forceDecision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
         assertThat(forceDecision.getCompactionResult()).isPresent();
         assertThat(engine.callCount.get()).isEqualTo(1);
@@ -93,11 +90,11 @@ class DefaultCompactionGuardForceCompactTest {
         DefaultCompactionGuard guard = newGuard(engine, AUTO_BAND_ESTIMATE);
 
         // Separate sessions so neither call is affected by the other's post-compaction state.
-        CompactionDecision maybeDecision = guard.maybeCompact(freshMemory(), model(), hookRegistry, userLocale);
+        CompactionDecision maybeDecision = guard.maybeCompact(freshMemory(), model(), hookRegistry);
         assertThat(maybeDecision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
         assertThat(maybeDecision.getCompactionResult()).isPresent();
 
-        CompactionDecision forceDecision = guard.forceCompact(freshMemory(), model(), hookRegistry, userLocale);
+        CompactionDecision forceDecision = guard.forceCompact(freshMemory(), model(), hookRegistry);
         assertThat(forceDecision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
         assertThat(forceDecision.getCompactionResult()).isPresent();
 
@@ -108,8 +105,7 @@ class DefaultCompactionGuardForceCompactTest {
     void noOpGuardForceCompactDelegatesToMaybeCompactAndNeverCompacts() {
         TranscriptBuffer memory = freshMemory();
 
-        CompactionDecision decision = NoOpCompactionGuard.instance().forceCompact(memory, model(), hookRegistry,
-                userLocale);
+        CompactionDecision decision = NoOpCompactionGuard.instance().forceCompact(memory, model(), hookRegistry);
 
         // NoOpCompactionGuard does not override forceCompact, so the CompactionGuard#forceCompact default delegates
         // to maybeCompact -- which NoOpCompactionGuard always answers with NONE("compaction disabled").

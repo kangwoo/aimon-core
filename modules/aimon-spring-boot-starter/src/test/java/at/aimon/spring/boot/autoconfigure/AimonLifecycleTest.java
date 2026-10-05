@@ -24,7 +24,6 @@ import org.springframework.context.annotation.Configuration;
 import at.aimon.bootstrap.AimonStack;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.HookRegistry;
@@ -217,8 +216,8 @@ class AimonLifecycleTest {
 
         stack.agentExecutor().getHookExecutionManager()
                 .executePreTool(PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName(AGENT)
-                        .hookRegistry(registry).userLocale(UserLocale.createDefault())
-                        .toolUse(ToolUse.of("id", "Read", Map.of("file_path", "/tmp/x"))).iterationCount(1).build());
+                        .hookRegistry(registry).toolUse(ToolUse.of("id", "Read", Map.of("file_path", "/tmp/x")))
+                        .iterationCount(1).build());
     }
 
     @Test

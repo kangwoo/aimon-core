@@ -7,7 +7,6 @@ import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.orca.OrcaProviderDependencies;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.credential.CredentialStore;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.hook.HookRegistry;
@@ -30,7 +29,7 @@ import at.aimon.core.workflow.WorkflowRunner;
  *
  * <p>
  * Common registry dependencies are held via {@link OrcaProviderDependencies} (composition), while tool-specific fields
- * ({@code controlFileSystem}, {@code userLocale}, {@code agent}) are held directly.
+ * ({@code controlFileSystem}, {@code agent}) are held directly.
  *
  * <p>
  * <b>No working filesystem, no shell.</b> This context deliberately offers no handle to the filesystem the model's
@@ -47,7 +46,7 @@ import at.aimon.core.workflow.WorkflowRunner;
  * {
  *     &#64;code
  *     OrcaToolProviderContext context = OrcaToolProviderContext.builder().controlFileSystem(controlFileSystem)
- *             .userLocale(userLocale).agent(agent).dependencies(deps).build();
+ *             .agent(agent).dependencies(deps).build();
  * }
  * </pre>
  *
@@ -108,7 +107,6 @@ public final class OrcaToolProviderContext {
     }
 
     private final VirtualFileSystem controlFileSystem;
-    private final UserLocale userLocale;
     private final Agent agent;
     private final OrcaProviderDependencies dependencies;
     private final List<ToolContextEnricher> toolContextEnrichers;
@@ -116,7 +114,6 @@ public final class OrcaToolProviderContext {
 
     private OrcaToolProviderContext(Builder builder) {
         controlFileSystem = builder.controlFileSystem;
-        userLocale = builder.userLocale;
         agent = builder.agent;
         dependencies = Objects.requireNonNull(builder.dependencies, "dependencies must not be null");
         toolContextEnrichers = builder.toolContextEnrichers != null
@@ -134,15 +131,6 @@ public final class OrcaToolProviderContext {
      */
     public VirtualFileSystem getControlFileSystem() {
         return controlFileSystem;
-    }
-
-    /**
-     * Returns the user locale.
-     *
-     * @return the user locale, may be null
-     */
-    public UserLocale getUserLocale() {
-        return userLocale;
     }
 
     /**
@@ -284,7 +272,6 @@ public final class OrcaToolProviderContext {
      */
     public static final class Builder {
         private VirtualFileSystem controlFileSystem;
-        private UserLocale userLocale;
         private Agent agent;
         private OrcaProviderDependencies dependencies;
         private List<ToolContextEnricher> toolContextEnrichers;
@@ -302,18 +289,6 @@ public final class OrcaToolProviderContext {
          */
         public Builder controlFileSystem(VirtualFileSystem controlFileSystem) {
             this.controlFileSystem = controlFileSystem;
-            return this;
-        }
-
-        /**
-         * Sets the user locale.
-         *
-         * @param userLocale
-         *            the user locale
-         * @return this builder
-         */
-        public Builder userLocale(UserLocale userLocale) {
-            this.userLocale = userLocale;
             return this;
         }
 

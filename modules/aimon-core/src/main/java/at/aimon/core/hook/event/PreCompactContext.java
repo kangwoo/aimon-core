@@ -8,7 +8,6 @@ import java.util.Optional;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.compact.CompactionTrigger;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.execution.HookContext;
@@ -36,7 +35,6 @@ public final class PreCompactContext implements HookContext {
     private final InvokerType invokerType;
     private final String invokerName;
     private final HookRegistry hookRegistry;
-    private final UserLocale userLocale;
     private final ExecutionEnvironment executionEnvironment;
     private final CompactionTrigger trigger;
     private final String sessionIdValue;
@@ -50,7 +48,6 @@ public final class PreCompactContext implements HookContext {
         invokerType = Objects.requireNonNull(builder.invokerType, "Invoker type cannot be null");
         invokerName = Objects.requireNonNull(builder.invokerName, "Invoker name cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
-        userLocale = Objects.requireNonNull(builder.userLocale, "UserLocale cannot be null");
         executionEnvironment = builder.executionEnvironment;
         trigger = Objects.requireNonNull(builder.trigger, "Trigger cannot be null");
         sessionIdValue = builder.sessionIdValue != null ? builder.sessionIdValue : "";
@@ -74,11 +71,6 @@ public final class PreCompactContext implements HookContext {
     @Override
     public HookRegistry getHookRegistry() {
         return hookRegistry;
-    }
-
-    @Override
-    public UserLocale getUserLocale() {
-        return userLocale;
     }
 
     @Override
@@ -139,7 +131,6 @@ public final class PreCompactContext implements HookContext {
         private InvokerType invokerType;
         private String invokerName;
         private HookRegistry hookRegistry;
-        private UserLocale userLocale;
         private ExecutionEnvironment executionEnvironment;
         private CompactionTrigger trigger;
         private String sessionIdValue;
@@ -164,11 +155,6 @@ public final class PreCompactContext implements HookContext {
 
         public Builder hookRegistry(HookRegistry hookRegistry) {
             this.hookRegistry = hookRegistry;
-            return this;
-        }
-
-        public Builder userLocale(UserLocale userLocale) {
-            this.userLocale = userLocale;
             return this;
         }
 

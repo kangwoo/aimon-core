@@ -79,9 +79,9 @@ public final class SubagentOnStartGate {
             CancellationSignal executionCancellation) {
         Objects.requireNonNull(context, "context cannot be null");
         return OnStartContext.builder().executorType(InvokerType.SUBAGENT).invokerName(context.getSubagent().getName())
-                .hookRegistry(context.getHookRegistry()).userLocale(context.getUserLocale())
-                .executionEnvironment(executionEnvironment).executionCancellation(executionCancellation)
-                .userMessage(goal).executionAttributes(executionAttributes).build();
+                .hookRegistry(context.getHookRegistry()).executionEnvironment(executionEnvironment)
+                .executionCancellation(executionCancellation).userMessage(goal).executionAttributes(executionAttributes)
+                .build();
     }
 
     /**

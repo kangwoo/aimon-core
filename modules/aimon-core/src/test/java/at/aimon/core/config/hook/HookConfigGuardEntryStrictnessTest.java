@@ -27,7 +27,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.HookExecutionManager;
@@ -54,8 +53,7 @@ import at.aimon.core.skill.hook.declarative.ShellActionExecutor;
 class HookConfigGuardEntryStrictnessTest {
 
     private static final ShellActionExecutor HOST_SHELL = new HostShellActionExecutor(mock(VirtualShell.class));
-    private static final ReloadInvoker INVOKER = new ReloadInvoker(InvokerType.MAIN_AGENT, "main",
-            UserLocale.createDefault());
+    private static final ReloadInvoker INVOKER = new ReloadInvoker(InvokerType.MAIN_AGENT, "main");
 
     @TempDir
     Path userDir;
