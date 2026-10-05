@@ -88,6 +88,17 @@ class WorkflowToolAttributesTest {
     }
 
     @Test
+    @DisplayName("EE-45: the built-in Workflow tool takes no 'attributes' input — placement is not the model's to choose")
+    @SuppressWarnings("unchecked")
+    void theBuiltInToolHasNoAttributesInput() {
+        final Map<String, Object> schema = newTool(new InMemorySubagentRegistry(),
+                recordingBehaviors(new ConcurrentHashMap<>())).getDefinition().getInputSchema();
+
+        assertThat((Map<String, Object>) schema.get("properties")).doesNotContainKey("attributes");
+        assertThat(schema).containsEntry("additionalProperties", false);
+    }
+
+    @Test
     @DisplayName("EE-44: a hidden role definition still gives its role's steps their attributes")
     void aHiddenRoleDefinitionStillPlacesItsSteps() {
         final InMemorySubagentRegistry registry = new InMemorySubagentRegistry();

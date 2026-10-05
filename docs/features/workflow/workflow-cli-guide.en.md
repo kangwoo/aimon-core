@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/workflow/workflow-cli-guide.md
-source_commit: 556ca5d
+source_commit: 9edefb8
 ---
 
 # Workflow CLI Guide (the aimon-cli view)
@@ -172,21 +172,26 @@ A top-level `return` and `await` are both legal (the script is wrapped in an asy
   model: "...",                // a model override
   tools: ["Read", "Grep"],     // the tool allow-list
   maxIterations: 10,
-  attributes: { sandbox: { slot: "build" } }  // attributes an execution environment provider reads
+  attributes: { sandbox: { profile: "ro" } }  // attributes an execution environment provider reads — only keys the operator allowed (default: none)
 }
 ```
 
 At least one of `agentType` and `systemPrompt` is required.
 
 `attributes` are read by the provider that decides which execution environment (a sandbox slot, say) the step runs in.
-If a subagent is registered under the same name as `agentType`, that definition's `attributes` are laid down first and
-the step's `attributes` **may only add keys the registered definition does not set.** The keys the registered definition
-sets are pinned — a step that gives one of them a different value fails the script (the message names the `agentType`,
-the key, the registered value and the script's value), and a step that gives the same value changes nothing. Scripts are
-written by the model, so this keeps a script from moving a subagent the operator registered with `sandbox.slot: isolated`
-to `privileged`. A step cannot delete a registered key either. An unregistered `agentType` (or a step with no
-`agentType`) has no keys to pin, so the step's `attributes` are used as they are — whether a model-written script may
-set `attributes` at all is not decided yet (backlog EE-45). Only attributes are taken from the registered definition.
+If a subagent is registered under the same name as `agentType`, that definition's `attributes` are laid down first.
+Scripts are written by the model and attributes decide where a step runs, so two rules bound a step's `attributes`.
+**The keys the registered definition sets are pinned** — a step that gives one of them a different value fails the
+script (the message names the `agentType`, the key, the registered value and the script's value), and a step that gives
+the same value changes nothing. This keeps a script from moving a subagent the operator registered with
+`sandbox.slot: isolated` to `privileged`. A step cannot delete a registered key either. **Every other key must be one
+the operator allowed** — that is a key the registered definition does not set, and every key of an unregistered
+`agentType` (or of a step with no `agentType`). The allow-list is empty by default, so a script that gives such
+`attributes` fails with an error naming the key and the remedy (pinning alone leaves a way round it: rename the step and
+ask for `privileged`). Whoever assembles the tool allows keys with
+`GraalJsWorkflowTool.Builder.scriptAttributeKeys(...)`, as dotted keys (`sandbox.profile`). Listing a key does not unpin
+it. List only keys that are safe whatever value arrives; a key that decides placement, such as `sandbox.slot`, goes in
+the definition of a subagent registered under that name. Only attributes are taken from the registered definition.
 The step is still named `graaljs:<agentType>`, and the prompt and tools are still the step's own. The reading rules are
 those of a definition file's `attributes` block: `{ sandbox: { slot: "build" } }` and `{ "sandbox.slot": "build" }` are
 the same attribute, numbers and booleans become text (`1.0` becomes `"1"`), and a non-object value, an array, an entry
@@ -386,6 +391,9 @@ To see the tool calls themselves, keep `cli.showToolCalls: true`.
 - `/runs stop` only reaches a run alive on this node.
 - The `WorkflowJs` sandbox values (the statement limit, the 30-minute timeout, `console` being disabled) cannot be
   adjusted from the configuration file. If you need to adjust them, embed the library and supply a `JsSandboxConfig` yourself.
+- The allow-list of `attributes` keys a script may set (`scriptAttributeKeys`) is not in the configuration file either —
+  in the CLI it is always empty. To give a step attributes in the CLI, define a subagent under that `agentType` name and
+  write the `attributes` there.
 - The `isolation: 'worktree'` descriptor needs a worktree factory to work. The CLI injects one when a file system is
   present; without it, that step is treated as an execution failure.
 - A workflow is **non-interactive**. Asking the user something back mid-script is not possible.

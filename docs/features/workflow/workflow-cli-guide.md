@@ -166,20 +166,23 @@ cli:
   model: "...",                // 모델 오버라이드
   tools: ["Read", "Grep"],     // 도구 허용 목록
   maxIterations: 10,
-  attributes: { sandbox: { slot: "build" } }  // 실행 환경 제공자가 읽는 속성
+  attributes: { sandbox: { profile: "ro" } }  // 실행 환경 제공자가 읽는 속성 — 운영자가 허용한 키만 (기본: 없음)
 }
 ```
 
 `agentType` 또는 `systemPrompt` 중 최소 하나는 필요하다.
 
 `attributes` 는 이 스텝을 어느 실행 환경(샌드박스 슬롯 등)에서 돌릴지 정하는 제공자가 읽는 값이다.
-`agentType` 과 같은 이름의 서브에이전트가 등록되어 있으면 그 정의의 `attributes` 가 먼저 깔리고, 스텝의
-`attributes` 는 **등록된 정의가 정하지 않은 키만 더할 수 있다.** 등록된 정의가 이미 정한 키는 고정된다 — 스텝이
-그 키에 다른 값을 주면 스크립트가 실패하고(메시지에 `agentType`·키·등록된 값·스크립트 값이 나온다), 같은 값을 주면
-아무 일도 없다. 스크립트는 모델이 쓰는 것이므로, 운영자가 `sandbox.slot: isolated` 로 등록한 서브에이전트를
-스크립트가 `privileged` 로 옮기지 못하게 하려는 것이다. 등록된 키를 지울 수도 없다. 등록되지 않은 `agentType`
-(또는 `agentType` 없는 스텝)에는 고정할 키가 없으므로 스텝의 `attributes` 가 그대로 쓰인다 — 모델이 쓴 스크립트가
-`attributes` 를 아예 쓸 수 있어야 하는지는 아직 정하지 않았다(백로그 EE-45). 등록된 정의에서 가져오는 것은
+`agentType` 과 같은 이름의 서브에이전트가 등록되어 있으면 그 정의의 `attributes` 가 먼저 깔린다. 스크립트는 모델이 쓰는
+것이고 속성은 스텝이 어디서 돌지를 정하므로, 스텝의 `attributes` 에는 규칙이 둘 걸린다. **등록된 정의가 이미 정한 키는
+고정된다** — 스텝이 그 키에 다른 값을 주면 스크립트가 실패하고(메시지에 `agentType`·키·등록된 값·스크립트 값이 나온다),
+같은 값을 주면 아무 일도 없다. 운영자가 `sandbox.slot: isolated` 로 등록한 서브에이전트를 스크립트가 `privileged` 로 옮기지
+못하게 하려는 것이다. 등록된 키를 지울 수도 없다. **그 밖의 키는 운영자가 허용한 것만 쓸 수 있다** — 등록된 정의가 정하지
+않은 키, 그리고 등록되지 않은 `agentType`(또는 `agentType` 없는 스텝)의 모든 키가 여기에 든다. 허용 목록은 기본이 비어
+있어서, 그런 `attributes` 를 준 스크립트는 키 이름과 고칠 방법을 담은 오류로 실패한다(고정만으로는 스텝 이름을 바꿔
+`privileged` 를 요청하는 길이 남는다). 허용은 도구를 조립하는 쪽이 `GraalJsWorkflowTool.Builder.scriptAttributeKeys(...)`
+에 점 표기 키(`sandbox.profile`)로 적는다. 목록에 넣어도 고정은 풀리지 않는다. 어떤 값이 와도 안전한 키만 넣고,
+`sandbox.slot` 처럼 배치를 정하는 키는 그 이름의 서브에이전트를 등록해 정의에 적는다. 등록된 정의에서 가져오는 것은
 속성뿐이다. 스텝의 이름은 여전히 `graaljs:<agentType>` 이고 프롬프트·도구도 스텝의 것이다. 읽는 규칙은 정의 파일의
 `attributes` 블록과 같다: `{ sandbox: { slot: "build" } }` 와 `{ "sandbox.slot": "build" }` 는 같은 속성이고,
 숫자·불리언은 글자가 되며(`1.0` 은 `"1"`), 객체가 아닌 값·배열·값이 `null` 인 항목·값이면서 그룹인 키·유한하지
@@ -378,6 +381,8 @@ No live run 'run:workflow:xxxx' to stop on this node.
 - `/runs stop`은 이 노드에서 살아있는 런에만 통한다.
 - `WorkflowJs` 샌드박스 값(문 수 제한, 30분 타임아웃, `console` 비활성)은 설정 파일로 조정할 수 없다.
   조정이 필요하면 라이브러리로 임베딩해 `JsSandboxConfig`를 직접 준다.
+- 스크립트가 쓸 수 있는 `attributes` 키의 허용 목록(`scriptAttributeKeys`)도 설정 파일에 없다 — CLI 에서는 늘 비어 있다.
+  CLI 에서 스텝에 속성을 주려면 그 `agentType` 이름으로 서브에이전트 정의를 두고 거기에 `attributes` 를 적는다.
 - `isolation: 'worktree'` 디스크립터는 워크트리 팩토리가 있어야 동작한다. CLI는 파일 시스템이 있을 때
   이를 주입하며, 없으면 해당 스텝이 실행 실패로 처리된다.
 - 워크플로는 **비대화형**이다. 스크립트 중간에 사용자에게 되묻는 것은 불가능하다.

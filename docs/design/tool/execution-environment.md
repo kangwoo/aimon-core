@@ -453,8 +453,9 @@ public interface ExecutionEnvironmentProvider {
   `8`, `on` → `true`) 평범한 텍스트가 아닌 값은 따옴표로 감싼다. 워크플로 단계도 포크이므로 같은 값을 싣는다(EE-42).
   단계의 서브에이전트는 등록된 정의가 아니라 인라인으로 만들어지므로, 속성은 이렇게 채운다 — GraalJS 의
   `agent({...})` 단계는 `agentType` 과 같은 이름으로 등록된 서브에이전트의 속성을 복사하고, 스크립트가 준
-  `attributes` 는 등록된 정의가 정하지 않은 키만 더할 수 있다(등록된 키는 고정되어 다른 값을 주면 스크립트가 실패하고,
-  키를 지울 수도 없다. 등록되지 않은 `agentType` 에는 고정할 키가 없다 — EE-45). 내장 `Workflow` 도구의
+  `attributes` 는 운영자가 허용한 키만 더할 수 있다(등록된 키는 고정되어 다른 값을 주면 스크립트가 실패하고, 키를 지울
+  수도 없다. 그 밖의 키 — 등록된 정의가 정하지 않은 키와 등록되지 않은 `agentType` 의 모든 키 — 는
+  `GraalJsWorkflowTool.Builder.scriptAttributeKeys` 에 있어야 하며, 그 목록은 기본이 비어 있다 — EE-45). 내장 `Workflow` 도구의
   단계는 역할마다 정해진 이름(`workflow-perspective` · `workflow-synthesizer` · `workflow-candidate` · `workflow-judge` ·
   `workflow-skeptic`)으로 등록된 서브에이전트의 속성을 복사한다. 그렇게 속성만 주려고 둔 정의는 `hidden: true` 로 모델에게서
   숨긴다 — `Task` 의 목록에 나오지 않고 모델이 이름을 대도 거절되며, 이름으로 찾는 쪽은 그대로 찾는다(EE-44). 어느 쪽이든 등록된 정의에서 가져오는 것은 속성뿐이고,

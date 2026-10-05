@@ -311,7 +311,10 @@ is what the review of the implementation changed.
   model-written script passes `attributes: { 'sandbox.slot': 'privileged' }` to escape to the privileged slot. Now a
   script attribute whose key the registered definition already sets fails the script with a `JsScriptException`
   naming the `agentType`, the key, the registered value and the script's value; an identical value is accepted as a
-  no-op, and keys the registered definition does not set may still be added. The check lives in
+  no-op, and keys the registered definition does not set may still be added. *(2026-10-05, EE-45: no longer — a key
+  the registered definition does not set, and every key of an unregistered or absent `agentType`, is accepted only if
+  the operator listed it in `scriptAttributeKeys`, which is empty by default. Pinning left the escape open: rename the
+  step and ask for the slot.)* The check lives in
   `InlineSubagentResolver`, before it calls `overlay`. `DefinitionAttributes.overlay` keeps its generic
   override-wins semantics (§3.1) — the pinning is a graaljs policy about who wrote the override, not a merge rule.
   The residual gap is recorded in EE-45: an **unregistered** `agentType` (or none) has nothing to pin, so a script

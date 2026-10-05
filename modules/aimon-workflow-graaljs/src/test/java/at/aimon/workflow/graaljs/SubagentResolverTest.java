@@ -23,8 +23,9 @@ import at.aimon.workflow.graaljs.exception.JsScriptException;
 
 /**
  * Deterministic-name synthesis tests for the inline resolver. Names must be stable across resolves (and
- * across JVMs) so shared/persistent resume caches replay without spurious misses. Also the EE-42 attribute rules:
- * a registered {@code agentType}'s attributes plus the descriptor's own, with the registered keys pinned.
+ * across JVMs) so shared/persistent resume caches replay without spurious misses. Also the attribute rules: a
+ * registered {@code agentType}'s attributes plus the descriptor's own, with the registered keys pinned (EE-42) and
+ * every other key admitted only when the operator allowed it (EE-45).
  */
 @DisplayName("InlineSubagentResolver — deterministic, cross-JVM-stable names")
 class SubagentResolverTest {
@@ -100,11 +101,14 @@ class SubagentResolverTest {
         }
 
         @Test
-        @DisplayName("unregistered agentType (or none), explicit attributes: the explicit ones")
+        @DisplayName("unregistered agentType (or none), explicit attributes the operator allowed: the explicit ones")
         void unregisteredWithExplicit() {
-            assertThat(withRegistry.resolve(type("reviewer").attributes(Map.of("sandbox.slot", "ro")).build())
-                    .getMetadata().getAttributes()).containsExactly(Map.entry("sandbox.slot", "ro"));
-            assertThat(withRegistry
+            // EE-45: only the keys the operator allowed. ScriptAttributeAllowListTest has the refusals.
+            final SubagentResolver allowing = SubagentResolver.inline(registry, List.of("sandbox.profile", "gpu"));
+
+            assertThat(allowing.resolve(type("reviewer").attributes(Map.of("sandbox.profile", "ro")).build())
+                    .getMetadata().getAttributes()).containsExactly(Map.entry("sandbox.profile", "ro"));
+            assertThat(allowing
                     .resolve(SubagentDescriptor.builder().systemPrompt("p").attributes(Map.of("gpu", "true")).build())
                     .getMetadata().getAttributes()).containsExactly(Map.entry("gpu", "true"));
         }
@@ -132,6 +136,31 @@ class SubagentResolverTest {
         }
 
         @Test
+        @DisplayName("registered agentType: allowing a key does not unpin it")
+        void allowingAKeyDoesNotUnpinIt() {
+            assertThatThrownBy(() -> SubagentResolver.inline(registry, List.of("sandbox.slot"))
+                    .resolve(type("builder").attributes(Map.of("sandbox.slot", "privileged")).build()))
+                    .isInstanceOf(JsScriptException.class).hasMessageContaining("pinned");
+        }
+
+        @Test
+        @DisplayName("the refusal of a key that is not allowed lists the keys that are")
+        void theRefusalListsTheAllowedKeys() {
+            assertThatThrownBy(() -> SubagentResolver.inline(registry, List.of("gpu", "sandbox.profile"))
+                    .resolve(type("reviewer").attributes(Map.of("sandbox.slot", "privileged")).build()))
+                    .isInstanceOf(JsScriptException.class).hasMessageContaining("'sandbox.slot'")
+                    .hasMessageContaining("allowed: gpu, sandbox.profile");
+        }
+
+        @Test
+        @DisplayName("a null or blank allowed key is refused when the resolver is built")
+        void blankAllowedKeysAreRefused() {
+            assertThatThrownBy(() -> SubagentResolver.inline(registry, List.of(" ")))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("scriptAttributeKeys");
+            assertThatThrownBy(() -> SubagentResolver.inline(registry, null)).isInstanceOf(NullPointerException.class);
+        }
+
+        @Test
         @DisplayName("registered agentType: the identical value for a registered key is accepted as a no-op")
         void registeredKeyIdenticalValueIsAccepted() {
             final Subagent subagent = withRegistry
@@ -142,9 +171,10 @@ class SubagentResolverTest {
         }
 
         @Test
-        @DisplayName("registered agentType: a key the registered definition does not set is added")
+        @DisplayName("registered agentType: an allowed key the registered definition does not set is added")
         void registeredPlusNewKey() {
-            final Subagent subagent = withRegistry.resolve(type("builder").attributes(Map.of("gpu", "true")).build());
+            final Subagent subagent = SubagentResolver.inline(registry, List.of("gpu"))
+                    .resolve(type("builder").attributes(Map.of("gpu", "true")).build());
 
             assertThat(subagent.getMetadata().getAttributes()).containsExactly(Map.entry("sandbox.slot", "build"),
                     Map.entry("sandbox.profile", "rw"), Map.entry("gpu", "true"));
@@ -160,7 +190,8 @@ class SubagentResolverTest {
         @Test
         @DisplayName("an explicit key that clashes as value/group with a registered one is a JsScriptException")
         void clashAcrossIsRejected() {
-            assertThatThrownBy(() -> withRegistry.resolve(type("builder").attributes(Map.of("sandbox", "x")).build()))
+            assertThatThrownBy(() -> SubagentResolver.inline(registry, List.of("sandbox"))
+                    .resolve(type("builder").attributes(Map.of("sandbox", "x")).build()))
                     .isInstanceOf(JsScriptException.class).hasMessageContaining("agent 'builder'")
                     .hasMessageContaining("'sandbox' is both a value and a group")
                     .hasMessageContaining("between the base and override");
