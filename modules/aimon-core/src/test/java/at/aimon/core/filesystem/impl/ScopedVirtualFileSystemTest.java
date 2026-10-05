@@ -375,6 +375,73 @@ class ScopedVirtualFileSystemTest {
                 .noneMatch(p -> p.contains("copied.sh"));
     }
 
+    // --- reserved prefixes (EE-46) -----------------------------------------------------------------------------------
+
+    private VirtualFileSystem reserving(Path tempDir) {
+        this.basePath = tempDir.toString();
+        this.base = new LocalFileSystem(new LocalFileSystemConfig(basePath));
+        base.initialize();
+        return new ScopedVirtualFileSystem(base, ".worktrees/k", Set.of(".aimon-staged"), Set.of(".worktrees"));
+    }
+
+    @Test
+    @DisplayName("EE-46: a path under a reserved prefix is refused in every spelling, and nothing is written")
+    void reservedPrefixIsRefusedInEverySpelling(@TempDir Path tempDir) {
+        final VirtualFileSystem vfs = reserving(tempDir);
+
+        for (final String path : List.of(".worktrees/other/x", ".worktrees/k/x", ".worktrees", ".WORKTREES/other/x",
+                "a/../.worktrees/other/x", "./.worktrees//other/x", basePath + "/.worktrees/other/x",
+                basePath + "/.Worktrees/other/x", basePath + "/.worktrees/k/.worktrees/other/x",
+                basePath + "/.worktrees")) {
+            assertThatThrownBy(() -> vfs.write(path, "x")).as(path).isInstanceOf(InvalidPathException.class)
+                    .hasMessageContaining("cannot address worktree directories");
+            assertThatThrownBy(() -> vfs.exists(path)).as(path).isInstanceOf(InvalidPathException.class);
+        }
+
+        assertThat(base.exists(".worktrees")).isFalse();
+    }
+
+    @Test
+    @DisplayName("EE-46: the branch's own host path and a deeper directory of the same name are not reserved")
+    void reservedPrefixIsOnlyTheNameAtTheBranchRoot(@TempDir Path tempDir) {
+        final VirtualFileSystem vfs = reserving(tempDir);
+
+        vfs.write(basePath + "/.worktrees/k/a.txt", "host path");
+        vfs.write(basePath + "/.worktrees/K/b.txt", "host path, other case");
+        vfs.write("docs/.worktrees/c.txt", "deeper");
+        vfs.write(".worktrees2/d.txt", "another name");
+
+        assertThat(vfs.listRecursive(".")).containsExactlyInAnyOrder("a.txt", "b.txt", "docs/.worktrees/c.txt",
+                ".worktrees2/d.txt");
+        assertThat(base.exists(".worktrees/k/.worktrees")).isFalse();
+    }
+
+    @Test
+    @DisplayName("EE-46: a branch-local directory under a reserved prefix (a shell made it) is left out of every listing")
+    void branchLocalReservedDirectoryIsNotListed(@TempDir Path tempDir) {
+        final VirtualFileSystem vfs = reserving(tempDir);
+        vfs.write("mine.txt", "x");
+        base.write(".worktrees/k/.worktrees/other/planted.sh", "shell-written");
+        base.write(".worktrees/k/.Worktrees/k/planted.sh", "shell-written");
+
+        assertThat(vfs.listRecursive(".")).containsExactly("mine.txt");
+        assertThat(vfs.list(".")).containsExactly("mine.txt");
+        assertThat(vfs.search(".", "*.sh", 10)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("EE-46: a scope built without reserved prefixes keeps every name — the control-store scope is one")
+    void noReservedPrefixesByDefault(@TempDir Path tempDir) {
+        final VirtualFileSystem vfs = sharing(tempDir);
+
+        vfs.write(".worktrees/other/x.txt", "an ordinary path here");
+
+        assertThat(base.exists(".worktrees/k/.worktrees/other/x.txt")).isTrue();
+        assertThat(vfs.listRecursive(".")).containsExactly(".worktrees/other/x.txt");
+        assertThatThrownBy(() -> new ScopedVirtualFileSystem(base, ".worktrees/k", Set.of(), Set.of("../x")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("reserved prefix");
+    }
+
     private static byte[] readAll(java.io.InputStream in) {
         try (in) {
             return in.readAllBytes();

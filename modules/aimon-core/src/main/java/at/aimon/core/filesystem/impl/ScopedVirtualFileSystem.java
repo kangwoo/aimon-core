@@ -61,6 +61,17 @@ import at.aimon.core.filesystem.exception.InvalidPathException;
  * inside the branch root, since the file tools cannot reach it — is left out of every listing and search: no caller
  * path reaches it (each spelling is routed to the parent's), so listing it would hand out paths that resolve
  * elsewhere, and a merge would try to promote them into the parent's shared directory.</li>
+ * <li><b>Reserved prefixes.</b> A path whose branch-relative form lies under one of the {@code reservedPrefixes}
+ * (whole segments, ignoring case, after normalisation) is refused by every operation with an
+ * {@link InvalidPathException}, and an entry there is left out of every listing and search. The local execution
+ * environment reserves the directory it keeps its branches in ({@code .worktrees}) this way. A branch-relative
+ * {@code .worktrees/other/x} would otherwise land in {@code {prefix}/.worktrees/other/x} and be promoted by a merge to
+ * the root's {@code .worktrees/other/x} — another branch's directory, or this branch's own when the path names it
+ * (backlog EE-46). It is a property of the scope's own name space, not an access rule: the delegate's path rules are
+ * untouched, and it holds over a delegate with none. Only the name at the branch root is reserved
+ * ({@code docs/.worktrees/x} is an ordinary path), and the branch root's own host path is not affected — it is
+ * stripped to the branch-relative remainder before this check (previous item). The listing filter is for what the file
+ * tools cannot have written: a directory a shell made there.</li>
  * <li><b>{@code getUsageSummary()}</b> reports the branch subtree, by delegating to the path-scoped overload with the
  * branch prefix — "the whole filesystem", scoped, is the branch. A backend that cannot answer per subtree still falls
  * back to whole-backend usage through that overload's default.</li>
@@ -72,6 +83,7 @@ public final class ScopedVirtualFileSystem implements VirtualFileSystem {
     private final String prefix;
     private final String baseWorkingDir;
     private final Set<String> sharedPrefixes;
+    private final Set<String> reservedPrefixes;
 
     /**
      * @param delegate
@@ -93,25 +105,46 @@ public final class ScopedVirtualFileSystem implements VirtualFileSystem {
      *            root-relative directories the branch sees unscoped — the delegate's own (must not be null)
      */
     public ScopedVirtualFileSystem(VirtualFileSystem delegate, String prefix, Set<String> sharedPrefixes) {
+        this(delegate, prefix, sharedPrefixes, Set.of());
+    }
+
+    /**
+     * @param delegate
+     *            the shared backend filesystem to scope (must not be null; borrowed — never closed)
+     * @param prefix
+     *            the branch prefix (e.g. {@code .worktrees/<branchKey>}; must not be null or blank)
+     * @param sharedPrefixes
+     *            root-relative directories the branch sees unscoped — the delegate's own (must not be null)
+     * @param reservedPrefixes
+     *            branch-relative directories no path may name and no listing shows — the directory the branches
+     *            themselves live in (must not be null)
+     */
+    public ScopedVirtualFileSystem(VirtualFileSystem delegate, String prefix, Set<String> sharedPrefixes,
+            Set<String> reservedPrefixes) {
         this.delegate = Objects.requireNonNull(delegate, "delegate cannot be null");
         Objects.requireNonNull(prefix, "prefix cannot be null");
         Objects.requireNonNull(sharedPrefixes, "sharedPrefixes cannot be null");
+        Objects.requireNonNull(reservedPrefixes, "reservedPrefixes cannot be null");
         final String normalized = VfsPaths.normalizeRelative(prefix);
         if (normalized == null || normalized.isEmpty()) {
             throw new IllegalArgumentException("prefix must be a non-empty relative path, got: " + prefix);
         }
         this.prefix = normalized;
         this.baseWorkingDir = delegate.getWorkingDirectory();
-        final Set<String> shared = new LinkedHashSet<>();
-        for (String sharedPrefix : sharedPrefixes) {
-            final String normalizedShared = VfsPaths.normalizeRelative(sharedPrefix);
-            if (normalizedShared == null || normalizedShared.isEmpty()) {
-                throw new IllegalArgumentException(
-                        "shared prefix must be a non-empty relative path, got: " + sharedPrefix);
+        this.sharedPrefixes = normalizedPrefixes(sharedPrefixes, "shared");
+        this.reservedPrefixes = normalizedPrefixes(reservedPrefixes, "reserved");
+    }
+
+    private static Set<String> normalizedPrefixes(Set<String> prefixes, String kind) {
+        final Set<String> normalized = new LinkedHashSet<>();
+        for (String each : prefixes) {
+            final String normalizedEach = VfsPaths.normalizeRelative(each);
+            if (normalizedEach == null || normalizedEach.isEmpty()) {
+                throw new IllegalArgumentException(kind + " prefix must be a non-empty relative path, got: " + each);
             }
-            shared.add(normalizedShared);
+            normalized.add(normalizedEach);
         }
-        this.sharedPrefixes = Set.copyOf(shared);
+        return Set.copyOf(normalized);
     }
 
     // --- path scoping ---------------------------------------------------------------------------------------------
@@ -128,8 +161,8 @@ public final class ScopedVirtualFileSystem implements VirtualFileSystem {
      * rejecting {@code ..\} sequences.
      *
      * @throws InvalidPathException
-     *             if the path contains a backslash, is an absolute path outside the base working directory, or
-     *             normalizes to a path that escapes the branch prefix
+     *             if the path contains a backslash, is an absolute path outside the base working directory,
+     *             normalizes to a path that escapes the branch prefix, or names a reserved prefix
      */
     private String scope(String path) {
         if (path != null && path.indexOf('\\') >= 0) {
@@ -139,6 +172,15 @@ public final class ScopedVirtualFileSystem implements VirtualFileSystem {
         final String normalizedRel = VfsPaths.normalizeRelative(rel);
         if (normalizedRel == null) {
             throw new InvalidPathException(path, "escapes the worktree branch prefix '" + prefix + "'");
+        }
+        final String reserved = reservedPrefixOf(normalizedRel);
+        if (reserved != null) {
+            // Refused here, for every operation and before any rule or backend sees the path: nested under the
+            // branch it would be outside the branch's rules, and a merge would carry it into another branch.
+            throw new InvalidPathException(path,
+                    "'" + reserved + "' is where worktree branches live, and a branch cannot address worktree"
+                            + " directories — not another branch's and not its own. Paths here are relative to this"
+                            + " branch's root ('" + prefix + "'); name the file by its path below that root");
         }
         if (isShared(normalizedRel)) {
             return normalizedRel;
@@ -154,6 +196,18 @@ public final class ScopedVirtualFileSystem implements VirtualFileSystem {
             }
         }
         return false;
+    }
+
+    /**
+     * The reserved prefix a normalised branch-relative path is at or under (whole segments, ignoring case), or null.
+     */
+    private String reservedPrefixOf(String branchRelative) {
+        for (String reserved : reservedPrefixes) {
+            if (VfsPaths.isUnderIgnoreCase(branchRelative, reserved)) {
+                return reserved;
+            }
+        }
+        return null;
     }
 
     /**
@@ -250,14 +304,19 @@ public final class ScopedVirtualFileSystem implements VirtualFileSystem {
      * Strips the branch prefix from delegate results, leaving out branch-local entries under a shared prefix: every
      * spelling of such a path is routed to the parent's directory ({@link #scope}), so the entry is unreachable through
      * this decorator. Entries of the parent's shared directory itself (a listing of {@code .aimon-staged}) are kept.
+     * Branch-local entries under a reserved prefix are left out for the same reason — {@link #scope} refuses every
+     * spelling of them — and so a merge, which works from this listing, never promotes one.
      */
     private List<String> unscopeAll(List<String> paths) {
         final String withSlash = prefix + "/";
         final List<String> out = new ArrayList<>(paths.size());
         for (final String p : paths) {
             final String normalized = stripLeadingSlashes(p);
-            if (normalized.startsWith(withSlash) && isShared(normalized.substring(withSlash.length()))) {
-                continue;
+            if (normalized.startsWith(withSlash)) {
+                final String branchRelative = normalized.substring(withSlash.length());
+                if (isShared(branchRelative) || reservedPrefixOf(branchRelative) != null) {
+                    continue;
+                }
             }
             out.add(unscope(normalized));
         }

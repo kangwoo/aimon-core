@@ -28,9 +28,10 @@ import at.aimon.core.agent.impl.orca.environment.WorktreeMerge;
 import at.aimon.core.environment.EnvironmentRequest;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.StagedResource;
-import at.aimon.core.environment.exception.StagingException;
+import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.VirtualFileSystems;
 import at.aimon.core.filesystem.exception.FileAccessDeniedException;
+import at.aimon.core.filesystem.exception.InvalidPathException;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.shell.ExecutionOptions;
@@ -219,14 +220,15 @@ class LocalIsolatedEnvironmentTest {
     }
 
     /**
-     * EE-26, which bytes. The branch is given the version the registry loaded — the one the rendered body was written
-     * for — not what the branch has since written under the same relative path in its own tree, and not a parent
-     * directory that changed after the load: that one is refused like any other source that no longer matches its
-     * content key.
+     * EE-26, which bytes. The branch is given the parent's skill — the version the registry loaded while a copy of it
+     * exists — never what the branch has since written under the same relative path in its own tree. A parent
+     * directory that changed after the load, with no copy of the loaded version left, is staged like any other source
+     * that no longer matches its content key: as it is now, under the key those bytes have (EE-3) — which is also
+     * what the parent itself, handed the live directory, is reading.
      */
     @Test
-    @DisplayName("EE-26: a branch gets the loaded version of a workspace skill, whatever it wrote in its own tree, and"
-            + " a skill changed since the load is refused")
+    @DisplayName("EE-26: a branch gets the parent's workspace skill, whatever it wrote in its own tree; one changed"
+            + " since the load is staged under its own key (EE-3)")
     void branchGetsTheLoadedVersionOfAWorkspaceSkill() throws Exception {
         parent.fileSystem().write("skills/demo/SKILL.md", "# demo");
         parent.fileSystem().write("skills/demo/scripts/x.sh", "echo loaded\n");
@@ -243,8 +245,20 @@ class LocalIsolatedEnvironmentTest {
         // Already staged under this key: the copy on disk still is the loaded version.
         assertThat(other.stage(resource)).isEqualTo(path);
         Files.delete(Path.of(path, LocalStaging.MARKER));
-        assertThatThrownBy(() -> other.stage(resource)).isInstanceOf(StagingException.class)
-                .hasMessageContaining("changed on disk after it was loaded");
+
+        final String changed = other.stage(resource);
+
+        final String current = StagedResource.scan(parent.fileSystem(), "skills/demo", "demo").getContentKey();
+        assertThat(changed).isNotEqualTo(path)
+                .isEqualTo(workspace.toAbsolutePath().normalize() + "/.aimon-staged/demo/" + current);
+        assertThat(read(other, changed + "/scripts/x.sh")).isEqualTo("echo changed-after-load\n");
+        assertThat(other.shell().execute(() -> "sh " + changed + "/scripts/x.sh").stdout())
+                .contains("changed-after-load");
+        // The branch's own edit is still not what is staged, and both branches of this parent are told the same.
+        assertThat(branch.stage(resource)).isEqualTo(changed);
+        assertThat(read(branch, "skills/demo/scripts/x.sh")).isEqualTo("echo branch-edit\n");
+        assertThatThrownBy(() -> other.fileSystem().write(changed + "/y", "tamper"))
+                .isInstanceOf(FileAccessDeniedException.class);
     }
 
     @Test
@@ -326,6 +340,131 @@ class LocalIsolatedEnvironmentTest {
         assertThat(workspace.resolve(".aimon-staged/x")).doesNotExist();
         assertThat(workspace.resolve(".aimon-staged/y")).doesNotExist();
         assertThat(workspace.resolve(".worktrees/k/.aimon-staged/x")).hasContent("shell copy");
+    }
+
+    // ---- EE-46: a branch cannot address .worktrees/
+    // ------------------------------------------------------------------
+
+    /**
+     * EE-46. A branch-relative {@code .worktrees/other/x} used to land in {@code .worktrees/k/.worktrees/other/x}, and
+     * a merge promoted it to the root's {@code .worktrees/other/x} — branch {@code other}'s directory.
+     */
+    @Test
+    @DisplayName("EE-46: a branch cannot write into another branch's directory, relative or absolute, in any case")
+    void anotherBranchDirectoryIsRefused() throws IOException {
+        final String ws = workspace.toAbsolutePath().normalize().toString();
+        final ExecutionEnvironment other = parent.isolate("other").orElseThrow();
+        other.fileSystem().write("mine.txt", "other's own");
+
+        for (final String path : List.of(".worktrees/other/x", ws + "/.worktrees/other/x", ".WORKTREES/other/x",
+                ws + "/.Worktrees/other/x", "./a/../.worktrees/other/x", ws + "/.worktrees/k/.worktrees/other/x",
+                ".worktrees/x", ".worktrees")) {
+            assertThatThrownBy(() -> branch.fileSystem().write(path, "injected")).as(path)
+                    .isInstanceOf(InvalidPathException.class).hasMessageContaining("worktree");
+        }
+        branch.fileSystem().write("result.txt", "done");
+
+        assertThat(workspace.resolve(".worktrees/k/.worktrees")).doesNotExist();
+        assertThat(branch.fileSystem().listRecursive(".")).containsExactly("result.txt");
+        final MergeReport report = WorktreeMerge.promote(parent, List.of(branch), WorktreeMerge.Policy.FAIL);
+        assertThat(report.promoted()).containsExactly("result.txt");
+        assertThat(other.fileSystem().listRecursive(".")).containsExactly("mine.txt");
+        assertThat(workspace.resolve(".worktrees/x")).doesNotExist();
+    }
+
+    /**
+     * EE-46. The target can be the branch's own directory: {@code .worktrees/k/x} written relative from branch
+     * {@code k} — and {@code .worktrees/K/x} on a disk that folds case — was promoted to the root's
+     * {@code .worktrees/k/x}, and under {@code .aimon/} to a place the branch's rules hide.
+     */
+    @Test
+    @DisplayName("EE-46: a branch cannot name its own directory relative to itself, in either letter case")
+    void ownBranchDirectoryNamedFromInsideIsRefused() throws IOException {
+        for (final String path : List.of(".worktrees/k/x", ".worktrees/K/x", ".worktrees/k/.aimon/x",
+                ".worktrees/K/.aimon/x")) {
+            assertThatThrownBy(() -> branch.fileSystem().write(path, "nested")).as(path)
+                    .isInstanceOf(InvalidPathException.class).hasMessageContaining("worktree");
+        }
+        branch.fileSystem().write("result.txt", "done");
+
+        assertThat(workspace.resolve(".worktrees/k/.worktrees")).doesNotExist();
+        final MergeReport report = WorktreeMerge.promote(parent, List.of(branch), WorktreeMerge.Policy.FAIL);
+        assertThat(report.promoted()).containsExactly("result.txt");
+        assertThat(workspace.resolve(".worktrees/k/x")).doesNotExist();
+        assertThat(workspace.resolve(".worktrees/k/.aimon")).doesNotExist();
+    }
+
+    @Test
+    @DisplayName("EE-46: every operation that would create or read something under .worktrees/ is refused, not only"
+            + " write")
+    void everyOperationOnTheWorktreeRootIsRefused() {
+        branch.fileSystem().write("a.txt", "a");
+        final VirtualFileSystem fs = branch.fileSystem();
+
+        assertThatThrownBy(() -> fs.createDirectory(".worktrees/other")).isInstanceOf(InvalidPathException.class);
+        assertThatThrownBy(() -> fs.move("a.txt", ".worktrees/other/a.txt", true))
+                .isInstanceOf(InvalidPathException.class);
+        assertThatThrownBy(() -> fs.copy("a.txt", ".worktrees/other/a.txt", true))
+                .isInstanceOf(InvalidPathException.class);
+        assertThatThrownBy(() -> fs.openOutputStream(".worktrees/other/y")).isInstanceOf(InvalidPathException.class);
+        assertThatThrownBy(() -> fs.read(".worktrees/other/y")).isInstanceOf(InvalidPathException.class);
+        assertThatThrownBy(() -> fs.listRecursive(".worktrees")).isInstanceOf(InvalidPathException.class);
+        assertThatThrownBy(() -> fs.deleteRecursive(".worktrees/other")).isInstanceOf(InvalidPathException.class);
+
+        assertThat(workspace.resolve(".worktrees/k/a.txt")).hasContent("a");
+        assertThat(workspace.resolve(".worktrees/k/.worktrees")).doesNotExist();
+    }
+
+    @Test
+    @DisplayName("EE-46: only the name at the branch root is reserved, and the branch's absolute root still works")
+    void worktreeNameBelowTheBranchRootIsAnOrdinaryDirectory() throws IOException {
+        final String ws = workspace.toAbsolutePath().normalize().toString();
+
+        branch.fileSystem().write("docs/.worktrees/notes.md", "an ordinary directory");
+        branch.fileSystem().write(ws + "/.worktrees/k/host.txt", "the path the shell prints");
+        branch.fileSystem().write(ws + "/.worktrees/K/case.txt", "and its case variant");
+
+        assertThat(branch.fileSystem().listRecursive(".")).containsExactlyInAnyOrder("docs/.worktrees/notes.md",
+                "host.txt", "case.txt");
+        final MergeReport report = WorktreeMerge.promote(parent, List.of(branch), WorktreeMerge.Policy.FAIL);
+        assertThat(report.promoted()).containsExactlyInAnyOrder("docs/.worktrees/notes.md", "host.txt", "case.txt");
+        assertThat(workspace.resolve("docs/.worktrees/notes.md")).hasContent("an ordinary directory");
+    }
+
+    @Test
+    @DisplayName("EE-46: a .worktrees/ directory a shell made in the branch is not listed, so a merge leaves it and the"
+            + " other branches alone")
+    void shellWrittenWorktreeDirectoryIsNeverPromoted() throws IOException {
+        final ExecutionEnvironment other = parent.isolate("other").orElseThrow();
+        other.fileSystem().write("mine.txt", "other's own");
+        Files.createDirectories(workspace.resolve(".worktrees/k/.worktrees/other"));
+        Files.writeString(workspace.resolve(".worktrees/k/.worktrees/other/x"), "shell-written");
+        Files.createDirectories(workspace.resolve(".worktrees/k/sub"));
+        Files.writeString(workspace.resolve(".worktrees/k/sub/kept.txt"), "shell-written, ordinary");
+        branch.fileSystem().write("result.txt", "done");
+
+        assertThat(branch.fileSystem().listRecursive(".")).containsExactlyInAnyOrder("result.txt", "sub/kept.txt");
+        assertThat(branch.fileSystem().list(".")).doesNotContain(".worktrees");
+        final MergeReport report = WorktreeMerge.promote(parent, List.of(branch), WorktreeMerge.Policy.FAIL);
+
+        assertThat(report.promoted()).containsExactlyInAnyOrder("result.txt", "sub/kept.txt");
+        assertThat(other.fileSystem().listRecursive(".")).containsExactly("mine.txt");
+        assertThat(workspace.resolve(".worktrees/k/.worktrees/other/x")).hasContent("shell-written");
+    }
+
+    @Test
+    @DisplayName("EE-46: the reservation is the scope's, not a path rule — it holds with no path rules at all")
+    void worktreeRootIsReservedWithoutPathRules(@TempDir Path unguarded) {
+        try (LocalExecutionEnvironmentProvider open = LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(unguarded).pathRules(List.of()).contentSearch(false).build()) {
+            final ExecutionEnvironment openBranch = open
+                    .resolve(EnvironmentRequest.builder().agentRuntimeId(AgentRuntimeId.fromName("open")).build())
+                    .isolate("k").orElseThrow();
+
+            assertThatThrownBy(() -> openBranch.fileSystem().write(".worktrees/other/x", "injected"))
+                    .isInstanceOf(InvalidPathException.class);
+            assertThat(unguarded.resolve(".worktrees/k/.worktrees")).doesNotExist();
+        }
     }
 
     @Test

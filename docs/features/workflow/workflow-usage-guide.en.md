@@ -567,9 +567,12 @@ AgentTask.builder().subagent(migrator).goal(...).isolate(true).build();
 - Promote a branch's files to the parent with `WorktreeMerge.promote(parent, branches, policy)`. Assembly code that
   knows only the keys gets the same branches back with `parent.isolate(key).orElseThrow()`. A branch cannot write
   under its own `.aimon/` — the parent's control-store protection applies at the branch root too and refuses the
-  write when it happens, so a merge never meets such a file. Pass `promote` **the very parent instance** the branches
-  were isolated from, and each branch once — the parent itself, another parent's branch or a duplicate is an
-  `IllegalArgumentException`.
+  write when it happens, so a merge never meets such a file. Nor can it address `.worktrees/` — another branch's
+  directory such as `.worktrees/other/x`, or its own, is refused; name a file by its path below the branch root. Branch
+  keys do repeat from run to run, though (the first isolated step is always `a0`), so two runs one after the other in
+  one workspace use the same branch directory — merge or remove it between runs. Pass `promote` **the very parent
+  instance** the branches were isolated from, and each branch once — the parent itself, another parent's branch or a
+  duplicate is an `IllegalArgumentException`.
 - `isolate(true)` cannot be cached (side effects cannot be replayed).
 - **An `isolate` step in an execution environment that does not support isolation is a run-fatal failure (C30).** It
   never runs unisolated. There is nothing to inject — the old `worktreeFactory` / `WorktreeEnvironmentFactory` are gone.

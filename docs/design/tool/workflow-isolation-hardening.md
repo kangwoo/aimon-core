@@ -510,3 +510,70 @@ acceptable.*
   javadoc's list and a constructor parameter) were reflowed. `WorkflowPhase4Test.isolateOnFailingProviderReportsTheReason` now also asserts that the cause is the
   `ExecutionEnvironmentUnavailableException` and that the root cause's message is the provider's own
   (`"sandbox down"`); both held.
+
+### 8.5 Later — EE-46: the worktree root is reserved in the scope
+
+*Appended 2026-10-05, when EE-46 (Q5) was worked. The body above is left as approved.*
+
+**What was done.** `ScopedVirtualFileSystem` takes a set of *reserved prefixes*, and `LocalIsolatedEnvironment` passes
+`.worktrees`. A path whose branch-relative form is at or under a reserved prefix (whole segments, ignoring case, after
+normalisation) is refused by every operation with `InvalidPathException`; a branch-local entry there is left out of
+`list` / `listRecursive` / `search`, so a merge — which works from the branch's listing — never sees a `.worktrees/`
+directory a shell made in the branch root. Both halves were asked for: the refusal so that a write does not vanish
+without a word, the listing filter for what never went through the file tools.
+
+**Why this does not contradict §1.1.** §1.1 rejected "teach `ScopedVirtualFileSystem` a list of denied prefixes"
+because it "would duplicate `PathRuleVirtualFileSystem`'s semantics … inside a second class", and §7 Q5 declined a
+`DENY {branchPrefix}/.worktrees` rule because the parent has no such rule. Both reasons are about `.aimon/`-like
+prefixes: ones the **parent's rules already describe**, so that composing a re-anchored copy of those rules reuses one
+implementation and keeps "the branch obeys the same rules as the parent". Neither applies to `.worktrees/`:
+
+- There is no parent rule to re-anchor. The composition §1.1 chose has nothing to compose, and the only rule-shaped
+  fix is the branch-only `DENY` that Q5 already turned down.
+- What is needed is not an access level. Nothing is hidden from `exists`, there are no subtree checks and no
+  `READ_ONLY`; one name is not part of the branch's name space at all. That name is the scope's own — `.worktrees/` is
+  where the scope's prefix lives — which is the kind of thing this class already owns: the shared prefixes are routed
+  by it, and DV-6 filters its listings for the same "no caller path reaches it" reason.
+
+So the invariant is intact: `LocalIsolatedEnvironment` still builds the branch rules from `parent.pathRules()` and
+nothing else, and `LocalIsolatedEnvironmentTest.worktreeRootIsReservedWithoutPathRules` shows the reservation holding
+for an assembly with no rules, where a rule could not.
+
+**Refusing the name, against "a legitimate directory name inside the branch".** DV-7 strips the branch prefix from an
+*absolute* path and leaves a relative `.worktrees/k/…` alone, and EE-46 recorded why: stripping it would silently turn
+a name the caller wrote into a different file. That argues against *rewriting* the path, not against refusing it. A
+branch starts empty and holds only what its step writes, and every path in it is promoted to the same path under the
+workspace root — so a branch-root `.worktrees/…` has exactly one possible destination, the directory the provider
+keeps its branches in. There is no outcome of such a write that is not an injection into another branch, a file under
+this branch's own root that the next merge promotes a second time, or litter in the provider's directory. The name is
+therefore taken at the branch root only; `docs/.worktrees/x` is an ordinary path, and the branch's own absolute root
+keeps working (it is stripped before the check).
+
+**What the reproduction showed** (macOS APFS, before the change, one merge of branch `k` after five writes from it):
+`.worktrees/other/rel.txt` and `{ws}/.worktrees/other/abs.txt` were promoted into branch `other`'s directory and then
+appeared in `other`'s own listing; relative `.worktrees/k/own.txt` and `.worktrees/k/.aimon/hidden.txt` were promoted
+to the root's `.worktrees/k/…`, the first now a file of branch `k` again, the second in the place the branch's rules
+hide. `.worktrees/K/OWN.txt` was the same file as `own.txt` on that disk.
+
+**Narrower than the item read (rule six).** `WorktreeMerge.promote` has **no caller in this repository's main
+sources** — only tests call it. It is the public helper an assembling application calls, so the injection reached a
+deployment only through such a caller. The nesting itself (a file outside the branch's rules) needed no merge.
+
+**Left open: branch keys repeat across runs.** `DefaultWorkflowContext.sanitizeBranchKey` derives the key from the
+step's structural path alone, so every run's first isolated step is `a0`, whatever the run id and whichever runner.
+`WorkflowPhase4Test.successiveRunsShareTheFirstIsolatedBranch` measures it: two runners with different run ids write
+`first.txt` and `second.txt` into the one `.worktrees/a0`, and a merge of that branch promotes both. It was not
+changed here, for three reasons that are each a decision rather than a detail:
+
+- **Determinism is what the merge contract rests on.** `LocalExecutionEnvironment.isolate` and `WorktreeMerge` both
+  document that an assembler knowing only a key gets the run's branch back with `parent.isolate(key)`. A key that
+  holds something the assembler does not have breaks that.
+- **The run id cannot make it unique.** `run(script)` uses the shared `DEFAULT_RUN_ID` for every default run, so a
+  key built from the run id still collides for exactly the runs most likely to share a workspace. A nonce per
+  invocation would be unique and would not survive a resume.
+- **Nothing removes a branch directory.** No code in the framework merges or deletes `.worktrees/{key}`; today the
+  set of directories is bounded by the set of step paths because runs reuse them. A key per run turns that into one
+  directory tree per run, forever, unless a cleanup is designed with it.
+
+EE-28's ownership checks would not be affected either way: they compare environment instances and lineage, not keys —
+which is also why they cannot see two runs sharing a key.

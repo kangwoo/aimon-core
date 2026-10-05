@@ -1217,6 +1217,11 @@ and why. Entries marked **(open)** are also tracked in
   uses the hex `ObjectId` of the newest revision, as §6 stage 5 planned. Every write uploads a new document, so the id
   changes with every rewrite; it also changes when the content does not, which is a false "changed" and the safe
   direction. This departs from the spec rather than from the plan, and review 3 of the build asked for it to be listed.
+  *Superseded 2026-10-05 (EE-5):* the etag is now the SHA-256 of the content, recorded in the file document's
+  `metadata.contentSha256` once the upload completes; a document without it still answers with its `ObjectId`. Q7 was
+  settled the same day: `LocalFileSystemConfig.Builder.contentHashEtag(true)` gives the local filesystem an opt-in
+  content-hash etag, off by default (it reads the whole file per `getMetadata`). See
+  `docs/design/filesystem/backend-contract.md` §4.2.
 - **The startup staging sweep never follows a symbolic link (review 3 of the build, blocking).** The plan's sweep used
   `Files.isDirectory` and `Files.list`, which follow links, so a `.aimon-staged` link (committed in a cloned repository,
   or made through the shell) led the sweep to delete week-old directories wherever it pointed. The sweep now does
@@ -1304,6 +1309,10 @@ and why. Entries marked **(open)** are also tracked in
 
 - **Review 3, second note (staging mismatch).** The error when a skill changed on disk after it was loaded now says
   what the user can do: "Restart the application, or reload the skill registry". There is no re-keying. See EE-3.
+  *Superseded 2026-10-05:* EE-3 took re-keying. A source that no longer hashes to its loaded key is scanned again and
+  staged under the key it has now, with one WARN; the error is gone, and so is the row "Host skill directory edited
+  without a registry reload" of §7 as written and the last staging test of §6 stage 3 (it now expects a copy under the
+  new key). `LocalStaging`'s class doc and the design §4.4 hold the rule.
 - **`.gitignore` for `.aimon-staged/`.** This followed Q4's default: no code wrote it, and the skill guide told users
   to add it (EE-4). *Superseded 2026-10-05:* EE-4 took Q4's recommended alternative — the local provider writes
   `.aimon-staged/.gitignore` containing `*` on the first copy.
@@ -1480,3 +1489,8 @@ plan:
   longer nest the branch inside itself past its rules. It also leaves out of its listings any branch-local entry under
   a shared prefix — a staging directory a shell made in the branch root, which no caller path reaches.
 - **The shared staging prefix matches ignoring case**, like the path rules it sits beside.
+- **Later (EE-46, 2026-10-05): a branch cannot address `.worktrees/`.** `ScopedVirtualFileSystem` takes a fourth
+  constructor argument, `reservedPrefixes`; the local branch passes `.worktrees`. A branch-relative path at or under it
+  is refused by every operation (`InvalidPathException`), and a branch-local entry there is left out of listings, so a
+  merge never promotes into another branch's directory or the branch's own. It is not a path rule: the branch rules
+  are still the parent's. See [`workflow-isolation-hardening.md`](workflow-isolation-hardening.md) §8.5.

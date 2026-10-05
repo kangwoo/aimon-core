@@ -431,7 +431,9 @@ return baseEnv.toBuilder().executionEnvironment(branch).build();
   `Bash` 도 기본 cwd 만큼은 격리된다 — 명령 안의 절대 경로까지 막지는 않는다("파일 도구 + 기본 cwd" 수준). 파생
   환경은 `durable() == false` 다. 스테이징 영역(`.aimon-staged/`)은 부모와 공유되어 브랜치 목록에 나오지 않는다.
   부모의 경로 규칙은 브랜치 루트 기준으로 한 번 더 걸린다 — 브랜치 안의 `.aimon/` 쓰기는 쓰는 시점에 거절되고,
-  목록에도 나오지 않는다. 브랜치를 다시 `isolate()` 하면 이유를 담은 오류다(중첩 격리 없음).
+  목록에도 나오지 않는다. 브랜치를 다시 `isolate()` 하면 이유를 담은 오류다(중첩 격리 없음). 브랜치 안에서
+  `.worktrees/` 를 가리키는 경로(다른 브랜치의 디렉터리든 자기 것이든)도 쓰는 시점에 거절된다 — 규칙이 아니라 스코프가
+  그 이름을 예약한 것이다(EE-46).
 - **disjoint 서브트리** — 구축상 zero-clobber, zero-copy 이며 Local/S3/GridFS 에 균일하게 적용된다.
   `ScopedVirtualFileSystem` 은 `list`/`listRecursive`/`search` **셋 다 결과에서 prefix 를 균일 strip**
   해 round-trip 불변식을 지키고, 파일 툴이 넘기는 **절대 경로 입력**(브랜치 루트의 호스트 경로 포함)도 브랜치

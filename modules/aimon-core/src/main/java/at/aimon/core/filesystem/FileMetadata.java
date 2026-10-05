@@ -84,8 +84,10 @@ public final class FileMetadata {
     }
 
     /**
-     * Returns the backend's version token for the file's content (S3 ETag, GridFS file id), if it has one. When
-     * present it is preferred over size and modification time to decide whether a file changed.
+     * Returns the backend's version token for the file's content, if it has one: the S3 ETag, a GridFS content hash
+     * (the file id for a file written before the hash was recorded), a local content hash when that filesystem is
+     * configured to compute one. When present on both sides of a comparison it is preferred over size and
+     * modification time to decide whether a file changed.
      *
      * @return the etag, or empty
      */
