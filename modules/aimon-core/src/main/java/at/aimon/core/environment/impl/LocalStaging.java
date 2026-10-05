@@ -8,8 +8,10 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -40,7 +42,8 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  * {@link StagedResource#getFiles()}, hashes what it copies with the same algorithm as
  * {@link StagedResource#scan}, and writes the marker last; a size over the limit, an unreadable recorded file or bytes
  * that no longer hash to the content key fail with {@link StagingException}, the partial copy removed and no marker
- * written, so an incomplete or mislabelled copy is never served and the next call retries.
+ * written, so an incomplete or mislabelled copy is never served and the next call retries. A resource holding two
+ * files whose names differ only by case is refused the same way when the workspace kept one file for both (EE-38).
  *
  * <p>
  * <b>Other stagers of the same workspace (EE-17).</b> The lock here is this instance's; a second process, or a second
@@ -185,6 +188,7 @@ final class LocalStaging {
             final String staging = temporarySibling(target);
             try {
                 copy(resource, reader, staging);
+                refuseMergedFiles(resource, staging);
                 rawFileSystem.write(staging + "/" + MARKER, resource.getContentKey().getBytes(StandardCharsets.UTF_8));
                 publish(resource, staging, target);
             } catch (RuntimeException e) {
@@ -220,13 +224,7 @@ final class LocalStaging {
             if (!onDisk.containsAll(expected)) {
                 return false;
             }
-            final StagedResource.ContentKeyBuilder hasher = new StagedResource.ContentKeyBuilder();
-            for (String relPath : resource.getFiles()) {
-                try (InputStream in = rawFileSystem.read(prefix + relPath)) {
-                    hasher.add(relPath, in.readAllBytes());
-                }
-            }
-            if (!hasher.build().equals(resource.getContentKey())) {
+            if (!contentKeyOnDisk(resource, target).equals(resource.getContentKey())) {
                 return false;
             }
             onDisk.removeAll(expected);
@@ -239,6 +237,17 @@ final class LocalStaging {
             log.debug("Could not verify staged copy {}: {}", target, e.getMessage());
             return false;
         }
+    }
+
+    /** The content key of what a directory holds under the resource's file names, read back from the workspace. */
+    private String contentKeyOnDisk(StagedResource resource, String directory) throws IOException {
+        final StagedResource.ContentKeyBuilder hasher = new StagedResource.ContentKeyBuilder();
+        for (String relPath : resource.getFiles()) {
+            try (InputStream in = rawFileSystem.read(directory + "/" + relPath)) {
+                hasher.add(relPath, in.readAllBytes());
+            }
+        }
+        return hasher.build();
     }
 
     /** The files below a directory, relative to it. */
@@ -294,6 +303,41 @@ final class LocalStaging {
             throw new StagingException("Skill '" + resource.getName() + "' changed on disk after it was loaded, so its"
                     + " files no longer match the version this session uses. Restart the application, or reload the"
                     + " skill registry, to pick up the change.");
+        }
+    }
+
+    /**
+     * Refuses a copy in which the workspace kept one file for two of the resource's names (EE-38). A classpath, S3 or
+     * GridFS source can hold {@code RUN.sh} beside {@code run.sh}; APFS and NTFS cannot, and the second write lands
+     * in the first one's file. The hash {@link #copy} checks is of bytes read from the source, so it cannot see that.
+     *
+     * <p>
+     * Names that fold to one are only where it can happen, not proof that it did: {@link VfsPaths#foldCase} folds at
+     * least as much as any store, and a case-sensitive disk keeps such a pair apart. So the copy itself is read back
+     * and hashed, and only a copy that differs is refused. A resource without such a pair — nearly every one — pays
+     * nothing for this.
+     */
+    private void refuseMergedFiles(StagedResource resource, String staging) {
+        final Map<String, String> byFoldedName = new HashMap<>();
+        for (String relPath : resource.getFiles()) {
+            final String twin = byFoldedName.putIfAbsent(VfsPaths.foldCase(relPath), relPath);
+            if (twin == null || twin.equals(relPath)) {
+                continue;
+            }
+            String onDisk;
+            try {
+                onDisk = contentKeyOnDisk(resource, staging);
+            } catch (IOException | RuntimeException e) {
+                log.debug("Could not read back staged copy {}: {}", staging, e.getMessage());
+                onDisk = null;
+            }
+            if (!resource.getContentKey().equals(onDisk)) {
+                throw new StagingException("Cannot stage '" + resource.getName() + "': " + twin + " and " + relPath
+                        + " differ only by letter case or Unicode form, and this workspace's filesystem keeps one"
+                        + " file for both. Rename one of them.");
+            }
+            // The workspace kept them apart, so it keeps every other such pair apart too.
+            return;
         }
     }
 

@@ -177,13 +177,14 @@ public final class VfsPaths {
      * The first lower-casing is what folds an uppercase letter whose full fold expands: {@code ẞ} (U+1E9E) is already
      * uppercase, so upper-then-lower would stop at {@code ß}, while lower-upper-lower gives {@code ß}, {@code SS},
      * {@code ss} — as APFS does. Folding more than a store does only hides more, which is the direction an access rule
-     * may err in.
+     * may err in. A caller for which a false match is not harmless — two names that fold alike are not thereby one
+     * file on a case-sensitive store — must take equal folds as "may be the same" and confirm it against the store.
      *
      * @param path
      *            a path
      * @return the folded path
      */
-    static String foldCase(String path) {
+    public static String foldCase(String path) {
         final String compatible = Normalizer.normalize(path, Normalizer.Form.NFKC);
         final String folded = compatible.toLowerCase(Locale.ROOT).toUpperCase(Locale.ROOT).toLowerCase(Locale.ROOT);
         return Normalizer.normalize(folded, Normalizer.Form.NFC);

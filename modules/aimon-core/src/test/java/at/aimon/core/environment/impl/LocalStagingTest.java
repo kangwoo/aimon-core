@@ -3,13 +3,17 @@ package at.aimon.core.environment.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicReference;
@@ -27,6 +31,7 @@ import at.aimon.core.environment.EnvironmentRequest;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.StagedResource;
 import at.aimon.core.environment.exception.StagingException;
+import at.aimon.core.filesystem.FileMetadata;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
@@ -259,6 +264,41 @@ class LocalStagingTest {
         assertThat(siblings(resource)).containsExactly(resource.getContentKey());
     }
 
+    // ---- EE-38 ----------------------------------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("EE-38: two files a case-insensitive workspace would merge into one are refused, naming both")
+    void caseCollisionRefusedOnAFoldingWorkspace() {
+        final StagedResource resource = caseSensitiveResource();
+        final ExecutionEnvironment env = borrowed(new CaseFoldingFileSystem(rawWorkspace()));
+
+        assertThatThrownBy(() -> env.stage(resource)).isInstanceOf(StagingException.class)
+                .hasMessageContaining("scripts/RUN.sh").hasMessageContaining("scripts/run.sh");
+
+        assertThat(target(resource)).as("no copy with one file standing for two").doesNotExist();
+        assertThat(siblings(resource)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("EE-38: on whatever disk this runs, a staged copy holds each file's own bytes or is refused")
+    void caseCollisionNeverStagesMergedFiles() {
+        final StagedResource resource = caseSensitiveResource();
+        final ExecutionEnvironment env = process();
+
+        final String path;
+        try {
+            path = env.stage(resource);
+        } catch (StagingException e) {
+            // A case-insensitive disk (APFS, NTFS).
+            assertThat(e).hasMessageContaining("scripts/RUN.sh").hasMessageContaining("scripts/run.sh");
+            assertThat(target(resource)).doesNotExist();
+            return;
+        }
+        // A case-sensitive disk keeps both, and such a skill stages as it always did.
+        assertThat(Path.of(path, "scripts/RUN.sh")).hasContent("echo UPPER");
+        assertThat(Path.of(path, "scripts/run.sh")).hasContent("echo lower");
+    }
+
     // ---- helpers --------------------------------------------------------------------------------------------------
 
     private static EnvironmentRequest request() {
@@ -338,6 +378,33 @@ class LocalStagingTest {
         }
     }
 
+    /**
+     * A resource as a classpath, S3 or GridFS source can hold it: two files whose names differ only by case. It is
+     * built by hand because the test's own disk may not be able to hold the pair.
+     */
+    private StagedResource caseSensitiveResource() {
+        final Map<String, String> files = new TreeMap<>();
+        files.put("SKILL.md", "# demo");
+        files.put("scripts/RUN.sh", "echo UPPER");
+        files.put("scripts/run.sh", "echo lower");
+        final VirtualFileSystem source = new DelegatingFileSystem(control) {
+            @Override
+            public InputStream read(String path) {
+                final String content = files.get(path.substring("skills/demo/".length()));
+                return new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8));
+            }
+        };
+        final StagedResource.ContentKeyBuilder hasher = new StagedResource.ContentKeyBuilder();
+        long total = 0;
+        for (Map.Entry<String, String> file : files.entrySet()) {
+            final byte[] bytes = file.getValue().getBytes(StandardCharsets.UTF_8);
+            hasher.add(file.getKey(), bytes);
+            total += bytes.length;
+        }
+        return StagedResource.builder().sourceFileSystem(source).sourceDir("skills/demo").name("demo")
+                .contentKey(hasher.build()).totalBytes(total).files(List.copyOf(files.keySet())).build();
+    }
+
     /** A source that runs a hook, once, just before one file is read. */
     private static final class HookedSource extends DelegatingFileSystem {
         private String suffix;
@@ -360,6 +427,91 @@ class LocalStagingTest {
                 once.run();
             }
             return super.read(path);
+        }
+    }
+
+    /**
+     * A workspace that keeps one file for names differing only by case, the way APFS and NTFS do, whatever disk the
+     * test runs on: every path is lower-cased on its way to the real one.
+     */
+    private static final class CaseFoldingFileSystem extends DelegatingFileSystem {
+
+        CaseFoldingFileSystem(VirtualFileSystem delegate) {
+            super(delegate);
+        }
+
+        private static String fold(String path) {
+            return path.toLowerCase(Locale.ROOT);
+        }
+
+        @Override
+        public void write(String path, InputStream content, long contentLength) {
+            super.write(fold(path), content, contentLength);
+        }
+
+        @Override
+        public InputStream read(String path) {
+            return super.read(fold(path));
+        }
+
+        @Override
+        public void delete(String path) {
+            super.delete(fold(path));
+        }
+
+        @Override
+        public boolean exists(String path) {
+            return super.exists(fold(path));
+        }
+
+        @Override
+        public boolean isDirectory(String path) {
+            return super.isDirectory(fold(path));
+        }
+
+        @Override
+        public FileMetadata getMetadata(String path) {
+            return super.getMetadata(fold(path));
+        }
+
+        @Override
+        public List<String> list(String directory) {
+            return super.list(fold(directory));
+        }
+
+        @Override
+        public List<String> listRecursive(String directory) {
+            return super.listRecursive(fold(directory));
+        }
+
+        @Override
+        public void copy(String sourcePath, String destinationPath, boolean overwrite) {
+            super.copy(fold(sourcePath), fold(destinationPath), overwrite);
+        }
+
+        @Override
+        public void move(String sourcePath, String destinationPath, boolean overwrite) {
+            super.move(fold(sourcePath), fold(destinationPath), overwrite);
+        }
+
+        @Override
+        public OutputStream openOutputStream(String path) {
+            return super.openOutputStream(fold(path));
+        }
+
+        @Override
+        public InputStream openInputStream(String path) {
+            return super.openInputStream(fold(path));
+        }
+
+        @Override
+        public void createDirectory(String path) {
+            super.createDirectory(fold(path));
+        }
+
+        @Override
+        public void deleteRecursive(String path) {
+            super.deleteRecursive(fold(path));
         }
     }
 }
