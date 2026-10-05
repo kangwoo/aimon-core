@@ -28,6 +28,8 @@ Central is versioned independently).
   `{{currentDate}}` in the agent definition's system prompt and fill it per turn with
   `SubmitOptions.systemPromptVariable(...)`. The embedding guide has the example (§6.2.2). An embedder that did set a
   snapshot provider loses the block and should move to that.
+- **Sessions that already stored such a block keep it.** It stays in their transcript as a synthetic entry, with the
+  date it was given then; new sessions get none.
 
 ### Added: `responsesApiEnabled` is a configuration key (L-2)
 

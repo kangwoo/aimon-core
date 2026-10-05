@@ -125,7 +125,7 @@ public final class SubmitOptionsCodec {
      * Encodes the options with a caller-supplied mapper.
      *
      * <p>
-     * <b>Why the mapper is a parameter and not just the field above.</b> Two of the five fields are
+     * <b>Why the mapper is a parameter and not just the field above.</b> Two of the four fields are
      * {@code Map<String, Object>}, so the mapper's configuration is part of what reaches the wire — a registered
      * {@code JavaTimeModule} is the difference between an {@code Instant} in {@code executionAttributes} landing as an
      * ISO-8601 string and landing as an object. The session inboxes take their mapper from the application

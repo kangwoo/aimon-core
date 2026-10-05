@@ -1268,7 +1268,9 @@ and why. Entries marked **(open)** are also tracked in
   which is the unavailable environment, so the block could show a directory of the host (EE-24). The fallback went
   first: a blank descriptor means no `working-directory` entry (`UserContextMessageBuilderTest`,
   `OrcaAgentExecutorUserContextInjectionTest`). With no reader left, `AgentEnvironmentSnapshot.getWorkingDirectory()`
-  and `Builder.workingDirectory(String)` were removed, as the plan had it.
+  and `Builder.workingDirectory(String)` were removed, as the plan had it. Later the same day the block itself went
+  (backlog EE-78): `AgentEnvironmentSnapshot`, `UserContextMessageBuilder` and the two test classes named here no
+  longer exist.
 - **Hook contexts (closed 2026-10-03, EE-9).** `HookContext.getEnvironmentDescriptor()` exists (default empty) and is
   filled for `PreToolContext` and `PostToolContext` (from the tool context in `SingleToolInvoker`). `CompactionRequest`
   did not gain a descriptor, and the compaction, lifecycle, subagent and permission contexts stay empty, so

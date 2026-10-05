@@ -19,8 +19,8 @@ import at.aimon.core.llm.LlmCallMetadata;
  *
  * <p>
  * SubmitOptions exists strictly to forward per-turn metadata from the {@link LiveSession} facade through to
- * {@link at.aimon.core.agent.impl.orca.OrcaAgentExecutionRequest}; the "unset means executor default" semantics are
- * part of that contract and are pinned here.
+ * {@link at.aimon.core.agent.impl.orca.OrcaAgentExecutionRequest}; that an option nobody named comes back unset is
+ * part of that contract and is pinned here.
  */
 @DisplayName("SubmitOptions builder / equality / immutability")
 class SubmitOptionsTest {

@@ -729,7 +729,10 @@ sessions.submitAsync(
 ```
 
 **Which time zone and which precision is yours to decide.** A timestamp down to the second in the system
-prompt changes the prompt on every turn and breaks the prompt cache. A date alone is usually right.
+prompt changes the prompt on every turn and breaks the prompt cache. A date alone is usually right. **On a
+turn that does not fill the variable, the slot renders as an empty string** — "Today is ." goes out with no
+error. If any path submits without it (the `submit(sessionId, input)` shortcuts, say), wrap the whole sentence:
+`{{#currentDate}}Today is {{currentDate}}.{{/currentDate}}`.
 
 ### 6.3 Reading `SubmitDisposition`
 

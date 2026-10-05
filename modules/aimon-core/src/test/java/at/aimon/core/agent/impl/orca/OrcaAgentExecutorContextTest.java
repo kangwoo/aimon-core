@@ -91,6 +91,28 @@ class OrcaAgentExecutorContextTest {
         }
 
         @Test
+        @DisplayName("the assembled reminder is logged as SYNTHETIC, the user's input and the answer as CONVERSATION")
+        void assembledReminderIsLoggedAsSynthetic() {
+            // The origin is what keeps the reminder out of memory ingest and out of the context engine's idea of the
+            // conversation; the message text alone would look the same under either origin.
+            final CapturingLlmClient llmClient = new CapturingLlmClient();
+            llmClient.enqueue(LlmResponse.of("final", List.of(), TokenUsage.of(10, 5, 15)));
+            final InMemorySessionRecordStore store = new InMemorySessionRecordStore();
+            final SessionId sessionId = SessionId.generate();
+            final OrcaAgentExecutor executor = createExecutor(llmClient, store);
+            executor.contextAssembler = req -> List.of(ContextBlock.userPrepend("test-up", SENTINEL_PREPEND));
+
+            executor.execute(createContext(),
+                    OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(sessionId).build());
+
+            assertThat(store.load(sessionId).orElseThrow().getLogState().getEntries())
+                    .extracting(at.aimon.core.agent.session.transcript.SessionLogEntry::getOrigin)
+                    .containsExactly(at.aimon.core.agent.session.transcript.LogOrigin.SYNTHETIC,
+                            at.aimon.core.agent.session.transcript.LogOrigin.CONVERSATION,
+                            at.aimon.core.agent.session.transcript.LogOrigin.CONVERSATION);
+        }
+
+        @Test
         @DisplayName("USER_PREPEND block is injected as a synthetic system-reminder user message")
         void userPrependAsReminder() {
             final CapturingLlmClient llmClient = new CapturingLlmClient();
@@ -169,13 +191,17 @@ class OrcaAgentExecutorContextTest {
     }
 
     private OrcaAgentExecutor createExecutor(LlmClient client) {
+        return createExecutor(client, new InMemorySessionRecordStore());
+    }
+
+    private OrcaAgentExecutor createExecutor(LlmClient client, InMemorySessionRecordStore store) {
         final DefaultToolExecutionManager toolManager = new DefaultToolExecutionManager();
         final DefaultHookExecutionManager hookManager = new DefaultHookExecutionManager();
         final DefaultCommandExecutionManager commandManager = new DefaultCommandExecutionManager(client);
         final DefaultSubagentExecutionManager subagentManager = new DefaultSubagentExecutionManager(client, toolManager,
                 hookManager);
-        return new OrcaAgentExecutor(client, new DefaultTranscriptManager(new InMemorySessionRecordStore()),
-                toolManager, hookManager, commandManager, subagentManager);
+        return new OrcaAgentExecutor(client, new DefaultTranscriptManager(store), toolManager, hookManager,
+                commandManager, subagentManager);
     }
 
     /** LLM client that records the system prompt and messages of the most recent call. */

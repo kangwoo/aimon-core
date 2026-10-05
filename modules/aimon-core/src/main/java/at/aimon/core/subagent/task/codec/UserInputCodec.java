@@ -62,7 +62,7 @@ import at.aimon.core.agent.input.UserInput;
  * faithful: the message is a lossy rendering of the request, in which an image reads back as a text placeholder.
  *
  * <p>
- * <b>No mapper overload, unlike {@link SubmitOptionsCodec}.</b> That class takes one because two of its five fields
+ * <b>No mapper overload, unlike {@link SubmitOptionsCodec}.</b> That class takes one because two of its four fields
  * are {@code Map<String, Object>}, so a registered module is the difference between an {@code Instant} landing as an
  * ISO-8601 string and landing as an object. Every leaf here is a {@code String} — a type tag, a MIME type, a file
  * name, or base64 text — so no mapper configuration can reach this wire, and a parameter for one would be ceremony

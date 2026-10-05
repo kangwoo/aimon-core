@@ -488,6 +488,9 @@ EE-24 와 한 변경에서 닫았다. `AgentEnvironmentSnapshot` 에서 필드 �
 테스트: `AgentEnvironmentSnapshotTest.snapshotCarriesNoWorkingDirectory`(필드가 되돌아오면 실패하는 리플렉션 가드). 문서는
 `docs/overview/glossary.md` · `architecture.md` 와 두 번역본, 구현 문서의 EE-10 차이 항목을 고쳤다.
 
+> **2026-10-05 (같은 날) — 이 타입과 위 테스트는 이제 없다.** EE-78 이 사용자 컨텍스트 블록을 통째로 걷어내면서
+> `AgentEnvironmentSnapshot` 과 `AgentEnvironmentSnapshotTest` 가 함께 지워졌다. 위 닫힘은 그 사이 몇 시간의 기록이다.
+
 ## EE-11 — 스케줄 루틴에는 read stamp 가 없다 · **열림**
 
 **무엇을.** 루틴의 `ToolContext` 에 `FILE_STAMPS_KEY` 를 넣을지 정한다.
@@ -1123,6 +1126,10 @@ Javadoc 을 실제 동작에 맞춘다.
 테스트(둘 다 고치기 전 코드에서 실패했다): `UserContextMessageBuilderTest.blankExecutionWorkingDirectoryDoesNotFallBackToTheSnapshot`
 (빈 문자열 · 공백 · `null`), `OrcaAgentExecutorUserContextInjectionTest.unavailableEnvironmentShowsNoWorkingDirectory`(던지는 환경
 제공자). 옛 대체 동작을 고정하던 `UserContextMessageBuilderTest` 의 세 테스트는 실행의 값으로 넘기도록 고쳤다.
+
+> **2026-10-05 (같은 날) — 위 빌더와 두 테스트 클래스는 이제 없다.** EE-78 이 그 블록을 통째로 걷어냈다
+> (`UserContextMessageBuilder`, `UserContextMessageBuilderTest`, `OrcaAgentExecutorUserContextInjectionTest`). 호스트 경로가
+> 새 세션에 나갈 길 자체가 없어졌고, "닫지 않은 것" — 이미 저장된 `messages[0]` — 은 그대로다.
 
 ## EE-25 — 워크플로 격리 오류가 실제 원인을 가린다 · **닫힘** *(2026-09-29)*
 

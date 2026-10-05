@@ -146,7 +146,7 @@ class SessionLogStateTest {
 
     /**
      * A new session whose first turn was interrupted and rewound has handed out seqs but holds nothing. Judging by
-     * {@code nextSeq > floorSeq} would treat it as resumed and deny the retry its user-context block.
+     * {@code nextSeq > floorSeq} would treat it as resumed when nothing has been said in it yet.
      */
     @Test
     void aRewoundFirstTurnLeavesNoConversationEvenThoughSeqsWereUsed() {

@@ -17,8 +17,10 @@ public enum ContextBlockKind {
     SYSTEM,
 
     /**
-     * Belongs ahead of the first real user message as a synthetic {@code <system-reminder>} user block. The
-     * place for per-conversation facts a deployment wants the model to have (the current date, user extensions).
+     * Injected ahead of each turn's user message as a synthetic {@code <system-reminder>} user block — every
+     * turn, not only the first, so each one is stored in the transcript. Suited to facts that belong beside the
+     * message rather than in the system prompt (user extensions); a value that only needs to be current, such as
+     * the date, costs less as a system prompt variable.
      */
     USER_PREPEND,
 

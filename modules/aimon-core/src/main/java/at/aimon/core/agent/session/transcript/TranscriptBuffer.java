@@ -345,7 +345,9 @@ public class TranscriptBuffer {
      * the user role.
      *
      * <p>
-     * This is the "is this session being resumed" question. Synthetic user messages do not answer it, and neither
+     * This is the "is this session being resumed" question. Nothing in the framework asks it at present — its one
+     * caller, the user-context block, is gone — and it is kept as part of the public transcript API. Synthetic user
+     * messages do not answer it, and neither
      * does the number of seqs handed out: a new session whose first turn was interrupted and rewound has used seqs
      * but holds no conversation.
      *

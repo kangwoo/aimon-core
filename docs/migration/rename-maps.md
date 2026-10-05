@@ -182,13 +182,12 @@ issued via `from(Agent)` / `from(Agent, String)`. There is still no `generate()`
 | `TaskQuery.byContext(...)` / `RunQuery.byContext(...)` | `byAgentRuntime(...)` |
 | `PendingTurnRegistry.listByContext(...)` | `listByAgentRuntime(...)` |
 
-(These three types were **removed** on 2026-10-05 together with the user-context block they fed — see the
-changelog. The mapping below is kept for anyone reading older code.)
-
 Also renamed for the same reason: `SessionContext` → **`AgentEnvironmentSnapshot`**,
 `SessionContextProvider` → `AgentEnvironmentSnapshotProvider`, `DefaultSessionContextProvider` →
 `DefaultAgentEnvironmentSnapshotProvider`, all moved from `at.aimon.core.agent.session` to
 `at.aimon.core.agent`. The type was never session-scoped — it is memoized by `AgentRuntimeId`.
+(Those three types were **removed** on 2026-10-05 together with the user-context block they fed — see the
+changelog. The mapping is kept for anyone reading older code.)
 Likewise `RenderContext.getSessionId()` → `getAgentRuntimeId()` and the skill-body variable
 `${AIMON_SESSION_ID}` → `${AIMON_AGENT_RUNTIME_ID}`; the old accessor and setter remain as
 `@Deprecated` delegates onto the same field. **This value is agent-scoped** — do not use it as a
@@ -494,7 +493,7 @@ set of overloads on thirty-five types would have doubled the name the change exi
 | `ExecutionOptions.getEnvironment()` / `Builder.environment(Map)` | a shell command's environment variables |
 | `AimonProperties.getEnvironment()`, `aimon.environment.*` | the starter's execution-environment settings -- no configuration key changed |
 | `EnvironmentBlocks`, `EnvironmentContextProvider`, the `"environment"` prompt block | the prompt's description of the execution environment |
-| `SubagentExecutionEnvironment`, `AgentEnvironmentSnapshot` | type names unchanged; only their `getEnvironment()` accessor became `getUserLocale()` |
+| `SubagentExecutionEnvironment`, `AgentEnvironmentSnapshot` | type names unchanged; only their `getEnvironment()` accessor became `getUserLocale()` (`AgentEnvironmentSnapshot` itself was removed on 2026-10-05) |
 
 **Not a data migration, and no frozen name moved.** The type never reached a wire or stored format: no session
 record, transcript, subagent task codec or shell-hook payload carries it, and the `ToolContext` key name is a key of

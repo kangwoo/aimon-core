@@ -61,16 +61,16 @@ class OrcaAgentExecutorUserLocaleTest {
     @Test
     @DisplayName("the system prompt and the messages are the same in every time zone")
     void promptDoesNotDependOnTheTimeZone() {
-        // Three zones that are never on the same calendar day at once: a prompt that rendered the date in the user's
-        // zone would differ between the first and the last.
+        // The last two are 26 hours apart (UTC+14 and UTC-12), so at no instant do they share a calendar date: a
+        // prompt that rendered the date in the user's zone would differ between them whenever this runs.
         final Sent utc = send(ZoneId.of("UTC"));
-        final Sent seoul = send(ZoneId.of("Asia/Seoul"));
         final Sent kiritimati = send(ZoneId.of("Pacific/Kiritimati"));
+        final Sent bakerIsland = send(ZoneId.of("Etc/GMT+12"));
 
-        assertThat(seoul.systemPrompt).isEqualTo(utc.systemPrompt);
         assertThat(kiritimati.systemPrompt).isEqualTo(utc.systemPrompt);
-        assertThat(seoul.messages).isEqualTo(utc.messages);
+        assertThat(bakerIsland.systemPrompt).isEqualTo(utc.systemPrompt);
         assertThat(kiritimati.messages).isEqualTo(utc.messages);
+        assertThat(bakerIsland.messages).isEqualTo(utc.messages);
 
         assertThat(utc.systemPrompt).startsWith("You are a test agent").doesNotContain("UTC");
         // Nothing is put in front of the user's message: the framework injects no date of its own.
