@@ -113,6 +113,15 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   message it does carry is `StagingException`'s on `STAGING_FAILED`: that text is the staging
   layer's own (over the limit, changed since scanned) and is what the `Skill` tool already tells the
   model for the same failure. Any new detail must be a fixed string or a type name.
+- **`http` / `mcp` actions follow the same rule on `preTool`** (the only guard event they can sit on).
+  `HttpActionExecutor#attempt` / `McpActionExecutor#attempt` return an `ActionCallOutcome`: a
+  *verdict* (any readable 2xx / non-error answer — only `decision: deny` blocks) or *no verdict*,
+  carried as a not-run outcome (`EXECUTOR_NOT_WIRED`, `CALL_FAILED`, `TIMEOUT`, `INVALID_RESPONSE`)
+  and judged by the same `ShellHookVerdicts`. A non-2xx status is never a verdict, whatever its body
+  says, and neither is a `decision` outside `allow` / `deny` / `defer`. `run(...)` is the advisory
+  reading (`attempt(...).orSuccess()`) and is what `postTool` calls — do not call `run` from a guard
+  event. `failOpen` is read for `command`, `http` and `mcp` alike; only on `deny` is it ignored with
+  a WARN. Neither in-tree assembly (`aimon-cli`, `aimon-bootstrap`) wires an http or mcp executor.
 - The user-facing table of what blocks and what `failOpen` changes lives in **one** place,
   `docs/features/hook/hook-config-guide.md` › "가드가 막는 경우" (and its `.en.md`). A change to guard
   semantics updates that table; other docs link to it rather than restating it.

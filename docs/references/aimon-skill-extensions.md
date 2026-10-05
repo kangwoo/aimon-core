@@ -157,7 +157,8 @@ action-def := { type: "deny", reason: string }
   - **`onStart` 의 거부는 fork 를 시작하지 않는다.** exit 2 든 아래의 "돌리지 못함" 이든, fork 는 LLM 을 한 번도 부르지 않고 끝나고 `Skill` 도구의 결과는 `Skill fork failed for '<스킬>': Execution blocked by OnStart hook [SUBAGENT/<에이전트>]: <사유>` 다. 그 fork 의 `onStop` 은 발화하지 않는다(시작하지 않은 실행에는 멈춤도 없다 — 메인 실행과 같다). 스킬 fork 가 띄운 하위 fork 도 시작할 때 같은 hook 을 맞는다.
 - **명령을 돌리지 못했을 때 — 가드는 막는다(fail-closed).** 종료 코드를 얻지 못하면 — 실행 환경 없음, 환경 사용 불가, 스킬 디렉터리 스테이징 실패, **timeout**, 셸 실패, 실행기가 던진 예외 — 또는 셸이 명령을 시작하지 못하면(**exit 126 · 127**: 스크립트가 그 환경에 없거나 실행 권한이 없다. 스크립트가 스스로 그 코드로 끝나도 구별되지 않아 똑같이 읽는다) 위 네 이벤트의 hook 은 **거부**한다. 판단하지 못한 가드는 통과시키지 않는다. 사유는 `Blocked: guard hook '<skill>' (<event>) could not run its command — <cause>: <detail>. …` 꼴이고 명령 문자열은 싣지 않는다 — 셸 실패와 예외는 `<detail>` 에 예외의 타입 이름만 싣는다(메시지는 명령을 담을 수 있어 로그에만 남는다).
   - 가드가 아니라 **관찰** 용도의 hook 이면 항목에 `failOpen: true` 를 선언한다(아래 예). 그러면 명령을 돌리지 못했을 때 WARN 만 남기고 통과한다. exit 2 는 `failOpen` 과 무관하게 여전히 거부다.
-  - `failOpen` 은 YAML 불리언(`true` / `false`)만 받는다. `"true"` 나 `1` 은 스킬 로드 시점의 파싱 오류다 — 가드를 푸는 키라서 느슨하게 읽지 않는다. `shell` 이 아닌 액션에 쓰면 WARN 후 무시된다.
+  - `failOpen` 은 YAML 불리언(`true` / `false`)만 받는다. `"true"` 나 `1` 은 스킬 로드 시점의 파싱 오류다 — 가드를 푸는 키라서 느슨하게 읽지 않는다. `shell` · `http` · `mcp` 액션에 똑같이 적용된다(`deny` 액션에 쓰면 WARN 후 무시된다 — 판정이 항상 있다).
+  - **`preTool` 의 `http` · `mcp` 액션도 같은 규칙이다.** 정책 서버가 `decision: deny` 로 답하면 판정이고, 닿지 못했거나(연결 실패 · timeout · non-2xx · MCP 서버 미연결 · `isError`) 답을 읽을 수 없으면(`decision` 이 `allow` · `deny` · `defer` 가 아님) **판정 없음**이라 막는다. `failOpen: true` 면 WARN 후 통과한다. 어떤 응답이 판정인지는 [hook 설정 가이드 › `http`](../features/hook/hook-config-guide.md#http)에 있다.
   - 환경 제공자가 실패한 실행에서는 가드가 걸린 도구가 **환경을 쓰지 않는 것까지** 막힌다. `preCompact` 에 관찰 hook 을 걸었다면 `failOpen: true` 를 권한다 — 아니면 환경 장애 동안 자동 compaction 이 계속 건너뛰어진다.
 - 그 밖의 이벤트(`postTool` · `onStop` · `subagentStart` · `subagentStop` · `permissionDenied` · `postCompact`)는 비차단 — 어떤 종료 코드도, 돌리지 못한 것도 경고 로그로만 기록되고 메인 흐름에 영향이 없다.
 

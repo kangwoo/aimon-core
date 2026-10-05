@@ -21,9 +21,11 @@ import at.aimon.core.hook.rewake.RewakeSpec;
  * <li><b>rewakeSpec</b> — the parsed {@code asyncRewake} block. Hooks that honour it attach the spec to every
  * {@code HookResult} they emit on a firing path, which schedules a re-fire through the async-rewake machinery. The
  * chain is bounded by {@link RewakeSpec#getMaxAttempts()}, so re-attaching on each fire terminates rather than looping.
- * <li><b>failOpen</b> — whether a shell command that produced no exit status lets the operation proceed. Off by
- * default: on the four events that can block ({@code preTool}, {@code onStart}, {@code preCompact},
- * {@code permissionRequest}) a guard that could not run blocks. Only read for shell actions on those events.
+ * <li><b>failOpen</b> — whether an action that gave no answer lets the operation proceed: a shell command that
+ * produced no exit status (or that the shell could not start), an {@code http} / {@code mcp} call that produced no
+ * verdict. Off by default: on the four events that can block ({@code preTool}, {@code onStart}, {@code preCompact},
+ * {@code permissionRequest}) a guard that could not decide blocks. Read on those events only; it never weakens a
+ * verdict (exit 2, {@code decision: deny}, a {@code deny} action).
  * </ul>
  *
  * <p>
@@ -155,8 +157,9 @@ public final class DeclarativeHookOptions {
 
         /**
          * @param failOpen
-         *            true to let the operation proceed when the hook's shell command produces no exit status
-         *            (default false — a guard that cannot run blocks)
+         *            true to let the operation proceed when the hook's action gives no answer — a shell command
+         *            with no exit status, an http / mcp call with no verdict (default false — a guard that cannot
+         *            decide blocks)
          * @return this builder
          */
         public Builder failOpen(boolean failOpen) {

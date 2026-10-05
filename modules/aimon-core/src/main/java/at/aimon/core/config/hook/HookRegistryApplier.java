@@ -171,13 +171,14 @@ public final class HookRegistryApplier {
                         + " shell actions; skipping", event, mhe.getSource());
                 continue;
             }
-            if (spec.isFailOpen() && !(action instanceof ShellAction)) {
-                log.warn("hooks: 'failOpen' only applies to 'command' handlers; ignored on {} ({})", event,
+            if (spec.isFailOpen() && action instanceof DenyAction) {
+                // A deny handler always has its verdict; there is no "could not decide" for failOpen to open.
+                log.warn("hooks: 'failOpen' has no effect on a 'deny' handler; ignored on {} ({})", event,
                         mhe.getSource());
             }
+            // Honoured for command, http and mcp alike: each can fail to produce a verdict.
             final DeclarativeHookOptions options = DeclarativeHookOptions.builder().hookIdDiscriminator(discriminator)
-                    .rewakeSpec(toRewakeSpec(spec, mhe, event, action))
-                    .failOpen(spec.isFailOpen() && action instanceof ShellAction).build();
+                    .rewakeSpec(toRewakeSpec(spec, mhe, event, action)).failOpen(spec.isFailOpen()).build();
             switch (event) {
                 case DeclarativePreToolHook.EVENT_NAME ->
                     registry.register(HookEventType.PRE_TOOL, new DeclarativePreToolHook(pseudoSkillName, predicate,

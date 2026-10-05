@@ -93,7 +93,27 @@ public final class ShellHookOutcome {
          * The shell did not find the command (exit {@value ShellHookOutcome#NOT_FOUND_EXIT_CODE}). Only a guard event
          * reads the exit code this way — see {@link ShellHookOutcome#asGuardAnswer()}.
          */
-        COMMAND_NOT_FOUND("command not found");
+        COMMAND_NOT_FOUND("command not found"),
+
+        /**
+         * An {@code http} or {@code mcp} action has no executor to carry it out. Reported by the hook itself, see
+         * {@link ActionCallOutcome}.
+         */
+        EXECUTOR_NOT_WIRED("action executor not wired"),
+
+        /**
+         * An {@code http} or {@code mcp} call did not come back with an answer: the endpoint could not be reached, it
+         * answered with a non-2xx status, the MCP server is not registered or not connected, or its tool reported an
+         * error.
+         */
+        CALL_FAILED("call failed"),
+
+        /**
+         * An {@code http} or {@code mcp} call came back with an answer that cannot be read as a verdict: a body
+         * declared as JSON that does not parse, a {@code decision} that is not one of the known values, an
+         * {@code updatedInput} that is not an object.
+         */
+        INVALID_RESPONSE("response could not be read");
 
         private final String description;
 

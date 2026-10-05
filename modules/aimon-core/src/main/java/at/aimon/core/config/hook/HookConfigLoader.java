@@ -213,7 +213,7 @@ public final class HookConfigLoader {
                     handler.getRejectedFailOpen()
                             .ifPresent(raw -> log.warn("hooks config at {}: {} handler {} on {} has a 'failOpen' that"
                                     + " is not a JSON boolean ({}); it is read as false, so the handler blocks when"
-                                    + " its command cannot run", path, handler.getType(), describe(handler),
+                                    + " it cannot get an answer", path, handler.getType(), describe(handler),
                                     event.getKey(), raw));
                 }
             }

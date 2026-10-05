@@ -353,8 +353,26 @@ HTTP 웹훅을 호출한다. `HttpAction` + `HttpActionExecutor`.
 }
 ```
 
-응답 본문은 `{ "decision": "deny" | "allow", "reason": "...", "updatedInput": {...} }`
-JSON 스키마를 따르면 `HookResult` 로 자동 매핑된다. 스키마를 따르지 않으면 정상 통과.
+응답 본문은 `{ "decision": "allow" | "deny" | "defer", "reason": "...", "feedback": "...", "updatedInput": {...} }`
+JSON 스키마를 따르면 `HookResult` 로 자동 매핑된다. `preTool` 에서는 **판정을 받았는지**가 중요하다 — 판정을 받지 못한
+가드는 막는다([가드가 막는 경우](#가드가-막는-경우)). `"failOpen": true` 는 `command` 와 똑같이 이 handler 에도 쓴다.
+
+| 응답 | 읽는 법 |
+|------|---------|
+| 2xx, JSON 객체, `decision` 이 `deny` | 판정: 거부 (`reason` 이 사유) |
+| 2xx, JSON 객체, `decision` 이 `allow` · `defer` 이거나 없음 | 판정: 허용 (`feedback` · `updatedInput` 은 그대로 적용) |
+| 2xx, 본문이 비었거나, JSON 으로 선언되지 않은 텍스트(`ok`)이거나, 객체가 아닌 JSON | 판정: 허용 — 결정을 싣지 않는 웹훅 |
+| 2xx 인데 읽을 수 없음 — `Content-Type` 이 JSON 인데 파싱되지 않는 본문, 문자열이 아니거나 셋 중 하나가 아닌 `decision`(예: `"block"`), 객체가 아닌 `updatedInput` | **판정 없음** (`response could not be read`) |
+| non-2xx (본문이 무엇이든) | **판정 없음** (`call failed: HTTP <status>`) — 거부는 2xx 의 `decision: deny` 로 표현한다 |
+| 연결 실패 · 전송 오류 | **판정 없음** (`call failed: <예외 타입>`) |
+| `timeout` 초과 | **판정 없음** (`timed out`) |
+| 실행기 미배선 | **판정 없음** (`action executor not wired`) |
+
+`postTool` 에서는 판정 없음이 전처럼 WARN 후 정상 진행이다.
+
+> ⚠️ **`aimon-cli` 는 `http` · `mcp` 실행기를 배선하지 않는다.** CLI 의 `hooks.json` 에 둔 `http` · `mcp` handler 는 호출되지
+> 않는다 — `preTool` 에서는 "실행기 미배선" 으로 매번 **막고**(`failOpen: true` 면 WARN 후 통과), `postTool` 에서는 WARN 만
+> 남긴다. 임베딩 호스트는 `HookHotReloadBootstrap.builder().httpExecutor(…).mcpExecutor(…)` 로 배선한다.
 
 > 🔒 환경 변수 참조는 **화이트리스트(`allowedEnvVars`)에 있는 키만** 치환된다.
 > 화이트리스트에 없는 변수는 빈 문자열로 처리되고 WARN 로그가 남는다.
@@ -376,7 +394,12 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 }
 ```
 
-응답이 `{decision, reason, updatedInput}` 모양이면 `HookResult` 로 매핑된다.
+응답이 `{decision, reason, feedback, updatedInput}` 모양이면 `HookResult` 로 매핑된다. 판정과 "판정 없음" 을 가르는 선은
+`http` 와 같다: 오류 없이 돌아온 결과는 판정이고(빈 내용 · 일반 텍스트 · 객체가 아닌 JSON 은 허용, JSON 객체는 결정 문서로
+읽는다), 서버가 등록되지 않았거나 연결되지 않았을 때 · 전송 오류 · `isError` 결과(`call failed`), 읽을 수 없는 결정
+문서(`response could not be read`), 실행기 미배선은 **판정 없음**이다 — `preTool` 에서는 막고 `"failOpen": true` 면 통과한다.
+`mcp` handler 의 `timeout` 은 호출 자체에 걸리지 않는다(`McpClient.callTool` 이 timeout 을 받지 않는다) — 멈춘 호출을 끊는
+것은 hook 실행기의 바깥 그물이다.
 
 ### `deny`
 
@@ -415,11 +438,16 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 | `command` 가 그 밖의 종료 코드 (1 · 3 · 130 …) | 스크립트 오작동 | 진행 (WARN) | 진행 (WARN) |
 | `command` 가 종료 코드를 내지 못함 — timeout, 셸 실패, 실행 환경 없음 · 사용 불가, 스킬 디렉터리 스테이징 실패, 셸을 지원하지 않는 실행기, 실행기가 던진 예외 | 돌리지 못함 | **막는다** | 진행 (WARN) |
 | `deny` handler | 판정: 거부 | **막는다** | **막는다** |
+| `http` · `mcp` 가 `decision: deny` 로 답함 | 판정: 거부 (`reason` 이 사유) | **막는다** | **막는다** |
+| `http` · `mcp` 가 그 밖의 읽을 수 있는 답을 함 (`allow` · `defer` · 결정 없음 · 빈 본문 · 일반 텍스트) | 판정: 허용 | 진행 | 진행 |
+| `http` · `mcp` 가 판정을 받지 못함 — 연결 실패, timeout, non-2xx, MCP 서버 미등록 · 미연결 · `isError`, 읽을 수 없는 답, 실행기 미배선, 실행기가 던진 예외 | 판정 없음 | **막는다** | 진행 (WARN) |
 
 "막는다" 는 `preTool` · `onStart` · `preCompact` 에서는 block, `permissionRequest` 에서는 deny 다. 돌리지 못해 막힌 사유는
 `Blocked: guard hook '<이름>' (<이벤트>) could not run its command — <원인>. A guard that cannot decide blocks
-(fail-closed).` 꼴이고, 커맨드 문자열 · 셸의 stderr · 예외 메시지 · `failOpen` 이라는 이름은 싣지 않는다 — 그 사유를 읽는
-쪽이 가드가 제약하는 당사자이기 때문이다.
+(fail-closed).` 꼴이고(`http` · `mcp` 는 `could not get a verdict from its http call` · `… its mcp call`), 커맨드 문자열 ·
+셸의 stderr · URL · 헤더 · 응답 본문 · 예외 메시지 · `failOpen` 이라는 이름은 싣지 않는다 — 그 사유를 읽는 쪽이 가드가
+제약하는 당사자이기 때문이다. `http` · `mcp` handler 는 `preTool` 과 `postTool` 에만 둘 수 있으므로, 이 표에서 그 세 행이
+해당하는 가드 이벤트는 `preTool` 하나다.
 
 ---
 
@@ -790,7 +818,7 @@ frontmatter 스키마 요약:
 | `matcher`       | `preTool` / `postTool` 에서만 허용 (생략 시 `"*"`). 다른 이벤트에 두면 파싱 실패  |
 | `action.type`   | `shell` / `deny` / `http` / `mcp`. `deny` 는 `preTool` 전용, `http`·`mcp` 는 `preTool`·`postTool` 전용 |
 | 타임아웃 필드   | `action.timeoutMs` (**밀리초**). frontmatter 에는 초 단위 `timeout` 별칭이 없다   |
-| `failOpen`      | entry 수준 키(`matcher` · `action` 과 나란히). YAML 불리언만 받고 기본 `false`. `shell` 액션이 종료 코드를 내지 못했을 때 통과시킨다 |
+| `failOpen`      | entry 수준 키(`matcher` · `action` 과 나란히). YAML 불리언만 받고 기본 `false`. 액션이 답을 내지 못했을 때 통과시킨다 — `shell` 의 종료 코드 없음 · exit 126/127, `http` · `mcp` 의 판정 없음 ([가드가 막는 경우](#가드가-막는-경우)) |
 
 `onSessionStart` / `onSessionEnd` / `onConfigReload` 는 skill 호출 바깥(세션·애플리케이션
 라이프사이클)에서 발사되므로 frontmatter 에서 거절된다 — `hooks.json` 에 선언한다.
@@ -819,6 +847,7 @@ fork 가 없어 발화하지 않는다. 전체 규칙은 [`aimon-skill-extension
 | `WARN hooks: 'command' on ... cannot run: the configured shell executor does not support shell actions` | 셸을 지원하지 않는 실행기(`NoOpShellActionExecutor`)로 `hooks.json` 을 적용했다. `command` handler 는 등록되지 않는다 — `HostShellActionExecutor` 를 배선할 것. |
 | `WARN hooks config at ...: ... has a 'failOpen' that is not a JSON boolean (...); it is read as false` | `failOpen` 에 `"true"` · `1` · `null` 을 썼다. 그 handler 는 `failOpen: false` 로 등록된다(커맨드를 못 돌리면 막는다). 관찰용이라면 `true` 로 고칠 것. |
 | 도구가 `Blocked: guard hook '...' could not run its command` 로 막힘      | 결정 채널이 있는 이벤트의 `command` handler 가 종료 코드를 내지 못했거나(timeout 등) 셸이 커맨드를 시작하지 못했다(`command not found: exit code 127` · `command not executable: exit code 126` — 스크립트 경로와 실행 권한을 확인). 사유의 원인을 고치거나, 관찰용 handler 라면 `"failOpen": true` 를 선언. 전체 표는 [가드가 막는 경우](#가드가-막는-경우). |
+| 도구가 `Blocked: guard hook '...' could not get a verdict from its http call` (또는 `mcp call`) 로 막힘 | `preTool` 의 `http` · `mcp` handler 가 판정을 받지 못했다. 사유의 원인을 본다 — `action executor not wired`(호스트가 실행기를 배선하지 않았다. `aimon-cli` 가 그렇다), `call failed: HTTP 503` · `call failed: ConnectException`(정책 서버), `timed out`, `response could not be read`(`decision` 값이 `allow` · `deny` · `defer` 가 아니다). 관찰용 handler 라면 `"failOpen": true`. |
 | `WARN hooks: 'asyncRewake' is not supported on event '...'`              | rewake 가능한 이벤트는 `preTool`/`preCompact`/`onSessionStart`/`onSessionEnd`/`onConfigReload`. hook 자체는 정상 등록됨. |
 | 셸 hook 이 exit 2 로 끝났는데 차단되지 않음                                | 해당 이벤트에 결정 채널이 없음. veto 는 `preTool`/`onStart`/`preCompact`(block), `permissionRequest`(deny) 에서만 유효. |
 | 커맨드 안의 `${tool_input.x}` / `${tool_name}` 이 빈 문자열                | 의도된 동작. 커맨드는 렌더링되지 않는다 — stdin JSON payload 나 `AIMON_*` env(`$AIMON_TOOL_NAME` 등) 를 사용. |

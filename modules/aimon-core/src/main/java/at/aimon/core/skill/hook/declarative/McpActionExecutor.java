@@ -30,8 +30,21 @@ import at.aimon.core.skill.hook.action.McpToolAction;
  * treated as side-effect only and {@link HookResult#success()} is returned.
  *
  * <p>
- * Unknown server, transport failure, and {@link McpCallResult#isError()} all degrade to {@code HookResult.success()}
- * with a WARN log &mdash; declarative hooks remain fail-soft.
+ * <b>Verdict or no verdict.</b> {@link #attempt} tells the two apart, because a guard has to (see
+ * {@link ActionCallOutcome}). A result that came back without {@link McpCallResult#isError()} is a verdict: content
+ * that is blank, plain text or JSON that is not an object is a side-effect call (allow), and a JSON object is read
+ * as a decision document. No verdict is: a server that is not registered or not connected, a transport failure or
+ * any other exception from the client, a result flagged {@code isError} (all {@code CALL_FAILED}), and a decision
+ * document that cannot be read ({@code INVALID_RESPONSE} &mdash; a {@code decision} that is not text or not one of
+ * {@code allow} / {@code deny} / {@code defer}, an {@code updatedInput} that is not an object).
+ *
+ * <p>
+ * {@link #run} is the advisory reading of the same call: a missing verdict is logged at WARN and returned as
+ * {@link HookResult#success()}, so a {@code postTool} call stays fail-soft.
+ *
+ * <p>
+ * The action's {@code timeout} is not enforced here &mdash; {@link McpClient#callTool} takes none. What bounds a call
+ * that hangs is the hook executor's outer net, which the action's declared budget widens.
  *
  * <p>
  * Thread-safe; {@code McpClientManager} is documented as thread-safe.
@@ -57,7 +70,8 @@ public final class McpActionExecutor {
     }
 
     /**
-     * Executes the action and returns the resolved {@link HookResult}.
+     * Executes the action and returns the resolved {@link HookResult}, reading a call that produced no verdict as
+     * success. For events that cannot block; a guard uses {@link #attempt}.
      *
      * @param action
      *            configured action (must not be null)
@@ -65,93 +79,85 @@ public final class McpActionExecutor {
      *            tool input source for placeholders (may be null)
      * @param contextAttributes
      *            context attributes for {@code ${context.X}} placeholders (must not be null)
-     * @return the hook result (never null)
+     * @return the hook result (never null; success when the call produced no verdict)
      */
     public HookResult run(McpToolAction action, ToolInput toolInput, Map<String, String> contextAttributes) {
+        return attempt(action, toolInput, contextAttributes).orSuccess();
+    }
+
+    /**
+     * Executes the action and reports whether it produced a verdict. Never throws for a failed call.
+     *
+     * @param action
+     *            configured action (must not be null)
+     * @param toolInput
+     *            tool input source for placeholders (may be null)
+     * @param contextAttributes
+     *            context attributes for {@code ${context.X}} placeholders (must not be null)
+     * @return the verdict, or why there is none (never null)
+     * @throws NullPointerException
+     *             if action or contextAttributes is null
+     */
+    public ActionCallOutcome attempt(McpToolAction action, ToolInput toolInput, Map<String, String> contextAttributes) {
         Objects.requireNonNull(action, "action cannot be null");
         Objects.requireNonNull(contextAttributes, "contextAttributes cannot be null");
 
-        final Optional<McpClient> clientOpt = mcpClientManager.getClient(action.getServerName());
-        if (clientOpt.isEmpty()) {
-            log.warn("MCP hook to '{}/{}' skipped: server not registered", action.getServerName(),
-                    action.getToolName());
-            return HookResult.success();
-        }
-        final McpClient client = clientOpt.get();
-        if (!client.isConnected()) {
-            log.warn("MCP hook to '{}/{}' skipped: server not connected", action.getServerName(), action.getToolName());
-            return HookResult.success();
-        }
-
-        final TemplateRenderer renderer = TemplateRenderer.builder().toolInput(toolInput).context(contextAttributes)
-                .build();
-
-        @SuppressWarnings("unchecked")
-        final Map<String, Object> renderedArgs = (Map<String, Object>) renderer.renderObject(action.getArgsTemplate());
-
         try {
+            final Optional<McpClient> clientOpt = mcpClientManager.getClient(action.getServerName());
+            if (clientOpt.isEmpty()) {
+                log.warn("MCP hook to '{}/{}' skipped: server not registered", action.getServerName(),
+                        action.getToolName());
+                return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.CALL_FAILED, "MCP server not registered");
+            }
+            final McpClient client = clientOpt.get();
+            if (!client.isConnected()) {
+                log.warn("MCP hook to '{}/{}' skipped: server not connected", action.getServerName(),
+                        action.getToolName());
+                return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.CALL_FAILED, "MCP server not connected");
+            }
+
+            final TemplateRenderer renderer = TemplateRenderer.builder().toolInput(toolInput).context(contextAttributes)
+                    .build();
+
+            @SuppressWarnings("unchecked")
+            final Map<String, Object> renderedArgs = (Map<String, Object>) renderer
+                    .renderObject(action.getArgsTemplate());
+
             final McpCallResult result = client.callTool(action.getToolName(), renderedArgs);
             if (result.isError()) {
+                // The content stays in the log: it is the server's text, and the detail becomes a deny reason.
                 log.warn("MCP hook '{}/{}' returned isError content: {}", action.getServerName(), action.getToolName(),
                         summarise(result.getContent()));
-                return HookResult.success();
+                return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.CALL_FAILED, "tool returned an error");
             }
             return mapContent(action, result.getContent());
         } catch (McpTransportException e) {
             log.warn("MCP hook '{}/{}' transport error: {}", action.getServerName(), action.getToolName(),
                     e.getMessage());
-            return HookResult.success();
+            return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.CALL_FAILED, ShellActionRunner.failureDetail(e));
         } catch (RuntimeException e) {
             log.warn("MCP hook '{}/{}' threw: {}", action.getServerName(), action.getToolName(), e.getMessage(), e);
-            return HookResult.success();
+            return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.CALL_FAILED, ShellActionRunner.failureDetail(e));
         }
     }
 
-    private HookResult mapContent(McpToolAction action, String content) {
+    private ActionCallOutcome mapContent(McpToolAction action, String content) {
         if (content == null || content.isBlank()) {
-            return HookResult.success();
+            return ActionCallOutcome.verdict(HookResult.success());
         }
         final JsonNode root;
         try {
             root = objectMapper.readTree(content);
         } catch (JsonProcessingException e) {
             // Plain-text content → side-effect only call, no decision intended.
-            return HookResult.success();
+            return ActionCallOutcome.verdict(HookResult.success());
         }
         if (root == null || !root.isObject()) {
-            return HookResult.success();
+            return ActionCallOutcome.verdict(HookResult.success());
         }
-
-        final JsonNode decisionNode = root.get("decision");
-        final JsonNode reasonNode = root.get("reason");
-        if (decisionNode != null && decisionNode.isTextual() && "deny".equalsIgnoreCase(decisionNode.asText())) {
-            final String reason = (reasonNode != null && reasonNode.isTextual())
-                    ? reasonNode.asText()
-                    : "Denied by MCP hook " + action.getServerName() + "/" + action.getToolName();
-            return HookResult.block(reason);
-        }
-
-        final JsonNode feedbackNode = root.get("feedback");
-        final JsonNode updatedInputNode = root.get("updatedInput");
-        if ((feedbackNode == null || !feedbackNode.isTextual())
-                && (updatedInputNode == null || !updatedInputNode.isObject())) {
-            return HookResult.success();
-        }
-
-        final HookResult.Builder b = HookResult.builder();
-        if (feedbackNode != null && feedbackNode.isTextual()) {
-            b.feedback(feedbackNode.asText());
-        }
-        if (updatedInputNode != null && updatedInputNode.isObject()) {
-            try {
-                @SuppressWarnings("unchecked")
-                final Map<String, Object> map = objectMapper.convertValue(updatedInputNode, Map.class);
-                b.updatedInput(ToolInput.of(map));
-            } catch (IllegalArgumentException e) {
-                log.warn("MCP hook returned malformed updatedInput; ignoring: {}", e.getMessage());
-            }
-        }
-        return b.build();
+        return DecisionDocument.read(root, objectMapper,
+                "MCP hook '" + action.getServerName() + "/" + action.getToolName() + "'",
+                "Denied by MCP hook " + action.getServerName() + "/" + action.getToolName(), false);
     }
 
     private static String summarise(String text) {

@@ -310,6 +310,8 @@ hooks:
   안 함" 이 "걸리는 모든 `preTool`/`onStart` 를 막음" 으로 바뀐다. 적용 시점에 `!shellExecutor.isShellSupported()` 면
   `command` 핸들러를 WARN 과 함께 건너뛴다(기존 `canRunOn` 검사 옆). 스킬 파서는 이미 파싱 오류로 막는다.
   셸 액션이 아닌 훅(`deny` · `http` · `mcp`)에 쓰면 WARN 후 무시한다 — 이 묶음은 셸 액션의 "못 돌림" 만 다룬다(§8 새 항목).
+  *(2026-10-05, EE-65 — `http` · `mcp` 에서는 이제 읽는다. `preTool` 의 두 액션은 판정을 받지 못하면 막고 `failOpen` 이면
+  통과한다. WARN 후 무시는 `deny` 에만 남았다.)*
   거부 채널이 없는 이벤트에 쓰면 조용히 무해하다(읽히지 않는다); 스킬 파서는 WARN 한 줄을 남긴다.
 
 ### 4.3 EE-58 (`tools.bash`)

@@ -9,10 +9,13 @@ import static org.mockito.Mockito.when;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.base.UserLocale;
@@ -21,9 +24,11 @@ import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.event.OnSessionStartContext;
 import at.aimon.core.hook.event.OnStartContext;
 import at.aimon.core.hook.event.PreToolContext;
+import at.aimon.core.hook.event.PreToolHook;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.hook.execution.HookStatus;
 import at.aimon.core.llm.ToolUse;
+import at.aimon.core.mcp.McpClientManager;
 import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCommand;
 import at.aimon.core.shell.ShellCommandResult;
@@ -31,6 +36,8 @@ import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.shell.exception.ShellTimeoutException;
 import at.aimon.core.skill.hook.declarative.DefaultShellActionExecutor;
 import at.aimon.core.skill.hook.declarative.HostShellActionExecutor;
+import at.aimon.core.skill.hook.declarative.HttpActionExecutor;
+import at.aimon.core.skill.hook.declarative.McpActionExecutor;
 import at.aimon.core.skill.hook.declarative.NoOpShellActionExecutor;
 
 @DisplayName("HookRegistryApplier")
@@ -87,6 +94,36 @@ class HookRegistryApplierTest {
         assertThat(guard.getStatus()).isEqualTo(HookStatus.BLOCKED);
         assertThat(guard.getFeedback().orElseThrow()).contains("timed out").doesNotContain("failOpen");
         assertThat(audit.getStatus()).isEqualTo(HookStatus.SUCCESS);
+    }
+
+    @Test
+    @DisplayName("an http or mcp handler blocks when it gets no verdict, unless it declares failOpen (EE-65)")
+    void failOpenIsHonouredForHttpAndMcpHandlers() {
+        final McpClientManager noServers = mock(McpClientManager.class);
+        when(noServers.getClient("policy")).thenReturn(Optional.empty());
+        final DefaultHookRegistry registry = new DefaultHookRegistry();
+
+        // Nothing listens on port 1 and the MCP server is not registered: neither call can produce a verdict.
+        new HookRegistryApplier(new HostShellActionExecutor(mock(VirtualShell.class)),
+                HttpActionExecutor.createDefault(), new McpActionExecutor(noServers, new ObjectMapper()), Map.of())
+                .apply(merged("""
+                        {"hooks":{"preTool":[{"hooks":[
+                          {"type":"http","url":"http://127.0.0.1:1/policy"},
+                          {"type":"http","url":"http://127.0.0.1:1/audit","failOpen":true},
+                          {"type":"mcp","server":"policy","tool":"evaluate"},
+                          {"type":"mcp","server":"policy","tool":"audit","failOpen":true}
+                        ]}]}}"""), registry);
+
+        final List<PreToolHook> hooks = registry.getHooks(HookEventType.PRE_TOOL);
+        final PreToolContext context = preToolContext(registry);
+        assertThat(hooks).hasSize(4);
+        assertThat(hooks.get(0).execute(context).getStatus()).isEqualTo(HookStatus.BLOCKED);
+        assertThat(hooks.get(0).execute(context).getFeedback().orElseThrow())
+                .contains("could not get a verdict from its http call").doesNotContain("failOpen")
+                .doesNotContain("127.0.0.1");
+        assertThat(hooks.get(1).execute(context).getStatus()).isEqualTo(HookStatus.SUCCESS);
+        assertThat(hooks.get(2).execute(context).getStatus()).isEqualTo(HookStatus.BLOCKED);
+        assertThat(hooks.get(3).execute(context).getStatus()).isEqualTo(HookStatus.SUCCESS);
     }
 
     @Test
