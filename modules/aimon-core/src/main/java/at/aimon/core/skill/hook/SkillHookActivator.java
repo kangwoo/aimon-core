@@ -11,7 +11,8 @@ import at.aimon.core.skill.Skill;
  * declares available to the skill's fork — through {@link SkillHookScope#hookRegistry()} — until
  * {@link SkillHookScope#close() close()} ends them. {@code SkillTool} wraps the skill body's execution in a
  * try-with-resources block over this scope so that the hooks are guaranteed to end on normal completion, errors, and
- * exceptions alike.
+ * exceptions alike. The user-slash path ({@code LlmSkillExecutor}) does the same around a fork-mode skill's fork, so a
+ * skill's hooks do not depend on whether the model or the user invoked it.
  *
  * <p>
  * Two implementations ship in core:

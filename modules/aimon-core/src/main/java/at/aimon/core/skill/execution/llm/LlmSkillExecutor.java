@@ -46,8 +46,11 @@ import at.aimon.core.skill.execution.SkillToolDispatcher;
 import at.aimon.core.skill.fork.NoOpSkillForkExecutor;
 import at.aimon.core.skill.fork.SkillForkExecutor;
 import at.aimon.core.skill.fork.SkillForkOutcome;
+import at.aimon.core.skill.hook.NoOpSkillHookActivator;
+import at.aimon.core.skill.hook.SkillHookScope;
 import at.aimon.core.skill.render.SkillContentRenderer;
 import at.aimon.core.tools.CallerAllowedTools;
+import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
 /**
@@ -109,6 +112,8 @@ import at.aimon.core.tools.ToolContextKeys;
 public class LlmSkillExecutor implements SkillExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(LlmSkillExecutor.class);
+
+    private static final NoOpSkillHookActivator NO_HOOKS = new NoOpSkillHookActivator();
 
     /** The skill loop never shrinks its view (context-engine design §3.2): its scratch buffer stays short. */
     private static final ContextEngine CONTEXT_ENGINE = ContextEngine.passthrough();
@@ -433,6 +438,12 @@ public class LlmSkillExecutor implements SkillExecutor {
      * live {@code OrcaAgentRuntime}); falls back to the constructor-injected executor otherwise.
      *
      * <p>
+     * The skill's own hooks are activated around the fork by the {@link at.aimon.core.skill.hook.SkillHookActivator}
+     * carried under {@link ToolContextKeys#SKILL_HOOK_ACTIVATOR_KEY} — the activator {@code SkillTool} is given on the
+     * model's path — and the registry its scope hands out reaches the fork, so a fork-mode skill's guards hold however
+     * the skill was invoked (EE-68). Without that key nothing is activated, which is what every caller got before.
+     *
+     * <p>
      * Token usage is reported as zero — the forked subagent owns its own token accounting, which is propagated through
      * its execution attribution rather than aggregated into the parent skill's metadata.
      */
@@ -440,7 +451,13 @@ public class LlmSkillExecutor implements SkillExecutor {
             Instant startTime, TokenUsage accumulatedTokens) {
         final SkillForkExecutor effectiveForkExecutor = toolContext.get(ToolContextKeys.SKILL_FORK_EXECUTOR_KEY)
                 .orElse(forkExecutor);
-        final SkillForkOutcome outcome = effectiveForkExecutor.fork(skill, renderedBody, toolContext);
+        final SkillForkOutcome outcome;
+        try (SkillHookScope hookScope = toolContext.get(ToolContextKeys.SKILL_HOOK_ACTIVATOR_KEY).orElse(NO_HOOKS)
+                .activate(skill, toolContext)) {
+            final ToolContext forkContext = hookScope.hookRegistry()
+                    .map(registry -> HookRegistryAccess.withHookRegistry(toolContext, registry)).orElse(toolContext);
+            outcome = effectiveForkExecutor.fork(skill, renderedBody, forkContext);
+        }
         final SkillExecutionMetadata metadata = buildMetadata(0, accumulatedTokens, startTime);
         if (outcome.isSuccess()) {
             return SkillExecutionResult.success(outcome.getFinalAnswer().orElse(""), metadata);

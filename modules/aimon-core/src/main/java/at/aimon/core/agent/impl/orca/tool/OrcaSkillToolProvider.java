@@ -8,14 +8,10 @@ import org.slf4j.LoggerFactory;
 import at.aimon.core.agent.orca.tool.OrcaToolProvider;
 import at.aimon.core.agent.orca.tool.OrcaToolProviderContext;
 import at.aimon.core.agent.tool.ToolRegistry;
-import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.skill.SkillRegistry;
 import at.aimon.core.skill.fork.NoOpSkillForkExecutor;
 import at.aimon.core.skill.fork.SkillForkExecutor;
 import at.aimon.core.skill.fork.SubagentBackedSkillForkExecutor;
-import at.aimon.core.skill.hook.NoOpSkillHookActivator;
-import at.aimon.core.skill.hook.ScopedSkillHookActivator;
-import at.aimon.core.skill.hook.SkillHookActivator;
 import at.aimon.core.skill.policy.AlwaysAllowSkillInvocationPolicy;
 import at.aimon.core.skill.policy.SkillInvocationPolicy;
 import at.aimon.core.skill.render.DefaultSkillContentRenderer;
@@ -46,7 +42,7 @@ public class OrcaSkillToolProvider implements OrcaToolProvider {
         Objects.requireNonNull(skillRegistry, "skillRegistry must not be null in context");
 
         registry.register(new SkillTool(skillRegistry, new DefaultSkillContentRenderer(), resolveForkExecutor(context),
-                resolveHookActivator(context), resolveInvocationPolicy(context)));
+                OrcaSkillHookActivatorResolver.resolve(context.getHookRegistry()), resolveInvocationPolicy(context)));
     }
 
     /**
@@ -62,20 +58,6 @@ public class OrcaSkillToolProvider implements OrcaToolProvider {
             return AlwaysAllowSkillInvocationPolicy.INSTANCE;
         }
         return policy;
-    }
-
-    /**
-     * Resolves the {@link SkillHookActivator} based on what is available in the provider context. Returns
-     * {@link NoOpSkillHookActivator} when no {@link HookRegistry} is wired in; otherwise layers per-skill hooks
-     * over it through a {@link ScopedSkillHookActivator}.
-     */
-    private static SkillHookActivator resolveHookActivator(OrcaToolProviderContext context) {
-        final HookRegistry hookRegistry = context.getHookRegistry();
-        if (hookRegistry == null) {
-            log.debug("SkillTool wired with NoOpSkillHookActivator: no HookRegistry available in context");
-            return new NoOpSkillHookActivator();
-        }
-        return new ScopedSkillHookActivator(hookRegistry);
     }
 
     /**

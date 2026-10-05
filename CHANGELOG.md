@@ -7,6 +7,26 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: a skill invoked as `/my-skill` runs its fork under the skill's own hooks (EE-68)
+
+- **A fork-mode skill's frontmatter hooks now apply however the skill is invoked.** Until now only the `Skill` tool
+  activated them; the same skill typed by the user as a slash command forked without them — its `onStart` hook did not
+  fire, an `onStart` guard that blocks let the fork run to a successful answer, and a `preTool` guard did not stop the
+  fork's tool calls. `LlmSkillExecutor` now activates the skill's hooks around the fork, the way `SkillTool` does, with
+  the activator `OrcaAgentExecutor` publishes in the slash command's tool context (new
+  `ToolContextKeys.SKILL_HOOK_ACTIVATOR_KEY`) together with the registry to layer over (`ToolContextKeys.HOOK_REGISTRY`).
+  Both paths resolve the activator through one `OrcaSkillHookActivatorResolver`: a `ScopedSkillHookActivator` when the
+  runtime has a hook registry, none otherwise.
+- **What an operator may notice.** A skill's guards now hold on `/skill` as they do on a model's `Skill` call: an
+  `onStart` block fails the command with `Skill fork failed for '<skill>': …`, a `preTool` deny refuses the fork's tool
+  call, and background `Workflow` / `WorkflowJs` and `ScheduleTask` are refused inside the fork. Inline-mode skills are
+  unchanged — they have no fork, so their hooks fire on neither path. The hooks are still never registered with the
+  runtime's registry (EE-49).
+- **Embedders.** A `LlmSkillExecutor` called without `SKILL_HOOK_ACTIVATOR_KEY` in its tool context activates nothing,
+  as before. The slash path's activator is resolved from the runtime, like its fork executor, not taken from a
+  `SkillTool` you registered yourself — a host that gave its own `SkillTool` a `NoOpSkillHookActivator` to switch skill
+  hooks off will now see them on `/skill`.
+
 ### Added: a shell can tell a hook's command from the model's (`ExecutionOptions.hook`)
 
 - **`ExecutionOptions.isHook()`** (builder: `hook(boolean)`, default `false`, carried by `toBuilder()`) marks a command

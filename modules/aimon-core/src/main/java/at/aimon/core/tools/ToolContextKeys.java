@@ -27,6 +27,7 @@ import at.aimon.core.knowledge.wiki.WikiScope;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.skill.execution.SkillToolDispatcher;
 import at.aimon.core.skill.fork.SkillForkExecutor;
+import at.aimon.core.skill.hook.SkillHookActivator;
 
 /**
  * Constants for tool context keys used in agent extension tools.
@@ -314,6 +315,18 @@ public final class ToolContextKeys {
      */
     public static final ToolContextKey<SkillForkExecutor> SKILL_FORK_EXECUTOR_KEY = ToolContextKey
             .of("skillForkExecutor", SkillForkExecutor.class);
+
+    /**
+     * Typed key for a per-execution {@link SkillHookActivator}.
+     *
+     * <p>
+     * Set by the agent executor on the user-slash command path so {@code LlmSkillExecutor} activates a fork-mode
+     * skill's own hooks around its fork with the same activator the LLM tool-call path ({@code SkillTool}) is given —
+     * without it, typing {@code /my-skill} started a fork none of the skill's guards covered (EE-68). When absent,
+     * {@code LlmSkillExecutor} activates nothing.
+     */
+    public static final ToolContextKey<SkillHookActivator> SKILL_HOOK_ACTIVATOR_KEY = ToolContextKey
+            .of("skillHookActivator", SkillHookActivator.class);
 
     /**
      * Typed key for a per-execution {@link SkillToolDispatcher}.

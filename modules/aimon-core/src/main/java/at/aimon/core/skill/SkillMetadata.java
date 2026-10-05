@@ -276,9 +276,10 @@ public final class SkillMetadata {
      * Gets the per-skill hook bundle (AIMON extension).
      *
      * <p>
-     * The hooks contained here are activated at the start of each {@code SkillTool.execute()} call (via
-     * {@link at.aimon.core.skill.hook.SkillHookActivator}) and deactivated when the call returns. They are most
-     * meaningful for fork-mode skills, where the scope spans the spawned SubAgent's lifetime.
+     * The hooks contained here are activated at the start of each invocation of the skill — a {@code SkillTool} call
+     * or a user's {@code /skill} command (via {@link at.aimon.core.skill.hook.SkillHookActivator}) — and deactivated
+     * when it returns. They fire only in a fork-mode skill's fork, where the scope spans the spawned SubAgent's
+     * lifetime.
      *
      * @return The hook set (never null; empty when no hooks are declared)
      */

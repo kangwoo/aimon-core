@@ -7,7 +7,8 @@ import at.aimon.core.skill.Skill;
  * Executes a skill in fork mode by delegating its rendered instructions to a named subagent.
  *
  * <p>
- * SkillTool consults this executor when a skill declares {@code execution.mode: fork}. The rendered skill body is
+ * {@code SkillTool} (model path) and {@code LlmSkillExecutor} (user-slash path) consult this executor when a skill
+ * declares {@code execution.mode: fork}. The rendered skill body is
  * forwarded as the subagent's goal; the subagent's final answer is returned to the calling LLM.
  *
  * <p>

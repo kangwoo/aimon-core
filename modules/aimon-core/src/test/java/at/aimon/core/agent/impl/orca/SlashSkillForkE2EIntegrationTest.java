@@ -4,11 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -22,6 +25,10 @@ import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.agent.tool.Tool;
+import at.aimon.core.agent.tool.ToolContext;
+import at.aimon.core.agent.tool.ToolInput;
+import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
 import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.DefaultCommandExecutionManager;
@@ -35,6 +42,9 @@ import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
+import at.aimon.core.hook.HookEventType;
+import at.aimon.core.hook.event.OnStartHook;
+import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
@@ -42,12 +52,14 @@ import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.Role;
 import at.aimon.core.llm.ToolDefinition;
+import at.aimon.core.llm.ToolUse;
 import at.aimon.core.skill.ExecutionMode;
 import at.aimon.core.skill.InvokePolicy;
 import at.aimon.core.skill.Skill;
 import at.aimon.core.skill.SkillContent;
 import at.aimon.core.skill.SkillMetadata;
 import at.aimon.core.skill.SkillRegistry;
+import at.aimon.core.skill.hook.SkillHookSet;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentContent;
@@ -220,6 +232,84 @@ class SlashSkillForkE2EIntegrationTest {
                 .satisfies(r -> assertThat(r.principal()).contains(alice));
     }
 
+    /**
+     * Regression (EE-68): only {@code SkillTool} activated a skill's frontmatter hooks, so a fork-mode skill the user
+     * typed as {@code /review} ran its fork without them — the same skill the model invoked through {@code Skill} did
+     * not. The hook here is an {@code onStart} guard because that is the event every fork fires before its first LLM
+     * call, which makes "the skill's hooks reached the fork" observable from the outside.
+     */
+    @Test
+    @DisplayName("a skill's onStart hook fires in the fork started by /<skill>")
+    void slashForkSkill_FiresTheSkillsOwnHooksInTheFork() {
+        final AtomicInteger fired = new AtomicInteger();
+        final OnStartHook onStart = ctx -> {
+            fired.incrementAndGet();
+            return HookResult.success();
+        };
+        skillRegistry.add(forkSkill("review", "code-reviewer", "Review: $ARGUMENTS",
+                SkillHookSet.builder().addOnStart(onStart).build()));
+        subagentRegistry.add(simpleSubagent("code-reviewer"));
+
+        final OrcaAgentExecutionResult result = executor.execute(createContext(), createRequest("/review Foo.java"));
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(fired).hasValue(1);
+    }
+
+    /** EE-68: a skill's guard blocks the slash-started fork exactly as it blocks the one {@code Skill} starts. */
+    @Test
+    @DisplayName("a skill's onStart guard that blocks stops the fork started by /<skill>")
+    void slashForkSkill_SkillGuardThatBlocks_StopsTheFork() {
+        final OnStartHook guard = ctx -> HookResult.block("not on this repo");
+        skillRegistry.add(forkSkill("review", "code-reviewer", "Review: $ARGUMENTS",
+                SkillHookSet.builder().addOnStart(guard).build()));
+        subagentRegistry.add(simpleSubagent("code-reviewer"));
+
+        final OrcaAgentExecutionResult result = executor.execute(createContext(), createRequest("/review Foo.java"));
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.getErrorMessage()).contains("Skill fork failed for 'review'").contains("not on this repo");
+        assertThat(llmClient.callCount()).isZero();
+    }
+
+    /**
+     * EE-68: a {@code preTool} guard — the other event the CHANGELOG names — keeps the slash fork's subagent from
+     * running the tool it asked for. The fork itself still answers: a denied tool call is an observation, not a stop.
+     */
+    @Test
+    @DisplayName("a skill's preTool guard denies the tool call made inside the fork started by /<skill>")
+    void slashForkSkill_SkillPreToolGuardDeniesTheForksToolCall() {
+        final CountingTool probe = new CountingTool();
+        toolRegistry.register(probe);
+        llmClient.queue(LlmResponse.of("probing", List.of(ToolUse.of("t1", CountingTool.NAME, Map.of()))));
+        skillRegistry.add(forkSkill("review", "code-reviewer", "Review: $ARGUMENTS",
+                SkillHookSet.builder().addPreTool(ctx -> HookResult.deny("probe is off limits")).build()));
+        subagentRegistry.add(simpleSubagent("code-reviewer"));
+
+        final OrcaAgentExecutionResult result = executor.execute(createContext(), createRequest("/review Foo.java"));
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(probe.executions).isZero();
+        assertThat(llmClient.callCount()).isEqualTo(2);
+    }
+
+    /**
+     * EE-68: activating on the slash path must not do it by registering with the runtime's registry — that is the
+     * agent-scoped registry every other session of the agent dispatches against (EE-49).
+     */
+    @Test
+    @DisplayName("the slash path leaves the skill's hooks out of the runtime's registry")
+    void slashForkSkill_DoesNotRegisterTheSkillsHooksWithTheRuntime() {
+        skillRegistry.add(forkSkill("review", "code-reviewer", "Review: $ARGUMENTS",
+                SkillHookSet.builder().addOnStart(ctx -> HookResult.success()).build()));
+        subagentRegistry.add(simpleSubagent("code-reviewer"));
+        final OrcaAgentRuntime runtime = createContext();
+
+        executor.execute(runtime, createRequest("/review Foo.java"));
+
+        assertThat(runtime.getHookRegistry().getHooks(HookEventType.ON_START)).isEmpty();
+    }
+
     private void skillForkRegistryFixture() {
         skillRegistry.add(forkSkill("review", "code-reviewer", "Review the following: $ARGUMENTS"));
         subagentRegistry.add(simpleSubagent("code-reviewer"));
@@ -259,16 +349,37 @@ class SlashSkillForkE2EIntegrationTest {
     }
 
     private static Skill forkSkill(String name, String agentName, String body) {
+        return forkSkill(name, agentName, body, SkillHookSet.empty());
+    }
+
+    private static Skill forkSkill(String name, String agentName, String body, SkillHookSet hooks) {
         return Skill.builder().name(name)
                 .metadata(SkillMetadata.builder().name(name).description("e2e fixture — " + name)
                         .invokePolicy(InvokePolicy.of(true, true)).executionMode(ExecutionMode.FORK)
-                        .forkAgentName(agentName).build())
+                        .forkAgentName(agentName).hooks(hooks).build())
                 .content(SkillContent.of(body)).build();
     }
 
     private static Subagent simpleSubagent(String name) {
         return Subagent.of(name, SubagentMetadata.builder().description("e2e " + name).maxIterations(2).build(),
                 SubagentContent.of("you are " + name));
+    }
+
+    /** A tool that only counts how often it actually ran. */
+    private static final class CountingTool implements Tool {
+        static final String NAME = "Probe";
+        int executions;
+
+        @Override
+        public ToolDefinition getDefinition() {
+            return ToolDefinition.of(NAME, "Counts executions", Map.of("type", "object"));
+        }
+
+        @Override
+        public ToolResult execute(ToolInput input, ToolContext context) {
+            executions++;
+            return ToolResult.success("probed");
+        }
     }
 
     /** In-memory {@link SkillRegistry} so the test does not depend on classpath fixtures. */
@@ -337,9 +448,15 @@ class SlashSkillForkE2EIntegrationTest {
     private static final class RecordingLlmClient implements LlmClient {
         private final String finalAnswer;
         private final List<String> userMessages = new ArrayList<>();
+        private final Deque<LlmResponse> queued = new ArrayDeque<>();
 
         RecordingLlmClient(String finalAnswer) {
             this.finalAnswer = finalAnswer;
+        }
+
+        /** Answers the next call with {@code response} instead of the fixed final answer. */
+        void queue(LlmResponse response) {
+            queued.add(response);
         }
 
         int callCount() {
@@ -367,7 +484,8 @@ class SlashSkillForkE2EIntegrationTest {
                     userMessages.add(m.getContent());
                 }
             }
-            return LlmResponse.text(finalAnswer);
+            final LlmResponse next = queued.poll();
+            return next != null ? next : LlmResponse.text(finalAnswer);
         }
 
         @Override

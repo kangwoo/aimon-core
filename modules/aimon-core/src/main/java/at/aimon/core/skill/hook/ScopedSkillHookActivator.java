@@ -15,7 +15,8 @@ import at.aimon.core.tools.HookRegistryAccess;
  * <p>
  * It does not register anything. Activation builds a {@link SkillScopedHookRegistry} — the registry the invoking
  * execution dispatches against, with the skill's hooks layered on top — and hands it out through the scope for
- * {@code SkillTool} to pass to the fork. Another session of the same agent, and the invoking execution itself, keep
+ * {@code SkillTool} or, on the user-slash path, {@code LlmSkillExecutor} to pass to the fork. Another session of the
+ * same agent, and the invoking execution itself, keep
  * dispatching against a registry that never contained the skill's hooks, so there is nothing to filter and nothing to
  * roll back. Closing the scope switches the layer off; each scope is single-use and idempotent on close.
  *
