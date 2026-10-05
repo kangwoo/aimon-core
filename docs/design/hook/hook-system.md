@@ -170,7 +170,12 @@ allow 로 강등된다. 그래서 인터럽트로 끊긴 대기는 정책과 무
 | `PathGlobPredicate` | 경로 파라미터의 글로브 |
 | `CompositePredicate` | 위의 AND/OR 조합 |
 
-Claude Code 풍 `if` 문법은 `PredicateParser` 가 위 구현들로 번역한다. `…declarative.predicate` 하위 패키지는 SPI 가 아니라 **impl** 이다. 바깥에서 닿을 수 있는 것은 부모
+Claude Code 풍 `if` 문법은 `PredicateParser` 가 위 구현들로 번역한다. 그 문법이 만드는 것은 **이름 · `도구(글롭)` · 그 둘의
+OR(`|`)** 뿐이다 — `CompositePredicate.and` 는 코드에서만 닿고, 정규식과 입력 필드 지정은 어느 구현에도 없다. 문법에 없는
+표기는 대개 파싱 오류가 아니라 **아무것도 맞추지 못하는 이름이나 글롭**이 되므로(괄호 없는 항은 통째로 이름이다), 사용자
+문서가 문법을 틀리게 적으면 그대로 옮긴 가드는 조용히 꺼진다. 사용자 쪽 정본은
+[`hook-config-guide.md` › Matcher 문법](../../features/hook/hook-config-guide.md#matcher-문법)이고,
+`DocumentedMatcherGrammarTest` 가 그 표의 각 행을 파서에 고정한다. `…declarative.predicate` 하위 패키지는 SPI 가 아니라 **impl** 이다. 바깥에서 닿을 수 있는 것은 부모
 패키지의 `ToolInputPredicate` 인터페이스뿐이며, `PackageDependencyArchitectureTest`
 가 이 두 규칙(하위 클래스는 전부 `ToolInputPredicate` 구현일 것 · 허용된 호출자 밖에서 import 금지)을 빌드에서
 강제한다.

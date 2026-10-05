@@ -18,8 +18,15 @@ import at.aimon.core.agent.tool.ToolInput;
  * each segment against the supplied glob.
  * <li>Path glob — e.g. {@code "Edit(*.ts)"}, {@code "Write(.env)"} — matches the tool's path/file_path argument.
  * <li>Composite — OR / AND combinations of the above (see
- * {@code at.aimon.core.skill.hook.declarative.predicate.CompositePredicate}).
+ * {@code at.aimon.core.skill.hook.declarative.predicate.CompositePredicate}). A {@code matcher} string can only
+ * express OR ({@code |}); AND is available to code that builds predicates itself.
  * </ul>
+ *
+ * <p>
+ * The {@code matcher} grammar has no regular expressions and no way to name an input field. A spelling outside the
+ * grammar usually still parses — a term without parentheses is a tool name in its entirety — and then matches no
+ * call, so the hook never fires. The grammar is documented for users in
+ * {@code docs/features/hook/hook-config-guide.md} ("Matcher 문법").
  *
  * <p>
  * Implementations must be immutable and thread-safe — predicates are shared across hook firings.

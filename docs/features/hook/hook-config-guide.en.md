@@ -233,17 +233,44 @@ that was written.
 `matcher` decides which tool calls a hook applies to. When it is empty or `"*"` it matches every
 tool (`NameOnlyPredicate.ANY`).
 
+The grammar is exactly what `PredicateParser` accepts: a **tool name**, **`Tool(glob)`**, and **`|`** (OR) joining them.
+
 | Pattern                               | Meaning                                                             |
 |---------------------------------------|---------------------------------------------------------------------|
-| `Bash`                                | The tool name is exactly `Bash`                                     |
-| `Read\|Write\|Edit`                   | Any one of the three                                                |
-| `mcp__.*`                             | A regular expression — every tool starting with `mcp__`             |
-| `Bash(command=^git\\s+push)`          | Tool name plus an input-field match (`PredicateParser`)             |
-| `Bash & input.command~^npm`           | Composition — name and input predicates joined with `&` / `\|`      |
+| `Bash`                                | The tool name is exactly `Bash` (case-sensitive)                    |
+| `Read\|Write\|Edit`                   | Any one of the three — `\|` is OR, and spaces around it are ignored |
+| `mcp__*`                              | A name glob — every tool starting with `mcp__`. `*` is the only wildcard |
+| `Bash(git push*)`                     | A sub-command glob for `Bash` — one of the pieces `command` splits into matches the **whole** glob |
+| `Edit(*.env)`                         | A path glob — the path argument of `Edit` matches the **whole** glob |
+| `Bash(rm -rf*)\|Write(*.env)`         | The terms above joined with `\|`. A `\|` **inside** parentheses is part of the pattern |
 
-- A pattern `PredicateParser` cannot interpret falls back to `name-only` on `postTool` and leaves a WARN log.
-  On `preTool` it is a **startup failure** — the fallback matches no real tool name, so the guard would silently be off.
-- Regular expressions follow Java `Pattern` syntax.
+- **Globs.** `*` is zero or more arbitrary characters (it crosses `/` too) and **every other character is a literal** —
+  `.`, `?`, `^`, `\s` and `**` have no special meaning. The comparison is anchored at both ends, so "starts with" is
+  written `git push*` and "contains" is written `*--force*`.
+- **`Bash(glob)`.** The `command` string is split at `&&`, `||`, `;`, `|` and newlines, and the contents of backticks,
+  `$(…)` and double quotes are looked at as pieces of their own (the `git push` in `bash -c "git push"`). The matcher
+  matches when any one piece matches the glob. It **compares text**; it does not interpret the shell — `git  push` (two
+  spaces) and `sudo git push` are not caught by `git push*`. A guard that has to hold against evasion should not lean
+  on the glob: have a `command` handler inspect `tool_input.command` from stdin itself.
+- **The tools that take `Tool(glob)`** are `Bash` and the eight path tools (`Read`, `Edit`, `Write`, `MultiEdit`, `Glob`,
+  `Grep`, `LS`, `NotebookEdit`), and no others. A path tool looks at the path string exactly as the model passed it
+  (`file_path` for `Read`, `Edit`, `Write` and `MultiEdit`; `pattern` then `path` for `Glob`; `path` then `pattern` for
+  `Grep`; `path` for `LS`; `notebook_path` for `NotebookEdit`). It may be absolute or relative, so start the glob with
+  `*`, as in `*.env`, to match whatever directory precedes it. Parentheses on any other tool (`WebFetch(…)`,
+  `mcp__x(…)`) do not parse.
+- **What is not there.** Regular expressions, AND (`&`), naming an input field (`command=…`) and negation are not part
+  of the grammar. It is also **not the grammar** of tool-permission patterns (`Bash(git:*)` and `Read(/tmp/**)` in
+  `allowed-tools`) — in a matcher `:` and `**` are literals.
+- **A matcher that does not parse** — unbalanced parentheses, an empty pattern (`Bash()`), an empty term (`Read|`), text
+  after the closing parenthesis, a tool that takes no parentheses — is a **startup failure** on `preTool`
+  ([What stops startup](#what-stops-startup)). On `postTool` it falls back to `name-only`, reading the whole string as
+  a tool name, and leaves a WARN (no tool has that name, so the hook does not fire).
+- **A matcher that parses but can match nothing is not caught.** A term without parentheses is a tool name in its
+  entirety and whatever is inside parentheses is a glob in its entirety, so a matcher written in a grammar that is not
+  listed above registers without an error and **never fires**: `mcp__.*` matches only names starting with `mcp__.`,
+  `Bash & input.command~^npm` matches only a tool with literally that name, and `Bash(command=^git\s+push)` matches only
+  a command that is literally that text. This guide once listed those three forms as grammar — a `deny` guard copied
+  from it has never fired, and should be rewritten in one of the forms in the table.
 
 ---
 
@@ -769,7 +796,7 @@ its executor (`aimon-cli` does not).
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash(command=^rm\\s+-rf\\s+/)",
+        "matcher": "Bash(rm -rf /*)",
         "hooks": [
           { "type": "deny", "reason": "Dangerous rm -rf commands are blocked." }
         ]
@@ -778,6 +805,11 @@ its executor (`aimon-cli` does not).
   }
 }
 ```
+
+The matcher looks at the **text** of each sub-command — `rm -rf /` and `cd /tmp && rm -rf /var/lib` are caught, while
+`rm -fr /` and `sudo rm -rf /` are not (`Bash(*rm -rf /*)` catches the latter as well). A block that must not be
+avoidable by spelling the command differently belongs in a `command` handler that inspects `tool_input.command`
+itself — see [Matcher syntax](#matcher-syntax).
 
 ### 3. Collecting metrics only, on PostTool (fail-soft)
 
@@ -847,7 +879,7 @@ from the same map, so they never drift:
 
 `<project>/.aimon/hooks.json` (PROJECT, team policy):
 ```json
-{ "hooks": { "PreToolUse": [{ "matcher": "Bash(command=^git\\s+push.*--force)", "hooks": [{ "type": "deny", "reason": "force push is not allowed" }] }] } }
+{ "hooks": { "PreToolUse": [{ "matcher": "Bash(git push*--force*)", "hooks": [{ "type": "deny", "reason": "force push is not allowed" }] }] } }
 ```
 
 `<project>/.aimon/hooks.local.json` (LOCAL, personal debugging):
@@ -868,7 +900,7 @@ hour.
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash(command=^kubectl\\s+apply.*-prod)",
+        "matcher": "Bash(kubectl apply*-prod*)",
         "hooks": [
           {
             "type": "mcp",
@@ -955,6 +987,7 @@ are in [`aimon-skill-extensions.md`](../../references/aimon-skill-extensions.md)
 | A fork ends with `Execution blocked by OnStart hook [SUBAGENT/…]`         | An `onStart` hook in `hooks.json` (or in skill frontmatter) blocked that fork. If the hook is meant for user input, make it exit 0 when `AIMON_INVOKER_TYPE` is `SUBAGENT`. |
 | The CLI does not start: `Configuration error: hooks config … is invalid: <event> entry #n, handler #m: …` | An entry under a guard event cannot be applied. Fix or remove the handler the message points at. If the handler only observes and may be left out when it cannot run, declare `"failOpen": true`. The full table is in [What stops startup](#what-stops-startup). |
 | `WARN hooks: matcher '...' could not be parsed`                          | A `PredicateParser` syntax error on `postTool`. It is running with the name-only fallback. (On `preTool` this is a startup failure.) |
+| A `deny` or guard hook is registered and never fires                     | Its matcher parses but matches no call — a regular expression (`mcp__.*`, `\s+`), `&`, `command=…` and a permission pattern (`Bash(git:*)`) are not matcher grammar, and none of them raises an error. Rewrite it in one of the forms under [Matcher syntax](#matcher-syntax). |
 | `WARN hooks: invalid handler in PROJECT on event 'postTool': ...`        | A required field is missing (`command`/`url`/`server+tool`/`reason`) on an event that is not a guard event. Only that handler is skipped. |
 | `WARN hooks: 'deny' is not valid on postTool ...`                        | `deny` is `preTool`-only. The handler is ignored on other events.             |
 | `WARN hooks: '...' event is not supported by AIMON in this phase`        | Only `Notification` / `UserPromptSubmit` / `stop_hook_active`. Everything else is supported. |

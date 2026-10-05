@@ -220,17 +220,38 @@ WARN 이 아니라 **시작 실패**다(`… is invalid: unknown event 'preTol' 
 `matcher` 는 어떤 도구 호출에 hook 을 적용할지를 결정한다. 비어 있거나
 `"*"` 이면 모든 도구에 매치된다 (`NameOnlyPredicate.ANY`).
 
+문법은 `PredicateParser` 가 받는 것이 전부다: **도구 이름**, **`도구(글롭)`**, 그리고 그 둘을 잇는 **`|`**(OR).
+
 | 패턴                                  | 의미                                                                |
 |---------------------------------------|---------------------------------------------------------------------|
-| `Bash`                                | 도구 이름이 정확히 `Bash`                                           |
-| `Read\|Write\|Edit`                   | 셋 중 하나                                                          |
-| `mcp__.*`                             | 정규식 — `mcp__` 으로 시작하는 모든 도구                            |
-| `Bash(command=^git\\s+push)`          | 도구 이름 + 입력 필드 매칭 (`PredicateParser`)                      |
-| `Bash & input.command~^npm`           | 합성 — 이름과 입력 술어를 `&`/`\|` 로 결합                          |
+| `Bash`                                | 도구 이름이 정확히 `Bash` (대소문자 구분)                           |
+| `Read\|Write\|Edit`                   | 셋 중 하나 — `\|` 는 OR 이고 양옆 공백은 무시된다                    |
+| `mcp__*`                              | 이름 글롭 — `mcp__` 으로 시작하는 모든 도구. 와일드카드는 `*` 하나뿐이다 |
+| `Bash(git push*)`                     | `Bash` 의 서브커맨드 글롭 — `command` 를 나눈 조각 중 하나가 글롭 **전체**와 일치 |
+| `Edit(*.env)`                         | 경로 글롭 — `Edit` 의 경로 인자가 글롭 **전체**와 일치               |
+| `Bash(rm -rf*)\|Write(*.env)`         | 위 항들을 `\|` 로 묶은 것. 괄호 **안**의 `\|` 는 패턴의 일부다       |
 
-- `PredicateParser` 가 해석하지 못하는 패턴은 `postTool` 에서는 `name-only` fallback 으로 떨어지고
-  WARN 로그가 남는다. `preTool` 에서는 **시작 실패**다 — fallback 은 실제 도구 이름과 맞지 않아 가드가 조용히 꺼진다.
-- 정규식은 Java `Pattern` 문법을 따른다.
+- **글롭.** `*` 는 0개 이상의 임의 문자(`/` 도 넘는다)이고 **그 밖의 모든 문자는 리터럴**이다 — `.` · `?` · `^` · `\s` ·
+  `**` 에 특별한 뜻이 없다. 앞뒤를 고정해 비교하므로 "…로 시작" 은 `git push*`, "…를 포함" 은 `*--force*` 로 적는다.
+- **`Bash(글롭)`.** `command` 문자열을 `&&` · `||` · `;` · `|` · 줄바꿈에서 나누고, 백틱 · `$(…)` · 큰따옴표 안의 내용도 따로
+  조각으로 본다(`bash -c "git push"` 의 `git push`). 조각 하나라도 글롭과 일치하면 매치다. 셸을 해석하는 것이 아니라
+  **글자를 비교**한다 — `git  push`(공백 두 칸) · `sudo git push` 는 `git push*` 에 걸리지 않는다. 우회를 막아야 하는
+  가드라면 글롭에 기대지 말고 `command` handler 가 stdin 의 `tool_input.command` 를 직접 검사하게 한다.
+- **`도구(글롭)` 을 받는 도구**는 `Bash` 와 경로 도구 여덟(`Read` · `Edit` · `Write` · `MultiEdit` · `Glob` · `Grep` · `LS` ·
+  `NotebookEdit`)뿐이다. 경로 도구는 모델이 넘긴 경로 문자열 그대로를 본다(`Read` · `Edit` · `Write` · `MultiEdit` 는
+  `file_path`, `Glob` 은 `pattern` · `path`, `Grep` 은 `path` · `pattern`, `LS` 는 `path`, `NotebookEdit` 는 `notebook_path`).
+  절대 경로일 수도 상대 경로일 수도 있으므로 디렉터리가 붙어도 걸리게 `*.env` 처럼 `*` 로 시작한다. 그 밖의 도구에
+  괄호를 붙이면(`WebFetch(…)`, `mcp__x(…)`) 해석되지 않는다.
+- **없는 것.** 정규식, AND(`&`), 입력 필드 지정(`command=…`), 부정은 문법에 없다. 도구 권한의 패턴 문법
+  (`allowed-tools` 의 `Bash(git:*)` · `Read(/tmp/**)`)과도 **다른 문법**이다 — 매처에서 `:` 와 `**` 는 리터럴이다.
+- **해석되지 않는 매처** — 짝이 맞지 않는 괄호, 빈 패턴(`Bash()`), 빈 항(`Read|`), 닫는 괄호 뒤의 글자, 괄호를 받지 않는
+  도구 — 는 `preTool` 에서 **시작 실패**다([시작할 때 막는 경우](#시작할-때-막는-경우)). `postTool` 에서는 문자열 전체를 도구
+  이름으로 보는 `name-only` fallback 으로 떨어지고 WARN 이 남는다(그 이름의 도구는 없으므로 hook 은 발화하지 않는다).
+- **해석은 되지만 아무것도 맞추지 못하는 매처는 잡히지 않는다.** 괄호가 없는 항은 통째로 도구 이름이고 괄호 안은 통째로
+  글롭이라, 위에 없는 문법으로 적은 매처는 오류 없이 등록되어 **한 번도 발화하지 않는다**: `mcp__.*` 는 `mcp__.` 으로
+  시작하는 이름만, `Bash & input.command~^npm` 은 그 글자 그대로의 이름만, `Bash(command=^git\s+push)` 는 그 글자 그대로의
+  커맨드만 맞춘다. 이 가이드는 한때 그 세 형태를 문법으로 실었다 — 그대로 옮겨 적은 `deny` 가드가 있다면 지금까지 걸린
+  적이 없으니 위 표의 형태로 고쳐 쓴다.
 
 ---
 
@@ -722,7 +743,7 @@ placeholder 는 `${<prefix>.<name>}` 세 종류뿐이다.
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash(command=^rm\\s+-rf\\s+/)",
+        "matcher": "Bash(rm -rf /*)",
         "hooks": [
           { "type": "deny", "reason": "위험한 rm -rf 명령은 차단됩니다." }
         ]
@@ -731,6 +752,10 @@ placeholder 는 `${<prefix>.<name>}` 세 종류뿐이다.
   }
 }
 ```
+
+매처는 서브커맨드의 **글자**를 본다 — `rm -rf /` 와 `cd /tmp && rm -rf /var/lib` 는 걸리지만 `rm -fr /` 나
+`sudo rm -rf /` 는 걸리지 않는다(뒤쪽까지 잡으려면 `Bash(*rm -rf /*)`). 표기를 바꿔 피할 수 있으면 안 되는 차단은 `command`
+handler 가 `tool_input.command` 를 직접 검사하게 한다 — [Matcher 문법](#matcher-문법).
 
 ### 3. PostTool 에서 메트릭만 수집 (fail-soft)
 
@@ -800,7 +825,7 @@ placeholder 는 `${<prefix>.<name>}` 세 종류뿐이다.
 
 `<project>/.aimon/hooks.json` (PROJECT, 팀 정책):
 ```json
-{ "hooks": { "PreToolUse": [{ "matcher": "Bash(command=^git\\s+push.*--force)", "hooks": [{ "type": "deny", "reason": "force push 금지" }] }] } }
+{ "hooks": { "PreToolUse": [{ "matcher": "Bash(git push*--force*)", "hooks": [{ "type": "deny", "reason": "force push 금지" }] }] } }
 ```
 
 `<project>/.aimon/hooks.local.json` (LOCAL, 개인 디버그):
@@ -820,7 +845,7 @@ placeholder 는 `${<prefix>.<name>}` 세 종류뿐이다.
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash(command=^kubectl\\s+apply.*-prod)",
+        "matcher": "Bash(kubectl apply*-prod*)",
         "hooks": [
           {
             "type": "mcp",
@@ -905,6 +930,7 @@ fork 가 없어 발화하지 않는다. 전체 규칙은 [`aimon-skill-extension
 | fork 가 `Execution blocked by OnStart hook [SUBAGENT/…]` 로 끝남          | `hooks.json`(또는 스킬 frontmatter)의 `onStart` hook 이 그 fork 를 막았다. 사용자 입력용 hook 이라면 `AIMON_INVOKER_TYPE` 이 `SUBAGENT` 일 때 exit 0 으로 빠지게 한다. |
 | `Configuration error: hooks config … is invalid: <event> entry #n, handler #m: …` 로 CLI 가 뜨지 않음 | 가드 이벤트 아래에 적용할 수 없는 항목이 있다. 메시지가 가리키는 handler 를 고치거나 지운다. 관찰용이라 못 돌아도 되는 handler 라면 `"failOpen": true`. 전체 표는 [시작할 때 막는 경우](#시작할-때-막는-경우). |
 | `WARN hooks: matcher '...' could not be parsed`                          | `postTool` 의 `PredicateParser` 문법 오류. fallback 으로 name-only 적용 중. (`preTool` 에서는 시작 실패.) |
+| `deny` · 가드 hook 이 등록됐는데 한 번도 걸리지 않음                       | 매처가 해석은 되지만 아무 호출과도 맞지 않는다 — 정규식(`mcp__.*`, `\s+`) · `&` · `command=…` · 권한 패턴(`Bash(git:*)`)은 매처 문법이 아니고 오류도 나지 않는다. [Matcher 문법](#matcher-문법)의 형태로 고친다. |
 | `WARN hooks: invalid handler in PROJECT on event 'postTool': ...`        | 가드가 아닌 이벤트에서 필수 필드 누락 (`command`/`url`/`server+tool`/`reason`). 해당 handler 만 스킵. |
 | `WARN hooks: 'deny' is not valid on postTool ...`                        | `deny` 는 `preTool` 전용. 다른 이벤트에서는 handler 가 무시됨.                |
 | `WARN hooks: '...' event is not supported by AIMON in this phase`        | `Notification` / `UserPromptSubmit` / `stop_hook_active` 뿐이다. 나머지는 모두 지원. |
