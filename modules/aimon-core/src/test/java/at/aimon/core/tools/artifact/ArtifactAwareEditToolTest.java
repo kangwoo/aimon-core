@@ -4,12 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,9 +26,11 @@ import at.aimon.core.agent.artifact.FileArtifact;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.environment.DelegatingFileSystem;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.FileStamp;
 import at.aimon.core.environment.TestExecutionEnvironments;
+import at.aimon.core.filesystem.FileMetadata;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
@@ -499,6 +503,75 @@ class ArtifactAwareEditToolTest {
                 assertThat(artifact.getStorage()).isEqualTo(ArtifactStorage.CONTROL);
             });
             assertThat(Files.readString(tempDir.resolve("control/artifacts/fork-7/report.csv"))).isEqualTo("new,data");
+        }
+
+        @Test
+        @DisplayName("Non-durable environment: editing one file twice counts it against the execution limit once")
+        void editingTwiceCountsTheFileOnce() throws IOException {
+            final ArtifactAwareEditTool limited = new ArtifactAwareEditTool(new ArtifactArchive(controlFileSystem,
+                    ArtifactPolicy.builder().enabled(true).maxExecutionBytes(12).build()));
+            final Path testFile = tempDir.resolve("report.csv");
+            Files.writeString(testFile, "old,data");
+            final ArtifactCollector collector = new ArtifactCollector("fork-7");
+            final ToolContext context = nonDurableContext(fileSystem, testFile, collector);
+
+            final ToolResult first = limited.execute(
+                    ToolInput.of(Map.of("file_path", testFile.toString(), "old_string", "old", "new_string", "new")),
+                    context);
+            final ToolResult second = limited.execute(
+                    ToolInput.of(Map.of("file_path", testFile.toString(), "old_string", "data", "new_string", "rows")),
+                    context);
+
+            assertThat(first.getContent()).doesNotContain("artifact not registered");
+            assertThat(second.isSuccess()).isTrue();
+            assertThat(second.getContent()).as("8 bytes of a 12-byte limit, edited twice")
+                    .doesNotContain("artifact not registered");
+            assertThat(Files.readString(tempDir.resolve("control/artifacts/fork-7/report.csv"))).isEqualTo("new,rows");
+        }
+
+        @Test
+        @DisplayName("Non-durable environment: an edited file whose size cannot be read is not archived as 0 bytes")
+        void unreadableSizeAfterEditAddsNote() throws IOException {
+            final Path testFile = tempDir.resolve("report.csv");
+            Files.writeString(testFile, "old,data");
+            final ArtifactCollector collector = new ArtifactCollector("fork-7");
+            // Metadata is readable for the stamps (before the edit and right after it) and fails from then on.
+            final AtomicInteger remaining = new AtomicInteger(Integer.MAX_VALUE);
+            final VirtualFileSystem flaky = new DelegatingFileSystem(fileSystem) {
+                @Override
+                public void write(String path, InputStream content, long contentLength) {
+                    super.write(path, content, contentLength);
+                    remaining.set(1);
+                }
+
+                @Override
+                public FileMetadata getMetadata(String path) {
+                    if (remaining.getAndDecrement() <= 0) {
+                        throw new IllegalStateException("metadata unavailable");
+                    }
+                    return super.getMetadata(path);
+                }
+            };
+
+            final ToolResult result = editTool.execute(
+                    ToolInput.of(Map.of("file_path", testFile.toString(), "old_string", "old", "new_string", "new")),
+                    nonDurableContext(flaky, testFile, collector));
+
+            assertThat(result.isSuccess()).isTrue();
+            assertThat(result.getContent()).contains("Successfully replaced").contains("[artifact not registered:")
+                    .contains("size");
+            assertThat(collector.getArtifacts()).isEmpty();
+            assertThat(controlFileSystem.exists("artifacts/fork-7/report.csv")).isFalse();
+        }
+
+        private ToolContext nonDurableContext(VirtualFileSystem workspace, Path testFile, ArtifactCollector collector) {
+            return ToolContext.builder()
+                    .put(ToolContextKeys.EXECUTION_ENVIRONMENT,
+                            TestExecutionEnvironments.builder().fileSystem(workspace).durable(false).build())
+                    .put(ReadTool.FILE_STAMPS_KEY,
+                            new ConcurrentHashMap<>(Map.of(tempDir.relativize(testFile).toString(),
+                                    FileStamp.of(fileSystem.getMetadata(testFile.toString())))))
+                    .put(ToolContextKeys.ARTIFACT_COLLECTOR, collector).build();
         }
 
         @Test

@@ -167,6 +167,23 @@ class ArtifactCollectorTest {
         assertThat(collector.totalBytes(ArtifactStorage.CONTROL)).isEqualTo(25);
     }
 
+    @Test
+    @DisplayName("totalBytes counts a path registered again once, at its latest size (EE-19)")
+    void totalBytesCountsAPathOnce() {
+        final ArtifactCollector collector = new ArtifactCollector();
+        collector.add(FileArtifact.builder().path("artifacts/k/b").fileName("b").size(20)
+                .storage(ArtifactStorage.CONTROL).build());
+        collector.add(FileArtifact.builder().path("artifacts/k/c").fileName("c").size(5)
+                .storage(ArtifactStorage.CONTROL).build());
+        collector.add(FileArtifact.builder().path("artifacts/k/b").fileName("b").size(8)
+                .storage(ArtifactStorage.CONTROL).build());
+
+        assertThat(collector.getArtifacts()).as("every registration is still reported").hasSize(3);
+        assertThat(collector.totalBytes(ArtifactStorage.CONTROL)).isEqualTo(13);
+        assertThat(collector.totalBytesExcluding(ArtifactStorage.CONTROL, "artifacts/k/b")).isEqualTo(5);
+        assertThat(collector.totalBytesExcluding(ArtifactStorage.CONTROL, "artifacts/k/none")).isEqualTo(13);
+    }
+
     private static FileArtifact createArtifact(String path, String fileName) {
         return FileArtifact.builder().path(path).fileName(fileName).size(1024).build();
     }
