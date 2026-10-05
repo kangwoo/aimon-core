@@ -164,6 +164,11 @@ MIME 을 가진 `FileInput` 은 이미지 블록이 된다.
 | `DocumentContentBlock` (텍스트) | `ofDocument(DocumentBlockParam)` + `PlainTextSource` |
 | `DocumentContentBlock` (PDF) | `ofDocument(DocumentBlockParam)` + `Base64PdfSource` |
 
+**텍스트 문서의 `media_type` 은 늘 `text/plain` 이다.** 블록의 MIME 이 `text/markdown` · `text/html` · `text/csv` 여도
+그렇다. API 가 텍스트 source 에 받는 값은 `text/plain` 하나뿐이고(SDK 스키마도 상수다), 원래 MIME 을 실으면 400
+(`media_type: Input should be 'text/plain'`)이다 — 2026-10-05 에 네 타입을 라이브로 재서 확인했다. SDK 는 보내기 전에
+스키마를 검사하지 않으므로 이 규칙을 지키는 것은 변환기다. 파일명은 `title` 로 간다.
+
 ### 6.2 OpenAI — 텍스트 문서는 텍스트로, 바이너리 문서는 거부
 
 Chat Completions 변환기(`OpenAIMessageConverter`):

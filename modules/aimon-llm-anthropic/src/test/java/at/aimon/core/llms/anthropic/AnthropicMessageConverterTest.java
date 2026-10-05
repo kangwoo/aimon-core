@@ -9,6 +9,8 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import com.anthropic.models.messages.MessageParam;
 import com.anthropic.models.messages.ToolUnion;
@@ -405,24 +407,31 @@ class AnthropicMessageConverterTest {
         assertThat(source.get("media_type")).isEqualTo("text/plain");
     }
 
-    @Test
-    @DisplayName("Should set correct mediaType for text/markdown document")
-    void shouldSetCorrectMediaTypeForMarkdownDocument() throws Exception {
-        byte[] mdData = "# Title".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        List<ContentBlock> blocks = List.of(DocumentContentBlock.of(mdData, "text/markdown", "README.md"));
+    @ParameterizedTest
+    @ValueSource(strings = {"text/plain", "text/markdown", "text/html", "text/csv"})
+    @DisplayName("Should send every text document with media_type text/plain, the only value the API accepts")
+    void shouldSendTextPlainMediaTypeForEveryTextDocument(String mimeType) throws Exception {
+        byte[] data = "a,b\n1,2".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        List<ContentBlock> blocks = List.of(DocumentContentBlock.of(data, mimeType, "attachment"));
 
-        Message message = Message.user(blocks);
-        List<MessageParam> params = converter.convertMessages(List.of(message));
+        List<MessageParam> params = converter.convertMessages(List.of(Message.user(blocks)));
+
+        // The SDK's own schema check: PlainTextSource.media_type is the constant "text/plain". The client does not run
+        // it before sending, so without this a wrong value reaches the server — measured 2026-10-05: text/markdown,
+        // text/html and text/csv each answered 400 "media_type: Input should be 'text/plain'".
+        params.get(0).validate();
 
         String json = objectMapper.writeValueAsString(params.get(0));
         Map<String, Object> messageMap = objectMapper.readValue(json, new TypeReference<>() {
         });
-
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> contentBlocks = (List<Map<String, Object>>) messageMap.get("content");
         @SuppressWarnings("unchecked")
         Map<String, Object> source = (Map<String, Object>) contentBlocks.get(0).get("source");
-        assertThat(source.get("media_type")).isEqualTo("text/markdown");
+        assertThat(source.get("type")).isEqualTo("text");
+        assertThat(source.get("media_type")).isEqualTo("text/plain");
+        assertThat(source.get("data")).isEqualTo("a,b\n1,2");
+        assertThat(contentBlocks.get(0).get("title")).isEqualTo("attachment");
     }
 
     @Test
