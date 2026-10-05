@@ -115,19 +115,21 @@ class DefaultContextEngineViewModeTest {
             assertThat(buffer.getMessages()).as("the log is append-only").isEqualTo(logBefore);
             assertThat(buffer.getVersion()).as("a view state change is a mutation to persist")
                     .isGreaterThan(versionBefore);
+            // The last message is input the model has not answered: it is neither summarized nor in the span.
             assertThat(buffer.getViewState().getSummarySpan()).hasValueSatisfying(span -> {
-                assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 3));
+                assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 2));
                 assertThat(span.getSummaryText()).isEqualTo("SUMMARY");
                 assertThat(span.getTrigger()).isEqualTo("AUTO");
-                assertThat(span.getMessagesSummarized()).isEqualTo(3);
+                assertThat(span.getMessagesSummarized()).isEqualTo(2);
             });
             final List<Message> view = decision.getView().getMessages();
-            assertThat(view).hasSize(2);
+            assertThat(view).hasSize(3);
             assertThat(view.get(0).getContent()).startsWith(CompactBoundary.BOUNDARY_OPEN_PREFIX);
             assertThat(view.get(1).getContent()).contains("SUMMARY");
+            assertThat(view.get(2)).isSameAs(logBefore.get(2));
             assertThat(decision.getViewSizeBefore()).hasValue(3);
             assertThat(summarizer.summarized).singleElement()
-                    .satisfies(request -> assertThat(request.getMessages()).isEqualTo(logBefore));
+                    .satisfies(request -> assertThat(request.getMessages()).isEqualTo(logBefore.subList(0, 2)));
             assertThat(decision.getCompactionMetadata())
                     .hasValueSatisfying(metadata -> assertThat(metadata.getPostCompactTokenCount()).isPositive());
         }
@@ -141,8 +143,9 @@ class DefaultContextEngineViewModeTest {
             final ContextDecision decision = engine().prepare(request());
 
             assertThat(summarizer.installed).hasSize(1);
-            assertThat(decision.getView().getMessages()).hasSize(3);
-            assertThat(decision.getView().getMessages().get(2).getContent()).isEqualTo("re-attached file");
+            // boundary, summary, the unanswered input, then what the hook appended to the log.
+            assertThat(decision.getView().getMessages()).hasSize(4);
+            assertThat(decision.getView().getMessages().get(3).getContent()).isEqualTo("re-attached file");
         }
 
         @Test
@@ -156,11 +159,15 @@ class DefaultContextEngineViewModeTest {
             final ContextDecision decision = engine.prepare(request());
 
             assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            // The first span was [0, 2); the second widens it over the input the model has since answered and its
+            // answer, and stops before the new unanswered input.
             assertThat(buffer.getViewState().getSummarySpan())
-                    .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 5)));
+                    .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 4)));
             assertThat(summarizer.summarized.get(1).getMessages().get(0).getContent())
                     .as("the previous markers are summarized as ordinary messages, as in place")
                     .startsWith(CompactBoundary.BOUNDARY_OPEN_PREFIX);
+            assertThat(summarizer.summarized.get(1).getMessages()).hasSize(4);
+            assertThat(decision.getView().getMessages()).hasSize(3);
             assertThat(buffer.getMessages()).hasSize(5);
         }
 
@@ -186,6 +193,220 @@ class DefaultContextEngineViewModeTest {
 
             assertThat(decision.getAction()).isNotEqualTo(CompactionDecision.Action.COMPACT);
             assertThat(buffer.getViewState().isEmpty()).isTrue();
+        }
+    }
+
+    /**
+     * What the model has not answered yet — the tool results after its last call, or the input after its last reply —
+     * is left out of the summary span (context-engine §13.10, SL-6).
+     */
+    @Nested
+    class Unanswered {
+
+        private static final String BIG = "x".repeat(4300);
+        private static final String OVER_BLOCKING = "x".repeat(6000);
+
+        private void callAndResult(String id, String result) {
+            buffer.addMessage(Message.assistant("", List.of(ToolUse.of(id, "Read", Map.of()))));
+            buffer.addMessage(Message.toolUseResults(List.of(ToolUseResult.success(id, result))));
+        }
+
+        @Test
+        void aToolResultOverTheAutoThresholdIsNotFoldedIntoTheSummaryBeforeTheModelReadsIt() {
+            buffer.addUserMessage("read the report");
+            buffer.addAssistantMessage("on it");
+            callAndResult("t1", BIG);
+            final List<Message> log = buffer.getMessages();
+
+            final ContextDecision decision = engine().prepare(request());
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            assertThat(buffer.getViewState().getSummarySpan()).hasValueSatisfying(span -> {
+                assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 2));
+                assertThat(span.getMessagesSummarized()).isEqualTo(2);
+            });
+            assertThat(summarizer.summarized).singleElement()
+                    .satisfies(request -> assertThat(request.getMessages()).isEqualTo(log.subList(0, 2)));
+            final List<Message> view = decision.getView().getMessages();
+            assertThat(view).hasSize(4);
+            assertThat(view.get(0).getContent()).startsWith(CompactBoundary.BOUNDARY_OPEN_PREFIX);
+            // The call and its result reach the model as the same instances the log holds, the result whole.
+            assertThat(view.get(2)).isSameAs(log.get(2));
+            assertThat(view.get(3)).isSameAs(log.get(3));
+            assertThat(decision.getViewSizeBefore()).hasValue(4);
+        }
+
+        @Test
+        void theCutNeverSeparatesACallFromItsResult() {
+            buffer.addUserMessage("go");
+            callAndResult("t1", "small");
+            callAndResult("t2", BIG);
+
+            final ContextDecision decision = engine().prepare(request());
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            // The unanswered part is the t2 result alone; the cut falls before the message that made the t2 call.
+            assertThat(buffer.getViewState().getSummarySpan())
+                    .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 3)));
+            final List<Message> view = decision.getView().getMessages();
+            final List<String> called = new ArrayList<>();
+            final List<String> answered = new ArrayList<>();
+            for (Message message : view) {
+                message.getToolUses().forEach(use -> called.add(use.getId()));
+                message.getToolUseResults().forEach(result -> answered.add(result.getToolUseId()));
+            }
+            assertThat(called).containsExactly("t2");
+            assertThat(answered).containsExactly("t2");
+            // And the summarized part holds the t1 pair whole.
+            final List<String> summarizedIds = new ArrayList<>();
+            for (Message message : summarizer.summarized.get(0).getMessages()) {
+                message.getToolUses().forEach(use -> summarizedIds.add("call:" + use.getId()));
+                message.getToolUseResults().forEach(result -> summarizedIds.add("result:" + result.getToolUseId()));
+            }
+            assertThat(summarizedIds).containsExactly("call:t1", "result:t1");
+        }
+
+        @Test
+        void whenOnlyTheUnansweredPartIsLeftNothingIsCompactedAndNothingIsReportedAsOne() {
+            buffer.addUserMessage("go");
+            buffer.addAssistantMessage("on it");
+            callAndResult("t1", BIG);
+            final DefaultContextEngine engine = engine();
+            assertThat(engine.prepare(request()).getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            final long versionAfterFirst = buffer.getVersion();
+
+            // The same view comes back each time the model has still not answered: no second summary call, no
+            // hook, no breaker failure, no span change.
+            for (int i = 0; i < DefaultCompactionGuard.DEFAULT_MAX_CONSECUTIVE_FAILURES + 2; i++) {
+                final ContextDecision again = engine.prepare(request());
+
+                assertThat(again.getAction()).isEqualTo(CompactionDecision.Action.WARN);
+                assertThat(again.getReason()).contains("nothing to compact");
+                assertThat(again.getCompactionMetadata()).isEmpty();
+                assertThat(again.getView().getMessages()).hasSize(4);
+            }
+            assertThat(summarizer.summarized).hasSize(1);
+            assertThat(summarizer.installed).hasSize(1);
+            assertThat(failures.get(buffer.getSessionId())).isZero();
+            assertThat(buffer.getVersion()).isEqualTo(versionAfterFirst);
+            assertThat(buffer.getViewState().getSummarySpan())
+                    .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 2)));
+        }
+
+        @Test
+        void aFirstInputOverTheAutoThresholdIsSentAsItIs() {
+            buffer.addUserMessage(BIG + "x".repeat(300));
+
+            final ContextDecision decision = engine().prepare(request());
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.WARN);
+            assertThat(summarizer.summarized).isEmpty();
+            assertThat(buffer.getViewState().isEmpty()).isTrue();
+            assertThat(decision.getView().getMessages()).isEqualTo(buffer.getMessages());
+            assertThat(failures.get(buffer.getSessionId())).isZero();
+        }
+
+        @Test
+        void onceTheModelHasAnsweredTheResultIsAbsorbedLikeAnythingElse() {
+            buffer.addUserMessage("go");
+            buffer.addAssistantMessage("on it");
+            callAndResult("t1", BIG);
+            final DefaultContextEngine engine = engine();
+            engine.prepare(request());
+            buffer.addAssistantMessage("the report says so");
+            buffer.addUserMessage("thanks, and now?");
+
+            final ContextDecision decision = engine.prepare(request());
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            assertThat(buffer.getViewState().getSummarySpan())
+                    .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 5)));
+            assertThat(decision.getView().getMessages()).hasSize(3);
+            assertThat(decision.getView().getMessages().get(2).getContent()).isEqualTo("thanks, and now?");
+        }
+
+        @Test
+        void aBudgetForcedPassLeavesTheUnansweredPartOutToo() {
+            buffer.addUserMessage("go");
+            buffer.addAssistantMessage("on it");
+            buffer.addUserMessage("x".repeat(4000));
+            final ContextRequest forced = ContextRequest.builder().transcriptBuffer(buffer).model(MODEL)
+                    .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault()).budgetForced(true)
+                    .build();
+
+            final ContextDecision decision = engine().prepare(forced);
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            assertThat(buffer.getViewState().getSummarySpan())
+                    .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 2)));
+        }
+
+        @Test
+        void atTheBlockingLimitWhatPrecedesTheUnansweredPartIsAbsorbedFirst() {
+            buffer.addUserMessage("go");
+            buffer.addAssistantMessage("on it");
+            buffer.addUserMessage(OVER_BLOCKING);
+
+            final ContextDecision decision = engine().prepare(request());
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            assertThat(decision.getReason()).contains("blocking-limit");
+            assertThat(buffer.getViewState().getSummarySpan())
+                    .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 2)));
+            assertThat(decision.getView().getMessages()).hasSize(3);
+        }
+
+        @Test
+        void atTheBlockingLimitWithNothingElseLeftTheUnansweredPartIsSummarizedAsTheLastResort() {
+            buffer.addUserMessage("go");
+            buffer.addAssistantMessage("on it");
+            buffer.addUserMessage(OVER_BLOCKING);
+            final DefaultContextEngine engine = engine();
+            engine.prepare(request());
+
+            // Still at the blocking limit and only the unanswered input is left: sending it cannot succeed, so the
+            // whole view is summarized, as it was before the unanswered part was protected. Once, not per iteration.
+            final ContextDecision second = engine.prepare(request());
+            final ContextDecision third = engine.prepare(request());
+
+            assertThat(second.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            assertThat(buffer.getViewState().getSummarySpan())
+                    .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 3)));
+            assertThat(second.getView().getMessages()).hasSize(2);
+            assertThat(third.getAction()).isEqualTo(CompactionDecision.Action.NONE);
+            assertThat(summarizer.summarized).hasSize(2);
+        }
+
+        @Test
+        void aManualCompactionOfAnInterruptedTurnStopsBeforeTheUnansweredInput() {
+            buffer.addUserMessage("hello");
+            buffer.addAssistantMessage("hi");
+            buffer.addUserMessage("the question the interrupted turn never answered");
+
+            final CompactionResult result = engine().compactNow(request(), null);
+
+            assertThat(result.isSuccess()).isTrue();
+            assertThat(buffer.getViewState().getSummarySpan())
+                    .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 2)));
+            final List<Message> view = ViewProjection.of(buffer.getLogState()).getMessages();
+            assertThat(view).hasSize(3);
+            assertThat(view.get(2).getContent()).isEqualTo("the question the interrupted turn never answered");
+        }
+
+        @Test
+        void aManualCompactionOfAViewThatIsOnlyUnansweredInputFails() {
+            buffer.addUserMessage("the only message");
+            failures.recordFailure(buffer.getSessionId());
+
+            final CompactionResult result = engine().compactNow(request(), null);
+
+            assertThat(result.isFailure()).isTrue();
+            assertThat(result.getError())
+                    .hasValueSatisfying(error -> assertThat(error).hasMessageContaining("nothing to compact"));
+            assertThat(summarizer.summarized).isEmpty();
+            assertThat(summarizer.installed).isEmpty();
+            assertThat(buffer.getViewState().isEmpty()).isTrue();
+            assertThat(failures.get(buffer.getSessionId())).as("a no-op does not reset the breaker").isEqualTo(1);
         }
     }
 
@@ -380,8 +601,11 @@ class DefaultContextEngineViewModeTest {
 
         private void summarizedLog() {
             fillPastTheAutoThreshold();
+            // Answered, so the compaction below summarizes the long message too (an unanswered one is left verbatim).
+            buffer.addAssistantMessage("answer");
             engine().prepare(request());
-            assertThat(buffer.getViewState().getSummarySpan()).isPresent();
+            assertThat(buffer.getViewState().getSummarySpan())
+                    .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 4)));
             buffer.addUserMessage("after the summary");
         }
 

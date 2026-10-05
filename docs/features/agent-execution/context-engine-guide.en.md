@@ -16,7 +16,7 @@ is sent**. This document covers which of the two engines to choose and how to tu
 
 | engine | What it does | When to choose it |
 |--------|--------------|-------------------|
-| `default` (default) | At the model's auto-compact threshold, replaces the **whole view** with one summary. Exactly the behaviour so far | Conversations usually end inside the window |
+| `default` (default) | At the model's auto-compact threshold, replaces the view with one summary. The part the model has not answered yet (a tool result it has just been given, the latest input) is left out of the summary and stays verbatim — when only that part is left it does not compact and only warns, and only at the blocking limit does it summarize that part too. On a version-1 log it summarizes everything, as before | Conversations usually end inside the window |
 | `rolling` | Keeps the **head** (the session's first request) and the **tail** (the recent conversation) verbatim and summarizes only the middle. Compacts earlier and in smaller steps, and **updates** the summary each time. Registers the `SessionHistory` tool | One session runs several windows long — operations conversations, long investigations |
 
 Neither engine **touches the log** (in the version-2 write format). A compaction only records in the view state "which
@@ -120,7 +120,8 @@ view:  [ head ][ boundary summary ][ verbatim ........ ][ tail ...... ]
   under the warning line, that call is handled by the `default` engine, with one WARN per model. A version-1 log is
   handled the same way
 
-`/compact` skips only the threshold decision and cuts the same way. If another compaction of the same session is in
+`/compact` skips only the threshold decision and cuts the same way (the `default` engine does the same on a
+version-2 log). If another compaction of the same session is in
 progress, it does not wait and shows the failure. It leaves the unanswered part alone just as automatic compaction
 does — when a turn was interrupted and the view ends with a user message the model never answered, `/compact`
 summarizes only what precedes it and that message stays verbatim. A view that is nothing but unanswered input gives a

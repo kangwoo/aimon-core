@@ -229,6 +229,11 @@ public class DefaultCompactionGuard implements CompactionGuard {
      * the log append-only reuses today's decision rules without the guard's {@link CompactionEngine} rewriting the
      * transcript (context-engine §4).
      *
+     * <p>
+     * A {@code compactor} that had nothing it may summarize answers with a failure carrying
+     * {@link NothingToCompactException}. On the AUTO path that is a {@code WARN} decision with no compaction
+     * metadata, and it never counts against the circuit breaker.
+     *
      * @param sessionId
      *            the session the lock and the circuit breaker are keyed on (must not be null)
      * @param systemPrompt
@@ -332,6 +337,13 @@ public class DefaultCompactionGuard implements CompactionGuard {
                         : "auto-compact threshold reached";
                 return CompactionDecision.compact(result, reason, estimated, blockingLimit);
             }
+            if (result.getError().orElse(null) instanceof NothingToCompactException nothing) {
+                // Not an attempt that failed: no summary was asked for and the view is as it was. Reporting it as
+                // COMPACT would publish a compaction that did not happen, and counting it would open the breaker on
+                // a view that is merely waiting for the model's answer.
+                return CompactionDecision.warn("auto-compact threshold reached but " + nothing.getMessage(), estimated,
+                        blockingLimit);
+            }
             recordFailureIfTransient(sessionId, result);
             return CompactionDecision.compact(result, "auto-compact attempted but failed", estimated, blockingLimit);
         }
@@ -388,6 +400,10 @@ public class DefaultCompactionGuard implements CompactionGuard {
         }
         if (error instanceof CompactionReentrancyException) {
             log.debug("Reentrant compaction for session {}; not counted toward circuit breaker", sessionId);
+            return;
+        }
+        if (error instanceof NothingToCompactException) {
+            log.debug("Nothing to compact for session {}; not counted toward circuit breaker", sessionId);
             return;
         }
         recordFailure(sessionId);
