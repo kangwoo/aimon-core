@@ -549,6 +549,21 @@ class CliConfigLoaderTest {
         }
 
         @Test
+        @DisplayName("Should not echo an out-of-range number either")
+        void doesNotEchoAnOutOfRangeNumber() throws IOException {
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "gpt-5.1"
+                      timeout: 98765432109876543210
+                    """);
+
+            assertThatThrownBy(() -> loader.load(configFile.toString())).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("llm.timeout").hasMessageNotContaining("98765432109876543210");
+        }
+
+        @Test
         @DisplayName("Should not echo a value the key could not take")
         void doesNotEchoTheRejectedValue() throws IOException {
             Path configFile = write("""

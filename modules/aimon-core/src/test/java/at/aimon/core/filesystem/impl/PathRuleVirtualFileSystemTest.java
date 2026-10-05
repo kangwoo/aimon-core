@@ -253,6 +253,23 @@ class PathRuleVirtualFileSystemTest {
     }
 
     @Test
+    @DisplayName("EE-39: maxResults below 1 is refused by the decorator itself, whatever the delegate accepts")
+    void searchRefusesANonPositiveLimitItself() {
+        // A delegate that does not check the contract's maxResults >= 1 used to reach subList(0, maxResults).
+        final VirtualFileSystem lenient = new DelegatingFileSystem(raw) {
+            @Override
+            public List<String> search(String directory, String pattern, int maxResults) {
+                return raw.search(directory, pattern, Math.max(1, maxResults));
+            }
+        };
+        final VirtualFileSystem guarded = new PathRuleVirtualFileSystem(lenient, List.of(PathRule.deny(".aimon")));
+
+        assertThatThrownBy(() -> guarded.search(".", "*", -1)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("maxResults");
+        assertThatThrownBy(() -> guarded.search(".", "*", 0)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     @DisplayName("EE-39: search keeps asking until it has maxResults visible hits when DENYed hits come first")
     void searchFillsMaxResults() {
         for (int i = 0; i < 5; i++) {

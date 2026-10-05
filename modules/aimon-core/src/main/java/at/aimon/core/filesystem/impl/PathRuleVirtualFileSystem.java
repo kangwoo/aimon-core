@@ -208,6 +208,11 @@ public final class PathRuleVirtualFileSystem implements VirtualFileSystem {
      */
     @Override
     public List<String> search(String directory, String pattern, int maxResults) {
+        // The contract's own check, made here: the re-search below slices by maxResults, so it cannot rely on every
+        // delegate refusing a non-positive limit first.
+        if (maxResults < 1) {
+            throw new IllegalArgumentException("maxResults must be >= 1, got: " + maxResults);
+        }
         checkRead(directory);
         if (!hidesBelow(resolve(directory))) {
             return delegate.search(directory, pattern, maxResults);

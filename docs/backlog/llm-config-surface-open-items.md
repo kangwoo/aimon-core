@@ -359,6 +359,11 @@ marked as ignorable)`. 두 번째 줄부터는 알려진 프로퍼티 목록이�
 > Integer`). 위 "남은 것" 의 열거형 타입 이름 문제도 이것으로 사라졌다. 리스트 안 키의 경로(`mcp.servers[0].comand`)와 값을
 > 찍지 않음을 테스트가 더 못박는다.
 
+> **보강 (2026-10-05, PR #225 최종 리뷰 후속).** 위 보강은 `InvalidFormatException` 만 막았고, 숫자 범위 초과는 여전히 Jackson
+> 문장(`Numeric value (…) out of range of int`)으로 값을 찍었다. 막는 목록을 허용 목록으로 뒤집었다 — Jackson 의 사유를 그대로
+> 쓰는 것은 **프로퍼티 이름 오류**(`PropertyBindingException`)뿐이고, 입력 불일치는 기대한 모양을, 그 밖은 `invalid value` 만
+> 댄다. 범위 초과 테스트가 고치기 전에 실패했다.
+
 ---
 
 ## L-6 — `BUDGETED` 쪽 절반이 선언된 행 없이 서 있는데, 이제 실측된 행이 셋 있다

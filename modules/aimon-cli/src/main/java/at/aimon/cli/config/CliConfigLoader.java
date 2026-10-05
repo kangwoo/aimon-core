@@ -13,7 +13,8 @@ import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.exc.InvalidFormatException;
+import com.fasterxml.jackson.databind.exc.MismatchedInputException;
+import com.fasterxml.jackson.databind.exc.PropertyBindingException;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
@@ -141,17 +142,21 @@ public class CliConfigLoader {
         if (key.length() == 0) {
             return "";
         }
-        // The original message without Jackson's location suffix; its first line is the reason, the rest lists every
-        // known property, which the key already makes unnecessary to read here. The "(class ...)" aside names a Java
-        // type the operator never wrote, so it goes too; the full text stays on the cause for --verbose.
+        // Jackson's own reason is kept only where it cannot carry a value: a property-name error, whose text names
+        // the field the operator wrote. Every other reason may quote the value ("from String \"…\"", "Numeric value
+        // (…) out of range"), and this sentence reaches stderr without --verbose -- the value may be a secret
+        // expanded from ${ENV} into the wrong key. Those name only the expected shape. The full text stays on the
+        // cause for --verbose.
         final String reason;
-        if (e instanceof InvalidFormatException invalid) {
-            // Jackson's own text quotes the rejected value, and this sentence reaches stderr without --verbose. The
-            // value may be a secret expanded from ${ENV} into the wrong key, so only the expected shape is named.
-            reason = describeExpected(invalid.getTargetType());
-        } else {
+        if (e instanceof PropertyBindingException) {
+            // First line only: the rest lists every known property, which the key makes unnecessary. The
+            // "(class ...)" aside names a Java type the operator never wrote.
             final String original = e.getOriginalMessage() == null ? "" : e.getOriginalMessage();
             reason = JAVA_TYPE_ASIDE.matcher(original.lines().findFirst().orElse("")).replaceAll("").trim();
+        } else if (e instanceof MismatchedInputException mismatched) {
+            reason = describeExpected(mismatched.getTargetType());
+        } else {
+            reason = "invalid value";
         }
         return reason.isEmpty() ? " (at " + key + ")" : " (at " + key + ": " + reason + ")";
     }
