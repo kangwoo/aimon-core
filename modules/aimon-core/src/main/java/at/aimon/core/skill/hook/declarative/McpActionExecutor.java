@@ -51,9 +51,10 @@ import at.aimon.core.skill.hook.action.McpToolAction;
  * <b>Timeout.</b> The action's {@link McpToolAction#getTimeout() timeout} bounds the call. {@link McpClient#callTool}
  * takes none, so the deadline is kept here: when it passes, the calling thread is interrupted, which is how a
  * request is told to stop ({@code StdioMcpTransport} polls for its response and gives up on an interrupt), and the
- * outcome is {@code TIMEOUT} &mdash; no verdict. The interrupt is this executor's own and is cleared before returning.
- * No thread is created per call: the deadline rides on the JDK's shared delay scheduler and is cancelled when the
- * call returns.
+ * outcome is {@code TIMEOUT} &mdash; no verdict. The interrupt is this executor's own and is taken back before
+ * returning, so the thread's interrupt flag is left as the call found it. No thread is created per call: the deadline
+ * rides on the JDK's shared delay scheduler and is cancelled when the call ends &mdash; by returning, by throwing, or
+ * with an {@link Error} that this method lets through.
  *
  * <p>
  * The server's {@code requestTimeout} (per server, 30s by default) still applies underneath, so <em>the smaller of
@@ -198,12 +199,16 @@ public final class McpActionExecutor {
             final CallDeadline deadline = CallDeadline.arm(action.getTimeout());
             McpCallResult result = null;
             RuntimeException failure = null;
+            boolean timedOut = false;
             try {
                 result = client.callTool(action.getToolName(), renderedArgs);
             } catch (RuntimeException e) {
                 failure = e;
+            } finally {
+                // On every way out, an Error included: this thread belongs to the hook pool and runs something else
+                // next, and a deadline left armed would interrupt that.
+                timedOut = deadline.disarm();
             }
-            final boolean timedOut = deadline.disarm();
             if (failure != null) {
                 if (timedOut) {
                     log.warn("MCP hook '{}/{}' timed out after {}", action.getServerName(), action.getToolName(),
@@ -263,13 +268,19 @@ public final class McpActionExecutor {
      *
      * <p>
      * {@link #fire()} and {@link #disarm()} are mutually exclusive, so once {@code disarm} has returned no interrupt
-     * from this deadline can arrive any more, and one that already did is cleared there. Clearing can swallow an
-     * outside interrupt that landed in the same instant; the call is over either way, and the caller that sent it
-     * (the hook executor's net) has already decided without this hook's result.
+     * from this deadline can arrive any more, and one that already did is taken back there: the flag is cleared, and
+     * set again when the thread was already interrupted as the deadline was armed. Clearing can swallow an outside
+     * interrupt that landed <em>during</em> the call in the same instant the deadline fired; the call is over either
+     * way, and the caller that sent it (the hook executor's net) has already decided without this hook's result.
+     *
+     * <p>
+     * {@code disarm} belongs in a {@code finally}: a call that leaves through an {@link Error} must end its deadline
+     * too.
      */
     private static final class CallDeadline {
 
         private final Thread caller = Thread.currentThread();
+        private final boolean interruptedBefore = caller.isInterrupted();
         private final CompletableFuture<Void> timer = new CompletableFuture<>();
         private boolean armed = true;
         private boolean fired;
@@ -295,14 +306,17 @@ public final class McpActionExecutor {
         /**
          * Ends the deadline and reports whether it had fired.
          *
-         * @return true when the call ran out of time (the interrupt it caused has been cleared)
+         * @return true when the call ran out of time (the interrupt it caused has been taken back)
          */
         synchronized boolean disarm() {
             armed = false;
-            // Cancels the scheduled timeout, so a call that answered leaves nothing behind.
+            // Cancels the scheduled timeout, so a call that ended leaves nothing behind.
             timer.complete(null);
             if (fired) {
                 Thread.interrupted();
+                if (interruptedBefore) {
+                    caller.interrupt();
+                }
             }
             return fired;
         }

@@ -1,6 +1,7 @@
 package at.aimon.core.skill.hook.declarative;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -151,6 +152,72 @@ class McpActionExecutorTimeoutTest {
         // and failOpen does not open it.
         assertThat(outcome.getUnrun().orElseThrow().getUnrunCause()).contains(ShellHookOutcome.Unrun.CANCELLED);
         assertThat(Thread.currentThread().isInterrupted()).isTrue();
+    }
+
+    // --- the deadline ends with the call on every exit path -------------------------------------------------------
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void callThatThrowsAnError_leavesNoDeadlineBehind_toInterruptTheThreadLater() throws Exception {
+        // An Error is not a RuntimeException: it leaves attempt() through no catch. The thread goes back to the hook
+        // pool and runs something else; a deadline still armed would interrupt that.
+        for (Error thrown : new Error[]{new NoClassDefFoundError("at/aimon/gone/Type"), new StackOverflowError()}) {
+            org.mockito.Mockito.doThrow(thrown).when(client).callTool(any(), any());
+
+            assertThatThrownBy(() -> executor.attempt(action(ACTION_TIMEOUT), ToolInput.of(), Map.of()))
+                    .isSameAs(thrown);
+
+            assertThat(interruptedWithin(ACTION_TIMEOUT.multipliedBy(3))).as(thrown.getClass().getSimpleName())
+                    .isFalse();
+        }
+    }
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void callThatThrowsAnErrorAfterTheDeadlineFired_doesNotLeaveTheExecutorsInterruptSet() {
+        // The deadline's interrupt is the executor's own. It is taken back on this exit path too.
+        when(client.callTool(any(), any())).thenAnswer(invocation -> {
+            spinPast(ACTION_TIMEOUT.multipliedBy(2));
+            throw new NoClassDefFoundError("at/aimon/gone/Type");
+        });
+
+        assertThatThrownBy(() -> executor.attempt(action(ACTION_TIMEOUT), ToolInput.of(), Map.of()))
+                .isInstanceOf(NoClassDefFoundError.class);
+
+        assertThat(Thread.currentThread().isInterrupted()).isFalse();
+    }
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void interruptThatWasSetBeforeTheCall_isStillSetAfterIt_evenWhenTheDeadlineFired() {
+        // The flag is left as it was found: taking back the deadline's interrupt must not take the caller's with it.
+        when(client.callTool(any(), any())).thenAnswer(invocation -> {
+            spinPast(ACTION_TIMEOUT.multipliedBy(2));
+            return McpCallResult.success("");
+        });
+        Thread.currentThread().interrupt();
+
+        executor.attempt(action(ACTION_TIMEOUT), ToolInput.of(), Map.of());
+
+        assertThat(Thread.currentThread().isInterrupted()).isTrue();
+    }
+
+    /** Waits without answering an interrupt, like a client that ignores one. */
+    private static void spinPast(Duration duration) {
+        final long end = System.nanoTime() + duration.toNanos();
+        while (System.nanoTime() < end) {
+            Thread.onSpinWait();
+        }
+    }
+
+    /** Whether an interrupt arrives on this thread within the window; the flag is consumed. */
+    private static boolean interruptedWithin(Duration window) {
+        try {
+            Thread.sleep(window.toMillis());
+            return false;
+        } catch (InterruptedException e) {
+            return true;
+        }
     }
 
     @Test
