@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
@@ -24,6 +25,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.environment.DelegatingFileSystem;
@@ -36,6 +38,10 @@ import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.impl.local.LocalShell;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 
 @DisplayName("LocalExecutionEnvironmentProvider staging (execution-environment §4.4)")
 class LocalExecutionEnvironmentProviderStagingTest {
@@ -548,21 +554,194 @@ class LocalExecutionEnvironmentProviderStagingTest {
         assertThat(Path.of(path, LocalStaging.MARKER)).exists();
     }
 
+    // ---- EE-3: a source that changed between the scan (the registry's load) and the first copy --------------------
+
     @Test
-    @DisplayName("a source edited after the scan is refused: no marker, no partial copy, and a message the user can"
-            + " act on")
-    void editedAfterScan() {
-        final StagedResource resource = scan();
+    @DisplayName("EE-3: a source edited after the scan is staged under the key its bytes have now, never under the"
+            + " loaded one")
+    void editedAfterScanIsStagedUnderItsOwnKey() {
+        final StagedResource loaded = scan();
         control.write("skills/demo/scripts/run.sh", "echo edited");
         final ExecutionEnvironment env = ownedEnv();
 
-        assertThatThrownBy(() -> env.stage(resource)).isInstanceOf(StagingException.class)
-                .hasMessageContaining("changed").hasMessageContaining("reload");
-        assertThat(workspace.resolve(".aimon-staged/demo/" + resource.getContentKey())).doesNotExist();
+        final String path = env.stage(loaded);
 
-        // A rescan (what a registry reload does) stages under the new key.
-        final String path = env.stage(scan());
+        // The key a registry reload would compute: a restart finds this copy and reuses it.
+        final String current = scan().getContentKey();
+        assertThat(current).isNotEqualTo(loaded.getContentKey());
+        assertThat(path).isEqualTo(root() + "/.aimon-staged/demo/" + current);
         assertThat(Path.of(path, "scripts/run.sh")).hasContent("echo edited");
+        assertThat(Path.of(path, LocalStaging.MARKER)).hasContent(current);
+        // New bytes are never stored under the old key, and nothing is left beside the copy.
+        assertThat(copies("demo")).containsExactly(current);
+        assertThat(env.stage(scan())).as("the reloaded resource names the same copy").isEqualTo(path);
+    }
+
+    @Test
+    @DisplayName("EE-3: the change is reported once, by name, at WARN — and later calls copy and read nothing")
+    void editedAfterScanWarnsOnceAndIsRemembered() {
+        final List<String> sourceReads = new ArrayList<>();
+        final VirtualFileSystem countingSource = new DelegatingFileSystem(control) {
+            @Override
+            public InputStream read(String path) {
+                sourceReads.add(path);
+                return super.read(path);
+            }
+        };
+        final StagedResource loaded = StagedResource.scan(countingSource, "skills/demo", "demo");
+        control.write("skills/demo/scripts/run.sh", "echo edited");
+        final ExecutionEnvironment env = ownedEnv();
+        final Logger logger = (Logger) LoggerFactory.getLogger(LocalStaging.class);
+        final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            final String first = env.stage(loaded);
+            sourceReads.clear();
+            assertThat(env.stage(loaded)).isEqualTo(first);
+            assertThat(env.stage(loaded)).isEqualTo(first);
+
+            assertThat(sourceReads).as("a remembered re-keyed copy costs what any staged copy costs").isEmpty();
+            assertThat(appender.list).filteredOn(e -> e.getLevel() == Level.WARN)
+                    .extracting(ILoggingEvent::getFormattedMessage).singleElement().asString().contains("'demo'")
+                    .contains("changed on disk");
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    @DisplayName("EE-3: files added and removed since the scan follow the edit — the copy is the directory as it is"
+            + " now, not the loaded file list with new bytes")
+    void editedAfterScanTakesTheCurrentFileSet() {
+        final StagedResource loaded = scan();
+        control.write("skills/demo/scripts/run.sh", "echo edited; . helper.sh");
+        control.write("skills/demo/scripts/helper.sh", "echo helper");
+        control.delete("skills/demo/references/notes.md");
+
+        final String path = ownedEnv().stage(loaded);
+
+        assertThat(path).endsWith("/" + scan().getContentKey());
+        assertThat(Path.of(path, "scripts/helper.sh")).hasContent("echo helper");
+        assertThat(Path.of(path, "references/notes.md")).doesNotExist();
+    }
+
+    @Test
+    @DisplayName("EE-3: a skill whose recorded files are unchanged still stages to its loaded key, also when a file"
+            + " was added beside them")
+    void unchangedSkillStillStagesToItsLoadedKey() {
+        final StagedResource loaded = scan();
+        control.write("skills/demo/late.txt", "late");
+
+        final String path = ownedEnv().stage(loaded);
+
+        assertThat(path).isEqualTo(root() + "/.aimon-staged/demo/" + loaded.getContentKey());
+        assertThat(Path.of(path, LocalStaging.MARKER)).hasContent(loaded.getContentKey());
+        assertThat(copies("demo")).containsExactly(loaded.getContentKey());
+    }
+
+    @Test
+    @DisplayName("EE-3: an edit after the first copy is not seen — the copy under the loaded key is served, in this"
+            + " process and in the next one that loaded the same version")
+    void editedAfterTheFirstCopyKeepsTheLoadedCopy() {
+        final StagedResource loaded = scan();
+        final String first = ownedEnv().stage(loaded);
+        control.write("skills/demo/scripts/run.sh", "echo edited");
+
+        assertThat(ownedEnv().stage(loaded)).isEqualTo(first);
+        assertThat(borrowedEnv(rawWorkspace()).stage(loaded)).isEqualTo(first);
+        assertThat(Path.of(first, "scripts/run.sh")).hasContent("echo staged-script");
+        assertThat(copies("demo")).containsExactly(loaded.getContentKey());
+    }
+
+    @Test
+    @DisplayName("EE-3: reverting the edit does not resurrect the edited bytes under the loaded key")
+    void revertedSourceStagesTheLoadedBytesUnderTheLoadedKey() {
+        final StagedResource loaded = scan();
+        control.write("skills/demo/scripts/run.sh", "echo edited");
+        final String edited = ownedEnv().stage(loaded);
+        control.write("skills/demo/scripts/run.sh", "echo staged-script");
+
+        // A process that never saw the edit.
+        final String reverted = borrowedEnv(rawWorkspace()).stage(loaded);
+
+        assertThat(reverted).isEqualTo(root() + "/.aimon-staged/demo/" + loaded.getContentKey());
+        assertThat(Path.of(reverted, "scripts/run.sh")).hasContent("echo staged-script");
+        assertThat(Path.of(edited, "scripts/run.sh")).hasContent("echo edited");
+    }
+
+    @Test
+    @DisplayName("EE-3: the size limit applies to what is on disk now, and a refused copy leaves nothing behind")
+    void editedAfterScanOverTheLimitIsRefused() {
+        final StagedResource loaded = scan();
+        final ExecutionEnvironment env = ownedEnv(
+                LocalExecutionEnvironmentProvider.builder().maxStagedBytes(loaded.getTotalBytes() + 4));
+        control.write("skills/demo/scripts/run.sh", "echo " + "x".repeat(200));
+
+        assertThatThrownBy(() -> env.stage(loaded)).isInstanceOf(StagingException.class)
+                .hasMessageContaining("staging limit");
+
+        assertThat(copies("demo")).isEmpty();
+        // Back under the limit: the next call stages.
+        control.write("skills/demo/scripts/run.sh", "echo ok-script-now!!");
+        assertThat(Path.of(env.stage(loaded), "scripts/run.sh")).hasContent("echo ok-script-now!!");
+    }
+
+    @Test
+    @DisplayName("EE-3: a source still changing while it is copied is refused, with nothing left, and stages once it"
+            + " holds still")
+    void sourceChangingDuringTheCopyIsRefusedThenStaged() {
+        final AtomicInteger edits = new AtomicInteger();
+        final AtomicBoolean moving = new AtomicBoolean(false);
+        // Every read of the script finds another version: no two passes over the directory agree.
+        final VirtualFileSystem restless = new DelegatingFileSystem(control) {
+            @Override
+            public InputStream read(String path) {
+                if (moving.get() && path.endsWith("scripts/run.sh")) {
+                    control.write("skills/demo/scripts/run.sh", "echo v" + edits.incrementAndGet());
+                }
+                return super.read(path);
+            }
+        };
+        final StagedResource loaded = StagedResource.scan(restless, "skills/demo", "demo");
+        final ExecutionEnvironment env = ownedEnv();
+
+        moving.set(true);
+        assertThatThrownBy(() -> env.stage(loaded)).isInstanceOf(StagingException.class).hasMessageContaining("demo")
+                .hasMessageContaining("changing");
+        assertThat(copies("demo")).isEmpty();
+
+        moving.set(false);
+        final String path = env.stage(loaded);
+        assertThat(Path.of(path, "scripts/run.sh")).hasContent("echo v" + edits.get());
+        assertThat(copies("demo")).containsExactly(scan().getContentKey());
+    }
+
+    @Test
+    @DisplayName("EE-3: a recorded file that is gone is a change too, and the copy is made without it")
+    void removedFileIsAChange() {
+        final StagedResource loaded = scan();
+        control.delete("skills/demo/references/notes.md");
+
+        final String path = ownedEnv().stage(loaded);
+
+        assertThat(path).endsWith("/" + scan().getContentKey());
+        assertThat(Path.of(path, "references/notes.md")).doesNotExist();
+        assertThat(Path.of(path, "scripts/run.sh")).hasContent("echo staged-script");
+        assertThat(copies("demo")).containsExactly(scan().getContentKey());
+    }
+
+    /** The directories beside (and including) the copies of a resource name. */
+    private List<String> copies(String name) {
+        final Path nameDir = workspace.resolve(".aimon-staged").resolve(name);
+        if (!Files.isDirectory(nameDir)) {
+            return List.of();
+        }
+        try (Stream<Path> entries = Files.list(nameDir)) {
+            return entries.map(p -> p.getFileName().toString()).sorted().toList();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     @Test

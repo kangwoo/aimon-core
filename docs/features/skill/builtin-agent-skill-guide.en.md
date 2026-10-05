@@ -417,8 +417,11 @@ that path as well.
   scripts through an interpreter — `bash x.sh`, `python3 x.py` (not `./x.sh`).
 - **Content-addressed.** `contentKey` hashes the whole skill directory: the same content gives the same path, a change
   gives a new one. The hash is computed once when the registry reads the skill — so startup reads every skill file once.
-- **After editing a skill on disk**, staging that skill fails until the registry is reloaded or the application is
-  restarted, so that files never get copied out of step with the version that was loaded.
+- **After editing a skill on disk**, the skill still works, and what gets copied depends on when you edited it. If this
+  process has **not used the skill yet** and no copy of the loaded version exists, the files on disk now are copied to the
+  `contentKey` path of that content, with one warning in the log. If you edited it **after it was used**, the copy of the
+  loaded version keeps being served. Either way, what was read from `SKILL.md` — the body, tool restrictions, hooks —
+  changes only when the registry is reloaded or the application is restarted.
 - **`.stageignore`** (a gitignore subset: globs, `dir/`, `!`, `#`) in the skill directory keeps large assets out of the
   copy. One skill directory stages at most 50 MB by default (starter property `aimon.environment.staging.max-bytes`).
 - **A skill installed as a link.** In the `skills/` directory of a bundle read from disk, a skill directory — or a

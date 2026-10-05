@@ -1304,6 +1304,10 @@ and why. Entries marked **(open)** are also tracked in
 
 - **Review 3, second note (staging mismatch).** The error when a skill changed on disk after it was loaded now says
   what the user can do: "Restart the application, or reload the skill registry". There is no re-keying. See EE-3.
+  *Superseded 2026-10-05:* EE-3 took re-keying. A source that no longer hashes to its loaded key is scanned again and
+  staged under the key it has now, with one WARN; the error is gone, and so is the row "Host skill directory edited
+  without a registry reload" of §7 as written and the last staging test of §6 stage 3 (it now expects a copy under the
+  new key). `LocalStaging`'s class doc and the design §4.4 hold the rule.
 - **`.gitignore` for `.aimon-staged/`.** This followed Q4's default: no code wrote it, and the skill guide told users
   to add it (EE-4). *Superseded 2026-10-05:* EE-4 took Q4's recommended alternative — the local provider writes
   `.aimon-staged/.gitignore` containing `*` on the first copy.

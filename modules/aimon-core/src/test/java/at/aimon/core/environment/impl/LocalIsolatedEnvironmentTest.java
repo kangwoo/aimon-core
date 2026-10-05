@@ -28,7 +28,6 @@ import at.aimon.core.agent.impl.orca.environment.WorktreeMerge;
 import at.aimon.core.environment.EnvironmentRequest;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.StagedResource;
-import at.aimon.core.environment.exception.StagingException;
 import at.aimon.core.filesystem.VirtualFileSystems;
 import at.aimon.core.filesystem.exception.FileAccessDeniedException;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
@@ -219,14 +218,15 @@ class LocalIsolatedEnvironmentTest {
     }
 
     /**
-     * EE-26, which bytes. The branch is given the version the registry loaded — the one the rendered body was written
-     * for — not what the branch has since written under the same relative path in its own tree, and not a parent
-     * directory that changed after the load: that one is refused like any other source that no longer matches its
-     * content key.
+     * EE-26, which bytes. The branch is given the parent's skill — the version the registry loaded while a copy of it
+     * exists — never what the branch has since written under the same relative path in its own tree. A parent
+     * directory that changed after the load, with no copy of the loaded version left, is staged like any other source
+     * that no longer matches its content key: as it is now, under the key those bytes have (EE-3) — which is also
+     * what the parent itself, handed the live directory, is reading.
      */
     @Test
-    @DisplayName("EE-26: a branch gets the loaded version of a workspace skill, whatever it wrote in its own tree, and"
-            + " a skill changed since the load is refused")
+    @DisplayName("EE-26: a branch gets the parent's workspace skill, whatever it wrote in its own tree; one changed"
+            + " since the load is staged under its own key (EE-3)")
     void branchGetsTheLoadedVersionOfAWorkspaceSkill() throws Exception {
         parent.fileSystem().write("skills/demo/SKILL.md", "# demo");
         parent.fileSystem().write("skills/demo/scripts/x.sh", "echo loaded\n");
@@ -243,8 +243,20 @@ class LocalIsolatedEnvironmentTest {
         // Already staged under this key: the copy on disk still is the loaded version.
         assertThat(other.stage(resource)).isEqualTo(path);
         Files.delete(Path.of(path, LocalStaging.MARKER));
-        assertThatThrownBy(() -> other.stage(resource)).isInstanceOf(StagingException.class)
-                .hasMessageContaining("changed on disk after it was loaded");
+
+        final String changed = other.stage(resource);
+
+        final String current = StagedResource.scan(parent.fileSystem(), "skills/demo", "demo").getContentKey();
+        assertThat(changed).isNotEqualTo(path)
+                .isEqualTo(workspace.toAbsolutePath().normalize() + "/.aimon-staged/demo/" + current);
+        assertThat(read(other, changed + "/scripts/x.sh")).isEqualTo("echo changed-after-load\n");
+        assertThat(other.shell().execute(() -> "sh " + changed + "/scripts/x.sh").stdout())
+                .contains("changed-after-load");
+        // The branch's own edit is still not what is staged, and both branches of this parent are told the same.
+        assertThat(branch.stage(resource)).isEqualTo(changed);
+        assertThat(read(branch, "skills/demo/scripts/x.sh")).isEqualTo("echo branch-edit\n");
+        assertThatThrownBy(() -> other.fileSystem().write(changed + "/y", "tamper"))
+                .isInstanceOf(FileAccessDeniedException.class);
     }
 
     @Test
