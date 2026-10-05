@@ -66,6 +66,17 @@ public class DefaultCompactionGuard implements CompactionGuard {
     public static final int DEFAULT_MAX_CONSECUTIVE_FAILURES = 3;
     public static final int DEFAULT_MAX_TRACKED_SESSIONS = 1024;
 
+    /**
+     * The phrase a blocking-limit {@code COMPACT} decision's reason carries when the compaction succeeded and the view
+     * is still at or above the blocking limit: nothing more could be summarized, and the view is sent as it is — the
+     * provider, or prompt-too-long recovery, has the last word (context-engine §13.10). The same fact is on the
+     * compaction's record as {@link CompactionMetadata#isOverBlockingLimit()}.
+     */
+    public static final String STILL_OVER_BLOCKING = "the view is still at or above the blocking limit";
+
+    /** The reason of a successful compaction at the blocking limit. */
+    private static final String BLOCKING_REASON = "blocking-limit forced compaction";
+
     private static final Logger log = LoggerFactory.getLogger(DefaultCompactionGuard.class);
 
     private final CompactionEngine compactionEngine;
@@ -229,6 +240,13 @@ public class DefaultCompactionGuard implements CompactionGuard {
      * {@link NothingToCompactException}. On the AUTO path that is a {@code WARN} decision with no compaction
      * metadata, and it never counts against the circuit breaker.
      *
+     * <p>
+     * At the blocking limit the {@code compactor} is expected to bring the view under the limit in that one call:
+     * the caller sends what it is given. A success whose record says the view is still at the limit
+     * ({@link CompactionMetadata#isOverBlockingLimit()}) stays a {@code COMPACT} decision, with
+     * {@link #STILL_OVER_BLOCKING} in its reason; a failure is a {@code BLOCK}. {@link #estimateTokens} and
+     * {@link #blockingLimit} give the compactor the sizes this guard decides on.
+     *
      * @param sessionId
      *            the session the lock and the circuit breaker are keyed on (must not be null)
      * @param systemPrompt
@@ -267,6 +285,34 @@ public class DefaultCompactionGuard implements CompactionGuard {
          * @return the outcome (must not be null)
          */
         CompactionResult compact(boolean forced);
+    }
+
+    /**
+     * Estimates a view the way {@link #decide} does before comparing it with a threshold, so a caller that has to
+     * hold a compaction to the blocking limit counts with the same estimator the limit was reached on.
+     *
+     * @param systemPrompt
+     *            counted in the estimate, as the provider counts it (may be null)
+     * @param view
+     *            the messages (must not be null)
+     * @return the estimated tokens
+     */
+    public int estimateTokens(String systemPrompt, List<Message> view) {
+        Objects.requireNonNull(view, "view cannot be null");
+        return tokenEstimator.estimate(systemPrompt, view);
+    }
+
+    /**
+     * Returns the blocking limit {@link #decide} holds {@code model} to: a view estimated at or above it is not sent
+     * without a compaction.
+     *
+     * @param model
+     *            the model the next call goes to (must not be null)
+     * @return the blocking limit in estimated tokens
+     */
+    public int blockingLimit(LlmModel model) {
+        Objects.requireNonNull(model, "model cannot be null");
+        return modelContextWindowRegistry.resolve(model.getName().orElse("")).getBlockingLimit();
     }
 
     private CompactionDecision serialized(SessionId sessionId, Supplier<CompactionDecision> evaluation) {
@@ -310,7 +356,7 @@ public class DefaultCompactionGuard implements CompactionGuard {
             final CompactionResult result = compactor.compact(true);
             if (result.isSuccess()) {
                 resetFailures(sessionId);
-                return CompactionDecision.compact(result, "blocking-limit forced compaction", estimated, blockingLimit);
+                return CompactionDecision.compact(result, blockingReason(result), estimated, blockingLimit);
             }
             recordFailureIfTransient(sessionId, result);
             return CompactionDecision.block("compaction failed at blocking limit: " + describeError(result), estimated,
@@ -350,6 +396,22 @@ public class DefaultCompactionGuard implements CompactionGuard {
         }
 
         return CompactionDecision.none();
+    }
+
+    /**
+     * The reason a successful blocking-limit compaction reports. A compactor that could not bring the view under the
+     * limit says so on its record ({@link CompactionMetadata#isOverBlockingLimit()}), and the reason repeats it: the
+     * action stays {@code COMPACT}, because a compaction did happen and the view is sent as it is, but it is not
+     * reported as the plain success it is not. A record that does not carry the limit — the in-place engine's —
+     * reads as before.
+     */
+    private static String blockingReason(CompactionResult result) {
+        final CompactionMetadata metadata = result.getMetadata();
+        if (!metadata.isOverBlockingLimit()) {
+            return BLOCKING_REASON;
+        }
+        return BLOCKING_REASON + "; " + STILL_OVER_BLOCKING + " (post=" + metadata.getPostCompactTokenCount()
+                + ", blocking=" + metadata.getBlockingLimit() + "); sending it as it is";
     }
 
     @SuppressWarnings("checkstyle:ParameterNumber")

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/agent-execution/context-engine-guide.md
-source_commit: 6e0e405
+source_commit: 5c43f5f
 ---
 
 # Context Engine Guide — shrinking the context of long conversations
@@ -16,7 +16,7 @@ is sent**. This document covers which of the two engines to choose and how to tu
 
 | engine | What it does | When to choose it |
 |--------|--------------|-------------------|
-| `default` (default) | At the model's auto-compact threshold, replaces the view with one summary. The part the model has not answered yet (a tool result it has just been given, the latest input) is left out of the summary and stays verbatim — when only that part is left it does not compact and only warns, and only at the blocking limit does it summarize that part too. On a version-1 log it summarizes everything, as before | Conversations usually end inside the window |
+| `default` (default) | At the model's auto-compact threshold, replaces the view with one summary. The part the model has not answered yet (a tool result it has just been given, the latest input) is left out of the summary and stays verbatim — when only that part is left it does not compact and only warns. At the blocking limit it summarizes that part too, in one pass, only when leaving it out could not bring the view under the limit; if the view is still at the limit after that, the decision's reason and the compaction record (`isOverBlockingLimit()`) say so. On a version-1 log it summarizes everything, as before | Conversations usually end inside the window |
 | `rolling` | Keeps the **head** (the session's first request) and the **tail** (the recent conversation) verbatim and summarizes only the middle. Compacts earlier and in smaller steps, and **updates** the summary each time. Registers the `SessionHistory` tool | One session runs several windows long — operations conversations, long investigations |
 
 Neither engine **touches the log** (in the version-2 write format). A compaction only records in the view state "which

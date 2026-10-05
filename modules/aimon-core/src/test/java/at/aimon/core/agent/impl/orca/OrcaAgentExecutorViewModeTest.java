@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -14,6 +15,7 @@ import at.aimon.core.agent.DefaultAgent;
 import at.aimon.core.agent.compact.CompactBoundary;
 import at.aimon.core.agent.compact.DefaultCompactionEngine;
 import at.aimon.core.agent.compact.DefaultCompactionGuard;
+import at.aimon.core.agent.compact.DefaultPromptSizeRecoveryStrategy;
 import at.aimon.core.agent.context.DefaultContextEngine;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
@@ -26,7 +28,11 @@ import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.SessionLogManifestEntry;
 import at.aimon.core.agent.session.transcript.SessionLogState;
 import at.aimon.core.agent.session.transcript.SessionLogStorage;
+import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.agent.tool.ToolContext;
+import at.aimon.core.agent.tool.ToolInput;
+import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.environment.TestExecutionEnvironments;
@@ -42,6 +48,8 @@ import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ModelContextLimits;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
+import at.aimon.core.llm.ToolUse;
+import at.aimon.core.llm.exception.LlmPromptTooLongException;
 import at.aimon.core.llm.token.HeuristicTokenEstimator;
 import at.aimon.core.memory.ExecutionMemoryUpdate;
 import at.aimon.core.skill.DefaultSkillRegistry;
@@ -200,6 +208,40 @@ class OrcaAgentExecutorViewModeTest {
         assertThat(repository.load(sessionId).orElseThrow().getLogState().getViewState().isEmpty()).isTrue();
     }
 
+    @Test
+    @DisplayName("a tool result over the blocking limit is summarized with what precedes it, and the turn completes")
+    void aToolResultOverTheBlockingLimitDoesNotFailTheTurn() {
+        final LimitedProvider llm = new LimitedProvider(TINY.getBlockingLimit());
+        final OrcaAgentExecutor executor = new OrcaAgentExecutorFactory().create(llm,
+                new DefaultTranscriptManager(repository, SessionCheckpointMailbox.disabled(), SessionLogFormat.V2));
+        final DefaultToolRegistry tools = new DefaultToolRegistry();
+        tools.register(new ReportTool());
+        final OrcaAgentRuntime runtime = runtime(executor, llm, tools);
+        final SessionId sessionId = SessionId.generate();
+
+        // Iteration 1 calls the tool; its result alone is over the blocking limit. The executor asks the engine once
+        // before iteration 2 and sends what it is given, so a compaction that summarized only "read the report" would
+        // hand the provider a request it rejects, and recovery has nothing it may drop.
+        final var result = executor.execute(runtime, request(sessionId, "read the report"));
+
+        assertThat(result.isSuccess()).as("the turn's outcome (%s; %d request(s) refused as too long)",
+                result.getErrorMessage(), llm.rejected).isTrue();
+        assertThat(llm.rejected).as("requests the provider refused as too long").isZero();
+        assertThat(result.getFinalAnswer()).isEqualTo("the report says so");
+        assertThat(llm.summaryCalls).as("one summary call for the whole view").hasSize(1);
+        assertThat(llm.summaryCalls.get(0)).anySatisfy(message -> assertThat(message.hasToolResults()).isTrue());
+        final List<Message> sentAfterCompaction = llm.agentCalls.get(1);
+        assertThat(sentAfterCompaction).hasSize(2);
+        assertThat(sentAfterCompaction.get(0).getContent()).startsWith(CompactBoundary.BOUNDARY_OPEN_PREFIX);
+        assertThat(sentAfterCompaction.get(1).getContent()).contains("THE SUMMARY");
+        assertThat(result.getCompactionEvents()).hasSize(1);
+
+        final SessionLogState stored = repository.load(sessionId).orElseThrow().getLogState();
+        assertThat(stored.getViewState().getSummarySpan())
+                .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 3)));
+        assertThat(stored.getConversationMessages()).as("the log keeps the call, its result and the answer").hasSize(4);
+    }
+
     // ============================== helpers ==============================
 
     private static OrcaAgentExecutionRequest request(SessionId sessionId, String userInput) {
@@ -207,6 +249,10 @@ class OrcaAgentExecutorViewModeTest {
     }
 
     private OrcaAgentRuntime runtime(OrcaAgentExecutor executor, LlmClient llm) {
+        return runtime(executor, llm, new DefaultToolRegistry());
+    }
+
+    private OrcaAgentRuntime runtime(OrcaAgentExecutor executor, LlmClient llm, DefaultToolRegistry toolRegistry) {
         final LocalFileSystem fileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
         fileSystem.initialize();
         final HeuristicTokenEstimator estimator = new HeuristicTokenEstimator();
@@ -215,16 +261,79 @@ class OrcaAgentExecutorViewModeTest {
         final DefaultCompactionGuard guard = new DefaultCompactionGuard(compactionEngine,
                 InMemoryModelContextWindowRegistry.builder().defaultLimits(TINY).build(), estimator);
         final DefaultContextEngine engine = DefaultContextEngine.builder().compactionGuard(guard)
-                .compactionEngine(compactionEngine).tokenEstimator(estimator).writeFormat(SessionLogFormat.V2).build();
+                .compactionEngine(compactionEngine).recoveryStrategy(new DefaultPromptSizeRecoveryStrategy())
+                .tokenEstimator(estimator).writeFormat(SessionLogFormat.V2).build();
         return OrcaAgentRuntime.builder()
                 .agent(DefaultAgent.builder().name("TestAgent").maxIterations(5).systemPrompt("You are a test agent")
                         .build())
-                .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry())
+                .toolRegistry(toolRegistry).hookRegistry(new DefaultHookRegistry())
                 .commandRegistry(new DefaultCommandRegistry(fileSystem, ".aimon/commands"))
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
                 .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
                 .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem)).contextEngine(engine)
                 .build();
+    }
+
+    /** Returns a report of about 1700 estimated tokens: over the blocking limit on its own. */
+    private static final class ReportTool extends AbstractTool {
+
+        ReportTool() {
+            super("Report", "returns the report",
+                    Map.of("type", "object", "properties", Map.of(), "required", List.of()));
+        }
+
+        @Override
+        public ToolResult execute(ToolInput input, ToolContext context) {
+            return ToolResult.success("r".repeat(6000));
+        }
+    }
+
+    /**
+     * A provider with a prompt limit: an agent request estimated at or over it is refused with
+     * {@link LlmPromptTooLongException}, as a provider refuses one over its window. The first agent request is
+     * answered with a tool call, the later ones with text. A summary request is always answered — how large a summary
+     * call may be is the compaction engine's matter, not what this double is for.
+     */
+    private static final class LimitedProvider implements LlmClient {
+
+        private final HeuristicTokenEstimator estimator = new HeuristicTokenEstimator();
+        private final int limit;
+        private final List<List<Message>> agentCalls = new ArrayList<>();
+        private final List<List<Message>> summaryCalls = new ArrayList<>();
+        private int rejected;
+
+        LimitedProvider(int limit) {
+            this.limit = limit;
+        }
+
+        @Override
+        public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
+                LlmModel modelConfig) {
+            return sendMessage(systemPrompt, messages, tools, modelConfig, LlmCallMetadata.empty());
+        }
+
+        @Override
+        public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
+                LlmModel modelConfig, LlmCallMetadata metadata) {
+            if (metadata.getFeature().filter(LlmCallMetadata.Feature.COMPACTION::equals).isPresent()) {
+                summaryCalls.add(List.copyOf(messages));
+                return LlmResponse.of("THE SUMMARY", List.of(), TokenUsage.of(5, 5, 10));
+            }
+            final int estimated = estimator.estimate(systemPrompt, messages);
+            if (estimated >= limit) {
+                rejected++;
+                throw new LlmPromptTooLongException("prompt is too long: " + estimated + " tokens >= " + limit);
+            }
+            agentCalls.add(List.copyOf(messages));
+            return agentCalls.size() == 1
+                    ? LlmResponse.of("", List.of(ToolUse.of("t1", "Report", Map.of())), TokenUsage.of(5, 5, 10))
+                    : LlmResponse.of("the report says so", List.of(), TokenUsage.of(5, 5, 10));
+        }
+
+        @Override
+        public String getProviderName() {
+            return "Limited";
+        }
     }
 
     /** Answers from a script, in order, and records the messages of every call. */
