@@ -530,9 +530,19 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
         }
 
         /**
-         * Returns the workspace file system the runtime's executions work in — shared with every other runtime when
-         * the caller supplied one, private to this runtime otherwise. The control store is
-         * {@link OrcaAgentRuntime#getControlFileSystem()}.
+         * Returns the file system {@code AimonStack.fileSystem(id)} answers with for this runtime — shared with every
+         * other runtime when the caller supplied one, private to this runtime otherwise. The control store is
+         * {@link OrcaAgentRuntime#getControlFileSystem()}. Which file system that is depends on the shape (EE-22):
+         *
+         * <ul>
+         * <li>{@code FileSystemSpec.localAt} with the stack's own provider: the runtime's workspace, as its file
+         * tools see it ({@code .aimon/} hidden).</li>
+         * <li>A supplied or factory-made file system: that file system itself — the workspace with the control store
+         * as its {@code .aimon/} subtree, nothing hidden.</li>
+         * <li>{@code FileSystemSpec.localAt} with a caller's provider ({@code ExecutionEnvironmentSpec.provider} or
+         * {@code shared}): the stack does not know that provider's workspace, so this is the <b>control store</b>,
+         * the same store as {@link OrcaAgentRuntime#getControlFileSystem()}. Read the workspace from the provider.</li>
+         * </ul>
          *
          * @return the file system, never null
          */

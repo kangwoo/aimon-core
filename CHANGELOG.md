@@ -47,6 +47,37 @@ Central is versioned independently).
   `modules/aimon-cli/src/main/resources/agents/` disappear; none was linked and no `docs/` anchor changed.
   `check-doc-links.py --self-test` gains the case.
 
+### Fixed: the local staging area ignores itself and re-checks a copy it did not make (EE-4, EE-37)
+
+- **The first copy into `.aimon-staged/` writes `.aimon-staged/.gitignore` containing `*`.** Nothing wrote it
+  before; the docs asked users to add the directory to their own `.gitignore`, and a workspace that is a repository
+  showed every staged copy in `git status`. A `.gitignore` already there is left as it is. A staged resource named
+  `.gitignore` is refused.
+- **A staged copy is reused only when it is the copy its path names.** The marker used to be checked for existence
+  alone, and the path is predictable (`{name}/{contentKey}`), so a copy committed to a repository or planted through
+  the shell — with a marker holding the right key and other bytes — was served as is. The first time a provider meets
+  a copy it did not make, it now checks that the marker holds the key, that the files are exactly the resource's,
+  and that they hash to the key; otherwise it copies again. The check is remembered per copy, so a copy is read once
+  per process. A shell can still change a copy after that check (design §2 non-goals).
+
+### Fixed: `PathRuleVirtualFileSystem` hides its `DENY`ed subtrees from usage and fills `search` (EE-34, EE-39)
+
+- **`getUsageSummary()` and `getUsageSummary(path)` leave `DENY`ed subtrees out.** The no-arg call was delegated as
+  is, and so was a path naming the root or a directory above a hidden prefix, so the local environment's totals
+  counted the `.aimon/` control store. Above a hidden prefix the decorator now lists its way down and sums the
+  visible entries; elsewhere it still asks the delegate's path-scoped overload, so a backend that ignores the path
+  there still over-reports.
+- **`search` returns up to `maxResults` visible hits.** It passed `maxResults` to the delegate and then dropped
+  hidden hits, so a search whose walk met `.aimon/` first could come back short or empty while visible matches
+  existed (reproduced on the local file system). It now repeats the search with a doubled limit until it has enough
+  visible hits or the delegate runs out. A directory with no hidden prefix beneath it is searched once, as before.
+
+### Fixed: the framework's write-once `ToolContext` keys are checked before `ToolContextKeys` is loaded (EE-32)
+
+- `executionEnvironment`, `executionEnvironmentProvider` and `hookRegistry` were registered as write-once only when
+  `ToolContextKeys` was initialised, so a string write that came first was not checked. `ToolContextKey` now knows
+  those three names from the start. A write-once key declared elsewhere is still registered when its class loads.
+
 ### Policy: `internal` packages are not public API, and the build says so
 
 - **`docs/project/api-stability.md` §2 now names `<package>.internal` beside `*.impl`.** The five `internal` packages

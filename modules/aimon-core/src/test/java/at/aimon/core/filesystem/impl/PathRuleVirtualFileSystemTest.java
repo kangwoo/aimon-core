@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 
 import org.junit.jupiter.api.AfterEach;
@@ -19,6 +20,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.environment.DelegatingFileSystem;
 import at.aimon.core.filesystem.FileMetadata;
+import at.aimon.core.filesystem.FileSystemUsage;
 import at.aimon.core.filesystem.PathRule;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.exception.FileAccessDeniedException;
@@ -211,5 +213,55 @@ class PathRuleVirtualFileSystemTest {
         assertThat(PathRule.deny(".aimon").covers(".aimon/x")).isTrue();
         assertThat(PathRule.deny(".aimon").covers(".aimon2/x")).isFalse();
         assertThatThrownBy(() -> PathRule.deny("..")).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("EE-34: usage of the whole filesystem leaves the DENYed subtree out, with or without a path")
+    void usageLeavesDeniedOut() {
+        // visible: src/a.txt ("work") and .aimon-staged/n/k/x.sh ("staged"); dirs src, .aimon-staged, n, k
+        final FileSystemUsage visible = FileSystemUsage.builder().totalSize(10).fileCount(2).directoryCount(4).build();
+        assertThat(raw.getUsageSummary().getFileCount()).isEqualTo(3);
+        assertThat(fs.getUsageSummary()).isEqualTo(visible);
+        assertThat(fs.getUsageSummary(".")).isEqualTo(visible);
+        assertThat(fs.getUsageSummary(base)).isEqualTo(visible);
+        assertThat(fs.getUsageSummary("src")).isEqualTo(raw.getUsageSummary("src"));
+        assertThatThrownBy(() -> fs.getUsageSummary(".aimon")).isInstanceOf(FileAccessDeniedException.class);
+    }
+
+    @Test
+    @DisplayName("EE-34: a nested DENY prefix is left out of the usage of every directory above it")
+    void usageLeavesNestedDeniedOut() {
+        raw.write("a/.secrets/key", "top secret");
+        raw.write("a/b.txt", "bb");
+        final VirtualFileSystem nested = new PathRuleVirtualFileSystem(raw, List.of(PathRule.deny("a/.secrets")));
+        assertThat(nested.getUsageSummary("a"))
+                .isEqualTo(FileSystemUsage.builder().totalSize(2).fileCount(1).directoryCount(0).build());
+        assertThat(nested.getUsageSummary().getFileCount()).isEqualTo(raw.getUsageSummary().getFileCount() - 1);
+        assertThat(nested.getUsageSummary().getDirectoryCount())
+                .isEqualTo(raw.getUsageSummary().getDirectoryCount() - 1);
+    }
+
+    @Test
+    @DisplayName("EE-39: search keeps asking until it has maxResults visible hits when DENYed hits come first")
+    void searchFillsMaxResults() {
+        for (int i = 0; i < 5; i++) {
+            raw.write(".aimon/hidden" + i + ".md", "h");
+        }
+        raw.write("src/visible1.md", "v");
+        raw.write("src/visible2.md", "v");
+        // a backend whose walk happens to reach the control store first
+        final VirtualFileSystem hiddenFirst = new DelegatingFileSystem(raw) {
+            @Override
+            public List<String> search(String directory, String pattern, int maxResults) {
+                return raw.search(directory, pattern, 1000).stream().sorted(Comparator
+                        .comparing((String p) -> !p.startsWith(".aimon/")).thenComparing(Comparator.naturalOrder()))
+                        .limit(maxResults).toList();
+            }
+        };
+        final VirtualFileSystem guarded = new PathRuleVirtualFileSystem(hiddenFirst, List.of(PathRule.deny(".aimon")));
+        assertThat(guarded.search(".", "*.md", 2)).containsExactly("src/visible1.md", "src/visible2.md");
+        assertThat(guarded.search(".", "*.md", 1)).containsExactly("src/visible1.md");
+        assertThat(guarded.search(".", "*.md", 100)).containsExactly("src/visible1.md", "src/visible2.md");
+        assertThat(guarded.search("src", "*.md", 1)).containsExactly("src/visible1.md");
     }
 }

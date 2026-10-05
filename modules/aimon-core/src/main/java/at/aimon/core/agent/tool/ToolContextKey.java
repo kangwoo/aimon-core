@@ -30,8 +30,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@link ToolContext.Builder}: a second write of the same <em>name</em> — through the key, through the string
  * {@code put(String, Object)} or through {@code putAll} — throws. The names live in a registry owned by this class
  * rather than in any one builder, so a context copied with {@code builder().putAll(ctx.getContext())} stays
- * protected: the copy is the first write into the new builder, and any later write of that name throws. The registry
- * is filled when the class declaring the constant is initialised.
+ * protected: the copy is the first write into the new builder, and any later write of that name throws. The
+ * framework's own write-once names ({@code executionEnvironment}, {@code executionEnvironmentProvider},
+ * {@code hookRegistry}) are in the registry from the start, so they are checked even before the class declaring their
+ * constants ({@code at.aimon.core.tools.ToolContextKeys}) is initialised. A write-once key declared anywhere else is
+ * registered when the class declaring it is initialised (EE-32).
  *
  * @param <T>
  *            the value type associated with this key
@@ -39,7 +42,19 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class ToolContextKey<T> {
 
+    /**
+     * The framework's write-once names, registered without waiting for the class that declares their keys to be
+     * initialised. Must list every {@link #writeOnce(String, Class)} key in {@code at.aimon.core.tools.ToolContextKeys}
+     * ({@code ToolContextKeysWriteOnceTest} holds the two together).
+     */
+    private static final Set<String> BUILT_IN_WRITE_ONCE_NAMES = Set.of("executionEnvironment",
+            "executionEnvironmentProvider", "hookRegistry");
+
     private static final Set<String> WRITE_ONCE_NAMES = ConcurrentHashMap.newKeySet();
+
+    static {
+        WRITE_ONCE_NAMES.addAll(BUILT_IN_WRITE_ONCE_NAMES);
+    }
 
     private final String name;
     private final Class<? super T> type;

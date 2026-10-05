@@ -148,6 +148,7 @@ class LocalExecutionEnvironmentProviderStagingTest {
         final StagedResource resource = scan();
 
         final String first = env.stage(resource);
+        writes.removeIf(w -> w.endsWith("/" + LocalStaging.GITIGNORE));
         assertThat(writes).hasSize(resource.getFiles().size() + 1);
         assertThat(writes.get(writes.size() - 1)).endsWith("/" + LocalStaging.MARKER);
 
@@ -539,6 +540,121 @@ class LocalExecutionEnvironmentProviderStagingTest {
         // A rescan (what a registry reload does) stages under the new key.
         final String path = env.stage(scan());
         assertThat(Path.of(path, "scripts/run.sh")).hasContent("echo edited");
+    }
+
+    @Test
+    @DisplayName("EE-4: the first copy writes .aimon-staged/.gitignore ignoring everything, so copies stay out of git")
+    void stagingAreaIgnoresItself() throws Exception {
+        final ExecutionEnvironment env = ownedEnv();
+        env.stage(scan());
+
+        final Path gitignore = workspace.resolve(".aimon-staged/" + LocalStaging.GITIGNORE);
+        assertThat(gitignore).hasContent("*");
+        assertThat(env.fileSystem().exists(".aimon-staged/.gitignore")).as("visible, read-only").isTrue();
+    }
+
+    @Test
+    @DisplayName("EE-4: a .gitignore the user already keeps in the staging area is left as it is")
+    void existingGitignoreKept() throws Exception {
+        final Path gitignore = workspace.resolve(".aimon-staged/" + LocalStaging.GITIGNORE);
+        Files.createDirectories(gitignore.getParent());
+        Files.writeString(gitignore, "# mine\n*\n");
+        ownedEnv().stage(scan());
+
+        assertThat(gitignore).hasContent("# mine\n*\n");
+    }
+
+    @Test
+    @DisplayName("EE-4: a resource named .gitignore cannot take the staging area's ignore file")
+    void gitignoreNameRefused() {
+        final StagedResource resource = StagedResource.scan(control, "skills/demo", ".gitignore");
+        assertThatThrownBy(() -> ownedEnv().stage(resource)).isInstanceOf(StagingException.class);
+    }
+
+    @Test
+    @DisplayName("EE-37: a planted copy whose marker names the key but whose files do not hash to it is staged again")
+    void plantedCopyWithMatchingMarkerIsReplaced() throws Exception {
+        final StagedResource resource = scan();
+        final Path target = workspace.resolve(".aimon-staged/demo/" + resource.getContentKey());
+        // what a cloned repository could carry: the right path, the right marker, other bytes
+        Files.createDirectories(target.resolve("scripts"));
+        Files.writeString(target.resolve("SKILL.md"), "# demo");
+        Files.writeString(target.resolve("scripts/run.sh"), "echo PLANTED");
+        Files.writeString(target.resolve("extra.sh"), "echo extra");
+        Files.writeString(target.resolve(LocalStaging.MARKER), resource.getContentKey());
+
+        final String path = ownedEnv().stage(resource);
+
+        assertThat(Path.of(path, "scripts/run.sh")).hasContent("echo staged-script");
+        assertThat(Path.of(path, "references/notes.md")).hasContent("notes");
+        assertThat(Path.of(path, "extra.sh")).as("a file the resource does not have").doesNotExist();
+        assertThat(Path.of(path, LocalStaging.MARKER)).hasContent(resource.getContentKey());
+    }
+
+    @Test
+    @DisplayName("EE-37: a copy with every file intact but an extra one planted beside them is staged again")
+    void intactCopyWithAnExtraFileIsReplaced() throws Exception {
+        final StagedResource resource = scan();
+        final String first = ownedEnv().stage(resource);
+        Files.writeString(Path.of(first, "extra.sh"), "echo extra");
+
+        final ExecutionEnvironment restarted = borrowedEnv(rawWorkspace());
+        assertThat(restarted.stage(resource)).isEqualTo(first);
+        assertThat(Path.of(first, "extra.sh")).doesNotExist();
+    }
+
+    @Test
+    @DisplayName("EE-37: a marker that does not hold the key is not taken as \"already staged\"")
+    void markerWithoutTheKeyIsNotTrusted() throws Exception {
+        final StagedResource resource = scan();
+        final Path target = workspace.resolve(".aimon-staged/demo/" + resource.getContentKey());
+        Files.createDirectories(target.resolve("scripts"));
+        Files.writeString(target.resolve("scripts/run.sh"), "echo PLANTED");
+        Files.writeString(target.resolve(LocalStaging.MARKER), "");
+
+        final String path = ownedEnv().stage(resource);
+
+        assertThat(Path.of(path, "scripts/run.sh")).hasContent("echo staged-script");
+    }
+
+    @Test
+    @DisplayName("EE-37: an intact copy left by an earlier process is reused without copying, and verified only once")
+    void intactCopyReusedAndVerifiedOnce() throws Exception {
+        final StagedResource resource = scan();
+        final String first = ownedEnv().stage(resource);
+
+        final List<String> writes = new ArrayList<>();
+        final List<String> reads = new ArrayList<>();
+        final VirtualFileSystem counting = new DelegatingFileSystem(rawWorkspace()) {
+            @Override
+            public void write(String path, InputStream content, long contentLength) {
+                writes.add(path);
+                super.write(path, content, contentLength);
+            }
+
+            @Override
+            public InputStream read(String path) {
+                reads.add(path);
+                return super.read(path);
+            }
+        };
+        final ExecutionEnvironment restarted = borrowedEnv(counting);
+
+        assertThat(restarted.stage(resource)).isEqualTo(first);
+        assertThat(writes).isEmpty();
+        assertThat(reads).as("the copy is checked against its key").isNotEmpty();
+
+        reads.clear();
+        assertThat(restarted.stage(resource)).isEqualTo(first);
+        assertThat(reads).as("once per environment").isEmpty();
+        assertThat(writes).isEmpty();
+    }
+
+    private LocalFileSystem rawWorkspace() {
+        final LocalFileSystem shared = new LocalFileSystem(new LocalFileSystemConfig(workspace.toString()));
+        shared.initialize();
+        closeables.add(shared::close);
+        return shared;
     }
 
     private static Path stagedCopy(Path nameDir, String key, Instant markerTime) throws Exception {

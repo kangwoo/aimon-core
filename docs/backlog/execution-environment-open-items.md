@@ -168,7 +168,7 @@ main 에는 `reloadSkill` / `reloadAll` 을 부르는 경로가 없다. 사용�
 
 출처: 계획 §7 "Host skill directory edited without a registry reload" · 리뷰 3.
 
-## EE-4 — `.aimon-staged/` 를 `.gitignore` 에 넣는 코드가 없다 · **열림**
+## EE-4 — `.aimon-staged/` 를 `.gitignore` 에 넣는 코드가 없다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 로컬 제공자가 `.aimon-staged/.gitignore`(`*`)를 쓰거나, CLI 에 프로젝트 초기화를 둔다.
 
@@ -180,6 +180,31 @@ main 에는 `reloadSkill` / `reloadAll` 을 부르는 경로가 없다. 사용�
 **언제 다시 볼까.** 사용자 저장소에 사본이 커밋되었다는 보고가 있을 때.
 
 출처: 계획 §9 Q4.
+
+### 닫힘 (2026-10-05)
+
+항목이 열어 둔 두 갈래 가운데 앞쪽(로컬 제공자가 쓴다)을 골랐다. 계획 §9 Q4 가 이미 "프로젝트 초기화가 필요 없다" 는
+이유로 권장한 쪽이다. `LocalStaging` 이 **처음 복사할 때** `{stagingRoot}/.gitignore` 에 `*` 를 쓴다. 이미 파일이 있으면
+건드리지 않고, 쓰기에 실패하면 WARN 만 남기고 스테이징은 계속한다. 복사할 것이 없는 경로(워크스페이스 안 스킬을 그대로
+돌려주는 경우)는 스테이징 영역을 만들지 않으므로 이 파일도 만들지 않는다. `*` 는 그 파일 자신도 가리므로 저장소에는
+아무것도 남지 않는다. 시작 스윕은 스테이징 루트 바로 아래의 **디렉터리**만 보므로 이 파일을 지우지 않는다.
+
+이름이 `.gitignore` 인 리소스는 이제 거부한다 — 그 이름의 디렉터리가 이 파일과 같은 자리를 다툰다. 스킬 이름 검증
+(`SkillValidator`)은 이런 이름을 막지만 `StagedResource` 를 직접 만드는 SPI 코드는 그 검증을 거치지 않는다.
+
+착수해 보니 항목의 서술과 달랐던 것.
+
+1. **근거(규칙 둘)는 참이었다.** main 소스에서 `.gitignore` 를 쓰는 코드는 없었고(`StageIgnore` · `HookConfigSource` 는
+   문법이나 문서 언급뿐이다), 스킬 가이드가 사용자에게 직접 넣으라고 안내하고 있었다. 그 문장은 이 변경에서 고쳤다
+   (`docs/features/skill/builtin-agent-skill-guide.md` · `.en.md`). 설계 §9.2 의 "CLI 의 프로젝트 초기화" 문장은 설계 시점
+   기록이라 그대로 두었다 — 구현 문서 §1 의 9번과 §10.4 가 그 차이를 적고 있고, §10.4 의 "no code writes it" 는 그
+   시점의 사실이다.
+2. **이 항목은 EE-37 의 전제 하나를 없앤다.** EE-37 은 미리 심어 둔 사본의 출처로 "복제한 저장소" 를 들었고 그 경로가 이
+   항목이었다. 다만 `.gitignore` 는 이미 커밋된 사본을 지우지 않고, 셸로 심는 경로는 남는다 — 그래서 EE-37 은 따로 닫았다.
+
+테스트: `LocalExecutionEnvironmentProviderStagingTest` — `stagingAreaIgnoresItself`(첫 복사 뒤 `*` 가 있다),
+`existingGitignoreKept`(사용자 파일은 그대로), `gitignoreNameRefused`. 앞의 것과 마지막 것은 고치기 전 코드에서 실패했다.
+`markerLastAndSkip` 은 쓰기 횟수를 세므로 이 파일의 쓰기를 빼고 센다.
 
 ## EE-5 — stamp 의 etag: GridFS 는 과민하고 로컬은 없다 · **열림**
 
@@ -844,7 +869,7 @@ PR #202 의 리뷰가 둘을 더 찾았다. (1) `OrcaAgentRuntimeManager.getOrCr
 자원(소유한 제공자)을 닫게 되었으므로 `OrcaAgentRuntime.close()` 를 멱등으로 만들었다. `docs/overview/scope-model.md` 의 §2 표와
 §3 문단, 시작 가이드의 `close()` 안내(두 문서 모두 한/영)에도 이 예외를 적었다.
 
-## EE-22 — `AimonStack.fileSystem(id)` 가 제어 저장소를 돌려줄 수 있다 · **열림**
+## EE-22 — `AimonStack.fileSystem(id)` 가 제어 저장소를 돌려줄 수 있다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 로컬이 아닌 팩토리나 공유 제공자(Spring 빈) 배치에서도 `fileSystem(id)` 가 워크스페이스를 돌려주게 하거나,
 Javadoc 을 실제 동작에 맞춘다.
@@ -857,6 +882,31 @@ Javadoc 을 실제 동작에 맞춘다.
 **언제 다시 볼까.** 스타터 사용자가 `fileSystem(id)` 로 워크스페이스를 읽으려 할 때.
 
 출처: 빌드 리뷰 3.
+
+### 닫힘 (2026-10-05)
+
+항목의 둘째 갈래(Javadoc 을 실제 동작에 맞춘다)다. 동작은 바꾸지 않았다. 호출자의 제공자를 쓰는 배치에서 스택은 그
+제공자의 워크스페이스를 모르고, 모르는 것을 돌려줄 방법은 없다 — 첫 갈래는 제공자 SPI 에 "워크스페이스 파일 시스템을
+내놓아라" 를 더해야 하는 일이라 이 항목의 크기를 넘는다.
+
+착수해 보니 항목의 서술과 달랐던 것.
+
+1. **절반은 이미 해소되어 있었다.** `AimonStack.fileSystem(id)` 의 Javadoc 은 2026-10-03 에 `a0f0dd6`(#205 리뷰 반영)이
+   "`localAt` 과 호출자의 제공자(`ExecutionEnvironmentSpec.provider` · `shared`)에서는 `.aimon/` 제어 저장소를 돌려준다,
+   워크스페이스는 제공자에게서 읽어라" 로 이미 고쳐 두었다. 항목이 인용한 파일(`StackAgentRuntimeProvisioner`)의
+   `Assembly.getFileSystem()` Javadoc 만 여전히 "the workspace file system the runtime's executions work in" 이라고 적고
+   있었다. 그 Javadoc 을 배치 세 갈래(아래)로 고쳤다.
+2. **조건(규칙 넷의 "배치 형태를 뭉뚱그린 단어")이 틀렸다.** 항목은 "로컬이 아닌 팩토리나 공유 제공자(Spring 빈) 배치" 라고
+   적었다. 갈래를 세어 보니 셋이다. `localAt` + 스택의 제공자 → 워크스페이스(파일 도구가 보는 그대로, `.aimon/` 가림).
+   공급 또는 팩토리 파일 시스템 → 그 파일 시스템 자체(워크스페이스이고, 제어 저장소는 그 안의 `.aimon/` 이며 **가려지지
+   않는다**). `localAt` + 호출자의 제공자 → **제어 저장소**. 제어 저장소를 돌려주는 것은 항목이 짚은 "로컬이 아닌" 배치가
+   아니라 **로컬** 배치였다. 둘째 갈래의 "가려지지 않는다" 는 어느 문서에도 없었으므로 `AimonStack` 의 Javadoc 에도 한 줄
+   더했다.
+
+테스트: `ControlRootLayoutTest.callerProviderLeavesFileSystemAtTheControlStore` — `localAt` 과 `ExecutionEnvironmentSpec.shared`
+로 세운 스택에서 `fileSystem(id)` 로 쓴 파일이 `{workspace}/.aimon/` 에 떨어지고, 워크스페이스 루트와 제공자의 워크스페이스에는
+없으며, 런타임의 제어 저장소에서 보인다. 동작을 바꾸지 않은 항목이므로 이 테스트는 고치기 전에도 통과한다 — Javadoc 이
+적는 동작을 고정해 두는 테스트다.
 
 ## EE-23 — 프로비저닝이 중간에 실패하면 자원이 샌다 · **닫힘** *(2026-09-30)*
 
@@ -1072,7 +1122,7 @@ not supported: this environment is already the isolated workflow branch 'k' (.wo
 
 출처: 빌드 리뷰 4.
 
-## EE-32 — `ToolContextKey` 의 한 번만 쓰는 이름 집합이 클래스 초기화에 기댄다 · **열림**
+## EE-32 — `ToolContextKey` 의 한 번만 쓰는 이름 집합이 클래스 초기화에 기댄다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 한 번만 쓰는 키 이름을 `ToolContextKeys` 의 클래스 초기화와 무관하게 등록한다(예: 이름 집합을 상수로 고정).
 
@@ -1085,6 +1135,28 @@ not supported: this environment is already the isolated workflow branch 'k' (.wo
 **언제 다시 볼까.** 문자열 키로 `ToolContext` 를 채우는 새 경로가 생길 때.
 
 출처: 빌드 리뷰 4.
+
+### 닫힘 (2026-10-05)
+
+항목의 예시 그대로다. `ToolContextKey` 가 프레임워크의 한 번만 쓰는 이름 셋(`executionEnvironment`,
+`executionEnvironmentProvider`, `hookRegistry`)을 `Set.of` 상수로 갖고, 클래스 초기화 때 레지스트리에 먼저 넣는다.
+`writeOnce(...)` 로 다른 곳에서 선언한 키는 지금처럼 그 클래스가 초기화될 때 등록된다.
+
+`ToolContextKey`(`at.aimon.core.agent.tool`)가 `ToolContextKeys`(`at.aimon.core.tools`)의 상수를 직접 참조하면 그 클래스를
+초기화하게 되어 처방이 무의미해지고, 패키지 방향도 거꾸로다. 그래서 이름을 문자열로 한 번 더 적었고, 두 목록이 어긋나지
+않게 하는 것은 테스트다.
+
+착수해 보니 항목의 서술과 달랐던 것.
+
+1. **근거와 심각도(규칙 둘·셋)는 적힌 그대로였다.** 새 클래스 로더에서 `ToolContextKey` 만 올리고
+   `isWriteOnceName("executionEnvironment")` 를 물으니 `false` 였다 — 그 상태의 빌더는 같은 이름의 두 번째 문자열 쓰기를
+   받아들인다. 운영 경로는 모두 상수를 먼저 건드리므로 위험이 이론적이라는 서술도 맞다. 다만 같은 JVM 안의 테스트로는
+   재현되지 않는다 — 다른 테스트가 이미 `ToolContextKeys` 를 초기화해 두기 때문이다. 재현에 격리된 클래스 로더가 필요했다.
+
+테스트: `ToolContextKeysWriteOnceTest` — 격리된 클래스 로더에서 `ToolContextKeys` 의 모든 write-once 키 이름이
+`isWriteOnceName` 으로 참이고, 그 세계의 빌더가 두 번째 `put("hookRegistry", …)` 를 `IllegalStateException` 으로 거절하며,
+그동안 `ToolContextKeys` 가 로드되지 않았음을 확인한다. `ToolContextKeys` 에 write-once 키를 더하고 상수 목록을 고치지 않으면
+이 테스트가 실패한다. 고치기 전 코드에서 실패했다.
 
 ## EE-33 — 경로 규칙이 Windows 의 이름 별칭을 모른다 · **열림**
 
@@ -1108,7 +1180,7 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 
 출처: 빌드 리뷰 4.
 
-## EE-34 — 경로 없는 `getUsageSummary()` 가 제어 저장소 크기를 드러낸다 · **열림**
+## EE-34 — 경로 없는 `getUsageSummary()` 가 제어 저장소 크기를 드러낸다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** `PathRuleVirtualFileSystem.getUsageSummary()` 가 규칙이 가린 경로의 사용량을 빼거나, 가린 쪽을 합치지 않는다.
 
@@ -1120,6 +1192,32 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 **언제 다시 볼까.** 사용량을 모델이나 외부 사용자에게 보여 주는 도구가 생길 때.
 
 출처: 빌드 리뷰 4.
+
+### 닫힘 (2026-10-05)
+
+항목의 두 갈래 가운데 뒤쪽(가린 쪽을 합치지 않는다)이다. 빼는 쪽은 위임이 경로 단위 합계를 정확히 줄 때만 맞고, 대소문자만
+다른 쌍둥이(`.AIMON`)가 대소문자를 구분하는 저장소에 함께 있으면 둘 다 가려야 하는데 하나만 뺀다. 그래서
+`PathRuleVirtualFileSystem` 의 두 `getUsageSummary` 는 이제 이렇게 센다 — 물은 디렉터리 아래에 `DENY` 접두어가 없으면
+지금처럼 위임의 경로 단위 오버로드에 맡기고, 있으면 그 디렉터리를 `list` 해서 가려지지 않은 항목만 더한다(하위 디렉터리는
+같은 규칙으로 내려가고, 파일은 `getMetadata` 의 크기). 접두어로 가는 길에 있는 디렉터리만 펼치므로 나머지는 지금과 같은
+한 번의 위임이다.
+
+착수해 보니 항목의 서술과 달랐던 것.
+
+1. **범위(규칙 둘)가 적힌 것보다 넓었다.** 항목은 인자 없는 호출만 짚었지만, `getUsageSummary(".")` 나
+   `getUsageSummary({base})` 처럼 **루트를 가리키는 경로**, 그리고 가린 접두어보다 위에 있는 디렉터리(`deny("a/.secrets")`
+   에서 `getUsageSummary("a")`)도 `checkRead` 를 통과해 그대로 위임됐다. 재현 테스트에서 셋 다 제어 저장소를 합쳤다.
+2. **심각도(규칙 셋)는 적힌 그대로 가볍다.** 새는 것은 크기와 개수뿐이다. 그리고 main 소스에서 `VirtualFileSystem` 의
+   `getUsageSummary` 를 부르는 곳은 이 데코레이터와 `ScopedVirtualFileSystem` 의 위임뿐이다(규칙 여섯 — `.getUsageSummary(`
+   와 `::getUsageSummary` 둘 다 훑었다). 항목의 재검토 트리거("보여 주는 도구가 생길 때")는 아직 오지 않았고, 이 변경은 그
+   트리거를 기다리지 않고 닫은 것이다.
+3. **남는 한계.** 접두어 바깥은 여전히 위임의 경로 단위 오버로드에 맡긴다. 그 오버로드를 구현하지 않은 백엔드(기본 구현은
+   경로를 무시하고 전체를 돌려준다 — `S3FileSystem` 이 그렇다)를 이 데코레이터로 감싸면 그 부분이 과대 보고되고, 그 과대
+   보고에는 가린 쪽이 다시 들어간다. 로컬 제공자의 워크스페이스(`LocalFileSystem`)는 오버로드를 구현하므로 해당하지 않는다.
+   Javadoc 에 적었다.
+
+테스트: `PathRuleVirtualFileSystemTest` — `usageLeavesDeniedOut`(인자 없음 · `"."` · 절대 경로 모두 보이는 것만, 가린 경로는
+`FileAccessDeniedException`), `usageLeavesNestedDeniedOut`(중첩 접두어). 둘 다 고치기 전 코드에서 실패했다.
 
 ## EE-35 — 링크 허용 루트를 설정 파일로 정할 수 없다 · **열림**
 
@@ -1153,7 +1251,7 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 
 출처: PR #195 리뷰 1.
 
-## EE-37 — 스테이징 마커는 있는지만 본다 · **열림**
+## EE-37 — 스테이징 마커는 있는지만 본다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** `.staged` 마커에 이미 쓰고 있는 `contentKey` 를 읽어, 경로의 키와 같을 때만 "이미 스테이징됨" 으로 본다.
 
@@ -1167,6 +1265,34 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 **언제 다시 볼까.** EE-4 를 다룰 때, 또는 스테이징 영역을 저장소에 커밋한 사례가 나올 때.
 
 출처: PR #195 리뷰 1.
+
+### 닫힘 (2026-10-05)
+
+EE-4 와 한 변경에서 닫았다. `LocalStaging` 은 이제 디스크에 있는 사본을 쓰기 전에 **그 사본이 경로가 가리키는 사본인지**
+확인한다 — 마커가 그 키를 담고 있고, 파일 목록이 리소스의 파일(과 마커)과 정확히 같고, 그 파일들이 키로 해시된다. 하나라도
+어긋나면 WARN 을 남기고 지운 뒤 다시 복사한다. 확인은 **대상마다 한 번**이다: 이 인스턴스가 직접 복사했거나 한 번 확인한
+대상은 기억해 두고, 그다음부터는 지금처럼 마커가 있는지만 묻는다. 그래서 프로세스마다 사본을 한 번 읽는 값이 든다. 마커를
+매번 묻는 것은 그대로라, 지워진 사본은 여전히 다시 복사된다(`deletedTargetRecopied`).
+
+착수해 보니 항목의 서술과 달랐던 것.
+
+1. **처방(규칙 다섯)이 듣지 않았다.** 항목은 "마커에 이미 쓰고 있는 `contentKey` 를 읽어 경로의 키와 비교" 하라고 적었다.
+   재현 테스트를 먼저 쓰고 그 처방만 적용해 돌렸더니, 잡은 것은 **내용이 빈 마커** 하나였고 항목이 겨눈 경우 — 올바른 경로에
+   올바른 키를 담은 마커와 다른 바이트를 심어 둔 사본 — 는 그대로 제공됐다. 이유는 항목 자신이 적어 두었다: 키는 결정적이고
+   **경로에 이미 적혀 있다.** 사본을 심을 수 있는 쪽은 마커에 그 키를 적을 수도 있고, 저장소에 커밋된 정직한 사본의 마커도
+   그 키를 담고 있다. 마커 내용은 경로가 이미 말한 것을 한 번 더 말할 뿐이었다. 듣는 처방은 **파일을 키에 대고 다시 해시하는
+   것**이었고, 마커 비교는 그 안에 한 줄로 들어갔다.
+2. **심각도(규칙 셋)는 적힌 그대로였다.** 고치기 전 코드에서 심어 둔 `scripts/run.sh` 가 그대로 제공됐다. 다만 항목이 적은
+   한계도 그대로다 — 확인한 뒤에 셸이 사본을 고치는 것은 막지 않는다(§2 비목표). 이것은 경계가 아니라 **우연히 들어온
+   사본을 걸러 내는 장치**다.
+3. **"있는지만 본다" 를 그대로 두는 이유가 클래스 Javadoc 에 있었다**(규칙 다섯의 둘째 문단). "the target is asked every time,
+   never an in-memory record" — 메모리 기록으로 마커 확인을 건너뛰지 말라는 문장이다. 그래서 기억해 두는 것은 "확인했다" 뿐이고
+   마커는 지금처럼 매번 묻는다. Javadoc 도 그렇게 고쳤다.
+
+테스트: `LocalExecutionEnvironmentProviderStagingTest` — `plantedCopyWithMatchingMarkerIsReplaced`(키를 담은 마커와 다른 바이트,
+덤으로 심은 파일), `intactCopyWithAnExtraFileIsReplaced`(파일은 온전하고 하나가 더 있다), `markerWithoutTheKeyIsNotTrusted`(빈
+마커), `intactCopyReusedAndVerifiedOnce`(이전 프로세스가 남긴 온전한 사본은 쓰기 없이 재사용되고, 두 번째부터는 읽지도 않는다).
+넷 다 고치기 전 코드에서 실패했고, 항목의 처방만 적용한 코드에서는 `markerWithoutTheKeyIsNotTrusted` 만 통과했다.
 
 ## EE-38 — 대소문자를 구분하는 소스를 구분하지 않는 디스크에 스테이징하면 파일이 합쳐진다 · **열림**
 
@@ -1182,7 +1308,7 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 
 출처: PR #195 리뷰 1.
 
-## EE-39 — 경로 규칙 파일 시스템의 `search` 가 결과를 덜 돌려줄 수 있다 · **열림**
+## EE-39 — 경로 규칙 파일 시스템의 `search` 가 결과를 덜 돌려줄 수 있다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** `PathRuleVirtualFileSystem.search` 가 위임에 더 많이 요청하거나(over-fetch), 가려진 항목을 걷는 동안 걸러
 `maxResults` 를 채운다.
@@ -1196,6 +1322,29 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 **언제 다시 볼까.** `search` 를 결과 개수에 기대는 도구가 쓰게 될 때.
 
 출처: PR #195 리뷰 1.
+
+### 닫힘 (2026-10-05)
+
+항목의 첫 갈래(더 많이 요청한다)다. 둘째 갈래(걷는 동안 거른다)는 데코레이터가 위임의 걷기를 조종할 수 없어 쓸 수 없다.
+`PathRuleVirtualFileSystem.search` 는 이제 위임의 답이 한도에서 잘렸고 그중 일부가 가려졌으면 **한도를 두 배로 늘려 다시
+묻는다** — 보이는 결과가 `maxResults` 에 이르거나 위임이 한도보다 적게 돌려줄 때(더 없다)까지. 늘린 한도는
+`Integer.MAX_VALUE` 에서 멈춘다. 찾는 디렉터리 아래에 `DENY` 접두어가 없으면 가려질 것이 없으므로 지금처럼 한 번만 묻는다.
+
+착수해 보니 항목의 서술과 달랐던 것.
+
+1. **심각도(규칙 셋)가 "덜" 보다 무거웠다.** 가짜 위임이 아니라 실제 `LocalFileSystem` 의 걷기 순서로 돌려 봤다. `.aimon/`
+   에 `*.md` 다섯 개, `src/` 에 두 개를 두고 `search(".", "*.md", 3)` 을 부르자 위임은 `.aimon/` 의 셋을 돌려줬고 데코레이터는
+   **빈 목록**을 돌려줬다. 보이는 결과가 있는데 "없다" 고 답한 것이다. 걷기 순서는 파일 시스템이 정하므로 어느 쪽이 먼저
+   나올지는 배치마다 다르다.
+2. **도달 가능성(규칙 여섯).** main 소스에서 `VirtualFileSystem.search` 를 부르는 곳은 이 데코레이터와
+   `ScopedVirtualFileSystem` 의 위임뿐이다 — `GrepTool` 의 `search` 는 `ContentSearch` 이고 VFS 가 아니다. 그래서 이 저장소
+   안의 도구가 물리는 결함은 아니었고, 공개 SPI(`VirtualFileSystems.pathRules`, EE-41)로 감싼 파일 시스템을 쓰는 쪽이 물리는
+   결함이었다.
+3. **값.** 위임이 한도를 존중해 걷기를 멈추는 백엔드에서는 다시 묻는 것이 다시 걷는 것이다. 가린 결과가 많을수록 걷기가
+   늘지만 두 배씩이므로 횟수는 로그 단위다.
+
+테스트: `PathRuleVirtualFileSystemTest.searchFillsMaxResults` — 가린 결과를 먼저 돌려주는 위임으로 `maxResults` 1 · 2 · 100
+과 하위 디렉터리 검색을 확인한다. 고치기 전 코드에서 실패했다(빈 목록).
 
 ## EE-40 — 포크의 환경 요청에 포크 자신의 정의가 없고, 에이전트 정의에 임의 속성이 없다 · **닫힘** *(2026-09-29)*
 
