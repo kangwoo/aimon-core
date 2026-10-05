@@ -407,10 +407,32 @@ JSON 스키마를 따르면 `HookResult` 로 자동 매핑된다. `preTool` 에�
 
 `postTool` 에서는 판정 없음이 전처럼 WARN 후 정상 진행이다.
 
-> ⚠️ **`aimon-cli` 는 `http` · `mcp` 실행기를 배선하지 않는다.** CLI 의 `hooks.json` 에 둔 `http` · `mcp` handler 는 호출되지
-> 않는다 — `preTool` 에 두면 CLI 가 **뜨지 않고**(`… type=http cannot run: no HttpActionExecutor is wired in this assembly`;
-> `failOpen: true` 면 등록되어 매 호출 WARN 후 통과), `postTool` 에서는 WARN 만 남긴다. 임베딩 호스트는
-> `HookHotReloadBootstrap.builder().httpExecutor(…).mcpExecutor(…)` 로 배선한다.
+> ℹ️ **`aimon-cli` 는 `http` · `mcp` handler 를 실행한다** — `hooks.json` 의 것도, 스킬 frontmatter 의 것도. `http` 는 언제나,
+> `mcp` 는 CLI 설정(`mcp.servers`)에 서버가 하나라도 있을 때다. 서버가 하나도 없는 CLI 에서 `mcp` handler 는 돌 수 없는
+> 항목이다 — `hooks.json` 의 `preTool` 에 있으면 CLI 가 **뜨지 않고**(`… type=mcp cannot run: no McpActionExecutor is wired in
+> this assembly`; `failOpen: true` 면 등록되어 매 호출 WARN 후 통과), 그 액션을 선언한 스킬은 로드되지 않는다.
+> `aimon-bootstrap` 과 Spring Boot 스타터는 **배선하지 않는다**: 임베딩 호스트가
+> `HookHotReloadBootstrap.builder().httpExecutor(…).mcpExecutor(…)` 와 `AimonStackSpec` 의 `skillParser` 로 직접 배선한다.
+
+**`http` handler 가 보내고 받는 것.** 이 handler 는 설정 파일이 호스트 프로세스에게 바깥으로 요청을 보내게 하는 자리다.
+
+- **URL 은 적힌 그대로다** (템플릿 대상이 아니다). `https://` 와 `http://` 를 모두 받는다 — 헤더에 토큰을 싣는다면 `https://` 를
+  쓴다.
+- **리다이렉트는 따라가지 않는다.** 3xx 는 다른 non-2xx 와 같이 판정 없음이다(`call failed: HTTP 307`). 따라가면 `${env.X}` 로
+  채운 헤더가 설정에 없는 호스트로 함께 가고, 그 호스트의 답이 판정이 된다. `url` 에는 최종 주소를 적는다.
+- **응답 본문은 1 MiB 까지 읽는다.** 넘으면 잘라서 추측하지 않고 판정 없음이다(`response could not be read: response larger
+  than 1048576 bytes`).
+- **`timeout` 은 응답 헤더가 도착할 때까지를 잰다.** 그 뒤 본문이 멈추면 hook 실행기의 바깥 그물이 끊는다. 연결 timeout 은
+  5초로 고정이다.
+- **프록시는 JVM 기본값이다** — `https.proxyHost` 같은 시스템 프로퍼티는 적용되고 `HTTPS_PROXY` 환경 변수는 보지 않는다.
+- **`${env.X}` 는 호스트 프로세스의 환경을 읽는다.** 읽을 수 있는 이름은 그 handler 가 **스스로 적은** `allowedEnvVars` 다. 이
+  목록은 템플릿이 적어 두지 않은 변수를 읽지 못하게 할 뿐, 설정을 쓴 사람이 무엇을 내보낼 수 있는지를 제한하지 않는다. 스킬
+  frontmatter 의 `http` 액션도 똑같이 읽는다 — CLI 에서 스킬의 `shell` 액션이 이미 같은 환경과 네트워크로 도는 것과 같은
+  권한이다. 스킬 승인은 스킬 **이름** 단위이고 hook 의 내용을 보여 주지 않으므로, 믿지 않는 스킬은 설치하지 않는다.
+- **템플릿 값은 이스케이프되지 않는다.** JSON 본문에 `"${tool_input.command}"` 를 쓰면 따옴표가 든 명령은 깨진 JSON 이 되고
+  (서버가 4xx 로 답하면 판정 없음 — `failOpen` 인 감사 hook 은 그 호출을 **기록하지 못한 채 통과**시킨다), 모델이 본문에
+  필드를 끼워 넣을 수도 있다. 모델이 고르는 값을 가드에 넘길 때는 값마다 따로 치환되어 구조가 깨지지 않는 `mcp` handler 의
+  `args` 나, stdin 으로 JSON 을 받는 `command` handler 가 안전하다.
 
 > 🔒 환경 변수 참조는 **화이트리스트(`allowedEnvVars`)에 있는 키만** 치환된다.
 > 화이트리스트에 없는 변수는 빈 문자열로 처리되고 WARN 로그가 남는다.
@@ -734,7 +756,8 @@ placeholder 는 `${<prefix>.<name>}` 세 종류뿐이다.
 ```
 
 감사 hook 은 가드가 아니므로 `"failOpen": true` 를 둔다 — 없으면 감사 서버에 닿지 못할 때마다 `Bash` 가 막힌다
-([가드가 막는 경우](#가드가-막는-경우)). `http` handler 는 실행기를 배선한 호스트에서만 돈다(`aimon-cli` 는 배선하지 않는다).
+([가드가 막는 경우](#가드가-막는-경우)). `aimon-cli` 는 이 handler 를 실행한다. 본문 템플릿은 값을 이스케이프하지 않으므로
+따옴표가 든 명령은 깨진 JSON 으로 나간다 — [`http`](#http) 절의 "보내고 받는 것" 참조.
 
 ### 2. 위험한 명령을 즉시 차단
 
@@ -815,6 +838,11 @@ handler 가 `tool_input.command` 를 직접 검사하게 한다 — [Matcher 문
   }
 }
 ```
+
+`policy-server` 는 호스트가 그 에이전트에 연결한 MCP 서버의 이름이다 — `aimon-cli` 에서는 설정 파일의 `mcp.servers[].name`
+이다. 가드이므로 서버에 닿지 못하거나 `timeout`(기본 10초) 안에 답이 없으면 `Edit` · `Write` 는 막힌다. 설정에 없는 서버
+이름은 오류로 잡히지 않고 매 호출 판정 없음(`call failed: MCP server not registered`)이 되므로 이름을 맞춰 적는다. 그 서버의
+도구는 다른 MCP 도구와 마찬가지로 모델의 도구 목록에도 올라간다.
 
 ### 5. 4-tier 레이어 결합 (USER + PROJECT + LOCAL)
 
@@ -939,7 +967,7 @@ fork 가 없어 발화하지 않는다. 전체 규칙은 [`aimon-skill-extension
 | `WARN hooks: 'command' on ... cannot run: the configured shell executor does not support shell actions` | 셸을 지원하지 않는 실행기(`NoOpShellActionExecutor`)로 `hooks.json` 을 적용했다. 가드가 아닌 `command` handler(가드가 아닌 이벤트, 또는 `failOpen: true`)는 등록되지 않는다 — `HostShellActionExecutor` 를 배선한다. 가드 이벤트의 `command` 라면 WARN 이 아니라 시작 실패다. |
 | `WARN hooks config at ...: ... has a 'failOpen' that is not a JSON boolean (...); it is read as false` | `failOpen` 에 `"true"` · `1` · `null` 을 썼다. 그 handler 는 `failOpen: false` 로 등록된다(커맨드를 못 돌리면 막는다). 관찰용이라면 `true` 로 고칠 것. |
 | 도구가 `Blocked: guard hook '...' could not run its command` 로 막힘      | 결정 채널이 있는 이벤트의 `command` handler 가 종료 코드를 내지 못했거나(timeout 등) 셸이 커맨드를 시작하지 못했다(`command not found: exit code 127` · `command not executable: exit code 126` — 스크립트 경로와 실행 권한을 확인). 사유의 원인을 고치거나, 관찰용 handler 라면 `"failOpen": true` 를 선언. 전체 표는 [가드가 막는 경우](#가드가-막는-경우). |
-| 도구가 `Blocked: guard hook '...' could not get a verdict from its http call` (또는 `mcp call`) 로 막힘 | `preTool` 의 `http` · `mcp` handler 가 판정을 받지 못했다. 사유의 원인을 본다 — `action executor not wired`(호스트가 실행기를 배선하지 않았다. `aimon-cli` 가 그렇다), `call failed: HTTP 503` · `call failed: ConnectException`(정책 서버), `timed out`, `response could not be read`(`decision` 값이 `allow` · `deny` · `defer` 가 아니다). 관찰용 handler 라면 `"failOpen": true`. |
+| 도구가 `Blocked: guard hook '...' could not get a verdict from its http call` (또는 `mcp call`) 로 막힘 | `preTool` 의 `http` · `mcp` handler 가 판정을 받지 못했다. 사유의 원인을 본다 — `action executor not wired`(호스트가 실행기를 배선하지 않았다 — `aimon-cli` 는 배선하므로 임베딩 호스트의 경우다), `call failed: MCP server not registered`(`server` 가 설정된 MCP 서버 이름이 아니다), `call failed: HTTP 307`(리다이렉트는 따라가지 않는다), `call failed: HTTP 503` · `call failed: ConnectException`(정책 서버), `timed out`, `response could not be read`(`decision` 값이 `allow` · `deny` · `defer` 가 아니다). 관찰용 handler 라면 `"failOpen": true`. |
 | `WARN hooks: 'asyncRewake' is not supported on event '...'`              | rewake 가능한 이벤트는 `preTool`/`preCompact`/`onSessionStart`/`onSessionEnd`/`onConfigReload`. hook 자체는 정상 등록됨. |
 | 셸 hook 이 exit 2 로 끝났는데 차단되지 않음                                | 해당 이벤트에 결정 채널이 없음. veto 는 `preTool`/`onStart`/`preCompact`(block), `permissionRequest`(deny) 에서만 유효. |
 | 커맨드 안의 `${tool_input.x}` / `${tool_name}` 이 빈 문자열                | 의도된 동작. 커맨드는 렌더링되지 않는다 — stdin JSON payload 나 `AIMON_*` env(`$AIMON_TOOL_NAME` 등) 를 사용. |

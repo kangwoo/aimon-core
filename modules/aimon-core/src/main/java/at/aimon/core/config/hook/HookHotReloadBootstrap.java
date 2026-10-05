@@ -166,13 +166,19 @@ public final class HookHotReloadBootstrap {
             return this;
         }
 
-        /** Optional HTTP executor; absence makes HTTP entries fail-soft at hook time. */
+        /**
+         * Optional HTTP executor. Without one an {@code http} handler cannot run: under {@code preTool} it stops the
+         * load unless it declared {@code failOpen}, and elsewhere it is registered and leaves a WARN when called.
+         */
         public Builder httpExecutor(HttpActionExecutor httpExecutor) {
             this.httpExecutor = httpExecutor;
             return this;
         }
 
-        /** Optional MCP executor; absence makes MCP entries fail-soft at hook time. */
+        /**
+         * Optional MCP executor, with the same consequences when absent as {@link #httpExecutor}. The executor
+         * borrows an agent-scoped {@code McpClientManager}; this bootstrap never closes it.
+         */
         public Builder mcpExecutor(McpActionExecutor mcpExecutor) {
             this.mcpExecutor = mcpExecutor;
             return this;

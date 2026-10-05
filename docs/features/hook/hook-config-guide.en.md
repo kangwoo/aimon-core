@@ -438,11 +438,37 @@ If the response body follows the JSON schema
 
 On `postTool` a missing verdict still leaves a WARN and proceeds, as before.
 
-> ⚠️ **`aimon-cli` wires no `http` or `mcp` executor.** An `http` or `mcp` handler in the CLI's `hooks.json` is never
-> called — placed on `preTool` it **keeps the CLI from starting** (`… type=http cannot run: no HttpActionExecutor is wired
-> in this assembly`; with `failOpen: true` it is registered and every call leaves a WARN and proceeds), and on `postTool`
-> it only leaves a WARN. An embedding host wires them with
-> `HookHotReloadBootstrap.builder().httpExecutor(…).mcpExecutor(…)`.
+> ℹ️ **`aimon-cli` runs `http` and `mcp` handlers** — those in `hooks.json` and those in skill frontmatter. `http` always;
+> `mcp` when the CLI configuration (`mcp.servers`) has at least one server. In a CLI with no server at all an `mcp`
+> handler is an entry that cannot run — on `preTool` in `hooks.json` it **keeps the CLI from starting** (`… type=mcp cannot
+> run: no McpActionExecutor is wired in this assembly`; with `failOpen: true` it is registered and every call leaves a
+> WARN and proceeds), and a skill that declares such an action does not load.
+> `aimon-bootstrap` and the Spring Boot starter **wire neither**: an embedding host wires them itself, with
+> `HookHotReloadBootstrap.builder().httpExecutor(…).mcpExecutor(…)` and the `skillParser` of `AimonStackSpec`.
+
+**What an `http` handler sends and receives.** This handler is where a configuration file makes the host process send a request out.
+
+- **The URL is used as written** (it is not templated). Both `https://` and `http://` are accepted — use `https://` when
+  a header carries a token.
+- **Redirects are not followed.** A 3xx is no verdict, like any other non-2xx (`call failed: HTTP 307`). Following it
+  would send the headers filled from `${env.X}` to a host the configuration never named, and make that host's answer the
+  verdict. Write the final address in `url`.
+- **At most 1 MiB of response body is read.** A larger one is not truncated and guessed at: it is no verdict (`response
+  could not be read: response larger than 1048576 bytes`).
+- **`timeout` is measured until the response headers arrive.** If the body stalls after that, the hook executor's outer
+  net cuts it off. The connect timeout is fixed at 5 seconds.
+- **The proxy is the JVM default** — system properties such as `https.proxyHost` apply; the `HTTPS_PROXY` environment
+  variable is not read.
+- **`${env.X}` reads the host process's environment.** The names it may read are the `allowedEnvVars` the handler lists
+  **for itself**. The list keeps a template from reading a variable it did not name; it does not limit what the author
+  of the configuration can send out. An `http` action in skill frontmatter reads it the same way — the same authority a
+  skill's `shell` action already has in the CLI, where it runs with that environment and network. Skill approval is per
+  skill **name** and does not show what its hooks do, so do not install a skill you do not trust.
+- **Template values are not escaped.** With `"${tool_input.command}"` in a JSON body, a command containing a quote goes
+  out as broken JSON (if the server answers 4xx that is no verdict — an audit hook with `failOpen` then lets the call
+  through **unrecorded**), and the model can insert fields into the body. To hand a guard a value the model chooses, the
+  `args` of an `mcp` handler (each value is substituted on its own, so the structure cannot break) or a `command`
+  handler reading JSON from stdin is the safe route.
 
 > 🔒 Environment-variable references are substituted **only for keys on the whitelist
 > (`allowedEnvVars`)**. A variable that is not on it becomes an empty string, with a WARN log.
@@ -786,8 +812,9 @@ string — the `asyncRewake` block does not go through template rendering, so wr
 ```
 
 An audit hook is not a guard, so it declares `"failOpen": true` — without it, `Bash` is blocked whenever the audit
-server cannot be reached ([What a guard blocks](#what-a-guard-blocks)). An `http` handler only runs on a host that wired
-its executor (`aimon-cli` does not).
+server cannot be reached ([What a guard blocks](#what-a-guard-blocks)). `aimon-cli` runs this handler. The body template
+does not escape values, so a command containing a quote goes out as broken JSON — see "What an `http` handler sends and
+receives" under [`http`](#http).
 
 ### 2. Blocking a dangerous command outright
 
@@ -869,6 +896,12 @@ from the same map, so they never drift:
   }
 }
 ```
+
+`policy-server` is the name of an MCP server the host connected to that agent — in `aimon-cli`, an `mcp.servers[].name`
+in the configuration file. It is a guard, so `Edit` and `Write` are blocked when the server cannot be reached or gives
+no answer within `timeout` (10 seconds by default). A server name that is not configured is not caught as an error; it
+is no verdict on every call (`call failed: MCP server not registered`), so spell the name as configured. That server's
+tools appear in the model's tool list too, like any other MCP tool.
 
 ### 5. Combining the 4-tier layers (USER + PROJECT + LOCAL)
 
@@ -996,7 +1029,7 @@ are in [`aimon-skill-extensions.md`](../../references/aimon-skill-extensions.md)
 | `WARN hooks: 'command' on ... cannot run: the configured shell executor does not support shell actions` | `hooks.json` was applied with an executor that has no shell support (`NoOpShellActionExecutor`). A `command` handler that is not a guard (an event that is not a guard event, or `failOpen: true`) is not registered — wire a `HostShellActionExecutor`. For a `command` on a guard event this is a startup failure, not a WARN. |
 | `WARN hooks config at ...: ... has a 'failOpen' that is not a JSON boolean (...); it is read as false` | `failOpen` was written as `"true"`, `1` or `null`. The handler is registered with `failOpen: false` (it blocks when its command cannot run). If it only observes, change the value to `true`. |
 | A tool is refused with `Blocked: guard hook '...' could not run its command` | A `command` handler on an event with a decision channel produced no exit code (a timeout, for one), or the shell could not start the command (`command not found: exit code 127`, `command not executable: exit code 126` — check the script path and its execute permission). Fix the cause named in the reason, or declare `"failOpen": true` if the handler only observes. The full table is in [What a guard blocks](#what-a-guard-blocks). |
-| A tool is refused with `Blocked: guard hook '...' could not get a verdict from its http call` (or `mcp call`) | An `http` or `mcp` handler on `preTool` got no verdict. Read the cause in the reason — `action executor not wired` (the host wired no executor; `aimon-cli` is such a host), `call failed: HTTP 503` or `call failed: ConnectException` (the policy server), `timed out`, `response could not be read` (the `decision` value is not `allow`, `deny` or `defer`). Declare `"failOpen": true` if the handler only observes. |
+| A tool is refused with `Blocked: guard hook '...' could not get a verdict from its http call` (or `mcp call`) | An `http` or `mcp` handler on `preTool` got no verdict. Read the cause in the reason — `action executor not wired` (the host wired no executor — `aimon-cli` wires them, so this is an embedding host), `call failed: MCP server not registered` (`server` is not the name of a configured MCP server), `call failed: HTTP 307` (redirects are not followed), `call failed: HTTP 503` or `call failed: ConnectException` (the policy server), `timed out`, `response could not be read` (the `decision` value is not `allow`, `deny` or `defer`). Declare `"failOpen": true` if the handler only observes. |
 | `WARN hooks: 'asyncRewake' is not supported on event '...'`              | Rewake-capable events are `preTool`/`preCompact`/`onSessionStart`/`onSessionEnd`/`onConfigReload`. The hook itself registers normally. |
 | A shell hook exited 2 but nothing was blocked                             | That event has no decision channel. A veto is effective only on `preTool`/`onStart`/`preCompact` (block) and `permissionRequest` (deny). |
 | `${tool_input.x}` / `${tool_name}` inside a command is empty              | Intended behaviour. Commands are not rendered — use the stdin JSON payload or the `AIMON_*` env (`$AIMON_TOOL_NAME` and so on). |

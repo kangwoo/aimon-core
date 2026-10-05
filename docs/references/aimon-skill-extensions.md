@@ -127,6 +127,8 @@ hooks:
 hook-def := { matcher?: string, action: action-def }
 action-def := { type: "deny", reason: string }
             | { type: "shell", command: string, timeoutMs?: integer }
+            | { type: "http", url: string, method?, headers?, body?, allowedEnvVars?, timeoutMs? }   # preTool · postTool
+            | { type: "mcp", server: string, tool: string, args?, timeoutMs? }                       # preTool · postTool
 ```
 
 - `matcher` (선택)

@@ -7,6 +7,7 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Supplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -77,11 +78,14 @@ public final class McpActionExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(McpActionExecutor.class);
 
-    private final McpClientManager mcpClientManager;
+    private final Supplier<Optional<McpClientManager>> mcpClientManagers;
     private final ObjectMapper objectMapper;
 
     /**
      * Creates a new executor.
+     *
+     * <p>
+     * The manager is <b>borrowed</b>: it is agent-scoped and its runtime closes it. This executor never does.
      *
      * @param mcpClientManager
      *            MCP manager that owns the registered server clients (must not be null)
@@ -89,8 +93,46 @@ public final class McpActionExecutor {
      *            JSON mapper used to interpret the call result content (must not be null)
      */
     public McpActionExecutor(McpClientManager mcpClientManager, ObjectMapper objectMapper) {
-        this.mcpClientManager = Objects.requireNonNull(mcpClientManager, "mcpClientManager cannot be null");
+        this(fixed(Objects.requireNonNull(mcpClientManager, "mcpClientManager cannot be null")), objectMapper);
+    }
+
+    private McpActionExecutor(Supplier<Optional<McpClientManager>> mcpClientManagers, ObjectMapper objectMapper) {
+        this.mcpClientManagers = mcpClientManagers;
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper cannot be null");
+    }
+
+    private static Supplier<Optional<McpClientManager>> fixed(McpClientManager manager) {
+        final Optional<McpClientManager> present = Optional.of(manager);
+        return () -> present;
+    }
+
+    /**
+     * Creates an executor that looks its {@link McpClientManager} up on every call.
+     *
+     * <p>
+     * For an assembly that has to hand out the executor before the manager exists. A skill parser is the case: it
+     * is built before the agent runtime, and the hooks it parses keep the executor they were given, while the manager
+     * is created with the runtime and owned by it. While the supplier answers empty &mdash; before the runtime is up,
+     * or for a runtime with no MCP servers &mdash; a call has no verdict ({@code CALL_FAILED}).
+     *
+     * <p>
+     * One executor resolves one manager. A manager is agent-scoped, so this fits an assembly with one runtime; a
+     * stack with several would need the manager of the runtime the hook <em>fired in</em>, which a supplier without
+     * the firing context cannot give.
+     *
+     * @param mcpClientManagers
+     *            answers the manager to use for a call, or empty when there is none yet; called on every call, on the
+     *            hook's thread (must not be null, must not return null)
+     * @param objectMapper
+     *            JSON mapper used to interpret the call result content (must not be null)
+     * @return a new executor (never null)
+     * @throws NullPointerException
+     *             if either argument is null
+     */
+    public static McpActionExecutor lateBound(Supplier<Optional<McpClientManager>> mcpClientManagers,
+            ObjectMapper objectMapper) {
+        return new McpActionExecutor(Objects.requireNonNull(mcpClientManagers, "mcpClientManagers cannot be null"),
+                objectMapper);
     }
 
     /**
@@ -127,7 +169,13 @@ public final class McpActionExecutor {
         Objects.requireNonNull(contextAttributes, "contextAttributes cannot be null");
 
         try {
-            final Optional<McpClient> clientOpt = mcpClientManager.getClient(action.getServerName());
+            final Optional<McpClientManager> manager = mcpClientManagers.get();
+            if (manager.isEmpty()) {
+                log.warn("MCP hook to '{}/{}' skipped: no MCP servers are available", action.getServerName(),
+                        action.getToolName());
+                return ActionCallOutcome.notRun(ShellHookOutcome.Unrun.CALL_FAILED, "MCP servers not available");
+            }
+            final Optional<McpClient> clientOpt = manager.get().getClient(action.getServerName());
             if (clientOpt.isEmpty()) {
                 log.warn("MCP hook to '{}/{}' skipped: server not registered", action.getServerName(),
                         action.getToolName());

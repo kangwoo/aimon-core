@@ -224,6 +224,28 @@ OR(`|`)** 뿐이다 — `CompositePredicate.and` 는 코드에서만 닿고, 정
 판정 없음은 셸의 "종료 코드 없음" 과 같은 자리(`ShellHookVerdicts`)에서 같은 규칙으로 읽는다: 막고, `failOpen: true` 면
 통과한다. `postTool` 은 전처럼 WARN 후 진행한다.
 
+**두 실행기를 누가 배선하는가.** 코어는 실행기를 만들지 않는다 — `HookRegistryApplier` 와 `SkillHookSetParser` 가 받은 것을
+훅에 넘길 뿐이다. 트리 안에서 배선하는 조립은 `aimon-cli` 하나이고(`HookActionExecutors`), `hooks.json` 과 스킬 frontmatter
+양쪽에 같은 실행기를 준다. 순서가 문제였다: 스킬 파서는 번들을 읽기 위해 스택보다 먼저 만들어지고 파싱된 훅은 그때 받은
+실행기를 계속 쥐는데, `McpClientManager` 는 런타임이 만들어진 뒤에야 있다. 그래서 `McpActionExecutor.lateBound(supplier)` 로
+만들어 두고 런타임이 서면 묶는다. 매니저는 agent-scoped 이고 런타임이 닫는다(`AGENT_RUNTIMES`) — 실행기는 빌려 쓸 뿐 닫지
+않으며, Java 17 의 `HttpClient` 에는 닫을 것이 없어 종료 순서에 올릴 항목도 없다. CLI 설정에 MCP 서버가 없으면 MCP 실행기는
+`null` 이다: 항상 실패하는 실행기를 주면 `mcp` 가드가 로드된 뒤 걸리는 호출을 전부 막지만, 없다고 말하면 시작에서 멈춘다.
+
+`aimon-bootstrap` 과 스타터는 배선하지 않는다. 이유는 둘이다. (1) 스택은 런타임을 여러 개 가질 수 있고 `McpClientManager` 는
+런타임마다 하나인데, 실행기는 **발화한 런타임**을 모른다(`attempt` 가 `HookContext` 를 받지 않는다) — 스택 전역 실행기는
+엉뚱한 에이전트의 서버를 부르게 된다. (2) 스킬의 `http` 액션은 호스트 JVM 에서, 호스트의 환경 변수와 네트워크로 나간다.
+CLI 에서는 스킬의 `shell` 액션이 이미 같은 권한으로 도므로 새로 주는 것이 없지만, 실행 환경이 샌드박스인 호스트에서는 스킬
+파일이 샌드박스 밖으로 요청을 보내는 길이 된다. 그 선택은 호스트가 `AimonStackSpec.skillParser` 와
+`HookHotReloadBootstrap.Builder` 로 직접 한다.
+
+**기본 HTTP 클라이언트는 좁게 잡았다.** `HttpActionExecutor.createDefault()` 는 리다이렉트를 따라가지 않고(JDK 클라이언트는
+리다이렉트 대상에 요청 헤더를 다시 보낸다 — `${env.X}` 로 채운 토큰이 설정에 없는 호스트로 가고 그 호스트의 답이 판정이
+된다), 응답 본문을 `MAX_RESPONSE_BYTES`(1 MiB)까지만 읽는다. 둘 다 "판정 없음" 으로 떨어지므로 가드는 닫힌 채 남는다.
+남겨 둔 것은 결정이 필요한 것들이다 — 평문 `http://` 허용, `allowedEnvVars` 가 그 선언 자신이 적는 목록이라는 점, 템플릿
+값이 이스케이프되지 않아 JSON 본문에 모델의 텍스트가 그대로 들어간다는 점. 사용자 문서는 셋을 그대로 적는다
+([`hook-config-guide.md` › `http`](../../features/hook/hook-config-guide.md#http)).
+
 **취소는 "돌리지 못함" 이 아니다(EE-80).** 훅의 셸 명령은 실행의 취소 신호(`HookContext.getExecutionCancellation()`)에
 묶여 돌고, 인터럽트가 오면 그 신호로 멈춘다 — 포그라운드 `Bash` 와 같은 길이다(EE-54). 그렇게 멈춘 명령은
 `Unrun.CANCELLED` 로 보고되고, 가드 이벤트에서는 `failOpen` 이어도 막는다. 훅 실행기가 기다리던 스레드의 인터럽트를

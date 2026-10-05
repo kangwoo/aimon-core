@@ -154,7 +154,24 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   says, and neither is a `decision` outside `allow` / `deny` / `defer`. `run(...)` is the advisory
   reading (`attempt(...).orSuccess()`) and is what `postTool` calls — do not call `run` from a guard
   event. `failOpen` is read for `command`, `http` and `mcp` alike; only on `deny` is it ignored with
-  a WARN. Neither in-tree assembly (`aimon-cli`, `aimon-bootstrap`) wires an http or mcp executor.
+  a WARN.
+- **Who wires the http / mcp executors.** `aimon-cli` does, for both sources: `HookActionExecutors`
+  hands one `HttpActionExecutor` and one late-bound `McpActionExecutor` to the hot-reload bootstrap
+  (`hooks.json`) and to the skill parser (frontmatter). The skill parser is built before the runtime
+  exists and a parsed hook keeps its executors, hence `McpActionExecutor.lateBound(supplier)`, bound
+  to the runtime's `McpClientManager` once the stack is up; when the CLI configures no MCP server the
+  MCP executor is `null`, so an `mcp` guard stops startup / fails the skill load instead of loading
+  and blocking every call. The executors own nothing and are on no teardown phase: the manager is
+  agent-scoped and its runtime closes it, and a Java 17 `HttpClient` has no `close()`.
+  `aimon-bootstrap` and the starter wire neither — a stack can hold several runtimes and an executor
+  resolves one manager without the firing context, and host-side HTTP from skill frontmatter crosses
+  the sandbox boundary where the environment provider is a sandbox. Hosts wire them through
+  `HookHotReloadBootstrap.Builder` and `AimonStackSpec#skillParser`.
+- **`HttpActionExecutor.createDefault()` does not follow redirects and reads at most
+  `MAX_RESPONSE_BYTES`.** The JDK client re-sends request headers to a redirect target, and hook
+  headers are where `${env.X}` puts tokens. Do not relax either to make an endpoint work; a 3xx and an
+  oversized body are both "no verdict". The URL is never templated; `allowedEnvVars` is declared by
+  the same file that uses it, so it bounds templates, not authors.
 - The user-facing table of what blocks and what `failOpen` changes lives in **one** place,
   `docs/features/hook/hook-config-guide.md` › "가드가 막는 경우" (and its `.en.md`). A change to guard
   semantics updates that table; other docs link to it rather than restating it.
