@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.base.UserLocale;
 import at.aimon.core.config.hook.HookConfigMerger;
@@ -127,6 +128,7 @@ class SubagentBehaviorOnStartTest {
         assertThat(behaviorRuns).hasValue(0);
         assertThat(result.isSuccess()).isFalse();
         assertThat(result.getErrorMessage()).isEqualTo("Execution blocked by OnStart hook [SUBAGENT/clock]: " + REASON);
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.BLOCKED);
         assertThat(result.getMetadata().getIterationCount()).isZero();
         assertThat(result.getMetadata().getTokenUsage().getTotalTokens()).isZero();
         assertThat(result.getSnapshot().getConversationHistory()).isEmpty();

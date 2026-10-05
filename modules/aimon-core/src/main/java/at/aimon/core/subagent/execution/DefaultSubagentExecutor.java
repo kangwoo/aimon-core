@@ -1201,14 +1201,14 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     }
 
     /**
-     * Creates the result of a fork an OnStart hook blocked: {@link CompletionReason#ERROR} with the exception's
+     * Creates the result of a fork an OnStart hook blocked: {@link CompletionReason#BLOCKED} with the exception's
      * message, which names the hook event and carries the hooks' reasons, so every spawn path hands the parent the
-     * refusal as it hands it any other failed fork.
+     * refusal as it hands it any other failed fork ({@link SubagentOnStartGate#blockedResult}, shared with the
+     * code-behavior path).
      *
      * <p>
      * OnStop hooks do <b>not</b> fire, which is why this does not go through {@link #createFailureResult}: the fork
-     * never started, and a main execution an OnStart hook blocks fires none either. {@code ERROR} rather than a reason
-     * of its own for the reason {@link #createStalledResult} gives.
+     * never started, and a main execution an OnStart hook blocks fires none either.
      *
      * <p>
      * The result carries {@code beforeGoal}, the transcript as it stood before the refused goal was added, not the

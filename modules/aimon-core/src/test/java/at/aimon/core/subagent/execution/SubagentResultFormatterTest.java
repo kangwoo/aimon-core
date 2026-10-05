@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.budget.CompletionReason;
+
 class SubagentResultFormatterTest {
 
     @Test
@@ -98,5 +100,12 @@ class SubagentResultFormatterTest {
         assertThat(tail.length() % 2).isZero();
         assertThat(tail.codePointCount(0, tail.length())).isEqualTo(tail.length() / 2);
         assertThat(Character.isLowSurrogate(tail.charAt(0))).isFalse();
+    }
+
+    @Test
+    void aBlockedForkIsNamedWithoutTheIncompleteAnswerClause() {
+        // A fork an onStart hook refused has no answer at all, so the line names the reason and nothing more.
+        assertThat(SubagentResultFormatter.completionReasonLine(CompletionReason.BLOCKED, false))
+                .contains("Completion reason: BLOCKED");
     }
 }

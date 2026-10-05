@@ -291,7 +291,8 @@ WARN 로그만 남기고 진행한다 (`AbstractDeclarativeShellHook#vetoResult`
 **`hooks.json` 의 `onStart` 는 모든 fork 에도 걸린다.** `onStart` 는 메인 턴뿐 아니라 fork 가 시작할 때마다 발화하고, 그때의
 "사용자 메시지" 는 그 fork 가 받은 goal 이다. exit 2 를 내거나 커맨드를 돌리지 못하면 그 fork 는 LLM 을 한 번도 부르지 않고
 끝나며, 부모는 `Execution blocked by OnStart hook [SUBAGENT/<이름>]: <사유>` 를 받는다(`Task` 는 `Status: FAILURE`, 스킬은
-`Skill fork failed for '<스킬>': …`, 백그라운드 작업은 `FAILED`). 사용자 입력만 검사하려던 hook 이라면 스크립트에서
+`Skill fork failed for '<스킬>': …`, 백그라운드 작업은 `FAILED`). 그 fork 의 완료 사유는 `ERROR` 가 아니라 `BLOCKED` 다 —
+`Task` 결과의 `Completion reason: BLOCKED` 줄과 워크플로 단계의 `completionReason` 으로 읽는다. 사용자 입력만 검사하려던 hook 이라면 스크립트에서
 `AIMON_INVOKER_TYPE` 로 가른다 — 메인 턴은 `MAIN_AGENT`, fork 는 `SUBAGENT` 다. fork 를 빼는 방법은 이것 하나다:
 `failOpen: true` 는 커맨드를 **돌리지 못했을 때만** 통과시키고 exit 2 는 그대로 막는다. 이름에 코드
 behavior(`SubagentBehavior`)가 등록된 SubAgent 도 같다 — ReAct 루프를 돌지 않지만 behavior 를 부르기 전에 `onStart` 가

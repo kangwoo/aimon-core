@@ -455,6 +455,20 @@ class TaskToolTest {
                 .endsWith(stopMessage + "\nCompletion reason: ERROR\n").doesNotContain("incomplete");
     }
 
+    @Test
+    void executeNamesAForkAnOnStartHookBlocked() {
+        final String refusal = "Execution blocked by OnStart hook [SUBAGENT/Explore]: no forks today";
+        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"),
+                eq("Find auth files"), eq("auth")))
+                .thenReturn(SubagentExecutionResult.failure(refusal, emptySnapshot(), metadata(),
+                        CompletionReason.BLOCKED));
+
+        ToolResult result = tool.execute(validInput(), contextWithId());
+
+        assertThat(result.getContent()).contains("Status: FAILURE\n")
+                .endsWith(refusal + "\nCompletion reason: BLOCKED\n").doesNotContain("incomplete");
+    }
+
     private static SessionSnapshot emptySnapshot() {
         return SessionSnapshot.of(SessionId.generate(), "sys", List.of());
     }

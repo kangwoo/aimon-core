@@ -290,7 +290,7 @@ AgentTask simple = AgentTask.of(reviewer, goal);  // 축약
 ```java
 result.isSuccess();          // 스텝 성공 여부
 result.isComplete();         // completionReason == COMPLETED
-result.completionReason();   // 왜 끝났는가 (한도 도달/에러/취소 등)
+result.completionReason();   // 왜 끝났는가 (한도 도달/에러/취소/onStart 훅이 막음(BLOCKED) 등)
 result.text();               // 최종 텍스트
 result.structured();         // Optional<Map<String,Object>> — resultSchema를 준 경우
 result.getLabel();

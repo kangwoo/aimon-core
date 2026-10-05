@@ -147,20 +147,36 @@ public final class HookRegistryReloader {
      * start, and the registry is left untouched. (A {@linkplain #reload reload} that fails keeps the previous config
      * instead &mdash; there is one to keep.)
      *
-     * @return always {@code true}; the return type predates the fail-closed rule and is kept for compatibility
      * @throws HookConfigParseException
      *             when a {@code hooks.json} that is present fails to parse or cannot be read; the message names the
      *             file and its layer
      * @throws RuntimeException
      *             when merging or applying the loaded config fails
      */
-    public boolean bootstrap() {
+    public void loadInitial() {
         synchronized (swapLock) {
             final MergedHookConfig merged = merger.merge(loader.load());
             applyToManagedLocked(merged);
             log.info("Initial hooks.json bootstrap applied: {}", describeManagedCounts());
-            return true;
         }
+    }
+
+    /**
+     * Performs the initial config load, as {@link #loadInitial()} does, and returns {@code true}.
+     *
+     * @return always {@code true}. Since a failed initial load throws (EE-71) there is no {@code false} to return, and
+     *         a branch on it is dead code
+     * @throws HookConfigParseException
+     *             when a {@code hooks.json} that is present fails to parse or cannot be read
+     * @throws RuntimeException
+     *             when merging or applying the loaded config fails
+     * @deprecated the result has been always {@code true} since a failed initial load started to throw. Call
+     *             {@link #loadInitial()} and handle the exception instead of testing the result.
+     */
+    @Deprecated
+    public boolean bootstrap() {
+        loadInitial();
+        return true;
     }
 
     /**

@@ -88,19 +88,23 @@ public final class HookHotReloadBootstrap {
     public static final class Started implements AutoCloseable {
 
         private final HookConfigWatcher watcher;
-        private final boolean bootstrapSucceeded;
 
-        private Started(HookConfigWatcher watcher, boolean bootstrapSucceeded) {
+        private Started(HookConfigWatcher watcher) {
             this.watcher = watcher;
-            this.bootstrapSucceeded = bootstrapSucceeded;
         }
 
         /**
          * Always true: a failed initial load makes {@link Builder#start()} throw, so no {@code Started} exists for
-         * it. Kept for compatibility.
+         * it.
+         *
+         * @return always {@code true}
+         * @deprecated the result has been always {@code true} since a failed initial load started to throw (EE-71), so
+         *             a branch on it is dead code. Having a {@code Started} at all is the success; to start without
+         *             the file hooks, catch {@link HookConfigParseException} from {@link Builder#start()}.
          */
+        @Deprecated
         public boolean isBootstrapSucceeded() {
-            return bootstrapSucceeded;
+            return true;
         }
 
         /** True iff the watcher started — i.e. subsequent {@code hooks.json} edits will be detected. */
@@ -251,7 +255,7 @@ public final class HookHotReloadBootstrap {
             final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry,
                     executionManager, invoker, rewakeService);
 
-            final boolean bootstrapOk = reloader.bootstrap();
+            reloader.loadInitial();
 
             final HookConfigWatcher watcher = new HookConfigWatcher(List.of(userHookDir.resolve(HOOKS_JSON),
                     projectHookDir.resolve(HOOKS_JSON), projectHookDir.resolve(HOOKS_LOCAL_JSON)), reloader::reload);
@@ -264,9 +268,9 @@ public final class HookHotReloadBootstrap {
                 } catch (RuntimeException ignored) {
                     // best-effort cleanup
                 }
-                return new Started(null, bootstrapOk);
+                return new Started(null);
             }
-            return new Started(watcher, bootstrapOk);
+            return new Started(watcher);
         }
     }
 }

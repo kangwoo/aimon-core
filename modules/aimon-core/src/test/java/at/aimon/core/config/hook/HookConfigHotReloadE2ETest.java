@@ -90,7 +90,7 @@ class HookConfigHotReloadE2ETest {
 
         final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry,
                 executionManager, INVOKER);
-        assertThat(reloader.bootstrap()).isTrue();
+        reloader.loadInitial();
         assertThat(registry.getHooks(HookEventType.PRE_TOOL)).hasSize(1);
         // Bootstrap does not fire OnConfigReload by contract.
         assertThat(reloadEvents).isEmpty();

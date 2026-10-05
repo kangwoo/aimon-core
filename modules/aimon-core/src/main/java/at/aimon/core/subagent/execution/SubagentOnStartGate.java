@@ -83,13 +83,14 @@ public final class SubagentOnStartGate {
     }
 
     /**
-     * Creates the result of a fork an {@code onStart} hook blocked: a failure with {@link CompletionReason#ERROR} and
+     * Creates the result of a fork an {@code onStart} hook blocked: a failure with {@link CompletionReason#BLOCKED} and
      * the exception's message, which names the hook event and carries the hooks' reasons, so every spawn path hands
      * the parent the refusal as it hands it any other failed fork.
      *
      * <p>
-     * {@code ERROR} rather than a reason of its own: no reader of a fork's reason branches differently on a block, and
-     * the one reader that needs to tell it from another error, the parent model, reads it in the message.
+     * {@code BLOCKED} rather than {@code ERROR} so a caller that branches on the reason — a workflow script deciding
+     * whether to retry a step, a dashboard counting refusals — can tell a guard's refusal from a fault without parsing
+     * the message. The parent model still reads the message.
      *
      * @param e
      *            the block (must not be null)
@@ -105,7 +106,7 @@ public final class SubagentOnStartGate {
     public static SubagentExecutionResult blockedResult(ExecutionBlockedByHookException e, SessionSnapshot snapshot,
             ExecutionMetadata metadata, Money cost) {
         Objects.requireNonNull(e, "e cannot be null");
-        return SubagentExecutionResult.failure(e.getMessage(), snapshot, metadata, CompletionReason.ERROR, cost);
+        return SubagentExecutionResult.failure(e.getMessage(), snapshot, metadata, CompletionReason.BLOCKED, cost);
     }
 
     /**

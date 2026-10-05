@@ -95,7 +95,7 @@ class DefaultSubagentExecutorOnStartBlockTest {
 
         assertThat(llm.calls).isZero();
         assertThat(result.isSuccess()).isFalse();
-        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.ERROR);
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.BLOCKED);
         assertThat(result.getMetadata().getIterationCount()).isZero();
         assertThat(result.getMetadata().getTokenUsage().getTotalTokens()).isZero();
         assertThat(result.getErrorMessage()).contains("OnStart", "SUBAGENT", "explorer", REASON);
