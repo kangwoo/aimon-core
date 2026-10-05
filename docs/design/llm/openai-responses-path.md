@@ -472,6 +472,7 @@ rung 집합, `temperature` 값 거부 — 은 내장 표의 근거이므로 [`mo
 |---|---|---|
 | `/v1/responses` 가 도구와 reasoning 을 한 요청에 받는가 | 받는다(200) — `gpt-5-nano`, `o4-mini`, `o3-mini`, `o3`, `o1`, `gpt-5.6-terra` | 2026-09-09 |
 | 같은 도구 요청을 Chat Completions 로 강제하면 | `gpt-5.6-terra` 에 `responsesApiEnabled(false)` 로 Chat 을 강제하고 `temperature` 도 `reasoning_effort` 도 없이 도구만 실은 요청이 **HTTP 400** — *"Function tools with reasoning_effort are not supported for gpt-5.6-terra in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'."* 기본 설정(Responses 로 라우팅)의 같은 요청은 수용. 파라미터를 바꾸는 것이 아니라 **라우팅이 수정이다** | 2026-09-10 |
+| Chat Completions 로 강제한 `gpt-5.6-terra` 에 `reasoning_effort: "none"` 을 실으면 | **200** — 도구 없이 한 번, 함수 도구 하나를 실어 한 번(`max_completion_tokens: 64`, `finish_reason: stop`, `reasoning_tokens: 0`). 윗줄의 오류 본문이 말한 출구가 실제로 열려 있다. `low` · `medium` · `high` 는 도구 없이는 200, 함수 도구 하나와 함께는 셋 다 윗줄과 같은 문구의 **400**(`param: reasoning_effort`) | 2026-10-05 |
 | `store: false` 에서 `encrypted_content` 가 오는가 | 온다 | 2026-09-09 |
 | 되실은 reasoning item 을 서버가 소비하는가 | 온전한 item 은 수용, `encrypted_content` 의 40자를 덮어쓴 대조군은 400(*"could not be verified"*) — 수용은 무시가 아니라 검증된 소비다. 손상 대조군은 `o4-mini` · `gpt-5.6-terra` 에서만 돌렸고, 이것이 모델별이 아닌 플랫폼 수준 검사라는 해석은 추론이다 | 2026-09-09 · 2026-09-10 |
 | reasoning item 을 빼고 다시 보내면 | 200 — item 은 요청의 개선이지 전제조건이 아니다. 그래서 trace 왕복을 켜도, 되던 요청이 item 부족으로 실패하지 않는다 | 2026-09-09 |
@@ -539,12 +540,13 @@ rung 집합, `temperature` 값 거부 — 은 내장 표의 근거이므로 [`mo
 
 - **`response.reasoning_text.delta` 가 어느 서버에서도 관측되지 않았다** — 원문 계열 분기가 실제 이벤트 이름과 맞는지 모른다.
   이름이 틀려도 400 이 아니라 빈 채널이다. [`RD-7`](../../backlog/reasoning-delta-stream-open-items.md)
-- **`incomplete` stop reason 두 갈래(`max_output_tokens`, `content_filter`)가 실제 응답으로 확인되지 않았다.**
-  [`RD-8`](../../backlog/reasoning-delta-stream-open-items.md)
+- **`incomplete` stop reason 의 `content_filter` 갈래가 실제 응답으로 확인되지 않았다.** `max_output_tokens` 갈래는
+  2026-10-05 에 응답 본문과 스트림 종료 이벤트 두 경로에서 실측했다. [`RD-8`](../../backlog/reasoning-delta-stream-open-items.md)
 - **보존 동작(§7.3)은 코드로 확인했을 뿐 실측하지 않았다.** [`RD-9`](../../backlog/reasoning-delta-stream-open-items.md)
-- **`responsesApiEnabled` 에 설정 표면이 없다.** Chat 전용 게이트웨이 배포는 설정만으로 404 에 닿을 수 있는데 처방은 자바
-  전용이다. 이 스위치를 설정으로 내리면 `gpt-5.6-terra` 를 Chat 에 강제하는 조합이 운영자 경로로 내려오고, 그 모델의
-  rung 집합은 `/v1/responses` 에서만 측정되었다. [`L-2`](../../backlog/llm-config-surface-open-items.md)
+- **`responsesApiEnabled` 는 이제 설정 키이고**(`llm.openai.responsesApiEnabled` · `aimon.llm.openai.responses-api-enabled`,
+  [`configuration-surface.md`](configuration-surface.md)), **그래서 `gpt-5.6-terra` 를 Chat 에 강제하는 조합이 운영자 경로에
+  있다.** 그 경로에서 도구 요청이 실측으로 통하는 길은 `reasoning_effort: none` 하나다(§9). effort 를 적지 않으면 400 이고,
+  `low` · `medium` · `high` 도 도구와 함께면 400 이다(2026-10-05). 클라이언트는 그 요청을 내보내기 전에 한 번 WARN 한다 — [`model-capabilities.md`](model-capabilities.md) §6.4 · §9
 
 등록되지 않은 것.
 

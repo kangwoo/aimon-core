@@ -1157,6 +1157,33 @@ class CliConfigLoaderTest {
         }
 
         @Test
+        @DisplayName("Should bind responsesApiEnabled, and leave it null when it is not written (L-2)")
+        void bindsResponsesApiEnabled() throws IOException {
+            Path off = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "gpt-5.1"
+                      openai:
+                        responsesApiEnabled: false
+                    """);
+            // Three states, not two: null is "not written" and is what lets OpenAIConfig keep owning the default.
+            final OpenAiProviderConfig written = loader.load(off.toString()).getLlmConfig().getOpenai();
+            assertThat(written.getResponsesApiEnabled()).isFalse();
+            assertThat(written.isEmpty()).as("a block carrying only this key is not empty").isFalse();
+
+            Path unwritten = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "gpt-5.1"
+                      openai:
+                        reasoningSummary: auto
+                    """);
+            assertThat(loader.load(unwritten.toString()).getLlmConfig().getOpenai().getResponsesApiEnabled()).isNull();
+        }
+
+        @Test
         @DisplayName("Should treat an absent or childless openai block as empty")
         void anAbsentOpenAiBlockIsEmpty() throws IOException {
             Path absent = write("""

@@ -2,6 +2,9 @@ package at.aimon.cli.factory;
 
 import static org.assertj.core.api.Assertions.*;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -11,10 +14,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import at.aimon.cli.config.AnthropicProviderConfig;
+import at.aimon.cli.config.CliConfigLoader;
 import at.aimon.cli.config.LlmProviderConfig;
 import at.aimon.cli.config.ModelCapabilityConfig;
 import at.aimon.cli.config.OpenAiProviderConfig;
@@ -693,6 +699,65 @@ class LlmClientFactoryTest {
             config.setProvider("anthropic");
             config.setApiKey("test-anthropic-api-key");
             config.getOpenai().setReasoningSummary(OpenAiReasoningSummary.AUTO);
+
+            assertThatThrownBy(() -> factory.create(config)).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("llm.openai").hasMessageContaining("llm.provider");
+        }
+
+        @Test
+        @DisplayName("Should turn the Responses path off from yaml alone (L-2)")
+        void yamlTurnsTheResponsesPathOff(@TempDir Path dir) throws IOException {
+            // The whole point of L-2, end to end: the 404 a Chat-Completions-only gateway produces is reachable
+            // through yaml (baseUrl plus a real gpt-5* name), so its remedy has to be reachable through yaml too.
+            // Read through the real loader rather than a setter so the binder link is under test as well.
+            final Path configFile = dir.resolve("chat-only-gateway.yaml");
+            Files.writeString(configFile, """
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      baseUrl: https://gateway.internal/v1
+                      model: "gpt-5.1"
+                      openai:
+                        responsesApiEnabled: false
+                    """);
+
+            final LlmProviderConfig loaded = new CliConfigLoader().load(configFile.toString()).getLlmConfig();
+
+            assertThat(factory.openAiConfig(loaded).isResponsesApiEnabled()).isFalse();
+        }
+
+        @Test
+        @DisplayName("Should keep OpenAIConfig's own default when responsesApiEnabled is not written")
+        void anUnwrittenSwitchKeepsTheVendorDefault() {
+            // The field is a nullable Boolean for this: "not written" must not become a second place that knows
+            // the default. A block carrying only the other key is the case a primitive would have got wrong.
+            final LlmProviderConfig withTheOtherKeyOnly = openai();
+            withTheOtherKeyOnly.getOpenai().setReasoningSummary(OpenAiReasoningSummary.AUTO);
+
+            assertThat(factory.openAiConfig(openai()).isResponsesApiEnabled()).isTrue();
+            assertThat(factory.openAiConfig(withTheOtherKeyOnly).isResponsesApiEnabled()).isTrue();
+        }
+
+        @ParameterizedTest
+        @ValueSource(booleans = {true, false})
+        @DisplayName("Should carry responsesApiEnabled through as written")
+        void theSwitchBindsBothWays(boolean written) {
+            final LlmProviderConfig config = openai();
+            config.getOpenai().setResponsesApiEnabled(written);
+
+            assertThat(factory.openAiConfig(config).isResponsesApiEnabled()).isEqualTo(written);
+        }
+
+        @ParameterizedTest
+        @ValueSource(booleans = {true, false})
+        @DisplayName("Should refuse a block carrying only responsesApiEnabled under the anthropic provider")
+        void theSwitchAloneUnderAnthropicIsRefused(boolean written) {
+            // Both values, because `true` restates the default and is still a line nothing reads: isEmpty() asks
+            // whether the key was written, not whether it changes anything.
+            final LlmProviderConfig config = new LlmProviderConfig();
+            config.setProvider("anthropic");
+            config.setApiKey("test-anthropic-api-key");
+            config.getOpenai().setResponsesApiEnabled(written);
 
             assertThatThrownBy(() -> factory.create(config)).isInstanceOf(ConfigurationException.class)
                     .hasMessageContaining("llm.openai").hasMessageContaining("llm.provider");

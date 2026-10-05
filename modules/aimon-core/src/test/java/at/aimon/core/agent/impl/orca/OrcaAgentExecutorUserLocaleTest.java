@@ -142,13 +142,14 @@ class OrcaAgentExecutorUserLocaleTest {
     }
 
     /**
-     * Snapshots a fixed instant together with the runtime's own {@link UserLocale}, as the default provider does. Its
-     * working directory is not what the model is shown — that comes from the execution environment's descriptor.
+     * Snapshots a fixed instant together with the runtime's own {@link UserLocale}, as the default provider does. The
+     * working directory the model is shown is not the snapshot's to give — it comes from the execution environment's
+     * descriptor.
      */
     private static final class SnapshotOfTheRuntime implements AgentEnvironmentSnapshotProvider {
         @Override
         public AgentEnvironmentSnapshot get(AgentRuntime runtime) {
-            return AgentEnvironmentSnapshot.builder().workingDirectory("/workspace/proj").currentDate(FIXED_INSTANT)
+            return AgentEnvironmentSnapshot.builder().currentDate(FIXED_INSTANT)
                     .userLocale(((OrcaAgentRuntime) runtime).getUserLocale()).build();
         }
 

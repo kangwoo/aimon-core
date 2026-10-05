@@ -1541,8 +1541,9 @@ def self_test():
     # exact. Many of these shapes are ones BLIND SPOT, SHARP EDGES, decision 6 or
     # docs_tree.anchors_of describes, and a change to whether a case's shape is
     # read or reported turns that case red until its expected findings change.
-    # Not every shape those texts name has a case: backlog T-9 lists fence and
-    # comment shapes in SHARP EDGES measured to have none.
+    # Not every shape those texts name has a case: backlog T-9 measured ten changes
+    # to the fence and comment readings in SHARP EDGES that no case caught, and
+    # those ten have cases below, but its list was the changes tried, not all of them.
     # Where the link check reads a shape differently (#121), docs_tree.anchors_of
     # says why, and check-doc-links.py --self-test pins that side.
 
@@ -1589,6 +1590,44 @@ def self_test():
          ["- 목록 항목", "  <!--", f"  ## {prefix}-9 — 목록 안 주석 속 항목", "  -->"], set(), False),
         ("an item heading in a comment opened after `>` (SHARP EDGES)",
          ["> <!--", f"> ## {prefix}-9 — 인용 안 주석 속 항목", "> -->"], {"unread-heading"}, False),
+        # Backlog T-9: one case per shape that one of its ten one-line changes to
+        # FENCE, COMMENT_OPEN or the unfence/uncomment order moves, and one for an
+        # eleventh it named without trying (an info string on the closing marker).
+        ("an item heading in a comment opened four spaces in is read (SHARP EDGES)",
+         ["    <!--", f"## {prefix}-9 — 네 칸 주석 속 항목", "    -->"], set(), True),
+        ("an item heading in a comment opened on a `- ` marker's line (SHARP EDGES)",
+         ["- <!--", f"  ## {prefix}-9 — 목록 표지 줄 주석 속 항목", "  -->"],
+         {"unread-heading"}, False),
+        ("an item heading in a fence opened after `>` (SHARP EDGES)",
+         ["> " + fence3, f"> ## {prefix}-9 — 인용 안 펜스 속 항목", "> " + fence3],
+         {"unread-heading"}, False),
+        ("an item heading after a comment block holding an unmatched fence marker "
+         "(SHARP EDGES)",
+         ["<!--", fence3, "-->", "", f"## {prefix}-9 — 주석 속 펜스 표지 뒤의 항목"], set(), False),
+        ("an item heading after a `~~~` marker that closes a backtick fence is read "
+         "(SHARP EDGES; docs_tree.anchors_of)",
+         [fence3, "~~~", "", f"## {prefix}-9 — 다른 글자 표지 뒤의 항목"], set(), True),
+        ("an item heading in a comment opened three spaces in (SHARP EDGES)",
+         ["   <!--", f"## {prefix}-9 — 세 칸 주석 속 항목", "   -->"], set(), False),
+        ("an item heading after the closer of a fence opened on a `1. ` marker's line "
+         "(SHARP EDGES; docs_tree.anchors_of)",
+         ["1. " + fence3 + "bash", "   한 줄", "   " + fence3, "",
+          f"## {prefix}-9 — 순서 목록 표지 줄 펜스 뒤의 항목"], set(), False),
+        ("an item heading after the closer of a fence opened on a `* ` marker's line "
+         "(SHARP EDGES; docs_tree.anchors_of)",
+         ["* " + fence3 + "bash", "  한 줄", "  " + fence3, "",
+          f"## {prefix}-9 — 별표 표지 줄 펜스 뒤의 항목"], set(), False),
+        ("an item heading after the closer of a fence opened on a `+ ` marker's line "
+         "(SHARP EDGES; docs_tree.anchors_of)",
+         ["+ " + fence3 + "bash", "  한 줄", "  " + fence3, "",
+          f"## {prefix}-9 — 더하기 표지 줄 펜스 뒤의 항목"], set(), False),
+        ("an item heading between `~~~` fence markers indented four spaces "
+         "(SHARP EDGES; docs_tree.anchors_of)",
+         ["문단", "", "    ~~~", "", f"## {prefix}-9 — 네 칸 물결 표지 사이의 항목", "", "    ~~~"],
+         set(), False),
+        ("an item heading after a marker with an info string that closes a fence is read "
+         "(SHARP EDGES; docs_tree.anchors_of)",
+         [fence3, fence3 + "bash", "", f"## {prefix}-9 — 정보 문자열 표지 뒤의 항목"], set(), True),
     ]
     for name, appended, flagged, read in shapes:
         def run(appended=appended, flagged=flagged, read=read):

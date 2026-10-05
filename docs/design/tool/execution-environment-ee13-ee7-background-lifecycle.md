@@ -17,6 +17,14 @@
 > `BackgroundBashManager.start` · `find` · `kill` 의 소유자 인자는 `AgentRuntimeId` 가 아니라 `BackgroundBashOwner` 다. 아래
 > 본문의 "같은 런타임의 어느 세션이든" 서술은 그 시점의 기록이다. 설계는
 > [`execution-environment-ee49-ee51-ee58-isolation-boundary.md`](execution-environment-ee49-ee51-ee58-isolation-boundary.md).
+>
+> **덧붙임 (2026-10-05, EE-54).** §3.1 의 "이 변경에서 싣는 호출자는 백그라운드 `Bash` 뿐이다" 는 그 시점의 기록이다.
+> 포그라운드 `Bash` 도 이제 명령마다 취소 신호를 싣는다. 그 신호를 거는 것은 `KillShell` 이 아니라 **실행 단위의**
+> `CancellationSignal`(`InterruptAccess.signalOf`)이다 — 도구가 셸 호출 동안만 리스너를 걸고 호출이 끝나면 뗀다.
+> `InterruptBehavior.THREAD_INTERRUPT` 선언과 스레드 인터럽트는 그대로 남아 있어 멈춤이 두 길로 나간다. 코디네이터가
+> 신호를 먼저 걸고 스레드를 나중에 인터럽트하므로 `LocalShell` 의 포그라운드 명령은 대개 취소 쪽으로 끝나지만, 모델이
+> 받는 결과는 어느 쪽이든 같다(`Bash command interrupted: <reason>`). 백그라운드 명령의 신호는 여전히 작업의 것이다 —
+> 실행의 인터럽트는 백그라운드 명령을 멈추지 않는다.
 
 - 대상 브랜치: `herdr/ee13-ee7-background-bash-lifecycle` (BASE `herdr/ee9-ee12-hook-env-shell`, HEAD `1f8b53f`)
 - 소스 인용은 모두 2026-10-03, `1f8b53f` 기준이다. 줄 번호 대신 심볼 이름을 주로 적었다.

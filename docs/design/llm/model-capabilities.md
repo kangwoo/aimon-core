@@ -407,6 +407,8 @@ prefix 를 공유하는 형제의 측정은 요청 표면에 대한 증거가 �
 | OpenAI 샘플링 · 도구 · effort `none` | `api.openai.com` `/v1/chat/completions` — `gpt-5-nano`·`o4-mini`·`o3-mini`·`gpt-4o-mini` | `gpt-5-nano`·`o4-mini`·`o3-mini` 는 `temperature: 1.0` 수용·`0.0` 거부, `gpt-4o-mini` 는 둘 다 수용. effort 없이 도구를 실은 요청은 `gpt-5-nano`·`o4-mini` 에서 200. `reasoning_effort: "none"` 은 둘 다 거부 | 2026-09-09 |
 | OpenAI reasoning item 재생 · ladder | `/v1/responses` — `o4-mini`·`o3-mini`·`o3`·`o1`·`gpt-5.6-terra`. 첫 요청은 함수 도구 하나 · `store: false` · `include: ["reasoning.encrypted_content"]` · effort `low`, 둘째 요청은 받은 reasoning item 을 함수 호출과 그 출력 앞에 재생. rung 은 하나씩 보냈다. 비용 규칙으로 `*-pro` · `*-deep-research` 이름은 호출하지 않았다 | 다섯 이름 모두 재생 수용. ladder 는 §6.1 | 2026-09-09 |
 | `gpt-5.6-terra` 샘플링 | `/v1/responses`, `temperature` 값 둘 | `0.0` 거부, `1.0` 수용 | 2026-09-10 |
+| `gpt-5.6-terra` 의 `none` — Chat Completions | `api.openai.com` `/v1/chat/completions`, `max_completion_tokens: 64`, `reasoning_effort: "none"` — `responsesApiEnabled=false` 가 보내는 모양. 도구 없이 한 번, 함수 도구 하나를 실어 한 번 | 둘 다 200 — `finish_reason: stop`, `reasoning_tokens: 0`. 행의 `NONE` 은 이 엔드포인트에서도 옳다 | 2026-10-05 |
+| `gpt-5.6-terra` 의 `low` · `medium` · `high` — Chat Completions | 같은 body 에 rung 만 바꿔, 도구 없이 한 번씩 · 함수 도구 하나를 실어 한 번씩(여섯 요청) | 도구 없이는 셋 다 200(`finish_reason: stop`, `reasoning_tokens: 0`). 도구와 함께는 셋 다 **400**, `param: reasoning_effort` — *"Function tools with reasoning_effort are not supported for gpt-5.6-terra in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'."* 행의 `supportsToolsWithReasoning: true` 는 `/v1/responses` 의 사실이다(§9, L-28) | 2026-10-05 |
 | Anthropic 샘플링 | `POST /v1/messages`, `max_tokens: 16`, 셀당 파라미터 하나, thinking 파라미터 없음 — 계정의 `GET /v1/models` 목록 11 모델 | §6.2. 대조군 셋: 샘플링 파라미터를 뺀 같은 body 는 거부 여섯과 수용 둘 모두 200(400 은 요청 모양 · 계정 · 헤더 탓이 아니다), `temperature: 1.0` 은 거부 여섯 모두 200(값으로 거부한다), `"temperature": null` 은 샘플링을 받는 모델에서도 400(능력 규칙이 아니라 타입 규칙이다) | 2026-09-09 |
 | Anthropic 방언 | SDK 검증이 서버 답을 가리지 않도록 raw HTTP `POST /v1/messages` — 목록의 11 모델과 목록에 없는 날짜 없는 별칭 `claude-opus-4-5`·`claude-sonnet-4-5`·`claude-haiku-4-5`. 네 모양: `thinking.type: adaptive` + `output_config.effort: low` / `thinking.type: enabled` + `budget_tokens: 1024` / adaptive 단독 / effort 단독 | §6.2. 반복 측정이 모든 칸에서 재현되었고, 400 은 `invalid_request_error`(요청 검증)라 결정적이다. adaptive 단독은 첫 모양과 같은 답이므로 400 의 원인은 `thinking.type` 이다. effort 단독은 `claude-haiku-4-5`·`claude-sonnet-4-5` 에서 400, `claude-opus-4-5` 에서 200 — 방언과 독립된 축이다(그 가드는 [`anthropic-thinking.md`](anthropic-thinking.md)). 별칭 셋은 호출되어 날짜 스냅샷으로 해석되었다. 추측한 날짜 4-6 이름 둘은 404 | 2026-09-10 |
 
@@ -420,9 +422,9 @@ prefix 를 공유하는 형제의 측정은 요청 표면에 대한 증거가 �
   않았다. 재생 · ladder · 스트리밍 모양 · 샘플링 모두 모른다. 그래서 prefix 행의 trace 왕복이 `false` 다
 - `gpt-5.6-luna` · `gpt-5.6-sol` — 목록에서 보았지만 호출하지 않았다. terra 와 같은 구멍이 있는지 모르므로 행이 없다
 - 날짜 붙은 `gpt-5.6-terra-*` 스냅샷 — 본 적 없다
-- terra 의 ladder 와 샘플링은 `/v1/responses` 에서만 쟀다. effort 게이트는 두 엔드포인트가 함께 쓰므로, Chat Completions
-  로 강제한 terra 는 잰 적 없는 칸에 `reasoning_effort: none` 을 보낸다. 행은 그래도 옳다 — 대안은 `minimal` 의 측정된
-  400 이다(백로그 L-2, §9)
+- terra 의 샘플링은 `/v1/responses` 에서만 쟀다. ladder 는 Chat Completions 에서도 쟀다(§6.3, 2026-10-05) — 네 rung 모두
+  도구 없이는 수용되고, 도구와 함께는 `none` 만 수용된다. 그 세 rung 의 `reasoning_tokens` 가 0 이었던 것은 한 단어짜리
+  프롬프트 탓일 수 있어, Chat 에서 rung 이 실제로 추론량을 바꾸는지는 모른다
 - effort 를 싣지 않은 o-series `/v1/responses` 요청이 `encrypted_content` 를 가진 reasoning item 을 돌려주는가 — 모든
   프로브가 effort 를 실었지만 `OpenAIConfig.reasoningEffort` 의 기본은 미설정이다. 돌려주지 않으면 그런 배포에서 trace
   왕복은 효과가 없다
@@ -507,9 +509,14 @@ prefix 를 공유하는 형제의 측정은 요청 표면에 대한 증거가 �
   없어 지금 잴 수 없다
 - **두 모양을 받으면서 budgeted 쪽을 선호하는 모델이 나오면 `EITHER` 는 그 선호를 적을 자리가 없다** —
   [`llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) L-10
-- **Chat Completions 로 강제한 `gpt-5.6-terra` 의 `reasoning_effort: none` 칸** —
-  [`llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) L-2. `responsesApiEnabled` 에 설정 표면이
-  생기는 순간 그 조합이 프로그램 전용이 아니게 되므로, L-2 를 맡는 쪽이 그 칸을 재거나 재지 않기로 한 것을 적는다
+- **Chat Completions 로 강제한 `gpt-5.6-terra` 는 도구 요청에 `none` 말고는 실측된 길이 없다.** `responsesApiEnabled` 가
+  설정 키가 되면서(`llm.openai.responsesApiEnabled` · `aimon.llm.openai.responses-api-enabled`) 그 조합이 운영자 경로로
+  내려왔고, `none` 칸은 2026-10-05 에 쟀다(200, §6.3). 그 옆도 같은 날 쟀다 — effort 를 적지 않은 도구 요청은 400 으로
+  실측되어 있었고(2026-09-10), `low` · `medium` · `high` 를 도구와 함께 실은 요청도 셋 다 400 이다(§6.3). 행의
+  `supportsToolsWithReasoning: true` 는 `/v1/responses` 에서 잰 사실이라 클라이언트는 Chat 에서도 그 rung 을 도구와 함께
+  그대로 내보낸다. 행과 요청 로직은 바꾸지 않았고, 클라이언트가 그 요청을
+  내보내기 전에 한 번 WARN 한다(`OpenAILlmClient.reportForcedChatToolsWithoutNone`) — 바꿔 보내지 않기로 한 결정은
+  [`llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) L-28
 - **나머지 미측정은 항목이 아니라 §6.4 의 빈 칸이다**
 
 ---

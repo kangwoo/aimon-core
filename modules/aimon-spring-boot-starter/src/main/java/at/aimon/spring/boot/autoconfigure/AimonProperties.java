@@ -216,7 +216,8 @@ public class AimonProperties implements InitializingBean {
      * <p>
      * The property tree in {@code docs/design/integration/spring-boot-starter.md} §9.3 has held this slot open since
      * before anything occupied it, and {@code docs/backlog/llm-config-surface-open-items.md} {@code L-2} names
-     * {@code responsesApiEnabled} as an eventual second key here. This one arrived first.
+     * {@code responsesApiEnabled} as an eventual second key here. {@code reasoning-summary} arrived first and
+     * {@code responses-api-enabled} followed it.
      *
      * <p>
      * A block written under another provider is refused by name rather than ignored, from inside the branch that
@@ -226,6 +227,9 @@ public class AimonProperties implements InitializingBean {
 
     /** How detailed a reasoning summary OpenAI requests ask for. */
     public static final String LLM_OPENAI_REASONING_SUMMARY = LLM_OPENAI + ".reasoning-summary";
+
+    /** Whether OpenAI requests may be routed to the Responses API at all. */
+    public static final String LLM_OPENAI_RESPONSES_API_ENABLED = LLM_OPENAI + ".responses-api-enabled";
 
     /** Backing store for session records. */
     public static final String SESSION_STORE = PREFIX + ".session.store";
@@ -1408,12 +1412,13 @@ public class AimonProperties implements InitializingBean {
          * The {@code aimon.llm.openai.*} block.
          *
          * <p>
-         * Nested inside {@code AimonProperties} for the reason {@link ModelCapabilityProperties} states, and its one
-         * property is a {@code String} for the reason {@link Anthropic}'s is: {@code aimon-llm-openai} is
+         * Nested inside {@code AimonProperties} for the reason {@link ModelCapabilityProperties} states, and its
+         * selector property is a {@code String} for the reason {@link Anthropic}'s is: {@code aimon-llm-openai} is
          * {@code compileOnly} here, so a vendor-typed accessor on a bean Spring binds throws
          * {@code NoClassDefFoundError} on a deployment carrying only the other vendor's module. The fold onto
          * {@code OpenAiReasoningSummary} happens inside the {@code @ConditionalOnClass}-guarded slice, over
-         * {@code values()} so the two configuration surfaces cannot come to accept different spellings.
+         * {@code values()} so the two configuration surfaces cannot come to accept different spellings. The switch
+         * beside it is a JDK {@code Boolean} and needs none of that.
          */
         public static class OpenAi {
 
@@ -1434,21 +1439,59 @@ public class AimonProperties implements InitializingBean {
                 return reasoningSummary;
             }
 
+            /**
+             * Whether requests may be routed to the Responses API ({@code /v1/responses}). {@code false} sends every
+             * request to Chat Completions. Unset by default, and unset leaves the vendor config's own default
+             * ({@code true}) standing — which is why this is a nullable {@code Boolean} rather than a primitive.
+             *
+             * <p>
+             * Set it to {@code false} when {@code aimon.llm.base-url} points at an OpenAI-compatible gateway that
+             * implements only {@code /v1/chat/completions} and passes real model names through: a {@code gpt-5*} or
+             * o-series name resolves to its built-in capability row, is routed to {@code /v1/responses}, and gets a
+             * 404. Turning the route off says nothing false about the model, so the rest of that row keeps applying.
+             *
+             * <p>
+             * What goes with it: Chat Completions has no reasoning-item round trip and no reasoning summary, so
+             * {@code reasoning-summary} beside this key reaches nothing and the client warns once.
+             */
+            private Boolean responsesApiEnabled;
+
             public void setReasoningSummary(String reasoningSummary) {
                 this.reasoningSummary = reasoningSummary;
+            }
+
+            /**
+             * Returns whether the Responses API path is used.
+             *
+             * @return the written value, or {@code null} when the key is absent and the client's default applies
+             */
+            public Boolean getResponsesApiEnabled() {
+                return responsesApiEnabled;
+            }
+
+            /**
+             * Sets whether the Responses API path is used.
+             *
+             * @param responsesApiEnabled
+             *            {@code false} to send every request to Chat Completions; {@code null} to keep the default
+             */
+            public void setResponsesApiEnabled(Boolean responsesApiEnabled) {
+                this.responsesApiEnabled = responsesApiEnabled;
             }
 
             /**
              * Whether nothing under this block was written.
              *
              * <p>
-             * Reads one field for null and loads no vendor class, which is what lets the refusal in
-             * {@code AimonLlmAutoConfiguration} sit on the enclosing class rather than inside a guarded slice.
+             * Reads two fields for null and loads no vendor class, which is what lets the refusal in
+             * {@code AimonLlmAutoConfiguration} sit on the enclosing class rather than inside a guarded slice. It
+             * asks whether a key was written, not whether it changes anything: {@code responses-api-enabled=true}
+             * restates the default and is still a line the Anthropic branch never reads.
              *
-             * @return true when the key is absent
+             * @return true when every key is absent
              */
             public boolean isEmpty() {
-                return reasoningSummary == null;
+                return reasoningSummary == null && responsesApiEnabled == null;
             }
         }
 

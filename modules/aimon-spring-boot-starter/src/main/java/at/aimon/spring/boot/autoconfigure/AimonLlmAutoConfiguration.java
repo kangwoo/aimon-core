@@ -142,7 +142,7 @@ public class AimonLlmAutoConfiguration {
      * The mirror of {@link #refuseAnthropicBlock}, and it exists because this round opened
      * {@link AimonProperties#LLM_OPENAI}: until there was an OpenAI block, the Anthropic branch had nothing to
      * refuse. Same placement rule and same reason — on the enclosing class because the branch that needs it is the
-     * one whose classpath lacks the OpenAI module, and safe there because the body reads one field for null through
+     * one whose classpath lacks the OpenAI module, and safe there because the body reads two fields for null through
      * {@link AimonProperties.Llm.OpenAi#isEmpty()}.
      *
      * @param llm
@@ -387,6 +387,10 @@ public class AimonLlmAutoConfiguration {
             }
             if (llm.getOpenai().getReasoningSummary() != null) {
                 config.reasoningSummary(reasoningSummary(llm.getOpenai().getReasoningSummary()));
+            }
+            // Unset is not `true`: the default belongs to OpenAIConfig, and only a written value is carried over.
+            if (llm.getOpenai().getResponsesApiEnabled() != null) {
+                config.responsesApiEnabled(llm.getOpenai().getResponsesApiEnabled());
             }
             return config.build();
         }

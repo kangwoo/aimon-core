@@ -494,6 +494,42 @@ aimon:
   `thinking` block. The block is bound to a different conversation."* 벤더의 처방이 이력에서 thinking 블록을
   전부 떼는 것이고, 대가는 기능 자체입니다(모델이 매 턴 추론을 다시 세웁니다). **여기서도 키 이름의 오타는
   조용합니다** — 위 블록과 같은 이유이고 같은 제약입니다. CLI 쪽 같은 축의 키는 camelCase 입니다.
+- `aimon.llm.openai.*` 는 위 `anthropic` 블록의 짝이고 **openai 분기만 읽습니다** — `provider: anthropic`(또는
+  미지정) 아래에 적힌 이 블록은 무시되지 않고 **기동을 실패시킵니다**. 키는 둘입니다.
+  `aimon.llm.openai.reasoning-summary` 는 `auto` · `concise` · `detailed` 중 하나로, 모델의 추론 요약을
+  요청하고 그 텍스트를 흘려보냅니다(Responses API 전용이고, 적지 않으면 요청은 글자 하나 바뀌지 않습니다).
+  `aimon.llm.openai.responses-api-enabled` 는 Responses API(`/v1/responses`) 경로를 쓸지 정하며, 적지 않으면
+  `true` 입니다.
+
+  ```yaml
+  aimon:
+    llm:
+      provider: openai
+      base-url: https://gateway.internal/v1
+      model: gpt-5.1
+      openai:
+        responses-api-enabled: false    # 이 게이트웨이에는 /v1/responses 가 없다
+  ```
+
+  **`responses-api-enabled: false` 는 Chat Completions 만 구현한 게이트웨이를 위한 스위치입니다.** `base-url` 을
+  그런 OpenAI 호환 게이트웨이로 돌리고 실제 모델 이름을 그대로 쓰면, `gpt-5*` 와 o-series 이름은 내장
+  capability 행에 걸려 `/v1/responses` 로 라우팅되고 게이트웨이는 404 를 줍니다. `false` 는 모든 요청을 Chat
+  Completions 로 보냅니다 — 모델에 대해 거짓말을 하지 않고 라우팅만 끄므로 그 행의 나머지 사실(샘플링 억제,
+  effort 사다리)은 계속 적용됩니다. 게이트웨이가 모델을 **개명**해서 노출한다면 이 키는 필요 없습니다(그
+  이름은 내장 표에 없어 처음부터 Chat Completions 로 갑니다). 끄면 reasoning item 왕복이 없어 모델이 매 호출
+  추론을 다시 세우고, `reasoning-summary` 는 아무 데도 닿지 않으며 클라이언트가 그 사실을 한 번 WARN 으로
+  말합니다.
+
+  **`gpt-5.6-terra` 를 `api.openai.com` 의 Chat Completions 로 강제하면 도구 요청에는
+  `aimon.llm.reasoning-effort=none` 이 필요합니다.** 실측한 칸은 아홉입니다. effort 를 적지 않고 도구를 실은
+  요청은 **HTTP 400** 입니다(2026-09-10) — *"Function tools with reasoning_effort are not supported for
+  gpt-5.6-terra in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to
+  'none'."* `reasoning_effort: "none"` 을 실은 요청은 도구가 없을 때도, 함수 도구 하나를 실었을 때도 **200**
+  입니다(2026-10-05). **그 밖의 rung(`low` · `medium` · `high`)은 도구와 함께 보내면 같은 문구의 400 이고,
+  도구가 없으면 200 입니다**(2026-10-05). 클라이언트는 그 rung 을 그대로 내보내고 거절은 서버가 합니다 —
+  내보내기 전에 그 사실을 한 번 WARN 으로 말합니다. 에이전트 정의의
+  `model.reasoningEffort` 가 프로퍼티를 이기므로 `none` 은 실제로 요청에 닿는 쪽에 적습니다. **여기서도 키
+  이름의 오타는 조용합니다.** CLI 쪽 같은 축의 키는 camelCase 입니다(`llm.openai.responsesApiEnabled`).
 - `knowledge` / `memory` 의 `supplied` 는 "**여러분이 그 빈을 선언하고 스타터는 도구만 거기에 연결한다**"는
   뜻입니다. Spring 이 만들었으니 Spring 이 닫고, 스택은 빌려 쓸 뿐입니다. `knowledge.backend` 에
   **OpenSearch 값이 일부러 없는** 것도 같은 이유입니다 — `aimon-knowledge-opensearch` 는 존재하고 동작하지만

@@ -359,14 +359,14 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | [`multi-instance-readiness.md`](multi-instance-readiness.md) | 아키텍처 리뷰 (2026-08-31) | 3 | 1 | 1 | 1 |
 | [`module-dependency-scope.md`](module-dependency-scope.md) | 아키텍처 리뷰 (2026-08-31) · #99 (2026-09-11) | 3 | 2 | 1 | 0 |
 | [`architecture-review-open-items.md`](architecture-review-open-items.md) | 아키텍처 리뷰 (2026-08-31) | 8 | 2 | 6 | 0 |
-| [`translation-tooling-open-items.md`](translation-tooling-open-items.md) | 번역 낡음 가드 작업 (2026-09-06) · #122 (2026-09-11) · #121 (2026-09-11) · #135 (2026-09-11) | 8 | 6 | 2 | 0 |
+| [`translation-tooling-open-items.md`](translation-tooling-open-items.md) | 번역 낡음 가드 작업 (2026-09-06) · #122 (2026-09-11) · #121 (2026-09-11) · #135 (2026-09-11) | 8 | 5 | 3 | 0 |
 | [`openai-model-capabilities-open-items.md`](openai-model-capabilities-open-items.md) | o-시리즈 reasoning-item 재생 프로브 (2026-09-09) | 1 | 0 | 1 | 0 |
-| [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) | `docs/design/llm/model-capability-config-key.md` §9 (#46) | 27 | 10 | 17 | 0 |
+| [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) | `docs/design/llm/model-capability-config-key.md` §9 (#46) | 28 | 9 | 19 | 0 |
 | [`reasoning-delta-stream-open-items.md`](reasoning-delta-stream-open-items.md) | `docs/design/llm/reasoning-delta-stream.md` §11 (#62) | 9 | 6 | 3 | 0 |
 | [`config-value-expansion-open-items.md`](config-value-expansion-open-items.md) | `docs/design/integration/config-value-expansion-and-frontmatter-strictness.md` §9 (#53) | 2 | 2 | 0 | 0 |
 | [`live-api-test-tier.md`](live-api-test-tier.md) | 라이브 API 테스트 계층의 CI 신호 결정 — #81 (2026-09-10) | 2 | 0 | 1 | 1 |
 | [`session-log-open-items.md`](session-log-open-items.md) | `docs/design/session/session-log.md` §12 · `docs/design/agent-execution/context-engine.md` §13 (2026-09-24 · 2026-09-25) | 6 | 1 | 5 | 0 |
-| [`execution-environment-open-items.md`](execution-environment-open-items.md) | `docs/design/tool/execution-environment-implementation.md` §9 · §10 · `docs/design/tool/execution-environment.md` §14 (2026-09-28) · 빌드 리뷰 4 · PR #195 리뷰 1 · 워크스페이스 샌드박스 설계 리뷰 (2026-09-29) · PR #196 리뷰 · EE-42 설계 §7 · §8 (2026-09-29) · `docs/design/tool/workflow-isolation-hardening.md` §7 · PR #202 (2026-09-30) · EE-9 · EE-12 설계 §8 · §9 (2026-10-03) · EE-13 · EE-7 설계 §8 · §9 와 그 리뷰 (2026-10-03) · EE-14 설계 §2.3 · §10 · PR #206 리뷰 (2026-10-03) · EE-49 · EE-51 · EE-58 설계 §8 · §9 와 그 리뷰 · PR #207 리뷰 (2026-10-04) · EE-70 · EE-71 설계 §9 (2026-10-04) · aimon-sandbox PR #6 (2026-10-04) | 77 | 40 | 37 | 0 |
+| [`execution-environment-open-items.md`](execution-environment-open-items.md) | `docs/design/tool/execution-environment-implementation.md` §9 · §10 · `docs/design/tool/execution-environment.md` §14 (2026-09-28) · 빌드 리뷰 4 · PR #195 리뷰 1 · 워크스페이스 샌드박스 설계 리뷰 (2026-09-29) · PR #196 리뷰 · EE-42 설계 §7 · §8 (2026-09-29) · `docs/design/tool/workflow-isolation-hardening.md` §7 · PR #202 (2026-09-30) · EE-9 · EE-12 설계 §8 · §9 (2026-10-03) · EE-13 · EE-7 설계 §8 · §9 와 그 리뷰 (2026-10-03) · EE-14 설계 §2.3 · §10 · PR #206 리뷰 (2026-10-03) · EE-49 · EE-51 · EE-58 설계 §8 · §9 와 그 리뷰 · PR #207 리뷰 (2026-10-04) · EE-70 · EE-71 설계 §9 (2026-10-04) · aimon-sandbox PR #6 (2026-10-04) | 80 | 35 | 45 | 0 |
 
 > **2026-09-10 — 위 표의 두 칸을 세어서 고쳤다. 규칙 일곱의 두 번째 사례이고, 둘 다 같은 모양이다:
 > 본문을 고친 사람이 색인을 세지 않았다.**

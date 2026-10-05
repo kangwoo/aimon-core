@@ -144,6 +144,14 @@ llm:
 #                                      #   Responses API ONLY: a model that does not do the reasoning trace
 #                                      #   round trip goes to Chat Completions, which has no such parameter,
 #                                      #   and a WARN says so once. Costs output tokens, hence opt-in.
+#    responsesApiEnabled: false        # default true. false sends EVERY request to /v1/chat/completions.
+#                                      #   For an OpenAI-compatible gateway (llm.baseUrl) that implements only
+#                                      #   Chat Completions but passes real model names through: a gpt-5* or
+#                                      #   o-series name otherwise routes to /v1/responses and gets a 404.
+#                                      #   Chat has no reasoning-item round trip and no reasoning summary, so
+#                                      #   reasoningSummary above reaches nothing (a WARN says so once).
+#                                      #   On api.openai.com itself, gpt-5.6-terra then needs
+#                                      #   `reasoningEffort: none` to take tools -- see the CLI reference.
 
 # Agent Configuration
 agent:

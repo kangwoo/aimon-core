@@ -67,7 +67,8 @@ public interface ExecutionEnvironment {
      *            the file set to stage (must not be null)
      * @return the absolute path of the staged directory as this environment's shell and file tools see it
      * @throws at.aimon.core.environment.exception.StagingException
-     *             if the resource cannot be staged (over the size limit, unreadable, changed since it was scanned)
+     *             if the resource cannot be staged (over the size limit, unreadable, changed since it was scanned,
+     *             or holding file names this environment's filesystem cannot keep apart)
      */
     String stage(StagedResource resource);
 

@@ -45,7 +45,7 @@ thinking 블록 재전송을 끌 수 있어야 한다.
   설정 파일의 스칼라와 매핑 키는 바인딩 **전에** 확장된다
 - 사용 방법과 전체 예시는 운영 가이드([`../../getting-started/aimon-core-integration-via-cli-reference.md`](../../getting-started/aimon-core-integration-via-cli-reference.md),
   [`../../getting-started/embedding-agent-in-application.md`](../../getting-started/embedding-agent-in-application.md))의 몫이다
-- `responsesApiEnabled` 와 샘플링 파라미터는 아직 설정 표면이 없다 — 배치만 정해져 있다(§3.2, L-2)
+- 샘플링 파라미터는 아직 설정 표면이 없다 — 배치만 정해져 있다(§3.2, L-2)
 
 ---
 
@@ -94,6 +94,7 @@ llm:
     replayThinkingBlocks: true
   openai:                                 # 벤더 — openai 분기만 읽는다 (provider 가 anthropic 이면 거절된다, §6.3)
     reasoningSummary: auto
+    responsesApiEnabled: true             # false 는 모든 요청을 Chat Completions 로 보낸다
 ```
 
 ```yaml
@@ -165,7 +166,7 @@ CLI 의 `default-config.yaml` 은 `reasoningEffort` 와 `acceptedReasoningEffort
 | `replayThinkingBlocks` | `llm.anthropic.replayThinkingBlocks` | `aimon.llm.anthropic.replay-thinking-blocks` | — | **벤더** | 이름 — thinking 블록은 Anthropic 의 서명된 콘텐츠 블록이다 |
 | `thinkingDisplay` | `llm.anthropic.thinkingDisplay` | `aimon.llm.anthropic.thinking-display` | — | **벤더** | 이름 — "thinking" 과 Anthropic `thinking` 객체 안의 필드명 `display` |
 | `reasoningSummary` | `llm.openai.reasoningSummary` | `aimon.llm.openai.reasoning-summary` | — | **벤더** | 이름 — `reasoning.summary` 는 OpenAI 요청 본문의 경로이고, 값 `auto` · `concise` · `detailed` 는 OpenAI 의 어휘다 |
-| *(표면 없음)* `responsesApiEnabled` | `llm.openai.responsesApiEnabled` | `aimon.llm.openai.responses-api-enabled` | — | **벤더** | 이름이 OpenAI 엔드포인트다. 표면을 주는 일은 L-2 |
+| `responsesApiEnabled` | `llm.openai.responsesApiEnabled` | `aimon.llm.openai.responses-api-enabled` | — | **벤더** | 이름이 OpenAI 엔드포인트다. Chat Completions 만 구현한 게이트웨이가 설정만으로 닿는 404 의 출구이며, 적지 않으면 기본값은 `OpenAIConfig` 의 것(`true`)이다 |
 | *(표면 없음)* `temperature` · `topP` · 두 penalty | — | `aimon.llm.<provider>.*` | — | **벤더** | 뜻이 벤더마다 다르다(유효 범위, 무시되는 파라미터). 표면을 주는 일은 L-2 |
 
 판정이 네임스페이스로 갈라 놓는 쌍이 하나 있다.
@@ -327,6 +328,7 @@ provider 모듈의 테스트가 설정 경로가 실제로 쓰는 번역기를 �
 | `thinkingDisplay` | `AnthropicThinkingDisplay` | `String` — 같음 |
 | `reasoningSummary` | `OpenAiReasoningSummary` | `String` — 같음 |
 | `thinkingBudgetTokens` · `replayThinkingBlocks` | `Integer` · `Boolean` | 같음 |
+| `responsesApiEnabled` | `Boolean` — `null` 은 "적지 않음" 이고 기본값은 `OpenAIConfig` 가 정한다 | 같음 |
 
 규칙은 하나다.
 
@@ -520,8 +522,8 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
   결과가 "이름이 바인딩되지 않았다" 와 "값이 버려졌다" 사이에서 모호해진다. 렌더 규칙은 표면마다 진짜로 다른 부분이라 공유
   계약이 남는 것이 없다. 바인더 고리는 키마다 손으로 쓴 테스트가 덮고, 그 일반화는 L-14 다
 - **(3) 을 넣지 않는다.** 레지스트리 의미가 바인딩 테스트에 끌려 들어오고, 두 표면이 닿을 수 있는 끝점이 다른 메서드라 한
-  계약이 두 사슬을 시험하게 된다. 선언에서 단언해야 두 서브클래스가 같은 사슬을 시험한다. 고리 (3) 도 손으로 쓴 전달이고
-  가드가 없다 — L-13
+  계약이 두 사슬을 시험하게 된다. 선언에서 단언해야 두 서브클래스가 같은 사슬을 시험한다. 고리 (3) 도 손으로 쓴 전달이고,
+  그 가드는 코어 쪽 `ModelCapabilityDeclarationTest.everyDeclarableKeyReachesTheDescriptor` 다 — L-13
 
 ### 8.2 키와 값
 
@@ -665,13 +667,14 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
 등록된 항목 — [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md):
 
 - **L-1** — 스타터에서 모르는 잎 이름이 조용하다(CLI 와의 비대칭). 닫는 길 셋의 저울이 거기 있다
-- **L-2** — `responsesApiEnabled` 와 샘플링 파라미터에 아직 설정 표면이 없다. 배치는 §3.2 표대로다. Anthropic 쪽은
-  `AnthropicConfig` 에 `topP` · penalty 필드부터 없다. `gpt-5.6-terra` 를 Chat Completions 로 강제한 칸의 미측정도 여기 붙어 있다
+- **L-2** — 샘플링 파라미터에 아직 설정 표면이 없다. 배치는 §3.2 표대로다. Anthropic 쪽은
+  `AnthropicConfig` 에 `topP` · penalty 필드부터 없다. 같은 항목의 `responsesApiEnabled` 절반은 표면을 얻었고, 거기 붙어 있던
+  `gpt-5.6-terra` 를 Chat Completions 로 강제한 칸은 2026-10-05 에 쟀다([`model-capabilities.md`](model-capabilities.md) §6.3)
 - **L-3** — `provider=none` 과 애플리케이션 자체 `LlmClient` 빈 배포에서 선언과 벤더 블록이 조용히 읽히지 않는다
 - **L-4** — 설정에서 prefix 를 선언할 길을 열 것인가(코어 쪽이 순수 추가가 아니다)
 - ~~**L-5** — CLI 매핑 오류 메시지가 어느 키인지 말하지 않는다~~ — 2026-10-05 닫힘
 - **L-8** — 선언이 내장 행을 가리면서 그 행의 플래그를 적지 않았을 때 알리지 않는다
-- **L-13** — 선언에서 기술자로 가는 세 번째 손 전달(고리 3)에 가드가 없다
+- ~~**L-13** — 선언에서 기술자로 가는 세 번째 손 전달(고리 3)에 가드가 없다~~ — 2026-10-05 닫힘
 - **L-14** — 바인더 고리(고리 1)는 키마다 손으로 확인되고, 스타터에는 확인되지 않는 키가 있다
 
 등록되지 않은 항목:
@@ -700,7 +703,7 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
 | `aimon-cli/…/cli/config/CliConfigLoader.java` | 매퍼 기능(`ACCEPT_CASE_INSENSITIVE_ENUMS`), 바인딩 전 확장, 매핑 오류의 일반 메시지 |
 | `aimon-cli/…/cli/config/LlmProviderConfig.java` · `ModelCapabilityConfig.java` | CLI 표면 필드와 타입 |
 | `aimon-cli/…/cli/config/AnthropicProviderConfig.java` | 박싱 필드 · `isEmpty()` · `ThinkingModeDeserializer`(YAML `off`) |
-| `aimon-cli/…/cli/config/OpenAiProviderConfig.java` | `reasoningSummary` 블록과 `isEmpty()` |
+| `aimon-cli/…/cli/config/OpenAiProviderConfig.java` | `reasoningSummary` · 박싱된 `responsesApiEnabled` 와 `isEmpty()` |
 | `aimon-cli/…/cli/factory/LlmClientFactory.java` | `declarationOf` · `registryFor` · 두 분기의 조립 메서드 · 좁은 catch 와 키 경로 · `refuseAnthropicBlock` / `refuseOpenAiBlock` |
 | `aimon-spring-boot-starter/…/autoconfigure/AimonProperties.java` | `LLM_*` 상수, `Llm` · `Llm.Anthropic` · `Llm.OpenAi` · `ModelCapabilityProperties` 필드 타입, `validateLlm` · `modelCapabilityRegistry` · `toDeclaration` |
 | `aimon-spring-boot-starter/…/autoconfigure/AimonLlmAutoConfiguration.java` | 가드된 중첩 슬라이스, vendor fold 와 `off` 힌트, 예산 키 catch, 바깥 클래스의 두 거절 |

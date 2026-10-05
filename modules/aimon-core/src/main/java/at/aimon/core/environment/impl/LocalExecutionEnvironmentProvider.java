@@ -139,7 +139,7 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
                 sweepStaging(ownedRoot, ownedRoot.resolve(builder.stagingRoot), sweepGrace(builder), builder.clock);
             }
 
-            final LocalStaging staging = new LocalStaging(rawFileSystem, toolFileSystem, builder.stagingRoot,
+            final LocalStaging staging = new LocalStaging(rawFileSystem, toolFileSystem, hostRoot, builder.stagingRoot,
                     builder.maxStagedBytes);
             final RipgrepContentSearch contentSearch = builder.contentSearch && hostRoot != null
                     ? Optional.ofNullable(builder.ripgrepExecutable).or(RipgrepContentSearch::probe)
@@ -246,7 +246,9 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
     /**
      * Deletes superseded staged copies that nothing can still reference: for each resource name, every
      * {@code {contentKey}} directory except the newest whose marker is older than the grace period, and marker-less
-     * (interrupted) directories older than the grace period.
+     * (interrupted) directories older than the grace period. The temporary directories {@link LocalStaging} copies
+     * into, and moves a replaced target to, go the same way once they are older than the grace period: a stager that
+     * died left them, and no running one can still own them (EE-17).
      *
      * <p>
      * The staging area is a directory inside the workspace, which anyone who can write the workspace (a cloned
@@ -286,11 +288,18 @@ public final class LocalExecutionEnvironmentProvider implements ExecutionEnviron
     }
 
     private static void sweepName(Path nameDir, Instant cutoff) throws IOException {
-        final List<Path> copies;
+        final List<Path> directories;
         try (Stream<Path> keys = Files.list(nameDir)) {
-            copies = keys.filter(LocalExecutionEnvironmentProvider::isRealDirectory)
-                    .filter(k -> LocalStaging.isContentKey(k.getFileName().toString())).toList();
+            directories = keys.filter(LocalExecutionEnvironmentProvider::isRealDirectory).toList();
         }
+        for (Path directory : directories) {
+            if (LocalStaging.isTemporary(directory.getFileName().toString()) && modified(directory).isBefore(cutoff)) {
+                deleteTree(directory);
+                log.debug("Swept abandoned staging directory {}", directory);
+            }
+        }
+        final List<Path> copies = directories.stream()
+                .filter(k -> LocalStaging.isContentKey(k.getFileName().toString())).toList();
         final Optional<Path> newest = copies.stream().filter(k -> Files.exists(k.resolve(LocalStaging.MARKER)))
                 .max(Comparator.comparing(k -> modified(k.resolve(LocalStaging.MARKER))));
         for (Path copy : copies) {

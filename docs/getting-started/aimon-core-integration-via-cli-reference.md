@@ -530,7 +530,7 @@ CLI 는 이제 같은 답을 한다.
 #### OpenAI 전용 블록 — `llm.openai`
 
 `llm.anthropic` 의 짝이고 같은 규칙을 따른다. **openai 분기만 읽으므로** `provider: anthropic` 아래에
-적힌 이 블록은 무시되지 않고 기동을 실패시킨다. 오늘 키는 하나다.
+적힌 이 블록은 무시되지 않고 기동을 실패시킨다. 키는 둘이다.
 
 ```yaml
 llm:
@@ -544,6 +544,7 @@ llm:
 | 키 | 뜻 | 적지 않으면 |
 |---|---|---|
 | `reasoningSummary` | 모델의 추론 요약을 요청하고 흘려보낼 것인가 (`auto` \| `concise` \| `detailed`) | 아무것도 요청하지 않고 아무것도 흘리지 않는다 |
+| `responsesApiEnabled` | Responses API(`/v1/responses`) 경로를 쓸 것인가. `false` 는 모든 요청을 Chat Completions 로 보낸다 | `true` — 추론 트레이스 왕복을 하는 모델은 `/v1/responses` 로 간다 |
 
 이 벤더에서 추론 자체는 `encrypted_content` — 설계상 암호문 — 이므로 **요약이 사람이 읽을 수 있는 유일한
 대리물**이다. 그것이 이 키가 Anthropic 쪽의 `thinkingDisplay` 와 다른 이름을 가진 이유다.
@@ -551,6 +552,37 @@ llm:
 **Responses API 전용이다.** 모델이 추론 트레이스 왕복을 지원하지 않거나 그 엔드포인트가 꺼져 있으면
 요청은 Chat Completions 로 가는데 거기에는 이 파라미터가 없다 — 그 경우 클라이언트가 한 번 WARN 으로
 말한다(조용히 아무것도 하지 않는 대신).
+
+**`responsesApiEnabled: false` 는 Chat Completions 만 구현한 게이트웨이를 위한 스위치다.** `baseUrl` 을 그런
+OpenAI 호환 게이트웨이로 돌리고 실제 모델 이름을 그대로 쓰면, `gpt-5*` 와 o-series 이름은 내장 capability
+행에 걸려 `/v1/responses` 로 라우팅되고 게이트웨이는 404 를 준다. 그 상황은 설정만으로 만들어지므로 빠져나오는
+길도 설정에 있다. 모델에 대해 거짓말을 하지 않고 라우팅만 끄는 것이어서, 그 행의 나머지 사실(샘플링 억제,
+effort 사다리)은 계속 적용된다. 게이트웨이가 모델을 **개명**해서 노출한다면 이 키는 필요 없다 — 그 이름은
+내장 표에 없어 처음부터 Chat Completions 로 간다.
+
+```yaml
+llm:
+  provider: openai
+  apiKey: "${OPENAI_API_KEY}"
+  baseUrl: https://gateway.internal/v1
+  model: gpt-5.1
+  openai:
+    responsesApiEnabled: false
+```
+
+끄면 함께 꺼지는 것이 둘 있다. reasoning item 왕복이 없어 모델이 매 호출 추론을 다시 세우고, 위의
+`reasoningSummary` 는 아무 데도 닿지 않는다.
+
+**`gpt-5.6-terra` 를 `api.openai.com` 의 Chat Completions 로 강제하면 도구 요청에는 `reasoningEffort: none` 이
+필요하다.** 실측한 칸은 아홉이다. effort 를 적지 않고 도구를 실은 요청은 **HTTP 400** 이다(2026-09-10) —
+*"Function tools with reasoning_effort are not supported for gpt-5.6-terra in /v1/chat/completions. To use
+function tools, use /v1/responses or set reasoning_effort to 'none'."* `reasoning_effort: "none"` 을 실은 요청은
+도구가 없을 때도, 함수 도구 하나를 실었을 때도 **200** 이다(2026-10-05, `finish_reason: stop`,
+`reasoning_tokens: 0`). **그 밖의 rung(`low` · `medium` · `high`)은 도구와 함께 보내면
+같은 문구의 400 이고, 도구가 없으면 200 이다**(2026-10-05, 여섯 요청). 클라이언트는 그 rung 을 그대로 내보내고
+거절은 서버가 한다 — 내보내기 전에 그 사실을 한 번 WARN 으로 말한다. 에이전트 정의의
+`model.reasoningEffort` 가 `llm.reasoningEffort` 를 이기므로 `none` 은 실제로 요청에 닿는 쪽에 적는다. 이것은
+그 모델 하나의 사정이다 — 게이트웨이 뒤의 모델이 무엇을 받는지는 그 게이트웨이가 정한다.
 
 `cli.tracing`이 켜져 있으면 그 위에 한 겹이 더 붙는다 (line 697-712) — `TracingLlmClient`가 원본 클라이언트를
 감싸고, 같은 `Tracer`가 실행기 팩토리에도 주입되어 턴/이터레이션/도구 span까지 한 트리에 모인다. 감싸는 대상은

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 79d78a7
+source_commit: 89a8ed4
 ---
 
 # Embedding an AIMON agent in your application
@@ -523,6 +523,43 @@ aimon:
   every thinking block from the history, and the cost is the feature itself (the model re-derives its
   reasoning each turn). **A misspelled key name is silent here too** — the same reason and the same limit as
   the block above. The CLI keys on the same axis are camelCase.
+- `aimon.llm.openai.*` is the counterpart of the `anthropic` block above and **is read by the openai branch
+  alone** — written under `provider: anthropic` (or no provider at all) it is not ignored, it **fails
+  startup**. It has two keys. `aimon.llm.openai.reasoning-summary` is one of `auto` · `concise` · `detailed`:
+  it asks for a summary of the model's reasoning and streams that text (Responses API only, and left unset the
+  request does not change by a character). `aimon.llm.openai.responses-api-enabled` decides whether the
+  Responses API (`/v1/responses`) path is used, and is `true` when unset.
+
+  ```yaml
+  aimon:
+    llm:
+      provider: openai
+      base-url: https://gateway.internal/v1
+      model: gpt-5.1
+      openai:
+        responses-api-enabled: false    # this gateway has no /v1/responses
+  ```
+
+  **`responses-api-enabled: false` is the switch for a gateway that implements Chat Completions only.** Point
+  `base-url` at such an OpenAI-compatible gateway while keeping real model names, and a `gpt-5*` or o-series
+  name resolves to its built-in capability row, is routed to `/v1/responses`, and gets a 404 from the gateway.
+  `false` sends every request to Chat Completions — it tells no lie about the model and only turns the routing
+  off, so the rest of that row (sampling suppression, the effort ladder) keeps applying. If the gateway exposes
+  the model under a **different** name you do not need this key (that name is not in the built-in table and
+  goes to Chat Completions from the start). With it off there is no reasoning-item round trip, so the model
+  rebuilds its reasoning on every call, and `reasoning-summary` reaches nothing — the client says so once at
+  WARN.
+
+  **Forcing `gpt-5.6-terra` onto Chat Completions at `api.openai.com` means tool requests need
+  `aimon.llm.reasoning-effort=none`.** Nine cells have been measured. A request carrying tools and no effort
+  is an **HTTP 400** (2026-09-10) — *"Function tools with reasoning_effort are not supported for
+  gpt-5.6-terra in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to
+  'none'."* A request carrying `reasoning_effort: "none"` is a **200** both without tools and with one
+  function tool (2026-10-05). **Any other rung (`low` · `medium` · `high`) sent alongside tools is a 400 with
+  the same text, and a 200 without tools** (2026-10-05). The client sends those rungs as they are and it is the
+  server that refuses — the client says so once at WARN before sending. An agent definition's `model.reasoningEffort` wins over the property, so write
+  `none` on whichever one actually reaches the request. **A misspelled key name is silent here too.** The CLI
+  keys on the same axis are camelCase (`llm.openai.responsesApiEnabled`).
 - `supplied` under `knowledge` / `memory` means "**you declare that bean and the starter only connects the
   tools to it**". Spring made it, so Spring closes it, and the stack merely borrows. The same reason is
   why `knowledge.backend` **deliberately has no OpenSearch value** — `aimon-knowledge-opensearch` exists

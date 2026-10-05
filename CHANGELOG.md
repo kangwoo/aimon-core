@@ -7,6 +7,107 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed (breaking): `AgentEnvironmentSnapshot` no longer carries a working directory (EE-10, EE-24)
+
+- **Removed `AgentEnvironmentSnapshot.getWorkingDirectory()` and `AgentEnvironmentSnapshot.Builder.workingDirectory(String)`.**
+  `build()` no longer requires one (the required fields are `currentDate` and `userLocale`), and `equals`, `hashCode` and
+  `toString` no longer include it. The snapshot is collected once per agent; the working directory is a fact of one
+  execution, and lives on `ExecutionEnvironment.descriptor().workingDirectory()`. There is no replacement on the snapshot
+  — delete the builder call.
+- **The user-context block no longer falls back to the snapshot's directory.**
+  `UserContextMessageBuilder.build(snapshot, executionWorkingDirectory)` emits a `working-directory` entry only for a
+  non-blank second argument, and `build(snapshot)` never emits one. An unavailable execution environment used to show
+  whatever the snapshot held — a host path, where the embedder's provider collected `user.dir`. Sessions that already
+  stored such a `messages[0]` keep it.
+
+### Added: `responsesApiEnabled` is a configuration key (L-2)
+
+- **`llm.openai.responsesApiEnabled` (CLI yaml) and `aimon.llm.openai.responses-api-enabled` (starter)** set
+  `OpenAIConfig.Builder.responsesApiEnabled`, which was reachable from Java only. `false` sends every request to
+  `/v1/chat/completions` — the switch for an OpenAI-compatible gateway that implements only that endpoint while passing
+  real model names through, where a `gpt-5*` or o-series name otherwise routes to `/v1/responses` and gets a 404. Unset
+  keeps the default (`true`). Under any other provider the key is refused by name, like the rest of the `openai` block.
+- **On `api.openai.com` itself, `gpt-5.6-terra` forced onto Chat Completions takes tools only with
+  `reasoningEffort: none`.** Measured on 2026-10-05: with one function tool, `none` is a 200 and `low`, `medium` and
+  `high` are each a 400 (*"Function tools with reasoning_effort are not supported for gpt-5.6-terra in
+  /v1/chat/completions…"*); without tools all four are a 200. The client sends what was configured — it substitutes
+  nothing, and a gateway may answer differently — and **warns once before it does**: a tools request for such a model
+  that goes out with a rung other than `none`, or with no effort at all — none configured, or one the client omitted
+  as off the model's ladder — logs what was measured and the two exits (L-28).
+- The sampling parameters (`temperature`, `topP`, the two penalties) are still Java-only.
+
+### Fixed: foreground `Bash` is also stopped through the shell's cancellation signal (EE-54)
+
+- **A foreground `Bash` call now hands the shell a cancellation that the execution's own signal trips.** It was stopped
+  only by the thread interrupt, which `LocalShell` answers and the shell contract does not promise — a remote shell's
+  blocking call could ignore it, or return while the remote command kept running. The thread interrupt is still sent;
+  `getInterruptBehavior()` is still `THREAD_INTERRUPT`. The result reads the same whichever of the two ends the command.
+- **Two things an embedder can observe.** Requesting an interrupt now runs the shell's kill on the requesting thread:
+  about 200ms for a command that ignores SIGTERM, 0–1ms otherwise. And a command whose execution was already
+  interrupted is no longer started and killed; it is not started.
+- A shell gets this only if it declares and implements `ShellFeature.CANCELLATION`. Hook shell commands do not carry the
+  signal (backlog EE-80).
+
+### Fixed: skill staging is published in one step and refuses files the disk merged (EE-17, EE-38)
+
+- **A staged copy is written to a temporary sibling directory, verified there, and renamed into place.** `LocalStaging`
+  used to copy into the target and delete it on failure, so a second process sharing the workspace could read a
+  half-copied skill — or have its finished copy deleted by the other's failed one. On a host directory the publish is one
+  atomic rename: a reader sees no target or a complete one, and the loser of a race returns the winner's copy untouched
+  — also when an invalid copy was in the way and the winner's landed while the loser was replacing it.
+  On a file system without a directory rename (S3, GridFS) files are moved in one by one with the marker last; no stager
+  deletes the target, and bytes that failed verification never reach it. The startup sweep also removes leftover
+  `*.tmp-*` directories.
+- **A skill holding names that differ only by case (`RUN.sh`, `run.sh`) is refused on a disk that merges them.** The
+  copy was verified against the bytes read from the source, so it passed while the disk held one file under both names.
+  When two names fold to the same string the staged copy is now read back and hashed; a mismatch is a
+  `StagingException` naming both paths. On a case-sensitive disk such a skill stages as before.
+  `VfsPaths.foldCase` is now public.
+
+### Fixed: `ReadOnlyLocalFileSystem` applies the link rule to every read-side method (EE-36)
+
+- **`exists`, `isDirectory`, `getMetadata` and `list` check the real path first**, as `read` and `listRecursive` did. They
+  followed links unchecked, so a link in a skill directory revealed whether a file outside the allowed roots existed and
+  how large it was. A link that fails the check is an `InvalidPathException` from all of them — not `false`, which
+  would have let a refused directory stage as an empty copy. A dangling link is resolved before it is checked — one
+  segment at a time, as the kernel would — so "absent" and "refused" no longer tell the two apart. `listRecursive`
+  confines its start directory and the dangling links it meets for the same reason.
+- **`read` opens the path it checked**, without following links, closing the window in which the link could be swapped
+  between the check and the open.
+
+### Fixed: artifact archiving kept one file per name, counted an edited file twice, and could fail without a word (EE-19)
+
+- **The archive path keeps the file's path under the working directory** (`artifacts/{key}/a/report.md`). `a/report.md`
+  and `b/report.md` used to share one archive path: the second overwrote the first and both artifacts pointed at it. A
+  file at the working directory's root archives where it did before.
+- **A file registered again counts once against the execution's limit**, at its latest size. Every `Edit` used to add
+  the whole file again. `ArtifactCollector.totalBytesExcluding(storage, path)` is new.
+- **`Edit` no longer archives a file whose size it could not read as zero bytes**, which skipped the limits; the result
+  carries `[artifact not registered: its size could not be read, …]`. An unexpected failure while registering now adds a
+  note too instead of nothing.
+- **A re-registration whose copy fails leaves the earlier archived copy in place.** The copy is written beside the
+  archive path and moved over it; it used to be written in place and deleted on failure, taking the copy the earlier
+  registration still pointed at. (EE-79)
+
+### Tests: the declaration-to-descriptor hand-off is checked for every capability key (L-13)
+
+- `ModelCapabilityDeclarationTest.everyDeclarableKeyReachesTheDescriptor` checks, with no key named in the test, that
+  each declarable key alone yields the `ModelCapabilities` its same-named setter builds. A key added to the declaration
+  and forgotten in `resolve(Builder)` used to leave the operator's setting bound and unused, with both surface guards
+  green. `aimon-core`'s tests now depend on `aimon-llm-capability-testkit`.
+
+### Tests: the Responses `incomplete` / `max_output_tokens` stop reason is measured live (RD-8)
+
+- Two tests in `OpenAIReasoningLiveTest` (run only with `OPENAI_KEY`) cut a response at the endpoint's minimum budget
+  and require `StopReason.MAX_TOKENS` from both the response body and the streaming terminal event. Measured on
+  2026-10-05. The `content_filter` branch cannot be provoked and is still read from documentation.
+
+### Docs CI: the heading self-tests fail on ten fence and comment readings they used to ignore (backlog T-9)
+
+- `check-backlog-registers.py --self-test` (57 → 68 cases) and `check-doc-links.py --self-test` (10 → 16) now pin the
+  readings `SHARP EDGES` describes. Each of the ten one-line changes listed in T-9 left all four commands green; each
+  now turns a self-test red.
+
 ### Fixed: follow-ups from #225's final review
 
 - **`Edit` no longer merges a lone CR and an LF into one line break at the edge of an edit.** Deleting the text between

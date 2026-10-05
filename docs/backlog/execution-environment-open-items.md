@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 77건 (열림 40 · 닫힘 37)
+# 실행 환경 — 등록 항목 80건 (열림 35 · 닫힘 45)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -456,7 +456,7 @@ EE-12 의 결정문대로 **서술자가 아니라 환경 자체**를 실었다.
 `SingleToolInvoker` 를 거치지 않으므로 루틴의 도구 단계에서는 `preTool`·`postTool` 을 포함해 어떤 훅도 발화하지 않는다.
 같은 문장이 설계 문서 §4.2, `TeardownPhase.HOOK_CONFIG_SHELL` 의 Javadoc, `CHANGELOG.md` 에도 들어가 있어 함께 고쳤다.)
 
-## EE-10 — `AgentEnvironmentSnapshot` 이 작업 디렉터리를 여전히 든다 · **열림**
+## EE-10 — `AgentEnvironmentSnapshot` 이 작업 디렉터리를 여전히 든다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 스냅숏에서 `workingDirectory` 를 뺀다.
 
@@ -469,6 +469,24 @@ EE-12 의 결정문대로 **서술자가 아니라 환경 자체**를 실었다.
 **언제 다시 볼까.** 스냅숏 수집기를 손볼 때.
 
 출처: 계획 §10 차이 목록.
+
+### 닫힘 (2026-10-05)
+
+EE-24 와 한 변경에서 닫았다. `AgentEnvironmentSnapshot` 에서 필드 · `getWorkingDirectory()` · `Builder.workingDirectory(String)` 을
+지웠고, `build()` 는 작업 디렉터리가 없다고 던지지 않는다(필수는 `currentDate` 와 `userLocale`). `equals` · `hashCode` ·
+`toString` 에서도 빠졌다. 대체물은 스냅숏에 없다 — 실행마다 다른 값은 `ExecutionEnvironment.descriptor().workingDirectory()` 다.
+공개 타입에서 지우는 변경이라 CHANGELOG 에 breaking 으로 적었다.
+
+**지우기 전에 읽는 쪽을 셌다 (규칙 여섯).** 모든 모듈과 `samples/` 의 main · test 에서 스냅숏 수신자의 `getWorkingDirectory()`,
+스냅숏 빌더의 `.workingDirectory(`, 메서드 참조(`::getWorkingDirectory` · `::workingDirectory`)를 훑었다. main 의 독자는
+`UserContextMessageBuilder` 하나였고 EE-24 가 그것을 없앴다. 빌더를 부르는 main 코드는 javadoc 예시 둘뿐이었다. 같은 이름을 가진
+다른 타입(`VirtualFileSystem` · `VirtualShell` · `ExecutionOptions`)은 건드리지 않았다.
+
+착수해 보니 항목의 서술과 달랐던 것은 EE-24 의 닫힘에 함께 적었다 — 이 필드는 "죽은 필드에 가깝다" 가 아니라, 출하되는 스택에서는
+**스냅숏 자체가 만들어지지 않는다**(EE-78).
+
+테스트: `AgentEnvironmentSnapshotTest.snapshotCarriesNoWorkingDirectory`(필드가 되돌아오면 실패하는 리플렉션 가드). 문서는
+`docs/overview/glossary.md` · `architecture.md` 와 두 번역본, 구현 문서의 EE-10 차이 항목을 고쳤다.
 
 ## EE-11 — 스케줄 루틴에는 read stamp 가 없다 · **열림**
 
@@ -793,7 +811,7 @@ AIMON 패키지에 기대지 못하게 하는 것은 전부터 있던 규칙이�
 실패한다. 루트 안을 가리키는 링크를 따라가는 것은 의도된 동작이다. 테스트는 `SkillLinkStagingTest` 와
 `ReadOnlyLocalFileSystemTest.linkedFileConfined`.
 
-## EE-17 — 스테이징이 프로세스 사이에서 경합한다 · **열림**
+## EE-17 — 스테이징이 프로세스 사이에서 경합한다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 임시 형제 디렉터리에 복사한 뒤 이름을 바꾸는 방식으로 스테이징을 원자화한다.
 
@@ -805,6 +823,49 @@ AIMON 패키지에 기대지 못하게 하는 것은 전부터 있던 규칙이�
 **언제 다시 볼까.** 한 워크스페이스를 여러 노드나 프로세스가 공유하는 배치를 지원할 때.
 
 출처: 빌드 리뷰 3.
+
+### 닫힘 (2026-10-05)
+
+`LocalStaging` 은 이제 대상 디렉터리에 직접 복사하지 않는다. 파일과 마커를 형제 디렉터리 `{contentKey}.tmp-{hex 32자}` 에 쓰고
+거기서 검증한 뒤 한 번에 내놓는다. 실패한 복사는 그 임시 디렉터리만 지운다. 시작 스윕은 유예 기간이 지난 `*.tmp-*` 도 치운다.
+마커를 마지막에 쓰는 것, EE-37 의 재해시, EE-4 의 `.gitignore`, 워크스페이스가 곧 소스일 때의 지름길은 그대로다.
+
+착수해 보니 항목의 서술과 달랐던 것.
+
+1. **심각도(규칙 셋)가 적힌 것보다 무거웠다.** 항목은 중단된 복사를 치우는 `deleteRecursive(target)` 만 적었다. 옛 코드에는
+   지우는 자리가 하나 더 있었다 — 읽기 실패나 해시 불일치 때의 `discard(target)` 이 **다른 프로세스가 방금 완성해 경로까지
+   내준 사본**을 지웠다.
+2. **처방(규칙 다섯)은 VFS SPI 로는 적용되지 않는다.** `VirtualFileSystem.move` 는 파일 하나를 옮긴다 — `LocalFileSystem.move`
+   는 디렉터리를 "Not a regular file" 로 거절하고, S3 · GridFS 는 복사 후 삭제다. 그래서 보장이 모드마다 다르다.
+   - **호스트 디렉터리**(`workspaceRoot` 모드, 또는 작업 디렉터리가 로컬 경로이고 임시 디렉터리가 호스트에서 보이는
+     `.fileSystem(vfs)`): `Files.move(…, ATOMIC_MOVE)` 한 번이다. 읽는 쪽은 대상이 없거나 완성된 것만 본다. 경합에서 진 쪽은
+     자기 사본을 버리고 이긴 쪽의 것을 손대지 않고 돌려준다. 잘못된 대상이 자리를 차지하고 있으면(이 변경 전의 중단된 복사,
+     EE-37 의 심어 둔 사본) 옆으로 옮기고 → 바꿔 넣고 → 지운다. 이름 바꾸기가 두 번이라 그 사이 대상이 **잠깐 없다**(절반만
+     있는 일은 없다).
+   - **그 밖의 파일 시스템**(S3 · GridFS): 원자적이지 않다. 검증된 파일을 대상에 하나씩 옮기고 마커를 마지막에 옮긴다. 키가
+     어긋난 마커는 먼저 지운다. 커밋 지점은 여전히 마커 하나다. 지켜지는 것은 둘이다 — 어떤 스테이저도 대상이나 그 안의
+     리소스 파일을 지우지 않고, 검증에 실패한 바이트는 대상에 닿지 않는다.
+
+**닫지 않은 것.** (1) 호스트 모드에서 두 프로세스가 같은 잘못된 대상을 동시에 바꾸면 둘째가 첫째의 새 사본을 밀어낼 수 있다 —
+세 번 시도하고 `StagingException` 으로 포기한다. (2) 비호스트 모드에서 진 쪽은 내놓을 때 이긴 쪽의 마커가 있어야 알아차린다.
+없으면 같은 바이트를 덮어쓴다. (3) 비호스트 모드는 호스트 루트 없이 `LocalFileSystem` 위에서만 시험했다 — **실제 S3 · GridFS
+로는 돌리지 않았다.** (4) 죽은 프로세스가 남긴 임시 디렉터리는 빌려 쓰는 VFS 에서는 치워지지 않는다(스윕이 돌지 않는다, EE-2 와
+같은 모양). (5) JVM 둘로 돌린 테스트는 없고 Windows 에서도 해 보지 않았다 — 열린 파일이 있는 디렉터리의 이름 바꾸기는 거기서
+실패한다.
+
+테스트(`LocalStagingTest`, 새 파일 — "다른 프로세스" 는 같은 디렉터리 위의 둘째 제공자이고 소스 파일 시스템의 훅에서 움직이므로
+타이밍에 기대지 않는다): `targetIsNeverVisibleHalfCopied`, `failingStagerLeavesTheOtherProcessCopy`, `loserAdoptsTheWinnersCopy`. 셋 다
+고치기 전 코드에서 실패했다. `interruptedTargetIsReplaced` 는 전에도 통과한 회귀 가드다. 기존
+`LocalExecutionEnvironmentProviderStagingTest` 32건은 고치지 않고 통과하고, 거기에 스윕 테스트 하나
+(`sweepRemovesAbandonedTemporaryDirectories`)를 더했다.
+
+> **보강 (2026-10-05, PR #227 리뷰).** 위 "닫지 않은 것" (1) 을 닫았다. 리뷰가 재현한 대로, 잘못된 대상이 자리를 차지한 채 두
+> 프로세스가 같은 키를 스테이징하면 늦은 쪽이 **먼저 끝낸 쪽의 멀쩡한 사본**을 옆으로 옮기고 지웠다 — "스테이징됐나" 를 묻는
+> 것과 "자리에 뭔가 있나" 를 묻는 것이 두 단계라 그 사이에 완성본이 들어올 수 있었다. 바이트는 같아도 이긴 쪽이 이미 경로를
+> 내준 디렉터리가 사라진다. 이제 옆으로 옮긴 디렉터리가 그 키의 완성본이면 **되돌려 놓고** 자기 사본을 버린다. 되돌릴 자리가
+> 그새 또 찼으면 그 사본만 버리고 다시 시도한다. 테스트 `aValidCopyMovedAsideIsRestored` 는 워크스페이스 파일 시스템의 `exists`
+> 에 훅을 걸어 그 순간을 만들고, 대상 디렉터리의 inode 가 이긴 쪽의 것 그대로임을 단언한다(고치기 전에는 다른 inode 였다).
+> 남은 틈은 옮겼다가 되돌리는 두 rename 사이에 대상이 잠깐 없다는 것이다.
 
 ## EE-18 — 백그라운드 `Bash` 가 사용 불가 환경과 notice 를 다루지 않는다 · **닫힘** *(2026-09-29)*
 
@@ -834,7 +895,7 @@ PR #196 의 리뷰가 찾은 경합도 고쳤다 — `BashOutput` 의 대기가 
 받는 생성자를 더했다. 포그라운드 `Bash` 의 timeout·실패 오류도 이제 notice 를 앞에 싣는다. 셸 구현(샌드박스 셸)이 새 생성자로
 notice 를 넘겨야 실제로 보인다. 테스트는 `BashToolTest` 와 `BashOutputToolTest` 의 notice·사용 불가 환경 케이스.
 
-## EE-19 — artifact 보관이 이름 충돌·중복 집계·조용한 실패를 낸다 · **열림**
+## EE-19 — artifact 보관이 이름 충돌·중복 집계·조용한 실패를 낸다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 보관 경로에 원본의 상대 경로를 반영하고, 재등록을 한 번만 세고, 크기를 모를 때와 예외가 났을 때 note 를 붙인다.
 
@@ -846,6 +907,37 @@ notice 를 넘겨야 실제로 보인다. 테스트는 `BashToolTest` 와 `BashO
 **언제 다시 볼까.** artifact 가 덮어써졌거나 한도에 일찍 걸린다는 보고가 있을 때.
 
 출처: 빌드 리뷰 3.
+
+### 닫힘 (2026-10-05)
+
+네 결함을 따로 확인하고 따로 고쳤다.
+
+| 결함 | 확인 | 고친 것 |
+|------|------|---------|
+| 이름 충돌 | 참이고 조용했다 — 둘째 파일이 첫째를 덮고 두 artifact 가 같은 경로를 가리켰다 | 보관 경로가 `artifacts/{key}/{작업 디렉터리 기준 상대 경로}` 다. 기준은 `FileStamps.key` 와 같은 방식으로 고르고, `VfsPaths.resolveUnder` 가 `report.md` · `./report.md` · 절대 경로 표기를 한 경로로 만든다 |
+| 중복 집계 | 참 | `ArtifactCollector.totalBytes` 가 경로마다 한 번, 마지막 크기로 센다. 새 `totalBytesExcluding(storage, path)` 로 한도 검사가 덮어쓸 경로를 뺀다 |
+| 크기를 모를 때 | **`Edit` 에서만 참**(아래 1) | 음수 `fallbackSize` 가 "모름" 이다. `Edit` 이 `-1` 을 넘기고, 영속되지 않는 환경에서 크기를 모르면 등록하지 않고 note 를 단다 |
+| 바깥 `catch` | 참 | `[artifact not registered: registering it failed: <message>]` 를 단다 |
+
+착수해 보니 항목의 서술과 달랐던 것.
+
+1. **셋째 결함은 조건부로 참이었다 (규칙 넷의 "갈래를 센다").** `fallbackSize=0` 을 넘기는 것은 `ArtifactAwareEditTool` 뿐이다.
+   `ArtifactAwareWriteTool` 은 자기가 쓴 UTF-8 바이트 수를 넘기고 그 값은 한도에 걸린다 — `fallbackSizeIsHeldToTheLimits` 는
+   고치기 전에도 통과했고 가드로 남겼다.
+2. **보관 경로를 다시 짜는 독자는 없었다 (규칙 여섯).** `register` 의 호출자는 두 도구뿐이고(`\.register(` 와 `::register` 로
+   셌다), main 어디도 보관 경로를 조립하지 않는다 — `FileArtifact.getPath()` 로만 읽는다. 루트에 있는 파일의 경로는 전과 같다.
+
+**닫지 않은 것.** (1) 수집기는 여전히 등록마다 `FileArtifact` 를 하나씩 갖는다 — 같은 경로가 결과에 두 번 나올 수 있다
+(`OrcaAgentExecutor` 가 iteration 별 보고에 `sliceFrom` 을 쓰므로 그대로 두었고, 한도만 한 번 센다). (2) 영속되는 환경에서는
+크기를 몰라도 0 으로 등록되고 note 가 없다 — 거기에는 한도가 없다. (3) 작업 디렉터리 밖의 파일은 정규화한 전체 경로 아래에
+보관되어 워크스페이스 안의 같은 상대 경로와 겹칠 수 있다(`/tmp/a` 대 `<base>/tmp/a`). (4) 경로 세그먼트를 정제하지 않는다
+(이름의 `:` 는 로컬 제어 저장소에서 여전히 실패한다). (5) 재등록이 한도에 걸리거나 복사에 실패하면 이전 artifact 항목이 수집기에
+남는다 — 그리고 그때 이전 보관본이 지워졌다(EE-79, 같은 날 닫았다).
+
+테스트(고치기 전 코드에서 실패했다): `ArtifactArchiveTest` 의 `sameNameInDifferentDirectoriesDoesNotCollide`,
+`reRegistrationIsCountedOnce`, `unknownSizeIsNotArchived`, `unexpectedFailureAddsNote`, `ArtifactAwareEditToolTest` 의
+`editingTwiceCountsTheFileOnce`, `unreadableSizeAfterEditAddsNote`. `ArtifactCollectorTest.totalBytesCountsAPathOnce` 는 수정과 함께
+더해서 이전 실행이 없다.
 
 ## EE-20 — 실행 환경 키가 없는 컨텍스트에서 `Skill` 이 성공한다 · **닫힘** *(2026-10-05)*
 
@@ -993,7 +1085,7 @@ Javadoc 을 실제 동작에 맞춘다.
 `AimonStackProvisioningRollbackTest` — 테넌트 행은 수정 전 코드에서 실패하는 것을 확인했고, 시작 경로 행은 한 번만
 닫는다는 것을 고정한다(수정 전에도 통과한다 — 거기서는 누수가 아니었으므로).
 
-## EE-24 — 사용 불가 환경의 사용자 컨텍스트가 호스트 디렉터리를 보여 줄 수 있다 · **열림**
+## EE-24 — 사용 불가 환경의 사용자 컨텍스트가 호스트 디렉터리를 보여 줄 수 있다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 서술자의 작업 디렉터리가 비었을 때 스냅숏 값으로 떨어지지 않게 한다.
 
@@ -1006,6 +1098,31 @@ Javadoc 을 실제 동작에 맞춘다.
 **언제 다시 볼까.** EE-10 을 다룰 때.
 
 출처: 빌드 리뷰 3.
+
+### 닫힘 (2026-10-05)
+
+`UserContextMessageBuilder.build(snapshot, executionWorkingDirectory)` 는 이제 실행의 작업 디렉터리만 쓴다. `null` 이나 빈 값이면
+`working-directory` 항목을 내지 않는다. 한 인자짜리 `build(snapshot)` 도 그 항목을 내지 않는다. 이어서 EE-10 이 스냅숏의 필드를
+지웠다.
+
+착수해 보니 항목의 서술과 달랐던 것.
+
+1. **심각도(규칙 셋 · 여섯)가 적힌 것보다 가볍다 — 출하되는 스택에서는 닿지 않는다.** 이 블록은
+   `AgentEnvironmentSnapshotProvider` 가 실행기에 설정되어 있을 때만 주입되는데,
+   `OrcaAgentExecutorFactory.withAgentEnvironmentSnapshotProvider` 를 부르는 main 소스가 부트스트랩 · CLI · 스타터 · 샘플 어디에도
+   없다(`\.withAgentEnvironmentSnapshotProvider(` 와 타입 이름으로 셌다, 2026-10-05). 결함은 제공자를 직접 꽂은 임베더에게만
+   닿았다. 그 사실 자체는 새 항목이다(EE-78).
+2. **"그 값은 호스트 경로일 수 있다" 의 출처는 javadoc 예시였다.** `user.dir` 을 넣는 수집기는 main 에 없다 —
+   `new DefaultAgentEnvironmentSnapshotProvider(` 와 `AgentEnvironmentSnapshot.builder()` 의 main 호출 지점은 0건이다.
+3. **이 빌더에 닿는 경로는 턴 하나다.** 서브에이전트와 스킬 포크는 이 빌더를 쓰지 않고 시스템 프롬프트에
+   `EnvironmentBlocks.render(descriptor)` 를 붙이며, 그쪽은 서술자의 작업 디렉터리가 비면 이미 생략한다. 루틴은 사용자 컨텍스트
+   메시지를 만들지 않는다.
+
+**닫지 않은 것.** 이 수정 전에 호스트 경로가 `messages[0]` 로 저장된 세션은 다시 열어도 그 메시지를 그대로 갖는다.
+
+테스트(둘 다 고치기 전 코드에서 실패했다): `UserContextMessageBuilderTest.blankExecutionWorkingDirectoryDoesNotFallBackToTheSnapshot`
+(빈 문자열 · 공백 · `null`), `OrcaAgentExecutorUserContextInjectionTest.unavailableEnvironmentShowsNoWorkingDirectory`(던지는 환경
+제공자). 옛 대체 동작을 고정하던 `UserContextMessageBuilderTest` 의 세 테스트는 실행의 값으로 넘기도록 고쳤다.
 
 ## EE-25 — 워크플로 격리 오류가 실제 원인을 가린다 · **닫힘** *(2026-09-29)*
 
@@ -1331,7 +1448,7 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 
 출처: PR #195 리뷰 1.
 
-## EE-36 — `ReadOnlyLocalFileSystem` 은 읽기와 전체 목록만 실제 경로를 검사한다 · **열림**
+## EE-36 — `ReadOnlyLocalFileSystem` 은 읽기와 전체 목록만 실제 경로를 검사한다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** `exists`, `isDirectory`, `getMetadata`, `list` 에도 링크 규칙의 실제 경로 검사를 적용하고, `read` 는 검사한 실제
 경로로 파일을 연다.
@@ -1345,6 +1462,50 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 **언제 다시 볼까.** 스킬 디렉터리를 운영자가 아닌 쪽에서 받게 될 때(EE-16 의 재검토 조건과 같다).
 
 출처: PR #195 리뷰 1.
+
+### 닫힘 (2026-10-05)
+
+`exists` · `isDirectory` · `getMetadata` · `list` 도 먼저 실제 경로를 가두고(confine) 그 실제 경로에 `NOFOLLOW_LINKS` 로 묻는다.
+`read` 는 검사한 실제 경로를 `NOFOLLOW_LINKS` 로 연다. 검사에 걸린 링크에는 네 메서드 모두 `listRecursive` · `read` 와 같은
+`InvalidPathException` 으로 답한다.
+
+착수해 보니 항목의 서술과 달랐던 것.
+
+1. **처방(규칙 다섯)이 모자랐다.** `toRealPath` 검사만 붙이면 존재가 여전히 샌다 — 루트 밖을 가리키는 **끊어진** 링크는 "없음",
+   살아 있는 링크는 "거절" 로 답이 갈린다. `read` 에도 같은 틈이 있었다(가두기 전에 `isRegularFile` 을 물었다). 그래서
+   `requireConfined` 는 존재하지 않는 경로도 끝까지 해석한다 — 끊어진 링크를 따라가고, 없는 꼬리는 부모의 실제 경로에 붙인다
+   (40홉 상한).
+2. **`exists` 가 `false` 가 아니라 예외인 이유.** `StagedResource.scan` 은 목록을 읽기 전에 `exists(dir) && isDirectory(dir)` 를
+   묻는다. `false` 로 답하면 **빈 사본이 조용히 스테이징된다** — 링크 규칙이 막으려는 바로 그 결과다(PR #195 의 차단 지적).
+3. **도달 범위(규칙 여섯).** 프로덕션 인스턴스는 하나(`PathSkillRepository`)이고, 거기서 불리는 것은 `exists` · `isDirectory` ·
+   `listRecursive` · `read` 다. `getMetadata` 와 `list` 는 트리 안에 프로덕션 호출자가 없고 공개된
+   `SkillSource.getFileSystem()` / `StagedResource.getSourceFileSystem()` 을 통해서만 닿는다.
+
+**닫지 않은 것.** 검사한 실제 경로의 **조상 디렉터리**는 검사와 열기 사이에 링크로 바뀔 수 있다 — `java.nio` 에는 디렉터리 기준
+열기가 없다(클래스 javadoc 에 적었다). `list` · `getMetadata` · `listRecursive` 의 검사-사용 틈도 그대로다(처방은 `read` 만이었다).
+루프를 도는 링크의 `getMetadata` 는 이제 `FileNotFoundException` 이 아니라 `BackendConnectionException` 이다. EE-35 는 건드리지
+않았다.
+
+테스트(`ReadOnlyLocalFileSystemTest`, 여섯 다 고치기 전 코드에서 실패했다): `existsConfined`,
+`existsIsNoOracleForAMissingOutsideTarget`, `isDirectoryConfined`, `getMetadataConfined`, `listConfined`, `readOpensTheCheckedPath`.
+마지막 것은 경합 테스트다 — 한 스레드가 링크를 루트 안팎으로 바꾸는 동안 2만 번 읽고, 옛 코드에서는 13번째 · 31번째 읽기에서
+루트 밖 내용이 나왔다.
+
+> **보강 (2026-10-05, PR #227 리뷰).** 위 처방에 구멍이 둘 있었고 둘 다 "루트 밖 대상이 있을 때와 없을 때 답이 같다" 는 약속을
+> 깼다. 루트를 벗어나는 것은 아니었다.
+>
+> 1. **끊어진 링크의 대상을 글자로 정규화했다.** `realParent.resolve(target).normalize()` 는 `x/..` 를 `x` 가 링크인지 보기 전에
+>    지운다. `out -> <밖>/dir`, `hop -> out/../probe` 이면 커널은 `<밖>/probe` 로 가는데 이 코드는 루트 안의 `probe` 로 갔다 —
+>    밖의 대상이 없으면 `exists("hop")` 이 예외 없이 답했고 `read("hop")` 은 링크가 가리키지 않는 파일을 돌려줬다. 이제 대상을
+>    **한 세그먼트씩** 따라간다(`followTarget`).
+> 2. **`listRecursive` 가 가두기 전에 물었다.** 시작 디렉터리를 `Files.isDirectory` 로 먼저 보고, 끊어진 링크는 가두지 않고
+>    건너뛰었다. 밖을 가리키는 링크는 대상이 없으면 빈 목록(또는 그 파일만 빠진 목록), 있으면 예외였다 — 앞의 것은 링크 규칙이
+>    막으려던 "조용히 빈 사본" 그대로다. 이제 시작 디렉터리를 먼저 가두고, 끊어진 링크도 가둔다. 루트 안을 가리키는 끊어진
+>    링크는 전처럼 목록에 없다.
+>
+> 테스트 `danglingLinkThroughALinkIsNotResolvedLexically`, `listRecursiveIsNoOracleForAMissingOutsideTarget` — 둘 다 고치기 전
+> 코드에서 실패했다. 같은 리뷰가 본 것 하나는 고치지 않았다: 조상이 보통 파일인 경로(`SKILL.md/x`)의 `read` · `getMetadata` 는
+> 이제 `FileNotFoundException` 이 아니라 `BackendConnectionException` 이다. 그것에 기대는 호출자는 없다.
 
 ## EE-37 — 스테이징 마커는 있는지만 본다 · **닫힘** *(2026-10-05)*
 
@@ -1397,7 +1558,7 @@ EE-4 와 한 변경에서 닫았다. `LocalStaging` 은 이제 디스크에 있�
 > 시각이 그대로임(재복사가 없었음)을 단언한다. 같은 리뷰가 짚은 EE-4 의 틈 — `.gitignore` 는 복사 경로에서만 써서 이미 사본이
 > 있는 워크스페이스는 영영 받지 못한다 — 도 함께 닫았다(`reusedCopyGetsTheGitignore`).
 
-## EE-38 — 대소문자를 구분하는 소스를 구분하지 않는 디스크에 스테이징하면 파일이 합쳐진다 · **열림**
+## EE-38 — 대소문자를 구분하는 소스를 구분하지 않는 디스크에 스테이징하면 파일이 합쳐진다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 스테이징 전에 접은 이름이 겹치는 파일 쌍을 찾아 거부하거나, 복사한 결과를 디스크에서 다시 해시한다.
 
@@ -1410,6 +1571,29 @@ EE-4 와 한 변경에서 닫았다. `LocalStaging` 은 이제 디스크에 있�
 **언제 다시 볼까.** 스테이징된 스킬 파일이 소스와 다르다는 보고가 나올 때.
 
 출처: PR #195 리뷰 1.
+
+### 닫힘 (2026-10-05)
+
+EE-17 과 같은 파일이라 그 위에서 닫았다. 복사가 끝난 뒤 리소스의 이름 가운데 **접으면 같아지는 쌍**이 있으면, 임시 사본을
+워크스페이스에서 다시 읽어 해시한다. 어긋나면 두 경로를 이름으로 적은 `StagingException` 을 던지고 아무것도 내놓지 않는다.
+접기는 `VfsPaths.foldCase` 를 그대로 쓴다(그래서 `public` 이 되었고, "접은 이름이 같다" 는 "같은 파일일 **수 있다**" 는 뜻이라고
+javadoc 에 적었다).
+
+착수해 보니 항목의 서술과 달랐던 것.
+
+1. **두 처방 가운데 하나를 고르지 않고 겹쳤다 (규칙 다섯).** 항목은 "접은 이름이 겹치면 거부" 와 "디스크에서 다시 해시" 를
+   나란히 적었다. 앞의 것만 쓰면 대소문자를 구분하는 Linux 디스크에서 `RUN.sh` 와 `run.sh` 를 함께 가진 멀쩡한 스킬이 깨진다 —
+   `foldCase` 는 일부러 넉넉하게 접는다. 그래서 접기는 **언제 다시 읽을지**만 정하고, 거부할지는 디스크가 정한다. 그런 쌍이 없는
+   리소스는 추가 I/O 가 없다.
+2. **심각도(규칙 셋)는 적힌 그대로다.** 이 머신의 APFS 에서 재현했다 — `RUN.sh` 를 읽으면 `run.sh` 의 내용이 나왔다.
+
+**닫지 않은 것.** 접기가 예측하지 못하는 합쳐짐(Windows 의 끝 점 · 예약 이름, EE-33)은 다시 해시하지 않는다. 디렉터리만 겹치는
+경우(`Scripts/a.sh` + `scripts/b.sh`)는 한 디렉터리로 합쳐진 채 스테이징된다 — 내용은 온전하다. 파일과 디렉터리가 겹치는 경우
+(`Run` + `run/x.sh`)는 이 메시지가 아니라 VFS 쓰기에서 실패한다. 대소문자를 구분하는 디스크에서 "두 파일 다 온전히 스테이징된다"
+쪽 분기는 이 머신에서 돌릴 수 없었다.
+
+테스트(`LocalStagingTest`, 둘 다 고치기 전 코드에서 실패했다): `caseCollisionRefusedOnAFoldingWorkspace`(모든 경로를 소문자로
+바꾸는 워크스페이스로 감싸 Linux 에서도 결정적이다), `caseCollisionNeverStagesMergedFiles`(실제 디스크).
 
 ## EE-39 — 경로 규칙 파일 시스템의 `search` 가 결과를 덜 돌려줄 수 있다 · **닫힘** *(2026-10-05)*
 
@@ -1903,7 +2087,7 @@ WARN), `HookRegistryApplierTest`(셸 미지원 실행기 · 옵션 전달), `Age
 
 출처: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md) §3.4 · §8.
 
-## EE-54 — 포그라운드 `Bash` 는 여전히 스레드 인터럽트에 기댄다 · **열림**
+## EE-54 — 포그라운드 `Bash` 는 여전히 스레드 인터럽트에 기댄다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 포그라운드 `Bash` 의 중단도 셸의 취소 신호(`ExecutionOptions.getCancellation()`)로 보낸다.
 
@@ -1918,6 +2102,44 @@ WARN), `HookRegistryApplierTest`(셸 미지원 실행기 · 옵션 전달), `Age
 **언제 다시 볼까.** 인터럽트에 반응하지 않는 셸(샌드박스)을 붙일 때.
 
 출처: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md) §3.1 · §8.
+
+### 닫힘 (2026-10-05)
+
+`BashTool` 은 포그라운드 호출마다 `ShellCancellationSource` 를 만들고, 실행의 `CancellationSignal`
+(`InterruptAccess.signalOf(context)`)에 `onCancel(stop::cancel)` 을 건 뒤 그 토큰을 `ExecutionOptions` 에 싣는다. 리스너는
+`shell.execute` 직전에 걸고 `finally` 에서 뗀다 — 실행의 신호는 명령보다 오래 살기 때문이다. `ShellCancelledException` 은 스레드
+인터럽트와 **같은 결과**(`Bash command interrupted: <reason>`)로 돌려준다. 백그라운드 경로는 그대로다 — 그 신호는 실행의 것이
+아니라 작업의 것이다.
+
+착수하기 전에 확인한 것 (규칙 다섯).
+
+1. **새 배관이 필요 없었다.** 실행의 신호는 이미 세 실행기(`OrcaAgentExecutor` · `DefaultSubagentExecutor` · `RoutineExecutor`)가
+   도구 컨텍스트에 싣고 있고, `CancellationSignal.onCancel` 의 `Registration` javadoc 이 바로 이 쓰임(오래 사는 신호 위의 짧은
+   리스너)을 적어 두었다. 공개 SPI 는 넓어지지 않았다.
+2. **`getInterruptBehavior` 는 `THREAD_INTERRUPT` 그대로다.** 그 값은 이 도구를 병렬 워커 풀 밖에 두고
+   (`DefaultParallelToolDispatcher`, [`interrupt-open-items.md`](interrupt-open-items.md) 4번의 전제), 취소를 모르는 셸을 깨우는
+   유일한 수단이기도 하다. 설계 §3.1 도 포그라운드의 인터럽트 경로는 "그대로다" 라고 적는다. 그래서 바꾸지 않고 **나란히** 보낸다.
+
+착수해 보니 달라진 것.
+
+1. **`LocalShell` 의 내부 경로가 바뀌었다.** 코디네이터가 스레드를 인터럽트하기 전에 신호를 먼저 발화하므로, 보통의 포그라운드
+   명령은 이제 `InterruptedException` 이 아니라 취소 리스너로 끝난다. 보이는 결과는 같다 — 두 순서를 20번 돌려 문구가 같고
+   도구가 돌아올 때 인터럽트 플래그가 서 있음을 확인했다.
+2. **`requestInterrupt` 가 이제 200ms 쯤 막힐 수 있다.** 종료가 인터럽트를 **요청한 스레드**에서 돈다. SIGTERM 을 무시하는
+   명령에서 200~210ms, 보통 명령에서 0~1ms 를 쟀다. `ShellCancellationSource.cancel()` 의 javadoc 이 이미 받아들인 값이지만
+   포그라운드 인터럽트에는 새것이고, 부모 → 자식 취소 사슬에서는 차례로 쌓인다.
+3. **이미 발화한 신호에서는 명령이 시작되지 않는다.** 전에는 `LocalShell` 이 프로세스를 띄우고 곧바로 죽였다. 문구는 같다.
+4. **항목의 "원격 셸" 은 그 셸이 하는 만큼만 나아진다.** 셸이 `CANCELLATION` 을 선언하고 구현해야 한다. 이 변경은 신호를
+   **전달**할 뿐이다.
+
+**닫지 않은 것.** 포그라운드로 `VirtualShell.execute` 를 부르면서 취소를 싣지 않는 호출자가 main 에 하나 더 있다 — 훅의 셸
+액션이다(EE-80).
+
+테스트(`BashToolInterruptTest`, 앞의 셋은 고치기 전 코드에서 실패했다): `interruptReachesAShellThatIgnoresThreadInterrupts`(스레드
+인터럽트를 무시하는 가짜 셸 — 전에는 3초 timeout), `alreadyTrippedSignalArrivesCancelled`, `listenerDoesNotOutliveTheCommand`,
+`localShellInterruptOutcomeIsUnchanged`(실제 `LocalShell`, pid 가 죽었는지 확인 — 전후 모두 통과). 설계 문서는 동결된 본문 대신
+머리말에 "덧붙임 (2026-10-05, EE-54)" 을 달았고, 살아 있는 명세 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
+§5.3 · §13 을 고쳤다.
 
 ## EE-55 — `LocalShell` 의 트리 종료는 스냅숏 뒤에 태어난 손자를 놓친다 · **열림**
 
@@ -2139,6 +2361,11 @@ CLI `AgentSetupFactory` 의 리로드 훅) 설정으로 줄 길이 없다. 그�
 **언제 다시 볼까.** 날짜 · 시각을 사용자의 시간대로 말해야 한다는 요구가 처음 나올 때, 또는 다음 공개 SPI 정리 때.
 
 출처: [`../design/tool/execution-environment-ee14-user-locale.md`](../design/tool/execution-environment-ee14-user-locale.md) §2.3 · §10 Q1.
+
+> **2026-10-05 — 이 항목의 전제 하나가 출하되는 스택에서는 성립하지 않는다 (EE-78).** 위 "왜" 는 *"모델이 받는 날짜는 사용자
+> 컨텍스트의 `current-date` 하나"* 라고 적는다. 그 블록은 `AgentEnvironmentSnapshotProvider` 가 설정된 실행기에서만 주입되고,
+> 부트스트랩 · CLI · 스타터는 그것을 설정하지 않는다. 그러니 시간대를 실을지 정하기 전에 **그 블록이 실리는가**가 먼저다.
+> 결정문을 쓸 때 두 항목을 함께 본다(규칙 넷).
 
 ## EE-61 — `SubagentExecutionEnvironment` 는 실행 환경이 아니다 · **열림**
 
@@ -2651,3 +2878,77 @@ GridFS 와 같은 모양이다 — 경로를 검증·정규화하고, 디렉터�
 초록이다. S3 는 여전히 공유 VFS 계약 스위트(`AbstractVirtualFileSystemContractTest`)를 쓰지 않는다 — 다른 디렉터리 목록 경우를
 만족하는지 재지 않았으므로 이 항목에서 붙이지 않았다.
 
+---
+
+## EE-78 — 사용자 컨텍스트 블록은 출하되는 어떤 스택에서도 주입되지 않는다 · **열림**
+
+*(2026-10-05 등록. 출처는 EE-24 · EE-10 착수.)*
+
+**무엇을.** `AgentEnvironmentSnapshotProvider` 를 부트스트랩이 배선할지, 아니면 그 표면(CTX-06 의 `messages[0]` 주입)을 걷어낼지
+정한다.
+
+**왜.** `OrcaAgentExecutor.maybeInjectUserContextMessage` 는 제공자가 없으면 곧바로 돌아온다. 그리고
+`OrcaAgentExecutorFactory.withAgentEnvironmentSnapshotProvider` 를 부르는 main 소스가 없다 — `AimonStackBuilder` 는 그것 없이
+팩토리를 만들고 CLI 와 스타터는 부트스트랩을 거친다. 그래서 `AimonStack` 으로 조립한 에이전트의 모델은 `current-date` 도
+`extensions` 도 받지 않는다. 관측 가능한 결과는 **모델이 오늘 날짜를 모른다**는 것이다(시스템 프롬프트가 따로 날짜를 싣는지는
+이 항목에서 확인하지 않았다 — 착수할 때 먼저 볼 값이다). EE-60 은 "모델이 받는 날짜는 사용자 컨텍스트의 `current-date` 하나" 라는
+전제 위에 시간대를 논하는데, 그 전제는 출하되는 스택에서 성립하지 않는다.
+
+**어디** *(2026-10-05)* — `modules/aimon-core/src/main/java/at/aimon/core/agent/impl/orca/OrcaAgentExecutorFactory.java` 의
+`withAgentEnvironmentSnapshotProvider`(232행), `OrcaAgentExecutor.maybeInjectUserContextMessage`,
+`modules/aimon-bootstrap/src/main/java/at/aimon/bootstrap/AimonStackBuilder.java` 의 팩토리 생성(386행). 호출자는
+`withAgentEnvironmentSnapshotProvider` 와 타입 이름 `AgentEnvironmentSnapshotProvider` 로 모든 모듈의 main 과 `samples/` 를 훑어
+셌다 — 걸리는 것은 `OrcaAgentExecutor` · `OrcaAgentExecutorFactory` 자신과 `package-info` 뿐이다.
+
+**언제 다시 볼까.** EE-60(시간대)을 결정할 때 — 두 항목은 같은 블록을 두고 묻는다. 또는 모델이 날짜를 틀리게 말한다는 보고가
+있을 때. 배선하기로 하면 수집기가 무엇을 모으는지(날짜를 실행마다 새로 읽는가, 프롬프트 캐시를 깨는가)가 함께 정해져야 한다.
+
+## EE-79 — 재등록의 복사가 실패하면 이전 보관본까지 지워진다 · **닫힘** *(2026-10-05)*
+
+*(2026-10-05 등록. 출처는 EE-19 착수.)*
+
+**무엇을.** `ArtifactArchive` 가 복사에 실패했을 때 **이번 시도가 쓴 것만** 치우게 한다 — 임시 이름에 쓰고 바꿔 넣거나, 이전
+보관본이 있었으면 지우지 않는다.
+
+**왜.** `archive` 의 `catch` 는 `discard` 로 보관 경로를 지운다. 그 경로에 이전 등록의 멀쩡한 사본이 있었다면 함께 사라지고,
+수집기에는 그것을 가리키는 `FileArtifact` 가 남는다 — 사용자가 받는 artifact 목록에 열리지 않는 항목이 생긴다. 이 변경 전부터
+있던 모양이지만, EE-19 가 보관 경로에 상대 경로를 반영하면서 같은 파일의 재등록(`Edit` 을 두 번)이 같은 경로를 덮어쓰는 것이
+**보통의 경우**가 되었다. 코드를 읽어 적었고 재현하지는 않았다(규칙 셋).
+
+**어디** *(2026-10-05)* — `modules/aimon-core/src/main/java/at/aimon/core/tools/artifact/ArtifactArchive.java` 의 `archive` 와
+`discard`.
+
+**언제 다시 볼까.** `ArtifactArchive` 를 다음에 손볼 때, 또는 artifact 가 목록에는 있는데 열리지 않는다는 보고가 있을 때.
+
+### 닫힘 (2026-10-05)
+
+등록한 날 PR #227 의 리뷰가 같은 자리를 다시 짚어 그 PR 에서 닫았다. `ArtifactArchive` 는 이제 보관 경로 옆의
+`{보관 경로}.part-{hex 32자}` 에 복사하고 성공하면 보관 경로 위로 옮긴다. 실패하면 그 부분 사본만 지운다 — 보관 경로는 건드리지
+않는다. 이전 등록이 수집기에 남는 것은 그대로이고, 이제 그것이 가리키는 파일도 남는다.
+
+**심각도(규칙 셋)는 적은 것보다 한 칸 무거웠다.** 항목은 "실패하면 지운다" 만 적었는데, 리뷰가 짚은 대로 `LocalFileSystem.write`
+는 제자리에서 잘라 쓰므로 로컬 제어 저장소에서는 실패를 **알아차리기 전에** 이전 사본이 이미 망가져 있었다. 지우지 않는
+것만으로는 모자랐고, 옆에 쓰고 옮기는 쪽이 듣는 처방이었다(규칙 다섯).
+
+**닫지 않은 것.** S3 · GridFS 의 `move` 는 복사 후 삭제라 옮기는 도중의 실패는 여전히 보관 경로를 건드릴 수 있다.
+
+테스트: `ArtifactArchiveTest.failedReRegistrationKeepsTheEarlierCopy` — 복사 도중 끊기는 소스로 재등록하고, 첫 보관본의 내용이
+그대로이고 옆에 부분 사본이 남지 않음을 단언한다. 고치기 전에는 보관본이 없었다.
+
+## EE-80 — 훅의 셸 액션은 취소 신호를 싣지 않는다 · **열림**
+
+*(2026-10-05 등록. 출처는 EE-54 착수.)*
+
+**무엇을.** 선언 훅의 셸 명령(스킬 훅과 `hooks.json`)에도 실행의 취소 신호를 실을지 정한다.
+
+**왜.** EE-54 뒤로 포그라운드 `Bash` 는 실행의 신호를 셸에 넘긴다. main 에서 포그라운드로 `VirtualShell.execute` 를 부르는 다른
+호출자는 `ShellActionRunner` 하나이고, 그것은 timeout 과 `hook(true)` 만 실은 옵션으로 부른다. 그래서 훅 명령이 도는 동안
+사용자가 실행을 중단하면 그 명령은 자기 timeout 까지 돈다 — 스레드 인터럽트에 반응하는 `LocalShell` 에서는 지금도 멈추고,
+반응하지 않는 셸에서는 EE-54 가 `Bash` 에서 닫은 그 틈이 그대로다. 훅은 실행 밖 이벤트(`onSessionStart` 등)에서도 발화하므로
+"어느 신호" 인지가 이벤트마다 다르다.
+
+**어디** *(2026-10-05)* — `modules/aimon-core/src/main/java/at/aimon/core/skill/hook/declarative/ShellActionRunner.java`(56~60행).
+`\.execute(` 로 main 의 `VirtualShell` 호출자를 세었다. 셸 SPI 밖에서 `ProcessBuilder` 를 직접 쓰는 것은
+`RipgrepContentSearch` 와 `StdioMcpTransport` 다.
+
+**언제 다시 볼까.** 인터럽트에 반응하지 않는 셸(샌드박스)을 붙일 때 — EE-48(운영자 훅의 셸을 어디서 돌리는가)과 함께.
