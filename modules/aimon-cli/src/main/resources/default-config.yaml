@@ -165,6 +165,18 @@ agent:
 # The startup banner's `Agent bundle:` line names the bundle that loaded, and `LLM Provider: <provider>
 # (<model>)` the model its main agent's requests carry.
   name: "default"
+# Where a symbolic link in the bundle's skills/ directory may lead. A skill directory, or a file or directory
+# inside one, may be a link (a shared helper installed as agents/<name>/skills/foo -> /opt/shared-skills/foo).
+# It is followed when it resolves inside that skills/ directory or inside one of the directories listed here;
+# a skill with a link that resolves anywhere else is not loaded -- that skill only, with a warning naming the
+# link. Default: empty, so links must stay inside skills/.
+#   - Absolute paths only. A relative path, an empty entry and `~` fail startup naming the entry
+#     (`~` is not expanded; write ${HOME}/shared-skills). `/` fails startup too: it would allow everything.
+#   - A directory that does not exist is accepted and matches nothing.
+#   - It applies to a bundle read from a directory on the classpath. A bundle inside the CLI jar has no links,
+#     and skills under .aimon/skills are read through the workspace file system, which follows no link.
+#  allowedSkillLinkRoots:
+#    - /opt/shared-skills
 
 
 

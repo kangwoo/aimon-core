@@ -203,7 +203,8 @@ public interface ExecutionEnvironmentProvider {
 - `contentSearch()` — `rg` 가 PATH 에 있으면 그것을, 없으면 비어 있음(→ `GrepTool` 이 기존 방식으로 돈다)
 - `stage()` — 소스가 작업 환경과 **같은 `VirtualFileSystem` 인스턴스**면(제어 저장소를 가르기 전인 §11 1·2단계)
   그 경로를 그대로 돌려준다. 아니면 §4.4 의 규칙대로 작업 환경의 스테이징 영역에 복사한다. 스테이징 영역은 파일
-  도구에게 **읽기 전용**이다(§9.2)
+  도구에게 **읽기 전용**이다(§9.2). *2026-10-05 (EE-26) 이후:* 그 경로를 그대로 돌려받는 것은 **부모 환경뿐**이다.
+  `isolate()` 가 만든 브랜치의 `stage()` 는 소스가 워크스페이스 안에 있어도 스테이징 영역에 복사한다(§4.4)
 - `isolate(branchKey)` — `ScopedVirtualFileSystem` + **`workingDirectory` 를 브랜치 루트로 둔 셸 뷰**. 셸 뷰는
   모든 명령의 기본 cwd 를 브랜치 루트로 바꿀 뿐이다. 절대 경로 쓰기까지 막지는 못한다. 로컬 격리가 "파일
   도구 + 기본 cwd" 수준이라는 것을 javadoc 에 적는다. 지금은 셸 쪽 격리가 아예 없으니 그보다는 낫다.
@@ -326,6 +327,15 @@ public interface ExecutionEnvironmentProvider {
 사본이 섞이지 않는다. 로컬은 `{project}/.aimon-staged/`(작업 트리와 같은 디스크이지만 `isolate()` 의 브랜치
 접두어 밖), 샌드박스는 제공자가 정한다(§13).
 
+*2026-10-05 (EE-26) 이후:* **브랜치에게는 언제나 사본을 준다.** 소스가 워크스페이스 자체일 때 부모는 복사하지 않고 그
+디렉터리를 돌려주지만(§4.2), 그 경로는 부모의 작업 트리 안이다. 브랜치의 파일 도구는 그 경로를 `.worktrees/{k}/` 아래로
+옮겨 읽으므로 거기서 아무것도 찾지 못하거나 브랜치가 같은 이름으로 쓴 파일을 읽고, 브랜치의 셸은 같은 문자열로 부모의
+파일을 연다. 두 쪽이 같은 파일을 보는 자리는 스테이징 영역뿐이라, 로컬 브랜치의 `stage()` 는 그 지름길을 쓰지 않고
+`.aimon-staged/{name}/{contentKey}/` 에 복사한다. 사본은 **레지스트리가 적재한 판**이다 — 렌더된 본문이 가리키는 판이고,
+브랜치가 자기 트리에서 고친 것도 적재 뒤에 부모 트리에서 바뀐 것도 아니다. 적재 뒤에 바뀐 워크스페이스 스킬은 다른 소스와
+똑같이 `contentKey` 검사에 걸려 `StagingException` 이 된다. 부모는 살아 있는 디렉터리를 받으므로 그 검사를 거치지 않고,
+크기 상한도 브랜치에서만 적용된다.
+
 **스킬을 렌더하는 모든 경로가 거친다.** `${AIMON_SKILL_DIR}` 에 들어가는 값은 언제나 `stage()` 의 반환값이다.
 `Skill` 도구, 스킬 포크, 스킬 기반 슬래시 커맨드(`SkillBackedCommandExecutor` → `LlmSkillExecutor`)가 모두 여기에
 해당한다. 커맨드 경로는 지금 렌더 컨텍스트에 스킬 디렉터리를 아예 싣지 않아 `${AIMON_SKILL_DIR}` 가 빈 문자열이
@@ -361,7 +371,14 @@ public interface ExecutionEnvironmentProvider {
 (`getAllSkills`, `reloadAll`)은 그 스킬을 경고 로그와 함께 빼고 나머지를 돌려주므로, 목록으로 만드는 `Skill` 도구의
 정의, `/skills`, 스킬 기반 슬래시 커맨드, REPL 배너는 그대로 뜬다. 그 스킬을 이름으로 부르면(`getSkill`) 같은 오류가
 난다. 허용 루트는
-`PathSkillRepository.builder(root).allowedLinkRoot(...)` 로 정하고, 기본값은 비어 있어 저장소 루트만 허용한다. 조상으로
+`PathSkillRepository.builder(root).allowedLinkRoot(...)` 로 정하고, 기본값은 비어 있어 저장소 루트만 허용한다.
+*2026-10-05 (EE-35) 이후:* 디스크에서 읽는 에이전트 번들의 `skills/` 에는 그 목록을 **설정으로** 준다 — 스타터
+`aimon.skill.allowed-link-roots`, CLI `agent.allowedSkillLinkRoots`, 부트스트랩 `AimonStackSpec.allowedSkillLinkRoots`
+가 `AdaptiveAgentBundleLoader` → `FileSystemAgentBundleLoader` 를 거쳐 그 빌더에 닿는다. 허용 루트는 **절대 경로**여야
+하고(상대 경로와 빈 문자열은 프로세스를 띄운 디렉터리에 따라 뜻이 달라진다) **파일 시스템 루트**(`/`, 정규화하면 루트가
+되는 `/opt/..`)일 수 없다 — 모든 경로가 그 아래라 규칙이 꺼진다. 둘 다 목록을 받는 자리에서 거부하며, 빌더와
+`VirtualFileSystems.readOnlyLocal` 로 직접 조립할 때도 같다. 없는 디렉터리는 받아들이고 아무것도 허용하지 않는다. 루트로
+가는 링크인 허용 루트도 아무것도 허용하지 않는다. 조상으로
 되돌아가는 링크는 경고와 함께 건너뛰고, 끊긴 링크는 일반 파일이 아니므로 목록에 없다. 마지막 안전망으로, 소스에서
 `SKILL.md` 가 보이는 디렉터리가 파일 0개로 스캔되고 소스의 목록에도 아무 파일이 없으면 레지스트리가 적재를 실패시킨다 —
 소스가 디렉터리 안을 보지 못한 것이고, 그대로 두면 빈 사본이 스테이징된다. 목록에는 파일이 있는데 `.stageignore` 가 전부

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/skill/builtin-agent-skill-guide.md
-source_commit: 4c9b3d2
+source_commit: 710a611
 ---
 
 # Built-in Agent/Skill Guide
@@ -421,6 +421,15 @@ that path as well.
   restarted, so that files never get copied out of step with the version that was loaded.
 - **`.stageignore`** (a gitignore subset: globs, `dir/`, `!`, `#`) in the skill directory keeps large assets out of the
   copy. One skill directory stages at most 50 MB by default (starter property `aimon.environment.staging.max-bytes`).
+- **A skill installed as a link.** In the `skills/` directory of a bundle read from disk, a skill directory — or a
+  file or directory inside one — may be a symbolic link. A link is followed only when its real path lies inside
+  `skills/` or inside an **allowed link root**; a skill with a link that points anywhere else is not loaded (that skill
+  only, with a warning naming the link). There are no allowed link roots by default. If a shared helper is linked as
+  `skills/foo -> /opt/shared-skills/foo`, name that directory — starter `aimon.skill.allowed-link-roots`, CLI
+  `agent.allowedSkillLinkRoots`, or `AimonStackSpec.builder().allowedSkillLinkRoots(...)` when assembling by hand.
+  Absolute paths only: a relative path, an empty entry or `/` fails startup, and a directory that does not exist is
+  accepted and allows nothing. A bundle inside a jar has no links, so the setting does not reach it, and user skills
+  under `.aimon/skills` are read through the workspace file system, which follows no link at all.
 - `.aimon-staged/` holds copies only. The local provider writes `.aimon-staged/.gitignore` (`*`) with the first
   copy, so it does not need a line in the project's `.gitignore` (an existing file there is left alone).
 

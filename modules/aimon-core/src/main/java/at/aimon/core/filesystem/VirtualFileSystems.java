@@ -39,11 +39,30 @@ public final class VirtualFileSystems {
      * @param root
      *            the directory to expose (must not be null; need not exist)
      * @param allowedLinkRoots
-     *            further directories a link may resolve into (must not be null; may be empty)
+     *            further directories a link may resolve into (must not be null; may be empty); each as
+     *            {@link #checkedLinkRoots} requires
      * @return the filesystem
+     * @throws IllegalArgumentException
+     *             if an allowed link root is not an absolute path or is a filesystem root
      */
     public static VirtualFileSystem readOnlyLocal(Path root, Collection<Path> allowedLinkRoots) {
         return new ReadOnlyLocalFileSystem(root, allowedLinkRoots);
+    }
+
+    /**
+     * Checks and normalises allowed link roots the way {@link #readOnlyLocal(Path, Collection)} will, without building
+     * a filesystem and without touching the disk. For code that takes the list from configuration and wants a bad
+     * entry refused where it is written: a root must be an absolute path (the empty string is not one) and must not
+     * be a filesystem root such as {@code /}, which would allow a link to resolve anywhere. A root need not exist.
+     *
+     * @param allowedLinkRoots
+     *            the directories a link may resolve into (must not be null; may be empty; no null element)
+     * @return the roots, normalised, in the order given (immutable)
+     * @throws IllegalArgumentException
+     *             if a root is not an absolute path or is a filesystem root
+     */
+    public static List<Path> checkedLinkRoots(Collection<Path> allowedLinkRoots) {
+        return ReadOnlyLocalFileSystem.checkedLinkRoots(allowedLinkRoots);
     }
 
     /**

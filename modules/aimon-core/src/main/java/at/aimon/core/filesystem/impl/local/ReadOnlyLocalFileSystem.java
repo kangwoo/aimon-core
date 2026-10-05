@@ -92,14 +92,50 @@ public final class ReadOnlyLocalFileSystem implements VirtualFileSystem {
      * @param root
      *            the directory to expose (must not be null; need not exist)
      * @param allowedLinkRoots
-     *            further directories a symbolic link may resolve into (must not be null; may be empty)
+     *            further directories a symbolic link may resolve into (must not be null; may be empty); each as
+     *            {@link #checkedLinkRoots} requires
+     * @throws IllegalArgumentException
+     *             if an allowed link root is not an absolute path or is a filesystem root
      */
     public ReadOnlyLocalFileSystem(Path root, Collection<Path> allowedLinkRoots) {
         this.root = Objects.requireNonNull(root, "root must not be null").toAbsolutePath().normalize();
+        this.allowedLinkRoots = checkedLinkRoots(allowedLinkRoots);
+    }
+
+    /**
+     * Checks and normalises a list of allowed link roots without touching the disk, so that whoever takes the list
+     * from configuration can refuse a bad one where it is written rather than when the first skill is staged.
+     *
+     * <p>
+     * A root must be an <b>absolute</b> path. A relative one — which includes the empty string — would be resolved
+     * against the working directory the process happens to be started in, so the same configuration would allow
+     * different directories on different hosts. And it must not be a <b>filesystem root</b> ({@code /}, {@code C:\},
+     * or a path such as {@code /opt/..} that normalises to one): every real path lies under it, which would turn the
+     * link rule off while it still looks configured. A root need not exist; one that does not simply matches nothing.
+     *
+     * @param allowedLinkRoots
+     *            the directories a symbolic link may resolve into (must not be null; may be empty; no null element)
+     * @return the roots, normalised, in the order given
+     * @throws IllegalArgumentException
+     *             if a root is not an absolute path or is a filesystem root
+     */
+    public static List<Path> checkedLinkRoots(Collection<Path> allowedLinkRoots) {
         Objects.requireNonNull(allowedLinkRoots, "allowedLinkRoots must not be null");
-        this.allowedLinkRoots = allowedLinkRoots.stream()
-                .map(p -> Objects.requireNonNull(p, "allowed link root must not be null").toAbsolutePath().normalize())
-                .toList();
+        final List<Path> checked = new ArrayList<>(allowedLinkRoots.size());
+        for (Path allowed : allowedLinkRoots) {
+            Objects.requireNonNull(allowed, "allowed link root must not be null");
+            if (!allowed.isAbsolute()) {
+                throw new IllegalArgumentException("An allowed link root must be an absolute path, got '" + allowed
+                        + "': a relative path would name a different directory wherever the process is started");
+            }
+            final Path normalized = allowed.normalize();
+            if (normalized.getNameCount() == 0) {
+                throw new IllegalArgumentException("An allowed link root must not be a filesystem root, got '" + allowed
+                        + "': every path lies under it, so it would allow a link to resolve anywhere");
+            }
+            checked.add(normalized);
+        }
+        return List.copyOf(checked);
     }
 
     private Path resolve(String path) {
@@ -129,7 +165,9 @@ public final class ReadOnlyLocalFileSystem implements VirtualFileSystem {
             return real;
         }
         for (Path allowed : allowedLinkRoots) {
-            if (real.startsWith(realOf(allowed))) {
+            final Path realAllowed = realOf(allowed);
+            // An allowed root that is itself a link to a filesystem root would allow everything; it allows nothing.
+            if (realAllowed.getNameCount() > 0 && real.startsWith(realAllowed)) {
                 return real;
             }
         }

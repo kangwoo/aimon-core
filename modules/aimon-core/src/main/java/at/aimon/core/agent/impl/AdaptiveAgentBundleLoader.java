@@ -4,6 +4,7 @@ import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -15,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import at.aimon.core.agent.definition.exception.AgentDefinitionNotFoundException;
 import at.aimon.core.agent.definition.parser.AgentDefinitionParser;
 import at.aimon.core.agent.definition.parser.MarkdownAgentDefinitionParser;
+import at.aimon.core.filesystem.VirtualFileSystems;
 import at.aimon.core.skill.CompositeSkillRegistry;
 import at.aimon.core.skill.parser.MarkdownSkillParser;
 import at.aimon.core.skill.parser.SkillParser;
@@ -67,6 +69,7 @@ public final class AdaptiveAgentBundleLoader implements AgentBundleLoader {
     private final AgentDefinitionParser parser;
     private final ClassLoader classLoader;
     private final SkillParser skillParser;
+    private final List<Path> allowedSkillLinkRoots;
 
     /**
      * Creates a new AdaptiveAgentBundleLoader with default settings.
@@ -123,10 +126,44 @@ public final class AdaptiveAgentBundleLoader implements AgentBundleLoader {
      */
     public AdaptiveAgentBundleLoader(String basePath, AgentDefinitionParser parser, ClassLoader classLoader,
             SkillParser skillParser) {
+        this(basePath, parser, classLoader, skillParser, List.of());
+    }
+
+    /**
+     * Creates a new AdaptiveAgentBundleLoader whose on-disk bundles may hold skills that are symbolic links into the
+     * given directories.
+     *
+     * <p>
+     * The list reaches {@link FileSystemAgentBundleLoader} and nothing else, so it matters only for a bundle whose
+     * {@code agent.md} is found on disk (a {@code file:} class path entry — an IDE or {@code gradle run} output
+     * directory, an exploded deployment, a configuration directory put on the class path). A bundle read from a jar
+     * has no links to follow. It is checked here, whichever way bundles turn out to be loaded, so a bad entry is
+     * refused at startup: see {@link VirtualFileSystems#checkedLinkRoots(Collection)}.
+     *
+     * @param basePath
+     *            the classpath base path for agent directories (must not be null)
+     * @param parser
+     *            the agent definition parser (must not be null)
+     * @param classLoader
+     *            the class loader to use for resource lookup (must not be null)
+     * @param skillParser
+     *            the skill parser used by the delegate loaders for bundled skills (must not be null)
+     * @param allowedSkillLinkRoots
+     *            absolute directories, none of them a filesystem root, that a link in an on-disk bundle's
+     *            {@code skills/} directory may resolve into (must not be null; may be empty)
+     * @throws NullPointerException
+     *             if any parameter is null
+     * @throws IllegalArgumentException
+     *             if an allowed link root is not an absolute path or is a filesystem root
+     */
+    public AdaptiveAgentBundleLoader(String basePath, AgentDefinitionParser parser, ClassLoader classLoader,
+            SkillParser skillParser, Collection<Path> allowedSkillLinkRoots) {
         this.basePath = Objects.requireNonNull(basePath, "Base path cannot be null");
         this.parser = Objects.requireNonNull(parser, "Parser cannot be null");
         this.classLoader = Objects.requireNonNull(classLoader, "ClassLoader cannot be null");
         this.skillParser = Objects.requireNonNull(skillParser, "Skill parser cannot be null");
+        this.allowedSkillLinkRoots = VirtualFileSystems.checkedLinkRoots(
+                Objects.requireNonNull(allowedSkillLinkRoots, "Allowed skill link roots cannot be null"));
     }
 
     /**
@@ -163,8 +200,8 @@ public final class AdaptiveAgentBundleLoader implements AgentBundleLoader {
                 final Path resolvedBasePath = agentMdPath.getParent().getParent();
 
                 log.debug("Using filesystem loader for agent '{}' (resource at '{}')", name, agentMdPath);
-                final AgentBundle onDisk = new FileSystemAgentBundleLoader(resolvedBasePath, parser, skillParser)
-                        .load(name);
+                final AgentBundle onDisk = new FileSystemAgentBundleLoader(resolvedBasePath, parser, skillParser,
+                        allowedSkillLinkRoots).load(name);
                 return layerOverClasspath(name, onDisk);
             } catch (URISyntaxException e) {
                 log.warn(

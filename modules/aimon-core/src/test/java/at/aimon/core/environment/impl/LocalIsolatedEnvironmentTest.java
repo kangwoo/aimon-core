@@ -28,8 +28,11 @@ import at.aimon.core.agent.impl.orca.environment.WorktreeMerge;
 import at.aimon.core.environment.EnvironmentRequest;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.StagedResource;
+import at.aimon.core.environment.exception.StagingException;
 import at.aimon.core.filesystem.VirtualFileSystems;
 import at.aimon.core.filesystem.exception.FileAccessDeniedException;
+import at.aimon.core.filesystem.impl.local.LocalFileSystem;
+import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCancellationSource;
 import at.aimon.core.shell.ShellCommandResult;
@@ -170,6 +173,104 @@ class LocalIsolatedEnvironmentTest {
         assertThat(branch.fileSystem().listRecursive(".")).containsExactly("result.txt");
         final MergeReport report = WorktreeMerge.promote(parent, List.of(branch), WorktreeMerge.Policy.FAIL);
         assertThat(report.promoted()).containsExactly("result.txt");
+    }
+
+    /**
+     * EE-26. A skill whose source is the workspace itself is not copied by the parent: {@code stage()} answers with the
+     * source directory. A branch cannot use that path — its file tools map it into {@code .worktrees/k/}, where the
+     * skill is not — so a branch is given a copy in the staging area, the one directory it shares with the parent.
+     */
+    @Test
+    @DisplayName("EE-26: a skill that lives in the workspace is staged for a branch as a copy both its file tools and"
+            + " its shell can use")
+    void workspaceResidentSkillIsUsableFromABranch() throws Exception {
+        parent.fileSystem().write("skills/demo/SKILL.md", "# demo");
+        parent.fileSystem().write("skills/demo/scripts/x.sh", "echo workspace-script\n");
+        // What a VfsSkillRepository over the workspace filesystem hands the registry.
+        final StagedResource resource = StagedResource.scan(parent.fileSystem(), "skills/demo", "demo");
+        final String ws = workspace.toAbsolutePath().normalize().toString();
+
+        final String path = branch.stage(resource);
+
+        // The shell (bash ${AIMON_SKILL_DIR}/x.sh) resolves the string on the host ...
+        final ShellCommandResult run = branch.shell().execute(() -> "sh " + path + "/scripts/x.sh");
+        assertThat(run.exitCode()).isZero();
+        assertThat(run.stdout()).contains("workspace-script");
+        // ... and the file tools (Read on a path of the rendered body) resolve it through the branch scope.
+        assertThat(read(branch, path + "/scripts/x.sh")).isEqualTo("echo workspace-script\n");
+        assertThat(branch.fileSystem().listRecursive(path)).isNotEmpty();
+        assertThat(path).isEqualTo(ws + "/.aimon-staged/demo/" + resource.getContentKey());
+        // Nothing of it is in the branch, so a merge promotes nothing.
+        assertThat(branch.fileSystem().listRecursive(".")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("EE-26: the parent still gets a workspace skill's own directory, and nothing is copied for it")
+    void workspaceResidentSkillIsNotCopiedForTheParent() throws Exception {
+        parent.fileSystem().write("skills/demo/SKILL.md", "# demo");
+        parent.fileSystem().write("skills/demo/scripts/x.sh", "echo workspace-script\n");
+        final StagedResource resource = StagedResource.scan(parent.fileSystem(), "skills/demo", "demo");
+
+        final String path = parent.stage(resource);
+
+        assertThat(path).isEqualTo(workspace.toAbsolutePath().normalize() + "/skills/demo");
+        assertThat(workspace.resolve(".aimon-staged")).doesNotExist();
+        assertThat(read(parent, path + "/scripts/x.sh")).isEqualTo("echo workspace-script\n");
+    }
+
+    /**
+     * EE-26, which bytes. The branch is given the version the registry loaded — the one the rendered body was written
+     * for — not what the branch has since written under the same relative path in its own tree, and not a parent
+     * directory that changed after the load: that one is refused like any other source that no longer matches its
+     * content key.
+     */
+    @Test
+    @DisplayName("EE-26: a branch gets the loaded version of a workspace skill, whatever it wrote in its own tree, and"
+            + " a skill changed since the load is refused")
+    void branchGetsTheLoadedVersionOfAWorkspaceSkill() throws Exception {
+        parent.fileSystem().write("skills/demo/SKILL.md", "# demo");
+        parent.fileSystem().write("skills/demo/scripts/x.sh", "echo loaded\n");
+        final StagedResource resource = StagedResource.scan(parent.fileSystem(), "skills/demo", "demo");
+        branch.fileSystem().write("skills/demo/scripts/x.sh", "echo branch-edit\n");
+
+        final String path = branch.stage(resource);
+
+        assertThat(read(branch, path + "/scripts/x.sh")).isEqualTo("echo loaded\n");
+        assertThat(read(branch, "skills/demo/scripts/x.sh")).isEqualTo("echo branch-edit\n");
+
+        parent.fileSystem().write("skills/demo/scripts/x.sh", "echo changed-after-load\n");
+        final ExecutionEnvironment other = parent.isolate("other").orElseThrow();
+        // Already staged under this key: the copy on disk still is the loaded version.
+        assertThat(other.stage(resource)).isEqualTo(path);
+        Files.delete(Path.of(path, LocalStaging.MARKER));
+        assertThatThrownBy(() -> other.stage(resource)).isInstanceOf(StagingException.class)
+                .hasMessageContaining("changed on disk after it was loaded");
+    }
+
+    @Test
+    @DisplayName("EE-26: a workspace given as a filesystem instance behaves the same — the source is that instance")
+    void workspaceResidentSkillOnABorrowedFileSystem(@TempDir Path borrowedRoot) throws Exception {
+        final LocalFileSystem shared = new LocalFileSystem(new LocalFileSystemConfig(borrowedRoot.toString()));
+        shared.initialize();
+        try (shared;
+                LocalExecutionEnvironmentProvider borrowed = LocalExecutionEnvironmentProvider.builder()
+                        .fileSystem(shared).contentSearch(false).build()) {
+            shared.write("skills/demo/SKILL.md", "# demo");
+            shared.write("skills/demo/scripts/x.sh", "echo workspace-script\n");
+            final StagedResource resource = StagedResource.scan(shared, "skills/demo", "demo");
+            final ExecutionEnvironment borrowedParent = borrowed
+                    .resolve(EnvironmentRequest.builder().agentRuntimeId(AgentRuntimeId.fromName("iso")).build());
+            final ExecutionEnvironment borrowedBranch = borrowedParent.isolate("k").orElseThrow();
+            final String root = borrowedRoot.toAbsolutePath().normalize().toString();
+
+            assertThat(borrowedParent.stage(resource)).isEqualTo(root + "/skills/demo");
+            final String path = borrowedBranch.stage(resource);
+
+            assertThat(path).isEqualTo(root + "/.aimon-staged/demo/" + resource.getContentKey());
+            assertThat(read(borrowedBranch, path + "/scripts/x.sh")).isEqualTo("echo workspace-script\n");
+            assertThat(borrowedBranch.shell().execute(() -> "sh " + path + "/scripts/x.sh").stdout())
+                    .contains("workspace-script");
+        }
     }
 
     /**

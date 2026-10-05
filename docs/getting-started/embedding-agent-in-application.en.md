@@ -338,6 +338,7 @@ aimon:
       mode: deny                    # deny (default) | allow-list | suspend | channel
       allow: []
       pending-turn-ttl: 10m
+    allowed-link-roots: []          # directories (absolute) a symbolic link in an on-disk bundle's skills/ may point into
 
   scheduling:
     backend: none                   # none (default) | in-memory | quartz

@@ -632,14 +632,15 @@ final AgentBundleLoader effectiveBundleLoader = (this.agentBundleLoader != null)
         ? this.agentBundleLoader
         : new AdaptiveAgentBundleLoader(DEFAULT_AGENT_BUNDLE_BASE_PATH,
                 new MarkdownAgentDefinitionParser(),
-                Thread.currentThread().getContextClassLoader(), skillParser);
+                Thread.currentThread().getContextClassLoader(), skillParser,
+                allowedSkillLinkRoots(config));
 final AgentBundle agentBundle = effectiveBundleLoader.load(extractAgentName(config));
 ```
 
 - **`OutputFormatter`** — owns console colouring and formatting. In your own application, replace it with an SSE streamer, a log appender, a WebSocket sender, ...
 - **`LocalShell`** — the **host shell** that runs the `command` handlers declared in `hooks.json` (wrapped in a `HostShellActionExecutor` and handed to hot reload). It is not for skill hooks. It is `AutoCloseable` and is cleaned up in `AgentSetup.close()`.
 - **`SkillParser`** — the markdown skill definition parser. It is wired with a `DefaultShellActionExecutor` (no arguments) so that `shell` hooks are accepted, but **no shell is injected** — a skill hook's shell action runs in the execution environment's shell of the execution the hook fires in.
-- **`AgentBundleLoader`** — loads `agents/<name>/agent.md` together with the subagents and skills underneath it. It reads from the classpath, so it packages into a jar.
+- **`AgentBundleLoader`** — loads `agents/<name>/agent.md` together with the subagents and skills underneath it. It reads from the classpath, so it packages into a jar. The last argument is the configuration's `agent.allowedSkillLinkRoots` — when the bundle is read from a **directory on disk** rather than a jar, the directories a symbolic link inside its `skills/` may point into (empty by default, so a skill with a link that leaves `skills/` is not loaded). Absolute paths only: a relative path, an empty entry, `~` (not expanded — write `${HOME}`) or `/` fails when the configuration is read, naming the entry by index. It does not reach user skills under `.aimon/skills`.
 
 **Your adaptation points:**
 - If you want to build agent definitions dynamically from code or a database, build the `AgentBundle` yourself and inject it through `AgentSetupFactory`'s package-private constructor.
