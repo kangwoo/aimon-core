@@ -1,6 +1,6 @@
 ---
 translated_from: CONTRIBUTING.md
-source_commit: f651622
+source_commit: b934eb6
 ---
 
 # AIMON Core 기여 가이드
@@ -146,6 +146,11 @@ export 되어 있는 동안에는 — 이 계층을 위해서든 CLI 를
 `@Tag("packaging")`(fat jar 실행)입니다. 각각 `./gradlew integrationTest`, `./gradlew packagingTest` 로
 돌고, CI 와 릴리스 게이트가 둘 다 돌립니다. (셋째였던 `@Tag("playwright")` 는 aimon-browser-playwright 가
 별도 저장소로 옮겨 가면서 함께 나갔습니다.)
+
+`./gradlew javadocCoverage` 는 게이트가 아닙니다. 배포되는 각 모듈의 공개 API 가운데 javadoc 이 없는 요소를
+셉니다 — [`docs/project/api-stability.md`](docs/project/api-stability.md) §6 의 `1.0` 조건입니다 — 그리고
+실패하지 않습니다. 모듈별 목록은 `modules/<module>/build/reports/javadoc-coverage/warnings.txt` 에 있습니다.
+공개 API 를 더한다면 문서를 함께 달아 그 수가 늘지 않게 해 주세요.
 
 검사가 실패하면 HTML 리포트가 이유를 말해 줍니다.
 

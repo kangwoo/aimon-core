@@ -31,6 +31,25 @@ plugins.withId("java-library") {
     }
 }
 
+// What is missing from the published javadoc. Registered here rather than in aimon.java-conventions because
+// "public API" is a property of what ships: the CLI, the samples and the unpublished testkits are not measured.
+// Within a module, `*.impl` is left out — api-stability.md §2 says that is internal, and a count that included it
+// would measure the wrong thing. Report-only; see JavadocCoverageTask.
+plugins.withId("java-library") {
+    val main = the<SourceSetContainer>().named("main")
+    // Resolved here, not inside the task block: in there `the<...>()` looks at the task's own extensions.
+    val tool = the<JavaToolchainService>().javadocToolFor(the<JavaPluginExtension>().toolchain)
+    tasks.register<JavadocCoverageTask>("javadocCoverage") {
+        description = "Count public API elements without javadoc (report only, never fails)"
+        group = "documentation"
+        sources.from(main.map { it.allJava.matching { exclude("**/impl/**") } })
+        classpath.from(main.map { it.compileClasspath }, main.map { it.output })
+        javadocTool.set(tool)
+        reportDir.set(layout.buildDirectory.dir("reports/javadoc-coverage"))
+        rootDir.set(rootProject.layout.projectDirectory)
+    }
+}
+
 plugins.withId("java-platform") {
     configure<MavenPublishBaseExtension> {
         // A platform has no code, so there is no javadoc and no sources to attach: the POM is the whole
