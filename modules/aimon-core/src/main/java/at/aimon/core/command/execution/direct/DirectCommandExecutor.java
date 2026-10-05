@@ -94,7 +94,9 @@ public final class DirectCommandExecutor implements CommandExecutor {
             // If result already has metadata (rare), preserve it; otherwise add ours
             if (result.getMetadata().isEmpty()) {
                 // Wrap result with metadata
-                if (result.isSuccess()) {
+                if (result.isTruncated()) {
+                    return CommandExecutionResult.truncated(result.getResponse(), metadata);
+                } else if (result.isSuccess()) {
                     return CommandExecutionResult.success(result.getResponse(), metadata);
                 } else {
                     return CommandExecutionResult.failure(result.getResponse(),

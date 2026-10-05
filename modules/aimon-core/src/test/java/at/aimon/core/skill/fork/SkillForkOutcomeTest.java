@@ -36,4 +36,15 @@ class SkillForkOutcomeTest {
         assertThatThrownBy(() -> SkillForkOutcome.failure(null)).isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("Error message");
     }
+
+    @Test
+    void truncated_IsASuccessThatSaysItsAnswerIsNotWhole() {
+        SkillForkOutcome outcome = SkillForkOutcome.truncated("partial");
+
+        assertThat(outcome.isSuccess()).isTrue();
+        assertThat(outcome.isTruncated()).isTrue();
+        assertThat(outcome.getFinalAnswer()).contains("partial");
+        assertThat(SkillForkOutcome.success("whole").isTruncated()).isFalse();
+        assertThat(SkillForkOutcome.failure("boom").isTruncated()).isFalse();
+    }
 }

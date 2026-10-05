@@ -124,9 +124,16 @@ public final class SkillBackedCommandExecutor implements CommandExecutor {
         return builder.build();
     }
 
+    /**
+     * Carries a skill's result over to the command's, field for field — including whether its final answer was cut off
+     * at {@code max_tokens}, which is what lets the turn that ran the slash command end {@code TRUNCATED} (L-26).
+     */
     private static CommandExecutionResult toCommandResult(SkillExecutionResult skillResult) {
         final Optional<ExecutionMetadata> metadata = skillResult.getMetadata()
                 .map(SkillBackedCommandExecutor::toExecutionMetadata);
+        if (skillResult.isTruncated()) {
+            return CommandExecutionResult.truncated(skillResult.getResponse(), metadata.orElse(null));
+        }
         if (skillResult.isSuccess()) {
             return metadata.map(m -> CommandExecutionResult.success(skillResult.getResponse(), m))
                     .orElseGet(() -> CommandExecutionResult.success(skillResult.getResponse()));

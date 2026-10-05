@@ -83,8 +83,10 @@ import at.aimon.core.tools.ToolContextKeys;
  * ({@link TruncatedResponses}). None of a cut response's tool calls is dispatched, on either path below: each is
  * answered with {@link TruncatedResponses#refusal(ToolUse)}, because a cut call's arguments did not arrive and the
  * response does not say which call was cut. A cut final answer comes back as a success whose text ends with
- * {@link TruncatedResponses#TRUNCATION_MARKER} — a skill result has no completion reason, and that is how a fork-mode
- * skill's cut answer already reads. Both log a WARN naming the skill. The executors' stalled-iteration guard
+ * {@link TruncatedResponses#TRUNCATION_MARKER} and whose {@link SkillExecutionResult#isTruncated()} is {@code true} — a
+ * skill result has no completion reason, so the flag is the type signal a slash invocation's turn reads to end
+ * {@code TRUNCATED}; a fork-mode skill whose fork was cut reports the same two things. Both log a WARN naming the
+ * skill. The executors' stalled-iteration guard
  * ({@link StalledIterationGuard}) stops this loop too, so a streak of refused or failing calls fails the skill with the
  * guard's stop message instead of running to {@code max-iterations}; nothing else could stop it, because a slash
  * command cannot be interrupted.
@@ -287,7 +289,8 @@ public class LlmSkillExecutor implements SkillExecutor {
             }
 
             // A final answer cut off at max_tokens is not a clean one. Keep the partial text — a failure's response
-            // would be an error message instead — and mark it with the marker the executors put on a TRUNCATED answer.
+            // would be an error message instead — mark it with the marker the executors put on a TRUNCATED answer, and
+            // say so on the result (isTruncated) so a caller does not have to read the marker out of the text.
             if (TruncatedResponses.isTruncated(currentResponse)) {
                 final String flaggedAnswer = currentResponse.getTextContent() + TruncatedResponses.TRUNCATION_MARKER;
                 log.warn(
@@ -297,7 +300,7 @@ public class LlmSkillExecutor implements SkillExecutor {
                         TruncatedResponses.reasoningClause(currentResponse.getTokenUsage()));
                 transcriptBuffer.addMessage(
                         Message.assistant(flaggedAnswer).withReasoningTraces(currentResponse.getReasoningTraces()));
-                return SkillExecutionResult.success(flaggedAnswer,
+                return SkillExecutionResult.truncated(flaggedAnswer,
                         buildMetadata(iterationCount, accumulatedTokens, startTime));
             }
 
@@ -459,6 +462,10 @@ public class LlmSkillExecutor implements SkillExecutor {
             outcome = effectiveForkExecutor.fork(skill, renderedBody, forkContext);
         }
         final SkillExecutionMetadata metadata = buildMetadata(0, accumulatedTokens, startTime);
+        if (outcome.isTruncated()) {
+            // The fork's answer was cut at max_tokens and already ends in the marker; hand the fact on as well.
+            return SkillExecutionResult.truncated(outcome.getFinalAnswer().orElse(""), metadata);
+        }
         if (outcome.isSuccess()) {
             return SkillExecutionResult.success(outcome.getFinalAnswer().orElse(""), metadata);
         }

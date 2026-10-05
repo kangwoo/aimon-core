@@ -1065,3 +1065,40 @@ sources executed in that run. 21 modules reported 10,992 tests, 0 failed, 72 ski
 and `aimon-cli` 482 among them. The other skips are `aimon-llm-anthropic` 25 and `aimon-llm-openai` 17, whose live
 classes need a key, and `aimon-sandbox-docker` and `aimon-sandbox-kubernetes` 14 each. The four doc checks and
 `mkdocs build --strict` passed with this section in the tree.
+
+## 13. After L-26 — a turn that ran a cut slash skill ends `TRUNCATED`
+
+*Appended 2026-10-05, when backlog `L-26` was decided and built. Nothing above is rewritten. It reverses one rejection in
+§3 D1 and supersedes §8.1 F-2, §9 Q4 and the "Consequence, recorded rather than changed" sentence at the end of D1; the
+marker text and everything else D1 decided stand.*
+
+**What changed.** D1 rejected a typed signal on the skill result because nothing would read it and carrying it to the turn
+needed `command/**`, which was not that run's. Both conditions were lifted by the decision. The signal is a flag, not a
+`CompletionReason`:
+
+- `SkillExecutionResult.truncated(response, metadata)` and `isTruncated()`. `LlmSkillExecutor` returns it for a cut final
+  answer, with the same marked text as before.
+- `SkillForkOutcome.truncated(finalAnswer)` and `isTruncated()`. `SubagentBackedSkillForkExecutor` returns it when the
+  fork ended `CompletionReason.TRUNCATED`, and `LlmSkillExecutor.executeFork` carries it over.
+- `CommandExecutionResult.truncated(response, metadata)` and `isTruncated()`. `SkillBackedCommandExecutor.toCommandResult`
+  maps the skill's flag; `DirectCommandExecutor` keeps it when it re-wraps a result to add metadata.
+- `OrcaAgentExecutor.executeCommandFlow` ends the turn `success` with `CompletionReason.TRUNCATED` when the command result
+  is truncated — the shape `createTruncatedResult` gives an agent's own cut answer.
+
+**Why a flag and not a reason.** A reason on these three types would need a truthful value on every path, and they do not
+know one: a skill that failed because its fork was interrupted, refused by a hook or out of iterations would have to say
+`ERROR`, which is what the flag avoids claiming. `isTruncated()` says the one thing the producer knows.
+
+**§2.2 was narrower than the defect.** It reads *"a fork-mode skill already surfaces a cut fork as a success whose text
+ends in the marker"* as the precedent for the marker. A fork-mode skill run as a slash command had the same consequence as
+the inline one — the turn ended `COMPLETED` — and the backlog item named only the inline skill. Both are fixed; the
+e2e test has one case each.
+
+**What did not change.** The marker stays in the text, so a reader of the text sees what it saw. The model's own path
+(`SkillTool`) is unchanged: there the skill's answer is a tool result and the turn goes on. A truncated command turn
+fires `onStop` with `success=true` and commits the response as a synthetic assistant message, as every command turn
+does; session totals and the transcript treat it as they treat the agent's `TRUNCATED` turn, because neither branches on
+the reason. The command path still emits no `ExecutionCompleted` event (§3 D1, F-7).
+
+**Measured.** `SlashSkillToolDispatchE2EIntegrationTest`, written first: the inline and the fork-mode case each failed
+with `expected: TRUNCATED but was: COMPLETED`; the uncut control passed before and after.

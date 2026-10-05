@@ -57,8 +57,9 @@ import ch.qos.logback.core.read.ListAppender;
  * final answer came back as a plain success. Now a cut response's calls are refused with
  * {@link TruncatedResponses#REFUSED_TOOL_CALL_MESSAGE} on both dispatch paths, a cut final answer ends with
  * {@link TruncatedResponses#TRUNCATION_MARKER}, and {@link StalledIterationGuard#MAX_CONSECUTIVE_STALLED_ITERATIONS}
- * iterations whose calls all failed end the skill. A skill result has no completion reason, so the marker in
- * {@link SkillExecutionResult#getResponse()} is how a cut answer shows — the shape a fork-mode skill already had.
+ * iterations whose calls all failed end the skill. A cut answer shows twice on a skill result: the marker at the end of
+ * {@link SkillExecutionResult#getResponse()}, and {@link SkillExecutionResult#isTruncated()} (L-26), which is what a
+ * slash invocation's turn reads to end {@code TRUNCATED}.
  */
 @DisplayName("LlmSkillExecutor max_tokens truncation and stalled-iteration handling")
 class LlmSkillExecutorTruncationTest {
@@ -144,6 +145,7 @@ class LlmSkillExecutorTruncationTest {
         final SkillExecutionResult result = execute(ToolContext.empty());
 
         assertThat(result.isSuccess()).isTrue();
+        assertThat(result.isTruncated()).as("the cut is a type signal too, not only the marker (L-26)").isTrue();
         assertThat(result.getResponse()).isEqualTo("partial" + TruncatedResponses.TRUNCATION_MARKER);
         assertThat(warnings()).anySatisfy(warning -> assertThat(warning).contains("Skill '" + SKILL + "'")
                 .contains("final answer truncated at max_tokens"));
