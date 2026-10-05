@@ -516,7 +516,54 @@ public class OpenAILlmClient implements LlmClient {
             return;
         }
 
+        reportForcedChatToolsWithoutNone(requested, capabilities, modelName, tools);
         requested.ifPresent(effort -> requestBuilder.reasoningEffort(OpenAiReasoningEfforts.toWire(effort)));
+    }
+
+    /**
+     * Says that a tools request is about to go out in a shape {@code api.openai.com} is measured to refuse.
+     *
+     * <p>
+     * A model whose row does the reasoning round trip belongs on {@code /v1/responses}; it is on Chat Completions here
+     * only because {@code responsesApiEnabled} is {@code false}. For the one such model whose ladder holds
+     * {@link ReasoningEffort#NONE} — {@code gpt-5.6-terra} — that endpoint answers a request carrying function tools
+     * with a 400 unless {@code reasoning_effort} is {@code none}: measured on 2026-09-10 with no effort and on
+     * 2026-10-05 with {@code low}, {@code medium} and {@code high}, each <em>"Function tools with reasoning_effort
+     * are not supported … use /v1/responses or set reasoning_effort to 'none'"</em>. The row's
+     * {@code supportsToolsWithReasoning} is a fact about the other endpoint, so the tools rule above does not catch
+     * it.
+     *
+     * <p>
+     * <strong>Reported, not repaired.</strong> Sending {@code none} in place of what was configured would put a
+     * request on the wire that nobody made — the rule {@link OpenAiRequestParameters#maySendEffort} states — and the
+     * switch exists for gateways, which may answer differently from the server this was measured against. So the
+     * request goes out as configured and the operator is told what was measured and what the two exits are. A model
+     * with no {@code none} rung is not reported: the server's stated exit does not exist for it and nothing measured
+     * says its request fails.
+     *
+     * @param requested
+     *            the effort about to be sent, or empty when none is
+     * @param capabilities
+     *            the resolved capabilities
+     * @param modelName
+     *            the resolved model name, for the warning text
+     * @param tools
+     *            the tools on this request
+     */
+    private void reportForcedChatToolsWithoutNone(Optional<ReasoningEffort> requested, ModelCapabilities capabilities,
+            String modelName, List<ToolDefinition> tools) {
+        if (tools.isEmpty() || config.isResponsesApiEnabled() || !capabilities.supportsReasoningTraceRoundTrip()
+                || !capabilities.acceptedReasoningEfforts().contains(ReasoningEffort.NONE)
+                || requested.filter(ReasoningEffort.NONE::equals).isPresent()) {
+            return;
+        }
+        final String carried = requested.map(effort -> "reasoningEffort " + effort).orElse("no reasoningEffort");
+        reportDivergence("forcedChatToolsWithoutNone=" + carried + "@" + modelName,
+                "{} is on Chat Completions because responsesApiEnabled is false, and this request carries tools with "
+                        + "{}. api.openai.com refuses function tools on Chat Completions for this model unless "
+                        + "reasoning_effort is 'none' (HTTP 400, measured 2026-10-05). The request is sent as "
+                        + "configured. If it is refused, set reasoningEffort: none or enable the Responses API.",
+                modelName, carried);
     }
 
     /**

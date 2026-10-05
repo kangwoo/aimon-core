@@ -514,7 +514,8 @@ prefix 를 공유하는 형제의 측정은 요청 표면에 대한 증거가 �
   내려왔고, `none` 칸은 2026-10-05 에 쟀다(200, §6.3). 그 옆도 같은 날 쟀다 — effort 를 적지 않은 도구 요청은 400 으로
   실측되어 있었고(2026-09-10), `low` · `medium` · `high` 를 도구와 함께 실은 요청도 셋 다 400 이다(§6.3). 행의
   `supportsToolsWithReasoning: true` 는 `/v1/responses` 에서 잰 사실이라 클라이언트는 Chat 에서도 그 rung 을 도구와 함께
-  그대로 내보낸다. 행과 요청 로직은 바꾸지 않았다 —
+  그대로 내보낸다. 행과 요청 로직은 바꾸지 않았고, 클라이언트가 그 요청을
+  내보내기 전에 한 번 WARN 한다(`OpenAILlmClient.reportForcedChatToolsWithoutNone`) — 바꿔 보내지 않기로 한 결정은
   [`llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md) L-28
 - **나머지 미측정은 항목이 아니라 §6.4 의 빈 칸이다**
 

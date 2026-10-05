@@ -30,8 +30,9 @@ Central is versioned independently).
 - **On `api.openai.com` itself, `gpt-5.6-terra` forced onto Chat Completions takes tools only with
   `reasoningEffort: none`.** Measured on 2026-10-05: with one function tool, `none` is a 200 and `low`, `medium` and
   `high` are each a 400 (*"Function tools with reasoning_effort are not supported for gpt-5.6-terra in
-  /v1/chat/completions…"*); without tools all four are a 200. The client sends the configured rung as it is, so the
-  refusal is the server's. Both guides say so; the client's behaviour is backlog L-28.
+  /v1/chat/completions…"*); without tools all four are a 200. The client sends what was configured — it substitutes
+  nothing, and a gateway may answer differently — and **warns once before it does**: a tools request for such a model
+  that carries a rung other than `none`, or no effort at all, logs what was measured and the two exits (L-28).
 - The sampling parameters (`temperature`, `topP`, the two penalties) are still Java-only.
 
 ### Fixed: foreground `Bash` is also stopped through the shell's cancellation signal (EE-54)

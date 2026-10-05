@@ -579,8 +579,8 @@ llm:
 function tools, use /v1/responses or set reasoning_effort to 'none'."* `reasoning_effort: "none"` 을 실은 요청은
 도구가 없을 때도, 함수 도구 하나를 실었을 때도 **200** 이다(2026-10-05, `finish_reason: stop`,
 `reasoning_tokens: 0`). **그 밖의 rung(`low` · `medium` · `high`)은 도구와 함께 보내면
-같은 문구의 400 이고, 도구가 없으면 200 이다**(2026-10-05, 여섯 요청). 클라이언트는 그 rung 을 그대로 내보내므로
-(백로그 L-28) 거절은 서버가 한다. 에이전트 정의의
+같은 문구의 400 이고, 도구가 없으면 200 이다**(2026-10-05, 여섯 요청). 클라이언트는 그 rung 을 그대로 내보내고
+거절은 서버가 한다 — 내보내기 전에 그 사실을 한 번 WARN 으로 말한다. 에이전트 정의의
 `model.reasoningEffort` 가 `llm.reasoningEffort` 를 이기므로 `none` 은 실제로 요청에 닿는 쪽에 적는다. 이것은
 그 모델 하나의 사정이다 — 게이트웨이 뒤의 모델이 무엇을 받는지는 그 게이트웨이가 정한다.
 

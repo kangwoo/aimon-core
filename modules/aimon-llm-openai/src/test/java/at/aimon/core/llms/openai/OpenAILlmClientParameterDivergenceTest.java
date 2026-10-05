@@ -350,4 +350,75 @@ class OpenAILlmClientParameterDivergenceTest {
         assertThat(warnings().get(0)).contains("Model capability lookup for " + A_REASONING_MODEL + " failed")
                 .contains("treating the model as unknown");
     }
+
+    /**
+     * L-28. {@code gpt-5.6-terra} has an exact row whose ladder holds {@code NONE} and whose
+     * {@code supportsToolsWithReasoning} is {@code true} — both measured on {@code /v1/responses}. Forced onto Chat
+     * Completions, {@code api.openai.com} answers a tools request with a 400 unless {@code reasoning_effort} is
+     * {@code none} (measured 2026-10-05 for {@code low}, {@code medium}, {@code high}; 2026-09-10 for no effort).
+     * The client sends what was configured — a gateway may answer differently — and says so.
+     */
+    private static final String TERRA = "gpt-5.6-terra";
+
+    private static final String FORCED_CHAT_TOOLS_WARNING = "refuses function tools on Chat Completions";
+
+    private OpenAILlmClient terraForcedOntoChat() {
+        return client(OpenAIConfig.builder().apiKey("test-key").model(TERRA).responsesApiEnabled(false).build());
+    }
+
+    @Test
+    @DisplayName("L-28: terra forced onto Chat with tools and a rung other than none is warned about, and sent as asked")
+    void forcedChatToolsWithARungIsWarnedAndSentUnchanged() {
+        final OpenAILlmClient client = terraForcedOntoChat();
+
+        final ChatCompletionCreateParams params = sendAndCapture(client,
+                LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).build(), List.of(A_TOOL));
+
+        assertThat(warnings()).filteredOn(w -> w.contains(FORCED_CHAT_TOOLS_WARNING)).singleElement()
+                .satisfies(w -> assertThat(w).contains(TERRA).contains("reasoningEffort LOW")
+                        .contains("responsesApiEnabled").contains("reasoningEffort: none"));
+        // Nothing is substituted: the rung that was configured is the rung on the wire.
+        assertThat(wireBodyOf(params)).contains("\"reasoning_effort\":\"low\"");
+    }
+
+    @Test
+    @DisplayName("L-28: the same request with no effort configured is warned about too — the server's default is refused")
+    void forcedChatToolsWithNoEffortIsWarned() {
+        final OpenAILlmClient client = terraForcedOntoChat();
+
+        final ChatCompletionCreateParams params = sendAndCapture(client, LlmModel.builder().build(), List.of(A_TOOL));
+
+        assertThat(warnings()).filteredOn(w -> w.contains(FORCED_CHAT_TOOLS_WARNING)).singleElement()
+                .satisfies(w -> assertThat(w).contains(TERRA).contains("no reasoningEffort"));
+        assertThat(wireBodyOf(params)).doesNotContain("reasoning_effort");
+    }
+
+    @Test
+    @DisplayName("L-28: the warning is said once per configuration, not once per call")
+    void forcedChatToolsWarningIsSaidOnce() {
+        final OpenAILlmClient client = terraForcedOntoChat();
+        final LlmModel model = LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build();
+
+        send(client, model, List.of(A_TOOL));
+        send(client, model, List.of(A_TOOL));
+
+        assertThat(warnings()).filteredOn(w -> w.contains(FORCED_CHAT_TOOLS_WARNING)).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("L-28: none with tools, any rung without tools, and a model with no none rung are all left in peace")
+    void theMeasuredWorkingShapesAreNotWarnedAbout() {
+        final OpenAILlmClient terra = terraForcedOntoChat();
+        send(terra, LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build(), List.of(A_TOOL));
+        send(terra, LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).build(), List.of());
+
+        // A family name: its ladder has no `none`, so the server's stated exit does not exist for it and nothing
+        // measured says the request fails.
+        final OpenAILlmClient family = new OpenAILlmClient(
+                OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL).responsesApiEnabled(false).build(),
+                mockOpenAIClient);
+        send(family, LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).build(), List.of(A_TOOL));
+
+        assertThat(warnings()).noneMatch(w -> w.contains(FORCED_CHAT_TOOLS_WARNING));
+    }
 }

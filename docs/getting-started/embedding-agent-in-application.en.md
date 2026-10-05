@@ -556,8 +556,8 @@ aimon:
   gpt-5.6-terra in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to
   'none'."* A request carrying `reasoning_effort: "none"` is a **200** both without tools and with one
   function tool (2026-10-05). **Any other rung (`low` · `medium` · `high`) sent alongside tools is a 400 with
-  the same text, and a 200 without tools** (2026-10-05). The client sends those rungs as they are, so it is the
-  server that refuses. An agent definition's `model.reasoningEffort` wins over the property, so write
+  the same text, and a 200 without tools** (2026-10-05). The client sends those rungs as they are and it is the
+  server that refuses — the client says so once at WARN before sending. An agent definition's `model.reasoningEffort` wins over the property, so write
   `none` on whichever one actually reaches the request. **A misspelled key name is silent here too.** The CLI
   keys on the same axis are camelCase (`llm.openai.responsesApiEnabled`).
 - `supplied` under `knowledge` / `memory` means "**you declare that bean and the starter only connects the

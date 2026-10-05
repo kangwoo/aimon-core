@@ -526,7 +526,8 @@ aimon:
   gpt-5.6-terra in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to
   'none'."* `reasoning_effort: "none"` 을 실은 요청은 도구가 없을 때도, 함수 도구 하나를 실었을 때도 **200**
   입니다(2026-10-05). **그 밖의 rung(`low` · `medium` · `high`)은 도구와 함께 보내면 같은 문구의 400 이고,
-  도구가 없으면 200 입니다**(2026-10-05). 클라이언트는 그 rung 을 그대로 내보내므로 거절은 서버가 합니다. 에이전트 정의의
+  도구가 없으면 200 입니다**(2026-10-05). 클라이언트는 그 rung 을 그대로 내보내고 거절은 서버가 합니다 —
+  내보내기 전에 그 사실을 한 번 WARN 으로 말합니다. 에이전트 정의의
   `model.reasoningEffort` 가 프로퍼티를 이기므로 `none` 은 실제로 요청에 닿는 쪽에 적습니다. **여기서도 키
   이름의 오타는 조용합니다.** CLI 쪽 같은 축의 키는 camelCase 입니다(`llm.openai.responsesApiEnabled`).
 - `knowledge` / `memory` 의 `supplied` 는 "**여러분이 그 빈을 선언하고 스타터는 도구만 거기에 연결한다**"는

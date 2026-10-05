@@ -1,4 +1,4 @@
-# LLM 설정 표면 — 등록 항목 28건 (열림 10 · 닫힘 18)
+# LLM 설정 표면 — 등록 항목 28건 (열림 9 · 닫힘 19)
 
 출처는 #46 이다 — 모델 capability 표를 CLI yaml 과 스타터 프로퍼티에서 확장할 수 있게 한 작업.
 설계는 옛 `model-capability-config-key.md`(지금은 [`../design/llm/configuration-surface.md`](../design/llm/configuration-surface.md)) 이고,
@@ -204,7 +204,8 @@ N-1 을 여기 적는 이유는 그것이 답이라고 보아서가 아니라 **
 > `OpenAIResponsesRequestFactory.acceptedEffort`).
 >
 > **그 칸의 옆에서 새 항목이 나왔다 (L-28).** 같은 날 나머지 rung 도 쟀더니 `low` · `medium` · `high` 는 도구와 함께면 400 이다.
-> 이 스위치가 설정으로 내려오면서 그 조합이 운영자 경로가 되었다.
+> 이 스위치가 설정으로 내려오면서 그 조합이 운영자 경로가 되었다. L-28 은 같은 날 닫혔다 — 클라이언트가 그 요청을 내보내기
+> 전에 한 번 WARN 한다.
 >
 > **착수하며 틀렸던 것 (규칙 둘).** `AimonDocumentedPropertiesTest` 는 문서 → 프로퍼티 방향만 본다 — 프로퍼티가 문서에
 > 있어야 한다고 요구하지 않는다. 그래서 #62 의 `aimon.llm.openai.reasoning-summary` 는 스타터 가이드에 적힌 적이 없었고,
@@ -1841,6 +1842,34 @@ function tools, use /v1/responses or set reasoning_effort to 'none'."*(`param: r
 
 **언제 다시 볼까.** `api.openai.com` 에 대고 이 스위치를 끈 배포가 400 을 보고할 때, 또는 `gpt-5.6` 가족의 다른 이름
 (`luna` · `sol`)에 행을 줄 때 — 같은 구멍이 있는지 그때 함께 잰다.
+
+### 닫힘 (2026-10-05)
+
+**결정 — 바꿔 보내지 않고 WARN 으로 알린다. 메인테이너가 골랐다.** 위 (b) 의 WARN 쪽이고, 요청 로직과 행은 그대로다.
+`OpenAILlmClient.reportForcedChatToolsWithoutNone` 이 다음이 모두 참일 때 한 번(설정 서명마다) 말한다 — `responsesApiEnabled` 가
+꺼져 있고, 모델의 행이 trace 왕복을 지원하고(원래 `/v1/responses` 로 갔을 모델), 사다리에 `none` 이 있고, 요청에 도구가 있고,
+내보내는 effort 가 `none` 이 아니다(effort 를 적지 않은 경우 포함). 메시지는 잰 사실(400, 2026-10-05)과 출구 둘
+(`reasoningEffort: none`, Responses API 켜기)을 말하고, 요청은 설정된 대로 나간다.
+
+**기각한 둘.**
+
+- **스위치가 꺼져 있으면 effort 를 아예 보내지 않는다.** 터라의 유일한 출구를 막는다 — effort 없는 도구 요청이 바로 2026-09-10 에
+  잰 400 이고, 통하는 것은 `none` 을 **명시적으로 보낸** 요청뿐이다. 그리고 이 스위치의 대상인 게이트웨이 배포에서 도구 없는
+  요청의 effort(네 rung 모두 200)까지 사라진다.
+- **`none` 으로 바꿔 보낸다.** 통하는 유일한 모양이지만 아무도 적지 않은 요청을 내보내는 일이다 — `maySendEffort` 의 javadoc 이
+  적은 원칙(*"Omitted, never raised"*)의 첫 예외가 되고, 측정은 `api.openai.com` 의 것이라 게이트웨이 뒤에서는 틀린 대체일 수
+  있다.
+
+**조건을 "사다리에 `none` 이 있다" 로 그은 이유.** 서버의 오류 문구가 말하는 출구가 `none` 이므로, 그 rung 이 없는 모델에는
+출구 자체가 없고 그 요청이 실패한다는 측정도 없다. 오늘 내장 표에서 이 조건에 걸리는 이름은 터라 하나다.
+
+**닫지 않은 것.** 400 은 그대로 난다 — 이 변경은 그 전에 한 줄을 남길 뿐이다. `modules/aimon-cli/examples/gpt-5.6-terra.yaml` 의
+주석 블록은 고치지 않았다. `gpt-5.6` 가족의 다른 이름은 재지 않았다(위 트리거).
+
+테스트(`OpenAILlmClientParameterDivergenceTest`, 앞의 셋은 구현 전에 실패했다): `forcedChatToolsWithARungIsWarnedAndSentUnchanged`
+(WARN 이 나오고 와이어에는 `"reasoning_effort":"low"` 가 그대로다), `forcedChatToolsWithNoEffortIsWarned`,
+`forcedChatToolsWarningIsSaidOnce`, `theMeasuredWorkingShapesAreNotWarnedAbout`(`none` + 도구, 도구 없는 rung, `none` 이 없는 가족
+이름 — 셋 다 조용하다).
 
 ---
 
