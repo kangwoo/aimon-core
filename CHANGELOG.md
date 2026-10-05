@@ -28,6 +28,7 @@ Central is versioned independently).
 - **Copyable examples no longer name models the API answers 404.** The `aimon-llm-anthropic` README, the
   `AnthropicConfig` / `AnthropicLlmClient` javadoc and the subagent parser format examples drop the model line and say
   what runs without one. Backlog L-27.
+
 ### Build: Quartz and OpenSearch tests run on the versions those modules ship (backlog D-2)
 
 - **`aimon-scheduling-quartz` and `aimon-knowledge-opensearch` resolve both test classpaths consistently with
