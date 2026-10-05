@@ -102,6 +102,40 @@ class SubagentLlmDefaultsTest {
     }
 
     @Test
+    @DisplayName("a parent that states no temperature leaves the subagent's unset, so the deployment default applies")
+    void anUnsetParentTemperatureStaysUnset() {
+        LlmModel parent = LlmModel.builder().name("parent-model").build();
+
+        LlmModel resolved = SubagentLlmDefaults.resolveModel(subagentWithModel(null), parent);
+
+        assertThat(resolved.getTemperature()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("the parent's topP and penalties are carried like its temperature")
+    void parentSamplingParametersAreCarried() {
+        LlmModel parent = LlmModel.builder().name("parent-model").temperature(0.2).topP(0.9).presencePenalty(0.5)
+                .frequencyPenalty(-0.5).build();
+
+        LlmModel resolved = SubagentLlmDefaults.resolveModel(subagentWithModel("frontmatter-model"), parent);
+
+        assertThat(resolved.getTemperature()).contains(0.2);
+        assertThat(resolved.getTopP()).contains(0.9);
+        assertThat(resolved.getPresencePenalty()).contains(0.5);
+        assertThat(resolved.getFrequencyPenalty()).contains(-0.5);
+    }
+
+    @Test
+    @DisplayName("unset parent topP and penalties stay unset")
+    void unsetParentSamplingParametersStayUnset() {
+        LlmModel resolved = SubagentLlmDefaults.resolveModel(subagentWithModel(null), DEFAULT_MODEL);
+
+        assertThat(resolved.getTopP()).isEmpty();
+        assertThat(resolved.getPresencePenalty()).isEmpty();
+        assertThat(resolved.getFrequencyPenalty()).isEmpty();
+    }
+
+    @Test
     @DisplayName("the two-arg overload behaves like a null override")
     void twoArgOverloadEqualsNullOverride() {
         Subagent subagent = subagentWithModel("frontmatter-model");

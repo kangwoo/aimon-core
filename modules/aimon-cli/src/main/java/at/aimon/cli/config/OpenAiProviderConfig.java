@@ -101,8 +101,8 @@ public class OpenAiProviderConfig {
      * <p>
      * <b>우선순위는 셋이고 여기가 가운데다.</b> 에이전트 정의의 {@code model.temperature} 가 있으면 그것이 이기고,
      * 없으면 이 값이 실리며, 둘 다 없으면 <b>아무것도 실리지 않아</b> 서버 기본값이 적용된다 — 클라이언트는 값을
-     * 지어내지 않는다({@code docs/design/llm/request-parameters.md} §2). 서브에이전트 요청은 예외다: 메인
-     * 에이전트의 정의에 값이 없으면 코어가 {@code 0.7} 을 명시값으로 싣기 때문에 이 키가 닿지 않는다(같은 문서 §3.5).
+     * 지어내지 않는다({@code docs/design/llm/request-parameters.md} §2). 서브에이전트 요청도 같은 규칙이다: 띄운
+     * 에이전트의 값을 물려받고, 그 정의에 값이 없으면 아무것도 싣지 않으므로 이 키가 닿는다(같은 문서 §3.5).
      *
      * <p>
      * <b>벤더 블록에 있는 이유는 뜻이 벤더마다 달라서다.</b> OpenAI 의 범위는 {@code 0.0}–{@code 2.0} 이고

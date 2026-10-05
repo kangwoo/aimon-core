@@ -594,9 +594,9 @@ aimon:
   says so once at WARN — a model whose built-in capability row says it takes no sampling parameters (`gpt-5*`,
   the o-series, some Claude models), `temperature` on an Anthropic request that carries a thinking parameter,
   and the two penalties on a request that goes to `/v1/responses`. Background calls on the same client that state no value receive
-  this default as well. **Subagent requests can be the exception**: when the main agent's definition has no
-  `temperature`, the framework puts `0.7` on a subagent request explicitly, and an explicit value wins over
-  this property. The CLI keys on the same axis are camelCase (`llm.openai.topP`).
+  this default as well. **Subagent requests follow the same rule**: a value in the starting agent's definition is
+  inherited, and when it has none nothing is put on the request, so this property
+  reaches it. The CLI keys on the same axis are camelCase (`llm.openai.topP`).
 - `supplied` under `knowledge` / `memory` means "**you declare that bean and the starter only connects the
   tools to it**". Spring made it, so Spring closes it, and the stack merely borrows. The same reason is
   why `knowledge.backend` **deliberately has no OpenSearch value** — `aimon-knowledge-opensearch` exists

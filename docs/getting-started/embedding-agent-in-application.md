@@ -563,9 +563,9 @@ aimon:
   실리지 않아 서버 기본값이 적용됩니다. 파라미터마다 따로 정해집니다. 값이 실리지 않는 요청에서는 클라이언트가
   한 번 WARN 으로 말합니다 — 내장 capability 행이 샘플링을 받지 않는다고 적은 모델(`gpt-5*` · o-series · 일부
   Claude 모델), thinking 파라미터가 실린 Anthropic 요청의 `temperature`, `/v1/responses` 로 가는 요청의 두
-  penalty. 같은 클라이언트를 쓰는 백그라운드 호출도 자기 값을 싣지 않았다면 이 기본값을 받습니다. **서브에이전트 요청은 예외일 수
-  있습니다**: 메인 에이전트의 정의에 `temperature` 가 없으면 프레임워크가 서브에이전트 요청에 `0.7` 을
-  명시값으로 싣고, 명시값은 이 프로퍼티를 이깁니다. CLI 쪽 같은 축의 키는 camelCase 입니다(`llm.openai.topP`).
+  penalty. 같은 클라이언트를 쓰는 백그라운드 호출도 자기 값을 싣지 않았다면 이 기본값을 받습니다. **서브에이전트 요청도 같은 규칙을
+  따릅니다**: 띄운 에이전트의 정의에 값이 있으면 그것을 물려받고, 없으면 아무것도 싣지 않아 이 프로퍼티가
+  닿습니다. CLI 쪽 같은 축의 키는 camelCase 입니다(`llm.openai.topP`).
 - `knowledge` / `memory` 의 `supplied` 는 "**여러분이 그 빈을 선언하고 스타터는 도구만 거기에 연결한다**"는
   뜻입니다. Spring 이 만들었으니 Spring 이 닫고, 스택은 빌려 쓸 뿐입니다. `knowledge.backend` 에
   **OpenSearch 값이 일부러 없는** 것도 같은 이유입니다 — `aimon-knowledge-opensearch` 는 존재하고 동작하지만

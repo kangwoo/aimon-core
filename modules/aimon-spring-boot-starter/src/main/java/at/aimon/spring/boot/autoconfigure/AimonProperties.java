@@ -1494,8 +1494,9 @@ public class AimonProperties implements InitializingBean {
              * It is the middle of three: an agent definition's {@code model.temperature} wins over it, and when
              * neither is written the parameter is left out and the server's default applies — the client does not
              * invent a value. It applies to every request this client sends whose model carries no temperature, not
-             * only to agent turns. Subagent requests are the exception: when the parent agent's definition has no
-             * temperature the framework puts {@code 0.7} on the request explicitly, so this key does not reach them.
+             * only to agent turns. Subagent requests follow the same rule: they inherit the parent agent's value, and
+             * when
+             * its definition has none nothing is put on the request, so this key reaches them.
              *
              * <p>
              * A value outside the range fails startup naming this property. A model whose capability row says it
@@ -1722,8 +1723,8 @@ public class AimonProperties implements InitializingBean {
              * It is the middle of three: an agent definition's {@code model.temperature} wins over it, and when
              * neither is written the parameter is left out and the server's default applies. It applies to every
              * request this client sends whose model carries no temperature, not only to agent turns. Subagent
-             * requests are the exception: when the parent agent's definition has no temperature the framework puts
-             * {@code 0.7} on the request explicitly, so this key does not reach them.
+             * requests follow the same rule: they inherit the parent agent's value, and when its definition has none
+             * nothing is put on the request, so this key reaches them.
              *
              * <p>
              * A value outside the range fails startup naming this property. Two kinds of request are sent without

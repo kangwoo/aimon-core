@@ -187,20 +187,26 @@ applySamplingParameters
 thinking 파라미터가 실리는지는 [`anthropic-thinking.md`](anthropic-thinking.md) 가 정한다. 이 절은 그 결과
 (`thinkingRequested`)를 입력으로 받는다.
 
-### 3.5 서브에이전트 요청은 temperature 를 명시값으로 싣는다
+### 3.5 서브에이전트 요청은 띄운 에이전트의 샘플링 값을 물려받고, 없으면 싣지 않는다
 
-`SubagentLlmDefaults.resolveModel` 은 서브에이전트 모델의 temperature 를 메인 에이전트의 `LlmModel` 에서 물려받고,
-거기에 없으면 `0.7` 을 **명시값으로** `LlmModel` 에 넣는다. ReAct 경로와 코드 behavior 경로가 같은 해석을 쓴다.
+`SubagentLlmDefaults.resolveModel` 은 서브에이전트 모델의 `temperature` · `topP` · 두 penalty 를 띄운 에이전트의 `LlmModel`
+에서 물려받는다. 거기에 없으면 **아무것도 넣지 않는다.** ReAct 경로와 코드 behavior 경로가 같은 해석을 쓴다.
 
-그래서 §2.2 의 "미설정은 보내지 않는다" 만으로는 서브에이전트 요청을 고치지 못한다. 두 장치는 서로를 대신하지 않는다.
+그래서 서브에이전트 요청은 메인 에이전트 요청과 같은 규칙을 탄다 — 값이 없으면 §2.2 의 "미설정은 보내지 않는다" 가
+적용되고, 배포 기본값 키(`llm.<provider>.temperature` 등)가 있으면 그것이 실린다.
 
-| | 메인 에이전트 요청(값 없음) | 서브에이전트 실행의 요청 | 명시 `temperature`/`topP` 요청 | 내장 표가 모르는 거절 모델 |
-|---|---|---|---|---|
-| capability 억제만 | 고친다 | 고친다 | 고친다 | 못 고친다 |
-| 미설정 비전송만 | 고친다 | **못 고친다** | **못 고친다** | 아무도 값을 넣지 않았을 때만 |
-| 둘 다 | 고친다 | 고친다 | 고친다 | 아무도 값을 넣지 않았을 때만 |
+| | 값 없는 요청(메인 · 서브에이전트) | 명시 `temperature`/`topP` 요청 | 내장 표가 모르는 거절 모델 |
+|---|---|---|---|
+| capability 억제만 | 고친다 | 고친다 | 못 고친다 |
+| 미설정 비전송만 | 고친다 | **못 고친다** | 아무도 값을 넣지 않았을 때만 |
+| 둘 다 | 고친다 | 고친다 | 아무도 값을 넣지 않았을 때만 |
 
-이 경로 때문에 보고 문구는 "configured" 라고 말하지 않는다(§5.2). 서브에이전트 기본값 자체는 §8.
+2026-10-05 이전에는 이 자리가 달랐다. 띄운 에이전트에 `temperature` 가 없으면 `resolveModel` 이 `0.7` 을 **명시값으로**
+넣었고, 명시값은 배포 기본값 키를 이겼다 — 운영자가 `0.2` 를 적은 배포에서 메인 요청은 `0.2`, 서브에이전트 요청은 `0.7` 로
+나갔고, 샘플링을 받지 않는 모델에서는 아무도 적지 않은 값에 대한 억제 WARN 이 나왔다. `topP` 와 두 penalty 는 물려받지도
+않았다. 그 상수에는 근거가 적혀 있지 않았다. `max tokens` 의 기본값(`4096`)은 그대로다(§8).
+
+보고 문구가 "configured" 라고 말하지 않는 이유는 §5.2.
 
 ---
 
@@ -359,9 +365,10 @@ divergence 는 **설정된 값과 다른 설정으로 요청이 성공하는 조
 문구는 값이 **이 요청에 실려 있다**고만 말한다 — `"temperature 0.7 is set on this request but <model> does not accept
 sampling parameters; it is being omitted and the call will succeed without it."` 에서 `<model>` 은 해석된 모델 이름이다.
 
-"configured" 라고 쓰지 않는 이유: 서브에이전트 경로에서는 아무도 설정하지 않았다 — `SubagentLlmDefaults` 가 자기 상수를
-`LlmModel` 에 넣고(§3.5), 클라이언트가 보고를 결정하는 지점에서는 그것과 운영자의 값을 구분할 방법이 없다. "이 요청에
-실려 있다" 는 두 출처 모두에 참이고, 운영자가 무엇을 찾아야 하는지도 그대로 말한다. 문구는 무엇이 빠지는지와 호출이 그것
+"configured" 라고 쓰지 않는 이유: 요청에 실린 값의 출처가 하나가 아니다 — 에이전트 정의, 띄운 에이전트에게서 물려받은
+값(§3.5), 배포 기본값 키. 클라이언트가 보고를 결정하는 지점에서는 그것들을 구분할 방법이 없다. "이 요청에 실려 있다" 는
+어느 출처에도 참이고, 운영자가 무엇을 찾아야 하는지도 그대로 말한다. (이 문구를 고를 때는 서브에이전트 경로가 아무도
+적지 않은 `0.7` 을 싣고 있었다 — 그 상수는 2026-10-05 에 없어졌다.) 문구는 무엇이 빠지는지와 호출이 그것
 없이 성공한다는 것을 함께 말한다.
 
 ### 5.3 두 보고 장치 — once 집합과 반복 보고 카운터
@@ -449,11 +456,9 @@ sampling parameters; it is being omitted and the call will succeed without it."`
   쟀다 — 도구와 함께면 400 이다([`model-capabilities.md`](model-capabilities.md) §6.3)
 - **reasoning 모델에 effort 를 설정하지 않았을 때 명시 effort 를 늘 보낼지** — 현재는 보내지 않고 서버 기본값에 맡긴다.
   기술자에 정책 기본값을 넣는 모양은 기각했지만(§6), 명시 전송 자체를 하지 않기로 닫은 판단은 기록되지 않았다. 백로그 미등록
-- **서브에이전트 요청의 temperature `0.7`** — 메인 에이전트가 temperature 를 정하지 않으면 서브에이전트 요청에 아무도
-  적지 않은 값이 실린다. 거절 모델에서는 capability 억제가 막지만, 내장 표가 모르는 거절 모델에서는 400 이다(§3.5).
-  **그 값은 명시값이라 배포 기본값 키(`llm.<provider>.temperature`)도 이긴다** — 운영자가 `0.2` 를 적은 배포에서 메인
-  에이전트 요청은 `0.2` 로, 서브에이전트 요청은 `0.7` 로 나간다. 운영 가이드에 그렇게 적혀 있다. 사용자 보고가 없어
-  등록하지 않았다
+- ~~**서브에이전트 요청의 temperature `0.7`**~~ — 2026-10-05 에 없앴다. 띄운 에이전트가 값을 정하지 않으면 서브에이전트
+  요청에도 아무것도 실리지 않고 배포 기본값 키가 닿는다. `topP` 와 두 penalty 도 함께 물려받는다(§3.5). 남은 것은
+  `max tokens` 의 `4096` 이다 — 띄운 에이전트가 정하지 않으면 서브에이전트 요청에 그 값이 명시로 실린다. 백로그 미등록
 - **`top_k` 는 실제 값(`5`)에서만 거절이 측정되었다** — `top_p` 처럼 존재로 거절되는지는 재지 않았다. 지금은 보낼
   경로가 없어 설계에 영향이 없지만, `LlmModel` 에 `topK` 가 생기면 "존재로 거절" 을 가정으로 물려받지 않아야 한다. 백로그 미등록
 - **미설정 temperature 가 서버 기본값(1.0)으로 샘플링되는 것이 에이전트 동작에 주는 영향은 측정되지 않았다** — 값을
@@ -469,7 +474,7 @@ sampling parameters; it is being omitted and the call will succeed without it."`
 | `aimon-core/…/llm/ReasoningEffort.java` | 다섯 rung, 오름차순 선언이 load-bearing 인 이유 |
 | `aimon-core/…/llm/capability/ModelCapabilities.java` | `acceptedReasoningEfforts()`, `Builder.lowestReasoningEffort` 축약, `supportsSamplingParameters` · `supportsToolsWithReasoning` |
 | `aimon-core/…/llm/capability/InMemoryModelCapabilityRegistry.java` | terra exact 행, `registerPrefix("gpt-5", …)` 가 terra 에 닿지 않는다는 좁힌 약속 |
-| `aimon-core/…/subagent/execution/SubagentLlmDefaults.java` | 서브에이전트 temperature 상속과 `0.7` |
+| `aimon-core/…/subagent/execution/SubagentLlmDefaults.java` | 서브에이전트의 샘플링 값 상속(없으면 미설정), `max tokens` 기본값 |
 | `aimon-llm-openai/…/OpenAiRequestParameters.java` | `applySampling`, `requestedEffort`, `maySendEffort`, 억제·ladder 보고 문구, `SamplingSink` |
 | `aimon-llm-openai/…/OpenAILlmClient.java` | `applyReasoningEffort`(도구 규칙이 여기 남는 이유), `reportDivergence`(once 집합, 상한 32) · `reportRecurringDivergence` |
 | `aimon-llm-openai/…/OpenAIResponsesRequestFactory.java` | 같은 effort 게이트(도구 규칙 없음), penalty 를 보고하는 Responses `SamplingSink` |

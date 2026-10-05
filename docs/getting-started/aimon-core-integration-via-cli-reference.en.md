@@ -676,9 +676,9 @@ llm:
   OpenAI's two penalties have no slot on `/v1/responses`.
 - **The key reaches every request that client sends** — not only agent turns: background calls on the same
   client, such as compaction summaries and peer memory, receive this default too when they state no value.
-- **It may not reach subagent requests.** When the main agent's definition has no `temperature`, the framework
-  puts `0.7` on a subagent request explicitly, and an explicit value wins over this key. To use one value for
-  subagents as well, write `model.temperature` in the agent definition.
+- **It reaches subagent requests too.** A subagent inherits the starting agent's `model.temperature`,
+  `model.topP` and the two penalties, and when that definition has none it puts nothing on the request. This
+  key's value is then sent exactly as it is on a main-agent request.
 
 If `cli.tracing` is on, one more layer goes on top (line 697-712) — `TracingLlmClient` wraps the original
 client, and the same `Tracer` is injected into the executor factory as well, so turn/iteration/tool spans
