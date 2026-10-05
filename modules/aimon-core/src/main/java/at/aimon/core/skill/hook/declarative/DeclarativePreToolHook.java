@@ -186,8 +186,9 @@ public final class DeclarativePreToolHook implements PreToolHook {
 
     /**
      * A guard cut off by the executor's outer net blocks: this hook declares {@link TimeoutBehavior#FAIL_CLOSED}, so
-     * an action that does not keep its own deadline — a shell without cancellation, an MCP call that never returns
-     * (the MCP executor enforces no timeout of its own) — cannot turn the guard into a pass under the event policy's
+     * an action that does not keep its own deadline — a shell without cancellation, an MCP client that does not
+     * answer the interrupt the MCP executor's deadline sends — cannot turn the guard into a pass under the event
+     * policy's
      * {@code FAIL_OPEN}. A hook that declared {@code failOpen} declares nothing and takes the policy's answer.
      */
     @Override

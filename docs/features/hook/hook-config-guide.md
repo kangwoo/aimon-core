@@ -344,8 +344,8 @@ budget 이 정책보다 짧으면 무시된다 — 그물을 좁혀 봐야 handl
 선언 budget 은 **10분(`MAX_DECLARED_BUDGET`)으로 클램프**되므로, 설정 실수가 턴을 무한정
 붙잡아 둘 수 없다 (초과 시 WARN 로그 후 10분으로 잘림).
 
-**바깥 그물이 먼저 터지면.** handler 가 자기 timeout 을 지키지 못해 — 취소를 구현하지 않은 원격 셸, 멈춘 I/O, timeout 을
-받지 않는 MCP 호출 — 바깥 그물이 그 hook 을 끊으면, 결정 채널이 있는 네 이벤트의 선언적 hook 은 **막는다**(`Hook timed out
+**바깥 그물이 먼저 터지면.** handler 가 자기 timeout 을 지키지 못해 — 취소를 구현하지 않은 원격 셸, 멈춘 I/O, 중단 신호에
+반응하지 않는 MCP 클라이언트 — 바깥 그물이 그 hook 을 끊으면, 결정 채널이 있는 네 이벤트의 선언적 hook 은 **막는다**(`Hook timed out
 after …ms (limit=…ms)`). 이벤트 정책의 `timeoutBehavior` 기본값은 `FAIL_OPEN` 이지만, 선언적 가드는 hook 마다 `FAIL_CLOSED` 를
 선언하고 실행기는 정책보다 그 선언을 따른다(`ExecutionHook#getTimeoutBehavior()`). `"failOpen": true` 인 handler 와 나머지
 9개 이벤트의 handler 는 아무것도 선언하지 않으므로 이벤트 정책(기본 `FAIL_OPEN` — 진행)을 따른다. 코드로 등록한 hook 의
@@ -415,8 +415,13 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 `http` 와 같다: 오류 없이 돌아온 결과는 판정이고(빈 내용 · 일반 텍스트 · 객체가 아닌 JSON 은 허용, JSON 객체는 결정 문서로
 읽는다), 서버가 등록되지 않았거나 연결되지 않았을 때 · 전송 오류 · `isError` 결과(`call failed`), 읽을 수 없는 결정
 문서(`response could not be read`), 실행기 미배선은 **판정 없음**이다 — `preTool` 에서는 막고 `"failOpen": true` 면 통과한다.
-`mcp` handler 의 `timeout` 은 호출 자체에 걸리지 않는다(`McpClient.callTool` 이 timeout 을 받지 않는다) — 멈춘 호출을 끊는
-것은 hook 실행기의 바깥 그물이다.
+`mcp` handler 의 `timeout`(기본 10초)은 **호출을 끊는다.** 시한이 지나면 호출하던 요청이 중단되고 결과는 **판정 없음**
+(`timed out: no response within <n>ms`)이다 — `preTool` 에서는 막고(`"failOpen": true` 면 통과), `postTool` 에서는 WARN 후
+진행한다. MCP 서버마다 설정하는 `requestTimeout`(기본 30초)은 그 아래에서 그대로 적용되므로 **둘 중 짧은 쪽이 호출을
+끝낸다**: handler 의 `timeout` 을 길게 적어도 요청은 서버의 `requestTimeout` 을 넘겨 기다리지 않고, 그쪽이 먼저 끝내면 사유는
+`call failed` 다. 끊긴 요청은 이쪽에서 더 기다리지 않는다 — stdio 서버에는 요청이 이미 전달되어 있으므로 서버는 일을
+계속할 수 있고, 늦게 온 응답은 버려진다(`notifications/cancelled` 는 보내지 않는다). 같은 서버로 가는 다른 요청이 끝나기를
+기다리는 중이었다면 이 시한으로는 끊기지 않고 hook 실행기의 바깥 그물이 끊는다 — 가드는 그때도 막는다.
 
 ### `deny`
 

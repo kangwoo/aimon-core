@@ -204,7 +204,14 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   `SkillScopedHookRegistry` — a decorator around it disables these refusals.
 - A handler's declared timeout is enforced by the action executor and, via
   `ExecutionHook#getExecutionBudget()`, widens the hook's outer net — subject to the same floor,
-  +5s grace and 10-minute clamp as any other declared budget. In `hooks.json` the `timeout` field is
+  +5s grace and 10-minute clamp as any other declared budget. "Enforced by the executor" holds for all
+  three transports: the shell's `ExecutionOptions` timeout, `HttpRequest.timeout`, and for `mcp` a
+  deadline `McpActionExecutor` keeps itself (`McpClient.callTool` takes none) by interrupting the
+  calling thread, reported as `TIMEOUT` with the interrupt cleared. The per-server `requestTimeout`
+  still bounds the request underneath, so the smaller of the two wins; an interrupt that is not the
+  executor's own is `CANCELLED`. Do not move the call to another thread to bound it — the hook already
+  runs on a pool thread whose wait the outer net bounds, and that net is the fallback for a client that
+  ignores the interrupt. In `hooks.json` the `timeout` field is
   **seconds** (Claude Code parity) with `timeoutMs` as a millisecond alias that wins when both are
   present; SKILL.md frontmatter accepts `action.timeoutMs` only.
 - A declarative hook re-attaches its `asyncRewake` spec on **every** fire — `DeclarativeRewake.attach`

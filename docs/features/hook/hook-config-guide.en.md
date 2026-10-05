@@ -368,7 +368,7 @@ handler's own deadline. A declared budget is **clamped to 10 minutes
 larger is truncated to 10 minutes after a WARN log).
 
 **When the outer net fires first.** If a handler does not keep its own timeout — a remote shell that does not implement
-cancellation, stuck I/O, an MCP call that takes no timeout — and the outer net cuts the hook off, a declarative hook on
+cancellation, stuck I/O, an MCP client that does not answer the stop signal — and the outer net cuts the hook off, a declarative hook on
 one of the four events with a decision channel **blocks** (`Hook timed out after …ms (limit=…ms)`). The event policy's
 `timeoutBehavior` defaults to `FAIL_OPEN`, but a declarative guard declares `FAIL_CLOSED` per hook and the executor
 follows that declaration over the policy (`ExecutionHook#getTimeoutBehavior()`). A handler with `"failOpen": true`, and
@@ -442,8 +442,16 @@ between a verdict and "no verdict" is the same as for `http`: a result that came
 (empty content, plain text and JSON that is not an object allow; a JSON object is read as a decision document), while a
 server that is not registered or not connected, a transport error, an `isError` result (`call failed`), a decision
 document that cannot be read (`response could not be read`) and an executor that is not wired are **no verdict** — on
-`preTool` that blocks, and `"failOpen": true` lets it through. The `timeout` of an `mcp` handler is not applied to the
-call itself (`McpClient.callTool` takes none) — what cuts off a call that hangs is the hook executor's outer net.
+`preTool` that blocks, and `"failOpen": true` lets it through.
+The `timeout` of an `mcp` handler (10 seconds by default) **ends the call.** When it passes, the request in flight is
+stopped and the result is **no verdict** (`timed out: no response within <n>ms`) — on `preTool` that blocks
+(`"failOpen": true` lets it through), on `postTool` it leaves a WARN and proceeds. The `requestTimeout` configured per
+MCP server (30 seconds by default) still applies underneath, so **the shorter of the two ends the call**: a long handler
+`timeout` does not make a request wait past the server's `requestTimeout`, and when that one ends it first the reason
+is `call failed`. Nothing goes on waiting for a request that was cut off — a stdio server has already received it, so
+the server may keep working, and an answer that arrives late is discarded (no `notifications/cancelled` is sent). A call
+that was still waiting for another request to the same server to finish is not cut off by this timeout; the hook
+executor's outer net cuts it off, and a guard blocks then too.
 
 ### `deny`
 
