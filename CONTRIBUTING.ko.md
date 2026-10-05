@@ -1,6 +1,6 @@
 ---
 translated_from: CONTRIBUTING.md
-source_commit: 3771c62
+source_commit: d67baad
 ---
 
 # AIMON Core 기여 가이드
@@ -137,7 +137,7 @@ export 되어 있는 동안에는 — 이 계층을 위해서든 CLI 를
 
 ```bash
 ./gradlew format     # Spotless 적용 (Eclipse formatter)
-./gradlew checkAll   # checkFormat + checkStyle + checkJavadocCoverage + 모든 모듈의 단위 테스트 + BOM 의 verifyBom
+./gradlew checkAll   # checkFormat + checkStyle + checkJavadocCoverage + checkTestClasspathVersions + 모든 모듈의 단위 테스트 + BOM 의 verifyBom
 ```
 
 `checkAll` 이 유일한 게이트입니다. 포맷 검사, Checkstyle, 각 모듈의 `test` 태스크, **그리고** BOM 의
@@ -153,6 +153,13 @@ export 되어 있는 동안에는 — 이 계층을 위해서든 CLI 를
 javadoc 없이 공개 API 를 더하면 수가 늘어납니다 — 문서를 달아 주세요(모듈별 목록은
 `modules/<module>/build/reports/javadoc-coverage/warnings.txt`). 기존 API 에 문서를 달면 수가 줄어듭니다 —
 그 모듈 줄을 실패 메시지가 알려 주는 수로 낮춰 주세요. `./gradlew javadocCoverage` 는 판정 없이 표만 출력합니다.
+
+그리고 각 모듈의 테스트를 그 모듈이 발행하는 라이브러리 버전에 묶어 둡니다(`checkTestClasspathVersions`).
+의존성을 바꿔서 어떤 모듈의 `testRuntimeClasspath` 가 `runtimeClasspath` 와 다른 버전의 라이브러리를 해석하게
+되면, `gradle/test-classpath-version-differences.txt` 가 그 차이를 이유와 함께 적고 있지 않은 한 실패합니다 —
+적어 둔 줄도 그 버전이 움직이거나 차이가 없어지면 실패합니다. 실패 메시지가 더하거나 고쳐 쓰거나 지울 줄을
+찍어 줍니다. 목록을 주석으로 적지 않고 검사하는 이유는
+[`docs/design/testing/test-classpath-version-check.md`](docs/design/testing/test-classpath-version-check.md) 에 있습니다.
 
 검사가 실패하면 HTML 리포트가 이유를 말해 줍니다.
 
