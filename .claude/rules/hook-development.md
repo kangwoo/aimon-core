@@ -162,18 +162,31 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   *verdict* (any readable 2xx / non-error answer) or *no verdict*, carried as a not-run outcome
   (`EXECUTOR_NOT_WIRED`, `CALL_FAILED`, `TIMEOUT`, `INVALID_RESPONSE`) and judged by the same
   `ShellHookVerdicts`. A non-2xx status is never a verdict, whatever its body says. `DecisionDocument`
-  is the one reader of the answer for both transports and reads a verdict in three places: the native
-  `decision` (`allow` / `defer` / `deny`, plus `block` as deny) and the two Claude Code spellings,
-  `hookSpecificOutput.permissionDecision` (`allow` / `deny` / `ask`) and `continue: false` (deny).
-  When they disagree the strictest wins — deny > unreadable > ask > allow — and an unreadable
-  statement (any other value, `permissionDecision: defer` included) is `INVALID_RESPONSE`. `ask` is
+  is the one reader of the answer for both transports and reads a verdict in up to three places: the
+  native `decision` (`allow` / `defer` / `deny`, plus `block` as deny) on **both**, and the two Claude
+  Code spellings, `hookSpecificOutput.permissionDecision` (`allow` / `deny` / `ask`) and
+  `continue: false` (deny), on **`http` only**. The switch is `readClaudeCodeSpellings` (true from
+  `HttpActionExecutor`, false from `McpActionExecutor`) and it covers everything only Claude Code
+  writes — `hookSpecificOutput.*` (`permissionDecision`, `updatedInput`, `additionalContext`),
+  `continue` / `stopReason`, `systemMessage`. On `mcp` those are not looked at, readable or not: an MCP
+  tool result is not written for Claude Code, and a result with a field named `continue` must not
+  become a deny or an `INVALID_RESPONSE`. A new Claude Code field goes behind the same switch.
+  When statements disagree the strictest wins — deny > unreadable > ask > allow — and an unreadable
+  statement (any other value, `permissionDecision: defer` included, and a `hookSpecificOutput` that
+  is present and not an object) is `INVALID_RESPONSE`. `ask` is
   `Decision.ASK`, resolved on `preTool` by the manager's `AskPromptHandler` (default deny); it is a
-  verdict, so `failOpen` does not open it. A deny reason comes from the denying statement's own reason
-  field (`reason` / `permissionDecisionReason` / `stopReason`), never from `feedback`,
-  `systemMessage` or `additionalContext`. A new spelling goes into `DecisionDocument`, not into an
-  executor. `run(...)` is the advisory
+  verdict, so `failOpen` does not open it. A deny reason comes from the reason field of a statement
+  that **denied** (`reason` for `decision`, `permissionDecisionReason`, `stopReason`), else the
+  default — never from a statement that did not deny (the `reason` beside `decision: allow`), and
+  never from `feedback`, `systemMessage` or `additionalContext`. `updatedInput` is read at the top
+  level and (http) inside `hookSpecificOutput`; non-object in either place, or two that differ, is
+  `INVALID_RESPONSE` unless the document denies, and neither is picked. A new spelling goes into
+  `DecisionDocument`, not into an executor. `run(...)` is the advisory
   reading (`attempt(...).orSuccess()`) and is what `postTool` calls — do not call `run` from a guard
-  event. `failOpen` is read for `command`, `http` and `mcp` alike; only on `deny` is it ignored with
+  event. Nothing resolves an `ASK` there, so `orSuccess()` reads an ask as success carrying the
+  document's own feedback (`ActionCallOutcome.ask(verdict, advisory)`): the ask's feedback slot is its
+  prompt, and `HookFeedback.collectAdvisory` would hand that to the model as advice about a tool that
+  already ran. A deny is still returned and `DeclarativePostToolHook#downgradeBlock` drops it. `failOpen` is read for `command`, `http` and `mcp` alike; only on `deny` is it ignored with
   a WARN — by both front-ends (`HookRegistryApplier`, `SkillHookSetParser#parseFailOpen`) and again by
   `DeclarativePreToolHook`'s constructor, so no source can build a deny hook that does not declare
   `FAIL_CLOSED`. A deny always has its verdict; all the flag could open is the pool refusing the hook

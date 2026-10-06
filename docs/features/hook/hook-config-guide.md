@@ -396,27 +396,36 @@ JSON 스키마를 따르면 `HookResult` 로 자동 매핑된다. `preTool` 에�
 
 | 응답 | 읽는 법 |
 |------|---------|
-| 2xx, JSON 객체, 거부를 말함 — `decision` 이 `deny` · `block`, `hookSpecificOutput.permissionDecision` 이 `deny`, `continue` 가 `false` | 판정: 거부 (사유는 차례로 `reason` · `permissionDecisionReason` · `stopReason`) |
+| 2xx, JSON 객체, 거부를 말함 — `decision` 이 `deny` · `block`, `hookSpecificOutput.permissionDecision` 이 `deny`, `continue` 가 `false` | 판정: 거부. 사유는 **거부한 필드의 짝**에서만 온다 — `decision` 은 `reason`, `permissionDecision` 은 `permissionDecisionReason`, `continue` 는 `stopReason`. 짝이 없으면 기본 문구(`Denied by HTTP hook`) |
 | 2xx, JSON 객체, `hookSpecificOutput.permissionDecision` 이 `ask` | 판정: 묻는다 — `AskPromptHandler` 가 답한다 (`permissionDecisionReason` 이 질문) |
-| 2xx, JSON 객체, `decision` 이 `allow` · `defer`, `permissionDecision` 이 `allow`, 또는 아무 결정도 없음 | 판정: 허용 (`feedback` · `updatedInput` 은 그대로 적용) |
+| 2xx, JSON 객체, `decision` 이 `allow` · `defer`, `permissionDecision` 이 `allow`, 또는 아무 결정도 없음 | 판정: 허용. `feedback`(없으면 `systemMessage`, 그다음 `hookSpecificOutput.additionalContext`)은 모델에게 전하고, `updatedInput` 은 **최상위와 `hookSpecificOutput` 안 두 자리** 어느 쪽에 있든 도구 입력을 바꾼다 |
 | 2xx, 본문이 비었거나, JSON 으로 선언되지 않은 텍스트(`ok`)이거나, 객체가 아닌 JSON | 판정: 허용 — 결정을 싣지 않는 웹훅 |
-| 2xx 인데 읽을 수 없음 — `Content-Type` 이 JSON 인데 파싱되지 않는 본문, 문자열이 아니거나 아는 값이 아닌 `decision`(예: `"approve"`) · `permissionDecision`(예: `"defer"`), 불리언이 아닌 `continue`, 객체가 아닌 `updatedInput` | **판정 없음** (`response could not be read`) |
+| 2xx 인데 읽을 수 없음 — `Content-Type` 이 JSON 인데 파싱되지 않는 본문, 문자열이 아니거나 아는 값이 아닌 `decision`(예: `"approve"`) · `permissionDecision`(예: `"defer"`), 불리언이 아닌 `continue`, 객체가 아닌 `hookSpecificOutput`, 객체가 아닌 `updatedInput`(두 자리 어느 쪽이든), 두 자리의 `updatedInput` 이 서로 다름 | **판정 없음** (`response could not be read`) |
 | non-2xx (본문이 무엇이든) | **판정 없음** (`call failed: HTTP <status>`) — 거부는 2xx 의 `decision: deny` 로 표현한다 |
 | 연결 실패 · 전송 오류 | **판정 없음** (`call failed: <예외 타입>`) |
 | `timeout` 초과 | **판정 없음** (`timed out`) |
 | 실행기 미배선 | **판정 없음** (`action executor not wired`) |
 
-Claude Code 용으로 만든 정책 엔드포인트도 그대로 쓸 수 있다 — 결정은 `decision` 말고도 Claude Code 의 두 철자
-(`hookSpecificOutput.permissionDecision`, `continue`)로 읽는다. 한 문서에 여러 철자가 있고 서로 다르면 **가장 엄한 쪽**이
+Claude Code 의 `PreToolUse` 용으로 만든 정책 엔드포인트의 **응답**은 고치지 않고 읽는다 — 다만 `http` 에서만, 그리고
+아래 두 가지를 빼고. 읽는 것: `hookSpecificOutput.permissionDecision`(`allow` · `deny` · `ask`)과 그 옆의
+`permissionDecisionReason` · `updatedInput` · `additionalContext`, `continue: false` 와 `stopReason`, `systemMessage`,
+`decision: block`. 읽지 않는 것: `permissionDecision: defer`(판정 없음, 아래)와 그 밖의 필드(`suppressOutput` 등 — 무시).
+**요청**은 맞춰 주지 않는다: 본문은 이 handler 의 `body` 템플릿이 만든 것이고 Claude Code 가 보내는 입력 JSON 이 아니며,
+non-2xx 는 거부도 통과도 아닌 판정 없음이다. `mcp` handler 는 이 철자들을 **읽지 않는다** — MCP 도구 결과는 Claude Code
+용으로 쓰인 것이 아니어서, 그쪽에서는 `decision`(`block` 포함) · `reason` · `feedback` · 최상위 `updatedInput` 만 읽는다.
+한 문서에 여러 철자가 있고 서로 다르면 **가장 엄한 쪽**이
 판정이다: 거부 > 읽을 수 없음 > 묻는다 > 허용. `decision: allow` 옆에 `permissionDecision: deny` 가 있으면 거부다.
-모델에게 보이는 거부 사유는 거부한 철자의 사유 필드에서만 온다 — `feedback` · `systemMessage` · `additionalContext` 는
-사유가 되지 않는다. `ask` 는 hook 실행 관리자의 `AskPromptHandler` 가 허용 · 거부로 바꾼다: 호스트가 넣지 않았으면
+모델에게 보이는 거부 사유는 거부한 필드의 짝에서만 온다 — 거부하지 않은 필드의 사유(`decision: allow` 옆의 `reason`)도,
+`feedback` · `systemMessage` · `additionalContext` 도 사유가 되지 않는다. `updatedInput` 은 허용일 때만 적용하고, 두 자리에
+서로 다른 값이 있으면 어느 쪽도 고르지 않고 판정 없음으로 읽는다. `ask` 는 hook 실행 관리자의 `AskPromptHandler` 가 허용 · 거부로 바꾼다: 호스트가 넣지 않았으면
 **거부**이고, 환경 변수 `AIMON_HOOK_ASK_DEFAULT=allow` 가 그 기본을 허용으로 바꾼다. `ask` 는 판정이므로 `failOpen` 이
 열지 않는다. `permissionDecision: defer` 는 `decision: defer` 와 달리 판정 없음이다 — Claude Code 의 `defer` 는 "호출한
 애플리케이션이 재개할 때까지 이 도구 호출을 보류" 라는 뜻이고 그렇게 할 수단이 없으므로, 도구를 실행하는 쪽으로 읽지
 않는다.
 
-`postTool` 에서는 판정 없음이 전처럼 WARN 후 정상 진행이다.
+`postTool` 에서는 판정 없음이 전처럼 WARN 후 정상 진행이다. 거부도 막을 것이 없으므로 WARN 후 진행이고, `ask` 는 물을
+상대가 없으므로 허용으로 읽는다 — 모델에게는 응답의 `feedback`(`systemMessage` · `additionalContext`)만 전하고 질문
+문구는 전하지 않는다.
 
 > ℹ️ **`aimon-cli` 는 `http` · `mcp` handler 를 실행한다** — `hooks.json` 의 것도, 스킬 frontmatter 의 것도. `http` 는 언제나,
 > `mcp` 는 CLI 설정(`mcp.servers`)에 서버가 하나라도 있을 때다. 서버가 하나도 없는 CLI 에서 `mcp` handler 는 돌 수 없는
@@ -466,7 +475,10 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 }
 ```
 
-응답이 `{decision, reason, feedback, updatedInput}` 모양이면 `HookResult` 로 매핑된다. 판정과 "판정 없음" 을 가르는 선은
+응답이 `{decision, reason, feedback, updatedInput}` 모양이면 `HookResult` 로 매핑된다. 읽는 것은 **이 네 필드뿐**이다 —
+`decision` 은 `allow` · `defer` · `deny` 와 `deny` 의 동의어 `block` 이고, Claude Code 의 철자(`hookSpecificOutput`,
+`continue`, `stopReason`, `systemMessage`)는 값이 무엇이든 보지 않는다. 도구 결과에 `continue` 라는 필드(페이지 플래그,
+이어 읽기 토큰)가 있다고 해서 판정이 되지는 않는다. 판정과 "판정 없음" 을 가르는 선은
 `http` 와 같다: 오류 없이 돌아온 결과는 판정이고(빈 내용 · 일반 텍스트 · 객체가 아닌 JSON 은 허용, JSON 객체는 결정 문서로
 읽는다), 서버가 등록되지 않았거나 연결되지 않았을 때 · 전송 오류 · `isError` 결과(`call failed`), 읽을 수 없는 결정
 문서(`response could not be read`), 실행기 미배선은 **판정 없음**이다 — `preTool` 에서는 막고 `"failOpen": true` 면 통과한다.
@@ -516,8 +528,8 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 | `command` 가 그 밖의 종료 코드 (1 · 3 · 130 …) | 스크립트 오작동 | 진행 (WARN) | 진행 (WARN) |
 | `command` 가 종료 코드를 내지 못함 — timeout, 셸 실패, 실행 환경 없음 · 사용 불가, 스킬 디렉터리 스테이징 실패, 셸을 지원하지 않는 실행기, 실행기가 던진 예외 | 돌리지 못함 | **막는다** | 진행 (WARN) |
 | `deny` handler | 판정: 거부 | **막는다** | **막는다** — `deny` 에서는 `failOpen` 을 읽지 않는다(WARN). 아래 "이벤트 정책을 따른다" 세 행에서도 `deny` handler 는 기본 열대로 막는다 |
-| `http` · `mcp` 가 거부로 답함 (`decision: deny` · `block`, `permissionDecision: deny`, `continue: false`) | 판정: 거부 (서버의 사유 필드가 사유) | **막는다** | **막는다** |
-| `http` · `mcp` 가 `permissionDecision: ask` 로 답함 | 판정: 묻는다 | `AskPromptHandler` 의 답대로 — 기본은 **막는다** | 같다 — 판정이므로 `failOpen` 과 무관 |
+| `http` · `mcp` 가 거부로 답함 (`decision: deny` · `block`; `http` 는 `permissionDecision: deny`, `continue: false` 도) | 판정: 거부 (거부한 필드의 짝이 사유) | **막는다** | **막는다** |
+| `http` 가 `permissionDecision: ask` 로 답함 | 판정: 묻는다 | `AskPromptHandler` 의 답대로 — 기본은 **막는다** | 같다 — 판정이므로 `failOpen` 과 무관 |
 | `http` · `mcp` 가 그 밖의 읽을 수 있는 답을 함 (`allow` · `defer` · 결정 없음 · 빈 본문 · 일반 텍스트) | 판정: 허용 | 진행 | 진행 |
 | `http` · `mcp` 가 판정을 받지 못함 — 연결 실패, timeout, non-2xx, MCP 서버 미등록 · 미연결 · `isError`, 읽을 수 없는 답, 실행기 미배선, 실행기가 던진 예외 | 판정 없음 | **막는다** | 진행 (WARN) |
 | handler 가 자기 timeout 을 넘겨 돌다가 hook 실행기의 바깥 그물(선언 timeout + 5초)에 끊김 | 판정 없음 | **막는다** | 이벤트 정책을 따른다 — 기본 정책은 진행 (WARN) |

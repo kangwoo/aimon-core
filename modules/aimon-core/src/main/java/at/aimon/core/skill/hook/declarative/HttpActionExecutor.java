@@ -49,11 +49,12 @@ import at.aimon.core.skill.hook.action.HttpMethod;
  * {@code systemMessage} is present)
  * <li>{@code {"decision":"deny", "reason":"..."}} → {@code HookResult.block(reason)}
  * <li>{@code {"decision":"defer"}} → {@code HookResult.success()} (delegates to the next hook)
- * <li>{@code "updatedInput": {...}} carried alongside any decision → {@code HookResult.builder().updatedInput(...)}
+ * <li>{@code "updatedInput": {...}} carried alongside an allow → {@code HookResult.builder().updatedInput(...)}
  * </ul>
- * The spellings an endpoint written for Claude Code uses are read as verdicts too &mdash; {@code decision: block},
- * {@code hookSpecificOutput.permissionDecision} and {@code continue: false}; {@link DecisionDocument} has the whole
- * mapping and what happens when two spellings disagree.
+ * The spellings an endpoint written for Claude Code uses are read too, on this transport only &mdash;
+ * {@code decision: block} (that one on {@code mcp} as well), {@code hookSpecificOutput.permissionDecision} with the
+ * {@code updatedInput} beside it, and {@code continue: false}; {@link DecisionDocument} has the whole mapping and
+ * what happens when two spellings disagree.
  *
  * <p>
  * <b>Verdict or no verdict.</b> {@link #attempt} tells the two apart, because a guard has to (see
@@ -68,10 +69,12 @@ import at.aimon.core.skill.hook.action.HttpMethod;
  * ({@code TIMEOUT}), a non-2xx status ({@code CALL_FAILED}, whatever its
  * body says &mdash; a refusal is spelled {@code decision: deny} in a 2xx), and a 2xx answer that cannot be read as a
  * decision ({@code INVALID_RESPONSE}): a body declared {@code application/json} that does not parse, a decision
- * field whose value is not one {@link DecisionDocument} knows, an {@code updatedInput} that is not an object.
+ * field whose value is not one {@link DecisionDocument} knows, a {@code hookSpecificOutput} or an
+ * {@code updatedInput} that is not an object, two {@code updatedInput} objects that differ.
  * </ul>
  * {@link #run} is the advisory reading of the same call: it logs a missing verdict at WARN and returns
- * {@link HookResult#success()}, so a {@code postTool} webhook stays fail-soft for transport problems.
+ * {@link HookResult#success()}, so a {@code postTool} webhook stays fail-soft for transport problems; an {@code ask}
+ * is read as success carrying the answer's own feedback, since nothing asks the user there.
  *
  * <p>
  * <b>Timeout.</b> The action's {@link HttpAction#getTimeout() timeout} bounds the whole exchange: connecting, the
@@ -163,7 +166,8 @@ public final class HttpActionExecutor {
 
     /**
      * Executes the action and returns the resolved {@link HookResult}, reading a call that produced no verdict as
-     * success. For events that cannot block; a guard uses {@link #attempt}.
+     * success, and an {@code ask} as success carrying the answer's own feedback (see
+     * {@link ActionCallOutcome#orSuccess()}). For events that cannot block; a guard uses {@link #attempt}.
      *
      * @param action
      *            the configured action (must not be null)
