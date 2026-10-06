@@ -68,10 +68,12 @@ import at.aimon.session.mongodb.internal.SessionSignalCodec;
  *
  * <p>
  * The watcher updates {@link ResumeTokenStore} after every dispatched event and on idle polls. On reconnect (after a
- * primary fail-over or a transient error) the watcher resumes from the last token. If the server refuses that token —
- * it has aged past the oplog window ({@code ChangeStreamHistoryLost}), or the stream no longer contains it — the
- * refusal arrives as a {@code MongoCommandException}; the watcher logs a warning, clears the token, and reopens without
- * resume. Signals published in the gap are lost (best-effort, matches the SPI's at-least-once semantics).
+ * primary fail-over or a transient error) the watcher resumes from the last token, and replays what it missed. If the
+ * server refuses that token — it has aged past the oplog window ({@code ChangeStreamHistoryLost}), or the stream no
+ * longer contains it — the refusal arrives as a {@code MongoCommandException} carrying the
+ * {@code NonResumableChangeStreamError} label; the watcher logs a warning, clears the token, and reopens without
+ * resume. Signals published in that gap are lost: delivery on this bus is best-effort. Any other command error keeps
+ * the token.
  *
  * <p>
  * The same happens when the server closes the cursor because the collection was dropped or recreated: the insert-only
@@ -89,6 +91,12 @@ public final class MongoSessionSignalBus implements SessionSignalBus, AutoClosea
     private static final Logger log = LoggerFactory.getLogger(MongoSessionSignalBus.class);
 
     private static final long WATCHER_RESTART_BACKOFF_MS = 500L;
+
+    /** The label the server puts on an error that means the change stream cannot be resumed from the given token. */
+    private static final String NON_RESUMABLE_CHANGE_STREAM_ERROR = "NonResumableChangeStreamError";
+
+    /** Server error code {@code InvalidResumeToken}. */
+    private static final int INVALID_RESUME_TOKEN = 260;
 
     private final MongoCollection<Document> collection;
     private final SessionSignalCodec codec;
@@ -212,8 +220,13 @@ public final class MongoSessionSignalBus implements SessionSignalBus, AutoClosea
             try {
                 pumpOnce();
             } catch (MongoChangeStreamException e) {
-                log.warn("Change stream history lost for node {} ({}); reopening without resume token", nodeId,
-                        e.toString());
+                // The driver's own complaint about an event it cannot take a resume token from. It is not how a
+                // history-lost token arrives (that is the labelled command error below), but the remedy is the same.
+                if (closed.get()) {
+                    return;
+                }
+                log.warn("Change stream on node {} produced an event without a resume token ({}); reopening without"
+                        + " one", nodeId, e.toString());
                 resumeTokenStore.clear();
                 sleepBackoff();
             } catch (MongoInterruptedException e) {
@@ -225,17 +238,20 @@ public final class MongoSessionSignalBus implements SessionSignalBus, AutoClosea
                 if (closed.get()) {
                     return;
                 }
-                if (resumeTokenStore.last().isPresent()) {
-                    // The server refused a command while this watcher was resuming from a stored token. This, not
-                    // MongoChangeStreamException, is how "the token is older than the oplog" (ChangeStreamHistoryLost)
-                    // and "the stream no longer contains it" arrive. Retrying the same token cannot succeed.
+                if (resumeTokenStore.last().isPresent() && isResumeRefused(e)) {
+                    // The server says this stream cannot be resumed from the stored token: it is older than the oplog
+                    // (ChangeStreamHistoryLost), or the stream no longer contains it. Retrying the same token cannot
+                    // succeed, so it is dropped and the stream starts over from now.
                     log.warn(
                             "Change stream watcher on node {} could not resume from its stored token ({}); starting"
                                     + " over without it — signals published in the gap are not delivered here",
                             nodeId, e.toString());
                     resumeTokenStore.clear();
                 } else {
-                    log.warn("Change stream watcher hit a server error on node {}: {}", nodeId, e.toString());
+                    // Any other command error — a killed operation, a step-down, an authorization failure — says
+                    // nothing about the token. It is kept, so the reopen resumes and replays what was missed. Dropping
+                    // it here would turn every transient server error into lost signals.
+                    log.warn("Change stream watcher hit a server error on node {}; resuming: {}", nodeId, e.toString());
                 }
                 sleepBackoff();
             } catch (MongoException e) {
@@ -252,6 +268,14 @@ public final class MongoSessionSignalBus implements SessionSignalBus, AutoClosea
                 sleepBackoff();
             }
         }
+    }
+
+    /**
+     * Whether a command error means "this stream cannot be resumed from that token", as opposed to any other failure
+     * of a command. The server labels the former; 260 is what a resume from an invalidate token returns.
+     */
+    private static boolean isResumeRefused(MongoCommandException e) {
+        return e.hasErrorLabel(NON_RESUMABLE_CHANGE_STREAM_ERROR) || e.getErrorCode() == INVALID_RESUME_TOKEN;
     }
 
     private void pumpOnce() {

@@ -168,6 +168,14 @@ public final class ListenDispatcher implements AutoCloseable {
                     return;
                 }
                 log.warn("LISTEN connection error, reconnecting: {}", e.toString());
+            } catch (RuntimeException e) {
+                // Anything else that escapes a pass — a row this build cannot decode, say — would otherwise end the
+                // thread for good. Reconnect instead; the same row may fail again, which is a warning per backoff
+                // rather than a node that has silently stopped listening.
+                if (!running) {
+                    return;
+                }
+                log.warn("LISTEN loop failed, reconnecting: {}", e.toString());
             } finally {
                 closeListenConnection();
             }
@@ -240,7 +248,9 @@ public final class ListenDispatcher implements AutoCloseable {
                         try {
                             handler.accept(SessionSignal.builder().sessionId(convId).kind(kind)
                                     .originNodeId(originNodeId).payload(payload).build());
-                        } catch (RuntimeException ex) {
+                        } catch (RuntimeException | Error ex) {
+                            // Error too: this thread is the only one that delivers signals to this node, and nothing
+                            // restarts it. One handler's AssertionError or LinkageError must not end it.
                             log.warn("Signal handler threw for {}: {}", convId, ex.toString());
                         }
                     }

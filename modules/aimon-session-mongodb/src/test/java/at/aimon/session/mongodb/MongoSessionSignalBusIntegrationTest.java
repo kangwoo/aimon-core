@@ -191,8 +191,10 @@ class MongoSessionSignalBusIntegrationTest {
     @Test
     @DisplayName("a watcher whose resume token the server refuses starts over instead of retrying it for ever")
     void watcherRecoversFromAResumeTokenTheServerRefuses() throws Exception {
-        // The aged-out token, stood in for by a token from another collection's stream — the server refuses both the
-        // same way, with a MongoCommandException rather than the MongoChangeStreamException the watcher looked for.
+        // The aged-out token, stood in for by a token from another collection's stream. The two are not refused
+        // identically — a real one is ChangeStreamHistoryLost (286) from the opening aggregate, this is
+        // ChangeStreamFatalError (280) from a later getMore — but both are a MongoCommandException labelled
+        // NonResumableChangeStreamError, which is what the watcher decides on.
         final ResumeTokenStore unusable = new ResumeTokenStore();
         unusable.update(tokenFromAnotherCollection());
         final MongoSessionSignalBus stale = new MongoSessionSignalBus(dbB, DocumentKeys.COLL_SIGNALS, "node-C",
@@ -225,6 +227,102 @@ class MongoSessionSignalBusIntegrationTest {
         }
     }
 
+    @Test
+    @DisplayName("the resume token advances while the channel is quiet")
+    void resumeTokenAdvancesWhileIdle() throws Exception {
+        // A token that only moved on delivery would be as old as the last signal, and on a quiet channel that is old
+        // enough to have left the oplog by the time a reconnect needs it.
+        final ResumeTokenStore tokens = new ResumeTokenStore();
+        final MongoSessionSignalBus quiet = new MongoSessionSignalBus(dbB, DocumentKeys.COLL_SIGNALS, "node-quiet",
+                tokens);
+        try (SessionSignalBus.Subscription sub = quiet.subscribe(SessionId.of("c-bus-quiet"), signal -> {
+        })) {
+            final BsonDocument first = awaitToken(tokens, null);
+            // Something has to move the oplog for the post-batch token to move; it need not be this collection.
+            MongoTestSupport.sharedDatabase().getCollection("signal_bus_test_oplog_filler")
+                    .insertOne(new Document("filler", true));
+
+            assertThat(awaitToken(tokens, first)).as("a later token, with nothing delivered").isNotEqualTo(first);
+        } finally {
+            quiet.close();
+            MongoTestSupport.sharedDatabase().getCollection("signal_bus_test_oplog_filler").drop();
+        }
+    }
+
+    /** Waits for the store to hold a token other than {@code previous}. */
+    private static BsonDocument awaitToken(ResumeTokenStore tokens, BsonDocument previous) throws InterruptedException {
+        final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(WAIT_TIMEOUT_MS * 2);
+        while (System.nanoTime() < deadline) {
+            final BsonDocument current = tokens.last().orElse(null);
+            if (current != null && !current.equals(previous)) {
+                return current;
+            }
+            Thread.sleep(50L);
+        }
+        throw new AssertionError("no new resume token within the timeout; last was " + previous);
+    }
+
+    @Test
+    @DisplayName("a server error that has nothing to do with the resume token does not cost any signal")
+    void anUnrelatedServerErrorLosesNoSignal() throws Exception {
+        // The watcher's getMore is killed on the server while signals keep arriving. That is a command error like a
+        // refused token is, but the token is fine: the watcher has to keep it, resume, and replay what it missed.
+        // Dropping the token here — starting over from "now" — loses everything published during the backoff.
+        final SessionId id = SessionId.of("c-bus-killop");
+        final int total = 80;
+        final LinkedBlockingQueue<SessionSignal> received = new LinkedBlockingQueue<>();
+        try (SessionSignalBus.Subscription sub = busB.subscribe(id, received::offer)) {
+            Thread.sleep(INITIAL_SETTLE_MS);
+            final Thread publisher = new Thread(() -> {
+                for (int i = 0; i < total; i++) {
+                    busA.publish(interrupt(id, "seq-" + i));
+                    try {
+                        Thread.sleep(20L);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                }
+            }, "signal-publisher");
+            publisher.start();
+            Thread.sleep(300L);
+
+            assertThat(killChangeStreamGetMore()).as("a getMore of the watcher was found and killed").isTrue();
+            publisher.join(TimeUnit.SECONDS.toMillis(30));
+
+            final java.util.Set<String> markers = new java.util.TreeSet<>();
+            final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(WAIT_TIMEOUT_MS * 2);
+            while (markers.size() < total && System.nanoTime() < deadline) {
+                final SessionSignal got = received.poll(100L, TimeUnit.MILLISECONDS);
+                if (got != null) {
+                    markers.add(String.valueOf(got.getPayload().get("marker")));
+                }
+            }
+            assertThat(markers).as("every published signal reached node B").hasSize(total);
+        }
+    }
+
+    /** Kills the in-flight getMore of every change stream on the signal collection; returns whether it found one. */
+    private boolean killChangeStreamGetMore() throws InterruptedException {
+        final MongoDatabase admin = clientA.getDatabase("admin");
+        final String namespace = MongoTestSupport.DATABASE_NAME + "." + DocumentKeys.COLL_SIGNALS;
+        final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(WAIT_TIMEOUT_MS);
+        while (System.nanoTime() < deadline) {
+            final Document current = admin
+                    .runCommand(new Document("currentOp", 1).append("op", "getmore").append("ns", namespace));
+            boolean killed = false;
+            for (Document op : current.getList("inprog", Document.class, java.util.List.of())) {
+                admin.runCommand(new Document("killOp", 1).append("op", op.get("opid")));
+                killed = true;
+            }
+            if (killed) {
+                return true;
+            }
+            Thread.sleep(20L);
+        }
+        return false;
+    }
+
     private static SessionSignal interrupt(SessionId id, String marker) {
         return SessionSignal.builder().sessionId(id).kind(SignalKind.INTERRUPT).originNodeId("node-A")
                 .payload(Map.of("reason", "USER_REQUEST", "marker", marker)).build();
@@ -239,12 +337,12 @@ class MongoSessionSignalBusIntegrationTest {
         final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(WAIT_TIMEOUT_MS * 2);
         int attempt = 0;
         while (System.nanoTime() < deadline) {
-            final String marker = "probe-" + attempt++;
-            busA.publish(interrupt(id, marker));
+            busA.publish(interrupt(id, "probe-" + attempt++));
             final long until = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(200L);
             while (System.nanoTime() < until) {
                 final SessionSignal got = received.poll(20L, TimeUnit.MILLISECONDS);
-                if (got != null && marker.equals(got.getPayload().get("marker"))) {
+                // Any probe, not only this window's: one that arrives late is still a delivery after the recovery.
+                if (got != null && String.valueOf(got.getPayload().get("marker")).startsWith("probe-")) {
                     return true;
                 }
             }
