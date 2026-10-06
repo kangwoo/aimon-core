@@ -1,8 +1,10 @@
-"""MkDocs hook: make the links written for GitHub work on the built site.
+"""MkDocs hook: make the pages written for GitHub read the same on the built site.
 
 Two rewrites, both at render time and both leaving the sources alone: a link that
 leaves what the site builds becomes a GitHub URL, and a fragment written against a
-canonical page is carried over to the translation the site serves in its place.
+canonical page is carried over to the translation the site serves in its place. And
+one change to how the site reads a page: a heading is what github.com takes for one
+(WHAT IS A HEADING, below).
 
 OUT-OF-DOCS LINKS.
 
@@ -113,6 +115,33 @@ makes position mean something. Six links needed this when it was written.
     built pages -- and, for sample text, that the page shows it as it was written;
     ``.github/workflows/docs.yml`` runs it before the real build.
 
+WHAT IS A HEADING (backlog T-11). Python-Markdown takes any line that starts with
+``#`` as a heading -- ``#113 gave both executors one reading`` is an ``<h1>`` reading
+"113 gave both ...". github.com does not (CommonMark asks for a space after the
+``#``), and neither does ``scripts/docs_tree.py``, which is what every check here
+reads headings with. Prose wraps, and an issue number lands at the start of a line:
+fifteen lines on five pages were such headings when this was written -- eight wrapped
+paragraph lines and seven list items that begin with the number -- each an ``<h1>``
+in the middle of a page, an entry in its table of contents, and one heading more than
+the checks counted, so that a translation of that page could not have its fragments
+carried.
+
+Most of those lines are in records whose body is kept byte-exact as approved
+(``docs/design/README.md`` section 3.4), so rewording them was not open, and a check
+that failed such a line would have failed on text nobody may change. ``on_config``
+below replaces Python-Markdown's ATX heading rule instead with one that asks for the
+space (``_spaced_hash_headers``). It is a block processor, not a rewrite of the page
+text, so it holds wherever the parser looks for a heading -- a paragraph's second
+line, a list item, a blockquote, an admonition's body -- without this file having to
+recognise those. ``_headings`` renders with the same extension list, so the ids a
+fragment is carried to are read the way the page is.
+
+What still differs runs the other way -- a real heading, on the site and on
+github.com, that ``docs_tree`` does not read: one written behind a ``>`` or a list
+marker (``docs_tree.anchors_of`` says why it is left; one page had one when this was
+written, in a page with no translation), and a setext one, a line underlined with
+``===`` or ``---`` (none). The warning in ``_carry`` is for those.
+
 Registered from ``mkdocs.yml`` under ``hooks:``. The first rewrite depends on no
 plugin; the second does nothing without a ``Files`` that maps a path to another
 source, which today is mkdocs-static-i18n's.
@@ -155,9 +184,39 @@ def _github_url(repo_url, relative_path):
     return f"{repo_url.rstrip('/')}/{kind}/{BRANCH}/{relative_path}"
 
 
+def _spaced_hash_headers():
+    """A Markdown extension under which ``#text``, with no space after the ``#``, is text.
+
+    Built on demand: this module is imported by name where Python-Markdown may not be
+    installed.
+    """
+    from markdown.blockprocessors import HashHeaderProcessor
+    from markdown.extensions import Extension
+
+    class SpacedHashHeaderProcessor(HashHeaderProcessor):
+        # The stock pattern with one thing added: after the run of one to six `#`, a
+        # space, a tab or the end of the line. Seven or more `#` are no heading either.
+        RE = re.compile(
+            r"(?:^|\n)(?P<level>#{1,6})(?=[ \t]|\n|$)(?P<header>(?:\\.|[^\\])*?)#*(?:\n|$)")
+
+    class SpacedHashHeaders(Extension):
+        def extendMarkdown(self, md):
+            # The same name and priority as the processor it stands in for.
+            md.parser.blockprocessors.register(
+                SpacedHashHeaderProcessor(md.parser), "hashheader", 70)
+
+    return SpacedHashHeaders()
+
+
 def on_config(config, **kwargs):
-    """Stop the build when docs_tree.site_tree() and MkDocs disagree on what is built."""
+    """Read headings as github.com does, and stop the build when docs_tree.site_tree()
+    and MkDocs disagree on what is built."""
     from mkdocs.exceptions import PluginError
+
+    # Before the return below: any site built with this hook reads headings this way.
+    extensions = config["markdown_extensions"]
+    if not any(type(e).__name__ == "SpacedHashHeaders" for e in extensions):
+        extensions.append(_spaced_hash_headers())
 
     config_file = config.get("config_file_path")
     if not config_file or Path(config_file).resolve().parent != _repo_root:
@@ -281,10 +340,11 @@ def _carry(page_uri, written_uri, fragment, docs_dir, files, config):
             # site cannot carry. A warning, so `mkdocs build --strict` stops on it.
             log.warning(
                 f"{link} on the site -- but scripts/check-doc-links.py reads the same headings "
-                "in both files and accepts this link. One of the two has a line the site "
-                "renders as a heading and github.com does not (Python-Markdown takes a line "
-                "starting `#text`, with no space after the `#`, as one): compare the two "
-                "pages' tables of contents and reword that line.")
+                "in both files and accepts this link. One of the two has a heading that "
+                "reading does not see: it reads a `# text` line at the start of a line only, "
+                "and a heading behind `>` or a list marker, or one underlined with `===` or "
+                "`---`, is a heading on the site and on github.com all the same. Compare the "
+                "two pages' tables of contents and write that heading as a `#` line of its own.")
         else:
             log.info(f"{link}. scripts/check-doc-links.py reports the same link.")
     return anchor
@@ -466,9 +526,19 @@ SELF_TEST_PAGES = {
     # [1, 2, 2, 3]. Read siblings-before-children both come out [1, 2, 2, 3].
     "nested.md": "# 순서가 다른 쌍\n\n## 첫째\n\n### 첫째의 세부\n\n## 둘째\n",
     "nested.en.md": "# A pair in another order\n\n## First\n\n## Second\n\n### Detail of the second\n",
-    # The paragraph's second line is a heading to Python-Markdown and to nothing else.
-    "stray.md": "# 어긋난 쌍\n\n## 둘째\n\n문단의 첫 줄\n#42 로 시작하는 둘째 줄\n",
-    "stray.en.md": "# A pair the site reads differently\n\n## Second\n\nfirst line\nthen #42\n",
+    # The paragraph's second line and the list item were headings to stock Python-Markdown
+    # and to nothing else (backlog T-11): an h1 in the middle of the page, and a pair the
+    # site saw as five headings against two.
+    "stray.md": "# 번호로 시작하는 줄\n\n## 둘째\n\n문단의 첫 줄\n#42 로 시작하는 둘째 줄\n\n"
+                "- #43 으로 시작하는 항목\n\n> #44 로 시작하는 인용\n",
+    "stray.en.md": "# Lines that start with a number\n\n## Second\n\nfirst line\nthen #42\n",
+    # The edges of "a space after the `#`": seven `#` are no heading, a no-break space is
+    # no space, and a `##` with nothing after it is still an (empty) heading.
+    "edges.md": "# 가장자리\n\n####### 일곱 개\n\n#\u00a0줄바꿈 없는 공백\n\n##\n\n끝\n",
+    # A setext heading: one to the site and to github.com, and not to docs_tree, which
+    # reads ATX headings only. What is left of "only the site sees it".
+    "setext.md": "# 어긋난 쌍\n\n## 둘째\n\n밑줄로 만든 제목\n---\n",
+    "setext.en.md": "# A pair the site reads differently\n\n## Second\n\nno heading here\n",
     "plain.md": "# 번역 없는 쪽\n\n## 제목\n",
     # A second `guide.md` / `guide.en.md`, with another outline: a file is its path.
     "sub/guide.md": "# 하위 가이드\n\n## 다른 제목\n",
@@ -500,6 +570,7 @@ SELF_TEST_PAGES = {
         f"{FENCE4}text\n{FENCE3}text\n[L25](guide.md#설정-방법)\n{FENCE3}\n{FENCE4}",
         # A `[` and a `](...)` in two paragraphs are no link, on the site or anywhere.
         "[L27 은 닫히지 않는다\n\n다음 문단의 글](guide.md#설정-방법)",
+        "[L28](setext.md#둘째)",
     ]) + "\n",
     # An opener nothing closes is no fence to the site: a paragraph, and a live link.
     "loose.md": f"# 닫히지 않은 펜스\n\n{FENCE3}text\n[L26](guide.md#설정-방법)\n",
@@ -528,8 +599,10 @@ SELF_TEST_CASES = [
      "design", "L07", "../behind/#둘째", "../behind/#둘째"),
     ("so is one the translation has under the same name, which still resolves",
      "design", "L08", "../behind/#api", "../behind/#api"),
+    ("a line starting `#42` is no heading on the site either, so that pair lines up and is carried",
+     "design", "L09", "../stray/#둘째", "../stray/#second"),
     ("when only the site sees an extra heading the fragment is left as written",
-     "design", "L09", "../stray/#둘째", "../stray/#둘째"),
+     "design", "L28", "../setext/#둘째", "../setext/#둘째"),
     ("a link into a page with no translation is untouched",
      "design", "L10", "../plain/#제목", "../plain/#제목"),
     ("a link with no fragment is untouched",
@@ -577,6 +650,25 @@ SELF_TEST_AS_WRITTEN = [
      "다음 문단의 글](guide.md#설정-방법)"),
 ]
 
+# A line that starts `#` with no space after it is text, as it is on github.com:
+# (case, the Korean page, what it must contain, what it must not).
+SELF_TEST_NOT_A_HEADING = [
+    ("a wrapped paragraph line starting `#42` stays in its paragraph",
+     "stray", "문단의 첫 줄\n#42 로 시작하는 둘째 줄</p>", r"<h\d[^>]*>\s*42 로"),
+    ("a list item starting `#43` stays a list item",
+     "stray", "<li>#43 으로 시작하는 항목</li>", r"<h\d[^>]*>\s*43 으로"),
+    ("a quoted line starting `#44` stays a quoted paragraph",
+     "stray", "<p>#44 로 시작하는 인용</p>", r"<h\d[^>]*>\s*44 로"),
+    ("and a heading written with its space is still one",
+     "stray", '<h2 id="둘째">', r"<p>## 둘째"),
+    ("seven `#` are no heading",
+     "edges", "<p>####### 일곱 개</p>", r"<h\d[^>]*>\s*#? ?일곱"),
+    ("a no-break space after the `#` is no space",
+     "edges", "<p>#\u00a0줄바꿈 없는 공백</p>", r"<h\d[^>]*>\s*줄바꿈"),
+    ("a `##` with nothing after it is still a heading, as it is on github.com",
+     "edges", "<h2", r"<p>##</p>"),
+]
+
 # What that build must say and must not: (case, log level, the link named, lines expected).
 SELF_TEST_LOG = [
     ("a pair both readings see as out of step is said at INFO", "INFO", "behind.md#둘째'", 1),
@@ -584,7 +676,9 @@ SELF_TEST_LOG = [
      "WARNING", "behind.md#둘째'", 0),
     ("a fragment left as written that still resolves is not mentioned", "", "behind.md#api'", 0),
     ("a pair only the site sees as out of step is a warning -- the link check accepted it",
-     "WARNING", "stray.md#둘째'", 1),
+     "WARNING", "setext.md#둘째'", 1),
+    ("a pair with a `#42` line is not out of step, and nothing is said of it",
+     "", "stray.md#둘째'", 0),
     ("a pair a level apart is said at INFO", "INFO", "levels.md#셋째'", 1),
     ("and so is a pair whose levels come in another order", "INFO", "nested.md#둘째'", 1),
     ("a carried fragment is not mentioned", "", "guide.md#설정-방법'", 0),
@@ -635,6 +729,9 @@ def self_test():
         hrefs = {(page, text): (href(page, text, ""), href(page, text, "en"))
                  for _, page, text, _, _ in SELF_TEST_CASES}
         english_design = (root / "site/en/design/index.html").read_text(encoding="utf-8")
+        korean_pages = {page: html.unescape(urllib.parse.unquote(
+            (root / "site" / page / "index.html").read_text(encoding="utf-8")))
+            for page in ("stray", "edges")}
 
     failed = 0
     print(f"self-test over {len(SELF_TEST_CASES)} link(s) in a two-locale site MkDocs built")
@@ -650,6 +747,12 @@ def self_test():
         failed += not ok
         print(f"  {'ok  ' if ok else 'FAIL'} and {name} reads on /en/ as it was written")
         print(f"         {text!r} {'is' if ok else 'is not'} on the page")
+
+    for name, page, present, absent in SELF_TEST_NOT_A_HEADING:
+        ok = present in korean_pages[page] and not re.search(absent, korean_pages[page])
+        failed += not ok
+        print(f"  {'ok  ' if ok else 'FAIL'} {name}")
+        print(f"         {present!r} {'is' if present in korean_pages[page] else 'is not'} on the page")
 
     print()
     print(f"self-test over {len(SELF_TEST_LOG)} thing(s) that build must say, or must not")
