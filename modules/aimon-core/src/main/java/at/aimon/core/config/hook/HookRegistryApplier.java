@@ -338,6 +338,12 @@ public final class HookRegistryApplier {
      * Parses the entry's matcher. A matcher that does not parse falls back to a name-only match on the raw string,
      * which matches no real tool &mdash; so on {@code preTool}, the one guard event that reads the matcher, it is not
      * a fallback but a guard that silently never fires, and stops the load instead.
+     *
+     * <p>
+     * "Does not parse" includes a term that reads as a tool name no tool can have ({@code "^Edit$"},
+     * {@code "tool=Bash"}, {@code "Bash & input.command~^npm"}, {@code "mcp__.*"}): {@link PredicateParser} refuses it
+     * for the same reason, since parsing it produced exactly that never-firing guard without going through this
+     * fallback at all.
      */
     private ToolInputPredicate parseMatcher(MergedHookConfig merged, String event, MergedHookEntry mhe, int idx) {
         final String matcher = mhe.getEntry().getMatcher();

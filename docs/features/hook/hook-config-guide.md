@@ -243,15 +243,21 @@ WARN 이 아니라 **시작 실패**다(`… is invalid: unknown event 'preTol' 
   절대 경로일 수도 상대 경로일 수도 있으므로 디렉터리가 붙어도 걸리게 `*.env` 처럼 `*` 로 시작한다. 그 밖의 도구에
   괄호를 붙이면(`WebFetch(…)`, `mcp__x(…)`) 해석되지 않는다.
 - **없는 것.** 정규식, AND(`&`), 입력 필드 지정(`command=…`), 부정은 문법에 없다. 도구 권한의 패턴 문법
-  (`allowed-tools` 의 `Bash(git:*)` · `Read(/tmp/**)`)과도 **다른 문법**이다 — 매처에서 `:` 와 `**` 는 리터럴이다.
+  (`allowed-tools` 의 `Bash(git:*)` · `Read(/tmp/**)`)과도 **다른 문법**이다 — 매처에서 `:` 는 리터럴이고 `**` 는 `*` 를 두 번
+  적은 것일 뿐이다(`Edit(**/*.java)` 는 디렉터리가 붙은 경로에는 걸리고 `Main.java` 에는 걸리지 않는다).
 - **해석되지 않는 매처** — 짝이 맞지 않는 괄호, 빈 패턴(`Bash()`), 빈 항(`Read|`), 닫는 괄호 뒤의 글자, 괄호를 받지 않는
-  도구 — 는 `preTool` 에서 **시작 실패**다([시작할 때 막는 경우](#시작할-때-막는-경우)). `postTool` 에서는 문자열 전체를 도구
-  이름으로 보는 `name-only` fallback 으로 떨어지고 WARN 이 남는다(그 이름의 도구는 없으므로 hook 은 발화하지 않는다).
-- **해석은 되지만 아무것도 맞추지 못하는 매처는 잡히지 않는다.** 괄호가 없는 항은 통째로 도구 이름이고 괄호 안은 통째로
-  글롭이라, 위에 없는 문법으로 적은 매처는 오류 없이 등록되어 **한 번도 발화하지 않는다**: `mcp__.*` 는 `mcp__.` 으로
-  시작하는 이름만, `Bash & input.command~^npm` 은 그 글자 그대로의 이름만, `Bash(command=^git\s+push)` 는 그 글자 그대로의
-  커맨드만 맞춘다. 이 가이드는 한때 그 세 형태를 문법으로 실었다 — 그대로 옮겨 적은 `deny` 가드가 있다면 지금까지 걸린
-  적이 없으니 위 표의 형태로 고쳐 쓴다.
+  도구, **어떤 도구의 이름도 될 수 없는 괄호 없는 항** — 는 `preTool` 에서 **시작 실패**다
+  ([시작할 때 막는 경우](#시작할-때-막는-경우)). `postTool` 에서는 문자열 전체를 도구 이름으로 보는 `name-only` fallback 으로
+  떨어지고 WARN 이 남는다(그 이름의 도구는 없으므로 hook 은 발화하지 않는다). 괄호 없는 항은 통째로 도구 이름이므로 영문자 ·
+  숫자 · `_` · `-` · `.` 와 와일드카드 `*` 만 올 수 있다 — `^Edit$`, `tool=Bash`, `Bash & input.command~^npm`, `Bash Edit`,
+  `Bash,Edit` 는 해석되지 않는다. `mcp__` 뒤는 서버 이름 자리(소문자 · 숫자 · `-`)라서 `mcp__.*` 와 `mcp__GitHub__x` 도
+  해석되지 않는다. 이 가이드는 한때 정규식 · `&` · 입력 필드 형태를 문법으로 실었고, 그렇게 적은 `deny` 가드는 오류 없이
+  등록되어 한 번도 걸리지 않았다 — 이제는 시작할 때 드러난다. 이름에 다른 문자가 든 도구는 그 자리에 `*` 를 적어 맞춘다.
+- **해석은 되지만 아무것도 맞추지 못하는 매처가 여전히 있다.** 괄호 **안**은 통째로 글롭이고 커맨드와 경로에는 어떤 문자든
+  올 수 있어 검사하지 않는다: `Bash(command=^git\s+push)` 는 그 글자 그대로의 커맨드만, `Bash(git:*)` 는 `git:` 으로 시작하는
+  커맨드만 맞춘다(`Bash(FOO=1 make*)` · `Bash(npm run deploy:*)` 처럼 같은 모양의 멀쩡한 가드가 있어 거절할 수 없다). 괄호
+  밖에서는 `.` 이 이름 문자라 `Bash.*` 가 해석된다 — `Bash.` 으로 시작하는 이름만 맞추고, 무엇을 맞추는지 알리는 WARN 이
+  남는다. 대소문자가 다른 이름(`bash`)과 없는 도구의 이름도 잡히지 않는다. 가드를 적었으면 한 번 걸리는지 확인한다.
 
 ---
 
@@ -565,7 +571,7 @@ entry #<n>, handler #<m>: <사유>`. 번호는 그 계층 · 그 이벤트 안�
 | 필수 필드 누락 · 잘못된 값 — `command` 없는 `command`, `reason` 없는 `deny`, URI 가 아닌 `url`, 모르는 `method`, `server` · `tool` 없는 `mcp` | **시작 실패** | skip + WARN |
 | 그 이벤트가 받지 않는 handler 타입 — `preTool` 밖의 `deny`, `preTool` · `postTool` 밖의 `http` · `mcp` | **시작 실패** | skip + WARN |
 | handler 가 하나도 없는 entry | **시작 실패** | skip + WARN |
-| 해석되지 않는 `matcher` | `preTool`: **시작 실패** | `postTool`: name-only fallback + WARN |
+| 해석되지 않는 `matcher` — 어떤 도구의 이름도 될 수 없는 괄호 없는 항(`^Edit$`, `Bash & …`, `mcp__.*`) 포함 | `preTool`: **시작 실패** | `postTool`: name-only fallback + WARN |
 | 이 호스트에서 돌 수 없는 handler — 셸을 지원하지 않는 실행기의 `command`, 실행기가 배선되지 않은 `http` · `mcp` | **시작 실패** (`"failOpen": true` 인 handler 는 가드가 아니므로 전처럼 처리 — `command` 는 skip + WARN, `http` · `mcp` 는 등록) | `command` 는 skip + WARN, `http` · `mcp` 는 등록되어 호출 때 WARN |
 | 가드 이벤트와 두 글자 이내로 다른 이벤트 이름 (`preTol`) | **시작 실패** | — |
 | 그 밖의 모르는 이벤트 이름 · 미지원 이벤트 | — | skip + WARN (가까운 이름이 있으면 알려 준다) |
@@ -984,8 +990,8 @@ fork 가 없어 발화하지 않는다. 전체 규칙은 [`aimon-skill-extension
 | 시작 시 `Configuration error: hooks config … (… layer) is invalid: …` / `… could not be read: …` 로 종료 | 메시지가 가리키는 파일의 그 위치를 고치거나 파일을 치운다. 깨진 JSON · 알 수 없는 `type` · 0 이하 `timeout` · 읽을 수 없는 파일 · 파일 자리에 있는 디렉터리가 모두 여기로 온다. 파일 hook 없이 뜨는 일은 없다. |
 | fork 가 `Execution blocked by OnStart hook [SUBAGENT/…]` 로 끝남          | `hooks.json`(또는 스킬 frontmatter)의 `onStart` hook 이 그 fork 를 막았다. 사용자 입력용 hook 이라면 `AIMON_INVOKER_TYPE` 이 `SUBAGENT` 일 때 exit 0 으로 빠지게 한다. |
 | `Configuration error: hooks config … is invalid: <event> entry #n, handler #m: …` 로 CLI 가 뜨지 않음 | 가드 이벤트 아래에 적용할 수 없는 항목이 있다. 메시지가 가리키는 handler 를 고치거나 지운다. 관찰용이라 못 돌아도 되는 handler 라면 `"failOpen": true`. 전체 표는 [시작할 때 막는 경우](#시작할-때-막는-경우). |
-| `WARN hooks: matcher '...' could not be parsed`                          | `postTool` 의 `PredicateParser` 문법 오류. fallback 으로 name-only 적용 중. (`preTool` 에서는 시작 실패.) |
-| `deny` · 가드 hook 이 등록됐는데 한 번도 걸리지 않음                       | 매처가 해석은 되지만 아무 호출과도 맞지 않는다 — 정규식(`mcp__.*`, `\s+`) · `&` · `command=…` · 권한 패턴(`Bash(git:*)`)은 매처 문법이 아니고 오류도 나지 않는다. [Matcher 문법](#matcher-문법)의 형태로 고친다. |
+| `WARN hooks: matcher '...' could not be parsed`                          | `postTool` 의 `PredicateParser` 문법 오류 — 도구 이름이 될 수 없는 항(`can match no tool`)도 여기로 온다. fallback 으로 name-only 적용 중이라 hook 은 발화하지 않는다. (`preTool` 에서는 시작 실패.) |
+| `deny` · 가드 hook 이 등록됐는데 한 번도 걸리지 않음                       | 매처가 해석은 되지만 아무 호출과도 맞지 않는다 — 괄호 **안**에 적은 정규식(`\s+`) · `command=…` · 권한 패턴(`Bash(git:*)`), 괄호 밖의 `Bash.*`(WARN 이 남는다) · 대소문자가 다른 이름은 매처 문법이 아니어도 오류가 나지 않는다. [Matcher 문법](#matcher-문법)의 형태로 고친다. |
 | `WARN hooks: invalid handler in PROJECT on event 'postTool': ...`        | 가드가 아닌 이벤트에서 필수 필드 누락 (`command`/`url`/`server+tool`/`reason`). 해당 handler 만 스킵. |
 | `WARN hooks: 'deny' is not valid on postTool ...`                        | `deny` 는 `preTool` 전용. 다른 이벤트에서는 handler 가 무시됨.                |
 | `WARN hooks: '...' event is not supported by AIMON in this phase`        | `Notification` / `UserPromptSubmit` / `stop_hook_active` 뿐이다. 나머지는 모두 지원. |

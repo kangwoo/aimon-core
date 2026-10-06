@@ -271,6 +271,25 @@ class SkillHookSetParserTest {
                 .hasMessageContaining("matcher").hasMessageContaining("string");
     }
 
+    @ParameterizedTest(name = "{0} matcher \"{1}\"")
+    @MethodSource("matchersNoToolCanMatch")
+    void parse_matcherNoToolCanMatch_throws(String event, String matcher) {
+        // EE-85: the text used to be taken whole as a tool name, so the deny guard loaded and never fired. The skill
+        // parser throws on a matcher that does not parse under both tool events, as it does for every malformed field.
+        Map<String, Object> hooks = Map.of(event,
+                List.of(Map.of("matcher", matcher, "action", Map.of("type", "shell", "command", "echo"))));
+
+        assertThatThrownBy(() -> shellParser.parse("s", hooks)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("hooks." + event + "[0].matcher could not be parsed")
+                .hasMessageContaining("can match no");
+    }
+
+    static Stream<Arguments> matchersNoToolCanMatch() {
+        return Stream.of("preTool", "postTool")
+                .flatMap(event -> Stream.of("^Edit$", "tool=Bash", "Bash & input.command~^npm", "Bash Edit", "mcp__.*")
+                        .map(matcher -> Arguments.of(event, matcher)));
+    }
+
     @Test
     void parse_omittedMatcherOnPreTool_defaultsToAny() {
         Map<String, Object> hooks = Map.of("preTool", List.of(Map.of("action", Map.of("type", "deny", "reason", "x"))));
