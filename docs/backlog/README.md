@@ -359,15 +359,36 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | [`multi-instance-readiness.md`](multi-instance-readiness.md) | 아키텍처 리뷰 (2026-08-31) | 3 | 1 | 1 | 1 |
 | [`module-dependency-scope.md`](module-dependency-scope.md) | 아키텍처 리뷰 (2026-08-31) · #99 (2026-09-11) · D-4 착수 (2026-10-06) | 5 | 2 | 3 | 0 |
 | [`architecture-review-open-items.md`](architecture-review-open-items.md) | 아키텍처 리뷰 (2026-08-31) | 8 | 2 | 6 | 0 |
-| [`translation-tooling-open-items.md`](translation-tooling-open-items.md) | 번역 낡음 가드 작업 (2026-09-06) · #122 (2026-09-11) · #121 (2026-09-11) · #135 (2026-09-11) · T-10 착수 (2026-10-06) | 10 | 3 | 7 | 0 |
+| [`translation-tooling-open-items.md`](translation-tooling-open-items.md) | 번역 낡음 가드 작업 (2026-09-06) · #122 (2026-09-11) · #121 (2026-09-11) · #135 (2026-09-11) · T-10 착수 (2026-10-06) | 10 | 2 | 8 | 0 |
 | [`openai-model-capabilities-open-items.md`](openai-model-capabilities-open-items.md) | o-시리즈 reasoning-item 재생 프로브 (2026-09-09) | 1 | 0 | 1 | 0 |
 | [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) | `docs/design/llm/model-capability-config-key.md` §9 (#46) | 30 | 5 | 25 | 0 |
 | [`reasoning-delta-stream-open-items.md`](reasoning-delta-stream-open-items.md) | `docs/design/llm/reasoning-delta-stream.md` §11 (#62) | 9 | 3 | 6 | 0 |
 | [`config-value-expansion-open-items.md`](config-value-expansion-open-items.md) | `docs/design/integration/config-value-expansion-and-frontmatter-strictness.md` §9 (#53) | 2 | 0 | 2 | 0 |
 | [`live-api-test-tier.md`](live-api-test-tier.md) | 라이브 API 테스트 계층의 CI 신호 결정 — #81 (2026-09-10) | 2 | 0 | 1 | 1 |
 | [`session-log-open-items.md`](session-log-open-items.md) | `docs/design/session/session-log.md` §12 · `docs/design/agent-execution/context-engine.md` §13 (2026-09-24 · 2026-09-25) | 6 | 0 | 6 | 0 |
-| [`execution-environment-open-items.md`](execution-environment-open-items.md) | `docs/design/tool/execution-environment-implementation.md` §9 · §10 · `docs/design/tool/execution-environment.md` §14 (2026-09-28) · 빌드 리뷰 4 · PR #195 리뷰 1 · 워크스페이스 샌드박스 설계 리뷰 (2026-09-29) · PR #196 리뷰 · EE-42 설계 §7 · §8 (2026-09-29) · `docs/design/tool/workflow-isolation-hardening.md` §7 · PR #202 (2026-09-30) · EE-9 · EE-12 설계 §8 · §9 (2026-10-03) · EE-13 · EE-7 설계 §8 · §9 와 그 리뷰 (2026-10-03) · EE-14 설계 §2.3 · §10 · PR #206 리뷰 (2026-10-03) · EE-49 · EE-51 · EE-58 설계 §8 · §9 와 그 리뷰 · PR #207 리뷰 (2026-10-04) · EE-70 · EE-71 설계 §9 (2026-10-04) · aimon-sandbox PR #6 (2026-10-04) · EE-83 · EE-85 · EE-88 착수 (2026-10-06) | 91 | 24 | 67 | 0 |
+| [`execution-environment-open-items.md`](execution-environment-open-items.md) | `docs/design/tool/execution-environment-implementation.md` §9 · §10 · `docs/design/tool/execution-environment.md` §14 (2026-09-28) · 빌드 리뷰 4 · PR #195 리뷰 1 · 워크스페이스 샌드박스 설계 리뷰 (2026-09-29) · PR #196 리뷰 · EE-42 설계 §7 · §8 (2026-09-29) · `docs/design/tool/workflow-isolation-hardening.md` §7 · PR #202 (2026-09-30) · EE-9 · EE-12 설계 §8 · §9 (2026-10-03) · EE-13 · EE-7 설계 §8 · §9 와 그 리뷰 (2026-10-03) · EE-14 설계 §2.3 · §10 · PR #206 리뷰 (2026-10-03) · EE-49 · EE-51 · EE-58 설계 §8 · §9 와 그 리뷰 · PR #207 리뷰 (2026-10-04) · EE-70 · EE-71 설계 §9 (2026-10-04) · aimon-sandbox PR #6 (2026-10-04) · EE-83 · EE-85 · EE-88 · EE-90 착수 (2026-10-06) | 92 | 22 | 70 | 0 |
 
+> **2026-10-06 — 위 배치가 연 다섯 가운데 셋을 닫았다 (`fix/ee89-ee90-t11`).** 닫힌 것은 EE-89 · EE-90 · T-11 이고, 그러다
+> 나온 EE-92 를 등록한 날 닫았다. 이번에도 새 항목은 닫는 항목을 **돌려 보다가** 나왔다 — EE-90 의 폴백을 읽으려고 돌린
+> 프로브에서.
+>
+> **셋 모두 처방이 적힌 대로 듣지 않았다 (규칙 다섯), 그리고 모양이 같다 — 처방이 한 문장 모자랐다.** EE-90 의 *"상한을
+> 둔다"* 에는 **넘었을 때의 답**이 없었고, 가장 자연스러운 답(기존 폴백처럼 "맞지 않는다")은 가드를 고치기 전보다 약하게
+> 만든다. EE-89 의 *"프로세스를 죽일지 정한다"* 는 쓰기를 **끊는다**는 것을 전제로 깔고 있었고, 끊지 않으면 정할 것이 없었다.
+> T-11 의 *"여덟 줄을 고친다"* 는 고칠 수 없는 글을 가리켰다 — 그 사실은 항목 자신의 "어디" 칸이 읽으라고 한 절에 있었다.
+> 처방을 적용하기 전에 **그 처방이 말하지 않은 갈림**이 무엇인지 먼저 적는다.
+>
+> **세는 도구의 사각지대가 하나 더 (규칙 여섯).** T-11 은 `^#[^# ]` 로 여덟 줄을 셌다. 렌더해 보니 열다섯이었다 — 정규식은
+> 줄 맨 앞만 봤고 파서는 리스트 항목의 첫 줄도 본다. 세는 식이 **세려는 것을 읽는 쪽의 문법**과 다르면, 센 숫자는 식의 것이다.
+>
+> **PR 앞에서 독립 리뷰를 받았고, 닫으면서 낸 회귀가 이번에도 하나 나왔다.** EE-92 의 주석 읽기가 `main` 보다 **덜** 맞췄다
+> (`echo "x # $(rm -rf /)"`). 직전 배치의 둘과 모양이 같고 한 겹이 더 있다: 이번에는 "덜 맞추지 않는다" 를 불변식으로
+> **적어 두기까지** 했는데, 그것을 재는 것을 돌리지 않았다. 리뷰어는 옛 구현과 새 구현을 나란히 돌렸다 — 불변식이 "전과
+> 같거나 더" 의 꼴이면 **옛 구현이 곧 시험기**다. 규칙 다섯에 붙는 줄: 불변식을 문장으로 적었으면, 닫기 전에 그것을 재는
+> 것을 한 번 돌린다. 같은 리뷰가 선재 결함 하나(글롭의 역추적)와 훅 셀프 테스트의 살아남는 변이 셋을 찾았고 함께 고쳤다.
+>
+> **확인하지 못한 것.** 한 플랫폼(macOS)에서만 돌았다. 각 항목의 "확인하지 않은 것" 칸이 나머지를 갖는다.
+>
 > **2026-10-06 — 세 등록부의 행을 세어서 고쳤다 (배치 `chore/backlog-batch-2026-10-06`).** 여섯이 닫히고 다섯이 열렸다. 닫힌 것은
 > EE-83 · EE-85 · EE-86 · EE-88 · D-4 · T-10, 열린 것은 EE-89 · EE-90 · EE-91 · D-5 · T-11 이다. 다섯 모두 닫은 항목을 **돌려 보다가**
 > 나왔다 — 읽기만 한 항목에서는 하나도 나오지 않았다.
