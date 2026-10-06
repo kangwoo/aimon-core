@@ -15,6 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.mongodb.MongoChangeStreamException;
+import com.mongodb.MongoCommandException;
 import com.mongodb.MongoException;
 import com.mongodb.MongoInterruptedException;
 import com.mongodb.client.ChangeStreamIterable;
@@ -66,11 +67,15 @@ import at.aimon.session.mongodb.internal.SessionSignalCodec;
  * <h2>Resume tokens</h2>
  *
  * <p>
- * The watcher updates {@link ResumeTokenStore} after every dispatched event. On reconnect (after a primary fail-over
- * or a transient error) the watcher resumes from the last token. If the token has aged past the oplog window the
- * driver throws {@link MongoChangeStreamException} with the {@code ChangeStreamHistoryLost} code; the watcher logs a
- * warning, clears the token, and reopens without resume — events between the gap are lost (best-effort, matches the
- * SPI's at-least-once semantics).
+ * The watcher updates {@link ResumeTokenStore} after every dispatched event and on idle polls. On reconnect (after a
+ * primary fail-over or a transient error) the watcher resumes from the last token. If the server refuses that token —
+ * it has aged past the oplog window ({@code ChangeStreamHistoryLost}), or the stream no longer contains it — the
+ * refusal arrives as a {@code MongoCommandException}; the watcher logs a warning, clears the token, and reopens without
+ * resume. Signals published in the gap are lost (best-effort, matches the SPI's at-least-once semantics).
+ *
+ * <p>
+ * The same happens when the server closes the cursor because the collection was dropped or recreated: the insert-only
+ * pipeline hides the invalidate event, so the watcher notices the server cursor is gone and reopens.
  *
  * <h2>Lifecycle</h2>
  *
@@ -105,12 +110,18 @@ public final class MongoSessionSignalBus implements SessionSignalBus, AutoClosea
     }
 
     public MongoSessionSignalBus(MongoDatabase database, String collectionName, String nodeId) {
+        this(database, collectionName, nodeId, new ResumeTokenStore());
+    }
+
+    /** Test seam: lets a test start the watcher from a resume token of its choosing. */
+    MongoSessionSignalBus(MongoDatabase database, String collectionName, String nodeId,
+            ResumeTokenStore resumeTokenStore) {
+        this.resumeTokenStore = Objects.requireNonNull(resumeTokenStore, "resumeTokenStore must not be null");
         Objects.requireNonNull(database, "database must not be null");
         this.collection = database
                 .getCollection(Objects.requireNonNull(collectionName, "collectionName must not be null"));
         this.nodeId = Objects.requireNonNull(nodeId, "nodeId must not be null");
         this.codec = new SessionSignalCodec();
-        this.resumeTokenStore = new ResumeTokenStore();
     }
 
     @Override
@@ -173,6 +184,12 @@ public final class MongoSessionSignalBus implements SessionSignalBus, AutoClosea
         }
     }
 
+    /** @return whether the watcher thread has been started and has not ended */
+    boolean isWatcherAlive() {
+        final Thread t = watcherThread;
+        return t != null && t.isAlive();
+    }
+
     private void unsubscribeOne(SessionId id, Consumer<SessionSignal> handler) {
         handlers.computeIfPresent(id, (k, list) -> {
             list.remove(handler);
@@ -204,6 +221,23 @@ public final class MongoSessionSignalBus implements SessionSignalBus, AutoClosea
                     return;
                 }
                 log.debug("Mongo cursor interrupted on node {} (close pending)", nodeId);
+            } catch (MongoCommandException e) {
+                if (closed.get()) {
+                    return;
+                }
+                if (resumeTokenStore.last().isPresent()) {
+                    // The server refused a command while this watcher was resuming from a stored token. This, not
+                    // MongoChangeStreamException, is how "the token is older than the oplog" (ChangeStreamHistoryLost)
+                    // and "the stream no longer contains it" arrive. Retrying the same token cannot succeed.
+                    log.warn(
+                            "Change stream watcher on node {} could not resume from its stored token ({}); starting"
+                                    + " over without it — signals published in the gap are not delivered here",
+                            nodeId, e.toString());
+                    resumeTokenStore.clear();
+                } else {
+                    log.warn("Change stream watcher hit a server error on node {}: {}", nodeId, e.toString());
+                }
+                sleepBackoff();
             } catch (MongoException e) {
                 if (closed.get()) {
                     return;
@@ -235,6 +269,21 @@ public final class MongoSessionSignalBus implements SessionSignalBus, AutoClosea
                     return;
                 }
                 if (change == null) {
+                    if (active.getServerCursor() == null) {
+                        // The server closed the cursor: the collection was dropped or renamed. The insert-only
+                        // pipeline filters out the invalidate event that would have said so, and tryNext() on a dead
+                        // cursor returns null for ever rather than throwing. A token from before an invalidate cannot
+                        // be resumed from, so it goes too.
+                        log.warn("Signal change stream on node {} was closed by the server (collection dropped or"
+                                + " recreated?); reopening — signals published in the gap are not delivered here",
+                                nodeId);
+                        resumeTokenStore.clear();
+                        sleepBackoff();
+                        return;
+                    }
+                    // Keep the token moving while the channel is quiet, so that a reconnect after a long idle stretch
+                    // does not resume from a token the oplog has already rolled past.
+                    resumeTokenStore.update(active.getResumeToken());
                     sleepShort();
                     continue;
                 }
@@ -271,7 +320,8 @@ public final class MongoSessionSignalBus implements SessionSignalBus, AutoClosea
             for (Consumer<SessionSignal> handler : list) {
                 try {
                     handler.accept(signal);
-                } catch (Exception e) {
+                } catch (Exception | Error e) {
+                    // Error too: this is the only thread that delivers signals to this node, and nothing restarts it.
                     log.warn("Signal handler threw for {} on node {}: {}", signal.getSessionId(), nodeId, e.toString());
                 }
             }

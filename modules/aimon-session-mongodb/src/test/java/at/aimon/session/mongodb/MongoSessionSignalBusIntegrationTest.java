@@ -6,20 +6,26 @@ import java.util.Map;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
+import org.bson.BsonDocument;
+import org.bson.Document;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+import com.mongodb.client.MongoChangeStreamCursor;
 import com.mongodb.client.MongoClient;
+import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.changestream.ChangeStreamDocument;
 
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.signal.SessionSignal;
 import at.aimon.core.agent.session.signal.SessionSignal.SignalKind;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
 import at.aimon.session.mongodb.internal.DocumentKeys;
+import at.aimon.session.mongodb.internal.ResumeTokenStore;
 
 /**
  * Integration tests for {@link MongoSessionSignalBus} against a real MongoDB replica-set container.
@@ -160,6 +166,108 @@ class MongoSessionSignalBusIntegrationTest {
             assertThat(got).as("A should receive B's broadcast").isNotNull();
             assertThat(got.getOriginNodeId()).isEqualTo("node-B");
             assertThat(received.poll(500L, TimeUnit.MILLISECONDS)).as("must not deliver A's own publish").isNull();
+        }
+    }
+
+    @Test
+    @DisplayName("a watcher keeps delivering after the signal collection is dropped and created again")
+    void watcherSurvivesTheCollectionBeingRecreated() throws Exception {
+        // The server closes the cursor on the drop, the insert-only pipeline never shows the watcher the invalidate,
+        // and tryNext() on the dead cursor returns null for ever. Every subscriber on the node goes deaf — interrupts,
+        // evictions and the event relay all ride this channel — with nothing in the log.
+        final SessionId id = SessionId.of("c-bus-recreate");
+        final LinkedBlockingQueue<SessionSignal> received = new LinkedBlockingQueue<>();
+        try (SessionSignalBus.Subscription sub = busB.subscribe(id, received::offer)) {
+            Thread.sleep(INITIAL_SETTLE_MS);
+            busA.publish(interrupt(id, "before"));
+            assertThat(received.poll(WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS)).isNotNull();
+
+            MongoTestSupport.dropAndApplyDdl();
+
+            assertThat(deliveredEventually(id, received)).as("a signal after the recreate reaches node B").isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("a watcher whose resume token the server refuses starts over instead of retrying it for ever")
+    void watcherRecoversFromAResumeTokenTheServerRefuses() throws Exception {
+        // The aged-out token, stood in for by a token from another collection's stream — the server refuses both the
+        // same way, with a MongoCommandException rather than the MongoChangeStreamException the watcher looked for.
+        final ResumeTokenStore unusable = new ResumeTokenStore();
+        unusable.update(tokenFromAnotherCollection());
+        final MongoSessionSignalBus stale = new MongoSessionSignalBus(dbB, DocumentKeys.COLL_SIGNALS, "node-C",
+                unusable);
+        final SessionId id = SessionId.of("c-bus-stale-token");
+        final LinkedBlockingQueue<SessionSignal> received = new LinkedBlockingQueue<>();
+        try (SessionSignalBus.Subscription sub = stale.subscribe(id, received::offer)) {
+            assertThat(deliveredEventually(id, received)).as("a signal reaches the node once it has started over")
+                    .isTrue();
+        } finally {
+            stale.close();
+        }
+    }
+
+    @Test
+    @DisplayName("a handler that throws an Error does not end the watcher")
+    void handlerThrowingAnErrorDoesNotEndTheWatcher() throws Exception {
+        final SessionId id = SessionId.of("c-bus-error");
+        final LinkedBlockingQueue<SessionSignal> received = new LinkedBlockingQueue<>();
+        try (SessionSignalBus.Subscription failing = busB.subscribe(id, signal -> {
+            throw new AssertionError("an Error, not an Exception, from a handler");
+        }); SessionSignalBus.Subscription sub = busB.subscribe(id, received::offer)) {
+            Thread.sleep(INITIAL_SETTLE_MS);
+            busA.publish(interrupt(id, "first"));
+            busA.publish(interrupt(id, "second"));
+
+            assertThat(received.poll(WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS)).isNotNull();
+            assertThat(received.poll(WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS)).isNotNull();
+            assertThat(busB.isWatcherAlive()).isTrue();
+        }
+    }
+
+    private static SessionSignal interrupt(SessionId id, String marker) {
+        return SessionSignal.builder().sessionId(id).kind(SignalKind.INTERRUPT).originNodeId("node-A")
+                .payload(Map.of("reason", "USER_REQUEST", "marker", marker)).build();
+    }
+
+    /**
+     * Publishes a fresh signal every 200 ms until one is heard. A watcher that is reopening has a window in which a
+     * publish is legitimately missed, so one publish and one wait would test the timing rather than the recovery.
+     */
+    private boolean deliveredEventually(SessionId id, LinkedBlockingQueue<SessionSignal> received)
+            throws InterruptedException {
+        final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(WAIT_TIMEOUT_MS * 2);
+        int attempt = 0;
+        while (System.nanoTime() < deadline) {
+            final String marker = "probe-" + attempt++;
+            busA.publish(interrupt(id, marker));
+            final long until = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(200L);
+            while (System.nanoTime() < until) {
+                final SessionSignal got = received.poll(20L, TimeUnit.MILLISECONDS);
+                if (got != null && marker.equals(got.getPayload().get("marker"))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static BsonDocument tokenFromAnotherCollection() {
+        final MongoCollection<Document> other = MongoTestSupport.sharedDatabase()
+                .getCollection("signal_bus_test_other_stream");
+        other.insertOne(new Document("seed", true));
+        try (MongoChangeStreamCursor<ChangeStreamDocument<Document>> cursor = other.watch().cursor()) {
+            other.insertOne(new Document("event", true));
+            final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(WAIT_TIMEOUT_MS);
+            while (System.nanoTime() < deadline) {
+                final ChangeStreamDocument<Document> change = cursor.tryNext();
+                if (change != null) {
+                    return change.getResumeToken();
+                }
+            }
+            throw new AssertionError("no change event from the other collection");
+        } finally {
+            other.drop();
         }
     }
 }

@@ -7,6 +7,22 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: `MongoSessionSignalBus` could go deaf for good while its watcher thread stayed alive
+
+Three ways a node stopped receiving cross-node signals — interrupts, evictions, the event relay — until it was
+restarted:
+
+- **A resume token the server refused was retried for ever.** The refusal (a token older than the oplog, among others)
+  arrives as a `MongoCommandException`; the branch that drops the token only caught `MongoChangeStreamException`. The
+  watcher logged a warning twice a second and delivered nothing. It now drops the token and starts over, and the token
+  advances on idle polls so that a quiet channel does not leave it stale.
+- **Dropping and recreating `conversation_signals` killed every watcher silently.** The server closes the cursor, the
+  insert-only pipeline hides the invalidate, and the cursor then returns nothing without failing. The watcher now
+  notices and reopens, with a warning.
+- **A handler that threw an `Error` ended the watcher thread**, which nothing restarts.
+
+Signals published while a watcher is reopening are still lost; that was and is best-effort.
+
 ### Changed (breaking): a matcher term no tool can be named no longer parses (EE-85)
 
 A matcher term without parentheses is a tool name. One holding a character no tool name has — `^Edit$`, `tool=Bash`,
