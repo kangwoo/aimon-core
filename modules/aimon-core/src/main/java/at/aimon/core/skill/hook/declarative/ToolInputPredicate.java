@@ -23,9 +23,10 @@ import at.aimon.core.agent.tool.ToolInput;
  * </ul>
  *
  * <p>
- * The {@code matcher} grammar has no regular expressions and no way to name an input field. A spelling outside the
- * grammar usually still parses — a term without parentheses is a tool name in its entirety — and then matches no
- * call, so the hook never fires. The grammar is documented for users in
+ * The {@code matcher} grammar has no regular expressions and no way to name an input field. A term without parentheses
+ * is a tool name in its entirety, so a spelling outside the grammar written there does not parse when no tool could
+ * have that name; written inside parentheses it is a glob like any other, and matches no call, so the hook never
+ * fires. The grammar is documented for users in
  * {@code docs/features/hook/hook-config-guide.md} ("Matcher 문법").
  *
  * <p>

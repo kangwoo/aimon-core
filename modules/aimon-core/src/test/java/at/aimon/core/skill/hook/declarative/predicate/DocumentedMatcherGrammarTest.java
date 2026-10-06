@@ -18,9 +18,11 @@ import at.aimon.core.skill.hook.declarative.ToolInputPredicate;
  * <p>
  * The guide used to document regular expressions, an input-field form and an {@code &} operator. The parser never
  * had any of the three, and — which is what made it a hole rather than a typo — every one of those spellings
- * <em>parses</em>: it becomes a name or a glob that no tool call can match, so the guard written with it registered
- * and never fired, without an error at startup. The first group of tests records that; the second pins each row of
- * the rewritten table. A change to the parser that breaks a test here changes what the guide promises.
+ * <em>parsed</em>: it became a name or a glob that no tool call can match, so the guard written with it registered
+ * and never fired, without an error at startup. The first group of tests records what became of each (EE-85): the
+ * two that are a term without parentheses no longer parse, the one inside parentheses still does and still matches
+ * nothing. The second group pins each row of the rewritten table. A change to the parser that breaks a test here
+ * changes what the guide promises.
  */
 @DisplayName("the matcher grammar the hook guide documents")
 class DocumentedMatcherGrammarTest {
@@ -34,21 +36,22 @@ class DocumentedMatcherGrammarTest {
         return matches(matcher, "Bash", Map.of("command", command));
     }
 
-    // --- what the guide used to document: parses, and matches nothing ------------------------------------------
+    // --- what the guide used to document -----------------------------------------------------------------------
 
     @Test
-    void regexOnTheToolName_isAGlobThatNeedsALiteralDot() {
-        // Documented as "every tool starting with mcp__".
-        assertThat(matches("mcp__.*", "mcp__github__create_issue", Map.of())).isFalse();
-        assertThat(matches("mcp__.*", "mcp__.anything", Map.of())).isTrue();
+    void regexOnTheToolName_noLongerParses() {
+        // Documented as "every tool starting with mcp__". It was a glob that needs a literal dot after "mcp__",
+        // where a server name goes, and no server name starts with one.
+        assertThatThrownBy(() -> PredicateParser.parse("mcp__.*")).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("can match no MCP tool").hasMessageContaining("'mcp__*'");
         // The spelling that does what was meant.
         assertThat(matches("mcp__*", "mcp__github__create_issue", Map.of())).isTrue();
     }
 
     @Test
-    void inputFieldRegex_isALiteralSubcommandGlob() {
+    void inputFieldRegex_isStillALiteralSubcommandGlob() {
         // Documented as "tool name plus an input-field match"; the three guide examples that used it were deny and
-        // approval guards.
+        // approval guards. Inside the parentheses nothing can be refused: a command line holds any character.
         assertThat(matchesBash("Bash(command=^git\\s+push)", "git push origin main")).isFalse();
         assertThat(matchesBash("Bash(command=^rm\\s+-rf\\s+/)", "rm -rf /")).isFalse();
         assertThat(matchesBash("Bash(command=^git\\s+push.*--force)", "git push --force")).isFalse();
@@ -58,9 +61,10 @@ class DocumentedMatcherGrammarTest {
     }
 
     @Test
-    void ampersand_isNotAnOperator_theWholeTextIsOneToolName() {
-        assertThat(matchesBash("Bash & input.command~^npm", "npm install")).isFalse();
-        assertThat(PredicateParser.parse("Bash & input.command~^npm")).isInstanceOf(NameOnlyPredicate.class);
+    void ampersand_isNotAnOperator_andTheTermNoLongerParses() {
+        // The whole text was one tool name. No tool has a name with a space, an '&' or a '~' in it.
+        assertThatThrownBy(() -> PredicateParser.parse("Bash & input.command~^npm"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("can match no tool");
     }
 
     @Test
@@ -93,8 +97,9 @@ class DocumentedMatcherGrammarTest {
         assertThat(matches("mcp__*", "mcp__github__create_issue", Map.of())).isTrue();
         assertThat(matches("*Search", "WebSearch", Map.of())).isTrue();
         assertThat(matches("mcp__*", "Bash", Map.of())).isFalse();
-        // '?' and '.' are literals.
-        assertThat(matches("Rea?", "Read", Map.of())).isFalse();
+        // '.' is a literal; '?' is not a name character at all, so the term does not parse.
+        assertThat(matches("Rea.", "Read", Map.of())).isFalse();
+        assertThatThrownBy(() -> PredicateParser.parse("Rea?")).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -170,5 +175,9 @@ class DocumentedMatcherGrammarTest {
         assertThatThrownBy(() -> PredicateParser.parse("Read|")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> PredicateParser.parse("Bash(rm *) & Edit"))
                 .isInstanceOf(IllegalArgumentException.class);
+        // A term without parentheses that holds a character no tool name has.
+        assertThatThrownBy(() -> PredicateParser.parse("^Edit$")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> PredicateParser.parse("Bash Edit")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> PredicateParser.parse("Bash,Edit")).isInstanceOf(IllegalArgumentException.class);
     }
 }

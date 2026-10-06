@@ -24,6 +24,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 import at.aimon.core.agent.InvokerType;
@@ -195,6 +196,67 @@ class HookConfigGuardEntryStrictnessTest {
 
         assertThatCode(reloader(NoOpShellActionExecutor.INSTANCE)::bootstrap).doesNotThrowAnyException();
         assertThat(registry.isEmpty()).isTrue();
+    }
+
+    // --- (2b) a matcher that parses as a tool name no tool can have (EE-85) ---------------------------------------
+
+    @ParameterizedTest(name = "preTool matcher \"{0}\"")
+    @ValueSource(strings = {"^Edit$", "tool=Bash", "Bash & input.command~^npm", "Bash Edit", "Bash,Edit", "mcp__.*",
+            "Read|^Edit$"})
+    void bootstrap_preToolMatcherNoToolCanMatch_stopsStartup(String matcher) throws Exception {
+        // Each of these used to register a deny guard that never fired: the text was taken whole as a tool name.
+        writeProjectHooks(denyOn("preTool", matcher));
+        final HookRegistryReloader reloader = reloader(HOST_SHELL);
+
+        assertThatThrownBy(reloader::bootstrap).isInstanceOf(HookConfigParseException.class)
+                .hasMessageContaining("hooks config " + projectHooksFile().toAbsolutePath())
+                .hasMessageContaining("(PROJECT layer) is invalid").hasMessageContaining("preTool entry #0")
+                .hasMessageContaining("the matcher could not be parsed").hasMessageContaining("can match no");
+        assertThat(registry.isEmpty()).isTrue();
+        verify(manager, never()).executeOnConfigReload(any());
+    }
+
+    @ParameterizedTest(name = "preTool matcher \"{0}\"")
+    @ValueSource(strings = {"Bash", "*", "Edit|Write", "mcp__*", "mcp__github__*", "*Search", "schedule_task",
+            "deriver.*", "Bash(git push*--force*)", "Bash(FOO=1 make *)", "Bash(npm run deploy:*)", "Edit(**/*.env)"})
+    void bootstrap_preToolMatcherThatCanMatch_isRegistered(String matcher) throws Exception {
+        writeProjectHooks(denyOn("preTool", matcher));
+
+        assertThatCode(reloader(HOST_SHELL)::bootstrap).doesNotThrowAnyException();
+        assertThat(registry.getHooks(HookEventType.PRE_TOOL)).hasSize(1);
+    }
+
+    @Test
+    void bootstrap_sameMatcherOnPostTool_isAWarnAndTheRestApplies() throws Exception {
+        // postTool cannot block: its unparseable matcher keeps the name-only fallback and the WARN it always had.
+        writeProjectHooks("""
+                {"hooks":{
+                  "postTool":[{"matcher":"^Edit$","hooks":[{"type":"command","command":"audit.sh"}]}],
+                  "preTool":[{"matcher":"Bash","hooks":[{"type":"deny","reason":"guard"}]}]
+                }}""");
+
+        assertThatCode(reloader(HOST_SHELL)::bootstrap).doesNotThrowAnyException();
+        assertThat(registry.getHooks(HookEventType.PRE_TOOL)).hasSize(1);
+        assertThat(registry.getHooks(HookEventType.POST_TOOL)).hasSize(1);
+    }
+
+    @Test
+    void reload_preToolMatcherNoToolCanMatch_keepsThePreviousConfig() throws Exception {
+        writeProjectHooks(denyOn("preTool", "Bash"));
+        final HookRegistryReloader reloader = reloader(HOST_SHELL);
+        assertThat(reloader.bootstrap()).isTrue();
+        final List<PreToolHook> before = List.copyOf(registry.getHooks(HookEventType.PRE_TOOL));
+
+        // An edit that would have swapped a live guard for one that never fires.
+        writeProjectHooks(denyOn("preTool", "Bash & input.command~^rm"));
+
+        assertThat(reloader.reload(2L, projectHooksFile())).isFalse();
+        assertThat(registry.getHooks(HookEventType.PRE_TOOL)).isEqualTo(before);
+    }
+
+    private static String denyOn(String event, String matcher) {
+        return "{\"hooks\":{\"" + event + "\":[{\"matcher\":\"" + matcher
+                + "\",\"hooks\":[{\"type\":\"deny\",\"reason\":\"no\"}]}]}}";
     }
 
     // --- (3) unknown event names -------------------------------------------------------------------------------
