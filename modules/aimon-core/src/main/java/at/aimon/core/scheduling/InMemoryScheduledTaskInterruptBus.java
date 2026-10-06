@@ -7,6 +7,7 @@ package at.aimon.core.scheduling;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,7 +20,9 @@ import at.aimon.core.agent.interrupt.InterruptReason;
  *
  * <p>
  * Useful in two places. It is the reference implementation a distributed bus is measured against — same fan-out, same
- * at-least-once delivery, same echo to the publisher — and it is what lets the cross-node contract be tested without a
+ * at-least-once delivery; it also echoes to the publisher, which the SPI allows and a distributed bus may filter out
+ * ({@code AbstractScheduledTaskInterruptBusContractTest} is the shared measure) — and it is what lets the cross-node
+ * contract be tested without a
  * broker, by giving two {@link SchedulingEngine}s in one JVM the same bus instance. It is <b>not</b> a substitute for
  * a distributed bus: the reach of this one ends at the process boundary, so nodes that do not share a heap do not
  * share a bus.
@@ -57,7 +60,13 @@ public final class InMemoryScheduledTaskInterruptBus implements ScheduledTaskInt
     public Subscription subscribe(InterruptListener listener) {
         Objects.requireNonNull(listener, "Listener cannot be null");
         listeners.add(listener);
-        // remove(Object) drops the first occurrence, so closing one of two identical subscriptions leaves the other.
-        return () -> listeners.remove(listener);
+        // remove(Object) drops the first occurrence, so closing one of two identical subscriptions leaves the other —
+        // but only if each handle removes once. Unguarded, a second close of this handle would take its twin.
+        final AtomicBoolean open = new AtomicBoolean(true);
+        return () -> {
+            if (open.compareAndSet(true, false)) {
+                listeners.remove(listener);
+            }
+        };
     }
 }

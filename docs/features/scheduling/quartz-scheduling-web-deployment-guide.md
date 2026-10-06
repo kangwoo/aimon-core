@@ -247,7 +247,7 @@ QuartzTaskSchedulerBuilder.create()
 | `clusterCheckinInterval` | 20_000ms | 15_000ms | 기본값 대비 failover 속도 향상 |
 | `defaultMaxQuota` (`SchedulingEngineBuilder`) | 10 | agent runtime당 **10–20** | LLM 비용·과도한 cron 등록 방어 |
 | `executionGuard` (`SchedulingEngineBuilder`) | `InMemoryScheduledExecutionGuard` (노드 로컬) | 분산 구현 | 노드 간 중복 발화에 대한 코어 레벨 2차 방어선 |
-| `interruptBus` (`SchedulingEngineBuilder`) | `ScheduledTaskInterruptBus.LOCAL_ONLY` (노드 로컬) | 분산 구현 | 취소가 **발화한 노드**의 실행까지 멈추게 한다 |
+| `interruptBus` (`SchedulingEngineBuilder`) | `ScheduledTaskInterruptBus.LOCAL_ONLY` (노드 로컬) | 분산 구현 (MongoDB: `MongoScheduledTaskInterruptBus`) | 취소가 **발화한 노드**의 실행까지 멈추게 한다 |
 
 `defaultMaxQuota`는 **agent runtime 단위** 상한이다(`TaskQuotaManager` 를 직접 주입하면 무시된다).
 
@@ -259,7 +259,9 @@ QuartzTaskSchedulerBuilder.create()
 노드 로컬이므로, 버스가 없으면 `cancel` 은 취소를 입력한 노드의 실행만 끊는다. 클러스터에서 그 노드는 대개 cron 이
 발화한 노드가 아니고, 그러면 저쪽 실행은 방금 삭제된 태스크를 위해 남은 스텝을 끝까지 돌린다. 스타터를 쓰면
 `ScheduledTaskInterruptBus` 빈 하나로 배선되고(`SchedulingSpec.withInterruptBus`), 코어가 싣는 구현은 노드 하나
-(`LOCAL_ONLY`)와 JVM 하나(`InMemoryScheduledTaskInterruptBus`)까지다 — 클러스터용은 애플리케이션이 쓴다.
+(`LOCAL_ONLY`)와 JVM 하나(`InMemoryScheduledTaskInterruptBus`)까지다. 클러스터용은 MongoDB 를 쓰는 배포라면
+`aimon-session-mongodb` 의 `MongoScheduledTaskInterruptBus` 를 넘기면 되고(`init.js` 가 만드는 capped 컬렉션
+`scheduled_task_interrupts` 와 replica set 이 필요하다), 그 밖의 저장소에서는 애플리케이션이 쓴다.
 설계 근거는 [`interrupt.md` §12.7](../../design/agent-execution/interrupt.md).
 
 ### 6.4 모니터링
