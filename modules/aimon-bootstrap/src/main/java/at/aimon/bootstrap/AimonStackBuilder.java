@@ -693,7 +693,7 @@ public final class AimonStackBuilder {
                             + " attempts it, not at startup.");
             return null;
         }
-        announceSchedulingDurability(spec.getScheduling(), degradations);
+        announceSchedulingDurability(spec, degradations);
         final SchedulingEngineBuilder builder = SchedulingEngineBuilder.create()
                 .agentRuntimeRegistry(agentRuntimeRegistry);
         spec.getScheduling().getTaskScheduler().ifPresent(builder::taskScheduler);
@@ -710,14 +710,19 @@ public final class AimonStackBuilder {
      * Says what a restart will lose, in the terms the deployment actually chose.
      *
      * <p>
-     * A scheduled task needs both halves to survive: the trigger, which the scheduler holds, and the record it names,
-     * which the repository holds. The announcement is graded rather than fixed because a fixed one is wrong for two
-     * deployments in opposite directions — silent when the default repository quietly drops everything, and crying
-     * degradation at a deployment that supplied a durable one. What the stack can actually see is which halves were
-     * left at their defaults, so that is what it reports.
+     * A scheduled task needs both halves to be there after a restart: the trigger, which the scheduler holds, and the
+     * record it names, which the repository holds. The announcement is graded rather than fixed because a fixed one
+     * is wrong for two deployments in opposite directions — silent when the default repository quietly drops
+     * everything, and crying degradation at a deployment that supplied a durable one. What the stack can actually see
+     * is which halves were left at their defaults and whether it is one node of several, so that is what it reports.
+     *
+     * <p>
+     * A supplied repository over the default scheduler is no longer a degradation on a single node: the engine
+     * rebuilds the triggers from the repository when it starts ({@code ScheduledTaskManager.rehydrate}). On one node
+     * of several it is, and a different one — each node rebuilds its own triggers.
      */
-    private static void announceSchedulingDurability(SchedulingSpec scheduling,
-            RuntimeDegradations.Collector degradations) {
+    private static void announceSchedulingDurability(AimonStackSpec spec, RuntimeDegradations.Collector degradations) {
+        final SchedulingSpec scheduling = spec.getScheduling();
         if (scheduling.getTaskRepository().isEmpty()) {
             // Announced rather than left to be discovered, because a durable scheduler makes it look solved: the
             // triggers come back after a restart and the tasks they name do not, so every firing lands on
@@ -730,14 +735,15 @@ public final class AimonStackBuilder {
         }
         final boolean schedulerSupplied = scheduling.getTaskScheduler().isPresent()
                 || scheduling.getTaskSchedulerFactory().isPresent();
-        if (!schedulerSupplied) {
+        if (!schedulerSupplied && spec.getSession().getMode() == DeploymentMode.DISTRIBUTED) {
             degradations.add("scheduling-durability",
-                    "Task records go to the supplied repository, but the triggers do not: the default in-memory"
-                            + " scheduler holds them, so a restart leaves the stored tasks with nothing scheduled to"
-                            + " fire them.");
+                    "Task records go to the supplied repository, but the triggers are per node: the default in-memory"
+                            + " scheduler rebuilds them from the repository when this node starts. A task registered"
+                            + " on another node is not scheduled here until this node restarts, and after that every"
+                            + " node fires it. Supply a clustered scheduler through the scheduling spec.");
         }
-        // Both halves were replaced deliberately. Whether either is genuinely durable is a property of the supplied
-        // implementations, which this builder cannot inspect and will not guess at.
+        // Otherwise: a single node rebuilds its triggers at start, or both halves were replaced deliberately. Whether
+        // a supplied implementation is genuinely durable is a property this builder cannot inspect and will not guess.
     }
 
     /**

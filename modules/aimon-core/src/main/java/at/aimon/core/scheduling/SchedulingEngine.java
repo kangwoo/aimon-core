@@ -94,11 +94,14 @@ public final class SchedulingEngine implements AutoCloseable {
      * Starts the scheduling engine.
      *
      * <p>
-     * This starts the task scheduler, allowing scheduled tasks to execute.
+     * This starts the task scheduler, allowing scheduled tasks to execute, and then schedules the enabled tasks the
+     * repository already holds that the scheduler does not ({@link ScheduledTaskManager#rehydrate()}) — the tasks a
+     * durable repository kept across a restart. With the default in-memory repository there are none.
      * </p>
      */
     public void start() {
         taskScheduler.start();
+        taskManager.rehydrate();
         log.info("Scheduling engine started");
     }
 

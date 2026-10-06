@@ -472,7 +472,7 @@ executor 를 만들어야 하므로 **아직 아무도 채우지 않은 가변 �
 
 | 항목 | 현재 | 필요한 것 |
 |------|------|----------|
-| **작업 정의 영속화** | `ScheduledTaskRepository` 구현이 인메모리 하나뿐이다. Quartz JDBC job store 를 써도 **트리거만** 남고 작업 정의는 재시작과 함께 사라진다 | RDB 백엔드. 여기에 더해 **기동 시 재등록** 경로 — `SchedulingEngine.start()` 는 스케줄러만 시작하고 저장된 활성 작업을 다시 걸지 않는다 |
+| **작업 정의 영속화** | 코어의 `ScheduledTaskRepository` 구현은 인메모리 하나이고, 영속 구현은 `aimon-session-mongodb` 의 `MongoScheduledTaskRepository` 하나다. **기동 시 재등록**은 있다 — `SchedulingEngine.start()` 가 저장된 활성 작업 가운데 스케줄러가 쥐고 있지 않은 것을 다시 건다(`ScheduledTaskManager.rehydrate`). 실행 이력 저장소는 여전히 인메모리뿐이다 | RDB 백엔드, 실행 이력의 영속 구현 |
 | **timezone** | `ScheduledTask.timezone` 에 저장되고 `schedule_task` 스키마가 IANA 존을 광고하지만, `TaskScheduler.scheduleRecurrently(taskId, cronExpression)` 이 표현식만 받으므로 **어느 스케줄러에도 전달되지 않는다.** 인메모리 스케줄러는 시스템 기본 존으로 계산한다 | 시그니처에 존을 태우거나 표현식과 존을 한 값으로 묶는다. 필드를 지우는 선택지는 없다 — 모델에게 이미 광고했다 |
 | **분산 `ScheduledExecutionGuard`** | 인메모리 구현뿐 (노드 로컬) | 공유 락/리스 저장소 기반 구현. 심은 이미 있으므로 구현체 하나를 주입하면 된다(§6) |
 | **작업 수정 API** | 없음 — 취소 후 재등록 | 부분 수정이 정말 필요한지부터. cron 만 바꾸는 것과 routine 을 바꾸는 것은 다른 작업에 가깝다 |

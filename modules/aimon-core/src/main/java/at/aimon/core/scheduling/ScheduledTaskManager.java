@@ -527,6 +527,57 @@ public class ScheduledTaskManager {
         UnixCronExpression.parse(cronExpression);
     }
 
+    /**
+     * Puts back what a restart took: schedules every stored, enabled task the scheduler is not already holding, and
+     * hands the quota manager the stored tasks to count.
+     *
+     * <p>
+     * A scheduled task has two halves — the record in the {@link ScheduledTaskRepository} and the trigger in the
+     * {@link TaskScheduler} — and they need not have the same lifetime. Over a durable repository and the in-memory
+     * scheduler the records come back after a restart and the triggers do not; this is what rebuilds them. Over a
+     * scheduler that keeps its own triggers (a Quartz JDBC job store) {@link TaskScheduler#exists} is already true
+     * for each and nothing is scheduled, apart from a task whose trigger went missing. Over the default in-memory
+     * repository there is nothing stored at start and this does nothing.
+     *
+     * <p>
+     * A task the scheduler refuses is logged and skipped rather than allowed to stop the rest: one expression the
+     * installed backend cannot express must not leave every other task unscheduled. A repository that cannot be read
+     * is different — that throws, because starting with nothing scheduled and no sign of it is the failure a durable
+     * repository was supplied to prevent.
+     *
+     * <p>
+     * Idempotent: a second call finds every trigger in place, and {@link TaskQuotaManager#restoreUsage} replaces
+     * counts rather than adding to them.
+     *
+     * <p>
+     * <b>Each node rebuilds its own triggers.</b> With a scheduler that is not shared between nodes, every node that
+     * starts over the same repository schedules every task, and each fires it. That is what a clustered scheduler is
+     * for; a {@link ScheduledExecutionGuard} that sees the shared store is the second line.
+     *
+     * @return how many tasks were scheduled by this call
+     */
+    public int rehydrate() {
+        quotaManager.restoreUsage(taskRepository.findAll().stream().map(ScheduledTask::getOwner).toList());
+
+        int scheduled = 0;
+        for (ScheduledTask task : taskRepository.findByEnabledTrue()) {
+            try {
+                if (taskScheduler.exists(task.getId())) {
+                    continue;
+                }
+                scheduleTask(task);
+                scheduled++;
+            } catch (RuntimeException e) {
+                log.warn("Stored task '{}' could not be scheduled at start and will not fire until it is registered"
+                        + " again or the engine restarts: {}", task.getId(), e.getMessage(), e);
+            }
+        }
+        if (scheduled > 0) {
+            log.info("Scheduled {} stored task(s) at start", scheduled);
+        }
+        return scheduled;
+    }
+
     private void scheduleTask(ScheduledTask task) {
         taskScheduler.scheduleRecurrently(task.getId(), task.getCronExpression());
     }

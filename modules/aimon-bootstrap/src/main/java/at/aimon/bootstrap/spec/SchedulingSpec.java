@@ -32,9 +32,11 @@ import at.aimon.core.scheduling.scheduler.TaskSchedulerFactory;
  * A scheduled task survives a restart only if <em>both</em> halves do: the trigger, which lives in the scheduler,
  * and the task record it names, which lives in a {@link ScheduledTaskRepository}. The scheduler half is chosen by
  * the {@code enabled(...)} variants above; the record half is {@link #withTaskRepository(ScheduledTaskRepository)}.
- * Supplying one and not the other is the failure the stack announces as its {@code scheduling-durability}
- * degradation — a surviving trigger whose task is gone fires into "task not found", which reads like durability
- * right up to the moment it is needed.
+ * A durable scheduler without a repository is the failure the stack announces as its
+ * {@code scheduling-durability} degradation — a surviving trigger whose task is gone fires into "task not found",
+ * which reads like durability right up to the moment it is needed. The other way round is sound on a single node: the
+ * engine rebuilds the triggers from a supplied repository when it starts. On one node of several each node rebuilds
+ * its own, and that is announced under the same name.
  */
 public final class SchedulingSpec {
 

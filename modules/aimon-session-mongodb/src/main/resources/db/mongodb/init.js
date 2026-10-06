@@ -44,6 +44,9 @@ ensureCollection("session_records");
 // session for the same reason as session_records, and frozen from its first deployment on.
 ensureCollection("session_log_segments");
 
+// scheduled_tasks holds one document per scheduled task (MongoScheduledTaskRepository), keyed by task id.
+ensureCollection("scheduled_tasks");
+
 // --- indexes -----------------------------------------------------------------
 //
 // createIndex is idempotent when the spec + name match; we always pass an explicit
@@ -82,6 +85,18 @@ target.background_task.createIndex(
 target.session_log_segments.createIndex(
     { sessionId: 1 },
     { name: "by_session" }
+);
+
+// scheduled_tasks: listings are per owner, and the engine reads every enabled task once at start.
+
+target.scheduled_tasks.createIndex(
+    { "owner.type": 1, "owner.id": 1 },
+    { name: "by_owner" }
+);
+
+target.scheduled_tasks.createIndex(
+    { enabled: 1 },
+    { name: "by_enabled" }
 );
 
 // --- replica-set sanity check -----------------------------------------------

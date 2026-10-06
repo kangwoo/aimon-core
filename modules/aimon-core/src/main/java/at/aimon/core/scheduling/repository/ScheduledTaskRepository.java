@@ -68,13 +68,9 @@ public interface ScheduledTaskRepository {
      * Returns all enabled tasks.
      *
      * <p>
-     * <b>No production code calls this, and that is not a reason to remove it.</b> This is the seam a rehydration
-     * loop needs: after a restart, something has to ask "which tasks should be scheduled right now" without holding
-     * an owner, and this is the only query that answers it. No such loop exists yet, because the only repository
-     * implementation in the tree is {@link InMemoryScheduledTaskRepository} and there is nothing to rehydrate from.
-     * When a durable implementation arrives, the in-memory scheduler path needs this method; the Quartz JDBC job
-     * store path does not, since {@code DelegatingJob} stores only the task id and re-reads the record at fire time.
-     * Deleting it as dead code would move that work further away rather than closer.
+     * This is what the engine asks at start ({@code ScheduledTaskManager.rehydrate}): "which tasks should be
+     * scheduled right now", without holding an owner. A durable implementation is read here once per start, across
+     * all owners, so it should not be a scan the deployment cannot afford.
      *
      * @return list of enabled tasks
      */
