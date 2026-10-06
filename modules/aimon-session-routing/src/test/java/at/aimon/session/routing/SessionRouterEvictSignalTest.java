@@ -14,6 +14,8 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.SessionId;
@@ -84,9 +86,12 @@ class SessionRouterEvictSignalTest {
         assertThat(((InterruptedAt) received.get(0)).getReason()).isEqualTo(InterruptReason.SESSION_RELEASED);
     }
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(strings = {"not_a_real_reason", "UNKNOWN"})
     @DisplayName("EVICT with unparseable payload reason falls back to USER_SIGINT but still emits InterruptedAt")
-    void evictWithUnknownReasonFallsBack() throws Exception {
+    void evictWithUnknownReasonFallsBack(String reasonOnTheWire) throws Exception {
+        // The literal "UNKNOWN" is unparseable in the sense that matters: no node may give it as a reason, so one that
+        // arrives is read the way any other unusable name is, and never handed on as the reason of a local interrupt.
         harness = TestManagerHarness.builder().nodeId("node-A").build();
         final SessionId id = SessionId.of("c-evict-2");
 
@@ -116,7 +121,7 @@ class SessionRouterEvictSignalTest {
         });
 
         harness.signalBus().publish(SessionSignal.builder().sessionId(id).kind(SessionSignal.SignalKind.EVICT)
-                .originNodeId("node-B").payload(Map.of("reason", "not_a_real_reason")).build());
+                .originNodeId("node-B").payload(Map.of("reason", reasonOnTheWire)).build());
 
         assertThat(terminated.await(TestLiveSession.DEFAULT_AWAIT_MS, TimeUnit.MILLISECONDS)).isTrue();
         assertThat(received).hasSize(1);

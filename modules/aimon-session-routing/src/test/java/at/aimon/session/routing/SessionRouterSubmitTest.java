@@ -16,7 +16,9 @@ import org.junit.jupiter.api.Test;
 import at.aimon.core.agent.AgentExecutionResult;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.TurnId;
 import at.aimon.core.agent.session.exception.ConflictingAgentException;
+import at.aimon.core.agent.session.signal.SessionSignal;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.session.routing.fixture.RequestFixtures;
 import at.aimon.session.routing.fixture.TestLiveSession;
@@ -79,6 +81,23 @@ class SessionRouterSubmitTest {
 
         assertThatThrownBy(() -> harness.manager().submit(RequestFixtures.submit(id, "beta", "hi")))
                 .isInstanceOf(ConflictingAgentException.class);
+    }
+
+    @Test
+    @DisplayName("interrupt(UNKNOWN) is refused before anything is published")
+    void interruptWithUnknownIsRefused() {
+        // A peer on the previous release cannot read the name and would drop the terminal frame it arrives in, so
+        // the value must never start out from here. It exists for reading, not for giving.
+        harness = TestManagerHarness.builder().build();
+        final SessionId id = SessionId.of("c-unknown");
+        final java.util.List<SessionSignal> published = new java.util.concurrent.CopyOnWriteArrayList<>();
+        harness.signalBus().subscribe(id, published::add);
+
+        assertThatThrownBy(() -> harness.manager().interrupt(id, InterruptReason.UNKNOWN))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("UNKNOWN");
+        assertThatThrownBy(() -> harness.manager().interrupt(id, TurnId.generate(), InterruptReason.UNKNOWN))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(published).isEmpty();
     }
 
     @Test
