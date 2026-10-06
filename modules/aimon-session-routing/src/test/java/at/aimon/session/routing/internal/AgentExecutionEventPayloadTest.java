@@ -73,6 +73,39 @@ class AgentExecutionEventPayloadTest {
     }
 
     @Test
+    @DisplayName("ExecutionCompleted with a completion reason this build does not know is delivered as ERROR")
+    void executionCompletedWithAnUnknownReasonIsStillDelivered() {
+        // The terminal event is what tells a remote subscriber the turn is over; one that loses it never completes.
+        // The frame carries no success flag, and every reason but COMPLETED is a non-success, so a name this build
+        // does not know reads as the coarsest non-success there is.
+        final Map<String, Object> payload = AgentExecutionEventPayload
+                .toPayload(ExecutionCompleted.builder().timestamp(TS).agentRuntimeId(CTX).iteration(0)
+                        .completionReason(CompletionReason.ABORTED).totalIterations(4).build(), TURN);
+        payload.put("completion", "INVENTED_BY_A_NEWER_NODE");
+
+        final AgentExecutionEvent decoded = AgentExecutionEventPayload.fromPayload(payload).orElseThrow();
+
+        assertThat(decoded).isInstanceOf(ExecutionCompleted.class);
+        assertThat(((ExecutionCompleted) decoded).getCompletionReason()).isEqualTo(CompletionReason.ERROR);
+        assertThat(((ExecutionCompleted) decoded).getTotalIterations()).isEqualTo(4);
+    }
+
+    @Test
+    @DisplayName("ExecutionError with a completion reason this build does not know is delivered as ERROR")
+    void executionErrorWithAnUnknownReasonIsStillDelivered() {
+        final Map<String, Object> payload = AgentExecutionEventPayload
+                .toPayload(ExecutionError.builder().timestamp(TS).agentRuntimeId(CTX).iteration(0)
+                        .errorMessage("kaboom").completionReason(CompletionReason.ERROR).build(), TURN);
+        payload.put("completion", "INVENTED_BY_A_NEWER_NODE");
+
+        final AgentExecutionEvent decoded = AgentExecutionEventPayload.fromPayload(payload).orElseThrow();
+
+        assertThat(decoded).isInstanceOf(ExecutionError.class);
+        assertThat(((ExecutionError) decoded).getErrorMessage()).isEqualTo("kaboom");
+        assertThat(((ExecutionError) decoded).getCompletionReason()).contains(CompletionReason.ERROR);
+    }
+
+    @Test
     @DisplayName("the sample set names every permitted subtype, so a new one cannot be added without a branch here")
     void samplesCoverEveryPermittedSubtype() {
         // This codec is the one blast-radius site whose omission is SILENT: flatten() returns null for an

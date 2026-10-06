@@ -24,7 +24,8 @@ import at.aimon.core.subagent.task.TaskResult;
  * makes a transcript unreconstructable, the reason here is metadata sitting next to the payload that actually matters.
  * Dropping a whole answer because a newer node named its stop reason something this one has not heard of would be the
  * worse failure, so an unreadable reason decodes as {@link CompletionReason#COMPLETED} for a success and
- * {@link CompletionReason#ERROR} for a failure — the coarse fact the {@code success} flag already carries.
+ * {@link CompletionReason#ERROR} for a failure — the coarse fact the {@code success} flag already carries
+ * ({@link CompletionReason#fromWireName(String, boolean)}, which the turn-side decoders share).
  *
  * <p>
  * Stateless and thread-safe: the shared {@link ObjectMapper} is used only for tree building and text I/O.
@@ -100,14 +101,7 @@ public final class JsonTaskResultCodec implements TaskResultCodec {
     }
 
     private static CompletionReason decodeCompletionReason(JsonNode root, boolean success) {
-        final String name = optionalText(root, FIELD_COMPLETION_REASON);
-        if (name != null) {
-            try {
-                return CompletionReason.valueOf(name);
-            } catch (IllegalArgumentException e) {
-                // Fall through to the coarse reason the success flag already implies — see the type javadoc.
-            }
-        }
-        return success ? CompletionReason.COMPLETED : CompletionReason.ERROR;
+        // Absent or unknown reads as the coarse reason the success flag already implies — see the type javadoc.
+        return CompletionReason.fromWireName(optionalText(root, FIELD_COMPLETION_REASON), success);
     }
 }

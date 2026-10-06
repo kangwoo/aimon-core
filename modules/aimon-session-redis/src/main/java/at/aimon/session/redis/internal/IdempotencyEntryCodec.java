@@ -48,6 +48,13 @@ import at.aimon.core.agent.session.store.StoredAgentExecutionResult;
  * encode() and decode() together keeps the round-trips green while every such entry decodes with the wrong session or
  * not at all, which is exactly the double-execution the store exists to prevent.
  * {@code IdempotencyEntryCodecTest} pins the literal in both directions.
+ *
+ * <p>
+ * <b>An unknown completion reason is not fatal.</b> For the same reason — the reader may be older than the writer
+ * during a rolling upgrade — a {@link CompletionReason} name this build does not know decodes as the coarse reason the
+ * stored {@code success} flag implies ({@link CompletionReason#fromWireName(String, boolean)}) and the answer is
+ * replayed. Throwing here would not stay with the one key either: {@code findStaleInFlight} scans the keyspace and
+ * decodes every entry it meets.
  */
 public final class IdempotencyEntryCodec {
 
@@ -130,9 +137,9 @@ public final class IdempotencyEntryCodec {
     }
 
     private AgentExecutionResult decodeResult(JsonNode node) {
-        final StoredAgentExecutionResult.Builder builder = StoredAgentExecutionResult.builder()
-                .success(node.get("success").asBoolean())
-                .completionReason(CompletionReason.valueOf(node.get("completionReason").asText()))
+        final boolean success = node.get("success").asBoolean();
+        final StoredAgentExecutionResult.Builder builder = StoredAgentExecutionResult.builder().success(success)
+                .completionReason(CompletionReason.fromWireName(node.get("completionReason").asText(), success))
                 .wasStreamed(node.get("wasStreamed").asBoolean());
         if (node.hasNonNull("finalAnswer")) {
             builder.finalAnswer(node.get("finalAnswer").asText());

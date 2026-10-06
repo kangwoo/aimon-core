@@ -171,10 +171,37 @@ class TurnResultPayloadTest {
                 .isEmpty();
         assertThat(TurnResultPayload.fromPayload(resultPayload(CompletionReason.COMPLETED.name(), "answer")))
                 .as("control: the same shape with every field present decodes").isPresent();
-        assertThat(TurnResultPayload.fromPayload(resultPayload("NOT_A_REASON", "answer")))
-                .as("unknown completion reason").isEmpty();
         assertThat(TurnResultPayload.fromPayload(resultPayload(CompletionReason.COMPLETED.name(), null)))
                 .as("a success with no answer violates the AgentExecutionResult invariant").isEmpty();
+    }
+
+    @Test
+    @DisplayName("a success whose completion reason this build does not know still delivers its answer")
+    void unknownCompletionReasonOnASuccessKeepsTheAnswer() {
+        // A rolling upgrade: the holder runs a build that names a stop reason this one has not heard of. Dropping the
+        // frame leaves the caller on the polling fallback -- or, with no idempotency key, on its deadline -- for a
+        // turn that finished. The label is the least important field in the payload.
+        final AgentExecutionResult rebuilt = TurnResultPayload
+                .fromPayload(resultPayload("INVENTED_BY_A_NEWER_NODE", "answer")).orElseThrow().result().orElseThrow();
+
+        assertThat(rebuilt.isSuccess()).isTrue();
+        assertThat(rebuilt.getFinalAnswer()).isEqualTo("answer");
+        assertThat(rebuilt.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
+    }
+
+    @Test
+    @DisplayName("a failure whose completion reason this build does not know arrives as ERROR with its message")
+    void unknownCompletionReasonOnAFailureDegradesToError() {
+        final Map<String, Object> payload = TurnResultPayload.toPayload(TURN, "k-1", StoredAgentExecutionResult
+                .builder().success(false).errorMessage("stopped").completionReason(CompletionReason.ABORTED).build());
+        payload.put(TurnResultPayload.KEY_COMPLETION, "INVENTED_BY_A_NEWER_NODE");
+
+        final AgentExecutionResult rebuilt = TurnResultPayload.fromPayload(payload).orElseThrow().result()
+                .orElseThrow();
+
+        assertThat(rebuilt.isSuccess()).isFalse();
+        assertThat(rebuilt.getErrorMessage()).isEqualTo("stopped");
+        assertThat(rebuilt.getCompletionReason()).isEqualTo(CompletionReason.ERROR);
     }
 
     private static Map<String, Object> failurePayload(String outcome) {

@@ -55,6 +55,12 @@ import at.aimon.core.agent.session.store.StoredAgentExecutionResult;
  * node does not know) decodes to {@link Failure.Code#FAILED} with the message preserved, so a rolling deployment
  * degrades to a less precise reason rather than a dropped signal — the opposite of {@code SignalKind.valueOf}, which
  * throws and takes the whole signal with it.
+ *
+ * <p>
+ * <b>So is the completion reason.</b> A {@link CompletionReason} name this build does not know reads as
+ * {@link CompletionReason#COMPLETED} for a success and {@link CompletionReason#ERROR} for a failure
+ * ({@link CompletionReason#fromWireName(String, boolean)}), with the answer or error message intact. The field itself
+ * is still required: a result payload with no completion entry at all is malformed and discarded.
  */
 final class TurnResultPayload {
 
@@ -192,9 +198,9 @@ final class TurnResultPayload {
     }
 
     private static AgentExecutionResult decodeResult(Map<String, Object> payload) {
-        final StoredAgentExecutionResult.Builder builder = StoredAgentExecutionResult.builder()
-                .success(asBoolean(payload.get(KEY_SUCCESS)))
-                .completionReason(CompletionReason.valueOf(asString(payload.get(KEY_COMPLETION))))
+        final boolean success = asBoolean(payload.get(KEY_SUCCESS));
+        final StoredAgentExecutionResult.Builder builder = StoredAgentExecutionResult.builder().success(success)
+                .completionReason(CompletionReason.fromWireName(asString(payload.get(KEY_COMPLETION)), success))
                 .wasStreamed(asBoolean(payload.get(KEY_STREAMED)));
         if (payload.containsKey(KEY_ANSWER)) {
             builder.finalAnswer(asString(payload.get(KEY_ANSWER)));
