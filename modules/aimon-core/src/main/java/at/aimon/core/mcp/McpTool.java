@@ -114,10 +114,12 @@ public class McpTool extends AbstractTool {
      *
      * <p>
      * Not {@link InterruptBehavior#THREAD_INTERRUPT}, although an interrupt is what ends the call. That declaration
-     * has the executor register a terminator bound to the executing thread, and for that reason the parallel
-     * dispatcher keeps such tools off its shared workers &mdash; every MCP tool would become sequential. Here the
-     * interrupt is the tool's own, sent only while its call is in flight and taken back before {@code execute} returns
-     * (see {@link CallInterrupt}), so a worker never carries it into its next task.
+     * has the executor register a terminator bound to the executing thread, which the parallel dispatcher refuses on
+     * its shared workers. An MCP tool is not dispatched in parallel today &mdash; it keeps the default
+     * {@code ConcurrencyBehavior.SEQUENTIAL} &mdash; so the two declarations would behave alike; this one is chosen
+     * so that the interrupt stays the tool's own business and is no obstacle if a tool is ever declared safe to run
+     * concurrently. It is sent only while the call is in flight and taken back before {@code execute} returns (see
+     * {@link CallInterrupt}), so the thread never carries it into what it runs next.
      */
     @Override
     public InterruptBehavior getInterruptBehavior() {
@@ -190,9 +192,9 @@ public class McpTool extends AbstractTool {
      * <p>
      * {@link #fire()} and {@link #disarm()} are mutually exclusive, so once {@code disarm} has returned no interrupt
      * from this call can arrive any more, and one that already did is taken back there: the flag is cleared, and set
-     * again when the thread was already interrupted as the call began. That is what lets a tool that interrupts its
-     * thread run on a shared parallel worker &mdash; the worker's flag still only ever means an interrupt of that
-     * worker from outside. Clearing can swallow such an outside interrupt when it lands during the call in the same
+     * again when the thread was already interrupted as the call began. So the thread's flag still only ever means an
+     * interrupt of that thread from outside, whoever owns the thread. Clearing can swallow such an outside interrupt
+     * when it lands during the call in the same
      * instant the signal trips; the execution is cancelled either way.
      *
      * <p>

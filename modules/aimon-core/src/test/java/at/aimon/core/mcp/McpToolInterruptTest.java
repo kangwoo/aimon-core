@@ -63,9 +63,8 @@ class McpToolInterruptTest {
     }
 
     @Test
-    void staysOnTheParallelPath() {
-        // COOPERATIVE and NON_INTERRUPTIBLE are the two declarations the parallel dispatcher accepts. THREAD_INTERRUPT
-        // would hear the cancellation too, and take every MCP tool out of parallel dispatch.
+    void declaresThatItListensToTheSignalItself() {
+        // Not THREAD_INTERRUPT: the executor registers no terminator for this tool. The tool sends its own interrupt.
         assertThat(tool.getInterruptBehavior()).isEqualTo(InterruptBehavior.COOPERATIVE);
     }
 

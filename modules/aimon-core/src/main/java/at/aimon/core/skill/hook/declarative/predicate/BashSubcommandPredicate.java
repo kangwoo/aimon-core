@@ -1,6 +1,8 @@
 package at.aimon.core.skill.hook.declarative.predicate;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.Objects;
 import java.util.regex.Pattern;
@@ -48,12 +50,14 @@ import at.aimon.core.skill.hook.declarative.ToolInputPredicate;
  * stops matching.
  *
  * <p>
- * A comment is read <em>as well</em>, not instead. Two apostrophes in two comments pair up and quote the lines between
- * them, so a command with a {@code #} is split a second time with the quotes and substitutions of each comment
- * ({@code #} at the start of a word, to the end of the line) left unread, and the pieces of both readings are matched.
- * Substituting the second reading for the first would be wrong wherever this takes a {@code #} for a comment and a
- * shell does not &mdash; inside double quotes, after an escaped space &mdash; because the {@code $(...)} after it,
- * which the shell runs, would go unread.
+ * Comments and here-documents are read <em>as well</em>, not instead. An apostrophe in a comment or in the body of a
+ * here-document is text to a shell; here it pairs up with the next one and quotes the lines between them. So a
+ * command with a {@code #} or a {@code <<} is split a second time, with the quotes and substitutions left unread in
+ * each comment ({@code #} at the start of a word, to the end of the line) and in each here-document body (the lines
+ * after a {@code <<WORD} up to the line that is {@code WORD}), and the pieces of both readings are matched.
+ * Substituting the second reading for the first would be wrong wherever this takes for a comment or a document what a
+ * shell does not &mdash; a {@code #} inside double quotes, a {@code <<} that is a shift &mdash; because a
+ * {@code $(...)} there, which the shell runs, would go unread.
  *
  * <h2>Commands that are not split</h2>
  *
@@ -185,7 +189,7 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
         // Not paired up somewhere: the pieces are a guess, so the command as written is matched as well.
         final int[] unpaired = {0};
         tokenize(command, result, 0, unpaired, false);
-        if (command.indexOf('#') >= 0) {
+        if (command.indexOf('#') >= 0 || command.contains("<<")) {
             // Added to the first reading, never in place of it: see the class comment.
             final int[] unpairedWithComments = {0};
             final List<String> withComments = new ArrayList<>();
@@ -202,8 +206,8 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
      * Tokenizes the command string into top-level sub-commands and the inner commands of any backtick / {@code $()}
      * substitutions encountered. {@code depth} is how many blocks enclose {@code command}, 0 for the command itself.
      * {@code unpaired} counts, across all levels, the quotes, backticks and {@code $(} that had no partner and were
-     * read as plain characters. With {@code readComments}, the quotes and substitutions of a comment are plain
-     * characters too.
+     * read as plain characters. With {@code readComments}, the quotes and substitutions of a comment and of a
+     * here-document body are plain characters too.
      */
     @SuppressWarnings({"checkstyle:CyclomaticComplexity", "checkstyle:NestedIfDepth", "checkstyle:NPathComplexity",
             "checkstyle:MethodLength"})
@@ -214,16 +218,22 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
         final StringBuilder current = new StringBuilder();
         final int len = command.length();
         boolean inComment = false;
+        boolean inHereDocument = false;
+        final HereDocuments hereDocuments = readComments ? new HereDocuments() : null;
         int i = 0;
         while (i < len) {
             final char c = command.charAt(i);
             if (c == '\n') {
                 inComment = false;
-            } else if (readComments && c == '#' && startsWord(command, i)) {
+                inHereDocument = hereDocuments != null && hereDocuments.isBodyLine(command, i + 1);
+            } else if (readComments && !inHereDocument && c == '#' && startsWord(command, i)) {
                 inComment = true;
+            } else if (readComments && !inHereDocument && !inComment && c == '<') {
+                hereDocuments.openIfOperator(command, i);
             }
-            if (inComment && c != ';' && c != '|' && c != '&') {
-                // Quotes and substitutions in a comment are text. Operators are left to the branches below.
+            if ((inComment || inHereDocument) && c != ';' && c != '|' && c != '&' && c != '\n') {
+                // Quotes and substitutions in a comment or a document are text. Operators are left to the branches
+                // below, so this reading splits wherever the plain one does.
                 current.append(c);
                 i++;
                 continue;
@@ -378,6 +388,73 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
     @Override
     public String toString() {
         return "BashSubcommandPredicate{Bash(" + pattern + ")}";
+    }
+
+    /**
+     * Which lines of a command are the body of a here-document: those after a line with {@code <<WORD}, up to and
+     * including the line that is {@code WORD}. Several documents opened on one line follow one another.
+     */
+    private static final class HereDocuments {
+
+        private final Deque<String> delimiters = new ArrayDeque<>();
+        private final Deque<Boolean> tabsStripped = new ArrayDeque<>();
+        private boolean inBody;
+        private boolean bodyEndsWithThisLine;
+
+        /** Notes a here-document when {@code <<} at {@code at} opens one; {@code <<<} is a here-string. */
+        void openIfOperator(String command, int at) {
+            final int len = command.length();
+            if (at + 1 >= len || command.charAt(at + 1) != '<' || (at > 0 && command.charAt(at - 1) == '<')
+                    || (at + 2 < len && command.charAt(at + 2) == '<')) {
+                return;
+            }
+            int i = at + 2;
+            final boolean strip = i < len && command.charAt(i) == '-';
+            if (strip) {
+                i++;
+            }
+            while (i < len && (command.charAt(i) == ' ' || command.charAt(i) == '\t')) {
+                i++;
+            }
+            final StringBuilder word = new StringBuilder();
+            while (i < len && !Character.isWhitespace(command.charAt(i)) && ";|&<>()".indexOf(command.charAt(i)) < 0) {
+                final char c = command.charAt(i++);
+                if (c != '\'' && c != '"' && c != '\\') {
+                    word.append(c);
+                }
+            }
+            if (word.length() > 0) {
+                delimiters.add(word.toString());
+                tabsStripped.add(strip);
+            }
+        }
+
+        /** Whether the line starting at {@code lineStart} belongs to a document's body (its last line included). */
+        boolean isBodyLine(String command, int lineStart) {
+            if (bodyEndsWithThisLine) {
+                bodyEndsWithThisLine = false;
+                inBody = false;
+                delimiters.poll();
+                tabsStripped.poll();
+            }
+            if (!inBody && delimiters.isEmpty()) {
+                return false;
+            }
+            inBody = true;
+            int end = command.indexOf('\n', lineStart);
+            if (end < 0) {
+                end = command.length();
+            }
+            int start = lineStart;
+            if (Boolean.TRUE.equals(tabsStripped.peek())) {
+                while (start < end && command.charAt(start) == '\t') {
+                    start++;
+                }
+            }
+            bodyEndsWithThisLine = command.regionMatches(start, delimiters.peek(), 0, end - start)
+                    && delimiters.peek().length() == end - start;
+            return true;
+        }
     }
 
     /** Signals a command the splitter declines to take apart; the message names the limit it is over. */

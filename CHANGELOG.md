@@ -143,8 +143,8 @@ to wait, and succeed if the server came back; it now fails after `requestTimeout
 **Cancellation.** `McpTool` declares `InterruptBehavior.COOPERATIVE` (was the default, `NON_INTERRUPTIBLE`). While its
 call is in flight it listens to the execution's cancellation signal and interrupts its own thread when the signal
 trips, so a cancelled turn, fork or routine no longer waits out the server's `requestTimeout`; the result is
-`MCP tool interrupted: <reason>`, and a call of an execution already cancelled is not made. MCP tools stay eligible for
-parallel dispatch. The request is not withdrawn — a server that already has it may still run it.
+`MCP tool interrupted: <reason>`, and a call of an execution already cancelled is not made. The request is not
+withdrawn — a server that already has it may still run it.
 
 ### Fixed: a `Bash(…)` matcher answers for a command too deep or too long to split (EE-90)
 
@@ -167,12 +167,13 @@ apostrophe in a `#` comment or a here-document did the same. A `deny` or `preToo
 `postTool` audit skipped it.
 
 A quote, backtick or `$(` with no partner is now read as the character it is and splitting goes on. Nothing that
-matched before stops matching: the unsplit command is still looked at as a piece of its own. A command with a `#` is
-split a second time with each comment's quotes and substitutions left unread, and the pieces of that reading are
+matched before stops matching: the unsplit command is still looked at as a piece of its own. A command with a `#` or a
+`<<` is split a second time with each comment's quotes and substitutions left unread, and the pieces of that reading are
 **added** to the first — two apostrophes in two comments no longer quote the lines between them, and a `#` that is no
 comment to a shell (inside double quotes) hides nothing. More than 64 such openers left open is a third limit beside
-the two above, with the same answer. Here-documents are still not understood — two apostrophes in one can quote the
-line after it. `Bash(…)` globs remain text comparison, not a shell parser.
+the two above, with the same answer. The second reading knows a here-document as well (`<<WORD` to the line that is
+`WORD`, `<<-` and quoted words included): an apostrophe in its body no longer pairs with one after it and quotes the
+commands between. `Bash(…)` globs remain text comparison, not a shell parser.
 
 Matcher globs no longer backtrack into an earlier `*` (`NameOnlyPredicate.compileGlob`, used by tool-name, path and
 `Bash(…)` matchers). A glob with two or more `*` could take seconds to minutes on text the model chose — `*a*a*b`

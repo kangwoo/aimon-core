@@ -322,6 +322,29 @@ class BashSubcommandPredicateTest {
     }
 
     @Test
+    void test_apostrophesInAHereDocument_doNotQuoteTheLinesAfterIt() {
+        // Two apostrophes, one in the document and one after it: paired up, they quote the rm between them. A shell
+        // reads the first as text of the document and runs the rm.
+        BashSubcommandPredicate p = BashSubcommandPredicate.of("rm -rf*");
+
+        assertThat(p.test("Bash", inputWithCommand("cat <<EOF\nit's\nEOF\nrm -rf /tmp/x\necho it's"))).isTrue();
+        assertThat(p.test("Bash", inputWithCommand("cat <<'EOF'\nit's\nEOF\nrm -rf /tmp/x\necho it's"))).isTrue();
+        assertThat(p.test("Bash", inputWithCommand("cat <<-EOF\n\tit's\n\tEOF\nrm -rf /tmp/x\necho it's"))).isTrue();
+        assertThat(p.test("Bash", inputWithCommand("cat <<A <<B\nit's\nA\nb\nB\nrm -rf /tmp/x\necho it's"))).isTrue();
+    }
+
+    @Test
+    void test_hereDocument_isOtherwiseReadAsBefore() {
+        BashSubcommandPredicate p = BashSubcommandPredicate.of("rm -rf*");
+
+        assertThat(p.test("Bash", inputWithCommand("cat <<EOF\nhello\nEOF\nls"))).isFalse();
+        // A substitution in a document is run by a shell, and is still read.
+        assertThat(p.test("Bash", inputWithCommand("cat <<EOF\n$(rm -rf /tmp/x)\nEOF"))).isTrue();
+        // A here-string and a shift are no here-document: the quotes after them still quote.
+        assertThat(p.test("Bash", inputWithCommand("cat <<<'a\nrm -rf /tmp/x\n'"))).isFalse();
+    }
+
+    @Test
     void test_unclosedSubstitution_doesNotHideTheCommandsInsideIt() {
         BashSubcommandPredicate p = BashSubcommandPredicate.of("rm -rf*");
 
