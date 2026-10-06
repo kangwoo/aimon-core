@@ -201,6 +201,23 @@ class DefaultLiveSessionInterruptTest {
     }
 
     @Test
+    @DisplayName("interrupt(UNKNOWN) is refused: it is a value for reading a peer's reason, not for giving one")
+    void interruptWithUnknownIsRefused() {
+        final OrcaAgentRuntime context = createContext();
+        final CapturingStreamingExecutor executor = new CapturingStreamingExecutor();
+
+        try (DefaultLiveSession session = new DefaultLiveSession(SessionId.of("irq04-unknown"), context, executor,
+                LiveSessionOptions.defaults())) {
+            // Refused even while idle: it is the argument that is wrong, not the moment.
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> session.interrupt(InterruptReason.UNKNOWN))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("UNKNOWN");
+            org.assertj.core.api.Assertions
+                    .assertThatThrownBy(() -> session.interrupt(TurnId.generate(), InterruptReason.UNKNOWN))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
     @DisplayName("after a turn completes, a subsequent interrupt() is a no-op (active ref is cleared)")
     void interruptAfterTurnCompletionIsNoOp() throws Exception {
         final OrcaAgentRuntime context = createContext();

@@ -2641,6 +2641,7 @@ public final class DefaultSessionRouter implements SessionRouter {
     public void interrupt(SessionId sessionId, InterruptReason reason) {
         Objects.requireNonNull(sessionId, "sessionId must not be null");
         Objects.requireNonNull(reason, "reason must not be null");
+        InterruptReason.requireGivable(reason);
         interruptLocal(sessionId, reason);
         signalBus.publish(SessionSignal.builder().sessionId(sessionId).kind(SessionSignal.SignalKind.INTERRUPT)
                 .originNodeId(nodeId).payload(Map.of("reason", reason.name())).build());
@@ -2651,6 +2652,7 @@ public final class DefaultSessionRouter implements SessionRouter {
         Objects.requireNonNull(sessionId, "sessionId must not be null");
         Objects.requireNonNull(turnId, "turnId must not be null");
         Objects.requireNonNull(reason, "reason must not be null");
+        InterruptReason.requireGivable(reason);
         interruptLocal(sessionId, turnId, reason);
         signalBus.publish(SessionSignal.builder().sessionId(sessionId).kind(SessionSignal.SignalKind.INTERRUPT)
                 .originNodeId(nodeId).payload(Map.of("reason", reason.name(), "turnId", turnId.value())).build());
@@ -3108,12 +3110,18 @@ public final class DefaultSessionRouter implements SessionRouter {
     }
 
     private static InterruptReason parseReason(Object raw) {
-        if (raw instanceof InterruptReason r) {
+        // UNKNOWN is not a reason a peer may give (the interrupt entry points refuse it), so one that arrives is as
+        // unusable as a name this build cannot read, and is read the same way. It must not go on to interruptLocal:
+        // the live session refuses it, and a refused interrupt is a turn that keeps running.
+        if (raw instanceof InterruptReason r && r != InterruptReason.UNKNOWN) {
             return r;
         }
         if (raw instanceof String s) {
             try {
-                return InterruptReason.valueOf(s);
+                final InterruptReason named = InterruptReason.valueOf(s);
+                if (named != InterruptReason.UNKNOWN) {
+                    return named;
+                }
             } catch (IllegalArgumentException ignored) {
                 // fall through
             }

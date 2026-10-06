@@ -106,6 +106,25 @@ class AgentExecutionEventPayloadTest {
     }
 
     @Test
+    @DisplayName("InterruptedAt with an interrupt reason this build does not know is delivered as UNKNOWN")
+    void interruptedAtWithAnUnknownReasonIsStillDelivered() {
+        // InterruptedAt is a terminal frame too: a subscriber that loses it never hears that the turn stopped. No
+        // existing reason is a truthful stand-in for one this build cannot name, so it reads as UNKNOWN.
+        final Map<String, Object> payload = AgentExecutionEventPayload
+                .toPayload(
+                        InterruptedAt.builder().timestamp(TS).agentRuntimeId(CTX).iteration(2)
+                                .reason(InterruptReason.USER_SIGINT).iterationIndex(2).partialOutput("so far").build(),
+                        TURN);
+        payload.put("reason", "INVENTED_BY_A_NEWER_NODE");
+
+        final AgentExecutionEvent decoded = AgentExecutionEventPayload.fromPayload(payload).orElseThrow();
+
+        assertThat(decoded).isInstanceOf(InterruptedAt.class);
+        assertThat(((InterruptedAt) decoded).getReason()).isEqualTo(InterruptReason.UNKNOWN);
+        assertThat(((InterruptedAt) decoded).getPartialOutput()).isEqualTo("so far");
+    }
+
+    @Test
     @DisplayName("the sample set names every permitted subtype, so a new one cannot be added without a branch here")
     void samplesCoverEveryPermittedSubtype() {
         // This codec is the one blast-radius site whose omission is SILENT: flatten() returns null for an
