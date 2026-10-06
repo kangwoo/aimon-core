@@ -183,6 +183,31 @@ public abstract class AbstractScheduledTaskInterruptBusContractTest {
         assertThat(closed.poll(QUIET_PERIOD.toMillis(), TimeUnit.MILLISECONDS)).isNull();
     }
 
+    @Test
+    @DisplayName("closing one subscription twice does not close its twin")
+    void closingASubscriptionTwiceLeavesItsTwin() throws Exception {
+        // Subscriptions are handles: the same listener registered twice is two of them. A close that removes "the
+        // listener" rather than "this registration" takes the twin with it the second time it is called.
+        final ScheduledTaskInterruptBus nodeA = busFor("node-A");
+        final ScheduledTaskInterruptBus nodeB = busFor("node-B");
+        final BlockingQueue<Received> heardOnB = new LinkedBlockingQueue<>();
+        final ScheduledTaskInterruptBus.InterruptListener listener = (id, reason) -> heardOnB
+                .add(new Received(id, reason));
+        final ScheduledTaskInterruptBus.Subscription first = nodeB.subscribe(listener);
+        toClose.add(nodeB.subscribe(listener));
+        awaitSubscriptionsLive();
+
+        first.close();
+        first.close();
+        final ScheduledTaskId taskId = ScheduledTaskId.generate();
+        nodeA.publish(taskId, InterruptReason.TASK_CANCELLED);
+
+        assertThat(heardOnB.poll(PATIENCE.toMillis(), TimeUnit.MILLISECONDS))
+                .isEqualTo(new Received(taskId, InterruptReason.TASK_CANCELLED));
+        // Exactly one registration is left, so exactly one delivery.
+        assertThat(heardOnB.poll(QUIET_PERIOD.toMillis(), TimeUnit.MILLISECONDS)).isNull();
+    }
+
     /**
      * The scenario the bus exists for, on real engines: the cancellation is entered on a node that is running nothing,
      * and the run stops on the node that has it.

@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.mongodb.MongoChangeStreamException;
+import com.mongodb.MongoCommandException;
 import com.mongodb.MongoException;
 import com.mongodb.MongoInterruptedException;
 import com.mongodb.client.ChangeStreamIterable;
@@ -59,10 +60,17 @@ import at.aimon.session.mongodb.internal.ScheduledTaskInterruptCodec;
  * <p>
  * At-least-once to nodes that are watching, best-effort overall. The publishing node's own requests are filtered out
  * by origin — the caller has already interrupted its local runs before it publishes — which the SPI permits but does
- * not require. A request published while a node's watcher is not attached (before its first {@link #subscribe}, or in
- * the gap after a resume token aged out of the oplog) is not delivered to that node; its run then stops where it would
- * have without a bus, at the next step boundary once the task is gone. A request whose reason this build does not
- * know — a newer node's, during a rolling upgrade — is still honoured (see {@link ScheduledTaskInterruptCodec}).
+ * not require. A request whose reason this build does not know — a newer node's, during a rolling upgrade — is still
+ * honoured (see {@link ScheduledTaskInterruptCodec}).
+ *
+ * <p>
+ * A request published while a node's watcher is not attached is not delivered to that node, and nothing redelivers
+ * it. There are three such windows: before the cursor opened after the first {@link #subscribe}; while the watcher
+ * starts over because the server refused its resume token (older than the oplog) or closed its cursor (the collection
+ * was dropped or recreated); and while MongoDB is unreachable for longer than the stream can resume across. Each of
+ * the last two is logged at WARN. <b>A run whose node missed the request is not stopped at all</b> — it runs its
+ * remaining steps, and only its write-back is suppressed if the task was deleted. That is the behaviour without a
+ * bus, which is what best-effort falls back to.
  *
  * <h2>Lifecycle</h2>
  *
@@ -81,7 +89,7 @@ public final class MongoScheduledTaskInterruptBus implements ScheduledTaskInterr
     private final MongoCollection<Document> collection;
     private final ScheduledTaskInterruptCodec codec = new ScheduledTaskInterruptCodec();
     private final String nodeId;
-    private final ResumeTokenStore resumeTokenStore = new ResumeTokenStore();
+    private final ResumeTokenStore resumeTokenStore;
 
     /** Copy-on-write for the reason the in-memory bus gives: subscriptions are handles, not set members. */
     private final List<InterruptListener> listeners = new CopyOnWriteArrayList<>();
@@ -115,6 +123,13 @@ public final class MongoScheduledTaskInterruptBus implements ScheduledTaskInterr
      *            this node's id, unique in the fleet (must not be null)
      */
     public MongoScheduledTaskInterruptBus(MongoDatabase database, String collectionName, String nodeId) {
+        this(database, collectionName, nodeId, new ResumeTokenStore());
+    }
+
+    /** Test seam: lets a test start the watcher from a resume token of its choosing. */
+    MongoScheduledTaskInterruptBus(MongoDatabase database, String collectionName, String nodeId,
+            ResumeTokenStore resumeTokenStore) {
+        this.resumeTokenStore = Objects.requireNonNull(resumeTokenStore, "resumeTokenStore must not be null");
         Objects.requireNonNull(database, "database must not be null");
         this.collection = database
                 .getCollection(Objects.requireNonNull(collectionName, "collectionName must not be null"));
@@ -143,8 +158,14 @@ public final class MongoScheduledTaskInterruptBus implements ScheduledTaskInterr
         }
         listeners.add(listener);
         ensureWatcherStarted();
-        // remove(Object) drops the first occurrence, so closing one of two identical subscriptions leaves the other.
-        return () -> listeners.remove(listener);
+        // remove(Object) drops the first occurrence, so closing one of two identical subscriptions leaves the other —
+        // but only if each handle removes once. Unguarded, a second close of this handle would take its twin.
+        final AtomicBoolean open = new AtomicBoolean(true);
+        return () -> {
+            if (open.compareAndSet(true, false)) {
+                listeners.remove(listener);
+            }
+        };
     }
 
     @Override
@@ -172,6 +193,20 @@ public final class MongoScheduledTaskInterruptBus implements ScheduledTaskInterr
         }
     }
 
+    /**
+     * @return whether a publish made now would be seen by this bus's listeners — true once the watcher's cursor is
+     *         open, and trivially true before any {@link #subscribe}, when there is nobody to miss it
+     */
+    boolean isWatching() {
+        return !watcherStarted.get() || cursor != null;
+    }
+
+    /** @return whether the watcher thread has been started and has not ended */
+    boolean isWatcherAlive() {
+        final Thread t = watcherThread;
+        return t != null && t.isAlive();
+    }
+
     private void ensureWatcherStarted() {
         if (!watcherStarted.compareAndSet(false, true)) {
             return;
@@ -196,6 +231,24 @@ public final class MongoScheduledTaskInterruptBus implements ScheduledTaskInterr
                     return;
                 }
                 log.debug("Mongo cursor interrupted on node {} (close pending)", nodeId);
+            } catch (MongoCommandException e) {
+                if (closed.get()) {
+                    return;
+                }
+                if (resumeTokenStore.last().isPresent()) {
+                    // The server refused a command while this watcher was resuming from a stored token. The refusal
+                    // that matters arrives this way, not as MongoChangeStreamException: a token older than the oplog
+                    // (ChangeStreamHistoryLost) or one the stream no longer contains. Retrying the same token cannot
+                    // succeed, and stop requests are rare enough that a stored token is routinely that old.
+                    log.warn(
+                            "Stop-request watcher on node {} could not resume from its stored token ({}); starting"
+                                    + " over without it — stop requests published in the gap are not delivered here",
+                            nodeId, e.toString());
+                    resumeTokenStore.clear();
+                } else {
+                    log.warn("Stop-request watcher hit a server error on node {}; retrying: {}", nodeId, e.toString());
+                }
+                sleep(WATCHER_RESTART_BACKOFF_MS);
             } catch (RuntimeException e) {
                 if (closed.get()) {
                     return;
@@ -221,6 +274,21 @@ public final class MongoScheduledTaskInterruptBus implements ScheduledTaskInterr
                     return;
                 }
                 if (change == null) {
+                    if (active.getServerCursor() == null) {
+                        // The server closed the cursor: the collection was dropped or renamed. The insert-only
+                        // pipeline filters out the invalidate event that would have said so, and tryNext() on a dead
+                        // cursor returns null for ever rather than throwing. A token from before an invalidate cannot
+                        // be resumed from, so it goes too.
+                        log.warn("Stop-request change stream on node {} was closed by the server (collection dropped"
+                                + " or recreated?); reopening — stop requests published in the gap are not delivered"
+                                + " here", nodeId);
+                        resumeTokenStore.clear();
+                        sleep(WATCHER_RESTART_BACKOFF_MS);
+                        return;
+                    }
+                    // Keep the token moving while nothing is published. Stop requests are rare, and a token that only
+                    // advanced on delivery would be days old — past the oplog — by the time a reconnect needed it.
+                    resumeTokenStore.update(active.getResumeToken());
                     sleep(IDLE_POLL_MS);
                     continue;
                 }
@@ -253,7 +321,9 @@ public final class MongoScheduledTaskInterruptBus implements ScheduledTaskInterr
             for (InterruptListener listener : listeners) {
                 try {
                     listener.onInterruptRequested(request.getTaskId(), request.getReason());
-                } catch (RuntimeException e) {
+                } catch (RuntimeException | Error e) {
+                    // Error too: this is the only thread that will ever deliver a stop request to this node, and
+                    // nothing restarts it. A listener's AssertionError or LinkageError must not end it.
                     log.warn("Interrupt listener failed for task '{}' ({}) on node {}; continuing the fan-out",
                             request.getTaskId(), request.getReason(), nodeId, e);
                 }

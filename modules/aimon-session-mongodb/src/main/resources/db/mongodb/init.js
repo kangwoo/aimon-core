@@ -28,9 +28,10 @@ ensureCollection("conversation_signals", { capped: true, size: 64 * 1024 * 1024 
 ensureCollection("background_task");
 
 // scheduled_task_interrupts is the change-stream channel for MongoScheduledTaskInterruptBus: one tiny
-// document per stop request, read once by every node. Capped so it never needs sweeping; 1 MiB holds
-// several thousand requests, far more than any node can fall behind by. Create it BEFORE the first
-// publish — an insert into a missing collection creates an uncapped one that grows without bound.
+// document per stop request. Capped so it never needs sweeping; nodes read the requests from the change
+// stream, not from the collection, so the size bounds storage only (1 MiB is several thousand requests).
+// Create it BEFORE the first publish — an insert into a missing collection creates an uncapped one that
+// grows without bound. Dropping and recreating it while nodes run is safe: each watcher reopens.
 ensureCollection("scheduled_task_interrupts", { capped: true, size: 1024 * 1024 });
 
 // session_records is the one collection named for the session rather than the conversation. The

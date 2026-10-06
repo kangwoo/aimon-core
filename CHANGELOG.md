@@ -20,9 +20,14 @@ close the `MongoDatabase`.
 The runtime never runs DDL, and publishing into a collection that does not exist makes MongoDB create an uncapped one,
 which works and grows for ever. A replica set is required, as for the signal bus.
 
-Delivery is best-effort: a request published before a node's watcher has attached, or in the gap after its resume token
-aged out of the oplog, does not reach that node, and its run stops at the next step boundary instead. A request whose
-reason an older node does not know is still honoured. Redis and Postgres have no implementation yet.
+Delivery is best-effort: a request published while a node's watcher is not attached does not reach that node and is
+not redelivered. That is the moment before its cursor opens, and the gap while it starts over after the server refused
+its resume token or closed its cursor (the collection was dropped or recreated); the last two are logged at WARN. A run
+whose node missed the request is not stopped: it finishes its remaining steps, as it would without a bus. A request
+whose reason an older node does not know is still honoured. Redis and Postgres have no implementation yet.
+
+`InMemoryScheduledTaskInterruptBus`: closing one subscription twice no longer removes a second subscription of the same
+listener.
 
 The contract every such bus has to meet is `AbstractScheduledTaskInterruptBusContractTest` in `aimon-session-testkit`.
 
