@@ -22,6 +22,12 @@ import at.aimon.core.agent.session.store.StoredAgentExecutionResult;
  * their own columns
  * ({@code key, conversation_id, input_hash, status, holder_id, created_at, last_touched_at, expires_at}); only the
  * {@code result_blob} round-trips through JSON.
+ *
+ * <p>
+ * <b>An unknown completion reason is not fatal.</b> A row outlives the node that wrote it, so during a rolling upgrade
+ * the reader may be older than the writer. A {@link CompletionReason} name this build does not know decodes as the
+ * coarse reason the stored {@code success} flag implies ({@link CompletionReason#fromWireName(String, boolean)}) and
+ * the answer is replayed.
  */
 public final class IdempotencyEntryRowCodec {
 
@@ -63,9 +69,9 @@ public final class IdempotencyEntryRowCodec {
             if (node == null || node.isNull()) {
                 return Optional.empty();
             }
-            final StoredAgentExecutionResult.Builder builder = StoredAgentExecutionResult.builder()
-                    .success(node.get("success").asBoolean())
-                    .completionReason(CompletionReason.valueOf(node.get("completionReason").asText()))
+            final boolean success = node.get("success").asBoolean();
+            final StoredAgentExecutionResult.Builder builder = StoredAgentExecutionResult.builder().success(success)
+                    .completionReason(CompletionReason.fromWireName(node.get("completionReason").asText(), success))
                     .wasStreamed(node.get("wasStreamed").asBoolean());
             if (node.hasNonNull("finalAnswer")) {
                 builder.finalAnswer(node.get("finalAnswer").asText());

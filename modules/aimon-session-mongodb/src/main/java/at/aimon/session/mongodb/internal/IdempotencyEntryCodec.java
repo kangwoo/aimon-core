@@ -36,6 +36,12 @@ import at.aimon.core.agent.session.store.StoredAgentExecutionResult;
  * The {@code result} subtree is the {@link StoredAgentExecutionResult} projection — full {@link AgentExecutionResult}
  * polymorphism is out of scope (design §9.2). Mirrors the Redis codec field-for-field except {@code expiresAt} replaces
  * the Redis-side {@code ttlMillis} hint (the TTL is part of the document via the indexed field).
+ *
+ * <p>
+ * <b>An unknown completion reason is not fatal.</b> An entry outlives the node that wrote it, so during a rolling
+ * upgrade the reader may be older than the writer. A {@link CompletionReason} name this build does not know — or a
+ * result with none — decodes as the coarse reason the stored {@code success} flag implies
+ * ({@link CompletionReason#fromWireName(String, boolean)}) and the answer is replayed.
  */
 public final class IdempotencyEntryCodec {
 
@@ -93,9 +99,9 @@ public final class IdempotencyEntryCodec {
     }
 
     public static AgentExecutionResult decodeResult(Document node) {
-        final StoredAgentExecutionResult.Builder builder = StoredAgentExecutionResult.builder()
-                .success(node.getBoolean("success", false))
-                .completionReason(CompletionReason.valueOf(node.getString("completionReason")))
+        final boolean success = node.getBoolean("success", false);
+        final StoredAgentExecutionResult.Builder builder = StoredAgentExecutionResult.builder().success(success)
+                .completionReason(CompletionReason.fromWireName(node.getString("completionReason"), success))
                 .wasStreamed(node.getBoolean("wasStreamed", false));
         final String finalAnswer = node.getString("finalAnswer");
         if (finalAnswer != null) {

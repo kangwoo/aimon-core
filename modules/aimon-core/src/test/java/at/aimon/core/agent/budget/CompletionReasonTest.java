@@ -28,4 +28,32 @@ class CompletionReasonTest {
             assertThat(CompletionReason.valueOf(reason.name())).isSameAs(reason);
         }
     }
+
+    @Test
+    @DisplayName("fromWireName reads every known name as itself, whatever the success flag says")
+    void fromWireNameKeepsAKnownName() {
+        // The flag decides the fallback and nothing else: a known reason is never overridden by it, so a success that
+        // ended SUSPENDED and a failure that ended TRUNCATED both keep their reason.
+        for (CompletionReason reason : CompletionReason.values()) {
+            assertThat(CompletionReason.fromWireName(reason.name(), true)).isSameAs(reason);
+            assertThat(CompletionReason.fromWireName(reason.name(), false)).isSameAs(reason);
+        }
+    }
+
+    @Test
+    @DisplayName("fromWireName reads a name this build does not know as the coarse reason for the success flag")
+    void fromWireNameDegradesAnUnknownName() {
+        assertThat(CompletionReason.fromWireName("INVENTED_BY_A_NEWER_NODE", true))
+                .isSameAs(CompletionReason.COMPLETED);
+        assertThat(CompletionReason.fromWireName("INVENTED_BY_A_NEWER_NODE", false)).isSameAs(CompletionReason.ERROR);
+        // Names are matched exactly, as valueOf matches them: a differently-cased name is an unknown one.
+        assertThat(CompletionReason.fromWireName("completed", false)).isSameAs(CompletionReason.ERROR);
+    }
+
+    @Test
+    @DisplayName("fromWireName reads an absent name the same way as an unknown one")
+    void fromWireNameDegradesAnAbsentName() {
+        assertThat(CompletionReason.fromWireName(null, true)).isSameAs(CompletionReason.COMPLETED);
+        assertThat(CompletionReason.fromWireName(null, false)).isSameAs(CompletionReason.ERROR);
+    }
 }
