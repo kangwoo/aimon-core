@@ -70,9 +70,11 @@ import at.aimon.core.skill.hook.action.McpToolAction;
  * <p>
  * What happens to the request afterwards: nothing is left waiting on this side. Over stdio the request line has
  * already been written, so the server may go on working and answer late; the transport discards that answer when
- * the next request reads past it. No {@code notifications/cancelled} is sent. A client that does not answer an
- * interrupt &mdash; one waiting for the transport while another request holds it, a blocking read &mdash; is not ended
- * by this deadline; the hook executor's outer net ends the wait for it, and a guard still blocks.
+ * the next request reads past it. No {@code notifications/cancelled} is sent. A call that is still waiting for
+ * the transport while another request holds it is ended by this deadline like any other, and was never written. A
+ * client that does not answer an interrupt &mdash; over stdio, one blocked <em>writing</em> a request larger than the
+ * pipe's buffer to a server that has stopped reading &mdash; is not ended by this deadline; the hook executor's outer
+ * net ends the wait for it, and a guard still blocks.
  *
  * <p>
  * An interrupt that is <em>not</em> this executor's &mdash; the hook executor cutting the hook off, the execution
