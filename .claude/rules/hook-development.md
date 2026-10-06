@@ -84,7 +84,8 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   is clamped at `MAX_DECLARED_BUDGET` (10 minutes); anything larger is truncated with a WARN.
 - What the net means when it fires is `HookExecutionPolicy#timeoutBehaviorFor(hook)`: the hook's own
   `ExecutionHook#getTimeoutBehavior()` when it declares one, otherwise the policy's
-  `timeoutBehavior()`. Every shipped policy is `FAIL_OPEN`, so a hook whose job is to veto must
+  `timeoutBehavior()`. Every policy `DefaultHookExecutionManager` assigns by default is `FAIL_OPEN`
+  (`HookExecutionPolicy.failClosedStopOnBlocked()` exists for a host to choose), so a hook whose job is to veto must
   declare `FAIL_CLOSED` itself — the declarative guard hooks do (unless `failOpen`). Do **not** change
   a policy default to close this for one hook: it changes every programmatically registered hook of
   that event. A programmatic `PreToolHook` / `OnStartHook` that declares nothing still reads as a

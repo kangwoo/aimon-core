@@ -1000,21 +1000,17 @@ public class AgentSetupFactory {
     }
 
     /**
-     * Builds the {@link MarkdownSkillParser} used for both bundled and user skills. Wiring a
+     * Builds the {@link MarkdownSkillParser} the CLI loads bundled and user skills with. Wiring a
      * {@link DefaultShellActionExecutor} here is what activates the SK-13 frontmatter {@code shell} action type — the
      * default zero-arg parser falls back to a no-op executor that fails such declarations at parse time. The executor
-     * takes no shell: each action runs in the shell of the execution environment its hook fires in.
-     */
-    static SkillParser createShellAwareSkillParser() {
-        return new MarkdownSkillParser(new ShellArgumentTokenizer(),
-                new SkillHookSetParser(new DefaultShellActionExecutor()));
-    }
-
-    /**
-     * {@link #createShellAwareSkillParser()} with the CLI's {@code http} and {@code mcp} hook executors, so a skill
-     * can declare those action types too. {@code ${env.X}} in such an action reads the CLI's own environment, for
-     * the names the action whitelists. Without an MCP executor (no MCP server configured) a skill declaring an
-     * {@code mcp} action fails to load, as one declaring {@code shell} does where there is no shell support.
+     * takes no shell: each action runs in the shell of the execution environment its hook fires in, never on the
+     * host outside it.
+     *
+     * <p>
+     * The CLI's {@code http} and {@code mcp} hook executors come with it, so a skill can declare those action types
+     * too. {@code ${env.X}} in such an action reads the CLI's own environment, for the names the action whitelists.
+     * Without an MCP executor (no MCP server configured) a skill declaring an {@code mcp} action fails to load, as one
+     * declaring {@code shell} does where there is no shell support.
      *
      * @param hookActions
      *            the CLI's hook action executors (must not be null)

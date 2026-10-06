@@ -480,7 +480,8 @@ OpenAI 의 넷이 한 `build()` 를 지나고, Anthropic 의 `temperature` 는 �
 거절은 **실제로 도는 분기 안에서만** 한다(`requireApiKey` 와 같은 자리). 분기 밖에서 검사하면 `provider=none` 이나 자기
 `LlmClient` 빈을 쓰는 배포의 유효한 설정이 기동 실패가 된다.
 
-**자기 `LlmClient` 빈을 준 배포에서는 `aimon.llm` 아래의 어떤 키도 거절하지 않는다.** 그 배포에서는 벤더 분기가 돌지
+**자기 `LlmClient` 빈을 준 배포에서는 `aimon.llm` 아래의 어떤 키도 *읽히지 않는다는 이유로는* 거절하지 않는다.** (철자가 틀린 키는
+다른 문제다 — §6.7 의 엄격한 세 서브트리 아래의 모르는 키는 이 배포에서도 기동 실패다. 그 검사는 `LlmClient` 빈을 보지 않는다.) 그 배포에서는 벤더 분기가 돌지
 않으므로 스타터는 `provider` 를 뺀 `aimon.llm.*` 을 하나도 읽지 않는다 — `api-key` · `model` · `base-url` · `timeout`,
 공유 키 둘(`reasoning-effort` · `model-capabilities`), 두 벤더 블록. 그래도 거절하지 않는 이유는 그 값들의 소비자가
 애플리케이션일 수 있어서다: 능력 선언은 `AimonProperties.modelCapabilityRegistry(...)` 로 자기 클라이언트에 넘길 수

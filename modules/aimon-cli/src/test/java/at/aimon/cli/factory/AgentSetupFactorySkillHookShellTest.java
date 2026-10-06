@@ -30,7 +30,7 @@ class AgentSetupFactorySkillHookShellTest {
     @Test
     @DisplayName("accepts a shell action on an in-execution event")
     void acceptsShellActionsOnInExecutionEvents() {
-        final SkillParser parser = AgentSetupFactory.createShellAwareSkillParser();
+        final SkillParser parser = AgentSetupFactory.createSkillParser(HookActionExecutors.create(false));
 
         final Skill parsed = parser.parse("sample",
                 skill("  onStart:\n    - action: { type: shell, command: \"echo hi\" }\n"));
@@ -41,7 +41,7 @@ class AgentSetupFactorySkillHookShellTest {
     @Test
     @DisplayName("the parsed hook does not fall back to the host when its context has no execution environment")
     void parsedHookDoesNotRunWithoutAnExecutionEnvironment() {
-        final SkillParser parser = AgentSetupFactory.createShellAwareSkillParser();
+        final SkillParser parser = AgentSetupFactory.createSkillParser(HookActionExecutors.create(false));
         final Skill parsed = parser.parse("sample",
                 skill("  onStart:\n    - action: { type: shell, command: \"exit 0\" }\n"));
 
@@ -57,7 +57,7 @@ class AgentSetupFactorySkillHookShellTest {
     @Test
     @DisplayName("failOpen: true in frontmatter lets a hook that could not run pass, still without a host fallback")
     void failOpenHookPassesWithoutAnExecutionEnvironment() {
-        final SkillParser parser = AgentSetupFactory.createShellAwareSkillParser();
+        final SkillParser parser = AgentSetupFactory.createSkillParser(HookActionExecutors.create(false));
         final Skill parsed = parser.parse("sample",
                 skill("  onStart:\n    - action: { type: shell, command: \"exit 2\" }\n      failOpen: true\n"));
 
@@ -74,7 +74,7 @@ class AgentSetupFactorySkillHookShellTest {
     @Test
     @DisplayName("rejects session- and config-lifecycle events, which have no execution environment")
     void rejectsOutOfExecutionEvents() {
-        final SkillParser parser = AgentSetupFactory.createShellAwareSkillParser();
+        final SkillParser parser = AgentSetupFactory.createSkillParser(HookActionExecutors.create(false));
 
         assertThatThrownBy(() -> parser.parse("sample",
                 skill("  onSessionStart:\n    - action: { type: shell, command: \"echo hi\" }\n")))

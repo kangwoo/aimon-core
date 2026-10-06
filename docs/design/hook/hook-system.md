@@ -116,8 +116,8 @@ interrupt 하고, 풀 스레드가 다른 풀 스레드를 기다리지 않으�
 이 정책이 없으면 바깥 그물이 먼저 잘라 버려, 액션이 스스로 만들 수 있었던 제대로 된 `HookResult` 대신
 뭉툭한 cancel 이 나간다. 병렬 모드에서 timeout 은 **대기를 제한할 뿐 이미 끝난 작업을 버리지 않는다.**
 
-**그물이 터졌을 때의 뜻도 훅이 선언할 수 있다(EE-64).** 정책의 `TimeoutBehavior` 는 체인 전체의 기본값이고 출하 정책은 전부
-`FAIL_OPEN` 이다. 거부가 목적인 훅에는 틀린 답이다 — 그물에 끊긴 가드는 아무 말도 하지 않았고, 통과시키면 "느려지는 것" 이
+**그물이 터졌을 때의 뜻도 훅이 선언할 수 있다(EE-64).** 정책의 `TimeoutBehavior` 는 체인 전체의 기본값이고, `DefaultHookExecutionManager` 가
+이벤트에 주는 기본 정책은 전부 `FAIL_OPEN` 이다(`HookExecutionPolicy.failClosedStopOnBlocked()` 는 호스트가 골라 쓰는 팩토리다). 거부가 목적인 훅에는 틀린 답이다 — 그물에 끊긴 가드는 아무 말도 하지 않았고, 통과시키면 "느려지는 것" 이
 가드를 끄는 방법이 된다. 그래서 `ExecutionHook.getTimeoutBehavior()` 로 훅이 자기 동작을 선언하고, 실행기는
 `timeoutBehaviorFor(hook)` 로 정책보다 그 선언을 따른다. 선언적 가드 훅(`failOpen` 아님)은 `FAIL_CLOSED` 를 선언한다. 정책
 기본값을 바꾸지 않은 이유는 그것이 프로그램으로 등록한 모든 훅의 동작을 바꾸기 때문이다 — 그 훅들은 여전히 정책을 따르고,
