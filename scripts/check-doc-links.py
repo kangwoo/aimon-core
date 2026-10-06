@@ -89,6 +89,19 @@ is involved, and this check has always accepted it (slug() normalises both sides
 MkDocs logs each one at INFO (`does not contain an anchor`); the hook's own
 `--self-test` builds a small two-locale site and reads the built hrefs.
 
+Which text is a link is read alike on both sides where it matters: the inline form
+`[text](path.md#fragment)`, whose text may wrap onto the next line (this check always
+read it so, and accepted as "the hook carries it" a link the hook, reading line by
+line, did not carry; the hook reads the page whole now). Neither reads a
+reference-style link, a `(<target>)` or a single-quoted title, so a fragment written
+in one of those is not checked here and not carried there -- the hook's docstring
+lists them. They differ on what a fence hides: this check toggles on every marker
+(docs_tree.unfence) and the hook pairs markers as the site does. So this check reads
+as a link a line in a fence shown inside a longer fence, which the site shows as text
+and the hook leaves alone -- a sample that has to name a real target; and it does not
+read anything after a marker nothing closes, which the site shows as a paragraph with
+live links -- those the hook carries when it can, and nothing reports when it cannot.
+
 External URLs are not checked. They fail for reasons that have nothing to do with
 this commit (rate limits, a host that is down, a login wall), and a docs gate that
 goes red on someone else's outage stops being read.
@@ -105,7 +118,10 @@ which is not read, one page per case, so a change that
 alters one of those cases' answers goes red there until that case's expected answer
 changes too. It then pins the directory rule the same way: one link per case, in a
 small tree written to a temporary directory, never the real one. The translation
-rule is pinned the same way again.
+rule is pinned the same way again. Last, the run itself: main() on such trees, and
+once the command line -- which exit code comes back, and which annotations `--github`
+adds. The cases before these ask check() what it found, and none of them would notice
+a run that found a broken link and exited 0.
 
 `--github` also prints each reported-not-failed link as a workflow warning annotation,
 since a line in a green job's log is a line nobody opens.
@@ -115,8 +131,11 @@ Usage:
     python3 scripts/check-doc-links.py --self-test
 """
 
+import contextlib
+import io
 import pathlib
 import re
+import subprocess
 import sys
 import tempfile
 
@@ -606,8 +625,106 @@ def pair_self_test():
     return 0
 
 
+# --- the run's self-test -----------------------------------------------------
+#
+# What a caller of this script gets: an exit code, and under `--github` one workflow
+# annotation per reported-not-failed link. Each case is a tree, whether `--github` was
+# asked for, and the two answers. The trees are made of the two findings above that
+# differ in severity -- a link to a file that is not there (fails), and a fragment into
+# a translation whose headings are behind (reported).
+
+BROKEN_PAGE, BROKEN_LINE = "docs/broken.md", 5
+REPORTED_PAGE, REPORTED_LINE = "docs/design.md", 4
+ANNOTATION = (f"::warning file={REPORTED_PAGE},line={REPORTED_LINE}::"
+              "not carried over guide.md#실행 (the site serves docs/guide.en.md for this link: ")
+UNREADABLE_MKDOCS = "docs_dir: docs\n" + UNREADABLE_EXCLUDES[0][1]
+
+# (case, the tree's findings, --github, exit code, annotations)
+MAIN_CASES = [
+    ("a broken link exits 1",
+     {"broken"}, False, 1, 0),
+    ("a reported link alone exits 0 -- it is reported, not failed",
+     {"reported"}, False, 0, 0),
+    ("`--github` adds one annotation for the reported link, naming its file and line",
+     {"reported"}, True, 0, 1),
+    ("with a broken link beside it the run exits 1, and the annotation is still only "
+     "the reported link's",
+     {"broken", "reported"}, True, 1, 1),
+    ("without `--github` the same tree exits 1 and prints no annotation",
+     {"broken", "reported"}, False, 1, 0),
+    ("a tree with neither exits 0 and prints no annotation",
+     set(), True, 0, 0),
+    ("an `exclude_docs` this cannot read exits 2, not 0",
+     {"unreadable"}, True, 2, 0),
+]
+
+
+def main_fixture(root, findings):
+    site_fixture(root, UNREADABLE_MKDOCS if "unreadable" in findings else SITE_MKDOCS)
+    (root / "docs/guide.md").write_text("\n".join(KO), encoding="utf-8")
+    (root / "docs/guide.en.md").write_text(
+        "\n".join(EN[:4] if "reported" in findings else EN), encoding="utf-8")
+    # The link sits on a line of its own number in each page, so a run that named the
+    # wrong line -- or the other page's -- does not pass by coincidence.
+    lead = "\n" * (REPORTED_LINE - 2)
+    (root / REPORTED_PAGE).write_text(f"# Page\n{lead}[link](guide.md#실행)\n", encoding="utf-8")
+    if "broken" in findings:
+        lead = "\n" * (BROKEN_LINE - 2)
+        (root / BROKEN_PAGE).write_text(f"# Page\n{lead}[link](missing.md)\n", encoding="utf-8")
+
+
+def main_self_test():
+    print(f"self-test over {len(MAIN_CASES) + 1} run(s): the exit code, and what `--github` adds")
+    failed = 0
+
+    def report(name, findings, expected, code, printed):
+        nonlocal failed
+        annotations = [line for line in printed.splitlines() if line.startswith("::")]
+        wanted_code, wanted_annotations = expected
+        ok = (code == wanted_code and len(annotations) == wanted_annotations
+              and all(line.startswith(ANNOTATION) for line in annotations)
+              and ("broken: 1" in printed) == ("broken" in findings)
+              and ("reported, not failed: 1" in printed) == ("reported" in findings))
+        failed += not ok
+        print(f"  {'ok  ' if ok else 'FAIL'} {name}")
+        print(f"         exit {code}, {len(annotations)} annotation(s)")
+        for line in annotations:
+            # Not at the start of the line: this output is a workflow log too, and the
+            # runner would take the fixture's annotation for one of the job's own.
+            print(f"         printed: {line}")
+
+    for name, findings, github, code, annotations in MAIN_CASES:
+        printed = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp).resolve()
+            main_fixture(root, findings)
+            with contextlib.redirect_stdout(printed):
+                got = main(str(root), github=github)
+        report(name, findings, (code, annotations), got, printed.getvalue())
+
+    # main() was handed `github` above. Whether `--github` on the command line reaches
+    # it, and whether its return value becomes the exit status, is the last thing.
+    findings = {"broken", "reported"}
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp).resolve()
+        main_fixture(root, findings)
+        ran = subprocess.run([sys.executable, __file__, "--github", str(root)],
+                             capture_output=True, text=True, encoding="utf-8")
+    report("run as a command with `--github`, that tree exits 1 with its one annotation",
+           findings, (1, 1), ran.returncode, ran.stdout)
+
+    print()
+    if failed:
+        print(f"{failed} case(s) failed: a run of this script no longer exits or annotates as "
+              "its docstring says (the usage, and `--github`). The `docs-links` job reads "
+              "nothing else: say there what a run does now, then change the expected answer here.")
+        return 1
+    print("every run above still exits and annotates as this script's docstring says")
+    return 0
+
+
 def self_test():
-    return max(heading_self_test(), site_self_test(), pair_self_test())
+    return max(heading_self_test(), site_self_test(), pair_self_test(), main_self_test())
 
 
 if __name__ == "__main__":
