@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: 88dd561
+source_commit: 88dd5612
 ---
 
 # Hook Configuration Guide (`hooks.json`)

@@ -186,6 +186,11 @@ if (mcpClientManager != null) {
 `#3-부트스트랩-흐름` 링크가 전부 죽는다. **헤딩을 옮겼으면 그것을 가리키는 `#fragment` 도 같은
 PR 에서 고친다.**
 
+고칠 것은 **번역본들**의 링크다. 번역이 없는 문서가 정본을 가리키는 `guide.md#3-부트스트랩-흐름` 은 그대로
+둔다 — 정본의 앵커이고, 영어 사이트에서는 훅이 같은 자리의 영어 제목으로 옮긴다
+([`documentation-guide.md` §4](documentation-guide.md#4-링크-규칙)). 그 대응은 자리로 정해지므로, 번역본에서
+제목을 빼거나 더하거나 레벨을 바꾸면 깨진다.
+
 ```bash
 python3 scripts/check-doc-links.py
 ```

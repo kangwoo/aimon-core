@@ -170,7 +170,26 @@ def anchors_of(text):
     pairings and of a `#` comment in front matter; the backlog check's
     `--self-test` has cases for its side.
     """
-    found, seen = set(), {}
+    found = {anchor for _, anchor, _ in headings_of(text) if anchor}
+    # Hand-written anchors live in raw HTML, so they are read off the raw text.
+    found.update(HTML_ANCHOR.findall(text))
+    return found
+
+
+def headings_of(text):
+    """The headings anchors_of reads, in page order, as `(level, anchor, nth)`.
+
+    The same lines and the same reading as anchors_of -- that function is this
+    one's anchors plus the hand-written `<a id>`s -- kept in order, because one
+    question needs the order: which heading of a translation stands where a
+    heading of its canonical stands (check-doc-links.py › WHICH FRAGMENTS MUST
+    SURVIVE A TRANSLATION).
+
+    `anchor` is `""` for a heading whose text slugs to nothing; it stays in the
+    list so that positions still count headings. `nth` is 0 for the first heading
+    with its slug and N for the one numbered `-N`.
+    """
+    found, seen = [], {}
     # Front matter is not page text: the site drops it and github.com renders it as a
     # table, so a `# ` comment inside it is no heading (backlog T-6). Blanked rather than
     # cut, the way unfence() blanks a fence, so line numbering survives.
@@ -181,12 +200,11 @@ def anchors_of(text):
             continue
         base = slug(m.group(2))
         if not base:
+            found.append((len(m.group(1)), "", 0))
             continue
         n = seen.get(base, 0)
         seen[base] = n + 1
-        found.add(base if n == 0 else f"{base}-{n}")
-    # Hand-written anchors live in raw HTML, so they are read off the raw text.
-    found.update(HTML_ANCHOR.findall(text))
+        found.append((len(m.group(1)), base if n == 0 else f"{base}-{n}", n))
     return found
 
 
