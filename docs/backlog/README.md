@@ -357,16 +357,37 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | [`spring-boot-starter-open-items.md`](spring-boot-starter-open-items.md) | `docs/design/integration/spring-boot-starter.md` (SBS-00 ~ SBS-12) | 34 | 4 | 26 | 4 |
 | [`interrupt-open-items.md`](interrupt-open-items.md) | `docs/design/agent-execution/interrupt.md` | 5 | 2 | 3 | 0 |
 | [`multi-instance-readiness.md`](multi-instance-readiness.md) | 아키텍처 리뷰 (2026-08-31) | 3 | 1 | 1 | 1 |
-| [`module-dependency-scope.md`](module-dependency-scope.md) | 아키텍처 리뷰 (2026-08-31) · #99 (2026-09-11) | 4 | 2 | 2 | 0 |
+| [`module-dependency-scope.md`](module-dependency-scope.md) | 아키텍처 리뷰 (2026-08-31) · #99 (2026-09-11) · D-4 착수 (2026-10-06) | 5 | 2 | 3 | 0 |
 | [`architecture-review-open-items.md`](architecture-review-open-items.md) | 아키텍처 리뷰 (2026-08-31) | 8 | 2 | 6 | 0 |
-| [`translation-tooling-open-items.md`](translation-tooling-open-items.md) | 번역 낡음 가드 작업 (2026-09-06) · #122 (2026-09-11) · #121 (2026-09-11) · #135 (2026-09-11) | 9 | 3 | 6 | 0 |
+| [`translation-tooling-open-items.md`](translation-tooling-open-items.md) | 번역 낡음 가드 작업 (2026-09-06) · #122 (2026-09-11) · #121 (2026-09-11) · #135 (2026-09-11) · T-10 착수 (2026-10-06) | 10 | 3 | 7 | 0 |
 | [`openai-model-capabilities-open-items.md`](openai-model-capabilities-open-items.md) | o-시리즈 reasoning-item 재생 프로브 (2026-09-09) | 1 | 0 | 1 | 0 |
 | [`llm-config-surface-open-items.md`](llm-config-surface-open-items.md) | `docs/design/llm/model-capability-config-key.md` §9 (#46) | 30 | 5 | 25 | 0 |
 | [`reasoning-delta-stream-open-items.md`](reasoning-delta-stream-open-items.md) | `docs/design/llm/reasoning-delta-stream.md` §11 (#62) | 9 | 3 | 6 | 0 |
 | [`config-value-expansion-open-items.md`](config-value-expansion-open-items.md) | `docs/design/integration/config-value-expansion-and-frontmatter-strictness.md` §9 (#53) | 2 | 0 | 2 | 0 |
 | [`live-api-test-tier.md`](live-api-test-tier.md) | 라이브 API 테스트 계층의 CI 신호 결정 — #81 (2026-09-10) | 2 | 0 | 1 | 1 |
 | [`session-log-open-items.md`](session-log-open-items.md) | `docs/design/session/session-log.md` §12 · `docs/design/agent-execution/context-engine.md` §13 (2026-09-24 · 2026-09-25) | 6 | 0 | 6 | 0 |
-| [`execution-environment-open-items.md`](execution-environment-open-items.md) | `docs/design/tool/execution-environment-implementation.md` §9 · §10 · `docs/design/tool/execution-environment.md` §14 (2026-09-28) · 빌드 리뷰 4 · PR #195 리뷰 1 · 워크스페이스 샌드박스 설계 리뷰 (2026-09-29) · PR #196 리뷰 · EE-42 설계 §7 · §8 (2026-09-29) · `docs/design/tool/workflow-isolation-hardening.md` §7 · PR #202 (2026-09-30) · EE-9 · EE-12 설계 §8 · §9 (2026-10-03) · EE-13 · EE-7 설계 §8 · §9 와 그 리뷰 (2026-10-03) · EE-14 설계 §2.3 · §10 · PR #206 리뷰 (2026-10-03) · EE-49 · EE-51 · EE-58 설계 §8 · §9 와 그 리뷰 · PR #207 리뷰 (2026-10-04) · EE-70 · EE-71 설계 §9 (2026-10-04) · aimon-sandbox PR #6 (2026-10-04) | 88 | 25 | 63 | 0 |
+| [`execution-environment-open-items.md`](execution-environment-open-items.md) | `docs/design/tool/execution-environment-implementation.md` §9 · §10 · `docs/design/tool/execution-environment.md` §14 (2026-09-28) · 빌드 리뷰 4 · PR #195 리뷰 1 · 워크스페이스 샌드박스 설계 리뷰 (2026-09-29) · PR #196 리뷰 · EE-42 설계 §7 · §8 (2026-09-29) · `docs/design/tool/workflow-isolation-hardening.md` §7 · PR #202 (2026-09-30) · EE-9 · EE-12 설계 §8 · §9 (2026-10-03) · EE-13 · EE-7 설계 §8 · §9 와 그 리뷰 (2026-10-03) · EE-14 설계 §2.3 · §10 · PR #206 리뷰 (2026-10-03) · EE-49 · EE-51 · EE-58 설계 §8 · §9 와 그 리뷰 · PR #207 리뷰 (2026-10-04) · EE-70 · EE-71 설계 §9 (2026-10-04) · aimon-sandbox PR #6 (2026-10-04) · EE-83 · EE-85 · EE-88 착수 (2026-10-06) | 91 | 24 | 67 | 0 |
+
+> **2026-10-06 — 세 등록부의 행을 세어서 고쳤다 (배치 `chore/backlog-batch-2026-10-06`).** 여섯이 닫히고 다섯이 열렸다. 닫힌 것은
+> EE-83 · EE-85 · EE-86 · EE-88 · D-4 · T-10, 열린 것은 EE-89 · EE-90 · EE-91 · D-5 · T-11 이다. 다섯 모두 닫은 항목을 **돌려 보다가**
+> 나왔다 — 읽기만 한 항목에서는 하나도 나오지 않았다.
+>
+> **고른 방법.** 열린 47건의 본문을 전부 읽고(규칙 일곱 — 표가 아니라 본문) 지금 착수할 수 있는 것만 묶었다. 나머지 41건은
+> 손대지 않았다: 트리거가 저장소 밖에 있거나(샌드박스 제공자 · 영속 구현 · 닿을 수 없는 모델 · 밖에서 온 소비자), `1.0` 조건에
+> 막혀 있거나, 설계가 먼저다. "트리거 대기" 로 적힌 EE-83 은 묶음에 넣었다 — 그 트리거가 *"그 변경보다 한 릴리스 앞서"* 를
+> 요구하므로, 트리거가 오면 이미 늦다. **트리거의 문장이 스스로 지금을 가리키는 항목**은 대기 칸에 있어도 착수 항목이다.
+>
+> **이 배치가 규칙에 더하는 것 둘.** (1) **"기준을 다시 적용하면 된다" 도 처방이다 (규칙 다섯).** D-4 는 D-2 의 기준(맞춘다)을
+> 넷에 다시 대면 된다고 적었고, 줄마다 대 보니 그 기준이 넷 중 **하나**에만 맞추라고 답했다. 스타터의 둘은 "출하 → 테스트" 라는
+> 화살표의 방향부터 틀려 있었다 — 어긋난 쪽은 테스트가 아니라 출하였다. 선례를 가리키는 처방은 선례의 **결론**이 아니라
+> **질문**을 옮겨야 한다. (2) **검사 둘이 같은 것을 읽는다고 믿은 자리가 있었다 (규칙 여섯).** T-10 의 처방은 "n 번째 제목은
+> n 번째 제목" 이었고, 그 n 을 세는 것이 둘이었다 — 저장소의 검사와 사이트의 렌더러. 144쪽 중 7쪽에서 둘의 제목 **개수**가
+> 달랐다. 호출자 인구조사의 `::` · NUL 바이트에 이어 세 번째 사각지대이고, 이번에는 세는 도구가 틀린 것이 아니라 **세는 도구가
+> 둘인데 하나라고 여긴 것**이다.
+>
+> **확인하지 못한 것.** 이 배치도 한 플랫폼(macOS)에서만 돌았다 — 2026-10-05 배치가 같은 칸에 적었다가 첫 CI 에서 값을 치른
+> 그 줄이다. EE-88 의 `available()` 과 EE-90 의 스택 깊이는 플랫폼에 따라 다른 값이다. docker 계층과 라이브 계층은 돌리지 않았다.
+> 독립 리뷰는 받지 않았다 — 항목별 작업자의 보고와 diff 를 조율자 한 사람이 읽었을 뿐이다.
 
 > **2026-10-05 — 일곱 등록부의 행을 세어서 고쳤다 (배치 `chore/backlog-batch-2026-10-05-c`).** 한 번에 서른세 항목이 닫히고
 > 열둘이 열렸다(그중 L-29 는 등록한 날 리뷰가 재현해 닫혔다). 닫힌 것의 3분의 1은 착수가 아니라 **결정**이었다 — 메인테이너가 그날 정한 것(SL-6 · EE-11 · EE-60 · RD-4 ·

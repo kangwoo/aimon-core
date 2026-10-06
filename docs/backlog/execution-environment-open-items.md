@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 88건 (열림 25 · 닫힘 63)
+# 실행 환경 — 등록 항목 91건 (열림 24 · 닫힘 67)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -3329,7 +3329,7 @@ main 코드가 없고, 스냅숏의 `userLocale` 은 블록을 만드는 쪽이 
 
 **언제 다시 볼까.** 링크로 설치한 번들 스킬을 실제로 쓰는 배포가 생길 때.
 
-## EE-83 — 턴 쪽 디코더 다섯은 모르는 `CompletionReason` 이름에 던진다 · **열림** *(트리거 대기)*
+## EE-83 — 턴 쪽 디코더 다섯은 모르는 `CompletionReason` 이름에 던진다 · **닫힘** *(2026-10-06)*
 
 *(2026-10-05 등록. 출처는 EE-75 착수.)*
 
@@ -3343,6 +3343,28 @@ main 코드가 없고, 스냅숏의 `userLocale` 은 블록을 만드는 쪽이 
 `IdempotencyEntry*Codec`(redis `:135`, postgres `:68`, mongodb `:98`).
 
 **언제 다시 볼까.** `CompletionReason` 에 턴이 가질 수 있는 값을 더할 때 — 그 변경보다 **먼저 한 릴리스 앞서** 나가야 한다.
+
+### 닫힘 (2026-10-06)
+
+**트리거를 기다리지 않았다 — 트리거가 "먼저 한 릴리스 앞서" 를 요구하기 때문이다.** 다섯 디코더가
+`CompletionReason.fromWireName(name, success)` 로 읽는다(`70d05c3f`). 아는 이름은 그대로, 모르거나 없는 이름은 성공이면
+`COMPLETED`, 아니면 `ERROR` 다 — `JsonTaskResultCodec` 이 혼자 하던 것을 enum 으로 올렸고 그 코덱도 이제 그것을 부른다.
+성공 플래그가 없는 종료 이벤트 둘(`ExecutionCompleted` · `ExecutionError`)은 `ERROR` 로 읽는다. 모르는 이름은 보존하지도 로그로
+남기지도 않는다(선례와 같다): 결과를 읽어 다시 쓰는 경로가 없고, 프레임마다 WARN 은 롤링 업그레이드 내내 턴마다 찍힌다.
+고치기 전에 실패하던 테스트는 열이다 — 라우팅 넷, redis · mongodb · postgres 각 둘.
+
+**"던진다" 는 절반만 맞았다 (규칙 둘).** 라우팅의 둘(`TurnResultPayload` · `AgentExecutionEventPayload`)은 던지지 않았다 —
+`fromPayload` 가 `RuntimeException` 을 잡아 WARN 하고 **프레임을 버렸다.** 그 버림을 고정하던 단언
+(`TurnResultPayloadTest.malformedPayloadIsDiscarded` 의 `"NOT_A_REASON"`)이 있었고 지웠다. 던지는 것은 세 백엔드 코덱이다.
+`valueOf` 는 다섯 클래스에 여섯이다(항목의 "다섯" 은 클래스 수다).
+
+**적힌 것보다 무거웠다 — 읽어서 본 것이고 돌려 보지는 않았다 (규칙 셋).** (1) `SessionEventRelay` 의 javadoc 대로면 종료
+이벤트를 잃은 구독자는 끝나지 않는다. (2) `RedisIdempotencyStore.findStaleInFlight` 는 키스페이스를 훑으며 모든 항목을
+디코드하고 `RedisException` 만 잡는다 — 모르는 사유를 가진 `DONE` 항목 하나가 그 TTL 동안 옛 노드의 스윕을 매 틱 던지게 했을
+것이다. mongodb 는 서버에서 `IN_FLIGHT` 로 거르므로 해당 없다.
+
+**확인하지 않은 것.** docker 계층(`integrationTest`)은 돌리지 않았다. 옛 CLI 는 새 노드의 인터럽트류 사유를 `[Interrupted]` 가
+아니라 오류 배너로 그린다(모양의 손실이다). 같은 모양의 엄격한 디코더가 남았다 — EE-91.
 
 ## EE-84 — `http` · `mcp` 훅 실행기는 CLI 에만 배선되어 있고, HTTP 훅의 기본값에 정하지 않은 것이 남았다 · **열림**
 
@@ -3368,7 +3390,7 @@ main 코드가 없고, 스냅숏의 `userLocale` 은 블록을 만드는 쪽이 
 **언제 다시 볼까.** 스타터나 부트스트랩 배포가 정책 서버를 훅으로 붙이려 할 때, 또는 `hooks.json` 의 http 훅을 감사에 쓰는
 배포가 생길 때(escape 가 그때 급해진다).
 
-## EE-85 — 파싱되지만 아무것도 맞출 수 없는 matcher 는 거절되지 않는다 · **열림**
+## EE-85 — 파싱되지만 아무것도 맞출 수 없는 matcher 는 거절되지 않는다 · **닫힘** *(2026-10-06)*
 
 *(2026-10-05 등록. 출처는 EE-72 의 후속 `bf312499`.)*
 
@@ -3389,7 +3411,37 @@ lint 를 둘지 정한다.
 
 **언제 다시 볼까.** 발화하지 않는 가드가 보고될 때. 또는 matcher 문법을 넓히자는 논의가 생길 때 — lint 와 문법은 같은 자리다.
 
-## EE-86 — 서브에이전트 요청의 `max tokens 4096` 은 아무도 적지 않은 값이다 · **열림**
+### 닫힘 (2026-10-06)
+
+**결정: lint 를 둔다. 파서에 두었다** (`bb3b9f2a`). 괄호 없는 term 은 `[A-Za-z0-9_.-]` 와 `*` 만 가질 수 있고, `mcp__` 로
+시작하면 서버 자리에 `[a-z0-9-]` 만 온다. 어기면 `PredicateParser` 가 던지므로 "파싱되지 않는 matcher" 가 되어 EE-72 의 경로를
+새 분기 없이 탄다 — `hooks.json` 의 `preTool` 은 기동 실패(리로드는 이전 설정 유지), 다른 이벤트는 WARN, 스킬 프론트매터는
+`preTool` · `postTool` 모두 적재 실패. 가드 이벤트 가운데 matcher 를 읽는 것은 `preTool` 하나다. 호환을 깨는 변경이다.
+
+**문자 집합은 지어내지 않았지만 in-tree 규칙에서 온 것도 아니다 (규칙 다섯).** 도구 이름을 검증하는 코드는 트리에 없다 —
+`DefaultToolRegistry.register` 는 null 아닌 문자열을 다 받는다. 집합은 이름의 **출처들의 합집합**이다: `TOOL_NAME` 상수 44개
+(`.` 포함 — `deriver.memory.search`), `McpTool.formatToolName` 과 `McpServerConfig.NAME_PATTERN`. MCP 스펙과 두 벤더의 도구 이름
+형식은 트리 밖 사실이라 확인하지 않았다. 그 집합 밖의 이름으로 등록한 임베더 도구는 그 문자 자리에 `*` 를 써서 맞춘다.
+
+**항목이 한 줄로 묶은 형태들은 한 종류가 아니었다 (규칙 둘).**
+
+- `.*` 는 문자로 거절할 수 없다. `.` 이 도구 이름 문자라 `Bash.*` 는 `deriver.*` 와 구별되지 않는다. 거절하는 것은 `mcp__.*`
+  뿐이고(서버 자리 규칙), `Bash.*` · `mcp__github__.*` 는 여전히 등록되고 발화하지 않는다 — 무엇에 맞는지 말하는 WARN 만 있고
+  그 WARN 에는 테스트가 없다
+- 권한 철자 `Bash(git:*)` 는 거절할 수 없다 — `npm run deploy:prod` 에 발화하는 `Bash(npm run deploy:*)` 와 같은 모양이다. 괄호
+  안은 검사하지 않고, 테스트가 그것을 고정한다
+- `Edit(**/*.java)` 는 "조용히 빗나가지" 않았다. `**` 는 별 둘이고 디렉터리가 있는 경로에 발화한다. 가이드가 `**` 를 리터럴이라고
+  적고 있었고 두 언어에서 고쳤다
+- 항목이 적지 않은 것도 걸린다 — `Bash,Edit` · `Bash Edit` · `Rea?` · `[Bb]ash` · `tool:Bash` · 대문자 서버(`mcp__GitHub__x`).
+  마지막은 판단이다: `mcp__Foo__x` 라는 이름의 비-MCP 도구는 이제 `*` 가 필요하다
+
+**남은 것.** 대소문자가 틀린 이름(`bash`)과 없는 도구의 이름은 여전히 등록되고 발화하지 않는다 — 이름이 "있을 수 있는가" 까지만
+본다. `HookRegistryApplier.parseMatcher` 는 matcher 를 읽지 않는 이벤트에서도 돌아, 거기 적힌 남의 문법은 "name-only 로 폴백"
+WARN 을 낸다(해롭지 않고 조금 오도한다). `docs/references/aimon-skill-extensions.md` 는 이벤트 목록(넷 → 열)을 고쳤지만 135 · 142 ·
+179행은 낡은 채다. `.claude/rules/hook-development.md` 의 "파싱되지 않는 `preTool` matcher" 는 이제 이 형태들을 포함한다는 말이 없다.
+곁가지의 `tokenize` 재귀는 프로브로 재현되어 EE-90 이 되었다. `PathGlobPredicate` 의 도구 목록은 보지 않았다.
+
+## EE-86 — 서브에이전트 요청의 `max tokens 4096` 은 아무도 적지 않은 값이다 · **닫힘** *(2026-10-06)*
 
 *(2026-10-05 등록. 출처는 서브에이전트의 `temperature 0.7` 을 없앤 `fc539d3b`.)*
 
@@ -3404,6 +3456,25 @@ lint 를 둘지 정한다.
 
 **언제 다시 볼까.** 서브에이전트의 답이 4096 에서 잘린다는 보고가 있을 때(L-23 · L-25 가 그 잘림의 뒤처리다).
 
+### 닫힘 (2026-10-06)
+
+**없앴다.** 띄운 에이전트가 max tokens 를 정하지 않으면 포크의 `LlmModel` 에도 값이 없고, 클라이언트가 자기 config 의
+`maxTokens` 를 쓴다(`d8b24946`). 고치기 전에 실패하는 테스트는 `SubagentLlmDefaultsTest.anUnsetParentMaxTokensStaysUnset` 이다.
+
+**재지 않았던 값을 쟀다 (규칙 다섯).** "싣지 않는다" 의 뜻은 두 in-tree 클라이언트에서 같다 —
+`modelConfig.getMaxTokens().orElse(config.getMaxTokens())`(`AnthropicLlmClient:377`, `OpenAILlmClient:403`,
+`OpenAIResponsesRequestFactory:129`, 2026-10-06). 그 config 의 기본값도 4096 이고, **어느 설정 표면도 그 값을 정하지 못한다**
+(`LlmClientFactory:112` 와 `AimonLlmAutoConfiguration:256` 의 주석이 그렇게 적고 있고, main 에서 config 빌더의 `maxTokens(` 를
+부르는 곳은 0건이다 — `\.maxTokens(` 와 `::maxTokens` 로 셌다).
+
+**그래서 항목보다 좁았다 (규칙 셋).** CLI 와 스타터 배포는 고치기 전에도 뒤에도 4096 을 보낸다. 상수가 이기던 것은
+`AnthropicConfig` · `OpenAIConfig` 를 손으로 조립해 `maxTokens` 를 바꾼 임베더의 값과, 자기 기본값을 가진 외부 `LlmClient` 구현의
+값이다 — 그 배포에서 메인 요청은 설정한 한도로, 포크는 4096 으로 나갔다. 그 상수에 근거를 적은 주석 · 설계 문장 · `.claude/rules/`
+항목은 없었다(`request-parameters.md` §8 이 "남은 것" 으로만 적어 두었다).
+
+**확인하지 않은 것.** 라이브 요청으로 보지 않았다 — 클라이언트의 폴백은 소스에서 읽었다. 트리거로 적혀 있던 "4096 에서 잘린다" 는
+CLI · 스타터에서 이 변경으로 달라지지 않는다. 그 값을 설정 표면에 열지는 이 항목의 일이 아니다.
+
 ## EE-87 — 이번에 생긴 조립 옵션 둘에는 설정 키가 없다 · **열림** *(트리거 대기)*
 
 *(2026-10-05 등록. 출처는 EE-5 · EE-45.)*
@@ -3417,7 +3488,7 @@ lint 를 둘지 정한다.
 **언제 다시 볼까.** 초 단위 mtime 파일 시스템 위의 CLI · 스타터 배포가 생길 때, 또는 CLI 에서 스크립트 속성이 필요하다는 요청이
 올 때.
 
-## EE-88 — `StdioMcpTransport` 의 대기 둘은 `requestTimeout` 이 세지 않는다 · **열림**
+## EE-88 — `StdioMcpTransport` 의 대기 둘은 `requestTimeout` 이 세지 않는다 · **닫힘** *(2026-10-06)*
 
 *(2026-10-05 등록. 출처는 `mcp` 훅 timeout 작업 `28b1e3bc`.)*
 
@@ -3433,3 +3504,103 @@ lint 를 둘지 정한다.
 
 **언제 다시 볼까.** MCP 서버가 멈춘 채 도구 호출이 돌아오지 않는다는 보고가 있을 때, 또는 B-6 의 결론을 다른 결정의 근거로
 인용하려 할 때.
+
+### 닫힘 (2026-10-06)
+
+**두 대기 모두 `requestTimeout` 이 센다** (`e8e6b4dd`). 읽기는 `available()` 이 말한 바이트만 읽고 `0x0A` 에서 자른 뒤 UTF-8 로
+푼다 — `Reader` 는 반쯤 온 멀티바이트 문자에서도 막을 수 있어 바이트 단에서 했다. `synchronized` 는 시한 있는 `tryLock` 이
+되었고 시계는 **호출 시점**에 시작한다. 락을 기다리다 끝난 요청은 "never sent" 라고 말한다. 두 대기는 이제 인터럽트에도 끝난다
+— 그래서 `mcp` 훅의 `timeout` 이 그것을 끊는다(가이드 두 언어와 `McpActionExecutor` javadoc 이 반대로 적고 있었다).
+
+**줄 중간에서 timeout 난 뒤.** 부분 줄 버퍼는 요청이 아니라 전송의 것으로 두었다. 늦게 온 나머지는 버려진 프레임을 완성하고 다음
+요청이 id 불일치로 버린다. timeout 에서 버퍼를 비웠다면 그 나머지가 한 줄로 파싱됐을 것이다 — 테스트가 고정한다.
+
+**읽은 것을 돌려 봤다 (규칙 셋).** 재현 테스트 다섯이 고치기 전 전부 실패했다(`StdioMcpTransportRequestTimeoutTest`). 전제는
+적힌 대로 참이었고 셋이 더 넓었다.
+
+- **항목이 "보지 않았다" 고 적은 도구 호출 경로에서는 아무것도 끝내지 않는다.** `McpTool` 은 `getInterruptBehavior()` 를 덮지
+  않아 `NON_INTERRUPTIBLE` 이고, `DefaultToolExecutor.execute` 는 시한 없이 동기로 부른다. 사용자 취소는 `requestTimeout` 을
+  끝까지 기다린다. 자기 시한을 가진 것은 `RoutineExecutor` 뿐인데 그 `cancel(true)` 도 옛 대기에는 닿지 않았다
+- **`NON_INTERRUPTIBLE` 은 병렬화 대상이다.** 멈춘 서버 하나로 가는 병렬 호출 N 개는 정확히 그 모니터에서 기다렸고, 고치기 전
+  N × `requestTimeout` 이 걸렸다(지금은 1 ×)
+- **셋째 대기가 있다 — 요청의 write.** 고치지 않았다(EE-89)
+
+**동작이 바뀐 자리.** 한 서버에 줄 선 요청들은 이제 `requestTimeout` 하나를 나눠 쓴다. 느리지만 멀쩡한 서버에서, 전에는 늦게
+성공하던 병렬 호출이 "never sent" 로 실패할 수 있다.
+
+**확인하지 않은 것.** macOS 에서만 돌렸다(테스트는 Windows 에서 꺼져 있다) — `available()` 의 파이프 동작은 플랫폼마다 다를 수
+있다. 요청 도중 죽은 프로세스는 여전히 timeout 을 끝까지 기다린다(`available()` 은 EOF 를 말하지 않는다. 유계이고 전과 같다).
+
+---
+
+## EE-89 — stdio MCP 요청의 write 는 `requestTimeout` 이 세지 않고, 멈춘 MCP 도구 호출은 취소할 수 없다 · **열림**
+
+*(2026-10-06 등록. 출처는 EE-88 착수.)*
+
+**무엇을.** (1) 요청 프레임을 쓰는 `stdin.write` 를 `requestTimeout` 아래에 둔다. (2) `McpTool` 의 인터럽트 동작을 정한다.
+
+**왜.** (1) 그 write 는 블로킹 파이프 쓰기다. 임시 프로브에서 `sleep` 만 하는 서버에 2 MB 요청을 보내니 `requestTimeout` 300ms 에
+5초 뒤에도 막혀 있었다 — 파이프 버퍼보다 큰 프레임을 stdin 을 읽지 않는 서버에 보낼 때다.
+[`spring-boot-starter-open-items.md`](spring-boot-starter-open-items.md) 의 B-6 이 기대는 *"모든 `sendRequest` 는 `requestTimeout`
+안에 돌아온다"* 는 EE-88 뒤에도 이만큼 좁다. (2) EE-88 뒤로 전송의 대기는 인터럽트에 끝나지만 `McpTool` 은 `NON_INTERRUPTIBLE`
+이라 아무도 인터럽트하지 않는다 — 사용자 취소는 `requestTimeout` 까지 기다린다. `THREAD_INTERRUPT` 로 선언하면 취소는 듣지만
+MCP 도구가 병렬화에서 빠진다(`DefaultParallelToolDispatcher.isParallelizableInterrupt`,
+[`interrupt-open-items.md`](interrupt-open-items.md) 4번의 전제).
+
+**처방은 적지 않는다 (규칙 다섯).** (1) 은 쓰는 스레드가 필요하고, 반쯤 쓴 프레임이 스트림을 망치므로 timeout 에서 프로세스를
+죽일지도 함께 정해야 한다. 적용해 보지 않았다.
+
+**어디** *(2026-10-06)* — `modules/aimon-core/src/main/java/at/aimon/core/mcp/transport/StdioMcpTransport.java` 의 `:186` · `:304`,
+`mcp/**/McpTool.java`. 클래스 javadoc 과 `docs/design/integration/mcp-tool.md` §7.1 이 (1) 을 적어 두었다.
+
+**언제 다시 볼까.** 큰 인자를 받는 MCP 도구가 멈춘 서버에서 돌아오지 않는다는 보고가 있을 때, 멈춘 MCP 호출을 취소할 수 없다는
+보고가 있을 때, 또는 B-6 의 결론을 다른 결정의 근거로 인용하려 할 때.
+
+## EE-90 — `BashSubcommandPredicate.tokenize` 의 재귀는 모델이 고른 깊이만큼 내려간다 · **열림**
+
+*(2026-10-06 등록. 출처는 EE-85 의 곁가지를 프로브로 돌린 것.)*
+
+**무엇을.** `preTool` · `postTool` 의 `Bash(…)` matcher 가 명령을 토큰화할 때 중첩 깊이와 입력 길이에 상한을 둔다.
+
+**왜.** matcher `Bash(rm -rf*)`, 기본 스택의 스레드, macOS aarch64 · JDK 17 에서 쟀다(임시 프로브).
+
+| 모양 | 크기 | 결과 |
+|---|---|---|
+| 중첩 `$(` × 12,000 | 36 KB | 통과, 273ms |
+| 중첩 `$(` × 14,000 | 42 KB | `StackOverflowError` |
+| 평평한 반복(`$(x) `) | 256 KB | 약 5ms |
+| 중첩 × 4,000, 단계마다 100자 | 412 KB | 통과, 1.1초 |
+| 중첩 × 8,000, 같은 패딩 | 824 KB | `OutOfMemoryError`(테스트 힙 2 GB) |
+
+**`BashTool.MAX_COMMAND_LENGTH`(32,768)는 이것을 막지 않는다** — 그 검사는 `execute()` 안에 있고(`BashTool:265`) `preTool` 훅은 그
+앞에서 돈다. 그러니 도구 호출 하나로 닿는다. 가드는 막는 쪽으로 실패한다고 EE-85 가 적었는데, **그 끝은 다시 돌려 보지 않았다** —
+프로브가 본 것은 predicate 가 던지는 것까지다(규칙 셋). `Error` 가 훅 실행기의 어느 catch 에 닿는지가 착수할 때 먼저 볼 값이다.
+제곱 복사는 모델 출력이 닿을 크기에서 1초 아래다.
+
+**어디** *(2026-10-06)* — `skill/hook/declarative/predicate/BashSubcommandPredicate.java` 의 `tokenize`(`:124` 가 진입점).
+
+**언제 다시 볼까.** 스레드 스택이 더 작은 플랫폼(Linux 기본값은 재지 않았다)에 배포할 때, 또는 `failOpen` · `postTool` 훅을 감사에
+쓰는 배포가 생길 때 — 그 훅이 죽으면 그 호출은 기록 없이 지나간다.
+
+## EE-91 — 롤링 업그레이드에서 모르는 enum 이름에 엄격한 디코더가 더 있다 · **열림** *(트리거 대기)*
+
+*(2026-10-06 등록. 출처는 EE-83 착수.)*
+
+**무엇을.** 아래 디코더들이 모르는 이름을 어떻게 읽을지 각각 정한다.
+
+**왜.** EE-83 은 `CompletionReason` 만 고쳤다. 같은 모양이 남아 있다 — 값을 더한 새 노드의 프레임을 옛 노드가 읽지 못한다.
+
+- `AgentExecutionEventPayload` 의 `InterruptReason.valueOf` · `RejectReason.valueOf` — 종료 프레임 `InterruptedAt` · `RejectedAt`
+  이 버려진다(EE-83 이 적은 "종료 이벤트를 잃은 구독자" 와 같은 결과다)
+- redis · mongodb 코덱의 `IdempotencyEntry.Status.valueOf`
+- `SignalKind.valueOf`(`TurnResultPayload` javadoc 이 이미 적어 두었다)
+- `StepOutcomeCodec:108` 의 `CompletionReason.valueOf` — **의도적으로 엄격하다.** 잡아서 이름을 넣어 다시 던지고, 깎아 읽을
+  성공 플래그가 없다. `BLOCKED` 는 enum 의 첫 릴리스 뒤에 생긴 포크 사유이므로 노출은 실제로 있었다. 반박할 것은 코드가 아니라
+  그 엄격함의 이유다(규칙 다섯)
+
+호출자와 소비자는 세지 않았다 — 이름을 읽은 것이다(규칙 여섯: 착수할 때 먼저 센다).
+
+**어디** *(2026-10-06)* — `aimon-session-routing` 의 `internal/AgentExecutionEventPayload.java`, redis · mongodb 의
+`IdempotencyEntryCodec`, `aimon-core` 의 `StepOutcomeCodec.java:108`.
+
+**언제 다시 볼까.** 그 enum 들 가운데 하나에 값을 더할 때 — EE-83 과 같이 그 변경보다 **한 릴리스 앞서** 나가야 한다.
