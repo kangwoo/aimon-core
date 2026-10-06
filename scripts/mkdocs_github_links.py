@@ -68,13 +68,50 @@ makes position mean something. Six links needed this when it was written.
     either. A fragment that is not one of the canonical's heading ids -- a
     hand-written ``<a id>`` -- is left as written as well: it resolves if the
     translation carries the same ``<a id>``.
+  * *Which links are read at all.* The inline form, ``[text](path.md#fragment)`` with
+    an optional ``"title"`` in double quotes -- the one form this tree writes (0 of
+    the others below when this was written). The text may wrap onto the next line;
+    it may not cross a blank one, since that is two paragraphs and no link. The
+    site makes a link of each of these too, and this hook does not see them, so
+    their fragment is not carried and is dead on ``/en/``:
+
+      - a reference-style link, ``[text][ref]`` with ``[ref]: path.md#fragment``
+      - a target in angle brackets, ``[text](<path.md#fragment>)``
+      - a title in single quotes, ``[text](path.md#fragment 'title')``
+      - a percent-encoded fragment, ``#%EC%84%A4%EC%A0%95``: it is read, and matched
+        against the site's ids character for character, which it is not
+
+    ``scripts/check-doc-links.py`` does not read the first three either (it reads
+    the same inline form), so nothing stops one being written; it fails the fourth
+    as ``no such anchor``. Write the inline form.
+  * *What is rewritten that is not a link.* Sample text is left alone inside a fence
+    and inside a code span -- ``_fenced`` pairs fence markers the way the site does,
+    so a fence shown inside a longer fence stays hidden. Three places show
+    link-looking text as text and are *not* recognised, so a sample there is
+    displayed with the fragment (or the GitHub URL) this hook wrote:
+
+      - a code block made by indenting four spaces. Not told apart on purpose: the
+        same indentation is a list item's continuation, an admonition's body, a
+        tab's, a definition's, and the links there are real (the three indented
+        links in this tree when this was written were all of that kind, one of them
+        out of ``docs/``). Reading one of those as code would leave a real link
+        dead; reading code as a link only changes what a sample displays
+      - a fence behind a blockquote's ``>``
+      - a code span that wraps, around a link written on one line. A wrapped code
+        span hides a link that wraps with it, and nothing else: a link on one line is
+        judged by its own line, as it was before text could wrap, because a stray
+        backtick in a heading or a table row would otherwise pair with one on the
+        next line and hide a real link
+
+    Show such a sample in a fence.
   * *What checks it.* MkDocs validates the link this hook returns, so a wrong id
     shows as its usual ``does not contain an anchor`` INFO line.
     ``scripts/check-doc-links.py`` asks, with no pip install, whether each such link
     has what this needs (WHICH FRAGMENTS MUST SURVIVE A TRANSLATION, which also says
     where its reading of headings differs from this one). ``--self-test`` here builds
     a small two-locale site in a temporary directory and reads the hrefs off the
-    built pages; ``.github/workflows/docs.yml`` runs it before the real build.
+    built pages -- and, for sample text, that the page shows it as it was written;
+    ``.github/workflows/docs.yml`` runs it before the real build.
 
 Registered from ``mkdocs.yml`` under ``hooks:``. The first rewrite depends on no
 plugin; the second does nothing without a ``Files`` that maps a path to another
@@ -93,13 +130,18 @@ from pathlib import Path
 
 log = logging.getLogger("mkdocs.hooks.github_links")
 
-# Same shape as scripts/check-doc-links.py -- a link inside a fence or backticks
-# is an example, not a link, and must not be rewritten.
-FENCE = re.compile(r"^\s*(?:```|~~~)")
+# A link inside a fence or backticks is an example, not a link, and must not be
+# rewritten. Which lines a fence hides is the *site's* answer (pymdownx.superfences),
+# not scripts/check-doc-links.py's, which toggles on every marker: see ``_fenced``.
+FENCE_OPEN = re.compile(r"^[ \t]*(`{3,}|~{3,})(.*)$")
 # A code span is delimited by a *run* of backticks, and the run length must match:
 # ``[`ReadTool`](x)`` is one span, not an empty span followed by a link.
 INLINE_CODE = re.compile(r"(`+)(?:(?!\1).)*\1")
-LINK = re.compile(r"(!?\[[^\]]*\]\()([^)\s]+)((?:\s+\"[^\"]*\")?\))")
+# A newline that does not end the paragraph: link text and a code span may both wrap
+# onto the next line, and neither may cross a blank one.
+_WRAP = r"\n(?![ \t\r]*\n)"
+WRAPPED_CODE = re.compile(rf"(`+)(?:(?!\1)(?:[^\n]|{_WRAP}))*\1")
+LINK = re.compile(rf"(!?\[(?:[^\]\n]|{_WRAP})*\]\()([^)\s]+)((?:\s+\"[^\"]*\")?\))")
 EXTERNAL = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//|#|<)", re.IGNORECASE)
 
 BRANCH = "main"
@@ -162,16 +204,7 @@ def on_page_markdown(markdown, page, config, files, **kwargs):
     def carry(written, fragment):
         return _carry(page.file.src_uri, written, fragment, docs_dir, files, config)
 
-    out, fenced = [], False
-    for line in markdown.splitlines():
-        if FENCE.match(line):
-            fenced = not fenced
-            out.append(line)
-            continue
-        out.append(
-            line if fenced else _rewrite(line, docs_dir, page_dir, repo_url, excluded, carry))
-
-    return "\n".join(out)
+    return _rewrite(markdown, docs_dir, page_dir, repo_url, excluded, carry)
 
 
 # --- fragments across a translation -----------------------------------------
@@ -293,22 +326,71 @@ def _excluder(config, docs_dir):
     return excluded
 
 
-def _rewrite(line, docs_dir, page_dir, repo_url, excluded, carry=None):
-    # Inline code is skipped by *position*, not by slicing the line up: link text
-    # is very often backticked here (``[`ReadTool`](...)``), and cutting the line
-    # at the code span would tear that link in half and leave it unrewritten.
-    protected = [(m.start(), m.end()) for m in INLINE_CODE.finditer(line)]
+def _fenced(lines):
+    """The indexes of the lines a fenced block hides, its two markers included.
 
-    def replace(match):
-        if any(start <= match.start(2) < end for start, end in protected):
-            return match.group(0)
-        prefix, target, suffix = match.groups()
+    As pymdownx.superfences pairs them, since it is what renders the page: a fence
+    opens on three or more backticks or tildes (a backtick fence's info string has no
+    backtick -- that line is a code span), and closes on the next line that is *that
+    very marker* and nothing else. A longer or shorter run does not close it, nor does
+    the other character, nor a marker with an info string -- so a fence shown inside a
+    longer fence stays hidden. An opener with no closer is not a fence at all: the
+    site renders those lines as a paragraph, and their links are live.
+    """
+    hidden, at = set(), 0
+    while at < len(lines):
+        opener = FENCE_OPEN.match(lines[at])
+        if opener and not (opener.group(1)[0] == "`" and "`" in opener.group(2)):
+            marker = opener.group(1)
+            closer = next(
+                (i for i in range(at + 1, len(lines)) if lines[i].strip() == marker), None)
+            if closer is not None:
+                hidden.update(range(at, closer + 1))
+                at = closer + 1
+                continue
+        at += 1
+    return hidden
+
+
+def _rewrite(markdown, docs_dir, page_dir, repo_url, excluded, carry=None):
+    """``markdown`` -- a whole page -- with each link's target rewritten, or left alone.
+
+    The page is read whole, not line by line, because a link's text may wrap:
+    ``[text that\nwraps](guide.md#frag)`` is one link to the site and to github.com.
+    Only the target is ever replaced; every other character comes back as it was given.
+    """
+    lines = markdown.split("\n")
+    fenced = _fenced(lines)
+    # Fenced lines are blanked to their own length, so offsets hold and nothing -- a
+    # link's text, a code span -- can be read across a fence.
+    shown = [" " * len(line) if i in fenced else line for i, line in enumerate(lines)]
+    masked = "\n".join(shown)
+
+    # Inline code is skipped by *position*, not by slicing the text up: link text
+    # is very often backticked here (``[`ReadTool`](...)``), and cutting at the code
+    # span would tear that link in half and leave it unrewritten.
+    protected, offset = [], 0
+    for line in shown:
+        protected += [(offset + m.start(), offset + m.end()) for m in INLINE_CODE.finditer(line)]
+        offset += len(line) + 1
+    # A code span that wraps hides only a link that wraps. A link written on one line
+    # is judged by its own line alone, as it always was: a stray backtick in a heading
+    # or a table row would otherwise pair with one a line below and hide a real link.
+    wrapped_code = [(m.start(), m.end()) for m in WRAPPED_CODE.finditer(masked)
+                    if "\n" in m.group(0)]
+
+    def target_for(match):
+        """What to write in place of the link's target, or None to leave it."""
+        hiding = protected + (wrapped_code if "\n" in match.group(1) else [])
+        if any(start <= match.start(2) < end for start, end in hiding):
+            return None
+        target = match.group(2)
         if EXTERNAL.match(target):
-            return match.group(0)
+            return None
 
         path_part, _, anchor = target.partition("#")
         if not path_part:
-            return match.group(0)
+            return None
 
         resolved = Path(posixpath.normpath(posixpath.join(page_dir, path_part)))
         # normpath keeps leading '..' when the path climbs out of docs_dir.
@@ -319,26 +401,33 @@ def _rewrite(line, docs_dir, page_dir, repo_url, excluded, carry=None):
             if inside is None:
                 carried = carry(resolved.as_posix(), anchor) if carry else None
                 if carried is None or carried == anchor:
-                    return match.group(0)
-                return f"{prefix}{path_part}#{carried}{suffix}"
+                    return None
+                return f"{path_part}#{carried}"
             if not repo_url:
-                return match.group(0)
+                return None
             url = _github_url(repo_url, inside)
-            return f"{prefix}{url}{'#' + anchor if anchor else ''}{suffix}"
+            return f"{url}{'#' + anchor if anchor else ''}"
 
         outside = (docs_dir / resolved).resolve()
         try:
             relative = outside.relative_to(_repo_root)
         except ValueError:
             # Climbs above the repository itself -- leave it for the link checker.
-            return match.group(0)
+            return None
         if not repo_url:
-            return match.group(0)
+            return None
 
         url = _github_url(repo_url, relative.as_posix())
-        return f"{prefix}{url}{'#' + anchor if anchor else ''}{suffix}"
+        return f"{url}{'#' + anchor if anchor else ''}"
 
-    return LINK.sub(replace, line)
+    out, done = [], 0
+    for match in LINK.finditer(masked):
+        target = target_for(match)
+        if target is not None:
+            out += [markdown[done:match.start(2)], target]
+            done = match.end(2)
+    out.append(markdown[done:])
+    return "".join(out)
 
 
 # --- the self-test -----------------------------------------------------------
@@ -347,22 +436,45 @@ def _rewrite(line, docs_dir, page_dir, repo_url, excluded, carry=None):
 # its hook and everything else inherited from the real mkdocs.yml -- the i18n plugin
 # and the `toc` slugify are the two things a carried id depends on, and a copy of
 # either here would be free to drift. Each case is one link, on a page that has no
-# translation (`design`) or on one half of a pair (`other`), and the href it must
-# have in the built Korean page and in the built English one. `twin()` is not asked
-# directly: what has to hold is the page the reader gets.
+# translation (`design`, `sub/page`, `loose`) or on one half of a pair (`other`), and
+# the href it must have in the built Korean page and in the built English one.
+# `twin()` is not asked directly: what has to hold is the page the reader gets.
+#
+# Several pages are here for one wrong reading each, and say so. A change to this
+# file that every case survives was not pinned by any of them -- that is how each of
+# those pages got here (a review mutated the hook and nothing went red).
+
+FENCE3, FENCE4 = "`" * 3, "`" * 4
 
 SELF_TEST_PAGES = {
     "index.md": "# 홈\n",
-    "guide.md": "# 가이드\n\n## 설정 방법\n\n## `call_id` 다루기\n\n## 설정 방법\n\n"
-                '<a id="옛-이름"></a>\n\n## API\n',
-    "guide.en.md": "# Guide\n\n## How to configure\n\n## Handling `call_id`\n\n"
+    # An h3 under the first h2: every later heading's position counts it.
+    "guide.md": "# 가이드\n\n## 설정 방법\n\n### 세부 설정\n\n## `call_id` 다루기\n\n"
+                '## 설정 방법\n\n<a id="옛-이름"></a>\n\n## API\n',
+    # Front matter, as every real translation has. Read as body it is a setext heading
+    # (`key: value` over `---`) and an ATX one (the comment), and nothing lines up.
+    "guide.en.md": "---\ntranslated_from: docs/guide.md\n# a comment, and not a heading\n"
+                   "source_commit: 0000000\n---\n\n"
+                   "# Guide\n\n## How to configure\n\n### Details\n\n## Handling `call_id`\n\n"
                    '## How to configure\n\n<a id="옛-이름"></a>\n\n## API\n',
     "behind.md": "# 뒤처진 쌍\n\n## 새 절\n\n## 둘째\n\n## API\n",
     "behind.en.md": "# A pair that is behind\n\n## Second\n\n## API\n",
+    # As many headings on both sides, and the last one a level apart.
+    "levels.md": "# 레벨이 다른 쌍\n\n## 둘째\n\n## 셋째\n",
+    "levels.en.md": "# A pair a level apart\n\n## Second\n\n### Third\n",
+    # The same levels on both sides in a different order: [1, 2, 3, 2] against
+    # [1, 2, 2, 3]. Read siblings-before-children both come out [1, 2, 2, 3].
+    "nested.md": "# 순서가 다른 쌍\n\n## 첫째\n\n### 첫째의 세부\n\n## 둘째\n",
+    "nested.en.md": "# A pair in another order\n\n## First\n\n## Second\n\n### Detail of the second\n",
     # The paragraph's second line is a heading to Python-Markdown and to nothing else.
     "stray.md": "# 어긋난 쌍\n\n## 둘째\n\n문단의 첫 줄\n#42 로 시작하는 둘째 줄\n",
     "stray.en.md": "# A pair the site reads differently\n\n## Second\n\nfirst line\nthen #42\n",
     "plain.md": "# 번역 없는 쪽\n\n## 제목\n",
+    # A second `guide.md` / `guide.en.md`, with another outline: a file is its path.
+    "sub/guide.md": "# 하위 가이드\n\n## 다른 제목\n",
+    "sub/guide.en.md": "# The guide one level down\n\n## A different heading\n",
+    # `../guide.md` is `guide.md` to the site; what is looked up is the resolved path.
+    "sub/page.md": "# 하위 문서\n\n[L16](../guide.md#설정-방법)\n\n[L17](guide.md#다른-제목)\n",
     "design.md": "# 설계\n\n" + "\n\n".join([
         "[L01](guide.md#설정-방법)",
         "[L02](guide.md#call_id-다루기)",
@@ -376,10 +488,26 @@ SELF_TEST_PAGES = {
         "[L10](plain.md#제목)",
         "[L11](guide.md)",
         "`[L12](guide.md#설정-방법)`",
+        "[L18](guide.md#세부-설정)",
+        "[L19](levels.md#셋째)",
+        "[L20](nested.md#둘째)",
+        "[L21](sub/guide.md#다른-제목)",
+        "[L22 의 글이\n다음 줄로 넘어간다](guide.md#설정-방법)",
+        "`[L23 의 글이\n다음 줄로 넘어간다](guide.md#설정-방법)`",
+        f"{FENCE3}text\n[L24](guide.md#설정-방법)\n{FENCE3}",
+        # The inner markers are text to the site. Toggling on every marker reads them
+        # as closing the outer fence, and the line between them as a link.
+        f"{FENCE4}text\n{FENCE3}text\n[L25](guide.md#설정-방법)\n{FENCE3}\n{FENCE4}",
+        # A `[` and a `](...)` in two paragraphs are no link, on the site or anywhere.
+        "[L27 은 닫히지 않는다\n\n다음 문단의 글](guide.md#설정-방법)",
     ]) + "\n",
+    # An opener nothing closes is no fence to the site: a paragraph, and a live link.
+    "loose.md": f"# 닫히지 않은 펜스\n\n{FENCE3}text\n[L26](guide.md#설정-방법)\n",
     "other.md": "# 다른 문서\n\n[L13](guide.md#설정-방법)\n",
     "other.en.md": "# Another\n\n[L14](guide.md#설정-방법)\n\n[L15](guide.en.md#how-to-configure)\n",
 }
+
+WRAPPED = "의 글이\n다음 줄로 넘어간다"
 
 # (case, built page, link text, href in the Korean build, href in the English build).
 # None where that build's page has no such link.
@@ -414,9 +542,40 @@ SELF_TEST_CASES = [
      "other", "L14", None, "../guide/#how-to-configure"),
     ("a `*.en.md` page linking the translation is untouched",
      "other", "L15", None, "../guide/#how-to-configure"),
+    ("a link written `../guide.md` from a subdirectory is carried -- the path is resolved",
+     "sub/page", "L16", "../../guide/#설정-방법", "../../guide/#how-to-configure"),
+    ("a second `guide.md` in another directory is carried by its own headings",
+     "sub/page", "L17", "../guide/#다른-제목", "../guide/#a-different-heading"),
+    ("an h3 is carried to the h3 at the same position",
+     "design", "L18", "../guide/#세부-설정", "../guide/#details"),
+    ("when the count matches and a level does not the fragment is left as written",
+     "design", "L19", "../levels/#셋째", "../levels/#셋째"),
+    ("so is it when the levels match only out of page order",
+     "design", "L20", "../nested/#둘째", "../nested/#둘째"),
+    ("the second `guide.md` is carried from the first one's directory too",
+     "design", "L21", "../sub/guide/#다른-제목", "../sub/guide/#a-different-heading"),
+    ("a link whose text wraps onto the next line is carried",
+     "design", "L22 " + WRAPPED, "../guide/#설정-방법", "../guide/#how-to-configure"),
+    ("a wrapped link inside a code span is not a link",
+     "design", "L23 " + WRAPPED, None, None),
+    ("a link inside a fence is not a link",
+     "design", "L24", None, None),
+    ("nor is one inside a fence shown in a longer fence",
+     "design", "L25", None, None),
+    ("a link after a fence marker nothing closes is a link, and is carried",
+     "loose", "L26", "../guide/#설정-방법", "../guide/#how-to-configure"),
 ]
 
-SELF_TEST_CODE_SPAN = "<code>[L12](guide.md#설정-방법)</code>"
+# "Not a link" would also be true of sample text that had been rewritten. So: what the
+# English page must show, character for character as it was written -- (case, text).
+SELF_TEST_AS_WRITTEN = [
+    ("the code span", "<code>[L12](guide.md#설정-방법)</code>"),
+    ("the wrapped code span", f"<code>[L23 {WRAPPED}](guide.md#설정-방법)</code>"),
+    ("the fenced line", "[L24](guide.md#설정-방법)"),
+    ("the line in the inner fence", "[L25](guide.md#설정-방법)"),
+    ("text that only looks like a link across two paragraphs",
+     "다음 문단의 글](guide.md#설정-방법)"),
+]
 
 # What that build must say and must not: (case, log level, the link named, lines expected).
 SELF_TEST_LOG = [
@@ -426,8 +585,14 @@ SELF_TEST_LOG = [
     ("a fragment left as written that still resolves is not mentioned", "", "behind.md#api'", 0),
     ("a pair only the site sees as out of step is a warning -- the link check accepted it",
      "WARNING", "stray.md#둘째'", 1),
+    ("a pair a level apart is said at INFO", "INFO", "levels.md#셋째'", 1),
+    ("and so is a pair whose levels come in another order", "INFO", "nested.md#둘째'", 1),
     ("a carried fragment is not mentioned", "", "guide.md#설정-방법'", 0),
 ]
+
+# Every fixture file gets this one modification time, so that nothing but its path
+# tells one from another.
+SELF_TEST_MTIME_NS = 1_700_000_000 * 10**9
 
 
 def self_test():
@@ -440,7 +605,10 @@ def self_test():
         root = Path(tmp).resolve()
         (root / "docs").mkdir()
         for name, text in SELF_TEST_PAGES.items():
-            (root / "docs" / name).write_text(text, encoding="utf-8")
+            path = root / "docs" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+            os.utime(path, ns=(SELF_TEST_MTIME_NS, SELF_TEST_MTIME_NS))
         (root / "mkdocs.yml").write_text(
             f"INHERIT: {_repo_root / 'mkdocs.yml'}\n"
             "docs_dir: docs\n"
@@ -460,7 +628,8 @@ def self_test():
 
         def href(page, text, locale):
             path = root / "site" / locale / page / "index.html"
-            found = re.findall(rf'<a href="([^"]*)">{text}</a>', path.read_text(encoding="utf-8"))
+            found = re.findall(
+                rf'<a href="([^"]*)">{re.escape(text)}</a>', path.read_text(encoding="utf-8"))
             return html.unescape(urllib.parse.unquote(found[0])) if len(found) == 1 else None
 
         hrefs = {(page, text): (href(page, text, ""), href(page, text, "en"))
@@ -474,13 +643,13 @@ def self_test():
         ok = got == (korean, english)
         failed += not ok
         print(f"  {'ok  ' if ok else 'FAIL'} {name}")
-        print(f"         /: {got[0]}    /en/: {got[1]}")
+        print(f"         /: {got[0]!r}    /en/: {got[1]!r}")
 
-    # "Not a link" would also be true of a code span whose text had been rewritten.
-    ok = SELF_TEST_CODE_SPAN in english_design
-    failed += not ok
-    print(f"  {'ok  ' if ok else 'FAIL'} and the code span reads on /en/ as it was written")
-    print(f"         {SELF_TEST_CODE_SPAN} {'is' if ok else 'is not'} on the page")
+    for name, text in SELF_TEST_AS_WRITTEN:
+        ok = text in english_design
+        failed += not ok
+        print(f"  {'ok  ' if ok else 'FAIL'} and {name} reads on /en/ as it was written")
+        print(f"         {text!r} {'is' if ok else 'is not'} on the page")
 
     print()
     print(f"self-test over {len(SELF_TEST_LOG)} thing(s) that build must say, or must not")
