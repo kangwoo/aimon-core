@@ -19,9 +19,11 @@ whenever it produced no verdict, and `failOpen: true` is the one opt-out. The gu
   an unknown `decision` value (including Claude Code's `"block"`), or no executor wired. All of these used to be a pass.
   `failOpen` is now honoured for these actions — never for a `deny` handler, from either `hooks.json` or front matter.
   A `postTool` handler still warns and proceeds.
-- **Claude Code's answer shapes are read as verdicts:** `hookSpecificOutput.permissionDecision` (`deny`, `allow`,
-  `ask`), `decision: "block"` and `continue: false`. When fields disagree the strictest wins. They used to be read as
-  allow, or as no verdict.
+- **An `http` guard reads Claude Code's answer shapes:** `hookSpecificOutput.permissionDecision` (`deny`, `allow`,
+  `ask`), `hookSpecificOutput.updatedInput` and `continue: false`. When fields disagree the strictest wins, and a deny
+  carries only the reason of the field that denied. They used to be read as allow. An `mcp` tool result is read for
+  the native fields only — `decision` (now with `block` as a synonym of `deny`), `reason`, `feedback`, top-level
+  `updatedInput`.
 - **An `http` handler's `timeout` bounds the whole exchange**, response body included, and cancels the request.
 - **The hook executor's outer timeout no longer lets a guard through** (EE-64), and neither does a hook pool that
   refuses the hook (saturated or closed) or a hook that throws before reaching its action. `ExecutionHook#getTimeoutBehavior()`
@@ -104,7 +106,9 @@ whenever it produced no verdict, and `failOpen: true` is the one opt-out. The gu
   warns instead of compacting; `/compact` on a view that is only unanswered input fails with "nothing to compact". At
   the blocking limit the view is brought under the limit within the one `prepare` the executor makes — the unanswered
   part is summarized together with what precedes it whenever leaving it out would not fit — and a forced compaction
-  that still ends at or over the limit is reported with `STILL_OVER_BLOCKING` / `isOverBlockingLimit()`. This gives up
+  that still ends at or over the limit is reported with `STILL_OVER_BLOCKING` / `isOverBlockingLimit()`. When the
+  pass needs two summary calls it is still one reported compaction (`CompactionMetadata.getSummaryCalls()` is 2), and
+  the compaction hooks fire once per call. This gives up
   the engine's promise of matching version-1 output.
 - **Each scheduled-routine fire carries its own read stamps.** An `Edit` step works after a `Read` step, and a `Write`
   step that overwrites an existing file is refused unless the file was read or written earlier in the same fire.
@@ -140,6 +144,9 @@ whenever it produced no verdict, and `failOpen: true` is the one opt-out. The gu
   This applies to resources made by `StagedResource.scan`; one assembled through `StagedResource.builder()` is refused
   when its source changed, as before, so files it never listed cannot reach `.aimon-staged/`. A skill refused for
   exceeding the staging limit stages on the next call once its large files are excluded or deleted.
+- **`LocalFileSystem.getMetadata` no longer throws for a file whose modification time is older than its creation
+  time** — on Linux, any file copied with `cp -p`, extracted from an archive or synced with `rsync -t`. `Read` failed
+  on those files. Not introduced by this release; found by its tests on the Linux CI runner.
 - **GridFS files report a content hash as their etag**, so rewriting a file with identical bytes no longer reads as
   "changed since it was read"; files written earlier keep the file id. The local filesystem gains an opt-in content-hash
   etag (`contentHashEtag` / `contentHashStamps`).
