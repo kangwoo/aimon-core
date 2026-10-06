@@ -27,7 +27,7 @@ import at.aimon.core.skill.hook.action.McpToolAction;
  * Resolves the target server via {@link McpClientManager} at call time, renders the args template via
  * {@link TemplateRenderer}, and invokes {@link McpClient#callTool}. The {@link McpCallResult} is mapped to a
  * {@link HookResult} using the same JSON contract as the HTTP executor &mdash; if the result content is a JSON object
- * it is read by {@link DecisionDocument}, the native {@code decision} and the Claude Code spellings alike; otherwise
+ * it is read by {@link DecisionDocument} &mdash; the native fields only (see below); otherwise
  * the call is treated as side-effect only and {@link HookResult#success()} is returned.
  *
  * <p>
@@ -38,6 +38,15 @@ import at.aimon.core.skill.hook.action.McpToolAction;
  * any other exception from the client, a result flagged {@code isError} (all {@code CALL_FAILED}), and a decision
  * document that cannot be read ({@code INVALID_RESPONSE} &mdash; a decision field whose value is not one
  * {@link DecisionDocument} knows, an {@code updatedInput} that is not an object).
+ *
+ * <p>
+ * <b>Native fields only.</b> What is read from the object is {@code decision} ({@code allow} / {@code defer} /
+ * {@code deny}, and {@code block} as deny) with {@code reason}, {@code feedback} and the top-level
+ * {@code updatedInput}. The fields only Claude Code writes &mdash; {@code hookSpecificOutput}, {@code continue},
+ * {@code stopReason}, {@code systemMessage} &mdash; are not looked at: an MCP tool result is not written for Claude
+ * Code, and a tool whose result has a field named {@code continue} (a pagination flag, a continuation token) would
+ * otherwise deny, or make an unreadable answer out of, every call it guards. The {@code http} executor does read
+ * them.
  *
  * <p>
  * {@link #run} is the advisory reading of the same call: a missing verdict is logged at WARN and returned as
@@ -135,7 +144,8 @@ public final class McpActionExecutor {
 
     /**
      * Executes the action and returns the resolved {@link HookResult}, reading a call that produced no verdict as
-     * success. For events that cannot block; a guard uses {@link #attempt}.
+     * success, and an {@code ask} as success carrying the answer's own feedback (see
+     * {@link ActionCallOutcome#orSuccess()}). For events that cannot block; a guard uses {@link #attempt}.
      *
      * @param action
      *            configured action (must not be null)

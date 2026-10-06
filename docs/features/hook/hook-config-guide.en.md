@@ -427,28 +427,39 @@ If the response body follows the JSON schema
 
 | Response | How it is read |
 |----------|----------------|
-| 2xx, a JSON object that refuses — `decision` is `deny` or `block`, `hookSpecificOutput.permissionDecision` is `deny`, `continue` is `false` | verdict: refuse (the reason is `reason`, `permissionDecisionReason`, `stopReason` respectively) |
+| 2xx, a JSON object that refuses — `decision` is `deny` or `block`, `hookSpecificOutput.permissionDecision` is `deny`, `continue` is `false` | verdict: refuse. The reason comes only from **the partner of the field that refused** — `reason` for `decision`, `permissionDecisionReason` for `permissionDecision`, `stopReason` for `continue`. With no partner, the default wording (`Denied by HTTP hook`) |
 | 2xx, a JSON object, `hookSpecificOutput.permissionDecision` is `ask` | verdict: ask — the `AskPromptHandler` answers (`permissionDecisionReason` is the question) |
-| 2xx, a JSON object, `decision` is `allow` or `defer`, `permissionDecision` is `allow`, or no decision at all | verdict: allow (`feedback` and `updatedInput` are applied as given) |
+| 2xx, a JSON object, `decision` is `allow` or `defer`, `permissionDecision` is `allow`, or no decision at all | verdict: allow. `feedback` (failing that `systemMessage`, then `hookSpecificOutput.additionalContext`) is passed to the model, and `updatedInput` replaces the tool input from **either of its two places, the top level or inside `hookSpecificOutput`** |
 | 2xx with an empty body, text that is not declared as JSON (`ok`), or JSON that is not an object | verdict: allow — a webhook that carries no decision |
-| 2xx that cannot be read — a body whose `Content-Type` is JSON but does not parse, a `decision` (`"approve"`, say) or `permissionDecision` (`"defer"`, say) that is not a string or not a known value, a `continue` that is not a boolean, an `updatedInput` that is not an object | **no verdict** (`response could not be read`) |
+| 2xx that cannot be read — a body whose `Content-Type` is JSON but does not parse, a `decision` (`"approve"`, say) or `permissionDecision` (`"defer"`, say) that is not a string or not a known value, a `continue` that is not a boolean, a `hookSpecificOutput` that is not an object, an `updatedInput` that is not an object (in either place), two `updatedInput` values that differ | **no verdict** (`response could not be read`) |
 | non-2xx (whatever the body says) | **no verdict** (`call failed: HTTP <status>`) — a refusal is spelled `decision: deny` in a 2xx |
 | connection failure, transport error | **no verdict** (`call failed: <exception type>`) |
 | `timeout` exceeded | **no verdict** (`timed out`) |
 | executor not wired | **no verdict** (`action executor not wired`) |
 
-A policy endpoint written for Claude Code can be used as it is — besides `decision`, the verdict is read from Claude
-Code's two spellings (`hookSpecificOutput.permissionDecision`, `continue`). When one document carries several and they
+The **response** of a policy endpoint written for Claude Code's `PreToolUse` is read without changing it — on `http`
+only, and with the two exceptions below. Read: `hookSpecificOutput.permissionDecision` (`allow`, `deny`, `ask`) with the
+`permissionDecisionReason`, `updatedInput` and `additionalContext` beside it, `continue: false` with `stopReason`,
+`systemMessage`, and `decision: block`. Not read: `permissionDecision: defer` (no verdict, below) and any other field
+(`suppressOutput` and the like — ignored). The **request** is not adapted: the body is what this handler's `body`
+template renders, not the input JSON Claude Code sends, and a non-2xx is neither a refusal nor a pass but no verdict. An
+`mcp` handler **does not read** these spellings — an MCP tool result is not written for Claude Code, so only `decision`
+(`block` included), `reason`, `feedback` and the top-level `updatedInput` are read there. When one document carries
+several spellings and they
 disagree, **the strictest is the verdict**: refuse > unreadable > ask > allow. `decision: allow` next to
-`permissionDecision: deny` is a refusal. The refusal reason shown to the model comes only from the reason field of the
-spelling that refused — `feedback`, `systemMessage` and `additionalContext` never become the reason. An `ask` is turned
+`permissionDecision: deny` is a refusal. The refusal reason shown to the model comes only from the partner of the field
+that refused — neither the reason of a field that did not refuse (the `reason` next to `decision: allow`) nor `feedback`,
+`systemMessage` or `additionalContext` ever becomes the reason. `updatedInput` is applied only on an allow, and when its
+two places hold different values neither is picked: that is no verdict. An `ask` is turned
 into allow or refuse by the hook execution manager's `AskPromptHandler`: unless the host supplied one it **refuses**,
 and the environment variable `AIMON_HOOK_ASK_DEFAULT=allow` changes that default to allow. An `ask` is a verdict, so
 `failOpen` does not open it. `permissionDecision: defer`, unlike `decision: defer`, is no verdict — Claude Code's `defer`
 means "hold this tool call until the calling application resumes it", there is no means to do that, and so it is not
 read as running the tool.
 
-On `postTool` a missing verdict still leaves a WARN and proceeds, as before.
+On `postTool` a missing verdict still leaves a WARN and proceeds, as before. A refusal has nothing to block and also
+proceeds with a WARN, and an `ask` has nobody to ask and is read as an allow — the model is given the response's
+`feedback` (`systemMessage`, `additionalContext`) only, not the question.
 
 > ℹ️ **`aimon-cli` runs `http` and `mcp` handlers** — those in `hooks.json` and those in skill frontmatter. `http` always;
 > `mcp` when the CLI configuration (`mcp.servers`) has at least one server. In a CLI with no server at all an `mcp`
@@ -503,7 +514,11 @@ Calls a tool on an MCP server. `McpToolAction` + `McpActionExecutor`.
 }
 ```
 
-If the response has the shape `{decision, reason, feedback, updatedInput}`, it is mapped to a `HookResult`. The line
+If the response has the shape `{decision, reason, feedback, updatedInput}`, it is mapped to a `HookResult`. **Those
+four fields are all that is read** — `decision` is `allow`, `defer`, `deny`, or `block` as a synonym of `deny`, and
+Claude Code's spellings (`hookSpecificOutput`, `continue`, `stopReason`, `systemMessage`) are not looked at, whatever
+they hold. A tool result that has a field named `continue` (a pagination flag, a continuation token) is not a verdict
+for that. The line
 between a verdict and "no verdict" is the same as for `http`: a result that came back without an error is a verdict
 (empty content, plain text and JSON that is not an object allow; a JSON object is read as a decision document), while a
 server that is not registered or not connected, a transport error, an `isError` result (`call failed`), a decision
@@ -558,8 +573,8 @@ verdict.** On the other 9 events no row blocks (a WARN, then the event proceeds)
 | `command` exits with any other code (1, 3, 130, …) | script malfunction | proceeds (WARN) | proceeds (WARN) |
 | `command` produces no exit code — a timeout, a shell failure, no execution environment or an unavailable one, a skill directory that could not be staged, an executor without shell support, an executor that throws | could not run | **blocks** | proceeds (WARN) |
 | `deny` handler | verdict: refuse | **blocks** | **blocks** — `failOpen` is not read on a `deny` (WARN). In the three "follows the event policy" rows below, a `deny` handler blocks as the default column says |
-| `http` or `mcp` answers with a refusal (`decision: deny` or `block`, `permissionDecision: deny`, `continue: false`) | verdict: refuse (the server's reason field is the reason) | **blocks** | **blocks** |
-| `http` or `mcp` answers `permissionDecision: ask` | verdict: ask | as the `AskPromptHandler` answers — by default **blocks** | the same — a verdict, so `failOpen` does not apply |
+| `http` or `mcp` answers with a refusal (`decision: deny` or `block`; on `http` also `permissionDecision: deny`, `continue: false`) | verdict: refuse (the partner of the field that refused is the reason) | **blocks** | **blocks** |
+| `http` answers `permissionDecision: ask` | verdict: ask | as the `AskPromptHandler` answers — by default **blocks** | the same — a verdict, so `failOpen` does not apply |
 | `http` or `mcp` gives any other readable answer (`allow`, `defer`, no decision, an empty body, plain text) | verdict: allow | proceeds | proceeds |
 | `http` or `mcp` gets no verdict — a connection failure, a timeout, a non-2xx status, an MCP server that is not registered or not connected or answers `isError`, an answer that cannot be read, an executor that is not wired, an executor that throws | no verdict | **blocks** | proceeds (WARN) |
 | the handler runs past its own timeout and is cut off by the hook executor's outer net (declared timeout + 5 seconds) | no verdict | **blocks** | follows the event policy — the default policy proceeds (WARN) |

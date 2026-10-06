@@ -32,6 +32,7 @@ public final class CompactionMetadata {
     private final long absorbedFromSeq;
     private final long absorbedToSeq;
     private final int blockingLimit;
+    private final int summaryCalls;
 
     private CompactionMetadata(Builder builder) {
         this.preCompactTokenCount = builder.preCompactTokenCount;
@@ -56,6 +57,10 @@ public final class CompactionMetadata {
         this.absorbedFromSeq = builder.absorbedFromSeq;
         this.absorbedToSeq = builder.absorbedToSeq;
         this.blockingLimit = requireNonNegative(builder.blockingLimit, "blockingLimit");
+        if (builder.summaryCalls < 1) {
+            throw new IllegalArgumentException("summaryCalls must be >= 1");
+        }
+        this.summaryCalls = builder.summaryCalls;
         if (preCompactTokenCount < 0) {
             throw new IllegalArgumentException("preCompactTokenCount must be >= 0");
         }
@@ -167,6 +172,21 @@ public final class CompactionMetadata {
     }
 
     /**
+     * How many summaries this one record stands for. {@code 1} except for the default context engine's blocking-limit
+     * pass that had to summarize twice in one {@code prepare}: the summary of what preceded the unanswered messages
+     * left the view at the limit, and a second call summarized the whole view (context-engine §13.10). That pass is
+     * reported as one compaction: {@link #getPreCompactTokenCount()}, {@link #getMessagesSummarized()} and
+     * {@link #getStartedAt()} describe the view before the first call, {@link #getPostCompactTokenCount()} and
+     * {@link #getCompletedAt()} the view after the second, and {@link #getDiscoveredToolNames()} what either call
+     * found. Each of the calls spent a summary request and fired the PreCompact and PostCompact hooks.
+     *
+     * @return the number of summary calls covered by this record ({@code >= 1})
+     */
+    public int getSummaryCalls() {
+        return summaryCalls;
+    }
+
+    /**
      * Returns a copy of this record with the blocking limit set.
      *
      * @param blockingLimit
@@ -177,8 +197,8 @@ public final class CompactionMetadata {
         final Builder builder = builder().preCompactTokenCount(preCompactTokenCount)
                 .postCompactTokenCount(postCompactTokenCount).messagesSummarized(messagesSummarized).trigger(trigger)
                 .startedAt(startedAt).completedAt(completedAt).discoveredToolNames(discoveredToolNames).kind(kind)
-                .viewShape(headTokens, spanTokens, tailTokens).summaryTokens(summaryTokens)
-                .blockingLimit(blockingLimit);
+                .viewShape(headTokens, spanTokens, tailTokens).summaryTokens(summaryTokens).blockingLimit(blockingLimit)
+                .summaryCalls(summaryCalls);
         if (absorbedFromSeq >= 0) {
             builder.absorbedRange(absorbedFromSeq, absorbedToSeq);
         }
@@ -200,21 +220,23 @@ public final class CompactionMetadata {
                 && discoveredToolNames.equals(that.discoveredToolNames) && kind == that.kind
                 && headTokens == that.headTokens && spanTokens == that.spanTokens && tailTokens == that.tailTokens
                 && summaryTokens == that.summaryTokens && absorbedFromSeq == that.absorbedFromSeq
-                && absorbedToSeq == that.absorbedToSeq && blockingLimit == that.blockingLimit;
+                && absorbedToSeq == that.absorbedToSeq && blockingLimit == that.blockingLimit
+                && summaryCalls == that.summaryCalls;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(preCompactTokenCount, postCompactTokenCount, messagesSummarized, trigger, startedAt,
                 completedAt, discoveredToolNames, kind, headTokens, spanTokens, tailTokens, summaryTokens,
-                absorbedFromSeq, absorbedToSeq, blockingLimit);
+                absorbedFromSeq, absorbedToSeq, blockingLimit, summaryCalls);
     }
 
     @Override
     public String toString() {
         return "CompactionMetadata{trigger=" + trigger + ", kind=" + kind + ", preTokens=" + preCompactTokenCount
                 + ", postTokens=" + postCompactTokenCount + ", messagesSummarized=" + messagesSummarized
-                + ", durationMs=" + (completedAt.toEpochMilli() - startedAt.toEpochMilli()) + '}';
+                + (summaryCalls > 1 ? ", summaryCalls=" + summaryCalls : "") + ", durationMs="
+                + (completedAt.toEpochMilli() - startedAt.toEpochMilli()) + '}';
     }
 
     /** Builder for {@link CompactionMetadata}. */
@@ -234,6 +256,7 @@ public final class CompactionMetadata {
         private long absorbedFromSeq = -1;
         private long absorbedToSeq = -1;
         private int blockingLimit;
+        private int summaryCalls = 1;
 
         private Builder() {
         }
@@ -327,6 +350,17 @@ public final class CompactionMetadata {
          */
         public Builder blockingLimit(int blockingLimit) {
             this.blockingLimit = blockingLimit;
+            return this;
+        }
+
+        /**
+         * @param summaryCalls
+         *            how many summaries the record stands for (must be {@code >= 1}; {@code 1}, the default, for an
+         *            ordinary compaction)
+         * @return this builder
+         */
+        public Builder summaryCalls(int summaryCalls) {
+            this.summaryCalls = summaryCalls;
             return this;
         }
 

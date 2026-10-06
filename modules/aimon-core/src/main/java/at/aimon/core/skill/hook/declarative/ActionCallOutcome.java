@@ -28,10 +28,12 @@ import at.aimon.core.hook.execution.HookResult;
 public final class ActionCallOutcome {
 
     private final HookResult verdict;
+    private final HookResult advisory;
     private final ShellHookOutcome unrun;
 
-    private ActionCallOutcome(HookResult verdict, ShellHookOutcome unrun) {
+    private ActionCallOutcome(HookResult verdict, HookResult advisory, ShellHookOutcome unrun) {
         this.verdict = verdict;
+        this.advisory = advisory;
         this.unrun = unrun;
     }
 
@@ -45,7 +47,29 @@ public final class ActionCallOutcome {
      *             if verdict is null
      */
     public static ActionCallOutcome verdict(HookResult verdict) {
-        return new ActionCallOutcome(Objects.requireNonNull(verdict, "verdict cannot be null"), null);
+        Objects.requireNonNull(verdict, "verdict cannot be null");
+        return new ActionCallOutcome(verdict, verdict, null);
+    }
+
+    /**
+     * Creates the outcome of a call whose verdict is a question for the user ({@code ask}).
+     *
+     * <p>
+     * A guard event has the question answered. An event that cannot block asks nobody, and there the question's
+     * prompt must not be mistaken for the endpoint's advice to the model, so the two readings are carried apart.
+     *
+     * @param ask
+     *            the verdict, an {@code ASK} result whose feedback is the prompt (must not be null)
+     * @param advisory
+     *            what the same answer says where nothing is asked: a success carrying the document's own feedback,
+     *            or a bare success (must not be null)
+     * @return the outcome (never null)
+     * @throws NullPointerException
+     *             if either argument is null
+     */
+    static ActionCallOutcome ask(HookResult ask, HookResult advisory) {
+        return new ActionCallOutcome(Objects.requireNonNull(ask, "ask cannot be null"),
+                Objects.requireNonNull(advisory, "advisory cannot be null"), null);
     }
 
     /**
@@ -61,7 +85,7 @@ public final class ActionCallOutcome {
      *             if cause is null
      */
     public static ActionCallOutcome notRun(ShellHookOutcome.Unrun cause, String detail) {
-        return new ActionCallOutcome(null, ShellHookOutcome.notRun(cause, detail));
+        return new ActionCallOutcome(null, null, ShellHookOutcome.notRun(cause, detail));
     }
 
     /**
@@ -79,13 +103,16 @@ public final class ActionCallOutcome {
     }
 
     /**
-     * Returns the verdict, reading a missing one as success. This is the advisory events' reading: there is nothing
-     * to block, and the executor has already logged why the call gave no answer.
+     * Returns the verdict as an event that cannot block reads it. A missing one is success: there is nothing to
+     * block, and the executor has already logged why the call gave no answer. An {@code ask} is success too, carrying
+     * the answer's own feedback when it has any &mdash; nothing resolves a question on such an event, and its prompt
+     * ("confirm this call?") would otherwise reach the model as advice about a tool that already ran. A deny is
+     * returned as it is; the caller decides what a block means where nothing can be blocked.
      *
-     * @return the verdict, or {@link HookResult#success()} when there is none (never null)
+     * @return the advisory reading of the outcome (never null, never an {@code ASK})
      */
     public HookResult orSuccess() {
-        return verdict != null ? verdict : HookResult.success();
+        return advisory != null ? advisory : HookResult.success();
     }
 
     @Override

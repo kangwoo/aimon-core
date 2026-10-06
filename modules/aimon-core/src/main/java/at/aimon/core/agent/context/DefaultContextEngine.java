@@ -1,9 +1,11 @@
 package at.aimon.core.agent.context;
 
 import java.time.Instant;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongPredicate;
@@ -407,7 +409,7 @@ public final class DefaultContextEngine implements ContextEngine {
                             + (before.size() - unreadFrom) + " message(s) the model has not answered yet"
                             + (unreadFrom > 0 ? " after an earlier summary" : "")));
         }
-        return summarizeSpan(request, trigger, instructions, before, prefix, null);
+        return summarizeSpan(request, trigger, instructions, before, prefix, null, null);
     }
 
     /**
@@ -423,7 +425,7 @@ public final class DefaultContextEngine implements ContextEngine {
      * that is still over the limit.
      * <li><b>The whole view is summarized by a second call</b> when the first case's summary came back long enough to
      * put the view at the limit again. If that second call fails, the first compaction stands and is reported as
-     * leaving the view over the limit.
+     * leaving the view over the limit. See "the two-summary pass" below.
      * <li><b>Nothing is summarized and the compaction fails</b> — no summary call, no hook — when the whole view is
      * what it would take and the view's end is not a legal cut: a tool call among the unanswered messages has no
      * result, so a span ending there would split the pair. The guard blocks the iteration.
@@ -436,13 +438,38 @@ public final class DefaultContextEngine implements ContextEngine {
      * ({@link CompactionMetadata#isOverBlockingLimit()}), which the guard carries into the decision's reason
      * ({@link DefaultCompactionGuard#STILL_OVER_BLOCKING}); the view is sent as it is. A summary call that fails is a
      * failed compaction, which the guard answers with {@code BLOCK}.
+     *
+     * <p>
+     * <b>The two-summary pass is one compaction to the caller and two to the hooks.</b>
+     * <ul>
+     * <li><b>What is returned</b> is one record for the pass ({@link CompactionMetadata#getSummaryCalls()} is
+     * {@code 2}): the pre-compaction size is the view before the first call, counted as the guard counts it; the
+     * messages summarized are every message of that view; the start is the first call's; the tool names are what
+     * either call found; the post-compaction size and the end are the second call's. The summary text is the second
+     * call's, the only one left in the view. The span the view state holds is the second call's as well, as for any
+     * summary that absorbs an earlier one.
+     * <li><b>PreCompact hooks fire twice</b>, once before each summary call, the second time for the view the first
+     * call left (its markers, the unanswered messages, and whatever a PostCompact hook appended). They fire inside
+     * {@link CompactionEngine#summarize}, and what they return belongs to that call: their feedback is its
+     * summarization instructions, and an AUTO block is its veto &mdash; a block of the second call leaves the first
+     * compaction standing, reported as over the limit, like any other failure of the second call.
+     * <li><b>PostCompact hooks fire twice</b>, once after each summary is recorded. The first firing cannot be held
+     * back: whether a second summary is needed is decided on the view as it is sent, which includes what those hooks
+     * append. So a hook that re-attaches something (a recently read file) attaches it after the first summary, the
+     * second summary absorbs that attachment along with everything else, and the hook attaches it again &mdash; the
+     * final view carries it once, and its tokens were summarized once for nothing. The second firing is given the
+     * record of the pass, the first the record of the first call.
+     * </ul>
+     * Firing them once for the pass would take a way to tell {@code summarize} that its hooks have run and to carry
+     * their instructions into the second call, and a rule for an attachment that alone puts the view back over the
+     * limit; neither exists.
      */
     private CompactionResult summarizeAtBlockingLimit(ContextRequest request, CompactionTrigger trigger,
             String instructions, ViewProjection before, int prefix, BlockingLimit blocking) {
         final TranscriptBuffer buffer = request.getTranscriptBuffer();
         final int size = before.size();
         if (prefix == size) {
-            return summarizeSpan(request, trigger, instructions, before, size, blocking);
+            return summarizeSpan(request, trigger, instructions, before, size, blocking, null);
         }
         final int unanswered = size - before.firstUnreadPosition();
         final boolean prefixCanFit = prefix > 0 && !blocking.reachedBy(before.getMessages().subList(prefix, size));
@@ -458,9 +485,11 @@ public final class DefaultContextEngine implements ContextEngine {
                             + " the model has not answered yet would not bring it under; summarizing them too, since"
                             + " the request cannot be sent as it is",
                     buffer.getSessionId(), blocking.limit, unanswered);
-            return summarizeSpan(request, trigger, instructions, before, size, blocking);
+            return summarizeSpan(request, trigger, instructions, before, size, blocking, null);
         }
-        final CompactionResult first = summarizeSpan(request, trigger, instructions, before, prefix, blocking);
+        // Counted before anything is summarized: the size of the view the pass starts from, should it take two calls.
+        final int viewTokensBefore = blocking.tokens(before.getMessages());
+        final CompactionResult first = summarizeSpan(request, trigger, instructions, before, prefix, blocking, null);
         if (first.isFailure() || !first.getMetadata().isOverBlockingLimit()) {
             return first;
         }
@@ -473,7 +502,8 @@ public final class DefaultContextEngine implements ContextEngine {
                         + " whole view, the messages the model has not answered yet included",
                 buffer.getSessionId(), first.getMetadata().getPostCompactTokenCount(), blocking.limit);
         final ViewProjection rest = ViewProjection.of(afterFirst);
-        final CompactionResult second = summarizeSpan(request, trigger, instructions, rest, rest.size(), blocking);
+        final CompactionResult second = summarizeSpan(request, trigger, instructions, rest, rest.size(), blocking,
+                new PassStart(viewTokensBefore, size, first.getMetadata()));
         if (second.isFailure()) {
             log.warn("The whole-view summary of session {} failed ({}); the view is sent over the blocking limit",
                     buffer.getSessionId(), second.getError().map(Throwable::getMessage).orElse("unknown error"));
@@ -496,9 +526,12 @@ public final class DefaultContextEngine implements ContextEngine {
      *            when not null, the record carries the blocking limit and the view's size as the guard counts it,
      *            taken after the PostCompact hooks ran, so {@link CompactionMetadata#isOverBlockingLimit()} answers
      *            for the view that is sent
+     * @param passStart
+     *            when not null, this is the second summary of one blocking-limit pass, and the record &mdash; the one
+     *            returned and the one the PostCompact hooks are shown &mdash; describes the pass from its start
      */
     private CompactionResult summarizeSpan(ContextRequest request, CompactionTrigger trigger, String instructions,
-            ViewProjection before, int absorbed, BlockingLimit blocking) {
+            ViewProjection before, int absorbed, BlockingLimit blocking, PassStart passStart) {
         final TranscriptBuffer buffer = request.getTranscriptBuffer();
         final SessionLogState state = buffer.getLogState();
         final List<Message> absorbedMessages = absorbed == before.size()
@@ -533,7 +566,7 @@ public final class DefaultContextEngine implements ContextEngine {
             return CompactionResult.failure(e, produced);
         }
         final CompactionResult installed = CompactionResult.success(summaryText,
-                installedMetadata(produced, viewTokens(request, blocking), blocking));
+                installedMetadata(produced, viewTokens(request, blocking), blocking, passStart));
         compactionEngine.summaryInstalled(summaryRequest, installed, buffer);
         log.info("Compaction recorded in the view: {} view messages summarized over seqs {}, {} left verbatim"
                 + " (trigger={})", absorbed, span.getRange(), before.size() - absorbed, trigger);
@@ -544,7 +577,7 @@ public final class DefaultContextEngine implements ContextEngine {
         final int sent = viewTokens(request, blocking);
         return sent == installed.getMetadata().getPostCompactTokenCount()
                 ? installed
-                : CompactionResult.success(summaryText, installedMetadata(produced, sent, blocking));
+                : CompactionResult.success(summaryText, installedMetadata(produced, sent, blocking, passStart));
     }
 
     /** The current view's estimated size: the guard's count when a blocking limit is held, else this engine's. */
@@ -557,12 +590,36 @@ public final class DefaultContextEngine implements ContextEngine {
     }
 
     private static CompactionMetadata installedMetadata(CompactionMetadata produced, int postTokenCount,
-            BlockingLimit blocking) {
-        return CompactionMetadata.builder().trigger(produced.getTrigger())
-                .preCompactTokenCount(produced.getPreCompactTokenCount()).postCompactTokenCount(postTokenCount)
-                .messagesSummarized(produced.getMessagesSummarized()).startedAt(produced.getStartedAt())
-                .completedAt(Instant.now()).discoveredToolNames(produced.getDiscoveredToolNames())
-                .blockingLimit(blocking == null ? 0 : blocking.limit).build();
+            BlockingLimit blocking, PassStart passStart) {
+        final CompactionMetadata.Builder record = CompactionMetadata.builder().trigger(produced.getTrigger())
+                .postCompactTokenCount(postTokenCount).completedAt(Instant.now())
+                .blockingLimit(blocking == null ? 0 : blocking.limit);
+        if (passStart == null) {
+            return record.preCompactTokenCount(produced.getPreCompactTokenCount())
+                    .messagesSummarized(produced.getMessagesSummarized()).startedAt(produced.getStartedAt())
+                    .discoveredToolNames(produced.getDiscoveredToolNames()).build();
+        }
+        final Set<String> toolNames = new LinkedHashSet<>(passStart.first.getDiscoveredToolNames());
+        toolNames.addAll(produced.getDiscoveredToolNames());
+        return record.preCompactTokenCount(passStart.viewTokens).messagesSummarized(passStart.viewMessages)
+                .startedAt(passStart.first.getStartedAt()).discoveredToolNames(List.copyOf(toolNames)).summaryCalls(2)
+                .build();
+    }
+
+    /**
+     * Where a blocking-limit pass that needed a second summary started: the view before its first call, and that
+     * call's record.
+     */
+    private static final class PassStart {
+        private final int viewTokens;
+        private final int viewMessages;
+        private final CompactionMetadata first;
+
+        private PassStart(int viewTokens, int viewMessages, CompactionMetadata first) {
+            this.viewTokens = viewTokens;
+            this.viewMessages = viewMessages;
+            this.first = first;
+        }
     }
 
     private static CompactionResult failure(CompactionTrigger trigger, Exception error) {
