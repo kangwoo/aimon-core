@@ -64,11 +64,12 @@ import at.aimon.session.mongodb.internal.ScheduledTaskInterruptCodec;
  * honoured (see {@link ScheduledTaskInterruptCodec}).
  *
  * <p>
- * A request published while a node's watcher is not attached is not delivered to that node, and nothing redelivers
- * it. There are three such windows: before the cursor opened after the first {@link #subscribe}; while the watcher
- * starts over because the server refused its resume token (older than the oplog) or closed its cursor (the collection
- * was dropped or recreated); and while MongoDB is unreachable for longer than the stream can resume across. Each of
- * the last two is logged at WARN. <b>A run whose node missed the request is not stopped at all</b> — it runs its
+ * A request published while a node's watcher has no cursor and no usable resume token is not delivered to that node,
+ * and nothing redelivers it. There are two such windows: before the cursor opened after the first {@link #subscribe},
+ * which logs nothing; and while the watcher starts over because the server refused its resume token (older than the
+ * oplog) or closed its cursor (the collection was dropped or recreated), which is logged at WARN. Any other
+ * interruption — a killed operation, a step-down, an outage the oplog still covers — keeps the token, and the watcher
+ * resumes and replays what it missed. <b>A run whose node missed the request is not stopped at all</b> — it runs its
  * remaining steps, and only its write-back is suppressed if the task was deleted. That is the behaviour without a
  * bus, which is what best-effort falls back to.
  *
@@ -85,6 +86,12 @@ public final class MongoScheduledTaskInterruptBus implements ScheduledTaskInterr
 
     private static final long WATCHER_RESTART_BACKOFF_MS = 500L;
     private static final long IDLE_POLL_MS = 50L;
+
+    /** The label the server puts on an error that means the change stream cannot be resumed from the given token. */
+    private static final String NON_RESUMABLE_CHANGE_STREAM_ERROR = "NonResumableChangeStreamError";
+
+    /** Server error code {@code InvalidResumeToken}. */
+    private static final int INVALID_RESUME_TOKEN = 260;
 
     private final MongoCollection<Document> collection;
     private final ScheduledTaskInterruptCodec codec = new ScheduledTaskInterruptCodec();
@@ -222,8 +229,13 @@ public final class MongoScheduledTaskInterruptBus implements ScheduledTaskInterr
             try {
                 pumpOnce();
             } catch (MongoChangeStreamException e) {
-                log.warn("Change stream history lost for node {} ({}); reopening without resume token — stop requests"
-                        + " published in the gap are not delivered here", nodeId, e.toString());
+                // The driver's own complaint about an event it cannot take a resume token from. It is not how a
+                // history-lost token arrives (that is the labelled command error below), but the remedy is the same.
+                if (closed.get()) {
+                    return;
+                }
+                log.warn("Stop-request change stream on node {} produced an event without a resume token ({});"
+                        + " reopening without one", nodeId, e.toString());
                 resumeTokenStore.clear();
                 sleep(WATCHER_RESTART_BACKOFF_MS);
             } catch (MongoInterruptedException e) {
@@ -235,18 +247,20 @@ public final class MongoScheduledTaskInterruptBus implements ScheduledTaskInterr
                 if (closed.get()) {
                     return;
                 }
-                if (resumeTokenStore.last().isPresent()) {
-                    // The server refused a command while this watcher was resuming from a stored token. The refusal
-                    // that matters arrives this way, not as MongoChangeStreamException: a token older than the oplog
-                    // (ChangeStreamHistoryLost) or one the stream no longer contains. Retrying the same token cannot
-                    // succeed, and stop requests are rare enough that a stored token is routinely that old.
+                if (resumeTokenStore.last().isPresent() && isResumeRefused(e)) {
+                    // The server says this stream cannot be resumed from the stored token: it is older than the oplog
+                    // (ChangeStreamHistoryLost), or the stream no longer contains it. Retrying the same token cannot
+                    // succeed, so it is dropped and the stream starts over from now.
                     log.warn(
                             "Stop-request watcher on node {} could not resume from its stored token ({}); starting"
                                     + " over without it — stop requests published in the gap are not delivered here",
                             nodeId, e.toString());
                     resumeTokenStore.clear();
                 } else {
-                    log.warn("Stop-request watcher hit a server error on node {}; retrying: {}", nodeId, e.toString());
+                    // Any other command error — a killed operation, a step-down, an authorization failure — says
+                    // nothing about the token. It is kept, so the reopen resumes and replays what was missed. Dropping
+                    // it here would turn every transient server error into lost stop requests.
+                    log.warn("Stop-request watcher hit a server error on node {}; resuming: {}", nodeId, e.toString());
                 }
                 sleep(WATCHER_RESTART_BACKOFF_MS);
             } catch (RuntimeException e) {
@@ -257,6 +271,14 @@ public final class MongoScheduledTaskInterruptBus implements ScheduledTaskInterr
                 sleep(WATCHER_RESTART_BACKOFF_MS);
             }
         }
+    }
+
+    /**
+     * Whether a command error means "this stream cannot be resumed from that token", as opposed to any other failure
+     * of a command. The server labels the former; 260 is what a resume from an invalidate token returns.
+     */
+    private static boolean isResumeRefused(MongoCommandException e) {
+        return e.hasErrorLabel(NON_RESUMABLE_CHANGE_STREAM_ERROR) || e.getErrorCode() == INVALID_RESUME_TOKEN;
     }
 
     private void pumpOnce() {

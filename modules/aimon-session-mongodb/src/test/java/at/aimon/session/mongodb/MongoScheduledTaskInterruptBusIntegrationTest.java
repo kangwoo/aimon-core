@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import com.mongodb.client.MongoChangeStreamCursor;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoCollection;
+import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.changestream.ChangeStreamDocument;
 
 import at.aimon.core.agent.interrupt.InterruptReason;
@@ -216,6 +217,109 @@ class MongoScheduledTaskInterruptBusIntegrationTest extends AbstractScheduledTas
         nodeB.close();
     }
 
+    @Test
+    @DisplayName("a server error that has nothing to do with the resume token does not cost any request")
+    void anUnrelatedServerErrorLosesNoRequest() throws Exception {
+        // The watcher's getMore is killed on the server while requests keep arriving. That is a command error like a
+        // refused token is, but the token is fine: the watcher has to keep it, resume, and replay what it missed.
+        final ScheduledTaskInterruptBus nodeA = busFor("node-A");
+        final ScheduledTaskInterruptBus nodeB = busFor("node-B");
+        final BlockingQueue<ScheduledTaskId> heardOnB = new LinkedBlockingQueue<>();
+        nodeB.subscribe((id, reason) -> heardOnB.add(id));
+        awaitSubscriptionsLive();
+        final int total = 80;
+        final java.util.Set<ScheduledTaskId> published = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        final Thread publisher = new Thread(() -> {
+            for (int i = 0; i < total; i++) {
+                final ScheduledTaskId id = ScheduledTaskId.generate();
+                published.add(id);
+                nodeA.publish(id, InterruptReason.TASK_CANCELLED);
+                try {
+                    Thread.sleep(20L);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }, "stop-request-publisher");
+        publisher.start();
+        Thread.sleep(300L);
+
+        assertThat(killChangeStreamGetMore()).as("a getMore of the watcher was found and killed").isTrue();
+        publisher.join(TimeUnit.SECONDS.toMillis(30));
+
+        final java.util.Set<ScheduledTaskId> heard = new java.util.HashSet<>();
+        final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(WAIT_TIMEOUT_MS * 2);
+        while (heard.size() < total && System.nanoTime() < deadline) {
+            final ScheduledTaskId got = heardOnB.poll(100L, TimeUnit.MILLISECONDS);
+            if (got != null) {
+                heard.add(got);
+            }
+        }
+        assertThat(heard).as("every published request reached node B").containsExactlyInAnyOrderElementsOf(published);
+    }
+
+    @Test
+    @DisplayName("the resume token advances while nothing is published")
+    void resumeTokenAdvancesWhileIdle() throws Exception {
+        // Stop requests are rare. A token that only moved on delivery would be as old as the last one, which is old
+        // enough to have left the oplog by the time a reconnect needs it.
+        final ResumeTokenStore tokens = new ResumeTokenStore();
+        final MongoClient clientB = clients.computeIfAbsent("node-B", n -> MongoTestSupport.newClient());
+        final MongoScheduledTaskInterruptBus nodeB = new MongoScheduledTaskInterruptBus(
+                clientB.getDatabase(MongoTestSupport.DATABASE_NAME), DocumentKeys.COLL_SCHEDULED_TASK_INTERRUPTS,
+                "node-B", tokens);
+        buses.put("node-B", nodeB);
+        nodeB.subscribe((id, reason) -> {
+        });
+
+        final BsonDocument first = awaitToken(tokens, null);
+        // Something has to move the oplog for the post-batch token to move; it need not be this collection.
+        final MongoCollection<Document> filler = MongoTestSupport.sharedDatabase()
+                .getCollection("interrupt_bus_test_oplog_filler");
+        try {
+            filler.insertOne(new Document("filler", true));
+
+            assertThat(awaitToken(tokens, first)).as("a later token, with nothing delivered").isNotEqualTo(first);
+        } finally {
+            filler.drop();
+        }
+    }
+
+    /** Waits for the store to hold a token other than {@code previous}. */
+    private static BsonDocument awaitToken(ResumeTokenStore tokens, BsonDocument previous) throws InterruptedException {
+        final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(WAIT_TIMEOUT_MS * 2);
+        while (System.nanoTime() < deadline) {
+            final BsonDocument current = tokens.last().orElse(null);
+            if (current != null && !current.equals(previous)) {
+                return current;
+            }
+            Thread.sleep(50L);
+        }
+        throw new AssertionError("no new resume token within the timeout; last was " + previous);
+    }
+
+    /** Kills the in-flight getMore of every change stream on the collection; returns whether it found one. */
+    private boolean killChangeStreamGetMore() throws InterruptedException {
+        final MongoDatabase admin = clients.get("node-A").getDatabase("admin");
+        final String namespace = MongoTestSupport.DATABASE_NAME + "." + DocumentKeys.COLL_SCHEDULED_TASK_INTERRUPTS;
+        final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(WAIT_TIMEOUT_MS);
+        while (System.nanoTime() < deadline) {
+            final Document current = admin
+                    .runCommand(new Document("currentOp", 1).append("op", "getmore").append("ns", namespace));
+            boolean killed = false;
+            for (Document op : current.getList("inprog", Document.class, java.util.List.of())) {
+                admin.runCommand(new Document("killOp", 1).append("op", op.get("opid")));
+                killed = true;
+            }
+            if (killed) {
+                return true;
+            }
+            Thread.sleep(20L);
+        }
+        return false;
+    }
+
     /**
      * Publishes a fresh request every 200 ms until one is heard. A watcher that is reopening has a window in which a
      * publish is legitimately missed, so one publish and one wait would test the timing rather than the recovery.
@@ -224,12 +328,13 @@ class MongoScheduledTaskInterruptBusIntegrationTest extends AbstractScheduledTas
             BlockingQueue<ScheduledTaskId> heard) throws InterruptedException {
         final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(WAIT_TIMEOUT_MS * 2);
         while (System.nanoTime() < deadline) {
-            final ScheduledTaskId probe = ScheduledTaskId.generate();
-            publisher.publish(probe, InterruptReason.TASK_CANCELLED);
+            publisher.publish(ScheduledTaskId.generate(), InterruptReason.TASK_CANCELLED);
             final long until = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(200L);
             while (System.nanoTime() < until) {
                 final ScheduledTaskId got = heard.poll(20L, TimeUnit.MILLISECONDS);
-                if (probe.equals(got)) {
+                // Any delivery counts, not only this window's probe: the queue is empty when this is called, so
+                // whatever arrives now is a request published after the recovery began.
+                if (got != null) {
                     return true;
                 }
             }

@@ -20,9 +20,10 @@ close the `MongoDatabase`.
 The runtime never runs DDL, and publishing into a collection that does not exist makes MongoDB create an uncapped one,
 which works and grows for ever. A replica set is required, as for the signal bus.
 
-Delivery is best-effort: a request published while a node's watcher is not attached does not reach that node and is
-not redelivered. That is the moment before its cursor opens, and the gap while it starts over after the server refused
-its resume token or closed its cursor (the collection was dropped or recreated); the last two are logged at WARN. A run
+Delivery is best-effort: a request published while a node's watcher has neither a cursor nor a usable resume token does
+not reach that node and is not redelivered. That is the moment before its cursor opens, and the gap while it starts over
+after the server refused its resume token or closed its cursor (the collection was dropped or recreated); the latter is
+logged at WARN. Other interruptions keep the token, and the watcher resumes and replays. A run
 whose node missed the request is not stopped: it finishes its remaining steps, as it would without a bus. A request
 whose reason an older node does not know is still honoured. Redis and Postgres have no implementation yet.
 
