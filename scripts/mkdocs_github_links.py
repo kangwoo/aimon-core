@@ -1,4 +1,10 @@
-"""MkDocs hook: point out-of-docs relative links at GitHub.
+"""MkDocs hook: make the links written for GitHub work on the built site.
+
+Two rewrites, both at render time and both leaving the sources alone: a link that
+leaves what the site builds becomes a GitHub URL, and a fragment written against a
+canonical page is carried over to the translation the site serves in its place.
+
+OUT-OF-DOCS LINKS.
 
 The repository is read on two surfaces. On GitHub, a link like
 ``../../modules/aimon-core/src/main/java/.../ReadTool.java`` resolves and is the
@@ -31,13 +37,61 @@ both about every directory under ``docs_dir`` and stops the build when they
 differ, so the link the check accepts as "the hook rewrites it" is one this hook
 does rewrite.
 
-Registered from ``mkdocs.yml`` under ``hooks:``. No plugin dependency.
+FRAGMENTS ACROSS A TRANSLATION (backlog T-10). A page with no ``.en.md`` is shown on
+``/en/`` from its Korean source, and its link ``guide.md#matcher-문법`` is sent to
+``guide.en.md`` -- mkdocs-static-i18n's ``Files.get_file_from_path`` prefers the
+build locale's file -- where no heading has that id. The link is right on
+github.com and right on the Korean site, so it is not the source that is wrong.
+``_carry`` rewrites the fragment to the id of the heading *at the same position*
+in the file the build serves; ``check-translation-structure.py`` holds a
+translation to its canonical's headings, same levels, same order, which is what
+makes position mean something. Six links needed this when it was written.
+
+  * *Which links.* One whose path, as written, names a ``.md`` file under
+    ``docs_dir`` and for which ``files.get_file_from_path`` returns a *different*
+    source file. Nothing here asks which locale is being built or names the i18n
+    plugin: on the Korean build the lookup returns the file as written and nothing
+    happens, and a ``.en.md`` page linking a canonical's Korean heading (none today)
+    is carried over by the same test.
+  * *Whose ids.* The site's. Both files are rendered with the build's own
+    ``markdown_extensions`` and the ids are read off ``toc_tokens`` -- the id written
+    into the link has to be the one the browser will look for, and
+    ``docs_tree.slug`` is not that (it drops ``_``, and numbers a repeated heading
+    ``-1`` where the site writes ``_1``). The fragment is matched against the
+    canonical's ids *exactly*: one that does not match is dead on the Korean site
+    too, and making it work only in English would hide that.
+  * *What is not guessed.* When the two files' headings do not line up -- a
+    different count, or a different level anywhere -- the link is left as written
+    and one INFO line says so. That pair is either behind its canonical (which fails
+    no build, by decision: ``check-translation-staleness.py``) or current and wrong
+    (which ``check-translation-structure.py`` fails), and position means nothing in
+    either. A fragment that is not one of the canonical's heading ids -- a
+    hand-written ``<a id>`` -- is left as written as well: it resolves if the
+    translation carries the same ``<a id>``.
+  * *What checks it.* MkDocs validates the link this hook returns, so a wrong id
+    shows as its usual ``does not contain an anchor`` INFO line.
+    ``scripts/check-doc-links.py`` asks, with no pip install, whether each such link
+    has what this needs (WHICH FRAGMENTS MUST SURVIVE A TRANSLATION, which also says
+    where its reading of headings differs from this one). ``--self-test`` here builds
+    a small two-locale site in a temporary directory and reads the hrefs off the
+    built pages; ``.github/workflows/docs.yml`` runs it before the real build.
+
+Registered from ``mkdocs.yml`` under ``hooks:``. The first rewrite depends on no
+plugin; the second does nothing without a ``Files`` that maps a path to another
+source, which today is mkdocs-static-i18n's.
+
+Usage:
+    python3 scripts/mkdocs_github_links.py --self-test    # needs docs-requirements.txt
 """
 
+import logging
+import os
 import posixpath
 import re
 import sys
 from pathlib import Path
+
+log = logging.getLogger("mkdocs.hooks.github_links")
 
 # Same shape as scripts/check-doc-links.py -- a link inside a fence or backticks
 # is an example, not a link, and must not be rewritten.
@@ -101,12 +155,12 @@ def on_config(config, **kwargs):
 
 def on_page_markdown(markdown, page, config, files, **kwargs):
     repo_url = config.get("repo_url")
-    if not repo_url:
-        return markdown
-
     docs_dir = Path(config["docs_dir"]).resolve()
     page_dir = posixpath.dirname(page.file.src_uri)
     excluded = _excluder(config, docs_dir)
+
+    def carry(written, fragment):
+        return _carry(page.file.src_uri, written, fragment, docs_dir, files, config)
 
     out, fenced = [], False
     for line in markdown.splitlines():
@@ -114,9 +168,107 @@ def on_page_markdown(markdown, page, config, files, **kwargs):
             fenced = not fenced
             out.append(line)
             continue
-        out.append(line if fenced else _rewrite(line, docs_dir, page_dir, repo_url, excluded))
+        out.append(
+            line if fenced else _rewrite(line, docs_dir, page_dir, repo_url, excluded, carry))
 
     return "\n".join(out)
+
+
+# --- fragments across a translation -----------------------------------------
+
+_heading_cache = {}
+_said = set()
+
+
+def _headings(path, config):
+    """``[(level, id)]`` for every heading of ``path``, in page order, as the site renders it."""
+    key = (path, path.stat().st_mtime_ns)
+    if key not in _heading_cache:
+        import markdown
+        from mkdocs.utils import meta
+
+        body, _ = meta.get_data(path.read_text(encoding="utf-8-sig"))
+        md = markdown.Markdown(
+            extensions=config["markdown_extensions"],
+            extension_configs=config["mdx_configs"] or {},
+        )
+        md.convert(body)
+        found = []
+
+        def walk(tokens):
+            for token in tokens:
+                found.append((token["level"], token["id"]))
+                walk(token["children"])
+
+        walk(getattr(md, "toc_tokens", []))
+        _heading_cache[key] = found
+    return _heading_cache[key]
+
+
+def twin(fragment, written, served):
+    """The id in ``served`` of the heading standing where ``#fragment`` stands in ``written``.
+
+    Both are ``[(level, id)]`` in page order. Returns ``(id, None)``, or ``(None, why)``
+    when the link must be left as written; ``why`` is None when there is nothing to say
+    (the fragment is not a heading id, so there is no position to carry).
+    """
+    at = next((i for i, (_, anchor) in enumerate(written) if anchor == fragment), None)
+    if at is None:
+        return None, None
+    if [level for level, _ in written] != [level for level, _ in served]:
+        if len(written) != len(served):
+            return None, f"their headings do not line up ({len(written)} against {len(served)})"
+        return None, "their headings do not line up (same count, a level differs)"
+    return served[at][1], None
+
+
+def _carry(page_uri, written_uri, fragment, docs_dir, files, config):
+    """``#fragment`` as it must be written for the file this build serves, or None to leave it."""
+    if not fragment or not written_uri.endswith(".md"):
+        return None
+    served = files.get_file_from_path(written_uri)
+    if served is None or served.src_uri == written_uri or not served.src_uri.endswith(".md"):
+        return None
+    written_path, served_path = docs_dir / written_uri, Path(served.abs_src_path)
+    if not written_path.is_file() or not served_path.is_file():
+        return None
+
+    there = _headings(served_path, config)
+    anchor, why = twin(fragment, _headings(written_path, config), there)
+    said = (page_uri, written_uri, fragment)
+    # Left as written and still alive when the served file has an id of that very name.
+    if why and said not in _said and fragment not in {i for _, i in there}:
+        _said.add(said)
+        link = (f"Doc file '{page_uri}' links '{written_uri}#{fragment}' and this build serves "
+                f"'{served.src_uri}' for it: the fragment is left as written, because {why}")
+        if _lines_up_for_the_link_check(written_path, served_path):
+            # Not a translation that is behind: the check that reads the sources sees one
+            # outline in both. So one file has a line the site renders as a heading and
+            # that reading does not, and scripts/check-doc-links.py has accepted a link the
+            # site cannot carry. A warning, so `mkdocs build --strict` stops on it.
+            log.warning(
+                f"{link} on the site -- but scripts/check-doc-links.py reads the same headings "
+                "in both files and accepts this link. One of the two has a line the site "
+                "renders as a heading and github.com does not (Python-Markdown takes a line "
+                "starting `#text`, with no space after the `#`, as one): compare the two "
+                "pages' tables of contents and reword that line.")
+        else:
+            log.info(f"{link}. scripts/check-doc-links.py reports the same link.")
+    return anchor
+
+
+def _lines_up_for_the_link_check(written_path, served_path):
+    """Whether docs_tree's reading -- check-doc-links.py's -- sees one outline in both files."""
+    scripts = str(Path(__file__).resolve().parent)
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import docs_tree
+
+    def levels(path):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        return [level for level, _, _ in docs_tree.headings_of(text)]
+
+    return levels(written_path) == levels(served_path)
 
 
 def _excluder(config, docs_dir):
@@ -141,7 +293,7 @@ def _excluder(config, docs_dir):
     return excluded
 
 
-def _rewrite(line, docs_dir, page_dir, repo_url, excluded):
+def _rewrite(line, docs_dir, page_dir, repo_url, excluded, carry=None):
     # Inline code is skipped by *position*, not by slicing the line up: link text
     # is very often backticked here (``[`ReadTool`](...)``), and cutting the line
     # at the code span would tear that link in half and leave it unrewritten.
@@ -165,6 +317,11 @@ def _rewrite(line, docs_dir, page_dir, repo_url, excluded):
             # not built. Everything else stays relative and MkDocs resolves it.
             inside = excluded(resolved.as_posix())
             if inside is None:
+                carried = carry(resolved.as_posix(), anchor) if carry else None
+                if carried is None or carried == anchor:
+                    return match.group(0)
+                return f"{prefix}{path_part}#{carried}{suffix}"
+            if not repo_url:
                 return match.group(0)
             url = _github_url(repo_url, inside)
             return f"{prefix}{url}{'#' + anchor if anchor else ''}{suffix}"
@@ -175,8 +332,177 @@ def _rewrite(line, docs_dir, page_dir, repo_url, excluded):
         except ValueError:
             # Climbs above the repository itself -- leave it for the link checker.
             return match.group(0)
+        if not repo_url:
+            return match.group(0)
 
         url = _github_url(repo_url, relative.as_posix())
         return f"{prefix}{url}{'#' + anchor if anchor else ''}{suffix}"
 
     return LINK.sub(replace, line)
+
+
+# --- the self-test -----------------------------------------------------------
+#
+# A small site, built by MkDocs itself into a temporary directory with this file as
+# its hook and everything else inherited from the real mkdocs.yml -- the i18n plugin
+# and the `toc` slugify are the two things a carried id depends on, and a copy of
+# either here would be free to drift. Each case is one link, on a page that has no
+# translation (`design`) or on one half of a pair (`other`), and the href it must
+# have in the built Korean page and in the built English one. `twin()` is not asked
+# directly: what has to hold is the page the reader gets.
+
+SELF_TEST_PAGES = {
+    "index.md": "# 홈\n",
+    "guide.md": "# 가이드\n\n## 설정 방법\n\n## `call_id` 다루기\n\n## 설정 방법\n\n"
+                '<a id="옛-이름"></a>\n\n## API\n',
+    "guide.en.md": "# Guide\n\n## How to configure\n\n## Handling `call_id`\n\n"
+                   '## How to configure\n\n<a id="옛-이름"></a>\n\n## API\n',
+    "behind.md": "# 뒤처진 쌍\n\n## 새 절\n\n## 둘째\n\n## API\n",
+    "behind.en.md": "# A pair that is behind\n\n## Second\n\n## API\n",
+    # The paragraph's second line is a heading to Python-Markdown and to nothing else.
+    "stray.md": "# 어긋난 쌍\n\n## 둘째\n\n문단의 첫 줄\n#42 로 시작하는 둘째 줄\n",
+    "stray.en.md": "# A pair the site reads differently\n\n## Second\n\nfirst line\nthen #42\n",
+    "plain.md": "# 번역 없는 쪽\n\n## 제목\n",
+    "design.md": "# 설계\n\n" + "\n\n".join([
+        "[L01](guide.md#설정-방법)",
+        "[L02](guide.md#call_id-다루기)",
+        "[L03](guide.md#설정-방법_1)",
+        "[L04](guide.md#설정-방법-1)",
+        "[L05](guide.md#옛-이름)",
+        "[L06](guide.md#api)",
+        "[L07](behind.md#둘째)",
+        "[L08](behind.md#api)",
+        "[L09](stray.md#둘째)",
+        "[L10](plain.md#제목)",
+        "[L11](guide.md)",
+        "`[L12](guide.md#설정-방법)`",
+    ]) + "\n",
+    "other.md": "# 다른 문서\n\n[L13](guide.md#설정-방법)\n",
+    "other.en.md": "# Another\n\n[L14](guide.md#설정-방법)\n\n[L15](guide.en.md#how-to-configure)\n",
+}
+
+# (case, built page, link text, href in the Korean build, href in the English build).
+# None where that build's page has no such link.
+SELF_TEST_CASES = [
+    ("a Korean heading is carried to the heading at the same position",
+     "design", "L01", "../guide/#설정-방법", "../guide/#how-to-configure"),
+    ("the id written is the site's, `_` and all -- not docs_tree.slug's",
+     "design", "L02", "../guide/#call_id-다루기", "../guide/#handling-call_id"),
+    ("a repeated heading is carried under the site's `_1` numbering",
+     "design", "L03", "../guide/#설정-방법_1", "../guide/#how-to-configure_1"),
+    ("github.com's `-1` numbering is no id on the site, and is left as written",
+     "design", "L04", "../guide/#설정-방법-1", "../guide/#설정-방법-1"),
+    ("a hand-written `<a id>` is left as written",
+     "design", "L05", "../guide/#옛-이름", "../guide/#옛-이름"),
+    ("a heading with the same id in both files comes out the same",
+     "design", "L06", "../guide/#api", "../guide/#api"),
+    ("when the translation has fewer headings the fragment is left as written, not guessed",
+     "design", "L07", "../behind/#둘째", "../behind/#둘째"),
+    ("so is one the translation has under the same name, which still resolves",
+     "design", "L08", "../behind/#api", "../behind/#api"),
+    ("when only the site sees an extra heading the fragment is left as written",
+     "design", "L09", "../stray/#둘째", "../stray/#둘째"),
+    ("a link into a page with no translation is untouched",
+     "design", "L10", "../plain/#제목", "../plain/#제목"),
+    ("a link with no fragment is untouched",
+     "design", "L11", "../guide/", "../guide/"),
+    ("a link inside a code span is not a link",
+     "design", "L12", None, None),
+    ("a canonical that has a translation keeps its fragment on the Korean build",
+     "other", "L13", "../guide/#설정-방법", None),
+    ("a `*.en.md` page linking the canonical's Korean heading is carried too",
+     "other", "L14", None, "../guide/#how-to-configure"),
+    ("a `*.en.md` page linking the translation is untouched",
+     "other", "L15", None, "../guide/#how-to-configure"),
+]
+
+SELF_TEST_CODE_SPAN = "<code>[L12](guide.md#설정-방법)</code>"
+
+# What that build must say and must not: (case, log level, the link named, lines expected).
+SELF_TEST_LOG = [
+    ("a pair both readings see as out of step is said at INFO", "INFO", "behind.md#둘째'", 1),
+    ("and not as a warning -- a translation that is behind fails no build",
+     "WARNING", "behind.md#둘째'", 0),
+    ("a fragment left as written that still resolves is not mentioned", "", "behind.md#api'", 0),
+    ("a pair only the site sees as out of step is a warning -- the link check accepted it",
+     "WARNING", "stray.md#둘째'", 1),
+    ("a carried fragment is not mentioned", "", "guide.md#설정-방법'", 0),
+]
+
+
+def self_test():
+    import html
+    import subprocess
+    import tempfile
+    import urllib.parse
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp).resolve()
+        (root / "docs").mkdir()
+        for name, text in SELF_TEST_PAGES.items():
+            (root / "docs" / name).write_text(text, encoding="utf-8")
+        (root / "mkdocs.yml").write_text(
+            f"INHERIT: {_repo_root / 'mkdocs.yml'}\n"
+            "docs_dir: docs\n"
+            f"hooks:\n  - {Path(__file__).resolve()}\n",
+            encoding="utf-8")
+        # Not --strict: one case is a warning, and the built pages are read either way.
+        built = subprocess.run(
+            [sys.executable, "-m", "mkdocs", "build", "-f", str(root / "mkdocs.yml"),
+             "-d", str(root / "site")],
+            capture_output=True, text=True, encoding="utf-8",
+            env={**os.environ, "NO_COLOR": "1"})
+        said = (built.stdout + built.stderr).splitlines()
+        if built.returncode != 0:
+            print("\n".join(said))
+            print("the self-test site did not build (is docs-requirements.txt installed?)")
+            return 1
+
+        def href(page, text, locale):
+            path = root / "site" / locale / page / "index.html"
+            found = re.findall(rf'<a href="([^"]*)">{text}</a>', path.read_text(encoding="utf-8"))
+            return html.unescape(urllib.parse.unquote(found[0])) if len(found) == 1 else None
+
+        hrefs = {(page, text): (href(page, text, ""), href(page, text, "en"))
+                 for _, page, text, _, _ in SELF_TEST_CASES}
+        english_design = (root / "site/en/design/index.html").read_text(encoding="utf-8")
+
+    failed = 0
+    print(f"self-test over {len(SELF_TEST_CASES)} link(s) in a two-locale site MkDocs built")
+    for name, page, text, korean, english in SELF_TEST_CASES:
+        got = hrefs[page, text]
+        ok = got == (korean, english)
+        failed += not ok
+        print(f"  {'ok  ' if ok else 'FAIL'} {name}")
+        print(f"         /: {got[0]}    /en/: {got[1]}")
+
+    # "Not a link" would also be true of a code span whose text had been rewritten.
+    ok = SELF_TEST_CODE_SPAN in english_design
+    failed += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'} and the code span reads on /en/ as it was written")
+    print(f"         {SELF_TEST_CODE_SPAN} {'is' if ok else 'is not'} on the page")
+
+    print()
+    print(f"self-test over {len(SELF_TEST_LOG)} thing(s) that build must say, or must not")
+    for name, level, link, expected in SELF_TEST_LOG:
+        got = sum(1 for line in said
+                  if line.startswith(level) and "and this build serves" in line and link in line)
+        ok = got == expected
+        failed += not ok
+        print(f"  {'ok  ' if ok else 'FAIL'} {name}")
+        print(f"         {got} {level or 'log'} line(s) naming {link[:-1]}")
+
+    print()
+    if failed:
+        print(f"{failed} case(s) failed: this hook no longer carries a fragment across a "
+              "translation the way its docstring says (FRAGMENTS ACROSS A TRANSLATION). Say "
+              "there what it does now and why, then change the expected answer here.")
+        return 1
+    print("every fragment above is still carried, or left as written, as this hook's docstring says")
+    return 0
+
+
+if __name__ == "__main__":
+    if "--self-test" in sys.argv[1:]:
+        sys.exit(self_test())
+    sys.exit("usage: python3 scripts/mkdocs_github_links.py --self-test")

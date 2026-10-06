@@ -52,6 +52,13 @@ jobs:
       - name: Install documentation toolchain
         run: pip install -r docs-requirements.txt
 
+      # The hook also carries a fragment written against a canonical page over to the
+      # translation the site serves in its place (backlog T-10). This builds a small
+      # two-locale site with the real mkdocs.yml inherited and reads the built hrefs --
+      # it needs the toolchain, so it runs here and not in build.yml's docs-links job.
+      - name: Self-test the link hook
+        run: python3 scripts/mkdocs_github_links.py --self-test
+
       # --strict turns MkDocs' link warnings into failures. It is only safe to
       # ask for that because scripts/mkdocs_github_links.py rewrites the ~200
       # links that intentionally point outside docs/ (at source files, at the
