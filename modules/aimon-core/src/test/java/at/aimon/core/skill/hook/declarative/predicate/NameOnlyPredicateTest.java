@@ -109,4 +109,51 @@ class NameOnlyPredicateTest {
         assertThat(p.test("Tool.Xyz", EMPTY)).isTrue();
         assertThat(p.test("ToolAX", EMPTY)).isFalse();
     }
+
+    @Test
+    void compileGlob_matchesWhatTheNaivePatternMatched() {
+        // The naive translation, `*` to `.*`, is the meaning of a glob here. Every glob and text over a small alphabet,
+        // up to a length where each is enumerated, must get the same answer from both.
+        final char[] alphabet = {'a', 'b', '*'};
+        final java.util.List<String> globs = wordsUpTo(alphabet, 5);
+        final java.util.List<String> texts = wordsUpTo(new char[]{'a', 'b'}, 6);
+        for (String glob : globs) {
+            final java.util.regex.Pattern naive = java.util.regex.Pattern
+                    .compile(java.util.Arrays.stream(glob.split("\\*", -1)).map(java.util.regex.Pattern::quote)
+                            .collect(java.util.stream.Collectors.joining(".*")), java.util.regex.Pattern.DOTALL);
+            final java.util.regex.Pattern compiled = NameOnlyPredicate.compileGlob(glob);
+            for (String text : texts) {
+                assertThat(compiled.matcher(text).matches()).as("glob '%s' on '%s'", glob, text)
+                        .isEqualTo(naive.matcher(text).matches());
+            }
+        }
+    }
+
+    @Test
+    void compileGlob_doesNotBacktrackIntoAnEarlierStar() {
+        // `.*a.*a.*b` tried every placement of the two a's: 8,000 characters did not finish in a hundred seconds.
+        final String text = "a".repeat(65_536);
+        final long start = System.nanoTime();
+
+        assertThat(NameOnlyPredicate.compileGlob("*a*a*b").matcher(text).matches()).isFalse();
+        assertThat(NameOnlyPredicate.compileGlob("*a*a*a").matcher(text).matches()).isTrue();
+        assertThat(NameOnlyPredicate.compileGlob("a*\n*a").matcher("a\n" + text).matches()).isTrue();
+
+        assertThat(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)).isLessThan(2_000L);
+    }
+
+    private static java.util.List<String> wordsUpTo(char[] alphabet, int maxLength) {
+        final java.util.List<String> words = new java.util.ArrayList<>(java.util.List.of(""));
+        int from = 0;
+        for (int length = 1; length <= maxLength; length++) {
+            final int to = words.size();
+            for (int i = from; i < to; i++) {
+                for (char c : alphabet) {
+                    words.add(words.get(i) + c);
+                }
+            }
+            from = to;
+        }
+        return words;
+    }
 }

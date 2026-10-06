@@ -95,10 +95,16 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   (`HookExecutionPolicy#failsClosedWithoutVerdict`): a hook the pool refused to run
   (`RejectedExecutionException` — saturated or shut down) and a hook whose body threw. A declarative
   guard catches what its *action* throws itself, so what arrives here is from outside that — the
-  matcher predicate, an `Error` (the Bash sub-command splitter recurses per nested `$(`, so the model
-  picks the depth). Both went through `onException`, i.e. success. This reads only the hook's own
-  declaration and never falls back to the policy's `timeoutBehavior()` — a policy may pair a
-  `FAIL_CLOSED` timeout with a lenient mapper, and a hook that declares nothing keeps the mapper. The
+  matcher predicate, an `Error`. Both went through `onException`, i.e. success. (The matcher that
+  used to die this way was the Bash sub-command splitter, one stack frame per nested `$(`. It now
+  declines to split a command over `MAX_NESTING_DEPTH` / `MAX_SPLIT_LENGTH` and answers *match*, so
+  the hook is asked. Do not make it answer *no match* — one more level of nesting would then step
+  around every `Bash(...)` matcher — or throw, which a `postTool` / `failOpen` hook reads as a
+  pass. The same goes for text it cannot pair up: an unpaired quote is read as a character and
+  splitting goes on, with the whole command kept as a piece too; a change there must never make
+  the matcher match *less*.) This reads only the hook's own declaration and never falls back to
+  the policy's `timeoutBehavior()` — a policy may pair a `FAIL_CLOSED` timeout with a lenient
+  mapper, and a hook that declares nothing keeps the mapper. The
   block reason is a fixed string plus, for a throw, the throwable's simple type name (the deny-reason
   rule below). Rejection answers at once, so a pool closed by teardown (`TeardownPhase.HOOK_EXECUTOR`,
   after `SESSIONS` and `AGENT_RUNTIMES`) cannot make a caller wait; the events an orderly shutdown

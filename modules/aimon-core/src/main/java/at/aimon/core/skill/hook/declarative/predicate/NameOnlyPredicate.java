@@ -106,23 +106,45 @@ public final class NameOnlyPredicate implements ToolInputPredicate {
      *
      * @param glob
      *            The glob pattern (must not be null)
+     *
+     *            <p>
+     *            The text matched is often written by the model (a Bash command, a path), so the pattern must not
+     *            backtrack into
+     *            an earlier {@code *} when a later literal fails: {@code .*a.*a.*b} against a long run of {@code a}
+     *            tries every
+     *            way of placing each one. A literal between two {@code *} is therefore found at its <em>first</em>
+     *            occurrence and
+     *            kept (an atomic group around a reluctant {@code .*?}) &mdash; the earliest place leaves the most text
+     *            for what
+     *            follows, so no match is lost &mdash; and only the last literal, which has to end the text, is searched
+     *            for from
+     *            the end.
+     *
      * @return The compiled {@link Pattern}, anchored implicitly via {@link java.util.regex.Matcher#matches()}
      */
     public static Pattern compileGlob(String glob) {
         Objects.requireNonNull(glob, "Glob cannot be null");
-        final StringBuilder regex = new StringBuilder(glob.length() + 8);
-        int literalStart = 0;
-        for (int i = 0; i < glob.length(); i++) {
+        final int firstStar = glob.indexOf('*');
+        if (firstStar < 0) {
+            return Pattern.compile(Pattern.quote(glob), Pattern.DOTALL);
+        }
+        final int lastStar = glob.lastIndexOf('*');
+        final StringBuilder regex = new StringBuilder(glob.length() + 16);
+        if (firstStar > 0) {
+            regex.append(Pattern.quote(glob.substring(0, firstStar)));
+        }
+        int literalStart = firstStar + 1;
+        for (int i = literalStart; i <= lastStar; i++) {
             if (glob.charAt(i) == '*') {
                 if (i > literalStart) {
-                    regex.append(Pattern.quote(glob.substring(literalStart, i)));
+                    regex.append("(?>.*?").append(Pattern.quote(glob.substring(literalStart, i))).append(')');
                 }
-                regex.append(".*");
                 literalStart = i + 1;
             }
         }
-        if (literalStart < glob.length()) {
-            regex.append(Pattern.quote(glob.substring(literalStart)));
+        regex.append(".*");
+        if (lastStar + 1 < glob.length()) {
+            regex.append(Pattern.quote(glob.substring(lastStar + 1)));
         }
         return Pattern.compile(regex.toString(), Pattern.DOTALL);
     }

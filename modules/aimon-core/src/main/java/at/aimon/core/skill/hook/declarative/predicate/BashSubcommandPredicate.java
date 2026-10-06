@@ -5,6 +5,9 @@ import java.util.List;
 import java.util.Objects;
 import java.util.regex.Pattern;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.skill.hook.declarative.ToolInputPredicate;
 
@@ -32,9 +35,36 @@ import at.aimon.core.skill.hook.declarative.ToolInputPredicate;
  * </ul>
  *
  * <p>
- * If the command cannot be tokenized cleanly (e.g. an unterminated quote), the predicate falls back to matching the
- * untokenized command as a single sub-command. This is best-effort whitelisting — callers that need defense-in-depth
- * should layer additional guards (e.g. tool-level permission rules).
+ * This is best-effort whitelisting — callers that need defense-in-depth should layer additional guards (e.g.
+ * tool-level permission rules).
+ *
+ * <h2>Text that does not pair up</h2>
+ *
+ * <p>
+ * A quote, backtick or {@code $(} with no partner is read as the character it is, and splitting goes on. It is common
+ * and harmless to a shell &mdash; the apostrophe of {@code echo "it's"}, which is no quote inside double quotes, or
+ * one in a comment or a here-document &mdash; and giving up on the whole command there would hide every command after
+ * it from the matcher. The unsplit command is kept as a sub-command of its own, so nothing that matched as a whole
+ * stops matching.
+ *
+ * <p>
+ * A comment is read <em>as well</em>, not instead. Two apostrophes in two comments pair up and quote the lines between
+ * them, so a command with a {@code #} is split a second time with the quotes and substitutions of each comment
+ * ({@code #} at the start of a word, to the end of the line) left unread, and the pieces of both readings are matched.
+ * Substituting the second reading for the first would be wrong wherever this takes a {@code #} for a comment and a
+ * shell does not &mdash; inside double quotes, after an escaped space &mdash; because the {@code $(...)} after it,
+ * which the shell runs, would go unread.
+ *
+ * <h2>Commands that are not split</h2>
+ *
+ * <p>
+ * The command is text the model wrote, and the splitter recurses into every quoted block and substitution, so two
+ * limits bound what it is asked to do: a command longer than {@link #MAX_SPLIT_LENGTH} characters, one nested
+ * deeper than {@link #MAX_NESTING_DEPTH} levels, or one that leaves more than {@link #MAX_UNPAIRED} quotes or
+ * substitutions open, is not split at all. For such a command the predicate answers
+ * {@code true} whatever the pattern. It cannot tell that no sub-command matches, and a matcher only decides whether a
+ * hook is asked &mdash; so the hook is asked, with the whole command as its input. Answering {@code false} would let a
+ * command step around every {@code Bash(...)} matcher by being nested one level too deep.
  *
  * <h2>Glob grammar</h2>
  *
@@ -52,6 +82,23 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
     public static final String BASH_TOOL_NAME = "Bash";
     /** Conventional input field carrying the shell command. */
     public static final String COMMAND_FIELD = "command";
+
+    private static final Logger log = LoggerFactory.getLogger(BashSubcommandPredicate.class);
+
+    /**
+     * How many levels of quoting and substitution the splitter follows. Each level is a stack frame and a copy of what
+     * is left of the command, so without a limit the depth of the stack is chosen by whoever wrote the command.
+     */
+    static final int MAX_NESTING_DEPTH = 64;
+
+    /**
+     * The longest command the splitter takes apart, in characters. Twice what the {@code Bash} tool agrees to run, so
+     * every command that can run is split; the predicate is asked before the tool has checked its own limit.
+     */
+    static final int MAX_SPLIT_LENGTH = 65_536;
+
+    /** How many quotes, backticks and {@code $(} with no partner the splitter reads past in one command. */
+    static final int MAX_UNPAIRED = 64;
 
     private final String pattern;
     private final Pattern compiledGlob;
@@ -92,7 +139,16 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
         if (!(raw instanceof String command) || command.isBlank()) {
             return false;
         }
-        for (String sub : splitSubcommands(command)) {
+        final List<String> subcommands;
+        try {
+            subcommands = splitSubcommands(command);
+        } catch (UnsplittableCommand unsplittable) {
+            // The command is not logged: it is as long as its author liked.
+            log.warn("Bash command not split ({}, {} characters); treating it as matching Bash({})",
+                    unsplittable.getMessage(), command.length(), pattern);
+            return true;
+        }
+        for (String sub : subcommands) {
             final String trimmed = sub.strip();
             if (!trimmed.isEmpty() && compiledGlob.matcher(trimmed).matches()) {
                 return true;
@@ -116,18 +172,27 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
      * @param command
      *            The raw shell command (must not be null)
      * @return List of sub-command segments (never null, never empty)
+     * @throws UnsplittableCommand
+     *             if the command is longer than {@link #MAX_SPLIT_LENGTH}, nested deeper than
+     *             {@link #MAX_NESTING_DEPTH}, or leaves more than {@link #MAX_UNPAIRED} quotes or substitutions open
      */
     static List<String> splitSubcommands(String command) {
         Objects.requireNonNull(command, "Command cannot be null");
-        final List<String> result = new ArrayList<>();
-        try {
-            tokenize(command, result);
-        } catch (TokenizeFailure failure) {
-            result.clear();
-            result.add(command);
-            return result;
+        if (command.length() > MAX_SPLIT_LENGTH) {
+            throw new UnsplittableCommand("longer than " + MAX_SPLIT_LENGTH + " characters");
         }
-        if (result.isEmpty()) {
+        final List<String> result = new ArrayList<>();
+        // Not paired up somewhere: the pieces are a guess, so the command as written is matched as well.
+        final int[] unpaired = {0};
+        tokenize(command, result, 0, unpaired, false);
+        if (command.indexOf('#') >= 0) {
+            // Added to the first reading, never in place of it: see the class comment.
+            final int[] unpairedWithComments = {0};
+            final List<String> withComments = new ArrayList<>();
+            tokenize(command, withComments, 0, unpairedWithComments, true);
+            result.addAll(withComments);
+        }
+        if (unpaired[0] > 0 || result.isEmpty()) {
             result.add(command);
         }
         return result;
@@ -135,15 +200,34 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
 
     /**
      * Tokenizes the command string into top-level sub-commands and the inner commands of any backtick / {@code $()}
-     * substitutions encountered.
+     * substitutions encountered. {@code depth} is how many blocks enclose {@code command}, 0 for the command itself.
+     * {@code unpaired} counts, across all levels, the quotes, backticks and {@code $(} that had no partner and were
+     * read as plain characters. With {@code readComments}, the quotes and substitutions of a comment are plain
+     * characters too.
      */
-    @SuppressWarnings({"checkstyle:CyclomaticComplexity", "checkstyle:NestedIfDepth"})
-    private static void tokenize(String command, List<String> out) {
+    @SuppressWarnings({"checkstyle:CyclomaticComplexity", "checkstyle:NestedIfDepth", "checkstyle:NPathComplexity",
+            "checkstyle:MethodLength"})
+    private static void tokenize(String command, List<String> out, int depth, int[] unpaired, boolean readComments) {
+        if (depth > MAX_NESTING_DEPTH) {
+            throw new UnsplittableCommand("nested deeper than " + MAX_NESTING_DEPTH + " levels");
+        }
         final StringBuilder current = new StringBuilder();
         final int len = command.length();
+        boolean inComment = false;
         int i = 0;
         while (i < len) {
             final char c = command.charAt(i);
+            if (c == '\n') {
+                inComment = false;
+            } else if (readComments && c == '#' && startsWord(command, i)) {
+                inComment = true;
+            }
+            if (inComment && c != ';' && c != '|' && c != '&') {
+                // Quotes and substitutions in a comment are text. Operators are left to the branches below.
+                current.append(c);
+                i++;
+                continue;
+            }
             if (c == '\\' && i + 1 < len) {
                 current.append(c).append(command.charAt(i + 1));
                 i += 2;
@@ -151,45 +235,43 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
             }
             if (c == '\'') {
                 final int end = command.indexOf('\'', i + 1);
-                if (end < 0) {
-                    throw new TokenizeFailure();
+                if (end >= 0) {
+                    current.append(command, i, end + 1);
+                    i = end + 1;
+                    continue;
                 }
-                current.append(command, i, end + 1);
-                i = end + 1;
-                continue;
-            }
-            if (c == '"') {
+                countUnpaired(unpaired);
+            } else if (c == '"') {
                 final int end = findMatchingDoubleQuote(command, i + 1);
-                if (end < 0) {
-                    throw new TokenizeFailure();
+                if (end >= 0) {
+                    // Add the verbatim quoted block to the current segment, but also recurse into its body so that
+                    // patterns like `bash -c "git push"` can match the inner `git push` as a sub-command.
+                    current.append(command, i, end + 1);
+                    tokenize(command.substring(i + 1, end), out, depth + 1, unpaired, readComments);
+                    i = end + 1;
+                    continue;
                 }
-                // Add the verbatim quoted block to the current segment, but also recurse into its body so that
-                // patterns like `bash -c "git push"` can match the inner `git push` as a sub-command.
-                current.append(command, i, end + 1);
-                tokenize(command.substring(i + 1, end), out);
-                i = end + 1;
-                continue;
-            }
-            if (c == '`') {
+                countUnpaired(unpaired);
+            } else if (c == '`') {
                 final int end = command.indexOf('`', i + 1);
-                if (end < 0) {
-                    throw new TokenizeFailure();
+                if (end >= 0) {
+                    current.append(command, i, end + 1);
+                    tokenize(command.substring(i + 1, end), out, depth + 1, unpaired, readComments);
+                    i = end + 1;
+                    continue;
                 }
-                current.append(command, i, end + 1);
-                tokenize(command.substring(i + 1, end), out);
-                i = end + 1;
-                continue;
-            }
-            if (c == '$' && i + 1 < len && command.charAt(i + 1) == '(') {
+                countUnpaired(unpaired);
+            } else if (c == '$' && i + 1 < len && command.charAt(i + 1) == '(') {
                 final int end = findMatchingParen(command, i + 2);
-                if (end < 0) {
-                    throw new TokenizeFailure();
+                if (end >= 0) {
+                    current.append(command, i, end + 1);
+                    tokenize(command.substring(i + 2, end), out, depth + 1, unpaired, readComments);
+                    i = end + 1;
+                    continue;
                 }
-                current.append(command, i, end + 1);
-                tokenize(command.substring(i + 2, end), out);
-                i = end + 1;
-                continue;
+                countUnpaired(unpaired);
             }
+            // An opener with no partner falls through here and is read as the character it is.
             // Logical / pipe / sequencing operators split sub-commands.
             if (c == '&' && i + 1 < len && command.charAt(i + 1) == '&') {
                 flushSegment(current, out);
@@ -210,6 +292,25 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
             i++;
         }
         flushSegment(current, out);
+    }
+
+    /**
+     * Each opener without a partner cost a scan to the end of the command to find that out, so their number is
+     * bounded like the depth is.
+     */
+    private static void countUnpaired(int[] unpaired) {
+        if (++unpaired[0] > MAX_UNPAIRED) {
+            throw new UnsplittableCommand("more than " + MAX_UNPAIRED + " quotes or substitutions left open");
+        }
+    }
+
+    /** Whether the character at {@code i} begins a word: the only place a {@code #} starts a comment. */
+    private static boolean startsWord(String command, int i) {
+        if (i == 0) {
+            return true;
+        }
+        final char before = command.charAt(i - 1);
+        return Character.isWhitespace(before) || before == ';' || before == '|' || before == '&';
     }
 
     private static void flushSegment(StringBuilder current, List<String> out) {
@@ -279,12 +380,12 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
         return "BashSubcommandPredicate{Bash(" + pattern + ")}";
     }
 
-    /** Internal sentinel signalling a tokenization failure (unterminated quote / paren). */
-    private static final class TokenizeFailure extends RuntimeException {
+    /** Signals a command the splitter declines to take apart; the message names the limit it is over. */
+    static final class UnsplittableCommand extends RuntimeException {
         private static final long serialVersionUID = 1L;
 
-        TokenizeFailure() {
-            super(null, null, false, false);
+        UnsplittableCommand(String limit) {
+            super(limit, null, false, false);
         }
     }
 }

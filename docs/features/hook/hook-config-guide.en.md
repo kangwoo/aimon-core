@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: 2c098b7b
+source_commit: 95eba66e
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -251,7 +251,12 @@ The grammar is exactly what `PredicateParser` accepts: a **tool name**, **`Tool(
   `$(…)` and double quotes are looked at as pieces of their own (the `git push` in `bash -c "git push"`). The matcher
   matches when any one piece matches the glob. It **compares text**; it does not interpret the shell — `git  push` (two
   spaces) and `sudo git push` are not caught by `git push*`. A guard that has to hold against evasion should not lean
-  on the glob: have a `command` handler inspect `tool_input.command` from stdin itself.
+  on the glob: have a `command` handler inspect `tool_input.command` from stdin itself. A quote, backtick or `$(` with
+  no partner is read as a character and splitting goes on — the `rm -rf x` in `echo "it's"; rm -rf x` is a piece (the
+  whole of such a command is looked at as one piece as well). Splitting has limits: a `command` longer than 65,536
+  characters, nested more than 64 levels deep, or with more than 64 of those left open, is not split and **matches
+  every `Bash(…)` glob** — when the pieces cannot be looked at, "no piece matches" is not an answer the matcher can
+  give, so the handler is asked (a `deny` blocks).
 - **The tools that take `Tool(glob)`** are `Bash` and the eight path tools (`Read`, `Edit`, `Write`, `MultiEdit`, `Glob`,
   `Grep`, `LS`, `NotebookEdit`), and no others. A path tool looks at the path string exactly as the model passed it
   (`file_path` for `Read`, `Edit`, `Write` and `MultiEdit`; `pattern` then `path` for `Glob`; `path` then `pattern` for
