@@ -18,15 +18,13 @@ import at.aimon.core.subagent.Subagent;
  */
 public final class SubagentLlmDefaults {
 
-    private static final int DEFAULT_MAX_TOKENS = 4096;
-
     private SubagentLlmDefaults() {
     }
 
     /**
      * Resolves the model for a subagent: the subagent's own {@code model} name when set, otherwise the default model's
-     * name, merged with the default's sampling parameters and max-tokens. This is the model the ReAct path sends to the
-     * LLM.
+     * name, merged with the default's sampling parameters and max-tokens, each only when the default states it. This is
+     * the model the ReAct path sends to the LLM.
      *
      * <p>
      * When neither names a model, the result carries no name, and the client sends its own default model — exactly as
@@ -51,6 +49,12 @@ public final class SubagentLlmDefaults {
      * model name sent as written — nothing here resolves an alias. When none is present the result carries no name,
      * and the client applies its own default model at request time rather than a name invented here. Max-tokens and
      * the sampling parameters are always inherited from {@code defaultModel} — only the model name is overridden.
+     *
+     * <p>
+     * <b>Max-tokens the spawning agent does not state stays unset</b>, for the same reason as the sampling parameters
+     * below: the client then applies the limit it was configured with ({@code AnthropicConfig} and
+     * {@code OpenAIConfig} both fall back to their own {@code maxTokens}), as it does for the parent's own requests. A
+     * literal here used to pin every such fork to 4096 output tokens whatever the client had been built with.
      *
      * <p>
      * <b>A sampling parameter the spawning agent does not state stays unset.</b> {@code temperature}, {@code topP} and
@@ -91,9 +95,9 @@ public final class SubagentLlmDefaults {
             modelName = defaultModel.getName().orElse(null);
         }
         final LlmModel.Builder model = LlmModel.builder().name(modelName)
-                .maxTokens(defaultModel.getMaxTokens().orElse(DEFAULT_MAX_TOKENS))
                 .reasoningEffort(defaultModel.getReasoningEffort().orElse(null))
                 .reasoningSummary(defaultModel.getReasoningSummary().orElse(null));
+        defaultModel.getMaxTokens().ifPresent(model::maxTokens);
         defaultModel.getTemperature().ifPresent(model::temperature);
         defaultModel.getTopP().ifPresent(model::topP);
         defaultModel.getPresencePenalty().ifPresent(model::presencePenalty);
