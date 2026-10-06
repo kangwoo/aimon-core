@@ -528,8 +528,7 @@ public class ScheduledTaskManager {
     }
 
     /**
-     * Puts back what a restart took: schedules every stored, enabled task the scheduler is not already holding, and
-     * hands the quota manager the stored tasks to count.
+     * Puts back what a restart took: schedules every stored, enabled task the scheduler is not already holding.
      *
      * <p>
      * A scheduled task has two halves — the record in the {@link ScheduledTaskRepository} and the trigger in the
@@ -542,34 +541,56 @@ public class ScheduledTaskManager {
      * <p>
      * A task the scheduler refuses is logged and skipped rather than allowed to stop the rest: one expression the
      * installed backend cannot express must not leave every other task unscheduled. A repository that cannot be read
-     * is different — that throws, because starting with nothing scheduled and no sign of it is the failure a durable
-     * repository was supplied to prevent.
+     * at all is different — that throws. A repository that can be read but holds records this build cannot decode
+     * leaves those out of its answer (that is the repository's choice, and it logs them); they are not scheduled.
      *
      * <p>
-     * Idempotent: a second call finds every trigger in place, and {@link TaskQuotaManager#restoreUsage} replaces
-     * counts rather than adding to them.
+     * Idempotent: a second call finds every trigger in place.
      *
      * <p>
-     * <b>Each node rebuilds its own triggers.</b> With a scheduler that is not shared between nodes, every node that
-     * starts over the same repository schedules every task, and each fires it. That is what a clustered scheduler is
-     * for; a {@link ScheduledExecutionGuard} that sees the shared store is the second line.
+     * <b>The fires missed while the process was down are not made up</b> by the in-memory scheduler, which computes
+     * the next fire from now. And a task bound to a runtime that is created lazily is scheduled here before that
+     * runtime exists; its fires fail until the runtime is registered.
+     *
+     * <p>
+     * <b>Each node rebuilds its own triggers.</b> With a scheduler that is not shared between nodes
+     * ({@link TaskScheduler#isClusterWide()}), every node that calls this over one repository schedules every task,
+     * and each fires it. {@link SchedulingEngine#start()} does not call this on such a node — see
+     * {@link SchedulingEngineBuilder#multiNode(boolean)}.
      *
      * @return how many tasks were scheduled by this call
      */
     public int rehydrate() {
-        quotaManager.restoreUsage(taskRepository.findAll().stream().map(ScheduledTask::getOwner).toList());
+        return scheduleStored(readStoredEnabled());
+    }
 
+    /** The read half of {@link #rehydrate()}, apart so the engine can do it before it starts the scheduler. */
+    List<ScheduledTask> readStoredEnabled() {
+        return taskRepository.findByEnabledTrue();
+    }
+
+    /** The scheduling half of {@link #rehydrate()}; needs a running scheduler. */
+    int scheduleStored(List<ScheduledTask> stored) {
         int scheduled = 0;
-        for (ScheduledTask task : taskRepository.findByEnabledTrue()) {
+        for (ScheduledTask task : stored) {
+            final ScheduledTaskId taskId = task.getId();
             try {
-                if (taskScheduler.exists(task.getId())) {
+                if (taskScheduler.exists(taskId)) {
                     continue;
                 }
                 scheduleTask(task);
+                // The list is a snapshot, and a cancel or a disable may have landed since it was read: both
+                // unschedule first and write second, so they found nothing to unschedule. Without this look the
+                // trigger just created would outlive its task — for good, in a job store that survives restarts,
+                // since no later pass visits a task the repository no longer lists.
+                if (taskRepository.findById(taskId).filter(ScheduledTask::isEnabled).isEmpty()) {
+                    taskScheduler.unschedule(taskId);
+                    continue;
+                }
                 scheduled++;
             } catch (RuntimeException e) {
-                log.warn("Stored task '{}' could not be scheduled at start and will not fire until it is registered"
-                        + " again or the engine restarts: {}", task.getId(), e.getMessage(), e);
+                log.warn("Stored task '{}' could not be scheduled at start and will not fire until it is disabled and"
+                        + " enabled again or the engine restarts: {}", taskId, e.getMessage(), e);
             }
         }
         if (scheduled > 0) {
@@ -620,13 +641,12 @@ public class ScheduledTaskManager {
 
             final RoutineResult result = routineExecutor.execute(task);
 
-            // Update last executed time. Conditional, not a blind save: the task can be cancelled while this run is
-            // in flight — that is now the normal case rather than a rare one, since cancelling interrupts the run —
-            // and a plain save would recreate the record cancel() just deleted. What that leaves behind is an
-            // unscheduled task that never fires again yet is still listed and still found by id, with its quota unit
-            // already refunded. A false here means the task is gone, so the run's outcome has nowhere to go.
-            final ScheduledTask updatedTask = task.withLastExecutedAt(Instant.now());
-            if (!taskRepository.updateIfPresent(updatedTask)) {
+            // Record the run. Conditional, not a blind save: the task can be cancelled while this run is in flight —
+            // that is now the normal case rather than a rare one, since cancelling interrupts the run — and a plain
+            // save would recreate the record cancel() just deleted. And narrow, not the copy read above: writing the
+            // whole task back would undo a disable that landed mid-run, and the engine would schedule it again at the
+            // next start. A false here means the task is gone, so the run's outcome has nowhere to go.
+            if (!taskRepository.recordExecution(taskId, Instant.now())) {
                 log.info("Task '{}' was deleted while its run was in progress; last-executed and history writes "
                         + "skipped", taskId);
                 return;

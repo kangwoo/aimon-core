@@ -1,5 +1,6 @@
 package at.aimon.session.mongodb;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -15,6 +16,7 @@ import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.ReplaceOptions;
+import com.mongodb.client.model.Updates;
 
 import at.aimon.core.base.Principal;
 import at.aimon.core.scheduling.ScheduledTask;
@@ -40,9 +42,9 @@ import at.aimon.session.mongodb.internal.ScheduledTaskDocumentCodec;
  * <p>
  * A scheduled task also needs a trigger, and that lives in the {@code TaskScheduler}. With the default in-memory
  * scheduler the engine rebuilds the triggers from this repository when it starts
- * ({@code ScheduledTaskManager.rehydrate}), which is enough for one node. Several nodes over one repository each
- * rebuild their own and each fire every task; that needs a clustered scheduler. Execution history is a separate
- * repository and is not stored here.
+ * ({@code ScheduledTaskManager.rehydrate}), which is enough for one node. On one node of several it does that only if
+ * the scheduler's triggers are shared by the deployment or an execution guard was supplied — see
+ * {@code SchedulingEngineBuilder.multiNode}. Execution history is a separate repository and is not stored here.
  *
  * <h2>Unreadable documents</h2>
  *
@@ -50,7 +52,21 @@ import at.aimon.session.mongodb.internal.ScheduledTaskDocumentCodec;
  * A document this build cannot decode — written by hand, or by a build with a field this one does not know how to
  * read — is skipped with a warning by the queries that return lists, so that one bad record does not take every
  * other task's schedule with it at start. {@link #findById} throws instead: the caller asked for that task, and
- * "absent" would be a wrong answer.
+ * "absent" would be a wrong answer. {@link #existsById} and {@link #countByOwner} read the stored fields and so
+ * still see it.
+ *
+ * <p>
+ * <b>The consequence is that such a task cannot be managed through the scheduling API.</b> Its owner does not see it
+ * listed, and cancel, interrupt and enable/disable all read it by id and fail. It still counts against the owner's
+ * quota. Removing it is an operator's job, in the database. An unknown <em>extra</em> field is not this case: it is
+ * ignored on read and kept on {@link #recordExecution}, though {@link #save} and {@link #updateIfPresent} replace the
+ * whole document and drop it.
+ *
+ * <h2>One collection, one application</h2>
+ *
+ * <p>
+ * Nothing in a document says which application wrote it. Two applications pointed at the same collection each
+ * schedule the other's tasks and fail them at every fire; give each its own collection name.
  *
  * <p>
  * The collection and its indexes come from {@code db/mongodb/init.js}; the runtime runs no DDL. The
@@ -111,6 +127,20 @@ public final class MongoScheduledTaskRepository implements ScheduledTaskReposito
     }
 
     @Override
+    public boolean recordExecution(ScheduledTaskId taskId, Instant executedAt) {
+        Objects.requireNonNull(taskId, "Task ID cannot be null");
+        Objects.requireNonNull(executedAt, "Execution time cannot be null");
+        try {
+            // One field, set in place. The rest of the document — including anything a newer build wrote that this one
+            // does not know, and an "enabled" that changed while the run was in flight — is left exactly as stored.
+            return collection.updateOne(byId(taskId), Updates.set(ScheduledTaskDocumentCodec.F_LAST_EXECUTED_AT,
+                    ScheduledTaskDocumentCodec.encodeInstant(executedAt))).getMatchedCount() > 0;
+        } catch (MongoException e) {
+            throw new SchedulingException("Mongo error recording the run of task '" + taskId + "'", e);
+        }
+    }
+
+    @Override
     public Optional<ScheduledTask> findById(ScheduledTaskId taskId) {
         Objects.requireNonNull(taskId, "Task ID cannot be null");
         final Document doc;
@@ -143,6 +173,17 @@ public final class MongoScheduledTaskRepository implements ScheduledTaskReposito
     public List<ScheduledTask> findByOwner(Principal owner) {
         Objects.requireNonNull(owner, "Owner cannot be null");
         return query(ownedBy(owner));
+    }
+
+    @Override
+    public int countByOwner(Principal owner) {
+        Objects.requireNonNull(owner, "Owner cannot be null");
+        try {
+            // Counted on the stored fields, so a document this build cannot decode still counts against its owner.
+            return Math.toIntExact(collection.countDocuments(ownedBy(owner)));
+        } catch (MongoException e) {
+            throw new SchedulingException("Mongo error counting the tasks of " + owner, e);
+        }
     }
 
     @Override

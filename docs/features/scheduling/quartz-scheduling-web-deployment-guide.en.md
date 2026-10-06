@@ -24,7 +24,7 @@ For the design background, see the following documents.
 | Situation | InMemory | Quartz (JDBC + cluster) |
 |---|---|---|
 | Several nodes | The same cron **fires on every node** | A DB lock keeps it on one node |
-| A node restarts | Registered tasks are lost | Recovered from the JDBC JobStore |
+| A node restarts | The triggers are lost. If the task records are in a durable `ScheduledTaskRepository`, a single node schedules them again when it starts | The triggers are recovered from the JDBC JobStore. **The task records are a separate matter** — with an in-memory `ScheduledTaskRepository` the recovered triggers fire tasks that no longer exist |
 | A node fails | The tasks stop | Another node takes over automatically |
 | A missed firing | Ignored | Handled according to the misfire policy |
 

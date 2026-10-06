@@ -11,7 +11,7 @@ import at.aimon.core.agent.DefaultAgentRuntimeRegistry;
 import at.aimon.core.base.ExternallyManaged;
 import at.aimon.core.scheduling.event.ScheduledTaskEventPublisher;
 import at.aimon.core.scheduling.event.SimpleScheduledTaskEventPublisher;
-import at.aimon.core.scheduling.quota.DefaultTaskQuotaManager;
+import at.aimon.core.scheduling.quota.StoredTaskQuotaManager;
 import at.aimon.core.scheduling.quota.TaskQuotaManager;
 import at.aimon.core.scheduling.repository.InMemoryScheduledTaskExecutionHistoryRepository;
 import at.aimon.core.scheduling.repository.InMemoryScheduledTaskRepository;
@@ -60,6 +60,7 @@ public final class SchedulingEngineBuilder {
     @ExternallyManaged
     private AgentRuntimeRegistry agentRuntimeRegistry;
     private int defaultMaxQuota = 10;
+    private boolean multiNode;
 
     private SchedulingEngineBuilder() {
     }
@@ -233,6 +234,24 @@ public final class SchedulingEngineBuilder {
     }
 
     /**
+     * Says this engine is one node of several that share the task repository.
+     *
+     * <p>
+     * It changes one thing: whether {@link SchedulingEngine#start()} schedules the tasks it finds stored. On a single
+     * node it always does. On one of several it does only if the scheduler's triggers are shared by the deployment
+     * ({@link TaskScheduler#isClusterWide()}) or an {@link #executionGuard} was supplied — otherwise every node would
+     * rebuild every trigger and every node would fire every task, with only a node-local guard between them.
+     *
+     * @param multiNode
+     *            whether other nodes run an engine over the same repository (default {@code false})
+     * @return this builder
+     */
+    public SchedulingEngineBuilder multiNode(boolean multiNode) {
+        this.multiNode = multiNode;
+        return this;
+    }
+
+    /**
      * Builds the scheduling engine.
      *
      * <p>
@@ -266,8 +285,11 @@ public final class SchedulingEngineBuilder {
             eventPublisher = new SimpleScheduledTaskEventPublisher();
         }
         if (quotaManager == null) {
-            quotaManager = new DefaultTaskQuotaManager(defaultMaxQuota);
+            // Counted from the repository rather than kept in a ledger beside it: a ledger is emptied by a restart the
+            // tasks survive, and is per node over a repository the nodes share.
+            quotaManager = new StoredTaskQuotaManager(taskRepository, defaultMaxQuota);
         }
+        final boolean guardSupplied = executionGuard != null;
         if (executionGuard == null) {
             executionGuard = new InMemoryScheduledExecutionGuard();
         }
@@ -293,7 +315,11 @@ public final class SchedulingEngineBuilder {
                 .interruptBus(interruptBus).build();
         taskManagerRef.set(taskManager);
 
-        return new SchedulingEngine(taskManager, routineExecutor, scheduler, eventPublisher, interruptBus);
+        // On one node of several, rebuilding the stored tasks' triggers is only safe if a trigger exists once for the
+        // whole deployment, or if something that sees the other nodes stops the duplicate fires.
+        final boolean rehydrateAtStart = !multiNode || scheduler.isClusterWide() || guardSupplied;
+        return new SchedulingEngine(taskManager, routineExecutor, scheduler, eventPublisher, interruptBus,
+                rehydrateAtStart);
     }
 
     private TaskScheduler resolveScheduler(ScheduledTaskExecutor executor) {

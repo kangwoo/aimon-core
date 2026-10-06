@@ -9,9 +9,10 @@ package at.aimon.spring.boot.autoconfigure;
  * task should not pay for.
  *
  * <p>
- * Whichever value is chosen, the scheduled <em>tasks</em> live in memory and are gone after a restart — the
- * scheduler decides where the triggers live, not the tasks. The stack announces that as its
- * {@code scheduling-durability} degradation rather than leaving it to be found.
+ * Whichever value is chosen, the scheduled <em>tasks</em> live in memory and are gone after a restart unless the
+ * application supplies a {@code ScheduledTaskRepository} bean — the scheduler decides where the triggers live, not the
+ * tasks. Without that bean the stack announces it as its {@code scheduling-durability} degradation rather than leaving
+ * it to be found. Both values here hold their triggers per node: {@code QUARTZ} is a RAM job store.
  */
 public enum SchedulingBackend {
 

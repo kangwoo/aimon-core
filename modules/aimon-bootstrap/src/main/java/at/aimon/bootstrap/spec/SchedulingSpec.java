@@ -34,9 +34,10 @@ import at.aimon.core.scheduling.scheduler.TaskSchedulerFactory;
  * the {@code enabled(...)} variants above; the record half is {@link #withTaskRepository(ScheduledTaskRepository)}.
  * A durable scheduler without a repository is the failure the stack announces as its
  * {@code scheduling-durability} degradation — a surviving trigger whose task is gone fires into "task not found",
- * which reads like durability right up to the moment it is needed. The other way round is sound on a single node: the
- * engine rebuilds the triggers from a supplied repository when it starts. On one node of several each node rebuilds
- * its own, and that is announced under the same name.
+ * which reads like durability right up to the moment it is needed. The other way round is sound: the engine rebuilds
+ * the triggers from a supplied repository when it starts. The exception is one node of several whose scheduler is per
+ * node and that has no execution guard seeing the others — there the engine does not rebuild them, and that is
+ * announced under the same name.
  */
 public final class SchedulingSpec {
 
@@ -125,8 +126,8 @@ public final class SchedulingSpec {
      * enumerate the product.
      *
      * <p>
-     * Nothing in this repository is durable — {@code InMemoryScheduledTaskRepository} is the only implementation
-     * that ships — so this seam exists for an application that wrote its own. Without it a finished durable
+     * {@code aimon-core} ships only the in-memory one; a durable one is {@code MongoScheduledTaskRepository} in
+     * {@code aimon-session-mongodb}, or an application's own. Without this seam a finished durable
      * implementation could not be reached at all: {@code SchedulingEngineBuilder} takes one, but nothing between an
      * application and that builder passed it along, which left hand-building the engine (and giving up the stack's
      * ordered teardown) as the only route.

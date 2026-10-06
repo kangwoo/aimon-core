@@ -4,8 +4,6 @@
 
 package at.aimon.core.scheduling.quota;
 
-import java.util.Collection;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -78,24 +76,6 @@ public class DefaultTaskQuotaManager implements TaskQuotaManager {
         final String key = quotaKey(principal);
         final AtomicInteger usage = usageMap.get(key);
         return usage != null ? usage.get() : 0;
-    }
-
-    /**
-     * Replaces the usage counts with a count of the given owners. This ledger is in memory, so after a restart it is
-     * the stored tasks that say how much of each quota is in use.
-     */
-    @Override
-    public void restoreUsage(Collection<Principal> ownersOfStoredTasks) {
-        Objects.requireNonNull(ownersOfStoredTasks, "Owners cannot be null");
-        final Map<String, AtomicInteger> counted = new HashMap<>();
-        for (Principal owner : ownersOfStoredTasks) {
-            counted.computeIfAbsent(quotaKey(owner), k -> new AtomicInteger(0)).incrementAndGet();
-        }
-        // Not atomic against a concurrent register. It does not need to be: this runs while the engine is starting,
-        // and a registration racing it is charged either before the clear (and recounted from the repository, where
-        // its task already is) or after the putAll.
-        usageMap.clear();
-        usageMap.putAll(counted);
     }
 
     @Override

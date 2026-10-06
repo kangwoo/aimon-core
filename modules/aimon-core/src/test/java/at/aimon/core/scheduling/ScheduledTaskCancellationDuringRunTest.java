@@ -111,6 +111,29 @@ class ScheduledTaskCancellationDuringRunTest {
         assertThat(taskRepo.findAll()).isEmpty();
     }
 
+    /**
+     * The same write-back, a different loser: a task its owner disabled while it was running stays disabled.
+     *
+     * <p>
+     * The run holds the copy of the task it read at fire time. Writing that copy back — enabled, as it was then —
+     * undid the disable, and with a repository that outlives the process the engine then scheduled the task again at
+     * the next start. The run records only that it ran.
+     */
+    @Test
+    void aTaskDisabledDuringItsRunStaysDisabledWhenTheRunUnwinds() throws Exception {
+        final ScheduledTask task = registerBlockingTask();
+        final CompletableFuture<Void> run = startRun(task);
+
+        manager.setEnabled(task.getId(), alice, false);
+        manager.interrupt(task.getId(), alice);
+        run.get(TEST_PATIENCE.toSeconds(), TimeUnit.SECONDS);
+
+        final ScheduledTask stored = taskRepo.findById(task.getId()).orElseThrow();
+        assertThat(stored.isEnabled()).isFalse();
+        // The run's own write did land: it is the disable that survived it, not the write that was skipped.
+        assertThat(stored.getLastExecutedAt()).isPresent();
+    }
+
     /** The other half of the same write-back: no history row survives for a task that no longer exists. */
     @Test
     void aRunThatUnwindsAfterCancellationLeavesNoHistoryBehind() throws Exception {

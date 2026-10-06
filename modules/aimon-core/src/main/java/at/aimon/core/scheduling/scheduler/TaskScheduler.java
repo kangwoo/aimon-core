@@ -62,4 +62,19 @@ public interface TaskScheduler {
      * Shuts down the scheduler gracefully.
      */
     void shutdown();
+
+    /**
+     * Whether the triggers this scheduler holds are shared by every node of the deployment.
+     *
+     * <p>
+     * {@code false} — the default, and the answer of the in-memory scheduler and of Quartz on a RAM or unclustered job
+     * store — means each node holds its own triggers and fires them itself. That decides what a node may do with a
+     * task repository several nodes share: rebuilding every stored task's trigger on each of them makes each of them
+     * fire it. {@code true} means a trigger exists once for the whole deployment and one node fires it.
+     *
+     * @return whether one trigger here is one trigger for the whole deployment
+     */
+    default boolean isClusterWide() {
+        return false;
+    }
 }

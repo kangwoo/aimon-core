@@ -80,6 +80,27 @@ class ScheduledTaskDocumentCodecTest {
     }
 
     @Test
+    @DisplayName("instants are written with a fixed nine-digit fraction, so the stored strings sort in time order")
+    void instantsSortAsText() {
+        final String whole = ScheduledTaskDocumentCodec.encodeInstant(Instant.parse("2026-10-06T00:00:00Z"));
+        final String half = ScheduledTaskDocumentCodec.encodeInstant(Instant.parse("2026-10-06T00:00:00.5Z"));
+
+        assertThat(whole).isEqualTo("2026-10-06T00:00:00.000000000Z");
+        // Instant.toString() would give "…:00Z" and "…:00.500Z", and the earlier one sorts after the later.
+        assertThat(whole).isLessThan(half);
+        assertThat(Instant.parse(whole)).isEqualTo(Instant.parse("2026-10-06T00:00:00Z"));
+    }
+
+    @Test
+    @DisplayName("a document with no 'enabled' field decodes as disabled — absent is not permission to fire")
+    void missingEnabledDecodesAsDisabled() {
+        final Document doc = codec.encode(fullTask());
+        doc.remove("enabled");
+
+        assertThat(codec.decode(doc).isEnabled()).isFalse();
+    }
+
+    @Test
     @DisplayName("a document without an owner is not a task")
     void missingOwnerIsRejected() {
         final Document doc = codec.encode(fullTask());

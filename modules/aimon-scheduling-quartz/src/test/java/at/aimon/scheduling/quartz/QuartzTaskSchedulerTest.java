@@ -66,6 +66,25 @@ class QuartzTaskSchedulerTest {
     }
 
     @Test
+    void testIsClusterWide_RamJobStore_IsPerNode() {
+        // The default scheduler is a RAM job store: its triggers live in this JVM and nowhere else.
+        assertThat(scheduler.isClusterWide()).isFalse();
+    }
+
+    @Test
+    void testIsClusterWide_ClusteredJobStore_IsClusterWide() throws Exception {
+        // Read from Quartz's own metadata rather than from how the scheduler was built, so a borrowed scheduler —
+        // one the application configured — answers for itself.
+        final org.quartz.Scheduler clustered = mock(org.quartz.Scheduler.class);
+        final org.quartz.SchedulerMetaData metaData = mock(org.quartz.SchedulerMetaData.class);
+        when(clustered.getMetaData()).thenReturn(metaData);
+        when(metaData.isJobStoreClustered()).thenReturn(true);
+
+        assertThat(new QuartzTaskScheduler(clustered, taskId -> {
+        }).isClusterWide()).isTrue();
+    }
+
+    @Test
     void testScheduleRecurrently_ValidCron_SchedulesTask() {
         // Arrange
         ScheduledTaskId taskId = ScheduledTaskId.of("test-task");

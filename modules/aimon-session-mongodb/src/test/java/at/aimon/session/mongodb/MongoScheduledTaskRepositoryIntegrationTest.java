@@ -96,6 +96,34 @@ class MongoScheduledTaskRepositoryIntegrationTest extends AbstractScheduledTaskR
         assertThat(collection().countDocuments()).isZero();
     }
 
+    @Test
+    @DisplayName("an unreadable document still counts against its owner's quota")
+    void unreadableDocumentStillCounts() {
+        repository.save(task("readable"));
+        plantUnreadable("task-unreadable");
+
+        // The listing leaves it out; the count, which is what a quota is measured against, must not.
+        assertThat(repository.findByOwner(Principal.user("alice"))).hasSize(1);
+        assertThat(repository.countByOwner(Principal.user("alice"))).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("recording a run keeps fields a newer build wrote that this one does not know")
+    void recordExecutionKeepsFieldsThisBuildDoesNotKnow() {
+        // A rolling upgrade or a rollback: the document carries a field from the other release. Decoding ignores it,
+        // so the task keeps running here — and a whole-document write-back after each run would delete it.
+        final ScheduledTask task = task("from-a-newer-build");
+        repository.save(task);
+        collection().updateOne(new Document("_id", task.getId().value()),
+                new Document("$set", new Document("pausedUntil", "2027-01-01T00:00:00Z")));
+
+        assertThat(repository.recordExecution(task.getId(), java.time.Instant.parse("2026-10-06T03:00:00Z"))).isTrue();
+
+        final Document stored = collection().find(new Document("_id", task.getId().value())).first();
+        assertThat(stored.getString("pausedUntil")).isEqualTo("2027-01-01T00:00:00Z");
+        assertThat(stored.getString("lastExecutedAt")).isEqualTo("2026-10-06T03:00:00.000000000Z");
+    }
+
     /** Owned by alice and enabled, so every listing would return it if it could be read; it has no routine. */
     private void plantUnreadable(String id) {
         collection().insertOne(new Document("_id", id).append("name", "broken").append("cronExpression", "0 0 1 1 *")

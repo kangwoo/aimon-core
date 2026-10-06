@@ -31,8 +31,9 @@ import at.aimon.core.scheduling.scheduler.TaskScheduler;
  * <p>
  * The reference implementation is {@code InMemoryScheduledTaskRepository}, and it is the one {@code aimon-core} tests
  * its scheduling against. A durable backend has to give the same answers — including the ones the in-memory map gives
- * for free and a store has to work for: a task read back <em>equal</em> to the one saved, owner queries that follow
- * {@link Principal#equals}, and an {@code updateIfPresent} that does not bring a deleted task back.
+ * for free and a store has to work for: a task read back the same in every field as the one saved, owner queries
+ * that follow {@link Principal#equals}, and writes after a run that neither bring a deleted task back nor undo what
+ * changed while the run was in flight.
  *
  * <p>
  * A backend joins by subclassing and implementing {@link #repository()}, starting each test from an empty store. If
@@ -78,8 +79,8 @@ public abstract class AbstractScheduledTaskRepositoryContractTest {
         repository().save(task);
 
         final ScheduledTask read = reopened().findById(task.getId()).orElseThrow();
-        assertThat(read).isEqualTo(task);
-        // equals() is the engine's view; field by field is what catches a field equals() does not cover.
+        // Field by field, not equals(): ScheduledTask.equals compares the id alone and would pass for a store that
+        // returned nothing else right.
         assertThat(read).usingRecursiveComparison().isEqualTo(task);
     }
 
@@ -169,6 +170,72 @@ public abstract class AbstractScheduledTaskRepositoryContractTest {
     }
 
     @Test
+    @DisplayName("recordExecution sets when the task ran and leaves the rest as stored, not as the caller last saw it")
+    void recordExecutionChangesOnlyTheExecutionTime() {
+        // A run reads its task, runs, and writes back. In between, the owner disables the task. Writing the run's
+        // copy back would enable it again; recording only the run must not.
+        final ScheduledTask asTheRunReadIt = task(alice, "disabled-mid-run", true);
+        repository().save(asTheRunReadIt);
+        repository().save(asTheRunReadIt.withEnabled(false));
+        final Instant ranAt = Instant.parse("2026-10-06T03:00:00.000000001Z");
+
+        assertThat(repository().recordExecution(asTheRunReadIt.getId(), ranAt)).isTrue();
+
+        final ScheduledTask stored = reopened().findById(asTheRunReadIt.getId()).orElseThrow();
+        assertThat(stored.getLastExecutedAt()).contains(ranAt);
+        assertThat(stored.isEnabled()).isFalse();
+        assertThat(stored).usingRecursiveComparison().ignoringFields("lastExecutedAt")
+                .isEqualTo(asTheRunReadIt.withEnabled(false));
+    }
+
+    @Test
+    @DisplayName("recordExecution does not bring back a task that was deleted, or create one that never was")
+    void recordExecutionDoesNotCreateATask() {
+        final ScheduledTask task = task(alice, "cancelled", true);
+        repository().save(task);
+        repository().deleteById(task.getId());
+
+        assertThat(repository().recordExecution(task.getId(), Instant.now())).isFalse();
+        assertThat(repository().recordExecution(ScheduledTaskId.generate(), Instant.now())).isFalse();
+
+        assertThat(repository().findAll()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a delete racing recordExecution always wins in the end")
+    void deleteRacingRecordExecutionNeverLeavesTheTaskBehind() throws Exception {
+        for (int round = 0; round < RACE_ROUNDS; round++) {
+            final ScheduledTask task = task(alice, "race-" + round, true);
+            repository().save(task);
+            final CountDownLatch go = new CountDownLatch(1);
+            final CompletableFuture<Void> record = CompletableFuture.runAsync(() -> {
+                await(go);
+                repository().recordExecution(task.getId(), Instant.now());
+            });
+            final CompletableFuture<Void> delete = CompletableFuture.runAsync(() -> {
+                await(go);
+                repository().deleteById(task.getId());
+            });
+            go.countDown();
+            CompletableFuture.allOf(record, delete).get(30, TimeUnit.SECONDS);
+
+            assertThat(repository().findById(task.getId())).as("round %d", round).isEmpty();
+        }
+    }
+
+    @Test
+    @DisplayName("countByOwner counts an owner's tasks, enabled or not, and nobody else's")
+    void countByOwnerCountsEveryTaskOfThatOwner() {
+        repository().save(task(alice, "alice-on", true));
+        repository().save(task(alice, "alice-off", false));
+        repository().save(task(bob, "bob-on", true));
+
+        assertThat(repository().countByOwner(alice)).isEqualTo(2);
+        assertThat(repository().countByOwner(Principal.user("alice", "Another Display Name"))).isEqualTo(2);
+        assertThat(repository().countByOwner(Principal.service("alice", "Same Id, Other Type"))).isZero();
+    }
+
+    @Test
     @DisplayName("owner queries follow Principal equality: type and id, not the display name")
     void ownerQueriesFollowPrincipalEquality() {
         final ScheduledTask asUser = task(Principal.user("shared-id", "Old Name"), "user-task", true);
@@ -246,7 +313,8 @@ public abstract class AbstractScheduledTaskRepositoryContractTest {
 
             assertThat(afterRestart.exists(enabled.getId())).isTrue();
             assertThat(afterRestart.exists(disabled.getId())).isFalse();
-            assertThat(after.getTaskManager().getById(enabled.getId(), alice)).isEqualTo(enabled);
+            assertThat(after.getTaskManager().getById(enabled.getId(), alice)).usingRecursiveComparison()
+                    .isEqualTo(enabled);
         }
     }
 

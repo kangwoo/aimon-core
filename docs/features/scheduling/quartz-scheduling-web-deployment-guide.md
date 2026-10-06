@@ -19,7 +19,7 @@
 | 상황 | InMemory | Quartz (JDBC + cluster) |
 |---|---|---|
 | 노드가 여러 개 | 노드별로 동일 cron이 **중복 실행** | DB 락으로 한 노드에서만 실행 |
-| 노드 재시작 | 등록된 task 소실 | JDBC JobStore에서 복구 |
+| 노드 재시작 | 트리거 소실. task 레코드가 영속 `ScheduledTaskRepository`에 있으면 단일 노드에서는 기동 시 다시 걸린다 | 트리거는 JDBC JobStore에서 복구. **task 레코드는 별개다** — `ScheduledTaskRepository`가 인메모리면 복구된 트리거가 없는 task를 발화한다 |
 | 노드 장애 | task 정지 | 다른 노드가 자동 인계 |
 | 누락된 실행 | 무시 | misfire 정책에 따라 처리 |
 

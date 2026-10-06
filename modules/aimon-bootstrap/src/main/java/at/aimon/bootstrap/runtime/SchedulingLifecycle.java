@@ -71,8 +71,10 @@ public final class SchedulingLifecycle implements AutoCloseable {
         if (started || stopped) {
             return;
         }
-        started = true;
+        // Marked only once it has: a start that throws (the task repository could not be read) leaves the scheduler
+        // stopped, and must stay retryable rather than be remembered as done.
         engine.start();
+        started = true;
     }
 
     /**

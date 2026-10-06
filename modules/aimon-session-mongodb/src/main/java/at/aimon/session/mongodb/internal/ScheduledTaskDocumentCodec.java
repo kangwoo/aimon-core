@@ -2,6 +2,8 @@ package at.aimon.session.mongodb.internal;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -21,7 +23,7 @@ import at.aimon.core.scheduling.ScheduledTaskId;
  * <p>
  * Document shape: <pre>
  * {
- *   _id: "task-…",                       // ScheduledTaskId
+ *   _id: "0b9f…",                        // ScheduledTaskId (a UUID when generated)
  *   name: "...",
  *   description: "...",                  // omitted when absent
  *   cronExpression: "0 2 * * *",
@@ -31,7 +33,7 @@ import at.aimon.core.scheduling.ScheduledTaskId;
  *   boundRuntimeId: "agent:ops",
  *   agentDefinitionVersion: "...",       // omitted when absent
  *   enabled: true,
- *   createdAt: "2026-10-06T01:02:03.123456789Z",
+ *   createdAt: "2026-10-06T01:02:03.123456789Z",   // always nine fraction digits
  *   lastExecutedAt: "..."                // omitted until the first run
  * }
  * </pre>
@@ -39,10 +41,16 @@ import at.aimon.core.scheduling.ScheduledTaskId;
  * <h2>Why the times are strings</h2>
  *
  * <p>
- * A BSON date keeps milliseconds and an {@link Instant} keeps nanoseconds, and {@link ScheduledTask#equals} compares
- * {@code createdAt}. Stored as a date, a task read back would not equal the task that was saved, and the same record
- * would differ between this backend and the in-memory one. ISO-8601 text round-trips exactly, and for instants in UTC
- * it still sorts in time order. Durations are ISO-8601 for the same reason.
+ * A BSON date keeps milliseconds and an {@link Instant} keeps nanoseconds. Stored as a date, {@code getCreatedAt()}
+ * and {@code getLastExecutedAt()} of a task read back would differ from the task that was saved, and from the same
+ * task in the in-memory repository — the shared contract suite compares field by field for that reason. ISO-8601
+ * text round-trips exactly. The cost is real and accepted: no date range queries and no TTL index on these fields;
+ * nothing uses either today.
+ *
+ * <p>
+ * Instants are written with a fixed nine-digit fraction ({@link #encodeInstant}), so the strings sort in time order.
+ * {@code Instant.toString()} would not do: it drops a zero fraction, and {@code "…:00Z"} sorts after
+ * {@code "…:00.500Z"}. Durations are ISO-8601 as well.
  *
  * <p>
  * The owner is nested as {@code {type, id, displayName}}, the shape {@code BackgroundTaskDocumentCodec} uses, and the
@@ -79,6 +87,9 @@ public final class ScheduledTaskDocumentCodec {
 
     /** Path of the owner's id inside the nested owner document. */
     public static final String F_OWNER_ID = DocumentKeys.F_OWNER + ".id";
+
+    private static final DateTimeFormatter FIXED_WIDTH_INSTANT = new DateTimeFormatterBuilder().appendInstant(9)
+            .toFormatter();
 
     private static final String OWNER_TYPE = "type";
     private static final String OWNER_ID = "id";
@@ -119,8 +130,8 @@ public final class ScheduledTaskDocumentCodec {
         doc.append(F_BOUND_RUNTIME_ID, task.getBoundRuntimeId().value());
         task.getAgentDefinitionVersion().ifPresent(version -> doc.append(F_AGENT_DEFINITION_VERSION, version.value()));
         doc.append(F_ENABLED, task.isEnabled());
-        doc.append(DocumentKeys.F_CREATED_AT, task.getCreatedAt().toString());
-        task.getLastExecutedAt().ifPresent(at -> doc.append(F_LAST_EXECUTED_AT, at.toString()));
+        doc.append(DocumentKeys.F_CREATED_AT, encodeInstant(task.getCreatedAt()));
+        task.getLastExecutedAt().ifPresent(at -> doc.append(F_LAST_EXECUTED_AT, encodeInstant(at)));
         return doc;
     }
 
@@ -156,6 +167,17 @@ public final class ScheduledTaskDocumentCodec {
             routine.add(decodeStep(step));
         }
         return builder.routine(routine).build();
+    }
+
+    /**
+     * Writes an instant as ISO-8601 with a fixed nine-digit fraction, so stored values sort in time order.
+     *
+     * @param instant
+     *            the instant to write (must not be null)
+     * @return text that {@link Instant#parse} reads back to the same instant
+     */
+    public static String encodeInstant(Instant instant) {
+        return FIXED_WIDTH_INSTANT.format(Objects.requireNonNull(instant, "instant must not be null"));
     }
 
     private static Document encodeStep(RoutineStep step) {
