@@ -3419,7 +3419,7 @@ lint 를 둘지 정한다.
 `preTool` · `postTool` 모두 적재 실패. 가드 이벤트 가운데 matcher 를 읽는 것은 `preTool` 하나다. 호환을 깨는 변경이다.
 
 **문자 집합은 지어내지 않았지만 in-tree 규칙에서 온 것도 아니다 (규칙 다섯).** 도구 이름을 검증하는 코드는 트리에 없다 —
-`DefaultToolRegistry.register` 는 null 아닌 문자열을 다 받는다. 집합은 이름의 **출처들의 합집합**이다: `TOOL_NAME` 상수 44개
+`DefaultToolRegistry.register` 는 null 아닌 문자열을 다 받는다. 집합은 이름의 **출처들의 합집합**이다: `TOOL_NAME` 상수 37개
 (`.` 포함 — `deriver.memory.search`), `McpTool.formatToolName` 과 `McpServerConfig.NAME_PATTERN`. MCP 스펙과 두 벤더의 도구 이름
 형식은 트리 밖 사실이라 확인하지 않았다. 그 집합 밖의 이름으로 등록한 임베더 도구는 그 문자 자리에 `*` 를 써서 맞춘다.
 
@@ -3435,7 +3435,15 @@ lint 를 둘지 정한다.
 - 항목이 적지 않은 것도 걸린다 — `Bash,Edit` · `Bash Edit` · `Rea?` · `[Bb]ash` · `tool:Bash` · 대문자 서버(`mcp__GitHub__x`).
   마지막은 판단이다: `mcp__Foo__x` 라는 이름의 비-MCP 도구는 이제 `*` 가 필요하다
 
-**남은 것.** 대소문자가 틀린 이름(`bash`)과 없는 도구의 이름은 여전히 등록되고 발화하지 않는다 — 이름이 "있을 수 있는가" 까지만
+**닫으면서 낸 회귀 하나를 리뷰가 재현했다 (규칙 다섯).** 거절은 `postTool` 에서 옆의 항까지 죽였다. `Bash|mcp__.*` 는 거절이
+생기기 전에 `Bash` 에 발화하던 OR 였는데, applier 가 문자열 전체를 이름으로 보는 fallback 으로 떨어뜨려 **등록되고 아무것에도
+발화하지 않는** 훅이 되었다 — 업그레이드에서도 핫 리로드에서도. 그것을 지키던 테스트는 `hasSize(1)` 만 단언했고 죽은 훅으로도
+통과했다. `postTool` 은 막을 수 없으므로 거절된 항만 빼고 나머지를 지킨다(`95eba66e`). 같은 커밋이 매처를 읽지 않는 이벤트의
+매처를 더는 해석하지 않는다 — `subagentStop` 의 에이전트 타입 매처(`my-plugin:reviewer`)에 거짓 WARN 이 나고 있었다.
+위 "44개" 도 리뷰가 세어 37개로 고쳤다 — 세지 않고 옮겨 적은 숫자였다.
+
+**남은 것.** `mcp__<server>__.*` 는 서버 자리가 멀쩡해 통과하고 발화하지 않는다 — 가져온 설정에서 가장 흔한 철자다. `.*` WARN 은
+정당한 `deriver.*` 에도 나고 어느 파일의 매처인지 말하지 않는다. 대소문자가 틀린 이름(`bash`)과 없는 도구의 이름은 여전히 등록되고 발화하지 않는다 — 이름이 "있을 수 있는가" 까지만
 본다. `HookRegistryApplier.parseMatcher` 는 matcher 를 읽지 않는 이벤트에서도 돌아, 거기 적힌 남의 문법은 "name-only 로 폴백"
 WARN 을 낸다(해롭지 않고 조금 오도한다). `docs/references/aimon-skill-extensions.md` 는 이벤트 목록(넷 → 열)을 고쳤지만 135 · 142 ·
 179행은 낡은 채다. `.claude/rules/hook-development.md` 의 "파싱되지 않는 `preTool` matcher" 는 이제 이 형태들을 포함한다는 말이 없다.
@@ -3509,7 +3517,7 @@ CLI · 스타터에서 이 변경으로 달라지지 않는다. 그 값을 설�
 
 **두 대기 모두 `requestTimeout` 이 센다** (`e8e6b4dd`). 읽기는 `available()` 이 말한 바이트만 읽고 `0x0A` 에서 자른 뒤 UTF-8 로
 푼다 — `Reader` 는 반쯤 온 멀티바이트 문자에서도 막을 수 있어 바이트 단에서 했다. `synchronized` 는 시한 있는 `tryLock` 이
-되었고 시계는 **호출 시점**에 시작한다. 락을 기다리다 끝난 요청은 "never sent" 라고 말한다. 두 대기는 이제 인터럽트에도 끝난다
+되었다. 락을 기다리다 끝난 요청은 "never sent" 라고 말한다. 두 대기는 이제 인터럽트에도 끝난다
 — 그래서 `mcp` 훅의 `timeout` 이 그것을 끊는다(가이드 두 언어와 `McpActionExecutor` javadoc 이 반대로 적고 있었다).
 
 **줄 중간에서 timeout 난 뒤.** 부분 줄 버퍼는 요청이 아니라 전송의 것으로 두었다. 늦게 온 나머지는 버려진 프레임을 완성하고 다음
@@ -3522,11 +3530,18 @@ CLI · 스타터에서 이 변경으로 달라지지 않는다. 그 값을 설�
   않아 `NON_INTERRUPTIBLE` 이고, `DefaultToolExecutor.execute` 는 시한 없이 동기로 부른다. 사용자 취소는 `requestTimeout` 을
   끝까지 기다린다. 자기 시한을 가진 것은 `RoutineExecutor` 뿐인데 그 `cancel(true)` 도 옛 대기에는 닿지 않았다
 - **`NON_INTERRUPTIBLE` 은 병렬화 대상이다.** 멈춘 서버 하나로 가는 병렬 호출 N 개는 정확히 그 모니터에서 기다렸고, 고치기 전
-  N × `requestTimeout` 이 걸렸다(지금은 1 ×)
+  N × `requestTimeout` 이 걸렸다(지금은 많아야 2 ×)
 - **셋째 대기가 있다 — 요청의 write.** 고치지 않았다(EE-89)
 
-**동작이 바뀐 자리.** 한 서버에 줄 선 요청들은 이제 `requestTimeout` 하나를 나눠 쓴다. 느리지만 멀쩡한 서버에서, 전에는 늦게
-성공하던 병렬 호출이 "never sent" 로 실패할 수 있다.
+**동작이 바뀐 자리.** 전송을 기다리는 시간에 상한이 생겼다 — `requestTimeout` 하나다. 느리지만 멀쩡한 서버에서, 앞선 요청들이
+그보다 오래 걸리면 전에는 늦게 성공하던 병렬 호출이 "never sent" 로 실패한다. 쓰인 요청은 전과 같이 시한 전체를 갖는다.
+
+**닫으면서 낸 회귀 하나를 리뷰가 재현했다 (규칙 다섯).** 첫 수정은 두 대기를 **호출 시점부터의 한 예산**으로 셌다. 400ms 걸리는
+서버 · 시한 1초 · 호출자 넷에서, 전에는 넷이 다 성공했는데 둘이 실패했고 그중 하나는 **쓰이고 서버가 실행한 뒤** 평범한 timeout 으로
+보고됐다 — 호출자는 그것을 "쓰이지 않았다" 와 구별할 수 없고, 다시 시도하면 부작용이 두 번 난다. 재현 테스트 다섯은 전부 **멈춘
+서버**를 썼고, 느리지만 답하는 서버에는 하나도 닿지 않았다. 두 대기를 따로 세도록 고쳤다(`c0be3fa8`,
+`aRequestThatWaitedItsTurnStillHasAWholeRequestTimeoutToBeAnsweredIn`). 같은 리뷰가 하나 더 찾았다: 292년을 넘는 `requestTimeout`
+은 `Duration.toNanos()` 가 `try` 밖에서 `ArithmeticException` 을 던졌다 — CLI 는 그 값을 `Duration.ofSeconds(n)` 으로 만든다. 포화시켰다.
 
 **확인하지 않은 것.** macOS 에서만 돌렸다(테스트는 Windows 에서 꺼져 있다) — `available()` 의 파이프 동작은 플랫폼마다 다를 수
 있다. 요청 도중 죽은 프로세스는 여전히 timeout 을 끝까지 기다린다(`available()` 은 EOF 를 말하지 않는다. 유계이고 전과 같다).
@@ -3592,7 +3607,7 @@ MCP 도구가 병렬화에서 빠진다(`DefaultParallelToolDispatcher.isParalle
 
 - `AgentExecutionEventPayload` 의 `InterruptReason.valueOf` · `RejectReason.valueOf` — 종료 프레임 `InterruptedAt` · `RejectedAt`
   이 버려진다(EE-83 이 적은 "종료 이벤트를 잃은 구독자" 와 같은 결과다)
-- redis · mongodb 코덱의 `IdempotencyEntry.Status.valueOf`
+- `IdempotencyEntry.Status.valueOf` — redis · mongodb 코덱과 `PostgresIdempotencyStore:348`(리뷰가 셋째를 찾았다)
 - `SignalKind.valueOf`(`TurnResultPayload` javadoc 이 이미 적어 두었다)
 - `StepOutcomeCodec:108` 의 `CompletionReason.valueOf` — **의도적으로 엄격하다.** 잡아서 이름을 넣어 다시 던지고, 깎아 읽을
   성공 플래그가 없다. `BLOCKED` 는 enum 의 첫 릴리스 뒤에 생긴 포크 사유이므로 노출은 실제로 있었다. 반박할 것은 코드가 아니라

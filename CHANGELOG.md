@@ -12,8 +12,9 @@ Central is versioned independently).
 A matcher term without parentheses is a tool name. One holding a character no tool name has — `^Edit$`, `tool=Bash`,
 `Bash & input.command~^npm`, `Bash Edit`, `Bash,Edit`, `mcp__.*` — used to register a hook that never fired. It is now a
 matcher that does not parse, and takes the paths EE-72 gave those: a `hooks.json` with one on `preTool` stops startup (a
-reload keeps the previous config; other events warn and fall back), and a skill with one on `preTool` or `postTool` does
-not load. Bare terms accept `[A-Za-z0-9_.-]` and `*`; after `mcp__` the server segment accepts `[a-z0-9-]`.
+reload keeps the previous config), and a skill with one on `preTool` or `postTool` does not load. A `hooks.json`
+`postTool` matcher keeps working: the term is left out with a warning and the hook fires on the terms beside it
+(`Bash|mcp__.*` still fires on `Bash`). A matcher on an event that reads none is no longer parsed. Bare terms accept `[A-Za-z0-9_.-]` and `*`; after `mcp__` the server segment accepts `[a-z0-9-]`.
 
 Not refused: anything inside parentheses (`Bash(git:*)` has the shape of a legitimate glob), and `Bash.*` — `.` is a
 tool-name character, so it parses, never fires, and logs a warning that says what it matches. The hook guide said `**`
@@ -25,9 +26,11 @@ was a literal inside a matcher glob; it is two wildcards, and both languages are
 and behind another request to the same server. Both now count against `requestTimeout`, and both end on an interrupt, so
 an `mcp` hook's `timeout` cuts them. A request that ran out of time waiting its turn fails as "never sent".
 
-Requests queued on one server now share a single `requestTimeout` instead of taking one each: N parallel calls to a
-stalled server return after 1 × the timeout, not N ×, and a parallel call to a slow but healthy server that used to
-succeed late can now fail. Not covered: the write of a request larger than the pipe buffer to a server that has stopped
+The two waits are bounded separately: at most one `requestTimeout` to reach the transport, and, once written, a whole
+`requestTimeout` to be answered in. N parallel calls to a stalled server return within 2 × the timeout, not N ×. A
+parallel call to a slow but healthy server that used to succeed late now fails as "never sent" if the requests ahead of
+it take longer than the timeout. A `requestTimeout` too long to count in nanoseconds is treated as unbounded instead of
+failing the request. Not covered: the write of a request larger than the pipe buffer to a server that has stopped
 reading its stdin (backlog EE-89).
 
 ### Fixed: a result with a completion reason this build does not know is read, not dropped (EE-83)
@@ -51,7 +54,8 @@ application that builds `AnthropicConfig` or `OpenAIConfig` with its own `maxTok
   `gradle/test-classpath-version-differences.txt`; none is left `UNDECIDED`. No shipped classpath changed.
 - **The docs site carries a fragment across a translation.** A link from an untranslated page to a translated page's
   Korean anchor used to be dead under `/en/` (six links). The mkdocs hook now rewrites it to the id of the heading at the
-  same position, and `check-doc-links.py` fails on a link that cannot be carried that way.
+  same position. `check-doc-links.py` fails on a link that can never be carried that way (a hand-written `<a id>` only
+  the original has, a repeated heading, a twin with no anchor) and reports a pair whose headings are out of step.
 
 ### Changed (breaking): declarative guard hooks block when they could not judge (EE-64, EE-65, EE-66, EE-69, EE-72, EE-73, EE-80)
 
