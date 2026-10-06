@@ -862,17 +862,20 @@ class AimonPropertiesValidationTest {
         // This surface builds the registry from the same properties more than once -- afterPropertiesSet builds one
         // to validate and throws it away, then the LLM slice (or an application's own bean method, through the public
         // accessor) builds the one that is used -- and the operator should read one line, not one per construction.
-        // A name no other test in this module declares, because "once" is per process.
-        final String warning = "Model capability declaration 'claude-opus-4-7'";
+        // "Once" is per process, so the name is one nothing else can have declared: a fresh suffix under a built-in
+        // prefix on every run -- a second run in one JVM, or another test in the family, cannot have used it up.
+        final String name = "claude-opus-4-7-" + java.util.UUID.randomUUID();
+        final String key = "aimon.llm.model-capabilities." + name;
+        final String warning = "Model capability declaration '" + name + "'";
 
-        runner.withPropertyValues("aimon.llm.model-capabilities.claude-opus-4-7.thinking-dialect=unknown",
-                "aimon.llm.model-capabilities.claude-opus-4-7.supports-sampling-parameters=false").run(ctx -> {
+        runner.withPropertyValues(key + ".thinking-dialect=unknown", key + ".supports-sampling-parameters=false")
+                .run(ctx -> {
                     assertThat(ctx).hasNotFailed();
                     AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm());
                 });
         assertThat(output.getAll()).doesNotContain(warning);
 
-        runner.withPropertyValues("aimon.llm.model-capabilities.claude-opus-4-7.thinking-dialect=unknown").run(ctx -> {
+        runner.withPropertyValues(key + ".thinking-dialect=unknown").run(ctx -> {
             assertThat(ctx).hasNotFailed();
             AimonProperties.modelCapabilityRegistry(ctx.getBean(AimonProperties.class).getLlm());
         });

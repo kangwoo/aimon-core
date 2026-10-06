@@ -134,6 +134,8 @@ class LocalShellCancellationTest {
     @Test
     @DisplayName("the late process is found through a surviving child even when the command's own shell has exited (EE-55)")
     void cancelKillsAProcessBornUnderASurvivingChild(@TempDir Path dir) throws Exception {
+        assumeTrue(Stream.of("/bin/bash", "/usr/bin/bash", "/usr/local/bin/bash").map(Path::of)
+                .anyMatch(Files::isExecutable), "the inner shell of this command is bash");
         final ShellCancellationSource source = ShellCancellationSource.create();
         final Path childPid = dir.resolve("child.pid");
         final Path latePid = dir.resolve("late.pid");
@@ -161,8 +163,12 @@ class LocalShellCancellationTest {
     void timeoutKillsAProcessBornAfterTheStopRequest(@TempDir Path dir) throws Exception {
         final Path parentPid = dir.resolve("parent.pid");
         final Path latePid = dir.resolve("late.pid");
+        // The shell waits in `wait`, not in a foreground `sleep`: a shell runs a trap at once when the signal
+        // interrupts `wait`, but only after the foreground command ends otherwise. With `while :; do sleep 1; done`
+        // and a 2 s timeout the stop request landed on the boundary between two sleeps, the trap was deferred past
+        // the kill grace, and on the Linux CI runner this test skipped itself on every run instead of asserting.
         final String command = "trap 'sleep 300 & echo $! > " + latePid + "; wait' TERM; echo $$ > " + parentPid
-                + "; while :; do sleep 1; done";
+                + "; while :; do sleep 30 & wait $!; done";
 
         try {
             assertThatThrownBy(() -> shell.execute(() -> command,

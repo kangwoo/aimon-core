@@ -487,18 +487,20 @@ class LlmClientFactoryTest {
         void theShadowWarningReachesThisSurface() {
             // L-8, on this surface. The judgement and the sentence are the core's; what is asserted here is that a
             // yaml-shaped declaration going through this factory reaches the one place that makes them, and that the
-            // complete form the reference prints is quiet. A name no other test in this module declares, because
-            // the warning is once per process per finding.
+            // complete form the reference prints is quiet. The warning is once per process per finding, so the name
+            // is one nothing else can have declared: a fresh suffix under a built-in prefix, on every run of the test
+            // -- a second run in one JVM, or another test using the same family, cannot have used it up.
+            final String name = "claude-opus-4-8-" + java.util.UUID.randomUUID();
             ModelCapabilityConfig bare = new ModelCapabilityConfig();
             bare.setThinkingDialect(ThinkingDialect.UNKNOWN);
-            LlmProviderConfig shadowing = anthropic("claude-opus-4-8");
-            shadowing.setModelCapabilities(Map.of("claude-opus-4-8", bare));
+            LlmProviderConfig shadowing = anthropic(name);
+            shadowing.setModelCapabilities(Map.of(name, bare));
 
             ModelCapabilityConfig full = new ModelCapabilityConfig();
             full.setThinkingDialect(ThinkingDialect.UNKNOWN);
             full.setSupportsSamplingParameters(false);
-            LlmProviderConfig restating = anthropic("claude-opus-4-8");
-            restating.setModelCapabilities(Map.of("claude-opus-4-8", full));
+            LlmProviderConfig restating = anthropic(name);
+            restating.setModelCapabilities(Map.of(name, full));
 
             Logger logger = (Logger) LoggerFactory.getLogger(InMemoryModelCapabilityRegistry.class);
             ListAppender<ILoggingEvent> appender = new ListAppender<>();
@@ -517,7 +519,7 @@ class LlmClientFactoryTest {
 
             assertThat(appender.list).hasSize(1);
             assertThat(appender.list.get(0).getLevel()).isEqualTo(Level.WARN);
-            assertThat(appender.list.get(0).getFormattedMessage()).contains("'claude-opus-4-8'")
+            assertThat(appender.list.get(0).getFormattedMessage()).contains("'" + name + "'")
                     .contains("prefix row 'claude-opus-4-8'").contains("supportsSamplingParameters=false (now true)")
                     .contains("supportsSamplingParameters: false");
         }

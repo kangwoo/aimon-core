@@ -53,7 +53,7 @@ starter 밖의 등록부에는 열린 항목이 있다. 어느 등록부에 몇 
 
 | 조건 | 지금 상태 |
 |------|----------|
-| 핵심 SPI 가 한 릴리스 주기 동안 무변경 | **아직 한 주기도 지나지 않았다.** `0.2.x` 는 `0.3.0` 이 `LlmClient` 에 기본 메서드 `getDefaultModelName()` 을 더하면서(소스 호환이지만 변경이다), `0.3.x` 는 `0.3.1` 이 `HookContext` 의 `getEnvironment()` 를 `getUserLocale()` 로 바꾸면서(EE-14, 파괴적) 끊겼다. 나머지 넷(`Tool` · `VirtualFileSystem` · `SessionRecordStore` · `AgentExecutor`)은 `0.2.4` 이후 바뀌지 않았다. 다음으로 셀 수 있는 주기는 `0.4.x` 다 |
+| 핵심 SPI 가 한 릴리스 주기 동안 무변경 | **아직 한 주기도 지나지 않았다.** `0.2.x` 는 `0.3.0` 이 `LlmClient` 에 기본 메서드 `getDefaultModelName()` 을 더하면서(소스 호환이지만 변경이다), `0.3.x` 는 `0.3.1` 이 `HookContext` 의 `getEnvironment()` 를 `getUserLocale()` 로 바꾸면서(EE-14, 파괴적) 끊겼다. 그 뒤의 미출시 변경(2026-10-05, EE-60)이 그 `getUserLocale()` 을 다시 없애며 `HookContext` 를 한 번 더 깬다 — 그것이 `0.3.2` 로 나가면 `0.3.x` 안의 두 번째 단절이고, `0.4.0` 으로 나가야 아래의 셈이 맞는다. 나머지 넷(`Tool` · `VirtualFileSystem` · `SessionRecordStore` · `AgentExecutor`)은 `0.2.4` 이후 바뀌지 않았다. 다음으로 셀 수 있는 주기는 `0.4.x` 다 |
 | `aimon-core` 밖에서 온 백엔드 구현이 하나 이상 | **0건.** `0.3.0` 이후 이 저장소 밖에도 SPI 구현이 생겼지만(`at.aimon.sandbox:*`, aimon-memory 의 `RemotePeerMemory`) 둘 다 같은 메인테이너의 저장소라, 이 조건이 묻는 것 — 남이 구현할 수 있는가 — 에는 답하지 못한다. B-23 이 여기에 걸려 있다 |
 | 스코프 모델이 개명 없이 한 주기를 넘김 | 최근 두 번의 파괴적 변경이 **둘 다** 여기서 나왔다(`AgentExecutionContext` → `AgentRuntime`, `Conversation`/`AgentSession` → `SessionRecord`/`LiveSession`). `0.3.0` · `0.3.1` 의 CHANGELOG 에는 수명 타입의 개명이 없다 — `0.3.1` 의 `Environment` → `UserLocale`(EE-14)은 수명 타입이 아니다. 세 번째가 없어야 한다 |
 | starter 미결 항목 정리 | 4건 남음 — 전부 외부 조건 대기(§2) |

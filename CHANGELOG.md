@@ -37,6 +37,13 @@ whenever it produced no verdict, and `failOpen: true` is the one opt-out. The gu
   background workflows and `ScheduleTask`: the subagent would outlive the guard. Foreground `Task` is unaffected.
 - **`onStart` hooks fire for code-behavior subagents** (`SubagentBehavior`) too (EE-73); a block stops the behavior
   before it runs. The hooks see the spawning execution's environment, and non-blocking feedback is discarded.
+- **`ShellHookOutcome.Unrun` gains seven constants** — `CALL_FAILED`, `CANCELLED`, `COMMAND_NOT_EXECUTABLE`,
+  `COMMAND_NOT_FOUND`, `EXECUTOR_NOT_WIRED`, `INVALID_RESPONSE`, `STAGING_FAILED` — so an exhaustive `switch` over it
+  outside this repository stops compiling. The enum is not serialized.
+- **An external `ExecutionEnvironment` is now asked to `stage()` at every skill shell-hook fire** (that is where
+  `AIMON_SKILL_DIR` comes from). It must be cheap when repeated; a null or blank answer, or an exception, means the
+  command is not run and a guard blocks — so a provider that refuses a skill edited since load now blocks that skill's
+  guard hooks where the hook used to run.
 - **A hook's shell command stops when its execution is interrupted** (EE-80), through the execution's cancellation
   signal, on `preTool`, `permissionRequest`, a fork's `onStart`, and `postTool`/`permissionDenied` of a live execution.
   A cancelled guard blocks regardless of `failOpen`. Other events are still bounded only by the command's timeout.
@@ -82,7 +89,9 @@ whenever it produced no verdict, and `failOpen: true` is the one opt-out. The gu
   (inline and fork-mode). `isTruncated()` is new on `SkillExecutionResult`, `SkillForkOutcome` and
   `CommandExecutionResult`; the marker text is unchanged.
 - **A `WorkflowJs` script may set only the attribute keys the operator allowed**
-  (`GraalJsWorkflowTool.Builder.scriptAttributeKeys`, empty by default); registered keys stay pinned.
+  (`GraalJsWorkflowTool.Builder.scriptAttributeKeys`, empty by default); registered keys stay pinned. **`aimon-cli`
+  has no setting for the list, so there every script-set attribute is refused** — give the step a registered subagent
+  that carries the attributes.
   `SubagentResolver.inline()` / `inline(registry)` refuse all script attributes — use `inline(registry, keys)`.
 - **Added:** subagent definitions accept `hidden: true` — `Task` neither lists nor launches the definition, while
   `Workflow` roles, `WorkflowJs` `agentType` and fork skills still resolve it. An agent definition can state
@@ -125,7 +134,8 @@ whenever it produced no verdict, and `failOpen: true` is the one opt-out. The gu
 
 ### Fixed: execution environment (EE-3, EE-5, EE-26, EE-46, EE-55)
 
-- **A skill edited on disk before its first use no longer fails staging until restart**: it is rescanned and staged
+- **A skill edited on disk before its first use no longer fails staging until restart** (local provider only — an
+  external provider's `stage()` is its own): it is rescanned and staged
   under its current content key, with one WARN. Parsed `SKILL.md` content still changes only on reload or restart.
   This applies to resources made by `StagedResource.scan`; one assembled through `StagedResource.builder()` is refused
   when its source changed, as before, so files it never listed cannot reach `.aimon-staged/`. A skill refused for
@@ -190,7 +200,8 @@ whenever it produced no verdict, and `failOpen: true` is the one opt-out. The gu
   nothing, and a gateway may answer differently — and **warns once before it does**: a tools request for such a model
   that goes out with a rung other than `none`, or with no effort at all — none configured, or one the client omitted
   as off the model's ladder — logs what was measured and the two exits (L-28).
-- The sampling parameters (`temperature`, `topP`, the two penalties) are still Java-only.
+- The sampling parameters (`temperature`, `topP`, the two penalties) got their configuration keys in the same release;
+  see "Changed: configuration surface" above.
 
 ### Fixed: foreground `Bash` is also stopped through the shell's cancellation signal (EE-54)
 
@@ -201,8 +212,8 @@ whenever it produced no verdict, and `failOpen: true` is the one opt-out. The gu
 - **Two things an embedder can observe.** Requesting an interrupt now runs the shell's kill on the requesting thread:
   about 200ms for a command that ignores SIGTERM, 0–1ms otherwise. And a command whose execution was already
   interrupted is no longer started and killed; it is not started.
-- A shell gets this only if it declares and implements `ShellFeature.CANCELLATION`. Hook shell commands do not carry the
-  signal (backlog EE-80).
+- A shell gets this only if it declares and implements `ShellFeature.CANCELLATION`. Hook shell commands carry it on the
+  events listed under EE-80 above.
 
 ### Fixed: skill staging is published in one step and refuses files the disk merged (EE-17, EE-38)
 
