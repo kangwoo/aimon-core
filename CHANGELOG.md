@@ -44,6 +44,24 @@ and a stored document a build cannot decode is skipped by listings and cannot be
 
 The contract a task repository has to meet is `AbstractScheduledTaskRepositoryContractTest` in `aimon-session-testkit`.
 
+### Fixed: `MongoSessionSignalBus` could go deaf for good while its watcher thread stayed alive
+
+Three ways a node stopped receiving cross-node signals — interrupts, evictions, the event relay — until it was
+restarted:
+
+- **A resume token the server refused was retried for ever.** The refusal (a token older than the oplog, among others)
+  arrives as a `MongoCommandException` labelled `NonResumableChangeStreamError`; the branch that drops the token only
+  caught `MongoChangeStreamException`. The watcher logged a warning twice a second and delivered nothing. It now drops
+  the token and starts over, and the token advances on idle polls so that a quiet channel does not leave it stale. Any
+  other command error — a killed operation, a step-down — keeps the token, so the watcher resumes and replays.
+- **Dropping and recreating `conversation_signals` killed every watcher silently.** The server closes the cursor, the
+  insert-only pipeline hides the invalidate, and the cursor then returns nothing without failing. The watcher now
+  notices and reopens, with a warning.
+- **A handler that threw an `Error` ended the watcher thread**, which nothing restarts. `PostgresSessionSignalBus` had
+  the same defect on its listen thread and is fixed too.
+
+Signals published while a watcher starts over without its token are lost; delivery on this bus is best-effort.
+
 ### Added: `MongoScheduledTaskInterruptBus` — cancelling a scheduled task reaches the node running it (MongoDB)
 
 `aimon-session-mongodb` ships a `ScheduledTaskInterruptBus` for clusters: a stop request entered on one node is inserted
