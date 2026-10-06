@@ -170,10 +170,12 @@ A quote, backtick or `$(` with no partner is now read as the character it is and
 matched before stops matching: the unsplit command is still looked at as a piece of its own. A command with a `#` or a
 `<<` is split a second time with each comment's quotes and substitutions left unread, and the pieces of that reading are
 **added** to the first — two apostrophes in two comments no longer quote the lines between them, and a `#` that is no
-comment to a shell (inside double quotes) hides nothing. More than 64 such openers left open is a third limit beside
-the two above, with the same answer. The second reading knows a here-document as well (`<<WORD` to the line that is
-`WORD`, `<<-` and quoted words included): an apostrophe in its body no longer pairs with one after it and quotes the
-commands between. `Bash(…)` globs remain text comparison, not a shell parser.
+comment to a shell (inside double quotes) hides nothing. The second reading knows a here-document as well (`<<WORD` to
+the line that is `WORD`; `<<-`, a quoted or empty word) and a `$'…'` string: an apostrophe in either no longer pairs
+with one after it and quotes the commands between. There is a third limit beside the two above, with the same answer:
+the characters scanned in vain for the partner of an unclosed quote or `$(`, about a million per reading. It bounds
+work, not a count — a script of hundreds of `echo "it's …"` lines is split as usual, while dozens of unclosed `$(` in
+a long command are not. `Bash(…)` globs remain text comparison, not a shell parser.
 
 Matcher globs no longer backtrack into an earlier `*` (`NameOnlyPredicate.compileGlob`, used by tool-name, path and
 `Bash(…)` matchers). A glob with two or more `*` could take seconds to minutes on text the model chose — `*a*a*b`

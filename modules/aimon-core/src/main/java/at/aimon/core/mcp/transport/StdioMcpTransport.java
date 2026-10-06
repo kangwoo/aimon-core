@@ -78,6 +78,9 @@ public class StdioMcpTransport implements McpTransport {
 
     private static final int READ_CHUNK_BYTES = 8192;
 
+    /** How long {@link #close()} waits for stdin to be closed on the writer thread before it ends the process. */
+    private static final long STDIN_CLOSE_WAIT_MILLIS = 200;
+
     private final Process process;
     private final OutputStream stdin;
     private final InputStream stdout;
@@ -461,9 +464,16 @@ public class StdioMcpTransport implements McpTransport {
         // cannot be sure will be freed. That holds for a write that starts after the look above too, and for one a
         // child of the server keeps open after the server is gone. The process is ended below either way.
         try {
-            writer.execute(this::closeStdin);
+            final CompletableFuture<Void> stdinClosed = CompletableFuture.runAsync(this::closeStdin, writer);
+            // End of input is how a stdio server is asked to leave, so it is given a moment to arrive before the
+            // signal below does. A moment only: behind a stalled write it never arrives, and nothing here waits on it.
+            stdinClosed.get(STDIN_CLOSE_WAIT_MILLIS, TimeUnit.MILLISECONDS);
         } catch (RejectedExecutionException alreadyClosed) {
             log.debug("StdioMcpTransport closed more than once");
+        } catch (TimeoutException | ExecutionException stillClosing) {
+            log.debug("MCP stdin was not closed before the process is ended");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
         writer.shutdown();
 

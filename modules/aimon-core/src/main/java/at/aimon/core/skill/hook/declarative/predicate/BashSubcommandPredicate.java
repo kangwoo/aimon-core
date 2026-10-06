@@ -50,7 +50,8 @@ import at.aimon.core.skill.hook.declarative.ToolInputPredicate;
  * stops matching.
  *
  * <p>
- * Comments and here-documents are read <em>as well</em>, not instead. An apostrophe in a comment or in the body of a
+ * Comments, here-documents and {@code $'...'} strings are read <em>as well</em>, not instead. An apostrophe in a
+ * comment or in the body of a
  * here-document is text to a shell; here it pairs up with the next one and quotes the lines between them. So a
  * command with a {@code #} or a {@code <<} is split a second time, with the quotes and substitutions left unread in
  * each comment ({@code #} at the start of a word, to the end of the line) and in each here-document body (the lines
@@ -62,10 +63,11 @@ import at.aimon.core.skill.hook.declarative.ToolInputPredicate;
  * <h2>Commands that are not split</h2>
  *
  * <p>
- * The command is text the model wrote, and the splitter recurses into every quoted block and substitution, so two
+ * The command is text the model wrote, and the splitter recurses into every quoted block and substitution, so three
  * limits bound what it is asked to do: a command longer than {@link #MAX_SPLIT_LENGTH} characters, one nested
- * deeper than {@link #MAX_NESTING_DEPTH} levels, or one that leaves more than {@link #MAX_UNPAIRED} quotes or
- * substitutions open, is not split at all. For such a command the predicate answers
+ * deeper than {@link #MAX_NESTING_DEPTH} levels, or one whose unclosed quotes and substitutions cost more than
+ * {@link #MAX_UNPAIRED_SCAN} characters of looking for their partners, is not split at all. For such a command the
+ * predicate answers
  * {@code true} whatever the pattern. It cannot tell that no sub-command matches, and a matcher only decides whether a
  * hook is asked &mdash; so the hook is asked, with the whole command as its input. Answering {@code false} would let a
  * command step around every {@code Bash(...)} matcher by being nested one level too deep.
@@ -101,8 +103,13 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
      */
     static final int MAX_SPLIT_LENGTH = 65_536;
 
-    /** How many quotes, backticks and {@code $(} with no partner the splitter reads past in one command. */
-    static final int MAX_UNPAIRED = 64;
+    /**
+     * How many characters one reading of a command may scan in vain, looking for the partner of a quote, backtick or
+     * {@code $(} that has none. The scanning is what is bounded, not the number of such openers: an apostrophe inside
+     * a short double-quoted string costs the length of that string, and a script may have hundreds, while each
+     * {@code $(} with no {@code )} costs the rest of the command.
+     */
+    static final int MAX_UNPAIRED_SCAN = 16 * MAX_SPLIT_LENGTH;
 
     private final String pattern;
     private final Pattern compiledGlob;
@@ -178,7 +185,8 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
      * @return List of sub-command segments (never null, never empty)
      * @throws UnsplittableCommand
      *             if the command is longer than {@link #MAX_SPLIT_LENGTH}, nested deeper than
-     *             {@link #MAX_NESTING_DEPTH}, or leaves more than {@link #MAX_UNPAIRED} quotes or substitutions open
+     *             {@link #MAX_NESTING_DEPTH}, or scans more than {@link #MAX_UNPAIRED_SCAN} characters for partners
+     *             that are not there
      */
     static List<String> splitSubcommands(String command) {
         Objects.requireNonNull(command, "Command cannot be null");
@@ -187,11 +195,11 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
         }
         final List<String> result = new ArrayList<>();
         // Not paired up somewhere: the pieces are a guess, so the command as written is matched as well.
-        final int[] unpaired = {0};
+        final int[] unpaired = {0, 0};
         tokenize(command, result, 0, unpaired, false);
-        if (command.indexOf('#') >= 0 || command.contains("<<")) {
+        if (command.indexOf('#') >= 0 || command.contains("<<") || command.contains("$'")) {
             // Added to the first reading, never in place of it: see the class comment.
-            final int[] unpairedWithComments = {0};
+            final int[] unpairedWithComments = {0, 0};
             final List<String> withComments = new ArrayList<>();
             tokenize(command, withComments, 0, unpairedWithComments, true);
             result.addAll(withComments);
@@ -206,7 +214,8 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
      * Tokenizes the command string into top-level sub-commands and the inner commands of any backtick / {@code $()}
      * substitutions encountered. {@code depth} is how many blocks enclose {@code command}, 0 for the command itself.
      * {@code unpaired} counts, across all levels, the quotes, backticks and {@code $(} that had no partner and were
-     * read as plain characters. With {@code readComments}, the quotes and substitutions of a comment and of a
+     * read as plain characters (slot 0), and the characters scanned to find that out (slot 1). With
+     * {@code readComments}, the quotes and substitutions of a comment and of a
      * here-document body are plain characters too.
      */
     @SuppressWarnings({"checkstyle:CyclomaticComplexity", "checkstyle:NestedIfDepth", "checkstyle:NPathComplexity",
@@ -219,6 +228,7 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
         final int len = command.length();
         boolean inComment = false;
         boolean inHereDocument = false;
+        int afterEscape = -1;
         final HereDocuments hereDocuments = readComments ? new HereDocuments() : null;
         int i = 0;
         while (i < len) {
@@ -226,7 +236,7 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
             if (c == '\n') {
                 inComment = false;
                 inHereDocument = hereDocuments != null && hereDocuments.isBodyLine(command, i + 1);
-            } else if (readComments && !inHereDocument && c == '#' && startsWord(command, i)) {
+            } else if (readComments && !inHereDocument && c == '#' && i != afterEscape && startsWord(command, i)) {
                 inComment = true;
             } else if (readComments && !inHereDocument && !inComment && c == '<') {
                 hereDocuments.openIfOperator(command, i);
@@ -241,7 +251,18 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
             if (c == '\\' && i + 1 < len) {
                 current.append(c).append(command.charAt(i + 1));
                 i += 2;
+                // What follows an escaped character continues its word: a # there starts no comment.
+                afterEscape = i;
                 continue;
+            }
+            if (readComments && c == '$' && i + 1 < len && command.charAt(i + 1) == '\'') {
+                // $'...' quotes with backslash escapes, so the ' of \' does not close it.
+                final int end = findMatchingDollarQuote(command, i + 2);
+                if (end >= 0) {
+                    current.append(command, i, end + 1);
+                    i = end + 1;
+                    continue;
+                }
             }
             if (c == '\'') {
                 final int end = command.indexOf('\'', i + 1);
@@ -250,7 +271,7 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
                     i = end + 1;
                     continue;
                 }
-                countUnpaired(unpaired);
+                countUnpaired(unpaired, len - i);
             } else if (c == '"') {
                 final int end = findMatchingDoubleQuote(command, i + 1);
                 if (end >= 0) {
@@ -261,7 +282,7 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
                     i = end + 1;
                     continue;
                 }
-                countUnpaired(unpaired);
+                countUnpaired(unpaired, len - i);
             } else if (c == '`') {
                 final int end = command.indexOf('`', i + 1);
                 if (end >= 0) {
@@ -270,7 +291,7 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
                     i = end + 1;
                     continue;
                 }
-                countUnpaired(unpaired);
+                countUnpaired(unpaired, len - i);
             } else if (c == '$' && i + 1 < len && command.charAt(i + 1) == '(') {
                 final int end = findMatchingParen(command, i + 2);
                 if (end >= 0) {
@@ -279,7 +300,7 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
                     i = end + 1;
                     continue;
                 }
-                countUnpaired(unpaired);
+                countUnpaired(unpaired, len - i);
             }
             // An opener with no partner falls through here and is read as the character it is.
             // Logical / pipe / sequencing operators split sub-commands.
@@ -305,12 +326,14 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
     }
 
     /**
-     * Each opener without a partner cost a scan to the end of the command to find that out, so their number is
-     * bounded like the depth is.
+     * Each opener without a partner cost a scan to the end of its block to find that out, so that scanning is bounded
+     * like the depth is.
      */
-    private static void countUnpaired(int[] unpaired) {
-        if (++unpaired[0] > MAX_UNPAIRED) {
-            throw new UnsplittableCommand("more than " + MAX_UNPAIRED + " quotes or substitutions left open");
+    private static void countUnpaired(int[] unpaired, int scanned) {
+        unpaired[0]++;
+        unpaired[1] += scanned;
+        if (unpaired[1] > MAX_UNPAIRED_SCAN) {
+            throw new UnsplittableCommand("too many quotes or substitutions left open");
         }
     }
 
@@ -320,7 +343,24 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
             return true;
         }
         final char before = command.charAt(i - 1);
-        return Character.isWhitespace(before) || before == ';' || before == '|' || before == '&';
+        return Character.isWhitespace(before) || before == ';' || before == '|' || before == '&' || before == '('
+                || before == ')';
+    }
+
+    private static int findMatchingDollarQuote(String s, int from) {
+        int i = from;
+        while (i < s.length()) {
+            final char c = s.charAt(i);
+            if (c == '\\') {
+                i += 2;
+                continue;
+            }
+            if (c == '\'') {
+                return i;
+            }
+            i++;
+        }
+        return -1;
     }
 
     private static void flushSegment(StringBuilder current, List<String> out) {
@@ -416,14 +456,30 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
             while (i < len && (command.charAt(i) == ' ' || command.charAt(i) == '\t')) {
                 i++;
             }
+            // The word is read through its quotes: <<'E F' ends at the line "E F", and <<'' at the first empty line.
             final StringBuilder word = new StringBuilder();
-            while (i < len && !Character.isWhitespace(command.charAt(i)) && ";|&<>()".indexOf(command.charAt(i)) < 0) {
-                final char c = command.charAt(i++);
-                if (c != '\'' && c != '"' && c != '\\') {
+            boolean quoted = false;
+            while (i < len) {
+                final char c = command.charAt(i);
+                if (c == '\'' || c == '"') {
+                    final int end = command.indexOf(c, i + 1);
+                    if (end < 0) {
+                        break;
+                    }
+                    word.append(command, i + 1, end);
+                    quoted = true;
+                    i = end + 1;
+                } else if (c == '\\' && i + 1 < len) {
+                    word.append(command.charAt(i + 1));
+                    i += 2;
+                } else if (Character.isWhitespace(c) || ";|&<>()".indexOf(c) >= 0) {
+                    break;
+                } else {
                     word.append(c);
+                    i++;
                 }
             }
-            if (word.length() > 0) {
+            if (word.length() > 0 || quoted) {
                 delimiters.add(word.toString());
                 tabsStripped.add(strip);
             }

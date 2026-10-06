@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: 52269e7d
+source_commit: c8183949
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -253,9 +253,9 @@ The grammar is exactly what `PredicateParser` accepts: a **tool name**, **`Tool(
   spaces) and `sudo git push` are not caught by `git push*`. A guard that has to hold against evasion should not lean
   on the glob: have a `command` handler inspect `tool_input.command` from stdin itself. A quote, backtick or `$(` with
   no partner is read as a character and splitting goes on — the `rm -rf x` in `echo "it's"; rm -rf x` is a piece (the
-  whole of such a command is looked at as one piece as well). A quote in a comment or in a here-document's body does
-  not hide the lines after it. Splitting has limits: a `command` longer than 65,536
-  characters, nested more than 64 levels deep, or with more than 64 of those left open, is not split and **matches
+  whole of such a command is looked at as one piece as well). A quote in a comment or in a here-document's body is read
+  so that it does not hide the lines after it (this is not a full shell grammar). Splitting has limits: a `command` longer than 65,536
+  characters, nested more than 64 levels deep, or with dozens of `$(` left unclosed, is not split and **matches
   every `Bash(…)` glob** — when the pieces cannot be looked at, "no piece matches" is not an answer the matcher can
   give, so the handler is asked (a `deny` blocks).
 - **The tools that take `Tool(glob)`** are `Bash` and the eight path tools (`Read`, `Edit`, `Write`, `MultiEdit`, `Glob`,

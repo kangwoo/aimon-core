@@ -353,6 +353,56 @@ class BashSubcommandPredicateTest {
     }
 
     @Test
+    void test_ordinaryScriptFullOfApostrophes_isStillSplit() {
+        // Every line leaves one apostrophe open inside its double quotes. Counted, sixty-five such lines were "too
+        // many" and the script matched every glob; what is bounded is the scanning they cost, and these cost none.
+        final StringBuilder script = new StringBuilder();
+        for (int line = 0; line < 500; line++) {
+            script.append("echo \"it's line ").append(line).append("\"\n");
+        }
+
+        assertThat(BashSubcommandPredicate.of("git push*").test("Bash", inputWithCommand(script.toString()))).isFalse();
+        assertThat(BashSubcommandPredicate.of("rm -rf*").test("Bash", inputWithCommand(script + "rm -rf /tmp/x\n")))
+                .isTrue();
+        final String hereDocument = "python3 - <<'EOF'\n" + "print(\"couldn't\")\n".repeat(500) + "EOF\n";
+        assertThat(BashSubcommandPredicate.of("git push*").test("Bash", inputWithCommand(hereDocument))).isFalse();
+    }
+
+    @Test
+    void test_commentRightAfterAParenthesis_doesNotHideTheNextLine() {
+        BashSubcommandPredicate p = BashSubcommandPredicate.of("rm -rf*");
+
+        assertThat(p.test("Bash", inputWithCommand("(#it's\nrm -rf /tmp/zz)\necho 'x'"))).isTrue();
+        assertThat(p.test("Bash", inputWithCommand("(true)#it's\nrm -rf /tmp/zz\necho 'x'"))).isTrue();
+        assertThat(p.test("Bash", inputWithCommand("echo $(#it's\nrm -rf /tmp/zz\n)\necho 'x'"))).isTrue();
+    }
+
+    @Test
+    void test_hashAfterAnEscapedSpace_doesNotSwitchOffTheHereDocumentAfterIt() {
+        BashSubcommandPredicate p = BashSubcommandPredicate.of("rm -rf*");
+
+        assertThat(p.test("Bash", inputWithCommand("echo a\\ #b <<EOF\nit's\nEOF\nrm -rf /tmp/zz\necho 'x'"))).isTrue();
+    }
+
+    @Test
+    void test_hereDocumentDelimiter_isReadThroughItsQuotes() {
+        BashSubcommandPredicate p = BashSubcommandPredicate.of("rm -rf*");
+
+        assertThat(p.test("Bash", inputWithCommand("cat <<'E F'\nE\nit's\nE F\nrm -rf /tmp/zz\necho 'x'"))).isTrue();
+        assertThat(p.test("Bash", inputWithCommand("cat <<E\\ F\nE\nit's\nE F\nrm -rf /tmp/zz\necho 'x'"))).isTrue();
+        assertThat(p.test("Bash", inputWithCommand("cat <<'E;F'\nE\nit's\nE;F\nrm -rf /tmp/zz\necho 'x'"))).isTrue();
+        // An empty delimiter ends the document at the first empty line.
+        assertThat(p.test("Bash", inputWithCommand("cat <<''\nit's\n\nrm -rf /tmp/zz\necho 'x'"))).isTrue();
+    }
+
+    @Test
+    void test_escapedApostropheInADollarQuote_doesNotHideTheCommandsAfterIt() {
+        BashSubcommandPredicate p = BashSubcommandPredicate.of("rm -rf*");
+
+        assertThat(p.test("Bash", inputWithCommand("echo $'it\\'s'; rm -rf /tmp/zz; echo 'x'"))).isTrue();
+    }
+
+    @Test
     void test_tooManyOpenersLeftOpen_matchesWhateverThePattern() {
         // Each one costs a scan to the end of the command. Past the limit the command is not split, and is answered
         // quickly.

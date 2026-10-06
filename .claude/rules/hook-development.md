@@ -97,7 +97,7 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   guard catches what its *action* throws itself, so what arrives here is from outside that — the
   matcher predicate, an `Error`. Both went through `onException`, i.e. success. (The matcher that
   used to die this way was the Bash sub-command splitter, one stack frame per nested `$(`. It now
-  declines to split a command over `MAX_NESTING_DEPTH` / `MAX_SPLIT_LENGTH` and answers *match*, so
+  declines to split a command over `MAX_NESTING_DEPTH` / `MAX_SPLIT_LENGTH` / `MAX_UNPAIRED_SCAN` and answers *match*, so
   the hook is asked. Do not make it answer *no match* — one more level of nesting would then step
   around every `Bash(...)` matcher — or throw, which a `postTool` / `failOpen` hook reads as a
   pass. The same goes for text it cannot pair up: an unpaired quote is read as a character and
