@@ -42,11 +42,13 @@ import at.aimon.core.mcp.exception.McpTransportException;
  *
  * <h2>Timeout</h2>
  * <p>
- * {@code requestTimeout} is measured from the call to {@link #sendRequest}, and covers both of the waits a request can
- * be held in: the wait for another request to release the transport, and the wait for a complete response line. A
- * request that runs out of time in the first was never written; one that runs out in the second was, so the server may
- * still be working on it, and whatever it writes later &mdash; the whole reply or the rest of a line it had started
- * &mdash; is read by the next request and dropped by its id. Both waits end early on an interrupt.
+ * {@code requestTimeout} bounds each of the two waits a request can be held in: the wait for another request to
+ * release the transport, and, once the request is written, the wait for a complete response line. They are counted
+ * separately, so a call returns within twice {@code requestTimeout} however many requests are queued, and a request
+ * that was written always has the whole of it to be answered in. A request that runs out of time in the first wait was
+ * never written, and says so; one that runs out in the second was, so the server may still be working on it, and
+ * whatever it writes later &mdash; the whole reply or the rest of a line it had started &mdash; is read by the next
+ * request and dropped by its id. Both waits end early on an interrupt.
  *
  * <p>
  * What the timeout does <em>not</em> cover is the write of the request itself. That is a blocking pipe write, and it
@@ -66,6 +68,8 @@ public class StdioMcpTransport implements McpTransport {
     private final InputStream stdout;
     private final ObjectMapper objectMapper;
     private final Duration requestTimeout;
+    /** {@link #requestTimeout} in nanoseconds, saturated: a timeout too long to count is one that never ends. */
+    private final long requestTimeoutNanos;
     private final AtomicInteger requestIdCounter = new AtomicInteger(1);
 
     /**
@@ -102,6 +106,7 @@ public class StdioMcpTransport implements McpTransport {
         Objects.requireNonNull(args, "args cannot be null");
         Objects.requireNonNull(env, "env cannot be null");
         this.requestTimeout = Objects.requireNonNull(requestTimeout, "requestTimeout cannot be null");
+        this.requestTimeoutNanos = toNanosSaturating(requestTimeout);
         this.objectMapper = new ObjectMapper();
 
         try {
@@ -151,10 +156,10 @@ public class StdioMcpTransport implements McpTransport {
 
     @Override
     public JsonNode sendRequest(String method, JsonNode params) {
-        // The clock starts here, before the wait for the transport: a caller is promised an answer or a timeout within
-        // requestTimeout of calling, not within requestTimeout of reaching the head of the queue.
-        final long timeoutNanos = requestTimeout.toNanos();
-        final long startNanos = System.nanoTime();
+        // Two waits, each bounded by requestTimeout: the wait for the transport, then the wait for the answer. They do
+        // not share one budget. A request that reached the transport with a sliver of time left would be written, run
+        // by the server, and reported as a timeout the caller could not tell from one that was never sent.
+        final long timeoutNanos = requestTimeoutNanos;
 
         if (closed || !process.isAlive()) {
             throw new McpTransportException("MCP process is not running");
@@ -185,12 +190,13 @@ public class StdioMcpTransport implements McpTransport {
             String requestJson = objectMapper.writeValueAsString(request) + "\n";
             stdin.write(requestJson.getBytes(StandardCharsets.UTF_8));
             stdin.flush();
+            final long sentNanos = System.nanoTime();
 
             log.debug("Sent JSON-RPC request: method={}, id={}", method, requestId);
 
             // Read response (with timeout). pollLine never blocks, so the deadline is looked at every
             // RESPONSE_POLL_MILLIS however the server paces what it writes.
-            while (System.nanoTime() - startNanos < timeoutNanos) {
+            while (System.nanoTime() - sentNanos < timeoutNanos) {
                 final String line = pollLine();
                 if (line == null) {
                     // Brief sleep to avoid busy-waiting
@@ -274,6 +280,14 @@ public class StdioMcpTransport implements McpTransport {
         }
     }
 
+    private static long toNanosSaturating(Duration duration) {
+        try {
+            return duration.toNanos();
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
+    }
+
     @Override
     public void sendNotification(String method, JsonNode params) {
         if (closed || !process.isAlive()) {
@@ -284,7 +298,7 @@ public class StdioMcpTransport implements McpTransport {
         try {
             // A notification waits for no reply, but it does wait its turn to write, and that wait is bounded the same
             // way a request's is.
-            locked = ioLock.tryLock(requestTimeout.toNanos(), TimeUnit.NANOSECONDS);
+            locked = ioLock.tryLock(requestTimeoutNanos, TimeUnit.NANOSECONDS);
             if (!locked) {
                 throw new McpTransportException("Timeout sending notification '" + method + "' after "
                         + requestTimeout.toMillis() + "ms (never sent: the transport was busy with another request)");

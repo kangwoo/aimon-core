@@ -111,9 +111,50 @@ class StdioMcpTransportRequestTimeoutTest {
                 final Outcome outcome = await(future);
                 assertThat(outcome.failure).isInstanceOf(McpTransportException.class)
                         .hasMessageContaining("Request timeout");
-                // Serialized, the slowest would take requests * timeoutMillis = 2400ms.
-                assertThat(outcome.elapsedMillis).isLessThan(timeoutMillis * 2);
+                // Serialized, the slowest would take requests * timeoutMillis = 2400ms. The bound is two timeouts and
+                // not one: a request that reaches the transport just inside its wait is sent, and then has a whole
+                // requestTimeout to be answered in.
+                assertThat(outcome.elapsedMillis).isLessThan(timeoutMillis * 2 + 400);
             }
+        }
+    }
+
+    @Test
+    void aRequestThatWaitedItsTurnStillHasAWholeRequestTimeoutToBeAnsweredIn() throws Exception {
+        // A healthy server that takes 600ms a request, and three callers at once. The third waits 1200ms for the
+        // transport and is answered 600ms after it is sent, 1800ms after it was called. Cutting it at 1500ms from the
+        // call would report a failure for a request the server went on to run.
+        final String script = "i=0; while read -r line; do i=$((i+1)); if [ $i -gt 1 ]; then sleep 0.6; fi; "
+                + "printf '{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{}}\\n' $i; done";
+
+        try (StdioMcpTransport transport = transport(script, Duration.ofMillis(1_500))) {
+            // The first request is answered at once: it is here so that the shell is up before anything is timed.
+            assertThat(await(callers.submit(() -> request(transport))).failure).isNull();
+
+            final CountDownLatch start = new CountDownLatch(1);
+            final List<Future<Outcome>> pending = new ArrayList<>();
+            for (int i = 0; i < 3; i++) {
+                pending.add(callers.submit(() -> {
+                    start.await();
+                    return request(transport);
+                }));
+            }
+            start.countDown();
+
+            for (Future<Outcome> future : pending) {
+                assertThat(await(future).failure).isNull();
+            }
+        }
+    }
+
+    @Test
+    void aRequestTimeoutTooLongToCountInNanosecondsIsNotAnError() throws Exception {
+        final String script = "read -r line; printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'; exec sleep 30";
+
+        try (StdioMcpTransport transport = transport(script, Duration.ofDays(365_000))) {
+            final Outcome outcome = await(callers.submit(() -> request(transport)));
+
+            assertThat(outcome.failure).isNull();
         }
     }
 
