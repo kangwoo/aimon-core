@@ -451,6 +451,49 @@ class DefaultContextEngineViewModeTest {
         }
 
         @Test
+        void theTwoSummaryPassIsReportedAsOneCompactionOfTheViewItStartedFrom() {
+            buffer.addUserMessage("x".repeat(300));
+            buffer.addAssistantMessage("one");
+            buffer.addUserMessage("x".repeat(300));
+            buffer.addAssistantMessage("on it");
+            buffer.addUserMessage("x".repeat(4500));
+            summarizer.text = "S".repeat(800);
+            summarizer.toolNamesPerCall = List.of(List.of("Read"), List.of("Read", "Grep"));
+            final int viewBefore = guard.estimateTokens(buffer.getSystemPrompt(), buffer.getMessages());
+
+            final ContextDecision decision = engine().prepare(request());
+
+            assertThat(summarizer.summarized).hasSize(2);
+            assertThat(summarizer.summarized.get(1).getMessages()).as("markers and the unanswered input").hasSize(3);
+            final CompactionMetadata first = summarizer.produced.get(0).getMetadata();
+            assertThat(decision.getCompactionMetadata()).hasValueSatisfying(metadata -> {
+                assertThat(metadata.getSummaryCalls()).isEqualTo(2);
+                assertThat(metadata.getPreCompactTokenCount()).as("the view before the first call")
+                        .isEqualTo(viewBefore);
+                assertThat(metadata.getMessagesSummarized()).as("every message of that view").isEqualTo(5);
+                assertThat(metadata.getStartedAt()).isEqualTo(first.getStartedAt());
+                assertThat(metadata.getDiscoveredToolNames()).containsExactly("Read", "Grep");
+                assertThat(metadata.getPostCompactTokenCount()).isEqualTo(tokensOf(decision));
+                assertThat(metadata.isOverBlockingLimit()).isFalse();
+            });
+            // The last PostCompact is shown the record of the pass, not of its second call alone.
+            assertThat(summarizer.installed).hasSize(2);
+            assertThat(summarizer.installed.get(0).getMetadata().getSummaryCalls()).isEqualTo(1);
+            assertThat(summarizer.installed.get(1).getMetadata().getSummaryCalls()).isEqualTo(2);
+            assertThat(summarizer.installed.get(1).getMetadata().getMessagesSummarized()).isEqualTo(5);
+        }
+
+        @Test
+        void anOrdinaryCompactionIsOneSummaryCall() {
+            buffer.addUserMessage(OVER_BLOCKING);
+
+            final ContextDecision decision = engine().prepare(request());
+
+            assertThat(decision.getCompactionMetadata())
+                    .hasValueSatisfying(metadata -> assertThat(metadata.getSummaryCalls()).isEqualTo(1));
+        }
+
+        @Test
         void whenThatSecondSummaryFailsTheFirstIsReportedAsLeavingTheViewOverTheLimit() {
             buffer.addUserMessage("x".repeat(600));
             buffer.addAssistantMessage("on it");
@@ -854,6 +897,8 @@ class DefaultContextEngineViewModeTest {
 
         private final List<SummaryRequest> summarized = new ArrayList<>();
         private final List<CompactionResult> installed = new ArrayList<>();
+        private final List<CompactionResult> produced = new ArrayList<>();
+        private List<List<String>> toolNamesPerCall = List.of();
         private boolean fail;
         private boolean returnNull;
         private String text = "SUMMARY";
@@ -877,13 +922,19 @@ class DefaultContextEngineViewModeTest {
             if (returnNull) {
                 return null;
             }
-            final Instant now = Instant.now();
+            // Each call starts at its own instant, so a record says which call's start it carries.
+            final Instant now = Instant.now().minusSeconds(100 - summarized.size());
+            final int call = summarized.size() - 1;
             final CompactionMetadata metadata = CompactionMetadata.builder().trigger(request.getTrigger())
                     .preCompactTokenCount(100).messagesSummarized(request.getMessages().size()).startedAt(now)
-                    .completedAt(now).build();
-            return fail || summarized.size() >= failFromCall
+                    .completedAt(now)
+                    .discoveredToolNames(call < toolNamesPerCall.size() ? toolNamesPerCall.get(call) : List.of())
+                    .build();
+            final CompactionResult result = fail || summarized.size() >= failFromCall
                     ? CompactionResult.failure(new IllegalStateException("provider down"), metadata)
                     : CompactionResult.success(text, metadata);
+            produced.add(result);
+            return result;
         }
 
         @Override
