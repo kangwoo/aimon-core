@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: ca68a22
+source_commit: 88dd561
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -531,8 +531,8 @@ MCP server (30 seconds by default) still applies underneath, so **the shorter of
 `timeout` does not make a request wait past the server's `requestTimeout`, and when that one ends it first the reason
 is `call failed`. Nothing goes on waiting for a request that was cut off — a stdio server has already received it, so
 the server may keep working, and an answer that arrives late is discarded (no `notifications/cancelled` is sent). A call
-that was still waiting for another request to the same server to finish is not cut off by this timeout; the hook
-executor's outer net cuts it off, and a guard blocks then too.
+that was still waiting for another request to the same server to finish is cut off by this timeout too, and that request
+was never delivered to the server — a guard blocks then too.
 
 ### `deny`
 
