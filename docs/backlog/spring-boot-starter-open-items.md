@@ -8,7 +8,7 @@
 
 | 항목 | 이슈 | 상태 |
 |------|------|------|
-| **B-7** — 예약 작업 재기동이 없다 | [#49](https://github.com/kangwoo/aimon-core/issues/49) | 열림 · 트리거 대기 |
+| **B-7** — 예약 작업 재기동이 없다 | [#49](https://github.com/kangwoo/aimon-core/issues/49) | 열림 · 트리거 대기 — 영속 구현(Mongo)과 재기동 루프는 났다(2026-10-06). 남은 것은 스타터의 Quartz JDBC 프로퍼티 |
 | **B-15** — 테넌트 축 상한 정책이 실측되지 않았다 | [#50](https://github.com/kangwoo/aimon-core/issues/50) | 열림 · 트리거 대기 |
 | **B-25** — SBS-04b 에서 접어 둔 예산·능력 축 | [#51](https://github.com/kangwoo/aimon-core/issues/51) | 접힘 |
 | **B-23** — 내부 운영 앱의 0.2.0 이관 | *(없음 — 아래)* | 열림 · 결정 대기 |
@@ -850,6 +850,54 @@ B-34 가 뚫은 것이 배달 경로(영속 구현 → 스택)의 한쪽 끝이�
 없다는 것, 그것이 제거 사유가 아니라는 것, 어느 경로가 이것을 필요로 하고(인메모리 스케줄러) 어느
 경로가 필요로 하지 않는지(Quartz JDBC job store). 코드 변경은 그 주석 하나뿐이고 **동작은 바뀌지
 않는다**. B-7 은 그대로 열려 있다.
+
+#### 영속 구현과 재기동 루프 (2026-10-06) — 트리거를 기다리지 않고 IT 를 소비자로 세웠다
+
+소비자는 여전히 없다(`roadmap.md` §3). 착수한 근거는 이 항목이 스스로 적어 둔 것이다 — 해소 조건은 "구현이 생기는
+시점" 이고, 배달 경로(B-34)와 재기동이 물을 자리(`findByEnabledTrue()`)가 이미 나 있었다. 모양을 추측할 것이 없었고
+빠진 것은 환경뿐이었으며, 환경은 Testcontainers 가 대신한다.
+
+**들어간 것 셋.**
+
+1. **재기동 루프** — `ScheduledTaskManager.rehydrate()`, `SchedulingEngine.start()` 가 스케줄러를 시작한 뒤 부른다.
+   저장소의 활성 작업 가운데 **스케줄러가 쥐고 있지 않은 것**(`TaskScheduler.exists`)만 다시 건다. 그래서 위 1차
+   정정이 가른 두 경로가 한 코드로 맞는다: 인메모리 스케줄러에서는 전부 다시 걸리고, Quartz JDBC job store 에서는
+   하나도 걸리지 않는다(트리거만 사라진 작업은 복구된다). 기본 인메모리 저장소에서는 기동 시 저장된 것이 없어 no-op 이다.
+2. **Mongo 구현** — `aimon-session-mongodb` 의 `MongoScheduledTaskRepository`(컬렉션 `scheduled_tasks`).
+   `updateIfPresent` 는 upsert 없는 `replaceOne` 한 번이다.
+3. **계약** — `aimon-session-testkit` 의 `AbstractScheduledTaskRepositoryContractTest` 11건. in-memory 구현이 daemon
+   없이 같은 11건을 통과한다. 마지막 건이 이 항목의 이름이다: 엔진 하나가 등록하고 닫힌 뒤, **다른 핸들**로 연 두 번째
+   엔진이 그 작업을 다시 건다.
+
+**착수해 보니 적힌 것과 달랐던 것.**
+
+1. **재기동에는 반쪽이 하나 더 있었다 — 쿼터.** 기본 `DefaultTaskQuotaManager` 의 장부는 메모리에 있다. 작업 레코드만
+   살아 돌아오면 재시작마다 모든 소유자가 **가진 작업 위에 한도를 통째로 다시** 받는다. 이 항목 어디에도 적혀 있지
+   않았고, 재현 테스트(`quotaCountsStoredTasksAfterRestart`)를 쓰자 나왔다. `TaskQuotaManager.restoreUsage` 를 default
+   메서드로 들였다 — 기본 구현은 no-op 이고(장부가 영속인 구현은 이미 세고 있다), 인메모리 구현만 저장된 작업으로
+   **덮어쓴다**(더하지 않으므로 두 번 불려도 같다).
+2. **`scheduling-durability` 의 둘째 문장이 거짓이 됐다.** "저장소만 주고 스케줄러는 기본값" 은 *"저장된 작업을 발화할
+   것이 남지 않는다"* 로 announce 되고 있었는데, 이제 단일 노드에서는 다시 걸린다. 그 degradation 은 지웠고, **분산
+   모드에서만** 다른 문장으로 남겼다 — 노드마다 자기 트리거를 다시 만들므로 모든 노드가 모든 작업을 발화한다.
+   `AimonStackBuilderTest` 의 해당 테스트가 그 문구를 고정하고 있어 함께 고쳤다.
+3. **시각은 BSON date 로 둘 수 없었다.** date 는 밀리초, `Instant` 는 나노초이고 `ScheduledTask.equals` 는 `createdAt`
+   을 비교한다. 계약 스위트의 첫 건(읽은 것이 저장한 것과 **같다**)이 그것을 요구하므로 ISO-8601 문자열로 저장한다.
+4. **`findById` 와 목록 조회의 실패 방식을 갈랐다.** 이 빌드가 읽지 못하는 문서 하나가 `findByEnabledTrue()` 를 통째로
+   던지게 하면 기동 시 **모든** 작업이 걸리지 않는다. 목록은 WARN 하고 건너뛰고, `findById` 는 던진다("없다" 는 틀린 답이다).
+
+`updateIfPresent` 의 원자성은 변이로 확인했다 — find-then-save 로 바꾸면 경합 테스트가 2라운드째에 빨개진다.
+
+**확인하지 못한 것 · 남은 것.**
+
+- **여러 노드 + 인메모리 스케줄러.** 위 2의 degradation 이 말하는 조합이다. `ScheduledExecutionGuard` 의 분산 구현이
+  없어서 중복 발화를 막는 것은 클러스터 스케줄러뿐이다. IT 는 이 조합을 돌리지 않았다.
+- **스타터의 Quartz JDBC job store · 클러스터링 프로퍼티.** 위 본문이 "그때 함께 열린다" 고 적은 것이다. 열지 않았다 —
+  이 항목이 열린 채 남는 이유다. `AimonSchedulingAutoConfiguration` 의 javadoc 에서 *"인메모리가 유일한 구현"* 이라는
+  문장만 고쳤다.
+- **실행 이력.** `ScheduledTaskExecutionHistoryRepository` 는 여전히 인메모리뿐이다. 재시작하면 이력은 사라진다.
+- **Redis · Postgres 구현.** 계약 스위트를 상속하면 된다.
+- **기동 시 저장소를 읽지 못하면 `start()` 가 던진다.** 조용히 아무것도 걸지 않는 것보다 낫다고 판단했지만, 실제
+  운영자의 요구로 확인한 것은 아니다.
 
 ---
 
