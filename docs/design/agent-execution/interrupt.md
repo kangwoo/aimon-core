@@ -95,13 +95,18 @@ public interface CancellationSignal {
 이며 **이미 trip 된 상태면 즉시 실행**하고, 등록은 `Registration` 을 돌려주어 해제할 수 있다
 (§6 이 이 해제에 의존한다).
 
-`InterruptReason` 은 아홉 값이다. 앞의 여섯은 단일 노드 시나리오이고, 뒤의 셋은 멀티 노드
-라우팅이 세션 소유권을 잃었을 때 쓴다.
+`InterruptReason` 은 열 값이다. 앞의 여섯은 단일 노드 시나리오이고, 다음 셋은 멀티 노드
+라우팅이 세션 소유권을 잃었을 때 쓴다. 마지막 하나는 **읽는 쪽의 값**이다.
 
 ```
 USER_SIGINT · NOW_PRIORITY_INPUT · BUDGET_EXCEEDED · PARENT_CANCELLED · TASK_CANCELLED · SYSTEM_SHUTDOWN
 LEASE_LOST · SESSION_RELEASED · HOLDER_LOST
+UNKNOWN
 ```
+
+`UNKNOWN` 으로 실행을 끊는 코드는 없다. 다른 노드가 쓴 사유를 읽는 디코더가
+(`InterruptReason.fromWireName`) 이 빌드가 모르는 이름을 만났을 때 돌려주는 값이다 — 롤링 업그레이드에서 새 노드가
+보낸 종료 프레임 `InterruptedAt` 을 버리지 않기 위해서다. 다른 값으로 대신 읽으면 일어나지 않은 일을 말하게 된다.
 
 `TASK_CANCELLED` 는 스케줄 태스크의 소유자가 그 태스크를 취소했거나 진행 중인 실행만 끊었을 때다(§12).
 `PARENT_CANCELLED` 와 나누어 둔 것은 **cascade 가 아니기** 때문이다 — 상위 실행에서 흘러 내려온 것이

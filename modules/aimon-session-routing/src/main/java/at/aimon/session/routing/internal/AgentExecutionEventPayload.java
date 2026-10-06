@@ -72,6 +72,12 @@ import at.aimon.core.skill.policy.pending.PendingTurnId;
  * reads as {@link CompletionReason#ERROR} instead of discarding the event
  * ({@link CompletionReason#fromWireName(String, boolean)}). Neither frame has a success flag to decide the fallback
  * with; every reason but {@code COMPLETED} is a non-success and an unknown name is not {@code COMPLETED}.
+ *
+ * <p>
+ * <b>Nor does an unknown interrupt reason.</b> {@link InterruptedAt} is terminal in the same way, and its reason reads
+ * as {@link InterruptReason#UNKNOWN} when this build cannot name it ({@link InterruptReason#fromWireName(String)}).
+ * {@link RejectedAt}'s reason and {@link SubagentTaskCompleted}'s outcome are still read strictly: a name this build
+ * does not know discards that frame.
  */
 final class AgentExecutionEventPayload {
 
@@ -372,7 +378,7 @@ final class AgentExecutionEventPayload {
                 yield builder.build();
             }
             case "InterruptedAt" -> InterruptedAt.builder().timestamp(timestamp).agentRuntimeId(context)
-                    .iteration(iteration).reason(InterruptReason.valueOf(asString(payload.get("reason"))))
+                    .iteration(iteration).reason(InterruptReason.fromWireName(asString(payload.get("reason"))))
                     .iterationIndex(asInt(payload.get("iterationIndex")))
                     .partialOutput(asString(payload.get("partial"))).build();
             case "RejectedAt" -> {

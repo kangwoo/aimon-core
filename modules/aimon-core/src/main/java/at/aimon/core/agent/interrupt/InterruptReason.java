@@ -47,5 +47,44 @@ public enum InterruptReason {
      * triggering a takeover. Surfaced to subscribers so the failed turn ends with a visible terminal event (design
      * §6.3 D).
      */
-    HOLDER_LOST
+    HOLDER_LOST,
+
+    /**
+     * The execution was interrupted for a reason this build cannot name.
+     *
+     * <p>
+     * <b>A reader's value, never a writer's.</b> Nothing interrupts an execution with this reason. It exists for the
+     * decoders that read a reason another node wrote ({@link #fromWireName(String)}): during a rolling upgrade a
+     * newer node may send a name this build does not define, and the frame carrying it — a terminal
+     * {@code InterruptedAt} — still has to be delivered, or the subscriber never hears that the turn stopped. No
+     * other value is a truthful stand-in: each of them says something specific happened, and it did not.
+     *
+     * <p>
+     * A consumer that branches on the reason should treat this like any reason it has no special handling for. The
+     * name that could not be read is not kept.
+     *
+     * <p>
+     * Added after the first release of this enum. A peer on a build that predates it cannot read the name
+     * {@code UNKNOWN} either, which is harmless as long as the first paragraph holds — no node originates it — and
+     * is the reason it must keep holding.
+     */
+    UNKNOWN;
+
+    /**
+     * Reads a reason another node wrote, without failing on one this build does not define.
+     *
+     * @param name
+     *            the name as written by {@link #name()}; may be null, or a name this build does not define
+     * @return the named reason, or {@link #UNKNOWN} when the name is absent or unknown (never null)
+     */
+    public static InterruptReason fromWireName(String name) {
+        if (name != null) {
+            try {
+                return valueOf(name);
+            } catch (IllegalArgumentException e) {
+                // Fall through: a name from a newer build is an expected input, not corruption.
+            }
+        }
+        return UNKNOWN;
+    }
 }

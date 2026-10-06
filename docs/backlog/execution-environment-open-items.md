@@ -3619,3 +3619,30 @@ MCP 도구가 병렬화에서 빠진다(`DefaultParallelToolDispatcher.isParalle
 `IdempotencyEntryCodec`, `aimon-core` 의 `StepOutcomeCodec.java:108`.
 
 **언제 다시 볼까.** 그 enum 들 가운데 하나에 값을 더할 때 — EE-83 과 같이 그 변경보다 **한 릴리스 앞서** 나가야 한다.
+
+### 일부 착수 (2026-10-06) — `InterruptReason` 은 새 값으로 읽는다
+
+`InterruptedAt` 의 사유만 고쳤다. `InterruptReason.UNKNOWN` 과 `InterruptReason.fromWireName(String)` 을 들였고,
+`AgentExecutionEventPayload` 가 그것으로 읽는다. 고치기 전에는 테스트
+(`interruptedAtWithAnUnknownReasonIsStillDelivered`)가 `No value present` 로 실패했다 — 프레임이 통째로 버려졌다.
+
+**왜 기존 값이 아니라 새 값인가.** `CompletionReason` 에는 거친 값(`ERROR`)이 있었다. 여기에는 없다 — 아홉 값이
+전부 "무슨 일이 있었다" 를 말하므로 어느 것을 골라도 구독자에게 거짓 사유가 간다.
+
+**새 값이 스스로 이 항목의 모양이 되지 않는 이유.** `UNKNOWN` 도 옛 노드가 모르는 이름이다. 그런데 **아무도
+`UNKNOWN` 으로 실행을 끊지 않으므로** 그 이름은 와이어에 처음으로 실리지 않는다. 읽은 값을 다시 내보내는 경로
+(EVICT 를 받아 종료 프레임을 합성하는 자리)에서 실릴 수는 있고, 그때 옛 노드는 그 프레임을 버린다 — 고치기 전에 그
+이름 없는 사유로 일어나던 것과 같은 결과다. 나빠지지 않는다. 이 성질은 enum 의 javadoc 이 조건으로 적는다.
+
+호출자를 셌다(규칙 여섯). main 소스에서 `InterruptReason` 값으로 분기하는 곳은 하나다 —
+`DefaultSessionRouter` 의 `reason == InterruptReason.SESSION_RELEASED`. 전수 `switch` 는 없어서 값을 더해도
+컴파일이 깨지는 곳이 없다.
+
+**손대지 않은 것.**
+
+- `DefaultSessionRouter.parseReason` — INTERRUPT · EVICT 신호의 사유를 읽고, 모르는 이름을 **`USER_SIGINT`** 로 읽는다.
+  이 항목이 피하려던 "거짓 사유" 가 이미 거기 있다. `SessionRouterEvictSignalTest` 가 그 값을 고정하고 있어
+  (*"EVICT with unparseable payload reason falls back to USER_SIGINT"*) 바꾸면 관측되는 이벤트가 바뀐다. 결정이 먼저다.
+- `RejectReason.valueOf` · `SubagentTaskCompleted.Outcome.valueOf` — 여전히 엄격하다. 프레임이 버려진다.
+- `IdempotencyEntry.Status` · `SignalKind` · `StepOutcomeCodec` — 위에 적힌 그대로다.
+
