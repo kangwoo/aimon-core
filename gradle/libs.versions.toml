@@ -56,7 +56,9 @@ aws-sdk = "2.55.10"
 #   read 2.1.1 before the Boot 4 move) on aimon-knowledge-opensearch, plus snakeyaml (2.7 -> 2.6) on both modules'
 #   test compile classpaths. The annotation jar is inert on both sides, as the Testcontainers jars below are; it is
 #   aligned rather than accepted because the cost lands on spring-boot-starter, which no test in that module loads,
-#   not on a library its tests run on. It raised the Logback pair on aimon-session-testkit as well, until #114.
+#   not on a library its tests run on. ALIGNED the same way, by the same criterion, on aimon-rewake-webhook (backlog
+#   D-4, 2026-10-06), where it raised jakarta.annotation-api (2.1.1 -> 3.0.0) over the version Jetty brings. It raised
+#   the Logback pair on aimon-session-testkit as well, until #114.
 # - Testcontainers (duct-tape): ACCEPTED, on six modules. The versions and the reason are no longer kept here: they are
 #   the first six lines of gradle/test-classpath-version-differences.txt, which `checkTestClasspathVersions` reads.
 # - The provider SDKs on aimon-spring-boot-starter's test classpath: was ACCEPTED (error_prone_annotations 2.21.1
@@ -66,7 +68,10 @@ aws-sdk = "2.55.10"
 # Which is why the accepted differences moved out of this comment (backlog D-3). A comment is a measurement of the day
 # it was written; `./gradlew checkTestClasspathVersions`, part of `checkAll`, fails on a difference that file does not
 # record, on a recorded one whose versions moved, and on a recorded one that is gone. Its first run also found four
-# differences on no list; they are in the file, marked undecided. docs/design/testing/test-classpath-version-check.md.
+# differences on no list. They were decided on 2026-10-06 (backlog D-4): one aligned, on aimon-rewake-webhook, and
+# three accepted, each with its reason in the file — jspecify on aimon-session-redis, and the two Micrometer jars on
+# aimon-spring-boot-starter, where the version under test is the one Spring Boot manages.
+# docs/design/testing/test-classpath-version-check.md.
 #
 # JUnit carries no version on a module that only tests against it, on purpose: such a module gets
 # spring-boot-starter-test (aimon.java-conventions), which brings org.junit:junit-bom onto its *test*

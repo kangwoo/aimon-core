@@ -286,5 +286,5 @@ tasks.register<TestClasspathVersionsTask>("checkTestClasspathVersions") {
 // in what it does, it can pass without failing anything — so the comment has to name the command that shows whether
 // the call still holds.
 //
-// The `shouldResolveConsistentlyWith` calls in aimon-cli, aimon-scheduling-quartz and aimon-knowledge-opensearch are
-// made on these terms; aimon-cli's comment is the worked example.
+// The `shouldResolveConsistentlyWith` calls in aimon-cli, aimon-scheduling-quartz, aimon-knowledge-opensearch and
+// aimon-rewake-webhook are made on these terms; aimon-cli's comment is the worked example.

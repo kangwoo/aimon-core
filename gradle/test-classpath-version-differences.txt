@@ -14,8 +14,9 @@
 #
 #   <module> | <group>:<name> | <shipped version> -> <version under test> | <why it is left that way>
 #
-# The other answer to a difference is to remove it: aimon-cli, aimon-scheduling-quartz and aimon-knowledge-opensearch
-# resolve their test classpaths consistently with runtimeClasspath (their build files say why), and so have no line.
+# The other answer to a difference is to remove it: aimon-cli, aimon-scheduling-quartz, aimon-knowledge-opensearch and
+# aimon-rewake-webhook resolve their test classpaths consistently with runtimeClasspath (their build files say why),
+# and so have no line.
 #
 # Rationale and rejected alternatives: docs/design/testing/test-classpath-shipped-versions.md (#99),
 # docs/design/testing/test-classpath-version-check.md (this check, backlog D-3).
@@ -31,13 +32,38 @@ aimon-session-postgres    | org.jetbrains:annotations | 13.0 -> 17.0.0 | Testcon
 aimon-session-redis       | org.jetbrains:annotations | 13.0 -> 17.0.0 | Testcontainers (duct-tape) asks for 17.0.0; an annotations jar no test run loads (#99, decision 2)
 aimon-spring-boot-starter | org.jetbrains:annotations | 13.0 -> 17.0.0 | Testcontainers (duct-tape) asks for 17.0.0; an annotations jar no test run loads (#99, decision 2)
 
-# --- Found by this check's first run (2026-10-05) and NOT YET DECIDED ----------------------------------------------
-# Nobody had recorded these four; they were on no list, in no comment. They are written down here so that the check
-# can gate the next difference instead of starting red — which is a record that they exist, not a decision that they
-# are fine. Each wants the choice #99 made per source: align the module's test classpaths, or accept with a reason
-# about what the jar contains. Until then the reason field says where the version comes from, which is all that is
-# known.
-aimon-rewake-webhook      | jakarta.annotation:jakarta.annotation-api | 2.1.1 -> 3.0.0   | UNDECIDED. Ships 2.1.1 (Jetty, via Javalin); spring-boot-starter (via spring-boot-starter-test) asks for 3.0.0. The same source D-2 aligned on aimon-knowledge-opensearch
-aimon-session-redis       | org.jspecify:jspecify                     | 1.0.0 -> 1.0.1   | UNDECIDED. Ships 1.0.0 (reactor-core, via Lettuce); Caffeine (aimon-session-routing, a test dependency) and Micrometer (spring-boot-starter-test) ask for 1.0.1
-aimon-spring-boot-starter | io.micrometer:micrometer-observation      | 1.16.7 -> 1.17.1 | UNDECIDED. Ships 1.16.7 (spring-context); the module's own test dependency spring-boot-starter-actuator asks for 1.17.1. A code jar, not annotations
-aimon-spring-boot-starter | io.micrometer:micrometer-commons          | 1.16.7 -> 1.17.1 | UNDECIDED. Same source as micrometer-observation on this module
+# The check's first run (2026-10-05) found four differences on no list. They were decided one by one on 2026-10-06
+# (backlog D-4). The fourth, jakarta.annotation-api on aimon-rewake-webhook, was aligned and has no line; the three
+# below were accepted, each with the jars opened.
+
+# --- Accepted (2026-10-06, backlog D-4): org.jspecify:jspecify on aimon-session-redis --------------------------------
+# 1.0.0 ships (reactor-core, via Lettuce). Caffeine 3.3.0 asks for 1.0.1 and reaches the tests through
+# aimon-session-testkit -> aimon-session-routing; micrometer-commons, under spring-boot-starter-test, asks for it too.
+# The jar is four annotation types (NonNull, Nullable, NullMarked, NullUnmarked) and their class files are
+# byte-identical in the two versions (shasum); the only file that differs is module-info.class, which moved out of
+# META-INF/versions/9 and which a classpath run does not read. So the number is one no run can observe, and the shape
+# is #99's decision 2: aligning would put Caffeine — a library the multi-node scenarios do run — below the version it
+# asks for, and, since consistent resolution is per classpath and not per jar, would take Testcontainers down to
+# org.jetbrains:annotations 13.0 on this module's twelve docker classes as well, which is the line decision 2 accepted
+# above. A deployment that adds aimon-session-routing resolves 1.0.1 itself (aimon-spring-boot-starter ships 1.0.1).
+aimon-session-redis       | org.jspecify:jspecify | 1.0.0 -> 1.0.1 | Caffeine (via aimon-session-routing) asks for 1.0.1; the four annotation classes are byte-identical in both versions, and aligning would push Caffeine and Testcontainers below what they ask for (#99, decision 2; D-4)
+
+# --- Accepted (2026-10-06, backlog D-4): Micrometer on aimon-spring-boot-starter -------------------------------------
+# These are code jars, so decision 2's reason does not reach them; the reason is the second one #99 gave for this
+# module in decision 3 — "shipped" is the wrong side to move. 1.16.7 is what spring-context 7.0.9's own POM asks for,
+# and it is what runtimeClasspath resolves only because this build resolves the starter without Spring Boot's
+# dependency management. Spring Boot 4.1.1, the line the starter targets, manages Micrometer 1.17.1: aimon-sample-app,
+# a Boot application on this starter with no Actuator, resolves micrometer-observation 1.17.1 "selected by rule". The
+# tests get the same 1.17.1 from spring-boot-starter-actuator, which the build file takes on purpose because it
+# "carries the Micrometer version Boot manages". So the tests already run on what an application on this Boot line
+# runs, and the lower number is the one no such application sees.
+#
+# Aligning was tried (2026-10-06). Consistent resolution holds back only the jars runtimeClasspath has, so the test
+# classpath became micrometer-core and micrometer-jakarta9 1.17.1 over micrometer-observation and micrometer-commons
+# 1.16.7 — a split no application resolves, since micrometer-core 1.17.1 asks for the other two at 1.17.1. The unit
+# tests passed on it (the two versions have the same public API, javap), which shows the split is survivable, not that
+# it is what ships. Raising what ships instead — a main-scope constraint, or Spring Boot's platform — changes the
+# published POM, which #99 declined to do for this module (decision 3); it is left as a question for whoever next
+# decides how the starter states its Boot baseline.
+aimon-spring-boot-starter | io.micrometer:micrometer-observation | 1.16.7 -> 1.17.1 | Spring Boot 4.1.1 manages 1.17.1, so a Boot application on this starter runs what the tests run; 1.16.7 is spring-context's own request, resolved here without Boot's dependency management. Aligning splits Micrometer (core 1.17.1 over observation 1.16.7) (D-4)
+aimon-spring-boot-starter | io.micrometer:micrometer-commons     | 1.16.7 -> 1.17.1 | Same as micrometer-observation on this module: it arrives only as that jar's dependency, at that jar's version (D-4)
