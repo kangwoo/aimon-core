@@ -78,7 +78,10 @@ public class StdioMcpTransport implements McpTransport {
 
     private static final int READ_CHUNK_BYTES = 8192;
 
-    /** How long {@link #close()} waits for stdin to be closed on the writer thread before it ends the process. */
+    /**
+     * How long {@link #close()} waits, twice at most: for a write in flight to end before it takes the write for
+     * stalled, and for stdin to be closed on the writer thread before it ends the process.
+     */
     private static final long STDIN_CLOSE_WAIT_MILLIS = 200;
 
     private final Process process;
@@ -456,8 +459,10 @@ public class StdioMcpTransport implements McpTransport {
         // Closing stdin is how a stdio server is asked to leave, but it cannot be asked while a write is stalled: the
         // server is not reading, so it would not see the end of input, and the close itself would queue behind that
         // write, which holds the stream's monitor. Ending the process is the one thing that ends such a write.
+        // A write that is only passing through, to a server that is reading, ends within the moment it is given
+        // here, and that server is then asked to leave like any other.
         final CompletableFuture<Void> write = writeInFlight;
-        if (write != null && !write.isDone()) {
+        if (write != null && !endedWithin(write, STDIN_CLOSE_WAIT_MILLIS)) {
             process.destroyForcibly();
         }
         // Always on the writer thread, behind whatever write is there: this thread must not wait for a monitor it
@@ -491,6 +496,21 @@ public class StdioMcpTransport implements McpTransport {
         }
 
         log.debug("StdioMcpTransport closed");
+    }
+
+    /** Whether {@code write} ended, well or badly, before {@code millis} had passed. */
+    private static boolean endedWithin(CompletableFuture<Void> write, long millis) {
+        try {
+            write.get(millis, TimeUnit.MILLISECONDS);
+            return true;
+        } catch (ExecutionException failed) {
+            return true;
+        } catch (TimeoutException stalled) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return write.isDone();
+        }
     }
 
     private void closeStdin() {

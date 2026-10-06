@@ -135,7 +135,8 @@ returns within three times `requestTimeout` at the very most, and within twice w
 A request that gives up in its write fails with `Request timeout … (the server is not reading its input …)`. Its frame
 is not cut short: the write finishes in the background and the transport stays taken until it has, so requests behind
 it fail as "never sent". If the server reads again it receives the whole frame and may run it. No process is killed to
-end a write; `close()` ends it, by ending the process first when a write is stalled.
+end a write; `close()` ends it, by ending the process first when a write is stalled — one still in flight after
+200 ms, so a write on its way to a server that is reading does not get that server killed.
 
 Behaviour that changes: a large request to a server that leaves its stdin unread for longer than `requestTimeout` used
 to wait, and succeed if the server came back; it now fails after `requestTimeout`.
