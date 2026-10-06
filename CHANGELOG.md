@@ -7,6 +7,43 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: scheduled tasks survive a restart — `MongoScheduledTaskRepository`, and the engine reschedules what it finds stored (B-7)
+
+Two things were missing for a scheduled task to be there after a restart, and both are in.
+
+- **`SchedulingEngine.start()` now schedules the stored tasks.** It calls the new `ScheduledTaskManager.rehydrate()`,
+  which schedules every stored, enabled task the scheduler is not already holding. With the default in-memory
+  repository nothing is stored at start and nothing changes. With a durable repository and the in-memory scheduler the
+  triggers are rebuilt; with a scheduler that keeps its own (a Quartz JDBC job store) none are, except for a task whose
+  trigger went missing. The repository is read before the scheduler starts, and **`start()` now throws if it cannot be
+  read**, with nothing left running.
+- **`MongoScheduledTaskRepository`** in `aimon-session-mongodb` stores tasks in `scheduled_tasks`. Pass it with
+  `SchedulingSpec.withTaskRepository(...)` or as a `ScheduledTaskRepository` bean. **Re-run `db/mongodb/init.js`**: it
+  creates the collection and its two indexes.
+
+**On one node of several, stored tasks are not rescheduled unless that is safe.** `SchedulingEngineBuilder.multiNode(true)`
+— which the stack sets in distributed mode — makes `start()` reschedule only if the scheduler's triggers are shared by
+the deployment (the new `TaskScheduler.isClusterWide()`, true for Quartz on a clustered job store) or a
+`ScheduledExecutionGuard` was supplied. Otherwise every node would rebuild every trigger and every node would fire every
+task. The stack announces that case as `scheduling-durability`; a supplied repository on a single node is no longer
+announced. The starter's `backend: quartz` is a RAM job store and counts as per node.
+
+**Changed: the default quota is counted from the repository.** `SchedulingEngineBuilder` now installs
+`StoredTaskQuotaManager` when no quota manager is given: an owner's usage is the number of tasks the repository holds
+for them (`ScheduledTaskRepository.countByOwner`, a new default method). The in-memory ledger it replaces was emptied by
+a restart the tasks survived, and was per node over a repository the nodes share. `DefaultTaskQuotaManager` is unchanged
+and still used when passed explicitly.
+
+**Changed (SPI): `ScheduledTaskRepository.recordExecution(taskId, executedAt)`.** A finished run now records only when it
+ran, instead of writing back the whole task as it read it at fire time. That write-back re-enabled a task its owner had
+disabled during the run. **A custom `ScheduledTaskRepository` must implement the new method**; it has no default, for the
+reason `updateIfPresent` has none — the presence check and the write must be atomic.
+
+Not included: execution history is still in memory only, the starter still has no property for Quartz's JDBC job store,
+and a stored document a build cannot decode is skipped by listings and cannot be cancelled through the API.
+
+The contract a task repository has to meet is `AbstractScheduledTaskRepositoryContractTest` in `aimon-session-testkit`.
+
 ### Added: `InterruptReason.UNKNOWN` — an interrupt reason from a newer node no longer drops the terminal event (EE-91)
 
 A node reading a cross-node `InterruptedAt` whose reason its build does not define used to discard the event, so a

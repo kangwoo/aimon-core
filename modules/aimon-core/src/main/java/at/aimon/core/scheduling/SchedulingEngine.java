@@ -4,6 +4,7 @@
 
 package at.aimon.core.scheduling;
 
+import java.util.List;
 import java.util.Objects;
 
 import org.slf4j.Logger;
@@ -65,6 +66,7 @@ public final class SchedulingEngine implements AutoCloseable {
      * runs on nodes that are not shutting down at all.
      */
     private final ScheduledTaskInterruptBus.Subscription interruptSubscription;
+    private final boolean rehydrateAtStart;
 
     /**
      * Creates a new scheduling engine.
@@ -75,6 +77,13 @@ public final class SchedulingEngine implements AutoCloseable {
      */
     SchedulingEngine(ScheduledTaskManager taskManager, RoutineExecutor routineExecutor, TaskScheduler taskScheduler,
             ScheduledTaskEventPublisher eventPublisher, ScheduledTaskInterruptBus interruptBus) {
+        this(taskManager, routineExecutor, taskScheduler, eventPublisher, interruptBus, true);
+    }
+
+    SchedulingEngine(ScheduledTaskManager taskManager, RoutineExecutor routineExecutor, TaskScheduler taskScheduler,
+            ScheduledTaskEventPublisher eventPublisher, ScheduledTaskInterruptBus interruptBus,
+            boolean rehydrateAtStart) {
+        this.rehydrateAtStart = rehydrateAtStart;
 
         this.taskManager = Objects.requireNonNull(taskManager, "Task manager cannot be null");
         this.routineExecutor = Objects.requireNonNull(routineExecutor, "Routine executor cannot be null");
@@ -94,12 +103,43 @@ public final class SchedulingEngine implements AutoCloseable {
      * Starts the scheduling engine.
      *
      * <p>
-     * This starts the task scheduler, allowing scheduled tasks to execute.
+     * This starts the task scheduler, allowing scheduled tasks to execute, and then schedules the enabled tasks the
+     * repository already holds that the scheduler does not ({@link ScheduledTaskManager#rehydrate()}) — the tasks a
+     * durable repository kept across a restart. With the default in-memory repository there are none.
+     * </p>
+     *
+     * <p>
+     * The repository is read <em>before</em> the scheduler is started, so a repository that cannot be read fails the
+     * start with nothing running: no scheduler accepting registrations while no stored task is scheduled.
+     * </p>
+     *
+     * <p>
+     * On one node of several whose scheduler is not shared, the stored tasks are <b>not</b> scheduled
+     * ({@link #rehydratesAtStart()}).
      * </p>
      */
     public void start() {
+        final List<ScheduledTask> stored = rehydrateAtStart ? taskManager.readStoredEnabled() : List.of();
         taskScheduler.start();
+        if (rehydrateAtStart) {
+            taskManager.scheduleStored(stored);
+        }
         log.info("Scheduling engine started");
+    }
+
+    /**
+     * Whether {@link #start()} schedules the tasks it finds stored.
+     *
+     * <p>
+     * {@code false} only for an engine built as one node of several ({@link SchedulingEngineBuilder#multiNode}) whose
+     * scheduler holds per-node triggers and whose execution guard was left at the node-local default. There,
+     * rebuilding the triggers would make every node fire every stored task with nothing to stop the duplicates, so
+     * the engine leaves them alone: a task fires on the node that registered it, until that node restarts.
+     *
+     * @return whether stored tasks are scheduled at start
+     */
+    public boolean rehydratesAtStart() {
+        return rehydrateAtStart;
     }
 
     /**

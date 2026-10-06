@@ -58,6 +58,15 @@ public final class DocumentKeys {
      */
     public static final String COLL_SCHEDULED_TASK_INTERRUPTS = "scheduled_task_interrupts";
 
+    /**
+     * Default collection holding scheduled task records, keyed by task id.
+     *
+     * <p>
+     * <b>FROZEN WIRE NAME from its first release.</b> A rename leaves every stored schedule in the old collection and
+     * the runtime reading one Mongo creates empty: no task is found, nothing is scheduled at start, and nothing errors.
+     */
+    public static final String COLL_SCHEDULED_TASKS = "scheduled_tasks";
+
     /** Default collection holding background subagent task snapshots, keyed by task id. */
     public static final String COLL_BACKGROUND_TASK = "background_task";
 

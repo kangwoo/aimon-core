@@ -64,7 +64,8 @@ public final class MongoTestSupport {
         final MongoDatabase db = sharedDatabase();
         for (String name : List.of(DocumentKeys.COLL_LOCKS, DocumentKeys.COLL_INBOX, DocumentKeys.COLL_IDEMPOTENCY,
                 DocumentKeys.COLL_SIGNALS, DocumentKeys.COLL_BACKGROUND_TASK, DocumentKeys.COLL_SESSION_RECORDS,
-                DocumentKeys.COLL_SESSION_LOG_SEGMENTS, DocumentKeys.COLL_SCHEDULED_TASK_INTERRUPTS)) {
+                DocumentKeys.COLL_SESSION_LOG_SEGMENTS, DocumentKeys.COLL_SCHEDULED_TASK_INTERRUPTS,
+                DocumentKeys.COLL_SCHEDULED_TASKS)) {
             try {
                 db.getCollection(name).drop();
             } catch (RuntimeException ignored) {
@@ -87,6 +88,13 @@ public final class MongoTestSupport {
         // Spelled out for the same reason as the inbox index below.
         db.getCollection(DocumentKeys.COLL_SESSION_LOG_SEGMENTS).createIndex(Indexes.ascending("sessionId"),
                 new IndexOptions().name("by_session"));
+
+        db.createCollection(DocumentKeys.COLL_SCHEDULED_TASKS);
+        // Spelled out for the same reason as the inbox index below.
+        db.getCollection(DocumentKeys.COLL_SCHEDULED_TASKS).createIndex(Indexes.ascending("owner.type", "owner.id"),
+                new IndexOptions().name("by_owner"));
+        db.getCollection(DocumentKeys.COLL_SCHEDULED_TASKS).createIndex(Indexes.ascending("enabled"),
+                new IndexOptions().name("by_enabled"));
 
         final MongoCollection<Document> inbox = db.getCollection(DocumentKeys.COLL_INBOX);
         // Spelled out rather than built from DocumentKeys: this index mirrors the one operators applied from init.js,

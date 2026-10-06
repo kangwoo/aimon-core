@@ -4,6 +4,7 @@
 
 package at.aimon.core.scheduling.repository;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -36,6 +37,14 @@ public class InMemoryScheduledTaskRepository implements ScheduledTaskRepository 
         // computeIfPresent is the atomicity the contract asks for: the presence check and the write happen under the
         // same bin lock, so a concurrent deleteById either loses the race entirely or wins it and leaves nothing here.
         return tasks.computeIfPresent(task.getId(), (id, stored) -> task) != null;
+    }
+
+    @Override
+    public boolean recordExecution(ScheduledTaskId taskId, Instant executedAt) {
+        Objects.requireNonNull(taskId, "Task ID cannot be null");
+        Objects.requireNonNull(executedAt, "Execution time cannot be null");
+        // Derived from the stored task under the bin lock, not from a copy the caller read earlier.
+        return tasks.computeIfPresent(taskId, (id, stored) -> stored.withLastExecutedAt(executedAt)) != null;
     }
 
     @Override

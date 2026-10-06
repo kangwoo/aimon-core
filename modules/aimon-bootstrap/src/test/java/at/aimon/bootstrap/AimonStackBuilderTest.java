@@ -3,6 +3,7 @@ package at.aimon.bootstrap;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 import java.nio.file.Path;
 import java.time.Duration;
@@ -329,17 +330,69 @@ class AimonStackBuilderTest {
     }
 
     @Test
-    @DisplayName("a repository over the default scheduler is announced as the other half missing")
-    void schedulingWithRepositoryOnlyAnnouncesTheTriggerHalf(@TempDir Path workspace) {
-        // The dangerous shape is not "nothing is durable" but "one half is" — the stored task outlives the restart
-        // and nothing is left scheduled to fire it, which looks like the feature working until the hour comes.
+    @DisplayName("a repository over the default scheduler is not a degradation on a single node")
+    void schedulingWithRepositoryOnlyIsSilentOnASingleNode(@TempDir Path workspace) {
+        // It used to be announced as the trigger half missing. The engine now rebuilds the triggers from the
+        // repository when it starts, so on one node there is nothing left to warn about.
         final SchedulingSpec scheduling = SchedulingSpec.enabled()
                 .withTaskRepository(new InMemoryScheduledTaskRepository());
 
         try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").scheduling(scheduling).build())) {
-            assertThat(stack.degradations().has("scheduling-durability")).isTrue();
-            assertThat(stack.degradations().describe()).contains("the triggers do not");
+            assertThat(stack.degradations().has("scheduling-durability")).isFalse();
         }
+    }
+
+    @Test
+    @DisplayName("the same pair on one node of several is announced: stored tasks are not rescheduled there")
+    void schedulingWithRepositoryOnlyAnnouncesNoReschedulingWhenDistributed(@TempDir Path workspace) {
+        // Rebuilding at start is right for one node and wrong for several: each node would schedule every stored
+        // task and each would fire it. The engine does not, and the stack says what that leaves.
+        final SchedulingSpec scheduling = SchedulingSpec.enabled()
+                .withTaskRepository(new InMemoryScheduledTaskRepository());
+
+        try (AimonStack stack = AimonStackBuilder
+                .build(specFor(workspace, "ops").scheduling(scheduling).session(distributedSession()).build())) {
+            assertThat(stack.degradations().has("scheduling-durability")).isTrue();
+            assertThat(stack.degradations().describe()).contains("not rescheduled when this node starts");
+            assertThat(stack.schedulingEngine().orElseThrow().rehydratesAtStart()).isFalse();
+        }
+    }
+
+    @Test
+    @DisplayName("a supplied scheduler does not silence it when that scheduler is per node too")
+    void suppliedPerNodeSchedulerIsAnnouncedWhenDistributed(@TempDir Path workspace) {
+        // "A scheduler was supplied" is not "the triggers are shared": Quartz on a RAM job store is supplied and per
+        // node. The announcement follows what the built scheduler says about itself.
+        final SchedulingSpec scheduling = SchedulingSpec.enabled(executor -> NO_OP_SCHEDULER)
+                .withTaskRepository(new InMemoryScheduledTaskRepository());
+
+        try (AimonStack stack = AimonStackBuilder
+                .build(specFor(workspace, "ops").scheduling(scheduling).session(distributedSession()).build())) {
+            assertThat(stack.degradations().has("scheduling-durability")).isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("an execution guard that sees the other nodes makes rescheduling safe, and it is silent again")
+    void suppliedExecutionGuardSilencesItWhenDistributed(@TempDir Path workspace) {
+        final SchedulingSpec scheduling = SchedulingSpec.enabled()
+                .withTaskRepository(new InMemoryScheduledTaskRepository())
+                .withExecutionGuard(new at.aimon.core.scheduling.InMemoryScheduledExecutionGuard());
+
+        try (AimonStack stack = AimonStackBuilder
+                .build(specFor(workspace, "ops").scheduling(scheduling).session(distributedSession()).build())) {
+            assertThat(stack.degradations().has("scheduling-durability")).isFalse();
+            assertThat(stack.schedulingEngine().orElseThrow().rehydratesAtStart()).isTrue();
+        }
+    }
+
+    private static SessionSpec distributedSession() {
+        return SessionSpec.builder().mode(at.aimon.session.routing.DeploymentMode.DISTRIBUTED).nodeId("pod-a")
+                .recordStore(mock(at.aimon.core.agent.session.store.SessionRecordStore.class))
+                .leaseStore(mock(at.aimon.core.agent.session.store.SessionLeaseStore.class))
+                .signalBus(mock(at.aimon.core.agent.session.signal.SessionSignalBus.class))
+                .inbox(mock(at.aimon.core.agent.session.inbox.SessionInbox.class))
+                .idempotencyStore(mock(at.aimon.core.agent.session.idempotency.IdempotencyStore.class)).build();
     }
 
     @Test

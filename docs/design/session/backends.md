@@ -203,6 +203,7 @@ mongosh "mongodb://localhost:27017/aimon_session?replicaSet=rs0" \
 | `conversation_inbox` | `by_conv_priority_fifo` = `(conversationId, priority, deliveredAt)` |
 | `idempotency_entries` | `ttl_expires_at` (`expireAfterSeconds: 0`) + `by_status_touch` |
 | `background_task` | `by_state`, `by_context` |
+| `scheduled_tasks` | 스케줄 태스크 레코드(`MongoScheduledTaskRepository`). `by_owner` = `(owner.type, owner.id)`, `by_enabled`. 세션 컬렉션이 아니다 |
 | `scheduled_task_interrupts` | **capped, 1 MiB** — 스케줄 태스크의 노드 간 중지 요청. 세션 컬렉션이 아니다(키가 `ScheduledTaskId`) |
 | `session_records` | 전사(문자열) + side field |
 

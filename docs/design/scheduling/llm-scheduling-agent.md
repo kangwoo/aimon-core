@@ -88,7 +88,7 @@ RoutineExecutor
 | `at.aimon.core.scheduling.cron` | `UnixCronExpression` — 정본 방언(§4) |
 | `at.aimon.core.scheduling.scheduler` | `TaskScheduler`, `ScheduledTaskExecutor`, `TaskSchedulerFactory`, `InMemoryTaskScheduler` |
 | `at.aimon.core.scheduling.repository` | 작업·이력 저장소 인터페이스와 인메모리 구현 |
-| `at.aimon.core.scheduling.quota` | `TaskQuotaManager`, `DefaultTaskQuotaManager` |
+| `at.aimon.core.scheduling.quota` | `TaskQuotaManager`, `StoredTaskQuotaManager`, `DefaultTaskQuotaManager` |
 | `at.aimon.core.scheduling.event` | 이벤트 7종 + 리스너 + 발행자(§5.6) |
 | `at.aimon.core.scheduling.exception` | `SchedulingException` 과 그 하위 5종 |
 | `at.aimon.core.tools.scheduling` | LLM 도구 3종 + 입력 파싱 DTO |
@@ -188,9 +188,10 @@ cron 작업은 자기가 만들어진 순간보다 오래 산다. 그 사이 누
 
 ### 3.5 할당량
 
-`TaskQuotaManager` 가 `Principal` 별 최대 작업 수를 강제한다. 기본값 10, `DefaultTaskQuotaManager` 는
-`ConcurrentHashMap` + `AtomicInteger` 기반이며 소유자별 커스텀 할당량을 받는다. 등록 시 증가하고 취소 시
-회수한다.
+`TaskQuotaManager` 가 `Principal` 별 최대 작업 수를 강제한다. 기본값 10. 엔진 빌더가 기본으로 넣는 것은
+`StoredTaskQuotaManager` 로, 장부를 두지 않고 저장소에 있는 그 소유자의 작업 수를 센다 — 장부는 저장소가 재시작을
+넘기거나 여러 노드가 공유하는 순간 저장소와 어긋난다. `DefaultTaskQuotaManager` 는 `ConcurrentHashMap` +
+`AtomicInteger` 장부이고 소유자별 커스텀 할당량을 받으며, 직접 넘길 때만 쓰인다.
 
 ---
 
@@ -402,7 +403,7 @@ executor 를 만들어야 하므로 **아직 아무도 채우지 않은 가변 �
 | `ScheduledTaskRepository` | `InMemoryScheduledTaskRepository` |
 | `ScheduledTaskExecutionHistoryRepository` | `InMemoryScheduledTaskExecutionHistoryRepository` |
 | `ScheduledTaskEventPublisher` | `SimpleScheduledTaskEventPublisher` |
-| `TaskQuotaManager` | `DefaultTaskQuotaManager(defaultMaxQuota)` — 기본 10 |
+| `TaskQuotaManager` | `StoredTaskQuotaManager(taskRepository, defaultMaxQuota)` — 기본 10 |
 | `ScheduledExecutionGuard` | `InMemoryScheduledExecutionGuard` |
 | `AgentRuntimeRegistry` | `DefaultAgentRuntimeRegistry` — 단, 실제 배포는 반드시 주입한다 |
 | `TaskScheduler` | `InMemoryTaskScheduler` |
@@ -472,7 +473,7 @@ executor 를 만들어야 하므로 **아직 아무도 채우지 않은 가변 �
 
 | 항목 | 현재 | 필요한 것 |
 |------|------|----------|
-| **작업 정의 영속화** | `ScheduledTaskRepository` 구현이 인메모리 하나뿐이다. Quartz JDBC job store 를 써도 **트리거만** 남고 작업 정의는 재시작과 함께 사라진다 | RDB 백엔드. 여기에 더해 **기동 시 재등록** 경로 — `SchedulingEngine.start()` 는 스케줄러만 시작하고 저장된 활성 작업을 다시 걸지 않는다 |
+| **작업 정의 영속화** | 코어의 `ScheduledTaskRepository` 구현은 인메모리 하나이고, 영속 구현은 `aimon-session-mongodb` 의 `MongoScheduledTaskRepository` 하나다. **기동 시 재등록**은 있다 — `SchedulingEngine.start()` 가 저장된 활성 작업 가운데 스케줄러가 쥐고 있지 않은 것을 다시 건다(`ScheduledTaskManager.rehydrate`). 여러 노드 가운데 하나이고 스케줄러의 트리거가 노드별이면 걸지 않는다(`SchedulingEngineBuilder.multiNode`). 쿼터는 장부 없이 저장소에서 센다(`StoredTaskQuotaManager`). 실행 이력 저장소는 여전히 인메모리뿐이다 | RDB 백엔드, 실행 이력의 영속 구현 |
 | **timezone** | `ScheduledTask.timezone` 에 저장되고 `schedule_task` 스키마가 IANA 존을 광고하지만, `TaskScheduler.scheduleRecurrently(taskId, cronExpression)` 이 표현식만 받으므로 **어느 스케줄러에도 전달되지 않는다.** 인메모리 스케줄러는 시스템 기본 존으로 계산한다 | 시그니처에 존을 태우거나 표현식과 존을 한 값으로 묶는다. 필드를 지우는 선택지는 없다 — 모델에게 이미 광고했다 |
 | **분산 `ScheduledExecutionGuard`** | 인메모리 구현뿐 (노드 로컬) | 공유 락/리스 저장소 기반 구현. 심은 이미 있으므로 구현체 하나를 주입하면 된다(§6) |
 | **작업 수정 API** | 없음 — 취소 후 재등록 | 부분 수정이 정말 필요한지부터. cron 만 바꾸는 것과 routine 을 바꾸는 것은 다른 작업에 가깝다 |

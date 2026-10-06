@@ -271,6 +271,21 @@ public class QuartzTaskScheduler implements TaskScheduler {
     }
 
     /**
+     * @return whether the underlying Quartz scheduler runs on a clustered job store — the one configuration in which a
+     *         trigger exists once for every node. A RAM store and an unclustered JDBC store are both per node
+     */
+    @Override
+    public boolean isClusterWide() {
+        try {
+            return scheduler.getMetaData().isJobStoreClustered();
+        } catch (SchedulerException e) {
+            LOGGER.warn("Could not read the Quartz job store's metadata; treating its triggers as per node: {}",
+                    e.toString());
+            return false;
+        }
+    }
+
+    /**
      * {@inheritDoc}
      *
      * <p>

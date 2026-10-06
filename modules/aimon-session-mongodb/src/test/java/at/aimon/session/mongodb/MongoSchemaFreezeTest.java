@@ -85,6 +85,9 @@ class MongoSchemaFreezeTest {
         // Also frozen from birth, and for the reason conversation_signals is: it is a change-stream channel, so a
         // rename splits a fleet mid-deploy and a cancellation entered on one half never reaches the other.
         assertThat(DocumentKeys.COLL_SCHEDULED_TASK_INTERRUPTS).isEqualTo("scheduled_task_interrupts");
+
+        // Frozen from birth: a rename leaves every stored schedule behind in a collection nothing reads.
+        assertThat(DocumentKeys.COLL_SCHEDULED_TASKS).isEqualTo("scheduled_tasks");
     }
 
     @Test
@@ -96,6 +99,7 @@ class MongoSchemaFreezeTest {
         assertThat(script).contains("ensureCollection(\"background_task\")");
         assertThat(script).contains("ensureCollection(\"session_records\")");
         assertThat(script).contains("ensureCollection(\"session_log_segments\")");
+        assertThat(script).contains("ensureCollection(\"scheduled_tasks\")");
 
         // The signal collection is capped, and that is not decoration: the change-stream bus depends on it. A rename
         // that drops the option provisions an unbounded collection which grows until the disk does.
@@ -136,5 +140,15 @@ class MongoSchemaFreezeTest {
         // session delete scan the whole collection.
         assertThat(script)
                 .contains("target.session_log_segments.createIndex( { sessionId: 1 }, { name: \"by_session\" } );");
+    }
+
+    @Test
+    @DisplayName("the scheduled-task indexes are declared on the frozen collection, fields and names")
+    void scheduledTaskIndexesAreFrozen() {
+        // The owner queries filter on the nested owner.type and owner.id that ScheduledTaskDocumentCodecTest pins on
+        // the document side; an index on any other spelling is one no query uses.
+        assertThat(script).contains("target.scheduled_tasks.createIndex( "
+                + "{ \"owner.type\": 1, \"owner.id\": 1 }, { name: \"by_owner\" } );");
+        assertThat(script).contains("target.scheduled_tasks.createIndex( { enabled: 1 }, { name: \"by_enabled\" } );");
     }
 }

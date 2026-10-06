@@ -63,7 +63,7 @@ import at.aimon.scheduling.quartz.QuartzTaskSchedulerBuilder;
  * <p>
  * There is no property for Quartz's JDBC job store or its clustering, though the adapter's builder has both. The
  * scheduled <em>tasks</em> are held in memory unless the application supplies a {@link ScheduledTaskRepository} bean
- * — {@code InMemoryScheduledTaskRepository} is the only implementation that ships — so a durable job store on its own
+ * — the starter itself configures none — so a durable job store on its own
  * would preserve the triggers and lose everything they point at, and each one would fire after a restart into "task
  * not found". That is worse than no durability, because it looks like durability. The stack says so at startup
  * through its {@code scheduling-durability} degradation, and this slice declines to offer the property that would

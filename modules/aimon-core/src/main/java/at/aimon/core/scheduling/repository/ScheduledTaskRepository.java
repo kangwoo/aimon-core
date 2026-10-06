@@ -4,6 +4,7 @@
 
 package at.aimon.core.scheduling.repository;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -49,6 +50,29 @@ public interface ScheduledTaskRepository {
     boolean updateIfPresent(ScheduledTask task);
 
     /**
+     * Records that a stored task ran, changing nothing else about it, and does nothing if it is no longer stored.
+     *
+     * <p>
+     * This is what a finished run writes back. It is narrower than {@link #updateIfPresent(ScheduledTask)} on
+     * purpose: a run holds the copy of the task it read at fire time, and writing that whole copy back undoes
+     * whatever changed while the run was in flight. A task its owner disabled mid-run would be stored as enabled
+     * again — and scheduled again at the next start — and a field written by a newer build would be erased by an
+     * older one that does not know it. Writing only the one value the run owns has neither effect.
+     *
+     * <p>
+     * Like {@code updateIfPresent}, the presence check and the write must be <b>atomic</b>, and a deleted task must
+     * not be recreated.
+     *
+     * @param taskId
+     *            the task that ran (must not be null)
+     * @param executedAt
+     *            when it ran (must not be null)
+     * @return {@code true} if a stored task was updated, {@code false} if no task with that id exists — in which case
+     *         nothing was written
+     */
+    boolean recordExecution(ScheduledTaskId taskId, Instant executedAt);
+
+    /**
      * Finds a task by its ID.
      *
      * @param taskId
@@ -68,13 +92,9 @@ public interface ScheduledTaskRepository {
      * Returns all enabled tasks.
      *
      * <p>
-     * <b>No production code calls this, and that is not a reason to remove it.</b> This is the seam a rehydration
-     * loop needs: after a restart, something has to ask "which tasks should be scheduled right now" without holding
-     * an owner, and this is the only query that answers it. No such loop exists yet, because the only repository
-     * implementation in the tree is {@link InMemoryScheduledTaskRepository} and there is nothing to rehydrate from.
-     * When a durable implementation arrives, the in-memory scheduler path needs this method; the Quartz JDBC job
-     * store path does not, since {@code DelegatingJob} stores only the task id and re-reads the record at fire time.
-     * Deleting it as dead code would move that work further away rather than closer.
+     * This is what the engine asks at start ({@code ScheduledTaskManager.rehydrate}): "which tasks should be
+     * scheduled right now", without holding an owner. A durable implementation is read here once per start, across
+     * all owners and with their routines, so it should not be a scan the deployment cannot afford.
      *
      * @return list of enabled tasks
      */
@@ -88,6 +108,22 @@ public interface ScheduledTaskRepository {
      * @return list of tasks owned by the principal
      */
     List<ScheduledTask> findByOwner(Principal owner);
+
+    /**
+     * Counts the tasks owned by the specified principal, enabled or not.
+     *
+     * <p>
+     * This is what a quota is measured against ({@code StoredTaskQuotaManager}), so it is asked on every
+     * registration. The default counts {@link #findByOwner(Principal)}; a store should override it with a count that
+     * does not load the tasks — and that counts a record it cannot decode, which {@code findByOwner} may leave out.
+     *
+     * @param owner
+     *            the owning principal
+     * @return how many tasks the principal owns
+     */
+    default int countByOwner(Principal owner) {
+        return findByOwner(owner).size();
+    }
 
     /**
      * Returns all enabled tasks owned by the specified principal.
