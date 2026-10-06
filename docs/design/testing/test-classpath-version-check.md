@@ -125,8 +125,9 @@ here so the next person does not measure it again.
   it makes the comparison pass, or advise deleting a true line, exactly when something is wrong (section 3).
 - **Do not record a difference without reading where it comes from.** `dependencyInsight` on both configurations is
   two commands, and the failure prints one of them.
-- **Do not treat the four UNDECIDED lines as accepted.** They are in the file so the check can gate the *next*
-  difference. The file says so above them.
+- **Do not write a line whose reason is only where the version comes from.** The four differences the first run found
+  were recorded that way, marked `UNDECIDED`, so the check could gate the *next* difference; they stayed undecided
+  until someone opened the jars (section 6, item 1). A provenance is not a reason to leave a difference.
 - **Do not add `testCompileClasspath`** without first explaining the 32 lower versions.
 - **Do not move the reasons back into comments.** A reason the task does not require is a reason that can be left
   out.
@@ -138,11 +139,30 @@ here so the next person does not measure it again.
    Spring). The two Micrometer jars on the starter are code, not annotations, and the higher version comes from the
    module's own test dependency on `spring-boot-starter-actuator` — an application that adds Actuator resolves that
    version too. `jspecify` is an annotations jar. None of the jars was opened for this change.
+
+   **Decided 2026-10-06 (backlog D-4), per line, with the jars opened.** No `UNDECIDED` line is left; the reasons are
+   in the record, above the lines they belong to.
+   - `aimon-rewake-webhook`, `jakarta.annotation-api`: **aligned**, with the block the other three aligned modules
+     have, and no line. The shipped side has a reader here, which `aimon-knowledge-opensearch` did not:
+     `jetty-ee10-annotations` references `jakarta.annotation.*` from six handler classes. The cost lands on
+     `spring-boot-starter`, which no test in the module loads.
+   - `aimon-session-redis`, `jspecify`: **accepted**. The four annotation classes are byte-identical in 1.0.0 and
+     1.0.1 — only `module-info.class` moved — and consistent resolution is per classpath, so aligning would have put
+     Caffeine, which the multi-node scenarios run, below the version it asks for, and taken back the
+     `org.jetbrains:annotations` line #99's decision 2 accepted on the same module.
+   - `aimon-spring-boot-starter`, the two Micrometer jars: **accepted**, and not for decision 2's reason — they are
+     code. The sentence above was narrower than the fact: an application needs no Actuator to resolve 1.17.1, because
+     Spring Boot 4.1.1 manages it (`aimon-sample-app`, which has none, resolves it "selected by rule"). 1.16.7 is
+     `spring-context`'s own request, and is what `runtimeClasspath` resolves only because this build resolves the
+     starter without Boot's dependency management. Aligning was tried: it leaves `micrometer-core` 1.17.1 over
+     `micrometer-observation` 1.16.7, a split no application resolves. The unit tests passed on it. What stays open
+     is the other side — whether the starter's published metadata should state the Micrometer its Boot line manages.
 2. **A dependency bump now fails `checkAll` when it moves a recorded version.** That is the point — the item's own
    trigger is "the next Spring Boot or Testcontainers bump" — and it also means a Dependabot PR for Testcontainers,
    OkHttp, Caffeine, Lettuce, Javalin or Spring Boot can go red on a line it cannot edit. The fix is one pasted line.
    How often it happens is not known yet.
-3. **Whether consistent resolution still holds on the three aligned modules** is answered only by absence: if
+3. **Whether consistent resolution still holds on the aligned modules** (three then, four since item 1 was decided)
+   is answered only by absence: if
    `shouldResolveConsistentlyWith` silently stopped working, their differences would reappear as unrecorded and
    fail. That is the Gradle-upgrade trigger D-3 listed, and it is now covered.
 
@@ -155,5 +175,5 @@ here so the next person does not measure it again.
 | The aggregate and its place in `checkAll` | `build.gradle.kts` |
 | The record | `gradle/test-classpath-version-differences.txt` |
 | The decisions the record's first six lines carry | [`test-classpath-shipped-versions.md`](test-classpath-shipped-versions.md) section 3.2 |
-| The three modules with no line because they align | `modules/aimon-cli/build.gradle.kts`, `modules/aimon-scheduling-quartz/build.gradle.kts`, `modules/aimon-knowledge-opensearch/build.gradle.kts` |
+| The four modules with no line because they align | `modules/aimon-cli/build.gradle.kts`, `modules/aimon-scheduling-quartz/build.gradle.kts`, `modules/aimon-knowledge-opensearch/build.gradle.kts`, `modules/aimon-rewake-webhook/build.gradle.kts` |
 | CI and the release gate, which both run `checkAll` | `.github/workflows/build.yml`, `scripts/release.sh` |
