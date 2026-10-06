@@ -3630,19 +3630,42 @@ MCP 도구가 병렬화에서 빠진다(`DefaultParallelToolDispatcher.isParalle
 전부 "무슨 일이 있었다" 를 말하므로 어느 것을 골라도 구독자에게 거짓 사유가 간다.
 
 **새 값이 스스로 이 항목의 모양이 되지 않는 이유.** `UNKNOWN` 도 옛 노드가 모르는 이름이다. 그런데 **아무도
-`UNKNOWN` 으로 실행을 끊지 않으므로** 그 이름은 와이어에 처음으로 실리지 않는다. 읽은 값을 다시 내보내는 경로
-(EVICT 를 받아 종료 프레임을 합성하는 자리)에서 실릴 수는 있고, 그때 옛 노드는 그 프레임을 버린다 — 고치기 전에 그
-이름 없는 사유로 일어나던 것과 같은 결과다. 나빠지지 않는다. 이 성질은 enum 의 javadoc 이 조건으로 적는다.
+`UNKNOWN` 을 사유로 줄 수 없으므로** 그 이름은 와이어에 실리지 않는다. 이것은 처음에 javadoc 의 한 문단으로만
+지켜졌고, 리뷰가 그 자리를 짚었다(아래). 지금은 호출자가 사유를 고르는 진입점 — `LiveSession.interrupt` 와
+`SessionRouter.interrupt` — 이 `InterruptReason.requireGivable` 로 거절한다.
 
-호출자를 셌다(규칙 여섯). main 소스에서 `InterruptReason` 값으로 분기하는 곳은 하나다 —
-`DefaultSessionRouter` 의 `reason == InterruptReason.SESSION_RELEASED`. 전수 `switch` 는 없어서 값을 더해도
-컴파일이 깨지는 곳이 없다.
+읽은 사유를 다시 내보내는 경로는 **없다.** EVENT 수신자도 EVICT 수신자도 디코드한 프레임을 노드 로컬 publisher 에만
+넘기고, 버스로 릴레이되는 것은 턴 자신의 리스너에서 나온 프레임뿐이다. 사유를 영속하는 코덱도 없다. 이름이 와이어에
+닿는 길은 호출자가 그것을 `interrupt` 에 넘기는 것 하나였고, 그 길을 막았다.
+
+호출자를 셌다(규칙 여섯). `InterruptReason` 값으로 분기하는 곳은 둘이다 — `DefaultSessionRouter` 의
+`reason == InterruptReason.SESSION_RELEASED` 와, `src/main` 에 있는 testkit 의 계약 테스트 하나
+(`AbstractMultiNodeSessionContractTest` 의 `== HOLDER_LOST`). 전수 `switch` · `EnumMap` · `values()` 소비자는 없어서
+값을 더해도 컴파일이 깨지는 곳이 없다.
+
+#### 독립 리뷰가 찾은 것 (2026-10-06)
+
+심각한 것은 없었고 변이 여섯은 전부 잡혔다. 다섯 건 가운데 무게가 있는 것은 하나다.
+
+1. **안전 논거가 강제되지 않는 전제 위에 있었다.** "아무도 `UNKNOWN` 으로 끊지 않는다" 는 주석이었고, 이 커밋이
+   함께 들인 공개 `fromWireName` 은 그 전제를 실수로 깨기에 딱 좋은 도구였다 — `valueOf(param)` 이 던지던 자리에
+   "너그러운 대체물" 로 넣으면 오타 하나가 `UNKNOWN` 인터럽트가 되고, 옛 노드는 그 종료 프레임을 버린다. **이 항목이
+   없애려던 바로 그 실패를, 고치기 전보다 나쁘게.** 진입점 둘에서 `IllegalArgumentException` 으로 거절한다.
+   코디네이터에서는 거절하지 않았다 — 거기는 원격에서 온 사유도 지나가므로, 거절은 곧 **인터럽트를 버리는 것**이 된다.
+   같은 이유로 `parseReason` 은 와이어에서 온 문자열 `"UNKNOWN"` 을 읽지 못하는 이름과 같이 읽는다.
+2. 이 기록의 두 문장이 틀려 있었다 — 재발행 경로가 있다고 적었고(없다), 분기하는 곳을 하나로 셌다(둘). 위에 고쳤다.
+3. 리더의 "이름 없음 → `UNKNOWN`" 분기는 유일한 호출자에서 닿지 않는다. 사유 필드가 **아예 없는** `InterruptedAt` 은
+   여전히 깨진 프레임으로 버려진다. 디코더 주석에 적었고 동작은 그대로다.
+4. 도구 셋(`BashTool` · `GrepTool` · `WebFetchTool`)은 신호에 사유가 **없을 때** `"UNKNOWN"` 이라는 글자를 찍는다.
+   enum 상수와 글자가 같아졌다. 진입점이 막혀 있어 두 뜻이 만날 길은 없지만, 고치지 않았다.
 
 **손대지 않은 것.**
 
 - `DefaultSessionRouter.parseReason` — INTERRUPT · EVICT 신호의 사유를 읽고, 모르는 이름을 **`USER_SIGINT`** 로 읽는다.
   이 항목이 피하려던 "거짓 사유" 가 이미 거기 있다. `SessionRouterEvictSignalTest` 가 그 값을 고정하고 있어
   (*"EVICT with unparseable payload reason falls back to USER_SIGINT"*) 바꾸면 관측되는 이벤트가 바뀐다. 결정이 먼저다.
+  보이는 결과가 하나 있다: 새 사유가 두 레일로 함께 오면 새 노드의 구독자는 같은 중지에 대해 종료 프레임을 **둘** 볼
+  수 있고 사유가 서로 다르다 — 릴레이된 EVENT 는 `UNKNOWN`, EVICT 가 합성한 것은 `USER_SIGINT`.
 - `RejectReason.valueOf` · `SubagentTaskCompleted.Outcome.valueOf` — 여전히 엄격하다. 프레임이 버려진다.
 - `IdempotencyEntry.Status` · `SignalKind` · `StepOutcomeCodec` — 위에 적힌 그대로다.
 

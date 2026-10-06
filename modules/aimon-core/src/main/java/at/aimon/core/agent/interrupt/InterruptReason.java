@@ -65,13 +65,39 @@ public enum InterruptReason {
      *
      * <p>
      * Added after the first release of this enum. A peer on a build that predates it cannot read the name
-     * {@code UNKNOWN} either, which is harmless as long as the first paragraph holds — no node originates it — and
-     * is the reason it must keep holding.
+     * {@code UNKNOWN} either, which is harmless as long as the first paragraph holds — no node originates it. The
+     * entry points where a caller chooses a reason enforce that rather than ask for it: {@code LiveSession.interrupt}
+     * and {@code SessionRouter.interrupt} refuse this value ({@link #requireGivable(InterruptReason)}).
      */
     UNKNOWN;
 
     /**
+     * Refuses {@link #UNKNOWN} as a reason a caller gives for an interrupt.
+     *
+     * <p>
+     * For the entry points where application code chooses the reason. A reason given here ends up in the terminal
+     * frame other nodes read, and a node on a build that predates {@code UNKNOWN} drops a frame carrying that name.
+     *
+     * @param reason
+     *            the reason a caller supplied (must not be null)
+     * @return {@code reason}, for chaining
+     * @throws IllegalArgumentException
+     *             if {@code reason} is {@link #UNKNOWN}
+     */
+    public static InterruptReason requireGivable(InterruptReason reason) {
+        if (reason == UNKNOWN) {
+            throw new IllegalArgumentException("UNKNOWN is what a decoder reads a peer's unrecognised reason as; it"
+                    + " cannot be given as the reason for an interrupt");
+        }
+        return reason;
+    }
+
+    /**
      * Reads a reason another node wrote, without failing on one this build does not define.
+     *
+     * <p>
+     * For decoders of names a peer wrote. Not for parsing a caller's input into a reason to interrupt with: the
+     * forgiving result for a misspelled name is {@link #UNKNOWN}, which the interrupt entry points refuse.
      *
      * @param name
      *            the name as written by {@link #name()}; may be null, or a name this build does not define

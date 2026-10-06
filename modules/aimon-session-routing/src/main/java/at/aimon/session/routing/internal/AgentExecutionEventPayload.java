@@ -76,6 +76,7 @@ import at.aimon.core.skill.policy.pending.PendingTurnId;
  * <p>
  * <b>Nor does an unknown interrupt reason.</b> {@link InterruptedAt} is terminal in the same way, and its reason reads
  * as {@link InterruptReason#UNKNOWN} when this build cannot name it ({@link InterruptReason#fromWireName(String)}).
+ * A frame with <em>no</em> reason at all is still malformed and discarded, like any frame missing a required field.
  * {@link RejectedAt}'s reason and {@link SubagentTaskCompleted}'s outcome are still read strictly: a name this build
  * does not know discards that frame.
  */

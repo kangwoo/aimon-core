@@ -839,6 +839,7 @@ public final class DefaultLiveSession implements LiveSession {
     @Override
     public void interrupt(InterruptReason reason) {
         Objects.requireNonNull(reason, "reason must not be null");
+        InterruptReason.requireGivable(reason);
         interrupt(activeTurn.get(), reason);
     }
 
@@ -886,6 +887,7 @@ public final class DefaultLiveSession implements LiveSession {
     public void interrupt(TurnId turnId, InterruptReason reason) {
         Objects.requireNonNull(turnId, "turnId must not be null");
         Objects.requireNonNull(reason, "reason must not be null");
+        InterruptReason.requireGivable(reason);
         final ActiveTurn turn = activeTurn.get();
         if (turn == null) {
             log.debug("Session {} interrupt({}) for turn {} requested with no active turn — ignoring", sessionId,

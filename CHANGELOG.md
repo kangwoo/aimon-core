@@ -11,7 +11,9 @@ Central is versioned independently).
 
 A node reading a cross-node `InterruptedAt` whose reason its build does not define used to discard the event, so a
 remote subscriber never heard that the turn had stopped. The reason now reads as the new `InterruptReason.UNKNOWN`
-(`InterruptReason.fromWireName`). Nothing interrupts an execution with `UNKNOWN`; it is only ever the result of reading.
+(`InterruptReason.fromWireName`). Nothing interrupts an execution with `UNKNOWN`; it is only ever the result of reading,
+and `LiveSession.interrupt` and `SessionRouter.interrupt` now throw `IllegalArgumentException` if given it — a node on
+the previous release would drop the frame that carried the name.
 
 **If you `switch` over `InterruptReason` without a `default`, add one.** The value is new to the enum. Other strict
 readers named by EE-91 are unchanged: `RejectedAt`'s reason and `SubagentTaskCompleted`'s outcome still discard a frame
