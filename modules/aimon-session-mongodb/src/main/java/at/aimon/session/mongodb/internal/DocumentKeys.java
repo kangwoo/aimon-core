@@ -48,6 +48,16 @@ public final class DocumentKeys {
      */
     public static final String COLL_SIGNALS = "conversation_signals";
 
+    /**
+     * Default capped collection holding cross-node stop requests for scheduled tasks.
+     *
+     * <p>
+     * <b>FROZEN WIRE NAME from its first release.</b> It is a change-stream channel like {@link #COLL_SIGNALS} and
+     * fails the same way when it moves: upgraded nodes publish to and watch one collection, the rest another, and a
+     * cancellation entered on one half never reaches a run held by the other.
+     */
+    public static final String COLL_SCHEDULED_TASK_INTERRUPTS = "scheduled_task_interrupts";
+
     /** Default collection holding background subagent task snapshots, keyed by task id. */
     public static final String COLL_BACKGROUND_TASK = "background_task";
 
@@ -230,6 +240,12 @@ public final class DocumentKeys {
 
     /** Segment document — when the sealing node wrote it; garbage collection compares it with its grace period. */
     public static final String F_SEGMENT_CREATED_AT = "createdAt";
+
+    /** Scheduled task id a stop request is addressed to (string form of {@code ScheduledTaskId}). */
+    public static final String F_TASK_ID = "taskId";
+
+    /** Why the stop was requested ({@code InterruptReason} name). */
+    public static final String F_REASON = "reason";
 
     private DocumentKeys() {
     }

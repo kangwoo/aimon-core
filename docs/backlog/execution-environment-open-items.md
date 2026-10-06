@@ -3615,6 +3615,15 @@ MCP 도구가 병렬화에서 빠진다(`DefaultParallelToolDispatcher.isParalle
 
 호출자와 소비자는 세지 않았다 — 이름을 읽은 것이다(규칙 여섯: 착수할 때 먼저 센다).
 
+**덧붙임 (2026-10-06, 착수하려다 멈췄다).** 같은 파일에 목록에 없는 것이 하나 더 있다 —
+`AgentExecutionEventPayload` 의 `SubagentTaskCompleted.Outcome.valueOf`(`:395`). 그리고 이 항목은 "한 줄씩 느슨하게"
+로 끝나지 않는다. EE-83 이 쓸 수 있었던 **거친 값**(`COMPLETED` / `ERROR`)이 여기 enum 들에는 없다:
+`InterruptReason` 에는 "모름" 에 해당하는 값이 없어 어느 것을 골라도 구독자에게 거짓 사유를 말하게 되고,
+`IdempotencyEntry.Status` 는 두 값의 뜻이 반대라(`IN_FLIGHT` ↔ `DONE`) 틀린 쪽으로 읽으면 턴이 중복 실행되거나
+영영 기다린다 — 엄격한 것이 맞을 수 있다. 그래서 결정 항목이다(규칙 넷). 같은 날 생긴
+`ScheduledTaskInterruptCodec`(Mongo)은 처음부터 느슨하게 읽는다 — 거기서는 사유가 라벨일 뿐이라 거친 값
+(`TASK_CANCELLED`)이 있었다.
+
 **어디** *(2026-10-06)* — `aimon-session-routing` 의 `internal/AgentExecutionEventPayload.java`, redis · mongodb 의
 `IdempotencyEntryCodec`, `aimon-core` 의 `StepOutcomeCodec.java:108`.
 

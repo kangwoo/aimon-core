@@ -81,6 +81,10 @@ class MongoSchemaFreezeTest {
         // creates on demand, which is a silently emptied conversation rather than an error.
         assertThat(DocumentKeys.COLL_SESSION_RECORDS).isEqualTo("session_records");
         assertThat(DocumentKeys.COLL_SESSION_LOG_SEGMENTS).isEqualTo("session_log_segments");
+
+        // Also frozen from birth, and for the reason conversation_signals is: it is a change-stream channel, so a
+        // rename splits a fleet mid-deploy and a cancellation entered on one half never reaches the other.
+        assertThat(DocumentKeys.COLL_SCHEDULED_TASK_INTERRUPTS).isEqualTo("scheduled_task_interrupts");
     }
 
     @Test
@@ -97,6 +101,9 @@ class MongoSchemaFreezeTest {
         // that drops the option provisions an unbounded collection which grows until the disk does.
         assertThat(script)
                 .contains("ensureCollection(\"conversation_signals\", { capped: true, size: 64 * 1024 * 1024 })");
+        // Capped for the same reason: nothing ever deletes a stop request, so the cap is the only bound it has.
+        assertThat(script)
+                .contains("ensureCollection(\"scheduled_task_interrupts\", { capped: true, size: 1024 * 1024 })");
     }
 
     @Test

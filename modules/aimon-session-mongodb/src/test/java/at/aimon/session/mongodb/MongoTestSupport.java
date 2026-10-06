@@ -64,7 +64,7 @@ public final class MongoTestSupport {
         final MongoDatabase db = sharedDatabase();
         for (String name : List.of(DocumentKeys.COLL_LOCKS, DocumentKeys.COLL_INBOX, DocumentKeys.COLL_IDEMPOTENCY,
                 DocumentKeys.COLL_SIGNALS, DocumentKeys.COLL_BACKGROUND_TASK, DocumentKeys.COLL_SESSION_RECORDS,
-                DocumentKeys.COLL_SESSION_LOG_SEGMENTS)) {
+                DocumentKeys.COLL_SESSION_LOG_SEGMENTS, DocumentKeys.COLL_SCHEDULED_TASK_INTERRUPTS)) {
             try {
                 db.getCollection(name).drop();
             } catch (RuntimeException ignored) {
@@ -77,6 +77,8 @@ public final class MongoTestSupport {
         db.createCollection(DocumentKeys.COLL_IDEMPOTENCY);
         db.createCollection(DocumentKeys.COLL_SIGNALS,
                 new CreateCollectionOptions().capped(true).sizeInBytes(64L * 1024L * 1024L));
+        db.createCollection(DocumentKeys.COLL_SCHEDULED_TASK_INTERRUPTS,
+                new CreateCollectionOptions().capped(true).sizeInBytes(1024L * 1024L));
         db.createCollection(DocumentKeys.COLL_BACKGROUND_TASK);
         // No index: every access is by _id, and listSessionIds is a full scan either way. init.js creates it for the
         // same reason it creates the others — so an operator sees the collection before the first session lands in it.

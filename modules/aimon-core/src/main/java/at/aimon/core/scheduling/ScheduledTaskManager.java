@@ -437,15 +437,16 @@ public class ScheduledTaskManager {
      * The bus is remote I/O in any distributed implementation, so publishing can fail. What has already happened when
      * it does — the local run tripped, the schedule removed, the record about to be deleted — is not undone by a
      * broker being unreachable, and cancelling would be a strange thing to refuse on those grounds. The failure is
-     * therefore logged and swallowed: the cost is a run elsewhere that stops late (at its next step boundary, once its
-     * task is gone) rather than promptly, which is exactly where this feature started.
+     * therefore logged and swallowed: the cost is a run elsewhere that is not stopped — it works through its remaining
+     * steps, and only its write-back is suppressed once its task is gone — which is exactly where this feature
+     * started. Nothing at a step boundary looks the task up again; the boundary checks the run's own signal only.
      */
     private void broadcastStop(ScheduledTaskId taskId, InterruptReason reason) {
         try {
             interruptBus.publish(taskId, reason);
         } catch (RuntimeException e) {
-            log.warn("Failed to broadcast the stop request for task '{}' ({}); runs on other nodes will only stop at"
-                    + " their next step boundary: {}", taskId, reason, e.getMessage(), e);
+            log.warn("Failed to broadcast the stop request for task '{}' ({}); runs on other nodes are not stopped and"
+                    + " will finish their remaining steps: {}", taskId, reason, e.getMessage(), e);
         }
     }
 

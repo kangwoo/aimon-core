@@ -1,4 +1,5 @@
-// The multi-node SessionRouter contract suite, in a module of its own so every session backend can run it.
+// The multi-node SessionRouter contract suite, in a module of its own so every session backend can run it. It also
+// holds the contract suites of the other SPIs those backends implement (scheduling's interrupt bus among them).
 //
 // The same shape as `aimon-filesystem-testkit`, and for the same two reasons — see that build script for the long
 // version. In short: `java-test-fixtures` on aimon-core fails configuration under the publishing plugin, and this
