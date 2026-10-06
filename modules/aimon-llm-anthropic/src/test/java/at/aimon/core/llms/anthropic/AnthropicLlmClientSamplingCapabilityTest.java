@@ -211,6 +211,38 @@ class AnthropicLlmClientSamplingCapabilityTest {
     }
 
     @Test
+    @DisplayName("precedence: the request's own temperature, then the client's configured default, then nothing")
+    void temperaturePrecedenceIsRequestThenClientThenNothing() {
+        // What `llm.anthropic.temperature` / `aimon.llm.anthropic.temperature` (L-2) rests on. The configuration
+        // surfaces only fill AnthropicConfig; that the value is a default an agent definition overrides is decided
+        // here. The third step is the absence of one: with neither set, no key is sent at all.
+        final AnthropicConfig deploymentDefault = config("prod-assistant").temperature(0.3).build();
+
+        final JsonNode fromRequest = send(client(deploymentDefault), LlmModel.builder().temperature(0.9).build());
+        final JsonNode fromClient = send(client(deploymentDefault), LlmModel.builder().build());
+        final JsonNode fromNobody = send(client(config("prod-assistant").build()), LlmModel.builder().build());
+
+        assertThat(fromRequest.get("temperature").asDouble()).isEqualTo(0.9);
+        assertThat(fromClient.get("temperature").asDouble()).isEqualTo(0.3);
+        assertThat(fromNobody.has("temperature")).isFalse();
+        assertThat(warnings()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("top_p has no client default: it is sent from the request or not at all")
+    void topPComesFromTheRequestAlone() {
+        // Why `llm.anthropic` has no topP key. AnthropicConfig carries no top_p, so there is nothing for a
+        // configuration surface to fill, and a key there would bind and reach no request.
+        final JsonNode withClientTemperatureOnly = send(client(config("prod-assistant").temperature(0.3).build()),
+                LlmModel.builder().build());
+        final JsonNode withRequestTopP = send(client(config("prod-assistant").build()),
+                LlmModel.builder().topP(0.9).build());
+
+        assertThat(withClientTemperatureOnly.has("top_p")).isFalse();
+        assertThat(withRequestTopP.get("top_p").asDouble()).isEqualTo(0.9);
+    }
+
+    @Test
     @DisplayName("the client's own configured temperature is suppressed too, and named as the client's")
     void aClientLevelTemperatureIsAlsoSuppressed() {
         final JsonNode body = send(client(config(REFUSING_MODEL).temperature(0.4).build()), LlmModel.builder().build());

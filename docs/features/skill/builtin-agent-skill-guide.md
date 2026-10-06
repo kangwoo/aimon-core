@@ -194,7 +194,7 @@ hooks:
 Review the following: $1
 ```
 
-> `shell` 액션은 호스트가 `DefaultShellActionExecutor` 로 와이어된 환경(예: aimon-cli)에서만 동작한다. 명령은 호스트가 아니라 **훅이 발화한 실행의 실행 환경 셸**에서 돈다 — 같은 스킬의 `Bash` 호출이 도는 곳이고, 작업 디렉터리는 워크스페이스다. 훅은 **이 스킬이 fork 한 에이전트(와 그 에이전트가 띄운 fork)에서만** 발화한다 — 같은 에이전트의 다른 세션이나 스킬을 호출한 쪽에는 발화하지 않는다. `preTool` 같은 가드 이벤트의 `shell` 훅은 명령을 **돌리지 못하면**(실행 환경 없음 · timeout · 셸 실패) 막는다. 관찰용이면 항목에 `failOpen: true` 를 둔다. 사용 가능한 환경 변수와 액션 시맨틱은 [AIMON Skill Extensions / hooks](../../references/aimon-skill-extensions.md#hooks--스킬-단위-hook-스코프) 를 참고한다.
+> `shell` 액션은 호스트가 `DefaultShellActionExecutor` 로 와이어된 환경(예: aimon-cli)에서만 동작한다. 명령은 호스트가 아니라 **훅이 발화한 실행의 실행 환경 셸**에서 돈다 — 같은 스킬의 `Bash` 호출이 도는 곳이고, 작업 디렉터리는 워크스페이스다. 훅은 **이 스킬이 fork 한 에이전트(와 그 에이전트가 띄운 fork)에서만** 발화한다 — 같은 에이전트의 다른 세션이나 스킬을 호출한 쪽에는 발화하지 않는다. `preTool` 같은 가드 이벤트의 `shell` 훅은 명령을 **돌리지 못하면**(실행 환경 없음 · timeout · 셸 실패, 또는 exit 126 · 127 — 훅이 도는 곳에 스크립트가 없거나 실행 권한이 없다) 막는다. 관찰용이면 항목에 `failOpen: true` 를 둔다. 무엇이 막고 `failOpen` 이 무엇을 바꾸는지는 표 하나에 있다: [hook 설정 가이드 › 가드가 막는 경우](../hook/hook-config-guide.md#가드가-막는-경우). 가드 훅(`onStart` · `preTool` · `preCompact` · `permissionRequest`)이 있는 스킬의 fork 안에서는 스킬보다 오래 살거나 스킬 밖에서 도는 일을 시작할 수 없다 — `Task` 의 `run_in_background`, background 워크플로, `ScheduleTask` 는 도구 오류로 거절된다(가드가 따라가지 못한다). 훅 명령은 자기 스킬 디렉터리의 스크립트를 환경 변수 `$AIMON_SKILL_DIR` 로 부른다(`bash "$AIMON_SKILL_DIR/scripts/guard.sh"`) — 훅이 도는 환경에 스테이징한 경로이고, 스테이징하지 못하면 명령은 돌지 않는다. 사용 가능한 환경 변수와 액션 시맨틱은 [AIMON Skill Extensions / hooks](../../references/aimon-skill-extensions.md#hooks--스킬-단위-hook-스코프) 를 참고한다.
 
 ## Fork-mode 스킬 호출하기
 
@@ -203,7 +203,7 @@ Review the following: $1
 ### 사전 조건
 
 1. `code-reviewer` 라는 SubAgent가 등록돼 있어야 한다 (`.aimon/agents/code-reviewer.md` 또는 빌트인 번들). 미등록이면 fork는 LLM/SubAgent 호출 없이 즉시 실패한다.
-2. 호스트가 SubAgent 인프라(6요소: `Agent`, `SubagentRegistry`, `ToolRegistry`, `HookRegistry`, `UserLocale`, `SubagentExecutionManager`)를 모두 와이어링해야 한다. `aimon-cli`는 기본으로 만족한다. 하나라도 빠지면 fork-mode 스킬 호출은 `fork execution is not configured` 로 실패한다 — 인라인 전용 배포를 가능하게 하려는 의도된 동작이다.
+2. 호스트가 SubAgent 인프라(5요소: `Agent`, `SubagentRegistry`, `ToolRegistry`, `HookRegistry`, `SubagentExecutionManager`)를 모두 와이어링해야 한다. `aimon-cli`는 기본으로 만족한다. 하나라도 빠지면 fork-mode 스킬 호출은 `fork execution is not configured` 로 실패한다 — 인라인 전용 배포를 가능하게 하려는 의도된 동작이다.
 
 ### fork 는 두 허용목록을 함께 적용한다
 
@@ -407,11 +407,22 @@ modules/aimon-core/src/main/resources/
   `bash x.sh` · `python3 x.py` 처럼 인터프리터로 실행한다(`./x.sh` 는 안 된다).
 - **내용 주소다.** `contentKey` 는 스킬 디렉터리 전체의 해시라, 내용이 같으면 경로가 같고 바뀌면 새 경로가 된다.
   해시는 레지스트리가 스킬을 읽을 때 한 번 계산한다 — 그래서 시작 시 모든 스킬 파일을 한 번씩 읽는다.
-- **디스크에서 스킬을 고친 뒤**에는 레지스트리를 다시 읽거나(reload) 앱을 재시작하기 전까지 그 스킬의 스테이징이
-  실패한다. 적재된 버전과 디스크 내용이 어긋난 채로 복사하지 않기 위해서다.
+- **디스크에서 스킬을 고친 뒤**에도 스킬은 계속 쓸 수 있다. 다만 무엇이 복사되는지는 고친 시점에 달렸다. 그 스킬을
+  이번 프로세스에서 **아직 쓰지 않았고** 적재된 판의 사본도 없으면, 지금 디스크에 있는 파일이 그 내용의 `contentKey`
+  경로로 복사되고 경고 로그가 한 번 남는다. **이미 쓴 뒤**에 고쳤으면 적재된 판의 사본이 그대로 쓰인다. 어느 쪽이든
+  본문 · 도구 제한 · 훅처럼 `SKILL.md` 에서 읽은 것은 레지스트리를 다시 읽거나(reload) 앱을 재시작해야 바뀐다.
 - **`.stageignore`** (gitignore 문법의 부분집합: glob, `dir/`, `!`, `#`)를 스킬 디렉터리에 두면 큰 에셋을 복사
   대상에서 뺄 수 있다. 스킬 디렉터리 하나의 스테이징 총량은 기본 50 MB 로 제한된다(스타터 속성
-  `aimon.environment.staging.max-bytes`).
+  `aimon.environment.staging.max-bytes`). 상한을 넘어 거부된 스킬은 큰 파일을 `.stageignore` 로 빼거나 지우면 재시작 없이
+  다음 호출부터 스테이징된다. 아직 넘으면 오류가 지금의 바이트 수를 알려 준다.
+- **링크로 설치한 스킬.** 디스크에서 읽는 번들의 `skills/` 에서는 스킬 디렉터리나 그 안의 파일·디렉터리가 심볼릭
+  링크여도 된다. 링크는 그 실제 경로가 `skills/` 안이거나 **허용 루트** 안일 때만 따라가고, 그 밖을 가리키는 링크가 있는
+  스킬은 적재되지 않는다(그 스킬만 빠지고 경고가 링크를 이름으로 든다). 허용 루트는 기본이 비어 있고, 공유 헬퍼를
+  `skills/foo -> /opt/shared-skills/foo` 로 링크했다면 그 디렉터리를 적는다 — 스타터 `aimon.skill.allowed-link-roots`,
+  CLI `agent.allowedSkillLinkRoots`, 직접 조립할 때는 `AimonStackSpec.builder().allowedSkillLinkRoots(...)`. 절대 경로만
+  받는다. 상대 경로, 빈 항목, `/` 는 기동이 실패하고, 없는 디렉터리는 받아들이되 아무것도 허용하지 않는다. jar 안의
+  번들에는 링크가 없으므로 이 설정이 닿지 않고, `.aimon/skills` 의 사용자 스킬은 워크스페이스 파일 시스템으로 읽으므로
+  링크를 아예 따라가지 않는다.
 - `.aimon-staged/` 는 사본일 뿐이다. 로컬 제공자가 첫 복사 때 `.aimon-staged/.gitignore`(`*`)를 써 두므로
   프로젝트의 `.gitignore` 에 따로 넣지 않아도 된다(이미 있는 파일은 건드리지 않는다).
 
@@ -419,7 +430,10 @@ modules/aimon-core/src/main/resources/
 
 `DefaultSkillContentRenderer` 가 스킬 본문에서 치환하는 내장 변수는 아래 5개가 전부다. 이들은 **본문 텍스트
 치환용**이며, 선언적 hook 에 주입되는 셸 프로세스 환경변수(`SkillHookEnv` 의 `AIMON_*`)와는 완전히 별개의
-채널이다 — 렌더러는 `System.getenv` 를 읽지 않는다.
+채널이다 — 렌더러는 `System.getenv` 를 읽지 않는다. 이름이 양쪽에 다 있는 것은 `AIMON_SKILL_DIR` 하나다: 본문에서는
+`${AIMON_SKILL_DIR}` 가 스킬을 호출한 실행의 환경에 스테이징한 경로로 치환되고, 훅 명령에서는 환경 변수
+`$AIMON_SKILL_DIR` 가 **훅이 발화한 실행**(스킬의 fork)의 환경에 스테이징한 경로다. fork 가 다른 환경에 놓이면 두 값은
+다르다.
 
 | 변수 | 값 | 범위 |
 |------|----|------|

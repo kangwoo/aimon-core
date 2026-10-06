@@ -221,7 +221,8 @@ adaptive 모양에만 붙는 규칙은 [`anthropic-thinking.md`](anthropic-think
   있다
 
 아무것도 설정하지 않은 배포는 아무것도 바뀌지 않아야 한다. 그래서 게이트는 **요청 키의 존재**다 — OpenAI
-Responses 경로는 `OpenAIConfig.getReasoningSummary().isPresent()`, Anthropic 은
+Responses 경로는 요청마다 해석한 `OpenAiRequestParameters.requestedSummary(model, config).isPresent()`(에이전트 정의의
+`model.reasoningSummary` 가 `OpenAIConfig` 의 키를 이긴다 — §5.6), Anthropic 은
 `AnthropicConfig.getThinkingDisplay().isPresent()` 를 매퍼 생성 시 넘긴다. 값이 아니라 존재로 여는 이유와
 그것이 `AnthropicThinkingDisplay` 의 상수 집합에 주는 제약은 [`anthropic-thinking.md`](anthropic-thinking.md) 에
 있다.
@@ -297,11 +298,31 @@ provider 별로 게이트가 서는 자리:
 
 다시 볼 조건은 백로그 RD-4 에 있다.
 
-**에이전트 frontmatter 에 두지 않는다.** 에이전트 정의는 에이전트를 서술하고, 터미널이 숙고를 렌더하는지는
-그 에이전트를 돌리는 배포를 서술한다. 같은 정의 파일을 CLI 사용자, 콘솔 없는 Spring 서비스, 스케줄 루틴이 함께
-읽는다. 반대 논거도 실재한다 — 요청은 매 요청 출력 토큰을 쓰고, 토큰 비용은 모델 동작 노브이므로 frontmatter
-의 소관이기도 하다. 결정적이지 않은 이유는 그 비용이 에이전트 설계가 아니라 배포의 렌더링 선택의 결과이기
-때문이다. 결정 항목으로 백로그 RD-6 에 있다.
+**에이전트 frontmatter 에는 요청 쪽만 둔다 — `model.reasoningSummary` (RD-6, 2026-10-05).** 처음에는 두지 않았다.
+에이전트 정의는 에이전트를 서술하고, 터미널이 숙고를 렌더하는지는 그 에이전트를 돌리는 배포를 서술하며, 같은 정의 파일을
+CLI 사용자, 콘솔 없는 Spring 서비스, 스케줄 루틴이 함께 읽기 때문이다. 반대 논거가 이겼다 — 요청은 매 요청 출력 토큰을
+쓰고, 토큰 비용은 모델 동작 노브이므로 frontmatter 의 소관이다. 그래서 에이전트 정의는 **요청할지와 얼마나 자세히**를
+적을 수 있고, 렌더할지는 여전히 배포의 것이다.
+
+- **값.** `none` · `auto` · `concise` · `detailed`, 대소문자 무시. 뒤의 셋은 벤더 키(`llm.openai.reasoningSummary`)가
+  받는 값과 철자가 같다. `none` 은 벤더 키에 없는 단 하나의 단어다 — 벤더 키는 적지 않는 것으로 끄는데, 배포가 켠 것을
+  에이전트가 끄려면 적을 말이 있어야 한다. `ReasoningEffort.NONE` 과 같은 단어를 골랐다. `off` 는 받지 않는다 — YAML 이
+  인용하지 않은 `off` 를 불리언으로 읽으므로 인용 여부에 따라 뜻이 갈린다. 그 밖의 값(불리언, 빈 값, 모르는 단어)은 키와
+  네 값을 부르는 `AgentDefinitionParseException` 이다
+- **우선순위.** 에이전트 정의의 값(`none` 포함) > 배포의 벤더 키 > 클라이언트 기본(요청하지 않음). 능력 게이트
+  (`supportsReasoningSummary`)는 우선순위 **다음**에 걸린다. 요청 본문의 `reasoning.summary`, 스트림의 추론 델타 게이트(§5.4),
+  "설정했는데 닿지 않는다" 보고 셋이 `OpenAiRequestParameters.requestedSummary` 한 곳의 답을 읽는다
+- **타입.** 중립 enum `at.aimon.core.llm.ReasoningSummary` 와 `LlmModel.reasoningSummary`(미설정 = 배포를 따른다).
+  `model.reasoningEffort` 가 간 길과 같다. frontmatter 키는 이름이 중립이고 지금 따르는 provider 는 OpenAI 하나다. 배포
+  키는 벤더 네임스페이스에 그대로 있다([`configuration-surface.md`](configuration-surface.md))
+- **따르지 못하는 provider.** Anthropic 에는 이 요청이 없다(대응하는 것은 어휘가 다른 `thinkingDisplay` 다). 값은
+  옮기지 않고 무시하며 값마다 한 번 WARN 으로 말한다 — 닿지 않는 effort 와 같은 처리다. `none` 은 `thinkingDisplay` 가
+  설정되어 있을 때만 말한다(그때만 에이전트가 끈 것이 여전히 흐를 수 있다)
+- **서브에이전트.** 서브에이전트 정의의 `model` 은 이름 문자열 하나라 자기 값을 적을 자리가 없다. 그래서
+  `SubagentLlmDefaults.resolveModel` 이 띄운 에이전트의 값을 물려준다(`none` 포함, 중첩 포크도). 게이트는 서브에이전트
+  자신의 모델에 걸린다
+- **버전.** `AgentDefinitionVersion.canonicalForm` 은 `model.reasoningSummary=` 줄을 값이 있을 때만 싣는다. 키를 쓰지 않는
+  정의의 버전은 키가 생기기 전과 같다
 
 ### 5.7 측정 결론
 
@@ -546,7 +567,7 @@ CLI 플래그는 picocli `negatable = true` 로 필드 하나가 `--streaming` /
 - ~~**RD-3** — REPL 의 `OutputFormatter.displayEvent` 가 `InterruptedAt` · `RejectedAt` 에서 던진다~~ — 2026-10-05 닫힘
 - **RD-4** — 중립 우산 키를 열 것인가(세 번째 provider, 또는 벤더 사이 이동 요구가 트리거)
 - **RD-5** — `AssistantTextStreamReset` / `…Completed` 의 이름이 시도 경계라는 실제 역할보다 좁다
-- **RD-6** — 에이전트 정의의 `model.reasoningSummary`
+- ~~**RD-6** — 에이전트 정의의 `model.reasoningSummary`~~ — 2026-10-05 닫힘 (§5.6)
 - **RD-7** — `response.reasoning_text.delta` 는 어느 서버에서도 관측된 적이 없다
 
 **등록되지 않은 것**

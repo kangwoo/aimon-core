@@ -15,7 +15,6 @@ import at.aimon.core.agent.tool.ToolContextKey;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.agent.tool.search.ToolSearchRegistry;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.hook.HookRegistry;
@@ -42,14 +41,12 @@ import at.aimon.core.skill.hook.SkillHookActivator;
  * <pre>
  * {
  *     &#64;code
- *     Optional<UserLocale> userLocale = context.get(ToolContextKeys.USER_LOCALE);
  *     Optional<Principal> principal = context.get(ToolContextKeys.PRINCIPAL);
  * }
  * </pre>
  *
  * @see ToolContext
  * @see ToolContextKey
- * @see UserLocale
  */
 public final class ToolContextKeys {
 
@@ -73,7 +70,7 @@ public final class ToolContextKeys {
      * {@link #EXECUTION_ENVIRONMENT}.
      *
      * <p>
-     * Tools that spawn a fork (Task, Workflow, a forked skill) copy it onto the fork's environment together with the
+     * Tools that spawn a fork (Task, Workflow, a forked skill) copy it onto the fork's launch context together with the
      * parent environment, so the fork resolves its own environment from the same per-runtime provider without any
      * registration-time handle to an environment source.
      */
@@ -97,16 +94,6 @@ public final class ToolContextKeys {
      */
     public static final ToolContextKey<HookRegistry> HOOK_REGISTRY = ToolContextKey.writeOnce("hookRegistry",
             HookRegistry.class);
-
-    /**
-     * Typed key for the {@link UserLocale} — the user- and application-side settings, today the time zone.
-     *
-     * <p>
-     * It carries no working directory and no environment variables: where this execution's commands run is
-     * {@link #EXECUTION_ENVIRONMENT}. The name follows {@link #PRINCIPAL}, the other property of the user, rather than
-     * the {@code _KEY}-suffixed constants.
-     */
-    public static final ToolContextKey<UserLocale> USER_LOCALE = ToolContextKey.of("userLocale", UserLocale.class);
 
     /**
      * Typed key for {@link Principal} identity.
@@ -349,7 +336,7 @@ public final class ToolContextKeys {
      *
      * <p>
      * Injected into {@link ToolContext} by the agent executor when a message queue is configured. The {@code Task} tool
-     * forwards it onto the subagent execution environment so a <b>background</b> subagent completion can push a
+     * forwards it onto the subagent launch context so a <b>background</b> subagent completion can push a
      * guaranteed {@code <task-notification>} back to the launching agent, delivered no later than the parent's
      * next ReAct iteration.
      */
@@ -361,7 +348,7 @@ public final class ToolContextKeys {
      *
      * <p>
      * Injected into {@link ToolContext} by the agent executor as a bound reference to its {@code EventEmitter}. The
-     * {@code Task} tool forwards it onto the subagent execution environment so a <b>background</b> subagent completion
+     * {@code Task} tool forwards it onto the subagent launch context so a <b>background</b> subagent completion
      * can emit a {@code SubagentTaskCompleted} event for live display / observability. This is best-effort:
      * events raised while the parent has no attached listener are dropped (the queued notification remains the
      * guaranteed path).
@@ -380,7 +367,7 @@ public final class ToolContextKeys {
      *
      * <p>
      * Read it only to <b>pass it on</b>. Spawning code &mdash; {@code Task}, the workflow tools, the skill fork
-     * executor &mdash; puts it on the {@code SubagentExecutionEnvironment} it builds so the spawned run cannot be
+     * executor &mdash; puts it on the {@code SubagentLaunchContext} it builds so the spawned run cannot be
      * granted what the spawner was refused; {@code DefaultSubagentExecutor} then intersects it with the target's own
      * list. Because each run republishes its own effective list here, the ceiling follows nesting to any depth
      * without a spawn site having to know how deep it is &mdash; the same property

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 89a8ed4
+source_commit: 4db0101
 ---
 
 # Embedding an AIMON agent in your application
@@ -198,7 +198,7 @@ Everything you pulled out through an accessor is **borrowed**, so you must not c
 
 ### 3.2 Auto-configuration slices
 
-`AimonAutoConfiguration` stands the core up and the other seven each own one axis. All of them are
+`AimonAutoConfiguration` stands the core up and the other eight each own one axis. All of them are
 listed in `META-INF/spring/…AutoConfiguration.imports`.
 
 | Slice | Turns on when | What it wires |
@@ -211,6 +211,7 @@ listed in `META-INF/spring/…AutoConfiguration.imports`.
 | `AimonObservabilityAutoConfiguration` | its three switches are **independent** | tracing (property) · Actuator `HealthIndicator` (class) · Micrometer gauges (a `MeterRegistry` **bean**) |
 | `AimonKnowledgeAutoConfiguration` | `aimon.knowledge.backend` | `KnowledgeStore` + `KnowledgeContribution` |
 | `AimonMemoryAutoConfiguration` | `aimon.memory.backend` | `RepresentationStore` / `ObservationStore` + `MemoryContribution` |
+| `AimonPropertiesBindingAutoConfiguration` | always | one `ConfigurationPropertiesBindHandlerAdvisor` — it makes **an unknown key a startup failure** under `aimon.llm.model-capabilities` · `aimon.llm.anthropic` · `aimon.llm.openai` |
 
 IMPORTANT: the last two slices **refuse to start when a bean and its selector disagree**. Declare a
 `KnowledgeStore` bean while `knowledge.backend: none` and — because no agent would be given a tool that
@@ -337,6 +338,7 @@ aimon:
       mode: deny                    # deny (default) | allow-list | suspend | channel
       allow: []
       pending-turn-ttl: 10m
+    allowed-link-roots: []          # directories (absolute) a symbolic link in an on-disk bundle's skills/ may point into
 
   scheduling:
     backend: none                   # none (default) | in-memory | quartz
@@ -385,7 +387,7 @@ aimon:
   more agent.
 - `aimon.llm.provider: none` means "the starter does not create an `LlmClient`". If you register an
   `LlmClient` bean yourself, that one is used (this is the shape the sample app takes). If nobody
-  registers one, the starter's fallback remains, and it fails on call **naming the properties you have to
+  registers one, the starter's fallback remains, and it fails at startup **naming the properties you have to
   fill in**.
 - **The `Bash` tool is off by default** — a point where this differs from the CLI. The CLI simply hands
   over the shell because a human approves each command; a server process has nobody to ask, so arbitrary
@@ -428,8 +430,9 @@ aimon:
   **For a name it does know it does not — an entry is that name's whole row, so a flag you leave out falls
   back to its fail-open value rather than to what that row said.** The `claude-*` rows state two things, the
   dialect **and** the sampling suppression, so writing only `thinking-dialect` for `claude-sonnet-5` puts the
-  suppression back at `true` and sends `temperature` to a model that answers 400 to it — and **with no
-  warning**, because the suppression WARN fires only when the flag is `false`. For such a name, copy every
+  suppression back at `true` and sends `temperature` to a model that answers 400 to it — with no warning at
+  request time, because the suppression WARN fires only when the flag is `false`, and with **one WARN at
+  startup** instead, naming the shadowed row, the flags that fell back and the lines to copy. For such a name, copy every
   flag that row states (`thinking-dialect` and `supports-sampling-parameters: false`). `thinking-dialect` is
   read by the anthropic branch only and `supports-reasoning-summary` by the OpenAI Responses path only — the
   latter is where you describe a gateway that takes `reasoning.effort` and 400s on `reasoning.summary`. The
@@ -440,15 +443,19 @@ aimon:
   A
   declaration **extends** the built-in table (registered as an exact entry, so it wins for that one name), the
   name is matched ignoring case, and a name containing a dot has to be wrapped in **brackets** —
-  `model-capabilities[gpt-5.7-x]` — because without them the entry does not arrive at all. An entry that
+  `model-capabilities[gpt-5.7-x]` — because without them startup fails, quoting that line as written. An entry that
   declares nothing, an entry stating both ladder keys, an empty
   `accepted-reasoning-efforts` list, **a list with an empty element in it** (`none,,high` fails naming the
   position), two names differing only in case, and an unusable
   `lowest-reasoning-effort` value all
   fail startup with the property named. A declaration under `provider: anthropic` is **no longer refused** —
-  that branch reads this registry too. **A misspelled flag name,
-  however, is silent** — Boot ignores unknown properties, and turning that off is a behaviour change for the
-  whole `aimon.*` tree, so it was not ridden in on this key. An application that declares its own `LlmClient`
+  that branch reads this registry too. **A misspelled flag name fails
+  startup too** — with Boot's *"The elements [...] were left unbound."*, quoting the key as written.
+  Boot ignores unknown properties, but for this subtree and the two vendor blocks below
+  `AimonPropertiesBindingAutoConfiguration` refuses them. Everywhere else under `aimon.*` they are still
+  ignored, and a key that arrives through an environment variable or a JVM system property is not checked
+  either (the same exemption Boot's `ignoreUnknownFields = false` makes). An application that keeps keys of
+  its own under one of those three subtrees names that slice in `spring.autoconfigure.exclude`. An application that declares its own `LlmClient`
   bean reaches neither branch, so its declaration is neither refused nor read — that application consumes it
   itself, which is what `AimonProperties.modelCapabilityRegistry(properties.getLlm())` is public for.
   The CLI key on the same axis is camelCase and
@@ -463,8 +470,8 @@ aimon:
   `aimon.llm.anthropic.thinking-mode` to be something other than the default `off`** — under `off` the
   request carries no thinking parameter, so the effort reaches nothing, and the client says so once per
   process (`reasoning-effort: none` is the exception: it and `off` mean the same thing). A bad value fails
-  startup with the property named, but **a misspelled key name is silent**, for the reason the paragraph
-  above gives.
+  startup with the property named, but **a misspelled key name is silent** — the refusal in the paragraph
+  above reaches three subtrees, and this key is a leaf directly under `aimon.llm`, outside all of them.
 - `aimon.llm.anthropic.*` **tunes Anthropic's thinking** — and unlike the block above, **it is read by the
   anthropic branch alone.** All three key names carry that vendor's vocabulary ("thinking" is its word for
   what this repository elsewhere calls `ReasoningEffort` / `ReasoningTrace`, `budget_tokens` is a field of
@@ -521,13 +528,18 @@ aimon:
   `replay-thinking-blocks: false` is an escape hatch for one named failure — *"Invalid `signature` in
   `thinking` block. The block is bound to a different conversation."* The vendor's own remedy is to strip
   every thinking block from the history, and the cost is the feature itself (the model re-derives its
-  reasoning each turn). **A misspelled key name is silent here too** — the same reason and the same limit as
-  the block above. The CLI keys on the same axis are camelCase.
+  reasoning each turn). **A misspelled key name fails startup here** — the same mechanism as
+  `model-capabilities`. The CLI keys on the same axis are camelCase.
 - `aimon.llm.openai.*` is the counterpart of the `anthropic` block above and **is read by the openai branch
   alone** — written under `provider: anthropic` (or no provider at all) it is not ignored, it **fails
-  startup**. It has two keys. `aimon.llm.openai.reasoning-summary` is one of `auto` · `concise` · `detailed`:
+  startup**. Two of its keys are covered here; the sampling defaults are in the next item. `aimon.llm.openai.reasoning-summary` is one of `auto` · `concise` · `detailed`:
   it asks for a summary of the model's reasoning and streams that text (Responses API only, and left unset the
-  request does not change by a character). `aimon.llm.openai.responses-api-enabled` decides whether the
+  request does not change by a character).
+  An agent definition's `model.reasoningSummary` (`none` · `auto` · `concise` · `detailed`) wins over this property.
+  `none` exists in the agent definition only: it turns off, for that agent, a summary the property turned on — the
+  property itself takes the three values and is turned off by leaving it out. A subagent inherits the value of the
+  agent that started it, and the anthropic branch ignores the value and says so once at WARN.
+  `aimon.llm.openai.responses-api-enabled` decides whether the
   Responses API (`/v1/responses`) path is used, and is `true` when unset.
 
   ```yaml
@@ -558,8 +570,33 @@ aimon:
   function tool (2026-10-05). **Any other rung (`low` · `medium` · `high`) sent alongside tools is a 400 with
   the same text, and a 200 without tools** (2026-10-05). The client sends those rungs as they are and it is the
   server that refuses — the client says so once at WARN before sending. An agent definition's `model.reasoningEffort` wins over the property, so write
-  `none` on whichever one actually reaches the request. **A misspelled key name is silent here too.** The CLI
+  `none` on whichever one actually reaches the request. **A misspelled key name fails startup here too.** The CLI
   keys on the same axis are camelCase (`llm.openai.responsesApiEnabled`).
+- **The sampling defaults live in the vendor blocks too, and the keys differ per block.** `aimon.llm.openai` has
+  `temperature` (`0.0`–`2.0`), `top-p` (`0.0`–`1.0`), `presence-penalty` and `frequency-penalty` (both
+  `-2.0`–`2.0`); `aimon.llm.anthropic` has `temperature` (`0.0`–`1.0`) **and nothing else** — the Anthropic API
+  has no penalties and that client reads `top_p` from the agent definition alone, so
+  a `top-p` written in that block fails startup as an unknown key. A value out of range fails startup too, naming
+  the property (`aimon.llm.anthropic.temperature=1.5 is invalid: Temperature must be between 0.0 and 1.0`).
+
+  ```yaml
+  aimon:
+    llm:
+      provider: openai
+      openai:
+        temperature: 0.2
+        top-p: 0.9
+  ```
+
+  **These are defaults, not overrides — agent definition > this property > nothing.** An agent definition's
+  `model.temperature` · `model.topP` wins; without one, this value is sent; with neither, nothing is sent and
+  the server's default applies. It is decided per parameter. On a request sent without the value the client
+  says so once at WARN — a model whose built-in capability row says it takes no sampling parameters (`gpt-5*`,
+  the o-series, some Claude models), `temperature` on an Anthropic request that carries a thinking parameter,
+  and the two penalties on a request that goes to `/v1/responses`. Background calls on the same client that state no value receive
+  this default as well. **Subagent requests follow the same rule**: a value in the starting agent's definition is
+  inherited, and when it has none nothing is put on the request, so this property
+  reaches it. The CLI keys on the same axis are camelCase (`llm.openai.topP`).
 - `supplied` under `knowledge` / `memory` means "**you declare that bean and the starter only connects the
   tools to it**". Spring made it, so Spring closes it, and the stack merely borrows. The same reason is
   why `knowledge.backend` **deliberately has no OpenSearch value** — `aimon-knowledge-opensearch` exists

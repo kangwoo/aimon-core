@@ -212,7 +212,8 @@ public class DefaultHookExecutionManager implements HookExecutionManager, AutoCl
      * <p>
      * Calling this does not put the manager into a dead state: a hook submitted afterwards is rejected by the stopped
      * pool and the resulting {@link java.util.concurrent.RejectedExecutionException} is mapped by the stage's
-     * {@link HookExecutionPolicy}, the same way a saturated pool already behaves.
+     * {@link HookExecutionPolicy}, the same way a saturated pool already behaves — except for a hook that declares
+     * fail-closed (the declarative guards), which is blocked at once rather than read as a pass.
      *
      * @throws Exception
      *             if the owned executor's own {@code close()} fails

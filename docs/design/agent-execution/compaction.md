@@ -50,7 +50,7 @@ Compaction 은 그 벽에 닿기 **전에** 오래된 메시지를 요약본으�
 ```
 OrcaAgentExecutor.executeReActLoop()
   └─ (매 iteration 머리에서)
-     CompactionGuard.maybeCompact(transcriptBuffer, model, hookRegistry, environment)
+     CompactionGuard.maybeCompact(transcriptBuffer, model, hookRegistry)
         │  임계값 판정 · 세션 락 · circuit breaker
         └─ CompactionEngine.compact(CompactionRequest)
              │  PreCompact 훅 → strip → 요약 LLM 호출 → replaceWith → PostCompact 훅
@@ -112,7 +112,8 @@ contextWindow` (임계값이 음수가 되는 것을 막는다), `blockingBuffer
    카운터를 리셋하고 `COMPACT`, 실패면 `BLOCK`
 2. **circuit breaker 개방** — 연속 실패가 임계(`DEFAULT_MAX_CONSECUTIVE_FAILURES = 3`)에 닿았으면
    `NONE("circuit breaker open")`. AUTO 만 막는다
-3. **auto-compact 밴드** — `estimated ≥ effectiveAutoThreshold` 이고 사전조건이 충족되면 엔진 호출
+3. **auto-compact 밴드** — `estimated ≥ effectiveAutoThreshold` 이고 사전조건이 충족되면 엔진 호출. 호출자가 준 compactor
+   (`decide`)가 요약할 것이 없다고 답하면(`NothingToCompactException`) 실패한 압축이 아니라 `WARN` 이다
 4. **warning 밴드** — 압축은 하지 않고 `WARN`
 
 어느 밴드에도 닿지 않으면 `NONE` 이다.
@@ -133,9 +134,9 @@ tool_use 와 tool_result 가 짝을 잃은 메시지 배열은 프로바이더�
   평가 중이면 기다리지 않고 비켜난다. AUTO 와 MANUAL 이 같은 대화를 동시에 갈아엎는 사고를 막는다
 - **락 맵은 유계** — `BoundedLruMap` 으로 `DEFAULT_MAX_TRACKED_SESSIONS = 1024` 개까지만 유지한다.
   긴 수명 프로세스에서 세션 수만큼 락이 쌓이는 누수를 막기 위한 것이다
-- **실패 카운트 대상은 일시적 실패뿐** — `CompactionBlockedByHookException`(훅이 의도적으로 막음)과
-  `CompactionReentrancyException`(프로그래머 오류)은 카운트하지 않는다. 이 둘을 세면 "설정대로 동작한 것"이
-  AUTO compaction 을 조용히 꺼 버린다
+- **실패 카운트 대상은 일시적 실패뿐** — `CompactionBlockedByHookException`(훅이 의도적으로 막음),
+  `CompactionReentrancyException`(프로그래머 오류), `NothingToCompactException`(요약할 것이 없음)은 카운트하지 않는다. 이
+  셋을 세면 "설정대로 동작한 것"이 AUTO compaction 을 조용히 꺼 버린다
 - **성공은 리셋** — 압축이 성공하면 카운터는 0 으로 돌아간다. `/compact` 로 사용자가 직접 성공시킨 경우도
   마찬가지로 `recordExternalSuccess(sessionId)` 가 breaker 를 닫는다
 
@@ -182,6 +183,12 @@ tool_use 와 tool_result 가 짝을 잃은 메시지 배열은 프로바이더�
 메시지 크기와 **절단면의 tool_use/tool_result 정합성**까지 검증되며, 위반이면 실패로 반환한다.
 범위가 없을 때의 동작(prefix·tail 이 모두 비어 `[boundary, summary]` 만 남는 것)이 전체 compaction 이므로
 두 경로는 같은 코드다.
+
+`compact()` 의 전체 compaction 은 대화를 **통째로** 요약한다 — 모델이 아직 답하지 않은 마지막 입력이나 도구 결과도 함께다.
+이것은 대화를 고쳐 쓰는 in-place 경로(v1 로그)의 동작이다. v2 로그에서 `DefaultContextEngine` 은 `compact()` 가 아니라
+`summarize()` 를 부르고, 거기에 넘기는 것은 미응답 부분 **앞**까지다. 그래서 뷰 모드의 결과는 `[boundary, summary]` 뒤에
+미응답 메시지가 원문으로 붙는다. 규칙과 극단은 [`context-engine.md` §13.10](context-engine.md#1310-모델이-아직-답하지-않은-것은-압축하지-않는다)
+이 정본이다.
 
 이 채널은 **아직 프로덕션 호출자가 없다** — 엔진과 검증은 있지만 자동으로 구간을 고르는 정책이 없다.
 정책이 생기면 그때 가드 쪽에 붙는다.

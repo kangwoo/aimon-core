@@ -18,6 +18,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.slf4j.LoggerFactory;
 
 import at.aimon.cli.config.AnthropicProviderConfig;
 import at.aimon.cli.config.CliConfigLoader;
@@ -36,6 +37,10 @@ import at.aimon.core.llms.anthropic.AnthropicThinkingDisplay;
 import at.aimon.core.llms.anthropic.AnthropicThinkingMode;
 import at.aimon.core.llms.openai.OpenAILlmClient;
 import at.aimon.core.llms.openai.OpenAiReasoningSummary;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 
 @DisplayName("LlmClientFactory Tests")
 class LlmClientFactoryTest {
@@ -466,8 +471,8 @@ class LlmClientFactoryTest {
             // at its fail-open value -- here supportsSamplingParameters true, for models measured to answer 400 to
             // temperature, and with no divergence WARN because that fires only when the flag is false.
             //
-            // The mechanism is #46's and is not changed here; the general remedy (warn when a declaration shadows a
-            // row it does not restate) is L-8. This assertion is expected to change only if that mechanism does.
+            // The mechanism is #46's and is not changed here. What L-8 added is that it is no longer silent: the
+            // registry warns once at construction -- theShadowWarningReachesThisSurface below.
             ModelCapabilityConfig bare = new ModelCapabilityConfig();
             bare.setThinkingDialect(ThinkingDialect.UNKNOWN);
             LlmProviderConfig config = anthropic("claude-sonnet-5");
@@ -475,6 +480,48 @@ class LlmClientFactoryTest {
 
             assertThat(factory.anthropicConfig(config).getModelCapabilityRegistry().resolve("claude-sonnet-5")
                     .supportsSamplingParameters()).isTrue();
+        }
+
+        @Test
+        @DisplayName("Should warn, once, when a declared name shadows a built-in row it does not restate")
+        void theShadowWarningReachesThisSurface() {
+            // L-8, on this surface. The judgement and the sentence are the core's; what is asserted here is that a
+            // yaml-shaped declaration going through this factory reaches the one place that makes them, and that the
+            // complete form the reference prints is quiet. The warning is once per process per finding, so the name
+            // is one nothing else can have declared: a fresh suffix under a built-in prefix, on every run of the test
+            // -- a second run in one JVM, or another test using the same family, cannot have used it up.
+            final String name = "claude-opus-4-8-" + java.util.UUID.randomUUID();
+            ModelCapabilityConfig bare = new ModelCapabilityConfig();
+            bare.setThinkingDialect(ThinkingDialect.UNKNOWN);
+            LlmProviderConfig shadowing = anthropic(name);
+            shadowing.setModelCapabilities(Map.of(name, bare));
+
+            ModelCapabilityConfig full = new ModelCapabilityConfig();
+            full.setThinkingDialect(ThinkingDialect.UNKNOWN);
+            full.setSupportsSamplingParameters(false);
+            LlmProviderConfig restating = anthropic(name);
+            restating.setModelCapabilities(Map.of(name, full));
+
+            Logger logger = (Logger) LoggerFactory.getLogger(InMemoryModelCapabilityRegistry.class);
+            ListAppender<ILoggingEvent> appender = new ListAppender<>();
+            appender.start();
+            logger.addAppender(appender);
+            try {
+                factory.anthropicConfig(restating);
+                assertThat(appender.list).isEmpty();
+
+                factory.anthropicConfig(shadowing);
+                factory.anthropicConfig(shadowing);
+            } finally {
+                logger.detachAppender(appender);
+                appender.stop();
+            }
+
+            assertThat(appender.list).hasSize(1);
+            assertThat(appender.list.get(0).getLevel()).isEqualTo(Level.WARN);
+            assertThat(appender.list.get(0).getFormattedMessage()).contains("'" + name + "'")
+                    .contains("prefix row 'claude-opus-4-8'").contains("supportsSamplingParameters=false (now true)")
+                    .contains("supportsSamplingParameters: false");
         }
 
         @Test

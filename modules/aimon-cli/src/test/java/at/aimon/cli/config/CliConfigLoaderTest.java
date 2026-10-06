@@ -1335,6 +1335,52 @@ class CliConfigLoaderTest {
         }
 
         @Test
+        @DisplayName("Should hand a child process the placeholder an MCP server argument escapes")
+        void keepsAnEscapedPlaceholderInAnMcpArgument() throws IOException {
+            // CE-1's motivating shape: a stdio server whose argument is for the child shell to expand, not for this
+            // loader. Unescaped it is replaced when the variable is set and refuses startup when it is not.
+            CliConfigLoader unsetLoader = new CliConfigLoader(name -> null);
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                    mcp:
+                      servers:
+                        - name: "files"
+                          transportType: "STDIO"
+                          command: "sh"
+                          args: ["-c", "exec server --root $${WORKSPACE_ROOT:-/srv} --token $${TOKEN}"]
+                          env:
+                            $${LITERAL_NAME}: "$${LITERAL_VALUE}"
+                    """);
+
+            McpServerEntry entry = unsetLoader.load(configFile.toString()).getMcpConfig().getServers().get(0);
+            assertThat(entry.getArgs()).containsExactly("-c",
+                    "exec server --root ${WORKSPACE_ROOT:-/srv} --token ${TOKEN}");
+            assertThat(entry.getEnv()).containsEntry("${LITERAL_NAME}", "${LITERAL_VALUE}");
+        }
+
+        @Test
+        @DisplayName("Should still refuse the same MCP server argument written without the escape")
+        void refusesTheUnescapedMcpArgumentWhenTheVariableIsNotSet() throws IOException {
+            CliConfigLoader unsetLoader = new CliConfigLoader(name -> null);
+            Path configFile = write("""
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                    mcp:
+                      servers:
+                        - name: "files"
+                          transportType: "STDIO"
+                          command: "sh"
+                          args: ["-c", "exec server --token ${TOKEN}"]
+                    """);
+
+            assertThatThrownBy(() -> unsetLoader.load(configFile.toString())).isInstanceOf(ConfigurationException.class)
+                    .hasMessage("Environment variable not set: TOKEN (at mcp.servers[].args[])");
+        }
+
+        @Test
         @DisplayName("Should expand onto a non-String field")
         void expandsOntoAnInteger() throws IOException {
             CliConfigLoader envLoader = new CliConfigLoader(name -> "45");

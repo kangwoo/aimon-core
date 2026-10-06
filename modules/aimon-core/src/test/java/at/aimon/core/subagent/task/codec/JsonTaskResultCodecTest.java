@@ -126,6 +126,15 @@ class JsonTaskResultCodecTest {
     }
 
     @Test
+    void aBlockedResultRoundTripsWithItsReason() {
+        final TaskResult blocked = TaskResult.builder().success(false)
+                .errorMessage("Execution blocked by OnStart hook [SUBAGENT/explorer]: no forks today")
+                .completionReason(CompletionReason.BLOCKED).build();
+
+        assertThat(codec.decode(codec.encode(blocked)).getCompletionReason()).isEqualTo(CompletionReason.BLOCKED);
+    }
+
+    @Test
     void unknownTopLevelFieldsAreIgnored() {
         final TaskResult decoded = codec
                 .decode("{\"version\":1,\"success\":true,\"finalAnswer\":\"a\",\"fieldFromTheFuture\":{\"x\":1}}");

@@ -137,7 +137,7 @@ one SessionRecord (영속, SessionId 로 식별)  :  0..N LiveSession (일시적
 - **`WorkflowRunner` 를 애플리케이션 셸에서 닫지 말 것.** 반대로, 다른 계층이 닫아줄 거라
   가정하고 안 닫아서도 안 된다 — 만든 쪽이 닫는다.
 - **빌려온 협력자를 닫지 말 것.** `WorkflowRunner` 는 `SubagentExecutionManager` 와
-  base `SubagentExecutionEnvironment` 를 빌려 쓰며, 자기 소유 풀만 닫는다.
+  base `SubagentLaunchContext` 를 빌려 쓰며, 자기 소유 풀만 닫는다.
 - **`AgentRuntimeId` 를 실행마다 새로 만들지 말 것.** `agent:<name>` /
   `agent:<name>:<discriminator>` 형식으로 결정론적이며 `from(Agent)` / `from(Agent, String)`
   으로 발급한다. `generate()` 는 **존재하지 않는다** — 있었다면 cron 재발화가
@@ -207,6 +207,11 @@ IMPORTANT: **"이름에 들어간 스코프 명사 = 그 타입의 수명" 은 �
   여전히 `"conversationId"` 이고, Mongo 컬렉션은 `conversation_locks` / `conversation_inbox` /
   `conversation_signals`, Postgres 테이블·채널도 `conversation_*` 다. **의도적으로 동결**한 것이다(§7).
   자바 식별자만 개명되었으므로 이름이 어긋나 보이는 것이 정상이다.
+- **`AssistantTextStreamReset` / `AssistantTextStreamCompleted`** — 텍스트 채널이 아니라 **시도(attempt)
+  하나 전체**를 경계 짓는다. 추론 채널(`AssistantReasoningDelta`)도 여기서 함께 닫히므로, 두 채널을 그리는
+  렌더러는 `Reset` 에서 둘 다 지우고 `Completed` 에서 둘 다 닫는다. 이름대로 읽으면 "텍스트만 리셋됐다" 로
+  오해하게 된다. 공개 이벤트 타입이자 노드 경계를 넘는 페이로드 프레임 이름이라 **개명하지 않았다**
+  (두 클래스의 javadoc 에 명시).
 
 `Session` 이라는 단어는 여전히 여러 수명을 가리킨다 — 영속 `SessionRecord`,
 `LiveSessionCache` 의 캐시 항목, `ReplSession`(CLI 실행 1회), `BrowserSession`(Playwright 컨텍스트).

@@ -57,6 +57,7 @@ public final class HostShellActionExecutor implements ShellActionExecutor {
         Objects.requireNonNull(action, "Action cannot be null");
         Objects.requireNonNull(context, "Context cannot be null");
         Objects.requireNonNull(environmentOverrides, "Environment overrides cannot be null");
-        return ShellActionRunner.run(shell, action, environmentOverrides, stdinPayload);
+        return ShellActionRunner.run(shell, action, environmentOverrides, stdinPayload,
+                context.getExecutionCancellation());
     }
 }

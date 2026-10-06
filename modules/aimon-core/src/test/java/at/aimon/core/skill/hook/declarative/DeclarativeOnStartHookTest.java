@@ -12,7 +12,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.OnStartContext;
@@ -24,7 +23,6 @@ import at.aimon.core.skill.hook.action.ShellAction;
 class DeclarativeOnStartHookTest {
 
     private static final HookRegistry REGISTRY = new DefaultHookRegistry();
-    private static final UserLocale ENV = UserLocale.createDefault();
 
     @Test
     void execute_runsExecutorWithExpectedEnv() {
@@ -150,7 +148,7 @@ class DeclarativeOnStartHookTest {
 
     private static OnStartContext contextFor(String userMessage) {
         return OnStartContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENV).userMessage(userMessage).build();
+                .hookRegistry(REGISTRY).userMessage(userMessage).build();
     }
 
     private static final class RecordingExecutor implements ShellActionExecutor {

@@ -31,7 +31,7 @@ CLI 는 그 이름을 어떻게 보여 주는가, provider 를 바꿨는데 정�
 - **별칭 해석.** AIMON 은 어디서도 모델 별칭을 풀지 않는다(§2.1).
 - **모델이 무엇을 받는가.** 요청 모양을 모델별로 바꾸는 사실과, 그 지식을 모델 이름 스니핑이 아니라 능력 레지스트리로만
   얻는다는 원칙은 [`model-capabilities.md`](model-capabilities.md) 가 정본이다.
-- **이름 밖의 요청 값.** 서브에이전트가 받는 temperature · max tokens 기본값은 [`request-parameters.md`](request-parameters.md)
+- **이름 밖의 요청 값.** 서브에이전트가 물려받는 샘플링 값과 max tokens 기본값은 [`request-parameters.md`](request-parameters.md)
   가 정한다.
 - **키의 표기와 바인딩.** `llm.model` · `aimon.llm.model` 이 어느 표면에 어떻게 바인딩되는지는
   [`configuration-surface.md`](configuration-surface.md) 가 정한다.
@@ -600,7 +600,7 @@ Each request carries these names; `llm.model` does not replace them. <remedies> 
 
 - [`model-capabilities.md`](model-capabilities.md) — 모델 이름 스니핑 금지의 정본, 계열 접두어가 기대는 내장 표와 기본 모델이
   해석되는 행
-- [`request-parameters.md`](request-parameters.md) — 서브에이전트 temperature · max tokens 명시값, 요청 조립 규칙
+- [`request-parameters.md`](request-parameters.md) — 서브에이전트의 샘플링 값 상속 · max tokens 기본값, 요청 조립 규칙
 - [`configuration-surface.md`](configuration-surface.md) — `llm.model` · `aimon.llm.model` 이 사는 설정 표면
 - [`../subagent/execution.md`](../subagent/execution.md) — 포크 실행의 정체성 · 예산 · 격리
 - [`../memory/pluggable-memory-backend.md`](../memory/pluggable-memory-backend.md) — memory 재료가 `MemorySpec` 으로 들어가는 경로

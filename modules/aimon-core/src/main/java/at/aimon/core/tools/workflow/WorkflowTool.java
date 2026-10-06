@@ -24,13 +24,12 @@ import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.exception.ToolExecutionException;
 import at.aimon.core.agent.tool.generic.GenericTool;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.tools.CallerAllowedTools;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
@@ -65,9 +64,11 @@ import at.aimon.core.workflow.WorkflowScript;
  * {@value #ROLE_JUDGE} or {@value #ROLE_SKEPTIC}, one per role and not per angle. Only that definition's attributes
  * are copied, once per role at the start of each run (so every step of one role in a run — the perspectives of one
  * fan-out, say — gets the same attributes even if the registry is reloaded mid-run); its prompt, tools and model are
- * ignored by this tool, and the step names ({@code workflow:judge} …) do not change. Note that such a definition is
- * also an ordinary registered subagent: the model sees it and can call it through {@code Task}, where — and only
- * where — its own prompt is used.
+ * ignored by this tool, and the step names ({@code workflow:judge} …) do not change. Such a definition is otherwise
+ * an ordinary registered subagent — the model would see it and could call it through {@code Task}, where its own
+ * prompt would be used — so mark it {@code hidden: true}
+ * ({@link at.aimon.core.subagent.SubagentMetadata#isHidden()}): the {@code Task} tool then neither lists nor launches
+ * it, and this tool still finds it by name.
  *
  * <p>
  * <b>A failing registry does not fail the run.</b> If the role lookup throws, a WARN is logged and that role's steps
@@ -136,7 +137,6 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
     private final SubagentRegistry subagentRegistry;
     private final ToolRegistry toolRegistry;
     private final HookRegistry hookRegistry;
-    private final UserLocale userLocale;
     private final SubagentExecutionManager subagentExecutionManager;
     private final List<ToolContextEnricher> toolContextEnrichers;
     private final WorkflowRunner backgroundRunner;
@@ -148,24 +148,22 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
      * @param defaultModel
      *            the default model for sub-agents (must not be null)
      * @param subagentRegistry
-     *            the subagent registry forwarded to the execution environment, and looked up for the built-in roles'
+     *            the subagent registry forwarded to the launch context, and looked up for the built-in roles'
      *            attributes (must not be null)
      * @param toolRegistry
-     *            the tool registry forwarded to the execution environment (must not be null)
+     *            the tool registry forwarded to the launch context (must not be null)
      * @param hookRegistry
-     *            the hook registry forwarded to the execution environment (must not be null)
-     * @param userLocale
-     *            the user locale forwarded to sub-agents (must not be null)
+     *            the hook registry forwarded to the launch context (must not be null)
      * @param subagentExecutionManager
      *            the borrowed subagent execution manager (must not be null)
      * @param toolContextEnrichers
      *            the tool-context enrichers forwarded to sub-agent tools (nullable; treated as empty)
      */
     public WorkflowTool(LlmModel defaultModel, SubagentRegistry subagentRegistry, ToolRegistry toolRegistry,
-            HookRegistry hookRegistry, UserLocale userLocale, SubagentExecutionManager subagentExecutionManager,
+            HookRegistry hookRegistry, SubagentExecutionManager subagentExecutionManager,
             List<ToolContextEnricher> toolContextEnrichers) {
-        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale, subagentExecutionManager,
-                toolContextEnrichers, null);
+        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, subagentExecutionManager, toolContextEnrichers,
+                null);
     }
 
     /**
@@ -174,14 +172,12 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
      * @param defaultModel
      *            the default model for sub-agents (must not be null)
      * @param subagentRegistry
-     *            the subagent registry forwarded to the execution environment, and looked up for the built-in roles'
+     *            the subagent registry forwarded to the launch context, and looked up for the built-in roles'
      *            attributes (must not be null)
      * @param toolRegistry
-     *            the tool registry forwarded to the execution environment (must not be null)
+     *            the tool registry forwarded to the launch context (must not be null)
      * @param hookRegistry
-     *            the hook registry forwarded to the execution environment (must not be null)
-     * @param userLocale
-     *            the user locale forwarded to sub-agents (must not be null)
+     *            the hook registry forwarded to the launch context (must not be null)
      * @param subagentExecutionManager
      *            the borrowed subagent execution manager (must not be null)
      * @param toolContextEnrichers
@@ -192,7 +188,7 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
      */
     @SuppressWarnings("checkstyle:ParameterNumber")
     public WorkflowTool(LlmModel defaultModel, SubagentRegistry subagentRegistry, ToolRegistry toolRegistry,
-            HookRegistry hookRegistry, UserLocale userLocale, SubagentExecutionManager subagentExecutionManager,
+            HookRegistry hookRegistry, SubagentExecutionManager subagentExecutionManager,
             List<ToolContextEnricher> toolContextEnrichers, WorkflowRunner backgroundRunner) {
         super(TOOL_NAME,
                 "Run a workflow that fans several sub-agents out on a prompt in parallel, choosing a strategy: "
@@ -206,7 +202,6 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
         this.subagentRegistry = Objects.requireNonNull(subagentRegistry, "subagentRegistry must not be null");
         this.toolRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry must not be null");
         this.hookRegistry = Objects.requireNonNull(hookRegistry, "hookRegistry must not be null");
-        this.userLocale = Objects.requireNonNull(userLocale, "userLocale must not be null");
         this.subagentExecutionManager = Objects.requireNonNull(subagentExecutionManager,
                 "subagentExecutionManager must not be null");
         this.toolContextEnrichers = toolContextEnrichers != null ? List.copyOf(toolContextEnrichers) : List.of();
@@ -254,12 +249,12 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
                         + " must run within an " + "agent runtime.");
             }
 
-            final SubagentExecutionEnvironment env = buildEnvironment(agentRuntimeId, context);
+            final SubagentLaunchContext launchContext = buildLaunchContext(agentRuntimeId, context);
             log.debug("Workflow: strategy={} prompt='{}' perspectives={} synthesize={}", strategy, prompt, perspectives,
                     synthesize);
             // The per-call foreground runner owns a lazily-created fan-out pool; close it once the synchronous run()
             // returns so a long-lived process does not leak a worker pool per invocation.
-            try (WorkflowRunner runner = WorkflowRunners.create(subagentExecutionManager, env)) {
+            try (WorkflowRunner runner = WorkflowRunners.create(subagentExecutionManager, launchContext)) {
                 return runner.run(script(prompt, perspectives, synthesize, strategy));
             }
 
@@ -301,7 +296,7 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
             log.warn("Workflow (background): the hooks of skill(s) {} do not fire for this run's subagents",
                     hookSkills);
         }
-        // Fire-and-forget on the shared runner's own base environment: a background run does NOT inherit the
+        // Fire-and-forget on the shared runner's own base launch context: a background run does NOT inherit the
         // invoking execution's agent runtime id, principal, or trace attribution. The run id is derived from
         // the full request (prompt + perspectives + synthesize) so distinct requests get distinct runs, while
         // an identical request that is still in flight is joined idempotently rather than duplicated.
@@ -511,7 +506,7 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
         }
     }
 
-    private SubagentExecutionEnvironment buildEnvironment(AgentRuntimeId agentRuntimeId, ToolContext context) {
+    private SubagentLaunchContext buildLaunchContext(AgentRuntimeId agentRuntimeId, ToolContext context) {
         final Map<String, Object> executionAttributes = context.get(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY)
                 .orElse(Map.of());
         final LlmCallMetadata parentMetadata = context.get(ToolContextKeys.LLM_CALL_METADATA_KEY)
@@ -520,14 +515,14 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
                 .orElse(NoopCancellationSignal.INSTANCE);
         final Principal principal = context.get(ToolContextKeys.PRINCIPAL).orElse(null);
 
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry)
+        return SubagentLaunchContext.builder().agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry)
                 .toolRegistry(toolRegistry)
                 // The caller's registry first: inside a forked skill it carries the skill's hooks, and the workflow's
                 // subagents must stay under them.
-                .hookRegistry(HookRegistryAccess.of(context).orElse(hookRegistry)).userLocale(userLocale)
-                .defaultModel(defaultModel).executionAttributes(executionAttributes)
-                .parentLlmCallMetadata(parentMetadata).cancellationSignal(parentSignal).principal(principal)
-                .toolContextEnrichers(toolContextEnrichers).callerAllowedTools(CallerAllowedTools.of(context))
+                .hookRegistry(HookRegistryAccess.of(context).orElse(hookRegistry)).defaultModel(defaultModel)
+                .executionAttributes(executionAttributes).parentLlmCallMetadata(parentMetadata)
+                .cancellationSignal(parentSignal).principal(principal).toolContextEnrichers(toolContextEnrichers)
+                .callerAllowedTools(CallerAllowedTools.of(context))
                 .invokingSessionId(InvokingSessionAccess.idToPropagate(context).orElse(null))
                 // The fork resolves its own environment from the spawning runtime's provider, with this execution's
                 // environment as its parent (execution-environment design §5.2).

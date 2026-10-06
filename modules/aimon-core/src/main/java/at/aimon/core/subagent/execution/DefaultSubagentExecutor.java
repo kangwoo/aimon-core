@@ -59,7 +59,6 @@ import at.aimon.core.agent.tool.ToolExecutionManager;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.search.ToolSearchCatalog;
 import at.aimon.core.agent.tool.search.ToolSearchRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.environment.EnvironmentDescriptor;
 import at.aimon.core.environment.EnvironmentRequest;
@@ -70,7 +69,6 @@ import at.aimon.core.environment.UnavailableExecutionEnvironment;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.HookFeedback;
 import at.aimon.core.hook.HookRegistry;
-import at.aimon.core.hook.event.OnStartContext;
 import at.aimon.core.hook.event.OnStopContext;
 import at.aimon.core.hook.exception.ExecutionBlockedByHookException;
 import at.aimon.core.hook.execution.HookResult;
@@ -115,7 +113,7 @@ import at.aimon.core.tools.todo.TodoWriteTool;
  *
  * <p>
  * This executor mirrors the {@code OrcaAgentExecutor} ReAct loop for parity: tool execution carries the same
- * {@link ToolContext} keys (user locale, LLM call metadata, artifact collector, cancellation signal, per-tool
+ * {@link ToolContext} keys (LLM call metadata, artifact collector, cancellation signal, per-tool
  * {@code toolUseId}), fires PermissionRequest/PreTool/PostTool hooks, and isolates PostTool hook failures so a hook
  * exception never discards a real tool result. A response the provider cut off at {@code max_tokens} gets the answers
  * that loop gives ({@link TruncatedResponses}): a final answer ends as {@link CompletionReason#TRUNCATED} with the
@@ -137,7 +135,7 @@ import at.aimon.core.tools.todo.TodoWriteTool;
  *
  *     SubagentExecutionContext context = SubagentExecutionContext.builder().subagent(codeReviewer)
  *             .agentRuntimeId(agentRuntimeId).defaultModel(model).toolRegistry(toolRegistry)
- *             .hookRegistry(hookRegistry).userLocale(userLocale).build();
+ *             .hookRegistry(hookRegistry).build();
  *
  *     SubagentExecutionRequest request = SubagentExecutionRequest.builder().taskId("task-001")
  *             .goal("Review the authentication module").build();
@@ -611,7 +609,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * <p>
      * A block is a hook that exited 2 or, unless it declares {@code failOpen: true}, one whose command could not be run
      * at all. Either way the fork does not start: {@link #startFork} turns the exception into
-     * {@link #createBlockedResult}. The same rule as {@code OrcaAgentExecutor#checkOnStartHooks}, which stops the turn.
+     * {@link #createBlockedResult}. The same rule as {@code OrcaAgentExecutor#checkOnStartHooks}, which stops the turn,
+     * and the same gate a code-behavior fork passes ({@link SubagentOnStartGate}).
      *
      * <p>
      * The note is wrapped in a {@code <system-reminder>} block so the model does not read it as genuine user intent,
@@ -623,16 +622,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      *             if any OnStart hook blocks the fork
      */
     private void checkOnStartHooks(LoopContext lc) {
-        final OnStartContext onStartContext = OnStartContext.builder().executorType(InvokerType.SUBAGENT)
-                .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry()).userLocale(lc.userLocale())
-                .executionEnvironment(lc.executionEnvironment()).userMessage(lc.goal)
-                .executionAttributes(lc.executionAttributes).build();
-        final List<HookResult> onStartResults = hookExecutionManager.executeOnStart(onStartContext);
-        if (hookExecutionManager.hasBlockedResult(onStartResults)) {
-            final List<String> blockReasons = hookExecutionManager.collectBlockedReasons(onStartResults);
-            throw new ExecutionBlockedByHookException(InvokerType.SUBAGENT, lc.subagent().getName(), "OnStart",
-                    blockReasons);
-        }
+        final List<HookResult> onStartResults = SubagentOnStartGate.check(hookExecutionManager,
+                SubagentOnStartGate.context(lc.context, lc.goal, lc.executionAttributes, lc.executionEnvironment(),
+                        lc.coordinator.getSignal()));
         HookFeedback.toReminderBlock(HookFeedback.collectAdvisory(onStartResults))
                 .ifPresent(block -> lc.transcriptBuffer.addMessage(Message.user(block), LogOrigin.SYNTHETIC));
     }
@@ -655,10 +647,10 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // fork had a session, and told an execution id as its name. The two are tied together at both entries into
         // execute(): a fresh fork derives the label from the id (forkTranscriptLabel), a resume derives the id back out
         // of the restored label (ExecutionId.of), which is why the round trip has to survive the snapshot.
-        final ContextDecision decision = contextEngine.prepare(ContextRequest.builder()
-                .transcriptBuffer(lc.transcriptBuffer).model(lc.modelConfig).hookRegistry(lc.hookRegistry())
-                .userLocale(lc.userLocale()).executionEnvironment(lc.executionEnvironment())
-                .caller(ContextCaller.builder().executionId(lc.executionId).build()).build());
+        final ContextDecision decision = contextEngine
+                .prepare(ContextRequest.builder().transcriptBuffer(lc.transcriptBuffer).model(lc.modelConfig)
+                        .hookRegistry(lc.hookRegistry()).executionEnvironment(lc.executionEnvironment())
+                        .caller(ContextCaller.builder().executionId(lc.executionId).build()).build());
         switch (decision.getAction()) {
             case BLOCK :
                 log.error("Compaction guard blocked subagent iteration {}: {}", iterationCount, decision.getReason());
@@ -774,10 +766,6 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // ToolContext.Builder#put rejecting nulls.
         request.getInvokingSessionId().ifPresent(id -> builder.put(ToolContextKeys.INVOKING_SESSION_ID, id));
 
-        final UserLocale userLocale = context.getUserLocale();
-        if (userLocale != null) {
-            builder.put(ToolContextKeys.USER_LOCALE, userLocale);
-        }
         request.getPrincipal().ifPresent(p -> builder.put(ToolContextKeys.PRINCIPAL, p));
         builder.put(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY, request.getExecutionAttributes());
         builder.put(ToolContextKeys.LLM_CALL_METADATA_KEY, effectiveMetadata);
@@ -1093,7 +1081,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // Delegate the interrupt-registrar + PermissionRequest/PreTool/execute/PostTool sequence to the shared
         // pipeline. The subagent variance is the SUBAGENT invoker identity and its declared allow-list.
         final ToolInvocationSpec spec = ToolInvocationSpec.builder().invokerType(InvokerType.SUBAGENT)
-                .invokerName(subagent.getName()).hookRegistry(lc.hookRegistry()).userLocale(lc.userLocale())
+                .invokerName(subagent.getName()).hookRegistry(lc.hookRegistry())
                 .executionAttributes(lc.executionAttributes).toolRegistry(lc.context.getToolRegistry())
                 .sessionRegistry(lc.sessionRegistry).allowedTools(subagent.getAllowedTools())
                 .coordinator(lc.coordinator).toolContext(lc.toolContext).toolUse(toolUse).iterationCount(iterationCount)
@@ -1108,7 +1096,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             TokenUsage accumulatedTokens) {
         final ExecutionMetadata metadata = buildMetadata(lc, iterationCount, accumulatedTokens);
         final OnStopContext onStopContext = OnStopContext.builder().executorType(InvokerType.SUBAGENT)
-                .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry()).userLocale(lc.userLocale())
+                .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry())
                 .executionEnvironment(lc.executionEnvironment()).success(true).finalAnswer(finalAnswer)
                 .metadata(metadata).executionAttributes(lc.executionAttributes).build();
         hookExecutionManager.executeOnStop(onStopContext);
@@ -1150,7 +1138,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 lc.subagent().getName(), iterationCount, TruncatedResponses.reasoningClause(responseUsage));
         final ExecutionMetadata metadata = buildMetadata(lc, iterationCount, accumulatedTokens);
         final OnStopContext onStopContext = OnStopContext.builder().executorType(InvokerType.SUBAGENT)
-                .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry()).userLocale(lc.userLocale())
+                .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry())
                 .executionEnvironment(lc.executionEnvironment()).success(true).finalAnswer(flaggedAnswer)
                 .metadata(metadata).executionAttributes(lc.executionAttributes).build();
         hookExecutionManager.executeOnStop(onStopContext);
@@ -1209,14 +1197,14 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     }
 
     /**
-     * Creates the result of a fork an OnStart hook blocked: {@link CompletionReason#ERROR} with the exception's
+     * Creates the result of a fork an OnStart hook blocked: {@link CompletionReason#BLOCKED} with the exception's
      * message, which names the hook event and carries the hooks' reasons, so every spawn path hands the parent the
-     * refusal as it hands it any other failed fork.
+     * refusal as it hands it any other failed fork ({@link SubagentOnStartGate#blockedResult}, shared with the
+     * code-behavior path).
      *
      * <p>
      * OnStop hooks do <b>not</b> fire, which is why this does not go through {@link #createFailureResult}: the fork
-     * never started, and a main execution an OnStart hook blocks fires none either. {@code ERROR} rather than a reason
-     * of its own for the reason {@link #createStalledResult} gives.
+     * never started, and a main execution an OnStart hook blocks fires none either.
      *
      * <p>
      * The result carries {@code beforeGoal}, the transcript as it stood before the refused goal was added, not the
@@ -1229,8 +1217,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         log.warn("Subagent '{}' not started: {}", lc.subagent().getName(), e.getMessage());
         // Terminal boundary so a background tail observes that the task ended (and why).
         stream(lc, "\n[ended: " + e.getMessage() + "]\n");
-        return SubagentExecutionResult.failure(e.getMessage(), beforeGoal,
-                buildMetadata(lc, iterationCount, accumulatedTokens), CompletionReason.ERROR,
+        return SubagentOnStartGate.blockedResult(e, beforeGoal, buildMetadata(lc, iterationCount, accumulatedTokens),
                 estimateCost(lc, accumulatedTokens));
     }
 
@@ -1244,7 +1231,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             TokenUsage accumulatedTokens, CompletionReason completionReason) {
         final ExecutionMetadata metadata = buildMetadata(lc, iterationCount, accumulatedTokens);
         final OnStopContext onStopContext = OnStopContext.builder().executorType(InvokerType.SUBAGENT)
-                .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry()).userLocale(lc.userLocale())
+                .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry())
                 .executionEnvironment(lc.executionEnvironment()).success(false).finalAnswer(errorMessage)
                 .metadata(metadata).executionAttributes(lc.executionAttributes).build();
         hookExecutionManager.executeOnStop(onStopContext);
@@ -1318,10 +1305,6 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
         private HookRegistry hookRegistry() {
             return context.getHookRegistry();
-        }
-
-        private UserLocale userLocale() {
-            return context.getUserLocale();
         }
 
         /**

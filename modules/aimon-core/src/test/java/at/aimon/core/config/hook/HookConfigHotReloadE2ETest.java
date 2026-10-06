@@ -16,7 +16,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -45,8 +44,7 @@ class HookConfigHotReloadE2ETest {
     private static final ShellActionExecutor SHELL_EXECUTOR = new HostShellActionExecutor(
             org.mockito.Mockito.mock(VirtualShell.class));
 
-    private static final UserLocale ENV = UserLocale.createDefault();
-    private static final ReloadInvoker INVOKER = new ReloadInvoker(InvokerType.MAIN_AGENT, "main", ENV);
+    private static final ReloadInvoker INVOKER = new ReloadInvoker(InvokerType.MAIN_AGENT, "main");
 
     @TempDir
     Path userDir;
@@ -90,7 +88,7 @@ class HookConfigHotReloadE2ETest {
 
         final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry,
                 executionManager, INVOKER);
-        assertThat(reloader.bootstrap()).isTrue();
+        reloader.loadInitial();
         assertThat(registry.getHooks(HookEventType.PRE_TOOL)).hasSize(1);
         // Bootstrap does not fire OnConfigReload by contract.
         assertThat(reloadEvents).isEmpty();

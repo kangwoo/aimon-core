@@ -26,7 +26,6 @@ import at.aimon.core.agent.compact.CompactionTrigger;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.ToolInput;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -66,7 +65,6 @@ import at.aimon.core.skill.hook.action.ShellAction;
 class DeclarativeShellHookBindingTest {
 
     private static final HookRegistry REGISTRY = new DefaultHookRegistry();
-    private static final UserLocale ENV = UserLocale.createDefault();
     private static final ShellAction ACTION = new ShellAction("notify.sh", Duration.ofSeconds(1));
     private static final String SKILL = "my-skill";
     private static final String DISCRIMINATOR = "handlers[0][1]";
@@ -166,21 +164,20 @@ class DeclarativeShellHookBindingTest {
         return Stream.of(
                 Arguments.of(DeclarativeOnSessionStartHook.EVENT_NAME,
                         OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                                .hookRegistry(REGISTRY).userLocale(ENV).sessionId(SessionId.of("sess-1")).build(),
+                                .hookRegistry(REGISTRY).sessionId(SessionId.of("sess-1")).build(),
                         OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                                .hookRegistry(REGISTRY).userLocale(ENV).executionId(run).build()),
+                                .hookRegistry(REGISTRY).executionId(run).build()),
                 Arguments.of(DeclarativeOnSessionEndHook.EVENT_NAME,
                         OnSessionEndContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                                .hookRegistry(REGISTRY).userLocale(ENV).sessionId(SessionId.of("sess-1")).build(),
+                                .hookRegistry(REGISTRY).sessionId(SessionId.of("sess-1")).build(),
                         OnSessionEndContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                                .hookRegistry(REGISTRY).userLocale(ENV).executionId(run).build()),
+                                .hookRegistry(REGISTRY).executionId(run).build()),
                 Arguments.of(DeclarativePreCompactHook.EVENT_NAME,
                         PreCompactContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                                .hookRegistry(REGISTRY).userLocale(ENV).trigger(CompactionTrigger.AUTO)
-                                .sessionIdValue("sess-1").build(),
+                                .hookRegistry(REGISTRY).trigger(CompactionTrigger.AUTO).sessionIdValue("sess-1")
+                                .build(),
                         PreCompactContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                                .hookRegistry(REGISTRY).userLocale(ENV).trigger(CompactionTrigger.AUTO).executionId(run)
-                                .build()));
+                                .hookRegistry(REGISTRY).trigger(CompactionTrigger.AUTO).executionId(run).build()));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -270,8 +267,35 @@ class DeclarativeShellHookBindingTest {
             DeclarativePreCompactHook.EVENT_NAME, DeclarativePermissionRequestHook.EVENT_NAME);
 
     static Stream<Arguments> bindingsByUnrunCause() {
+        // CANCELLED is not "the guard could not run": it has its own rule and its own test below.
         return bindings().flatMap(row -> Stream.of(ShellHookOutcome.Unrun.values())
+                .filter(cause -> cause != ShellHookOutcome.Unrun.CANCELLED)
                 .map(cause -> Arguments.of(row.get()[0], row.get()[3], cause)));
+    }
+
+    static Stream<Arguments> bindingsByFailOpen() {
+        return bindings().flatMap(
+                row -> Stream.of(false, true).map(failOpen -> Arguments.of(row.get()[0], row.get()[3], failOpen)));
+    }
+
+    @ParameterizedTest(name = "{0} / failOpen={2}")
+    @MethodSource("bindingsByFailOpen")
+    void create_commandStoppedByAnInterrupt_blocksOnGuardEventsWhateverFailOpenSays(String eventName,
+            HookContext context, boolean failOpen) {
+        final ExecutionHook<?> hook = DeclarativeShellHookBinding.forEvent(eventName).orElseThrow().create(SKILL,
+                ACTION, RecordingExecutor.notRunning(ShellHookOutcome.Unrun.CANCELLED),
+                DeclarativeHookOptions.builder().failOpen(failOpen).build());
+
+        final HookResult result = execute(hook, context);
+
+        if (!GUARD_EVENTS.contains(eventName)) {
+            assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
+            return;
+        }
+        // The execution is ending: "allow and continue" is not an answer, and failOpen does not make it one (EE-80).
+        assertThat(result.getStatus()).isEqualTo(HookStatus.BLOCKED);
+        assertThat(result.getFeedback().orElseThrow()).contains("hook '" + SKILL + "' (" + eventName + ")")
+                .contains("execution cancelled").doesNotContain("failOpen").doesNotContain(ACTION.getCommand());
     }
 
     @ParameterizedTest(name = "{0} / {2}")
@@ -359,7 +383,7 @@ class DeclarativeShellHookBindingTest {
 
     private static OnStartContext onStartContext() {
         return OnStartContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENV).userMessage("deploy please").build();
+                .hookRegistry(REGISTRY).userMessage("deploy please").build();
     }
 
     private static OnStopContext onStopContext() {
@@ -367,36 +391,35 @@ class DeclarativeShellHookBindingTest {
         final ExecutionMetadata metadata = ExecutionMetadata.builder().iterationCount(3).duration(Duration.ofMillis(50))
                 .startTime(now.minusMillis(50)).endTime(now).build();
         return OnStopContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENV).success(true).finalAnswer("done").metadata(metadata).build();
+                .hookRegistry(REGISTRY).success(true).finalAnswer("done").metadata(metadata).build();
     }
 
     private static OnSessionStartContext onSessionStartContext() {
         return OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENV).sessionId(SessionId.generate())
-                .agentRuntimeId("agent:default-agent").build();
+                .hookRegistry(REGISTRY).sessionId(SessionId.generate()).agentRuntimeId("agent:default-agent").build();
     }
 
     private static OnSessionEndContext onSessionEndContext() {
         return OnSessionEndContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENV).sessionId(SessionId.generate())
-                .agentRuntimeId("agent:default-agent").clean(true).build();
+                .hookRegistry(REGISTRY).sessionId(SessionId.generate()).agentRuntimeId("agent:default-agent")
+                .clean(true).build();
     }
 
     private static SubagentStartContext subagentStartContext() {
         return SubagentStartContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENV).subagentName("Explore").taskId("t-1")
-                .goal("map the module graph").description("read-only exploration").build();
+                .hookRegistry(REGISTRY).subagentName("Explore").taskId("t-1").goal("map the module graph")
+                .description("read-only exploration").build();
     }
 
     private static SubagentStopContext subagentStopContext() {
         return SubagentStopContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENV).subagentName("Explore").taskId("t-1").success(true).build();
+                .hookRegistry(REGISTRY).subagentName("Explore").taskId("t-1").success(true).build();
     }
 
     private static PreCompactContext preCompactContext() {
         return PreCompactContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENV).trigger(CompactionTrigger.AUTO).sessionIdValue("conv-1")
-                .messageCount(42).estimatedTokens(120_000).build();
+                .hookRegistry(REGISTRY).trigger(CompactionTrigger.AUTO).sessionIdValue("conv-1").messageCount(42)
+                .estimatedTokens(120_000).build();
     }
 
     private static PostCompactContext postCompactContext() {
@@ -404,26 +427,25 @@ class DeclarativeShellHookBindingTest {
         final CompactionMetadata metadata = CompactionMetadata.builder().trigger(CompactionTrigger.AUTO).startedAt(now)
                 .completedAt(now).build();
         return PostCompactContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENV).trigger(CompactionTrigger.AUTO).compactionMetadata(metadata)
+                .hookRegistry(REGISTRY).trigger(CompactionTrigger.AUTO).compactionMetadata(metadata)
                 .compactSummary("summary").transcriptBuffer(new TranscriptBuffer(SessionId.generate())).build();
     }
 
     private static PermissionRequestContext permissionRequestContext() {
         return PermissionRequestContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENV).toolName("Bash")
-                .toolInput(ToolInput.of(Map.of("command", "ls"))).build();
+                .hookRegistry(REGISTRY).toolName("Bash").toolInput(ToolInput.of(Map.of("command", "ls"))).build();
     }
 
     private static PermissionDeniedContext permissionDeniedContext() {
         return PermissionDeniedContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).userLocale(ENV).toolName("Bash")
-                .toolInput(ToolInput.of(Map.of("command", "rm -rf /"))).denyReason("policy").build();
+                .hookRegistry(REGISTRY).toolName("Bash").toolInput(ToolInput.of(Map.of("command", "rm -rf /")))
+                .denyReason("policy").build();
     }
 
     private static OnConfigReloadContext onConfigReloadContext() {
         return OnConfigReloadContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("config-watcher")
-                .hookRegistry(REGISTRY).userLocale(ENV).reloadCounter(1L).configSource("/etc/aimon/hooks.json")
-                .successful(true).build();
+                .hookRegistry(REGISTRY).reloadCounter(1L).configSource("/etc/aimon/hooks.json").successful(true)
+                .build();
     }
 
     /**

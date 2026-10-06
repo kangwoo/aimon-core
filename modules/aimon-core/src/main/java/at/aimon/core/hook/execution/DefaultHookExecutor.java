@@ -110,7 +110,11 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
      * Deliberately does <b>not</b> wait for termination. Teardown runs late, when nothing should still be submitting,
      * and blocking here would add an unbounded phase to a shutdown sequence that documents which of its phases are
      * unbounded. A hook that arrives after this point is rejected, and {@link RejectedExecutionException} is already a
-     * mapped outcome — {@link HookExecutionPolicy#onException(Exception)} decides it, exactly as for a saturated pool.
+     * mapped outcome, exactly as for a saturated pool: {@link HookExecutionPolicy#onException(Exception)} decides it,
+     * except for a hook that declares fail-closed, which is blocked. Neither waits. In an orderly teardown nothing
+     * that fires a guard is left by the time the pool closes (turns end first), and the events a shutdown does fire —
+     * {@code onStop}, {@code onSessionEnd} — are advisory and declare nothing, so they are not turned into blocks. A
+     * tool call that arrives anyway, from an execution that outlived its drain, is refused rather than run unguarded.
      *
      * <p>
      * Idempotent: shutting an already-stopped pool down again is a no-op.
@@ -209,7 +213,7 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
      * All hooks are launched concurrently and observe the same starting context &mdash; {@code updatedInput} /
      * {@code updatedOutput} threading is intentionally <b>not</b> performed (parallel hooks have no defined order).
      * Each hook is timed-out independently per {@link HookExecutionPolicy#timeoutFor(ExecutionHook)} /
-     * {@link HookExecutionPolicy#timeoutBehavior()}.
+     * {@link HookExecutionPolicy#timeoutBehaviorFor(ExecutionHook)}.
      *
      * <p>
      * {@code stopOnBlocked} is a no-op in parallel mode &mdash; already-launched hooks cannot be cancelled mid-flight,
@@ -242,9 +246,8 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
                 futures.add(hookExecutor.submit(() -> hook.execute(context)));
                 rejected.add(null);
             } catch (RejectedExecutionException ree) {
-                log.warn("Hook rejected by executor (pool saturated or shut down). hook={}", hook, ree);
                 futures.add(null);
-                rejected.add(policy.onException(ree));
+                rejected.add(onRejected(hook, policy, ree));
             }
         }
         final List<HookResult> results = new ArrayList<>(hooks.size());
@@ -263,8 +266,11 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
      * timeout} — the policy's, widened when the hook declares a longer budget of its own.
      *
      * <p>
-     * Exceptions inside the hook are mapped through {@link HookExecutionPolicy#onException(Exception)}. Timeouts are
-     * mapped according to {@link HookExecutionPolicy#timeoutBehavior()}: {@code FAIL_OPEN} returns
+     * Exceptions inside the hook, and a pool that refuses it, are mapped through
+     * {@link HookExecutionPolicy#onException(Exception)} — unless the hook declares fail-closed, in which case both
+     * block ({@link #onThrown}, {@link #onRejected}). Timeouts are
+     * mapped according to {@link HookExecutionPolicy#timeoutBehaviorFor(ExecutionHook)} — the hook's own declaration,
+     * or the policy's {@link HookExecutionPolicy#timeoutBehavior()} when it made none: {@code FAIL_OPEN} returns
      * {@link HookResult#success()} (with a WARN log), {@code FAIL_CLOSED} returns a BLOCKED result with a descriptive
      * feedback (with an ERROR log). An interrupted wait is always BLOCKED ({@link #onInterrupted}).
      */
@@ -275,8 +281,7 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
         try {
             future = hookExecutor.submit(() -> hook.execute(ctx));
         } catch (RejectedExecutionException ree) {
-            log.warn("Hook rejected by executor (pool saturated or shut down). hook={}", hook, ree);
-            return policy.onException(ree);
+            return onRejected(hook, policy, ree);
         }
         return awaitHook(hook, future, policy, startNanos, toNanosSaturating(policy.timeoutFor(hook)));
     }
@@ -307,8 +312,10 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
      * Waits for an already-submitted hook task until its budget expires, mapping each failure mode to a result.
      *
      * <p>
-     * A failure <i>of the hook</i> goes through {@link HookExecutionPolicy#onException(Exception)}; expiry goes through
-     * {@link HookExecutionPolicy#timeoutBehavior()}. An interrupt goes through neither — see {@link #onInterrupted}
+     * A failure <i>of the hook</i> goes through {@link #onThrown} ({@link HookExecutionPolicy#onException(Exception)}
+     * unless the hook declares fail-closed); expiry goes through
+     * {@link HookExecutionPolicy#timeoutBehaviorFor(ExecutionHook)}. An interrupt goes through neither — see
+     * {@link #onInterrupted}
      * for why it is answered with BLOCKED regardless of the policy.
      *
      * <p>
@@ -332,10 +339,7 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
             final long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
             return onTimeout(hook, policy, elapsedMs, TimeUnit.NANOSECONDS.toMillis(budgetNanos));
         } catch (ExecutionException ee) {
-            final Throwable cause = ee.getCause();
-            final Exception toMap = (cause instanceof Exception) ? (Exception) cause : new RuntimeException(cause);
-            log.warn("Hook execution failed. Treating as policy-defined result. hook={}", hook, toMap);
-            return policy.onException(toMap);
+            return onThrown(hook, policy, ee.getCause());
         } catch (InterruptedException ie) {
             // Re-arm before anything else: the caller's cancellation protocol has no other channel to ride on, and
             // InterruptedException has already cleared the flag on the way out of Future#get.
@@ -345,9 +349,56 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
         } catch (RuntimeException e) {
             // Defensive: any other runtime error from the executor's wiring, including the CancellationException a
             // concurrently-cancelled task surfaces.
-            log.warn("Hook execution failed (runtime). Treating as policy-defined result. hook={}", hook, e);
-            return policy.onException(e);
+            return onThrown(hook, policy, e);
         }
+    }
+
+    /**
+     * Maps a hook the pool refused to run — saturated, or shut down — to a result.
+     *
+     * <p>
+     * A hook that {@linkplain HookExecutionPolicy#failsClosedWithoutVerdict(ExecutionHook) declares fail-closed} is
+     * blocked: it was never asked, and "the guard could not be started" must not read as "the guard allowed it" —
+     * otherwise filling the pool is a way to switch a guard off. Every other hook keeps
+     * {@link HookExecutionPolicy#onException(Exception)}, as before.
+     *
+     * <p>
+     * This returns at once, so a pool closed on purpose (stack teardown) cannot make a caller wait; see
+     * {@link #close()} for which hooks can still arrive then.
+     */
+    private static <C extends HookContext> HookResult onRejected(ExecutionHook<C> hook, HookExecutionPolicy policy,
+            RejectedExecutionException ree) {
+        if (policy.failsClosedWithoutVerdict(hook)) {
+            log.error("Hook rejected by executor (pool saturated or shut down); it declares fail-closed, so the"
+                    + " operation is blocked. hook={}", hook, ree);
+            return HookResult.block("Hook could not be run (the hook executor rejected it), so it gave no verdict");
+        }
+        log.warn("Hook rejected by executor (pool saturated or shut down). hook={}", hook, ree);
+        return policy.onException(ree);
+    }
+
+    /**
+     * Maps a hook whose body threw to a result.
+     *
+     * <p>
+     * A hook that {@linkplain HookExecutionPolicy#failsClosedWithoutVerdict(ExecutionHook) declares fail-closed} is
+     * blocked. The declarative guards catch what their action throws themselves; what reaches this point came from
+     * outside that — the matcher predicate, the context, an {@link Error} such as a stack overflow in the matcher on
+     * input the model chose — and under the shipped policies it used to read as success. The block reason names the
+     * throwable's type and nothing else: its reader is the party the guard constrains, and a message can carry
+     * anything. Every other hook keeps {@link HookExecutionPolicy#onException(Exception)}, as before.
+     */
+    private static <C extends HookContext> HookResult onThrown(ExecutionHook<C> hook, HookExecutionPolicy policy,
+            Throwable thrown) {
+        if (policy.failsClosedWithoutVerdict(hook)) {
+            log.error("Hook threw instead of returning a verdict; it declares fail-closed, so the operation is"
+                    + " blocked. hook={}", hook, thrown);
+            return HookResult.block("Hook failed before it returned a verdict ("
+                    + (thrown == null ? "unknown failure" : thrown.getClass().getSimpleName()) + ")");
+        }
+        final Exception toMap = thrown instanceof Exception e ? e : new RuntimeException(thrown);
+        log.warn("Hook execution failed. Treating as policy-defined result. hook={}", hook, toMap);
+        return policy.onException(toMap);
     }
 
     /**
@@ -387,7 +438,9 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
 
     private static <C extends HookContext> HookResult onTimeout(ExecutionHook<C> hook, HookExecutionPolicy policy,
             long elapsedMs, long limitMs) {
-        if (policy.timeoutBehavior() == TimeoutBehavior.FAIL_CLOSED) {
+        // The hook's own declaration wins over the chain's default: a declarative guard is FAIL_CLOSED under a
+        // FAIL_OPEN policy.
+        if (policy.timeoutBehaviorFor(hook) == TimeoutBehavior.FAIL_CLOSED) {
             log.error("Hook timed out (FAIL_CLOSED). hook={} elapsedMs={} limitMs={}", hook, elapsedMs, limitMs);
             return HookResult.block("Hook timed out after " + elapsedMs + "ms (limit=" + limitMs + "ms)");
         }

@@ -3,7 +3,6 @@ package at.aimon.core.agent.compact;
 import java.util.Objects;
 
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
 
@@ -31,12 +30,10 @@ public final class NoOpCompactionGuard implements CompactionGuard {
     }
 
     @Override
-    public CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-            UserLocale userLocale) {
+    public CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry) {
         Objects.requireNonNull(memory, "memory cannot be null");
         Objects.requireNonNull(model, "model cannot be null");
         Objects.requireNonNull(hookRegistry, "hookRegistry cannot be null");
-        Objects.requireNonNull(userLocale, "userLocale cannot be null");
         return CompactionDecision.none("compaction disabled");
     }
 }

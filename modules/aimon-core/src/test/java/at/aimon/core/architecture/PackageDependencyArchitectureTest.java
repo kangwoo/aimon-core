@@ -52,8 +52,8 @@ import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.shell.ShellCorePackage;
 import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 
 /**
@@ -287,7 +287,7 @@ class PackageDependencyArchitectureTest {
 
     @Test
     @DisplayName("at.aimon.core.workflow may depend only on the subagent SPI types (SubagentExecutionManager,"
-            + " SubagentExecutionEnvironment, Subagent, SubagentExecutionResult) and the execution-environment SPI"
+            + " SubagentLaunchContext, Subagent, SubagentExecutionResult) and the execution-environment SPI"
             + " types it isolates branches with — not on the Default* impls that share the subagent package (WU-6,"
             + " subagent-workflow design §3.3 / B4)")
     void workflowMayDependOnlyOnSubagentSpiTypes() {
@@ -308,7 +308,7 @@ class PackageDependencyArchitectureTest {
         // resolving the parent environment through the run's provider when the run has none (§5.2) — the SPI types
         // and the resolve helper, never environment.impl.
         ArchRule rule = classes().that().resideInAPackage(PKG_WORKFLOW).should().onlyDependOnClassesThat(
-                JavaClass.Predicates.belongToAnyOf(SubagentExecutionManager.class, SubagentExecutionEnvironment.class,
+                JavaClass.Predicates.belongToAnyOf(SubagentExecutionManager.class, SubagentLaunchContext.class,
                         Subagent.class, SubagentExecutionResult.class, CompletionReason.class, ExecutionMetadata.class,
                         TokenUsage.class, AgentRuntimeId.class, ExecutionEnvironment.class,
                         ExecutionEnvironmentProvider.class, EnvironmentRequest.class, ExecutionEnvironments.class)
@@ -534,8 +534,12 @@ class PackageDependencyArchitectureTest {
     @Test
     @DisplayName("at.aimon.core.base should not depend on any other aimon packages")
     void coreShouldNotDependOnOtherAimonPackages() {
+        // snakeyaml is the one library besides slf4j, and it is here for one class: base.text.YamlDuplicateKeys, which
+        // the agent, subagent and skill front-matter parsers all call. Those three share no aimon package below
+        // themselves except this one, and what the rule guards -- base reaching up into another aimon package -- is
+        // untouched by a library every one of those parsers already depends on.
         ArchRule rule = classes().that().resideInAPackage(PKG_CORE).should().onlyDependOnClassesThat()
-                .resideInAnyPackage(PKG_CORE, PKG_JAVA, PKG_SLF4J);
+                .resideInAnyPackage(PKG_CORE, PKG_JAVA, PKG_SLF4J, PKG_SNAKEYAML);
 
         rule.check(classes);
     }
@@ -565,8 +569,7 @@ class PackageDependencyArchitectureTest {
     void configHookOutboundDependenciesAreCurated() {
         // The bootstrap/reload layer materialises hooks.json into Declarative*Hook instances and registers them
         // on the live HookRegistry. Allowed inbound references:
-        // - at.aimon.core.base — AimonException base class for HookConfigParseException, and the UserLocale value type
-        // embedded in OnConfigReloadContext
+        // - at.aimon.core.base — AimonException base class for HookConfigParseException
         // - at.aimon.core.agent — the InvokerType value type embedded in OnConfigReloadContext
         // - at.aimon.core.hook.. — HookRegistry + HookExecutionManager + at.aimon.core.hook.event.* hook types
         // - at.aimon.core.skill.hook — Declarative*Hook builders and HookAction value types

@@ -19,7 +19,6 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.CommandRegistry;
 import at.aimon.core.command.MutableCommandRegistry;
 import at.aimon.core.command.SystemCommand;
@@ -119,10 +118,9 @@ class OrcaSystemCommandProviderTest {
 
     @Test
     void shouldNotRegisterCompactWhenAnyCollaboratorMissing() {
-        // env missing
+        // hookExecutionManager missing
         OrcaProviderDependencies deps = baseDeps().compactionEngine(mock(CompactionEngine.class))
-                .compactionGuard(mock(CompactionGuard.class)).hookRegistry(mock(HookRegistry.class))
-                .hookExecutionManager(mock(HookExecutionManager.class)).build();
+                .compactionGuard(mock(CompactionGuard.class)).hookRegistry(mock(HookRegistry.class)).build();
 
         provider.registerCommands(registry, context(deps));
 
@@ -133,7 +131,7 @@ class OrcaSystemCommandProviderTest {
     void shouldRegisterCompactWhenAllCollaboratorsPresent() {
         OrcaProviderDependencies deps = baseDeps().compactionEngine(mock(CompactionEngine.class))
                 .compactionGuard(mock(CompactionGuard.class)).hookRegistry(mock(HookRegistry.class))
-                .hookExecutionManager(mock(HookExecutionManager.class)).userLocale(mock(UserLocale.class)).build();
+                .hookExecutionManager(mock(HookExecutionManager.class)).build();
 
         provider.registerCommands(registry, context(deps));
 
@@ -193,7 +191,7 @@ class OrcaSystemCommandProviderTest {
     void shouldRegisterAllOptionalCommandsWhenEverythingPresent() {
         OrcaProviderDependencies deps = baseDeps().compactionEngine(mock(CompactionEngine.class))
                 .compactionGuard(mock(CompactionGuard.class)).hookRegistry(mock(HookRegistry.class))
-                .hookExecutionManager(mock(HookExecutionManager.class)).userLocale(mock(UserLocale.class))
+                .hookExecutionManager(mock(HookExecutionManager.class))
                 .pendingTurnRegistry(mock(PendingTurnRegistry.class)).agentApprovalStore(mock(AgentApprovalStore.class))
                 .rewakeService(mock(RewakeService.class)).build();
 

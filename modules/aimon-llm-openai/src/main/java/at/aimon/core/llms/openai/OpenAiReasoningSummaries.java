@@ -1,6 +1,10 @@
 package at.aimon.core.llms.openai;
 
+import java.util.Optional;
+
 import com.openai.models.Reasoning;
+
+import at.aimon.core.llm.ReasoningSummary;
 
 /**
  * Maps {@link OpenAiReasoningSummary} to OpenAI's wire vocabulary.
@@ -13,6 +17,27 @@ import com.openai.models.Reasoning;
 final class OpenAiReasoningSummaries {
 
     private OpenAiReasoningSummaries() {
+    }
+
+    /**
+     * Maps the provider-neutral request an agent definition states onto this vendor's level.
+     *
+     * <p>
+     * The three levels map by name. {@link ReasoningSummary#NONE} maps to empty: this vendor has no "none" value —
+     * no summary is what the request gets by carrying no {@code reasoning.summary} — which is also why the deployment
+     * key has three values and the agent key four.
+     *
+     * @param summary
+     *            the neutral request (must not be null)
+     * @return the vendor level, or empty for {@link ReasoningSummary#NONE}
+     */
+    static Optional<OpenAiReasoningSummary> fromNeutral(ReasoningSummary summary) {
+        return switch (summary) {
+            case NONE -> Optional.empty();
+            case AUTO -> Optional.of(OpenAiReasoningSummary.AUTO);
+            case CONCISE -> Optional.of(OpenAiReasoningSummary.CONCISE);
+            case DETAILED -> Optional.of(OpenAiReasoningSummary.DETAILED);
+        };
     }
 
     /**

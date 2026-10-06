@@ -10,8 +10,8 @@ import at.aimon.core.agent.interrupt.InterruptReason;
  * Node-local live-cancellation machinery for one background run — a run-shaped analog of {@code RunningTaskHandle}.
  *
  * <p>
- * Holds the per-run {@link InterruptCoordinator} (whose {@link #signal()} is injected into the run's per-run execution
- * environment so its fan-out subagents observe a stop), the captured hosting worker thread, and the stop flag. Like the
+ * Holds the per-run {@link InterruptCoordinator} (whose {@link #signal()} is injected into the run's per-run launch
+ * context so its fan-out subagents observe a stop), the captured hosting worker thread, and the stop flag. Like the
  * subagent handle, {@link #requestStop()} both trips the signal AND interrupts the worker — {@code CompletableFuture}
  * cancellation does not interrupt a running body, and the interrupt unblocks any interruptible wait the worker is in
  * (cooperative stop still relies on the subagents polling the signal at their checkpoints).
@@ -35,7 +35,7 @@ final class RunControl {
         this.parentReg = parentReg;
     }
 
-    /** @return the run's cancellation signal (injected into the per-run environment). */
+    /** @return the run's cancellation signal (injected into the per-run launch context). */
     CancellationSignal signal() {
         return coordinator.getSignal();
     }

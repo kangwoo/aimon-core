@@ -11,6 +11,7 @@ import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
 import at.aimon.core.agent.interrupt.TerminatorRegistrar;
 import at.aimon.core.agent.tool.InterruptToolKeys;
@@ -185,8 +186,8 @@ public final class SingleToolInvoker {
                 // PermissionDenied advisory chain — PreTool/tool execution is skipped.
                 final PermissionRequestContext permissionRequestContext = PermissionRequestContext.builder()
                         .invokerType(spec.getInvokerType()).invokerName(spec.getInvokerName())
-                        .hookRegistry(spec.getHookRegistry()).userLocale(spec.getUserLocale())
-                        .executionEnvironment(environmentOf(spec)).toolName(toolUse.getName())
+                        .hookRegistry(spec.getHookRegistry()).executionEnvironment(environmentOf(spec))
+                        .executionCancellation(cancellationOf(spec)).toolName(toolUse.getName())
                         .toolInput(ToolInput.of(toolUse.getInput())).executionAttributes(spec.getExecutionAttributes())
                         .build();
                 final List<HookResult> permissionResults = hookExecutionManager
@@ -210,9 +211,9 @@ public final class SingleToolInvoker {
                 // Execute PreTool hooks
                 final PreToolContext preToolContext = PreToolContext.builder().executorType(spec.getInvokerType())
                         .invokerName(spec.getInvokerName()).hookRegistry(spec.getHookRegistry())
-                        .userLocale(spec.getUserLocale()).executionEnvironment(environmentOf(spec)).toolUse(toolUse)
-                        .iterationCount(spec.getIterationCount()).executionAttributes(spec.getExecutionAttributes())
-                        .build();
+                        .executionEnvironment(environmentOf(spec)).executionCancellation(cancellationOf(spec))
+                        .toolUse(toolUse).iterationCount(spec.getIterationCount())
+                        .executionAttributes(spec.getExecutionAttributes()).build();
                 final List<HookResult> preToolResults = hookExecutionManager.executePreTool(preToolContext);
                 feedback.addAll(HookFeedback.collectAdvisory(preToolResults));
 
@@ -266,6 +267,25 @@ public final class SingleToolInvoker {
     }
 
     /**
+     * The execution's cancellation signal, as the tool itself would read it — so a hook's shell command stops on the
+     * same interrupt the tool does. Null when the tool context carries none (the hook then runs untied, as before).
+     */
+    private static CancellationSignal cancellationOf(ToolInvocationSpec spec) {
+        return spec.getToolContext().get(InterruptToolKeys.CANCELLATION_SIGNAL).orElse(null);
+    }
+
+    /**
+     * {@link #cancellationOf} for the chains that report what already happened (PostTool, PermissionDenied): the
+     * signal while the execution is live, and none once it has been cancelled. A command that is running when the
+     * interrupt arrives is stopped; one that starts afterwards is reporting on a cancelled execution and must still
+     * run — handing it a tripped signal would keep an audit hook from ever recording the interrupted call.
+     */
+    private static CancellationSignal liveCancellationOf(ToolInvocationSpec spec) {
+        final CancellationSignal signal = cancellationOf(spec);
+        return signal == null || signal.isCancelled() ? null : signal;
+    }
+
+    /**
      * Records a permission denial: logs it, notifies the PermissionDenied advisory chain (isolated), and returns the
      * deny tool result.
      */
@@ -296,8 +316,8 @@ public final class SingleToolInvoker {
         try {
             final PermissionDeniedContext deniedContext = PermissionDeniedContext.builder()
                     .invokerType(spec.getInvokerType()).invokerName(spec.getInvokerName())
-                    .hookRegistry(spec.getHookRegistry()).userLocale(spec.getUserLocale())
-                    .executionEnvironment(environmentOf(spec)).toolName(toolUse.getName())
+                    .hookRegistry(spec.getHookRegistry()).executionEnvironment(environmentOf(spec))
+                    .executionCancellation(liveCancellationOf(spec)).toolName(toolUse.getName())
                     .toolInput(ToolInput.of(toolUse.getInput())).denyReason(combinedReason)
                     .executionAttributes(spec.getExecutionAttributes()).build();
             hookExecutionManager.executePermissionDenied(deniedContext);
@@ -320,7 +340,7 @@ public final class SingleToolInvoker {
         try {
             final PostToolContext postToolContext = PostToolContext.builder().executorType(spec.getInvokerType())
                     .invokerName(spec.getInvokerName()).hookRegistry(spec.getHookRegistry())
-                    .userLocale(spec.getUserLocale()).executionEnvironment(environmentOf(spec))
+                    .executionEnvironment(environmentOf(spec)).executionCancellation(liveCancellationOf(spec))
                     .toolUse(effectiveToolUse).toolUseResult(toolUseResult).iterationCount(spec.getIterationCount())
                     .executionAttributes(spec.getExecutionAttributes()).build();
             final List<HookResult> postToolResults = hookExecutionManager.executePostTool(postToolContext);

@@ -4,6 +4,7 @@ import java.util.Optional;
 
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.ReasoningEffort;
+import at.aimon.core.llm.ReasoningSummary;
 import at.aimon.core.llm.capability.ModelCapabilities;
 
 /**
@@ -116,6 +117,35 @@ final class OpenAiRequestParameters {
      */
     static Optional<ReasoningEffort> requestedEffort(LlmModel modelConfig, OpenAIConfig config) {
         return modelConfig.getReasoningEffort().or(config::getReasoningEffort);
+    }
+
+    /**
+     * Resolves the reasoning summary this request asks for: the {@link LlmModel} first, then the client config.
+     *
+     * <p>
+     * The model's value is the agent definition's {@code model.reasoningSummary} and wins in both directions.
+     * {@link ReasoningSummary#NONE} resolves to empty even when the client config asks for a summary; a level
+     * resolves to that level even when the client config asks for none. A model that states nothing defers to the
+     * client config, whose own default is to ask for nothing.
+     *
+     * <p>
+     * Everything that depends on whether a summary was asked for reads this one answer — the request's
+     * {@code reasoning.summary}, the stream's reasoning-delta gate and the "configured but inert" reports — so the
+     * three cannot disagree about a request. Whether the target model can carry the parameter is decided afterwards,
+     * by {@link ModelCapabilities#supportsReasoningSummary()}.
+     *
+     * @param modelConfig
+     *            the per-request model config (must not be null)
+     * @param config
+     *            the client config (must not be null)
+     * @return the summary level to ask for, or empty to ask for none
+     */
+    static Optional<OpenAiReasoningSummary> requestedSummary(LlmModel modelConfig, OpenAIConfig config) {
+        final Optional<ReasoningSummary> stated = modelConfig.getReasoningSummary();
+        if (stated.isEmpty()) {
+            return config.getReasoningSummary();
+        }
+        return OpenAiReasoningSummaries.fromNeutral(stated.get());
     }
 
     /**

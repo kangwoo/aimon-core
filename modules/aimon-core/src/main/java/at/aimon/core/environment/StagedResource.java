@@ -33,11 +33,19 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  *
  * <p>
  * A source needs only the read side of {@link VirtualFileSystem}: {@code exists}, {@code isDirectory},
- * {@code listRecursive} and {@code read}/{@code openInputStream}.
+ * {@code listRecursive} and {@code read}/{@code openInputStream}. {@link #sizeOf} additionally asks for
+ * {@code getMetadata}, and its callers do without it when the source has none.
  *
  * <p>
  * The key is computed when the registry loads the resource, not on every {@code stage()} call, so staging never
  * re-reads the whole directory just to decide whether a copy exists.
+ *
+ * <p>
+ * <b>Scanned or assembled.</b> A resource {@link #scan} produced {@linkplain #isScanned() says so}: its file list
+ * <em>is</em> the rule above applied to its directory, so a provider that finds the source changed may apply the rule
+ * again and stage what is there now. A resource assembled through {@link #builder()} carries a file list its author
+ * chose — possibly a deliberate subset of a directory that holds more — and no provider may widen it: it is staged as
+ * recorded or refused. The builder cannot claim the first kind.
  */
 public final class StagedResource {
 
@@ -55,6 +63,7 @@ public final class StagedResource {
     private final String name;
     private final long totalBytes;
     private final List<String> files;
+    private final boolean scanned;
 
     private StagedResource(Builder builder) {
         this.sourceFileSystem = Objects.requireNonNull(builder.sourceFileSystem, "sourceFileSystem must not be null");
@@ -63,6 +72,7 @@ public final class StagedResource {
         this.name = Objects.requireNonNull(builder.name, "name must not be null");
         this.totalBytes = builder.totalBytes;
         this.files = List.copyOf(builder.files);
+        this.scanned = builder.scanned;
     }
 
     /**
@@ -86,15 +96,7 @@ public final class StagedResource {
         Objects.requireNonNull(directory, "directory must not be null");
         Objects.requireNonNull(name, "name must not be null");
         final String dir = trimTrailingSlash(directory);
-        final List<String> relPaths = new ArrayList<>();
-        if (fileSystem.exists(dir) && fileSystem.isDirectory(dir)) {
-            for (String path : fileSystem.listRecursive(dir)) {
-                relPaths.add(relativize(dir, path));
-            }
-        }
-        final StageIgnore ignore = readStageIgnore(fileSystem, dir);
-        relPaths.removeIf(ignore::ignored);
-        relPaths.sort(null);
+        final List<String> relPaths = fileSet(fileSystem, dir);
 
         final ContentKeyBuilder hasher = new ContentKeyBuilder();
         final List<String> hashed = new ArrayList<>();
@@ -112,8 +114,55 @@ public final class StagedResource {
             hashed.add(rel);
             total += bytes.length;
         }
-        return builder().sourceFileSystem(fileSystem).sourceDir(dir).name(name).contentKey(hasher.build())
-                .totalBytes(total).files(hashed).build();
+        final Builder builder = builder().sourceFileSystem(fileSystem).sourceDir(dir).name(name)
+                .contentKey(hasher.build()).totalBytes(total).files(hashed);
+        // Not a builder method: only this scan can say that the file list is the directory's.
+        builder.scanned = true;
+        return builder.build();
+    }
+
+    /**
+     * The size {@link #scan} would record for a directory as it is now, taken from
+     * {@link VirtualFileSystem#getMetadata file metadata}: the same file set — the listing less what
+     * {@code .stageignore} excludes — and no file content read apart from {@code .stageignore} itself. It is how a
+     * provider can tell that a resource is still too large to stage without reading it again.
+     *
+     * <p>
+     * Unlike {@code scan}, this needs {@code getMetadata} of the source. A source that has only the read side throws
+     * from here, and the caller falls back to scanning.
+     *
+     * @param fileSystem
+     *            the source filesystem (must not be null)
+     * @param directory
+     *            the directory on it (must not be null)
+     * @return the sum of the sizes of the files {@code scan} would hash; 0 for a missing directory
+     * @throws RuntimeException
+     *             whatever the source filesystem throws when the directory cannot be listed or a file's metadata
+     *             cannot be read
+     */
+    public static long sizeOf(VirtualFileSystem fileSystem, String directory) {
+        Objects.requireNonNull(fileSystem, "fileSystem must not be null");
+        Objects.requireNonNull(directory, "directory must not be null");
+        final String dir = trimTrailingSlash(directory);
+        long total = 0;
+        for (String rel : fileSet(fileSystem, dir)) {
+            total += fileSystem.getMetadata(join(dir, rel)).getSize();
+        }
+        return total;
+    }
+
+    /** The file-set rule: the recursive listing, less what {@code .stageignore} excludes, sorted. */
+    private static List<String> fileSet(VirtualFileSystem fileSystem, String dir) {
+        final List<String> relPaths = new ArrayList<>();
+        if (fileSystem.exists(dir) && fileSystem.isDirectory(dir)) {
+            for (String path : fileSystem.listRecursive(dir)) {
+                relPaths.add(relativize(dir, path));
+            }
+        }
+        final StageIgnore ignore = readStageIgnore(fileSystem, dir);
+        relPaths.removeIf(ignore::ignored);
+        relPaths.sort(null);
+        return relPaths;
     }
 
     private static String unreadable(String rel, String name, Exception e) {
@@ -176,6 +225,19 @@ public final class StagedResource {
     }
 
     /**
+     * Whether {@link #scan} produced this resource, so that {@link #getFiles()} is everything under
+     * {@link #getSourceDir()} that {@code .stageignore} does not exclude. Scanning the same directory again then
+     * yields the same kind of resource, which is what lets a provider follow a source that changed since it was
+     * loaded. {@code false} for a resource assembled through {@link #builder()}, whose file list is its author's
+     * choice: nothing may be staged for it that it does not list.
+     *
+     * @return {@code true} only for a resource returned by {@link #scan}
+     */
+    public boolean isScanned() {
+        return scanned;
+    }
+
+    /**
      * Returns the source path of one of {@link #getFiles()}.
      *
      * @param relPath
@@ -194,7 +256,7 @@ public final class StagedResource {
     @Override
     public String toString() {
         return "StagedResource{name='" + name + "', contentKey='" + contentKey + "', files=" + files.size()
-                + ", totalBytes=" + totalBytes + '}';
+                + ", totalBytes=" + totalBytes + ", scanned=" + scanned + '}';
     }
 
     private static String relativize(String dir, String path) {
@@ -270,7 +332,10 @@ public final class StagedResource {
         }
     }
 
-    /** Builder for {@link StagedResource}. */
+    /**
+     * Builder for {@link StagedResource}. What it builds is never {@linkplain StagedResource#isScanned() scanned}:
+     * there is no method to say so.
+     */
     public static final class Builder {
         private VirtualFileSystem sourceFileSystem;
         private String sourceDir;
@@ -278,6 +343,8 @@ public final class StagedResource {
         private String name;
         private long totalBytes;
         private List<String> files = List.of();
+        /** Set by {@link StagedResource#scan} alone. */
+        private boolean scanned;
 
         private Builder() {
         }

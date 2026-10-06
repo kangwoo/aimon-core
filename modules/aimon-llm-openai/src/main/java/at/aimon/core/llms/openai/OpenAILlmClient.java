@@ -330,18 +330,22 @@ public class OpenAILlmClient implements LlmClient {
             LlmModel modelConfig, LlmStreamingOptions streamingOptions) {
         final String modelName = modelConfig.getName().orElse(config.getModel());
         final ModelCapabilities capabilities = capabilitiesFor(modelName);
+        // Resolved once for the request: the agent's model.reasoningSummary over this client's key. The request
+        // factory resolves the same answer, so the stream's gate opens exactly when the ask went out.
+        final Optional<OpenAiReasoningSummary> requestedSummary = OpenAiRequestParameters.requestedSummary(modelConfig,
+                config);
 
         if (capabilities.supportsReasoningTraceRoundTrip() && config.isResponsesApiEnabled()) {
             // Read once, and used on both sides of the round trip: the request factory decides which stored traces
             // are ours, the exchange tags the ones that come back. getProviderName() is overridable, so resolving it
             // in two places at two times is how a subclass ends up tagging traces it then drops as foreign.
             final String providerName = getProviderName();
-            return new OpenAIResponsesExchange(client, responsesConverter,
-                    responsesRequestFactory.build(systemPrompt, messages, tools, modelConfig, capabilities, modelName,
-                            providerName),
-                    providerName, this::reportRecurringDivergence, config.getReasoningSummary().isPresent());
+            return new OpenAIResponsesExchange(
+                    client, responsesConverter, responsesRequestFactory.build(systemPrompt, messages, tools,
+                            modelConfig, capabilities, modelName, providerName),
+                    providerName, this::reportRecurringDivergence, requestedSummary.isPresent());
         }
-        reportInertReasoningSummary(capabilities, modelName);
+        reportInertReasoningSummary(requestedSummary, capabilities, modelName);
         return new OpenAIChatCompletionsExchange(client, converter, buildChatRequest(systemPrompt, messages, tools,
                 modelConfig, streamingOptions, capabilities, modelName));
     }
@@ -362,8 +366,9 @@ public class OpenAILlmClient implements LlmClient {
      * {@code responsesApiEnabled=false} is a switch the operator set. Once per signature rather than per call, for
      * {@link #reportDivergence}'s stated reason — both are properties of the configuration.
      */
-    private void reportInertReasoningSummary(ModelCapabilities capabilities, String modelName) {
-        if (config.getReasoningSummary().isEmpty()) {
+    private void reportInertReasoningSummary(Optional<OpenAiReasoningSummary> requestedSummary,
+            ModelCapabilities capabilities, String modelName) {
+        if (requestedSummary.isEmpty()) {
             return;
         }
         if (!capabilities.supportsReasoningTraceRoundTrip()) {
@@ -371,14 +376,14 @@ public class OpenAILlmClient implements LlmClient {
                     "reasoningSummary {} is configured but {} is not routed to the Responses API (it does not "
                             + "support the reasoning trace round trip), and Chat Completions has no reasoning.summary "
                             + "parameter. Nothing is asked for and no reasoning text streams.",
-                    config.getReasoningSummary().get(), modelName);
+                    requestedSummary.get(), modelName);
             return;
         }
         reportDivergence("reasoningSummaryWithResponsesDisabled@" + modelName,
                 "reasoningSummary {} is configured but the Responses API is disabled for this client, so {} goes to "
                         + "Chat Completions, which has no reasoning.summary parameter. Nothing is asked for and no "
                         + "reasoning text streams. Enable the Responses API to act on it.",
-                config.getReasoningSummary().get(), modelName);
+                requestedSummary.get(), modelName);
     }
 
     /**

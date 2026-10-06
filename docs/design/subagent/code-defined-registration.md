@@ -139,7 +139,7 @@ runtimeFactory.withCodeSubagentRegistry(codeSubagentRegistry)
 | **C1** | `InMemorySubagentRegistry.reload*` 는 **안전한 no-op** (throw ❌, clear ❌) | composite 가 reload 를 무조건 전파한다 — §2.3 |
 | **C2** | 합성 순서는 `[bundled, user, code]` | 코드 화이트리스트의 un-shadowable 성질 — §3. 충돌 테스트로 고정 |
 | **C3** | `Subagent.builder()` 기본값 ≡ 마크다운 파서 기본값 | 코드 정의와 동등 마크다운이 구별 불가해야 한다 — §2.4 |
-| **C4** | (provider SPI 도입 시) provider context 에 `OrcaProviderDependencies` 금지 | 닭-달걀 — composite 는 deps 보다 **먼저** 생성된다(deps 가 composite 에 의존). context 는 `Agent` / `UserLocale` 만 — §7 |
+| **C4** | (provider SPI 도입 시) provider context 에 `OrcaProviderDependencies` 금지 | 닭-달걀 — composite 는 deps 보다 **먼저** 생성된다(deps 가 composite 에 의존). context 는 `Agent` 만 — §7 |
 | **C5** | 신규 타입 ArchUnit 배치 | `InMemorySubagentRegistry` · `MutableSubagentRegistry` 는 `at.aimon.core.subagent`(도메인). 향후 SPI 는 `at.aimon.core.agent.orca.subagent`, 빌트인 구현은 `*.impl.orca.subagent` — §2.2 |
 
 ---
@@ -182,7 +182,7 @@ C 의 기각 사유는 세 가지였다 — (a) `Subagent` 값 객체에 행위�
 
 도입하게 되면 C4 가 첫 제약이 된다 — provider context 에 `OrcaProviderDependencies` 를 실을 수 없다.
 composite 레지스트리가 deps 보다 먼저 생성되고 deps 가 composite 에 의존하므로, provider 가 deps 를 들고
-다니면 그래프가 닫히지 않는다. context 에 넣을 수 있는 것은 `Agent` 와 `UserLocale` 뿐이다.
+다니면 그래프가 닫히지 않는다. context 에 넣을 수 있는 것은 `Agent` 뿐이다.
 
 ---
 

@@ -296,6 +296,7 @@ terra 의 ladder 를 고치지 못한다. 약속에서 하중을 받는 것은 *
 설정의 능력 선언(`llm.modelCapabilities.<model>`, `aimon.llm.model-capabilities.<model>`)은
 `InMemoryModelCapabilityRegistry.withDefaultsExtendedBy` 를 거쳐 내장 표 위에 **exact** 항목으로 들어가고, 그 이름의
 행을 **패치하지 않고 전체를 대체한다** — 적지 않은 필드는 내장 행이 말하던 값이 아니라 fail-open 값으로 떨어진다.
+그렇게 떨어진 필드가 내장 행이 fail-open 이 아닌 값으로 두던 것이면 레지스트리가 만들어질 때 WARN 한 줄이 그것을 부른다.
 규칙과 거절 목록의 정본은 [`configuration-surface.md`](configuration-surface.md) 다.
 
 ---

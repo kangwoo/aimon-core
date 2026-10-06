@@ -16,6 +16,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
@@ -316,6 +321,105 @@ class LocalStagingTest {
         assertThat(order.get(0)).as("the commit point goes before any file changes").isEqualTo("delete .staged");
         assertThat(order.get(order.size() - 1)).as("and comes back last").isEqualTo("move .staged");
         assertThat(siblings(resource)).containsExactly(resource.getContentKey());
+    }
+
+    // ---- EE-3: a source that changed since it was loaded, against the same interleavings ----------------------------
+
+    @Test
+    @DisplayName("EE-3: two processes that loaded the same version and meet the same edit end up with one copy, under"
+            + " the key the edited bytes have")
+    void twoProcessesReKeyToTheSameCopy() {
+        final HookedSource source = new HookedSource(control);
+        final StagedResource loaded = StagedResource.scan(source, "skills/demo", "demo");
+        final StagedResource sameLoaded = StagedResource.scan(control, "skills/demo", "demo");
+        control.write("skills/demo/scripts/run.sh", "echo edited");
+        final StagedResource current = StagedResource.scan(control, "skills/demo", "demo");
+        final ExecutionEnvironment loser = process();
+        final ExecutionEnvironment winner = process();
+        final AtomicReference<String> winnerPath = new AtomicReference<>();
+        final Map<String, FileTime> written = new LinkedHashMap<>();
+        // The loser is in the middle of its first pass when the other process stages the edited skill completely.
+        source.beforeRead("scripts/run.sh", () -> {
+            winnerPath.set(winner.stage(sameLoaded));
+            written.putAll(modifiedTimes(Path.of(winnerPath.get())));
+            pause();
+        });
+
+        final String loserPath = loser.stage(loaded);
+
+        assertThat(loserPath).isEqualTo(winnerPath.get()).isEqualTo(target(current).toString());
+        assertThat(Path.of(loserPath, "scripts/run.sh")).hasContent("echo edited");
+        assertThat(modifiedTimes(Path.of(loserPath))).as("not one file of the winner's copy rewritten")
+                .isEqualTo(written);
+        assertThat(siblings(current)).as("no copy under the loaded key, no temporary directory")
+                .containsExactly(current.getContentKey());
+    }
+
+    @Test
+    @DisplayName("EE-3: many threads over two stagers, all holding the loaded resource of an edited skill, get one path")
+    void concurrentStagersOfAnEditedSkillAgree() throws Exception {
+        final StagedResource loaded = StagedResource.scan(control, "skills/demo", "demo");
+        control.write("skills/demo/scripts/run.sh", "echo edited");
+        final StagedResource current = StagedResource.scan(control, "skills/demo", "demo");
+        final List<ExecutionEnvironment> processes = List.of(process(), process());
+        final int threads = 12;
+        final ExecutorService pool = Executors.newFixedThreadPool(threads);
+        final CountDownLatch start = new CountDownLatch(1);
+        try {
+            final List<Future<String>> results = new ArrayList<>();
+            for (int i = 0; i < threads; i++) {
+                final ExecutionEnvironment env = processes.get(i % processes.size());
+                results.add(pool.submit(() -> {
+                    start.await();
+                    return env.stage(loaded);
+                }));
+            }
+            start.countDown();
+
+            for (Future<String> result : results) {
+                assertThat(result.get(30, TimeUnit.SECONDS)).isEqualTo(target(current).toString());
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(describe(target(current))).isEqualTo("complete");
+        assertThat(target(current).resolve("scripts/run.sh")).hasContent("echo edited");
+        assertThat(siblings(current)).containsExactly(current.getContentKey());
+    }
+
+    @Test
+    @DisplayName("EE-3, no host directory: an edited skill is moved file by file into the directory of its own key")
+    void withoutAHostDirectoryAnEditedSkillIsReKeyed() {
+        final StagedResource loaded = StagedResource.scan(control, "skills/demo", "demo");
+        control.write("skills/demo/scripts/run.sh", "echo edited");
+        final StagedResource current = StagedResource.scan(control, "skills/demo", "demo");
+        final LocalStaging staging = remoteLike();
+
+        final String path = staging.stage(loaded);
+
+        assertThat(Path.of(path)).isEqualTo(target(current));
+        assertThat(describe(Path.of(path))).isEqualTo("complete");
+        assertThat(Path.of(path, LocalStaging.MARKER)).hasContent(current.getContentKey());
+        assertThat(Path.of(path, "scripts/run.sh")).hasContent("echo edited");
+        assertThat(siblings(current)).containsExactly(current.getContentKey());
+        assertThat(staging.stage(loaded)).isEqualTo(path);
+    }
+
+    @Test
+    @DisplayName("EE-3, no host directory: a second stager of the edited skill rewrites nothing of the first one's copy")
+    void withoutAHostDirectoryASecondStagerAdoptsTheReKeyedCopy() {
+        final StagedResource loaded = StagedResource.scan(control, "skills/demo", "demo");
+        control.write("skills/demo/scripts/run.sh", "echo edited");
+        final StagedResource current = StagedResource.scan(control, "skills/demo", "demo");
+        final String first = remoteLike().stage(loaded);
+        final Map<String, FileTime> written = modifiedTimes(Path.of(first));
+        pause();
+
+        final String second = remoteLike().stage(loaded);
+
+        assertThat(second).isEqualTo(first);
+        assertThat(modifiedTimes(Path.of(second))).isEqualTo(written);
+        assertThat(siblings(current)).containsExactly(current.getContentKey());
     }
 
     // ---- EE-38 ----------------------------------------------------------------------------------------------------

@@ -208,10 +208,20 @@ memory:
 
 규칙의 나머지 절반은 이렇다.
 
-- **같은 이름으로 풀리는 두 형제 키는 거절한다.** yaml 은 같은 키를 두 번 적는 것을 막지만 `${A}` 와
-  `${B}` 가 같은 값으로 풀리는 것은 막지 못하고, 그때 뒤엣것이 앞엣것을 덮으면 아무도 보고하지 않는다.
+- **같은 이름으로 풀리는 두 형제 키는 거절한다.** `${A}` 와 `${B}` 가 같은 값으로 풀리면 뒤엣것이 앞엣것을
+  덮는데, 파일 어디에도 같은 키가 두 번 적혀 있지 않으므로 읽어서는 찾을 수 없다. **문자 그대로 같은 키를
+  두 번 적은 것은 거절하지 않고 WARN 으로 알린다** — ``Configuration key `llm.timeout` is written more than
+  once; the earlier value is discarded and the last one is used.`` 뒤엣것이 이기는 것은 예전과 같고, 달라진
+  것은 버려진 값이 있다는 사실을 말한다는 것뿐이다. 에이전트 · 서브에이전트 · 스킬의 프론트매터도 같은 경우에
+  같은 문장으로 알린다.
 - **한 번만 푼다.** 변수의 값이 다시 `${OTHER}` 이면 그대로 남는다.
-- **리터럴 `${` 를 적는 escape 는 없다.**
+- **`$${NAME}` 은 리터럴 `${NAME}` 이다.** 변수를 조회하지 않으므로 그 변수가 설정되어 있지 않아도 기동한다.
+  stdio MCP 서버의 `args` 나 `env` 에 **자식 프로세스가 풀어야 하는** 플레이스홀더를 적을 때 쓴다 —
+  `args: ["-c", "exec server --token $${TOKEN}"]` 는 자식에게 `${TOKEN}` 을 그대로 넘긴다. escape 는
+  플레이스홀더 **바로 앞**에서만 성립한다: `pa$$word` 나 혼자 있는 `$$` 는 그대로다. 플레이스홀더 앞에서는
+  `$$` 하나가 리터럴 `$` 하나이고 홀수로 남은 `$` 가 플레이스홀더를 연다 — `$$${PRICE}` 는 `$` 뒤에 변수의
+  값이 붙고(`$${PRICE}` 가 escape 가 되기 전에 뜻하던 것), `$$$${NAME}` 은 리터럴 `$${NAME}` 이다.
+  `${NAME:default}` 같은 기본값 문법은 없다 — escape 없이 적으면 `NAME:default` 전체가 변수 이름이다.
 - **플레이스홀더가 없는 스칼라는 건드리지 않는다.** 파서가 읽은 원문이 그대로 디시리얼라이저에 닿으므로
   `thinkingMode: off` 는 여전히 `off` 를 뜻한다 — `off` 는 YAML 1.1 의 boolean 이라 원문 텍스트만이
   그것을 `no` · `false` 와 구별한다.
@@ -317,7 +327,7 @@ llm:
 다른 것을 뜻하지도 않기 때문이다. 답으로 하는 일은 다르다 — OpenAI 는 rung 파라미터를 보내고 Anthropic 은
 토큰 예산으로 옮긴다 — 그리고 그 번역이 중립 enum 이 있는 이유다.
 
-에이전트 정의의 `model.reasoningEffort` 가 이것을 이긴다. 값이 이 모델의 사다리에 없으면 파라미터는
+에이전트 정의의 `model.reasoningEffort` 가 이것을 이긴다. 서브에이전트는 자기를 띄운 에이전트의 값을 물려받는다. 값이 이 모델의 사다리에 없으면 파라미터는
 **빠지고 보고된다** — 올려서 맞추지 않는다. 운영자가 하지 않은 요청이 조용히 나가는 것보다 낫기 때문이다.
 
 **Anthropic 에서는 `llm.anthropic.thinkingMode` 가 기본값 `off` 가 아니어야 뜻이 있다.** `off` 아래에서는
@@ -393,7 +403,9 @@ modelCapabilities:
 ```
 
 위쪽은 `supportsSamplingParameters` 를 fail-open 인 `true` 로 되돌리므로 `temperature` 가 400 을 내는 모델로
-나간다 — 그리고 **경고가 없다.** 억제 WARN 은 플래그가 `false` 일 때만 울리기 때문이다. `thinkingMode: extended`
+나간다. 요청 시점에는 **경고가 없다** — 억제 WARN 은 플래그가 `false` 일 때만 울리기 때문이다. 대신
+**기동 시 WARN 한 줄**이 나온다: 선언이 가린 내장 행, 떨어진 플래그와 그 행이 주던 값, 옮겨 적을 줄을 부른다.
+fail-open 값이 의도라면 그 값을 직접 적으면(`supportsSamplingParameters: true`) 멈춘다. `thinkingMode: extended`
 로 피할 수도 없다: 그 분기는 `temperature` 는 빼지만 `top_p` 는 여전히 싣는다.
 
 **규칙은 한 줄이다 — 항목이 행 전체이므로, 내장 행이 말하던 플래그를 전부 옮겨 적는다.** `claude-*` 이름에
@@ -530,7 +542,7 @@ CLI 는 이제 같은 답을 한다.
 #### OpenAI 전용 블록 — `llm.openai`
 
 `llm.anthropic` 의 짝이고 같은 규칙을 따른다. **openai 분기만 읽으므로** `provider: anthropic` 아래에
-적힌 이 블록은 무시되지 않고 기동을 실패시킨다. 키는 둘이다.
+적힌 이 블록은 무시되지 않고 기동을 실패시킨다. 여기서 다루는 키는 둘이고, 샘플링 기본값 넷은 다음 절에 있다.
 
 ```yaml
 llm:
@@ -548,6 +560,14 @@ llm:
 
 이 벤더에서 추론 자체는 `encrypted_content` — 설계상 암호문 — 이므로 **요약이 사람이 읽을 수 있는 유일한
 대리물**이다. 그것이 이 키가 Anthropic 쪽의 `thinkingDisplay` 와 다른 이름을 가진 이유다.
+
+**에이전트 정의의 `model.reasoningSummary` 가 이 키를 이긴다.** 값은 `none` \| `auto` \| `concise` \| `detailed` 이고
+대소문자를 가리지 않는다. 뒤의 셋은 이 키와 철자가 같고, `none` 은 에이전트 정의에만 있다 — 이 키는 적지 않는 것으로
+끄지만, 배포가 켠 요약을 한 에이전트만 끄려면 적을 말이 필요하다. `off` · 불리언 · 빈 값 · 모르는 단어는 네 값을 부르는
+오류로 에이전트 로딩을 실패시킨다. 순서는 에이전트 정의의 값 > 이 키 > 요청하지 않음이고, 모델이 요약을 받는지
+(`supportsReasoningSummary`)는 그 다음에 본다. 서브에이전트는 자기 값을 적을 자리가 없어(`model` 이 이름 하나다) 자기를 띄운
+에이전트의 값을 물려받는다. `provider: anthropic` 에서는 `model.reasoningSummary` 가 무시되고 클라이언트가 한 번 WARN 으로
+말한다 — 그쪽에서 thinking 텍스트를 정하는 것은 `thinkingDisplay` 다.
 
 **Responses API 전용이다.** 모델이 추론 트레이스 왕복을 지원하지 않거나 그 엔드포인트가 꺼져 있으면
 요청은 Chat Completions 로 가는데 거기에는 이 파라미터가 없다 — 그 경우 클라이언트가 한 번 WARN 으로
@@ -584,6 +604,53 @@ function tools, use /v1/responses or set reasoning_effort to 'none'."* `reasonin
 `model.reasoningEffort` 가 `llm.reasoningEffort` 를 이기므로 `none` 은 실제로 요청에 닿는 쪽에 적는다. 이것은
 그 모델 하나의 사정이다 — 게이트웨이 뒤의 모델이 무엇을 받는지는 그 게이트웨이가 정한다.
 
+#### 샘플링 기본값 — `llm.<provider>.temperature` 외
+
+에이전트 정의가 값을 적지 않은 요청에 실릴 **배포 기본값**이다. 공통 `llm.*` 이 아니라 벤더 블록에 있는 것은
+같은 키의 뜻이 벤더마다 달라서다 — 유효범위가 다르고, 한쪽에는 아예 없는 파라미터가 있다. 그래서 **블록마다
+키가 다르다.**
+
+```yaml
+llm:
+  provider: openai
+  openai:
+    temperature: 0.2
+    topP: 0.9
+    presencePenalty: 0.0
+    frequencyPenalty: 0.0
+```
+
+```yaml
+llm:
+  provider: anthropic
+  anthropic:
+    temperature: 0.3
+```
+
+| 키 | `llm.openai` | `llm.anthropic` |
+|---|---|---|
+| `temperature` | `0.0`–`2.0` | `0.0`–`1.0` |
+| `topP` | `0.0`–`1.0` | 키가 없다 — 이 클라이언트는 `top_p` 를 에이전트 정의의 `model.topP` 에서만 읽는다 |
+| `presencePenalty` · `frequencyPenalty` | `-2.0`–`2.0`. Chat Completions 로 가는 요청에만 실린다 | 키가 없다 — Anthropic API 에 대응 파라미터가 없다 |
+
+- **우선순위는 셋이다 — 에이전트 정의 > 이 키 > 없음.** 에이전트 정의의 `model.temperature` · `model.topP` 가
+  있으면 그것이 이기고, 없으면 이 키의 값이 실리며, 둘 다 없으면 **아무것도 실리지 않아** 서버 기본값이
+  적용된다. 클라이언트가 채워 넣는 세 번째 값은 없다. 파라미터마다 따로 정해지므로 정의가 `temperature` 만
+  적어도 `topP` 의 기본값은 그대로 실린다.
+- **범위를 벗어난 값은 기동을 실패시키고 키를 부른다** — ``Invalid `llm.anthropic.temperature` in the LLM
+  config: Temperature must be between 0.0 and 1.0``. `1.5` 는 `llm.openai.temperature` 로는 유효하고
+  `llm.anthropic.temperature` 로는 아니다.
+- **블록에 없는 키는 모르는 키로 거절된다.** `llm.anthropic.topP` 는 조용히 무시되지 않는다.
+- **값이 실리지 않는 요청이 있고, 그때마다 클라이언트가 한 번 WARN 으로 말한다.** 내장 capability 행이
+  샘플링을 받지 않는다고 적은 모델(`gpt-5*` · o-series · 일부 Claude 모델)에는 넷 다 실리지 않는다. Anthropic 은
+  thinking 파라미터가 실린 요청에 `temperature` 를 함께 받지 않는다. OpenAI 의 두 penalty 는 `/v1/responses`
+  에 자리가 없다.
+- **이 키가 닿는 것은 그 클라이언트가 보내는 모든 요청이다** — 에이전트 턴만이 아니라 컴팩션 요약, peer
+  memory 처럼 같은 클라이언트를 쓰는 백그라운드 호출도 자기 값을 싣지 않았다면 이 기본값을 받는다.
+- **서브에이전트 요청에도 닿는다.** 서브에이전트는 띄운 에이전트의 `model.temperature` · `model.topP` · 두
+  penalty 를 물려받고, 그 정의에 값이 없으면 아무것도 싣지 않는다. 그때는 메인 에이전트 요청과 똑같이 이 키의
+  값이 실린다.
+
 `cli.tracing`이 켜져 있으면 그 위에 한 겹이 더 붙는다 (line 697-712) — `TracingLlmClient`가 원본 클라이언트를
 감싸고, 같은 `Tracer`가 실행기 팩토리에도 주입되어 턴/이터레이션/도구 span까지 한 트리에 모인다. 감싸는 대상은
 **에이전트 턴 경로뿐**이다. 백그라운드 서브시스템(wiki 인덱싱, peer memory, dreamer)은 의도적으로 원본
@@ -605,14 +672,15 @@ final AgentBundleLoader effectiveBundleLoader = (this.agentBundleLoader != null)
         ? this.agentBundleLoader
         : new AdaptiveAgentBundleLoader(DEFAULT_AGENT_BUNDLE_BASE_PATH,
                 new MarkdownAgentDefinitionParser(),
-                Thread.currentThread().getContextClassLoader(), skillParser);
+                Thread.currentThread().getContextClassLoader(), skillParser,
+                allowedSkillLinkRoots(config));
 final AgentBundle agentBundle = effectiveBundleLoader.load(extractAgentName(config));
 ```
 
 - **`OutputFormatter`** — 콘솔 색상/포매팅 담당. 자신의 앱에서는 SSE 스트리머, 로그 어펜더, WebSocket 송신기 등으로 대체한다.
 - **`LocalShell`** — `hooks.json` 에 선언한 `command` 핸들러를 돌리는 **호스트 셸**이다(`HostShellActionExecutor` 로 감싸 핫리로드에 넘긴다). 스킬 훅용이 아니다. `AutoCloseable`로 `AgentSetup.close()`에서 정리된다.
 - **`SkillParser`** — 마크다운 스킬 정의 파서. `DefaultShellActionExecutor`(인자 없음)를 물려 `shell` 훅을 받아들이되 **셸은 주입하지 않는다** — 스킬 훅의 셸 액션은 훅이 발화한 실행의 실행 환경 셸에서 돈다.
-- **`AgentBundleLoader`** — `agents/<name>/agent.md`와 그 하위의 서브에이전트, 스킬을 한 번에 로드한다. 클래스패스에서 읽으므로 jar로 패키징된다.
+- **`AgentBundleLoader`** — `agents/<name>/agent.md`와 그 하위의 서브에이전트, 스킬을 한 번에 로드한다. 클래스패스에서 읽으므로 jar로 패키징된다. 마지막 인자는 설정의 `agent.allowedSkillLinkRoots` 다 — 번들이 jar 가 아니라 **디스크의 디렉터리**에서 읽힐 때, 그 `skills/` 안의 심볼릭 링크가 가리켜도 되는 디렉터리 목록이다(기본은 비어 있어 `skills/` 밖을 가리키는 링크가 있는 스킬은 적재되지 않는다). 절대 경로만 받는다. 상대 경로, 빈 항목, `~`(풀지 않는다 — `${HOME}` 을 쓴다), `/` 는 설정을 읽는 시점에 항목 번호를 대며 실패한다. `.aimon/skills` 의 사용자 스킬에는 닿지 않는다.
 
 **여러분의 적응 포인트:**
 - Agent 정의를 코드/DB에서 동적으로 만들고 싶으면 `AgentBundle`을 직접 빌드해서 `AgentSetupFactory`의 패키지-프라이빗 생성자로 주입한다.

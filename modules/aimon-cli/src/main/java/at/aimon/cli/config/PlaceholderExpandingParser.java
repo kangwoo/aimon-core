@@ -4,14 +4,17 @@ import java.io.IOException;
 import java.io.Writer;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.core.Base64Variant;
 import com.fasterxml.jackson.core.JsonParser;
@@ -55,7 +58,20 @@ import at.aimon.cli.exception.ConfigurationException;
  *
  * <p>
  * Expansion is a single pass: a variable whose value is itself {@code ${OTHER}} stays literal, as it always has.
- * There is no escape syntax for a literal placeholder; nothing in the tree needs one.
+ *
+ * <p>
+ * <b>{@code $${NAME}} is the literal text {@code ${NAME}}.</b> Under a rule that reaches every scalar there was
+ * otherwise no way to write one: set, the variable was substituted; unset, startup failed. The value that needs it is
+ * an argument or environment entry of a stdio MCP server that the <em>child</em> process is meant to expand. The
+ * escape exists only directly in front of a placeholder, so {@code pa$$word} and a lone {@code $$} are still what
+ * they were. Directly in front of one, each {@code $$} is one literal {@code $} and an odd {@code $} left over opens
+ * the placeholder: {@code $$${NAME}} is a {@code $} followed by the variable's value — the meaning {@code $${NAME}}
+ * had before it became the escape — and {@code $$$${NAME}} is the text {@code $${NAME}}. An escaped placeholder ends
+ * where an expanded one would, at the first <code>}</code>, and names no variable: nothing is looked up, so nothing
+ * has to be set. What a variable expands to is not scanned again, for the escape any more than for a placeholder.
+ * Taking the whole run of {@code $} together with the placeholder is what makes the escape a property of the
+ * placeholder rather than of the {@code $} character: a {@code $$} that no placeholder follows is never an escape, so
+ * it is never changed.
  *
  * <p>
  * <b>Two sibling keys that end up with the same name are refused</b> rather than letting the later one silently
@@ -63,9 +79,16 @@ import at.aimon.cli.exception.ConfigurationException;
  * property of every mapping. It fires only when expansion is what made the two collide — two keys written the same
  * way twice are yaml's own last-wins and are left alone, because expansion did not create that collision and this
  * class is not the place to start failing on it.
+ *
+ * <p>
+ * <b>Left alone, but not left unsaid.</b> A key written twice is logged at WARN with its path, once per key, saying
+ * the earlier value is discarded. It stays a warning because the same question has an answer elsewhere in this
+ * repository that cannot be a refusal: the agent, subagent and skill front-matter parsers keep snakeyaml's
+ * duplicate-key option at its default so that files which load today keep loading, and they report a duplicate in the
+ * same words ({@code YamlDuplicateKeys}). One answer on every surface an operator writes yaml on.
  */
 final class PlaceholderExpandingParser extends JsonParserDelegate {
-    private static final Pattern ENV_VAR_PATTERN = Pattern.compile("\\$\\{([^}]+)}");
+    private static final Logger log = LoggerFactory.getLogger(PlaceholderExpandingParser.class);
 
     private final Function<String, String> envVarResolver;
 
@@ -317,19 +340,85 @@ final class PlaceholderExpandingParser extends JsonParserDelegate {
         if (written == null || !written.contains("${")) {
             return written;
         }
-        final Matcher matcher = ENV_VAR_PATTERN.matcher(written);
-        final StringBuilder expanded = new StringBuilder();
-        while (matcher.find()) {
-            final String name = matcher.group(1);
-            final String value = envVarResolver.apply(name);
-            if (value == null) {
-                throw new ConfigurationException(
-                        "Environment variable not set: " + name + " (at " + currentPath() + ")");
+        return expand(written, this::valueOf);
+    }
+
+    /**
+     * Expands one scalar: every {@code ${NAME}} and the {@code $} written directly in front of it, left to right.
+     *
+     * <p>
+     * A hand scan, in one pass. This was the pattern <code>(\$*)\$\{([^}]+)}</code>, and that pattern is quadratic
+     * twice over: for a run of {@code $} that no placeholder follows it re-reads the rest of the run from every
+     * position in it, and for a <code>${</code> that is never closed it reads to the end of the text from each one. A
+     * configuration value is not attacker-controlled, but a generated one can be long, and 128,000 {@code $} took
+     * half a minute. Here a run of {@code $} is read once and belongs, whole, to the placeholder that follows it or
+     * to none; and once no <code>}</code> is left, nothing further can be a placeholder and the scan stops looking.
+     *
+     * @param written
+     *            the scalar as written
+     * @param valueOf
+     *            the value of a variable by name; throws when there is none
+     * @return the expansion — equal to {@code written} when it holds no placeholder
+     */
+    static String expand(CharSequence written, Function<String, String> valueOf) {
+        final int length = written.length();
+        final StringBuilder expanded = new StringBuilder(length);
+        // False once a search for `}` has reached the end of the text: no placeholder can close after that.
+        boolean braceAhead = true;
+        int index = 0;
+        while (index < length) {
+            final char character = written.charAt(index);
+            if (character != '$') {
+                expanded.append(character);
+                index++;
+                continue;
             }
-            matcher.appendReplacement(expanded, Matcher.quoteReplacement(value));
+            final int runStart = index;
+            while (index < length && written.charAt(index) == '$') {
+                index++;
+            }
+            // The dollars written in front of `{NAME}`: the one that opens the placeholder and any before it.
+            final int dollars = index - runStart;
+            int close = -1;
+            if (braceAhead && index < length && written.charAt(index) == '{') {
+                close = index + 1;
+                while (close < length && written.charAt(close) != '}') {
+                    close++;
+                }
+                if (close == length) {
+                    braceAhead = false;
+                }
+            }
+            // A name is everything up to the first `}`, and at least one character: `${}` is not a placeholder.
+            if (close <= index + 1 || close == length) {
+                // No placeholder follows, so the run is not an escape of anything: `pa$$word` stays what it is. The
+                // `{`, if that is what stopped the run, is an ordinary character for the next turn of the loop.
+                expanded.append(written, runStart, index);
+                continue;
+            }
+            final String name = written.subSequence(index + 1, close).toString();
+            for (int literal = 0; literal < dollars / 2; literal++) {
+                expanded.append('$');
+            }
+            if (dollars % 2 == 0) {
+                // Every `$$` is one literal `$`, and none is left to open a placeholder: `$${NAME}` is the text
+                // `${NAME}`. The variable is not looked up, so it does not have to be set.
+                expanded.append('{').append(name).append('}');
+            } else {
+                // Appended as it is and never scanned: what a variable expands to is not expanded again.
+                expanded.append(valueOf.apply(name));
+            }
+            index = close + 1;
         }
-        matcher.appendTail(expanded);
         return expanded.toString();
+    }
+
+    private String valueOf(String name) {
+        final String value = envVarResolver.apply(name);
+        if (value == null) {
+            throw new ConfigurationException("Environment variable not set: " + name + " (at " + currentPath() + ")");
+        }
+        return value;
     }
 
     private void popLevel() {
@@ -370,6 +459,7 @@ final class PlaceholderExpandingParser extends JsonParserDelegate {
         private final boolean array;
         private String fieldName;
         private Map<String, String> writtenByExpanded;
+        private Set<String> reportedDuplicates;
 
         Level(boolean array) {
             this.array = array;
@@ -380,8 +470,22 @@ final class PlaceholderExpandingParser extends JsonParserDelegate {
                 writtenByExpanded = new LinkedHashMap<>();
             }
             final String previous = writtenByExpanded.putIfAbsent(expanded, written);
-            if (previous == null || (previous.equals(expanded) && written.equals(expanded))) {
-                // Nothing seen before, or the same key written twice — a duplicate expansion did not create.
+            if (previous == null) {
+                return;
+            }
+            if (previous.equals(expanded) && written.equals(expanded)) {
+                // The same key written twice — a duplicate expansion did not create. Jackson keeps the last value,
+                // exactly as it did before this class could see both, and startup goes on; what changed is that the
+                // discarded value is now mentioned. Once per key, however many times it is written.
+                if (reportedDuplicates == null) {
+                    reportedDuplicates = new HashSet<>();
+                }
+                if (reportedDuplicates.add(expanded)) {
+                    log.warn(
+                            "Configuration key `{}` is written more than once;"
+                                    + " the earlier value is discarded and the last one is used.",
+                            enclosingPath.isEmpty() ? expanded : enclosingPath + "." + expanded);
+                }
                 return;
             }
             throw new ConfigurationException("Configuration keys `" + previous + "` and `" + written

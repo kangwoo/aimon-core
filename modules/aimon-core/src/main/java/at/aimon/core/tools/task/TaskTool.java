@@ -32,7 +32,6 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.knowledge.KnowledgeScope;
 import at.aimon.core.knowledge.KnowledgeStore;
@@ -40,8 +39,8 @@ import at.aimon.core.llm.DynamicToolDefinitionProvider;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.subagent.exception.SubagentNotFoundException;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
@@ -87,7 +86,7 @@ import at.aimon.core.tools.ToolContextKeys;
  *     SubagentRegistry registry = new DefaultSubagentRegistry(repository, parser);
  *     SubagentExecutionManager executionManager = new DefaultSubagentExecutionManager(llmClient, toolExecutionManager,
  *             hookExecutionManager);
- *     Tool taskTool = new TaskTool(defaultModel, registry, toolRegistry, hookRegistry, userLocale, executionManager);
+ *     Tool taskTool = new TaskTool(defaultModel, registry, toolRegistry, hookRegistry, executionManager);
  *
  *     ToolContext context = ToolContext.empty();
  *
@@ -119,7 +118,6 @@ public class TaskTool extends AbstractTool {
     private final SubagentRegistry subagentRegistry;
     private final ToolRegistry toolRegistry;
     private final HookRegistry hookRegistry;
-    private final UserLocale userLocale;
 
     private final SubagentExecutionManager subagentExecutionManager;
     private final List<ToolContextEnricher> toolContextEnrichers;
@@ -138,15 +136,12 @@ public class TaskTool extends AbstractTool {
      *            the tool registry available to subagents (must not be null)
      * @param hookRegistry
      *            the hook registry (must not be null)
-     * @param userLocale
-     *            the user locale (must not be null)
      * @param subagentExecutionManager
      *            the subagent execution manager (must not be null)
      */
     public TaskTool(LlmModel defaultModel, SubagentRegistry subagentRegistry, ToolRegistry toolRegistry,
-            HookRegistry hookRegistry, UserLocale userLocale, SubagentExecutionManager subagentExecutionManager) {
-        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale, subagentExecutionManager,
-                List.of());
+            HookRegistry hookRegistry, SubagentExecutionManager subagentExecutionManager) {
+        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, subagentExecutionManager, List.of());
     }
 
     /**
@@ -162,18 +157,16 @@ public class TaskTool extends AbstractTool {
      *            the tool registry available to subagents (must not be null)
      * @param hookRegistry
      *            the hook registry (must not be null)
-     * @param userLocale
-     *            the user locale (must not be null)
      * @param subagentExecutionManager
      *            the subagent execution manager (must not be null)
      * @param toolContextEnrichers
      *            the enrichers to forward (nullable; treated as empty when absent)
      */
     public TaskTool(LlmModel defaultModel, SubagentRegistry subagentRegistry, ToolRegistry toolRegistry,
-            HookRegistry hookRegistry, UserLocale userLocale, SubagentExecutionManager subagentExecutionManager,
+            HookRegistry hookRegistry, SubagentExecutionManager subagentExecutionManager,
             List<ToolContextEnricher> toolContextEnrichers) {
-        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale, subagentExecutionManager,
-                toolContextEnrichers, null);
+        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, subagentExecutionManager, toolContextEnrichers,
+                null);
     }
 
     /**
@@ -189,8 +182,6 @@ public class TaskTool extends AbstractTool {
      *            the tool registry available to subagents (must not be null)
      * @param hookRegistry
      *            the hook registry (must not be null)
-     * @param userLocale
-     *            the user locale (must not be null)
      * @param subagentExecutionManager
      *            the subagent execution manager (must not be null)
      * @param toolContextEnrichers
@@ -201,10 +192,10 @@ public class TaskTool extends AbstractTool {
      */
     @SuppressWarnings("checkstyle:ParameterNumber")
     public TaskTool(LlmModel defaultModel, SubagentRegistry subagentRegistry, ToolRegistry toolRegistry,
-            HookRegistry hookRegistry, UserLocale userLocale, SubagentExecutionManager subagentExecutionManager,
+            HookRegistry hookRegistry, SubagentExecutionManager subagentExecutionManager,
             List<ToolContextEnricher> toolContextEnrichers, TaskOutputStore taskOutputStore) {
-        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale, subagentExecutionManager,
-                toolContextEnrichers, taskOutputStore, null);
+        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, subagentExecutionManager, toolContextEnrichers,
+                taskOutputStore, null);
     }
 
     /**
@@ -219,8 +210,6 @@ public class TaskTool extends AbstractTool {
      *            the tool registry available to subagents (must not be null)
      * @param hookRegistry
      *            the hook registry (must not be null)
-     * @param userLocale
-     *            the user locale (must not be null)
      * @param subagentExecutionManager
      *            the subagent execution manager (must not be null)
      * @param toolContextEnrichers
@@ -234,11 +223,11 @@ public class TaskTool extends AbstractTool {
      */
     @SuppressWarnings("checkstyle:ParameterNumber")
     public TaskTool(LlmModel defaultModel, SubagentRegistry subagentRegistry, ToolRegistry toolRegistry,
-            HookRegistry hookRegistry, UserLocale userLocale, SubagentExecutionManager subagentExecutionManager,
+            HookRegistry hookRegistry, SubagentExecutionManager subagentExecutionManager,
             List<ToolContextEnricher> toolContextEnrichers, TaskOutputStore taskOutputStore,
             SessionSnapshotStore sessionSnapshotStore) {
-        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale, subagentExecutionManager,
-                toolContextEnrichers, taskOutputStore, sessionSnapshotStore, null);
+        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, subagentExecutionManager, toolContextEnrichers,
+                taskOutputStore, sessionSnapshotStore, null);
     }
 
     /**
@@ -254,8 +243,6 @@ public class TaskTool extends AbstractTool {
      *            the tool registry available to subagents (must not be null)
      * @param hookRegistry
      *            the hook registry (must not be null)
-     * @param userLocale
-     *            the user locale (must not be null)
      * @param subagentExecutionManager
      *            the subagent execution manager (must not be null)
      * @param toolContextEnrichers
@@ -271,7 +258,7 @@ public class TaskTool extends AbstractTool {
      */
     @SuppressWarnings("checkstyle:ParameterNumber")
     public TaskTool(LlmModel defaultModel, SubagentRegistry subagentRegistry, ToolRegistry toolRegistry,
-            HookRegistry hookRegistry, UserLocale userLocale, SubagentExecutionManager subagentExecutionManager,
+            HookRegistry hookRegistry, SubagentExecutionManager subagentExecutionManager,
             List<ToolContextEnricher> toolContextEnrichers, TaskOutputStore taskOutputStore,
             SessionSnapshotStore sessionSnapshotStore, TaskResultStore taskResultStore) {
         super(new DynamicToolDefinitionProvider(TOOL_NAME, ToolCategories.EXECUTION,
@@ -281,7 +268,6 @@ public class TaskTool extends AbstractTool {
         this.subagentRegistry = Objects.requireNonNull(subagentRegistry, "Subagent registry cannot be null");
         this.toolRegistry = Objects.requireNonNull(toolRegistry, "Tool registry bundle cannot be null");
         this.hookRegistry = Objects.requireNonNull(hookRegistry, "Hook registry cannot be null");
-        this.userLocale = Objects.requireNonNull(userLocale, "UserLocale cannot be null");
         this.subagentExecutionManager = Objects.requireNonNull(subagentExecutionManager,
                 "Subagent execution manager cannot be null");
         this.toolContextEnrichers = toolContextEnrichers != null ? List.copyOf(toolContextEnrichers) : List.of();
@@ -305,7 +291,10 @@ public class TaskTool extends AbstractTool {
     }
 
     /**
-     * Builds the tools description including available subagents.
+     * Builds the tools description including available subagents. A definition marked
+     * {@linkplain at.aimon.core.subagent.SubagentMetadata#isHidden() hidden} is left out: it is registered to be looked
+     * up by name (a
+     * {@code Workflow} role, a GraalJS {@code agentType}), not to be offered to the model.
      *
      * @param registry
      *            The subagent registry
@@ -320,7 +309,7 @@ public class TaskTool extends AbstractTool {
         desc.append("The subagent will work independently and return results when complete.")
                 .append(Constants.DOUBLE_NEWLINE);
 
-        final List<Subagent> subagents = registry.getAllSubagents();
+        final List<Subagent> subagents = visibleSubagents(registry);
         if (!subagents.isEmpty()) {
             desc.append("<available_subagents>").append(Constants.NEWLINE);
             for (Subagent subagent : subagents) {
@@ -397,6 +386,15 @@ public class TaskTool extends AbstractTool {
             final String prompt = input.getRequiredString("prompt");
             final String description = input.getRequiredString("description");
 
+            // A hidden definition is not the model's to launch. Leaving it out of the description is not enough — the
+            // model can still name it (it may have seen the name in a workflow step label or an operator's /agents
+            // output) — so the call is refused here, before a resume snapshot is loaded or anything is spawned.
+            if (isHidden(subagentName)) {
+                log.warn("Task refused: subagent '{}' is hidden from the model (hidden: true)", subagentName);
+                return ToolResult.error("Subagent not available to Task: " + subagentName + ". Available subagents: "
+                        + String.join(", ", getAvailableSubagentNames()));
+            }
+
             // Extract optional model override. When supplied it wins over the subagent's own `model` frontmatter
             // and the default model during resolution. A present-but-blank value is a caller error.
             final String model = input.getString("model", null);
@@ -424,11 +422,10 @@ public class TaskTool extends AbstractTool {
                 if (sessionSnapshotStore == null) {
                     return ToolResult.error("Resume is not available: no session snapshot store is configured.");
                 }
-                // Confine the load to the caller's own runtime: background task ids are globally unique but
-                // shared across agents in one snapshot store, so without scoping any agent could resume — and thereby
-                // read — another agent's transcript just by knowing its id. A foreign-context or untagged transcript
-                // loads as empty, indistinguishable from an unknown id. Non-Orca paths without a context id pass
-                // through
+                // Confine the load to the caller's own runtime: background task ids are globally unique but shared
+                // across agents in one snapshot store, so without scoping any agent could resume — and thereby read —
+                // another agent's transcript just by knowing its id. A foreign-context or untagged transcript loads as
+                // empty, indistinguishable from an unknown id. Non-Orca paths without a context id pass through
                 // unscoped (see ScopedSessionSnapshotStore#scopeOrPassThrough).
                 final SessionSnapshotStore scopedStore = ScopedSessionSnapshotStore
                         .scopeOrPassThrough(sessionSnapshotStore, maybeAgentRuntimeId);
@@ -446,22 +443,38 @@ public class TaskTool extends AbstractTool {
                 previousSnapshot = resumable.getSnapshot();
             }
 
-            // Require the agent runtime id to spawn the subagent (resolved above; scopes resume + stamps the env).
+            // Require the agent runtime id to spawn the subagent (resolved above; scopes resume + stamps the launch
+            // context).
             final AgentRuntimeId agentRuntimeId = maybeAgentRuntimeId
                     .orElseThrow(() -> new IllegalStateException("Agent runtime ID not found in tool context"));
 
-            // Build execution environment once for reuse
-            final SubagentExecutionEnvironment env = buildEnvironment(context, agentRuntimeId, model, previousSnapshot);
+            // Build the launch context once for reuse
+            final SubagentLaunchContext launchContext = buildLaunchContext(context, agentRuntimeId, model,
+                    previousSnapshot);
 
             // Generate unique task ID
             final String taskId = UUID.randomUUID().toString();
 
             if (runInBackground) {
-                // Launch subagent in background. The cancellation signal carried on env still cooperatively stops the
-                // background subagent while the parent execution is alive; once that execution ends, cancellation of
-                // the background task is owned by the execution manager's TaskStop control plane.
+                // A background subagent outlives the skill whose fork starts it: the skill's hook layer goes off
+                // when the Skill tool returns and the subagent runs on under the runtime's hooks only. A guard that
+                // would silently stop applying is refused, as for a background workflow run (EE-63); a hook that
+                // only observes is not (EE-69). The judgment is HookRegistryAccess's, the same one.
+                final List<String> guardSkills = HookRegistryAccess.activeSkillGuards(context);
+                if (!guardSkills.isEmpty()) {
+                    log.warn("Task (background) refused: skill guard hooks are active ({})", guardSkills);
+                    return ToolResult.error(HookRegistryAccess.backgroundTaskRefusal(guardSkills));
+                }
+                final List<String> hookSkills = HookRegistryAccess.activeSkillHooks(context);
+                if (!hookSkills.isEmpty()) {
+                    log.warn("Task (background): the hooks of skill(s) {} stop firing for this subagent once the"
+                            + " skill returns", hookSkills);
+                }
+                // Launch subagent in background. The cancellation signal carried on launchContext still cooperatively
+                // stops the background subagent while the parent execution is alive; once that execution ends,
+                // cancellation of the background task is owned by the execution manager's TaskStop control plane.
                 final CompletableFuture<SubagentExecutionResult> future = subagentExecutionManager
-                        .executeInBackground(env, taskId, subagentName, prompt, description);
+                        .executeInBackground(launchContext, taskId, subagentName, prompt, description);
 
                 return ToolResult.success(String.format(
                         "Background task launched successfully.\n" + "Task ID: %s\n" + "Subagent: %s\n" + "Task: %s\n\n"
@@ -472,8 +485,8 @@ public class TaskTool extends AbstractTool {
 
             // Synchronous (foreground) launch: the subagent runs on this tool's thread. Register a thread-interrupt
             // terminator on the parent-issued registrar (EXTERNALLY_TERMINATED) so a parent cancel can break a blocking
-            // subagent call out-of-band, in addition to the cooperative signal carried on env.
-            final SubagentExecutionResult result = runForeground(context, env, taskId, subagentName, prompt,
+            // subagent call out-of-band, in addition to the cooperative signal carried on launchContext.
+            final SubagentExecutionResult result = runForeground(context, launchContext, taskId, subagentName, prompt,
                     description);
 
             // Format result
@@ -492,7 +505,7 @@ public class TaskTool extends AbstractTool {
     }
 
     /**
-     * Collects everything the spawned subagent inherits from the calling execution into one environment.
+     * Collects everything the spawned subagent inherits from the calling execution into one launch context.
      *
      * <p>
      * Every value read here is optional: {@code TaskTool} is reachable from non-Orca paths that populate little or
@@ -507,10 +520,10 @@ public class TaskTool extends AbstractTool {
      *            the caller's model override, or null to use the subagent's own frontmatter
      * @param previousSnapshot
      *            the transcript to resume from, or null for a fresh run
-     * @return the environment to launch the subagent with
+     * @return the launch context to launch the subagent with
      */
-    private SubagentExecutionEnvironment buildEnvironment(ToolContext context, AgentRuntimeId agentRuntimeId,
-            String model, SessionSnapshot previousSnapshot) {
+    private SubagentLaunchContext buildLaunchContext(ToolContext context, AgentRuntimeId agentRuntimeId, String model,
+            SessionSnapshot previousSnapshot) {
 
         // Extract execution attributes from tool context for subagent propagation
         final Map<String, Object> executionAttributes = context.get(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY)
@@ -551,18 +564,18 @@ public class TaskTool extends AbstractTool {
         final Consumer<AgentExecutionEvent> parentEventSink = context.get(ToolContextKeys.AGENT_EVENT_SINK)
                 .orElse(null);
 
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry)
+        return SubagentLaunchContext.builder().agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry)
                 .toolRegistry(toolRegistry)
                 // The caller's registry first: inside a forked skill it carries the skill's hooks, and a subagent
                 // started from there must stay under them.
-                .hookRegistry(HookRegistryAccess.of(context).orElse(hookRegistry)).userLocale(userLocale)
-                .defaultModel(defaultModel).modelOverride(model).executionAttributes(executionAttributes)
-                .parentLlmCallMetadata(parentMetadata).cancellationSignal(parentSignal).principal(principal)
-                .knowledgeStore(knowledgeStore).knowledgeScope(knowledgeScope)
-                .toolContextEnrichers(toolContextEnrichers).taskOutputStore(taskOutputStore)
-                .taskResultStore(taskResultStore).sessionSnapshotStore(sessionSnapshotStore)
-                .previousSnapshot(previousSnapshot).messageQueueManager(messageQueueManager)
-                .parentEventSink(parentEventSink).callerAllowedTools(CallerAllowedTools.of(context))
+                .hookRegistry(HookRegistryAccess.of(context).orElse(hookRegistry)).defaultModel(defaultModel)
+                .modelOverride(model).executionAttributes(executionAttributes).parentLlmCallMetadata(parentMetadata)
+                .cancellationSignal(parentSignal).principal(principal).knowledgeStore(knowledgeStore)
+                .knowledgeScope(knowledgeScope).toolContextEnrichers(toolContextEnrichers)
+                .taskOutputStore(taskOutputStore).taskResultStore(taskResultStore)
+                .sessionSnapshotStore(sessionSnapshotStore).previousSnapshot(previousSnapshot)
+                .messageQueueManager(messageQueueManager).parentEventSink(parentEventSink)
+                .callerAllowedTools(CallerAllowedTools.of(context))
                 .invokingSessionId(InvokingSessionAccess.idToPropagate(context).orElse(null))
                 // The fork resolves its own environment from the spawning runtime's provider, with this execution's
                 // environment as its parent (execution-environment design §5.2).
@@ -577,12 +590,13 @@ public class TaskTool extends AbstractTool {
      * <p>
      * The terminator is unregistered in a finally block so it cannot leak into a later tool invocation should the
      * parent re-use the registrar. When no registrar is present (non-Orca call paths), the subagent simply runs to
-     * completion and cancellation falls back to the cooperative {@code parentSignal} forwarded into {@code env}.
+     * completion and cancellation falls back to the cooperative {@code parentSignal} forwarded into
+     * {@code launchContext}.
      *
      * @param context
      *            the tool context (used to read the optional {@link InterruptToolKeys#TERMINATOR_REGISTRAR})
-     * @param env
-     *            the subagent execution environment
+     * @param launchContext
+     *            the launch context
      * @param taskId
      *            the generated task id
      * @param subagentName
@@ -593,17 +607,17 @@ public class TaskTool extends AbstractTool {
      *            the short task description
      * @return the subagent execution result (never null)
      */
-    private SubagentExecutionResult runForeground(ToolContext context, SubagentExecutionEnvironment env, String taskId,
-            String subagentName, String prompt, String description) {
+    private SubagentExecutionResult runForeground(ToolContext context, SubagentLaunchContext launchContext,
+            String taskId, String subagentName, String prompt, String description) {
         final TerminatorRegistrar registrar = context.get(InterruptToolKeys.TERMINATOR_REGISTRAR).orElse(null);
         if (registrar == null) {
-            return subagentExecutionManager.execute(env, taskId, subagentName, prompt, description);
+            return subagentExecutionManager.execute(launchContext, taskId, subagentName, prompt, description);
         }
         final Thread toolThread = Thread.currentThread();
         final Terminator terminator = toolThread::interrupt;
         registrar.register(terminator);
         try {
-            return subagentExecutionManager.execute(env, taskId, subagentName, prompt, description);
+            return subagentExecutionManager.execute(launchContext, taskId, subagentName, prompt, description);
         } finally {
             registrar.unregister(terminator);
         }
@@ -653,11 +667,22 @@ public class TaskTool extends AbstractTool {
     }
 
     /**
-     * Gets the list of available subagent names.
+     * Gets the list of available subagent names — the ones the model may launch, so hidden definitions are left out.
      *
      * @return A list of subagent names
      */
     private List<String> getAvailableSubagentNames() {
-        return subagentRegistry.getAllSubagents().stream().map(Subagent::getName).toList();
+        return visibleSubagents(subagentRegistry).stream().map(Subagent::getName).toList();
+    }
+
+    /** The registered subagents the model is shown: every definition that is not marked hidden. */
+    private static List<Subagent> visibleSubagents(SubagentRegistry registry) {
+        return registry.getAllSubagents().stream().filter(subagent -> !subagent.getMetadata().isHidden()).toList();
+    }
+
+    /** Whether {@code subagentName} resolves to a definition marked hidden. An unknown name is not hidden. */
+    private boolean isHidden(String subagentName) {
+        return subagentRegistry.getSubagent(subagentName).map(subagent -> subagent.getMetadata().isHidden())
+                .orElse(false);
     }
 }

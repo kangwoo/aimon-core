@@ -10,7 +10,6 @@ import at.aimon.core.agent.interrupt.NoopCancellationSignal;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.hook.HookRegistry;
@@ -33,7 +32,6 @@ import at.aimon.core.subagent.Subagent;
  * <li>Subagent configuration and definition
  * <li>Tool handler for managing tool execution
  * <li>Hook handler for managing execution hooks
- * <li>User locale
  * <li>Default model configuration
  * </ul>
  *
@@ -52,7 +50,7 @@ import at.aimon.core.subagent.Subagent;
  * {
  *     &#64;code
  *     SubagentExecutionContext context = SubagentExecutionContext.builder().subagent(codeReviewer)
- *             .toolHandler(toolHandler).hookHandler(hookHandler).userLocale(UserLocale.createDefault()).build();
+ *             .toolHandler(toolHandler).hookHandler(hookHandler).build();
  *
  *     SubagentExecutionRequest request = SubagentExecutionRequest.builder().taskId("task-001")
  *             .goal("Review authentication module").build();
@@ -74,7 +72,6 @@ public final class SubagentExecutionContext {
     private final String modelOverride;
     private final ToolRegistry toolRegistry;
     private final HookRegistry hookRegistry;
-    private final UserLocale userLocale;
     private final CancellationSignal parentCancellationSignal;
     private final KnowledgeStore knowledgeStore;
     private final KnowledgeScope knowledgeScope;
@@ -90,7 +87,6 @@ public final class SubagentExecutionContext {
         this.modelOverride = builder.modelOverride;
         this.toolRegistry = Objects.requireNonNull(builder.toolRegistry, "Tool registry cannot be null");
         this.hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
-        this.userLocale = Objects.requireNonNull(builder.userLocale, "UserLocale cannot be null");
         this.parentCancellationSignal = builder.parentCancellationSignal != null
                 ? builder.parentCancellationSignal
                 : NoopCancellationSignal.INSTANCE;
@@ -162,15 +158,6 @@ public final class SubagentExecutionContext {
      */
     public HookRegistry getHookRegistry() {
         return hookRegistry;
-    }
-
-    /**
-     * Gets the user locale.
-     *
-     * @return The user locale (never null)
-     */
-    public UserLocale getUserLocale() {
-        return userLocale;
     }
 
     /**
@@ -268,7 +255,6 @@ public final class SubagentExecutionContext {
         private String modelOverride;
         private ToolRegistry toolRegistry;
         private HookRegistry hookRegistry;
-        private UserLocale userLocale;
         private CancellationSignal parentCancellationSignal;
         private KnowledgeStore knowledgeStore;
         private KnowledgeScope knowledgeScope;
@@ -317,12 +303,6 @@ public final class SubagentExecutionContext {
         /** hookRegistry를 설정한다. */
         public Builder hookRegistry(HookRegistry hookRegistry) {
             this.hookRegistry = hookRegistry;
-            return this;
-        }
-
-        /** UserLocale 을 설정한다. */
-        public Builder userLocale(UserLocale userLocale) {
-            this.userLocale = userLocale;
             return this;
         }
 

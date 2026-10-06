@@ -78,7 +78,7 @@ public final class AnthropicConfig {
             throw new IllegalArgumentException("API key cannot be blank");
         }
         // Range check only when a value is present -- "unset" is not out of range.
-        if (temperature != null && (temperature < 0.0 || temperature > 1.0)) {
+        if (outside(temperature, 0.0, 1.0)) {
             throw new IllegalArgumentException("Temperature must be between 0.0 and 1.0");
         }
         if (maxTokens <= 0) {
@@ -97,6 +97,16 @@ public final class AnthropicConfig {
                         + " thinking mode, but " + "the configured mode is " + thinkingMode);
             }
         }
+    }
+
+    /**
+     * Whether a value that is present lies outside {@code [low, high]}. The test is "not inside", never "below or
+     * above": {@code NaN} compares false with both bounds, so the second form lets it through, and a {@code NaN} that
+     * a configuration key or a front matter value can spell would otherwise reach a request. The infinities are
+     * outside either way.
+     */
+    private static boolean outside(Double value, double low, double high) {
+        return value != null && !(value >= low && value <= high);
     }
 
     /**

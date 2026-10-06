@@ -1,5 +1,7 @@
 package at.aimon.spring.boot.autoconfigure;
 
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -18,6 +20,7 @@ import at.aimon.bootstrap.spec.ExecutionEnvironmentSpec;
 import at.aimon.bootstrap.spec.SessionSpec;
 import at.aimon.core.agent.ContextEngineKind;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
+import at.aimon.core.filesystem.VirtualFileSystems;
 import at.aimon.core.knowledge.SimpleDocumentChunker;
 import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
@@ -203,6 +206,17 @@ public class AimonProperties implements InitializingBean {
     public static final String LLM_ANTHROPIC_THINKING_BUDGET_TOKENS = LLM_ANTHROPIC + ".thinking-budget-tokens";
 
     /**
+     * The deployment's default {@code temperature} for Anthropic requests, {@code 0.0} to {@code 1.0}.
+     *
+     * <p>
+     * A vendor key and not a shared {@code aimon.llm.temperature} by the second test of the rule that placed
+     * {@link #LLM_ANTHROPIC}: the name is neutral, but the meaning is not — the same number is in range for one
+     * vendor and out of range for the other, and one vendor has parameters the other has no counterpart for. It is
+     * the only sampling key in this block because it is the only sampling value {@code AnthropicConfig} carries.
+     */
+    public static final String LLM_ANTHROPIC_TEMPERATURE = LLM_ANTHROPIC + ".temperature";
+
+    /**
      * OpenAI-only settings — {@code aimon.llm.openai.*}.
      *
      * <p>
@@ -231,6 +245,18 @@ public class AimonProperties implements InitializingBean {
     /** Whether OpenAI requests may be routed to the Responses API at all. */
     public static final String LLM_OPENAI_RESPONSES_API_ENABLED = LLM_OPENAI + ".responses-api-enabled";
 
+    /** The deployment's default {@code temperature} for OpenAI requests, {@code 0.0} to {@code 2.0}. */
+    public static final String LLM_OPENAI_TEMPERATURE = LLM_OPENAI + ".temperature";
+
+    /** The deployment's default {@code top_p} for OpenAI requests, {@code 0.0} to {@code 1.0}. */
+    public static final String LLM_OPENAI_TOP_P = LLM_OPENAI + ".top-p";
+
+    /** The deployment's default {@code presence_penalty} for OpenAI requests, {@code -2.0} to {@code 2.0}. */
+    public static final String LLM_OPENAI_PRESENCE_PENALTY = LLM_OPENAI + ".presence-penalty";
+
+    /** The deployment's default {@code frequency_penalty} for OpenAI requests, {@code -2.0} to {@code 2.0}. */
+    public static final String LLM_OPENAI_FREQUENCY_PENALTY = LLM_OPENAI + ".frequency-penalty";
+
     /** Backing store for session records. */
     public static final String SESSION_STORE = PREFIX + ".session.store";
 
@@ -248,6 +274,9 @@ public class AimonProperties implements InitializingBean {
 
     /** How long a suspended turn waits for an out-of-band approval. */
     public static final String SKILL_APPROVAL_PENDING_TURN_TTL = PREFIX + ".skill.approval.pending-turn-ttl";
+
+    /** Directories a symbolic link in an on-disk agent bundle's {@code skills/} directory may resolve into. */
+    public static final String SKILL_ALLOWED_LINK_ROOTS = PREFIX + ".skill.allowed-link-roots";
 
     /** Engine that runs scheduled tasks. */
     public static final String SCHEDULING_BACKEND = PREFIX + ".scheduling.backend";
@@ -855,6 +884,7 @@ public class AimonProperties implements InitializingBean {
         requirePositive(agentRuntime.getSweepInterval(), AGENT_RUNTIME_SWEEP_INTERVAL);
         requirePositive(skill.getApproval().getPendingTurnTtl(), SKILL_APPROVAL_PENDING_TURN_TTL);
         requireNoBlankEntry(skill.getApproval().getAllow(), SKILL_APPROVAL_ALLOW);
+        skill.toAllowedLinkRoots();
         // Checked here, not only when a rolling runtime is built: an agent can pick rolling in its AGENT.md later,
         // and a bad ratio should not wait for that agent to be the one that fails.
         final ContextProperties.Rolling rolling = context.getRolling();
@@ -1456,6 +1486,47 @@ public class AimonProperties implements InitializingBean {
              */
             private Boolean responsesApiEnabled;
 
+            /**
+             * The deployment's default {@code temperature}, {@code 0.0} to {@code 2.0}. Unset by default, and unset
+             * means no {@code temperature} is sent unless the request carries its own.
+             *
+             * <p>
+             * It is the middle of three: an agent definition's {@code model.temperature} wins over it, and when
+             * neither is written the parameter is left out and the server's default applies — the client does not
+             * invent a value. It applies to every request this client sends whose model carries no temperature, not
+             * only to agent turns. Subagent requests follow the same rule: they inherit the parent agent's value, and
+             * when
+             * its definition has none nothing is put on the request, so this key reaches them.
+             *
+             * <p>
+             * A value outside the range fails startup naming this property. A model whose capability row says it
+             * does not accept sampling parameters ({@code gpt-5*}, the o-series) is sent none, and the client warns
+             * once.
+             */
+            private Double temperature;
+
+            /**
+             * The deployment's default {@code top_p}, {@code 0.0} to {@code 1.0}. Unset by default. Same precedence
+             * and the same suppression as {@code temperature}.
+             */
+            private Double topP;
+
+            /**
+             * The deployment's default {@code presence_penalty}, {@code -2.0} to {@code 2.0}. Unset by default. Same
+             * precedence and the same suppression as {@code temperature}.
+             *
+             * <p>
+             * Chat Completions only. The Responses API has no penalty parameters, so on a request routed there the
+             * value is not sent and the client warns once.
+             */
+            private Double presencePenalty;
+
+            /**
+             * The deployment's default {@code frequency_penalty}, {@code -2.0} to {@code 2.0}. Unset by default.
+             * Chat Completions only, as {@code presence-penalty} is.
+             */
+            private Double frequencyPenalty;
+
             public void setReasoningSummary(String reasoningSummary) {
                 this.reasoningSummary = reasoningSummary;
             }
@@ -1483,7 +1554,7 @@ public class AimonProperties implements InitializingBean {
              * Whether nothing under this block was written.
              *
              * <p>
-             * Reads two fields for null and loads no vendor class, which is what lets the refusal in
+             * Reads fields for null and loads no vendor class, which is what lets the refusal in
              * {@code AimonLlmAutoConfiguration} sit on the enclosing class rather than inside a guarded slice. It
              * asks whether a key was written, not whether it changes anything: {@code responses-api-enabled=true}
              * restates the default and is still a line the Anthropic branch never reads.
@@ -1491,13 +1562,91 @@ public class AimonProperties implements InitializingBean {
              * @return true when every key is absent
              */
             public boolean isEmpty() {
-                return reasoningSummary == null && responsesApiEnabled == null;
+                return reasoningSummary == null && responsesApiEnabled == null && temperature == null && topP == null
+                        && presencePenalty == null && frequencyPenalty == null;
+            }
+
+            /**
+             * Returns the deployment's default temperature.
+             *
+             * @return the written value, or {@code null} when the key is absent
+             */
+            public Double getTemperature() {
+                return temperature;
+            }
+
+            /**
+             * Sets the deployment's default temperature.
+             *
+             * @param temperature
+             *            {@code 0.0} to {@code 2.0}, or {@code null} to send none by default
+             */
+            public void setTemperature(Double temperature) {
+                this.temperature = temperature;
+            }
+
+            /**
+             * Returns the deployment's default {@code top_p}.
+             *
+             * @return the written value, or {@code null} when the key is absent
+             */
+            public Double getTopP() {
+                return topP;
+            }
+
+            /**
+             * Sets the deployment's default {@code top_p}.
+             *
+             * @param topP
+             *            {@code 0.0} to {@code 1.0}, or {@code null} to send none by default
+             */
+            public void setTopP(Double topP) {
+                this.topP = topP;
+            }
+
+            /**
+             * Returns the deployment's default presence penalty.
+             *
+             * @return the written value, or {@code null} when the key is absent
+             */
+            public Double getPresencePenalty() {
+                return presencePenalty;
+            }
+
+            /**
+             * Sets the deployment's default presence penalty.
+             *
+             * @param presencePenalty
+             *            {@code -2.0} to {@code 2.0}, or {@code null} to send none by default
+             */
+            public void setPresencePenalty(Double presencePenalty) {
+                this.presencePenalty = presencePenalty;
+            }
+
+            /**
+             * Returns the deployment's default frequency penalty.
+             *
+             * @return the written value, or {@code null} when the key is absent
+             */
+            public Double getFrequencyPenalty() {
+                return frequencyPenalty;
+            }
+
+            /**
+             * Sets the deployment's default frequency penalty.
+             *
+             * @param frequencyPenalty
+             *            {@code -2.0} to {@code 2.0}, or {@code null} to send none by default
+             */
+            public void setFrequencyPenalty(Double frequencyPenalty) {
+                this.frequencyPenalty = frequencyPenalty;
             }
         }
 
         /**
          * The {@code aimon.llm.anthropic.*} block — which thinking dialect requests speak, how much of it, whether
-         * its text is shown, and whether stored thinking blocks are replayed.
+         * its text is shown, whether stored thinking blocks are replayed, and the deployment's default
+         * {@code temperature}.
          *
          * <p>
          * Nested inside {@code AimonProperties} for the reason {@link ModelCapabilityProperties} states: the
@@ -1565,6 +1714,30 @@ public class AimonProperties implements InitializingBean {
              */
             private Boolean replayThinkingBlocks;
 
+            /**
+             * The deployment's default {@code temperature}, {@code 0.0} to {@code 1.0} — Anthropic's range, which is
+             * narrower than OpenAI's. Unset by default, and unset means no {@code temperature} is sent unless the
+             * request carries its own.
+             *
+             * <p>
+             * It is the middle of three: an agent definition's {@code model.temperature} wins over it, and when
+             * neither is written the parameter is left out and the server's default applies. It applies to every
+             * request this client sends whose model carries no temperature, not only to agent turns. Subagent
+             * requests follow the same rule: they inherit the parent agent's value, and when its definition has none
+             * nothing is put on the request, so this key reaches them.
+             *
+             * <p>
+             * A value outside the range fails startup naming this property. Two kinds of request are sent without
+             * it, and the client warns once for each: one that carries a thinking parameter, which Anthropic does not
+             * accept together with {@code temperature}, and one to a model whose capability row says it does not
+             * accept sampling parameters.
+             *
+             * <p>
+             * This is the only sampling key in the block. The Anthropic API has no penalties, and the client reads
+             * {@code top_p} from the request alone, so {@code top-p} here is an unknown key and fails startup.
+             */
+            private Double temperature;
+
             public String getThinkingMode() {
                 return thinkingMode;
             }
@@ -1601,14 +1774,33 @@ public class AimonProperties implements InitializingBean {
              * Whether nothing under this block was written.
              *
              * <p>
-             * Reads four fields for null and loads no vendor class, which is what lets the refusal in
+             * Reads fields for null and loads no vendor class, which is what lets the refusal in
              * {@code AimonLlmAutoConfiguration} sit on the enclosing class rather than inside a guarded slice.
              *
-             * @return true when all four keys are absent
+             * @return true when every key is absent
              */
             public boolean isEmpty() {
                 return thinkingMode == null && thinkingBudgetTokens == null && thinkingDisplay == null
-                        && replayThinkingBlocks == null;
+                        && replayThinkingBlocks == null && temperature == null;
+            }
+
+            /**
+             * Returns the deployment's default temperature.
+             *
+             * @return the written value, or {@code null} when the key is absent
+             */
+            public Double getTemperature() {
+                return temperature;
+            }
+
+            /**
+             * Sets the deployment's default temperature.
+             *
+             * @param temperature
+             *            {@code 0.0} to {@code 1.0}, or {@code null} to send none by default
+             */
+            public void setTemperature(Double temperature) {
+                this.temperature = temperature;
             }
         }
     }
@@ -2268,13 +2460,84 @@ public class AimonProperties implements InitializingBean {
         }
     }
 
-    /** Skill invocation policy. */
+    /** Skill loading and invocation policy. */
     public static class Skill {
 
         private final Approval approval = new Approval();
 
+        /**
+         * Directories a symbolic link in an agent bundle's skills/ directory may resolve into, besides that directory
+         * itself. Absolute paths; a relative path, a blank entry or a filesystem root (/) fails startup. Empty by
+         * default: a skill with a link that leaves skills/ is not loaded. Reaches bundles read from a directory on
+         * the class path, not ones inside a jar.
+         */
+        private List<String> allowedLinkRoots = new ArrayList<>();
+
         public Approval getApproval() {
             return approval;
+        }
+
+        /**
+         * Returns {@code aimon.skill.allowed-link-roots} as written; {@link #toAllowedLinkRoots()} checks it.
+         *
+         * @return the entries, possibly empty, never null
+         */
+        public List<String> getAllowedLinkRoots() {
+            return allowedLinkRoots;
+        }
+
+        /**
+         * Sets {@code aimon.skill.allowed-link-roots}.
+         *
+         * @param allowedLinkRoots
+         *            the entries, or null for none
+         */
+        public void setAllowedLinkRoots(List<String> allowedLinkRoots) {
+            this.allowedLinkRoots = (allowedLinkRoots == null) ? new ArrayList<>() : allowedLinkRoots;
+        }
+
+        /**
+         * Turns {@code aimon.skill.allowed-link-roots} into the paths the stack spec takes, refusing an entry the
+         * link rule cannot use — by property and index, at startup, rather than when the first bundle is read (a
+         * bundle in a jar never reads the list at all).
+         *
+         * <p>
+         * An entry must be an absolute path: a relative one would name a different directory depending on where the
+         * application is started, and a blank one is a gap in an indexed property or a stray comma. A filesystem root
+         * is refused because every path lies under it, which would switch the rule off while it still looks
+         * configured. A directory that does not exist is accepted and matches nothing.
+         *
+         * @return the allowed link roots, normalised, in the order written
+         * @throws IllegalStateException
+         *             if an entry is blank, not a path, not absolute, or a filesystem root
+         */
+        public List<Path> toAllowedLinkRoots() {
+            final List<Path> roots = new ArrayList<>(allowedLinkRoots.size());
+            for (int i = 0; i < allowedLinkRoots.size(); i++) {
+                final String property = SKILL_ALLOWED_LINK_ROOTS + "[" + i + "]";
+                final String value = allowedLinkRoots.get(i);
+                if (isBlank(value)) {
+                    throw new IllegalStateException(property + " is blank. Remove the entry — it is either a gap in"
+                            + " an indexed property or a stray comma, and it allows no directory.");
+                }
+                final Path root;
+                try {
+                    root = Path.of(value);
+                } catch (InvalidPathException e) {
+                    throw new IllegalStateException(property + "=" + value + " is not a valid path.", e);
+                }
+                if (!root.isAbsolute()) {
+                    throw new IllegalStateException(property + "=" + value + " must be an absolute path. A relative"
+                            + " path would name a different directory wherever the application is started.");
+                }
+                try {
+                    roots.addAll(VirtualFileSystems.checkedLinkRoots(List.of(root)));
+                } catch (IllegalArgumentException e) {
+                    throw new IllegalStateException(property + "=" + value + " must not be a filesystem root: every"
+                            + " path lies under it, so it would allow a skill link to resolve anywhere.", e);
+                }
+            }
+            return List.copyOf(roots);
         }
 
         /**

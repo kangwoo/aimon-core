@@ -19,7 +19,6 @@ import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
@@ -107,8 +106,8 @@ class DefaultSubagentExecutorSideEffectFilterTest {
                 .subagent(Subagent.of("explorer", SubagentMetadata.builder().description("d").maxIterations(5).build(),
                         SubagentContent.of("you are explorer")))
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(registry)
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .parentCancellationSignal(NoopCancellationSignal.INSTANCE).build();
+                .hookRegistry(new DefaultHookRegistry()).parentCancellationSignal(NoopCancellationSignal.INSTANCE)
+                .build();
 
         final SubagentExecutionResult result = executor.execute(context,
                 SubagentExecutionRequest.builder().taskId("task-1").goal("go").build());

@@ -13,7 +13,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -34,8 +33,7 @@ class HookHotReloadBootstrapTest {
     private static final ShellActionExecutor SHELL_EXECUTOR = new HostShellActionExecutor(
             org.mockito.Mockito.mock(VirtualShell.class));
 
-    private static final ReloadInvoker INVOKER = new ReloadInvoker(InvokerType.MAIN_AGENT, "main",
-            UserLocale.createDefault());
+    private static final ReloadInvoker INVOKER = new ReloadInvoker(InvokerType.MAIN_AGENT, "main");
 
     @TempDir
     Path userDir;
@@ -51,8 +49,7 @@ class HookHotReloadBootstrapTest {
                 .projectRoot(projectDir).shellExecutor(SHELL_EXECUTOR).processEnv(Map.of()).registry(registry)
                 .executionManager(executionManager).invoker(INVOKER).start()) {
 
-            // No layer files present → bootstrap is a successful no-op.
-            assertThat(started.isBootstrapSucceeded()).isTrue();
+            // No layer files present → the initial load is a successful no-op.
             assertThat(started.isWatcherActive()).isTrue();
             assertThat(registry.getHooks(HookEventType.PRE_TOOL)).isEmpty();
         }
@@ -71,8 +68,18 @@ class HookHotReloadBootstrapTest {
                 .projectRoot(projectDir).shellExecutor(SHELL_EXECUTOR).processEnv(Map.of()).registry(registry)
                 .invoker(INVOKER).start()) {
 
-            assertThat(started.isBootstrapSucceeded()).isTrue();
             assertThat(registry.getHooks(HookEventType.PRE_TOOL)).hasSize(1);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("deprecation")
+    void theDeprecatedBootstrapFlagIsAlwaysTrue() throws Exception {
+        try (HookHotReloadBootstrap.Started started = HookHotReloadBootstrap.builder().userHome(userDir)
+                .projectRoot(projectDir).shellExecutor(SHELL_EXECUTOR).processEnv(Map.of())
+                .registry(new DefaultHookRegistry()).invoker(INVOKER).start()) {
+
+            assertThat(started.isBootstrapSucceeded()).isTrue();
         }
     }
 

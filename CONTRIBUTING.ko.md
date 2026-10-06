@@ -1,6 +1,6 @@
 ---
 translated_from: CONTRIBUTING.md
-source_commit: 222fa46
+source_commit: d67baad
 ---
 
 # AIMON Core 기여 가이드
@@ -137,7 +137,7 @@ export 되어 있는 동안에는 — 이 계층을 위해서든 CLI 를
 
 ```bash
 ./gradlew format     # Spotless 적용 (Eclipse formatter)
-./gradlew checkAll   # checkFormat + checkStyle + checkJavadocCoverage + 모든 모듈의 단위 테스트 + BOM 의 verifyBom
+./gradlew checkAll   # checkFormat + checkStyle + checkJavadocCoverage + checkTestClasspathVersions + 모든 모듈의 단위 테스트 + BOM 의 verifyBom
 ```
 
 `checkAll` 이 유일한 게이트입니다. 포맷 검사, Checkstyle, 각 모듈의 `test` 태스크, **그리고** BOM 의
@@ -153,6 +153,13 @@ export 되어 있는 동안에는 — 이 계층을 위해서든 CLI 를
 javadoc 없이 공개 API 를 더하면 수가 늘어납니다 — 문서를 달아 주세요(모듈별 목록은
 `modules/<module>/build/reports/javadoc-coverage/warnings.txt`). 기존 API 에 문서를 달면 수가 줄어듭니다 —
 그 모듈 줄을 실패 메시지가 알려 주는 수로 낮춰 주세요. `./gradlew javadocCoverage` 는 판정 없이 표만 출력합니다.
+
+그리고 각 모듈의 테스트를 그 모듈이 발행하는 라이브러리 버전에 묶어 둡니다(`checkTestClasspathVersions`).
+의존성을 바꿔서 어떤 모듈의 `testRuntimeClasspath` 가 `runtimeClasspath` 와 다른 버전의 라이브러리를 해석하게
+되면, `gradle/test-classpath-version-differences.txt` 가 그 차이를 이유와 함께 적고 있지 않은 한 실패합니다 —
+적어 둔 줄도 그 버전이 움직이거나 차이가 없어지면 실패합니다. 실패 메시지가 더하거나 고쳐 쓰거나 지울 줄을
+찍어 줍니다. 목록을 주석으로 적지 않고 검사하는 이유는
+[`docs/design/testing/test-classpath-version-check.md`](docs/design/testing/test-classpath-version-check.md) 에 있습니다.
 
 검사가 실패하면 HTML 리포트가 이유를 말해 줍니다.
 
@@ -176,16 +183,19 @@ python3 scripts/check-translation-structure.py # 각 번역본이 여전히 같�
 python3 scripts/check-backlog-registers.py     # docs/backlog/: 한 등록부 안의 중복 ID, 본문과 어긋난 건수
 ```
 
-첫 번째는 저장소의 모든 `*.md` 를 훑으면서 두 가지에 대해 실패합니다. 존재하지 않는 경로를 가리키는 링크,
-그리고 대상 파일의 어느 제목과도 맞지 않는 `#fragment` 입니다. 그중 앵커 쪽이 들리는 것보다 중요합니다 —
+첫 번째는 저장소의 모든 `*.md` 를 훑으면서 세 가지에 대해 실패합니다. 존재하지 않는 경로를 가리키는 링크,
+대상 파일의 어느 제목과도 맞지 않는 `#fragment`, 그리고 문서 사이트의 페이지에서 사이트에 빌드되는
+디렉토리를 가리키는 링크입니다(`../features/` — `../features/README.md` 로 씁니다. GitHub 은 트리 화면을
+열지만 사이트에는 디렉토리의 페이지가 없습니다). 그중 앵커 쪽이 들리는 것보다 중요합니다 —
 앵커가 틀려도 페이지는 그대로 열리기 때문에, 독자는 문서 맨 위에 떨어지고서도 자기가 엉뚱한 절로
 보내졌다는 사실을 끝내 알지 못합니다. 외부 URL 은 일부러 검사하지 않습니다. 남의 호스트가 죽었다고
 빨개지는 게이트는 아무도 읽지 않게 되니까요. CI 는 `docs-links` 잡의 첫 스텝에서 이것을 돌리고, 같은
-스텝에서 이어서 `python3 scripts/check-doc-links.py --self-test` 를 돌립니다. 셀프 테스트는 트리를 읽지
+스텝에서 이어서 `python3 scripts/check-doc-links.py --self-test` 를 돌립니다. 셀프 테스트는 저장소의 트리를 읽지
 않습니다. 붙잡는 제목 모양 — `docs_tree.anchors_of` 가 제목을 페이지나 백로그 검사와, 또는 둘 다와 다르게
 읽는 자리 — 마다 작은 페이지를 만들고, 그 제목으로 가는 링크가 그 케이스의 기대 답대로 풀리는지(또는
-풀리지 않는지) 봅니다. 기대 답은 그 함수의 docstring 을 따릅니다. `scripts/docs_tree.py` 가 제목이나
-펜스를 읽는 방식을 고쳤다면 이것도 돌리세요.
+풀리지 않는지) 봅니다. 기대 답은 그 함수의 docstring 을 따릅니다. 이어서 디렉토리 규칙에 대해서도
+같은 일을 합니다 — 케이스마다 링크 하나를 작은 임시 트리에 두고 봅니다. `scripts/docs_tree.py` 가 제목이나
+펜스, `mkdocs.yml` 을 읽는 방식을 고쳤다면 이것도 돌리세요.
 
 두 번째와 세 번째는 번역에 관한 것이고 `translations` 잡에서 함께 돕니다. 각각 무엇에 실패하고 그중
 하나는 왜 대체로 실패하지 않는지는 [번역](#번역) 절에 있습니다. 둘 다 전체 git 이력이 필요하므로 얕은

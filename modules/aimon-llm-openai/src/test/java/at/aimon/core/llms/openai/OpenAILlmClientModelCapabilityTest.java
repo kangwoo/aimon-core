@@ -361,6 +361,39 @@ class OpenAILlmClientModelCapabilityTest {
     }
 
     @Test
+    @DisplayName("precedence: the request's own value, then the client's configured default, then nothing")
+    void samplingPrecedenceIsRequestThenClientThenNothing() {
+        // What `llm.openai.temperature` / `aimon.llm.openai.temperature` (L-2) rests on. The configuration surfaces
+        // only fill OpenAIConfig; that the value is a default an agent definition overrides, and not an override of
+        // the agent definition, is decided here. Per parameter, so a definition that states one of the four does not
+        // lose the deployment's default for the other three.
+        final OpenAIConfig deploymentDefaults = config("gpt-4o").temperature(0.2).topP(0.8).presencePenalty(0.4)
+                .frequencyPenalty(0.6).build();
+
+        final ChatCompletionCreateParams fromClient = capture(deploymentDefaults, LlmModel.builder().build(),
+                List.of());
+        assertThat(fromClient.temperature()).contains(0.2);
+        assertThat(fromClient.topP()).contains(0.8);
+        assertThat(fromClient.presencePenalty()).contains(0.4);
+        assertThat(fromClient.frequencyPenalty()).contains(0.6);
+    }
+
+    @Test
+    @DisplayName("precedence: a value on the request wins over the client's default, one parameter at a time")
+    void aRequestValueWinsOverTheClientDefaultPerParameter() {
+        final OpenAIConfig deploymentDefaults = config("gpt-4o").temperature(0.2).topP(0.8).presencePenalty(0.4)
+                .frequencyPenalty(0.6).build();
+
+        final ChatCompletionCreateParams params = capture(deploymentDefaults,
+                LlmModel.builder().temperature(1.3).frequencyPenalty(-1.0).build(), List.of());
+
+        assertThat(params.temperature()).contains(1.3);
+        assertThat(params.frequencyPenalty()).contains(-1.0);
+        assertThat(params.topP()).contains(0.8);
+        assertThat(params.presencePenalty()).contains(0.4);
+    }
+
+    @Test
     @DisplayName("a temperature configured on OpenAIConfig is suppressed too")
     void configLevelTemperatureSuppressed() {
         final OpenAIConfig config = config(A_REASONING_MODEL).responsesApiEnabled(false).temperature(0.7).topP(0.5)

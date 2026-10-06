@@ -7,7 +7,6 @@ import at.aimon.core.agent.compact.CompactionGuard;
 import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.orca.OrcaProviderDependencies;
 import at.aimon.core.agent.tool.ToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.CommandRegistry;
 import at.aimon.core.credential.CredentialStore;
 import at.aimon.core.hook.HookExecutionManager;
@@ -164,15 +163,6 @@ public final class OrcaCommandProviderContext {
      */
     public CredentialStore getCredentialStore() {
         return dependencies.getCredentialStore();
-    }
-
-    /**
-     * Returns the user locale.
-     *
-     * @return the user locale, may be null
-     */
-    public UserLocale getUserLocale() {
-        return dependencies.getUserLocale();
     }
 
     /**

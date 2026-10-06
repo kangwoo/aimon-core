@@ -1,0 +1,43 @@
+# Versions a module's tests run on that are not the versions the module ships — every one, with why.
+#
+# The bar (#91): a module's tests run against the versions the module ships, unless the difference is a recorded
+# choice. This file is the record, and `./gradlew checkTestClasspathVersions` (part of `checkAll`, so CI and the
+# release gate) holds the build to it. It compares each module's runtimeClasspath with its testRuntimeClasspath and
+# fails on:
+#
+#   - a difference that is not here;
+#   - a line whose versions are no longer the ones resolved — the reason was written about the versions on the line,
+#     so a bump on either side sends someone back to read it. The failure prints the line to write;
+#   - a line whose difference is gone, or whose module the build does not have. Delete it.
+#
+# One difference per line:
+#
+#   <module> | <group>:<name> | <shipped version> -> <version under test> | <why it is left that way>
+#
+# The other answer to a difference is to remove it: aimon-cli, aimon-scheduling-quartz and aimon-knowledge-opensearch
+# resolve their test classpaths consistently with runtimeClasspath (their build files say why), and so have no line.
+#
+# Rationale and rejected alternatives: docs/design/testing/test-classpath-shipped-versions.md (#99),
+# docs/design/testing/test-classpath-version-check.md (this check, backlog D-3).
+
+# --- Accepted (#99, decision 2): Testcontainers' org.jetbrains:annotations ------------------------------------------
+# 13.0 ships (kotlin-stdlib, via okhttp); Testcontainers' duct-tape asks for 17.0.0. Both jars are CLASS-retention
+# annotations and constant holders — nothing a test run loads — and no source here names them. Aligning would push
+# Testcontainers below the version it asks for on six docker tiers to equalise a number nothing observes.
+aimon-filesystem-gridfs   | org.jetbrains:annotations | 13.0 -> 17.0.0 | Testcontainers (duct-tape) asks for 17.0.0; an annotations jar no test run loads (#99, decision 2)
+aimon-filesystem-s3       | org.jetbrains:annotations | 13.0 -> 17.0.0 | Testcontainers (duct-tape) asks for 17.0.0; an annotations jar no test run loads (#99, decision 2)
+aimon-session-mongodb     | org.jetbrains:annotations | 13.0 -> 17.0.0 | Testcontainers (duct-tape) asks for 17.0.0; an annotations jar no test run loads (#99, decision 2)
+aimon-session-postgres    | org.jetbrains:annotations | 13.0 -> 17.0.0 | Testcontainers (duct-tape) asks for 17.0.0; an annotations jar no test run loads (#99, decision 2)
+aimon-session-redis       | org.jetbrains:annotations | 13.0 -> 17.0.0 | Testcontainers (duct-tape) asks for 17.0.0; an annotations jar no test run loads (#99, decision 2)
+aimon-spring-boot-starter | org.jetbrains:annotations | 13.0 -> 17.0.0 | Testcontainers (duct-tape) asks for 17.0.0; an annotations jar no test run loads (#99, decision 2)
+
+# --- Found by this check's first run (2026-10-05) and NOT YET DECIDED ----------------------------------------------
+# Nobody had recorded these four; they were on no list, in no comment. They are written down here so that the check
+# can gate the next difference instead of starting red — which is a record that they exist, not a decision that they
+# are fine. Each wants the choice #99 made per source: align the module's test classpaths, or accept with a reason
+# about what the jar contains. Until then the reason field says where the version comes from, which is all that is
+# known.
+aimon-rewake-webhook      | jakarta.annotation:jakarta.annotation-api | 2.1.1 -> 3.0.0   | UNDECIDED. Ships 2.1.1 (Jetty, via Javalin); spring-boot-starter (via spring-boot-starter-test) asks for 3.0.0. The same source D-2 aligned on aimon-knowledge-opensearch
+aimon-session-redis       | org.jspecify:jspecify                     | 1.0.0 -> 1.0.1   | UNDECIDED. Ships 1.0.0 (reactor-core, via Lettuce); Caffeine (aimon-session-routing, a test dependency) and Micrometer (spring-boot-starter-test) ask for 1.0.1
+aimon-spring-boot-starter | io.micrometer:micrometer-observation      | 1.16.7 -> 1.17.1 | UNDECIDED. Ships 1.16.7 (spring-context); the module's own test dependency spring-boot-starter-actuator asks for 1.17.1. A code jar, not annotations
+aimon-spring-boot-starter | io.micrometer:micrometer-commons          | 1.16.7 -> 1.17.1 | UNDECIDED. Same source as micrometer-observation on this module

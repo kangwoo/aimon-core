@@ -10,19 +10,19 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.agent.tool.permission.AllowedTools;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.skill.Skill;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.subagent.SubagentToolScope;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
@@ -52,7 +52,6 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
     private final SubagentRegistry subagentRegistry;
     private final ToolRegistry toolRegistry;
     private final HookRegistry hookRegistry;
-    private final UserLocale userLocale;
     private final SubagentExecutionManager subagentExecutionManager;
 
     /**
@@ -67,19 +66,15 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
      *            Tool registry exposed to the forked subagent (must not be null)
      * @param hookRegistry
      *            Hook registry exposed to the forked subagent (must not be null)
-     * @param userLocale
-     *            User locale passed to the forked subagent (must not be null)
      * @param subagentExecutionManager
      *            Manager that performs the actual subagent execution (must not be null)
      */
     public SubagentBackedSkillForkExecutor(LlmModel defaultModel, SubagentRegistry subagentRegistry,
-            ToolRegistry toolRegistry, HookRegistry hookRegistry, UserLocale userLocale,
-            SubagentExecutionManager subagentExecutionManager) {
+            ToolRegistry toolRegistry, HookRegistry hookRegistry, SubagentExecutionManager subagentExecutionManager) {
         this.defaultModel = Objects.requireNonNull(defaultModel, "Default model cannot be null");
         this.subagentRegistry = Objects.requireNonNull(subagentRegistry, "Subagent registry cannot be null");
         this.toolRegistry = Objects.requireNonNull(toolRegistry, "Tool registry cannot be null");
         this.hookRegistry = Objects.requireNonNull(hookRegistry, "Hook registry cannot be null");
-        this.userLocale = Objects.requireNonNull(userLocale, "UserLocale cannot be null");
         this.subagentExecutionManager = Objects.requireNonNull(subagentExecutionManager,
                 "Subagent execution manager cannot be null");
     }
@@ -141,12 +136,11 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
         // tools refused as "not permitted" even though the same skill ran inline without trouble.
         final Principal principal = toolContext.get(ToolContextKeys.PRINCIPAL).orElse(null);
 
-        final SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder().agentRuntimeId(agentRuntimeId)
+        final SubagentLaunchContext launchContext = SubagentLaunchContext.builder().agentRuntimeId(agentRuntimeId)
                 .subagentRegistry(subagentRegistry).toolRegistry(toolRegistry)
                 // The caller's registry, which for a skill with hooks is the view SkillTool layered them onto.
-                .hookRegistry(HookRegistryAccess.of(toolContext).orElse(hookRegistry)).userLocale(userLocale)
-                .defaultModel(defaultModel).executionAttributes(executionAttributes)
-                .parentLlmCallMetadata(parentMetadata).principal(principal)
+                .hookRegistry(HookRegistryAccess.of(toolContext).orElse(hookRegistry)).defaultModel(defaultModel)
+                .executionAttributes(executionAttributes).parentLlmCallMetadata(parentMetadata).principal(principal)
                 .callerAllowedTools(CallerAllowedTools.of(toolContext))
                 .invokingSessionId(InvokingSessionAccess.idToPropagate(toolContext).orElse(null))
                 // The fork resolves its own environment from the spawning runtime's provider, with this execution's
@@ -158,10 +152,14 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
         final String description = "skill:" + skill.getName();
 
         try {
-            final SubagentExecutionResult result = subagentExecutionManager.executeInline(env, taskId, effectiveTarget,
-                    goal, description);
+            final SubagentExecutionResult result = subagentExecutionManager.executeInline(launchContext, taskId,
+                    effectiveTarget, goal, description);
             if (result.isSuccess()) {
-                return SkillForkOutcome.success(result.getFinalAnswer());
+                // A fork cut at max_tokens is a success whose answer is partial; say so by type, not only by the
+                // marker its text ends in, so a slash invocation can end its turn TRUNCATED (L-26).
+                return result.getCompletionReason() == CompletionReason.TRUNCATED
+                        ? SkillForkOutcome.truncated(result.getFinalAnswer())
+                        : SkillForkOutcome.success(result.getFinalAnswer());
             }
             return SkillForkOutcome.failure(result.getErrorMessage());
         } catch (RuntimeException e) {

@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 80건 (열림 34 · 닫힘 46)
+# 실행 환경 — 등록 항목 88건 (열림 25 · 닫힘 63)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -151,7 +151,7 @@ EE-70 의 덧붙임)과 aimon-ops 의 테스트 두 곳(`RenderPayloadCollectorH
 
 출처: 계획 §9 Q11 · Q16.
 
-## EE-3 — 로드 뒤 디스크에서 고친 스킬은 재시작 전까지 스테이징이 실패한다 · **열림**
+## EE-3 — 로드 뒤 디스크에서 고친 스킬은 재시작 전까지 스테이징이 실패한다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 스테이징 중 내용이 달라진 스킬을 **다시 키를 매겨**(복사하며 계산한 해시로) 스테이징하거나, CLI·부트스트랩에
 사용자 레이어 스킬 재적재 경로를 둔다.
@@ -167,6 +167,30 @@ main 에는 `reloadSkill` / `reloadAll` 을 부르는 경로가 없다. 사용�
 **언제 다시 볼까.** 사용자가 이 오류를 처음 보고할 때, 또는 스킬 hot-reload 를 붙일 때.
 
 출처: 계획 §7 "Host skill directory edited without a registry reload" · 리뷰 3.
+
+### 닫힘 (2026-10-05)
+
+적재한 키와 맞지 않는 소스는 실패시키지 않고 **다시 훑어 지금 내용의 키로** 스테이징하고 WARN 을 한 번 남긴다(`e3a34f43`).
+항목의 두 처방 가운데 "다시 키를 매긴다" 쪽이다.
+
+- **처방을 그대로 쓰지는 않았다 (규칙 다섯).** "복사하며 계산한 해시로 마무리" 하면 적재 시점의 파일 목록에 새 바이트를 채운
+  사본이 된다 — 어떤 재적재도 계산하지 않는 키이고, 추가된 파일을 놓치고, 바뀐 `.stageignore` 를 무시한다. 임시 사본을 버리고
+  소스를 다시 훑는다.
+- **검사가 지키던 것은 하나였고 그대로 지켜진다.** 바이트는 자기 해시가 아닌 키 아래에 저장되지 않는다. `contentKey` 를 읽는
+  곳은 `LocalStaging` 뿐이다.
+- **항목보다 좁았다 (규칙 둘).** 스테이징이 실패한 것은 적재된 키의 사본이 **아직 없을 때**뿐이었다. 한 번 쓴 스킬은 옛 사본이
+  조용히 제공되고 수정은 보이지 않는다 — 이것은 그대로이며 `editedAfterTheFirstCopyKeepsTheLoadedCopy` 가 고정한다.
+- 파싱된 `SKILL.md` 본문은 재적재·재시작 때만 바뀐다. 모델이 옛 본문을 따르며 새 스크립트를 돌릴 수 있다(설계 §4.4 에 적었다).
+- EE-26 의 브랜치 경로(`stageCopy`)도 같은 코드를 탄다.
+
+- **다시 훑는 것은 `StagedResource.scan` 이 만든 리소스뿐이다 (리뷰가 잡았다, `a9f92304`).** 첫 구현은 어떤 리소스든 소스
+  디렉터리 **전체**를 다시 훑었다. 공개 빌더로 파일 일부만 적어 만든 리소스(`files=[run.sh]`)는 `run.sh` 가 바뀌면 적지 않은
+  `credentials.env` 까지 `.aimon-staged/` 로 복사됐다 — 모델의 파일 도구와 셸이 읽는 자리다. 출하되는 조립은 `scan()` 만
+  쓰므로 닿지 않았다. 손으로 만든 리소스는 이제 EE-3 이전처럼 거절한다.
+- 적재 시점에 크기 상한을 넘은 스킬도 다시 훑는다(`897e9741`). 전에는 오류가 "`.stageignore` 로 큰 파일을 빼라" 고 말하는데
+  그렇게 해도 재시작 전까지 같은 오류였다. 거절되는 호출의 비용은 목록 한 번과 파일당 메타데이터 한 번이고 내용은 읽지 않는다.
+
+**남은 것.** 첫 사용 뒤의 수정은 재시작 전까지 보이지 않는다. CLI · 부트스트랩의 재적재 경로는 여전히 없다.
 
 ## EE-4 — `.aimon-staged/` 를 `.gitignore` 에 넣는 코드가 없다 · **닫힘** *(2026-10-05)*
 
@@ -206,7 +230,7 @@ main 에는 `reloadSkill` / `reloadAll` 을 부르는 경로가 없다. 사용�
 `existingGitignoreKept`(사용자 파일은 그대로), `gitignoreNameRefused`. 앞의 것과 마지막 것은 고치기 전 코드에서 실패했다.
 `markerLastAndSkip` 은 쓰기 횟수를 세므로 이 파일의 쓰기를 빼고 센다.
 
-## EE-5 — stamp 의 etag: GridFS 는 과민하고 로컬은 없다 · **열림**
+## EE-5 — stamp 의 etag: GridFS 는 과민하고 로컬은 없다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** GridFS 에 내용 해시 etag 를 두고(드라이버 5.x 에서 `md5` 가 없어졌다), 로컬 파일 시스템에 선택형 내용 해시 etag 를
 둘지 정한다.
@@ -224,6 +248,21 @@ main 에는 `reloadSkill` / `reloadAll` 을 부르는 경로가 없다. 사용�
 GridFS etag 가 설계 §7 의 "GridFS(md5)" 와 다르다는 점은 빌드 리뷰 3 이 짚었고, 계획 §10.2 에 차이로 적었다.
 
 출처: 계획 §9 Q6 · Q7 · 빌드 리뷰 3.
+
+### 닫힘 (2026-10-05)
+
+GridFS 의 etag 는 업로드 뒤 `metadata.contentSha256` 에 적은 `sha256:<hex>` 다. 그 키가 없는 문서(옛 파일, 롤링 배포 중의 옛
+노드, 해시 기록 직전)는 전처럼 `ObjectId` 를 돌려주고 이관은 없다 — 접두어가 달라 두 모양은 같다고 비교되지 않으므로 섞여도
+최악은 예전의 안전한 오탐이다. 로컬 파일 시스템에는 선택형 내용 해시 etag 가 생겼다(기본 꺼짐,
+`LocalFileSystemConfig.Builder.contentHashEtag`, `ExecutionEnvironmentSpec.Builder.contentHashStamps`) (`a7420e9b`).
+
+- GridFS 통합 테스트는 Docker 로 **실제로 돌렸다**(167건). 고치기 전 `GridFSFileSystemEtagTest` 8건 중 3건이 실패했다.
+- **비용은 항목이 적은 것보다 넓다 (규칙 셋).** 해시는 `getMetadata` 에서 계산되므로 stamp 뿐 아니라 `WorktreeMerge` ·
+  `ArtifactArchive` 의 조회도 파일 전체를 읽는다.
+- 로컬 테스트는 옵션이 생기기 전에는 컴파일되지 않아 실패를 보지 못했다. `defaultHasNoEtagAndMissesTheRewrite` 가 mtime 을
+  되돌려 틈을 어느 디스크에서나 재현한다.
+
+**남은 것.** 로컬 옵션은 부트스트랩 스펙으로만 켠다 — 스타터 프로퍼티 · CLI 키는 없다(EE-87).
 
 ## EE-6 — 번들 스킬 머티리얼라이저를 은퇴시킬지 · **열림 · 결정됨** *(2026-09-29)*
 
@@ -491,7 +530,7 @@ EE-24 와 한 변경에서 닫았다. `AgentEnvironmentSnapshot` 에서 필드 �
 > **2026-10-05 (같은 날) — 이 타입과 위 테스트는 이제 없다.** EE-78 이 사용자 컨텍스트 블록을 통째로 걷어내면서
 > `AgentEnvironmentSnapshot` 과 `AgentEnvironmentSnapshotTest` 가 함께 지워졌다. 위 닫힘은 그 사이 몇 시간의 기록이다.
 
-## EE-11 — 스케줄 루틴에는 read stamp 가 없다 · **열림**
+## EE-11 — 스케줄 루틴에는 read stamp 가 없다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 루틴의 `ToolContext` 에 `FILE_STAMPS_KEY` 를 넣을지 정한다.
 
@@ -504,6 +543,18 @@ EE-24 와 한 변경에서 닫았다. `AgentEnvironmentSnapshot` 에서 필드 �
 **언제 다시 볼까.** 루틴에서 `Edit` 을 쓰고 싶다는 요청이 있을 때.
 
 출처: 계획 §10 차이 목록.
+
+### 닫힘 (2026-10-05)
+
+**결정 (2026-10-05, 메인테이너): stamp 를 넣는다.** `RoutineExecutor.buildToolContext` 가 발화마다 새 맵을
+`ReadTool.FILE_STAMPS_KEY` 로 싣는다(`f09e5093`). 루틴의 `Edit` 은 같은 발화의 `Read` 뒤에 동작하고, **기존 파일을 `Read` 없이
+덮어쓰는 `Write` 단계는 거절된다** — 이미 배포된 그런 루틴은 `Read` 단계를 넣어 다시 등록해야 한다(파괴적 변경, 이관 안내는
+`../design/scheduling/llm-scheduling-agent.md` §3.2).
+
+- 전제는 전부 참이었다. 두 실행기는 실행마다 새 맵을 만들고(`OrcaAgentExecutor` · `DefaultSubagentExecutor`), 맵은 발화
+  단위다 — application-scoped 컴포넌트가 쥐지 않는다. 같은 발화에서 앞서 쓴 파일은 `Read` 없이 고칠 수 있다.
+- `RoutineExecutorReadStampTest` 7건 중 5건이 고치기 전에 실패했다.
+- 거절 문구(`Read the file before modifying it: <path>`)는 루틴에 `Read` 단계를 더하라고 말하지 않는다. 그 안내는 문서에 있다.
 
 ## EE-12 — 스킬 선언 훅의 셸은 여전히 호스트다 · **닫힘** *(2026-10-03)*
 
@@ -1157,7 +1208,7 @@ Javadoc 을 실제 동작에 맞춘다.
 들고 있으면서 `isolate()` 에만 빈 값을 돌려줬다. `resolveEnv` 에서 `instanceof UnavailableExecutionEnvironment` 를 보는
 처방은 ArchUnit 의 `workflow` 허용 목록을 넓혀야 했고, `isolate()` 를 부르는 다른 코드는 여전히 빈 값을 받았을 것이다.
 
-## EE-26 — 워크스페이스 안 스킬의 스테이징 경로를 격리 브랜치가 쓸 수 없다 · **열림**
+## EE-26 — 워크스페이스 안 스킬의 스테이징 경로를 격리 브랜치가 쓸 수 없다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 소스가 워크스페이스 자체일 때의 지름길이 격리 브랜치에서도 유효한 경로를 돌려주게 하거나, 브랜치에서는
 지름길을 쓰지 않고 `.aimon-staged/` 로 복사한다.
@@ -1173,6 +1224,21 @@ Javadoc 을 실제 동작에 맞춘다.
 **언제 다시 볼까.** 워크스페이스에 둔 VFS 스킬 저장소를 격리 워크플로 단계에서 쓸 때.
 
 출처: 빌드 리뷰 4.
+
+### 닫힘 (2026-10-05)
+
+격리 브랜치는 지름길을 쓰지 않고 `.aimon-staged/` 로 복사한다(`LocalStaging.stageCopy`, `421acdfe`). 다른 처방("브랜치에서
+유효한 경로를 돌려준다")에는 해가 없다 — 브랜치 파일 시스템이 부모 트리에 닿는 길은 공유 접두어뿐이고 스테이징 루트가 그
+유일한 것이다. 부모 환경의 동작은 그대로다.
+
+- **항목보다 좁았다.** 실패한 것은 파일 도구뿐이다. 브랜치의 셸은 절대 경로로 부모의 파일을 열어
+  `bash ${AIMON_SKILL_DIR}/x.sh` 는 돌았다.
+- **항목보다 넓었다.** 브랜치가 같은 상대 경로에 파일을 써 두면 파일 도구는 브랜치의 수정본을, 셸은 부모의 파일을 봤다 —
+  오류 없이 갈라졌다.
+- **출하되는 조립은 이 지름길에 닿지 않는다 (규칙 여섯).** CLI 와 부트스트랩은 스킬 저장소를 워크스페이스와 다른 파일 시스템
+  인스턴스 위에 만든다. 손으로 조립한 경우에만 생긴다.
+
+**남은 것.** 부모의 지름길은 여전히 검증하지 않은 살아 있는 디렉터리를 돌려준다(설계 §4.4 에 적었다).
 
 ## EE-27 — 브랜치의 공유 접두어 검사는 대소문자를 구분한다 · **닫힘** *(2026-09-29)*
 
@@ -1438,7 +1504,7 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 > 실패했다. 옛 코드는 위임의 `walkUsage` 를 그대로 썼고 그것은 링크를 따라가지 않고 파일로 센다. 이제 위임이 설명을 거절한
 > 항목은 크기 0 인 파일로 센다(`PathRuleVirtualFileSystemTest.usageCountsASymlinkInsteadOfThrowing`, 고치기 전 실패).
 
-## EE-35 — 링크 허용 루트를 설정 파일로 정할 수 없다 · **열림**
+## EE-35 — 링크 허용 루트를 설정 파일로 정할 수 없다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** `PathSkillRepository` 의 허용 링크 루트(`allowedLinkRoot(s)`)를 에이전트 번들 로더, CLI, 부트스트랩, 스타터
 설정으로 노출한다.
@@ -1454,6 +1520,21 @@ PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 
 **언제 다시 볼까.** 링크로 설치한 스킬이 적재되지 않는다는 보고가 나올 때, 또는 스타터에 스킬 설정 절이 생길 때.
 
 출처: PR #195 리뷰 1.
+
+### 닫힘 (2026-10-05)
+
+허용 링크 루트를 세 표면에서 정한다 — 스타터 `aimon.skill.allowed-link-roots`, CLI `agent.allowedSkillLinkRoots`, 부트스트랩
+`AimonStackSpec.Builder.allowedSkillLinkRoots` (`87d6ad70`). 기본은 빈 목록이다.
+
+- 루트는 절대 경로여야 한다. 상대 경로 · 빈 문자열 · `~` · 파일 시스템 루트(`/` 로 정규화되는 것 포함)는 설정을 읽는 시점에
+  키 이름과 함께 거절한다. 없는 루트는 받아들이고 아무것도 맞지 않는다.
+- **기존 공개 API 의 동작이 바뀌었다.** `PathSkillRepository.Builder.build()` 와 `VirtualFileSystems.readOnlyLocal(Path,
+  Collection)` 이 상대 루트와 `/` 를 거절한다. 전에는 상대 루트를 JVM 작업 디렉터리로 풀었고 `/` 를 받았다. main 호출자는 0건이었다.
+- **항목보다 좁았다.** "디스크에서 읽는 에이전트" 는 `agent.md` 가 `file:` 클래스패스 리소스인 번들뿐이다. jar 안의 번들과
+  `.aimon/skills` 의 사용자 스킬(`VfsSkillRepository`)에는 이 키가 닿지 않는다.
+- 스타터에는 이미 `aimon.skill.*` 절이 있었다 — 항목의 트리거 하나는 등록 시점에 이미 충족되어 있었다.
+
+**남은 것.** EE-82.
 
 ## EE-36 — `ReadOnlyLocalFileSystem` 은 읽기와 전체 목록만 실제 경로를 검사한다 · **닫힘** *(2026-10-05)*
 
@@ -1762,7 +1843,7 @@ javadoc 에 적었다).
 
 출처: EE-42 설계 §7 Q2.
 
-## EE-44 — `Workflow` 역할 정의가 모델에게 `Task` 서브에이전트로도 보인다 · **열림**
+## EE-44 — `Workflow` 역할 정의가 모델에게 `Task` 서브에이전트로도 보인다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 내장 단계를 배치하려고 `workflow-judge` 같은 이름으로 정의한 서브에이전트를 모델의 서브에이전트 목록에서 숨길
 수단을 둔다 — 레지스트리의 "숨김" 표시, 또는 역할 → 속성을 레지스트리가 아닌 도구 설정(맵)으로 받는 방식.
@@ -1778,7 +1859,20 @@ javadoc 에 적었다).
 
 출처: EE-42 설계 §7 Q5.
 
-## EE-45 — `WorkflowJs` 스크립트의 `attributes` 로 모델이 배치를 고를 수 있다 · **열림**
+### 닫힘 (2026-10-05)
+
+서브에이전트 정의에 `hidden: true` 를 둔다(`Subagent.Builder.hidden`, `9edefb8d`). `Task` 는 숨긴 정의를 목록에 싣지 않고,
+이름을 대도 실행 전에 거절한다. `Workflow` 역할, `WorkflowJs` 의 `agentType`, 포크 스킬의 `agent:` 는 계속 찾는다. `/agents` 는
+`[hidden]` 표시와 함께 보여 준다.
+
+- 모델에게 서브에이전트를 이름으로 나열하거나 푸는 자리는 `Task` 하나뿐임을 세어 확인했다.
+- `SubagentToolScope.withAllowedTools` 가 플래그를 복사하지 않아 호출자의 상한이 숨김을 풀 뻔했다 — 함께 고쳤다.
+- bare YAML boolean 이 아닌 값은 `SubagentParseException` 이다.
+
+**남은 것.** `/agents` 출력은 다른 명령 답처럼 트랜스크립트에 남으므로, 운영자가 실행한 뒤에는 모델이 숨긴 이름을 읽을 수
+있다. 보장은 목록에서 빼는 것이 아니라 **거절**이다.
+
+## EE-45 — `WorkflowJs` 스크립트의 `attributes` 로 모델이 배치를 고를 수 있다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 모델이 쓴 GraalJS 스크립트가 `attributes` 를 아예 쓸 수 있어야 하는지 정한다. 절반은 이미 닫혔다 — 등록된
 `agentType` 의 키는 고정되어 스크립트가 덮을 수 없다(EE-42 리뷰 반영). 남은 절반은 **등록되지 않은 `agentType`(또는
@@ -1800,6 +1894,20 @@ javadoc 에 적었다).
 **언제 다시 볼까.** 슬롯마다 권한이나 비용이 다른 제공자가 생길 때.
 
 출처: EE-42 구현(설계 §8 의 차이 목록).
+
+### 닫힘 (2026-10-05)
+
+**결정 (2026-10-05): 선택지 (c), 기본은 닫힘.** `GraalJsWorkflowTool.Builder.scriptAttributeKeys(...)` 가 스크립트가 적어도 되는
+속성 키의 목록을 받고 기본은 빈 목록이다(`ab66f15f`). 허용되지 않은 키를 쓴 스크립트는 그 키와 두 처방을 말하며 실패한다.
+등록된 키의 고정은 그대로이고 허용 목록이 고정을 풀지 않는다.
+
+- **항목이 열어 둔 절반을 돌려서 확인했다.** 스크립트는 **등록된** `agentType` 에도 새 키를 더할 수 있었다(기존 테스트 둘이
+  그것을 고정하고 있었다). 같은 규칙으로 막았다.
+- **결정문보다 넓게 닫혔다.** 닫힌 기본값은 기본 리졸버에 있어서 공개 팩토리 `SubagentResolver.inline()` ·
+  `inline(registry)` 도 모든 스크립트 속성을 거절한다 — 리졸버는 스크립트를 누가 썼는지 알 수 없다. 호스트가 쓴 스크립트로
+  `GraalJsWorkflowScript` 를 직접 구동하는 임베더는 `inline(registry, keys)` 를 쓴다.
+
+**남은 것.** CLI · 스타터에는 허용 목록을 정할 설정 키가 없다(EE-87).
 
 ## EE-46 — 브랜치 안에서 `.worktrees/` 를 가리키는 경로는 병합에서 브랜치 디렉터리로 승격된다 · **열림**
 
@@ -1834,6 +1942,21 @@ javadoc 에 적었다).
 
 출처: [`../design/tool/workflow-isolation-hardening.md`](../design/tool/workflow-isolation-hardening.md) §7 Q5 와 그 설계
 리뷰(2026-09-29), §8.4 의 빌드 리뷰(2026-09-29).
+
+> **2026-10-05 — 앞의 둘을 닫았다. 항목은 셋째(실행 간 키 공유)로 열려 있다.** 브랜치는 `.worktrees/` 를 가리킬 수 없다 —
+> 스코프가 브랜치 루트의 그 이름을 예약해 모든 연산을 `InvalidPathException` 으로 거절하고 목록에서 뺀다(`a9271037`). 경로 규칙은
+> 더하지 않았으므로 "브랜치 규칙은 부모의 것" 은 그대로다. 설계 §1.1 이 "스코프에 거부 접두어 목록을 가르친다" 를 기각한 이유는
+> 부모의 규칙이 이미 서술하는 접두어에 대한 것이고, `.worktrees/` 에는 옮길 부모 규칙이 없다(반박은 설계 §8.5). 고치기 전에는
+> 브랜치 `k` 의 병합 한 번이 `other` 의 디렉터리에 둘, 자기 디렉터리에 둘을 올렸다.
+>
+> **항목보다 좁았다 (규칙 여섯).** `WorktreeMerge.promote` 는 main 소스에 호출자가 없다. 이 주입은 그 메서드를 부르는
+> 애플리케이션에서만 배포에 닿는다.
+>
+> **남은 것 — 재현만 했다.** 서로 다른 run id 의 두 러너가 `.worktrees/a0` 하나에 쓰고 병합이 두 파일을 다 올린다
+> (`WorkflowPhase4Test.successiveRunsShareTheFirstIsolatedBranch`). 실행별 키로 바꾸지 않은 이유: `run(script)` 은 공유
+> `DEFAULT_RUN_ID` 를 쓰고, `isolate` 와 `WorktreeMerge` 는 키로 브랜치를 다시 짓는다고 문서화하며, **프레임워크 안에 브랜치
+> 디렉터리를 치우는 것이 없어** 실행별 키는 무한 증가다. 정리 설계가 먼저다 — in-tree 에는 격리 단계의 출력을 병합하는 코드도
+> 없다(graaljs 프런트엔드는 `isolate` 를 걸지만 병합을 내놓지 않는다).
 
 ## EE-47 — `WorktreeMerge.promote` 는 계보를 밝히지 않는 브랜치를 약한 검사로만 받는다 · **열림**
 
@@ -1941,7 +2064,7 @@ javadoc 에 적었다).
 
 설계와 구현이 설계에서 벗어난 점: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md).
 
-## EE-50 — 스킬 훅 명령에는 `${AIMON_SKILL_DIR}` 가 없다 · **열림**
+## EE-50 — 스킬 훅 명령에는 `${AIMON_SKILL_DIR}` 가 없다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 스킬 훅의 셸 액션이 자기 스킬 디렉터리의 스크립트를 경로로 부를 수 있게, 스테이징된 경로를 훅의 환경 변수로
 준다.
@@ -1958,6 +2081,21 @@ javadoc 에 적었다).
 
 출처: [`../design/tool/execution-environment-ee9-ee12-hook-environment.md`](../design/tool/execution-environment-ee9-ee12-hook-environment.md)
 §8.
+
+### 닫힘 (2026-10-05)
+
+스킬이 선언한 셸 훅은 `AIMON_SKILL_DIR`(stdin 에는 `skill_dir`)를 받는다 — 훅 명령이 **도는 환경에** 발화 시점에 스테이징한
+경로다(`SkillHookDirectory`, `a88a1c2f`).
+
+- 고치기 전에는 `bash "$AIMON_SKILL_DIR/scripts/guard.sh"` 가 `bash "/scripts/guard.sh"` 가 되어 exit 127 로 끝났고, 127 은
+  허용으로 읽혀 **가드가 통과했다**(EE-66 이 그 뒤로 닫았다).
+- 변수는 `hooks.json` 훅, `StagedResource` 없는 스킬, 환경이 없는 컨텍스트에서 **빈 값이 아니라 없다.**
+- 스테이징이 실패하면 명령을 돌리지 않는다(`ShellHookOutcome.Unrun.STAGING_FAILED`). 가드 이벤트는 `failOpen` 이 아닌 한 막는다.
+- 훅은 파싱 시점에 만들어져 리소스를 모르므로, 발화하는 훅이 자기 층을 **동일성으로** 찾는다 — 이름이 겹치는 `hooks.json` 훅은
+  아무것도 받지 못한다.
+- 비용: 발화마다 `stage()` 를 부른다. 로컬은 마커 조회 한 번, 원격 제공자는 왕복 한 번이다.
+
+**남은 것.** EE-81(본문의 `${AIMON_SKILL_DIR}` 는 스폰한 쪽의 경로다).
 
 ## EE-51 — 환경이 없거나 사용 불가면 스킬 가드 훅이 통과로 바뀐다 · **닫힘** *(2026-10-04)*
 
@@ -2167,6 +2305,20 @@ PR #205 의 리뷰 뒤로 유예가 끝났을 때 살아 있는 핸들은 부모
 
 출처: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md) §2-2 · §6 · §8.
 
+> **2026-10-05 — 좁혔다. 닫지 않았다.** 유예가 끝날 때 살아 있는 부모와 스냅숏의 살아 있는 핸들에서 자손을 **한 번 더** 열거해
+> 늘어난 집합을 SIGKILL 한다(`13effde0`). 유예 중에 태어난 프로세스(TERM 트랩이 fork 한 것, 살아남은 자식 아래에서 태어난 것)가
+> 함께 죽는다 — 고치기 전 실패하던 테스트 셋이 통과한다.
+>
+> **이 항목의 문장 하나가 틀렸다 (규칙 둘).** `nohup` · `setsid` 는 그것만으로 트리를 벗어나지 않는다. `descendants()` 는 부모
+> pid 로 걷고, macOS 에서 `nohup sleep` 과 `setsid()` 한 자식은 부모가 사는 동안 열거됐다. 빠진 것은 pid 1 로 재부모된
+> `(sleep &)` 뿐이다(Linux 는 돌려 보지 않았다).
+>
+> **여전히 빠져나가는 것.** (1) 부모가 이미 죽은 프로세스 — 이중 fork, `( cmd & )`, 데몬. (2) 마지막 열거와 kill 사이의 fork.
+> TERM 을 무시하며 계속 fork 하는 명령으로 재면 100회 중 2(50ms 간격) ~ 11(1ms)회 남는다(고치기 전 20/20). 그래서 연속 fork 는
+> 테스트가 고정하지 않는다. 여러 번 도는 고정점 루프는 재 보니 더 나빴다(열거 사이에 테이블을 더 읽을 뿐이다). 프로세스 그룹은
+> 쓰지 않았다 — macOS 에 `setsid` 가 없고 모든 명령의 실행 방식이 바뀐다. `KillShell` 의 답과 도구 설명은 이제 분리된
+> 프로세스가 남을 수 있다고 말한다.
+
 ## EE-56 — 부트스트랩을 거치지 않는 조립은 작업 목록과 바인딩을 스스로 챙겨야 한다 · **열림**
 
 **무엇을.** `OrcaAgentRuntimeManager` 나 `OrcaAgentRuntimeFactory` 를 직접 쓰는 조립에서도 백그라운드 작업 목록이 런타임보다
@@ -2348,7 +2500,7 @@ aimon-sandbox PR #6(머지 `2b70370`)이 그쪽 저장소에서 닫았다 — �
 남긴 것(그쪽에서 결정 대기): 취소는 exec 의 **프로세스 그룹**까지만 닿는다 — 그룹을 떠난 작업(`setsid` · `set -m`)은 샌드박스가
 사라질 때까지 남는다. 나중에 태어난 손자는 그룹에 속하므로 잡힌다는 점에서 `LocalShell` 의 한계(EE-55)와 모양이 다르다.
 
-## EE-60 — `UserLocale.timeZone` 은 공급 경로도 소비자도 없다 · **열림**
+## EE-60 — `UserLocale.timeZone` 은 공급 경로도 소비자도 없다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 시간대를 프롬프트(또는 다른 소비자)에 실을지 정하고, 싣는다면 값의 출처를 정한다 — 에이전트 정의, 스타터
 속성, `Principal` 별. 싣지 않기로 하면 값과 그 배관을 지운다.
@@ -2380,7 +2532,23 @@ CLI `AgentSetupFactory` 의 리로드 훅) 설정으로 줄 길이 없다. 그�
 > 시그니처)을 지울 것인가.** 위 "언제 다시 볼까" 의 "다음 공개 SPI 정리 때" 가 그 자리다.
 > `OrcaAgentExecutorUserLocaleTest.promptDoesNotDependOnTheTimeZone` 은 이제 메시지가 사용자 입력 하나뿐임을 단언한다.
 
-## EE-61 — `SubagentExecutionEnvironment` 는 실행 환경이 아니다 · **열림**
+### 닫힘 (2026-10-05)
+
+**결정 (2026-10-05, 메인테이너): 지운다.** 다시 세어 보니 `UserLocale` 의 필드는 `timeZone` 하나였고 main 소스에 읽는 곳이
+없었다. 그래서 필드가 아니라 **타입과 그것만 나르던 배관 전부**를 지웠다(`ff0e6ff2`, 파일 237개).
+
+- 없어진 공개 표면: `at.aimon.core.base.UserLocale`, `HookContext` 와 이벤트 컨텍스트 열셋 · 도구 · 압축 · 서브에이전트
+  컨텍스트의 `getUserLocale()` / `userLocale(...)`, `ToolContextKeys.USER_LOCALE`, `CompactionGuard` 두 메서드와 `TaskTool` ·
+  `WorkflowTool` · `CompactCommand` · `ReloadInvoker` · `SubagentBackedSkillForkExecutor` 생성자의 인자,
+  `GraalJsWorkflowTool.Builder.userLocale`. 이관은 [`../migration/rename-maps.md`](../migration/rename-maps.md).
+- 값은 세션 레코드 · 트랜스크립트 · 노드 간 프레임 어디에도 실린 적이 없다. 호환 처리는 없다.
+- 값을 **본** 코드는 "없으면 기능을 끈다" 분기 다섯뿐이었다(`/compact` 등록 조건 둘, 스킬 포크 리졸버, 두 context engine).
+  출하되는 두 조립은 언제나 값을 주었으므로 관측되는 차이는 없다.
+- 항목의 "main 47개 파일" 은 손댄 수로는 64개다.
+
+**저장소 밖.** aimon-sandbox 의 테스트가 `.userLocale(...)` 을 부르고 있으면 그 호출을 지워야 한다. 여기서는 확인할 수 없다.
+
+## EE-61 — `SubagentExecutionEnvironment` 는 실행 환경이 아니다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** `SubagentExecutionEnvironment` 의 이름을 그것이 실제로 무엇인지 말하는 이름으로 바꿀지 정한다.
 
@@ -2396,6 +2564,17 @@ environment" 라고 부른다(`DefaultSubagentExecutionManager`, `TaskTool`). `E
 **언제 다시 볼까.** 서브에이전트 SPI 를 다음에 깨뜨릴 때.
 
 출처: [`../design/tool/execution-environment-ee14-user-locale.md`](../design/tool/execution-environment-ee14-user-locale.md) §3.4 · §10 Q7.
+
+### 닫힘 (2026-10-05)
+
+**결정 (2026-10-05): 지금 개명한다.** `SubagentExecutionEnvironment` → `SubagentLaunchContext`(`82bcca30`, 파일 55개). 설계에
+기록된 후보가 없어 이 이름을 골랐다 — 호출자가 서브에이전트를 띄우려고 매니저에 건네는 묶음이고, `SubagentExecutionContext`
+(매니저가 실행기에 건네는 것)와 구분된다. 도구는 호출마다 하나를 만들고, 워크플로 러너만 틀로 하나를 쥐고 `toBuilder()` 로
+실행별 · 단계별 인스턴스를 만든다. 접근자와 빌더 메서드 이름은 그대로다.
+
+- **항목이 인용한 `getParentExecutionEnvironment()` 는 있었던 적이 없다 (규칙 둘).** 접근자는 `getExecutionEnvironment()` 이고
+  이름은 그대로 두었다 — 진짜 `ExecutionEnvironment` 를 돌려준다.
+- 매핑은 [`../migration/rename-maps.md`](../migration/rename-maps.md) 에 있다. 승인된 설계 기록의 본문은 옛 이름 그대로다.
 
 ## EE-62 — 지식 저장소 가이드의 런타임 예제에 실행 환경 제공자가 없다 · **닫힘** *(2026-10-05)*
 
@@ -2469,7 +2648,7 @@ runId)` 를 부르고, 그 러너의 기반 환경은 런타임을 조립할 때
 
 출처: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) §3.1 · §8 · §9 Q8 · 설계 리뷰 1.
 
-## EE-64 — 훅 실행기 수준 timeout 의 `FAIL_OPEN` 이 선언 가드의 fail-closed 를 우회한다 · **열림**
+## EE-64 — 훅 실행기 수준 timeout 의 `FAIL_OPEN` 이 선언 가드의 fail-closed 를 우회한다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 선언 셸 가드가 자기 timeout 을 지키지 못해 훅 실행기의 바깥 그물이 먼저 터지는 경우에도 막게 한다.
 
@@ -2494,7 +2673,24 @@ runId)` 를 부르고, 그 러너의 기반 환경은 런타임을 조립할 때
 
 출처: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) §6 F5 · §9 Q4.
 
-## EE-65 — `preTool` 의 `http` · `mcp` 액션은 실행기가 없으면 통과한다 · **열림**
+### 닫힘 (2026-10-05)
+
+**결정 (2026-10-05): 정책 기본값은 두고, 훅이 자기 timeout 동작을 선언한다.** `ExecutionHook#getTimeoutBehavior()` 가 생겼고
+네 가드 이벤트의 선언 훅은 `FAIL_CLOSED` 를 선언한다(`9aa1f006`). 실행기의 바깥 그물이 먼저 터져도 막는다.
+
+- **항목보다 넓었다 (규칙 셋 — 이번에는 돌렸다).** "선언 셸 훅은 닿지 않는다" 는 던지는 경우에만 참이었다. 바깥 timeout 으로는
+  선언 `onStart` · `preCompact` · `permissionRequest` 가드와 MCP 가드도 통과하고 있었다(`DeclarativeGuardOuterTimeoutTest`
+  9건 중 6건이 고치기 전에 실패).
+- `failOpen` 훅은 `FAIL_OPEN` 을 선언하지 않고 **아무것도 선언하지 않는다** — `failOpen` 이 호스트가 설정한 더 엄격한 정책을
+  풀지 못하게 하려는 것이다.
+- 같은 선언이 이후 "아예 돌리지 못함" 까지 덮게 되었다(`b24f2356`): 풀이 포화되거나 닫혀 거절된 훅, 자기 `try` 밖에서 던진
+  훅(예: matcher 술어). 후자는 모델이 닿을 수 있었다 — 깊게 중첩된 `$(` 가 `BashSubcommandPredicate.tokenize` 에서
+  `StackOverflowError` 를 내고 `Bash(rm *)` 가드를 통과시켰다.
+
+**의식적으로 둔 것 (테스트가 고정한다).** 아무것도 선언하지 않은 프로그램 등록 `PreToolHook` · `OnStartHook` 은 바깥 그물에
+잘리거나 던져도 여전히 통과한다. `FAIL_CLOSED` 를 선언한 프로그램 훅은 이제 던지거나 거절되어도 막는다.
+
+## EE-65 — `preTool` 의 `http` · `mcp` 액션은 실행기가 없으면 통과한다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** `preTool` 선언 훅의 `http` · `mcp` 액션에도 "판단하지 못한 가드는 막는다" 를 적용할지 정한다.
 
@@ -2512,7 +2708,42 @@ WARN 후 성공("degrading to success")이고 `McpToolAction` 도 같다. 정책
 
 출처: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) §8.
 
-## EE-66 — 가드 명령이 없어서 나는 exit 126/127 은 통과다 · **열림**
+### 닫힘 (2026-10-05)
+
+**결정 (2026-10-05): 셸 가드와 같은 규칙.** `preTool` 의 `http` · `mcp` 액션은 판정을 받지 못하면 막고, `failOpen` 을 이 두
+액션에서도 읽는다(`9573a048`).
+
+- **실행기를 읽으니 미배선 분기만이 아니었다 (규칙 둘 — 항목이 착수할 때 먼저 보라고 한 값).** 두 실행기는 연결 실패,
+  `InterruptedException`, non-2xx, 깨진 JSON, 모르는 `decision`, MCP 의 미등록 서버 · `isError` · 전송 예외를 **전부
+  `HookResult.success()`** 로 돌려주고 있었다. Claude Code 철자 `{"decision":"block"}` 도 허용으로 읽혔다.
+- 판정인 것: 읽을 수 있는 2xx / 오류 아닌 MCP 결과(`deny` 는 `failOpen` 이어도 막는다). 판정이 아닌 것: 연결 · 전송 실패,
+  timeout, **모든 non-2xx**, 파싱되지 않는 JSON, 모르는 `decision`, 미배선.
+- `http` · `mcp` 는 `preTool` · `postTool` 에만 있으므로 "가드 이벤트 전부" 는 `preTool` 이다. `postTool` 은 전처럼 WARN 후 진행한다.
+- **in-tree 조립은 두 실행기를 배선한 적이 없었다 (규칙 여섯).** CLI 에서 이 핸들러들은 등록되고 한 번도 호출되지 않았다.
+  CLI 는 이후 배선했다(`ceeafdc7` — `hooks.json` 과 스킬 프론트매터 둘 다, `mcp` 는 MCP 서버가 설정되어 있을 때만). 그때
+  `HttpActionExecutor.createDefault()` 의 결함 둘도 고쳤다: 리다이렉트를 따라가며 env 템플릿 헤더를 다른 호스트로 보냈고(이제
+  `Redirect.NEVER`), 응답 본문을 무제한으로 읽었다(이제 1 MiB).
+- `mcp` 액션의 `timeout` 은 강제되지 않았다 — 이제 호출을 끝내고 `TIMEOUT` 으로 읽는다(`28b1e3bc`). 서버의 `requestTimeout`
+  과는 작은 쪽이 이긴다.
+
+- **리뷰가 이 결정 안에서 넷을 더 잡았다.** `hooks.json` 의 `deny` 핸들러에 `failOpen: true` 를 쓰면 "무시한다" 고 WARN 을 찍고는
+  적용해서, matcher 가 던지거나 풀이 거절하면 그 deny 가 통과했다(`b8d8dd53`). Claude Code 형식의 거부
+  (`hookSpecificOutput.permissionDecision: "deny"`, `continue: false`)는 **허용**으로 읽혔다 — 이제 `decision: "block"` 과 함께
+  판정으로 읽고, 필드가 엇갈리면 엄격한 쪽이 이긴다(`95937b75`). `mcp` 호출이 `Error` 를 던지면 timeout 타이머가 풀리지 않아
+  나중에 다른 일을 하는 풀 스레드를 인터럽트했다(`1c49d8cc`). `http` 액션의 `timeout` 은 헤더까지만 제한했다 — 이제 본문까지
+  교환 전체를 제한하고 요청을 취소한다(`43302523`).
+- **그 수정을 한 번 더 리뷰했더니 다섯이 더 나왔다 — 전부 Claude Code 철자를 읽게 한 그 커밋에서.** `updatedInput` 은 최상위에서만
+  읽어 Claude Code 가 두는 자리(`hookSpecificOutput` 안)의 재작성을 버렸다. 거부 이유에 `decision: allow` 옆의 `reason` 이
+  실렸다. 객체가 아닌 `hookSpecificOutput` 은 허용이 됐다. 그리고 그 철자들을 `mcp` 결과에서도 읽어, `continue` 라는 필드를 가진
+  페이지네이션 응답이 거부가 됐다 — 이제 Claude Code 철자는 `http` 에서만 읽는다. `postTool` 의 `ask` 는 이미 돈 도구에 대한
+  확인 문구를 모델에게 보냈다(`88dd5612`). **고친 것을 고칠 때도 같은 규칙이다**: 처방이 표면을 넓히면(읽는 필드가 늘었다) 넓어진
+  표면 전체가 새 항목이다.
+
+**남은 것.** EE-84(부트스트랩 · 스타터 미배선, HTTP 훅의 판단 항목들). `postTool` 에서 거부 응답이 오면 문서의 `feedback` 이
+버려진다(`downgradeBlock`). CLI 테스트 스무 개 남짓이 개발자의 실제 `~/.aimon/hooks.json` 을 읽는다 — EE-72 로 그 파일이 기동을
+멈추는 범위가 넓어졌으므로, 그런 파일을 둔 개발자 PC 에서는 CI 에서 통과하는 테스트가 실패할 수 있다.
+
+## EE-66 — 가드 명령이 없어서 나는 exit 126/127 은 통과다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 셸이 "명령을 찾지 못했다"(127) · "실행할 수 없다"(126)로 끝난 가드 훅을 "돌리지 못함" 으로 읽을지 정한다.
 
@@ -2530,6 +2761,16 @@ WARN 후 성공("degrading to success")이고 `McpToolAction` 도 같다. 정책
 누락된 채 통과했다는 보고가 있을 때.
 
 출처: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) §9 Q3.
+
+### 닫힘 (2026-10-05)
+
+**결정 (2026-10-05): 가드 이벤트에서 exit 126 · 127 은 "돌리지 못함" 이고 `failOpen` 이 아닌 한 막는다.** 다른 0 아닌 코드는
+그대로다 — exit 1 은 여전히 허용이다(`84802ba0`). 스크립트가 스스로 126 · 127 을 내도 막힌다. 그것은 받아들인 값이다.
+
+- 러너는 코드를 관측한 대로 보고하고, 읽기를 바꾸는 것은 `ShellHookVerdicts.guard` 뿐이다. 관찰 이벤트는 기록만 한다.
+- 막는 이유에는 셸의 stderr(명령줄을 인용한다)를 싣지 않는다.
+- EE-50 이 닫힌 뒤로 127 은 스크립트 경로가 불안정해서가 아니라 이름이 틀렸거나 인터프리터가 없을 때만 난다.
+- 고정하던 테스트 셋을 고쳤다(`execute_exitCodesOtherThanTwo_stillAllow` 의 목록에서 126 · 127 을 뺐다).
 
 ## EE-67 — 호출자 없는 포크가 띄운 백그라운드 작업은 그 포크만 본다 · **열림**
 
@@ -2607,7 +2848,7 @@ INLINE 스킬은 바뀌지 않았다 — `Skill` 도구로 부르든 슬래시�
 (백그라운드 `Workflow` · `WorkflowJs` 와 `ScheduleTask` 가 거절 전에 읽는 값), 포크가 끝나거나 던지면 층이 꺼진다, 키가
 없으면 포크가 호출자의 컨텍스트를 그대로 받는다.
 
-## EE-69 — 스킬 포크가 띄운 백그라운드 서브에이전트는 스킬이 끝난 뒤 가드 없이 돈다 · **열림**
+## EE-69 — 스킬 포크가 띄운 백그라운드 서브에이전트는 스킬이 끝난 뒤 가드 없이 돈다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 가드 훅이 걸린 스킬의 포크가 `Task` 를 `run_in_background` 로 띄웠을 때, 스킬이 반환한 뒤에도 도는 그
 서브에이전트를 어떻게 다룰지 정한다 — 가드를 유지할지, 띄우는 것을 거절할지, 지금처럼 둘지.
@@ -2627,6 +2868,17 @@ INLINE 스킬은 바뀌지 않았다 — `Skill` 도구로 부르든 슬래시�
 거절 쪽이 맞다.
 
 출처: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) 의 설계 리뷰 2(§10.3).
+
+### 닫힘 (2026-10-05)
+
+**결정 (2026-10-05): 거절한다.** 가드 훅이 활성인 스킬의 포크 안에서 `Task` 의 `run_in_background` 는 백그라운드 워크플로 ·
+`ScheduleTask` 와 같은 판정(`HookRegistryAccess.activeSkillGuards`)으로 거절된다. 관찰 전용 훅만 있으면 WARN 후 띄운다.
+포그라운드 `Task` 는 그대로다(`7a3e25ea`).
+
+- **항목이 없다고 적은 테스트를 썼다.** `SkillGuardBackgroundTaskIntegrationTest` — 고치기 전에는 백그라운드 서브에이전트가
+  스킬이 반환한 뒤 **그 스킬의 가드가 막는 Bash 를 실제로 실행했다.**
+
+**남은 것.** `SkillScopedHookRegistry` 를 감싼 데코레이터는 네 거절을 모두 끈다(기존의 문서화된 한계). EE-63 은 그대로 열려 있다.
 
 ## EE-70 — 포크는 `onStart` 의 block 을 버린다 · **닫힘** *(2026-10-04)*
 
@@ -2743,7 +2995,7 @@ WARN 한 줄조차 "의도된 동작" 으로 문서화되어 있었다.
 
 설계: [`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md).
 
-## EE-72 — 적용 단계에서 잘못된 `hooks.json` 핸들러는 WARN 후 조용히 빠진다 · **열림**
+## EE-72 — 적용 단계에서 잘못된 `hooks.json` 핸들러는 WARN 후 조용히 빠진다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 파싱은 통과했지만 적용할 수 없는 `hooks.json` 항목 — `command` 없는 `command` 핸들러, `preTool` 밖의 `deny`,
 잘못된 URL, 모르는 이벤트 이름(`preTol`) — 을 시작 실패로 볼지, 지금처럼 WARN 후 건너뛸지 정한다.
@@ -2766,7 +3018,24 @@ WARN 한 줄조차 "의도된 동작" 으로 문서화되어 있었다.
 
 출처: [`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md) §9 Q2.
 
-## EE-73 — 코드 behavior 서브에이전트는 `onStart` 를 발화하지 않는다 · **열림**
+### 닫힘 (2026-10-05)
+
+**결정 (2026-10-05): 가드 이벤트의 항목만 엄격하게 본다.** 가드 이벤트 아래의 적용 불가 항목은 `HookConfigParseException`
+(파일 · 이벤트 · 항목 · 핸들러 번호)으로 시작을 멈춘다 — EE-71 과 같은 채널이고, 리로드는 이전 설정을 유지한다. 비가드
+이벤트는 WARN 후 건너뛴다. 모르는 이벤트 이름은 WARN 을 유지하되 가까운 이름을 제안하고, **가드 이벤트에서 두 글자 이내로
+틀린 이름**(`preTol`)은 시작을 멈춘다(`74087572`).
+
+- 항목의 예보다 넓게 셌다: 핸들러 없는 항목, 파싱되지 않는 `preTool` matcher, `onStart` · `preCompact` · `permissionRequest`
+  의 비`command` 핸들러, 실행기가 배선되지 않은 `preTool` 의 `http` · `mcp`. `failOpen: true` 인데 여기서 못 도는 핸들러는
+  예전 처리 그대로다.
+- **스킬 선언 훅은 같은 경로가 아니고 이미 엄격했다.** `SkillHookSetParser` 는 이 경우들에 전부 던진다.
+
+**이 결정이 못 잡는 것 — 그리고 그것이 문서에 있었다.** EE-72 는 **파싱되지 않는** matcher 만 잡는다. 훅 가이드가 문서화한 세
+형태(`mcp__.*`, `Bash(command=^…)`, `Bash & input.command~…`)는 전부 **파싱되고, 등록되고, 한 번도 발화하지 않는다.** 가이드의
+예제 가드 셋(rm, force push, prod apply)이 그렇게 적혀 있었다. 문서를 파서에 맞췄다(`bf312499`). 파싱되지만 아무것도 맞출 수
+없는 matcher 를 거절하는 일은 EE-85 다.
+
+## EE-73 — 코드 behavior 서브에이전트는 `onStart` 를 발화하지 않는다 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 이름에 `SubagentBehavior` 가 등록된 서브에이전트에도 `onStart`(와 그 block)를 적용할지 정한다.
 
@@ -2785,6 +3054,17 @@ LLM 을 부르지 않을 수도 있고, 그 안에서 다시 스폰한 포크는
 
 출처: [`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md) §2 전제 5 · §9 Q4.
 
+### 닫힘 (2026-10-05)
+
+**결정 (2026-10-05): 발화한다.** behavior 포크도 ReAct 포크와 같은 `onStart` 게이트(`SubagentOnStartGate`)를 지나고, 막히면
+같은 실패 결과로 끝난다(`ca68a220`).
+
+- **돌려 보니 항목이 읽어서 적은 대로였다 (규칙 셋).** 막는 훅 아래에서 behavior 가 실행됐다(`SubagentBehaviorOnStartTest`
+  6건 중 4건이 고치기 전에 실패).
+- behavior 포크는 자기 환경을 해석하지 않으므로 훅은 **스폰한 실행의** 환경을 본다. 막지 않는 피드백은 붙일 대화가 없어 버린다.
+- 서브에이전트 가이드에 적혀 있던 이유("피드백 주입에 대화 루프가 필요하다")는 피드백에는 여전히 참이지만, `onStart` 가
+  가드가 된 뒤로는 발화하지 않을 이유가 아니다(규칙 다섯).
+
 ## EE-74 — 깨진 `hooks.json` 으로도 띄우는 탈출구가 없다 · **열림** *(트리거 대기)*
 
 **무엇을.** 운영자가 "깨진 파일이 있어도 띄우겠다" 고 명시할 수단(빌더 옵션 · CLI 플래그)을 둘지 정한다.
@@ -2802,7 +3082,7 @@ LLM 을 부르지 않을 수도 있고, 그 안에서 다시 스폰한 포크는
 
 출처: [`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md) §3.2 · §9 Q3.
 
-## EE-75 — EE-70 · EE-71 이 시그니처를 그대로 두느라 남긴 표면 · **열림** *(트리거 대기)*
+## EE-75 — EE-70 · EE-71 이 시그니처를 그대로 두느라 남긴 표면 · **닫힘** *(2026-10-05)*
 
 **무엇을.** 다음 SPI 정리 때 둘을 본다. (1) `HookRegistryReloader.bootstrap()` 의 `boolean` 과
 `HookHotReloadBootstrap.Started.isBootstrapSucceeded()` — 이제 항상 참이다. `@Deprecated` 로 표시하거나 없앤다. (2) `onStart`
@@ -2820,6 +3100,20 @@ LLM 을 부르지 않을 수도 있고, 그 안에서 다시 스폰한 포크는
 (워크플로의 재시도 정책, 대시보드)가 나올 때.
 
 출처: [`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md) §9 Q5 · Q6.
+
+### 닫힘 (2026-10-05)
+
+(1) `HookRegistryReloader.bootstrap()` 과 `HookHotReloadBootstrap.Started.isBootstrapSucceeded()` 에 `@Deprecated` 를 달았고
+대체로 `loadInitial()` 을 두었다. 지우지는 않았다 — 다음 breaking 묶음의 일이다. (2) 훅이 막은 포크는
+`CompletionReason.BLOCKED` 로 끝난다(`c5e516e4`).
+
+- `JsonTaskResultCodec` 은 이미 관대했다 — **옛 노드는 `BLOCKED` 를 `ERROR` 로 읽는다**, 곧 전에 보던 값이다.
+- in-tree 의 독자를 전부 봤다. 완료 사유로 재시도를 가르는 정책은 없다(`WorkflowPatterns` 는 `isSuccess()` ·
+  `isComplete()` 만 본다). 세션 합계 · 예산 · CLI 포매터는 이 값을 만나지 않는다 — 막힌 **턴**은 결과 없이 던진다.
+- `api-stability.md` §5 의 "`@Deprecated` 0건" 은 이미 거짓이었다(트리에 7건). 고치고, enum 추가는 옛 노드가 무엇을 읽는지와
+  함께 breaking 으로 적는다는 규칙을 더했다.
+
+**남은 것.** EE-83(턴 쪽 디코더는 관대하지 않다).
 
 ---
 
@@ -2994,3 +3288,148 @@ main 코드가 없고, 스냅숏의 `userLocale` 은 블록을 만드는 쪽이 
 `RipgrepContentSearch` 와 `StdioMcpTransport` 다.
 
 **언제 다시 볼까.** 인터럽트에 반응하지 않는 셸(샌드박스)을 붙일 때 — EE-48(운영자 훅의 셸을 어디서 돌리는가)과 함께.
+
+> **2026-10-05 — 신호를 쥔 발화 자리에는 실었다. 나머지로 열려 있다.** `HookContext#getExecutionCancellation()` 이 생겼고
+> `ShellActionRunner` 가 명령을 그 신호에 묶는다(`2f89df94`). 취소된 명령은 `Unrun.CANCELLED` 이고 가드 이벤트에서는
+> **`failOpen` 과 무관하게** 막는다 — 실행이 취소되는 중이므로 "허용하고 계속" 으로 읽히면 안 된다.
+>
+> 닿는 곳: `preTool` · `permissionRequest`(언제나), 포크의 `onStart`, 아직 취소되지 않은 실행의 `postTool` ·
+> `permissionDenied`. **닿지 않는 곳:** 메인 턴의 `onStart`(코디네이터가 만들어지기 전에 발화한다), `onStop`(취소된 포크에서는
+> 신호가 이미 서 있어 명령이 아예 시작되지 않게 된다), `preCompact` · `postCompact`(압축 요청 타입이 신호를 싣지 않는다),
+> `subagentStart` · `subagentStop`. 이 이벤트들에서는 인터럽트에 반응하지 않는 셸에서 틈이 그대로다.
+
+---
+
+## EE-81 — 포크가 다른 환경에 놓이면 스킬 본문의 `${AIMON_SKILL_DIR}` 는 스폰한 쪽의 경로다 · **열림** *(트리거 대기)*
+
+*(2026-10-05 등록. 출처는 EE-50 착수.)*
+
+**무엇을.** 포크 모드 스킬의 본문을 포크의 환경에 스테이징한 경로로 렌더한다.
+
+**왜.** EE-50 뒤로 스킬의 **훅**은 훅이 도는 환경에 스테이징한 경로를 받는다. 본문은 스폰한 쪽에서 렌더된다. 포크를 둘째 로컬
+워크스페이스에 둔 임시 프로브에서 본문은 `<spawner>/.aimon-staged/…`, 훅은 `<fork>/.aimon-staged/…` 를 받았다. 오늘의
+`LocalExecutionEnvironmentProvider.resolve` 는 `request.parent()` 를 돌려주므로 둘이 같다 — 관측이지 결함이 아니다(규칙 여섯).
+
+**어디** *(2026-10-05)* — `at.aimon.core.tools.SkillRenderContextAccess`, `LocalExecutionEnvironmentProvider.resolve`.
+
+**언제 다시 볼까.** 포크에 부모와 다른 환경을 주는 제공자를 붙일 때(EE-52 와 같은 트리거).
+
+## EE-82 — 허용 루트로 적재된 링크 스킬은 머티리얼라이즈되지 않고, 번들의 `agents/` 에는 링크 규칙이 없다 · **열림**
+
+*(2026-10-05 등록. 출처는 EE-35 착수.)*
+
+**무엇을.** (1) 허용 링크 루트 아래의 링크 스킬을 `BundledSkillMaterializer` 가 건너뛰는 것이 의도인지 정한다. (2) 번들의
+`agents/` 디렉터리(`PathSubagentRepository`)에 스킬과 같은 링크 규칙을 둘지 정한다.
+
+**왜.** (1) 루트를 설정하면 링크 스킬은 번들 층에서 제공되지만 `.aimon/bundled-skills` 로는 복사되지 않는다 — 프로브로 확인했다.
+그 차이가 어디서 보이는지는 재지 않았다. (2) 는 **들여다보지 않았다** — 스킬의 링크 규칙이 서브에이전트 정의에는 없다는 것만
+읽었다(규칙 둘: 착수할 때 먼저 볼 값이다).
+
+**어디** *(2026-10-05)* — `skill/repository/BundledSkillMaterializer.java`, `subagent/**/PathSubagentRepository.java`.
+
+**언제 다시 볼까.** 링크로 설치한 번들 스킬을 실제로 쓰는 배포가 생길 때.
+
+## EE-83 — 턴 쪽 디코더 다섯은 모르는 `CompletionReason` 이름에 던진다 · **열림** *(트리거 대기)*
+
+*(2026-10-05 등록. 출처는 EE-75 착수.)*
+
+**무엇을.** 턴 결과를 읽는 디코더가 모르는 완료 사유 이름을 관대하게 읽게 한다(`JsonTaskResultCodec` 이 하는 것처럼).
+
+**왜.** `CompletionReason.valueOf` 를 폴백 없이 부르는 곳이 다섯이다 — `TurnResultPayload`, `AgentExecutionEventPayload`(둘),
+그리고 redis · postgres · mongodb 의 `IdempotencyEntry*Codec`. `BLOCKED` 는 여기 닿지 않는다(막힌 턴은 결과 없이 던진다). 그러나
+다음에 **턴 수준** 값을 더하면 롤링 업그레이드 중의 옛 노드가 그 프레임과 그 멱등성 항목을 읽지 못한다.
+
+**어디** *(2026-10-05)* — `TurnResultPayload.java:197`, `AgentExecutionEventPayload.java:349,363`, 세 백엔드의
+`IdempotencyEntry*Codec`(redis `:135`, postgres `:68`, mongodb `:98`).
+
+**언제 다시 볼까.** `CompletionReason` 에 턴이 가질 수 있는 값을 더할 때 — 그 변경보다 **먼저 한 릴리스 앞서** 나가야 한다.
+
+## EE-84 — `http` · `mcp` 훅 실행기는 CLI 에만 배선되어 있고, HTTP 훅의 기본값에 정하지 않은 것이 남았다 · **열림**
+
+*(2026-10-05 등록. 출처는 EE-65 와 그 후속 `ceeafdc7`.)*
+
+**무엇을.** (1) 부트스트랩과 스타터에서 `http` · `mcp` 훅 핸들러를 돌릴지, 돌린다면 어떻게 배선할지 정한다. (2) HTTP 훅의 아래
+기본값들을 정한다.
+
+**왜.** (1) 부트스트랩은 스킬 훅에 셸만 배선하고 `hooks.json` 은 아예 읽지 않으며, 스타터는 둘 다 배선하지 않는다. CLI 와 같은
+작은 변경이 아니다 — 스택은 런타임을 여럿 가질 수 있고 각자 `McpClientManager` 를 갖는데 실행기는 어느 런타임이 발화했는지
+받지 못한다. 그리고 스킬의 http 액션은 **호스트 JVM 에서 호스트의 env 와 네트워크로** 돈다 — 환경 제공자가 샌드박스인 곳에서는
+그 경계를 넘는다(CLI 에는 이 틈이 없다: 스킬의 셸 훅이 이미 호스트에서 돈다). (2) 정하지 않고 가이드에 적어만 둔 것:
+템플릿 값은 escape 되지 않는다(JSON `body` 의 `"${tool_input.command}"` 에 따옴표가 들면 깨진 JSON 이 나가고, 서버가 4xx 로
+답하면 `failOpen` 감사 훅은 그 호출을 기록 없이 통과시킨다 — 모델이 요청 필드를 주입할 수도 있다), 평문 `http://` 를 받는다,
+`allowedEnvVars` 는 그것을 쓰는 같은 파일이 선언한다, 실패 시 URL 이 쿼리 문자열째 WARN 에
+찍힌다, 1 MiB 상한은 상수다. `mcp` 호출에는 인터럽트가 닿지 않는 대기가 둘 남는다 — 다른 요청이 쥔 `synchronized sendRequest`
+모니터와 부분 줄의 `readLine()` (EE-88). Claude Code 의 `permissionDecision: "defer"` 와 폐기된
+`decision: "approve"` 는 "판정 없음" 으로 읽는다 — 앞의 것은 "애플리케이션이 재개할 때까지 보류" 라 여기서 할 수 있는 것이 없다.
+
+**어디** *(2026-10-05)* — `aimon-cli/.../factory/HookActionExecutors.java`, `HttpActionExecutor.java`, `TemplateRenderer.java`,
+이음매는 `AimonStackSpec#skillParser` 와 `HookHotReloadBootstrap.Builder`.
+
+**언제 다시 볼까.** 스타터나 부트스트랩 배포가 정책 서버를 훅으로 붙이려 할 때, 또는 `hooks.json` 의 http 훅을 감사에 쓰는
+배포가 생길 때(escape 가 그때 급해진다).
+
+## EE-85 — 파싱되지만 아무것도 맞출 수 없는 matcher 는 거절되지 않는다 · **열림**
+
+*(2026-10-05 등록. 출처는 EE-72 의 후속 `bf312499`.)*
+
+**무엇을.** 어떤 도구 이름도 가질 수 없는 문자(공백, `&`, `~`, `^`, `=`, `.*`)가 든 bare term 을 가드 이벤트에서 거절하는
+lint 를 둘지 정한다.
+
+**왜.** `PredicateParser` 는 괄호 없는 term 을 통째로 도구 이름으로, 괄호 안을 통째로 glob 으로 받는다. 그래서 정규식 · 입력 필드 ·
+`&` 로 적은 matcher 는 **파싱되고 등록되고 한 번도 발화하지 않는다** — EE-72 의 기동 실패는 파싱되지 않는 matcher 만 잡는다.
+훅 가이드가 그 세 형태를 문서화하고 있었고 예제 가드 셋이 그렇게 적혀 있었다(고쳤다). 권한 철자(`"Bash(git:*)"`,
+`"Edit(**/*.java)"`)도 matcher 에서는 조용히 빗나간다. in-tree 설정에는 없다. 사용자의 `hooks.json` 은 셀 수 없다.
+
+곁가지 (같은 자리, 고치지 않았다): `BashSubcommandPredicate.tokenize` 의 재귀는 모델이 조종한다 — 가드는 이제 막지만
+`failOpen` · `postTool` 훅은 거기서 죽고 입력은 O(n²) 부분 문자열 복사를 치른다. `PathGlobPredicate` 는 in-tree 도구가 아닌
+`Glob` · `LS` · `MultiEdit` · `NotebookEdit` 를 받는다. `docs/references/aimon-skill-extensions.md` 는 손댄 곳 밖에서도 낡았다
+("지원 이벤트: preTool, postTool, onStart, onStop").
+
+**어디** *(2026-10-05)* — `skill/hook/declarative/predicate/PredicateParser.java`, `BashSubcommandPredicate.java`.
+
+**언제 다시 볼까.** 발화하지 않는 가드가 보고될 때. 또는 matcher 문법을 넓히자는 논의가 생길 때 — lint 와 문법은 같은 자리다.
+
+## EE-86 — 서브에이전트 요청의 `max tokens 4096` 은 아무도 적지 않은 값이다 · **열림**
+
+*(2026-10-05 등록. 출처는 서브에이전트의 `temperature 0.7` 을 없앤 `fc539d3b`.)*
+
+**무엇을.** 띄운 에이전트가 max tokens 를 정하지 않았을 때 `SubagentLlmDefaults.resolveModel` 이 `4096` 을 명시로 싣는 것을
+둘지 정한다.
+
+**왜.** 같은 날 없앤 `0.7` 과 같은 모양이다 — 지어낸 명시값이 배포와 클라이언트의 기본값을 이긴다. 다만 이 값은 응답 길이를
+직접 정하고, Anthropic 은 `max_tokens` 가 필수라 "싣지 않는다" 가 곧 클라이언트 기본값이다. 그 기본값이 무엇이고 4096 과
+어떻게 다른지는 **재지 않았다**(규칙 다섯: 값을 바꾸기 전에 그 값이 왜 그 값인지부터).
+
+**어디** *(2026-10-05)* — `subagent/execution/SubagentLlmDefaults.java` 의 `DEFAULT_MAX_TOKENS`.
+
+**언제 다시 볼까.** 서브에이전트의 답이 4096 에서 잘린다는 보고가 있을 때(L-23 · L-25 가 그 잘림의 뒤처리다).
+
+## EE-87 — 이번에 생긴 조립 옵션 둘에는 설정 키가 없다 · **열림** *(트리거 대기)*
+
+*(2026-10-05 등록. 출처는 EE-5 · EE-45.)*
+
+**무엇을.** `GraalJsWorkflowTool.Builder.scriptAttributeKeys`(EE-45)와 로컬 내용 해시 etag
+(`ExecutionEnvironmentSpec.Builder.contentHashStamps`, EE-5)를 CLI · 스타터 설정으로 내릴지 정한다.
+
+**왜.** 둘 다 프로그램으로 조립할 때만 정할 수 있다. CLI 에서 워크플로 단계에 속성을 주는 길은 등록된 정의뿐이고 가이드가
+그렇게 말한다. `contentSearch` 도 스펙 전용이라 선례는 "스펙에 둔다" 쪽이다.
+
+**언제 다시 볼까.** 초 단위 mtime 파일 시스템 위의 CLI · 스타터 배포가 생길 때, 또는 CLI 에서 스크립트 속성이 필요하다는 요청이
+올 때.
+
+## EE-88 — `StdioMcpTransport` 의 대기 둘은 `requestTimeout` 이 세지 않는다 · **열림**
+
+*(2026-10-05 등록. 출처는 `mcp` 훅 timeout 작업 `28b1e3bc`.)*
+
+**무엇을.** stdio MCP 요청이 `requestTimeout` 안에 반드시 돌아오게 한다.
+
+**왜.** [`spring-boot-starter-open-items.md`](spring-boot-starter-open-items.md) 의 B-6 은 *"모든 `sendRequest` 는
+`requestTimeout` 안에 돌아온다"* 를 근거로 닫혔다. 그 문장은 적힌 것보다 좁다: 전송은 `ready()` 를 폴링한 뒤 **블로킹
+`readLine()`** 을 부르므로 부분 줄을 쓴 서버는 무기한 막고, `synchronized sendRequest` 모니터를 기다리는 시간은 세지 않는다.
+소스를 읽은 것이고 부분 줄 서버로 돌려 보지는 않았다(규칙 셋). 훅 경로에서는 바깥 그물이 끝내고 가드는 막는다. 도구 호출
+경로에서 무엇이 끝내는지는 보지 않았다.
+
+**어디** *(2026-10-05)* — `mcp/**/StdioMcpTransport.java` 의 응답 읽기와 `sendRequest`.
+
+**언제 다시 볼까.** MCP 서버가 멈춘 채 도구 호출이 돌아오지 않는다는 보고가 있을 때, 또는 B-6 의 결론을 다른 결정의 근거로
+인용하려 할 때.

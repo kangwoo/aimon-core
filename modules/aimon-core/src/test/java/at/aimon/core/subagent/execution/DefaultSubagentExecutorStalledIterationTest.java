@@ -26,7 +26,6 @@ import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -169,8 +168,7 @@ class DefaultSubagentExecutorStalledIterationTest {
         final SubagentExecutionContext context = SubagentExecutionContext.builder()
                 .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent)
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(registry)
-                .hookRegistry(hookRegistry).userLocale(UserLocale.createDefault())
-                .parentCancellationSignal(parentSignal).build();
+                .hookRegistry(hookRegistry).parentCancellationSignal(parentSignal).build();
         return new DefaultSubagentExecutor(llm, new DefaultToolExecutionManager(), new DefaultHookExecutionManager())
                 .execute(context, SubagentExecutionRequest.builder().taskId("task-1").goal("go").build());
     }

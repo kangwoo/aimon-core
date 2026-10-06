@@ -90,7 +90,7 @@ public final class HookRegistryReloader {
      *            the manager used to fire {@link at.aimon.core.hook.event.OnConfigReloadHook OnConfigReload}; may be
      *            {@code null} to suppress event firing (e.g. during initial bootstrap before hooks are wired)
      * @param invoker
-     *            invoker identity (type / name / user locale) embedded in the {@link OnConfigReloadContext} (must not
+     *            invoker identity (type / name) embedded in the {@link OnConfigReloadContext} (must not
      *            be null)
      */
     public HookRegistryReloader(HookConfigLoader loader, HookConfigMerger merger, HookRegistryApplier bootstrap,
@@ -117,7 +117,7 @@ public final class HookRegistryReloader {
      *            the manager used to fire {@link at.aimon.core.hook.event.OnConfigReloadHook OnConfigReload}; may be
      *            {@code null} to suppress event firing
      * @param invoker
-     *            invoker identity (type / name / user locale) embedded in the {@link OnConfigReloadContext} (must not
+     *            invoker identity (type / name) embedded in the {@link OnConfigReloadContext} (must not
      *            be null)
      * @param rewakeService
      *            the application-scoped rewake service used to cancel envelopes for removed hooks; pass
@@ -147,20 +147,37 @@ public final class HookRegistryReloader {
      * start, and the registry is left untouched. (A {@linkplain #reload reload} that fails keeps the previous config
      * instead &mdash; there is one to keep.)
      *
-     * @return always {@code true}; the return type predates the fail-closed rule and is kept for compatibility
      * @throws HookConfigParseException
-     *             when a {@code hooks.json} that is present fails to parse or cannot be read; the message names the
-     *             file and its layer
+     *             when a {@code hooks.json} that is present fails to parse or cannot be read, when an entry under a
+     *             guard event cannot be applied, or when an event name is a near-miss of a guard event; the message
+     *             names the file and its layer
      * @throws RuntimeException
-     *             when merging or applying the loaded config fails
+     *             when merging or applying the loaded config fails for any other reason
      */
-    public boolean bootstrap() {
+    public void loadInitial() {
         synchronized (swapLock) {
             final MergedHookConfig merged = merger.merge(loader.load());
             applyToManagedLocked(merged);
             log.info("Initial hooks.json bootstrap applied: {}", describeManagedCounts());
-            return true;
         }
+    }
+
+    /**
+     * Performs the initial config load, as {@link #loadInitial()} does, and returns {@code true}.
+     *
+     * @return always {@code true}. Since a failed initial load throws (EE-71) there is no {@code false} to return, and
+     *         a branch on it is dead code
+     * @throws HookConfigParseException
+     *             when a {@code hooks.json} that is present fails to parse or cannot be read
+     * @throws RuntimeException
+     *             when merging or applying the loaded config fails
+     * @deprecated the result has been always {@code true} since a failed initial load started to throw. Call
+     *             {@link #loadInitial()} and handle the exception instead of testing the result.
+     */
+    @Deprecated
+    public boolean bootstrap() {
+        loadInitial();
+        return true;
     }
 
     /**
@@ -193,6 +210,13 @@ public final class HookRegistryReloader {
             }
             try {
                 applyToManagedLocked(merged);
+            } catch (HookConfigParseException e) {
+                // An entry under a guard event that cannot be applied: a config problem like a file that does not
+                // parse, found one stage later. Nothing was swapped (it is thrown while staging), so the previous
+                // config stays, and it is reported as the load failure it is.
+                log.warn("Hook config reload (counter={}) failed: {}", reloadCounter, e.getMessage());
+                fireOnConfigReload(reloadCounter, configSource, false, "load/merge failed: " + e.getMessage());
+                return false;
             } catch (RuntimeException e) {
                 log.error("Hook config reload (counter={}) failed during swap: {}", reloadCounter, e.getMessage(), e);
                 fireOnConfigReload(reloadCounter, configSource, false, "swap failed: " + e.getMessage());
@@ -320,8 +344,8 @@ public final class HookRegistryReloader {
         }
         try {
             final OnConfigReloadContext.Builder b = OnConfigReloadContext.builder().invokerType(invoker.getType())
-                    .invokerName(invoker.getName()).hookRegistry(registry).userLocale(invoker.getUserLocale())
-                    .reloadCounter(counter).successful(successful);
+                    .invokerName(invoker.getName()).hookRegistry(registry).reloadCounter(counter)
+                    .successful(successful);
             if (!configSource.isEmpty()) {
                 b.configSource(configSource);
             }

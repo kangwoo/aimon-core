@@ -855,3 +855,16 @@ is left as written; this records where it stopped matching the tree.*
   `expectedDeclaration` seam §3.5 added, and the helper is private.
 - **Open question 5 → run once.** The suite ran on exactly JUnit 5.12.2 (21 tests, 0 failures). The `junit` note says
   so, how, and that nothing repeats it.
+
+*Appended 2026-10-05 for backlog D-3, whose design is
+[`test-classpath-version-check.md`](test-classpath-version-check.md).*
+
+- **§3.2's accepted difference is no longer recorded in `gradle/libs.versions.toml`.** Its six lines are in
+  `gradle/test-classpath-version-differences.txt`, which `checkTestClasspathVersions` reads. The comment block §4.2
+  drafted now points at that file instead of carrying the versions.
+- **§3.3's accepted difference no longer exists.** `error_prone_annotations` was 2.21.1 shipped and 2.33.0 under test
+  on `aimon-spring-boot-starter`; Caffeine 3.3.0 asks for 2.50.0 and both classpaths resolve it. The record kept
+  saying otherwise until the check's first run. It has no line in the new file.
+- **Four differences are on no list in this document.** The same first run found them (on `aimon-rewake-webhook`,
+  `aimon-session-redis` and `aimon-spring-boot-starter`); they are in the file, marked undecided. Whether any of them
+  existed on the tree §2 measured was not checked.

@@ -2,8 +2,8 @@ package at.aimon.core.workflow;
 
 import java.util.Objects;
 
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.workflow.impl.DefaultWorkflowRunner;
 import at.aimon.core.workflow.impl.InMemoryStepResultCache;
 
@@ -12,7 +12,7 @@ import at.aimon.core.workflow.impl.InMemoryStepResultCache;
  *
  * <p>
  * Lets consumers obtain a runner without importing {@code at.aimon.core.workflow.impl} directly (that boundary is
- * enforced by ArchUnit). Consumers build a base {@link SubagentExecutionEnvironment} — which requires agent/hook/llm
+ * enforced by ArchUnit). Consumers build a base {@link SubagentLaunchContext} — which requires agent/hook/llm
  * types they already hold at bootstrap — and hand it here together with a borrowed {@link SubagentExecutionManager}.
  */
 public final class WorkflowRunners {
@@ -25,12 +25,12 @@ public final class WorkflowRunners {
      *
      * @param manager
      *            the borrowed subagent execution manager (must not be null)
-     * @param baseEnv
-     *            the borrowed base execution environment (must not be null)
+     * @param baseLaunchContext
+     *            the borrowed base launch context (must not be null)
      * @return a new runner
      */
-    public static WorkflowRunner create(SubagentExecutionManager manager, SubagentExecutionEnvironment baseEnv) {
-        return new DefaultWorkflowRunner(manager, baseEnv);
+    public static WorkflowRunner create(SubagentExecutionManager manager, SubagentLaunchContext baseLaunchContext) {
+        return new DefaultWorkflowRunner(manager, baseLaunchContext);
     }
 
     /**
@@ -38,8 +38,8 @@ public final class WorkflowRunners {
      *
      * @param manager
      *            the borrowed subagent execution manager (must not be null)
-     * @param baseEnv
-     *            the borrowed base execution environment (must not be null)
+     * @param baseLaunchContext
+     *            the borrowed base launch context (must not be null)
      * @param concurrency
      *            the fan-out concurrency configuration (must not be null)
      * @param eventSink
@@ -48,9 +48,9 @@ public final class WorkflowRunners {
      *            the run-scoped agent-count/token backstops (must not be null)
      * @return a new runner
      */
-    public static WorkflowRunner create(SubagentExecutionManager manager, SubagentExecutionEnvironment baseEnv,
+    public static WorkflowRunner create(SubagentExecutionManager manager, SubagentLaunchContext baseLaunchContext,
             WorkflowConcurrencyConfig concurrency, WorkflowEventSink eventSink, WorkflowBudget budget) {
-        return new DefaultWorkflowRunner(manager, baseEnv, concurrency, eventSink, budget);
+        return new DefaultWorkflowRunner(manager, baseLaunchContext, concurrency, eventSink, budget);
     }
 
     /**
@@ -58,8 +58,8 @@ public final class WorkflowRunners {
      *
      * @param manager
      *            the borrowed subagent execution manager (must not be null)
-     * @param baseEnv
-     *            the borrowed base execution environment (must not be null)
+     * @param baseLaunchContext
+     *            the borrowed base launch context (must not be null)
      * @param concurrency
      *            the fan-out concurrency configuration (must not be null)
      * @param eventSink
@@ -71,10 +71,10 @@ public final class WorkflowRunners {
      *            {@link StepResultCache#NO_OP} (no resume)
      * @return a new runner
      */
-    public static WorkflowRunner create(SubagentExecutionManager manager, SubagentExecutionEnvironment baseEnv,
+    public static WorkflowRunner create(SubagentExecutionManager manager, SubagentLaunchContext baseLaunchContext,
             WorkflowConcurrencyConfig concurrency, WorkflowEventSink eventSink, WorkflowBudget budget,
             StepResultCache stepResultCache) {
-        return new DefaultWorkflowRunner(manager, baseEnv, concurrency, eventSink, budget, stepResultCache);
+        return new DefaultWorkflowRunner(manager, baseLaunchContext, concurrency, eventSink, budget, stepResultCache);
     }
 
     /**
@@ -86,17 +86,17 @@ public final class WorkflowRunners {
      *
      * @param manager
      *            the borrowed subagent execution manager (must not be null)
-     * @param baseEnv
-     *            the borrowed base execution environment (must not be null)
+     * @param baseLaunchContext
+     *            the borrowed base launch context (must not be null)
      * @param options
      *            the runner options (must not be null; use {@link WorkflowRunnerOptions#defaults()} for all
      *            defaults)
      * @return a new runner
      */
-    public static WorkflowRunner create(SubagentExecutionManager manager, SubagentExecutionEnvironment baseEnv,
+    public static WorkflowRunner create(SubagentExecutionManager manager, SubagentLaunchContext baseLaunchContext,
             WorkflowRunnerOptions options) {
         Objects.requireNonNull(options, "options cannot be null");
-        return DefaultWorkflowRunner.builder(manager, baseEnv).concurrency(options.concurrency())
+        return DefaultWorkflowRunner.builder(manager, baseLaunchContext).concurrency(options.concurrency())
                 .eventSink(options.eventSink()).budget(options.budget()).stepResultCache(options.stepResultCache())
                 .runStore(options.runStore()).backgroundConfig(options.backgroundConfig()).build();
     }

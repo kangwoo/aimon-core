@@ -199,11 +199,12 @@ public interface ExecutionEnvironmentProvider {
 
 - `descriptor()` — 호스트를 읽어 만든 `EnvironmentDescriptor`(작업 디렉터리·platform·OS 버전·셸 이름). 로컬에서는
   호스트가 곧 실행 환경이므로 참이다. 이 설계를 쓸 때는 같은 값을 옛 `Environment.createDefault()` 가 들고 있었고,
-  그 타입은 그 뒤 시간대만 든 `UserLocale` 이 되었다(EE-14)
+  그 타입은 그 뒤 시간대만 든 `UserLocale` 이 되었다가(EE-14) 읽는 곳이 없어 지워졌다(EE-60)
 - `contentSearch()` — `rg` 가 PATH 에 있으면 그것을, 없으면 비어 있음(→ `GrepTool` 이 기존 방식으로 돈다)
 - `stage()` — 소스가 작업 환경과 **같은 `VirtualFileSystem` 인스턴스**면(제어 저장소를 가르기 전인 §11 1·2단계)
   그 경로를 그대로 돌려준다. 아니면 §4.4 의 규칙대로 작업 환경의 스테이징 영역에 복사한다. 스테이징 영역은 파일
-  도구에게 **읽기 전용**이다(§9.2)
+  도구에게 **읽기 전용**이다(§9.2). *2026-10-05 (EE-26) 이후:* 그 경로를 그대로 돌려받는 것은 **부모 환경뿐**이다.
+  `isolate()` 가 만든 브랜치의 `stage()` 는 소스가 워크스페이스 안에 있어도 스테이징 영역에 복사한다(§4.4)
 - `isolate(branchKey)` — `ScopedVirtualFileSystem` + **`workingDirectory` 를 브랜치 루트로 둔 셸 뷰**. 셸 뷰는
   모든 명령의 기본 cwd 를 브랜치 루트로 바꿀 뿐이다. 절대 경로 쓰기까지 막지는 못한다. 로컬 격리가 "파일
   도구 + 기본 cwd" 수준이라는 것을 javadoc 에 적는다. 지금은 셸 쪽 격리가 아예 없으니 그보다는 낫다.
@@ -326,6 +327,55 @@ public interface ExecutionEnvironmentProvider {
 사본이 섞이지 않는다. 로컬은 `{project}/.aimon-staged/`(작업 트리와 같은 디스크이지만 `isolate()` 의 브랜치
 접두어 밖), 샌드박스는 제공자가 정한다(§13).
 
+*2026-10-05 (EE-26) 이후:* **브랜치에게는 언제나 사본을 준다.** 소스가 워크스페이스 자체일 때 부모는 복사하지 않고 그
+디렉터리를 돌려주지만(§4.2), 그 경로는 부모의 작업 트리 안이다. 브랜치의 파일 도구는 그 경로를 `.worktrees/{k}/` 아래로
+옮겨 읽으므로 거기서 아무것도 찾지 못하거나 브랜치가 같은 이름으로 쓴 파일을 읽고, 브랜치의 셸은 같은 문자열로 부모의
+파일을 연다. 두 쪽이 같은 파일을 보는 자리는 스테이징 영역뿐이라, 로컬 브랜치의 `stage()` 는 그 지름길을 쓰지 않고
+`.aimon-staged/{name}/{contentKey}/` 에 복사한다. 사본은 **부모 트리의 스킬**이다 — 브랜치가 자기 트리에서 같은 이름으로
+고친 파일이 아니다. 적재된 판의 사본이 있으면 그것을 쓰고, 없는데 적재 뒤에 부모 트리에서 스킬이 바뀌었으면 다른 소스와
+똑같이 `contentKey` 검사에 걸려 **지금 내용의 키로** 복사된다(아래 EE-3). 부모는 살아 있는 디렉터리를 받으므로 그 검사를
+거치지 않고, 크기 상한도 브랜치에서만 적용된다.
+
+*2026-10-05 (EE-3) 이후:* **적재 뒤에 바뀐 소스는 거부하지 않고, 지금 내용의 키로 스테이징한다.** `contentKey` 는
+레지스트리가 읽을 때 한 번 계산되는데(위), CLI 와 부트스트랩에는 레지스트리를 다시 읽는 경로가 없다. 그래서 복사하는
+바이트가 그 키로 해시되지 않으면 실패시키던 검사는, 스킬을 고친 사용자에게 재시작 말고는 길이 없는 오류였다. 검사가
+지키던 것은 하나다 — **바이트를 그것이 해시되지 않는 키 아래에 두지 않는다**(옛 키 경로에 새 내용이 놓이면, 소스를
+되돌려도 고친 내용이 옛 키로 되살아난다). 그것은 거부하지 않고도 지켜진다. 로컬 제공자는 어긋남을 발견하면 임시 사본을
+버리고 소스를 **다시 스캔해**, 그 결과를 여느 자원과 똑같이 그 자신의 키 아래에 복사한다 — 레지스트리를 다시 읽거나
+재시작하면 계산될 바로 그 키라서, 재시작한 프로세스는 이 사본을 재사용한다. 기록된 파일이 없어졌거나 파일이 상한을 넘게
+자란 경우도 같은 길로 간다. 다시 스캔하므로 사본은 적재 때의 파일 목록에 새 바이트를 채운 것이 아니라 **지금의
+디렉터리**이고(더해진 파일, 빠진 파일, 바뀐 `.stageignore`), 크기 상한도 지금의 크기에 건다. 스킬 이름을 든 WARN 이 한 번
+남고, 그 대응은 사본의 마커가 있는 동안 제공자 인스턴스가 기억한다(이후 호출은 여느 사본처럼 마커의 `exists` 만 본다).
+다시 스캔한 뒤 복사하는 사이에 또 바뀌면 `StagingException` 이고 다음 호출이 처음부터 다시 한다. 이것이 바꾸는 것은
+**첫 복사**뿐이다. 적재된 키의 사본이 이미 있으면 — 이 프로세스가 만들었든 같은 판을 적재한 이전 프로세스가 만들었든 —
+그 사본이 쓰이고, 그 뒤의 수정은 레지스트리가 다시 읽을 때까지 보이지 않는다(위 "해시는 `stage()` 호출마다 계산하지
+않는다"). 그리고 스테이징되는 것은 **파일**이다. 적재 때 `SKILL.md` 에서 읽은 것 — 렌더되는 본문, 도구 제한, 훅 선언 —
+은 레지스트리가 다시 읽을 때까지 적재된 판이므로, 그 사이 모델은 옛 본문을 따라 새 스크립트를 돌릴 수 있다. 이것은
+스테이징이 도입되기 전(스크립트가 호스트 경로에서 그대로 돌던 때)과 같은 상태이고, 스킬 디렉터리에 쓸 수 있는 사람은
+어느 쪽이든 그 스크립트를 정할 수 있으므로 새 경계를 넘지 않는다. `contentKey` 를 키로 삼는 것은 사본의 경로와 제공자의
+검증 기록뿐이다 — main 소스에서 `StagedResource.getContentKey()` 를 읽는 곳은 로컬 제공자의 스테이징 하나라서, 다시 매긴
+키와 어긋날 다른 캐시가 없다. 별도 저장소에 있는 샌드박스 제공자의 `stage()` 는 이 변경에 들어 있지 않다.
+
+*다시 스캔하는 것은 스캔으로 만든 자원뿐이다.* 다시 스캔해도 되는 까닭은 자원의 파일 목록이 **곧 그 디렉터리**이기
+때문인데, 그것은 `StagedResource.scan(...)` 이 만든 자원에만 참이다. `StagedResource.builder()` 로 손수 조립한 자원(SPI
+코드, 원격 저장소의 키)은 작성자가 고른 목록을 갖고, 그 디렉터리에는 일부러 뺀 파일이 있을 수 있다 — 다시 스캔하면 그
+파일이 스테이징 영역에 복사되어 모델의 파일 도구와 셸이 읽게 된다. 그래서 자원은 자신의 출처를 싣는다
+(`StagedResource.isScanned()` — `scan()` 만 참으로 만들고 빌더에는 그렇게 말할 메서드가 없다). 로컬 제공자는 스캔된
+자원만 위와 같이 따라가고, 조립된 자원은 **기록된 대로 스테이징하거나 거부한다**: 바이트가 키와 어긋나면 EE-3 이전의
+`StagingException`("changed on disk after it was loaded … Restart the application, or reload the skill registry")이고,
+기록된 파일을 읽지 못했거나 상한을 넘게 자랐으면 그 읽기·크기 오류다. 어느 쪽이든 목록에 없는 파일은 임시 디렉터리에도
+쓰이지 않는다. 격리 브랜치의 `stage()` 도 같은 코드를 지나므로 같은 판단을 받는다. 출하되는 조립에서 자원을 만드는 곳은
+`DefaultSkillRegistry` 하나이고 `scan()` 을 쓰므로, 스킬에 대해서는 위 문단이 그대로다.
+
+*적재 때 이미 상한을 넘은 자원도 같은 길로 간다.* 기록된 크기가 상한을 넘으면 아무것도 복사하지 않고 거부하는데, 그 오류는
+"`.stageignore` 로 큰 파일을 빼라"고 말한다 — 그 말은 재시작 없이 통해야 한다. 그래서 기록된 크기도 마지막 판단이 아니다.
+로컬 제공자는 소스의 **지금 크기**를 파일 메타데이터로 구한다(`StagedResource.sizeOf` — 스캔과 같은 파일 집합이고 파일
+내용은 읽지 않는다). 상한 아래로 내려왔으면 바뀐 소스와 똑같이 다시 스캔해 그 키로 스테이징하고 기억한다. 여전히 넘으면
+**지금의 바이트 수**를 든 `StagingException` 이다. 그 비용은 그런 호출마다 목록 조회 한 번과 파일당 크기 조회 한 번이고,
+거부는 기억하지 않는다 — 기억하지 않으므로 사용자가 고친 직후의 호출이 그것을 본다. 그냥 너무 큰 스킬이 호출마다 통째로
+다시 읽히지는 않는다. 크기를 알려 주지 못하는 소스(읽기 쪽만 구현한 것)는 전체 스캔으로 대신하므로 거부되는 호출마다 한 번
+다 읽는다. 조립된 자원은 여기서도 기록된 대로다 — 기록된 크기가 넘으면 디렉터리를 보지 않고 거부한다.
+
 **스킬을 렌더하는 모든 경로가 거친다.** `${AIMON_SKILL_DIR}` 에 들어가는 값은 언제나 `stage()` 의 반환값이다.
 `Skill` 도구, 스킬 포크, 스킬 기반 슬래시 커맨드(`SkillBackedCommandExecutor` → `LlmSkillExecutor`)가 모두 여기에
 해당한다. 커맨드 경로는 지금 렌더 컨텍스트에 스킬 디렉터리를 아예 싣지 않아 `${AIMON_SKILL_DIR}` 가 빈 문자열이
@@ -335,6 +385,15 @@ public interface ExecutionEnvironmentProvider {
 환경이 필요하므로 뒤쪽, `SkillRenderContextAccess` 에서 `EXECUTION_ENVIRONMENT` 를 꺼내 `resolveSkillBaseDir`
 의 결과(제어 저장소 쪽 경로) 대신 `env.stage(...)` 의 반환값을 `skillBaseDir` 로 넣으면 된다. `skill.render` 는
 환경을 모르는 채로 남는다.
+
+**스킬이 선언한 셸 훅도 거친다 (EE-50).** 훅 명령의 환경 변수 `AIMON_SKILL_DIR` 도 `stage()` 의 반환값이다. 다만 본문과
+**시점과 환경이 다르다**: 본문은 스킬을 호출한 실행의 환경에 렌더할 때 한 번 스테이징하고, 훅은 **발화할 때마다 발화한
+실행의 환경**에 스테이징한다(`skill.hook.declarative.SkillHookDirectory`). 훅은 스킬의 fork 와 그 fork 가 띄운 실행에서
+발화하고 그 실행은 환경을 따로 해석하므로, 호출한 쪽에서 얻은 경로를 물려주면 fork 가 다른 환경에 놓였을 때 없는 경로가
+된다. 그래서 활성화가 fork 에 넘기는 것은 경로가 아니라 `StagedResource` 다 — `SkillScopedHookRegistry` 가 스킬의 훅과
+함께 싣고, 훅은 자기가 속한 층을 **동일성**으로 찾는다(`hooks.json` 훅은 어느 층에도 없어 변수를 받지 않는다). 스테이징에
+실패하면 명령을 돌리지 않는다(변수 없이 돌리면 다른 명령이 된다). 가드 이벤트에서는 그것이 거부이고 `failOpen` 이면
+통과다.
 
 **모든 스킬 저장소가 스테이징 소스를 낸다.** `SkillRepository` 는 스킬마다 `stage()` 에 넘길 소스 — 읽기만 하는
 `VirtualFileSystem` 과 그 안의 스킬 디렉터리 — 를 돌려준다(`resolveSource`). VFS 저장소는 자기 VFS 를, 호스트
@@ -361,7 +420,14 @@ public interface ExecutionEnvironmentProvider {
 (`getAllSkills`, `reloadAll`)은 그 스킬을 경고 로그와 함께 빼고 나머지를 돌려주므로, 목록으로 만드는 `Skill` 도구의
 정의, `/skills`, 스킬 기반 슬래시 커맨드, REPL 배너는 그대로 뜬다. 그 스킬을 이름으로 부르면(`getSkill`) 같은 오류가
 난다. 허용 루트는
-`PathSkillRepository.builder(root).allowedLinkRoot(...)` 로 정하고, 기본값은 비어 있어 저장소 루트만 허용한다. 조상으로
+`PathSkillRepository.builder(root).allowedLinkRoot(...)` 로 정하고, 기본값은 비어 있어 저장소 루트만 허용한다.
+*2026-10-05 (EE-35) 이후:* 디스크에서 읽는 에이전트 번들의 `skills/` 에는 그 목록을 **설정으로** 준다 — 스타터
+`aimon.skill.allowed-link-roots`, CLI `agent.allowedSkillLinkRoots`, 부트스트랩 `AimonStackSpec.allowedSkillLinkRoots`
+가 `AdaptiveAgentBundleLoader` → `FileSystemAgentBundleLoader` 를 거쳐 그 빌더에 닿는다. 허용 루트는 **절대 경로**여야
+하고(상대 경로와 빈 문자열은 프로세스를 띄운 디렉터리에 따라 뜻이 달라진다) **파일 시스템 루트**(`/`, 정규화하면 루트가
+되는 `/opt/..`)일 수 없다 — 모든 경로가 그 아래라 규칙이 꺼진다. 둘 다 목록을 받는 자리에서 거부하며, 빌더와
+`VirtualFileSystems.readOnlyLocal` 로 직접 조립할 때도 같다. 없는 디렉터리는 받아들이고 아무것도 허용하지 않는다. 루트로
+가는 링크인 허용 루트도 아무것도 허용하지 않는다. 조상으로
 되돌아가는 링크는 경고와 함께 건너뛰고, 끊긴 링크는 일반 파일이 아니므로 목록에 없다. 마지막 안전망으로, 소스에서
 `SKILL.md` 가 보이는 디렉터리가 파일 0개로 스캔되고 소스의 목록에도 아무 파일이 없으면 레지스트리가 적재를 실패시킨다 —
 소스가 디렉터리 안을 보지 못한 것이고, 그대로 두면 빈 사본이 스테이징된다. 목록에는 파일이 있는데 `.stageignore` 가 전부
@@ -426,7 +492,7 @@ public interface ExecutionEnvironmentProvider {
   같은 샌드박스다. 코어가 약속하는 것은 "포크는 부모의 격리 단위(작업 공간) 밖으로 나가지 않는다"이고, "부모와
   같은 파일 시스템"은 기본 제공자의 성질이지 계약이 아니다. 부모가 사용 불가 환경이면 제공자는 포크도 사용 불가로
   돌려줘야 한다 — 부모를 만들지 못한 이유(주체 거부 등)를 포크가 새 해석으로 우회하면 안 된다.
-  `SubagentExecutionEnvironment` 에 부모 `ExecutionEnvironment` 필드를 더한다. 포크의 요청에는 포크 자신의 정의도
+  `SubagentLaunchContext`(이 설계를 쓸 때의 이름은 `SubagentExecutionEnvironment` — EE-61 로 개명) 에 부모 `ExecutionEnvironment` 필드를 더한다. 포크의 요청에는 포크 자신의 정의도
   실린다 — `EnvironmentRequest.fork()` 가 서브에이전트 이름과 정의 파일의 `attributes`(점 표기로 펼친
   `Map<String, String>`, 예: `sandbox.slot`)를 담은 `ForkDefinition` 을 준다. 제공자가 포크마다 다른 슬롯을 고르는
   근거가 이것이다. 메인 턴은 `agent()` 의 `getAttributes()` 에서 같은 값을 읽는다. 두 경우를 한 번에 푸는 것이
@@ -436,10 +502,12 @@ public interface ExecutionEnvironmentProvider {
   `8`, `on` → `true`) 평범한 텍스트가 아닌 값은 따옴표로 감싼다. 워크플로 단계도 포크이므로 같은 값을 싣는다(EE-42).
   단계의 서브에이전트는 등록된 정의가 아니라 인라인으로 만들어지므로, 속성은 이렇게 채운다 — GraalJS 의
   `agent({...})` 단계는 `agentType` 과 같은 이름으로 등록된 서브에이전트의 속성을 복사하고, 스크립트가 준
-  `attributes` 는 등록된 정의가 정하지 않은 키만 더할 수 있다(등록된 키는 고정되어 다른 값을 주면 스크립트가 실패하고,
-  키를 지울 수도 없다. 등록되지 않은 `agentType` 에는 고정할 키가 없다 — EE-45). 내장 `Workflow` 도구의
+  `attributes` 는 운영자가 허용한 키만 더할 수 있다(등록된 키는 고정되어 다른 값을 주면 스크립트가 실패하고, 키를 지울
+  수도 없다. 그 밖의 키 — 등록된 정의가 정하지 않은 키와 등록되지 않은 `agentType` 의 모든 키 — 는
+  `GraalJsWorkflowTool.Builder.scriptAttributeKeys` 에 있어야 하며, 그 목록은 기본이 비어 있다 — EE-45). 내장 `Workflow` 도구의
   단계는 역할마다 정해진 이름(`workflow-perspective` · `workflow-synthesizer` · `workflow-candidate` · `workflow-judge` ·
-  `workflow-skeptic`)으로 등록된 서브에이전트의 속성을 복사한다. 어느 쪽이든 등록된 정의에서 가져오는 것은 속성뿐이고,
+  `workflow-skeptic`)으로 등록된 서브에이전트의 속성을 복사한다. 그렇게 속성만 주려고 둔 정의는 `hidden: true` 로 모델에게서
+  숨긴다 — `Task` 의 목록에 나오지 않고 모델이 이름을 대도 거절되며, 이름으로 찾는 쪽은 그대로 찾는다(EE-44). 어느 쪽이든 등록된 정의에서 가져오는 것은 속성뿐이고,
   이름·프롬프트·도구는 단계의 것 그대로다. 속성이 비면 제공자는 위의 기본(부모와 같은 샌드박스)을 따른다. 설계와
   구현이 달라진 점은 [`execution-environment-ee42-workflow-attributes.md`](execution-environment-ee42-workflow-attributes.md)
 - **워크플로 격리 브랜치** — 러너는 `parentEnv.isolate(branchKey)` 를 부른다. 비어 있으면(격리를 지원하지 않는
@@ -447,7 +515,7 @@ public interface ExecutionEnvironmentProvider {
   서로의 파일을 덮는다. `isolate()` 가 던지면(격리를 여기서 거절한다 — 사용 불가 환경, 이미 브랜치인 환경) 러너는
   그 메시지를 오류에 싣고 예외를 원인으로 잇는다. 사용 불가 환경은 빈 값이 아니라 자기 원인(제공자 없음, 샌드박스
   다운)을 담은 `ExecutionEnvironmentUnavailableException` 을 던진다
-- `SubagentExecutionEnvironment.toolRegistry` 는 부모 레지스트리 그대로다. 브랜치별 레지스트리가 없어진다
+- `SubagentLaunchContext.toolRegistry` 는 부모 레지스트리 그대로다. 브랜치별 레지스트리가 없어진다
 - `WorktreeMerge.promote(baseVfs, branchKeys, policy)` 는 지금 베이스 VFS 하나와 브랜치 키 목록을 받아
   `.worktrees/{key}/` 를 스스로 찾아간다. 브랜치 위치를 아는 것이 환경이 되므로, 부모 환경과 브랜치 환경 목록을
   받는 형태로 바뀐다. 동작(브랜치 간 충돌을 먼저 훑고 `Policy` 로 고른 뒤 VFS 복사로 올리는 병합)은 그대로다.
@@ -546,8 +614,8 @@ public interface ExecutionEnvironmentProvider {
 `OrcaToolProviderContext` 에서 `getFileSystem()` 과 `getShell()` 을 **삭제**하고 `getControlFileSystem()` 을
 더한다. 도구 등록 시점에 작업 환경을 붙잡을 수 있는 통로를 남겨 두면, 외부 프로바이더가 그것을 생성자에 넣어
 §1.1 을 다시 만든다. `getEnvironment()` 는 §10 이후 `timeZone` 만 남은 값을 돌려주게 되므로 그 결정(§14)을
-따른다 — 그 결정은 내려졌고(EE-14), 지금 이 접근자는 `getUserLocale()` 이며 `at.aimon.core.base.UserLocale` 을
-돌려준다. 외부 소비자 둘의 영향:
+따른다 — 그 결정은 내려졌고(EE-14) 접근자는 `getUserLocale()` 이 되었다가, 값을 읽는 곳이 없어 접근자째 지워졌다(EE-60).
+외부 소비자 둘의 영향:
 
 - `OrcaSandboxToolProvider`(aimon-sandbox) — 워크스페이스 샌드박스 설계에서 샌드박스 전용 실행 도구는 모두
   없어진다. 명령과 파일은 코어의 `Bash`·파일 도구가 샌드박스 환경에서 처리한다. 남는 것은 슬롯의 수명을 다루는
@@ -580,6 +648,12 @@ Edit(p) / Write(p) -> if exists(p):
 값을 돌려줘야 한다. mtime 해상도가 초 단위인 파일 시스템에서 같은 초 안에 크기를 바꾸지 않고 두 번 쓰면 놓칠 수
 있다. 그 백엔드는 `etag` 로 내용 해시를 준다.
 
+*2026-10-05 (EE-5) 이후:* 위 "GridFS(md5)" 는 드라이버 5.x 에서 md5 가 없어져 처음에는 파일 문서의 `ObjectId` 로 지어졌고
+(같은 내용을 다시 써도 "바뀌었다" 가 되는 안전한 오탐), 지금은 **내용의 SHA-256** 이다 — 업로드가 끝난 뒤 파일 문서의
+메타데이터에 적고, 해시가 없는 문서(이전에 쓴 파일)는 계속 `ObjectId` 로 답하므로 마이그레이션이 없다. 로컬 파일
+시스템에는 **선택형** 내용 해시 etag 가 생겼다(기본 꺼짐, stamp 마다 파일을 통째로 읽는 값). 백엔드별 표는
+[`../filesystem/backend-contract.md`](../filesystem/backend-contract.md) §4.2 가 갖는다.
+
 stamp 맵의 키는 모델이 넘긴 문자열이 아니라 **환경의 파일 시스템이 정규화한 경로**다. `a.txt` 로 읽고
 `./a.txt` 나 절대 경로로 고치는 흔한 경우가 "읽지 않았다"로 거부되면 안 된다.
 
@@ -590,12 +664,15 @@ stamp 맵의 키는 모델이 넘긴 문자열이 아니라 **환경의 파일 �
 
 `ReadTool.READ_FILES_KEY`(`ToolContextKey<Set<String>>`)는 삭제하고 `FILE_STAMPS_KEY`(`Map<String, FileStamp>`,
 동시 접근 안전)로 바꾼다. 실행 단위 값이라는 점은 같다 — 두 실행기가 `createToolContext()` 에서 실행당 한 번
-만든다.
+만들고, `RoutineExecutor` 가 `buildToolContext()` 에서 발화당 한 번 만든다. 스킬 기반 슬래시 커맨드의 컨텍스트는
+명령마다 새 맵을 받는다.
 
 실행 단위라는 것이 행동 변화를 하나 만든다. 지금은 `Edit` 만 "이번 실행에서 읽었는가"를 보지만, 바뀐 뒤에는 **기존
 파일을 덮어쓰는 `Write` 도** 같은 실행 안에서 `Read` 를 먼저 요구한다. 대화형 세션에서 이전 턴에 읽은 파일을
-이번 턴에 덮어쓰려면 다시 읽어야 하고, 포크도 부모의 stamp 를 물려받지 않는다. 의도한 것이다 — 턴 사이에는 사람과
-셸이 파일을 바꿀 시간이 가장 길다. 에러 문구가 다음 행동("Read it again")을 알려 주므로 모델은 한 번의 왕복으로
+이번 턴에 덮어쓰려면 다시 읽어야 하고, 포크도 부모의 stamp 를 물려받지 않는다. 스케줄 루틴도 같다 — 기존 파일을
+덮어쓰는 `Write` 단계는 같은 발화의 앞 단계에서 그 파일을 `Read` 해야 하고, 앞 발화의 stamp 는 남지 않는다
+([`llm-scheduling-agent.md`](../scheduling/llm-scheduling-agent.md) §3.2 에 마이그레이션 안내가 있다). 의도한 것이다 —
+턴 사이와 발화 사이에는 사람과 셸이 파일을 바꿀 시간이 가장 길다. 에러 문구가 다음 행동("Read it again")을 알려 주므로 모델은 한 번의 왕복으로
 회복한다.
 
 ---
@@ -653,8 +730,15 @@ CLI 처럼 "사용자 프로젝트 디렉터리에서 돈다"는 배치에서는
 풀어서 절대 경로가 규칙을 비껴간다. 아래에서는 브랜치 경로의 표기 — 브랜치 기준 상대 경로, 워크스페이스나 브랜치
 루트 아래의 절대 경로(`./`·`//` 가 섞이거나 브랜치 키의 대소문자가 달라도) — 가 모두 `.worktrees/{key}/` 아래의 한
 위임 경로로 줄어든 뒤다(나머지 세그먼트의 대소문자는 규칙이 무시한다). 줄지 않는 것은 브랜치 안에서 `.worktrees/`
-를 가리키는 경로다 — `.worktrees/other/x` 나 상대 경로로 쓴 `.worktrees/{key}/x` 는 브랜치 안에 중첩되어 규칙 밖에
-놓이고, 병합이 그 디렉터리로 올린다(백로그 EE-46). 브랜치가 공유하는 스테이징 접두어도 대소문자를 무시하고 맞추므로,
+를 가리키는 경로다 — `.worktrees/other/x`(상대든 `{ws}/.worktrees/other/x` 든)나 상대 경로로 쓴 `.worktrees/{key}/x`
+는 브랜치 경로의 다른 표기가 아니다. 예전에는 그것이 브랜치 안에 중첩되어 규칙 밖에 놓였고 병합이 그 디렉터리 —
+다른 브랜치의 것이거나 그 브랜치 자신의 것 — 로 올렸다. *2026-10-05 (EE-46) 이후:* **브랜치는 `.worktrees/` 를 가리킬
+수 없다.** 브랜치 기준 경로가 `.worktrees` 이거나 그 아래이면(대소문자 무시) 스코프가 모든 연산을 `InvalidPathException`
+으로 거절하고, 브랜치 루트에 있는 `.worktrees/` — 파일 도구를 거치지 않는 셸이 만든 것 — 는 브랜치 목록에서 빼므로
+병합이 보지 못한다. 이것은 경로 규칙이 아니라 **스코프가 자기 디렉터리 이름을 예약한 것**이다. 브랜치 규칙은 여전히
+부모의 것 그대로이고(위), 규칙을 비운 어셈블리의 브랜치에서도 예약은 유효하다. 예약되는 것은 브랜치 루트의 그 이름
+하나뿐이라 `docs/.worktrees/x` 는 보통 파일이고, 브랜치 루트의 절대 경로(`{ws}/.worktrees/{key}/x`)는 예전대로 브랜치의
+`x` 다. 브랜치가 공유하는 스테이징 접두어도 대소문자를 무시하고 맞추므로,
 `.AIMON-STAGED/x` 쓰기는 브랜치 안에 떨어지지 않고 부모의 `READ_ONLY` 규칙에 걸린다. 셸이 브랜치 루트에 만든
 스테이징 디렉터리는 어떤 표기로도 닿지 않으므로(모두 부모의 것으로 간다) 브랜치 목록에서 빠지고, 병합이 올리지
 않는다. 이것은 부모가 스테이징 영역을 지킨다는 전제 위에 있다 — 그 규칙을 뺀 어셈블리의 브랜치는 루트 스테이징
@@ -695,9 +779,9 @@ CLI 처럼 "사용자 프로젝트 디렉터리에서 돈다"는 배치에서는
 아니라 사용자·애플리케이션의 속성이므로 `Environment` 에 남긴다(→ 이름을 바꿀지는 §14).
 
 이 문단과 아래 문단의 `Environment` 는 그 뒤 **없어졌다**(EE-14). `timeZone` 은 `at.aimon.core.base.UserLocale` 로 옮겨
-갔고, 훅 컨텍스트 · 도구 프로바이더 컨텍스트 · 런타임의 접근자는 `getUserLocale()`, `ToolContext` 의 키는
-`ToolContextKeys.USER_LOCALE`(`"userLocale"`)이다. 옮긴 것은 이름과 위치뿐이다 — 프롬프트는 전에도 지금도 시간대를 싣지
-않고, `timeZone` 을 읽는 운영 코드는 없다(백로그 EE-60). 옛 이름과 새 이름의 대응은
+갔다가, 읽는 운영 코드가 하나도 없어 2026-10-05 에 **값과 배관이 함께 지워졌다**(EE-60) — `UserLocale`, 훅 컨텍스트 · 도구
+프로바이더 컨텍스트 · 런타임의 `getUserLocale()`, `ToolContextKeys.USER_LOCALE`(`"userLocale"`)은 이제 없다. 프롬프트는 전에도
+지금도 시간대를 싣지 않는다 — 날짜가 필요한 배포는 자기 시간대로 계산해 시스템 프롬프트 변수로 건넨다. 옛 이름과 새 이름의 대응은
 [`../../migration/rename-maps.md`](../../migration/rename-maps.md), 설계는
 [`execution-environment-ee14-user-locale.md`](execution-environment-ee14-user-locale.md) 에 있다.
 
@@ -828,7 +912,7 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 > 형식)은 아직 열려 있다. **백그라운드 명령을 끝낼 수단도 2026-10-03 에 닫혔다**(EE-13, 작업 목록의 수명을 다룬 EE-7 과
 > 함께) — 아래 불릿의 "끝내는 도구가 없다" 는 더는 사실이 아니고, 지금의 동작은 §5.3 에 있다. **`Environment` 의 남은 필드도
 > 2026-10-03 에 닫혔다**(EE-14) — 아래 불릿의 "옮기고 없앨지" 는 더는 질문이 아니다. `Environment` 는 없어졌고 `timeZone` 은
-> `at.aimon.core.base.UserLocale` 에 있다. 지금의 이름은 §10 에, 설계는
+> `at.aimon.core.base.UserLocale` 로 옮겨 갔다가 읽는 곳이 없어 지워졌다(EE-60, 2026-10-05). 경위는 §10 에, 설계는
 > [`execution-environment-ee14-user-locale.md`](execution-environment-ee14-user-locale.md) 에 있다.
 
 - **`Environment` 의 남은 필드** — `platform`/`osVersion`/`workingDirectory` 가 서술자로 가면 `timeZone` 만 남는다.
@@ -888,7 +972,7 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 - [`execution-environment-implementation.md`](execution-environment-implementation.md) — 이 설계의 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점
 - [`execution-environment-ee9-ee12-hook-environment.md`](execution-environment-ee9-ee12-hook-environment.md) — 훅 컨텍스트에 실행 환경을 싣고 스킬 선언 훅의 셸을 실행 환경으로 옮긴 설계(EE-9 · EE-12)
 - [`execution-environment-ee13-ee7-background-lifecycle.md`](execution-environment-ee13-ee7-background-lifecycle.md) — 백그라운드 `Bash` 종료(`KillShell`, 셸 취소 계약, 환경이 정하는 상한)와 제공자 · 작업 목록의 수명 상향 설계(EE-13 · EE-7)
-- [`execution-environment-ee14-user-locale.md`](execution-environment-ee14-user-locale.md) — `Environment` 를 없애고 `timeZone` 을 `UserLocale` 로 옮긴 설계(EE-14)
+- [`execution-environment-ee14-user-locale.md`](execution-environment-ee14-user-locale.md) — `Environment` 를 없애고 `timeZone` 을 `UserLocale` 로 옮긴 설계(EE-14). 그 `UserLocale` 을 지운 기록(EE-60)은 §12
 - [`execution-environment-ee49-ee51-ee58-isolation-boundary.md`](execution-environment-ee49-ee51-ee58-isolation-boundary.md) — 한 런타임을 나눠 쓰는 실행들 사이의 경계 셋: 스킬 훅의 발화 범위, 명령을 돌리지 못한 가드의 fail-closed, 백그라운드 작업의 가시 범위(EE-49 · EE-51 · EE-58)
 - [`execution-environment-ee70-ee71-fail-closed.md`](execution-environment-ee70-ee71-fail-closed.md) — 그 fail-closed 를 두 곳에 더 이은 설계: `onStart` 훅이 막으면 포크가 시작하지 않는다, 로드되지 않는 `hooks.json` 으로는 뜨지 않는다(EE-70 · EE-71)
 - [`../workflow/workflow.md`](../workflow/workflow.md) §6.3 — worktree 격리

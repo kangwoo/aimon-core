@@ -13,10 +13,11 @@ import at.aimon.core.llms.anthropic.AnthropicThinkingDisplay;
 import at.aimon.core.llms.anthropic.AnthropicThinkingMode;
 
 /**
- * yaml 로 적은 Anthropic 전용 설정 — {@code llm.anthropic} 아래의 네 키.
+ * yaml 로 적은 Anthropic 전용 설정 — {@code llm.anthropic} 아래의 thinking 키 넷과 샘플링 기본값 하나
+ * ({@code temperature}).
  *
  * <p>
- * 네 키 모두 <b>이름이 Anthropic 개념을 담고 있어서</b> 공통 {@code llm.*} 이 아니라 벤더 네임스페이스로 내려왔다 —
+ * thinking 키 넷은 모두 <b>이름이 Anthropic 개념을 담고 있어서</b> 공통 {@code llm.*} 이 아니라 벤더 네임스페이스로 내려왔다 —
  * "thinking" 은 이 현상에 대한 Anthropic 의 단어이고(이 저장소의 중립 명사는 {@code ReasoningEffort} ·
  * {@code ReasoningTrace} 다), {@code budget_tokens} 는 Anthropic 요청 본문의 필드 이름 그대로이며,
  * "thinking block" 은 서명이 붙은 {@code thinking} 콘텐츠 블록이라는 와이어 명사다. 네 번째인
@@ -53,6 +54,7 @@ public class AnthropicProviderConfig {
     private Integer thinkingBudgetTokens;
     private AnthropicThinkingDisplay thinkingDisplay;
     private Boolean replayThinkingBlocks;
+    private Double temperature;
 
     /** AnthropicProviderConfig를 생성한다. */
     public AnthropicProviderConfig() {
@@ -121,17 +123,51 @@ public class AnthropicProviderConfig {
     }
 
     /**
+     * 이 배포의 기본 {@code temperature} — 에이전트 정의가 자기 값을 적지 않은 요청에만 실린다.
+     *
+     * <p>
+     * <b>우선순위는 셋이고 여기가 가운데다.</b> 에이전트 정의의 {@code model.temperature} 가 있으면 그것이 이기고,
+     * 없으면 이 값이 실리며, 둘 다 없으면 <b>아무것도 실리지 않아</b> 서버 기본값이 적용된다
+     * ({@code docs/design/llm/request-parameters.md} §2). 서브에이전트 요청도 같은 규칙이다: 띄운 에이전트의 값을
+     * 물려받고, 그 정의에 값이 없으면 아무것도 싣지 않으므로 이 키가 닿는다(같은 문서 §3.5).
+     *
+     * <p>
+     * <b>Anthropic 의 범위는 {@code 0.0}–{@code 1.0} 이다</b> — OpenAI 의 {@code 0.0}–{@code 2.0} 과 다르고,
+     * 그것이 이 키가 공통 {@code llm.*} 이 아니라 벤더 블록에 있는 이유다. 범위는
+     * {@link at.aimon.core.llms.anthropic.AnthropicConfig} 한 곳이 알고, 벗어나면 클라이언트를 조립할 때 이 키의
+     * 이름으로 기동이 실패한다.
+     *
+     * <p>
+     * <b>실리지 않는 요청이 둘 있고, 둘 다 클라이언트가 한 번 경고한다.</b> thinking 파라미터가 실린 요청
+     * (Anthropic 은 thinking 과 {@code temperature} 를 함께 받지 않는다), 그리고 내장 capability 행이 샘플링을 받지
+     * 않는다고 적은 모델.
+     *
+     * <p>
+     * <b>이 블록의 샘플링 키는 이것 하나다.</b> Anthropic API 에는 penalty 가 없고, 이 클라이언트는 {@code top_p} 를
+     * 요청의 {@code LlmModel} 에서만 읽는다 — 그래서 여기에 {@code topP} 를 적으면 모르는 키로 거절된다.
+     *
+     * @return 적힌 값, 또는 적지 않았으면 null
+     */
+    public Double getTemperature() {
+        return temperature;
+    }
+
+    public void setTemperature(Double temperature) {
+        this.temperature = temperature;
+    }
+
+    /**
      * 이 블록에 적힌 것이 하나도 없는가.
      *
      * <p>
      * {@code anthropic:} 이라고만 적고 아무 자식도 두지 않은 블록과, 블록 자체가 없는 설정을 같은 것으로 만든다 —
      * 그래야 "읽지 않는 분기가 이 블록을 거절한다" 가 빈 블록에 대해 발화하지 않는다.
      *
-     * @return 네 키가 모두 비어 있으면 true
+     * @return 키가 모두 비어 있으면 true
      */
     public boolean isEmpty() {
         return thinkingMode == null && thinkingBudgetTokens == null && thinkingDisplay == null
-                && replayThinkingBlocks == null;
+                && replayThinkingBlocks == null && temperature == null;
     }
 
     @Override
@@ -145,19 +181,20 @@ public class AnthropicProviderConfig {
         final AnthropicProviderConfig that = (AnthropicProviderConfig) o;
         return thinkingMode == that.thinkingMode && Objects.equals(thinkingBudgetTokens, that.thinkingBudgetTokens)
                 && thinkingDisplay == that.thinkingDisplay
-                && Objects.equals(replayThinkingBlocks, that.replayThinkingBlocks);
+                && Objects.equals(replayThinkingBlocks, that.replayThinkingBlocks)
+                && Objects.equals(temperature, that.temperature);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(thinkingMode, thinkingBudgetTokens, thinkingDisplay, replayThinkingBlocks);
+        return Objects.hash(thinkingMode, thinkingBudgetTokens, thinkingDisplay, replayThinkingBlocks, temperature);
     }
 
     @Override
     public String toString() {
         return "AnthropicProviderConfig{" + "thinkingMode=" + thinkingMode + ", thinkingBudgetTokens="
                 + thinkingBudgetTokens + ", thinkingDisplay=" + thinkingDisplay + ", replayThinkingBlocks="
-                + replayThinkingBlocks + '}';
+                + replayThinkingBlocks + ", temperature=" + temperature + '}';
     }
 
     /**

@@ -61,6 +61,10 @@ public final class AgentListCommand extends SystemCommand implements DirectExecu
             for (Subagent subagent : subagents) {
                 final SubagentMetadata metadata = subagent.getMetadata();
                 output.append(String.format("  %s", subagent.getName()));
+                if (metadata.isHidden()) {
+                    // Shown to the operator, who registered it; the Task tool neither lists nor launches it.
+                    output.append(" [hidden]");
+                }
                 if (metadata.getDescription() != null && !metadata.getDescription().isEmpty()) {
                     output.append(String.format(" - %s", metadata.getDescription()));
                 }
@@ -73,6 +77,10 @@ public final class AgentListCommand extends SystemCommand implements DirectExecu
             }
             output.append(Constants.NEWLINE);
             output.append(String.format("Total: %d subagent(s)", subagents.size()));
+            final long hidden = subagents.stream().filter(subagent -> subagent.getMetadata().isHidden()).count();
+            if (hidden > 0) {
+                output.append(String.format(", %d hidden from the model", hidden));
+            }
         }
 
         return CommandExecutionResult.success(output.toString());

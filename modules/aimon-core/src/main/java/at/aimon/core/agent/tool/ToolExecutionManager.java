@@ -41,7 +41,7 @@ import at.aimon.core.llm.ToolUse;
  *     registry.register(new BashTool(shell));
  *
  *     ToolUse toolUse = ToolUse.of("tool_123", "bash", Map.of("command", "ls -la"));
- *     ToolContext context = ToolContext.builder().put(ToolContextKeys.USER_LOCALE, userLocale).build();
+ *     ToolContext context = ToolContext.builder().put(ToolContextKeys.PRINCIPAL, principal).build();
  *
  *     // Execute without permission restrictions
  *     ToolExecutionResult result = manager.execute(toolUse, context, registry);

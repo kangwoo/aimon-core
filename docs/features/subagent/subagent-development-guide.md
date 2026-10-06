@@ -142,6 +142,7 @@ Subagent dbTriage = Subagent.builder()
 | `model(String)` | | `null` (실행기 기본 모델) |
 | `maxIterations(int)` | | `1000` |
 | `attributes(Map<String, String>)` | | 빈 맵 (마크다운 `attributes:` 블록을 점 표기 키로 펼친 것과 같다 — 예: `sandbox.slot`. 코어는 싣기만 하고, 실행 환경 제공자 같은 외부 구성 요소가 읽는다) |
+| `hidden(boolean)` | | `false` (마크다운 `hidden: true` 와 같다. 모델에게서 숨긴다 — `Task` 도구의 목록에 나오지 않고 모델이 이름을 대도 거절된다. 레지스트리는 그 이름을 그대로 찾아 주므로 `Workflow` 역할 · `WorkflowJs` 의 `agentType` · fork 스킬의 `agent:` 는 전처럼 쓴다. 마크다운에서는 따옴표 없는 `true` / `false` 만 받고 그 밖의 값은 파싱 오류다) |
 
 > **도구 문자열 포맷**은 마크다운 `allowed-tools` 와 동일하다: `"Read"`, `"Bash(git:*)"`, `"Bash(npm install)"` 등.
 > 내부적으로 `AllowedTool.parse(...)`를 거치므로 파싱 로직이 중복되지 않는다.
@@ -161,7 +162,7 @@ Subagent.builder().name("plain").systemPrompt("You are a plain agent.").build();
 You are a plain agent.
 ```
 
-둘 다 `maxIterations=1000`, `model=null`, `whenToUse=null`, 도구 제한 없음, 속성 없음(빈 `attributes`)이 됩니다.
+둘 다 `maxIterations=1000`, `model=null`, `whenToUse=null`, 도구 제한 없음, 속성 없음(빈 `attributes`), 숨김 아님(`hidden=false`)이 됩니다.
 마크다운의 `attributes:` 블록(예: `attributes:` 아래 `sandbox:` → `slot: build`)은 코드의
 `.attributes(Map.of("sandbox.slot", "build"))` 와 같습니다.
 
@@ -336,7 +337,7 @@ public interface SubagentBehavior {
 - `support`(`SubagentBehaviorSupport`)는 취소 신호와 결과 빌더를 제공한다: `cancellationSignal()`,
   `isCancelledOrInterrupted()`, `success(finalAnswer)`, `failure(errorMessage)` — conversation snapshot/metadata를
   직접 구성할 필요가 없다.
-- 구현체는 `context.getToolRegistry()`/`getUserLocale()` 등으로 도구·LLM을 **선택적으로** 쓸 수 있으나, 기본
+- 구현체는 `context.getToolRegistry()`/`getDefaultModel()` 등으로 도구·LLM을 **선택적으로** 쓸 수 있으나, 기본
   기대값은 순수 코드다. `Tool.execute()`처럼 throw 대신 `support.failure(...)` 반환을 권장한다(러너가 throw/null도
   failure로 셰이핑하는 안전망 제공).
 
@@ -347,7 +348,7 @@ public interface SubagentBehavior {
 
 | `support` accessor | ReAct가 쓰는 값과 동일? | 설명 |
 |--------------------|--------------------------|------|
-| `resolvedModel()` | ✅ | 호출별 override, 없으면 서브에이전트 `model`, 없으면 default 의 이름에 default 의 temperature·max tokens 를 합친 **해석된 모델**. 이름은 쓰인 그대로 보내고(별칭을 풀지 않는다) 비어 있을 수 있으며, 그러면 클라이언트가 자기 기본 모델을 보낸다. (raw `ctx.getDefaultModel()`은 override 도 `model` 도 미반영) |
+| `resolvedModel()` | ✅ | 호출별 override, 없으면 서브에이전트 `model`, 없으면 default 의 이름에 default 의 샘플링 값(`temperature` · `topP` · 두 penalty — 띄운 에이전트가 적지 않았으면 싣지 않는다)과 max tokens 를 합친 **해석된 모델**. 이름은 쓰인 그대로 보내고(별칭을 풀지 않는다) 비어 있을 수 있으며, 그러면 클라이언트가 자기 기본 모델을 보낸다. 띄운 에이전트의 `model.reasoningEffort` 와 `model.reasoningSummary` 도 물려받는다(`none` 포함, 중첩 포크도) — 서브에이전트 정의의 `model` 은 이름 하나라 자기 값을 적을 자리가 없고, 띄운 에이전트가 적지 않았으면 배포의 키를 따른다. 값이 서브에이전트의 모델에 닿는지는 그 모델의 능력으로 다시 판정한다 — 그 모델의 사다리에 없는 effort 는 보내지 않고 한 번 WARN 으로 말한다. (raw `ctx.getDefaultModel()`은 override 도 `model` 도 미반영) |
 | `scopedToolRegistry()` | ✅ | 서브에이전트 allow-list로 필터된 registry (**노출만, 강제 아님** — trusted code는 `ctx.getToolRegistry()`로 전체 접근 가능) |
 | `effectiveLlmCallMetadata()` | ✅ | 서브에이전트 사용량 귀속 metadata (component=이름, feature="subagent") |
 | `llmGateway()` | ✅ | ReAct와 동일 config(기본 재시도, 폴백 없음)의 게이트웨이. `LlmClient` 미배선 시 `Optional.empty()` |
@@ -402,10 +403,14 @@ agentExecutorFactory.withSubagentBehaviorRegistry(codeBehavior);  // OrcaAgentEx
 > `systemPrompt`는 데이터 엔트리의 필수 필드라 무엇이든 채워야 하지만, 행위가 ReAct 루프를 대체하므로 코드-행위
 > 서브에이전트에선 실제로 사용되지 않는다(플레이스홀더로 둔다).
 
-### 제한: OnStart/OnStop 훅 미발화
+### OnStart 는 가드로만 발화하고, OnStop 은 발화하지 않는다
 
-코드 경로는 ReAct 루프를 우회하므로, 루프 내부 훅인 **OnStart/OnStop은 발화되지 않는다**(OnStart의 대화-피드백
-주입은 대화 루프가 있어야 의미가 있고, OnStop 종료 신호는 SubagentStop과 중복이다). 디스패치 경계 훅인
+코드 경로는 ReAct 루프를 우회하지만 **OnStart 는 behavior 를 부르기 전에 발화한다.** block 이면 behavior 는 실행되지 않고
+ReAct 포크와 같은 실패 결과(`Execution blocked by OnStart hook [SUBAGENT/<이름>]: <사유>`)로 끝난다 — 운영자의 `hooks.json`
+`onStart` 가드가 코드 서브에이전트를 비켜 가지 않게 하기 위해서다. ReAct 포크와 다른 점은 셋이다. block 이 아닌 피드백은
+**버려진다**(대화-피드백 주입은 대화 루프가 있어야 의미가 있다). 훅이 받는 실행 환경은 포크의 것이 아니라 **스폰한 실행의
+것**이다(behavior 가 `context.getExecutionEnvironment()` 로 받는 그 환경 — 러너는 포크용 환경을 따로 만들지 않는다).
+**OnStop 은 발화하지 않는다**(종료 신호는 SubagentStop 과 중복이다). 디스패치 경계 훅인
 **SubagentStart/SubagentStop은 그대로 발화**되므로 옵저버빌리티/감사에는 손실이 없다.
 
 ### 전체 예제

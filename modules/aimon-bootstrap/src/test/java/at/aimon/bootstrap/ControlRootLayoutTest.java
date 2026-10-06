@@ -141,6 +141,27 @@ class ControlRootLayoutTest {
         }
     }
 
+    @Test
+    @DisplayName("EE-5: contentHashStamps reaches the workspaces the stack builds; by default their files have no etag")
+    void contentHashStampsReachesTheLocalWorkspace(@TempDir Path plain, @TempDir Path hashed) throws Exception {
+        final AgentRuntimeId ops = AgentRuntimeId.fromName("ops");
+        try (AimonStack stack = AimonStackBuilder.build(spec(plain).build())) {
+            final ExecutionEnvironment env = environmentOf(stack, ops);
+            env.fileSystem().write("a.txt", "aaaa");
+
+            assertThat(env.fileSystem().getMetadata("a.txt").getEtag()).isEmpty();
+        }
+        try (AimonStack stack = AimonStackBuilder.build(spec(hashed)
+                .executionEnvironment(
+                        ExecutionEnvironmentSpec.builder().contentSearch(false).contentHashStamps(true).build())
+                .build())) {
+            final ExecutionEnvironment env = environmentOf(stack, ops);
+            env.fileSystem().write("a.txt", "aaaa");
+
+            assertThat(env.fileSystem().getMetadata("a.txt").getEtag().orElseThrow()).startsWith("sha256:");
+        }
+    }
+
     private static ExecutionEnvironment environmentOf(AimonStack stack, AgentRuntimeId id) {
         final OrcaAgentRuntime runtime = stack.runtime(id).orElseThrow();
         return runtime.getExecutionEnvironmentProvider()

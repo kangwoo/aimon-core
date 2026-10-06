@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/workflow/workflow-usage-guide.md
-source_commit: 3e95c28
+source_commit: 93a4909
 ---
 
 # Workflow Usage Guide (the library view)
@@ -73,22 +73,21 @@ Where the packages live:
 
 ```java
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.workflow.WorkflowRunner;
 import at.aimon.core.workflow.WorkflowRunners;
 
-// 1) the base environment the subagents run in (every step inherits it)
-SubagentExecutionEnvironment baseEnv = SubagentExecutionEnvironment.builder()
+// 1) the base launch context the subagents are launched with (every step inherits it)
+SubagentLaunchContext baseLaunchContext = SubagentLaunchContext.builder()
         .agentRuntimeId(agentRuntimeId)       // AgentRuntimeId
         .subagentRegistry(subagentRegistry)
         .toolRegistry(toolRegistry)
         .hookRegistry(hookRegistry)
-        .userLocale(userLocale)
         .defaultModel(agent.getMetadata().getModel())
         .build();
 
 // 2) assemble the runner (subagentExecutionManager is borrowed — the runner does not close it)
-try (WorkflowRunner runner = WorkflowRunners.create(subagentExecutionManager, baseEnv)) {
+try (WorkflowRunner runner = WorkflowRunners.create(subagentExecutionManager, baseLaunchContext)) {
 
     // 3) run the script
     String answer = runner.run(ctx -> {
@@ -124,16 +123,16 @@ Subagent technical = Subagent.builder()
 
 ```java
 // minimal — default concurrency, no event sink, the default budget
-WorkflowRunners.create(manager, baseEnv);
+WorkflowRunners.create(manager, baseLaunchContext);
 
 // concurrency / events / budget named
-WorkflowRunners.create(manager, baseEnv, concurrency, eventSink, budget);
+WorkflowRunners.create(manager, baseLaunchContext, concurrency, eventSink, budget);
 
 // the above + a step result cache (for resume)
-WorkflowRunners.create(manager, baseEnv, concurrency, eventSink, budget, stepResultCache);
+WorkflowRunners.create(manager, baseLaunchContext, concurrency, eventSink, budget, stepResultCache);
 
 // every option (recommended)
-WorkflowRunners.create(manager, baseEnv, options);
+WorkflowRunners.create(manager, baseLaunchContext, options);
 ```
 
 ### WorkflowRunnerOptions
@@ -167,7 +166,7 @@ It creates one runner per context and attaches an in-memory step cache. There is
 `isolate` step derives its branch from the execution environment (see "Worktree isolation" below).
 
 ```java
-return WorkflowRunners.create(subagentExecutionManager, baseEnv,
+return WorkflowRunners.create(subagentExecutionManager, baseLaunchContext,
         WorkflowRunnerOptions.builder()
                 .stepResultCache(WorkflowRunners.inMemoryStepResultCache())
                 .build());
@@ -295,7 +294,7 @@ AgentTask simple = AgentTask.of(reviewer, goal);  // the short form
 ```java
 result.isSuccess();          // whether the step succeeded
 result.isComplete();         // completionReason == COMPLETED
-result.completionReason();   // why it ended (a limit reached / an error / a cancellation …)
+result.completionReason();   // why it ended (a limit reached / an error / a cancellation / refused by an onStart hook (BLOCKED) …)
 result.text();               // the final text
 result.structured();         // Optional<Map<String,Object>> — where a resultSchema was given
 result.getLabel();
@@ -567,9 +566,12 @@ AgentTask.builder().subagent(migrator).goal(...).isolate(true).build();
 - Promote a branch's files to the parent with `WorktreeMerge.promote(parent, branches, policy)`. Assembly code that
   knows only the keys gets the same branches back with `parent.isolate(key).orElseThrow()`. A branch cannot write
   under its own `.aimon/` — the parent's control-store protection applies at the branch root too and refuses the
-  write when it happens, so a merge never meets such a file. Pass `promote` **the very parent instance** the branches
-  were isolated from, and each branch once — the parent itself, another parent's branch or a duplicate is an
-  `IllegalArgumentException`.
+  write when it happens, so a merge never meets such a file. Nor can it address `.worktrees/` — another branch's
+  directory such as `.worktrees/other/x`, or its own, is refused; name a file by its path below the branch root. Branch
+  keys do repeat from run to run, though (the first isolated step is always `a0`), so two runs one after the other in
+  one workspace use the same branch directory — merge or remove it between runs. Pass `promote` **the very parent
+  instance** the branches were isolated from, and each branch once — the parent itself, another parent's branch or a
+  duplicate is an `IllegalArgumentException`.
 - `isolate(true)` cannot be cached (side effects cannot be replayed).
 - **An `isolate` step in an execution environment that does not support isolation is a run-fatal failure (C30).** It
   never runs unisolated. There is nothing to inject — the old `worktreeFactory` / `WorktreeEnvironmentFactory` are gone.
@@ -586,10 +588,10 @@ If the parallel steps touch nothing but distinct files, isolation is unnecessary
 | Rule | Why |
 |------|------|
 | Keep the `WorkflowRunner` **application-scoped** and reuse it | Creating a worker pool per run leaks |
-| The runner **borrows** `SubagentExecutionManager` and `baseEnv`. **It must never close them** | The caller owns them |
+| The runner **borrows** `SubagentExecutionManager` and `baseLaunchContext`. **It must never close them** | The caller owns them |
 | If you created a runner per call, **you must close it** (try-with-resources) | Otherwise a fan-out pool is left behind per run |
 | Cancelling `RunHandle.future()` does not stop the run → `stop(runId)` | The future is a defensive copy |
-| A background run does **not** inherit the calling turn's context, principal or cancellation signal | It runs in the runner's own base environment |
+| A background run does **not** inherit the calling turn's context, principal or cancellation signal | It runs with the runner's own base launch context |
 
 Look at the core's own example (`WorkflowTool`) and you will see the foreground path creating a runner per call and closing it at once:
 

@@ -90,4 +90,36 @@ public interface ExecutionHook<C extends HookContext> {
     default Optional<Duration> getExecutionBudget() {
         return Optional.empty();
     }
+
+    /**
+     * Returns what the executor's outer timeout must mean for this hook, when the hook knows.
+     *
+     * <p>
+     * The event's {@link HookExecutionPolicy#timeoutBehavior() policy} answers that question for every hook of the
+     * chain at once, and the shipped policies answer {@link HookExecutionPolicy.TimeoutBehavior#FAIL_OPEN}:
+     * availability first. That is the wrong answer for a hook that exists to veto — a guard cut off by the net said
+     * nothing, and letting the operation through makes "be slow" the way to switch the guard off. Such a hook
+     * declares {@link HookExecutionPolicy.TimeoutBehavior#FAIL_CLOSED} here and the executor honours it over the
+     * policy ({@link HookExecutionPolicy#timeoutBehaviorFor(ExecutionHook)}).
+     *
+     * <p>
+     * A {@code FAIL_CLOSED} declaration covers the two other ways a hook ends without a verdict as well
+     * ({@link HookExecutionPolicy#failsClosedWithoutVerdict(ExecutionHook)}): the executor's pool refused to run it
+     * (saturated, or shut down), and its body threw. Without that a guard closed against "slow" would stay open
+     * against "never started" and "crashed". A hook that declares nothing keeps
+     * {@link HookExecutionPolicy#onException(Exception)} for both, and so does one that declares {@code FAIL_OPEN}.
+     *
+     * <p>
+     * The declaration only matters when the hook returned no result: a hook that returns in time is
+     * never asked. The in-tree declarers are the declarative guard hooks ({@code hooks.json} / skill frontmatter on
+     * {@code preTool}, {@code onStart}, {@code preCompact}, {@code permissionRequest}) that did not declare
+     * {@code failOpen}. A hook registered in code is free to declare one as well.
+     *
+     * @return the behaviour this hook asks for when it ends without a verdict (an outer timeout; for
+     *         {@code FAIL_CLOSED} also a rejection or a throw), or {@link Optional#empty()} to accept the event
+     *         policy's
+     */
+    default Optional<HookExecutionPolicy.TimeoutBehavior> getTimeoutBehavior() {
+        return Optional.empty();
+    }
 }

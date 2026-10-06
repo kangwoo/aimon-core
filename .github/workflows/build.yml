@@ -26,10 +26,16 @@ jobs:
   # first so that a red step names the heading or row that is wrong; the self-test then
   # only ever runs on a tree the check has passed, where a failure can only mean the checker.
   #
-  # The link check's `--self-test` reads no tree. Each case pins how docs_tree.anchors_of
-  # reads one heading shape -- differently from the page, the backlog check, or both -- so a
-  # change that alters a case's answer goes red until its expected answer changes too. It runs
-  # after the check only so that a red step names a broken link first.
+  # The link check's `--self-test` does not read this tree. Each heading case pins how
+  # docs_tree.anchors_of reads one heading shape -- differently from the page, the backlog
+  # check, or both -- and each directory case pins, in a small temporary tree, one link the
+  # check must fail (a directory the site builds) or must keep accepting (one the MkDocs hook
+  # rewrites, or one on a page the site does not build). A change that alters a case's answer
+  # goes red until its expected answer changes too. It runs after the check only so that a
+  # red step names a broken link first.
+  #
+  # The check reads mkdocs.yml with a regex -- nothing is pip-installed here -- and the docs
+  # site build (docs.yml) is where that reading is compared with MkDocs' own.
   docs-links:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -81,7 +87,15 @@ jobs:
       # and holds the corpus still: it is the only thing that would catch the
       # axes silently ceasing to measure, which on a corpus with nothing to
       # catch looks exactly like a green run.
-      - name: Compare structure, fail on a mismatch in a current translation
+      #
+      # The second also holds every front matter the site or these scripts read
+      # (every translation, every other site page) to the notation mkdocs' YAML
+      # parser and the scripts' line regex read the same. That failure does not
+      # depend on the pair's state: only whoever wrote the front matter can
+      # create it, and mkdocs publishes a block it cannot read as page text with
+      # `--strict` green. The self-test's second half holds that rule to fixed
+      # cases, since the tree has nothing for it to reject.
+      - name: Compare structure, fail on a mismatch in a current translation or on front matter mkdocs would misread
         run: |
           python3 scripts/check-translation-structure.py --self-test
           python3 scripts/check-translation-structure.py --github

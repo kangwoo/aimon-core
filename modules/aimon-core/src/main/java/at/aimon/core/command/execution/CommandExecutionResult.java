@@ -41,7 +41,7 @@ public final class CommandExecutionResult {
      *             if response is null
      */
     public static CommandExecutionResult success(String response) {
-        return new CommandExecutionResult(true, response, null, null);
+        return new CommandExecutionResult(true, response, null, null, false);
     }
 
     /**
@@ -57,7 +57,26 @@ public final class CommandExecutionResult {
      */
     public static CommandExecutionResult success(String response, ExecutionMetadata metadata) {
         Objects.requireNonNull(metadata, "Metadata cannot be null");
-        return new CommandExecutionResult(true, response, null, metadata);
+        return new CommandExecutionResult(true, response, null, metadata, false);
+    }
+
+    /**
+     * Creates a successful execution result whose response is a final answer the provider cut off at its output-token
+     * limit. The partial text is kept — it ends in the truncation marker
+     * ({@code TruncatedResponses.TRUNCATION_MARKER}) — and {@link #isTruncated()} says it is not whole, so the turn
+     * that
+     * ran the command ends {@code CompletionReason.TRUNCATED} instead of {@code COMPLETED}.
+     *
+     * @param response
+     *            The partial response, marker included (must not be null)
+     * @param metadata
+     *            The execution metadata (nullable)
+     * @return A successful, truncated result
+     * @throws NullPointerException
+     *             if response is null
+     */
+    public static CommandExecutionResult truncated(String response, ExecutionMetadata metadata) {
+        return new CommandExecutionResult(true, response, null, metadata, true);
     }
 
     /**
@@ -72,7 +91,7 @@ public final class CommandExecutionResult {
     public static CommandExecutionResult failure(Throwable error) {
         Objects.requireNonNull(error, "Error cannot be null");
         final String errorMessage = "Command execution failed: " + error.getMessage();
-        return new CommandExecutionResult(false, errorMessage, error, null);
+        return new CommandExecutionResult(false, errorMessage, error, null, false);
     }
 
     /**
@@ -90,7 +109,7 @@ public final class CommandExecutionResult {
         Objects.requireNonNull(error, "Error cannot be null");
         Objects.requireNonNull(metadata, "Metadata cannot be null");
         final String errorMessage = "Command execution failed: " + error.getMessage();
-        return new CommandExecutionResult(false, errorMessage, error, metadata);
+        return new CommandExecutionResult(false, errorMessage, error, metadata, false);
     }
 
     /**
@@ -107,7 +126,7 @@ public final class CommandExecutionResult {
     public static CommandExecutionResult failure(String message, Throwable error) {
         Objects.requireNonNull(message, "Message cannot be null");
         Objects.requireNonNull(error, "Error cannot be null");
-        return new CommandExecutionResult(false, message, error, null);
+        return new CommandExecutionResult(false, message, error, null, false);
     }
 
     /**
@@ -127,13 +146,14 @@ public final class CommandExecutionResult {
         Objects.requireNonNull(message, "Message cannot be null");
         Objects.requireNonNull(error, "Error cannot be null");
         Objects.requireNonNull(metadata, "Metadata cannot be null");
-        return new CommandExecutionResult(false, message, error, metadata);
+        return new CommandExecutionResult(false, message, error, metadata, false);
     }
 
     private final boolean success;
     private final String response;
     private final Throwable error;
     private final ExecutionMetadata metadata;
+    private final boolean truncated;
 
     /**
      * Creates a new CommandExecutionResult.
@@ -146,12 +166,27 @@ public final class CommandExecutionResult {
      *            The error that occurred (null if success)
      * @param metadata
      *            The execution metadata (can be null)
+     * @param truncated
+     *            Whether the response is a final answer cut off at the output-token limit
      */
-    private CommandExecutionResult(boolean success, String response, Throwable error, ExecutionMetadata metadata) {
+    private CommandExecutionResult(boolean success, String response, Throwable error, ExecutionMetadata metadata,
+            boolean truncated) {
         this.success = success;
         this.response = Objects.requireNonNull(response, "Response cannot be null");
         this.error = error;
         this.metadata = metadata;
+        this.truncated = truncated;
+    }
+
+    /**
+     * Whether the response is a final answer the provider cut off at its output-token limit. Only a successful result
+     * can be truncated, and only a command that runs a model produces one — a slash skill, inline or fork-mode. A
+     * command that computes its own response is never truncated.
+     *
+     * @return true if the response is a final answer that is not whole
+     */
+    public boolean isTruncated() {
+        return truncated;
     }
 
     /**
@@ -208,13 +243,13 @@ public final class CommandExecutionResult {
             return false;
         }
         final CommandExecutionResult that = (CommandExecutionResult) o;
-        return success == that.success && response.equals(that.response) && Objects.equals(error, that.error)
-                && Objects.equals(metadata, that.metadata);
+        return success == that.success && truncated == that.truncated && response.equals(that.response)
+                && Objects.equals(error, that.error) && Objects.equals(metadata, that.metadata);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(success, response, error, metadata);
+        return Objects.hash(success, response, error, metadata, truncated);
     }
 
     @Override
@@ -223,6 +258,9 @@ public final class CommandExecutionResult {
         sb.append("success=").append(success);
         if (success) {
             sb.append(", response='").append(response).append('\'');
+            if (truncated) {
+                sb.append(", truncated=true");
+            }
         } else {
             sb.append(", error=").append(error != null ? error.getClass().getSimpleName() : "unknown");
         }

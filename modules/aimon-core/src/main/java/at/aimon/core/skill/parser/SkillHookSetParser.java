@@ -241,13 +241,13 @@ public final class SkillHookSetParser {
     }
 
     /**
-     * Reads the entry-level {@code failOpen} key: whether a shell command that produced no exit status lets the
-     * operation proceed instead of blocking it.
+     * Reads the entry-level {@code failOpen} key: whether an action that gave no answer — a shell command with no exit
+     * status, an {@code http} / {@code mcp} call with no verdict — lets the operation proceed instead of blocking it.
      *
      * <p>
      * Only a YAML boolean is accepted. This key takes a guard off, so a value that merely looks true ({@code "true"},
      * {@code 1}) is a parse error rather than a guess in either direction. Where the key cannot have an effect — a
-     * non-shell action, or an event that cannot block — it is ignored with a WARN.
+     * {@code deny} action, or an event that cannot block — it is ignored with a WARN.
      */
     private static boolean parseFailOpen(String event, Map<?, ?> def, HookAction action, String path) {
         if (!def.containsKey("failOpen")) {
@@ -258,8 +258,9 @@ public final class SkillHookSetParser {
             throw new IllegalArgumentException(path + ".failOpen must be a boolean (true or false), got: "
                     + (raw == null ? "null" : raw.getClass().getSimpleName()));
         }
-        if (!(action instanceof ShellAction)) {
-            log.warn("{}: 'failOpen' only applies to shell actions; ignored", path);
+        if (action instanceof DenyAction) {
+            // A deny action always has its verdict; there is no "could not decide" for failOpen to open.
+            log.warn("{}: 'failOpen' has no effect on a deny action; ignored", path);
             return false;
         }
         if (!SkillHookSet.guardEvents().contains(eventType(event))) {

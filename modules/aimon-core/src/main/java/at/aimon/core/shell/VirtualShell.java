@@ -19,8 +19,9 @@ import at.aimon.core.shell.exception.ShellExecutionException;
  * Every {@code execute} call carries a {@link ShellCancellation} in its {@link ExecutionOptions}. What a shell does
  * with it is decided by {@link ShellFeature#CANCELLATION}:
  * <ul>
- * <li><b>A shell that supports it</b> stops the command and everything the command started (the process tree for a
- * local shell, the remote command for a remote one) when the signal is tripped while the command runs, and that
+ * <li><b>A shell that supports it</b> stops the command and what the command started, as far as the shell can reach
+ * it (the process tree for a local shell &mdash; which no longer contains a process the command detached from itself
+ * &mdash; the remote command for a remote one) when the signal is tripped while the command runs, and that
  * {@code execute} call throws {@link at.aimon.core.shell.exception.ShellCancelledException} carrying the output
  * captured so far. A signal that is already tripped when {@code execute} is called means the command is not started
  * at all, and the same exception is thrown. A signal tripped after the command ended changes nothing.</li>

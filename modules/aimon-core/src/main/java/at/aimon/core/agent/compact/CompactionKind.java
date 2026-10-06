@@ -15,7 +15,10 @@ public enum CompactionKind {
     /** A rolling span was widened: the middle of the view was summarized, head and tail kept verbatim. */
     ROLLING,
 
-    /** The whole view was summarized into one boundary / summary pair — the default engine's compaction. */
+    /**
+     * The view was summarized into one boundary / summary pair — the default engine's compaction. In view mode the
+     * messages the model had not answered yet are left after the pair, verbatim.
+     */
     FULL,
 
     /**

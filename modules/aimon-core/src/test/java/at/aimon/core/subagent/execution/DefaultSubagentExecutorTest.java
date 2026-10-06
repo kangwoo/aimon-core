@@ -33,7 +33,6 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.EnvironmentRequest;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.environment.UnavailableExecutionEnvironment;
@@ -47,6 +46,7 @@ import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.ReasoningSummary;
 import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.Role;
 import at.aimon.core.llm.ToolDefinition;
@@ -171,8 +171,6 @@ class DefaultSubagentExecutorTest {
         final ToolContext captured = probe.captured.get();
         assertThat(captured).isNotNull();
         assertThat(captured.get(ToolContextKeys.AGENT_RUNTIME_ID)).isPresent();
-        assertThat(captured.get(ToolContextKeys.USER_LOCALE)).containsSame(context.getUserLocale());
-        assertThat(captured.get("userLocale", UserLocale.class)).containsSame(context.getUserLocale());
         assertThat(captured.get(ToolContextKeys.LLM_CALL_METADATA_KEY)).isPresent();
         assertThat(captured.get(ToolContextKeys.ARTIFACT_COLLECTOR)).isPresent();
         assertThat(captured.get(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY)).isPresent();
@@ -219,8 +217,8 @@ class DefaultSubagentExecutorTest {
         final SubagentExecutionContext context = SubagentExecutionContext.builder()
                 .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent("explorer", 5))
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(registry)
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .knowledgeStore(knowledgeStore).knowledgeScope(knowledgeScope).build();
+                .hookRegistry(new DefaultHookRegistry()).knowledgeStore(knowledgeStore).knowledgeScope(knowledgeScope)
+                .build();
 
         final SubagentExecutionResult result = newExecutor(llm).execute(context, request("probe"));
 
@@ -247,8 +245,7 @@ class DefaultSubagentExecutorTest {
         final SubagentExecutionContext context = SubagentExecutionContext.builder()
                 .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent("explorer", 5))
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(registry)
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .toolContextEnrichers(List.of(enricher)).build();
+                .hookRegistry(new DefaultHookRegistry()).toolContextEnrichers(List.of(enricher)).build();
 
         final SubagentExecutionResult result = newExecutor(llm).execute(context, request("probe"));
 
@@ -272,8 +269,7 @@ class DefaultSubagentExecutorTest {
         final SubagentExecutionContext context = SubagentExecutionContext.builder()
                 .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(builder)
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .executionEnvironmentProvider(provider).build();
+                .hookRegistry(new DefaultHookRegistry()).executionEnvironmentProvider(provider).build();
 
         newExecutor(llm).execute(context, request("build it"));
 
@@ -344,8 +340,7 @@ class DefaultSubagentExecutorTest {
         final SubagentExecutionContext context = SubagentExecutionContext.builder()
                 .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent("explorer", 5))
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(registry)
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault()).outputSink(sink)
-                .build();
+                .hookRegistry(new DefaultHookRegistry()).outputSink(sink).build();
 
         final SubagentExecutionResult result = newExecutor(llm).execute(context, request("probe"));
 
@@ -420,12 +415,46 @@ class DefaultSubagentExecutorTest {
                 .satisfies(m -> assertThat(m.getReasoningTraces()).containsExactly(trace));
     }
 
+    /**
+     * A fork's LLM calls carry the spawning agent's {@code reasoningSummary}. A subagent definition names its model
+     * as a bare string, so this is the only place the value can come from; without it the fork follows the
+     * deployment's setting where its parent had overridden it.
+     */
+    @Test
+    @DisplayName("the fork's LLM call carries the spawning agent's reasoningSummary, none included")
+    void theForkCarriesTheParentReasoningSummary() {
+        for (ReasoningSummary summary : new ReasoningSummary[]{ReasoningSummary.NONE, ReasoningSummary.DETAILED}) {
+            final StubLlmClient llm = new StubLlmClient();
+            final SubagentExecutionContext context = SubagentExecutionContext.builder()
+                    .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent("explorer", 5))
+                    .defaultModel(LlmModel.builder().name("parent-model").reasoningSummary(summary).build())
+                    .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry()).build();
+
+            assertThat(newExecutor(llm).execute(context, request("go")).isSuccess()).isTrue();
+
+            assertThat(llm.models).isNotEmpty().allSatisfy(
+                    model -> assertThat(model.getReasoningSummary()).as("parent %s", summary).contains(summary));
+        }
+    }
+
+    @Test
+    @DisplayName("a parent that states no reasoningSummary leaves the fork's call without one")
+    void theForkOfAParentWithoutAReasoningSummaryCarriesNone() {
+        final StubLlmClient llm = new StubLlmClient();
+        final SubagentExecutionContext context = createContext("explorer", NoopCancellationSignal.INSTANCE,
+                new DefaultToolRegistry(), 5);
+
+        assertThat(newExecutor(llm).execute(context, request("go")).isSuccess()).isTrue();
+
+        assertThat(llm.models).isNotEmpty().allSatisfy(model -> assertThat(model.getReasoningSummary()).isEmpty());
+    }
+
     private SubagentExecutionContext createContext(String subagentName, CancellationSignal parentSignal,
             ToolRegistry toolRegistry, int maxIterations) {
         return SubagentExecutionContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test-1"))
                 .subagent(subagent(subagentName, maxIterations)).defaultModel(LlmModel.builder().name("gpt-4").build())
                 .toolRegistry(toolRegistry).hookRegistry(new DefaultHookRegistry())
-                .userLocale(UserLocale.createDefault()).parentCancellationSignal(parentSignal).build();
+                .parentCancellationSignal(parentSignal).build();
     }
 
     private Subagent subagent(String subagentName, int maxIterations) {
@@ -522,6 +551,8 @@ class DefaultSubagentExecutorTest {
         private final Deque<LlmResponse> responses = new ArrayDeque<>();
         /** The message list of every call, so a test can read what the NEXT request was actually handed. */
         private final List<List<Message>> seen = new ArrayList<>();
+        /** The model config of every call. */
+        private final List<LlmModel> models = new ArrayList<>();
         private int calls;
         private boolean alwaysToolUse;
 
@@ -536,6 +567,7 @@ class DefaultSubagentExecutorTest {
                 LlmModel modelConfig, LlmCallMetadata metadata) {
             calls++;
             seen.add(List.copyOf(messages));
+            models.add(modelConfig);
             if (!responses.isEmpty()) {
                 return responses.poll();
             }

@@ -100,7 +100,6 @@ import at.aimon.core.agent.tool.permission.AllowedTools;
 import at.aimon.core.agent.tool.search.ToolSearchCatalog;
 import at.aimon.core.agent.tool.search.ToolSearchRegistry;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.CommandExecutionManager;
 import at.aimon.core.command.execution.CommandExecutionResult;
 import at.aimon.core.command.execution.ExecutionMetadata;
@@ -191,9 +190,9 @@ import at.aimon.core.tracing.Tracer;
  *     OrcaAgentExecutor executor = new OrcaAgentExecutor(llmClient, sessionRecordStore, toolExecutionManager,
  *             hookExecutionManager, commandExecutionManager, subagentExecutionManager);
  *
- *     // Build the agent runtime with agent, tools, and user locale
+ *     // Build the agent runtime with agent and tools
  *     OrcaAgentRuntime context = OrcaAgentRuntime.builder().agent(agent).toolRegistry(toolRegistry)
- *             .hookRegistry(hookRegistry).commandRegistry(commandRegistry).userLocale(userLocale).build();
+ *             .hookRegistry(hookRegistry).commandRegistry(commandRegistry).build();
  *
  *     // Build execution request with user input and optional session ID
  *     OrcaAgentExecutionRequest request = OrcaAgentExecutionRequest.builder()
@@ -812,7 +811,7 @@ public class OrcaAgentExecutor
     }
 
     /**
-     * Creates a tool context with the user locale, execution-scoped state and artifact collector.
+     * Creates a tool context with the execution-scoped state and artifact collector.
      *
      * @param scope
      *            The execution scope containing context, user info, attributes, and artifact collector
@@ -837,11 +836,6 @@ public class OrcaAgentExecutor
         builder.put(ToolContextKeys.AGENT_RUNTIME_ID, scope.agentRuntime.getId());
         builder.put(ToolContextKeys.SESSION_ID, scope.transcriptBuffer.getSessionId());
 
-        // Add the user locale if available
-        final UserLocale userLocale = scope.getUserLocale();
-        if (userLocale != null) {
-            builder.put(ToolContextKeys.USER_LOCALE, userLocale);
-        }
         if (scope.getPrincipal() != null) {
             builder.put(ToolContextKeys.PRINCIPAL, scope.getPrincipal());
         }
@@ -1483,10 +1477,14 @@ public class OrcaAgentExecutor
 
         invokeOnStop(scope, commandExecutionResult.isSuccess(), commandExecutionResult.getResponse(), metadata);
 
-        // Return command execution result as failure or success based on command result
+        // Return command execution result as failure or success based on command result. A command whose final answer
+        // was cut at max_tokens — a slash skill, inline or fork-mode — ends the turn as the agent's own cut answer
+        // does:
+        // a success carrying the flagged partial text, with TRUNCATED as its reason (createTruncatedResult).
         if (commandExecutionResult.isSuccess()) {
             return OrcaAgentExecutionResult.success(commandExecutionResult.getResponse(),
-                    scope.transcriptBuffer.toSnapshot(), metadata, scope.artifactCollector.getArtifacts())
+                    scope.transcriptBuffer.toSnapshot(), metadata, scope.artifactCollector.getArtifacts(),
+                    commandExecutionResult.isTruncated() ? CompletionReason.TRUNCATED : CompletionReason.COMPLETED)
                     .withCompactionEvents(scope.compactionEvents);
         } else {
             return OrcaAgentExecutionResult.failure(commandExecutionResult.getResponse(),
@@ -2034,7 +2032,7 @@ public class OrcaAgentExecutor
             // OrcaSkillToolProvider uses for SkillTool, so both invocation paths share fork wiring semantics.
             final SkillForkExecutor skillForkExecutor = OrcaSkillForkExecutorResolver.resolve(agentRuntime.getAgent(),
                     agentRuntime.getSubagentRegistry(), agentRuntime.getToolRegistry(), agentRuntime.getHookRegistry(),
-                    agentRuntime.getUserLocale(), subagentExecutionManager);
+                    subagentExecutionManager);
             final ToolContext.Builder commandContextBuilder = ToolContext.builder();
             // The command renders skills, which stage their files through this execution's environment (§4.4).
             putExecutionEnvironment(commandContextBuilder, scope);
@@ -2112,7 +2110,7 @@ public class OrcaAgentExecutor
         return (toolRegistry, toolContext, toolUses, allowedTools, iterationCount) -> toolUses.stream()
                 .map(toolUse -> singleToolInvoker.invoke(ToolInvocationSpec.builder()
                         .invokerType(InvokerType.MAIN_AGENT).invokerName(agentRuntime.getAgent().getName())
-                        .hookRegistry(agentRuntime.getHookRegistry()).userLocale(agentRuntime.getUserLocale())
+                        .hookRegistry(agentRuntime.getHookRegistry())
                         .executionAttributes(scope.getExecutionAttributes()).toolRegistry(toolRegistry)
                         .sessionRegistry(toolRegistry).allowedTools(allowedTools).coordinator(coordinator)
                         .toolContext(toolContext).toolUse(toolUse).iterationCount(iterationCount).build()))
@@ -2520,10 +2518,9 @@ public class OrcaAgentExecutor
         final Agent agent = agentRuntime.getAgent();
         final ToolInvocationSpec spec = ToolInvocationSpec.builder().invokerType(InvokerType.MAIN_AGENT)
                 .invokerName(agent.getName()).hookRegistry(agentRuntime.getHookRegistry())
-                .userLocale(agentRuntime.getUserLocale()).executionAttributes(executionAttributes)
-                .toolRegistry(agentRuntime.getToolRegistry()).sessionRegistry(sessionRegistry)
-                .allowedTools(agent.getAllowedTools()).coordinator(coordinator).toolContext(toolContext)
-                .toolUse(toolUse).iterationCount(iterationCount).build();
+                .executionAttributes(executionAttributes).toolRegistry(agentRuntime.getToolRegistry())
+                .sessionRegistry(sessionRegistry).allowedTools(agent.getAllowedTools()).coordinator(coordinator)
+                .toolContext(toolContext).toolUse(toolUse).iterationCount(iterationCount).build();
         return singleToolInvoker.invoke(spec);
     }
 
@@ -2577,8 +2574,8 @@ public class OrcaAgentExecutor
     private List<HookResult> invokeOnStart(ExecutionScope scope, String userMessage) {
         final OnStartContext onStartContext = OnStartContext.builder().executorType(InvokerType.MAIN_AGENT)
                 .invokerName(scope.getAgent().getName()).hookRegistry(scope.getHookRegistry())
-                .userLocale(scope.getUserLocale()).executionEnvironment(scope.executionEnvironment)
-                .userMessage(userMessage).executionAttributes(scope.getExecutionAttributes()).build();
+                .executionEnvironment(scope.executionEnvironment).userMessage(userMessage)
+                .executionAttributes(scope.getExecutionAttributes()).build();
         return hookExecutionManager.executeOnStart(onStartContext);
     }
 
@@ -2604,9 +2601,8 @@ public class OrcaAgentExecutor
         consumeLingeringInterrupt(scope, "OnStop");
         final OnStopContext onStopContext = OnStopContext.builder().executorType(InvokerType.MAIN_AGENT)
                 .invokerName(scope.getAgent().getName()).hookRegistry(scope.getHookRegistry())
-                .userLocale(scope.getUserLocale()).executionEnvironment(scope.executionEnvironment).success(success)
-                .finalAnswer(finalAnswer).metadata(metadata).executionAttributes(scope.getExecutionAttributes())
-                .build();
+                .executionEnvironment(scope.executionEnvironment).success(success).finalAnswer(finalAnswer)
+                .metadata(metadata).executionAttributes(scope.getExecutionAttributes()).build();
         hookExecutionManager.executeOnStop(onStopContext);
     }
 
@@ -3133,7 +3129,7 @@ public class OrcaAgentExecutor
     private static ContextRequest contextRequest(ExecutionScope scope, boolean budgetForced) {
         return ContextRequest.builder().transcriptBuffer(scope.transcriptBuffer)
                 .model(scope.getAgent().getMetadata().getModel()).hookRegistry(scope.getHookRegistry())
-                .userLocale(scope.getUserLocale()).executionEnvironment(scope.executionEnvironment)
+                .executionEnvironment(scope.executionEnvironment)
                 .caller(ContextCaller.builder().principal(scope.getPrincipal()).build()).budgetForced(budgetForced)
                 .build();
     }
@@ -3518,10 +3514,6 @@ public class OrcaAgentExecutor
 
         HookRegistry getHookRegistry() {
             return agentRuntime.getHookRegistry();
-        }
-
-        UserLocale getUserLocale() {
-            return agentRuntime.getUserLocale();
         }
 
         ToolRegistry getToolRegistry() {

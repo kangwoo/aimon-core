@@ -7,11 +7,14 @@ import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import at.aimon.core.base.DefinitionAttributes;
+import at.aimon.core.base.text.YamlDuplicateKeys;
 
 /**
  * Parses subagent content including YAML frontmatter and markdown body.
@@ -29,6 +32,10 @@ import at.aimon.core.base.DefinitionAttributes;
  * <li>max-iterations: Optional positive integer cap on the ReAct loop (defaults applied downstream)
  * <li>attributes: Optional free-form map the framework carries but never reads, flattened to dotted keys by
  * {@link DefinitionAttributes} (e.g. {@code sandbox.slot} for an execution environment provider)
+ * <li>hidden: Optional boolean. {@code true} keeps the definition out of the model's subagent list and makes the
+ * {@code Task} tool refuse it, while the registry still resolves the name — for a definition that exists only to be
+ * looked up, such as one giving a built-in {@code Workflow} role its attributes. Absent means {@code false}; anything
+ * but a bare {@code true} / {@code false} is a parse error
  * </ul>
  *
  * <p>
@@ -77,6 +84,14 @@ import at.aimon.core.base.DefinitionAttributes;
  * </pre>
  */
 public class SubagentContentParser {
+    /** Frontmatter key that hides a definition from the model. */
+    public static final String HIDDEN_KEY = "hidden";
+
+    private static final Logger log = LoggerFactory.getLogger(SubagentContentParser.class);
+
+    /** How much of a description a warning quotes to say which subagent it is about. */
+    private static final int DESCRIPTION_EXCERPT_LENGTH = 60;
+
     // Matches YAML frontmatter between --- delimiters
     private static final Pattern FRONTMATTER_PATTERN = Pattern.compile("^---\\s*\n(.*?)\n---\\s*\n(.*)$",
             Pattern.DOTALL);
@@ -130,13 +145,39 @@ public class SubagentContentParser {
 
         try {
             final Map<String, Object> yamlData = newYaml().load(yamlContent);
-            return parseMetadata(yamlData, systemPrompt);
+            final SubagentContentResult result = parseMetadata(yamlData, systemPrompt);
+            warnAboutDuplicateKeys(result.getDescription(), yamlContent);
+            return result;
         } catch (SubagentParseException e) {
             // Preserve the specific field-level message instead of masking it with the generic wrapper.
             throw e;
         } catch (Exception e) {
             throw new SubagentParseException("Failed to parse YAML frontmatter", e);
         }
+    }
+
+    /**
+     * Says so when the front matter writes a key twice: snakeyaml keeps the last value and the earlier one is gone
+     * before anything downstream can notice. A warning rather than a refusal for the reason {@link #newYaml()} gives —
+     * a subagent file that loads today has to keep loading.
+     *
+     * <p>
+     * A subagent is named by its file, which this parser is not given, so the line quotes the start of the
+     * description to say which one it means.
+     */
+    private static void warnAboutDuplicateKeys(String description, String yamlContent) {
+        final List<String> duplicated = YamlDuplicateKeys.find(yamlContent);
+        if (duplicated.isEmpty()) {
+            return;
+        }
+        String document = "Subagent";
+        if (description != null && !description.isBlank()) {
+            final String oneLine = description.strip().replaceAll("\\s+", " ");
+            document = "Subagent (description: '" + (oneLine.length() > DESCRIPTION_EXCERPT_LENGTH
+                    ? oneLine.substring(0, DESCRIPTION_EXCERPT_LENGTH) + "…"
+                    : oneLine) + "')";
+        }
+        log.warn("{}", YamlDuplicateKeys.describe(document, duplicated));
     }
 
     /** Parses subagent metadata from YAML data. */
@@ -160,7 +201,29 @@ public class SubagentContentParser {
             throw new SubagentParseException(e.getMessage(), e);
         }
 
-        return new SubagentContentResult(description, whenToUse, tools, model, maxIterations, systemPrompt, attributes);
+        return new SubagentContentResult(description, whenToUse, tools, model, maxIterations, systemPrompt, attributes)
+                .withHidden(parseHidden(yamlData));
+    }
+
+    /**
+     * Parses the optional {@code hidden} field.
+     *
+     * <p>
+     * Absent means not hidden. Present, it must be a bare YAML boolean: a quoted string, a number, a list or a key
+     * written with no value is rejected, naming the key and the value. Reading {@code hidden: "false"} or
+     * {@code hidden:} as either answer would silently decide whether the model can launch the definition, which is the
+     * one thing the key is for.
+     */
+    private boolean parseHidden(Map<String, Object> yamlData) {
+        if (!yamlData.containsKey(HIDDEN_KEY)) {
+            return false;
+        }
+        final Object value = yamlData.get(HIDDEN_KEY);
+        if (value instanceof Boolean hidden) {
+            return hidden;
+        }
+        throw new SubagentParseException("Invalid " + HIDDEN_KEY + " format: must be true or false, got: "
+                + (value == null ? "no value" : value.getClass().getSimpleName() + " '" + value + "'"));
     }
 
     /**

@@ -67,7 +67,6 @@ public class OrcaSkillToolProvider implements OrcaToolProvider {
      */
     private static SkillForkExecutor resolveForkExecutor(OrcaToolProviderContext context) {
         return OrcaSkillForkExecutorResolver.resolve(context.getAgent(), context.getSubagentRegistry(),
-                context.getToolRegistry(), context.getHookRegistry(), context.getUserLocale(),
-                context.getSubagentExecutionManager());
+                context.getToolRegistry(), context.getHookRegistry(), context.getSubagentExecutionManager());
     }
 }

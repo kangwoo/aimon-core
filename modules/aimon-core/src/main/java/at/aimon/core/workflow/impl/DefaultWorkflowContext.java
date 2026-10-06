@@ -26,8 +26,8 @@ import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.ExecutionEnvironments;
 import at.aimon.core.llm.cost.Money;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.workflow.AgentStepResult;
 import at.aimon.core.workflow.AgentTask;
@@ -48,9 +48,9 @@ import at.aimon.core.workflow.exception.WorkflowException;
  *
  * <p>
  * {@code agent()} runs a single inline subagent via the primitive
- * {@link SubagentExecutionManager#execute(SubagentExecutionEnvironment, Subagent, String)} on the shared, borrowed base
- * environment. {@code parallel()} fans thunks out to the run's {@link BoundedFanoutDispatcher}; {@code pipeline()} is
- * expressed as fan-out over per-item stage chains.
+ * {@link SubagentExecutionManager#execute(SubagentLaunchContext, Subagent, String)} on the shared, borrowed base
+ * launch context. {@code parallel()} fans thunks out to the run's {@link BoundedFanoutDispatcher}; {@code pipeline()}
+ * is expressed as fan-out over per-item stage chains.
  *
  * <p>
  * <b>Resume (design §5.3).</b> Every {@code agent()} step gets a deterministic {@link StepKey} = {@code runId}
@@ -70,7 +70,7 @@ public final class DefaultWorkflowContext implements WorkflowContext {
             .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
 
     private final SubagentExecutionManager manager;
-    private final SubagentExecutionEnvironment baseEnv;
+    private final SubagentLaunchContext baseLaunchContext;
     private final BoundedFanoutDispatcher fanout;
     private final BoundedFanoutDispatcher sequentialFanout;
     private final WorkflowEventSink eventSink;
@@ -104,11 +104,11 @@ public final class DefaultWorkflowContext implements WorkflowContext {
      */
     private final ThreadLocal<PathFrame> frame = new ThreadLocal<>();
 
-    DefaultWorkflowContext(SubagentExecutionManager manager, SubagentExecutionEnvironment baseEnv,
+    DefaultWorkflowContext(SubagentExecutionManager manager, SubagentLaunchContext baseLaunchContext,
             BoundedFanoutDispatcher fanout, WorkflowEventSink eventSink, WorkflowBudget budget, ResumeBinding resume,
             ContextExecutionOptions execution) {
         this.manager = Objects.requireNonNull(manager, "manager cannot be null");
-        this.baseEnv = Objects.requireNonNull(baseEnv, "baseEnv cannot be null");
+        this.baseLaunchContext = Objects.requireNonNull(baseLaunchContext, "baseLaunchContext cannot be null");
         this.fanout = Objects.requireNonNull(fanout, "fanout cannot be null");
         this.eventSink = eventSink != null ? eventSink : WorkflowEventSink.NO_OP;
         this.budget = Objects.requireNonNull(budget, "budget cannot be null");
@@ -135,11 +135,12 @@ public final class DefaultWorkflowContext implements WorkflowContext {
         final PathFrame f = currentFrame();
         final String segment = f.next("a");
         final String path = f.childPath(segment);
-        // Resolve the (possibly worktree-scoped) env FIRST, independent of cache state — so isolation works even under
-        // NO_OP (the dominant default). Only fingerprint/load/save is resume-gated (design §6.3).
-        final SubagentExecutionEnvironment env = resolveEnv(task, path);
+        // Resolve the (possibly worktree-scoped) launch context FIRST, independent of cache state — so isolation works
+        // even under NO_OP (the dominant default). Only fingerprint/load/save is resume-gated (design §6.3).
+        final SubagentLaunchContext launchContext = resolveLaunchContext(task, path);
         if (stepResultCache == StepResultCache.NO_OP) {
-            return executeStep(task, env); // fast path skips only cache/fingerprint work, not env resolution
+            // fast path skips only cache/fingerprint work, not the launch-context resolution
+            return executeStep(task, launchContext);
         }
         // Cache-active: always fold this leaf's left-context so sibling fingerprints stay correct, even when the step
         // itself is non-cacheable (§6.5).
@@ -147,7 +148,7 @@ public final class DefaultWorkflowContext implements WorkflowContext {
         final String fp = f.foldLeaf(segment, inputHash);
         if (task.isNonCacheable()) {
             // Bypass BOTH load and save: a transcript-free replay cannot re-materialize this step's file writes.
-            return executeStep(task, env);
+            return executeStep(task, launchContext);
         }
         final StepKey key = StepKey.of(runId, agentRuntimeId, path);
         final Optional<StepOutcome> cached = stepResultCache.load(key);
@@ -156,7 +157,7 @@ public final class DefaultWorkflowContext implements WorkflowContext {
             // Cache hit: position + input + structure all match. Replay the memoized outcome, re-hydrating the budget.
             return replay(task, cached.get());
         }
-        final AgentStepResult result = executeStep(task, env);
+        final AgentStepResult result = executeStep(task, launchContext);
         if (result.isComplete()) {
             // COMPLETED-only: never cache a failure/interruption, so a resume re-runs it.
             stepResultCache.save(key, toOutcome(result, inputHash, fp));
@@ -165,24 +166,24 @@ public final class DefaultWorkflowContext implements WorkflowContext {
     }
 
     /**
-     * Resolves the environment a step runs against. Non-isolated steps use the borrowed base env. An isolated step
-     * asks the execution environment for a branch ({@link ExecutionEnvironment#isolate}, execution-environment design
-     * §5.2) — the parent's environment when the run has one, else one resolved from the runtime's provider (a
+     * Resolves the launch context a step is launched with. Non-isolated steps use the borrowed base one. An isolated
+     * step asks the execution environment for a branch ({@link ExecutionEnvironment#isolate}, execution-environment
+     * design §5.2) — the parent's environment when the run has one, else one resolved from the runtime's provider (a
      * runtime-level runner has no calling execution). The branch environment becomes the step's parent environment,
-     * which the fork's provider hands back unchanged; the tool registry and the cancellation signal are the base
-     * env's. An environment that cannot isolate fails the run rather than running the branch unscoped (C30); when it
-     * refuses with a reason (unavailable, already a branch), the reason is quoted and chained as the cause.
+     * which the fork's provider hands back unchanged; the tool registry and the cancellation signal are the base launch
+     * context's. An environment that cannot isolate fails the run rather than running the branch unscoped (C30); when
+     * it refuses with a reason (unavailable, already a branch), the reason is quoted and chained as the cause.
      * Independent of cache state so isolation holds under {@code NO_OP}.
      */
-    private SubagentExecutionEnvironment resolveEnv(AgentTask task, String path) {
+    private SubagentLaunchContext resolveLaunchContext(AgentTask task, String path) {
         if (!task.isIsolate()) {
-            return baseEnv;
+            return baseLaunchContext;
         }
-        final ExecutionEnvironment parent = baseEnv.getExecutionEnvironment()
+        final ExecutionEnvironment parent = baseLaunchContext.getExecutionEnvironment()
                 .orElseGet(() -> ExecutionEnvironments.resolveOrUnavailable(
-                        baseEnv.getExecutionEnvironmentProvider().orElse(null),
-                        EnvironmentRequest.builder().agentRuntimeId(baseEnv.getAgentRuntimeId())
-                                .principal(baseEnv.getPrincipal().orElse(null)).build()));
+                        baseLaunchContext.getExecutionEnvironmentProvider().orElse(null),
+                        EnvironmentRequest.builder().agentRuntimeId(baseLaunchContext.getAgentRuntimeId())
+                                .principal(baseLaunchContext.getPrincipal().orElse(null)).build()));
         final String branchKey = sanitizeBranchKey(path);
         final Optional<ExecutionEnvironment> branch;
         try {
@@ -196,7 +197,7 @@ public final class DefaultWorkflowContext implements WorkflowContext {
             throw new WorkflowException("agent task requested isolation (isolate=true) but the execution environment "
                     + "does not support isolation — refusing to run unscoped (C30)");
         }
-        return baseEnv.toBuilder().executionEnvironment(branch.get()).build();
+        return baseLaunchContext.toBuilder().executionEnvironment(branch.get()).build();
     }
 
     /** Turns a structural step-path into a single filesystem-safe branch subtree name (deterministic). */
@@ -229,7 +230,7 @@ public final class DefaultWorkflowContext implements WorkflowContext {
         }
     }
 
-    private AgentStepResult executeStep(AgentTask task, SubagentExecutionEnvironment env) {
+    private AgentStepResult executeStep(AgentTask task, SubagentLaunchContext launchContext) {
         // Structured output (prompt-and-parse): when a result schema is set, augment the goal with a JSON-emit
         // instruction and, after a successful run, parse+validate the final answer into AgentStepResult.structured().
         final Map<String, Object> schema = task.getResultSchema().orElse(null);
@@ -239,8 +240,8 @@ public final class DefaultWorkflowContext implements WorkflowContext {
         eventSink.onAgentStarted(task);
         // Wrap ONLY the terminal leaf in the global leaf permit: the permit gates the LLM call, never a
         // fan-out join or the dispatcher thunk. Accounting stays outside the permit scope.
-        final SubagentExecutionResult raw = leafSlots.around(env.getCancellationSignal(),
-                () -> manager.execute(env, task.getSubagent(), goal));
+        final SubagentExecutionResult raw = leafSlots.around(launchContext.getCancellationSignal(),
+                () -> manager.execute(launchContext, task.getSubagent(), goal));
         tokensSpent.addAndGet(raw.getMetadata().getTokenUsage().getTotalTokens());
         costSpent.addAndGet(toMicros(raw.getCost()));
         final Map<String, Object> structured = schema != null && raw.isSuccess()
@@ -308,8 +309,8 @@ public final class DefaultWorkflowContext implements WorkflowContext {
         final String constructPath = parent.childPath(constructSegment);
         final int level = parent.nestingLevel() + 1;
         // Fold the construct (kind ordinal + child count) into the parent digest so a fan-out length change diverges
-        // all
-        // children (§6.5). Only maintained on the cache-active path; the child seed forks from the post-fold digest.
+        // all children (§6.5). Only maintained on the cache-active path; the child seed forks from the post-fold
+        // digest.
         final boolean cacheActive = stepResultCache != StepResultCache.NO_OP;
         final String base = cacheActive ? parent.foldConstruct(constructSegment, thunks.size()) : "";
         final List<Supplier<R>> wrapped = new ArrayList<>(thunks.size());
@@ -324,15 +325,14 @@ public final class DefaultWorkflowContext implements WorkflowContext {
         // input-order reassembly and failure isolation, and both propagate a run-fatal WorkflowException. The
         // run's cancellation signal is threaded so a nested join is interruptible.
         final BoundedFanoutDispatcher dispatcher = level <= maxNestingDepth ? fanout : sequentialFanout;
-        return dispatcher.dispatch(wrapped, Supplier::get, (thunk, error) -> null, baseEnv.getCancellationSignal());
+        return dispatcher.dispatch(wrapped, Supplier::get, (thunk, error) -> null,
+                baseLaunchContext.getCancellationSignal());
     }
 
     /**
      * Runs {@code body} under a fresh child path frame rooted at {@code prefix} with the given nesting {@code level}
-     * and
-     * fingerprint {@code seed}, restoring the previous frame after (a stack discipline that survives both the
-     * sequential
-     * degrade and true nested parallelism).
+     * and fingerprint {@code seed}, restoring the previous frame after (a stack discipline that survives both the
+     * sequential degrade and true nested parallelism).
      */
     private <R> R runUnderFrame(String prefix, int level, String seed, Supplier<R> body) {
         final PathFrame previous = frame.get();
@@ -380,9 +380,9 @@ public final class DefaultWorkflowContext implements WorkflowContext {
     private static String inputHash(AgentTask task) {
         final Subagent sa = task.getSubagent();
         final StringBuilder sb = new StringBuilder(256);
-        sb.append(task.getGoal()).append(' ').append(sa.getName()).append(' ').append(sa.getMaxIterations()).append(' ')
-                .append(sa.hashCode()).append(' ').append(sa.getAllowedTools()).append(' ').append(task.isIsolate())
-                .append(' ').append(task.isNonCacheable()).append(' ');
+        sb.append(task.getGoal()).append('\0').append(sa.getName()).append('\0').append(sa.getMaxIterations())
+                .append('\0').append(sa.hashCode()).append('\0').append(sa.getAllowedTools()).append('\0')
+                .append(task.isIsolate()).append('\0').append(task.isNonCacheable()).append('\0');
         try {
             sb.append(HASH_MAPPER.writeValueAsString(task.getResultSchema().orElse(Map.of())));
         } catch (JsonProcessingException e) {
@@ -416,8 +416,7 @@ public final class DefaultWorkflowContext implements WorkflowContext {
      * construct;
      * {@code nestingLevel} is the per-call-stack fan-out depth used for routing (§6.2); {@code runningDigest} is the
      * left-context structure fingerprint chain (§6.5), seeded from the parent. Not thread-safe by design: a level's
-     * body
-     * runs on exactly one thread.
+     * body runs on exactly one thread.
      */
     private static final class PathFrame {
         private final String prefix;

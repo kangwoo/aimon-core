@@ -17,7 +17,6 @@ import at.aimon.core.agent.compact.DefaultCompactionGuard;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.InMemoryModelContextWindowRegistry;
@@ -62,7 +61,7 @@ class DefaultContextEngineSummaryRequestTest {
 
     private static ContextRequest request(TranscriptBuffer buffer) {
         return ContextRequest.builder().transcriptBuffer(buffer).systemPrompt("system prompt").model(MODEL)
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault()).build();
+                .hookRegistry(new DefaultHookRegistry()).build();
     }
 
     private static TranscriptBuffer twoCompletedTurns(SessionLogFormat format) {
@@ -110,19 +109,43 @@ class DefaultContextEngineSummaryRequestTest {
     }
 
     @Test
-    @DisplayName("a request already ending on tool results is sent as it is")
+    @DisplayName("in place (version 1): a request already ending on tool results is sent as it is")
     void aRequestEndingOnToolResultsGetsNoNote() {
-        final TranscriptBuffer buffer = new TranscriptBuffer(SessionId.generate(), "system prompt");
-        buffer.requireFormat(SessionLogFormat.V2);
-        buffer.addUserMessage("fetch the report");
-        buffer.addMessage(Message.assistant("", List.of(ToolUse.of("t-1", "fetch_report", Map.of()))));
-        buffer.addMessage(Message.toolUseResults(List.of(ToolUseResult.success("t-1", "report text"))));
+        final TranscriptBuffer buffer = turnInFlight(SessionLogFormat.V1);
 
-        final CompactionResult result = engine(SessionLogFormat.V2).compactNow(request(buffer), null);
+        final CompactionResult result = engine(SessionLogFormat.V1).compactNow(request(buffer), null);
 
         assertThat(result.isSuccess()).isTrue();
         assertThat(calls.lastRoles).containsExactly(Role.TOOL);
         assertThat(calls.lastInput).hasSize(3);
+    }
+
+    @Test
+    @DisplayName("view mode: a turn in flight is summarized up to the unanswered call, so the request holds no tool result")
+    void viewModeLeavesTheUnansweredToolResultOutOfTheRequest() {
+        // The tool result is what the model has not answered yet, and its call stays with it (SL-6). What is sent to
+        // the summarizer is the user message alone, which already ends on the user side.
+        final TranscriptBuffer buffer = turnInFlight(SessionLogFormat.V2);
+
+        final CompactionResult result = engine(SessionLogFormat.V2).compactNow(request(buffer), null);
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(calls.lastRoles).containsExactly(Role.USER);
+        assertThat(calls.lastInput).extracting(Message::getRole).doesNotContain(Role.TOOL, Role.ASSISTANT);
+        assertThat(calls.lastInput.get(0).getContent()).isEqualTo("fetch the report");
+        assertThat(buffer.getViewState().getSummarySpan())
+                .hasValueSatisfying(span -> assertThat(span.getRange().getToSeq()).isEqualTo(1));
+    }
+
+    private static TranscriptBuffer turnInFlight(SessionLogFormat format) {
+        final TranscriptBuffer buffer = new TranscriptBuffer(SessionId.generate(), "system prompt");
+        if (format == SessionLogFormat.V2) {
+            buffer.requireFormat(SessionLogFormat.V2);
+        }
+        buffer.addUserMessage("fetch the report");
+        buffer.addMessage(Message.assistant("", List.of(ToolUse.of("t-1", "fetch_report", Map.of()))));
+        buffer.addMessage(Message.toolUseResults(List.of(ToolUseResult.success("t-1", "report text"))));
+        return buffer;
     }
 
     /** Answers every summary call and records the role its input ends on. */

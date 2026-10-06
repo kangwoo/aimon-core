@@ -28,15 +28,14 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.workflow.RunHandle;
 import at.aimon.core.workflow.RunId;
@@ -60,7 +59,7 @@ class DefaultWorkflowRunnerBackgroundTest {
 
     private final AtomicInteger execCount = new AtomicInteger();
     private SubagentExecutionManager manager;
-    private SubagentExecutionEnvironment env;
+    private SubagentLaunchContext env;
     private Subagent sub;
     private DefaultWorkflowRunner runner;
 
@@ -78,7 +77,7 @@ class DefaultWorkflowRunnerBackgroundTest {
     }
 
     private void stubImmediateSuccess() {
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> {
                     execCount.incrementAndGet();
                     return success("ans:" + invocation.getArgument(2, String.class));
@@ -106,9 +105,9 @@ class DefaultWorkflowRunnerBackgroundTest {
      * that finished on its own.
      */
     private void stubBlockUntilCancelled() {
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> {
-                    final SubagentExecutionEnvironment perRun = invocation.getArgument(0);
+                    final SubagentLaunchContext perRun = invocation.getArgument(0);
                     final long deadline = System.currentTimeMillis() + BLOCKED_SUBAGENT_SAFETY_MILLIS;
                     while (!perRun.getCancellationSignal().isCancelled()) {
                         if (System.currentTimeMillis() >= deadline) {
@@ -179,7 +178,7 @@ class DefaultWorkflowRunnerBackgroundTest {
     @DisplayName("re-submitting a still-live run id is idempotent: same handle, dispatched once")
     void idempotentResubmit() throws Exception {
         final CountDownLatch release = new CountDownLatch(1);
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> {
                     execCount.incrementAndGet();
                     release.await();
@@ -263,7 +262,7 @@ class DefaultWorkflowRunnerBackgroundTest {
     @DisplayName("stop() on a still-queued run settles PENDING → KILLED without ever starting the script body")
     void stopWhileQueuedNeverStartsScript() throws Exception {
         final CountDownLatch release = new CountDownLatch(1);
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> {
                     release.await(5, TimeUnit.SECONDS);
                     return success("first");
@@ -295,7 +294,7 @@ class DefaultWorkflowRunnerBackgroundTest {
     @Test
     @DisplayName("close() settles dropped/interrupted runs instead of leaving their futures incomplete forever")
     void closeSettlesQueuedRuns() {
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> {
                     Thread.sleep(10_000); // parked until close()'s shutdownNow interrupts the hosting worker
                     return success("never");
@@ -362,7 +361,7 @@ class DefaultWorkflowRunnerBackgroundTest {
     @DisplayName("a genuinely saturated hosting pool (pool + queue full) rejects the submit and settles it FAILED")
     void saturationRejectsAndSettlesFailed() {
         final CountDownLatch release = new CountDownLatch(1);
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> {
                     release.await(5, TimeUnit.SECONDS);
                     return success("slow");
@@ -459,10 +458,9 @@ class DefaultWorkflowRunnerBackgroundTest {
                 .builder().iterationCount(1).tokenUsage(TokenUsage.empty()).timestamps(now, now).build());
     }
 
-    private static SubagentExecutionEnvironment env() {
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
+    private static SubagentLaunchContext env() {
+        return SubagentLaunchContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
                 .subagentRegistry(new InMemorySubagentRegistry()).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .defaultModel(LlmModel.builder().name("gpt-4").build()).build();
+                .hookRegistry(new DefaultHookRegistry()).defaultModel(LlmModel.builder().name("gpt-4").build()).build();
     }
 }

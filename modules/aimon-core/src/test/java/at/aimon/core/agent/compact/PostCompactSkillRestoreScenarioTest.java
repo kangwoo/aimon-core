@@ -10,7 +10,6 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -43,13 +42,11 @@ class PostCompactSkillRestoreScenarioTest {
     private DefaultCompactionEngine engine;
     private DefaultHookRegistry hookRegistry;
     private DefaultHookExecutionManager hookExecutionManager;
-    private UserLocale userLocale;
 
     @BeforeEach
     void setUp() {
         hookRegistry = new DefaultHookRegistry();
         hookExecutionManager = new DefaultHookExecutionManager();
-        userLocale = UserLocale.createDefault();
 
         hookRegistry.register(HookEventType.POST_COMPACT, new InvokedSkillsRestoreHook(10));
         engine = DefaultCompactionEngine.withDefaults(new StubSummaryClient(), new HeuristicTokenEstimator(),
@@ -64,9 +61,9 @@ class PostCompactSkillRestoreScenarioTest {
         appendSkillCall(memory, "use-2", "summarize", "the meeting notes");
         appendSkillCall(memory, "use-3", "review", "src/main/java/Foo.java");
 
-        CompactionResult result = engine.compact(CompactionRequest.builder().transcriptBuffer(memory)
-                .trigger(CompactionTrigger.AUTO).model(LlmModel.builder().name("test-model").build())
-                .hookRegistry(hookRegistry).userLocale(userLocale).build());
+        CompactionResult result = engine
+                .compact(CompactionRequest.builder().transcriptBuffer(memory).trigger(CompactionTrigger.AUTO)
+                        .model(LlmModel.builder().name("test-model").build()).hookRegistry(hookRegistry).build());
 
         assertThat(result.isSuccess()).isTrue();
 
@@ -103,9 +100,9 @@ class PostCompactSkillRestoreScenarioTest {
         // Re-invoking the same (name, args) pair must move it to the most-recent position, not duplicate it.
         appendSkillCall(memory, "use-3", "commit", "--scope=feat");
 
-        CompactionResult result = engine.compact(CompactionRequest.builder().transcriptBuffer(memory)
-                .trigger(CompactionTrigger.AUTO).model(LlmModel.builder().name("test-model").build())
-                .hookRegistry(hookRegistry).userLocale(userLocale).build());
+        CompactionResult result = engine
+                .compact(CompactionRequest.builder().transcriptBuffer(memory).trigger(CompactionTrigger.AUTO)
+                        .model(LlmModel.builder().name("test-model").build()).hookRegistry(hookRegistry).build());
 
         assertThat(result.isSuccess()).isTrue();
 
@@ -123,9 +120,9 @@ class PostCompactSkillRestoreScenarioTest {
         memory.addUserMessage("hello — no skills involved");
         memory.addAssistantMessage("hi back");
 
-        CompactionResult result = engine.compact(CompactionRequest.builder().transcriptBuffer(memory)
-                .trigger(CompactionTrigger.AUTO).model(LlmModel.builder().name("test-model").build())
-                .hookRegistry(hookRegistry).userLocale(userLocale).build());
+        CompactionResult result = engine
+                .compact(CompactionRequest.builder().transcriptBuffer(memory).trigger(CompactionTrigger.AUTO)
+                        .model(LlmModel.builder().name("test-model").build()).hookRegistry(hookRegistry).build());
 
         assertThat(result.isSuccess()).isTrue();
         // No Skill tool_uses → restore hook returns success without appending anything.

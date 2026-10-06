@@ -1,13 +1,18 @@
 package at.aimon.spring.boot.autoconfigure;
 
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_ANTHROPIC;
+import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_ANTHROPIC_TEMPERATURE;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_ANTHROPIC_THINKING_BUDGET_TOKENS;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_ANTHROPIC_THINKING_DISPLAY;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_ANTHROPIC_THINKING_MODE;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_API_KEY;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_MODEL;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_OPENAI;
+import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_OPENAI_FREQUENCY_PENALTY;
+import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_OPENAI_PRESENCE_PENALTY;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_OPENAI_REASONING_SUMMARY;
+import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_OPENAI_TEMPERATURE;
+import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_OPENAI_TOP_P;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_PROVIDER;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.PROVIDER_ANTHROPIC;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.PROVIDER_OPENAI;
@@ -158,6 +163,39 @@ public class AimonLlmAutoConfiguration {
         }
     }
 
+    /** The credential and model a throwaway vendor config is built with when one value is checked on its own. */
+    private static final String PROBE = "probe";
+
+    /**
+     * Asks a vendor config whether it accepts <em>one</em> value, and rethrows its refusal naming the property.
+     *
+     * <p>
+     * This shape exists so that no range is written down here. The valid range of a sampling value differs per
+     * vendor — {@code temperature} is {@code 0.0}-{@code 2.0} for OpenAI and {@code 0.0}-{@code 1.0} for Anthropic —
+     * and each vendor config's constructor is the one place that knows its own. But that constructor's exception
+     * names a Java argument, and one {@code build()} can throw for several written keys, so wrapping the real build
+     * cannot tell which property to name. A config carrying that one value is built and thrown away instead: the
+     * rule stays where it was, and all this surface adds is the property to fix.
+     *
+     * <p>
+     * On the enclosing class, like the two refusals above, and for the same reason it is safe: the descriptor names
+     * JDK types only. The vendor type is in the caller's lambda, which lives in that vendor's guarded slice.
+     *
+     * @param property
+     *            the property to name when the value is refused
+     * @param value
+     *            the value as bound, for the message
+     * @param probe
+     *            builds a vendor config carrying that value and nothing else from configuration
+     */
+    private static void requireAccepted(String property, Object value, Runnable probe) {
+        try {
+            probe.run();
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException(property + "=" + value + " is invalid: " + e.getMessage(), e);
+        }
+    }
+
     /** Anthropic branch — also the branch taken when {@code aimon.llm.provider} is absent. */
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnClass(AnthropicLlmClient.class)
@@ -207,16 +245,18 @@ public class AimonLlmAutoConfiguration {
                 config.reasoningEffort(llm.getReasoningEffort());
             }
             applyThinking(config, llm.getAnthropic());
+            applySampling(config, llm.getAnthropic());
             try {
                 return config.build();
             } catch (IllegalArgumentException e) {
                 // Narrow on purpose. The IllegalArgumentExceptions build() can throw on this path are a blank API
                 // key, an out-of-range temperature, a non-positive maxTokens, a budget below 1024, and a budget
                 // under a mode other than EXTENDED. The first three cannot arrive -- requireApiKey rejects a blank
-                // key by property name first, and neither of the other two is settable from any configuration
-                // surface -- so the two that remain are both the budget's, which is why the message can name that
-                // one key rather than the block. If a later round makes temperature settable, that stops being
-                // true and the catch has to be split.
+                // key and applySampling an out-of-range temperature, each by its own property name first, and
+                // maxTokens is not settable from any configuration surface -- so the two that remain are both the
+                // budget's, which is why the message can name that one key rather than the block. Temperature
+                // became settable without this catch being split because its value is asked about on its own
+                // before build() runs; a second key that build() can refuse needs the same treatment.
                 throw new IllegalStateException(LLM_ANTHROPIC_THINKING_BUDGET_TOKENS + " is invalid: " + e.getMessage(),
                         e);
             }
@@ -257,6 +297,30 @@ public class AimonLlmAutoConfiguration {
             if (anthropic.getReplayThinkingBlocks() != null) {
                 config.replayThinkingBlocks(anthropic.getReplayThinkingBlocks());
             }
+        }
+
+        /**
+         * Copies {@code aimon.llm.anthropic.temperature} onto the vendor config, only when it was written — so a
+         * deployment that does not write it still sends no {@code temperature} it was not asked for.
+         *
+         * <p>
+         * One key, because {@code AnthropicConfig} carries one sampling value. The Anthropic API has no penalties,
+         * and the client reads {@code top_p} from the request's {@code LlmModel} alone; a property for a value the
+         * client would never send from its config would be configured and never read.
+         *
+         * @param config
+         *            the builder being assembled
+         * @param anthropic
+         *            the bound {@code aimon.llm.anthropic} block
+         */
+        private static void applySampling(AnthropicConfig.Builder config, AimonProperties.Llm.Anthropic anthropic) {
+            if (anthropic.getTemperature() == null) {
+                return;
+            }
+            final double temperature = anthropic.getTemperature();
+            requireAccepted(LLM_ANTHROPIC_TEMPERATURE, temperature,
+                    () -> AnthropicConfig.builder().apiKey(PROBE).temperature(temperature).build());
+            config.temperature(temperature);
         }
 
         /**
@@ -392,7 +456,51 @@ public class AimonLlmAutoConfiguration {
             if (llm.getOpenai().getResponsesApiEnabled() != null) {
                 config.responsesApiEnabled(llm.getOpenai().getResponsesApiEnabled());
             }
+            applySampling(config, llm.getOpenai());
             return config.build();
+        }
+
+        /**
+         * Copies the four {@code aimon.llm.openai} sampling keys onto the vendor config, each only when it was
+         * written — so a deployment that writes none still sends no sampling value it was not asked for.
+         *
+         * <p>
+         * Each value is asked about on its own before it is copied, because all four pass through one
+         * {@code build()} and its exception alone cannot say which property was wrong.
+         *
+         * @param config
+         *            the builder being assembled
+         * @param openai
+         *            the bound {@code aimon.llm.openai} block
+         */
+        private static void applySampling(OpenAIConfig.Builder config, AimonProperties.Llm.OpenAi openai) {
+            if (openai.getTemperature() != null) {
+                final double temperature = openai.getTemperature();
+                requireAccepted(LLM_OPENAI_TEMPERATURE, temperature, () -> probe().temperature(temperature).build());
+                config.temperature(temperature);
+            }
+            if (openai.getTopP() != null) {
+                final double topP = openai.getTopP();
+                requireAccepted(LLM_OPENAI_TOP_P, topP, () -> probe().topP(topP).build());
+                config.topP(topP);
+            }
+            if (openai.getPresencePenalty() != null) {
+                final double presencePenalty = openai.getPresencePenalty();
+                requireAccepted(LLM_OPENAI_PRESENCE_PENALTY, presencePenalty,
+                        () -> probe().presencePenalty(presencePenalty).build());
+                config.presencePenalty(presencePenalty);
+            }
+            if (openai.getFrequencyPenalty() != null) {
+                final double frequencyPenalty = openai.getFrequencyPenalty();
+                requireAccepted(LLM_OPENAI_FREQUENCY_PENALTY, frequencyPenalty,
+                        () -> probe().frequencyPenalty(frequencyPenalty).build());
+                config.frequencyPenalty(frequencyPenalty);
+            }
+        }
+
+        /** The config {@link #requireAccepted} lays one value on, with nothing else from configuration in it. */
+        private static OpenAIConfig.Builder probe() {
+            return OpenAIConfig.builder().apiKey(PROBE).model(PROBE);
         }
 
         /**

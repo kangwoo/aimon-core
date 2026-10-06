@@ -11,7 +11,6 @@ import org.junit.jupiter.api.Test;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
@@ -34,7 +33,6 @@ class DefaultCompactionEngineCallMetadataTest {
     private TokenEstimator tokenEstimator;
     private DefaultHookExecutionManager hookExecutionManager;
     private HookRegistry hookRegistry;
-    private UserLocale userLocale;
     private DefaultCompactionEngine engine;
 
     @BeforeEach
@@ -43,7 +41,6 @@ class DefaultCompactionEngineCallMetadataTest {
         tokenEstimator = new HeuristicTokenEstimator();
         hookExecutionManager = new DefaultHookExecutionManager();
         hookRegistry = new DefaultHookRegistry();
-        userLocale = UserLocale.createDefault();
         engine = DefaultCompactionEngine.withDefaults(llmClient, tokenEstimator, hookExecutionManager);
     }
 
@@ -101,7 +98,7 @@ class DefaultCompactionEngineCallMetadataTest {
 
     private CompactionRequest.Builder baseRequest(TranscriptBuffer memory) {
         return CompactionRequest.builder().transcriptBuffer(memory).trigger(CompactionTrigger.MANUAL)
-                .model(LlmModel.builder().name("test-model").build()).hookRegistry(hookRegistry).userLocale(userLocale);
+                .model(LlmModel.builder().name("test-model").build()).hookRegistry(hookRegistry);
     }
 
     private static TranscriptBuffer memoryWith(String userMessage) {

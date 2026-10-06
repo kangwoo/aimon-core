@@ -97,8 +97,10 @@ at.aimon.core.hook/
 > 선언적 hook (`hooks.json` / SKILL.md) 도 같은 네 체인에서만 거부할 수 있고, 거부는 셸
 > handler 의 **exit 2** 로 표현한다. `ON_START` 의 선언적 veto 는 최근에 추가되었다 —
 > 그 전에는 `onStart` 셸 hook 이 exit 2 로 끝나도 아무 일도 일어나지 않았다. 그 네 체인에서는
-> 셸 handler 가 **종료 코드를 내지 못해도**(실행 환경 없음 · timeout · 셸 실패) 거부다 — 판단하지
-> 못한 가드는 막는다. 관찰용 handler 는 `failOpen: true` 로 이 규칙에서 빠진다.
+> 셸 handler 가 **종료 코드를 내지 못해도**(실행 환경 없음 · timeout · 셸 실패), 셸이 커맨드를
+> **시작하지 못해도**(exit 126 · 127) 거부다 — 판단하지 못한 가드는 막는다. 관찰용 handler 는
+> `failOpen: true` 로 이 규칙에서 빠진다. 전체 표는
+> [hook 설정 가이드 › 가드가 막는 경우](hook-config-guide.md#가드가-막는-경우).
 
 새 이벤트를 추가하려면 hook 인터페이스 + context 타입 + `HookEventType` 상수 +
 `HookExecutionManager` 메서드 + **발화 지점** 을 모두 추가해야 한다. 발화 지점이 없는 상수는
@@ -254,7 +256,6 @@ registry.register(HookEventType.PRE_TOOL, rateLimitHook);
 | `getInvokerType()` | `InvokerType` | 실행자 유형 (MAIN_AGENT, SUBAGENT 등) |
 | `getInvokerName()` | `String` | 실행자 이름 |
 | `getHookRegistry()` | `HookRegistry` | Hook 레지스트리 |
-| `getUserLocale()` | `UserLocale` | 사용자 로케일 (시간대) |
 | `getExecutionEnvironment()` | `Optional<ExecutionEnvironment>` | 훅이 발화한 실행의 실행 환경 — 그 실행의 도구가 쓰는 파일 시스템·셸. 실행 밖에서 발화하는 이벤트(`onSessionStart` · `onSessionEnd` · `onConfigReload`)와 rewake 리플레이에서는 비어 있다. 비어 있을 때 호스트로 되돌아가지 말 것 |
 | `getEnvironmentDescriptor()` | `Optional<EnvironmentDescriptor>` | 위 환경의 서술자(작업 디렉터리 · platform · OS). 명령이 **어디서 도는지**는 호스트가 아니라 이것으로 판단한다 |
 | `getTimestamp()` | `Instant` | 타임스탬프 |
@@ -368,7 +369,7 @@ HookResult.builder()...build();              // 여러 축을 동시에 설정
 | 항목 | 기본값 | 설명 |
 |------|--------|------|
 | `timeout` | 30초 | hook 하나당 바깥 안전망 |
-| `timeoutBehavior` | `FAIL_OPEN` | 타임아웃 시 통과(`FAIL_OPEN`) / 차단(`FAIL_CLOSED`) |
+| `timeoutBehavior` | `FAIL_OPEN` | 타임아웃 시 통과(`FAIL_OPEN`) / 차단(`FAIL_CLOSED`). 체인의 기본값이며, hook 이 직접 선언하면 그 hook 에는 선언이 이긴다 |
 | `executionMode` | `SEQUENTIAL` | 병렬 실행은 opt-in |
 | `stopOnBlocked` | 정책별 | 차단 결과가 나오면 후속 hook 단축 |
 | `dedupKeyExtractor` | 없음 | 같은 키의 중복 hook 제거 |
@@ -383,6 +384,17 @@ HookResult.builder()...build();              // 여러 축을 동시에 설정
   (`hooks.json` / frontmatter 의 `timeoutMs`) 에서 오는 검증되지 않은 값이므로, 상한이 없으면
   hook 하나가 턴을 무한정 붙잡을 수 있고 `Long.MAX_VALUE` 근처 값은 executor 의 나노초 변환에서
   오버플로합니다. 초과 시 WARN 로그를 남기고 10분으로 자릅니다.
+- **`timeoutBehaviorFor(hook)`** 이 그물이 터졌을 때 실제로 적용되는 동작입니다. hook 이
+  `getTimeoutBehavior()` 로 `FAIL_CLOSED` 나 `FAIL_OPEN` 을 선언하면 정책의 `timeoutBehavior` 보다
+  그 선언이 우선합니다. 선언적 가드 hook(`preTool` · `onStart` · `preCompact` ·
+  `permissionRequest`, `failOpen` 아님)은 `FAIL_CLOSED` 를 선언하므로 기본 정책 아래에서도
+  그물에 끊기면 막습니다. **코드로 등록한 hook 은 선언하지 않는 한 정책을 따릅니다** — 기본
+  정책에서 그물에 끊긴 `PreToolHook` · `OnStartHook` 은 통과로 읽히고, `OnStartHook` 이 던진
+  예외도 `onStart` 정책에서는 성공입니다. 거부가 목적인 hook 이라면 `getTimeoutBehavior()` 를
+  오버라이드해 `FAIL_CLOSED` 를 선언하세요. 그 선언은 그물뿐 아니라 판정 없이 끝나는 나머지 두
+  경우에도 적용됩니다 — 실행기의 풀이 hook 을 받지 않았을 때(포화 · 종료)와 hook 본문이 예외를
+  던졌을 때도 `onException` 대신 BLOCKED 입니다(`failsClosedWithoutVerdict`). 선언하지 않은 hook 은
+  두 경우 모두 전처럼 `onException` 을 따릅니다.
 - **병렬 모드**에서 timeout 은 **대기를 제한할 뿐, 이미 끝난 작업을 버리지 않습니다.** 결과는 항상
   등록 순서대로 재조립됩니다.
 - **`stopOnBlocked` 는 `SEQUENTIAL` 에서만 의미가 있습니다.** `PARALLEL` 에서는 이미 제출된

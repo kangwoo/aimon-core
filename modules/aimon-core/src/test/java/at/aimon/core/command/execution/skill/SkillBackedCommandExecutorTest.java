@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.ExecutionId;
+import at.aimon.core.agent.budget.TruncatedResponses;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContext;
@@ -91,6 +92,36 @@ class SkillBackedCommandExecutorTest {
      * per-run state, so a shared one would quietly merge two runs' buckets. Same reason
      * {@code RoutineExecutor} generates per fire rather than reusing the task id.
      */
+    @Test
+    @DisplayName("L-26: a skill result cut at max_tokens becomes a truncated command result, text unchanged")
+    void shouldCarryATruncatedSkillResultOver() {
+        SkillExecutionMetadata metadata = SkillExecutionMetadata.builder().iterationCount(2)
+                .tokenUsage(TokenUsage.empty()).timestamps(Instant.now(), Instant.now()).build();
+        String cut = "partial" + TruncatedResponses.TRUNCATION_MARKER;
+        SkillBackedCommandExecutor executor = new SkillBackedCommandExecutor(
+                (c, r) -> SkillExecutionResult.truncated(cut, metadata));
+
+        CommandExecutionResult result = executor.execute(buildContext(new SkillBackedCommand(simpleSkill("commit"))),
+                CommandExecutionRequest.builder().build());
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.isTruncated()).isTrue();
+        assertThat(result.getResponse()).isEqualTo(cut);
+        assertThat(result.getMetadata()).hasValueSatisfying(m -> assertThat(m.getIterationCount()).isEqualTo(2));
+    }
+
+    @Test
+    @DisplayName("L-26: a whole skill result and a failed one are not truncated command results")
+    void shouldNotMarkOtherSkillResultsTruncated() {
+        SkillBackedCommand command = new SkillBackedCommand(simpleSkill("commit"));
+
+        assertThat(new SkillBackedCommandExecutor((c, r) -> SkillExecutionResult.success("whole"))
+                .execute(buildContext(command), CommandExecutionRequest.builder().build()).isTruncated()).isFalse();
+        assertThat(new SkillBackedCommandExecutor(
+                (c, r) -> SkillExecutionResult.failure(new IllegalStateException("boom")))
+                .execute(buildContext(command), CommandExecutionRequest.builder().build()).isTruncated()).isFalse();
+    }
+
     @Test
     @DisplayName("gives each invocation a fresh, skill-named ExecutionId")
     void shouldGiveEachInvocationAFreshExecutionId() {

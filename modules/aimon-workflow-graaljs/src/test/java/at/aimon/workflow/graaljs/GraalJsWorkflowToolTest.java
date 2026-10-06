@@ -22,7 +22,6 @@ import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.PostToolHook;
@@ -33,7 +32,7 @@ import at.aimon.core.skill.hook.SkillHookSet;
 import at.aimon.core.skill.hook.SkillScopedHookRegistry;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.workflow.WorkflowBackgroundConfig;
@@ -61,8 +60,7 @@ class GraalJsWorkflowToolTest extends AbstractGraalJsRunTest {
         final GraalJsWorkflowTool.Builder builder = GraalJsWorkflowTool.builder()
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).subagentRegistry(registry)
                 .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry())
-                .userLocale(UserLocale.createDefault()).subagentExecutionManager(manager).engines(engines)
-                .backgroundRunner(backgroundRunner);
+                .subagentExecutionManager(manager).engines(engines).backgroundRunner(backgroundRunner);
         if (sandbox != null) {
             builder.sandbox(sandbox);
         }
@@ -96,6 +94,70 @@ class GraalJsWorkflowToolTest extends AbstractGraalJsRunTest {
 
         assertThat(result.isSuccess()).as(result.getContent()).isTrue();
         assertThat(result.getContent()).isEqualTo("graaljs:builder {sandbox.slot=build}");
+    }
+
+    @Test
+    @DisplayName("EE-45: by default a script that gives a step attributes fails, naming the key and the remedy")
+    void scriptAttributesAreRefusedByDefault() {
+        final java.util.concurrent.atomic.AtomicInteger steps = new java.util.concurrent.atomic.AtomicInteger();
+        behavior = (subagent, goal) -> {
+            steps.incrementAndGet();
+            return "ran";
+        };
+
+        final ToolResult result = tool(null).execute(ToolInput.of(Map.of("script",
+                "return agent({ goal: 'g', systemPrompt: 'p', attributes: { sandbox: { slot: 'privileged' } } }).text;")),
+                contextWithId());
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("'sandbox.slot'", "allowed: none", "scriptAttributeKeys");
+        assertThat(steps).as("no step runs with attributes the operator did not allow").hasValue(0);
+    }
+
+    @Test
+    @DisplayName("EE-45: scriptAttributeKeys admits exactly the listed keys")
+    void scriptAttributeKeysAdmitTheListedKeys() {
+        behavior = (subagent, goal) -> subagent.getMetadata().getAttributes().toString();
+        final GraalJsWorkflowTool allowing = GraalJsWorkflowTool.builder()
+                .defaultModel(LlmModel.builder().name("gpt-4").build()).subagentRegistry(new InMemorySubagentRegistry())
+                .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry())
+                .subagentExecutionManager(manager).engines(engines).scriptAttributeKeys(List.of("sandbox.profile"))
+                .build();
+
+        final ToolResult allowed = allowing.execute(ToolInput.of(Map.of("script",
+                "return agent({ agentType: 'a', goal: 'g', attributes: { sandbox: { profile: 'ro' } } }).text;")),
+                contextWithId());
+        final ToolResult refused = allowing.execute(ToolInput.of(Map.of("script",
+                "return agent({ agentType: 'a', goal: 'g', attributes: { sandbox: { slot: 'privileged' } } }).text;")),
+                contextWithId());
+
+        assertThat(allowed.isSuccess()).as(allowed.getContent()).isTrue();
+        assertThat(allowed.getContent()).isEqualTo("{sandbox.profile=ro}");
+        assertThat(refused.isError()).isTrue();
+        assertThat(refused.getContent()).contains("'sandbox.slot'", "allowed: sandbox.profile");
+    }
+
+    @Test
+    @DisplayName("EE-45: scriptAttributeKeys with a custom resolver is refused at build, and so is a blank key")
+    void scriptAttributeKeysConfigureOnlyTheDefaultResolver() {
+        final GraalJsWorkflowTool.Builder builder = GraalJsWorkflowTool.builder()
+                .defaultModel(LlmModel.builder().name("gpt-4").build()).subagentRegistry(new InMemorySubagentRegistry())
+                .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry())
+                .subagentExecutionManager(manager).engines(engines).subagentResolver(SubagentResolver.inline())
+                .scriptAttributeKeys(List.of("gpu"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(builder::build).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("scriptAttributeKeys");
+        org.assertj.core.api.Assertions
+                .assertThatThrownBy(() -> GraalJsWorkflowTool.builder().scriptAttributeKeys(List.of("")))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("EE-45: the tool's schema does not advertise 'attributes' to the model")
+    void theSchemaDoesNotAdvertiseAttributes() {
+        assertThat(tool(null).getDefinition().getInputSchema().toString()).doesNotContain("attributes");
+        assertThat(tool(null).getDefinition().getDescription()).doesNotContain("attributes");
     }
 
     @Test
@@ -162,8 +224,7 @@ class GraalJsWorkflowToolTest extends AbstractGraalJsRunTest {
                 insideSkill(fromContext));
 
         assertThat(result.isSuccess()).as(result.getContent()).isTrue();
-        final ArgumentCaptor<SubagentExecutionEnvironment> env = ArgumentCaptor
-                .forClass(SubagentExecutionEnvironment.class);
+        final ArgumentCaptor<SubagentLaunchContext> env = ArgumentCaptor.forClass(SubagentLaunchContext.class);
         verify(manager).execute(env.capture(), any(Subagent.class), anyString());
         assertThat(env.getValue().getHookRegistry()).isSameAs(fromContext);
     }

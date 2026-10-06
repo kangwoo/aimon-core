@@ -17,6 +17,9 @@ import java.util.Optional;
  * <li><b>0</b> — success; the hook allows the tool.
  * <li><b>{@value #DENY_EXIT_CODE}</b> — deny; the tool is blocked and {@link #getStderr() stderr} is fed back to the
  * model as the reason.
+ * <li><b>{@value #NOT_EXECUTABLE_EXIT_CODE} / {@value #NOT_FOUND_EXIT_CODE}</b> — the shell could not start the
+ * command. On an event with a decision channel this is read as "not run" ({@link #asGuardAnswer()}), so the guard
+ * blocks unless it declared {@code failOpen}; on an advisory event it is logged like any other failure.
  * <li><b>anything else</b> — a hook script malfunction. It is logged at WARN and treated as allow: a broken audit
  * script must not silently start blocking every tool call.
  * </ul>
@@ -35,6 +38,12 @@ public final class ShellHookOutcome {
 
     /** Exit code a shell hook uses to veto the tool dispatch. */
     public static final int DENY_EXIT_CODE = 2;
+
+    /** Exit code a POSIX shell reports for a command it found but could not execute. */
+    public static final int NOT_EXECUTABLE_EXIT_CODE = 126;
+
+    /** Exit code a POSIX shell reports for a command it did not find. */
+    public static final int NOT_FOUND_EXIT_CODE = 127;
 
     /**
      * Upper bound on the number of characters of {@link #denyReason()} handed back to the model.
@@ -56,6 +65,13 @@ public final class ShellHookOutcome {
         /** The execution environment is there but could not be used (or gave no shell). */
         ENVIRONMENT_UNAVAILABLE("execution environment unavailable"),
 
+        /**
+         * The declaring skill's directory could not be staged into the environment the command runs in, so
+         * {@code AIMON_SKILL_DIR} has no value. The command is not run without it: a command written against
+         * {@code "$AIMON_SKILL_DIR/scripts/x.sh"} would otherwise run {@code /scripts/x.sh}.
+         */
+        STAGING_FAILED("skill directory could not be staged"),
+
         /** The executor does not run shell actions at all. */
         SHELL_UNSUPPORTED("shell actions not supported"),
 
@@ -63,7 +79,49 @@ public final class ShellHookOutcome {
         TIMEOUT("timed out"),
 
         /** The shell failed before the command could report an exit status. */
-        EXECUTION_FAILED("shell execution failed");
+        EXECUTION_FAILED("shell execution failed"),
+
+        /**
+         * The execution the hook fired in was interrupted while the action ran: the command was stopped through the
+         * execution's cancellation signal, or the thread running it was interrupted. Unlike every other cause this
+         * one blocks on a guard event <em>whatever</em> {@code failOpen} says &mdash; the execution is ending, so
+         * "allow and continue" is not an answer (see {@code ShellHookVerdicts}).
+         */
+        CANCELLED("execution cancelled"),
+
+        /**
+         * The shell found the command but could not execute it (exit
+         * {@value ShellHookOutcome#NOT_EXECUTABLE_EXIT_CODE}:
+         * no execute permission, or not an executable). Only a guard event reads the exit code this way — see
+         * {@link ShellHookOutcome#asGuardAnswer()}.
+         */
+        COMMAND_NOT_EXECUTABLE("command not executable"),
+
+        /**
+         * The shell did not find the command (exit {@value ShellHookOutcome#NOT_FOUND_EXIT_CODE}). Only a guard event
+         * reads the exit code this way — see {@link ShellHookOutcome#asGuardAnswer()}.
+         */
+        COMMAND_NOT_FOUND("command not found"),
+
+        /**
+         * An {@code http} or {@code mcp} action has no executor to carry it out. Reported by the hook itself, see
+         * {@link ActionCallOutcome}.
+         */
+        EXECUTOR_NOT_WIRED("action executor not wired"),
+
+        /**
+         * An {@code http} or {@code mcp} call did not come back with an answer: the endpoint could not be reached, it
+         * answered with a non-2xx status, the MCP server is not registered or not connected, or its tool reported an
+         * error.
+         */
+        CALL_FAILED("call failed"),
+
+        /**
+         * An {@code http} or {@code mcp} call came back with an answer that cannot be read as a verdict: a body
+         * declared as JSON that does not parse, a {@code decision} that is not one of the known values, an
+         * {@code updatedInput} that is not an object.
+         */
+        INVALID_RESPONSE("response could not be read");
 
         private final String description;
 
@@ -102,7 +160,11 @@ public final class ShellHookOutcome {
      * @param cause
      *            why there is no exit status (must not be null)
      * @param detail
-     *            what the failure said about itself, typically the exception message (may be null or blank)
+     *            what goes after the cause in the reason (may be null or blank). On a guard event the reason is read
+     *            by the party the guard constrains, so this is a fixed string or an exception's type, not its message;
+     *            the two messages that are passed on &mdash; a {@code StagingException}'s and an
+     *            {@code ExecutionEnvironmentUnavailableException}'s &mdash; are the ones a tool call failing the same
+     *            way already returns to the model
      * @return the outcome (never null)
      * @throws NullPointerException
      *             if cause is null
@@ -180,6 +242,37 @@ public final class ShellHookOutcome {
             return "";
         }
         return unrunDetail.isEmpty() ? unrunCause.description() : cap(unrunCause.description() + ": " + unrunDetail);
+    }
+
+    /**
+     * Returns this outcome as an event with a decision channel reads it: an exit code of
+     * {@value #NOT_EXECUTABLE_EXIT_CODE} or {@value #NOT_FOUND_EXIT_CODE} becomes a command that was
+     * {@linkplain #notRun(Unrun, String) not run}, and every other outcome is returned unchanged.
+     *
+     * <p>
+     * Those two codes are the shell's own report that it never started the command — the guard script is missing
+     * from the environment, or is not executable there — so the guard said nothing, exactly as when there is no exit
+     * status at all. A script can also exit with either code itself; the two cannot be told apart, and a guard that
+     * does so is read as one that could not run. Every other non-zero code keeps its meaning (a script malfunction,
+     * allowed), and an advisory event never calls this: there an exit code is only logged.
+     *
+     * <p>
+     * The detail is the exit code alone. The shell's stderr for these codes quotes the command line, which may carry
+     * secrets, and the reason is read by the party the guard constrains.
+     *
+     * @return the outcome to judge on a guard event (never null)
+     */
+    public ShellHookOutcome asGuardAnswer() {
+        if (!observed) {
+            return this;
+        }
+        if (exitCode == NOT_FOUND_EXIT_CODE) {
+            return notRun(Unrun.COMMAND_NOT_FOUND, "exit code " + exitCode);
+        }
+        if (exitCode == NOT_EXECUTABLE_EXIT_CODE) {
+            return notRun(Unrun.COMMAND_NOT_EXECUTABLE, "exit code " + exitCode);
+        }
+        return this;
     }
 
     /**

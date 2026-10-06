@@ -12,7 +12,6 @@ import org.mockito.ArgumentCaptor;
 
 import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.orca.OrcaProviderDependencies;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.CommandRegistry;
 import at.aimon.core.command.MutableCommandRegistry;
 import at.aimon.core.command.SystemCommand;
@@ -34,8 +33,7 @@ class OrcaSystemCommandProviderContextEngineTest {
     @Test
     void registersCompactOverTheContextEngineWithoutABareEngineOrGuard() {
         final OrcaProviderDependencies deps = baseDeps().contextEngine(ContextEngine.passthrough())
-                .hookRegistry(mock(HookRegistry.class)).hookExecutionManager(mock(HookExecutionManager.class))
-                .userLocale(mock(UserLocale.class)).build();
+                .hookRegistry(mock(HookRegistry.class)).hookExecutionManager(mock(HookExecutionManager.class)).build();
 
         provider.registerCommands(registry, context(deps));
 
@@ -45,7 +43,7 @@ class OrcaSystemCommandProviderContextEngineTest {
     @Test
     void stillSkipsCompactWhenTheHookPlumbingIsMissing() {
         final OrcaProviderDependencies deps = baseDeps().contextEngine(ContextEngine.passthrough())
-                .hookRegistry(mock(HookRegistry.class)).hookExecutionManager(mock(HookExecutionManager.class)).build();
+                .hookRegistry(mock(HookRegistry.class)).build();
 
         provider.registerCommands(registry, context(deps));
 

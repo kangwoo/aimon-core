@@ -23,7 +23,6 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.permission.AllowedTool;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.LlmModel;
@@ -170,19 +169,18 @@ class DefaultSubagentExecutionManagerCallerCeilingTest {
         return Subagent.builder().name(name).systemPrompt("(inline)").tools(allowedTools).build();
     }
 
-    private static SubagentExecutionEnvironment env() {
+    private static SubagentLaunchContext env() {
         return baseEnv().build();
     }
 
-    private static SubagentExecutionEnvironment envAllowing(List<String> callerAllowedTools) {
+    private static SubagentLaunchContext envAllowing(List<String> callerAllowedTools) {
         return baseEnv().callerAllowedTools(callerAllowedTools.stream().map(AllowedTool::parse).toList()).build();
     }
 
-    private static SubagentExecutionEnvironment.Builder baseEnv() {
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
+    private static SubagentLaunchContext.Builder baseEnv() {
+        return SubagentLaunchContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
                 .subagentRegistry(new InMemorySubagentRegistry()).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .defaultModel(LlmModel.builder().name("gpt-4").build());
+                .hookRegistry(new DefaultHookRegistry()).defaultModel(LlmModel.builder().name("gpt-4").build());
     }
 
     private static SubagentExecutionResult reactResult(String answer) {

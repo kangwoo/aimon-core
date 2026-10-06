@@ -124,7 +124,7 @@ public final class RollingContextEngine implements ContextEngine {
      * (context-engine §13.10). The same fact reaches the execution result as
      * {@link CompactionMetadata#isOverBlockingLimit()} on that compaction's record.
      */
-    public static final String STILL_OVER_BLOCKING = "the view is still at or above the blocking limit";
+    public static final String STILL_OVER_BLOCKING = DefaultCompactionGuard.STILL_OVER_BLOCKING;
 
     /** Stands before an absorbed range that does not start with a user message, so the summary call's does. */
     static final String CONTINUATION_NOTE = "[The earlier part of this conversation is covered by the previous"
@@ -562,7 +562,6 @@ public final class RollingContextEngine implements ContextEngine {
                 .executionId(call.request.getCaller().getExecutionId().orElse(null)).trigger(trigger)
                 .model(summaryModel != null ? summaryModel : call.request.getModel())
                 .hookRegistry(call.request.getHookRegistry().orElseThrow())
-                .userLocale(call.request.getUserLocale().orElseThrow())
                 .executionEnvironment(call.request.getExecutionEnvironment().orElse(null))
                 .customInstructions(instructions).callMetadata(call.request.getCallMetadata().orElse(null))
                 .rolling(true).previousSummary(held != null ? held.getSummaryText() : null)
@@ -678,8 +677,6 @@ public final class RollingContextEngine implements ContextEngine {
     private static void requireHooks(ContextRequest request) {
         request.getHookRegistry()
                 .orElseThrow(() -> new IllegalArgumentException("RollingContextEngine requires a HookRegistry"));
-        request.getUserLocale()
-                .orElseThrow(() -> new IllegalArgumentException("RollingContextEngine requires a UserLocale"));
     }
 
     @Override

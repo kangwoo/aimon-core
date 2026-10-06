@@ -4,6 +4,8 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.util.Collection;
+import java.util.List;
 import java.util.Objects;
 
 import org.slf4j.Logger;
@@ -17,6 +19,7 @@ import at.aimon.core.agent.definition.AgentDefinition;
 import at.aimon.core.agent.definition.exception.AgentDefinitionLoadException;
 import at.aimon.core.agent.definition.exception.AgentDefinitionNotFoundException;
 import at.aimon.core.agent.definition.parser.AgentDefinitionParser;
+import at.aimon.core.filesystem.VirtualFileSystems;
 import at.aimon.core.skill.DefaultSkillRegistry;
 import at.aimon.core.skill.SkillRegistry;
 import at.aimon.core.skill.parser.MarkdownSkillParser;
@@ -76,6 +79,7 @@ public final class FileSystemAgentBundleLoader implements AgentBundleLoader {
     private final Path basePath;
     private final AgentDefinitionParser parser;
     private final SkillParser skillParser;
+    private final List<Path> allowedSkillLinkRoots;
 
     /**
      * Creates a new FileSystemAgentBundleLoader using a default {@link MarkdownSkillParser}. Frontmatter {@code shell}
@@ -107,9 +111,41 @@ public final class FileSystemAgentBundleLoader implements AgentBundleLoader {
      *             if any parameter is null
      */
     public FileSystemAgentBundleLoader(Path basePath, AgentDefinitionParser parser, SkillParser skillParser) {
+        this(basePath, parser, skillParser, List.of());
+    }
+
+    /**
+     * Creates a new FileSystemAgentBundleLoader whose bundled skills may be symbolic links into the given directories.
+     *
+     * <p>
+     * A skill directory under {@code {basePath}/{name}/skills/}, or anything inside one, may be a symbolic link. It is
+     * followed when it resolves inside that {@code skills/} directory or inside one of {@code allowedSkillLinkRoots};
+     * a skill with a link that resolves anywhere else does not load, and only that skill (execution-environment
+     * design §4.4). With an empty list — what the other constructors pass — only links within {@code skills/} are
+     * followed. The list is checked here, before any bundle is read: see
+     * {@link VirtualFileSystems#checkedLinkRoots(Collection)} for what is refused.
+     *
+     * @param basePath
+     *            the filesystem base path for agent directories (must not be null)
+     * @param parser
+     *            the agent definition parser (must not be null)
+     * @param skillParser
+     *            the skill parser used by the bundled skill registry (must not be null)
+     * @param allowedSkillLinkRoots
+     *            absolute directories, none of them a filesystem root, that a link in a bundle's {@code skills/}
+     *            directory may resolve into (must not be null; may be empty)
+     * @throws NullPointerException
+     *             if any parameter is null
+     * @throws IllegalArgumentException
+     *             if an allowed link root is not an absolute path or is a filesystem root
+     */
+    public FileSystemAgentBundleLoader(Path basePath, AgentDefinitionParser parser, SkillParser skillParser,
+            Collection<Path> allowedSkillLinkRoots) {
         this.basePath = Objects.requireNonNull(basePath, "Base path cannot be null");
         this.parser = Objects.requireNonNull(parser, "Parser cannot be null");
         this.skillParser = Objects.requireNonNull(skillParser, "Skill parser cannot be null");
+        this.allowedSkillLinkRoots = VirtualFileSystems.checkedLinkRoots(
+                Objects.requireNonNull(allowedSkillLinkRoots, "Allowed skill link roots cannot be null"));
     }
 
     @Override
@@ -168,7 +204,8 @@ public final class FileSystemAgentBundleLoader implements AgentBundleLoader {
             return null;
         }
 
-        final PathSkillRepository repository = new PathSkillRepository(skillsPath);
+        final PathSkillRepository repository = PathSkillRepository.builder(skillsPath)
+                .allowedLinkRoots(allowedSkillLinkRoots).build();
         return new DefaultSkillRegistry(repository, skillParser);
     }
 }

@@ -32,15 +32,14 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.permission.AllowedTool;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentMetadata;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.subagent.exception.SubagentNotFoundException;
@@ -59,7 +58,6 @@ class TaskToolTest {
     private SubagentRegistry subagentRegistry;
     private ToolRegistry toolRegistry;
     private HookRegistry hookRegistry;
-    private UserLocale userLocale;
     private SubagentExecutionManager executionManager;
     private TaskTool tool;
 
@@ -69,10 +67,9 @@ class TaskToolTest {
         subagentRegistry = mock(SubagentRegistry.class);
         toolRegistry = mock(ToolRegistry.class);
         hookRegistry = mock(HookRegistry.class);
-        userLocale = mock(UserLocale.class);
         executionManager = mock(SubagentExecutionManager.class);
         lenient().when(subagentRegistry.getAllSubagents()).thenReturn(List.of());
-        tool = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale, executionManager);
+        tool = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, executionManager);
     }
 
     private SubagentExecutionResult successResult() {
@@ -93,18 +90,16 @@ class TaskToolTest {
 
     @Test
     void constructorRejectsNullArguments() {
-        assertThatNullPointerException().isThrownBy(
-                () -> new TaskTool(null, subagentRegistry, toolRegistry, hookRegistry, userLocale, executionManager));
-        assertThatNullPointerException().isThrownBy(
-                () -> new TaskTool(defaultModel, null, toolRegistry, hookRegistry, userLocale, executionManager));
-        assertThatNullPointerException().isThrownBy(
-                () -> new TaskTool(defaultModel, subagentRegistry, null, hookRegistry, userLocale, executionManager));
-        assertThatNullPointerException().isThrownBy(
-                () -> new TaskTool(defaultModel, subagentRegistry, toolRegistry, null, userLocale, executionManager));
-        assertThatNullPointerException().isThrownBy(
-                () -> new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, null, executionManager));
-        assertThatNullPointerException().isThrownBy(
-                () -> new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale, null));
+        assertThatNullPointerException()
+                .isThrownBy(() -> new TaskTool(null, subagentRegistry, toolRegistry, hookRegistry, executionManager));
+        assertThatNullPointerException()
+                .isThrownBy(() -> new TaskTool(defaultModel, null, toolRegistry, hookRegistry, executionManager));
+        assertThatNullPointerException()
+                .isThrownBy(() -> new TaskTool(defaultModel, subagentRegistry, null, hookRegistry, executionManager));
+        assertThatNullPointerException()
+                .isThrownBy(() -> new TaskTool(defaultModel, subagentRegistry, toolRegistry, null, executionManager));
+        assertThatNullPointerException()
+                .isThrownBy(() -> new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, null));
     }
 
     @Test
@@ -179,8 +174,8 @@ class TaskToolTest {
     @Test
     void executeRejectsResumeWhenSnapshotNotFound() {
         SessionSnapshotStore store = new InMemorySessionSnapshotStore();
-        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale,
-                executionManager, List.of(), null, store);
+        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, executionManager,
+                List.of(), null, store);
         ToolInput input = ToolInput
                 .of(Map.of("subagent_name", "Explore", "prompt", "p", "description", "d", "resume", "missing"));
 
@@ -194,7 +189,7 @@ class TaskToolTest {
     void executeForwardsTheCallersConversationAsTheInvoker() {
         final SessionId caller = SessionId.generate();
 
-        final SubagentExecutionEnvironment env = captureEnvFor(
+        final SubagentLaunchContext env = captureEnvFor(
                 ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeId.of("agent:test"))
                         .put(ToolContextKeys.SESSION_ID, caller).build());
 
@@ -208,7 +203,7 @@ class TaskToolTest {
         final SessionId user = SessionId.generate();
         final SessionId intermediateFork = SessionId.generate();
 
-        final SubagentExecutionEnvironment env = captureEnvFor(
+        final SubagentLaunchContext env = captureEnvFor(
                 ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeId.of("agent:test"))
                         .put(ToolContextKeys.SESSION_ID, intermediateFork)
                         .put(ToolContextKeys.INVOKING_SESSION_ID, user).build());
@@ -249,7 +244,7 @@ class TaskToolTest {
         // Inside a forked skill the caller's registry carries the skill's hooks; the constructor's does not (EE-49).
         final HookRegistry fromContext = new DefaultHookRegistry();
 
-        final SubagentExecutionEnvironment env = captureEnvFor(
+        final SubagentLaunchContext env = captureEnvFor(
                 HookRegistryAccess.withHookRegistry(contextWithId(), fromContext));
 
         assertThat(env.getHookRegistry()).isSameAs(fromContext);
@@ -261,14 +256,13 @@ class TaskToolTest {
     }
 
     /** Runs a successful foreground Task against the given context and returns the environment it built. */
-    private SubagentExecutionEnvironment captureEnvFor(ToolContext context) {
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"), anyString(),
+    private SubagentLaunchContext captureEnvFor(ToolContext context) {
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"), anyString(),
                 anyString())).thenReturn(successResult());
 
         tool.execute(ToolInput.of(Map.of("subagent_name", "Explore", "prompt", "p", "description", "d")), context);
 
-        final ArgumentCaptor<SubagentExecutionEnvironment> captor = ArgumentCaptor
-                .forClass(SubagentExecutionEnvironment.class);
+        final ArgumentCaptor<SubagentLaunchContext> captor = ArgumentCaptor.forClass(SubagentLaunchContext.class);
         verify(executionManager).execute(captor.capture(), anyString(), eq("Explore"), anyString(), anyString());
         return captor.getValue();
     }
@@ -279,9 +273,9 @@ class TaskToolTest {
         SessionSnapshot saved = SessionSnapshot.of(SessionId.generate(), "sys", List.of());
         // The transcript is tagged with the caller's own context, so the scoped resume load surfaces it.
         store.save("task-123", "Explore", AgentRuntimeId.of("agent:test"), saved);
-        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale,
-                executionManager, List.of(), null, store);
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"), anyString(),
+        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, executionManager,
+                List.of(), null, store);
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"), anyString(),
                 anyString())).thenReturn(successResult());
         ToolInput input = ToolInput
                 .of(Map.of("subagent_name", "Explore", "prompt", "p", "description", "d", "resume", "task-123"));
@@ -289,8 +283,7 @@ class TaskToolTest {
         ToolResult result = withStore.execute(input, contextWithId());
 
         assertThat(result.isSuccess()).isTrue();
-        ArgumentCaptor<SubagentExecutionEnvironment> envCaptor = ArgumentCaptor
-                .forClass(SubagentExecutionEnvironment.class);
+        ArgumentCaptor<SubagentLaunchContext> envCaptor = ArgumentCaptor.forClass(SubagentLaunchContext.class);
         verify(executionManager).execute(envCaptor.capture(), anyString(), eq("Explore"), anyString(), anyString());
         assertThat(envCaptor.getValue().getPreviousSnapshot()).contains(saved);
         assertThat(envCaptor.getValue().getSessionSnapshotStore()).contains(store);
@@ -303,8 +296,8 @@ class TaskToolTest {
         // The snapshot was recorded by "Explore" in the caller's own context; resuming it as "Plan" must be rejected on
         // the subagent-name check (the context check passes, so we reach the mismatch branch), not silently grafted.
         store.save("task-123", "Explore", AgentRuntimeId.of("agent:test"), saved);
-        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale,
-                executionManager, List.of(), null, store);
+        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, executionManager,
+                List.of(), null, store);
         ToolInput input = ToolInput
                 .of(Map.of("subagent_name", "Plan", "prompt", "p", "description", "d", "resume", "task-123"));
 
@@ -312,7 +305,7 @@ class TaskToolTest {
 
         assertThat(result.isError()).isTrue();
         assertThat(result.getContent()).contains("belongs to subagent 'Explore'").contains("not 'Plan'");
-        verify(executionManager, never()).execute(any(SubagentExecutionEnvironment.class), anyString(), anyString(),
+        verify(executionManager, never()).execute(any(SubagentLaunchContext.class), anyString(), anyString(),
                 anyString(), anyString());
     }
 
@@ -323,8 +316,8 @@ class TaskToolTest {
         // The transcript belongs to a different agent's runtime. Even though the id is known, the caller
         // (agent:test) must not be able to resume — and thereby read — another agent's transcript.
         store.save("task-123", "Explore", AgentRuntimeId.of("agent:other"), saved);
-        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale,
-                executionManager, List.of(), null, store);
+        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, executionManager,
+                List.of(), null, store);
         ToolInput input = ToolInput
                 .of(Map.of("subagent_name", "Explore", "prompt", "p", "description", "d", "resume", "task-123"));
 
@@ -333,7 +326,7 @@ class TaskToolTest {
         assertThat(result.isError()).isTrue();
         // Reported as unknown id — the foreign transcript's existence is not leaked.
         assertThat(result.getContent()).contains("No resumable task found for id: task-123");
-        verify(executionManager, never()).execute(any(SubagentExecutionEnvironment.class), anyString(), anyString(),
+        verify(executionManager, never()).execute(any(SubagentLaunchContext.class), anyString(), anyString(),
                 anyString(), anyString());
     }
 
@@ -341,8 +334,8 @@ class TaskToolTest {
     void nineArgConstructorAcceptsConversationSnapshotStore() {
         SessionSnapshotStore store = new InMemorySessionSnapshotStore();
 
-        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale,
-                executionManager, List.of(), null, store);
+        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, executionManager,
+                List.of(), null, store);
 
         assertThat(withStore.getDefinition().getName()).isEqualTo(TaskTool.TOOL_NAME);
     }
@@ -360,7 +353,7 @@ class TaskToolTest {
         Subagent gp = stubSubagent("general-purpose", "general");
         Subagent explore = stubSubagent("Explore", "explore files");
         when(subagentRegistry.getAllSubagents()).thenReturn(List.of(gp, explore));
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"), anyString(),
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"), anyString(),
                 anyString())).thenThrow(new SubagentNotFoundException("Explore"));
 
         ToolResult result = tool.execute(validInput(), contextWithId());
@@ -371,7 +364,7 @@ class TaskToolTest {
 
     @Test
     void executeReturnsFormattedResultOnSuccess() {
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"),
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"),
                 eq("Find auth files"), eq("auth"))).thenReturn(successResult());
 
         ToolResult result = tool.execute(validInput(), contextWithId());
@@ -385,7 +378,7 @@ class TaskToolTest {
 
     @Test
     void executeReturnsBackgroundLaunchMessageWhenRunInBackground() {
-        when(executionManager.executeInBackground(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"),
+        when(executionManager.executeInBackground(any(SubagentLaunchContext.class), anyString(), eq("Explore"),
                 anyString(), anyString())).thenReturn(CompletableFuture.completedFuture(successResult()));
 
         ToolInput input = ToolInput.of(Map.of("subagent_name", "Explore", "prompt", "Find auth files", "description",
@@ -398,6 +391,68 @@ class TaskToolTest {
                 .contains("AgentOutput");
         verify(executionManager).executeInBackground(any(), anyString(), eq("Explore"), eq("Find auth files"),
                 eq("auth"));
+    }
+
+    // --- EE-69: a background subagent outlives the skill whose fork starts it -------------------------------------
+
+    private ToolContext contextInside(HookRegistry registry) {
+        return ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeId.of("agent:test"))
+                .put(ToolContextKeys.HOOK_REGISTRY, registry).build();
+    }
+
+    private static ToolInput backgroundInput() {
+        return ToolInput.of(Map.of("subagent_name", "Explore", "prompt", "Find auth files", "description", "auth",
+                "run_in_background", true));
+    }
+
+    @Test
+    void backgroundIsRefusedWhileASkillsGuardHooksAreActive() {
+        final HookRegistry runtime = new at.aimon.core.hook.DefaultHookRegistry();
+        for (at.aimon.core.skill.hook.SkillHookSet guards : List.of(
+                at.aimon.core.skill.hook.SkillHookSet.builder()
+                        .addPreTool(ctx -> at.aimon.core.hook.execution.HookResult.success()).build(),
+                at.aimon.core.skill.hook.SkillHookSet.builder()
+                        .addOnStart(ctx -> at.aimon.core.hook.execution.HookResult.success()).build())) {
+            final at.aimon.core.skill.hook.SkillScopedHookRegistry view = new at.aimon.core.skill.hook.SkillScopedHookRegistry(
+                    runtime, "deploy", guards);
+
+            final ToolResult result = tool.execute(backgroundInput(), contextInside(view));
+
+            assertThat(result.isError()).isTrue();
+            assertThat(result.getContent()).contains("skill 'deploy'").contains("guard hooks")
+                    .contains("background subagent").contains("foreground");
+        }
+        verify(executionManager, never()).executeInBackground(any(), anyString(), anyString(), anyString(),
+                anyString());
+    }
+
+    @Test
+    void foregroundIsNotRefusedWhileASkillsGuardHooksAreActive() {
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"), anyString(),
+                anyString())).thenReturn(successResult());
+        final at.aimon.core.skill.hook.SkillScopedHookRegistry view = new at.aimon.core.skill.hook.SkillScopedHookRegistry(
+                new at.aimon.core.hook.DefaultHookRegistry(), "deploy", at.aimon.core.skill.hook.SkillHookSet.builder()
+                        .addPreTool(ctx -> at.aimon.core.hook.execution.HookResult.success()).build());
+
+        assertThat(tool.execute(validInput(), contextInside(view)).isSuccess()).isTrue();
+    }
+
+    @Test
+    void backgroundRunsOnceTheSkillsLayerIsClosed_andWhenTheSkillOnlyObserves() {
+        when(executionManager.executeInBackground(any(SubagentLaunchContext.class), anyString(), eq("Explore"),
+                anyString(), anyString())).thenReturn(CompletableFuture.completedFuture(successResult()));
+        final HookRegistry runtime = new at.aimon.core.hook.DefaultHookRegistry();
+        final at.aimon.core.skill.hook.SkillScopedHookRegistry closed = new at.aimon.core.skill.hook.SkillScopedHookRegistry(
+                runtime, "deploy", at.aimon.core.skill.hook.SkillHookSet.builder()
+                        .addPreTool(ctx -> at.aimon.core.hook.execution.HookResult.success()).build());
+        closed.deactivate();
+        final at.aimon.core.skill.hook.SkillScopedHookRegistry observing = new at.aimon.core.skill.hook.SkillScopedHookRegistry(
+                runtime, "audit", at.aimon.core.skill.hook.SkillHookSet.builder()
+                        .addPostTool(ctx -> at.aimon.core.hook.execution.HookResult.success()).build());
+
+        assertThat(tool.execute(backgroundInput(), contextInside(closed)).isSuccess()).isTrue();
+        assertThat(tool.execute(backgroundInput(), contextInside(observing)).isSuccess()).isTrue();
+        assertThat(tool.execute(backgroundInput(), contextInside(runtime)).isSuccess()).isTrue();
     }
 
     @Test
@@ -415,7 +470,7 @@ class TaskToolTest {
     @Test
     void executeNamesTheCompletionReasonAfterTheResultWhenTheForksAnswerWasCut() {
         final String partial = "The module has three packages: api, impl, and" + TruncatedResponses.TRUNCATION_MARKER;
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"),
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"),
                 eq("Find auth files"), eq("auth")))
                 .thenReturn(SubagentExecutionResult.success(partial, emptySnapshot(), metadata(),
                         CompletionReason.TRUNCATED));
@@ -431,7 +486,7 @@ class TaskToolTest {
 
     @Test
     void executeLeavesACompletedResultExactlyAsItWas() {
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"),
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"),
                 eq("Find auth files"), eq("auth"))).thenReturn(successResult());
 
         ToolResult result = tool.execute(validInput(), contextWithId());
@@ -444,7 +499,7 @@ class TaskToolTest {
     void executeNamesTheCompletionReasonOfAFailedForkWithNoGloss() {
         final String stopMessage = "Execution aborted: 3 consecutive tool-only iterations made no progress (all tool "
                 + "calls failed)";
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"),
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"),
                 eq("Find auth files"), eq("auth")))
                 .thenReturn(SubagentExecutionResult.failure(stopMessage, emptySnapshot(), metadata(),
                         CompletionReason.ERROR));
@@ -453,6 +508,20 @@ class TaskToolTest {
 
         assertThat(result.getContent()).contains("Status: FAILURE\n")
                 .endsWith(stopMessage + "\nCompletion reason: ERROR\n").doesNotContain("incomplete");
+    }
+
+    @Test
+    void executeNamesAForkAnOnStartHookBlocked() {
+        final String refusal = "Execution blocked by OnStart hook [SUBAGENT/Explore]: no forks today";
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"),
+                eq("Find auth files"), eq("auth")))
+                .thenReturn(SubagentExecutionResult.failure(refusal, emptySnapshot(), metadata(),
+                        CompletionReason.BLOCKED));
+
+        ToolResult result = tool.execute(validInput(), contextWithId());
+
+        assertThat(result.getContent()).contains("Status: FAILURE\n")
+                .endsWith(refusal + "\nCompletion reason: BLOCKED\n").doesNotContain("incomplete");
     }
 
     private static SessionSnapshot emptySnapshot() {
@@ -475,7 +544,7 @@ class TaskToolTest {
                 .timestamps(now, now).build();
         SessionSnapshot snapshot = SessionSnapshot.of(SessionId.generate(), "sys", List.of());
         SubagentExecutionResult huge = SubagentExecutionResult.success(hugeSummary, snapshot, metadata);
-        when(executionManager.execute(any(SubagentExecutionEnvironment.class), anyString(), eq("Explore"),
+        when(executionManager.execute(any(SubagentLaunchContext.class), anyString(), eq("Explore"),
                 eq("Find auth files"), eq("auth"))).thenReturn(huge);
 
         ToolResult result = tool.execute(validInput(), contextWithId());
@@ -491,8 +560,8 @@ class TaskToolTest {
     void eightArgConstructorAcceptsTaskOutputStore() {
         TaskOutputStore store = new InMemoryTaskOutputStore();
 
-        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, userLocale,
-                executionManager, List.of(), store);
+        TaskTool withStore = new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, executionManager,
+                List.of(), store);
 
         assertThat(withStore.getDefinition().getName()).isEqualTo(TaskTool.TOOL_NAME);
     }

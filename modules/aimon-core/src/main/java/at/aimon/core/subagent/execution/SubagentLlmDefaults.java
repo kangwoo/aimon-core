@@ -18,7 +18,6 @@ import at.aimon.core.subagent.Subagent;
  */
 public final class SubagentLlmDefaults {
 
-    private static final double DEFAULT_TEMPERATURE = 0.7;
     private static final int DEFAULT_MAX_TOKENS = 4096;
 
     private SubagentLlmDefaults() {
@@ -26,7 +25,8 @@ public final class SubagentLlmDefaults {
 
     /**
      * Resolves the model for a subagent: the subagent's own {@code model} name when set, otherwise the default model's
-     * name, merged with the default's temperature and max-tokens. This is the model the ReAct path sends to the LLM.
+     * name, merged with the default's sampling parameters and max-tokens. This is the model the ReAct path sends to the
+     * LLM.
      *
      * <p>
      * When neither names a model, the result carries no name, and the client sends its own default model — exactly as
@@ -49,8 +49,24 @@ public final class SubagentLlmDefaults {
      * Priority (highest first): explicit {@code modelOverride} (e.g. the {@code Task} tool's {@code model} argument)
      * &gt; the subagent's own {@code model} frontmatter name &gt; the default model's name. Every one of them is a
      * model name sent as written — nothing here resolves an alias. When none is present the result carries no name,
-     * and the client applies its own default model at request time rather than a name invented here. Temperature and
-     * max-tokens are always inherited from {@code defaultModel} — only the model name is overridden.
+     * and the client applies its own default model at request time rather than a name invented here. Max-tokens and
+     * the sampling parameters are always inherited from {@code defaultModel} — only the model name is overridden.
+     *
+     * <p>
+     * <b>A sampling parameter the spawning agent does not state stays unset.</b> {@code temperature}, {@code topP} and
+     * the two penalties are carried when the parent's model has them and left out when it does not, so the provider's
+     * configured default (and after it the server's) applies to a fork exactly as it does to the parent's own
+     * requests. Nothing is invented here: a value nobody wrote would win over the deployment's default and would be
+     * sent to — or reported as suppressed on — a model the operator never configured it for.
+     *
+     * <p>
+     * The spawning agent's {@code reasoningEffort} and {@code reasoningSummary} are inherited as well,
+     * {@link at.aimon.core.llm.ReasoningEffort#NONE} and {@link at.aimon.core.llm.ReasoningSummary#NONE} included: a
+     * subagent definition names its model as a bare string and has nowhere to state either, so without this a fork
+     * would follow the deployment's setting where its parent had overridden it. Each is left unset when the parent
+     * states none. Whether the subagent's model can carry the value is still decided by the provider, from that
+     * model's capabilities: an effort that is not on the subagent model's ladder is omitted and reported, as a
+     * deployment default would be, never sent as it is.
      *
      * @param subagent
      *            the subagent (must not be null)
@@ -74,8 +90,15 @@ public final class SubagentLlmDefaults {
             // No literal: a nameless model is sent on the client's own default, as a nameless main agent already is.
             modelName = defaultModel.getName().orElse(null);
         }
-        return LlmModel.builder().name(modelName).temperature(defaultModel.getTemperature().orElse(DEFAULT_TEMPERATURE))
-                .maxTokens(defaultModel.getMaxTokens().orElse(DEFAULT_MAX_TOKENS)).build();
+        final LlmModel.Builder model = LlmModel.builder().name(modelName)
+                .maxTokens(defaultModel.getMaxTokens().orElse(DEFAULT_MAX_TOKENS))
+                .reasoningEffort(defaultModel.getReasoningEffort().orElse(null))
+                .reasoningSummary(defaultModel.getReasoningSummary().orElse(null));
+        defaultModel.getTemperature().ifPresent(model::temperature);
+        defaultModel.getTopP().ifPresent(model::topP);
+        defaultModel.getPresencePenalty().ifPresent(model::presencePenalty);
+        defaultModel.getFrequencyPenalty().ifPresent(model::frequencyPenalty);
+        return model.build();
     }
 
     /**

@@ -32,7 +32,8 @@ import at.aimon.core.shell.VirtualShell;
  * <p>
  * The descriptor's working directory is the branch root's host path — the shell's default cwd — and the file tools
  * accept absolute paths under it. The staging area is shared with the parent: {@link #stage} returns the parent's
- * copy, the branch filesystem routes {@code .aimon-staged/} to the parent's (read-only) directory, and staged files
+ * copy (always a copy, also for a resource that lives in the workspace — EE-26), the branch filesystem routes
+ * {@code .aimon-staged/} to the parent's (read-only) directory, and staged files
  * never appear in a branch listing, so a merge never promotes them — nor does a staging directory a shell made inside
  * the branch root, which the listing leaves out as unreachable. {@link #durable()} is {@code false}: the branch
  * directory disappears after a merge or a discard, so artifacts written here are archived into the control store.
@@ -47,10 +48,23 @@ import at.aimon.core.shell.VirtualShell;
  * absolute under the workspace or under the branch root (with {@code ./}, {@code //} or the branch key in another
  * letter case) — has already been reduced to one delegate path under {@code .worktrees/{branchKey}/}, up to the letter
  * case of its own segments, which the rules fold. A layer above would see the branch's {@code "."} working directory
- * and miss absolute paths. What the scope does not reduce is a path that names {@code .worktrees/} from inside the
- * branch — {@code .worktrees/other/x}, or {@code .worktrees/k/x} written relative: it lands nested in the branch,
- * outside its rules, and a merge promotes it into that directory (backlog EE-46). The rules follow the parent: an
- * assembly that dropped them leaves its branches unguarded too.
+ * and miss absolute paths. The rules follow the parent: an assembly that dropped them leaves its branches unguarded
+ * too.
+ *
+ * <p>
+ * <b>A branch cannot address {@code .worktrees/} (EE-46).</b> A path that names the worktree root from inside the
+ * branch — {@code .worktrees/other/x} relative or absolute, or the branch's own {@code .worktrees/k/x} written
+ * relative, in any letter case — is not a spelling of a branch path, so the scope cannot reduce it. It used to land
+ * nested in the branch ({@code .worktrees/k/.worktrees/other/x}), outside the branch's rules, and a merge promoted it
+ * into that other directory. The scope now refuses every operation on such a path, and leaves a
+ * {@code .worktrees/} directory at the branch root — one a shell made, which bypasses the file tools — out of the
+ * branch's listings, so a merge never sees it. This is the scope's reservation of its own directory name, not a path
+ * rule: the branch rules above are still exactly the parent's, and the reservation holds for an assembly with no
+ * rules. Only the name at the branch root is taken ({@code docs/.worktrees/x} is an ordinary file), and the branch's
+ * own absolute root ({@code {workspace}/.worktrees/k/x}, as its shell prints it) keeps meaning the branch's
+ * {@code x}. What is unchanged is the workspace root: the parent's file tools can still write under
+ * {@code .worktrees/}, and the keys the workflow runner derives repeat from run to run ({@code a0} for every run's
+ * first isolated step), so successive or concurrent runs in one workspace share a branch directory.
  *
  * <p>
  * <b>No nesting.</b> {@link #isolate} throws: a branch cannot be isolated again (a scope over a scope loses absolute
@@ -74,7 +88,9 @@ final class LocalIsolatedEnvironment implements ExecutionEnvironment {
         final VirtualFileSystem guarded = branchRules.isEmpty()
                 ? parent.fileSystem()
                 : VirtualFileSystems.withPathRules(parent.fileSystem(), branchRules);
-        this.fileSystem = new ScopedVirtualFileSystem(guarded, branchPrefix, Set.of(parent.staging().stagingRoot()));
+        // The worktree root is reserved in the scope, not denied by a rule: the branch rules stay exactly the parent's.
+        this.fileSystem = new ScopedVirtualFileSystem(guarded, branchPrefix, Set.of(parent.staging().stagingRoot()),
+                Set.of(LocalExecutionEnvironment.WORKTREE_ROOT));
         final String parentDirectory = parent.descriptor().workingDirectory();
         final String branchDirectory = VfsPaths.join(parentDirectory.isEmpty() ? "." : parentDirectory, branchPrefix);
         final Path branchHostPath = LocalExecutionEnvironment.localPathOf(branchDirectory);
@@ -113,9 +129,14 @@ final class LocalIsolatedEnvironment implements ExecutionEnvironment {
         return false;
     }
 
+    /**
+     * The parent's copy in the shared staging area. A resource that lives in the workspace is copied there too rather
+     * than answered with its own directory, as the parent does: that directory is the parent's, and this branch's
+     * file tools would look for it under the branch root (EE-26, {@link LocalStaging#stageCopy}).
+     */
     @Override
     public String stage(StagedResource resource) {
-        return parent.stage(resource);
+        return parent.staging().stageCopy(resource);
     }
 
     @Override

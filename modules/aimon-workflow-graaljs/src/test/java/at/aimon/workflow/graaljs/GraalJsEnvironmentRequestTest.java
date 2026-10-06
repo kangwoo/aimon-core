@@ -16,7 +16,6 @@ import org.junit.jupiter.api.Test;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.EnvironmentRequest;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.environment.UnavailableExecutionEnvironment;
@@ -30,7 +29,7 @@ import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.execution.DefaultSubagentExecutor;
 import at.aimon.core.workflow.RunId;
 import at.aimon.core.workflow.WorkflowRunner;
@@ -96,8 +95,8 @@ class GraalJsEnvironmentRequestTest {
     }
 
     /**
-     * Runs {@code js} over a registry holding {@code builder} ({@code sandbox.slot: build}) and returns the requests
-     * the provider saw.
+     * Runs {@code js} over a registry holding {@code builder} ({@code sandbox.slot: build}), with the keys these
+     * scripts set allowed (EE-45), and returns the requests the provider saw.
      */
     private List<EnvironmentRequest> run(String js) {
         final InMemorySubagentRegistry registry = new InMemorySubagentRegistry();
@@ -109,7 +108,7 @@ class GraalJsEnvironmentRequestTest {
             return UnavailableExecutionEnvironment.of("not needed");
         };
         final GraalJsWorkflowScript script = new GraalJsWorkflowScript(js, Map.of(), JsSandboxConfig.defaults(),
-                engines, SubagentResolver.inline(registry), null);
+                engines, SubagentResolver.inline(registry, List.of("sandbox.profile", "sandbox.slot", "gpu")), null);
         final DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(new DefaultSubagentExecutor(
                 new DoneLlmClient(), new DefaultToolExecutionManager(), new DefaultHookExecutionManager()), pool);
         try (WorkflowRunner runner = WorkflowRunners.create(manager, env(registry, provider),
@@ -119,12 +118,11 @@ class GraalJsEnvironmentRequestTest {
         return requests;
     }
 
-    private static SubagentExecutionEnvironment env(InMemorySubagentRegistry registry,
-            ExecutionEnvironmentProvider provider) {
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
+    private static SubagentLaunchContext env(InMemorySubagentRegistry registry, ExecutionEnvironmentProvider provider) {
+        return SubagentLaunchContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
                 .subagentRegistry(registry).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .defaultModel(LlmModel.builder().name("gpt-4").build()).executionEnvironmentProvider(provider).build();
+                .hookRegistry(new DefaultHookRegistry()).defaultModel(LlmModel.builder().name("gpt-4").build())
+                .executionEnvironmentProvider(provider).build();
     }
 
     /** An LLM that answers every call with a final "done". */

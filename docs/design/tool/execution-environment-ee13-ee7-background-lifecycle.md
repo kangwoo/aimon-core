@@ -422,7 +422,7 @@ BackgroundBashKill kill(AgentRuntimeId owner, String taskId);        // REQUESTE
 | 취소를 지원하지 않는 셸에서 `KillShell` | `ToolResult.error`. 명령은 상한까지 돈다. 시작 응답에도 미리 적는다 |
 | 취소와 정상 종료가 겹친다 | `LocalShell` 은 리스너가 죽이기 **전에** 세운 플래그로 판정한다. 플래그가 없으면 정상 결과다. 어느 쪽이든 작업은 한 번만 정착한다 |
 | 시작 전에 취소 | 프로세스를 띄운 직후 등록하는 리스너가 그 자리에서 돈다(이미 걸린 신호). 명령은 곧바로 죽고 `KILLED` |
-| 취소 뒤에도 손자 프로세스가 남는다 | 자손 스냅숏의 기존 경합. `KillShell` 은 "stop requested" 이상을 약속하지 않는다. 백로그 후보(§8) |
+| 취소 뒤에도 손자 프로세스가 남는다 | 자손 스냅숏의 기존 경합. `KillShell` 은 "stop requested" 이상을 약속하지 않는다. 백로그 후보(§8). 그 뒤 좁혀졌다 — §10.8 |
 | 원격 셸이 멈춤을 요청했으나 `execute` 가 돌아오지 않는다 | `KillShell` 은 5초 뒤 "still shutting down" 으로 답하고, 작업은 `RUNNING` 으로 남다가 상한에 끝난다 |
 | `toBuilder()` 가 취소를 빠뜨린다 | 격리 브랜치에서 취소가 조용히 사라진다 → 테스트로 고정 |
 | 환경이 0 이하의 상한을 준다 | 받지 않는다(WARN, 24시간) — 셸이 "무한" 으로 읽는다 |
@@ -701,7 +701,7 @@ BackgroundBashKill kill(AgentRuntimeId owner, String taskId);        // REQUESTE
   `KillShell` 이 "stopped" 라고 답했다. 이제 스냅숏의 모든 핸들과 부모가 **한 유예를 나눠 쓰고**, 유예가 끝났을 때 아직
   살아 있는 것은 부모의 생사와 상관없이 하나하나 SIGKILL 한다. timeout · 인터럽트 · 취소가 같은 코드를 타므로 셋 다
   바뀐다. `LocalShellCancellationTest.cancelKillsAChildThatIgnoresTerm` 이 고정한다. 스냅숏 뒤에 태어난 손자(EE-55)는 여전히
-  남는다. `KillShell` 의 답은 "stopped: the command and the processes it was running were terminated" 로, §6 표의 "stop
+  남는다(이 문장은 PR #205 시점의 것이다 — 지금 남는 범위와 답의 문구는 §10.8). `KillShell` 의 답은 "stopped: the command and the processes it was running were terminated" 로, §6 표의 "stop
   requested 이상을 약속하지 않는다" 보다 한 걸음 더 말한다 — 열거한 트리는 이제 확실히 죽기 때문이다.
 - **슬롯 생성이 제공자 전체의 락 밖에서 돈다.** `PerRuntimeLocalEnvironmentProvider` 는 워크스페이스 함수(디렉터리 생성,
   스테이징 스윕, 호출자의 `FileSystemSpec.factory` 와 그 원격 연결)를 `synchronized (lock)` 안에서 불렀고, 모든 실행의
@@ -728,3 +728,34 @@ BackgroundBashKill kill(AgentRuntimeId owner, String taskId);        // REQUESTE
   제어 저장소를 돌려준다는 이전 줄을 더했다(전에는 `LocalExecutionEnvironmentProvider` 를 돌려주는 `factory` 면 그 작업
   공간이었다 — `StackAgentRuntimeProvisioner.createLocalStores`). `modules/aimon-cli/README.md` 에 CLI 를 끝내면 모델이 띄운
   백그라운드 명령도 끝난다는 줄을 더했다.
+
+### 10.8 EE-55 — 유예 뒤에 자손을 다시 열거한다 (2026-10-05)
+
+§2-2 · §6 이 "그대로 물려받는다" 고 적은 스냅숏 경합을 좁혔다. 본문은 그대로 두고 바뀐 사실을 여기 적는다.
+
+- **무엇이 바뀌었나.** `LocalShell.destroyForciblyQuietly` 는 유예가 끝난 뒤, 강제 종료 직전에 자손을 한 번 더 열거한다
+  (`sweepLateDescendants`). 걷는 출발점은 부모만이 아니라 **그 시점에 살아 있는 모든 핸들**이다 — 죽은 프로세스의
+  `descendants()` 는 비어 있으므로(자식이 그 순간 재부모화된다) "부모를 죽인 뒤 다시 훑는다" 는 아무것도 찾지 못한다.
+  새로 찾은 프로세스는 멈춤 요청 뒤에 태어난 것이라 SIGTERM 과 유예 없이 곧바로 SIGKILL 한다. timeout · 인터럽트 ·
+  취소 · 스택 종료가 같은 코드를 타므로 넷 다 바뀐다.
+- **한 번만 걷는다.** "새 것이 안 나올 때까지 반복" 은 남은 틈을 줄이지 않는다. `descendants()` 는 프로세스 테이블을 한
+  시점에 읽으므로 살아 있는 뿌리에서 한 번 걸으면 그 시점 기준으로 완전하고, 중요한 것은 **마지막 열거와 kill 사이의
+  시간**뿐이다. 반복은 그 자리에 열거를 한 번 더 끼워 넣는다. 조상이 이미 걸린 핸들은 건너뛰어, 보통은 테이블을 한 번
+  읽고 트리가 SIGTERM 에 다 죽었으면 한 번도 읽지 않는다.
+- **프로세스 그룹을 고르지 않은 이유.** `ProcessBuilder` 에는 새 그룹으로 띄우는 길이 없고, 그 일을 하는 래퍼
+  `setsid(1)` 는 macOS 에 없다(확인: `which setsid` → not found, Darwin 25.6). 래퍼를 끼우면 **모든** 명령의 기동 방식이
+  바뀐다. 그룹도 완전하지 않다 — 스스로 `setsid` 를 부른 프로세스는 그룹을 떠난다.
+- **지금도 남는 것.** ① 부모가 이미 죽은 프로세스 — 이중 fork, `( cmd & )`, 데몬화, 그리고 `TERM` 핸들러가 fork 한 뒤
+  유예 안에 끝난 경우. ② 마지막 열거와 그 부모의 kill 사이에 태어난 프로세스. `TERM` 을 무시하고 쉬지 않고 fork 하는
+  명령으로 재 보면(macOS, 한 번의 실측) 50ms 간격에서 100회 중 2회, fork 만 반복할 때 40회 중 6회, 매번 프로세스
+  하나가 남았다. 고치기 전에는 같은 명령이 20회 중 20회, 합쳐 112개를 남겼다.
+- **항목 본문이 틀렸던 것.** `nohup` 과 `setsid` 는 그 자체로는 트리를 벗어나지 않는다. `ProcessHandle.descendants()` 는
+  부모 pid 로 걷고, 둘은 시그널 처리나 세션을 바꿀 뿐 부모를 바꾸지 않는다. 부모 셸이 살아 있는 동안 둘 다 열거되고
+  죽는다(실측). 벗어나는 것은 **부모가 끝난** 프로세스다.
+- **모델에게 하는 말.** `KillShell` 의 답은 "stopped: the command and the processes still attached to it were terminated.
+  A process it detached (a daemon, anything started with a double fork) is not stopped by this and may still be running."
+  이고, 도구 설명도 같은 범위를 말한다.
+- **테스트.** `LocalShellCancellationTest` 의 `cancelKillsAProcessBornAfterTheStopRequest`(셸이 `TERM` 에 fork 하고 남는다),
+  `cancelKillsAProcessBornUnderASurvivingChild`(부모 셸은 죽고 자식만 남아, 그 자식의 핸들로만 닿는다),
+  `timeoutKillsAProcessBornAfterTheStopRequest`. 셋 다 고치기 전 코드에서 늦게 태어난 프로세스가 살아남아 실패했다.
+  쉬지 않고 fork 하는 경우는 위 ②가 남아 결정적이지 않으므로 테스트로 고정하지 않았다.

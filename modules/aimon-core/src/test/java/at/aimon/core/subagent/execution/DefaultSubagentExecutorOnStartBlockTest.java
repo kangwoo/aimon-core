@@ -23,7 +23,6 @@ import at.aimon.core.agent.interrupt.NoopCancellationSignal;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.config.hook.HookConfigMerger;
 import at.aimon.core.config.hook.HookConfigSource;
 import at.aimon.core.config.hook.HookRegistryApplier;
@@ -55,7 +54,7 @@ import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentContent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentMetadata;
 import at.aimon.core.subagent.behavior.InMemorySubagentBehaviorRegistry;
 import at.aimon.core.subagent.task.InMemorySessionSnapshotStore;
@@ -95,7 +94,7 @@ class DefaultSubagentExecutorOnStartBlockTest {
 
         assertThat(llm.calls).isZero();
         assertThat(result.isSuccess()).isFalse();
-        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.ERROR);
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.BLOCKED);
         assertThat(result.getMetadata().getIterationCount()).isZero();
         assertThat(result.getMetadata().getTokenUsage().getTotalTokens()).isZero();
         assertThat(result.getErrorMessage()).contains("OnStart", "SUBAGENT", "explorer", REASON);
@@ -129,6 +128,23 @@ class DefaultSubagentExecutorOnStartBlockTest {
         assertThat(llm.seenMessages.get(0)).extracting(Message::getContent)
                 .anyMatch(content -> content.contains("<system-reminder") && content.contains("ADVICE-91c3"));
         assertThat(onStops).containsExactly(true);
+    }
+
+    @Test
+    @DisplayName("a fork's onStart carries the fork's cancellation signal, so a hook command stops when it is cancelled")
+    void onStartCarriesTheForksCancellationSignal() {
+        final List<java.util.Optional<at.aimon.core.agent.interrupt.CancellationSignal>> seen = new ArrayList<>();
+        hooks.register(HookEventType.ON_START, (OnStartHook) context -> {
+            seen.add(context.getExecutionCancellation());
+            return HookResult.success();
+        });
+        llm.responses.add(LlmResponse.text("done"));
+
+        assertThat(execute(null).isSuccess()).isTrue();
+
+        assertThat(seen).hasSize(1);
+        assertThat(seen.get(0)).isPresent();
+        assertThat(seen.get(0).get().isCancelled()).isFalse();
     }
 
     @Test
@@ -170,9 +186,9 @@ class DefaultSubagentExecutorOnStartBlockTest {
         try {
             final DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(executor(), pool,
                     new DefaultHookExecutionManager(), new InMemorySubagentBehaviorRegistry());
-            final SubagentExecutionEnvironment env = SubagentExecutionEnvironment.builder()
+            final SubagentLaunchContext env = SubagentLaunchContext.builder()
                     .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagentRegistry(subagents)
-                    .toolRegistry(new DefaultToolRegistry()).hookRegistry(hooks).userLocale(UserLocale.createDefault())
+                    .toolRegistry(new DefaultToolRegistry()).hookRegistry(hooks)
                     .defaultModel(LlmModel.builder().name("gpt-4").build()).executionEnvironment(forkEnvironment)
                     .executionEnvironmentProvider(request -> forkEnvironment).sessionSnapshotStore(snapshots).build();
 
@@ -272,7 +288,7 @@ class DefaultSubagentExecutorOnStartBlockTest {
         final SubagentExecutionContext context = SubagentExecutionContext.builder()
                 .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent())
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(hooks).userLocale(UserLocale.createDefault()).executionEnvironment(forkEnvironment)
+                .hookRegistry(hooks).executionEnvironment(forkEnvironment)
                 .executionEnvironmentProvider(request -> forkEnvironment).outputSink(streamed::append)
                 .parentCancellationSignal(NoopCancellationSignal.INSTANCE).build();
         return executor().execute(context, SubagentExecutionRequest.builder().taskId("task-1").goal(goal)

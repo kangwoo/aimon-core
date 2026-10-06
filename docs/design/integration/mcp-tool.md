@@ -285,8 +285,21 @@ AgentRuntime.close()
 **같은 JSON 계약**으로 `HookResult` 에 매핑된다 — `decision` 필드가 있으면 `allow`/`deny`/`defer` 를
 존중하고, 없으면 부작용 전용 호출로 보고 `success()` 를 돌려준다.
 
-알 수 없는 서버·전송 실패·`isError` 결과는 **전부 WARN + `success()`** 로 degrade 한다. 선언적 훅은
-fail-soft 다.
+알 수 없는 서버·전송 실패·`isError` 결과는 **판정 없음**이다(`ActionCallOutcome`). 그것을 어떻게 읽을지는 이벤트가
+정한다 — `postTool` 은 WARN + `success()` 로 degrade 하고, `preTool` 가드는 막는다(`failOpen` 이면 통과). 선언적 훅
+전체가 fail-soft 라던 예전 서술은 `preTool` 에 대해 더 이상 참이 아니다.
+
+**액션의 `timeout` 은 실행기가 지킨다.** `McpClient.callTool` 은 timeout 을 받지 않으므로 `McpActionExecutor` 가 시한을
+직접 쥐고, 지나면 호출 스레드를 인터럽트한다 — `StdioMcpTransport` 의 응답 대기는 폴링이라 인터럽트에 곧바로 끝난다.
+결과는 `TIMEOUT`(판정 없음)이고 그 인터럽트는 실행기의 것이므로 돌려주기 전에 지운다. 호출마다 스레드를 만들지 않는다:
+훅은 이미 훅 실행기의 풀 스레드에서 돌고 그 대기는 바깥 그물이 끊으므로, 시한은 JDK 의 공용 지연 스케줄러
+(`CompletableFuture.orTimeout`)에 걸어 두었다가 호출이 돌아오면 취소한다.
+
+서버별 `requestTimeout`(§5.3)은 그 아래에서 그대로 요청을 묶는다. **둘 중 짧은 쪽이 호출을 끝내고**, 액션의 `timeout` 이
+`requestTimeout` 을 늘려 주지는 않는다. 끊긴 요청은 이쪽에 남지 않는다 — stdio 로는 요청 줄이 이미 나갔으므로 서버는
+계속 일할 수 있고, 늦은 응답은 다음 요청이 읽으면서 id 불일치로 버린다(`notifications/cancelled` 는 구현되어 있지 않다).
+인터럽트가 닿지 않는 대기가 둘 있다 — 다른 요청이 쥔 `sendRequest` 의 모니터를 기다리는 것과, 줄바꿈 없는 조각을 읽는
+`readLine()` 이다. 그 경우 이 시한은 듣지 않고 훅 실행기의 그물이 대기를 끝낸다(가드는 그대로 막는다).
 
 ### 7.2 rewake 브리지 — 소비자만 있고 생산자가 없다
 

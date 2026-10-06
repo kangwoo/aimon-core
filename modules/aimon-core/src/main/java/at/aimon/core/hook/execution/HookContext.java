@@ -5,7 +5,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
+import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.environment.EnvironmentDescriptor;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
@@ -19,8 +19,8 @@ import at.aimon.core.hook.HookRegistry;
  * <ul>
  * <li>Executor type (MAIN_AGENT or SUBAGENT)
  * <li>Executor name
- * <li>User locale (the time zone) — where commands run is {@link #getExecutionEnvironment()} and what that place
- * looks like is {@link #getEnvironmentDescriptor()}
+ * <li>Where commands run ({@link #getExecutionEnvironment()}) and what that place looks like
+ * ({@link #getEnvironmentDescriptor()})
  * <li>Timestamp of the event
  * </ul>
  *
@@ -48,15 +48,6 @@ public interface HookContext {
      * @return The hook registry (never null)
      */
     HookRegistry getHookRegistry();
-
-    /**
-     * Gets the user locale — the user- and application-side settings, today the time zone. It says nothing about
-     * where commands run: the working directory, platform and OS version are on {@link #getEnvironmentDescriptor()},
-     * and the place itself is {@link #getExecutionEnvironment()}.
-     *
-     * @return The user locale (never null)
-     */
-    UserLocale getUserLocale();
 
     /**
      * The execution environment the firing execution runs in — the same instance its tools reach through
@@ -94,6 +85,33 @@ public interface HookContext {
      */
     default Optional<EnvironmentDescriptor> getEnvironmentDescriptor() {
         return getExecutionEnvironment().map(ExecutionEnvironment::descriptor);
+    }
+
+    /**
+     * The cancellation signal of the execution this event fires in — the one its tools read through
+     * {@code InterruptAccess.signalOf(ToolContext)}. It is an <em>execution</em> concept: a turn, a fork and a
+     * scheduled routine each have one, and a hook that starts something long-running on the execution's behalf (a
+     * shell command, say) ties it to this signal so an interrupt stops it instead of waiting out its timeout.
+     *
+     * <p>
+     * Empty is a correct answer and callers must handle it. Events that fire outside any execution
+     * ({@code onSessionStart}, {@code onSessionEnd}, {@code onConfigReload}) never have one, and an event that fires
+     * inside an execution arrives empty when its firing site holds no signal. Today the signal is carried by:
+     * <ul>
+     * <li>{@code permissionRequest} and {@code preTool} — always, so a command fired after the interrupt is not
+     * started at all and the guard blocks;
+     * <li>{@code postTool} and {@code permissionDenied} — only while the execution has not been cancelled. They report
+     * what already happened: a command running when the interrupt arrives is stopped, but one fired afterwards still
+     * runs, so an audit hook can record the interrupted call;
+     * <li>a fork's {@code onStart}.
+     * </ul>
+     * Everything else arrives empty: a main turn's {@code onStart} fires before the turn's signal exists,
+     * {@code onStop} fires when the execution is over, and the compaction and subagent-lifecycle sites hold no signal.
+     *
+     * @return the execution's cancellation signal, or empty when none is in reach
+     */
+    default Optional<CancellationSignal> getExecutionCancellation() {
+        return Optional.empty();
     }
 
     /**

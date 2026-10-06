@@ -25,7 +25,9 @@ import at.aimon.core.llm.ToolUseResult;
  * <ul>
  * <li><b>A final answer</b>, with no tool calls. On the two executors the execution ends as
  * {@link CompletionReason#TRUNCATED}: the partial text with {@link #TRUNCATION_MARKER} appended, and a WARN. A skill's
- * loop returns the same marked text as its result, which carries no completion reason. The deriver returns observations
+ * loop returns the same marked text as its result, which carries no completion reason but says the same thing with
+ * {@code SkillExecutionResult.isTruncated()}; a turn that ran the skill as a slash command reads that and ends
+ * {@code TRUNCATED} too. The deriver returns observations
  * rather than text, so it has no answer to mark.
  * <li><b>A response with tool calls.</b> None of them is run, on any of the four loops. Each is answered with
  * {@link #refusal(ToolUse)}, the results are committed as executed results are (every {@code tool_use} must be

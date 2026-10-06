@@ -13,7 +13,7 @@ package at.aimon.core.workflow;
  *
  * <p>
  * The runner borrows its collaborators (a {@code SubagentExecutionManager} and a base
- * {@code SubagentExecutionEnvironment} referencing agent-scoped resources) and <b>must not close them</b> — they
+ * {@code SubagentLaunchContext} referencing agent-scoped resources) and <b>must not close them</b> — they
  * outlive the runner. Foreground {@link #run(WorkflowScript, RunId)} and background
  * {@link #runInBackground(WorkflowScript, RunId)} both fan out onto a single runner-owned shared pool; a background
  * run's script body is additionally hosted on a runner-owned hosting pool. {@link #close()} shuts the runner-owned
@@ -75,8 +75,8 @@ public interface WorkflowRunner extends AutoCloseable, WorkflowRunController {
      *
      * <p>
      * A background run takes nothing from the call that submitted it: its subagents dispatch against the registry of
-     * the runner's base environment. The hooks of a skill the submitting call runs inside therefore do not follow the
-     * run. A tool that submits on behalf of a tool call must check
+     * the runner's base launch context. The hooks of a skill the submitting call runs inside therefore do not follow
+     * the run. A tool that submits on behalf of a tool call must check
      * {@code HookRegistryAccess.activeSkillGuards(toolContext)} first and refuse when it is not empty, as
      * {@code Workflow} and {@code WorkflowJs} do — otherwise those guards are off for the run without any signal.
      *
@@ -92,7 +92,7 @@ public interface WorkflowRunner extends AutoCloseable, WorkflowRunController {
 
     /**
      * Releases only resources the runner itself owns — the run-hosting pool. Borrowed collaborators (manager, base
-     * environment) are never closed here.
+     * launch context) are never closed here.
      */
     @Override
     void close();

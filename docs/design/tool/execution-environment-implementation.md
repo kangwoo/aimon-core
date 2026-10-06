@@ -13,7 +13,9 @@
 
 > **Note (2026-10-03, EE-14).** The `Environment` this document names no longer exists: its one remaining field moved to
 > `at.aimon.core.base.UserLocale`, and `getEnvironment()` / `ENVIRONMENT_KEY` became `getUserLocale()` /
-> `USER_LOCALE`. The body is left as approved; the mapping is in
+> `USER_LOCALE` -- and on 2026-10-05 `UserLocale` and those accessors were removed outright, because nothing read the
+> value (EE-60). The same day `SubagentExecutionEnvironment` was renamed `SubagentLaunchContext` (EE-61). The body is
+> left as approved; the mapping is in
 > [`../../migration/rename-maps.md`](../../migration/rename-maps.md).
 
 Spec: `docs/design/tool/execution-environment.md` (580 lines, Status PROPOSED). The spec decides the behaviour; this
@@ -171,7 +173,7 @@ public interface ExecutionEnvironmentProvider { ExecutionEnvironment resolve(Env
 |---|---|---|
 | `EnvironmentDescriptor` | `workingDirectory`, `platform`, `osVersion`, `shellName`, `notes` (all `Optional<String>` getters except `workingDirectory`); `static EnvironmentDescriptor unavailable(String cause)` | 1 |
 | `EnvironmentRequest` | `AgentRuntimeId agentRuntimeId` (required). Optional: `Agent agent` (see §2), `SessionId sessionId`, `ExecutionId executionId`, `SessionId invokingSessionId`, `Principal principal`, `ExecutionEnvironment parent`, `String branchKey`. | 1 |
-| `StagedResource` | `VirtualFileSystem sourceFileSystem`, `String sourceDir`, `String contentKey`, `String name`, `long totalBytes`, and from stage 3 `List<String> files` (the relative paths `scan` hashed, and exactly what `stage()` copies). Stage 3 adds `static StagedResource scan(VirtualFileSystem fs, String dir, String name)`. It lists `dir` recursively, drops directories and paths ignored by `dir/.stageignore` (`StageIgnore`), and hashes `sorted(relPath + '\0' + bytes)` with SHA-256, keeping 16 hex characters. It sums `totalBytes`. Both the registry (hash) and `stage()` (copy) use its file-set rule, so they cannot disagree. A source needs only the read side of the VFS: `exists`, `isDirectory`, `listRecursive`, `read`. The javadoc states this. | 1 (`totalBytes`, `scan`: 3) |
+| `StagedResource` | `VirtualFileSystem sourceFileSystem`, `String sourceDir`, `String contentKey`, `String name`, `long totalBytes`, and from stage 3 `List<String> files` (the relative paths `scan` hashed, and exactly what `stage()` copies). Stage 3 adds `static StagedResource scan(VirtualFileSystem fs, String dir, String name)`. It lists `dir` recursively, drops directories and paths ignored by `dir/.stageignore` (`StageIgnore`), and hashes `sorted(relPath + '\0' + bytes)` with SHA-256, keeping 16 hex characters. It sums `totalBytes`. Both the registry (hash) and `stage()` (copy) use its file-set rule, so they cannot disagree. A source needs only the read side of the VFS: `exists`, `isDirectory`, `listRecursive`, `read`. The javadoc states this. A resource `scan` returned reports `isScanned() == true`; the builder cannot set it (§10.4). | 1 (`totalBytes`, `scan`: 3) |
 | `UnavailableExecutionEnvironment` | `static ExecutionEnvironment of(Throwable cause)`. `fileSystem()`/`shell()` return proxies whose every call throws `ExecutionEnvironmentUnavailableException(cause)`. `stage()` throws. `descriptor()` = `EnvironmentDescriptor.unavailable(cause)`. | 1 |
 | `ExecutionEnvironments` | `resolveOrUnavailable(provider, request)`: catches `RuntimeException`, logs WARN, and returns `UnavailableExecutionEnvironment.of(e)`. A `null` provider or a `null` return is treated as a failure. It has no `ToolContext` dependency. | 1 |
 | `at.aimon.core.tools.ExecutionEnvironmentAccess` (tools package, not environment) | `require(ToolContext)` returns the env or throws `IllegalStateException("No execution environment in tool context")`; tools catch it and return `ToolResult.error`. `providerOf(ToolContext)` returns an `Optional`. | 1 |
@@ -218,7 +220,9 @@ Stage 2 deletes `VIRTUAL_FILE_SYSTEM`. Stage 5 deletes `ReadTool.READ_FILES_KEY`
   accept it because every VFS already takes absolute paths under its base. For a URI base it is root-anchored
   (`/.aimon-staged/…`), which those backends accept. The same-instance passthrough (stages 1–2, and the
   `.fileSystem(vfs)` mode when the source *is* the workspace fs) returns the source directory in that same absolute
-  form.
+  form. *(As built, EE-26: only to the parent. A branch from `isolate()` always gets a copy in the staging area, because
+  the source directory is a path in the parent's working tree that the branch's file tools map into
+  `.worktrees/{key}/`. Design §4.4 says which bytes the copy holds.)*
 - `LocalIsolatedEnvironment` (stage 4):
   - **Filesystem.** `new ScopedVirtualFileSystem(parent.toolFileSystem, ".worktrees/" + key, Set.of(stagingRoot))`.
     It sits over the parent's *path-rule-wrapped* fs, not the raw one, and takes a new constructor argument,
@@ -1215,6 +1219,11 @@ and why. Entries marked **(open)** are also tracked in
   uses the hex `ObjectId` of the newest revision, as §6 stage 5 planned. Every write uploads a new document, so the id
   changes with every rewrite; it also changes when the content does not, which is a false "changed" and the safe
   direction. This departs from the spec rather than from the plan, and review 3 of the build asked for it to be listed.
+  *Superseded 2026-10-05 (EE-5):* the etag is now the SHA-256 of the content, recorded in the file document's
+  `metadata.contentSha256` once the upload completes; a document without it still answers with its `ObjectId`. Q7 was
+  settled the same day: `LocalFileSystemConfig.Builder.contentHashEtag(true)` gives the local filesystem an opt-in
+  content-hash etag, off by default (it reads the whole file per `getMetadata`). See
+  `docs/design/filesystem/backend-contract.md` §4.2.
 - **The startup staging sweep never follows a symbolic link (review 3 of the build, blocking).** The plan's sweep used
   `Files.isDirectory` and `Files.list`, which follow links, so a `.aimon-staged` link (committed in a cloned repository,
   or made through the shell) led the sweep to delete week-old directories wherever it pointed. The sweep now does
@@ -1257,10 +1266,12 @@ and why. Entries marked **(open)** are also tracked in
 - **The runtime's `Environment` is `Environment.createDefault()` from stage 3 on**, and after stage 5 `Environment` holds
   only `timeZone`, as planned. `ReplSession`, `AgentSetupFactory` and the CLI's model-mismatch hint read the working
   directory from the runtime's provider (`AgentSetupFactory.workingDirectoryOf`).
-- **Routines get no `FILE_STAMPS_KEY` (open, EE-11).** §6 stage 5a puts the stamp map into "both executors and the
-  routine context". It is in both executors, not in routines. With the map, a routine `Write` that overwrites a file
-  would start failing without a preceding `Read`, and deployed routines would break. Without it, routines behave as
-  before: `Edit` always refuses and `Write` does not check.
+- **Routines got no `FILE_STAMPS_KEY` (closed 2026-10-05, EE-11).** §6 stage 5a puts the stamp map into "both
+  executors and the routine context". The first implementation put it in both executors and not in routines, because
+  with the map a routine `Write` that overwrites a file fails without a preceding `Read`, and deployed routines would
+  break; routines kept the old behaviour (`Edit` always refused, `Write` did not check). The maintainer accepted that
+  break: `RoutineExecutor.buildToolContext` now puts a fresh map into each fire's context. The migration note is in
+  `docs/design/scheduling/llm-scheduling-agent.md` §3.2.
 - **`AgentEnvironmentSnapshot` kept `workingDirectory` (closed 2026-10-05, EE-10).** §6 stage 5d takes the working
   directory out of the snapshot. The first implementation left it in and had
   `UserContextMessageBuilder.build(snapshot, executionWorkingDirectory)` prefer the execution's descriptor, which
@@ -1302,6 +1313,12 @@ and why. Entries marked **(open)** are also tracked in
 
 - **Review 3, second note (staging mismatch).** The error when a skill changed on disk after it was loaded now says
   what the user can do: "Restart the application, or reload the skill registry". There is no re-keying. See EE-3.
+  *Superseded 2026-10-05:* EE-3 took re-keying. A source that no longer hashes to its loaded key is scanned again and
+  staged under the key it has now, with one WARN; the error is gone, and so is the row "Host skill directory edited
+  without a registry reload" of §7 as written and the last staging test of §6 stage 3 (it now expects a copy under the
+  new key). `LocalStaging`'s class doc and the design §4.4 hold the rule. *Narrowed the same day:* only a resource
+  that `StagedResource.scan` produced (`isScanned()`) is scanned again. One assembled through the builder keeps the
+  refusal quoted above, because its file list may be a deliberate subset of a directory that holds more.
 - **`.gitignore` for `.aimon-staged/`.** This followed Q4's default: no code wrote it, and the skill guide told users
   to add it (EE-4). *Superseded 2026-10-05:* EE-4 took Q4's recommended alternative — the local provider writes
   `.aimon-staged/.gitignore` containing `*` on the first copy.
@@ -1438,8 +1455,10 @@ attributes were always empty. EE-42 fills them without touching `EnvironmentRequ
   subagent registered under a step's `agentType`, and the script's own `attributes` may add keys to them. The
   registered keys are pinned: a script value for one of them fails the script unless it is identical, so a
   model-written script cannot move an operator-registered subagent to another slot. An unregistered `agentType` has
-  nothing to pin, and its script attributes are used as they are — EE-45 decides whether scripts may set them at all.
-  `GraalJsWorkflowTool` uses that resolver over its own registry by default.
+  nothing to pin, and its script attributes were at first used as they were. EE-45 closed that: a key no registered
+  definition sets for the step is accepted only if the operator listed it
+  (`SubagentResolver.inline(registry, scriptAttributeKeys)`, `GraalJsWorkflowTool.Builder.scriptAttributeKeys`), and the
+  list is empty by default. `GraalJsWorkflowTool` uses that resolver over its own registry by default.
 - **`DefinitionAttributes.overlay(base, override)`** is the one merge rule — generic, the override winning per key —
   and re-checks the merged map for a key that is both a value and a group. The pinning above is the graaljs
   resolver's check before it calls `overlay`, not a rule of `overlay`.
@@ -1478,3 +1497,8 @@ plan:
   longer nest the branch inside itself past its rules. It also leaves out of its listings any branch-local entry under
   a shared prefix — a staging directory a shell made in the branch root, which no caller path reaches.
 - **The shared staging prefix matches ignoring case**, like the path rules it sits beside.
+- **Later (EE-46, 2026-10-05): a branch cannot address `.worktrees/`.** `ScopedVirtualFileSystem` takes a fourth
+  constructor argument, `reservedPrefixes`; the local branch passes `.worktrees`. A branch-relative path at or under it
+  is refused by every operation (`InvalidPathException`), and a branch-local entry there is left out of listings, so a
+  merge never promotes into another branch's directory or the branch's own. It is not a path rule: the branch rules
+  are still the parent's. See [`workflow-isolation-hardening.md`](workflow-isolation-hardening.md) §8.5.

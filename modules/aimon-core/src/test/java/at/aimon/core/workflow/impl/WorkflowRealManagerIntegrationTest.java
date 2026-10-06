@@ -17,14 +17,18 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
-import at.aimon.core.base.UserLocale;
+import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
+import at.aimon.core.hook.HookEventType;
+import at.aimon.core.hook.event.OnStartHook;
+import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.behavior.InMemorySubagentBehaviorRegistry;
 import at.aimon.core.subagent.execution.SubagentExecutor;
 import at.aimon.core.workflow.AgentStepResult;
@@ -39,7 +43,7 @@ import at.aimon.core.workflow.WorkflowEventSink;
  * with <b>no LLM</b>. The ReAct/LLM executor is verified to never be touched.
  *
  * <p>
- * This exercises the wiring a bootstrap performs (build a base {@link SubagentExecutionEnvironment}, hand it plus the
+ * This exercises the wiring a bootstrap performs (build a base {@link SubagentLaunchContext}, hand it plus the
  * manager to the runner) without needing an API key.
  */
 @DisplayName("Workflow ↔ real DefaultSubagentExecutionManager (code behaviors, no LLM)")
@@ -96,14 +100,37 @@ class WorkflowRealManagerIntegrationTest {
         verify(reactExecutor, never()).execute(any(), any());
     }
 
+    @Test
+    @DisplayName("a step an onStart hook blocks is a failed, incomplete step whose reason is BLOCKED (EE-75)")
+    void aStepAnOnStartHookBlocksEndsBlocked() {
+        final DefaultHookRegistry hooks = new DefaultHookRegistry();
+        hooks.register(HookEventType.ON_START, (OnStartHook) context -> HookResult.block("STEP-REFUSED-8f02"));
+        final InMemorySubagentBehaviorRegistry behaviors = new InMemorySubagentBehaviorRegistry();
+        behaviors.register("upper", (ctx, req, support) -> support.success(req.getGoal().toUpperCase(Locale.ROOT)));
+        final DefaultSubagentExecutionManager hooked = new DefaultSubagentExecutionManager(reactExecutor, bgPool,
+                new DefaultHookExecutionManager(), behaviors);
+        final SubagentLaunchContext env = SubagentLaunchContext.builder()
+                .agentRuntimeId(AgentRuntimeId.of("agent:workflow-test"))
+                .subagentRegistry(new InMemorySubagentRegistry()).toolRegistry(new DefaultToolRegistry())
+                .hookRegistry(hooks).defaultModel(LlmModel.builder().name("gpt-4").build()).build();
+        final DefaultWorkflowRunner runner = new DefaultWorkflowRunner(hooked, env,
+                WorkflowConcurrencyConfig.enabled(4), WorkflowEventSink.NO_OP, WorkflowBudget.defaults());
+
+        final AgentStepResult step = runner.run(ctx -> ctx.agent(subagent("upper"), "hello"));
+
+        assertThat(step.isSuccess()).isFalse();
+        assertThat(step.isComplete()).isFalse();
+        assertThat(step.completionReason()).isEqualTo(CompletionReason.BLOCKED);
+        assertThat(step.text()).contains("OnStart", "STEP-REFUSED-8f02");
+    }
+
     private static Subagent subagent(String name) {
         return Subagent.builder().name(name).systemPrompt("(code behavior)").build();
     }
 
-    private static SubagentExecutionEnvironment env() {
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:workflow-test"))
+    private static SubagentLaunchContext env() {
+        return SubagentLaunchContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:workflow-test"))
                 .subagentRegistry(new InMemorySubagentRegistry()).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .defaultModel(LlmModel.builder().name("gpt-4").build()).build();
+                .hookRegistry(new DefaultHookRegistry()).defaultModel(LlmModel.builder().name("gpt-4").build()).build();
     }
 }

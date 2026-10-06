@@ -423,6 +423,7 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
         final LocalExecutionEnvironmentProvider.Builder builder = LocalExecutionEnvironmentProvider.builder()
                 .maxStagedBytes(executionEnvironmentSpec.getMaxStagedBytes())
                 .contentSearch(executionEnvironmentSpec.isContentSearch())
+                .contentHashStamps(executionEnvironmentSpec.isContentHashStamps())
                 .backgroundCommandTimeout(executionEnvironmentSpec.getBackgroundCommandTimeout().orElse(null));
         if (executionEnvironmentSpec.isControlWritable()) {
             builder.pathRules(List.of(PathRule.readOnly(LocalExecutionEnvironmentProvider.DEFAULT_STAGING_ROOT)));

@@ -186,7 +186,7 @@ WARN  BundledSkillMaterializer   - Bundled skill 'commit' cannot be materialized
 
 ### 3.2 auto-configuration 슬라이스
 
-`AimonAutoConfiguration` 이 코어를 세우고, 나머지 7개가 각각 한 축을 담당합니다. 전부
+`AimonAutoConfiguration` 이 코어를 세우고, 나머지 8개가 각각 한 축을 담당합니다. 전부
 `META-INF/spring/…AutoConfiguration.imports` 에 등재되어 있습니다.
 
 | 슬라이스 | 켜지는 조건 | 배선하는 것 |
@@ -199,6 +199,7 @@ WARN  BundledSkillMaterializer   - Bundled skill 'commit' cannot be materialized
 | `AimonObservabilityAutoConfiguration` | 스위치 3개가 **독립** | 추적(프로퍼티) · Actuator `HealthIndicator`(클래스) · Micrometer 게이지(`MeterRegistry` **빈**) |
 | `AimonKnowledgeAutoConfiguration` | `aimon.knowledge.backend` | `KnowledgeStore` + `KnowledgeContribution` |
 | `AimonMemoryAutoConfiguration` | `aimon.memory.backend` | `RepresentationStore` / `ObservationStore` + `MemoryContribution` |
+| `AimonPropertiesBindingAutoConfiguration` | 항상 | `ConfigurationPropertiesBindHandlerAdvisor` 하나 — `aimon.llm.model-capabilities` · `aimon.llm.anthropic` · `aimon.llm.openai` 아래의 **모르는 키를 기동 실패로** 만듭니다 |
 
 IMPORTANT: 뒤의 두 슬라이스는 **빈과 선택자가 어긋나면 기동을 거부**합니다. `KnowledgeStore` 빈을 선언해
 놓고 `knowledge.backend: none` 이면 — 어떤 에이전트에게도 그 저장소에 닿을 도구가 주어지지 않으므로 —
@@ -321,6 +322,7 @@ aimon:
       mode: deny                    # deny(기본) | allow-list | suspend | channel
       allow: []
       pending-turn-ttl: 10m
+    allowed-link-roots: []          # 디스크에서 읽는 번들의 skills/ 안 심볼릭 링크가 가리켜도 되는 디렉터리(절대 경로)
 
   scheduling:
     backend: none                   # none(기본) | in-memory | quartz
@@ -368,7 +370,7 @@ aimon:
   기여하는 날 **프로퍼티 변경 없이 트래픽이 다른 에이전트로 옮겨가기** 때문입니다.
 - `aimon.llm.provider: none` 은 "스타터가 `LlmClient` 를 만들지 않는다"는 뜻입니다. 여러분이
   `LlmClient` 빈을 직접 등록하면 그것이 쓰입니다(샘플 앱이 이 형태입니다). 아무도 등록하지 않으면
-  스타터의 폴백이 남는데, 그것은 호출 시 **어떤 프로퍼티를 채워야 하는지 이름을 대며** 실패합니다.
+  스타터의 폴백이 남는데, 그것은 기동 시 **어떤 프로퍼티를 채워야 하는지 이름을 대며** 실패합니다.
 - **`Bash` 도구는 기본이 off 입니다** — CLI 와 다른 지점입니다. CLI 가 셸을 그냥 쥐여 주는 것은 사람이 명령
   하나하나를 승인하기 때문이고, 서버 프로세스에는 물어볼 사람이 없으므로 임의 명령 실행은 명시적으로 켜야
   합니다.
@@ -407,7 +409,8 @@ aimon:
   **내장 표가 아는 이름에 대해서는 그렇지 않습니다 — 항목 하나가 그 이름의 행 전체이므로, 적지 않은 플래그는
   그 행이 말하던 값이 아니라 fail-open 값으로 떨어집니다.** `claude-*` 행은 방언과 **샘플링 억제** 두 가지를
   말하므로, `claude-sonnet-5` 에 `thinking-dialect` 만 적으면 억제가 `true` 로 되돌아가 `temperature` 가
-  400 을 내는 모델로 나갑니다 — 억제 WARN 은 플래그가 `false` 일 때만 울리므로 **경고도 없이**입니다.
+  400 을 내는 모델로 나갑니다 — 억제 WARN 은 플래그가 `false` 일 때만 울리므로 요청 시점에는 경고가 없고,
+  대신 **기동 시 WARN 한 줄**이 가린 행 · 떨어진 플래그 · 옮겨 적을 줄을 부릅니다.
   그런 이름에는 그 행이 말하던 플래그를 전부 옮겨 적습니다(`thinking-dialect` 와
   `supports-sampling-parameters: false`). `thinking-dialect` 는 anthropic 분기만,
   `supports-reasoning-summary` 는 OpenAI Responses 경로만 읽습니다 — 후자는 `reasoning.effort` 는 받고
@@ -417,14 +420,18 @@ aimon:
   일반형입니다(내장 `gpt-5.6-terra` 행이 실측된 그 경우입니다 — `none` 을 받고 `minimal` 을 거절합니다).
   선언은 내장 표를
   **확장**하고(exact 항목으로 등록되므로 그 이름 하나만 이깁니다), 이름은 대소문자를 가리지 않으며, 점이 든
-  이름은 `model-capabilities[gpt-5.7-x]` 처럼 **대괄호**로 감싸야 합니다(감싸지 않으면 항목이 아예 도착하지
-  않습니다). 아무것도 선언하지 않은 항목·두 사다리 키를 함께 적은 항목·빈
+  이름은 `model-capabilities[gpt-5.7-x]` 처럼 **대괄호**로 감싸야 합니다(감싸지 않으면 그 줄을 그대로
+  부르며 기동이 실패합니다). 아무것도 선언하지 않은 항목·두 사다리 키를 함께 적은 항목·빈
   `accepted-reasoning-efforts` 목록·**빈 원소를 낀 목록**(`none,,high` 는 몇 번째인지를 부르며 실패합니다)·
   대소문자만 다른 두 이름·잘못된 `lowest-reasoning-effort` 값은
   프로퍼티 이름을 대며 기동을 실패시킵니다. `provider: anthropic` 아래의 선언은 **더 이상 거절되지
-  않습니다** — 그 분기도 이 registry 를 읽기 때문입니다. **다만 플래그 이름의 오타는
-  조용합니다** — Boot 가 모르는 프로퍼티를 무시하기 때문이며, 그것을 끄는 것은 `aimon.*` 트리 전체의 동작
-  변경이라 이 키에 얹지 않았습니다. 자기 `LlmClient` 빈을 선언한 앱은 두 분기 어느 쪽에도 닿지 않으므로 이
+  않습니다** — 그 분기도 이 registry 를 읽기 때문입니다. **플래그 이름의 오타도 기동을
+  실패시킵니다** — 적힌 키를 그대로 부르는 Boot 의 *"The elements [...] were left unbound."* 입니다.
+  Boot 는 모르는 프로퍼티를 무시하지만, 이 서브트리와 아래의 두 벤더 블록에 한해서는
+  `AimonPropertiesBindingAutoConfiguration` 이 그것을 거절합니다. `aimon.*` 의 나머지에서는 여전히 무시되고,
+  환경 변수와 JVM 시스템 프로퍼티로 들어온 키도 검사하지 않습니다(Boot 의 `ignoreUnknownFields = false` 와
+  같은 예외입니다). 이 세 서브트리 아래에 자기 키를 두는 앱은 그 슬라이스를 `spring.autoconfigure.exclude`
+  에 적습니다. 자기 `LlmClient` 빈을 선언한 앱은 두 분기 어느 쪽에도 닿지 않으므로 이
   선언이 거절되지도 읽히지도 않습니다 — 그 앱이 직접 씁니다:
   `AimonProperties.modelCapabilityRegistry(properties.getLlm())` 가 그 자리를 위해 public 입니다.
   CLI 쪽 같은 축의 키는 camelCase 이고
@@ -438,7 +445,8 @@ aimon:
   기본값 `off` 가 아니어야 뜻이 있습니다** — `off` 아래에서는 요청에 thinking 파라미터가 실리지 않으므로
   effort 가 닿을 곳이 없고, 클라이언트가 프로세스당 한 번 WARN 으로 그 사실을 말합니다
   (`reasoning-effort: none` 은 예외입니다 — 그것과 `off` 는 같은 것을 뜻합니다). 값 오타는 프로퍼티 이름을
-  대며 기동을 실패시키지만 **키 이름의 오타는 조용합니다**, 바로 위 문단과 같은 이유로.
+  대며 기동을 실패시키지만 **키 이름의 오타는 조용합니다** — 위 문단의 거절이 닿는 것은 세 서브트리이고,
+  이 키는 `aimon.llm` 바로 아래의 잎이라 그 밖에 있습니다.
 - `aimon.llm.anthropic.*` 는 **Anthropic 의 thinking 을 조율합니다** — 바로 위 블록과 달리 **anthropic 분기만
   읽습니다.** 세 키의 이름이 전부 그 벤더의 어휘이기 때문이며(이 저장소가 다른 자리에서 `ReasoningEffort` ·
   `ReasoningTrace` 라고 부르는 것에 대한 그쪽 단어가 "thinking" 이고, `budget_tokens` 는 요청 본문의 필드
@@ -492,12 +500,16 @@ aimon:
 
   `replay-thinking-blocks: false` 는 이름 있는 실패 하나를 위한 비상구입니다 — *"Invalid `signature` in
   `thinking` block. The block is bound to a different conversation."* 벤더의 처방이 이력에서 thinking 블록을
-  전부 떼는 것이고, 대가는 기능 자체입니다(모델이 매 턴 추론을 다시 세웁니다). **여기서도 키 이름의 오타는
-  조용합니다** — 위 블록과 같은 이유이고 같은 제약입니다. CLI 쪽 같은 축의 키는 camelCase 입니다.
+  전부 떼는 것이고, 대가는 기능 자체입니다(모델이 매 턴 추론을 다시 세웁니다). **여기서는 키 이름의 오타가
+  기동을 실패시킵니다** — `model-capabilities` 와 같은 장치입니다. CLI 쪽 같은 축의 키는 camelCase 입니다.
 - `aimon.llm.openai.*` 는 위 `anthropic` 블록의 짝이고 **openai 분기만 읽습니다** — `provider: anthropic`(또는
-  미지정) 아래에 적힌 이 블록은 무시되지 않고 **기동을 실패시킵니다**. 키는 둘입니다.
+  미지정) 아래에 적힌 이 블록은 무시되지 않고 **기동을 실패시킵니다**. 여기서 다루는 키는 둘이고, 샘플링 기본값은 아래 항목에 있습니다.
   `aimon.llm.openai.reasoning-summary` 는 `auto` · `concise` · `detailed` 중 하나로, 모델의 추론 요약을
   요청하고 그 텍스트를 흘려보냅니다(Responses API 전용이고, 적지 않으면 요청은 글자 하나 바뀌지 않습니다).
+  에이전트 정의의 `model.reasoningSummary`(`none` · `auto` · `concise` · `detailed`)가 이 프로퍼티를 이깁니다. `none` 은
+  에이전트 정의에만 있는 값으로, 프로퍼티가 켠 요약을 그 에이전트에서만 끕니다 — 프로퍼티 자체는 세 값만 받고 적지 않는
+  것으로 끕니다. 서브에이전트는 자기를 띄운 에이전트의 값을 물려받고, anthropic 분기는 그 값을 무시하며 한 번 WARN 으로
+  말합니다.
   `aimon.llm.openai.responses-api-enabled` 는 Responses API(`/v1/responses`) 경로를 쓸지 정하며, 적지 않으면
   `true` 입니다.
 
@@ -529,7 +541,31 @@ aimon:
   도구가 없으면 200 입니다**(2026-10-05). 클라이언트는 그 rung 을 그대로 내보내고 거절은 서버가 합니다 —
   내보내기 전에 그 사실을 한 번 WARN 으로 말합니다. 에이전트 정의의
   `model.reasoningEffort` 가 프로퍼티를 이기므로 `none` 은 실제로 요청에 닿는 쪽에 적습니다. **여기서도 키
-  이름의 오타는 조용합니다.** CLI 쪽 같은 축의 키는 camelCase 입니다(`llm.openai.responsesApiEnabled`).
+  이름의 오타는 기동을 실패시킵니다.** CLI 쪽 같은 축의 키는 camelCase 입니다(`llm.openai.responsesApiEnabled`).
+- **샘플링 기본값도 벤더 블록에 있고, 블록마다 키가 다릅니다.** `aimon.llm.openai` 에는
+  `temperature`(`0.0`–`2.0`) · `top-p`(`0.0`–`1.0`) · `presence-penalty` · `frequency-penalty`(둘 다
+  `-2.0`–`2.0`)가 있고, `aimon.llm.anthropic` 에는 `temperature`(`0.0`–`1.0`) **하나뿐입니다** — Anthropic API
+  에는 penalty 가 없고 그 클라이언트는 `top_p` 를 에이전트 정의에서만 읽으므로, 그 블록에 적은 `top-p`
+  는 모르는 키로 기동을 실패시킵니다. 범위를 벗어난 값도 그 프로퍼티의 이름으로 기동을 실패시킵니다
+  (`aimon.llm.anthropic.temperature=1.5 is invalid: Temperature must be between 0.0 and 1.0`).
+
+  ```yaml
+  aimon:
+    llm:
+      provider: openai
+      openai:
+        temperature: 0.2
+        top-p: 0.9
+  ```
+
+  **이 값들은 덮어쓰기가 아니라 기본값입니다 — 에이전트 정의 > 이 프로퍼티 > 없음.** 에이전트 정의의
+  `model.temperature` · `model.topP` 가 있으면 그것이 이기고, 없으면 이 값이 실리며, 둘 다 없으면 아무것도
+  실리지 않아 서버 기본값이 적용됩니다. 파라미터마다 따로 정해집니다. 값이 실리지 않는 요청에서는 클라이언트가
+  한 번 WARN 으로 말합니다 — 내장 capability 행이 샘플링을 받지 않는다고 적은 모델(`gpt-5*` · o-series · 일부
+  Claude 모델), thinking 파라미터가 실린 Anthropic 요청의 `temperature`, `/v1/responses` 로 가는 요청의 두
+  penalty. 같은 클라이언트를 쓰는 백그라운드 호출도 자기 값을 싣지 않았다면 이 기본값을 받습니다. **서브에이전트 요청도 같은 규칙을
+  따릅니다**: 띄운 에이전트의 정의에 값이 있으면 그것을 물려받고, 없으면 아무것도 싣지 않아 이 프로퍼티가
+  닿습니다. CLI 쪽 같은 축의 키는 camelCase 입니다(`llm.openai.topP`).
 - `knowledge` / `memory` 의 `supplied` 는 "**여러분이 그 빈을 선언하고 스타터는 도구만 거기에 연결한다**"는
   뜻입니다. Spring 이 만들었으니 Spring 이 닫고, 스택은 빌려 쓸 뿐입니다. `knowledge.backend` 에
   **OpenSearch 값이 일부러 없는** 것도 같은 이유입니다 — `aimon-knowledge-opensearch` 는 존재하고 동작하지만

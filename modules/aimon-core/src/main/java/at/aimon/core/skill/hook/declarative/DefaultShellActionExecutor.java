@@ -79,6 +79,7 @@ public final class DefaultShellActionExecutor implements ShellActionExecutor {
         try {
             shell = executionEnvironment.get().shell();
         } catch (ExecutionEnvironmentUnavailableException e) {
+            // The message is passed on: it is what a tool call in this environment already returns to the model.
             log.warn("Skill hook shell action not run: the execution environment is unavailable (command={}): {}",
                     action.getCommand(), e.getMessage());
             return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE, e.getMessage());
@@ -89,6 +90,7 @@ public final class DefaultShellActionExecutor implements ShellActionExecutor {
             return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE,
                     "the environment gave no shell (" + ShellActionRunner.failureDetail(e) + ")");
         }
-        return ShellActionRunner.run(shell, action, environmentOverrides, stdinPayload);
+        return ShellActionRunner.run(shell, action, environmentOverrides, stdinPayload,
+                context.getExecutionCancellation());
     }
 }

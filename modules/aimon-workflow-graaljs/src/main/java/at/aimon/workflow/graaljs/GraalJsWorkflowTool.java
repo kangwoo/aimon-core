@@ -3,6 +3,7 @@ package at.aimon.workflow.graaljs;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Collection;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -28,12 +29,11 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.tools.CallerAllowedTools;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
@@ -54,7 +54,7 @@ import at.aimon.workflow.graaljs.exception.JsScriptException;
  * <p>
  * Foreground runs build a per-call, budget-bearing runner from the invoking execution's agent runtime
  * (agentRuntimeId, principal, execution attributes, parent LLM metadata, cancellation signal) and block for the
- * result. Background runs reuse the injected app-scoped runner and its own base environment (they do <b>not</b>
+ * result. Background runs reuse the injected app-scoped runner and its own base launch context (they do <b>not</b>
  * inherit the invoking execution's context or signal), returning a run id trackable via {@code /runs}. The tool
  * never throws: guest errors and cancellation ({@link JsScriptException}) and any other failure become
  * {@link ToolResult#error}.
@@ -74,7 +74,6 @@ public final class GraalJsWorkflowTool extends AbstractTool {
     private final SubagentRegistry subagentRegistry;
     private final ToolRegistry toolRegistry;
     private final HookRegistry hookRegistry;
-    private final UserLocale userLocale;
     private final SubagentExecutionManager subagentExecutionManager;
     private final List<ToolContextEnricher> toolContextEnrichers;
 
@@ -94,7 +93,6 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         this.subagentRegistry = Objects.requireNonNull(builder.subagentRegistry, "subagentRegistry must not be null");
         this.toolRegistry = Objects.requireNonNull(builder.toolRegistry, "toolRegistry must not be null");
         this.hookRegistry = Objects.requireNonNull(builder.hookRegistry, "hookRegistry must not be null");
-        this.userLocale = Objects.requireNonNull(builder.userLocale, "userLocale must not be null");
         this.subagentExecutionManager = Objects.requireNonNull(builder.subagentExecutionManager,
                 "subagentExecutionManager must not be null");
         this.toolContextEnrichers = builder.toolContextEnrichers != null
@@ -102,9 +100,13 @@ public final class GraalJsWorkflowTool extends AbstractTool {
                 : List.of();
         this.engines = Objects.requireNonNull(builder.engines, "engines must not be null");
         this.sandbox = builder.sandbox != null ? builder.sandbox : JsSandboxConfig.defaults();
+        if (builder.subagentResolver != null && !builder.scriptAttributeKeys.isEmpty()) {
+            throw new IllegalStateException("scriptAttributeKeys configures the default subagentResolver and has no "
+                    + "effect on a custom one; set one or the other");
+        }
         this.subagentResolver = builder.subagentResolver != null
                 ? builder.subagentResolver
-                : SubagentResolver.inline(subagentRegistry);
+                : SubagentResolver.inline(subagentRegistry, builder.scriptAttributeKeys);
         this.backgroundRunner = builder.backgroundRunner; // nullable
     }
 
@@ -194,9 +196,9 @@ public final class GraalJsWorkflowTool extends AbstractTool {
             log.warn("WorkflowJs (background): the hooks of skill(s) {} do not fire for this run's subagents",
                     hookSkills);
         }
-        // Fire-and-forget on the shared runner's own base environment and bootstrap budget: a background run does NOT
-        // inherit the invoking execution's context id, principal, or cancellation signal (mirrors WorkflowTool). The
-        // run id is derived from the full request so an identical in-flight request is joined idempotently.
+        // Fire-and-forget on the shared runner's own base launch context and bootstrap budget: a background run does
+        // NOT inherit the invoking execution's context id, principal, or cancellation signal (mirrors WorkflowTool).
+        // The run id is derived from the full request so an identical in-flight request is joined idempotently.
         final RunId runId = RunId.from(RUN_SCRIPT_NAME, discriminator(source, args));
         final GraalJsWorkflowScript script = new GraalJsWorkflowScript(source, args, sandbox, engines, subagentResolver,
                 NoopCancellationSignal.INSTANCE);
@@ -223,7 +225,7 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         final CancellationSignal.Registration cascade = parentSignal
                 .onCancel(() -> runCoordinator.requestInterrupt(InterruptReason.PARENT_CANCELLED));
         try {
-            final SubagentExecutionEnvironment env = buildEnvironment(agentRuntimeId, context, runSignal);
+            final SubagentLaunchContext launchContext = buildLaunchContext(agentRuntimeId, context, runSignal);
             final GraalJsWorkflowScript script = new GraalJsWorkflowScript(source, args, sandbox, engines,
                     subagentResolver, runSignal,
                     () -> runCoordinator.requestInterrupt(InterruptReason.BUDGET_EXCEEDED));
@@ -233,7 +235,7 @@ public final class GraalJsWorkflowTool extends AbstractTool {
             log.debug("WorkflowJs (foreground): runId='{}'", runId.value());
             // The per-call foreground runner owns a lazily-created fan-out pool; close it once run() returns so a
             // long-lived process does not leak a worker pool per invocation.
-            try (WorkflowRunner runner = WorkflowRunners.create(subagentExecutionManager, env, options)) {
+            try (WorkflowRunner runner = WorkflowRunners.create(subagentExecutionManager, launchContext, options)) {
                 return ToolResult.success(runner.run(script, runId));
             }
         } finally {
@@ -253,7 +255,7 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         return options.build();
     }
 
-    private SubagentExecutionEnvironment buildEnvironment(AgentRuntimeId agentRuntimeId, ToolContext context,
+    private SubagentLaunchContext buildLaunchContext(AgentRuntimeId agentRuntimeId, ToolContext context,
             CancellationSignal parentSignal) {
         final Map<String, Object> executionAttributes = context.get(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY)
                 .orElse(Map.of());
@@ -261,14 +263,14 @@ public final class GraalJsWorkflowTool extends AbstractTool {
                 .orElse(LlmCallMetadata.empty());
         final Principal principal = context.get(ToolContextKeys.PRINCIPAL).orElse(null);
 
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry)
+        return SubagentLaunchContext.builder().agentRuntimeId(agentRuntimeId).subagentRegistry(subagentRegistry)
                 .toolRegistry(toolRegistry)
                 // The caller's registry first: inside a forked skill it carries the skill's hooks, and the workflow's
                 // subagents must stay under them.
-                .hookRegistry(HookRegistryAccess.of(context).orElse(hookRegistry)).userLocale(userLocale)
-                .defaultModel(defaultModel).executionAttributes(executionAttributes)
-                .parentLlmCallMetadata(parentMetadata).cancellationSignal(parentSignal).principal(principal)
-                .toolContextEnrichers(toolContextEnrichers).callerAllowedTools(CallerAllowedTools.of(context))
+                .hookRegistry(HookRegistryAccess.of(context).orElse(hookRegistry)).defaultModel(defaultModel)
+                .executionAttributes(executionAttributes).parentLlmCallMetadata(parentMetadata)
+                .cancellationSignal(parentSignal).principal(principal).toolContextEnrichers(toolContextEnrichers)
+                .callerAllowedTools(CallerAllowedTools.of(context))
                 .invokingSessionId(InvokingSessionAccess.idToPropagate(context).orElse(null))
                 // The fork resolves its own environment from the spawning runtime's provider, with this execution's
                 // environment as its parent (execution-environment design §5.2).
@@ -297,19 +299,19 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         }
     }
 
-    /** Builder for the tool's environment-building and execution dependencies. */
+    /** Builder for the tool's launch-context-building and execution dependencies. */
     public static final class Builder {
 
         private LlmModel defaultModel;
         private SubagentRegistry subagentRegistry;
         private ToolRegistry toolRegistry;
         private HookRegistry hookRegistry;
-        private UserLocale userLocale;
         private SubagentExecutionManager subagentExecutionManager;
         private List<ToolContextEnricher> toolContextEnrichers;
         private GraalJsEngineHolder engines;
         private JsSandboxConfig sandbox;
         private SubagentResolver subagentResolver;
+        private List<String> scriptAttributeKeys = List.of();
         private WorkflowRunner backgroundRunner;
 
         private Builder() {
@@ -335,11 +337,6 @@ public final class GraalJsWorkflowTool extends AbstractTool {
             return this;
         }
 
-        public Builder userLocale(UserLocale userLocale) {
-            this.userLocale = userLocale;
-            return this;
-        }
-
         public Builder subagentExecutionManager(SubagentExecutionManager subagentExecutionManager) {
             this.subagentExecutionManager = subagentExecutionManager;
             return this;
@@ -362,12 +359,42 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         }
 
         /**
-         * Optional resolver; defaults to {@link SubagentResolver#inline(SubagentRegistry)} over this tool's
-         * {@code subagentRegistry}, so a step whose {@code agentType} names a registered subagent carries that
-         * subagent's attributes.
+         * Optional resolver; defaults to {@link SubagentResolver#inline(SubagentRegistry, Collection)} over
+         * this tool's {@code subagentRegistry} and {@link #scriptAttributeKeys(Collection)}, so a step whose
+         * {@code agentType} names a registered subagent carries that subagent's attributes. A custom resolver decides
+         * for itself what a script may set; combining it with {@code scriptAttributeKeys} fails {@link #build()}.
          */
         public Builder subagentResolver(SubagentResolver subagentResolver) {
             this.subagentResolver = subagentResolver;
+            return this;
+        }
+
+        /**
+         * The attribute keys a script may set on a step, as flattened dotted keys ({@code sandbox.profile}). Empty by
+         * default: a script that gives a step {@code attributes} fails with a script error naming the key.
+         *
+         * <p>
+         * The script is written by the model, and attributes are what an execution environment provider reads to place
+         * a step, so which keys a script may set is the operator's decision. A registered definition's own keys stay
+         * pinned whether or not they are listed here — the list only admits keys no registered definition sets for
+         * that step, which includes every key of a step whose {@code agentType} is unregistered or absent. List only
+         * keys whose every value is safe for a model to choose; a key such as {@code sandbox.slot} belongs in a
+         * registered definition instead.
+         *
+         * @param scriptAttributeKeys
+         *            the allowed keys (must not be null, nor contain a null or blank key)
+         * @return this builder
+         * @throws IllegalArgumentException
+         *             if a key is null or blank
+         */
+        public Builder scriptAttributeKeys(Collection<String> scriptAttributeKeys) {
+            Objects.requireNonNull(scriptAttributeKeys, "scriptAttributeKeys must not be null");
+            for (final String key : scriptAttributeKeys) {
+                if (key == null || key.isBlank()) {
+                    throw new IllegalArgumentException("scriptAttributeKeys must not contain a null or blank key");
+                }
+            }
+            this.scriptAttributeKeys = List.copyOf(scriptAttributeKeys);
             return this;
         }
 
@@ -377,6 +404,13 @@ public final class GraalJsWorkflowTool extends AbstractTool {
             return this;
         }
 
+        /**
+         * Builds the tool.
+         *
+         * @return the tool
+         * @throws IllegalStateException
+         *             if both a custom {@code subagentResolver} and {@code scriptAttributeKeys} were set
+         */
         public GraalJsWorkflowTool build() {
             return new GraalJsWorkflowTool(this);
         }

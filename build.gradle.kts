@@ -88,6 +88,25 @@ tasks.register("checkStyle") {
     dependsOn(codeSubprojects().map { it.tasks.named("checkstyleMain") })
 }
 
+// Each module compares what its tests run on with what it ships (TestClasspathVersionsTask, registered by
+// aimon.java-conventions). The first task here adds the one thing no module can see — a line in the record that names
+// a module the build does not have, which no module's task would ever read. It is a task of its own rather than the
+// aggregate's action so that it does not wait on the modules: under `--continue` a task whose dependency failed is
+// skipped, and an orphaned line would then go unreported in exactly the run that was collecting every problem.
+val checkRecordedDifferenceModules = tasks.register<RecordedDifferenceModulesTask>("checkRecordedDifferenceModules") {
+    description = "Fails if ${RecordedDifferences.PATH} records a difference for a module this build does not have"
+    group = "verification"
+    recordedFile.set(layout.projectDirectory.file(RecordedDifferences.PATH))
+    modules.set(codeSubprojects().map { it.name })
+}
+
+tasks.register("checkTestClasspathVersions") {
+    description = "Hold every module's test classpath to the versions it ships, outside the recorded differences"
+    group = "verification"
+    dependsOn(checkRecordedDifferenceModules)
+    dependsOn(codeSubprojects().map { it.tasks.named("checkTestClasspathVersions") })
+}
+
 // `test` here is each module's own test task, which excludes `@Tag("docker")` and `@Tag("packaging")` in every
 // module (see the aimon.java-conventions plugin). Those tiers run under `integrationTest` and `packagingTest`,
 // which `checkAll` does not aggregate but CI and the release gate both name -- out of this aggregate is not out
@@ -96,9 +115,10 @@ tasks.register("checkStyle") {
 // The BOM has no tests, but it does have a claim that can be wrong — that it manages exactly the modules
 // this build publishes — so `checkAll` picks up its `verifyBom` in place of the test task it lacks.
 tasks.register("checkAll") {
-    description = "Run all code quality checks (Spotless + Checkstyle + javadoc ratchet + unit tests + the BOM's verifyBom)"
+    description = "Run all code quality checks (Spotless + Checkstyle + javadoc ratchet + test-classpath versions + " +
+        "unit tests + the BOM's verifyBom)"
     group = "verification"
-    dependsOn("checkFormat", "checkStyle", "checkJavadocCoverage")
+    dependsOn("checkFormat", "checkStyle", "checkJavadocCoverage", "checkTestClasspathVersions")
     dependsOn(codeSubprojects().map { it.tasks.named("test") })
     dependsOn(":aimon-bom:verifyBom")
 }

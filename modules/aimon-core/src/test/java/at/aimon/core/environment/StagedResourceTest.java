@@ -143,4 +143,47 @@ class StagedResourceTest {
         assertThat(resource.getFiles()).isEmpty();
         assertThat(resource.getTotalBytes()).isZero();
     }
+
+    @Test
+    @DisplayName("a scanned resource says so, and one assembled with the same values through the builder does not")
+    void scannedOrigin() {
+        final StagedResource scanned = StagedResource.scan(control, "skills/demo", "demo");
+        final StagedResource assembled = StagedResource.builder().sourceFileSystem(scanned.getSourceFileSystem())
+                .sourceDir(scanned.getSourceDir()).name(scanned.getName()).contentKey(scanned.getContentKey())
+                .totalBytes(scanned.getTotalBytes()).files(scanned.getFiles()).build();
+
+        assertThat(scanned.isScanned()).isTrue();
+        assertThat(assembled.isScanned()).isFalse();
+        assertThat(scanned.toString()).contains("scanned=true");
+        assertThat(assembled.toString()).contains("scanned=false");
+        assertThat(StagedResource.scan(control, "skills/none", "none").isScanned()).isTrue();
+    }
+
+    @Test
+    @DisplayName("the builder has no way to claim a scan: its only methods are the six values and build()")
+    void builderCannotClaimAScan() {
+        assertThat(java.util.Arrays.stream(StagedResource.Builder.class.getDeclaredMethods())
+                .filter(m -> !m.isSynthetic()).map(java.lang.reflect.Method::getName)).containsExactlyInAnyOrder(
+                        "sourceFileSystem", "sourceDir", "contentKey", "name", "totalBytes", "files", "build");
+    }
+
+    @Test
+    @DisplayName("sizeOf is the size scan would record, .stageignore applied, without reading a file's content")
+    void sizeOfMatchesScanWithoutReading() {
+        control.write("skills/demo/.stageignore", "templates/\n");
+        final java.util.List<String> reads = new java.util.ArrayList<>();
+        final VirtualFileSystem counting = new DelegatingFileSystem(control) {
+            @Override
+            public InputStream read(String path) {
+                reads.add(path);
+                return super.read(path);
+            }
+        };
+
+        final long size = StagedResource.sizeOf(counting, "skills/demo/");
+
+        assertThat(reads).containsExactly("skills/demo/.stageignore");
+        assertThat(size).isEqualTo(StagedResource.scan(control, "skills/demo", "demo").getTotalBytes());
+        assertThat(StagedResource.sizeOf(control, "skills/none")).isZero();
+    }
 }

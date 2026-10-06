@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/features.md
-source_commit: 79d78a7
+source_commit: d67baad
 ---
 
 # Feature Catalog
@@ -502,10 +502,10 @@ environment can be swapped in for the local disk.
 
 ## What is not in this document
 
-- **why it was designed that way** → [`../design/`](../design/)
-- **what was deliberately deferred** → [`../design/backlog/`](../design/backlog/)
-- **version upgrade procedures** → [`../migration/`](../migration/)
-- **contributing, building and publishing** → [`../project/`](../project/)
+- **why it was designed that way** → [`../design/`](../design/README.md)
+- **what was deliberately deferred** → [`../design/backlog/`](../design/README.md#backlog--아직-결정하지-않은-것)
+- **version upgrade procedures** → [`../migration/`](../migration/README.md)
+- **contributing, building and publishing** → [`../project/`](../project/README.md)
 
 ## Related documents
 

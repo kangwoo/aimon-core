@@ -35,7 +35,6 @@ import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.stream.StreamingAgentExecutor;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.environment.TestExecutionEnvironments;
@@ -289,8 +288,7 @@ class DefaultLiveSessionStatusTest {
                 .commandRegistry(new DefaultCommandRegistry(fileSystem, ".aimon/commands"))
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
                 .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
-                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
-                .userLocale(UserLocale.createDefault()).build();
+                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem)).build();
     }
 
     /**

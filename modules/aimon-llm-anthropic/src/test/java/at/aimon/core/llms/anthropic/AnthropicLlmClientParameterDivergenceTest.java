@@ -25,6 +25,7 @@ import com.anthropic.services.blocking.MessageService;
 
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.ReasoningSummary;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
@@ -153,5 +154,47 @@ class AnthropicLlmClientParameterDivergenceTest {
         send(client, LlmModel.builder().temperature(0.7).topP(0.9).build());
 
         assertThat(warnings()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("an agent's reasoningSummary level is ignored and reported once, however many calls carry it")
+    void anIgnoredReasoningSummaryIsReportedOnce() {
+        when(mockMessageService.create(any(MessageCreateParams.class))).thenThrow(SENTINEL);
+        AnthropicLlmClient client = client();
+        LlmModel model = LlmModel.builder().reasoningSummary(ReasoningSummary.DETAILED).build();
+
+        // A subagent inherits the value on every call it makes; the report is a fact about the configuration.
+        send(client, model);
+        send(client, model);
+        send(client, model);
+
+        assertThat(warnings()).singleElement().asString().contains("reasoningSummary").contains("DETAILED")
+                .contains("thinkingDisplay");
+    }
+
+    @Test
+    @DisplayName("an agent's reasoningSummary none says nothing: no summary is what this request carries anyway")
+    void anIgnoredNoneIsSilentWithoutADisplay() {
+        when(mockMessageService.create(any(MessageCreateParams.class))).thenThrow(SENTINEL);
+        AnthropicLlmClient client = client();
+
+        send(client, LlmModel.builder().reasoningSummary(ReasoningSummary.NONE).build());
+
+        assertThat(warnings()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("an agent's none beside a configured thinkingDisplay is reported: the display still applies")
+    void aNoneThatDoesNotTurnTheDisplayOffIsReported() {
+        when(mockMessageService.create(any(MessageCreateParams.class))).thenThrow(SENTINEL);
+        lenient().when(mockAnthropicClient.messages()).thenReturn(mockMessageService);
+        AnthropicLlmClient client = new AnthropicLlmClient(AnthropicConfig.builder().apiKey("test-key")
+                .model("claude-sonnet-4-20250514").thinkingMode(AnthropicThinkingMode.ADAPTIVE)
+                .thinkingDisplay(AnthropicThinkingDisplay.SUMMARIZED).build(), mockAnthropicClient);
+
+        send(client, LlmModel.builder().reasoningSummary(ReasoningSummary.NONE).build());
+
+        assertThat(warnings()).anySatisfy(
+                m -> assertThat(m).contains("reasoningSummary").contains("NONE").contains("thinkingDisplay"));
     }
 }

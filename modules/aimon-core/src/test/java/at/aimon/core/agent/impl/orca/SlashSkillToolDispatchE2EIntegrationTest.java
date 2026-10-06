@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.agent.DefaultAgent;
+import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.budget.TruncatedResponses;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
@@ -30,7 +31,6 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.permission.PermissionSubject;
 import at.aimon.core.agent.tool.permission.ToolPermissionSubjectAware;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.environment.TestExecutionEnvironments;
@@ -52,12 +52,14 @@ import at.aimon.core.llm.StopReason;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
+import at.aimon.core.skill.ExecutionMode;
 import at.aimon.core.skill.InvokePolicy;
 import at.aimon.core.skill.Skill;
 import at.aimon.core.skill.SkillContent;
 import at.aimon.core.skill.SkillMetadata;
 import at.aimon.core.skill.SkillRegistry;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
+import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.tools.file.EditTool;
@@ -96,6 +98,7 @@ class SlashSkillToolDispatchE2EIntegrationTest {
     private DefaultHookRegistry hookRegistry;
     private CountingTool countingTool;
     private OrcaAgentExecutor executor;
+    private SubagentRegistry subagentRegistry = new EmptySubagentRegistry();
 
     @BeforeEach
     void setUp() {
@@ -234,6 +237,54 @@ class SlashSkillToolDispatchE2EIntegrationTest {
     }
 
     @Test
+    @DisplayName("L-26: a slash skill whose final answer is cut at max_tokens ends the turn TRUNCATED, as an agent's own cut answer does")
+    void slashSkillCutFinalAnswer_EndsTheTurnTruncated() {
+        skillRegistry.add(inlineSkill("audit", "Audit this: $ARGUMENTS"));
+        llmClient.script(LlmResponse.of("the audit found", List.of(), TokenUsage.empty(), StopReason.MAX_TOKENS));
+
+        final OrcaAgentExecutionResult result = executor.execute(createContext(), createRequest("/audit src"));
+
+        // The same shape a turn's own cut answer has: the partial text is kept and marked, and the reason says so.
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getFinalAnswer()).isEqualTo("the audit found" + TruncatedResponses.TRUNCATION_MARKER);
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.TRUNCATED);
+        assertThat(result.getSnapshot().getConversationHistory()).last().extracting(Message::getContent)
+                .isEqualTo("the audit found" + TruncatedResponses.TRUNCATION_MARKER);
+    }
+
+    @Test
+    @DisplayName("L-26: a slash skill that answers whole still ends the turn COMPLETED")
+    void slashSkillWholeFinalAnswer_EndsTheTurnCompleted() {
+        skillRegistry.add(inlineSkill("audit", "Audit this: $ARGUMENTS"));
+        llmClient.script(LlmResponse.text("audit complete"));
+
+        final OrcaAgentExecutionResult result = executor.execute(createContext(), createRequest("/audit src"));
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
+    }
+
+    @Test
+    @DisplayName("L-26: a fork-mode slash skill whose fork's final answer is cut ends the turn TRUNCATED too")
+    void forkModeSlashSkillCutFinalAnswer_EndsTheTurnTruncated() {
+        final InMemorySubagentRegistry subagents = new InMemorySubagentRegistry();
+        subagents.register(Subagent.builder().name("worker").systemPrompt("You do the work").build());
+        subagentRegistry = subagents;
+        skillRegistry.add(Skill.builder().name("delegate")
+                .metadata(SkillMetadata.builder().name("delegate").description("e2e fixture — delegate")
+                        .invokePolicy(InvokePolicy.of(true, true)).executionMode(ExecutionMode.FORK)
+                        .forkAgentName("worker").build())
+                .content(SkillContent.of("Do this: $ARGUMENTS")).build());
+        llmClient.script(LlmResponse.of("the worker found", List.of(), TokenUsage.empty(), StopReason.MAX_TOKENS));
+
+        final OrcaAgentExecutionResult result = executor.execute(createContext(), createRequest("/delegate src"));
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getFinalAnswer()).isEqualTo("the worker found" + TruncatedResponses.TRUNCATION_MARKER);
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.TRUNCATED);
+    }
+
+    @Test
     @DisplayName("EE-31: an inline skill can Edit a file it Read in the same slash invocation")
     void slashSkillEdit_AfterReadInSameInvocation_Succeeds() throws Exception {
         Files.writeString(tempDir.resolve("notes.txt"), "status: draft");
@@ -342,10 +393,8 @@ class SlashSkillToolDispatchE2EIntegrationTest {
                 .agent(DefaultAgent.builder().name("TestAgent").maxIterations(3).systemPrompt("You are a test agent")
                         .model(LlmModel.builder().name("gpt-4").build()).build())
                 .toolRegistry(toolRegistry).hookRegistry(hookRegistry).commandRegistry(commandRegistry)
-                .subagentRegistry(new EmptySubagentRegistry()).skillRegistry(skillRegistry)
-                .controlFileSystem(fileSystem)
-                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
-                .userLocale(UserLocale.createDefault()).build();
+                .subagentRegistry(subagentRegistry).skillRegistry(skillRegistry).controlFileSystem(fileSystem)
+                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem)).build();
     }
 
     private static OrcaAgentExecutionRequest createRequest(String userInput) {

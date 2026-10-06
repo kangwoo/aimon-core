@@ -30,7 +30,6 @@ import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.LlmModel;
@@ -38,8 +37,8 @@ import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.cost.Money;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
-import at.aimon.core.subagent.SubagentExecutionEnvironment;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.workflow.AgentStepResult;
 import at.aimon.core.workflow.AgentTask;
@@ -53,14 +52,14 @@ class DefaultWorkflowRunnerTest {
 
     private final List<DefaultWorkflowRunner> runners = new ArrayList<>();
     private SubagentExecutionManager manager;
-    private SubagentExecutionEnvironment env;
+    private SubagentLaunchContext env;
     private Subagent sub;
 
     @BeforeEach
     void setUp() {
         manager = mock(SubagentExecutionManager.class);
         // Fake inline execution: echo the goal so routing is observable. Never-throw contract preserved.
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> success("ans:" + invocation.getArgument(2, String.class)));
         env = env();
         sub = subagent("worker");
@@ -201,7 +200,7 @@ class DefaultWorkflowRunnerTest {
     void tokenBudgetAbortsRun() {
         // Each agent spends 100 tokens; a 250-token ceiling admits the first three (spend 0/100/200 all < 250), the
         // third crosses to 300, and the fourth is refused (post-hoc: the crosser completes, the next is stopped).
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> successWithTokens("ans:" + invocation.getArgument(2, String.class), 100));
         final DefaultWorkflowRunner runner = runner(WorkflowConcurrencyConfig.disabled(), WorkflowEventSink.NO_OP,
                 WorkflowBudget.of(1000, 250));
@@ -220,7 +219,7 @@ class DefaultWorkflowRunnerTest {
         // Each agent costs $0.001 (1000 micros); a $0.0025 (2500 micros) ceiling admits the first three (spend
         // 0/1000/2000 all < 2500), the third crosses to 3000, and the fourth is refused (post-hoc, like the token
         // ceiling).
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenAnswer(invocation -> successWithCost("ans:" + invocation.getArgument(2, String.class), 0.001));
         final DefaultWorkflowRunner runner = runner(WorkflowConcurrencyConfig.disabled(), WorkflowEventSink.NO_OP,
                 WorkflowBudget.of(1000, 0, 0.0025));
@@ -240,13 +239,13 @@ class DefaultWorkflowRunnerTest {
                 Map.of("name", Map.of("type", "string"), "score", Map.of("type", "integer")));
         final AgentTask task = AgentTask.builder().subagent(sub).goal("profile the user").resultSchema(schema).build();
 
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenReturn(success("{\"name\": \"alice\", \"score\": 7}"));
         final AgentStepResult ok = runner(WorkflowConcurrencyConfig.disabled()).run(ctx -> ctx.agent(task));
         assertThat(ok.structured()).get()
                 .satisfies(m -> assertThat(m).containsEntry("name", "alice").containsEntry("score", 7));
 
-        when(manager.execute(any(SubagentExecutionEnvironment.class), any(Subagent.class), anyString()))
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
                 .thenReturn(success("sorry, I cannot"));
         final AgentStepResult bad = runner(WorkflowConcurrencyConfig.disabled()).run(ctx -> ctx.agent(task));
         assertThat(bad.structured()).isEmpty();
@@ -302,11 +301,10 @@ class DefaultWorkflowRunnerTest {
                 CompletionReason.COMPLETED, Money.usd(costUsd));
     }
 
-    private static SubagentExecutionEnvironment env() {
-        return SubagentExecutionEnvironment.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
+    private static SubagentLaunchContext env() {
+        return SubagentLaunchContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
                 .subagentRegistry(new InMemorySubagentRegistry()).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
-                .defaultModel(LlmModel.builder().name("gpt-4").build()).build();
+                .hookRegistry(new DefaultHookRegistry()).defaultModel(LlmModel.builder().name("gpt-4").build()).build();
     }
 
     /** Thread-safe recording sink: agent events fire on worker threads, so every collection is concurrent. */

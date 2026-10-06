@@ -7,7 +7,6 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 
 /**
  * Provides contextual information for tool execution.
@@ -31,11 +30,11 @@ import at.aimon.core.base.UserLocale;
  *     &#64;code
  *     // Create context with builder
  *     ToolContext context = ToolContext.builder().put("fileSystem", virtualFileSystem)
- *             .put(ToolContextKeys.USER_LOCALE, userLocale).put("executorType", InvokerType.MAIN_AGENT).build();
+ *             .put(ToolContextKeys.PRINCIPAL, principal).put("executorType", InvokerType.MAIN_AGENT).build();
  *
  *     // Type-safe retrieval
  *     Optional<VirtualFileSystem> fs = context.get("fileSystem", VirtualFileSystem.class);
- *     Optional<UserLocale> userLocale = context.get(ToolContextKeys.USER_LOCALE);
+ *     Optional<Principal> principal = context.get(ToolContextKeys.PRINCIPAL);
  *
  *     // Check for presence
  *     if (context.containsKey("executorType")) {
@@ -52,7 +51,6 @@ import at.aimon.core.base.UserLocale;
  * thread safety.
  *
  * @see Tool
- * @see UserLocale
  * @see InvokerType
  */
 public final class ToolContext {
@@ -156,8 +154,8 @@ public final class ToolContext {
      * <pre>
      * {
      *     &#64;code
-     *     ToolContextKey<UserLocale> USER_LOCALE = ToolContextKey.of("userLocale", UserLocale.class);
-     *     Optional<UserLocale> userLocale = context.get(USER_LOCALE);
+     *     ToolContextKey<Principal> PRINCIPAL = ToolContextKey.of("principal", Principal.class);
+     *     Optional<Principal> principal = context.get(PRINCIPAL);
      * }
      * </pre>
      *

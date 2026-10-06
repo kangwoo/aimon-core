@@ -142,8 +142,8 @@ id 를 스냅샷하고(그 뒤에 찍으면 방금 쓴 리비전이 목록에 �
 | 백엔드 | etag | 근거 |
 |--------|------|------|
 | S3 | `ETag` (`HeadObject` 응답) | 내용이 바뀌면 바뀐다 |
-| GridFS | 파일 문서의 `ObjectId` hex | 쓰기마다 새 문서를 올리므로 다시 쓰면 바뀐다. 드라이버 5.x 에는 md5 가 없다. 같은 내용을 다시 써도 바뀌는 것은 안전한 쪽의 오탐이다 |
-| 로컬 | 없음 | nanosecond mtime + 크기로 판정. 초 단위 mtime 파일 시스템(HFS+, 일부 네트워크 마운트)에서 같은 초·같은 크기의 재작성은 놓칠 수 있다 |
+| GridFS | 내용의 SHA-256 (`sha256:` + hex). 해시가 없는 문서는 파일 문서의 `ObjectId` hex | 업로드가 끝난 뒤 파일 문서의 `metadata.contentSha256` 에 적는다(드라이버 5.x 에는 md5 가 없다). 같은 내용을 다시 쓰면 etag 가 그대로다. 이 키가 생기기 전에 쓴 파일, 해시 기록에 실패한 업로드, 업로드 완료와 기록 사이의 순간에는 `ObjectId` 로 답한다 — 쓰기마다 바뀌는 값이라 놓치는 것은 없고, 같은 내용에도 바뀌는 안전한 쪽의 오탐만 남는다. 접두어가 있어 두 모양은 서로 같아질 수 없다 |
+| 로컬 | 기본은 없음. `LocalFileSystemConfig.builder(..).contentHashEtag(true)` 이면 내용의 SHA-256 | 기본은 nanosecond mtime + 크기로 판정하고, 초 단위 mtime 파일 시스템(HFS+, 일부 네트워크 마운트)에서 같은 초·같은 크기의 재작성은 놓칠 수 있다. 옵션을 켜면 그것을 잡고 같은 내용의 재작성은 변경으로 보지 않는다. 값은 `getMetadata` 호출마다 파일을 **한 번 통째로 읽는** 것이다(stamp 뿐 아니라 병합·artifact 보관의 조회도). 로컬 제공자는 `contentHashStamps(true)`, 부트스트랩은 `ExecutionEnvironmentSpec.contentHashStamps(true)` 로 워크스페이스 루트에서 만드는 파일 시스템에 전달한다 |
 
 감싸는 데코레이터(`ScopedVirtualFileSystem`, `PathRuleVirtualFileSystem`)는 etag 를 그대로 전달한다.
 

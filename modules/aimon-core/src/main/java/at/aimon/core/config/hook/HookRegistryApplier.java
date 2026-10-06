@@ -68,6 +68,16 @@ import at.aimon.core.skill.hook.declarative.predicate.PredicateParser;
  * layers are protected.
  *
  * <p>
+ * <b>An entry that cannot be applied.</b> An entry can parse and still be unusable: a {@code command} handler with no
+ * command, a {@code deny} outside {@code preTool}, a URL that is not a URI, a matcher that does not parse, a handler
+ * type the event does not accept, a handler whose executor this assembly did not wire. Under an event whose hooks
+ * cannot block, such an entry is skipped with a WARN and the rest of the file applies. Under a guard event
+ * ({@code preTool}, {@code onStart}, {@code preCompact}, {@code permissionRequest}) it throws
+ * {@link HookConfigParseException} and nothing is registered &mdash; the same stop a file that does not parse gets,
+ * because the result of skipping is the same: a guard its author wrote is off. A handler that declared
+ * {@code failOpen} is not a guard, and one that merely cannot run in this assembly is still skipped.
+ *
+ * <p>
  * Stateless and thread-safe; the registry must itself be thread-safe.
  */
 public final class HookRegistryApplier {
@@ -97,9 +107,11 @@ public final class HookRegistryApplier {
      * @param shellExecutor
      *            shell executor (must not be null)
      * @param httpExecutor
-     *            HTTP executor (may be null; absence makes HTTP entries fail-soft at hook time)
+     *            HTTP executor (may be null; an {@code http} handler then cannot be applied — fatal under a guard
+     *            event, a WARN at hook time elsewhere)
      * @param mcpExecutor
-     *            MCP executor (may be null; absence makes MCP entries fail-soft at hook time)
+     *            MCP executor (may be null; an {@code mcp} handler then cannot be applied — fatal under a guard event,
+     *            a WARN at hook time elsewhere)
      * @param processEnv
      *            process env snapshot for HTTP / MCP env whitelist evaluation (must not be null)
      */
@@ -117,7 +129,12 @@ public final class HookRegistryApplier {
      * @param merged
      *            the merged config (must not be null)
      * @param registry
-     *            the destination registry (must not be null)
+     *            the destination registry (must not be null). When this throws, hooks registered before the bad
+     *            entry are already in it: pass a registry that can be discarded, as {@link HookRegistryReloader}
+     *            does
+     * @throws HookConfigParseException
+     *             when an entry under a guard event cannot be applied; the message names the file, the event, the
+     *             entry and the handler
      */
     public void apply(MergedHookConfig merged, HookRegistry registry) {
         Objects.requireNonNull(merged, "merged cannot be null");
@@ -134,17 +151,22 @@ public final class HookRegistryApplier {
                     continue;
                 }
                 final int idx = nextIndexBySource.merge(mhe.getSource(), 1, Integer::sum) - 1;
-                applyEntry(event, mhe, idx, registry);
+                applyEntry(merged, event, mhe, idx, registry);
             }
         }
     }
 
-    private void applyEntry(String event, MergedHookEntry mhe, int idx, HookRegistry registry) {
+    private void applyEntry(MergedHookConfig merged, String event, MergedHookEntry mhe, int idx,
+            HookRegistry registry) {
         final String sourceKey = mhe.getSource().name().toLowerCase(Locale.ROOT);
         final String pseudoSkillName = sourceKey + "#" + idx;
-        final ToolInputPredicate predicate = parseMatcher(mhe.getEntry().getMatcher());
+        final boolean guardEvent = HookEventName.isGuard(event);
+        final ToolInputPredicate predicate = parseMatcher(merged, event, mhe, idx);
         final List<HookHandlerSpec> handlers = mhe.getEntry().getHandlers();
         if (handlers.isEmpty()) {
+            if (guardEvent) {
+                throw inapplicable(merged, mhe, event, idx, -1, "the entry has no handlers");
+            }
             log.warn("hooks: empty handler list for {}/{} on event '{}', skipping", mhe.getSource(),
                     mhe.getEntry().getMatcher(), event);
             return;
@@ -155,9 +177,23 @@ public final class HookRegistryApplier {
             try {
                 action = toAction(spec, event);
             } catch (IllegalArgumentException ex) {
+                if (guardEvent) {
+                    throw inapplicable(merged, mhe, event, idx, handlerIdx, ex.getMessage());
+                }
                 log.warn("hooks: invalid handler in {} on event '{}': {}", mhe.getSource(), event, ex.getMessage());
                 continue;
             }
+            // failOpen opens "could not decide", and a deny handler always has its verdict: on one the flag would
+            // only stop the hook declaring FAIL_CLOSED, so a matcher that threw or a pool that refused the hook
+            // would read as allow. Skill frontmatter drops it at the same point (SkillHookSetParser#parseFailOpen).
+            final boolean failOpen = spec.isFailOpen() && !(action instanceof DenyAction);
+            if (spec.isFailOpen() && !failOpen) {
+                log.warn("hooks: 'failOpen' has no effect on a 'deny' handler; ignored on {} ({})", event,
+                        mhe.getSource());
+            }
+            // A handler that declared failOpen is not a guard: leaving it out leaves no guard off, so it keeps the
+            // WARN-and-skip a non-guard event gets when it cannot run here.
+            final boolean guard = guardEvent && !failOpen;
             // Reload-stable, unique per registered hook. The entry index is layer-scoped (see #apply) and the layer
             // itself is already part of the id through pseudoSkillName, so this pair is unique across layers without
             // repeating the source here. The handler index is required because the entry index alone repeats across
@@ -166,22 +202,33 @@ public final class HookRegistryApplier {
             final String discriminator = event + "[" + idx + "][" + handlerIdx + "]";
             if (action instanceof ShellAction && !shellExecutor.isShellSupported()) {
                 // Registering it anyway would not be harmless: the command can never run, and a guard event reads
-                // "could not run" as a block, so every matching preTool / onStart would be refused.
+                // "could not run" as a block, so every matching preTool / onStart would be refused. Dropping a guard
+                // is worse still, so on a guard event this stops the load instead.
+                if (guard) {
+                    throw inapplicable(merged, mhe, event, idx, handlerIdx, "type=command cannot run: the configured"
+                            + " shell executor does not support shell actions");
+                }
                 log.warn("hooks: 'command' on {} ({}) cannot run: the configured shell executor does not support"
                         + " shell actions; skipping", event, mhe.getSource());
                 continue;
             }
-            if (spec.isFailOpen() && !(action instanceof ShellAction)) {
-                log.warn("hooks: 'failOpen' only applies to 'command' handlers; ignored on {} ({})", event,
-                        mhe.getSource());
-            }
+            // Honoured for command, http and mcp alike: each can fail to produce a verdict.
             final DeclarativeHookOptions options = DeclarativeHookOptions.builder().hookIdDiscriminator(discriminator)
-                    .rewakeSpec(toRewakeSpec(spec, mhe, event, action))
-                    .failOpen(spec.isFailOpen() && action instanceof ShellAction).build();
+                    .rewakeSpec(toRewakeSpec(spec, mhe, event, action)).failOpen(failOpen).build();
             switch (event) {
-                case DeclarativePreToolHook.EVENT_NAME ->
+                case DeclarativePreToolHook.EVENT_NAME -> {
+                    // The shell question again, for the other two transports: a guard that can never be asked.
+                    if (guard && action instanceof HttpAction && httpExecutor == null) {
+                        throw inapplicable(merged, mhe, event, idx, handlerIdx,
+                                "type=http cannot run: no HttpActionExecutor is wired in this assembly");
+                    }
+                    if (guard && action instanceof McpToolAction && mcpExecutor == null) {
+                        throw inapplicable(merged, mhe, event, idx, handlerIdx,
+                                "type=mcp cannot run: no McpActionExecutor is wired in this assembly");
+                    }
                     registry.register(HookEventType.PRE_TOOL, new DeclarativePreToolHook(pseudoSkillName, predicate,
                             action, shellExecutor, httpExecutor, mcpExecutor, processEnv, options));
+                }
                 case DeclarativePostToolHook.EVENT_NAME -> {
                     if (action instanceof DenyAction) {
                         log.warn("hooks: 'deny' is not valid on postTool ({}); skipping", mhe.getSource());
@@ -200,6 +247,10 @@ public final class HookRegistryApplier {
                         continue;
                     }
                     if (!(action instanceof ShellAction shell)) {
+                        if (guardEvent) {
+                            throw inapplicable(merged, mhe, event, idx, handlerIdx,
+                                    "only 'command' handlers are valid on " + event);
+                        }
                         log.warn("hooks: only 'command' actions are valid on {} ({}); skipping", event,
                                 mhe.getSource());
                         continue;
@@ -207,6 +258,11 @@ public final class HookRegistryApplier {
                     if (!shellExecutor.canRunOn(binding.getEventType())) {
                         // Only reachable when an embedder wires an environment-bound executor into hooks.json: the
                         // event has no execution environment, so the command would be skipped on every firing.
+                        if (guard) {
+                            throw inapplicable(merged, mhe, event, idx, handlerIdx, "type=command cannot run: the"
+                                    + " event fires outside any execution and the configured shell executor only runs"
+                                    + " in an execution environment");
+                        }
                         log.warn("hooks: 'command' on {} ({}) cannot run: the event fires outside any execution and"
                                 + " the configured shell executor only runs in an execution environment; skipping",
                                 event, mhe.getSource());
@@ -216,6 +272,26 @@ public final class HookRegistryApplier {
                 }
             }
         }
+    }
+
+    /**
+     * The failure for an entry under a guard event that parsed but cannot be applied.
+     *
+     * <p>
+     * Skipping such an entry starts the host with the guard its author wrote missing, which is the failure a
+     * {@code hooks.json} that does not parse already stops startup for. The message is worded the same way and names
+     * the file, the event, the entry and the handler. It never quotes the handler's command or URL: either may carry
+     * a secret, and this text reaches a console and {@code OnConfigReload} hooks.
+     *
+     * @param handlerIdx
+     *            the handler's position in the entry, or -1 when the problem is the entry itself
+     */
+    private static HookConfigParseException inapplicable(MergedHookConfig merged, MergedHookEntry mhe, String event,
+            int idx, int handlerIdx, String reason) {
+        return new HookConfigParseException(merged.describe(mhe.getSource()) + " is invalid: " + event + " entry #"
+                + idx + (handlerIdx < 0 ? "" : ", handler #" + handlerIdx) + ": " + reason + ". An entry under an"
+                + " event whose hooks can block is not skipped when it cannot be applied: that would leave the guard"
+                + " off");
     }
 
     /**
@@ -258,13 +334,23 @@ public final class HookRegistryApplier {
         }
     }
 
-    private ToolInputPredicate parseMatcher(String matcher) {
+    /**
+     * Parses the entry's matcher. A matcher that does not parse falls back to a name-only match on the raw string,
+     * which matches no real tool &mdash; so on {@code preTool}, the one guard event that reads the matcher, it is not
+     * a fallback but a guard that silently never fires, and stops the load instead.
+     */
+    private ToolInputPredicate parseMatcher(MergedHookConfig merged, String event, MergedHookEntry mhe, int idx) {
+        final String matcher = mhe.getEntry().getMatcher();
         if (matcher == null || matcher.isBlank() || "*".equals(matcher.strip())) {
             return NameOnlyPredicate.ANY;
         }
         try {
             return PredicateParser.parse(matcher);
         } catch (IllegalArgumentException ex) {
+            if (DeclarativePreToolHook.EVENT_NAME.equals(event)) {
+                throw inapplicable(merged, mhe, event, idx, -1,
+                        "the matcher could not be parsed (" + ex.getMessage() + ")");
+            }
             log.warn("hooks: matcher '{}' could not be parsed ({}); falling back to name-only", matcher,
                     ex.getMessage());
             return NameOnlyPredicate.of(matcher);

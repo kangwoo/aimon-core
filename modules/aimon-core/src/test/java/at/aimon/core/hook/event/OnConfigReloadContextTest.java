@@ -9,7 +9,6 @@ import java.time.Instant;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 
@@ -18,15 +17,11 @@ import at.aimon.core.hook.HookRegistry;
  */
 class OnConfigReloadContextTest {
 
-    private static final UserLocale ENV = UserLocale.createDefault();
-
     @Test
     void builderRequiresMandatoryFields() {
         final HookRegistry registry = new DefaultHookRegistry();
-        assertThatNullPointerException().isThrownBy(() -> OnConfigReloadContext.builder()
-                .invokerType(InvokerType.MAIN_AGENT).invokerName("main").userLocale(ENV).build());
-        assertThatNullPointerException().isThrownBy(() -> OnConfigReloadContext.builder()
-                .invokerType(InvokerType.MAIN_AGENT).invokerName("main").hookRegistry(registry).build());
+        assertThatNullPointerException().isThrownBy(
+                () -> OnConfigReloadContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("main").build());
     }
 
     @Test
@@ -34,7 +29,7 @@ class OnConfigReloadContextTest {
         final HookRegistry registry = new DefaultHookRegistry();
         assertThatIllegalArgumentException()
                 .isThrownBy(() -> OnConfigReloadContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                        .invokerName("main").hookRegistry(registry).userLocale(ENV).reloadCounter(-1L).build());
+                        .invokerName("main").hookRegistry(registry).reloadCounter(-1L).build());
     }
 
     @Test
@@ -43,7 +38,7 @@ class OnConfigReloadContextTest {
         final Instant ts = Instant.parse("2026-05-08T00:00:00Z");
 
         final OnConfigReloadContext ctx = OnConfigReloadContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("config-watcher").hookRegistry(registry).userLocale(ENV).reloadCounter(7L)
+                .invokerName("config-watcher").hookRegistry(registry).reloadCounter(7L)
                 .configSource("/etc/aimon/hooks.json").successful(true).timestamp(ts).build();
 
         assertThat(ctx.getInvokerType()).isEqualTo(InvokerType.MAIN_AGENT);
@@ -62,8 +57,8 @@ class OnConfigReloadContextTest {
     void exposesFailurePathWithReason() {
         final HookRegistry registry = new DefaultHookRegistry();
         final OnConfigReloadContext ctx = OnConfigReloadContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("config-watcher").hookRegistry(registry).userLocale(ENV).reloadCounter(3L)
-                .successful(false).failureReason("malformed json").build();
+                .invokerName("config-watcher").hookRegistry(registry).reloadCounter(3L).successful(false)
+                .failureReason("malformed json").build();
 
         assertThat(ctx.isSuccessful()).isFalse();
         assertThat(ctx.getFailureReason()).isEqualTo("malformed json");
@@ -74,7 +69,7 @@ class OnConfigReloadContextTest {
     void defaultsAreApplied() {
         final HookRegistry registry = new DefaultHookRegistry();
         final OnConfigReloadContext ctx = OnConfigReloadContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("config-watcher").hookRegistry(registry).userLocale(ENV).build();
+                .invokerName("config-watcher").hookRegistry(registry).build();
 
         assertThat(ctx.getReloadCounter()).isZero();
         assertThat(ctx.getConfigSource()).isEmpty();

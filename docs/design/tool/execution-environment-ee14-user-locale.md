@@ -12,6 +12,11 @@
 > (EE-60 ← §2.3 · Q1, EE-61 ← Q7, EE-1 의 보강 ← Q5). 열림/닫힘의 정본은 그 문서다. 이 설계가 닫는 질문은
 > [`execution-environment.md`](execution-environment.md) §14 의 첫 불릿이고, 옛 이름과 새 이름의 대응표는
 > [`../../migration/rename-maps.md`](../../migration/rename-maps.md) 에 있다.
+>
+> **덧붙임 (2026-10-05, EE-60).** 이 설계가 만든 `UserLocale` 은 **지워졌다** — 타입, `getUserLocale()` / `userLocale(…)`,
+> `ToolContextKeys.USER_LOCALE` 전부다. §2.3 이 찾은 "읽는 곳이 없다" 가 Q1 의 답이 되었다. 본문은 그대로 두었고, 지운
+> 범위와 그렇게 정한 근거는 §12 에 있다. Q7 이 남긴 `SubagentExecutionEnvironment` 도 같은 날 `SubagentLaunchContext` 로
+> 개명되었다(EE-61, §13) — 본문과 §12 의 그 이름은 당시의 것이다.
 
 - 대상 브랜치: `herdr/ee14-environment-to-user-locale` (HEAD `89a8ed4`, PR #205 위)
 - 근거를 확인한 날짜: 2026-10-03. 아래의 파일 수·줄 번호는 모두 이 날짜, 이 브랜치 기준이다.
@@ -571,3 +576,76 @@ at\.aimon\.core\.agent\.Environment\b
 | Q7 새 항목 둘 | 둘 다 등록했다(**EE-60**, **EE-61**). EE-61 은 인접한 관찰이라는 설계의 유보를 항목 본문에 적었다("관측 가능한 잘못은 아직 없다") |
 | Q8 `ToolPermissionSubjectAware` | 코드로 확인하고 네 곳을 맞췄다(§11.1 의 4) |
 | Q9 릴리스 묶음의 강제 수단 | 없다. `CHANGELOG` 와 백로그 EE-14 에 적었고 PR 설명에 올릴 질문이다 |
+
+## 12. 그 뒤 — `UserLocale` 을 지웠다 (EE-60, 2026-10-05)
+
+Q1 의 답이 나왔다. §2.3 이 찾은 것 — `timeZone` 을 읽는 운영 코드가 없다 — 은 이 설계가 구현된 뒤에도 그대로였고,
+그 값이 갈 수 있었던 유일한 자리(사용자 컨텍스트 블록)는 EE-78 로 없어졌다. 프레임워크는 날짜를 프롬프트에 넣지 않으며,
+날짜가 필요한 배포는 자기 시간대로 계산한 값을 시스템 프롬프트 변수로 건넨다. 그래서 메인테이너의 결정은 "읽히지 않는 값과
+그 값만 나르는 배관을 지운다" 였다.
+
+지우기 전에 다시 센 것(2026-10-05, `2be5ea70` 기준. 호출은 `.getUserLocale(` 와 `::getUserLocale` 두 형태로, 생성은
+`UserLocale.createDefault()` · `UserLocale.builder()` · `new` 로 셌다):
+
+| 무엇 | main 소스 | 테스트 |
+|---|---|---|
+| `UserLocale` 이 든 것 | `timeZone` 하나 | — |
+| `getTimeZone()` 을 부르는 곳 | **0** | `UserLocaleTest` 뿐 |
+| `UserLocale` 을 만드는 곳 | 2 — `OrcaAgentRuntimeFactory.assemble`, CLI `AgentSetupFactory` 의 리로드 훅. 둘 다 `createDefault()` | 다수 |
+| `getUserLocale()` 의 결과를 **넘기는 것 말고** 쓰는 곳 | 0. 값을 보는 코드는 널 검사와 `toString` 둘뿐이다 — 생성자 · 빌더의 필수 인자 검사, 그리고 값이 없으면 기능을 끄는 분기 다섯(`OrcaSystemCommandProvider` 의 `/compact` 등록 조건 둘, `OrcaSkillForkExecutorResolver`, `DefaultContextEngine` · `RollingContextEngine` 의 `requires a UserLocale`) | 같은 인스턴스가 전달되는지 보는 단언 |
+| 직렬화 · 영속 | 없다(§2.4 그대로) — Jackson 타입, 세션 레코드 · 트랜스크립트, 태스크 코덱, 셸 훅 payload, 리소스 파일 어디에도 없다 | — |
+
+타입에 다른 필드가 없으므로 "필드만 지우고 타입은 남긴다" 는 갈래는 해당하지 않았다. **타입과 배관을 통째로 지웠다:**
+
+- `at.aimon.core.base.UserLocale` (타입, `createDefault()`, `builder()`, `getTimeZone()`).
+- `getUserLocale()` — `HookContext` 와 열세 이벤트 컨텍스트, `RewakeCapableRuntime`, `OrcaToolProviderContext`,
+  `OrcaProviderDependencies`, `OrcaCommandProviderContext`, `OrcaAgentRuntime`, `ContextRequest`, `CompactionRequest`,
+  `CompactionGuardRequest`, `SummaryRequest`, `SubagentExecutionEnvironment`, `SubagentExecutionContext`,
+  `ToolInvocationSpec`, `ReloadInvoker`. 각 빌더의 `userLocale(…)` 도 함께.
+- `UserLocale` 매개변수 — `CompactionGuard` 의 위치 인자 메서드 넷(`maybeCompact` · `forceCompact`, 각각 `ExecutionId` 유무),
+  `ReloadInvoker` · `TaskTool` · `WorkflowTool` · `SubagentBackedSkillForkExecutor` · `CompactCommand` 의 생성자,
+  `OrcaSkillForkExecutorResolver.resolve`. `GraalJsWorkflowTool.Builder.userLocale(…)`.
+- `ToolContextKeys.USER_LOCALE` 과 `ToolContext` 의 키 `"userLocale"` — 실행기가 더는 넣지 않는다.
+
+**동작이 바뀐 곳은 그 분기 다섯뿐이다.** 값이 없다는 이유로 `/compact` 를 등록하지 않거나 스킬 포크를 `NoOp` 으로 돌리거나
+컨텍스트 엔진이 요청을 거부하는 일이 없어졌다. 조립 경로 둘은 언제나 값을 넣었으므로 출하되는 스택에서는 관측되는 차이가 없다.
+호환 다리는 두지 않았다 — 저장되거나 노드 사이를 오가는 형식에 이 값이 나타난 적이 없으므로 옛 레코드 · 옛 노드와 맞출 것이
+없고, 깨지는 것은 컴파일뿐이다. 지운 API 의 목록은
+[`../../migration/rename-maps.md`](../../migration/rename-maps.md) 의 "`UserLocale` was removed, not renamed" 절에 있다.
+
+테스트: `UserLocaleTest` 는 지웠고, §11.2 의 `OrcaAgentExecutorUserLocaleTest` 는 `OrcaAgentExecutorSentPromptTest` 가
+되었다 — 시간대를 바꿔 가며 비교할 값이 없어졌으므로, 남긴 것은 EE-78 뒤에 그 테스트가 유일하게 붙들고 있던 단언("모델에게
+가는 메시지는 사용자 입력 하나뿐이다")과 "도구 컨텍스트에 `userLocale` 도 `environment` 도 없다" 다.
+
+이 변경은 저장소 밖을 깬다: `HookContext` 를 구현하거나 `getUserLocale()` 을 읽는 훅, `userLocale(…)` 을 부르는 조립 코드는
+그 호출을 지워야 한다. aimon-sandbox 의 `OrcaRuntimeSandboxE2ETest`(§2.5)가 EE-14 를 따라와 `.userLocale(…)` 을 부르고 있다면
+그 한 줄도 지운다 — 이 저장소에서 확인할 수 있는 것은 아니다.
+
+## 13. 그 뒤 — `SubagentExecutionEnvironment` 는 `SubagentLaunchContext` 가 되었다 (EE-61, 2026-10-05)
+
+Q7 이 백로그로 넘긴 인접한 관찰도 같은 날 닫혔다. 결정은 "지금 개명한다" 였고, 이 설계는 새 이름의 후보를 적어 두지 않았으므로
+(§3.4 는 "이번에 개명하지 않는다" 만 말한다) 이름은 착수할 때 골랐다.
+
+- **무엇인가.** 서브에이전트를 띄우는 쪽이 `SubagentExecutionManager` 에 넘기는 협력자 묶음이다 — 런타임 id, 레지스트리 셋,
+  기본 모델, 실행 속성, 저장소들, 그리고 **스폰한 실행의** `ExecutionEnvironment` 와 제공자. 실행 환경이 아니라 실행 환경을
+  **나르는** 것이다.
+- **왜 `LaunchContext` 인가.** 이 저장소에서 `*Context` 는 실행 하나에 딸린 값이다. 이 타입의 인스턴스 하나는 띄우기 한 번에
+  쓰인다 — 도구(`TaskTool` · `WorkflowTool` · `GraalJsWorkflowTool` · `SubagentBackedSkillForkExecutor`)는 호출마다 새로 만든다.
+  워크플로 러너만 **base** 를 러너 수명 동안 들고 있는데, 그것은 틀이고 런마다 · 격리 스텝마다 `toBuilder()` 로 파생한 인스턴스가
+  실제로 넘어간다. 값 객체라 자기 수명이 없고 들고 있는 쪽의 수명을 따른다는 것을 타입 Javadoc 에 적었다.
+- **`SubagentExecutionContext` 와의 차이.** 띄우기의 양 끝이다. launch context 는 **호출자가 매니저에게** 주는 것이고(서브에이전트가
+  아직 풀리지 않았다), execution context 는 **매니저가 실행기에게** 주는 것이다(풀린 `Subagent` 와 그 포크의 협력자). 이름의
+  앞 단어가 그 차이를 말한다.
+- **바꾼 것.** 타입과 빌더, main 소스의 매개변수 · 필드 · 지역 변수(`env` → `launchContext`, `baseEnv` → `baseLaunchContext`,
+  `perRunEnv` → `perRunLaunchContext`), 내부 메서드(`buildEnvironment` → `buildLaunchContext`, `resolveEnv` →
+  `resolveLaunchContext`), 그것을 "the environment" 라고 부르던 Javadoc 과 주석, 예외 메시지 둘
+  (`"Execution environment cannot be null"` → `"Launch context cannot be null"`, `"baseEnv cannot be null"` →
+  `"baseLaunchContext cannot be null"`). 접근자와 빌더 메서드의 이름은 하나도 바뀌지 않았다.
+- **바꾸지 않은 것.** `getExecutionEnvironment()` / `getExecutionEnvironmentProvider()` — 진짜 `ExecutionEnvironment` 를 돌려준다.
+  다만 돌려주는 것이 포크의 환경이 아니라 **스폰한 실행의** 환경이라는 것은 이름에 없다(Javadoc 에만 있다). 백로그 EE-61 본문은
+  이 접근자를 `getParentExecutionEnvironment()` 라고 적었는데 그런 이름은 코드에 있은 적이 없다. 테스트의 지역 변수 이름(`env`)도
+  그대로 두었다.
+
+대응표는 [`../../migration/rename-maps.md`](../../migration/rename-maps.md) 의
+"`SubagentExecutionEnvironment` → `SubagentLaunchContext`" 절에 있다. 이 문서의 본문과 §12, 그리고 다른 승인본 설계 문서
+(`execution-environment-implementation.md`, EE-9/12, EE-49/51/58)의 본문은 옛 이름 그대로다.

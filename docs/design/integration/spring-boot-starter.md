@@ -247,7 +247,7 @@ sessions.submit(sessionId, "ops-agent", req.getInput(),
 | 읽는 것 | 서버에서의 문제 |
 |--------|---------------|
 | jar 위치 또는 `user.dir` (CLI 의 `getJarDirectory()`) | Boot jar 에서 code source URI 가 **opaque** 라 `toURI().getPath()` 가 null → `jarPath.endsWith(".jar")` 가 **NPE** → `catch(Exception)` 이 삼키고 `user.dir` 로 조용히 폴백한다. 실제 repackage 된 jar 로 확인됨 |
-| `Environment.createDefault()` 의 `user.dir` (이 표를 쓴 때의 이름이다 — 작업 디렉터리는 그 뒤 실행의 `EnvironmentDescriptor` 로 옮겨 갔고, `Environment` 는 시간대만 든 `UserLocale` 이 되었다) | 컨테이너의 CWD 는 의미 없는 값 |
+| `Environment.createDefault()` 의 `user.dir` (이 표를 쓴 때의 이름이다 — 작업 디렉터리는 그 뒤 실행의 `EnvironmentDescriptor` 로 옮겨 갔고, `Environment` 는 시간대만 든 `UserLocale` 이 되었다가 읽는 곳이 없어 EE-60 으로 지워졌다) | 컨테이너의 CWD 는 의미 없는 값 |
 | `HookConfigLoader.createDefault()` / hook hot reload 의 `user.home` | 컨테이너에서 `/` 또는 `/root` |
 | `BundledSkillMaterializer` 의 `.aimon/bundled-skills` **기동 시 디스크 쓰기** | 읽기 전용 루트 파일시스템에서 실패 |
 | `DefaultCommandRegistry.initialize()` 의 `.aimon/commands/*.md` | 무관한 파일 하나가 컨텍스트 기동 실패로 |
@@ -594,9 +594,10 @@ SessionCheckpointMailbox mailbox = own(TeardownPhase.CHECKPOINTS, SessionCheckpo
 | 6 | `AimonMemoryAutoConfiguration` | `before` 슬라이스 1. `aimon.memory.backend`(`none`/`in-memory`/`supplied`) + `peer-mode` / `redaction` 선택자 | `MemoryContribution`(값 빈) + `in-memory` 일 때 `RepresentationStore` / `ObservationStore`. `@ConditionalOnClass` 를 쓰지 않는다 — 스토어 구현이 전부 코어에 있어 항상 존재한다 |
 | 7 | `AimonKnowledgeAutoConfiguration` | `before` 슬라이스 1. `aimon.knowledge.backend`(`none`/`keyword`/`supplied`) | `KnowledgeContribution`(값 빈) + `keyword` 일 때 `KnowledgeStore`. OpenSearch 는 `supplied` 경로로만 닿는다 |
 | 8 | `AimonObservabilityAutoConfiguration` | `before` 슬라이스 1. `aimon.tracing.*` · `@ConditionalOnClass(HealthIndicator)` · `@ConditionalOnClass(SanitizingFunction)` · `@ConditionalOnClass` **+ `@ConditionalOnBean`**`(MeterRegistry)` — 스위치 넷이 서로 독립이다 | `Tracer`, `TraceSpanStore`, `AimonHealthIndicator`, `AimonMetrics`, `/env` 새니타이저 |
+| 9 | `AimonPropertiesBindingAutoConfiguration` | 순서 제약 없음. 프로퍼티 선택자 없음 | `ConfigurationPropertiesBindHandlerAdvisor` — `aimon.llm.model-capabilities` · `aimon.llm.anthropic` · `aimon.llm.openai` 아래의 unbound 프로퍼티를 기동 실패로 만든다. 빈을 하나도 바인딩하지 않으므로 `@EnableConfigurationProperties` 를 달지 않는다 ([`../llm/configuration-surface.md`](../llm/configuration-surface.md) §6.7) |
 
-여덟 슬라이스 전부가 `@ConditionalOnProperty(name = aimon.enabled, havingValue = "true", matchIfMissing = true)`
-와 `@EnableConfigurationProperties(AimonProperties.class)` 를 함께 단다.
+아홉 슬라이스 전부가 `@ConditionalOnProperty(name = aimon.enabled, havingValue = "true", matchIfMissing = true)`
+를 달고, 1–8 은 `@EnableConfigurationProperties(AimonProperties.class)` 를 함께 단다.
 
 **스킬 승인 정책과 에이전트 커스터마이저에는 별도 슬라이스가 없다.** 둘 다 값 하나로 귀결되므로 루트
 슬라이스의 `EnabledConfiguration` 이 `ObjectProvider<AimonAgentCustomizer>` 와 승인 프로퍼티를 직접 읽어

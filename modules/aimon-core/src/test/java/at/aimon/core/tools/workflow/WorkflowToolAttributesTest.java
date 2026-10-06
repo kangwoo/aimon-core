@@ -25,7 +25,6 @@ import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.EnvironmentRequest;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.environment.UnavailableExecutionEnvironment;
@@ -88,6 +87,33 @@ class WorkflowToolAttributesTest {
     }
 
     @Test
+    @DisplayName("EE-45: the built-in Workflow tool takes no 'attributes' input — placement is not the model's to choose")
+    @SuppressWarnings("unchecked")
+    void theBuiltInToolHasNoAttributesInput() {
+        final Map<String, Object> schema = newTool(new InMemorySubagentRegistry(),
+                recordingBehaviors(new ConcurrentHashMap<>())).getDefinition().getInputSchema();
+
+        assertThat((Map<String, Object>) schema.get("properties")).doesNotContainKey("attributes");
+        assertThat(schema).containsEntry("additionalProperties", false);
+    }
+
+    @Test
+    @DisplayName("EE-44: a hidden role definition still gives its role's steps their attributes")
+    void aHiddenRoleDefinitionStillPlacesItsSteps() {
+        final InMemorySubagentRegistry registry = new InMemorySubagentRegistry();
+        registry.register(Subagent.builder().name(WorkflowTool.ROLE_JUDGE).systemPrompt("placement only")
+                .attributes(JUDGE_ATTRIBUTES).hidden(true).build());
+        final Map<String, Map<String, String>> seen = new ConcurrentHashMap<>();
+
+        final ToolResult result = newTool(registry, recordingBehaviors(seen)).execute(
+                ToolInput.of(Map.of("prompt", "how?", "strategy", "judge_panel", "perspectives", "a,b")),
+                context(null));
+
+        assertThat(result.isSuccess()).as(result.getContent()).isTrue();
+        assertThat(seen.get("workflow:judge")).isEqualTo(JUDGE_ATTRIBUTES);
+    }
+
+    @Test
     @DisplayName("a registry that throws leaves the steps without attributes instead of failing the workflow")
     void failingRegistryMeansNoAttributes() {
         final SubagentRegistry registry = mock(SubagentRegistry.class);
@@ -147,7 +173,7 @@ class WorkflowToolAttributesTest {
         final SubagentExecutor executor = new DefaultSubagentExecutor(new DoneLlmClient(),
                 new DefaultToolExecutionManager(), new DefaultHookExecutionManager());
         final WorkflowTool tool = new WorkflowTool(LlmModel.builder().name("gpt-4").build(), registry,
-                new DefaultToolRegistry(), new DefaultHookRegistry(), UserLocale.createDefault(),
+                new DefaultToolRegistry(), new DefaultHookRegistry(),
                 new DefaultSubagentExecutionManager(executor, pool), List.of());
 
         final ToolResult result = tool.execute(
@@ -193,7 +219,7 @@ class WorkflowToolAttributesTest {
         final SubagentExecutionManager manager = new DefaultSubagentExecutionManager(mock(SubagentExecutor.class), pool,
                 null, behaviors);
         return new WorkflowTool(LlmModel.builder().name("gpt-4").build(), registry, new DefaultToolRegistry(),
-                new DefaultHookRegistry(), UserLocale.createDefault(), manager, List.of());
+                new DefaultHookRegistry(), manager, List.of());
     }
 
     /** Code behaviors for every built-in step name the tests reach, each recording its subagent's attributes. */

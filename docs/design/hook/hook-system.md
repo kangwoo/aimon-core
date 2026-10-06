@@ -116,11 +116,36 @@ interrupt 하고, 풀 스레드가 다른 풀 스레드를 기다리지 않으�
 이 정책이 없으면 바깥 그물이 먼저 잘라 버려, 액션이 스스로 만들 수 있었던 제대로 된 `HookResult` 대신
 뭉툭한 cancel 이 나간다. 병렬 모드에서 timeout 은 **대기를 제한할 뿐 이미 끝난 작업을 버리지 않는다.**
 
+**그물이 터졌을 때의 뜻도 훅이 선언할 수 있다(EE-64).** 정책의 `TimeoutBehavior` 는 체인 전체의 기본값이고, `DefaultHookExecutionManager` 가
+이벤트에 주는 기본 정책은 전부 `FAIL_OPEN` 이다(`HookExecutionPolicy.failClosedStopOnBlocked()` 는 호스트가 골라 쓰는 팩토리다). 거부가 목적인 훅에는 틀린 답이다 — 그물에 끊긴 가드는 아무 말도 하지 않았고, 통과시키면 "느려지는 것" 이
+가드를 끄는 방법이 된다. 그래서 `ExecutionHook.getTimeoutBehavior()` 로 훅이 자기 동작을 선언하고, 실행기는
+`timeoutBehaviorFor(hook)` 로 정책보다 그 선언을 따른다. 선언적 가드 훅(`failOpen` 아님)은 `FAIL_CLOSED` 를 선언한다. 정책
+기본값을 바꾸지 않은 이유는 그것이 프로그램으로 등록한 모든 훅의 동작을 바꾸기 때문이다 — 그 훅들은 여전히 정책을 따르고,
+`onStart` 정책(`continueOnExceptionAndNeverStop`) 아래에서 던지거나 그물에 끊긴 `OnStartHook` 이 성공으로 읽히는 것도
+그대로다.
+
 ### 3.3 예외는 정책이 매핑한다 — 인터럽트는 아니다
 
 훅은 던지지 않아야 하지만, 새어 나온 예외는 `HookExecutionPolicy.onException` 이 `HookResult` 로 매핑한다.
 `failClosedStopOnBlocked` 정책에서는 그 매핑이 버그를 block 으로 바꾼다 — 의도된 선택이며, 그래서 기본
 정책은 fail-open 이다.
+
+**`FAIL_CLOSED` 를 선언한 훅은 이 매퍼도 타지 않는다.** §3.2 의 선언은 처음에 그물(timeout)에만 걸렸고, 판정 없이 끝나는
+길이 둘 더 남아 있었다 — 풀이 훅을 받지 않는 것(`RejectedExecutionException`: 포화, 또는 닫힌 풀)과 훅 본문이 던지는
+것이다. 선언적 가드는 **액션**이 던진 것은 스스로 잡아 fail-closed 로 읽지만 그 `try` 밖 — matcher 술어, 컨텍스트 접근,
+`Error` — 은 실행기까지 올라왔고, 출하 정책의 매퍼는 그것을 성공으로 읽었다. 재현된 경로가 하나 있다:
+`BashSubcommandPredicate` 는 중첩된 `$(` 마다 재귀하므로 깊이를 모델이 고르고, `StackOverflowError` 가 난 `Bash(rm *)` 가드는
+그 호출을 통과시켰다. 그래서 `failsClosedWithoutVerdict(hook)` 이 참이면 두 경우 모두 BLOCKED 다.
+
+같은 선언을 쓰고 새 선언을 만들지 않았다 — "느렸다" · "시작하지 못했다" · "죽었다" 가 서로 다른 값을 가질 수 있으면 열린
+쪽이 곧 우회로이기 때문이다. 반대로 정책의 `timeoutBehavior()` 로는 **떨어지지 않는다**: 아무것도 선언하지 않은 훅의 실패는
+매퍼의 질문이고, `FAIL_CLOSED` timeout 과 관대한 매퍼를 함께 쓰는 정책에서 프로그램 훅의 동작이 바뀌면 안 된다. 사유는
+고정 문자열에 예외의 **타입 이름**만 붙는다(메시지는 싣지 않는다).
+
+닫힌 풀은 종료 순서가 일부러 만드는 상태다(`TeardownPhase.HOOK_EXECUTOR`). 그 단계는 `SESSIONS` · `AGENT_RUNTIMES` 뒤라
+가드를 발화시킬 턴이 남아 있지 않고, 종료 중에 발화하는 `onStop` · `onSessionEnd` 는 아무것도 선언하지 않는 advisory
+이벤트다. 드레인 시한을 넘겨 살아남은 실행의 도구 호출이 그래도 도착하면 거절은 즉시 돌아오므로 기다림은 생기지 않고,
+그 호출은 가드 없이 실행되는 대신 막힌다.
 
 **인터럽트는 이 매퍼를 타지 않는다.** 매퍼가 답하는 질문은 "훅이 *실패*하면 어떻게 할 것인가" 인데,
 인터럽트는 훅의 실패가 아니라 **그 판정을 기다릴 이쪽의 능력**이 끊긴 것이다. 넘겨 버리면 묻지도 않은
@@ -145,7 +170,12 @@ allow 로 강등된다. 그래서 인터럽트로 끊긴 대기는 정책과 무
 | `PathGlobPredicate` | 경로 파라미터의 글로브 |
 | `CompositePredicate` | 위의 AND/OR 조합 |
 
-Claude Code 풍 `if` 문법은 `PredicateParser` 가 위 구현들로 번역한다. `…declarative.predicate` 하위 패키지는 SPI 가 아니라 **impl** 이다. 바깥에서 닿을 수 있는 것은 부모
+Claude Code 풍 `if` 문법은 `PredicateParser` 가 위 구현들로 번역한다. 그 문법이 만드는 것은 **이름 · `도구(글롭)` · 그 둘의
+OR(`|`)** 뿐이다 — `CompositePredicate.and` 는 코드에서만 닿고, 정규식과 입력 필드 지정은 어느 구현에도 없다. 문법에 없는
+표기는 대개 파싱 오류가 아니라 **아무것도 맞추지 못하는 이름이나 글롭**이 되므로(괄호 없는 항은 통째로 이름이다), 사용자
+문서가 문법을 틀리게 적으면 그대로 옮긴 가드는 조용히 꺼진다. 사용자 쪽 정본은
+[`hook-config-guide.md` › Matcher 문법](../../features/hook/hook-config-guide.md#matcher-문법)이고,
+`DocumentedMatcherGrammarTest` 가 그 표의 각 행을 파서에 고정한다. `…declarative.predicate` 하위 패키지는 SPI 가 아니라 **impl** 이다. 바깥에서 닿을 수 있는 것은 부모
 패키지의 `ToolInputPredicate` 인터페이스뿐이며, `PackageDependencyArchitectureTest`
 가 이 두 규칙(하위 클래스는 전부 `ToolInputPredicate` 구현일 것 · 허용된 호출자 밖에서 import 금지)을 빌드에서
 강제한다.
@@ -178,7 +208,10 @@ Claude Code 풍 `if` 문법은 `PredicateParser` 가 위 구현들로 번역한�
 효력이 있는 곳은 결정 채널을 가진 네 이벤트뿐이다 — `preTool`/`onStart`/`preCompact` 는 block,
 `permissionRequest` 는 deny. 나머지는 로그만 남기고 진행한다.
 
-**exit 2 외의 non-zero 는 허용**이다. 깨진 스크립트가 조용한 게이트키퍼가 되면 안 된다.
+**exit 2 외의 non-zero 는 허용**이다. 깨진 스크립트가 조용한 게이트키퍼가 되면 안 된다. 예외는 셸 자신이 보고하는 두 코드다 —
+**126(실행할 수 없음) · 127(찾지 못함)** 은 스크립트가 돌지 않았다는 뜻이므로 결정 채널을 가진 네 이벤트에서는 아래 "종료
+코드 없음" 과 같이 읽는다(`ShellHookOutcome.asGuardAnswer()`). 스크립트가 스스로 그 코드를 낼 수도 있어 구별되지 않지만,
+가드 스크립트가 없는 환경에서 가드가 통과로 바뀌는 쪽이 더 나쁘다(EE-66).
 
 **종료 코드가 없으면 거부다(fail-closed).** 명령을 돌리지 못했거나 끝나지 않았을 때 — 실행 환경 없음 · 사용 불가, timeout,
 셸 실패 — 실행기는 원인을 실어 보고하고(`ShellHookOutcome.notRun(cause, detail)`), 결정 채널을 가진 네 이벤트의 훅은 그것을
@@ -186,6 +219,42 @@ Claude Code 풍 `if` 문법은 `PredicateParser` 가 위 구현들로 번역한�
 감사 스크립트가 게이트키퍼가 되고, 뒤쪽을 통과시키면 가드를 느리게 만들거나 환경을 떨어뜨리는 것으로 가드를 끌 수 있다.
 같은 이벤트가 가드와 감사 두 용도로 쓰이므로 훅마다 `failOpen: true` 로 빠질 수 있다. 사유에는 원인만 싣는다 — 명령
 문자열(비밀이 들어갈 수 있다)도, 푸는 방법(그 글을 읽는 것은 가드를 받는 쪽이다)도 싣지 않는다.
+**`http` · `mcp` 핸들러도 같은 규칙을 탄다(EE-65).** `preTool` 에서 두 실행기는 "판정" 과 "판정 없음" 을 갈라 보고한다
+(`ActionCallOutcome`) — 정책 서버가 `deny` 라고 답한 것은 판정이고, 닿지 못했거나 답을 읽을 수 없는 것은 판정 없음이다.
+판정 없음은 셸의 "종료 코드 없음" 과 같은 자리(`ShellHookVerdicts`)에서 같은 규칙으로 읽는다: 막고, `failOpen: true` 면
+통과한다. `postTool` 은 전처럼 WARN 후 진행한다.
+
+**두 실행기를 누가 배선하는가.** 코어는 실행기를 만들지 않는다 — `HookRegistryApplier` 와 `SkillHookSetParser` 가 받은 것을
+훅에 넘길 뿐이다. 트리 안에서 배선하는 조립은 `aimon-cli` 하나이고(`HookActionExecutors`), `hooks.json` 과 스킬 frontmatter
+양쪽에 같은 실행기를 준다. 순서가 문제였다: 스킬 파서는 번들을 읽기 위해 스택보다 먼저 만들어지고 파싱된 훅은 그때 받은
+실행기를 계속 쥐는데, `McpClientManager` 는 런타임이 만들어진 뒤에야 있다. 그래서 `McpActionExecutor.lateBound(supplier)` 로
+만들어 두고 런타임이 서면 묶는다. 매니저는 agent-scoped 이고 런타임이 닫는다(`AGENT_RUNTIMES`) — 실행기는 빌려 쓸 뿐 닫지
+않으며, Java 17 의 `HttpClient` 에는 닫을 것이 없어 종료 순서에 올릴 항목도 없다. CLI 설정에 MCP 서버가 없으면 MCP 실행기는
+`null` 이다: 항상 실패하는 실행기를 주면 `mcp` 가드가 로드된 뒤 걸리는 호출을 전부 막지만, 없다고 말하면 시작에서 멈춘다.
+
+`aimon-bootstrap` 과 스타터는 배선하지 않는다. 이유는 둘이다. (1) 스택은 런타임을 여러 개 가질 수 있고 `McpClientManager` 는
+런타임마다 하나인데, 실행기는 **발화한 런타임**을 모른다(`attempt` 가 `HookContext` 를 받지 않는다) — 스택 전역 실행기는
+엉뚱한 에이전트의 서버를 부르게 된다. (2) 스킬의 `http` 액션은 호스트 JVM 에서, 호스트의 환경 변수와 네트워크로 나간다.
+CLI 에서는 스킬의 `shell` 액션이 이미 같은 권한으로 도므로 새로 주는 것이 없지만, 실행 환경이 샌드박스인 호스트에서는 스킬
+파일이 샌드박스 밖으로 요청을 보내는 길이 된다. 그 선택은 호스트가 `AimonStackSpec.skillParser` 와
+`HookHotReloadBootstrap.Builder` 로 직접 한다.
+
+**기본 HTTP 클라이언트는 좁게 잡았다.** `HttpActionExecutor.createDefault()` 는 리다이렉트를 따라가지 않고(JDK 클라이언트는
+리다이렉트 대상에 요청 헤더를 다시 보낸다 — `${env.X}` 로 채운 토큰이 설정에 없는 호스트로 가고 그 호스트의 답이 판정이
+된다), 응답 본문을 `MAX_RESPONSE_BYTES`(1 MiB)까지만 읽는다. 둘 다 "판정 없음" 으로 떨어지므로 가드는 닫힌 채 남는다.
+남겨 둔 것은 결정이 필요한 것들이다 — 평문 `http://` 허용, `allowedEnvVars` 가 그 선언 자신이 적는 목록이라는 점, 템플릿
+값이 이스케이프되지 않아 JSON 본문에 모델의 텍스트가 그대로 들어간다는 점. 사용자 문서는 셋을 그대로 적는다
+([`hook-config-guide.md` › `http`](../../features/hook/hook-config-guide.md#http)).
+
+**취소는 "돌리지 못함" 이 아니다(EE-80).** 훅의 셸 명령은 실행의 취소 신호(`HookContext.getExecutionCancellation()`)에
+묶여 돌고, 인터럽트가 오면 그 신호로 멈춘다 — 포그라운드 `Bash` 와 같은 길이다(EE-54). 그렇게 멈춘 명령은
+`Unrun.CANCELLED` 로 보고되고, 가드 이벤트에서는 `failOpen` 이어도 막는다. 훅 실행기가 기다리던 스레드의 인터럽트를
+정책과 무관하게 BLOCKED 로 답하는 것(§3.3)과 같은 이유다: 판정이 없으면 진행 허가도 없고, 이 경로는 실행이 어차피 끝나는
+중일 때만 닿는다. 스레드 인터럽트에 반응하는 셸(`LocalShell`)이 `InterruptedException` 으로 끝낸 것도 같은 원인으로 읽어
+두 종류의 셸에서 결과가 같다. 신호는 그것을 쥐고 있는 발화 지점만 싣는다 — 도구 범위 이벤트와 fork 의 `onStart`. 이미
+일어난 일을 알리는 `postTool` · `permissionDenied` 는 실행이 취소되기 전까지만 싣는다(취소 뒤의 감사 명령이 시작조차 못 하는
+것을 막는다).
+
 사유 문자열은 `MAX_DENY_REASON_LENGTH`(4000자)로 자른다 — 훅이 스택트레이스를 통째로 뱉어 대화 컨텍스트에
 무제한 주입되는 것을 막는다.
 

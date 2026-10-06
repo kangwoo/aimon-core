@@ -89,4 +89,25 @@ class MarkdownSubagentParserTest {
 
         assertThat(subagent.getMetadata().getAttributes()).containsExactly(entry("sandbox.slot", "build"));
     }
+
+    @Test
+    void parse_HiddenFrontmatter_ReachesTheSubagentMetadata() {
+        String content = """
+                ---
+                description: Placement only
+                hidden: true
+                attributes:
+                  sandbox:
+                    slot: isolated
+                ---
+
+                Never run through Task.
+                """;
+
+        at.aimon.core.subagent.Subagent subagent = new MarkdownSubagentParser(new SubagentContentParser())
+                .parse("workflow-judge", content);
+
+        assertThat(subagent.getMetadata().isHidden()).isTrue();
+        assertThat(subagent.getMetadata().getAttributes()).containsEntry("sandbox.slot", "isolated");
+    }
 }

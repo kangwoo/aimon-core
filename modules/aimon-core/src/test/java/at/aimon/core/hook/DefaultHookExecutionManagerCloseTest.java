@@ -11,7 +11,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.event.PreToolContext;
 import at.aimon.core.hook.event.PreToolHook;
 import at.aimon.core.hook.execution.AskPromptHandler;
@@ -103,7 +102,7 @@ class DefaultHookExecutionManagerCloseTest {
         registry.register(HookEventType.PRE_TOOL, capture);
 
         final PreToolContext context = PreToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                .invokerName("agent").hookRegistry(registry).userLocale(UserLocale.createDefault())
+                .invokerName("agent").hookRegistry(registry)
                 .toolUse(ToolUse.of("id", "Bash", Map.of("command", "echo"))).iterationCount(1).build();
 
         final List<HookResult> results = manager.executePreTool(context);

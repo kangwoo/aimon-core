@@ -17,6 +17,7 @@ class CompletionReasonTest {
         assertThat(CompletionReason.WALL_CLOCK_EXCEEDED.isSuccessful()).isFalse();
         assertThat(CompletionReason.ABORTED.isSuccessful()).isFalse();
         assertThat(CompletionReason.INTERRUPTED.isSuccessful()).isFalse();
+        assertThat(CompletionReason.BLOCKED.isSuccessful()).isFalse();
         assertThat(CompletionReason.ERROR.isSuccessful()).isFalse();
     }
 

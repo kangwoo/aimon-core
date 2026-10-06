@@ -21,12 +21,15 @@ import com.openai.models.responses.ResponseCreateParams;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ReasoningEffort;
+import at.aimon.core.llm.ReasoningSummary;
 import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
 import at.aimon.core.llm.capability.ModelCapabilities;
 import at.aimon.core.llms.openai.exception.ToolConversionException;
+import at.aimon.core.subagent.Subagent;
+import at.aimon.core.subagent.execution.SubagentLlmDefaults;
 
 /**
  * Tests the {@link ResponseCreateParams} counterpart to the Chat request builder.
@@ -369,6 +372,201 @@ class OpenAIResponsesRequestFactoryTest {
                         ModelCapabilities.unknown(), SILENT));
 
         assertThat(body).contains("\"summary\":\"auto\"");
+    }
+
+    // ---- model.reasoningSummary: the agent's value over the deployment's ----
+
+    private static OpenAIConfig configWithSummary(OpenAiReasoningSummary summary) {
+        final OpenAIConfig.Builder builder = OpenAIConfig.builder().apiKey("k").model(GPT5_NAME);
+        if (summary != null) {
+            builder.reasoningSummary(summary);
+        }
+        return builder.build();
+    }
+
+    private static LlmModel modelWithSummary(ReasoningSummary summary) {
+        return LlmModel.builder().reasoningSummary(summary).build();
+    }
+
+    @Test
+    @DisplayName("an agent's none turns the summary off where the deployment asks for one")
+    void anAgentNoneOverridesTheDeploymentKey() {
+        final List<String> reported = new ArrayList<>();
+
+        final ResponseCreateParams params = build(configWithSummary(OpenAiReasoningSummary.DETAILED),
+                modelWithSummary(ReasoningSummary.NONE), List.of(), GPT5,
+                (signature, message, args) -> reported.add(signature));
+
+        assertThat(params._reasoning()).isInstanceOf(JsonMissing.class);
+        assertThat(ResponsesFixtures.bodyOf(params)).doesNotContain("summary");
+        // Nothing was withheld from a model that cannot take it; the agent asked for nothing.
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    @DisplayName("an agent's level asks for a summary where the deployment asks for none")
+    void anAgentLevelAppliesWithoutADeploymentKey() {
+        final JsonNode reasoning = ResponsesFixtures
+                .bodyTreeOf(build(configWithSummary(null), modelWithSummary(ReasoningSummary.DETAILED), List.of()))
+                .get("reasoning");
+
+        assertThat(reasoning.get("summary").asText()).isEqualTo("detailed");
+    }
+
+    @Test
+    @DisplayName("an agent's level wins over a different deployment level, for each of the three")
+    void anAgentLevelWinsOverTheDeploymentLevel() {
+        assertThat(summaryOnTheWire(OpenAiReasoningSummary.DETAILED, ReasoningSummary.AUTO)).isEqualTo("auto");
+        assertThat(summaryOnTheWire(OpenAiReasoningSummary.DETAILED, ReasoningSummary.CONCISE)).isEqualTo("concise");
+        assertThat(summaryOnTheWire(OpenAiReasoningSummary.CONCISE, ReasoningSummary.DETAILED)).isEqualTo("detailed");
+    }
+
+    @Test
+    @DisplayName("an agent that states nothing follows the deployment key, and the client default when that is unset")
+    void anUnsetAgentValueDefersToTheDeployment() {
+        assertThat(summaryOnTheWire(OpenAiReasoningSummary.CONCISE, null)).isEqualTo("concise");
+
+        final ResponseCreateParams neither = build(configWithSummary(null), LlmModel.builder().build(), List.of());
+        assertThat(neither._reasoning()).isInstanceOf(JsonMissing.class);
+    }
+
+    @Test
+    @DisplayName("the capability gate applies after precedence: an agent's level is withheld and reported once")
+    void theCapabilityGateAppliesToTheAgentValue() {
+        final ModelCapabilities refusesSummary = ModelCapabilities.builder().supportsReasoningSummary(false).build();
+        final List<String> reported = new ArrayList<>();
+
+        final ResponseCreateParams params = build(configWithSummary(null), modelWithSummary(ReasoningSummary.DETAILED),
+                List.of(), refusesSummary, (signature, message, args) -> reported.add(signature));
+
+        assertThat(params._reasoning()).isInstanceOf(JsonMissing.class);
+        // The signature the deployment key's withheld summary uses, so one model is told about once whichever
+        // surface asked.
+        assertThat(reported).containsExactly("reasoningSummary=DETAILED@" + GPT5_NAME);
+    }
+
+    // ---- a subagent's call: the model SubagentLlmDefaults resolves from the spawning agent's ----
+
+    private static LlmModel subagentModelOf(LlmModel parent) {
+        return SubagentLlmDefaults.resolveModel(Subagent.builder().name("explore").systemPrompt("(prompt)").build(),
+                parent);
+    }
+
+    @Test
+    @DisplayName("subagent: the parent's none sends no summary request where the deployment asks for one")
+    void aSubagentOfANoneParentSendsNoSummary() {
+        final ResponseCreateParams params = build(configWithSummary(OpenAiReasoningSummary.DETAILED),
+                subagentModelOf(modelWithSummary(ReasoningSummary.NONE)), List.of());
+
+        assertThat(ResponsesFixtures.bodyOf(params)).doesNotContain("summary");
+    }
+
+    @Test
+    @DisplayName("subagent: the parent's detailed is requested where the deployment asks for none")
+    void aSubagentOfADetailedParentRequestsDetailed() {
+        final JsonNode reasoning = ResponsesFixtures.bodyTreeOf(
+                build(configWithSummary(null), subagentModelOf(modelWithSummary(ReasoningSummary.DETAILED)), List.of()))
+                .get("reasoning");
+
+        assertThat(reasoning.get("summary").asText()).isEqualTo("detailed");
+    }
+
+    @Test
+    @DisplayName("subagent: a parent that states nothing leaves the deployment key deciding")
+    void aSubagentOfAnUnsetParentFollowsTheDeployment() {
+        final JsonNode reasoning = ResponsesFixtures.bodyTreeOf(build(configWithSummary(OpenAiReasoningSummary.CONCISE),
+                subagentModelOf(LlmModel.builder().name("parent-model").build()), List.of())).get("reasoning");
+
+        assertThat(reasoning.get("summary").asText()).isEqualTo("concise");
+    }
+
+    @Test
+    @DisplayName("subagent: a nested fork keeps the value its grandparent stated")
+    void aNestedForkKeepsTheValue() {
+        final LlmModel grandchild = subagentModelOf(subagentModelOf(modelWithSummary(ReasoningSummary.NONE)));
+
+        final ResponseCreateParams params = build(configWithSummary(OpenAiReasoningSummary.DETAILED), grandchild,
+                List.of());
+
+        assertThat(ResponsesFixtures.bodyOf(params)).doesNotContain("summary");
+    }
+
+    @Test
+    @DisplayName("subagent: the gate is the subagent's own model, and its refusal is reported under one signature")
+    void aSubagentOnAModelThatRefusesTheSummaryIsGatedByItsOwnModel() {
+        final ModelCapabilities refusesSummary = ModelCapabilities.builder().supportsReasoningSummary(false).build();
+        final List<String> reported = new ArrayList<>();
+        final LlmModel subagentModel = subagentModelOf(modelWithSummary(ReasoningSummary.AUTO));
+
+        final ResponseCreateParams params = build(configWithSummary(null), subagentModel, List.of(), refusesSummary,
+                (signature, message, args) -> reported.add(signature), "gateway-model");
+        build(configWithSummary(null), subagentModel, List.of(), refusesSummary,
+                (signature, message, args) -> reported.add(signature), "gateway-model");
+
+        assertThat(params._reasoning()).isInstanceOf(JsonMissing.class);
+        // The same signature on every call, which is what the client's once-per-signature register dedups on.
+        assertThat(reported).containsOnly("reasoningSummary=AUTO@gateway-model");
+    }
+
+    // ---- a subagent's inherited reasoningEffort goes through the subagent model's own gates ----
+
+    private static LlmModel subagentModelOnWithParentEffort(String subagentModelName, ReasoningEffort parentEffort) {
+        return SubagentLlmDefaults.resolveModel(
+                Subagent.builder().name("explore").systemPrompt("(prompt)").model(subagentModelName).build(),
+                LlmModel.builder().name("parent-model").reasoningEffort(parentEffort).build());
+    }
+
+    @Test
+    @DisplayName("subagent: an inherited effort the subagent's model accepts is sent")
+    void anInheritedEffortOnTheLadderIsSent() {
+        final JsonNode reasoning = ResponsesFixtures
+                .bodyTreeOf(
+                        build(config(), subagentModelOnWithParentEffort(GPT5_NAME, ReasoningEffort.HIGH), List.of()))
+                .get("reasoning");
+
+        assertThat(reasoning.get("effort").asText()).isEqualTo("high");
+    }
+
+    @Test
+    @DisplayName("subagent: an inherited effort off the subagent model's ladder is omitted and reported, never sent raw")
+    void anInheritedEffortOffTheLadderIsOmitted() {
+        // The parent's model may accept a rung the subagent's does not: terra takes none and not minimal, gpt-5-mini
+        // the reverse. Each is judged against the model the request actually names.
+        final List<String> reported = new ArrayList<>();
+
+        final ResponseCreateParams onTerra = build(config(),
+                subagentModelOnWithParentEffort(TERRA_NAME, ReasoningEffort.MINIMAL), List.of(), TERRA,
+                (signature, message, args) -> reported.add(signature), TERRA_NAME);
+        final ResponseCreateParams onGpt5 = build(config(),
+                subagentModelOnWithParentEffort(GPT5_NAME, ReasoningEffort.NONE), List.of(), GPT5,
+                (signature, message, args) -> reported.add(signature), GPT5_NAME);
+
+        assertThat(ResponsesFixtures.bodyOf(onTerra)).doesNotContain("effort");
+        assertThat(ResponsesFixtures.bodyOf(onGpt5)).doesNotContain("effort");
+        // (The subagent default temperature is reported as suppressed on these models too; that is not this test's.)
+        assertThat(reported).filteredOn(signature -> signature.startsWith("reasoningEffort")).containsExactly(
+                "reasoningEffortOffLadder=MINIMAL@" + TERRA_NAME, "reasoningEffortOffLadder=NONE@" + GPT5_NAME);
+    }
+
+    @Test
+    @DisplayName("subagent: an inherited effort on a model with no effort parameter is omitted and reported")
+    void anInheritedEffortOnAModelWithoutTheParameterIsOmitted() {
+        final ModelCapabilities noEffort = InMemoryModelCapabilityRegistry.withDefaults().resolve("gpt-4o");
+        assertThat(noEffort.supportsReasoningEffort()).as("fixture precondition").isFalse();
+        final List<String> reported = new ArrayList<>();
+
+        final ResponseCreateParams params = build(config(),
+                subagentModelOnWithParentEffort("gpt-4o", ReasoningEffort.HIGH), List.of(), noEffort,
+                (signature, message, args) -> reported.add(signature), "gpt-4o");
+
+        assertThat(params._reasoning()).isInstanceOf(JsonMissing.class);
+        assertThat(reported).containsExactly("reasoningEffort=HIGH@gpt-4o");
+    }
+
+    private String summaryOnTheWire(OpenAiReasoningSummary deployment, ReasoningSummary agent) {
+        final LlmModel model = agent == null ? LlmModel.builder().build() : modelWithSummary(agent);
+        return ResponsesFixtures.bodyTreeOf(build(configWithSummary(deployment), model, List.of())).get("reasoning")
+                .get("summary").asText();
     }
 
     @Test

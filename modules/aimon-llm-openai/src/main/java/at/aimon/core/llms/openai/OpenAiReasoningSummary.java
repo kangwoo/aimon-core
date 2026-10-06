@@ -15,6 +15,12 @@ package at.aimon.core.llms.openai;
  * exists: a vendor SDK type on a public configuration surface makes that SDK part of this project's API. Absent means
  * unset means off — no {@code reasoning.summary} on the wire and no reasoning delta forwarded.
  *
+ * <p>
+ * This is the deployment's answer. A request whose {@link at.aimon.core.llm.LlmModel} carries a
+ * {@link at.aimon.core.llm.ReasoningSummary} — an agent definition's {@code model.reasoningSummary} — overrides it for
+ * that request, in both directions; that vocabulary has these three levels plus {@code NONE}, which this enum does not
+ * need because absence already says it.
+ *
  * @see OpenAIConfig.Builder#reasoningSummary(OpenAiReasoningSummary)
  */
 public enum OpenAiReasoningSummary {

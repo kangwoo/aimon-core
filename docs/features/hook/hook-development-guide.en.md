@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-development-guide.md
-source_commit: 4c9b3d2
+source_commit: 2bfe9a97
 ---
 
 # Hook Development Guide
@@ -104,8 +104,10 @@ There are 13 in total:
 > refusal is expressed as **exit 2** from the shell handler. The declarative veto on `ON_START`
 > was added recently — before that, an `onStart` shell hook exiting 2 had no effect whatsoever.
 > In those four chains a shell handler that **produces no exit code** (no execution environment,
-> a timeout, a shell failure) refuses as well — a guard that could not decide blocks. A handler
-> that only observes opts out with `failOpen: true`.
+> a timeout, a shell failure), or whose command the shell **could not start** (exit 126 or 127),
+> refuses as well — a guard that could not decide blocks. A handler that only observes opts out
+> with `failOpen: true`. The full table is in
+> [Hook configuration guide › What a guard blocks](hook-config-guide.en.md#what-a-guard-blocks).
 
 Adding a new event means adding all of: the hook interface, the context type, the
 `HookEventType` constant, the `HookExecutionManager` method, and **the firing site**. A constant
@@ -265,7 +267,6 @@ Each hook receives the context object that matches its firing point. Every conte
 | `getInvokerType()` | `InvokerType` | Invoker type (MAIN_AGENT, SUBAGENT, …) |
 | `getInvokerName()` | `String` | Invoker name |
 | `getHookRegistry()` | `HookRegistry` | The hook registry |
-| `getUserLocale()` | `UserLocale` | The user locale (time zone) |
 | `getExecutionEnvironment()` | `Optional<ExecutionEnvironment>` | The execution environment of the execution the hook fires in — the file system and shell that execution's tools use. Empty for events that fire outside any execution (`onSessionStart`, `onSessionEnd`, `onConfigReload`) and for a rewake replay. Do not fall back to the host when it is empty |
 | `getEnvironmentDescriptor()` | `Optional<EnvironmentDescriptor>` | The descriptor of that environment (working directory, platform, OS). Use this, not the host, to tell **where commands run** |
 | `getTimestamp()` | `Instant` | Timestamp |
@@ -383,7 +384,7 @@ may sit between a `tool_use` and its `tool_result`.
 | Item | Default | Description |
 |------|--------|------|
 | `timeout` | 30 seconds | The outer safety net for a single hook |
-| `timeoutBehavior` | `FAIL_OPEN` | On timeout, pass (`FAIL_OPEN`) or block (`FAIL_CLOSED`) |
+| `timeoutBehavior` | `FAIL_OPEN` | On timeout, pass (`FAIL_OPEN`) or block (`FAIL_CLOSED`). The default for the chain; a hook that declares its own wins for that hook |
 | `executionMode` | `SEQUENTIAL` | Parallel execution is opt-in |
 | `stopOnBlocked` | Policy-dependent | Short-circuits the remaining hooks once a blocking result appears |
 | `dedupKeyExtractor` | None | Removes duplicate hooks sharing a key |
@@ -400,6 +401,19 @@ may sit between a `tool_use` and its `tool_result`.
   without a ceiling one hook could hold a turn indefinitely, and values near `Long.MAX_VALUE`
   overflow the executor's nanosecond conversion. Anything larger is truncated to 10 minutes with
   a WARN log.
+- **`timeoutBehaviorFor(hook)`** is what actually applies when the net fires. If a hook declares
+  `FAIL_CLOSED` or `FAIL_OPEN` through `getTimeoutBehavior()`, that declaration takes precedence
+  over the policy's `timeoutBehavior`. A declarative guard hook (`preTool`, `onStart`,
+  `preCompact`, `permissionRequest`, without `failOpen`) declares `FAIL_CLOSED`, so it blocks when
+  the net cuts it off even under the default policy. **A hook registered in code follows the
+  policy unless it declares otherwise** — under the default policies a `PreToolHook` or
+  `OnStartHook` cut off by the net reads as a pass, and an exception thrown by an `OnStartHook` is
+  a success under the `onStart` policy too. A hook whose purpose is to refuse should override
+  `getTimeoutBehavior()` to declare `FAIL_CLOSED`. That declaration covers not only the net but
+  the two other ways a hook ends without a verdict — when the executor's pool does not take the
+  hook (saturated, or shut down) and when the hook body throws, the result is BLOCKED instead of
+  `onException` (`failsClosedWithoutVerdict`). A hook that declares nothing follows `onException`
+  in both cases, as before.
 - **In parallel mode** a timeout **bounds the wait; it does not discard work that already
   finished.** Results are always reassembled in registration order.
 - **`stopOnBlocked` is meaningful only under `SEQUENTIAL`.** Under `PARALLEL` an already

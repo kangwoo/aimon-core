@@ -6,7 +6,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
+import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.execution.HookContext;
@@ -27,7 +27,7 @@ import at.aimon.core.hook.execution.HookContext;
  * {
  *     &#64;code
  *     OnStartContext context = OnStartContext.builder().invokerType(InvokerType.MAIN_AGENT)
- *             .invokerName("default-agent").userLocale(userLocale)
+ *             .invokerName("default-agent")
  *             .userMessage("What files are in the current directory?").build();
  * }
  * </pre>
@@ -45,8 +45,8 @@ public final class OnStartContext implements HookContext {
     private final InvokerType invokerType;
     private final String invokerName;
     private final HookRegistry hookRegistry;
-    private final UserLocale userLocale;
     private final ExecutionEnvironment executionEnvironment;
+    private final CancellationSignal executionCancellation;
     private final String userMessage;
     private final Instant timestamp;
     private final Map<String, Object> executionAttributes;
@@ -55,8 +55,8 @@ public final class OnStartContext implements HookContext {
         invokerType = Objects.requireNonNull(builder.invokerType, "Executor type cannot be null");
         invokerName = Objects.requireNonNull(builder.invokerName, "Executor name cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
-        userLocale = Objects.requireNonNull(builder.userLocale, "UserLocale cannot be null");
         executionEnvironment = builder.executionEnvironment;
+        executionCancellation = builder.executionCancellation;
         userMessage = Objects.requireNonNull(builder.userMessage, "User message cannot be null");
         timestamp = Objects.requireNonNull(builder.timestamp, "Timestamp cannot be null");
         executionAttributes = builder.executionAttributes != null ? Map.copyOf(builder.executionAttributes) : Map.of();
@@ -78,13 +78,13 @@ public final class OnStartContext implements HookContext {
     }
 
     @Override
-    public UserLocale getUserLocale() {
-        return userLocale;
+    public Optional<ExecutionEnvironment> getExecutionEnvironment() {
+        return Optional.ofNullable(executionEnvironment);
     }
 
     @Override
-    public Optional<ExecutionEnvironment> getExecutionEnvironment() {
-        return Optional.ofNullable(executionEnvironment);
+    public Optional<CancellationSignal> getExecutionCancellation() {
+        return Optional.ofNullable(executionCancellation);
     }
 
     /**
@@ -118,8 +118,8 @@ public final class OnStartContext implements HookContext {
         private InvokerType invokerType;
         private String invokerName;
         private HookRegistry hookRegistry;
-        private UserLocale userLocale;
         private ExecutionEnvironment executionEnvironment;
+        private CancellationSignal executionCancellation;
         private String userMessage;
         private Instant timestamp = Instant.now();
         private Map<String, Object> executionAttributes;
@@ -164,18 +164,6 @@ public final class OnStartContext implements HookContext {
         }
 
         /**
-         * Sets the user locale.
-         *
-         * @param userLocale
-         *            the user locale (must not be null)
-         * @return This builder
-         */
-        public Builder userLocale(UserLocale userLocale) {
-            this.userLocale = userLocale;
-            return this;
-        }
-
-        /**
          * Sets the execution environment the firing execution runs in.
          *
          * @param executionEnvironment
@@ -184,6 +172,19 @@ public final class OnStartContext implements HookContext {
          */
         public Builder executionEnvironment(ExecutionEnvironment executionEnvironment) {
             this.executionEnvironment = executionEnvironment;
+            return this;
+        }
+
+        /**
+         * Sets the cancellation signal of the execution this event fires in, so a hook's shell command stops when
+         * the execution is interrupted.
+         *
+         * @param executionCancellation
+         *            the execution's signal (nullable — absent when the firing site has none in reach)
+         * @return This builder
+         */
+        public Builder executionCancellation(CancellationSignal executionCancellation) {
+            this.executionCancellation = executionCancellation;
             return this;
         }
 

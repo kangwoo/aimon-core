@@ -134,4 +134,25 @@ class CommandExecutionResultTest {
 
         assertThat(result.getResponse()).isEqualTo(multiline);
     }
+
+    @Test
+    @DisplayName("A truncated result is a success that says its answer is not whole")
+    void truncatedIsASuccessThatSaysItsAnswerIsNotWhole() {
+        CommandExecutionResult result = CommandExecutionResult.truncated("partial", null);
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.isTruncated()).isTrue();
+        assertThat(result.getResponse()).isEqualTo("partial");
+        assertThat(result.getMetadata()).isEmpty();
+        assertThat(result).isNotEqualTo(CommandExecutionResult.success("partial"));
+        assertThat(result.toString()).contains("truncated=true");
+    }
+
+    @Test
+    @DisplayName("No other result is truncated")
+    void noOtherResultIsTruncated() {
+        assertThat(CommandExecutionResult.success("whole").isTruncated()).isFalse();
+        assertThat(CommandExecutionResult.failure(new IllegalStateException("x")).isTruncated()).isFalse();
+        assertThat(CommandExecutionResult.failure("m", new IllegalStateException("x")).isTruncated()).isFalse();
+    }
 }

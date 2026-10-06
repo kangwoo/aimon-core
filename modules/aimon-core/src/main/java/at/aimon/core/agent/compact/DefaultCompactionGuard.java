@@ -17,7 +17,6 @@ import org.slf4j.LoggerFactory;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
@@ -66,6 +65,17 @@ public class DefaultCompactionGuard implements CompactionGuard {
 
     public static final int DEFAULT_MAX_CONSECUTIVE_FAILURES = 3;
     public static final int DEFAULT_MAX_TRACKED_SESSIONS = 1024;
+
+    /**
+     * The phrase a blocking-limit {@code COMPACT} decision's reason carries when the compaction succeeded and the view
+     * is still at or above the blocking limit: nothing more could be summarized, and the view is sent as it is — the
+     * provider, or prompt-too-long recovery, has the last word (context-engine §13.10). The same fact is on the
+     * compaction's record as {@link CompactionMetadata#isOverBlockingLimit()}.
+     */
+    public static final String STILL_OVER_BLOCKING = "the view is still at or above the blocking limit";
+
+    /** The reason of a successful compaction at the blocking limit. */
+    private static final String BLOCKING_REASON = "blocking-limit forced compaction";
 
     private static final Logger log = LoggerFactory.getLogger(DefaultCompactionGuard.class);
 
@@ -144,16 +154,15 @@ public class DefaultCompactionGuard implements CompactionGuard {
     }
 
     @Override
-    public CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-            UserLocale userLocale) {
-        return serializedEvaluate(memory, model, hookRegistry, userLocale, null, null, false);
+    public CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry) {
+        return serializedEvaluate(memory, model, hookRegistry, null, null, false);
     }
 
     @Override
     public CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-            UserLocale userLocale, ExecutionId executionId) {
+            ExecutionId executionId) {
         Objects.requireNonNull(executionId, "executionId cannot be null");
-        return serializedEvaluate(memory, model, hookRegistry, userLocale, executionId, null, false);
+        return serializedEvaluate(memory, model, hookRegistry, executionId, null, false);
     }
 
     /**
@@ -167,21 +176,20 @@ public class DefaultCompactionGuard implements CompactionGuard {
     public CompactionDecision maybeCompact(CompactionGuardRequest request) {
         Objects.requireNonNull(request, "request cannot be null");
         return serializedEvaluate(request.getTranscriptBuffer(), request.getModel(), request.getHookRegistry(),
-                request.getUserLocale(), request.getExecutionId().orElse(null),
-                request.getExecutionEnvironment().orElse(null), request.isBudgetForced());
+                request.getExecutionId().orElse(null), request.getExecutionEnvironment().orElse(null),
+                request.isBudgetForced());
+    }
+
+    @Override
+    public CompactionDecision forceCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry) {
+        return serializedEvaluate(memory, model, hookRegistry, null, null, true);
     }
 
     @Override
     public CompactionDecision forceCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-            UserLocale userLocale) {
-        return serializedEvaluate(memory, model, hookRegistry, userLocale, null, null, true);
-    }
-
-    @Override
-    public CompactionDecision forceCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-            UserLocale userLocale, ExecutionId executionId) {
+            ExecutionId executionId) {
         Objects.requireNonNull(executionId, "executionId cannot be null");
-        return serializedEvaluate(memory, model, hookRegistry, userLocale, executionId, null, true);
+        return serializedEvaluate(memory, model, hookRegistry, executionId, null, true);
     }
 
     /**
@@ -204,17 +212,15 @@ public class DefaultCompactionGuard implements CompactionGuard {
      *            hint compacts earlier than the model's own auto-compact threshold would
      */
     private CompactionDecision serializedEvaluate(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-            UserLocale userLocale, ExecutionId executionId, ExecutionEnvironment executionEnvironment,
-            boolean budgetForced) {
+            ExecutionId executionId, ExecutionEnvironment executionEnvironment, boolean budgetForced) {
         Objects.requireNonNull(memory, "memory cannot be null");
         Objects.requireNonNull(model, "model cannot be null");
         Objects.requireNonNull(hookRegistry, "hookRegistry cannot be null");
-        Objects.requireNonNull(userLocale, "userLocale cannot be null");
 
         final SessionId sessionId = memory.getSessionId();
         return serialized(sessionId,
                 () -> evaluate(memory.getSystemPrompt(), memory.getMessages(), model, sessionId, budgetForced,
-                        forced -> invokeEngine(memory, model, hookRegistry, userLocale, sessionId, executionId,
+                        forced -> invokeEngine(memory, model, hookRegistry, sessionId, executionId,
                                 executionEnvironment, forced)));
     }
 
@@ -228,6 +234,18 @@ public class DefaultCompactionGuard implements CompactionGuard {
      * circuit breaker's bookkeeping around the {@code compactor}'s result. This is how a context engine that keeps
      * the log append-only reuses today's decision rules without the guard's {@link CompactionEngine} rewriting the
      * transcript (context-engine §4).
+     *
+     * <p>
+     * A {@code compactor} that had nothing it may summarize answers with a failure carrying
+     * {@link NothingToCompactException}. On the AUTO path that is a {@code WARN} decision with no compaction
+     * metadata, and it never counts against the circuit breaker.
+     *
+     * <p>
+     * At the blocking limit the {@code compactor} is expected to bring the view under the limit in that one call:
+     * the caller sends what it is given. A success whose record says the view is still at the limit
+     * ({@link CompactionMetadata#isOverBlockingLimit()}) stays a {@code COMPACT} decision, with
+     * {@link #STILL_OVER_BLOCKING} in its reason; a failure is a {@code BLOCK}. {@link #estimateTokens} and
+     * {@link #blockingLimit} give the compactor the sizes this guard decides on.
      *
      * @param sessionId
      *            the session the lock and the circuit breaker are keyed on (must not be null)
@@ -267,6 +285,34 @@ public class DefaultCompactionGuard implements CompactionGuard {
          * @return the outcome (must not be null)
          */
         CompactionResult compact(boolean forced);
+    }
+
+    /**
+     * Estimates a view the way {@link #decide} does before comparing it with a threshold, so a caller that has to
+     * hold a compaction to the blocking limit counts with the same estimator the limit was reached on.
+     *
+     * @param systemPrompt
+     *            counted in the estimate, as the provider counts it (may be null)
+     * @param view
+     *            the messages (must not be null)
+     * @return the estimated tokens
+     */
+    public int estimateTokens(String systemPrompt, List<Message> view) {
+        Objects.requireNonNull(view, "view cannot be null");
+        return tokenEstimator.estimate(systemPrompt, view);
+    }
+
+    /**
+     * Returns the blocking limit {@link #decide} holds {@code model} to: a view estimated at or above it is not sent
+     * without a compaction.
+     *
+     * @param model
+     *            the model the next call goes to (must not be null)
+     * @return the blocking limit in estimated tokens
+     */
+    public int blockingLimit(LlmModel model) {
+        Objects.requireNonNull(model, "model cannot be null");
+        return modelContextWindowRegistry.resolve(model.getName().orElse("")).getBlockingLimit();
     }
 
     private CompactionDecision serialized(SessionId sessionId, Supplier<CompactionDecision> evaluation) {
@@ -310,7 +356,7 @@ public class DefaultCompactionGuard implements CompactionGuard {
             final CompactionResult result = compactor.compact(true);
             if (result.isSuccess()) {
                 resetFailures(sessionId);
-                return CompactionDecision.compact(result, "blocking-limit forced compaction", estimated, blockingLimit);
+                return CompactionDecision.compact(result, blockingReason(result), estimated, blockingLimit);
             }
             recordFailureIfTransient(sessionId, result);
             return CompactionDecision.block("compaction failed at blocking limit: " + describeError(result), estimated,
@@ -332,6 +378,13 @@ public class DefaultCompactionGuard implements CompactionGuard {
                         : "auto-compact threshold reached";
                 return CompactionDecision.compact(result, reason, estimated, blockingLimit);
             }
+            if (result.getError().orElse(null) instanceof NothingToCompactException nothing) {
+                // Not an attempt that failed: no summary was asked for and the view is as it was. Reporting it as
+                // COMPACT would publish a compaction that did not happen, and counting it would open the breaker on
+                // a view that is merely waiting for the model's answer.
+                return CompactionDecision.warn("auto-compact threshold reached but " + nothing.getMessage(), estimated,
+                        blockingLimit);
+            }
             recordFailureIfTransient(sessionId, result);
             return CompactionDecision.compact(result, "auto-compact attempted but failed", estimated, blockingLimit);
         }
@@ -345,14 +398,29 @@ public class DefaultCompactionGuard implements CompactionGuard {
         return CompactionDecision.none();
     }
 
+    /**
+     * The reason a successful blocking-limit compaction reports. A compactor that could not bring the view under the
+     * limit says so on its record ({@link CompactionMetadata#isOverBlockingLimit()}), and the reason repeats it: the
+     * action stays {@code COMPACT}, because a compaction did happen and the view is sent as it is, but it is not
+     * reported as the plain success it is not. A record that does not carry the limit — the in-place engine's —
+     * reads as before.
+     */
+    private static String blockingReason(CompactionResult result) {
+        final CompactionMetadata metadata = result.getMetadata();
+        if (!metadata.isOverBlockingLimit()) {
+            return BLOCKING_REASON;
+        }
+        return BLOCKING_REASON + "; " + STILL_OVER_BLOCKING + " (post=" + metadata.getPostCompactTokenCount()
+                + ", blocking=" + metadata.getBlockingLimit() + "); sending it as it is";
+    }
+
     @SuppressWarnings("checkstyle:ParameterNumber")
     private CompactionResult invokeEngine(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
-            UserLocale userLocale, SessionId sessionId, ExecutionId executionId,
-            ExecutionEnvironment executionEnvironment, boolean forced) {
+            SessionId sessionId, ExecutionId executionId, ExecutionEnvironment executionEnvironment, boolean forced) {
         // executionId is null for a session-backed compaction; the builder treats that as "identify by session id",
         // which is what the engine did before this channel existed.
         final CompactionRequest request = CompactionRequest.builder().transcriptBuffer(memory)
-                .trigger(CompactionTrigger.AUTO).model(model).hookRegistry(hookRegistry).userLocale(userLocale)
+                .trigger(CompactionTrigger.AUTO).model(model).hookRegistry(hookRegistry)
                 .executionEnvironment(executionEnvironment).forced(forced).executionId(executionId).build();
         try {
             return compactionEngine.compact(request);
@@ -388,6 +456,10 @@ public class DefaultCompactionGuard implements CompactionGuard {
         }
         if (error instanceof CompactionReentrancyException) {
             log.debug("Reentrant compaction for session {}; not counted toward circuit breaker", sessionId);
+            return;
+        }
+        if (error instanceof NothingToCompactException) {
+            log.debug("Nothing to compact for session {}; not counted toward circuit breaker", sessionId);
             return;
         }
         recordFailure(sessionId);

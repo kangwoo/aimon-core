@@ -381,7 +381,7 @@ SPI 시그니처는 그대로지만 **동작 변경 둘이 breaking** 이다. `C
 | 질문 | 결과 |
 |---|---|
 | Q1 — 읽을 수 없는 파일 · 비정규 파일 | 기본대로 **기동 실패**. §10.1 의 4 로 한 걸음 더 갔다(검색 불가 디렉터리). 메인테이너가 뒤집으면 `loadOptional` 의 세 분기와 해당 테스트가 빠진다 |
-| Q2 — 적용 단계의 WARN-후-건너뛰기 | 바꾸지 않았다 → **EE-72** |
+| Q2 — 적용 단계의 WARN-후-건너뛰기 | 바꾸지 않았다 → **EE-72** *(2026-10-05 닫힘: 가드 이벤트의 적용 불가 항목과 가드 이벤트의 오타는 시작 실패 · 리로드는 이전 설정 유지. 나머지는 WARN 그대로)* |
 | Q3 — 탈출구 | 설정 스위치 없음 → **EE-74**(트리거 대기) |
 | Q4 — 코드 behavior 서브에이전트 | 건드리지 않았다. 훅 가이드에 한계로 적고 → **EE-73** |
 | Q5 — `bootstrap()` 의 `boolean` · `isBootstrapSucceeded()` | `@Deprecated` 없이 남겼다 → **EE-75** |
@@ -431,3 +431,25 @@ SPI 시그니처는 그대로지만 **동작 변경 둘이 breaking** 이다. `C
 
 손대지 않은 것: EE-75(늘 참인 `bootstrapOk`), EE-64(코드 훅 예외 매핑), 워크플로 단계의 막힌 포크 테스트, `AimonCli` stderr
 테스트.
+
+### 10.7 그 뒤 닫힌 열린 질문 (2026-10-05)
+
+본문은 그대로 두고, 그 뒤 달라진 사실만 적는다.
+
+- **Q4 (EE-73) — 코드 behavior 서브에이전트도 `onStart` 를 발화한다.** 전제 5 의 "발화하는 곳은 둘뿐" 은 이제 셋이다:
+  `SubagentBehaviorRunner` 가 behavior 를 부르기 전에 `SubagentOnStartGate` 로 발화한다. 그 클래스는 발화 · block 판정 ·
+  막힌 결과를 `DefaultSubagentExecutor` 와 함께 쓴다. block 이면 behavior 는 실행되지 않고 같은 실패 결과로 끝나며 `onStop`
+  은 없다. ReAct 포크와 다른 점은 둘이다 — behavior 포크는 자기 환경을 풀지 않으므로 훅은 **스폰한 실행의 환경**을 받고,
+  block 이 아닌 피드백은 붙일 대화가 없어 버린다. 항목이 "읽었고 돌려 보지는 않았다" 고 적은 것은 돌려서 확인했다 — 고치기
+  전에는 block 을 낸 훅 아래에서 behavior 가 실행됐다.
+- **Q5 (EE-75) — 늘 참인 두 표면은 `@Deprecated` 다.** `HookRegistryReloader.bootstrap()` 은 `void loadInitial()` 로 대체되고
+  (옛 메서드는 그것을 부르고 `true` 를 돌려준다), `Started.isBootstrapSucceeded()` 는 상수 `true` 다. 트리 안에서 그 값으로
+  갈라지던 곳은 `HookHotReloadBootstrap.start()` 의 `bootstrapOk` 전달 하나였고 없앴다. 메서드 삭제는 하지 않았다.
+- **Q6 (EE-75) — 막힌 포크의 완료 사유는 `CompletionReason.BLOCKED` 다.** §3.1 의 표와 §4 의 `CompletionReason.ERROR` 는 이제
+  `BLOCKED` 로 읽는다. 기각 사유였던 "그 값으로 분기할 독자가 없다" 는 그대로지만 깨지는 묶음 안에서 더했다. 위험 둘은
+  이렇게 확인했다. 옛 노드: 포크의 사유를 노드 사이로 나르는 코덱은 `JsonTaskResultCodec` 하나이고 모르는 이름을 실패
+  결과에서는 `ERROR` 로 읽는다 — 옛 노드는 막힌 포크를 전과 같이 본다. `StepOutcomeCodec` 은 `COMPLETED` 단계만 저장하므로
+  이 값을 만나지 않는다. 트리 안의 독자: `completionReasonLine`(`Task` · `AgentOutput` · 완료 알림)과 CLI 의
+  `SubagentResultDisplayHook` 은 값 전체를 훑으므로 코드 변경 없이 `Completion reason: BLOCKED` 를 찍고,
+  `AgentStepResult.isComplete()` 는 거짓이다. 턴의 완료 사유를 나르는 세션 코덱들은 이 값을 만나지 않는다(막힌 턴은 결과가
+  아니라 예외다).

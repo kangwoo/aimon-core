@@ -3,17 +3,17 @@
 각 서브시스템이 **왜 그렇게 생겼는가**를 담는다. 무엇을 만들지의 계획이 아니라 이미 내려진 결정과
 그 근거, 그리고 기각한 대안이 여기 있다.
 
-- **어떻게 쓰는가**를 알고 싶으면 → [`../features/`](../features/)
+- **어떻게 쓰는가**를 알고 싶으면 → [`../features/`](../features/README.md)
 - **무엇이 있는가**를 훑고 싶으면 → [`../overview/architecture.md`](../overview/architecture.md)
 - **언제 무엇이 죽는가**가 궁금하면 → [`../overview/scope-model.md`](../overview/scope-model.md)
-- **아직 정하지 않은 것**은 → [`../backlog/`](../backlog/) 와 [`backlog/`](backlog/)
+- **아직 정하지 않은 것**은 → [`../backlog/`](../backlog/) 와 [`backlog/`](#backlog--아직-결정하지-않은-것)
 
 ---
 
 ## 1. 구성 축 — 도메인이지 상태가 아니다
 
 이 디렉토리는 [`../overview/architecture.md`](../overview/architecture.md) 의 서브시스템 구분을 그대로
-따르는 **도메인 축**으로 나뉜다. 디렉토리 이름은 [`../features/`](../features/) 의 것과 일치한다 —
+따르는 **도메인 축**으로 나뉜다. 디렉토리 이름은 [`../features/`](../features/README.md) 의 것과 일치한다 —
 같은 주제의 사용 가이드와 설계 근거가 같은 이름으로 마주 보게 하려는 것이다.
 
 예전에는 **상태 축**이었다. 루트가 "제안", `implemented/` 가 "완료" 였고, 문서는 구현이 끝나면 옮겨졌다.
@@ -67,7 +67,7 @@
 | [`execution-environment-implementation.md`](tool/execution-environment-implementation.md) | 위 설계의 구현 계획(승인본, 영어) — 코드 위치·단계·ArchUnit 변경·테스트, 그리고 구현이 계획에서 벗어난 점(§10) |
 | [`execution-environment-ee42-workflow-attributes.md`](tool/execution-environment-ee42-workflow-attributes.md) | (IMPLEMENTED) 워크플로 단계가 정의의 `attributes` 를 싣게 한 EE-42 설계(승인본, 영어) — `SubagentDescriptor`, 등록 정의 위에 덮는 병합 규칙, `Workflow` 역할 이름, 그리고 구현이 설계에서 벗어난 점(§8) |
 | [`execution-environment-ee9-ee12-hook-environment.md`](tool/execution-environment-ee9-ee12-hook-environment.md) | (IMPLEMENTED) 훅 컨텍스트에 실행 환경을 싣고 스킬 선언 훅의 셸을 실행 환경으로 옮긴 EE-9 · EE-12 설계(승인본) — 이벤트별 발화 지점, `ShellActionExecutor` 가 발화 컨텍스트를 받는 모양, 파싱 시점 거부, 그리고 구현이 설계에서 벗어난 점(§10) |
-| [`execution-environment-ee14-user-locale.md`](tool/execution-environment-ee14-user-locale.md) | (IMPLEMENTED) `Environment` 를 없애고 `timeZone` 을 `at.aimon.core.base.UserLocale` 로 옮긴 EE-14 설계(승인본) — 이름과 패키지를 고른 이유, 접근자 · 키까지 바꾼 범위, 이름이 같지만 건드리지 않은 것, `timeZone` 을 읽는 운영 코드가 없다는 발견, 그리고 구현이 설계에서 벗어난 점(§11) |
+| [`execution-environment-ee14-user-locale.md`](tool/execution-environment-ee14-user-locale.md) | (IMPLEMENTED) `Environment` 를 없애고 `timeZone` 을 `at.aimon.core.base.UserLocale` 로 옮긴 EE-14 설계(승인본) — 이름과 패키지를 고른 이유, 접근자 · 키까지 바꾼 범위, 이름이 같지만 건드리지 않은 것, `timeZone` 을 읽는 운영 코드가 없다는 발견, 그리고 구현이 설계에서 벗어난 점(§11). 그 `UserLocale` 은 2026-10-05 에 배관째 지워졌고(EE-60, §12) `SubagentExecutionEnvironment` 는 `SubagentLaunchContext` 가 되었다(EE-61, §13) |
 | [`execution-environment-ee13-ee7-background-lifecycle.md`](tool/execution-environment-ee13-ee7-background-lifecycle.md) | (IMPLEMENTED) 백그라운드 `Bash` 를 끝내는 `KillShell` 과 셸 SPI 의 취소 계약, 환경이 정하는 상한, 그리고 제공자와 작업 목록(`BackgroundBashManager` · `BackgroundBashStore`)을 애플리케이션 수명으로 올린 EE-13 · EE-7 설계(승인본) — 축출 훅이 id 콜백이 아니라 `RuntimeBinding` 핸들인 이유, 기각한 대안, 그리고 구현이 설계에서 벗어난 점(§10) |
 | [`execution-environment-ee49-ee51-ee58-isolation-boundary.md`](tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) | (IMPLEMENTED) 한 런타임을 나눠 쓰는 실행들 사이의 경계 셋을 닫은 EE-49 · EE-51 · EE-58 설계(승인본) — 스킬 훅을 공유 레지스트리에 등록하지 않고 포크가 받는 레지스트리에 얹는 이유, 명령을 돌리지 못한 가드를 막는 규칙과 훅별 `failOpen`, 백그라운드 작업의 소유자를 (런타임, 세션 또는 실행)으로 넓힌 것, 기각한 대안, 그리고 구현이 설계에서 벗어난 점(§10) |
 | [`execution-environment-ee70-ee71-fail-closed.md`](tool/execution-environment-ee70-ee71-fail-closed.md) | (IMPLEMENTED) 가드가 판단하지 못했는데 일이 진행되던 두 곳을 막은 EE-70 · EE-71 설계(승인본) — 포크가 `onStart` block 에서 시작하지 않고 실패 결과로 끝나는 모양과 `onStop` 을 발화하지 않는 이유, 시작 시 `hooks.json` 로드 실패를 예외로 전파하고 탈출구 스위치를 두지 않은 이유, 경로별(CLI · 호스트) 동작, 기각한 대안, 그리고 구현이 설계에서 벗어난 점(§10) |
@@ -129,7 +129,7 @@
 | 문서 | 무엇이 있나 |
 |------|------------|
 | [`documentation/translation-structure-check.md`](documentation/translation-structure-check.md) | 정본과 번역본의 구조 일치를 강제하는 검사 — 여섯 축의 처분, 실패/경고를 가르는 쌍의 상태, 예외 표현, 공허 통과가 아님을 보이는 프로브 |
-| [`documentation/docs-site.md`](documentation/docs-site.md) | 문서 사이트의 구조 — 접미사 레이아웃, 한국어가 루트인 이유(빌드 제약), 실측으로 정한 한국어 검색 구분자, `nav:` 를 쓰지 않는 이유, GitHub 과 같은 앵커, `docs/` 밖 링크를 렌더 시점에 바꾸는 훅 |
+| [`documentation/docs-site.md`](documentation/docs-site.md) | 문서 사이트의 구조 — 접미사 레이아웃, 한국어가 루트인 이유(빌드 제약), 실측으로 정한 한국어 검색 구분자, `nav:` 를 쓰지 않는 이유, GitHub 과 같은 앵커, `docs/` 밖 링크를 렌더 시점에 바꾸는 훅, 사이트에 빌드되는 디렉토리를 가리키는 링크를 훅이 아니라 링크 검사가 실패시키는 이유와 그 경계 |
 | [`documentation/backlog-register-check.md`](documentation/backlog-register-check.md) | 백로그 등록부의 중복 ID 와, 항목과 어긋난 표제·색인 건수에 실패하는 검사 — 무엇을 항목과 상태로 읽는가, 번호로 인용되는 등록부의 선언된 읽기, 등록부 간 ID 유일성, 면제 없는 실패, 읽기 규칙을 하나씩 끄는 셀프 테스트 |
 
 ### testing — 모듈의 테스트가 무엇 위에서 도는가
@@ -143,6 +143,7 @@
 | 문서 | 무엇이 있나 |
 |------|------------|
 | [`testing/test-classpath-shipped-versions.md`](testing/test-classpath-shipped-versions.md) | 테스트 클래스패스가 발행 버전과 어긋난 아홉 자리를 출처별로 맞추거나 받아들인 결정 — `aimon-cli` 의 두 테스트 클래스패스만 런타임과 일관되게 해석하는 이유, 주석 jar 두 출처를 받아들인 근거, 발행되는 메모리 테스트킷의 JUnit 바닥, 크기를 재서 기각한 대안들 |
+| [`testing/test-classpath-version-check.md`](testing/test-classpath-version-check.md) | 테스트가 도는 버전과 발행 버전의 차이를 빌드가 검사하게 한 결정 — 받아들인 차이를 주석이 아니라 태스크가 읽는 파일에 이유와 함께 두는 이유, 줄이 버전을 싣고 낡은 줄도 실패하는 이유, 첫 실행이 찾은 기록에 없던 넷과 이미 거짓이 된 기록 하나, 컴파일 축(43건)을 뺀 근거 |
 | [`testing/shipped-logback-and-test-classpath-followups.md`](testing/shipped-logback-and-test-classpath-followups.md) | CLI 배포본이 싣는 Logback 을 1.5.13 에서 1.6.3 으로 올린 결정 — 1.5.x 의 어느 버전도 아닌 이유(CVE-2026-19880 은 1.6.3 에서만 고쳐졌다), 권고를 id 로 찾지 않고 검색하는 이유, 모듈 빌드 스크립트가 `@Incubating` Gradle API 를 부르는 조건과 조용히 지나갈 수 있는 절반, 메모리 계약 스위트를 JUnit 바닥에서 한 번 돌린 기록, #111 이 남긴 기록 넷의 정리 |
 | [`testing/packed-logback-and-advisory-reporting-followups.md`](testing/packed-logback-and-advisory-reporting-followups.md) | 발행되지 않는 샘플 앱이 싣는 Logback 을 Spring Boot 의 `logback.version` 으로 카탈로그의 1.6.3 에 맞춘 결정 — 권고 범위 안의 버전을 알리는 스캐너를 두지 않고 읽기에 기댄다고 적은 이유(GitHub 과 OSV 가 두 CVE 를 어떤 패키지에도 잇지 않는다), Dependabot 의 열린 PR 한도를 5 에서 50 으로 올린 이유, CLI 가 시작할 때 Logback 상태를 찍게 하던 참조되지 않은 appender, #127 의 기록이 GitHub 권고 데이터베이스와 Dependabot 에 대해 틀린 자리의 정정 |
 | [`testing/release-gate-provider-keys.md`](testing/release-gate-provider-keys.md) | export 된 프로바이더 키가 평범한 빌드를 과금되는 라이브 API 실행으로 바꾸는 문제 — 키가 환경에 있으면 시작하지 않는 릴리스 스크립트, 거부 목록을 키 게이트와 대조하는 인구조사, 가드가 읽는 파일을 테스트 입력으로 선언하는 규칙 |
@@ -173,7 +174,7 @@
 |-------------|--------------|
 | 체크박스 · WI/WU 표 · Phase 로그 | `docs/plan/` — 진행 중인 계획이 있을 때만 존재하고 끝나면 지운다 ([`../project/documentation-guide.md`](../project/documentation-guide.md) 참조) |
 | "착수 전 기록" · rev.1/rev.2 정정 이력 | 어디에도. 정정은 본문에 반영하고 흔적은 지운다 |
-| 사용법 · 설정 예시 · 트러블슈팅 | [`../features/`](../features/) |
+| 사용법 · 설정 예시 · 트러블슈팅 | [`../features/`](../features/README.md) |
 | 구현 순서 · 테스트 전략 · 기술 스택 | 계획 산출물. 결정만 남기고 뺀다 |
 
 ### 3.3 링크와 코드 참조
@@ -227,7 +228,7 @@
 | §3.1 참조 파일 지도 | **면제** | 본문의 파일별 변경 절과 날짜가 있는 인용이 같은 일을 한다. 나중에 붙인 지도는 본문이 읽은 트리가 아니라 그 뒤의 트리를 가리킨다 |
 | §3.2 체크박스 · WI/WU 표 · Phase 로그 | **금지 — 경계 뒤 절에서도** | 본문은 고치지 않으므로 거기 박힌 진행 상태는 영원히 틀린 채 남는다. 무엇이 열려 있는지는 [`../backlog/`](../backlog/) 가 정본이다 |
 | §3.2 "착수 전 기록" · rev.1/rev.2 정정 이력 | **뒤집힌다.** 정정은 본문에 반영하지 않고 경계 뒤 절에 적는다. 승인된 본문 안의 재확인 기록과 개정 메모는 본문으로 남는다 | 흔적을 지우면 승인할 때 무엇을 믿었는지가 사라진다. 이 기록이 있는 이유가 그것이다 |
-| §3.2 사용법 · 설정 예시 · 트러블슈팅 | **금지.** 예외 하나 — 결정이 설정의 모양 자체일 때(키 이름 · 중첩 · 표기) 그 모양을 보인 조각은 본문에 남는다. 그 기능의 사용 가이드는 여전히 [`../features/`](../features/) 에 따로 둔다 | 조각을 빼면 결정이 빠진다. 운영 방법은 결정이 아니다 |
+| §3.2 사용법 · 설정 예시 · 트러블슈팅 | **금지.** 예외 하나 — 결정이 설정의 모양 자체일 때(키 이름 · 중첩 · 표기) 그 모양을 보인 조각은 본문에 남는다. 그 기능의 사용 가이드는 여전히 [`../features/`](../features/README.md) 에 따로 둔다 | 조각을 빼면 결정이 빠진다. 운영 방법은 결정이 아니다 |
 | §3.2 구현 순서 · 테스트 전략 · 기술 스택 | **면제** — 경계 앞뒤 모두 | 리뷰가 승인한 것이 그 계획이고, 경계 뒤 절의 이탈은 그 계획을 기준으로만 뜻을 갖는다. 기준 커밋에 묶여 있으므로 지금의 테스트를 서술한다고 읽히지 않는다 |
 | §3.3 상대 경로 링크 | **적용** | `scripts/check-doc-links.py` 가 모든 문서를 검사한다 |
 | §3.3 본문에 `file:line` 금지 | **면제.** 대신 인용마다 날짜를 복원할 수 있어야 한다 — 아래 "인용의 날짜" | 줄 번호가 다음 커밋에 틀린다는 이유는 참이다. 그러나 어느 커밋의 줄인지 복원할 수 있는 인용은 틀린 것이 아니라 날짜가 지난 것이다 |

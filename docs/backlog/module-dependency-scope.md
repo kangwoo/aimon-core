@@ -1,4 +1,4 @@
-# 백엔드 모듈의 POM 스코프와 테스트 클래스패스 버전 — 등록 항목 3건 (열림 2 · 닫힘 1)
+# 백엔드 모듈의 POM 스코프와 테스트 클래스패스 버전 — 등록 항목 4건 (열림 2 · 닫힘 2)
 
 `.claude/rules/code-style.md` 와 `.claude/rules/architecture.md` 가 같은 규칙을 두 번 적고 있다 —
 **implementation 모듈은 `implementation(project(":aimon-core"))` 를 쓰고, 파사드만 `api()` 를 쓴다.**
@@ -191,7 +191,7 @@ Boot 올림이 여는 차이를 테스트가 발행 버전을 따라가게 해�
 **D-3 에 미치는 것.** 받아들인 목록은 늘지 않았다. `aimon-cli` 를 포함해 같은 블록을 가진 모듈이 셋이 되었으므로, D-3 의
 마지막 트리거(Gradle 올림이 `shouldResolveConsistentlyWith` 를 바꿀 때)가 닿는 자리도 셋이 되었다.
 
-### D-3 — 테스트와 발행 버전의 차이를 적은 기록을 아무것도 검사하지 않는다 · **열림 · 결정 대기**
+### D-3 — 테스트와 발행 버전의 차이를 적은 기록을 아무것도 검사하지 않는다 · **닫힘** *(2026-10-05)*
 
 **무엇** — 모듈의 `runtimeClasspath` 와 `testRuntimeClasspath`(원한다면 `testCompileClasspath` 도)의 버전이
 기록된 목록 밖에서 어긋나면 실패하는 검사를 둘지 결정한다.
@@ -219,6 +219,42 @@ Boot 올림이 여는 차이를 테스트가 발행 버전을 따라가게 해�
 - Gradle 을 올릴 때 — `aimon-cli` 가 테스트 클래스패스를 맞추는 `shouldResolveConsistentlyWith` 는 `@Incubating` 이다
   (#120). 없어지면 모든 빌드가 설정 단계에서 멈춘다. 동작만 바뀌면 아무것도 실패하지 않은 채 그 모듈의 테스트가 다시
   `spring-boot-starter-test` 가 올린 버전 위에서 돌 수 있다. 그것을 알아챌 것이 이 검사다.
+
+#### 닫힘 (2026-10-05)
+
+**결정 (2026-10-05): 검사를 둔다.** `checkTestClasspathVersions` 가 `checkAll` 에 들어갔다(`272dbd24`). 받아들인 차이는
+`gradle/test-classpath-version-differences.txt` 에 버전과 이유와 함께 적고, 기록되지 않은 차이 · 버전이 움직인 기록 · 사라진
+기록 · 없는 모듈을 가리키는 줄에 실패한다. 구성 캐시와 맞고 구성 시점에 아무것도 풀지 않는다.
+
+- **첫 실행이 이 항목의 전제를 증명했다.** 23개 모듈 중 7개에서 차이 10건 — 기록되어 있고 참인 것 6, **기록되어 있지만 이미
+  사라진 것 1**(스타터의 `error_prone_annotations`), **어디에도 기록된 적 없는 것 4**(D-4).
+- `testCompileClasspath` 축은 넣지 않았다 — 17개 모듈에 43건이다.
+
+- 첫 구현은 해석되지 않는 의존성을 "클래스패스에 없음" 으로 읽어, 부분 그래프를 비교하고 유효한 기록을 지우라고 안내했다. 리뷰가
+  잡았다 — 이제 어느 쪽 그래프든 해석되지 않는 좌표가 있으면 **아무것도 비교하기 전에** 그것을 말하며 실패한다(`d5031a2d`).
+
+**알아 둘 것.** 기록된 버전을 움직이는 의존성 올림은 이제 `checkAll` 을 실패시킨다(Dependabot PR 포함). 그것이 이 항목의
+트리거였지만 빈도는 모른다.
+
+---
+
+### D-4 — 첫 검사가 찾은, 기록된 적 없는 테스트 클래스패스 차이 넷 · **열림 · 결정 대기**
+
+*(2026-10-05 등록. 출처는 D-3 의 첫 실행.)*
+
+**무엇** — 넷을 각각 맞출지 받아들일지 정한다. 지금은 `gradle/test-classpath-version-differences.txt` 에 `UNDECIDED` 로 적혀
+있다 — 적지 않으면 검사가 빨간 채로 시작한다.
+
+| 모듈 | 라이브러리 | 출하 → 테스트 | 높은 쪽이 오는 곳 |
+|---|---|---|---|
+| `aimon-rewake-webhook` | `jakarta.annotation-api` | 2.1.1 → 3.0.0 | D-2 가 opensearch 에서 맞춘 것과 같은 출처 |
+| `aimon-session-redis` | `jspecify` | 1.0.0 → 1.0.1 | — |
+| `aimon-spring-boot-starter` | `micrometer-observation` | 1.16.7 → 1.17.1 | 그 모듈의 actuator 테스트 의존성 |
+| `aimon-spring-boot-starter` | `micrometer-commons` | 1.16.7 → 1.17.1 | 같다 |
+
+**왜 — 관측 가능한 결과** 그 모듈들의 테스트는 출하하는 것과 다른 버전 위에서 돈다. 스타터의 둘은 주석이 아니라 **코드 jar** 다.
+
+**언제 다시 볼까** — D-2 를 닫을 때 쓴 기준(맞추는 쪽)을 다시 적용하면 된다. `UNDECIDED` 줄은 누가 그 파일을 열 때마다 보인다.
 
 ---
 

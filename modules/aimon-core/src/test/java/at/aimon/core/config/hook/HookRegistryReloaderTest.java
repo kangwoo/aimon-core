@@ -25,7 +25,6 @@ import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.HookExecutionManager;
@@ -50,8 +49,7 @@ class HookRegistryReloaderTest {
     private static final ShellActionExecutor SHELL_EXECUTOR = new HostShellActionExecutor(
             org.mockito.Mockito.mock(VirtualShell.class));
 
-    private static final UserLocale ENV = UserLocale.createDefault();
-    private static final ReloadInvoker INVOKER = new ReloadInvoker(InvokerType.MAIN_AGENT, "main", ENV);
+    private static final ReloadInvoker INVOKER = new ReloadInvoker(InvokerType.MAIN_AGENT, "main");
 
     @TempDir
     Path userDir;
@@ -105,10 +103,23 @@ class HookRegistryReloaderTest {
         final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry, manager,
                 INVOKER);
 
-        assertThat(reloader.bootstrap()).isTrue();
+        reloader.loadInitial();
         assertThat(registry.getHooks(HookEventType.PRE_TOOL)).hasSize(1);
         assertThat(reloader.getManagedHookCount()).isEqualTo(1);
         verify(manager, never()).executeOnConfigReload(any());
+    }
+
+    @Test
+    @SuppressWarnings("deprecation")
+    void theDeprecatedBootstrapStillLoadsAndAnswersTrue() throws Exception {
+        writeProjectHooks("{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"Bash\",\"hooks\":["
+                + "{\"type\":\"command\",\"command\":\"echo hi\"}]}]}}");
+        final HookRegistry registry = new DefaultHookRegistry();
+        final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry, null,
+                INVOKER);
+
+        assertThat(reloader.bootstrap()).isTrue();
+        assertThat(registry.getHooks(HookEventType.PRE_TOOL)).hasSize(1);
     }
 
     @Test
@@ -117,7 +128,7 @@ class HookRegistryReloaderTest {
         final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry, null,
                 INVOKER);
 
-        assertThat(reloader.bootstrap()).isTrue();
+        reloader.loadInitial();
         assertThat(registry.isEmpty()).isTrue();
         assertThat(reloader.getManagedHookCount()).isZero();
     }
@@ -134,7 +145,7 @@ class HookRegistryReloaderTest {
         final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry, manager,
                 INVOKER);
 
-        assertThatThrownBy(reloader::bootstrap).isInstanceOf(HookConfigParseException.class)
+        assertThatThrownBy(reloader::loadInitial).isInstanceOf(HookConfigParseException.class)
                 .hasMessageContaining(projectHooksFile().toAbsolutePath().toString())
                 .hasMessageContaining("(PROJECT layer) is invalid");
         assertThat(registry.isEmpty()).isTrue();
@@ -151,7 +162,7 @@ class HookRegistryReloaderTest {
         when(manager.executeOnConfigReload(any())).thenReturn(List.of());
         final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry, manager,
                 INVOKER);
-        assertThat(reloader.bootstrap()).isTrue();
+        reloader.loadInitial();
         final List<PreToolHook> before = List.copyOf(registry.getHooks(HookEventType.PRE_TOOL));
 
         // The file is replaced by a directory: there, but not readable as a config. Before EE-71 this layer was
@@ -178,7 +189,7 @@ class HookRegistryReloaderTest {
         final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry, manager,
                 INVOKER);
 
-        assertThat(reloader.bootstrap()).isTrue();
+        reloader.loadInitial();
         final List<PreToolHook> firstSnapshot = List.copyOf(registry.getHooks(HookEventType.PRE_TOOL));
         assertThat(firstSnapshot).hasSize(1);
 
@@ -214,7 +225,7 @@ class HookRegistryReloaderTest {
 
         final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry, null,
                 INVOKER);
-        assertThat(reloader.bootstrap()).isTrue();
+        reloader.loadInitial();
         assertThat(registry.getHooks(HookEventType.PRE_TOOL)).hasSize(2).contains(external);
 
         writeProjectHooks("{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"Read\",\"hooks\":["
@@ -234,7 +245,7 @@ class HookRegistryReloaderTest {
         when(manager.executeOnConfigReload(any())).thenReturn(List.of());
         final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry, manager,
                 INVOKER);
-        assertThat(reloader.bootstrap()).isTrue();
+        reloader.loadInitial();
         final List<PreToolHook> beforeFailure = List.copyOf(registry.getHooks(HookEventType.PRE_TOOL));
 
         // Replace with malformed JSON to force a parse failure on reload.
@@ -260,7 +271,7 @@ class HookRegistryReloaderTest {
         final HookRegistry registry = new DefaultHookRegistry();
         final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry, null,
                 INVOKER);
-        assertThat(reloader.bootstrap()).isTrue();
+        reloader.loadInitial();
 
         writeProjectHooks("{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"Read\",\"hooks\":["
                 + "{\"type\":\"command\",\"command\":\"y\"}]}]}}");
@@ -284,7 +295,7 @@ class HookRegistryReloaderTest {
         final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry, manager,
                 INVOKER);
 
-        assertThat(reloader.bootstrap()).isTrue();
+        reloader.loadInitial();
         final List<PreToolHook> oldHooks = List.copyOf(registry.getHooks(HookEventType.PRE_TOOL));
         assertThat(oldHooks).hasSize(2);
 
@@ -329,7 +340,7 @@ class HookRegistryReloaderTest {
         final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry, null,
                 INVOKER, rewakeService);
 
-        assertThat(reloader.bootstrap()).isTrue();
+        reloader.loadInitial();
 
         // Bootstrap has no prior managed hooks, so no ids are "removed" — cancel must not be invoked.
         verifyNoInteractions(rewakeService);
@@ -345,7 +356,7 @@ class HookRegistryReloaderTest {
         when(rewakeService.cancelByOriginatingHookId(anyString())).thenReturn(0);
         final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry, null,
                 INVOKER, rewakeService);
-        assertThat(reloader.bootstrap()).isTrue();
+        reloader.loadInitial();
 
         // Drop the only hook by replacing the config with an empty hooks block.
         writeProjectHooks("{\"hooks\":{}}");
@@ -366,7 +377,7 @@ class HookRegistryReloaderTest {
         final RewakeService rewakeService = mock(RewakeService.class);
         final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry, null,
                 INVOKER, rewakeService);
-        assertThat(reloader.bootstrap()).isTrue();
+        reloader.loadInitial();
 
         // The matcher changed but the hook still sits at the same position → its hookId is unchanged, so the rewakes
         // it owns must survive the reload.
@@ -387,7 +398,7 @@ class HookRegistryReloaderTest {
         final RewakeService rewakeService = mock(RewakeService.class);
         final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry, null,
                 INVOKER, rewakeService);
-        assertThat(reloader.bootstrap()).isTrue();
+        reloader.loadInitial();
 
         registry.armFailureCounter();
         writeProjectHooks("{\"hooks\":{\"PreToolUse\":["
@@ -414,7 +425,7 @@ class HookRegistryReloaderTest {
                 .thenThrow(new IllegalStateException("simulated cancel failure"));
         final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry, manager,
                 INVOKER, rewakeService);
-        assertThat(reloader.bootstrap()).isTrue();
+        reloader.loadInitial();
 
         writeProjectHooks("{\"hooks\":{}}");
         // Reload still reports success because the swap committed before the (best-effort) cancel ran.

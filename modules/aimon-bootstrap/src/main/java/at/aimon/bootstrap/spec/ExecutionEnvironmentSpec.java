@@ -37,9 +37,11 @@ public final class ExecutionEnvironmentSpec {
     private final long maxStagedBytes;
     private final boolean controlWritable;
     private final boolean contentSearch;
+    private final boolean contentHashStamps;
     private final Duration backgroundCommandTimeout;
 
     private ExecutionEnvironmentSpec(Builder builder) {
+        this.contentHashStamps = builder.contentHashStamps;
         this.providerSupplier = builder.providerSupplier;
         this.sharedProvider = builder.sharedProvider;
         if (builder.maxStagedBytes < 0) {
@@ -137,6 +139,18 @@ public final class ExecutionEnvironmentSpec {
         return contentSearch;
     }
 
+    /**
+     * Whether the local provider's workspaces report a content hash as each file's etag, so the file tools' read
+     * stamps compare content rather than size and modification time. Off by default: it costs a full read of the
+     * file per stamp. It applies to the workspaces the stack builds from a workspace root; a file system the
+     * application supplies ({@code FileSystemSpec}'s instance or factory) carries its own setting.
+     *
+     * @return {@code true} to hash file content into read stamps
+     */
+    public boolean isContentHashStamps() {
+        return contentHashStamps;
+    }
+
     /** @return a new builder */
     public static Builder builder() {
         return new Builder();
@@ -147,7 +161,8 @@ public final class ExecutionEnvironmentSpec {
         return "ExecutionEnvironmentSpec{provider="
                 + (sharedProvider != null ? "shared" : providerSupplier != null ? "supplied" : "local")
                 + ", maxStagedBytes=" + maxStagedBytes + ", controlWritable=" + controlWritable + ", contentSearch="
-                + contentSearch + ", backgroundCommandTimeout=" + backgroundCommandTimeout + '}';
+                + contentSearch + ", contentHashStamps=" + contentHashStamps + ", backgroundCommandTimeout="
+                + backgroundCommandTimeout + '}';
     }
 
     /** Builder for {@link ExecutionEnvironmentSpec}. */
@@ -157,6 +172,7 @@ public final class ExecutionEnvironmentSpec {
         private long maxStagedBytes = DEFAULT_MAX_STAGED_BYTES;
         private boolean controlWritable;
         private boolean contentSearch = true;
+        private boolean contentHashStamps;
         private Duration backgroundCommandTimeout;
 
         private Builder() {
@@ -189,6 +205,18 @@ public final class ExecutionEnvironmentSpec {
          */
         public Builder contentSearch(boolean contentSearch) {
             this.contentSearch = contentSearch;
+            return this;
+        }
+
+        /**
+         * @param contentHashStamps
+         *            whether the local provider's workspace-root workspaces hash file content into their etags, so
+         *            read stamps catch a same-size rewrite on a file system whose modification time counts in whole
+         *            seconds — at the price of a full read of the file per stamp (default {@code false})
+         * @return this builder
+         */
+        public Builder contentHashStamps(boolean contentHashStamps) {
+            this.contentHashStamps = contentHashStamps;
             return this;
         }
 

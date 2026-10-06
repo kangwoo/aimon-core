@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/skill/builtin-agent-skill-guide.md
-source_commit: 4c9b3d2
+source_commit: ff0e6ff2
 ---
 
 # Built-in Agent/Skill Guide
@@ -199,7 +199,7 @@ hooks:
 Review the following: $1
 ```
 
-> The `shell` action only works in an environment where the host has wired `DefaultShellActionExecutor` (aimon-cli, for instance). The command runs not on the host but in **the execution environment's shell of the execution the hook fires in** — where the same skill's `Bash` calls run, with the workspace as its working directory. The hooks fire **only in the agent this skill forks (and in forks that agent starts)** — not in another session of the same agent, and not for the caller of the skill. A `shell` hook on a guard event such as `preTool` blocks when its command **could not run** (no execution environment, a timeout, a shell failure); for a hook that only observes, put `failOpen: true` on the entry. For the available environment variables and the action semantics, see [AIMON Skill Extensions / hooks](../../references/aimon-skill-extensions.md#hooks--스킬-단위-hook-스코프).
+> The `shell` action only works in an environment where the host has wired `DefaultShellActionExecutor` (aimon-cli, for instance). The command runs not on the host but in **the execution environment's shell of the execution the hook fires in** — where the same skill's `Bash` calls run, with the workspace as its working directory. The hooks fire **only in the agent this skill forks (and in forks that agent starts)** — not in another session of the same agent, and not for the caller of the skill. A `shell` hook on a guard event such as `preTool` blocks when its command **could not run** (no execution environment, a timeout, a shell failure, or exit 126 / 127 — the script is missing or not executable where the hook runs); for a hook that only observes, put `failOpen: true` on the entry. What blocks and what `failOpen` changes is one table: [Hook configuration guide › What a guard blocks](../hook/hook-config-guide.en.md#what-a-guard-blocks). Inside the fork of a skill that has guard hooks (`onStart`, `preTool`, `preCompact`, `permissionRequest`), work that would outlive the skill or run outside it cannot be started — `Task` with `run_in_background`, a background workflow and `ScheduleTask` are refused with a tool error (the guards could not follow). A hook command reaches the scripts in its own skill directory through the environment variable `$AIMON_SKILL_DIR` (`bash "$AIMON_SKILL_DIR/scripts/guard.sh"`) — the path the skill was staged to in the environment the hook runs in; if it cannot be staged, the command does not run. For the available environment variables and the action semantics, see [AIMON Skill Extensions / hooks](../../references/aimon-skill-extensions.md#hooks--스킬-단위-hook-스코프).
 
 ## Invoking a fork-mode skill
 
@@ -208,7 +208,7 @@ What happens when the `review` example above (`execution.mode: fork`, `agent: co
 ### Preconditions
 
 1. A SubAgent named `code-reviewer` must be registered (`.aimon/agents/code-reviewer.md`, or a built-in bundle). If it is not, the fork fails immediately without any LLM or SubAgent call.
-2. The host must wire the whole SubAgent infrastructure (the six pieces: `Agent`, `SubagentRegistry`, `ToolRegistry`, `HookRegistry`, `UserLocale`, `SubagentExecutionManager`). `aimon-cli` satisfies this by default. Miss any one of them and a fork-mode skill invocation fails with `fork execution is not configured` — deliberate behaviour, so that an inline-only deployment remains possible.
+2. The host must wire the whole SubAgent infrastructure (the five pieces: `Agent`, `SubagentRegistry`, `ToolRegistry`, `HookRegistry`, `SubagentExecutionManager`). `aimon-cli` satisfies this by default. Miss any one of them and a fork-mode skill invocation fails with `fork execution is not configured` — deliberate behaviour, so that an inline-only deployment remains possible.
 
 ### A fork applies both allow-lists together
 
@@ -417,10 +417,24 @@ that path as well.
   scripts through an interpreter — `bash x.sh`, `python3 x.py` (not `./x.sh`).
 - **Content-addressed.** `contentKey` hashes the whole skill directory: the same content gives the same path, a change
   gives a new one. The hash is computed once when the registry reads the skill — so startup reads every skill file once.
-- **After editing a skill on disk**, staging that skill fails until the registry is reloaded or the application is
-  restarted, so that files never get copied out of step with the version that was loaded.
+- **After editing a skill on disk**, the skill still works, and what gets copied depends on when you edited it. If this
+  process has **not used the skill yet** and no copy of the loaded version exists, the files on disk now are copied to the
+  `contentKey` path of that content, with one warning in the log. If you edited it **after it was used**, the copy of the
+  loaded version keeps being served. Either way, what was read from `SKILL.md` — the body, tool restrictions, hooks —
+  changes only when the registry is reloaded or the application is restarted.
 - **`.stageignore`** (a gitignore subset: globs, `dir/`, `!`, `#`) in the skill directory keeps large assets out of the
   copy. One skill directory stages at most 50 MB by default (starter property `aimon.environment.staging.max-bytes`).
+  A skill refused for being over the limit stages from the next call on, without a restart, once the large files are
+  excluded with `.stageignore` or deleted. While it is still over, the error gives its current size in bytes.
+- **A skill installed as a link.** In the `skills/` directory of a bundle read from disk, a skill directory — or a
+  file or directory inside one — may be a symbolic link. A link is followed only when its real path lies inside
+  `skills/` or inside an **allowed link root**; a skill with a link that points anywhere else is not loaded (that skill
+  only, with a warning naming the link). There are no allowed link roots by default. If a shared helper is linked as
+  `skills/foo -> /opt/shared-skills/foo`, name that directory — starter `aimon.skill.allowed-link-roots`, CLI
+  `agent.allowedSkillLinkRoots`, or `AimonStackSpec.builder().allowedSkillLinkRoots(...)` when assembling by hand.
+  Absolute paths only: a relative path, an empty entry or `/` fails startup, and a directory that does not exist is
+  accepted and allows nothing. A bundle inside a jar has no links, so the setting does not reach it, and user skills
+  under `.aimon/skills` are read through the workspace file system, which follows no link at all.
 - `.aimon-staged/` holds copies only. The local provider writes `.aimon-staged/.gitignore` (`*`) with the first
   copy, so it does not need a line in the project's `.gitignore` (an existing file there is left alone).
 
@@ -428,7 +442,11 @@ that path as well.
 
 The five below are all the built-in variables `DefaultSkillContentRenderer` substitutes in a skill body. They are for
 **substitution in the body text**, and are an entirely separate channel from the shell process environment variables
-injected into declarative hooks (`SkillHookEnv`'s `AIMON_*`) — the renderer never reads `System.getenv`.
+injected into declarative hooks (`SkillHookEnv`'s `AIMON_*`) — the renderer never reads `System.getenv`. One name
+exists on both sides, `AIMON_SKILL_DIR`: in the body, `${AIMON_SKILL_DIR}` is replaced with the path staged into the
+environment of the execution that invoked the skill, and in a hook command the environment variable `$AIMON_SKILL_DIR`
+is the path staged into the environment of **the execution the hook fires in** (the skill's fork). When the fork is
+placed in another environment the two values differ.
 
 | Variable | Value | Scope |
 |------|----|------|

@@ -61,6 +61,31 @@ class CompositeCommandExecutorRoutingTest {
     }
 
     @Test
+    @DisplayName("L-26: DirectCommandExecutor keeps a truncated result truncated when it adds metadata")
+    void directExecutorKeepsATruncatedResultTruncated() {
+        // No in-tree DirectExecutable runs a model, but the SPI lets one: re-wrapping its result to add metadata must
+        // not turn a cut answer back into a whole one.
+        final class CutCommand extends SystemCommand implements DirectExecutable {
+            CutCommand() {
+                super("direct-cut", "stub");
+            }
+
+            @Override
+            public CommandExecutionResult execute(CommandExecutionContext context,
+                    DirectCommandExecutionRequest request) {
+                return CommandExecutionResult.truncated("partial", null);
+            }
+        }
+
+        CommandExecutionResult result = directExecutor.execute(buildContext(new CutCommand()), buildRequest());
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.isTruncated()).isTrue();
+        assertThat(result.getResponse()).isEqualTo("partial");
+        assertThat(result.getMetadata()).isPresent();
+    }
+
+    @Test
     @DisplayName("DirectExecutable routes to DirectCommandExecutor")
     void shouldRouteDirectExecutable() {
         CompositeCommandExecutor composite = new CompositeCommandExecutor(directExecutor, skillExecutor);

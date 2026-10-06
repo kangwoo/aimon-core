@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/scope-model.md
-source_commit: 89a8ed4
+source_commit: ad0acfb
 ---
 
 # Scope Model
@@ -150,7 +150,7 @@ Every item on this list is actually written into a code comment somewhere.
 - **Do not close `WorkflowRunner` from the application shell.** And conversely, do not leave it
   unclosed on the assumption that some other layer will — whoever created it closes it.
 - **Do not close a borrowed collaborator.** `WorkflowRunner` borrows `SubagentExecutionManager`
-  and the base `SubagentExecutionEnvironment`, and closes only the pool it owns.
+  and the base `SubagentLaunchContext`, and closes only the pool it owns.
 - **Do not mint a new `AgentRuntimeId` per execution.** It is deterministic, of the form
   `agent:<name>` / `agent:<name>:<discriminator>`, and is issued via `from(Agent)` /
   `from(Agent, String)`. `generate()` **does not exist** — had it existed, a cron re-fire could
@@ -225,6 +225,12 @@ code.
   `conversation_locks` / `conversation_inbox` / `conversation_signals`, and the Postgres tables
   and channels are `conversation_*`. This was **deliberately frozen** (§7). Only the Java
   identifiers were renamed, so the names looking mismatched is the normal state.
+- **`AssistantTextStreamReset` / `AssistantTextStreamCompleted`** — they bound **one whole
+  attempt**, not the text channel. The reasoning channel (`AssistantReasoningDelta`) closes here
+  too, so a renderer drawing both channels clears both on `Reset` and closes both on `Completed`.
+  Read literally, the names suggest "only the text was reset", which is wrong. They are public
+  event types and the payload frame names that cross a node boundary, so they were **not
+  renamed** (noted in the javadoc of both classes).
 
 The word `Session` still points at several lifetimes — the persistent `SessionRecord`, a
 `LiveSessionCache` entry, `ReplSession` (one CLI run), `BrowserSession` (a Playwright context).

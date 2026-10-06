@@ -34,6 +34,7 @@ public final class LlmModel {
     private final Double presencePenalty;
     private final Double frequencyPenalty;
     private final ReasoningEffort reasoningEffort;
+    private final ReasoningSummary reasoningSummary;
     private final Duration requestTimeout;
 
     private LlmModel(Builder builder) {
@@ -44,6 +45,7 @@ public final class LlmModel {
         presencePenalty = builder.presencePenalty;
         frequencyPenalty = builder.frequencyPenalty;
         reasoningEffort = builder.reasoningEffort;
+        reasoningSummary = builder.reasoningSummary;
         requestTimeout = builder.requestTimeout;
 
         // Validate ranges.
@@ -56,24 +58,34 @@ public final class LlmModel {
         // deployment at startup rather than on its first LLM call. What each provider then does with a legal-but-
         // divergent value is the provider's to report, and each one must say so at a level an operator sees (see
         // AnthropicLlmClient#reportDivergence).
-        if (temperature != null && (temperature < 0.0 || temperature > 2.0)) {
+        if (outside(temperature, 0.0, 2.0)) {
             throw new IllegalArgumentException("Temperature must be between 0.0 and 2.0");
         }
         if (maxTokens != null && maxTokens <= 0) {
             throw new IllegalArgumentException("Max tokens must be positive");
         }
-        if (topP != null && (topP < 0.0 || topP > 1.0)) {
+        if (outside(topP, 0.0, 1.0)) {
             throw new IllegalArgumentException("Top P must be between 0.0 and 1.0");
         }
-        if (presencePenalty != null && (presencePenalty < -2.0 || presencePenalty > 2.0)) {
+        if (outside(presencePenalty, -2.0, 2.0)) {
             throw new IllegalArgumentException("Presence penalty must be between -2.0 and 2.0");
         }
-        if (frequencyPenalty != null && (frequencyPenalty < -2.0 || frequencyPenalty > 2.0)) {
+        if (outside(frequencyPenalty, -2.0, 2.0)) {
             throw new IllegalArgumentException("Frequency penalty must be between -2.0 and 2.0");
         }
         if (requestTimeout != null && (requestTimeout.isNegative() || requestTimeout.isZero())) {
             throw new IllegalArgumentException("Request timeout must be positive");
         }
+    }
+
+    /**
+     * Whether a value that is present lies outside {@code [low, high]}. The test is "not inside", never "below or
+     * above": {@code NaN} compares false with both bounds, so the second form lets it through, and a {@code NaN} that
+     * a configuration key or a front matter value can spell would otherwise reach a request. The infinities are
+     * outside either way.
+     */
+    private static boolean outside(Double value, double low, double high) {
+        return value != null && !(value >= low && value <= high);
     }
 
     /**
@@ -154,6 +166,20 @@ public final class LlmModel {
     }
 
     /**
+     * Gets whether this call asks the provider for a reasoning summary, and how detailed a one.
+     *
+     * <p>
+     * Empty means the caller says nothing and the provider follows its own deployment setting. A value — including
+     * {@link ReasoningSummary#NONE} — takes precedence over that setting. A provider or model that has no such
+     * request parameter ignores it and reports that once.
+     *
+     * @return Optional containing the reasoning summary request, or empty if not set
+     */
+    public Optional<ReasoningSummary> getReasoningSummary() {
+        return Optional.ofNullable(reasoningSummary);
+    }
+
+    /**
      * Gets the per-request worst-case timeout ceiling (safety net).
      *
      * <p>
@@ -180,20 +206,21 @@ public final class LlmModel {
                 && Objects.equals(maxTokens, that.maxTokens) && Objects.equals(topP, that.topP)
                 && Objects.equals(presencePenalty, that.presencePenalty)
                 && Objects.equals(frequencyPenalty, that.frequencyPenalty) && reasoningEffort == that.reasoningEffort
-                && Objects.equals(requestTimeout, that.requestTimeout);
+                && reasoningSummary == that.reasoningSummary && Objects.equals(requestTimeout, that.requestTimeout);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(name, temperature, maxTokens, topP, presencePenalty, frequencyPenalty, reasoningEffort,
-                requestTimeout);
+                reasoningSummary, requestTimeout);
     }
 
     @Override
     public String toString() {
         return "LlmModel{" + "model='" + name + '\'' + ", temperature=" + temperature + ", maxTokens=" + maxTokens
                 + ", topP=" + topP + ", presencePenalty=" + presencePenalty + ", frequencyPenalty=" + frequencyPenalty
-                + ", reasoningEffort=" + reasoningEffort + ", requestTimeout=" + requestTimeout + '}';
+                + ", reasoningEffort=" + reasoningEffort + ", reasoningSummary=" + reasoningSummary
+                + ", requestTimeout=" + requestTimeout + '}';
     }
 
     /**
@@ -221,6 +248,7 @@ public final class LlmModel {
         private Double presencePenalty;
         private Double frequencyPenalty;
         private ReasoningEffort reasoningEffort;
+        private ReasoningSummary reasoningSummary;
         private Duration requestTimeout;
 
         private Builder() {
@@ -342,6 +370,23 @@ public final class LlmModel {
          */
         public Builder reasoningEffort(ReasoningEffort reasoningEffort) {
             this.reasoningEffort = reasoningEffort;
+            return this;
+        }
+
+        /**
+         * Sets whether this call asks the provider for a reasoning summary, and how detailed a one.
+         *
+         * <p>
+         * A value set here takes precedence over the provider's deployment setting, in both directions:
+         * {@link ReasoningSummary#NONE} asks for no summary where the deployment asks for one, and a level asks for
+         * one where the deployment asks for none. Leaving it unset defers to the deployment.
+         *
+         * @param reasoningSummary
+         *            The reasoning summary request; {@code null} leaves it unset
+         * @return This builder
+         */
+        public Builder reasoningSummary(ReasoningSummary reasoningSummary) {
+            this.reasoningSummary = reasoningSummary;
             return this;
         }
 

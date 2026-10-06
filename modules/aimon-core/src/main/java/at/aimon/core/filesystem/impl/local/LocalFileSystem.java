@@ -16,8 +16,12 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -258,9 +262,8 @@ public final class LocalFileSystem implements VirtualFileSystem {
             final BasicFileAttributes attrs = Files.readAttributes(targetPath, BasicFileAttributes.class);
 
             if (attrs.isDirectory()) {
-                return FileMetadata.builder().path(path).size(0).directory(true)
-                        .createdAt(attrs.creationTime().toInstant()).modifiedAt(attrs.lastModifiedTime().toInstant())
-                        .build();
+                return FileMetadata.builder().path(path).size(0).directory(true).createdAt(createdAt(attrs))
+                        .modifiedAt(attrs.lastModifiedTime().toInstant()).build();
             }
 
             if (!attrs.isRegularFile()) {
@@ -270,11 +273,48 @@ public final class LocalFileSystem implements VirtualFileSystem {
             // Detect MIME type based on file content and extension
             final String mimeType = MimeTypeDetector.detectMimeType(targetPath);
 
-            return FileMetadata.builder().path(path).size(attrs.size()).createdAt(attrs.creationTime().toInstant())
-                    .modifiedAt(attrs.lastModifiedTime().toInstant()).mimeType(mimeType).build();
+            // Optional, and a full read of the file when on: LocalFileSystemConfig.Builder#contentHashEtag (EE-5).
+            final String etag = config.isContentHashEtag() ? contentHashEtag(targetPath) : null;
+
+            return FileMetadata.builder().path(path).size(attrs.size()).createdAt(createdAt(attrs))
+                    .modifiedAt(attrs.lastModifiedTime().toInstant()).mimeType(mimeType).etag(etag).build();
         } catch (IOException e) {
             throw new BackendConnectionException(BackendType.LOCAL, "Failed to read metadata for file: " + path, e);
         }
+    }
+
+    /**
+     * The creation time to report: the file's own, unless its modification time is earlier.
+     *
+     * <p>
+     * {@link FileMetadata} refuses a modification time before the creation time, and a disk can hold exactly that.
+     * Where the platform records a birth time that nothing rewrites (Linux, through {@code statx}), any file whose
+     * modification time was carried over from elsewhere — {@code cp -p}, an extracted archive, {@code rsync -t},
+     * {@code touch -d} — was created after it was "last modified". Reporting the earlier of the two keeps the
+     * metadata readable; {@code ReadOnlyLocalFileSystem} answers the same way. On macOS the case does not arise:
+     * setting an earlier modification time moves the birth time back with it.
+     */
+    private static Instant createdAt(BasicFileAttributes attrs) {
+        final Instant created = attrs.creationTime().toInstant();
+        final Instant modified = attrs.lastModifiedTime().toInstant();
+        return created.isAfter(modified) ? modified : created;
+    }
+
+    /** {@code "sha256:"} plus the lowercase hex SHA-256 of a file's bytes, streamed through the configured buffer. */
+    private String contentHashEtag(Path file) throws IOException {
+        final MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is required of every Java platform", e);
+        }
+        final byte[] buffer = new byte[config.getBufferSize()];
+        try (InputStream in = Files.newInputStream(file)) {
+            for (int read = in.read(buffer); read >= 0; read = in.read(buffer)) {
+                digest.update(buffer, 0, read);
+            }
+        }
+        return "sha256:" + HexFormat.of().formatHex(digest.digest());
     }
 
     @Override

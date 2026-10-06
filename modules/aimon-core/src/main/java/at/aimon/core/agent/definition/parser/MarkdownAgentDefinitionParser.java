@@ -11,6 +11,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
@@ -22,8 +24,10 @@ import at.aimon.core.agent.definition.exception.AgentDefinitionParseException;
 import at.aimon.core.agent.tool.exception.InvalidToolSpecException;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.base.DefinitionAttributes;
+import at.aimon.core.base.text.YamlDuplicateKeys;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.ReasoningEffort;
+import at.aimon.core.llm.ReasoningSummary;
 
 /**
  * Parses agent loader files with YAML frontmatter.
@@ -42,6 +46,7 @@ import at.aimon.core.llm.ReasoningEffort;
  *   name: gpt5.1
  *   temperature: 0.7
  *   reasoningEffort: high
+ *   reasoningSummary: auto
  * tags:
  *   - coding
  *   - java
@@ -57,6 +62,8 @@ import at.aimon.core.llm.ReasoningEffort;
  * </pre>
  */
 public final class MarkdownAgentDefinitionParser implements AgentDefinitionParser {
+    private static final Logger log = LoggerFactory.getLogger(MarkdownAgentDefinitionParser.class);
+
     private static final Version DEFAULT_VERSION = new Version(1, 0, 0);
 
     private static final String FRONTMATTER_DELIMITER = "---";
@@ -103,6 +110,7 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
 
             // Extract metadata
             final String name = extractStringOrElseThrow(frontmatter, "name");
+            warnAboutDuplicateKeys(name, parts[1]);
             final Version version = extractVersion(frontmatter);
             final int maxIterations = extractInt(frontmatter, "maxIterations", Integer.MAX_VALUE);
 
@@ -130,6 +138,23 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
             throw e;
         } catch (Exception e) {
             throw new AgentDefinitionParseException("Failed to parse agent definition", e);
+        }
+    }
+
+    /**
+     * Says so when the front matter writes a key twice.
+     *
+     * <p>
+     * snakeyaml keeps the last value and drops the earlier one before {@link #parse} ever sees a map, so an author
+     * who wrote {@code temperature} twice runs on one of the two with nothing to tell them which. Refusing the file is
+     * not available — see {@link #newYaml()}: a definition that loads today has to keep loading — so the loss is made
+     * visible instead. The CLI configuration file reports the same thing in the same words
+     * ({@code PlaceholderExpandingParser}), and the skill and subagent parsers do too.
+     */
+    private static void warnAboutDuplicateKeys(String name, String frontmatterYaml) {
+        final List<String> duplicated = YamlDuplicateKeys.find(frontmatterYaml);
+        if (!duplicated.isEmpty()) {
+            log.warn("{}", YamlDuplicateKeys.describe("Agent definition '" + name + "'", duplicated));
         }
     }
 
@@ -232,6 +257,9 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
         if (configMap.containsKey("reasoningEffort")) {
             builder.reasoningEffort(extractReasoningEffort(configMap));
         }
+        if (configMap.containsKey("reasoningSummary")) {
+            builder.reasoningSummary(extractReasoningSummary(configMap));
+        }
 
         return builder.build();
     }
@@ -271,6 +299,43 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
         }
         throw new AgentDefinitionParseException(
                 "Invalid model.reasoningEffort: " + value + ". Accepted values: " + accepted + ".");
+    }
+
+    /**
+     * Reads {@code model.reasoningSummary} onto the neutral enum, ignoring case.
+     *
+     * <p>
+     * Read the way {@link #extractReasoningEffort} reads its key: a value that is not one of the constants is an
+     * error naming the key, the value and every accepted spelling, never a substituted default. Three of the four
+     * words are the ones the OpenAI deployment key accepts; {@code none} is the fourth, and it is what an agent writes
+     * to ask for no summary where the deployment asks for one.
+     *
+     * <p>
+     * {@code off} is not accepted. YAML reads an unquoted {@code off} as the boolean {@code false}, so accepting the
+     * quoted word would make the key behave differently with and without quotes; a boolean, an empty value and
+     * {@code ~} are refused for the same reason — none of them is guessed to mean {@code none}.
+     *
+     * @param configMap
+     *            the {@code model} block
+     * @return the matching constant
+     * @throws AgentDefinitionParseException
+     *             naming the key and every accepted spelling when nothing matches
+     */
+    private ReasoningSummary extractReasoningSummary(Map<String, Object> configMap) {
+        final Object value = configMap.get("reasoningSummary");
+        if (value instanceof String written) {
+            for (ReasoningSummary candidate : ReasoningSummary.values()) {
+                if (candidate.name().equalsIgnoreCase(written.trim())) {
+                    return candidate;
+                }
+            }
+        }
+        final StringBuilder accepted = new StringBuilder();
+        for (ReasoningSummary candidate : ReasoningSummary.values()) {
+            accepted.append(accepted.length() == 0 ? "" : ", ").append(candidate.name().toLowerCase(Locale.ROOT));
+        }
+        throw new AgentDefinitionParseException(
+                "Invalid model.reasoningSummary: " + value + ". Accepted values: " + accepted + ".");
     }
 
     /**

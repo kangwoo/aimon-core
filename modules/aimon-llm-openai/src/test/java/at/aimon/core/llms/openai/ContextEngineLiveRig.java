@@ -44,7 +44,6 @@ import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
@@ -167,7 +166,7 @@ final class ContextEngineLiveRig {
                 .commandRegistry(new DefaultCommandRegistry(fileSystem, ".aimon/commands"))
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
                 .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
-                .userLocale(UserLocale.createDefault()).contextEngine(engine).build();
+                .contextEngine(engine).build();
     }
 
     /** A rig over the rolling engine, with a fresh session. */
@@ -232,8 +231,7 @@ final class ContextEngineLiveRig {
     CompactionResult compactNow() {
         final TranscriptBuffer buffer = transcripts.initialize(sessionId, SYSTEM_PROMPT);
         final ContextRequest request = ContextRequest.builder().transcriptBuffer(buffer).systemPrompt(SYSTEM_PROMPT)
-                .model(model).hookRegistry(runtime.getHookRegistry()).userLocale(runtime.getUserLocale())
-                .caller(ContextCaller.session()).build();
+                .model(model).hookRegistry(runtime.getHookRegistry()).caller(ContextCaller.session()).build();
         final CompactionResult result = runtime.getContextEngine().compactNow(request, null);
         if (result.isSuccess()) {
             transcripts.save(buffer);

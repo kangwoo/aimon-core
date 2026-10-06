@@ -590,9 +590,9 @@ class InMemoryModelCapabilityRegistryTest {
         //
         // #69 is what makes this reachable from a configuration file for the first time, since thinkingDialect is the
         // first key whose documented target is a name the built-in table always describes. The mechanism is #46's
-        // and is not changed here; the general remedy -- warn when a declaration shadows a row it does not restate --
-        // is L-8 in docs/backlog/llm-config-surface-open-items.md. This assertion is expected to change only if that
-        // mechanism does.
+        // and is not changed here. L-8 made it audible rather than different: the registry now warns once at
+        // construction (DeclarationShadowWarningTest), and this assertion -- that the row is still replaced, not
+        // merged -- is expected to change only if the mechanism itself does.
         final ModelCapabilities bare = InMemoryModelCapabilityRegistry
                 .withDefaultsExtendedBy(Map.of("claude-sonnet-5",
                         ModelCapabilityDeclaration.builder().thinkingDialect(ThinkingDialect.UNKNOWN).build()))

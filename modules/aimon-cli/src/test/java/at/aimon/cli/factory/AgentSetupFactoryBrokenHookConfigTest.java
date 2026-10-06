@@ -139,6 +139,41 @@ class AgentSetupFactoryBrokenHookConfigTest {
         verify(queues.get(0)).stop();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+    @org.junit.jupiter.params.provider.CsvSource(delimiter = '|', value = {
+            "a guard handler with no command | {\"hooks\":{\"preTool\":[{\"hooks\":[{\"type\":\"command\"}]}]}}"
+                    + " | preTool entry #0, handler #0",
+            "an event name one letter off a guard event"
+                    + " | {\"hooks\":{\"preTol\":[{\"hooks\":[{\"type\":\"deny\",\"reason\":\"no\"}]}]}}"
+                    + " | did you mean 'preTool'",
+            // The CLI runs http handlers, and mcp handlers when it has MCP servers. This configuration has none, so
+            // the guard could never ask (AgentSetupFactoryRemoteHookTest covers the handlers that do run).
+            "an mcp guard, which a CLI with no MCP server cannot run"
+                    + " | {\"hooks\":{\"preTool\":[{\"hooks\":[{\"type\":\"mcp\",\"server\":\"policy\",\"tool\":\"evaluate\"}]}]}}"
+                    + " | no McpActionExecutor is wired"})
+    @DisplayName("a hooks.json that parses but has a guard entry that cannot be applied stops create() the same way")
+    void inapplicableGuardEntryStopsCreate(String what, String json, String expected, @TempDir Path work)
+            throws Exception {
+        final Path hooksFile = Files.createDirectories(home.resolve(".aimon")).resolve("hooks.json");
+        Files.writeString(hooksFile, json);
+        final AgentSetupFactory factory = new AgentSetupFactory(new LlmClientFactory() {
+            @Override
+            public LlmClient create(LlmProviderConfig config) {
+                final LlmClient client = super.create(config);
+                clients.add(client);
+                return client;
+            }
+        }, null);
+
+        assertThatThrownBy(() -> factory.create(config(work.resolve("representations.jsonl"))))
+                .isInstanceOf(ConfigurationException.class)
+                .hasMessageContaining("hooks config " + hooksFile.toAbsolutePath())
+                .hasMessageContaining("(USER layer) is invalid").hasMessageContaining(expected)
+                .hasMessageContaining("fix or remove the file").hasCauseInstanceOf(HookConfigParseException.class);
+        assertThat(stackLog.list).extracting(ILoggingEvent::getFormattedMessage)
+                .anyMatch(message -> message.startsWith("Shutting down AIMON stack"));
+    }
+
     @Test
     @DisplayName("without a hooks.json the same configuration starts")
     void missingHooksJsonStarts(@TempDir Path work) {

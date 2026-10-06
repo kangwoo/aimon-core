@@ -15,7 +15,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -54,7 +53,7 @@ class HostShellActionExecutorTest {
         when(fixed.execute(any(ShellCommand.class), any(ExecutionOptions.class)))
                 .thenReturn(new ShellCommandResult(0, "ok", "", Duration.ofMillis(1)));
         HookContext context = OnStartContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault())
+                .hookRegistry(new DefaultHookRegistry())
                 .executionEnvironment(TestExecutionEnvironments.ofShell(environmentShell)).userMessage("hi").build();
 
         ShellHookOutcome outcome = new HostShellActionExecutor(fixed).run(
@@ -79,7 +78,7 @@ class HostShellActionExecutorTest {
         when(fixed.execute(any(ShellCommand.class), any(ExecutionOptions.class)))
                 .thenReturn(new ShellCommandResult(0, "", "", Duration.ofMillis(1)));
         HookContext context = OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault()).build();
+                .hookRegistry(new DefaultHookRegistry()).build();
 
         ShellHookOutcome outcome = new HostShellActionExecutor(fixed)
                 .run(new ShellAction("true", Duration.ofSeconds(1)), context, Map.of(), null);
@@ -94,7 +93,7 @@ class HostShellActionExecutorTest {
         when(fixed.execute(any(ShellCommand.class), any(ExecutionOptions.class)))
                 .thenThrow(new ShellTimeoutException("timeout", Duration.ofSeconds(1), "", ""));
         HookContext context = OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault()).build();
+                .hookRegistry(new DefaultHookRegistry()).build();
 
         ShellHookOutcome outcome = new HostShellActionExecutor(fixed)
                 .run(new ShellAction("sleep 9", Duration.ofSeconds(1)), context, Map.of(), null);

@@ -45,7 +45,8 @@ thinking 블록 재전송을 끌 수 있어야 한다.
   설정 파일의 스칼라와 매핑 키는 바인딩 **전에** 확장된다
 - 사용 방법과 전체 예시는 운영 가이드([`../../getting-started/aimon-core-integration-via-cli-reference.md`](../../getting-started/aimon-core-integration-via-cli-reference.md),
   [`../../getting-started/embedding-agent-in-application.md`](../../getting-started/embedding-agent-in-application.md))의 몫이다
-- 샘플링 파라미터는 아직 설정 표면이 없다 — 배치만 정해져 있다(§3.2, L-2)
+- 샘플링 값의 **우선순위와 억제**는 [`request-parameters.md`](request-parameters.md) 가 정본이다. 이 문서는 그 값의
+  배포 기본값이 어느 블록의 어느 키인가만 다룬다(§3.2 · §3.3)
 
 ---
 
@@ -60,7 +61,8 @@ thinking 블록 재전송을 끌 수 있어야 한다.
 | 에이전트 frontmatter | camelCase | `model.*` | `MarkdownAgentDefinitionParser.extractModel` | `LlmModel` |
 
 두 표기는 섞이지 않는다. CLI 는 빈 이름을 그대로 쓰고(`@JsonProperty` 없음, 네이밍 전략 없음), 스타터는 Boot 의
-kebab 규칙을 쓴다. 한 표면의 표기로 다른 표면을 쓰면 CLI 는 모르는 필드로 실패하고 스타터는 조용히 무시한다(§6.4).
+kebab 규칙을 쓴다. 한 표면의 표기로 다른 표면을 쓰면 CLI 는 모르는 필드로 실패하고, 스타터는 strict 서브트리 셋 아래에서는 실패하고
+그 밖에서는 조용히 무시한다(§6.4).
 
 ### 2.2 잎 이름
 
@@ -92,9 +94,14 @@ llm:
     thinkingMode: auto
     thinkingDisplay: summarized
     replayThinkingBlocks: true
+    temperature: 0.3                      # 샘플링 기본값 — 이 블록에는 이것 하나다 (§3.3)
   openai:                                 # 벤더 — openai 분기만 읽는다 (provider 가 anthropic 이면 거절된다, §6.3)
     reasoningSummary: auto
     responsesApiEnabled: true             # false 는 모든 요청을 Chat Completions 로 보낸다
+    temperature: 0.2                      # 샘플링 기본값 넷 (§3.3)
+    topP: 0.9
+    presencePenalty: 0.0
+    frequencyPenalty: 0.0
 ```
 
 ```yaml
@@ -165,9 +172,9 @@ CLI 의 `default-config.yaml` 은 `reasoningEffort` 와 `acceptedReasoningEffort
 | `thinkingBudgetTokens` | `llm.anthropic.thinkingBudgetTokens` | `aimon.llm.anthropic.thinking-budget-tokens` | — | **벤더** | 이름 — `budget_tokens` 는 Anthropic 요청 본문의 필드다. 뜻 — 다른 벤더는 생각의 양을 토큰 수로 말하지 않는다 |
 | `replayThinkingBlocks` | `llm.anthropic.replayThinkingBlocks` | `aimon.llm.anthropic.replay-thinking-blocks` | — | **벤더** | 이름 — thinking 블록은 Anthropic 의 서명된 콘텐츠 블록이다 |
 | `thinkingDisplay` | `llm.anthropic.thinkingDisplay` | `aimon.llm.anthropic.thinking-display` | — | **벤더** | 이름 — "thinking" 과 Anthropic `thinking` 객체 안의 필드명 `display` |
-| `reasoningSummary` | `llm.openai.reasoningSummary` | `aimon.llm.openai.reasoning-summary` | — | **벤더** | 이름 — `reasoning.summary` 는 OpenAI 요청 본문의 경로이고, 값 `auto` · `concise` · `detailed` 는 OpenAI 의 어휘다 |
+| `reasoningSummary` | `llm.openai.reasoningSummary` | `aimon.llm.openai.reasoning-summary` | `model.reasoningSummary` | **벤더**(배포 키) · 이름은 중립(frontmatter) | 배포 키는 벤더다 — `reasoning.summary` 는 OpenAI 요청 본문의 경로이고, 값 `auto` · `concise` · `detailed` 는 OpenAI 의 어휘다. frontmatter 키는 중립 타입 `ReasoningSummary` 로 읽으며 지금 따르는 provider 는 OpenAI 하나다(Anthropic 은 무시하고 한 번 말한다). frontmatter 에만 `none` 이 있다 — 배포 키는 적지 않는 것으로 끄고, 그 서브트리는 모르는 값을 기동 실패로 거절한다 |
 | `responsesApiEnabled` | `llm.openai.responsesApiEnabled` | `aimon.llm.openai.responses-api-enabled` | — | **벤더** | 이름이 OpenAI 엔드포인트다. Chat Completions 만 구현한 게이트웨이가 설정만으로 닿는 404 의 출구이며, 적지 않으면 기본값은 `OpenAIConfig` 의 것(`true`)이다 |
-| *(표면 없음)* `temperature` · `topP` · 두 penalty | — | `aimon.llm.<provider>.*` | — | **벤더** | 뜻이 벤더마다 다르다(유효 범위, 무시되는 파라미터). 표면을 주는 일은 L-2 |
+| 샘플링 기본값 — `temperature` · `topP` · `presencePenalty` · `frequencyPenalty` | `llm.openai.*` (넷) · `llm.anthropic.temperature` (하나) | `aimon.llm.openai.*` (넷) · `aimon.llm.anthropic.temperature` (하나) | `model.temperature` · `model.topP` | **벤더** | 뜻 — 이름은 중립이지만 유효범위가 벤더마다 다르고(`temperature` 는 OpenAI `0.0`–`2.0`, Anthropic `0.0`–`1.0`) 한쪽에는 없는 파라미터가 있다. 블록마다 키가 다른 이유는 §3.3 |
 
 판정이 네임스페이스로 갈라 놓는 쌍이 하나 있다.
 
@@ -182,6 +189,29 @@ aimon.llm.anthropic.replay-thinking-blocks                                 # 한
 
 추론 스트림을 켜는 중립 우산 키는 두지 않고, 스트림 노브는 frontmatter 에 두지 않는다 — 그 판단은
 [`streaming.md`](streaming.md) 가 가진다.
+
+### 3.3 샘플링 기본값 — 벤더의 클라이언트가 자기 설정에서 싣는 것만 키가 된다
+
+샘플링 기본값은 §3.1 의 **둘째 검사**(뜻)로 벤더 서브트리에 내려간 첫 키 가족이다. 이름(`temperature`)은 중립이지만
+같은 숫자가 한 벤더에서는 유효하고 다른 벤더에서는 아니며, 한 벤더에는 대응물이 없는 파라미터가 있다.
+
+**블록마다 키가 다르다. 기준은 "그 벤더의 클라이언트가 자기 config 에서 읽어 요청에 싣는 값인가" 다.**
+
+| 파라미터 | `llm.openai` / `aimon.llm.openai` | `llm.anthropic` / `aimon.llm.anthropic` |
+|---|---|---|
+| `temperature` | 키 있음 — `OpenAIConfig.temperature`, `0.0`–`2.0` | 키 있음 — `AnthropicConfig.temperature`, `0.0`–`1.0` |
+| `topP` | 키 있음 — `OpenAIConfig.topP`, `0.0`–`1.0` | **키 없음** — `AnthropicConfig` 에 필드가 없고, 클라이언트는 `top_p` 를 요청의 `LlmModel` 에서만 읽는다 |
+| `presencePenalty` · `frequencyPenalty` | 키 있음 — `-2.0`–`2.0`. Responses 엔드포인트에는 자리가 없어 보고 후 생략된다 | **키 없음** — Anthropic API 에 대응 파라미터가 없다 |
+
+- **없는 키는 모르는 키다.** `llm.anthropic.topP` 는 CLI 에서 Jackson 이, 스타터에서 strict 서브트리(§6.7)가 거절한다.
+  받아 놓고 아무 요청에도 싣지 않는 키를 두면 이 표면이 금지하는 "설정했는데 읽히지 않는" 키가 된다
+- **Anthropic 의 `topP` 기본값은 키를 더하는 일이 아니라 클라이언트를 바꾸는 일이다.** `AnthropicConfig` 에 필드를
+  더하고 `applySamplingParameters` 가 그것으로 물러서게 해야 하며, thinking 과 함께일 때의 `[0.95, 1.0]` 창
+  ([`request-parameters.md`](request-parameters.md) §3.4)이 배포 기본값에도 걸린다. 요구가 없어 하지 않았다
+- **우선순위는 표면이 정하지 않는다.** 표면은 벤더 config 를 채울 뿐이고, "요청의 `LlmModel` 먼저, 그다음 클라이언트
+  설정, 그 뒤는 없다" 는 클라이언트의 규칙이다([`request-parameters.md`](request-parameters.md) §2.1). 그래서 이 키는
+  에이전트 정의의 `model.temperature` 를 **덮지 않고**, 정의가 값을 적지 않은 요청에만 실린다
+- **범위도 표면이 적지 않는다.** 각 벤더 config 의 생성자가 자기 범위를 알고, 표면은 그 거절에 키 경로를 얹는다(§6.1)
 
 ---
 
@@ -247,8 +277,15 @@ L-4 가 가진다.
 고치려는 선언이다 — `claude-*` 행은 샘플링 억제(`supportsSamplingParameters: false`)도 말하므로, 그 이름에
 `thinkingDialect` 만 적으면 억제가 풀려 샘플링 파라미터가 400 을 내는 모델로 가고, 억제할 것이 없으므로 억제 경고도
 나지 않는다. 그래서 운영 문서는 행 전체를 적는 모양을 보인다. `thinkingDialect: unknown` 도 유효한 진술이다 — "이
-이름에 대해 내장 행의 방언으로 행동하지 말라". 선언이 내장 행을 가리면서 그 행의 플래그를 빠뜨렸을 때 기동 시 알리는
-일반형은 L-8 이 가진다. 선언이 행을 대체한다는 사실은 [`model-capabilities.md`](model-capabilities.md) 가 한 문장으로
+이름에 대해 내장 행의 방언으로 행동하지 말라".
+
+**그 귀결은 레지스트리를 만들 때 WARN 으로 알린다.** 선언한 이름을 내장 행(exact 든 prefix 든)이 이미 덮고 있고, 그 행이
+fail-open 이 아닌 값으로 둔 플래그를 선언이 **적지 않았으면**, `withDefaultsExtendedBy` 가 WARN 한 줄을 낸다 — 모델 이름,
+가린 행, 떨어진 플래그마다 그 행이 주던 값과 지금 값, 옮겨 적을 줄. 병합하지 않고 거절하지도 않는다: 선언은 적힌 그대로
+등록된다. 판정은 `ModelCapabilityDeclaration` 이 "적지 않음" 과 "기본값을 적음" 을 구분해 들고 있기 때문에 가능하고, 그래서
+**적은 플래그는 값이 무엇이든 보고하지 않는다** — fail-open 값이 의도라면 그 값을 직접 적는 것이 경고를 끄는 길이다.
+ladder 는 두 키 중 어느 것으로 적어도 적은 것이다. 같은 발견은 프로세스당 한 번만 말한다: 스타터는 같은 프로퍼티로
+레지스트리를 두 번 만든다(`afterPropertiesSet` 의 검증, LLM 슬라이스의 사용). 선언이 행을 대체한다는 사실은 [`model-capabilities.md`](model-capabilities.md) 가 한 문장으로
 가리키고, 규칙은 여기가 정본이다.
 
 ### 4.4 설정 표면은 내장 표의 어떤 행이든 표현한다
@@ -263,8 +300,8 @@ L-4 가 가진다.
 받는 rung 이 없는 모델은 `supportsReasoningEffort: false` 로 적는다. **중복 rung 은 조용히 접는다** — 반복된 rung 이
 하나와 다르게 읽힐 방법이 없다. 표면은 `List` 로 받고 선언으로 갈 때 집합이 된다.
 
-설정 키 `lowestReasoningEffort` 는 SPI 가 floor 를 읽기용으로 내놓지 않게 된 뒤에도 **개명하지 않는다.** 스타터는 모르는
-프로퍼티를 조용히 무시하므로(L-1), 개명하면 그 키를 선언한 모든 배포가 말없이 선언을 잃는다. 키는 남고 형제 키가 생긴다.
+설정 키 `lowestReasoningEffort` 는 SPI 가 floor 를 읽기용으로 내놓지 않게 된 뒤에도 **개명하지 않는다.** 스타터는 이
+서브트리의 모르는 프로퍼티를 거절하므로(§6.7), 개명하면 그 키를 선언한 모든 배포의 기동이 실패한다. 키는 남고 형제 키가 생긴다.
 
 ### 4.5 공유 번역기 한 곳 — `ModelCapabilityDeclaration` 과 `withDefaultsExtendedBy`
 
@@ -329,6 +366,7 @@ provider 모듈의 테스트가 설정 경로가 실제로 쓰는 번역기를 �
 | `reasoningSummary` | `OpenAiReasoningSummary` | `String` — 같음 |
 | `thinkingBudgetTokens` · `replayThinkingBlocks` | `Integer` · `Boolean` | 같음 |
 | `responsesApiEnabled` | `Boolean` — `null` 은 "적지 않음" 이고 기본값은 `OpenAIConfig` 가 정한다 | 같음 |
+| 샘플링 기본값 다섯(`llm.openai` 의 넷 · `llm.anthropic.temperature`) | `Double` — `null` 은 "적지 않음" 이고, 그때 벤더 config 의 필드도 미설정으로 남아 요청에 실리지 않는다 | 같음 |
 
 규칙은 하나다.
 
@@ -398,11 +436,18 @@ enum 이 상수를 얻으면 힌트가 따라오지 않은 채 초록일 수 없
 | 선언 하나의 `build()` | `llm.modelCapabilities.<model>` | `aimon.llm.model-capabilities.<model>` |
 | `withDefaultsExtendedBy(...)` | `llm.modelCapabilities` | `aimon.llm.model-capabilities` |
 | `AnthropicConfig.Builder.build()` | `llm.anthropic.thinkingBudgetTokens` | `aimon.llm.anthropic.thinking-budget-tokens` |
+| 샘플링 값 **하나만** 실은 벤더 config 의 `build()` | `llm.openai.temperature` · `topP` · `presencePenalty` · `frequencyPenalty`, `llm.anthropic.temperature` | `aimon.llm.openai.temperature` · `top-p` · `presence-penalty` · `frequency-penalty`, `aimon.llm.anthropic.temperature` |
 
-마지막 행이 블록이 아니라 예산 키를 부르는 이유: 이 경로에서 `build()` 가 던질 수 있는 예외 중 설정에서 도달하는 것은
+셋째 행이 블록이 아니라 예산 키를 부르는 이유: 이 경로에서 `build()` 가 던질 수 있는 예외 중 설정에서 도달하는 것은
 둘 다 예산의 것이다(나머지는 앞에서 이름으로 거절되거나 설정할 수 없는 값의 것이다). 이 전제는 catch 옆 주석에 적혀
-있고, 같은 빌드 경로에 설정 가능한 키가 새로 생기면 catch 를 가른다. 표면마다 메시지 문구가 다른 것은 옳다 — 각
-메시지는 자기 표면의 키 경로를 가리켜야 한다.
+있다. 표면마다 메시지 문구가 다른 것은 옳다 — 각 메시지는 자기 표면의 키 경로를 가리켜야 한다.
+
+**한 `build()` 가 여러 키의 사유로 던질 수 있으면 감싸는 것만으로는 키를 고를 수 없다.** 샘플링 값이 그 경우다 —
+OpenAI 의 넷이 한 `build()` 를 지나고, Anthropic 의 `temperature` 는 예산과 같은 `build()` 를 지난다. 그래서 마지막 행은
+실제 조립을 감싸지 않고 **값 하나만 실은 config 를 지어 보고 버린다**(`requireAccepted`). 범위는 여전히 벤더 config 의
+생성자 한 곳에만 적혀 있고, 그 호출이 던진 예외에 키 경로가 얹힌다 — 사전 검사로 범위를 다시 적는 것과 다르다. 능력
+선언의 `validateLlm()` 이 번역기를 불러 보고 결과를 버리는 것(§6.2)과 같은 모양이다. 이 검사가 실제 `build()` 보다
+먼저 돌므로 셋째 행의 전제(남는 예외는 예산의 것)도 그대로 선다.
 
 예산과 모드의 규칙 자체(예산은 `EXTENDED` 전용, 1024 이상)는 [`anthropic-thinking.md`](anthropic-thinking.md) 가 정본이다.
 표면이 더하는 것은 실패의 모양뿐이다 — `thinkingBudgetTokens` 를 `EXTENDED` 가 아닌 모드와 함께 적거나 **예산만 적으면**
@@ -428,21 +473,37 @@ enum 이 상수를 얻으면 힌트가 따라오지 않은 채 초록일 수 없
 | 스타터 `provider=openai` | `aimon.llm.anthropic` | `IllegalStateException` — 두 프로퍼티를 부른다 |
 | 스타터 `provider=anthropic`(또는 미지정) | `aimon.llm.openai` | `IllegalStateException` — 두 프로퍼티를 부른다 |
 | 스타터 `provider=openai`, Anthropic 모듈이 클래스패스에 없음 | `aimon.llm.anthropic` | 위와 같은 메시지. 스타터 vendor 키가 `String` 이어서 가능하다 — 벤더 enum 이었다면 `NoClassDefFoundError` |
-| 스타터 `provider=none`, 또는 애플리케이션이 자기 `LlmClient` 빈을 준 배포 | 어느 것이든 | **읽지도 거절하지도 않는다** — L-3 |
+| 스타터, 애플리케이션이 자기 `LlmClient` 빈을 준 배포 — `provider` 가 `none` 이든 내장 값이든 서드파티 값이든 | 어느 것이든 | **읽지도 거절하지도 않는다.** 결정이다(아래) |
+| 스타터 `provider=none`, 애플리케이션 `LlmClient` 빈 없음 | 어느 것이든 | 블록과 무관하게 **기동하지 않는다** — `aimonUnresolvedLlmClient` 가 `aimon.llm.provider=none` 을 부르며 실패한다 |
 | 어느 표면이든 | 빈 블록(`anthropic:` 만 적음) | 거절하지 않는다 |
 
 거절은 **실제로 도는 분기 안에서만** 한다(`requireApiKey` 와 같은 자리). 분기 밖에서 검사하면 `provider=none` 이나 자기
-`LlmClient` 빈을 쓰는 배포의 유효한 설정이 기동 실패가 된다. 그 두 모양에서 선언과 블록이 조용히 읽히지 않는 것은 L-3 이다.
+`LlmClient` 빈을 쓰는 배포의 유효한 설정이 기동 실패가 된다.
+
+**자기 `LlmClient` 빈을 준 배포에서는 `aimon.llm` 아래의 어떤 키도 *읽히지 않는다는 이유로는* 거절하지 않는다.** (철자가 틀린 키는
+다른 문제다 — §6.7 의 엄격한 세 서브트리 아래의 모르는 키는 이 배포에서도 기동 실패다. 그 검사는 `LlmClient` 빈을 보지 않는다.) 그 배포에서는 벤더 분기가 돌지
+않으므로 스타터는 `provider` 를 뺀 `aimon.llm.*` 을 하나도 읽지 않는다 — `api-key` · `model` · `base-url` · `timeout`,
+공유 키 둘(`reasoning-effort` · `model-capabilities`), 두 벤더 블록. 그래도 거절하지 않는 이유는 그 값들의 소비자가
+애플리케이션일 수 있어서다: 능력 선언은 `AimonProperties.modelCapabilityRegistry(...)` 로 자기 클라이언트에 넘길 수
+있고, 나머지는 프로퍼티 빈의 접근자로 읽어 자기 벤더 config 를 지을 수 있다. 스타터는 그 빈이 그것을 읽는지 알 수
+없으므로, 여기서의 거절은 "읽히지 않는 설정" 이 아니라 **유효한 설정**을 기동 실패로 만든다. 읽히지 않더라도 능력
+선언은 `validateLlm()` 이 여전히 검증한다 — 깨진 선언은 이 배포에서도 기동을 실패시킨다.
+
+**`provider=none` 은 별개의 모양이 아니다.** 빈이 없는 `provider=none` 은 실행되는 배포가 아니라 기동 실패이고
+(`aimonUnresolvedLlmClient` — `LlmClient` 빈의 부재를 알 수 있는 유일한 자리, 곧 LLM 슬라이스의 빈 정의가 등록된 뒤),
+그 메시지가 권하는 처방(빈을 정의하라)을 따르면 위 문단의 배포가 된다. 그래서 "선언이 조용히 읽히지 않는" 모양은
+둘이 아니라 하나이고, 그 하나에 대한 답이 위의 결정이다(L-3).
 능력 선언은 두 벤더 분기가 모두 읽으므로 이 거절의 대상이 아니다.
 
 ### 6.4 표면별 실패
 
 | 실패 | CLI | 스타터 | frontmatter |
 |---|---|---|---|
-| **모르는 잎 이름** | `ConfigurationException("Invalid configuration structure in: <file> (at <키>: <사유>)")`. 키와 Jackson 의 사유 첫 줄이 감싸는 문장에 실린다(L-5, 2026-10-05 닫힘) | **조용하다.** `@ConfigurationProperties` 의 기본 `ignoreUnknownFields = true`. 잎이 하나도 바인딩되지 않은 맵 항목은 만들어지지도 않는다(L-1). IDE 가 메타데이터로 모르는 잎을 표시하는 것이 남는 완화책이다 | `model:` 아래 모르는 키는 읽지 않는다 |
+| **모르는 잎 이름** | `ConfigurationException("Invalid configuration structure in: <file> (at <키>: <사유>)")`. 키와 Jackson 의 사유 첫 줄이 감싸는 문장에 실린다(L-5, 2026-10-05 닫힘) | **strict 서브트리 셋**(`aimon.llm.model-capabilities` · `aimon.llm.anthropic` · `aimon.llm.openai`) 아래에서는 Boot 의 `UnboundConfigurationPropertiesException` 이 적힌 키를 부르며 기동을 실패시킨다(§6.7). **그 밖은 조용하다** — `@ConfigurationProperties` 의 기본 `ignoreUnknownFields = true` 이고, `aimon.llm.reasoning-effor` 같은 `aimon.llm` 바로 아래 잎이 여기 든다(L-1). IDE 가 메타데이터로 모르는 잎을 표시하는 것이 그쪽에 남는 완화책이다 | `model:` 아래 모르는 키는 읽지 않는다 |
 | **enum 값 오류** | Jackson `InvalidFormatException` → 위와 같은 `ConfigurationException`(L-5) | 코어 enum 은 Boot 바인딩 실패가 프로퍼티와 변환을 부른다. vendor `String` 은 fold 가 프로퍼티와 허용 철자 전부를 부르는 `IllegalStateException` | `model.reasoningEffort` 는 키와 허용 값을 부르는 `AgentDefinitionParseException` |
 | **의미 오류** — 아무것도 선언하지 않음 · 본문이 빔 · 빈/공백 이름 · 대소문자만 다른 중복 · 두 ladder 키 · 빈 ladder | 코어 거절을 키 경로와 재던짐(§6.1) | 같음, `afterPropertiesSet` 시점 | — |
 | **예산 규칙 위반** | `llm.anthropic.thinkingBudgetTokens` 를 부르며 실패 | `aimon.llm.anthropic.thinking-budget-tokens` 를 부르며 실패 | — |
+| **샘플링 기본값이 그 벤더의 범위 밖** | 그 키를 부르며 실패 — ``Invalid `llm.anthropic.temperature` in the LLM config: Temperature must be between 0.0 and 1.0`` | 그 프로퍼티와 값을 부르며 실패 — `aimon.llm.anthropic.temperature=1.5 is invalid: …`. vendor 키이므로 슬라이스의 빈 생성 시점이다(§6.2) | `model.temperature` 는 `LlmModel` 의 합집합 범위(`0.0`–`2.0`)로만 거절되고, 그 안에서 벤더 범위를 벗어난 값은 클라이언트가 요청 시점에 보고한다 |
 | **읽히지 않을 벤더 블록** | §6.3 | §6.3 | — |
 | **선언은 맞는데 요청이 다른 이름을 부름** | 선언은 죽은 항목이 된다. 감지하지 않는다 | 같음 | — |
 
@@ -455,7 +516,8 @@ enum 이 상수를 얻으면 힌트가 따라오지 않은 채 초록일 수 없
 Spring Boot 바인더는 맵 키의 대소문자를 **보존**하고, 대괄호 없이 점이 들어간 이름으로는 항목을 **만들지 않으며**, 잎이
 하나도 바인딩되지 않은 항목도 만들지 않는다(Spring Boot 3.5.x, 2026-09-09 실측). 그래서:
 
-- 점이 있는 모델 이름은 대괄호 표기(`"[name.with.dot]"`)가 **필수**다 — 대괄호가 없으면 항목이 조용히 사라진다
+- 점이 있는 모델 이름은 대괄호 표기(`"[name.with.dot]"`)가 **필수**다 — 대괄호가 없으면 바인더는 항목을 만들지 않고, 남은
+  줄이 strict 서브트리의 unbound 원소가 되어 기동이 그 줄을 부르며 실패한다(§6.7)
 - 대소문자만 다른 두 키는 합쳐지지 않고 둘 다 도착하므로 **두 표면 모두에서** 번역기가 거절한다
 - 레지스트리가 조회에서 대소문자를 접으므로 `Prod-Assistant` 로 선언하고 `prod-assistant` 로 불러도 맞는다
 
@@ -475,6 +537,28 @@ YAML 1.1 은 인용하지 않은 `off` 를 불리언으로 읽는다. `off` 는 
 키 하나에만 있다 — `ReasoningEffort` · `ThinkingDialect` · `thinkingDisplay` · `reasoningSummary` 의 어떤 철자도 YAML 의 불리언 ·
 null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는다.
 
+### 6.7 스타터의 strict 서브트리
+
+스타터는 `aimon.*` 전체가 아니라 **세 서브트리 아래에서만** 모르는 키를 거절한다 —
+`aimon.llm.model-capabilities` · `aimon.llm.anthropic` · `aimon.llm.openai`. 셋 다 스타터가 모든 잎을 정의하는 닫힌 집합이다.
+`ignoreUnknownFields = false` 는 prefix 전체에 걸리므로 같은 prefix 아래 자기 키를 두는 호스트 앱을 깨고(§8), 이 장치는
+그 거절을 서브트리 사정거리로 얻는다. `AimonProperties` 의 타입은 그대로이므로 메타데이터와 문서 가드의 walker 도 그대로다.
+
+- **장치.** `AimonPropertiesBindingAutoConfiguration` 이 `ConfigurationPropertiesBindHandlerAdvisor` 빈 하나를 낸다.
+  advisor 는 애플리케이션의 **모든** `@ConfigurationProperties` 바인딩에 적용되므로 좁히는 일은
+  `StrictSubtreeBindHandler` 안에서 한다: 서브트리마다 Boot 의 `NoUnboundElementsBindHandler` 를 하나씩 두고, 이름이
+  서브트리 루트이거나 그 아래인 이벤트만 넘기며, 바인더가 **루트를 끝낼 때** 판정을 묻는다. 루트를 지나가지 않는 바인딩은
+  검사가 일어나지 않으므로 호스트 앱의 빈은 prefix 가 `aimon.llm` 이어도 영향을 받지 않는다
+- **빈 값은 오타가 아니다.** Boot 는 `key=` 를 `String` 이 아닌 타입에서 `null` 로 바꾸고 성공으로 보고하지 않으므로,
+  `NoUnboundElementsBindHandler` 를 그대로 쓰면 철자가 맞는 키의 빈 값(`${VAR:}` 의 결과)이 unbound 로 거절된다. 이 트리에서
+  빈 값은 "기본값을 둔다" 이므로, 바인더가 **실제로 물어본 이름**은 거절 목록에서 뺀다
+- **검사하지 않는 출처.** 환경 변수와 JVM 시스템 프로퍼티 — Boot 의 `UnboundElementsSourceFilter` 가 `ignoreUnknownFields = false`
+  에서 두는 것과 같은 예외다
+- **끄는 길.** `aimon.enabled=false` 는 슬라이스 자체를 끈다. 세 서브트리 아래에 자기 키를 두는 앱은
+  `spring.autoconfigure.exclude` 에 그 클래스를 적는다
+- **닿지 않는 모양.** `aimon.llm.reasoning-effort` 처럼 `aimon.llm` 바로 아래에 놓인 스칼라 잎. 그것을 덮는 prefix 는
+  `aimon.llm` 자신뿐이고, 그것을 strict 로 만드는 것은 호스트 앱이 거기 둔 키를 전부 거절하는 다른 결정이다(L-1)
+
 ---
 
 ## 7. frontmatter `model.reasoningEffort`
@@ -485,6 +569,11 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
 ([`../integration/config-value-expansion-and-frontmatter-strictness.md`](../integration/config-value-expansion-and-frontmatter-strictness.md)).
 에이전트 정의의 effort 와 클라이언트 설정의 effort 가 함께 있을 때 무엇이 이기는지는
 [`request-parameters.md`](request-parameters.md) 가 정한다.
+
+**`model.reasoningSummary` 도 같은 자리에서 같은 규칙으로 읽는다.** 값은 `none` · `auto` · `concise` · `detailed` 이고
+중립 enum `ReasoningSummary` 에 fold 한다. 문자열이 아닌 값(인용하지 않은 `off` 가 되는 불리언, 빈 값)과 모르는 단어는 키와 네
+값을 부르는 `AgentDefinitionParseException` 이다. 뜻과 우선순위는 [`streaming.md`](streaming.md) §5.6 이 정한다.
+`canonicalForm` 은 이 키의 줄을 값이 있을 때만 싣는다.
 
 **`AgentDefinitionVersion.canonicalForm` 은 `model.reasoningEffort=` 줄을 싣는다.** 이 버전은 요청 시점보다 오래 사는 작업
 (예약된 cron 이 다시 울릴 때 그 사이 수정된 정의로 다시 만들어진 런타임에 붙는 것)을 위한 변경 감지기이고, 정의가 바뀌었다고
@@ -505,7 +594,7 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
 
 ```
    yaml / 프로퍼티 텍스트
-        │  (1) 바인더      Jackson(CLI, 모르는 필드에 실패) / Boot relaxed binding(스타터, 무시)
+        │  (1) 바인더      Jackson(CLI, 모르는 필드에 실패) / Boot relaxed binding(스타터, 이 서브트리에서 실패)
         ▼
    ModelCapabilityConfig · AimonProperties.ModelCapabilityProperties      ← 표면 (키마다 bean 프로퍼티)
         │  (2) 전달        LlmClientFactory.declarationOf(...) / toDeclaration()   ← 손으로 쓴, 키마다 한 줄
@@ -588,7 +677,7 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
   한 키를 빠뜨린 가짜 표면 · getter 하나가 세터 둘을 먹이는 가짜 표면 등으로 그 경로를 자기 테스트에서 붙든다. 가짜 표면은
   모양별로 고른 키만 가지므로 새 키가 이 모듈의 편집 지점이 되지 않는다
 - **바인더 고리 테스트를 대체하지 않는다.** 프로브는 bean 세터로 쓰므로 바인더를 지나지 않는다. 키마다 손으로 쓴 바인더
-  테스트는 그대로 남고, 그 범위의 현재 사실(스타터에서 확인되지 않는 키)은 L-14 가 가진다
+  테스트는 그대로 남는다. 지금의 여덟 키는 두 표면 모두에서 텍스트로 확인되고, 다음 키의 테스트는 누가 쓰기 전까지 없다 — L-14
 
 ---
 
@@ -609,8 +698,8 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
 | `lowestReasoningEffort` 를 `String` 으로 받아 번역기가 파싱 | 스타터에 손 힌트가 필요해져 "enum 선택자는 타입이 값을 싣는다" 가 깨진다. 코어 enum 을 프로퍼티 타입으로 쓰는 선례(`MemoryInjectionMode`)가 이미 있다 |
 | 번역기를 `aimon-bootstrap` 에 | `LlmClient` 는 두 표면 모두 스택 밖에서 만들어진다. 코어에 있어야 provider 모듈 테스트가 같은 번역기를 쓴다(§4.5) |
 | 번역 로직을 두 표면에 각각 인라인 | 규칙 넷(defaulting · 확장 · exact 등록 · 이름 검증)이 두 곳에 있으면 어긋남이 조용하다 |
-| `AimonProperties` 에 `ignoreUnknownFields = false` | `aimon.*` 트리 **전체**의 동작 변경이고, 같은 prefix 아래 자기 키를 두는 호스트 앱을 기동 실패로 만들 수 있다. 스타터 오타 문제 자체는 L-1 |
-| 항목을 `Map<String, Map<String, String>>` 로 받아 번역기가 잎을 검사 | 스타터 오타를 이 서브트리만 닫지만, 메타데이터에서 잎 이름과 enum 후보가 사라지고, 문서 가드가 `*.*` 를 기록해 **가이드의 잎 오타가 통과한다.** 설정 오타를 잡으려고 문서 오타를 못 잡게 만드는 거래다 — L-1 이 저울을 가진다 |
+| `AimonProperties` 에 `ignoreUnknownFields = false` | `aimon.*` 트리 **전체**의 동작 변경이고, 같은 prefix 아래 자기 키를 두는 호스트 앱을 기동 실패로 만들 수 있다. 같은 거절을 서브트리 사정거리로 얻는 것이 §6.7 이다 |
+| 항목을 `Map<String, Map<String, String>>` 로 받아 번역기가 잎을 검사 | 스타터 오타를 이 서브트리만 닫지만, 메타데이터에서 잎 이름과 enum 후보가 사라지고, 문서 가드가 `*.*` 를 기록해 **가이드의 잎 오타가 통과한다.** 설정 오타를 잡으려고 문서 오타를 못 잡게 만드는 거래다. §6.7 은 타입을 건드리지 않고 같은 서브트리를 닫는다 |
 | 테스트를 위해 `OpenAILlmClient.getConfig()` 공개 | 배포 모듈의 공개 표면을 테스트 편의로 넓힌다. 표면의 조립 메서드를 package-private 으로 추출한다(§5.3) |
 | 설정 키 `lowestReasoningEffort` 를 SPI 에 맞춰 개명 | 스타터가 모르는 프로퍼티에 침묵하므로 그 키를 선언한 배포가 말없이 선언을 잃는다(§4.4) |
 | 스타터 `reasoning-effort` 를 `String` 으로 받아 fold | `String` 은 `compileOnly` 벤더 클래스의 부재를 견디려는 모양이다. `ReasoningEffort` 는 코어라 늘 있고, `String` 은 IDE 완성과 메타데이터 타입만 잃는다 |
@@ -666,16 +755,19 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
 
 등록된 항목 — [`../../backlog/llm-config-surface-open-items.md`](../../backlog/llm-config-surface-open-items.md):
 
-- **L-1** — 스타터에서 모르는 잎 이름이 조용하다(CLI 와의 비대칭). 닫는 길 셋의 저울이 거기 있다
-- **L-2** — 샘플링 파라미터에 아직 설정 표면이 없다. 배치는 §3.2 표대로다. Anthropic 쪽은
-  `AnthropicConfig` 에 `topP` · penalty 필드부터 없다. 같은 항목의 `responsesApiEnabled` 절반은 표면을 얻었고, 거기 붙어 있던
-  `gpt-5.6-terra` 를 Chat Completions 로 강제한 칸은 2026-10-05 에 쟀다([`model-capabilities.md`](model-capabilities.md) §6.3)
-- **L-3** — `provider=none` 과 애플리케이션 자체 `LlmClient` 빈 배포에서 선언과 벤더 블록이 조용히 읽히지 않는다
+- **L-1** — 스타터에서 모르는 잎 이름이 조용하다(CLI 와의 비대칭). strict 서브트리 셋은 닫혔고(§6.7), 남은 것은 어느
+  서브트리에도 들지 않는 `aimon.llm` 바로 아래의 스칼라 잎이다
+- **L-2** — 두 절반(`responsesApiEnabled` · 샘플링 파라미터)이 모두 표면을 얻었다(2026-10-05). 샘플링 기본값은 §3.3 의
+  다섯 키다. 남은 것은 Anthropic 의 `topP` 기본값이고, 그것은 키가 아니라 클라이언트 변경이다(§3.3). `responsesApiEnabled` 에 붙어 있던
+  `gpt-5.6-terra` 를 Chat Completions 로 강제한 칸은 같은 날 쟀다([`model-capabilities.md`](model-capabilities.md) §6.3)
+- **L-3** — 애플리케이션 자체 `LlmClient` 빈 배포에서 `aimon.llm.*` 이 읽히지 않는 것은 거절하지 않기로 했다(§6.3).
+  항목이 따로 센 `provider=none` + 빈 없음은 실행되는 배포가 아니라 이미 기동 실패다
 - **L-4** — 설정에서 prefix 를 선언할 길을 열 것인가(코어 쪽이 순수 추가가 아니다)
 - ~~**L-5** — CLI 매핑 오류 메시지가 어느 키인지 말하지 않는다~~ — 2026-10-05 닫힘
-- **L-8** — 선언이 내장 행을 가리면서 그 행의 플래그를 적지 않았을 때 알리지 않는다
+- ~~**L-8** — 선언이 내장 행을 가리면서 그 행의 플래그를 적지 않았을 때 알리지 않는다~~ — 2026-10-05 닫힘(기동 시 WARN, §4)
 - ~~**L-13** — 선언에서 기술자로 가는 세 번째 손 전달(고리 3)에 가드가 없다~~ — 2026-10-05 닫힘
-- **L-14** — 바인더 고리(고리 1)는 키마다 손으로 확인되고, 스타터에는 확인되지 않는 키가 있다
+- **L-14** — 바인더 고리(고리 1)는 키마다 손으로 확인된다. 지금의 여덟 키는 두 표면에서 전부 덮였고, 남은 것은 변환이
+  필요한 타입의 다음 키다. 스타터에서 **이름**이 어긋나는 쪽은 §6.7 이 기동 실패로 만든다
 
 등록되지 않은 항목:
 
@@ -697,21 +789,25 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
 | 파일 | 무엇을 확인하나 |
 |---|---|
 | `aimon-core/…/llm/capability/ModelCapabilityDeclaration.java` | 박싱 필드 · `null` 세터 · `build()` 의 두 거절 · `capabilities()` · `equals` 범위 |
-| `aimon-core/…/llm/capability/InMemoryModelCapabilityRegistry.java` | `withDefaultsExtendedBy` — 내장 표에서 시작, exact 등록, 이름 · 대소문자 중복 · `null` 값 거절 |
+| `aimon-core/…/llm/capability/InMemoryModelCapabilityRegistry.java` | `withDefaultsExtendedBy` — 내장 표에서 시작, exact 등록, 이름 · 대소문자 중복 · `null` 값 거절, 가린 행에 대한 WARN 과 프로세스당 한 번 |
+| `aimon-core/…/llm/capability/ShadowedBuiltInRow.java` | 선언이 적지 않아 떨어진 플래그의 판정과 WARN 문장(§4) |
+| `aimon-core/src/test/…/llm/capability/DeclarationShadowWarningTest.java` | 그 WARN 이 울리는 모양과 울리지 않는 모양 |
 | `aimon-core/…/agent/definition/parser/MarkdownAgentDefinitionParser.java` | `extractModel` 이 읽는 키, `model.reasoningEffort` fold 와 `AgentDefinitionParseException` |
 | `aimon-core/…/agent/AgentDefinitionVersion.java` | `canonicalForm` 의 `model.reasoningEffort=` 줄과 변경 감지기의 목적 |
 | `aimon-cli/…/cli/config/CliConfigLoader.java` | 매퍼 기능(`ACCEPT_CASE_INSENSITIVE_ENUMS`), 바인딩 전 확장, 매핑 오류의 일반 메시지 |
 | `aimon-cli/…/cli/config/LlmProviderConfig.java` · `ModelCapabilityConfig.java` | CLI 표면 필드와 타입 |
 | `aimon-cli/…/cli/config/AnthropicProviderConfig.java` | 박싱 필드 · `isEmpty()` · `ThinkingModeDeserializer`(YAML `off`) |
-| `aimon-cli/…/cli/config/OpenAiProviderConfig.java` | `reasoningSummary` · 박싱된 `responsesApiEnabled` 와 `isEmpty()` |
-| `aimon-cli/…/cli/factory/LlmClientFactory.java` | `declarationOf` · `registryFor` · 두 분기의 조립 메서드 · 좁은 catch 와 키 경로 · `refuseAnthropicBlock` / `refuseOpenAiBlock` |
+| `aimon-cli/…/cli/config/OpenAiProviderConfig.java` | `reasoningSummary` · 박싱된 `responsesApiEnabled` · 샘플링 기본값 넷과 `isEmpty()` |
+| `aimon-cli/…/cli/factory/LlmClientFactory.java` | `declarationOf` · `registryFor` · 두 분기의 조립 메서드 · 좁은 catch 와 키 경로 · `requireAccepted`(샘플링 값 하나의 범위) · `refuseAnthropicBlock` / `refuseOpenAiBlock` |
 | `aimon-spring-boot-starter/…/autoconfigure/AimonProperties.java` | `LLM_*` 상수, `Llm` · `Llm.Anthropic` · `Llm.OpenAi` · `ModelCapabilityProperties` 필드 타입, `validateLlm` · `modelCapabilityRegistry` · `toDeclaration` |
-| `aimon-spring-boot-starter/…/autoconfigure/AimonLlmAutoConfiguration.java` | 가드된 중첩 슬라이스, vendor fold 와 `off` 힌트, 예산 키 catch, 바깥 클래스의 두 거절 |
+| `aimon-spring-boot-starter/…/autoconfigure/AimonLlmAutoConfiguration.java` | 가드된 중첩 슬라이스, vendor fold 와 `off` 힌트, 예산 키 catch, 바깥 클래스의 두 거절과 `requireAccepted` |
 | `aimon-spring-boot-starter/src/main/resources/META-INF/additional-spring-configuration-metadata.json` | `String` 선택자 네 개의 값 힌트 |
 | `aimon-spring-boot-starter/src/test/…/AimonAutoConfigurationTest.java` | `noPropertiesSignatureNamesAVendorType` — 시그니처 패키지 허용 목록 |
 | `aimon-spring-boot-starter/src/test/…/AimonConfigurationMetadataTest.java` | 손 힌트 집합 고정과 힌트 값 대조 |
 | `aimon-spring-boot-starter/src/test/…/AimonDocumentedPropertiesTest.java` | 트리 walker(맵 · `AimonProperties$` 중첩 타입), `everyStatedDefaultMatchesTheField` |
-| `aimon-spring-boot-starter/src/test/…/AimonPropertiesValidationTest.java` | 대괄호 · 대소문자 보존 · 스타터 오타 침묵의 한계 기록 테스트 |
+| `aimon-spring-boot-starter/src/test/…/AimonPropertiesValidationTest.java` | 대괄호 · 대소문자 보존 · 오타 거절 · 남은 침묵(`aimon.llm` 바로 아래 잎)의 한계 기록 테스트 |
+| `aimon-spring-boot-starter/…/autoconfigure/AimonPropertiesBindingAutoConfiguration.java` · `StrictSubtreeBindHandler.java` | strict 서브트리 목록과 advisor, 서브트리 안에서만 unbound 를 거절하는 handler(§6.7) |
+| `aimon-spring-boot-starter/src/test/…/AimonStrictSubtreeBindingTest.java` | §6.7 의 실측 — 거절 · 정상 바인딩 · 서브트리 밖 · 호스트 빈 · 빈 값 · 시스템 프로퍼티 · 킬 스위치 · `.imports` 등재 |
 | `aimon-cli/src/test/…/cli/config/CliConfigLoaderTest.java` | yaml 로 바인더를 지나는 키별 확인, `off` |
 | `aimon-llm-capability-testkit/…/testkit/AbstractModelCapabilityBindingContractTest.java` | 네 훅 · `valuesFor` · 두 중첩 확인, 계약 하나의 논거(javadoc) |
 | `aimon-llm-capability-testkit/…/testkit/DeclarableKeys.java` · `ProbeValues.java` · `SurfaceWriter.java` · `ModelCapabilityBindingProbe.java` | 키 발견, 값 쌍 합성과 검사, 일방향 변환, 빈 선언 거절의 번역 |

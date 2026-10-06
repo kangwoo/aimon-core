@@ -7,7 +7,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.InvokerType;
-import at.aimon.core.base.UserLocale;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.event.OnStartContext;
 import at.aimon.core.hook.execution.HookResult;
@@ -31,7 +30,7 @@ class AgentSetupFactorySkillHookShellTest {
     @Test
     @DisplayName("accepts a shell action on an in-execution event")
     void acceptsShellActionsOnInExecutionEvents() {
-        final SkillParser parser = AgentSetupFactory.createShellAwareSkillParser();
+        final SkillParser parser = AgentSetupFactory.createSkillParser(HookActionExecutors.create(false));
 
         final Skill parsed = parser.parse("sample",
                 skill("  onStart:\n    - action: { type: shell, command: \"echo hi\" }\n"));
@@ -42,7 +41,7 @@ class AgentSetupFactorySkillHookShellTest {
     @Test
     @DisplayName("the parsed hook does not fall back to the host when its context has no execution environment")
     void parsedHookDoesNotRunWithoutAnExecutionEnvironment() {
-        final SkillParser parser = AgentSetupFactory.createShellAwareSkillParser();
+        final SkillParser parser = AgentSetupFactory.createSkillParser(HookActionExecutors.create(false));
         final Skill parsed = parser.parse("sample",
                 skill("  onStart:\n    - action: { type: shell, command: \"exit 0\" }\n"));
 
@@ -58,7 +57,7 @@ class AgentSetupFactorySkillHookShellTest {
     @Test
     @DisplayName("failOpen: true in frontmatter lets a hook that could not run pass, still without a host fallback")
     void failOpenHookPassesWithoutAnExecutionEnvironment() {
-        final SkillParser parser = AgentSetupFactory.createShellAwareSkillParser();
+        final SkillParser parser = AgentSetupFactory.createSkillParser(HookActionExecutors.create(false));
         final Skill parsed = parser.parse("sample",
                 skill("  onStart:\n    - action: { type: shell, command: \"exit 2\" }\n      failOpen: true\n"));
 
@@ -69,14 +68,13 @@ class AgentSetupFactorySkillHookShellTest {
 
     private static OnStartContext noEnvironment() {
         return OnStartContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(new DefaultHookRegistry()).userLocale(UserLocale.createDefault()).userMessage("hi")
-                .build();
+                .hookRegistry(new DefaultHookRegistry()).userMessage("hi").build();
     }
 
     @Test
     @DisplayName("rejects session- and config-lifecycle events, which have no execution environment")
     void rejectsOutOfExecutionEvents() {
-        final SkillParser parser = AgentSetupFactory.createShellAwareSkillParser();
+        final SkillParser parser = AgentSetupFactory.createSkillParser(HookActionExecutors.create(false));
 
         assertThatThrownBy(() -> parser.parse("sample",
                 skill("  onSessionStart:\n    - action: { type: shell, command: \"echo hi\" }\n")))
