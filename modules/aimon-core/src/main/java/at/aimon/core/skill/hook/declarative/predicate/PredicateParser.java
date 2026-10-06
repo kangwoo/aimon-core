@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -116,6 +117,36 @@ public final class PredicateParser {
      *             if expression is blank or fails to parse
      */
     public static ToolInputPredicate parse(String expression) {
+        return parseTerms(expression, null);
+    }
+
+    /**
+     * Parses an expression for a hook that cannot block, keeping the terms that can match and leaving out the ones
+     * that are tool names no tool can have. {@link #parse(String)} refuses the whole expression for one such term,
+     * which is right for a guard &mdash; a guard that silently lost a term is a hole &mdash; and wrong for an observer:
+     * {@code "Bash|mcp__.*"} on {@code postTool} fired on {@code Bash} before that term was refused, and must go on
+     * doing so.
+     *
+     * <p>
+     * Only that refusal is forgiven. An expression that is malformed in any other way still throws, as it always did.
+     * When no term is left the result matches nothing, which is what such an expression did before.
+     *
+     * @param expression
+     *            The expression (must not be null or blank)
+     * @param refused
+     *            Told why each left-out term was refused (must not be null)
+     * @return The predicate over the terms that were kept (never null)
+     * @throws NullPointerException
+     *             if expression or refused is null
+     * @throws IllegalArgumentException
+     *             if expression is blank or is malformed in some other way
+     */
+    public static ToolInputPredicate parseKeepingMatchableTerms(String expression, Consumer<String> refused) {
+        Objects.requireNonNull(refused, "Refused cannot be null");
+        return parseTerms(expression, refused);
+    }
+
+    private static ToolInputPredicate parseTerms(String expression, Consumer<String> refused) {
         Objects.requireNonNull(expression, "Expression cannot be null");
         if (expression.isBlank()) {
             throw new IllegalArgumentException("Expression cannot be blank");
@@ -127,7 +158,19 @@ public final class PredicateParser {
             if (trimmed.isEmpty()) {
                 throw new IllegalArgumentException("Empty term in expression: '" + expression + "'");
             }
-            terms.add(parseTerm(trimmed));
+            try {
+                terms.add(parseTerm(trimmed));
+            } catch (UnmatchableTermException e) {
+                if (refused == null) {
+                    throw e;
+                }
+                refused.accept(e.getMessage());
+            }
+        }
+        if (terms.isEmpty()) {
+            // Every term was refused. The raw expression as a name is the predicate this used to produce: it holds a
+            // character no tool name has, so it matches nothing.
+            return NameOnlyPredicate.of(expression);
         }
         if (terms.size() == 1) {
             return terms.get(0);
@@ -172,7 +215,7 @@ public final class PredicateParser {
         for (int i = 0; i < term.length(); i++) {
             final char c = term.charAt(i);
             if (!isToolNameChar(c) && c != '*') {
-                throw new IllegalArgumentException("Term '" + term + "' can match no tool: a term without parentheses"
+                throw new UnmatchableTermException("Term '" + term + "' can match no tool: a term without parentheses"
                         + " is a tool name, and " + describe(c) + " cannot occur in one (tool names are letters,"
                         + " digits, '_', '-' and '.'; '*' is the only wildcard). There are no regular expressions,"
                         + " no '&' and no input-field form: write Tool, Tool(glob), or terms joined by '|'");
@@ -182,9 +225,9 @@ public final class PredicateParser {
             requireMatchableMcpServer(term);
         }
         if (term.contains(".*")) {
-            log.warn("hooks: matcher term '{}' holds '.*', which is not a regular expression here: '.' is a literal"
-                    + " and '*' alone is the wildcard, so it matches only names with a dot at that place. For \"any"
-                    + " characters\" write '{}'", term, term.replace(".*", "*"));
+            log.warn("hooks: matcher term '{}' holds '.*'. That is not a regular expression here: '.' is a literal and"
+                    + " '*' alone is the wildcard, so the term matches only names with a dot at that place. If \"any"
+                    + " characters\" was meant, write '{}'", term, term.replace(".*", "*"));
         }
     }
 
@@ -200,11 +243,23 @@ public final class PredicateParser {
             }
             final boolean serverNameChar = c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-';
             if (!serverNameChar) {
-                throw new IllegalArgumentException("Term '" + term + "' can match no MCP tool: MCP tools are named"
+                throw new UnmatchableTermException("Term '" + term + "' can match no MCP tool: MCP tools are named"
                         + " mcp__<server>__<tool> and a server name holds only lowercase letters, digits and '-', so "
                         + describe(c) + " cannot stand in the server's place. '*' is the only wildcard: every MCP"
                         + " tool is 'mcp__*', every tool of one server 'mcp__<server>__*'");
             }
+        }
+    }
+
+    /**
+     * A bare term that is a tool name no tool can have: the one refusal {@link #parseKeepingMatchableTerms} forgives.
+     */
+    private static final class UnmatchableTermException extends IllegalArgumentException {
+
+        private static final long serialVersionUID = 1L;
+
+        private UnmatchableTermException(String message) {
+            super(message);
         }
     }
 

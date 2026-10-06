@@ -10,6 +10,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -26,8 +27,10 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.HookExecutionManager;
@@ -39,6 +42,10 @@ import at.aimon.core.skill.hook.declarative.HostShellActionExecutor;
 import at.aimon.core.skill.hook.declarative.HttpActionExecutor;
 import at.aimon.core.skill.hook.declarative.NoOpShellActionExecutor;
 import at.aimon.core.skill.hook.declarative.ShellActionExecutor;
+import at.aimon.core.skill.hook.declarative.ToolInputPredicate;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 
 /**
  * A {@code hooks.json} entry that parses but cannot be applied (EE-72).
@@ -238,6 +245,48 @@ class HookConfigGuardEntryStrictnessTest {
         assertThatCode(reloader(HOST_SHELL)::bootstrap).doesNotThrowAnyException();
         assertThat(registry.getHooks(HookEventType.PRE_TOOL)).hasSize(1);
         assertThat(registry.getHooks(HookEventType.POST_TOOL)).hasSize(1);
+    }
+
+    @ParameterizedTest(name = "postTool \"{0}\" still fires on {1}")
+    @CsvSource({"Bash|mcp__.*, Bash", "Edit|Write|^MultiEdit$, Edit", "Edit|Write|^MultiEdit$, Write",
+            "tool=Bash | Read, Read"})
+    void bootstrap_postToolMatcherWithOneTermNoToolCanMatch_keepsTheTermsThatCan(String matcher, String tool)
+            throws Exception {
+        // Before the unmatchable-term refusal each of these was an OR whose live terms fired. Refusing the whole
+        // matcher and falling back to a name-only match on the raw string would turn a working audit hook dead.
+        writeProjectHooks("{\"hooks\":{\"postTool\":[{\"matcher\":\"" + matcher
+                + "\",\"hooks\":[{\"type\":\"command\",\"command\":\"audit.sh\"}]}]}}");
+
+        assertThatCode(reloader(HOST_SHELL)::bootstrap).doesNotThrowAnyException();
+
+        assertThat(postToolPredicate().test(tool, ToolInput.of())).isTrue();
+        assertThat(postToolPredicate().test("Grep", ToolInput.of())).isFalse();
+    }
+
+    @ParameterizedTest(name = "{0} does not read its matcher, so \"{1}\" is not parsed")
+    @CsvSource({"subagentStop, my-plugin:reviewer", "onStop, a b", "onStart, x y", "permissionRequest, ^Bash$"})
+    void bootstrap_matcherOnAnEventThatDoesNotReadIt_isNotParsed(String event, String matcher) throws Exception {
+        writeProjectHooks("{\"hooks\":{\"" + event + "\":[{\"matcher\":\"" + matcher
+                + "\",\"hooks\":[{\"type\":\"command\",\"command\":\"g.sh\"}]}]}}");
+        final ListAppender<ILoggingEvent> logs = new ListAppender<>();
+        final Logger applierLog = (Logger) LoggerFactory.getLogger(HookRegistryApplier.class);
+        logs.start();
+        applierLog.addAppender(logs);
+        try {
+            assertThatCode(reloader(HOST_SHELL)::bootstrap).doesNotThrowAnyException();
+        } finally {
+            applierLog.detachAppender(logs);
+        }
+
+        assertThat(logs.list).extracting(ILoggingEvent::getFormattedMessage)
+                .noneMatch(message -> message.contains("could not be parsed") || message.contains("can match no"));
+    }
+
+    private ToolInputPredicate postToolPredicate() throws Exception {
+        final Object hook = registry.getHooks(HookEventType.POST_TOOL).get(0);
+        final Field field = hook.getClass().getDeclaredField("predicate");
+        field.setAccessible(true);
+        return (ToolInputPredicate) field.get(hook);
     }
 
     @Test

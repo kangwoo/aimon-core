@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: 88dd5612
+source_commit: 2c098b7b
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -264,9 +264,11 @@ The grammar is exactly what `PredicateParser` accepts: a **tool name**, **`Tool(
   with a directory in front and does not catch `Main.java`).
 - **A matcher that does not parse** — unbalanced parentheses, an empty pattern (`Bash()`), an empty term (`Read|`), text
   after the closing parenthesis, a tool that takes no parentheses, **a term without parentheses that no tool can be
-  named** — is a **startup failure** on `preTool` ([What stops startup](#what-stops-startup)). On `postTool` it falls
-  back to `name-only`, reading the whole string as a tool name, and leaves a WARN (no tool has that name, so the hook
-  does not fire). A term without parentheses is a tool name in its entirety, so it may hold letters, digits, `_`, `-`,
+  named** — is a **startup failure** on `preTool` ([What stops startup](#what-stops-startup)). `postTool` cannot block, so it is
+  less strict: a term no tool can be named is **left out** and the hook fires on the terms beside it (`Bash|mcp__.*`
+  fires on `Bash`), with a WARN per term left out. Any other syntax error falls back to `name-only`, reading the whole
+  string as a tool name, and leaves a WARN (no tool has that name, so the hook does not fire). The `matcher` of an event
+  that does not read one (anything but `preTool` and `postTool`) is not parsed. A term without parentheses is a tool name in its entirety, so it may hold letters, digits, `_`, `-`,
   `.` and the wildcard `*`, and nothing else — `^Edit$`, `tool=Bash`, `Bash & input.command~^npm`, `Bash Edit` and
   `Bash,Edit` do not parse. What follows `mcp__` is where a server name goes (lowercase letters, digits, `-`), so
   `mcp__.*` and `mcp__GitHub__x` do not parse either. This guide once listed regular expressions, `&` and an
@@ -623,7 +625,7 @@ message.
 | A missing required field or a bad value — a `command` with no `command`, a `deny` with no `reason`, a `url` that is not a URI, an unknown `method`, an `mcp` with no `server` or `tool` | **startup failure** | skip + WARN |
 | A handler type the event does not accept — `deny` outside `preTool`, `http` or `mcp` outside `preTool` / `postTool` | **startup failure** | skip + WARN |
 | An entry with no handlers at all | **startup failure** | skip + WARN |
-| A `matcher` that does not parse — including a term without parentheses that no tool can be named (`^Edit$`, `Bash & …`, `mcp__.*`) | `preTool`: **startup failure** | `postTool`: name-only fallback + WARN |
+| A `matcher` that does not parse — including a term without parentheses that no tool can be named (`^Edit$`, `Bash & …`, `mcp__.*`) | `preTool`: **startup failure** | `postTool`: a term no tool can be named is left out and the rest fire + WARN; any other syntax error is the name-only fallback + WARN |
 | A handler that cannot run on this host — a `command` with an executor that has no shell support, an `http` or `mcp` whose executor is not wired | **startup failure** (a handler with `"failOpen": true` is not a guard and is handled as before — a `command` is skipped with a WARN, an `http` or `mcp` is registered) | a `command` is skipped with a WARN; an `http` or `mcp` is registered and leaves a WARN when called |
 | An event name within two letters of a guard event (`preTol`) | **startup failure** | — |
 | Any other unknown event name, or an unsupported event | — | skip + WARN (naming the closest event when there is one) |
@@ -1059,7 +1061,7 @@ are in [`aimon-skill-extensions.md`](../../references/aimon-skill-extensions.md)
 | Startup exits with `Configuration error: hooks config … (… layer) is invalid: …` / `… could not be read: …` | Fix the file at the position the message points to, or remove the file. Broken JSON, an unknown `type`, a `timeout` of zero or less, an unreadable file and a directory where the file should be all end up here. It never starts without its file hooks. |
 | A fork ends with `Execution blocked by OnStart hook [SUBAGENT/…]`         | An `onStart` hook in `hooks.json` (or in skill frontmatter) blocked that fork. If the hook is meant for user input, make it exit 0 when `AIMON_INVOKER_TYPE` is `SUBAGENT`. |
 | The CLI does not start: `Configuration error: hooks config … is invalid: <event> entry #n, handler #m: …` | An entry under a guard event cannot be applied. Fix or remove the handler the message points at. If the handler only observes and may be left out when it cannot run, declare `"failOpen": true`. The full table is in [What stops startup](#what-stops-startup). |
-| `WARN hooks: matcher '...' could not be parsed`                          | A `PredicateParser` syntax error on `postTool` — a term that cannot be a tool name (`can match no tool`) lands here too. It is running with the name-only fallback, so the hook does not fire. (On `preTool` this is a startup failure.) |
+| `WARN hooks: matcher '...' could not be parsed`                          | A `PredicateParser` syntax error on `postTool`. It is running with the name-only fallback, so the hook does not fire. (On `preTool` this is a startup failure.) A term that cannot be a tool name (`can match no tool`) arrives separately as `a term of matcher '...' is left out`, and that hook fires on its other terms. |
 | A `deny` or guard hook is registered and never fires                     | Its matcher parses but matches no call — a regular expression (`\s+`), `command=…` or a permission pattern (`Bash(git:*)`) written **inside** parentheses, a `Bash.*` outside them (it leaves a WARN) and a name in the wrong case are not matcher grammar and still raise no error. Rewrite it in one of the forms under [Matcher syntax](#matcher-syntax). |
 | `WARN hooks: invalid handler in PROJECT on event 'postTool': ...`        | A required field is missing (`command`/`url`/`server+tool`/`reason`) on an event that is not a guard event. Only that handler is skipped. |
 | `WARN hooks: 'deny' is not valid on postTool ...`                        | `deny` is `preTool`-only. The handler is ignored on other events.             |
