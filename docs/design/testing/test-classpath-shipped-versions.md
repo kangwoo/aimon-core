@@ -868,3 +868,10 @@ is left as written; this records where it stopped matching the tree.*
 - **Four differences are on no list in this document.** The same first run found them (on `aimon-rewake-webhook`,
   `aimon-session-redis` and `aimon-spring-boot-starter`); they are in the file, marked undecided. Whether any of them
   existed on the tree §2 measured was not checked.
+
+*Appended 2026-10-06 for backlog D-4.*
+
+- **The four are decided, and none is marked undecided any more.** `aimon-rewake-webhook` is aligned the way §3.1
+  aligned `aimon-cli`. `jspecify` on `aimon-session-redis` is accepted on §3.2's reasoning, and the two Micrometer jars
+  on `aimon-spring-boot-starter` on the second reason of §3.3 — "shipped" is the wrong comparison for that jar on that
+  module. The measurements are in [`test-classpath-version-check.md`](test-classpath-version-check.md), section 6.

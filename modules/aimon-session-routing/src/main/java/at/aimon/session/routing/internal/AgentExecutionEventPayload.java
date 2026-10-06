@@ -65,6 +65,13 @@ import at.aimon.core.skill.policy.pending.PendingTurnId;
  * not JSON primitives (or nested primitive maps/lists) are normalized by the bus codec and may not reconstruct
  * faithfully. Durations are carried at millisecond granularity. An unrecognized {@code type} (e.g. a newer node's event
  * an older node does not know) decodes to {@link Optional#empty()} so a rolling deployment degrades gracefully.
+ *
+ * <p>
+ * <b>An unknown completion reason does not drop the frame.</b> The two terminal events that carry a
+ * {@link CompletionReason} are what tell a remote subscriber the turn is over, so a name this build does not know
+ * reads as {@link CompletionReason#ERROR} instead of discarding the event
+ * ({@link CompletionReason#fromWireName(String, boolean)}). Neither frame has a success flag to decide the fallback
+ * with; every reason but {@code COMPLETED} is a non-success and an unknown name is not {@code COMPLETED}.
  */
 final class AgentExecutionEventPayload {
 
@@ -346,7 +353,7 @@ final class AgentExecutionEventPayload {
             case "ExecutionCompleted" -> {
                 final ExecutionCompleted.Builder builder = ExecutionCompleted.builder().timestamp(timestamp)
                         .agentRuntimeId(context).iteration(iteration)
-                        .completionReason(CompletionReason.valueOf(asString(payload.get("completion"))))
+                        .completionReason(CompletionReason.fromWireName(asString(payload.get("completion")), false))
                         .totalIterations(asInt(payload.get("totalIterations")));
                 if (payload.containsKey("elapsedMillis")) {
                     builder.elapsed(Duration.ofMillis(asLong(payload.get("elapsedMillis"))));
@@ -360,7 +367,7 @@ final class AgentExecutionEventPayload {
                     builder.cause(new RuntimeException(asString(payload.get("causeMessage"))));
                 }
                 if (payload.containsKey("completion")) {
-                    builder.completionReason(CompletionReason.valueOf(asString(payload.get("completion"))));
+                    builder.completionReason(CompletionReason.fromWireName(asString(payload.get("completion")), false));
                 }
                 yield builder.build();
             }

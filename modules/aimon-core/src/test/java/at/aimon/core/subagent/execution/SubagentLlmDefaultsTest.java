@@ -112,6 +112,16 @@ class SubagentLlmDefaultsTest {
     }
 
     @Test
+    @DisplayName("a parent that states no max-tokens leaves the subagent's unset, so the client's configured one applies")
+    void anUnsetParentMaxTokensStaysUnset() {
+        LlmModel parent = LlmModel.builder().name("parent-model").build();
+
+        LlmModel resolved = SubagentLlmDefaults.resolveModel(subagentWithModel(null), parent);
+
+        assertThat(resolved.getMaxTokens()).isEmpty();
+    }
+
+    @Test
     @DisplayName("the parent's topP and penalties are carried like its temperature")
     void parentSamplingParametersAreCarried() {
         LlmModel parent = LlmModel.builder().name("parent-model").temperature(0.2).topP(0.9).presencePenalty(0.5)

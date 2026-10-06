@@ -15,6 +15,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
+import at.aimon.core.agent.AgentExecutionResult;
+import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.idempotency.IdempotencyEntry;
 
@@ -80,5 +82,39 @@ class IdempotencyEntryCodecTest {
                         + "\"lastTouchedAt\":\"2026-04-27T10:00:05Z\",\"ttlMillis\":1800000,\"result\":null}");
 
         assertThat(decoded.getSessionId()).isEqualTo(SessionId.of("c-7"));
+    }
+
+    @Test
+    @DisplayName("a DONE entry whose completion reason this build does not know still replays its answer")
+    void unknownCompletionReasonOnASuccessKeepsTheAnswer() {
+        // Written by a node on a newer build during a rolling upgrade. The entry exists so a retried turn gets the
+        // answer that already ran; the label is the least important field in it. And a decode that throws here is not
+        // confined to that one key: findStaleInFlight scans the keyspace and decodes every entry it meets.
+        final IdempotencyEntry decoded = codec.decode(doneEntry(true, "\"finalAnswer\":\"the answer\","
+                + "\"errorMessage\":null,\"completionReason\":\"INVENTED_BY_A_NEWER_NODE\""));
+
+        final AgentExecutionResult result = decoded.getResult().orElseThrow();
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getFinalAnswer()).isEqualTo("the answer");
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
+    }
+
+    @Test
+    @DisplayName("a failed DONE entry whose completion reason this build does not know replays as ERROR")
+    void unknownCompletionReasonOnAFailureDegradesToError() {
+        final IdempotencyEntry decoded = codec.decode(doneEntry(false, "\"finalAnswer\":null,"
+                + "\"errorMessage\":\"stopped\",\"completionReason\":\"INVENTED_BY_A_NEWER_NODE\""));
+
+        final AgentExecutionResult result = decoded.getResult().orElseThrow();
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.getErrorMessage()).isEqualTo("stopped");
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.ERROR);
+    }
+
+    private static String doneEntry(boolean success, String resultFields) {
+        return "{\"key\":\"idem-9\",\"conversationId\":\"c-9\",\"inputHash\":\"sha256:def\","
+                + "\"status\":\"DONE\",\"holderId\":null,\"createdAt\":\"2026-04-27T10:00:00Z\","
+                + "\"lastTouchedAt\":\"2026-04-27T10:00:05Z\",\"ttlMillis\":1800000,\"result\":{\"success\":" + success
+                + "," + resultFields + ",\"wasStreamed\":false}}";
     }
 }

@@ -1,4 +1,4 @@
-# 백엔드 모듈의 POM 스코프와 테스트 클래스패스 버전 — 등록 항목 4건 (열림 2 · 닫힘 2)
+# 백엔드 모듈의 POM 스코프와 테스트 클래스패스 버전 — 등록 항목 5건 (열림 2 · 닫힘 3)
 
 `.claude/rules/code-style.md` 와 `.claude/rules/architecture.md` 가 같은 규칙을 두 번 적고 있다 —
 **implementation 모듈은 `implementation(project(":aimon-core"))` 를 쓰고, 파사드만 `api()` 를 쓴다.**
@@ -238,7 +238,7 @@ Boot 올림이 여는 차이를 테스트가 발행 버전을 따라가게 해�
 
 ---
 
-### D-4 — 첫 검사가 찾은, 기록된 적 없는 테스트 클래스패스 차이 넷 · **열림 · 결정 대기**
+### D-4 — 첫 검사가 찾은, 기록된 적 없는 테스트 클래스패스 차이 넷 · ~~열림 · 결정 대기~~ **닫힘 (2026-10-06)**
 
 *(2026-10-05 등록. 출처는 D-3 의 첫 실행.)*
 
@@ -255,6 +255,59 @@ Boot 올림이 여는 차이를 테스트가 발행 버전을 따라가게 해�
 **왜 — 관측 가능한 결과** 그 모듈들의 테스트는 출하하는 것과 다른 버전 위에서 돈다. 스타터의 둘은 주석이 아니라 **코드 jar** 다.
 
 **언제 다시 볼까** — D-2 를 닫을 때 쓴 기준(맞추는 쪽)을 다시 적용하면 된다. `UNDECIDED` 줄은 누가 그 파일을 열 때마다 보인다.
+
+#### 닫힘 (2026-10-06)
+
+**넷을 줄마다 정했다. 맞춘 것은 하나다** (`dfcc353f`). `UNDECIDED` 줄은 남지 않았다.
+
+| 줄 | 결정 | 근거 |
+|---|---|---|
+| `aimon-rewake-webhook` · `jakarta.annotation-api` | **맞췄다** — 줄을 지웠다 | 앞의 세 모듈과 같은 `shouldResolveConsistentlyWith(runtimeClasspath)`. 값은 `spring-boot-starter` 가 치르는데 그 모듈의 테스트는 Spring 을 부르지 않는다 |
+| `aimon-session-redis` · `jspecify` | 받아들였다 | 애노테이션 타입 넷의 클래스 파일이 두 버전에서 바이트 단위로 같다(`module-info.class` 만 다르다). 맞추면 Caffeine 이 요구한 버전 아래로 내려가고, #99 결정 2 가 받아들인 `org.jetbrains:annotations` 줄까지 되돌린다 |
+| `aimon-spring-boot-starter` · `micrometer-observation` · `micrometer-commons` | 받아들였다 | **틀린 쪽이 출하 쪽이다** — 아래 |
+
+**"맞추는 쪽을 다시 적용하면 된다" 는 넷 중 하나에만 들었다 (규칙 다섯).** 같은 기준(맞추는 값이 어디에 떨어지는가)을 줄마다
+대니 셋은 받아들이는 쪽이 나왔다. 맞춤은 jar 단위가 아니라 **클래스패스 단위**라, redis 와 스타터에서는 이미 받아들인 줄을 함께
+지운다 — 항목을 블록으로 처리했다면 보이지 않았을 것이다.
+
+**스타터의 "높은 쪽은 actuator 테스트 의존성에서 온다" 는 적힌 것보다 좁았다 (규칙 둘).** 1.16.7 은 `spring-context` 7.0.9 의
+POM 이 요구하는 값이고, 스타터의 `runtimeClasspath` 가 그것을 고르는 이유는 이 빌드가 스타터를 Boot 의 의존성 관리 없이 해석하기
+때문이다. `spring-boot-dependencies` 4.1.1 은 Micrometer 1.17.1 을 관리하고, Actuator 없는 `aimon-sample-app` 도 1.17.1 을 받는다.
+즉 **스타터를 쓰는 어떤 Boot 앱도 1.16.7 위에서 돌지 않는다.** 맞춰 보기는 했다 — 테스트 클래스패스가 `micrometer-core` 1.17.1 ·
+`observation` 1.16.7 로 갈렸고 단위 테스트 312건이 통과했다(두 버전의 공개 API 는 `javap` 로 같다). 깨지지 않지만 아무도 돌리지
+않는 조합을 테스트하는 것이다. 출하 쪽을 고치는 일은 D-5 다.
+
+**항목에 없던 것.** webhook 의 `testCompileClasspath` 는 `snakeyaml` 도 2.6 대 2.7 로 어긋나 있었고 같은 블록이 맞췄다. 그리고
+webhook 줄은 opensearch 선례보다 무겁다 — 출하 쪽에 읽는 코드가 있다(`jetty-ee10-annotations` 의 핸들러 여섯). 테스트가 거기
+닿는지는 재지 않았다.
+
+**확인한 것.** 세 모듈의 `runtimeClasspath` · `compileClasspath` 는 앞뒤가 바이트 단위로 같다 — 출하 해석은 움직이지 않았다.
+`checkTestClasspathVersions` · 세 모듈의 단위 테스트 · `verifyBom` 초록. docker 계층은 돌리지 않았다(webhook 에는 없고, 나머지
+둘의 테스트 클래스패스는 그대로다).
+
+---
+
+### D-5 — 스타터가 발행하는 Micrometer 는 그 스타터를 쓰는 앱이 받는 버전이 아니다 · **열림 · 결정 대기**
+
+*(2026-10-06 등록. 출처는 D-4.)*
+
+**무엇** — `aimon-spring-boot-starter` 의 발행 메타데이터가 그 Boot 라인이 관리하는 Micrometer 를 말하게 할지 정한다 — main
+스코프 제약으로든 Boot 플랫폼으로든.
+
+**왜 — 관측 가능한 결과** 스타터의 `runtimeClasspath` 는 `micrometer-observation` · `micrometer-commons` 1.16.7 을 고르고, 스타터를
+쓰는 Boot 4.1.1 앱은 1.17.1 을 받는다(D-4 의 닫힘 기록). 스타터의 테스트는 1.17.1 위에서 돌므로 **테스트가 앱과 같고 POM 이
+다르다.** 오늘 물리는 사람은 없다 — Boot 의 의존성 관리가 소비자 쪽에서 버전을 정한다. 물리는 것은 그 관리 없이 스타터를 받는
+소비자다. 그런 소비자가 있는지는 모른다(표본 0).
+
+**결정에 필요한 것** (규칙 넷) — #99 는 이 모듈의 POM 을 바꾸지 않기로 했다
+([`../design/testing/test-classpath-shipped-versions.md`](../design/testing/test-classpath-shipped-versions.md) 결정 3). 그 결정의
+이유가 Micrometer 에도 그대로 서는지부터 읽는다. 바꾸는 쪽은 발행 POM 이 움직이므로 `verifyBom` 과 D-1 의 전이 표면 논의에 닿는다.
+
+**어디** *(2026-10-06)* — `modules/aimon-spring-boot-starter/build.gradle.kts`, `gradle/test-classpath-version-differences.txt` 의
+2026-10-06 수용 절.
+
+**언제 다시 볼까** — Boot 의 의존성 관리 없이 스타터를 쓰는 소비자가 보고될 때, 또는 Boot 라인을 올려 두 버전의 공개 API 가
+갈릴 때(그때는 받아들인 이유 하나가 사라진다).
 
 ---
 

@@ -9,6 +9,8 @@ import org.bson.Document;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.AgentExecutionResult;
+import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.idempotency.IdempotencyEntry;
 
@@ -72,6 +74,40 @@ class IdempotencyEntryCodecTest {
 
         assertThat(decoded.getSessionId()).isEqualTo(SessionId.of("conv-3"));
         assertThat(decoded.getKey()).isEqualTo("idem-3");
+    }
+
+    @Test
+    @DisplayName("a DONE entry whose completion reason this build does not know still replays its answer")
+    void unknownCompletionReasonOnASuccessKeepsTheAnswer() {
+        // Written by a node on a newer build during a rolling upgrade. The entry exists so a retried turn gets the
+        // answer that already ran; the label is the least important field in it.
+        final IdempotencyEntry decoded = codec.decode(doneEntry(
+                new Document().append("success", true).append("finalAnswer", "the answer").append("errorMessage", null)
+                        .append("completionReason", "INVENTED_BY_A_NEWER_NODE").append("wasStreamed", false)));
+
+        final AgentExecutionResult result = decoded.getResult().orElseThrow();
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getFinalAnswer()).isEqualTo("the answer");
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
+    }
+
+    @Test
+    @DisplayName("a failed DONE entry whose completion reason this build does not know replays as ERROR")
+    void unknownCompletionReasonOnAFailureDegradesToError() {
+        final IdempotencyEntry decoded = codec.decode(doneEntry(
+                new Document().append("success", false).append("finalAnswer", null).append("errorMessage", "stopped")
+                        .append("completionReason", "INVENTED_BY_A_NEWER_NODE").append("wasStreamed", false)));
+
+        final AgentExecutionResult result = decoded.getResult().orElseThrow();
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.getErrorMessage()).isEqualTo("stopped");
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.ERROR);
+    }
+
+    private static Document doneEntry(Document result) {
+        return new Document().append("_id", "idem-9").append("conversationId", "conv-9").append("inputHash", "hash-9")
+                .append("status", "DONE").append("createdAt", Date.from(CREATED_AT))
+                .append("lastTouchedAt", Date.from(TOUCHED_AT)).append("result", result);
     }
 
     private static IdempotencyEntry entry(String sessionId) {

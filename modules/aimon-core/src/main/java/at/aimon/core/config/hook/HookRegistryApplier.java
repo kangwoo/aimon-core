@@ -338,16 +338,39 @@ public final class HookRegistryApplier {
      * Parses the entry's matcher. A matcher that does not parse falls back to a name-only match on the raw string,
      * which matches no real tool &mdash; so on {@code preTool}, the one guard event that reads the matcher, it is not
      * a fallback but a guard that silently never fires, and stops the load instead.
+     *
+     * <p>
+     * "Does not parse" includes a term that reads as a tool name no tool can have ({@code "^Edit$"},
+     * {@code "tool=Bash"}, {@code "Bash & input.command~^npm"}, {@code "mcp__.*"}): {@link PredicateParser} refuses it
+     * for the same reason, since parsing it produced exactly that never-firing guard without going through this
+     * fallback at all.
+     *
+     * <p>
+     * {@code postTool} cannot block, so there such a term is left out and the terms beside it are kept:
+     * {@code "Bash|mcp__.*"} went on firing on {@code Bash} before the refusal existed and still does. The events that
+     * never read a matcher do not have theirs parsed &mdash; a WARN about a matcher nothing consults says something
+     * that is not so.
      */
     private ToolInputPredicate parseMatcher(MergedHookConfig merged, String event, MergedHookEntry mhe, int idx) {
         final String matcher = mhe.getEntry().getMatcher();
         if (matcher == null || matcher.isBlank() || "*".equals(matcher.strip())) {
             return NameOnlyPredicate.ANY;
         }
+        final boolean preTool = DeclarativePreToolHook.EVENT_NAME.equals(event);
+        if (!preTool && !DeclarativePostToolHook.EVENT_NAME.equals(event)) {
+            return NameOnlyPredicate.ANY;
+        }
         try {
-            return PredicateParser.parse(matcher);
+            if (preTool) {
+                return PredicateParser.parse(matcher);
+            }
+            return PredicateParser.parseKeepingMatchableTerms(matcher,
+                    reason -> log.warn(
+                            "hooks: a term of matcher '{}' on event '{}' ({}) is left out, and the hook"
+                                    + " fires only on the terms beside it: {}",
+                            matcher, event, mhe.getSource(), reason));
         } catch (IllegalArgumentException ex) {
-            if (DeclarativePreToolHook.EVENT_NAME.equals(event)) {
+            if (preTool) {
                 throw inapplicable(merged, mhe, event, idx, -1,
                         "the matcher could not be parsed (" + ex.getMessage() + ")");
             }

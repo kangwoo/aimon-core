@@ -117,8 +117,19 @@ IMPORTANT: **무엇이 열려 있는지의 정본은 `backlog/` 다.** 설계 �
   링크를 뺀다. `docs/` 밖이나 `backlog/` · `plan/` 을 가리키는 디렉토리 링크는 그대로 써도 된다 — 위의 훅이
   바꾼다. 경계는 [`docs-site.md` §7.1](../design/documentation/docs-site.md#71-훅이-건드리지-않는-것--사이트에-빌드되는-디렉토리를-가리키는-링크)
   에 있다.
-- 링크는 자동으로 검사된다 — `python3 scripts/check-doc-links.py` 가 경로와 `#앵커`, 그리고 위의 디렉토리
-  링크를 본다. CI 의 `docs-links` 잡이 같은 것을 돌린다.
+- **번역이 있는 문서의 절**을 번역이 없는 문서에서 가리킬 때도 정본의 앵커를 그대로 쓴다
+  (`../features/hook/hook-config-guide.md#matcher-문법`). 영어 사이트는 번역이 없는 페이지를 한국어 원문으로
+  보여 주면서 그 링크만 `.en.md` 로 보내는데, 거기에는 한국어 앵커가 없다. 위의 훅이 **같은 자리의 제목**의
+  id 로 fragment 를 옮긴다 — 번역 쌍은 제목의 수 · 레벨 · 순서가 같아야 하므로(§5) 자리가 곧 대응이다.
+  영어 쪽에 한국어 `<a id>` 를 심지 않는다. 훅이 옮기지 못하는 경우는 셋이고 링크 검사가 알려 준다:
+  쌍의 제목이 어긋나 있으면 **보고만** 하고(뒤처진 번역은 빌드를 깨지 않는다), 정본에만 있는 손으로 쓴
+  `<a id>` 와 같은 제목이 반복된 절의 둘째 이후(`#설정-1`)는 **실패**한다. 훅이 읽는 것은 **인라인 링크**
+  (`[글](경로.md#앵커)`, 글이 다음 줄로 넘어가도 된다)뿐이다 — 참조 링크(`[글][ref]`), `(<경로#앵커>)`,
+  작은따옴표 제목은 옮겨지지 않고 링크 검사도 보지 않으므로 쓰지 않는다. 경계는
+  [`docs-site.md` §7.2](../design/documentation/docs-site.md#72-번역을-건너는-fragment--같은-자리의-제목으로-옮긴다)
+  에 있다.
+- 링크는 자동으로 검사된다 — `python3 scripts/check-doc-links.py` 가 경로와 `#앵커`, 위의 디렉토리 링크,
+  그리고 번역을 건너는 fragment 를 본다. CI 의 `docs-links` 잡이 같은 것을 돌린다.
 
 **제목을 고치면 앵커가 바뀐다.** 문서 안의 목차와 다른 문서의 `#fragment` 를 같은 PR 에서 다시 겨눈다.
 
@@ -294,6 +305,7 @@ mkdocs serve            # http://127.0.0.1:8000 에서 미리보기
 mkdocs build --strict   # CI 가 돌리는 것과 같다 — 링크 경고가 실패가 된다
 
 python3 scripts/check-doc-links.py             # 경로 + 앵커
+python3 scripts/mkdocs_github_links.py --self-test  # 훅이 fragment 를 옮기는지 — 작은 사이트를 빌드해 본다
 python3 scripts/check-backlog-registers.py     # 등록부의 중복 ID · 제목과 색인의 건수
 python3 scripts/check-translation-staleness.py # 뒤처진 번역
 python3 scripts/check-translation-structure.py # 정본과 어긋난 구조

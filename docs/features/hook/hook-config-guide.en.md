@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: ca68a22
+source_commit: 2c098b7b
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -260,17 +260,27 @@ The grammar is exactly what `PredicateParser` accepts: a **tool name**, **`Tool(
   `mcp__x(…)`) do not parse.
 - **What is not there.** Regular expressions, AND (`&`), naming an input field (`command=…`) and negation are not part
   of the grammar. It is also **not the grammar** of tool-permission patterns (`Bash(git:*)` and `Read(/tmp/**)` in
-  `allowed-tools`) — in a matcher `:` and `**` are literals.
+  `allowed-tools`) — in a matcher `:` is a literal and `**` is only `*` written twice (`Edit(**/*.java)` catches a path
+  with a directory in front and does not catch `Main.java`).
 - **A matcher that does not parse** — unbalanced parentheses, an empty pattern (`Bash()`), an empty term (`Read|`), text
-  after the closing parenthesis, a tool that takes no parentheses — is a **startup failure** on `preTool`
-  ([What stops startup](#what-stops-startup)). On `postTool` it falls back to `name-only`, reading the whole string as
-  a tool name, and leaves a WARN (no tool has that name, so the hook does not fire).
-- **A matcher that parses but can match nothing is not caught.** A term without parentheses is a tool name in its
-  entirety and whatever is inside parentheses is a glob in its entirety, so a matcher written in a grammar that is not
-  listed above registers without an error and **never fires**: `mcp__.*` matches only names starting with `mcp__.`,
-  `Bash & input.command~^npm` matches only a tool with literally that name, and `Bash(command=^git\s+push)` matches only
-  a command that is literally that text. This guide once listed those three forms as grammar — a `deny` guard copied
-  from it has never fired, and should be rewritten in one of the forms in the table.
+  after the closing parenthesis, a tool that takes no parentheses, **a term without parentheses that no tool can be
+  named** — is a **startup failure** on `preTool` ([What stops startup](#what-stops-startup)). `postTool` cannot block, so it is
+  less strict: a term no tool can be named is **left out** and the hook fires on the terms beside it (`Bash|mcp__.*`
+  fires on `Bash`), with a WARN per term left out. Any other syntax error falls back to `name-only`, reading the whole
+  string as a tool name, and leaves a WARN (no tool has that name, so the hook does not fire). The `matcher` of an event
+  that does not read one (anything but `preTool` and `postTool`) is not parsed. A term without parentheses is a tool name in its entirety, so it may hold letters, digits, `_`, `-`,
+  `.` and the wildcard `*`, and nothing else — `^Edit$`, `tool=Bash`, `Bash & input.command~^npm`, `Bash Edit` and
+  `Bash,Edit` do not parse. What follows `mcp__` is where a server name goes (lowercase letters, digits, `-`), so
+  `mcp__.*` and `mcp__GitHub__x` do not parse either. This guide once listed regular expressions, `&` and an
+  input-field form as grammar, and a `deny` guard written that way registered without an error and never fired — it
+  now shows at startup. A tool whose name holds some other character is matched by writing `*` in that place.
+- **Some matchers still parse and can match nothing.** What is **inside** parentheses is a glob in its entirety, and a
+  command or a path can hold any character, so it is not checked: `Bash(command=^git\s+push)` matches only a command
+  that is literally that text, and `Bash(git:*)` only a command starting with `git:` (`Bash(FOO=1 make*)` and
+  `Bash(npm run deploy:*)` are sound guards of the same shape, so neither can be refused). Outside parentheses `.` is a
+  name character, so `Bash.*` parses — it matches only names starting with `Bash.`, and a WARN says what it matches. A
+  name in the wrong case (`bash`) and the name of a tool that does not exist are not caught either. Having written a
+  guard, check once that it fires.
 
 ---
 
@@ -531,8 +541,8 @@ MCP server (30 seconds by default) still applies underneath, so **the shorter of
 `timeout` does not make a request wait past the server's `requestTimeout`, and when that one ends it first the reason
 is `call failed`. Nothing goes on waiting for a request that was cut off — a stdio server has already received it, so
 the server may keep working, and an answer that arrives late is discarded (no `notifications/cancelled` is sent). A call
-that was still waiting for another request to the same server to finish is not cut off by this timeout; the hook
-executor's outer net cuts it off, and a guard blocks then too.
+that was still waiting for another request to the same server to finish is cut off by this timeout too, and that request
+was never delivered to the server — a guard blocks then too.
 
 ### `deny`
 
@@ -615,7 +625,7 @@ message.
 | A missing required field or a bad value — a `command` with no `command`, a `deny` with no `reason`, a `url` that is not a URI, an unknown `method`, an `mcp` with no `server` or `tool` | **startup failure** | skip + WARN |
 | A handler type the event does not accept — `deny` outside `preTool`, `http` or `mcp` outside `preTool` / `postTool` | **startup failure** | skip + WARN |
 | An entry with no handlers at all | **startup failure** | skip + WARN |
-| A `matcher` that does not parse | `preTool`: **startup failure** | `postTool`: name-only fallback + WARN |
+| A `matcher` that does not parse — including a term without parentheses that no tool can be named (`^Edit$`, `Bash & …`, `mcp__.*`) | `preTool`: **startup failure** | `postTool`: a term no tool can be named is left out and the rest fire + WARN; any other syntax error is the name-only fallback + WARN |
 | A handler that cannot run on this host — a `command` with an executor that has no shell support, an `http` or `mcp` whose executor is not wired | **startup failure** (a handler with `"failOpen": true` is not a guard and is handled as before — a `command` is skipped with a WARN, an `http` or `mcp` is registered) | a `command` is skipped with a WARN; an `http` or `mcp` is registered and leaves a WARN when called |
 | An event name within two letters of a guard event (`preTol`) | **startup failure** | — |
 | Any other unknown event name, or an unsupported event | — | skip + WARN (naming the closest event when there is one) |
@@ -1051,8 +1061,8 @@ are in [`aimon-skill-extensions.md`](../../references/aimon-skill-extensions.md)
 | Startup exits with `Configuration error: hooks config … (… layer) is invalid: …` / `… could not be read: …` | Fix the file at the position the message points to, or remove the file. Broken JSON, an unknown `type`, a `timeout` of zero or less, an unreadable file and a directory where the file should be all end up here. It never starts without its file hooks. |
 | A fork ends with `Execution blocked by OnStart hook [SUBAGENT/…]`         | An `onStart` hook in `hooks.json` (or in skill frontmatter) blocked that fork. If the hook is meant for user input, make it exit 0 when `AIMON_INVOKER_TYPE` is `SUBAGENT`. |
 | The CLI does not start: `Configuration error: hooks config … is invalid: <event> entry #n, handler #m: …` | An entry under a guard event cannot be applied. Fix or remove the handler the message points at. If the handler only observes and may be left out when it cannot run, declare `"failOpen": true`. The full table is in [What stops startup](#what-stops-startup). |
-| `WARN hooks: matcher '...' could not be parsed`                          | A `PredicateParser` syntax error on `postTool`. It is running with the name-only fallback. (On `preTool` this is a startup failure.) |
-| A `deny` or guard hook is registered and never fires                     | Its matcher parses but matches no call — a regular expression (`mcp__.*`, `\s+`), `&`, `command=…` and a permission pattern (`Bash(git:*)`) are not matcher grammar, and none of them raises an error. Rewrite it in one of the forms under [Matcher syntax](#matcher-syntax). |
+| `WARN hooks: matcher '...' could not be parsed`                          | A `PredicateParser` syntax error on `postTool`. It is running with the name-only fallback, so the hook does not fire. (On `preTool` this is a startup failure.) A term that cannot be a tool name (`can match no tool`) arrives separately as `a term of matcher '...' is left out`, and that hook fires on its other terms. |
+| A `deny` or guard hook is registered and never fires                     | Its matcher parses but matches no call — a regular expression (`\s+`), `command=…` or a permission pattern (`Bash(git:*)`) written **inside** parentheses, a `Bash.*` outside them (it leaves a WARN) and a name in the wrong case are not matcher grammar and still raise no error. Rewrite it in one of the forms under [Matcher syntax](#matcher-syntax). |
 | `WARN hooks: invalid handler in PROJECT on event 'postTool': ...`        | A required field is missing (`command`/`url`/`server+tool`/`reason`) on an event that is not a guard event. Only that handler is skipped. |
 | `WARN hooks: 'deny' is not valid on postTool ...`                        | `deny` is `preTool`-only. The handler is ignored on other events.             |
 | `WARN hooks: '...' event is not supported by AIMON in this phase`        | Only `Notification` / `UserPromptSubmit` / `stop_hook_active`. Everything else is supported. |

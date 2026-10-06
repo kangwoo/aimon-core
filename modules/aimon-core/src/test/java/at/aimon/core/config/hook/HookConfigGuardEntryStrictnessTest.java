@@ -10,6 +10,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -24,9 +25,12 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.HookExecutionManager;
@@ -38,6 +42,10 @@ import at.aimon.core.skill.hook.declarative.HostShellActionExecutor;
 import at.aimon.core.skill.hook.declarative.HttpActionExecutor;
 import at.aimon.core.skill.hook.declarative.NoOpShellActionExecutor;
 import at.aimon.core.skill.hook.declarative.ShellActionExecutor;
+import at.aimon.core.skill.hook.declarative.ToolInputPredicate;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 
 /**
  * A {@code hooks.json} entry that parses but cannot be applied (EE-72).
@@ -195,6 +203,109 @@ class HookConfigGuardEntryStrictnessTest {
 
         assertThatCode(reloader(NoOpShellActionExecutor.INSTANCE)::bootstrap).doesNotThrowAnyException();
         assertThat(registry.isEmpty()).isTrue();
+    }
+
+    // --- (2b) a matcher that parses as a tool name no tool can have (EE-85) ---------------------------------------
+
+    @ParameterizedTest(name = "preTool matcher \"{0}\"")
+    @ValueSource(strings = {"^Edit$", "tool=Bash", "Bash & input.command~^npm", "Bash Edit", "Bash,Edit", "mcp__.*",
+            "Read|^Edit$"})
+    void bootstrap_preToolMatcherNoToolCanMatch_stopsStartup(String matcher) throws Exception {
+        // Each of these used to register a deny guard that never fired: the text was taken whole as a tool name.
+        writeProjectHooks(denyOn("preTool", matcher));
+        final HookRegistryReloader reloader = reloader(HOST_SHELL);
+
+        assertThatThrownBy(reloader::bootstrap).isInstanceOf(HookConfigParseException.class)
+                .hasMessageContaining("hooks config " + projectHooksFile().toAbsolutePath())
+                .hasMessageContaining("(PROJECT layer) is invalid").hasMessageContaining("preTool entry #0")
+                .hasMessageContaining("the matcher could not be parsed").hasMessageContaining("can match no");
+        assertThat(registry.isEmpty()).isTrue();
+        verify(manager, never()).executeOnConfigReload(any());
+    }
+
+    @ParameterizedTest(name = "preTool matcher \"{0}\"")
+    @ValueSource(strings = {"Bash", "*", "Edit|Write", "mcp__*", "mcp__github__*", "*Search", "schedule_task",
+            "deriver.*", "Bash(git push*--force*)", "Bash(FOO=1 make *)", "Bash(npm run deploy:*)", "Edit(**/*.env)"})
+    void bootstrap_preToolMatcherThatCanMatch_isRegistered(String matcher) throws Exception {
+        writeProjectHooks(denyOn("preTool", matcher));
+
+        assertThatCode(reloader(HOST_SHELL)::bootstrap).doesNotThrowAnyException();
+        assertThat(registry.getHooks(HookEventType.PRE_TOOL)).hasSize(1);
+    }
+
+    @Test
+    void bootstrap_sameMatcherOnPostTool_isAWarnAndTheRestApplies() throws Exception {
+        // postTool cannot block: its unparseable matcher keeps the name-only fallback and the WARN it always had.
+        writeProjectHooks("""
+                {"hooks":{
+                  "postTool":[{"matcher":"^Edit$","hooks":[{"type":"command","command":"audit.sh"}]}],
+                  "preTool":[{"matcher":"Bash","hooks":[{"type":"deny","reason":"guard"}]}]
+                }}""");
+
+        assertThatCode(reloader(HOST_SHELL)::bootstrap).doesNotThrowAnyException();
+        assertThat(registry.getHooks(HookEventType.PRE_TOOL)).hasSize(1);
+        assertThat(registry.getHooks(HookEventType.POST_TOOL)).hasSize(1);
+    }
+
+    @ParameterizedTest(name = "postTool \"{0}\" still fires on {1}")
+    @CsvSource({"Bash|mcp__.*, Bash", "Edit|Write|^MultiEdit$, Edit", "Edit|Write|^MultiEdit$, Write",
+            "tool=Bash | Read, Read"})
+    void bootstrap_postToolMatcherWithOneTermNoToolCanMatch_keepsTheTermsThatCan(String matcher, String tool)
+            throws Exception {
+        // Before the unmatchable-term refusal each of these was an OR whose live terms fired. Refusing the whole
+        // matcher and falling back to a name-only match on the raw string would turn a working audit hook dead.
+        writeProjectHooks("{\"hooks\":{\"postTool\":[{\"matcher\":\"" + matcher
+                + "\",\"hooks\":[{\"type\":\"command\",\"command\":\"audit.sh\"}]}]}}");
+
+        assertThatCode(reloader(HOST_SHELL)::bootstrap).doesNotThrowAnyException();
+
+        assertThat(postToolPredicate().test(tool, ToolInput.of())).isTrue();
+        assertThat(postToolPredicate().test("Grep", ToolInput.of())).isFalse();
+    }
+
+    @ParameterizedTest(name = "{0} does not read its matcher, so \"{1}\" is not parsed")
+    @CsvSource({"subagentStop, my-plugin:reviewer", "onStop, a b", "onStart, x y", "permissionRequest, ^Bash$"})
+    void bootstrap_matcherOnAnEventThatDoesNotReadIt_isNotParsed(String event, String matcher) throws Exception {
+        writeProjectHooks("{\"hooks\":{\"" + event + "\":[{\"matcher\":\"" + matcher
+                + "\",\"hooks\":[{\"type\":\"command\",\"command\":\"g.sh\"}]}]}}");
+        final ListAppender<ILoggingEvent> logs = new ListAppender<>();
+        final Logger applierLog = (Logger) LoggerFactory.getLogger(HookRegistryApplier.class);
+        logs.start();
+        applierLog.addAppender(logs);
+        try {
+            assertThatCode(reloader(HOST_SHELL)::bootstrap).doesNotThrowAnyException();
+        } finally {
+            applierLog.detachAppender(logs);
+        }
+
+        assertThat(logs.list).extracting(ILoggingEvent::getFormattedMessage)
+                .noneMatch(message -> message.contains("could not be parsed") || message.contains("can match no"));
+    }
+
+    private ToolInputPredicate postToolPredicate() throws Exception {
+        final Object hook = registry.getHooks(HookEventType.POST_TOOL).get(0);
+        final Field field = hook.getClass().getDeclaredField("predicate");
+        field.setAccessible(true);
+        return (ToolInputPredicate) field.get(hook);
+    }
+
+    @Test
+    void reload_preToolMatcherNoToolCanMatch_keepsThePreviousConfig() throws Exception {
+        writeProjectHooks(denyOn("preTool", "Bash"));
+        final HookRegistryReloader reloader = reloader(HOST_SHELL);
+        assertThat(reloader.bootstrap()).isTrue();
+        final List<PreToolHook> before = List.copyOf(registry.getHooks(HookEventType.PRE_TOOL));
+
+        // An edit that would have swapped a live guard for one that never fires.
+        writeProjectHooks(denyOn("preTool", "Bash & input.command~^rm"));
+
+        assertThat(reloader.reload(2L, projectHooksFile())).isFalse();
+        assertThat(registry.getHooks(HookEventType.PRE_TOOL)).isEqualTo(before);
+    }
+
+    private static String denyOn(String event, String matcher) {
+        return "{\"hooks\":{\"" + event + "\":[{\"matcher\":\"" + matcher
+                + "\",\"hooks\":[{\"type\":\"deny\",\"reason\":\"no\"}]}]}}";
     }
 
     // --- (3) unknown event names -------------------------------------------------------------------------------
