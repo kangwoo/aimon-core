@@ -533,7 +533,8 @@ in-memory 구현, 분산 전환은 리팩토링이 아니라 구현체 교체.
 |------|----------|
 | `ScheduledTaskInterruptBus.LOCAL_ONLY` (기본값) | 이 노드. 단일 노드에서는 로컬 `interrupt` 가 이미 전부이므로 팬아웃할 곳이 없다 |
 | `InMemoryScheduledTaskInterruptBus` | 이 JVM. 한 프로세스 안의 엔진 여럿, 그리고 브로커 없이 계약을 테스트하는 자리 |
-| 분산 구현 | 클러스터. 애플리케이션이 빈/스펙으로 주입한다 |
+| `MongoScheduledTaskInterruptBus` (`aimon-session-mongodb`) | 클러스터. capped 컬렉션 `scheduled_task_interrupts` 위의 change stream — `MongoSessionSignalBus` 와 같은 기제다 |
+| 그 밖의 분산 구현 | 클러스터. 애플리케이션이 빈/스펙으로 주입한다 |
 
 **발행은 매니저가, 구독은 엔진이 한다.** 둘을 갈라 놓은 것이 설계의 핵심이다 — `RoutineExecutor` 가
 스스로 발행까지 하면 그것의 `shutdown()` 이 여기 있는 실행을 전부 끊으면서 그 사실을 클러스터에
@@ -575,9 +576,10 @@ IMPORTANT: **이 목록은 미룬 근거이지 현재 상태가 아니다.** 무
 1. **병렬화 대상 확대 시 승격 규칙 재검토** — §8.5 의 전제.
 2. **크로스 노드 취소의 분산 구현** — §12.7 로 SPI 는 났고 그 자리에 어떤 SPI 를 낼지도 정해졌지만,
    `aimon-core` 가 싣는 구현은 노드 하나(`LOCAL_ONLY`)와 JVM 하나
-   (`InMemoryScheduledTaskInterruptBus`)까지다. 클러스터용은 지금은 애플리케이션이 쓴다.
-   `aimon-session-{redis,postgres,mongodb}` 가 `SessionSignalBus` 에 대해 하는 것과 같은 모양의
-   백엔드를 낼 수 있겠지만, 소비자가 나타나기 전까지는 만들지 않는다.
+   (`InMemoryScheduledTaskInterruptBus`)까지다. 클러스터용은 `aimon-session-mongodb` 의
+   `MongoScheduledTaskInterruptBus` 하나가 있고, Redis · Postgres 에서는 여전히 애플리케이션이 쓴다.
+   세 백엔드가 지켜야 할 계약은 `aimon-session-testkit` 의
+   `AbstractScheduledTaskInterruptBusContractTest` 다.
 3. **크로스 노드 제출의 멀티모달** — §15.6 의 마지막 문단. `LiveSession` 은 `UserInput` 을 받지만
    `SubmitRequest` 는 아직 `String` 이다. 인코딩은 이미 있으므로(`JsonSessionSnapshotCodec` 의
    `userInput`) 인박스 와이어 포맷에 얹기만 하면 되고, 이것도 소비자가 나타나기 전까지는 하지 않는다.

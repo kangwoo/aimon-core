@@ -19,6 +19,49 @@ the previous release would drop the frame that carried the name.
 readers named by EE-91 are unchanged: `RejectedAt`'s reason and `SubagentTaskCompleted`'s outcome still discard a frame
 whose name they do not know, and an unreadable reason on an `INTERRUPT` or `EVICT` signal still reads as `USER_SIGINT`.
 
+### Fixed: `MongoSessionSignalBus` could go deaf for good while its watcher thread stayed alive
+
+Three ways a node stopped receiving cross-node signals — interrupts, evictions, the event relay — until it was
+restarted:
+
+- **A resume token the server refused was retried for ever.** The refusal (a token older than the oplog, among others)
+  arrives as a `MongoCommandException` labelled `NonResumableChangeStreamError`; the branch that drops the token only
+  caught `MongoChangeStreamException`. The watcher logged a warning twice a second and delivered nothing. It now drops
+  the token and starts over, and the token advances on idle polls so that a quiet channel does not leave it stale. Any
+  other command error — a killed operation, a step-down — keeps the token, so the watcher resumes and replays.
+- **Dropping and recreating `conversation_signals` killed every watcher silently.** The server closes the cursor, the
+  insert-only pipeline hides the invalidate, and the cursor then returns nothing without failing. The watcher now
+  notices and reopens, with a warning.
+- **A handler that threw an `Error` ended the watcher thread**, which nothing restarts. `PostgresSessionSignalBus` had
+  the same defect on its listen thread and is fixed too.
+
+Signals published while a watcher starts over without its token are lost; delivery on this bus is best-effort.
+
+### Added: `MongoScheduledTaskInterruptBus` — cancelling a scheduled task reaches the node running it (MongoDB)
+
+`aimon-session-mongodb` ships a `ScheduledTaskInterruptBus` for clusters: a stop request entered on one node is inserted
+into a capped collection and every other node hears it through a change stream, the mechanism `MongoSessionSignalBus`
+uses. Until now the core shipped a node-local default and an in-JVM bus, and a cluster had to write its own. Pass it with
+`SchedulingSpec.withInterruptBus(new MongoScheduledTaskInterruptBus(database, nodeId))`, or as a
+`ScheduledTaskInterruptBus` bean under the starter. It is `AutoCloseable` and the application closes it; it does not
+close the `MongoDatabase`.
+
+**Re-run `db/mongodb/init.js` before wiring it.** The script now creates `scheduled_task_interrupts` capped at 1 MiB.
+The runtime never runs DDL, and publishing into a collection that does not exist makes MongoDB create an uncapped one,
+which works and grows for ever. A replica set is required, as for the signal bus.
+
+Delivery is best-effort: a request published while a node's watcher has neither a cursor nor a usable resume token does
+not reach that node and is not redelivered. That is the moment before its cursor opens, and the gap while it starts over
+after the server refused its resume token or closed its cursor (the collection was dropped or recreated); the latter is
+logged at WARN. Other interruptions keep the token, and the watcher resumes and replays. A run
+whose node missed the request is not stopped: it finishes its remaining steps, as it would without a bus. A request
+whose reason an older node does not know is still honoured. Redis and Postgres have no implementation yet.
+
+`InMemoryScheduledTaskInterruptBus`: closing one subscription twice no longer removes a second subscription of the same
+listener.
+
+The contract every such bus has to meet is `AbstractScheduledTaskInterruptBusContractTest` in `aimon-session-testkit`.
+
 ### Changed (breaking): a matcher term no tool can be named no longer parses (EE-85)
 
 A matcher term without parentheses is a tool name. One holding a character no tool name has — `^Edit$`, `tool=Bash`,
