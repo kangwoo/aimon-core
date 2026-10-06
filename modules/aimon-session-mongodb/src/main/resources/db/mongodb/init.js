@@ -27,6 +27,12 @@ ensureCollection("idempotency_entries");
 ensureCollection("conversation_signals", { capped: true, size: 64 * 1024 * 1024 });
 ensureCollection("background_task");
 
+// scheduled_task_interrupts is the change-stream channel for MongoScheduledTaskInterruptBus: one tiny
+// document per stop request, read once by every node. Capped so it never needs sweeping; 1 MiB holds
+// several thousand requests, far more than any node can fall behind by. Create it BEFORE the first
+// publish — an insert into a missing collection creates an uncapped one that grows without bound.
+ensureCollection("scheduled_task_interrupts", { capped: true, size: 1024 * 1024 });
+
 // session_records is the one collection named for the session rather than the conversation. The
 // "conversation_*" spellings above are contracts with documents already on disk; this collection
 // had none when it was added, so it got the name the code uses. It is frozen from here on all the
@@ -79,7 +85,7 @@ target.session_log_segments.createIndex(
 
 // --- replica-set sanity check -----------------------------------------------
 //
-// Change Streams (signal bus) need a replica set. Print a clear error if the
+// Change Streams (signal bus, scheduled-task interrupt bus) need a replica set. Print a clear error if the
 // admin forgot to rs.initiate(); the script itself does not initiate.
 
 try {

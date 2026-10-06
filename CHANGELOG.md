@@ -7,6 +7,25 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: `MongoScheduledTaskInterruptBus` — cancelling a scheduled task reaches the node running it (MongoDB)
+
+`aimon-session-mongodb` ships a `ScheduledTaskInterruptBus` for clusters: a stop request entered on one node is inserted
+into a capped collection and every other node hears it through a change stream, the mechanism `MongoSessionSignalBus`
+uses. Until now the core shipped a node-local default and an in-JVM bus, and a cluster had to write its own. Pass it with
+`SchedulingSpec.withInterruptBus(new MongoScheduledTaskInterruptBus(database, nodeId))`, or as a
+`ScheduledTaskInterruptBus` bean under the starter. It is `AutoCloseable` and the application closes it; it does not
+close the `MongoDatabase`.
+
+**Re-run `db/mongodb/init.js` before wiring it.** The script now creates `scheduled_task_interrupts` capped at 1 MiB.
+The runtime never runs DDL, and publishing into a collection that does not exist makes MongoDB create an uncapped one,
+which works and grows for ever. A replica set is required, as for the signal bus.
+
+Delivery is best-effort: a request published before a node's watcher has attached, or in the gap after its resume token
+aged out of the oplog, does not reach that node, and its run stops at the next step boundary instead. A request whose
+reason an older node does not know is still honoured. Redis and Postgres have no implementation yet.
+
+The contract every such bus has to meet is `AbstractScheduledTaskInterruptBusContractTest` in `aimon-session-testkit`.
+
 ### Changed (breaking): a matcher term no tool can be named no longer parses (EE-85)
 
 A matcher term without parentheses is a tool name. One holding a character no tool name has — `^Edit$`, `tool=Bash`,
