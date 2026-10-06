@@ -104,22 +104,16 @@ public final class NameOnlyPredicate implements ToolInputPredicate {
      * Compiles a tool-name glob (where {@code *} means "zero or more arbitrary characters") into a regex
      * {@link Pattern}. Visible for reuse from sibling predicates (e.g. {@code PathGlobPredicate}).
      *
+     * <p>
+     * The text matched is often written by the model (a Bash command, a path), so the pattern must not backtrack into
+     * an earlier {@code *} when a later literal fails: {@code .*a.*a.*b} against a long run of {@code a} tries every
+     * way of placing each one. A literal between two {@code *} is therefore found at its <em>first</em> occurrence and
+     * kept (an atomic group around a reluctant {@code .*?}) &mdash; the earliest place leaves the most text for what
+     * follows, so no match is lost &mdash; and only the last literal, which has to end the text, is searched for from
+     * the end.
+     *
      * @param glob
      *            The glob pattern (must not be null)
-     *
-     *            <p>
-     *            The text matched is often written by the model (a Bash command, a path), so the pattern must not
-     *            backtrack into
-     *            an earlier {@code *} when a later literal fails: {@code .*a.*a.*b} against a long run of {@code a}
-     *            tries every
-     *            way of placing each one. A literal between two {@code *} is therefore found at its <em>first</em>
-     *            occurrence and
-     *            kept (an atomic group around a reluctant {@code .*?}) &mdash; the earliest place leaves the most text
-     *            for what
-     *            follows, so no match is lost &mdash; and only the last literal, which has to end the text, is searched
-     *            for from
-     *            the end.
-     *
      * @return The compiled {@link Pattern}, anchored implicitly via {@link java.util.regex.Matcher#matches()}
      */
     public static Pattern compileGlob(String glob) {

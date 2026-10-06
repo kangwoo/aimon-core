@@ -51,11 +51,11 @@ import at.aimon.core.skill.hook.declarative.ToolInputPredicate;
  *
  * <p>
  * Comments, here-documents and {@code $'...'} strings are read <em>as well</em>, not instead. An apostrophe in a
- * comment or in the body of a
- * here-document is text to a shell; here it pairs up with the next one and quotes the lines between them. So a
- * command with a {@code #} or a {@code <<} is split a second time, with the quotes and substitutions left unread in
- * each comment ({@code #} at the start of a word, to the end of the line) and in each here-document body (the lines
- * after a {@code <<WORD} up to the line that is {@code WORD}), and the pieces of both readings are matched.
+ * comment or in the body of a here-document is text to a shell; here it pairs up with the next one and quotes the
+ * lines between them. So a command with a {@code #}, a {@code <<} or a {@code $'} is split a second time, with the
+ * quotes and substitutions left unread in each comment ({@code #} at the start of a word, to the end of the line) and
+ * in each here-document body (the lines after a {@code <<WORD} up to the line that is {@code WORD}), and the pieces
+ * of both readings are matched.
  * Substituting the second reading for the first would be wrong wherever this takes for a comment or a document what a
  * shell does not &mdash; a {@code #} inside double quotes, a {@code <<} that is a shift &mdash; because a
  * {@code $(...)} there, which the shell runs, would go unread.
@@ -67,10 +67,9 @@ import at.aimon.core.skill.hook.declarative.ToolInputPredicate;
  * limits bound what it is asked to do: a command longer than {@link #MAX_SPLIT_LENGTH} characters, one nested
  * deeper than {@link #MAX_NESTING_DEPTH} levels, or one whose unclosed quotes and substitutions cost more than
  * {@link #MAX_UNPAIRED_SCAN} characters of looking for their partners, is not split at all. For such a command the
- * predicate answers
- * {@code true} whatever the pattern. It cannot tell that no sub-command matches, and a matcher only decides whether a
- * hook is asked &mdash; so the hook is asked, with the whole command as its input. Answering {@code false} would let a
- * command step around every {@code Bash(...)} matcher by being nested one level too deep.
+ * predicate answers {@code true} whatever the pattern. It cannot tell that no sub-command matches, and a matcher only
+ * decides whether a hook is asked &mdash; so the hook is asked, with the whole command as its input. Answering
+ * {@code false} would let a command step around every {@code Bash(...)} matcher by being nested one level too deep.
  *
  * <h2>Glob grammar</h2>
  *
@@ -215,8 +214,8 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
      * substitutions encountered. {@code depth} is how many blocks enclose {@code command}, 0 for the command itself.
      * {@code unpaired} counts, across all levels, the quotes, backticks and {@code $(} that had no partner and were
      * read as plain characters (slot 0), and the characters scanned to find that out (slot 1). With
-     * {@code readComments}, the quotes and substitutions of a comment and of a
-     * here-document body are plain characters too.
+     * {@code readComments}, the quotes and substitutions of a comment and of a here-document body are plain characters
+     * too, and a {@code $'...'} string ends at its first unescaped quote.
      */
     @SuppressWarnings({"checkstyle:CyclomaticComplexity", "checkstyle:NestedIfDepth", "checkstyle:NPathComplexity",
             "checkstyle:MethodLength"})
