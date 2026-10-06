@@ -87,7 +87,7 @@ fail-closed 라는 것과, 그래서 결과가 권한 상승이 아니라 마찰
 | 메모리 | `PeerMemory` (다섯 티어). 저장소 SPI 셋은 기본 백엔드의 재료로 격하됨 | **없음** — `aimon-memory-{postgres,mongodb}` 제거됨. 분산 메모리는 이 저장소 밖의 원격 `PeerMemory` 백엔드다 | `MemorySpec` |
 | 지식 | `KnowledgeStore` | **OpenSearch** | `AimonStackSpec.getKnowledgeStore` |
 | 자격증명 | `CredentialStore` | 없음 | `AimonStackSpec.getCredentialStore` |
-| 스케줄 저장소·가드 | `ScheduledTaskRepository` · `ScheduledExecutionGuard` · `ScheduledTaskInterruptBus` | 없음 — **B-7** | `SchedulingSpec` (B-34 가 뚫었다) |
+| 스케줄 저장소·가드 | `ScheduledTaskRepository` · `ScheduledExecutionGuard` · `ScheduledTaskInterruptBus` | 저장소 · 가드는 없음 — **B-7**. 인터럽트 버스만 **Mongo** (2026-10-06, [`interrupt-open-items.md`](interrupt-open-items.md) 3번) | `SchedulingSpec` (B-34 가 뚫었다) |
 | 서브에이전트 산출물 | `TaskOutputStore` · `TaskResultStore` · `SessionSnapshotStore` | **VFS 경유** (GridFS · S3) | 런타임 팩토리 |
 | **승인 · 보류턴 · 메시지 큐** | `AgentApprovalStore` · `SessionApprovalStore` · `PendingTurnRegistry` · `MessageQueueRepository` | 없음 — **M-2** | `SkillApprovalSpec` · `AimonStackSpec` (M-1 이 뚫었다) |
 

@@ -342,7 +342,7 @@ forward 시나리오가 Redis·Postgres·MongoDB **셋 다에서** 실제로 돌
 
 ---
 
-## 3. 크로스 노드 스케줄 취소의 분산 구현 — **열림 (소비자 대기)**
+## 3. 크로스 노드 스케줄 취소의 분산 구현 — **열림 (Mongo 는 났다 · Redis · Postgres 는 소비자 대기)**
 
 **무엇** — `ScheduledTaskInterruptBus` 의 브로커 기반 구현.
 
@@ -358,6 +358,48 @@ forward 시나리오가 Redis·Postgres·MongoDB **셋 다에서** 실제로 돌
 
 **언제 다시 볼까** — 클러스터 배포에서 스케줄 루틴 취소가 실제로 요구될 때. 모양은 정해져 있다 —
 `SessionSignalBus` 에 대해 그 세 모듈이 하는 것과 같은 백엔드.
+
+### Mongo 구현 (2026-10-06) — 트리거를 기다리지 않고, IT 를 소비자로 세웠다
+
+소비자는 여전히 없다. 그래도 착수한 근거는 이 항목 자신의 문장이다 — *"모양은 정해져 있다"*. 모양을
+추측해야 해서 미룬 항목(EE-57 · M-2)과 달리 여기서 빠져 있던 것은 **환경**뿐이었고, 환경은 Testcontainers 가
+대신한다. 소비자를 IT 가 대신한 것은 아니다 — 그 구분은 아래 "확인하지 못한 것" 에 남긴다.
+
+- **구현** — `aimon-session-mongodb` 의 `MongoScheduledTaskInterruptBus`. capped 컬렉션
+  `scheduled_task_interrupts`(1 MiB, `init.js`) 위의 change stream 이고, `MongoSessionSignalBus` 와 같은 구조다.
+  `MongoSessionBackends` 에는 넣지 않았다 — 그 집합체는 세션 SPI 의 것이고, 선례인 `MongoBackgroundTaskStore` 도
+  밖에 있다.
+- **계약** — `aimon-session-testkit` 의 `AbstractScheduledTaskInterruptBusContractTest` 다섯 건. 버스 단위 넷
+  (건너감 · 모든 사유 · 던지는 리스너 · 구독 해제)과 엔진 단위 하나(노드 B 에서 `interrupt` → 노드 A 의 실행이
+  `CANCELLED` 로 끝난다). in-memory 구현이 daemon 없이 같은 다섯을 통과한다. Redis · Postgres 구현이 생기면
+  상속만 하면 된다.
+- **Mongo 고유 셋** — 자기 요청은 origin 으로 걸러진다, 모르는 사유 이름도 중지 요청으로 읽는다, 읽을 수 없는
+  문서가 watcher 를 멈추지 않는다.
+
+착수해 보니 달랐던 것.
+
+1. **에코는 계약이 아니었다.** in-memory 버스는 발행 노드에도 돌려주고 코어의
+   `ScheduledTaskCrossNodeInterruptTest` 는 그 에코를 "일부러 둔다" 고 적는다. SPI 는 에코를 **허용**할 뿐이라
+   Mongo 는 origin 으로 거른다(호출자가 발행 전에 로컬 실행을 이미 끊는다). 그래서 계약 스위트는 발행 노드가
+   듣는지를 단언하지 않는다 — 단언했다면 두 구현 중 하나가 틀린 것이 된다.
+2. **EE-91 의 모양을 처음부터 피했다.** 이 컬렉션은 한 릴리스 뒤처진 노드도 읽으므로, 코덱은
+   `InterruptReason.valueOf` 를 쓰지 않는다. 모르는 이름은 `TASK_CANCELLED` 로 읽고 **중지는 진행한다** — 사유는
+   기록의 문구를 고를 뿐이고, 버려지면 안 되는 것은 요청이다.
+3. **`subscribe` 는 스트림이 붙기 전에 돌아온다.** `MongoSessionSignalBus` 와 같은 성질이고 같은 값(500ms)을
+   IT 가 기다린다. 기동 직후 그 창에 들어온 중지 요청은 그 노드에 닿지 않는다. 계약 스위트에는
+   `awaitSubscriptionsLive()` 훅으로 드러나 있다.
+
+확인하지 못한 것.
+
+- **실제 소비자의 요구.** IT 가 증명한 것은 "이 구현이 SPI 의 계약을 지킨다" 이지 "이 계약이 클러스터 운영에
+  충분하다" 가 아니다. 예컨대 중지 요청이 **유실**된 경우(위 3, 또는 resume token 이 oplog 밖으로 밀린 경우)를
+  운영자가 알 길은 WARN 한 줄뿐이다.
+- **init.js 를 다시 돌리지 않은 클러스터.** 컬렉션이 없으면 첫 `insertOne` 이 capped 가 아닌 컬렉션을 만든다 —
+  동작은 하고 영원히 자란다. 런타임은 DDL 을 실행하지 않는다는 이 모듈의 규칙을 따랐고, javadoc 과 CHANGELOG 에
+  적었다. 기동 시 검사는 없다.
+- **replica set 장애 조치 중의 동작.** IT 는 단일 노드 replica set 이다.
+
+**남은 것** — Redis · Postgres. 트리거는 그대로다(그 저장소로 클러스터를 꾸리는 소비자).
 
 ---
 
