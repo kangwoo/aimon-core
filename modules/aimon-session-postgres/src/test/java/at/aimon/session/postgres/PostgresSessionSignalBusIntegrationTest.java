@@ -192,4 +192,31 @@ class PostgresSessionSignalBusIntegrationTest {
         final int deleted = busA.sweepOlderThan(java.time.Instant.now().plusSeconds(60));
         assertThat(deleted).isGreaterThanOrEqualTo(1);
     }
+
+    @Test
+    @DisplayName("a handler that throws an Error does not end the listen thread")
+    void handlerThrowingAnErrorDoesNotEndTheListenThread() throws Exception {
+        // The listen thread is the only thing that delivers signals to this node, and nothing restarts it. A handler
+        // on one session throwing an Error must not silence every other session.
+        final SessionId failing = SessionId.of("c-bus-error");
+        final SessionId healthy = SessionId.of("c-bus-healthy");
+        final LinkedBlockingQueue<SessionSignal> received = new LinkedBlockingQueue<>();
+        try (SessionSignalBus.Subscription bad = busB.subscribe(failing, signal -> {
+            throw new AssertionError("an Error, not an Exception, from a handler");
+        }); SessionSignalBus.Subscription good = busB.subscribe(healthy, received::offer)) {
+            Thread.sleep(100);
+            for (SignalKind kind : new SignalKind[]{SignalKind.INTERRUPT, SignalKind.EVENT}) {
+                busA.publish(SessionSignal.builder().sessionId(failing).kind(kind).originNodeId("node-A")
+                        .payload(Map.of("reason", "USER_REQUEST")).build());
+            }
+            Thread.sleep(300);
+
+            for (SignalKind kind : new SignalKind[]{SignalKind.INTERRUPT, SignalKind.EVENT}) {
+                busA.publish(SessionSignal.builder().sessionId(healthy).kind(kind).originNodeId("node-A")
+                        .payload(Map.of("reason", "USER_REQUEST")).build());
+                final SessionSignal got = received.poll(5, TimeUnit.SECONDS);
+                assertThat(got).as("a %s for the healthy session after the other handler threw", kind).isNotNull();
+            }
+        }
+    }
 }

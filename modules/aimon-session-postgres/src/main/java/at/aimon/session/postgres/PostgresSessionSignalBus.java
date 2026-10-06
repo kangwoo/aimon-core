@@ -209,7 +209,8 @@ public final class PostgresSessionSignalBus implements SessionSignalBus, AutoClo
         for (Consumer<SessionSignal> h : list) {
             try {
                 h.accept(signal);
-            } catch (RuntimeException ex) {
+            } catch (RuntimeException | Error ex) {
+                // Error too — see ListenDispatcher: this runs on the listen thread, which nothing restarts.
                 log.warn("Signal handler threw for {}: {}", signal.getSessionId(), ex.toString());
             }
         }
