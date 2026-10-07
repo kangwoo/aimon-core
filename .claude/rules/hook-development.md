@@ -152,47 +152,53 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   from the environment (`shell()` throwing an `IllegalStateException`) gives its type, as before. A
   tool that stops passing that message to the model takes this exception with it. Any new detail must
   be a fixed string or a type name.
-- **A hook command is tied to the execution's cancellation signal, and a cancelled one blocks even
-  with `failOpen`.** `ShellActionRunner` registers a per-call listener on
-  `HookContext#getExecutionCancellation()` and removes it in `finally` (the signal outlives the
-  command). `ShellCancelledException`, and a `ShellExecutionException` caused by
-  `InterruptedException` (how `LocalShell` ends on a thread interrupt), are both `Unrun.CANCELLED`,
-  which `ShellHookVerdicts` blocks regardless of `failOpen` — "allow and continue" is not an answer
-  for an execution that is ending. The signal is an *execution* concept (turn, fork, routine), named
-  accordingly. **Which answer an event gives is decided by the context type, not the firing site.** A
-  *gate* context (`onStart`, `preCompact`, `preTool`, `permissionRequest`) returns the signal always;
-  a *report* context (`onStop`, `postCompact`, `subagentStart`, `subagentStop`, `postTool`,
-  `permissionDenied`) returns it through `CancellationSignals.liveOrEmpty` — only while it has not
-  tripped, so an audit or cleanup command of a cancelled execution still starts. The runner reads the
-  getter once per command, which is what makes the rule hold for the second hook of a chain; do not
-  move the filter back to a firing site, and give a new event's context one of the two getters. A
-  firing site passes the signal it holds and decides nothing: the execution's own for a turn's or a
-  fork's `onStart` / `onStop` and for AUTO compaction, and for `subagentStart` / `subagentStop` the
-  signal that governs the *fork* (the spawner's in the foreground, the per-task coordinator's in the
-  background). `OrcaAgentExecutor#runTurn` creates and publishes the turn's coordinator immediately
-  before the `onStart` chain for that reason. Empty means no signal there can trip — events outside
-  an execution, a slash-command turn after its `onStart`, `/compact`, a rewake replay — not missing
-  plumbing.
-- **`ignoreInterrupt` is the per-hook way out of the report rule, and it has two halves (EE-97).** A
-  report hook that declared it (`DeclarativeHookOptions#isIgnoreInterrupt`; handler key in
-  `hooks.json`, entry key in frontmatter, strict boolean like `failOpen`) is not stopped by an
-  interrupt. An interrupt reaches a command by two roads, and both must be closed or the option
-  silently fails for the hooks it exists for: (1) the *signal* — the hook hands its executor a
-  `SignalDetachedHookContext`, a view whose `getExecutionCancellation()` is empty, so the runner
-  registers nothing; do not add a parameter to `ShellActionExecutor.run` for this, and do not put the
-  rule in the context's getter (the context is per chain, the option per hook); (2) the *thread* —
-  `RunningTaskHandle.requestStop` and `RunControl.requestStop` interrupt the worker as well as
-  tripping the signal, so the hook declares `ExecutionHook#ignoresInterrupt()` and
-  `DefaultHookExecutor.awaitHook` keeps waiting instead of `future.cancel(true)`, re-arming the flag
-  on the way out. Honoured on `SkillHookSet.reportEvents()` and for a shell action only; both
-  front-ends drop it with a WARN elsewhere, and the gate hook classes ignore it even when constructed
-  with it (`ignoresInterrupt()` is `ignoreInterrupt && !canVeto()`), so "a cancelled guard blocks
-  regardless of `failOpen`" stays true. It lengthens nothing: the action's timeout still ends the
-  command and the execution's thread waits for it. `awaitHook` does not know the event — a
-  programmatic gate hook that returns `true` delays an interrupted execution for its budget (it
-  still gets its real verdict, never a pass); do not declare it on a gate. A new `HookContext` method
-  must be delegated by the view (`DeclarativeHookIgnoreInterruptTest` checks by reflection), and an
-  executor must use the context through `HookContext` only.
+- **A gate hook's command always stops on an interrupt and a report hook's never does (EE-80,
+  EE-98) — and a cancelled gate blocks even with `failOpen`.** The split is by what the hook is
+  asked: *gates* are `onStart`, `preCompact`, `preTool`, `permissionRequest`; *reports* are
+  `SkillHookSet.reportEvents()` — `onStop`, `postCompact`, `subagentStart`, `subagentStop`,
+  `postTool`, `permissionDenied`. It follows from the event; there is no config key
+  (`ignoreInterrupt` existed between EE-97 and EE-98 and was removed unreleased — do not bring it
+  back as a default-off opt-out; the opt-in the other way is EE-101).
+  - *Gate.* `ShellActionRunner` registers a per-call listener on
+    `HookContext#getExecutionCancellation()` and removes it in `finally` (the signal outlives the
+    command). `ShellCancelledException`, and a `ShellExecutionException` caused by
+    `InterruptedException` (how `LocalShell` ends on a thread interrupt), are both
+    `Unrun.CANCELLED`, which `ShellHookVerdicts` blocks regardless of `failOpen` — "allow and
+    continue" is not an answer for an execution that is ending.
+  - *Report.* An interrupt reaches a command by two roads and the hook classes close both, or the
+    rule silently fails for the hooks it exists for. (1) The *signal*: the hook hands its executor a
+    `SignalDetachedHookContext`, a view whose `getExecutionCancellation()` is empty, so the runner
+    registers nothing. Do not add a parameter to `ShellActionExecutor.run` for this. (2) The
+    *thread*: `RunningTaskHandle.requestStop` and `RunControl.requestStop` interrupt the worker as
+    well as tripping the signal, so the hook answers `ExecutionHook#ignoresInterrupt()` with `true`
+    and `DefaultHookExecutor.awaitHook` keeps waiting instead of `future.cancel(true)`, re-arming
+    the flag on the way out. `AbstractDeclarativeShellHook` answers `reportEvent && !canVeto()`;
+    `DeclarativePostToolHook` answers `true` for a shell action only (`http` / `mcp` were never tied
+    to the signal). The command is ended by finishing, by the action's timeout, or by hook-pool
+    teardown — and the execution's thread waits for it, which is why the guide says to keep report
+    hooks' timeouts short.
+  - *The context getter is a separate thing, and is for hooks written in code.* **Which answer an
+    event's context gives is decided by the context type, not the firing site.** A gate context
+    returns the signal always; a report context returns it through
+    `CancellationSignals.liveOrEmpty` — only while it has not tripped, so a programmatic audit or
+    cleanup hook that ties its work to it is never refused a start by a cancelled execution. Do not
+    move that filter back to a firing site, and give a new event's context one of the two getters.
+    The declarative report hooks do not read it (the view masks it); it is also what EE-101 would
+    read. A new `HookContext` method must be delegated by the view
+    (`DeclarativeReportHookInterruptTest` checks by reflection), and an executor must use the
+    context through `HookContext` only — on a report event it is not the event's own context type.
+  - *A firing site passes the signal it holds and decides nothing:* the execution's own for a turn's
+    or a fork's `onStart` / `onStop` and for AUTO compaction, and for `subagentStart` /
+    `subagentStop` the signal that governs the *fork* (the spawner's in the foreground, the per-task
+    coordinator's in the background). `OrcaAgentExecutor#runTurn` creates and publishes the turn's
+    coordinator immediately before the `onStart` chain for that reason. The signal is an *execution*
+    concept (turn, fork, routine), named accordingly. Empty means no signal there can trip — events
+    outside an execution, a slash-command turn after its `onStart`, `/compact`, a rewake replay —
+    not missing plumbing.
+  - *`ignoresInterrupt()` is public SPI and `awaitHook` does not know the event.* A programmatic
+    hook keeps the default `false` — a thread interrupt cancels it, on a report event too — unless
+    it overrides the method. One that returns `true` on a gate delays an interrupted execution for
+    its budget (it still gets its real verdict, never a pass); do not declare it on a gate.
 - **`http` / `mcp` actions follow the same rule on `preTool`** (the only guard event they can sit on).
   `HttpActionExecutor#attempt` / `McpActionExecutor#attempt` return an `ActionCallOutcome`: a
   *verdict* (any readable 2xx / non-error answer) or *no verdict*, carried as a not-run outcome

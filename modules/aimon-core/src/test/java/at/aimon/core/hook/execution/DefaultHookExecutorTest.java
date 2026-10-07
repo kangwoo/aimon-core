@@ -708,7 +708,8 @@ class DefaultHookExecutorTest {
     }
 
     /**
-     * The thread road of {@code ignoreInterrupt}: the firing thread is interrupted while the hook runs (a background
+     * The thread road of a hook that asks to be waited for: the firing thread is interrupted while the hook runs (a
+     * background
      * fork's {@code Task.stop} does this to the worker). The hook's task is not cancelled, its own result comes back,
      * and the interrupt is back on the firing thread for the caller's cancellation to read.
      */

@@ -79,7 +79,6 @@ import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.shell.exception.ShellCancelledException;
 import at.aimon.core.skill.DefaultSkillRegistry;
 import at.aimon.core.skill.hook.action.ShellAction;
-import at.aimon.core.skill.hook.declarative.DeclarativeHookOptions;
 import at.aimon.core.skill.hook.declarative.DeclarativeOnStartHook;
 import at.aimon.core.skill.hook.declarative.DeclarativeOnStopHook;
 import at.aimon.core.skill.hook.declarative.DeclarativePreCompactHook;
@@ -221,8 +220,8 @@ class OrcaAgentExecutorHookCancellationTest {
     }
 
     @Test
-    @DisplayName("EE-97: an interrupt that arrives while a finished turn's onStop command runs stops the command")
-    void reactTurn_interruptDuringOnStop_stopsTheCommandOfAHookWithoutTheOption() throws Exception {
+    @DisplayName("EE-98: an interrupt that arrives while a finished turn's onStop command runs leaves it running to its end")
+    void reactTurn_interruptDuringOnStop_leavesTheCommandRunningToItsEnd() throws Exception {
         hookRegistry.register(HookEventType.ON_STOP,
                 new DeclarativeOnStopHook("ops", GUARD, new HostShellActionExecutor(holdingShell())));
 
@@ -230,32 +229,13 @@ class OrcaAgentExecutorHookCancellationTest {
                 .submit(() -> executor().execute(runtime(null), request("hi")));
         assertThat(commandStarted.await(STARTED_GUARD_SECONDS, TimeUnit.SECONDS)).isTrue();
         // The next input preempting the finished turn: the interrupt lands on the turn's still-open coordinator.
-        published.get().requestInterrupt(InterruptReason.USER_SIGINT);
-        final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
-
-        assertThat(stoppedByCancellation).as("the shell saw the command's cancellation trip").isTrue();
-        assertThat(ranToCompletion).isFalse();
-        // The turn had already finished; only its cleanup was cut short.
-        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
-    }
-
-    @Test
-    @DisplayName("EE-97: with ignoreInterrupt the same interrupt leaves the onStop command running to its end")
-    void reactTurn_interruptDuringOnStop_leavesTheCommandOfAnIgnoreInterruptHookRunning() throws Exception {
-        hookRegistry.register(HookEventType.ON_STOP,
-                new DeclarativeOnStopHook("ops", GUARD, new HostShellActionExecutor(holdingShell()),
-                        DeclarativeHookOptions.builder().ignoreInterrupt(true).build()));
-
-        final Future<OrcaAgentExecutionResult> turn = turnThread
-                .submit(() -> executor().execute(runtime(null), request("hi")));
-        assertThat(commandStarted.await(STARTED_GUARD_SECONDS, TimeUnit.SECONDS)).isTrue();
         // Listeners run inside requestInterrupt, so a command tied to the signal would have been stopped by now.
         published.get().requestInterrupt(InterruptReason.USER_SIGINT);
 
         assertThat(stoppedByCancellation).isFalse();
         assertThat(turn).as("the turn is still waiting for its cleanup").isNotDone();
         commandMayFinish.countDown();
-        final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
+        final OrcaAgentExecutionResult result = turn.get(STARTED_GUARD_SECONDS, TimeUnit.SECONDS);
 
         assertThat(ranToCompletion).as("the cleanup command finished on its own").isTrue();
         assertThat(stoppedByCancellation).isFalse();

@@ -116,36 +116,6 @@ class JacksonHookConfigParserTest {
     }
 
     @Test
-    @DisplayName("ignoreInterrupt binds from a JSON boolean and defaults to false (EE-97)")
-    void ignoreInterruptBindsFromABoolean() {
-        final HookConfigDocument doc = parser.parse("{\"hooks\":{\"Stop\":[{\"hooks\":["
-                + "{\"type\":\"command\",\"command\":\"a\",\"ignoreInterrupt\":true},"
-                + "{\"type\":\"command\",\"command\":\"b\",\"ignoreInterrupt\":false},"
-                + "{\"type\":\"command\",\"command\":\"c\"}]}]}}");
-
-        assertThat(doc.getHooks().get("Stop").get(0).getHandlers()).extracting(HookHandlerSpec::isIgnoreInterrupt)
-                .containsExactly(true, false, false);
-        assertThat(doc.getHooks().get("Stop").get(0).getHandlers())
-                .allSatisfy(h -> assertThat(h.getRejectedIgnoreInterrupt()).isEmpty());
-    }
-
-    @org.junit.jupiter.params.ParameterizedTest(name = "ignoreInterrupt: {0}")
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"\"true\"", "\"false\"", "1", "0", "null", "[true]"})
-    @DisplayName("an ignoreInterrupt that is not a JSON boolean is read as false and the handler is kept (EE-97)")
-    void ignoreInterruptThatIsNotABooleanIsReadAsFalse(String value) {
-        // Bound like failOpen: no coercion, and no parse failure either — that would drop the file's guards.
-        final String json = "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"x\","
-                + "\"ignoreInterrupt\":" + value + "}]}]}}";
-
-        final HookHandlerSpec handler = parser.parse(json).getHooks().get("Stop").get(0).getHandlers().get(0);
-
-        assertThat(handler.isIgnoreInterrupt()).isFalse();
-        assertThat(handler.getCommand()).isEqualTo("x");
-        assertThat(handler.getRejectedIgnoreInterrupt()).contains(value);
-        assertThat(handler.getRejectedFailOpen()).isEmpty();
-    }
-
-    @Test
     @DisplayName("unknown handler fields are silently ignored (forwards-compat)")
     void unknownFieldsAreIgnored() {
         final String json = "{\"hooks\":{\"PreToolUse\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"x\""
@@ -229,16 +199,16 @@ class JacksonHookConfigParserTest {
     }
 
     @Test
-    @DisplayName("the fifteen-argument fromJson, from before ignoreInterrupt, still builds a spec that does not declare it")
-    void fromJsonWithoutIgnoreInterrupt_isKeptAndDelegates() {
-        // A public static method of a published module: a caller compiled against the old signature must keep
-        // linking. Jackson binds the sixteen-argument creator; this one only fills the new argument in.
-        final HookHandlerSpec spec = HookHandlerSpec.fromJson("command", "cleanup.sh", null, null, null, null, null,
-                null, null, null, null, 30L, null, null, com.fasterxml.jackson.databind.node.BooleanNode.TRUE);
+    void removedIgnoreInterruptKey_isReadLikeAnyOtherUnknownKey() {
+        // EE-98 removed the key before it was released. A file that still carries it is not an error and the key
+        // means nothing: Jackson skips it as it skips every field the handler does not know.
+        final HookHandlerSpec handler = parser
+                .parse("{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"cleanup.sh\","
+                        + "\"ignoreInterrupt\":\"yes\",\"failOpen\":true}]}]}}")
+                .getHooks().get("Stop").get(0).getHandlers().get(0);
 
-        assertThat(spec.getCommand()).isEqualTo("cleanup.sh");
-        assertThat(spec.isFailOpen()).isTrue();
-        assertThat(spec.isIgnoreInterrupt()).isFalse();
-        assertThat(spec.getRejectedIgnoreInterrupt()).isEmpty();
+        assertThat(handler.getCommand()).isEqualTo("cleanup.sh");
+        assertThat(handler.isFailOpen()).isTrue();
+        assertThat(handler.getRejectedFailOpen()).isEmpty();
     }
 }

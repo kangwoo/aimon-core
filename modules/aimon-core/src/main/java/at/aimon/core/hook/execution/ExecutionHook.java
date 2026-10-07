@@ -129,14 +129,16 @@ public interface ExecutionHook<C extends HookContext> {
      * <p>
      * By default an interrupt of the firing thread cancels the hook's task and the hook is reported as BLOCKED: the
      * execution is being cancelled and nobody waits for the verdict. A hook whose work must finish once it has started
-     * — a cleanup or audit command on {@code onStop}, say — returns {@code true}: the executor then leaves the task
+     * — a cleanup or audit on {@code onStop}, say — returns {@code true}: the executor then leaves the task
      * alone, waits for what is left of the hook's budget, returns the hook's own result (or takes the ordinary timeout
      * path), and re-arms the thread's interrupt flag before it returns, so the caller's cancellation still sees it.
      *
      * <p>
      * This is the thread-interrupt half of "not stopped by an interrupt". The other half is the hook's own: it must
-     * not tie its work to {@link HookContext#getExecutionCancellation()}. The declarative shell hooks that declared
-     * {@code ignoreInterrupt} do both.
+     * not tie its work to {@link HookContext#getExecutionCancellation()}. The declarative shell hooks do both on every
+     * report event ({@code onStop}, {@code subagentStop}, {@code postCompact}, {@code postTool},
+     * {@code permissionDenied}, {@code subagentStart}) — by the event, not by a setting — and on no other. A hook
+     * registered in code keeps the default unless it overrides this.
      *
      * <p>
      * The executor does not know the event, so the declaration is honoured wherever it is made. It never turns an

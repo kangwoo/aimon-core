@@ -7,36 +7,41 @@ Central is versioned independently).
 
 ## [Unreleased]
 
-### Changed: the follow-ups to hook cancellation — an opt-out for cleanup commands, and four edges (EE-93 – EE-97)
+### Changed: the follow-ups to hook cancellation — report commands run through an interrupt, and four edges (EE-93 – EE-98)
 
-EE-80 (next entry) left five things open. Three are built, one is half built, one is decided against. The design, what
-the build changed in it and the reasons are in
+EE-80 (next entry) left five things open. Three are built, one is half built, one is decided against; EE-98 then
+replaced the option EE-97 had built with a rule. The design, what the build changed in it and the reasons are in
 [`docs/design/hook/hook-cancellation-followups-ee93-ee97.md`](docs/design/hook/hook-cancellation-followups-ee93-ee97.md).
 
-- **Added: `ignoreInterrupt`, so a cleanup command is not cut in half by an interrupt (EE-97).** A handler in
-  `hooks.json` (`"ignoreInterrupt": true`) or an entry in SKILL.md frontmatter (`ignoreInterrupt: true`) declares that
-  its shell command is not stopped when the execution is interrupted. It is honoured for a `command` / `shell` action
-  on the report events — `onStop`, `subagentStop`, `postCompact`, `postTool`, `permissionDenied`, `subagentStart` —
-  and holds on both roads an interrupt takes: the execution's signal, and the thread interrupt a stopped background
-  fork also gets. The default is unchanged (a running report command is stopped), and so is the guard rule: on
-  `onStart` / `preCompact` / `permissionRequest` / `preTool` the key is dropped with a WARN, and a cancelled guard
-  still blocks regardless of `failOpen`. It is also dropped, with a WARN, on the events outside any execution and on
-  `http` / `mcp` handlers. Only a boolean is accepted: in `hooks.json` anything else is read as `false` with a WARN,
-  in frontmatter it is a parse error — as for `failOpen`. The option lengthens nothing: the handler's `timeout` still
-  ends the command, and the execution (and so the next input) waits for it. An older AIMON reading a `hooks.json` that
-  carries the key ignores it — handler entries tolerate unknown fields — so the command is stopped there as before.
-  A declarative shell hook class constructed in code honours the option on the same report events only: one built
-  for `onSessionStart` / `onSessionEnd` / `onConfigReload` with the option does not declare `ignoresInterrupt()`.
-  `HookHandlerSpec.fromJson` gained an `ignoreInterrupt` argument; the previous fifteen-argument signature is kept as
-  an overload.
+- **A report hook's shell command is never stopped by the execution's interrupt (EE-97, EE-98).** On `onStop`,
+  `subagentStop`, `postCompact`, `postTool`, `permissionDenied` and `subagentStart`, a `command` / `shell` action runs
+  until it finishes or its own `timeout` ends it — whether the interrupt arrives before the command starts or while
+  it runs, and on both roads an interrupt takes: the execution's cancellation signal, and the thread interrupt a
+  stopped background fork also gets. A cleanup is therefore not cut in half by the next input. Guard events are the
+  other half of the same sentence and are unchanged: a command on `onStart` / `preCompact` / `preTool` /
+  `permissionRequest` is always stopped, and a cancelled guard blocks regardless of `failOpen`. The rule follows from
+  the event; there is **no configuration key** for it. What it costs: the execution's thread — a finished turn's too —
+  waits for a report command, so an interrupted execution, and the input queued behind it, waits for up to the
+  command's remaining `timeout`, on every shell. Keep report hooks' `timeout` short. Hook-pool teardown and process
+  exit still end the command. Against the last release this is one change, on the thread road: `DefaultHookExecutor`
+  used to cancel a hook whose firing thread was interrupted, and a shell that answers thread interrupts (`LocalShell`)
+  then stopped the command — so stopping a background fork (`Task.stop`) while its `onStop` / `subagentStop` command
+  ran cut that command short, and now waits for it. A turn's `onStop` command was never reached by an interrupt in a
+  release and behaves as it did. `http` / `mcp` handlers on `postTool` are not part of this: they were never tied to
+  the signal and are still cancelled by a thread interrupt.
 - **`ExecutionHook` gained `ignoresInterrupt()` (default `false`).** A hook that returns `true` is waited for when the
   thread that fired it is interrupted: `DefaultHookExecutor` no longer cancels its task, returns the hook's own result
-  (or times out as usual), and re-arms the thread's interrupt flag. The executor does not know the event, so a hook
-  registered in code is honoured on any event; on a guard event that makes an interrupted execution wait for the
-  guard — it never turns an interrupt into a pass. A custom `HookExecutor` has to honour the method itself.
-- **A `ShellActionExecutor` may be handed a view of the hook context.** For an `ignoreInterrupt` hook the `context`
-  argument of `run` is not the event's own context type but a wrapper whose `getExecutionCancellation()` is empty. Use
-  it through `HookContext` only; an executor that downcasts it fails for exactly those hooks.
+  (or times out as usual), and re-arms the thread's interrupt flag. The declarative shell hooks return `true` on the
+  six report events and `false` everywhere else. A hook registered in code keeps the default — a thread interrupt
+  still cancels it, on a report event too — unless it overrides the method; the executor does not know the event, so
+  an override is honoured on any event, and on a guard event that makes an interrupted execution wait for the guard —
+  it never turns an interrupt into a pass. A custom `HookExecutor` has to honour the method itself.
+- **A `ShellActionExecutor` is handed a view of the hook context on the report events.** There the `context` argument
+  of `run` is not the event's own context type but a wrapper whose `getExecutionCancellation()` is empty — that is how
+  the command stays untied from the signal without the executor knowing the event. Use the argument through
+  `HookContext` only; an executor outside this repository that downcasts it (to `OnStopContext`, `PostToolContext`, …)
+  now fails on those six events. On the guard events and the events outside any execution it is the context itself, as
+  before.
 - **The AUTO-compaction summary call is aborted by an interrupt (EE-95).** When the compaction request carries the
   execution's signal, `DefaultCompactionEngine` makes the summary call with a cancellation token, so an interrupt
   during a compaction no longer waits the call out; a signal that has already tripped makes no call. The turn or fork
@@ -96,26 +101,27 @@ the build changed in it and the reasons are in
   input in through its own mid-turn drain; the input stays in the queue for the next turn or the host's drain, as when
   a turn is preempted mid-loop. `isInterruptible()` is `false` in that stretch.
 - **Not changed:** a running slash command still cannot be interrupted (EE-93 stays open for that), and a cancellation
-  that reaches the firing thread only as `Thread.interrupt()` still does not stop a hook command on a shell that
-  ignores thread interrupts (EE-96, decided against for now).
+  that reaches the firing thread only as `Thread.interrupt()` still does not stop a guard hook's command on a shell
+  that ignores thread interrupts (EE-96, decided against for now).
 
-### Changed: a hook's shell command follows the execution's interrupt on every event that has one (EE-80)
+### Changed: a guard hook's shell command follows the execution's interrupt on every event that has one (EE-80)
 
 The first half of EE-80 tied a hook command to the execution's cancellation signal on the tool-scoped events and a
-fork's `onStart`. The rest are now covered, so a command on a shell that ignores thread interrupts (a remote shell) no
-longer runs to its own timeout after the user interrupts.
+fork's `onStart`. The remaining guard events are now covered, so a guard command on a shell that ignores thread
+interrupts (a remote shell) no longer runs to its own timeout after the user interrupts. Report events went the other
+way: their commands are not tied to the signal at all (EE-98, above).
 
-- **Guard events always carry the signal; report events carry it until it trips.** `onStart` (now a main turn's too)
-  and `preCompact` join `preTool` and `permissionRequest`: a command fired after the interrupt is not started, a running
-  one is stopped, and the guard blocks regardless of `failOpen`. `onStop`, `postCompact`, `subagentStart` and
-  `subagentStop` join `postTool` and `permissionDenied`: a running command is stopped, and one fired after the
-  cancellation runs unbound, so an audit or cleanup command of a cancelled execution always starts.
-- **An interrupt can now stop a running `onStop` command**, on every shell. Before, nothing delivered the interrupt
-  there. A cleanup that must finish declares `ignoreInterrupt` (EE-97, above).
-- **`postTool` / `permissionDenied`: the rule is applied per hook, not per chain.** With two hooks in sequence, an
-  interrupt during the first used to hand the second a tripped signal, and its command never started.
-  `HookContext#getExecutionCancellation()` on a report context can therefore turn from present to empty over the life of
-  one context object; read it when the work starts.
+- **Guard commands always stop on an interrupt; report commands never do.** `onStart` (now a main turn's too) and
+  `preCompact` join `preTool` and `permissionRequest`: a command fired after the interrupt is not started, a running
+  one is stopped, and the guard blocks regardless of `failOpen`. On `onStop`, `postCompact`, `subagentStart`,
+  `subagentStop`, `postTool` and `permissionDenied` the command is handed no signal, so an audit or cleanup command
+  starts and finishes whether or not the execution was interrupted — which is also what a released `onStop` command
+  on a local shell has always done. This changes `postTool` and `permissionDenied` from the first half of EE-80, which
+  stopped a running command there.
+- **`HookContext#getExecutionCancellation()` answers a hook written in code on the report events as well** — the
+  execution's signal while it has not tripped, empty afterwards, so a hook that ties its own work to it is never
+  refused a start by an execution that was already cancelled. The answer can therefore turn from present to empty over
+  the life of one context object; read it when the work starts. The declarative shell commands do not use it there.
 - **A turn can be interrupted while its `onStart` hooks run.** The executor creates the turn's coordinator and calls
   `OrcaAgentExecutionRequest#getInterruptObserver()` before `onStart` instead of at loop entry — once per turn, and now
   for a slash-command turn as well. `LiveSession.interrupt`, a NOW-priority input and `close()` used to be ignored in
@@ -130,12 +136,11 @@ longer runs to its own timeout after the user interrupts.
   `INTERRUPTED` and a fork ends with its interrupted result instead of `ContextWindowExceededException`.
 - **`ContextRequest`, `CompactionGuardRequest`, `CompactionRequest` and `SummaryRequest` gained an optional
   `executionCancellation`.** A custom `ContextEngine` or `CompactionEngine` that builds its own downstream requests
-  must forward it, or its compaction hooks stay unbound — silently, as before this change. `OnStopContext`,
+  must forward it, or its `preCompact` guard stays unbound — silently, as before this change. `OnStopContext`,
   `PreCompactContext`, `PostCompactContext`, `SubagentStartContext` and `SubagentStopContext` gained the matching
   builder method.
-- **Still unbound, because no signal there can trip:** a slash-command turn's `onStop`, the `preCompact` / `postCompact`
-  / `onStop` of a manual `/compact`, a `preCompact` chain rebuilt by a rewake replay, and the events outside any
-  execution. The design and what the build changed in it are in
+- **Guards still unbound, because no signal there can trip:** the `preCompact` of a manual `/compact`, a `preCompact`
+  chain rebuilt by a rewake replay, and the events outside any execution. The design and what the build changed in it are in
   [`docs/design/hook/hook-shell-cancellation-ee80.md`](docs/design/hook/hook-shell-cancellation-ee80.md).
 
 ### Added: tasks that compare the context engines under view pressure (tests only)
@@ -466,10 +471,10 @@ whenever it produced no verdict, and `failOpen: true` is the one opt-out. The gu
   command is not run and a guard blocks — so a provider that refuses a skill edited since load now blocks that skill's
   guard hooks where the hook used to run.
 - **A hook's shell command stops when its execution is interrupted** (EE-80), through the execution's cancellation
-  signal, on `preTool`, `permissionRequest`, a fork's `onStart`, and `postTool`/`permissionDenied` of a live execution.
-  A cancelled guard blocks regardless of `failOpen`. Other events are still bounded only by the command's timeout.
-  *(The other events were covered later — see "a hook's shell command follows the execution's interrupt on every event
-  that has one" above.)*
+  signal, on `preTool`, `permissionRequest` and a fork's `onStart`. A cancelled guard blocks regardless of `failOpen`.
+  Other events are still bounded only by the command's timeout. *(The other guard events were covered later, and the
+  report events deliberately left out — see "a guard hook's shell command follows the execution's interrupt on every
+  event that has one" above.)*
 
 ### Fixed: the hook guide documented matchers the parser never supported
 
@@ -641,7 +646,7 @@ whenever it produced no verdict, and `failOpen: true` is the one opt-out. The gu
   about 200ms for a command that ignores SIGTERM, 0–1ms otherwise. And a command whose execution was already
   interrupted is no longer started and killed; it is not started.
 - A shell gets this only if it declares and implements `ShellFeature.CANCELLATION`. Hook shell commands carry it on the
-  events listed under EE-80 above, and since the later EE-80 entry on every event whose execution has a signal.
+  events listed under EE-80 above, and since the later EE-80 entry on every guard event whose execution has a signal.
 
 ### Fixed: skill staging is published in one step and refuses files the disk merged (EE-17, EE-38)
 

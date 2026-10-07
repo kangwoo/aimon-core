@@ -212,10 +212,9 @@ public final class HookRegistryApplier {
                         + " shell actions; skipping", event, mhe.getSource());
                 continue;
             }
-            // failOpen is honoured for command, http and mcp alike: each can fail to produce a verdict.
+            // Honoured for command, http and mcp alike: each can fail to produce a verdict.
             final DeclarativeHookOptions options = DeclarativeHookOptions.builder().hookIdDiscriminator(discriminator)
-                    .rewakeSpec(toRewakeSpec(spec, mhe, event, action)).failOpen(failOpen)
-                    .ignoreInterrupt(ignoreInterrupt(spec, mhe, event, action)).build();
+                    .rewakeSpec(toRewakeSpec(spec, mhe, event, action)).failOpen(failOpen).build();
             switch (event) {
                 case DeclarativePreToolHook.EVENT_NAME -> {
                     // The shell question again, for the other two transports: a guard that can never be asked.
@@ -273,37 +272,6 @@ public final class HookRegistryApplier {
                 }
             }
         }
-    }
-
-    /**
-     * Reads the handler's {@code ignoreInterrupt}, dropping it with a WARN where it cannot have an effect.
-     *
-     * <p>
-     * It is honoured for a {@code command} on a {@linkplain HookEventName#isReport(String) report event} and nowhere
-     * else: a guard of a cancelled execution must stop and block, an event outside any execution has no interrupt to
-     * ignore, and an {@code http} / {@code mcp} call is not tied to the execution's signal in the first place. Skill
-     * frontmatter drops it at the same points ({@code SkillHookSetParser#parseIgnoreInterrupt}).
-     */
-    private static boolean ignoreInterrupt(HookHandlerSpec spec, MergedHookEntry mhe, String event, HookAction action) {
-        if (!spec.isIgnoreInterrupt()) {
-            return false;
-        }
-        if (HookEventName.isGuard(event)) {
-            log.warn("hooks: 'ignoreInterrupt' has no effect on {} ({}): the event can block, and a guard of an"
-                    + " interrupted execution is stopped; ignored", event, mhe.getSource());
-            return false;
-        }
-        if (!HookEventName.isReport(event)) {
-            log.warn("hooks: 'ignoreInterrupt' has no effect on {} ({}): the event fires outside any execution, so"
-                    + " there is no interrupt to ignore; ignored", event, mhe.getSource());
-            return false;
-        }
-        if (!(action instanceof ShellAction)) {
-            log.warn("hooks: 'ignoreInterrupt' has no effect on a handler that is not a 'command' ({} on {}): only a"
-                    + " command is tied to the execution's interrupt; ignored", mhe.getSource(), event);
-            return false;
-        }
-        return true;
     }
 
     /**

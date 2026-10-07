@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: 41bfdf28
+source_commit: f30512fa
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -306,7 +306,6 @@ event, skip + WARN on the other events. See "What stops startup" below).
   "timeout": 5      // optional, in seconds (Claude Code parity). 30 seconds if omitted
   // "timeoutMs": 500  // alternative: a millisecond alias. If both are set, timeoutMs wins
   // "failOpen": true  // optional, default false. Let the event proceed when the command could not run (see "Exit codes")
-  // "ignoreInterrupt": true  // optional, default false. Do not stop this command when the execution is interrupted (see "Interrupts")
 }
 ```
 
@@ -640,40 +639,31 @@ message.
 Hooks in skill frontmatter do not need this table — that parser has been strict from the start, and every case above is
 a load failure of that skill.
 
-**Interrupts.** When the user interrupts an execution, a `command` that is running is stopped **through the execution's
-cancellation signal** — so it does not run on to its own timeout even on a shell that does not answer a thread interrupt
-(a remote shell). The reason is `Blocked: hook '<name>' (<event>) was stopped — execution cancelled. An interrupted
-execution does not proceed.`, with or without `failOpen`. The guard events (`onStart`, `preCompact`,
-`permissionRequest`, `preTool`) always carry the signal — a command fired after the interrupt is not started. The events
-that report something that already happened (`onStop`, `postCompact`, `subagentStart`, `subagentStop`, `postTool`,
-`permissionDenied`) carry it only while the execution has not been cancelled — a command that is running is stopped by
-the interrupt, but an audit or cleanup command fired after the cancellation runs to its end. If a cleanup has to
-finish, declare `ignoreInterrupt` on that handler (just below). When an interrupt arrives while a main turn's
-`onStart` command is running, the turn ends as an **interrupted turn**, not as an error saying a hook blocked it — a
-fork does the same, and so does an interrupt that arrives before the turn reaches `onStart` (the command is then not
-started). What
-gets no signal is where no signal can trip — a slash-command turn's `onStop`, `/compact`'s `preCompact`, `postCompact`
-and `onStop`, a `preCompact` rebuilt by a rewake replay, and the events outside any execution (`onSessionStart`,
-`onSessionEnd`, `onConfigReload`). Those commands stop, as before, only if the shell answers a thread interrupt.
+**Interrupts.** The rule is one sentence — **a guard command always stops on an interrupt, and a report command never
+does.** The event decides; there is no configuration key to turn it on or off.
 
-**A command that has to finish — `ignoreInterrupt`.** If the user sends the next input in a hurry while a normally
-finished turn's `onStop` cleanup command is running, that interrupt stops the cleanup half done. Put
-`"ignoreInterrupt": true` on a handler for which that must not happen.
+A `command` on a guard event (`onStart`, `preCompact`, `permissionRequest`, `preTool`) is stopped **through the
+execution's cancellation signal** when the user interrupts the execution — so it does not run on to its own timeout
+even on a shell that does not answer a thread interrupt (a remote shell), and a command fired after the interrupt is
+not started. The reason is `Blocked: hook '<name>' (<event>) was stopped — execution cancelled. An interrupted
+execution does not proceed.`, with or without `failOpen`. When an interrupt arrives while a main turn's `onStart`
+command is running, the turn ends as an **interrupted turn**, not as an error saying a hook blocked it — a fork does
+the same, and so does an interrupt that arrives before the turn reaches `onStart` (the command is then not started).
+A guard that gets no signal is one where no signal can trip — `/compact`'s `preCompact`, and a `preCompact` rebuilt by
+a rewake replay. The events outside any execution (`onSessionStart`, `onSessionEnd`, `onConfigReload`) have no signal
+either. Those commands stop, as before, only if the shell answers a thread interrupt.
 
-```jsonc
-{ "type": "command", "command": "./cleanup.sh", "timeout": 20, "ignoreInterrupt": true }
-```
-
-That command is not stopped by an interrupt of the execution — whether the interrupt arrives as the signal (the
+**A report command runs to its end.** A `command` on an event that reports something that already happened (`onStop`,
+`subagentStop`, `postCompact`, `postTool`, `permissionDenied`, `subagentStart`) is not stopped by an interrupt of the
+execution — whether the interrupt came before the command or while it runs, and whether it arrives as the signal (the
 session's `interrupt`, the next input preempting the turn) or as a thread interrupt, as when a background fork is
-stopped. It is honoured only for a `command` on the events that report something that already happened (`onStop`,
-`subagentStop`, `postCompact`, `postTool`, `permissionDenied`, `subagentStart`). On a guard event it is dropped with a
-WARN — the guard of an interrupted execution has to stop and block, and neither `failOpen` nor `ignoreInterrupt`
-changes that. It is dropped on the events outside any execution and on `http` and `mcp` handlers too (there is no
-interrupt to ignore). Only a JSON boolean is accepted; any other value is read as `false` with a WARN. Use it knowing
-**what the option does not do**: `timeout` still ends the command (the option lengthens nothing), and so do the hook
-executor shutting down and the process exiting. And the execution **waits** for the command — the next input waits
-that long too, so keep `timeout` short.
+stopped. So a normally finished turn's `onStop` cleanup command is not cut off half done when the user sends the next
+input in a hurry. Only three things end that command: finishing by itself, the handler's `timeout`, and the hook
+executor shutting down or the process exiting. What it costs is waiting — **the execution waits for the command.** An
+interrupted execution, the next input queued behind it and a stopped background fork all wait until the command ends
+or its `timeout` runs out. So **keep a report hook's `timeout` short** — do not leave it at the 30-second default, set
+it to what the cleanup really takes, and have the command hand long work to the background and return at once. `http`
+and `mcp` handlers on `postTool` are not covered by this rule.
 
 ---
 
@@ -1073,7 +1063,6 @@ A summary of the frontmatter schema:
 | `action.type`   | `shell` / `deny` / `http` / `mcp`. `deny` is `preTool`-only; `http` and `mcp` are `preTool`/`postTool`-only |
 | Timeout field   | `action.timeoutMs` (**milliseconds**). Frontmatter has no seconds-based `timeout` alias |
 | `failOpen`      | An entry-level key (beside `matcher` and `action`). YAML boolean only, default `false`. Lets the event proceed when the action gives no answer — a `shell` action with no exit code or exit 126/127, an `http` or `mcp` action with no verdict ([What a guard blocks](#what-a-guard-blocks)) |
-| `ignoreInterrupt` | An entry-level key. YAML boolean only (anything else fails the parse), default `false`. Does not stop that `shell` command when the execution is interrupted. Honoured only for a `shell` action on `onStop`, `subagentStop`, `postCompact`, `postTool`, `permissionDenied` and `subagentStart`; anywhere else it is ignored with a WARN ("Interrupts" under [What stops startup](#what-stops-startup)) |
 
 `onSessionStart` / `onSessionEnd` / `onConfigReload` fire outside a skill invocation (in the
 session and application lifecycles), so frontmatter rejects them — declare them in `hooks.json`.
@@ -1104,8 +1093,6 @@ are in [`aimon-skill-extensions.md`](../../references/aimon-skill-extensions.md)
 | `WARN hooks: only 'command' actions are valid on ...`                    | Events other than `preTool`/`postTool` accept shell handlers only. It is a WARN only on an event that is not a guard event. |
 | `WARN hooks: 'command' on ... cannot run: the configured shell executor does not support shell actions` | `hooks.json` was applied with an executor that has no shell support (`NoOpShellActionExecutor`). A `command` handler that is not a guard (an event that is not a guard event, or `failOpen: true`) is not registered — wire a `HostShellActionExecutor`. For a `command` on a guard event this is a startup failure, not a WARN. |
 | `WARN hooks config at ...: ... has a 'failOpen' that is not a JSON boolean (...); it is read as false` | `failOpen` was written as `"true"`, `1` or `null`. The handler is registered with `failOpen: false` (it blocks when its command cannot run). If it only observes, change the value to `true`. |
-| `WARN hooks config at ...: ... has a 'ignoreInterrupt' that is not a JSON boolean (...); it is read as false` | `ignoreInterrupt` was written as `"true"`, `1` or `null`. That handler's command is stopped by an interrupt. If it has to finish, change the value to `true`. |
-| `WARN hooks: 'ignoreInterrupt' has no effect on ...` | The key is where it cannot be honoured — a guard event (`the event can block`), an event outside any execution (`fires outside any execution`), or a handler that is not a `command`. The handler is still registered; only the key is dropped. From skill frontmatter it reads `<path>: 'ignoreInterrupt' has no effect on …`. |
 | A tool is refused with `Blocked: guard hook '...' could not run its command` | A `command` handler on an event with a decision channel produced no exit code (a timeout, for one), or the shell could not start the command (`command not found: exit code 127`, `command not executable: exit code 126` — check the script path and its execute permission). Fix the cause named in the reason, or declare `"failOpen": true` if the handler only observes. The full table is in [What a guard blocks](#what-a-guard-blocks). |
 | A tool is refused with `Blocked: guard hook '...' could not get a verdict from its http call` (or `mcp call`) | An `http` or `mcp` handler on `preTool` got no verdict. Read the cause in the reason — `action executor not wired` (the host wired no executor — `aimon-cli` wires them, so this is an embedding host), `call failed: MCP server not registered` (`server` is not the name of a configured MCP server), `call failed: HTTP 307` (redirects are not followed), `call failed: HTTP 503` or `call failed: ConnectException` (the policy server), `timed out`, `response could not be read` (the `decision` or `permissionDecision` value is not a known one — the table under [http](#http)). Declare `"failOpen": true` if the handler only observes. |
 | `WARN hooks: 'asyncRewake' is not supported on event '...'`              | Rewake-capable events are `preTool`/`preCompact`/`onSessionStart`/`onSessionEnd`/`onConfigReload`. The hook itself registers normally. |

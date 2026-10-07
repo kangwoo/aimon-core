@@ -39,7 +39,12 @@ class DeclarativePostToolHookTest {
 
         assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
         assertThat(exec.calls).hasSize(1);
-        assertThat(exec.calls.get(0).context).isSameAs(context);
+        // postTool reports, so the executor is handed a view of the context without the execution's signal (EE-98),
+        // not the context itself.
+        assertThat(exec.calls.get(0).context).isNotSameAs(context);
+        assertThat(exec.calls.get(0).context.getHookRegistry()).isSameAs(context.getHookRegistry());
+        assertThat(exec.calls.get(0).context.getInvokerName()).isEqualTo(context.getInvokerName());
+        assertThat(exec.calls.get(0).context.getTimestamp()).isEqualTo(context.getTimestamp());
         Map<String, String> env = exec.calls.get(0).env;
         assertThat(env).containsEntry(SkillHookEnv.AIMON_HOOK_EVENT, "postTool")
                 .containsEntry(SkillHookEnv.AIMON_SKILL_NAME, "my-skill")

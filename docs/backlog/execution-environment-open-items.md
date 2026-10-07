@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 100건 (열림 26 · 닫힘 74)
+# 실행 환경 — 등록 항목 101건 (열림 26 · 닫힘 75)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -74,7 +74,9 @@ EE-93 은 값싼 절반 둘만 짓고 남은 것("도는 슬래시 명령은 멈
 이유를 적었다. 그 변경의 설계와 구현이 설계에서 벗어난 점은
 [`../design/hook/hook-cancellation-followups-ee93-ee97.md`](../design/hook/hook-cancellation-followups-ee93-ee97.md) 에
 있다. EE-98~EE-100 은 그 설계의 열린 질문(Q1 · Q2 → EE-98)과 설계 리뷰(EE-99 · EE-100) 가운데 이 변경 밖으로 결과가 번지는
-것을 옮긴 것이다.
+것을 옮긴 것이다. EE-98 은 2026-10-08 에 메인테이너가 정했고 같은 변경에서 닫았다 — 기본값을 뒤집고 옵션을 없앴다: 보고
+이벤트의 셸 명령은 인터럽트에 멈추지 않는다. 그 결정이 EE-80 과 EE-97 의 닫힘 노트에 적힌 것 일부를 사실이 아니게 했으므로
+두 항목에 날짜 붙은 절을 더했다. EE-101 은 그 결정이 짓지 않고 남긴 반대쪽 옵션이다.
 
 ---
 
@@ -3358,6 +3360,19 @@ main 코드가 없고, 스냅숏의 `userLocale` 은 블록을 만드는 쪽이 
 **확인하지 않은 것.** docker 계층(`integrationTest`)은 돌리지 않았다. 자체 `ContextEngine` · `CompactionEngine` 을 가진 외부
 구현이 새 필드를 넘기지 않으면 그 압축 훅은 전처럼 신호 없이 돈다 — 조용하고, 이 변경 전과 같다.
 
+### 2026-10-08 — 보고 이벤트의 절반은 EE-98 이 뒤집었다
+
+위 표의 **"싣는다, 서기 전까지만 (보고)"** 네 줄은 이제 **컨텍스트의 getter 가 코드로 쓴 훅에게 주는 답**만 말한다. 선언 훅의
+**셸 명령**은 보고 이벤트(`onStop` · `postCompact` · `subagentStart` · `subagentStop` · `postTool` · `permissionDenied`)에서
+신호를 받지 않고, 인터럽트에 멈추지 않는다 — 먼저 왔든 도는 중에 왔든. 그래서 위에서 사실이 아니게 된 문장은 넷이다.
+(1) "돌던 명령만 인터럽트에 멈춘다" — 멈추지 않는다. (2) 2026-10-05 노트의 "닿는 곳: … 아직 취소되지 않은 실행의 `postTool` ·
+`permissionDenied`" — 그 둘도 이제 닿지 않는다. (3) "메인테이너가 정할 것 (2) 돌고 있는 `onStop` 명령이 인터럽트에 멈추는 것" —
+멈추지 않는 쪽으로 정해졌다. (4) "리뷰 뒤에 고친 것" 의 "스폰한 턴을 인터럽트해도 명령이 멈추지 않았다" — 발화 순서를 옮긴
+것은 그대로이고(그 자리의 컨텍스트가 코드 훅에게 아직 설 수 있는 신호를 준다), 그것을 고정하던 테스트는 이제 그 명령이
+끝까지 도는 것을 본다. 가드 쪽(메인 턴의 `onStart`, AUTO `preCompact`)과 "어느 신호" 열, 신호가 없는 자리의 목록은 그대로다.
+항목의 "왜" 가 겨눈 것 — 인터럽트에 반응하지 않는 셸에서 훅 명령이 자기 timeout 까지 도는 틈 — 은 가드 이벤트에서만 닫혀 있고,
+보고 이벤트에서는 **알고 연 것**이다. 결정과 이유는 EE-98.
+
 ---
 
 ## EE-81 — 포크가 다른 환경에 놓이면 스킬 본문의 `${AIMON_SKILL_DIR}` 는 스폰한 쪽의 경로다 · **열림** *(트리거 대기)*
@@ -4159,6 +4174,10 @@ SDK(anthropic-java 2.65.0, openai-java 4.69.2)는 `StreamResponse.close()` 뒤�
 > **다른 항목이 이 항목에 바꿔 놓은 것.** EE-94 뒤로, 이렇게 인터럽트된 **포크**는 `onStart` 에서 `INTERRUPTED` 로 끝난다(전에는
 > `BLOCKED`). **턴**은 여전히 `ExecutionBlockedByHookException` 으로 끝난다 — 턴은 신호만 읽는다. 그리고 `ignoreInterrupt` 를
 > 선언한 훅(EE-97)은 어느 길로도 멈추지 않는다 — 그것은 이 항목의 틈이 아니라 그 옵션의 뜻이다.
+>
+> **2026-10-08 — 이 항목은 가드 명령의 것으로 좁아졌다.** EE-98 뒤로 옵션은 없고, 보고 이벤트의 셸 명령은 어느 길로도 멈추지
+> 않는 것이 규칙이다. 그래서 "왜" 의 "어느 이벤트에서든" 은 "가드 이벤트에서" 로 읽는다 — 스레드 인터럽트만으로 온 취소가
+> 멈추지 못해서 틈인 것은 가드 명령뿐이다.
 
 ## EE-97 — 끝까지 돌아야 하는 `onStop` 명령에 인터럽트를 피할 방법이 없다 · **닫힘** *(2026-10-07)*
 
@@ -4221,7 +4240,31 @@ EE-80 이 릴리스되기 전에만 호환성 값 없이 바꿀 수 있다 — E
 `config/hook/HookRegistryApplier.java:287`, `skill/parser/SkillHookSetParser.java:282`,
 `skill/hook/SkillHookSet.java:127`(`reportEvents`).
 
-## EE-98 — `ignoreInterrupt` 의 이름과, 돌고 있는 보고 명령을 인터럽트에 멈추는 기본값은 릴리스 전에만 값없이 바뀐다 · **열림**
+### 2026-10-08 — 옵션은 없어졌고, 옵션이 켜던 것이 규칙이 됐다 (EE-98)
+
+이 항목이 원한 것 — 끝까지 돌아야 하는 `onStop` 명령이 인터럽트에 끊기지 않는 것 — 은 그대로 성립한다. 달라진 것은 **방법**이다:
+`ignoreInterrupt` 는 릴리스되지 않은 채 제거됐고, 보고 이벤트의 셸 명령은 선언 없이 언제나 그렇게 돈다. 위에서 사실이 아니게
+된 것을 적는다.
+
+- **"지은 것"** — 훅별 옵션은 없다. 키, `DeclarativeHookOptions` · `HookHandlerSpec` 의 필드, 두 파서의 WARN 이 모두 없다.
+  "기본값은 그대로다 — 옵션이 없으면 돌고 있는 보고 명령은 EE-80 의 규칙대로 멈춘다" 는 뒤집혔다. "가드 이벤트에서는 적재할
+  때 WARN 과 함께 버리고" 는 버릴 키가 없으므로 해당이 없다 — 가드 규칙 자체(취소된 가드는 `failOpen` 과 무관하게 막는다)는
+  그대로다.
+- **"근거가 달랐던 것 — 길이 둘이었다"** — 길이 둘이라는 것과 둘을 막는 방식은 그대로 남았다. 신호의 길은 여전히 신호 없는
+  컨텍스트 뷰(`SignalDetachedHookContext`)이고, 스레드의 길은 여전히 `ExecutionHook#ignoresInterrupt()` 다. 둘을 켜는 것이
+  옵션이 아니라 **이벤트**가 됐을 뿐이다.
+- **"적힌 것보다 무거웠나"** 의 두 쌍("옵션이 없으면 … 취소를 보고, 있으면 … 끝까지 돈다")은 한쪽씩만 남았다 — 끝까지 도는 쪽.
+- **"옵션이 하지 않는 것"** — 옵션은 없지만 세 문장은 규칙의 것으로 그대로 참이다: `timeout` 이 명령을 끝내고, 훅 풀의
+  teardown 과 프로세스 종료도 끝내고, 실행의 스레드는 그 명령을 기다린다.
+- **"리뷰가 짚어 정한 것"** (1) 은 그대로다 — 코드로 등록한 훅의 `ignoresInterrupt()` 는 기본 `false` 이고, 선언하면 어느
+  이벤트에서든 듣는다. (2) 는 **넓어졌다**: 셸 실행기는 옵션을 선언한 훅에서만이 아니라 **보고 이벤트의 모든 발화에서** 뷰를
+  받는다. 컨텍스트를 이벤트 타입으로 내려받는 저장소 밖 실행기는 이제 여섯 보고 이벤트 전부에서 `ClassCastException` 을
+  낸다(저장소 안에는 여전히 그런 실행기가 없다).
+- **"메인테이너가 정할 것"** — 정해졌다(EE-98).
+- **"어디"** — `DeclarativeHookOptions.java`, `HookRegistryApplier.java:287`, `SkillHookSetParser.java:282` 에는 이제 이 항목의
+  것이 없다. 남은 자리는 EE-98 의 "어디" 에 있다.
+
+## EE-98 — `ignoreInterrupt` 의 이름과, 돌고 있는 보고 명령을 인터럽트에 멈추는 기본값은 릴리스 전에만 값없이 바뀐다 · **닫힘** *(2026-10-08)*
 
 *(2026-10-07 등록. 출처는 EE-93~EE-97 설계 Q1 · Q2.)*
 
@@ -4239,6 +4282,73 @@ timeout 까지 돈다 — EE-80 이 닫으려던 것의 일부가 기본값에�
 `hook/event/OnStopContext.java`(보고 규칙이 있는 자리), `CHANGELOG.md` 의 `[Unreleased]`.
 
 **언제 다시 볼까.** EE-80 을 싣는 릴리스를 자르기 전. 그 뒤로는 이 항목이 "이름을 바꾸는 값" 을 재는 항목이 된다.
+
+### 닫힘 (2026-10-08)
+
+**메인테이너가 정했다 — 기본값을 뒤집고 옵션을 없앤다.** 릴리스 전이라 값이 붙지 않는다. (2) 가 (1) 을 지웠다: 이름을 고를
+옵션이 남지 않았다.
+
+**규칙.** 선언 훅의 셸 명령은, 보고 이벤트(`onStop` · `subagentStop` · `postCompact` · `postTool` · `permissionDenied` ·
+`subagentStart`)에서는 실행의 인터럽트에 **결코 멈추지 않는다** — 취소 신호로도, EE-97 이 다룬 스레드 인터럽트의 길
+(`DefaultHookExecutor.awaitHook`, 백그라운드 포크의 `Task.stop`)로도. 끝나거나 자기 `timeout` 이 끝낼 때까지 돈다. 훅 풀의
+teardown 과 프로세스 종료는 여전히 끝낸다. 가드 이벤트(`onStart` · `preCompact` · `preTool` · `permissionRequest`)는 그대로다:
+언제나 신호에 묶이고, 취소된 가드는 `failOpen` 과 무관하게 막는다. 한 문장이 된다 — **가드 명령은 인터럽트에 언제나 멈추고
+보고 명령은 결코 멈추지 않는다.**
+
+**이유.** (1) **경합.** 고치기 전에는 정리가 끝나는지가 순서에 달려 있었다 — 인터럽트보다 조금 먼저 시작한 보고 명령은 반쯤
+돌다 끊기고, 조금 늦게 시작한 같은 명령은 끝까지 돌았다. (2) **조용한 실패와 보이는 지연.** 반쯤 된 정리는 아무 데도
+보고되지 않는다. 끝까지 도는 명령이 치르는 것은 `timeout` 으로 묶인, 기다리는 쪽에 보이는 지연이다. (3) **릴리스된 `onStop`
+동작이 깨지지 않는다.** EE-80 전에는 턴의 `onStop` 명령에 인터럽트를 전하는 것이 없었고, 그 명령은 끝까지 돌았다.
+
+**값.** 중단된 실행과 그 뒤에 선 다음 입력이 보고 명령의 남은 `timeout` 만큼 기다린다. 결정문은 그 값을 "스레드 인터럽트에
+반응하지 않는 셸에서" 로 적었는데, 지어 보니 **셸을 가리지 않는다** — 두 길을 다 막았으므로 `LocalShell` 의 명령에도 닿는
+것이 없다. 가이드에는 그렇게 적었고, 보고 훅의 `timeout` 을 짧게 잡으라고 적었다.
+
+**근거가 달랐던 것 (규칙 둘) — (3) 은 신호의 길에서만 참이다.** 릴리스된 훅 실행기(`v0.3.1` 의 `DefaultHookExecutor`)는 발화
+스레드의 인터럽트에 훅의 태스크를 취소하는 것으로 답했고, `LocalShell` 은 그것에 반응한다. 그래서 백그라운드 포크를
+`Task.stop` 으로 멈추면, 로컬 셸에서 돌던 그 포크의 `onStop` · `subagentStop` 명령은 **릴리스에서 끊겼다.** 이제는 끝까지 돌고
+멈춘 태스크가 그만큼 늦게 끝난다. 결정이 스레드의 길을 명시해 포함했으므로 그대로 지었고, CHANGELOG 에 릴리스 대비 바뀌는
+동작으로 적었다. 릴리스된 실행기는 읽어서 봤고 그 버전에서 돌려 보지 않았다.
+
+**지운 것.** 설정 키 `ignoreInterrupt`(`hooks.json` 의 핸들러 키, SKILL.md 의 항목 키), `DeclarativeHookOptions` ·
+`HookHandlerSpec` 의 필드와 빌더 메서드, 두 파서의 읽기와 WARN, 로더의 불리언 아님 WARN, `HookEventName.isReport`.
+`HookHandlerSpec.fromJson` 은 EE-97 전의 시그니처 하나로 돌아갔다. 사용 중단 경로는 두지 않았다 — 키가 릴리스된 적이 없다.
+그 키를 아직 담은 설정은 모르는 키가 받는 대접을 받는다: `hooks.json` 은 읽고 지나가고(핸들러는 모르는 필드를 허용한다),
+frontmatter 도 읽고 지나간다(항목 키를 검사하지 않는다). 둘 다 테스트로 고정했다.
+
+**남긴 것, 그리고 이유.**
+
+- `ExecutionHook#ignoresInterrupt()` — 훅 실행기가 "이 훅의 태스크는 인터럽트에 취소하지 말 것" 을 아는 유일한 통로다. 이제
+  설정이 아니라 **이벤트**가 답한다: 선언 셸 훅은 보고 이벤트에서 `true`, 그 밖에서 `false`(`postTool` 은 셸 액션일 때만).
+  코드로 등록한 훅은 기본 `false` 그대로다 — 보고 이벤트의 프로그래매틱 훅이 조용히 멈출 수 없게 되지 않았다.
+- `SignalDetachedHookContext` — 지우지 못했다. 지우려면 보고 컨텍스트의 getter 가 비어 있다고 답해야 하는데, 그러면 코드로 쓴
+  훅이 지금 받는 신호를 잃고, EE-80 이 보고 이벤트 여섯에 놓은 배관(빌더, 발화 지점, 포크를 다스리는 신호의 선택)이 읽는
+  쪽 없이 남는다 — EE-101 이 오면 다시 놓아야 할 것이다. 그래서 뷰는 남고, 옵션을 선언한 훅에서만이 아니라 보고 이벤트의
+  모든 발화에서 실행기에게 간다. **이것이 임베더에게 보이는 값이다**: 컨텍스트를 이벤트 타입으로 내려받는 저장소 밖
+  `ShellActionExecutor` 는 여섯 보고 이벤트에서 `ClassCastException` 을 낸다. 저장소 안의 테스트 하나
+  (`DeclarativePostToolHookTest`)가 "실행기는 그 컨텍스트 자체를 받는다" 고 단정하고 있었고, 그것을 고쳐야 했다. SPI javadoc 과
+  CHANGELOG 의 경고는 지우지 않고 넓혀 적었다.
+- `CancellationSignals.liveOrEmpty` 와 보고 컨텍스트의 "서기 전까지만" getter — 그대로다. 셸 명령은 더는 읽지 않는다.
+  `HookContext#getExecutionCancellation()` 이 보고 이벤트에서 **코드로 쓴 훅**에게 주는 답은 `main` 과 같다: 신호가 서기
+  전에는 그 신호, 선 뒤에는 비어 있음.
+
+**적힌 것보다 무거웠나 (규칙 셋).** 뒤집은 테스트와 새 테스트마다 옛 규칙을 되돌려 놓고(두 훅 클래스가 `ignoresInterrupt()`
+에 `false` 로 답하고 실행기에게 컨텍스트 자체를 넘기게 해서) 실패하는 것을 봤다: 보고 이벤트 여섯의 신호 길과 스레드 길,
+`postTool` 두 훅 체인(`DeclarativeReportHookInterruptTest`), 끝난 턴의 `onStop`(`OrcaAgentExecutorHookCancellationTest`),
+백그라운드 포크의 셋 — 스폰한 쪽 인터럽트 아래의 `subagentStart`, 풀이 거절한 태스크의 `subagentStop`, `Task.stop` 아래의
+`subagentStop`(`DefaultSubagentExecutionManagerTest`). 멈춤과 안 멈춤은 테스트 셸이 본 것으로 읽었고 걸린 시간으로 읽지
+않았다. "이미 취소된 실행에서 발화한 보고 명령은 시작된다" 와 가드 테스트는 옛 규칙에서도 통과한다 — 바뀌지 않은 절반이다.
+
+**확인하지 않은 것.** 실제 `LocalShell` 과 원격 셸에서 보고 명령을 돌리지 않았다(테스트 셸은 두 종류를 흉내 낸다). docker
+계층은 돌리지 않았다. 종료(shutdown) 순서에서 보고 명령을 기다리는 실행이 teardown 을 얼마나 늦추는지는 재지 않았다 —
+훅 풀의 teardown 이 그 명령을 끝내지만 그 단계는 세션과 런타임 뒤에 온다. 설계 문서 둘에는 승인본을 고치지 않고 절을
+더했다([`../design/hook/hook-shell-cancellation-ee80.md`](../design/hook/hook-shell-cancellation-ee80.md) §12,
+[`../design/hook/hook-cancellation-followups-ee93-ee97.md`](../design/hook/hook-cancellation-followups-ee93-ee97.md) §14).
+
+**어디** *(2026-10-08)* — `skill/hook/declarative/AbstractDeclarativeShellHook.java`(`ignoresInterrupt`, `runShell`),
+`skill/hook/declarative/DeclarativePostToolHook.java`, `skill/hook/declarative/SignalDetachedHookContext.java`,
+`skill/hook/SkillHookSet.java`(`reportEvents`), `hook/execution/ExecutionHook.java`(`ignoresInterrupt`),
+`hook/execution/HookContext.java`(`getExecutionCancellation`).
 
 ## EE-99 — 코드 비헤이비어 포크는 `onStart` 중의 인터럽트에 여전히 `BLOCKED` 로 끝난다 · **열림** *(트리거 대기)*
 
@@ -4277,3 +4387,24 @@ the hook returned a verdict" 사유로 끝난다. 같은 정지가 ReAct 포크�
 
 **언제 다시 볼까.** `CompactBoundary` 나 `compactionEvents` 를 사용자에게 "압축됨" 으로 보여 주는 호스트가 실패한 시도를
 구분하지 못한다는 보고가 올 때.
+
+## EE-101 — 보고 이벤트의 셸 명령을 인터럽트에 멈추게 하는 옵션이 없다 · **열림** *(트리거 대기)*
+
+*(2026-10-08 등록. 출처는 EE-98 의 결정.)*
+
+**무엇을.** 보고 이벤트의 훅이 "실행이 인터럽트되면 이 명령을 멈출 것" 을 선언할 수 있게 할지 정한다(`failOpen` 처럼 훅별
+옵션, 기본은 지금대로 멈추지 않음).
+
+**왜.** EE-98 뒤로 보고 이벤트의 셸 명령은 인터럽트에 멈추지 않고, 그것을 바꿀 설정이 없다. 대부분의 보고 훅(정리 · 감사)에는
+그것이 맞지만, 끝까지 돌 이유가 없는 긴 보고 명령 — 실행이 살아 있을 때만 뜻이 있는 알림이나 동기화 — 을 가진 배포에서는
+중단된 실행과 다음 입력이 그 명령의 남은 `timeout` 만큼 기다린다. 지금 줄 수 있는 답은 "`timeout` 을 짧게" 뿐이다. 요청이
+없는데 옵션을 먼저 두지 않기로 했다 — 방금 걷어 낸 것이 요청 없이 둔 옵션이었다.
+
+**어디** *(2026-10-08)* — 지을 때 쓸 것은 남아 있다. 보고 컨텍스트는 여전히 신호를 싣고(`hook/event/OnStopContext.java` 와 같은
+모양의 다섯, `CancellationSignals.liveOrEmpty`), 발화 지점은 여전히 그것을 넘긴다. 옵션이 할 일은 둘이다 — 그 훅이 셸
+실행기에게 뷰(`skill/hook/declarative/SignalDetachedHookContext.java`) 대신 컨텍스트를 넘기고, `ignoresInterrupt()` 에 `false`
+로 답하는 것(`skill/hook/declarative/AbstractDeclarativeShellHook.java`, `DeclarativePostToolHook.java`). 그렇게 지으면 EE-80 의
+보고 규칙이 그 훅에서만 돌아온다: 돌던 명령은 멈추고, 이미 취소된 실행에서 발화한 명령은 끝까지 돈다 — EE-98 이 없앤 경합이
+그 훅에 다시 생긴다는 것을 옵션의 문서에 적어야 한다.
+
+**언제 다시 볼까.** 보고 훅 때문에 인터럽트 뒤의 다음 입력이 늦는다는 보고가, `timeout` 을 줄여서는 풀리지 않는 형태로 올 때.

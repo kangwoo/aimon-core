@@ -90,8 +90,8 @@ public interface HookContext {
     /**
      * The cancellation signal of the execution this event fires in — the one its tools read through
      * {@code InterruptAccess.signalOf(ToolContext)}. It is an <em>execution</em> concept: a turn, a fork and a
-     * scheduled routine each have one, and a hook that starts something long-running on the execution's behalf (a
-     * shell command, say) ties it to this signal so an interrupt stops it instead of waiting out its timeout.
+     * scheduled routine each have one, and a hook that starts something long-running on the execution's behalf ties
+     * it to this signal so an interrupt stops it instead of waiting out its timeout.
      *
      * <p>
      * Which answer an event gives depends on what the hook is being asked:
@@ -101,11 +101,12 @@ public interface HookContext {
      * all, one that is running is stopped, and the guard blocks.
      * <li><b>A report</b> — {@code onStop}, {@code postCompact}, {@code subagentStart}, {@code subagentStop},
      * {@code postTool}, {@code permissionDenied} — records what already happened, and carries the signal only while
-     * it has not tripped. A command running when the interrupt arrives is stopped, but one that starts afterwards
-     * runs unbound, so an audit or cleanup hook on a cancelled execution always starts. The rule lives in the
-     * context's getter, so the answer can turn from present to empty over the life of one context: read it when the
-     * work starts, not when the context is built. A signal that trips between the read and the registration cancels
-     * that one command at once.
+     * it has not tripped, so an audit or cleanup hook on a cancelled execution is never refused a start. This answer
+     * is for hooks written in code, which decide for themselves whether to tie their work to it. The declarative
+     * hooks' shell commands do not: on a report event the command is handed no signal, and an interrupt never stops it
+     * — it runs until it finishes or its own timeout ends it. The rule lives in the context's getter, so the answer
+     * can turn from present to empty over the life of one context: read it when the work starts, not when the context
+     * is built. A signal that trips between the read and the registration cancels that work at once.
      * </ul>
      * {@code subagentStart} and {@code subagentStop} fire in the spawning execution but carry the signal that governs
      * the <em>fork</em> — the spawner's for a foreground fork, the task's own for a background one.
