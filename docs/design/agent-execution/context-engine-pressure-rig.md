@@ -1,7 +1,7 @@
 # 설계 — ContextEngineLiveRig 의 engine 비교 과제 (뷰 압력 리그)
 
 > Status: **IMPLEMENTED** — 적용 대상은 `aimon-llm-openai` · `aimon-llm-anthropic` 의 테스트 소스와 문서뿐이다. 프로덕션 코드는
-> 바뀌지 않았다. 기준선 수치는 아직 재지 않았다([`CP-1`](../../backlog/context-engine-pressure-rig-open-items.md)).
+> 바뀌지 않았다. 기준선은 2026-10-07 에 한 번 쟀고, 수치는 [`CP-1`](../../backlog/context-engine-pressure-rig-open-items.md) 에 있다.
 > §1 ~ §8 은 리뷰를 통과한 설계 그대로다(기준 커밋 `a65392d0`, 승인 뒤 고치지 않았다). 구현이 그 글에서 갈라진 자리는
 > [§9](#9-구현이-이-설계와-갈라진-자리)에 있다. 지금의 리그를 서술하는 글은 이 기록이 아니라
 > [`context-engine.md` §13.11](context-engine.md#1311-engine-을-비교하는-과제) 이다.
