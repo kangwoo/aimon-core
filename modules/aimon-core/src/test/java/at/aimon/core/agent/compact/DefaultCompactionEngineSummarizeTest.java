@@ -176,7 +176,27 @@ class DefaultCompactionEngineSummarizeTest {
         assertThat(result.isSuccess()).isTrue();
         assertThat(client.lastSystemPrompt.get()).contains("Key decisions and constraints").contains("cumulative")
                 .contains("Update the previous summary").contains("PREVIOUS SUMMARY TEXT").contains("about 640 tokens");
-        assertThat(client.lastMessages.get()).extracting(Message::getContent).containsExactly("new work");
+        assertThat(client.lastMessages.get()).extracting(Message::getContent).containsExactly("new work",
+                DefaultCompactionEngine.ROLLING_SUMMARIZE_NOTE);
+    }
+
+    @Test
+    void aRequestEndingOnAUserMessageIsStillClosedWithTheInstruction() {
+        // "On the user side" is not enough: a model that reads a question last answers it instead of summarizing.
+        engine.summarize(request(List.of(Message.user("what is the deploy code?"))).build());
+
+        assertThat(client.lastMessages.get()).extracting(Message::getContent)
+                .containsExactly("what is the deploy code?", DefaultCompactionEngine.SUMMARIZE_NOTE);
+    }
+
+    @Test
+    void aRequestItsCallerAlreadyClosedIsNotClosedTwice() {
+        engine.summarize(
+                request(List.of(Message.user("work"), Message.user(DefaultCompactionEngine.ROLLING_SUMMARIZE_NOTE)))
+                        .rolling(true).build());
+
+        assertThat(client.lastMessages.get()).extracting(Message::getContent).containsExactly("work",
+                DefaultCompactionEngine.ROLLING_SUMMARIZE_NOTE);
     }
 
     @Test

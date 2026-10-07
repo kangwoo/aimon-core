@@ -228,7 +228,7 @@ class RollingContextEngineTest {
         }
 
         @Test
-        void aSummaryRequestEndingWithAUserMessageGetsNoClosingNote() {
+        void aSummaryRequestEndingWithAUserMessageIsClosedToo() {
             buffer.addUserMessage("goal");
             for (int i = 1; i <= 10; i++) {
                 // Every message a user one, so the absorbed range cannot end with an assistant message.
@@ -238,12 +238,14 @@ class RollingContextEngineTest {
             engine().prepare(request());
 
             final List<Message> sent = summarizer.summarized.get(0).getMessages();
-            assertThat(sent.get(sent.size() - 1).getContent()).isNotEqualTo(RollingContextEngine.SUMMARIZE_NOTE);
+            assertThat(sent.get(sent.size() - 1).getContent()).isEqualTo(RollingContextEngine.SUMMARIZE_NOTE);
+            assertThat(sent.get(sent.size() - 2).getContent()).as("the absorbed range itself ends with a user message")
+                    .isEqualTo("u".repeat(60));
             assertThat(sent).extracting(Message::getRole).containsOnly(Role.USER);
         }
 
         @Test
-        void aSummaryRequestEndingWithToolResultsGetsNoClosingNote() {
+        void aSummaryRequestEndingWithToolResultsIsClosedToo() {
             buffer.addUserMessage("goal");
             for (int i = 0; i < 4; i++) {
                 buffer.addMessage(Message.assistant("", List.of(ToolUse.of("t" + i, "Read", Map.of()))));
@@ -254,8 +256,11 @@ class RollingContextEngineTest {
             engine().prepare(request());
 
             final List<Message> sent = summarizer.summarized.get(0).getMessages();
-            assertThat(sent.get(sent.size() - 1).getRole()).as("tool results are sent in the user's role")
+            assertThat(sent.get(sent.size() - 2).getRole()).as("the absorbed range ends with tool results")
                     .isEqualTo(Role.TOOL);
+            assertThat(sent.get(sent.size() - 1).getContent())
+                    .as("a model that reads a tool result last reaches for the next call instead of summarizing")
+                    .isEqualTo(RollingContextEngine.SUMMARIZE_NOTE);
         }
 
         @Test
@@ -636,7 +641,8 @@ class RollingContextEngineTest {
             });
             final SummaryRequest summary = summarizer.summarized.get(0);
             assertThat(summary.getPreviousSummary()).hasValue("s".repeat(900));
-            assertThat(summary.getMessages()).extracting(Message::getContent).containsExactly("goal");
+            assertThat(summary.getMessages()).extracting(Message::getContent).containsExactly("goal",
+                    RollingContextEngine.SUMMARIZE_NOTE);
         }
     }
 

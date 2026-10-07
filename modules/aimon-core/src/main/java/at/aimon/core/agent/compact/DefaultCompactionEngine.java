@@ -59,14 +59,35 @@ import at.aimon.core.llm.token.TokenEstimator;
 public class DefaultCompactionEngine implements CompactionEngine {
 
     /**
-     * Closes a summary request whose messages would otherwise end with an assistant message. A conversation between
-     * turns ends on the assistant's final answer, so the whole-conversation summary of {@code /compact}, of an AUTO
-     * compaction in view mode and of the in-place v1 compaction all end there; a request ending with an assistant
-     * message reads as a prefill of a finished answer, which Anthropic answers with no content blocks at all and other
-     * providers may continue instead of summarizing. Appended to the summary call's input only — never to the
-     * transcript, the log or the view.
+     * Closes every summary request: the last message the summary model reads is this instruction, whatever the
+     * conversation to summarize ends on. Appended to the summary call's input only — never to the transcript, the log
+     * or the view.
+     *
+     * <p>
+     * Without it the model answers the conversation instead of summarizing it. A request ending with an assistant
+     * message reads as a prefill of a finished answer, which Anthropic answers with no content blocks at all. A
+     * request ending with tool results or with the user's own message is no better, although it is "on the user
+     * side": the model carries on with the task it sees — it answers the question, or reaches for the next tool
+     * call, and since a summary call offers no tools that comes back as no content blocks either. A forced compaction
+     * in the middle of a tool chain ends exactly there.
+     *
+     * <p>
+     * The wording is as blunt as it is because "write the summary now" alone was not enough. When the last thing
+     * before the note was a user request to call a tool, after ten turns that had each done exactly that, a real
+     * Anthropic model still reached for the tool eight times out of ten; told that the conversation is over and that
+     * no request in it is to be carried out, it summarized ten times out of ten.
      */
-    public static final String SUMMARIZE_NOTE = "[End of the conversation to summarize. Write the summary now.]";
+    public static final String SUMMARIZE_NOTE = "[End of the conversation to summarize. The conversation is over: do"
+            + " not carry out any request in it and do not call any tool. Write the summary now, as plain text.]";
+
+    /**
+     * The closing instruction of a rolling summary request, which asks for an update of the previous summary rather
+     * than a new one. It lives here, beside {@link #SUMMARIZE_NOTE}, so that this engine can tell a request its caller
+     * already closed from one it still has to close.
+     */
+    public static final String ROLLING_SUMMARIZE_NOTE = "[End of the part to summarize. That part of the conversation"
+            + " is over: do not carry out any request in it and do not call any tool. Write the updated summary now, as"
+            + " plain text.]";
 
     private static final Logger log = LoggerFactory.getLogger(DefaultCompactionEngine.class);
 
@@ -350,9 +371,11 @@ public class DefaultCompactionEngine implements CompactionEngine {
                     hookExecutionManager.collectBlockedReasons(preResults));
         }
 
-        // 2) Strip non-text blocks for the summary call (in-range only), and close the input on the user side so the
-        // request is never an assistant prefill
-        final List<Message> strippedMessages = closedOnTheUserSide(messageStripper.stripNonTextBlocks(inRangeMessages));
+        // 2) Strip non-text blocks for the summary call (in-range only), and close the input with the instruction to
+        // summarize, so the model neither continues an assistant prefill nor carries on with the conversation
+        final List<Message> strippedMessages = closedWithTheSummarizeNote(
+                messageStripper.stripNonTextBlocks(inRangeMessages),
+                rolling == null ? SUMMARIZE_NOTE : ROLLING_SUMMARIZE_NOTE);
 
         // 3) Build summary prompt — merge custom instructions from hooks + request
         final String mergedInstructions = mergeCustomInstructions(customInstructions, preFeedback);
@@ -387,22 +410,25 @@ public class DefaultCompactionEngine implements CompactionEngine {
     }
 
     /**
-     * Returns {@code messages} unchanged when it is empty or its last message is on the user side (a user message, or
-     * tool results — which every provider carries on the user side), otherwise a copy with {@link #SUMMARIZE_NOTE}
-     * appended as a user message.
+     * Returns {@code messages} with {@code note} appended as a user message, or unchanged when it is empty or already
+     * ends with a closing note ({@link #SUMMARIZE_NOTE} or {@link #ROLLING_SUMMARIZE_NOTE}) its caller appended.
      */
-    static List<Message> closedOnTheUserSide(List<Message> messages) {
+    static List<Message> closedWithTheSummarizeNote(List<Message> messages, String note) {
         if (messages.isEmpty()) {
             return messages;
         }
-        final Role last = messages.get(messages.size() - 1).getRole();
-        if (last == Role.USER || last == Role.TOOL) {
+        final Message last = messages.get(messages.size() - 1);
+        if (last.getRole() == Role.USER && isClosingNote(last.getContent())) {
             return messages;
         }
         final List<Message> closed = new ArrayList<>(messages.size() + 1);
         closed.addAll(messages);
-        closed.add(Message.user(SUMMARIZE_NOTE));
+        closed.add(Message.user(note));
         return closed;
+    }
+
+    private static boolean isClosingNote(String content) {
+        return SUMMARIZE_NOTE.equals(content) || ROLLING_SUMMARIZE_NOTE.equals(content);
     }
 
     private static CompactionMetadata failureMetadata(CompactionTrigger trigger, int preTokenCount,

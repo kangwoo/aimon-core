@@ -7,6 +7,33 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: a summary request is always closed with the instruction to summarize
+
+A compaction's summary call could come back empty, or come back with an answer to the conversation instead of a summary
+of it. Two things were wrong, and both had to change before the failures stopped.
+
+- **The instruction was missing.** The call's input was closed with an instruction only when it ended with an assistant
+  message; an input ending with tool results or with a user message was sent as it was. A model that reads a tool result
+  last reaches for the next tool call, and since a summary call offers no tools, Anthropic returned no content blocks
+  (`stop_reason=end_turn, request ended on a user message`) — six times out of six for a request that ends in the middle
+  of a tool chain. An input ending with a question was answered, and the answer was stored as the summary.
+  `DefaultCompactionEngine` now appends the instruction whatever the input ends on, and `RollingContextEngine` does the
+  same for its own requests. A request its caller already closed is not closed twice.
+- **The instruction was too weak.** "Write the summary now" did not stop a model whose last real message was a user
+  request to call a tool, after ten turns that had each done exactly that: eight empty responses out of ten. This is the
+  shape a compaction forced at the blocking limit produces, and that failure could end the turn with
+  `ContextWindowExceededException`. `SUMMARIZE_NOTE` now also says that the conversation is over, that no request in it
+  is to be carried out and that no tool is to be called: ten summaries out of ten on the same input.
+
+Measured against `claude-haiku-4-5` in a 16K window: about half of the default engine's summary calls failed before,
+none of sixteen after.
+
+- The rolling instruction text moved to the new public constant `DefaultCompactionEngine.ROLLING_SUMMARIZE_NOTE`; a
+  rolling request handed straight to `DefaultCompactionEngine.summarize` is closed with it.
+- **The text of `SUMMARIZE_NOTE` changed.** Code that matches it by value rather than by the constant no longer matches.
+- **A custom `CompactionEngine`** that builds its own summary call from `SummaryRequest.getMessages()` receives one more
+  trailing user message from the rolling engine than before when the absorbed range ends with a user message or tool
+  results.
 ### Fixed: a turn's result no longer waits for its event stream to reach the signal bus
 
 In `DISTRIBUTED` mode on a bus where a publish is a database round trip (`MongoSessionSignalBus`), a turn's result could

@@ -37,7 +37,7 @@ import at.aimon.core.llm.token.HeuristicTokenEstimator;
  * how {@code /compact} in view mode first failed against a real provider.
  */
 @SuppressWarnings("deprecation") // the default engine's guard is part of what is under test
-@DisplayName("DefaultContextEngine - the summary request ends on the user side")
+@DisplayName("DefaultContextEngine - the summary request ends with the instruction to summarize")
 class DefaultContextEngineSummaryRequestTest {
 
     private static final LlmModel MODEL = LlmModel.builder().name("test-model").build();
@@ -109,22 +109,27 @@ class DefaultContextEngineSummaryRequestTest {
     }
 
     @Test
-    @DisplayName("in place (version 1): a request already ending on tool results is sent as it is")
-    void aRequestEndingOnToolResultsGetsNoNote() {
+    @DisplayName("in place (version 1): a request ending on tool results is closed with the instruction too")
+    void aRequestEndingOnToolResultsIsClosedToo() {
+        // Tool results go out in the user's role, so this request was never a prefill. The model still read a tool
+        // result last and reached for the next call rather than summarizing; with no tools offered, a real
+        // Anthropic model returned no content at all.
         final TranscriptBuffer buffer = turnInFlight(SessionLogFormat.V1);
 
         final CompactionResult result = engine(SessionLogFormat.V1).compactNow(request(buffer), null);
 
         assertThat(result.isSuccess()).isTrue();
-        assertThat(calls.lastRoles).containsExactly(Role.TOOL);
-        assertThat(calls.lastInput).hasSize(3);
+        assertThat(calls.lastRoles).containsExactly(Role.USER);
+        assertThat(calls.lastInput).hasSize(4);
+        assertThat(calls.lastInput.get(2).getRole()).isEqualTo(Role.TOOL);
+        assertThat(calls.lastInput.get(3).getContent()).isEqualTo(DefaultCompactionEngine.SUMMARIZE_NOTE);
     }
 
     @Test
     @DisplayName("view mode: a turn in flight is summarized up to the unanswered call, so the request holds no tool result")
     void viewModeLeavesTheUnansweredToolResultOutOfTheRequest() {
         // The tool result is what the model has not answered yet, and its call stays with it (SL-6). What is sent to
-        // the summarizer is the user message alone, which already ends on the user side.
+        // the summarizer is the user message and the closing instruction.
         final TranscriptBuffer buffer = turnInFlight(SessionLogFormat.V2);
 
         final CompactionResult result = engine(SessionLogFormat.V2).compactNow(request(buffer), null);
