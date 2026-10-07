@@ -549,8 +549,12 @@ seq 는 알림에 싣지 않는다. 모델이 구간을 고르려면 지도가 �
 
 착수 조건은 하나다 — **이 저장소의 과제에서 이득이 재어졌을 때.**
 
-`ContextEngineLiveRig` 에는 engine 을 비교하는 과제가 없다. 뷰 압력을 높인 상태에서 사실 보존(needle), 키-값 조회, 로그
-triage 를 `default` 와 `rolling` 으로 재는 과제가 먼저 있어야 한다. 그 리그에서 다음이 보이면 이 문서를 다시 연다.
+`ContextEngineLiveRig` 에 engine 을 비교하는 과제는 생겼다 — 뷰 압력을 높인 상태에서 사실 보존(needle), 키-값 조회, 로그
+triage 를 `default` 와 `rolling` 으로 잰다([`context-engine.md` §13.11](../agent-execution/context-engine.md#1311-engine-을-비교하는-과제)).
+**기준선을 한 번 쟀고, 아래 조건은 충족되지 않았다**(2026-10-07, 16K 창, `claude-haiku-4-5` 와 `gpt-4o-mini`, 시드
+하나 — 수치와 읽은 방법은 [`CP-1`](../../backlog/context-engine-pressure-rig-open-items.md)). 롤링이 약한 칸은 키-값 조회
+하나였고, 거기서 잃은 것은 요약이 지운 사실이 아니라 모델이 되찾지 않은 사실이었다. 그 리그에서 다음이 보이면 이 문서를
+다시 연다.
 
 - 롤링이 M1 ~ M3 때문에 실패하는 과제가 실제로 있다 — 요약이 필요한 사실을 잃거나, 임계값 전의 뷰가 쓸모없는 결과로 차서
   비용이나 정확도가 나빠진다. 논문의 수치는 32K 상한의 것이고, 128K ~ 200K 창에서는 셋 다 훨씬 늦게 나타난다

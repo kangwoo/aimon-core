@@ -1,6 +1,6 @@
 ---
 translated_from: CONTRIBUTING.md
-source_commit: d67baad
+source_commit: 272dbd2
 ---
 
 # AIMON Core 기여 가이드
@@ -68,7 +68,7 @@ source_commit: d67baad
 
 ### 라이브 API 테스트
 
-실제 프로바이더 API 를 호출하는 테스트 클래스가 여섯 있고, 각각 그 프로바이더의 키로
+실제 프로바이더 API 를 호출하는 테스트 클래스가 여덟 있고, 각각 그 프로바이더의 키로
 `@EnabledIfEnvironmentVariable` 게이트가 걸려 있습니다.
 
 | 클래스 | 모듈 | 키 |
@@ -76,9 +76,11 @@ source_commit: d67baad
 | `AnthropicThinkingLiveTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY` |
 | `AnthropicLlmClientIntegrationTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY` |
 | `AnthropicContextEngineLiveTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY` |
+| `AnthropicContextPressureLiveTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY`, 그리고 `AIMON_CONTEXT_PRESSURE` |
 | `OpenAIReasoningLiveTest` | `aimon-llm-openai` | `OPENAI_KEY` |
 | `OpenAILlmClientIntegrationTest` | `aimon-llm-openai` | `OPENAI_KEY` |
 | `OpenAIContextEngineLiveTest` | `aimon-llm-openai` | `OPENAI_KEY` |
+| `OpenAIContextPressureLiveTest` | `aimon-llm-openai` | `OPENAI_KEY`, 그리고 `AIMON_CONTEXT_PRESSURE` |
 
 **이 계층에는 CI 신호가 전혀 없습니다.** 어느 워크플로도 두 키를 주지 않으므로, 키가 없는 곳에서는 —
 CI 를 포함해 — 이 클래스들이 각각 `SKIPPED` 로 보고되고 `checkAll` 은 초록으로 남습니다.
@@ -104,6 +106,54 @@ Anthropic 클래스는 롤링 시나리오를 extended thinking 아래에서도 
 둘을 합쳐 `claude-haiku-4-5` 와 `gpt-4o-mini` 에 대략 40번 호출합니다. 각 클래스에는 키가 필요 없는 쌍둥이
 `ContextEngineLiveRigTest` 가 있어서 같은 시나리오를 스크립트로 짠 모델에 대해 모든 평범한 빌드에서 돌리므로,
 시나리오가 롤링 사이클에 닿지 못하게 만드는 변경은 키 없이도 잡힙니다.
+
+**두 `*ContextPressureLiveTest` 클래스는 위 명령에 없고, 키만으로는 돌지 않습니다.** 이 둘은 `default` 와
+`rolling` 컨텍스트 엔진을 스크립트로 짠 세 과제 — 사실 보존, 키-값 조회, 로그 triage — 로 비교하며, 과제는
+정해진 *뷰 압력*에서 돕니다. 뷰 압력은 과제가 첫 질문 전에 세션에 밀어 넣는 추정 토큰을 effective context
+window 의 배수로 나타낸 값입니다. 한 번 돌리면 수백 번 호출하므로, 이 클래스들에는 키 말고도
+`AIMON_CONTEXT_PRESSURE` 가 있어야 하고 그 값이 곧 돌릴 수준의 목록입니다. 그 변수가 없으면 키가 export 된
+셸에서도 `SKIPPED` 로 보고됩니다.
+
+```bash
+ANTHROPIC_KEY=... AIMON_CONTEXT_PRESSURE=0.3,2 \
+./gradlew :aimon-llm-anthropic:test --rerun \
+              --tests 'at.aimon.core.llms.anthropic.AnthropicContextPressureLiveTest'
+
+OPENAI_KEY=... AIMON_CONTEXT_PRESSURE=0.3,2 \
+./gradlew :aimon-llm-openai:test --rerun \
+              --tests 'at.aimon.core.llms.openai.OpenAIContextPressureLiveTest'
+```
+
+수준은 `0.3` 에서 `8` 사이의 수이고, 그 밖의 값은 첫 호출 전에 실행을 멈춥니다. `0.3` 은 대조입니다 — 거기서는
+어느 엔진도 압축하지 않아야 합니다 — 그리고 모든 실행에 넣어야 합니다. 대조를 틀리는 모델로는 더 높은 수준에서
+엔진을 비교할 수 없기 때문입니다. 스크립트 모델을 상대로 한 수준의 여섯 칸(세 과제 × 두 엔진)은 프로바이더당
+`0.3` 에서 약 130번 호출에 추정 입력 0.4M 토큰, `2` 에서 510번에 2.8M, `4` 에서 960번에 5.9M 이 들고, 실제
+모델은 적어도 그만큼 듭니다. 키가 필요 없는 쌍둥이 `ContextPressureRunTest` 가 그 수를 칸별로 각 프로바이더
+모듈의 `build/reports/context-engine-pressure/keyless-call-counts.md` 에 씁니다 — 그 모듈의 `test` 태스크가
+실제로 돌 때마다 그렇습니다.
+
+이 클래스들은 정답률에 대해 아무것도 단언하지 않습니다 — 정답률은 재는 대상입니다. 결과는 보고서이고,
+프로바이더 모듈 아래 `build/reports/context-engine-pressure/<provider>-<model>.md` 에 칸이 끝날 때마다 다시
+쓰이므로 중간에 죽은 실행도 이미 돈을 낸 결과는 남깁니다. 보고서에는 칸마다 한 줄, 질문마다 한 줄이 있습니다.
+다음 순서로 읽으세요.
+
+- `status` 가 `OK` 가 아닌 줄, `failed turns` 가 0 보다 큰 줄, `rolling` 줄 가운데 `FULL` 이 0 보다 큰 줄은
+  먼저 빼 둡니다 — 마지막 것은 롤링 엔진이 기본 엔진으로 물러난 줄입니다
+- `0.3` 줄이 `OK` 이고 정답률 1.00 인 과제만 더 높은 수준에서 엔진을 비교합니다. `INVALID_CONTROL` 은 대조가
+  압축했다는 뜻이므로 대조가 아니었습니다
+- `rolling` 의 `NEEDLE` 줄은 압력 단계에 `ROLLING` 이 있고 `PRUNE` 이 없어야 합니다. 그 줄은 롤링 요약이 무엇을
+  지켰는지를 잽니다
+- `rolling` 의 `KEY_VALUE` · `LOG_TRIAGE` 줄은 압력 단계에 `PRUNE` 이 있고, 수준 `2` 에서는 `ROLLING` 이
+  없습니다. 거기서의 오답은 요약이 잃은 사실이 아니라 모델이 되읽지 않은 elide 된 도구 결과입니다. 수준 `4` 에서는
+  `ROLLING` 이 보일 수 있고, 그 줄은 둘이 섞인 것입니다
+- `sent view sum` 이 비용입니다. `SessionHistory calls` 는 롤링 엔진의 정답률이 되찾기로 치른 값이고, 그 도구가
+  없는 기본 엔진에서는 언제나 0 입니다
+- `refetch attempts` 는 이미 받은 리포트를 다시 요청한 횟수입니다 — 출처는 리포트를 한 번씩만 내줍니다. 기본
+  엔진의 `ABSTAINED` 옆에 이 수가 높으면, 길이 있었다면 답을 찾아봤을 모델입니다
+
+한 번의 실행은 과제당 질문 여섯에서 여덟 개짜리 표본 하나이므로, 한두 문제의 차이는 잡음입니다. 과제가
+무엇인지, 비교가 왜 16K 창을 쓰는지, 무엇을 재지 않는지는
+[`docs/design/agent-execution/context-engine.md` §13.11](docs/design/agent-execution/context-engine.md#1311-engine-을-비교하는-과제) 에 있습니다.
 
 **돌릴 때마다 돈이 듭니다** — 키 주인의 계정에 청구되는 실제 호출입니다. 키를 커밋하지 말고, 이슈나
 풀 리퀘스트에 붙이는 실패 출력에서는 키를 가리세요.

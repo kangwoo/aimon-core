@@ -196,6 +196,11 @@ R-1 이 두 태그 계층을 두고 적은 문장 — *"그 차이는 양이 아
    *(2026-09-11, #98: 이제 절반은 강제된다 — `aimon-llm-*` 모듈에 **새 변수**로 게이트가 걸린 클래스가 들어오면
    `ReleaseGateMatchesCiGateTest` 가 실패하고, 그 실패 메시지가 `CONTRIBUTING.md` 의 표를 고치라고 말한다. **이미 있는
    변수**로 게이트가 걸린 클래스와 표 자체는 여전히 아무것도 강제하지 않는다.)*
+   *(2026-10-07: 클래스가 둘 늘어 여덟이다 — `AnthropicContextPressureLiveTest` · `OpenAIContextPressureLiveTest`. 둘은
+   **이미 있는 변수**로 게이트가 걸려 위 검사를 지나가지 않았고, 표는 손으로 고쳤다. 이 계층의 **기본 한 번 실행 비용은
+   그대로다**: 둘은 키가 있어도 `AIMON_CONTEXT_PRESSURE` 가 없으면 건너뛴다. 그 변수를 주고 돌리는 한 번은 프로바이더당
+   수백만 토큰이고, 그 opt-in 을 인구조사가 읽지 못한다는 것은
+   [`context-engine-pressure-rig-open-items.md`](context-engine-pressure-rig-open-items.md) 의 CP-2 다.)*
    참고로 이슈는 #71 의 더 큰 스윕이 청구 호출 11건이었다고 적었다. **이 문서는 네 클래스 한 번의 청구
    호출 수를 세지 않았다**
 
