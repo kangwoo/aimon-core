@@ -409,7 +409,8 @@ Each behavioural test fails on the base commit; for the new option that means it
 
 *Appended 2026-10-07, after implementation. Everything above this section is the body as approved, and it is not
 edited to look prescient. Three sources feed this section: the run's `build/deviations.md`, the design review's
-non-blocking notes, and what was found while building.*
+non-blocking notes, and what was found while building. DV-8, the first item of §13.2 and the
+code-review rows of §13.3 were added after the code review of the build, which found EE-95 installing a truncated summary.*
 
 **No outcome in §2 changed.** EE-97, EE-95 and EE-94 are built; EE-93 is split as §7 says — the flag tells the truth
 and an interrupt before `onStart` is kept, while a running slash command is still not interruptible; EE-96 is not
@@ -447,6 +448,21 @@ untouched, as §4 said. What departed is below.
   states that did change (coordinator closed, coordinator not yet published) have tests of their own. §7 lists
   `HookContext.java` "where it describes the command turn"; that sentence is still true as written.
 
+- **DV-8 — a summary that returns after the signal tripped is not installed (reverses §9).** §9 has "Signal trips, but
+  the client ignores the token and returns a summary → the summary is installed and `postCompact` fires — finished
+  work is kept", and the build pinned it (`aSummaryTheClientReturnsAfterTheSignalTrippedIsKept`). The code review ran
+  the real clients against a server that stalls mid-stream and found the premise wrong: a client whose stream was
+  closed under it does not ignore the token, it **returns the part that had arrived** as a normal response (§13.2).
+  "Finished work" and "half a sentence" are the same thing to the engine — nothing in an `LlmResponse` separates them
+  for every client — so the row cost a truncated summary installed over the transcript, or, with no text yet, a
+  "Compaction summary was empty" failure both breakers counted. `callSummaryModel` now reads the signal again when the
+  call returns and when it throws: either way a tripped signal makes it the cancelled failure. The clients were fixed
+  as well (§13.2); the engine check stays because the engine is handed any `LlmClient`. What is given up is the
+  row's own case, a summary complete at the instant of the trip: it is discarded, and the next execution compacts
+  again. The test is now `…IsNotInstalled`, with one for the in-place rewrite and one for a failure after the trip.
+  The same check answers the build review's note that the generic `catch (RuntimeException)` ignored the signal, so a
+  provider answering an aborted stream with a transport error was logged at ERROR and counted.
+
 ### 13.2 What was found while building
 
 - **Reload has no per-hook diff to "see" the flag** (§9's "the builder confirms the reloader's diff sees it").
@@ -459,6 +475,19 @@ untouched, as §4 said. What departed is below.
   Shown by a test in each provider module, as the review asked, not by a statement: Anthropic's two requests are equal;
   OpenAI Chat Completions' are equal once the streaming call's `stream_options` is added to the blocking one. The
   OpenAI Responses endpoint was not compared.
+- **A closed stream does not throw, it ends** (code review, after the build). §5 says "a cancelled call surfaces as
+  `LlmCallCancelledException`", and finding 7 took the clients' abort lever as proven. It was proven against mocks.
+  Over the real transport, anthropic-java 2.65.0 and openai-java 4.69.2 end the event sequence quietly after
+  `StreamResponse.close()`; both clients classified a cancellation only in `catch` blocks, so the mappers emitted
+  their terminal chunk and the client returned the partial aggregate. That is not EE-95's alone: the ReAct loop's own
+  call goes through the same code, and an interrupted turn ended `COMPLETED` with the streamed prefix as its final
+  answer. Fixed in the three mappers — a stream that ends without `message_stop` / a `finish_reason` /
+  `response.completed` under a tripped token throws `LlmCallCancelledException` and emits no `STREAM_END` — which
+  routes the loop into the interrupted arm it already had (prefix kept, `interrupted` completion, `INTERRUPTED`).
+  Pinned over a local `HttpServer` that sends the opening of a stream and stalls, per path (Anthropic, OpenAI Chat
+  Completions, OpenAI Responses), at three levels: the client, an AUTO compaction under `DefaultCompactionGuard`, and
+  a turn (`AnthropicStreamAbortTest`, `OpenAIStreamAbortTest`). A fork's call takes the same client path and was not
+  run over the transport.
 - **What an interrupted turn reports** (review). Over the blocking limit the guard answers `BLOCK` and the result has
   no compaction event. In the auto band it answers `COMPACT` with the failed attempt, and the turn's result carries
   one event before the loop's own call is short-circuited — what any failed compaction does. Both are pinned in
@@ -495,6 +524,7 @@ untouched, as §4 said. What departed is below.
 | Review: say "not measured" plainly | Done in EE-95's closing note. |
 | Review: the stale `ActiveTurn` field comment | Corrected. |
 | Review: a negative twin for the fork test | Added. |
+| Code review: an aborted summary call came back as a success | DV-8 and §13.2 — the clients throw, and the engine no longer trusts them to. |
 | Q1 — the option's name | Built as `ignoreInterrupt`. **EE-98.** |
 | Q2 — the default (bind a running report command, opt out) | Kept. Free to change only before the release that carries EE-80. **EE-98.** |
 | Q3 — the thread road adds a public SPI method | Built; without it the option would not hold for a background fork on a local shell, which the fork test shows. |

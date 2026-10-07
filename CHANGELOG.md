@@ -43,8 +43,26 @@ the build changed in it and the reasons are in
   cancellation-aware `sendMessage` behaves as before. (2) A cancelled summary comes back as
   `CompactionResult.failure` carrying `LlmCallCancelledException`, and neither circuit breaker
   (`DefaultCompactionGuard`, `RollingContextEngine`) counts it. A client that throws that exception while the signal
-  is live is reported as an ordinary `LlmClientException` and is counted. Below the blocking limit an interrupted turn
-  reports the failed attempt in `compactionEvents`, as any failed compaction is reported (EE-100).
+  is live is reported as an ordinary `LlmClientException` and is counted. (3) Once the signal has tripped, whatever
+  the call does is that same cancelled failure: a summary the client **returns** after the trip is not installed, and
+  an error of any other kind is not counted or logged at ERROR. The engine does not rely on the client to say
+  "cancelled" — an aborted stream can come back as the part of the summary that had arrived, or as a transport error.
+  The cost is a summary that had in fact finished when the signal tripped: it is discarded as well. Below the blocking
+  limit an interrupted turn reports the failed attempt in `compactionEvents`, as any failed compaction is reported
+  (EE-100).
+- **Fixed: an interrupt during a streaming LLM call is reported as a cancellation, not as a finished answer.**
+  `AnthropicLlmClient` and `OpenAILlmClient` (Chat Completions and Responses) abort an in-flight call by closing its
+  stream, and classified the cancellation only where the read threw. The SDKs (anthropic-java 2.65.0, openai-java
+  4.69.2) do not throw out of a closed stream — it ends — so the client closed the response normally and returned
+  what had arrived. Both now throw `LlmCallCancelledException` when a stream ends without its terminal event
+  (`message_stop`, a `finish_reason`, `response.completed` / `response.incomplete`) while the call's token is tripped,
+  and hand the sink no `STREAM_END` for it. A stream that reached its terminal event is returned as before, tripped
+  token or not; so is one that ends early under a live token. What changes for a caller: a turn or fork interrupted
+  mid-call ends `INTERRUPTED` with the streamed prefix kept as the assistant message and an `interrupted` stream
+  completion — what `OrcaAgentExecutor` already did when the read threw — where it used to end `COMPLETED` with the
+  prefix (or an empty string) as the final answer; and the AUTO-compaction summary call above is actually cancelled,
+  where it used to install a half-sentence summary over the transcript or fail as "Compaction summary was empty" and
+  move the breakers. A custom `LlmClient` over one of these SDKs needs the same check.
 - **`SignalBackedLlmCancellation` is `AutoCloseable`.** `close()` removes its listener from the signal, for an adapter
   that lives shorter than the signal. The executors' per-execution instances are not closed and behave as before.
 - **A fork interrupted while its `onStart` hooks run ends `INTERRUPTED`, not `BLOCKED` (EE-94).** The fork now reads its

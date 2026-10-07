@@ -35,8 +35,12 @@ import at.aimon.core.agent.session.transcript.TranscriptBuffer;
  * to its compaction hooks and ties its summary LLM call to it, so an interrupt during a compaction does not wait the
  * call out. A summary cancelled that way is returned as a failure carrying
  * {@link at.aimon.core.llm.exception.LlmCallCancelledException} — a result, not a throw — and callers that count
- * failures toward a circuit breaker do not count it. An engine that ignores the signal behaves as before: the call
- * runs to its end and the execution reads the interrupt at its next checkpoint.
+ * failures toward a circuit breaker do not count it. That holds for whatever the call does once the signal has tripped,
+ * and does not depend on the client reporting a cancellation: a summary the client returns after the trip is not
+ * installed — an aborted stream can come back as the part that had arrived — and a failure of any other kind is not a
+ * failed compaction. A summary that had finished when the signal tripped is discarded with them. An engine that
+ * ignores the signal behaves as before: the call runs to its end and the execution reads the interrupt at its next
+ * checkpoint.
  */
 public interface CompactionEngine {
 

@@ -32,6 +32,7 @@ import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.exception.LlmCallCancelledException;
+import at.aimon.core.llm.exception.LlmClientException;
 import at.aimon.core.llm.token.HeuristicTokenEstimator;
 
 /**
@@ -125,17 +126,77 @@ class DefaultCompactionEngineSummaryCancellationTest {
     }
 
     @Test
-    void aSummaryTheClientReturnsAfterTheSignalTrippedIsKept() {
-        // A client that does not honour the token finishes its call. The work is done, so it is not thrown away.
+    void aSummaryTheClientReturnsAfterTheSignalTrippedIsNotInstalled() {
+        // A client whose aborted stream ends quietly returns what had arrived as if it were the answer. The engine
+        // cannot tell that from a finished summary, so neither is installed once the signal has tripped.
         final AbortableClient client = new AbortableClient();
         client.beforeAnswering = () -> coordinator.requestInterrupt(InterruptReason.USER_SIGINT);
         client.ignoreTheToken = true;
 
         final CompactionResult result = engine(client).summarize(request().executionCancellation(signal).build());
 
-        assertThat(result.isSuccess()).isTrue();
-        assertThat(result.getSummaryText()).hasValue("the summary");
+        assertThat(result.isFailure()).isTrue();
+        assertThat(result.getError()).containsInstanceOf(LlmCallCancelledException.class);
+        assertThat(result.getSummaryText()).isEmpty();
         assertThat(signal.liveListeners).hasValue(0);
+    }
+
+    @Test
+    void theInPlaceCompactionLeavesTheTranscriptAloneWhenTheSummaryReturnsAfterTheSignalTripped() {
+        final AbortableClient client = new AbortableClient();
+        client.beforeAnswering = () -> coordinator.requestInterrupt(InterruptReason.USER_SIGINT);
+        client.ignoreTheToken = true;
+        final TranscriptBuffer buffer = new TranscriptBuffer(SessionId.generate());
+        buffer.addUserMessage("first");
+        buffer.addAssistantMessage("one");
+        buffer.addUserMessage("second");
+        buffer.addAssistantMessage("two");
+        final List<Message> before = buffer.getMessages();
+
+        @SuppressWarnings("deprecation")
+        final CompactionResult result = engine(client)
+                .compact(CompactionRequest.builder().transcriptBuffer(buffer).trigger(CompactionTrigger.AUTO)
+                        .model(MODEL).hookRegistry(new DefaultHookRegistry()).executionCancellation(signal).build());
+
+        assertThat(result.getError()).containsInstanceOf(LlmCallCancelledException.class);
+        assertThat(buffer.getMessages()).as("the transcript is as it was").isEqualTo(before);
+    }
+
+    @Test
+    void aSummaryTheClientReturnsWhileTheSignalIsLiveIsInstalled() {
+        // The other side of the two tests above: the discard is tied to the signal, not to the overload.
+        final AbortableClient client = new AbortableClient();
+        client.ignoreTheToken = true;
+
+        final CompactionResult result = engine(client).summarize(request().executionCancellation(signal).build());
+
+        assertThat(result.getSummaryText()).hasValue("the summary");
+    }
+
+    @Test
+    void aFailureOfAnyKindAfterTheSignalTrippedIsACancellation() {
+        // A provider may answer an aborted stream with a transport error. The execution was interrupted; the
+        // breakers must not read that as compaction not working.
+        final AbortableClient client = new AbortableClient();
+        client.beforeAnswering = () -> coordinator.requestInterrupt(InterruptReason.USER_SIGINT);
+        client.failure = new LlmClientException("stream reset");
+
+        final CompactionResult result = engine(client).summarize(request().executionCancellation(signal).build());
+
+        assertThat(result.isFailure()).isTrue();
+        assertThat(result.getError().orElseThrow()).isInstanceOf(LlmCallCancelledException.class)
+                .hasCause(client.failure);
+        assertThat(signal.liveListeners).hasValue(0);
+    }
+
+    @Test
+    void aFailureWhileTheSignalIsLiveIsAnOrdinaryFailure() {
+        final AbortableClient client = new AbortableClient();
+        client.failure = new LlmClientException("stream reset");
+
+        final CompactionResult result = engine(client).summarize(request().executionCancellation(signal).build());
+
+        assertThat(result.getError()).containsSame(client.failure);
     }
 
     @Test
@@ -217,6 +278,7 @@ class DefaultCompactionEngineSummaryCancellationTest {
         };
         boolean ignoreTheToken;
         boolean throwCancelledUnasked;
+        RuntimeException failure;
 
         @Override
         public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
@@ -240,6 +302,9 @@ class DefaultCompactionEngineSummaryCancellationTest {
                 throw new LlmCallCancelledException("stream closed");
             }
             beforeAnswering.run();
+            if (failure != null) {
+                throw failure;
+            }
             if (ignoreTheToken) {
                 return LlmResponse.text("the summary");
             }

@@ -440,10 +440,19 @@ public class DefaultCompactionEngine implements CompactionEngine {
      * interrupt aborts the call in flight instead of waiting it out; a signal that has already tripped makes no call.
      * A provider handed a live token runs a blocking call over its streaming transport, as the loop's own calls do.
      *
+     * <p>
+     * <b>Whatever the call does once the signal has tripped is a cancellation.</b> The client is not trusted to say
+     * so. An aborted stream can come back as a response holding the part that had arrived, and that must not be
+     * installed over the transcript as the summary; it can come back as a transport error, and that says nothing
+     * about whether compaction works. Both leave here as {@link LlmCallCancelledException}. The price is a summary
+     * that was in fact complete when the signal tripped: it is discarded too, because nothing in the response tells
+     * the two apart for every client, and the execution it was made for is ending.
+     *
      * @throws LlmCallCancelledException
-     *             only when the execution's signal has tripped. A client that reports a cancellation while the signal
-     *             is live has failed, and is rethrown as a plain {@link LlmClientException} so that the breakers,
-     *             which do not count a cancelled summary, count that one
+     *             only when the execution's signal has tripped — whether the client threw it, threw something else,
+     *             or returned. A client that reports a cancellation while the signal is live has failed, and is
+     *             rethrown as a plain {@link LlmClientException} so that the breakers, which do not count a cancelled
+     *             summary, count that one
      */
     private LlmResponse callSummaryModel(String systemPrompt, List<Message> messages, LlmModel model,
             LlmCallMetadata callMetadata, CancellationSignal executionCancellation) {
@@ -459,13 +468,25 @@ public class DefaultCompactionEngine implements CompactionEngine {
         // Closed with the call: the signal lives for the whole execution, and a listener left on it per compaction
         // would pile up.
         try (SignalBackedLlmCancellation cancellation = new SignalBackedLlmCancellation(executionCancellation)) {
-            return llmClient.sendMessage(systemPromptParts, messages, List.of(), model, callMetadata, cancellation);
+            final LlmResponse response = llmClient.sendMessage(systemPromptParts, messages, List.of(), model,
+                    callMetadata, cancellation);
+            if (executionCancellation.isCancelled()) {
+                throw new LlmCallCancelledException(
+                        "Compaction summary discarded: the execution was cancelled while the call was in flight");
+            }
+            return response;
         } catch (LlmCallCancelledException e) {
             if (executionCancellation.isCancelled()) {
                 throw e;
             }
             throw new LlmClientException(
                     "Compaction summary call reported a cancellation the execution did not request", e);
+        } catch (RuntimeException e) {
+            if (executionCancellation.isCancelled()) {
+                throw new LlmCallCancelledException(
+                        "Compaction summary call failed after the execution was cancelled: " + e.getMessage(), e);
+            }
+            throw e;
         }
     }
 

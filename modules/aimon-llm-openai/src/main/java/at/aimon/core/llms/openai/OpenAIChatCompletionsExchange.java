@@ -16,6 +16,7 @@ import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionMessageFunctionToolCall;
 import com.openai.models.chat.completions.ChatCompletionMessageToolCall;
 
+import at.aimon.core.llm.LlmCancellation;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.StopReason;
 import at.aimon.core.llm.TokenUsage;
@@ -58,12 +59,13 @@ final class OpenAIChatCompletionsExchange implements OpenAIEndpointExchange {
     }
 
     @Override
-    public OpenAIStreamHandle openStream(RequestOptions options, LlmStreamSink sink, ChunkAggregator aggregator) {
+    public OpenAIStreamHandle openStream(RequestOptions options, LlmStreamSink sink, ChunkAggregator aggregator,
+            LlmCancellation cancellation) {
         final StreamResponse<ChatCompletionChunk> streamResponse = options == null
                 ? client.chat().completions().createStreaming(params)
                 : client.chat().completions().createStreaming(params, options);
         final OpenAIStreamingMapper mapper = new OpenAIStreamingMapper(sink, aggregator);
-        return OpenAIStreamHandle.of(streamResponse, mapper::consume);
+        return OpenAIStreamHandle.of(streamResponse, stream -> mapper.consume(stream, cancellation));
     }
 
     /**

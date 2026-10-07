@@ -2,6 +2,7 @@ package at.aimon.core.llms.openai;
 
 import com.openai.core.RequestOptions;
 
+import at.aimon.core.llm.LlmCancellation;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.streaming.ChunkAggregator;
 import at.aimon.core.llm.streaming.LlmStreamSink;
@@ -47,7 +48,13 @@ interface OpenAIEndpointExchange {
      *            the caller's stream sink (must not be null)
      * @param aggregator
      *            the client's aggregator, which builds the final response (must not be null)
+     * @param cancellation
+     *            the call's cancellation token (must not be null). The handle's mapper reads it once the stream has
+     *            ended: a stream that stopped short of its terminal event under a tripped token is reported as an
+     *            {@link at.aimon.core.llm.exception.LlmCallCancelledException}, because the SDK ends a closed stream
+     *            without throwing
      * @return an open stream handle (never null)
      */
-    OpenAIStreamHandle openStream(RequestOptions options, LlmStreamSink sink, ChunkAggregator aggregator);
+    OpenAIStreamHandle openStream(RequestOptions options, LlmStreamSink sink, ChunkAggregator aggregator,
+            LlmCancellation cancellation);
 }
