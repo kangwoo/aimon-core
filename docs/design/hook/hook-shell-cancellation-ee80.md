@@ -452,3 +452,16 @@ as §5 said. What departed is below.
 
 Q1, Q3 and Q5 are the maintainer's calls; the defaults above are what was built. Open or closed is decided in the
 backlog, not here.
+
+## 11. What became of EE-93 – EE-97
+
+*Appended 2026-10-07, by the change that took up the five items §10.3 sent to the backlog. §10 above is as it was
+written.*
+
+All five were given an outcome in one change: EE-94 (the fork asymmetry of Q2), EE-95 (the summary call of Q6 (a)) and
+EE-97 (the opt-out Q3 lacked) were built and closed; EE-93 was built in part — `isInterruptible` no longer says `true`
+for a running command, and the window DV-1 left ("an interrupt in that earlier stretch is still dropped") is closed —
+and stays open for "a running slash command cannot be interrupted"; EE-96 (Q6 (b)) was decided against for now. Two
+sentences of §10 are therefore no longer true of the code: DV-1's "still dropped" and DV-3's "a slash-command turn
+keeps reporting `interruptible=true`". The design and its own departures are in
+[`hook-cancellation-followups-ee93-ee97.md`](hook-cancellation-followups-ee93-ee97.md).
