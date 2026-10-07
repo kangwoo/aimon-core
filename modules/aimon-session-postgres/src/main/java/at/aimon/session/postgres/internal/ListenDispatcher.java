@@ -40,6 +40,14 @@ import at.aimon.core.agent.session.signal.SessionSignal.SignalKind;
  * far, and resumes. No signal loss because the rows live in the table independent of NOTIFY delivery.
  *
  * <p>
+ * <b>Rows that commit late.</b> An id is taken at insert and the row is visible at commit, so with two publishers a
+ * fetch can return a later id before an earlier one exists. A bare high-water mark would then never see the earlier
+ * row. Every id a fetch steps over is therefore kept by a {@link SignalGapTracker} for {@link #GAP_GRACE_MILLIS} and
+ * asked for by id on each pass until it appears. A row recovered this way is delivered after rows with higher ids:
+ * order holds within one publisher's sequential publishes — which is what a session's event stream is — and not
+ * across publishers. A transaction that stays open past the grace period still loses its rows here.
+ *
+ * <p>
  * Backstop self-poll (design §4.2): every {@link #selfPollMillis} ms the dispatcher re-runs the fetch query without
  * waiting for a doorbell, catching any rows that arrived while a NOTIFY was dropped (e.g. backend crash, network
  * blip).
@@ -68,6 +76,15 @@ public final class ListenDispatcher implements AutoCloseable {
     private static final String SQL_FETCH = "SELECT id, conversation_id, kind, origin_node_id, payload::text "
             + "FROM conversation_signal WHERE id > ? ORDER BY id LIMIT 10000";
 
+    private static final String SQL_FETCH_GAPS = "SELECT id, conversation_id, kind, origin_node_id, payload::text "
+            + "FROM conversation_signal WHERE id = ANY(?) ORDER BY id";
+
+    /**
+     * How long an id that a fetch stepped over is still asked for. Far longer than a publish transaction takes — an
+     * insert, a notify, a commit — and short enough that the ids of rolled-back transactions do not pile up.
+     */
+    public static final long GAP_GRACE_MILLIS = 30_000L;
+
     private static final String SQL_MAX_ID = "SELECT COALESCE(MAX(id), 0) AS max_id FROM conversation_signal";
 
     private final String jdbcUrl;
@@ -80,6 +97,7 @@ public final class ListenDispatcher implements AutoCloseable {
 
     private final ConcurrentMap<SessionId, Consumer<SessionSignal>> handlers = new ConcurrentHashMap<>();
     private final AtomicLong lastSeenId = new AtomicLong(0);
+    private final SignalGapTracker gaps = new SignalGapTracker(GAP_GRACE_MILLIS);
 
     private volatile Thread thread;
     private volatile boolean running;
@@ -222,54 +240,78 @@ public final class ListenDispatcher implements AutoCloseable {
         }
     }
 
-    private void fetchAndDispatch() {
+    private synchronized void fetchAndDispatch() {
         final long since = lastSeenId.get();
-        try (Connection c = fetchDataSource.getConnection(); PreparedStatement ps = c.prepareStatement(SQL_FETCH)) {
-            ps.setLong(1, since);
-            try (ResultSet rs = ps.executeQuery()) {
-                long maxSeen = since;
-                while (rs.next()) {
-                    final long id = rs.getLong("id");
-                    final SessionId convId = SessionId.of(rs.getString("conversation_id"));
-                    final SignalKind kind;
-                    try {
-                        kind = SignalKind.valueOf(rs.getString("kind"));
-                    } catch (IllegalArgumentException e) {
-                        log.warn("Skipping conversation_signal id={} with unknown kind={}", id, rs.getString("kind"));
+        try (Connection c = fetchDataSource.getConnection()) {
+            // The stepped-over ids first: a row that has turned up since belongs before anything newer.
+            final Long[] missing = gaps.outstanding(System.nanoTime());
+            if (missing.length > 0) {
+                try (PreparedStatement ps = c.prepareStatement(SQL_FETCH_GAPS)) {
+                    ps.setArray(1, c.createArrayOf("bigint", missing));
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            gaps.resolved(dispatchRow(rs));
+                        }
+                    }
+                }
+            }
+            try (PreparedStatement ps = c.prepareStatement(SQL_FETCH)) {
+                ps.setLong(1, since);
+                try (ResultSet rs = ps.executeQuery()) {
+                    long maxSeen = since;
+                    while (rs.next()) {
+                        final long id = dispatchRow(rs);
+                        if (id > maxSeen + 1 && !gaps.noteHole(maxSeen + 1, id, System.nanoTime())) {
+                            log.debug("Not tracking the gap in conversation_signal ids {}..{}", maxSeen + 1, id - 1);
+                        }
                         if (id > maxSeen) {
                             maxSeen = id;
                         }
-                        continue;
                     }
-                    final String originNodeId = rs.getString("origin_node_id");
-                    final Map<String, Object> payload = codec.decodePayload(rs.getString("payload"));
-                    final Consumer<SessionSignal> handler = handlers.get(convId);
-                    if (handler != null) {
-                        try {
-                            handler.accept(SessionSignal.builder().sessionId(convId).kind(kind)
-                                    .originNodeId(originNodeId).payload(payload).build());
-                        } catch (RuntimeException | Error ex) {
-                            // Error too: this thread is the only one that delivers signals to this node, and nothing
-                            // restarts it. One handler's AssertionError or LinkageError must not end it.
-                            log.warn("Signal handler threw for {}: {}", convId, ex.toString());
+                    // CAS-style monotonic update so a concurrent fetch can't decrease the watermark.
+                    long current;
+                    do {
+                        current = lastSeenId.get();
+                        if (maxSeen <= current) {
+                            break;
                         }
-                    }
-                    if (id > maxSeen) {
-                        maxSeen = id;
-                    }
+                    } while (!lastSeenId.compareAndSet(current, maxSeen));
                 }
-                // CAS-style monotonic update so a concurrent fetch can't decrease the watermark.
-                long current;
-                do {
-                    current = lastSeenId.get();
-                    if (maxSeen <= current) {
-                        break;
-                    }
-                } while (!lastSeenId.compareAndSet(current, maxSeen));
             }
         } catch (SQLException e) {
             log.warn("conversation_signal fetch failed: {}", e.toString());
         }
+    }
+
+    /**
+     * Hands the current row to the handler tracking its session, if any.
+     *
+     * @return the row's id
+     */
+    private long dispatchRow(ResultSet rs) throws SQLException {
+        final long id = rs.getLong("id");
+        final SessionId convId = SessionId.of(rs.getString("conversation_id"));
+        final SignalKind kind;
+        try {
+            kind = SignalKind.valueOf(rs.getString("kind"));
+        } catch (IllegalArgumentException e) {
+            log.warn("Skipping conversation_signal id={} with unknown kind={}", id, rs.getString("kind"));
+            return id;
+        }
+        final String originNodeId = rs.getString("origin_node_id");
+        final Map<String, Object> payload = codec.decodePayload(rs.getString("payload"));
+        final Consumer<SessionSignal> handler = handlers.get(convId);
+        if (handler != null) {
+            try {
+                handler.accept(SessionSignal.builder().sessionId(convId).kind(kind).originNodeId(originNodeId)
+                        .payload(payload).build());
+            } catch (RuntimeException | Error ex) {
+                // Error too: this thread is the only one that delivers signals to this node, and nothing
+                // restarts it. One handler's AssertionError or LinkageError must not end it.
+                log.warn("Signal handler threw for {}: {}", convId, ex.toString());
+            }
+        }
+        return id;
     }
 
     private void closeListenConnection() {

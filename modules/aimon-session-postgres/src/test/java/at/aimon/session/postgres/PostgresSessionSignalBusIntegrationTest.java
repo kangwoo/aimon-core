@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -28,6 +29,7 @@ import at.aimon.core.agent.session.exception.SessionSignalBusException;
 import at.aimon.core.agent.session.signal.SessionSignal;
 import at.aimon.core.agent.session.signal.SessionSignal.SignalKind;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
+import at.aimon.session.postgres.internal.ListenDispatcher;
 
 /**
  * Integration tests for {@link PostgresSessionSignalBus} against a real Postgres container.
@@ -268,6 +270,73 @@ class PostgresSessionSignalBusIntegrationTest {
         assertThatCode(() -> busA.publishAll(List.of())).doesNotThrowAnyException();
 
         assertThat(queryLong("SELECT count(*) FROM conversation_signal")).isZero();
+    }
+
+    @Test
+    @DisplayName("a row whose transaction commits after a later id was delivered is still delivered")
+    void aRowThatCommitsLateIsStillDelivered() throws Exception {
+        final SessionId id = SessionId.of("c-bus-late-commit");
+        final LinkedBlockingQueue<SessionSignal> received = new LinkedBlockingQueue<>();
+        try (SessionSignalBus.Subscription sub = busB.subscribe(id, received::offer);
+                Connection slow = PostgresTestSupport.dataSource().getConnection()) {
+            Thread.sleep(100);
+            // A publisher that has taken its id and not committed yet.
+            slow.setAutoCommit(false);
+            try (PreparedStatement ps = slow.prepareStatement("INSERT INTO conversation_signal "
+                    + "(conversation_id, kind, origin_node_id, payload) VALUES (?, 'EVENT', 'node-C', ?::jsonb)")) {
+                ps.setString(1, id.value());
+                ps.setString(2, "{\"marker\":\"late\"}");
+                ps.executeUpdate();
+            }
+
+            // A second publisher takes the next id and commits first; node B's high-water mark moves past the first.
+            busA.publish(event(id, "early", "ok"));
+            final SessionSignal early = received.poll(5, TimeUnit.SECONDS);
+            assertThat(early).isNotNull();
+            assertThat(early.getPayload()).containsEntry("marker", "early");
+
+            try (PreparedStatement notify = slow.prepareStatement("SELECT pg_notify(?, '0')")) {
+                notify.setString(1, ListenDispatcher.CHANNEL);
+                notify.execute();
+            }
+            slow.commit();
+
+            final SessionSignal late = received.poll(5, TimeUnit.SECONDS);
+            assertThat(late).as("the row that committed after a later id had been delivered").isNotNull();
+            assertThat(late.getPayload()).containsEntry("marker", "late");
+            assertThat(received.poll(300, TimeUnit.MILLISECONDS)).as("nothing is delivered twice").isNull();
+        }
+    }
+
+    @Test
+    @DisplayName("ids a rolled-back transaction took are stepped over without delivering anything twice")
+    void aRolledBackBatchLeavesNoTrace() throws Exception {
+        final SessionId id = SessionId.of("c-bus-rolled-back");
+        final LinkedBlockingQueue<SessionSignal> received = new LinkedBlockingQueue<>();
+        try (SessionSignalBus.Subscription sub = busB.subscribe(id, received::offer);
+                Connection aborted = PostgresTestSupport.dataSource().getConnection()) {
+            Thread.sleep(100);
+            aborted.setAutoCommit(false);
+            try (PreparedStatement ps = aborted.prepareStatement(
+                    "INSERT INTO conversation_signal " + "(conversation_id, kind, origin_node_id, payload) "
+                            + "SELECT ?, 'EVENT', 'node-C', '{}'::jsonb FROM generate_series(1, 50)")) {
+                ps.setString(1, id.value());
+                ps.executeUpdate();
+            }
+            aborted.rollback();
+
+            busA.publishAll(List.of(event(id, "a", "ok"), event(id, "b", "ok")));
+            busA.publish(event(id, "c", "ok"));
+
+            final List<Object> markers = new ArrayList<>();
+            for (int i = 0; i < 3; i++) {
+                final SessionSignal got = received.poll(5, TimeUnit.SECONDS);
+                assertThat(got).isNotNull();
+                markers.add(got.getPayload().get("marker"));
+            }
+            assertThat(markers).containsExactly("a", "b", "c");
+            assertThat(received.poll(300, TimeUnit.MILLISECONDS)).as("nothing is delivered twice").isNull();
+        }
     }
 
     private static List<SessionSignal> deltas(SessionId id, int count) {
