@@ -1,5 +1,7 @@
 package at.aimon.core.agent.session.signal;
 
+import java.util.List;
+import java.util.Objects;
 import java.util.function.Consumer;
 
 import at.aimon.core.agent.session.SessionId;
@@ -37,6 +39,55 @@ public interface SessionSignalBus {
      *            the signal to publish (must not be null)
      */
     void publish(SessionSignal signal);
+
+    /**
+     * Publish several signals, in list order.
+     *
+     * <p>
+     * This exists for the one caller that publishes at stream rate — the per-turn event relay, which sees a signal per
+     * text delta. A backend whose {@link #publish} costs a round trip (a document insert, a transaction) should
+     * override this to send the list in as few round trips as its transport allows; the default simply publishes one
+     * at a time and is right for a backend where a publish is already cheap.
+     *
+     * <p>
+     * Two things hold for every implementation:
+     * <ul>
+     * <li><b>Order.</b> Signals of one kind for one session are delivered to a subscriber in list order. Across kinds
+     * there is no more order than {@link #publish} gives — a backend may carry {@code EVENT} on a channel of its
+     * own.</li>
+     * <li><b>One bad signal does not take the rest with it.</b> A signal that cannot be published is skipped and the
+     * ones after it are still attempted; the failure is reported by throwing once the whole list has been tried. A
+     * failure of the transport itself, where nothing further could succeed, may be thrown straight away.</li>
+     * </ul>
+     *
+     * <p>
+     * A bus that wraps another must forward this method as well as {@link #publish}: inheriting the default would
+     * publish through the delegate one signal at a time and quietly undo the delegate's batching.
+     *
+     * @param signals
+     *            the signals to publish, in delivery order (must not be null; may be empty)
+     * @throws RuntimeException
+     *             the first failure, with any later ones attached as suppressed, after every signal has been attempted
+     */
+    default void publishAll(List<SessionSignal> signals) {
+        Objects.requireNonNull(signals, "signals must not be null");
+        RuntimeException failure = null;
+        for (SessionSignal signal : signals) {
+            try {
+                publish(signal);
+            } catch (RuntimeException e) {
+                if (failure == null) {
+                    failure = e;
+                } else if (e != failure) {
+                    // The same instance twice cannot suppress itself; a bus that rethrows a cached exception does this.
+                    failure.addSuppressed(e);
+                }
+            }
+        }
+        if (failure != null) {
+            throw failure;
+        }
+    }
 
     /**
      * Handle to a single subscription. Closing it unregisters the handler.

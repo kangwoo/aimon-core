@@ -35,6 +35,7 @@ public final class SessionRouterConfig {
     private final Duration idempotencySecondaryTtl;
     private final Duration idempotencyForwardTtl;
     private final Duration releaseInterruptTimeout;
+    private final Duration relayCloseDrainTimeout;
     private final SessionMetrics metrics;
     private final SessionApprovalStore sessionApprovalStore;
     private final SessionLogSegmentStore segmentStore;
@@ -55,6 +56,7 @@ public final class SessionRouterConfig {
         this.idempotencySecondaryTtl = builder.idempotencySecondaryTtl;
         this.idempotencyForwardTtl = builder.idempotencyForwardTtl;
         this.releaseInterruptTimeout = builder.releaseInterruptTimeout;
+        this.relayCloseDrainTimeout = builder.relayCloseDrainTimeout;
         this.metrics = builder.metrics;
         this.sessionApprovalStore = builder.sessionApprovalStore;
         this.segmentStore = builder.segmentStore;
@@ -145,6 +147,15 @@ public final class SessionRouterConfig {
         return releaseInterruptTimeout;
     }
 
+    /**
+     * How long the end of a turn waits for its {@code EVENT} frames to reach the signal bus.
+     *
+     * @return the relay's close-drain timeout
+     */
+    public Duration relayCloseDrainTimeout() {
+        return relayCloseDrainTimeout;
+    }
+
     public SessionMetrics metrics() {
         return metrics;
     }
@@ -186,6 +197,7 @@ public final class SessionRouterConfig {
         private Duration idempotencySecondaryTtl;
         private Duration idempotencyForwardTtl;
         private Duration releaseInterruptTimeout;
+        private Duration relayCloseDrainTimeout = SessionEventRelay.DEFAULT_CLOSE_DRAIN_TIMEOUT;
         private SessionMetrics metrics;
         private SessionApprovalStore sessionApprovalStore;
         private SessionLogSegmentStore segmentStore;
@@ -268,6 +280,11 @@ public final class SessionRouterConfig {
             return this;
         }
 
+        public Builder relayCloseDrainTimeout(Duration relayCloseDrainTimeout) {
+            this.relayCloseDrainTimeout = relayCloseDrainTimeout;
+            return this;
+        }
+
         public Builder metrics(SessionMetrics metrics) {
             this.metrics = metrics;
             return this;
@@ -308,6 +325,10 @@ public final class SessionRouterConfig {
                 throw new IllegalStateException(
                         "lockExtendInterval (" + lockExtendInterval + ") must be strictly less than lockLease ("
                                 + lockLease + ") — otherwise the lease expires before the first renewal tick fires");
+            }
+            if (relayCloseDrainTimeout == null || relayCloseDrainTimeout.isNegative()) {
+                throw new IllegalStateException(
+                        "relayCloseDrainTimeout must not be null or negative, was: " + relayCloseDrainTimeout);
             }
             return new SessionRouterConfig(this);
         }

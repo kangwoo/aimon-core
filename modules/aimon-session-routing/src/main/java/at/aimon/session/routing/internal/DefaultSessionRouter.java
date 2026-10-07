@@ -135,6 +135,7 @@ public final class DefaultSessionRouter implements SessionRouter {
     private final Duration idempotencySecondaryTtl;
     private final Duration idempotencyForwardTtl;
     private final Duration releaseInterruptTimeout;
+    private final Duration relayCloseDrainTimeout;
     private final SessionMetrics metrics;
 
     /**
@@ -193,7 +194,21 @@ public final class DefaultSessionRouter implements SessionRouter {
      */
     private final ScheduledExecutorService leaseScheduler;
 
+    /**
+     * Publishes every turn's {@code EVENT} frames to the signal bus, off the turn threads. A small pool rather than
+     * one thread: a publish is a round trip to the bus, and on one thread a single slow one would hold up the frames
+     * of every session on the node. More than one thread is safe because a {@link SessionEventRelay} never has two
+     * drains in flight, and fair because it gives the thread back after every batch.
+     */
     private final ExecutorService relayDispatcher;
+
+    /**
+     * Per session, the relay of its latest turn for as long as that relay still has frames to publish — which it only
+     * does past the end of its turn when the turn stopped waiting for a slow bus. The next turn's relay is given it as
+     * predecessor so the two turns' frames reach the bus in turn order. An entry removes itself once its relay has
+     * nothing left; on a healthy bus that is before the next turn starts.
+     */
+    private final ConcurrentMap<SessionId, SessionEventRelay> unfinishedRelays = new ConcurrentHashMap<>();
     private final ExecutorService turnExecutor;
     private final LeaseRenewer leaseRenewer;
 
@@ -395,6 +410,7 @@ public final class DefaultSessionRouter implements SessionRouter {
         this.idempotencyForwardTtl = Objects.requireNonNull(config.idempotencyForwardTtl(), "idempotencyForwardTtl");
         this.releaseInterruptTimeout = Objects.requireNonNull(config.releaseInterruptTimeout(),
                 "releaseInterruptTimeout");
+        this.relayCloseDrainTimeout = Objects.requireNonNull(config.relayCloseDrainTimeout(), "relayCloseDrainTimeout");
         this.metrics = Objects.requireNonNull(metrics, "metrics must not be null");
         this.sessionApprovalStore = config.sessionApprovalStore();
         this.rawSegments = config.segmentStore();
@@ -415,7 +431,8 @@ public final class DefaultSessionRouter implements SessionRouter {
         // default.
         final int leaseSchedulerSize = Math.max(2, Runtime.getRuntime().availableProcessors() / 2);
         this.leaseScheduler = Executors.newScheduledThreadPool(leaseSchedulerSize, namedFactory("web-session-lease"));
-        this.relayDispatcher = Executors.newSingleThreadExecutor(namedFactory("web-session-relay"));
+        final int relayDispatcherSize = Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors()));
+        this.relayDispatcher = Executors.newFixedThreadPool(relayDispatcherSize, namedFactory("web-session-relay"));
         // Unbounded by choice, and bounded in practice by the turn gate rather than by the pool: activeTurns admits one
         // turn per session per node, so the live thread count tracks concurrently active sessions — itself capped by
         // maxCachedSessions — and not the arrival rate. Capping it here would not cap that; it would put lease teardown
@@ -1331,8 +1348,13 @@ public final class DefaultSessionRouter implements SessionRouter {
             AgentExecutionResult turnResult = null;
             RuntimeException turnFailure = null;
             try {
+                // Closing the relay is bounded by relayCloseDrainTimeout: the announcement below is what the caller is
+                // waiting for, and it does not wait for the best-effort EVENT rail to catch up.
                 try (SessionEventRelay relay = new SessionEventRelay(convId, messageTurnId, eventPublisher, signalBus,
-                        nodeId, relayDispatcher)) {
+                        nodeId, relayDispatcher, relayCloseDrainTimeout).after(unfinishedRelays.get(convId))) {
+                    // One turn per session at a time on this node, so nothing races this put.
+                    unfinishedRelays.put(convId, relay);
+                    relay.whenQuiescent(() -> unfinishedRelays.remove(convId, relay));
                     turnResult = session.submitAsync(messageTurnId, next.getUserInput(), next.getSubmitOptions(), relay)
                             .toCompletableFuture().join();
                 } catch (RuntimeException e) {

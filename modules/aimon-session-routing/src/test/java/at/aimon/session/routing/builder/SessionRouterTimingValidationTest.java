@@ -78,6 +78,16 @@ class SessionRouterTimingValidationTest {
     }
 
     @Test
+    @DisplayName("build() rejects a negative relayCloseDrainTimeout and accepts zero")
+    void rejectsNegativeRelayCloseDrainTimeout() {
+        assertThatThrownBy(() -> base().relayCloseDrainTimeout(Duration.ofMillis(-1)).build())
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("relayCloseDrainTimeout");
+
+        final SessionRouter manager = base().relayCloseDrainTimeout(Duration.ZERO).build();
+        manager.close();
+    }
+
+    @Test
     @DisplayName("build() accepts the shipped 30s/10s pair — two missed ticks of headroom")
     void acceptsShippedDefaults() {
         assertThat(SessionRouterBuilder.DEFAULT_LOCK_LEASE)

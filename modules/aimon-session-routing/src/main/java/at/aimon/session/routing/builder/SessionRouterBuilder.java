@@ -23,6 +23,7 @@ import at.aimon.session.routing.DeploymentMode;
 import at.aimon.session.routing.LiveSessionOpener;
 import at.aimon.session.routing.SessionRouter;
 import at.aimon.session.routing.internal.DefaultSessionRouter;
+import at.aimon.session.routing.internal.SessionEventRelay;
 import at.aimon.session.routing.internal.SessionRouterConfig;
 import at.aimon.session.routing.metrics.SessionMetrics;
 
@@ -101,6 +102,9 @@ public final class SessionRouterBuilder {
     public static final Duration DEFAULT_IDEMPOTENCY_FORWARD_TTL = Duration.ofMinutes(5);
     public static final Duration DEFAULT_RELEASE_INTERRUPT_TIMEOUT = Duration.ofSeconds(5);
 
+    /** Default for {@link #relayCloseDrainTimeout(Duration)}. */
+    public static final Duration DEFAULT_RELAY_CLOSE_DRAIN_TIMEOUT = SessionEventRelay.DEFAULT_CLOSE_DRAIN_TIMEOUT;
+
     private LiveSessionFactory sessionFactory;
     private LiveSessionOpener sessionOpener;
     private SessionRecordStore sessionRecordStore;
@@ -120,6 +124,7 @@ public final class SessionRouterBuilder {
     private Duration idempotencySecondaryTtl = DEFAULT_IDEMPOTENCY_SECONDARY_TTL;
     private Duration idempotencyForwardTtl = DEFAULT_IDEMPOTENCY_FORWARD_TTL;
     private Duration releaseInterruptTimeout = DEFAULT_RELEASE_INTERRUPT_TIMEOUT;
+    private Duration relayCloseDrainTimeout = DEFAULT_RELAY_CLOSE_DRAIN_TIMEOUT;
     private SessionMetrics metrics = SessionMetrics.NOOP;
     private boolean statusBroadcast;
     private SessionApprovalStore sessionApprovalStore;
@@ -412,6 +417,30 @@ public final class SessionRouterBuilder {
     }
 
     /**
+     * Sets how long the end of a turn waits for that turn's {@code EVENT} frames to reach the signal bus before the
+     * turn's result is announced.
+     *
+     * <p>
+     * The {@code EVENT} rail is best-effort and the result is not, so the wait is bounded. When it runs out, the text
+     * and reasoning deltas still buffered are abandoned (and counted as dropped); the structural frames, the terminal
+     * one among them, are still published, after the result rather than before it. A remote subscriber loses the tail
+     * of the stream and nothing else: the final text arrives again in the turn's result.
+     *
+     * <p>
+     * Zero means do not wait, which is not the same as "no cost": whatever happens to be buffered at the instant the
+     * turn ends is then dropped on every turn, healthy bus or not.
+     *
+     * @param v
+     *            the longest the end of a turn waits for the remote event channel (not null; a negative value is
+     *            rejected by {@link #build()})
+     * @return this builder
+     */
+    public SessionRouterBuilder relayCloseDrainTimeout(Duration v) {
+        this.relayCloseDrainTimeout = v;
+        return this;
+    }
+
+    /**
      * Sets the metrics sink. Passing {@code null} resets to {@link SessionMetrics#NOOP}.
      *
      * @param v
@@ -507,6 +536,7 @@ public final class SessionRouterBuilder {
         Objects.requireNonNull(idempotencySecondaryTtl, "idempotencySecondaryTtl must not be null");
         Objects.requireNonNull(idempotencyForwardTtl, "idempotencyForwardTtl must not be null");
         Objects.requireNonNull(releaseInterruptTimeout, "releaseInterruptTimeout must not be null");
+        Objects.requireNonNull(relayCloseDrainTimeout, "relayCloseDrainTimeout must not be null");
         // The lease timings are validated where the config is assembled below, not here: that is the one door every
         // construction path goes through, including the test harnesses that build a config directly.
 
@@ -545,8 +575,8 @@ public final class SessionRouterBuilder {
                 .statusHeartbeatInterval(statusHeartbeatInterval).holderLossSweepInterval(holderLossSweepInterval)
                 .idempotencyPrimaryTtl(idempotencyPrimaryTtl).idempotencySecondaryTtl(idempotencySecondaryTtl)
                 .idempotencyForwardTtl(idempotencyForwardTtl).releaseInterruptTimeout(releaseInterruptTimeout)
-                .metrics(metrics).sessionApprovalStore(sessionApprovalStore).segmentStore(sessionLogSegmentStore)
-                .build();
+                .relayCloseDrainTimeout(relayCloseDrainTimeout).metrics(metrics)
+                .sessionApprovalStore(sessionApprovalStore).segmentStore(sessionLogSegmentStore).build();
 
         final DefaultSessionRouter manager;
         if (sessionOpener != null) {

@@ -7,6 +7,29 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: a turn's result no longer waits for its event stream to reach the signal bus
+
+In `DISTRIBUTED` mode on a bus where a publish is a database round trip (`MongoSessionSignalBus`), a turn's result could
+arrive tens of seconds after its execution finished. `SessionEventRelay` published one signal per event — one per text
+delta — and at the end of the turn published whatever was still buffered, on the turn thread, before the result was
+announced. A model emits deltas faster than inserts are acknowledged, so the buffer (1024 frames) filled and the turn
+waited for all of it: 34 seconds was measured. This happened whether or not any other node was subscribed.
+
+- **The relay publishes in batches.** Up to 256 frames go out in one call to the new
+  `SessionSignalBus.publishAll(List<SessionSignal>)`. It is a default method that publishes one at a time, so an
+  existing bus needs no change; `MongoSessionSignalBus` overrides it with one ordered `insertMany`. A signal the bus
+  cannot publish is skipped and the ones after it are still published. **A bus that wraps another must forward
+  `publishAll`**, or the delegate's batching is lost.
+- **The end of a turn waits a bounded time for the event stream.** `SessionRouterBuilder.relayCloseDrainTimeout`
+  (default 2 s). Past it the text and reasoning deltas still buffered are dropped and counted, and the result is
+  announced. The structural frames are still published, **possibly after `TURN_RESULT`**, and always before the
+  frames of the session's next turn. Frames still unpublished when the router shuts down are lost.
+- **The relay dispatcher is a pool of 2–4 threads**, not one, and a relay gives its thread back after every batch, so
+  relays with a backlog take turns. A relay never has two drains in flight, so order within a turn is kept.
+
+`PostgresSessionSignalBus` still publishes one transaction per signal. The timeout bounds what that costs a turn, and
+on a long answer it means dropped deltas for remote subscribers rather than a late result.
+
 ### Added: scheduled tasks survive a restart — `MongoScheduledTaskRepository`, and the engine reschedules what it finds stored (B-7)
 
 Two things were missing for a scheduled task to be there after a restart, and both are in.
