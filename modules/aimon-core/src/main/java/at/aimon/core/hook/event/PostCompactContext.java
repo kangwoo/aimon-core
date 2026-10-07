@@ -10,6 +10,8 @@ import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.compact.CompactionMetadata;
 import at.aimon.core.agent.compact.CompactionTrigger;
 import at.aimon.core.agent.compact.InvokedSkillRecord;
+import at.aimon.core.agent.interrupt.CancellationSignal;
+import at.aimon.core.agent.interrupt.CancellationSignals;
 import at.aimon.core.agent.session.transcript.LogOrigin;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.environment.ExecutionEnvironment;
@@ -43,6 +45,7 @@ public final class PostCompactContext implements HookContext {
     private final String invokerName;
     private final HookRegistry hookRegistry;
     private final ExecutionEnvironment executionEnvironment;
+    private final CancellationSignal executionCancellation;
     private final CompactionTrigger trigger;
     private final CompactionMetadata compactionMetadata;
     private final String compactSummary;
@@ -57,6 +60,7 @@ public final class PostCompactContext implements HookContext {
         invokerName = Objects.requireNonNull(builder.invokerName, "Invoker name cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
         executionEnvironment = builder.executionEnvironment;
+        executionCancellation = builder.executionCancellation;
         trigger = Objects.requireNonNull(builder.trigger, "Trigger cannot be null");
         compactionMetadata = Objects.requireNonNull(builder.compactionMetadata, "Compaction metadata cannot be null");
         compactSummary = Objects.requireNonNull(builder.compactSummary, "Compact summary cannot be null");
@@ -87,6 +91,18 @@ public final class PostCompactContext implements HookContext {
     @Override
     public Optional<ExecutionEnvironment> getExecutionEnvironment() {
         return Optional.ofNullable(executionEnvironment);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * This event reports something that already happened, so the signal is handed out only while it has not tripped:
+     * a command running when the interrupt arrives is stopped, and one that starts afterwards runs unbound.
+     */
+    @Override
+    public Optional<CancellationSignal> getExecutionCancellation() {
+        return CancellationSignals.liveOrEmpty(executionCancellation);
     }
 
     public CompactionTrigger getTrigger() {
@@ -166,6 +182,7 @@ public final class PostCompactContext implements HookContext {
         private String invokerName;
         private HookRegistry hookRegistry;
         private ExecutionEnvironment executionEnvironment;
+        private CancellationSignal executionCancellation;
         private CompactionTrigger trigger;
         private CompactionMetadata compactionMetadata;
         private String compactSummary;
@@ -202,6 +219,19 @@ public final class PostCompactContext implements HookContext {
          */
         public Builder executionEnvironment(ExecutionEnvironment executionEnvironment) {
             this.executionEnvironment = executionEnvironment;
+            return this;
+        }
+
+        /**
+         * Sets the cancellation signal of the execution this event fires in, so a hook's shell command stops when
+         * the execution is interrupted.
+         *
+         * @param executionCancellation
+         *            the execution's signal (nullable — absent when the firing site has none in reach)
+         * @return This builder
+         */
+        public Builder executionCancellation(CancellationSignal executionCancellation) {
+            this.executionCancellation = executionCancellation;
             return this;
         }
 

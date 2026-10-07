@@ -94,19 +94,33 @@ public interface HookContext {
      * shell command, say) ties it to this signal so an interrupt stops it instead of waiting out its timeout.
      *
      * <p>
-     * Empty is a correct answer and callers must handle it. Events that fire outside any execution
-     * ({@code onSessionStart}, {@code onSessionEnd}, {@code onConfigReload}) never have one, and an event that fires
-     * inside an execution arrives empty when its firing site holds no signal. Today the signal is carried by:
+     * Which answer an event gives depends on what the hook is being asked:
      * <ul>
-     * <li>{@code permissionRequest} and {@code preTool} — always, so a command fired after the interrupt is not
-     * started at all and the guard blocks;
-     * <li>{@code postTool} and {@code permissionDenied} — only while the execution has not been cancelled. They report
-     * what already happened: a command running when the interrupt arrives is stopped, but one fired afterwards still
-     * runs, so an audit hook can record the interrupted call;
-     * <li>a fork's {@code onStart}.
+     * <li><b>A gate</b> — {@code onStart}, {@code preCompact}, {@code preTool}, {@code permissionRequest} — is asked
+     * before something proceeds, and carries the signal always. A command fired after the interrupt is not started at
+     * all, one that is running is stopped, and the guard blocks.
+     * <li><b>A report</b> — {@code onStop}, {@code postCompact}, {@code subagentStart}, {@code subagentStop},
+     * {@code postTool}, {@code permissionDenied} — records what already happened, and carries the signal only while
+     * it has not tripped. A command running when the interrupt arrives is stopped, but one that starts afterwards
+     * runs unbound, so an audit or cleanup hook on a cancelled execution always starts. The rule lives in the
+     * context's getter, so the answer can turn from present to empty over the life of one context: read it when the
+     * work starts, not when the context is built. A signal that trips between the read and the registration cancels
+     * that one command at once.
      * </ul>
-     * Everything else arrives empty: a main turn's {@code onStart} fires before the turn's signal exists,
-     * {@code onStop} fires when the execution is over, and the compaction and subagent-lifecycle sites hold no signal.
+     * {@code subagentStart} and {@code subagentStop} fire in the spawning execution but carry the signal that governs
+     * the <em>fork</em> — the spawner's for a foreground fork, the task's own for a background one.
+     *
+     * <p>
+     * Empty is a correct answer and callers must handle it. It means no signal there can trip:
+     * <ul>
+     * <li>events that fire outside any execution ({@code onSessionStart}, {@code onSessionEnd},
+     * {@code onConfigReload});
+     * <li>a slash-command turn once its {@code onStart} has run — its {@code onStop}, and the {@code preCompact} /
+     * {@code postCompact} / {@code onStop} of a manual {@code /compact} — because a command is not interruptible;
+     * <li>a {@code preCompact} chain rebuilt by a rewake replay, outside the execution that fired it;
+     * <li>a custom {@code ContextEngine} or {@code CompactionEngine} that does not forward the signal on the requests
+     * it builds.
+     * </ul>
      *
      * @return the execution's cancellation signal, or empty when none is in reach
      */

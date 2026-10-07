@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-development-guide.md
-source_commit: 2bfe9a97
+source_commit: e8a8d87a
 ---
 
 # Hook Development Guide
@@ -269,6 +269,7 @@ Each hook receives the context object that matches its firing point. Every conte
 | `getHookRegistry()` | `HookRegistry` | The hook registry |
 | `getExecutionEnvironment()` | `Optional<ExecutionEnvironment>` | The execution environment of the execution the hook fires in — the file system and shell that execution's tools use. Empty for events that fire outside any execution (`onSessionStart`, `onSessionEnd`, `onConfigReload`) and for a rewake replay. Do not fall back to the host when it is empty |
 | `getEnvironmentDescriptor()` | `Optional<EnvironmentDescriptor>` | The descriptor of that environment (working directory, platform, OS). Use this, not the host, to tell **where commands run** |
+| `getExecutionCancellation()` | `Optional<CancellationSignal>` | The cancellation signal of the execution the hook fires in. A hook that starts something long-running on the execution's behalf ties it to this signal so an interrupt stops it. The guard events (`onStart`, `preCompact`, `preTool`, `permissionRequest`) always carry it; the events that report something that already happened (`onStop`, `postCompact`, `subagentStart`, `subagentStop`, `postTool`, `permissionDenied`) carry it **only until it trips** — so the answer can change on one and the same context, and it is read when the work starts, not when the context arrives. Empty for events outside any execution, for a slash-command turn's `onStop` and for `/compact`'s compaction events |
 | `getTimestamp()` | `Instant` | Timestamp |
 | `getExecutionAttributes()` | `Map<String, Object>` | Supplementary execution information |
 

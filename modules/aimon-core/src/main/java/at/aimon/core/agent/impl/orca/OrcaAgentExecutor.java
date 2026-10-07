@@ -316,11 +316,13 @@ public class OrcaAgentExecutor
     private final EventEmitter eventEmitter = new EventEmitter();
 
     /**
-     * Factory for the per-turn {@link InterruptCoordinator}. Invoked once per
-     * {@link #executeReActLoop(ExecutionScope)} call; the returned coordinator owns the turn-scoped
-     * {@link CancellationSignal} injected into every {@link ToolContext} and the
-     * {@link TerminatorRegistrar}s issued to {@link InterruptBehavior#THREAD_INTERRUPT}/
-     * {@link InterruptBehavior#EXTERNALLY_TERMINATED} tools.
+     * Factory for the per-turn {@link InterruptCoordinator}. Invoked once per turn by {@code runTurn}, before the
+     * {@code onStart} hooks fire; the returned coordinator owns the turn-scoped {@link CancellationSignal} that the
+     * turn's hooks are tied to, that {@link #executeReActLoop(ExecutionScope)} injects into every {@link ToolContext},
+     * and the {@link TerminatorRegistrar}s issued to {@link InterruptBehavior#THREAD_INTERRUPT}/
+     * {@link InterruptBehavior#EXTERNALLY_TERMINATED} tools. A slash-command turn invokes it a second time, for the
+     * coordinator {@code executeCommand} hands the command's tools — so a supplier that returns one shared instance
+     * sees the command's close also close the turn's.
      *
      * <p>
      * Package-private so tests inside {@code at.aimon.core.agent.impl.orca} can substitute a supplier that retains the
@@ -1138,16 +1140,11 @@ public class OrcaAgentExecutor
         // CompletionReason. Stays null when the turn exits by throwing.
         OrcaAgentExecutionResult turnResult = null;
         try {
-            // Execute OnStart hooks and check for blocks
-            checkOnStartHooks(scope, userMessage.getContent());
-
-            // Check if the user input is a command (starts with /)
-            // Attach the per-model cost summary once here — the single choke point both terminal flows funnel
+            // Attach the per-model cost summary once here — the single choke point every terminal flow funnels
             // through — so no other completion path needs to thread it. Empty (a no-op wither) when no cost estimator
             // was wired or the command flow ran (no LLM calls).
-            final OrcaAgentExecutionResult result = (commandExecutionManager.isCommand(executionRequest)
-                    ? executeCommandFlow(scope, executionRequest)
-                    : executeReActLoop(scope)).withCostSummary(scope.costSummary);
+            final OrcaAgentExecutionResult result = runTurn(scope, userMessage.getContent())
+                    .withCostSummary(scope.costSummary);
             recordTurnOutcome(turnSpan, result);
             turnResult = result;
             return result;
@@ -1172,6 +1169,47 @@ public class OrcaAgentExecutor
             }
             transcriptManager.saveSilently(transcriptBuffer);
             feedMemoryThenRearmInterrupt(scope, turnResult);
+        }
+    }
+
+    /**
+     * Runs the turn under its own {@link InterruptCoordinator}: the OnStart hooks, then the command flow or the ReAct
+     * loop.
+     *
+     * <p>
+     * One coordinator per turn, created before the OnStart hooks so their commands have a signal to be tied to
+     * (EE-80). AutoCloseable drops pending registrars on any exit path (normal return, budget stop, interrupt, thrown
+     * exception) — and it is closed when this method returns, so the coordinator is already closed when
+     * {@code execute()} persists the turn and feeds it to memory, as it was when the loop owned it.
+     *
+     * @param scope
+     *            The execution scope
+     * @param userMessage
+     *            The user message text that triggered the execution
+     * @return The turn's result, without its cost summary (never null)
+     * @throws ExecutionBlockedByHookException
+     *             if any OnStart hook blocks the execution
+     */
+    private OrcaAgentExecutionResult runTurn(ExecutionScope scope, String userMessage) {
+        try (InterruptCoordinator coordinator = Objects.requireNonNull(interruptCoordinatorFactory.get(),
+                "interruptCoordinatorFactory must not return null")) {
+            scope.coordinator = coordinator;
+            // Publish the fresh coordinator to the request's observer exactly once so session/queue-level
+            // callers (DefaultLiveSession, REPL SIGINT handler, priority-queue preemption) can trip the turn. The
+            // observer is a no-op by default, preserving behaviour for requests that do not opt in. Published here
+            // rather than at loop entry: an interrupt that arrives while an OnStart hook runs has to reach the turn.
+            scope.executionRequest.getInterruptObserver().accept(coordinator);
+
+            // Execute OnStart hooks and check for blocks
+            if (!checkOnStartHooks(scope, userMessage)) {
+                // Returned, not thrown, so it takes the same road out as any other interrupted turn: execute()'s
+                // finally sees CompletionReason.INTERRUPTED and keeps the turn's retry mark.
+                return handleInterrupted(scope, 0, TokenUsage.empty());
+            }
+            // Check if the user input is a command (starts with /)
+            return commandExecutionManager.isCommand(scope.executionRequest)
+                    ? executeCommandFlow(scope, scope.executionRequest)
+                    : executeReActLoop(scope);
         }
     }
 
@@ -1417,6 +1455,11 @@ public class OrcaAgentExecutor
      * back into the conversation.
      *
      * <p>
+     * An interrupt that landed while the chain ran is read first, before the blocks. The user stopped the turn; no
+     * guard refused the input — and a shell guard answers a cancelled command with a block, so reading the blocks
+     * first would report the interrupt as a veto, and only when the hook that happened to be running was a shell one.
+     *
+     * <p>
      * The feedback message is appended after the real user message (already in memory at this point) so the model
      * reads the note as context for the turn it is about to take, and is wrapped in a {@code <system-reminder>} block
      * so it is not mistaken for genuine user intent. Mirrors {@code DefaultSubagentExecutor#checkOnStartHooks};
@@ -1426,11 +1469,20 @@ public class OrcaAgentExecutor
      *            The execution scope
      * @param userMessage
      *            The user message text that triggered the execution
+     * @return {@code true} if the turn may proceed, {@code false} if it was interrupted during the chain and must end
+     *         as {@link CompletionReason#INTERRUPTED}
      * @throws ExecutionBlockedByHookException
      *             if any OnStart hook blocks the execution
      */
-    private void checkOnStartHooks(ExecutionScope scope, String userMessage) {
+    private boolean checkOnStartHooks(ExecutionScope scope, String userMessage) {
         final List<HookResult> onStartResults = invokeOnStart(scope, userMessage);
+        if (scope.coordinator.getSignal().isCancelled()) {
+            if (hookExecutionManager.hasBlockedResult(onStartResults)) {
+                log.debug("Turn interrupted during OnStart; not reporting the hook block(s): {}",
+                        hookExecutionManager.collectBlockedReasons(onStartResults));
+            }
+            return false;
+        }
         if (hookExecutionManager.hasBlockedResult(onStartResults)) {
             final List<String> blockReasons = hookExecutionManager.collectBlockedReasons(onStartResults);
             throw new ExecutionBlockedByHookException(InvokerType.MAIN_AGENT, scope.getAgent().getName(), "OnStart",
@@ -1438,6 +1490,7 @@ public class OrcaAgentExecutor
         }
         HookFeedback.toReminderBlock(HookFeedback.collectAdvisory(onStartResults))
                 .ifPresent(block -> scope.transcriptBuffer.addMessage(Message.user(block), LogOrigin.SYNTHETIC));
+        return true;
     }
 
     /**
@@ -1475,7 +1528,9 @@ public class OrcaAgentExecutor
                     LogOrigin.SYNTHETIC);
         }
 
-        invokeOnStop(scope, commandExecutionResult.isSuccess(), commandExecutionResult.getResponse(), metadata);
+        // No signal: nothing the command flow runs reads the turn's, so the honest answer for this OnStop is "none
+        // can trip" rather than a signal that is live but inert.
+        invokeOnStop(scope, null, commandExecutionResult.isSuccess(), commandExecutionResult.getResponse(), metadata);
 
         // Return command execution result as failure or success based on command result. A command whose final answer
         // was cut at max_tokens — a slash skill, inline or fork-mode — ends the turn as the agent's own cut answer
@@ -1509,364 +1564,358 @@ public class OrcaAgentExecutor
         // Create per-session registry (enables ToolSearch activation isolation)
         final ToolRegistry sessionRegistry = createSessionRegistry(scope.agentRuntime.getToolRegistry());
 
-        // One coordinator per executeReActLoop call. AutoCloseable drops pending registrars on any exit path
-        // (normal return, budget stop, interrupt, thrown exception).
-        try (InterruptCoordinator coordinator = Objects.requireNonNull(interruptCoordinatorFactory.get(),
-                "interruptCoordinatorFactory must not return null")) {
-            final CancellationSignal cancellationSignal = coordinator.getSignal();
-            // LLM-CANCEL: one adapter per turn bridges the turn signal to the active LLM HTTP call so a trip can
-            // actively abort the in-flight stream (not just wait for the next iteration boundary). Created once — it
-            // registers a single signal listener for the whole turn (see SignalBackedLlmCancellation).
-            final SignalBackedLlmCancellation llmCancellation = new SignalBackedLlmCancellation(cancellationSignal);
+        // The turn's coordinator, created and published by runTurn before the OnStart hooks. runTurn closes it.
+        final InterruptCoordinator coordinator = scope.coordinator;
+        final CancellationSignal cancellationSignal = coordinator.getSignal();
+        // LLM-CANCEL: one adapter per turn bridges the turn signal to the active LLM HTTP call so a trip can
+        // actively abort the in-flight stream (not just wait for the next iteration boundary). Created once — it
+        // registers a single signal listener for the whole turn (see SignalBackedLlmCancellation).
+        final SignalBackedLlmCancellation llmCancellation = new SignalBackedLlmCancellation(cancellationSignal);
 
-            // Publish the fresh coordinator to the request's observer exactly once so session/queue-level
-            // callers (DefaultLiveSession, REPL SIGINT handler, priority-queue preemption) can trip the turn. The
-            // observer is a no-op by default, preserving behaviour for requests that do not opt in.
-            scope.executionRequest.getInterruptObserver().accept(coordinator);
+        // Live-metrics seam: publish the per-turn BudgetTracker so session-level callers
+        // (DefaultLiveSession.status()) can read live iteration / token / elapsed counters. No-op by default,
+        // so requests that do not opt in are unaffected. Published once, here at loop entry — it is what marks
+        // the turn as running, which a turn still in its OnStart hooks or a slash-command turn is not.
+        scope.executionRequest.getBudgetObserver().accept(scope.budgetTracker);
 
-            // Live-metrics seam: publish the per-turn BudgetTracker so session-level callers
-            // (DefaultLiveSession.status()) can read live iteration / token / elapsed counters. No-op by default,
-            // so requests that do not opt in are unaffected. Published once, alongside the interrupt coordinator.
-            scope.executionRequest.getBudgetObserver().accept(scope.budgetTracker);
+        final ToolContext toolContext = createToolContext(scope, sessionRegistry, cancellationSignal,
+                messageQueueManager, event -> scope.eventDispatcher.dispatch(event),
+                transcriptManager.getLogReader().orElse(null));
 
-            final ToolContext toolContext = createToolContext(scope, sessionRegistry, cancellationSignal,
-                    messageQueueManager, event -> scope.eventDispatcher.dispatch(event),
-                    transcriptManager.getLogReader().orElse(null));
+        TokenUsage accumulatedTokens = TokenUsage.empty();
+        // Model name for cost attribution — constant for the whole execution, resolved once. Empty (null) when
+        // the agent left the model name defaulted; the estimator/summary bucket such calls under "unknown".
+        final String costModelName = scope.getAgent().getMetadata().getModel().getName().orElse(null);
+        // Cost tracking is opt-in. When the default NOOP estimator is in place nothing is recorded, so the
+        // exposed CostSummary stays empty. Resolved once so a mid-loop field swap cannot toggle behaviour per turn.
+        final boolean costTrackingEnabled = costEstimator != CostEstimator.NOOP;
+        int iterationCount = 0;
+        // Consecutive stalled-iteration streak (reset on any iteration that made progress). Tripping
+        // MAX_CONSECUTIVE_STALLED_ITERATIONS aborts the loop before the next LLM call — the death-spiral guard.
+        final StalledIterationGuard stalledIterationGuard = new StalledIterationGuard();
+        // Number of queued user inputs drained at the PREVIOUS iteration's tail. Read at the top of the next
+        // iteration to tag its LoopTransition as QUEUED_INPUT (observation-only; never drives control flow).
+        int injectedLastTail = 0;
+        final int maxIterations = scope.getAgent().getMetadata().getMaxIterations();
+        // The agent's own allow-list, reduced to a name-admission predicate once per execution: the list is fixed
+        // for the execution, while the registry it filters is re-read every iteration for newly activated
+        // deferred tools. An agent that declares nothing admits everything, which is what it did before the
+        // declaration existed.
+        final Predicate<Tool> agentAdmits = AllowedTools.admissionFilter(scope.getAgent().getAllowedTools());
 
-            TokenUsage accumulatedTokens = TokenUsage.empty();
-            // Model name for cost attribution — constant for the whole execution, resolved once. Empty (null) when
-            // the agent left the model name defaulted; the estimator/summary bucket such calls under "unknown".
-            final String costModelName = scope.getAgent().getMetadata().getModel().getName().orElse(null);
-            // Cost tracking is opt-in. When the default NOOP estimator is in place nothing is recorded, so the
-            // exposed CostSummary stays empty. Resolved once so a mid-loop field swap cannot toggle behaviour per turn.
-            final boolean costTrackingEnabled = costEstimator != CostEstimator.NOOP;
-            int iterationCount = 0;
-            // Consecutive stalled-iteration streak (reset on any iteration that made progress). Tripping
-            // MAX_CONSECUTIVE_STALLED_ITERATIONS aborts the loop before the next LLM call — the death-spiral guard.
-            final StalledIterationGuard stalledIterationGuard = new StalledIterationGuard();
-            // Number of queued user inputs drained at the PREVIOUS iteration's tail. Read at the top of the next
-            // iteration to tag its LoopTransition as QUEUED_INPUT (observation-only; never drives control flow).
-            int injectedLastTail = 0;
-            final int maxIterations = scope.getAgent().getMetadata().getMaxIterations();
-            // The agent's own allow-list, reduced to a name-admission predicate once per execution: the list is fixed
-            // for the execution, while the registry it filters is re-read every iteration for newly activated
-            // deferred tools. An agent that declares nothing admits everything, which is what it did before the
-            // declaration existed.
-            final Predicate<Tool> agentAdmits = AllowedTools.admissionFilter(scope.getAgent().getAllowedTools());
+        // CONV-COMPACT-01: resolve the context engine once per ReAct loop. It is the one place the LLM view is
+        // shrunk — the compaction gate below and the prompt-too-long recovery in invokeGateway both go through it.
+        // A runtime configured with no guard and no recovery strategy yields an engine that does neither.
+        final ContextEngine contextEngine = scope.agentRuntime.getContextEngine();
 
-            // CONV-COMPACT-01: resolve the context engine once per ReAct loop. It is the one place the LLM view is
-            // shrunk — the compaction gate below and the prompt-too-long recovery in invokeGateway both go through it.
-            // A runtime configured with no guard and no recovery strategy yields an engine that does neither.
-            final ContextEngine contextEngine = scope.agentRuntime.getContextEngine();
+        try {
+            while (iterationCount < maxIterations) {
+                // Honour a trip that landed before this iteration starts (e.g. between tool-result commit
+                // and the next sendMessage call, or before the very first LLM call). No new LLM traffic or tool
+                // invocation is issued once the signal is raised.
+                if (isInterrupted(coordinator)) {
+                    return handleInterrupted(scope, iterationCount, accumulatedTokens);
+                }
 
-            try {
-                while (iterationCount < maxIterations) {
-                    // Honour a trip that landed before this iteration starts (e.g. between tool-result commit
-                    // and the next sendMessage call, or before the very first LLM call). No new LLM traffic or tool
-                    // invocation is issued once the signal is raised.
+                // Consult the budget tracker BEFORE starting a new iteration so exhausted budgets do not incur
+                // another LLM call. The agent-metadata maxIterations bound in the while-condition remains in place;
+                // when hit, the loop finalises via handleMaxIterations — a normal
+                // CompletionReason.MAX_ITERATIONS
+                // return, no longer a thrown MaxIterationsExceededException.
+                final BudgetDecision decision = scope.budgetTracker.check();
+                if (decision == BudgetDecision.STOP) {
+                    return handleBudgetStop(scope, iterationCount, accumulatedTokens);
+                }
+                // A soft budget hint asks us to proactively compact before spending more tokens. Route this
+                // iteration's compaction gate through forceCompact (lower effective trigger) rather than the normal
+                // auto-compact band. Self-limiting: once memory has been compacted small, forceCompact returns NONE
+                // until the context regrows.
+                final boolean budgetForcedCompaction = decision == BudgetDecision.SHOULD_COMPACT;
+                if (budgetForcedCompaction) {
+                    log.info("Budget hint: SHOULD_COMPACT — forcing proactive compaction before iteration {}",
+                            iterationCount + 1);
+                }
+
+                iterationCount++;
+                scope.budgetTracker.recordIteration();
+                log.debug("Starting iteration {} of {}", iterationCount, maxIterations);
+
+                // CONV-COMPACT-01: AUTO compaction gate. The engine evaluates the conversation against per-model
+                // thresholds, may compact it before the next LLM call, and returns the view that call is sent.
+                // When the budget tracker requested proactive compaction, the request's budgetForced flag lowers
+                // the effective trigger to the warning band.
+                // Snapshot the message count BEFORE the engine runs — in place, the engine rewrites memory, so
+                // this is the only point where the pre-compaction size is observable for the CompactBoundary
+                // event below. An engine that reports the view's own sizes wins: with an append-only log the
+                // log does not shrink, only the view does (context-engine §10).
+                final int messagesBeforeCompaction = scope.transcriptBuffer.size();
+                final ContextRequest contextRequest = contextRequest(scope, budgetForcedCompaction);
+                final ContextDecision compactionDecision = contextEngine.prepare(contextRequest);
+                switch (compactionDecision.getAction()) {
+                    case BLOCK :
+                        // An interrupted preCompact guard blocks, the compaction is skipped, and a view over the
+                        // blocking limit then answers BLOCK. That window error was caused by the interrupt, so it is
+                        // the interrupt: read the signal alone — isInterrupted would also consume a thread flag.
+                        if (cancellationSignal.isCancelled()) {
+                            log.debug("Compaction guard blocked iteration {} after an interrupt: {}", iterationCount,
+                                    compactionDecision.getReason());
+                            return handleInterrupted(scope, iterationCount, accumulatedTokens);
+                        }
+                        log.error("Compaction guard blocked iteration {}: {}", iterationCount,
+                                compactionDecision.getReason());
+                        throw new ContextWindowExceededException(compactionDecision.getEstimatedTokens(),
+                                compactionDecision.getBlockingLimit(), compactionDecision.getReason());
+                    case COMPACT :
+                        log.info("Compaction performed before iteration {}: {}", iterationCount,
+                                compactionDecision.getReason());
+                        compactionDecision.getCompactionMetadata().ifPresent(scope.compactionEvents::add);
+                        // Publish the compaction-boundary observability event. Emitted here (not at the
+                        // iteration tail) so it is ordered immediately before this iteration's IterationStarted,
+                        // reflecting that the compaction happened just before the LLM call it precedes.
+                        final boolean viewSized = compactionDecision.getViewSizeBefore().isPresent();
+                        scope.eventDispatcher.emitCompactBoundary(iterationCount,
+                                compactionDecision.getViewSizeBefore().orElse(messagesBeforeCompaction),
+                                viewSized
+                                        ? compactionDecision.getView().getMessages().size()
+                                        : scope.transcriptBuffer.size());
+                        // What the view stopped showing verbatim can leave the record now, on this thread, so a
+                        // long turn's mid-turn checkpoints do not keep rewriting it (session-log §5.3). Runs after
+                        // the boundary event, which may still read the buffer's size.
+                        transcriptManager.seal(scope.transcriptBuffer);
+                        break;
+                    case WARN :
+                        log.warn("Compaction guard warning at iteration {}: {}", iterationCount,
+                                compactionDecision.getReason());
+                        // A rolling engine that could not bring the view down says so as a FALLBACK record: it
+                        // belongs with the compactions in the result, not only in the log (context-engine §5.6).
+                        compactionDecision.getCompactionMetadata().filter(m -> m.getKind() == CompactionKind.FALLBACK)
+                                .ifPresent(scope.compactionEvents::add);
+                        break;
+                    case NONE :
+                    default :
+                        break;
+                }
+
+                // STREAM-03: publish iteration-start boundary before issuing the LLM call.
+                scope.eventDispatcher.emitIterationStarted(iterationCount);
+
+                // TRACE-01: open an ITERATION span; this iteration's LLM and tool spans nest under it. The active
+                // span is restored and the iteration span closed in the finally below (covers every exit path).
+                final Tracer.Span iterationSpan = safeStartChild(scope.activeSpan.context(), SpanType.ITERATION,
+                        "iteration#" + iterationCount, null);
+                final Tracer.Span parentActiveSpan = scope.activeSpan;
+                scope.activeSpan = iterationSpan;
+                // Tag every re-entry (iteration 2+) with why the loop continued. The first iteration is the
+                // loop's entry, not a re-entry, so it carries no transition. Observation-only: attached to the
+                // span, never consulted for control flow.
+                if (iterationCount > 1) {
+                    annotateLoopTransition(iterationSpan,
+                            resolveLoopTransition(iterationCount, budgetForcedCompaction, injectedLastTail));
+                }
+                try {
+
+                    // Query available tools each iteration so newly activated deferred tools are included.
+                    // Two axes are withheld, and each reads its bound from the same value the refusal reads, so a
+                    // filter and a refusal cannot disagree: the side-effect ceiling, and the agent's own
+                    // allow-list (the same list dispatchSingleTool hands the execution manager). A tool the model
+                    // could only pick to read a refusal costs it an iteration.
+                    final List<ToolDefinition> availableTools = sessionRegistry.findAll().stream()
+                            .filter(t -> maxSideEffectLevel.permits(t.getSideEffectLevel())).filter(agentAdmits)
+                            .map(Tool::getDefinition).toList();
+                    warnOnEmptyToolOffer(scope, availableTools, sessionRegistry, iterationCount);
+
+                    // Streaming-tool overlap (design §11): when the executor streams AND the dispatcher
+                    // supports eager dispatch (parallel + the streamingOverlap opt-in, pool open), install a
+                    // per-iteration scheduler so completed side-effect-free tool_use blocks run during the token
+                    // stream. It shares the executor-scoped pool via the dispatcher and holds only per-attempt
+                    // state. When overlap is off this stays null and every path below is byte-identical to the
+                    // non-overlap behaviour. Built here (iteration span already active) so the eager runner's
+                    // effective tool context matches the harvest path exactly.
+                    final boolean overlapActive = useStreaming && parallelToolDispatcher.supportsEagerDispatch();
+                    scope.streamingToolScheduler = overlapActive
+                            ? new StreamingToolScheduler(parallelToolDispatcher, sessionRegistry,
+                                    toolRunner(scope, toolContext, iterationCount, coordinator, sessionRegistry))
+                            : null;
+
+                    final LlmResponse response;
+                    try {
+                        response = invokeGateway(scope, contextEngine, contextRequest, compactionDecision.getView(),
+                                iterationCount, availableTools, cancellationSignal, llmCancellation);
+                    } finally {
+                        // LLM-CANCEL: drop the just-finished call's abort lever so a trip landing while the next
+                        // tools run cannot invoke a stale (already-closed) stream. Idempotent close() makes this
+                        // hygiene rather than strictly required.
+                        llmCancellation.clearAbort();
+                    }
+
+                    // Accumulate tokens
+                    accumulatedTokens = accumulatedTokens.add(response.getTokenUsage());
+                    scope.budgetTracker.recordTokens(response.getTokenUsage());
+
+                    // When a cost estimator is wired (opt-in), price this call and fold the cost into the
+                    // per-model summary + the opt-in cost budget axis. With the default CostEstimator.NOOP the
+                    // whole
+                    // block is skipped so the exposed CostSummary stays empty (isEmpty()==true) — cost tracking is
+                    // entirely opt-in and adds no per-model bookkeeping when unused. The budget axis is USD-only by
+                    // contract, so a non-USD estimate (advanced misconfiguration) still accumulates in the summary
+                    // but is not enforced as a STOP.
+                    if (costTrackingEnabled) {
+                        final Money callCost = costEstimator.estimate(costModelName, response.getTokenUsage());
+                        scope.costSummary = scope.costSummary.record(costModelName, response.getTokenUsage(), callCost);
+                        if (Money.USD.equals(callCost.getCurrency())) {
+                            scope.budgetTracker.recordCost(callCost);
+                        }
+                    }
+
+                    // STREAM-03: publish assistant-message-received for intermediate (tool-calling) responses only.
+                    // The terminal response (no tool uses) is surfaced through AgentExecutionResult#getFinalAnswer
+                    // and
+                    // rendered by the REPL's displayResult; emitting it here would duplicate the final answer line.
+                    if (response.hasToolUses()) {
+                        scope.eventDispatcher.emitAssistantMessageReceived(iterationCount, response);
+                    }
+
+                    // A response the provider cut off at max_tokens is read once, here, and both of its
+                    // shapes branch on it below: a final answer ends as TRUNCATED, and tool calls are refused
+                    // rather than run. DefaultSubagentExecutor gives a fork the same two answers
+                    // (TruncatedResponses).
+                    final boolean truncated = TruncatedResponses.isTruncated(response);
+
+                    // SK-11.4: pre-flight scan of Skill tool_uses. If any need user approval, suspend the turn
+                    // atomically — no assistant message and no tool_result are committed to TranscriptBuffer, so
+                    // a
+                    // subsequent resume can re-issue the LLM call from the same memory state and the cached
+                    // approvals
+                    // (populated by the approval channel before resume) flip the policy to ALLOW. Skipped when the
+                    // scanner is unconfigured (headless context) so the legacy fail-closed path through SkillTool
+                    // continues to apply. Also skipped for a cut response: its calls are refused below, and nobody
+                    // should be asked to approve a call whose arguments may be the part that was cut.
+                    if (skillPreflightScanner != null && response.hasToolUses() && !truncated) {
+                        final SkillPreflightScanResult scan = skillPreflightScanner.scan(response.getToolUses(),
+                                scope.agentRuntime.getId(), scope.transcriptBuffer.getSessionId(),
+                                scope.getPrincipal());
+                        if (scan.shouldSuspend()) {
+                            // The turn suspends without committing this response — drop any eager tool work so
+                            // nothing from the abandoned response is harvested on resume. Safe: eager tools are
+                            // side-effect-free, so their partial execution is simply discarded.
+                            discardEagerToolUses(scope);
+                            return handleSuspended(scope, iterationCount, accumulatedTokens, scan.getPendingSkills());
+                        }
+                    }
+
+                    // If no tools uses, we have the final answer
+                    if (!response.hasToolUses()) {
+                        // A turn the provider cut off at max_tokens is NOT a clean final answer. Surface the
+                        // partial text with an explicit marker and terminate as TRUNCATED (isSuccessful()=false) so
+                        // callers can distinguish it from a normal COMPLETED finish, rather than silently treating
+                        // the truncated fragment as the agent's considered answer.
+                        if (truncated) {
+                            final String flaggedAnswer = response.getTextContent() + TRUNCATION_MARKER;
+                            scope.transcriptBuffer.addMessage(Message.assistant(flaggedAnswer, response.getToolUses())
+                                    .withReasoningTraces(response.getReasoningTraces()));
+                            scope.eventDispatcher.emitIterationCompleted(iterationCount, false);
+                            scope.eventDispatcher.emitExecutionCompleted(iterationCount, CompletionReason.TRUNCATED);
+                            return createTruncatedResult(scope, flaggedAnswer, iterationCount, accumulatedTokens,
+                                    response.getTokenUsage());
+                        }
+                        scope.transcriptBuffer
+                                .addMessage(Message.assistant(response.getTextContent(), response.getToolUses())
+                                        .withReasoningTraces(response.getReasoningTraces()));
+                        // STREAM-03: iteration-complete + execution-complete(COMPLETED) for the terminal-success
+                        // path.
+                        scope.eventDispatcher.emitIterationCompleted(iterationCount, false);
+                        scope.eventDispatcher.emitExecutionCompleted(iterationCount, CompletionReason.COMPLETED);
+                        return createSuccessResult(scope, response.getTextContent(), iterationCount, accumulatedTokens);
+                    }
+
+                    // Mark the artifact count before tool execution; sliceFrom() below closes the window.
+                    final int artifactCountBefore = scope.artifactCollector.size();
+
+                    // Execute all tool uses — unless the response was cut off at max_tokens. Then none of
+                    // them runs: a cut call's arguments did not arrive, and the response does not say which
+                    // call was cut. Everything after this is the same for both: the assistant commit, the
+                    // result commit, the stalled-iteration guard, the queue drain and the iteration-tail
+                    // checks.
+                    final List<ToolUseResult> toolUseResults = truncated
+                            ? refuseTruncatedToolUses(scope, response, iterationCount)
+                            : executeToolUses(scope, toolContext, response.getToolUses(), iterationCount, coordinator,
+                                    sessionRegistry);
+
+                    // Collect artifacts produced during this iteration's tool execution and convert to
+                    // MessageArtifact. One snapshot does the slicing — reading the collector twice (size, then
+                    // elements) would let a late add shift the window between the two reads.
+                    final List<MessageArtifact> iterationArtifacts = scope.artifactCollector
+                            .sliceFrom(artifactCountBefore).stream().map(FileArtifact::toMessageArtifact).toList();
+
+                    // Add assistant response with artifacts to conversation
+                    scope.transcriptBuffer.addMessage(
+                            Message.assistant(response.getTextContent(), response.getToolUses(), iterationArtifacts)
+                                    .withReasoningTraces(response.getReasoningTraces()));
+
+                    if (!toolUseResults.isEmpty()) {
+                        scope.transcriptBuffer.addMessage(Message.toolUseResults(toolUseResults));
+                    }
+
+                    // Death-spiral guard (StalledIterationGuard, which a fork and a skill's loop share): an
+                    // iteration that issued tool calls but had every one of them fail made no forward progress.
+                    // Once MAX_CONSECUTIVE_STALLED_ITERATIONS such iterations land back-to-back, abort here —
+                    // BEFORE the queue drain and budget continuation below — rather than feeding the all-error
+                    // result back into another LLM call and spending the rest of the budget on a request that is
+                    // not converging. Any iteration that made progress resets the streak.
+                    // An interrupted batch is not a death spiral. Once the signal is tripped every
+                    // not-yet-started tool_use is short-circuited to an error result (see toolRunner), so an
+                    // interrupted iteration looks all-error to the guard. Counting it would let a trip that lands
+                    // on the third consecutive failing iteration finalise the turn as a stall (ERROR) instead of
+                    // INTERRUPTED. Read the signal directly here — the consuming isInterrupted(coordinator) check
+                    // below owns the thread-interrupt half and must stay the single evaluation point for it.
+                    if (cancellationSignal.isCancelled()) {
+                        stalledIterationGuard.reset();
+                    } else if (stalledIterationGuard.recordToolIteration(toolUseResults, truncated)) {
+                        scope.eventDispatcher.emitIterationCompleted(iterationCount, false);
+                        return handleStalledIteration(scope, iterationCount, accumulatedTokens, stalledIterationGuard);
+                    }
+
+                    // CQ-03: iteration-tail mid-turn injection. After tool results are committed to memory and
+                    // BEFORE
+                    // the next sendMessage call, drain queued user inputs scoped to this agent runtime and
+                    // append
+                    // them as <system-reminder>-wrapped user messages. When no queue manager is configured this is
+                    // a
+                    // no-op, preserving legacy behavior. The drained count is carried into the next iteration
+                    // so its LoopTransition can be tagged QUEUED_INPUT.
+                    injectedLastTail = injectQueuedMessages(scope);
+
+                    // Iteration-tail trip check. A tool may have cooperatively tripped the signal during
+                    // this
+                    // iteration, or an external caller may have landed a trip between tool return and the next LLM
+                    // call. Exit cleanly as INTERRUPTED rather than launching another sendMessage.
                     if (isInterrupted(coordinator)) {
+                        scope.eventDispatcher.emitIterationCompleted(iterationCount, false);
                         return handleInterrupted(scope, iterationCount, accumulatedTokens);
                     }
 
-                    // Consult the budget tracker BEFORE starting a new iteration so exhausted budgets do not incur
-                    // another LLM call. The agent-metadata maxIterations bound in the while-condition remains in place;
-                    // when hit, the loop finalises via handleMaxIterations — a normal
-                    // CompletionReason.MAX_ITERATIONS
-                    // return, no longer a thrown MaxIterationsExceededException.
-                    final BudgetDecision decision = scope.budgetTracker.check();
-                    if (decision == BudgetDecision.STOP) {
-                        return handleBudgetStop(scope, iterationCount, accumulatedTokens);
-                    }
-                    // A soft budget hint asks us to proactively compact before spending more tokens. Route this
-                    // iteration's compaction gate through forceCompact (lower effective trigger) rather than the normal
-                    // auto-compact band. Self-limiting: once memory has been compacted small, forceCompact returns NONE
-                    // until the context regrows.
-                    final boolean budgetForcedCompaction = decision == BudgetDecision.SHOULD_COMPACT;
-                    if (budgetForcedCompaction) {
-                        log.info("Budget hint: SHOULD_COMPACT — forcing proactive compaction before iteration {}",
-                                iterationCount + 1);
-                    }
-
-                    iterationCount++;
-                    scope.budgetTracker.recordIteration();
-                    log.debug("Starting iteration {} of {}", iterationCount, maxIterations);
-
-                    // CONV-COMPACT-01: AUTO compaction gate. The engine evaluates the conversation against per-model
-                    // thresholds, may compact it before the next LLM call, and returns the view that call is sent.
-                    // When the budget tracker requested proactive compaction, the request's budgetForced flag lowers
-                    // the effective trigger to the warning band.
-                    // Snapshot the message count BEFORE the engine runs — in place, the engine rewrites memory, so
-                    // this is the only point where the pre-compaction size is observable for the CompactBoundary
-                    // event below. An engine that reports the view's own sizes wins: with an append-only log the
-                    // log does not shrink, only the view does (context-engine §10).
-                    final int messagesBeforeCompaction = scope.transcriptBuffer.size();
-                    final ContextRequest contextRequest = contextRequest(scope, budgetForcedCompaction);
-                    final ContextDecision compactionDecision = contextEngine.prepare(contextRequest);
-                    switch (compactionDecision.getAction()) {
-                        case BLOCK :
-                            log.error("Compaction guard blocked iteration {}: {}", iterationCount,
-                                    compactionDecision.getReason());
-                            throw new ContextWindowExceededException(compactionDecision.getEstimatedTokens(),
-                                    compactionDecision.getBlockingLimit(), compactionDecision.getReason());
-                        case COMPACT :
-                            log.info("Compaction performed before iteration {}: {}", iterationCount,
-                                    compactionDecision.getReason());
-                            compactionDecision.getCompactionMetadata().ifPresent(scope.compactionEvents::add);
-                            // Publish the compaction-boundary observability event. Emitted here (not at the
-                            // iteration tail) so it is ordered immediately before this iteration's IterationStarted,
-                            // reflecting that the compaction happened just before the LLM call it precedes.
-                            final boolean viewSized = compactionDecision.getViewSizeBefore().isPresent();
-                            scope.eventDispatcher.emitCompactBoundary(iterationCount,
-                                    compactionDecision.getViewSizeBefore().orElse(messagesBeforeCompaction),
-                                    viewSized
-                                            ? compactionDecision.getView().getMessages().size()
-                                            : scope.transcriptBuffer.size());
-                            // What the view stopped showing verbatim can leave the record now, on this thread, so a
-                            // long turn's mid-turn checkpoints do not keep rewriting it (session-log §5.3). Runs after
-                            // the boundary event, which may still read the buffer's size.
-                            transcriptManager.seal(scope.transcriptBuffer);
-                            break;
-                        case WARN :
-                            log.warn("Compaction guard warning at iteration {}: {}", iterationCount,
-                                    compactionDecision.getReason());
-                            // A rolling engine that could not bring the view down says so as a FALLBACK record: it
-                            // belongs with the compactions in the result, not only in the log (context-engine §5.6).
-                            compactionDecision.getCompactionMetadata()
-                                    .filter(m -> m.getKind() == CompactionKind.FALLBACK)
-                                    .ifPresent(scope.compactionEvents::add);
-                            break;
-                        case NONE :
-                        default :
-                            break;
-                    }
-
-                    // STREAM-03: publish iteration-start boundary before issuing the LLM call.
-                    scope.eventDispatcher.emitIterationStarted(iterationCount);
-
-                    // TRACE-01: open an ITERATION span; this iteration's LLM and tool spans nest under it. The active
-                    // span is restored and the iteration span closed in the finally below (covers every exit path).
-                    final Tracer.Span iterationSpan = safeStartChild(scope.activeSpan.context(), SpanType.ITERATION,
-                            "iteration#" + iterationCount, null);
-                    final Tracer.Span parentActiveSpan = scope.activeSpan;
-                    scope.activeSpan = iterationSpan;
-                    // Tag every re-entry (iteration 2+) with why the loop continued. The first iteration is the
-                    // loop's entry, not a re-entry, so it carries no transition. Observation-only: attached to the
-                    // span, never consulted for control flow.
-                    if (iterationCount > 1) {
-                        annotateLoopTransition(iterationSpan,
-                                resolveLoopTransition(iterationCount, budgetForcedCompaction, injectedLastTail));
-                    }
-                    try {
-
-                        // Query available tools each iteration so newly activated deferred tools are included.
-                        // Two axes are withheld, and each reads its bound from the same value the refusal reads, so a
-                        // filter and a refusal cannot disagree: the side-effect ceiling, and the agent's own
-                        // allow-list (the same list dispatchSingleTool hands the execution manager). A tool the model
-                        // could only pick to read a refusal costs it an iteration.
-                        final List<ToolDefinition> availableTools = sessionRegistry.findAll().stream()
-                                .filter(t -> maxSideEffectLevel.permits(t.getSideEffectLevel())).filter(agentAdmits)
-                                .map(Tool::getDefinition).toList();
-                        warnOnEmptyToolOffer(scope, availableTools, sessionRegistry, iterationCount);
-
-                        // Streaming-tool overlap (design §11): when the executor streams AND the dispatcher
-                        // supports eager dispatch (parallel + the streamingOverlap opt-in, pool open), install a
-                        // per-iteration scheduler so completed side-effect-free tool_use blocks run during the token
-                        // stream. It shares the executor-scoped pool via the dispatcher and holds only per-attempt
-                        // state. When overlap is off this stays null and every path below is byte-identical to the
-                        // non-overlap behaviour. Built here (iteration span already active) so the eager runner's
-                        // effective tool context matches the harvest path exactly.
-                        final boolean overlapActive = useStreaming && parallelToolDispatcher.supportsEagerDispatch();
-                        scope.streamingToolScheduler = overlapActive
-                                ? new StreamingToolScheduler(parallelToolDispatcher, sessionRegistry,
-                                        toolRunner(scope, toolContext, iterationCount, coordinator, sessionRegistry))
-                                : null;
-
-                        final LlmResponse response;
-                        try {
-                            response = invokeGateway(scope, contextEngine, contextRequest, compactionDecision.getView(),
-                                    iterationCount, availableTools, cancellationSignal, llmCancellation);
-                        } finally {
-                            // LLM-CANCEL: drop the just-finished call's abort lever so a trip landing while the next
-                            // tools run cannot invoke a stale (already-closed) stream. Idempotent close() makes this
-                            // hygiene rather than strictly required.
-                            llmCancellation.clearAbort();
-                        }
-
-                        // Accumulate tokens
-                        accumulatedTokens = accumulatedTokens.add(response.getTokenUsage());
-                        scope.budgetTracker.recordTokens(response.getTokenUsage());
-
-                        // When a cost estimator is wired (opt-in), price this call and fold the cost into the
-                        // per-model summary + the opt-in cost budget axis. With the default CostEstimator.NOOP the
-                        // whole
-                        // block is skipped so the exposed CostSummary stays empty (isEmpty()==true) — cost tracking is
-                        // entirely opt-in and adds no per-model bookkeeping when unused. The budget axis is USD-only by
-                        // contract, so a non-USD estimate (advanced misconfiguration) still accumulates in the summary
-                        // but is not enforced as a STOP.
-                        if (costTrackingEnabled) {
-                            final Money callCost = costEstimator.estimate(costModelName, response.getTokenUsage());
-                            scope.costSummary = scope.costSummary.record(costModelName, response.getTokenUsage(),
-                                    callCost);
-                            if (Money.USD.equals(callCost.getCurrency())) {
-                                scope.budgetTracker.recordCost(callCost);
-                            }
-                        }
-
-                        // STREAM-03: publish assistant-message-received for intermediate (tool-calling) responses only.
-                        // The terminal response (no tool uses) is surfaced through AgentExecutionResult#getFinalAnswer
-                        // and
-                        // rendered by the REPL's displayResult; emitting it here would duplicate the final answer line.
-                        if (response.hasToolUses()) {
-                            scope.eventDispatcher.emitAssistantMessageReceived(iterationCount, response);
-                        }
-
-                        // A response the provider cut off at max_tokens is read once, here, and both of its
-                        // shapes branch on it below: a final answer ends as TRUNCATED, and tool calls are refused
-                        // rather than run. DefaultSubagentExecutor gives a fork the same two answers
-                        // (TruncatedResponses).
-                        final boolean truncated = TruncatedResponses.isTruncated(response);
-
-                        // SK-11.4: pre-flight scan of Skill tool_uses. If any need user approval, suspend the turn
-                        // atomically — no assistant message and no tool_result are committed to TranscriptBuffer, so
-                        // a
-                        // subsequent resume can re-issue the LLM call from the same memory state and the cached
-                        // approvals
-                        // (populated by the approval channel before resume) flip the policy to ALLOW. Skipped when the
-                        // scanner is unconfigured (headless context) so the legacy fail-closed path through SkillTool
-                        // continues to apply. Also skipped for a cut response: its calls are refused below, and nobody
-                        // should be asked to approve a call whose arguments may be the part that was cut.
-                        if (skillPreflightScanner != null && response.hasToolUses() && !truncated) {
-                            final SkillPreflightScanResult scan = skillPreflightScanner.scan(response.getToolUses(),
-                                    scope.agentRuntime.getId(), scope.transcriptBuffer.getSessionId(),
-                                    scope.getPrincipal());
-                            if (scan.shouldSuspend()) {
-                                // The turn suspends without committing this response — drop any eager tool work so
-                                // nothing from the abandoned response is harvested on resume. Safe: eager tools are
-                                // side-effect-free, so their partial execution is simply discarded.
-                                discardEagerToolUses(scope);
-                                return handleSuspended(scope, iterationCount, accumulatedTokens,
-                                        scan.getPendingSkills());
-                            }
-                        }
-
-                        // If no tools uses, we have the final answer
-                        if (!response.hasToolUses()) {
-                            // A turn the provider cut off at max_tokens is NOT a clean final answer. Surface the
-                            // partial text with an explicit marker and terminate as TRUNCATED (isSuccessful()=false) so
-                            // callers can distinguish it from a normal COMPLETED finish, rather than silently treating
-                            // the truncated fragment as the agent's considered answer.
-                            if (truncated) {
-                                final String flaggedAnswer = response.getTextContent() + TRUNCATION_MARKER;
-                                scope.transcriptBuffer
-                                        .addMessage(Message.assistant(flaggedAnswer, response.getToolUses())
-                                                .withReasoningTraces(response.getReasoningTraces()));
-                                scope.eventDispatcher.emitIterationCompleted(iterationCount, false);
-                                scope.eventDispatcher.emitExecutionCompleted(iterationCount,
-                                        CompletionReason.TRUNCATED);
-                                return createTruncatedResult(scope, flaggedAnswer, iterationCount, accumulatedTokens,
-                                        response.getTokenUsage());
-                            }
-                            scope.transcriptBuffer
-                                    .addMessage(Message.assistant(response.getTextContent(), response.getToolUses())
-                                            .withReasoningTraces(response.getReasoningTraces()));
-                            // STREAM-03: iteration-complete + execution-complete(COMPLETED) for the terminal-success
-                            // path.
-                            scope.eventDispatcher.emitIterationCompleted(iterationCount, false);
-                            scope.eventDispatcher.emitExecutionCompleted(iterationCount, CompletionReason.COMPLETED);
-                            return createSuccessResult(scope, response.getTextContent(), iterationCount,
-                                    accumulatedTokens);
-                        }
-
-                        // Mark the artifact count before tool execution; sliceFrom() below closes the window.
-                        final int artifactCountBefore = scope.artifactCollector.size();
-
-                        // Execute all tool uses — unless the response was cut off at max_tokens. Then none of
-                        // them runs: a cut call's arguments did not arrive, and the response does not say which
-                        // call was cut. Everything after this is the same for both: the assistant commit, the
-                        // result commit, the stalled-iteration guard, the queue drain and the iteration-tail
-                        // checks.
-                        final List<ToolUseResult> toolUseResults = truncated
-                                ? refuseTruncatedToolUses(scope, response, iterationCount)
-                                : executeToolUses(scope, toolContext, response.getToolUses(), iterationCount,
-                                        coordinator, sessionRegistry);
-
-                        // Collect artifacts produced during this iteration's tool execution and convert to
-                        // MessageArtifact. One snapshot does the slicing — reading the collector twice (size, then
-                        // elements) would let a late add shift the window between the two reads.
-                        final List<MessageArtifact> iterationArtifacts = scope.artifactCollector
-                                .sliceFrom(artifactCountBefore).stream().map(FileArtifact::toMessageArtifact).toList();
-
-                        // Add assistant response with artifacts to conversation
-                        scope.transcriptBuffer.addMessage(
-                                Message.assistant(response.getTextContent(), response.getToolUses(), iterationArtifacts)
-                                        .withReasoningTraces(response.getReasoningTraces()));
-
-                        if (!toolUseResults.isEmpty()) {
-                            scope.transcriptBuffer.addMessage(Message.toolUseResults(toolUseResults));
-                        }
-
-                        // Death-spiral guard (StalledIterationGuard, which a fork and a skill's loop share): an
-                        // iteration that issued tool calls but had every one of them fail made no forward progress.
-                        // Once MAX_CONSECUTIVE_STALLED_ITERATIONS such iterations land back-to-back, abort here —
-                        // BEFORE the queue drain and budget continuation below — rather than feeding the all-error
-                        // result back into another LLM call and spending the rest of the budget on a request that is
-                        // not converging. Any iteration that made progress resets the streak.
-                        // An interrupted batch is not a death spiral. Once the signal is tripped every
-                        // not-yet-started tool_use is short-circuited to an error result (see toolRunner), so an
-                        // interrupted iteration looks all-error to the guard. Counting it would let a trip that lands
-                        // on the third consecutive failing iteration finalise the turn as a stall (ERROR) instead of
-                        // INTERRUPTED. Read the signal directly here — the consuming isInterrupted(coordinator) check
-                        // below owns the thread-interrupt half and must stay the single evaluation point for it.
-                        if (cancellationSignal.isCancelled()) {
-                            stalledIterationGuard.reset();
-                        } else if (stalledIterationGuard.recordToolIteration(toolUseResults, truncated)) {
-                            scope.eventDispatcher.emitIterationCompleted(iterationCount, false);
-                            return handleStalledIteration(scope, iterationCount, accumulatedTokens,
-                                    stalledIterationGuard);
-                        }
-
-                        // CQ-03: iteration-tail mid-turn injection. After tool results are committed to memory and
-                        // BEFORE
-                        // the next sendMessage call, drain queued user inputs scoped to this agent runtime and
-                        // append
-                        // them as <system-reminder>-wrapped user messages. When no queue manager is configured this is
-                        // a
-                        // no-op, preserving legacy behavior. The drained count is carried into the next iteration
-                        // so its LoopTransition can be tagged QUEUED_INPUT.
-                        injectedLastTail = injectQueuedMessages(scope);
-
-                        // Iteration-tail trip check. A tool may have cooperatively tripped the signal during
-                        // this
-                        // iteration, or an external caller may have landed a trip between tool return and the next LLM
-                        // call. Exit cleanly as INTERRUPTED rather than launching another sendMessage.
-                        if (isInterrupted(coordinator)) {
-                            scope.eventDispatcher.emitIterationCompleted(iterationCount, false);
-                            return handleInterrupted(scope, iterationCount, accumulatedTokens);
-                        }
-
-                        // STREAM-03: iteration-complete with willContinue=true — another LLM call will follow.
-                        scope.eventDispatcher.emitIterationCompleted(iterationCount, true);
-                    } finally {
-                        scope.activeSpan = parentActiveSpan;
-                        iterationSpan.close();
-                    }
+                    // STREAM-03: iteration-complete with willContinue=true — another LLM call will follow.
+                    scope.eventDispatcher.emitIterationCompleted(iterationCount, true);
+                } finally {
+                    scope.activeSpan = parentActiveSpan;
+                    iterationSpan.close();
                 }
-
-                // The agent-metadata iteration ceiling is a policy limit, not an error. Finalise via a normal
-                // return carrying CompletionReason.MAX_ITERATIONS — the same shape as budget-driven stops — rather
-                // than throwing MaxIterationsExceededException into the catch below and routing through the generic
-                // error path.
-                return handleMaxIterations(scope, iterationCount, accumulatedTokens, maxIterations);
-
-            } catch (CancelledExecutionException e) {
-                // PSTREAM-09: streaming sink raised the checkpoint mid-stream. Partial text (if any) has already been
-                // appended to memory inside invokeGateway and an AssistantTextStreamCompleted(finishReason=
-                // "interrupted") event has been emitted; fall through to the shared INTERRUPTED finalisation path.
-                log.debug("ReAct loop cancelled: {}", e.getMessage());
-                return handleInterrupted(scope, iterationCount, accumulatedTokens);
-            } catch (Exception e) {
-                return handleExecutionError(e, scope, iterationCount, accumulatedTokens);
             }
+
+            // The agent-metadata iteration ceiling is a policy limit, not an error. Finalise via a normal
+            // return carrying CompletionReason.MAX_ITERATIONS — the same shape as budget-driven stops — rather
+            // than throwing MaxIterationsExceededException into the catch below and routing through the generic
+            // error path.
+            return handleMaxIterations(scope, iterationCount, accumulatedTokens, maxIterations);
+
+        } catch (CancelledExecutionException e) {
+            // PSTREAM-09: streaming sink raised the checkpoint mid-stream. Partial text (if any) has already been
+            // appended to memory inside invokeGateway and an AssistantTextStreamCompleted(finishReason=
+            // "interrupted") event has been emitted; fall through to the shared INTERRUPTED finalisation path.
+            log.debug("ReAct loop cancelled: {}", e.getMessage());
+            return handleInterrupted(scope, iterationCount, accumulatedTokens);
+        } catch (Exception e) {
+            return handleExecutionError(e, scope, iterationCount, accumulatedTokens);
         }
     }
 
@@ -2019,8 +2068,9 @@ public class OrcaAgentExecutor
     private CommandExecutionResult executeCommand(ExecutionScope scope, OrcaAgentExecutionRequest executionRequest,
             TranscriptBuffer transcriptBuffer) {
         // One coordinator per command, closed on every exit path so no terminator outlives the command that
-        // registered it. The ReAct loop mints its own at line ~1415 and the two flows are mutually exclusive
-        // (executeCommandFlow or executeReActLoop, never both), so these can never overlap. Nothing trips this one
+        // registered it. It is not the turn's coordinator that runTurn created for the OnStart hooks: that one
+        // is published to the interrupt observer, and handing its signal to the command's tools would make a slash
+        // command interruptible as a side effect. Nothing trips this one
         // today — a slash command is not interruptible — but an inline skill's tools must still be handed a
         // registrar, because SingleToolInvoker asks for one whenever the target tool declares THREAD_INTERRUPT.
         try (InterruptCoordinator commandCoordinator = Objects.requireNonNull(interruptCoordinatorFactory.get(),
@@ -2574,13 +2624,13 @@ public class OrcaAgentExecutor
     private List<HookResult> invokeOnStart(ExecutionScope scope, String userMessage) {
         final OnStartContext onStartContext = OnStartContext.builder().executorType(InvokerType.MAIN_AGENT)
                 .invokerName(scope.getAgent().getName()).hookRegistry(scope.getHookRegistry())
-                .executionEnvironment(scope.executionEnvironment).userMessage(userMessage)
-                .executionAttributes(scope.getExecutionAttributes()).build();
+                .executionEnvironment(scope.executionEnvironment).executionCancellation(scope.coordinator.getSignal())
+                .userMessage(userMessage).executionAttributes(scope.getExecutionAttributes()).build();
         return hookExecutionManager.executeOnStart(onStartContext);
     }
 
     /**
-     * Invokes the OnStop hooks after agent execution completes.
+     * Invokes the OnStop hooks after agent execution completes, tied to the turn's cancellation signal.
      *
      * @param scope
      *            The execution scope
@@ -2592,6 +2642,26 @@ public class OrcaAgentExecutor
      *            The execution metadata including iteration count, token usage, and timestamps
      */
     private void invokeOnStop(ExecutionScope scope, boolean success, String finalAnswer, ExecutionMetadata metadata) {
+        invokeOnStop(scope, scope.coordinator.getSignal(), success, finalAnswer, metadata);
+    }
+
+    /**
+     * Invokes the OnStop hooks after agent execution completes.
+     *
+     * @param scope
+     *            The execution scope
+     * @param executionCancellation
+     *            The signal the hooks' commands are tied to while it has not tripped, or {@code null} where none can
+     *            trip (the command flow)
+     * @param success
+     *            Whether the execution was successful
+     * @param finalAnswer
+     *            The final answer or error message from the execution
+     * @param metadata
+     *            The execution metadata including iteration count, token usage, and timestamps
+     */
+    private void invokeOnStop(ExecutionScope scope, CancellationSignal executionCancellation, boolean success,
+            String finalAnswer, ExecutionMetadata metadata) {
         // Interrupt-flag hygiene: OnStop hooks are the turn's last hooks and run on whatever thread finalised
         // it — which, on the error path, is a thread the loop's checkpoints never swept (an LlmClient that restored
         // the flag before throwing reaches handleExecutionError directly). A live flag makes the hook executor's timed
@@ -2601,8 +2671,9 @@ public class OrcaAgentExecutor
         consumeLingeringInterrupt(scope, "OnStop");
         final OnStopContext onStopContext = OnStopContext.builder().executorType(InvokerType.MAIN_AGENT)
                 .invokerName(scope.getAgent().getName()).hookRegistry(scope.getHookRegistry())
-                .executionEnvironment(scope.executionEnvironment).success(success).finalAnswer(finalAnswer)
-                .metadata(metadata).executionAttributes(scope.getExecutionAttributes()).build();
+                .executionEnvironment(scope.executionEnvironment).executionCancellation(executionCancellation)
+                .success(success).finalAnswer(finalAnswer).metadata(metadata)
+                .executionAttributes(scope.getExecutionAttributes()).build();
         hookExecutionManager.executeOnStop(onStopContext);
     }
 
@@ -2710,10 +2781,11 @@ public class OrcaAgentExecutor
     }
 
     /**
-     * Finalises a ReAct loop whose turn-scoped {@link CancellationSignal} was tripped, either mid-iteration
-     * (a cooperative tool returned early) or between iterations (an external caller invoked
+     * Finalises a turn whose turn-scoped {@link CancellationSignal} was tripped: mid-iteration (a cooperative tool
+     * returned early), between iterations (an external caller invoked
      * {@link InterruptCoordinator#requestInterrupt(InterruptReason)} between a tool-result commit and the next
-     * {@code sendMessage} call).
+     * {@code sendMessage} call), or before the loop was entered at all, while the OnStart hooks ran — then with an
+     * iteration count of zero, for a ReAct and a slash-command turn alike.
      *
      * <p>
      * Mirrors {@link #handleBudgetStop} structurally: builds execution metadata from the current iteration and token
@@ -3129,7 +3201,7 @@ public class OrcaAgentExecutor
     private static ContextRequest contextRequest(ExecutionScope scope, boolean budgetForced) {
         return ContextRequest.builder().transcriptBuffer(scope.transcriptBuffer)
                 .model(scope.getAgent().getMetadata().getModel()).hookRegistry(scope.getHookRegistry())
-                .executionEnvironment(scope.executionEnvironment)
+                .executionEnvironment(scope.executionEnvironment).executionCancellation(scope.coordinator.getSignal())
                 .caller(ContextCaller.builder().principal(scope.getPrincipal()).build()).budgetForced(budgetForced)
                 .build();
     }
@@ -3478,6 +3550,14 @@ public class OrcaAgentExecutor
          * shared across iterations — a fresh instance (or {@code null}) is installed each iteration.
          */
         StreamingToolScheduler streamingToolScheduler;
+
+        /**
+         * The turn's interrupt coordinator. Assigned once in {@code runTurn}, before the OnStart hooks fire and
+         * before anything else reads the scope, and closed by {@code runTurn} when the turn's flow returns. Its
+         * signal is what the turn's hooks and the ReAct loop's tools are tied to; the command flow hands its tools a
+         * coordinator of its own.
+         */
+        InterruptCoordinator coordinator;
 
         /**
          * Interrupt-flag hygiene: latched once a finalisation point consumed a live thread interrupt (see

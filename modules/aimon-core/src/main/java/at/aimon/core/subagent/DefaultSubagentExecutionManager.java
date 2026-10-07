@@ -583,7 +583,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         // Foreground path: fire SubagentStart on the calling thread, then run the body. The background path
         // (executeInBackground) fires SubagentStart itself BEFORE dispatch — so the launch is observed on the launching
         // thread, immediately and in order, rather than late on a pool worker — and calls runResolvedSubagent directly.
-        fireSubagentStart(launchContext, taskId, target.name(), goal, description);
+        fireSubagentStart(launchContext, taskId, target.name(), goal, description, cancellationSignal);
         return runResolvedSubagent(launchContext, taskId, target, goal, cancellationSignal, outputSink);
     }
 
@@ -660,7 +660,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             result = createFailureResult(startTime, "Subagent execution error: " + e.getMessage());
         }
 
-        fireSubagentStop(launchContext, taskId, subagentName, result);
+        fireSubagentStop(launchContext, taskId, subagentName, result, cancellationSignal);
         return result;
     }
 
@@ -769,8 +769,13 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
     // Both subagent hooks fire in the spawning execution's registry, so the environment they carry is the spawner's
     // (SubagentLaunchContext#getExecutionEnvironment), not the fork's — at subagentStart the fork's has not been
     // resolved yet. Empty when a runtime-level runner spawned the fork.
+    //
+    // The cancellation signal they carry is the one that governs the fork, which is the answer to "whose work is this
+    // hook doing": the spawner's for a foreground fork, the per-task coordinator's for a background one — it cascades
+    // from the spawner's and is also what Task.stop trips. Both events report, so the contexts hand it out only while
+    // it has not tripped: a fork that ended because the signal tripped still gets its stop recorded.
     private void fireSubagentStart(SubagentLaunchContext launchContext, String taskId, String subagentName, String goal,
-            String description) {
+            String description, CancellationSignal governingSignal) {
         if (hookExecutionManager == null) {
             return;
         }
@@ -778,8 +783,8 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             final SubagentStartContext ctx = SubagentStartContext.builder().invokerType(InvokerType.MAIN_AGENT)
                     .invokerName(subagentName).hookRegistry(launchContext.getHookRegistry())
                     .executionEnvironment(launchContext.getExecutionEnvironment().orElse(null))
-                    .subagentName(subagentName).taskId(taskId).goal(goal).description(description)
-                    .executionAttributes(launchContext.getExecutionAttributes()).build();
+                    .executionCancellation(governingSignal).subagentName(subagentName).taskId(taskId).goal(goal)
+                    .description(description).executionAttributes(launchContext.getExecutionAttributes()).build();
             hookExecutionManager.executeSubagentStart(ctx);
         } catch (Exception e) {
             log.warn("SubagentStart hook failed for subagent '{}', taskId={}: {}", subagentName, taskId,
@@ -788,7 +793,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
     }
 
     private void fireSubagentStop(SubagentLaunchContext launchContext, String taskId, String subagentName,
-            SubagentExecutionResult result) {
+            SubagentExecutionResult result, CancellationSignal governingSignal) {
         if (hookExecutionManager == null) {
             return;
         }
@@ -796,8 +801,8 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             final SubagentStopContext ctx = SubagentStopContext.builder().invokerType(InvokerType.MAIN_AGENT)
                     .invokerName(subagentName).hookRegistry(launchContext.getHookRegistry())
                     .executionEnvironment(launchContext.getExecutionEnvironment().orElse(null))
-                    .subagentName(subagentName).taskId(taskId).success(result.isSuccess())
-                    .errorMessage(result.isSuccess() ? null : result.getErrorMessage())
+                    .executionCancellation(governingSignal).subagentName(subagentName).taskId(taskId)
+                    .success(result.isSuccess()).errorMessage(result.isSuccess() ? null : result.getErrorMessage())
                     .executionAttributes(launchContext.getExecutionAttributes()).build();
             hookExecutionManager.executeSubagentStop(ctx);
         } catch (Exception e) {
@@ -843,7 +848,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         // Fire SubagentStart on THIS (launching) thread, before the task is queued to a worker, so the launch is
         // observed immediately and in turn order (e.g. the CLI's SubagentLaunchDisplayHook) — including when the
         // bounded pool later rejects the task. The worker then runs runResolvedSubagent, which does NOT re-fire start.
-        fireSubagentStart(launchContext, taskId, subagentName, goal, description);
+        fireSubagentStart(launchContext, taskId, subagentName, goal, description, handle.getSignal());
 
         final CompletableFuture<SubagentExecutionResult> future;
         try {
@@ -873,7 +878,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             // SubagentStart fired on the launching thread above; balance it with a Stop for this reject-before-run path
             // (the runResolvedSubagent path fires its own Stop). Advisory; failures are swallowed inside
             // fireSubagentStop.
-            fireSubagentStop(launchContext, taskId, subagentName, failure);
+            fireSubagentStop(launchContext, taskId, subagentName, failure, handle.getSignal());
             // This path never registers a whenComplete finalizer, so notify the parent here. It is mutually
             // exclusive with the finalizeBackgroundTask path, so the completion is still signalled exactly once.
             notifyParentOfCompletion(launchContext, taskId, subagentName, BackgroundTaskState.FAILED, failure, rex);

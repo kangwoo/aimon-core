@@ -4,6 +4,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.ExecutionId;
+import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
@@ -23,6 +24,7 @@ public final class CompactionRequest {
     private final LlmModel model;
     private final HookRegistry hookRegistry;
     private final ExecutionEnvironment executionEnvironment;
+    private final CancellationSignal executionCancellation;
     private final String customInstructions;
     private final boolean forced;
     private final LlmCallMetadata callMetadata;
@@ -35,6 +37,7 @@ public final class CompactionRequest {
         this.model = Objects.requireNonNull(builder.model, "Model cannot be null");
         this.hookRegistry = Objects.requireNonNull(builder.hookRegistry, "HookRegistry cannot be null");
         this.executionEnvironment = builder.executionEnvironment;
+        this.executionCancellation = builder.executionCancellation;
         this.customInstructions = builder.customInstructions;
         this.forced = builder.forced;
         this.callMetadata = builder.callMetadata;
@@ -68,6 +71,17 @@ public final class CompactionRequest {
      */
     public Optional<ExecutionEnvironment> getExecutionEnvironment() {
         return Optional.ofNullable(executionEnvironment);
+    }
+
+    /**
+     * The cancellation signal of the execution being compacted, carried into the PreCompact / PostCompact hook
+     * contexts so a hook's command stops when that execution is interrupted. Empty when no signal there can trip — a
+     * manual {@code /compact}, a rewake replay — or the caller had none in reach.
+     *
+     * @return the compacting execution's cancellation signal, or empty when there is none
+     */
+    public Optional<CancellationSignal> getExecutionCancellation() {
+        return Optional.ofNullable(executionCancellation);
     }
 
     public Optional<String> getCustomInstructions() {
@@ -133,6 +147,7 @@ public final class CompactionRequest {
         private LlmModel model;
         private HookRegistry hookRegistry;
         private ExecutionEnvironment executionEnvironment;
+        private CancellationSignal executionCancellation;
         private String customInstructions;
         private boolean forced;
         private LlmCallMetadata callMetadata;
@@ -164,6 +179,17 @@ public final class CompactionRequest {
 
         public Builder executionEnvironment(ExecutionEnvironment executionEnvironment) {
             this.executionEnvironment = executionEnvironment;
+            return this;
+        }
+
+        /**
+         * @param executionCancellation
+         *            the compacting execution's cancellation signal for the compaction hooks, or {@code null} when
+         *            there is none
+         * @return this builder
+         */
+        public Builder executionCancellation(CancellationSignal executionCancellation) {
+            this.executionCancellation = executionCancellation;
             return this;
         }
 

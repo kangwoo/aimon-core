@@ -258,6 +258,7 @@ registry.register(HookEventType.PRE_TOOL, rateLimitHook);
 | `getHookRegistry()` | `HookRegistry` | Hook 레지스트리 |
 | `getExecutionEnvironment()` | `Optional<ExecutionEnvironment>` | 훅이 발화한 실행의 실행 환경 — 그 실행의 도구가 쓰는 파일 시스템·셸. 실행 밖에서 발화하는 이벤트(`onSessionStart` · `onSessionEnd` · `onConfigReload`)와 rewake 리플레이에서는 비어 있다. 비어 있을 때 호스트로 되돌아가지 말 것 |
 | `getEnvironmentDescriptor()` | `Optional<EnvironmentDescriptor>` | 위 환경의 서술자(작업 디렉터리 · platform · OS). 명령이 **어디서 도는지**는 호스트가 아니라 이것으로 판단한다 |
+| `getExecutionCancellation()` | `Optional<CancellationSignal>` | 훅이 발화한 실행의 취소 신호. 훅이 실행을 대신해 오래 걸리는 일을 시작하면 이 신호에 묶어 인터럽트에 멈추게 한다. 가드 이벤트(`onStart` · `preCompact` · `preTool` · `permissionRequest`)는 항상 싣고, 이미 일어난 일을 알리는 이벤트(`onStop` · `postCompact` · `subagentStart` · `subagentStop` · `postTool` · `permissionDenied`)는 **신호가 서기 전까지만** 싣는다 — 그래서 같은 컨텍스트에서도 답이 바뀔 수 있으니 컨텍스트를 받을 때가 아니라 일을 시작할 때 읽는다. 실행 밖 이벤트와 슬래시 명령 턴의 `onStop` · `/compact` 의 압축 이벤트에서는 비어 있다 |
 | `getTimestamp()` | `Instant` | 타임스탬프 |
 | `getExecutionAttributes()` | `Map<String, Object>` | 실행 부가 정보 |
 

@@ -9,8 +9,12 @@ import static org.mockito.Mockito.when;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -19,6 +23,8 @@ import org.mockito.ArgumentCaptor;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.impl.orca.OrcaAgentExecutionRequest;
+import at.aimon.core.agent.interrupt.CancellationSignal;
+import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
@@ -325,6 +331,87 @@ class DefaultSubagentExecutionManagerTest {
         verify(hooks).executeSubagentStop(stop.capture());
         assertThat(start.getValue().getExecutionEnvironment()).isEmpty();
         assertThat(stop.getValue().getExecutionEnvironment()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a foreground fork's SubagentStart/Stop carry the spawning execution's cancellation signal (EE-80)")
+    void foregroundSubagentHooksCarryTheSpawnersSignal() {
+        InMemorySubagentRegistry dataRegistry = new InMemorySubagentRegistry();
+        dataRegistry.register(Subagent.builder().name("clock").systemPrompt("(code)").build());
+        InMemorySubagentBehaviorRegistry behaviorRegistry = new InMemorySubagentBehaviorRegistry();
+        behaviorRegistry.register("clock", (ctx, req, support) -> support.success("tick"));
+        SignalRecordingHooks hooks = new SignalRecordingHooks();
+        DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(reactExecutor, bgPool,
+                hooks.manager, behaviorRegistry);
+        try (DefaultInterruptCoordinator spawner = new DefaultInterruptCoordinator()) {
+            // A foreground fork is governed by the spawner's own signal: that is what cancels it.
+            manager.execute(env(dataRegistry).toBuilder().cancellationSignal(spawner.getSignal()).build(), "task-1",
+                    "clock", "go", "");
+
+            assertThat(hooks.atStart.get().orElseThrow()).isSameAs(spawner.getSignal());
+            assertThat(hooks.atStop.get().orElseThrow()).isSameAs(spawner.getSignal());
+        }
+    }
+
+    @Test
+    @DisplayName("a background fork's SubagentStart/Stop carry the task's signal; a stopped task's Stop carries none")
+    void backgroundSubagentHooksCarryTheTasksSignal() throws Exception {
+        InMemorySubagentRegistry dataRegistry = new InMemorySubagentRegistry();
+        dataRegistry.register(Subagent.builder().name("clock").systemPrompt("(code)").build());
+        InMemorySubagentBehaviorRegistry behaviorRegistry = new InMemorySubagentBehaviorRegistry();
+        CountDownLatch running = new CountDownLatch(1);
+        AtomicReference<CancellationSignal> forkParentSignal = new AtomicReference<>();
+        behaviorRegistry.register("clock", (ctx, req, support) -> {
+            forkParentSignal.set(ctx.getParentCancellationSignal());
+            CountDownLatch stopped = new CountDownLatch(1);
+            ctx.getParentCancellationSignal().onCancel(stopped::countDown);
+            running.countDown();
+            try {
+                stopped.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return support.failure("stopped");
+        });
+        SignalRecordingHooks hooks = new SignalRecordingHooks();
+        DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(reactExecutor, bgPool,
+                hooks.manager, behaviorRegistry);
+        try (DefaultInterruptCoordinator spawner = new DefaultInterruptCoordinator()) {
+            var future = manager.executeInBackground(
+                    env(dataRegistry).toBuilder().cancellationSignal(spawner.getSignal()).build(), "task-bg", "clock",
+                    "go", "");
+            assertThat(running.await(5, TimeUnit.SECONDS)).isTrue();
+            // The task's own signal, not the spawner's: it is what Task.stop trips, and it cascades from the spawner's.
+            assertThat(hooks.atStart.get().orElseThrow()).isNotSameAs(spawner.getSignal())
+                    .isSameAs(forkParentSignal.get());
+
+            assertThat(manager.stop("task-bg")).isTrue();
+            future.get(5, TimeUnit.SECONDS);
+
+            assertThat(spawner.getSignal().isCancelled()).isFalse();
+            // The fork ended because that signal tripped; its stop is still reported, with nothing to keep the
+            // hook's command from starting.
+            assertThat(hooks.atStop.get()).as("SubagentStop fired").isNotNull();
+            assertThat(hooks.atStop.get()).isEmpty();
+        }
+    }
+
+    /** A hook manager that reads each subagent context's signal at the moment the event fires. */
+    private static final class SignalRecordingHooks {
+        final AtomicReference<Optional<CancellationSignal>> atStart = new AtomicReference<>();
+        final AtomicReference<Optional<CancellationSignal>> atStop = new AtomicReference<>();
+        final HookExecutionManager manager = mock(HookExecutionManager.class);
+
+        SignalRecordingHooks() {
+            when(manager.executeSubagentStart(any())).thenAnswer(invocation -> {
+                atStart.set(invocation.<SubagentStartContext>getArgument(0).getExecutionCancellation());
+                return List.of();
+            });
+            when(manager.executeSubagentStop(any())).thenAnswer(invocation -> {
+                atStop.set(invocation.<SubagentStopContext>getArgument(0).getExecutionCancellation());
+                return List.of();
+            });
+        }
     }
 
     private DefaultSubagentExecutionManager newManager(InMemorySubagentBehaviorRegistry behaviorRegistry) {

@@ -6,6 +6,8 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.interrupt.CancellationSignal;
+import at.aimon.core.agent.interrupt.CancellationSignals;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
@@ -46,6 +48,7 @@ public final class OnStopContext implements HookContext {
     private final String invokerName;
     private final HookRegistry hookRegistry;
     private final ExecutionEnvironment executionEnvironment;
+    private final CancellationSignal executionCancellation;
     private final boolean success;
     private final String finalAnswer;
     private final ExecutionMetadata metadata;
@@ -57,6 +60,7 @@ public final class OnStopContext implements HookContext {
         invokerName = Objects.requireNonNull(builder.invokerName, "Executor name cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
         executionEnvironment = builder.executionEnvironment;
+        executionCancellation = builder.executionCancellation;
         success = builder.success;
         finalAnswer = builder.finalAnswer;
         metadata = Objects.requireNonNull(builder.metadata, "Metadata cannot be null");
@@ -82,6 +86,18 @@ public final class OnStopContext implements HookContext {
     @Override
     public Optional<ExecutionEnvironment> getExecutionEnvironment() {
         return Optional.ofNullable(executionEnvironment);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * This event reports something that already happened, so the signal is handed out only while it has not tripped:
+     * a command running when the interrupt arrives is stopped, and one that starts afterwards runs unbound.
+     */
+    @Override
+    public Optional<CancellationSignal> getExecutionCancellation() {
+        return CancellationSignals.liveOrEmpty(executionCancellation);
     }
 
     /**
@@ -134,6 +150,7 @@ public final class OnStopContext implements HookContext {
         private String invokerName;
         private HookRegistry hookRegistry;
         private ExecutionEnvironment executionEnvironment;
+        private CancellationSignal executionCancellation;
         private boolean success;
         private String finalAnswer;
         private ExecutionMetadata metadata;
@@ -188,6 +205,19 @@ public final class OnStopContext implements HookContext {
          */
         public Builder executionEnvironment(ExecutionEnvironment executionEnvironment) {
             this.executionEnvironment = executionEnvironment;
+            return this;
+        }
+
+        /**
+         * Sets the cancellation signal of the execution this event fires in, so a hook's shell command stops when
+         * the execution is interrupted.
+         *
+         * @param executionCancellation
+         *            the execution's signal (nullable — absent when the firing site has none in reach)
+         * @return This builder
+         */
+        public Builder executionCancellation(CancellationSignal executionCancellation) {
+            this.executionCancellation = executionCancellation;
             return this;
         }
 

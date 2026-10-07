@@ -114,6 +114,12 @@ public final class LiveSessionStatus {
      * Indicates whether a turn with a live interrupt coordinator is currently in flight, i.e. whether
      * {@link LiveSession#interrupt(at.aimon.core.agent.interrupt.InterruptReason)} would have a coordinator to trip.
      *
+     * <p>
+     * It says a coordinator exists, not that tripping it stops anything. The coordinator is published before the
+     * turn's {@code onStart} hooks, so this is {@code true} while the phase is still {@link Phase#IDLE}; and it stays
+     * {@code true} for the rest of a slash-command turn, where an interrupt after those hooks is inert because a
+     * command is not interruptible.
+     *
      * @return {@code true} iff an interruptible turn is currently active
      */
     public boolean isInterruptible() {

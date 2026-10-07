@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: c8183949
+source_commit: 24b98878
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -642,11 +642,16 @@ a load failure of that skill.
 **Interrupts.** When the user interrupts an execution, a `command` that is running is stopped **through the execution's
 cancellation signal** — so it does not run on to its own timeout even on a shell that does not answer a thread interrupt
 (a remote shell). The reason is `Blocked: hook '<name>' (<event>) was stopped — execution cancelled. An interrupted
-execution does not proceed.`, with or without `failOpen`. The events that carry the signal are `permissionRequest` and
-`preTool` (always), `postTool` and `permissionDenied` (only while the execution has not been cancelled — an audit
-command fired after the cancellation runs to its end), and a fork's `onStart`. Commands on a main turn's `onStart`, on
-`onStop`, on the compaction and subagent events and on the events outside any execution (`onSessionStart`,
-`onSessionEnd`, `onConfigReload`) get no signal and stop, as before, only if the shell answers a thread interrupt.
+execution does not proceed.`, with or without `failOpen`. The guard events (`onStart`, `preCompact`,
+`permissionRequest`, `preTool`) always carry the signal — a command fired after the interrupt is not started. The events
+that report something that already happened (`onStop`, `postCompact`, `subagentStart`, `subagentStop`, `postTool`,
+`permissionDenied`) carry it only while the execution has not been cancelled — a command that is running is stopped by
+the interrupt, but an audit or cleanup command fired after the cancellation runs to its end. If an `onStop` cleanup has
+to finish, write it knowing an interrupt can arrive partway through. When an interrupt arrives while a main turn's
+`onStart` command is running, the turn ends as an **interrupted turn**, not as an error saying a hook blocked it. What
+gets no signal is where no signal can trip — a slash-command turn's `onStop`, `/compact`'s `preCompact` and
+`postCompact`, and the events outside any execution (`onSessionStart`, `onSessionEnd`, `onConfigReload`). Those commands
+stop, as before, only if the shell answers a thread interrupt.
 
 ---
 

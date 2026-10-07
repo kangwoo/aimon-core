@@ -1,6 +1,7 @@
 package at.aimon.core.agent.interrupt;
 
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Shared cancellation/interrupt check for every execution path that drives an agent execution — the main ReAct loop
@@ -53,5 +54,24 @@ public final class CancellationSignals {
         Objects.requireNonNull(cancellationSignal, "cancellationSignal cannot be null");
         final boolean threadInterrupted = Thread.interrupted();
         return cancellationSignal.isCancelled() || threadInterrupted;
+    }
+
+    /**
+     * Returns the signal only while it has not tripped. This is the rule for a hook event that <em>reports</em>
+     * something that already happened ({@code onStop}, {@code postTool}, ...): work started on the execution's behalf
+     * is tied to the signal while the execution is live, and work started after the interrupt is not — otherwise the
+     * tripped signal would keep an audit or cleanup command from ever starting.
+     *
+     * <p>
+     * The answer is a snapshot. A signal that trips right after this returns is still handed out, and whoever
+     * registers on it is cancelled at once — a window of one call, which callers accept. Does not touch the thread
+     * interrupt flag.
+     *
+     * @param signalOrNull
+     *            the execution-scoped cancellation signal, or null when the caller holds none
+     * @return the signal, or empty when it is null or already cancelled
+     */
+    public static Optional<CancellationSignal> liveOrEmpty(CancellationSignal signalOrNull) {
+        return signalOrNull == null || signalOrNull.isCancelled() ? Optional.empty() : Optional.of(signalOrNull);
     }
 }

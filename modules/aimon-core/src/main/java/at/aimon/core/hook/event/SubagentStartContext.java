@@ -6,6 +6,8 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.interrupt.CancellationSignal;
+import at.aimon.core.agent.interrupt.CancellationSignals;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.execution.HookContext;
@@ -35,6 +37,7 @@ public final class SubagentStartContext implements HookContext {
     private final String invokerName;
     private final HookRegistry hookRegistry;
     private final ExecutionEnvironment executionEnvironment;
+    private final CancellationSignal executionCancellation;
     private final String subagentName;
     private final String taskId;
     private final String goal;
@@ -47,6 +50,7 @@ public final class SubagentStartContext implements HookContext {
         invokerName = Objects.requireNonNull(builder.invokerName, "Invoker name cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
         executionEnvironment = builder.executionEnvironment;
+        executionCancellation = builder.executionCancellation;
         subagentName = Objects.requireNonNull(builder.subagentName, "Subagent name cannot be null");
         taskId = Objects.requireNonNull(builder.taskId, "Task id cannot be null");
         goal = Objects.requireNonNull(builder.goal, "Goal cannot be null");
@@ -73,6 +77,18 @@ public final class SubagentStartContext implements HookContext {
     @Override
     public Optional<ExecutionEnvironment> getExecutionEnvironment() {
         return Optional.ofNullable(executionEnvironment);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * This event reports something that already happened, so the signal is handed out only while it has not tripped:
+     * a command running when the interrupt arrives is stopped, and one that starts afterwards runs unbound.
+     */
+    @Override
+    public Optional<CancellationSignal> getExecutionCancellation() {
+        return CancellationSignals.liveOrEmpty(executionCancellation);
     }
 
     /**
@@ -134,6 +150,7 @@ public final class SubagentStartContext implements HookContext {
         private String invokerName;
         private HookRegistry hookRegistry;
         private ExecutionEnvironment executionEnvironment;
+        private CancellationSignal executionCancellation;
         private String subagentName;
         private String taskId;
         private String goal;
@@ -189,6 +206,19 @@ public final class SubagentStartContext implements HookContext {
          */
         public Builder executionEnvironment(ExecutionEnvironment executionEnvironment) {
             this.executionEnvironment = executionEnvironment;
+            return this;
+        }
+
+        /**
+         * Sets the cancellation signal of the execution this event fires in, so a hook's shell command stops when
+         * the execution is interrupted.
+         *
+         * @param executionCancellation
+         *            the execution's signal (nullable — absent when the firing site has none in reach)
+         * @return This builder
+         */
+        public Builder executionCancellation(CancellationSignal executionCancellation) {
+            this.executionCancellation = executionCancellation;
             return this;
         }
 

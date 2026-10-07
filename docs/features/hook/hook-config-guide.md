@@ -587,11 +587,14 @@ entry #<n>, handler #<m>: <사유>`. 번호는 그 계층 · 그 이벤트 안�
 
 **인터럽트.** 사용자가 실행을 중단하면 돌고 있던 `command` 는 **실행의 취소 신호로** 멈춘다 — 스레드 인터럽트에 반응하지
 않는 셸(원격 셸)에서도 자기 timeout 까지 돌지 않는다. 사유는 `Blocked: hook '<이름>' (<이벤트>) was stopped — execution
-cancelled. An interrupted execution does not proceed.` 이고 `failOpen` 과 무관하다. 신호를 싣는 이벤트는 `permissionRequest` ·
-`preTool`(항상), `postTool` · `permissionDenied`(실행이 아직 취소되지 않았을 때만 — 취소된 뒤에 발화한 감사 커맨드는 끝까지
-돈다), fork 의 `onStart` 다. 메인 턴의 `onStart`, `onStop`, compaction · 서브에이전트 이벤트, 실행 밖 이벤트
-(`onSessionStart` · `onSessionEnd` · `onConfigReload`)의 커맨드는 신호를 받지 않아 전처럼 셸이 스레드 인터럽트에 반응해야
-멈춘다.
+cancelled. An interrupted execution does not proceed.` 이고 `failOpen` 과 무관하다. 가드 이벤트(`onStart` · `preCompact` ·
+`permissionRequest` · `preTool`)는 신호를 항상 싣는다 — 인터럽트 뒤에 발화한 커맨드는 시작되지 않는다. 이미 일어난 일을 알리는
+이벤트(`onStop` · `postCompact` · `subagentStart` · `subagentStop` · `postTool` · `permissionDenied`)는 실행이 아직 취소되지
+않았을 때만 싣는다 — 돌고 있던 커맨드는 인터럽트로 멈추지만, 취소된 뒤에 발화한 감사 · 정리 커맨드는 끝까지 돈다. 끝까지
+돌아야 하는 `onStop` 정리 작업이라면 인터럽트가 그 도중에 올 수 있다는 점을 감안해 쓴다. 메인 턴의 `onStart` 커맨드가 도는
+동안 인터럽트가 오면 그 턴은 훅이 막았다는 오류가 아니라 **중단된 턴**으로 끝난다. 신호를 받지 않는 것은 설 수 있는 신호가
+없는 자리다 — 슬래시 명령 턴의 `onStop`, `/compact` 의 `preCompact` · `postCompact`, 실행 밖 이벤트(`onSessionStart` ·
+`onSessionEnd` · `onConfigReload`). 그 커맨드는 전처럼 셸이 스레드 인터럽트에 반응해야 멈춘다.
 
 ---
 

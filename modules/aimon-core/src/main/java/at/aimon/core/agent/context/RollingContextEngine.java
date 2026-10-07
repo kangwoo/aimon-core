@@ -563,6 +563,7 @@ public final class RollingContextEngine implements ContextEngine {
                 .model(summaryModel != null ? summaryModel : call.request.getModel())
                 .hookRegistry(call.request.getHookRegistry().orElseThrow())
                 .executionEnvironment(call.request.getExecutionEnvironment().orElse(null))
+                .executionCancellation(call.request.getExecutionCancellation().orElse(null))
                 .customInstructions(instructions).callMetadata(call.request.getCallMetadata().orElse(null))
                 .rolling(true).previousSummary(held != null ? held.getSummaryText() : null)
                 .targetSummaryTokens(call.summaryBudget).build();

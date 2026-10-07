@@ -134,7 +134,8 @@ public final class DefaultLiveSession implements LiveSession {
      * <p>
      * The id is known before the executor is called and is installed up front, so a turn that has started but not yet
      * reached the ReAct loop is already addressable. The coordinator and tracker are published into the same object
-     * later, at loop entry, via {@link OrcaAgentExecutionRequest#getInterruptObserver()} and
+     * later — the coordinator just before the turn's OnStart hooks, the tracker at loop entry — via
+     * {@link OrcaAgentExecutionRequest#getInterruptObserver()} and
      * {@link OrcaAgentExecutionRequest#getBudgetObserver()} — hence they are {@code volatile} within
      * {@link ActiveTurn} while the reference itself is swapped atomically. Clearing uses
      * {@link AtomicReference#compareAndSet(Object, Object)} so overlapping turns (allowed only when no
@@ -415,13 +416,18 @@ public final class DefaultLiveSession implements LiveSession {
      *
      * <p>
      * Reports the session's live runtime state. The {@link LiveSessionStatus.Phase phase} is derived from the
-     * published turn handles rather than the {@link #busy} guard: {@code RUNNING} iff an interrupt coordinator or a
-     * budget tracker is currently published for an in-flight turn (this covers <em>all</em> submit paths, not just
-     * {@link #offerAsync}), {@code CLOSED} once {@link #close()} has run, otherwise {@code IDLE}. The handles are
-     * published at ReAct loop entry, so the session still reports {@code IDLE} during the brief window between a
-     * {@code submit*} call and loop entry, and for the whole duration of slash-command turns (which bypass the ReAct
-     * loop and never publish handles — matching the existing {@link #interrupt(InterruptReason) interrupt} no-op
-     * behaviour for command turns). This is acceptable for the diagnostic / UI use case.
+     * published budget tracker rather than the {@link #busy} guard: {@code RUNNING} iff a tracker is currently
+     * published for an in-flight turn (this covers <em>all</em> submit paths, not just {@link #offerAsync}),
+     * {@code CLOSED} once {@link #close()} has run, otherwise {@code IDLE}. The tracker is published at ReAct loop
+     * entry, so the session still reports {@code IDLE} during the window between a {@code submit*} call and loop
+     * entry — the turn's OnStart hooks run in it — and for the whole duration of slash-command turns (which bypass
+     * the ReAct loop and never publish one). This is acceptable for the diagnostic / UI use case.
+     *
+     * <p>
+     * {@link LiveSessionStatus#isInterruptible() interruptible} is keyed on the coordinator, which is published
+     * earlier, before the OnStart hooks. So a turn can be {@code IDLE} and interruptible at once: an interrupt during
+     * its OnStart hooks ends it. For a slash-command turn the flag stays {@code true} after those hooks although
+     * nothing the command runs reads the signal.
      *
      * <p>
      * Live {@link LiveSessionStatus.TurnProgress turn progress} is included only when the executor published a
@@ -435,12 +441,14 @@ public final class DefaultLiveSession implements LiveSession {
     @Override
     public LiveSessionStatus status() {
         final ActiveTurn turn = activeTurn.get();
-        // Phase stays derived from the *published* handles, not from the mere existence of an ActiveTurn: the id is
-        // installed before the executor is entered, so keying off it would flip the session to RUNNING during the
-        // pre-loop window and for the whole of a slash-command turn, which this method documents as IDLE.
+        // Phase stays derived from the *published tracker*, not from the mere existence of an ActiveTurn, and not
+        // from the coordinator either: the id is installed before the executor is entered and the coordinator is
+        // published before the OnStart hooks, so keying off either would flip the session to RUNNING during the
+        // pre-loop window and for the whole of a slash-command turn, which this method documents as IDLE. Only the
+        // tracker is published at loop entry.
         final InterruptCoordinator coordinator = turn == null ? null : turn.coordinator;
         final BudgetTracker tracker = turn == null ? null : turn.tracker;
-        final boolean turnActive = coordinator != null || tracker != null;
+        final boolean turnActive = tracker != null;
         final LiveSessionStatus.Phase phase;
         if (closed) {
             phase = LiveSessionStatus.Phase.CLOSED;
@@ -835,6 +843,12 @@ public final class DefaultLiveSession implements LiveSession {
      * given {@link InterruptReason}. The first trip wins; subsequent calls on the same turn are idempotent no-ops (see
      * {@link InterruptCoordinator#requestInterrupt(InterruptReason)}). When the session is idle the call is a silent
      * debug-logged no-op — matching the contract described on {@link LiveSession#interrupt(InterruptReason)}.
+     *
+     * <p>
+     * A turn is reachable from its OnStart hooks on: an interrupt that arrives while one runs stops the hook's command
+     * and ends the turn as interrupted before any LLM call. Earlier than that — while the executor renders the prompt
+     * and opens the transcript — there is no coordinator yet and the call is ignored. A slash-command turn is
+     * reachable during its OnStart hooks only; afterwards the trip lands on a signal nothing the command reads.
      */
     @Override
     public void interrupt(InterruptReason reason) {
@@ -859,11 +873,11 @@ public final class DefaultLiveSession implements LiveSession {
         }
         final InterruptCoordinator coordinator = turn.coordinator;
         if (coordinator == null) {
-            // The turn is installed but has not reached ReAct loop entry, so nothing has published a coordinator yet
-            // and there is no interruptible work in flight. Matches the historical no-op for slash-command turns,
-            // which bypass the loop and never publish one at all.
-            log.debug("Session {} interrupt({}) for turn {} requested before loop entry — ignoring", sessionId, reason,
-                    turn.turnId);
+            // The turn is installed but the executor has not reached its OnStart hooks, so nothing has published a
+            // coordinator yet: the turn is still rendering its prompt and opening its transcript, and there is no
+            // interruptible work in flight.
+            log.debug("Session {} interrupt({}) for turn {} requested before its OnStart hooks — ignoring", sessionId,
+                    reason, turn.turnId);
             return;
         }
         log.debug("Session {} forwarding interrupt({}) to the coordinator of turn {}", sessionId, reason, turn.turnId);

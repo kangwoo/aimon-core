@@ -82,6 +82,7 @@
 | [`skill/approval-scope.md`](skill/approval-scope.md) | pending → session → agent 승인 체인과 각 스코프의 도달 범위 |
 | [`hook/hook-system.md`](hook/hook-system.md) | 훅 종류, 설정 체계, 실행 순서 |
 | [`hook/async-rewake.md`](hook/async-rewake.md) | 외부 이벤트로 에이전트를 다시 깨우는 rewake 봉투와 바운드 |
+| [`hook/hook-shell-cancellation-ee80.md`](hook/hook-shell-cancellation-ee80.md) | (IMPLEMENTED, 승인본, 영어, 차이는 §10) 훅의 셸 명령을 실행의 취소 신호에 묶는 일의 나머지(EE-80) — 이벤트를 가드와 보고로 나누고 보고는 신호가 서기 전까지만 싣는 규칙, 그 규칙을 발화 지점이 아니라 컨텍스트의 getter 에 둔 이유, 메인 턴의 코디네이터를 `onStart` 앞으로 올린 것, 신호가 없는 자리(슬래시 명령 · `/compact` · rewake 리플레이 · 실행 밖 이벤트), 기각한 대안 |
 | [`subagent/execution.md`](subagent/execution.md) | 포크 실행 — 세션 없는 실행의 정체성, 예산, 격리 |
 | [`subagent/background-task-result-persistence.md`](subagent/background-task-result-persistence.md) | 백그라운드 태스크의 **결과**를 저장소로 내린 자리 — 순서 계약, `block=true` 폴링, 크기 정책 |
 | [`subagent/code-defined-registration.md`](subagent/code-defined-registration.md) | 마크다운이 아니라 코드로 서브에이전트를 등록하는 경로 |

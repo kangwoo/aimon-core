@@ -185,6 +185,7 @@ public final class DefaultContextEngine implements ContextEngine {
         final CompactionDecision decision = compactionGuard.maybeCompact(CompactionGuardRequest.builder()
                 .transcriptBuffer(buffer).model(request.getModel()).hookRegistry(hookRegistry).executionId(executionId)
                 .executionEnvironment(request.getExecutionEnvironment().orElse(null))
+                .executionCancellation(request.getExecutionCancellation().orElse(null))
                 .budgetForced(request.isBudgetForced()).build());
         // Read after the guard: a compaction rewrote the buffer in place, and the view is what it left behind.
         return ContextDecision.from(decision, viewOf(request), sizeBefore);
@@ -332,7 +333,8 @@ public final class DefaultContextEngine implements ContextEngine {
         }
         final CompactionRequest compactionRequest = CompactionRequest.builder().transcriptBuffer(buffer)
                 .trigger(CompactionTrigger.MANUAL).model(request.getModel()).hookRegistry(requireHookRegistry(request))
-                .executionEnvironment(request.getExecutionEnvironment().orElse(null)).customInstructions(instructions)
+                .executionEnvironment(request.getExecutionEnvironment().orElse(null))
+                .executionCancellation(request.getExecutionCancellation().orElse(null)).customInstructions(instructions)
                 .callMetadata(request.getCallMetadata().orElse(null))
                 .executionId(request.getCaller().getExecutionId().orElse(null)).build();
         final CompactionResult result = compactionEngine.compact(compactionRequest);
@@ -542,7 +544,8 @@ public final class DefaultContextEngine implements ContextEngine {
                 .systemPrompt(request.getSystemPrompt()).sessionId(buffer.getSessionId())
                 .executionId(request.getCaller().getExecutionId().orElse(null)).trigger(trigger)
                 .model(request.getModel()).hookRegistry(requireHookRegistry(request))
-                .executionEnvironment(request.getExecutionEnvironment().orElse(null)).customInstructions(instructions)
+                .executionEnvironment(request.getExecutionEnvironment().orElse(null))
+                .executionCancellation(request.getExecutionCancellation().orElse(null)).customInstructions(instructions)
                 .callMetadata(request.getCallMetadata().orElse(null)).build();
         final CompactionResult summarized = compactionEngine.summarize(summaryRequest);
         if (summarized == null) {

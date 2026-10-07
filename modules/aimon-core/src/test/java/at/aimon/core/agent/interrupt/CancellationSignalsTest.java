@@ -84,4 +84,19 @@ class CancellationSignalsTest {
         assertThatThrownBy(() -> CancellationSignals.isCancelledOrInterrupted(null))
                 .isInstanceOf(NullPointerException.class);
     }
+
+    @Test
+    @DisplayName("liveOrEmpty hands out a signal only while it has not tripped, and never touches the thread flag")
+    void liveOrEmptyTracksTheSignal() {
+        try (DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator()) {
+            assertThat(CancellationSignals.liveOrEmpty(null)).isEmpty();
+            assertThat(CancellationSignals.liveOrEmpty(coordinator.getSignal())).containsSame(coordinator.getSignal());
+
+            coordinator.requestInterrupt(InterruptReason.USER_SIGINT);
+            Thread.currentThread().interrupt();
+
+            assertThat(CancellationSignals.liveOrEmpty(coordinator.getSignal())).isEmpty();
+            assertThat(Thread.currentThread().isInterrupted()).as("the thread interrupt is not consumed").isTrue();
+        }
+    }
 }

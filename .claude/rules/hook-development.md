@@ -159,11 +159,19 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   `InterruptedException` (how `LocalShell` ends on a thread interrupt), are both `Unrun.CANCELLED`,
   which `ShellHookVerdicts` blocks regardless of `failOpen` — "allow and continue" is not an answer
   for an execution that is ending. The signal is an *execution* concept (turn, fork, routine), named
-  accordingly. A firing site passes it only where it holds one: `SingleToolInvoker` for the four
-  tool-scoped events (`postTool` / `permissionDenied` only while not yet cancelled, so an audit
-  command fired after the interrupt still runs) and `DefaultSubagentExecutor` for a fork's
-  `onStart`. A main turn's `onStart` fires before the turn's signal exists; `onStop`, compaction and
-  subagent-lifecycle sites carry none.
+  accordingly. **Which answer an event gives is decided by the context type, not the firing site.** A
+  *gate* context (`onStart`, `preCompact`, `preTool`, `permissionRequest`) returns the signal always;
+  a *report* context (`onStop`, `postCompact`, `subagentStart`, `subagentStop`, `postTool`,
+  `permissionDenied`) returns it through `CancellationSignals.liveOrEmpty` — only while it has not
+  tripped, so an audit or cleanup command of a cancelled execution still starts. The runner reads the
+  getter once per command, which is what makes the rule hold for the second hook of a chain; do not
+  move the filter back to a firing site, and give a new event's context one of the two getters. A
+  firing site passes the signal it holds and decides nothing: the execution's own for a turn's or a
+  fork's `onStart` / `onStop` and for AUTO compaction, and for `subagentStart` / `subagentStop` the
+  signal that governs the *fork* (the spawner's in the foreground, the per-task coordinator's in the
+  background). `OrcaAgentExecutor.execute()` creates and publishes the turn's coordinator before
+  `onStart` for that reason. Empty means no signal there can trip — events outside an execution, a
+  slash-command turn after its `onStart`, `/compact`, a rewake replay — not missing plumbing.
 - **`http` / `mcp` actions follow the same rule on `preTool`** (the only guard event they can sit on).
   `HttpActionExecutor#attempt` / `McpActionExecutor#attempt` return an `ActionCallOutcome`: a
   *verdict* (any readable 2xx / non-error answer) or *no verdict*, carried as a not-run outcome
