@@ -8,9 +8,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.ContextEngineKind;
 import at.aimon.core.agent.DefaultAgent;
 import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionKind;
@@ -28,6 +33,7 @@ import at.aimon.core.agent.impl.orca.OrcaAgentExecutionRequest;
 import at.aimon.core.agent.impl.orca.OrcaAgentExecutionResult;
 import at.aimon.core.agent.impl.orca.OrcaAgentExecutor;
 import at.aimon.core.agent.impl.orca.OrcaAgentRuntime;
+import at.aimon.core.agent.prompt.SystemPromptParts;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
@@ -52,6 +58,7 @@ import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.InMemoryModelContextWindowRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
+import at.aimon.core.llm.LlmCancellation;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
@@ -60,6 +67,9 @@ import at.aimon.core.llm.ModelContextLimits;
 import at.aimon.core.llm.ModelContextWindowRegistry;
 import at.aimon.core.llm.Role;
 import at.aimon.core.llm.ToolDefinition;
+import at.aimon.core.llm.ToolUse;
+import at.aimon.core.llm.streaming.LlmStreamSink;
+import at.aimon.core.llm.streaming.LlmStreamingOptions;
 import at.aimon.core.llm.token.HeuristicTokenEstimator;
 import at.aimon.core.llm.token.TokenEstimator;
 import at.aimon.core.skill.DefaultSkillRegistry;
@@ -90,6 +100,16 @@ import at.aimon.core.tools.session.SessionHistoryTool;
  * {@link SummaryCallRecorder}, so a test can see every one of them, and whether the provider accepted it.
  *
  * <p>
+ * <strong>The comparison profile.</strong> Those numbers are chosen to reach a rolling cycle in a few turns, and they
+ * put the two engines on different windows, so they compare nothing. {@link #forComparison} is a second wiring for
+ * the tasks of {@link ContextPressureTasks}: both engines over one window (effective 14,000 tokens), the rolling
+ * engine at the ratios it ships with, {@code SessionHistory} registered for rolling only — as the runtime factory
+ * does — a system prompt that names no tool, and a report tool that hands each report out once. The window is 16K and
+ * not 8K because a {@code SessionHistory} result's size does not scale with the window; at 8K one retrieval can leave
+ * the rolling engine nothing legal to do. The executor's client is wrapped in a {@link MainCallRecorder} there, and
+ * only there (context-engine §13.11).
+ *
+ * <p>
  * Kept in step with the copy in {@code aimon-llm-anthropic}: the two provider modules share no test source set, and
  * this
  * wiring is the part of the scenario that does not depend on the provider.
@@ -113,7 +133,22 @@ final class ContextEngineLiveRig {
                     .autoCompactBuffer(500).warningBuffer(500).blockingBuffer(300).build())
             .build();
 
+    /**
+     * The comparison profile's window: effective 14,000, the default engine's AUTO at 13,000 and blocking at 13,600.
+     * The buffers keep the proportions the 200K defaults have.
+     */
+    static final ModelContextLimits COMPARISON_LIMITS = ModelContextLimits.builder().contextWindow(16_000)
+            .reservedOutputTokens(2_000).autoCompactBuffer(1_000).warningBuffer(1_000).blockingBuffer(400).build();
+
+    private static final ModelContextWindowRegistry COMPARISON_WINDOW = InMemoryModelContextWindowRegistry.builder()
+            .defaultLimits(COMPARISON_LIMITS).build();
+
+    /** What a comparison rig's report tool answers a report id it has already handed out with. */
+    static final String ALREADY_DELIVERED = " was already delivered earlier in this conversation. The source does not"
+            + " serve a report twice.";
+
     private final LlmClient client;
+    private final Wiring wiring;
     private final SummaryCallRecorder summaries;
     private final LlmModel model;
     private final SessionId sessionId;
@@ -122,12 +157,14 @@ final class ContextEngineLiveRig {
     private final DefaultTranscriptManager transcripts;
     private final OrcaAgentExecutor executor;
     private final OrcaAgentRuntime runtime;
+    private final MainCallRecorder mainCalls;
     private final List<CompactionMetadata> compactions = new ArrayList<>();
 
-    private ContextEngineLiveRig(LlmClient client, LlmModel model, Path baseDir, boolean rolling, SessionId sessionId,
+    private ContextEngineLiveRig(LlmClient client, LlmModel model, Path baseDir, Wiring wiring, SessionId sessionId,
             InMemorySessionRecordStore records, InMemorySessionLogSegmentStore segments,
             SummaryCallRecorder summaries) {
         this.client = client;
+        this.wiring = wiring;
         this.model = model;
         this.sessionId = sessionId;
         this.records = records;
@@ -141,26 +178,35 @@ final class ContextEngineLiveRig {
 
         final DefaultToolExecutionManager toolManager = new DefaultToolExecutionManager();
         final DefaultHookExecutionManager hookManager = new DefaultHookExecutionManager();
-        this.executor = new OrcaAgentExecutor(client, transcripts, toolManager, hookManager,
-                new DefaultCommandExecutionManager(client),
+        // Only the comparison wiring records the executor's calls; the two scenario wirings hand it the client as
+        // they always did.
+        this.mainCalls = wiring.comparison ? new MainCallRecorder(client, estimator) : null;
+        this.executor = new OrcaAgentExecutor(mainCalls != null ? mainCalls : client, transcripts, toolManager,
+                hookManager, new DefaultCommandExecutionManager(client),
                 new DefaultSubagentExecutionManager(client, toolManager, hookManager));
         final CompactionEngine compactionEngine = DefaultCompactionEngine.withDefaults(summaries, estimator,
                 hookManager);
-        final ContextEngine engine = rolling
-                ? rollingEngine(compactionEngine, estimator)
-                : viewModeEngine(compactionEngine, estimator);
+        final boolean rolling = wiring.rolling;
+        final ContextEngine engine;
+        if (wiring.comparison) {
+            engine = rolling
+                    ? comparisonRollingEngine(compactionEngine, estimator)
+                    : comparisonDefaultEngine(compactionEngine, estimator);
+        } else {
+            engine = rolling ? rollingEngine(compactionEngine, estimator) : viewModeEngine(compactionEngine, estimator);
+        }
 
         final LocalFileSystem fileSystem = new LocalFileSystem(new LocalFileSystemConfig(baseDir.toString()));
         fileSystem.initialize();
         final DefaultToolRegistry tools = new DefaultToolRegistry();
-        tools.register(new ReportTool());
+        tools.register(new ReportTool(wiring.reports, wiring.reportDesk));
         if (rolling) {
             // The tool's own default cut: its fresh result may exceed the rolling tail, and the engine keeps it
             // verbatim until the model has answered it (context-engine §13.10).
             tools.register(new SessionHistoryTool());
         }
         final DefaultAgent agent = DefaultAgent.builder().name("ContextEngineLiveAgent").maxIterations(6)
-                .systemPrompt(SYSTEM_PROMPT).model(model).build();
+                .systemPrompt(wiring.systemPrompt).model(model).build();
         this.runtime = OrcaAgentRuntime.builder().id(AgentRuntimeId.from(agent)).agent(agent).toolRegistry(tools)
                 .hookRegistry(new DefaultHookRegistry())
                 .commandRegistry(new DefaultCommandRegistry(fileSystem, ".aimon/commands"))
@@ -171,16 +217,51 @@ final class ContextEngineLiveRig {
 
     /** A rig over the rolling engine, with a fresh session. */
     static ContextEngineLiveRig rolling(LlmClient client, LlmModel model, Path baseDir) {
-        return new ContextEngineLiveRig(client, model, baseDir, true, SessionId.generate(),
+        return new ContextEngineLiveRig(client, model, baseDir, Wiring.scenario(true), SessionId.generate(),
                 new InMemorySessionRecordStore(), new InMemorySessionLogSegmentStore(),
                 new SummaryCallRecorder(client));
     }
 
     /** A rig over the default engine in view mode (a version-2 transcript), with a fresh session. */
     static ContextEngineLiveRig defaultViewMode(LlmClient client, LlmModel model, Path baseDir) {
-        return new ContextEngineLiveRig(client, model, baseDir, false, SessionId.generate(),
+        return new ContextEngineLiveRig(client, model, baseDir, Wiring.scenario(false), SessionId.generate(),
                 new InMemorySessionRecordStore(), new InMemorySessionLogSegmentStore(),
                 new SummaryCallRecorder(client));
+    }
+
+    /**
+     * A rig in the comparison profile, with a fresh session: {@code kind}'s engine over {@link #COMPARISON_LIMITS},
+     * the tools the runtime factory would register for it, and a report tool that hands each of {@code reports} out
+     * once.
+     */
+    static ContextEngineLiveRig forComparison(ContextEngineKind kind, LlmClient client, LlmModel model, Path baseDir,
+            Map<String, String> reports) {
+        Objects.requireNonNull(kind, "kind cannot be null");
+        return new ContextEngineLiveRig(client, model, baseDir,
+                Wiring.comparison(kind == ContextEngineKind.ROLLING, reports), SessionId.generate(),
+                new InMemorySessionRecordStore(), new InMemorySessionLogSegmentStore(),
+                new SummaryCallRecorder(client));
+    }
+
+    /** The view size at which the comparison profile's rolling engine compacts: 60% of the effective window. */
+    static int comparisonRollingThreshold() {
+        return Math.min(
+                (int) (RollingContextEngine.DEFAULT_AUTO_COMPACT_RATIO * COMPARISON_LIMITS.getEffectiveContextWindow()),
+                COMPARISON_LIMITS.getAutoCompactThreshold());
+    }
+
+    /** The shipped ratios, untouched: what is measured is the configuration that is deployed. */
+    private static ContextEngine comparisonRollingEngine(CompactionEngine compactionEngine, TokenEstimator estimator) {
+        return RollingContextEngine.builder().compactionEngine(compactionEngine)
+                .modelContextWindowRegistry(COMPARISON_WINDOW).tokenEstimator(estimator)
+                .writeFormat(SessionLogFormat.V2).build();
+    }
+
+    @SuppressWarnings("deprecation") // as viewModeEngine: the guard's type is what selects view mode
+    private static ContextEngine comparisonDefaultEngine(CompactionEngine compactionEngine, TokenEstimator estimator) {
+        final DefaultCompactionGuard guard = new DefaultCompactionGuard(compactionEngine, COMPARISON_WINDOW, estimator);
+        return DefaultContextEngine.builder().compactionGuard(guard).compactionEngine(compactionEngine)
+                .tokenEstimator(estimator).writeFormat(SessionLogFormat.V2).build();
     }
 
     private static ContextEngine rollingEngine(CompactionEngine compactionEngine, TokenEstimator estimator) {
@@ -214,24 +295,33 @@ final class ContextEngineLiveRig {
                 .isEqualTo(stored.getLogState());
         final InMemorySessionRecordStore reloaded = new InMemorySessionRecordStore();
         reloaded.mergeFromSnapshot(decoded);
-        return new ContextEngineLiveRig(client, model, baseDir,
-                runtime.getContextEngine() instanceof RollingContextEngine, sessionId, reloaded, segments, summaries);
+        return new ContextEngineLiveRig(client, model, baseDir, wiring, sessionId, reloaded, segments, summaries);
     }
 
     /** Runs one turn of this rig's session and requires it to succeed. */
     OrcaAgentExecutionResult turn(String input) {
+        final OrcaAgentExecutionResult result = tryTurn(input);
+        assertThat(result.isSuccess()).as("turn '%s' failed: %s", input, result.getErrorMessage()).isTrue();
+        return result;
+    }
+
+    /**
+     * Runs one turn of this rig's session and returns whatever came of it. A comparison run counts a failed turn; it
+     * does not stop on one.
+     */
+    OrcaAgentExecutionResult tryTurn(String input) {
         final OrcaAgentExecutionResult result = executor.execute(runtime,
                 OrcaAgentExecutionRequest.builder().sessionId(sessionId).userInput(input).build());
-        assertThat(result.isSuccess()).as("turn '%s' failed: %s", input, result.getErrorMessage()).isTrue();
         compactions.addAll(result.getCompactionEvents());
         return result;
     }
 
     /** What {@code /compact} does, against this rig's saved session: one MANUAL compaction, then a save. */
     CompactionResult compactNow() {
-        final TranscriptBuffer buffer = transcripts.initialize(sessionId, SYSTEM_PROMPT);
-        final ContextRequest request = ContextRequest.builder().transcriptBuffer(buffer).systemPrompt(SYSTEM_PROMPT)
-                .model(model).hookRegistry(runtime.getHookRegistry()).caller(ContextCaller.session()).build();
+        final TranscriptBuffer buffer = transcripts.initialize(sessionId, wiring.systemPrompt);
+        final ContextRequest request = ContextRequest.builder().transcriptBuffer(buffer)
+                .systemPrompt(wiring.systemPrompt).model(model).hookRegistry(runtime.getHookRegistry())
+                .caller(ContextCaller.session()).build();
         final CompactionResult result = runtime.getContextEngine().compactNow(request, null);
         if (result.isSuccess()) {
             transcripts.save(buffer);
@@ -265,6 +355,29 @@ final class ContextEngineLiveRig {
 
     SummaryCallRecorder summaries() {
         return summaries;
+    }
+
+    /** The executor's calls. Recorded in the comparison profile only. */
+    MainCallRecorder mainCalls() {
+        if (mainCalls == null) {
+            throw new IllegalStateException("only a comparison rig records the executor's calls");
+        }
+        return mainCalls;
+    }
+
+    /** Which reports were handed out; empty outside the comparison profile, where a report is served every time. */
+    Optional<ReportDesk> reportDesk() {
+        return Optional.ofNullable(wiring.reportDesk);
+    }
+
+    /** The effective window this rig's engine decides against. */
+    int effectiveWindow() {
+        return wiring.limits.getEffectiveContextWindow();
+    }
+
+    /** The view size past which this rig's engine refuses to send without compacting. */
+    int blockingLimit() {
+        return wiring.limits.getBlockingLimit();
     }
 
     /** The seq of the logged tool result that carries {@code needle}, if any. */
@@ -325,14 +438,23 @@ final class ContextEngineLiveRig {
         return report.toString();
     }
 
-    /** Returns the planted report for {@code R-1} and a short one for anything else. */
+    /**
+     * Returns the report filed under the id asked for and a short one for anything else. With a {@link ReportDesk} a
+     * report is handed out once; asked again, the tool says so — as a result, not an error, since an error invites a
+     * retry.
+     */
     private static final class ReportTool extends AbstractTool {
 
-        ReportTool() {
+        private final Map<String, String> reports;
+        private final ReportDesk desk;
+
+        ReportTool(Map<String, String> reports, ReportDesk desk) {
             super(REPORT_TOOL, "Fetches an operations report by id.",
                     Map.of("type", "object", "additionalProperties", false, "properties",
                             Map.of("report_id", Map.of("type", "string", "description", "The report id, e.g. R-1")),
                             "required", List.of("report_id")));
+            this.reports = reports;
+            this.desk = desk;
         }
 
         @Override
@@ -343,8 +465,78 @@ final class ContextEngineLiveRig {
             if (id == null || id.isBlank()) {
                 return ToolResult.error("report_id is required");
             }
-            return ToolResult
-                    .success("R-1".equalsIgnoreCase(id.trim()) ? plantedReport() : "Report " + id + ": no entries.");
+            for (Map.Entry<String, String> report : reports.entrySet()) {
+                if (!report.getKey().equalsIgnoreCase(id.trim())) {
+                    continue;
+                }
+                if (desk != null && !desk.handOut(report.getKey())) {
+                    return ToolResult.success("Report " + report.getKey() + ALREADY_DELIVERED);
+                }
+                return ToolResult.success(report.getValue());
+            }
+            return ToolResult.success("Report " + id + ": no entries.");
+        }
+    }
+
+    /**
+     * Which reports a comparison rig has handed out. A source that serves a thing once — a rotated log, a consumed
+     * queue — is what the comparison's report tool plays, and this is where that source's state lives: in the rig, for
+     * one rig's lifetime, so two engines' runs cannot touch each other. Thread-safe.
+     */
+    static final class ReportDesk {
+
+        private final Set<String> served = ConcurrentHashMap.newKeySet();
+        private final AtomicInteger refused = new AtomicInteger();
+
+        /** Marks {@code id} handed out. False, and counted, when it already was. */
+        boolean handOut(String id) {
+            if (served.add(id)) {
+                return true;
+            }
+            refused.incrementAndGet();
+            return false;
+        }
+
+        boolean served(String id) {
+            return served.contains(id);
+        }
+
+        /** How many times a report was asked for again and not given. */
+        int refusedCount() {
+            return refused.get();
+        }
+    }
+
+    /** What separates one wiring of this rig from another. Immutable but for the desk it carries. */
+    private static final class Wiring {
+
+        private final boolean rolling;
+        private final boolean comparison;
+        private final String systemPrompt;
+        private final ModelContextLimits limits;
+        private final Map<String, String> reports;
+        private final ReportDesk reportDesk;
+
+        private Wiring(boolean rolling, boolean comparison, String systemPrompt, ModelContextLimits limits,
+                Map<String, String> reports, ReportDesk reportDesk) {
+            this.rolling = rolling;
+            this.comparison = comparison;
+            this.systemPrompt = systemPrompt;
+            this.limits = limits;
+            this.reports = reports;
+            this.reportDesk = reportDesk;
+        }
+
+        /** The live scenario's wiring: the small window for rolling, the framework's table for the default engine. */
+        static Wiring scenario(boolean rolling) {
+            return new Wiring(rolling, false, SYSTEM_PROMPT,
+                    rolling ? SMALL_WINDOW.resolve("") : InMemoryModelContextWindowRegistry.withDefaults().resolve(""),
+                    Map.of("R-1", plantedReport()), null);
+        }
+
+        static Wiring comparison(boolean rolling, Map<String, String> reports) {
+            return new Wiring(rolling, true, ContextPressureTasks.SYSTEM_PROMPT, COMPARISON_LIMITS,
+                    Map.copyOf(Objects.requireNonNull(reports, "reports cannot be null")), new ReportDesk());
         }
     }
 
@@ -401,6 +593,133 @@ final class ContextEngineLiveRig {
 
         List<String> failures() {
             return List.copyOf(failures);
+        }
+    }
+
+    /**
+     * The client a comparison rig's executor calls through: forwards to the real one and records each call — the
+     * estimated size of the view it sent, the input tokens the provider reported, and the tools the answer asked for.
+     *
+     * <p>
+     * <strong>Every overload goes to the same overload of the delegate.</strong> The executor's gateway calls the
+     * system-prompt-parts overloads, which are {@code default} methods on {@link LlmClient} that a provider client
+     * overrides for cache boundaries, cancellation and streaming. Forwarding only the {@code String} overload, as
+     * {@link SummaryCallRecorder} may, would let the defaults concatenate the parts and change the request the
+     * provider is sent — and the rig would measure a request no unwrapped client makes.
+     */
+    static final class MainCallRecorder implements LlmClient {
+
+        private final LlmClient delegate;
+        private final TokenEstimator estimator;
+        private final List<Integer> sentViewTokens = new CopyOnWriteArrayList<>();
+        private final List<String> toolUses = new CopyOnWriteArrayList<>();
+        private final AtomicLong reportedPromptTokens = new AtomicLong();
+
+        MainCallRecorder(LlmClient delegate, TokenEstimator estimator) {
+            this.delegate = Objects.requireNonNull(delegate, "delegate cannot be null");
+            this.estimator = Objects.requireNonNull(estimator, "estimator cannot be null");
+        }
+
+        @Override
+        public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools) {
+            sent(systemPrompt, messages);
+            return received(delegate.sendMessage(systemPrompt, messages, tools));
+        }
+
+        @Override
+        public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
+                LlmModel modelConfig) {
+            sent(systemPrompt, messages);
+            return received(delegate.sendMessage(systemPrompt, messages, tools, modelConfig));
+        }
+
+        @Override
+        public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
+                LlmModel modelConfig, LlmCallMetadata metadata) {
+            sent(systemPrompt, messages);
+            return received(delegate.sendMessage(systemPrompt, messages, tools, modelConfig, metadata));
+        }
+
+        @Override
+        public LlmResponse sendMessage(SystemPromptParts systemPromptParts, List<Message> messages,
+                List<ToolDefinition> tools, LlmModel modelConfig, LlmCallMetadata metadata) {
+            sent(systemPromptParts.concatenated(), messages);
+            return received(delegate.sendMessage(systemPromptParts, messages, tools, modelConfig, metadata));
+        }
+
+        @Override
+        public LlmResponse sendMessage(SystemPromptParts systemPromptParts, List<Message> messages,
+                List<ToolDefinition> tools, LlmModel modelConfig, LlmCallMetadata metadata,
+                LlmCancellation cancellation) {
+            sent(systemPromptParts.concatenated(), messages);
+            return received(
+                    delegate.sendMessage(systemPromptParts, messages, tools, modelConfig, metadata, cancellation));
+        }
+
+        @Override
+        public LlmResponse sendMessageStreaming(SystemPromptParts systemPromptParts, List<Message> messages,
+                List<ToolDefinition> tools, LlmModel modelConfig, LlmCallMetadata metadata, LlmStreamingOptions options,
+                LlmStreamSink sink) {
+            sent(systemPromptParts.concatenated(), messages);
+            return received(delegate.sendMessageStreaming(systemPromptParts, messages, tools, modelConfig, metadata,
+                    options, sink));
+        }
+
+        @Override
+        public LlmResponse sendMessageStreaming(SystemPromptParts systemPromptParts, List<Message> messages,
+                List<ToolDefinition> tools, LlmModel modelConfig, LlmCallMetadata metadata, LlmStreamingOptions options,
+                LlmStreamSink sink, LlmCancellation cancellation) {
+            sent(systemPromptParts.concatenated(), messages);
+            return received(delegate.sendMessageStreaming(systemPromptParts, messages, tools, modelConfig, metadata,
+                    options, sink, cancellation));
+        }
+
+        @Override
+        public String getProviderName() {
+            return delegate.getProviderName();
+        }
+
+        @Override
+        public Optional<String> getDefaultModelName() {
+            return delegate.getDefaultModelName();
+        }
+
+        private void sent(String systemPrompt, List<Message> messages) {
+            sentViewTokens.add(estimator.estimate(systemPrompt, messages));
+        }
+
+        private LlmResponse received(LlmResponse response) {
+            if (response.hasTokenUsage()) {
+                reportedPromptTokens.addAndGet(response.getTokenUsage().getPromptTokens());
+            }
+            for (ToolUse use : response.getToolUses()) {
+                toolUses.add(use.getName());
+            }
+            return response;
+        }
+
+        /** The calls made, counting one that the provider then refused. */
+        int count() {
+            return sentViewTokens.size();
+        }
+
+        /** The estimated size of each call's view, system prompt included, in call order. */
+        List<Integer> sentViewTokens() {
+            return List.copyOf(sentViewTokens);
+        }
+
+        /**
+         * The input tokens the provider reported, summed over the calls that were answered. Both provider clients put
+         * the provider's whole input count here, and neither asks for prompt caching, so the two are the same
+         * quantity; a scripted client reports none.
+         */
+        long reportedPromptTokens() {
+            return reportedPromptTokens.get();
+        }
+
+        /** How many times an answer asked for the tool named {@code toolName}. */
+        int toolUsesNamed(String toolName) {
+            return (int) toolUses.stream().filter(toolName::equals).count();
         }
     }
 }

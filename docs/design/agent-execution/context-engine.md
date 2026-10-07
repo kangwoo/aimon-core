@@ -829,3 +829,128 @@ live 테스트의 keyless 쌍둥이가 처음 돌 때 드러난 결함이다. �
     blocking 경로에서 미응답 앞의 절단면이 정한 prune 이 이미 읽은 결과만 가리는 것
     (`atTheBlockingLimitAnOlderReadResultIsPrunedByTheCutBeforeTheUnreadPart`), 수동 `/compact` 가 중단된 턴의 미응답 입력 앞에서
     멈추고 미응답 입력뿐이면 실패하는 것(`aManualCompactionOfAnInterruptedTurn…`, `aManualCompactionOfAViewThatIsOnlyUnansweredInput…`)
+
+### 13.11 engine 을 비교하는 과제
+
+*(2026-10-07)* `ContextEngineLiveRig` 의 기존 시나리오는 "프로바이더가 engine 의 요청을 받아 주는가" 와 "사실 하나가 롤링
+사이클을 넘어 돌아오는가" 를 통과/실패로 본다. 두 engine 을 **같은 입력**으로 돌려 정답률과 비용을 나란히 놓는 과제는
+없었고, 그 시나리오의 두 engine 은 서로 다른 창 위에 있다(롤링은 8K 창에 비율 0.3, 기본 engine 은 프레임워크 창 표). 이
+절은 그 비교를 위해 리그에 더한 것을 적는다. 프로덕션 코드와 SPI 는 바뀌지 않았다. 승인된 설계와 구현이 거기서 갈라진
+자리는 [`context-engine-pressure-rig.md`](context-engine-pressure-rig.md), 남은 일은
+[`../../backlog/context-engine-pressure-rig-open-items.md`](../../backlog/context-engine-pressure-rig-open-items.md) 에 있다.
+**기준선 수치는 아직 없다**(CP-1) — 아래는 리그의 정의이지 측정 결과가 아니다.
+
+**압력.** 과제가 첫 질문 **전에** 로그에 밀어 넣는 입력(압력 단계의 사용자 입력 + 그것이 가져온 도구 결과)의 추정 토큰
+합을 effective window 로 나눈 값이다. 추정은 engine 이 임계값 판정에 쓰는 `HeuristicTokenEstimator` 다 — 압축을 일으키는
+것이 그 숫자다. 질문 문장은 세지 않는다. 생성기는 합이 `p × effective` 이상이 될 때까지 **압력 단위**(도구 결과 하나)를
+더하고, 실행에서 실제로 닿은 압력을 다시 재어 결과에 싣는다. 수준은 0.3 이상 8 이하다. **0.3 이 대조**다 — 어느 engine 도
+압축하지 않아야 하고, 여기서 틀리는 모델은 압력과 무관하게 과제를 못 푸는 것이다.
+
+**비교 프로파일** (`ContextEngineLiveRig.forComparison`). 기존 두 팩토리와 그 숫자는 그대로다.
+
+| 항목 | 값 |
+|------|----|
+| 창 | `contextWindow 16_000`, `reservedOutputTokens 2_000` → effective 14,000. 버퍼 1,000 / 1,000 / 400 |
+| 기본 engine | 그 창 위의 `DefaultCompactionGuard` + `DefaultContextEngine`(V2, 뷰 모드). AUTO 13,000, blocking 13,600 |
+| 롤링 engine | `RollingContextEngine.builder()` 에 **비율을 주지 않는다** — 배포되는 기본값 그대로. 임계값 8,400, tail 2,800, 요약 목표 1,120, prune 하한 500 |
+| 도구 | 두 engine 모두 `fetch_report`. `SessionHistoryTool` 은 `OrcaAgentRuntimeFactory` 가 하는 대로 **롤링에만**(§13.4) |
+| 시스템 프롬프트 | 두 engine 에 같은 문장이고 도구를 이름으로 부르지 않는다. 다른 것은 도구 목록뿐이다 |
+| 실행기의 클라이언트 | `MainCallRecorder` 로 감싼다 — 호출마다 보낸 뷰의 추정 토큰, 프로바이더가 센 입력 토큰, 응답이 요청한 도구 이름. `LlmClient` 의 모든 오버로드를 **같은 오버로드로** 넘긴다. `String` 오버로드만 감싸면 default 구현이 system prompt parts 를 이어 붙여 프로바이더가 받는 요청의 모양이 바뀐다 |
+
+- **왜 16K 인가.** `SessionHistory` 검색 결과의 크기는 창에 비례하지 않는다. 보통은 일치 하나에 이웃 메시지를 더한 수천
+  자지만, 최악은 약 30,000자(약 8.6K 토큰)다 — 상한(`SEARCH_RESULT_PARTS × maxResultChars` = 20,000자)은 일치를 붙이기
+  **전에** 검사하고, 일치 하나는 앞뒤 두 메시지씩을 각각 2,000자까지 달고 온다. 그 결과는 미응답이라 원문으로 남는다
+  (§13.10). 16K 에서는 그 최악도 받는다: 임계값과 blocking 사이에서는 `FALLBACK` 으로 그대로 보내고, blocking 에 닿으면
+  미응답 앞을 전부 흡수해 약 9.9K 로 나간다. 8K 창에서는 미응답 부분만으로 blocking 을 넘을 수 있고, 그러면 리그는 "롤링이
+  사실을 잃었다" 가 아니라 "창이 되찾기 도구보다 작다" 를 재게 된다. 그래서 **롤링 칸의 질문 단계에 `FALLBACK` 이 보이는
+  것은 예상한 동작**이고 그 칸을 버릴 이유가 아니다
+- **롤링은 prune 을 먼저 한다 — 그래서 단위의 크기가 무엇을 재는지를 정한다**(§5.5). prune 하한 이상의 도구 결과로 만든
+  압력은 전부 placeholder 로 접히고, 그것으로 임계값 아래가 되는 동안 롤링은 요약하지 않는다. 과제마다 단위를 나눈다
+  - **작은 단위(약 1,450자, 도구 메시지로 약 420 토큰) — needle.** prune 하한 **아래**라 지울 수 없고 롤링은 요약해야 한다.
+    needle 의 사실은 사용자 메시지라 어차피 prune 대상이 아니므로, 이렇게 해야 사실이 실제로 span 에 흡수된다
+  - **큰 단위(약 3,850자, 약 1,110 ~ 1,160 토큰) — keyValue · logTriage.** prune 대상이고, `SessionHistory` 의 2,000자
+    절단보다 길어 `offset` 으로 이어 읽는 경로가 쓰이고, 넷을 더해도 대조 수준의 여유(계획 ≤ 롤링 임계값의 0.6 배) 안에
+    든다. 이 두 과제의 롤링 기준선은 **prune 기준선**이다
+
+**세 과제** (`ContextPressureTasks`). 사용자 입력의 순서와 도구가 돌려주는 본문이 전부 `(과제, 시드, 압력)` 에서 정해지고,
+같은 과제 인스턴스 하나를 두 engine 에 준다. 1턴은 사실이 없는 브리핑이다 — 롤링의 head 는 첫 사용자 메시지를 원문으로
+고정하므로(§5.2 · §13.6), 거기 사실을 두면 롤링이 과제와 무관하게 맞힌다. 압력 단계는 턴마다 `fetch_report` 한 번, 질문 단계는
+턴마다 질문 하나다.
+
+| 과제 | 사실이 놓이는 자리 | 질문 | 롤링에서 재는 것 |
+|------|-------------------|------|------------------|
+| needle (사실 보존) | 2 ~ 7턴의 **사용자 메시지** 여섯. 그 뒤로 사실과 무관한 작은 리포트 | 사실마다 하나(6), 전부 `EARLY` | `ROLLING` 요약이 사실을 지키는가, 잃었으면 검색으로 되찾는가 |
+| keyValue (키-값 조회) | **도구 결과** — `svc.<name>.<attr> = <value>` 약 100줄의 페이지가 곧 단위 | 8. 물은 키의 다음 줄에 한 글자만 다른 이웃 키가 있다 | prune 이 가린 결과에서 한 줄을 되찾는가 — 검색, 그리고 페이지 뒤쪽이면 `offset` 읽기 |
+| logTriage (로그 triage) | **도구 결과** — 서비스 로그 덤프가 곧 단위. INFO 잡음 속에 오류 코드 · 노드 · 요청 id 를 가진 WARN/ERROR 세 줄 | 6. 덤프를 지목한 것, 오류 코드만 준 것(내용으로 찾아야 한다), 덤프를 지목하되 같은 코드가 다른 덤프의 다른 노드에 있는 것 | 위와 같다 |
+
+- **stratum.** keyValue · logTriage 의 질문은 출처의 위치로 나뉜다 — 마지막 두 단위(롤링의 tail 에 드는 양)가 `LATE`,
+  나머지의 앞 절반이 `EARLY`, 뒤 절반이 `MIDDLE`. **늦은 것부터 묻는다**: 롤링에서 `LATE` 의 출처는 첫 되찾기 결과가 올
+  때까지만 원문이라, 다른 순서로 물으면 `LATE` 도 가려진 결과에 대고 묻게 된다
+- **needle 에는 층이 없다.** 사실은 전부 첫 리포트 앞에 있고 대조를 넘는 어느 수준에서도 첫 압축이 흡수한다. needle 에서
+  압축이 치른 값을 가르는 비교는 stratum 이 아니라 **같은 질문의 대조 수준**이다
+- **한 번만 내주는 `fetch_report`.** 비교 리그의 리포트 도구는 id 를 처음 받으면 본문을, 그 뒤로는 "이미 내주었다" 는 고정
+  문장을 돌려준다(오류가 아닌 결과 — 오류는 재시도를 부른다). 한 번 흘러가면 다시 오지 않는 출처의 모양이다. 그렇게 하지
+  않으면 기본 engine 의 모델이 다시 가져와서 답하고, engine 이 무엇을 지켰는지와 무관한 정답이 된다. 내준 id 는 리그의
+  `ReportDesk` 가 갖는다 — 도구 규칙의 "무상태" 는 프로덕션 도구의 것이고 이것은 리그 하나의 수명 안에서 출처를 흉내 내는
+  대역이다. 기존 시나리오의 리포트 도구는 지금처럼 몇 번이든 내준다
+- **채점은 문자열 대조다.** 답은 `QX7-MULE-4417` 꼴의 생성된 토큰이고 말뭉치에 정확히 한 번 나온다. 정규화한 최종 답에
+  정답이 있고 미끼(같은 꼴의 다른 값)가 없으면 `CORRECT`, `UNKNOWN` 이거나 그 꼴의 토큰이 없으면 `ABSTAINED`, 다른 값을
+  답했으면 `WRONG`, 턴이 실패했으면 `FAILED`. `WRONG` 과 `ABSTAINED` 를 가르는 것은 요약이 사실을 잃을 때 침묵이 아니라
+  틀린 값으로 나타나는지를 보려는 것이다. LLM 심판은 없다
+
+**러너와 보고서** (`ContextPressureRun`). 칸 하나는 과제 × engine × 수준이다. 러너는 모델이나 프로바이더가 한 일로 던지지
+않는다 — 수치는 전부 실행 결과의 압축 기록, 두 recorder, `ReportDesk` 에서 읽는다.
+
+| `status` | 뜻 |
+|----------|----|
+| `OK` | 압력에 닿았고(요청의 90% 이상) 대조 칸이면 압축이 없었다 |
+| `INVALID_CONTROL` | 대조 칸(계획 토큰 ≤ 롤링 임계값의 0.6 배)인데 압축 기록이 있다. 단언이 아니라 기록이다 |
+| `INVALID_PRESSURE` | 모델이 fetch 를 건너뛰어 닿은 압력이 요청의 90% 아래다. 다시 시키지 않는다 — 두 engine 의 입력이 달라진다 |
+| `ERROR` | 압력 단계의 턴이 실패했다. 그 칸을 닫고 다음 칸으로 간다. 질문 턴의 실패는 그 질문만 `FAILED` 다 |
+
+읽는 법:
+
+- **먼저 걸러 낸다** — `status` 가 `OK` 가 아닌 줄, `failed turns > 0`, 롤링 줄의 `FULL > 0`(기본 engine 으로 물러났다)
+- **대조 수준의 칸이 `OK` 이고 정답률 1.0 이어야** 그 과제 · 모델 · engine 의 높은 수준을 engine 비교로 읽는다
+- **needle 의 롤링 줄은 요약을 잰다.** 압력 단계가 `ROLLING ≥ 1`, `PRUNE = 0` 이어야 한다
+- **keyValue · logTriage 의 롤링 줄은 prune 을 잰다.** 수준 2 의 압력 단계는 `PRUNE ≥ 1`, `ROLLING = 0` 이고, 여기서 롤링의
+  오답은 "요약이 잃었다" 가 아니라 "가려진 결과를 되찾지 못했다" 다. **수준 4 는 여유가 수십 토큰이라** 답에 군말을 붙이는
+  모델에서는 압력 단계에 `ROLLING` 이 보일 수 있고, 그 칸은 prune 과 요약이 섞인 것이다
+- `sent view sum` 이 비용의 대리값이다 — "정답률은 같은데 합이 크다" 가 읽고 지나간 결과를 임계값까지 싣고 가는 값이다.
+  `reported input` 은 프로바이더가 센 입력 토큰이고, 두 클라이언트 모두 캐시를 요청하지 않으므로 두 프로바이더에서 같은 양이다
+- `SessionHistory calls` 는 롤링이 정답률을 사는 데 든 값이다. 기본 engine 에는 그 도구가 없어 언제나 0 이다
+- `refetch attempts` 는 어느 engine 에서든 0 이 아닐 수 있다 — 모델이 다시 가져오려다 거절당한 횟수다. 기본 engine 의
+  `ABSTAINED` 옆에 이 수가 높으면 "되찾을 길이 있었다면 썼을 것" 으로 읽는다(CP-3)
+
+**재지 않는 것.**
+
+- **한 번의 실행은 한 표본이다.** 과제당 질문은 6 ~ 8 개이고 모델은 결정적이지 않다. 한두 문제의 차이는 잡음이다
+- **큰 도구 결과에 대한 롤링의 요약** — keyValue · logTriage 는 prune 기준선이다. 롤링의 요약은 needle 만 본다
+- **다시 가져올 수 있는 출처** — 실제 도구 다수는 다시 부를 수 있고, 그때 뷰에서 잃은 것의 값은 오답이 아니라 다시 부르는
+  비용이다. 이 리그의 기본 engine 은 그만큼 실제보다 불리하다(CP-3)
+- **창이 16K 다.** 이 리그는 "압력이 같을 때 두 engine 이 어떻게 다른가" 를 재고, "실제 창에서 그 압력에 얼마나 자주
+  닿는가" 는 재지 않는다
+- **턴 사이의 압력만 만든다.** 한 턴 안에서 iteration 이 수십 번 도는 실행은 없다
+- 재는 모델은 기존 라이브 클래스의 것이다(CP-4)
+
+**키 없이 붙드는 것.** `ContextPressureTasksTest` 는 생성의 결정성, 압력, 대조의 여유, 단위가 prune 하한의 어느 쪽에
+있는지(`RollingContextEngine.DEFAULT_PRUNE_MIN_TOKENS` 를 읽어 쓴다), 답의 유일성, 채점을 본다. 두 프로바이더 모듈은 테스트
+소스를 공유하지 않아 과제 코드가 사본 둘이고, 어긋남은 **말뭉치의 SHA-256 지문**이 붙든다 — 두 모듈의 테스트가 같은
+리터럴과 대조하므로 한쪽 생성기만 고치면 그 모듈이 빨개진다. `ContextPressureRunTest` 는 세 과제를 두 engine 에 스크립트
+모델로 돌린다: 대조에서 압축이 없음, needle 이 롤링을 요약하게 만듦(`ROLLING ≥ 2`, `PRUNE = 0`, 물러나지 않음), 큰 단위가
+prune 됨(`ROLLING = 0`), 기본 engine 이 잃은 것을 러너가 잃었다고 보고함, 한 번만 내주는 리포트, 실패한 질문 뒤에 다음
+질문이 돎, 네 `status`, recorder 가 오버로드의 모양을 바꾸지 않음. 라이브 클래스는 **정답률을 단언하지 않는다** — 재는
+대상이지 통과 조건이 아니다.
+
+**라이브 실행.** `OpenAIContextPressureLiveTest` · `AnthropicContextPressureLiveTest` 는 프로바이더 키 게이트를 그대로 따르고,
+그 안에서 `AIMON_CONTEXT_PRESSURE`(값이 곧 수준 목록)가 없으면 건너뛴다 — 한 번의 비용이 기존 라이브 계층 전체의 수십 배에서 백 배라
+키가 export 된 셸의 평범한 빌드가 그것을 치르지 않게 한 것이다(CP-2). 명령, 비용, 보고서의 위치는
+[`CONTRIBUTING.md` › Live-API tests](../../../CONTRIBUTING.md#live-api-tests) 가 정본이다.
+
+| 관심사 | 파일 (두 프로바이더 모듈의 테스트 소스에 같은 이름으로) |
+|--------|------|
+| 비교 프로파일 · `ReportDesk` · `MainCallRecorder` | [`ContextEngineLiveRig.java`](../../../modules/aimon-llm-openai/src/test/java/at/aimon/core/llms/openai/ContextEngineLiveRig.java) |
+| 과제의 생성 · 채점 · 지문 | [`ContextPressureTasks.java`](../../../modules/aimon-llm-openai/src/test/java/at/aimon/core/llms/openai/ContextPressureTasks.java) |
+| 러너 · 결과 · 보고서 | [`ContextPressureRun.java`](../../../modules/aimon-llm-openai/src/test/java/at/aimon/core/llms/openai/ContextPressureRun.java) |
+| 키 없는 검사 | [`ContextPressureTasksTest.java`](../../../modules/aimon-llm-openai/src/test/java/at/aimon/core/llms/openai/ContextPressureTasksTest.java), [`ContextPressureRunTest.java`](../../../modules/aimon-llm-openai/src/test/java/at/aimon/core/llms/openai/ContextPressureRunTest.java) |
+| 라이브 | [`OpenAIContextPressureLiveTest.java`](../../../modules/aimon-llm-openai/src/test/java/at/aimon/core/llms/openai/OpenAIContextPressureLiveTest.java), [`AnthropicContextPressureLiveTest.java`](../../../modules/aimon-llm-anthropic/src/test/java/at/aimon/core/llms/anthropic/AnthropicContextPressureLiveTest.java) |

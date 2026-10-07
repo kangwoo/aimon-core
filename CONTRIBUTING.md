@@ -63,7 +63,7 @@ If you're new and want a place to start, look for issues labeled `good first iss
 
 ### Live-API tests
 
-Six test classes call a provider's real API, and each one is gated on that provider's key with
+Eight test classes call a provider's real API, and each one is gated on that provider's key with
 `@EnabledIfEnvironmentVariable`:
 
 | Class | Module | Key |
@@ -71,9 +71,11 @@ Six test classes call a provider's real API, and each one is gated on that provi
 | `AnthropicThinkingLiveTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY` |
 | `AnthropicLlmClientIntegrationTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY` |
 | `AnthropicContextEngineLiveTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY` |
+| `AnthropicContextPressureLiveTest` | `aimon-llm-anthropic` | `ANTHROPIC_KEY`, and `AIMON_CONTEXT_PRESSURE` |
 | `OpenAIReasoningLiveTest` | `aimon-llm-openai` | `OPENAI_KEY` |
 | `OpenAILlmClientIntegrationTest` | `aimon-llm-openai` | `OPENAI_KEY` |
 | `OpenAIContextEngineLiveTest` | `aimon-llm-openai` | `OPENAI_KEY` |
+| `OpenAIContextPressureLiveTest` | `aimon-llm-openai` | `OPENAI_KEY`, and `AIMON_CONTEXT_PRESSURE` |
 
 **This tier has no CI signal at all.** No workflow supplies either key, so wherever the keys are
 absent — CI included — each of these classes reports `SKIPPED` and `checkAll` stays green. The
@@ -100,6 +102,56 @@ a prefill — and a forced `/compact` on the default engine in view mode. Togeth
 on `claude-haiku-4-5` and `gpt-4o-mini`. Each has a keyless twin, `ContextEngineLiveRigTest`, which runs
 the same scenario against a scripted model in every ordinary build, so a change that stops the scenario
 reaching its rolling cycles is caught without a key.
+
+**The two `*ContextPressureLiveTest` classes are not in the command above, and a key alone does not run
+them.** They compare the `default` and `rolling` context engines on three scripted tasks — fact retention,
+key-value lookup and log triage — at a given *view pressure*: the estimated tokens a task pushes into the
+session before its first question, as a multiple of the effective context window. One run makes hundreds
+of calls, so besides the key these classes need `AIMON_CONTEXT_PRESSURE`, whose value is the list of
+levels to run. Without it they report `SKIPPED`, even in a shell that has the key exported.
+
+```bash
+ANTHROPIC_KEY=... AIMON_CONTEXT_PRESSURE=0.3,2 \
+./gradlew :aimon-llm-anthropic:test --rerun \
+              --tests 'at.aimon.core.llms.anthropic.AnthropicContextPressureLiveTest'
+
+OPENAI_KEY=... AIMON_CONTEXT_PRESSURE=0.3,2 \
+./gradlew :aimon-llm-openai:test --rerun \
+              --tests 'at.aimon.core.llms.openai.OpenAIContextPressureLiveTest'
+```
+
+A level is a number from `0.3` to `8`; anything else stops the run before its first call. `0.3` is the
+control — neither engine should compact there — and belongs in every run, because a model that gets the
+control wrong cannot be used to compare the engines at a higher level. Against a scripted model the six
+cells of one level (three tasks on two engines) take about 130 calls and 0.4M estimated input tokens at
+`0.3`, 510 calls and 2.8M at `2`, and 960 calls and 5.9M at `4`, per provider; a real model takes at
+least that. The keyless twin `ContextPressureRunTest` writes those counts per cell to
+`build/reports/context-engine-pressure/keyless-call-counts.md` in each provider module, each time that
+module's `test` task really runs.
+
+These classes assert nothing about accuracy — accuracy is what they measure. The result is a report,
+`build/reports/context-engine-pressure/<provider>-<model>.md` under the provider's module, rewritten
+after every cell so a run that dies keeps what it has already paid for. It has one row per cell and one
+per question. Read it in this order:
+
+- Set aside every row whose `status` is not `OK`, every row with `failed turns` above 0, and every
+  `rolling` row with `FULL` above 0 — there the rolling engine fell back to the default one
+- Compare the engines at a higher level only for a task whose `0.3` rows are `OK` with accuracy 1.00.
+  `INVALID_CONTROL` means the control compacted, so it was not a control
+- In a `NEEDLE` row on `rolling` the pressure phase should show `ROLLING` and no `PRUNE`: that row
+  measures what the rolling summary kept
+- In a `KEY_VALUE` or `LOG_TRIAGE` row on `rolling` the pressure phase shows `PRUNE`, and at level `2` no
+  `ROLLING`: a wrong answer there is an elided tool result the model did not read back, not a fact a
+  summary lost. At level `4` a `ROLLING` may appear, and that row mixes the two
+- `sent view sum` is the cost; `SessionHistory calls` is what the rolling engine's accuracy cost in
+  lookups, and is always 0 on the default engine, which has no such tool
+- `refetch attempts` counts requests for a report that was already delivered — the source serves each
+  one once. A high count next to `ABSTAINED` on the default engine is a model that would have looked the
+  answer up if it could
+
+One run is one sample of six to eight questions per task, so a difference of a question or two is noise.
+What the tasks are, why the comparison uses a 16K window, and what it does not measure are in
+[`docs/design/agent-execution/context-engine.md` §13.11](docs/design/agent-execution/context-engine.md#1311-engine-을-비교하는-과제).
 
 **Every run costs money** — these are billed calls on the account the keys belong to. Never commit a
 key, and redact it from any failure output you paste into an issue or a pull request.

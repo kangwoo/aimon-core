@@ -39,6 +39,7 @@
 | [`interceptor.md`](agent-execution/interceptor.md) | `AgentExecutionInterceptor` — `execute()` 경계를 가로채는 동기 체인 |
 | [`compaction.md`](agent-execution/compaction.md) | 컨텍스트가 차기 전 대화 요약. 트리거 조건, 실패 처리, `/compact` |
 | [`context-engine.md`](agent-execution/context-engine.md) | (IMPLEMENTED, 차이는 §13) LLM 에 보낼 뷰를 정하는 `ContextEngine` — 판정·복구·`/compact` 를 한 자리에, 장기 대화용 롤링 engine |
+| [`context-engine-pressure-rig.md`](agent-execution/context-engine-pressure-rig.md) | (IMPLEMENTED — 테스트 소스만, 차이는 §9) `default` · `rolling` engine 을 같은 과제로 재는 뷰 압력 리그의 승인된 설계 — 두 engine 을 같은 16K 창에 놓는 비교 프로파일, 롤링이 prune 을 먼저 하므로 단위 크기가 재는 것을 정한다는 것, 한 번만 내주는 출처, 과금 실행의 opt-in. 지금의 리그는 `context-engine.md` §13.11 |
 | [`artifact.md`](agent-execution/artifact.md) | 에이전트가 만든 파일을 사용자에게 건네는 경로 |
 | [`integration-test-layers.md`](agent-execution/integration-test-layers.md) | `OrcaAgentRuntime` 통합 테스트의 계층 구분과 무엇을 어디서 검증하는가 |
 | [`max-tokens-truncation-reporting.md`](agent-execution/max-tokens-truncation-reporting.md) | `max_tokens` 에서 잘린 응답에 두 ReAct 루프가 같은 답을 주는 자리 — 잘린 도구 호출을 실행하지 않고 거절하는 이유, 포크의 `TRUNCATED`, 추론 토큰을 숫자로만 붙이는 WARN, thinking 기록 §16.8 과 백로그 L-16 의 정정 |

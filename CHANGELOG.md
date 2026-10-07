@@ -7,6 +7,24 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: tasks that compare the context engines under view pressure (tests only)
+
+- **`ContextEngineLiveRig` can now compare the `default` and `rolling` engines on the same input.** A second wiring,
+  `forComparison`, puts both engines on one 16K window with the rolling engine at the ratios it ships with, and three
+  scripted tasks — fact retention, key-value lookup, log triage — take *view pressure* (estimated tokens pushed into the
+  session before the first question, as a multiple of the effective window) as a parameter. Each cell reports accuracy
+  next to what the rig can already observe: compactions by kind, the estimated size of every view sent, summary calls,
+  `SessionHistory` calls. The task input is fixed by a seed and given unchanged to both engines. No production code
+  changed; the two provider modules carry copies of the test sources, held together by a fingerprint of the corpus.
+- **A keyless twin runs in every build.** `ContextPressureTasksTest` and `ContextPressureRunTest` drive the tasks with a
+  scripted model, so a change that stops the needle task making the rolling engine summarize, or shrinks the control
+  level's room, is caught without a key.
+- **The live classes need an opt-in besides the key.** `AnthropicContextPressureLiveTest` and
+  `OpenAIContextPressureLiveTest` are gated on the existing `ANTHROPIC_KEY` / `OPENAI_KEY` and additionally skip unless
+  `AIMON_CONTEXT_PRESSURE` lists the levels to run, because one run is millions of tokens. **No baseline has been
+  measured yet** — this adds the instrument the shelved self-managed engine's start condition asks for, not a result.
+  How to run it and read its report is under [`CONTRIBUTING.md` › Live-API tests](CONTRIBUTING.md#live-api-tests); the
+  definitions are in `docs/design/agent-execution/context-engine.md` §13.11.
 ### Fixed: a summary request is always closed with the instruction to summarize
 
 A compaction's summary call could come back empty, or come back with an answer to the conversation instead of a summary
