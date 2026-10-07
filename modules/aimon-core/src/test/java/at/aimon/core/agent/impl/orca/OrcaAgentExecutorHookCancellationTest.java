@@ -277,6 +277,47 @@ class OrcaAgentExecutorHookCancellationTest {
     }
 
     @Test
+    @DisplayName("EE-93: a slash-command turn's coordinator is open during onStart and closed while the command runs")
+    void commandTurn_coordinatorIsClosedBeforeTheCommandRuns() {
+        final AtomicReference<Boolean> closedDuringOnStart = new AtomicReference<>();
+        final AtomicReference<Boolean> closedDuringCommand = new AtomicReference<>();
+        hookRegistry.register(HookEventType.ON_START, (OnStartHook) context -> {
+            closedDuringOnStart.set(published.get().isClosed());
+            return HookResult.success();
+        });
+        ping.duringExecution = () -> {
+            closedDuringCommand.set(published.get().isClosed());
+            // What a host's interrupt does now: it lands on a closed coordinator and trips nothing.
+            published.get().requestInterrupt(InterruptReason.USER_SIGINT);
+        };
+
+        final OrcaAgentExecutionResult result = executor().execute(runtime(null), request("/ping"));
+
+        assertThat(closedDuringOnStart.get()).as("an interrupt during onStart ends the turn").isFalse();
+        assertThat(closedDuringCommand.get()).as("a command is not interruptible, and the coordinator says so")
+                .isTrue();
+        assertThat(published.get().getSignal().isCancelled()).isFalse();
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(ping.executions).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("EE-93: a ReAct turn's coordinator is open through its onStop and closed when the turn returns")
+    void reactTurn_coordinatorIsOpenThroughOnStopAndClosedAfter() {
+        final AtomicReference<Boolean> closedDuringOnStop = new AtomicReference<>();
+        hookRegistry.register(HookEventType.ON_STOP, (OnStopHook) context -> {
+            closedDuringOnStop.set(published.get().isClosed());
+            return HookResult.success();
+        });
+
+        final OrcaAgentExecutionResult result = executor().execute(runtime(null), request("hi"));
+
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
+        assertThat(closedDuringOnStop.get()).isFalse();
+        assertThat(published.get().isClosed()).isTrue();
+    }
+
+    @Test
     @DisplayName("the compaction gate is handed the turn's signal, and a BLOCK after an interrupt is the interrupt")
     void reactTurn_compactionBlockedAfterAnInterrupt_endsTheTurnInterrupted() {
         final AtomicReference<Optional<CancellationSignal>> gateSignal = new AtomicReference<>();
@@ -497,6 +538,8 @@ class OrcaAgentExecutorHookCancellationTest {
     /** A slash command that counts its executions. */
     private static final class PingCommand extends SystemCommand implements DirectExecutable {
         final AtomicInteger executions = new AtomicInteger();
+        volatile Runnable duringExecution = () -> {
+        };
 
         PingCommand() {
             super("ping", "ping");
@@ -505,6 +548,7 @@ class OrcaAgentExecutorHookCancellationTest {
         @Override
         public CommandExecutionResult execute(CommandExecutionContext context, DirectCommandExecutionRequest request) {
             executions.incrementAndGet();
+            duringExecution.run();
             return CommandExecutionResult.success("pong");
         }
     }

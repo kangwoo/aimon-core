@@ -115,10 +115,12 @@ public final class LiveSessionStatus {
      * {@link LiveSession#interrupt(at.aimon.core.agent.interrupt.InterruptReason)} would have a coordinator to trip.
      *
      * <p>
-     * It says a coordinator exists, not that tripping it stops anything. The coordinator is published before the
-     * turn's {@code onStart} hooks, so this is {@code true} while the phase is still {@link Phase#IDLE}; and it stays
-     * {@code true} for the rest of a slash-command turn, where an interrupt after those hooks is inert because a
-     * command is not interruptible.
+     * The coordinator is published before the turn's {@code onStart} hooks, so this is {@code true} while the phase
+     * is still {@link Phase#IDLE}. It is {@code false} once the executor has closed the coordinator: for the rest of
+     * a slash-command turn after those hooks, because a command is not interruptible, and for any turn in the short
+     * stretch between the end of its work and its retirement, while it is being persisted. It is also {@code false}
+     * before the hooks, while the turn is still being set up — an interrupt in that stretch is kept and delivered
+     * when the coordinator appears, but the flag does not promise it.
      *
      * @return {@code true} iff an interruptible turn is currently active
      */

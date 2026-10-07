@@ -291,8 +291,185 @@ class DefaultLiveSessionInterruptTest {
     }
 
     // ============================================================
+    // An interrupt that arrives before the coordinator is published (EE-93)
+    // ============================================================
+
+    @Test
+    @DisplayName("an interrupt before the coordinator is published is kept and delivered when it is")
+    void interruptBeforePublicationIsKeptAndDelivered() throws Exception {
+        final OrcaAgentRuntime context = createContext();
+        final SessionId sessionId = SessionId.of("ee93-kept");
+        final CapturingStreamingExecutor executor = new CapturingStreamingExecutor().deferringPublication();
+
+        try (DefaultLiveSession session = new DefaultLiveSession(sessionId, context, executor,
+                LiveSessionOptions.defaults())) {
+            final CompletionStage<?> stage = session.submitAsync("hi", e -> {
+            });
+            // The turn is installed, the executor is still rendering the prompt: nothing to trip yet.
+            assertThat(session.status().isInterruptible()).isFalse();
+
+            session.interrupt(InterruptReason.USER_SIGINT);
+            // Kept, not promised: the flag stays false until there is a coordinator to trip.
+            assertThat(session.status().isInterruptible()).isFalse();
+            final InterruptCoordinator coordinator = executor.publish();
+
+            assertThat(coordinator.getSignal().isCancelled()).isTrue();
+            assertThat(coordinator.getSignal().getReason()).contains(InterruptReason.USER_SIGINT);
+
+            executor.completeNext(done(sessionId));
+            stage.toCompletableFuture().get(1, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    @DisplayName("the first reason kept is the one delivered")
+    void firstKeptReasonWins() throws Exception {
+        final OrcaAgentRuntime context = createContext();
+        final SessionId sessionId = SessionId.of("ee93-first");
+        final CapturingStreamingExecutor executor = new CapturingStreamingExecutor().deferringPublication();
+        final MessageQueueManager queue = new DefaultMessageQueueManager(new InMemoryMessageQueueRepository());
+
+        try (DefaultLiveSession session = new DefaultLiveSession(sessionId, context, executor,
+                LiveSessionOptions.defaults(), queue)) {
+            final CompletionStage<?> stage = session.submitAsync("hi", e -> {
+            });
+
+            session.interrupt(InterruptReason.USER_SIGINT);
+            queue.enqueue(QueuedInput.builder().inputText("now please").priority(QueuedInputPriority.NOW)
+                    .agentRuntimeId(context.getId()).build());
+            final InterruptCoordinator coordinator = executor.publish();
+
+            assertThat(coordinator.getSignal().getReason()).contains(InterruptReason.USER_SIGINT);
+
+            executor.completeNext(done(sessionId));
+            stage.toCompletableFuture().get(1, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    @DisplayName("a NOW-priority input enqueued before the coordinator is published preempts that turn, and stays queued")
+    void nowPriorityEnqueueBeforePublicationPreemptsTheTurn() throws Exception {
+        final OrcaAgentRuntime context = createContext();
+        final SessionId sessionId = SessionId.of("ee93-now");
+        final CapturingStreamingExecutor executor = new CapturingStreamingExecutor().deferringPublication();
+        final MessageQueueManager queue = new DefaultMessageQueueManager(new InMemoryMessageQueueRepository());
+
+        try (DefaultLiveSession session = new DefaultLiveSession(sessionId, context, executor,
+                LiveSessionOptions.defaults(), queue)) {
+            final CompletionStage<?> stage = session.submitAsync("hi", e -> {
+            });
+
+            // The enqueue event is delivered inside enqueue(), so it addresses the turn that is active at that
+            // instant — this one, which has not reached its onStart hooks.
+            queue.enqueue(QueuedInput.builder().inputText("now please").priority(QueuedInputPriority.NOW)
+                    .agentRuntimeId(context.getId()).build());
+            final InterruptCoordinator coordinator = executor.publish();
+
+            assertThat(coordinator.getSignal().isCancelled()).isTrue();
+            assertThat(coordinator.getSignal().getReason()).contains(InterruptReason.NOW_PRIORITY_INPUT);
+            // The preempted turn consumes nothing: the input is still there for whoever runs next.
+            assertThat(queue.snapshot()).hasSize(1);
+            assertThat(queue.snapshot().get(0).getPriority()).isEqualTo(QueuedInputPriority.NOW);
+
+            executor.completeNext(done(sessionId));
+            stage.toCompletableFuture().get(1, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    @DisplayName("close() before the coordinator is published still reaches the turn, with SESSION_RELEASED")
+    void closeBeforePublicationReachesTheTurn() throws Exception {
+        final OrcaAgentRuntime context = createContext();
+        final SessionId sessionId = SessionId.of("ee93-close");
+        final CapturingStreamingExecutor executor = new CapturingStreamingExecutor().deferringPublication();
+
+        final DefaultLiveSession session = new DefaultLiveSession(sessionId, context, executor,
+                LiveSessionOptions.defaults());
+        final CompletionStage<?> stage = session.submitAsync("hi", e -> {
+        });
+
+        session.close();
+        final InterruptCoordinator coordinator = executor.publish();
+
+        assertThat(coordinator.getSignal().isCancelled()).isTrue();
+        assertThat(coordinator.getSignal().getReason()).contains(InterruptReason.SESSION_RELEASED);
+
+        executor.completeNext(done(sessionId));
+        stage.toCompletableFuture().get(1, TimeUnit.SECONDS);
+    }
+
+    @Test
+    @DisplayName("a kept interrupt dies with its turn: the next turn's coordinator is not tripped")
+    void keptInterruptDiesWithItsTurn() throws Exception {
+        final OrcaAgentRuntime context = createContext();
+        final SessionId sessionId = SessionId.of("ee93-dies");
+        final CapturingStreamingExecutor executor = new CapturingStreamingExecutor().deferringPublication();
+
+        try (DefaultLiveSession session = new DefaultLiveSession(sessionId, context, executor,
+                LiveSessionOptions.defaults())) {
+            // A turn that ends before it ever publishes a coordinator — it threw while opening its transcript, say.
+            final CompletionStage<?> first = session.submitAsync("hi", e -> {
+            });
+            session.interrupt(InterruptReason.USER_SIGINT);
+            executor.completeNext(done(sessionId));
+            first.toCompletableFuture().get(1, TimeUnit.SECONDS);
+
+            final CompletionStage<?> second = session.submitAsync("again", e -> {
+            });
+            final InterruptCoordinator coordinator = executor.publish();
+
+            assertThat(coordinator.getSignal().isCancelled()).isFalse();
+
+            executor.completeNext(done(sessionId));
+            second.toCompletableFuture().get(1, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    @DisplayName("an interrupt racing the publication is delivered whichever of the two gets there first")
+    void interruptRacingPublicationIsNeverLost() throws Exception {
+        final OrcaAgentRuntime context = createContext();
+        final java.util.concurrent.ExecutorService racers = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            for (int round = 0; round < 300; round++) {
+                final SessionId sessionId = SessionId.of("ee93-race-" + round);
+                final CapturingStreamingExecutor executor = new CapturingStreamingExecutor().deferringPublication();
+                try (DefaultLiveSession session = new DefaultLiveSession(sessionId, context, executor,
+                        LiveSessionOptions.defaults())) {
+                    final CompletionStage<?> stage = session.submitAsync("hi", e -> {
+                    });
+                    final java.util.concurrent.CyclicBarrier together = new java.util.concurrent.CyclicBarrier(2);
+                    final java.util.concurrent.Future<?> interrupting = racers.submit(() -> {
+                        together.await();
+                        session.interrupt(InterruptReason.USER_SIGINT);
+                        return null;
+                    });
+                    final java.util.concurrent.Future<InterruptCoordinator> publishing = racers.submit(() -> {
+                        together.await();
+                        return executor.publish();
+                    });
+                    interrupting.get(5, TimeUnit.SECONDS);
+                    final InterruptCoordinator coordinator = publishing.get(5, TimeUnit.SECONDS);
+
+                    assertThat(coordinator.getSignal().isCancelled()).as("round %d", round).isTrue();
+
+                    executor.completeNext(done(sessionId));
+                    stage.toCompletableFuture().get(1, TimeUnit.SECONDS);
+                }
+            }
+        } finally {
+            racers.shutdownNow();
+        }
+    }
+
+    // ============================================================
     // Helpers
     // ============================================================
+
+    private static OrcaAgentExecutionResult done(SessionId sessionId) {
+        return OrcaAgentExecutionResult.success("done", SessionSnapshot.of(sessionId),
+                ExecutionMetadata.simple(Duration.ZERO, Instant.EPOCH, Instant.EPOCH));
+    }
 
     private OrcaAgentRuntime createContext() {
         final LocalFileSystem fileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
@@ -323,6 +500,31 @@ class DefaultLiveSessionInterruptTest {
         private final List<OrcaAgentExecutionResult> preseeded = new ArrayList<>();
         private final List<CountDownLatch> observerLatches = new ArrayList<>();
         private int invocations;
+        private boolean deferPublication;
+        private OrcaAgentExecutionRequest unpublished;
+
+        /**
+         * Emulates the stretch before the executor reaches the turn's onStart hooks: the turn is running, and the
+         * coordinator is not handed to the observer until the test calls {@link #publish()}.
+         */
+        CapturingStreamingExecutor deferringPublication() {
+            this.deferPublication = true;
+            return this;
+        }
+
+        /** Publishes the current turn's coordinator, as the executor does right before the onStart hooks. */
+        InterruptCoordinator publish() {
+            final OrcaAgentExecutionRequest request;
+            final InterruptCoordinator coordinator;
+            synchronized (this) {
+                request = unpublished;
+                coordinator = capturedCoordinator.get();
+                unpublished = null;
+            }
+            // Outside the monitor, as the executor's own thread would call it.
+            request.getInterruptObserver().accept(coordinator);
+            return coordinator;
+        }
 
         @Override
         public OrcaAgentExecutionResult execute(OrcaAgentRuntime agentRuntime,
@@ -343,7 +545,11 @@ class DefaultLiveSessionInterruptTest {
             // Emulate the executor: construct a per-invocation coordinator and publish it to the observer.
             final DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator();
             capturedCoordinator.set(coordinator);
-            request.getInterruptObserver().accept(coordinator);
+            if (deferPublication) {
+                unpublished = request;
+            } else {
+                request.getInterruptObserver().accept(coordinator);
+            }
             // Signal any awaiters that the observer has been invoked.
             for (int i = 0; i < Math.min(invocations, observerLatches.size()); i++) {
                 observerLatches.get(i).countDown();

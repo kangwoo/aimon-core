@@ -425,9 +425,13 @@ public final class DefaultLiveSession implements LiveSession {
      *
      * <p>
      * {@link LiveSessionStatus#isInterruptible() interruptible} is keyed on the coordinator, which is published
-     * earlier, before the OnStart hooks. So a turn can be {@code IDLE} and interruptible at once: an interrupt during
-     * its OnStart hooks ends it. For a slash-command turn the flag stays {@code true} after those hooks although
-     * nothing the command runs reads the signal.
+     * earlier, before the OnStart hooks, and says whether that coordinator is still open. So a turn can be
+     * {@code IDLE} and interruptible at once: an interrupt during its OnStart hooks ends it. The flag turns
+     * {@code false} when the executor closes the coordinator — for a slash-command turn right after those hooks,
+     * because a command is not interruptible, and for a ReAct turn when its work is over and only the persist is
+     * left. Before the coordinator is published it is {@code false} too: an interrupt in that stretch is kept and
+     * delivered ({@link #interrupt(InterruptReason)}), but the flag does not promise a delivery to an executor that
+     * may never publish one.
      *
      * <p>
      * Live {@link LiveSessionStatus.TurnProgress turn progress} is included only when the executor published a
@@ -458,7 +462,7 @@ public final class DefaultLiveSession implements LiveSession {
             phase = LiveSessionStatus.Phase.IDLE;
         }
         final LiveSessionStatus.Builder builder = LiveSessionStatus.builder().sessionId(sessionId).phase(phase)
-                .interruptible(coordinator != null)
+                .interruptible(coordinator != null && !coordinator.isClosed())
                 .queueDepth(messageQueueManager != null ? messageQueueManager.snapshot().size() : 0).options(options)
                 .sessionTotals(sessionTotals.get());
         if (tracker != null) {
@@ -777,8 +781,7 @@ public final class DefaultLiveSession implements LiveSession {
         }
         final OrcaAgentExecutionRequest.Builder builder = OrcaAgentExecutionRequest.builder().userInput(input)
                 .submitOptions(submitOptions).sessionId(sessionId).budget(options.getBudget())
-                .interruptObserver(coordinator -> turn.coordinator = coordinator)
-                .budgetObserver(tracker -> turn.tracker = tracker);
+                .interruptObserver(turn::publish).budgetObserver(tracker -> turn.tracker = tracker);
         submitOptions.getPrincipal().ifPresent(builder::principal);
         if (!submitOptions.getSystemPromptVariables().isEmpty()) {
             builder.systemPromptVariables(submitOptions.getSystemPromptVariables());
@@ -845,10 +848,13 @@ public final class DefaultLiveSession implements LiveSession {
      * debug-logged no-op — matching the contract described on {@link LiveSession#interrupt(InterruptReason)}.
      *
      * <p>
-     * A turn is reachable from its OnStart hooks on: an interrupt that arrives while one runs stops the hook's command
-     * and ends the turn as interrupted before any LLM call. Earlier than that — while the executor renders the prompt
-     * and opens the transcript — there is no coordinator yet and the call is ignored. A slash-command turn is
-     * reachable during its OnStart hooks only; afterwards the trip lands on a signal nothing the command reads.
+     * A turn is reachable from the moment it is installed. An interrupt that arrives while an OnStart hook runs stops
+     * the hook's command and ends the turn as interrupted before any LLM call. Earlier than that — while the executor
+     * renders the prompt and opens the transcript — there is no coordinator yet, so the reason is kept on the turn
+     * and handed to the coordinator the moment the executor publishes it: the turn then meets a tripped signal at its
+     * OnStart hooks and ends the same way, with no hook command started and no LLM call made. A slash-command turn is
+     * reachable up to the end of its OnStart hooks only; the executor closes its coordinator there, and a later
+     * interrupt is that coordinator's no-op.
      */
     @Override
     public void interrupt(InterruptReason reason) {
@@ -858,8 +864,9 @@ public final class DefaultLiveSession implements LiveSession {
     }
 
     /**
-     * Trips {@code turn}'s coordinator, or logs why it could not be tripped. Shared by both {@code interrupt}
-     * overloads and by {@link #close()} so the "no turn / turn not yet interruptible" cases are decided in one place.
+     * Trips {@code turn}'s coordinator, or keeps the reason for it when the executor has not published one yet.
+     * Shared by both {@code interrupt} overloads and by {@link #close()} so the "no turn / turn not yet
+     * interruptible" cases are decided in one place.
      *
      * @param turn
      *            the turn to interrupt, or {@code null} when the session is idle
@@ -871,17 +878,16 @@ public final class DefaultLiveSession implements LiveSession {
             log.debug("Session {} interrupt({}) requested with no active turn — ignoring", sessionId, reason);
             return;
         }
-        final InterruptCoordinator coordinator = turn.coordinator;
-        if (coordinator == null) {
+        if (turn.interruptOrKeep(reason)) {
+            log.debug("Session {} forwarded interrupt({}) to the coordinator of turn {}", sessionId, reason,
+                    turn.turnId);
+        } else {
             // The turn is installed but the executor has not reached its OnStart hooks, so nothing has published a
-            // coordinator yet: the turn is still rendering its prompt and opening its transcript, and there is no
-            // interruptible work in flight.
-            log.debug("Session {} interrupt({}) for turn {} requested before its OnStart hooks — ignoring", sessionId,
-                    reason, turn.turnId);
-            return;
+            // coordinator yet: the turn is still rendering its prompt and opening its transcript. The reason waits
+            // on the turn and is delivered when the coordinator is published; it dies with the turn if none ever is.
+            log.debug("Session {} interrupt({}) for turn {} requested before its OnStart hooks — kept for its"
+                    + " coordinator", sessionId, reason, turn.turnId);
         }
-        log.debug("Session {} forwarding interrupt({}) to the coordinator of turn {}", sessionId, reason, turn.turnId);
-        coordinator.requestInterrupt(reason);
     }
 
     /**
@@ -1066,10 +1072,11 @@ public final class DefaultLiveSession implements LiveSession {
      *
      * <p>
      * Not a value object and deliberately not immutable: the {@link TurnId} is known at submit time but the
-     * {@link InterruptCoordinator} and {@link BudgetTracker} only exist once the executor reaches ReAct loop entry, and
-     * are published into this object from the executing thread while other threads ({@code interrupt}, {@code status})
-     * read them. Hence the two {@code volatile} fields — the identity of the object is what is swapped atomically on
-     * {@link #activeTurn}, and its contents fill in afterwards.
+     * {@link InterruptCoordinator} only exists once the executor reaches the turn's OnStart hooks and the
+     * {@link BudgetTracker} once it reaches ReAct loop entry, and both are published into this object from the
+     * executing thread while other threads ({@code interrupt}, {@code status}) read them. Hence the {@code volatile}
+     * fields — the identity of the object is what is swapped atomically on {@link #activeTurn}, and its contents fill
+     * in afterwards.
      *
      * <p>
      * This is why the three are not three {@code AtomicReference}s: they answer one question ("what is running, and
@@ -1078,15 +1085,64 @@ public final class DefaultLiveSession implements LiveSession {
     private static final class ActiveTurn {
 
         private final TurnId turnId;
-        /** Published at ReAct loop entry; stays {@code null} for turns that never enter the loop (slash commands). */
+        /**
+         * Published before the turn's OnStart hooks, for a slash-command turn too; {@code null} until then. The
+         * executor closes it when the turn is done with it — see {@link InterruptCoordinator#isClosed()}.
+         */
         private volatile InterruptCoordinator coordinator;
-        /** Published at ReAct loop entry, right after {@link #coordinator}. Read best-effort — not thread-safe. */
+        /**
+         * The reason of an interrupt that arrived before {@link #coordinator} was published, waiting to be delivered
+         * to it. The first one wins, as on the coordinator itself.
+         */
+        private final AtomicReference<InterruptReason> pendingInterrupt = new AtomicReference<>();
+        /**
+         * Published at ReAct loop entry; stays {@code null} for turns that never enter the loop (slash commands).
+         * Read best-effort — not thread-safe.
+         */
         private volatile BudgetTracker tracker;
         /** Guards the end-of-turn fold so a turn is counted into the session totals exactly once. */
         private final AtomicBoolean settled = new AtomicBoolean(false);
 
         ActiveTurn(TurnId turnId) {
             this.turnId = Objects.requireNonNull(turnId, "turnId must not be null");
+        }
+
+        /**
+         * The executor's interrupt observer: takes the turn's coordinator, then hands it an interrupt that was
+         * waiting for one.
+         *
+         * <p>
+         * Set first, deliver second — the mirror of {@link #interruptOrKeep}, which keeps first and re-reads second.
+         * Whichever way the two interleave, at least one of them sees the other's write; when both do, the second
+         * {@code requestInterrupt} is the coordinator's own no-op.
+         */
+        void publish(InterruptCoordinator published) {
+            coordinator = published;
+            final InterruptReason pending = pendingInterrupt.get();
+            if (pending != null) {
+                published.requestInterrupt(pending);
+            }
+        }
+
+        /**
+         * Trips the turn's coordinator, or — when the executor has not published one yet — keeps the reason for it.
+         *
+         * @return {@code true} if a coordinator was there to hand the reason to; {@code false} if the reason was kept
+         */
+        boolean interruptOrKeep(InterruptReason reason) {
+            final InterruptCoordinator published = coordinator;
+            if (published != null) {
+                published.requestInterrupt(reason);
+                return true;
+            }
+            pendingInterrupt.compareAndSet(null, reason);
+            // The coordinator may have been published between the read above and the write: deliver it ourselves.
+            final InterruptCoordinator publishedMeanwhile = coordinator;
+            if (publishedMeanwhile == null) {
+                return false;
+            }
+            publishedMeanwhile.requestInterrupt(pendingInterrupt.get());
+            return true;
         }
 
         /**

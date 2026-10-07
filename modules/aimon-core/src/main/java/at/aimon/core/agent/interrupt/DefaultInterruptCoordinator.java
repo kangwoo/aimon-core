@@ -70,6 +70,11 @@ public final class DefaultInterruptCoordinator implements InterruptCoordinator {
         activeRegistrars.clear();
     }
 
+    @Override
+    public boolean isClosed() {
+        return closed;
+    }
+
     /**
      * Removes the given registrar from the active list. Invoked by {@link DefaultTerminatorRegistrar#close()}.
      *

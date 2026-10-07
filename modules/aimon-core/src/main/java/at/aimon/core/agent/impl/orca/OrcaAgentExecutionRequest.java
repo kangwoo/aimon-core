@@ -202,8 +202,9 @@ public final class OrcaAgentExecutionRequest implements AgentExecutionRequest {
      * slash-command turn included. Session implementations use this to capture the coordinator so external actors
      * (REPL SIGINT, priority-queue preemption, parent-agent cascade) can subsequently trip the turn via
      * {@link InterruptCoordinator#requestInterrupt(at.aimon.core.agent.interrupt.InterruptReason)}. A trip during the
-     * {@code onStart} hooks ends the turn as interrupted before any LLM call; one that lands on a slash-command turn
-     * after them is not read by anything, because a command is not interruptible.
+     * {@code onStart} hooks ends the turn as interrupted before any LLM call. A slash-command turn's coordinator is
+     * closed once those hooks have run, because a command is not interruptible: a trip after that is a no-op, and
+     * {@link InterruptCoordinator#isClosed()} says so.
      *
      * <p>
      * Defaults to a no-op when the caller did not configure an observer. Never returns null.

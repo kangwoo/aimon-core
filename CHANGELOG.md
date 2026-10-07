@@ -55,6 +55,22 @@ the build changed in it and the reasons are in
   cut off is not persisted and replayed by a later `Task(resume=…)` — that last part also changes a fork interrupted
   during a programmatic `onStart` hook, which already ended `INTERRUPTED`. No new enum constant. A code-behavior
   subagent is unchanged (EE-99).
+- **`LiveSessionStatus#isInterruptible()` no longer says `true` where an interrupt does nothing (EE-93).** It is now
+  `true` only while the turn's coordinator is open. A slash-command turn is interruptible during its `onStart` hooks
+  and not after — the executor closes the turn's coordinator before the command runs, so an interrupt there is a
+  logged no-op instead of a trip nothing reads. A ReAct turn also reads `false` in the short stretch after its work is
+  done, while it is persisted. The wire shape of `StatusSnapshotPayload` is unchanged (same key, same type); in a
+  mixed-version cluster an old and a new node report different **values** for those two states.
+  `InterruptCoordinator` gained `isClosed()` (default `false`, so a custom coordinator is reported as before). A custom
+  `interruptCoordinatorFactory` that returns one shared instance now hands a slash command a closed coordinator.
+- **An interrupt that arrives before a turn's `onStart` hooks is kept, not dropped (EE-93).** `LiveSession.interrupt`,
+  `close()` and a NOW-priority input used to be ignored while the executor was still rendering the prompt and opening
+  the transcript. `DefaultLiveSession` now keeps the reason (the first one wins) and hands it to the turn's coordinator
+  when the executor publishes it: the turn ends `INTERRUPTED` at `onStart` — no hook command started, no LLM call,
+  `onStop(success=false)`, and for a slash-command turn the command does not run. For a NOW-priority input this means
+  the turn that was being set up when the input was enqueued is preempted instead of running and possibly taking that
+  input in through its own mid-turn drain; the input stays in the queue for the next turn or the host's drain, as when
+  a turn is preempted mid-loop. `isInterruptible()` is `false` in that stretch.
 
 ### Changed: a hook's shell command follows the execution's interrupt on every event that has one (EE-80)
 
@@ -78,11 +94,11 @@ longer runs to its own timeout after the user interrupts.
   for a slash-command turn as well. `LiveSession.interrupt`, a NOW-priority input and `close()` used to be ignored in
   that window; they now stop the hook's command and end the turn as `CompletionReason.INTERRUPTED` (`onStop` fired with
   `success=false`, no LLM call, the turn stays retryable) — not as `ExecutionBlockedByHookException`. An interrupt
-  earlier than `onStart`, while the prompt is rendered, is still ignored.
+  earlier than `onStart`, while the prompt is rendered, is kept and delivered then (EE-93, above).
 - **`LiveSession.status()` reports `RUNNING` from the published budget tracker alone.** A turn still in its `onStart`
-  hooks, and a slash-command turn, stay `IDLE` as before, but `isInterruptible()` is now `true` for them. For a
-  slash-command turn it stays `true` after `onStart` although an interrupt there does nothing — a command is not
-  interruptible (EE-93).
+  hooks, and a slash-command turn, stay `IDLE` as before, but `isInterruptible()` is now `true` while their `onStart`
+  hooks run. For a slash-command turn it turns `false` after `onStart` — a command is not interruptible (EE-93,
+  above).
 - **An AUTO compaction blocked by an interrupted `preCompact` no longer surfaces as a context-window error.** A turn ends
   `INTERRUPTED` and a fork ends with its interrupted result instead of `ContextWindowExceededException`.
 - **`ContextRequest`, `CompactionGuardRequest`, `CompactionRequest` and `SummaryRequest` gained an optional

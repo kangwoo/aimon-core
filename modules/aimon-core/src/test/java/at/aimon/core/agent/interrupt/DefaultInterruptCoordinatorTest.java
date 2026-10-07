@@ -130,4 +130,39 @@ class DefaultInterruptCoordinatorTest {
 
         assertThatThrownBy(() -> coordinator.requestInterrupt(null)).isInstanceOf(NullPointerException.class);
     }
+
+    @Test
+    @DisplayName("isClosed turns true with close(), and a coordinator that does not implement it reads as open (EE-93)")
+    void isClosedFollowsClose() {
+        final DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator();
+        assertThat(coordinator.isClosed()).isFalse();
+
+        coordinator.close();
+        coordinator.close();
+
+        assertThat(coordinator.isClosed()).isTrue();
+
+        // A coordinator written before the method existed keeps answering what was assumed of every coordinator.
+        final InterruptCoordinator legacy = new InterruptCoordinator() {
+            @Override
+            public CancellationSignal getSignal() {
+                return NoopCancellationSignal.INSTANCE;
+            }
+
+            @Override
+            public void requestInterrupt(InterruptReason reason) {
+            }
+
+            @Override
+            public TerminatorRegistrar newTerminatorRegistrar() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void close() {
+            }
+        };
+        legacy.close();
+        assertThat(legacy.isClosed()).isFalse();
+    }
 }
