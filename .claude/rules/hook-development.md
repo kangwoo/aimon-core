@@ -257,7 +257,12 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   user's input branches on `AIMON_INVOKER_TYPE` — and `onStart` is one of
   `SkillHookSet.guardEvents()`. A behavior fork resolves no environment of its own, so its hooks see
   the spawning execution's, and its non-blocking feedback is dropped (there is no transcript to
-  append it to).
+  append it to). **A cancellation during the chain is not a block:** `DefaultSubagentExecutor.startFork`
+  reads the fork's cancellation right after the chain, before the block, and ends the fork
+  `INTERRUPTED` — with `onStop` fired and the transcript as it stood *before* the goal, so an
+  unanswered goal is not replayed on resume (EE-94). It reads through `isCancelledOrInterrupted`, not
+  the bare signal, because the hook executor re-arms a thread interrupt that would otherwise cut
+  every `onStop` hook's wait. `SubagentBehaviorRunner` does not do this (EE-99).
 - **A `hooks.json` that does not load stops startup.** `HookRegistryReloader.bootstrap()` and
   `HookHotReloadBootstrap.start()` propagate `HookConfigParseException` (file path, layer, cause) for
   a file that does not parse *or cannot be read*; only a missing file is an absent layer. Do not

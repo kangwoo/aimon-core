@@ -47,6 +47,14 @@ the build changed in it and the reasons are in
   reports the failed attempt in `compactionEvents`, as any failed compaction is reported (EE-100).
 - **`SignalBackedLlmCancellation` is `AutoCloseable`.** `close()` removes its listener from the signal, for an adapter
   that lives shorter than the signal. The executors' per-execution instances are not closed and behave as before.
+- **A fork interrupted while its `onStart` hooks run ends `INTERRUPTED`, not `BLOCKED` (EE-94).** The fork now reads its
+  cancellation right after the `onStart` chain, before the blocks, as a turn does. Visible to the parent model and to
+  anything that reads a fork's result: the reason is `CompletionReason.INTERRUPTED` and the message is "Execution
+  interrupted" instead of "…blocked by OnStart hook: …execution cancelled…"; the fork's `onStop` hooks now fire
+  (`success=false`); and the result carries the transcript as it stood **before** the goal, so a goal whose guard was
+  cut off is not persisted and replayed by a later `Task(resume=…)` — that last part also changes a fork interrupted
+  during a programmatic `onStart` hook, which already ended `INTERRUPTED`. No new enum constant. A code-behavior
+  subagent is unchanged (EE-99).
 
 ### Changed: a hook's shell command follows the execution's interrupt on every event that has one (EE-80)
 
