@@ -21,6 +21,7 @@ import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.ToolUseResult;
 import at.aimon.core.skill.hook.action.ShellAction;
 import at.aimon.core.skill.hook.declarative.predicate.NameOnlyPredicate;
+import at.aimon.core.skill.hook.declarative.predicate.PredicateParser;
 
 class DeclarativePostToolHookTest {
 
@@ -71,6 +72,25 @@ class DeclarativePostToolHookTest {
 
         assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
         assertThat(exec.calls).isEmpty();
+    }
+
+    @Test
+    void execute_bashCommandNestedTooDeepToSplit_stillRunsTheAuditCommand() {
+        // postTool cannot block, so a matcher that died here left no trace at all: the call went by unrecorded. A
+        // command the splitter declines to take apart matches instead, and the audit runs.
+        RecordingExecutor exec = new RecordingExecutor();
+        DeclarativePostToolHook hook = new DeclarativePostToolHook("my-skill", PredicateParser.parse("Bash(rm -rf*)"),
+                new ShellAction("audit.sh", Duration.ofSeconds(1)), exec);
+        String nested = "$(".repeat(20_000) + "rm -rf /" + ")".repeat(20_000);
+        PostToolContext context = PostToolContext.builder().executorType(InvokerType.MAIN_AGENT)
+                .invokerName("default-agent").hookRegistry(REGISTRY)
+                .toolUse(ToolUse.of("call-1", "Bash", Map.of("command", nested)))
+                .toolUseResult(ToolUseResult.error("call-1", "Command exceeds maximum length")).iterationCount(5)
+                .build();
+
+        hook.execute(context);
+
+        assertThat(exec.calls).hasSize(1);
     }
 
     @Test

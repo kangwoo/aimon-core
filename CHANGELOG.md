@@ -122,8 +122,65 @@ The two waits are bounded separately: at most one `requestTimeout` to reach the 
 `requestTimeout` to be answered in. N parallel calls to a stalled server return within 2 × the timeout, not N ×. A
 parallel call to a slow but healthy server that used to succeed late now fails as "never sent" if the requests ahead of
 it take longer than the timeout. A `requestTimeout` too long to count in nanoseconds is treated as unbounded instead of
-failing the request. Not covered: the write of a request larger than the pipe buffer to a server that has stopped
-reading its stdin (backlog EE-89).
+failing the request. The write of the request is the third wait, bounded under EE-89 below.
+
+### Fixed: a stdio MCP request's write is bounded too, and a cancelled execution ends an MCP tool call (EE-89)
+
+**The write.** A frame larger than the pipe buffer (64 KB), sent to a server that is not reading its stdin, held the
+caller in a pipe write that neither `requestTimeout` nor an interrupt could end — and `close()` queued behind it. The
+write now runs on a writer thread and the request waits for it for at most `requestTimeout`, or until it is
+interrupted. The three waits (for the transport, for the write, for the answer) are counted separately, so a call
+returns within three times `requestTimeout` at the very most, and within twice when the server takes the frame at once.
+
+A request that gives up in its write fails with `Request timeout … (the server is not reading its input …)`. Its frame
+is not cut short: the write finishes in the background and the transport stays taken until it has, so requests behind
+it fail as "never sent". If the server reads again it receives the whole frame and may run it. No process is killed to
+end a write; `close()` ends it, by ending the process first when a write is stalled — one still in flight after
+200 ms, so a write on its way to a server that is reading does not get that server killed.
+
+Behaviour that changes: a large request to a server that leaves its stdin unread for longer than `requestTimeout` used
+to wait, and succeed if the server came back; it now fails after `requestTimeout`.
+
+**Cancellation.** `McpTool` declares `InterruptBehavior.COOPERATIVE` (was the default, `NON_INTERRUPTIBLE`). While its
+call is in flight it listens to the execution's cancellation signal and interrupts its own thread when the signal
+trips, so a cancelled turn, fork or routine no longer waits out the server's `requestTimeout`; the result is
+`MCP tool interrupted: <reason>`, and a call of an execution already cancelled is not made. The request is not
+withdrawn — a server that already has it may still run it.
+
+### Fixed: a `Bash(…)` matcher answers for a command too deep or too long to split (EE-90)
+
+The sub-command splitter behind `Bash(…)` matchers recursed once per nested `$(`, quote or backtick with no limit, on
+text the model writes: about 14,000 levels (42 KB) overflowed the stack, and a larger command ran the heap out. A
+fail-closed guard blocked on that; a `postTool` or `failOpen` hook died and the call went by unrecorded. The check
+ran before `Bash`'s own length limit, so one tool call reached it.
+
+A command longer than 65,536 characters, or nested more than 64 levels deep, is now not split, and **matches every
+`Bash(…)` glob**: the matcher cannot tell that no sub-command matches, so the hook is asked, with the whole command as
+its input. A `deny` denies it, a `command` handler decides, a `postTool` audit runs. Commands inside both limits are
+still split, never assumed to match (EE-92 below changes how an unpaired quote in them is read). A WARN names the limit
+and the command's length, never the command.
+
+### Fixed: an apostrophe no longer hides the rest of a command from a `Bash(…)` matcher (EE-92)
+
+`echo "it's"; rm -rf x` did not match `Bash(rm -rf*)`. The splitter read the `'` — a plain character inside double
+quotes — as an opening quote, found no partner, and gave up on the whole command, matching it as one piece; an
+apostrophe in a `#` comment or a here-document did the same. A `deny` or `preTool` guard let the command through and a
+`postTool` audit skipped it.
+
+A quote, backtick or `$(` with no partner is now read as the character it is and splitting goes on. Nothing that
+matched before stops matching: the unsplit command is still looked at as a piece of its own. A command with a `#` or a
+`<<` is split a second time with each comment's quotes and substitutions left unread, and the pieces of that reading are
+**added** to the first — two apostrophes in two comments no longer quote the lines between them, and a `#` that is no
+comment to a shell (inside double quotes) hides nothing. The second reading knows a here-document as well (`<<WORD` to
+the line that is `WORD`; `<<-`, a quoted or empty word) and a `$'…'` string: an apostrophe in either no longer pairs
+with one after it and quotes the commands between. There is a third limit beside the two above, with the same answer:
+the characters scanned in vain for the partner of an unclosed quote or `$(`, about a million per reading. It bounds
+work, not a count — a script of hundreds of `echo "it's …"` lines is split as usual, while dozens of unclosed `$(` in
+a long command are not. `Bash(…)` globs remain text comparison, not a shell parser.
+
+Matcher globs no longer backtrack into an earlier `*` (`NameOnlyPredicate.compileGlob`, used by tool-name, path and
+`Bash(…)` matchers). A glob with two or more `*` could take seconds to minutes on text the model chose — `*a*a*b`
+against 8,000 `a`s did not finish in 100 seconds. What a glob matches is unchanged.
 
 ### Fixed: a result with a completion reason this build does not know is read, not dropped (EE-83)
 
@@ -139,7 +196,7 @@ add one under a rolling upgrade.
 and starter deployments are unaffected — no configuration surface sets that limit, so they send 4096 either way. An
 application that builds `AnthropicConfig` or `OpenAIConfig` with its own `maxTokens` now gets it on forks too.
 
-### Build and docs tooling (D-4, T-10)
+### Build and docs tooling (D-4, T-10, T-11)
 
 - **`aimon-rewake-webhook` tests run on the `jakarta.annotation-api` the module ships** (2.1.1, was 3.0.0). The other
   three differences the first `checkTestClasspathVersions` run found are accepted with their reasons in
@@ -148,6 +205,11 @@ application that builds `AnthropicConfig` or `OpenAIConfig` with its own `maxTok
   Korean anchor used to be dead under `/en/` (six links). The mkdocs hook now rewrites it to the id of the heading at the
   same position. `check-doc-links.py` fails on a link that can never be carried that way (a hand-written `<a id>` only
   the original has, a repeated heading, a twin with no anchor) and reports a pair whose headings are out of step.
+- **The docs site no longer makes a heading of a line that starts `#113 …`** (T-11). Python-Markdown reads `#` with no
+  space after it as a heading; github.com and the checks here do not. Fifteen lines on five pages — wrapped prose and
+  list items that begin with an issue number — were an `<h1>` in the middle of the page and an entry in its table of
+  contents. The mkdocs hook replaces that rule with CommonMark's (a space after the `#`); no source line changed, since
+  most of them sit in records kept byte-exact.
 
 ### Changed (breaking): declarative guard hooks block when they could not judge (EE-64, EE-65, EE-66, EE-69, EE-72, EE-73, EE-80)
 

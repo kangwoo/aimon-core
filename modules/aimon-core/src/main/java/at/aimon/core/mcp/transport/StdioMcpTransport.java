@@ -12,9 +12,15 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.ReentrantLock;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,22 +43,31 @@ import at.aimon.core.mcp.exception.McpTransportException;
  *
  * <h2>Thread Safety</h2>
  * <p>
- * This class is thread-safe. Concurrent requests are serialized by a lock over the process I/O streams, one request on
- * the wire at a time.
+ * This class is thread-safe. Concurrent requests are serialized by a permit over the process I/O streams, one request
+ * on the wire at a time.
  *
  * <h2>Timeout</h2>
  * <p>
- * {@code requestTimeout} bounds each of the two waits a request can be held in: the wait for another request to
- * release the transport, and, once the request is written, the wait for a complete response line. They are counted
- * separately, so a call returns within twice {@code requestTimeout} however many requests are queued, and a request
- * that was written always has the whole of it to be answered in. A request that runs out of time in the first wait was
- * never written, and says so; one that runs out in the second was, so the server may still be working on it, and
- * whatever it writes later &mdash; the whole reply or the rest of a line it had started &mdash; is read by the next
- * request and dropped by its id. Both waits end early on an interrupt.
+ * {@code requestTimeout} bounds each of the three waits a request can be held in: the wait for another request to
+ * release the transport, the write of the request's frame, and, once that is written, the wait for a complete response
+ * line. They are counted separately, so a request that was written always has the whole of it to be answered in. The
+ * write takes no time worth counting unless the server is not reading its stdin, so a call returns within twice
+ * {@code requestTimeout} however many requests are queued, and within three times it at the very most. All three waits
+ * end early on an interrupt.
  *
  * <p>
- * What the timeout does <em>not</em> cover is the write of the request itself. That is a blocking pipe write, and it
- * stalls if the server has stopped reading its stdin and the frame is larger than the pipe's buffer.
+ * What a request that ran out of time left behind depends on the wait it was in:
+ * <ul>
+ * <li><b>waiting for the transport</b> &mdash; nothing. It was never written, and says so.
+ * <li><b>writing</b> &mdash; a frame that is partly in the pipe. It is not cut short there, which would hand the server
+ * a line made of two requests: the write is left to finish on the writer thread and the transport stays taken until it
+ * has, so the requests behind it fail as never sent. If the server reads again it gets the whole frame and may run it,
+ * so this request does <em>not</em> say it was never sent. Nothing is killed to end the write; {@link #close()} is what
+ * ends it for a server that never reads.
+ * <li><b>waiting for the response</b> &mdash; a request the server may still be working on. Whatever it writes later
+ * &mdash; the whole reply or the rest of a line it had started &mdash; is read by the next request and dropped by its
+ * id.
+ * </ul>
  */
 public class StdioMcpTransport implements McpTransport {
 
@@ -62,6 +77,12 @@ public class StdioMcpTransport implements McpTransport {
     private static final long RESPONSE_POLL_MILLIS = 10;
 
     private static final int READ_CHUNK_BYTES = 8192;
+
+    /**
+     * How long {@link #close()} waits, twice at most: for a write in flight to end before it takes the write for
+     * stalled, and for stdin to be closed on the writer thread before it ends the process.
+     */
+    private static final long STDIN_CLOSE_WAIT_MILLIS = 200;
 
     private final Process process;
     private final OutputStream stdin;
@@ -73,13 +94,25 @@ public class StdioMcpTransport implements McpTransport {
     private final AtomicInteger requestIdCounter = new AtomicInteger(1);
 
     /**
-     * Serializes use of the process streams. A lock rather than {@code synchronized} because the wait for it has to be
-     * timed and interruptible: a monitor can be neither, and a request queued behind a stalled one would otherwise wait
-     * out that request's timeout before its own began.
+     * Serializes use of the process streams. Not {@code synchronized}, because the wait for it has to be timed and
+     * interruptible: a monitor can be neither, and a request queued behind a stalled one would otherwise wait out that
+     * request's timeout before its own began. And a semaphore rather than a lock, because the permit is not always
+     * returned by the thread that took it: a request that gives up in the middle of its write leaves the permit with
+     * that write. See {@link #writeFrame}.
      */
-    private final ReentrantLock ioLock = new ReentrantLock();
+    private final Semaphore ioPermit = new Semaphore(1);
 
-    // Read state, guarded by ioLock. It belongs to the stream, not to a request: see pollLine.
+    /**
+     * Runs the pipe writes. A pipe write blocks for as long as the server leaves its stdin unread, and nothing but the
+     * end of the process ends one, so no request thread makes that call itself: it waits for this thread to have made
+     * it. One thread is enough, since {@link #ioPermit} admits one frame at a time. Started on the first frame.
+     */
+    private final ExecutorService writer;
+
+    /** The write on the wire now, if any: what {@link #close()} asks to learn whether the server is reading. */
+    private volatile CompletableFuture<Void> writeInFlight;
+
+    // Read state, guarded by ioPermit. It belongs to the stream, not to a request: see pollLine.
     private final byte[] chunk = new byte[READ_CHUNK_BYTES];
     private int chunkPosition;
     private int chunkLength;
@@ -108,6 +141,11 @@ public class StdioMcpTransport implements McpTransport {
         this.requestTimeout = Objects.requireNonNull(requestTimeout, "requestTimeout cannot be null");
         this.requestTimeoutNanos = toNanosSaturating(requestTimeout);
         this.objectMapper = new ObjectMapper();
+        this.writer = Executors.newSingleThreadExecutor(runnable -> {
+            final Thread thread = new Thread(runnable, "mcp-stdin-writer-" + command);
+            thread.setDaemon(true);
+            return thread;
+        });
 
         try {
             List<String> commandLine = new ArrayList<>();
@@ -132,6 +170,7 @@ public class StdioMcpTransport implements McpTransport {
 
             log.debug("Started MCP process: {}", String.join(" ", commandLine));
         } catch (IOException e) {
+            writer.shutdownNow();
             throw new McpTransportException("Failed to start MCP process: " + command, e);
         }
     }
@@ -156,20 +195,19 @@ public class StdioMcpTransport implements McpTransport {
 
     @Override
     public JsonNode sendRequest(String method, JsonNode params) {
-        // Two waits, each bounded by requestTimeout: the wait for the transport, then the wait for the answer. They do
-        // not share one budget. A request that reached the transport with a sliver of time left would be written, run
-        // by the server, and reported as a timeout the caller could not tell from one that was never sent.
+        // Three waits, each bounded by requestTimeout: for the transport, for the write, for the answer. They do not
+        // share one budget. A request that reached the transport with a sliver of time left would be written, run by
+        // the server, and reported as a timeout the caller could not tell from one that was never sent.
         final long timeoutNanos = requestTimeoutNanos;
 
         if (closed || !process.isAlive()) {
             throw new McpTransportException("MCP process is not running");
         }
 
-        boolean locked = false;
+        final IoTurn turn = new IoTurn();
         try {
-            locked = ioLock.tryLock(timeoutNanos, TimeUnit.NANOSECONDS);
-            if (!locked) {
-                // Nothing was written, so unlike the timeout below this request never reached the server.
+            if (!turn.take(timeoutNanos)) {
+                // Nothing was written, so unlike the timeouts below this request never reached the server.
                 throw new McpTransportException("Request timeout for method '" + method + "' after "
                         + requestTimeout.toMillis() + "ms (never sent: the transport was busy with another request)");
             }
@@ -188,8 +226,11 @@ public class StdioMcpTransport implements McpTransport {
 
             // Send request
             String requestJson = objectMapper.writeValueAsString(request) + "\n";
-            stdin.write(requestJson.getBytes(StandardCharsets.UTF_8));
-            stdin.flush();
+            if (!writeFrame(requestJson.getBytes(StandardCharsets.UTF_8), turn)) {
+                throw new McpTransportException("Request timeout for method '" + method + "' after "
+                        + requestTimeout.toMillis() + "ms (the server is not reading its input: the request is still"
+                        + " being written, and the server will receive it if it reads again)");
+            }
             final long sentNanos = System.nanoTime();
 
             log.debug("Sent JSON-RPC request: method={}, id={}", method, requestId);
@@ -233,8 +274,81 @@ public class StdioMcpTransport implements McpTransport {
         } catch (Exception e) {
             throw new McpTransportException("Failed to communicate with MCP process: " + e.getMessage(), e);
         } finally {
-            if (locked) {
-                ioLock.unlock();
+            turn.end();
+        }
+    }
+
+    /**
+     * Writes one frame to the server's stdin, waiting at most {@code requestTimeout} for the write to end.
+     *
+     * <p>
+     * The write is made on {@link #writer} and awaited here, which is what lets the wait be timed and interruptible.
+     * When the wait ends first &mdash; time is up, or the caller is interrupted &mdash; the write is <em>not</em>
+     * abandoned: part of the frame is in the pipe, and the next frame written after it would be read by the server as
+     * the rest of the same line. The frame belongs to the stream from then on, as an unfinished response line does
+     * (see {@link #pollLine}): the write runs on, and {@code turn} is handed over to it, so the transport stays taken
+     * until it has ended one way or the other.
+     *
+     * @return {@code true} when the frame was written, {@code false} when time ran out first
+     * @throws InterruptedException
+     *             if the caller was interrupted first
+     * @throws IOException
+     *             if the write failed
+     */
+    private boolean writeFrame(byte[] frame, IoTurn turn) throws InterruptedException, IOException {
+        final CompletableFuture<Void> write = new CompletableFuture<>();
+        writeInFlight = write;
+        writer.execute(() -> {
+            try {
+                stdin.write(frame);
+                stdin.flush();
+                write.complete(null);
+            } catch (Throwable t) {
+                write.completeExceptionally(t);
+            }
+        });
+        try {
+            write.get(requestTimeoutNanos, TimeUnit.NANOSECONDS);
+            return true;
+        } catch (TimeoutException e) {
+            turn.handOverTo(write);
+            return false;
+        } catch (InterruptedException e) {
+            turn.handOverTo(write);
+            throw e;
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof IOException io) {
+                throw io;
+            }
+            throw new IOException(e.getCause());
+        }
+    }
+
+    /**
+     * One caller's hold on {@link #ioPermit}: taken once, given back exactly once, by the caller in its
+     * {@code finally} or by the write it left behind.
+     */
+    private final class IoTurn {
+
+        private boolean held;
+
+        boolean take(long timeoutNanos) throws InterruptedException {
+            held = ioPermit.tryAcquire(timeoutNanos, TimeUnit.NANOSECONDS);
+            return held;
+        }
+
+        /** Leaves the permit with a write that outlives the caller's wait for it. */
+        void handOverTo(CompletableFuture<Void> write) {
+            held = false;
+            // Runs here and now when the write ended between the wait giving up and this line.
+            write.whenComplete((ignored, thrown) -> ioPermit.release());
+        }
+
+        void end() {
+            if (held) {
+                held = false;
+                writeInFlight = null;
+                ioPermit.release();
             }
         }
     }
@@ -294,12 +408,11 @@ public class StdioMcpTransport implements McpTransport {
             throw new McpTransportException("MCP process is not running");
         }
 
-        boolean locked = false;
+        final IoTurn turn = new IoTurn();
         try {
-            // A notification waits for no reply, but it does wait its turn to write, and that wait is bounded the same
-            // way a request's is.
-            locked = ioLock.tryLock(requestTimeoutNanos, TimeUnit.NANOSECONDS);
-            if (!locked) {
+            // A notification waits for no reply, but it does wait its turn to write and for the write itself, and both
+            // waits are bounded the same way a request's are.
+            if (!turn.take(requestTimeoutNanos)) {
                 throw new McpTransportException("Timeout sending notification '" + method + "' after "
                         + requestTimeout.toMillis() + "ms (never sent: the transport was busy with another request)");
             }
@@ -315,8 +428,11 @@ public class StdioMcpTransport implements McpTransport {
             // not wait for one (that is the request/response path in sendRequest).
 
             final String notificationJson = objectMapper.writeValueAsString(notification) + "\n";
-            stdin.write(notificationJson.getBytes(StandardCharsets.UTF_8));
-            stdin.flush();
+            if (!writeFrame(notificationJson.getBytes(StandardCharsets.UTF_8), turn)) {
+                throw new McpTransportException("Timeout sending notification '" + method + "' after "
+                        + requestTimeout.toMillis() + "ms (the server is not reading its input: the notification is"
+                        + " still being written, and the server will receive it if it reads again)");
+            }
 
             log.debug("Sent JSON-RPC notification: method={}", method);
         } catch (McpTransportException e) {
@@ -327,9 +443,7 @@ public class StdioMcpTransport implements McpTransport {
         } catch (Exception e) {
             throw new McpTransportException("Failed to send notification '" + method + "': " + e.getMessage(), e);
         } finally {
-            if (locked) {
-                ioLock.unlock();
-            }
+            turn.end();
         }
     }
 
@@ -342,11 +456,31 @@ public class StdioMcpTransport implements McpTransport {
     public void close() throws Exception {
         closed = true;
 
-        try {
-            stdin.close();
-        } catch (IOException e) {
-            log.debug("Error closing stdin: {}", e.getMessage());
+        // Closing stdin is how a stdio server is asked to leave, but it cannot be asked while a write is stalled: the
+        // server is not reading, so it would not see the end of input, and the close itself would queue behind that
+        // write, which holds the stream's monitor. Ending the process is the one thing that ends such a write.
+        // A write that is only passing through, to a server that is reading, ends within the moment it is given
+        // here, and that server is then asked to leave like any other.
+        final CompletableFuture<Void> write = writeInFlight;
+        if (write != null && !endedWithin(write, STDIN_CLOSE_WAIT_MILLIS)) {
+            process.destroyForcibly();
         }
+        // Always on the writer thread, behind whatever write is there: this thread must not wait for a monitor it
+        // cannot be sure will be freed. That holds for a write that starts after the look above too, and for one a
+        // child of the server keeps open after the server is gone. The process is ended below either way.
+        try {
+            final CompletableFuture<Void> stdinClosed = CompletableFuture.runAsync(this::closeStdin, writer);
+            // End of input is how a stdio server is asked to leave, so it is given a moment to arrive before the
+            // signal below does. A moment only: behind a stalled write it never arrives, and nothing here waits on it.
+            stdinClosed.get(STDIN_CLOSE_WAIT_MILLIS, TimeUnit.MILLISECONDS);
+        } catch (RejectedExecutionException alreadyClosed) {
+            log.debug("StdioMcpTransport closed more than once");
+        } catch (TimeoutException | ExecutionException stillClosing) {
+            log.debug("MCP stdin was not closed before the process is ended");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        writer.shutdown();
 
         if (process.isAlive()) {
             process.destroy();
@@ -362,6 +496,29 @@ public class StdioMcpTransport implements McpTransport {
         }
 
         log.debug("StdioMcpTransport closed");
+    }
+
+    /** Whether {@code write} ended, well or badly, before {@code millis} had passed. */
+    private static boolean endedWithin(CompletableFuture<Void> write, long millis) {
+        try {
+            write.get(millis, TimeUnit.MILLISECONDS);
+            return true;
+        } catch (ExecutionException failed) {
+            return true;
+        } catch (TimeoutException stalled) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return write.isDone();
+        }
+    }
+
+    private void closeStdin() {
+        try {
+            stdin.close();
+        } catch (IOException e) {
+            log.debug("Error closing stdin: {}", e.getMessage());
+        }
     }
 
 }

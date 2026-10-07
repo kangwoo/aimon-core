@@ -186,22 +186,40 @@ class DeclarativeGuardNotRunTest {
 
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
-    void preTool_guardWhoseMatcherOverflowsTheStackOnTheModelsCommand_blocks() throws Exception {
-        // The Bash sub-command splitter recurses once per nested $( ... ), so the model picks the depth. The Error is
-        // thrown in the matcher, before the hook reaches its action. The small worker stack only makes the depth at
-        // which it happens independent of the platform default.
+    void preTool_guardWhoseMatcherDiesWithAnError_blocks() {
+        // An Error is not an Exception, and it is thrown before the hook reaches its action. The matcher that used to
+        // do this on a command the model chose was the Bash sub-command splitter, one stack frame per nested $( ... );
+        // it is bounded now (see the next test), so the road is driven with a matcher that throws outright.
+        final ToolInputPredicate overflowing = (toolName, input) -> {
+            throw new StackOverflowError();
+        };
+        registry.register(HookEventType.PRE_TOOL, new DeclarativePreToolHook("ops", overflowing, GUARD, shell));
+
+        final HookResult result = HookResult.merge(running.executePreTool(preToolContext("ls")));
+
+        assertThat(result.getStatus()).isEqualTo(HookStatus.BLOCKED);
+        assertThat(result.getFeedback().orElseThrow()).contains("StackOverflowError");
+    }
+
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void preTool_guardAskedAboutACommandNestedTooDeepToSplit_isRunNotKilled() throws Exception {
+        // 20,000 nested $( ... ) overflowed the matcher on this stack. The matcher now declines to split it and
+        // matches, so the hook gets as far as its action: what blocks here is the guard's own command failing to run
+        // (the shell is a mock), which is the answer for a command that is not nested at all.
         final ExecutorService smallStacks = Executors
                 .newCachedThreadPool(task -> new Thread(null, task, "hook-small-stack", 256 * 1024));
         final DefaultHookExecutionManager manager = DefaultHookExecutionManager.builder()
                 .executor(new DefaultHookExecutor(smallStacks)).build();
         registry.register(HookEventType.PRE_TOOL,
-                new DeclarativePreToolHook("ops", PredicateParser.parse("Bash(rm *)"), GUARD, shell));
+                new DeclarativePreToolHook("ops", PredicateParser.parse("Bash(git push*)"), GUARD, shell));
         final String nested = "$(".repeat(20_000) + "rm -rf /" + ")".repeat(20_000);
         try {
             final HookResult result = HookResult.merge(manager.executePreTool(preToolContext(nested)));
 
             assertThat(result.getStatus()).isEqualTo(HookStatus.BLOCKED);
-            assertThat(result.getFeedback().orElseThrow()).contains("StackOverflowError");
+            assertThat(result.getFeedback().orElseThrow()).contains("could not run its command")
+                    .doesNotContain("StackOverflowError");
         } finally {
             smallStacks.shutdownNow();
         }

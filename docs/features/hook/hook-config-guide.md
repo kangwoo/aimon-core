@@ -236,7 +236,12 @@ WARN 이 아니라 **시작 실패**다(`… is invalid: unknown event 'preTol' 
 - **`Bash(글롭)`.** `command` 문자열을 `&&` · `||` · `;` · `|` · 줄바꿈에서 나누고, 백틱 · `$(…)` · 큰따옴표 안의 내용도 따로
   조각으로 본다(`bash -c "git push"` 의 `git push`). 조각 하나라도 글롭과 일치하면 매치다. 셸을 해석하는 것이 아니라
   **글자를 비교**한다 — `git  push`(공백 두 칸) · `sudo git push` 는 `git push*` 에 걸리지 않는다. 우회를 막아야 하는
-  가드라면 글롭에 기대지 말고 `command` handler 가 stdin 의 `tool_input.command` 를 직접 검사하게 한다.
+  가드라면 글롭에 기대지 말고 `command` handler 가 stdin 의 `tool_input.command` 를 직접 검사하게 한다. 짝이 없는
+  따옴표 · 백틱 · `$(` 는 글자로 읽고 계속 나눈다 — `echo "it's"; rm -rf x` 의 `rm -rf x` 는 조각이다(그런 명령은 전체도
+  한 조각으로 함께 본다). 주석과 here-document 본문의 따옴표는 뒤따르는 줄을 가리지 않게
+  읽는다(셸 문법 전체를 아는 것은 아니다). 나누는 데는 한도가 있다: 65,536자를 넘거나, 64단계보다 깊게 중첩됐거나, 닫히지
+  않은 `$(` 가 수십 개 늘어선 `command` 는 나누지 않고 **어떤 `Bash(…)` 글롭에도 매치된 것으로** 본다 — 조각을 볼 수 없으면 "맞는 조각이
+  없다" 고 답할 수 없으므로 handler 에게 묻는다(`deny` 라면 막힌다).
 - **`도구(글롭)` 을 받는 도구**는 `Bash` 와 경로 도구 여덟(`Read` · `Edit` · `Write` · `MultiEdit` · `Glob` · `Grep` · `LS` ·
   `NotebookEdit`)뿐이다. 경로 도구는 모델이 넘긴 경로 문자열 그대로를 본다(`Read` · `Edit` · `Write` · `MultiEdit` 는
   `file_path`, `Glob` 은 `pattern` · `path`, `Grep` 은 `path` · `pattern`, `LS` 는 `path`, `NotebookEdit` 는 `notebook_path`).

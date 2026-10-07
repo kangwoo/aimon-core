@@ -127,10 +127,27 @@ at.aimon.core.mcp/
 2. **선언을 대신한다** — `getSideEffectLevel()` / `getDestructiveBehavior()` 를 `McpToolTraits` 에 위임한다.
 3. **호출을 위임한다** — `mcpClient.callTool(name, input.toMap())`.
 
-`execute()` 의 실패 경로는 셋이고 **전부 `ToolResult.error()`** 로 나간다: 연결이 끊긴 경우
+`execute()` 의 실패 경로는 넷이고 **전부 `ToolResult.error()`** 로 나간다: 실행이 취소된 경우, 연결이 끊긴 경우
 (`isConnected()` 가 false), 서버가 `isError` 결과를 준 경우, 그리고 그 밖의 모든 예외. 마지막 catch 가
 `Exception` 인 것은 게으름이 아니라 계약이다 — 도구는 예외를 던지지 않는다
 ([tool-development-guide](../../features/tool/tool-development-guide.md)).
+
+**취소는 도구가 직접 듣는다 — 선언은 `COOPERATIVE` 다.** 호출은 서버의 `requestTimeout` 만큼 기다릴 수 있고, 그것은
+취소된 실행이 기다리기에는 긴 시간이다. 그래서 호출이 떠 있는 동안 `McpTool` 은 실행의 `CancellationSignal` 에 리스너를
+걸어 두고, 신호가 서면 **호출 중인 자기 스레드를 인터럽트**한다 — 전송은 인터럽트에 요청을 놓는다(§7.1). 결과는
+`MCP tool interrupted: <사유>` 다. 이미 취소된 실행의 호출은 보내지 않는다. 요청을 되돌리지는 않는다: stdio 로는 줄이
+이미 나갔으므로 서버는 그것을 실행할 수 있다(`notifications/cancelled` 는 구현되어 있지 않다). 신호가 선 뒤에도 호출이
+답을 갖고 돌아왔으면 그 답을 그대로 돌려준다 — 서버가 실행한 것을 숨기지 않는다.
+
+`THREAD_INTERRUPT` 로도 같은 취소를 얻는다 — 그 선언은 실행기가 실행 스레드에 묶인 terminator 를 등록하게 한다. 오늘은
+둘의 차이가 없다: `McpTool` 은 `ConcurrencyBehavior` 를 선언하지 않아 기본값 `SEQUENTIAL` 이고, **MCP 도구가 든 배치는
+병렬로 돌지 않는다.** `COOPERATIVE` 를 고른 것은 인터럽트를 도구 안의 일로 두기 위해서다 — 신호만 있으면 어느 실행기에서든
+듣고, MCP 도구를 언젠가 `CONCURRENT_SAFE` 로 선언하게 되더라도(서버의 `readOnlyHint` 를 믿는 경우) 병렬 디스패처가
+`THREAD_INTERRUPT` 도구를 받지 않는다는 것이 걸림돌이 되지 않는다. 인터럽트를 도구의 것으로 두었다: 호출이 떠 있는 동안에만 보내고, `execute` 가 돌아오기 전에
+되거둔다(리스너를 떼고, 자기가 세운 플래그를 지운다. 보내는 쪽과 거두는 쪽은 서로 배타적이라 거둔 뒤에는 오지 않는다).
+그래서 워커의 인터럽트 플래그는 여전히 "밖에서 온 그 워커의 인터럽트" 만을 뜻하고, 신호가 서지 않은 호출에서 온
+인터럽트는 지우지 않는다. 예외가 하나 있다: 신호가 선 **바로 그 호출 도중에** 밖에서 온 인터럽트는 도구의 것과 구별할 수
+없어 함께 지워진다(호출 전에 이미 서 있던 플래그는 되세운다). 그 실행은 어느 쪽이든 취소된 것이다.
 
 입력 스키마는 서버가 준 것을 **그대로** 광고한다. 그래서 `BuiltInToolSchemaArchitectureTest` 의
 `additionalProperties: false` 강제 대상에서 MCP 도구는 빠져 있다 — 그 스키마는 우리 것이 아니다.
@@ -303,9 +320,21 @@ AgentRuntime.close()
 쓰인 요청이 언제나 시한 전체를 갖게 하려는 것이다: 남은 시간이 거의 없는 채로 쓰인 요청은 서버가 실행하고도 timeout 으로
 보고되어, 호출자가 "쓰이지 않았다" 와 구별할 수 없다. 그래서 호출 하나는 줄 선 요청이 몇이든 시한의 두 배 안에 돌아온다. 둘 다
 인터럽트에도 곧바로 끝난다. 앞의 대기에서 시간이 다한 요청은 서버에 **쓰이지 않았고**, 시한을 넘긴 줄의 뒤늦은 나머지는
-그 줄을 마저 완성한 뒤 id 불일치로 버려진다. 인터럽트도 `requestTimeout` 도 닿지 않는 대기는 하나 남는다 — 서버가 stdin 을
-읽지 않는데 파이프 버퍼보다 큰 요청을 **쓰는** 것이다. 그 경우 이 시한은 듣지 않고 훅 실행기의 그물이 대기를 끝낸다(가드는
-그대로 막는다).
+그 줄을 마저 완성한 뒤 id 불일치로 버려진다.
+
+**셋째 대기는 요청을 쓰는 것이고, 같은 시한이 따로 센다.** 파이프 쓰기는 서버가 stdin 을 읽지 않으면 버퍼(64 KB)보다 큰
+프레임에서 막히고, 막힌 쓰기는 프로세스가 끝나는 것 말고는 무엇으로도 끝나지 않는다 — 인터럽트로도 아니다. 그래서 요청
+스레드는 그 호출을 직접 하지 않는다: 전송마다 하나인 쓰기 스레드가 쓰고, 요청은 그것이 끝나기를 `requestTimeout` 까지
+(그리고 인터럽트까지) 기다린다. 기다림이 먼저 끝났을 때 **쓰기는 버리지 않는다.** 프레임의 앞부분이 이미 파이프에 있어서,
+그 뒤에 다음 프레임을 쓰면 서버는 두 요청을 한 줄로 읽는다. 반쯤 온 응답 줄과 같은 규칙이다 — 그 프레임은 요청의 것이
+아니라 스트림의 것이 되어 쓰기 스레드에서 마저 쓰이고, 전송은 그때까지 잡혀 있다(뒤의 요청은 "never sent" 로 실패한다).
+서버가 다시 읽으면 프레임은 온전히 도착하고 실행될 수 있으므로, 이 timeout 은 "쓰이지 않았다" 고 말하지 않는다.
+프로세스를 죽여서 쓰기를 끝내지 않는다 — 느리지만 살아 있는 서버를 죽이게 된다. 끝내 읽지 않는 서버의 쓰기를 끝내는
+것은 `close()` 이고, 그때는 프로세스를 먼저 끝낸다 — 떠 있는 쓰기를 200ms 기다려 보고도 끝나지 않을 때만이다(읽고 있는
+서버로 가는 쓰기는 그 안에 끝나므로, 그런 서버는 강제로 끝내지 않는다). `close()` 는 stdin 을 언제나 쓰기 스레드에서 닫는다 — 멈춘 쓰기가
+스트림의 모니터를 쥐고 있어, 호출한 스레드에서 닫으면 그 뒤에 줄을 선다. 쓰기가 멈춰 있지 않으면 그 닫힘(서버에게는 입력의
+끝)이 프로세스 종료 신호보다 먼저 가도록 잠깐 기다린다. 세 대기가 따로 세므로 호출 하나의 상한은 시한의 세 배이고, 서버가 프레임을 곧바로 읽는 보통의 경우에는
+위에 적은 두 배다.
 
 ### 7.2 rewake 브리지 — 소비자만 있고 생산자가 없다
 
@@ -406,6 +435,10 @@ MCP 서버 하나가 죽었다고 에이전트 전체가 뜨지 못하면, 선�
   하드코딩된 목록에 직접 넣어야 한다(§5.1).
 - **`McpTool` 의 입력 스키마에 `additionalProperties: false` 를 주입하지 말 것.** 그 스키마는 서버가
   소유한다. 엄격함을 켜는 것은 스키마 소유자의 선언이다.
+- **`McpTool` 에 취소 경로를 하나 더 달지 말 것.** 취소는 도구가 이미 듣는다. `THREAD_INTERRUPT` 로 바꾸면 실행기의
+  terminator 와 도구의 리스너가 같은 스레드를 두 번 인터럽트하고, 도구가 거두는 것은 자기 것 하나다(§3).
+- **timeout 난 쓰기를 끊거나, 그 뒤에 다음 프레임을 쓰지 말 것.** 반쯤 쓰인 프레임 뒤의 프레임은 서버에게 같은 줄이다
+  (§7.1).
 - **애노테이션 해소를 `registerAllTools` 밖으로 옮기지 말 것.** 해소 지점이 하나이기 때문에 그 뒤로는
   아무도 원격/로컬을 구분하지 않는다는 §1 의 성질이 유지된다.
 
@@ -415,14 +448,14 @@ MCP 서버 하나가 죽었다고 에이전트 전체가 뜨지 못하면, 선�
 
 | 파일 | 무엇을 보나 |
 |------|------------|
-| `modules/aimon-core/src/main/java/at/aimon/core/mcp/McpTool.java` | 어댑터. 이름 포맷, 3중 실패 경로 |
+| `modules/aimon-core/src/main/java/at/aimon/core/mcp/McpTool.java` | 어댑터. 이름 포맷, 실패 경로, 취소를 듣는 방식 |
 | `modules/aimon-core/src/main/java/at/aimon/core/mcp/McpToolTraits.java` | 신뢰 해소. `resolve()` 가 §4의 전부 |
 | `modules/aimon-core/src/main/java/at/aimon/core/mcp/McpToolAnnotations.java` | 서버가 신고하는 4개 힌트와 그 MCP 기본값 |
 | `modules/aimon-core/src/main/java/at/aimon/core/mcp/McpServerConfig.java` | 이름 패턴, 전송 타입 enum, `AnnotationTrust` enum |
 | `modules/aimon-core/src/main/java/at/aimon/core/mcp/McpClientManager.java` | 병렬 초기화, 데드라인 계산, 레이스 정리, 도구 등록 |
 | `modules/aimon-core/src/main/java/at/aimon/core/mcp/DefaultMcpClientFactory.java` | 전송 분기. 미구현 전송이 던지는 지점 |
 | `modules/aimon-core/src/main/java/at/aimon/core/mcp/DefaultMcpClient.java` | initialize 핸드셰이크, `tools/list`, `tools/call` |
-| `modules/aimon-core/src/main/java/at/aimon/core/mcp/transport/StdioMcpTransport.java` | JSON-RPC 프레이밍, 요청 상관, 인바운드 알림을 건너뛰는 곳 |
+| `modules/aimon-core/src/main/java/at/aimon/core/mcp/transport/StdioMcpTransport.java` | JSON-RPC 프레이밍, 요청 상관, 세 대기와 그 시한, 인바운드 알림을 건너뛰는 곳 |
 | `modules/aimon-core/src/main/java/at/aimon/core/mcp/orca/OrcaMcpToolProvider.java` | 등록 흐름 전체 |
 | `modules/aimon-core/src/main/java/at/aimon/core/hook/rewake/mcp/McpNotificationToRewakeBridge.java` | 생산자가 없는 소비자 |
 | `modules/aimon-core/src/main/java/at/aimon/core/skill/hook/declarative/McpActionExecutor.java` | 선언적 훅에서의 MCP 호출 |
