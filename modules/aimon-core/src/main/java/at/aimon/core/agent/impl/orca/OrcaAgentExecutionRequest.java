@@ -194,14 +194,16 @@ public final class OrcaAgentExecutionRequest implements AgentExecutionRequest {
     }
 
     /**
-     * Returns the observer invoked with the turn's fresh {@link InterruptCoordinator} at loop entry.
+     * Returns the observer invoked with the turn's fresh {@link InterruptCoordinator} before its {@code onStart} hooks.
      *
      * <p>
-     * Interrupt seam: the Orca executor creates a per-turn coordinator inside
-     * {@code executeReActLoop} and publishes it to this observer exactly once before the first LLM call. Session
-     * implementations use this to capture the coordinator so external actors (REPL SIGINT, priority-queue preemption,
-     * parent-agent cascade) can subsequently trip the turn via
-     * {@link InterruptCoordinator#requestInterrupt(at.aimon.core.agent.interrupt.InterruptReason)}.
+     * Interrupt seam: the Orca executor creates a per-turn coordinator in {@code runTurn}, immediately before the
+     * turn's {@code onStart} hooks fire, and publishes it to this observer exactly once — so for every turn, a
+     * slash-command turn included. Session implementations use this to capture the coordinator so external actors
+     * (REPL SIGINT, priority-queue preemption, parent-agent cascade) can subsequently trip the turn via
+     * {@link InterruptCoordinator#requestInterrupt(at.aimon.core.agent.interrupt.InterruptReason)}. A trip during the
+     * {@code onStart} hooks ends the turn as interrupted before any LLM call; one that lands on a slash-command turn
+     * after them is not read by anything, because a command is not interruptible.
      *
      * <p>
      * Defaults to a no-op when the caller did not configure an observer. Never returns null.

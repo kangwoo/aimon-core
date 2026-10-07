@@ -19,6 +19,8 @@ import at.aimon.core.agent.compact.CompactionResult;
 import at.aimon.core.agent.compact.CompactionTrigger;
 import at.aimon.core.agent.compact.DefaultCompactionEngine;
 import at.aimon.core.agent.compact.DefaultCompactionGuard;
+import at.aimon.core.agent.interrupt.CancellationSignal;
+import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
@@ -47,6 +49,9 @@ import at.aimon.core.llm.token.TokenEstimator;
  * EE-9: the execution environment a caller puts on a {@link ContextRequest} reaches the PreCompact / PostCompact hooks
  * a compaction fires, on every route through {@link DefaultContextEngine} and the real {@link DefaultCompactionEngine}:
  * AUTO in place (through the guard), MANUAL in place, and both in view mode (summarize + summaryInstalled).
+ *
+ * <p>
+ * EE-80: the execution's cancellation signal travels the same four request types and is asserted on the same routes.
  */
 @SuppressWarnings("deprecation") // the guard and the in-place engine entry are part of what is under test
 @DisplayName("Compaction hooks carry the ContextRequest's execution environment")
@@ -56,6 +61,8 @@ class ContextEngineExecutionEnvironmentTest {
 
     private final ExecutionEnvironment executionEnvironment = TestExecutionEnvironments.builder()
             .workingDirectory("/workspace").build();
+    private final DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator();
+    private final CancellationSignal executionCancellation = coordinator.getSignal();
     private DefaultHookRegistry hookRegistry;
     private final AtomicReference<PreCompactContext> pre = new AtomicReference<>();
     private final AtomicReference<PostCompactContext> post = new AtomicReference<>();
@@ -78,19 +85,23 @@ class ContextEngineExecutionEnvironmentTest {
     }
 
     private DefaultContextEngine engine(SessionLogFormat writeFormat) {
+        return engine(writeFormat, 7_500);
+    }
+
+    private DefaultContextEngine engine(SessionLogFormat writeFormat, int estimatedTokens) {
         final DefaultCompactionGuard guard = new DefaultCompactionGuard(compactionEngine,
                 InMemoryModelContextWindowRegistry.builder()
                         .defaultLimits(ModelContextLimits.builder().contextWindow(10_000).reservedOutputTokens(1_000)
                                 .autoCompactBuffer(2_000).warningBuffer(1_000).blockingBuffer(500).build())
                         .build(),
-                new FixedTokenEstimator(7_500));
+                new FixedTokenEstimator(estimatedTokens));
         return DefaultContextEngine.builder().compactionGuard(guard).compactionEngine(compactionEngine)
-                .tokenEstimator(new FixedTokenEstimator(7_500)).writeFormat(writeFormat).build();
+                .tokenEstimator(new FixedTokenEstimator(estimatedTokens)).writeFormat(writeFormat).build();
     }
 
     private ContextRequest.Builder request(TranscriptBuffer buffer) {
         return ContextRequest.builder().transcriptBuffer(buffer).systemPrompt("system prompt").model(MODEL)
-                .hookRegistry(hookRegistry);
+                .hookRegistry(hookRegistry).executionCancellation(executionCancellation);
     }
 
     private static TranscriptBuffer conversation(SessionLogFormat format) {
@@ -111,6 +122,8 @@ class ContextEngineExecutionEnvironmentTest {
         assertThat(pre.get().getExecutionEnvironment().orElseThrow()).isSameAs(expected);
         assertThat(post.get().getExecutionEnvironment().orElseThrow()).isSameAs(expected);
         assertThat(pre.get().getEnvironmentDescriptor()).contains(expected.descriptor());
+        assertThat(pre.get().getExecutionCancellation().orElseThrow()).isSameAs(executionCancellation);
+        assertThat(post.get().getExecutionCancellation().orElseThrow()).isSameAs(executionCancellation);
     }
 
     @Test
@@ -181,6 +194,38 @@ class ContextEngineExecutionEnvironmentTest {
     }
 
     @Test
+    @DisplayName("AUTO over the blocking limit: a preCompact guard that blocks on a cancelled execution yields BLOCK")
+    void aCancelledPreCompactGuardOverTheBlockingLimitAnswersBlock() {
+        // What a shell guard does with a tripped signal: it does not start its command and blocks. The executors
+        // read the same signal in their BLOCK branch and end as interrupted rather than as a window failure.
+        hookRegistry.register(HookEventType.PRE_COMPACT,
+                (PreCompactHook) context -> context.getExecutionCancellation().orElseThrow().isCancelled()
+                        ? HookResult.block("execution cancelled")
+                        : HookResult.success());
+        compactionEngine = DefaultCompactionEngine.withDefaults(new StubSummaryClient(), new FixedTokenEstimator(9_000),
+                new DefaultHookExecutionManager());
+        coordinator.requestInterrupt(at.aimon.core.agent.interrupt.InterruptReason.USER_SIGINT);
+
+        final ContextDecision decision = engine(SessionLogFormat.V1, 9_000)
+                .prepare(request(conversation(SessionLogFormat.V1)).build());
+
+        assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.BLOCK);
+        assertThat(post.get()).as("nothing was compacted").isNull();
+    }
+
+    @Test
+    @DisplayName("a request without a cancellation signal leaves the hook contexts empty")
+    void noCancellationOnTheRequest() {
+        final TranscriptBuffer buffer = conversation(SessionLogFormat.V1);
+
+        engine(SessionLogFormat.V1).prepare(ContextRequest.builder().transcriptBuffer(buffer)
+                .systemPrompt("system prompt").model(MODEL).hookRegistry(hookRegistry).build());
+
+        assertThat(pre.get().getExecutionCancellation()).isEmpty();
+        assertThat(post.get().getExecutionCancellation()).isEmpty();
+    }
+
+    @Test
     @DisplayName("a guard written against the positional methods still runs, and drops the environment")
     void aPositionalOnlyGuardDropsTheEnvironment() {
         // The documented cost of not overriding maybeCompact(CompactionGuardRequest): the hooks fire without an
@@ -201,6 +246,7 @@ class ContextEngineExecutionEnvironmentTest {
 
         assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
         assertThat(pre.get().getExecutionEnvironment()).isEmpty();
+        assertThat(pre.get().getExecutionCancellation()).isEmpty();
     }
 
     @Test
@@ -209,12 +255,15 @@ class ContextEngineExecutionEnvironmentTest {
         final DefaultCompactionGuard guard = (DefaultCompactionGuard) engine(SessionLogFormat.V1).getCompactionGuard();
 
         guard.maybeCompact(CompactionGuardRequest.builder().transcriptBuffer(conversation(SessionLogFormat.V1))
-                .model(MODEL).hookRegistry(hookRegistry).executionEnvironment(executionEnvironment).build());
+                .model(MODEL).hookRegistry(hookRegistry).executionEnvironment(executionEnvironment)
+                .executionCancellation(executionCancellation).build());
         assertThat(pre.get().getExecutionEnvironment().orElseThrow()).isSameAs(executionEnvironment);
+        assertThat(pre.get().getExecutionCancellation().orElseThrow()).isSameAs(executionCancellation);
 
         pre.set(null);
         guard.maybeCompact(conversation(SessionLogFormat.V1), MODEL, hookRegistry);
         assertThat(pre.get().getExecutionEnvironment()).isEmpty();
+        assertThat(pre.get().getExecutionCancellation()).isEmpty();
     }
 
     /** Returns a fixed estimate regardless of content, so a threshold band can be targeted precisely. */

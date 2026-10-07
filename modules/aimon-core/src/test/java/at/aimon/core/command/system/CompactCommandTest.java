@@ -240,6 +240,9 @@ class CompactCommandTest {
         // The compaction request is what the engine puts on the PreCompact / PostCompact hook contexts.
         assertThat(engine.lastRequest.get().getExecutionEnvironment().orElseThrow()).isSameAs(executionEnvironment);
         assertThat(capturedOnStop.get().getExecutionEnvironment().orElseThrow()).isSameAs(executionEnvironment);
+        // EE-80: a slash command is not interruptible, so neither the compaction nor the onStop is handed a signal.
+        assertThat(engine.lastRequest.get().getExecutionCancellation()).isEmpty();
+        assertThat(capturedOnStop.get().getExecutionCancellation()).isEmpty();
     }
 
     @Test

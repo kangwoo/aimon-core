@@ -609,8 +609,16 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * <p>
      * A block is a hook that exited 2 or, unless it declares {@code failOpen: true}, one whose command could not be run
      * at all. Either way the fork does not start: {@link #startFork} turns the exception into
-     * {@link #createBlockedResult}. The same rule as {@code OrcaAgentExecutor#checkOnStartHooks}, which stops the turn,
-     * and the same gate a code-behavior fork passes ({@link SubagentOnStartGate}).
+     * {@link #createBlockedResult}. The same rule for what counts as a block as
+     * {@code OrcaAgentExecutor#checkOnStartHooks}, which stops the turn, and the same gate a code-behavior fork passes
+     * ({@link SubagentOnStartGate}).
+     *
+     * <p>
+     * The two differ on an interrupt that lands while the chain runs. The main turn reads its signal before the blocks
+     * and ends {@code INTERRUPTED}. A fork does not: a shell guard answers its cancelled command with a block, so the
+     * fork ends {@code BLOCKED} with an "execution cancelled" reason — and {@code INTERRUPTED}, at the loop's first
+     * checkpoint, only when the hook that was running was a programmatic one that did not block. Whether a fork should
+     * read the signal here too is open (EE-94).
      *
      * <p>
      * The note is wrapped in a {@code <system-reminder>} block so the model does not read it as genuine user intent,
@@ -640,6 +648,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * @return the view to send (never null)
      * @throws ContextWindowExceededException
      *             if the engine blocks the iteration
+     * @throws CancelledExecutionException
+     *             if the engine blocks the iteration of a fork that has been cancelled
      */
     private ContextView applyCompactionGate(LoopContext lc, int iterationCount) {
         // Hand the engine this fork's run identity. Without it the compaction engine has only the transcript label to
@@ -647,12 +657,16 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // fork had a session, and told an execution id as its name. The two are tied together at both entries into
         // execute(): a fresh fork derives the label from the id (forkTranscriptLabel), a resume derives the id back out
         // of the restored label (ExecutionId.of), which is why the round trip has to survive the snapshot.
-        final ContextDecision decision = contextEngine
-                .prepare(ContextRequest.builder().transcriptBuffer(lc.transcriptBuffer).model(lc.modelConfig)
-                        .hookRegistry(lc.hookRegistry()).executionEnvironment(lc.executionEnvironment())
-                        .caller(ContextCaller.builder().executionId(lc.executionId).build()).build());
+        final ContextDecision decision = contextEngine.prepare(ContextRequest.builder()
+                .transcriptBuffer(lc.transcriptBuffer).model(lc.modelConfig).hookRegistry(lc.hookRegistry())
+                .executionEnvironment(lc.executionEnvironment()).executionCancellation(lc.coordinator.getSignal())
+                .caller(ContextCaller.builder().executionId(lc.executionId).build()).build());
         switch (decision.getAction()) {
             case BLOCK :
+                // An interrupted preCompact guard blocks, the compaction is skipped, and a view over the blocking
+                // limit then answers BLOCK. That window error was caused by the interrupt, so it is the interrupt:
+                // unwind as a cancellation, which the loop turns into the fork's interrupted result.
+                lc.coordinator.getSignal().checkpoint();
                 log.error("Compaction guard blocked subagent iteration {}: {}", iterationCount, decision.getReason());
                 throw new ContextWindowExceededException(decision.getEstimatedTokens(), decision.getBlockingLimit(),
                         decision.getReason());
@@ -1097,8 +1111,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         final ExecutionMetadata metadata = buildMetadata(lc, iterationCount, accumulatedTokens);
         final OnStopContext onStopContext = OnStopContext.builder().executorType(InvokerType.SUBAGENT)
                 .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry())
-                .executionEnvironment(lc.executionEnvironment()).success(true).finalAnswer(finalAnswer)
-                .metadata(metadata).executionAttributes(lc.executionAttributes).build();
+                .executionEnvironment(lc.executionEnvironment()).executionCancellation(lc.coordinator.getSignal())
+                .success(true).finalAnswer(finalAnswer).metadata(metadata).executionAttributes(lc.executionAttributes)
+                .build();
         hookExecutionManager.executeOnStop(onStopContext);
         // Stream the full final answer plus a terminal boundary so a background tail sees the complete result and knows
         // the task finished.
@@ -1139,8 +1154,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         final ExecutionMetadata metadata = buildMetadata(lc, iterationCount, accumulatedTokens);
         final OnStopContext onStopContext = OnStopContext.builder().executorType(InvokerType.SUBAGENT)
                 .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry())
-                .executionEnvironment(lc.executionEnvironment()).success(true).finalAnswer(flaggedAnswer)
-                .metadata(metadata).executionAttributes(lc.executionAttributes).build();
+                .executionEnvironment(lc.executionEnvironment()).executionCancellation(lc.coordinator.getSignal())
+                .success(true).finalAnswer(flaggedAnswer).metadata(metadata).executionAttributes(lc.executionAttributes)
+                .build();
         hookExecutionManager.executeOnStop(onStopContext);
         // The same terminal boundary a success streams, naming why the answer is incomplete.
         stream(lc, "\n[final answer]\n" + flaggedAnswer + "\n[completed: TRUNCATED at max_tokens after "
@@ -1232,8 +1248,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         final ExecutionMetadata metadata = buildMetadata(lc, iterationCount, accumulatedTokens);
         final OnStopContext onStopContext = OnStopContext.builder().executorType(InvokerType.SUBAGENT)
                 .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry())
-                .executionEnvironment(lc.executionEnvironment()).success(false).finalAnswer(errorMessage)
-                .metadata(metadata).executionAttributes(lc.executionAttributes).build();
+                .executionEnvironment(lc.executionEnvironment()).executionCancellation(lc.coordinator.getSignal())
+                .success(false).finalAnswer(errorMessage).metadata(metadata).executionAttributes(lc.executionAttributes)
+                .build();
         hookExecutionManager.executeOnStop(onStopContext);
         // Terminal boundary so a background tail observes that the task ended (and why).
         stream(lc, "\n[ended: " + errorMessage + "]\n");

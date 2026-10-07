@@ -62,6 +62,8 @@ class RollingContextEngineTest {
     private static final LlmModel MODEL = LlmModel.builder().name("tiny").build();
     private static final ExecutionEnvironment EXECUTION_ENVIRONMENT = TestExecutionEnvironments.builder()
             .workingDirectory("/workspace").build();
+    private static final at.aimon.core.agent.interrupt.CancellationSignal EXECUTION_CANCELLATION = new at.aimon.core.agent.interrupt.DefaultInterruptCoordinator()
+            .getSignal();
 
     private static final ModelContextLimits LIMITS = ModelContextLimits.builder().contextWindow(1200)
             .reservedOutputTokens(200).autoCompactBuffer(100).warningBuffer(100).blockingBuffer(50).build();
@@ -92,7 +94,7 @@ class RollingContextEngineTest {
     private ContextRequest request(String systemPrompt, boolean budgetForced) {
         return ContextRequest.builder().transcriptBuffer(buffer).systemPrompt(systemPrompt).model(MODEL)
                 .hookRegistry(new DefaultHookRegistry()).executionEnvironment(EXECUTION_ENVIRONMENT)
-                .budgetForced(budgetForced).build();
+                .executionCancellation(EXECUTION_CANCELLATION).budgetForced(budgetForced).build();
     }
 
     /** seq 0 = "goal", then {@code count} messages of {@code size} characters, alternating assistant / user. */
@@ -148,6 +150,8 @@ class RollingContextEngineTest {
             assertThat(summary.isRolling()).isTrue();
             // EE-9: the request's execution environment rides along to the summary request, for the compaction hooks.
             assertThat(summary.getExecutionEnvironment().orElseThrow()).isSameAs(EXECUTION_ENVIRONMENT);
+            // EE-80: and so does the execution's cancellation signal.
+            assertThat(summary.getExecutionCancellation().orElseThrow()).isSameAs(EXECUTION_CANCELLATION);
             assertThat(summary.getPreviousSummary()).isEmpty();
             assertThat(summary.getTargetSummaryTokens()).isEqualTo(80);
             assertThat(summary.getTrigger()).isEqualTo(CompactionTrigger.AUTO);

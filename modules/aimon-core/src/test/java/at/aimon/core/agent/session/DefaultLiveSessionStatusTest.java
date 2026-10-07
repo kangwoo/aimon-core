@@ -28,6 +28,7 @@ import at.aimon.core.agent.impl.orca.OrcaAgentExecutionRequest;
 import at.aimon.core.agent.impl.orca.OrcaAgentExecutionResult;
 import at.aimon.core.agent.impl.orca.OrcaAgentRuntime;
 import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
+import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.queue.DefaultMessageQueueManager;
 import at.aimon.core.agent.queue.InMemoryMessageQueueRepository;
 import at.aimon.core.agent.queue.MessageQueueManager;
@@ -216,14 +217,14 @@ class DefaultLiveSessionStatusTest {
     @DisplayName("a turn that publishes no tracker (e.g. a slash-command turn) is excluded from session totals")
     void turnWithoutTrackerIsExcludedFromTotals() throws Exception {
         final OrcaAgentRuntime context = createContext();
-        final CapturingExecutor executor = new CapturingExecutor(newTracker()).withoutObservers();
+        final CapturingExecutor executor = new CapturingExecutor(newTracker()).withoutTracker();
         final SessionId sessionId = SessionId.of("status-command");
 
         try (DefaultLiveSession session = new DefaultLiveSession(sessionId, context, executor,
                 LiveSessionOptions.defaults())) {
             final CompletionStage<?> stage = session.submitAsync("/help", e -> {
             });
-            // No handles published, so the session never observes the turn — it still reads IDLE.
+            // No tracker published, so the session still reads IDLE — the coordinator alone does not make it RUNNING.
             assertThat(session.status().getPhase()).isEqualTo(LiveSessionStatus.Phase.IDLE);
 
             executor.completeNext(result(sessionId));
@@ -231,6 +232,34 @@ class DefaultLiveSessionStatusTest {
 
             final LiveSessionStatus after = session.status();
             assertThat(after.getSessionTotals().getTurnCount()).isZero();
+        }
+    }
+
+    @Test
+    @DisplayName("a turn still in its onStart hooks is IDLE and interruptible, and an interrupt reaches it (EE-80)")
+    void turnBeforeLoopEntryIsIdleButInterruptible() throws Exception {
+        final OrcaAgentRuntime context = createContext();
+        // The coordinator is published before the onStart hooks, the tracker only at loop entry: this is the window
+        // in between, and the whole of a slash-command turn.
+        final CapturingExecutor executor = new CapturingExecutor(newTracker()).withoutTracker();
+        final SessionId sessionId = SessionId.of("status-pre-loop");
+
+        try (DefaultLiveSession session = new DefaultLiveSession(sessionId, context, executor,
+                LiveSessionOptions.defaults())) {
+            final CompletionStage<?> stage = session.submitAsync("hi", e -> {
+            });
+            assertThat(executor.awaitObserverInvoked(1, TimeUnit.SECONDS)).isTrue();
+
+            final LiveSessionStatus preLoop = session.status();
+            assertThat(preLoop.getPhase()).isEqualTo(LiveSessionStatus.Phase.IDLE);
+            assertThat(preLoop.isInterruptible()).isTrue();
+            assertThat(preLoop.getTurnProgress()).isEmpty();
+
+            session.interrupt(InterruptReason.USER_SIGINT);
+            assertThat(executor.lastCoordinator().getSignal().isCancelled()).isTrue();
+
+            executor.completeNext(result(sessionId));
+            stage.toCompletableFuture().get(1, TimeUnit.SECONDS);
         }
     }
 
@@ -292,9 +321,10 @@ class DefaultLiveSessionStatusTest {
     }
 
     /**
-     * Streaming executor stub that emulates the Orca executor's loop-entry contract: per invocation it creates a fresh
-     * {@link DefaultInterruptCoordinator}, publishes it together with the {@link BudgetTracker} for that turn to the
-     * request's observers, then parks on a caller-controlled future released via {@link #completeNext}. Supplying more
+     * Streaming executor stub that emulates the Orca executor's publication contract: per invocation it creates a
+     * fresh {@link DefaultInterruptCoordinator}, publishes it together with the {@link BudgetTracker} for that turn to
+     * the request's observers, then parks on a caller-controlled future released via {@link #completeNext}. Supplying
+     * more
      * than one tracker models successive turns (turn N publishes tracker N, then the last tracker repeats).
      */
     private static final class CapturingExecutor
@@ -305,17 +335,25 @@ class DefaultLiveSessionStatusTest {
         private final List<BudgetTracker> trackers;
         private final List<CompletableFuture<OrcaAgentExecutionResult>> inflight = new ArrayList<>();
         private final List<CountDownLatch> observerLatches = new ArrayList<>();
-        private boolean publishObservers = true;
+        private boolean publishTracker = true;
+        private DefaultInterruptCoordinator lastCoordinator;
         private int invocations;
 
         CapturingExecutor(BudgetTracker... trackers) {
             this.trackers = List.of(trackers);
         }
 
-        /** Emulates a turn that bypasses the ReAct loop (e.g. a slash command): no observer handles are published. */
-        CapturingExecutor withoutObservers() {
-            this.publishObservers = false;
+        /**
+         * Emulates a turn that has not entered the ReAct loop, or never will (a slash command): the coordinator is
+         * published, as the executor does before the onStart hooks, and the tracker is not.
+         */
+        CapturingExecutor withoutTracker() {
+            this.publishTracker = false;
             return this;
+        }
+
+        synchronized DefaultInterruptCoordinator lastCoordinator() {
+            return lastCoordinator;
         }
 
         @Override
@@ -336,8 +374,9 @@ class DefaultLiveSessionStatusTest {
             invocations++;
             final DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator();
             final BudgetTracker tracker = trackers.get(Math.min(invocations - 1, trackers.size() - 1));
-            if (publishObservers) {
-                request.getInterruptObserver().accept(coordinator);
+            lastCoordinator = coordinator;
+            request.getInterruptObserver().accept(coordinator);
+            if (publishTracker) {
                 request.getBudgetObserver().accept(tracker);
             }
             for (int i = 0; i < Math.min(invocations, observerLatches.size()); i++) {

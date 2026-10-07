@@ -8,6 +8,7 @@ import java.util.Optional;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.compact.CompactionTrigger;
+import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.execution.HookContext;
@@ -36,6 +37,7 @@ public final class PreCompactContext implements HookContext {
     private final String invokerName;
     private final HookRegistry hookRegistry;
     private final ExecutionEnvironment executionEnvironment;
+    private final CancellationSignal executionCancellation;
     private final CompactionTrigger trigger;
     private final String sessionIdValue;
     private final ExecutionId executionId;
@@ -49,6 +51,7 @@ public final class PreCompactContext implements HookContext {
         invokerName = Objects.requireNonNull(builder.invokerName, "Invoker name cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
         executionEnvironment = builder.executionEnvironment;
+        executionCancellation = builder.executionCancellation;
         trigger = Objects.requireNonNull(builder.trigger, "Trigger cannot be null");
         sessionIdValue = builder.sessionIdValue != null ? builder.sessionIdValue : "";
         executionId = builder.executionId;
@@ -76,6 +79,11 @@ public final class PreCompactContext implements HookContext {
     @Override
     public Optional<ExecutionEnvironment> getExecutionEnvironment() {
         return Optional.ofNullable(executionEnvironment);
+    }
+
+    @Override
+    public Optional<CancellationSignal> getExecutionCancellation() {
+        return Optional.ofNullable(executionCancellation);
     }
 
     public CompactionTrigger getTrigger() {
@@ -132,6 +140,7 @@ public final class PreCompactContext implements HookContext {
         private String invokerName;
         private HookRegistry hookRegistry;
         private ExecutionEnvironment executionEnvironment;
+        private CancellationSignal executionCancellation;
         private CompactionTrigger trigger;
         private String sessionIdValue;
         private ExecutionId executionId;
@@ -167,6 +176,19 @@ public final class PreCompactContext implements HookContext {
          */
         public Builder executionEnvironment(ExecutionEnvironment executionEnvironment) {
             this.executionEnvironment = executionEnvironment;
+            return this;
+        }
+
+        /**
+         * Sets the cancellation signal of the execution this event fires in, so a hook's shell command stops when
+         * the execution is interrupted.
+         *
+         * @param executionCancellation
+         *            the execution's signal (nullable — absent when the firing site has none in reach)
+         * @return This builder
+         */
+        public Builder executionCancellation(CancellationSignal executionCancellation) {
+            this.executionCancellation = executionCancellation;
             return this;
         }
 

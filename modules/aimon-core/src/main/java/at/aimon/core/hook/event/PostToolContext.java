@@ -7,6 +7,7 @@ import java.util.Optional;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.interrupt.CancellationSignal;
+import at.aimon.core.agent.interrupt.CancellationSignals;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
@@ -99,9 +100,16 @@ public final class PostToolContext implements HookContext {
         return Optional.ofNullable(executionEnvironment);
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * This event reports something that already happened, so the signal is handed out only while it has not tripped:
+     * a command running when the interrupt arrives is stopped, and one that starts afterwards runs unbound.
+     */
     @Override
     public Optional<CancellationSignal> getExecutionCancellation() {
-        return Optional.ofNullable(executionCancellation);
+        return CancellationSignals.liveOrEmpty(executionCancellation);
     }
 
     /**

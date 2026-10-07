@@ -269,20 +269,11 @@ public final class SingleToolInvoker {
     /**
      * The execution's cancellation signal, as the tool itself would read it — so a hook's shell command stops on the
      * same interrupt the tool does. Null when the tool context carries none (the hook then runs untied, as before).
+     * Passed as is to all four chains: the two that report what already happened (PostTool, PermissionDenied) stop
+     * handing it out once it has tripped, in the context's own getter, so the rule is applied per hook.
      */
     private static CancellationSignal cancellationOf(ToolInvocationSpec spec) {
         return spec.getToolContext().get(InterruptToolKeys.CANCELLATION_SIGNAL).orElse(null);
-    }
-
-    /**
-     * {@link #cancellationOf} for the chains that report what already happened (PostTool, PermissionDenied): the
-     * signal while the execution is live, and none once it has been cancelled. A command that is running when the
-     * interrupt arrives is stopped; one that starts afterwards is reporting on a cancelled execution and must still
-     * run — handing it a tripped signal would keep an audit hook from ever recording the interrupted call.
-     */
-    private static CancellationSignal liveCancellationOf(ToolInvocationSpec spec) {
-        final CancellationSignal signal = cancellationOf(spec);
-        return signal == null || signal.isCancelled() ? null : signal;
     }
 
     /**
@@ -317,7 +308,7 @@ public final class SingleToolInvoker {
             final PermissionDeniedContext deniedContext = PermissionDeniedContext.builder()
                     .invokerType(spec.getInvokerType()).invokerName(spec.getInvokerName())
                     .hookRegistry(spec.getHookRegistry()).executionEnvironment(environmentOf(spec))
-                    .executionCancellation(liveCancellationOf(spec)).toolName(toolUse.getName())
+                    .executionCancellation(cancellationOf(spec)).toolName(toolUse.getName())
                     .toolInput(ToolInput.of(toolUse.getInput())).denyReason(combinedReason)
                     .executionAttributes(spec.getExecutionAttributes()).build();
             hookExecutionManager.executePermissionDenied(deniedContext);
@@ -340,7 +331,7 @@ public final class SingleToolInvoker {
         try {
             final PostToolContext postToolContext = PostToolContext.builder().executorType(spec.getInvokerType())
                     .invokerName(spec.getInvokerName()).hookRegistry(spec.getHookRegistry())
-                    .executionEnvironment(environmentOf(spec)).executionCancellation(liveCancellationOf(spec))
+                    .executionEnvironment(environmentOf(spec)).executionCancellation(cancellationOf(spec))
                     .toolUse(effectiveToolUse).toolUseResult(toolUseResult).iterationCount(spec.getIterationCount())
                     .executionAttributes(spec.getExecutionAttributes()).build();
             final List<HookResult> postToolResults = hookExecutionManager.executePostTool(postToolContext);

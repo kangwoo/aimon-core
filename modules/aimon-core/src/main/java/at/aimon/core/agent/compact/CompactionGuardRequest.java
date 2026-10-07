@@ -4,6 +4,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.ExecutionId;
+import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
@@ -28,6 +29,7 @@ public final class CompactionGuardRequest {
     private final HookRegistry hookRegistry;
     private final ExecutionId executionId;
     private final ExecutionEnvironment executionEnvironment;
+    private final CancellationSignal executionCancellation;
     private final boolean budgetForced;
 
     private CompactionGuardRequest(Builder builder) {
@@ -36,6 +38,7 @@ public final class CompactionGuardRequest {
         this.hookRegistry = Objects.requireNonNull(builder.hookRegistry, "hookRegistry cannot be null");
         this.executionId = builder.executionId;
         this.executionEnvironment = builder.executionEnvironment;
+        this.executionCancellation = builder.executionCancellation;
         this.budgetForced = builder.budgetForced;
     }
 
@@ -75,6 +78,17 @@ public final class CompactionGuardRequest {
     }
 
     /**
+     * The cancellation signal of the execution being compacted, carried into the PreCompact / PostCompact hook
+     * contexts so a hook's command stops when that execution is interrupted. Empty when no signal there can trip — a
+     * manual {@code /compact}, a rewake replay — or the caller had none in reach.
+     *
+     * @return the compacting execution's cancellation signal, or empty when there is none
+     */
+    public Optional<CancellationSignal> getExecutionCancellation() {
+        return Optional.ofNullable(executionCancellation);
+    }
+
+    /**
      * Whether a budget hint asked for proactive compaction &mdash; the {@code forceCompact} half of the positional
      * entry points.
      */
@@ -89,6 +103,7 @@ public final class CompactionGuardRequest {
         private HookRegistry hookRegistry;
         private ExecutionId executionId;
         private ExecutionEnvironment executionEnvironment;
+        private CancellationSignal executionCancellation;
         private boolean budgetForced;
 
         private Builder() {
@@ -116,6 +131,17 @@ public final class CompactionGuardRequest {
 
         public Builder executionEnvironment(ExecutionEnvironment executionEnvironment) {
             this.executionEnvironment = executionEnvironment;
+            return this;
+        }
+
+        /**
+         * @param executionCancellation
+         *            the compacting execution's cancellation signal for the compaction hooks, or {@code null} when
+         *            there is none
+         * @return this builder
+         */
+        public Builder executionCancellation(CancellationSignal executionCancellation) {
+            this.executionCancellation = executionCancellation;
             return this;
         }
 

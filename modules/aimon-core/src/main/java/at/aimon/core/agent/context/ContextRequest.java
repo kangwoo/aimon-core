@@ -3,6 +3,7 @@ package at.aimon.core.agent.context;
 import java.util.Objects;
 import java.util.Optional;
 
+import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
@@ -29,6 +30,7 @@ public final class ContextRequest {
     private final LlmModel model;
     private final HookRegistry hookRegistry;
     private final ExecutionEnvironment executionEnvironment;
+    private final CancellationSignal executionCancellation;
     private final ContextCaller caller;
     private final boolean budgetForced;
     private final LlmCallMetadata callMetadata;
@@ -39,6 +41,7 @@ public final class ContextRequest {
         this.model = Objects.requireNonNull(builder.model, "model cannot be null");
         this.hookRegistry = builder.hookRegistry;
         this.executionEnvironment = builder.executionEnvironment;
+        this.executionCancellation = builder.executionCancellation;
         this.caller = builder.caller != null ? builder.caller : ContextCaller.session();
         this.budgetForced = builder.budgetForced;
         this.callMetadata = builder.callMetadata;
@@ -78,6 +81,17 @@ public final class ContextRequest {
         return Optional.ofNullable(executionEnvironment);
     }
 
+    /**
+     * The cancellation signal of the execution being compacted, carried into the PreCompact / PostCompact hook
+     * contexts so a hook's command stops when that execution is interrupted. Empty when no signal there can trip — a
+     * manual {@code /compact}, a rewake replay — or the caller had none in reach.
+     *
+     * @return the compacting execution's cancellation signal, or empty when there is none
+     */
+    public Optional<CancellationSignal> getExecutionCancellation() {
+        return Optional.ofNullable(executionCancellation);
+    }
+
     /** Who the call is made on behalf of. Never null; defaults to {@link ContextCaller#session()}. */
     public ContextCaller getCaller() {
         return caller;
@@ -106,6 +120,7 @@ public final class ContextRequest {
         private LlmModel model;
         private HookRegistry hookRegistry;
         private ExecutionEnvironment executionEnvironment;
+        private CancellationSignal executionCancellation;
         private ContextCaller caller;
         private boolean budgetForced;
         private LlmCallMetadata callMetadata;
@@ -145,6 +160,17 @@ public final class ContextRequest {
          */
         public Builder executionEnvironment(ExecutionEnvironment executionEnvironment) {
             this.executionEnvironment = executionEnvironment;
+            return this;
+        }
+
+        /**
+         * @param executionCancellation
+         *            the compacting execution's cancellation signal for the compaction hooks, or {@code null} when
+         *            there is none
+         * @return this builder
+         */
+        public Builder executionCancellation(CancellationSignal executionCancellation) {
+            this.executionCancellation = executionCancellation;
             return this;
         }
 
