@@ -116,6 +116,36 @@ class JacksonHookConfigParserTest {
     }
 
     @Test
+    @DisplayName("ignoreInterrupt binds from a JSON boolean and defaults to false (EE-97)")
+    void ignoreInterruptBindsFromABoolean() {
+        final HookConfigDocument doc = parser.parse("{\"hooks\":{\"Stop\":[{\"hooks\":["
+                + "{\"type\":\"command\",\"command\":\"a\",\"ignoreInterrupt\":true},"
+                + "{\"type\":\"command\",\"command\":\"b\",\"ignoreInterrupt\":false},"
+                + "{\"type\":\"command\",\"command\":\"c\"}]}]}}");
+
+        assertThat(doc.getHooks().get("Stop").get(0).getHandlers()).extracting(HookHandlerSpec::isIgnoreInterrupt)
+                .containsExactly(true, false, false);
+        assertThat(doc.getHooks().get("Stop").get(0).getHandlers())
+                .allSatisfy(h -> assertThat(h.getRejectedIgnoreInterrupt()).isEmpty());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest(name = "ignoreInterrupt: {0}")
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"\"true\"", "\"false\"", "1", "0", "null", "[true]"})
+    @DisplayName("an ignoreInterrupt that is not a JSON boolean is read as false and the handler is kept (EE-97)")
+    void ignoreInterruptThatIsNotABooleanIsReadAsFalse(String value) {
+        // Bound like failOpen: no coercion, and no parse failure either — that would drop the file's guards.
+        final String json = "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"x\","
+                + "\"ignoreInterrupt\":" + value + "}]}]}}";
+
+        final HookHandlerSpec handler = parser.parse(json).getHooks().get("Stop").get(0).getHandlers().get(0);
+
+        assertThat(handler.isIgnoreInterrupt()).isFalse();
+        assertThat(handler.getCommand()).isEqualTo("x");
+        assertThat(handler.getRejectedIgnoreInterrupt()).contains(value);
+        assertThat(handler.getRejectedFailOpen()).isEmpty();
+    }
+
+    @Test
     @DisplayName("unknown handler fields are silently ignored (forwards-compat)")
     void unknownFieldsAreIgnored() {
         final String json = "{\"hooks\":{\"PreToolUse\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"x\""

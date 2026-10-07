@@ -6,9 +6,11 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.AbstractExecutorService;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
@@ -647,6 +649,193 @@ class DefaultHookExecutorTest {
             Thread.interrupted();
             executor.close();
             inline.shutdownNow();
+        }
+    }
+
+    // ---- hooks that ask to be waited for (EE-97) ---------------------------------------------
+
+    /**
+     * A hook that declares {@link ExecutionHook#ignoresInterrupt()} and runs until the test lets it finish. It records
+     * whether its own thread was interrupted, and when the executor asked it the question — which the executor does
+     * exactly when it is deciding what to do with an interrupt of the firing thread.
+     */
+    private static final class MustFinishHook implements PreToolHook {
+
+        private final CountDownLatch started = new CountDownLatch(1);
+        private final CountDownLatch asked = new CountDownLatch(1);
+        private final CountDownLatch mayFinish = new CountDownLatch(1);
+        private final AtomicBoolean ownThreadInterrupted = new AtomicBoolean();
+        private final HookResult verdict;
+
+        MustFinishHook(HookResult verdict) {
+            this.verdict = verdict;
+        }
+
+        @Override
+        public boolean ignoresInterrupt() {
+            asked.countDown();
+            return true;
+        }
+
+        @Override
+        public HookResult execute(PreToolContext context) {
+            started.countDown();
+            try {
+                mayFinish.await();
+            } catch (InterruptedException e) {
+                ownThreadInterrupted.set(true);
+                Thread.currentThread().interrupt();
+            }
+            return verdict;
+        }
+    }
+
+    /** Interrupts {@code firing} once the hook runs, and lets the hook finish once the executor has answered. */
+    private static Thread interruptThenRelease(Thread firing, MustFinishHook hook) {
+        final Thread helper = new Thread(() -> {
+            try {
+                hook.started.await();
+                firing.interrupt();
+                hook.asked.await();
+                hook.mayFinish.countDown();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }, "interrupt-then-release");
+        helper.setDaemon(true);
+        helper.start();
+        return helper;
+    }
+
+    /**
+     * The thread road of {@code ignoreInterrupt}: the firing thread is interrupted while the hook runs (a background
+     * fork's {@code Task.stop} does this to the worker). The hook's task is not cancelled, its own result comes back,
+     * and the interrupt is back on the firing thread for the caller's cancellation to read.
+     */
+    @Test
+    @Timeout(20)
+    void aHookThatIgnoresInterruptIsWaitedForAndKeepsItsResult() {
+        final MustFinishHook hook = new MustFinishHook(HookResult.withFeedback("cleanup finished"));
+        final DefaultHookExecutor executor = new DefaultHookExecutor();
+        try {
+            interruptThenRelease(Thread.currentThread(), hook);
+            final List<HookResult> results = executor.execute(List.of(hook), preCtx(),
+                    HookExecutionPolicy.continueOnExceptionButStopOnBlocked());
+
+            assertThat(hook.ownThreadInterrupted).as("the hook's task was not cancelled").isFalse();
+            assertThat(results).hasSize(1);
+            assertThat(results.get(0).isBlocked()).isFalse();
+            assertThat(results.get(0).getFeedback()).contains("cleanup finished");
+            assertThat(Thread.currentThread().isInterrupted()).as("the caller's cancellation still sees the interrupt")
+                    .isTrue();
+        } finally {
+            Thread.interrupted();
+            executor.close();
+        }
+    }
+
+    /**
+     * The same hook without the declaration is what the suite above pins: cancelled and BLOCKED. This is the twin
+     * that makes the test before it mean something.
+     */
+    @Test
+    @Timeout(20)
+    void theSameInterruptCancelsAHookThatDoesNotDeclareIt() throws Exception {
+        final CountDownLatch started = new CountDownLatch(1);
+        final CountDownLatch cancelled = new CountDownLatch(1);
+        final PreToolHook hook = ctx -> {
+            started.countDown();
+            try {
+                new CountDownLatch(1).await();
+            } catch (InterruptedException e) {
+                cancelled.countDown();
+                Thread.currentThread().interrupt();
+            }
+            return HookResult.withFeedback("cleanup finished");
+        };
+        final Thread firing = Thread.currentThread();
+        final Thread helper = new Thread(() -> {
+            try {
+                started.await();
+                firing.interrupt();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        helper.setDaemon(true);
+        final DefaultHookExecutor executor = new DefaultHookExecutor();
+        try {
+            helper.start();
+            final List<HookResult> results = executor.execute(List.of(hook), preCtx(),
+                    HookExecutionPolicy.continueOnExceptionButStopOnBlocked());
+
+            assertThat(results.get(0).isBlocked()).isTrue();
+            assertThat(results.get(0).getFeedback().orElseThrow()).contains("interrupted");
+            Thread.interrupted();
+            assertThat(cancelled.await(10, TimeUnit.SECONDS)).as("the hook's task was cancelled").isTrue();
+        } finally {
+            Thread.interrupted();
+            executor.close();
+        }
+    }
+
+    /**
+     * A flag that is already set when the wait begins is not a reason to skip the wait either — and the executor does
+     * not know the event, so a hook on a gate that declares it is honoured too. What that buys is only time: the
+     * verdict that comes back is the hook's own block, never "interrupted", and never a pass.
+     */
+    @Test
+    @Timeout(20)
+    void aGateHookThatDeclaresItDelaysTheInterruptButKeepsItsOwnVerdict() {
+        final MustFinishHook guard = new MustFinishHook(HookResult.block("not on a Friday"));
+        final DefaultHookExecutor executor = new DefaultHookExecutor();
+        try {
+            Thread.currentThread().interrupt();
+            final Thread helper = new Thread(() -> {
+                try {
+                    guard.asked.await();
+                    guard.mayFinish.countDown();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            helper.setDaemon(true);
+            helper.start();
+            final List<HookResult> results = executor.execute(List.of(guard), preCtx(),
+                    HookExecutionPolicy.continueOnExceptionButStopOnBlocked());
+
+            assertThat(guard.ownThreadInterrupted).isFalse();
+            assertThat(results.get(0).isBlocked()).isTrue();
+            assertThat(results.get(0).getFeedback()).contains("not on a Friday");
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+            executor.close();
+        }
+    }
+
+    /**
+     * The declaration lengthens nothing. A hook that outlives its budget is cut off by the ordinary timeout, with the
+     * policy's answer for one, and its task is cancelled then.
+     */
+    @Test
+    @Timeout(20)
+    void aHookThatIgnoresInterruptStillTimesOut() throws Exception {
+        final MustFinishHook hook = new MustFinishHook(HookResult.success());
+        final HookExecutionPolicy shortFailClosed = HookExecutionPolicy.continueOnExceptionButStopOnBlocked()
+                .withTimeout(Duration.ofMillis(200)).withTimeoutBehavior(TimeoutBehavior.FAIL_CLOSED);
+        final DefaultHookExecutor executor = new DefaultHookExecutor();
+        try {
+            Thread.currentThread().interrupt();
+            final List<HookResult> results = executor.execute(List.of(hook), preCtx(), shortFailClosed);
+
+            assertThat(results.get(0).isBlocked()).isTrue();
+            assertThat(results.get(0).getFeedback().orElseThrow()).contains("timed out");
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+            hook.mayFinish.countDown();
+            executor.close();
         }
     }
 

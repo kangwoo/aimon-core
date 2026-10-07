@@ -79,7 +79,9 @@ import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.shell.exception.ShellCancelledException;
 import at.aimon.core.skill.DefaultSkillRegistry;
 import at.aimon.core.skill.hook.action.ShellAction;
+import at.aimon.core.skill.hook.declarative.DeclarativeHookOptions;
 import at.aimon.core.skill.hook.declarative.DeclarativeOnStartHook;
+import at.aimon.core.skill.hook.declarative.DeclarativeOnStopHook;
 import at.aimon.core.skill.hook.declarative.DeclarativePreCompactHook;
 import at.aimon.core.skill.hook.declarative.HostShellActionExecutor;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
@@ -111,6 +113,8 @@ class OrcaAgentExecutorHookCancellationTest {
     private final ExecutorService turnThread = Executors.newSingleThreadExecutor();
     private final CountDownLatch commandStarted = new CountDownLatch(1);
     private final AtomicBoolean stoppedByCancellation = new AtomicBoolean();
+    private final CountDownLatch commandMayFinish = new CountDownLatch(1);
+    private final AtomicBoolean ranToCompletion = new AtomicBoolean();
     private final AtomicReference<InterruptCoordinator> published = new AtomicReference<>();
     private final AtomicInteger publications = new AtomicInteger();
     private final AtomicReference<OnStopContext> onStop = new AtomicReference<>();
@@ -137,6 +141,7 @@ class OrcaAgentExecutorHookCancellationTest {
 
     @AfterEach
     void stopTurnThread() {
+        commandMayFinish.countDown();
         turnThread.shutdownNow();
     }
 
@@ -207,6 +212,48 @@ class OrcaAgentExecutorHookCancellationTest {
         assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
         assertThat(ping.executions).hasValue(0);
         assertThat(onStop.get().isSuccess()).isFalse();
+    }
+
+    @Test
+    @DisplayName("EE-97: an interrupt that arrives while a finished turn's onStop command runs stops the command")
+    void reactTurn_interruptDuringOnStop_stopsTheCommandOfAHookWithoutTheOption() throws Exception {
+        hookRegistry.register(HookEventType.ON_STOP,
+                new DeclarativeOnStopHook("ops", GUARD, new HostShellActionExecutor(holdingShell())));
+
+        final Future<OrcaAgentExecutionResult> turn = turnThread
+                .submit(() -> executor().execute(runtime(null), request("hi")));
+        assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        // The next input preempting the finished turn: the interrupt lands on the turn's still-open coordinator.
+        published.get().requestInterrupt(InterruptReason.USER_SIGINT);
+        final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
+
+        assertThat(stoppedByCancellation).as("the shell saw the command's cancellation trip").isTrue();
+        assertThat(ranToCompletion).isFalse();
+        // The turn had already finished; only its cleanup was cut short.
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
+    }
+
+    @Test
+    @DisplayName("EE-97: with ignoreInterrupt the same interrupt leaves the onStop command running to its end")
+    void reactTurn_interruptDuringOnStop_leavesTheCommandOfAnIgnoreInterruptHookRunning() throws Exception {
+        hookRegistry.register(HookEventType.ON_STOP,
+                new DeclarativeOnStopHook("ops", GUARD, new HostShellActionExecutor(holdingShell()),
+                        DeclarativeHookOptions.builder().ignoreInterrupt(true).build()));
+
+        final Future<OrcaAgentExecutionResult> turn = turnThread
+                .submit(() -> executor().execute(runtime(null), request("hi")));
+        assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        // Listeners run inside requestInterrupt, so a command tied to the signal would have been stopped by now.
+        published.get().requestInterrupt(InterruptReason.USER_SIGINT);
+
+        assertThat(stoppedByCancellation).isFalse();
+        assertThat(turn).as("the turn is still waiting for its cleanup").isNotDone();
+        commandMayFinish.countDown();
+        final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
+
+        assertThat(ranToCompletion).as("the cleanup command finished on its own").isTrue();
+        assertThat(stoppedByCancellation).isFalse();
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
     }
 
     @Test
@@ -349,6 +396,40 @@ class OrcaAgentExecutorHookCancellationTest {
                 throw new ShellCancelledException("Process cancelled: guard.sh");
             }
             return new ShellCommandResult(0, "", "", COMMAND_RUNTIME);
+        });
+        return shell;
+    }
+
+    /**
+     * The same kind of shell, whose command runs until the test lets it finish or its cancellation trips, and
+     * records which of the two ended it.
+     */
+    private VirtualShell holdingShell() throws Exception {
+        final VirtualShell shell = mock(VirtualShell.class);
+        when(shell.execute(any(ShellCommand.class), any(ExecutionOptions.class))).thenAnswer(invocation -> {
+            final ExecutionOptions options = invocation.getArgument(1);
+            final CountDownLatch ended = new CountDownLatch(1);
+            options.getCancellation().onCancel(() -> {
+                stoppedByCancellation.set(true);
+                ended.countDown();
+            });
+            final Thread releaser = new Thread(() -> {
+                try {
+                    commandMayFinish.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                ended.countDown();
+            }, "command-release");
+            releaser.setDaemon(true);
+            releaser.start();
+            commandStarted.countDown();
+            awaitIgnoringInterrupts(ended);
+            if (stoppedByCancellation.get()) {
+                throw new ShellCancelledException("Process cancelled: guard.sh");
+            }
+            ranToCompletion.set(true);
+            return new ShellCommandResult(0, "", "", Duration.ofMillis(1));
         });
         return shell;
     }

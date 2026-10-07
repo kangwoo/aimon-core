@@ -7,6 +7,33 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed: the follow-ups to hook cancellation — an opt-out for cleanup commands, and four edges (EE-93 – EE-97)
+
+EE-80 (next entry) left five things open. Three are built, one is half built, one is decided against. The design, what
+the build changed in it and the reasons are in
+[`docs/design/hook/hook-cancellation-followups-ee93-ee97.md`](docs/design/hook/hook-cancellation-followups-ee93-ee97.md).
+
+- **Added: `ignoreInterrupt`, so a cleanup command is not cut in half by an interrupt (EE-97).** A handler in
+  `hooks.json` (`"ignoreInterrupt": true`) or an entry in SKILL.md frontmatter (`ignoreInterrupt: true`) declares that
+  its shell command is not stopped when the execution is interrupted. It is honoured for a `command` / `shell` action
+  on the report events — `onStop`, `subagentStop`, `postCompact`, `postTool`, `permissionDenied`, `subagentStart` —
+  and holds on both roads an interrupt takes: the execution's signal, and the thread interrupt a stopped background
+  fork also gets. The default is unchanged (a running report command is stopped), and so is the guard rule: on
+  `onStart` / `preCompact` / `permissionRequest` / `preTool` the key is dropped with a WARN, and a cancelled guard
+  still blocks regardless of `failOpen`. It is also dropped, with a WARN, on the events outside any execution and on
+  `http` / `mcp` handlers. Only a boolean is accepted: in `hooks.json` anything else is read as `false` with a WARN,
+  in frontmatter it is a parse error — as for `failOpen`. The option lengthens nothing: the handler's `timeout` still
+  ends the command, and the execution (and so the next input) waits for it. An older AIMON reading a `hooks.json` that
+  carries the key ignores it — handler entries tolerate unknown fields — so the command is stopped there as before.
+- **`ExecutionHook` gained `ignoresInterrupt()` (default `false`).** A hook that returns `true` is waited for when the
+  thread that fired it is interrupted: `DefaultHookExecutor` no longer cancels its task, returns the hook's own result
+  (or times out as usual), and re-arms the thread's interrupt flag. The executor does not know the event, so a hook
+  registered in code is honoured on any event; on a guard event that makes an interrupted execution wait for the
+  guard — it never turns an interrupt into a pass. A custom `HookExecutor` has to honour the method itself.
+- **A `ShellActionExecutor` may be handed a view of the hook context.** For an `ignoreInterrupt` hook the `context`
+  argument of `run` is not the event's own context type but a wrapper whose `getExecutionCancellation()` is empty. Use
+  it through `HookContext` only; an executor that downcasts it fails for exactly those hooks.
+
 ### Changed: a hook's shell command follows the execution's interrupt on every event that has one (EE-80)
 
 The first half of EE-80 tied a hook command to the execution's cancellation signal on the tool-scoped events and a
@@ -19,7 +46,7 @@ longer runs to its own timeout after the user interrupts.
   `subagentStop` join `postTool` and `permissionDenied`: a running command is stopped, and one fired after the
   cancellation runs unbound, so an audit or cleanup command of a cancelled execution always starts.
 - **An interrupt can now stop a running `onStop` command**, on every shell. Before, nothing delivered the interrupt
-  there. A cleanup that must finish has no opt-out yet (EE-97).
+  there. A cleanup that must finish declares `ignoreInterrupt` (EE-97, above).
 - **`postTool` / `permissionDenied`: the rule is applied per hook, not per chain.** With two hooks in sequence, an
   interrupt during the first used to hand the second a tripped signal, and its command never started.
   `HookContext#getExecutionCancellation()` on a report context can therefore turn from present to empty over the life of

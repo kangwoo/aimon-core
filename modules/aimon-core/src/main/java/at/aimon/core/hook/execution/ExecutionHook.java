@@ -122,4 +122,32 @@ public interface ExecutionHook<C extends HookContext> {
     default Optional<HookExecutionPolicy.TimeoutBehavior> getTimeoutBehavior() {
         return Optional.empty();
     }
+
+    /**
+     * Returns whether the executor keeps waiting for this hook when the thread that fired it is interrupted.
+     *
+     * <p>
+     * By default an interrupt of the firing thread cancels the hook's task and the hook is reported as BLOCKED: the
+     * execution is being cancelled and nobody waits for the verdict. A hook whose work must finish once it has started
+     * — a cleanup or audit command on {@code onStop}, say — returns {@code true}: the executor then leaves the task
+     * alone, waits for what is left of the hook's budget, returns the hook's own result (or takes the ordinary timeout
+     * path), and re-arms the thread's interrupt flag before it returns, so the caller's cancellation still sees it.
+     *
+     * <p>
+     * This is the thread-interrupt half of "not stopped by an interrupt". The other half is the hook's own: it must
+     * not tie its work to {@link HookContext#getExecutionCancellation()}. The declarative shell hooks that declared
+     * {@code ignoreInterrupt} do both.
+     *
+     * <p>
+     * The executor does not know the event, so the declaration is honoured wherever it is made. It never turns an
+     * interrupt into a pass — the wait yields the hook's real verdict or a timeout — but on an event that gates
+     * something ({@code preTool}, {@code onStart}, {@code preCompact}, {@code permissionRequest}) it makes the
+     * interrupted execution wait for the gate, for up to the hook's whole budget. The declarative hooks never declare
+     * it there; a hook registered in code should not either.
+     *
+     * @return true to be waited for across an interrupt of the firing thread; the default is false
+     */
+    default boolean ignoresInterrupt() {
+        return false;
+    }
 }

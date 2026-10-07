@@ -213,7 +213,8 @@ public final class SkillHookSetParser {
         // hook of a class would share one id, so rewake deliveries could not be routed and a reload could not tell
         // which pending rewakes belong to a hook that actually changed. See DeclarativeHookId.
         final DeclarativeHookOptions options = DeclarativeHookOptions.builder().hookIdDiscriminator(path)
-                .failOpen(parseFailOpen(event, def, action, path)).build();
+                .failOpen(parseFailOpen(event, def, action, path))
+                .ignoreInterrupt(parseIgnoreInterrupt(event, def, action, path)).build();
         switch (event) {
             case DeclarativePreToolHook.EVENT_NAME -> builder.addPreTool(new DeclarativePreToolHook(skillName,
                     predicate, action, shellExecutor, httpExecutor, mcpExecutor, processEnv, options));
@@ -267,6 +268,39 @@ public final class SkillHookSetParser {
             log.warn("{}: 'failOpen' has no effect on {} — the event cannot block", path, event);
         }
         return failOpen;
+    }
+
+    /**
+     * Reads the entry-level {@code ignoreInterrupt} key: whether the hook's shell command is left running when the
+     * execution is interrupted, instead of being stopped.
+     *
+     * <p>
+     * Only a YAML boolean is accepted, as for {@code failOpen}. Where the key cannot have an effect — an event that
+     * can block, where a guard of an interrupted execution is stopped whatever it declared, or an action that is not
+     * a shell command and so is not tied to the interrupt at all — it is ignored with a WARN.
+     */
+    private static boolean parseIgnoreInterrupt(String event, Map<?, ?> def, HookAction action, String path) {
+        if (!def.containsKey("ignoreInterrupt")) {
+            return false;
+        }
+        final Object raw = def.get("ignoreInterrupt");
+        if (!(raw instanceof Boolean ignoreInterrupt)) {
+            throw new IllegalArgumentException(path + ".ignoreInterrupt must be a boolean (true or false), got: "
+                    + (raw == null ? "null" : raw.getClass().getSimpleName()));
+        }
+        if (!ignoreInterrupt) {
+            return false;
+        }
+        if (!SkillHookSet.reportEvents().contains(eventType(event))) {
+            log.warn("{}: 'ignoreInterrupt' has no effect on {} — the event can block, and a guard of an interrupted"
+                    + " execution is stopped; ignored", path, event);
+            return false;
+        }
+        if (!(action instanceof ShellAction)) {
+            log.warn("{}: 'ignoreInterrupt' has no effect on an action that is not a shell command; ignored", path);
+            return false;
+        }
+        return true;
     }
 
     private ToolInputPredicate parseMatcher(String event, Map<?, ?> def, String path) {

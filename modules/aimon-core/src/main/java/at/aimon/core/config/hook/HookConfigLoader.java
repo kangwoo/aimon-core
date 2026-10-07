@@ -185,7 +185,7 @@ public final class HookConfigLoader {
         try {
             final HookConfigDocument doc = parser.parseFile(path);
             log.debug("loaded hooks config from {}: {}", path, doc);
-            warnRejectedFailOpen(path, doc);
+            warnRejectedFlags(path, doc);
             return Optional.of(doc);
         } catch (HookConfigParseException e) {
             throw new HookConfigParseException(fileLabel(path, source) + " is invalid: " + e.getMessage(), e);
@@ -208,18 +208,25 @@ public final class HookConfigLoader {
         return MergedHookConfig.fileLabel(path, source);
     }
 
-    private static void warnRejectedFailOpen(Path path, HookConfigDocument doc) {
+    /** Reports each strict-boolean handler flag whose value was not a JSON boolean and was read as false. */
+    private static void warnRejectedFlags(Path path, HookConfigDocument doc) {
         for (Map.Entry<String, List<HookEntry>> event : doc.getHooks().entrySet()) {
             for (HookEntry entry : event.getValue()) {
                 for (HookHandlerSpec handler : entry.getHandlers()) {
-                    handler.getRejectedFailOpen()
-                            .ifPresent(raw -> log.warn("hooks config at {}: {} handler {} on {} has a 'failOpen' that"
-                                    + " is not a JSON boolean ({}); it is read as false, so the handler blocks when"
-                                    + " it cannot get an answer", path, handler.getType(), describe(handler),
-                                    event.getKey(), raw));
+                    handler.getRejectedFailOpen().ifPresent(raw -> warnRejectedFlag(path, handler, event.getKey(),
+                            "failOpen", raw, "the handler blocks when it cannot get an answer"));
+                    handler.getRejectedIgnoreInterrupt()
+                            .ifPresent(raw -> warnRejectedFlag(path, handler, event.getKey(), "ignoreInterrupt", raw,
+                                    "an interrupt of the execution stops the handler's command"));
                 }
             }
         }
+    }
+
+    private static void warnRejectedFlag(Path path, HookHandlerSpec handler, String event, String key, String raw,
+            String consequence) {
+        log.warn("hooks config at {}: {} handler {} on {} has a '{}' that is not a JSON boolean ({}); it is read as"
+                + " false, so {}", path, handler.getType(), describe(handler), event, key, raw, consequence);
     }
 
     private static String describe(HookHandlerSpec handler) {

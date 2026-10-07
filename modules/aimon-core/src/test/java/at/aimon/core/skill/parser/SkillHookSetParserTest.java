@@ -548,6 +548,56 @@ class SkillHookSetParserTest {
         assertThat(set.getOnStopHooks().get(0).execute(onStopContext()).getStatus()).isEqualTo(HookStatus.SUCCESS);
     }
 
+    // --- ignoreInterrupt (EE-97) ----------------------------------------------------------------------------------
+
+    @Test
+    void parse_ignoreInterruptOnAReportEvent_reachesTheHook() {
+        final Map<String, Object> shell = Map.of("type", "shell", "command", "cleanup.sh");
+        final Map<String, Object> hooks = Map.of("onStop",
+                List.of(Map.of("action", shell, "ignoreInterrupt", true),
+                        Map.of("action", shell, "ignoreInterrupt", false), Map.of("action", shell)),
+                "postTool", List.of(Map.of("action", shell, "ignoreInterrupt", true)));
+
+        final SkillHookSet set = new SkillHookSetParser(new RecordingShellExecutor()).parse("deploy", hooks);
+
+        assertThat(set.getOnStopHooks()).extracting(ExecutionHook::ignoresInterrupt).containsExactly(true, false,
+                false);
+        assertThat(set.getPostToolHooks()).extracting(ExecutionHook::ignoresInterrupt).containsExactly(true);
+    }
+
+    @ParameterizedTest(name = "ignoreInterrupt: {0}")
+    @MethodSource("nonBooleanFailOpen")
+    void parse_ignoreInterruptThatIsNotABoolean_throws(Object value) {
+        final Map<String, Object> entry = new java.util.HashMap<>();
+        entry.put("action", Map.of("type", "shell", "command", "cleanup.sh"));
+        entry.put("ignoreInterrupt", value);
+
+        assertThatThrownBy(() -> shellParser.parse("s", Map.of("onStop", List.of(entry))))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("hooks.onStop[0].ignoreInterrupt")
+                .hasMessageContaining("boolean");
+    }
+
+    @Test
+    void parse_ignoreInterruptOnAGuardEventOrANonShellAction_isDroppedAndTheHookIsKept() {
+        final SkillHookSetParser parser = new SkillHookSetParser(new RecordingShellExecutor(),
+                at.aimon.core.skill.hook.declarative.HttpActionExecutor.createDefault(), null, Map.of());
+        final Map<String, Object> shell = Map.of("type", "shell", "command", "gate.sh");
+        final Map<String, Object> hooks = Map.of("onStart", List.of(Map.of("action", shell, "ignoreInterrupt", true)),
+                "preTool", List.of(Map.of("action", shell, "ignoreInterrupt", true)), "preCompact",
+                List.of(Map.of("action", shell, "ignoreInterrupt", true)), "permissionRequest",
+                List.of(Map.of("action", shell, "ignoreInterrupt", true)), "postTool", List.of(Map.of("action",
+                        Map.of("type", "http", "url", "http://127.0.0.1:1/audit"), "ignoreInterrupt", true)));
+
+        final SkillHookSet set = parser.parse("deploy", hooks);
+
+        for (at.aimon.core.hook.HookEventType<?> event : List.of(at.aimon.core.hook.HookEventType.ON_START,
+                at.aimon.core.hook.HookEventType.PRE_TOOL, at.aimon.core.hook.HookEventType.PRE_COMPACT,
+                at.aimon.core.hook.HookEventType.PERMISSION_REQUEST, at.aimon.core.hook.HookEventType.POST_TOOL)) {
+            assertThat(set.get(event)).as(event.name()).hasSize(1)
+                    .allSatisfy(hook -> assertThat(hook.ignoresInterrupt()).isFalse());
+        }
+    }
+
     // --- asyncRewake (B-1): declarable in hooks.json only ---------------------------------------------------------
 
     @Test

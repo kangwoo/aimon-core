@@ -70,7 +70,25 @@ public final class HookEventName {
     private static final Set<String> GUARD_EVENTS = SkillHookSet.guardEvents().stream().map(HookEventType::name)
             .collect(Collectors.toUnmodifiableSet());
 
+    /** AIMON names of the events whose hooks report what already happened inside an execution. */
+    private static final Set<String> REPORT_EVENTS = SkillHookSet.reportEvents().stream().map(HookEventType::name)
+            .collect(Collectors.toUnmodifiableSet());
+
     private HookEventName() {
+    }
+
+    /**
+     * Returns whether hooks on the given event report something that already happened inside an execution:
+     * {@code postTool}, {@code onStop}, {@code subagentStart}, {@code subagentStop}, {@code permissionDenied},
+     * {@code postCompact}. Only there can a handler declare {@code ignoreInterrupt}.
+     *
+     * @param aimonName
+     *            the canonical AIMON event name (must not be null)
+     * @return true for a report event
+     */
+    public static boolean isReport(String aimonName) {
+        Objects.requireNonNull(aimonName, "aimonName cannot be null");
+        return REPORT_EVENTS.contains(aimonName);
     }
 
     /**

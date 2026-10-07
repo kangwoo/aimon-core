@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-development-guide.md
-source_commit: e8a8d87a
+source_commit: dc9d19c3
 ---
 
 # Hook Development Guide
@@ -269,7 +269,7 @@ Each hook receives the context object that matches its firing point. Every conte
 | `getHookRegistry()` | `HookRegistry` | The hook registry |
 | `getExecutionEnvironment()` | `Optional<ExecutionEnvironment>` | The execution environment of the execution the hook fires in — the file system and shell that execution's tools use. Empty for events that fire outside any execution (`onSessionStart`, `onSessionEnd`, `onConfigReload`) and for a rewake replay. Do not fall back to the host when it is empty |
 | `getEnvironmentDescriptor()` | `Optional<EnvironmentDescriptor>` | The descriptor of that environment (working directory, platform, OS). Use this, not the host, to tell **where commands run** |
-| `getExecutionCancellation()` | `Optional<CancellationSignal>` | The cancellation signal of the execution the hook fires in. A hook that starts something long-running on the execution's behalf ties it to this signal so an interrupt stops it. The guard events (`onStart`, `preCompact`, `preTool`, `permissionRequest`) always carry it; the events that report something that already happened (`onStop`, `postCompact`, `subagentStart`, `subagentStop`, `postTool`, `permissionDenied`) carry it **only until it trips** — so the answer can change on one and the same context, and it is read when the work starts, not when the context arrives. Empty for events outside any execution, for a slash-command turn's `onStop` and for `/compact`'s compaction events |
+| `getExecutionCancellation()` | `Optional<CancellationSignal>` | The cancellation signal of the execution the hook fires in. A hook that starts something long-running on the execution's behalf ties it to this signal so an interrupt stops it. The guard events (`onStart`, `preCompact`, `preTool`, `permissionRequest`) always carry it; the events that report something that already happened (`onStop`, `postCompact`, `subagentStart`, `subagentStop`, `postTool`, `permissionDenied`) carry it **only until it trips** — so the answer can change on one and the same context, and it is read when the work starts, not when the context arrives. Empty for events outside any execution, for a slash-command turn's `onStop` and for `/compact`'s compaction events. A declarative hook that declared `ignoreInterrupt` hands its shell executor a **view** in which this is empty — a `ShellActionExecutor` uses the context it is given through `HookContext` only and does not downcast it to the event's type |
 | `getTimestamp()` | `Instant` | Timestamp |
 | `getExecutionAttributes()` | `Map<String, Object>` | Supplementary execution information |
 
@@ -425,6 +425,17 @@ may sit between a `tool_use` and its `tool_result`.
   means no permission to proceed, so the executor answers BLOCKED (the same reason
   `TimeoutBehavior.FAIL_CLOSED` exists). A hook that already finished is unaffected — its completed
   result comes back as is.
+- **A hook that declares `ignoresInterrupt()` is waited for across that interrupt.** When it
+  returns `true`, the executor does not cancel the hook's task: it waits out what is left of the
+  budget, returns the hook's own result (or takes the usual timeout path), and sets the thread's
+  interrupt flag again before returning. It is for cleanup and audit work that has to finish once
+  it has started, and it is what a declarative hook's `ignoreInterrupt` uses. This is one half —
+  the other is the hook's own: not tying its work to `getExecutionCancellation()`. The executor
+  does not know the event, so the declaration is honoured **on any event**. It cannot turn an
+  interrupt into a pass (what the wait ends in is the hook's own verdict or a timeout), but if a
+  hook on a guard event declares it, the interrupted execution waits for that guard for up to its
+  whole budget. The declarative guard hooks never declare it, and a guard registered in code
+  should not either.
 
 ### Reattaching an async rewake
 

@@ -43,6 +43,8 @@ import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.event.SubagentStartContext;
 import at.aimon.core.hook.event.SubagentStopContext;
+import at.aimon.core.hook.event.SubagentStopHook;
+import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.TokenUsage;
@@ -51,7 +53,9 @@ import at.aimon.core.shell.ShellCommand;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.shell.exception.ShellCancelledException;
+import at.aimon.core.shell.exception.ShellExecutionException;
 import at.aimon.core.skill.hook.action.ShellAction;
+import at.aimon.core.skill.hook.declarative.DeclarativeHookOptions;
 import at.aimon.core.skill.hook.declarative.DeclarativeSubagentStartHook;
 import at.aimon.core.skill.hook.declarative.DeclarativeSubagentStopHook;
 import at.aimon.core.skill.hook.declarative.HostShellActionExecutor;
@@ -525,6 +529,123 @@ class DefaultSubagentExecutionManagerTest {
             gate.countDown();
             launcher.shutdownNow();
             boundedPool.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("EE-97: Task.stop during a background fork's SubagentStop command stops the command")
+    void taskStopStopsARunningSubagentStopCommandWithoutTheOption() throws Exception {
+        InterruptAnsweringShell shell = new InterruptAnsweringShell();
+        DefaultSubagentExecutionManager manager = managerWithInstantFork();
+        DefaultHookRegistry hookRegistry = new DefaultHookRegistry();
+        hookRegistry.register(HookEventType.SUBAGENT_STOP,
+                new DeclarativeSubagentStopHook("ops", AUDIT, new HostShellActionExecutor(shell.mock)));
+
+        var future = manager.executeInBackground(
+                env(instantForkRegistry()).toBuilder().hookRegistry(hookRegistry).build(), "task-bg", "clock", "go",
+                "");
+        assertThat(shell.started.await(5, TimeUnit.SECONDS)).isTrue();
+        // Both roads at once: the task's signal trips and the worker thread is interrupted.
+        assertThat(manager.stop("task-bg")).isTrue();
+        future.get(HANG_GUARD.toMillis() * 2, TimeUnit.MILLISECONDS);
+
+        assertThat(shell.stopped).as("the shell saw the stop, by its cancellation or its thread").isTrue();
+        assertThat(shell.ranToCompletion).isFalse();
+    }
+
+    @Test
+    @DisplayName("EE-97: with ignoreInterrupt, Task.stop leaves the SubagentStop command running on either road")
+    void taskStopLeavesAnIgnoreInterruptSubagentStopCommandRunning() throws Exception {
+        InterruptAnsweringShell shell = new InterruptAnsweringShell();
+        DefaultSubagentExecutionManager manager = managerWithInstantFork();
+        CountDownLatch executorAsked = new CountDownLatch(1);
+        DeclarativeSubagentStopHook declared = new DeclarativeSubagentStopHook("ops", AUDIT,
+                new HostShellActionExecutor(shell.mock),
+                DeclarativeHookOptions.builder().ignoreInterrupt(true).build());
+        DefaultHookRegistry hookRegistry = new DefaultHookRegistry();
+        // The hook as declared, observed: the executor asks this question exactly when it is deciding what to do with
+        // the interrupt of the worker thread, so the test knows the interrupt was answered before it lets go.
+        hookRegistry.register(HookEventType.SUBAGENT_STOP, new SubagentStopHook() {
+            @Override
+            public HookResult execute(SubagentStopContext context) {
+                return declared.execute(context);
+            }
+
+            @Override
+            public Optional<Duration> getExecutionBudget() {
+                return declared.getExecutionBudget();
+            }
+
+            @Override
+            public boolean ignoresInterrupt() {
+                executorAsked.countDown();
+                return declared.ignoresInterrupt();
+            }
+        });
+
+        var future = manager.executeInBackground(
+                env(instantForkRegistry()).toBuilder().hookRegistry(hookRegistry).build(), "task-bg", "clock", "go",
+                "");
+        assertThat(shell.started.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(manager.stop("task-bg")).isTrue();
+        assertThat(executorAsked.await(5, TimeUnit.SECONDS)).as("the worker's interrupt reached the hook wait")
+                .isTrue();
+
+        // Neither road reached the command: its cancellation did not trip and its thread was not interrupted.
+        assertThat(shell.stopped).isFalse();
+        shell.mayFinish.countDown();
+        future.get(HANG_GUARD.toMillis() * 2, TimeUnit.MILLISECONDS);
+
+        assertThat(shell.ranToCompletion).as("the command finished on its own").isTrue();
+        assertThat(shell.stopped).isFalse();
+    }
+
+    private static InMemorySubagentRegistry instantForkRegistry() {
+        InMemorySubagentRegistry dataRegistry = new InMemorySubagentRegistry();
+        dataRegistry.register(Subagent.builder().name("clock").systemPrompt("(code)").build());
+        return dataRegistry;
+    }
+
+    /** A manager with real hooks whose "clock" fork ends at once, so the task goes straight to its SubagentStop. */
+    private DefaultSubagentExecutionManager managerWithInstantFork() {
+        InMemorySubagentBehaviorRegistry behaviorRegistry = new InMemorySubagentBehaviorRegistry();
+        behaviorRegistry.register("clock", (ctx, req, support) -> support.success("tick"));
+        return new DefaultSubagentExecutionManager(reactExecutor, bgPool, new DefaultHookExecutionManager(),
+                behaviorRegistry);
+    }
+
+    /**
+     * A shell that answers both stops, as {@code LocalShell} does: its command ends when its cancellation trips or
+     * when its thread is interrupted, and otherwise runs until the test lets it finish.
+     */
+    private static final class InterruptAnsweringShell {
+        final CountDownLatch started = new CountDownLatch(1);
+        final CountDownLatch mayFinish = new CountDownLatch(1);
+        final AtomicBoolean stopped = new AtomicBoolean();
+        final AtomicBoolean ranToCompletion = new AtomicBoolean();
+        final VirtualShell mock = mock(VirtualShell.class);
+
+        InterruptAnsweringShell() throws Exception {
+            when(mock.execute(any(ShellCommand.class), any(ExecutionOptions.class))).thenAnswer(invocation -> {
+                final ExecutionOptions options = invocation.getArgument(1);
+                final Thread commandThread = Thread.currentThread();
+                options.getCancellation().onCancel(() -> {
+                    stopped.set(true);
+                    commandThread.interrupt();
+                });
+                started.countDown();
+                try {
+                    if (!mayFinish.await(HANG_GUARD.toMillis(), TimeUnit.MILLISECONDS)) {
+                        throw new IllegalStateException("the test never let the command finish");
+                    }
+                } catch (InterruptedException e) {
+                    stopped.set(true);
+                    Thread.currentThread().interrupt();
+                    throw new ShellExecutionException("Interrupted: audit.sh", e);
+                }
+                ranToCompletion.set(true);
+                return new ShellCommandResult(0, "", "", Duration.ofMillis(1));
+            });
         }
     }
 
