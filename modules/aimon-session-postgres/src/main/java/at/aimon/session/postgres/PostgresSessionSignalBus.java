@@ -225,13 +225,11 @@ public final class PostgresSessionSignalBus implements SessionSignalBus, AutoClo
      * stale pooled connection is the usual cause and the next checkout is a fresh one.
      *
      * <p>
-     * <b>The high-water mark.</b> {@code ListenDispatcher} fetches {@code id > lastSeen}. Ids are taken at insert and
-     * become visible at commit, so a row whose transaction commits after a later id has been fetched is never
-     * delivered to that node. This method does not create that. Its ids are held for one statement and a commit —
-     * which is not always less than {@link #publish} holds its one id for: the statement takes longer the more rows
-     * and the larger the payloads, where {@code publish} has a fixed two round trips. What falls is the number of such
-     * windows, one per list rather than one per signal, and that is why the exposure falls. What rises is the size of
-     * a loss when one happens: a whole batch, which may include a turn's terminal frame, rather than one signal.
+     * <b>The high-water mark.</b> Ids are taken at insert and become visible at commit, so a batch that commits after
+     * a later id has been fetched is behind the dispatcher's high-water mark. {@code ListenDispatcher} keeps asking
+     * for the ids it stepped over for a grace period, which is what delivers such a batch — late, and after rows with
+     * higher ids. A batch holds its ids for one statement and a commit; that grows with the number of rows and the
+     * size of the payloads, which is one reason {@link #MAX_BATCH_ROWS} is not larger.
      *
      * @param signals
      *            the signals to publish, in delivery order (must not be null; may be empty)

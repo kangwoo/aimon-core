@@ -33,10 +33,18 @@ trips and a commit for each. One `NOTIFY` is enough because the listener never r
 row past its high-water mark, in id order. A row the server rejects rolls the batch back, and the batch is then
 published one signal at a time, so the one at fault fails alone and nothing is published twice. `publish` is unchanged.
 
-Not changed by this, and not new: the Postgres listener's high-water mark (`id > lastSeen`) never delivers a row whose
-transaction commits after a later id has already been fetched, which two concurrent publishers can produce. With
-batches there are far fewer transactions to collide, so it happens less often; when it does, that node loses a whole
-batch — which can include a turn's terminal frame — rather than one signal.
+### Fixed: the Postgres signal listener no longer loses a row that commits after a later one
+
+`ListenDispatcher` fetched `id > lastSeen`. An id is taken at insert and the row is visible at commit, so with two
+publishers a later id could be fetched before an earlier one existed, and the earlier row was then never delivered to
+that node. With `publishAll` the row at stake became a whole batch, which can include a turn's terminal frame.
+
+The listener now remembers the ids a fetch stepped over for 60 seconds and asks for them, in the same statement as the
+new rows, on each pass. A row found this way is delivered **after** rows with higher ids that an earlier pass already
+delivered: order still holds within one publisher's sequential publishes, which is what a session's event stream is,
+and not across publishers. A transaction open for longer than 60 seconds still loses its rows on that node. The memory
+is bounded — the highest 4,096 ids of any one hole, 16,384 ids in all — and running out of room is logged. No schema change, and nothing changes for publishers, so it takes effect node by node
+in a rolling upgrade.
 
 ### Added: scheduled tasks survive a restart — `MongoScheduledTaskRepository`, and the engine reschedules what it finds stored (B-7)
 
