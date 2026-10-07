@@ -412,6 +412,11 @@ edited to look prescient. Three sources feed this section: the run's `build/devi
 non-blocking notes, and what was found while building. DV-8, the first item of §13.2 and the
 code-review rows of §13.3 were added after the code review of the build, which found EE-95 installing a truncated summary.*
 
+**After the code review, an interrupt kept before `onStart` runs no `onStart` hook at all.** §7 (b) has the turn "meet
+a tripped signal at `onStart`" with "gate commands not started". Read literally that is what was built, and it left
+every programmatic, `http` and `mcp` hook ahead of the first shell guard running in full, up to its timeout, for a
+turn already stopped. `checkOnStartHooks` now reads the signal before it dispatches the chain.
+
 **No outcome in §2 changed.** EE-97, EE-95 and EE-94 are built; EE-93 is split as §7 says — the flag tells the truth
 and an interrupt before `onStart` is kept, while a running slash command is still not interruptible; EE-96 is not
 built. `ShellActionRunner`, `ShellHookVerdicts`, the two shell executors, the hook contexts and `HookEventType` are
@@ -429,8 +434,10 @@ untouched, as §4 said. What departed is below.
   !canVeto()` as a field. `canVeto()` is overridable, so `AbstractDeclarativeShellHook` keeps the option and answers
   `ignoresInterrupt()` as `ignoreInterrupt && !canVeto()` each time, the way `getTimeoutBehavior()` reads `failOpen`.
   A side effect §9 does not list: the three hook classes for events outside any execution cannot veto, so one built by
-  hand with the option declares `ignoresInterrupt()`. Both front-ends drop the key first, and those events have no
-  signal to detach; left.
+  hand with the option declared `ignoresInterrupt()`. Both front-ends drop the key first, and those events have no
+  signal to detach; it was left at first. After the code review the answer is `ignoreInterrupt && reportEvent &&
+  !canVeto()`, the report events being `SkillHookSet.reportEvents()`: declaring it there would have had such a hook
+  waited for across a thread interrupt that has nothing to do with an execution being stopped.
 - **DV-3 — the `rejectedFailOpen` plumbing is shared inside `HookHandlerSpec`, and the public accessor has a sibling.**
   Two private helpers bind either flag and `HookConfigLoader` has one WARN for both. `getRejectedFailOpen()` stays and
   `getRejectedIgnoreInterrupt()` joins it; a generic accessor would have changed a public method for no reader.
@@ -525,6 +532,11 @@ untouched, as §4 said. What departed is below.
 | Review: the stale `ActiveTurn` field comment | Corrected. |
 | Review: a negative twin for the fork test | Added. |
 | Code review: an aborted summary call came back as a success | DV-8 and §13.2 — the clients throw, and the engine no longer trusts them to. |
+| Code review: the `ignoreInterrupt` drop in frontmatter was not pinned | The WARN is asserted per dropped entry (the hook class's own check hid the parser's). The WARN no longer says "the event can block" for an event that is merely not a report event. |
+| Code review: an interrupt kept before `onStart` still dispatched the chain | The signal is read before the chain is dispatched; no `onStart` hook of any kind runs. |
+| Code review: `HookHandlerSpec.fromJson` gained a parameter | The old signature is kept as an overload. |
+| Code review: a hand-built session-event hook declared `ignoresInterrupt()` | Restricted to the report events (DV-2). |
+| Code review: `ActiveTurn.publish` delivers the kept reason on every call | Left as built, with the precondition (one publication per turn) stated on the method; clearing the reason would have changed the hand-off `interruptOrKeep` re-reads. |
 | Q1 — the option's name | Built as `ignoreInterrupt`. **EE-98.** |
 | Q2 — the default (bind a running report command, opt out) | Kept. Free to change only before the release that carries EE-80. **EE-98.** |
 | Q3 — the thread road adds a public SPI method | Built; without it the option would not hold for a background fork on a local shell, which the fork test shows. |

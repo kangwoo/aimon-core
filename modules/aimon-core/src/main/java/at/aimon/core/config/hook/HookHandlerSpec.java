@@ -313,6 +313,57 @@ public final class HookHandlerSpec {
     }
 
     /**
+     * The factory as it was before {@code ignoreInterrupt} existed: builds a spec that does not declare it.
+     *
+     * <p>
+     * Kept so that code calling the fifteen-argument form keeps compiling and linking. Jackson does not use it — the
+     * {@code @JsonCreator} is the sixteen-argument overload below, to which this one delegates.
+     *
+     * @param typeRaw
+     *            the {@code type} discriminator string (must not be null)
+     * @param command
+     *            shell command (used when type=command)
+     * @param url
+     *            HTTP url (used when type=http)
+     * @param method
+     *            HTTP method (used when type=http)
+     * @param headers
+     *            HTTP header map (used when type=http)
+     * @param body
+     *            request body template (used when type=http)
+     * @param allowedEnvVars
+     *            allowed env var names (used when type=http)
+     * @param serverName
+     *            MCP server name (used when type=mcp)
+     * @param toolName
+     *            MCP tool name (used when type=mcp)
+     * @param args
+     *            MCP args template (used when type=mcp)
+     * @param reason
+     *            deny reason (used when type=deny)
+     * @param timeoutSeconds
+     *            handler timeout in <b>seconds</b> ({@code timeout}, Claude Code parity); must be positive
+     * @param timeoutMs
+     *            handler timeout in <b>milliseconds</b> ({@code timeoutMs}, AIMON extension); must be positive and
+     *            takes precedence over {@code timeoutSeconds} when both are present
+     * @param asyncRewake
+     *            optional {@code asyncRewake} block describing how the framework should re-fire the hook
+     * @param failOpen
+     *            optional {@code failOpen} flag; bound as a raw node so that only a JSON boolean can open it
+     * @return the spec (never null)
+     * @throws IllegalArgumentException
+     *             if {@code typeRaw} is unknown or either timeout is not positive
+     */
+    @SuppressWarnings("checkstyle:ParameterNumber")
+    public static HookHandlerSpec fromJson(String typeRaw, String command, String url, String method,
+            Map<String, String> headers, String body, List<String> allowedEnvVars, String serverName, String toolName,
+            Map<String, Object> args, String reason, Long timeoutSeconds, Long timeoutMs, RewakeSpecConfig asyncRewake,
+            JsonNode failOpen) {
+        return fromJson(typeRaw, command, url, method, headers, body, allowedEnvVars, serverName, toolName, args,
+                reason, timeoutSeconds, timeoutMs, asyncRewake, failOpen, null);
+    }
+
+    /**
      * Jackson constructor honoring the Claude Code field names.
      *
      * @param typeRaw

@@ -1466,6 +1466,13 @@ public class OrcaAgentExecutor
      * back into the conversation.
      *
      * <p>
+     * An interrupt that is already there when the turn gets here — one {@code DefaultLiveSession} kept while the turn
+     * was being set up and delivered as the coordinator was published (EE-93) — ends the turn before the chain is
+     * dispatched. No {@code onStart} hook of any kind runs for it: stopping at the first shell guard would let every
+     * programmatic, {@code http} and {@code mcp} hook ahead of that guard run in full, up to its own timeout, for a
+     * turn the user had already stopped.
+     *
+     * <p>
      * An interrupt that landed while the chain ran is read first, before the blocks. The user stopped the turn; no
      * guard refused the input — and a shell guard answers a cancelled command with a block, so reading the blocks
      * first would report the interrupt as a veto, and only when the hook that happened to be running was a shell one.
@@ -1494,6 +1501,10 @@ public class OrcaAgentExecutor
      *             if any OnStart hook blocks the execution
      */
     private boolean checkOnStartHooks(ExecutionScope scope, String userMessage) {
+        if (scope.coordinator.getSignal().isCancelled()) {
+            log.debug("Turn interrupted before OnStart; its OnStart hooks are not run");
+            return false;
+        }
         final List<HookResult> onStartResults = invokeOnStart(scope, userMessage);
         if (scope.coordinator.getSignal().isCancelled()) {
             if (hookExecutionManager.hasBlockedResult(onStartResults)) {

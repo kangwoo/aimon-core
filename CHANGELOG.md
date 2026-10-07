@@ -25,6 +25,10 @@ the build changed in it and the reasons are in
   in frontmatter it is a parse error — as for `failOpen`. The option lengthens nothing: the handler's `timeout` still
   ends the command, and the execution (and so the next input) waits for it. An older AIMON reading a `hooks.json` that
   carries the key ignores it — handler entries tolerate unknown fields — so the command is stopped there as before.
+  A declarative shell hook class constructed in code honours the option on the same report events only: one built
+  for `onSessionStart` / `onSessionEnd` / `onConfigReload` with the option does not declare `ignoresInterrupt()`.
+  `HookHandlerSpec.fromJson` gained an `ignoreInterrupt` argument; the previous fifteen-argument signature is kept as
+  an overload.
 - **`ExecutionHook` gained `ignoresInterrupt()` (default `false`).** A hook that returns `true` is waited for when the
   thread that fired it is interrupted: `DefaultHookExecutor` no longer cancels its task, returns the hook's own result
   (or times out as usual), and re-arms the thread's interrupt flag. The executor does not know the event, so a hook
@@ -84,8 +88,10 @@ the build changed in it and the reasons are in
 - **An interrupt that arrives before a turn's `onStart` hooks is kept, not dropped (EE-93).** `LiveSession.interrupt`,
   `close()` and a NOW-priority input used to be ignored while the executor was still rendering the prompt and opening
   the transcript. `DefaultLiveSession` now keeps the reason (the first one wins) and hands it to the turn's coordinator
-  when the executor publishes it: the turn ends `INTERRUPTED` at `onStart` — no hook command started, no LLM call,
-  `onStop(success=false)`, and for a slash-command turn the command does not run. For a NOW-priority input this means
+  when the executor publishes it: the turn ends `INTERRUPTED` at `onStart` — no `onStart` hook of any kind is run
+  (the executor reads the signal before it dispatches the chain, so a programmatic, `http` or `mcp` hook ahead of the
+  first shell guard does not run either), no LLM call, `onStop(success=false)`, and for a slash-command turn the
+  command does not run. An `onStop` hook therefore can see a turn whose `onStart` hooks never ran. For a NOW-priority input this means
   the turn that was being set up when the input was enqueued is preempted instead of running and possibly taking that
   input in through its own mid-turn drain; the input stays in the queue for the next turn or the host's drain, as when
   a turn is preempted mid-loop. `isInterruptible()` is `false` in that stretch.

@@ -1115,6 +1115,13 @@ public final class DefaultLiveSession implements LiveSession {
          * Set first, deliver second — the mirror of {@link #interruptOrKeep}, which keeps first and re-reads second.
          * Whichever way the two interleave, at least one of them sees the other's write; when both do, the second
          * {@code requestInterrupt} is the coordinator's own no-op.
+         *
+         * <p>
+         * <b>Precondition: called once per turn.</b> The kept reason is not cleared here — {@link #interruptOrKeep}
+         * re-reads it — so every call delivers it. That is right only because the executor publishes exactly one
+         * coordinator per turn ({@code OrcaAgentExecutor#runTurn}; a slash command's own coordinator is never
+         * published). An executor that published a second one would have it tripped by an interrupt that was meant
+         * for the stretch before the first.
          */
         void publish(InterruptCoordinator published) {
             coordinator = published;

@@ -227,4 +227,18 @@ class JacksonHookConfigParserTest {
         assertThat(spec.getAsyncRewake().getTrigger().getEvent().getType()).isEqualTo("webhook");
         assertThat(spec.getAsyncRewake().getTrigger().getEvent().getKey()).isEqualTo("ticket-${tool_input.id}");
     }
+
+    @Test
+    @DisplayName("the fifteen-argument fromJson, from before ignoreInterrupt, still builds a spec that does not declare it")
+    void fromJsonWithoutIgnoreInterrupt_isKeptAndDelegates() {
+        // A public static method of a published module: a caller compiled against the old signature must keep
+        // linking. Jackson binds the sixteen-argument creator; this one only fills the new argument in.
+        final HookHandlerSpec spec = HookHandlerSpec.fromJson("command", "cleanup.sh", null, null, null, null, null,
+                null, null, null, null, 30L, null, null, com.fasterxml.jackson.databind.node.BooleanNode.TRUE);
+
+        assertThat(spec.getCommand()).isEqualTo("cleanup.sh");
+        assertThat(spec.isFailOpen()).isTrue();
+        assertThat(spec.isIgnoreInterrupt()).isFalse();
+        assertThat(spec.getRejectedIgnoreInterrupt()).isEmpty();
+    }
 }

@@ -105,6 +105,12 @@ class OrcaAgentExecutorHookCancellationTest {
      * from {@link #stoppedByCancellation}, not from how soon the turn returned.
      */
     private static final Duration COMMAND_RUNTIME = Duration.ofSeconds(10);
+    /**
+     * How long a test waits for its turn to reach the command or the summary call. A hang guard too, and a wide one:
+     * the first turn of a cold JVM on a loaded machine has been seen to take six seconds to get there, which a
+     * five-second wait reported as a failure of the hook.
+     */
+    private static final long STARTED_GUARD_SECONDS = 30;
     private static final ShellAction GUARD = new ShellAction("guard.sh", Duration.ofSeconds(30));
 
     @TempDir
@@ -178,7 +184,7 @@ class OrcaAgentExecutorHookCancellationTest {
 
         final Future<OrcaAgentExecutionResult> turn = turnThread
                 .submit(() -> executor().execute(runtime(null), request("hi", sessionId)));
-        assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(commandStarted.await(STARTED_GUARD_SECONDS, TimeUnit.SECONDS)).isTrue();
         published.get().requestInterrupt(InterruptReason.USER_SIGINT);
         final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
 
@@ -204,7 +210,7 @@ class OrcaAgentExecutorHookCancellationTest {
 
         final Future<OrcaAgentExecutionResult> turn = turnThread
                 .submit(() -> executor().execute(runtime(null), request("/ping")));
-        assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(commandStarted.await(STARTED_GUARD_SECONDS, TimeUnit.SECONDS)).isTrue();
         published.get().requestInterrupt(InterruptReason.USER_SIGINT);
         final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
 
@@ -222,7 +228,7 @@ class OrcaAgentExecutorHookCancellationTest {
 
         final Future<OrcaAgentExecutionResult> turn = turnThread
                 .submit(() -> executor().execute(runtime(null), request("hi")));
-        assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(commandStarted.await(STARTED_GUARD_SECONDS, TimeUnit.SECONDS)).isTrue();
         // The next input preempting the finished turn: the interrupt lands on the turn's still-open coordinator.
         published.get().requestInterrupt(InterruptReason.USER_SIGINT);
         final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
@@ -242,7 +248,7 @@ class OrcaAgentExecutorHookCancellationTest {
 
         final Future<OrcaAgentExecutionResult> turn = turnThread
                 .submit(() -> executor().execute(runtime(null), request("hi")));
-        assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(commandStarted.await(STARTED_GUARD_SECONDS, TimeUnit.SECONDS)).isTrue();
         // Listeners run inside requestInterrupt, so a command tied to the signal would have been stopped by now.
         published.get().requestInterrupt(InterruptReason.USER_SIGINT);
 
@@ -347,7 +353,7 @@ class OrcaAgentExecutorHookCancellationTest {
 
         final Future<OrcaAgentExecutionResult> turn = turnThread
                 .submit(() -> executor().execute(runtime(engineOverTheBlockingLimit()), request("hi")));
-        assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(commandStarted.await(STARTED_GUARD_SECONDS, TimeUnit.SECONDS)).isTrue();
         published.get().requestInterrupt(InterruptReason.USER_SIGINT);
         final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
 
@@ -361,7 +367,7 @@ class OrcaAgentExecutorHookCancellationTest {
     void reactTurn_interruptDuringTheSummaryCall_overTheBlockingLimit_endsTheTurnInterrupted() throws Exception {
         final Future<OrcaAgentExecutionResult> turn = turnThread
                 .submit(() -> executor().execute(runtime(engineOverTheBlockingLimit()), request("hi")));
-        assertThat(llmClient.summaryCallStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(llmClient.summaryCallStarted.await(STARTED_GUARD_SECONDS, TimeUnit.SECONDS)).isTrue();
         published.get().requestInterrupt(InterruptReason.USER_SIGINT);
         final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
 
@@ -378,7 +384,7 @@ class OrcaAgentExecutorHookCancellationTest {
     void reactTurn_interruptDuringTheSummaryCall_inTheAutoBand_endsTheTurnInterrupted() throws Exception {
         final Future<OrcaAgentExecutionResult> turn = turnThread
                 .submit(() -> executor().execute(runtime(engineAt(7_500)), request("hi")));
-        assertThat(llmClient.summaryCallStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(llmClient.summaryCallStarted.await(STARTED_GUARD_SECONDS, TimeUnit.SECONDS)).isTrue();
         published.get().requestInterrupt(InterruptReason.USER_SIGINT);
         final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
 

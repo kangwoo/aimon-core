@@ -93,6 +93,8 @@ class DefaultLiveSessionInterruptBeforeOnStartTest {
 
             assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
             assertThat(llm.calls).hasValue(0);
+            // The onStart hook here is a programmatic one, which no signal stops: it is not run at all.
+            assertThat(onStartBodiesRun).as("no onStart hook runs for a turn interrupted before it").hasValue(0);
             assertThat(onStops).containsExactly(false);
         }
     }
@@ -111,6 +113,7 @@ class DefaultLiveSessionInterruptBeforeOnStartTest {
 
             assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
             assertThat(ping.executions).hasValue(0);
+            assertThat(onStartBodiesRun).hasValue(0);
             assertThat(onStops).containsExactly(false);
         }
     }
@@ -133,6 +136,7 @@ class DefaultLiveSessionInterruptBeforeOnStartTest {
             // could take the input into the turn it was meant to preempt.
             assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
             assertThat(llm.calls).hasValue(0);
+            assertThat(onStartBodiesRun).hasValue(0);
             assertThat(queue.snapshot()).as("left for the next turn, or for the host's own drain").hasSize(1);
         }
     }

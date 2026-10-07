@@ -276,8 +276,10 @@ public final class SkillHookSetParser {
      *
      * <p>
      * Only a YAML boolean is accepted, as for {@code failOpen}. Where the key cannot have an effect — an event that
-     * can block, where a guard of an interrupted execution is stopped whatever it declared, or an action that is not
-     * a shell command and so is not tied to the interrupt at all — it is ignored with a WARN.
+     * is not one of the {@linkplain SkillHookSet#reportEvents() report events}, or an action that is not a shell
+     * command and so is not tied to the interrupt at all — it is ignored with a WARN. Every such event frontmatter
+     * can declare today is a {@linkplain SkillHookSet#guardEvents() guard}, whose command is stopped with an
+     * interrupted execution whatever it declared; the WARN says so only when that is the reason.
      */
     private static boolean parseIgnoreInterrupt(String event, Map<?, ?> def, HookAction action, String path) {
         if (!def.containsKey("ignoreInterrupt")) {
@@ -291,9 +293,15 @@ public final class SkillHookSetParser {
         if (!ignoreInterrupt) {
             return false;
         }
-        if (!SkillHookSet.reportEvents().contains(eventType(event))) {
-            log.warn("{}: 'ignoreInterrupt' has no effect on {} — the event can block, and a guard of an interrupted"
-                    + " execution is stopped; ignored", path, event);
+        final HookEventType<?> type = eventType(event);
+        if (!SkillHookSet.reportEvents().contains(type)) {
+            if (SkillHookSet.guardEvents().contains(type)) {
+                log.warn("{}: 'ignoreInterrupt' has no effect on {} — the event can block, and a guard of an"
+                        + " interrupted execution is stopped; ignored", path, event);
+            } else {
+                log.warn("{}: 'ignoreInterrupt' has no effect on {} — it is honoured only on the events that report"
+                        + " what an execution did; ignored", path, event);
+            }
             return false;
         }
         if (!(action instanceof ShellAction)) {

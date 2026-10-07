@@ -184,6 +184,20 @@ class DeclarativeHookIgnoreInterruptTest {
     }
 
     @Test
+    void aHookBuiltByHandForAnEventOutsideAnyExecutionDoesNotAskToBeWaitedFor() {
+        // Neither front-end lets the key through on these three, but the classes are public and cannot veto, so
+        // "not a guard" alone would honour it. The option is for the report events.
+        final ShellActionExecutor shell = new HostShellActionExecutor(mock(VirtualShell.class));
+
+        assertThat(new DeclarativeOnSessionStartHook("ops", ACTION, shell, IGNORE_INTERRUPT).ignoresInterrupt())
+                .isFalse();
+        assertThat(new DeclarativeOnSessionEndHook("ops", ACTION, shell, IGNORE_INTERRUPT).ignoresInterrupt())
+                .isFalse();
+        assertThat(new DeclarativeOnConfigReloadHook("ops", ACTION, shell, IGNORE_INTERRUPT).ignoresInterrupt())
+                .isFalse();
+    }
+
+    @Test
     void theOptionIsPartOfTheOptionsValue() {
         final DeclarativeHookOptions plain = DeclarativeHookOptions.builder().hookIdDiscriminator("onStop[0][0]")
                 .build();

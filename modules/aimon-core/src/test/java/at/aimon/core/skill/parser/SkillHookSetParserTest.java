@@ -588,7 +588,17 @@ class SkillHookSetParserTest {
                 List.of(Map.of("action", shell, "ignoreInterrupt", true)), "postTool", List.of(Map.of("action",
                         Map.of("type", "http", "url", "http://127.0.0.1:1/audit"), "ignoreInterrupt", true)));
 
-        final SkillHookSet set = parser.parse("deploy", hooks);
+        final ch.qos.logback.classic.Logger parserLogger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory
+                .getLogger(SkillHookSetParser.class);
+        final ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender = new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        parserLogger.addAppender(appender);
+        final SkillHookSet set;
+        try {
+            set = parser.parse("deploy", hooks);
+        } finally {
+            parserLogger.detachAppender(appender);
+        }
 
         for (at.aimon.core.hook.HookEventType<?> event : List.of(at.aimon.core.hook.HookEventType.ON_START,
                 at.aimon.core.hook.HookEventType.PRE_TOOL, at.aimon.core.hook.HookEventType.PRE_COMPACT,
@@ -596,6 +606,41 @@ class SkillHookSetParserTest {
             assertThat(set.get(event)).as(event.name()).hasSize(1)
                     .allSatisfy(hook -> assertThat(hook.ignoresInterrupt()).isFalse());
         }
+        // The hook classes refuse the option on a guard event by themselves, so the assertion above holds with the
+        // parser's own check removed. The WARN is what only the parser produces: one per dropped key, naming the
+        // entry and saying why.
+        final List<String> warnings = appender.list.stream()
+                .filter(event -> event.getLevel() == ch.qos.logback.classic.Level.WARN)
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .filter(message -> message.contains("'ignoreInterrupt'")).toList();
+        assertThat(warnings).hasSize(5);
+        for (String guard : List.of("onStart", "preTool", "preCompact", "permissionRequest")) {
+            assertThat(warnings).as(guard).filteredOn(message -> message.startsWith("hooks." + guard + "[0]:"))
+                    .singleElement().asString().contains("has no effect on " + guard).contains("the event can block");
+        }
+        assertThat(warnings).filteredOn(message -> message.startsWith("hooks.postTool[0]:")).singleElement().asString()
+                .contains("not a shell command").doesNotContain("can block");
+    }
+
+    @Test
+    void parse_ignoreInterruptOnAReportEventWithAShellAction_isKeptWithoutAWarning() {
+        // The other side of the test above: the WARN is tied to the cases the key is dropped in.
+        final ch.qos.logback.classic.Logger parserLogger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory
+                .getLogger(SkillHookSetParser.class);
+        final ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender = new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        parserLogger.addAppender(appender);
+        final SkillHookSet set;
+        try {
+            set = shellParser.parse("deploy", Map.of("onStop", List
+                    .of(Map.of("action", Map.of("type", "shell", "command", "cleanup.sh"), "ignoreInterrupt", true))));
+        } finally {
+            parserLogger.detachAppender(appender);
+        }
+
+        assertThat(set.getOnStopHooks()).singleElement()
+                .satisfies(hook -> assertThat(hook.ignoresInterrupt()).isTrue());
+        assertThat(appender.list).noneMatch(event -> event.getFormattedMessage().contains("'ignoreInterrupt'"));
     }
 
     // --- asyncRewake (B-1): declarable in hooks.json only ---------------------------------------------------------
