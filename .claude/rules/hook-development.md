@@ -169,9 +169,10 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   firing site passes the signal it holds and decides nothing: the execution's own for a turn's or a
   fork's `onStart` / `onStop` and for AUTO compaction, and for `subagentStart` / `subagentStop` the
   signal that governs the *fork* (the spawner's in the foreground, the per-task coordinator's in the
-  background). `OrcaAgentExecutor.execute()` creates and publishes the turn's coordinator before
-  `onStart` for that reason. Empty means no signal there can trip — events outside an execution, a
-  slash-command turn after its `onStart`, `/compact`, a rewake replay — not missing plumbing.
+  background). `OrcaAgentExecutor#runTurn` creates and publishes the turn's coordinator immediately
+  before the `onStart` chain for that reason. Empty means no signal there can trip — events outside
+  an execution, a slash-command turn after its `onStart`, `/compact`, a rewake replay — not missing
+  plumbing.
 - **`http` / `mcp` actions follow the same rule on `preTool`** (the only guard event they can sit on).
   `HttpActionExecutor#attempt` / `McpActionExecutor#attempt` return an `ActionCallOutcome`: a
   *verdict* (any readable 2xx / non-error answer) or *no verdict*, carried as a not-run outcome

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: 24b98878
+source_commit: dc9d19c3
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -649,9 +649,9 @@ that report something that already happened (`onStop`, `postCompact`, `subagentS
 the interrupt, but an audit or cleanup command fired after the cancellation runs to its end. If an `onStop` cleanup has
 to finish, write it knowing an interrupt can arrive partway through. When an interrupt arrives while a main turn's
 `onStart` command is running, the turn ends as an **interrupted turn**, not as an error saying a hook blocked it. What
-gets no signal is where no signal can trip — a slash-command turn's `onStop`, `/compact`'s `preCompact` and
-`postCompact`, and the events outside any execution (`onSessionStart`, `onSessionEnd`, `onConfigReload`). Those commands
-stop, as before, only if the shell answers a thread interrupt.
+gets no signal is where no signal can trip — a slash-command turn's `onStop`, `/compact`'s `preCompact`, `postCompact`
+and `onStop`, a `preCompact` rebuilt by a rewake replay, and the events outside any execution (`onSessionStart`,
+`onSessionEnd`, `onConfigReload`). Those commands stop, as before, only if the shell answers a thread interrupt.
 
 ---
 

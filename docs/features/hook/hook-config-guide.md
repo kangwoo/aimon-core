@@ -593,8 +593,9 @@ cancelled. An interrupted execution does not proceed.` 이고 `failOpen` 과 무
 않았을 때만 싣는다 — 돌고 있던 커맨드는 인터럽트로 멈추지만, 취소된 뒤에 발화한 감사 · 정리 커맨드는 끝까지 돈다. 끝까지
 돌아야 하는 `onStop` 정리 작업이라면 인터럽트가 그 도중에 올 수 있다는 점을 감안해 쓴다. 메인 턴의 `onStart` 커맨드가 도는
 동안 인터럽트가 오면 그 턴은 훅이 막았다는 오류가 아니라 **중단된 턴**으로 끝난다. 신호를 받지 않는 것은 설 수 있는 신호가
-없는 자리다 — 슬래시 명령 턴의 `onStop`, `/compact` 의 `preCompact` · `postCompact`, 실행 밖 이벤트(`onSessionStart` ·
-`onSessionEnd` · `onConfigReload`). 그 커맨드는 전처럼 셸이 스레드 인터럽트에 반응해야 멈춘다.
+없는 자리다 — 슬래시 명령 턴의 `onStop`, `/compact` 의 `preCompact` · `postCompact` · `onStop`, rewake 리플레이가 다시 만든
+`preCompact`, 실행 밖 이벤트(`onSessionStart` · `onSessionEnd` · `onConfigReload`). 그 커맨드는 전처럼 셸이 스레드 인터럽트에
+반응해야 멈춘다.
 
 ---
 

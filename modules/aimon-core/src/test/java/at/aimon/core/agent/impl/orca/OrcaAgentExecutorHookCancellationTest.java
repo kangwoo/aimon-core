@@ -14,6 +14,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -27,11 +28,15 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.DefaultAgent;
 import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.compact.CompactionDecision;
+import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionResult;
+import at.aimon.core.agent.compact.DefaultCompactionEngine;
+import at.aimon.core.agent.compact.DefaultCompactionGuard;
 import at.aimon.core.agent.context.ContextDecision;
 import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.context.ContextRequest;
 import at.aimon.core.agent.context.ContextView;
+import at.aimon.core.agent.context.DefaultContextEngine;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptReason;
@@ -57,13 +62,16 @@ import at.aimon.core.hook.event.OnStartHook;
 import at.aimon.core.hook.event.OnStopContext;
 import at.aimon.core.hook.event.OnStopHook;
 import at.aimon.core.hook.execution.HookResult;
+import at.aimon.core.llm.InMemoryModelContextWindowRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.ModelContextLimits;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.exception.LlmPromptTooLongException;
+import at.aimon.core.llm.token.TokenEstimator;
 import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCommand;
 import at.aimon.core.shell.ShellCommandResult;
@@ -72,6 +80,7 @@ import at.aimon.core.shell.exception.ShellCancelledException;
 import at.aimon.core.skill.DefaultSkillRegistry;
 import at.aimon.core.skill.hook.action.ShellAction;
 import at.aimon.core.skill.hook.declarative.DeclarativeOnStartHook;
+import at.aimon.core.skill.hook.declarative.DeclarativePreCompactHook;
 import at.aimon.core.skill.hook.declarative.HostShellActionExecutor;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.DefaultSubagentRegistry;
@@ -89,8 +98,11 @@ import at.aimon.core.subagent.DefaultSubagentRegistry;
 @DisplayName("OrcaAgentExecutor: the turn's hooks and the turn's cancellation signal (EE-80)")
 class OrcaAgentExecutorHookCancellationTest {
 
-    /** How long the fake command "runs" when nothing stops it. Long enough that a prompt stop is unmistakable. */
-    private static final Duration COMMAND_RUNTIME = Duration.ofSeconds(4);
+    /**
+     * How long the fake command "runs" when nothing stops it. A hang guard only: that a command was stopped is read
+     * from {@link #stoppedByCancellation}, not from how soon the turn returned.
+     */
+    private static final Duration COMMAND_RUNTIME = Duration.ofSeconds(10);
     private static final ShellAction GUARD = new ShellAction("guard.sh", Duration.ofSeconds(30));
 
     @TempDir
@@ -98,6 +110,7 @@ class OrcaAgentExecutorHookCancellationTest {
 
     private final ExecutorService turnThread = Executors.newSingleThreadExecutor();
     private final CountDownLatch commandStarted = new CountDownLatch(1);
+    private final AtomicBoolean stoppedByCancellation = new AtomicBoolean();
     private final AtomicReference<InterruptCoordinator> published = new AtomicReference<>();
     private final AtomicInteger publications = new AtomicInteger();
     private final AtomicReference<OnStopContext> onStop = new AtomicReference<>();
@@ -161,12 +174,11 @@ class OrcaAgentExecutorHookCancellationTest {
         final Future<OrcaAgentExecutionResult> turn = turnThread
                 .submit(() -> executor().execute(runtime(null), request("hi", sessionId)));
         assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
-        final long interruptedAt = System.nanoTime();
         published.get().requestInterrupt(InterruptReason.USER_SIGINT);
         final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
 
         // The command was stopped, not waited out.
-        assertThat(Duration.ofNanos(System.nanoTime() - interruptedAt)).isLessThan(COMMAND_RUNTIME.dividedBy(2));
+        assertThat(stoppedByCancellation).as("the shell saw the command's cancellation trip").isTrue();
         // The user stopped the turn; it is not reported as a guard's veto, though the cancelled guard blocked.
         assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
         assertThat(result.getMetadata().getIterationCount()).isZero();
@@ -188,11 +200,10 @@ class OrcaAgentExecutorHookCancellationTest {
         final Future<OrcaAgentExecutionResult> turn = turnThread
                 .submit(() -> executor().execute(runtime(null), request("/ping")));
         assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
-        final long interruptedAt = System.nanoTime();
         published.get().requestInterrupt(InterruptReason.USER_SIGINT);
         final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
 
-        assertThat(Duration.ofNanos(System.nanoTime() - interruptedAt)).isLessThan(COMMAND_RUNTIME.dividedBy(2));
+        assertThat(stoppedByCancellation).as("the shell saw the command's cancellation trip").isTrue();
         assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
         assertThat(ping.executions).hasValue(0);
         assertThat(onStop.get().isSuccess()).isFalse();
@@ -239,6 +250,25 @@ class OrcaAgentExecutorHookCancellationTest {
     }
 
     @Test
+    @DisplayName("an interrupt during an AUTO preCompact command stops it and ends the turn INTERRUPTED")
+    void reactTurn_interruptDuringPreCompact_endsTheTurnInterrupted() throws Exception {
+        // The chain end to end, with the real engine: the turn's signal reaches the guard's command, the stopped
+        // guard blocks, the compaction is skipped, the view is over the blocking limit, and the BLOCK is the interrupt.
+        hookRegistry.register(HookEventType.PRE_COMPACT,
+                new DeclarativePreCompactHook("ops", GUARD, new HostShellActionExecutor(cancellationOnlyShell())));
+
+        final Future<OrcaAgentExecutionResult> turn = turnThread
+                .submit(() -> executor().execute(runtime(engineOverTheBlockingLimit()), request("hi")));
+        assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        published.get().requestInterrupt(InterruptReason.USER_SIGINT);
+        final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
+
+        assertThat(stoppedByCancellation).as("the shell saw the command's cancellation trip").isTrue();
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
+        assertThat(llmClient.calls).as("neither a summary call nor a loop call").hasValue(0);
+    }
+
+    @Test
     @DisplayName("a BLOCK with no interrupt behind it is still a context-window failure")
     void reactTurn_compactionBlockedWithoutAnInterrupt_isStillAnError() {
         final ContextEngine blocking = new StubContextEngine(
@@ -277,6 +307,21 @@ class OrcaAgentExecutorHookCancellationTest {
                 .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem)).build();
     }
 
+    /** The default engine with every estimate in the blocking band, so only a compaction can let the turn go on. */
+    private ContextEngine engineOverTheBlockingLimit() {
+        final TokenEstimator overTheLimit = new FixedTokenEstimator(9_000);
+        final CompactionEngine compactionEngine = DefaultCompactionEngine.withDefaults(llmClient, overTheLimit,
+                new DefaultHookExecutionManager());
+        final DefaultCompactionGuard guard = new DefaultCompactionGuard(compactionEngine,
+                InMemoryModelContextWindowRegistry.builder()
+                        .defaultLimits(ModelContextLimits.builder().contextWindow(10_000).reservedOutputTokens(1_000)
+                                .autoCompactBuffer(2_000).warningBuffer(1_000).blockingBuffer(500).build())
+                        .build(),
+                overTheLimit);
+        return DefaultContextEngine.builder().compactionGuard(guard).compactionEngine(compactionEngine)
+                .tokenEstimator(overTheLimit).build();
+    }
+
     private OrcaAgentExecutor executor() {
         final DefaultToolExecutionManager toolManager = new DefaultToolExecutionManager();
         final DefaultHookExecutionManager hookManager = new DefaultHookExecutionManager();
@@ -300,6 +345,7 @@ class OrcaAgentExecutorHookCancellationTest {
             options.getCancellation().onCancel(stopped::countDown);
             commandStarted.countDown();
             if (awaitIgnoringInterrupts(stopped)) {
+                stoppedByCancellation.set(true);
                 throw new ShellCancelledException("Process cancelled: guard.sh");
             }
             return new ShellCommandResult(0, "", "", COMMAND_RUNTIME);
@@ -361,6 +407,30 @@ class OrcaAgentExecutorHookCancellationTest {
         @Override
         public CompactionResult compactNow(ContextRequest request, String instructions) {
             throw new UnsupportedOperationException("not under test");
+        }
+    }
+
+    /** Returns a fixed estimate regardless of content, so a threshold band can be targeted precisely. */
+    private static final class FixedTokenEstimator implements TokenEstimator {
+        private final int fixedEstimate;
+
+        FixedTokenEstimator(int fixedEstimate) {
+            this.fixedEstimate = fixedEstimate;
+        }
+
+        @Override
+        public int estimate(String systemPrompt, List<Message> messages) {
+            return fixedEstimate;
+        }
+
+        @Override
+        public int estimateMessage(Message message) {
+            return 0;
+        }
+
+        @Override
+        public int estimateText(String text) {
+            return 0;
         }
     }
 

@@ -873,12 +873,14 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             saveTaskResult(launchContext, taskId, failure);
             taskStore.transition(taskId, BackgroundTaskState.FAILED);
             runningTasks.remove(taskId);
-            coordinator.close();
-            parentCancelReg.remove();
             // SubagentStart fired on the launching thread above; balance it with a Stop for this reject-before-run path
             // (the runResolvedSubagent path fires its own Stop). Advisory; failures are swallowed inside
-            // fireSubagentStop.
+            // fireSubagentStop. Fired before the coordinator is closed and the cascade is deregistered, as on the
+            // path that ran: after either, the task's signal can no longer trip, and an interrupt of the spawning
+            // execution would not stop the hook's command.
             fireSubagentStop(launchContext, taskId, subagentName, failure, handle.getSignal());
+            coordinator.close();
+            parentCancelReg.remove();
             // This path never registers a whenComplete finalizer, so notify the parent here. It is mutually
             // exclusive with the finalizeBackgroundTask path, so the completion is still signalled exactly once.
             notifyParentOfCompletion(launchContext, taskId, subagentName, BackgroundTaskState.FAILED, failure, rex);

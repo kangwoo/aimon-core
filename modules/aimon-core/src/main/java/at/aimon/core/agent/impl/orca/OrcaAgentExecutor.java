@@ -1458,12 +1458,20 @@ public class OrcaAgentExecutor
      * An interrupt that landed while the chain ran is read first, before the blocks. The user stopped the turn; no
      * guard refused the input — and a shell guard answers a cancelled command with a block, so reading the blocks
      * first would report the interrupt as a veto, and only when the hook that happened to be running was a shell one.
+     * A fork does not do this: {@code DefaultSubagentExecutor#checkOnStartHooks} reads the blocks only, so the same
+     * interrupt ends a fork {@code BLOCKED}, or {@code INTERRUPTED} if the running hook was a programmatic one (EE-94).
+     *
+     * <p>
+     * Only the signal is read. A cancellation that arrives purely as {@link Thread#interrupt()} on the turn's thread
+     * does not trip it; the hook executor answers that interrupt with a block, and the turn still ends as
+     * {@link ExecutionBlockedByHookException} (EE-96).
      *
      * <p>
      * The feedback message is appended after the real user message (already in memory at this point) so the model
      * reads the note as context for the turn it is about to take, and is wrapped in a {@code <system-reminder>} block
-     * so it is not mistaken for genuine user intent. Mirrors {@code DefaultSubagentExecutor#checkOnStartHooks};
-     * without this the main agent silently dropped feedback that subagents surfaced.
+     * so it is not mistaken for genuine user intent. The feedback handling mirrors
+     * {@code DefaultSubagentExecutor#checkOnStartHooks}; without this the main agent silently dropped feedback that
+     * subagents surfaced.
      *
      * @param scope
      *            The execution scope

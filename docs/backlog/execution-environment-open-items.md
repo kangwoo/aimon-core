@@ -3343,6 +3343,11 @@ main 코드가 없고, 스냅숏의 `userLocale` 은 블록을 만드는 쪽이 
 선다. (2) 돌고 있는 `onStop` 명령이 인터럽트에 멈추는 것(EE-97). (3) 이 항목을 닫는 것 — 남은 것은 "신호가 있는데 싣지
 않는다" 가 아니라 "신호가 없다" 이므로 닫았고, 그 가운데 바꿀 수 있는 것은 EE-93 으로 따로 세웠다.
 
+**리뷰 뒤에 고친 것 (2026-10-07).** 풀이 거절한 백그라운드 태스크의 `subagentStop` 은 위 표대로 태스크의 신호를 받았지만,
+코디네이터를 닫고 스폰한 쪽 신호의 캐스케이드를 뗀 **뒤에** 발화했으므로 그 신호는 더는 설 수 없었다 — 스폰한 턴을
+인터럽트해도 명령이 멈추지 않았다. 발화를 둘 앞으로 옮겼다(`subagent/DefaultSubagentExecutionManager.java:881`). 고치기 전에
+실패하는 테스트가 붙었고, 테스트는 "명령이 일찍 돌아왔다" 가 아니라 "테스트 셸이 취소를 봤다" 로 증명하게 바꿨다.
+
 **확인하지 않은 것.** docker 계층(`integrationTest`)은 돌리지 않았다. 자체 `ContextEngine` · `CompactionEngine` 을 가진 외부
 구현이 새 필드를 넘기지 않으면 그 압축 훅은 전처럼 신호 없이 돈다 — 조용하고, 이 변경 전과 같다.
 
@@ -3958,8 +3963,8 @@ EE-88 이 값을 치르고 배운 것(쓰인 요청은 시한 전체를 갖는�
 달려 있다. EE-80 은 이미 나간 결과를 바꾸지 않으려고 포크를 건드리지 않았다. 부모 모델이 읽는 사유 문자열이 달라진다는 것
 말고 어디서 차이가 보이는지는 재지 않았다.
 
-**어디** *(2026-10-07)* — `subagent/execution/DefaultSubagentExecutor.java:624`(`checkOnStartHooks`),
-`subagent/execution/SubagentOnStartGate.java`. 턴 쪽의 모양은 `OrcaAgentExecutor.java:1477`.
+**어디** *(2026-10-07)* — `subagent/execution/DefaultSubagentExecutor.java:632`(`checkOnStartHooks`),
+`subagent/execution/SubagentOnStartGate.java`. 턴 쪽의 모양은 `OrcaAgentExecutor.java:1485`.
 
 **언제 다시 볼까.** 포크의 `BLOCKED` 를 가드의 거절로 세거나 알리는 독자가 생길 때.
 

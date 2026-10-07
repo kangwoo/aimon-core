@@ -412,14 +412,21 @@ as §5 said. What departed is below.
   That is the rule working, but the outcome is older than this change and was not designed here.
 - **`subagentStart` with a spawner that is already cancelled** (review note): the fork is still launched —
   `runExecute` calls `runResolvedSubagent` unconditionally, and the fork ends at its own first checkpoint — so start
-  and stop stay a pair and the event was kept live-only as designed. This was read from the code, not pinned by a
-  test.
-- **Fire-site tests are narrower than §8 in three places.** `Task.stop` during a background fork is asserted on the
+  and stop stay a pair and the event was kept live-only as designed. Read from the code at first; the review
+  follow-up pinned it for a foreground and a background fork.
+- **Fire-site tests are narrower than §8 in two places.** `Task.stop` during a background fork is asserted on the
   context the hook manager receives (the getter is empty when `subagentStop` fires), not by running a shell command
-  through it; "a spawner interrupt during a `subagentStart` command stops it" is covered by the hook-level case plus
-  the identity assertion at the fire site, not end to end; and "a `BLOCK` after an interrupt is the interrupt" drives
-  both executors with a scripted `ContextEngine`, while the premise — a cancelled `preCompact` guard over the blocking
-  limit yields `BLOCK` — is tested separately against the real guard and engine.
+  through it; and for a fork, "a `BLOCK` after an interrupt is the interrupt" drives the executor with a scripted
+  `ContextEngine`, while the premise — a cancelled `preCompact` guard over the blocking limit yields `BLOCK` — is
+  tested separately against the real guard and engine. The review follow-up joined the other two end to end: a
+  spawner interrupt during a background fork's `subagentStart` command, and a main turn interrupted during an AUTO
+  `preCompact` command, each run a shell command through the real hook manager (and, for the turn, the real guard and
+  engine). The same follow-up replaced every "returned within half the command's runtime" assertion with the fake
+  shell recording that its command's cancellation tripped.
+- **The pool-rejection `subagentStop` was handed a signal that could no longer trip** (review follow-up). §5 passes
+  the task coordinator's signal there, and the build did — after closing the coordinator and deregistering the
+  cascade from the spawner's signal, so a spawner interrupt did not reach the command. The stop now fires before both,
+  as it does on the path that ran.
 - **The rolling engine's breaker** (§7's "builder to confirm") was confirmed by the review, not re-measured here.
 
 ### 10.3 Review notes and open questions — where each one went

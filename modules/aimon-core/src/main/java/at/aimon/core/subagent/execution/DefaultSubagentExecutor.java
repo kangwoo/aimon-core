@@ -609,8 +609,16 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * <p>
      * A block is a hook that exited 2 or, unless it declares {@code failOpen: true}, one whose command could not be run
      * at all. Either way the fork does not start: {@link #startFork} turns the exception into
-     * {@link #createBlockedResult}. The same rule as {@code OrcaAgentExecutor#checkOnStartHooks}, which stops the turn,
-     * and the same gate a code-behavior fork passes ({@link SubagentOnStartGate}).
+     * {@link #createBlockedResult}. The same rule for what counts as a block as
+     * {@code OrcaAgentExecutor#checkOnStartHooks}, which stops the turn, and the same gate a code-behavior fork passes
+     * ({@link SubagentOnStartGate}).
+     *
+     * <p>
+     * The two differ on an interrupt that lands while the chain runs. The main turn reads its signal before the blocks
+     * and ends {@code INTERRUPTED}. A fork does not: a shell guard answers its cancelled command with a block, so the
+     * fork ends {@code BLOCKED} with an "execution cancelled" reason — and {@code INTERRUPTED}, at the loop's first
+     * checkpoint, only when the hook that was running was a programmatic one that did not block. Whether a fork should
+     * read the signal here too is open (EE-94).
      *
      * <p>
      * The note is wrapped in a {@code <system-reminder>} block so the model does not read it as genuine user intent,

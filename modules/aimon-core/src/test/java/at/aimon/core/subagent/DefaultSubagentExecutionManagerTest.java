@@ -7,13 +7,17 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.AfterEach;
@@ -25,6 +29,7 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.impl.orca.OrcaAgentExecutionRequest;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
+import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
@@ -32,13 +37,24 @@ import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.TestExecutionEnvironments;
+import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
+import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.event.SubagentStartContext;
 import at.aimon.core.hook.event.SubagentStopContext;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.TokenUsage;
+import at.aimon.core.shell.ExecutionOptions;
+import at.aimon.core.shell.ShellCommand;
+import at.aimon.core.shell.ShellCommandResult;
+import at.aimon.core.shell.VirtualShell;
+import at.aimon.core.shell.exception.ShellCancelledException;
+import at.aimon.core.skill.hook.action.ShellAction;
+import at.aimon.core.skill.hook.declarative.DeclarativeSubagentStartHook;
+import at.aimon.core.skill.hook.declarative.DeclarativeSubagentStopHook;
+import at.aimon.core.skill.hook.declarative.HostShellActionExecutor;
 import at.aimon.core.subagent.behavior.InMemorySubagentBehaviorRegistry;
 import at.aimon.core.subagent.execution.SubagentExecutionRequest;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
@@ -50,6 +66,10 @@ import at.aimon.core.subagent.task.SessionSnapshotStore;
 class DefaultSubagentExecutionManagerTest {
 
     private final SubagentExecutor reactExecutor = mock(SubagentExecutor.class);
+    /** How long the fake hook command "runs" when nothing stops it: a hang guard, not the proof of a stop. */
+    private static final Duration HANG_GUARD = Duration.ofSeconds(10);
+    private static final ShellAction AUDIT = new ShellAction("audit.sh", Duration.ofSeconds(60));
+
     private final ExecutorService bgPool = Executors.newSingleThreadExecutor();
 
     @AfterEach
@@ -393,6 +413,160 @@ class DefaultSubagentExecutionManagerTest {
             // hook's command from starting.
             assertThat(hooks.atStop.get()).as("SubagentStop fired").isNotNull();
             assertThat(hooks.atStop.get()).isEmpty();
+        }
+    }
+
+    @Test
+    @DisplayName("a fork spawned by an already-cancelled execution still reports its start, with no signal (EE-80)")
+    void subagentStartOfAnAlreadyCancelledSpawnerCarriesNoSignal() throws Exception {
+        InMemorySubagentRegistry dataRegistry = new InMemorySubagentRegistry();
+        dataRegistry.register(Subagent.builder().name("clock").systemPrompt("(code)").build());
+        InMemorySubagentBehaviorRegistry behaviorRegistry = new InMemorySubagentBehaviorRegistry();
+        behaviorRegistry.register("clock", (ctx, req, support) -> support.failure("cancelled"));
+        try (DefaultInterruptCoordinator spawner = new DefaultInterruptCoordinator()) {
+            spawner.requestInterrupt(InterruptReason.USER_SIGINT);
+            SubagentLaunchContext cancelled = env(dataRegistry).toBuilder().cancellationSignal(spawner.getSignal())
+                    .build();
+
+            // Foreground: the spawner's own signal, already tripped. A report is handed nothing that would keep its
+            // command from starting.
+            SignalRecordingHooks foreground = new SignalRecordingHooks();
+            new DefaultSubagentExecutionManager(reactExecutor, bgPool, foreground.manager, behaviorRegistry)
+                    .execute(cancelled, "task-fg", "clock", "go", "");
+            assertThat(foreground.atStart.get()).as("SubagentStart fired").isNotNull();
+            assertThat(foreground.atStart.get()).isEmpty();
+
+            // Background: the task's signal, which the cascade trips as soon as it is registered on a tripped one.
+            SignalRecordingHooks background = new SignalRecordingHooks();
+            new DefaultSubagentExecutionManager(reactExecutor, bgPool, background.manager, behaviorRegistry)
+                    .executeInBackground(cancelled, "task-bg", "clock", "go", "").get(5, TimeUnit.SECONDS);
+            assertThat(background.atStart.get()).as("SubagentStart fired").isNotNull();
+            assertThat(background.atStart.get()).isEmpty();
+        }
+    }
+
+    @Test
+    @DisplayName("interrupting the spawner stops a background fork's running SubagentStart command (EE-80)")
+    void spawnerInterruptStopsARunningBackgroundSubagentStartCommand() throws Exception {
+        InMemorySubagentRegistry dataRegistry = new InMemorySubagentRegistry();
+        dataRegistry.register(Subagent.builder().name("clock").systemPrompt("(code)").build());
+        InMemorySubagentBehaviorRegistry behaviorRegistry = new InMemorySubagentBehaviorRegistry();
+        behaviorRegistry.register("clock", (ctx, req, support) -> support.failure("cancelled"));
+        CancellationOnlyShell shell = new CancellationOnlyShell();
+        DefaultHookRegistry hookRegistry = new DefaultHookRegistry();
+        hookRegistry.register(HookEventType.SUBAGENT_START,
+                new DeclarativeSubagentStartHook("ops", AUDIT, new HostShellActionExecutor(shell.mock)));
+        DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(reactExecutor, bgPool,
+                new DefaultHookExecutionManager(), behaviorRegistry);
+        ExecutorService launcher = Executors.newSingleThreadExecutor();
+        try (DefaultInterruptCoordinator spawner = new DefaultInterruptCoordinator()) {
+            SubagentLaunchContext launchContext = env(dataRegistry).toBuilder().hookRegistry(hookRegistry)
+                    .cancellationSignal(spawner.getSignal()).build();
+
+            // SubagentStart fires on the launching thread, so the launch itself waits on the command.
+            Future<CompletableFuture<SubagentExecutionResult>> launch = launcher
+                    .submit(() -> manager.executeInBackground(launchContext, "task-bg", "clock", "go", ""));
+            assertThat(shell.started.await(5, TimeUnit.SECONDS)).isTrue();
+            // The whole chain: spawner's signal -> the task's coordinator -> the hook context -> the command.
+            spawner.requestInterrupt(InterruptReason.USER_SIGINT);
+            launch.get(HANG_GUARD.toMillis() * 2, TimeUnit.MILLISECONDS).get(5, TimeUnit.SECONDS);
+
+            assertThat(shell.stoppedByCancellation).as("the shell saw the command's cancellation trip").isTrue();
+        } finally {
+            launcher.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("interrupting the spawner stops the SubagentStop command of a task the pool rejected (EE-80)")
+    void spawnerInterruptStopsTheSubagentStopCommandOfARejectedTask() throws Exception {
+        InMemorySubagentRegistry dataRegistry = new InMemorySubagentRegistry();
+        dataRegistry.register(Subagent.builder().name("clock").systemPrompt("(code)").build());
+        InMemorySubagentBehaviorRegistry behaviorRegistry = new InMemorySubagentBehaviorRegistry();
+        CountDownLatch gate = new CountDownLatch(1);
+        CountDownLatch running = new CountDownLatch(1);
+        behaviorRegistry.register("clock", (ctx, req, support) -> {
+            running.countDown();
+            try {
+                gate.await(HANG_GUARD.toMillis() * 4, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return support.success("tick");
+        });
+        CancellationOnlyShell shell = new CancellationOnlyShell();
+        DefaultHookRegistry hookRegistry = new DefaultHookRegistry();
+        hookRegistry.register(HookEventType.SUBAGENT_STOP,
+                new DeclarativeSubagentStopHook("ops", AUDIT, new HostShellActionExecutor(shell.mock)));
+        ExecutorService boundedPool = DefaultSubagentExecutionManager
+                .newBackgroundExecutor(SubagentBackgroundConfig.of(1, 1));
+        DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(reactExecutor, boundedPool,
+                new DefaultHookExecutionManager(), behaviorRegistry);
+        ExecutorService launcher = Executors.newSingleThreadExecutor();
+        try (DefaultInterruptCoordinator spawner = new DefaultInterruptCoordinator()) {
+            // One task on the single worker, one in the queue: the third has nowhere to go.
+            manager.executeInBackground(env(dataRegistry), "t1", "clock", "go", "");
+            assertThat(running.await(5, TimeUnit.SECONDS)).isTrue();
+            manager.executeInBackground(env(dataRegistry), "t2", "clock", "go", "");
+            SubagentLaunchContext launchContext = env(dataRegistry).toBuilder().hookRegistry(hookRegistry)
+                    .cancellationSignal(spawner.getSignal()).build();
+
+            // The rejected task's Stop fires on the launching thread, inside the spawning execution.
+            Future<CompletableFuture<SubagentExecutionResult>> launch = launcher
+                    .submit(() -> manager.executeInBackground(launchContext, "t3", "clock", "go", ""));
+            assertThat(shell.started.await(5, TimeUnit.SECONDS)).isTrue();
+            spawner.requestInterrupt(InterruptReason.USER_SIGINT);
+            SubagentExecutionResult rejected = launch.get(HANG_GUARD.toMillis() * 2, TimeUnit.MILLISECONDS).get(5,
+                    TimeUnit.SECONDS);
+
+            assertThat(rejected.getErrorMessage()).contains("saturated");
+            assertThat(shell.stoppedByCancellation).as("the shell saw the command's cancellation trip").isTrue();
+        } finally {
+            gate.countDown();
+            launcher.shutdownNow();
+            boundedPool.shutdownNow();
+        }
+    }
+
+    /**
+     * A shell that ignores thread interrupts and stops only when the command's cancellation signal trips, as a shell
+     * whose blocking call is a remote request does. It records which of the two ended the command.
+     */
+    private static final class CancellationOnlyShell {
+        final CountDownLatch started = new CountDownLatch(1);
+        final AtomicBoolean stoppedByCancellation = new AtomicBoolean();
+        final VirtualShell mock = mock(VirtualShell.class);
+
+        CancellationOnlyShell() throws Exception {
+            when(mock.execute(any(ShellCommand.class), any(ExecutionOptions.class))).thenAnswer(invocation -> {
+                final ExecutionOptions options = invocation.getArgument(1);
+                final CountDownLatch stopped = new CountDownLatch(1);
+                options.getCancellation().onCancel(stopped::countDown);
+                started.countDown();
+                if (awaitIgnoringInterrupts(stopped)) {
+                    stoppedByCancellation.set(true);
+                    throw new ShellCancelledException("Process cancelled: audit.sh");
+                }
+                return new ShellCommandResult(0, "", "", HANG_GUARD);
+            });
+        }
+
+        private static boolean awaitIgnoringInterrupts(CountDownLatch latch) {
+            final long deadline = System.nanoTime() + HANG_GUARD.toNanos();
+            boolean interrupted = false;
+            try {
+                while (true) {
+                    try {
+                        return latch.await(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+                    } catch (InterruptedException e) {
+                        interrupted = true;
+                    }
+                }
+            } finally {
+                if (interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            }
         }
     }
 

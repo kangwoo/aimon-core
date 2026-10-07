@@ -13,6 +13,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.AfterEach;
@@ -63,13 +64,17 @@ import at.aimon.core.skill.hook.declarative.predicate.NameOnlyPredicate;
 @DisplayName("declarative hook shell commands and the execution's cancellation signal (EE-80)")
 class DeclarativeHookCancellationTest {
 
-    /** How long the fake command "runs" when nothing stops it. Long enough that a prompt stop is unmistakable. */
-    private static final Duration COMMAND_RUNTIME = Duration.ofSeconds(4);
+    /**
+     * How long the fake command "runs" when nothing stops it. A hang guard only: that a command was stopped is read
+     * from {@link #stoppedByCancellation}, not from how soon the hook returned.
+     */
+    private static final Duration COMMAND_RUNTIME = Duration.ofSeconds(10);
     private static final ShellAction ACTION = new ShellAction("guard.sh --token s3cret", Duration.ofSeconds(30));
 
     private final ExecutorService hookThread = Executors.newSingleThreadExecutor();
     private final CountDownLatch commandStarted = new CountDownLatch(1);
     private final AtomicReference<ExecutionOptions> seenOptions = new AtomicReference<>();
+    private final AtomicBoolean stoppedByCancellation = new AtomicBoolean();
 
     @AfterEach
     void stopHookThread() {
@@ -86,12 +91,11 @@ class DeclarativeHookCancellationTest {
 
             final Future<HookResult> running = hookThread.submit(() -> hook.execute(preTool(coordinator.getSignal())));
             assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
-            final long interruptedAt = System.nanoTime();
             coordinator.requestInterrupt(InterruptReason.USER_SIGINT);
             final HookResult result = running.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
 
             // The command was stopped, not waited out.
-            assertThat(Duration.ofNanos(System.nanoTime() - interruptedAt)).isLessThan(COMMAND_RUNTIME.dividedBy(2));
+            assertThat(stoppedByCancellation).as("the shell saw the command's cancellation trip").isTrue();
             // And a cancelled guard is not "allow and continue", whatever failOpen says: the execution is ending.
             assertThat(result.getStatus()).isEqualTo(HookStatus.BLOCKED);
             assertThat(result.getFeedback().orElseThrow()).contains("execution cancelled").doesNotContain("s3cret")
@@ -126,11 +130,10 @@ class DeclarativeHookCancellationTest {
 
             final Future<HookResult> running = hookThread.submit(() -> hook.execute(context));
             assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
-            final long interruptedAt = System.nanoTime();
             coordinator.requestInterrupt(InterruptReason.USER_SIGINT);
             final HookResult result = running.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
 
-            assertThat(Duration.ofNanos(System.nanoTime() - interruptedAt)).isLessThan(COMMAND_RUNTIME.dividedBy(2));
+            assertThat(stoppedByCancellation).as("the shell saw the command's cancellation trip").isTrue();
             // Nothing to decide on an advisory event.
             assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
         }
@@ -145,11 +148,10 @@ class DeclarativeHookCancellationTest {
             final Future<HookResult> running = hookThread
                     .submit(() -> event.fire(new HostShellActionExecutor(shell), coordinator.getSignal()));
             assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
-            final long interruptedAt = System.nanoTime();
             coordinator.requestInterrupt(InterruptReason.USER_SIGINT);
             final HookResult result = running.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
 
-            assertThat(Duration.ofNanos(System.nanoTime() - interruptedAt)).isLessThan(COMMAND_RUNTIME.dividedBy(2));
+            assertThat(stoppedByCancellation).as("the shell saw the command's cancellation trip").isTrue();
             assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
         }
     }
@@ -187,6 +189,7 @@ class DeclarativeHookCancellationTest {
             assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
             coordinator.requestInterrupt(InterruptReason.USER_SIGINT);
             running.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
+            assertThat(stoppedByCancellation).as("the shell saw the command's cancellation trip").isTrue();
             seenOptions.set(null);
             final HookResult audited = second.execute(context);
 
@@ -207,11 +210,10 @@ class DeclarativeHookCancellationTest {
             final Future<HookResult> running = hookThread
                     .submit(() -> hook.execute(preCompact(coordinator.getSignal())));
             assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
-            final long interruptedAt = System.nanoTime();
             coordinator.requestInterrupt(InterruptReason.USER_SIGINT);
             final HookResult result = running.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
 
-            assertThat(Duration.ofNanos(System.nanoTime() - interruptedAt)).isLessThan(COMMAND_RUNTIME.dividedBy(2));
+            assertThat(stoppedByCancellation).as("the shell saw the command's cancellation trip").isTrue();
             assertThat(result.getStatus()).isEqualTo(HookStatus.BLOCKED);
             assertThat(result.getFeedback().orElseThrow()).contains("execution cancelled");
         }
@@ -377,6 +379,7 @@ class DeclarativeHookCancellationTest {
             options.getCancellation().onCancel(stopped::countDown);
             commandStarted.countDown();
             if (awaitIgnoringInterrupts(stopped)) {
+                stoppedByCancellation.set(true);
                 throw new ShellCancelledException("Process cancelled: guard.sh --token s3cret");
             }
             return new ShellCommandResult(0, "", "", COMMAND_RUNTIME);
