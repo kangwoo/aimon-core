@@ -29,6 +29,7 @@ import at.aimon.core.agent.compact.CompactionMetadata;
 import at.aimon.core.agent.compact.CompactionReentrancyException;
 import at.aimon.core.agent.compact.CompactionResult;
 import at.aimon.core.agent.compact.CompactionTrigger;
+import at.aimon.core.agent.compact.DefaultCompactionEngine;
 import at.aimon.core.agent.compact.DefaultCompactionGuard;
 import at.aimon.core.agent.compact.InMemoryCompactionFailureStore;
 import at.aimon.core.agent.compact.NoOpPromptSizeRecoveryStrategy;
@@ -131,11 +132,12 @@ public final class RollingContextEngine implements ContextEngine {
             + " summary.]";
 
     /**
-     * Closes a summary call's input that would otherwise end with an assistant message. An absorbed range usually ends
-     * at the assistant's last text, because the tail cut prefers to start at a user message; a request ending with an
-     * assistant message reads as a prefill, which some providers reject and others continue instead of summarizing.
+     * Closes every summary call's input, whatever the absorbed range ends on. A request ending with an assistant
+     * message reads as a prefill, and one ending with tool results or a user message is answered as the conversation
+     * it is rather than summarized (see {@link DefaultCompactionEngine#SUMMARIZE_NOTE}). This engine closes its own
+     * input because it runs with any {@code CompactionEngine} that can summarize, not only the default one.
      */
-    static final String SUMMARIZE_NOTE = "[End of the part to summarize. Write the updated summary now.]";
+    static final String SUMMARIZE_NOTE = DefaultCompactionEngine.ROLLING_SUMMARIZE_NOTE;
 
     /** The reason of a successful compaction at the blocking limit. */
     static final String BLOCKING_REASON = "blocking-limit forced compaction";
@@ -554,9 +556,7 @@ public final class RollingContextEngine implements ContextEngine {
             input.add(Message.user(CONTINUATION_NOTE));
         }
         input.addAll(absorbed);
-        if (!endsOnTheUserSide(input)) {
-            input.add(Message.user(SUMMARIZE_NOTE));
-        }
+        input.add(Message.user(SUMMARIZE_NOTE));
         final SummaryRequest summaryRequest = SummaryRequest.builder().messages(input)
                 .systemPrompt(call.request.getSystemPrompt()).sessionId(buffer.getSessionId())
                 .executionId(call.request.getCaller().getExecutionId().orElse(null)).trigger(trigger)
@@ -617,15 +617,6 @@ public final class RollingContextEngine implements ContextEngine {
         log.info("Rolling compaction of session {}: span now {} (stage {}), absorbed {} messages, {} -> {} tokens",
                 buffer.getSessionId(), span.getRange(), plan.stage, absorbed.size(), call.estimated, postTokens);
         return installed;
-    }
-
-    /**
-     * Whether the summary call's input ends with a message sent in the user's role: a user message, or tool results,
-     * which providers send in the user's role too.
-     */
-    private static boolean endsOnTheUserSide(List<Message> input) {
-        final Role last = input.get(input.size() - 1).getRole();
-        return last == Role.USER || last == Role.TOOL;
     }
 
     private Shape shapeOf(ViewProjection view, long headEndSeq, long spanEndSeq) {
