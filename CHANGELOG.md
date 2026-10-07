@@ -39,10 +39,11 @@ published one signal at a time, so the one at fault fails alone and nothing is p
 publishers a later id could be fetched before an earlier one existed, and the earlier row was then never delivered to
 that node. With `publishAll` the row at stake became a whole batch, which can include a turn's terminal frame.
 
-The listener now remembers every id a fetch stepped over for 30 seconds and asks for those ids on each pass. A row found
-this way is delivered **after** rows with higher ids: order still holds within one publisher's sequential publishes,
-which is what a session's event stream is, and not across publishers. A transaction open for longer than 30 seconds
-still loses its rows on that node. No schema change, and nothing changes for publishers, so it takes effect node by node
+The listener now remembers the ids a fetch stepped over for 60 seconds and asks for them, in the same statement as the
+new rows, on each pass. A row found this way is delivered **after** rows with higher ids that an earlier pass already
+delivered: order still holds within one publisher's sequential publishes, which is what a session's event stream is,
+and not across publishers. A transaction open for longer than 60 seconds still loses its rows on that node. The memory
+is bounded — the highest 4,096 ids of any one hole, 16,384 ids in all — and running out of room is logged. No schema change, and nothing changes for publishers, so it takes effect node by node
 in a rolling upgrade.
 
 ### Added: scheduled tasks survive a restart — `MongoScheduledTaskRepository`, and the engine reschedules what it finds stored (B-7)

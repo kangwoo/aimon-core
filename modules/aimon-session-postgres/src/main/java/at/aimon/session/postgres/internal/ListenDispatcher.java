@@ -42,10 +42,13 @@ import at.aimon.core.agent.session.signal.SessionSignal.SignalKind;
  * <p>
  * <b>Rows that commit late.</b> An id is taken at insert and the row is visible at commit, so with two publishers a
  * fetch can return a later id before an earlier one exists. A bare high-water mark would then never see the earlier
- * row. Every id a fetch steps over is therefore kept by a {@link SignalGapTracker} for {@link #GAP_GRACE_MILLIS} and
- * asked for by id on each pass until it appears. A row recovered this way is delivered after rows with higher ids:
- * order holds within one publisher's sequential publishes — which is what a session's event stream is — and not
- * across publishers. A transaction that stays open past the grace period still loses its rows here.
+ * row. The ids a fetch steps over are therefore kept by a {@link SignalGapTracker} for {@link #GAP_GRACE_MILLIS} —
+ * within that tracker's bounds — and asked for in the same statement as the new rows on each pass until they appear.
+ * One statement, so one snapshot: a recovered row and the rows its publisher sent after it are seen together and
+ * delivered in id order. A row recovered this way is still delivered after rows with higher ids that an earlier pass
+ * had already delivered: order holds within one publisher's sequential publishes — which is what a session's event
+ * stream is — and not across publishers. A transaction that stays open past the grace period still loses its rows
+ * here.
  *
  * <p>
  * Backstop self-poll (design §4.2): every {@link #selfPollMillis} ms the dispatcher re-runs the fetch query without
@@ -76,14 +79,20 @@ public final class ListenDispatcher implements AutoCloseable {
     private static final String SQL_FETCH = "SELECT id, conversation_id, kind, origin_node_id, payload::text "
             + "FROM conversation_signal WHERE id > ? ORDER BY id LIMIT 10000";
 
-    private static final String SQL_FETCH_GAPS = "SELECT id, conversation_id, kind, origin_node_id, payload::text "
-            + "FROM conversation_signal WHERE id = ANY(?) ORDER BY id";
+    /** {@link #SQL_FETCH} widened to the ids a previous fetch stepped over — one statement, so one snapshot. */
+    private static final String SQL_FETCH_WITH_GAPS = "SELECT id, conversation_id, kind, origin_node_id, "
+            + "payload::text FROM conversation_signal WHERE id > ? OR id = ANY(?) ORDER BY id LIMIT 10000";
 
     /**
-     * How long an id that a fetch stepped over is still asked for. Far longer than a publish transaction takes — an
-     * insert, a notify, a commit — and short enough that the ids of rolled-back transactions do not pile up.
+     * How long an id that a fetch stepped over is still asked for, counted from when it was first stepped over. Far
+     * longer than a publish transaction takes — an insert, a notify, a commit — above the 30 s
+     * {@code idle_in_transaction_session_timeout} the deployment notes recommend, and short enough that the ids of
+     * rolled-back transactions do not pile up.
      */
-    public static final long GAP_GRACE_MILLIS = 30_000L;
+    public static final long GAP_GRACE_MILLIS = 60_000L;
+
+    /** At most one warning per this long about holes there was no room to track. */
+    private static final long UNTRACKED_WARN_INTERVAL_NANOS = 10_000_000_000L;
 
     private static final String SQL_MAX_ID = "SELECT COALESCE(MAX(id), 0) AS max_id FROM conversation_signal";
 
@@ -97,7 +106,9 @@ public final class ListenDispatcher implements AutoCloseable {
 
     private final ConcurrentMap<SessionId, Consumer<SessionSignal>> handlers = new ConcurrentHashMap<>();
     private final AtomicLong lastSeenId = new AtomicLong(0);
+    /** Touched only by the listener thread, like the fetch that feeds it. */
     private final SignalGapTracker gaps = new SignalGapTracker(GAP_GRACE_MILLIS);
+    private long lastUntrackedWarnNanos = System.nanoTime() - UNTRACKED_WARN_INTERVAL_NANOS;
 
     private volatile Thread thread;
     private volatile boolean running;
@@ -240,46 +251,55 @@ public final class ListenDispatcher implements AutoCloseable {
         }
     }
 
-    private synchronized void fetchAndDispatch() {
+    private void fetchAndDispatch() {
         final long since = lastSeenId.get();
-        try (Connection c = fetchDataSource.getConnection()) {
-            // The stepped-over ids first: a row that has turned up since belongs before anything newer.
-            final Long[] missing = gaps.outstanding(System.nanoTime());
+        final Long[] missing = gaps.outstanding();
+        try (Connection c = fetchDataSource.getConnection();
+                PreparedStatement ps = c.prepareStatement(missing.length == 0 ? SQL_FETCH : SQL_FETCH_WITH_GAPS)) {
+            ps.setLong(1, since);
             if (missing.length > 0) {
-                try (PreparedStatement ps = c.prepareStatement(SQL_FETCH_GAPS)) {
-                    ps.setArray(1, c.createArrayOf("bigint", missing));
-                    try (ResultSet rs = ps.executeQuery()) {
-                        while (rs.next()) {
-                            gaps.resolved(dispatchRow(rs));
-                        }
-                    }
-                }
+                ps.setArray(2, c.createArrayOf("bigint", missing));
             }
-            try (PreparedStatement ps = c.prepareStatement(SQL_FETCH)) {
-                ps.setLong(1, since);
-                try (ResultSet rs = ps.executeQuery()) {
-                    long maxSeen = since;
-                    while (rs.next()) {
-                        final long id = dispatchRow(rs);
-                        if (id > maxSeen + 1 && !gaps.noteHole(maxSeen + 1, id, System.nanoTime())) {
-                            log.debug("Not tracking the gap in conversation_signal ids {}..{}", maxSeen + 1, id - 1);
-                        }
-                        if (id > maxSeen) {
-                            maxSeen = id;
-                        }
+            try (ResultSet rs = ps.executeQuery()) {
+                long maxSeen = since;
+                long untracked = 0;
+                while (rs.next()) {
+                    final long id = dispatchRow(rs);
+                    if (id <= since) {
+                        // One of the ids asked for by name: it has turned up.
+                        gaps.resolved(id);
+                        continue;
                     }
-                    // CAS-style monotonic update so a concurrent fetch can't decrease the watermark.
-                    long current;
-                    do {
-                        current = lastSeenId.get();
-                        if (maxSeen <= current) {
-                            break;
-                        }
-                    } while (!lastSeenId.compareAndSet(current, maxSeen));
+                    untracked += gaps.noteHole(maxSeen + 1, id, System.nanoTime());
+                    maxSeen = id;
                 }
+                if (untracked > 0) {
+                    warnUntracked(untracked);
+                }
+                // CAS-style monotonic update: the mark never moves backwards.
+                long current;
+                do {
+                    current = lastSeenId.get();
+                    if (maxSeen <= current) {
+                        break;
+                    }
+                } while (!lastSeenId.compareAndSet(current, maxSeen));
             }
+            // After they have been asked for, never before — see SignalGapTracker#expire.
+            gaps.expire(System.nanoTime());
         } catch (SQLException e) {
             log.warn("conversation_signal fetch failed: {}", e.toString());
+        }
+    }
+
+    private void warnUntracked(long untracked) {
+        final long now = System.nanoTime();
+        if (now - lastUntrackedWarnNanos >= UNTRACKED_WARN_INTERVAL_NANOS) {
+            lastUntrackedWarnNanos = now;
+            log.warn("No room to track {} skipped conversation_signal id(s) — a row among them that commits late will"
+                    + " not be delivered on this node", untracked);
+        } else {
+            log.debug("No room to track {} skipped conversation_signal id(s)", untracked);
         }
     }
 

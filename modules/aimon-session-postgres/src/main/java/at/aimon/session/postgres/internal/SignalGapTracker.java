@@ -15,9 +15,10 @@ import java.util.TreeMap;
  * again: every id stepped over is kept for a grace period and asked for by id until it appears or the period ends.
  *
  * <p>
- * Bounded twice over. A hole wider than {@link #MAX_HOLE_SPAN} is not tracked at all — that is not a transaction in
- * flight but rows that were reaped, or a dispatcher that started from zero — and no more than {@link #MAX_TRACKED}
- * ids are held at once.
+ * Bounded twice over. Of a hole wider than {@link #MAX_HOLE_SPAN} only the highest {@link #MAX_HOLE_SPAN} ids are
+ * tracked — a hole that wide is a dispatcher that started from zero, not that many transactions in flight, and the
+ * ones that could still be in flight took their ids last. And no more than {@link #MAX_TRACKED} ids are held at once;
+ * when there is not room for a hole, again its highest ids are the ones kept.
  *
  * <p>
  * Not thread-safe; the dispatcher calls it from one thread at a time.
@@ -46,21 +47,28 @@ final class SignalGapTracker {
      * Records that a fetch returned {@code toExclusive} without having returned any id from {@code fromInclusive} up
      * to it.
      *
-     * @return {@code true} when the hole is now tracked, {@code false} when it was too wide or there was no room
+     * @return how many ids of the hole were left untracked for want of room — zero unless {@link #MAX_TRACKED} was
+     *         reached. Ids cut off because the hole was wider than {@link #MAX_HOLE_SPAN} are not counted.
      */
-    boolean noteHole(long fromInclusive, long toExclusive, long nowNanos) {
-        final long span = toExclusive - fromInclusive;
-        if (span <= 0) {
-            return true;
-        }
-        if (span > MAX_HOLE_SPAN || deadlines.size() + span > MAX_TRACKED) {
-            return false;
+    long noteHole(long fromInclusive, long toExclusive, long nowNanos) {
+        final long from = Math.max(fromInclusive, toExclusive - MAX_HOLE_SPAN);
+        if (toExclusive <= from) {
+            return 0;
         }
         final long deadline = nowNanos + graceNanos;
-        for (long id = fromInclusive; id < toExclusive; id++) {
-            deadlines.putIfAbsent(id, deadline);
+        long untracked = 0;
+        // Highest first, so that what is left out when room runs short is the oldest of the hole.
+        for (long id = toExclusive - 1; id >= from; id--) {
+            if (deadlines.containsKey(id)) {
+                continue;
+            }
+            if (deadlines.size() >= MAX_TRACKED) {
+                untracked++;
+            } else {
+                deadlines.put(id, deadline);
+            }
         }
-        return true;
+        return untracked;
     }
 
     /** The row for {@code id} has been delivered; stop asking for it. */
@@ -68,16 +76,21 @@ final class SignalGapTracker {
         deadlines.remove(id);
     }
 
+    /** The ids still being asked for, ascending. Does not expire any: see {@link #expire}. */
+    Long[] outstanding() {
+        return deadlines.keySet().toArray(new Long[0]);
+    }
+
     /**
-     * Drops the ids whose grace period has ended and returns the ones still worth asking for, ascending.
+     * Drops the ids whose grace period has ended. Called after a fetch has asked for them, never before: a dispatcher
+     * that could not fetch for longer than the grace period must still ask once for what it was waiting on.
      */
-    Long[] outstanding(long nowNanos) {
+    void expire(long nowNanos) {
         for (Iterator<Map.Entry<Long, Long>> it = deadlines.entrySet().iterator(); it.hasNext();) {
             if (it.next().getValue() - nowNanos <= 0) {
                 it.remove();
             }
         }
-        return deadlines.keySet().toArray(new Long[0]);
     }
 
     int size() {

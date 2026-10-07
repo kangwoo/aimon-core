@@ -22,11 +22,11 @@ class SignalGapTrackerTest {
     void tracksAHoleUntilResolved() {
         final SignalGapTracker gaps = new SignalGapTracker(GRACE_MS);
 
-        assertThat(gaps.noteHole(5, 8, T0)).isTrue();
-        assertThat(gaps.outstanding(after(10))).containsExactly(5L, 6L, 7L);
+        assertThat(gaps.noteHole(5, 8, T0)).isZero();
+        assertThat(gaps.outstanding()).containsExactly(5L, 6L, 7L);
 
         gaps.resolved(6);
-        assertThat(gaps.outstanding(after(20))).containsExactly(5L, 7L);
+        assertThat(gaps.outstanding()).containsExactly(5L, 7L);
     }
 
     @Test
@@ -38,36 +38,55 @@ class SignalGapTrackerTest {
         // Noticing 5 again does not give it a new lease.
         gaps.noteHole(5, 6, after(600));
 
-        assertThat(gaps.outstanding(after(999))).containsExactly(5L, 9L);
-        assertThat(gaps.outstanding(after(1_000))).containsExactly(9L);
-        assertThat(gaps.outstanding(after(1_600))).isEmpty();
+        gaps.expire(after(999));
+        assertThat(gaps.outstanding()).containsExactly(5L, 9L);
+        gaps.expire(after(1_000));
+        assertThat(gaps.outstanding()).containsExactly(9L);
+        gaps.expire(after(1_600));
+        assertThat(gaps.outstanding()).isEmpty();
     }
 
     @Test
-    @DisplayName("does not track a hole too wide to be transactions in flight")
-    void ignoresAHoleThatIsTooWide() {
+    @DisplayName("asking for the outstanding ids does not expire them")
+    void outstandingDoesNotExpire() {
+        final SignalGapTracker gaps = new SignalGapTracker(GRACE_MS);
+        gaps.noteHole(5, 6, T0);
+
+        assertThat(gaps.outstanding()).containsExactly(5L);
+        assertThat(gaps.size()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("of a hole too wide to be transactions in flight, tracks the highest ids")
+    void tracksTheTopOfAHoleThatIsTooWide() {
         final SignalGapTracker gaps = new SignalGapTracker(GRACE_MS);
 
-        assertThat(gaps.noteHole(1, 1 + SignalGapTracker.MAX_HOLE_SPAN + 1L, T0)).isFalse();
-        assertThat(gaps.size()).isZero();
-        assertThat(gaps.noteHole(1, 1 + SignalGapTracker.MAX_HOLE_SPAN, T0)).isTrue();
+        assertThat(gaps.noteHole(1, 10_000, T0)).as("cut for width, not for room").isZero();
+
         assertThat(gaps.size()).isEqualTo(SignalGapTracker.MAX_HOLE_SPAN);
+        final Long[] kept = gaps.outstanding();
+        assertThat(kept[0]).isEqualTo(10_000L - SignalGapTracker.MAX_HOLE_SPAN);
+        assertThat(kept[kept.length - 1]).isEqualTo(9_999L);
     }
 
     @Test
-    @DisplayName("holds no more than its cap, and takes holes again once there is room")
+    @DisplayName("when room runs out keeps the highest ids of the hole, reports the rest, and takes holes again later")
     void isBoundedInTotal() {
         final SignalGapTracker gaps = new SignalGapTracker(GRACE_MS);
         long next = 1;
         while (gaps.size() + SignalGapTracker.MAX_HOLE_SPAN <= SignalGapTracker.MAX_TRACKED) {
-            assertThat(gaps.noteHole(next, next + SignalGapTracker.MAX_HOLE_SPAN, T0)).isTrue();
+            assertThat(gaps.noteHole(next, next + SignalGapTracker.MAX_HOLE_SPAN, T0)).isZero();
             next += 2L * SignalGapTracker.MAX_HOLE_SPAN;
         }
         assertThat(gaps.size()).isEqualTo(SignalGapTracker.MAX_TRACKED);
+        gaps.resolved(1);
+        gaps.resolved(2);
 
-        assertThat(gaps.noteHole(next, next + 1, T0)).as("no room").isFalse();
-        gaps.outstanding(after(GRACE_MS));
-        assertThat(gaps.noteHole(next, next + 1, after(GRACE_MS))).as("room again after expiry").isTrue();
+        assertThat(gaps.noteHole(next, next + 5, T0)).as("ids there was no room for").isEqualTo(3L);
+        assertThat(gaps.outstanding()).contains(next + 4, next + 3).doesNotContain(next + 2);
+
+        gaps.expire(after(GRACE_MS));
+        assertThat(gaps.noteHole(next, next + 5, after(GRACE_MS))).as("room again after expiry").isZero();
     }
 
     @Test
@@ -75,7 +94,7 @@ class SignalGapTrackerTest {
     void emptyHole() {
         final SignalGapTracker gaps = new SignalGapTracker(GRACE_MS);
 
-        assertThat(gaps.noteHole(5, 5, T0)).isTrue();
+        assertThat(gaps.noteHole(5, 5, T0)).isZero();
         assertThat(gaps.size()).isZero();
     }
 }

@@ -309,6 +309,91 @@ class PostgresSessionSignalBusIntegrationTest {
     }
 
     @Test
+    @DisplayName("a batch that commits late is delivered whole, in order, with what its publisher sent after it")
+    void aBatchThatCommitsLateIsDeliveredInOrder() throws Exception {
+        final SessionId id = SessionId.of("c-bus-late-batch");
+        final SessionId other = SessionId.of("c-bus-late-batch-other");
+        final LinkedBlockingQueue<SessionSignal> received = new LinkedBlockingQueue<>();
+        final LinkedBlockingQueue<SessionSignal> receivedOther = new LinkedBlockingQueue<>();
+        try (SessionSignalBus.Subscription sub = busB.subscribe(id, received::offer);
+                SessionSignalBus.Subscription subOther = busB.subscribe(other, receivedOther::offer);
+                Connection slow = PostgresTestSupport.dataSource().getConnection()) {
+            Thread.sleep(100);
+            slow.setAutoCommit(false);
+            try (PreparedStatement ps = slow.prepareStatement(
+                    "INSERT INTO conversation_signal " + "(conversation_id, kind, origin_node_id, payload) "
+                            + "SELECT ?, 'EVENT', 'node-C', jsonb_build_object('chunkIndex', n) "
+                            + "FROM generate_series(0, 99) AS n ORDER BY n")) {
+                ps.setString(1, id.value());
+                ps.executeUpdate();
+            }
+
+            // Another session's publisher overtakes the batch several times, over several fetch passes.
+            for (int i = 0; i < 3; i++) {
+                busA.publish(event(other, "overtaking-" + i, "ok"));
+                assertThat(receivedOther.poll(5, TimeUnit.SECONDS)).isNotNull();
+            }
+
+            // The slow publisher commits, and its next publish is already committed by the time node B looks.
+            slow.commit();
+            final List<SessionSignal> next = new ArrayList<>();
+            for (int i = 100; i < 110; i++) {
+                next.add(SessionSignal.builder().sessionId(id).kind(SignalKind.EVENT).originNodeId("node-C")
+                        .payload(Map.of("chunkIndex", i)).build());
+            }
+            busA.publishAll(next);
+
+            assertThat(chunkIndexes(received, 110)).isEqualTo(range(110));
+            assertThat(received.poll(300, TimeUnit.MILLISECONDS)).as("nothing is delivered twice").isNull();
+        }
+    }
+
+    @Test
+    @DisplayName("a node that started on an empty table still recovers a row that commits late")
+    void aNodeStartedOnAnEmptyTableRecoversALateRow() throws Exception {
+        final SessionId id = SessionId.of("c-bus-late-fresh-node");
+        // The table is empty but its sequence is not at the start: every row so far has been reaped. A node that
+        // starts now seeds its mark at zero, and its first fetch steps over thousands of ids at once.
+        try (Connection c = PostgresTestSupport.dataSource().getConnection(); Statement st = c.createStatement()) {
+            st.execute("SELECT setval(pg_get_serial_sequence('conversation_signal', 'id'), 20000)");
+        }
+        final HikariDataSource publishPoolC = PostgresTestSupport.isolatedDataSource(2);
+        final HikariDataSource fetchPoolC = PostgresTestSupport.isolatedDataSource(2);
+        final PostgresSessionSignalBus busC = new PostgresSessionSignalBus(publishPoolC, fetchPoolC,
+                PostgresTestSupport.jdbcUrl(), PostgresTestSupport.listenConnectionProps(), "node-fresh");
+        final LinkedBlockingQueue<SessionSignal> received = new LinkedBlockingQueue<>();
+        try (SessionSignalBus.Subscription sub = busC.subscribe(id, received::offer);
+                Connection slow = PostgresTestSupport.dataSource().getConnection()) {
+            Thread.sleep(100);
+            slow.setAutoCommit(false);
+            try (PreparedStatement ps = slow.prepareStatement("INSERT INTO conversation_signal "
+                    + "(conversation_id, kind, origin_node_id, payload) VALUES (?, 'EVENT', 'node-C', ?::jsonb)")) {
+                ps.setString(1, id.value());
+                ps.setString(2, "{\"marker\":\"late\"}");
+                ps.executeUpdate();
+            }
+            busA.publish(event(id, "early", "ok"));
+            final SessionSignal early = received.poll(5, TimeUnit.SECONDS);
+            assertThat(early).isNotNull();
+            assertThat(early.getPayload()).containsEntry("marker", "early");
+
+            try (PreparedStatement notify = slow.prepareStatement("SELECT pg_notify(?, '0')")) {
+                notify.setString(1, ListenDispatcher.CHANNEL);
+                notify.execute();
+            }
+            slow.commit();
+
+            final SessionSignal late = received.poll(5, TimeUnit.SECONDS);
+            assertThat(late).as("the row just below the first id this node ever fetched").isNotNull();
+            assertThat(late.getPayload()).containsEntry("marker", "late");
+        } finally {
+            busC.close();
+            fetchPoolC.close();
+            publishPoolC.close();
+        }
+    }
+
+    @Test
     @DisplayName("ids a rolled-back transaction took are stepped over without delivering anything twice")
     void aRolledBackBatchLeavesNoTrace() throws Exception {
         final SessionId id = SessionId.of("c-bus-rolled-back");
