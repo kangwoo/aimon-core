@@ -148,6 +148,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultSubagentExecutor.class);
 
+    /** The message every interrupted fork reports, whenever the interrupt landed. */
+    private static final String INTERRUPTED_MESSAGE = "Execution interrupted";
+
     /** {@code kind} label for the single system-prompt part backing the parts-aware gateway call. */
     private static final String SYSTEM_PROMPT_KIND = "subagent-instructions";
 
@@ -423,7 +426,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     /**
      * Runs the subagent ReAct loop: fires OnStart hooks, then iterates LLM call → tool execution until a final answer,
      * an exhausted budget/iteration bound, a cancellation, a stall ({@link StalledIterationGuard}), or an error. An
-     * OnStart hook that blocks ends the fork before the first iteration ({@link #createBlockedResult}).
+     * OnStart hook that blocks ends the fork before the first iteration ({@link #createBlockedResult}), and so does a
+     * cancellation that lands while those hooks run ({@link #createInterruptedBeforeStartResult}).
      *
      * @param lc
      *            the immutable per-execution loop context (must not be null)
@@ -441,7 +445,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         int iterationCount = 0;
 
         try {
-            // Goal, then OnStart hooks: a block ends the fork before its first LLM call (see startFork).
+            // Goal, then OnStart hooks: a block, or a cancellation during them, ends the fork before its first LLM
+            // call (see startFork).
             final Optional<SubagentExecutionResult> refused = startFork(lc);
             if (refused.isPresent()) {
                 return refused.get();
@@ -589,17 +594,38 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * guard refused is never persisted and replayed by a later resume. It is empty for a fresh fork, which therefore
      * saves nothing and stays unresumable; for a resume it is the restored conversation, unchanged.
      *
-     * @return the blocked result if an OnStart hook refused the fork, empty to run the loop
+     * <p>
+     * Once the chain is over — returned or blocked — the fork's cancellation is read, before either outcome is looked
+     * at. A fork cancelled while its OnStart hooks ran was stopped, not refused: it ends {@code INTERRUPTED}, as a
+     * turn does, whichever kind of hook was running (a shell guard answers its cancelled command with a block, a
+     * programmatic hook with nothing) and whichever road the cancellation took. The read is the loop's own checkpoint
+     * predicate, so it also takes a thread interrupt the hook executor re-armed off the thread; left there, it would
+     * break the wait for every OnStop hook that fires next.
+     *
+     * @return the result that ends the fork here — blocked by a hook, or interrupted during the hooks — or empty to
+     *         run the loop
      */
     private Optional<SubagentExecutionResult> startFork(LoopContext lc) {
         final SessionSnapshot beforeGoal = lc.transcriptBuffer.toSnapshot();
         lc.transcriptBuffer.addUserMessage(lc.goal);
+        ExecutionBlockedByHookException blocked = null;
         try {
             checkOnStartHooks(lc);
-            return Optional.empty();
         } catch (ExecutionBlockedByHookException e) {
-            return Optional.of(createBlockedResult(lc, e, beforeGoal, 0, TokenUsage.empty()));
+            blocked = e;
         }
+        if (isCancelledOrInterrupted(lc.coordinator.getSignal())) {
+            if (blocked != null) {
+                // A cancelled guard blocks; that block is the cancellation's, and a veto that came with it stops
+                // nothing the cancellation has not stopped already.
+                log.debug("Subagent '{}' cancelled during its OnStart hooks; block not reported: {}",
+                        lc.subagent().getName(), blocked.getMessage());
+            }
+            return Optional.of(createInterruptedBeforeStartResult(lc, beforeGoal));
+        }
+        return blocked == null
+                ? Optional.empty()
+                : Optional.of(createBlockedResult(lc, blocked, beforeGoal, 0, TokenUsage.empty()));
     }
 
     /**
@@ -614,11 +640,10 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * ({@link SubagentOnStartGate}).
      *
      * <p>
-     * The two differ on an interrupt that lands while the chain runs. The main turn reads its signal before the blocks
-     * and ends {@code INTERRUPTED}. A fork does not: a shell guard answers its cancelled command with a block, so the
-     * fork ends {@code BLOCKED} with an "execution cancelled" reason — and {@code INTERRUPTED}, at the loop's first
-     * checkpoint, only when the hook that was running was a programmatic one that did not block. Whether a fork should
-     * read the signal here too is open (EE-94).
+     * A cancellation that lands while the chain runs is not this method's to report: a shell guard answers its
+     * cancelled command with a block and this throws like for any other block. {@link #startFork} reads the fork's
+     * cancellation after the chain and, when it has tripped, ends the fork {@code INTERRUPTED} before looking at the
+     * block — the same order the main turn takes.
      *
      * <p>
      * The note is wrapped in a {@code <system-reminder>} block so the model does not read it as genuine user intent,
@@ -1174,8 +1199,25 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             TokenUsage accumulatedTokens) {
         log.info("Subagent execution interrupted: iterations={}, tokens={}", iterationCount,
                 accumulatedTokens.getTotalTokens());
-        return createFailureResult(lc, "Execution interrupted", iterationCount, accumulatedTokens,
+        return createFailureResult(lc, INTERRUPTED_MESSAGE, iterationCount, accumulatedTokens,
                 CompletionReason.INTERRUPTED);
+    }
+
+    /**
+     * Creates the result of a fork cancelled while its OnStart hooks ran: the same interrupted result as
+     * {@link #createInterruptedResult} — {@link CompletionReason#INTERRUPTED}, the canonical message, OnStop hooks
+     * fired with {@code success=false} — except for the transcript it hands back.
+     *
+     * <p>
+     * That is {@code beforeGoal}, as for a {@linkplain #createBlockedResult blocked} fork, not the live buffer. A
+     * fork's goal is written by the parent model, which can also stop a background fork and resume it later; a goal
+     * whose guard was cut off before it answered must not come back as conversation history on that resume, where the
+     * OnStart hooks are shown only the new goal. No verdict, not persisted.
+     */
+    private SubagentExecutionResult createInterruptedBeforeStartResult(LoopContext lc, SessionSnapshot beforeGoal) {
+        log.info("Subagent '{}' interrupted during its OnStart hooks; not started", lc.subagent().getName());
+        return createFailureResult(lc, INTERRUPTED_MESSAGE, 0, TokenUsage.empty(), CompletionReason.INTERRUPTED,
+                beforeGoal);
     }
 
     /**
@@ -1245,6 +1287,19 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      */
     private SubagentExecutionResult createFailureResult(LoopContext lc, String errorMessage, int iterationCount,
             TokenUsage accumulatedTokens, CompletionReason completionReason) {
+        return createFailureResult(lc, errorMessage, iterationCount, accumulatedTokens, completionReason, null);
+    }
+
+    /**
+     * {@link #createFailureResult(LoopContext, String, int, TokenUsage, CompletionReason)} with the transcript to hand
+     * back named by the caller.
+     *
+     * @param snapshot
+     *            the transcript the result carries, or {@code null} for the live buffer as it stands once the OnStop
+     *            hooks have run
+     */
+    private SubagentExecutionResult createFailureResult(LoopContext lc, String errorMessage, int iterationCount,
+            TokenUsage accumulatedTokens, CompletionReason completionReason, SessionSnapshot snapshot) {
         final ExecutionMetadata metadata = buildMetadata(lc, iterationCount, accumulatedTokens);
         final OnStopContext onStopContext = OnStopContext.builder().executorType(InvokerType.SUBAGENT)
                 .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry())
@@ -1254,8 +1309,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         hookExecutionManager.executeOnStop(onStopContext);
         // Terminal boundary so a background tail observes that the task ended (and why).
         stream(lc, "\n[ended: " + errorMessage + "]\n");
-        return SubagentExecutionResult.failure(errorMessage, lc.transcriptBuffer.toSnapshot(), metadata,
-                completionReason, estimateCost(lc, accumulatedTokens));
+        return SubagentExecutionResult.failure(errorMessage,
+                snapshot != null ? snapshot : lc.transcriptBuffer.toSnapshot(), metadata, completionReason,
+                estimateCost(lc, accumulatedTokens));
     }
 
     /** Prices the accumulated token usage with the configured estimator and this execution's resolved model. */

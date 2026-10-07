@@ -7,6 +7,98 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed: the follow-ups to hook cancellation — an opt-out for cleanup commands, and four edges (EE-93 – EE-97)
+
+EE-80 (next entry) left five things open. Three are built, one is half built, one is decided against. The design, what
+the build changed in it and the reasons are in
+[`docs/design/hook/hook-cancellation-followups-ee93-ee97.md`](docs/design/hook/hook-cancellation-followups-ee93-ee97.md).
+
+- **Added: `ignoreInterrupt`, so a cleanup command is not cut in half by an interrupt (EE-97).** A handler in
+  `hooks.json` (`"ignoreInterrupt": true`) or an entry in SKILL.md frontmatter (`ignoreInterrupt: true`) declares that
+  its shell command is not stopped when the execution is interrupted. It is honoured for a `command` / `shell` action
+  on the report events — `onStop`, `subagentStop`, `postCompact`, `postTool`, `permissionDenied`, `subagentStart` —
+  and holds on both roads an interrupt takes: the execution's signal, and the thread interrupt a stopped background
+  fork also gets. The default is unchanged (a running report command is stopped), and so is the guard rule: on
+  `onStart` / `preCompact` / `permissionRequest` / `preTool` the key is dropped with a WARN, and a cancelled guard
+  still blocks regardless of `failOpen`. It is also dropped, with a WARN, on the events outside any execution and on
+  `http` / `mcp` handlers. Only a boolean is accepted: in `hooks.json` anything else is read as `false` with a WARN,
+  in frontmatter it is a parse error — as for `failOpen`. The option lengthens nothing: the handler's `timeout` still
+  ends the command, and the execution (and so the next input) waits for it. An older AIMON reading a `hooks.json` that
+  carries the key ignores it — handler entries tolerate unknown fields — so the command is stopped there as before.
+  A declarative shell hook class constructed in code honours the option on the same report events only: one built
+  for `onSessionStart` / `onSessionEnd` / `onConfigReload` with the option does not declare `ignoresInterrupt()`.
+  `HookHandlerSpec.fromJson` gained an `ignoreInterrupt` argument; the previous fifteen-argument signature is kept as
+  an overload.
+- **`ExecutionHook` gained `ignoresInterrupt()` (default `false`).** A hook that returns `true` is waited for when the
+  thread that fired it is interrupted: `DefaultHookExecutor` no longer cancels its task, returns the hook's own result
+  (or times out as usual), and re-arms the thread's interrupt flag. The executor does not know the event, so a hook
+  registered in code is honoured on any event; on a guard event that makes an interrupted execution wait for the
+  guard — it never turns an interrupt into a pass. A custom `HookExecutor` has to honour the method itself.
+- **A `ShellActionExecutor` may be handed a view of the hook context.** For an `ignoreInterrupt` hook the `context`
+  argument of `run` is not the event's own context type but a wrapper whose `getExecutionCancellation()` is empty. Use
+  it through `HookContext` only; an executor that downcasts it fails for exactly those hooks.
+- **The AUTO-compaction summary call is aborted by an interrupt (EE-95).** When the compaction request carries the
+  execution's signal, `DefaultCompactionEngine` makes the summary call with a cancellation token, so an interrupt
+  during a compaction no longer waits the call out; a signal that has already tripped makes no call. The turn or fork
+  ends `INTERRUPTED`. Two things an embedder can see: (1) while a signal is present the summary call runs over the
+  provider's **streaming transport** — a provider handed a live token reroutes a blocking call that way; the request
+  itself is the same (on OpenAI Chat Completions the streaming call adds `stream_options`). `/compact`, and any
+  request without a signal, uses the same overload as before. A custom `LlmClient` that does not override the
+  cancellation-aware `sendMessage` behaves as before. (2) A cancelled summary comes back as
+  `CompactionResult.failure` carrying `LlmCallCancelledException`, and neither circuit breaker
+  (`DefaultCompactionGuard`, `RollingContextEngine`) counts it. A client that throws that exception while the signal
+  is live is reported as an ordinary `LlmClientException` and is counted. (3) Once the signal has tripped, whatever
+  the call does is that same cancelled failure: a summary the client **returns** after the trip is not installed, and
+  an error of any other kind is not counted or logged at ERROR. The engine does not rely on the client to say
+  "cancelled" — an aborted stream can come back as the part of the summary that had arrived, or as a transport error.
+  The cost is a summary that had in fact finished when the signal tripped: it is discarded as well. Below the blocking
+  limit an interrupted turn reports the failed attempt in `compactionEvents`, as any failed compaction is reported
+  (EE-100).
+- **Fixed: an interrupt during a streaming LLM call is reported as a cancellation, not as a finished answer.**
+  `AnthropicLlmClient` and `OpenAILlmClient` (Chat Completions and Responses) abort an in-flight call by closing its
+  stream, and classified the cancellation only where the read threw. The SDKs (anthropic-java 2.65.0, openai-java
+  4.69.2) do not throw out of a closed stream — it ends — so the client closed the response normally and returned
+  what had arrived. Both now throw `LlmCallCancelledException` when a stream ends without its terminal event
+  (`message_stop`, a `finish_reason`, `response.completed` / `response.incomplete`) while the call's token is tripped,
+  and hand the sink no `STREAM_END` for it. A stream that reached its terminal event is returned as before, tripped
+  token or not; so is one that ends early under a live token. What changes for a caller: a turn or fork interrupted
+  mid-call ends `INTERRUPTED` with the streamed prefix kept as the assistant message and an `interrupted` stream
+  completion — what `OrcaAgentExecutor` already did when the read threw — where it used to end `COMPLETED` with the
+  prefix (or an empty string) as the final answer; and the AUTO-compaction summary call above is actually cancelled,
+  where it used to install a half-sentence summary over the transcript or fail as "Compaction summary was empty" and
+  move the breakers. A custom `LlmClient` over one of these SDKs needs the same check.
+- **`SignalBackedLlmCancellation` is `AutoCloseable`.** `close()` removes its listener from the signal, for an adapter
+  that lives shorter than the signal. The executors' per-execution instances are not closed and behave as before.
+- **A fork interrupted while its `onStart` hooks run ends `INTERRUPTED`, not `BLOCKED` (EE-94).** The fork now reads its
+  cancellation right after the `onStart` chain, before the blocks, as a turn does. Visible to the parent model and to
+  anything that reads a fork's result: the reason is `CompletionReason.INTERRUPTED` and the message is "Execution
+  interrupted" instead of "…blocked by OnStart hook: …execution cancelled…"; the fork's `onStop` hooks now fire
+  (`success=false`); and the result carries the transcript as it stood **before** the goal, so a goal whose guard was
+  cut off is not persisted and replayed by a later `Task(resume=…)` — that last part also changes a fork interrupted
+  during a programmatic `onStart` hook, which already ended `INTERRUPTED`. No new enum constant. A code-behavior
+  subagent is unchanged (EE-99).
+- **`LiveSessionStatus#isInterruptible()` no longer says `true` where an interrupt does nothing (EE-93).** It is now
+  `true` only while the turn's coordinator is open. A slash-command turn is interruptible during its `onStart` hooks
+  and not after — the executor closes the turn's coordinator before the command runs, so an interrupt there is a
+  logged no-op instead of a trip nothing reads. A ReAct turn also reads `false` in the short stretch after its work is
+  done, while it is persisted. The wire shape of `StatusSnapshotPayload` is unchanged (same key, same type); in a
+  mixed-version cluster an old and a new node report different **values** for those two states.
+  `InterruptCoordinator` gained `isClosed()` (default `false`, so a custom coordinator is reported as before). A custom
+  `interruptCoordinatorFactory` that returns one shared instance now hands a slash command a closed coordinator.
+- **An interrupt that arrives before a turn's `onStart` hooks is kept, not dropped (EE-93).** `LiveSession.interrupt`,
+  `close()` and a NOW-priority input used to be ignored while the executor was still rendering the prompt and opening
+  the transcript. `DefaultLiveSession` now keeps the reason (the first one wins) and hands it to the turn's coordinator
+  when the executor publishes it: the turn ends `INTERRUPTED` at `onStart` — no `onStart` hook of any kind is run
+  (the executor reads the signal before it dispatches the chain, so a programmatic, `http` or `mcp` hook ahead of the
+  first shell guard does not run either), no LLM call, `onStop(success=false)`, and for a slash-command turn the
+  command does not run. An `onStop` hook therefore can see a turn whose `onStart` hooks never ran. For a NOW-priority input this means
+  the turn that was being set up when the input was enqueued is preempted instead of running and possibly taking that
+  input in through its own mid-turn drain; the input stays in the queue for the next turn or the host's drain, as when
+  a turn is preempted mid-loop. `isInterruptible()` is `false` in that stretch.
+- **Not changed:** a running slash command still cannot be interrupted (EE-93 stays open for that), and a cancellation
+  that reaches the firing thread only as `Thread.interrupt()` still does not stop a hook command on a shell that
+  ignores thread interrupts (EE-96, decided against for now).
+
 ### Changed: a hook's shell command follows the execution's interrupt on every event that has one (EE-80)
 
 The first half of EE-80 tied a hook command to the execution's cancellation signal on the tool-scoped events and a
@@ -19,7 +111,7 @@ longer runs to its own timeout after the user interrupts.
   `subagentStop` join `postTool` and `permissionDenied`: a running command is stopped, and one fired after the
   cancellation runs unbound, so an audit or cleanup command of a cancelled execution always starts.
 - **An interrupt can now stop a running `onStop` command**, on every shell. Before, nothing delivered the interrupt
-  there. A cleanup that must finish has no opt-out yet (EE-97).
+  there. A cleanup that must finish declares `ignoreInterrupt` (EE-97, above).
 - **`postTool` / `permissionDenied`: the rule is applied per hook, not per chain.** With two hooks in sequence, an
   interrupt during the first used to hand the second a tripped signal, and its command never started.
   `HookContext#getExecutionCancellation()` on a report context can therefore turn from present to empty over the life of
@@ -29,11 +121,11 @@ longer runs to its own timeout after the user interrupts.
   for a slash-command turn as well. `LiveSession.interrupt`, a NOW-priority input and `close()` used to be ignored in
   that window; they now stop the hook's command and end the turn as `CompletionReason.INTERRUPTED` (`onStop` fired with
   `success=false`, no LLM call, the turn stays retryable) — not as `ExecutionBlockedByHookException`. An interrupt
-  earlier than `onStart`, while the prompt is rendered, is still ignored.
+  earlier than `onStart`, while the prompt is rendered, is kept and delivered then (EE-93, above).
 - **`LiveSession.status()` reports `RUNNING` from the published budget tracker alone.** A turn still in its `onStart`
-  hooks, and a slash-command turn, stay `IDLE` as before, but `isInterruptible()` is now `true` for them. For a
-  slash-command turn it stays `true` after `onStart` although an interrupt there does nothing — a command is not
-  interruptible (EE-93).
+  hooks, and a slash-command turn, stay `IDLE` as before, but `isInterruptible()` is now `true` while their `onStart`
+  hooks run. For a slash-command turn it turns `false` after `onStart` — a command is not interruptible (EE-93,
+  above).
 - **An AUTO compaction blocked by an interrupted `preCompact` no longer surfaces as a context-window error.** A turn ends
   `INTERRUPTED` and a fork ends with its interrupted result instead of `ContextWindowExceededException`.
 - **`ContextRequest`, `CompactionGuardRequest`, `CompactionRequest` and `SummaryRequest` gained an optional

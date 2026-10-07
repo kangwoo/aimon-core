@@ -50,6 +50,7 @@ import at.aimon.core.llm.ModelContextLimits;
 import at.aimon.core.llm.ModelContextWindowRegistry;
 import at.aimon.core.llm.Role;
 import at.aimon.core.llm.ToolUseResult;
+import at.aimon.core.llm.exception.LlmCallCancelledException;
 import at.aimon.core.llm.exception.LlmPromptTooLongException;
 import at.aimon.core.llm.token.TokenEstimator;
 
@@ -652,7 +653,9 @@ public final class RollingContextEngine implements ContextEngine {
 
     private void recordFailureIfTransient(SessionId sessionId, CompactionResult result) {
         final Exception error = result.getError().orElse(null);
-        if (error instanceof CompactionBlockedByHookException || error instanceof CompactionReentrancyException) {
+        // A summary call cancelled with its execution is no more a failed compaction than a hook's block is.
+        if (error instanceof CompactionBlockedByHookException || error instanceof CompactionReentrancyException
+                || error instanceof LlmCallCancelledException) {
             log.debug("Compaction of session {} was not a transient failure; not counted toward the circuit breaker",
                     sessionId);
             return;

@@ -79,7 +79,9 @@ import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.shell.exception.ShellCancelledException;
 import at.aimon.core.skill.DefaultSkillRegistry;
 import at.aimon.core.skill.hook.action.ShellAction;
+import at.aimon.core.skill.hook.declarative.DeclarativeHookOptions;
 import at.aimon.core.skill.hook.declarative.DeclarativeOnStartHook;
+import at.aimon.core.skill.hook.declarative.DeclarativeOnStopHook;
 import at.aimon.core.skill.hook.declarative.DeclarativePreCompactHook;
 import at.aimon.core.skill.hook.declarative.HostShellActionExecutor;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
@@ -103,6 +105,12 @@ class OrcaAgentExecutorHookCancellationTest {
      * from {@link #stoppedByCancellation}, not from how soon the turn returned.
      */
     private static final Duration COMMAND_RUNTIME = Duration.ofSeconds(10);
+    /**
+     * How long a test waits for its turn to reach the command or the summary call. A hang guard too, and a wide one:
+     * the first turn of a cold JVM on a loaded machine has been seen to take six seconds to get there, which a
+     * five-second wait reported as a failure of the hook.
+     */
+    private static final long STARTED_GUARD_SECONDS = 30;
     private static final ShellAction GUARD = new ShellAction("guard.sh", Duration.ofSeconds(30));
 
     @TempDir
@@ -111,6 +119,8 @@ class OrcaAgentExecutorHookCancellationTest {
     private final ExecutorService turnThread = Executors.newSingleThreadExecutor();
     private final CountDownLatch commandStarted = new CountDownLatch(1);
     private final AtomicBoolean stoppedByCancellation = new AtomicBoolean();
+    private final CountDownLatch commandMayFinish = new CountDownLatch(1);
+    private final AtomicBoolean ranToCompletion = new AtomicBoolean();
     private final AtomicReference<InterruptCoordinator> published = new AtomicReference<>();
     private final AtomicInteger publications = new AtomicInteger();
     private final AtomicReference<OnStopContext> onStop = new AtomicReference<>();
@@ -137,6 +147,7 @@ class OrcaAgentExecutorHookCancellationTest {
 
     @AfterEach
     void stopTurnThread() {
+        commandMayFinish.countDown();
         turnThread.shutdownNow();
     }
 
@@ -173,7 +184,7 @@ class OrcaAgentExecutorHookCancellationTest {
 
         final Future<OrcaAgentExecutionResult> turn = turnThread
                 .submit(() -> executor().execute(runtime(null), request("hi", sessionId)));
-        assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(commandStarted.await(STARTED_GUARD_SECONDS, TimeUnit.SECONDS)).isTrue();
         published.get().requestInterrupt(InterruptReason.USER_SIGINT);
         final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
 
@@ -199,7 +210,7 @@ class OrcaAgentExecutorHookCancellationTest {
 
         final Future<OrcaAgentExecutionResult> turn = turnThread
                 .submit(() -> executor().execute(runtime(null), request("/ping")));
-        assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(commandStarted.await(STARTED_GUARD_SECONDS, TimeUnit.SECONDS)).isTrue();
         published.get().requestInterrupt(InterruptReason.USER_SIGINT);
         final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
 
@@ -207,6 +218,48 @@ class OrcaAgentExecutorHookCancellationTest {
         assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
         assertThat(ping.executions).hasValue(0);
         assertThat(onStop.get().isSuccess()).isFalse();
+    }
+
+    @Test
+    @DisplayName("EE-97: an interrupt that arrives while a finished turn's onStop command runs stops the command")
+    void reactTurn_interruptDuringOnStop_stopsTheCommandOfAHookWithoutTheOption() throws Exception {
+        hookRegistry.register(HookEventType.ON_STOP,
+                new DeclarativeOnStopHook("ops", GUARD, new HostShellActionExecutor(holdingShell())));
+
+        final Future<OrcaAgentExecutionResult> turn = turnThread
+                .submit(() -> executor().execute(runtime(null), request("hi")));
+        assertThat(commandStarted.await(STARTED_GUARD_SECONDS, TimeUnit.SECONDS)).isTrue();
+        // The next input preempting the finished turn: the interrupt lands on the turn's still-open coordinator.
+        published.get().requestInterrupt(InterruptReason.USER_SIGINT);
+        final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
+
+        assertThat(stoppedByCancellation).as("the shell saw the command's cancellation trip").isTrue();
+        assertThat(ranToCompletion).isFalse();
+        // The turn had already finished; only its cleanup was cut short.
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
+    }
+
+    @Test
+    @DisplayName("EE-97: with ignoreInterrupt the same interrupt leaves the onStop command running to its end")
+    void reactTurn_interruptDuringOnStop_leavesTheCommandOfAnIgnoreInterruptHookRunning() throws Exception {
+        hookRegistry.register(HookEventType.ON_STOP,
+                new DeclarativeOnStopHook("ops", GUARD, new HostShellActionExecutor(holdingShell()),
+                        DeclarativeHookOptions.builder().ignoreInterrupt(true).build()));
+
+        final Future<OrcaAgentExecutionResult> turn = turnThread
+                .submit(() -> executor().execute(runtime(null), request("hi")));
+        assertThat(commandStarted.await(STARTED_GUARD_SECONDS, TimeUnit.SECONDS)).isTrue();
+        // Listeners run inside requestInterrupt, so a command tied to the signal would have been stopped by now.
+        published.get().requestInterrupt(InterruptReason.USER_SIGINT);
+
+        assertThat(stoppedByCancellation).isFalse();
+        assertThat(turn).as("the turn is still waiting for its cleanup").isNotDone();
+        commandMayFinish.countDown();
+        final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
+
+        assertThat(ranToCompletion).as("the cleanup command finished on its own").isTrue();
+        assertThat(stoppedByCancellation).isFalse();
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
     }
 
     @Test
@@ -227,6 +280,47 @@ class OrcaAgentExecutorHookCancellationTest {
         // Nothing the command flow runs reads a signal, so "none can trip" is the honest answer for its onStop.
         assertThat(onStop.get()).isNotNull();
         assertThat(onStopSignal.get()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("EE-93: a slash-command turn's coordinator is open during onStart and closed while the command runs")
+    void commandTurn_coordinatorIsClosedBeforeTheCommandRuns() {
+        final AtomicReference<Boolean> closedDuringOnStart = new AtomicReference<>();
+        final AtomicReference<Boolean> closedDuringCommand = new AtomicReference<>();
+        hookRegistry.register(HookEventType.ON_START, (OnStartHook) context -> {
+            closedDuringOnStart.set(published.get().isClosed());
+            return HookResult.success();
+        });
+        ping.duringExecution = () -> {
+            closedDuringCommand.set(published.get().isClosed());
+            // What a host's interrupt does now: it lands on a closed coordinator and trips nothing.
+            published.get().requestInterrupt(InterruptReason.USER_SIGINT);
+        };
+
+        final OrcaAgentExecutionResult result = executor().execute(runtime(null), request("/ping"));
+
+        assertThat(closedDuringOnStart.get()).as("an interrupt during onStart ends the turn").isFalse();
+        assertThat(closedDuringCommand.get()).as("a command is not interruptible, and the coordinator says so")
+                .isTrue();
+        assertThat(published.get().getSignal().isCancelled()).isFalse();
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(ping.executions).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("EE-93: a ReAct turn's coordinator is open through its onStop and closed when the turn returns")
+    void reactTurn_coordinatorIsOpenThroughOnStopAndClosedAfter() {
+        final AtomicReference<Boolean> closedDuringOnStop = new AtomicReference<>();
+        hookRegistry.register(HookEventType.ON_STOP, (OnStopHook) context -> {
+            closedDuringOnStop.set(published.get().isClosed());
+            return HookResult.success();
+        });
+
+        final OrcaAgentExecutionResult result = executor().execute(runtime(null), request("hi"));
+
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
+        assertThat(closedDuringOnStop.get()).isFalse();
+        assertThat(published.get().isClosed()).isTrue();
     }
 
     @Test
@@ -259,13 +353,50 @@ class OrcaAgentExecutorHookCancellationTest {
 
         final Future<OrcaAgentExecutionResult> turn = turnThread
                 .submit(() -> executor().execute(runtime(engineOverTheBlockingLimit()), request("hi")));
-        assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(commandStarted.await(STARTED_GUARD_SECONDS, TimeUnit.SECONDS)).isTrue();
         published.get().requestInterrupt(InterruptReason.USER_SIGINT);
         final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
 
         assertThat(stoppedByCancellation).as("the shell saw the command's cancellation trip").isTrue();
         assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
         assertThat(llmClient.calls).as("neither a summary call nor a loop call").hasValue(0);
+    }
+
+    @Test
+    @DisplayName("EE-95: an interrupt during an AUTO summary call over the blocking limit ends the turn INTERRUPTED")
+    void reactTurn_interruptDuringTheSummaryCall_overTheBlockingLimit_endsTheTurnInterrupted() throws Exception {
+        final Future<OrcaAgentExecutionResult> turn = turnThread
+                .submit(() -> executor().execute(runtime(engineOverTheBlockingLimit()), request("hi")));
+        assertThat(llmClient.summaryCallStarted.await(STARTED_GUARD_SECONDS, TimeUnit.SECONDS)).isTrue();
+        published.get().requestInterrupt(InterruptReason.USER_SIGINT);
+        final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
+
+        // The call was aborted, not waited out: the client saw its abort lever pulled.
+        assertThat(llmClient.summaryAbortRan).isTrue();
+        // The guard answers BLOCK for a compaction that failed over the limit, and that BLOCK is the interrupt.
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
+        assertThat(llmClient.calls).as("no loop call").hasValue(0);
+        assertThat(result.getCompactionEvents()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("EE-95: an interrupt during an AUTO summary call under the blocking limit ends the turn INTERRUPTED")
+    void reactTurn_interruptDuringTheSummaryCall_inTheAutoBand_endsTheTurnInterrupted() throws Exception {
+        final Future<OrcaAgentExecutionResult> turn = turnThread
+                .submit(() -> executor().execute(runtime(engineAt(7_500)), request("hi")));
+        assertThat(llmClient.summaryCallStarted.await(STARTED_GUARD_SECONDS, TimeUnit.SECONDS)).isTrue();
+        published.get().requestInterrupt(InterruptReason.USER_SIGINT);
+        final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
+
+        assertThat(llmClient.summaryAbortRan).isTrue();
+        // Here the guard answers COMPACT with the failed attempt; the loop goes on to its own call, which is never
+        // made on a tripped signal.
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
+        assertThat(llmClient.calls).as("no loop call").hasValue(0);
+        // The attempt is reported like any other compaction that was attempted and failed: one record, nothing
+        // summarized into the view.
+        assertThat(result.getCompactionEvents()).singleElement()
+                .satisfies(event -> assertThat(event.getPostCompactTokenCount()).isZero());
     }
 
     @Test
@@ -309,7 +440,12 @@ class OrcaAgentExecutorHookCancellationTest {
 
     /** The default engine with every estimate in the blocking band, so only a compaction can let the turn go on. */
     private ContextEngine engineOverTheBlockingLimit() {
-        final TokenEstimator overTheLimit = new FixedTokenEstimator(9_000);
+        return engineAt(9_000);
+    }
+
+    /** The default engine with every estimate fixed: auto-compact from 7000, blocking from 8500. */
+    private ContextEngine engineAt(int estimate) {
+        final TokenEstimator overTheLimit = new FixedTokenEstimator(estimate);
         final CompactionEngine compactionEngine = DefaultCompactionEngine.withDefaults(llmClient, overTheLimit,
                 new DefaultHookExecutionManager());
         final DefaultCompactionGuard guard = new DefaultCompactionGuard(compactionEngine,
@@ -353,6 +489,40 @@ class OrcaAgentExecutorHookCancellationTest {
         return shell;
     }
 
+    /**
+     * The same kind of shell, whose command runs until the test lets it finish or its cancellation trips, and
+     * records which of the two ended it.
+     */
+    private VirtualShell holdingShell() throws Exception {
+        final VirtualShell shell = mock(VirtualShell.class);
+        when(shell.execute(any(ShellCommand.class), any(ExecutionOptions.class))).thenAnswer(invocation -> {
+            final ExecutionOptions options = invocation.getArgument(1);
+            final CountDownLatch ended = new CountDownLatch(1);
+            options.getCancellation().onCancel(() -> {
+                stoppedByCancellation.set(true);
+                ended.countDown();
+            });
+            final Thread releaser = new Thread(() -> {
+                try {
+                    commandMayFinish.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                ended.countDown();
+            }, "command-release");
+            releaser.setDaemon(true);
+            releaser.start();
+            commandStarted.countDown();
+            awaitIgnoringInterrupts(ended);
+            if (stoppedByCancellation.get()) {
+                throw new ShellCancelledException("Process cancelled: guard.sh");
+            }
+            ranToCompletion.set(true);
+            return new ShellCommandResult(0, "", "", Duration.ofMillis(1));
+        });
+        return shell;
+    }
+
     private static boolean awaitIgnoringInterrupts(CountDownLatch latch) {
         final long deadline = System.nanoTime() + COMMAND_RUNTIME.toNanos();
         boolean interrupted = false;
@@ -374,6 +544,8 @@ class OrcaAgentExecutorHookCancellationTest {
     /** A slash command that counts its executions. */
     private static final class PingCommand extends SystemCommand implements DirectExecutable {
         final AtomicInteger executions = new AtomicInteger();
+        volatile Runnable duringExecution = () -> {
+        };
 
         PingCommand() {
             super("ping", "ping");
@@ -382,6 +554,7 @@ class OrcaAgentExecutorHookCancellationTest {
         @Override
         public CommandExecutionResult execute(CommandExecutionContext context, DirectCommandExecutionRequest request) {
             executions.incrementAndGet();
+            duringExecution.run();
             return CommandExecutionResult.success("pong");
         }
     }
@@ -434,9 +607,36 @@ class OrcaAgentExecutorHookCancellationTest {
         }
     }
 
-    /** Answers every call with a final text and counts the calls. */
+    /**
+     * Answers every call with a final text and counts the calls. A compaction summary call that is handed a
+     * cancellation is not counted: it blocks until its abort lever is pulled, as a provider's call does, and records
+     * that it was.
+     */
     private static final class CountingLlmClient implements LlmClient {
         final AtomicInteger calls = new AtomicInteger();
+        final CountDownLatch summaryCallStarted = new CountDownLatch(1);
+        final AtomicBoolean summaryAbortRan = new AtomicBoolean();
+
+        @Override
+        public LlmResponse sendMessage(at.aimon.core.agent.prompt.SystemPromptParts systemPromptParts,
+                List<Message> messages, List<ToolDefinition> tools, LlmModel modelConfig, LlmCallMetadata metadata,
+                at.aimon.core.llm.LlmCancellation cancellation) {
+            if (metadata.getFeature().filter(LlmCallMetadata.Feature.COMPACTION::equals).isEmpty()) {
+                return sendMessage(systemPromptParts.concatenated(), messages, tools, modelConfig, metadata);
+            }
+            final CountDownLatch aborted = new CountDownLatch(1);
+            cancellation.onCancel(() -> {
+                summaryAbortRan.set(true);
+                aborted.countDown();
+            });
+            summaryCallStarted.countDown();
+            try {
+                aborted.await(COMMAND_RUNTIME.toMillis(), TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            throw new at.aimon.core.llm.exception.LlmCallCancelledException("summary call aborted by cancellation");
+        }
 
         @Override
         public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,

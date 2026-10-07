@@ -122,9 +122,11 @@ public final class SummaryRequest {
     }
 
     /**
-     * The cancellation signal of the execution being compacted, carried into the PreCompact / PostCompact hook
-     * contexts so a hook's command stops when that execution is interrupted. Empty when no signal there can trip — a
-     * manual {@code /compact}, a rewake replay — or the caller had none in reach.
+     * The cancellation signal of the execution being compacted. It is carried into the PreCompact / PostCompact hook
+     * contexts so a hook's command stops when that execution is interrupted, and it bounds the summary LLM call: an
+     * interrupt aborts the call in flight, and the result is a failure carrying
+     * {@link at.aimon.core.llm.exception.LlmCallCancelledException}. Empty when no signal there can trip — a manual
+     * {@code /compact}, a rewake replay — or the caller had none in reach.
      *
      * @return the compacting execution's cancellation signal, or empty when there is none
      */

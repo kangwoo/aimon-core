@@ -63,6 +63,14 @@ import at.aimon.core.config.hook.rewake.RewakeSpecConfig;
  * guards off to punish a typo in a key that can only take one off.
  *
  * <p>
+ * <b>{@code ignoreInterrupt}.</b> A {@code command} handler on an event that reports what already happened
+ * ({@code onStop}, {@code subagentStop}, {@code postCompact}, {@code postTool}, {@code permissionDenied},
+ * {@code subagentStart}) is stopped when the execution is interrupted while it runs. {@code "ignoreInterrupt": true}
+ * leaves it running to its own timeout instead, for a cleanup that must not be cut in half. Anywhere else the
+ * {@link HookRegistryApplier} drops it with a WARN. It is bound like {@code failOpen}: a JSON boolean and nothing
+ * else, a non-boolean read as {@code false} and kept in {@link #getRejectedIgnoreInterrupt()} for the loader's WARN.
+ *
+ * <p>
  * Immutable; thread-safe.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -137,6 +145,11 @@ public final class HookHandlerSpec {
     // the raw JSON of a failOpen that was not a boolean, or null; read as false
     private final String rejectedFailOpen;
 
+    private final boolean ignoreInterrupt;
+
+    // the raw JSON of an ignoreInterrupt that was not a boolean, or null; read as false
+    private final String rejectedIgnoreInterrupt;
+
     private HookHandlerSpec(Builder b) {
         this.type = Objects.requireNonNull(b.type, "type cannot be null");
         this.command = b.command;
@@ -153,6 +166,8 @@ public final class HookHandlerSpec {
         this.asyncRewake = b.asyncRewake;
         this.failOpen = b.failOpen;
         this.rejectedFailOpen = b.rejectedFailOpen;
+        this.ignoreInterrupt = b.ignoreInterrupt;
+        this.rejectedIgnoreInterrupt = b.rejectedIgnoreInterrupt;
     }
 
     /** @return the handler type discriminator (never null) */
@@ -272,6 +287,25 @@ public final class HookHandlerSpec {
     }
 
     /**
+     * @return true when an interrupt of the execution does not stop the handler's command; false (the default) when a
+     *         running command is stopped
+     */
+    @JsonProperty("ignoreInterrupt")
+    @JsonInclude(JsonInclude.Include.NON_DEFAULT)
+    public boolean isIgnoreInterrupt() {
+        return ignoreInterrupt;
+    }
+
+    /**
+     * @return the raw JSON of an {@code ignoreInterrupt} value that was not a JSON boolean and was therefore read as
+     *         {@code false}, or empty when the field was absent or a boolean. Not part of the wire form.
+     */
+    @JsonIgnore
+    public Optional<String> getRejectedIgnoreInterrupt() {
+        return Optional.ofNullable(rejectedIgnoreInterrupt);
+    }
+
+    /**
      * @return a new builder
      */
     public static Builder builder() {
@@ -279,7 +313,11 @@ public final class HookHandlerSpec {
     }
 
     /**
-     * Jackson constructor honoring the Claude Code field names.
+     * The factory as it was before {@code ignoreInterrupt} existed: builds a spec that does not declare it.
+     *
+     * <p>
+     * Kept so that code calling the fifteen-argument form keeps compiling and linking. Jackson does not use it — the
+     * {@code @JsonCreator} is the sixteen-argument overload below, to which this one delegates.
      *
      * @param typeRaw
      *            the {@code type} discriminator string (must not be null)
@@ -316,6 +354,55 @@ public final class HookHandlerSpec {
      * @throws IllegalArgumentException
      *             if {@code typeRaw} is unknown or either timeout is not positive
      */
+    @SuppressWarnings("checkstyle:ParameterNumber")
+    public static HookHandlerSpec fromJson(String typeRaw, String command, String url, String method,
+            Map<String, String> headers, String body, List<String> allowedEnvVars, String serverName, String toolName,
+            Map<String, Object> args, String reason, Long timeoutSeconds, Long timeoutMs, RewakeSpecConfig asyncRewake,
+            JsonNode failOpen) {
+        return fromJson(typeRaw, command, url, method, headers, body, allowedEnvVars, serverName, toolName, args,
+                reason, timeoutSeconds, timeoutMs, asyncRewake, failOpen, null);
+    }
+
+    /**
+     * Jackson constructor honoring the Claude Code field names.
+     *
+     * @param typeRaw
+     *            the {@code type} discriminator string (must not be null)
+     * @param command
+     *            shell command (used when type=command)
+     * @param url
+     *            HTTP url (used when type=http)
+     * @param method
+     *            HTTP method (used when type=http)
+     * @param headers
+     *            HTTP header map (used when type=http)
+     * @param body
+     *            request body template (used when type=http)
+     * @param allowedEnvVars
+     *            allowed env var names (used when type=http)
+     * @param serverName
+     *            MCP server name (used when type=mcp)
+     * @param toolName
+     *            MCP tool name (used when type=mcp)
+     * @param args
+     *            MCP args template (used when type=mcp)
+     * @param reason
+     *            deny reason (used when type=deny)
+     * @param timeoutSeconds
+     *            handler timeout in <b>seconds</b> ({@code timeout}, Claude Code parity); must be positive
+     * @param timeoutMs
+     *            handler timeout in <b>milliseconds</b> ({@code timeoutMs}, AIMON extension); must be positive and
+     *            takes precedence over {@code timeoutSeconds} when both are present
+     * @param asyncRewake
+     *            optional {@code asyncRewake} block describing how the framework should re-fire the hook
+     * @param failOpen
+     *            optional {@code failOpen} flag; bound as a raw node so that only a JSON boolean can open it
+     * @param ignoreInterrupt
+     *            optional {@code ignoreInterrupt} flag; bound as a raw node for the same reason
+     * @return the spec (never null)
+     * @throws IllegalArgumentException
+     *             if {@code typeRaw} is unknown or either timeout is not positive
+     */
     // Jackson @JsonCreator: each param binds a distinct wire field 1:1, so they cannot be grouped.
     @SuppressWarnings("checkstyle:ParameterNumber")
     @JsonCreator
@@ -326,28 +413,38 @@ public final class HookHandlerSpec {
             @JsonProperty("server") String serverName, @JsonProperty("tool") String toolName,
             @JsonProperty("args") Map<String, Object> args, @JsonProperty("reason") String reason,
             @JsonProperty("timeout") Long timeoutSeconds, @JsonProperty("timeoutMs") Long timeoutMs,
-            @JsonProperty("asyncRewake") RewakeSpecConfig asyncRewake, @JsonProperty("failOpen") JsonNode failOpen) {
+            @JsonProperty("asyncRewake") RewakeSpecConfig asyncRewake, @JsonProperty("failOpen") JsonNode failOpen,
+            @JsonProperty("ignoreInterrupt") JsonNode ignoreInterrupt) {
         return builder().type(Type.fromJson(typeRaw)).command(command).url(url).method(method).headers(headers)
                 .bodyTemplate(body)
                 .allowedEnvVars(allowedEnvVars == null ? Set.of() : new LinkedHashSet<>(allowedEnvVars))
                 .serverName(serverName).toolName(toolName).args(args).reason(reason)
                 .timeoutMs(resolveTimeoutMs(timeoutSeconds, timeoutMs)).asyncRewake(asyncRewake)
-                .failOpen(failOpen != null && failOpen.isBoolean() && failOpen.booleanValue())
-                .rejectedFailOpen(rejectedFailOpen(failOpen)).build();
+                .failOpen(strictBoolean(failOpen)).rejectedFailOpen(rejectedBoolean(failOpen))
+                .ignoreInterrupt(strictBoolean(ignoreInterrupt))
+                .rejectedIgnoreInterrupt(rejectedBoolean(ignoreInterrupt)).build();
     }
 
     /**
-     * Reads {@code failOpen} without Jackson's scalar coercion, which would bind {@code "true"} and {@code 1} to
-     * {@code true}: anything present that is not a JSON boolean &mdash; an explicit {@code null} included &mdash; is
-     * read as {@code false} (closed) and its raw JSON is returned so the loader can WARN about it.
+     * Reads a flag ({@code failOpen}, {@code ignoreInterrupt}) without Jackson's scalar coercion, which would bind
+     * {@code "true"} and {@code 1} to {@code true}: only a JSON {@code true} sets it.
+     */
+    private static boolean strictBoolean(JsonNode flag) {
+        return flag != null && flag.isBoolean() && flag.booleanValue();
+    }
+
+    /**
+     * The other half of {@link #strictBoolean}: anything present that is not a JSON boolean &mdash; an explicit
+     * {@code null} included &mdash; was read as {@code false}, and its raw JSON is returned so the loader can WARN
+     * about it.
      *
      * @return the raw JSON of a non-boolean value, or null when the field is absent or a boolean
      */
-    private static String rejectedFailOpen(JsonNode failOpen) {
-        if (failOpen == null || failOpen.isBoolean()) {
+    private static String rejectedBoolean(JsonNode flag) {
+        if (flag == null || flag.isBoolean()) {
             return null;
         }
-        return failOpen.toString();
+        return flag.toString();
     }
 
     /**
@@ -407,6 +504,8 @@ public final class HookHandlerSpec {
         private RewakeSpecConfig asyncRewake;
         private boolean failOpen;
         private String rejectedFailOpen;
+        private boolean ignoreInterrupt;
+        private String rejectedIgnoreInterrupt;
 
         private Builder() {
         }
@@ -507,6 +606,27 @@ public final class HookHandlerSpec {
          */
         Builder rejectedFailOpen(String rejectedFailOpen) {
             this.rejectedFailOpen = rejectedFailOpen;
+            return this;
+        }
+
+        /**
+         * @param ignoreInterrupt
+         *            true to leave the handler's command running when the execution is interrupted
+         * @return this builder
+         */
+        public Builder ignoreInterrupt(boolean ignoreInterrupt) {
+            this.ignoreInterrupt = ignoreInterrupt;
+            return this;
+        }
+
+        /**
+         * @param rejectedIgnoreInterrupt
+         *            raw JSON of an {@code ignoreInterrupt} value that was not a boolean, or null; it only lets the
+         *            loader report the value it ignored
+         * @return this builder
+         */
+        Builder rejectedIgnoreInterrupt(String rejectedIgnoreInterrupt) {
+            this.rejectedIgnoreInterrupt = rejectedIgnoreInterrupt;
             return this;
         }
 

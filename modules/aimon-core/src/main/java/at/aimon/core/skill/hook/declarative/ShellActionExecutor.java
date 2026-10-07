@@ -96,7 +96,11 @@ public interface ShellActionExecutor {
      * @param action
      *            The action to execute (must not be null)
      * @param context
-     *            The context of the hook firing the action (must not be null)
+     *            The context of the hook firing the action (must not be null). Use it through {@link HookContext}
+     *            only: it need not be the event's own context type. A hook that declared {@code ignoreInterrupt} hands
+     *            over a view whose {@link HookContext#getExecutionCancellation()} is empty, so an executor that ties
+     *            the command to that signal needs no knowledge of the option, and one that downcasts the context
+     *            fails for exactly those hooks.
      * @param environmentOverrides
      *            Extra environment variables provided by the firing hook (never null; may be empty). Implementations
      *            merge these on top of any inherited environment.

@@ -12,6 +12,7 @@ import com.openai.models.responses.Response;
 import com.openai.models.responses.ResponseCreateParams;
 import com.openai.models.responses.ResponseStreamEvent;
 
+import at.aimon.core.llm.LlmCancellation;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.StopReason;
 import at.aimon.core.llm.streaming.ChunkAggregator;
@@ -61,13 +62,14 @@ final class OpenAIResponsesExchange implements OpenAIEndpointExchange {
     }
 
     @Override
-    public OpenAIStreamHandle openStream(RequestOptions options, LlmStreamSink sink, ChunkAggregator aggregator) {
+    public OpenAIStreamHandle openStream(RequestOptions options, LlmStreamSink sink, ChunkAggregator aggregator,
+            LlmCancellation cancellation) {
         final StreamResponse<ResponseStreamEvent> streamResponse = options == null
                 ? client.responses().createStreaming(params)
                 : client.responses().createStreaming(params, options);
         final OpenAIResponsesStreamingMapper mapper = new OpenAIResponsesStreamingMapper(sink, aggregator, converter,
                 providerName, reporter, forwardReasoning);
-        return OpenAIStreamHandle.of(streamResponse, mapper::consume);
+        return OpenAIStreamHandle.of(streamResponse, stream -> mapper.consume(stream, cancellation));
     }
 
     /**

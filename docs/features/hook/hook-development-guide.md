@@ -258,7 +258,7 @@ registry.register(HookEventType.PRE_TOOL, rateLimitHook);
 | `getHookRegistry()` | `HookRegistry` | Hook 레지스트리 |
 | `getExecutionEnvironment()` | `Optional<ExecutionEnvironment>` | 훅이 발화한 실행의 실행 환경 — 그 실행의 도구가 쓰는 파일 시스템·셸. 실행 밖에서 발화하는 이벤트(`onSessionStart` · `onSessionEnd` · `onConfigReload`)와 rewake 리플레이에서는 비어 있다. 비어 있을 때 호스트로 되돌아가지 말 것 |
 | `getEnvironmentDescriptor()` | `Optional<EnvironmentDescriptor>` | 위 환경의 서술자(작업 디렉터리 · platform · OS). 명령이 **어디서 도는지**는 호스트가 아니라 이것으로 판단한다 |
-| `getExecutionCancellation()` | `Optional<CancellationSignal>` | 훅이 발화한 실행의 취소 신호. 훅이 실행을 대신해 오래 걸리는 일을 시작하면 이 신호에 묶어 인터럽트에 멈추게 한다. 가드 이벤트(`onStart` · `preCompact` · `preTool` · `permissionRequest`)는 항상 싣고, 이미 일어난 일을 알리는 이벤트(`onStop` · `postCompact` · `subagentStart` · `subagentStop` · `postTool` · `permissionDenied`)는 **신호가 서기 전까지만** 싣는다 — 그래서 같은 컨텍스트에서도 답이 바뀔 수 있으니 컨텍스트를 받을 때가 아니라 일을 시작할 때 읽는다. 실행 밖 이벤트와 슬래시 명령 턴의 `onStop` · `/compact` 의 압축 이벤트에서는 비어 있다 |
+| `getExecutionCancellation()` | `Optional<CancellationSignal>` | 훅이 발화한 실행의 취소 신호. 훅이 실행을 대신해 오래 걸리는 일을 시작하면 이 신호에 묶어 인터럽트에 멈추게 한다. 가드 이벤트(`onStart` · `preCompact` · `preTool` · `permissionRequest`)는 항상 싣고, 이미 일어난 일을 알리는 이벤트(`onStop` · `postCompact` · `subagentStart` · `subagentStop` · `postTool` · `permissionDenied`)는 **신호가 서기 전까지만** 싣는다 — 그래서 같은 컨텍스트에서도 답이 바뀔 수 있으니 컨텍스트를 받을 때가 아니라 일을 시작할 때 읽는다. 실행 밖 이벤트와 슬래시 명령 턴의 `onStop` · `/compact` 의 압축 이벤트에서는 비어 있다. `ignoreInterrupt` 를 선언한 선언적 hook 은 자기 셸 실행기에게 이 값이 비어 있는 **뷰**를 넘긴다 — `ShellActionExecutor` 는 받은 컨텍스트를 이벤트 타입으로 내려받지 말고 `HookContext` 로만 쓴다 |
 | `getTimestamp()` | `Instant` | 타임스탬프 |
 | `getExecutionAttributes()` | `Map<String, Object>` | 실행 부가 정보 |
 
@@ -405,6 +405,15 @@ HookResult.builder()...build();              // 여러 축을 동시에 설정
   **돌지도 않은 채** fail-open 으로 통과합니다. 판정이 없다는 것은 진행해도 좋다는 허가가 없다는
   뜻이므로 실행기가 BLOCKED 로 답합니다 (`TimeoutBehavior.FAIL_CLOSED` 와 같은 이유). 이미 끝난
   hook 은 영향이 없습니다 — 완료된 결과는 그대로 돌아옵니다.
+- **`ignoresInterrupt()` 를 선언한 hook 은 그 인터럽트에도 기다려 줍니다.** `true` 를 돌려주면
+  실행기는 hook 의 태스크를 취소하지 않고 남은 예산만큼 마저 기다린 뒤, hook 자신의 결과(또는
+  평소의 timeout 처리)를 돌려주고 스레드의 인터럽트 플래그를 다시 세워 둡니다. 한번 시작하면
+  끝나야 하는 정리 · 감사 작업을 위한 것이고, 선언적 hook 의 `ignoreInterrupt` 가 이것을 씁니다.
+  이것은 절반입니다 — 나머지 절반은 hook 자신이 자기 일을 `getExecutionCancellation()` 에 묶지
+  않는 것입니다. 실행기는 이벤트를 모르므로 선언은 **어느 이벤트에서든** 듣습니다. 인터럽트를
+  통과로 바꾸지는 못하지만(기다린 끝에 나오는 것은 hook 자신의 판정이나 timeout 입니다), 가드
+  이벤트의 hook 이 선언하면 중단된 실행이 그 가드를 예산이 다할 때까지 기다리게 됩니다. 선언적
+  가드 hook 은 선언하지 않으며, 코드로 등록하는 가드도 선언하지 마세요.
 
 ### Async rewake 재부착
 

@@ -62,4 +62,22 @@ public interface InterruptCoordinator extends AutoCloseable {
      */
     @Override
     void close();
+
+    /**
+     * Whether {@link #close()} has run, i.e. whether {@link #requestInterrupt(InterruptReason)} is now a no-op.
+     *
+     * <p>
+     * A holder that was handed the coordinator and cannot be told when the execution is done with it — a live
+     * session's interrupt observer is called once and never retracted — reads this to say truthfully whether an
+     * interrupt would still reach anything. Best-effort: the answer can turn {@code true} right after it was read.
+     *
+     * <p>
+     * The default answers {@code false}, so a coordinator written before this method existed is reported as open for
+     * as long as it is held, which is what was reported for every coordinator before.
+     *
+     * @return {@code true} once the coordinator has been closed
+     */
+    default boolean isClosed() {
+        return false;
+    }
 }

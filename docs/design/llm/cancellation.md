@@ -124,6 +124,12 @@ Stainless SDK 의 `StreamResponse` 는 `AutoCloseable` 이고 `close()` 가 하�
    등록한다
 3. 스트림이 abort 로 풀리며 나는 예외(SDK 의 stream-closed `IOException` 등)는 토큰이 취소 상태면
    `LlmCallCancelledException` 으로 매핑한다 — 일시적 실패로 분류되지 않게
+4. **예외 없이 끝난 스트림도 본다.** 닫힌 스트림은 던지지 않을 수 있다 — 지금의 SDK(anthropic-java 2.65.0,
+   openai-java 4.69.2)는 `close()` 뒤에 이벤트 열을 조용히 끝낸다. 그래서 스트림 매퍼가 토큰을 받고, 종료 이벤트
+   (`message_stop` · `finish_reason` · `response.completed` / `response.incomplete`) 없이 끝난 스트림을 토큰이 선
+   상태에서 만나면 `LlmCallCancelledException` 을 던진다. 이때 `STREAM_END` 는 내지 않는다 — 그 청크는 "답이
+   온전하다" 는 뜻이고, 끊긴 스트림의 완료를 알리는 것은 호출자의 일이다. 종료 이벤트까지 온 스트림은 토큰이 서
+   있어도 정상 응답이다
 
 ```java
 try (StreamResponse<…> stream = client.…createStreaming(request)) {
@@ -134,6 +140,11 @@ try (StreamResponse<…> stream = client.…createStreaming(request)) {
 
 취소가 trip 되면 다음 chunk 를 기다리지 않고 즉시 `close()` 가 걸리고 스트림 반복이 풀린다. 등록과 guard 사이에
 취소가 도착해도 2번의 동기 발화 규칙(§2.2)이 이미 닫힌 스트림을 읽게 해 같은 경로로 풀린다.
+
+4번이 없던 동안 끊긴 호출은 **성공**으로 돌아왔다: 매퍼가 조용히 끝난 스트림을 답의 끝으로 읽어 종료 청크를 내고,
+클라이언트는 그때까지 온 조각을 응답으로 돌려주었다. 인터럽트된 턴은 `COMPLETED` 로 끝나며 앞부분을 최종 답으로
+삼았고, 압축의 요약 호출은 반 문장을 요약으로 설치했다(EE-95). 3번만으로는 목(mock) 스트림 위에서만 참이었다 — 이
+규칙은 실제 전송 위에서 고정한다(`AnthropicStreamAbortTest`, `OpenAIStreamAbortTest`: 앞머리만 보내고 멈추는 로컬 서버).
 
 OpenAI 클라이언트는 `OpenAIStreamHandle` 에 이 레버를 등록하고, 핸들의 `close()` 가 `StreamResponse.close()` 에
 위임한다. Chat Completions 와 Responses 중 어느 엔드포인트로 가든 등록 · 비스트리밍 라우팅 · 오류 분류는 같은
@@ -212,10 +223,11 @@ blocking `.create()` 에는 진행 중에 걸 수 있는 취소 핸들이 없다
 아니라 **어댑트하는 쪽**(`at.aimon.core.agent.interrupt`)에 둔다 — agent 는 llm 에 의존할 수 있고 반대는 안 되기
 때문이다(§2.1).
 
-**`CancellationSignal.onCancel` 에는 deregister 가 없다.** 한 실행은 LLM 호출을 여러 번(iteration 당 1회 + 게이트웨이
-재시도) 내므로, 호출마다 리스너를 등록하면 리스너와 이미 끝난 스트림 참조가 무한히 쌓이고 trip 시 끝난 호출의 abort
-까지 전부 발화한다. 그래서 리스너를 **실행당 정확히 하나** 등록하고, 그 하나가 "현재 in-flight 콜" 의 abort 로
-팬아웃한다.
+**리스너는 실행당 하나다.** 한 실행은 LLM 호출을 여러 번(iteration 당 1회 + 게이트웨이 재시도) 내므로, 호출마다
+리스너를 등록해 두면 리스너와 이미 끝난 스트림 참조가 쌓이고 trip 시 끝난 호출의 abort 까지 전부 발화한다. 그래서
+리스너를 **실행당 정확히 하나** 등록하고, 그 하나가 "현재 in-flight 콜" 의 abort 로 팬아웃한다. (이 설계를 정할 때
+`CancellationSignal.onCancel` 에는 deregister 가 없었다. 지금은 `Registration` 을 돌려준다 — 그래도 실행기의 브릿지는
+신호만큼 살므로 뗄 일이 없고, 하나로 충분하다는 결론은 그대로다.)
 
 ```java
 public final class SignalBackedLlmCancellation implements LlmCancellation {
@@ -235,6 +247,11 @@ public final class SignalBackedLlmCancellation implements LlmCancellation {
     public void clearAbort() { currentAbort.set(null); }   // 콜 종료 시 — late-abort·참조 누수 방지
 }
 ```
+
+**신호보다 짧게 사는 브릿지는 리스너를 떼어야 한다.** 압축 엔진은 요약 호출 하나를 위해 실행의 신호 위에 브릿지를
+만든다(EE-95). 그 브릿지를 남겨 두면 압축마다 리스너가 하나씩, 실행이 끝날 때까지 쌓인다. 그래서 브릿지는
+`AutoCloseable` 이고 `close()` 가 등록을 걷는다 — 엔진은 호출을 try-with-resources 로 감싼다. 실행기의 브릿지는 닫지
+않는다.
 
 set 과 이미-취소됨 확인 사이의 경합으로 같은 abort 가 두 번 발화할 수 있다. abort 가 멱등이므로 무해하다.
 
@@ -351,7 +368,7 @@ core 경로는 `modules/aimon-core/src/main/java/at/aimon/core/` 기준, provide
 | `llm/retry/LlmRetryPolicy.java`, `llm/retry/LlmFallbackPolicy.java` | 설정 집합과 무관한 non-retryable · non-activating carve-out |
 | `llm/streaming/ChunkAggregator.java` | 스트리밍 라우팅의 재조립, 깨진 인자 관대 처리, usage 폴백 |
 | `llm/logging/LoggingLlmClient.java`, `llm/usage/MeteringLlmClient.java`, `llm/tagging/TaggingLlmClient.java`, `llm/tagging/BoundMetadataLlmClient.java`, `tracing/impl/TracingLlmClient.java` | 다섯 데코레이터의 same-instance 전파 |
-| `agent/interrupt/SignalBackedLlmCancellation.java` | deregister 부재, 단일 리스너, `clearAbort` |
+| `agent/interrupt/SignalBackedLlmCancellation.java` | 단일 리스너, `clearAbort`, 호출 하나짜리 브릿지의 `close()` |
 | `agent/impl/orca/OrcaAgentExecutor.java` | 턴 배선, 취소 예외 매핑, `handleInterrupted` |
 | `subagent/execution/DefaultSubagentExecutor.java` | 포크 배선, catch 순서, `createInterruptedResult` |
 | `subagent/task/TaskStopSignal.java`, `subagent/task/RunningTaskHandle.java` | cross-node 정지 경로의 끝 |

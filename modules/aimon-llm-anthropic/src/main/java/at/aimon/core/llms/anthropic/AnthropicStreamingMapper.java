@@ -27,9 +27,11 @@ import com.anthropic.models.messages.TextDelta;
 import com.anthropic.models.messages.ThinkingBlock;
 import com.anthropic.models.messages.ToolUseBlock;
 
+import at.aimon.core.llm.LlmCancellation;
 import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.StopReason;
 import at.aimon.core.llm.TokenUsage;
+import at.aimon.core.llm.exception.LlmCallCancelledException;
 import at.aimon.core.llm.streaming.ChunkAggregator;
 import at.aimon.core.llm.streaming.LlmStreamChunk;
 import at.aimon.core.llm.streaming.LlmStreamSink;
@@ -131,9 +133,31 @@ final class AnthropicStreamingMapper {
      * Consumes the SDK stream end-to-end and emits a terminal {@code STREAM_END} exactly once.
      */
     void consume(Stream<RawMessageStreamEvent> stream) {
+        consume(stream, LlmCancellation.none());
+    }
+
+    /**
+     * Consumes the SDK stream end-to-end and emits a terminal {@code STREAM_END} exactly once — unless the stream
+     * stopped short of {@code message_stop} while {@code cancellation} is tripped.
+     *
+     * <p>
+     * The SDK does not throw out of a stream that was closed under it: {@code StreamResponse.close()} makes the
+     * sequence simply end. So an aborted call arrives here as a stream with no {@code message_stop}, and closing it
+     * with the synthetic terminal chunk below would hand the caller the part that had arrived as the whole answer. It
+     * is a cancellation, and no terminal chunk is emitted for it: the sink's stream is the caller's to end.
+     *
+     * @throws LlmCallCancelledException
+     *             if the stream ended without {@code message_stop} and {@code cancellation} is tripped
+     */
+    void consume(Stream<RawMessageStreamEvent> stream, LlmCancellation cancellation) {
         Objects.requireNonNull(stream, "stream");
+        Objects.requireNonNull(cancellation, "cancellation");
         stream.forEach(this::onEvent);
         if (!streamEnded) {
+            if (cancellation.isCancelled()) {
+                throw new LlmCallCancelledException(
+                        "Anthropic streaming call aborted by cancellation: the stream ended before message_stop");
+            }
             // Defensive fallback: Anthropic's SDK typically terminates the stream with message_stop; if the server
             // closes the connection early without one, emit a synthetic STREAM_END so the aggregator closes cleanly.
             emitStreamEnd();

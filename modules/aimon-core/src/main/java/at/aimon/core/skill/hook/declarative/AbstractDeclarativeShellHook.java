@@ -14,6 +14,7 @@ import at.aimon.core.hook.execution.HookContext;
 import at.aimon.core.hook.execution.HookExecutionPolicy.TimeoutBehavior;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.hook.rewake.RewakeSpec;
+import at.aimon.core.skill.hook.SkillHookSet;
 import at.aimon.core.skill.hook.action.ShellAction;
 
 /**
@@ -53,6 +54,15 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
     private final ShellActionExecutor shellExecutor;
     private final RewakeSpec rewakeSpec;
     private final boolean failOpen;
+    private final boolean ignoreInterrupt;
+
+    /**
+     * Whether {@code eventName} is one of the {@linkplain SkillHookSet#reportEvents() report events}, the only ones
+     * {@code ignoreInterrupt} is for. The events outside any execution ({@code onSessionStart}, {@code onSessionEnd},
+     * {@code onConfigReload}) cannot veto either, so {@link #canVeto()} alone would let a hook built by hand for one
+     * of them be waited for across a thread interrupt that has nothing to do with an execution being stopped.
+     */
+    private final boolean reportEvent;
 
     /**
      * Creates a shell-backed declarative hook.
@@ -68,10 +78,11 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
      * @param shellExecutor
      *            the executor used to run the action (must not be null)
      * @param options
-     *            config-derived options: hook-id discriminator, {@code failOpen} and {@code asyncRewake} spec (must
-     *            not be null). The spec is honoured for every event; the caller is responsible for only supplying one
-     *            on events the
-     *            rewake machinery can actually re-fire — see {@link DeclarativeHookOptions}.
+     *            config-derived options: hook-id discriminator, {@code failOpen}, {@code ignoreInterrupt} and
+     *            {@code asyncRewake} spec (must not be null). The spec is honoured for every event; the caller is
+     *            responsible for only supplying one on events the rewake machinery can actually re-fire — see
+     *            {@link DeclarativeHookOptions}. {@code ignoreInterrupt} is honoured only on a
+     *            {@linkplain SkillHookSet#reportEvents() report event}.
      * @throws NullPointerException
      *             if any argument is null
      */
@@ -83,6 +94,8 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
         this.hookId = DeclarativeHookId.of(hookClass, this.skillName, options.getHookIdDiscriminator());
         this.rewakeSpec = options.getRewakeSpec().orElse(null);
         this.failOpen = options.isFailOpen();
+        this.ignoreInterrupt = options.isIgnoreInterrupt();
+        this.reportEvent = SkillHookSet.reportEvents().stream().anyMatch(type -> type.name().equals(this.eventName));
         this.action = Objects.requireNonNull(action, "Action cannot be null");
         this.shellExecutor = Objects.requireNonNull(shellExecutor, "Shell executor cannot be null");
     }
@@ -109,6 +122,17 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
         return canVeto() && !failOpen ? Optional.of(TimeoutBehavior.FAIL_CLOSED) : Optional.empty();
     }
 
+    /**
+     * A hook that declared {@code ignoreInterrupt} is waited for when the firing thread is interrupted, and its command
+     * is not tied to the execution's signal ({@link #runShell}). Only on a report event, and never on an event with a
+     * decision channel, whatever the options said: a guard of a cancelled execution must stop and block,
+     * {@code failOpen} or not, and an event outside any execution has no interrupt of an execution to sit out.
+     */
+    @Override
+    public final boolean ignoresInterrupt() {
+        return ignoreInterrupt && reportEvent && !canVeto();
+    }
+
     @Override
     public final HookResult execute(C context) {
         Objects.requireNonNull(context, "Context cannot be null");
@@ -129,15 +153,22 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
      * throw (or a linkage failure) is read as {@link ShellHookOutcome.Unrun#EXECUTION_FAILED} so the fail-closed rule
      * and its {@code failOpen} opt-out apply, instead of the exception reaching the hook policy, which maps it to
      * success on the guard events.
+     *
+     * <p>
+     * A hook that {@linkplain #ignoresInterrupt() ignores an interrupt} hands the executor a view of the context
+     * that carries no cancellation signal, so the command is started and left to finish whatever the execution's
+     * signal does.
      */
     private ShellHookOutcome runShell(C context, Map<String, String> env) {
         try {
             contributeEnv(context, env);
-            final Optional<ShellHookOutcome> unstaged = SkillHookDirectory.export(env, context, this, shellExecutor);
+            final HookContext shellContext = ignoresInterrupt() ? new SignalDetachedHookContext(context) : context;
+            final Optional<ShellHookOutcome> unstaged = SkillHookDirectory.export(env, shellContext, this,
+                    shellExecutor);
             if (unstaged.isPresent()) {
                 return unstaged.get();
             }
-            return shellExecutor.run(action, context, env,
+            return shellExecutor.run(action, shellContext, env,
                     ShellHookPayload.render(env, payloadToolInput(context).orElse(null)));
         } catch (RuntimeException | LinkageError e) {
             log.warn("Skill '{}' {} shell hook threw instead of reporting an outcome", skillName, eventName, e);

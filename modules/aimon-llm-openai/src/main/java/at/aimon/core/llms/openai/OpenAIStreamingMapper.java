@@ -11,8 +11,10 @@ import org.slf4j.LoggerFactory;
 import com.openai.models.chat.completions.ChatCompletionChunk;
 import com.openai.models.completions.CompletionUsage;
 
+import at.aimon.core.llm.LlmCancellation;
 import at.aimon.core.llm.StopReason;
 import at.aimon.core.llm.TokenUsage;
+import at.aimon.core.llm.exception.LlmCallCancelledException;
 import at.aimon.core.llm.streaming.ChunkAggregator;
 import at.aimon.core.llm.streaming.LlmStreamChunk;
 import at.aimon.core.llm.streaming.LlmStreamSink;
@@ -69,8 +71,30 @@ final class OpenAIStreamingMapper {
      * STREAM_END at the tail.
      */
     void consume(Stream<ChatCompletionChunk> stream) {
+        consume(stream, LlmCancellation.none());
+    }
+
+    /**
+     * As {@link #consume(Stream)} — unless the stream stopped before any {@code finish_reason} while
+     * {@code cancellation} is tripped.
+     *
+     * <p>
+     * The SDK does not throw out of a stream that was closed under it: {@code StreamResponse.close()} makes the
+     * sequence simply end. So an aborted call arrives here as a stream in which no choice ever finished, and closing
+     * it with the terminal chunk would hand the caller the part that had arrived as the whole answer. It is a
+     * cancellation, and no terminal chunk is emitted for it: the sink's stream is the caller's to end.
+     *
+     * @throws LlmCallCancelledException
+     *             if the stream ended without a {@code finish_reason} and {@code cancellation} is tripped
+     */
+    void consume(Stream<ChatCompletionChunk> stream, LlmCancellation cancellation) {
         Objects.requireNonNull(stream, "stream");
+        Objects.requireNonNull(cancellation, "cancellation");
         stream.forEach(this::onChunk);
+        if (lastFinishReason.isEmpty() && cancellation.isCancelled()) {
+            throw new LlmCallCancelledException(
+                    "OpenAI streaming call aborted by cancellation: the stream ended before a finish_reason");
+        }
         emitStreamEnd();
     }
 

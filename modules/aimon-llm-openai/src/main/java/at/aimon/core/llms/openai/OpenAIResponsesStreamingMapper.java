@@ -14,9 +14,11 @@ import com.openai.models.responses.ResponseOutputItemAddedEvent;
 import com.openai.models.responses.ResponseOutputItemDoneEvent;
 import com.openai.models.responses.ResponseStreamEvent;
 
+import at.aimon.core.llm.LlmCancellation;
 import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.StopReason;
 import at.aimon.core.llm.TokenUsage;
+import at.aimon.core.llm.exception.LlmCallCancelledException;
 import at.aimon.core.llm.streaming.ChunkAggregator;
 import at.aimon.core.llm.streaming.LlmStreamChunk;
 import at.aimon.core.llm.streaming.LlmStreamSink;
@@ -73,6 +75,9 @@ final class OpenAIResponsesStreamingMapper {
     private String lastStatus;
     private String lastIncompleteReason;
 
+    /** Whether {@code response.completed} or {@code response.incomplete} arrived — see {@link #consume}. */
+    private boolean terminalSeen;
+
     OpenAIResponsesStreamingMapper(LlmStreamSink sink, ChunkAggregator aggregator,
             OpenAIResponsesMessageConverter converter, String providerName, OpenAIDivergenceReporter reporter,
             boolean forwardReasoning) {
@@ -89,8 +94,30 @@ final class OpenAIResponsesStreamingMapper {
      * at the tail.
      */
     void consume(Stream<ResponseStreamEvent> stream) {
+        consume(stream, LlmCancellation.none());
+    }
+
+    /**
+     * As {@link #consume(Stream)} — unless the stream stopped before its terminal event
+     * ({@code response.completed} or {@code response.incomplete}) while {@code cancellation} is tripped.
+     *
+     * <p>
+     * The SDK does not throw out of a stream that was closed under it: {@code StreamResponse.close()} makes the
+     * sequence simply end. So an aborted call arrives here as a stream with no terminal event, and closing it with
+     * the terminal chunk would hand the caller the part that had arrived as the whole answer. It is a cancellation,
+     * and no terminal chunk is emitted for it: the sink's stream is the caller's to end.
+     *
+     * @throws LlmCallCancelledException
+     *             if the stream ended without a terminal event and {@code cancellation} is tripped
+     */
+    void consume(Stream<ResponseStreamEvent> stream, LlmCancellation cancellation) {
         Objects.requireNonNull(stream, "stream");
+        Objects.requireNonNull(cancellation, "cancellation");
         stream.forEach(this::onEvent);
+        if (!terminalSeen && cancellation.isCancelled()) {
+            throw new LlmCallCancelledException(
+                    "OpenAI streaming call aborted by cancellation: the stream ended before response.completed");
+        }
         emitStreamEnd();
     }
 
@@ -203,6 +230,7 @@ final class OpenAIResponsesStreamingMapper {
             throw OpenAiResponseErrors.fromResponse(response, "OpenAI streaming call failed");
         }
 
+        this.terminalSeen = true;
         this.lastUsage = OpenAiResponseUsages.toTokenUsage(response.usage());
         this.lastStatus = response.status().map(status -> status._value().asString().orElse(null)).orElse(null);
         this.lastIncompleteReason = response.incompleteDetails().flatMap(Response.IncompleteDetails::reason)

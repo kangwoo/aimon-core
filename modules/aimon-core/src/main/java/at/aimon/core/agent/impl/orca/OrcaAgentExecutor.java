@@ -321,8 +321,8 @@ public class OrcaAgentExecutor
      * turn's hooks are tied to, that {@link #executeReActLoop(ExecutionScope)} injects into every {@link ToolContext},
      * and the {@link TerminatorRegistrar}s issued to {@link InterruptBehavior#THREAD_INTERRUPT}/
      * {@link InterruptBehavior#EXTERNALLY_TERMINATED} tools. A slash-command turn invokes it a second time, for the
-     * coordinator {@code executeCommand} hands the command's tools — so a supplier that returns one shared instance
-     * sees the command's close also close the turn's.
+     * coordinator {@code executeCommand} hands the command's tools, after {@code runTurn} has closed the turn's — so a
+     * supplier that returns one shared instance hands the command a coordinator that is already closed.
      *
      * <p>
      * Package-private so tests inside {@code at.aimon.core.agent.impl.orca} can substitute a supplier that retains the
@@ -1182,6 +1182,12 @@ public class OrcaAgentExecutor
      * exception) — and it is closed when this method returns, so the coordinator is already closed when
      * {@code execute()} persists the turn and feeds it to memory, as it was when the loop owned it.
      *
+     * <p>
+     * A slash-command turn is done with it sooner: nothing the command flow runs reads the turn's signal, so the
+     * coordinator is closed before the command starts rather than after it. An interrupt during the command is then
+     * the coordinator's own logged no-op instead of a trip nobody reads, and whoever holds the published coordinator
+     * can see that from {@link InterruptCoordinator#isClosed()} — a command is not interruptible (EE-93).
+     *
      * @param scope
      *            The execution scope
      * @param userMessage
@@ -1207,9 +1213,14 @@ public class OrcaAgentExecutor
                 return handleInterrupted(scope, 0, TokenUsage.empty());
             }
             // Check if the user input is a command (starts with /)
-            return commandExecutionManager.isCommand(scope.executionRequest)
-                    ? executeCommandFlow(scope, scope.executionRequest)
-                    : executeReActLoop(scope);
+            if (commandExecutionManager.isCommand(scope.executionRequest)) {
+                // The command flow reads nothing of the turn's coordinator (its OnStop is handed no signal and
+                // executeCommand mints its own), so the turn is done with it here. The try-with-resources close
+                // below is then a no-op.
+                coordinator.close();
+                return executeCommandFlow(scope, scope.executionRequest);
+            }
+            return executeReActLoop(scope);
         }
     }
 
@@ -1455,11 +1466,18 @@ public class OrcaAgentExecutor
      * back into the conversation.
      *
      * <p>
+     * An interrupt that is already there when the turn gets here — one {@code DefaultLiveSession} kept while the turn
+     * was being set up and delivered as the coordinator was published (EE-93) — ends the turn before the chain is
+     * dispatched. No {@code onStart} hook of any kind runs for it: stopping at the first shell guard would let every
+     * programmatic, {@code http} and {@code mcp} hook ahead of that guard run in full, up to its own timeout, for a
+     * turn the user had already stopped.
+     *
+     * <p>
      * An interrupt that landed while the chain ran is read first, before the blocks. The user stopped the turn; no
      * guard refused the input — and a shell guard answers a cancelled command with a block, so reading the blocks
      * first would report the interrupt as a veto, and only when the hook that happened to be running was a shell one.
-     * A fork does not do this: {@code DefaultSubagentExecutor#checkOnStartHooks} reads the blocks only, so the same
-     * interrupt ends a fork {@code BLOCKED}, or {@code INTERRUPTED} if the running hook was a programmatic one (EE-94).
+     * A fork reads in the same order ({@code DefaultSubagentExecutor#startFork}), so the same interrupt ends a fork
+     * {@code INTERRUPTED} too.
      *
      * <p>
      * Only the signal is read. A cancellation that arrives purely as {@link Thread#interrupt()} on the turn's thread
@@ -1483,6 +1501,10 @@ public class OrcaAgentExecutor
      *             if any OnStart hook blocks the execution
      */
     private boolean checkOnStartHooks(ExecutionScope scope, String userMessage) {
+        if (scope.coordinator.getSignal().isCancelled()) {
+            log.debug("Turn interrupted before OnStart; its OnStart hooks are not run");
+            return false;
+        }
         final List<HookResult> onStartResults = invokeOnStart(scope, userMessage);
         if (scope.coordinator.getSignal().isCancelled()) {
             if (hookExecutionManager.hasBlockedResult(onStartResults)) {
@@ -2078,7 +2100,7 @@ public class OrcaAgentExecutor
         // One coordinator per command, closed on every exit path so no terminator outlives the command that
         // registered it. It is not the turn's coordinator that runTurn created for the OnStart hooks: that one
         // is published to the interrupt observer, and handing its signal to the command's tools would make a slash
-        // command interruptible as a side effect. Nothing trips this one
+        // command interruptible as a side effect — runTurn has closed it by now. Nothing trips this one
         // today — a slash command is not interruptible — but an inline skill's tools must still be handed a
         // registrar, because SingleToolInvoker asks for one whenever the target tool declares THREAD_INTERRUPT.
         try (InterruptCoordinator commandCoordinator = Objects.requireNonNull(interruptCoordinatorFactory.get(),
@@ -3561,9 +3583,9 @@ public class OrcaAgentExecutor
 
         /**
          * The turn's interrupt coordinator. Assigned once in {@code runTurn}, before the OnStart hooks fire and
-         * before anything else reads the scope, and closed by {@code runTurn} when the turn's flow returns. Its
-         * signal is what the turn's hooks and the ReAct loop's tools are tied to; the command flow hands its tools a
-         * coordinator of its own.
+         * before anything else reads the scope, and closed by {@code runTurn} when the turn's flow returns — for a
+         * slash-command turn, before the command flow starts. Its signal is what the turn's hooks and the ReAct loop's
+         * tools are tied to; the command flow hands its tools a coordinator of its own.
          */
         InterruptCoordinator coordinator;
 

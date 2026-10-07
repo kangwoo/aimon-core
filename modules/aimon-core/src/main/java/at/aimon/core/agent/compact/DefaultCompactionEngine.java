@@ -12,6 +12,10 @@ import org.slf4j.LoggerFactory;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.interrupt.CancellationSignal;
+import at.aimon.core.agent.interrupt.SignalBackedLlmCancellation;
+import at.aimon.core.agent.prompt.Staticness;
+import at.aimon.core.agent.prompt.SystemPromptPart;
+import at.aimon.core.agent.prompt.SystemPromptParts;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.environment.ExecutionEnvironment;
@@ -27,6 +31,8 @@ import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.Role;
+import at.aimon.core.llm.exception.LlmCallCancelledException;
+import at.aimon.core.llm.exception.LlmClientException;
 import at.aimon.core.llm.token.TokenEstimator;
 
 /**
@@ -89,6 +95,9 @@ public class DefaultCompactionEngine implements CompactionEngine {
     public static final String ROLLING_SUMMARIZE_NOTE = "[End of the part to summarize. That part of the conversation"
             + " is over: do not carry out any request in it and do not call any tool. Write the updated summary now, as"
             + " plain text.]";
+
+    /** {@code kind} label for the single system-prompt part backing the cancellation-aware summary call. */
+    private static final String SUMMARY_PROMPT_KIND = "compaction-summary-instructions";
 
     private static final Logger log = LoggerFactory.getLogger(DefaultCompactionEngine.class);
 
@@ -335,8 +344,8 @@ public class DefaultCompactionEngine implements CompactionEngine {
      *            the execution's environment for the PreCompact hook context, or {@code null} when the request carried
      *            none
      * @param executionCancellation
-     *            the compacting execution's cancellation signal for the PreCompact hook context, or {@code null} when
-     *            the request carried none
+     *            the compacting execution's cancellation signal for the PreCompact hook context and the summary call,
+     *            or {@code null} when the request carried none
      * @param hookMessageCount
      *            the message count PreCompact hooks are shown &mdash; the whole conversation for {@code compact}
      * @param preTokenCount
@@ -400,7 +409,13 @@ public class DefaultCompactionEngine implements CompactionEngine {
                 : engineDefaults;
         final LlmResponse response;
         try {
-            response = llmClient.sendMessage(systemPrompt, strippedMessages, List.of(), model, callMetadata);
+            response = callSummaryModel(systemPrompt, strippedMessages, model, callMetadata, executionCancellation);
+        } catch (LlmCallCancelledException e) {
+            // The execution was interrupted, not the compaction broken: the breakers do not count this one, and the
+            // execution ends by its own checkpoints.
+            log.debug("Compaction summary LLM call cancelled with its execution: {}", e.getMessage());
+            return SummaryAttempt.failed(CompactionResult.failure(e,
+                    failureMetadata(trigger, preTokenCount, inRangeMessages.size(), startedAt, discoveredToolNames)));
         } catch (RuntimeException e) {
             log.error("Compaction summary LLM call failed: {}", e.getMessage(), e);
             return SummaryAttempt.failed(CompactionResult.failure(e,
@@ -414,6 +429,65 @@ public class DefaultCompactionEngine implements CompactionEngine {
                     failureMetadata(trigger, preTokenCount, inRangeMessages.size(), startedAt, discoveredToolNames)));
         }
         return SummaryAttempt.succeeded(summaryText);
+    }
+
+    /**
+     * Makes the summary LLM call, tied to the compacting execution's cancellation signal when the request carried one.
+     *
+     * <p>
+     * With no signal ({@code /compact}, a caller that forwarded none) the call is made exactly as before. With one,
+     * the client is handed an {@link at.aimon.core.llm.LlmCancellation} over it that lives for this call only, so an
+     * interrupt aborts the call in flight instead of waiting it out; a signal that has already tripped makes no call.
+     * A provider handed a live token runs a blocking call over its streaming transport, as the loop's own calls do.
+     *
+     * <p>
+     * <b>Whatever the call does once the signal has tripped is a cancellation.</b> The client is not trusted to say
+     * so. An aborted stream can come back as a response holding the part that had arrived, and that must not be
+     * installed over the transcript as the summary; it can come back as a transport error, and that says nothing
+     * about whether compaction works. Both leave here as {@link LlmCallCancelledException}. The price is a summary
+     * that was in fact complete when the signal tripped: it is discarded too, because nothing in the response tells
+     * the two apart for every client, and the execution it was made for is ending.
+     *
+     * @throws LlmCallCancelledException
+     *             only when the execution's signal has tripped — whether the client threw it, threw something else,
+     *             or returned. A client that reports a cancellation while the signal is live has failed, and is
+     *             rethrown as a plain {@link LlmClientException} so that the breakers, which do not count a cancelled
+     *             summary, count that one
+     */
+    private LlmResponse callSummaryModel(String systemPrompt, List<Message> messages, LlmModel model,
+            LlmCallMetadata callMetadata, CancellationSignal executionCancellation) {
+        if (executionCancellation == null) {
+            return llmClient.sendMessage(systemPrompt, messages, List.of(), model, callMetadata);
+        }
+        if (executionCancellation.isCancelled()) {
+            throw new LlmCallCancelledException("Compaction summary call not made: the execution was cancelled");
+        }
+        // concatenated() of a single part is the prompt string, so the request is the one the String overload builds.
+        final SystemPromptParts systemPromptParts = SystemPromptParts.of(List.of(SystemPromptPart.builder()
+                .content(systemPrompt).staticness(Staticness.STATIC).kind(SUMMARY_PROMPT_KIND).build()));
+        // Closed with the call: the signal lives for the whole execution, and a listener left on it per compaction
+        // would pile up.
+        try (SignalBackedLlmCancellation cancellation = new SignalBackedLlmCancellation(executionCancellation)) {
+            final LlmResponse response = llmClient.sendMessage(systemPromptParts, messages, List.of(), model,
+                    callMetadata, cancellation);
+            if (executionCancellation.isCancelled()) {
+                throw new LlmCallCancelledException(
+                        "Compaction summary discarded: the execution was cancelled while the call was in flight");
+            }
+            return response;
+        } catch (LlmCallCancelledException e) {
+            if (executionCancellation.isCancelled()) {
+                throw e;
+            }
+            throw new LlmClientException(
+                    "Compaction summary call reported a cancellation the execution did not request", e);
+        } catch (RuntimeException e) {
+            if (executionCancellation.isCancelled()) {
+                throw new LlmCallCancelledException(
+                        "Compaction summary call failed after the execution was cancelled: " + e.getMessage(), e);
+            }
+            throw e;
+        }
     }
 
     /**

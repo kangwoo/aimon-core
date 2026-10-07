@@ -173,6 +173,26 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   before the `onStart` chain for that reason. Empty means no signal there can trip — events outside
   an execution, a slash-command turn after its `onStart`, `/compact`, a rewake replay — not missing
   plumbing.
+- **`ignoreInterrupt` is the per-hook way out of the report rule, and it has two halves (EE-97).** A
+  report hook that declared it (`DeclarativeHookOptions#isIgnoreInterrupt`; handler key in
+  `hooks.json`, entry key in frontmatter, strict boolean like `failOpen`) is not stopped by an
+  interrupt. An interrupt reaches a command by two roads, and both must be closed or the option
+  silently fails for the hooks it exists for: (1) the *signal* — the hook hands its executor a
+  `SignalDetachedHookContext`, a view whose `getExecutionCancellation()` is empty, so the runner
+  registers nothing; do not add a parameter to `ShellActionExecutor.run` for this, and do not put the
+  rule in the context's getter (the context is per chain, the option per hook); (2) the *thread* —
+  `RunningTaskHandle.requestStop` and `RunControl.requestStop` interrupt the worker as well as
+  tripping the signal, so the hook declares `ExecutionHook#ignoresInterrupt()` and
+  `DefaultHookExecutor.awaitHook` keeps waiting instead of `future.cancel(true)`, re-arming the flag
+  on the way out. Honoured on `SkillHookSet.reportEvents()` and for a shell action only; both
+  front-ends drop it with a WARN elsewhere, and the gate hook classes ignore it even when constructed
+  with it (`ignoresInterrupt()` is `ignoreInterrupt && !canVeto()`), so "a cancelled guard blocks
+  regardless of `failOpen`" stays true. It lengthens nothing: the action's timeout still ends the
+  command and the execution's thread waits for it. `awaitHook` does not know the event — a
+  programmatic gate hook that returns `true` delays an interrupted execution for its budget (it
+  still gets its real verdict, never a pass); do not declare it on a gate. A new `HookContext` method
+  must be delegated by the view (`DeclarativeHookIgnoreInterruptTest` checks by reflection), and an
+  executor must use the context through `HookContext` only.
 - **`http` / `mcp` actions follow the same rule on `preTool`** (the only guard event they can sit on).
   `HttpActionExecutor#attempt` / `McpActionExecutor#attempt` return an `ActionCallOutcome`: a
   *verdict* (any readable 2xx / non-error answer) or *no verdict*, carried as a not-run outcome
@@ -237,7 +257,12 @@ for side effects only. Wiring one up is a feature, not a bug fix.
   user's input branches on `AIMON_INVOKER_TYPE` — and `onStart` is one of
   `SkillHookSet.guardEvents()`. A behavior fork resolves no environment of its own, so its hooks see
   the spawning execution's, and its non-blocking feedback is dropped (there is no transcript to
-  append it to).
+  append it to). **A cancellation during the chain is not a block:** `DefaultSubagentExecutor.startFork`
+  reads the fork's cancellation right after the chain, before the block, and ends the fork
+  `INTERRUPTED` — with `onStop` fired and the transcript as it stood *before* the goal, so an
+  unanswered goal is not replayed on resume (EE-94). It reads through `isCancelledOrInterrupted`, not
+  the bare signal, because the hook executor re-arms a thread interrupt that would otherwise cut
+  every `onStop` hook's wait. `SubagentBehaviorRunner` does not do this (EE-99).
 - **A `hooks.json` that does not load stops startup.** `HookRegistryReloader.bootstrap()` and
   `HookHotReloadBootstrap.start()` propagate `HookConfigParseException` (file path, layer, cause) for
   a file that does not parse *or cannot be read*; only a missing file is an absent layer. Do not

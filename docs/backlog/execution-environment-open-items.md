@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 97건 (열림 26 · 닫힘 71)
+# 실행 환경 — 등록 항목 100건 (열림 26 · 닫힘 74)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -68,6 +68,13 @@ EE-80 은 2026-10-07 에 닫았다 — 2026-10-05 에 절반(신호를 쥔 발�
 [`../design/hook/hook-shell-cancellation-ee80.md`](../design/hook/hook-shell-cancellation-ee80.md) 에 있다. EE-93~EE-97 은 그
 설계의 열린 질문(Q5 · Q4 → EE-93, Q2 → EE-94, Q6 → EE-95 · EE-96, Q3 → EE-97) 가운데 이 변경 밖으로 결과가 번지는 것을 옮긴
 것이다.
+
+그 다섯(EE-93~EE-97)은 2026-10-07 에 한 변경에서 항목마다 따로 결론을 냈다 — 셋(EE-94 · EE-95 · EE-97)은 짓고 닫았고,
+EE-93 은 값싼 절반 둘만 짓고 남은 것("도는 슬래시 명령은 멈출 수 없다")으로 좁혀 열어 두었으며, EE-96 은 짓지 않기로 하고
+이유를 적었다. 그 변경의 설계와 구현이 설계에서 벗어난 점은
+[`../design/hook/hook-cancellation-followups-ee93-ee97.md`](../design/hook/hook-cancellation-followups-ee93-ee97.md) 에
+있다. EE-98~EE-100 은 그 설계의 열린 질문(Q1 · Q2 → EE-98)과 설계 리뷰(EE-99 · EE-100) 가운데 이 변경 밖으로 결과가 번지는
+것을 옮긴 것이다.
 
 ---
 
@@ -3930,7 +3937,7 @@ EE-88 이 값을 치르고 배운 것(쓰인 요청은 시한 전체를 갖는�
 **남은 것 — 고치지 않았다.** 표기를 바꾸는 우회(`sudo`, `/bin/rm`, 변수 대입 접두)는 가이드가 적은 대로 그대로다. 글롭은 셸
 파서가 아니다.
 
-## EE-93 — 슬래시 명령 턴은 `onStart` 뒤로 인터럽트할 수 없고, 턴은 `onStart` 앞에서도 닿지 않는다 · **열림** *(트리거 대기)*
+## EE-93 — 도는 슬래시 명령은 인터럽트할 수 없다 · **열림** *(트리거 대기)*
 
 *(2026-10-07 등록. 출처는 EE-80 설계 Q5 · Q4 와 그 리뷰.)*
 
@@ -3951,7 +3958,53 @@ EE-88 이 값을 치르고 배운 것(쓰인 요청은 시한 전체를 갖는�
 **언제 다시 볼까.** 오래 도는 슬래시 명령(포크 모드 스킬, `/compact`)을 사용자가 멈추지 못한다는 보고가 올 때, 또는
 `isInterruptible` 을 제어 판단에 쓰는 호스트가 생길 때.
 
-## EE-94 — `onStart` 중에 인터럽트된 포크는 `BLOCKED` 로, 턴은 `INTERRUPTED` 로 끝난다 · **열림**
+> **2026-10-07 — 값싼 절반 둘은 지었다. 명령을 인터럽트할 수 있게 하는 일은 하지 않았고, 항목은 그것으로 좁혀 남는다.**
+> 제목도 그에 맞게 바꿨다(옛 제목: "슬래시 명령 턴은 `onStart` 뒤로 인터럽트할 수 없고, 턴은 `onStart` 앞에서도 닿지
+> 않는다"). 설계와 그 뒤의 차이는 [`../design/hook/hook-cancellation-followups-ee93-ee97.md`](../design/hook/hook-cancellation-followups-ee93-ee97.md) §7 · §13.
+>
+> **지은 것 하나 — 플래그가 사실을 말한다 ((b) 가 닫혔다).** `InterruptCoordinator#isClosed()` 가 생겼고(기본 구현은 `false`),
+> `runTurn` 은 명령 흐름에 들어가기 전에 턴의 코디네이터를 닫는다 — 명령 흐름은 그 코디네이터에서 아무것도 읽지 않는다.
+> `LiveSessionStatus#isInterruptible` 은 "코디네이터가 있고 아직 닫히지 않았다" 가 됐다. 그래서 명령 턴은 `onStart` 훅이
+> 도는 동안만 `true` 이고, 명령이 도는 동안의 `interrupt` 는 아무도 읽지 않는 신호를 세우는 대신 닫힌 코디네이터의 no-op 이
+> 된다. 덤으로 ReAct 턴이 일을 마치고 저장되는 짧은 구간도 `false` 가 됐다(전에는 닫힌 코디네이터를 들고 `true` 였다).
+> 와이어 모양은 그대로다(`StatusSnapshotPayload` 의 `interruptible`, 같은 키 · 같은 타입) — 섞인 클러스터에서 옛 노드와 새
+> 노드가 그 두 구간의 **값**만 다르게 말한다. 그 값을 읽는 프로덕션 코드는 여전히 없다(`isInterruptible` 로 main 을 셌다,
+> 2026-10-07).
+>
+> **지은 것 둘 — `onStart` 앞의 인터럽트를 받는다 ((2) 가 닫혔다).** 코디네이터가 공개되기 전에 온 인터럽트의 이유를 턴이
+> 쥐고 있다가(먼저 온 것이 이긴다) 실행기가 코디네이터를 공개하는 순간 넘긴다. 턴은 `onStart` 에서 선 신호를 만나 EE-80 이
+> 만든 길로 끝난다 — `onStart` 훅은 종류를 가리지 않고 하나도 돌지 않고(실행기가 체인을 내보내기 **전에** 신호를 읽는다 —
+> 처음에는 셸 가드의 명령만 시작되지 않았고, 그 앞의 프로그래매틱 · `http` · `mcp` 훅은 끝까지 돌았다. 코드 리뷰가 짚어
+> 고쳤다), `INTERRUPTED`, `onStop(success=false)`, LLM 호출 없음. 슬래시 명령
+> 턴이면 명령이 돌지 않는다. `interrupt` · `close()` · NOW 우선순위 선점이 한 메서드를 지나므로 셋 다 바뀐다. 실제 실행기와
+> 세션을 붙여 돌려 봤다(`DefaultLiveSessionInterruptBeforeOnStartTest` — 고치기 전에는 턴이 `COMPLETED` 로 끝난다). 공개와
+> 인터럽트가 겹치는 순서는 양쪽 다, 그리고 300번 맞붙여 봤다. 그 구간의 플래그는 `false` 다 — 코디네이터를 끝내 공개하지
+> 않을 수도 있는 실행기를 두고 전달을 약속하지 않으려는 것이고, 턴이 `onStart` 에 닿기 전에 던지면 쥐고 있던 이유는 턴과
+> 함께 사라진다.
+>
+> **NOW 선점에서 달라지는 것 (리뷰가 따라가 보라고 한 것).** 큐의 `ENQUEUED` 통지는 `enqueue` 안에서 동기로 나가므로, NOW
+> 입력은 넣는 그 순간에 활성인 턴을 겨눈다 — 나중에 설치된 턴에 늦게 도착하지 않는다. 달라지는 경우는 하나다: 그 순간의
+> 턴이 아직 준비 중일 때. 전에는 인터럽트가 버려져 턴이 그대로 돌았고, 루프의 턴 중간 주입(NOW 도 NEXT 이하로 걷어 간다)이
+> 그 입력을 **선점하려던 바로 그 턴** 안으로 넣을 수 있었다. 이제 그 턴은 LLM 호출 없이 `INTERRUPTED` 로 끝나고 입력은 큐에
+> 남는다. 남은 입력을 누가 가져가는가는 턴 중간에 선점된 경우와 같다 — CLI 는 턴 뒤에 큐를 비워 새 턴으로 돌리고
+> (`ReplSession.drainQueueAfterTurn`), 그 밖의 호스트에서는 다음 턴의 주입이나 호스트 자신의 처리까지 큐에 있다. main 에서
+> NOW 로 넣는 코드는 없다(외부가 `enqueueMidTurnInput` 으로 넣는다).
+>
+> **짓지 않은 것 — 이 항목에 남은 것.** (1) 과 (a) · (c): 명령이 도는 동안은 멈출 수 없고, 그 턴의 `onStop` 과 `/compact`
+> 의 압축 훅은 신호를 받지 않는다. 트리거는 오지 않았다 — 멈추지 못했다는 보고가 없고 플래그를 읽는 호스트도 없다. 그리고
+> 한 가지 변경이 아니다. 명령에 턴의 신호를 넘기려면 넷을 정해야 한다: 인라인 스킬의 루프가 선 신호에서 무엇을 하는가,
+> 인터럽트된 명령이 전사에 무엇을 남기는가, `CommandExecutionResult` 가 "인터럽트됨" 을 어떻게 말하는가, MANUAL `preCompact`
+> 의 block(지금은 경고로 낮춘다)이 취소된 가드의 것일 때 무엇을 뜻하는가. 트리거가 오면 이 넷이 할 일의 목록이다. 그때
+> `/compact` 의 요약 호출은 이미 멈출 수 있다 — EE-95 뒤로 요청이 신호를 실어 오기만 하면 된다.
+>
+> **어디** *(2026-10-07)* — `agent/impl/orca/OrcaAgentExecutor.java`(`runTurn` `:1199`, 명령 앞의 `close()` `:1220`,
+> `executeCommand` `:2087`), `agent/session/DefaultLiveSession.java`(`interruptible` `:465`, `ActiveTurn.publish` `:1119`,
+> `interruptOrKeep` `:1132`), `agent/interrupt/InterruptCoordinator.java:80`.
+>
+> **메인테이너가 정할 것.** `isClosed()` 는 공개 인터페이스에 더한 메서드이고, 둘째는 `interrupt` · `close()` · NOW 선점의
+> 동작을 바꾼다. 둘은 서로 기대지 않으므로 하나만 뺄 수 있다.
+
+## EE-94 — `onStart` 중에 인터럽트된 포크는 `BLOCKED` 로, 턴은 `INTERRUPTED` 로 끝난다 · **닫힘** *(2026-10-07)*
 
 *(2026-10-07 등록. 출처는 EE-80 설계 Q2.)*
 
@@ -3968,7 +4021,40 @@ EE-88 이 값을 치르고 배운 것(쓰인 요청은 시한 전체를 갖는�
 
 **언제 다시 볼까.** 포크의 `BLOCKED` 를 가드의 거절로 세거나 알리는 독자가 생길 때.
 
-## EE-95 — AUTO 압축의 요약 LLM 호출은 실행의 취소 신호에 묶이지 않는다 · **열림**
+### 닫힘 (2026-10-07)
+
+**트리거를 기다리지 않았다.** 고치는 것이 몇 줄이고, 옛 답에 기대는 독자가 없었다 — `CompletionReason.BLOCKED` 로 갈리는
+프로덕션 코드는 없다(main 을 `BLOCKED` 로 셌다). 설계와 그 뒤의 차이는 [`../design/hook/hook-cancellation-followups-ee93-ee97.md`](../design/hook/hook-cancellation-followups-ee93-ee97.md) §6 · §13.
+
+**지은 것.** ReAct 포크는 `onStart` 체인이 돌아오거나 block 을 던진 **직후에**, 어느 쪽인지 보기 전에 취소를 한 번 읽는다
+(`startFork`). 섰으면 `INTERRUPTED` 와 "Execution interrupted" 로 끝나고, 다른 모든 인터럽트된 포크처럼
+`onStop(success=false)` 가 발화한다. 돌던 훅이 셸 가드였든 프로그램 훅이었든, 취소가 신호로 왔든 태스크 핸들로(신호 +
+스레드 인터럽트) 왔든 같다.
+
+**정한 것 하나 — 무엇을 돌려주는가.** 목표를 넣기 **전의** 전사다(`beforeGoal`), `BLOCKED` 결과가 그러하듯. 포크의 목표는 부모
+모델이 쓰고, 같은 모델이 백그라운드 포크를 멈추고(`Task.stop`) 나중에 이어 갈 수 있다. 살아 있는 버퍼를 돌려주면 가드가 답하기
+전에 끊긴 목표가 저장되어 다음 resume 에서 모델에게 대화 이력으로 되돌아온다 — 그때 `onStart` 는 새 목표만 본다. "판정
+없음, 저장 안 함" 을 지켰다. 그래서 루프의 첫 체크포인트에서 끝나던 경우(프로그램 훅)도 답이 바뀌었다: 이유는 전과 같이
+`INTERRUPTED` 인데 스냅샷에 목표가 없다.
+
+**근거가 달랐던 것 (규칙 둘).** 항목은 차이를 "block 을 그대로 읽어서" 로만 적었다. 태스크 핸들로 멈춘 포크에는 한 겹이 더
+있었다: 훅 실행기가 스레드 인터럽트에 block 으로 답하면서 **플래그를 다시 세워 둔다.** 그 플래그를 치우지 않고 `onStop` 을
+발화하면 모든 `onStop` 훅의 대기가 즉시 끊긴다. 그래서 읽는 것은 맨 신호가 아니라 루프의 체크포인트 술어
+(`isCancelledOrInterrupted`)이고, 테스트는 `onStop` 훅의 **몸통이 돌았는지**로 확인한다.
+
+**적힌 것보다 무거웠나 (규칙 셋).** 가볍지도 무겁지도 않았다 — 부모 모델이 읽는 문자열과 이유, 그리고 `onStop` 의 발화가
+달라진다. 다섯 경우를 돌렸다(`DefaultSubagentExecutorOnStartInterruptTest`): 셸 가드 · 프로그램 훅 · 막으면서 동시에 취소 ·
+resume · 태스크 핸들. 고치기 전에는 넷이 `BLOCKED` 이거나 스냅샷에 목표가 남는다. resume 뒤의 재생은 `createBlockedResult`
+의 javadoc 과 테스트(`aBlockedResumeDoesNotBreakALaterOne`)로 읽었고, 실제 저장소를 낀 백그라운드 resume 으로는 돌려 보지
+않았다.
+
+**남긴 것.** 코드 비헤이비어 포크(`SubagentBehaviorRunner`)는 그대로다 — 그 게이트에는 신호가 없고 돌려줄 인터럽트 결과도
+없다. EE-99 로 따로 세웠다. 새 enum 상수는 없으므로 롤링 업그레이드에서 걸릴 것이 없다(EE-83).
+
+**어디** *(2026-10-07)* — `subagent/execution/DefaultSubagentExecutor.java`(`startFork` `:608`,
+`createInterruptedBeforeStartResult` `:1217`).
+
+## EE-95 — AUTO 압축의 요약 LLM 호출은 실행의 취소 신호에 묶이지 않는다 · **닫힘** *(2026-10-07)*
 
 *(2026-10-07 등록. 출처는 EE-80 설계 Q6(a). 읽어서 본 것이고 돌려 보지 않았다.)*
 
@@ -3982,6 +4068,60 @@ EE-88 이 값을 치르고 배운 것(쓰인 요청은 시한 전체를 갖는�
 `CompactionEngine.summarize` 를 지난다.
 
 **언제 다시 볼까.** 압축 중의 인터럽트가 늦다는 보고가 올 때. 착수할 때 먼저 잴 값은 요약 호출의 길이다.
+
+### 닫힘 (2026-10-07)
+
+**트리거를 기다리지 않았고, 먼저 재라고 한 값은 재지 않았다.** 요약 호출의 길이는 **측정하지 않았다** — 압력 리그의
+기준선([`context-engine-pressure-rig-open-items.md`](context-engine-pressure-rig-open-items.md))에도 그 숫자는 없다. 변경은 그
+숫자에 기대지 않는다: 호출이 길든 짧든 인터럽트가 그것을 기다리지 않게 될 뿐이다. 그 숫자가 필요한 것은 "이것이 얼마나
+아팠는가" 이고, 그것은 여전히 모른다. 설계와 그 뒤의 차이는 [`../design/hook/hook-cancellation-followups-ee93-ee97.md`](../design/hook/hook-cancellation-followups-ee93-ee97.md) §5 · §13.
+
+**지은 것.** `DefaultCompactionEngine` 은 요청이 신호를 실어 오면 요약 호출을 취소 토큰과 함께 부른다
+(`SignalBackedLlmCancellation` — 그 호출 하나만큼만 살고, 끝나면 신호에서 리스너를 뗀다). 이미 선 신호면 호출하지 않는다.
+취소된 요약은 `LlmCallCancelledException` 을 실은 **실패 결과**로 돌아가고(던지지 않는다), 두 회로 차단기는 그것을 세지 않는다
+— 훅의 block 을 세지 않는 것과 같은 이유다. 롤링 engine 은 같은 `CompactionEngine.summarize` 를 지나므로 따로 고칠 것이
+없었다. 실행을 끝내는 데 새로 필요한 것도 없었다: 차단 한도 위에서는 가드가 `BLOCK` 으로 답하고 두 실행기가 그 자리에서
+신호를 읽으며(EE-80), 그 아래에서는 루프가 자기 LLM 호출로 가는데 선 토큰 앞에서 호출되지 않는다. 신호가 없는 요청
+(`/compact`, 신호를 넘기지 않는 자체 engine)은 전과 **같은 오버로드**로 불린다.
+
+**임베더에게 보이는 것.** 신호가 있는 동안 요약 호출은 프로바이더의 **스트리밍 전송**을 탄다 — 살아 있는 토큰을 받은
+프로바이더는 블로킹 호출을 스트리밍으로 돌려 중간에 끊을 수 있게 한다(루프의 논스트리밍 호출이 이미 그렇게 돈다).
+모델에게 가는 요청은 같다: Anthropic 은 두 길의 요청이 같고, OpenAI Chat Completions 는 스트리밍 쪽에 `stream_options` 만
+더 붙는다 — 두 프로바이더 모듈의 테스트가 요청을 나란히 놓고 비교한다. 취소 오버로드를 재정의하지 않은 자체 `LlmClient` 는
+전과 같이 호출을 끝까지 기다린다.
+
+**리뷰가 짚어 고친 것.** 차단기가 그 예외를 **타입으로** 면제하면, 신호가 살아 있는데 "취소됐다" 를 던지는 클라이언트는
+차단기를 영영 움직이지 못하고 매 iteration 마다 압축이 다시 시도된다. 엔진이 그 경우를 평범한 실패
+(`LlmClientException`, 원인은 그 예외)로 바꿔 돌려주므로 차단기가 센다. 요청한 적 없는 취소는 취소가 아니라 고장이다.
+
+**코드 리뷰가 짚어 고친 것 — 끊긴 호출이 "성공" 으로 돌아왔다.** 처음 실은 것은 프로바이더 클라이언트가 끊긴 호출을
+`LlmCallCancelledException` 으로 알린다는 전제 위에 있었고, 그 전제는 목(mock) 으로만 확인된 것이었다. 실제 전송 위에서
+SDK(anthropic-java 2.65.0, openai-java 4.69.2)는 `StreamResponse.close()` 뒤에 던지지 않고 스트림을 **조용히 끝낸다**.
+클라이언트는 그것을 답의 끝으로 읽어, 그때까지 온 조각을 정상 응답으로 돌려주었다. 그래서 요약 도중의 인터럽트는 반 문장짜리
+요약을 전사 위에 **설치**했고(`success=true`), 글자가 오기 전이면 "Compaction summary was empty" 로 실패해 두 차단기가
+**셌다** — 고치려던 것의 반대다. 두 겹으로 고쳤다. (1) 세 경로(Anthropic · OpenAI Chat Completions · OpenAI Responses)의
+스트림 매퍼는 종료 이벤트(`message_stop` · `finish_reason` · `response.completed`) 없이 끝난 스트림을 토큰이 선 상태에서
+만나면 `LlmCallCancelledException` 을 던지고 `STREAM_END` 를 내지 않는다. (2) 엔진은 클라이언트를 믿지 않는다: 신호가 선
+뒤에 호출이 **돌아오든 던지든** 취소된 실패로 돌려준다 — 돌아온 요약은 설치하지 않고, 어떤 종류의 실패도 차단기가 세지
+않는다. 설계의 "끝난 일은 버리지 않는다" 를 뒤집은 것이다(설계 §13.1 DV-8): 엔진에게 "끝난 요약" 과 "반 문장" 은 구별되지
+않는다. 값은 신호가 서는 순간 실제로 완성돼 있던 요약 하나이고, 다음 실행이 다시 압축한다.
+
+**같은 결함이 루프의 호출에도 있었고, 같이 고쳐졌다.** 클라이언트는 ReAct 루프와 공유된다. 호출 도중 인터럽트된 턴은
+`INTERRUPTED` 가 아니라 `COMPLETED` 로, 그때까지 스트리밍된 앞부분(또는 빈 문자열)을 최종 답으로 삼아 끝났다 — 이 변경
+전부터의 동작이다. 클라이언트가 이제 취소를 던지므로 루프는 이미 갖고 있던 가지로 간다: 앞부분을 assistant 메시지로
+남기고, `interrupted` 완료 이벤트를 내고, `INTERRUPTED` 로 끝난다. 종료 이벤트까지 온 스트림은 토큰이 서 있어도 전과 같이
+돌려준다. 세 경로 모두 로컬 `HttpServer`(스트림의 앞머리만 보내고 멈춘다) 위에서 클라이언트 · AUTO 압축(가드 아래, 차단기
+카운트 포함) · 턴 세 층으로 고정했다(`AnthropicStreamAbortTest`, `OpenAIStreamAbortTest`) — 글자가 온 뒤와 오기 전 둘 다.
+
+**확인하지 않은 것.** 실제 프로바이더에서 요약 호출이 끊기는 것(라이브 계층)은 돌리지 않았다 — 끊는 지렛대는 루프의 호출이
+쓰는 것과 같은 것이고, 위의 테스트는 실제 SDK 와 소켓 위에서 돌지만 상대는 로컬 서버다. 포크의 호출은 같은 클라이언트
+경로를 타지만 전송 위에서 돌려 보지 않았다. OpenAI **Responses** 엔드포인트의 요청 동등성은 비교하지 않았다(Chat Completions 만). 그리고
+차단 한도 **아래**에서 인터럽트된 턴은 실패한 압축 시도 하나를 결과에 싣는다 — 테스트로 고정했고, 그것이 원하는
+것인지는 EE-100 으로 세웠다.
+
+**어디** *(2026-10-07)* — `agent/compact/DefaultCompactionEngine.java:448`(`callSummaryModel`),
+`agent/compact/DefaultCompactionGuard.java:474`, `agent/context/RollingContextEngine.java:658`,
+`agent/interrupt/SignalBackedLlmCancellation.java:68`(`close`).
 
 ## EE-96 — 스레드 인터럽트로만 온 취소는 인터럽트에 반응하지 않는 셸의 훅 명령을 멈추지 못한다 · **열림** *(트리거 대기)*
 
@@ -3998,7 +4138,29 @@ EE-88 이 값을 치르고 배운 것(쓰인 요청은 시한 전체를 갖는�
 
 **언제 다시 볼까.** 인터럽트에 반응하지 않는 셸을 붙인 배포에서, 턴을 스레드 인터럽트로 취소하는 호스트가 생길 때.
 
-## EE-97 — 끝까지 돌아야 하는 `onStop` 명령에 인터럽트를 피할 방법이 없다 · **열림**
+> **2026-10-07 — 짓지 않기로 했다. 트리거 대기로 남는다.** 이유는 셋이다. 설계는
+> [`../design/hook/hook-cancellation-followups-ee93-ee97.md`](../design/hook/hook-cancellation-followups-ee93-ee97.md) §8.
+>
+> **(1) 트리거에 조건이 둘 필요하고, 저장소 안에서는 둘째가 성립하지 않는다.** 인터럽트에 반응하지 않는 셸 **그리고**
+> `Thread.interrupt()` 만으로 취소하는 호스트. 실행의 스레드를 인터럽트하는 main 의 코드는 둘이고
+> (`subagent/task/RunningTaskHandle.java:121`, `workflow/impl/RunControl.java:62` — `.interrupt()` 로 `modules/*/src/main` 을
+> 셌다, 2026-10-07; 나머지는 도구 스레드 · 기한 감시 · 리스너 스레드를 겨눈다), 둘 다 신호를 **먼저** 세운다. 그래서 그 명령은
+> 이미 신호의 길로 멈춘다. 스레드 인터럽트만 오는 취소는 임베더에게서만 올 수 있다.
+>
+> **(2) 노출이 묶여 있다.** 그 명령은 자기 timeout 까지만 돈다. 그리고 루프의 체크포인트는 맨 스레드 인터럽트를 이미 신호로
+> 올린다(`OrcaAgentExecutor.isInterrupted`) — 빠지는 것은 훅 명령이 도는 동안뿐이다.
+>
+> **(3) 고칠 자리가 훅 실행기가 아니고, 고쳐도 절반이다.** 훅 실행기는 읽기 전용 신호만 쥐고 있어 세울 수 없다. 세울 수 있는
+> 것은 코디네이터를 가진 발화 자리다 — 체인이 스레드 플래그가 선 채로 돌아오면 `requestInterrupt` 로 올리고, 그러면 아직
+> 등록되어 있는 그 명령의 리스너에 닿는다. 그것은 `onStart` 와 `onStop` 을 덮지만 도구 범위 이벤트(신호만 쥔 자리에서
+> 발화한다)와 압축은 덮지 못한다. 오지 않은 트리거를 위해 취소의 길을 하나 더, 그것도 절반만 놓지는 않는다. 트리거가 오면
+> 이 스케치에서 시작한다.
+>
+> **다른 항목이 이 항목에 바꿔 놓은 것.** EE-94 뒤로, 이렇게 인터럽트된 **포크**는 `onStart` 에서 `INTERRUPTED` 로 끝난다(전에는
+> `BLOCKED`). **턴**은 여전히 `ExecutionBlockedByHookException` 으로 끝난다 — 턴은 신호만 읽는다. 그리고 `ignoreInterrupt` 를
+> 선언한 훅(EE-97)은 어느 길로도 멈추지 않는다 — 그것은 이 항목의 틈이 아니라 그 옵션의 뜻이다.
+
+## EE-97 — 끝까지 돌아야 하는 `onStop` 명령에 인터럽트를 피할 방법이 없다 · **닫힘** *(2026-10-07)*
 
 *(2026-10-07 등록. 출처는 EE-80 설계 Q3.)*
 
@@ -4014,3 +4176,104 @@ EE-88 이 값을 치르고 배운 것(쓰인 요청은 시한 전체를 갖는�
 `hook/event/OnStopContext.java:100`(규칙이 있는 자리).
 
 **언제 다시 볼까.** 인터럽트로 정리 훅이 중간에 끊겼다는 보고가 올 때.
+
+### 닫힘 (2026-10-07)
+
+**트리거를 기다리지 않았다.** EE-80 이 아직 릴리스되지 않은 채 `main` 에 있고, 그 상태에서는 정상 종료한 턴의 `onStop` 정리
+명령이 다음 입력의 선점(NOW 우선순위)에 반쯤 돈 채 끊긴다 — 모든 셸에서, 끌 방법 없이. 보고를 기다릴 일이 아니었다.
+설계와 그 뒤의 차이는 [`../design/hook/hook-cancellation-followups-ee93-ee97.md`](../design/hook/hook-cancellation-followups-ee93-ee97.md) §4 · §13.
+
+**지은 것.** 훅별 옵션 `ignoreInterrupt` — `hooks.json` 에서는 핸들러 키, SKILL.md 에서는 항목 키, 불리언, 기본 `false`.
+보고 이벤트(`onStop` · `subagentStop` · `postCompact` · `postTool` · `permissionDenied` · `subagentStart`)의 **셸 명령**에서만
+듣는다. 그 훅의 명령은 실행의 인터럽트에 멈추지 않고 자기 `timeout` 까지 돈다. 기본값은 그대로다 — 옵션이 없으면 돌고 있는
+보고 명령은 EE-80 의 규칙대로 멈춘다. 가드 규칙도 그대로다: 가드 이벤트에서는 적재할 때 WARN 과 함께 버리고, 가드 훅
+클래스는 받아도 읽지 않으므로 취소된 가드는 `failOpen` 과 무관하게 막는다.
+
+**근거가 달랐던 것 (규칙 둘) — 길이 둘이었다.** 항목은 "실행의 신호에 묶지 말 것" 이라고 적었고, 그것만 했다면 옵션은
+**정확히 그것이 필요한 훅에서** 듣지 않았을 것이다. 백그라운드 포크를 멈추는 것(`Task.stop`)은 신호를 세우면서 **워커
+스레드도 인터럽트한다.** 훅 실행기는 그 인터럽트에 훅의 풀 태스크를 취소하는 것으로 답하고, `LocalShell` 은 그것에 반응한다.
+그래서 옵션은 둘을 한다. 신호의 길: 훅이 실행기에게 신호 없는 컨텍스트 뷰를 넘긴다(공개 SPI `ShellActionExecutor.run` 의
+시그니처는 그대로다). 스레드의 길: 훅이 `ExecutionHook#ignoresInterrupt()` 를 선언하고, 훅 실행기는 그런 훅을 기다리다
+인터럽트를 받으면 태스크를 취소하지 않고 남은 예산만큼 마저 기다린 뒤 스레드의 플래그를 다시 세워 돌려준다.
+
+**적힌 것보다 무거웠나 (규칙 셋).** 두 길을 각각 돌렸다. 턴: 끝난 턴의 `onStop` 명령이 도는 동안 공개된 코디네이터로
+인터럽트 — 옵션이 없으면 테스트 셸이 취소를 보고, 있으면 명령이 끝까지 돈다. 백그라운드 포크: 스레드 인터럽트에 반응하는
+테스트 셸에서 `subagentStop` 명령이 도는 동안 `Task.stop` — 같은 쌍. 멈춤과 안 멈춤은 셸이 본 것으로 읽었고 걸린 시간으로
+읽지 않았다. 실제 `LocalShell` 과 원격 셸에서는 돌리지 않았다. 반쪽 정리가 무엇을 남기는지는 여전히 명령에 달려 있다.
+
+**옵션이 하지 않는 것 — 가이드에 적었다.** `timeout` 은 그대로 명령을 끝낸다(옵션은 아무것도 늘리지 않는다). 훅 풀의
+teardown 과 프로세스 종료도 끝낸다. 그리고 실행의 스레드가 그 명령을 **기다린다** — 다음 입력도 그만큼 기다리므로 timeout 을
+짧게 잡으라고 적었다.
+
+**리뷰가 짚어 정한 것 둘.** (1) `ignoresInterrupt()` 는 공개 SPI 이고 훅 실행기는 이벤트를 모른다. 프로그램으로 등록한
+가드 훅이 그것을 선언하면 그대로 듣는다 — 인터럽트를 통과로 바꾸지는 못하고(기다린 끝에 나오는 것은 훅 자신의 판정이나
+timeout 이다) 인터럽트된 실행이 그 가드를 기다리게 될 뿐이다. 그렇게 **정했고**, javadoc · 개발 가이드 · 테스트에 적었다.
+(2) 옵션을 선언한 훅의 셸 실행기는 이벤트 자신의 컨텍스트 타입이 아니라 **뷰**를 받는다. 컨텍스트를 `OnStopContext` 로
+내려받는 저장소 밖 실행기는 그 훅에서만 `ClassCastException` 을 낸다(저장소 안에는 그런 실행기가 없다). SPI javadoc 과
+CHANGELOG 에 "`HookContext` 로만 쓸 것" 을 적었다.
+
+**메인테이너가 정할 것.** 이름(`ignoreInterrupt`)과 기본값(보고 명령을 묶어 두고 끄는 쪽을 옵션으로)은 지은 대로이고, 둘 다
+EE-80 이 릴리스되기 전에만 호환성 값 없이 바꿀 수 있다 — EE-98.
+
+**어디** *(2026-10-07)* — `skill/hook/declarative/DeclarativeHookOptions.java`,
+`skill/hook/declarative/SignalDetachedHookContext.java`, `skill/hook/declarative/AbstractDeclarativeShellHook.java:121`,
+`hook/execution/ExecutionHook.java:150`, `hook/execution/DefaultHookExecutor.java:337`(`awaitHook`),
+`config/hook/HookRegistryApplier.java:287`, `skill/parser/SkillHookSetParser.java:282`,
+`skill/hook/SkillHookSet.java:127`(`reportEvents`).
+
+## EE-98 — `ignoreInterrupt` 의 이름과, 돌고 있는 보고 명령을 인터럽트에 멈추는 기본값은 릴리스 전에만 값없이 바뀐다 · **열림**
+
+*(2026-10-07 등록. 출처는 EE-93~EE-97 설계 Q1 · Q2.)*
+
+**무엇을.** 다음 릴리스 전에 둘을 정한다. (1) 옵션의 이름. (2) 기본값의 방향 — 돌고 있는 보고 명령을 인터럽트에 멈추고
+끄는 쪽을 옵션으로 둘지(지금), 멈추지 않고 멈추는 쪽을 옵션으로 둘지.
+
+**왜.** 둘 다 설정 표면이라 릴리스에 실리면 바꾸는 값이 붙는다. 지금은 붙지 않는다 — EE-80 과 EE-97 모두 `CHANGELOG.md` 의
+`[Unreleased]` 아래에 있다. (1) `ignoreInterrupt` 는 지은 이름이고, 견준 것은 `runToCompletion`(timeout 이 여전히 끝내므로
+과한 약속이다)과 `uninterruptible` 이다. (2) 지금의 기본값은 EE-80 의 Q3 을 그대로 둔 것이다. 반대쪽을 고르면 로컬 셸의
+`onStop` 정리 명령은 EE-80 전처럼 끝까지 돌고, 대신 인터럽트에 반응하지 않는 셸의 `onStop` 명령은 인터럽트 뒤에도 자기
+timeout 까지 돈다 — EE-80 이 닫으려던 것의 일부가 기본값에서 다시 열린다. 어느 쪽이 더 흔한 훅인지는 재지 않았다: 저장소
+안에 `onStop` 셸 훅을 쓰는 설정이 없다.
+
+**어디** *(2026-10-07)* — `config/hook/HookHandlerSpec.java`(`ignoreInterrupt`), `skill/parser/SkillHookSetParser.java:282`,
+`hook/event/OnStopContext.java`(보고 규칙이 있는 자리), `CHANGELOG.md` 의 `[Unreleased]`.
+
+**언제 다시 볼까.** EE-80 을 싣는 릴리스를 자르기 전. 그 뒤로는 이 항목이 "이름을 바꾸는 값" 을 재는 항목이 된다.
+
+## EE-99 — 코드 비헤이비어 포크는 `onStart` 중의 인터럽트에 여전히 `BLOCKED` 로 끝난다 · **열림** *(트리거 대기)*
+
+*(2026-10-07 등록. 출처는 EE-93~EE-97 설계 리뷰. 읽어서 본 것이고 돌려 보지 않았다.)*
+
+**무엇을.** `SubagentBehaviorRunner` 도 `onStart` 체인 뒤에 취소를 읽어 인터럽트된 결과로 끝내게 할지 정한다.
+
+**왜.** EE-94 는 ReAct 포크만 고쳤다. 코드 비헤이비어 포크의 `onStart` 게이트에는 신호가 가지 않는다
+(`SubagentOnStartGate.context` 의 신호 없는 오버로드). 그래서 그 훅의 명령은 신호로는 멈추지 않고, 백그라운드로 돌던 그
+포크를 `Task.stop` 으로 멈추면 워커의 스레드 인터럽트에 훅 실행기가 block 으로 답해 포크가 `BLOCKED` 와 "interrupted before
+the hook returned a verdict" 사유로 끝난다. 같은 정지가 ReAct 포크에서는 `INTERRUPTED` 다. 비헤이비어는 전사도 `onStop` 도
+없으므로 차이는 부모 모델이 읽는 이유와 문자열뿐이다.
+
+**어디** *(2026-10-07)* — `subagent/behavior/SubagentBehaviorRunner.java:168`(`checkOnStartHooks`),
+`subagent/execution/SubagentOnStartGate.java`.
+
+**언제 다시 볼까.** 코드 비헤이비어 서브에이전트에 `onStart` 훅을 걸고 백그라운드로 돌리는 배포가 생길 때.
+
+## EE-100 — 압축 중에 인터럽트된 턴은 실패한 압축 시도를 결과와 `CompactBoundary` 로 보고한다 · **열림**
+
+*(2026-10-07 등록. 출처는 EE-93~EE-97 설계 리뷰. 결과의 `compactionEvents` 는 테스트로 봤고, `CompactBoundary` 와 전사 봉인은
+읽어서 봤다.)*
+
+**무엇을.** 요약이 취소되어 실패한 압축을, 그 턴의 `compactionEvents` · `CompactBoundary` 이벤트 · 전사 봉인에서 뺄지 정한다.
+
+**왜.** EE-95 뒤로 AUTO 요약 호출은 인터럽트에 끊기고, 차단 한도 **아래**에서 가드는 그것을 "시도했으나 실패한 압축" 으로
+돌려준다(`COMPACT` + 실패 결과). 턴의 루프는 `COMPACT` 가지에서 성공 여부를 보지 않고 메타데이터를 `compactionEvents` 에
+더하고, `CompactBoundary` 를 내고, 전사를 봉인한 뒤에야 자기 LLM 호출에서 인터럽트로 끝난다. 그래서 인터럽트된 턴의 결과에
+일어나지 않은 압축의 기록이 하나 실리고, 스트림을 듣는 쪽은 압축 경계를 본다. 실패한 압축이 그렇게 보고되는 것은 이 변경
+전부터의 동작이다(프로바이더 오류로 실패한 요약도 같다) — 새로운 것은 인터럽트가 그 경로를 만든다는 것뿐이다. 차단 한도
+위에서는 `BLOCK` 가지가 먼저 끝내므로 실리지 않는다. 포크는 `compactionEvents` 를 싣지 않는다.
+
+**어디** *(2026-10-07)* — `agent/impl/orca/OrcaAgentExecutor.java`(루프의 `case COMPACT`),
+`OrcaAgentExecutorHookCancellationTest.reactTurn_interruptDuringTheSummaryCall_inTheAutoBand_endsTheTurnInterrupted`(지금의 답을
+고정한 테스트).
+
+**언제 다시 볼까.** `CompactBoundary` 나 `compactionEvents` 를 사용자에게 "압축됨" 으로 보여 주는 호스트가 실패한 시도를
+구분하지 못한다는 보고가 올 때.

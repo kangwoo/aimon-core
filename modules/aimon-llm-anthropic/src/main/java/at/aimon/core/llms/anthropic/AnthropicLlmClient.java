@@ -340,10 +340,12 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
             // Register the abort lever: StreamResponse.close() cancels the underlying OkHttp call — thread-safe and
             // idempotent, so it is safe to fire from the TaskStop/parent-cascade thread mid-stream. If cancellation
             // already fired between the guard above and here, onCancel invokes close() synchronously now, so the
-            // stream below reads an already-closed source and unwinds through the catch blocks as a cancellation.
+            // stream below reads an already-closed source. A closed source does not throw in this SDK: it ends. The
+            // mapper is therefore handed the token, and reports a stream that stopped short of message_stop under a
+            // tripped token as the cancellation it is; the catch blocks below cover a transport that does throw.
             cancellation.onCancel(streamResponse::close);
-            mapper.consume(streamResponse.stream());
-        } catch (MessageConversionException | ToolConversionException e) {
+            mapper.consume(streamResponse.stream(), cancellation);
+        } catch (LlmCallCancelledException | MessageConversionException | ToolConversionException e) {
             throw e;
         } catch (com.anthropic.errors.AnthropicException e) {
             if (cancellation.isCancelled()) {

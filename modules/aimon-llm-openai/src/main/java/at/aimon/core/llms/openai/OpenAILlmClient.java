@@ -273,10 +273,13 @@ public class OpenAILlmClient implements LlmClient {
         // A per-request timeout, when set, also bounds the streaming call (worst-case ceiling incl. no-progress
         // stalls); when unset, keep the single-argument overload so the client-wide default applies unchanged.
         final RequestOptions requestOptions = perRequestOptions(modelConfig);
-        try (OpenAIStreamHandle handle = exchange.openStream(requestOptions, sink, aggregator)) {
+        try (OpenAIStreamHandle handle = exchange.openStream(requestOptions, sink, aggregator, cancellation)) {
             // Register the abort lever: the handle's close() delegates to StreamResponse.close(), which cancels the
             // underlying OkHttp call — thread-safe and idempotent. If cancellation already fired, onCancel invokes
-            // close() synchronously now, so the stream read below unwinds through the catch blocks as a cancellation.
+            // close() synchronously now, so the stream read below is of an already-closed source. A closed source
+            // does not throw in this SDK: it ends. The handle's mapper holds the token for that reason, and reports a
+            // stream that stopped short of its terminal event under a tripped token as the cancellation it is; the
+            // catch blocks below cover a transport that does throw.
             cancellation.onCancel(handle::close);
             handle.consume();
         } catch (LlmCallCancelledException e) {

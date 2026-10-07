@@ -272,7 +272,8 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
      * mapped according to {@link HookExecutionPolicy#timeoutBehaviorFor(ExecutionHook)} — the hook's own declaration,
      * or the policy's {@link HookExecutionPolicy#timeoutBehavior()} when it made none: {@code FAIL_OPEN} returns
      * {@link HookResult#success()} (with a WARN log), {@code FAIL_CLOSED} returns a BLOCKED result with a descriptive
-     * feedback (with an ERROR log). An interrupted wait is always BLOCKED ({@link #onInterrupted}).
+     * feedback (with an ERROR log). An interrupted wait is always BLOCKED ({@link #onInterrupted}), unless the hook
+     * {@linkplain ExecutionHook#ignoresInterrupt() asks to be waited for}.
      */
     private <C extends HookContext> HookResult invokeWithTimeout(ExecutionHook<C> hook, C ctx,
             HookExecutionPolicy policy) {
@@ -319,6 +320,11 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
      * for why it is answered with BLOCKED regardless of the policy.
      *
      * <p>
+     * A hook that {@linkplain ExecutionHook#ignoresInterrupt() ignores an interrupt} is not cancelled by one: the wait
+     * goes on for what is left of the budget and ends in the hook's own result or the ordinary timeout, and the
+     * thread's interrupt flag is set again on the way out — including when it was already set on the way in.
+     *
+     * <p>
      * The task is submitted via {@link ExecutorService#submit(java.util.concurrent.Callable)} rather than
      * {@link CompletableFuture#supplyAsync}, so {@link Future#cancel(boolean) cancel(true)} genuinely interrupts the
      * worker thread on timeout instead of merely completing the wrapper exceptionally and leaking the thread.
@@ -330,7 +336,36 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
      */
     private static <C extends HookContext> HookResult awaitHook(ExecutionHook<C> hook, Future<HookResult> future,
             HookExecutionPolicy policy, long startNanos, long budgetNanos) {
-        final long remainingNanos = Math.max(0L, budgetNanos - (System.nanoTime() - startNanos));
+        boolean interrupted = false;
+        try {
+            while (true) {
+                final long remainingNanos = Math.max(0L, budgetNanos - (System.nanoTime() - startNanos));
+                try {
+                    return awaitOnce(hook, future, policy, startNanos, budgetNanos, remainingNanos);
+                } catch (InterruptedException ie) {
+                    if (!hook.ignoresInterrupt()) {
+                        // Re-arm before anything else: the caller's cancellation protocol has no other channel to
+                        // ride on, and InterruptedException has already cleared the flag on the way out of Future#get.
+                        Thread.currentThread().interrupt();
+                        future.cancel(true);
+                        return onInterrupted(hook);
+                    }
+                    // The hook asked to be waited for. InterruptedException cleared the flag, so the next wait blocks;
+                    // the flag is put back below, once, whatever the wait ends in.
+                    interrupted = true;
+                }
+            }
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    /** One bounded wait of {@link #awaitHook}; an interrupt is the caller's to answer. */
+    private static <C extends HookContext> HookResult awaitOnce(ExecutionHook<C> hook, Future<HookResult> future,
+            HookExecutionPolicy policy, long startNanos, long budgetNanos, long remainingNanos)
+            throws InterruptedException {
         try {
             final HookResult result = future.get(remainingNanos, TimeUnit.NANOSECONDS);
             return result != null ? result : HookResult.success();
@@ -340,12 +375,6 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
             return onTimeout(hook, policy, elapsedMs, TimeUnit.NANOSECONDS.toMillis(budgetNanos));
         } catch (ExecutionException ee) {
             return onThrown(hook, policy, ee.getCause());
-        } catch (InterruptedException ie) {
-            // Re-arm before anything else: the caller's cancellation protocol has no other channel to ride on, and
-            // InterruptedException has already cleared the flag on the way out of Future#get.
-            Thread.currentThread().interrupt();
-            future.cancel(true);
-            return onInterrupted(hook);
         } catch (RuntimeException e) {
             // Defensive: any other runtime error from the executor's wiring, including the CancellationException a
             // concurrently-cancelled task surfaces.
@@ -430,6 +459,12 @@ public class DefaultHookExecutor implements HookExecutor, AutoCloseable {
      * This is defence in depth, not the primary defence. The primary one is interrupt-flag hygiene in the ReAct loop
      * ({@code CancellationSignals}, interrupt design §8.1–§8.3), which keeps a stale flag from reaching this executor
      * at all; this method covers the paths hygiene has not swept.
+     *
+     * <p>
+     * <b>The one exemption</b> is a hook that {@linkplain ExecutionHook#ignoresInterrupt() asks to be waited for}:
+     * {@link #awaitHook} never gets here for it. That is not a way round a guard, because the alternative it takes is
+     * not "success without running" — the wait continues and returns the hook's real verdict, or the timeout path's
+     * answer when the budget runs out. What it costs is time: the interrupted execution waits for that hook.
      */
     private static <C extends HookContext> HookResult onInterrupted(ExecutionHook<C> hook) {
         log.warn("Hook execution interrupted before a verdict was returned; treating as BLOCKED. hook={}", hook);

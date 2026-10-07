@@ -710,6 +710,26 @@ class RollingContextEngineTest {
     }
 
     @Nested
+    class CancelledSummary {
+
+        @Test
+        void aSummaryCancelledWithItsExecutionDoesNotMoveTheBreaker() {
+            // EE-95: the execution was interrupted; that says nothing about whether compaction works.
+            summarizer.fail = true;
+            summarizer.failure = new at.aimon.core.llm.exception.LlmCallCancelledException("aborted by cancellation");
+            conversation(10, 60);
+            final RollingContextEngine engine = engine();
+
+            for (int i = 0; i < 4; i++) {
+                assertThat(engine.prepare(request()).getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            }
+
+            assertThat(failures.get(buffer.getSessionId())).isZero();
+            assertThat(summarizer.summarized).as("the breaker never opened").hasSize(4);
+        }
+    }
+
+    @Nested
     class ThrowingEngine {
 
         @Test
@@ -872,6 +892,7 @@ class RollingContextEngineTest {
         private final List<CompactionResult> installed = new ArrayList<>();
         private int compacted;
         private boolean fail;
+        private Exception failure = new IllegalStateException("provider down");
         private boolean throwOnSummarize;
         private boolean throwOnInstall;
         private Runnable duringSummarize = () -> {
@@ -902,7 +923,7 @@ class RollingContextEngineTest {
                     .preCompactTokenCount(100).messagesSummarized(request.getMessages().size()).startedAt(now)
                     .completedAt(now).build();
             return fail
-                    ? CompactionResult.failure(new IllegalStateException("provider down"), metadata)
+                    ? CompactionResult.failure(failure, metadata)
                     : CompactionResult.success("SUMMARY-" + summarized.size(), metadata);
         }
 

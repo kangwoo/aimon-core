@@ -58,6 +58,14 @@ public final class SkillHookSet {
     private static final List<HookEventType<?>> GUARD_EVENTS = List.of(HookEventType.ON_START, HookEventType.PRE_TOOL,
             HookEventType.PERMISSION_REQUEST, HookEventType.PRE_COMPACT);
 
+    /**
+     * The events whose hooks record what already happened inside an execution. They carry the execution's
+     * cancellation signal only while it has not tripped, and they are where {@code ignoreInterrupt} is honoured.
+     */
+    private static final List<HookEventType<?>> REPORT_EVENTS = List.of(HookEventType.POST_TOOL, HookEventType.ON_STOP,
+            HookEventType.SUBAGENT_START, HookEventType.SUBAGENT_STOP, HookEventType.PERMISSION_DENIED,
+            HookEventType.POST_COMPACT);
+
     private static final SkillHookSet EMPTY = builder().build();
 
     private final Map<HookEventType<?>, List<ExecutionHook<?>>> byEvent;
@@ -106,6 +114,18 @@ public final class SkillHookSet {
      */
     public static List<HookEventType<?>> guardEvents() {
         return GUARD_EVENTS;
+    }
+
+    /**
+     * Returns the events whose hooks report something that already happened inside an execution &mdash;
+     * {@code postTool}, {@code onStop}, {@code subagentStart}, {@code subagentStop}, {@code permissionDenied} and
+     * {@code postCompact}. These are the events on which a hook may declare {@code ignoreInterrupt}: a report can be
+     * left to finish after an interrupt, a {@linkplain #guardEvents() guard} cannot.
+     *
+     * @return immutable list (never null)
+     */
+    public static List<HookEventType<?>> reportEvents() {
+        return REPORT_EVENTS;
     }
 
     /**

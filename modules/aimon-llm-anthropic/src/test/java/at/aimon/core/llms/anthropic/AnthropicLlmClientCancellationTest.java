@@ -18,6 +18,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -27,6 +28,8 @@ import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.RawMessageStreamEvent;
 import com.anthropic.services.blocking.MessageService;
 
+import at.aimon.core.agent.prompt.Staticness;
+import at.aimon.core.agent.prompt.SystemPromptPart;
 import at.aimon.core.agent.prompt.SystemPromptParts;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmCancellation;
@@ -253,5 +256,48 @@ class AnthropicLlmClientCancellationTest {
 
         verify(mockMessageService, never()).create(any(MessageCreateParams.class));
         verify(mockMessageService, never()).createStreaming(any(MessageCreateParams.class));
+    }
+
+    @Test
+    @DisplayName("A one-part system prompt with a live token builds the request the String overload builds")
+    void singlePartPromptWithALiveToken_buildsTheSameRequestAsTheStringOverload() {
+        // The compaction engine's summary call (EE-95): it used to go through the String overload, and with the
+        // execution's signal in hand it wraps the same prompt as one part and passes a live token. What reaches the
+        // API must not change with that — same system text, no cache breakpoint added — only the transport does.
+        final String prompt = "You summarize conversations.";
+        final List<Message> messages = List.of(Message.user("first"), Message.assistant("one"), Message.user("go"));
+        final LlmModel model = LlmModel.builder().build();
+        when(mockMessageService.create(any(MessageCreateParams.class)))
+                .thenThrow(new RuntimeException("blocking-create-was-invoked"));
+        @SuppressWarnings("unchecked")
+        StreamResponse<RawMessageStreamEvent> streamResponse = mock(StreamResponse.class);
+        when(streamResponse.stream()).thenReturn(Stream.empty());
+        when(mockMessageService.createStreaming(any(MessageCreateParams.class))).thenReturn(streamResponse);
+        AnthropicLlmClient client = createClientWithMock();
+        LlmCancellation live = new LlmCancellation() {
+            @Override
+            public boolean isCancelled() {
+                return false;
+            }
+
+            @Override
+            public void onCancel(Runnable abort) {
+                // never fired here
+            }
+        };
+
+        assertThatThrownBy(
+                () -> client.sendMessage(prompt, messages, Collections.emptyList(), model, LlmCallMetadata.empty()))
+                .isInstanceOf(LlmClientException.class);
+        client.sendMessage(
+                SystemPromptParts.of(List.of(SystemPromptPart.builder().content(prompt).staticness(Staticness.STATIC)
+                        .kind("compaction-summary-instructions").build())),
+                messages, Collections.emptyList(), model, LlmCallMetadata.empty(), live);
+
+        ArgumentCaptor<MessageCreateParams> blocking = ArgumentCaptor.forClass(MessageCreateParams.class);
+        ArgumentCaptor<MessageCreateParams> streaming = ArgumentCaptor.forClass(MessageCreateParams.class);
+        verify(mockMessageService).create(blocking.capture());
+        verify(mockMessageService).createStreaming(streaming.capture());
+        assertThat(streaming.getValue()).isEqualTo(blocking.getValue());
     }
 }

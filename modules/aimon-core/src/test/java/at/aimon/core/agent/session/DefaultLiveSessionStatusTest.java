@@ -264,6 +264,34 @@ class DefaultLiveSessionStatusTest {
     }
 
     @Test
+    @DisplayName("interruptible turns false once the executor has closed the turn's coordinator (EE-93)")
+    void turnWhoseCoordinatorIsClosedIsNotInterruptible() throws Exception {
+        final OrcaAgentRuntime context = createContext();
+        // A slash-command turn after its onStart hooks, and any turn between the end of its work and its retirement:
+        // the turn is still active, and the executor is done with the coordinator it published.
+        final CapturingExecutor executor = new CapturingExecutor(newTracker()).withoutTracker();
+        final SessionId sessionId = SessionId.of("status-closed-coordinator");
+
+        try (DefaultLiveSession session = new DefaultLiveSession(sessionId, context, executor,
+                LiveSessionOptions.defaults())) {
+            final CompletionStage<?> stage = session.submitAsync("/help", e -> {
+            });
+            assertThat(executor.awaitObserverInvoked(1, TimeUnit.SECONDS)).isTrue();
+            assertThat(session.status().isInterruptible()).as("during the onStart hooks").isTrue();
+
+            executor.lastCoordinator().close();
+
+            assertThat(session.status().isInterruptible()).as("once the command runs").isFalse();
+            // And the flag is telling the truth: the interrupt reaches nothing.
+            session.interrupt(InterruptReason.USER_SIGINT);
+            assertThat(executor.lastCoordinator().getSignal().isCancelled()).isFalse();
+
+            executor.completeNext(result(sessionId));
+            stage.toCompletableFuture().get(1, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     @DisplayName("queueDepth reflects the wired mid-turn queue while a turn is in flight")
     void queueDepthReflectsWiredQueue() throws Exception {
         final OrcaAgentRuntime context = createContext();
