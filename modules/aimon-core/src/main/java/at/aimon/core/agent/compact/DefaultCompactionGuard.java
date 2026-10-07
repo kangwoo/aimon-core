@@ -27,6 +27,7 @@ import at.aimon.core.llm.ModelContextWindowRegistry;
 import at.aimon.core.llm.Role;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.ToolUseResult;
+import at.aimon.core.llm.exception.LlmCallCancelledException;
 import at.aimon.core.llm.token.TokenEstimator;
 
 /**
@@ -453,7 +454,8 @@ public class DefaultCompactionGuard implements CompactionGuard {
 
     /**
      * Increments the circuit-breaker failure counter only for transient failures. Hook-blocks and reentrant calls are
-     * intentional / programmer-error signals and must not silently disable AUTO compaction.
+     * intentional / programmer-error signals and must not silently disable AUTO compaction; a summary call cancelled
+     * with its execution says nothing about whether compaction works.
      */
     private void recordFailureIfTransient(SessionId sessionId, CompactionResult result) {
         final Exception error = result.getError().orElse(null);
@@ -467,6 +469,11 @@ public class DefaultCompactionGuard implements CompactionGuard {
         }
         if (error instanceof NothingToCompactException) {
             log.debug("Nothing to compact for session {}; not counted toward circuit breaker", sessionId);
+            return;
+        }
+        if (error instanceof LlmCallCancelledException) {
+            log.debug("Compaction summary call cancelled with its execution for session {}; not counted toward"
+                    + " circuit breaker", sessionId);
             return;
         }
         recordFailure(sessionId);

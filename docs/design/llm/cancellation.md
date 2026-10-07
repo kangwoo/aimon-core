@@ -212,10 +212,11 @@ blocking `.create()` 에는 진행 중에 걸 수 있는 취소 핸들이 없다
 아니라 **어댑트하는 쪽**(`at.aimon.core.agent.interrupt`)에 둔다 — agent 는 llm 에 의존할 수 있고 반대는 안 되기
 때문이다(§2.1).
 
-**`CancellationSignal.onCancel` 에는 deregister 가 없다.** 한 실행은 LLM 호출을 여러 번(iteration 당 1회 + 게이트웨이
-재시도) 내므로, 호출마다 리스너를 등록하면 리스너와 이미 끝난 스트림 참조가 무한히 쌓이고 trip 시 끝난 호출의 abort
-까지 전부 발화한다. 그래서 리스너를 **실행당 정확히 하나** 등록하고, 그 하나가 "현재 in-flight 콜" 의 abort 로
-팬아웃한다.
+**리스너는 실행당 하나다.** 한 실행은 LLM 호출을 여러 번(iteration 당 1회 + 게이트웨이 재시도) 내므로, 호출마다
+리스너를 등록해 두면 리스너와 이미 끝난 스트림 참조가 쌓이고 trip 시 끝난 호출의 abort 까지 전부 발화한다. 그래서
+리스너를 **실행당 정확히 하나** 등록하고, 그 하나가 "현재 in-flight 콜" 의 abort 로 팬아웃한다. (이 설계를 정할 때
+`CancellationSignal.onCancel` 에는 deregister 가 없었다. 지금은 `Registration` 을 돌려준다 — 그래도 실행기의 브릿지는
+신호만큼 살므로 뗄 일이 없고, 하나로 충분하다는 결론은 그대로다.)
 
 ```java
 public final class SignalBackedLlmCancellation implements LlmCancellation {
@@ -235,6 +236,11 @@ public final class SignalBackedLlmCancellation implements LlmCancellation {
     public void clearAbort() { currentAbort.set(null); }   // 콜 종료 시 — late-abort·참조 누수 방지
 }
 ```
+
+**신호보다 짧게 사는 브릿지는 리스너를 떼어야 한다.** 압축 엔진은 요약 호출 하나를 위해 실행의 신호 위에 브릿지를
+만든다(EE-95). 그 브릿지를 남겨 두면 압축마다 리스너가 하나씩, 실행이 끝날 때까지 쌓인다. 그래서 브릿지는
+`AutoCloseable` 이고 `close()` 가 등록을 걷는다 — 엔진은 호출을 try-with-resources 로 감싼다. 실행기의 브릿지는 닫지
+않는다.
 
 set 과 이미-취소됨 확인 사이의 경합으로 같은 abort 가 두 번 발화할 수 있다. abort 가 멱등이므로 무해하다.
 
@@ -351,7 +357,7 @@ core 경로는 `modules/aimon-core/src/main/java/at/aimon/core/` 기준, provide
 | `llm/retry/LlmRetryPolicy.java`, `llm/retry/LlmFallbackPolicy.java` | 설정 집합과 무관한 non-retryable · non-activating carve-out |
 | `llm/streaming/ChunkAggregator.java` | 스트리밍 라우팅의 재조립, 깨진 인자 관대 처리, usage 폴백 |
 | `llm/logging/LoggingLlmClient.java`, `llm/usage/MeteringLlmClient.java`, `llm/tagging/TaggingLlmClient.java`, `llm/tagging/BoundMetadataLlmClient.java`, `tracing/impl/TracingLlmClient.java` | 다섯 데코레이터의 same-instance 전파 |
-| `agent/interrupt/SignalBackedLlmCancellation.java` | deregister 부재, 단일 리스너, `clearAbort` |
+| `agent/interrupt/SignalBackedLlmCancellation.java` | 단일 리스너, `clearAbort`, 호출 하나짜리 브릿지의 `close()` |
 | `agent/impl/orca/OrcaAgentExecutor.java` | 턴 배선, 취소 예외 매핑, `handleInterrupted` |
 | `subagent/execution/DefaultSubagentExecutor.java` | 포크 배선, catch 순서, `createInterruptedResult` |
 | `subagent/task/TaskStopSignal.java`, `subagent/task/RunningTaskHandle.java` | cross-node 정지 경로의 끝 |

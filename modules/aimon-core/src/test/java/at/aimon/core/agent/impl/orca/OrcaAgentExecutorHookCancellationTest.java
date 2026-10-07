@@ -316,6 +316,43 @@ class OrcaAgentExecutorHookCancellationTest {
     }
 
     @Test
+    @DisplayName("EE-95: an interrupt during an AUTO summary call over the blocking limit ends the turn INTERRUPTED")
+    void reactTurn_interruptDuringTheSummaryCall_overTheBlockingLimit_endsTheTurnInterrupted() throws Exception {
+        final Future<OrcaAgentExecutionResult> turn = turnThread
+                .submit(() -> executor().execute(runtime(engineOverTheBlockingLimit()), request("hi")));
+        assertThat(llmClient.summaryCallStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        published.get().requestInterrupt(InterruptReason.USER_SIGINT);
+        final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
+
+        // The call was aborted, not waited out: the client saw its abort lever pulled.
+        assertThat(llmClient.summaryAbortRan).isTrue();
+        // The guard answers BLOCK for a compaction that failed over the limit, and that BLOCK is the interrupt.
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
+        assertThat(llmClient.calls).as("no loop call").hasValue(0);
+        assertThat(result.getCompactionEvents()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("EE-95: an interrupt during an AUTO summary call under the blocking limit ends the turn INTERRUPTED")
+    void reactTurn_interruptDuringTheSummaryCall_inTheAutoBand_endsTheTurnInterrupted() throws Exception {
+        final Future<OrcaAgentExecutionResult> turn = turnThread
+                .submit(() -> executor().execute(runtime(engineAt(7_500)), request("hi")));
+        assertThat(llmClient.summaryCallStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        published.get().requestInterrupt(InterruptReason.USER_SIGINT);
+        final OrcaAgentExecutionResult result = turn.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
+
+        assertThat(llmClient.summaryAbortRan).isTrue();
+        // Here the guard answers COMPACT with the failed attempt; the loop goes on to its own call, which is never
+        // made on a tripped signal.
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
+        assertThat(llmClient.calls).as("no loop call").hasValue(0);
+        // The attempt is reported like any other compaction that was attempted and failed: one record, nothing
+        // summarized into the view.
+        assertThat(result.getCompactionEvents()).singleElement()
+                .satisfies(event -> assertThat(event.getPostCompactTokenCount()).isZero());
+    }
+
+    @Test
     @DisplayName("a BLOCK with no interrupt behind it is still a context-window failure")
     void reactTurn_compactionBlockedWithoutAnInterrupt_isStillAnError() {
         final ContextEngine blocking = new StubContextEngine(
@@ -356,7 +393,12 @@ class OrcaAgentExecutorHookCancellationTest {
 
     /** The default engine with every estimate in the blocking band, so only a compaction can let the turn go on. */
     private ContextEngine engineOverTheBlockingLimit() {
-        final TokenEstimator overTheLimit = new FixedTokenEstimator(9_000);
+        return engineAt(9_000);
+    }
+
+    /** The default engine with every estimate fixed: auto-compact from 7000, blocking from 8500. */
+    private ContextEngine engineAt(int estimate) {
+        final TokenEstimator overTheLimit = new FixedTokenEstimator(estimate);
         final CompactionEngine compactionEngine = DefaultCompactionEngine.withDefaults(llmClient, overTheLimit,
                 new DefaultHookExecutionManager());
         final DefaultCompactionGuard guard = new DefaultCompactionGuard(compactionEngine,
@@ -515,9 +557,36 @@ class OrcaAgentExecutorHookCancellationTest {
         }
     }
 
-    /** Answers every call with a final text and counts the calls. */
+    /**
+     * Answers every call with a final text and counts the calls. A compaction summary call that is handed a
+     * cancellation is not counted: it blocks until its abort lever is pulled, as a provider's call does, and records
+     * that it was.
+     */
     private static final class CountingLlmClient implements LlmClient {
         final AtomicInteger calls = new AtomicInteger();
+        final CountDownLatch summaryCallStarted = new CountDownLatch(1);
+        final AtomicBoolean summaryAbortRan = new AtomicBoolean();
+
+        @Override
+        public LlmResponse sendMessage(at.aimon.core.agent.prompt.SystemPromptParts systemPromptParts,
+                List<Message> messages, List<ToolDefinition> tools, LlmModel modelConfig, LlmCallMetadata metadata,
+                at.aimon.core.llm.LlmCancellation cancellation) {
+            if (metadata.getFeature().filter(LlmCallMetadata.Feature.COMPACTION::equals).isEmpty()) {
+                return sendMessage(systemPromptParts.concatenated(), messages, tools, modelConfig, metadata);
+            }
+            final CountDownLatch aborted = new CountDownLatch(1);
+            cancellation.onCancel(() -> {
+                summaryAbortRan.set(true);
+                aborted.countDown();
+            });
+            summaryCallStarted.countDown();
+            try {
+                aborted.await(COMMAND_RUNTIME.toMillis(), TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            throw new at.aimon.core.llm.exception.LlmCallCancelledException("summary call aborted by cancellation");
+        }
 
         @Override
         public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,

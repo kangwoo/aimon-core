@@ -18,6 +18,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -28,6 +29,8 @@ import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.services.blocking.ChatService;
 import com.openai.services.blocking.chat.ChatCompletionService;
 
+import at.aimon.core.agent.prompt.Staticness;
+import at.aimon.core.agent.prompt.SystemPromptPart;
 import at.aimon.core.agent.prompt.SystemPromptParts;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmCancellation;
@@ -261,5 +264,55 @@ class OpenAILlmClientCancellationTest {
 
         verify(mockChatCompletionService, never()).create(any(ChatCompletionCreateParams.class));
         verify(mockChatCompletionService, never()).createStreaming(any(ChatCompletionCreateParams.class));
+    }
+
+    @Test
+    @DisplayName("A one-part system prompt with a live token builds the request the String overload builds")
+    void singlePartPromptWithALiveToken_buildsTheSameRequestAsTheStringOverload() {
+        // The compaction engine's summary call (EE-95): it used to go through the String overload, and with the
+        // execution's signal in hand it wraps the same prompt as one part and passes a live token. What the model is
+        // sent must not change with that; only the transport does (the streaming call also asks for usage).
+        final String prompt = "You summarize conversations.";
+        final List<Message> messages = List.of(Message.user("first"), Message.assistant("one"), Message.user("go"));
+        final LlmModel model = LlmModel.builder().build();
+        when(mockChatCompletionService.create(any(ChatCompletionCreateParams.class)))
+                .thenThrow(new RuntimeException("blocking-create-was-invoked"));
+        @SuppressWarnings("unchecked")
+        StreamResponse<ChatCompletionChunk> streamResponse = mock(StreamResponse.class);
+        when(streamResponse.stream()).thenReturn(Stream.empty());
+        when(mockChatCompletionService.createStreaming(any(ChatCompletionCreateParams.class)))
+                .thenReturn(streamResponse);
+        OpenAILlmClient client = createClientWithMock();
+        LlmCancellation live = new LlmCancellation() {
+            @Override
+            public boolean isCancelled() {
+                return false;
+            }
+
+            @Override
+            public void onCancel(Runnable abort) {
+                // never fired here
+            }
+        };
+
+        assertThatThrownBy(
+                () -> client.sendMessage(prompt, messages, Collections.emptyList(), model, LlmCallMetadata.empty()))
+                .isInstanceOf(LlmClientException.class);
+        client.sendMessage(
+                SystemPromptParts.of(List.of(SystemPromptPart.builder().content(prompt).staticness(Staticness.STATIC)
+                        .kind("compaction-summary-instructions").build())),
+                messages, Collections.emptyList(), model, LlmCallMetadata.empty(), live);
+
+        ArgumentCaptor<ChatCompletionCreateParams> blocking = ArgumentCaptor.forClass(ChatCompletionCreateParams.class);
+        ArgumentCaptor<ChatCompletionCreateParams> streaming = ArgumentCaptor
+                .forClass(ChatCompletionCreateParams.class);
+        verify(mockChatCompletionService).create(blocking.capture());
+        verify(mockChatCompletionService).createStreaming(streaming.capture());
+        // The streaming call's one addition (stream_options, to get usage) put onto the blocking request makes the
+        // two equal: everything else is the same request.
+        assertThat(blocking.getValue().streamOptions()).isEmpty();
+        assertThat(streaming.getValue()).isEqualTo(blocking.getValue().toBuilder()
+                .streamOptions(streaming.getValue().streamOptions().orElseThrow()).build());
+        assertThat(streaming.getValue().messages()).isEqualTo(blocking.getValue().messages());
     }
 }

@@ -42,6 +42,29 @@ class SignalBackedLlmCancellationTest {
     }
 
     @Test
+    @DisplayName("close takes the listener off the signal, and a later trip reaches no abort (EE-95)")
+    void closeRemovesTheListener() {
+        final CountingSignal counting = new CountingSignal();
+        final SignalBackedLlmCancellation shortLived = new SignalBackedLlmCancellation(counting);
+        assertThat(counting.listenerCount()).isEqualTo(1);
+
+        shortLived.close();
+        shortLived.close();
+
+        assertThat(counting.listenerCount()).as("one removal, however often it is closed").isZero();
+
+        // And on a real signal: an adapter made for one call does not fire that call's abort after the call is over.
+        final DefaultCancellationSignal signal = new DefaultCancellationSignal();
+        final AtomicInteger fired = new AtomicInteger();
+        try (SignalBackedLlmCancellation perCall = new SignalBackedLlmCancellation(signal)) {
+            perCall.onCancel(fired::incrementAndGet);
+        }
+        signal.trip(InterruptReason.USER_SIGINT);
+
+        assertThat(fired).hasValue(0);
+    }
+
+    @Test
     @DisplayName("isCancelled delegates to the underlying signal")
     void isCancelledDelegates() {
         final DefaultCancellationSignal signal = new DefaultCancellationSignal();
@@ -155,7 +178,12 @@ class SignalBackedLlmCancellationTest {
         @Override
         public Registration onCancel(Runnable listener) {
             listeners++;
-            return () -> listeners--;
+            final java.util.concurrent.atomic.AtomicBoolean removed = new java.util.concurrent.atomic.AtomicBoolean();
+            return () -> {
+                if (removed.compareAndSet(false, true)) {
+                    listeners--;
+                }
+            };
         }
     }
 }

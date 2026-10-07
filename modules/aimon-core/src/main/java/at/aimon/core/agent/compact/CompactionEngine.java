@@ -29,6 +29,14 @@ import at.aimon.core.agent.session.transcript.TranscriptBuffer;
  * {@link #summarize(SummaryRequest)} does only the first half: it returns the summary and leaves every transcript
  * alone, for a caller that records the summary somewhere else than the messages it replaces. An engine advertises the
  * second entry through {@link #supportsSummarize()}, so a caller can tell whether it is there without calling it.
+ *
+ * <p>
+ * <b>Cancellation.</b> Both request types can carry the compacting execution's cancellation signal. An engine hands it
+ * to its compaction hooks and ties its summary LLM call to it, so an interrupt during a compaction does not wait the
+ * call out. A summary cancelled that way is returned as a failure carrying
+ * {@link at.aimon.core.llm.exception.LlmCallCancelledException} — a result, not a throw — and callers that count
+ * failures toward a circuit breaker do not count it. An engine that ignores the signal behaves as before: the call
+ * runs to its end and the execution reads the interrupt at its next checkpoint.
  */
 public interface CompactionEngine {
 

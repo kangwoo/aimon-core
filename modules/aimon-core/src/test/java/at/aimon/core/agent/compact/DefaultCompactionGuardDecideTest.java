@@ -84,6 +84,24 @@ class DefaultCompactionGuardDecideTest {
     }
 
     @Test
+    void aSummaryCancelledWithItsExecutionDoesNotMoveTheBreaker() {
+        // EE-95: the execution was interrupted; that says nothing about whether compaction works.
+        final Instant now = Instant.now();
+        final CompactionResult cancelled = CompactionResult.failure(
+                new at.aimon.core.llm.exception.LlmCallCancelledException("summary call aborted by cancellation"),
+                CompactionMetadata.builder().trigger(CompactionTrigger.AUTO).startedAt(now).completedAt(now).build());
+
+        final CompactionDecision auto = guard.decide(SESSION, "sys", viewOf(4300), MODEL, false, forced -> cancelled);
+        final CompactionDecision blocking = guard.decide(SESSION, "sys", viewOf(5000), MODEL, false,
+                forced -> cancelled);
+
+        assertThat(auto.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+        // Over the blocking limit the answer is BLOCK, which both executors read as the interrupt it came from.
+        assertThat(blocking.getAction()).isEqualTo(CompactionDecision.Action.BLOCK);
+        assertThat(failures.get(SESSION)).isZero();
+    }
+
+    @Test
     void aConcurrentDecisionOnTheSameSessionAnswersNone() throws Exception {
         final CountDownLatch inside = new CountDownLatch(1);
         final CountDownLatch release = new CountDownLatch(1);

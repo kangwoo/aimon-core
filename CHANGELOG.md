@@ -33,6 +33,20 @@ the build changed in it and the reasons are in
 - **A `ShellActionExecutor` may be handed a view of the hook context.** For an `ignoreInterrupt` hook the `context`
   argument of `run` is not the event's own context type but a wrapper whose `getExecutionCancellation()` is empty. Use
   it through `HookContext` only; an executor that downcasts it fails for exactly those hooks.
+- **The AUTO-compaction summary call is aborted by an interrupt (EE-95).** When the compaction request carries the
+  execution's signal, `DefaultCompactionEngine` makes the summary call with a cancellation token, so an interrupt
+  during a compaction no longer waits the call out; a signal that has already tripped makes no call. The turn or fork
+  ends `INTERRUPTED`. Two things an embedder can see: (1) while a signal is present the summary call runs over the
+  provider's **streaming transport** — a provider handed a live token reroutes a blocking call that way; the request
+  itself is the same (on OpenAI Chat Completions the streaming call adds `stream_options`). `/compact`, and any
+  request without a signal, uses the same overload as before. A custom `LlmClient` that does not override the
+  cancellation-aware `sendMessage` behaves as before. (2) A cancelled summary comes back as
+  `CompactionResult.failure` carrying `LlmCallCancelledException`, and neither circuit breaker
+  (`DefaultCompactionGuard`, `RollingContextEngine`) counts it. A client that throws that exception while the signal
+  is live is reported as an ordinary `LlmClientException` and is counted. Below the blocking limit an interrupted turn
+  reports the failed attempt in `compactionEvents`, as any failed compaction is reported (EE-100).
+- **`SignalBackedLlmCancellation` is `AutoCloseable`.** `close()` removes its listener from the signal, for an adapter
+  that lives shorter than the signal. The executors' per-execution instances are not closed and behave as before.
 
 ### Changed: a hook's shell command follows the execution's interrupt on every event that has one (EE-80)
 

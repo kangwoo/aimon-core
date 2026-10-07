@@ -12,18 +12,25 @@ import java.util.function.Function;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.compact.CompactionDecision;
+import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionResult;
+import at.aimon.core.agent.compact.DefaultCompactionEngine;
+import at.aimon.core.agent.compact.DefaultCompactionGuard;
 import at.aimon.core.agent.context.ContextDecision;
 import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.context.ContextRequest;
 import at.aimon.core.agent.context.ContextView;
+import at.aimon.core.agent.context.DefaultContextEngine;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptReason;
+import at.aimon.core.agent.prompt.SystemPromptParts;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
@@ -33,17 +40,22 @@ import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.event.OnStartHook;
 import at.aimon.core.hook.event.OnStopHook;
 import at.aimon.core.hook.execution.HookResult;
+import at.aimon.core.llm.InMemoryModelContextWindowRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
+import at.aimon.core.llm.LlmCancellation;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.ModelContextLimits;
 import at.aimon.core.llm.StopReason;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
+import at.aimon.core.llm.exception.LlmCallCancelledException;
 import at.aimon.core.llm.exception.LlmPromptTooLongException;
 import at.aimon.core.llm.invoke.LlmCallGateway;
+import at.aimon.core.llm.token.TokenEstimator;
 import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentContent;
 import at.aimon.core.subagent.SubagentMetadata;
@@ -146,6 +158,52 @@ class DefaultSubagentExecutorHookCancellationTest {
         assertThat(llm.calls).isZero();
     }
 
+    @ParameterizedTest(name = "estimate={0}")
+    @ValueSource(ints = {9_000, 7_500})
+    @DisplayName("EE-95: an interrupt during a fork's AUTO summary call aborts the call and ends the fork INTERRUPTED")
+    void interruptDuringTheSummaryCall(int estimate) {
+        // 9000 is over the blocking limit (the guard answers BLOCK), 7500 is in the auto band (it answers COMPACT with
+        // the failed attempt and the loop's own call is then never made). Either way the fork ends interrupted.
+        llm.duringTheSummaryCall = () -> spawner.requestInterrupt(InterruptReason.USER_SIGINT);
+
+        final SubagentExecutionResult result = execute(engineAt(estimate), 10);
+
+        assertThat(llm.summaryAbortRan).as("the client saw the summary call's abort lever pulled").isTrue();
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
+        assertThat(result.getErrorMessage()).doesNotContain("Context window exceeded");
+        assertThat(llm.calls).as("no loop call").isZero();
+    }
+
+    /** The default engine with every estimate fixed: auto-compact from 7000, blocking from 8500. */
+    private ContextEngine engineAt(int estimate) {
+        final TokenEstimator fixed = new TokenEstimator() {
+            @Override
+            public int estimate(String systemPrompt, List<Message> messages) {
+                return estimate;
+            }
+
+            @Override
+            public int estimateMessage(Message message) {
+                return 0;
+            }
+
+            @Override
+            public int estimateText(String text) {
+                return 0;
+            }
+        };
+        final CompactionEngine compactionEngine = DefaultCompactionEngine.withDefaults(llm, fixed,
+                new DefaultHookExecutionManager());
+        final DefaultCompactionGuard guard = new DefaultCompactionGuard(compactionEngine,
+                InMemoryModelContextWindowRegistry.builder()
+                        .defaultLimits(ModelContextLimits.builder().contextWindow(10_000).reservedOutputTokens(1_000)
+                                .autoCompactBuffer(2_000).warningBuffer(1_000).blockingBuffer(500).build())
+                        .build(),
+                fixed);
+        return DefaultContextEngine.builder().compactionGuard(guard).compactionEngine(compactionEngine)
+                .tokenEstimator(fixed).build();
+    }
+
     private void assertOnStopCarriesTheForksLiveSignal() {
         final CancellationSignal forkSignal = onStartSignals.get(0).orElseThrow();
         assertThat(onStopSignals).singleElement()
@@ -191,7 +249,29 @@ class DefaultSubagentExecutorHookCancellationTest {
         private final Deque<LlmResponse> responses = new ArrayDeque<>();
         private Runnable beforeAnswering = () -> {
         };
+        private Runnable duringTheSummaryCall = () -> {
+        };
+        private boolean summaryAbortRan;
         private int calls;
+
+        /**
+         * A compaction summary call that is handed a cancellation: not counted as a loop call, and it ends the way a
+         * provider's call does when its abort lever is pulled while it runs.
+         */
+        @Override
+        public LlmResponse sendMessage(SystemPromptParts systemPromptParts, List<Message> messages,
+                List<ToolDefinition> tools, LlmModel modelConfig, LlmCallMetadata metadata,
+                LlmCancellation cancellation) {
+            if (metadata.getFeature().filter(LlmCallMetadata.Feature.COMPACTION::equals).isEmpty()) {
+                return sendMessage(systemPromptParts.concatenated(), messages, tools, modelConfig, metadata);
+            }
+            cancellation.onCancel(() -> summaryAbortRan = true);
+            duringTheSummaryCall.run();
+            if (summaryAbortRan) {
+                throw new LlmCallCancelledException("summary call aborted by cancellation");
+            }
+            return LlmResponse.text("a summary nobody interrupted");
+        }
 
         @Override
         public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
