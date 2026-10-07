@@ -27,8 +27,16 @@ waited for all of it: 34 seconds was measured. This happened whether or not any 
 - **The relay dispatcher is a pool of 2–4 threads**, not one, and a relay gives its thread back after every batch, so
   relays with a backlog take turns. A relay never has two drains in flight, so order within a turn is kept.
 
-`PostgresSessionSignalBus` still publishes one transaction per signal. The timeout bounds what that costs a turn, and
-on a long answer it means dropped deltas for remote subscribers rather than a late result.
+`PostgresSessionSignalBus` overrides `publishAll` as well: the list is one multi-row `INSERT` that rings the doorbell
+once, in one transaction — two round trips and one commit for up to 1,000 signals, where the default cost three round
+trips and a commit for each. One `NOTIFY` is enough because the listener never reads the id it carries; it fetches every
+row past its high-water mark, in id order. A row the server rejects rolls the batch back, and the batch is then
+published one signal at a time, so the one at fault fails alone and nothing is published twice. `publish` is unchanged.
+
+Not changed by this, and not new: the Postgres listener's high-water mark (`id > lastSeen`) never delivers a row whose
+transaction commits after a later id has already been fetched, which two concurrent publishers can produce. A batch
+holds its ids for a shorter time than a single `publish` does and there are far fewer transactions to collide, but a
+collision now loses that node a whole batch of deltas rather than one.
 
 ### Added: scheduled tasks survive a restart — `MongoScheduledTaskRepository`, and the engine reschedules what it finds stored (B-7)
 

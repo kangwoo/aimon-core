@@ -1,8 +1,16 @@
 package at.aimon.session.postgres;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -16,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import com.zaxxer.hikari.HikariDataSource;
 
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.exception.SessionSignalBusException;
 import at.aimon.core.agent.session.signal.SessionSignal;
 import at.aimon.core.agent.session.signal.SessionSignal.SignalKind;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
@@ -109,6 +118,150 @@ class PostgresSessionSignalBusIntegrationTest {
             assertThat(got).as("subscriber should receive EVENT").isNotNull();
             assertThat(got.getKind()).isEqualTo(SignalKind.EVENT);
             assertThat(got.getPayload()).containsEntry("type", "AssistantTextDelta").containsEntry("delta", "hello");
+        }
+    }
+
+    @Test
+    @DisplayName("publishAll delivers a 500-signal batch to another node's subscriber in list order, once, in one transaction")
+    void publishAllKeepsListOrder() throws Exception {
+        final SessionId id = SessionId.of("c-bus-batch");
+        final int count = 500;
+        final LinkedBlockingQueue<SessionSignal> received = new LinkedBlockingQueue<>();
+        try (SessionSignalBus.Subscription sub = busB.subscribe(id, received::offer)) {
+            Thread.sleep(100);
+            busA.publishAll(deltas(id, count));
+
+            assertThat(chunkIndexes(received, count)).isEqualTo(range(count));
+            assertThat(received.poll(300, TimeUnit.MILLISECONDS)).as("nothing is published twice").isNull();
+        }
+        assertThat(queryLong("SELECT count(*) FROM conversation_signal")).isEqualTo(count);
+        assertThat(queryLong("SELECT count(DISTINCT xmin::text) FROM conversation_signal"))
+                .as("transactions the batch was inserted by").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("publishAll splits a list longer than one statement and still delivers it in list order")
+    void publishAllSplitsAListLongerThanOneStatement() throws Exception {
+        final SessionId id = SessionId.of("c-bus-batch-split");
+        final int count = 2 * PostgresSessionSignalBus.MAX_BATCH_ROWS + 1;
+        final LinkedBlockingQueue<SessionSignal> received = new LinkedBlockingQueue<>();
+        try (SessionSignalBus.Subscription sub = busB.subscribe(id, received::offer)) {
+            Thread.sleep(100);
+            busA.publishAll(deltas(id, count));
+
+            assertThat(chunkIndexes(received, count)).isEqualTo(range(count));
+            assertThat(received.poll(300, TimeUnit.MILLISECONDS)).as("nothing is published twice").isNull();
+        }
+        assertThat(queryLong("SELECT count(DISTINCT xmin::text) FROM conversation_signal"))
+                .as("transactions the list was inserted by").isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("publishAll still delivers the signals around ones the server rejects, in order and once, and throws")
+    void publishAllDeliversTheSignalsAroundOnesTheServerRejects() throws Exception {
+        final SessionId id = SessionId.of("c-bus-batch-rejected");
+        // jsonb has no representation for U+0000, so the server turns the row away (22P05) and with it the whole
+        // statement — without saying which row it was.
+        final String rejected = "nul\u0000";
+        final LinkedBlockingQueue<SessionSignal> received = new LinkedBlockingQueue<>();
+        try (SessionSignalBus.Subscription sub = busB.subscribe(id, received::offer)) {
+            Thread.sleep(100);
+            final List<SessionSignal> batch = List.of(event(id, "a", "ok"), event(id, "bad-1", rejected),
+                    event(id, "b", "ok"), event(id, "bad-2", rejected), event(id, "c", "ok"));
+
+            assertThatThrownBy(() -> busA.publishAll(batch)).isInstanceOf(SessionSignalBusException.class).satisfies(
+                    e -> assertThat(e.getCause().getSuppressed()).as("the second rejected signal").hasSize(1));
+
+            final List<Object> markers = new ArrayList<>();
+            for (int i = 0; i < 3; i++) {
+                final SessionSignal got = received.poll(5, TimeUnit.SECONDS);
+                assertThat(got).as("signal %d that the server accepted", i).isNotNull();
+                markers.add(got.getPayload().get("marker"));
+            }
+            assertThat(markers).containsExactly("a", "b", "c");
+            assertThat(received.poll(300, TimeUnit.MILLISECONDS)).as("nothing is published twice").isNull();
+        }
+        assertThat(queryLong("SELECT count(*) FROM conversation_signal")).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("publishAll skips a signal whose payload cannot be encoded and keeps the rest in one transaction")
+    void publishAllSkipsASignalThatCannotBeEncoded() throws Exception {
+        final SessionId id = SessionId.of("c-bus-batch-unencodable");
+        final LinkedBlockingQueue<SessionSignal> received = new LinkedBlockingQueue<>();
+        try (SessionSignalBus.Subscription sub = busB.subscribe(id, received::offer)) {
+            Thread.sleep(100);
+            // A bean with no properties: Jackson refuses it, before anything is sent.
+            final SessionSignal unencodable = SessionSignal.builder().sessionId(id).kind(SignalKind.EVENT)
+                    .originNodeId("node-A").payload(Map.of("marker", "poison", "body", new Object())).build();
+            final List<SessionSignal> batch = List.of(event(id, "first", "ok"), unencodable, event(id, "last", "ok"));
+
+            assertThatThrownBy(() -> busA.publishAll(batch)).isInstanceOf(SessionSignalBusException.class);
+
+            final SessionSignal first = received.poll(5, TimeUnit.SECONDS);
+            final SessionSignal last = received.poll(5, TimeUnit.SECONDS);
+            assertThat(first).isNotNull();
+            assertThat(last).as("the signal after the unencodable one").isNotNull();
+            assertThat(first.getPayload()).containsEntry("marker", "first");
+            assertThat(last.getPayload()).containsEntry("marker", "last");
+            assertThat(received.poll(300, TimeUnit.MILLISECONDS)).as("nothing is published twice").isNull();
+        }
+        assertThat(queryLong("SELECT count(DISTINCT xmin::text) FROM conversation_signal"))
+                .as("an unencodable signal does not cost the batch its single transaction").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("publishAll of an empty list is a no-op that takes no connection")
+    void publishAllOfAnEmptyListIsANoOp() {
+        // A closed pool refuses every checkout, so returning normally means none was asked for.
+        publishPoolA.close();
+
+        assertThatCode(() -> busA.publishAll(List.of())).doesNotThrowAnyException();
+
+        assertThat(queryLong("SELECT count(*) FROM conversation_signal")).isZero();
+    }
+
+    private static List<SessionSignal> deltas(SessionId id, int count) {
+        final List<SessionSignal> batch = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            batch.add(SessionSignal.builder().sessionId(id).kind(SignalKind.EVENT).originNodeId("node-A")
+                    .payload(Map.of("type", "AssistantTextDelta", "delta", "d" + i, "chunkIndex", i)).build());
+        }
+        return batch;
+    }
+
+    private static List<Object> chunkIndexes(LinkedBlockingQueue<SessionSignal> received, int count)
+            throws InterruptedException {
+        final List<Object> chunks = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            final SessionSignal got = received.poll(5, TimeUnit.SECONDS);
+            assertThat(got).as("signal %d of the batch", i).isNotNull();
+            chunks.add(got.getPayload().get("chunkIndex"));
+        }
+        return chunks;
+    }
+
+    private static List<Object> range(int count) {
+        final List<Object> expected = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            expected.add(i);
+        }
+        return expected;
+    }
+
+    private static SessionSignal event(SessionId id, String marker, String body) {
+        return SessionSignal.builder().sessionId(id).kind(SignalKind.EVENT).originNodeId("node-A")
+                .payload(Map.of("type", "ToolCallCompleted", "marker", marker, "body", body)).build();
+    }
+
+    private static long queryLong(String sql) {
+        try (Connection c = PostgresTestSupport.dataSource().getConnection();
+                Statement s = c.createStatement();
+                ResultSet rs = s.executeQuery(sql)) {
+            rs.next();
+            return rs.getLong(1);
+        } catch (SQLException e) {
+            throw new IllegalStateException(sql, e);
         }
     }
 

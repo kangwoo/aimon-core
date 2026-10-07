@@ -317,7 +317,8 @@ claim(sessionId, agentRef, nodeId, lease)
 
 - **배치로 뺀다.** 쌓인 프레임을 최대 256개(`MAX_BATCH`)씩 `SessionSignalBus.publishAll` 한 번으로 보낸다.
   왕복 수가 backlog 건수가 아니라 건수 ÷ 배치에 비례한다. `publishAll` 의 기본 구현은 한 건씩 publish 하고,
-  publish 가 왕복인 백엔드(`MongoSessionSignalBus` — ordered `insertMany`)가 재정의한다.
+  publish 가 왕복인 백엔드(`MongoSessionSignalBus` — ordered `insertMany`, `PostgresSessionSignalBus` — 여러 행
+  `INSERT` 하나와 `NOTIFY` 한 번)가 재정의한다.
 - **디스패처 작업 하나에 배치 하나, 릴레이 하나에 작업 하나.** 릴레이는 drain 을 동시에 둘 띄우지 않는다
   (`wip` 카운터). 그래서 두 배치가 순서를 바꿔 나갈 수 없고, 한 릴레이가 디스패처 스레드를 둘 차지하지도
   않는다. 배치를 하나 보낸 뒤에는 디스패처 큐의 맨 뒤로 간다 — 버스가 모델보다 느리면 버퍼는 스트림이
