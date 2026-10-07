@@ -126,6 +126,7 @@ Spring Boot 스타터에서는 `SessionApprovalStore` · `AgentApprovalStore` ·
 | `idempotencyPrimaryTtl` | 24시간 | 성공한 턴의 결과를 중복 제출에 되돌려 줄 수 있는 기간. |
 | `idempotencySecondaryTtl` | 30초 | 이보다 오래된 `IN_FLIGHT` 항목은 스위퍼가 복구할 수 있다. `lockLease` 보다 커야 한다. |
 | `releaseInterruptTimeout` | 5초 | 캐시가 축출을 강제하기 전에 진행 중인 턴이 `releaseSession()` 을 따르기를 기다리는 최대 시간. |
+| `relayCloseDrainTimeout` | 2초 | 턴이 끝날 때 그 턴의 `EVENT` 프레임이 시그널 버스에 다 나가기를 기다리는 최대 시간. 넘으면 남은 텍스트·숙고 델타를 버리고 결과를 먼저 알린다. 종결 프레임은 그래도 발행된다. |
 
 **불변식:** `lockExtendInterval < lockLease`(`build()` 에서 강제)와 `idempotencySecondaryTtl > lockLease`. 어기면 건강한 노드에서 가짜 홀더 유실 복구가 일어난다.
 

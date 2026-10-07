@@ -153,6 +153,7 @@
 | 문서 | 무엇이 있나 |
 |------|------------|
 | [`backlog/orca-executor-speculative-side-work.md`](backlog/orca-executor-speculative-side-work.md) | 투기적 side-work — 착수 조건이 갖춰지지 않아 보류된 항목 |
+| [`backlog/self-managed-context-engine.md`](backlog/self-managed-context-engine.md) | 모델이 도구로 자기 뷰를 줄이는 context engine — 편집을 뷰 상태(`rewrites` · `trims`)로 받는 게이트, 롤링 안전망, 크기 알림까지는 정했고, 레코드 크기 · 요약 입력 · `trim` 세부 · 작업 노트와 저장 형식은 깨진 안과 제약만 적었다. 이 저장소의 과제에서 이득을 잰 값이 없어 보류 |
 
 ---
 

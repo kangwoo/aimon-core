@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.AbstractExecutorService;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
@@ -264,11 +265,16 @@ class SessionEventRelayOverflowTest {
     /**
      * Never runs the drain task, so the test controls exactly when the buffer is drained: {@code close()} drains
      * synchronously. Without this the dispatcher thread would race the producer and the buffer would rarely fill.
+     *
+     * <p>
+     * It refuses the task the way a shut-down executor does rather than swallowing it. {@code close()} hands its drain
+     * to the dispatcher and drains on the calling thread only when that is refused; a dispatcher that accepted the
+     * task and never ran it would leave {@code close()} waiting out its timeout.
      */
     private static final class NoopDispatcher extends AbstractExecutorService {
         @Override
         public void execute(Runnable command) {
-            // intentionally dropped
+            throw new RejectedExecutionException("dispatcher is shut down");
         }
 
         @Override

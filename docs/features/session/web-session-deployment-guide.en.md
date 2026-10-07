@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/session/web-session-deployment-guide.md
-source_commit: db4266a
+source_commit: 66e8d69
 ---
 
 # Web Session Manager — Deployment & Operations Guide
@@ -136,6 +136,7 @@ All defaults live in `SessionRouterBuilder`. The recommended starting points:
 | `idempotencyPrimaryTtl` | 24 h | How long a successful turn's result stays replayable on a duplicate submit. |
 | `idempotencySecondaryTtl` | 30 s | A lapsed `IN_FLIGHT` entry past this age is eligible for sweeper-driven recovery. Must be > `lockLease`. |
 | `releaseInterruptTimeout` | 5 s | Max wait for an active turn to honor `releaseSession()` before the cache forces eviction. |
+| `relayCloseDrainTimeout` | 2 s | Max wait, at the end of a turn, for that turn's `EVENT` frames to reach the signal bus. Past it the remaining text and reasoning deltas are dropped and the result is announced first. The terminal frame is still published. |
 
 **Invariant:** `lockExtendInterval < lockLease` (enforced at `build()`) and `idempotencySecondaryTtl > lockLease`. Violations cause spurious holder-loss recoveries on healthy nodes.
 

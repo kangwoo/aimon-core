@@ -309,8 +309,32 @@ claim(sessionId, agentRef, nodeId, lease)
 
 - 로컬 fan-out 은 `SubmissionPublisher.offer(item, 0L, NANOS, onDrop)` — demand 가 없는 구독자가 있으면
   **가장 오래된 이벤트를 버리지** 프로듀서를 세우지 않는다.
-- 원격 fan-out 은 유한 `ArrayBlockingQueue` 로 분리하고 라우터 소유 디스패처 스레드가 뺀다. Redis publish
-  지연이 턴을 세울 수 없다.
+- 원격 fan-out 은 유한 `ArrayBlockingQueue` 로 분리하고 라우터 소유 디스패처(`web-session-relay`, 2~4
+  스레드)가 뺀다. 버스의 publish 지연이 턴을 세울 수 없다.
+
+**버스가 빠르다고 가정하지 않는다.** publish 는 pub/sub 쓰기일 수도 있고 문서 insert 일 수도 있으며, 모델은
+데이터베이스가 insert 를 확인해 주는 것보다 훨씬 빨리 델타를 낸다. 여기서 두 가지가 나온다.
+
+- **배치로 뺀다.** 쌓인 프레임을 최대 256개(`MAX_BATCH`)씩 `SessionSignalBus.publishAll` 한 번으로 보낸다.
+  왕복 수가 backlog 건수가 아니라 건수 ÷ 배치에 비례한다. `publishAll` 의 기본 구현은 한 건씩 publish 하고,
+  publish 가 왕복인 백엔드(`MongoSessionSignalBus` — ordered `insertMany`, `PostgresSessionSignalBus` — 여러 행
+  `INSERT` 하나와 `NOTIFY` 한 번)가 재정의한다.
+- **디스패처 작업 하나에 배치 하나, 릴레이 하나에 작업 하나.** 릴레이는 drain 을 동시에 둘 띄우지 않는다
+  (`wip` 카운터). 그래서 두 배치가 순서를 바꿔 나갈 수 없고, 한 릴레이가 디스패처 스레드를 둘 차지하지도
+  않는다. 배치를 하나 보낸 뒤에는 디스패처 큐의 맨 뒤로 간다 — 버스가 모델보다 느리면 버퍼는 스트림이
+  끝날 때까지 비지 않으므로, 빌 때까지 도는 루프는 그 스레드를 다른 세션에게서 턴 내내 빼앗는다.
+- **`close()` 에는 상한이 있다.** `close()` 는 턴 스레드에서, 실행이 끝난 뒤 결과를 알리기 **전에** 돈다.
+  그러니 `close()` 가 기다리는 만큼 호출자가 기다린다. 발행은 디스패처에 남겨 두고 `close()` 는
+  `relayCloseDrainTimeout`(기본 2초)까지만 기다린다. 시간이 다하면 버퍼에 남은 델타(등급 0·1)를 버리고
+  세며, 구조 프레임은 버퍼에 남겨 디스패처가 마저 발행한다 — 이때 종결 프레임은 `TURN_RESULT` **뒤에**
+  도착할 수 있다. 턴의 결과가 best-effort rail 뒤에 붙잡히는 일은 없다. 디스패처가 이미 내려간 뒤(라우터
+  종료)에는 발행할 다른 스레드가 없으므로 호출 스레드에서, 상한 없이 뺀다. 남겨 둔 프레임은 라우터가
+  종료되면 함께 사라진다.
+- **한 턴의 프레임이 다음 턴의 프레임 사이에 끼지 않는다.** 마감에서 프레임을 남긴 릴레이는 같은 세션의
+  다음 턴 릴레이에 `after(predecessor)` 로 넘겨지고(`DefaultSessionRouter.unfinishedRelays`), 후임은 전임이 다
+  내보낼 때까지 아무것도 발행하지 않는다. 수신 측은 `EVENT` 를 턴이 아니라 세션 단위로 읽으므로, 턴 N+1
+  한가운데에서 턴 N 의 종결 프레임을 보면 엉뚱한 스트림을 끝낸다. 버스가 건강하면 전임은 다음 턴이 시작하기
+  전에 이미 비어 있고 이 장치는 아무 일도 하지 않는다.
 
 **오버플로 정책**은 프레임이 다 같지 않다는 데서 나오고, 등급은 둘이 아니라 **셋**이다.
 
@@ -324,7 +348,8 @@ claim(sessionId, agentRef, nodeId, lease)
 찾아 버린다. 등급 비교가 있어야 하는 이유는 단순히 "둘 다 버릴 수 있다" 로 넓히면 두 등급이 **같아져서**
 숙고 폭주가 답 텍스트를 밀어내기 때문이다 — 압박 아래의 선택은 정반대여야 한다. 버릴 것이 하나도 없고
 들어오는 것도 구조 프레임일 때만 구조 프레임을 희생한다. 드롭은 세고(`getDroppedEventCount()`)
-`close()` 에서 보고한다 — 빈틈이 조용한 적은 없다.
+`close()` 에서 보고한다 — 빈틈이 조용한 적은 없다. `close()` 가 마감에서 버리는 델타도 같은 등급을 따르고
+같은 수에 더해진다.
 
 #### 5.5.2 페이로드 코덱 3종 — 평평한 원시값만
 
@@ -878,6 +903,7 @@ systemPrompt)` 를 호출하고, 그 계약이 *"세션이 있으면 읽고 없�
 | `idempotencyPrimaryTtl` / `secondaryTtl` | 24시간 / 30초 | §9.2 |
 | `idempotencyForwardTtl` | 5분 | 전달된 future 의 마감 (§9.1) |
 | `releaseInterruptTimeout` | 5초 | §6.3 A, §7.7 |
+| `relayCloseDrainTimeout` | 2초 | 턴 종료가 `EVENT` rail 을 기다리는 상한 (§5.5.1) |
 
 내부 컴포넌트(`LeaseRenewer`, `InProcessEventPublisher`, `LiveSessionCache`)는 라우터가 소유하며 외부에서
 주입하지 않는다.

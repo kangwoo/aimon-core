@@ -1,5 +1,6 @@
 package at.aimon.session.mongodb;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -14,6 +15,7 @@ import org.bson.Document;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.mongodb.MongoBulkWriteException;
 import com.mongodb.MongoChangeStreamException;
 import com.mongodb.MongoCommandException;
 import com.mongodb.MongoException;
@@ -24,6 +26,7 @@ import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.Aggregates;
 import com.mongodb.client.model.Filters;
+import com.mongodb.client.model.InsertManyOptions;
 import com.mongodb.client.model.changestream.ChangeStreamDocument;
 import com.mongodb.client.model.changestream.FullDocument;
 
@@ -39,7 +42,9 @@ import at.aimon.session.mongodb.internal.SessionSignalCodec;
  * MongoDB Change Streams-backed {@link SessionSignalBus} per design §4.2.
  *
  * <p>
- * Publishes signals as {@code insertOne} documents in the capped {@code conversation_signals} collection. A single
+ * Publishes signals as documents inserted into the capped {@code conversation_signals} collection: {@link #publish}
+ * with one {@code insertOne}, {@link #publishAll} with one ordered {@code insertMany} for the whole list, which is what
+ * keeps a turn's event stream from costing a round trip per text delta. A single
  * background watcher thread per bus instance opens one change-stream cursor with a static
  * {@code $match: { operationType: "insert" }} pipeline; the dispatcher routes incoming inserts to subscribers by
  * looking up the {@code sessionId} field in an in-memory subscriber map.
@@ -165,6 +170,101 @@ public final class MongoSessionSignalBus implements SessionSignalBus, AutoClosea
             throw new SessionSignalBusException(
                     "Mongo error publishing " + signal.getKind() + " for " + signal.getSessionId(), e);
         }
+    }
+
+    /**
+     * Publishes the list as one ordered {@code insertMany}: one round trip rather than one per signal, and the oplog —
+     * hence every change stream — sees the documents in list order.
+     *
+     * <p>
+     * A single unpublishable signal costs itself and not the tail of the batch — the tail is where a turn's terminal
+     * frame is. An ordered insert stops at the first document the server refuses; that document is skipped and the
+     * insert resumes with the ones after it. A document the driver refuses before sending (an oversized payload) fails
+     * the call without naming the document, and the batch is then inserted one document at a time.
+     */
+    @Override
+    public void publishAll(List<SessionSignal> signals) {
+        Objects.requireNonNull(signals, "signals must not be null");
+        if (closed.get()) {
+            throw new IllegalStateException("Bus is closed");
+        }
+        if (signals.isEmpty()) {
+            return;
+        }
+        final InsertManyOptions ordered = new InsertManyOptions().ordered(true);
+        final List<Document> docs = new ArrayList<>(signals.size());
+        RuntimeException failure = null;
+        for (SessionSignal signal : signals) {
+            try {
+                docs.add(codec.encode(Objects.requireNonNull(signal, "signal must not be null")));
+            } catch (RuntimeException e) {
+                failure = keepFirst(failure, e);
+            }
+        }
+        int from = 0;
+        while (from < docs.size()) {
+            try {
+                collection.insertMany(docs.subList(from, docs.size()), ordered);
+                from = docs.size();
+            } catch (MongoBulkWriteException e) {
+                if (e.getWriteErrors().isEmpty()) {
+                    // A write-concern error: the documents were written, only the acknowledgement fell short.
+                    failure = keepFirst(failure, e);
+                    from = docs.size();
+                } else {
+                    // Ordered, so there is exactly one write error and everything before it went in.
+                    failure = keepFirst(failure, e);
+                    from += e.getWriteErrors().get(0).getIndex() + 1;
+                }
+            } catch (MongoException e) {
+                // The transport, not a document: nothing after this would fare better.
+                final SessionSignalBusException fatal = new SessionSignalBusException(
+                        "Mongo error publishing " + (docs.size() - from) + " of " + signals.size() + " signals", e);
+                if (failure != null) {
+                    fatal.addSuppressed(failure);
+                }
+                throw fatal;
+            } catch (RuntimeException e) {
+                // Not the server and not the transport: the driver refused to encode a document — one past the 16 MB
+                // limit is turned away here, before anything is sent. It does not say which, so the rest go one at a
+                // time and the one at fault fails alone.
+                failure = keepFirst(failure, insertEach(docs.subList(from, docs.size())));
+                from = docs.size();
+            }
+        }
+        if (failure != null) {
+            throw new SessionSignalBusException("Mongo could not publish every one of " + signals.size() + " signals",
+                    failure);
+        }
+    }
+
+    /**
+     * Inserts each document on its own, in order, and returns the first failure with the later ones suppressed — or
+     * {@code null} when every insert succeeded.
+     */
+    private RuntimeException insertEach(List<Document> docs) {
+        RuntimeException failure = null;
+        for (Document doc : docs) {
+            try {
+                collection.insertOne(doc);
+            } catch (RuntimeException e) {
+                failure = keepFirst(failure, e);
+            }
+        }
+        return failure;
+    }
+
+    private static RuntimeException keepFirst(RuntimeException first, RuntimeException next) {
+        if (next == null) {
+            return first;
+        }
+        if (first == null) {
+            return next;
+        }
+        if (next != first) {
+            first.addSuppressed(next);
+        }
+        return first;
     }
 
     @Override

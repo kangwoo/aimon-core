@@ -1,7 +1,10 @@
 package at.aimon.session.mongodb;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -21,6 +24,7 @@ import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.changestream.ChangeStreamDocument;
 
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.exception.SessionSignalBusException;
 import at.aimon.core.agent.session.signal.SessionSignal;
 import at.aimon.core.agent.session.signal.SessionSignal.SignalKind;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
@@ -114,6 +118,91 @@ class MongoSessionSignalBusIntegrationTest {
             assertThat(got.getKind()).isEqualTo(SignalKind.EVENT);
             assertThat(got.getPayload()).containsEntry("type", "AssistantTextDelta").containsEntry("delta", "hello");
         }
+    }
+
+    @Test
+    @DisplayName("publishAll delivers a batch to another node's subscriber in list order")
+    void publishAllKeepsListOrder() throws Exception {
+        final SessionId id = SessionId.of("c-bus-batch");
+        final int count = 500;
+        final LinkedBlockingQueue<SessionSignal> received = new LinkedBlockingQueue<>();
+        try (SessionSignalBus.Subscription sub = busB.subscribe(id, received::offer)) {
+            Thread.sleep(INITIAL_SETTLE_MS);
+            final List<SessionSignal> batch = new ArrayList<>(count);
+            for (int i = 0; i < count; i++) {
+                batch.add(SessionSignal.builder().sessionId(id).kind(SignalKind.EVENT).originNodeId("node-A")
+                        .payload(Map.of("type", "AssistantTextDelta", "delta", "d" + i, "chunkIndex", i)).build());
+            }
+            busA.publishAll(batch);
+            busA.publishAll(List.of());
+
+            final List<Object> chunks = new ArrayList<>(count);
+            for (int i = 0; i < count; i++) {
+                final SessionSignal got = received.poll(WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                assertThat(got).as("signal %d of the batch", i).isNotNull();
+                chunks.add(got.getPayload().get("chunkIndex"));
+            }
+            final List<Object> expected = new ArrayList<>(count);
+            for (int i = 0; i < count; i++) {
+                expected.add(i);
+            }
+            assertThat(chunks).isEqualTo(expected);
+        }
+    }
+
+    @Test
+    @DisplayName("publishAll resumes after a document the server refuses mid-batch")
+    void publishAllResumesAfterAServerWriteError() throws Exception {
+        final SessionId id = SessionId.of("c-bus-batch-refused");
+        // A validator is how to get a write error out of the server for one chosen document of an ordered insert.
+        dbA.runCommand(new Document("collMod", DocumentKeys.COLL_SIGNALS).append("validator",
+                new Document(DocumentKeys.F_PAYLOAD + ".marker", new Document("$ne", "refused"))));
+        final LinkedBlockingQueue<SessionSignal> received = new LinkedBlockingQueue<>();
+        try (SessionSignalBus.Subscription sub = busB.subscribe(id, received::offer)) {
+            Thread.sleep(INITIAL_SETTLE_MS);
+            final List<SessionSignal> batch = List.of(event(id, "a", "ok"), event(id, "refused", "ok"),
+                    event(id, "b", "ok"), event(id, "refused", "ok"), event(id, "c", "ok"));
+
+            assertThatThrownBy(() -> busA.publishAll(batch)).isInstanceOf(SessionSignalBusException.class);
+
+            final List<Object> markers = new ArrayList<>();
+            for (int i = 0; i < 3; i++) {
+                final SessionSignal got = received.poll(WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                assertThat(got).as("signal %d that the server accepted", i).isNotNull();
+                markers.add(got.getPayload().get("marker"));
+            }
+            assertThat(markers).containsExactly("a", "b", "c");
+            assertThat(received.poll(300L, TimeUnit.MILLISECONDS)).as("nothing is published twice").isNull();
+        }
+    }
+
+    @Test
+    @DisplayName("publishAll skips a document the driver refuses and still publishes the ones around it")
+    void publishAllSkipsARefusedDocument() throws Exception {
+        final SessionId id = SessionId.of("c-bus-batch-poison");
+        final LinkedBlockingQueue<SessionSignal> received = new LinkedBlockingQueue<>();
+        try (SessionSignalBus.Subscription sub = busB.subscribe(id, received::offer)) {
+            Thread.sleep(INITIAL_SETTLE_MS);
+            // Past the 16 MB a single document may be. The driver turns it away before anything is sent, and fails
+            // the whole call without saying which document it was.
+            final String oversized = "x".repeat(17 * 1024 * 1024);
+            final List<SessionSignal> batch = List.of(event(id, "first", "ok"), event(id, "poison", oversized),
+                    event(id, "last", "ok"));
+
+            assertThatThrownBy(() -> busA.publishAll(batch)).isInstanceOf(SessionSignalBusException.class);
+
+            final SessionSignal first = received.poll(WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            final SessionSignal last = received.poll(WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            assertThat(first).isNotNull();
+            assertThat(last).as("the signal after the refused one").isNotNull();
+            assertThat(first.getPayload()).containsEntry("marker", "first");
+            assertThat(last.getPayload()).containsEntry("marker", "last");
+        }
+    }
+
+    private static SessionSignal event(SessionId id, String marker, String body) {
+        return SessionSignal.builder().sessionId(id).kind(SignalKind.EVENT).originNodeId("node-A")
+                .payload(Map.of("type", "ToolCallCompleted", "marker", marker, "body", body)).build();
     }
 
     @Test
