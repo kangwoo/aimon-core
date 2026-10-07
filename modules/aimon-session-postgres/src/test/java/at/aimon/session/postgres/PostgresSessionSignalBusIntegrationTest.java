@@ -122,10 +122,10 @@ class PostgresSessionSignalBusIntegrationTest {
     }
 
     @Test
-    @DisplayName("publishAll delivers a 500-signal batch to another node's subscriber in list order, once, in one transaction")
+    @DisplayName("publishAll delivers a full batch to another node's subscriber in list order, once, in one transaction")
     void publishAllKeepsListOrder() throws Exception {
         final SessionId id = SessionId.of("c-bus-batch");
-        final int count = 500;
+        final int count = PostgresSessionSignalBus.MAX_BATCH_ROWS;
         final LinkedBlockingQueue<SessionSignal> received = new LinkedBlockingQueue<>();
         try (SessionSignalBus.Subscription sub = busB.subscribe(id, received::offer)) {
             Thread.sleep(100);
@@ -152,8 +152,57 @@ class PostgresSessionSignalBusIntegrationTest {
             assertThat(chunkIndexes(received, count)).isEqualTo(range(count));
             assertThat(received.poll(300, TimeUnit.MILLISECONDS)).as("nothing is published twice").isNull();
         }
+        assertThat(queryLong("SELECT count(*) FROM conversation_signal")).isEqualTo(count);
         assertThat(queryLong("SELECT count(DISTINCT xmin::text) FROM conversation_signal"))
                 .as("transactions the list was inserted by").isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("publishAll of one signal delivers it, as publish does")
+    void publishAllOfOneSignal() throws Exception {
+        final SessionId id = SessionId.of("c-bus-batch-one");
+        final LinkedBlockingQueue<SessionSignal> received = new LinkedBlockingQueue<>();
+        try (SessionSignalBus.Subscription sub = busB.subscribe(id, received::offer)) {
+            Thread.sleep(100);
+            busA.publishAll(List.of(event(id, "only", "it's a \"quoted\" {body}, with \\ and a comma")));
+
+            final SessionSignal got = received.poll(5, TimeUnit.SECONDS);
+            assertThat(got).isNotNull();
+            assertThat(got.getPayload()).containsEntry("marker", "only").containsEntry("body",
+                    "it's a \"quoted\" {body}, with \\ and a comma");
+        }
+        assertThat(queryLong("SELECT count(*) FROM conversation_signal")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("publishAll routes a list that mixes sessions to each session's subscriber, in list order")
+    void publishAllOfMixedSessions() throws Exception {
+        final SessionId one = SessionId.of("c-bus-batch-mixed-1");
+        final SessionId two = SessionId.of("c-bus-batch-mixed-2");
+        final LinkedBlockingQueue<SessionSignal> forOne = new LinkedBlockingQueue<>();
+        final LinkedBlockingQueue<SessionSignal> forTwo = new LinkedBlockingQueue<>();
+        try (SessionSignalBus.Subscription subOne = busB.subscribe(one, forOne::offer);
+                SessionSignalBus.Subscription subTwo = busB.subscribe(two, forTwo::offer)) {
+            Thread.sleep(100);
+            busA.publishAll(List.of(event(one, "1a", "ok"), event(two, "2a", "ok"), event(one, "1b", "ok"),
+                    event(two, "2b", "ok")));
+
+            assertThat(forOne.poll(5, TimeUnit.SECONDS).getPayload()).containsEntry("marker", "1a");
+            assertThat(forOne.poll(5, TimeUnit.SECONDS).getPayload()).containsEntry("marker", "1b");
+            assertThat(forTwo.poll(5, TimeUnit.SECONDS).getPayload()).containsEntry("marker", "2a");
+            assertThat(forTwo.poll(5, TimeUnit.SECONDS).getPayload()).containsEntry("marker", "2b");
+        }
+    }
+
+    @Test
+    @DisplayName("publishAll throws straight away when no connection can be had")
+    void publishAllWithoutAConnectionThrows() {
+        publishPoolA.close();
+
+        assertThatThrownBy(() -> busA.publishAll(deltas(SessionId.of("c-bus-batch-no-pool"), 3)))
+                .isInstanceOf(SessionSignalBusException.class).hasMessageContaining("batch of 3");
+
+        assertThat(queryLong("SELECT count(*) FROM conversation_signal")).isZero();
     }
 
     @Test

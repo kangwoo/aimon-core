@@ -43,7 +43,7 @@ import at.aimon.session.postgres.internal.SessionSignalRowCodec;
  * transaction: two round trips and one commit for the list, not three round trips and a commit per signal. That is
  * what keeps a turn's event stream — a signal per text delta — from costing a commit per delta. One doorbell is enough
  * because the dispatcher never looks at the id a notification carries: it fetches every row past its high-water mark,
- * in id order, and a multi-row {@code VALUES} assigns ids in list order.</li>
+ * in id order, and the insert reads its rows in list order.</li>
  * <li>{@link #subscribe} registers an in-memory handler and asks the {@link ListenDispatcher} to track this
  * session. The dispatcher owns one dedicated long-lived connection running {@code LISTEN
  * conversation_signal_doorbell}; on each notification (or on a periodic 5 s self-poll backstop) it fetches new rows
@@ -72,22 +72,25 @@ public final class PostgresSessionSignalBus implements SessionSignalBus, AutoClo
 
     private static final String SQL_NOTIFY = "SELECT pg_notify(?, ?)";
 
-    private static final String SQL_INSERT_BATCH_HEAD = "WITH ins AS (INSERT INTO conversation_signal "
-            + "(conversation_id, kind, origin_node_id, payload) VALUES ";
-
-    private static final String SQL_INSERT_BATCH_ROW = "(?, ?, ?, ?::jsonb)";
-
-    private static final String SQL_INSERT_BATCH_TAIL = " RETURNING id) SELECT pg_notify(?, max(id)::text) FROM ins";
-
-    /** Bind parameters per row of the batch insert. */
-    private static final int BATCH_ROW_PARAMS = 4;
+    /**
+     * One statement text whatever the size of the list: the rows travel as four arrays. A {@code VALUES} list would be
+     * a different text for every row count, and the driver keeps a server-prepared statement — and the server a cached
+     * plan — for each text it has seen a few times on a connection; with batches of 1 to 256 rows that is hundreds of
+     * plans on every pooled connection. {@code ORDER BY ord} is what makes the ids follow list order by statement
+     * rather than by accident of how the rows happen to be read.
+     */
+    private static final String SQL_INSERT_BATCH = "WITH ins AS (INSERT INTO conversation_signal "
+            + "(conversation_id, kind, origin_node_id, payload) "
+            + "SELECT c, k, o, p::jsonb FROM unnest(?::text[], ?::text[], ?::text[], ?::text[]) "
+            + "WITH ORDINALITY AS t(c, k, o, p, ord) ORDER BY ord RETURNING id) "
+            + "SELECT pg_notify(?, max(id)::text) FROM ins";
 
     /**
-     * Rows per batch statement. Four parameters a row, and the wire protocol counts a statement's parameters in a
-     * signed 16-bit field; this stays far inside it. A longer list goes out as several statements, each its own
-     * transaction, so no transaction holds its ids uncommitted for longer than one statement takes.
+     * Rows per batch statement. A transaction holds the ids it has taken until it commits, and the statement takes
+     * longer the more rows it inserts, so a long list goes out as several short transactions rather than one long one
+     * — see the note on the high-water mark on {@link #publishAll}. Sized to the largest list the event relay sends.
      */
-    static final int MAX_BATCH_ROWS = 1_000;
+    static final int MAX_BATCH_ROWS = 256;
 
     /** SQLSTATE class 08 — connection exception. */
     private static final String SQLSTATE_CONNECTION_CLASS = "08";
@@ -191,8 +194,8 @@ public final class PostgresSessionSignalBus implements SessionSignalBus, AutoClo
      * connection. A list longer than {@link #MAX_BATCH_ROWS} goes out as several such transactions, in order.
      *
      * <p>
-     * <b>Order.</b> The rows of a multi-row {@code VALUES} take their ids in list order, and the dispatcher on every
-     * node reads {@code conversation_signal} in id order.
+     * <b>Order.</b> The insert reads its rows in list order ({@code ORDER BY} the position in the list), so they take
+     * their ids in list order, and the dispatcher on every node reads {@code conversation_signal} in id order.
      *
      * <p>
      * <b>One doorbell.</b> The dispatcher does not use the id a notification carries; any notification makes it fetch
@@ -204,7 +207,10 @@ public final class PostgresSessionSignalBus implements SessionSignalBus, AutoClo
      * connection is taken, so one that cannot be encoded costs only itself. A row the server rejects aborts the
      * statement without saying which row it was; the transaction is rolled back — nothing of the batch was published —
      * and the batch is published again one signal at a time through {@link #publish}, in order, where the one at fault
-     * fails alone. Savepoints would find the row too, but at a round trip per row inside a transaction that holds
+     * fails alone. The statement's own error is logged and, if anything is thrown, attached to it as suppressed: a
+     * statement that fails for a reason that is not a row (a timeout, a read-only standby) looks the same from here,
+     * and the log is where that shows. Savepoints would find the row too, but at a round trip per row inside a
+     * transaction that holds
      * every id it has taken until it commits; see the note on the high-water mark below.
      *
      * <p>
@@ -221,10 +227,11 @@ public final class PostgresSessionSignalBus implements SessionSignalBus, AutoClo
      * <p>
      * <b>The high-water mark.</b> {@code ListenDispatcher} fetches {@code id > lastSeen}. Ids are taken at insert and
      * become visible at commit, so a row whose transaction commits after a later id has been fetched is never
-     * delivered to that node. This method does not create that, and is written not to widen it: the ids are taken by
-     * one statement and the commit follows directly, with no round trip per row in between — a shorter gap between
-     * taking an id and committing it than {@link #publish} has, and one such gap per list rather than one per signal.
-     * What it does change is the size of a loss when one happens: a whole batch rather than one signal.
+     * delivered to that node. This method does not create that. Its ids are held for one statement and a commit —
+     * which is not always less than {@link #publish} holds its one id for: the statement takes longer the more rows
+     * and the larger the payloads, where {@code publish} has a fixed two round trips. What falls is the number of such
+     * windows, one per list rather than one per signal, and that is why the exposure falls. What rises is the size of
+     * a loss when one happens: a whole batch, which may include a turn's terminal frame, rather than one signal.
      *
      * @param signals
      *            the signals to publish, in delivery order (must not be null; may be empty)
@@ -241,6 +248,7 @@ public final class PostgresSessionSignalBus implements SessionSignalBus, AutoClo
         final List<SessionSignal> encodable = new ArrayList<>(signals.size());
         final List<String> payloads = new ArrayList<>(signals.size());
         RuntimeException failure = null;
+        final List<SQLException> batchErrors = new ArrayList<>();
         for (SessionSignal signal : signals) {
             try {
                 Objects.requireNonNull(signal, "signal must not be null");
@@ -254,49 +262,55 @@ public final class PostgresSessionSignalBus implements SessionSignalBus, AutoClo
             final int to = Math.min(from + MAX_BATCH_ROWS, encodable.size());
             final List<SessionSignal> chunk = encodable.subList(from, to);
             try {
-                if (!insertBatch(chunk, payloads.subList(from, to))) {
+                final SQLException batchError = insertBatch(chunk, payloads.subList(from, to));
+                if (batchError != null) {
+                    batchErrors.add(batchError);
                     failure = keepFirst(failure, publishEach(chunk));
                 }
             } catch (SessionSignalBusException fatal) {
                 if (failure != null && failure != fatal) {
                     fatal.addSuppressed(failure);
                 }
+                batchErrors.forEach(fatal::addSuppressed);
                 throw fatal;
             }
         }
         if (failure != null) {
-            throw new SessionSignalBusException(
-                    "Postgres could not publish every one of " + signals.size() + " signals", failure);
+            final SessionSignalBusException thrown = new SessionSignalBusException("Postgres could not publish every"
+                    + " one of " + signals.size() + " signals; first failure: " + failure.getMessage(), failure);
+            batchErrors.forEach(thrown::addSuppressed);
+            throw thrown;
         }
     }
 
     /**
      * Inserts the rows and rings the doorbell in one transaction.
      *
-     * @return {@code true} when the transaction committed; {@code false} when the statement failed and the transaction
+     * @return {@code null} when the transaction committed; the statement's error when it failed and the transaction
      *         was rolled back, so that none of the rows was published
      * @throws SessionSignalBusException
      *             when no connection could be obtained, or the commit itself failed and its outcome is unknown
      */
-    private boolean insertBatch(List<SessionSignal> signals, List<String> payloads) {
-        final StringBuilder sql = new StringBuilder(SQL_INSERT_BATCH_HEAD);
-        for (int i = 0; i < signals.size(); i++) {
-            sql.append(i == 0 ? "" : ", ").append(SQL_INSERT_BATCH_ROW);
+    private SQLException insertBatch(List<SessionSignal> signals, List<String> payloads) {
+        final int n = signals.size();
+        final String[] sessionIds = new String[n];
+        final String[] kinds = new String[n];
+        final String[] origins = new String[n];
+        for (int i = 0; i < n; i++) {
+            final SessionSignal signal = signals.get(i);
+            sessionIds[i] = signal.getSessionId().value();
+            kinds[i] = signal.getKind().name();
+            origins[i] = signal.getOriginNodeId();
         }
-        sql.append(SQL_INSERT_BATCH_TAIL);
         try (Connection c = publishDataSource.getConnection()) {
             c.setAutoCommit(false);
             try {
-                try (PreparedStatement ps = c.prepareStatement(sql.toString())) {
-                    int p = 0;
-                    for (int i = 0; i < signals.size(); i++) {
-                        final SessionSignal signal = signals.get(i);
-                        ps.setString(++p, signal.getSessionId().value());
-                        ps.setString(++p, signal.getKind().name());
-                        ps.setString(++p, signal.getOriginNodeId());
-                        ps.setString(++p, payloads.get(i));
-                    }
-                    ps.setString(signals.size() * BATCH_ROW_PARAMS + 1, ListenDispatcher.CHANNEL);
+                try (PreparedStatement ps = c.prepareStatement(SQL_INSERT_BATCH)) {
+                    ps.setArray(1, c.createArrayOf("text", sessionIds));
+                    ps.setArray(2, c.createArrayOf("text", kinds));
+                    ps.setArray(3, c.createArrayOf("text", origins));
+                    ps.setArray(4, c.createArrayOf("text", payloads.toArray(new String[0])));
+                    ps.setString(5, ListenDispatcher.CHANNEL);
                     ps.execute();
                 } catch (SQLException e) {
                     try {
@@ -304,24 +318,22 @@ public final class PostgresSessionSignalBus implements SessionSignalBus, AutoClo
                     } catch (SQLException ignored) {
                         /* best-effort rollback; no commit was asked for, so nothing was published either way */
                     }
-                    log.debug("Batch insert of {} signals failed, publishing them one at a time: {}", signals.size(),
-                            e.toString());
-                    return false;
+                    log.warn("Batch insert of {} signals failed, publishing them one at a time: {}", n, e.toString());
+                    return e;
                 }
                 c.commit();
-                return true;
+                return null;
             } finally {
                 restoreAutoCommit(c);
             }
         } catch (SQLException e) {
-            throw new SessionSignalBusException("Postgres error publishing a batch of " + signals.size() + " signals",
-                    e);
+            throw new SessionSignalBusException("Postgres error publishing a batch of " + n + " signals", e);
         }
     }
 
     /**
      * Best-effort: by now the batch has either committed or been rolled back, and a connection too broken to take this
-     * must not turn either outcome into a different one. The pool resets or retires the connection on return.
+     * must not turn either outcome into a different one.
      */
     private static void restoreAutoCommit(Connection c) {
         try {
