@@ -71,6 +71,9 @@ the build changed in it and the reasons are in
   the turn that was being set up when the input was enqueued is preempted instead of running and possibly taking that
   input in through its own mid-turn drain; the input stays in the queue for the next turn or the host's drain, as when
   a turn is preempted mid-loop. `isInterruptible()` is `false` in that stretch.
+- **Not changed:** a running slash command still cannot be interrupted (EE-93 stays open for that), and a cancellation
+  that reaches the firing thread only as `Thread.interrupt()` still does not stop a hook command on a shell that
+  ignores thread interrupts (EE-96, decided against for now).
 
 ### Changed: a hook's shell command follows the execution's interrupt on every event that has one (EE-80)
 
