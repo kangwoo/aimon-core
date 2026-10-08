@@ -7,6 +7,8 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-08
+
 ### Changed: the follow-ups to hook cancellation — report commands run through an interrupt, and four edges (EE-93 – EE-98)
 
 EE-80 (next entry) left five things open. Three are built, one is half built, one is decided against; EE-98 then
