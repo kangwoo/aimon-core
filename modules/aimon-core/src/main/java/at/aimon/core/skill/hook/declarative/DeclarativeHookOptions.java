@@ -26,11 +26,6 @@ import at.aimon.core.hook.rewake.RewakeSpec;
  * verdict. Off by default: on the four events that can block ({@code preTool}, {@code onStart}, {@code preCompact},
  * {@code permissionRequest}) a guard that could not decide blocks. Read on those events only; it never weakens a
  * verdict (exit 2, {@code decision: deny}, a {@code deny} action).
- * <li><b>ignoreInterrupt</b> — whether the hook's shell command is left running when the execution is interrupted.
- * Off by default: a command running when the interrupt arrives is stopped. Read on the report events only
- * ({@link at.aimon.core.skill.hook.SkillHookSet#reportEvents()}) and only for a shell command; a hook on an event
- * that can block ignores it, so a cancelled guard still blocks. It lengthens nothing: the command's own timeout still
- * ends it, and the execution's thread waits for it.
  * </ul>
  *
  * <p>
@@ -50,17 +45,15 @@ public final class DeclarativeHookOptions {
     private final String hookIdDiscriminator;
     private final RewakeSpec rewakeSpec;
     private final boolean failOpen;
-    private final boolean ignoreInterrupt;
 
     private DeclarativeHookOptions(Builder builder) {
         this.hookIdDiscriminator = builder.hookIdDiscriminator;
         this.rewakeSpec = builder.rewakeSpec;
         this.failOpen = builder.failOpen;
-        this.ignoreInterrupt = builder.ignoreInterrupt;
     }
 
     /**
-     * Returns the shared empty instance — no discriminator, no rewake, fail-closed, stopped by an interrupt.
+     * Returns the shared empty instance — no discriminator, no rewake, fail-closed.
      *
      * @return the empty options (never null)
      */
@@ -109,13 +102,6 @@ public final class DeclarativeHookOptions {
         return failOpen;
     }
 
-    /**
-     * @return true when the hook's shell command is not stopped by an interrupt of the execution it fired in
-     */
-    public boolean isIgnoreInterrupt() {
-        return ignoreInterrupt;
-    }
-
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -125,19 +111,18 @@ public final class DeclarativeHookOptions {
             return false;
         }
         return Objects.equals(hookIdDiscriminator, that.hookIdDiscriminator)
-                && Objects.equals(rewakeSpec, that.rewakeSpec) && failOpen == that.failOpen
-                && ignoreInterrupt == that.ignoreInterrupt;
+                && Objects.equals(rewakeSpec, that.rewakeSpec) && failOpen == that.failOpen;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(hookIdDiscriminator, rewakeSpec, failOpen, ignoreInterrupt);
+        return Objects.hash(hookIdDiscriminator, rewakeSpec, failOpen);
     }
 
     @Override
     public String toString() {
         return "DeclarativeHookOptions{hookIdDiscriminator='" + hookIdDiscriminator + "', rewakeSpec=" + rewakeSpec
-                + ", failOpen=" + failOpen + ", ignoreInterrupt=" + ignoreInterrupt + '}';
+                + ", failOpen=" + failOpen + '}';
     }
 
     /** Builder for {@link DeclarativeHookOptions}. */
@@ -146,7 +131,6 @@ public final class DeclarativeHookOptions {
         private String hookIdDiscriminator;
         private RewakeSpec rewakeSpec;
         private boolean failOpen;
-        private boolean ignoreInterrupt;
 
         private Builder() {
         }
@@ -180,17 +164,6 @@ public final class DeclarativeHookOptions {
          */
         public Builder failOpen(boolean failOpen) {
             this.failOpen = failOpen;
-            return this;
-        }
-
-        /**
-         * @param ignoreInterrupt
-         *            true to leave the hook's shell command running when the execution is interrupted (default false
-         *            — a running command is stopped). Honoured on report events only
-         * @return this builder
-         */
-        public Builder ignoreInterrupt(boolean ignoreInterrupt) {
-            this.ignoreInterrupt = ignoreInterrupt;
             return this;
         }
 

@@ -59,8 +59,8 @@ public final class SkillHookSet {
             HookEventType.PERMISSION_REQUEST, HookEventType.PRE_COMPACT);
 
     /**
-     * The events whose hooks record what already happened inside an execution. They carry the execution's
-     * cancellation signal only while it has not tripped, and they are where {@code ignoreInterrupt} is honoured.
+     * The events whose hooks record what already happened inside an execution. An interrupt of the execution
+     * does not stop a declarative shell command on one of them.
      */
     private static final List<HookEventType<?>> REPORT_EVENTS = List.of(HookEventType.POST_TOOL, HookEventType.ON_STOP,
             HookEventType.SUBAGENT_START, HookEventType.SUBAGENT_STOP, HookEventType.PERMISSION_DENIED,
@@ -119,8 +119,8 @@ public final class SkillHookSet {
     /**
      * Returns the events whose hooks report something that already happened inside an execution &mdash;
      * {@code postTool}, {@code onStop}, {@code subagentStart}, {@code subagentStop}, {@code permissionDenied} and
-     * {@code postCompact}. These are the events on which a hook may declare {@code ignoreInterrupt}: a report can be
-     * left to finish after an interrupt, a {@linkplain #guardEvents() guard} cannot.
+     * {@code postCompact}. A declarative shell command on one of them is never stopped by an interrupt of the
+     * execution; one on a {@linkplain #guardEvents() guard} event always is.
      *
      * @return immutable list (never null)
      */

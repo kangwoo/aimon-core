@@ -84,7 +84,8 @@ public final class SubagentStartContext implements HookContext {
      *
      * <p>
      * This event reports something that already happened, so the signal is handed out only while it has not tripped:
-     * a command running when the interrupt arrives is stopped, and one that starts afterwards runs unbound.
+     * a hook written in code that ties its own work to it is never refused a start by an execution that was already
+     * cancelled. A declarative hook's shell command is not handed the signal on this event at all.
      */
     @Override
     public Optional<CancellationSignal> getExecutionCancellation() {

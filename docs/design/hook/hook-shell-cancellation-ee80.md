@@ -20,6 +20,10 @@
 > `docs/design/` is not a translation target (`docs/project/documentation-guide.md` §5.1). What the hook system does
 > today is in [`hook-system.md`](hook-system.md); the open questions of §9 that reach beyond this change went to the
 > backlog as EE-93 – EE-97 (§10.3).
+>
+> **The report half of §3 is no longer what the code does.** EE-98 replaced "a report command is bound while the
+> signal is live" with "a report command is never bound" before any of this was released —
+> [§12](#12-what-ee-98-changed-the-report-rule).
 
 Base: `69862623`. Paths are relative to `modules/aimon-core/src/main/java/at/aimon/core/` unless they start with
 `docs/` or `modules/`.
@@ -465,3 +469,80 @@ and stays open for "a running slash command cannot be interrupted"; EE-96 (Q6 (b
 sentences of §10 are therefore no longer true of the code: DV-1's "still dropped" and DV-3's "a slash-command turn
 keeps reporting `interruptible=true`". The design and its own departures are in
 [`hook-cancellation-followups-ee93-ee97.md`](hook-cancellation-followups-ee93-ee97.md).
+
+## 12. What EE-98 changed: the report rule
+
+*Appended 2026-10-08, by the change that closed EE-98. §10 and §11 above are as they were written.*
+
+§3's split into gates and reports stands, and so does everything about gates. The report half of the rule does not.
+§3 bound a report event's command to the signal "while it has not tripped": a command running when the interrupt
+arrived was stopped, one that started afterwards ran to completion. EE-97 then added a per-hook way out
+(`ignoreInterrupt`). EE-98 removed both before either was released. **A declarative hook's shell command on a report
+event — `onStop`, `postCompact`, `subagentStart`, `subagentStop`, `postTool`, `permissionDenied` — is handed no signal
+and is never stopped by the execution's interrupt**; it runs until it finishes or its own timeout ends it. The rule is
+one sentence now: gate commands always stop on an interrupt, report commands never do.
+
+Why, in the order the maintainer weighed it:
+
+- **Whether a cleanup finished depended on a race.** The same `onStop` command was cut in half if it had started just
+  before the interrupt and ran to its end if it started just after. Q3 of §9 chose the default knowing the second half;
+  it did not name the two halves as one race.
+- **The two failures are not alike.** A half-done cleanup is silent — nothing reports it. A command that runs on is a
+  delay that is bounded by its timeout and visible to whoever is waiting.
+- **On the signal road it is what was released.** Before this document's change `LiveSession.interrupt` and a
+  preempting input delivered nothing to a turn's `onStop` command, so it ran to its end. Stopping it was the new
+  behaviour; not stopping it breaks nobody. (The thread road is another matter — below.)
+
+What it costs is the part of §1 that the report events were bound for: an interrupted execution — and the input queued
+behind it — waits for report commands. That holds on every shell, not only one that ignores thread interrupts,
+because the thread road is closed as well. The wait is per hook and adds up: a chain runs hook by hook, a report
+command that had not started when the interrupt arrived also starts and runs in full, and the chains that still fire
+while the execution unwinds (`postTool`, then `onStop`, then `subagentStop`) each add theirs. One hook's ceiling is
+the outer net, `min(timeout, 10 min) + 5 s` (`HookExecutionPolicy.timeoutFor`). The guide tells authors to keep report
+hooks' timeouts short. "Hook-pool teardown still ends it" needs two conditions: the stack owns the pool
+(`DefaultHookExecutor.close()` leaves an injected pool alone) and the shell answers the thread interrupt that
+`shutdownNow()` sends — a remote shell's command, which carries no cancellation token by design, runs on to its
+timeout. An opt-in the other way ("stop this report command on an interrupt") was not added; it is the thing to add
+if someone asks, and is registered as EE-101.
+
+Released behaviour does change on the thread road, and for more than one sender. Since before EE-80,
+`DefaultHookExecutor` answered **any** interrupt of the firing thread by cancelling the hook's task, and a shell that
+answers thread interrupts (`LocalShell`) then stopped the command. A report hook now sits that interrupt out, whoever
+sent it. The senders that reach a firing thread, all present in `v0.3.1`: `Task.stop` on a background fork
+(`RunningTaskHandle.requestStop`), a workflow stop (`RunControl.requestStop`), `DefaultSessionRouter.close()`
+(`turnExecutor.shutdownNow()`) and `DefaultSubagentExecutionManager.close()` (`shutdownNow()` on the background
+pool). And it is all six report events, not `onStop` / `subagentStop` only — a fork that is stopped is usually in its
+loop, so the command running at that moment is most often a `postTool` one. Two consequences worth naming. A stopped
+task or workflow settles later, by the time its report commands take. And shutdown waits: a router closed while a
+turn's `onStop` or `postTool` command runs used to kill that command through the interrupt; now the turn's thread
+keeps waiting past the router's two-second `awaitTermination`, after the session cache and the event publisher are
+closed, until the command ends, its timeout runs out or the `HOOK_EXECUTOR` teardown phase reaches it. So "a turn's
+`onStop` behaves as released" is true of the signal road only. All of this was read from the released sources
+(`v0.3.1`), not run against them.
+
+What this does to the statements above:
+
+- **§3, "Report … bound, live-only", and the per-event table's "Bind, live-only" rows** describe the context getter
+  only. The getter is unchanged — a report context still answers the signal until it trips
+  (`CancellationSignals.liveOrEmpty`) — and that answer is now for hooks written in code, which decide for themselves
+  what to tie to it. The declarative shell hooks do not pass it on: on a report event they hand their
+  `ShellActionExecutor` a view of the context whose `getExecutionCancellation()` is empty
+  (`SignalDetachedHookContext`, from EE-97), and they declare `ExecutionHook#ignoresInterrupt()` so that a thread
+  interrupt of the firing thread does not cancel them either. Both follow from the event, not from a setting.
+- **§3's reason for putting the rule in the getter** ("the second hook of a chain") still holds for a hook written in
+  code. For shell commands the question no longer arises.
+- **§10's "the six `Declarative*Hook` classes … are untouched"** stopped being true with EE-97 and is less true now:
+  `AbstractDeclarativeShellHook` and `DeclarativePostToolHook` are where the report rule lives.
+- **§10.2, "Its `onStop` then fires with a tripped signal and, by the report rule, runs unbound"** is now simply how
+  every `onStop` command runs. **"The pool-rejection `subagentStop` was handed a signal that could no longer trip"**:
+  the reordering stays — the context a programmatic hook reads there carries a signal that can still trip — but the
+  shell command it was found on no longer follows that signal, and the test that pinned it now asserts the command
+  runs to its end.
+- **§10.3's Q3 row** ("Default kept (bind, live-only). The missing opt-out is EE-97") is reversed: not bound, and no
+  opt-out to miss.
+- **The first half of EE-80** stopped a running `postTool` / `permissionDenied` command. That is gone with the rest.
+
+Tests: `DeclarativeReportHookInterruptTest` holds the rule for all six report events on both roads (the signal; a
+thread interrupt through `DefaultHookExecutor`, on a shell that answers thread interrupts), with the four gate events
+as the other half; `DeclarativeHookCancellationTest` keeps the gate cases and "a report command fired after the
+cancellation still starts". Each flipped test was run against the old rule restored and failed there.

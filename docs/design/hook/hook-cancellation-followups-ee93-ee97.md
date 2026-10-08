@@ -20,6 +20,10 @@
 > these five items were; `docs/design/` is not a translation target (`docs/project/documentation-guide.md` §5.1). What
 > the hook system does today is in [`hook-system.md`](hook-system.md); the open questions of §12 that reach beyond this
 > change went to the backlog as EE-98 – EE-100 (§13.3).
+>
+> **§4's option does not exist.** EE-98 removed `ignoreInterrupt` before it was released and made what it switched on
+> the rule for every report hook — [§14](#14-what-ee-98-changed-the-option-became-the-rule). §4 and the parts of §9 –
+> §13 that describe the option are a record of what was approved and built, not of what ships.
 
 Base: `52d36952`. Paths are relative to `modules/aimon-core/src/main/java/at/aimon/core/` unless they start with
 `docs/`, `modules/` or `.claude/`. Line numbers are approximate (`≈`) and at the base commit. Where a statement was read
@@ -546,3 +550,49 @@ untouched, as §4 said. What departed is below.
 | Q7 — EE-93's bookkeeping | Kept open and narrowed, with its heading changed to what is left; no new id. |
 
 Q1, Q2 and Q5 are the maintainer's calls; the defaults above are what was built.
+
+## 14. What EE-98 changed: the option became the rule
+
+*Appended 2026-10-08, by the change that closed EE-98. §13 above is as it was written.*
+
+Q1 and Q2 of §12 were the maintainer's, and §13.3 sent both to EE-98 with the note that they were free to change only
+before the release carrying EE-80. They were decided before that release: **the default is flipped and the option is
+removed.** A declarative hook's shell command on a report event is never stopped by the execution's interrupt — not
+through the signal, not through the thread interrupt — and there is no key to say otherwise. Gate events are as §4
+left them. The reasons (the start-before / start-after race, a silent half-done cleanup against a bounded and visible
+delay, and the released `onStop` behaviour) and the cost are in
+[`hook-shell-cancellation-ee80.md` §12](hook-shell-cancellation-ee80.md#12-what-ee-98-changed-the-report-rule).
+
+What was removed, and what of §4 is still in the code:
+
+| §4 / §13 built | Now |
+|---|---|
+| `ignoreInterrupt` — handler key in `hooks.json`, entry key in frontmatter | Removed from both. A file that still carries it gets what any unknown key gets: `hooks.json` ignores it (handler entries tolerate unknown fields), frontmatter ignores it (entry keys are not checked). Both are pinned by a test. |
+| `DeclarativeHookOptions#isIgnoreInterrupt`, `HookHandlerSpec#isIgnoreInterrupt` / `getRejectedIgnoreInterrupt`, the builders' setters | Removed. `DeclarativeHookOptions` is back to discriminator, rewake spec and `failOpen`. |
+| `HookHandlerSpec.fromJson` with sixteen arguments, the fifteen-argument one kept as an overload | One signature again, the fifteen-argument one from before §4. |
+| The WARNs for a key that cannot have an effect (`HookRegistryApplier`, `SkillHookSetParser`), the loader's WARN for a non-boolean, `HookEventName.isReport` | Removed with the key. |
+| `ExecutionHook#ignoresInterrupt()` and `DefaultHookExecutor.awaitHook` honouring it | **Kept, unchanged.** It is still how the hook executor learns "do not cancel this hook's task on an interrupt of the firing thread". The declarative shell hooks now answer it from the event — `true` on the six report events, `false` elsewhere — and for `postTool` only for a shell action. A hook registered in code keeps the default `false` unless it overrides the method, so §13.1's DV-1 reads as written. |
+| `SignalDetachedHookContext` | **Kept**, and handed to the shell executor on every report firing instead of only for a hook that opted in. The context getter still answers a live signal on a report event, for hooks written in code; the view is what keeps the declarative command from following it without widening `ShellActionExecutor.run`. The cost §13.3 recorded for it grew with its reach: an executor outside this repository that downcasts the `context` argument now fails on every report event, not for opted-in hooks only. |
+| `SkillHookSet.reportEvents()` | Kept; it is what the hook classes read. |
+| `CancellationSignals.liveOrEmpty` on the six report contexts | Kept. No shell command reads it any more; it is the answer a hook written in code gets, and what an opt-in the other way (EE-101) would read. |
+
+Two things were weighed and not done. Making the report contexts answer *empty* would have removed the view and the
+downcast hazard, but it takes the signal away from hooks written in code and leaves the plumbing EE-80 built for the
+six report events — the builders, the firing sites, the choice of the fork's governing signal — with no reader, to be
+rebuilt for EE-101. And giving each report context a same-typed copy without the signal would have removed the
+downcast hazard at the price of six copy methods that have to track every field the contexts gain.
+
+Which statements of §13 no longer hold: DV-2's `ignoreInterrupt && reportEvent && !canVeto()` is `reportEvent &&
+!canVeto()`; DV-3 and DV-4 describe plumbing that is gone; §13.2's first two bullets (the reload diff "seeing" the
+flag, an older node ignoring the key) have no flag to be about; its "fire-site tests" bullet names
+`DeclarativeHookIgnoreInterruptTest`, which is now `DeclarativeReportHookInterruptTest`; and §13.3's rows for the
+frontmatter WARN, the `fromJson` overload, Q1 and Q2 are superseded by the table above. EE-96's closing remark — that
+a hook which declared the option is stopped by neither road — now describes every report hook.
+
+For each test that was flipped or added, the old rule was put back (the two hook classes answering
+`ignoresInterrupt()` with `false` and handing the context itself to the executor) and the test was seen to fail:
+the six-event signal-road and thread-road cases and the two-hook `postTool` chain in
+`DeclarativeReportHookInterruptTest`, the turn's `onStop` case in `OrcaAgentExecutorHookCancellationTest`, and the
+three background-fork cases in `DefaultSubagentExecutionManagerTest` (`subagentStart` under a spawner interrupt, the
+pool-rejected task's `subagentStop`, `Task.stop` during `subagentStop`). Nothing was run against a real remote shell
+or a live provider, and the docker tier was not run.

@@ -284,7 +284,6 @@ WARN 이 아니라 **시작 실패**다(`… is invalid: unknown event 'preTol' 
   "timeout": 5      // 선택, 초 단위 (Claude Code parity). 미지정 시 30초
   // "timeoutMs": 500  // 대안: 밀리초 단위 별칭. 둘 다 있으면 timeoutMs 가 이긴다
   // "failOpen": true  // 선택, 기본 false. 커맨드를 돌리지 못했을 때 막지 않고 통과시킨다 (아래 "종료 코드")
-  // "ignoreInterrupt": true  // 선택, 기본 false. 실행이 인터럽트되어도 이 커맨드를 멈추지 않는다 (아래 "인터럽트")
 }
 ```
 
@@ -586,34 +585,31 @@ entry #<n>, handler #<m>: <사유>`. 번호는 그 계층 · 그 이벤트 안�
 
 스킬 frontmatter 의 hook 에는 이 표가 필요 없다 — 그쪽 파서는 처음부터 엄격해서 위 경우가 전부 그 스킬의 로드 실패다.
 
-**인터럽트.** 사용자가 실행을 중단하면 돌고 있던 `command` 는 **실행의 취소 신호로** 멈춘다 — 스레드 인터럽트에 반응하지
-않는 셸(원격 셸)에서도 자기 timeout 까지 돌지 않는다. 사유는 `Blocked: hook '<이름>' (<이벤트>) was stopped — execution
-cancelled. An interrupted execution does not proceed.` 이고 `failOpen` 과 무관하다. 가드 이벤트(`onStart` · `preCompact` ·
-`permissionRequest` · `preTool`)는 신호를 항상 싣는다 — 인터럽트 뒤에 발화한 커맨드는 시작되지 않는다. 이미 일어난 일을 알리는
-이벤트(`onStop` · `postCompact` · `subagentStart` · `subagentStop` · `postTool` · `permissionDenied`)는 실행이 아직 취소되지
-않았을 때만 싣는다 — 돌고 있던 커맨드는 인터럽트로 멈추지만, 취소된 뒤에 발화한 감사 · 정리 커맨드는 끝까지 돈다. 끝까지
-돌아야 하는 정리 작업이라면 그 handler 에 `ignoreInterrupt` 를 선언한다(바로 아래). 메인 턴의 `onStart` 커맨드가 도는
-동안 인터럽트가 오면 그 턴은 훅이 막았다는 오류가 아니라 **중단된 턴**으로 끝난다 — fork 도 같고, 턴이 `onStart` 에 닿기
-전에 온 인터럽트도 같다(그때는 커맨드가 시작되지 않는다). 신호를 받지 않는 것은 설 수 있는 신호가
-없는 자리다 — 슬래시 명령 턴의 `onStop`, `/compact` 의 `preCompact` · `postCompact` · `onStop`, rewake 리플레이가 다시 만든
-`preCompact`, 실행 밖 이벤트(`onSessionStart` · `onSessionEnd` · `onConfigReload`). 그 커맨드는 전처럼 셸이 스레드 인터럽트에
-반응해야 멈춘다.
+**인터럽트.** 규칙은 한 문장이다 — **가드 커맨드는 인터럽트에 언제나 멈추고, 보고 커맨드는 결코 멈추지 않는다.** 이벤트가
+정하며, 켜거나 끄는 설정 키는 없다.
 
-**끝까지 돌아야 하는 커맨드 — `ignoreInterrupt`.** 정상 종료한 턴의 `onStop` 정리 커맨드가 도는 동안 사용자가 다음 입력을
-급히 넣으면, 그 인터럽트가 정리를 반쯤 된 채로 멈춘다. 그래서는 안 되는 handler 에 `"ignoreInterrupt": true` 를 둔다.
+가드 이벤트(`onStart` · `preCompact` · `permissionRequest` · `preTool`)의 `command` 는 사용자가 실행을 중단하면 **실행의 취소
+신호로** 멈춘다 — 스레드 인터럽트에 반응하지 않는 셸(원격 셸)에서도 자기 timeout 까지 돌지 않고, 인터럽트 뒤에 발화한
+커맨드는 시작되지 않는다. 사유는 `Blocked: hook '<이름>' (<이벤트>) was stopped — execution cancelled. An interrupted
+execution does not proceed.` 이고 `failOpen` 과 무관하다. 메인 턴의 `onStart` 커맨드가 도는 동안 인터럽트가 오면 그 턴은
+훅이 막았다는 오류가 아니라 **중단된 턴**으로 끝난다 — fork 도 같고, 턴이 `onStart` 에 닿기 전에 온 인터럽트도 같다(그때는
+커맨드가 시작되지 않는다). 신호를 받지 않는 가드는 설 수 있는 신호가 없는 자리다 — `/compact` 의 `preCompact` 와 rewake
+리플레이가 다시 만든 `preCompact`. 실행 밖 이벤트(`onSessionStart` · `onSessionEnd` · `onConfigReload`)에도 신호가 없다. 그
+커맨드는 전처럼 셸이 스레드 인터럽트에 반응해야 멈춘다.
 
-```jsonc
-{ "type": "command", "command": "./cleanup.sh", "timeout": 20, "ignoreInterrupt": true }
-```
-
-그 커맨드는 실행의 인터럽트에 멈추지 않는다 — 인터럽트가 신호로 오든(세션의 `interrupt`, 다음 입력의 선점), 백그라운드
-fork 를 멈출 때처럼 스레드 인터럽트로 오든. 듣는 곳은 이미 일어난 일을 알리는 이벤트(`onStop` · `subagentStop` ·
-`postCompact` · `postTool` · `permissionDenied` · `subagentStart`)의 `command` 뿐이다. 가드 이벤트에서는 WARN 과 함께
-버려진다 — 중단된 실행의 가드는 멈추고 막아야 하며 그것은 `failOpen` 으로도 `ignoreInterrupt` 로도 바뀌지 않는다. 실행 밖
-이벤트와 `http` · `mcp` handler 에서도 버려진다(피할 인터럽트가 없다). JSON 불리언만 받고, 아닌 값은 `false` 로 읽고 WARN 을
-남긴다. **이 옵션이 하지 않는 것**을 알고 쓴다: `timeout` 은 여전히 그 커맨드를 끝내고(옵션은 아무것도 늘리지 않는다), hook
-실행기의 종료와 프로세스 종료도 끝낸다. 그리고 실행은 그 커맨드를 **기다린다** — 다음 입력도 그만큼 기다리므로 `timeout` 을
-짧게 잡는다.
+**보고 커맨드는 끝까지 돈다.** 이미 일어난 일을 알리는 이벤트(`onStop` · `subagentStop` · `postCompact` · `postTool` ·
+`permissionDenied` · `subagentStart`)의 `command` 는 실행의 인터럽트에 멈추지 않는다 — 인터럽트가 커맨드보다 먼저 왔든 도는
+중에 왔든, 신호로 오든(세션의 `interrupt`, 다음 입력의 선점) 백그라운드 fork 를 멈출 때처럼 스레드 인터럽트로 오든. 그래서
+정상 종료한 턴의 `onStop` 정리 커맨드는 사용자가 다음 입력을 급히 넣어도 반쯤 된 채로 끊기지 않는다. 그 커맨드를 끝내는
+것은 셋뿐이다: 스스로 끝나는 것, 그 handler 의 `timeout`, 그리고 프로세스 종료 · hook 실행기의 종료(실행기의 종료는 스택이
+그 스레드 풀을 소유하고 셸이 스레드 인터럽트에 반응할 때만 끝낸다 — 원격 셸의 커맨드는 `timeout` 까지 돈다). 값은
+기다림이다 — **실행은 그 커맨드를 기다린다.** 중단된 실행도, 그 뒤에 선 다음 입력도, 멈춘 백그라운드 fork 와 워크플로도,
+**종료 중인 노드도** 커맨드가 끝나거나 `timeout` 이 될 때까지 기다린다. 기다림은 **hook 마다이고, 체인의 hook 은 더해진다**:
+돌던 커맨드는 남은 `timeout` 을, 그 뒤의 보고 hook 은 각자의 `timeout` 전부를 쓸 수 있고, 실행이 끝나며 이어서 발화하는
+`postTool` → `onStop` → `subagentStop` 이 차례로 더한다 — 기본 30초인 `onStop` handler 셋이면 다음 입력이 90초까지 기다린다.
+hook 하나는 `timeout` + 5초에서 끊기고, 얼마를 적었든 10분 + 5초를 넘지 못한다. 그러니 **보고 hook 의 `timeout` 은 짧게
+잡는다** — 기본값 30초를 그대로 두지 말고 그 정리가 실제로 걸리는 시간에 맞추고, 오래 걸리는 일은 커맨드가 백그라운드로 넘기고
+바로 돌아오게 한다. `postTool` 의 `http` · `mcp` handler 는 이 규칙의 대상이 아니다.
 
 ---
 
@@ -999,7 +995,6 @@ frontmatter 스키마 요약:
 | `action.type`   | `shell` / `deny` / `http` / `mcp`. `deny` 는 `preTool` 전용, `http`·`mcp` 는 `preTool`·`postTool` 전용 |
 | 타임아웃 필드   | `action.timeoutMs` (**밀리초**). frontmatter 에는 초 단위 `timeout` 별칭이 없다   |
 | `failOpen`      | entry 수준 키(`matcher` · `action` 과 나란히). YAML 불리언만 받고 기본 `false`. 액션이 답을 내지 못했을 때 통과시킨다 — `shell` 의 종료 코드 없음 · exit 126/127, `http` · `mcp` 의 판정 없음 ([가드가 막는 경우](#가드가-막는-경우)) |
-| `ignoreInterrupt` | entry 수준 키. YAML 불리언만 받고(아니면 파싱 실패) 기본 `false`. 실행이 인터럽트되어도 그 `shell` 커맨드를 멈추지 않는다. `onStop` · `subagentStop` · `postCompact` · `postTool` · `permissionDenied` · `subagentStart` 의 `shell` 액션에서만 듣고, 그 밖에서는 WARN 과 함께 무시된다 ([시작할 때 막는 경우](#시작할-때-막는-경우)의 "인터럽트") |
 
 `onSessionStart` / `onSessionEnd` / `onConfigReload` 는 skill 호출 바깥(세션·애플리케이션
 라이프사이클)에서 발사되므로 frontmatter 에서 거절된다 — `hooks.json` 에 선언한다.
@@ -1029,8 +1024,6 @@ fork 가 없어 발화하지 않는다. 전체 규칙은 [`aimon-skill-extension
 | `WARN hooks: only 'command' actions are valid on ...`                    | `preTool`/`postTool` 외의 이벤트는 셸 handler 전용. 가드가 아닌 이벤트일 때만 WARN 이다. |
 | `WARN hooks: 'command' on ... cannot run: the configured shell executor does not support shell actions` | 셸을 지원하지 않는 실행기(`NoOpShellActionExecutor`)로 `hooks.json` 을 적용했다. 가드가 아닌 `command` handler(가드가 아닌 이벤트, 또는 `failOpen: true`)는 등록되지 않는다 — `HostShellActionExecutor` 를 배선한다. 가드 이벤트의 `command` 라면 WARN 이 아니라 시작 실패다. |
 | `WARN hooks config at ...: ... has a 'failOpen' that is not a JSON boolean (...); it is read as false` | `failOpen` 에 `"true"` · `1` · `null` 을 썼다. 그 handler 는 `failOpen: false` 로 등록된다(커맨드를 못 돌리면 막는다). 관찰용이라면 `true` 로 고칠 것. |
-| `WARN hooks config at ...: ... has a 'ignoreInterrupt' that is not a JSON boolean (...); it is read as false` | `ignoreInterrupt` 에 `"true"` · `1` · `null` 을 썼다. 그 handler 의 커맨드는 인터럽트에 멈춘다. 끝까지 돌아야 한다면 `true` 로 고칠 것. |
-| `WARN hooks: 'ignoreInterrupt' has no effect on ...` | 그 키가 들을 수 없는 자리에 있다 — 가드 이벤트(`the event can block`), 실행 밖 이벤트(`fires outside any execution`), `command` 가 아닌 handler. handler 는 그대로 등록되고 키만 버려진다. 스킬 frontmatter 에서는 `<경로>: 'ignoreInterrupt' has no effect on …` 로 나온다. |
 | 도구가 `Blocked: guard hook '...' could not run its command` 로 막힘      | 결정 채널이 있는 이벤트의 `command` handler 가 종료 코드를 내지 못했거나(timeout 등) 셸이 커맨드를 시작하지 못했다(`command not found: exit code 127` · `command not executable: exit code 126` — 스크립트 경로와 실행 권한을 확인). 사유의 원인을 고치거나, 관찰용 handler 라면 `"failOpen": true` 를 선언. 전체 표는 [가드가 막는 경우](#가드가-막는-경우). |
 | 도구가 `Blocked: guard hook '...' could not get a verdict from its http call` (또는 `mcp call`) 로 막힘 | `preTool` 의 `http` · `mcp` handler 가 판정을 받지 못했다. 사유의 원인을 본다 — `action executor not wired`(호스트가 실행기를 배선하지 않았다 — `aimon-cli` 는 배선하므로 임베딩 호스트의 경우다), `call failed: MCP server not registered`(`server` 가 설정된 MCP 서버 이름이 아니다), `call failed: HTTP 307`(리다이렉트는 따라가지 않는다), `call failed: HTTP 503` · `call failed: ConnectException`(정책 서버), `timed out`, `response could not be read`(`decision` · `permissionDecision` 값이 아는 값이 아니다 — [http](#http) 의 표). 관찰용 handler 라면 `"failOpen": true`. |
 | `WARN hooks: 'asyncRewake' is not supported on event '...'`              | rewake 가능한 이벤트는 `preTool`/`preCompact`/`onSessionStart`/`onSessionEnd`/`onConfigReload`. hook 자체는 정상 등록됨. |

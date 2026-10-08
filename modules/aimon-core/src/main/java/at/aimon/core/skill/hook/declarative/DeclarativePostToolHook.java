@@ -64,7 +64,6 @@ public final class DeclarativePostToolHook implements PostToolHook {
     private final HttpActionExecutor httpExecutor;
     private final McpActionExecutor mcpExecutor;
     private final Map<String, String> processEnvSnapshot;
-    private final boolean ignoreInterrupt;
 
     /**
      * Creates a hook with shell-only action support (legacy SK-13 wiring).
@@ -136,10 +135,9 @@ public final class DeclarativePostToolHook implements PostToolHook {
      * @param processEnv
      *            process env snapshot used to populate the env whitelist for HTTP / MCP actions (must not be null)
      * @param options
-     *            config-derived options: hook-id discriminator and {@code ignoreInterrupt} (must not be null).
-     *            {@code postTool} is not a rewakeable event, so any {@code asyncRewake} spec carried here is ignored —
-     *            the applier rejects it at registration time. {@code ignoreInterrupt} is honoured for a shell action
-     *            only: an {@code http} / {@code mcp} call is not tied to the execution's signal to begin with.
+     *            config-derived options: hook-id discriminator (must not be null). {@code postTool} is not a
+     *            rewakeable event, so any {@code asyncRewake} spec carried here is ignored — the applier rejects it
+     *            at registration time.
      */
     // Declarative hooks bind one constructor parameter per config field, so they cannot be grouped.
     @SuppressWarnings("checkstyle:ParameterNumber")
@@ -160,7 +158,6 @@ public final class DeclarativePostToolHook implements PostToolHook {
         this.httpExecutor = httpExecutor;
         this.mcpExecutor = mcpExecutor;
         this.processEnvSnapshot = Map.copyOf(Objects.requireNonNull(processEnv, "processEnv cannot be null"));
-        this.ignoreInterrupt = options.isIgnoreInterrupt() && action instanceof ShellAction;
     }
 
     @Override
@@ -173,9 +170,14 @@ public final class DeclarativePostToolHook implements PostToolHook {
         return action.getExecutionBudget();
     }
 
+    /**
+     * {@code postTool} is a report event, so a shell command is waited for when the firing thread is interrupted and
+     * is not tied to the execution's signal: it runs until it finishes or its own timeout ends it. An {@code http} /
+     * {@code mcp} call is not tied to that signal to begin with and keeps the default.
+     */
     @Override
     public boolean ignoresInterrupt() {
-        return ignoreInterrupt;
+        return action instanceof ShellAction;
     }
 
     @Override
@@ -189,9 +191,9 @@ public final class DeclarativePostToolHook implements PostToolHook {
 
         if (action instanceof ShellAction shell) {
             final Map<String, String> env = buildShellEnv(context, toolName);
-            // A hook that declared ignoreInterrupt hands the executor a view with no cancellation signal, so the
-            // command is not tied to the execution's.
-            final HookContext shellContext = ignoreInterrupt ? new SignalDetachedHookContext(context) : context;
+            // postTool reports: the executor gets a view with no cancellation signal, so the command is not tied
+            // to the execution's and an interrupt does not stop it.
+            final HookContext shellContext = new SignalDetachedHookContext(context);
             if (SkillHookDirectory.export(env, shellContext, this, shellExecutor).isPresent()) {
                 // The skill's directory could not be staged, so the command is not run (already logged): postTool
                 // cannot block, but it does not run a command whose "$AIMON_SKILL_DIR/..." would resolve to "/...".

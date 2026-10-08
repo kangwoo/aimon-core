@@ -36,7 +36,6 @@ import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.event.OnSessionStartContext;
 import at.aimon.core.hook.event.OnStopContext;
 import at.aimon.core.hook.event.PostCompactContext;
-import at.aimon.core.hook.event.PostToolContext;
 import at.aimon.core.hook.event.PreCompactContext;
 import at.aimon.core.hook.event.PreToolContext;
 import at.aimon.core.hook.event.SubagentStartContext;
@@ -44,7 +43,6 @@ import at.aimon.core.hook.event.SubagentStopContext;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.hook.execution.HookStatus;
 import at.aimon.core.llm.ToolUse;
-import at.aimon.core.llm.ToolUseResult;
 import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCommand;
 import at.aimon.core.shell.ShellCommandResult;
@@ -54,7 +52,8 @@ import at.aimon.core.skill.hook.action.ShellAction;
 import at.aimon.core.skill.hook.declarative.predicate.NameOnlyPredicate;
 
 /**
- * A hook's shell command stops when the execution it fired in is interrupted (EE-80).
+ * A gate hook's shell command stops when the execution it fired in is interrupted (EE-80). A report hook's is handed
+ * no signal and does not (EE-98) — see {@code DeclarativeReportHookInterruptTest} for that half.
  *
  * <p>
  * The shell here is the kind the item is about: its blocking call does not answer a thread interrupt, and the only
@@ -118,44 +117,6 @@ class DeclarativeHookCancellationTest {
         }
     }
 
-    @Test
-    void advisoryEvent_interruptedExecution_stopsTheCommandAndProceeds() throws Exception {
-        try (DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator()) {
-            final DeclarativePostToolHook hook = new DeclarativePostToolHook("ops", NameOnlyPredicate.ANY, ACTION,
-                    new HostShellActionExecutor(cancellationOnlyShell()));
-            final PostToolContext context = PostToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("agent").hookRegistry(new DefaultHookRegistry())
-                    .executionCancellation(coordinator.getSignal()).toolUse(ToolUse.of("call-1", "Bash", Map.of()))
-                    .toolUseResult(ToolUseResult.success("call-1", "ok")).iterationCount(1).build();
-
-            final Future<HookResult> running = hookThread.submit(() -> hook.execute(context));
-            assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
-            coordinator.requestInterrupt(InterruptReason.USER_SIGINT);
-            final HookResult result = running.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
-
-            assertThat(stoppedByCancellation).as("the shell saw the command's cancellation trip").isTrue();
-            // Nothing to decide on an advisory event.
-            assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
-        }
-    }
-
-    @ParameterizedTest
-    @EnumSource(ReportEvent.class)
-    void reportEvent_interruptedExecution_stopsTheCommandAndProceeds(ReportEvent event) throws Exception {
-        try (DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator()) {
-            final VirtualShell shell = cancellationOnlyShell();
-
-            final Future<HookResult> running = hookThread
-                    .submit(() -> event.fire(new HostShellActionExecutor(shell), coordinator.getSignal()));
-            assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
-            coordinator.requestInterrupt(InterruptReason.USER_SIGINT);
-            final HookResult result = running.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
-
-            assertThat(stoppedByCancellation).as("the shell saw the command's cancellation trip").isTrue();
-            assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
-        }
-    }
-
     @ParameterizedTest
     @EnumSource(ReportEvent.class)
     void reportEvent_executionAlreadyCancelled_stillRunsTheCommandUnbound(ReportEvent event) throws Exception {
@@ -165,37 +126,12 @@ class DeclarativeHookCancellationTest {
             final HookResult result = event.fire(new HostShellActionExecutor(recordingShell()),
                     coordinator.getSignal());
 
-            // The audit / cleanup command of a cancelled execution starts, and nothing can stop it but its timeout.
+            // The audit / cleanup command of a cancelled execution starts, and nothing can stop it but its timeout
+            // — the same as one that was already running when the interrupt arrived (EE-98; that half, on all six
+            // report events and both roads, is DeclarativeReportHookInterruptTest).
             assertThat(seenOptions.get()).as("the command was handed to the shell").isNotNull();
             assertThat(seenOptions.get().getCancellation().isCancelled()).isFalse();
             assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
-        }
-    }
-
-    @Test
-    void postTool_secondHookOfTheChain_stillRunsAfterAnInterruptDuringTheFirst() throws Exception {
-        try (DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator()) {
-            // One context for the whole chain, as DefaultHookExecutor runs it: the rule has to hold per hook.
-            final PostToolContext context = PostToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("agent").hookRegistry(new DefaultHookRegistry())
-                    .executionCancellation(coordinator.getSignal()).toolUse(ToolUse.of("call-1", "Bash", Map.of()))
-                    .toolUseResult(ToolUseResult.success("call-1", "ok")).iterationCount(1).build();
-            final DeclarativePostToolHook first = new DeclarativePostToolHook("ops", NameOnlyPredicate.ANY, ACTION,
-                    new HostShellActionExecutor(cancellationOnlyShell()));
-            final DeclarativePostToolHook second = new DeclarativePostToolHook("audit", NameOnlyPredicate.ANY, ACTION,
-                    new HostShellActionExecutor(recordingShell()));
-
-            final Future<HookResult> running = hookThread.submit(() -> first.execute(context));
-            assertThat(commandStarted.await(5, TimeUnit.SECONDS)).isTrue();
-            coordinator.requestInterrupt(InterruptReason.USER_SIGINT);
-            running.get(COMMAND_RUNTIME.toMillis() * 2, TimeUnit.MILLISECONDS);
-            assertThat(stoppedByCancellation).as("the shell saw the command's cancellation trip").isTrue();
-            seenOptions.set(null);
-            final HookResult audited = second.execute(context);
-
-            assertThat(seenOptions.get()).as("the second hook's command was handed to the shell").isNotNull();
-            assertThat(seenOptions.get().getCancellation().isCancelled()).isFalse();
-            assertThat(audited.getStatus()).isEqualTo(HookStatus.SUCCESS);
         }
     }
 
@@ -297,7 +233,7 @@ class DeclarativeHookCancellationTest {
 
     // --- helpers ----------------------------------------------------------------------------------------------
 
-    /** The four events that report what already happened and were not tied to the execution's signal before. */
+    /** Four of the six events that report what already happened; their commands are handed no signal. */
     private enum ReportEvent {
         ON_STOP {
             @Override

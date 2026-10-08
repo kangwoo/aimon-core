@@ -17,10 +17,12 @@ import at.aimon.core.hook.execution.HookContext;
  * everything else.
  *
  * <p>
- * It is what a hook that declared {@code ignoreInterrupt} hands its {@link ShellActionExecutor}: the executor then
- * builds the command's options without a cancellation token and registers nothing on the execution's signal, so the
- * command starts and runs exactly as one fired on an already-cancelled execution does under the report rule. The
- * option is per hook and the context is per chain, which is why this is a view and not a field of the context.
+ * It is what a declarative hook on a report event ({@code onStop}, {@code subagentStop}, {@code postCompact},
+ * {@code postTool}, {@code permissionDenied}, {@code subagentStart}) hands its {@link ShellActionExecutor}: the
+ * executor then builds the command's options without a cancellation token and registers nothing on the execution's
+ * signal, so an interrupt does not stop the command whether it arrives before the command starts or while it runs.
+ * The context itself keeps answering a live signal — that answer is for hooks written in code, which decide for
+ * themselves what to tie to it — which is why this is a view and not the context's own answer.
  *
  * <p>
  * The view is a plain {@link HookContext}, not the event's own context type: an executor must use what it is handed

@@ -22,9 +22,9 @@ import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.event.OnSessionStartContext;
 import at.aimon.core.hook.event.OnStartContext;
+import at.aimon.core.hook.event.PostToolHook;
 import at.aimon.core.hook.event.PreToolContext;
 import at.aimon.core.hook.event.PreToolHook;
-import at.aimon.core.hook.execution.ExecutionHook;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.hook.execution.HookStatus;
 import at.aimon.core.llm.ToolUse;
@@ -128,6 +128,44 @@ class HookRegistryApplierTest {
     }
 
     @Test
+    @DisplayName("EE-98: a command on a report event is waited for across an interrupt; a gate, a session event and an http handler are not")
+    void reportEventCommandsAskToBeWaitedFor_andNothingElseDoes() {
+        // The rule follows from the event, with no key in the file. It is what keeps a hooks.json report command from
+        // being cancelled when the thread that fired it is interrupted.
+        final DefaultHookRegistry registry = new DefaultHookRegistry();
+
+        new HookRegistryApplier(new HostShellActionExecutor(mock(VirtualShell.class)),
+                HttpActionExecutor.createDefault(), null, Map.of()).apply(merged("""
+                        {"hooks":{
+                          "onStop":[{"hooks":[{"type":"command","command":"cleanup.sh"}]}],
+                          "subagentStop":[{"hooks":[{"type":"command","command":"cleanup.sh"}]}],
+                          "subagentStart":[{"hooks":[{"type":"command","command":"audit.sh"}]}],
+                          "postCompact":[{"hooks":[{"type":"command","command":"audit.sh"}]}],
+                          "permissionDenied":[{"hooks":[{"type":"command","command":"audit.sh"}]}],
+                          "postTool":[{"hooks":[
+                            {"type":"command","command":"audit.sh"},
+                            {"type":"http","url":"http://127.0.0.1:1/audit"}
+                          ]}],
+                          "preTool":[{"hooks":[{"type":"command","command":"guard.sh"}]}],
+                          "onSessionEnd":[{"hooks":[{"type":"command","command":"bye.sh"}]}]
+                        }}"""), registry);
+
+        for (HookEventType<?> report : List.of(HookEventType.ON_STOP, HookEventType.SUBAGENT_STOP,
+                HookEventType.SUBAGENT_START, HookEventType.POST_COMPACT, HookEventType.PERMISSION_DENIED)) {
+            assertThat(registry.getHooks(report)).as(report.name()).singleElement()
+                    .satisfies(hook -> assertThat(hook.ignoresInterrupt()).isTrue());
+        }
+        final List<PostToolHook> postTool = registry.getHooks(HookEventType.POST_TOOL);
+        assertThat(postTool).hasSize(2);
+        assertThat(postTool.get(0).ignoresInterrupt()).as("postTool command").isTrue();
+        assertThat(postTool.get(1).ignoresInterrupt()).as("postTool http").isFalse();
+        assertThat(registry.getHooks(HookEventType.PRE_TOOL)).singleElement()
+                .satisfies(hook -> assertThat(hook.ignoresInterrupt()).isFalse());
+        assertThat(registry.getHooks(HookEventType.ON_SESSION_END)).singleElement()
+                .satisfies(hook -> assertThat(hook.ignoresInterrupt()).isFalse());
+    }
+
+    @Test
     @DisplayName("preTool command entries are registered as pre-tool hooks")
     void preToolCommandRegistered() {
         final HookConfigDocument doc = parser.parse(
@@ -197,73 +235,6 @@ class HookRegistryApplierTest {
         bootstrap().apply(merged, registry);
 
         assertThat(registry.getHooks(HookEventType.ON_START)).hasSize(1);
-    }
-
-    // --- ignoreInterrupt (EE-97) ------------------------------------------------------------------------------------
-
-    @Test
-    @DisplayName("ignoreInterrupt reaches a command handler on every report event")
-    void ignoreInterruptIsPassedToReportHooks() {
-        final DefaultHookRegistry registry = new DefaultHookRegistry();
-
-        bootstrap().apply(merged("""
-                {"hooks":{
-                  "onStop":[{"hooks":[{"type":"command","command":"cleanup.sh","ignoreInterrupt":true},
-                                      {"type":"command","command":"note.sh"}]}],
-                  "subagentStop":[{"hooks":[{"type":"command","command":"c.sh","ignoreInterrupt":true}]}],
-                  "subagentStart":[{"hooks":[{"type":"command","command":"c.sh","ignoreInterrupt":true}]}],
-                  "postCompact":[{"hooks":[{"type":"command","command":"c.sh","ignoreInterrupt":true}]}],
-                  "permissionDenied":[{"hooks":[{"type":"command","command":"c.sh","ignoreInterrupt":true}]}],
-                  "postTool":[{"hooks":[{"type":"command","command":"c.sh","ignoreInterrupt":true}]}]
-                }}"""), registry);
-
-        assertThat(registry.getHooks(HookEventType.ON_STOP)).extracting(ExecutionHook::ignoresInterrupt)
-                .containsExactly(true, false);
-        for (HookEventType<?> event : List.of(HookEventType.SUBAGENT_STOP, HookEventType.SUBAGENT_START,
-                HookEventType.POST_COMPACT, HookEventType.PERMISSION_DENIED, HookEventType.POST_TOOL)) {
-            assertThat(registry.getHooks(event)).as(event.name()).hasSize(1)
-                    .allSatisfy(hook -> assertThat(hook.ignoresInterrupt()).isTrue());
-        }
-    }
-
-    @Test
-    @DisplayName("ignoreInterrupt is dropped with a WARN on a guard event, outside an execution, and off a command")
-    void ignoreInterruptIsDroppedWhereItCannotHaveAnEffect() {
-        final DefaultHookRegistry registry = new DefaultHookRegistry();
-        final ch.qos.logback.classic.Logger applierLogger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory
-                .getLogger(HookRegistryApplier.class);
-        final ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender = new ch.qos.logback.core.read.ListAppender<>();
-        appender.start();
-        applierLogger.addAppender(appender);
-        try {
-            new HookRegistryApplier(new HostShellActionExecutor(mock(VirtualShell.class)),
-                    HttpActionExecutor.createDefault(), null, Map.of()).apply(merged("""
-                            {"hooks":{
-                              "onStart":[{"hooks":[{"type":"command","command":"gate.sh","ignoreInterrupt":true}]}],
-                              "preTool":[{"hooks":[{"type":"command","command":"gate.sh","ignoreInterrupt":true}]}],
-                              "onSessionEnd":[{"hooks":[{"type":"command","command":"bye.sh","ignoreInterrupt":true}]}],
-                              "postTool":[{"hooks":[{"type":"http","url":"http://127.0.0.1:1/audit",
-                                                     "ignoreInterrupt":true}]}]
-                            }}"""), registry);
-        } finally {
-            applierLogger.detachAppender(appender);
-            appender.stop();
-        }
-
-        // Every handler is still registered: the key is dropped, not the hook.
-        for (HookEventType<?> event : List.of(HookEventType.ON_START, HookEventType.PRE_TOOL,
-                HookEventType.ON_SESSION_END, HookEventType.POST_TOOL)) {
-            assertThat(registry.getHooks(event)).as(event.name()).hasSize(1)
-                    .allSatisfy(hook -> assertThat(hook.ignoresInterrupt()).isFalse());
-        }
-        final List<String> warnings = appender.list.stream()
-                .filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)
-                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
-                .filter(m -> m.contains("'ignoreInterrupt'")).toList();
-        assertThat(warnings).hasSize(4);
-        assertThat(warnings).filteredOn(m -> m.contains("the event can block")).hasSize(2);
-        assertThat(warnings).filteredOn(m -> m.contains("outside any execution")).hasSize(1);
-        assertThat(warnings).filteredOn(m -> m.contains("not a 'command'")).hasSize(1);
     }
 
     // --- which shell a hooks.json command runs in (EE-12) -----------------------------------------------------------

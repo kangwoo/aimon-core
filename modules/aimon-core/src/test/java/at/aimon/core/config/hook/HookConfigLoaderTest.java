@@ -71,36 +71,6 @@ class HookConfigLoaderTest {
     }
 
     @Test
-    @DisplayName("a non-boolean ignoreInterrupt is read as false and WARNs with the file and the handler (EE-97)")
-    void nonBooleanIgnoreInterruptIsReadAsFalseWithAWarning(@TempDir Path tmp) throws IOException {
-        final Path projDir = Files.createDirectories(tmp.resolve("project"));
-        final Path file = projDir.resolve("hooks.json");
-        Files.writeString(file, "{\"hooks\":{\"Stop\":[{\"hooks\":["
-                + "{\"type\":\"command\",\"command\":\"cleanup.sh\",\"ignoreInterrupt\":\"yes\"}]}]}}");
-        final ch.qos.logback.classic.Logger loaderLogger = (ch.qos.logback.classic.Logger) LoggerFactory
-                .getLogger(HookConfigLoader.class);
-        final ListAppender<ILoggingEvent> appender = new ListAppender<>();
-        appender.start();
-        loaderLogger.addAppender(appender);
-        try {
-            final LayeredHookConfig config = new HookConfigLoader(new JacksonHookConfigParser(), tmp.resolve("user"),
-                    projDir).load();
-
-            assertThat(config.get(HookConfigSource.PROJECT).getHooks().get("Stop").get(0).getHandlers())
-                    .extracting(HookHandlerSpec::getCommand, HookHandlerSpec::isIgnoreInterrupt)
-                    .containsExactly(org.assertj.core.groups.Tuple.tuple("cleanup.sh", false));
-            final List<ILoggingEvent> warnings = appender.list.stream().filter(e -> e.getLevel() == Level.WARN)
-                    .toList();
-            assertThat(warnings).hasSize(1);
-            assertThat(warnings.get(0).getFormattedMessage()).contains(file.toString()).contains("cleanup.sh")
-                    .contains("'ignoreInterrupt'").contains("\"yes\"").contains("read as false");
-        } finally {
-            loaderLogger.detachAppender(appender);
-            appender.stop();
-        }
-    }
-
-    @Test
     @DisplayName("present files are loaded into the matching source slot")
     void loadsThreeLayers(@TempDir Path tmp) throws IOException {
         final Path userDir = Files.createDirectories(tmp.resolve("user"));

@@ -58,9 +58,10 @@ public final class CancellationSignals {
 
     /**
      * Returns the signal only while it has not tripped. This is the rule for a hook event that <em>reports</em>
-     * something that already happened ({@code onStop}, {@code postTool}, ...): work started on the execution's behalf
-     * is tied to the signal while the execution is live, and work started after the interrupt is not — otherwise the
-     * tripped signal would keep an audit or cleanup command from ever starting.
+     * something that already happened ({@code onStop}, {@code postTool}, ...): a hook written in code may tie its
+     * work to the signal while the execution is live, and is handed none after the interrupt — otherwise the tripped
+     * signal would keep an audit or cleanup from ever starting. The declarative hooks' shell commands on those events
+     * are not handed the signal either way.
      *
      * <p>
      * The answer is a snapshot. A signal that trips right after this returns is still handed out, and whoever
