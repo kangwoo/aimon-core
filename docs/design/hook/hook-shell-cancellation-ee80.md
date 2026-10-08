@@ -489,21 +489,36 @@ Why, in the order the maintainer weighed it:
   it did not name the two halves as one race.
 - **The two failures are not alike.** A half-done cleanup is silent — nothing reports it. A command that runs on is a
   delay that is bounded by its timeout and visible to whoever is waiting.
-- **For a turn's `onStop` it is what was released.** Before this document's change nothing delivered an interrupt to
-  that command, so it ran to its end. Stopping it was the new behaviour; not stopping it breaks nobody.
+- **On the signal road it is what was released.** Before this document's change `LiveSession.interrupt` and a
+  preempting input delivered nothing to a turn's `onStop` command, so it ran to its end. Stopping it was the new
+  behaviour; not stopping it breaks nobody. (The thread road is another matter — below.)
 
 What it costs is the part of §1 that the report events were bound for: an interrupted execution — and the input queued
-behind it — waits for a report command for up to that command's remaining timeout. That holds on every shell, not
-only one that ignores thread interrupts, because the thread road is closed as well. The guide tells authors to keep
-report hooks' timeouts short. An opt-in the other way ("stop this report command on an interrupt") was not added; it
-is the thing to add if someone asks, and is registered as EE-101.
+behind it — waits for report commands. That holds on every shell, not only one that ignores thread interrupts,
+because the thread road is closed as well. The wait is per hook and adds up: a chain runs hook by hook, a report
+command that had not started when the interrupt arrived also starts and runs in full, and the chains that still fire
+while the execution unwinds (`postTool`, then `onStop`, then `subagentStop`) each add theirs. One hook's ceiling is
+the outer net, `min(timeout, 10 min) + 5 s` (`HookExecutionPolicy.timeoutFor`). The guide tells authors to keep report
+hooks' timeouts short. "Hook-pool teardown still ends it" needs two conditions: the stack owns the pool
+(`DefaultHookExecutor.close()` leaves an injected pool alone) and the shell answers the thread interrupt that
+`shutdownNow()` sends — a remote shell's command, which carries no cancellation token by design, runs on to its
+timeout. An opt-in the other way ("stop this report command on an interrupt") was not added; it is the thing to add
+if someone asks, and is registered as EE-101.
 
-One released behaviour does change, and it is on the thread road, not the signal's. Since before EE-80,
-`DefaultHookExecutor` answered an interrupt of the firing thread by cancelling the hook's task, and a shell that
-answers thread interrupts (`LocalShell`) then stopped the command. `Task.stop` interrupts a background fork's worker,
-so a fork's `onStop` or `subagentStop` command running on a local shell was cut short by it. It now runs to its end
-and the stopped task finishes that much later. This was read from the released executor (`v0.3.1`), not run against
-it.
+Released behaviour does change on the thread road, and for more than one sender. Since before EE-80,
+`DefaultHookExecutor` answered **any** interrupt of the firing thread by cancelling the hook's task, and a shell that
+answers thread interrupts (`LocalShell`) then stopped the command. A report hook now sits that interrupt out, whoever
+sent it. The senders that reach a firing thread, all present in `v0.3.1`: `Task.stop` on a background fork
+(`RunningTaskHandle.requestStop`), a workflow stop (`RunControl.requestStop`), `DefaultSessionRouter.close()`
+(`turnExecutor.shutdownNow()`) and `DefaultSubagentExecutionManager.close()` (`shutdownNow()` on the background
+pool). And it is all six report events, not `onStop` / `subagentStop` only — a fork that is stopped is usually in its
+loop, so the command running at that moment is most often a `postTool` one. Two consequences worth naming. A stopped
+task or workflow settles later, by the time its report commands take. And shutdown waits: a router closed while a
+turn's `onStop` or `postTool` command runs used to kill that command through the interrupt; now the turn's thread
+keeps waiting past the router's two-second `awaitTermination`, after the session cache and the event publisher are
+closed, until the command ends, its timeout runs out or the `HOOK_EXECUTOR` teardown phase reaches it. So "a turn's
+`onStop` behaves as released" is true of the signal road only. All of this was read from the released sources
+(`v0.3.1`), not run against them.
 
 What this does to the statements above:
 

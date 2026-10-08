@@ -4300,15 +4300,30 @@ teardown 과 프로세스 종료는 여전히 끝낸다. 가드 이벤트(`onSta
 보고되지 않는다. 끝까지 도는 명령이 치르는 것은 `timeout` 으로 묶인, 기다리는 쪽에 보이는 지연이다. (3) **릴리스된 `onStop`
 동작이 깨지지 않는다.** EE-80 전에는 턴의 `onStop` 명령에 인터럽트를 전하는 것이 없었고, 그 명령은 끝까지 돌았다.
 
-**값.** 중단된 실행과 그 뒤에 선 다음 입력이 보고 명령의 남은 `timeout` 만큼 기다린다. 결정문은 그 값을 "스레드 인터럽트에
-반응하지 않는 셸에서" 로 적었는데, 지어 보니 **셸을 가리지 않는다** — 두 길을 다 막았으므로 `LocalShell` 의 명령에도 닿는
-것이 없다. 가이드에는 그렇게 적었고, 보고 훅의 `timeout` 을 짧게 잡으라고 적었다.
+**값.** 중단된 실행과 그 뒤에 선 다음 입력이 보고 명령을 기다린다. 결정문은 그 값을 "스레드 인터럽트에 반응하지 않는
+셸에서" 로 적었는데, 지어 보니 **셸을 가리지 않는다** — 두 길을 다 막았으므로 `LocalShell` 의 명령에도 닿는 것이 없다.
+그리고 "보고 명령 하나의 남은 `timeout`" 이 아니다(리뷰): 체인은 훅을 차례로 돌리고, 아직 시작하지 않은 보고 명령도 시작해서
+끝까지 돌며, 실행이 풀리는 동안 이어지는 체인(`postTool` → `onStop` → `subagentStop`)이 각자의 것을 더한다. 기본 30초인 `onStop`
+핸들러 셋이면 다음 입력은 90초까지 기다린다. 훅 하나의 상한은 `min(timeout, 10분) + 5초` 다
+(`hook/execution/HookExecutionPolicy.java` 의 `timeoutFor`). 가이드에는 그렇게 적었고, 보고 훅의 `timeout` 을 짧게 잡으라고 적었다.
+"훅 풀의 teardown 이 여전히 끝낸다" 에도 조건이 둘 붙는다: 스택이 그 풀을 소유할 것(`DefaultHookExecutor.close()` 는 주입된
+풀을 닫지 않는다), 그리고 셸이 스레드 인터럽트에 반응할 것 — 원격 셸의 보고 명령은 취소 토큰을 싣지 않으므로 자기 timeout
+까지 그쪽에서 돈다.
 
 **근거가 달랐던 것 (규칙 둘) — (3) 은 신호의 길에서만 참이다.** 릴리스된 훅 실행기(`v0.3.1` 의 `DefaultHookExecutor`)는 발화
-스레드의 인터럽트에 훅의 태스크를 취소하는 것으로 답했고, `LocalShell` 은 그것에 반응한다. 그래서 백그라운드 포크를
-`Task.stop` 으로 멈추면, 로컬 셸에서 돌던 그 포크의 `onStop` · `subagentStop` 명령은 **릴리스에서 끊겼다.** 이제는 끝까지 돌고
-멈춘 태스크가 그만큼 늦게 끝난다. 결정이 스레드의 길을 명시해 포함했으므로 그대로 지었고, CHANGELOG 에 릴리스 대비 바뀌는
-동작으로 적었다. 릴리스된 실행기는 읽어서 봤고 그 버전에서 돌려 보지 않았다.
+스레드의 **어떤** 인터럽트에든 훅의 태스크를 취소하는 것으로 답했고, `LocalShell` 은 그것에 반응한다. 보고 훅은 이제 누가
+보냈든 그 인터럽트를 넘긴다. 그러니 릴리스 대비 바뀌는 것은 `Task.stop` 하나가 아니다(리뷰가 짚었다 — 처음에는 그렇게 적었다).
+발화 스레드에 닿는 인터럽트를 보내는 자리는 넷이고 모두 `v0.3.1` 에 있었다: 백그라운드 포크의 `Task.stop`
+(`subagent/task/RunningTaskHandle.java:121`), 워크플로 정지(`workflow/impl/RunControl.java:62`), `DefaultSessionRouter.close()` 의
+`turnExecutor.shutdownNow()`(`aimon-session-routing`, `DefaultSessionRouter.java:3030`), `DefaultSubagentExecutionManager.close()` 의
+`shutdownNow()`(`:1272`) — 줄 번호는 2026-10-08. 이벤트도 `onStop` · `subagentStop` 만이 아니라 보고 이벤트 여섯 전부다: 멈춘
+포크는 대개 루프 안에 있으므로 그때 돌던 것은 흔히 `postTool` 명령이다. 결과는 둘이다. 멈춘 태스크와 워크플로가 보고 명령이
+도는 만큼 늦게 끝난다. 그리고 **종료가 기다린다**: 턴의 `onStop`(또는 `postTool`) 명령이 도는 동안 라우터를 닫으면, 릴리스에서는
+`shutdownNow()` 의 인터럽트가 그 명령을 끝냈지만 이제 턴의 스레드는 라우터의 2초 `awaitTermination` 을 넘겨 — 세션 캐시와 이벤트
+publisher 가 닫힌 뒤에도 — 명령이 끝나거나 timeout 이 되거나 `HOOK_EXECUTOR` teardown 단계가 닿을 때까지 기다린다. "턴의 `onStop`
+은 릴리스된 대로다" 는 그래서 신호의 길(`LiveSession.interrupt`, 선점하는 입력)에서만 참이다. 결정이 스레드의 길을 명시해
+포함했으므로 그대로 지었고, CHANGELOG 에 릴리스 대비 바뀌는 동작으로 — 운영자가 읽을 종료 문장과 함께 — 적었다. 릴리스된
+소스는 읽어서 봤고 그 버전에서 돌려 보지 않았다.
 
 **지운 것.** 설정 키 `ignoreInterrupt`(`hooks.json` 의 핸들러 키, SKILL.md 의 항목 키), `DeclarativeHookOptions` ·
 `HookHandlerSpec` 의 필드와 빌더 메서드, 두 파서의 읽기와 WARN, 로더의 불리언 아님 WARN, `HookEventName.isReport`.

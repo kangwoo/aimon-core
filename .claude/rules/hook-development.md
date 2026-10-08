@@ -175,8 +175,12 @@ for side effects only. Wiring one up is a feature, not a bug fix.
     the flag on the way out. `AbstractDeclarativeShellHook` answers `reportEvent && !canVeto()`;
     `DeclarativePostToolHook` answers `true` for a shell action only (`http` / `mcp` were never tied
     to the signal). The command is ended by finishing, by the action's timeout, or by hook-pool
-    teardown — and the execution's thread waits for it, which is why the guide says to keep report
-    hooks' timeouts short.
+    teardown (only a pool the stack owns, and only on a shell that answers a thread interrupt) —
+    and the execution's thread waits for it, per hook and summed over a chain, which is why the
+    guide says to keep report hooks' timeouts short. The wait holds against **every** sender of a
+    thread interrupt — `Task.stop`, a workflow stop, `shutdownNow()` from a router or the subagent
+    manager closing — so shutdown waits on a running report command too; that is a change against
+    `v0.3.1` and is in the CHANGELOG as one.
   - *The context getter is a separate thing, and is for hooks written in code.* **Which answer an
     event's context gives is decided by the context type, not the firing site.** A gate context
     returns the signal always; a report context returns it through

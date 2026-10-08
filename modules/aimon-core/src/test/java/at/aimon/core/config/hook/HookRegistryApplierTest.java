@@ -22,6 +22,7 @@ import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.event.OnSessionStartContext;
 import at.aimon.core.hook.event.OnStartContext;
+import at.aimon.core.hook.event.PostToolHook;
 import at.aimon.core.hook.event.PreToolContext;
 import at.aimon.core.hook.event.PreToolHook;
 import at.aimon.core.hook.execution.HookResult;
@@ -124,6 +125,44 @@ class HookRegistryApplierTest {
         assertThat(hooks.get(1).execute(context).getStatus()).isEqualTo(HookStatus.SUCCESS);
         assertThat(hooks.get(2).execute(context).getStatus()).isEqualTo(HookStatus.BLOCKED);
         assertThat(hooks.get(3).execute(context).getStatus()).isEqualTo(HookStatus.SUCCESS);
+    }
+
+    @Test
+    @DisplayName("EE-98: a command on a report event is waited for across an interrupt; a gate, a session event and an http handler are not")
+    void reportEventCommandsAskToBeWaitedFor_andNothingElseDoes() {
+        // The rule follows from the event, with no key in the file. It is what keeps a hooks.json report command from
+        // being cancelled when the thread that fired it is interrupted.
+        final DefaultHookRegistry registry = new DefaultHookRegistry();
+
+        new HookRegistryApplier(new HostShellActionExecutor(mock(VirtualShell.class)),
+                HttpActionExecutor.createDefault(), null, Map.of()).apply(merged("""
+                        {"hooks":{
+                          "onStop":[{"hooks":[{"type":"command","command":"cleanup.sh"}]}],
+                          "subagentStop":[{"hooks":[{"type":"command","command":"cleanup.sh"}]}],
+                          "subagentStart":[{"hooks":[{"type":"command","command":"audit.sh"}]}],
+                          "postCompact":[{"hooks":[{"type":"command","command":"audit.sh"}]}],
+                          "permissionDenied":[{"hooks":[{"type":"command","command":"audit.sh"}]}],
+                          "postTool":[{"hooks":[
+                            {"type":"command","command":"audit.sh"},
+                            {"type":"http","url":"http://127.0.0.1:1/audit"}
+                          ]}],
+                          "preTool":[{"hooks":[{"type":"command","command":"guard.sh"}]}],
+                          "onSessionEnd":[{"hooks":[{"type":"command","command":"bye.sh"}]}]
+                        }}"""), registry);
+
+        for (HookEventType<?> report : List.of(HookEventType.ON_STOP, HookEventType.SUBAGENT_STOP,
+                HookEventType.SUBAGENT_START, HookEventType.POST_COMPACT, HookEventType.PERMISSION_DENIED)) {
+            assertThat(registry.getHooks(report)).as(report.name()).singleElement()
+                    .satisfies(hook -> assertThat(hook.ignoresInterrupt()).isTrue());
+        }
+        final List<PostToolHook> postTool = registry.getHooks(HookEventType.POST_TOOL);
+        assertThat(postTool).hasSize(2);
+        assertThat(postTool.get(0).ignoresInterrupt()).as("postTool command").isTrue();
+        assertThat(postTool.get(1).ignoresInterrupt()).as("postTool http").isFalse();
+        assertThat(registry.getHooks(HookEventType.PRE_TOOL)).singleElement()
+                .satisfies(hook -> assertThat(hook.ignoresInterrupt()).isFalse());
+        assertThat(registry.getHooks(HookEventType.ON_SESSION_END)).singleElement()
+                .satisfies(hook -> assertThat(hook.ignoresInterrupt()).isFalse());
     }
 
     @Test

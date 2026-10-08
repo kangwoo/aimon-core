@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: f30512fa
+source_commit: 8613c51b
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -658,12 +658,18 @@ either. Those commands stop, as before, only if the shell answers a thread inter
 execution — whether the interrupt came before the command or while it runs, and whether it arrives as the signal (the
 session's `interrupt`, the next input preempting the turn) or as a thread interrupt, as when a background fork is
 stopped. So a normally finished turn's `onStop` cleanup command is not cut off half done when the user sends the next
-input in a hurry. Only three things end that command: finishing by itself, the handler's `timeout`, and the hook
-executor shutting down or the process exiting. What it costs is waiting — **the execution waits for the command.** An
-interrupted execution, the next input queued behind it and a stopped background fork all wait until the command ends
-or its `timeout` runs out. So **keep a report hook's `timeout` short** — do not leave it at the 30-second default, set
-it to what the cleanup really takes, and have the command hand long work to the background and return at once. `http`
-and `mcp` handlers on `postTool` are not covered by this rule.
+input in a hurry. Only three things end that command: finishing by itself, the handler's `timeout`, and the process
+exiting or the hook executor shutting down (the executor's shutdown ends it only when the stack owns that thread pool
+and the shell answers a thread interrupt — a command on a remote shell runs on to its `timeout`). What it costs is
+waiting — **the execution waits for the command.** An interrupted execution, the next input queued behind it, a
+stopped background fork or workflow, and **a node that is shutting down** all wait until the command ends or its
+`timeout` runs out. The wait is **per hook, and the hooks of a chain add up**: the command that was running can take
+what is left of its `timeout`, every report hook after it can take all of its own, and `postTool`, then `onStop`,
+then `subagentStop`, which still fire as the execution ends, add theirs in turn — three `onStop` handlers at the
+30-second default hold the next input for up to 90 seconds. One hook is cut off at its `timeout` plus 5 seconds, and
+at 10 minutes plus 5 seconds whatever it declares. So **keep a report hook's `timeout` short** — do not leave it at
+the 30-second default, set it to what the cleanup really takes, and have the command hand long work to the background
+and return at once. `http` and `mcp` handlers on `postTool` are not covered by this rule.
 
 ---
 

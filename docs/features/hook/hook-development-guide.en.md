@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-development-guide.md
-source_commit: f30512fa
+source_commit: 8613c51b
 ---
 
 # Hook Development Guide
@@ -431,7 +431,8 @@ may sit between a `tool_use` and its `tool_result`.
   interrupt flag again before returning. It is for cleanup and audit work that has to finish once
   it has started, and a declarative hook's shell command always declares it on a report event (the
   event decides, not a setting). A hook registered in code keeps the default `false` unless it
-  overrides the method. This is one half —
+  overrides the method. The wait is per hook and the hooks of a chain add up — with three hooks
+  that declare it, an interrupted execution waits for up to the sum of three budgets. This is one half —
   the other is the hook's own: not tying its work to `getExecutionCancellation()`. The executor
   does not know the event, so the declaration is honoured **on any event**. It cannot turn an
   interrupt into a pass (what the wait ends in is the hook's own verdict or a timeout), but if a

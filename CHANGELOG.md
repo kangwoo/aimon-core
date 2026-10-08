@@ -21,14 +21,27 @@ replaced the option EE-97 had built with a rule. The design, what the build chan
   other half of the same sentence and are unchanged: a command on `onStart` / `preCompact` / `preTool` /
   `permissionRequest` is always stopped, and a cancelled guard blocks regardless of `failOpen`. The rule follows from
   the event; there is **no configuration key** for it. What it costs: the execution's thread — a finished turn's too —
-  waits for a report command, so an interrupted execution, and the input queued behind it, waits for up to the
-  command's remaining `timeout`, on every shell. Keep report hooks' `timeout` short. Hook-pool teardown and process
-  exit still end the command. Against the last release this is one change, on the thread road: `DefaultHookExecutor`
-  used to cancel a hook whose firing thread was interrupted, and a shell that answers thread interrupts (`LocalShell`)
-  then stopped the command — so stopping a background fork (`Task.stop`) while its `onStop` / `subagentStop` command
-  ran cut that command short, and now waits for it. A turn's `onStop` command was never reached by an interrupt in a
-  release and behaves as it did. `http` / `mcp` handlers on `postTool` are not part of this: they were never tied to
-  the signal and are still cancelled by a thread interrupt.
+  waits for report commands, on every shell. The wait is **per hook, and hooks in a chain add up**: the command that
+  was running takes what is left of its `timeout`, every later report hook of that chain starts and may take all of
+  its own, and so do the chains that still fire while the execution unwinds (`postTool`, then `onStop`, then
+  `subagentStop`). Three `onStop` handlers at the 30-second default can hold the next input for 90 seconds. One hook is
+  cut off by the executor at its `timeout` plus 5 seconds, and at 10 minutes plus 5 seconds whatever it declared. Keep
+  report hooks' `timeout` short. Process exit still ends the command, and so does hook-pool teardown — when the
+  stack owns the pool (an injected pool is the caller's to close) and the shell answers a thread interrupt; a command
+  on a remote shell that ignores one keeps running there until its `timeout`. `http` / `mcp` handlers on `postTool`
+  are not part of this: they were never tied to the signal and are still cancelled by a thread interrupt.
+- **Changed against the last release: an interrupt of the thread that fired a report hook no longer stops its
+  command — which includes shutdown.** Up to `v0.3.1`, `DefaultHookExecutor` cancelled any hook whose firing thread
+  was interrupted, and a shell that answers thread interrupts (`LocalShell`) then stopped the command. That applied to
+  every sender of such an interrupt, and for a report command none of them stops it now: `Task.stop` on a background
+  fork, a workflow stop (`RunControl.requestStop`), `SessionRouter.close()` (`shutdownNow()` on the turn pool) and
+  `DefaultSubagentExecutionManager.close()` (`shutdownNow()` on the background pool) — on all six report events, so a
+  stopped fork that was in a `postTool` command waits for it as much as one in its `onStop`. **For an operator:
+  shutting a node down while a report command runs now waits on that command** until it ends, its `timeout` runs
+  out, or the hook-pool teardown phase (after sessions and runtimes) reaches it. The router and the subagent manager
+  still wait for their own pools for a few seconds only and move on, so their `close()` returns as before; what
+  outlives it is the worker thread waiting for the command. Only the signal road is unchanged against the release: a
+  turn's `onStop` command was not reached by `LiveSession.interrupt` or a preempting input before, and is not now.
 - **`ExecutionHook` gained `ignoresInterrupt()` (default `false`).** A hook that returns `true` is waited for when the
   thread that fired it is interrupted: `DefaultHookExecutor` no longer cancels its task, returns the hook's own result
   (or times out as usual), and re-arms the thread's interrupt flag. The declarative shell hooks return `true` on the
