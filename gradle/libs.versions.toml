@@ -192,7 +192,7 @@ snakeyaml = "2.7"
 cron-utils = "9.2.1"
 mustache = "0.9.14"
 picocli = "4.7.7"
-jline = "4.4.6"
+jline = "4.4.7"
 jansi = "2.4.3"
 
 # HTML Parsing
@@ -240,7 +240,7 @@ logback = "1.6.5"
 checkstyle = "10.12.5"
 spotbugs = "6.5.12"
 jacoco = "0.8.11"
-spotless = "8.10.3"
+spotless = "8.10.4"
 
 # Publishing
 # 0.32.0 rather than 0.30.0 because 0.30.0 refuses to publish a snapshot at all when the host is the Central
