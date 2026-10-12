@@ -33,13 +33,13 @@ lombok = "1.18.48"
 mapstruct = "1.6.3"
 
 # Database
-postgresql = "42.7.13"
+postgresql = "42.7.14"
 h2 = "2.5.252"
 hikari = "7.1.0"
 mongodb = "5.13.0"
 
 # Cloud & Storage
-aws-sdk = "2.55.10"
+aws-sdk = "2.55.13"
 
 # Testing
 # Test classpaths against shipped versions (#99). #91's bar: a module's tests run against the versions the module
