@@ -64,6 +64,9 @@ final class OpenAIResponsesStreamingMapper {
     /** Whether reasoning deltas reach the sink — see {@link OpenAIResponsesExchange}'s constructor. */
     private final boolean forwardReasoning;
 
+    /** Whether reasoning items become traces at all — see {@link OpenAIResponsesExchange}'s constructor. */
+    private final boolean captureReasoning;
+
     /**
      * The output items as {@code output_item.done} delivered them: in output order, and including the
      * {@code function_call} items the reasoning anchor rule needs.
@@ -81,12 +84,19 @@ final class OpenAIResponsesStreamingMapper {
     OpenAIResponsesStreamingMapper(LlmStreamSink sink, ChunkAggregator aggregator,
             OpenAIResponsesMessageConverter converter, String providerName, OpenAIDivergenceReporter reporter,
             boolean forwardReasoning) {
+        this(sink, aggregator, converter, providerName, reporter, forwardReasoning, true);
+    }
+
+    OpenAIResponsesStreamingMapper(LlmStreamSink sink, ChunkAggregator aggregator,
+            OpenAIResponsesMessageConverter converter, String providerName, OpenAIDivergenceReporter reporter,
+            boolean forwardReasoning, boolean captureReasoning) {
         this.sink = Objects.requireNonNull(sink, "sink");
         this.aggregator = Objects.requireNonNull(aggregator, "aggregator");
         this.converter = Objects.requireNonNull(converter, "converter");
         this.providerName = Objects.requireNonNull(providerName, "providerName");
         this.reporter = Objects.requireNonNull(reporter, "reporter");
         this.forwardReasoning = forwardReasoning;
+        this.captureReasoning = captureReasoning;
     }
 
     /**
@@ -240,10 +250,12 @@ final class OpenAIResponsesStreamingMapper {
     private void emitStreamEnd() {
         final OpenAIResponsesMessageConverter.Output output = converter.convertStreamedOutput(completedItems,
                 providerName);
-        for (ReasoningTrace trace : output.getReasoningTraces()) {
-            aggregator.addReasoningTrace(trace);
+        if (captureReasoning) {
+            for (ReasoningTrace trace : output.getReasoningTraces()) {
+                aggregator.addReasoningTrace(trace);
+            }
         }
-        if (output.reasoningWithoutEncryptedContent()) {
+        if (captureReasoning && output.reasoningWithoutEncryptedContent()) {
             // A feature that quietly does nothing is the failure this whole path exists to fix; it should at least
             // say so — and keep saying so while it lasts, which is why the client hands this mapper its recurring
             // counter rather than its once set.

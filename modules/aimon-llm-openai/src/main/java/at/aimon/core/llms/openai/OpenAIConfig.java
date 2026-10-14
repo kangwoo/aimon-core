@@ -69,12 +69,6 @@ public final class OpenAIConfig {
         this.maxTokens = builder.maxTokens;
         this.timeout = builder.timeout;
         this.modelCapabilityRegistry = builder.modelCapabilityRegistry;
-        if (builder.endpoint != null && builder.responsesApiEnabled != null) {
-            throw new IllegalArgumentException("endpoint(" + builder.endpoint
-                    + ") and the deprecated responsesApiEnabled(" + builder.responsesApiEnabled
-                    + ") are both set -- set only endpoint; responsesApiEnabled(false) is "
-                    + "endpoint(CHAT_COMPLETIONS) and responsesApiEnabled(true) is endpoint(AUTO)");
-        }
         this.endpoint = builder.endpoint != null
                 ? builder.endpoint
                 : Boolean.FALSE.equals(builder.responsesApiEnabled)
@@ -91,6 +85,12 @@ public final class OpenAIConfig {
         if (model.isBlank()) {
             throw new IllegalArgumentException(
                     "Model cannot be blank -- call OpenAIConfig.builder().model(\"gpt-4o\")");
+        }
+        if (builder.endpoint != null && builder.responsesApiEnabled != null) {
+            throw new IllegalArgumentException("endpoint(" + builder.endpoint
+                    + ") and the deprecated responsesApiEnabled(" + builder.responsesApiEnabled
+                    + ") are both set -- set only endpoint; responsesApiEnabled(false) is "
+                    + "endpoint(CHAT_COMPLETIONS) and responsesApiEnabled(true) is endpoint(AUTO)");
         }
         // Range checks run only when a value is present -- "unset" is not out of range. Bounds match LlmModel's, so a
         // value legal on one is legal on the other.

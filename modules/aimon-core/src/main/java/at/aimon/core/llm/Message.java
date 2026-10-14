@@ -318,7 +318,8 @@ public final class Message {
      * {@code encrypted_content}) or signed text (Anthropic's {@code signature}), so rewriting a single byte
      * invalidates it and the provider rejects the replay — which is the entire reason the payload exists. The
      * consequence is that redaction does not reach a reasoning payload. A deployment that cannot accept that should
-     * turn the reasoning round trip off at the provider (for OpenAI, {@code OpenAIConfig.responsesApiEnabled(false)})
+     * turn the reasoning round trip off at the provider (for OpenAI,
+     * {@code OpenAIConfig.endpoint(OpenAiEndpoint.CHAT_COMPLETIONS)})
      * rather than expect this method to cover it.
      *
      * @param transform

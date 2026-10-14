@@ -344,10 +344,11 @@ public class OpenAILlmClient implements LlmClient {
             // in two places at two times is how a subclass ends up tagging traces it then drops as foreign.
             final String providerName = getProviderName();
             reportForcedWithoutRoundTrip(capabilities, modelName);
-            return new OpenAIResponsesExchange(
-                    client, responsesConverter, responsesRequestFactory.build(systemPrompt, messages, tools,
-                            modelConfig, capabilities, modelName, providerName),
-                    providerName, this::reportRecurringDivergence, requestedSummary.isPresent());
+            return new OpenAIResponsesExchange(client, responsesConverter,
+                    responsesRequestFactory.build(systemPrompt, messages, tools, modelConfig, capabilities, modelName,
+                            providerName),
+                    providerName, this::reportRecurringDivergence, requestedSummary.isPresent(),
+                    capabilities.supportsReasoningTraceRoundTrip());
         }
         reportInertReasoningSummary(requestedSummary, capabilities, modelName);
         return new OpenAIChatCompletionsExchange(client, converter, buildChatRequest(systemPrompt, messages, tools,
@@ -419,10 +420,9 @@ public class OpenAILlmClient implements LlmClient {
             return;
         }
         reportDivergence("reasoningSummaryWithResponsesDisabled@" + modelName,
-                "reasoningSummary {} is configured but this client's endpoint is CHAT_COMPLETIONS (or "
-                        + "responsesApiEnabled is false), so {} goes to Chat Completions, which has no "
-                        + "reasoning.summary parameter. Nothing is asked for and no reasoning text streams. Enable the "
-                        + "Responses API to act on it.",
+                "reasoningSummary {} is configured but this client's endpoint is CHAT_COMPLETIONS, so {} goes to "
+                        + "Chat Completions, which has no reasoning.summary parameter. Nothing is asked for and no "
+                        + "reasoning text streams. Set the endpoint to AUTO or RESPONSES to act on it.",
                 requestedSummary.get(), modelName);
     }
 
@@ -611,13 +611,13 @@ public class OpenAILlmClient implements LlmClient {
         }
         final String carried = requested.map(effort -> "reasoningEffort " + effort).orElse("no reasoningEffort");
         reportDivergence("forcedChatToolsWithoutNone=" + carried + "@" + modelName,
-                "{} is on Chat Completions because this client's endpoint is CHAT_COMPLETIONS (or "
-                        + "responsesApiEnabled is false), and this request carries tools with "
+                "{} is on Chat Completions because this client's endpoint is CHAT_COMPLETIONS, and this request "
+                        + "carries tools with "
                         + "{}. api.openai.com refuses function tools on Chat Completions for the models whose "
                         + "capabilities look like this -- measured on gpt-5.6-terra, documented for gpt-6-sol and "
                         + "gpt-6-luna -- unless reasoning_effort is 'none' (HTTP 400). "
-                        + "The request is sent as configured. If it is refused, set reasoningEffort: none or enable "
-                        + "the Responses API.",
+                        + "The request is sent as configured. If it is refused, set reasoningEffort: none or set the "
+                        + "endpoint to AUTO or RESPONSES.",
                 modelName, carried);
     }
 

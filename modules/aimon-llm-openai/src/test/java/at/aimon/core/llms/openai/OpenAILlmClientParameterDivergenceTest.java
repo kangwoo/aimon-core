@@ -377,7 +377,7 @@ class OpenAILlmClientParameterDivergenceTest {
 
         assertThat(warnings()).filteredOn(w -> w.contains(FORCED_CHAT_TOOLS_WARNING)).singleElement()
                 .satisfies(w -> assertThat(w).contains(TERRA).contains("reasoningEffort LOW")
-                        .contains("responsesApiEnabled").contains("reasoningEffort: none"));
+                        .contains("endpoint is CHAT_COMPLETIONS").contains("reasoningEffort: none"));
         // Nothing is substituted: the rung that was configured is the rung on the wire.
         assertThat(wireBodyOf(params)).contains("\"reasoning_effort\":\"low\"");
     }

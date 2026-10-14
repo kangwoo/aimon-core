@@ -1,5 +1,6 @@
 package at.aimon.core.llms.openai;
 
+import java.util.List;
 import java.util.Objects;
 
 import org.slf4j.Logger;
@@ -36,21 +37,31 @@ final class OpenAIResponsesExchange implements OpenAIEndpointExchange {
     private final String providerName;
     private final OpenAIDivergenceReporter reporter;
     private final boolean forwardReasoning;
+    private final boolean captureReasoning;
 
     /**
      * @param forwardReasoning
      *            whether the mapper forwards reasoning deltas to the sink. Gated on this deployment's configuration
      *            rather than on the arrival of the events, because an OpenAI-compatible gateway behind
      *            {@code baseUrl} may emit summary events unasked and a deployment that set nothing must see no change
+     * @param captureReasoning
+     *            whether reasoning items become {@link at.aimon.core.llm.ReasoningTrace}s on the response — the
+     *            model's {@code supportsReasoningTraceRoundTrip}, the same flag the request factory reads. A model
+     *            sent here by {@link OpenAiEndpoint#RESPONSES} without it was not asked for
+     *            {@code encrypted_content} and never has a trace replayed, so storing one would only grow the
+     *            transcript, and the missing-{@code encrypted_content} warning would point at an {@code include} the
+     *            client chose not to send
      */
     OpenAIResponsesExchange(OpenAIClient client, OpenAIResponsesMessageConverter converter, ResponseCreateParams params,
-            String providerName, OpenAIDivergenceReporter reporter, boolean forwardReasoning) {
+            String providerName, OpenAIDivergenceReporter reporter, boolean forwardReasoning,
+            boolean captureReasoning) {
         this.client = Objects.requireNonNull(client, "client");
         this.converter = Objects.requireNonNull(converter, "converter");
         this.params = Objects.requireNonNull(params, "params");
         this.providerName = Objects.requireNonNull(providerName, "providerName");
         this.reporter = Objects.requireNonNull(reporter, "reporter");
         this.forwardReasoning = forwardReasoning;
+        this.captureReasoning = captureReasoning;
     }
 
     @Override
@@ -68,7 +79,7 @@ final class OpenAIResponsesExchange implements OpenAIEndpointExchange {
                 ? client.responses().createStreaming(params)
                 : client.responses().createStreaming(params, options);
         final OpenAIResponsesStreamingMapper mapper = new OpenAIResponsesStreamingMapper(sink, aggregator, converter,
-                providerName, reporter, forwardReasoning);
+                providerName, reporter, forwardReasoning, captureReasoning);
         return OpenAIStreamHandle.of(streamResponse, stream -> mapper.consume(stream, cancellation));
     }
 
@@ -86,7 +97,7 @@ final class OpenAIResponsesExchange implements OpenAIEndpointExchange {
         }
 
         final OpenAIResponsesMessageConverter.Output output = converter.convertOutput(response.output(), providerName);
-        if (output.reasoningWithoutEncryptedContent()) {
+        if (captureReasoning && output.reasoningWithoutEncryptedContent()) {
             reporter.report("reasoningWithoutEncryptedContent@" + providerName,
                     "This turn produced reasoning items but none carried encrypted_content, so nothing can be "
                             + "replayed on the next turn and the model will re-derive its reasoning. Check that the "
@@ -104,6 +115,6 @@ final class OpenAIResponsesExchange implements OpenAIEndpointExchange {
 
         return LlmResponse.of(output.getText(), output.getToolUses(),
                 OpenAiResponseUsages.toTokenUsage(response.usage()), stopReason)
-                .withReasoningTraces(output.getReasoningTraces());
+                .withReasoningTraces(captureReasoning ? output.getReasoningTraces() : List.of());
     }
 }

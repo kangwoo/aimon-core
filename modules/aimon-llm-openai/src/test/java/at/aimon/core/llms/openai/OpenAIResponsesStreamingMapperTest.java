@@ -138,6 +138,30 @@ class OpenAIResponsesStreamingMapperTest {
     }
 
     @Test
+    @DisplayName("a model without the round trip captures no trace and does not warn about missing encrypted_content")
+    void aModelWithoutTheRoundTripCapturesNothing() {
+        // endpoint(RESPONSES) on a model whose row does not do the round trip: the request asked for no
+        // encrypted_content and nothing will ever be replayed, so a trace would only grow the transcript and the
+        // warning would point at an include the client chose not to send.
+        final List<String> reported = new ArrayList<>();
+        final List<ResponseStreamEvent> events = new ArrayList<>();
+        for (String json : new String[]{
+                "{\"type\":\"response.output_item.done\",\"output_index\":0,\"sequence_number\":1,"
+                        + "\"item\":{\"type\":\"reasoning\",\"id\":\"rs_1\",\"summary\":[]}}",
+                "{\"type\":\"response.output_item.done\",\"output_index\":1,\"sequence_number\":2,"
+                        + "\"item\":{\"type\":\"reasoning\",\"id\":\"rs_2\",\"summary\":[],"
+                        + "\"encrypted_content\":\"ZZZ\"}}",
+                completed("completed", null, 3)}) {
+            events.add(ResponsesFixtures.event(json));
+        }
+        new OpenAIResponsesStreamingMapper(sink, aggregator, new OpenAIResponsesMessageConverter(), "OpenAI",
+                (signature, message, args) -> reported.add(signature), false, false).consume(events.stream());
+
+        assertThat(aggregator.toLlmResponse().getReasoningTraces()).isEmpty();
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
     @DisplayName("response.completed supplies the usage, reasoning tokens included")
     void completedSuppliesUsage() {
         final LlmResponse response = consume(
