@@ -7,6 +7,18 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: `aimon-llm-testkit` — one `CountingHttpServer` for both provider modules' SDK-retry tests (tests only)
+
+The OpenAI and Anthropic `*LlmClientSdkRetryTest`s each carried a copy of the local HTTP server they count attempts
+against, identical but for the package. It is now `at.aimon.llm.testkit.CountingHttpServer` in a new module, taken on
+`testImplementation` by both. Not published, and it depends on nothing — plain JDK sockets, no aimon-core, no JUnit.
+
+- A module rather than `java-test-fixtures`, for the reason in `aimon-filesystem-testkit`'s build script.
+- Hardened on the way to being shared: an empty script is rejected, the acceptor thread is a daemon, accepted
+  connections time out, one failed request no longer ends the serve loop silently, and the bind address is the
+  `127.0.0.1` that `url()` advertises. Its limits — one connection at a time, `Content-Length` bodies only — are in the
+  class javadoc.
+
 ### Added: cap the SDK's own retries — `OpenAIConfig.Builder.maxRetries(Integer)`, `AnthropicConfig.Builder.maxRetries(Integer)`
 
 Both vendor SDKs retry a failed request on their own (408 · 409 · 429 · 5xx · I/O errors), underneath `LlmClient`. A

@@ -13,4 +13,7 @@ dependencies {
     implementation(libs.slf4j.api)
 
     testImplementation(libs.archunit.junit5)
+
+    // The local HTTP server the SDK-retry tests count attempts against, shared with the other provider module.
+    testImplementation(project(":aimon-llm-testkit"))
 }

@@ -22,7 +22,8 @@ import at.aimon.core.llm.exception.LlmClientException;
 import at.aimon.core.llm.streaming.LlmStreamChunk;
 import at.aimon.core.llm.streaming.LlmStreamSink;
 import at.aimon.core.llm.streaming.LlmStreamingOptions;
-import at.aimon.core.llms.anthropic.CountingHttpServer.Step;
+import at.aimon.llm.testkit.CountingHttpServer;
+import at.aimon.llm.testkit.CountingHttpServer.Step;
 
 /**
  * {@link AnthropicConfig#getMaxRetries()} over the real transport: what the SDK underneath the client actually sends,

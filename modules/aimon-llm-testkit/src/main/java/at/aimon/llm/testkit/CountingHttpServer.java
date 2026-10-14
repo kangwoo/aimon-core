@@ -1,4 +1,4 @@
-package at.aimon.core.llms.openai;
+package at.aimon.llm.testkit;
 
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
@@ -11,6 +11,7 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -30,12 +31,25 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>
  * Both SDKs build OkHttp with {@code retryOnConnectionFailure(false)}, so a dropped connection is not retried below the
  * SDK either, and the count is the SDK's alone.
+ *
+ * <p>
+ * It lives here rather than in each provider module's test sources because the OpenAI and Anthropic retry tests need
+ * the same server, and two copies of a test server drift the way two copies of anything do.
+ *
+ * <p>
+ * Limits, all deliberate for what it is: one connection is served at a time, on one daemon thread, so a step that
+ * holds its connection open ({@link Step#sseThenReset}) holds back the next request until it lets go; request bodies
+ * are read by {@code Content-Length} only, which is what both SDKs send, not chunked; and a request is counted once its
+ * head has arrived, before its answer is written, so {@link #requestCount()} is final by the time the client sees that
+ * answer. {@link #requestCount()} may be read from any thread.
  */
-final class CountingHttpServer implements AutoCloseable {
+public final class CountingHttpServer implements AutoCloseable {
 
     /** One scripted answer. */
-    static final class Step {
+    public static final class Step {
         private static final long HANG_GUARD_SECONDS = 20;
+        /** Longer than the hang guard, so only a client that never sends a request trips it. */
+        private static final int READ_TIMEOUT_MILLIS = 30_000;
 
         private final String raw;
         private final CountDownLatch resetWhen;
@@ -50,7 +64,9 @@ final class CountingHttpServer implements AutoCloseable {
          * a millisecond of backoff rather than the exponential default. It is {@code 1} rather than {@code 0} because
          * the Anthropic SDK ignores a delay that is not positive and falls back to the exponential one.
          */
-        static Step status(int status, String contentType, String body) {
+        public static Step status(int status, String contentType, String body) {
+            Objects.requireNonNull(contentType, "contentType");
+            Objects.requireNonNull(body, "body");
             final byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
             final String retryAfter = status >= 400 ? "Retry-After-Ms: 1\r\n" : "";
             return new Step("HTTP/1.1 " + status + " X\r\nContent-Type: " + contentType + "\r\nContent-Length: "
@@ -58,7 +74,7 @@ final class CountingHttpServer implements AutoCloseable {
         }
 
         /** A JSON response. */
-        static Step json(int status, String body) {
+        public static Step json(int status, String body) {
             return status(status, "application/json", body);
         }
 
@@ -67,13 +83,15 @@ final class CountingHttpServer implements AutoCloseable {
          * its first events, rather than one that merely ends early. The test opens the latch from its sink, so the
          * reset comes after the client has read those events, not in a race with them.
          */
-        static Step sseThenReset(String events, CountDownLatch reached) {
+        public static Step sseThenReset(String events, CountDownLatch reached) {
+            Objects.requireNonNull(events, "events");
+            Objects.requireNonNull(reached, "reached");
             return new Step("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n" + events,
                     reached);
         }
 
         /** Closes the connection after reading the request, without writing a byte of response. */
-        static Step drop() {
+        public static Step drop() {
             return new Step(null, null);
         }
     }
@@ -81,32 +99,52 @@ final class CountingHttpServer implements AutoCloseable {
     private final ServerSocket socket;
     private final List<Step> script;
     private final AtomicInteger requests = new AtomicInteger();
-    private final ExecutorService acceptor = Executors.newSingleThreadExecutor();
+    private final ExecutorService acceptor = Executors.newSingleThreadExecutor(runnable -> {
+        final Thread thread = new Thread(runnable, "counting-http-server");
+        // A test that forgets close() must not keep the JVM alive.
+        thread.setDaemon(true);
+        return thread;
+    });
 
     private CountingHttpServer(List<Step> script) throws IOException {
-        this.socket = new ServerSocket(0, 50, InetAddress.getLoopbackAddress());
+        // Copied before the socket opens, so a bad script cannot leak a bound socket.
         this.script = List.copyOf(script);
+        if (this.script.isEmpty()) {
+            throw new IllegalArgumentException("A script needs at least one step");
+        }
+        // 127.0.0.1 explicitly rather than getLoopbackAddress(), which is ::1 under preferIPv6Addresses and would
+        // then disagree with url().
+        this.socket = new ServerSocket(0, 50, InetAddress.getByAddress(new byte[]{127, 0, 0, 1}));
         acceptor.submit(this::serve);
     }
 
-    /** Starts a server that answers with {@code steps} in order, repeating the last. */
-    static CountingHttpServer answering(Step... steps) throws IOException {
+    /**
+     * Starts a server that answers with {@code steps} in order, repeating the last.
+     *
+     * @param steps
+     *            the script, at least one step
+     * @return the running server; close it when done
+     * @throws IOException
+     *             if the listening socket cannot be opened
+     */
+    public static CountingHttpServer answering(Step... steps) throws IOException {
         return new CountingHttpServer(List.of(steps));
     }
 
     /** The server's base URL, without a trailing slash. */
-    String url() {
+    public String url() {
         return "http://127.0.0.1:" + socket.getLocalPort();
     }
 
     /** How many requests have reached the server so far. */
-    int requestCount() {
+    public int requestCount() {
         return requests.get();
     }
 
     private void serve() {
         while (!socket.isClosed()) {
             try (Socket connection = socket.accept()) {
+                connection.setSoTimeout(Step.READ_TIMEOUT_MILLIS);
                 if (!readRequest(connection.getInputStream())) {
                     continue;
                 }
@@ -127,6 +165,10 @@ final class CountingHttpServer implements AutoCloseable {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
+            } catch (RuntimeException e) {
+                // One malformed request must not silently end the loop: a dead acceptor with the socket still open
+                // turns every later attempt into a client-side timeout that hides this cause.
+                System.err.println("CountingHttpServer: request handling failed: " + e);
             }
         }
     }
