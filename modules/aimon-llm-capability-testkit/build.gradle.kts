@@ -13,7 +13,7 @@
 // The full argument is on `AbstractModelCapabilityBindingContractTest`.
 //
 // Deliberately NOT published: `aimon.publishable` is absent, so `aimon-bom` leaves it out on its own. Unlike the other
-// three testkits it has tests of its own — its whole value is in whether it fails, and once both real surfaces forward
+// testkits it has tests of its own — its whole value is in whether it fails, and once both real surfaces forward
 // every key, nothing else in the tree exercises the failing path.
 plugins {
     id("aimon.java-conventions")
