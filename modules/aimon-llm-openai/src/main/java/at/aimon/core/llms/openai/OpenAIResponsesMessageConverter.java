@@ -94,6 +94,9 @@ final class OpenAIResponsesMessageConverter {
      *            this client's provider name, used to drop traces authored elsewhere (must not be null)
      * @param reporter
      *            where a dropped trace is reported (must not be null)
+     * @param replayTraces
+     *            {@code false} to emit no reasoning item at all — for a model whose row does not do the round trip.
+     *            Nothing is reported per trace then; the client has already said once that the round trip is off
      * @return the input items, in the order the API must receive them
      * @throws MessageConversionException
      *             for an unsupported content block, exactly as the Chat converter throws
@@ -101,20 +104,20 @@ final class OpenAIResponsesMessageConverter {
      *             for an unsupported role, exactly as the Chat converter throws
      */
     List<ResponseInputItem> convertMessages(List<Message> messages, String providerName,
-            OpenAIDivergenceReporter reporter) {
+            OpenAIDivergenceReporter reporter, boolean replayTraces) {
         Objects.requireNonNull(messages, "Messages cannot be null");
         Objects.requireNonNull(providerName, "providerName cannot be null");
         Objects.requireNonNull(reporter, "reporter cannot be null");
 
         final List<ResponseInputItem> items = new ArrayList<>();
         for (Message message : messages) {
-            convertMessage(message, providerName, reporter, items);
+            convertMessage(message, providerName, reporter, replayTraces, items);
         }
         return items;
     }
 
     private void convertMessage(Message message, String providerName, OpenAIDivergenceReporter reporter,
-            List<ResponseInputItem> out) {
+            boolean replayTraces, List<ResponseInputItem> out) {
         Objects.requireNonNull(message, "Message cannot be null");
 
         if (message.getRole() == Role.TOOL) {
@@ -127,7 +130,7 @@ final class OpenAIResponsesMessageConverter {
         } else if (message.getRole() == Role.USER) {
             out.add(convertUserMessage(message));
         } else if (message.getRole() == Role.ASSISTANT) {
-            convertAssistantMessage(message, providerName, reporter, out);
+            convertAssistantMessage(message, providerName, reporter, replayTraces, out);
         } else {
             throw new IllegalArgumentException("Unsupported role: " + message.getRole());
         }
@@ -153,8 +156,8 @@ final class OpenAIResponsesMessageConverter {
      * Emits one assistant turn, applying the emit rule of the class javadoc.
      */
     private void convertAssistantMessage(Message message, String providerName, OpenAIDivergenceReporter reporter,
-            List<ResponseInputItem> out) {
-        final List<ReasoningTrace> traces = message.getReasoningTraces();
+            boolean replayTraces, List<ResponseInputItem> out) {
+        final List<ReasoningTrace> traces = replayTraces ? message.getReasoningTraces() : List.of();
 
         // 1. every trace with no anchor, in stored order.
         for (ReasoningTrace trace : traces) {

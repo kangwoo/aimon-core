@@ -8,9 +8,11 @@ import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_ANTHROPIC_T
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_API_KEY;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_MODEL;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_OPENAI;
+import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_OPENAI_ENDPOINT;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_OPENAI_FREQUENCY_PENALTY;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_OPENAI_PRESENCE_PENALTY;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_OPENAI_REASONING_SUMMARY;
+import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_OPENAI_RESPONSES_API_ENABLED;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_OPENAI_TEMPERATURE;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_OPENAI_TOP_P;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_PROVIDER;
@@ -19,6 +21,8 @@ import static at.aimon.spring.boot.autoconfigure.AimonProperties.PROVIDER_OPENAI
 
 import java.util.Locale;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -34,6 +38,7 @@ import at.aimon.core.llms.anthropic.AnthropicThinkingDisplay;
 import at.aimon.core.llms.anthropic.AnthropicThinkingMode;
 import at.aimon.core.llms.openai.OpenAIConfig;
 import at.aimon.core.llms.openai.OpenAILlmClient;
+import at.aimon.core.llms.openai.OpenAiEndpoint;
 import at.aimon.core.llms.openai.OpenAiReasoningSummary;
 
 /**
@@ -409,6 +414,8 @@ public class AimonLlmAutoConfiguration {
     @ConditionalOnProperty(name = LLM_PROVIDER, havingValue = PROVIDER_OPENAI)
     static class OpenAiConfiguration {
 
+        private static final Logger log = LoggerFactory.getLogger(OpenAiConfiguration.class);
+
         @Bean
         @ConditionalOnMissingBean(LlmClient.class)
         LlmClient aimonOpenAiLlmClient(AimonProperties properties) {
@@ -452,10 +459,7 @@ public class AimonLlmAutoConfiguration {
             if (llm.getOpenai().getReasoningSummary() != null) {
                 config.reasoningSummary(reasoningSummary(llm.getOpenai().getReasoningSummary()));
             }
-            // Unset is not `true`: the default belongs to OpenAIConfig, and only a written value is carried over.
-            if (llm.getOpenai().getResponsesApiEnabled() != null) {
-                config.responsesApiEnabled(llm.getOpenai().getResponsesApiEnabled());
-            }
+            applyEndpoint(config, llm.getOpenai());
             applySampling(config, llm.getOpenai());
             return config.build();
         }
@@ -501,6 +505,44 @@ public class AimonLlmAutoConfiguration {
         /** The config {@link #requireAccepted} lays one value on, with nothing else from configuration in it. */
         private static OpenAIConfig.Builder probe() {
             return OpenAIConfig.builder().apiKey(PROBE).model(PROBE);
+        }
+
+        /**
+         * Carries {@code endpoint} — or the deprecated {@code responses-api-enabled} — onto the vendor config, each
+         * only when written: unset is not {@code auto}, the default belongs to {@code OpenAIConfig}.
+         *
+         * <p>
+         * Both written is refused by name, even when they agree: one of them is a line nobody should have to reason
+         * about, and the vendor config refuses the same pair with builder vocabulary an operator does not see.
+         *
+         * @param config
+         *            the builder being assembled
+         * @param openai
+         *            the bound {@code aimon.llm.openai} block
+         */
+        @SuppressWarnings("deprecation") // responses-api-enabled: still carried over, with a warning
+        private static void applyEndpoint(OpenAIConfig.Builder config, AimonProperties.Llm.OpenAi openai) {
+            if (openai.getEndpoint() != null && openai.getResponsesApiEnabled() != null) {
+                throw new IllegalStateException(LLM_OPENAI_ENDPOINT + " and the deprecated "
+                        + LLM_OPENAI_RESPONSES_API_ENABLED + " are both set. Write only " + LLM_OPENAI_ENDPOINT
+                        + " (responses-api-enabled=false is endpoint=chat-completions, true is endpoint=auto).");
+            }
+            if (openai.getEndpoint() != null) {
+                config.endpoint(endpoint(openai.getEndpoint()));
+            }
+            if (openai.getResponsesApiEnabled() != null) {
+                log.warn("{} is deprecated; write {}={} instead", LLM_OPENAI_RESPONSES_API_ENABLED, LLM_OPENAI_ENDPOINT,
+                        openai.getResponsesApiEnabled()
+                                ? OpenAiEndpoint.AUTO.configValue()
+                                : OpenAiEndpoint.CHAT_COMPLETIONS.configValue());
+                config.responsesApiEnabled(openai.getResponsesApiEnabled());
+            }
+        }
+
+        private static OpenAiEndpoint endpoint(String value) {
+            return OpenAiEndpoint.fromConfigValue(value)
+                    .orElseThrow(() -> new IllegalStateException(LLM_OPENAI_ENDPOINT + "=" + value
+                            + " is not an endpoint. Accepted values: " + OpenAiEndpoint.acceptedConfigValues() + "."));
         }
 
         /**

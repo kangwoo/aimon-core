@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: 75ac0d2
+source_commit: fc539d3b
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -581,7 +581,7 @@ llm:
 | Key | Meaning | If omitted |
 |---|---|---|
 | `reasoningSummary` | Whether to ask for a summary of the model's reasoning and stream it (`auto` \| `concise` \| `detailed`) | Neither is asked for and nothing is streamed |
-| `responsesApiEnabled` | Whether the Responses API (`/v1/responses`) path is used. `false` sends every request to Chat Completions | `true` — a model that does the reasoning trace round trip goes to `/v1/responses` |
+| `endpoint` | The endpoint requests go to (`auto` \| `chat-completions` \| `responses`). Replaces the deprecated `responsesApiEnabled`; writing both fails startup | `auto` — a model that does the reasoning trace round trip goes to `/v1/responses`, every other model to Chat Completions |
 
 On this vendor the reasoning itself is `encrypted_content` — ciphertext by design — so **a summary is the only
 human-readable surrogate there is.** That is why this key has a different name from Anthropic's
@@ -597,11 +597,11 @@ state a value of its own (its `model` is a single name), so it inherits the valu
 Under `provider: anthropic`, `model.reasoningSummary` is ignored and the client says so once at WARN — what
 decides thinking text there is `thinkingDisplay`.
 
-**Responses API only.** If the model does not support the reasoning trace round trip, or that endpoint is
-switched off, the request goes to Chat Completions, which has no such parameter — and in that case the client
+**Responses API only.** If the model does not support the reasoning trace round trip, or
+`endpoint: chat-completions` is set, the request goes to Chat Completions, which has no such parameter — and in that case the client
 says so once at WARN (rather than doing nothing in silence).
 
-**`responsesApiEnabled: false` is the switch for a gateway that implements Chat Completions only.** Point
+**`endpoint: chat-completions` is the value for a gateway that implements Chat Completions only.** Point
 `baseUrl` at such an OpenAI-compatible gateway while keeping real model names, and a `gpt-5*` or o-series name
 resolves to its built-in capability row, is routed to `/v1/responses`, and gets a 404 from the gateway. That
 situation is produced by configuration alone, so the way out is in configuration too. It tells no lie about the
@@ -616,11 +616,19 @@ llm:
   baseUrl: https://gateway.internal/v1
   model: gpt-5.1
   openai:
-    responsesApiEnabled: false
+    endpoint: chat-completions
 ```
 
 Two things go off with it. There is no reasoning-item round trip, so the model rebuilds its reasoning on every
 call, and `reasoningSummary` above reaches nothing.
+
+**`endpoint: responses` goes the other way.** It sends every request to `/v1/responses` whatever the model — for
+a deployment that wants one endpoint, or a name the built-in table does not know that should still reach
+Responses. It changes no fact about the model either. A model whose row does not say it does the reasoning trace
+round trip (`gpt-4o`, a name not in the table) is neither asked for reasoning items nor sent stored ones, and the
+client says so once at WARN. To get the round trip for such a model too, declare
+`supportsReasoningTraceRoundTrip: true` for it under `modelCapabilities`. `responsesApiEnabled` is deprecated —
+`false` is `chat-completions`, `true` is `auto` — and warns once at startup when written.
 
 **Forcing `gpt-5.6-terra` onto Chat Completions at `api.openai.com` means tool requests need
 `reasoningEffort: none`.** Nine cells have been measured. A request carrying tools and no effort is an

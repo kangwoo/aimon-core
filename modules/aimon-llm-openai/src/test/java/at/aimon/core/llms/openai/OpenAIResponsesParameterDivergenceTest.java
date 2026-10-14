@@ -42,7 +42,7 @@ import ch.qos.logback.core.read.ListAppender;
  * Divergence reporting on the Responses path — the gap re-pointing the Chat divergence tests would otherwise open.
  *
  * <p>
- * Six tests in {@code OpenAILlmClientParameterDivergenceTest} moved to {@code responsesApiEnabled(false)} because they
+ * Six tests in {@code OpenAILlmClientParameterDivergenceTest} moved to {@code endpoint(CHAT_COMPLETIONS)} because they
  * assert Chat behaviour, and that left <strong>nothing</strong> asserting that suppression is still reported on the new
  * endpoint. Sampling suppression is deliberately implemented once and shared, precisely so it is; these tests are what
  * make that checkable.
@@ -279,9 +279,8 @@ class OpenAIResponsesParameterDivergenceTest {
                 .when(mockChatCompletionService
                         .create(any(com.openai.models.chat.completions.ChatCompletionCreateParams.class)))
                 .thenThrow(new RuntimeException("create-invoked"));
-        final OpenAILlmClient client = new OpenAILlmClient(
-                config().responsesApiEnabled(false).reasoningSummary(OpenAiReasoningSummary.AUTO).build(),
-                mockOpenAIClient);
+        final OpenAILlmClient client = new OpenAILlmClient(config().endpoint(OpenAiEndpoint.CHAT_COMPLETIONS)
+                .reasoningSummary(OpenAiReasoningSummary.AUTO).build(), mockOpenAIClient);
 
         assertThatThrownBy(() -> send(client, LlmModel.builder().build(), List.of()))
                 .hasRootCauseMessage("create-invoked");
@@ -289,7 +288,7 @@ class OpenAIResponsesParameterDivergenceTest {
         assertThatThrownBy(() -> send(client, LlmModel.builder().build(), List.of()))
                 .hasRootCauseMessage("create-invoked");
 
-        assertThat(warnings()).filteredOn(warning -> warning.contains("Responses API is disabled")).hasSize(1);
+        assertThat(warnings()).filteredOn(warning -> warning.contains("endpoint is CHAT_COMPLETIONS")).hasSize(1);
     }
 
     @Test

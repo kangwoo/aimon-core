@@ -288,6 +288,44 @@ class OpenAIConfigTest {
     }
 
     @Test
+    @DisplayName("the endpoint defaults to AUTO, and the deprecated switch maps onto it")
+    void endpointDefaultsToAutoAndTheDeprecatedSwitchMapsOntoIt() {
+        assertThat(OpenAIConfig.builder().apiKey("k").model("gpt-4o").build().getEndpoint())
+                .isEqualTo(OpenAiEndpoint.AUTO);
+        assertThat(OpenAIConfig.builder().apiKey("k").model("gpt-4o").endpoint(OpenAiEndpoint.RESPONSES).build()
+                .getEndpoint()).isEqualTo(OpenAiEndpoint.RESPONSES);
+        assertThat(OpenAIConfig.builder().apiKey("k").model("gpt-4o").responsesApiEnabled(false).build().getEndpoint())
+                .isEqualTo(OpenAiEndpoint.CHAT_COMPLETIONS);
+        assertThat(OpenAIConfig.builder().apiKey("k").model("gpt-4o").responsesApiEnabled(true).build().getEndpoint())
+                .isEqualTo(OpenAiEndpoint.AUTO);
+        // The deprecated reader answers for RESPONSES too: the route is not disabled.
+        assertThat(OpenAIConfig.builder().apiKey("k").model("gpt-4o").endpoint(OpenAiEndpoint.RESPONSES).build()
+                .isResponsesApiEnabled()).isTrue();
+    }
+
+    @Test
+    @DisplayName("setting both the endpoint and the deprecated switch is refused, even when they agree")
+    void endpointAndTheDeprecatedSwitchTogetherAreRefused() {
+        assertThatThrownBy(() -> OpenAIConfig.builder().apiKey("k").model("gpt-4o").responsesApiEnabled(false)
+                .endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).build()).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("endpoint(CHAT_COMPLETIONS)").hasMessageContaining("responsesApiEnabled(false)");
+        assertThatThrownBy(() -> OpenAIConfig.builder().apiKey("k").model("gpt-4o").endpoint(null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    @DisplayName("an endpoint configuration value folds case, and - and _ are one character")
+    void endpointConfigValuesFold() {
+        assertThat(OpenAiEndpoint.fromConfigValue("chat-completions")).contains(OpenAiEndpoint.CHAT_COMPLETIONS);
+        assertThat(OpenAiEndpoint.fromConfigValue(" Chat_Completions ")).contains(OpenAiEndpoint.CHAT_COMPLETIONS);
+        assertThat(OpenAiEndpoint.fromConfigValue("RESPONSES")).contains(OpenAiEndpoint.RESPONSES);
+        assertThat(OpenAiEndpoint.fromConfigValue("auto")).contains(OpenAiEndpoint.AUTO);
+        assertThat(OpenAiEndpoint.fromConfigValue("chat")).isEmpty();
+        assertThat(OpenAiEndpoint.CHAT_COMPLETIONS.configValue()).isEqualTo("chat-completions");
+        assertThat(OpenAiEndpoint.acceptedConfigValues()).isEqualTo("auto, chat-completions, responses");
+    }
+
+    @Test
     @DisplayName("NaN is not a sampling value: every range check refuses it, with the message an out-of-range number"
             + " gets")
     void nanIsRefusedByEveryRangeCheck() {

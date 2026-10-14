@@ -48,7 +48,7 @@ import ch.qos.logback.core.read.ListAppender;
  * {@code AnthropicLlmClientParameterDivergenceTest}, which reports the same class of divergence for the same reason.
  *
  * <p>
- * Most tests here set {@code responsesApiEnabled(false)}, because they assert the Chat Completions divergences and
+ * Most tests here set {@code endpoint(CHAT_COMPLETIONS)}, because they assert the Chat Completions divergences and
  * the models they name route to {@code /v1/responses} on a stock config — the {@code gpt-5} family since round 4,
  * and the two {@code o4-mini} rows since round 8 measured that name's reasoning-item replay. The rest are already on
  * Chat without saying so and are left alone: some override the registry so the lookup degrades to
@@ -148,8 +148,8 @@ class OpenAILlmClientParameterDivergenceTest {
     @Test
     @DisplayName("a temperature suppressed by capabilities is reported once at WARN")
     void suppressedTemperatureIsReportedOnce() {
-        final OpenAILlmClient client = client(
-                OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL).responsesApiEnabled(false).build());
+        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL)
+                .endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).build());
         final LlmModel model = LlmModel.builder().temperature(0.7).build();
 
         send(client, model, List.of());
@@ -167,8 +167,8 @@ class OpenAILlmClientParameterDivergenceTest {
     void messageDoesNotAssertOperatorIntent() {
         // A subagent turn carries a temperature from SubagentLlmDefaults, not from a human, and nothing here can tell
         // the two apart -- so the wording says only that the value is set on the request.
-        final OpenAILlmClient client = client(
-                OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL).responsesApiEnabled(false).build());
+        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL)
+                .endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).build());
 
         send(client, LlmModel.builder().temperature(0.7).build(), List.of());
 
@@ -197,8 +197,8 @@ class OpenAILlmClientParameterDivergenceTest {
         // issue #43's "sampling parameters are sent only when the caller explicitly set them" beats round 1's "an
         // unknown model sends exactly what it sends today", which round 1 had recorded as design O-1/A6. See
         // docs/design/llm/request-parameters.md section 2.2.
-        final OpenAILlmClient client = client(
-                OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL).responsesApiEnabled(false).build());
+        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL)
+                .endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).build());
 
         final ChatCompletionCreateParams params = sendAndCapture(client, LlmModel.builder().build(), List.of(A_TOOL));
 
@@ -228,8 +228,8 @@ class OpenAILlmClientParameterDivergenceTest {
     @Test
     @DisplayName("each distinct suppressed parameter is reported separately")
     void eachParameterIsReportedSeparately() {
-        final OpenAILlmClient client = client(
-                OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL).responsesApiEnabled(false).build());
+        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL)
+                .endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).build());
 
         send(client, LlmModel.builder().temperature(0.7).topP(0.9).presencePenalty(1.0).frequencyPenalty(-1.0).build(),
                 List.of());
@@ -250,7 +250,7 @@ class OpenAILlmClientParameterDivergenceTest {
                         .supportsReasoningEffort(true).supportsToolsWithReasoning(false).build())
                 .build();
         final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("no-tools-with-reasoning")
-                .responsesApiEnabled(false).modelCapabilityRegistry(registry).build());
+                .endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).modelCapabilityRegistry(registry).build());
 
         send(client, LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build(), List.of(A_TOOL));
 
@@ -272,8 +272,8 @@ class OpenAILlmClientParameterDivergenceTest {
         // The body assertion is the half this test's own name claimed and did not check: warning and sending are not
         // mutually exclusive, so asserting only the warning left "report it, then send it anyway" -- the 400 this
         // branch exists to prevent -- indistinguishable from correct behaviour.
-        final OpenAILlmClient client = client(
-                OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL).responsesApiEnabled(false).build());
+        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL)
+                .endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).build());
 
         final ChatCompletionCreateParams params = sendAndCapture(client,
                 LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build(), List.of(A_TOOL));
@@ -292,10 +292,10 @@ class OpenAILlmClientParameterDivergenceTest {
         // 2026-09-09 -- "Unsupported value: 'minimal' is not supported with the 'o4-mini' model. Supported values
         // are: 'low', 'medium', and 'high'." -- and on /v1/chat/completions round 6 recorded the same floor with a
         // different ceiling. This test is about the Chat request, and since round 8 a stock config on this name
-        // goes to /v1/responses, so responsesApiEnabled(false) is the fixture line that keeps it here. The rule
+        // goes to /v1/responses, so endpoint(CHAT_COMPLETIONS) is the fixture line that keeps it here. The rule
         // itself is shared: OpenAiRequestParameters.maySendEffort is called by both endpoints.
-        final OpenAILlmClient client = client(
-                OpenAIConfig.builder().apiKey("test-key").model("o4-mini").responsesApiEnabled(false).build());
+        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("o4-mini")
+                .endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).build());
 
         final ChatCompletionCreateParams params = sendAndCapture(client,
                 LlmModel.builder().reasoningEffort(ReasoningEffort.MINIMAL).build(), List.of(A_TOOL));
@@ -311,9 +311,9 @@ class OpenAILlmClientParameterDivergenceTest {
     void lowIsStillSentForTheOSeries() {
         // The other side of the same row: narrowing the ladder must not turn the whole family's reasoning off.
         // Without this, an absurd acceptedReasoningEfforts would pass every other assertion in this class.
-        // responsesApiEnabled(false) for the reason given on the test above -- this is the Chat request shape.
-        final OpenAILlmClient client = client(
-                OpenAIConfig.builder().apiKey("test-key").model("o4-mini").responsesApiEnabled(false).build());
+        // endpoint(CHAT_COMPLETIONS) for the reason given on the test above -- this is the Chat request shape.
+        final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("o4-mini")
+                .endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).build());
 
         final ChatCompletionCreateParams params = sendAndCapture(client,
                 LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).build(), List.of(A_TOOL));
@@ -363,7 +363,8 @@ class OpenAILlmClientParameterDivergenceTest {
     private static final String FORCED_CHAT_TOOLS_WARNING = "refuses function tools on Chat Completions";
 
     private OpenAILlmClient terraForcedOntoChat() {
-        return client(OpenAIConfig.builder().apiKey("test-key").model(TERRA).responsesApiEnabled(false).build());
+        return client(OpenAIConfig.builder().apiKey("test-key").model(TERRA).endpoint(OpenAiEndpoint.CHAT_COMPLETIONS)
+                .build());
     }
 
     @Test
@@ -376,7 +377,7 @@ class OpenAILlmClientParameterDivergenceTest {
 
         assertThat(warnings()).filteredOn(w -> w.contains(FORCED_CHAT_TOOLS_WARNING)).singleElement()
                 .satisfies(w -> assertThat(w).contains(TERRA).contains("reasoningEffort LOW")
-                        .contains("responsesApiEnabled").contains("reasoningEffort: none"));
+                        .contains("endpoint is CHAT_COMPLETIONS").contains("reasoningEffort: none"));
         // Nothing is substituted: the rung that was configured is the rung on the wire.
         assertThat(wireBodyOf(params)).contains("\"reasoning_effort\":\"low\"");
     }
@@ -420,7 +421,7 @@ class OpenAILlmClientParameterDivergenceTest {
                                 .supportsReasoningTraceRoundTrip(false).build())
                 .build();
         final OpenAILlmClient client = client(OpenAIConfig.builder().apiKey("test-key").model("chat-only-with-none")
-                .responsesApiEnabled(false).modelCapabilityRegistry(registry).build());
+                .endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).modelCapabilityRegistry(registry).build());
 
         final ChatCompletionCreateParams params = sendAndCapture(client,
                 LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).build(), List.of(A_TOOL));
@@ -450,9 +451,8 @@ class OpenAILlmClientParameterDivergenceTest {
 
         // A family name: its ladder has no `none`, so the server's stated exit does not exist for it and nothing
         // measured says the request fails.
-        final OpenAILlmClient family = new OpenAILlmClient(
-                OpenAIConfig.builder().apiKey("test-key").model(A_REASONING_MODEL).responsesApiEnabled(false).build(),
-                mockOpenAIClient);
+        final OpenAILlmClient family = new OpenAILlmClient(OpenAIConfig.builder().apiKey("test-key")
+                .model(A_REASONING_MODEL).endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).build(), mockOpenAIClient);
         send(family, LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).build(), List.of(A_TOOL));
 
         assertThat(warnings()).noneMatch(w -> w.contains(FORCED_CHAT_TOOLS_WARNING));

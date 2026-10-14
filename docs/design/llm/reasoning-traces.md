@@ -171,7 +171,7 @@ identity fast path 도 `hasReasoningTraces()` 를 확인한다. 이것이 없으
 
 - **공시** — `Message.mapText` 와 `ReasoningTrace` 의 javadoc 이 이 사실을 적는다. 프로세스 밖으로 나가는 것은
   provider 자신이 만들어 이미 가진 payload 라는 점도 함께 적는다
-- **끄는 스위치** — OpenAI 는 `OpenAIConfig.responsesApiEnabled(false)` 다. Chat Completions 는 reasoning 항목을
+- **끄는 스위치** — OpenAI 는 `OpenAIConfig.endpoint(OpenAiEndpoint.CHAT_COMPLETIONS)` 다. Chat Completions 는 reasoning 항목을
   돌려주지 않으므로 캡처할 것 자체가 없다. Anthropic 의 `replayThinkingBlocks(false)` 는 재전송만 끈다. 캡처는
   무조건이므로(§7) 트레이스는 전사에 계속 남는다
 
@@ -432,7 +432,7 @@ Claude Fable 5.1 이후 모델에서, 2026-08-31 이후 생성된 계정에는 �
 ``Invalid `signature` in `thinking` block. The block is bound to a different conversation.`` 이다. 트레이스를 버리면
 무효가 될 것이 없고, 되실으면 이 오류에 닿을 수 있다. 스위치를 끄는 것은 벤더가 문서화한 해법 — 이력에서 `thinking`
 과 `redacted_thinking` 블록을 전부 뺀다 — 그대로다. 전사 증가(§3.6)를 없애는 수단이기도 하다. OpenAI 쪽의 같은 탈출구는
-`responsesApiEnabled(false)` 다.
+`endpoint(OpenAiEndpoint.CHAT_COMPLETIONS)` 다.
 
 **기본값을 `true` 로 둔다.** 설정 없이 기능이 동작하게 하는 값이고, 위험은 좁다 — Fable 5.1 이후 모델, 2026-08-31
 이후 생성된 계정, 실제로 바뀐 prefix 가 모두 겹쳐야 하며, 그때의 오류는 해법을 가리키는 문장이다. `false` 의 대가는

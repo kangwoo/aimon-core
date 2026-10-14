@@ -160,7 +160,14 @@ llm:
 #                                      #   Responses API ONLY: a model that does not do the reasoning trace
 #                                      #   round trip goes to Chat Completions, which has no such parameter,
 #                                      #   and a WARN says so once. Costs output tokens, hence opt-in.
-#    responsesApiEnabled: false        # default true. false sends EVERY request to /v1/chat/completions.
+#    endpoint: chat-completions        # default auto. auto | chat-completions | responses.
+#                                      #   auto: a model whose capability row does the reasoning trace round
+#                                      #   trip goes to /v1/responses, every other model to Chat Completions.
+#                                      #   responses: EVERY request to /v1/responses; a model whose row does
+#                                      #   not do the round trip goes there without reasoning items (a WARN
+#                                      #   says so once). Replaces the deprecated responsesApiEnabled
+#                                      #   (false = chat-completions, true = auto); writing both fails startup.
+#                                      #   chat-completions: EVERY request to /v1/chat/completions.
 #                                      #   For an OpenAI-compatible gateway (llm.baseUrl) that implements only
 #                                      #   Chat Completions but passes real model names through: a gpt-5* or
 #                                      #   o-series name otherwise routes to /v1/responses and gets a 404.

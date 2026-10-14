@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 4db0101
+source_commit: ac5ce989
 ---
 
 # Embedding an AIMON agent in your application
@@ -539,8 +539,10 @@ aimon:
   `none` exists in the agent definition only: it turns off, for that agent, a summary the property turned on — the
   property itself takes the three values and is turned off by leaving it out. A subagent inherits the value of the
   agent that started it, and the anthropic branch ignores the value and says so once at WARN.
-  `aimon.llm.openai.responses-api-enabled` decides whether the
-  Responses API (`/v1/responses`) path is used, and is `true` when unset.
+  `aimon.llm.openai.endpoint` names the endpoint requests go to (`auto` · `chat-completions` · `responses`), and
+  is `auto` when unset — a model that does the reasoning trace round trip goes to `/v1/responses`, every other
+  model to Chat Completions. Writing it together with the deprecated `responses-api-enabled` fails startup
+  (`false` is `chat-completions`, `true` is `auto`).
 
   ```yaml
   aimon:
@@ -549,18 +551,20 @@ aimon:
       base-url: https://gateway.internal/v1
       model: gpt-5.1
       openai:
-        responses-api-enabled: false    # this gateway has no /v1/responses
+        endpoint: chat-completions    # this gateway has no /v1/responses
   ```
 
-  **`responses-api-enabled: false` is the switch for a gateway that implements Chat Completions only.** Point
+  **`endpoint: chat-completions` is the value for a gateway that implements Chat Completions only.** Point
   `base-url` at such an OpenAI-compatible gateway while keeping real model names, and a `gpt-5*` or o-series
   name resolves to its built-in capability row, is routed to `/v1/responses`, and gets a 404 from the gateway.
-  `false` sends every request to Chat Completions — it tells no lie about the model and only turns the routing
+  This value sends every request to Chat Completions — it tells no lie about the model and only turns the routing
   off, so the rest of that row (sampling suppression, the effort ladder) keeps applying. If the gateway exposes
   the model under a **different** name you do not need this key (that name is not in the built-in table and
   goes to Chat Completions from the start). With it off there is no reasoning-item round trip, so the model
   rebuilds its reasoning on every call, and `reasoning-summary` reaches nothing — the client says so once at
-  WARN.
+  WARN. `endpoint: responses` goes the other way and sends every request to `/v1/responses` whatever the model. A
+  model whose row does not say it does the reasoning trace round trip goes there without reasoning items, and the
+  client says so once at WARN.
 
   **Forcing `gpt-5.6-terra` onto Chat Completions at `api.openai.com` means tool requests need
   `aimon.llm.reasoning-effort=none`.** Nine cells have been measured. A request carrying tools and no effort
@@ -571,7 +575,7 @@ aimon:
   the same text, and a 200 without tools** (2026-10-05). The client sends those rungs as they are and it is the
   server that refuses — the client says so once at WARN before sending. An agent definition's `model.reasoningEffort` wins over the property, so write
   `none` on whichever one actually reaches the request. **A misspelled key name fails startup here too.** The CLI
-  keys on the same axis are camelCase (`llm.openai.responsesApiEnabled`).
+  key on the same axis is `llm.openai.endpoint`, with the same value spellings.
 - **The sampling defaults live in the vendor blocks too, and the keys differ per block.** `aimon.llm.openai` has
   `temperature` (`0.0`–`2.0`), `top-p` (`0.0`–`1.0`), `presence-penalty` and `frequency-penalty` (both
   `-2.0`–`2.0`); `aimon.llm.anthropic` has `temperature` (`0.0`–`1.0`) **and nothing else** — the Anthropic API

@@ -91,6 +91,13 @@ class AimonConfigurationMetadataTest {
                 enumSpellings("at.aimon.core.llms.anthropic.AnthropicThinkingDisplay"));
         assertThat(valueCandidates(AimonProperties.LLM_OPENAI_REASONING_SUMMARY))
                 .containsExactlyInAnyOrderElementsOf(enumSpellings("at.aimon.core.llms.openai.OpenAiReasoningSummary"));
+        // The fifth, for the same reason. Read off the enum's own configValue() rather than enumSpellings(): the
+        // documented spelling joins words with '-', which a plain lower-casing of CHAT_COMPLETIONS would not give.
+        final List<String> endpoints = new ArrayList<>();
+        for (at.aimon.core.llms.openai.OpenAiEndpoint endpoint : at.aimon.core.llms.openai.OpenAiEndpoint.values()) {
+            endpoints.add(endpoint.configValue());
+        }
+        assertThat(valueCandidates(AimonProperties.LLM_OPENAI_ENDPOINT)).containsExactlyInAnyOrderElementsOf(endpoints);
     }
 
     /**
@@ -166,7 +173,7 @@ class AimonConfigurationMetadataTest {
         METADATA.path("hints").forEach(hint -> hinted.add(hint.path("name").asText()));
         assertThat(hinted).containsExactlyInAnyOrder(AimonProperties.LLM_PROVIDER,
                 AimonProperties.LLM_ANTHROPIC_THINKING_MODE, AimonProperties.LLM_ANTHROPIC_THINKING_DISPLAY,
-                AimonProperties.LLM_OPENAI_REASONING_SUMMARY);
+                AimonProperties.LLM_OPENAI_REASONING_SUMMARY, AimonProperties.LLM_OPENAI_ENDPOINT);
     }
 
     @Test

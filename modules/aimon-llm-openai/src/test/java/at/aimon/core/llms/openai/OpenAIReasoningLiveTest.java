@@ -231,14 +231,14 @@ class OpenAIReasoningLiveTest {
         @DisplayName("the negative control: the same request on Chat Completions is still the original 400")
         void theSameRequestOnChatCompletionsIsStillTheOriginal400() {
             // Without this, the sibling above proves only that some request succeeded — not that routing is what
-            // fixed it. `responsesApiEnabled(false)` is the one switch that puts this model back where the issue
+            // fixed it. `endpoint(CHAT_COMPLETIONS)` is the one switch that puts this model back where the issue
             // found it, and this rejection is the issue's own 400 still being returned.
             //
             // Note what is *not* configured: no temperature, and no reasoning effort. The issue says omitting the
             // effort is not a workaround because the server's default for these models is `medium`, and this
             // rejection is that claim still holding.
             final OpenAILlmClient client = new OpenAILlmClient(
-                    config(REASONING_MODEL).responsesApiEnabled(false).build());
+                    config(REASONING_MODEL).endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).build());
 
             // Not the message. An earlier revision asserted the issue's sentence whole, and no narrower substring would
             // be better: the SDK builds this exception's message as "400: " followed by the server's English sentence,

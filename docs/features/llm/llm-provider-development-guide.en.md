@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/llm/llm-provider-development-guide.md
-source_commit: 6a07573
+source_commit: 96870e07
 ---
 
 # LLM Provider Development Guide
@@ -474,7 +474,7 @@ bytes and emits them with fields that were never there.
 
 The cost is not hidden — **`Message.mapText` does not reach this payload, so redaction does not
 either.** That is not fixable (fixing it breaks the replay), and a deployment that cannot accept it
-has an off switch (for OpenAI, `OpenAIConfig.responsesApiEnabled(false)`).
+has an off switch (for OpenAI, `OpenAIConfig.endpoint(OpenAiEndpoint.CHAT_COMPLETIONS)`).
 
 The full design is in [the OpenAI Responses path](../../design/llm/openai-responses-path.md).
 

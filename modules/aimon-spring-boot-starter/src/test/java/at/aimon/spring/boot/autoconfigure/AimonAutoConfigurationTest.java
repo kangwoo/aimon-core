@@ -58,6 +58,7 @@ import at.aimon.core.llms.anthropic.AnthropicLlmClient;
 import at.aimon.core.llms.anthropic.AnthropicThinkingDisplay;
 import at.aimon.core.llms.anthropic.AnthropicThinkingMode;
 import at.aimon.core.llms.openai.OpenAILlmClient;
+import at.aimon.core.llms.openai.OpenAiEndpoint;
 import at.aimon.core.llms.openai.OpenAiReasoningSummary;
 import at.aimon.session.routing.SubmitRequest;
 import at.aimon.spring.boot.AimonAgents;
@@ -476,6 +477,49 @@ class AimonAutoConfigurationTest {
         }
         minimal(workspace).withClassLoader(new FilteredClassLoader("at.aimon.core.llms.openai"))
                 .withPropertyValues("aimon.llm.openai.responses-api-enabled=false")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure().hasStackTraceContaining(AimonProperties.LLM_OPENAI)
+                        .hasStackTraceContaining(AimonProperties.LLM_PROVIDER));
+    }
+
+    @Test
+    @DisplayName("endpoint reaches the vendor config in either spelling, and unset is auto")
+    void endpointReachesTheOpenAiClient(@TempDir Path workspace) {
+        for (String[] written : new String[][]{{"responses", "RESPONSES"}, {"chat-completions", "CHAT_COMPLETIONS"},
+                {"Chat_Completions", "CHAT_COMPLETIONS"}, {"auto", "AUTO"}}) {
+            minimal(workspace)
+                    .withPropertyValues("aimon.llm.provider=openai", "aimon.llm.model=gpt-4o",
+                            "aimon.llm.openai.endpoint=" + written[0])
+                    .run(ctx -> assertThat(AimonLlmAutoConfiguration.OpenAiConfiguration
+                            .openAiConfig(ctx.getBean(AimonProperties.class).getLlm()).getEndpoint())
+                            .as("endpoint written as `%s`", written[0]).isEqualTo(OpenAiEndpoint.valueOf(written[1])));
+        }
+        minimal(workspace).withPropertyValues("aimon.llm.provider=openai", "aimon.llm.model=gpt-4o")
+                .run(ctx -> assertThat(AimonLlmAutoConfiguration.OpenAiConfiguration
+                        .openAiConfig(ctx.getBean(AimonProperties.class).getLlm()).getEndpoint())
+                        .isEqualTo(OpenAiEndpoint.AUTO));
+    }
+
+    @Test
+    @DisplayName("an endpoint that names none, or one written beside responses-api-enabled, fails startup by name")
+    void aBadEndpointFailsStartupByName(@TempDir Path workspace) {
+        minimal(workspace)
+                .withPropertyValues("aimon.llm.provider=openai", "aimon.llm.model=gpt-4o",
+                        "aimon.llm.openai.endpoint=chat")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining(AimonProperties.LLM_OPENAI_ENDPOINT + "=chat")
+                        .hasStackTraceContaining("auto, chat-completions, responses"));
+        minimal(workspace)
+                .withPropertyValues("aimon.llm.provider=openai", "aimon.llm.model=gpt-4o",
+                        "aimon.llm.openai.endpoint=auto", "aimon.llm.openai.responses-api-enabled=true")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining(AimonProperties.LLM_OPENAI_ENDPOINT)
+                        .hasStackTraceContaining("aimon.llm.openai.responses-api-enabled"));
+    }
+
+    @Test
+    @DisplayName("endpoint alone under the anthropic provider is refused, naming both properties")
+    void endpointUnderAnthropicIsRefused(@TempDir Path workspace) {
+        minimal(workspace).withPropertyValues("aimon.llm.openai.endpoint=responses")
                 .run(ctx -> assertThat(ctx).hasFailed().getFailure().hasStackTraceContaining(AimonProperties.LLM_OPENAI)
                         .hasStackTraceContaining(AimonProperties.LLM_PROVIDER));
     }

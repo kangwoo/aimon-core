@@ -103,20 +103,36 @@ interface OpenAIStreamHandle extends AutoCloseable {   // StreamResponse<T> 의 
 
 ---
 
-## 3. 라우팅 — `supportsReasoningTraceRoundTrip() && isResponsesApiEnabled()`
+## 3. 라우팅 — `OpenAIConfig.getEndpoint()` 와 `supportsReasoningTraceRoundTrip()`
 
 ```java
 final String modelName = modelConfig.getName().orElse(config.getModel());
 final ModelCapabilities capabilities = capabilitiesFor(modelName);
-if (capabilities.supportsReasoningTraceRoundTrip() && config.isResponsesApiEnabled()) { ... }   // → Responses
+switch (config.getEndpoint()) {
+    case RESPONSES -> /* → Responses */;
+    case CHAT_COMPLETIONS -> /* → Chat */;
+    case AUTO -> /* capabilities.supportsReasoningTraceRoundTrip() 가 정한다 */;
+}
 ```
 
-`OpenAILlmClient.exchangeFor` 가 이 결정을 요청마다 한 번 내린다. 두 항은 서로 다른 질문에 답한다.
+`OpenAILlmClient.exchangeFor` 가 이 결정을 요청마다 한 번 내린다. 두 입력은 서로 다른 질문에 답한다.
 
-| 항 | 질문 | 성격 |
+| 입력 | 질문 | 성격 |
 |---|---|---|
 | `ModelCapabilities.supportsReasoningTraceRoundTrip()` | 이 **모델**이 다음 요청에 되실을 reasoning trace 를 돌려주는가 | 모델 사실. provider 중립 |
-| `OpenAIConfig.isResponsesApiEnabled()` | 이 **배포의 엔드포인트**가 `/v1/responses` 를 제공하는가 | 운영 사실. 기본 `true` |
+| `OpenAIConfig.getEndpoint()` | 이 **배포**가 어느 엔드포인트를 쓰는가 — `AUTO` · `CHAT_COMPLETIONS` · `RESPONSES` | 운영 사실. 기본 `AUTO` |
+
+**`AUTO` 만 선택을 모델에 맡긴다.** 나머지 둘은 모델과 상관없이 한쪽으로 보낸다. `AUTO` 는 이 값이 생기기 전의 동작
+그대로이고, `CHAT_COMPLETIONS` 는 폐기 예정인 `responsesApiEnabled(false)` 가 하던 일이다(`true` 는 `AUTO`). 둘을 함께
+설정하면 `build()` 가 실패한다 — 같은 뜻이어도 그렇다.
+
+**엔드포인트를 강제해도 모델에 대한 사실은 바뀌지 않는다.** 샘플링 억제와 effort ladder 는 어느 엔드포인트에서나 행이
+정한다. 특히 reasoning item 왕복은 엔드포인트가 아니라 `supportsReasoningTraceRoundTrip()` 를 따른다. `RESPONSES` 로
+보낸 모델의 행이 그것을 말하지 않으면 요청 팩토리는 `include: ["reasoning.encrypted_content"]` 를 싣지 않고, 변환기는
+저장된 trace 를 하나도 되싣지 않는다(§4.2). 그 모델이 그것을 받는다는 측정이 없고, 다른 모델이 쓴 trace 는 그 모델이
+소비할 수 있는 것이 아니다 — 한 세션 안에서 모델이 바뀌는 일(`gpt-5.x` 세션의 `gpt-4o` 요약 호출)은 흔하다.
+클라이언트는 그 사실을 모델마다 한 번 WARN 한다(`reasoningTraceRoundTripOff@<model>`). 왕복까지 원하면 그 모델에
+`supportsReasoningTraceRoundTrip: true` 를 선언한다.
 
 **모델 이름은 요청에서 온다.** `LlmModel` 의 이름이 클라이언트의 설정 모델을 덮어쓰고, 그 이름으로 능력을 조회한다.
 이것이 선택을 클라이언트 단위가 아니라 요청 단위로 만든다. 결정 어디에도 모델 이름 문자열은 없다 — 모델 지식은
@@ -130,11 +146,11 @@ if (capabilities.supportsReasoningTraceRoundTrip() && config.isResponsesApiEnabl
 
 **둘째 항은 모델 사실이 아니라 배포 스위치다.** OpenAI 호환 게이트웨이 중에는 `/v1/chat/completions` 만 구현하고 실제
 모델 이름을 그대로 넘기는 것이 많다. 그런 배포는 `gpt-5.x` 이름을 내장 행으로 해석해 `/v1/responses` 로 보내고 404 를
-받는다. `responsesApiEnabled(false)` 는 모델에 대해 거짓말을 하지 않고 그 라우팅만 끄므로, 고쳐진 레지스트리 행은 그
+받는다. `endpoint(CHAT_COMPLETIONS)` 는 모델에 대해 거짓말을 하지 않고 그 라우팅만 끄므로, 고쳐진 레지스트리 행은 그
 운영자에게도 계속 닿는다. 게이트웨이가 모델 이름을 **바꾸는** 경우는 이름이 `unknown()` 으로 해석되어 애초에 영향이
 없다. 기본 재시도 정책은 404 를 재시도하지 않으므로 이 실패는 한 번 크게 난다.
 
-두 항 모두 참이 아니면 요청은 Chat Completions 로 간다. 거기서는 도구와 effort 를 함께 받지 못하는 모델의 effort 를
+Responses 로 가지 않는 요청은 Chat Completions 로 간다. 거기서는 도구와 effort 를 함께 받지 못하는 모델의 effort 를
 생략하는 도구 규칙이 다시 적용된다 — 그 규칙의 정본은 [`request-parameters.md`](request-parameters.md) 다.
 
 **provider 이름도 같은 자리에서 한 번 해석된다.** `getProviderName()` 은 재정의할 수 있는 메서드이므로, 요청 팩토리가
@@ -158,7 +174,7 @@ if (capabilities.supportsReasoningTraceRoundTrip() && config.isResponsesApiEnabl
 | `tools(List<ChatCompletionTool>)` | `tools(List<Tool>)` via `Tool.ofFunction(FunctionTool)` — `strict(false)`(§4.4) |
 | `streamOptions.includeUsage` | **대응물 없음.** 이 엔드포인트의 `stream_options` 에는 `include_obfuscation` 만 있다. usage 는 요청하지 않아도 실린다(§9) |
 | `temperature` / `top_p` | 같은 둘. **presence · frequency penalty 는 없다** |
-| — | `store(false)` + `include(REASONING_ENCRYPTED_CONTENT)`(§4.2) |
+| — | `store(false)` + `include(REASONING_ENCRYPTED_CONTENT)` — 후자는 행이 trace 왕복을 말할 때만(§4.2) |
 
 샘플링 파라미터는 Chat 경로와 같은 규칙으로 싣는다 — 누군가 값을 넣었을 때만, 생략은 setter 를 부르지 않는 것으로.
 두 엔드포인트가 같은 `OpenAiRequestParameters.applySampling` 을 거치므로 서로 어긋날 수 없다. 이 엔드포인트에 없는
@@ -177,6 +193,11 @@ if (capabilities.supportsReasoningTraceRoundTrip() && config.isResponsesApiEnabl
 못하는 것 — 는 드러나지 않는 종류다.
 
 `reasoning.summary` 는 `include` 항목을 따로 요구하지 않는다. 이것은 추론이 아니라 측정이다(§9).
+
+**`include` 는 행이 trace 왕복을 말할 때만 싣는다.** `AUTO` 에서는 그 행이 이 엔드포인트로 보낸 이유이므로 언제나 실린다.
+빠지는 것은 `endpoint(RESPONSES)` 가 왕복을 말하지 않는 모델을 이리로 보낸 경우뿐이고(§3), 그때는 저장된 trace 도 되싣지
+않는다. 그 조합은 측정한 적이 없다 — 왕복을 하지 않는 모델에 이 항목을 실었을 때 서버가 어떻게 답하는지 모르므로, 모르는
+것을 보내지 않는 쪽을 택했다.
 
 ### 4.3 도구 규칙은 없고, ladder 검사는 공유한다
 
@@ -459,7 +480,7 @@ summary 이벤트를 보낼 수 있고, 아무것도 설정하지 않은 배포�
 **Chat 으로 라우팅된 모델.** Chat Completions 에는 `reasoning.summary` 파라미터도 summary 이벤트도 없다. `reasoningSummary` 가
 설정되었는데 요청이 Chat 으로 가면, 운영자에게 키가 아무 데도 닿지 않는다는 것을 알릴 곳이 달리 없으므로 클라이언트가 한 번
 경고한다. 경고는 라우팅된 원인을 구분한다 — 모델이 trace 왕복을 하지 않는 경우(다른 모델이 필요하다)와
-`responsesApiEnabled=false` 인 경우(운영자가 켠 스위치다)의 처방이 다르기 때문이다. 이 두 signature 는 요청이 Chat 으로 갔을 때만,
+`endpoint` 가 `CHAT_COMPLETIONS` 인 경우(운영자가 고른 값이다)의 처방이 다르기 때문이다. 이 두 signature 는 요청이 Chat 으로 갔을 때만,
 §8 게이트의 보고는 Responses 로 갔을 때만 발화하므로 서로 겹치지 않는다.
 
 ---
@@ -545,7 +566,7 @@ rung 집합, `temperature` 값 거부 — 은 내장 표의 근거이므로 [`mo
 - **`incomplete` stop reason 의 `content_filter` 갈래가 실제 응답으로 확인되지 않았다.** `max_output_tokens` 갈래는
   2026-10-05 에 응답 본문과 스트림 종료 이벤트 두 경로에서 실측했다. [`RD-8`](../../backlog/reasoning-delta-stream-open-items.md)
 - **보존 동작(§7.3)은 코드로 확인했을 뿐 실측하지 않았다.** [`RD-9`](../../backlog/reasoning-delta-stream-open-items.md)
-- **`responsesApiEnabled` 는 이제 설정 키이고**(`llm.openai.responsesApiEnabled` · `aimon.llm.openai.responses-api-enabled`,
+- **엔드포인트는 설정 키이고**(`llm.openai.endpoint` · `aimon.llm.openai.endpoint`, 폐기 예정인 `responsesApiEnabled` 의 후신,
   [`configuration-surface.md`](configuration-surface.md)), **그래서 `gpt-5.6-terra` 를 Chat 에 강제하는 조합이 운영자 경로에
   있다.** 그 경로에서 도구 요청이 실측으로 통하는 길은 `reasoning_effort: none` 하나다(§9). effort 를 적지 않으면 400 이고,
   `low` · `medium` · `high` 도 도구와 함께면 400 이다(2026-10-05). 클라이언트는 그 요청을 내보내기 전에 한 번 WARN 한다 — [`model-capabilities.md`](model-capabilities.md) §6.4 · §9
@@ -579,7 +600,7 @@ rung 집합, `temperature` 값 거부 — 은 내장 표의 근거이므로 [`mo
 | `OpenAiResponseStopReasons.java` | `status` · `incomplete_details.reason` · 도구 호출 유무 매핑 |
 | `OpenAiRequestParameters.java` | 두 엔드포인트가 공유하는 `applySampling` · `maySendEffort` |
 | `OpenAIExceptionMapper.java` | `SseException` 분기, `mapMidStreamError` |
-| `OpenAIConfig.java` · `OpenAiReasoningSummary.java` | `responsesApiEnabled`(기본 `true`)의 뜻, `reasoningSummary` 의 뜻과 enum |
+| `OpenAIConfig.java` · `OpenAiEndpoint.java` · `OpenAiReasoningSummary.java` | `endpoint`(기본 `AUTO`)와 폐기 예정인 `responsesApiEnabled` 의 뜻, 설정 값의 철자 접기, `reasoningSummary` 의 뜻과 enum |
 | `aimon-core` `llm/capability/ModelCapabilities.java` | `supportsReasoningTraceRoundTrip`(fail-open `false`), `supportsReasoningSummary`(fail-open `true`) |
 | `aimon-core` `base/NullSafeMaps.java` | `withoutNullValues` |
 | `OpenAIReasoningLiveTest.java` (테스트) | §9 결론 일부를 키가 있는 환경에서 다시 단언하는 라이브 테스트 |
