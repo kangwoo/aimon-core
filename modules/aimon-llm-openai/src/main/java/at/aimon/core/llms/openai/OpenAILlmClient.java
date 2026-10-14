@@ -403,8 +403,7 @@ public class OpenAILlmClient implements LlmClient {
      * The message names which of the two conditions routed the request, because the remedies differ: a model that
      * does not do the reasoning round trip needs a different model, while
      * {@link OpenAiEndpoint#CHAT_COMPLETIONS} is a switch the operator set. Once per signature rather than per call,
-     * for
-     * {@link #reportDivergence}'s stated reason — both are properties of the configuration.
+     * for {@link #reportDivergence}'s stated reason — both are properties of the configuration.
      */
     private void reportInertReasoningSummary(Optional<OpenAiReasoningSummary> requestedSummary,
             ModelCapabilities capabilities, String modelName) {
@@ -612,10 +611,9 @@ public class OpenAILlmClient implements LlmClient {
         final String carried = requested.map(effort -> "reasoningEffort " + effort).orElse("no reasoningEffort");
         reportDivergence("forcedChatToolsWithoutNone=" + carried + "@" + modelName,
                 "{} is on Chat Completions because this client's endpoint is CHAT_COMPLETIONS, and this request "
-                        + "carries tools with "
-                        + "{}. api.openai.com refuses function tools on Chat Completions for the models whose "
-                        + "capabilities look like this -- measured on gpt-5.6-terra, documented for gpt-6-sol and "
-                        + "gpt-6-luna -- unless reasoning_effort is 'none' (HTTP 400). "
+                        + "carries tools with {}. api.openai.com refuses function tools on Chat Completions for the "
+                        + "models whose capabilities look like this -- measured on gpt-5.6-terra, documented for "
+                        + "gpt-6-sol and gpt-6-luna -- unless reasoning_effort is 'none' (HTTP 400). "
                         + "The request is sent as configured. If it is refused, set reasoningEffort: none or set the "
                         + "endpoint to AUTO or RESPONSES.",
                 modelName, carried);

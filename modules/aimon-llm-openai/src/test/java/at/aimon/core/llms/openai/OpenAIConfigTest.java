@@ -322,6 +322,7 @@ class OpenAIConfigTest {
         assertThat(OpenAiEndpoint.fromConfigValue("auto")).contains(OpenAiEndpoint.AUTO);
         assertThat(OpenAiEndpoint.fromConfigValue("chat")).isEmpty();
         assertThat(OpenAiEndpoint.CHAT_COMPLETIONS.configValue()).isEqualTo("chat-completions");
+        assertThat(OpenAiEndpoint.acceptedConfigValues()).isEqualTo("auto, chat-completions, responses");
     }
 
     @Test

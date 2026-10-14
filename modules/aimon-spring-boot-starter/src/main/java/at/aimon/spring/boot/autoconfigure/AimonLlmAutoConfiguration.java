@@ -540,14 +540,9 @@ public class AimonLlmAutoConfiguration {
         }
 
         private static OpenAiEndpoint endpoint(String value) {
-            return OpenAiEndpoint.fromConfigValue(value).orElseThrow(() -> {
-                final StringBuilder accepted = new StringBuilder();
-                for (OpenAiEndpoint candidate : OpenAiEndpoint.values()) {
-                    accepted.append(accepted.length() == 0 ? "" : ", ").append(candidate.configValue());
-                }
-                return new IllegalStateException(
-                        LLM_OPENAI_ENDPOINT + "=" + value + " is not an endpoint. Accepted values: " + accepted + ".");
-            });
+            return OpenAiEndpoint.fromConfigValue(value)
+                    .orElseThrow(() -> new IllegalStateException(LLM_OPENAI_ENDPOINT + "=" + value
+                            + " is not an endpoint. Accepted values: " + OpenAiEndpoint.acceptedConfigValues() + "."));
         }
 
         /**

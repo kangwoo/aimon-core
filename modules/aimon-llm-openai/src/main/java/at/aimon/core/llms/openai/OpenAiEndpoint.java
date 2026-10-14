@@ -3,6 +3,7 @@ package at.aimon.core.llms.openai;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.StringJoiner;
 
 /**
  * Which OpenAI endpoint an {@link OpenAILlmClient} sends its requests to.
@@ -73,5 +74,19 @@ public enum OpenAiEndpoint {
      */
     public String configValue() {
         return name().toLowerCase(Locale.ROOT).replace('_', '-');
+    }
+
+    /**
+     * Every {@link #configValue()}, comma-separated in declaration order — what a refusal of an unknown value lists, so
+     * that both configuration surfaces list the same values.
+     *
+     * @return e.g. {@code auto, chat-completions, responses}
+     */
+    public static String acceptedConfigValues() {
+        final StringJoiner accepted = new StringJoiner(", ");
+        for (OpenAiEndpoint endpoint : values()) {
+            accepted.add(endpoint.configValue());
+        }
+        return accepted.toString();
     }
 }

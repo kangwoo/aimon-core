@@ -6,7 +6,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.StringJoiner;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,6 +27,8 @@ import at.aimon.core.llms.openai.OpenAiEndpoint;
 
 public class LlmClientFactory {
 
+    private static final Logger log = LoggerFactory.getLogger(LlmClientFactory.class);
+
     /** capability 선언 블록의 yaml 키 경로. 거절 메시지가 사용자가 고쳐야 하는 자리를 이 이름으로 부른다. */
     private static final String MODEL_CAPABILITIES_KEY = "llm.modelCapabilities";
 
@@ -35,8 +36,6 @@ public class LlmClientFactory {
     private static final String ANTHROPIC_KEY = "llm.anthropic";
 
     /** OpenAI 전용 블록의 yaml 키 경로. 이 라운드가 연 네임스페이스이고, 거절이 이 이름을 부른다. */
-    private static final Logger log = LoggerFactory.getLogger(LlmClientFactory.class);
-
     private static final String OPENAI_KEY = "llm.openai";
 
     /** provider 선택자의 yaml 키 경로. {@link #ANTHROPIC_KEY} 를 거절할 때 함께 부른다. */
@@ -253,9 +252,10 @@ public class LlmClientFactory {
         }
         if (openai.getEndpoint() != null) {
             final String written = openai.getEndpoint();
-            builder.endpoint(OpenAiEndpoint.fromConfigValue(written).orElseThrow(
-                    () -> new ConfigurationException("Invalid `" + OPENAI_KEY + ".endpoint` in the LLM " + "config: `"
-                            + written + "` is not an endpoint. Accepted values: " + acceptedEndpoints())));
+            builder.endpoint(OpenAiEndpoint.fromConfigValue(written)
+                    .orElseThrow(() -> new ConfigurationException("Invalid `" + OPENAI_KEY + ".endpoint` in the LLM "
+                            + "config: `" + written + "` is not an endpoint. Accepted values: "
+                            + OpenAiEndpoint.acceptedConfigValues())));
         }
         if (openai.getResponsesApiEnabled() != null) {
             log.warn("`{}.responsesApiEnabled` is deprecated - write `{}.endpoint: {}` instead", OPENAI_KEY, OPENAI_KEY,
@@ -288,15 +288,6 @@ public class LlmClientFactory {
                     () -> openAiProbe().frequencyPenalty(frequencyPenalty).build());
             builder.frequencyPenalty(frequencyPenalty);
         }
-    }
-
-    /** {@code llm.openai.endpoint} 가 받는 값들 — 오류 메시지가 그 목록을 열거한다. */
-    private static String acceptedEndpoints() {
-        final StringJoiner accepted = new StringJoiner(", ");
-        for (OpenAiEndpoint endpoint : OpenAiEndpoint.values()) {
-            accepted.add(endpoint.configValue());
-        }
-        return accepted.toString();
     }
 
     /** {@link #requireAccepted} 가 값 하나를 얹어 보는, 그 밖에는 아무것도 적히지 않은 OpenAI config. */
