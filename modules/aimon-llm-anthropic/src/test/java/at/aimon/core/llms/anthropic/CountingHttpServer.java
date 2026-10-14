@@ -11,8 +11,10 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -24,26 +26,35 @@ import java.util.concurrent.atomic.AtomicInteger;
  * than a builder call a mock saw. The last step repeats once the script runs out. It is a raw socket rather than
  * {@code com.sun.net.httpserver} so a step can also drop the connection without answering, which is what a network
  * failure looks like to the client. Every answer closes its connection, so each attempt is a fresh one.
+ *
+ * <p>
+ * Both SDKs build OkHttp with {@code retryOnConnectionFailure(false)}, so a dropped connection is not retried below the
+ * SDK either, and the count is the SDK's alone.
  */
 final class CountingHttpServer implements AutoCloseable {
 
     /** One scripted answer. */
     static final class Step {
-        private final String raw;
+        private static final long HANG_GUARD_SECONDS = 20;
 
-        private Step(String raw) {
+        private final String raw;
+        private final CountDownLatch resetWhen;
+
+        private Step(String raw, CountDownLatch resetWhen) {
             this.raw = raw;
+            this.resetWhen = resetWhen;
         }
 
         /**
-         * A complete response. Error statuses carry {@code Retry-After-Ms: 0}, which the SDK obeys, so a retry costs
-         * no backoff and the tests stay fast.
+         * A complete response. Error statuses carry {@code Retry-After-Ms: 1}, which both SDKs obey, so a retry costs
+         * a millisecond of backoff rather than the exponential default. It is {@code 1} rather than {@code 0} because
+         * the Anthropic SDK ignores a delay that is not positive and falls back to the exponential one.
          */
         static Step status(int status, String contentType, String body) {
             final byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-            final String retryAfter = status >= 400 ? "Retry-After-Ms: 0\r\n" : "";
+            final String retryAfter = status >= 400 ? "Retry-After-Ms: 1\r\n" : "";
             return new Step("HTTP/1.1 " + status + " X\r\nContent-Type: " + contentType + "\r\nContent-Length: "
-                    + bytes.length + "\r\n" + retryAfter + "Connection: close\r\n\r\n" + body);
+                    + bytes.length + "\r\n" + retryAfter + "Connection: close\r\n\r\n" + body, null);
         }
 
         /** A JSON response. */
@@ -51,14 +62,19 @@ final class CountingHttpServer implements AutoCloseable {
             return status(status, "application/json", body);
         }
 
-        /** The opening of an SSE stream, after which the connection is closed with no terminating event. */
-        static Step truncatedSse(String events) {
-            return new Step("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n" + events);
+        /**
+         * The opening of an SSE stream, then a connection reset once {@code reached} opens — a stream that fails after
+         * its first events, rather than one that merely ends early. The test opens the latch from its sink, so the
+         * reset comes after the client has read those events, not in a race with them.
+         */
+        static Step sseThenReset(String events, CountDownLatch reached) {
+            return new Step("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n" + events,
+                    reached);
         }
 
         /** Closes the connection after reading the request, without writing a byte of response. */
         static Step drop() {
-            return new Step(null);
+            return new Step(null, null);
         }
     }
 
@@ -91,7 +107,9 @@ final class CountingHttpServer implements AutoCloseable {
     private void serve() {
         while (!socket.isClosed()) {
             try (Socket connection = socket.accept()) {
-                readRequest(connection.getInputStream());
+                if (!readRequest(connection.getInputStream())) {
+                    continue;
+                }
                 final int index = requests.getAndIncrement();
                 final Step step = script.get(Math.min(index, script.size() - 1));
                 if (step.raw != null) {
@@ -99,21 +117,33 @@ final class CountingHttpServer implements AutoCloseable {
                     out.write(step.raw.getBytes(StandardCharsets.UTF_8));
                     out.flush();
                 }
+                if (step.resetWhen != null) {
+                    step.resetWhen.await(Step.HANG_GUARD_SECONDS, TimeUnit.SECONDS);
+                    // Linger zero turns the close below into a TCP reset.
+                    connection.setSoLinger(true, 0);
+                }
             } catch (IOException e) {
                 // Closed by close(), or the client hung up; either way the next accept decides.
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
             }
         }
     }
 
-    /** Reads one request's head and its {@code Content-Length} body, so the client is never cut off mid-send. */
-    private static void readRequest(InputStream raw) throws IOException {
+    /**
+     * Reads one request's head and its {@code Content-Length} body, so the client is never cut off mid-send.
+     *
+     * @return whether a whole request head arrived — a connection that ends before one is not a request
+     */
+    private static boolean readRequest(InputStream raw) throws IOException {
         final InputStream in = new BufferedInputStream(raw);
         final ByteArrayOutputStream head = new ByteArrayOutputStream();
         int matched = 0;
         while (matched < 4) {
             final int b = in.read();
             if (b < 0) {
-                return;
+                return false;
             }
             head.write(b);
             matched = (b == (matched % 2 == 0 ? '\r' : '\n')) ? matched + 1 : (b == '\r' ? 1 : 0);
@@ -125,6 +155,7 @@ final class CountingHttpServer implements AutoCloseable {
             }
         }
         in.readNBytes(length);
+        return true;
     }
 
     @Override

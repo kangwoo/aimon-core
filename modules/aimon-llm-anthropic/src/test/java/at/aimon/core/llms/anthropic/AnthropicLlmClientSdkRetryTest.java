@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,6 +20,7 @@ import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.exception.LlmClientException;
 import at.aimon.core.llm.streaming.LlmStreamChunk;
+import at.aimon.core.llm.streaming.LlmStreamSink;
 import at.aimon.core.llm.streaming.LlmStreamingOptions;
 import at.aimon.core.llms.anthropic.CountingHttpServer.Step;
 
@@ -148,8 +150,8 @@ class AnthropicLlmClientSdkRetryTest {
         try (CountingHttpServer server = CountingHttpServer.answering(OVERLOADED)) {
             AnthropicLlmClient client = client(server, 0);
 
-            assertThatThrownBy(() -> stream(client, new CopyOnWriteArrayList<>()))
-                    .isInstanceOf(LlmClientException.class);
+            assertThatThrownBy(() -> stream(client, chunk -> {
+            })).isInstanceOf(LlmClientException.class);
 
             assertThat(server.requestCount()).isEqualTo(1);
         }
@@ -161,26 +163,45 @@ class AnthropicLlmClientSdkRetryTest {
         try (CountingHttpServer server = CountingHttpServer.answering(OVERLOADED)) {
             AnthropicLlmClient client = client(server, 2);
 
-            assertThatThrownBy(() -> stream(client, new CopyOnWriteArrayList<>()))
-                    .isInstanceOf(LlmClientException.class);
+            assertThatThrownBy(() -> stream(client, chunk -> {
+            })).isInstanceOf(LlmClientException.class);
 
             assertThat(server.requestCount()).isEqualTo(3);
         }
     }
 
     @Test
-    @DisplayName("streaming: a stream cut after its first delta is not replayed, even with retries left")
-    void streamCutAfterDeltaIsNotReplayed() throws Exception {
-        try (CountingHttpServer server = CountingHttpServer.answering(Step.truncatedSse(PARTIAL_STREAM))) {
+    @DisplayName("streaming: a stream reset after its first delta is not replayed, even with retries left")
+    void streamResetAfterDeltaIsNotReplayed() throws Exception {
+        CountDownLatch deltaSeen = new CountDownLatch(1);
+        try (CountingHttpServer server = CountingHttpServer.answering(Step.sseThenReset(PARTIAL_STREAM, deltaSeen))) {
             AnthropicLlmClient client = client(server, 3);
             List<LlmStreamChunk> chunks = new CopyOnWriteArrayList<>();
 
-            // Whether the cut surfaces as an error or as a short answer is the stream contract's business, not this
+            // Whether the reset surfaces as an error or as a short answer is the stream contract's business, not this
             // key's; what this key must not do is send the request again.
-            catchThrowable(() -> stream(client, chunks));
+            catchThrowable(() -> stream(client, chunk -> {
+                chunks.add(chunk);
+                if (chunk.getTextDelta().filter("partial"::equals).isPresent()) {
+                    deltaSeen.countDown();
+                }
+            }));
 
+            assertThat(deltaSeen.getCount()).as("the delta reached the sink before the reset").isZero();
             assertThat(server.requestCount()).isEqualTo(1);
             assertThat(chunks.stream().filter(c -> c.getTextDelta().filter("partial"::equals).isPresent())).hasSize(1);
+        }
+    }
+
+    @Test
+    @DisplayName("maxRetries(N): a connection that keeps dropping is sent at most N + 1 times")
+    void positiveCapsNetworkFailures() throws Exception {
+        try (CountingHttpServer server = CountingHttpServer.answering(Step.drop())) {
+            AnthropicLlmClient client = client(server, 1);
+
+            assertThatThrownBy(() -> send(client)).isInstanceOf(LlmClientException.class);
+
+            assertThat(server.requestCount()).isEqualTo(2);
         }
     }
 
@@ -194,9 +215,9 @@ class AnthropicLlmClientSdkRetryTest {
                 LlmModel.builder().build());
     }
 
-    private static LlmResponse stream(AnthropicLlmClient client, List<LlmStreamChunk> chunks) {
+    private static LlmResponse stream(AnthropicLlmClient client, LlmStreamSink sink) {
         return client.sendMessageStreaming(SystemPromptParts.empty(), List.of(Message.user("hi")),
                 Collections.emptyList(), LlmModel.builder().build(), LlmCallMetadata.empty(),
-                LlmStreamingOptions.defaults(), chunks::add, LlmCancellation.none());
+                LlmStreamingOptions.defaults(), sink, LlmCancellation.none());
     }
 }

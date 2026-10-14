@@ -483,8 +483,16 @@ public final class OpenAIConfig {
          *
          * <p>
          * It does not touch any retry above the client, and it does not make a stream replayable: the SDK retries only
-         * before a response arrives, so a stream that fails after its first event is never sent again whatever this
-         * says.
+         * before it hands a response back, so a stream whose body is already being read is never sent again whatever
+         * this says.
+         *
+         * <p>
+         * With {@code N > 0}, two ceilings are per attempt rather than per call. A cancellation is not observed while
+         * the SDK is retrying — the client registers its abort lever only once the SDK returns a response — so a call
+         * cancelled during a retry may still send its remaining attempts, after a backoff that honours the server's
+         * {@code Retry-After}. And the configured {@code timeout}, like a per-request
+         * {@link at.aimon.core.llm.LlmModel#getRequestTimeout()}, bounds each attempt, so a call can take up to
+         * {@code N + 1} of them plus the backoff in between. {@code 0} makes both ceilings hold for the whole call.
          *
          * @param maxRetries
          *            the most retries after the first attempt ({@code 0} for none), or {@code null} to leave the SDK's
