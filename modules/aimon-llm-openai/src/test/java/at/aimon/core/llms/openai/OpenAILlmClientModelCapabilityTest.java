@@ -57,7 +57,7 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
  * <p>
  * <strong>Every test here is about the Chat Completions request shape</strong>, which is why the nine that name a
  * model the built-in table routes to {@code /v1/responses} — eight {@code gpt-5.x} and, since round 8 measured its
- * reasoning-item replay, one {@code o3} — set {@code responsesApiEnabled(false)}. That flag is a fixture line, not
+ * reasoning-item replay, one {@code o3} — set {@code endpoint(CHAT_COMPLETIONS)}. That flag is a fixture line, not
  * an assertion change: the model name stays in the fixture, so what each test is <em>about</em> is unchanged, and
  * two of them ({@code toolsClampReasoningEffortToNone}, and {@code clampedReasoningEffortIsReported} in the
  * divergence sibling) test a clamp that is a Chat Completions rule outright and belongs nowhere else. The endpoint
@@ -193,14 +193,15 @@ class OpenAILlmClientModelCapabilityTest {
         // InMemoryModelCapabilityRegistry.withDefaults() -- every other suppression test here builds its registry by
         // hand and would stay green while the 400 shipped.
         //
-        // responsesApiEnabled(false) is what keeps this on Chat Completions now that the built-in gpt-5 row also says
+        // endpoint(CHAT_COMPLETIONS) is what keeps this on Chat Completions now that the built-in gpt-5 row also says
         // its reasoning traces round-trip. The test is still about the Chat request shape, and the NONE clamp it
         // asserts is a Chat rule outright -- but it is no longer the STOCK-config binding, because a stock config
         // now routes this model to /v1/responses. That binding moved to
         // OpenAILlmClientEndpointSelectionTest.stockConfigOnAReasoningModelUsesResponses, which is where a reader
         // looking for "what does the shipped default do" should go.
-        final ChatCompletionCreateParams params = capture(config(A_REASONING_MODEL).responsesApiEnabled(false).build(),
-                LlmModel.builder().build(), List.of(A_TOOL));
+        final ChatCompletionCreateParams params = capture(
+                config(A_REASONING_MODEL).endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).build(), LlmModel.builder().build(),
+                List.of(A_TOOL));
 
         assertThat(params._temperature()).isInstanceOf(JsonMissing.class);
         // Round 6, measured 2026-09-09: this used to assert an explicit NONE. The API rejects that value outright
@@ -263,7 +264,7 @@ class OpenAILlmClientModelCapabilityTest {
         //
         // Round 8, measured 2026-09-09: o3's reasoning-item replay is now measured, its exact row says
         // supportsReasoningTraceRoundTrip=true, and a stock config on this name reaches /v1/responses. So
-        // responsesApiEnabled(false) is a fixture line here for exactly the reason it is one on the gpt-5.x tests
+        // endpoint(CHAT_COMPLETIONS) is a fixture line here for exactly the reason it is one on the gpt-5.x tests
         // above -- this test is still about the CHAT request shape, and the stock-config binding for this name has
         // moved to OpenAILlmClientEndpointSelectionTest.stockConfigOnAMeasuredOSeriesNameUsesResponses. It is
         // deliberately not re-pointed at an unmeasured sibling such as o1-pro: that would couple a sampling
@@ -275,8 +276,9 @@ class OpenAILlmClientModelCapabilityTest {
         // deliberately -- issue #43's "sampling parameters are sent only when the caller explicitly set them" beats
         // round 1's "an unknown model sends exactly what it sends today", which round 1 had recorded as design
         // O-1/A6. See docs/design/llm/request-parameters.md section 2.2.
-        final ChatCompletionCreateParams params = capture(config("o3").responsesApiEnabled(false).build(),
-                modelWithAllSamplingValues(), List.of(A_TOOL));
+        final ChatCompletionCreateParams params = capture(
+                config("o3").endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).build(), modelWithAllSamplingValues(),
+                List.of(A_TOOL));
 
         assertSamplingOmitted(params);
         assertThat(params._reasoningEffort()).isInstanceOf(JsonMissing.class);
@@ -396,8 +398,8 @@ class OpenAILlmClientModelCapabilityTest {
     @Test
     @DisplayName("a temperature configured on OpenAIConfig is suppressed too")
     void configLevelTemperatureSuppressed() {
-        final OpenAIConfig config = config(A_REASONING_MODEL).responsesApiEnabled(false).temperature(0.7).topP(0.5)
-                .presencePenalty(0.5).frequencyPenalty(0.5).build();
+        final OpenAIConfig config = config(A_REASONING_MODEL).endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).temperature(0.7)
+                .topP(0.5).presencePenalty(0.5).frequencyPenalty(0.5).build();
 
         assertSamplingOmitted(capture(config, LlmModel.builder().build(), List.of()));
     }
@@ -406,7 +408,7 @@ class OpenAILlmClientModelCapabilityTest {
     @DisplayName("the streaming path suppresses exactly as the blocking path does")
     void streamingPathSuppressesToo() {
         final ChatCompletionCreateParams params = captureStreaming(
-                config(A_REASONING_MODEL).responsesApiEnabled(false).temperature(0.7).build(),
+                config(A_REASONING_MODEL).endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).temperature(0.7).build(),
                 LlmModel.builder().build(), List.of(A_TOOL));
 
         assertSamplingOmitted(params);
@@ -433,7 +435,8 @@ class OpenAILlmClientModelCapabilityTest {
                 .build();
 
         final ChatCompletionCreateParams params = capture(
-                config("no-tools-with-reasoning").responsesApiEnabled(false).modelCapabilityRegistry(registry).build(),
+                config("no-tools-with-reasoning").endpoint(OpenAiEndpoint.CHAT_COMPLETIONS)
+                        .modelCapabilityRegistry(registry).build(),
                 LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build(), List.of(A_TOOL));
 
         assertThat(params._reasoningEffort()).isInstanceOf(JsonMissing.class);
@@ -444,8 +447,9 @@ class OpenAILlmClientModelCapabilityTest {
     void noToolsNoEffortSendsNothing() {
         // The compaction / summarization path calls sendMessage(..., List.of(), ...), so a reasoning model can still
         // reason there; phase 1 does not disable reasoning further than the endpoint already forces.
-        final ChatCompletionCreateParams params = capture(config(A_REASONING_MODEL).responsesApiEnabled(false).build(),
-                LlmModel.builder().build(), List.of());
+        final ChatCompletionCreateParams params = capture(
+                config(A_REASONING_MODEL).endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).build(), LlmModel.builder().build(),
+                List.of());
 
         assertThat(params._reasoningEffort()).isInstanceOf(JsonMissing.class);
     }
@@ -453,7 +457,8 @@ class OpenAILlmClientModelCapabilityTest {
     @Test
     @DisplayName("a reasoning model with no tools sends the configured effort as asked")
     void noToolsSendsTheConfiguredEffort() {
-        final ChatCompletionCreateParams params = capture(config(A_REASONING_MODEL).responsesApiEnabled(false).build(),
+        final ChatCompletionCreateParams params = capture(
+                config(A_REASONING_MODEL).endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).build(),
                 LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build(), List.of());
 
         assertThat(params.reasoningEffort()).contains(com.openai.models.ReasoningEffort.HIGH);
@@ -477,8 +482,8 @@ class OpenAILlmClientModelCapabilityTest {
     @Test
     @DisplayName("an effort configured on OpenAIConfig reaches the model when LlmModel sets none")
     void configLevelReasoningEffortIsUsed() {
-        final ChatCompletionCreateParams params = capture(
-                config(A_REASONING_MODEL).responsesApiEnabled(false).reasoningEffort(ReasoningEffort.LOW).build(),
+        final ChatCompletionCreateParams params = capture(config(A_REASONING_MODEL)
+                .endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).reasoningEffort(ReasoningEffort.LOW).build(),
                 LlmModel.builder().build(), List.of());
 
         assertThat(params.reasoningEffort()).contains(com.openai.models.ReasoningEffort.LOW);
@@ -492,8 +497,8 @@ class OpenAILlmClientModelCapabilityTest {
         // and a pair of tests that read alike is what notices if one provider's drifts. The compatibility half
         // (nothing configured anywhere sends nothing) is aReasoningModelWithNoToolsAndNoConfiguredEffortSendsNothing
         // above, which is why it is not repeated here: capture() verifies exactly one call.
-        final ChatCompletionCreateParams overridden = capture(
-                config(A_REASONING_MODEL).responsesApiEnabled(false).reasoningEffort(ReasoningEffort.LOW).build(),
+        final ChatCompletionCreateParams overridden = capture(config(A_REASONING_MODEL)
+                .endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).reasoningEffort(ReasoningEffort.LOW).build(),
                 LlmModel.builder().reasoningEffort(ReasoningEffort.HIGH).build(), List.of());
 
         assertThat(overridden.reasoningEffort()).contains(com.openai.models.ReasoningEffort.HIGH);
@@ -528,7 +533,7 @@ class OpenAILlmClientModelCapabilityTest {
         // half of the same property is bound separately, by OpenAILlmClientEndpointSelectionTest cases 5 and 6 --
         // neither implies the other, which is exactly why both exist.
         final ChatCompletionCreateParams params = capture(
-                config("gpt-4o").responsesApiEnabled(false)
+                config("gpt-4o").endpoint(OpenAiEndpoint.CHAT_COMPLETIONS)
                         .modelCapabilityRegistry(InMemoryModelCapabilityRegistry.withDefaults()).build(),
                 LlmModel.builder().name(A_REASONING_MODEL).build(), List.of(A_TOOL));
 
@@ -574,7 +579,7 @@ class OpenAILlmClientModelCapabilityTest {
         // The extension is one name wide. gpt-5-mini is not declared, so it must still resolve through the built-in
         // gpt-5 prefix -- which on the Chat path means sampling is suppressed for it too, for the table's reason
         // rather than the declaration's.
-        final ChatCompletionCreateParams params = capture(config("gpt-5-mini").responsesApiEnabled(false)
+        final ChatCompletionCreateParams params = capture(config("gpt-5-mini").endpoint(OpenAiEndpoint.CHAT_COMPLETIONS)
                 .modelCapabilityRegistry(InMemoryModelCapabilityRegistry.withDefaultsExtendedBy(Map.of("prod-assistant",
                         ModelCapabilityDeclaration.builder().supportsSamplingParameters(true).build())))
                 .build(), modelWithAllSamplingValues(), List.of(A_TOOL));

@@ -6,7 +6,7 @@ import at.aimon.core.llms.openai.OpenAiReasoningSummary;
 
 /**
  * yaml 로 적은 OpenAI 전용 설정 — {@code llm.openai} 아래의 키들: {@code reasoningSummary},
- * {@code responsesApiEnabled}, 그리고 샘플링 기본값 넷({@code temperature} · {@code topP} ·
+ * {@code endpoint}, 폐기 예정인 {@code responsesApiEnabled}, 그리고 샘플링 기본값 넷({@code temperature} · {@code topP} ·
  * {@code presencePenalty} · {@code frequencyPenalty}).
  *
  * <p>
@@ -29,6 +29,7 @@ import at.aimon.core.llms.openai.OpenAiReasoningSummary;
 public class OpenAiProviderConfig {
 
     private OpenAiReasoningSummary reasoningSummary;
+    private String endpoint;
     private Boolean responsesApiEnabled;
     private Double temperature;
     private Double topP;
@@ -62,6 +63,39 @@ public class OpenAiProviderConfig {
     }
 
     /**
+     * 이 클라이언트가 요청을 보내는 엔드포인트 — {@code auto} · {@code chat-completions} · {@code responses}.
+     *
+     * <p>
+     * {@code auto}(적지 않았을 때와 같다)는 지금까지의 동작이다 — 내장 capability 행이 reasoning trace 왕복을
+     * 지원한다고 적은 모델은 {@code /v1/responses} 로, 나머지는 Chat Completions 로 간다. {@code chat-completions}
+     * 는 모든 요청을 Chat Completions 로 보낸다(옛 {@code responsesApiEnabled: false} 와 같다). {@code responses} 는
+     * 모델과 상관없이 모든 요청을 {@code /v1/responses} 로 보낸다.
+     *
+     * <p>
+     * <b>엔드포인트를 강제해도 모델에 대한 사실은 바뀌지 않는다.</b> 샘플링 억제와 effort 사다리는 어느 엔드포인트에서나
+     * 그대로이고, {@code responses} 로 보낸 모델의 행이 trace 왕복을 말하지 않으면 reasoning item 을 요청하지도
+     * 되싣지도 않는다 — 클라이언트가 그 사실을 한 번 경고한다.
+     *
+     * <p>
+     * 문자열인 것은 {@code chat-completions} 와 {@code chat_completions} 를 같은 값으로 받기 위해서다. 대소문자와
+     * {@code -} / {@code _} 를 접는 규칙은 {@code OpenAiEndpoint.fromConfigValue} 한 곳에 있고 스타터도 같은 메서드로
+     * 접는다. 모르는 값은 이 키의 이름으로 기동을 실패시킨다. {@code responsesApiEnabled} 와 함께 적어도 실패한다.
+     *
+     * @return 적힌 값, 또는 적지 않았으면 null
+     */
+    public String getEndpoint() {
+        return endpoint;
+    }
+
+    public void setEndpoint(String endpoint) {
+        this.endpoint = endpoint;
+    }
+
+    /**
+     * <b>폐기 예정 — {@link #getEndpoint()} 를 쓴다.</b> {@code false} 는 {@code endpoint: chat-completions},
+     * {@code true} 는 {@code endpoint: auto} 와 같다. 둘을 함께 적으면 기동이 실패한다.
+     *
+     * <p>
      * 이 배포가 Responses API({@code /v1/responses}) 경로를 쓰는가 — {@code false} 는 모든 요청을
      * Chat Completions 로 돌린다.
      *
@@ -180,8 +214,8 @@ public class OpenAiProviderConfig {
      * @return 키가 모두 비어 있으면 true
      */
     public boolean isEmpty() {
-        return reasoningSummary == null && responsesApiEnabled == null && temperature == null && topP == null
-                && presencePenalty == null && frequencyPenalty == null;
+        return reasoningSummary == null && endpoint == null && responsesApiEnabled == null && temperature == null
+                && topP == null && presencePenalty == null && frequencyPenalty == null;
     }
 
     @Override
@@ -193,7 +227,7 @@ public class OpenAiProviderConfig {
             return false;
         }
         final OpenAiProviderConfig that = (OpenAiProviderConfig) o;
-        return reasoningSummary == that.reasoningSummary
+        return reasoningSummary == that.reasoningSummary && Objects.equals(endpoint, that.endpoint)
                 && Objects.equals(responsesApiEnabled, that.responsesApiEnabled)
                 && Objects.equals(temperature, that.temperature) && Objects.equals(topP, that.topP)
                 && Objects.equals(presencePenalty, that.presencePenalty)
@@ -202,14 +236,14 @@ public class OpenAiProviderConfig {
 
     @Override
     public int hashCode() {
-        return Objects.hash(reasoningSummary, responsesApiEnabled, temperature, topP, presencePenalty,
+        return Objects.hash(reasoningSummary, endpoint, responsesApiEnabled, temperature, topP, presencePenalty,
                 frequencyPenalty);
     }
 
     @Override
     public String toString() {
-        return "OpenAiProviderConfig{" + "reasoningSummary=" + reasoningSummary + ", responsesApiEnabled="
-                + responsesApiEnabled + ", temperature=" + temperature + ", topP=" + topP + ", presencePenalty="
-                + presencePenalty + ", frequencyPenalty=" + frequencyPenalty + '}';
+        return "OpenAiProviderConfig{" + "reasoningSummary=" + reasoningSummary + ", endpoint=" + endpoint
+                + ", responsesApiEnabled=" + responsesApiEnabled + ", temperature=" + temperature + ", topP=" + topP
+                + ", presencePenalty=" + presencePenalty + ", frequencyPenalty=" + frequencyPenalty + '}';
     }
 }

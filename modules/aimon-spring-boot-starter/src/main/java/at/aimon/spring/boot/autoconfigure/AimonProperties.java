@@ -13,6 +13,7 @@ import java.util.Set;
 
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.DeprecatedConfigurationProperty;
 
 import at.aimon.bootstrap.runtime.AgentRuntimeEviction;
 import at.aimon.bootstrap.spec.AgentRuntimeSpec;
@@ -242,7 +243,15 @@ public class AimonProperties implements InitializingBean {
     /** How detailed a reasoning summary OpenAI requests ask for. */
     public static final String LLM_OPENAI_REASONING_SUMMARY = LLM_OPENAI + ".reasoning-summary";
 
-    /** Whether OpenAI requests may be routed to the Responses API at all. */
+    /** Which endpoint OpenAI requests go to: {@code auto}, {@code chat-completions} or {@code responses}. */
+    public static final String LLM_OPENAI_ENDPOINT = LLM_OPENAI + ".endpoint";
+
+    /**
+     * Whether OpenAI requests may be routed to the Responses API at all.
+     *
+     * @deprecated use {@link #LLM_OPENAI_ENDPOINT}
+     */
+    @Deprecated
     public static final String LLM_OPENAI_RESPONSES_API_ENABLED = LLM_OPENAI + ".responses-api-enabled";
 
     /** The deployment's default {@code temperature} for OpenAI requests, {@code 0.0} to {@code 2.0}. */
@@ -1452,6 +1461,9 @@ public class AimonProperties implements InitializingBean {
          */
         public static class OpenAi {
 
+            /** How the deprecated {@code responses-api-enabled} maps onto {@code endpoint}. */
+            private static final String ENDPOINT_MAPPING = "false is endpoint=chat-completions, true is endpoint=auto";
+
             /**
              * How detailed a summary of its reasoning to ask OpenAI for, and — the same key's other half — whether
              * that text is streamed to subscribers as it is produced: {@code auto}, {@code concise} or
@@ -1470,6 +1482,30 @@ public class AimonProperties implements InitializingBean {
             }
 
             /**
+             * Which endpoint requests go to: {@code auto}, {@code chat-completions} or {@code responses}.
+             * Case-insensitive, and {@code -} / {@code _} are interchangeable. Unset by default, and unset is
+             * {@code auto}.
+             *
+             * <p>
+             * {@code auto} is what this client has always done: a model whose capability row does the reasoning
+             * trace round trip goes to {@code /v1/responses}, every other model to Chat Completions.
+             * {@code chat-completions} sends every request to Chat Completions — for a gateway that implements
+             * nothing else, and what {@code responses-api-enabled=false} used to say. {@code responses} sends every
+             * request to {@code /v1/responses}, whatever the model; a model whose row does not do the round trip is
+             * sent there without reasoning items, and the client warns once.
+             *
+             * <p>
+             * Forcing an endpoint says nothing about the model, so sampling suppression and the effort ladder keep
+             * applying. Writing this together with {@code responses-api-enabled} fails startup, and so does a value
+             * that names no endpoint.
+             */
+            private String endpoint;
+
+            /**
+             * Deprecated — use {@code endpoint}: {@code false} is {@code chat-completions}, {@code true} is
+             * {@code auto}.
+             *
+             * <p>
              * Whether requests may be routed to the Responses API ({@code /v1/responses}). {@code false} sends every
              * request to Chat Completions. Unset by default, and unset leaves the vendor config's own default
              * ({@code true}) standing — which is why this is a nullable {@code Boolean} rather than a primitive.
@@ -1532,10 +1568,30 @@ public class AimonProperties implements InitializingBean {
             }
 
             /**
+             * Returns the written endpoint.
+             *
+             * @return the written value, or {@code null} when the key is absent and {@code auto} applies
+             */
+            public String getEndpoint() {
+                return endpoint;
+            }
+
+            /**
+             * Sets the endpoint requests go to.
+             *
+             * @param endpoint
+             *            {@code auto}, {@code chat-completions} or {@code responses}; {@code null} to keep the default
+             */
+            public void setEndpoint(String endpoint) {
+                this.endpoint = endpoint;
+            }
+
+            /**
              * Returns whether the Responses API path is used.
              *
              * @return the written value, or {@code null} when the key is absent and the client's default applies
              */
+            @DeprecatedConfigurationProperty(replacement = LLM_OPENAI_ENDPOINT, reason = ENDPOINT_MAPPING)
             public Boolean getResponsesApiEnabled() {
                 return responsesApiEnabled;
             }
@@ -1562,8 +1618,8 @@ public class AimonProperties implements InitializingBean {
              * @return true when every key is absent
              */
             public boolean isEmpty() {
-                return reasoningSummary == null && responsesApiEnabled == null && temperature == null && topP == null
-                        && presencePenalty == null && frequencyPenalty == null;
+                return reasoningSummary == null && endpoint == null && responsesApiEnabled == null
+                        && temperature == null && topP == null && presencePenalty == null && frequencyPenalty == null;
             }
 
             /**

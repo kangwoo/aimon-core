@@ -97,7 +97,7 @@ llm:
     temperature: 0.3                      # 샘플링 기본값 — 이 블록에는 이것 하나다 (§3.3)
   openai:                                 # 벤더 — openai 분기만 읽는다 (provider 가 anthropic 이면 거절된다, §6.3)
     reasoningSummary: auto
-    responsesApiEnabled: true             # false 는 모든 요청을 Chat Completions 로 보낸다
+    endpoint: auto                        # auto | chat-completions | responses (§3.2 표)
     temperature: 0.2                      # 샘플링 기본값 넷 (§3.3)
     topP: 0.9
     presencePenalty: 0.0
@@ -173,7 +173,8 @@ CLI 의 `default-config.yaml` 은 `reasoningEffort` 와 `acceptedReasoningEffort
 | `replayThinkingBlocks` | `llm.anthropic.replayThinkingBlocks` | `aimon.llm.anthropic.replay-thinking-blocks` | — | **벤더** | 이름 — thinking 블록은 Anthropic 의 서명된 콘텐츠 블록이다 |
 | `thinkingDisplay` | `llm.anthropic.thinkingDisplay` | `aimon.llm.anthropic.thinking-display` | — | **벤더** | 이름 — "thinking" 과 Anthropic `thinking` 객체 안의 필드명 `display` |
 | `reasoningSummary` | `llm.openai.reasoningSummary` | `aimon.llm.openai.reasoning-summary` | `model.reasoningSummary` | **벤더**(배포 키) · 이름은 중립(frontmatter) | 배포 키는 벤더다 — `reasoning.summary` 는 OpenAI 요청 본문의 경로이고, 값 `auto` · `concise` · `detailed` 는 OpenAI 의 어휘다. frontmatter 키는 중립 타입 `ReasoningSummary` 로 읽으며 지금 따르는 provider 는 OpenAI 하나다(Anthropic 은 무시하고 한 번 말한다). frontmatter 에만 `none` 이 있다 — 배포 키는 적지 않는 것으로 끄고, 그 서브트리는 모르는 값을 기동 실패로 거절한다 |
-| `responsesApiEnabled` | `llm.openai.responsesApiEnabled` | `aimon.llm.openai.responses-api-enabled` | — | **벤더** | 이름이 OpenAI 엔드포인트다. Chat Completions 만 구현한 게이트웨이가 설정만으로 닿는 404 의 출구이며, 적지 않으면 기본값은 `OpenAIConfig` 의 것(`true`)이다 |
+| `endpoint` | `llm.openai.endpoint` | `aimon.llm.openai.endpoint` | — | **벤더** | 값이 OpenAI 엔드포인트다(`auto` · `chat-completions` · `responses`). `chat-completions` 는 Chat Completions 만 구현한 게이트웨이가 설정만으로 닿는 404 의 출구이고, `responses` 는 모델과 상관없이 모든 요청을 `/v1/responses` 로 보낸다. 적지 않으면 기본값은 `OpenAIConfig` 의 것(`auto`)이다. 철자 접기(대소문자, `-` · `_`)는 `OpenAiEndpoint.fromConfigValue` 한 곳이 하고 두 표면이 그것을 부른다 |
+| `responsesApiEnabled` (폐기 예정) | `llm.openai.responsesApiEnabled` | `aimon.llm.openai.responses-api-enabled` | — | **벤더** | `endpoint` 로 대체되었다 — `false` 는 `chat-completions`, `true` 는 `auto`. 여전히 읽고 기동 때 한 번 WARN 하며, `endpoint` 와 함께 적으면 두 키의 이름으로 기동이 실패한다 |
 | 샘플링 기본값 — `temperature` · `topP` · `presencePenalty` · `frequencyPenalty` | `llm.openai.*` (넷) · `llm.anthropic.temperature` (하나) | `aimon.llm.openai.*` (넷) · `aimon.llm.anthropic.temperature` (하나) | `model.temperature` · `model.topP` | **벤더** | 뜻 — 이름은 중립이지만 유효범위가 벤더마다 다르고(`temperature` 는 OpenAI `0.0`–`2.0`, Anthropic `0.0`–`1.0`) 한쪽에는 없는 파라미터가 있다. 블록마다 키가 다른 이유는 §3.3 |
 
 판정이 네임스페이스로 갈라 놓는 쌍이 하나 있다.
@@ -365,7 +366,8 @@ provider 모듈의 테스트가 설정 경로가 실제로 쓰는 번역기를 �
 | `thinkingDisplay` | `AnthropicThinkingDisplay` | `String` — 같음 |
 | `reasoningSummary` | `OpenAiReasoningSummary` | `String` — 같음 |
 | `thinkingBudgetTokens` · `replayThinkingBlocks` | `Integer` · `Boolean` | 같음 |
-| `responsesApiEnabled` | `Boolean` — `null` 은 "적지 않음" 이고 기본값은 `OpenAIConfig` 가 정한다 | 같음 |
+| `endpoint` | `String` — `OpenAiEndpoint.fromConfigValue` 로 fold (`chat-completions` 를 Jackson 의 enum 바인딩이 받지 못한다) | `String` — 가드된 슬라이스 안에서 같은 메서드로 fold |
+| `responsesApiEnabled` (폐기 예정) | `Boolean` — `null` 은 "적지 않음" 이고 기본값은 `OpenAIConfig` 가 정한다 | 같음 |
 | 샘플링 기본값 다섯(`llm.openai` 의 넷 · `llm.anthropic.temperature`) | `Double` — `null` 은 "적지 않음" 이고, 그때 벤더 config 의 필드도 미설정으로 남아 요청에 실리지 않는다 | 같음 |
 
 규칙은 하나다.
@@ -797,7 +799,7 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
 | `aimon-cli/…/cli/config/CliConfigLoader.java` | 매퍼 기능(`ACCEPT_CASE_INSENSITIVE_ENUMS`), 바인딩 전 확장, 매핑 오류의 일반 메시지 |
 | `aimon-cli/…/cli/config/LlmProviderConfig.java` · `ModelCapabilityConfig.java` | CLI 표면 필드와 타입 |
 | `aimon-cli/…/cli/config/AnthropicProviderConfig.java` | 박싱 필드 · `isEmpty()` · `ThinkingModeDeserializer`(YAML `off`) |
-| `aimon-cli/…/cli/config/OpenAiProviderConfig.java` | `reasoningSummary` · 박싱된 `responsesApiEnabled` · 샘플링 기본값 넷과 `isEmpty()` |
+| `aimon-cli/…/cli/config/OpenAiProviderConfig.java` | `reasoningSummary` · `endpoint` · 박싱된 `responsesApiEnabled`(폐기 예정) · 샘플링 기본값 넷과 `isEmpty()` |
 | `aimon-cli/…/cli/factory/LlmClientFactory.java` | `declarationOf` · `registryFor` · 두 분기의 조립 메서드 · 좁은 catch 와 키 경로 · `requireAccepted`(샘플링 값 하나의 범위) · `refuseAnthropicBlock` / `refuseOpenAiBlock` |
 | `aimon-spring-boot-starter/…/autoconfigure/AimonProperties.java` | `LLM_*` 상수, `Llm` · `Llm.Anthropic` · `Llm.OpenAi` · `ModelCapabilityProperties` 필드 타입, `validateLlm` · `modelCapabilityRegistry` · `toDeclaration` |
 | `aimon-spring-boot-starter/…/autoconfigure/AimonLlmAutoConfiguration.java` | 가드된 중첩 슬라이스, vendor fold 와 `off` 힌트, 예산 키 catch, 바깥 클래스의 두 거절과 `requireAccepted` |
@@ -823,7 +825,7 @@ null 리졸버와 부딪히지 않고, 대소문자는 매퍼 기능이 덮는�
 - [`request-parameters.md`](request-parameters.md) — `reasoningEffort` 우선순위와 effort ladder, 샘플링 파라미터 규칙
 - [`anthropic-thinking.md`](anthropic-thinking.md) — thinking 모드 · 예산 · display 규칙(이 문서는 그 키의 표면 실패만)
 - [`reasoning-traces.md`](reasoning-traces.md) — `replayThinkingBlocks` 의 의미
-- [`openai-responses-path.md`](openai-responses-path.md) — `reasoningSummary` 요청과 `responsesApiEnabled`
+- [`openai-responses-path.md`](openai-responses-path.md) — `reasoningSummary` 요청과 `endpoint`
 - [`streaming.md`](streaming.md) — 추론 스트림 노브와 중립 우산 키를 두지 않는 판단
 - [`model-name-resolution.md`](model-name-resolution.md) — 요청이 싣는 모델 이름과 문서 예시의 모델 이름 규칙
 - [`../integration/spring-boot-starter.md`](../integration/spring-boot-starter.md) — 스타터 프로퍼티 트리와 자동설정 슬라이스

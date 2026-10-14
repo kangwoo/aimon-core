@@ -510,8 +510,10 @@ aimon:
   에이전트 정의에만 있는 값으로, 프로퍼티가 켠 요약을 그 에이전트에서만 끕니다 — 프로퍼티 자체는 세 값만 받고 적지 않는
   것으로 끕니다. 서브에이전트는 자기를 띄운 에이전트의 값을 물려받고, anthropic 분기는 그 값을 무시하며 한 번 WARN 으로
   말합니다.
-  `aimon.llm.openai.responses-api-enabled` 는 Responses API(`/v1/responses`) 경로를 쓸지 정하며, 적지 않으면
-  `true` 입니다.
+  `aimon.llm.openai.endpoint` 는 요청을 보낼 엔드포인트(`auto` · `chat-completions` · `responses`)를 정하며, 적지
+  않으면 `auto` 입니다 — 추론 트레이스 왕복을 하는 모델은 `/v1/responses` 로, 나머지는 Chat Completions 로 갑니다.
+  폐기 예정인 `responses-api-enabled` 와 함께 적으면 기동이 실패합니다(`false` 는 `chat-completions`, `true` 는
+  `auto` 입니다).
 
   ```yaml
   aimon:
@@ -520,17 +522,18 @@ aimon:
       base-url: https://gateway.internal/v1
       model: gpt-5.1
       openai:
-        responses-api-enabled: false    # 이 게이트웨이에는 /v1/responses 가 없다
+        endpoint: chat-completions    # 이 게이트웨이에는 /v1/responses 가 없다
   ```
 
-  **`responses-api-enabled: false` 는 Chat Completions 만 구현한 게이트웨이를 위한 스위치입니다.** `base-url` 을
+  **`endpoint: chat-completions` 는 Chat Completions 만 구현한 게이트웨이를 위한 값입니다.** `base-url` 을
   그런 OpenAI 호환 게이트웨이로 돌리고 실제 모델 이름을 그대로 쓰면, `gpt-5*` 와 o-series 이름은 내장
-  capability 행에 걸려 `/v1/responses` 로 라우팅되고 게이트웨이는 404 를 줍니다. `false` 는 모든 요청을 Chat
+  capability 행에 걸려 `/v1/responses` 로 라우팅되고 게이트웨이는 404 를 줍니다. 이 값은 모든 요청을 Chat
   Completions 로 보냅니다 — 모델에 대해 거짓말을 하지 않고 라우팅만 끄므로 그 행의 나머지 사실(샘플링 억제,
   effort 사다리)은 계속 적용됩니다. 게이트웨이가 모델을 **개명**해서 노출한다면 이 키는 필요 없습니다(그
   이름은 내장 표에 없어 처음부터 Chat Completions 로 갑니다). 끄면 reasoning item 왕복이 없어 모델이 매 호출
   추론을 다시 세우고, `reasoning-summary` 는 아무 데도 닿지 않으며 클라이언트가 그 사실을 한 번 WARN 으로
-  말합니다.
+  말합니다. 반대로 `endpoint: responses` 는 모델과 상관없이 모든 요청을 `/v1/responses` 로 보냅니다. 행이 추론
+  트레이스 왕복을 말하지 않는 모델은 reasoning item 없이 가고, 클라이언트가 그 사실을 한 번 WARN 으로 말합니다.
 
   **`gpt-5.6-terra` 를 `api.openai.com` 의 Chat Completions 로 강제하면 도구 요청에는
   `aimon.llm.reasoning-effort=none` 이 필요합니다.** 실측한 칸은 아홉입니다. effort 를 적지 않고 도구를 실은
@@ -541,7 +544,7 @@ aimon:
   도구가 없으면 200 입니다**(2026-10-05). 클라이언트는 그 rung 을 그대로 내보내고 거절은 서버가 합니다 —
   내보내기 전에 그 사실을 한 번 WARN 으로 말합니다. 에이전트 정의의
   `model.reasoningEffort` 가 프로퍼티를 이기므로 `none` 은 실제로 요청에 닿는 쪽에 적습니다. **여기서도 키
-  이름의 오타는 기동을 실패시킵니다.** CLI 쪽 같은 축의 키는 camelCase 입니다(`llm.openai.responsesApiEnabled`).
+  이름의 오타는 기동을 실패시킵니다.** CLI 쪽 같은 축의 키는 `llm.openai.endpoint` 이고, 값의 철자는 같습니다.
 - **샘플링 기본값도 벤더 블록에 있고, 블록마다 키가 다릅니다.** `aimon.llm.openai` 에는
   `temperature`(`0.0`–`2.0`) · `top-p`(`0.0`–`1.0`) · `presence-penalty` · `frequency-penalty`(둘 다
   `-2.0`–`2.0`)가 있고, `aimon.llm.anthropic` 에는 `temperature`(`0.0`–`1.0`) **하나뿐입니다** — Anthropic API

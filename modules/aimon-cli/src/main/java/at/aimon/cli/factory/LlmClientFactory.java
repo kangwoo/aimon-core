@@ -6,6 +6,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.StringJoiner;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import at.aimon.cli.config.AnthropicProviderConfig;
 import at.aimon.cli.config.LlmProviderConfig;
@@ -20,6 +24,7 @@ import at.aimon.core.llms.anthropic.AnthropicConfig;
 import at.aimon.core.llms.anthropic.AnthropicLlmClient;
 import at.aimon.core.llms.openai.OpenAIConfig;
 import at.aimon.core.llms.openai.OpenAILlmClient;
+import at.aimon.core.llms.openai.OpenAiEndpoint;
 
 public class LlmClientFactory {
 
@@ -30,6 +35,8 @@ public class LlmClientFactory {
     private static final String ANTHROPIC_KEY = "llm.anthropic";
 
     /** OpenAI 전용 블록의 yaml 키 경로. 이 라운드가 연 네임스페이스이고, 거절이 이 이름을 부른다. */
+    private static final Logger log = LoggerFactory.getLogger(LlmClientFactory.class);
+
     private static final String OPENAI_KEY = "llm.openai";
 
     /** provider 선택자의 yaml 키 경로. {@link #ANTHROPIC_KEY} 를 거절할 때 함께 부른다. */
@@ -230,6 +237,7 @@ public class LlmClientFactory {
      * {@code llm.openai} 의 키를 vendor config 에 옮긴다. {@link #applyThinking} 와 같은 계약이다 —
      * <b>적힌 것만</b> 옮기므로, 블록이 없는 배포의 요청은 이 변경 전과 글자 하나 다르지 않다.
      */
+    @SuppressWarnings("deprecation") // responsesApiEnabled: still carried over, with a warning
     private void applyOpenAi(OpenAIConfig.Builder builder, OpenAiProviderConfig openai) {
         if (openai == null || openai.isEmpty()) {
             return;
@@ -237,8 +245,23 @@ public class LlmClientFactory {
         if (openai.getReasoningSummary() != null) {
             builder.reasoningSummary(openai.getReasoningSummary());
         }
-        // null 은 "적지 않음" 이고, 그때 기본값(true)은 OpenAIConfig 가 정한다 — 여기서 다시 적지 않는다.
+        // null 은 "적지 않음" 이고, 그때 기본값(AUTO)은 OpenAIConfig 가 정한다 — 여기서 다시 적지 않는다.
+        if (openai.getEndpoint() != null && openai.getResponsesApiEnabled() != null) {
+            throw new ConfigurationException("`" + OPENAI_KEY + ".endpoint` and the deprecated `" + OPENAI_KEY
+                    + ".responsesApiEnabled` are both set - write only `endpoint` (responsesApiEnabled: false is "
+                    + "endpoint: chat-completions, true is endpoint: auto)");
+        }
+        if (openai.getEndpoint() != null) {
+            final String written = openai.getEndpoint();
+            builder.endpoint(OpenAiEndpoint.fromConfigValue(written).orElseThrow(
+                    () -> new ConfigurationException("Invalid `" + OPENAI_KEY + ".endpoint` in the LLM " + "config: `"
+                            + written + "` is not an endpoint. Accepted values: " + acceptedEndpoints())));
+        }
         if (openai.getResponsesApiEnabled() != null) {
+            log.warn("`{}.responsesApiEnabled` is deprecated - write `{}.endpoint: {}` instead", OPENAI_KEY, OPENAI_KEY,
+                    openai.getResponsesApiEnabled()
+                            ? OpenAiEndpoint.AUTO.configValue()
+                            : OpenAiEndpoint.CHAT_COMPLETIONS.configValue());
             builder.responsesApiEnabled(openai.getResponsesApiEnabled());
         }
         // 샘플링 기본값 넷. 적힌 것만 옮기고, 각 값은 옮기기 전에 자기 키의 이름으로 한 번 물어본다 — 넷이 한
@@ -265,6 +288,15 @@ public class LlmClientFactory {
                     () -> openAiProbe().frequencyPenalty(frequencyPenalty).build());
             builder.frequencyPenalty(frequencyPenalty);
         }
+    }
+
+    /** {@code llm.openai.endpoint} 가 받는 값들 — 오류 메시지가 그 목록을 열거한다. */
+    private static String acceptedEndpoints() {
+        final StringJoiner accepted = new StringJoiner(", ");
+        for (OpenAiEndpoint endpoint : OpenAiEndpoint.values()) {
+            accepted.add(endpoint.configValue());
+        }
+        return accepted.toString();
     }
 
     /** {@link #requireAccepted} 가 값 하나를 얹어 보는, 그 밖에는 아무것도 적히지 않은 OpenAI config. */

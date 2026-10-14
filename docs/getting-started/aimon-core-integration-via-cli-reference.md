@@ -556,7 +556,7 @@ llm:
 | 키 | 뜻 | 적지 않으면 |
 |---|---|---|
 | `reasoningSummary` | 모델의 추론 요약을 요청하고 흘려보낼 것인가 (`auto` \| `concise` \| `detailed`) | 아무것도 요청하지 않고 아무것도 흘리지 않는다 |
-| `responsesApiEnabled` | Responses API(`/v1/responses`) 경로를 쓸 것인가. `false` 는 모든 요청을 Chat Completions 로 보낸다 | `true` — 추론 트레이스 왕복을 하는 모델은 `/v1/responses` 로 간다 |
+| `endpoint` | 요청을 보낼 엔드포인트 (`auto` \| `chat-completions` \| `responses`). 폐기 예정인 `responsesApiEnabled` 를 대신하며, 둘을 함께 적으면 기동이 실패한다 | `auto` — 추론 트레이스 왕복을 하는 모델은 `/v1/responses` 로, 나머지는 Chat Completions 로 간다 |
 
 이 벤더에서 추론 자체는 `encrypted_content` — 설계상 암호문 — 이므로 **요약이 사람이 읽을 수 있는 유일한
 대리물**이다. 그것이 이 키가 Anthropic 쪽의 `thinkingDisplay` 와 다른 이름을 가진 이유다.
@@ -569,11 +569,11 @@ llm:
 에이전트의 값을 물려받는다. `provider: anthropic` 에서는 `model.reasoningSummary` 가 무시되고 클라이언트가 한 번 WARN 으로
 말한다 — 그쪽에서 thinking 텍스트를 정하는 것은 `thinkingDisplay` 다.
 
-**Responses API 전용이다.** 모델이 추론 트레이스 왕복을 지원하지 않거나 그 엔드포인트가 꺼져 있으면
+**Responses API 전용이다.** 모델이 추론 트레이스 왕복을 지원하지 않거나 `endpoint: chat-completions` 이면
 요청은 Chat Completions 로 가는데 거기에는 이 파라미터가 없다 — 그 경우 클라이언트가 한 번 WARN 으로
 말한다(조용히 아무것도 하지 않는 대신).
 
-**`responsesApiEnabled: false` 는 Chat Completions 만 구현한 게이트웨이를 위한 스위치다.** `baseUrl` 을 그런
+**`endpoint: chat-completions` 는 Chat Completions 만 구현한 게이트웨이를 위한 값이다.** `baseUrl` 을 그런
 OpenAI 호환 게이트웨이로 돌리고 실제 모델 이름을 그대로 쓰면, `gpt-5*` 와 o-series 이름은 내장 capability
 행에 걸려 `/v1/responses` 로 라우팅되고 게이트웨이는 404 를 준다. 그 상황은 설정만으로 만들어지므로 빠져나오는
 길도 설정에 있다. 모델에 대해 거짓말을 하지 않고 라우팅만 끄는 것이어서, 그 행의 나머지 사실(샘플링 억제,
@@ -587,11 +587,18 @@ llm:
   baseUrl: https://gateway.internal/v1
   model: gpt-5.1
   openai:
-    responsesApiEnabled: false
+    endpoint: chat-completions
 ```
 
 끄면 함께 꺼지는 것이 둘 있다. reasoning item 왕복이 없어 모델이 매 호출 추론을 다시 세우고, 위의
 `reasoningSummary` 는 아무 데도 닿지 않는다.
+
+**`endpoint: responses` 는 반대 방향이다.** 모델과 상관없이 모든 요청을 `/v1/responses` 로 보낸다 — 한
+엔드포인트로 통일하고 싶을 때, 또는 내장 표에 없는 이름을 Responses 로 보내고 싶을 때 쓴다. 이 값도 모델에 대한
+사실은 바꾸지 않는다. 행이 추론 트레이스 왕복을 말하지 않는 모델(`gpt-4o`, 표에 없는 이름)은 reasoning item 을
+요청하지도 되싣지도 않고, 클라이언트가 그 사실을 한 번 WARN 으로 말한다. 그 모델의 왕복까지 원하면
+`modelCapabilities` 에 `supportsReasoningTraceRoundTrip: true` 를 선언한다. `responsesApiEnabled` 는 폐기
+예정이다 — `false` 는 `chat-completions`, `true` 는 `auto` 이고, 적혀 있으면 기동할 때 한 번 WARN 한다.
 
 **`gpt-5.6-terra` 를 `api.openai.com` 의 Chat Completions 로 강제하면 도구 요청에는 `reasoningEffort: none` 이
 필요하다.** 실측한 칸은 아홉이다. effort 를 적지 않고 도구를 실은 요청은 **HTTP 400** 이다(2026-09-10) —

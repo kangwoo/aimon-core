@@ -122,12 +122,20 @@ final class OpenAIResponsesRequestFactory {
      */
     ResponseCreateParams build(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
             LlmModel modelConfig, ModelCapabilities capabilities, String modelName, String providerName) {
-        final List<ResponseInputItem> input = converter.convertMessages(messages, providerName, trafficReporter);
+        // The capability, not the endpoint, decides whether reasoning items are asked for and replayed. Under
+        // OpenAiEndpoint.AUTO the two coincide -- the capability is what routed the request here -- so this is false
+        // only for a model sent here by OpenAiEndpoint.RESPONSES whose row does not do the round trip: nothing says
+        // it accepts the include, and a trace another model wrote is not one it can consume.
+        final boolean replayReasoning = capabilities.supportsReasoningTraceRoundTrip();
+        final List<ResponseInputItem> input = converter.convertMessages(messages, providerName, trafficReporter,
+                replayReasoning);
 
         final ResponseCreateParams.Builder builder = ResponseCreateParams.builder().model(modelName)
                 .instructions(systemPrompt).input(ResponseCreateParams.Input.ofResponse(input))
-                .maxOutputTokens((long) modelConfig.getMaxTokens().orElse(config.getMaxTokens())).store(false)
-                .include(List.of(ResponseIncludable.REASONING_ENCRYPTED_CONTENT));
+                .maxOutputTokens((long) modelConfig.getMaxTokens().orElse(config.getMaxTokens())).store(false);
+        if (replayReasoning) {
+            builder.include(List.of(ResponseIncludable.REASONING_ENCRYPTED_CONTENT));
+        }
 
         OpenAiRequestParameters.applySampling(modelConfig, config, capabilities, modelName,
                 new ResponsesSamplingSink(builder, modelName, reporter), reporter);

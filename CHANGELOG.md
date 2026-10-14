@@ -7,6 +7,33 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: name the OpenAI endpoint explicitly — `OpenAIConfig.endpoint(OpenAiEndpoint)`, `llm.openai.endpoint`, `aimon.llm.openai.endpoint`
+
+`responsesApiEnabled` could only take the Responses API away; it could not send a request there. A model's capability
+row decided, so `gpt-4o` or a gateway name the built-in table does not know always went to Chat Completions. The
+endpoint is now a three-value choice made when the client is built.
+
+- **`AUTO`** (the default, and the old behaviour): a model whose row does the reasoning trace round trip goes to
+  `/v1/responses`, every other model to Chat Completions.
+- **`CHAT_COMPLETIONS`**: every request to `/v1/chat/completions` — what `responsesApiEnabled(false)` did.
+- **`RESPONSES`**: every request to `/v1/responses`, whatever the model.
+- **Forcing an endpoint changes routing, not what the model is said to do.** Sampling suppression and the effort
+  ladder still come from the capability row. A model sent to `/v1/responses` whose row does not say it does the
+  reasoning trace round trip is sent **without** `include: ["reasoning.encrypted_content"]` and without stored
+  reasoning traces, and the client warns once per model (`reasoningTraceRoundTripOff@<model>`). Declare
+  `supportsReasoningTraceRoundTrip: true` for the model to get the round trip too.
+- **Configuration:** CLI `llm.openai.endpoint`, starter `aimon.llm.openai.endpoint`, written `auto` ·
+  `chat-completions` · `responses` (case-insensitive; `-` and `_` are the same). Both surfaces fold through
+  `OpenAiEndpoint.fromConfigValue`. An unknown value fails startup naming the key and listing the accepted values.
+- **Deprecated:** `OpenAIConfig.Builder.responsesApiEnabled(boolean)`, `OpenAIConfig.isResponsesApiEnabled()`,
+  `llm.openai.responsesApiEnabled` and `aimon.llm.openai.responses-api-enabled`. They still work (`false` →
+  `CHAT_COMPLETIONS`, `true` → `AUTO`), and the configuration keys warn once at startup. **Setting both the old
+  switch and `endpoint` fails** — in the builder and on both configuration surfaces — even when they agree.
+- `isResponsesApiEnabled()` answers `true` for `RESPONSES` as well as `AUTO`; read `getEndpoint()` to tell them
+  apart.
+- The two Chat-path warnings that named `responsesApiEnabled` (an inert `reasoningSummary`, a forced-Chat tools
+  request) now name `endpoint` first and the old switch in parentheses.
+
 ### Added: built-in capability rows for the GPT-6 names — `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6.1-sol`
 
 Until now these names resolved to `ModelCapabilities.unknown()`, which kept them on Chat Completions and sent a

@@ -36,6 +36,7 @@ import at.aimon.core.llms.anthropic.AnthropicLlmClient;
 import at.aimon.core.llms.anthropic.AnthropicThinkingDisplay;
 import at.aimon.core.llms.anthropic.AnthropicThinkingMode;
 import at.aimon.core.llms.openai.OpenAILlmClient;
+import at.aimon.core.llms.openai.OpenAiEndpoint;
 import at.aimon.core.llms.openai.OpenAiReasoningSummary;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
@@ -805,6 +806,66 @@ class LlmClientFactoryTest {
             config.setProvider("anthropic");
             config.setApiKey("test-anthropic-api-key");
             config.getOpenai().setResponsesApiEnabled(written);
+
+            assertThatThrownBy(() -> factory.create(config)).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("llm.openai").hasMessageContaining("llm.provider");
+        }
+
+        @Test
+        @DisplayName("Should name the endpoint from yaml, in either spelling")
+        void yamlNamesTheEndpoint(@TempDir Path dir) throws IOException {
+            final Path configFile = dir.resolve("forced-responses.yaml");
+            Files.writeString(configFile, """
+                    llm:
+                      provider: "openai"
+                      apiKey: "test-api-key"
+                      model: "gpt-4o"
+                      openai:
+                        endpoint: responses
+                    """);
+
+            final LlmProviderConfig loaded = new CliConfigLoader().load(configFile.toString()).getLlmConfig();
+
+            assertThat(factory.openAiConfig(loaded).getEndpoint()).isEqualTo(OpenAiEndpoint.RESPONSES);
+            for (String written : new String[]{"chat-completions", "CHAT_COMPLETIONS"}) {
+                final LlmProviderConfig config = openai();
+                config.getOpenai().setEndpoint(written);
+                assertThat(factory.openAiConfig(config).getEndpoint()).as(written)
+                        .isEqualTo(OpenAiEndpoint.CHAT_COMPLETIONS);
+            }
+            assertThat(factory.openAiConfig(openai()).getEndpoint()).isEqualTo(OpenAiEndpoint.AUTO);
+        }
+
+        @Test
+        @DisplayName("Should refuse an endpoint that names none, listing the accepted values")
+        void anUnknownEndpointIsRefusedByName() {
+            final LlmProviderConfig config = openai();
+            config.getOpenai().setEndpoint("chat");
+
+            assertThatThrownBy(() -> factory.openAiConfig(config)).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("llm.openai.endpoint")
+                    .hasMessageContaining("auto, chat-completions, responses");
+        }
+
+        @ParameterizedTest
+        @ValueSource(booleans = {true, false})
+        @DisplayName("Should refuse endpoint written together with the deprecated responsesApiEnabled")
+        void endpointWithTheDeprecatedSwitchIsRefused(boolean written) {
+            final LlmProviderConfig config = openai();
+            config.getOpenai().setEndpoint("auto");
+            config.getOpenai().setResponsesApiEnabled(written);
+
+            assertThatThrownBy(() -> factory.openAiConfig(config)).isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("llm.openai.endpoint").hasMessageContaining("llm.openai.responsesApiEnabled");
+        }
+
+        @Test
+        @DisplayName("Should refuse a block carrying only endpoint under the anthropic provider")
+        void theEndpointAloneUnderAnthropicIsRefused() {
+            final LlmProviderConfig config = new LlmProviderConfig();
+            config.setProvider("anthropic");
+            config.setApiKey("test-anthropic-api-key");
+            config.getOpenai().setEndpoint("auto");
 
             assertThatThrownBy(() -> factory.create(config)).isInstanceOf(ConfigurationException.class)
                     .hasMessageContaining("llm.openai").hasMessageContaining("llm.provider");

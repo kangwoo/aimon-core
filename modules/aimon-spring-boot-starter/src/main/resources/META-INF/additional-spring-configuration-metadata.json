@@ -53,6 +53,23 @@
       ]
     },
     {
+      "name": "aimon.llm.openai.endpoint",
+      "values": [
+        {
+          "value": "auto",
+          "description": "The default. A model whose capability row does the reasoning trace round trip goes to /v1/responses, every other model to Chat Completions."
+        },
+        {
+          "value": "chat-completions",
+          "description": "Every request to /v1/chat/completions -- for a gateway that implements nothing else. What responses-api-enabled=false used to say."
+        },
+        {
+          "value": "responses",
+          "description": "Every request to /v1/responses, whatever the model. A model whose row does not do the round trip is sent there without reasoning items."
+        }
+      ]
+    },
+    {
       "name": "aimon.llm.openai.reasoning-summary",
       "values": [
         {

@@ -461,7 +461,7 @@ IMPORTANT: **`payload` 를 파싱하거나 다시 직렬화하거나 정규화�
 
 그 대가는 숨기지 않는다 — **`Message.mapText` 는 이 페이로드에 닿지 않으므로 레닥션도 닿지 않는다.**
 고칠 수 있는 성질의 것이 아니고(고치면 되읽기가 깨진다), 받아들일 수 없는 배포에는 끄는 스위치가 있다
-(OpenAI 는 `OpenAIConfig.responsesApiEnabled(false)`).
+(OpenAI 는 `OpenAIConfig.endpoint(OpenAiEndpoint.CHAT_COMPLETIONS)`).
 
 설계 전문은 [OpenAI Responses 경로](../../design/llm/openai-responses-path.md) 참조.
 

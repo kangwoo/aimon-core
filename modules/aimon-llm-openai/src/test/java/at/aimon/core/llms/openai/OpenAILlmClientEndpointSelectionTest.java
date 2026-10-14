@@ -157,11 +157,55 @@ class OpenAILlmClientEndpointSelectionTest {
     }
 
     @Test
-    @DisplayName("4: responsesApiEnabled(false) keeps a reasoning model on Chat Completions")
+    @DisplayName("4: endpoint(CHAT_COMPLETIONS) keeps a reasoning model on Chat Completions")
     void responsesApiDisabledKeepsAReasoningModelOnChat() {
         // The escape hatch for a gateway that implements only /v1/chat/completions while passing real model names
         // through -- a deployment that works today and that this branch would otherwise 404.
-        send(config(A_REASONING_MODEL).responsesApiEnabled(false).build(), LlmModel.builder().build());
+        send(config(A_REASONING_MODEL).endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).build(), LlmModel.builder().build());
+
+        assertWentToChat();
+    }
+
+    @Test
+    @DisplayName("endpoint(RESPONSES) sends a model whose row stays on Chat to the Responses API")
+    void forcedResponsesSendsANonReasoningModelToResponses() {
+        send(config("gpt-4o").endpoint(OpenAiEndpoint.RESPONSES).build(), LlmModel.builder().build());
+
+        Assertions.assertThat(assertWentToResponses().model().orElseThrow().asString()).isEqualTo("gpt-4o");
+    }
+
+    @Test
+    @DisplayName("endpoint(RESPONSES) on a model without the round trip asks for no encrypted reasoning and replays"
+            + " no stored trace")
+    void forcedResponsesWithoutTheRoundTripReplaysNothing() {
+        // Forcing the endpoint is a routing choice, not a claim about the model: gpt-4o's row says nothing about
+        // replaying reasoning items, so neither the include nor a trace another model wrote goes on its request.
+        final Message withTrace = Message.assistant("thinking")
+                .withReasoningTraces(List.of(at.aimon.core.llm.ReasoningTrace.builder().providerName("OpenAI").payload(
+                        "{\"type\":\"reasoning\",\"id\":\"rs_1\",\"summary\":[]," + "\"encrypted_content\":\"ZZZ\"}")
+                        .build()));
+        final OpenAILlmClient client = clientFor(config("gpt-4o").endpoint(OpenAiEndpoint.RESPONSES).build());
+        assertThatThrownBy(() -> client.sendMessage("sys", List.of(Message.user("hi"), withTrace), List.of(),
+                LlmModel.builder().build())).hasRootCause(SENTINEL);
+
+        final ResponseCreateParams params = assertWentToResponses();
+        Assertions.assertThat(params.include()).isEmpty();
+        Assertions.assertThat(params._body().toString()).doesNotContain("ZZZ");
+    }
+
+    @Test
+    @DisplayName("endpoint(RESPONSES) on a reasoning model keeps the round trip")
+    void forcedResponsesKeepsTheRoundTripOfAReasoningModel() {
+        send(config(A_REASONING_MODEL).endpoint(OpenAiEndpoint.RESPONSES).build(), LlmModel.builder().build());
+
+        Assertions.assertThat(assertWentToResponses().include().orElseThrow())
+                .containsExactly(com.openai.models.responses.ResponseIncludable.REASONING_ENCRYPTED_CONTENT);
+    }
+
+    @Test
+    @DisplayName("endpoint(AUTO) is the stock behaviour: the model's row decides")
+    void explicitAutoIsTheStockRouting() {
+        send(config("gpt-4o").endpoint(OpenAiEndpoint.AUTO).build(), LlmModel.builder().build());
 
         assertWentToChat();
     }

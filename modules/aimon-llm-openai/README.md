@@ -144,7 +144,8 @@ OpenAIConfig config = OpenAIConfig.builder()
 | `timeout` | Duration | 60초 | - | 요청 타임아웃 |
 | `baseUrl` | String | null | - | 커스텀 API 엔드포인트 (선택) |
 | `modelCapabilityRegistry` | ModelCapabilityRegistry | 내장 테이블 | - | 모델별 요청 형태 조회 (게이트웨이·Azure 배포에서 교체) |
-| `responsesApiEnabled` | boolean | `true` | - | `/v1/responses` 경로 사용 여부. `false` 는 모든 요청을 Chat Completions 로 보낸다 (Chat 전용 게이트웨이). 설정 키: CLI `llm.openai.responsesApiEnabled` · 스타터 `aimon.llm.openai.responses-api-enabled` |
+| `endpoint` | `OpenAiEndpoint` | `AUTO` | - | 요청을 보낼 엔드포인트. `AUTO` 는 추론 트레이스 왕복을 하는 모델만 `/v1/responses` 로, `CHAT_COMPLETIONS` 는 모든 요청을 Chat Completions 로(Chat 전용 게이트웨이), `RESPONSES` 는 모든 요청을 `/v1/responses` 로 보낸다. 설정 키: CLI `llm.openai.endpoint` · 스타터 `aimon.llm.openai.endpoint` (`auto` · `chat-completions` · `responses`) |
+| `responsesApiEnabled` (폐기 예정) | boolean | - | - | `endpoint` 로 대체 — `false` 는 `CHAT_COMPLETIONS`, `true` 는 `AUTO`. `endpoint` 와 함께 설정하면 `build()` 가 실패한다 |
 
 샘플링 파라미터는 **누군가 값을 넣었을 때만** 요청에 실린다. 미설정은 `0.0` 이 아니라 **아예 보내지 않는 것**이고,
 그때는 서버 기본값이 적용된다. 예전 동작(`temperature: 0.0`)을 유지하려면 `.temperature(0.0)` 을 명시한다.

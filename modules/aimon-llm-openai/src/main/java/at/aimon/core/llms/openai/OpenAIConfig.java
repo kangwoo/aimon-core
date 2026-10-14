@@ -54,7 +54,7 @@ public final class OpenAIConfig {
     private final int maxTokens;
     private final Duration timeout;
     private final ModelCapabilityRegistry modelCapabilityRegistry;
-    private final boolean responsesApiEnabled;
+    private final OpenAiEndpoint endpoint;
 
     private OpenAIConfig(Builder builder) {
         this.baseUrl = builder.baseUrl;
@@ -69,7 +69,17 @@ public final class OpenAIConfig {
         this.maxTokens = builder.maxTokens;
         this.timeout = builder.timeout;
         this.modelCapabilityRegistry = builder.modelCapabilityRegistry;
-        this.responsesApiEnabled = builder.responsesApiEnabled;
+        if (builder.endpoint != null && builder.responsesApiEnabled != null) {
+            throw new IllegalArgumentException("endpoint(" + builder.endpoint
+                    + ") and the deprecated responsesApiEnabled(" + builder.responsesApiEnabled
+                    + ") are both set -- set only endpoint; responsesApiEnabled(false) is "
+                    + "endpoint(CHAT_COMPLETIONS) and responsesApiEnabled(true) is endpoint(AUTO)");
+        }
+        this.endpoint = builder.endpoint != null
+                ? builder.endpoint
+                : Boolean.FALSE.equals(builder.responsesApiEnabled)
+                        ? OpenAiEndpoint.CHAT_COMPLETIONS
+                        : OpenAiEndpoint.AUTO;
 
         if (apiKey.isBlank()) {
             throw new IllegalArgumentException("API key cannot be blank");
@@ -204,7 +214,8 @@ public final class OpenAIConfig {
      *
      * <p>
      * <b>The Chat Completions path has no counterpart.</b> A deployment whose model routes there — because the model
-     * does not support the reasoning round trip, or because {@link #isResponsesApiEnabled()} is off — gets no ask and
+     * does not support the reasoning round trip under {@link OpenAiEndpoint#AUTO}, or because {@link #getEndpoint()} is
+     * {@link OpenAiEndpoint#CHAT_COMPLETIONS} — gets no ask and
      * no channel, and the client says so once.
      *
      * @return Optional containing the configured summary level, or empty when none was configured — in which case no
@@ -242,6 +253,21 @@ public final class OpenAIConfig {
     }
 
     /**
+     * Which endpoint this client sends requests to — {@link OpenAiEndpoint#AUTO} unless one was named.
+     *
+     * <p>
+     * A different question from anything in the capability registry, and the difference is load-bearing. The registry
+     * answers <em>what does this model do</em> — a vendor fact. This answers <em>which endpoint does this deployment
+     * use</em> — an operational one. {@link OpenAiEndpoint} says what each value routes where, and what forcing an
+     * endpoint leaves alone.
+     *
+     * @return the endpoint (never null)
+     */
+    public OpenAiEndpoint getEndpoint() {
+        return endpoint;
+    }
+
+    /**
      * Whether this deployment's endpoint offers {@code /v1/responses}.
      *
      * <p>
@@ -256,10 +282,13 @@ public final class OpenAIConfig {
      * Note the asymmetry with a <em>renamed</em> gateway model: that resolves to unknown capabilities and is
      * unaffected. Only the pass-through gateway is exposed.
      *
-     * @return {@code true} (the default) when a reasoning model may be routed to the Responses API
+     * @return {@code true} unless the endpoint is {@link OpenAiEndpoint#CHAT_COMPLETIONS}
+     * @deprecated read {@link #getEndpoint()}, which can also say {@link OpenAiEndpoint#RESPONSES}; this answers
+     *             {@code true} for both other values
      */
+    @Deprecated
     public boolean isResponsesApiEnabled() {
-        return responsesApiEnabled;
+        return endpoint != OpenAiEndpoint.CHAT_COMPLETIONS;
     }
 
     /** Builder for OpenAIConfig. */
@@ -276,7 +305,8 @@ public final class OpenAIConfig {
         private Duration timeout = DEFAULT_TIMEOUT;
         private String baseUrl;
         private ModelCapabilityRegistry modelCapabilityRegistry = InMemoryModelCapabilityRegistry.withDefaults();
-        private boolean responsesApiEnabled = true;
+        private OpenAiEndpoint endpoint;
+        private Boolean responsesApiEnabled;
 
         private Builder() {
         }
@@ -476,14 +506,45 @@ public final class OpenAIConfig {
          *
          * <p>
          * Both configuration surfaces carry this switch: {@code llm.openai.responsesApiEnabled} in the CLI's yaml
-         * and {@code aimon.llm.openai.responses-api-enabled} in the starter.
+         * and {@code aimon.llm.openai.responses-api-enabled} in the starter. Both are deprecated with it.
          *
          * @param responsesApiEnabled
          *            {@code false} when this endpoint has no {@code /v1/responses}
          * @return This builder
+         * @deprecated use {@link #endpoint(OpenAiEndpoint)}: {@code false} is {@link OpenAiEndpoint#CHAT_COMPLETIONS}
+         *             and {@code true} is {@link OpenAiEndpoint#AUTO}. Setting both fails {@link #build()}.
          */
+        @Deprecated
         public Builder responsesApiEnabled(boolean responsesApiEnabled) {
             this.responsesApiEnabled = responsesApiEnabled;
+            return this;
+        }
+
+        /**
+         * Names the endpoint this client sends requests to.
+         *
+         * <p>
+         * Unset is {@link OpenAiEndpoint#AUTO}: a model whose capability row does the reasoning trace round trip goes
+         * to {@code /v1/responses}, every other model to Chat Completions. {@link OpenAiEndpoint#CHAT_COMPLETIONS}
+         * is the exit for an OpenAI-compatible gateway that implements nothing else and passes real model names
+         * through — on {@code api.openai.com} itself, a model whose row holds {@code none} (such as
+         * {@code gpt-5.6-terra}) then needs {@code reasoningEffort: none} for a tools request, and the client warns
+         * before sending one without it. {@link OpenAiEndpoint#RESPONSES} sends every model to {@code /v1/responses};
+         * a model whose row does not do the round trip is sent there without {@code reasoning.encrypted_content} and
+         * without stored reasoning traces.
+         *
+         * <p>
+         * Both configuration surfaces carry this: {@code llm.openai.endpoint} in the CLI's yaml and
+         * {@code aimon.llm.openai.endpoint} in the starter, as {@code auto} · {@code chat-completions} ·
+         * {@code responses}. It replaces {@link #responsesApiEnabled(boolean)}, and setting both fails
+         * {@link #build()}.
+         *
+         * @param endpoint
+         *            the endpoint (must not be null)
+         * @return This builder
+         */
+        public Builder endpoint(OpenAiEndpoint endpoint) {
+            this.endpoint = Objects.requireNonNull(endpoint, "endpoint cannot be null");
             return this;
         }
 

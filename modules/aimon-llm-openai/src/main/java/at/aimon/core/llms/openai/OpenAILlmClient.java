@@ -317,11 +317,11 @@ public class OpenAILlmClient implements LlmClient {
      * the reasoning round trip, so the name a trace is tagged with is the name it is later matched against.
      *
      * <p>
-     * Two conditions, answering two different questions. {@link ModelCapabilities#supportsReasoningTraceRoundTrip()}
-     * says what the <em>model</em> does; {@link OpenAIConfig#isResponsesApiEnabled()} says what this
-     * <em>deployment's endpoint</em> offers. A model whose capabilities could not be resolved degrades to
-     * {@link ModelCapabilities#unknown()}, whose answer is {@code false}, so an unresolvable model is never routed to
-     * the new endpoint.
+     * Two inputs, answering two different questions. {@link ModelCapabilities#supportsReasoningTraceRoundTrip()}
+     * says what the <em>model</em> does; {@link OpenAIConfig#getEndpoint()} says which endpoint this
+     * <em>deployment</em> uses, and only {@link OpenAiEndpoint#AUTO} hands the choice to the model. Under it, a model
+     * whose capabilities could not be resolved degrades to {@link ModelCapabilities#unknown()}, whose answer is
+     * {@code false}, so an unresolvable model is never routed to the new endpoint unless the deployment says so.
      *
      * @param streamingOptions
      *            when non-null, enables {@code stream_options.include_usage} per the caller's preference on the Chat
@@ -338,11 +338,12 @@ public class OpenAILlmClient implements LlmClient {
         final Optional<OpenAiReasoningSummary> requestedSummary = OpenAiRequestParameters.requestedSummary(modelConfig,
                 config);
 
-        if (capabilities.supportsReasoningTraceRoundTrip() && config.isResponsesApiEnabled()) {
+        if (routesToResponses(capabilities)) {
             // Read once, and used on both sides of the round trip: the request factory decides which stored traces
             // are ours, the exchange tags the ones that come back. getProviderName() is overridable, so resolving it
             // in two places at two times is how a subclass ends up tagging traces it then drops as foreign.
             final String providerName = getProviderName();
+            reportForcedWithoutRoundTrip(capabilities, modelName);
             return new OpenAIResponsesExchange(
                     client, responsesConverter, responsesRequestFactory.build(systemPrompt, messages, tools,
                             modelConfig, capabilities, modelName, providerName),
@@ -351,6 +352,40 @@ public class OpenAILlmClient implements LlmClient {
         reportInertReasoningSummary(requestedSummary, capabilities, modelName);
         return new OpenAIChatCompletionsExchange(client, converter, buildChatRequest(systemPrompt, messages, tools,
                 modelConfig, streamingOptions, capabilities, modelName));
+    }
+
+    /**
+     * Whether this request goes to {@code /v1/responses}: always under {@link OpenAiEndpoint#RESPONSES}, never under
+     * {@link OpenAiEndpoint#CHAT_COMPLETIONS}, and under {@link OpenAiEndpoint#AUTO} when the model's row does the
+     * reasoning trace round trip — the only one of the three the model decides.
+     */
+    private boolean routesToResponses(ModelCapabilities capabilities) {
+        return switch (config.getEndpoint()) {
+            case RESPONSES -> true;
+            case CHAT_COMPLETIONS -> false;
+            case AUTO -> capabilities.supportsReasoningTraceRoundTrip();
+        };
+    }
+
+    /**
+     * Says once per model that a request bound for {@code /v1/responses} carries no reasoning items.
+     *
+     * <p>
+     * The capability, not the endpoint, decides whether they are asked for and replayed — which is what keeps
+     * {@link OpenAiEndpoint#RESPONSES} a routing choice rather than a claim about the model; the request factory
+     * reads the same flag. A model forced here whose row does not do the round trip therefore gets neither
+     * {@code include: ["reasoning.encrypted_content"]} nor the session's stored traces. Said because a deployment that
+     * forced the endpoint may well expect the round trip to come with it.
+     */
+    private void reportForcedWithoutRoundTrip(ModelCapabilities capabilities, String modelName) {
+        if (capabilities.supportsReasoningTraceRoundTrip()) {
+            return;
+        }
+        reportDivergence("reasoningTraceRoundTripOff@" + modelName,
+                "{} is sent to the Responses API because this client's endpoint is RESPONSES, but its capability row "
+                        + "does not say it replays reasoning items, so none are requested or replayed. Declare "
+                        + "supportsReasoningTraceRoundTrip: true for the model if it does.",
+                modelName);
     }
 
     /**
@@ -366,7 +401,8 @@ public class OpenAILlmClient implements LlmClient {
      * <p>
      * The message names which of the two conditions routed the request, because the remedies differ: a model that
      * does not do the reasoning round trip needs a different model, while
-     * {@code responsesApiEnabled=false} is a switch the operator set. Once per signature rather than per call, for
+     * {@link OpenAiEndpoint#CHAT_COMPLETIONS} is a switch the operator set. Once per signature rather than per call,
+     * for
      * {@link #reportDivergence}'s stated reason — both are properties of the configuration.
      */
     private void reportInertReasoningSummary(Optional<OpenAiReasoningSummary> requestedSummary,
@@ -374,7 +410,7 @@ public class OpenAILlmClient implements LlmClient {
         if (requestedSummary.isEmpty()) {
             return;
         }
-        if (!capabilities.supportsReasoningTraceRoundTrip()) {
+        if (config.getEndpoint() == OpenAiEndpoint.AUTO) {
             reportDivergence("reasoningSummaryOffResponsesPath@" + modelName,
                     "reasoningSummary {} is configured but {} is not routed to the Responses API (it does not "
                             + "support the reasoning trace round trip), and Chat Completions has no reasoning.summary "
@@ -383,9 +419,10 @@ public class OpenAILlmClient implements LlmClient {
             return;
         }
         reportDivergence("reasoningSummaryWithResponsesDisabled@" + modelName,
-                "reasoningSummary {} is configured but the Responses API is disabled for this client, so {} goes to "
-                        + "Chat Completions, which has no reasoning.summary parameter. Nothing is asked for and no "
-                        + "reasoning text streams. Enable the Responses API to act on it.",
+                "reasoningSummary {} is configured but this client's endpoint is CHAT_COMPLETIONS (or "
+                        + "responsesApiEnabled is false), so {} goes to Chat Completions, which has no "
+                        + "reasoning.summary parameter. Nothing is asked for and no reasoning text streams. Enable the "
+                        + "Responses API to act on it.",
                 requestedSummary.get(), modelName);
     }
 
@@ -536,11 +573,13 @@ public class OpenAILlmClient implements LlmClient {
      *
      * <p>
      * A model whose row does the reasoning round trip belongs on {@code /v1/responses}; it is on Chat Completions here
-     * only because {@code responsesApiEnabled} is {@code false}. For the one such model whose ladder holds
+     * only because the endpoint is {@link OpenAiEndpoint#CHAT_COMPLETIONS}. For the one such model whose ladder holds
      * {@link ReasoningEffort#NONE} — {@code gpt-5.6-terra} — that endpoint answers a request carrying function tools
      * with a 400 unless {@code reasoning_effort} is {@code none}: measured on 2026-09-10 with no effort and on
      * 2026-10-05 with {@code low}, {@code medium} and {@code high}, each <em>"Function tools with reasoning_effort
-     * are not supported … use /v1/responses or set reasoning_effort to 'none'"</em>. The row's
+     * are not supported … use /v1/responses or set reasoning_effort to 'none'"</em>. The {@code gpt-6-sol} and
+     * {@code gpt-6-luna} rows have the same shape and reach this warning too; for them the refusal is the vendor
+     * guide's sentence, not a measurement. The row's
      * {@code supportsToolsWithReasoning} is a fact about the other endpoint, so the tools rule above does not catch
      * it.
      *
@@ -564,16 +603,19 @@ public class OpenAILlmClient implements LlmClient {
      */
     private void reportForcedChatToolsWithoutNone(Optional<ReasoningEffort> requested, ModelCapabilities capabilities,
             String modelName, List<ToolDefinition> tools) {
-        if (tools.isEmpty() || config.isResponsesApiEnabled() || !capabilities.supportsReasoningTraceRoundTrip()
+        if (tools.isEmpty() || config.getEndpoint() != OpenAiEndpoint.CHAT_COMPLETIONS
+                || !capabilities.supportsReasoningTraceRoundTrip()
                 || !capabilities.acceptedReasoningEfforts().contains(ReasoningEffort.NONE)
                 || requested.filter(ReasoningEffort.NONE::equals).isPresent()) {
             return;
         }
         final String carried = requested.map(effort -> "reasoningEffort " + effort).orElse("no reasoningEffort");
         reportDivergence("forcedChatToolsWithoutNone=" + carried + "@" + modelName,
-                "{} is on Chat Completions because responsesApiEnabled is false, and this request carries tools with "
-                        + "{}. api.openai.com refuses function tools on Chat Completions for gpt-5.6-terra, the "
-                        + "model these capabilities were measured on, unless reasoning_effort is 'none' (HTTP 400). "
+                "{} is on Chat Completions because this client's endpoint is CHAT_COMPLETIONS (or "
+                        + "responsesApiEnabled is false), and this request carries tools with "
+                        + "{}. api.openai.com refuses function tools on Chat Completions for the models whose "
+                        + "capabilities look like this -- measured on gpt-5.6-terra, documented for gpt-6-sol and "
+                        + "gpt-6-luna -- unless reasoning_effort is 'none' (HTTP 400). "
                         + "The request is sent as configured. If it is refused, set reasoningEffort: none or enable "
                         + "the Responses API.",
                 modelName, carried);
