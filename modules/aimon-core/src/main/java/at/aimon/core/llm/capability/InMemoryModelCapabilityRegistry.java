@@ -308,7 +308,8 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
      *
      * <p>
      * Transcribed from the vendor's "Using GPT-6" guide and the {@code gpt-6-luna} model page, then measured against
-     * {@code api.openai.com} on 2026-10-14 — every value below agreed with the server. Without a row these names fall
+     * {@code api.openai.com} on 2026-10-14 — every value that was sent agreed with the server, and the one rung that
+     * was not ({@code medium}) is on every enumeration the server returned. Without a row these names fall
      * to {@link ModelCapabilities#unknown()}, which keeps them on Chat Completions, and that endpoint refuses a
      * function-tools request on all four unless {@code reasoning_effort} is {@code none} — a rung two of them do not
      * have. For an agent that is every request. {@code docs/design/llm/model-capabilities.md} section 6.1 gives the
@@ -329,10 +330,10 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
         // request without 'none' is refused for all four (param reasoning_effort), and OpenAILlmClient warns before
         // sending it for the two names whose ladder holds NONE.
         //
-        // Ladders hold only rungs sent and accepted on /v1/responses. 'none' is accepted by gpt-6-sol and gpt-6-luna
-        // and refused by the other two; 'minimal' is refused by all four; 'low', 'high' and 'xhigh' are accepted by
-        // all four. 'medium' was not sent -- the server lists it, and it is the documented default. 'xhigh' and
-        // 'max' (listed, not sent) have no ReasoningEffort constant, as on terra.
+        // Ladders on /v1/responses: 'none' accepted by gpt-6-sol and gpt-6-luna and refused by the other two;
+        // 'minimal' refused by all four; 'low', 'high' and 'xhigh' accepted by all four. 'medium' is on the ladders
+        // without having been sent -- every refusal enumerates it and the guide names it the default. 'xhigh' and
+        // 'max' (the latter enumerated, not sent) have no ReasoningEffort constant, as on terra.
         //
         // Exact, like every other OpenAI name this table knows by name. The plain "gpt-6" and "gpt-6.1" are not
         // model ids, and no dated snapshot was listed (the luna page gives "gpt-6-luna" as its only snapshot), so a

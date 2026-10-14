@@ -45,8 +45,9 @@ says they reject. `InMemoryModelCapabilityRegistry.withDefaults()` now carries a
 - **Ladders:** `gpt-6-sol` and `gpt-6-luna` accept `none`, `low`, `medium`, `high`; `gpt-6-astra` and `gpt-6.1-sol`
   accept `low`, `medium`, `high`. `minimal` is omitted with a WARN on all four.
 - **Measured against `api.openai.com` on 2026-10-14.** The values were transcribed from the vendor's "Using GPT-6"
-  guide and the `gpt-6-luna` model page, then probed, and every one agreed with the server: the ladders' rungs
-  (`minimal` refused on all four, `none` refused on astra and 6.1-sol), `temperature` refused at the default effort,
+  guide and the `gpt-6-luna` model page, then probed, and every value sent agreed with the server: the ladders' rungs
+  (`minimal` refused on all four, `none` refused on astra and 6.1-sol; `medium` was not sent, and is on every
+  enumeration the server returned), `temperature` refused at the default effort,
   the Chat Completions refusal of a tools request without `none`, and the reasoning item round trip — replay accepted,
   and a replay with corrupted ciphertext refused. [`docs/design/llm/model-capabilities.md`](docs/design/llm/model-capabilities.md)
   §6.1 · §6.3 give the evidence per value and §6.4 what is still unmeasured (`medium` / `max`, `top_p`, reasoning

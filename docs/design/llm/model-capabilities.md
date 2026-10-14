@@ -346,7 +346,7 @@ prefix 를 공유하는 형제의 측정은 요청 표면에 대한 증거가 �
 | `claude-*` 열한 prefix | 자유 — `gpt-*` · `o*` 와 겹칠 수 없고, `-4-5` · `-4-6` · `-4-7` · `-4-8` 은 형제이지 중첩이 아니다 |
 | exact 행 | 자유 — exact 는 위치와 무관하게 모든 prefix 를 이긴다 |
 
-### 5.4 documentation-derived 행 — `claude-mythos`
+### 5.4 문서에서 온 행 — `claude-mythos` · `gpt-6*`
 
 `claude-mythos` 행은 측정하지 않았다. 측정에 쓴 계정의 모델 목록에 그 prefix 로 시작하는 모델이 없어 사실도 식별자도
 호출하지 못했다. 그래도 행을 싣고 소스 주석에 documentation-derived 로 표시한다.
@@ -360,7 +360,8 @@ prefix 를 공유하는 형제의 측정은 요청 표면에 대한 증거가 �
 
 **`gpt-6*` 네 이름은 문서에서 옮겨 적은 뒤 측정했다** — `gpt-6-astra` · `gpt-6-sol` · `gpt-6-luna` · `gpt-6.1-sol`. 행은
 벤더의 "Using GPT-6" 가이드와 `gpt-6-luna` 모델 페이지가 이름으로 말한 것만 적었고, 같은 날(2026-10-14) `api.openai.com`
-에 보낸 프로브(§6.3)가 그 모든 값과 일치했다. 그래서 documentation-derived 행이 아니라 측정된 행이다. 두 가지는
+에 보낸 프로브(§6.3)가 보낸 모든 값에서 일치했다. 보내지 않은 rung 은 `medium` 하나이고, 서버의 모든 거부 메시지가 그것을
+열거한다. 그래서 documentation-derived 행이 아니라 측정된 행이다. 두 가지는
 여전히 이 절의 규칙을 따른다.
 
 - **비용 행렬.** 행이 없으면 이 이름들은 `unknown()` 으로 떨어져 Chat Completions 에 남는데, 그 엔드포인트는 넷 모두의 함수
@@ -424,7 +425,7 @@ prefix 를 공유하는 형제의 측정은 요청 표면에 대한 증거가 �
 | `gpt-5.6-terra` 샘플링 | `/v1/responses`, `temperature` 값 둘 | `0.0` 거부, `1.0` 수용 | 2026-09-10 |
 | `gpt-5.6-terra` 의 `none` — Chat Completions | `api.openai.com` `/v1/chat/completions`, `max_completion_tokens: 64`, `reasoning_effort: "none"` — `responsesApiEnabled=false` 가 보내는 모양. 도구 없이 한 번, 함수 도구 하나를 실어 한 번 | 둘 다 200 — `finish_reason: stop`, `reasoning_tokens: 0`. 행의 `NONE` 은 이 엔드포인트에서도 옳다 | 2026-10-05 |
 | `gpt-5.6-terra` 의 `low` · `medium` · `high` — Chat Completions | 같은 body 에 rung 만 바꿔, 도구 없이 한 번씩 · 함수 도구 하나를 실어 한 번씩(여섯 요청) | 도구 없이는 셋 다 200(`finish_reason: stop`, `reasoning_tokens: 0`). 도구와 함께는 셋 다 **400**, `param: reasoning_effort` — *"Function tools with reasoning_effort are not supported for gpt-5.6-terra in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'."* 행의 `supportsToolsWithReasoning: true` 는 `/v1/responses` 의 사실이다(§9, L-28) | 2026-10-05 |
-| `gpt-6*` 네 이름 | raw HTTP — 이름마다 `/v1/chat/completions` 에 함수 도구 하나를 effort 없이 · `reasoning_effort: "none"` 과 함께 한 번씩, `/v1/responses` 에 rung `none`·`minimal`·`low`·`high`·`xhigh` 를 하나씩, `temperature: 0.5` 를 기본 effort 와 `none` 에서 한 번씩, 도구 + `low` 한 번. 그다음 클라이언트로 도구 턴 · 그 item 의 재생 · `encrypted_content` 끝 40자를 바꾼 재생 | §6.1. 손상 재생은 넷 모두 거부되어 재생 수용이 소비의 증거다. 클라이언트로 보낸 부분은 `OpenAIReasoningLiveTest.Gpt6Rows` 가 다시 단언한다 | 2026-10-14 |
+| `gpt-6*` 네 이름 | raw HTTP — 이름마다 `/v1/chat/completions` 에 함수 도구 하나를 effort 없이 · `reasoning_effort: "none"` 과 함께 한 번씩, `/v1/responses` 에 rung `none`·`minimal`·`low`·`high`·`xhigh` 를 하나씩, `temperature: 0.5` 를 기본 effort 와 `none` 에서 한 번씩(astra · 6.1-sol 의 `none` 쪽은 `none` 자체로 거부되어 샘플링에 대해 말하지 않는다), 도구 + `low` 한 번. 그다음 클라이언트로 도구 턴 · 그 item 의 재생 · `encrypted_content` 끝 40자를 바꾼 재생 | §6.1. 손상 재생은 넷 모두 거부되어 재생 수용이 소비의 증거다. 클라이언트로 보낸 부분은 `OpenAIReasoningLiveTest.Gpt6Rows` 가 다시 단언한다 | 2026-10-14 |
 | Anthropic 샘플링 | `POST /v1/messages`, `max_tokens: 16`, 셀당 파라미터 하나, thinking 파라미터 없음 — 계정의 `GET /v1/models` 목록 11 모델 | §6.2. 대조군 셋: 샘플링 파라미터를 뺀 같은 body 는 거부 여섯과 수용 둘 모두 200(400 은 요청 모양 · 계정 · 헤더 탓이 아니다), `temperature: 1.0` 은 거부 여섯 모두 200(값으로 거부한다), `"temperature": null` 은 샘플링을 받는 모델에서도 400(능력 규칙이 아니라 타입 규칙이다) | 2026-09-09 |
 | Anthropic 방언 | SDK 검증이 서버 답을 가리지 않도록 raw HTTP `POST /v1/messages` — 목록의 11 모델과 목록에 없는 날짜 없는 별칭 `claude-opus-4-5`·`claude-sonnet-4-5`·`claude-haiku-4-5`. 네 모양: `thinking.type: adaptive` + `output_config.effort: low` / `thinking.type: enabled` + `budget_tokens: 1024` / adaptive 단독 / effort 단독 | §6.2. 반복 측정이 모든 칸에서 재현되었고, 400 은 `invalid_request_error`(요청 검증)라 결정적이다. adaptive 단독은 첫 모양과 같은 답이므로 400 의 원인은 `thinking.type` 이다. effort 단독은 `claude-haiku-4-5`·`claude-sonnet-4-5` 에서 400, `claude-opus-4-5` 에서 200 — 방언과 독립된 축이다(그 가드는 [`anthropic-thinking.md`](anthropic-thinking.md)). 별칭 셋은 호출되어 날짜 스냅샷으로 해석되었다. 추측한 날짜 4-6 이름 둘은 404 | 2026-09-10 |
 

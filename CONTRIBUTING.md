@@ -103,6 +103,11 @@ on `claude-haiku-4-5` and `gpt-4o-mini`. Each has a keyless twin, `ContextEngine
 the same scenario against a scripted model in every ordinary build, so a change that stops the scenario
 reaching its rolling cycles is caught without a key.
 
+`OpenAIReasoningLiveTest` makes about 20 billed calls: six on the reasoning path itself, twelve that measure
+the four `gpt-6*` capability rows against the server, and two on `gpt-4o-mini` with the endpoint forced to
+`/v1/responses`. Its refusals are rejected before generation and cost nothing. The `gpt-6*` cases need a key
+whose project can call those models; on a key that cannot, they fail rather than skip.
+
 **The two `*ContextPressureLiveTest` classes are not in the command above, and a key alone does not run
 them.** They compare the `default` and `rolling` context engines on three scripted tasks — fact retention,
 key-value lookup and log triage — at a given *view pressure*: the estimated tokens a task pushes into the

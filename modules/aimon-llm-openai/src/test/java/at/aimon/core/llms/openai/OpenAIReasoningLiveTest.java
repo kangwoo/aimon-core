@@ -5,9 +5,14 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BiFunction;
+import java.util.function.Consumer;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -17,8 +22,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.openai.client.OpenAIClient;
+import com.openai.client.okhttp.OpenAIOkHttpClient;
+import com.openai.core.JsonMissing;
 import com.openai.core.ObjectMappers;
 import com.openai.errors.BadRequestException;
+import com.openai.models.responses.ResponseCreateParams;
+import com.openai.services.blocking.ResponseService;
 
 import at.aimon.core.agent.prompt.SystemPromptParts;
 import at.aimon.core.llm.LlmCallMetadata;
@@ -202,6 +212,63 @@ class OpenAIReasoningLiveTest {
         return ReasoningTrace.builder().providerName(trace.getProviderName())
                 .payload(ObjectMappers.jsonMapper().writeValueAsString(payload))
                 .toolUseId(trace.getToolUseId().orElse(null)).build();
+    }
+
+    /**
+     * The real SDK client, wrapped so that a live test can see which service a request went through and what the
+     * Responses request carried.
+     *
+     * <p>
+     * "The call succeeded" cannot tell the endpoints apart: a model that both accept answers either way, and a request
+     * that silently lost a parameter is accepted as readily as one that never had it. Recording at the SDK boundary is
+     * what turns those successes into evidence.
+     */
+    private static final class RecordingClient {
+
+        /** {@code "responses"} or {@code "chat"}, one per request, in order. */
+        private final List<String> services = new ArrayList<>();
+
+        /** Every {@link ResponseCreateParams} handed to the Responses service. */
+        private final List<ResponseCreateParams> responsesRequests = new ArrayList<>();
+
+        private OpenAIClient wrap(OpenAIClient real) {
+            return proxy(OpenAIClient.class, real, (method, result) -> {
+                if (method.getName().equals("responses")) {
+                    services.add("responses");
+                    return proxy(ResponseService.class, (ResponseService) result, (call, ignored) -> ignored,
+                            this::recordResponsesRequest);
+                }
+                if (method.getName().equals("chat")) {
+                    services.add("chat");
+                }
+                return result;
+            }, args -> {
+            });
+        }
+
+        private void recordResponsesRequest(Object[] args) {
+            if (args != null && args.length > 0 && args[0] instanceof ResponseCreateParams params) {
+                responsesRequests.add(params);
+            }
+        }
+
+        private static <T> T proxy(Class<T> type, T target, BiFunction<Method, Object, Object> onResult,
+                Consumer<Object[]> onArgs) {
+            return type
+                    .cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, (self, method, args) -> {
+                        onArgs.accept(args);
+                        try {
+                            return onResult.apply(method, method.invoke(target, args));
+                        } catch (InvocationTargetException e) {
+                            throw e.getCause();
+                        }
+                    }));
+        }
+
+        private OpenAILlmClient client(OpenAIConfig config) {
+            return new OpenAILlmClient(config,
+                    wrap(OpenAIOkHttpClient.builder().apiKey(config.getApiKey()).timeout(config.getTimeout()).build()));
+        }
     }
 
     @Nested
@@ -425,9 +492,10 @@ class OpenAIReasoningLiveTest {
 
         @ParameterizedTest
         @ValueSource(strings = {SOL, LUNA, ASTRA, SOL_6_1})
-        @DisplayName("the negative control: the same tools request on Chat Completions is refused")
+        @DisplayName("the negative control: a tools request without an effort is refused on Chat Completions")
         void chatCompletionsRefusesTheToolsRequest(String model) {
-            // The cost the row exists to avoid, still being charged where the row is bypassed. Asserted on the error's
+            // The cost the row exists to avoid, still being charged where the row is bypassed: without the row these
+            // names stay on Chat Completions with no effort configured, which is this request. Asserted on the error's
             // structured fields rather than its sentence, for the reason TheReproduction gives.
             final OpenAILlmClient client = new OpenAILlmClient(
                     config(model).endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).build());
@@ -460,12 +528,19 @@ class OpenAIReasoningLiveTest {
         @ValueSource(strings = {ASTRA, SOL_6_1})
         @DisplayName("astra and 6.1-sol: a configured reasoningEffort none is dropped, so the request succeeds")
         void aConfiguredNoneIsDropped(String model) {
-            // The server refuses 'none' on these two names on both endpoints (measured 2026-10-14). The request
-            // succeeding is the ladder having withheld the rung; a row that listed NONE would make this a 400.
-            final OpenAILlmClient client = new OpenAILlmClient(config(model).build());
+            // The server refuses 'none' on these two names on /v1/responses, and with tools on Chat Completions
+            // (measured 2026-10-14). Success alone would not show the ladder did it -- a missing row also drops the
+            // effort, through supportsReasoningEffort false, and also succeeds -- so the recorded request is read:
+            // it went to /v1/responses, which only this row's round-trip flag does, and carried no reasoning object.
+            final RecordingClient recording = new RecordingClient();
+            final OpenAILlmClient client = recording.client(config(model).build());
 
             assertThatCode(() -> client.sendMessage(SYSTEM, List.of(Message.user("What is 2+2?")), List.of(),
                     LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build())).doesNotThrowAnyException();
+
+            assertThat(recording.services).containsExactly("responses");
+            assertThat(recording.responsesRequests).singleElement()
+                    .satisfies(params -> assertThat(params._reasoning()).isInstanceOf(JsonMissing.class));
         }
     }
 
@@ -475,7 +550,9 @@ class OpenAIReasoningLiveTest {
      * <p>
      * The unit tests pin the request this sends — no {@code include}, no replayed traces — and the response side that
      * stores none. What only the server can say is that such a request is accepted at all, tool call and tool result
-     * included, on a model that has never been sent to this endpoint by {@link OpenAiEndpoint#AUTO}.
+     * included, on a model that has never been sent to this endpoint by {@link OpenAiEndpoint#AUTO}. The model accepts
+     * the same turn on Chat Completions too, so the endpoint is read off the recorded requests rather than inferred
+     * from the success.
      */
     @Nested
     @DisplayName("RESPONSES forced on a model without the round trip")
@@ -485,18 +562,22 @@ class OpenAIReasoningLiveTest {
         private static final String NON_REASONING_MODEL = "gpt-4o-mini";
 
         @Test
-        @DisplayName("a tool call and its result go through /v1/responses, and no trace is kept")
+        @DisplayName("a tool call and its result go through /v1/responses, without the encrypted_content include")
         void aToolTurnAndItsResultGoThrough() {
-            final OpenAILlmClient client = new OpenAILlmClient(
-                    config(NON_REASONING_MODEL).endpoint(OpenAiEndpoint.RESPONSES).build());
+            final RecordingClient recording = new RecordingClient();
+            final OpenAILlmClient client = recording
+                    .client(config(NON_REASONING_MODEL).endpoint(OpenAiEndpoint.RESPONSES).build());
 
             final LlmResponse first = client.sendMessage(RECORD_SYSTEM, List.of(Message.user(ASK_TOOL)),
                     List.of(recordAnswerTool()), LlmModel.builder().build());
             assumeTrue(!first.getToolUses().isEmpty(), "model did not call the tool; nothing to send a result for");
-            assertThat(first.getReasoningTraces()).isEmpty();
 
             assertThatCode(() -> client.sendMessage(RECORD_SYSTEM, secondTurn(first, List.of()),
                     List.of(recordAnswerTool()), LlmModel.builder().build())).doesNotThrowAnyException();
+
+            assertThat(recording.services).containsExactly("responses", "responses");
+            assertThat(recording.responsesRequests).hasSize(2)
+                    .allSatisfy(params -> assertThat(params.include()).isEmpty());
         }
     }
 

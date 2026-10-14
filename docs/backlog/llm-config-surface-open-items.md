@@ -728,7 +728,7 @@ capability 표 이전의 모양, 즉 400 을 낸 그 `temperature` 가 실려 �
 **어디.** `InMemoryModelCapabilityRegistry.registerAnthropicDefaults` 의 `claude-mythos` 행,
 그리고 그것을 인용하는
 옛 `reasoning-model-enablement.md` §9 U-1
-(2026-09-10) — 지금은 [`../design/llm/model-capabilities.md` §5.4](../design/llm/model-capabilities.md#54-documentation-derived-행--claude-mythos).
+(2026-09-10) — 지금은 [`../design/llm/model-capabilities.md` §5.4](../design/llm/model-capabilities.md#54-문서에서-온-행--claude-mythos--gpt-6).
 
 **언제 다시 볼까.** 그 prefix 로 시작하는 모델이 어느 계정에서든 닿을 때. 그때 두 이름을 각각 프로브하면
 prefix 를 쪼갤지(Preview 만 `EITHER`) 그대로 둘지가 한 번에 정해진다. 그전에 쪼개는 것은 아무도 본 적 없는
