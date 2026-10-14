@@ -345,13 +345,15 @@ class OpenAIResponsesReasoningRoundTripTest {
     }
 
     /**
-     * The {@code type} of each input item, or {@code role:<role>} for the two message carriers, which do not write a
-     * {@code type} discriminator (the API infers those from their shape, and the SDK's builders leave the field unset
-     * by default). Naming the role instead of {@code null} is what makes an ordering failure readable.
+     * The {@code type} of each input item, or {@code role:<role>} for the two message carriers. Those are labelled by
+     * role whether or not they write a {@code type} discriminator: openai-java 4.69 left it unset (the API infers it
+     * from the shape), 4.78 writes {@code "message"}, and naming the role is what makes an ordering failure
+     * readable either way.
      */
     private static List<String> itemTypes(JsonNode input) {
         return java.util.stream.StreamSupport.stream(input.spliterator(), false).map(item -> {
-            if (item.hasNonNull("type")) {
+            final boolean message = !item.hasNonNull("type") || "message".equals(item.get("type").asText());
+            if (!message) {
                 return item.get("type").asText();
             }
             return "role:" + (item.hasNonNull("role") ? item.get("role").asText() : "?");
