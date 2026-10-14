@@ -22,6 +22,9 @@ include(
     // the rule rather than two copies of it. Not published, like `aimon-filesystem-testkit` above: every subject it
     // checks is in this repository.
     "aimon-llm-capability-testkit",
+    // Test support the provider modules share (the HTTP server their SDK-retry tests count attempts against). Not a
+    // contract suite and not published.
+    "aimon-llm-testkit",
     "aimon-rewake-webhook",
     "aimon-scheduling-quartz",
     "aimon-session-routing",
@@ -58,6 +61,7 @@ project(":aimon-knowledge-opensearch").projectDir = file("modules/aimon-knowledg
 project(":aimon-llm-anthropic").projectDir = file("modules/aimon-llm-anthropic")
 project(":aimon-llm-openai").projectDir = file("modules/aimon-llm-openai")
 project(":aimon-llm-capability-testkit").projectDir = file("modules/aimon-llm-capability-testkit")
+project(":aimon-llm-testkit").projectDir = file("modules/aimon-llm-testkit")
 project(":aimon-rewake-webhook").projectDir = file("modules/aimon-rewake-webhook")
 project(":aimon-scheduling-quartz").projectDir = file("modules/aimon-scheduling-quartz")
 project(":aimon-session-routing").projectDir = file("modules/aimon-session-routing")

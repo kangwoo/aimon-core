@@ -1,4 +1,4 @@
-package at.aimon.core.llms.openai;
+package at.aimon.llm.testkit;
 
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
@@ -30,11 +30,15 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>
  * Both SDKs build OkHttp with {@code retryOnConnectionFailure(false)}, so a dropped connection is not retried below the
  * SDK either, and the count is the SDK's alone.
+ *
+ * <p>
+ * It lives here rather than in each provider module's test sources because the OpenAI and Anthropic retry tests need
+ * the same server, and two copies of a test server drift the way two copies of anything do.
  */
-final class CountingHttpServer implements AutoCloseable {
+public final class CountingHttpServer implements AutoCloseable {
 
     /** One scripted answer. */
-    static final class Step {
+    public static final class Step {
         private static final long HANG_GUARD_SECONDS = 20;
 
         private final String raw;
@@ -50,7 +54,7 @@ final class CountingHttpServer implements AutoCloseable {
          * a millisecond of backoff rather than the exponential default. It is {@code 1} rather than {@code 0} because
          * the Anthropic SDK ignores a delay that is not positive and falls back to the exponential one.
          */
-        static Step status(int status, String contentType, String body) {
+        public static Step status(int status, String contentType, String body) {
             final byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
             final String retryAfter = status >= 400 ? "Retry-After-Ms: 1\r\n" : "";
             return new Step("HTTP/1.1 " + status + " X\r\nContent-Type: " + contentType + "\r\nContent-Length: "
@@ -58,7 +62,7 @@ final class CountingHttpServer implements AutoCloseable {
         }
 
         /** A JSON response. */
-        static Step json(int status, String body) {
+        public static Step json(int status, String body) {
             return status(status, "application/json", body);
         }
 
@@ -67,13 +71,13 @@ final class CountingHttpServer implements AutoCloseable {
          * its first events, rather than one that merely ends early. The test opens the latch from its sink, so the
          * reset comes after the client has read those events, not in a race with them.
          */
-        static Step sseThenReset(String events, CountDownLatch reached) {
+        public static Step sseThenReset(String events, CountDownLatch reached) {
             return new Step("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n" + events,
                     reached);
         }
 
         /** Closes the connection after reading the request, without writing a byte of response. */
-        static Step drop() {
+        public static Step drop() {
             return new Step(null, null);
         }
     }
@@ -90,17 +94,17 @@ final class CountingHttpServer implements AutoCloseable {
     }
 
     /** Starts a server that answers with {@code steps} in order, repeating the last. */
-    static CountingHttpServer answering(Step... steps) throws IOException {
+    public static CountingHttpServer answering(Step... steps) throws IOException {
         return new CountingHttpServer(List.of(steps));
     }
 
     /** The server's base URL, without a trailing slash. */
-    String url() {
+    public String url() {
         return "http://127.0.0.1:" + socket.getLocalPort();
     }
 
     /** How many requests have reached the server so far. */
-    int requestCount() {
+    public int requestCount() {
         return requests.get();
     }
 

@@ -24,7 +24,8 @@ import at.aimon.core.llm.exception.LlmClientException;
 import at.aimon.core.llm.streaming.LlmStreamChunk;
 import at.aimon.core.llm.streaming.LlmStreamSink;
 import at.aimon.core.llm.streaming.LlmStreamingOptions;
-import at.aimon.core.llms.openai.CountingHttpServer.Step;
+import at.aimon.llm.testkit.CountingHttpServer;
+import at.aimon.llm.testkit.CountingHttpServer.Step;
 
 /**
  * {@link OpenAIConfig#getMaxRetries()} over the real transport: what the SDK underneath the client actually sends, read

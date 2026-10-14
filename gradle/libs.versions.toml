@@ -77,7 +77,8 @@ aws-sdk = "2.55.13"
 # spring-boot-starter-test (aimon.java-conventions), which brings org.junit:junit-bom onto its *test*
 # configurations, and a number written here would be a dead letter reading like the truth.
 #
-# The four testkits are not such modules, and this note is the one place their platform is explained.
+# The four testkits are not such modules, and this note is the one place their platform is explained. (A fifth,
+# aimon-llm-testkit, is plain JDK code that compiles against no JUnit, so it declares no platform and is not counted.)
 # aimon-filesystem-testkit, aimon-session-testkit, aimon-llm-capability-testkit and aimon-memory-testkit
 # compile against JUnit in *main* sources, which the test-scoped starter never reaches, and name
 # `junit-jupiter` without a version — so each declares a platform itself, and declares it `api`, which puts

@@ -313,6 +313,7 @@ modules/
 ├── aimon-llm-openai             # OpenAI LlmClient
 ├── aimon-llm-anthropic          # Anthropic LlmClient
 ├── aimon-llm-capability-testkit # Shared model-capability binding contract tests
+├── aimon-llm-testkit            # Shared provider test support (local HTTP server for SDK retry tests)
 │
 ├── aimon-filesystem-gridfs      # MongoDB GridFS VFS
 ├── aimon-filesystem-s3          # AWS S3 VFS
