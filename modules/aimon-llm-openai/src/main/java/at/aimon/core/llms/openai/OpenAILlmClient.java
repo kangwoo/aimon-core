@@ -554,7 +554,8 @@ public class OpenAILlmClient implements LlmClient {
         }
 
         // Model rule, shared with the Responses path: NONE is off every OpenAI ladder measured to date except
-        // gpt-5.6-terra's, MINIMAL is off the o-series one, and MINIMAL is off terra's too -- which is why the
+        // gpt-5.6-terra's, gpt-6-sol's and gpt-6-luna's, MINIMAL is off the o-series one, and MINIMAL is off those
+        // three too -- which is why the
         // capability is the set of accepted rungs rather than the lowest one.
         if (requested.isPresent() && !OpenAiRequestParameters.maySendEffort(requested.get(), capabilities, modelName,
                 this::reportDivergence)) {
@@ -572,15 +573,15 @@ public class OpenAILlmClient implements LlmClient {
      *
      * <p>
      * A model whose row does the reasoning round trip belongs on {@code /v1/responses}; it is on Chat Completions here
-     * only because the endpoint is {@link OpenAiEndpoint#CHAT_COMPLETIONS}. For the one such model whose ladder holds
-     * {@link ReasoningEffort#NONE} — {@code gpt-5.6-terra} — that endpoint answers a request carrying function tools
-     * with a 400 unless {@code reasoning_effort} is {@code none}: measured on 2026-09-10 with no effort and on
-     * 2026-10-05 with {@code low}, {@code medium} and {@code high}, each <em>"Function tools with reasoning_effort
-     * are not supported … use /v1/responses or set reasoning_effort to 'none'"</em>. The {@code gpt-6-sol} and
-     * {@code gpt-6-luna} rows have the same shape and reach this warning too; for them the refusal is the vendor
-     * guide's sentence, not a measurement. The row's
-     * {@code supportsToolsWithReasoning} is a fact about the other endpoint, so the tools rule above does not catch
-     * it.
+     * only because the endpoint is {@link OpenAiEndpoint#CHAT_COMPLETIONS}. For such a model whose ladder holds
+     * {@link ReasoningEffort#NONE}, that endpoint answers a request carrying function tools with a 400 unless
+     * {@code reasoning_effort} is {@code none}. On {@code gpt-5.6-terra} every rung was measured: on 2026-09-10 with
+     * no effort and on 2026-10-05 with {@code low}, {@code medium} and {@code high}, each <em>"Function tools with
+     * reasoning_effort are not supported … use /v1/responses or set reasoning_effort to 'none'"</em>. The
+     * {@code gpt-6-sol} and {@code gpt-6-luna} rows have the same shape and reach this warning too; for them the
+     * refusal without an effort and the acceptance at {@code none} were measured on 2026-10-14, and the refusal at
+     * the other rungs is inferred from terra and the vendor guide. The row's {@code supportsToolsWithReasoning} is a
+     * fact about the other endpoint, so the tools rule above does not catch it.
      *
      * <p>
      * <strong>Reported, not repaired.</strong> Sending {@code none} in place of what was configured would put a
@@ -612,8 +613,8 @@ public class OpenAILlmClient implements LlmClient {
         reportDivergence("forcedChatToolsWithoutNone=" + carried + "@" + modelName,
                 "{} is on Chat Completions because this client's endpoint is CHAT_COMPLETIONS, and this request "
                         + "carries tools with {}. api.openai.com refuses function tools on Chat Completions for the "
-                        + "models whose capabilities look like this -- measured on gpt-5.6-terra, documented for "
-                        + "gpt-6-sol and gpt-6-luna -- unless reasoning_effort is 'none' (HTTP 400). "
+                        + "models whose capabilities look like this -- gpt-5.6-terra, gpt-6-sol and gpt-6-luna -- "
+                        + "unless reasoning_effort is 'none' (HTTP 400). "
                         + "The request is sent as configured. If it is refused, set reasoningEffort: none or set the "
                         + "endpoint to AUTO or RESPONSES.",
                 modelName, carried);

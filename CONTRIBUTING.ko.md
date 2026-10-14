@@ -1,6 +1,6 @@
 ---
 translated_from: CONTRIBUTING.md
-source_commit: 272dbd2
+source_commit: 07c4f4a
 ---
 
 # AIMON Core 기여 가이드
@@ -106,6 +106,11 @@ Anthropic 클래스는 롤링 시나리오를 extended thinking 아래에서도 
 둘을 합쳐 `claude-haiku-4-5` 와 `gpt-4o-mini` 에 대략 40번 호출합니다. 각 클래스에는 키가 필요 없는 쌍둥이
 `ContextEngineLiveRigTest` 가 있어서 같은 시나리오를 스크립트로 짠 모델에 대해 모든 평범한 빌드에서 돌리므로,
 시나리오가 롤링 사이클에 닿지 못하게 만드는 변경은 키 없이도 잡힙니다.
+
+`OpenAIReasoningLiveTest` 는 대략 20번 청구되는 호출을 합니다 — reasoning 경로 자체에 여섯 번, 네 `gpt-6*`
+capability 행을 서버에 대어 보는 데 열두 번, 엔드포인트를 `/v1/responses` 로 강제한 `gpt-4o-mini` 에 두 번입니다.
+거절되는 요청은 생성 전에 거절되어 비용이 없습니다. `gpt-6*` 케이스는 그 모델을 부를 수 있는 프로젝트의 키가
+필요하고, 부를 수 없는 키에서는 건너뛰지 않고 실패합니다.
 
 **두 `*ContextPressureLiveTest` 클래스는 위 명령에 없고, 키만으로는 돌지 않습니다.** 이 둘은 `default` 와
 `rolling` 컨텍스트 엔진을 스크립트로 짠 세 과제 — 사실 보존, 키-값 조회, 로그 triage — 로 비교하며, 과제는

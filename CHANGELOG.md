@@ -44,13 +44,19 @@ says they reject. `InMemoryModelCapabilityRegistry.withDefaults()` now carries a
   configured) and take a reasoning effort.
 - **Ladders:** `gpt-6-sol` and `gpt-6-luna` accept `none`, `low`, `medium`, `high`; `gpt-6-astra` and `gpt-6.1-sol`
   accept `low`, `medium`, `high`. `minimal` is omitted with a WARN on all four.
-- **These rows are documentation-derived, not measured.** No request was sent to any of the four; the values are
-  transcribed from the vendor's "Using GPT-6" guide and the `gpt-6-luna` model page as read on 2026-10-14.
-  [`docs/design/llm/model-capabilities.md`](docs/design/llm/model-capabilities.md) §5.4 · §6.1 quote the sentence
-  each value rests on, and §6.4 lists what is still unmeasured. A `modelCapabilities` entry for the name replaces the
-  row.
+- **Measured against `api.openai.com` on 2026-10-14.** The values were transcribed from the vendor's "Using GPT-6"
+  guide and the `gpt-6-luna` model page, then probed, and every value sent agreed with the server: the ladders' rungs
+  (`minimal` refused on all four, `none` refused on astra and 6.1-sol; `medium` was not sent, and is on every
+  enumeration the server returned), `temperature` refused at the default effort,
+  the Chat Completions refusal of a tools request without `none`, and the reasoning item round trip — replay accepted,
+  and a replay with corrupted ciphertext refused. [`docs/design/llm/model-capabilities.md`](docs/design/llm/model-capabilities.md)
+  §6.1 · §6.3 give the evidence per value and §6.4 what is still unmeasured (`medium` / `max`, `top_p`, reasoning
+  summaries, streaming). A `modelCapabilities` entry for the name replaces the row.
+- **`OpenAIReasoningLiveTest` re-asserts them** when `OPENAI_KEY` is set: `Gpt6Rows` (the round trip with its
+  corrupted-payload control per name, the Chat Completions refusal, `none` on Chat for sol / luna, a dropped `none`
+  for astra / 6.1-sol) and `ForcedResponses` (a tool turn and its result on `gpt-4o-mini` under `endpoint: responses`).
 - **Changed for existing deployments on these names:** a `temperature` / `topP` that used to be sent is now omitted,
-  including on `gpt-6-sol` / `gpt-6-luna` with `reasoningEffort: none`, where the guide implies it would be accepted.
+  including on `gpt-6-sol` / `gpt-6-luna` with `reasoningEffort: none`, where the server does accept `temperature`.
 - **Not covered:** the bare `gpt-6` / `gpt-6.1` (not model ids), dated snapshots and any other `gpt-6*` name still
   resolve to `unknown()`. The context-window registry and the price table have no GPT-6 entries.
 - The forced-Chat tools warning (`responsesApiEnabled: false`) no longer names `gpt-5.6-terra` as the model the
