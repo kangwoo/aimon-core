@@ -53,6 +53,7 @@ public final class OpenAIConfig {
     private final OpenAiReasoningSummary reasoningSummary;
     private final int maxTokens;
     private final Duration timeout;
+    private final Integer maxRetries;
     private final ModelCapabilityRegistry modelCapabilityRegistry;
     private final OpenAiEndpoint endpoint;
 
@@ -68,6 +69,7 @@ public final class OpenAIConfig {
         this.reasoningSummary = builder.reasoningSummary;
         this.maxTokens = builder.maxTokens;
         this.timeout = builder.timeout;
+        this.maxRetries = builder.maxRetries;
         this.modelCapabilityRegistry = builder.modelCapabilityRegistry;
         this.endpoint = builder.endpoint != null
                 ? builder.endpoint
@@ -108,6 +110,9 @@ public final class OpenAIConfig {
         }
         if (maxTokens <= 0) {
             throw new IllegalArgumentException("Max tokens must be positive");
+        }
+        if (maxRetries != null && maxRetries < 0) {
+            throw new IllegalArgumentException("Max retries must not be negative, got: " + maxRetries);
         }
     }
 
@@ -244,6 +249,21 @@ public final class OpenAIConfig {
     }
 
     /**
+     * Gets how many times the SDK may retry a failed request on its own, after the first attempt.
+     *
+     * <p>
+     * Empty is not zero. Empty means nobody set it, and the SDK's own retry policy applies untouched — this config
+     * neither knows nor copies that policy's count. {@code 0} means the SDK sends each request once and hands the
+     * first failure back; {@code N} caps it at {@code N + 1} attempts. <em>Which</em> failures are retried is the SDK's
+     * decision either way.
+     *
+     * @return Optional containing the configured retry count, or empty when none was configured
+     */
+    public Optional<Integer> getMaxRetries() {
+        return Optional.ofNullable(maxRetries);
+    }
+
+    /**
      * Gets the registry the client consults to decide which parameters this deployment's model accepts.
      *
      * @return The capability registry (never null)
@@ -303,6 +323,7 @@ public final class OpenAIConfig {
         private OpenAiReasoningSummary reasoningSummary;
         private int maxTokens = DEFAULT_MAX_TOKENS;
         private Duration timeout = DEFAULT_TIMEOUT;
+        private Integer maxRetries;
         private String baseUrl;
         private ModelCapabilityRegistry modelCapabilityRegistry = InMemoryModelCapabilityRegistry.withDefaults();
         private OpenAiEndpoint endpoint;
@@ -447,6 +468,39 @@ public final class OpenAIConfig {
          */
         public Builder timeout(Duration timeout) {
             this.timeout = Objects.requireNonNull(timeout, "Timeout cannot be null");
+            return this;
+        }
+
+        /**
+         * Caps the retries the SDK makes on its own, underneath this client.
+         *
+         * <p>
+         * Unset by default, and unset means the SDK's retry policy applies exactly as it did before this key existed.
+         * The retries it controls happen <em>below</em> {@link at.aimon.core.llm.LlmClient}: a wrapper around this
+         * client — one that meters, admits or reserves budget per call — sees one call however many HTTP attempts the
+         * SDK made for it. {@code 0} makes that one call one attempt, which is what such a wrapper needs if each
+         * attempt has to pass it; a retry is then the caller's to make, and it goes through the wrapper again.
+         *
+         * <p>
+         * It does not touch any retry above the client, and it does not make a stream replayable: the SDK retries only
+         * before it hands a response back, so a stream whose body is already being read is never sent again whatever
+         * this says.
+         *
+         * <p>
+         * With {@code N > 0}, two ceilings are per attempt rather than per call. A cancellation is not observed while
+         * the SDK is retrying — the client registers its abort lever only once the SDK returns a response — so a call
+         * cancelled during a retry may still send its remaining attempts, after a backoff that honours the server's
+         * {@code Retry-After}. And the configured {@code timeout}, like a per-request
+         * {@link at.aimon.core.llm.LlmModel#getRequestTimeout()}, bounds each attempt, so a call can take up to
+         * {@code N + 1} of them plus the backoff in between. {@code 0} makes both ceilings hold for the whole call.
+         *
+         * @param maxRetries
+         *            the most retries after the first attempt ({@code 0} for none), or {@code null} to leave the SDK's
+         *            default in place; a negative value fails {@link #build()}
+         * @return This builder
+         */
+        public Builder maxRetries(Integer maxRetries) {
+            this.maxRetries = maxRetries;
             return this;
         }
 

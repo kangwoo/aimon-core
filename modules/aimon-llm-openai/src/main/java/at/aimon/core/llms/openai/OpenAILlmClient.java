@@ -158,6 +158,8 @@ public class OpenAILlmClient implements LlmClient {
         if (baseUrl != null && !baseUrl.isEmpty()) {
             builder.baseUrl(baseUrl);
         }
+        // Only when set: an unset value must leave the SDK's own default in place, not a copy of it.
+        config.getMaxRetries().ifPresent(builder::maxRetries);
 
         return builder.build();
     }

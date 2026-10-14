@@ -7,6 +7,29 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: cap the SDK's own retries — `OpenAIConfig.Builder.maxRetries(Integer)`, `AnthropicConfig.Builder.maxRetries(Integer)`
+
+Both vendor SDKs retry a failed request on their own (408 · 409 · 429 · 5xx · I/O errors), underneath `LlmClient`. A
+wrapper around the client — one that admits, meters or reserves budget per call — saw one call however many HTTP
+attempts the SDK made for it. The constructor that takes a ready-made SDK client is package-private (it exists for
+tests), so an application had no supported way to turn that off.
+
+- **Unset** (the default, and `null`): the SDK builder's retry setter is not called; its own policy applies unchanged.
+  The config does not copy the SDK's count.
+- **`0`**: each request is sent once and the first failure is returned. **`N`**: at most `N + 1` attempts. Which
+  failures are retried stays the SDK's decision. **Negative** fails `build()`.
+- `getMaxRetries()` returns `Optional<Integer>`, so unset and an explicit `0` are distinguishable.
+  `AnthropicConfig`'s `equals` / `hashCode` / `toString` include it.
+- Applies to every path built on that SDK client — OpenAI Chat Completions and Responses, Anthropic Messages, blocking
+  and streaming. A stream that fails after its first event is never replayed by the SDK, whatever this says.
+- With `N > 0` the client's `timeout` and a per-request `requestTimeout` bound each attempt, not the call, and a
+  cancellation is not observed while the SDK is retrying; `0` makes both hold for the whole call. The builder javadoc
+  and `docs/design/llm/cancellation.md` §7 say so.
+- It touches nothing above the client: a retry made by the caller still goes through any wrapper again. Builder only —
+  no CLI or starter key. `OpenAIEmbeddingConfig` is unchanged.
+- Verified by counting the requests a local HTTP server receives (`*LlmClientSdkRetryTest`), including the SDK
+  default (two retries in OpenAI 4.69.2 / Anthropic 2.65.0) for the unset case.
+
 ### Added: name the OpenAI endpoint explicitly — `OpenAIConfig.endpoint(OpenAiEndpoint)`, `llm.openai.endpoint`, `aimon.llm.openai.endpoint`
 
 `responsesApiEnabled` could only take the Responses API away; it could not send a request there. A model's capability

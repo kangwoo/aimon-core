@@ -411,4 +411,33 @@ class AnthropicConfigTest {
                     .hasMessage("Temperature must be between 0.0 and 1.0");
         }
     }
+
+    @Test
+    @DisplayName("maxRetries is unset by default, and unset is distinct from an explicit 0")
+    void maxRetriesDefaultsToUnset() {
+        assertThat(AnthropicConfig.builder().apiKey("k").build().getMaxRetries()).isEmpty();
+        assertThat(AnthropicConfig.builder().apiKey("k").maxRetries(null).build().getMaxRetries()).isEmpty();
+        assertThat(AnthropicConfig.builder().apiKey("k").maxRetries(0).build().getMaxRetries()).contains(0);
+        assertThat(AnthropicConfig.builder().apiKey("k").maxRetries(5).build().getMaxRetries()).contains(5);
+    }
+
+    @Test
+    @DisplayName("a negative maxRetries fails build()")
+    void negativeMaxRetriesIsRejected() {
+        assertThatThrownBy(() -> AnthropicConfig.builder().apiKey("k").maxRetries(-1).build())
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Max retries");
+    }
+
+    @Test
+    @DisplayName("maxRetries participates in equality, the hash and toString")
+    void maxRetriesParticipatesInEquality() {
+        AnthropicConfig zero = AnthropicConfig.builder().apiKey("k").maxRetries(0).build();
+        AnthropicConfig unset = AnthropicConfig.builder().apiKey("k").build();
+
+        assertThat(zero).isEqualTo(AnthropicConfig.builder().apiKey("k").maxRetries(0).build())
+                .hasSameHashCodeAs(AnthropicConfig.builder().apiKey("k").maxRetries(0).build());
+        assertThat(zero).isNotEqualTo(unset);
+        assertThat(zero.toString()).contains("maxRetries=0");
+        assertThat(unset.toString()).contains("maxRetries=null");
+    }
 }
