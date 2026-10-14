@@ -299,7 +299,52 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
         builder.register("gpt-5.6-terra", gpt5Family().acceptedReasoningEfforts(
                 EnumSet.of(ReasoningEffort.NONE, ReasoningEffort.LOW, ReasoningEffort.MEDIUM, ReasoningEffort.HIGH))
                 .build());
+        registerGpt6Defaults(builder);
         return builder;
+    }
+
+    /**
+     * Registers the four {@code gpt-6*} names, so that {@link #builderWithDefaults()} stays readable.
+     *
+     * <p>
+     * <strong>Documentation-derived, not measured</strong> — the only OpenAI rows in this table that are. None of the
+     * four was called: they are transcribed from the vendor's "Using GPT-6" guide and the {@code gpt-6-luna} model
+     * page as read on 2026-10-14, and {@code docs/design/llm/model-capabilities.md} section 6.1 says which sentence
+     * each value rests on. They ship unmeasured for the reason the {@code claude-mythos} row does: without a row
+     * these names fall to {@link ModelCapabilities#unknown()}, which keeps them on Chat Completions, and the guide
+     * says that endpoint refuses function tools for all four unless {@code reasoning_effort} is {@code none} — a
+     * rung two of them do not have. For an agent that is every request. A wrong row here costs a dropped value and a
+     * warning.
+     */
+    private static void registerGpt6Defaults(Builder builder) {
+        // The four flags are the gpt-5 family's, by the same builder terra uses, and each has a documented reason:
+        //
+        // - supportsSamplingParameters false: "When reasoning effort is not none, remove temperature, top_p, and
+        // top_logprobs." gpt-6-astra and gpt-6.1-sol have no 'none', so that is always. gpt-6-sol and gpt-6-luna do,
+        // and the sentence implies they take sampling at 'none' -- a boolean cannot say "only at none", and the
+        // default effort is 'medium', so the row suppresses. What that loses is a temperature configured together
+        // with reasoningEffort: none on those two names; a declaration for the name gives it back.
+        // - supportsReasoningTraceRoundTrip true: this is the flag that routes the name to /v1/responses, which is
+        // where the guide sends every tools request ("tool calling requires Responses", "Use Responses for
+        // reasoning with tools"). Replay itself was not probed; the guide lists "persisted reasoning" as supported.
+        // - supportsToolsWithReasoning true: as on terra, a fact about /v1/responses. On Chat Completions the
+        // combination is documented as refused, and OpenAILlmClient warns before sending it for the two names
+        // whose ladder holds NONE.
+        //
+        // Ladders state only the rungs a document names. 'minimal' is on none of the four: the guide rejects it for
+        // gpt-6.1-sol by name, the gpt-6-luna page's list omits it, and for gpt-6-astra and gpt-6-sol no page read
+        // says either way -- so it is withheld, which is the cheap direction to be wrong in. 'xhigh' and 'max' have
+        // no ReasoningEffort constant, as on terra.
+        //
+        // Exact, like every other OpenAI name this table knows by name. The plain "gpt-6" and "gpt-6.1" are not
+        // model ids, and no dated snapshot was listed (the luna page gives "gpt-6-luna" as its only snapshot), so a
+        // prefix would assert identifiers nobody has seen. A gpt-6-* name outside these four resolves to unknown().
+        final ModelCapabilities withNone = gpt5Family().acceptedReasoningEfforts(
+                EnumSet.of(ReasoningEffort.NONE, ReasoningEffort.LOW, ReasoningEffort.MEDIUM, ReasoningEffort.HIGH))
+                .build();
+        final ModelCapabilities alwaysReasoning = gpt5Family().lowestReasoningEffort(ReasoningEffort.LOW).build();
+        builder.register("gpt-6-sol", withNone).register("gpt-6-luna", withNone)
+                .register("gpt-6-astra", alwaysReasoning).register("gpt-6.1-sol", alwaysReasoning);
     }
 
     /**

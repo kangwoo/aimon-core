@@ -166,6 +166,48 @@ class InMemoryModelCapabilityRegistryTest {
     }
 
     @Test
+    @DisplayName("the four gpt-6 names are the gpt-5 family row with the ladder the vendor documents")
+    void gpt6NamesStateTheirDocumentedLadders() {
+        // Documentation-derived, not measured: the "Using GPT-6" guide and the gpt-6-luna model page, read
+        // 2026-10-14. gpt-6-sol and gpt-6-luna take 'none'; gpt-6-astra and gpt-6.1-sol always reason. 'minimal' is
+        // on none of the four ladders, and that is the rung a wrong row would turn into a 400.
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
+        final ModelCapabilities family = registry.resolve("gpt-5-mini");
+
+        for (final String name : new String[]{"gpt-6-sol", "gpt-6-luna"}) {
+            assertThat(registry.resolve(name).acceptedReasoningEfforts()).as(name).containsExactly(ReasoningEffort.NONE,
+                    ReasoningEffort.LOW, ReasoningEffort.MEDIUM, ReasoningEffort.HIGH);
+        }
+        for (final String name : new String[]{"gpt-6-astra", "gpt-6.1-sol"}) {
+            assertThat(registry.resolve(name).acceptedReasoningEfforts()).as(name).containsExactly(ReasoningEffort.LOW,
+                    ReasoningEffort.MEDIUM, ReasoningEffort.HIGH);
+        }
+        // The other flags come from the family row, as terra's do. supportsReasoningTraceRoundTrip is the one that
+        // matters most here: it is what puts these names on /v1/responses, the only endpoint the guide says takes
+        // their tools requests.
+        for (final String name : new String[]{"gpt-6-sol", "gpt-6-luna", "gpt-6-astra", "gpt-6.1-sol"}) {
+            final ModelCapabilities row = registry.resolve(name);
+            assertThat(row.supportsSamplingParameters()).as(name).isEqualTo(family.supportsSamplingParameters());
+            assertThat(row.supportsReasoningEffort()).as(name).isEqualTo(family.supportsReasoningEffort());
+            assertThat(row.supportsToolsWithReasoning()).as(name).isEqualTo(family.supportsToolsWithReasoning());
+            assertThat(row.supportsReasoningTraceRoundTrip()).as(name).isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("the gpt-6 rows are exact: the bare family names and unseen siblings stay unknown")
+    void gpt6RowsAreExactNames() {
+        // "gpt-6" and "gpt-6.1" are not model ids, and no dated snapshot was listed. A prefix would assert
+        // identifiers nobody has seen -- the same reason gpt-5.6-luna and gpt-5.6-sol have no row.
+        final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
+
+        assertThat(registry.capabilitiesOf("gpt-6")).isEmpty();
+        assertThat(registry.capabilitiesOf("gpt-6.1")).isEmpty();
+        assertThat(registry.capabilitiesOf("gpt-6-astra-2026-09-03")).isEmpty();
+        assertThat(registry.capabilitiesOf("gpt-6.1-luna")).isEmpty();
+    }
+
+    @Test
     @DisplayName("models the table does not name stay unknown - gpt-4o and gpt-4-turbo")
     void defaultsLeaveEverythingElseUnknown() {
         final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();

@@ -7,6 +7,28 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: built-in capability rows for the GPT-6 names — `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6.1-sol`
+
+Until now these names resolved to `ModelCapabilities.unknown()`, which kept them on Chat Completions and sent a
+configured `temperature` — the endpoint OpenAI's guide says refuses their function-tool requests, and a parameter it
+says they reject. `InMemoryModelCapabilityRegistry.withDefaults()` now carries an exact row for each.
+
+- **All four are routed to `/v1/responses`**, omit the sampling parameters (with the usual one-time WARN when one was
+  configured) and take a reasoning effort.
+- **Ladders:** `gpt-6-sol` and `gpt-6-luna` accept `none`, `low`, `medium`, `high`; `gpt-6-astra` and `gpt-6.1-sol`
+  accept `low`, `medium`, `high`. `minimal` is omitted with a WARN on all four.
+- **These rows are documentation-derived, not measured.** No request was sent to any of the four; the values are
+  transcribed from the vendor's "Using GPT-6" guide and the `gpt-6-luna` model page as read on 2026-10-14.
+  [`docs/design/llm/model-capabilities.md`](docs/design/llm/model-capabilities.md) §5.4 · §6.1 quote the sentence
+  each value rests on, and §6.4 lists what is still unmeasured. A `modelCapabilities` entry for the name replaces the
+  row.
+- **Changed for existing deployments on these names:** a `temperature` / `topP` that used to be sent is now omitted,
+  including on `gpt-6-sol` / `gpt-6-luna` with `reasoningEffort: none`, where the guide implies it would be accepted.
+- **Not covered:** the bare `gpt-6` / `gpt-6.1` (not model ids), dated snapshots and any other `gpt-6*` name still
+  resolve to `unknown()`. The context-window registry and the price table have no GPT-6 entries.
+- The forced-Chat tools warning (`responsesApiEnabled: false`) no longer names `gpt-5.6-terra` as the model the
+  capabilities were measured on, since `gpt-6-sol` and `gpt-6-luna` now reach it too.
+
 ## [0.3.2] - 2026-10-08
 
 ### Changed: the follow-ups to hook cancellation — report commands run through an interrupt, and four edges (EE-93 – EE-98)
