@@ -577,10 +577,9 @@ public class OpenAILlmClient implements LlmClient {
      * with a 400 unless {@code reasoning_effort} is {@code none}: measured on 2026-09-10 with no effort and on
      * 2026-10-05 with {@code low}, {@code medium} and {@code high}, each <em>"Function tools with reasoning_effort
      * are not supported … use /v1/responses or set reasoning_effort to 'none'"</em>. The {@code gpt-6-sol} and
-     * {@code gpt-6-luna} rows have the same shape and reach this warning too; for them the refusal is the vendor
-     * guide's sentence, not a measurement. The row's
-     * {@code supportsToolsWithReasoning} is a fact about the other endpoint, so the tools rule above does not catch
-     * it.
+     * {@code gpt-6-luna} rows have the same shape and reach this warning too; their refusal without an effort and
+     * their acceptance at {@code none} were measured on 2026-10-14. The row's {@code supportsToolsWithReasoning} is a
+     * fact about the other endpoint, so the tools rule above does not catch it.
      *
      * <p>
      * <strong>Reported, not repaired.</strong> Sending {@code none} in place of what was configured would put a
@@ -612,8 +611,8 @@ public class OpenAILlmClient implements LlmClient {
         reportDivergence("forcedChatToolsWithoutNone=" + carried + "@" + modelName,
                 "{} is on Chat Completions because this client's endpoint is CHAT_COMPLETIONS, and this request "
                         + "carries tools with {}. api.openai.com refuses function tools on Chat Completions for the "
-                        + "models whose capabilities look like this -- measured on gpt-5.6-terra, documented for "
-                        + "gpt-6-sol and gpt-6-luna -- unless reasoning_effort is 'none' (HTTP 400). "
+                        + "models whose capabilities look like this -- measured on gpt-5.6-terra, gpt-6-sol and "
+                        + "gpt-6-luna -- unless reasoning_effort is 'none' (HTTP 400). "
                         + "The request is sent as configured. If it is refused, set reasoningEffort: none or set the "
                         + "endpoint to AUTO or RESPONSES.",
                 modelName, carried);

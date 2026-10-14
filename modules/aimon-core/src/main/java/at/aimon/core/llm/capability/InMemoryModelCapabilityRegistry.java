@@ -307,34 +307,32 @@ public final class InMemoryModelCapabilityRegistry implements ModelCapabilityReg
      * Registers the four {@code gpt-6*} names, so that {@link #builderWithDefaults()} stays readable.
      *
      * <p>
-     * <strong>Documentation-derived, not measured</strong> — the only OpenAI rows in this table that are. None of the
-     * four was called: they are transcribed from the vendor's "Using GPT-6" guide and the {@code gpt-6-luna} model
-     * page as read on 2026-10-14, and {@code docs/design/llm/model-capabilities.md} section 6.1 says which sentence
-     * each value rests on. They ship unmeasured for the reason the {@code claude-mythos} row does: without a row
-     * these names fall to {@link ModelCapabilities#unknown()}, which keeps them on Chat Completions, and the guide
-     * says that endpoint refuses function tools for all four unless {@code reasoning_effort} is {@code none} — a
-     * rung two of them do not have. For an agent that is every request. A wrong row here costs a dropped value and a
-     * warning.
+     * Transcribed from the vendor's "Using GPT-6" guide and the {@code gpt-6-luna} model page, then measured against
+     * {@code api.openai.com} on 2026-10-14 — every value below agreed with the server. Without a row these names fall
+     * to {@link ModelCapabilities#unknown()}, which keeps them on Chat Completions, and that endpoint refuses a
+     * function-tools request on all four unless {@code reasoning_effort} is {@code none} — a rung two of them do not
+     * have. For an agent that is every request. {@code docs/design/llm/model-capabilities.md} section 6.1 gives the
+     * evidence per value, section 6.3 the probe, and {@code OpenAIReasoningLiveTest.Gpt6Rows} re-asserts the part a
+     * client can send.
      */
     private static void registerGpt6Defaults(Builder builder) {
-        // The four flags are the gpt-5 family's, by the same builder terra uses, and each has a documented reason:
+        // The four flags are the gpt-5 family's, by the same builder terra uses. Measured on 2026-10-14:
         //
-        // - supportsSamplingParameters false: "When reasoning effort is not none, remove temperature, top_p, and
-        // top_logprobs." gpt-6-astra and gpt-6.1-sol have no 'none', so that is always. gpt-6-sol and gpt-6-luna do,
-        // and the sentence implies they take sampling at 'none' -- a boolean cannot say "only at none", and the
-        // default effort is 'medium', so the row suppresses. What that loses is a temperature configured together
-        // with reasoningEffort: none on those two names; a declaration for the name gives it back.
-        // - supportsReasoningTraceRoundTrip true: this is the flag that routes the name to /v1/responses, which is
-        // where the guide sends every tools request ("tool calling requires Responses", "Use Responses for
-        // reasoning with tools"). Replay itself was not probed; the guide lists "persisted reasoning" as supported.
-        // - supportsToolsWithReasoning true: as on terra, a fact about /v1/responses. On Chat Completions the
-        // combination is documented as refused, and OpenAILlmClient warns before sending it for the two names
-        // whose ladder holds NONE.
+        // - supportsSamplingParameters false: temperature: 0.5 refused at the default effort on all four. gpt-6-sol
+        // and gpt-6-luna accept it at effort 'none' -- a boolean cannot say "only at none", and the default effort is
+        // not 'none', so the row suppresses. What that loses is a temperature configured together with
+        // reasoningEffort: none on those two names; a declaration for the name gives it back.
+        // - supportsReasoningTraceRoundTrip true: this is the flag that routes the name to /v1/responses. On all four
+        // a tools turn there returned a reasoning item with encrypted_content, the replayed item was accepted, and
+        // the same item with its ciphertext corrupted was refused -- the server consumed it.
+        // - supportsToolsWithReasoning true: as on terra, a fact about /v1/responses. On Chat Completions a tools
+        // request without 'none' is refused for all four (param reasoning_effort), and OpenAILlmClient warns before
+        // sending it for the two names whose ladder holds NONE.
         //
-        // Ladders state only the rungs a document names. 'minimal' is on none of the four: the guide rejects it for
-        // gpt-6.1-sol by name, the gpt-6-luna page's list omits it, and for gpt-6-astra and gpt-6-sol no page read
-        // says either way -- so it is withheld, which is the cheap direction to be wrong in. 'xhigh' and 'max' have
-        // no ReasoningEffort constant, as on terra.
+        // Ladders hold only rungs sent and accepted on /v1/responses. 'none' is accepted by gpt-6-sol and gpt-6-luna
+        // and refused by the other two; 'minimal' is refused by all four; 'low', 'high' and 'xhigh' are accepted by
+        // all four. 'medium' was not sent -- the server lists it, and it is the documented default. 'xhigh' and
+        // 'max' (listed, not sent) have no ReasoningEffort constant, as on terra.
         //
         // Exact, like every other OpenAI name this table knows by name. The plain "gpt-6" and "gpt-6.1" are not
         // model ids, and no dated snapshot was listed (the luna page gives "gpt-6-luna" as its only snapshot), so a

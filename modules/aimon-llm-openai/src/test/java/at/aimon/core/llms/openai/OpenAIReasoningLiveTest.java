@@ -13,6 +13,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.openai.core.ObjectMappers;
@@ -56,9 +58,10 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
  * are rejected before generation and so are billed nothing.
  *
  * <p>
- * <strong>Cost.</strong> One tool-calling turn is captured once and shared, so the class makes six billable calls —
- * four here
- * and the two of {@link TheBudgetRunsOut}.
+ * <strong>Cost.</strong> One tool-calling turn is captured once and shared, so the #43 / #71 half makes six billable
+ * calls — four here and the two of {@link TheBudgetRunsOut}. {@link Gpt6Rows} adds twelve (a captured turn and its
+ * replay per name, two at {@code none} on Chat, two with a dropped {@code none}) and {@link ForcedResponses} two;
+ * their refusals are rejected before generation and billed nothing.
  * Where a claim depends on the model <em>choosing</em> to call a tool, the test aborts through {@code assumeTrue}
  * rather than failing — but an empty reasoning channel is not in that category and is red, see
  * {@link ReasoningDeltasArriveOnAStream}.
@@ -367,6 +370,133 @@ class OpenAIReasoningLiveTest {
             assertThat(response.getTokenUsage().getReasoningTokens())
                     .isLessThanOrEqualTo(response.getTokenUsage().getCompletionTokens());
             assertThat(response.getStopReason()).contains(StopReason.END_TURN);
+        }
+    }
+
+    /**
+     * The four {@code gpt-6*} rows of {@code InMemoryModelCapabilityRegistry}, against the server they describe.
+     *
+     * <p>
+     * <strong>The rows were transcribed before they were measured</strong> — from the vendor's "Using GPT-6" guide —
+     * and the probe that measured them on 2026-10-14 is {@code docs/design/llm/model-capabilities.md} section 6.3.
+     * This class keeps the part of that probe a client can send. The ladder negatives (a {@code none} on
+     * {@code gpt-6-astra}, a {@code minimal} on any of the four) cannot be: the row drops them before the wire, which
+     * is the point of the row, so what is asserted here is that the dropped request then succeeds.
+     *
+     * <p>
+     * Each claim has its negative control, as in the rest of this class: the item replay is paired with a corrupted
+     * payload, and the routing with the same request forced onto Chat Completions.
+     */
+    @Nested
+    @DisplayName("the gpt-6* capability rows, against the real API")
+    class Gpt6Rows {
+
+        private static final String SOL = "gpt-6-sol";
+        private static final String LUNA = "gpt-6-luna";
+        private static final String ASTRA = "gpt-6-astra";
+        private static final String SOL_6_1 = "gpt-6.1-sol";
+
+        @ParameterizedTest
+        @ValueSource(strings = {SOL, LUNA, ASTRA, SOL_6_1})
+        @DisplayName("a tools turn goes to /v1/responses, and its reasoning item is consumed on replay")
+        void aToolsTurnRoutesToResponsesAndItsItemIsConsumed(String model) throws Exception {
+            // One capture per name and three requests on it, rather than one test per claim: a capture per claim
+            // would triple the billed turns for the same evidence. The corrupted replay is refused before
+            // generation and costs nothing.
+            final OpenAILlmClient client = new OpenAILlmClient(config(model).build());
+            final LlmModel low = LlmModel.builder().reasoningEffort(ReasoningEffort.LOW).build();
+            final LlmResponse first = client.sendMessage(RECORD_SYSTEM, List.of(Message.user(ASK_TOOL)),
+                    List.of(recordAnswerTool()), low);
+            assumeTrue(!first.getToolUses().isEmpty(), "model did not call the tool; nothing to anchor an item to");
+
+            // Without the row these names stay on Chat Completions, where the tools request above is refused (see
+            // chatCompletionsRefusesTheToolsRequest). An item at all is the request having gone to /v1/responses with
+            // the include the row's round-trip flag asks for.
+            assertThat(first.getReasoningTraces()).isNotEmpty();
+            assertThat(first.getReasoningTraces().get(0).getPayload()).contains("encrypted_content");
+
+            assertThatCode(() -> client.sendMessage(RECORD_SYSTEM, secondTurn(first, first.getReasoningTraces()),
+                    List.of(recordAnswerTool()), low)).doesNotThrowAnyException();
+
+            final List<ReasoningTrace> corrupted = List.of(withCorruptedCiphertext(first.getReasoningTraces().get(0)));
+            assertThatThrownBy(() -> client.sendMessage(RECORD_SYSTEM, secondTurn(first, corrupted),
+                    List.of(recordAnswerTool()), low)).isInstanceOf(LlmInvalidRequestException.class);
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {SOL, LUNA, ASTRA, SOL_6_1})
+        @DisplayName("the negative control: the same tools request on Chat Completions is refused")
+        void chatCompletionsRefusesTheToolsRequest(String model) {
+            // The cost the row exists to avoid, still being charged where the row is bypassed. Asserted on the error's
+            // structured fields rather than its sentence, for the reason TheReproduction gives.
+            final OpenAILlmClient client = new OpenAILlmClient(
+                    config(model).endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).build());
+
+            assertThatThrownBy(() -> client.sendMessage(SYSTEM, List.of(Message.user("What is 2+2?")),
+                    List.of(recordAnswerTool()), LlmModel.builder().build()))
+                    .isInstanceOf(LlmInvalidRequestException.class).cause()
+                    .isInstanceOfSatisfying(BadRequestException.class, error -> {
+                        assertThat(error.type()).contains("invalid_request_error");
+                        assertThat(error.param()).contains("reasoning_effort");
+                    });
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {SOL, LUNA})
+        @DisplayName("sol and luna: on Chat Completions, a tools request at reasoningEffort none is accepted")
+        void chatCompletionsAcceptsTheToolsRequestAtNone(String model) {
+            // The way out the forced-Chat tools warning names, and the reason only these two rows carry NONE. The
+            // other two answer this same request with a 400 naming 'none' as unsupported — measured, and not
+            // reproducible through this client, which drops the rung first (see aConfiguredNoneIsDropped).
+            final OpenAILlmClient client = new OpenAILlmClient(
+                    config(model).endpoint(OpenAiEndpoint.CHAT_COMPLETIONS).build());
+
+            assertThatCode(() -> client.sendMessage(SYSTEM, List.of(Message.user("What is 2+2?")),
+                    List.of(recordAnswerTool()), LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build()))
+                    .doesNotThrowAnyException();
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {ASTRA, SOL_6_1})
+        @DisplayName("astra and 6.1-sol: a configured reasoningEffort none is dropped, so the request succeeds")
+        void aConfiguredNoneIsDropped(String model) {
+            // The server refuses 'none' on these two names on both endpoints (measured 2026-10-14). The request
+            // succeeding is the ladder having withheld the rung; a row that listed NONE would make this a 400.
+            final OpenAILlmClient client = new OpenAILlmClient(config(model).build());
+
+            assertThatCode(() -> client.sendMessage(SYSTEM, List.of(Message.user("What is 2+2?")), List.of(),
+                    LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build())).doesNotThrowAnyException();
+        }
+    }
+
+    /**
+     * {@link OpenAiEndpoint#RESPONSES} on a model whose row does not do the reasoning trace round trip.
+     *
+     * <p>
+     * The unit tests pin the request this sends — no {@code include}, no replayed traces — and the response side that
+     * stores none. What only the server can say is that such a request is accepted at all, tool call and tool result
+     * included, on a model that has never been sent to this endpoint by {@link OpenAiEndpoint#AUTO}.
+     */
+    @Nested
+    @DisplayName("RESPONSES forced on a model without the round trip")
+    class ForcedResponses {
+
+        /** A non-reasoning model: its capabilities resolve to {@code unknown()}, so AUTO would send it to Chat. */
+        private static final String NON_REASONING_MODEL = "gpt-4o-mini";
+
+        @Test
+        @DisplayName("a tool call and its result go through /v1/responses, and no trace is kept")
+        void aToolTurnAndItsResultGoThrough() {
+            final OpenAILlmClient client = new OpenAILlmClient(
+                    config(NON_REASONING_MODEL).endpoint(OpenAiEndpoint.RESPONSES).build());
+
+            final LlmResponse first = client.sendMessage(RECORD_SYSTEM, List.of(Message.user(ASK_TOOL)),
+                    List.of(recordAnswerTool()), LlmModel.builder().build());
+            assumeTrue(!first.getToolUses().isEmpty(), "model did not call the tool; nothing to send a result for");
+            assertThat(first.getReasoningTraces()).isEmpty();
+
+            assertThatCode(() -> client.sendMessage(RECORD_SYSTEM, secondTurn(first, List.of()),
+                    List.of(recordAnswerTool()), LlmModel.builder().build())).doesNotThrowAnyException();
         }
     }
 

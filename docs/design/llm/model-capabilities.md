@@ -321,8 +321,8 @@ terra 의 ladder 를 고치지 못한다. 약속에서 하중을 받는 것은 *
 **OpenAI 는 측정한 이름을 exact 로 적는다.** reasoning item 재생과 ladder 는 계열이 아니라 이름 단위로 알려진다. 이름
 prefix 를 공유하는 형제의 측정은 요청 표면에 대한 증거가 아니다 — `o1` 이 통과했다고 `o1-pro` 에 대해 말해지는 것은
 없다. 그래서 측정된 o-series 여덟 이름과 `gpt-5.6-terra` 는 exact 행이고, 같은 prefix 아래의 나머지 이름은 prefix 행의
-값으로 떨어진다. `gpt-6*` 네 이름도 exact 지만 측정이 아니라 문서에서 왔고(§5.4), 그 계열에는 prefix 행이 없어 나머지
-`gpt-6*` 이름은 `unknown()` 이다. 본 적 없는 terra 의 날짜 스냅샷은 `gpt-5` prefix 에 떨어져 계열 ladder 를 물려받으며, 누군가 재거나
+값으로 떨어진다. `gpt-6*` 네 이름도 같은 이유로 exact 이고(§5.4), 그 계열에는 prefix 행이 없어 나머지 `gpt-6*` 이름은
+`unknown()` 이다. 본 적 없는 terra 의 날짜 스냅샷은 `gpt-5` prefix 에 떨어져 계열 ladder 를 물려받으며, 누군가 재거나
 선언할 때까지 그대로다.
 
 별칭 exact 행(`o1`, `o3`, …)은 별칭이 측정한 날 가리키던 곳을 가리키는 동안만 옳다. 별칭이 옮겨 가면 그 행은 조용히
@@ -358,16 +358,14 @@ prefix 를 공유하는 형제의 측정은 요청 표면에 대한 증거가 �
 - **식별자를 추측하지 않는다.** `claude-mythos-5-1` 같은 이름을 적으면 아무도 본 적 없는 식별자를 단언하게 된다. 계열
   prefix 하나는 사실만 단언한다
 
-**`gpt-6*` 네 이름도 documentation-derived 다** — `gpt-6-astra` · `gpt-6-sol` · `gpt-6-luna` · `gpt-6.1-sol`. 넷 다 호출하지
-않았고, 벤더의 "Using GPT-6" 가이드와 `gpt-6-luna` 모델 페이지(2026-10-14 에 읽음)를 옮겨 적었다. Mythos 행과 같은 점과
-다른 점이 하나씩 있다.
+**`gpt-6*` 네 이름은 문서에서 옮겨 적은 뒤 측정했다** — `gpt-6-astra` · `gpt-6-sol` · `gpt-6-luna` · `gpt-6.1-sol`. 행은
+벤더의 "Using GPT-6" 가이드와 `gpt-6-luna` 모델 페이지가 이름으로 말한 것만 적었고, 같은 날(2026-10-14) `api.openai.com`
+에 보낸 프로브(§6.3)가 그 모든 값과 일치했다. 그래서 documentation-derived 행이 아니라 측정된 행이다. 두 가지는
+여전히 이 절의 규칙을 따른다.
 
-- **비용 행렬은 같은 쪽을, 더 세게 가리킨다.** 행이 없으면 이 이름들은 `unknown()` 으로 떨어져 Chat Completions 에 남는데,
-  가이드는 그 엔드포인트가 넷 모두의 함수 도구 요청을 `reasoning_effort: none` 이 아니면 거절한다고 적는다 — 그리고
-  `gpt-6-astra` · `gpt-6.1-sol` 에는 `none` rung 이 없다. 에이전트에게 그것은 매 요청이다. 틀린 행은 값 하나 드롭과 WARN 이다
-- **증거는 더 약하다.** Mythos 행은 같은 벤더 문장이 도달 가능한 여섯 이름에서 정확히 맞았다는 대조가 있었다. 이 가이드는
-  이 저장소가 어떤 측정으로도 대조해 본 적이 없다. 그래서 행은 문서가 이름으로 말한 것만 적고(§6.1), 문서가 말하지 않은
-  칸은 §6.4 에 빈 칸으로 남긴다
+- **비용 행렬.** 행이 없으면 이 이름들은 `unknown()` 으로 떨어져 Chat Completions 에 남는데, 그 엔드포인트는 넷 모두의 함수
+  도구 요청을 `reasoning_effort: none` 이 아니면 거절하고(측정), `gpt-6-astra` · `gpt-6.1-sol` 은 `none` 자체를 거절한다.
+  에이전트에게 그것은 매 요청이다
 - **식별자는 문서가 준 것만 쓴다.** 그래서 prefix 가 아니라 exact 다 — 맨 `gpt-6` · `gpt-6.1` 은 모델 식별자가 아니고,
   날짜 스냅샷은 어느 페이지에도 없었다(`gpt-6-luna` 페이지의 유일한 스냅샷은 `gpt-6-luna` 자신이다)
 
@@ -400,8 +398,8 @@ prefix 를 공유하는 형제의 측정은 요청 표면에 대한 증거가 �
 | `gpt-5-chat` | prefix, `gpt-5` 앞 | 샘플링 `true` · effort `false` · 도구+reasoning `true` · trace 왕복 `false` — `unknown()` 과 같은 값 | 측정한 행이 아니다. 행의 일은 계열의 비-reasoning 변형이 `gpt-5` 행에 걸려 샘플링을 억제당하지 않게 하는 것이다. `gpt-5-chat-latest` 는 404(deprecated)지만 행은 그 이름 하나가 아니라 prefix 다. 모델이 없으면 행은 무해하고, 행이 없으면 비-reasoning 모델의 샘플링이 생략된다 | 404: 2026-09-09 |
 | `gpt-5` | prefix | 샘플링 `false` · effort `true` · 도구+reasoning `true` · trace 왕복 `true`. ladder 는 적지 않음 | Chat Completions(`gpt-5-nano`): `temperature` 는 `1.0` 만 받고 `0.0` 거부 — 생략이 모델이 받는 유일한 값과 같다. effort 없이 도구를 실은 요청 200 — 충돌이 없으므로 `true`. `reasoning_effort: "none"` 거부, 열거는 `minimal`·`low`·`medium`·`high`. Responses: 재생한 reasoning item 수용. ladder 는 fail-open 기본 `{MINIMAL..HIGH}` 이 측정과 맞으므로 적지 않는다 — 구멍은 계열이 아니라 terra 의 것이다 | 2026-09-09 |
 | `gpt-5.6-terra` | exact | `gpt-5` 계열의 네 플래그 + ladder `{NONE, LOW, MEDIUM, HIGH}` | `/v1/responses` 에 일곱 rung 을 하나씩 보냈다: `none`·`low`·`medium`·`high`·`xhigh`·`max` 수용, `minimal` 거부. 모든 rung 을 실제로 보낸 유일한 ladder 다. `xhigh`·`max` 는 중립 어휘에 상수가 없어 행에 없다([`request-parameters.md`](request-parameters.md)). 재생한 reasoning item 수용. `/v1/responses` 에서 `temperature: 0.0` 거부 · `1.0` 수용. 네 플래그는 계열 행과 같은 출처에서 오고 ladder 만 다르다 — trace 왕복이 `false` 로 어긋나면 이 이름이 조용히 `/v1/responses` 를 떠난다 | ladder · 재생 2026-09-09, `temperature` 2026-09-10 |
-| `gpt-6-sol` · `gpt-6-luna` | exact ×2 | `gpt-5` 계열의 네 플래그 + ladder `{NONE, LOW, MEDIUM, HIGH}` — terra 행과 같은 값 | **documentation-derived(§5.4), 호출하지 않았다.** ladder: 가이드 *"GPT-6 Sol and GPT-6 Luna support `none`"*, luna 페이지 *"`reasoning.effort` supports `none`, `low`, `medium` (default), `high`, `xhigh`, and `max`"* — `minimal` 은 그 열거에 없다. sol 의 `none` 밖 rung 을 열거한 페이지는 읽지 못했다. 샘플링 `false`: *"When reasoning effort is not `none`, remove `temperature`, `top_p`, and `top_logprobs`"* — `none` 에서는 받는다는 뜻으로 읽히지만 boolean 은 "`none` 에서만" 을 말할 수 없고 기본 effort 가 `medium` 이라 억제한다. trace 왕복 `true`: *"Use Responses for reasoning with tools"*, Chat 은 *"function calling … only with `reasoning_effort: \"none\"`"* — 이 플래그가 이름을 `/v1/responses` 로 보낸다. 재생 자체는 재지 않았다(가이드는 "persisted reasoning" 을 지원 기능으로 든다) | 문서 2026-10-14 |
-| `gpt-6-astra` · `gpt-6.1-sol` | exact ×2 | `gpt-5` 계열의 네 플래그 + ladder `{LOW, MEDIUM, HIGH}` | **documentation-derived(§5.4), 호출하지 않았다.** ladder: 가이드 *"GPT-6 Astra and GPT-6.1 Sol do not support the `none` reasoning effort"*, `gpt-6.1-sol` 은 *"Set `reasoning.effort` to `low`, `medium` (default), `high`, `xhigh`, or `max`"* 와 *"The `none` and `minimal` reasoning efforts are not supported"*. astra 의 `minimal` 과 `none` 밖 rung 은 공식 페이지에서 읽지 못했고 보류한다. 샘플링 `false`: 같은 문장, `none` 이 없으므로 언제나. trace 왕복 `true`: *"support Chat Completions, but tool calling requires Responses"* | 문서 2026-10-14 |
+| `gpt-6-sol` · `gpt-6-luna` | exact ×2 | `gpt-5` 계열의 네 플래그 + ladder `{NONE, LOW, MEDIUM, HIGH}` — terra 행과 같은 값 | 문서에서 옮겨 적고 측정했다(§5.4). ladder: `/v1/responses` 에 `none`·`low`·`high`·`xhigh` 수용, `minimal` 거부 — 거부 메시지는 `none`·`low`·`medium`·`high`·`xhigh`·`max` 를 열거한다. `medium` 은 보내지 않았다(열거와 가이드의 기본값). 샘플링 `false`: 기본 effort 에서 `temperature: 0.5` 거부, effort `none` 과 함께는 수용 — boolean 은 "`none` 에서만" 을 말할 수 없고 기본 effort 가 `none` 이 아니라 억제한다. trace 왕복 `true`: 도구 턴이 `encrypted_content` 를 가진 reasoning item 을 돌려주고, 재생 수용, 손상시킨 재생 거부. Chat Completions: effort 없이 도구를 실은 요청 400(`param: reasoning_effort`), `none` 과 함께는 200 | 2026-10-14 |
+| `gpt-6-astra` · `gpt-6.1-sol` | exact ×2 | `gpt-5` 계열의 네 플래그 + ladder `{LOW, MEDIUM, HIGH}` | 문서에서 옮겨 적고 측정했다(§5.4). ladder: `/v1/responses` 에 `low`·`high`·`xhigh` 수용, `none`·`minimal` 거부 — 거부 메시지는 `low`·`medium`·`high`·`xhigh`·`max` 를 열거한다. `medium` 은 보내지 않았다. 샘플링 `false`: `temperature: 0.5` 거부, `none` 이 없으므로 언제나. trace 왕복 `true`: 재생 수용 · 손상 재생 거부, sol · luna 와 같다. Chat Completions: effort 없이 도구를 실은 요청 400, `none` 도 400(*"does not support 'none' with this model"*) — 이 둘에게 Chat 의 도구 요청은 나갈 길이 없다 | 2026-10-14 |
 | `o1` · `o3` · `o4` | prefix ×3 | 샘플링 `false` · effort `true` · 도구+reasoning `true` · trace 왕복 `false` · ladder `{LOW, MEDIUM, HIGH}` | Chat Completions: `o3-mini`·`o4-mini` 의 `temperature` 는 `1.0` 수용·`0.0` 거부, `o4-mini` 는 effort 없이 도구를 실은 요청 200, `none` 거부. ladder 는 아래 exact 행과 같은 측정이다. trace 왕복 `false` 는 이 prefix 아래의 호출하지 않은 이름 — `o1-pro`, `o4-mini-deep-research` 와 앞으로의 이름 — 이 떨어지는 값이다 | 2026-09-09 |
 | 측정된 o-series 여덟 이름: `o1` `o1-2024-12-17` `o3` `o3-2025-04-16` `o3-mini` `o3-mini-2025-01-31` `o4-mini` `o4-mini-2025-04-16` | exact | prefix 행과 같고 trace 왕복 `true` | `/v1/responses` 에서 `o1`·`o3`·`o3-mini`·`o4-mini` 가 재생한 reasoning item 을 받았다. 수용이 소비라는 것은 손상 대조군이 보인다([`openai-responses-path.md`](openai-responses-path.md)). 날짜 붙은 이름은 요청에 보낸 것이 아니라 수용된 응답의 `model` 로 돌아온 이름이다 — 스냅샷을 요청하면 그 스냅샷에 닿는다는 가정 하나가 있다. ladder: `none`·`minimal`·`xhigh`·`max` 를 하나씩 보내 거부, `low` 수용, `medium`·`high` 는 서버 열거에 있다(`high` 는 `o1` 을 뺀 셋에서 따로 보냈다) | 2026-09-09 |
 
@@ -426,6 +424,7 @@ prefix 를 공유하는 형제의 측정은 요청 표면에 대한 증거가 �
 | `gpt-5.6-terra` 샘플링 | `/v1/responses`, `temperature` 값 둘 | `0.0` 거부, `1.0` 수용 | 2026-09-10 |
 | `gpt-5.6-terra` 의 `none` — Chat Completions | `api.openai.com` `/v1/chat/completions`, `max_completion_tokens: 64`, `reasoning_effort: "none"` — `responsesApiEnabled=false` 가 보내는 모양. 도구 없이 한 번, 함수 도구 하나를 실어 한 번 | 둘 다 200 — `finish_reason: stop`, `reasoning_tokens: 0`. 행의 `NONE` 은 이 엔드포인트에서도 옳다 | 2026-10-05 |
 | `gpt-5.6-terra` 의 `low` · `medium` · `high` — Chat Completions | 같은 body 에 rung 만 바꿔, 도구 없이 한 번씩 · 함수 도구 하나를 실어 한 번씩(여섯 요청) | 도구 없이는 셋 다 200(`finish_reason: stop`, `reasoning_tokens: 0`). 도구와 함께는 셋 다 **400**, `param: reasoning_effort` — *"Function tools with reasoning_effort are not supported for gpt-5.6-terra in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'."* 행의 `supportsToolsWithReasoning: true` 는 `/v1/responses` 의 사실이다(§9, L-28) | 2026-10-05 |
+| `gpt-6*` 네 이름 | raw HTTP — 이름마다 `/v1/chat/completions` 에 함수 도구 하나를 effort 없이 · `reasoning_effort: "none"` 과 함께 한 번씩, `/v1/responses` 에 rung `none`·`minimal`·`low`·`high`·`xhigh` 를 하나씩, `temperature: 0.5` 를 기본 effort 와 `none` 에서 한 번씩, 도구 + `low` 한 번. 그다음 클라이언트로 도구 턴 · 그 item 의 재생 · `encrypted_content` 끝 40자를 바꾼 재생 | §6.1. 손상 재생은 넷 모두 거부되어 재생 수용이 소비의 증거다. 클라이언트로 보낸 부분은 `OpenAIReasoningLiveTest.Gpt6Rows` 가 다시 단언한다 | 2026-10-14 |
 | Anthropic 샘플링 | `POST /v1/messages`, `max_tokens: 16`, 셀당 파라미터 하나, thinking 파라미터 없음 — 계정의 `GET /v1/models` 목록 11 모델 | §6.2. 대조군 셋: 샘플링 파라미터를 뺀 같은 body 는 거부 여섯과 수용 둘 모두 200(400 은 요청 모양 · 계정 · 헤더 탓이 아니다), `temperature: 1.0` 은 거부 여섯 모두 200(값으로 거부한다), `"temperature": null` 은 샘플링을 받는 모델에서도 400(능력 규칙이 아니라 타입 규칙이다) | 2026-09-09 |
 | Anthropic 방언 | SDK 검증이 서버 답을 가리지 않도록 raw HTTP `POST /v1/messages` — 목록의 11 모델과 목록에 없는 날짜 없는 별칭 `claude-opus-4-5`·`claude-sonnet-4-5`·`claude-haiku-4-5`. 네 모양: `thinking.type: adaptive` + `output_config.effort: low` / `thinking.type: enabled` + `budget_tokens: 1024` / adaptive 단독 / effort 단독 | §6.2. 반복 측정이 모든 칸에서 재현되었고, 400 은 `invalid_request_error`(요청 검증)라 결정적이다. adaptive 단독은 첫 모양과 같은 답이므로 400 의 원인은 `thinking.type` 이다. effort 단독은 `claude-haiku-4-5`·`claude-sonnet-4-5` 에서 400, `claude-opus-4-5` 에서 200 — 방언과 독립된 축이다(그 가드는 [`anthropic-thinking.md`](anthropic-thinking.md)). 별칭 셋은 호출되어 날짜 스냅샷으로 해석되었다. 추측한 날짜 4-6 이름 둘은 404 | 2026-09-10 |
 
@@ -439,11 +438,9 @@ prefix 를 공유하는 형제의 측정은 요청 표면에 대한 증거가 �
   않았다. 재생 · ladder · 스트리밍 모양 · 샘플링 모두 모른다. 그래서 prefix 행의 trace 왕복이 `false` 다
 - `gpt-5.6-luna` · `gpt-5.6-sol` — 목록에서 보았지만 호출하지 않았다. terra 와 같은 구멍이 있는지 모르므로 행이 없다
 - 날짜 붙은 `gpt-5.6-terra-*` 스냅샷 — 본 적 없다
-- `gpt-6-astra` · `gpt-6-sol` · `gpt-6-luna` · `gpt-6.1-sol` — **행은 있지만 넷 다 호출하지 않았다**(§5.4). 재지 않은 것:
-  어느 rung 이든 실제로 보내 보기, `gpt-6-astra` · `gpt-6-sol` 의 `minimal`, reasoning item 재생과 손상 대조군,
-  `gpt-6-sol` · `gpt-6-luna` 가 `none` 에서 샘플링 파라미터를 받는지, reasoning summary. Chat Completions 로 강제한
-  `gpt-6-astra` · `gpt-6.1-sol` 의 도구 요청은 문서상 나갈 길이 없는데 클라이언트는 그 둘에 WARN 하지 않는다 — WARN 은
-  ladder 에 `none` 이 있는 행에만 걸린다
+- `gpt-6*` 네 이름의 `medium` · `max` rung(서버 열거로만 안다), `top_p`, reasoning summary, 스트리밍. Chat Completions
+  로 강제한 `gpt-6-astra` · `gpt-6.1-sol` 의 도구 요청은 나갈 길이 없다고 측정되었는데(§6.1) 클라이언트는 그 둘에 WARN
+  하지 않는다 — WARN 은 ladder 에 `none` 이 있는 행에만 걸린다
 - 그 넷 밖의 `gpt-6*` 이름과 날짜 스냅샷 — 본 적 없고 행도 없다
 - terra 의 샘플링은 `/v1/responses` 에서만 쟀다. ladder 는 Chat Completions 에서도 쟀다(§6.3, 2026-10-05) — 네 rung 모두
   도구 없이는 수용되고, 도구와 함께는 `none` 만 수용된다. 그 세 rung 의 `reasoning_tokens` 가 0 이었던 것은 한 단어짜리

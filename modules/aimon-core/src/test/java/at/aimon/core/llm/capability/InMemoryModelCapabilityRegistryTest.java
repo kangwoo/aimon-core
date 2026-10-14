@@ -166,11 +166,11 @@ class InMemoryModelCapabilityRegistryTest {
     }
 
     @Test
-    @DisplayName("the four gpt-6 names are the gpt-5 family row with the ladder the vendor documents")
-    void gpt6NamesStateTheirDocumentedLadders() {
-        // Documentation-derived, not measured: the "Using GPT-6" guide and the gpt-6-luna model page, read
-        // 2026-10-14. gpt-6-sol and gpt-6-luna take 'none'; gpt-6-astra and gpt-6.1-sol always reason. 'minimal' is
-        // on none of the four ladders, and that is the rung a wrong row would turn into a 400.
+    @DisplayName("the four gpt-6 names are the gpt-5 family row with their measured ladders")
+    void gpt6NamesStateTheirMeasuredLadders() {
+        // Measured on /v1/responses, 2026-10-14 (model-capabilities.md section 6.1): gpt-6-sol and gpt-6-luna accept
+        // 'none'; gpt-6-astra and gpt-6.1-sol refuse it. 'minimal' is refused by all four, and that is the rung a
+        // wrong row would turn into a 400.
         final InMemoryModelCapabilityRegistry registry = InMemoryModelCapabilityRegistry.withDefaults();
         final ModelCapabilities family = registry.resolve("gpt-5-mini");
 
