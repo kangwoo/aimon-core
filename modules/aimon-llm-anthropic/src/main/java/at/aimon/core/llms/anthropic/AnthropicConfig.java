@@ -53,6 +53,7 @@ public final class AnthropicConfig {
     private final Double temperature;
     private final int maxTokens;
     private final Duration timeout;
+    private final Integer maxRetries;
     private final ReasoningEffort reasoningEffort;
     private final AnthropicThinkingMode thinkingMode;
     private final Integer thinkingBudgetTokens;
@@ -67,6 +68,7 @@ public final class AnthropicConfig {
         this.temperature = builder.temperature;
         this.maxTokens = builder.maxTokens;
         this.timeout = builder.timeout;
+        this.maxRetries = builder.maxRetries;
         this.reasoningEffort = builder.reasoningEffort;
         this.thinkingMode = Objects.requireNonNull(builder.thinkingMode, "Thinking mode cannot be null");
         this.thinkingBudgetTokens = builder.thinkingBudgetTokens;
@@ -83,6 +85,9 @@ public final class AnthropicConfig {
         }
         if (maxTokens <= 0) {
             throw new IllegalArgumentException("Max tokens must be positive");
+        }
+        if (maxRetries != null && maxRetries < 0) {
+            throw new IllegalArgumentException("Max retries must not be negative, got: " + maxRetries);
         }
         if (thinkingBudgetTokens != null) {
             // The API rejects a budget below 1024 on every request, so failing here beats failing on all of them.
@@ -170,6 +175,21 @@ public final class AnthropicConfig {
      */
     public Duration getTimeout() {
         return timeout;
+    }
+
+    /**
+     * Gets how many times the SDK may retry a failed request on its own, after the first attempt.
+     *
+     * <p>
+     * Empty is not zero. Empty means nobody set it, and the SDK's own retry policy applies untouched — this config
+     * neither knows nor copies that policy's count. {@code 0} means the SDK sends each request once and hands the
+     * first failure back; {@code N} caps it at {@code N + 1} attempts. <em>Which</em> failures are retried is the SDK's
+     * decision either way.
+     *
+     * @return Optional containing the configured retry count, or empty when none was configured
+     */
+    public Optional<Integer> getMaxRetries() {
+        return Optional.ofNullable(maxRetries);
     }
 
     /**
@@ -276,23 +296,25 @@ public final class AnthropicConfig {
         // that names the model whose value was dropped, or in its absence.
         return Objects.equals(temperature, that.temperature) && maxTokens == that.maxTokens
                 && Objects.equals(baseUrl, that.baseUrl) && apiKey.equals(that.apiKey) && model.equals(that.model)
-                && timeout.equals(that.timeout) && reasoningEffort == that.reasoningEffort
-                && thinkingMode == that.thinkingMode && Objects.equals(thinkingBudgetTokens, that.thinkingBudgetTokens)
+                && timeout.equals(that.timeout) && Objects.equals(maxRetries, that.maxRetries)
+                && reasoningEffort == that.reasoningEffort && thinkingMode == that.thinkingMode
+                && Objects.equals(thinkingBudgetTokens, that.thinkingBudgetTokens)
                 && thinkingDisplay == that.thinkingDisplay && replayThinkingBlocks == that.replayThinkingBlocks;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(baseUrl, apiKey, model, temperature, maxTokens, timeout, reasoningEffort, thinkingMode,
-                thinkingBudgetTokens, thinkingDisplay, replayThinkingBlocks);
+        return Objects.hash(baseUrl, apiKey, model, temperature, maxTokens, timeout, maxRetries, reasoningEffort,
+                thinkingMode, thinkingBudgetTokens, thinkingDisplay, replayThinkingBlocks);
     }
 
     @Override
     public String toString() {
         return "AnthropicConfig{" + "baseUrl='" + baseUrl + '\'' + ", model='" + model + '\'' + ", temperature="
-                + temperature + ", maxTokens=" + maxTokens + ", timeout=" + timeout + ", reasoningEffort="
-                + reasoningEffort + ", thinkingMode=" + thinkingMode + ", thinkingBudgetTokens=" + thinkingBudgetTokens
-                + ", thinkingDisplay=" + thinkingDisplay + ", replayThinkingBlocks=" + replayThinkingBlocks + '}';
+                + temperature + ", maxTokens=" + maxTokens + ", timeout=" + timeout + ", maxRetries=" + maxRetries
+                + ", reasoningEffort=" + reasoningEffort + ", thinkingMode=" + thinkingMode + ", thinkingBudgetTokens="
+                + thinkingBudgetTokens + ", thinkingDisplay=" + thinkingDisplay + ", replayThinkingBlocks="
+                + replayThinkingBlocks + '}';
     }
 
     /** Builder for AnthropicConfig. */
@@ -303,6 +325,7 @@ public final class AnthropicConfig {
         private Double temperature;
         private int maxTokens = DEFAULT_MAX_TOKENS;
         private Duration timeout = DEFAULT_TIMEOUT;
+        private Integer maxRetries;
         private String baseUrl;
         private ReasoningEffort reasoningEffort;
         private AnthropicThinkingMode thinkingMode = DEFAULT_THINKING_MODE;
@@ -376,6 +399,31 @@ public final class AnthropicConfig {
          */
         public Builder timeout(Duration timeout) {
             this.timeout = Objects.requireNonNull(timeout, "Timeout cannot be null");
+            return this;
+        }
+
+        /**
+         * Caps the retries the SDK makes on its own, underneath this client.
+         *
+         * <p>
+         * Unset by default, and unset means the SDK's retry policy applies exactly as it did before this key existed.
+         * The retries it controls happen <em>below</em> {@link at.aimon.core.llm.LlmClient}: a wrapper around this
+         * client — one that meters, admits or reserves budget per call — sees one call however many HTTP attempts the
+         * SDK made for it. {@code 0} makes that one call one attempt, which is what such a wrapper needs if each
+         * attempt has to pass it; a retry is then the caller's to make, and it goes through the wrapper again.
+         *
+         * <p>
+         * It does not touch any retry above the client, and it does not make a stream replayable: the SDK retries only
+         * before a response arrives, so a stream that fails after its first event is never sent again whatever this
+         * says.
+         *
+         * @param maxRetries
+         *            the most retries after the first attempt ({@code 0} for none), or {@code null} to leave the SDK's
+         *            default in place; a negative value fails {@link #build()}
+         * @return This builder
+         */
+        public Builder maxRetries(Integer maxRetries) {
+            this.maxRetries = maxRetries;
             return this;
         }
 

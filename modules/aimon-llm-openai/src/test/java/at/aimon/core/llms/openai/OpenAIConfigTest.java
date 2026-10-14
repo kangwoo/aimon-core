@@ -359,4 +359,23 @@ class OpenAIConfigTest {
                     .isInstanceOf(IllegalArgumentException.class);
         }
     }
+
+    @Test
+    @DisplayName("maxRetries is unset by default, and unset is distinct from an explicit 0")
+    void maxRetriesDefaultsToUnset() {
+        assertThat(OpenAIConfig.builder().apiKey("k").model("gpt-4o").build().getMaxRetries()).isEmpty();
+        assertThat(OpenAIConfig.builder().apiKey("k").model("gpt-4o").maxRetries(null).build().getMaxRetries())
+                .isEmpty();
+        assertThat(OpenAIConfig.builder().apiKey("k").model("gpt-4o").maxRetries(0).build().getMaxRetries())
+                .contains(0);
+        assertThat(OpenAIConfig.builder().apiKey("k").model("gpt-4o").maxRetries(5).build().getMaxRetries())
+                .contains(5);
+    }
+
+    @Test
+    @DisplayName("a negative maxRetries fails build()")
+    void negativeMaxRetriesIsRejected() {
+        assertThatThrownBy(() -> OpenAIConfig.builder().apiKey("k").model("gpt-4o").maxRetries(-1).build())
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Max retries");
+    }
 }
