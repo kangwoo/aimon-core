@@ -60,8 +60,8 @@ class AnthropicLlmClientSdkRetryTest {
     @Test
     @DisplayName("maxRetries(0): a retryable 529 is sent once and its error propagates")
     void zeroSendsOnce() throws Exception {
-        try (CountingHttpServer server = CountingHttpServer.answering(OVERLOADED)) {
-            AnthropicLlmClient client = client(server, 0);
+        try (CountingHttpServer server = CountingHttpServer.answering(OVERLOADED);
+                AnthropicLlmClient client = client(server, 0)) {
 
             assertThatThrownBy(() -> send(client)).isInstanceOf(LlmClientException.class);
 
@@ -72,8 +72,8 @@ class AnthropicLlmClientSdkRetryTest {
     @Test
     @DisplayName("maxRetries(0): a 429 is sent once")
     void zeroSendsRateLimitOnce() throws Exception {
-        try (CountingHttpServer server = CountingHttpServer.answering(RATE_LIMITED)) {
-            AnthropicLlmClient client = client(server, 0);
+        try (CountingHttpServer server = CountingHttpServer.answering(RATE_LIMITED);
+                AnthropicLlmClient client = client(server, 0)) {
 
             assertThatThrownBy(() -> send(client)).isInstanceOf(LlmClientException.class);
 
@@ -84,8 +84,8 @@ class AnthropicLlmClientSdkRetryTest {
     @Test
     @DisplayName("maxRetries(N): a failure that keeps coming back is sent at most N + 1 times")
     void positiveCapsAttempts() throws Exception {
-        try (CountingHttpServer server = CountingHttpServer.answering(OVERLOADED)) {
-            AnthropicLlmClient client = client(server, 1);
+        try (CountingHttpServer server = CountingHttpServer.answering(OVERLOADED);
+                AnthropicLlmClient client = client(server, 1)) {
 
             assertThatThrownBy(() -> send(client)).isInstanceOf(LlmClientException.class);
 
@@ -96,8 +96,8 @@ class AnthropicLlmClientSdkRetryTest {
     @Test
     @DisplayName("maxRetries(N): a failure followed by success is retried within the cap and the answer converted")
     void recoversWithinCap() throws Exception {
-        try (CountingHttpServer server = CountingHttpServer.answering(OVERLOADED, SUCCESS)) {
-            AnthropicLlmClient client = client(server, 3);
+        try (CountingHttpServer server = CountingHttpServer.answering(OVERLOADED, SUCCESS);
+                AnthropicLlmClient client = client(server, 3)) {
 
             LlmResponse response = send(client);
 
@@ -111,8 +111,8 @@ class AnthropicLlmClientSdkRetryTest {
     @Test
     @DisplayName("unset: the SDK's own policy applies unchanged")
     void unsetKeepsSdkDefault() throws Exception {
-        try (CountingHttpServer server = CountingHttpServer.answering(OVERLOADED)) {
-            AnthropicLlmClient client = client(server, null);
+        try (CountingHttpServer server = CountingHttpServer.answering(OVERLOADED);
+                AnthropicLlmClient client = client(server, null)) {
 
             assertThatThrownBy(() -> send(client)).isInstanceOf(LlmClientException.class);
 
@@ -123,8 +123,8 @@ class AnthropicLlmClientSdkRetryTest {
     @Test
     @DisplayName("a non-retryable 400 is sent once whatever maxRetries says")
     void nonRetryableIsNeverRetried() throws Exception {
-        try (CountingHttpServer server = CountingHttpServer.answering(BAD_REQUEST)) {
-            AnthropicLlmClient client = client(server, 3);
+        try (CountingHttpServer server = CountingHttpServer.answering(BAD_REQUEST);
+                AnthropicLlmClient client = client(server, 3)) {
 
             assertThatThrownBy(() -> send(client)).isInstanceOf(LlmClientException.class);
 
@@ -135,8 +135,8 @@ class AnthropicLlmClientSdkRetryTest {
     @Test
     @DisplayName("maxRetries(0): a dropped connection is sent once and fails the call")
     void zeroDoesNotRetryNetworkFailure() throws Exception {
-        try (CountingHttpServer server = CountingHttpServer.answering(Step.drop())) {
-            AnthropicLlmClient client = client(server, 0);
+        try (CountingHttpServer server = CountingHttpServer.answering(Step.drop());
+                AnthropicLlmClient client = client(server, 0)) {
 
             assertThatThrownBy(() -> send(client)).isInstanceOf(LlmClientException.class);
 
@@ -147,8 +147,8 @@ class AnthropicLlmClientSdkRetryTest {
     @Test
     @DisplayName("streaming, maxRetries(0): an error before the stream opens is sent once")
     void streamingZeroSendsOnce() throws Exception {
-        try (CountingHttpServer server = CountingHttpServer.answering(OVERLOADED)) {
-            AnthropicLlmClient client = client(server, 0);
+        try (CountingHttpServer server = CountingHttpServer.answering(OVERLOADED);
+                AnthropicLlmClient client = client(server, 0)) {
 
             assertThatThrownBy(() -> stream(client, chunk -> {
             })).isInstanceOf(LlmClientException.class);
@@ -160,8 +160,8 @@ class AnthropicLlmClientSdkRetryTest {
     @Test
     @DisplayName("streaming, maxRetries(N): an error before the stream opens is sent at most N + 1 times")
     void streamingPositiveCapsAttempts() throws Exception {
-        try (CountingHttpServer server = CountingHttpServer.answering(OVERLOADED)) {
-            AnthropicLlmClient client = client(server, 2);
+        try (CountingHttpServer server = CountingHttpServer.answering(OVERLOADED);
+                AnthropicLlmClient client = client(server, 2)) {
 
             assertThatThrownBy(() -> stream(client, chunk -> {
             })).isInstanceOf(LlmClientException.class);
@@ -174,8 +174,8 @@ class AnthropicLlmClientSdkRetryTest {
     @DisplayName("streaming: a stream reset after its first delta is not replayed, even with retries left")
     void streamResetAfterDeltaIsNotReplayed() throws Exception {
         CountDownLatch deltaSeen = new CountDownLatch(1);
-        try (CountingHttpServer server = CountingHttpServer.answering(Step.sseThenReset(PARTIAL_STREAM, deltaSeen))) {
-            AnthropicLlmClient client = client(server, 3);
+        try (CountingHttpServer server = CountingHttpServer.answering(Step.sseThenReset(PARTIAL_STREAM, deltaSeen));
+                AnthropicLlmClient client = client(server, 3)) {
             List<LlmStreamChunk> chunks = new CopyOnWriteArrayList<>();
 
             // Whether the reset surfaces as an error or as a short answer is the stream contract's business, not this
@@ -196,8 +196,8 @@ class AnthropicLlmClientSdkRetryTest {
     @Test
     @DisplayName("maxRetries(N): a connection that keeps dropping is sent at most N + 1 times")
     void positiveCapsNetworkFailures() throws Exception {
-        try (CountingHttpServer server = CountingHttpServer.answering(Step.drop())) {
-            AnthropicLlmClient client = client(server, 1);
+        try (CountingHttpServer server = CountingHttpServer.answering(Step.drop());
+                AnthropicLlmClient client = client(server, 1)) {
 
             assertThatThrownBy(() -> send(client)).isInstanceOf(LlmClientException.class);
 

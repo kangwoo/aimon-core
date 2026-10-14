@@ -48,31 +48,32 @@ class OpenAILlmClientSdkRetryTest {
     private static final Step BAD_REQUEST = Step.json(400,
             "{\"error\":{\"message\":\"bad\",\"type\":\"invalid_request_error\"}}");
 
+    private static final String CHAT_SUCCESS = "{\"id\":\"c1\",\"object\":\"chat.completion\",\"created\":1,"
+            + "\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
+            + "\"content\":\"ok\",\"refusal\":null},\"finish_reason\":\"stop\",\"logprobs\":null}],"
+            + "\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1,\"total_tokens\":4}}";
+    private static final String CHAT_PARTIAL_STREAM = "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\","
+            + "\"created\":1,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\","
+            + "\"content\":\"partial\"},\"finish_reason\":null}]}\n\n";
+    private static final String RESPONSES_SUCCESS = "{\"id\":\"r\",\"object\":\"response\",\"created_at\":1,"
+            + "\"model\":\"gpt-5-mini\",\"status\":\"completed\",\"parallel_tool_calls\":true,"
+            + "\"tool_choice\":\"auto\",\"tools\":[],\"output\":[{\"type\":\"message\",\"id\":\"msg_1\","
+            + "\"role\":\"assistant\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\","
+            + "\"text\":\"ok\",\"annotations\":[]}]}],\"usage\":{\"input_tokens\":3,\"output_tokens\":1,"
+            + "\"total_tokens\":4,\"input_tokens_details\":{\"cached_tokens\":0},"
+            + "\"output_tokens_details\":{\"reasoning_tokens\":0}}}";
+    private static final String RESPONSES_PARTIAL_STREAM = "event: response.created\ndata: {\"type\":\"response.created\","
+            + "\"sequence_number\":0,\"response\":{\"id\":\"r\",\"created_at\":1,\"model\":\"m\","
+            + "\"object\":\"response\",\"parallel_tool_calls\":true,\"tool_choice\":\"auto\",\"tools\":[],"
+            + "\"status\":\"in_progress\",\"output\":[]}}\n\n"
+            + "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\","
+            + "\"content_index\":0,\"item_id\":\"msg_1\",\"output_index\":0,\"logprobs\":[],"
+            + "\"delta\":\"partial\",\"sequence_number\":1}\n\n";
+
     /** The two endpoints, each with a model that routes to it and a successful answer from it. */
     enum Endpoint {
-        CHAT_COMPLETIONS("gpt-4o",
-                "{\"id\":\"c1\",\"object\":\"chat.completion\",\"created\":1,\"model\":\"gpt-4o\","
-                        + "\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\","
-                        + "\"refusal\":null},\"finish_reason\":\"stop\",\"logprobs\":null}],"
-                        + "\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1,\"total_tokens\":4}}",
-                "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"m\","
-                        + "\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"partial\"},"
-                        + "\"finish_reason\":null}]}\n\n"), RESPONSES(
-                                "gpt-5-mini",
-                                "{\"id\":\"r\",\"object\":\"response\",\"created_at\":1,\"model\":\"gpt-5-mini\","
-                                        + "\"status\":\"completed\",\"parallel_tool_calls\":true,\"tool_choice\":\"auto\","
-                                        + "\"tools\":[],\"output\":[{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\","
-                                        + "\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\","
-                                        + "\"annotations\":[]}]}],\"usage\":{\"input_tokens\":3,\"output_tokens\":1,"
-                                        + "\"total_tokens\":4,\"input_tokens_details\":{\"cached_tokens\":0},"
-                                        + "\"output_tokens_details\":{\"reasoning_tokens\":0}}}",
-                                "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,"
-                                        + "\"response\":{\"id\":\"r\",\"created_at\":1,\"model\":\"m\",\"object\":\"response\","
-                                        + "\"parallel_tool_calls\":true,\"tool_choice\":\"auto\",\"tools\":[],"
-                                        + "\"status\":\"in_progress\",\"output\":[]}}\n\n"
-                                        + "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\","
-                                        + "\"content_index\":0,\"item_id\":\"msg_1\",\"output_index\":0,\"logprobs\":[],"
-                                        + "\"delta\":\"partial\",\"sequence_number\":1}\n\n");
+        CHAT_COMPLETIONS("gpt-4o", CHAT_SUCCESS, CHAT_PARTIAL_STREAM), RESPONSES("gpt-5-mini", RESPONSES_SUCCESS,
+                RESPONSES_PARTIAL_STREAM);
 
         private final String model;
         private final String success;
