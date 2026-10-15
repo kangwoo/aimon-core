@@ -86,8 +86,9 @@ class QuotaImplTest {
         void dropsExpiredDailyKeys() {
             final Clock clock = Clock.fixed(Instant.parse("2026-10-15T12:00:00Z"), ZoneOffset.UTC);
             final InMemoryUsageLedger ledger = new InMemoryUsageLedger(clock, Period.ofDays(7));
-            final QuotaKey old = QuotaKey.of(SESSION, QuotaWindow.DAILY, "2026-10-07");
-            final QuotaKey kept = QuotaKey.of(SESSION, QuotaWindow.DAILY, "2026-10-08");
+            // Seven days of retention plus the one day of slack for zones behind UTC.
+            final QuotaKey old = QuotaKey.of(SESSION, QuotaWindow.DAILY, "2026-10-06");
+            final QuotaKey kept = QuotaKey.of(SESSION, QuotaWindow.DAILY, "2026-10-07");
             final QuotaKey total = QuotaKey.of(SESSION, QuotaWindow.TOTAL, "");
 
             ledger.charge(List.of(old, kept, total), QuotaUsage.of(1, Money.zeroUsd()));
@@ -96,6 +97,20 @@ class QuotaImplTest {
             assertThat(usage.get(old)).isEqualTo(QuotaUsage.zero());
             assertThat(usage.get(kept).getTokens()).isEqualTo(1);
             assertThat(usage.get(total).getTokens()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("zero retention keeps the current bucket of a zone that is still on the previous UTC day")
+        void zeroRetentionKeepsWesternZonesCurrentBucket() {
+            // 02:00 UTC on the 15th is 21:00 on the 14th in UTC-5: that zone's current bucket is the 14th.
+            final Clock clock = Clock.fixed(Instant.parse("2026-10-15T02:00:00Z"), ZoneOffset.UTC);
+            final InMemoryUsageLedger ledger = new InMemoryUsageLedger(clock, Period.ZERO);
+            final QuotaKey current = QuotaKey.of(SESSION, QuotaWindow.DAILY, "2026-10-14");
+
+            ledger.charge(List.of(current), QuotaUsage.of(1, Money.zeroUsd()));
+            ledger.charge(List.of(current), QuotaUsage.of(1, Money.zeroUsd()));
+
+            assertThat(ledger.get(List.of(current)).get(current).getTokens()).isEqualTo(2);
         }
     }
 

@@ -32,7 +32,8 @@ import at.aimon.core.llm.cost.Money;
  *
  * <p>
  * {@link QuotaWindow#DAILY} keys are dropped once their day is older than the retention period (seven days unless
- * configured), checked at most once per UTC day on a charge. {@link QuotaWindow#TOTAL} keys are never dropped.
+ * configured) plus one day of slack for zones behind UTC, checked at most once per UTC day on a charge.
+ * {@link QuotaWindow#TOTAL} keys are never dropped.
  *
  * <p>
  * Application-scoped and thread-safe. Holds no resources, so there is nothing to close.
@@ -99,7 +100,9 @@ public final class InMemoryUsageLedger implements UsageLedger {
             return;
         }
         lastPurgeDay = today;
-        final LocalDate oldestKept = today.minus(dailyRetention);
+        // Buckets are dated in the guard's zone, not UTC, and a zone west of UTC is still on the previous day. One day
+        // of slack keeps every zone's current bucket — even at zero retention — since no zone trails UTC by a full day.
+        final LocalDate oldestKept = today.minus(dailyRetention).minusDays(1);
         counters.keySet().removeIf(key -> key.getWindow() == QuotaWindow.DAILY && isBefore(key, oldestKept));
     }
 

@@ -212,7 +212,7 @@ spent, and the ledger's usage is always lower than the provider's invoice
 ([UQ-1](../../backlog/usage-quota-open-items.md)).
 
 - **compaction** summary calls
-- LLM calls of a slash-command skill that does not fork (`/skill`)
+- the **cost** of a slash-command skill that does not fork (`/skill`) — it is checked and its tokens are charged, but its calls are not priced
 - LLM calls a code-behavior subagent makes directly
 - LLM calls outside any execution, such as memory derivation and wiki synthesis
 - Embedding and knowledge search cost

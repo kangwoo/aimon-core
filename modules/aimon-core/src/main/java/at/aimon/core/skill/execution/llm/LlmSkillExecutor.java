@@ -17,6 +17,8 @@ import at.aimon.core.agent.budget.StalledIterationGuard;
 import at.aimon.core.agent.budget.TruncatedResponses;
 import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.context.ContextRequest;
+import at.aimon.core.agent.quota.QuotaGuard;
+import at.aimon.core.agent.quota.QuotaViolation;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.SideEffectLevel;
@@ -208,23 +210,7 @@ public class LlmSkillExecutor implements SkillExecutor {
                     scratchTranscriptLabel(context.getExecutionId()), systemPrompt);
             transcriptBuffer.addUserMessage(renderedBody);
 
-            // Withhold what the tool execution manager would refuse anyway. The ceiling is read from the manager
-            // rather than configured here on purpose: the filter and the refusal then cannot disagree, and a skill
-            // offered a tool above the ceiling would spend an iteration picking it and reading the refusal.
-            final SideEffectLevel ceiling = toolExecutionManager.getMaxSideEffectLevel();
-            final List<ToolDefinition> filteredTools = filterTools(allowedTools, context.getAvailableTools()).stream()
-                    .filter(tool -> ceiling.permits(tool.getSideEffectLevel())).map(Tool::getDefinition).toList();
-            if (filteredTools.isEmpty() && !allowedTools.isEmpty()) {
-                // Either filter alone leaves something; together they can leave nothing — a misspelled allowed-tools
-                // entry, or one naming only tools above the ceiling. No provider rejects an empty tools field (all
-                // omit it), so the model answers from prose and the skill reports a clean result: an answer that looks
-                // like work that was never done. The outcome is left alone — a skill that legitimately needs no tool
-                // exists — but it is not left silent.
-                log.warn(
-                        "Skill '{}' is offered no tools: its allowed-tools names {} and the side-effect ceiling is "
-                                + "{}, leaving nothing from the {} available tool(s). It will answer without acting.",
-                        skill.getName(), allowedTools, ceiling, context.getAvailableTools().size());
-            }
+            final List<ToolDefinition> filteredTools = offeredTools(skill, allowedTools, context);
 
             // Prefer the per-execution dispatcher the agent executor binds into the command tool context: it runs each
             // call through the same SingleToolInvoker pipeline the ReAct loop uses, so a skill cannot reach a tool by
@@ -237,9 +223,17 @@ public class LlmSkillExecutor implements SkillExecutor {
             // enough to need it. It still asks the engine for the view, so no LLM call reads the transcript directly.
             final ContextRequest contextRequest = ContextRequest.builder().transcriptBuffer(transcriptBuffer)
                     .model(context.getDefaultModel()).build();
-            LlmResponse currentResponse = llmClient.sendMessage(systemPrompt,
-                    CONTEXT_ENGINE.prepare(contextRequest).getView().getMessages(), filteredTools,
-                    context.getDefaultModel());
+            // The turn's quota guard, bound into the command tool context: a `/my-skill` loop runs inside the turn, so
+            // it is checked and charged like the turn's own calls, or a slash would be a way past a spent quota.
+            final QuotaGuard quotaGuard = context.getToolContext().get(ToolContextKeys.QUOTA_GUARD)
+                    .orElseGet(QuotaGuard::disabled);
+            final Optional<SkillExecutionResult> quotaStopBeforeFirstCall = quotaStop(skill, quotaGuard, 0,
+                    accumulatedTokens, startTime);
+            if (quotaStopBeforeFirstCall.isPresent()) {
+                return quotaStopBeforeFirstCall.get();
+            }
+            LlmResponse currentResponse = sendAndCharge(systemPrompt, contextRequest, filteredTools, context,
+                    quotaGuard);
             accumulatedTokens = accumulatedTokens.add(currentResponse.getTokenUsage());
 
             int iterationCount = 0;
@@ -281,9 +275,13 @@ public class LlmSkillExecutor implements SkillExecutor {
                             startTime);
                 }
 
-                currentResponse = llmClient.sendMessage(transcriptBuffer.getSystemPrompt(),
-                        CONTEXT_ENGINE.prepare(contextRequest).getView().getMessages(), filteredTools,
-                        context.getDefaultModel());
+                final Optional<SkillExecutionResult> quotaStopBeforeNextCall = quotaStop(skill, quotaGuard,
+                        iterationCount + 1, accumulatedTokens, startTime);
+                if (quotaStopBeforeNextCall.isPresent()) {
+                    return quotaStopBeforeNextCall.get();
+                }
+                currentResponse = sendAndCharge(transcriptBuffer.getSystemPrompt(), contextRequest, filteredTools,
+                        context, quotaGuard);
                 accumulatedTokens = accumulatedTokens.add(currentResponse.getTokenUsage());
                 iterationCount++;
             }
@@ -350,6 +348,99 @@ public class LlmSkillExecutor implements SkillExecutor {
                 skill.getName(), iterationCount + 1, toolUses.stream().map(ToolUse::getName).toList(),
                 TruncatedResponses.reasoningClause(response.getTokenUsage()));
         return toolUses.stream().map(TruncatedResponses::refusal).toList();
+    }
+
+    /**
+     * The tools the skill's model is offered: its bounded allow-list, less what the tool execution manager would refuse
+     * anyway.
+     *
+     * <p>
+     * The ceiling is read from the manager rather than configured here on purpose: the filter and the refusal then
+     * cannot disagree, and a skill offered a tool above the ceiling would spend an iteration picking it and reading the
+     * refusal.
+     *
+     * @param skill
+     *            the skill being executed, named in the WARN
+     * @param allowedTools
+     *            the skill's allow-list, already bounded by the caller's
+     * @param context
+     *            the execution context supplying the available tools
+     * @return the definitions to offer (never null; may be empty)
+     */
+    private List<ToolDefinition> offeredTools(Skill skill, List<AllowedTool> allowedTools,
+            SkillExecutionContext context) {
+        final SideEffectLevel ceiling = toolExecutionManager.getMaxSideEffectLevel();
+        final List<ToolDefinition> filteredTools = filterTools(allowedTools, context.getAvailableTools()).stream()
+                .filter(tool -> ceiling.permits(tool.getSideEffectLevel())).map(Tool::getDefinition).toList();
+        if (filteredTools.isEmpty() && !allowedTools.isEmpty()) {
+            // Either filter alone leaves something; together they can leave nothing — a misspelled allowed-tools
+            // entry, or one naming only tools above the ceiling. No provider rejects an empty tools field (all omit
+            // it), so the model answers from prose and the skill reports a clean result: an answer that looks like
+            // work that was never done. The outcome is left alone — a skill that legitimately needs no tool exists —
+            // but it is not left silent.
+            log.warn(
+                    "Skill '{}' is offered no tools: its allowed-tools names {} and the side-effect ceiling is {}, "
+                            + "leaving nothing from the {} available tool(s). It will answer without acting.",
+                    skill.getName(), allowedTools, ceiling, context.getAvailableTools().size());
+        }
+        return filteredTools;
+    }
+
+    /**
+     * Makes one LLM call of the skill loop and charges its tokens to the turn's usage quota. There is no cost estimator
+     * here, so the call is charged tokens only, as an unpriced fork call is.
+     *
+     * @param systemPrompt
+     *            the system prompt to send
+     * @param contextRequest
+     *            the request the context engine builds the view from
+     * @param tools
+     *            the tools offered
+     * @param context
+     *            the execution context supplying the model
+     * @param quotaGuard
+     *            the turn's guard ({@link QuotaGuard#disabled()} when none was bound)
+     * @return the response (never null)
+     */
+    private LlmResponse sendAndCharge(String systemPrompt, ContextRequest contextRequest, List<ToolDefinition> tools,
+            SkillExecutionContext context, QuotaGuard quotaGuard) {
+        final LlmResponse response = llmClient.sendMessage(systemPrompt,
+                CONTEXT_ENGINE.prepare(contextRequest).getView().getMessages(), tools, context.getDefaultModel());
+        quotaGuard.charge(context.getDefaultModel().getName().orElse(null), response.getTokenUsage(), null);
+        return response;
+    }
+
+    /**
+     * Checks the turn's usage quota before an LLM call, the boundary both agent executors check it at.
+     *
+     * <p>
+     * A reached quota fails the skill with a message naming {@code QUOTA_EXCEEDED} and the key that stopped it — a
+     * skill result carries no completion reason, so the message is where the caller learns retrying will not help. A
+     * guard that fails closed throws {@code QuotaLedgerUnavailableException} out of the check, and the loop's catch
+     * turns it into a plain failure.
+     *
+     * @param skill
+     *            the skill being executed
+     * @param quotaGuard
+     *            the turn's guard ({@link QuotaGuard#disabled()} when none was bound)
+     * @param toolIterations
+     *            tool iterations completed so far, for the metadata
+     * @param accumulatedTokens
+     *            tokens spent so far, for the metadata
+     * @param startTime
+     *            when the skill started, for the metadata
+     * @return the failure to return when the quota is reached, or empty to make the call
+     */
+    private static Optional<SkillExecutionResult> quotaStop(Skill skill, QuotaGuard quotaGuard, int toolIterations,
+            TokenUsage accumulatedTokens, Instant startTime) {
+        final Optional<QuotaViolation> violation = quotaGuard.check();
+        if (violation.isEmpty()) {
+            return Optional.empty();
+        }
+        final String message = "Execution stopped: QUOTA_EXCEEDED — " + violation.get().describe();
+        log.info("Skill '{}' stopped before an LLM call: {}", skill.getName(), message);
+        return Optional.of(SkillExecutionResult.failure(message, new IllegalStateException(message),
+                buildMetadata(toolIterations, accumulatedTokens, startTime)));
     }
 
     /**
