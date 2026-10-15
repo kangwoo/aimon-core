@@ -83,6 +83,7 @@
 - [중단 가능 도구 가이드](../features/agent-execution/interruptible-tools-guide.md)
 - [system-reminder 규약](../features/agent-execution/system-reminder-convention.md)
 - [Context Engine 가이드](../features/agent-execution/context-engine-guide.md) — 긴 대화의 압축 정책 (`default` / `rolling`)
+- [Usage Quota 가이드](../features/agent-execution/usage-quota-guide.md) — 세션·사용자·테넌트별 누적 사용량 한도
 
 ---
 

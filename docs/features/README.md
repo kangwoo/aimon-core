@@ -19,6 +19,7 @@ ReAct 루프, 턴 처리, 중단, 입력 큐.
 | [`interruptible-tools-guide.md`](agent-execution/interruptible-tools-guide.md) | Ctrl+C, NOW priority 입력 등 외부 중단 처리와 `InterruptBehavior` |
 | [`system-reminder-convention.md`](agent-execution/system-reminder-convention.md) | `<system-reminder>` 합성 컨텍스트를 넣는 규약 |
 | [`context-engine-guide.md`](agent-execution/context-engine-guide.md) | 긴 대화의 컨텍스트를 줄이는 engine 고르기 — `default` / `rolling`, `SessionHistory` 도구 |
+| [`usage-quota-guide.md`](agent-execution/usage-quota-guide.md) | 세션·사용자·테넌트·일 단위 누적 토큰·비용 한도 — 켜는 법, 포크 합산, soft limit 의 초과 상한 |
 
 설계 근거: [`agent-runtime-scope.md`](../design/agent-execution/agent-runtime-scope.md) ·
 [`orca-executor.md`](../design/agent-execution/orca-executor.md) ·
@@ -26,7 +27,8 @@ ReAct 루프, 턴 처리, 중단, 입력 큐.
 [`interrupt.md`](../design/agent-execution/interrupt.md) ·
 [`compaction.md`](../design/agent-execution/compaction.md) ·
 [`context-engine.md`](../design/agent-execution/context-engine.md) ·
-[`artifact.md`](../design/agent-execution/artifact.md)
+[`artifact.md`](../design/agent-execution/artifact.md) ·
+[`usage-quota.md`](../design/agent-execution/usage-quota.md)
 
 ## `session/` — 세션
 
