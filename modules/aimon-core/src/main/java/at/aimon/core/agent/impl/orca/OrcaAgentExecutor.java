@@ -2867,6 +2867,10 @@ public class OrcaAgentExecutor
      * unmetered, loudly.
      */
     private QuotaGuard createQuotaGuard(OrcaAgentRuntime agentRuntime, OrcaAgentExecutionRequest executionRequest) {
+        // No ledger, no work: a stack without quotas resolves nothing and so can never log the WARN below.
+        if (!quotaGuardFactory.isEnabled()) {
+            return QuotaGuard.disabled();
+        }
         try {
             return quotaGuardFactory.create(QuotaResolutionContext.builder().agentRuntimeId(agentRuntime.getId())
                     .sessionId(executionRequest.getSessionId()).principal(executionRequest.getPrincipal().orElse(null))

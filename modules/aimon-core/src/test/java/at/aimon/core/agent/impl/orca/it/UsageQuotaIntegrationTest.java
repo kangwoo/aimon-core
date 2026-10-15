@@ -49,6 +49,8 @@ class UsageQuotaIntegrationTest {
     private static final String WORKER = "it-worker";
     private static final String INNER = "it-inner";
     private static final long TOKENS_PER_CALL = 15;
+    private static final String INLINE_SKILL = "it-inline";
+    private static final String FORK_SKILL = "it-forked";
 
     @TempDir
     Path tempDir;
@@ -62,6 +64,13 @@ class UsageQuotaIntegrationTest {
         support = new OrcaRuntimeItSupport(tempDir);
         llm = new ScriptedLlmClient();
         ledger = new InMemoryUsageLedger();
+        // An inline skill for the slash-command path, and a fork-mode one for the Skill tool's fork.
+        support.seedSkill("agent-a", INLINE_SKILL, "---\nname: " + INLINE_SKILL
+                + "\ndescription: Runs its own LLM loop when typed as a slash command\ninvoke:\n  user: true\n---\n\nSummarise the module\n");
+        support.seedSkill("agent-a", FORK_SKILL,
+                "---\nname: " + FORK_SKILL
+                        + "\ndescription: Runs its body in a subagent\nexecution:\n  mode: fork\n  agent: " + WORKER
+                        + "\n---\n\nForked body\n");
     }
 
     @AfterEach
@@ -164,6 +173,57 @@ class UsageQuotaIntegrationTest {
         // too — a guard that reached only one level would leave the second level as the bypass.
         assertThat(llm.callCount(ScriptedLlmClient.forkRoute(sessionId.value(), INNER))).isEqualTo(1);
         assertThat(sessionTotal(sessionId).getTokens()).isEqualTo(5 * TOKENS_PER_CALL);
+    }
+
+    @Test
+    @DisplayName("a /skill typed into a session whose quota is spent makes no LLM call")
+    void slashSkillIsStoppedBySpentSessionQuota() {
+        final OrcaRuntimeItSupport.Node node = node(
+                factory(ledger, QuotaScope.Kind.SESSION, QuotaLimit.total().maxTokens(TOKENS_PER_CALL).build()));
+        final SessionId sessionId = OrcaRuntimeItSupport.newSession();
+        llm.script(sessionId.value(), ScriptedLlmClient.text("spends the quota"));
+        assertThat(node.run(sessionId, "turn 1").getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
+
+        final OrcaAgentExecutionResult slash = node.run(sessionId, "/" + INLINE_SKILL);
+
+        // The skill loop calls the LLM without call metadata, so its calls land on the unrouted route. The executor
+        // binds the turn's guard into the command tool context by hand; without that binding this call would be made.
+        assertThat(llm.callCount(ScriptedLlmClient.UNROUTED)).as("the skill loop must not reach the LLM").isZero();
+        assertThat(slash.isSuccess()).isFalse();
+        assertThat(slash.getErrorMessage()).contains("QUOTA_EXCEEDED");
+    }
+
+    @Test
+    @DisplayName("a /skill's LLM calls are charged to the session it was typed into")
+    void slashSkillUsageIsChargedToTheSession() {
+        final OrcaRuntimeItSupport.Node node = node(
+                factory(ledger, QuotaScope.Kind.SESSION, QuotaLimit.total().maxTokens(1_000).build()));
+        final SessionId sessionId = OrcaRuntimeItSupport.newSession();
+        // The skill loop's calls carry no metadata, so they are scripted on the unrouted route.
+        llm.script(ScriptedLlmClient.UNROUTED, ScriptedLlmClient.text("summary"));
+
+        assertThat(node.run(sessionId, "/" + INLINE_SKILL).isSuccess()).isTrue();
+
+        assertThat(llm.callCount(ScriptedLlmClient.UNROUTED)).isEqualTo(1);
+        assertThat(sessionTotal(sessionId).getTokens()).isEqualTo(TOKENS_PER_CALL);
+    }
+
+    @Test
+    @DisplayName("a fork-mode skill called through the Skill tool is charged to the parent turn's session key")
+    void forkSkillUsageIsChargedToTheParentSession() {
+        final OrcaRuntimeItSupport.Node node = node(
+                factory(ledger, QuotaScope.Kind.SESSION, QuotaLimit.total().maxTokens(1_000).build()));
+        final SessionId sessionId = OrcaRuntimeItSupport.newSession();
+        llm.script(sessionId.value(), ScriptedLlmClient.callTool("Skill", Map.of("skill", FORK_SKILL)),
+                ScriptedLlmClient.text("done"));
+        llm.script(ScriptedLlmClient.forkRoute(sessionId.value(), WORKER), ScriptedLlmClient.text("forked"));
+
+        assertThat(node.run(sessionId, "run the forked skill").getCompletionReason())
+                .isEqualTo(CompletionReason.COMPLETED);
+
+        // 2 parent + 1 fork: SubagentBackedSkillForkExecutor hands the fork the turn's guard.
+        assertThat(llm.callCount(ScriptedLlmClient.forkRoute(sessionId.value(), WORKER))).isEqualTo(1);
+        assertThat(sessionTotal(sessionId).getTokens()).isEqualTo(3 * TOKENS_PER_CALL);
     }
 
     @Test

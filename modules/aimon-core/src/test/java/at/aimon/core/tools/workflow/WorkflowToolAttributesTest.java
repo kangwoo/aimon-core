@@ -20,6 +20,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.quota.QuotaGuard;
+import at.aimon.core.agent.quota.QuotaLimit;
+import at.aimon.core.agent.quota.impl.InMemoryUsageLedger;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContext;
@@ -213,6 +216,35 @@ class WorkflowToolAttributesTest {
         assertThat(result.isSuccess()).as(result.getContent()).isTrue();
         assertThat(seen).isNotEmpty();
         assertThat(seen.values()).allSatisfy(registry -> assertThat(registry).isSameAs(fromContext));
+    }
+
+    @Test
+    @DisplayName("a foreground run hands every step the caller's quota guard, so a workflow is no way around a quota")
+    void foregroundStepsCarryTheCallersQuotaGuard() {
+        final QuotaGuard guard = QuotaGuard.builder().ledger(new InMemoryUsageLedger())
+                .policy(scope -> List.of(QuotaLimit.total().maxTokens(1_000).build())).build();
+        final Map<String, QuotaGuard> seen = new ConcurrentHashMap<>();
+        final InMemorySubagentBehaviorRegistry behaviors = new InMemorySubagentBehaviorRegistry();
+        for (String name : List.of("workflow:candidate:a", "workflow:candidate:b", "workflow:synthesizer")) {
+            behaviors.register(name, (c, r, s) -> {
+                seen.put(name, r.getQuotaGuard());
+                return s.success(name + " answer");
+            });
+        }
+        behaviors.register("workflow:judge", (c, r, s) -> {
+            seen.put("workflow:judge", r.getQuotaGuard());
+            return s.success("{\"score\": 5}");
+        });
+        final ToolContext context = ToolContext.builder()
+                .put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeId.of("agent:test"))
+                .put(ToolContextKeys.QUOTA_GUARD, guard).build();
+
+        final ToolResult result = newTool(new InMemorySubagentRegistry(), behaviors).execute(
+                ToolInput.of(Map.of("prompt", "how?", "strategy", "judge_panel", "perspectives", "a,b")), context);
+
+        assertThat(result.isSuccess()).as(result.getContent()).isTrue();
+        assertThat(seen).containsKeys("workflow:candidate:a", "workflow:candidate:b", "workflow:judge");
+        assertThat(seen.values()).allSatisfy(stepGuard -> assertThat(stepGuard).isSameAs(guard));
     }
 
     private WorkflowTool newTool(SubagentRegistry registry, InMemorySubagentBehaviorRegistry behaviors) {

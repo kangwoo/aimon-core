@@ -26,7 +26,7 @@ AIMON has two kinds of limit. The names are similar, but they count over differe
 | Unit | execution | session · user · tenant |
 | Axes | iterations · tokens · cost · wall-clock | tokens · cost |
 | When it stops | `MAX_ITERATIONS` · `TOKEN_BUDGET_EXCEEDED` etc. | `QUOTA_EXCEEDED` |
-| Changing it at runtime | REPL `/budget` | changing the policy (`QuotaPolicy`) |
+| Changing it at runtime | REPL `/budget` | a dynamic `QuotaPolicy` of your own (`StaticQuotaPolicy` needs a restart) |
 
 The "budget" you set on a session (`LiveSessionOptions.getBudget()`) is on the budget side too — it is a **per-turn
 default applied afresh to every turn**, not a limit on the session as a whole. When you need a limit like "this
@@ -162,7 +162,9 @@ node through `SessionRouter`, and a result kept in the idempotency store, carry 
 one-line message ([UQ-3](../../backlog/usage-quota-open-items.md)).
 
 Raising the turn budget with `/budget` does not lift a quota. To lift it, raise the limit in the policy, or, for
-`DAILY`, wait for the next day.
+`DAILY`, wait for the next day. The policy is read once when a turn starts. `StaticQuotaPolicy` is immutable, so
+changing its limits means restarting the stack; to change them while running, implement a `QuotaPolicy` that returns
+the current limits each time.
 
 ## 7. How far it can overshoot
 
@@ -187,6 +189,9 @@ To do the opposite, set `QuotaSpec.failClosed(true)`. A ledger failure then ends
 happens at the check (before the call) or at the charge (after it) — not `QUOTA_EXCEEDED`, because the limit was not
 exceeded, it could not be checked.
 
+When the failure comes at the charge (after the call), **the LLM response that was already paid for is dropped** —
+the execution ends before it reaches the transcript. Weigh that cost when choosing fail-closed.
+
 `failClosed` applies **to ledger failures only**. If the `QuotaScopeResolver` or `QuotaPolicy` the application supplied
 throws when a turn starts, that turn logs a WARN and runs without a quota, whatever `failClosed` says. Failing there
 would lose the turn's transcript.
@@ -196,6 +201,10 @@ would lose the turn's transcript.
 `InMemoryUsageLedger` counts **within one node only**. With several nodes each counts separately, so user and tenant
 limits are effectively multiplied by the number of nodes. A session limit also starts again from zero when the
 session moves to another node.
+
+`InMemoryUsageLedger` drops past `DAILY` keys once the retention (seven days by default) has passed, but **never drops
+`TOTAL` keys.** With a session `TOTAL` limit, every session leaves a key behind, so memory keeps growing on a
+long-running node. Cleaning up keys when a session is deleted is phase 3.
 
 To share limits across nodes you need a `UsageLedger` that records to a shared store. Redis and Postgres
 implementations are not provided yet (phase 3). Until then you can implement `UsageLedger` yourself — there are two

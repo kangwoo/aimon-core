@@ -20,7 +20,7 @@ AIMON 에는 한도가 두 종류 있다. 이름이 비슷하지만 세는 범�
 | 단위 | 실행 | 세션 · 사용자 · 테넌트 |
 | 축 | iteration · 토큰 · 비용 · 경과 시간 | 토큰 · 비용 |
 | 멈출 때 | `MAX_ITERATIONS` · `TOKEN_BUDGET_EXCEEDED` 등 | `QUOTA_EXCEEDED` |
-| 런타임 변경 | REPL `/budget` | 정책(`QuotaPolicy`) 변경 |
+| 런타임 변경 | REPL `/budget` | 동적 `QuotaPolicy` 직접 구현 (`StaticQuotaPolicy` 는 재시작) |
 
 세션에 설정하는 "예산"(`LiveSessionOptions.getBudget()`)도 budget 쪽이다 — **매 턴에 새로 적용되는 턴별
 기본값**이지 세션 전체의 한도가 아니다. "이 세션은 총 200만 토큰까지" 같은 한도가 필요하면 quota 를 쓴다.
@@ -150,7 +150,8 @@ NOTE: `getQuotaViolation()` 은 턴이 **같은 노드에서** 실행됐을 때�
 ([UQ-3](../../backlog/usage-quota-open-items.md)).
 
 `/budget` 으로 턴 예산을 올려도 quota 는 풀리지 않는다. 풀려면 정책의 한도를 올리거나, `DAILY` 라면 다음 날을
-기다린다.
+기다린다. 정책은 턴이 시작될 때 한 번 읽힌다. `StaticQuotaPolicy` 는 불변이라 한도를 바꾸려면 스택을 다시 띄워야
+하고, 실행 중에 바꾸려면 매번 최신 한도를 돌려주는 `QuotaPolicy` 를 직접 구현한다.
 
 ## 7. 얼마나 넘칠 수 있나
 
@@ -173,6 +174,9 @@ quota 는 **soft limit** 이다. 호출 전에 누적치를 보고, 호출이 �
 반대로 하려면 `QuotaSpec.failClosed(true)` 를 준다. 그때 장부 장애는 판정(호출 전)에서든 기록(호출 후)에서든
 실행을 `ERROR` 로 끝낸다(`QUOTA_EXCEEDED` 가 아니다 — 한도를 넘은 것이 아니라 판정을 못 한 것이므로).
 
+기록(호출 후) 단계의 장애로 끝날 때는 **이미 비용을 낸 LLM 응답이 버려진다** — 대화 기록에 들어가기 전에 실행이
+끝나기 때문이다. fail-closed 를 고를 때 이 비용을 감안한다.
+
 `failClosed` 는 **장부 장애에만** 적용된다. 애플리케이션이 준 `QuotaScopeResolver` 나 `QuotaPolicy` 가 턴 시작
 시점에 예외를 던지면, 그 턴은 `failClosed` 와 상관없이 WARN 을 남기고 쿼터 없이 실행된다. 그 자리에서 실패시키면
 턴의 대화 기록을 잃기 때문이다.
@@ -181,6 +185,10 @@ quota 는 **soft limit** 이다. 호출 전에 누적치를 보고, 호출이 �
 
 `InMemoryUsageLedger` 는 **노드 하나 안에서만** 센다. 노드가 여럿이면 각 노드가 따로 세므로, 사용자·테넌트
 한도는 사실상 노드 수만큼 늘어난다. 세션 한도도 세션이 다른 노드로 옮겨 가면 0 부터 다시 센다.
+
+`InMemoryUsageLedger` 는 지난 `DAILY` 키를 보존 기간(기본 7일)이 지나면 지우지만, **`TOTAL` 키는 지우지 않는다.**
+세션 `TOTAL` 한도를 걸면 세션마다 키가 하나씩 남아, 오래 떠 있는 노드에서는 메모리가 계속 늘어난다. 세션 삭제 시
+키 정리는 3단계 범위다.
 
 여러 노드에서 한도를 공유하려면 공유 저장소에 기록하는 `UsageLedger` 가 필요하다. Redis · Postgres 구현은
 아직 제공되지 않는다(3단계). 그때까지는 `UsageLedger` 를 직접 구현할 수 있다 — 지켜야 할 계약은 둘이다.

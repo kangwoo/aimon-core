@@ -27,6 +27,8 @@ many turns, what a user spends over many sessions, or what a tenant spends in a 
   quota ends the execution with the new `CompletionReason.QUOTA_EXCEEDED` before its next LLM call, and the result
   names the key, limit and usage (`AgentExecutionResult#getQuotaViolation()`). The `Task` tool's reason line tells the
   parent model that retrying or launching another subagent will stop the same way.
+- **A typed `/my-skill` is metered too.** The inline skill loop reads the turn's guard from the command tool context,
+  checks it before every LLM call and charges tokens after it (no cost estimator there, so not cost).
 - **Ledger failure fails open** (WARN, execution continues). `failClosed(true)` ends it with `ERROR` instead, not
   `QUOTA_EXCEEDED`.
 - `CompletionReason` gains a constant: a peer on an older build reads `QUOTA_EXCEEDED` as `ERROR` through

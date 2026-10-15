@@ -112,6 +112,8 @@ class QuotaValueTypesTest {
             assertThatThrownBy(() -> QuotaLimit.total().maxTokens(0)).isInstanceOf(IllegalArgumentException.class);
             assertThatThrownBy(() -> QuotaLimit.total().maxCost(Money.zero("EUR")))
                     .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> QuotaLimit.total().maxCost(Money.zeroUsd()))
+                    .isInstanceOf(IllegalArgumentException.class);
         }
 
         @Test

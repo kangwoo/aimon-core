@@ -160,15 +160,19 @@ public final class QuotaLimit {
          * Sets the cost ceiling.
          *
          * @param maxCost
-         *            the ceiling (must not be null, must be USD)
+         *            the ceiling (must not be null, must be a positive USD amount)
          * @return this builder
          * @throws IllegalArgumentException
-         *             if {@code maxCost} is not in USD
+         *             if {@code maxCost} is not in USD or is not positive
          */
         public Builder maxCost(Money maxCost) {
             Objects.requireNonNull(maxCost, "Max cost cannot be null");
             if (!Money.USD.equals(maxCost.getCurrency())) {
                 throw new IllegalArgumentException("Quota cost limits are USD-only, got " + maxCost.getCurrency());
+            }
+            // A zero ceiling is reached by zero usage, which would stop every turn at iteration 0 — the maxTokens rule.
+            if (maxCost.getAmount().signum() <= 0) {
+                throw new IllegalArgumentException("Max cost must be positive, got " + maxCost);
             }
             this.maxCost = maxCost;
             return this;
