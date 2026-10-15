@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/scope-model.md
-source_commit: ad0acfb
+source_commit: 82bcca3
 ---
 
 # Scope Model
@@ -22,7 +22,7 @@ stretch of running.
 
 | Scope | Representative components | Identifier | Lifetime |
 |-------|--------------|--------|----------|
-| **Application** | `SchedulingEngine`, `ScheduledTaskManager`, `RoutineExecutor`, `AgentRuntimeRegistry`, `SessionRecordStore`, `SessionLeaseStore`, `SessionInbox`, `SessionSignalBus`, `IdempotencyStore`, `KnowledgeStore`, `CredentialStore`, `BackgroundBashManager`, `BackgroundBashStore` | — | app start ~ shutdown |
+| **Application** | `SchedulingEngine`, `ScheduledTaskManager`, `RoutineExecutor`, `AgentRuntimeRegistry`, `SessionRecordStore`, `SessionLeaseStore`, `SessionInbox`, `SessionSignalBus`, `IdempotencyStore`, `KnowledgeStore`, `CredentialStore`, `BackgroundBashManager`, `BackgroundBashStore`, `UsageLedger` | — | app start ~ shutdown |
 | **Agent** | `AgentRuntime` and what it owns — `ToolRegistry` / `HookRegistry` / `McpClientManager` | `AgentRuntimeId` (`agent:<name>[:<discriminator>]`) | per `(Agent, discriminator)`, held across sessions |
 | **Session** | `SessionRecord`, `SessionTotals`, `budgetOverride`, `SessionTranscript` | `SessionId` | as long as the session exists — **persistent** |
 | **Live session** | `LiveSession`, the message queue, the event publisher | (references the bound `SessionId`) | node-local, **transient** (open ~ `close()`) |
@@ -40,6 +40,11 @@ session-wide cumulative figures are held separately by `SessionTotals`. "Turn or
 hedging but an exhaustive list: in the main sources `new BudgetTracker(` appears in exactly
 **2 places**, and `OrcaAgentExecutor` (turn) and `DefaultSubagentExecutor` (fork) are both of
 them. (grep reports 3, but the third is example code inside `BudgetTracker`'s javadoc.)
+
+An accumulated limit is not a budget but a **quota**. Its counters live in the application-scoped
+`UsageLedger`, and the `QuotaGuard` built once per turn is **shared, not rebuilt,** by every fork
+that turn starts — a fork has no session, so resolving again would drop the session key
+([`../design/agent-execution/usage-quota.md`](../design/agent-execution/usage-quota.md) §4.3).
 
 That turns and forks share a budget tracker this way is no accident — **a turn is one kind of
 execution**, and a fork is another kind that has no session. That is exactly why you must not

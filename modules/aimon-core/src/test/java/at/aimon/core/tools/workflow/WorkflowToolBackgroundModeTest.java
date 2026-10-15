@@ -11,6 +11,9 @@ import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.quota.QuotaGuard;
+import at.aimon.core.agent.quota.QuotaLimit;
+import at.aimon.core.agent.quota.impl.InMemoryUsageLedger;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
@@ -117,6 +120,20 @@ class WorkflowToolBackgroundModeTest {
         assertThat(third.value()).isEqualTo(first.value());
     }
 
+    @Test
+    @DisplayName("a background run is handed the submitting execution's quota guard — it is no way around a quota")
+    void backgroundRunCarriesTheQuotaGuard() {
+        final RecordingRunner runner = new RecordingRunner();
+        final QuotaGuard guard = QuotaGuard.builder().ledger(new InMemoryUsageLedger())
+                .policy(scope -> List.of(QuotaLimit.total().maxTokens(1).build())).build();
+
+        final ToolResult result = tool(runner).execute(ToolInput.of(Map.of("prompt", "x", "mode", "background")),
+                ToolContext.builder().put(ToolContextKeys.QUOTA_GUARD, guard).build());
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(runner.recordedQuotaGuard).isSameAs(guard);
+    }
+
     // --- skill hooks cannot follow a background run (EE-49) ----------------------------------------------------------
 
     private static final PreToolHook GUARD = ctx -> HookResult.success();
@@ -221,6 +238,13 @@ class WorkflowToolBackgroundModeTest {
     private static final class RecordingRunner implements WorkflowRunner {
 
         private RunId recordedRunId;
+        private QuotaGuard recordedQuotaGuard;
+
+        @Override
+        public <T> RunHandle<T> runInBackground(WorkflowScript<T> script, RunId runId, QuotaGuard quotaGuard) {
+            this.recordedQuotaGuard = quotaGuard;
+            return runInBackground(script, runId);
+        }
 
         @Override
         public <T> T run(WorkflowScript<T> script, RunId runId) {

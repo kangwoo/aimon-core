@@ -68,6 +68,10 @@ import at.aimon.core.agent.prompt.SystemReminderFormatter;
 import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.queue.QueuedInput;
 import at.aimon.core.agent.queue.QueuedInputPriority;
+import at.aimon.core.agent.quota.QuotaGuard;
+import at.aimon.core.agent.quota.QuotaGuardFactory;
+import at.aimon.core.agent.quota.QuotaResolutionContext;
+import at.aimon.core.agent.quota.QuotaViolation;
 import at.aimon.core.agent.session.transcript.LogOrigin;
 import at.aimon.core.agent.session.transcript.SessionLogReader;
 import at.aimon.core.agent.session.transcript.SessionLogSource;
@@ -403,6 +407,14 @@ public class OrcaAgentExecutor
     volatile ContextAssembler contextAssembler = ContextAssembler.NOOP;
 
     /**
+     * Builds each turn's {@link QuotaGuard} — the accumulated-usage check and charge the turn and every fork under it
+     * share. Defaults to {@link QuotaGuardFactory#disabled()} (every guard meters nothing), so quotas are entirely
+     * opt-in and wiring nothing leaves behaviour unchanged. {@code volatile} for the same reason as
+     * {@link #costEstimator}.
+     */
+    volatile QuotaGuardFactory quotaGuardFactory = QuotaGuardFactory.disabled();
+
+    /**
      * PSTREAM-09: when {@code true}, the ReAct loop routes LLM calls through
      * {@link LlmCallGateway#sendMessageStreaming} so the caller observes token-level
      * {@link AssistantTextDelta} events. When {@code false} (the default), the legacy non-streaming path is used.
@@ -577,6 +589,9 @@ public class OrcaAgentExecutor
         if (builder.contextAssembler != null) {
             this.contextAssembler = builder.contextAssembler;
         }
+        if (builder.quotaGuardFactory != null) {
+            this.quotaGuardFactory = builder.quotaGuardFactory;
+        }
     }
 
     /**
@@ -649,6 +664,7 @@ public class OrcaAgentExecutor
         private TracePayloadPolicy tracePayloadPolicy;
         private CostEstimator costEstimator;
         private ContextAssembler contextAssembler;
+        private QuotaGuardFactory quotaGuardFactory;
 
         private Builder() {
         }
@@ -799,6 +815,19 @@ public class OrcaAgentExecutor
             return this;
         }
 
+        /**
+         * Injects the factory that builds each turn's usage-quota guard. When unset (or {@code null}), the executor
+         * keeps {@link QuotaGuardFactory#disabled()} (nothing is metered) and behaviour is unchanged.
+         *
+         * @param quotaGuardFactory
+         *            the factory (may be {@code null} to keep the disabled default)
+         * @return this builder
+         */
+        public Builder quotaGuardFactory(QuotaGuardFactory quotaGuardFactory) {
+            this.quotaGuardFactory = quotaGuardFactory;
+            return this;
+        }
+
         public OrcaAgentExecutor build() {
             // Validate required fields up front so the failure message identifies the missing builder field
             // (rather than surfacing a generic "X cannot be null" from the underlying constructor).
@@ -846,6 +875,8 @@ public class OrcaAgentExecutor
         builder.put(ToolContextKeys.LLM_CALL_METADATA_KEY, scope.llmCallMetadata);
         builder.put(ToolContextKeys.ARTIFACT_COLLECTOR, scope.artifactCollector);
         builder.put(TodoWriteTool.CONTEXT_ID_KEY, scope.transcriptBuffer.getSessionId().value());
+        // The spawn tools read it into the launch context, so a fork charges this turn's quota keys.
+        builder.put(ToolContextKeys.QUOTA_GUARD, scope.quotaGuard);
 
         // PAR-05 / execution-environment §7: inject a thread-safe, execution-scoped map of read stamps. It backs the
         // stale-write guard of Edit (and of Write over an existing file), and it is concurrency-safe so parallel
@@ -1121,6 +1152,8 @@ public class OrcaAgentExecutor
 
         final ExecutionScope scope = new ExecutionScope(agentRuntime, executionRequest, transcriptBuffer,
                 systemPromptParts, effectiveMetadata, budgetTracker, executionEnvironment);
+        // Usage quota: one guard per turn, inherited by every fork the turn starts (tool context key QUOTA_GUARD).
+        scope.quotaGuard = createQuotaGuard(agentRuntime, executionRequest);
         // TRACE-01: the turn span is the active parent until the ReAct loop swaps in per-iteration spans.
         scope.activeSpan = turnSpan;
 
@@ -1656,6 +1689,13 @@ public class OrcaAgentExecutor
                 if (decision == BudgetDecision.STOP) {
                     return handleBudgetStop(scope, iterationCount, accumulatedTokens);
                 }
+                // Usage quota, at the same boundary: a quota a fork or another session already spent stops the turn
+                // here, before the LLM call — at iteration 0 when it was spent before the turn began. A fail-closed
+                // guard whose ledger failed throws, and the catch below ends the turn as ERROR.
+                final Optional<QuotaViolation> quotaViolation = scope.quotaGuard.check();
+                if (quotaViolation.isPresent()) {
+                    return handleQuotaStop(scope, iterationCount, accumulatedTokens, quotaViolation.get());
+                }
                 // A soft budget hint asks us to proactively compact before spending more tokens. Route this
                 // iteration's compaction gate through forceCompact (lower effective trigger) rather than the normal
                 // auto-compact band. Self-limiting: once memory has been compacted small, forceCompact returns NONE
@@ -1789,13 +1829,16 @@ public class OrcaAgentExecutor
                     // entirely opt-in and adds no per-model bookkeeping when unused. The budget axis is USD-only by
                     // contract, so a non-USD estimate (advanced misconfiguration) still accumulates in the summary
                     // but is not enforced as a STOP.
+                    Money callCost = null;
                     if (costTrackingEnabled) {
-                        final Money callCost = costEstimator.estimate(costModelName, response.getTokenUsage());
+                        callCost = costEstimator.estimate(costModelName, response.getTokenUsage());
                         scope.costSummary = scope.costSummary.record(costModelName, response.getTokenUsage(), callCost);
                         if (Money.USD.equals(callCost.getCurrency())) {
                             scope.budgetTracker.recordCost(callCost);
                         }
                     }
+                    // The same call, charged to the turn's quota keys. Unpriced (no estimator) charges tokens only.
+                    scope.quotaGuard.charge(costModelName, response.getTokenUsage(), callCost);
 
                     // STREAM-03: publish assistant-message-received for intermediate (tool-calling) responses only.
                     // The terminal response (no tool uses) is surfaced through AgentExecutionResult#getFinalAnswer
@@ -2133,6 +2176,9 @@ public class OrcaAgentExecutor
             // not. Fresh per command, as createToolContext's is fresh per execution: a file read by an earlier turn or
             // an earlier slash command must be read again before this one modifies it.
             commandContextBuilder.put(ReadTool.FILE_STAMPS_KEY, new ConcurrentHashMap<>());
+            // The turn's quota guard, by hand like the keys above: a `/my-skill` fork charges the session that typed
+            // it, as a Skill tool call's fork does.
+            commandContextBuilder.put(ToolContextKeys.QUOTA_GUARD, scope.quotaGuard);
             final ToolContext commandToolContext = commandContextBuilder
                     .put(ToolContextKeys.AGENT_RUNTIME_ID, agentRuntime.getId())
                     // The session id belongs here too: a `/my-skill` invocation of a fork-mode skill spawns a
@@ -2808,6 +2854,60 @@ public class OrcaAgentExecutor
 
         return OrcaAgentExecutionResult.failure(stopMessage, scope.transcriptBuffer.toSnapshot(), metadata,
                 scope.artifactCollector.getArtifacts(), reason).withCompactionEvents(scope.compactionEvents);
+    }
+
+    /**
+     * Builds the turn's usage-quota guard. Scopes come from the request rather than the transcript — a turn without a
+     * session id (a scheduled routine, a rewake replay) gets no session scope, not the id the transcript minted for it.
+     *
+     * <p>
+     * Fail-safe like the tracing setup in {@code execute()}, and for the same reason: it runs before the try/finally
+     * that saves the transcript, so an application resolver or policy that throws must not lose the turn. Only the
+     * ledger's failures are subject to {@code failClosed} (usage-quota §5.1); a broken resolver leaves the turn
+     * unmetered, loudly.
+     */
+    private QuotaGuard createQuotaGuard(OrcaAgentRuntime agentRuntime, OrcaAgentExecutionRequest executionRequest) {
+        try {
+            return quotaGuardFactory.create(QuotaResolutionContext.builder().agentRuntimeId(agentRuntime.getId())
+                    .sessionId(executionRequest.getSessionId()).principal(executionRequest.getPrincipal().orElse(null))
+                    .attributes(executionRequest.getExecutionAttributes()).build());
+        } catch (RuntimeException e) {
+            log.warn("Quota guard setup failed; this turn is not metered: {}", e.toString());
+            return QuotaGuard.disabled();
+        }
+    }
+
+    /**
+     * Ends the turn because a usage quota was reached. Shaped like {@link #handleBudgetStop}: the OnStop hooks fire
+     * with {@code success=false}, the terminal boundary carries {@link CompletionReason#QUOTA_EXCEEDED}, and the
+     * result names the violation ({@link OrcaAgentExecutionResult#getQuotaViolation()}).
+     *
+     * @param scope
+     *            The execution scope
+     * @param iterationCount
+     *            The number of iterations completed before the stop
+     * @param accumulatedTokens
+     *            The accumulated token usage at the stop point
+     * @param violation
+     *            The quota that was reached
+     * @return The failure result carrying {@link CompletionReason#QUOTA_EXCEEDED} (never null)
+     */
+    private OrcaAgentExecutionResult handleQuotaStop(ExecutionScope scope, int iterationCount,
+            TokenUsage accumulatedTokens, QuotaViolation violation) {
+        final String stopMessage = "Execution stopped by quota: " + violation.describe();
+        log.warn("Usage quota reached: {}, iterations={}, tokens={}", violation.describe(), iterationCount,
+                accumulatedTokens.getTotalTokens());
+
+        final ExecutionMetadata metadata = buildExecutionMetadata(iterationCount, accumulatedTokens, scope.startTime);
+
+        invokeOnStop(scope, false, stopMessage, metadata);
+
+        scope.eventDispatcher.emitExecutionCompleted(iterationCount, CompletionReason.QUOTA_EXCEEDED);
+
+        return OrcaAgentExecutionResult
+                .failure(stopMessage, scope.transcriptBuffer.toSnapshot(), metadata,
+                        scope.artifactCollector.getArtifacts(), CompletionReason.QUOTA_EXCEEDED)
+                .withCompactionEvents(scope.compactionEvents).withQuotaViolation(violation);
     }
 
     /**
@@ -3565,6 +3665,13 @@ public class OrcaAgentExecutor
          * when no cost estimator is wired.
          */
         CostSummary costSummary = CostSummary.empty();
+
+        /**
+         * The turn's usage-quota guard. Assigned once in {@code execute()} right after the scope is built, before
+         * anything reads it; the disabled guard until then. Published to tools under {@code QUOTA_GUARD} so every
+         * fork of the turn shares it.
+         */
+        QuotaGuard quotaGuard = QuotaGuard.disabled();
 
         /**
          * TRACE-01: the span that downstream LLM/tool calls attach under. Set to the turn span after construction, then

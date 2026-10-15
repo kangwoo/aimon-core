@@ -30,6 +30,7 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.impl.AgentImplPackage;
+import at.aimon.core.agent.quota.QuotaGuard;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.base.BasePackage;
 import at.aimon.core.command.execution.ExecutionMetadata;
@@ -307,11 +308,15 @@ class PackageDependencyArchitectureTest {
         // Execution-environment addition: an isolated step derives its branch with ExecutionEnvironment.isolate(),
         // resolving the parent environment through the run's provider when the run has none (§5.2) — the SPI types
         // and the resolve helper, never environment.impl.
-        ArchRule rule = classes().that().resideInAPackage(PKG_WORKFLOW).should().onlyDependOnClassesThat(
-                JavaClass.Predicates.belongToAnyOf(SubagentExecutionManager.class, SubagentLaunchContext.class,
-                        Subagent.class, SubagentExecutionResult.class, CompletionReason.class, ExecutionMetadata.class,
-                        TokenUsage.class, AgentRuntimeId.class, ExecutionEnvironment.class,
-                        ExecutionEnvironmentProvider.class, EnvironmentRequest.class, ExecutionEnvironments.class)
+        // Usage-quota addition: a background run carries the submitting execution's QuotaGuard onto its per-run
+        // launch context (usage-quota §4.3) — the guard value only, never a ledger or a quota impl.
+        ArchRule rule = classes().that().resideInAPackage(PKG_WORKFLOW).should()
+                .onlyDependOnClassesThat(JavaClass.Predicates
+                        .belongToAnyOf(SubagentExecutionManager.class, SubagentLaunchContext.class, Subagent.class,
+                                SubagentExecutionResult.class, CompletionReason.class, ExecutionMetadata.class,
+                                TokenUsage.class, AgentRuntimeId.class, ExecutionEnvironment.class,
+                                ExecutionEnvironmentProvider.class, EnvironmentRequest.class,
+                                ExecutionEnvironments.class, QuotaGuard.class)
                         .or(JavaClass.Predicates.resideInAnyPackage(PKG_WORKFLOW, PKG_CORE, PKG_FILESYSTEM_CORE,
                                 PKG_AGENT_INTERRUPT, PKG_LLM_COST, PKG_JAVA, PKG_SLF4J, PKG_JACKSON)));
 

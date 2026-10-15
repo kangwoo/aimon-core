@@ -24,6 +24,7 @@ import at.aimon.core.agent.impl.orca.OrcaAgentRuntime;
 import at.aimon.core.agent.impl.orca.OrcaAgentRuntimeFactory;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
 import at.aimon.core.agent.orca.tool.OrcaToolProvider;
+import at.aimon.core.agent.quota.QuotaGuardFactory;
 import at.aimon.core.agent.session.DefaultLiveSession;
 import at.aimon.core.agent.session.LiveSessionOptions;
 import at.aimon.core.agent.session.SessionId;
@@ -154,7 +155,8 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
         final OrcaAgentExecutor executor = OrcaAgentExecutor.builder().llmClient(llmClient)
                 .transcriptManager(transcriptManager).toolExecutionManager(toolManager)
                 .hookExecutionManager(hookManager).commandExecutionManager(commandManager)
-                .subagentExecutionManager(subagentManager).costEstimator(options.costEstimator).build();
+                .subagentExecutionManager(subagentManager).costEstimator(options.costEstimator)
+                .quotaGuardFactory(options.quotaGuardFactory).build();
 
         final Agent agent = DefaultAgent.builder().name(name).maxIterations(options.maxIterations)
                 .systemPrompt("You are " + name + ", an integration-test agent.").build();
@@ -444,6 +446,11 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
             return session;
         }
 
+        /** Runs one turn from a caller-built request — for a test that needs a field {@link #run} does not set. */
+        OrcaAgentExecutionResult execute(OrcaAgentExecutionRequest request) {
+            return executor.execute(runtime, request);
+        }
+
         /** Runs one turn for a fresh session — for tests that do not care about the id. */
         OrcaAgentExecutionResult run(String userInput) {
             return run(newSession(), userInput);
@@ -490,6 +497,7 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
         private DefaultSubagentExecutionManager sharedSubagentManager;
         private SkillInvocationPolicy skillInvocationPolicy;
         private CostEstimator costEstimator;
+        private QuotaGuardFactory quotaGuardFactory;
         private int maxIterations = MAX_ITERATIONS;
         private UnaryOperator<ExecutionEnvironmentProvider> environmentProviderDecorator = UnaryOperator.identity();
         private boolean skillShellHooks;
@@ -561,6 +569,15 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
          */
         Options costEstimator(CostEstimator costEstimator) {
             this.costEstimator = Objects.requireNonNull(costEstimator, "costEstimator must not be null");
+            return this;
+        }
+
+        /**
+         * Meters the executor's turns — and every fork under them — against accumulated usage quotas. Without this
+         * the executor keeps {@code QuotaGuardFactory.disabled()}, the production default.
+         */
+        Options quotaGuardFactory(QuotaGuardFactory quotaGuardFactory) {
+            this.quotaGuardFactory = Objects.requireNonNull(quotaGuardFactory, "quotaGuardFactory must not be null");
             return this;
         }
 

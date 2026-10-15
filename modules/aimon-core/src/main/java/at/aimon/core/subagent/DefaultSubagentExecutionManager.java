@@ -644,7 +644,9 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
                     .llmCallMetadata(launchContext.getParentLlmCallMetadata())
                     .principal(launchContext.getPrincipal().orElse(null))
                     .invokingSessionId(launchContext.getInvokingSessionId().orElse(null))
-                    .previousSnapshot(launchContext.getPreviousSnapshot().orElse(null)).build();
+                    .previousSnapshot(launchContext.getPreviousSnapshot().orElse(null))
+                    // The spawning turn's quota guard, so the fork is charged to the turn's keys (usage-quota §4.3).
+                    .quotaGuard(launchContext.getQuotaGuard()).build();
 
             // Execute subagent. A code behavior registered for this name REPLACES the ReAct loop, receiving the SAME
             // context/request (cancellation signal, principal, metadata, tools). When absent, the data subagent runs

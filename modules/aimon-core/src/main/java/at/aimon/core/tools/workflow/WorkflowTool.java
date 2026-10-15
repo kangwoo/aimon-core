@@ -297,11 +297,15 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
                     hookSkills);
         }
         // Fire-and-forget on the shared runner's own base launch context: a background run does NOT inherit the
-        // invoking execution's agent runtime id, principal, or trace attribution. The run id is derived from
+        // invoking execution's agent runtime id, principal, or trace attribution — only its quota guard (below). The
+        // run id is derived from
         // the full request (prompt + perspectives + synthesize) so distinct requests get distinct runs, while
         // an identical request that is still in flight is joined idempotently rather than duplicated.
         final RunId runId = RunId.from("workflow", runDiscriminator(prompt, perspectives, synthesize, strategy));
-        backgroundRunner.runInBackground(script(prompt, perspectives, synthesize, strategy), runId);
+        // The exception to "takes nothing": the run is charged to this execution's quota, or it would be a way around
+        // it.
+        backgroundRunner.runInBackground(script(prompt, perspectives, synthesize, strategy), runId,
+                context.get(ToolContextKeys.QUOTA_GUARD).orElse(null));
         log.debug("Workflow (background): runId='{}' strategy={} perspectives={} synthesize={}", runId.value(),
                 strategy, perspectives, synthesize);
         return "Started background workflow run '" + runId.value() + "' over " + perspectives.size()
@@ -527,6 +531,8 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
                 // The fork resolves its own environment from the spawning runtime's provider, with this execution's
                 // environment as its parent (execution-environment design §5.2).
                 .executionEnvironment(ExecutionEnvironmentAccess.of(context).orElse(null))
-                .executionEnvironmentProvider(ExecutionEnvironmentAccess.providerOf(context).orElse(null)).build();
+                .executionEnvironmentProvider(ExecutionEnvironmentAccess.providerOf(context).orElse(null))
+                // The spawning execution's quota guard: the fork is charged to its keys, never resolves its own.
+                .quotaGuard(context.get(ToolContextKeys.QUOTA_GUARD).orElse(null)).build();
     }
 }

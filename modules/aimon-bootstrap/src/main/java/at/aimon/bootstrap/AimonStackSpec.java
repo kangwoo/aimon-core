@@ -17,6 +17,7 @@ import at.aimon.bootstrap.spec.FileSystemSpec;
 import at.aimon.bootstrap.spec.KnowledgeStoreFactory;
 import at.aimon.bootstrap.spec.LlmSpec;
 import at.aimon.bootstrap.spec.MemorySpec;
+import at.aimon.bootstrap.spec.QuotaSpec;
 import at.aimon.bootstrap.spec.SchedulingSpec;
 import at.aimon.bootstrap.spec.SessionSpec;
 import at.aimon.bootstrap.spec.SkillApprovalSpec;
@@ -82,6 +83,7 @@ public final class AimonStackSpec {
     private final KnowledgeStore knowledgeStore;
     private final KnowledgeStoreFactory knowledgeStoreFactory;
     private final MemorySpec memory;
+    private final QuotaSpec quota;
     private final SkillParser skillParser;
     private final List<Path> allowedSkillLinkRoots;
     private final MessageQueueRepository messageQueueRepository;
@@ -104,6 +106,7 @@ public final class AimonStackSpec {
         this.knowledgeStore = builder.knowledgeStore;
         this.knowledgeStoreFactory = builder.knowledgeStoreFactory;
         this.memory = builder.memory;
+        this.quota = Objects.requireNonNullElseGet(builder.quota, QuotaSpec::disabled);
         this.skillParser = builder.skillParser;
         // Checked here, not when the first bundle is read: a bundle in a jar never reads the list at all, and a bad
         // entry should not wait for the deployment that unpacks one.
@@ -325,6 +328,15 @@ public final class AimonStackSpec {
     }
 
     /**
+     * Returns the accumulated usage quotas the executor enforces.
+     *
+     * @return the spec; {@link QuotaSpec#disabled()} when none was set (never null)
+     */
+    public QuotaSpec getQuota() {
+        return quota;
+    }
+
+    /**
      * Returns the caller-supplied skill parser.
      *
      * @return the parser, or empty when the stack builds its own
@@ -429,6 +441,7 @@ public final class AimonStackSpec {
         private KnowledgeStore knowledgeStore;
         private KnowledgeStoreFactory knowledgeStoreFactory;
         private MemorySpec memory;
+        private QuotaSpec quota;
         private SkillParser skillParser;
         private final List<Path> allowedSkillLinkRoots = new ArrayList<>();
         private MessageQueueRepository messageQueueRepository;
@@ -561,6 +574,19 @@ public final class AimonStackSpec {
          */
         public Builder memory(MemorySpec memory) {
             this.memory = memory;
+            return this;
+        }
+
+        /**
+         * Sets the accumulated usage quotas — session, principal and tenant limits, in total or per day, enforced on
+         * every turn and on every fork under it.
+         *
+         * @param quota
+         *            the spec, or {@code null} for quotas off
+         * @return this builder
+         */
+        public Builder quota(QuotaSpec quota) {
+            this.quota = quota;
             return this;
         }
 

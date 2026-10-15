@@ -27,6 +27,13 @@ public final class SubagentResultFormatter {
     /** Default tail-keep budget in characters (~32k), overridable per call. */
     public static final int DEFAULT_MAX_CHARS = 32_000;
 
+    /**
+     * What a {@code QUOTA_EXCEEDED} reason line adds for the parent model. The quota is shared by the whole execution
+     * tree, so a retry or another subagent would be stopped before its first LLM call, the same way.
+     */
+    public static final String QUOTA_EXCEEDED_HINT = "a usage quota this whole task is charged to is used up; "
+            + "retrying or launching another subagent will stop the same way — finish with what you have";
+
     private SubagentResultFormatter() {
     }
 
@@ -34,6 +41,10 @@ public final class SubagentResultFormatter {
      * The {@code Completion reason:} line that follows a subagent's result when it did not finish on its own terms,
      * shared by the foreground {@code Task} result, the background {@code AgentOutput} result and the background
      * completion notice so the three say it in the same words.
+     *
+     * <p>
+     * A {@link CompletionReason#QUOTA_EXCEEDED} line also tells the parent model what not to do: the quota is the whole
+     * execution tree's, so launching another subagent, or retrying this one, is stopped the same way.
      *
      * @param reason
      *            the result's completion reason
@@ -46,6 +57,9 @@ public final class SubagentResultFormatter {
         Objects.requireNonNull(reason, "Completion reason cannot be null");
         if (reason.isSuccessful()) {
             return Optional.empty();
+        }
+        if (reason == CompletionReason.QUOTA_EXCEEDED) {
+            return Optional.of("Completion reason: " + reason.name() + " (" + QUOTA_EXCEEDED_HINT + ")");
         }
         // It answered, but not on its own terms: the answer is there and it is not whole.
         return Optional.of("Completion reason: " + reason.name()

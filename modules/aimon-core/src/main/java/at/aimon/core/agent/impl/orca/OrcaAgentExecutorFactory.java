@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.context.ContextAssembler;
 import at.aimon.core.agent.queue.MessageQueueManager;
+import at.aimon.core.agent.quota.QuotaGuardFactory;
 import at.aimon.core.agent.session.transcript.ThrowingPromptTooLongHandler;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.session.transcript.TranscriptManager;
@@ -143,6 +144,9 @@ public class OrcaAgentExecutorFactory {
     private TracePayloadPolicy tracePayloadPolicy;
     // Optional cost estimator pricing each LLM call. Null => executor keeps CostEstimator.NOOP (zero-cost).
     private CostEstimator costEstimator;
+
+    // Optional usage-quota guard factory. Null => executor keeps QuotaGuardFactory.disabled() (nothing metered).
+    private QuotaGuardFactory quotaGuardFactory;
     // Optional context assembler. Null => executor keeps ContextAssembler.NOOP (assembles nothing).
     private ContextAssembler contextAssembler;
     // Optional model-fallback policy applied to the default gateway. Null => LlmFallbackPolicy.none() (no
@@ -587,6 +591,20 @@ public class OrcaAgentExecutorFactory {
     }
 
     /**
+     * Installs the factory that builds each turn's usage-quota guard on the created executor. The forks a turn starts
+     * share the turn's guard, so the subagent executor needs no factory of its own. When unset (or {@code null}), the
+     * executor keeps {@link QuotaGuardFactory#disabled()} and behaviour is unchanged.
+     *
+     * @param quotaGuardFactory
+     *            the factory (may be {@code null} to clear)
+     * @return this factory (for chaining)
+     */
+    public OrcaAgentExecutorFactory withQuotaGuardFactory(QuotaGuardFactory quotaGuardFactory) {
+        this.quotaGuardFactory = quotaGuardFactory;
+        return this;
+    }
+
+    /**
      * Installs the context assembler that builds the runtime context blocks (environment / git branch / directory
      * summary / user extensions / attachments) injected into each turn. When unset (or {@code null}), the executor
      * keeps {@link ContextAssembler#NOOP} (assembles nothing) and the prompt shape is unchanged.
@@ -689,7 +707,8 @@ public class OrcaAgentExecutorFactory {
     /**
      * Applies the post-construction executor overrides configured on this factory: the executor-scoped parallel
      * dispatcher (when an enabled {@link ToolConcurrencyConfig} was set), the {@link Tracer}, the
-     * {@link TracePayloadPolicy}, the {@link CostEstimator}, and the {@link ContextAssembler}. Each is left at the
+     * {@link TracePayloadPolicy}, the {@link CostEstimator}, the {@link QuotaGuardFactory}, and the
+     * {@link ContextAssembler}. Each is left at the
      * executor's default when the corresponding override is unset.
      */
     private OrcaAgentExecutor applyExecutorOverrides(OrcaAgentExecutor executor) {
@@ -707,6 +726,9 @@ public class OrcaAgentExecutorFactory {
         }
         if (costEstimator != null) {
             executor.costEstimator = costEstimator;
+        }
+        if (quotaGuardFactory != null) {
+            executor.quotaGuardFactory = quotaGuardFactory;
         }
         if (contextAssembler != null) {
             executor.contextAssembler = contextAssembler;

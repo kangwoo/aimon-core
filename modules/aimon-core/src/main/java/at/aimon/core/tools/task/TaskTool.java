@@ -580,7 +580,9 @@ public class TaskTool extends AbstractTool {
                 // The fork resolves its own environment from the spawning runtime's provider, with this execution's
                 // environment as its parent (execution-environment design §5.2).
                 .executionEnvironment(ExecutionEnvironmentAccess.of(context).orElse(null))
-                .executionEnvironmentProvider(ExecutionEnvironmentAccess.providerOf(context).orElse(null)).build();
+                .executionEnvironmentProvider(ExecutionEnvironmentAccess.providerOf(context).orElse(null))
+                // The spawning execution's quota guard: the fork is charged to its keys, never resolves its own.
+                .quotaGuard(context.get(ToolContextKeys.QUOTA_GUARD).orElse(null)).build();
     }
 
     /**

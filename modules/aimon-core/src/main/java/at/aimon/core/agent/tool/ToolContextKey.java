@@ -32,7 +32,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * rather than in any one builder, so a context copied with {@code builder().putAll(ctx.getContext())} stays
  * protected: the copy is the first write into the new builder, and any later write of that name throws. The
  * framework's own write-once names ({@code executionEnvironment}, {@code executionEnvironmentProvider},
- * {@code hookRegistry}) are in the registry from the start, so they are checked even before the class declaring their
+ * {@code hookRegistry}, {@code quotaGuard}) are in the registry from the start, so they are checked even before the
+ * class declaring their
  * constants ({@code at.aimon.core.tools.ToolContextKeys}) is initialised. A write-once key declared anywhere else is
  * registered when the class declaring it is initialised (EE-32).
  *
@@ -48,7 +49,7 @@ public final class ToolContextKey<T> {
      * ({@code ToolContextKeysWriteOnceTest} holds the two together).
      */
     private static final Set<String> BUILT_IN_WRITE_ONCE_NAMES = Set.of("executionEnvironment",
-            "executionEnvironmentProvider", "hookRegistry");
+            "executionEnvironmentProvider", "hookRegistry", "quotaGuard");
 
     private static final Set<String> WRITE_ONCE_NAMES = ConcurrentHashMap.newKeySet();
 

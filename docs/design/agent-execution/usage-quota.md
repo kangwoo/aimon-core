@@ -1,6 +1,9 @@
 # Usage Quota — 세션·사용자·테넌트 단위의 누적 사용량 한도
 
-> Status: **PROPOSED** — 설계만 있다. 구현은 §9 의 단계를 따른다.
+> Status: **IMPLEMENTED (1단계)** (2026-10-15) — §9 의 1단계가 `aimon-core` 와 `aimon-bootstrap` 에 들어갔다.
+> 2단계(CLI 표시, Spring Boot 프로퍼티)와 3단계(Redis · Postgres 장부)는 아직이다.
+> **[§11](#11-구현-뒤--설계와-달라진-점-그리고-백로그로-간-것)은 구현 뒤에 덧붙인 절이고, 구현이 이 문서에서 벗어난
+> 자리는 거기에 있다.** 이 머리말과 §11 사이의 본문은 승인된 그대로 두었다 — 고치지 않고 §11 에서 정정한다.
 > 적용 대상: `aimon-core` (1·2단계), `aimon-bootstrap` · `aimon-spring-boot-starter` (배선),
 > `aimon-session-{redis,postgres}` (3단계 백엔드)
 > 관련 규칙: [`.claude/rules/multi-instance-design.md`](../../../.claude/rules/multi-instance-design.md)
@@ -293,3 +296,121 @@ estimator 가 `NOOP` 이면 bootstrap 이 시작 시 WARN 을 한 번 남긴다.
 - **hard limit** (예약 후 차감). 응답 크기를 미리 알 수 없어 예약량을 정할 근거가 없다
 - **임베딩 · 지식 검색 비용**. `CostEstimator` 가 LLM 채팅 호출만 가격을 매긴다
 - **도구 실행 횟수·시간** 쿼터
+
+---
+
+## 11. 구현 뒤 — 설계와 달라진 점, 그리고 백로그로 간 것
+
+1단계 구현(2026-10-15)이 본문과 다르게 간 자리다. 본문은 승인된 그대로 두었고, 현재의 사실은 이 절이 갖는다.
+1단계 밖으로 결과가 나가는 열린 질문은 백로그
+[`../../backlog/usage-quota-open-items.md`](../../backlog/usage-quota-open-items.md) 의 `UQ-1` ~ `UQ-3` 으로 올렸다.
+
+### 11.1 타입 하나가 늘었다 — `QuotaGuardFactory`
+
+§3 은 `QuotaGuard` 를 "실행 1회에 하나" 로 두었지만, 그것을 **누가 만드는지**는 적지 않았다. 실행기는 에이전트 범위
+싱글턴이고 guard 는 턴마다 새로 resolve 되어야 하므로, 장부 · 정책 · resolver · `Clock` · `ZoneId` · `failClosed` 를
+들고 턴마다 `create(QuotaResolutionContext)` 를 부르는 application-scoped 객체가 하나 필요했다. 그것이
+`at.aimon.core.agent.quota.QuotaGuardFactory` 다. 실행기의 기본값은 `QuotaGuardFactory.disabled()` 이고, 그때 모든
+턴은 `QuotaGuard.disabled()` 를 받는다 — §1.1 의 "무변경 기본값" 이 이 한 자리에서 지켜진다.
+
+배선은 `OrcaAgentExecutor.Builder#quotaGuardFactory` · `OrcaAgentExecutorFactory#withQuotaGuardFactory` 이고,
+`aimon-bootstrap` 의 `QuotaSpec#toGuardFactory()` 가 §7.1 의 스펙을 이것으로 바꾼다. `QuotaSpec` 에는 본문에 없던
+`clock(Clock)` 이 있다(테스트가 일 경계를 넘기기 위해). `zone` 을 정하지 않으면 **UTC** 다 — 노드마다 다른 시스템
+시간대가 같은 키를 서로 다른 날짜 버킷에 쓰지 않게 하려는 것이다.
+
+### 11.2 fail-closed 는 예외로 전달된다
+
+§3 의 `check()` 는 `Optional<QuotaViolation>` 이라 "판정할 수 없었다" 를 담을 칸이 없다. 그래서 fail-closed guard 는
+장부 예외를 `QuotaLedgerUnavailableException`(`agent.quota.exception`)으로 감싸 던지고, 두 루프는 그것을 이미 있는
+일반 오류 경로로 받아 `ERROR` 로 끝낸다(§5.1 이 정한 결과 그대로). 본문은 `charge` 실패를 따로 말하지 않았는데,
+fail-closed 에서는 **호출이 끝난 뒤의 기록 실패도** 실행을 `ERROR` 로 끝낸다 — 기록되지 않은 사용량을 두고 다음
+호출을 내는 것은 fail-closed 가 막으려는 바로 그 일이다. fail-open 에서는 둘 다 WARN 한 줄이고 실행은 계속된다.
+
+`failClosed` 가 다루는 것은 **장부** 장애뿐이다. 턴의 guard 를 만들다 애플리케이션의 resolver 나 정책이 던지면, 그
+턴은 WARN 한 줄과 함께 계량 없이 돈다 — guard 는 트랜스크립트를 저장하는 try/finally 보다 앞에서 만들어지므로, 거기서
+던지면 턴이 결과 없이 사라진다. 바로 위의 트레이싱 설정이 같은 이유로 fail-safe 다.
+
+### 11.3 포크 전파는 도구 컨텍스트를 거친다
+
+§4.3 의 "부모의 `QuotaGuard` 를 `SubagentLaunchContext` 에 싣는다" 는 그대로지만, 스폰 도구는 부모 실행을 모르고
+**도구 컨텍스트**만 안다. 그래서 길은 이렇다.
+
+```
+OrcaAgentExecutor ── ToolContextKeys.QUOTA_GUARD ──▶ TaskTool · WorkflowTool · WorkflowJs · 포크 스킬
+                                                     └─▶ SubagentLaunchContext.quotaGuard
+DefaultSubagentExecutionManager ──▶ SubagentExecutionRequest.quotaGuard ──▶ DefaultSubagentExecutor
+DefaultSubagentExecutor ── QUOTA_GUARD 를 그대로 다시 싣는다 ──▶ 포크 안의 포크
+```
+
+`QUOTA_GUARD` 는 **write-once** 키다 — `ToolContextEnricher` 가 `disabled()` 로 바꿔 끼워 아래의 포크 전체를 계량
+밖으로 빼는 것을 막는다. 슬래시 명령(`/my-skill`) 턴이 만드는 도구 컨텍스트에도 같은 guard 를 싣는다. 포크 스킬이
+그 길로도 포크를 띄우기 때문이다.
+
+### 11.4 백그라운드 워크플로는 launch context 를 거치지 않았다
+
+§4.3 이 꼽은 네 자리 가운데 `WorkflowTool` 은 **포그라운드**에서만 호출별 launch context 를 만든다.
+`mode=background` 는 에이전트 단위 runner(`OrcaAgentRuntimeFactory` 가 만든다)의 **기본 launch context** 로 돌고,
+그 컨텍스트는 의도적으로 호출한 실행에게서 아무것도 물려받지 않는다(주체 · 트레이스 · 취소 신호). 본문대로만
+구현하면 백그라운드 워크플로가 바로 §1 의 우회로가 된다 — 쿼터를 다 쓴 세션이 같은 일을 백그라운드로 띄우면 계량되지
+않는다.
+
+그래서 `WorkflowRunner` 에 `runInBackground(script, runId, QuotaGuard)` 기본 메서드를 더했다. 기본 구현은 guard 를
+무시하고 기존 메서드로 위임하며(서브에이전트를 띄우지 않는 runner 에게만 맞는 답이라고 javadoc 에 적었다),
+`DefaultWorkflowRunner` 가 이것을 재정의해 실행별 launch context 에 guard 를 싣는다. `WorkflowTool` 과
+`GraalJsWorkflowTool` 의 백그라운드 경로가 자기 도구 컨텍스트의 guard 를 넘긴다. 백그라운드 실행이 호출한 실행에게서
+물려받는 것은 **이 하나뿐**이다 — 나머지를 물려받지 않는 이유는 그대로이고, 쿼터만은 물려받지 않으면 우회로라서다.
+`workflow` 패키지의 ArchUnit 허용 목록(`workflowMayDependOnlyOnSubagentSpiTypes`)에 `QuotaGuard` 한 타입이 더해졌다.
+
+`OrcaAgentRuntimeFactory` 의 기본 launch context 자체는 비활성 guard 를 갖는다. 거기에는 물려줄 호출한 실행이 없다.
+앱 코드가 그 runner 를 직접 부르는 경우, 그리고 같은 이유로 `RoutineExecutor` 의 단계가 띄우는 포크는 1단계에서
+계량되지 않는다 — `UQ-2`.
+
+### 11.5 결과와 `CompletionReason` 의 소비자
+
+`QUOTA_EXCEEDED` 는 `TOKEN_BUDGET_EXCEEDED` 와 `COST_BUDGET_EXCEEDED` 사이에 들어갔다. 소비자를 전수로 읽은
+결과, `switch` 로 이 enum 을 나누는 곳은 없었고 모든 독자가 "`COMPLETED` / `INTERRUPTED` / 그 밖" 으로 읽는다. 그래서
+`QUOTA_EXCEEDED` 는 코드 변경 없이 `COST_BUDGET_EXCEEDED` 와 같은 무리에 든다 — CLI 는 오류 결과로 보여 주고,
+`AgentStepResult#isComplete()` 는 거짓이고, 노드 간 코덱들은 `fromWireName` 으로 읽으므로 옛 노드는 `ERROR` 로 받는다.
+바꾼 독자는 하나다 — §6 이 정하라고 한 `Task` 도구의 문장.
+
+```
+Completion reason: QUOTA_EXCEEDED (a usage quota this whole task is charged to is used up; retrying or launching another subagent will stop the same way — finish with what you have)
+```
+
+`SubagentResultFormatter#completionReasonLine` 에서 만들어지므로 포그라운드 `Task`, 백그라운드 `AgentOutput`, 완료
+알림이 같은 말을 한다. CLI 의 `SubagentResultDisplayHook` 은 `Completion reason: (\w+)` 뒤의 공백 이후를 허용하므로
+그대로 읽는다.
+
+`QuotaViolation` 은 `AgentExecutionResult#getQuotaViolation()`(기본 메서드, 빈 값)과 `OrcaAgentExecutionResult`,
+`SubagentExecutionResult` 에 실린다. 라우팅 와이어(`TurnResultPayload`)와 저장된 결과는 이름과 메시지만 싣고 위반은
+싣지 않는다 — `UQ-3`.
+
+### 11.6 작은 차이
+
+- **주체 범위의 id 는 `<type>/<id>` 다.** `Principal` 의 동일성은 종류와 id 둘이므로(`Principal#equals`), 같은 id 의
+  사용자와 서비스는 다른 주체다. §2 의 예시 키 `principal:alice:daily:2026-10-15` 는 실제로
+  `principal:user/alice:daily:2026-10-15` 다.
+- **충전되는 토큰은 `TokenUsage#getTotalTokens()` 다.** 비용이 없거나(`CostEstimator.NOOP`) USD 가 아니면 비용은 0 으로
+  기록된다 — 비용 예산 축이 같은 규칙이다. 토큰도 비용도 0 인 호출은 장부에 쓰지 않는다.
+- **한 범위에 같은 기간의 한도가 둘이면 키 하나를 공유하고, 한 번만 충전된다.** 판정은 한도마다 따로 한다.
+- **§7.3 의 WARN 은 bootstrap 의 `quota-cost` degradation 이다.** "설정되었지만 효과가 없다" 를 bootstrap 이 알리는
+  기존 방식(`RuntimeDegradations`)을 따랐다. 비용 한도를 볼 수 있는 것은 `StaticQuotaPolicy`(`hasCostLimit()`) 뿐이라,
+  사용자 정의 `QuotaPolicy` 의 비용 한도는 알릴 수 없다. bootstrap 의 기본 estimator 는 가격표 기반이므로 이 경고가 뜨는
+  것은 `ExecutorSpec.costEstimator(CostEstimator.NOOP)` 를 명시했을 때다.
+- **`InMemoryUsageLedger` 는 §8 의 `DAILY` 보존 기간을 갖는다**(기본 7일, 충전 때 UTC 하루 한 번 정리). 비용은 §8 대로
+  마이크로달러 `long` 이며 충전마다 반올림(HALF_UP)한다. `TOTAL` 키는 정리하지 않는다.
+- **`QuotaResolutionContext` 의 "metadata" 는 실행 요청의 `executionAttributes` 다**(`getAttributes()`).
+- **세션 범위는 요청의 `getSessionId()` 에서 온다**(§4.4 그대로) — 트랜스크립트가 세션 없는 요청에 발급하는 id 가 아니다.
+  그래서 세션 id 없이 들어온 턴에는 세션 범위가 걸리지 않는다.
+
+### 11.7 확인한 것과 확인하지 못한 것
+
+확인한 것은 테스트가 갖는다. `UsageQuotaIntegrationTest`(실제 실행기 · `Task` 도구 · 서브에이전트 실행기)가 여러 턴에
+걸친 세션 `TOTAL` 누적과 LLM 호출 없는 iteration 0 멈춤, 포크와 포크 안 포크의 사용량이 부모 세션 키에 기록되는 것,
+포크 안의 판정, 두 세션에 걸친 주체 누적, 장부 장애의 fail-open / fail-closed 를 보인다. `QuotaGuardTest` 가 주입
+`Clock` 으로 `Asia/Seoul` 자정의 `DAILY` 리셋을, `AimonStackQuotaTest` 가 `AimonStackSpec` 배선과 `quota-cost` 를,
+`DefaultWorkflowRunnerBackgroundTest` · `WorkflowToolBackgroundModeTest` 가 §11.4 를 본다.
+
+확인하지 못한 것: 실행기를 통해 **비용** 한도로 멈추는 것(비용 한도의 판정과 충전은 `QuotaGuardTest` 가 보지만, 통합
+테스트는 `CostEstimator` 없이 토큰 한도만 돌렸다), 그리고 병렬 포크가 같은 키를 동시에 넘길 때의 초과량이 §5 의 상한 안인지(장부의 동시 충전이 잃지
+않는다는 것만 단위 테스트가 본다).

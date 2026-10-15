@@ -7,6 +7,34 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: usage quotas — accumulated session, principal and tenant limits, in total or per day (`at.aimon.core.agent.quota`)
+
+`ExecutionBudget` bounds one execution and starts again on the next, so nothing bounded what a session spends over
+many turns, what a user spends over many sessions, or what a tenant spends in a day — and a subagent fork, with its own
+`BudgetTracker`, was a way around any session-level limit. Phase 1 of `docs/design/agent-execution/usage-quota.md`.
+
+- **Opt-in, no change by default.** Without a ledger the executor uses `QuotaGuardFactory.disabled()` and behaves as
+  before. Wire one with `OrcaAgentExecutorFactory#withQuotaGuardFactory` or `AimonStackSpec.Builder#quota(QuotaSpec)`.
+- **One ledger, three scopes, two windows.** `UsageLedger` (application-scoped; `InMemoryUsageLedger` in `.impl`)
+  counts tokens and USD cost per `QuotaKey` — `SESSION` · `PRINCIPAL` · `TENANT` × `TOTAL` · `DAILY` (local midnight in
+  the configured zone, UTC by default). `StaticQuotaPolicy` sets limits per scope kind; `DefaultQuotaScopeResolver`
+  picks the session and principal, and a tenant only when given a function for it.
+- **Forks are charged to their turn.** The turn's `QuotaGuard` reaches every fork — `Task`, `Workflow` (background
+  runs included, via the new default `WorkflowRunner#runInBackground(script, runId, QuotaGuard)`), `WorkflowJs`, forked
+  skills, forks inside forks — through the write-once `ToolContextKeys.QUOTA_GUARD` and
+  `SubagentLaunchContext#getQuotaGuard()`. A fork never resolves scopes of its own.
+- **Soft limit.** Checked at each iteration boundary right after the budget, charged after each LLM call. A reached
+  quota ends the execution with the new `CompletionReason.QUOTA_EXCEEDED` before its next LLM call, and the result
+  names the key, limit and usage (`AgentExecutionResult#getQuotaViolation()`). The `Task` tool's reason line tells the
+  parent model that retrying or launching another subagent will stop the same way.
+- **Ledger failure fails open** (WARN, execution continues). `failClosed(true)` ends it with `ERROR` instead, not
+  `QUOTA_EXCEEDED`.
+- `CompletionReason` gains a constant: a peer on an older build reads `QUOTA_EXCEEDED` as `ERROR` through
+  `fromWireName`. Code that `switch`es over the enum without a `default` needs a case.
+- Not yet: CLI display and Spring Boot properties (phase 2), Redis / Postgres ledgers (phase 3). Calls outside the two
+  ReAct loops (compaction, memory, wiki) are not metered, nor are forks a scheduled routine's steps start — backlog
+  `UQ-1` · `UQ-2`.
+
 ### Added: `aimon-llm-testkit` — one `CountingHttpServer` for both provider modules' SDK-retry tests (tests only)
 
 The OpenAI and Anthropic `*LlmClientSdkRetryTest`s each carried a copy of the local HTTP server they count attempts

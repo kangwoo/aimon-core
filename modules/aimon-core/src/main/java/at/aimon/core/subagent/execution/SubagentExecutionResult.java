@@ -3,8 +3,10 @@ package at.aimon.core.subagent.execution;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 import at.aimon.core.agent.budget.CompletionReason;
+import at.aimon.core.agent.quota.QuotaViolation;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.command.execution.ExecutionMetadata;
@@ -103,7 +105,7 @@ public final class SubagentExecutionResult {
         Objects.requireNonNull(snapshot, "Session snapshot cannot be null");
         Objects.requireNonNull(metadata, "Execution metadata cannot be null");
         Objects.requireNonNull(completionReason, "Completion reason cannot be null");
-        return new SubagentExecutionResult(finalAnswer, snapshot, metadata, true, null, completionReason, cost);
+        return new SubagentExecutionResult(finalAnswer, snapshot, metadata, true, null, completionReason, cost, null);
     }
 
     /**
@@ -168,7 +170,7 @@ public final class SubagentExecutionResult {
         Objects.requireNonNull(snapshot, "Session snapshot cannot be null");
         Objects.requireNonNull(metadata, "Execution metadata cannot be null");
         Objects.requireNonNull(completionReason, "Completion reason cannot be null");
-        return new SubagentExecutionResult(null, snapshot, metadata, false, errorMessage, completionReason, cost);
+        return new SubagentExecutionResult(null, snapshot, metadata, false, errorMessage, completionReason, cost, null);
     }
 
     /**
@@ -226,9 +228,13 @@ public final class SubagentExecutionResult {
     private final String errorMessage;
     private final CompletionReason completionReason;
     private final Money cost;
+    private final QuotaViolation quotaViolation;
 
+    // One argument per field of an immutable value; bundling them would only move the list.
+    @SuppressWarnings("checkstyle:ParameterNumber")
     private SubagentExecutionResult(String finalAnswer, SessionSnapshot snapshot, ExecutionMetadata metadata,
-            boolean success, String errorMessage, CompletionReason completionReason, Money cost) {
+            boolean success, String errorMessage, CompletionReason completionReason, Money cost,
+            QuotaViolation quotaViolation) {
         this.finalAnswer = finalAnswer;
         this.snapshot = Objects.requireNonNull(snapshot, "Session snapshot cannot be null");
         this.metadata = Objects.requireNonNull(metadata, "Execution metadata cannot be null");
@@ -236,6 +242,7 @@ public final class SubagentExecutionResult {
         this.errorMessage = errorMessage;
         this.completionReason = Objects.requireNonNull(completionReason, "Completion reason cannot be null");
         this.cost = cost != null ? cost : Money.zeroUsd();
+        this.quotaViolation = quotaViolation;
     }
 
     /**
@@ -370,6 +377,29 @@ public final class SubagentExecutionResult {
         return cost;
     }
 
+    /**
+     * Gets the usage quota that stopped the fork, when one did.
+     *
+     * @return the violation when {@link #getCompletionReason()} is {@link CompletionReason#QUOTA_EXCEEDED}, otherwise
+     *         empty
+     */
+    public Optional<QuotaViolation> getQuotaViolation() {
+        return Optional.ofNullable(quotaViolation);
+    }
+
+    /**
+     * Returns a copy of this result naming the quota that stopped the fork.
+     *
+     * @param quotaViolation
+     *            the violation (must not be null)
+     * @return a new result carrying the violation; the original is unchanged
+     */
+    public SubagentExecutionResult withQuotaViolation(QuotaViolation quotaViolation) {
+        Objects.requireNonNull(quotaViolation, "Quota violation cannot be null");
+        return new SubagentExecutionResult(finalAnswer, snapshot, metadata, success, errorMessage, completionReason,
+                cost, quotaViolation);
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -382,12 +412,13 @@ public final class SubagentExecutionResult {
         return success == that.success && Objects.equals(finalAnswer, that.finalAnswer)
                 && snapshot.equals(that.snapshot) && metadata.equals(that.metadata)
                 && Objects.equals(errorMessage, that.errorMessage) && completionReason == that.completionReason
-                && cost.equals(that.cost);
+                && cost.equals(that.cost) && Objects.equals(quotaViolation, that.quotaViolation);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(finalAnswer, snapshot, metadata, success, errorMessage, completionReason, cost);
+        return Objects.hash(finalAnswer, snapshot, metadata, success, errorMessage, completionReason, cost,
+                quotaViolation);
     }
 
     @Override

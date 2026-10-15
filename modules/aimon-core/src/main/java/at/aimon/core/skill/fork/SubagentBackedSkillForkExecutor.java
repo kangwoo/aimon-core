@@ -146,7 +146,9 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
                 // The fork resolves its own environment from the spawning runtime's provider, with this execution's
                 // environment as its parent (execution-environment design §5.2).
                 .executionEnvironment(ExecutionEnvironmentAccess.of(toolContext).orElse(null))
-                .executionEnvironmentProvider(ExecutionEnvironmentAccess.providerOf(toolContext).orElse(null)).build();
+                .executionEnvironmentProvider(ExecutionEnvironmentAccess.providerOf(toolContext).orElse(null))
+                // The spawning execution's quota guard: the fork is charged to its keys, never resolves its own.
+                .quotaGuard(toolContext.get(ToolContextKeys.QUOTA_GUARD).orElse(null)).build();
 
         final String taskId = UUID.randomUUID().toString();
         final String description = "skill:" + skill.getName();

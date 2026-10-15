@@ -43,6 +43,8 @@ import at.aimon.core.agent.interrupt.TerminatorRegistrar;
 import at.aimon.core.agent.prompt.Staticness;
 import at.aimon.core.agent.prompt.SystemPromptPart;
 import at.aimon.core.agent.prompt.SystemPromptParts;
+import at.aimon.core.agent.quota.QuotaGuard;
+import at.aimon.core.agent.quota.QuotaViolation;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.LogOrigin;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
@@ -412,9 +414,10 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 final LoopContext lc = LoopContext.builder().context(context).transcriptBuffer(transcriptBuffer)
                         .executionId(executionId).systemPromptParts(systemPromptParts)
                         .effectiveMetadata(effectiveMetadata).modelConfig(modelConfig).budgetTracker(budgetTracker)
-                        .stalledIterationGuard(new StalledIterationGuard()).startTime(Instant.now())
-                        .toolContext(toolContext).sessionRegistry(sessionRegistry).coordinator(coordinator)
-                        .goal(request.getGoal()).executionAttributes(request.getExecutionAttributes()).build();
+                        .stalledIterationGuard(new StalledIterationGuard()).quotaGuard(request.getQuotaGuard())
+                        .startTime(Instant.now()).toolContext(toolContext).sessionRegistry(sessionRegistry)
+                        .coordinator(coordinator).goal(request.getGoal())
+                        .executionAttributes(request.getExecutionAttributes()).build();
 
                 return runReActLoop(lc);
             } finally {
@@ -463,6 +466,12 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 if (lc.budgetTracker.check() == BudgetDecision.STOP) {
                     return createBudgetStopResult(lc, iterationCount, accumulatedTokens);
                 }
+                // The spawning turn's quota, at the same boundary: what the turn, its other forks and the user's other
+                // sessions spent counts here too, so a fork is no way around a quota.
+                final Optional<QuotaViolation> quotaViolation = lc.quotaGuard.check();
+                if (quotaViolation.isPresent()) {
+                    return createQuotaStopResult(lc, iterationCount, accumulatedTokens, quotaViolation.get());
+                }
 
                 iterationCount++;
                 lc.budgetTracker.recordIteration();
@@ -491,17 +500,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 accumulatedTokens = accumulatedTokens.add(response.getTokenUsage());
                 lc.budgetTracker.recordTokens(response.getTokenUsage());
 
-                // Cost mirror: when a cost estimator is wired, price THIS call and fold it into the tracker's
-                // cost axis so a request-level ExecutionBudget.maxCostUsd stops the loop in-flight — the result-time
-                // estimate alone would only report the total after the loop already exited. USD-only by contract,
-                // like OrcaAgentExecutor's cost block: a non-USD estimate is not enforced as a STOP.
-                if (costEstimator != CostEstimator.NOOP) {
-                    final Money callCost = costEstimator.estimate(lc.modelConfig.getName().orElse(""),
-                            response.getTokenUsage());
-                    if (Money.USD.equals(callCost.getCurrency())) {
-                        lc.budgetTracker.recordCost(callCost);
-                    }
-                }
+                recordCallCost(lc, response);
 
                 // A response cut off at max_tokens is read once, here, and both shapes below branch on it: the same two
                 // answers OrcaAgentExecutor gives a turn (TruncatedResponses).
@@ -806,6 +805,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         request.getInvokingSessionId().ifPresent(id -> builder.put(ToolContextKeys.INVOKING_SESSION_ID, id));
 
         request.getPrincipal().ifPresent(p -> builder.put(ToolContextKeys.PRINCIPAL, p));
+        // Republished unchanged, so a fork this fork starts is charged to the same turn's keys.
+        builder.put(ToolContextKeys.QUOTA_GUARD, request.getQuotaGuard());
         builder.put(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY, request.getExecutionAttributes());
         builder.put(ToolContextKeys.LLM_CALL_METADATA_KEY, effectiveMetadata);
         builder.put(ToolContextKeys.ARTIFACT_COLLECTOR, artifactCollector);
@@ -1233,6 +1234,41 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     }
 
     /**
+     * Prices one LLM call and records it twice: on the tracker's cost axis, and on the spawning turn's quota keys.
+     *
+     * <p>
+     * Cost mirror: when a cost estimator is wired, the call's price is folded into the tracker so a request-level
+     * {@code ExecutionBudget.maxCostUsd} stops the loop in-flight — the result-time estimate alone would only report
+     * the
+     * total after the loop already exited. USD-only by contract, like {@code OrcaAgentExecutor}'s cost block: a non-USD
+     * estimate is not enforced as a STOP. The quota charge goes to the turn's keys — the session's among them, though
+     * the fork has none; an unpriced call charges tokens only.
+     */
+    private void recordCallCost(LoopContext lc, LlmResponse response) {
+        Money callCost = null;
+        if (costEstimator != CostEstimator.NOOP) {
+            callCost = costEstimator.estimate(lc.modelConfig.getName().orElse(""), response.getTokenUsage());
+            if (Money.USD.equals(callCost.getCurrency())) {
+                lc.budgetTracker.recordCost(callCost);
+            }
+        }
+        lc.quotaGuard.charge(lc.modelConfig.getName().orElse(null), response.getTokenUsage(), callCost);
+    }
+
+    /**
+     * Creates the result of a fork a usage quota stopped: {@link CompletionReason#QUOTA_EXCEEDED}, with the violation
+     * on the result and named in the message the parent reads. OnStop hooks fire with {@code success=false}, as for a
+     * budget stop.
+     */
+    private SubagentExecutionResult createQuotaStopResult(LoopContext lc, int iterationCount,
+            TokenUsage accumulatedTokens, QuotaViolation violation) {
+        log.info("Subagent execution stopped by quota: {}, iterations={}", violation.describe(), iterationCount);
+        return createFailureResult(lc,
+                "Execution stopped: " + CompletionReason.QUOTA_EXCEEDED.name() + " — " + violation.describe(),
+                iterationCount, accumulatedTokens, CompletionReason.QUOTA_EXCEEDED).withQuotaViolation(violation);
+    }
+
+    /**
      * Creates the result of a fork the stalled-iteration guard stopped: {@link CompletionReason#ERROR}, as a turn the
      * guard stops ends, with the guard's stop message ({@link StalledIterationGuard#stopMessage()}); OnStop hooks fire
      * with {@code success=false}.
@@ -1348,6 +1384,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
          * the guard the turn and a skill's loop use too.
          */
         private final StalledIterationGuard stalledIterationGuard;
+        /**
+         * The spawning turn's usage-quota guard, shared — not this fork's own. Every fork of one turn, nested or
+         * parallel, holds the same instance.
+         */
+        private final QuotaGuard quotaGuard;
         private final Instant startTime;
         private final ToolContext toolContext;
         private final ToolRegistry sessionRegistry;
@@ -1364,6 +1405,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             this.modelConfig = b.modelConfig;
             this.budgetTracker = b.budgetTracker;
             this.stalledIterationGuard = b.stalledIterationGuard;
+            this.quotaGuard = b.quotaGuard;
             this.startTime = b.startTime;
             this.toolContext = b.toolContext;
             this.sessionRegistry = b.sessionRegistry;
@@ -1409,6 +1451,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             private LlmModel modelConfig;
             private BudgetTracker budgetTracker;
             private StalledIterationGuard stalledIterationGuard;
+            private QuotaGuard quotaGuard;
             private Instant startTime;
             private ToolContext toolContext;
             private ToolRegistry sessionRegistry;
@@ -1453,6 +1496,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
             private Builder stalledIterationGuard(StalledIterationGuard stalledIterationGuard) {
                 this.stalledIterationGuard = stalledIterationGuard;
+                return this;
+            }
+
+            private Builder quotaGuard(QuotaGuard quotaGuard) {
+                this.quotaGuard = quotaGuard;
                 return this;
             }
 

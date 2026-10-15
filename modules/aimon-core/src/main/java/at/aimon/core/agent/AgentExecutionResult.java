@@ -1,9 +1,11 @@
 package at.aimon.core.agent;
 
 import java.util.List;
+import java.util.Optional;
 
 import at.aimon.core.agent.artifact.FileArtifact;
 import at.aimon.core.agent.budget.CompletionReason;
+import at.aimon.core.agent.quota.QuotaViolation;
 
 /**
  * Represents the result of an agent execution.
@@ -156,5 +158,19 @@ public interface AgentExecutionResult {
      */
     default boolean wasStreamed() {
         return false;
+    }
+
+    /**
+     * Gets the usage quota that stopped the execution, when one did.
+     *
+     * <p>
+     * Present exactly when {@link #getCompletionReason()} is {@link CompletionReason#QUOTA_EXCEEDED}; it names the key
+     * (scope, window, bucket), the limit and the usage, so a caller can say which quota is spent. The default is empty,
+     * for implementations that never meter quotas.
+     *
+     * @return the violation, or empty when no quota stopped the execution
+     */
+    default Optional<QuotaViolation> getQuotaViolation() {
+        return Optional.empty();
     }
 }

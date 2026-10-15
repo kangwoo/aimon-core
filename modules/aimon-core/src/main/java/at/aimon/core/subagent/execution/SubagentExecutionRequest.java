@@ -5,6 +5,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.budget.ExecutionBudget;
+import at.aimon.core.agent.quota.QuotaGuard;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.base.Principal;
@@ -47,6 +48,7 @@ public final class SubagentExecutionRequest {
     private final Map<String, Object> executionAttributes;
     private final LlmCallMetadata llmCallMetadata;
     private final ExecutionBudget budget;
+    private final QuotaGuard quotaGuard;
 
     private SubagentExecutionRequest(Builder builder) {
         this.taskId = Objects.requireNonNull(builder.taskId, "Task ID cannot be null");
@@ -59,6 +61,7 @@ public final class SubagentExecutionRequest {
                 : Map.of();
         this.llmCallMetadata = builder.llmCallMetadata != null ? builder.llmCallMetadata : LlmCallMetadata.empty();
         this.budget = builder.budget;
+        this.quotaGuard = builder.quotaGuard != null ? builder.quotaGuard : QuotaGuard.disabled();
     }
 
     public String getTaskId() {
@@ -143,6 +146,18 @@ public final class SubagentExecutionRequest {
         return Optional.ofNullable(budget);
     }
 
+    /**
+     * Gets the usage-quota guard the fork checks and charges — its spawning turn's, inherited unchanged.
+     *
+     * <p>
+     * Not part of {@link #equals(Object)}: it is a shared collaborator, not a value of the request.
+     *
+     * @return the guard (never null; {@link QuotaGuard#disabled()} when the spawner handed none)
+     */
+    public QuotaGuard getQuotaGuard() {
+        return quotaGuard;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -183,6 +198,7 @@ public final class SubagentExecutionRequest {
         private Map<String, Object> executionAttributes;
         private LlmCallMetadata llmCallMetadata;
         private ExecutionBudget budget;
+        private QuotaGuard quotaGuard;
 
         /** taskId를 설정한다. */
         public Builder taskId(String taskId) {
@@ -251,6 +267,18 @@ public final class SubagentExecutionRequest {
          */
         public Builder budget(ExecutionBudget budget) {
             this.budget = budget;
+            return this;
+        }
+
+        /**
+         * Sets the usage-quota guard the fork shares with its spawning turn. The fork never builds one of its own.
+         *
+         * @param quotaGuard
+         *            the guard (nullable; {@link QuotaGuard#disabled()} is applied when absent)
+         * @return this builder
+         */
+        public Builder quotaGuard(QuotaGuard quotaGuard) {
+            this.quotaGuard = quotaGuard;
             return this;
         }
 
