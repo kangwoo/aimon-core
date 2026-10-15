@@ -22,6 +22,7 @@ The ReAct loop, turn handling, interruption, the input queue.
 | [`interruptible-tools-guide.en.md`](agent-execution/interruptible-tools-guide.en.md) | External interruption — Ctrl+C, NOW priority input — and `InterruptBehavior` |
 | [`system-reminder-convention.en.md`](agent-execution/system-reminder-convention.en.md) | The convention for injecting `<system-reminder>` synthetic context |
 | [`context-engine-guide.en.md`](agent-execution/context-engine-guide.en.md) | Choosing the engine that shrinks a long conversation's context — `default` / `rolling`, the `SessionHistory` tool |
+| [`usage-quota-guide.en.md`](agent-execution/usage-quota-guide.en.md) | Cumulative token and cost limits per session, user, tenant and day — turning them on, fork accounting, the soft limit's overshoot bound |
 
 Design rationale: [`agent-runtime-scope.md`](../design/agent-execution/agent-runtime-scope.md) ·
 [`orca-executor.md`](../design/agent-execution/orca-executor.md) ·
@@ -29,7 +30,8 @@ Design rationale: [`agent-runtime-scope.md`](../design/agent-execution/agent-run
 [`interrupt.md`](../design/agent-execution/interrupt.md) ·
 [`compaction.md`](../design/agent-execution/compaction.md) ·
 [`context-engine.md`](../design/agent-execution/context-engine.md) ·
-[`artifact.md`](../design/agent-execution/artifact.md)
+[`artifact.md`](../design/agent-execution/artifact.md) ·
+[`usage-quota.md`](../design/agent-execution/usage-quota.md)
 
 ## `session/` — sessions
 

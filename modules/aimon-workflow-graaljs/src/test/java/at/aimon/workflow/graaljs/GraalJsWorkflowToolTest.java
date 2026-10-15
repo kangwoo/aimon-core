@@ -277,7 +277,7 @@ class GraalJsWorkflowToolTest extends AbstractGraalJsRunTest {
                     .execute(ToolInput.of(Map.of("script", "return 1;", "mode", "background")), insideSkill(registry));
 
             assertThat(result.isSuccess()).as(result.getContent()).isTrue();
-            verify(backgroundRunner).runInBackground(any(), any());
+            verify(backgroundRunner).runInBackground(any(), any(), any());
         }
     }
 

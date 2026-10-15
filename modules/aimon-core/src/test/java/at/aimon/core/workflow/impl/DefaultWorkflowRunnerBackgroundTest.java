@@ -25,6 +25,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.quota.QuotaGuard;
+import at.aimon.core.agent.quota.impl.InMemoryUsageLedger;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
@@ -118,6 +120,25 @@ class DefaultWorkflowRunnerBackgroundTest {
                     }
                     throw new CancellationException("subagent unwound: run cancelled");
                 });
+    }
+
+    @Test
+    @DisplayName("a background run's subagents get the submitter's quota guard; without one, the base context's")
+    void backgroundRunCarriesTheSubmittersQuotaGuard() throws Exception {
+        final java.util.List<QuotaGuard> seen = new java.util.concurrent.CopyOnWriteArrayList<>();
+        when(manager.execute(any(SubagentLaunchContext.class), any(Subagent.class), anyString()))
+                .thenAnswer(invocation -> {
+                    seen.add(invocation.getArgument(0, SubagentLaunchContext.class).getQuotaGuard());
+                    return success("ok");
+                });
+        final QuotaGuard guard = QuotaGuard.builder().ledger(new InMemoryUsageLedger())
+                .policy(scope -> java.util.List.of()).build();
+
+        runner.runInBackground(ctx -> ctx.agent(sub, "g").text(), RunId.from("metered"), guard)
+                .await(Duration.ofSeconds(5));
+        runner.runInBackground(ctx -> ctx.agent(sub, "g").text(), RunId.from("unmetered")).await(Duration.ofSeconds(5));
+
+        assertThat(seen).containsExactly(guard, QuotaGuard.disabled());
     }
 
     @Test

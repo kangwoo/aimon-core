@@ -3,11 +3,13 @@ package at.aimon.core.agent.impl.orca;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 import at.aimon.core.agent.AgentExecutionResult;
 import at.aimon.core.agent.artifact.FileArtifact;
 import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.compact.CompactionMetadata;
+import at.aimon.core.agent.quota.QuotaViolation;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.llm.Message;
@@ -274,6 +276,7 @@ public final class OrcaAgentExecutionResult implements AgentExecutionResult {
     private final boolean wasStreamed;
     private final List<CompactionMetadata> compactionEvents;
     private final CostSummary costSummary;
+    private final QuotaViolation quotaViolation;
 
     /**
      * Creates a new AgentExecutionResult from the supplied builder.
@@ -294,6 +297,7 @@ public final class OrcaAgentExecutionResult implements AgentExecutionResult {
         this.compactionEvents = List
                 .copyOf(Objects.requireNonNull(builder.compactionEvents, "Compaction events cannot be null"));
         this.costSummary = Objects.requireNonNull(builder.costSummary, "Cost summary cannot be null");
+        this.quotaViolation = builder.quotaViolation;
     }
 
     /**
@@ -311,6 +315,7 @@ public final class OrcaAgentExecutionResult implements AgentExecutionResult {
         private boolean wasStreamed;
         private List<CompactionMetadata> compactionEvents;
         private CostSummary costSummary;
+        private QuotaViolation quotaViolation;
 
         private Builder finalAnswer(String finalAnswer) {
             this.finalAnswer = finalAnswer;
@@ -362,6 +367,11 @@ public final class OrcaAgentExecutionResult implements AgentExecutionResult {
             return this;
         }
 
+        private Builder quotaViolation(QuotaViolation quotaViolation) {
+            this.quotaViolation = quotaViolation;
+            return this;
+        }
+
         private OrcaAgentExecutionResult build() {
             return new OrcaAgentExecutionResult(this);
         }
@@ -384,7 +394,8 @@ public final class OrcaAgentExecutionResult implements AgentExecutionResult {
         }
         return new Builder().finalAnswer(finalAnswer).snapshot(snapshot).metadata(metadata).success(success)
                 .errorMessage(errorMessage).artifacts(artifacts).completionReason(completionReason)
-                .wasStreamed(wasStreamed).compactionEvents(compactionEvents).costSummary(costSummary).build();
+                .wasStreamed(wasStreamed).compactionEvents(compactionEvents).costSummary(costSummary)
+                .quotaViolation(quotaViolation).build();
     }
 
     /**
@@ -405,7 +416,24 @@ public final class OrcaAgentExecutionResult implements AgentExecutionResult {
         }
         return new Builder().finalAnswer(finalAnswer).snapshot(snapshot).metadata(metadata).success(success)
                 .errorMessage(errorMessage).artifacts(artifacts).completionReason(completionReason)
-                .wasStreamed(wasStreamed).compactionEvents(compactionEvents).costSummary(costSummary).build();
+                .wasStreamed(wasStreamed).compactionEvents(compactionEvents).costSummary(costSummary)
+                .quotaViolation(quotaViolation).build();
+    }
+
+    /**
+     * Returns a copy of this result naming the quota that stopped the execution. Used by {@link OrcaAgentExecutor} when
+     * it ends a turn with {@link CompletionReason#QUOTA_EXCEEDED}.
+     *
+     * @param quotaViolation
+     *            the violation (must not be null)
+     * @return a new result instance carrying the violation; the original is unchanged
+     */
+    public OrcaAgentExecutionResult withQuotaViolation(QuotaViolation quotaViolation) {
+        Objects.requireNonNull(quotaViolation, "Quota violation cannot be null");
+        return new Builder().finalAnswer(finalAnswer).snapshot(snapshot).metadata(metadata).success(success)
+                .errorMessage(errorMessage).artifacts(artifacts).completionReason(completionReason)
+                .wasStreamed(wasStreamed).compactionEvents(compactionEvents).costSummary(costSummary)
+                .quotaViolation(quotaViolation).build();
     }
 
     /**
@@ -538,6 +566,16 @@ public final class OrcaAgentExecutionResult implements AgentExecutionResult {
         return costSummary;
     }
 
+    /**
+     * Gets the quota that stopped the execution: which key, which limit, how much was used.
+     *
+     * @return the violation when the result's reason is {@link CompletionReason#QUOTA_EXCEEDED}, otherwise empty
+     */
+    @Override
+    public Optional<QuotaViolation> getQuotaViolation() {
+        return Optional.ofNullable(quotaViolation);
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -551,13 +589,14 @@ public final class OrcaAgentExecutionResult implements AgentExecutionResult {
                 && Objects.equals(finalAnswer, that.finalAnswer) && snapshot.equals(that.snapshot)
                 && metadata.equals(that.metadata) && Objects.equals(errorMessage, that.errorMessage)
                 && artifacts.equals(that.artifacts) && completionReason == that.completionReason
-                && compactionEvents.equals(that.compactionEvents) && costSummary.equals(that.costSummary);
+                && compactionEvents.equals(that.compactionEvents) && costSummary.equals(that.costSummary)
+                && Objects.equals(quotaViolation, that.quotaViolation);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(finalAnswer, snapshot, metadata, success, errorMessage, artifacts, completionReason,
-                wasStreamed, compactionEvents, costSummary);
+                wasStreamed, compactionEvents, costSummary, quotaViolation);
     }
 
     @Override

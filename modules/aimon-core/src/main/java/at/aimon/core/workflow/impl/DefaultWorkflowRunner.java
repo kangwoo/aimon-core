@@ -23,6 +23,7 @@ import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptReason;
+import at.aimon.core.agent.quota.QuotaGuard;
 import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.workflow.RunHandle;
@@ -210,6 +211,11 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
 
     @Override
     public <T> RunHandle<T> runInBackground(WorkflowScript<T> script, RunId runId) {
+        return runInBackground(script, runId, null);
+    }
+
+    @Override
+    public <T> RunHandle<T> runInBackground(WorkflowScript<T> script, RunId runId, QuotaGuard quotaGuard) {
         Objects.requireNonNull(script, "script cannot be null");
         Objects.requireNonNull(runId, "runId cannot be null");
         // The RunStore is the authoritative idempotency gate: putIfAbsentOrTerminal atomically claims the id when
@@ -224,7 +230,7 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
                 baseLaunchContext.getPrincipal().orElse(null), baseLaunchContext.getAgentRuntimeId(), Instant.now());
         for (int attempts = 0; attempts < MAX_RESUBMIT_STORE_ATTEMPTS; attempts++) {
             if (runStore.putIfAbsentOrTerminal(pending)) {
-                return dispatch(script, runId);
+                return dispatch(script, runId, quotaGuard != null ? quotaGuard : baseLaunchContext.getQuotaGuard());
             }
             for (int spins = 0; spins < RESUBMIT_REGISTRY_SPINS; spins++) {
                 final Optional<RunningRunRegistry.Entry> existing = runningRuns.find(runId);
@@ -237,11 +243,12 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
         throw new IllegalStateException("run " + runId + " is active but is not hosted on this node");
     }
 
-    private <T> RunHandle<T> dispatch(WorkflowScript<T> script, RunId runId) {
-        // Per-run coordinator + launch context: the run's fan-out subagents observe THIS run's cancellation signal.
+    private <T> RunHandle<T> dispatch(WorkflowScript<T> script, RunId runId, QuotaGuard quotaGuard) {
+        // Per-run coordinator + launch context: the run's fan-out subagents observe THIS run's cancellation signal,
+        // and are charged to the submitting execution's quota (WorkflowRunner#runInBackground(..., QuotaGuard)).
         final InterruptCoordinator coordinator = new DefaultInterruptCoordinator();
         final SubagentLaunchContext perRunLaunchContext = baseLaunchContext.toBuilder()
-                .cancellationSignal(coordinator.getSignal()).build();
+                .cancellationSignal(coordinator.getSignal()).quotaGuard(quotaGuard).build();
         final RunControl control = new RunControl(coordinator, null);
         final CompletableFuture<T> future = new CompletableFuture<>();
         final RunHandle<T> handle = new RunHandle<>(runId, future);

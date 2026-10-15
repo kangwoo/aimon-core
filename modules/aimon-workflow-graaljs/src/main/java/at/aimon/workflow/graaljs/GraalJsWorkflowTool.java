@@ -202,7 +202,8 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         final RunId runId = RunId.from(RUN_SCRIPT_NAME, discriminator(source, args));
         final GraalJsWorkflowScript script = new GraalJsWorkflowScript(source, args, sandbox, engines, subagentResolver,
                 NoopCancellationSignal.INSTANCE);
-        backgroundRunner.runInBackground(script, runId);
+        // The exception: the run is charged to this execution's quota, or it would be a way around it.
+        backgroundRunner.runInBackground(script, runId, context.get(ToolContextKeys.QUOTA_GUARD).orElse(null));
         log.debug("WorkflowJs (background): runId='{}'", runId.value());
         return ToolResult.success("Started background JS workflow run '" + runId.value()
                 + "'. Track it with the /runs command (or /runs status " + runId.value() + ").");
@@ -275,7 +276,9 @@ public final class GraalJsWorkflowTool extends AbstractTool {
                 // The fork resolves its own environment from the spawning runtime's provider, with this execution's
                 // environment as its parent (execution-environment design §5.2).
                 .executionEnvironment(ExecutionEnvironmentAccess.of(context).orElse(null))
-                .executionEnvironmentProvider(ExecutionEnvironmentAccess.providerOf(context).orElse(null)).build();
+                .executionEnvironmentProvider(ExecutionEnvironmentAccess.providerOf(context).orElse(null))
+                // The spawning execution's quota guard: the fork is charged to its keys, never resolves its own.
+                .quotaGuard(context.get(ToolContextKeys.QUOTA_GUARD).orElse(null)).build();
     }
 
     private static Map<String, Object> readArgs(ToolInput input) {

@@ -17,7 +17,7 @@ AIMON 컴포넌트의 **수명(lifetime)**, **소유권(ownership)**, **소멸 �
 
 | Scope | 대표 컴포넌트 | 식별자 | Lifetime |
 |-------|--------------|--------|----------|
-| **Application** | `SchedulingEngine`, `ScheduledTaskManager`, `RoutineExecutor`, `AgentRuntimeRegistry`, `SessionRecordStore`, `SessionLeaseStore`, `SessionInbox`, `SessionSignalBus`, `IdempotencyStore`, `KnowledgeStore`, `CredentialStore`, `BackgroundBashManager`, `BackgroundBashStore` | — | 앱 시작 ~ 종료 |
+| **Application** | `SchedulingEngine`, `ScheduledTaskManager`, `RoutineExecutor`, `AgentRuntimeRegistry`, `SessionRecordStore`, `SessionLeaseStore`, `SessionInbox`, `SessionSignalBus`, `IdempotencyStore`, `KnowledgeStore`, `CredentialStore`, `BackgroundBashManager`, `BackgroundBashStore`, `UsageLedger` | — | 앱 시작 ~ 종료 |
 | **Agent** | `AgentRuntime` 과 그것이 소유한 `ToolRegistry` / `HookRegistry` / `McpClientManager` | `AgentRuntimeId` (`agent:<name>[:<discriminator>]`) | `(Agent, discriminator)` 단위, 세션들을 가로질러 유지 |
 | **Session** | `SessionRecord`, `SessionTotals`, `budgetOverride`, `SessionTranscript` | `SessionId` | 세션이 존재하는 동안 — **영속** |
 | **Live session** | `LiveSession`, 메시지 큐, 이벤트 publisher | (바인딩된 `SessionId` 참조) | 노드 로컬, **일시적** (열기 ~ `close()`) |
@@ -33,6 +33,11 @@ AIMON 컴포넌트의 **수명(lifetime)**, **소유권(ownership)**, **소멸 �
 `SessionTotals` 가 따로 들고 있다. "턴 또는 포크" 는 헤지가 아니라 전수다: main 소스에서
 `new BudgetTracker(` 는 정확히 **2곳**뿐이며 `OrcaAgentExecutor`(턴)와 `DefaultSubagentExecutor`(포크)
 가 전부다. (grep 은 3건을 뱉지만 세 번째는 `BudgetTracker` javadoc 안의 사용 예시 코드다.)
+
+누적 한도는 예산이 아니라 **쿼터**다. 그 카운터는 application-scoped `UsageLedger` 에 있고, 턴마다 하나
+만들어지는 `QuotaGuard` 는 그 턴이 시작한 모든 포크가 **새로 만들지 않고 그대로 공유한다** — 포크에는
+세션이 없으므로 다시 해석하면 세션 키가 빠진다
+([`../design/agent-execution/usage-quota.md`](../design/agent-execution/usage-quota.md) §4.3).
 
 턴과 포크가 이렇게 예산 트래커를 공유하는 것은 우연이 아니다 — **턴은 실행(execution)의 한 종류**이고,
 포크는 세션이 없는 다른 종류다. 두 경로가 공유하는 것을 설명할 때 `turn` 이라고 쓰면 안 되는 이유가

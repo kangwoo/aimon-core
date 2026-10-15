@@ -8,6 +8,7 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.artifact.ArtifactCollector;
 import at.aimon.core.agent.queue.MessageQueueManager;
+import at.aimon.core.agent.quota.QuotaGuard;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.tool.ToolContext;
@@ -384,6 +385,24 @@ public final class ToolContextKeys {
     @SuppressWarnings("unchecked")
     public static final ToolContextKey<List<AllowedTool>> CALLER_ALLOWED_TOOLS = ToolContextKey.of("callerAllowedTools",
             (Class<List<AllowedTool>>) (Class<?>) List.class);
+
+    /**
+     * Typed key for the {@link QuotaGuard} of the execution tree the tool runs in.
+     *
+     * <p>
+     * The turn's executor publishes the guard it built; a fork publishes the guard it inherited, unchanged. A spawn
+     * site &mdash; {@code TaskTool}, {@code WorkflowTool}, a forked skill &mdash; reads it into the
+     * {@code SubagentLaunchContext} it builds, which is how a fork's LLM calls land on the turn's session, principal
+     * and tenant keys instead of on none. Because each run republishes it, it follows nesting to any depth, as
+     * {@link #CALLER_ALLOWED_TOOLS} does.
+     *
+     * <p>
+     * Write-once, so a {@code ToolContextEnricher} cannot replace it with {@link QuotaGuard#disabled()} and give the
+     * forks below it an unmetered tree. Absent on call paths no executor built (unit tests, a scheduled routine's own
+     * tool context); a spawn site then hands the fork the disabled guard.
+     */
+    public static final ToolContextKey<QuotaGuard> QUOTA_GUARD = ToolContextKey.writeOnce("quotaGuard",
+            QuotaGuard.class);
 
     private ToolContextKeys() {
         throw new AssertionError("This class should not be instantiated");

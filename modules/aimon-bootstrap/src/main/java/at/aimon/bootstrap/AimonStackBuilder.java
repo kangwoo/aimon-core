@@ -27,6 +27,7 @@ import at.aimon.bootstrap.spec.AgentDescriptor;
 import at.aimon.bootstrap.spec.AgentRuntimeSpec;
 import at.aimon.bootstrap.spec.AgentSpec;
 import at.aimon.bootstrap.spec.ExecutorSpec;
+import at.aimon.bootstrap.spec.QuotaSpec;
 import at.aimon.bootstrap.spec.SchedulingSpec;
 import at.aimon.bootstrap.spec.SessionSpec;
 import at.aimon.bootstrap.spec.SkillApprovalSpec;
@@ -45,6 +46,7 @@ import at.aimon.core.agent.impl.orca.OrcaAgentRuntimeFactory;
 import at.aimon.core.agent.queue.DefaultMessageQueueManager;
 import at.aimon.core.agent.queue.InMemoryMessageQueueRepository;
 import at.aimon.core.agent.queue.MessageQueueManager;
+import at.aimon.core.agent.quota.impl.StaticQuotaPolicy;
 import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionCheckpointMailbox;
@@ -61,6 +63,7 @@ import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.hook.rewake.impl.DefaultRewakeFireListener;
 import at.aimon.core.hook.rewake.impl.DefaultRewakeService;
 import at.aimon.core.knowledge.KnowledgeStore;
+import at.aimon.core.llm.cost.CostEstimator;
 import at.aimon.core.llm.cost.TablePricedCostEstimator;
 import at.aimon.core.scheduling.ScheduledTaskManager;
 import at.aimon.core.scheduling.SchedulingEngine;
@@ -385,11 +388,23 @@ public final class AimonStackBuilder {
 
         // --- Executor -------------------------------------------------------------------------------------
         final ExecutorSpec executorSpec = spec.getExecutor();
+        final CostEstimator costEstimator = executorSpec.getCostEstimator()
+                .orElseGet(TablePricedCostEstimator::withDefaultPrices);
         final OrcaAgentExecutorFactory executorFactory = new OrcaAgentExecutorFactory()
                 .withMessageQueueManager(messageQueueManager).withSkillPreflightScanner(skillPreflightScanner)
                 .withPendingTurnRegistry(pendingTurnRegistry).withSubagentBehaviorRegistry(codeSubagentBehaviorRegistry)
-                .withRewakeService(rewakeService).withUseStreaming(executorSpec.isStreaming()).withCostEstimator(
-                        executorSpec.getCostEstimator().orElseGet(TablePricedCostEstimator::withDefaultPrices));
+                .withRewakeService(rewakeService).withUseStreaming(executorSpec.isStreaming())
+                .withCostEstimator(costEstimator);
+        // Usage quotas (usage-quota §7.1). Off without a ledger: the factory is then the disabled one, which is what
+        // the executor holds anyway. The ledger is borrowed — application-scoped, never enrolled for teardown.
+        final QuotaSpec quotaSpec = spec.getQuota();
+        executorFactory.withQuotaGuardFactory(quotaSpec.toGuardFactory());
+        if (quotaSpec.getLedger().isPresent() && costEstimator == CostEstimator.NOOP
+                && quotaSpec.getPolicy() instanceof StaticQuotaPolicy staticPolicy && staticPolicy.hasCostLimit()) {
+            degradations.add("quota-cost",
+                    "A quota cost limit is configured but the cost estimator is NOOP, so every call is priced at"
+                            + " zero and the cost limit never fires. Token limits are unaffected.");
+        }
         spec.getSkillApproval().getPendingTurnTtl().ifPresent(executorFactory::withPendingTurnTtl);
         executorSpec.getTracer().ifPresent(executorFactory::withTracer);
         executorSpec.getTracePayloadPolicy().ifPresent(executorFactory::withTracePayloadPolicy);

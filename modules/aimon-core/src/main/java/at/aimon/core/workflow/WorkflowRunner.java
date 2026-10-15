@@ -1,5 +1,7 @@
 package at.aimon.core.workflow;
 
+import at.aimon.core.agent.quota.QuotaGuard;
+
 /**
  * Runs {@link WorkflowScript}s, foreground or in the background.
  *
@@ -89,6 +91,34 @@ public interface WorkflowRunner extends AutoCloseable, WorkflowRunController {
      * @return a handle to the background run
      */
     <T> RunHandle<T> runInBackground(WorkflowScript<T> script, RunId runId);
+
+    /**
+     * {@link #runInBackground(WorkflowScript, RunId)}, with the run's subagents charged to the submitting execution's
+     * usage quota.
+     *
+     * <p>
+     * The one thing a background run <em>does</em> take from the call that submitted it. Everything else stays the
+     * base launch context's, as above; but a run that also left the quota behind would be a way around it — a user
+     * whose session is out of quota could start the same work in the background and have it run unmetered.
+     *
+     * <p>
+     * The default ignores {@code quotaGuard} and delegates, which is right only for a runner that starts no subagent.
+     * {@code DefaultWorkflowRunner} overrides it. Joining a run already in flight under {@code runId} keeps that run's
+     * guard.
+     *
+     * @param script
+     *            the script to run (must not be null)
+     * @param runId
+     *            the run identifier (must not be null)
+     * @param quotaGuard
+     *            the submitting execution's guard, or {@code null} for the base launch context's
+     * @param <T>
+     *            the script's result type
+     * @return a handle to the background run
+     */
+    default <T> RunHandle<T> runInBackground(WorkflowScript<T> script, RunId runId, QuotaGuard quotaGuard) {
+        return runInBackground(script, runId);
+    }
 
     /**
      * Releases only resources the runner itself owns — the run-hosting pool. Borrowed collaborators (manager, base

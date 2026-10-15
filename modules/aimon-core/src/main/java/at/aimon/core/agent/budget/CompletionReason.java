@@ -20,6 +20,21 @@ public enum CompletionReason {
     /** Execution halted because the wall-clock budget elapsed. */
     WALL_CLOCK_EXCEEDED,
     /**
+     * Execution halted because an accumulated usage quota was reached — a session's, a principal's or a tenant's,
+     * in total or for the day ({@code at.aimon.core.agent.quota}). Checked where the budget is, before the next LLM
+     * call, so a quota already spent ends the execution at iteration 0. The result names the key that stopped it.
+     *
+     * <p>
+     * Kept apart from {@link #TOKEN_BUDGET_EXCEEDED} and {@link #COST_BUDGET_EXCEEDED} because the next step differs:
+     * those lift when the execution's budget is raised, this one does not — only the quota's window resetting, or its
+     * limit being raised, does. Like them it is a safety stop, not an error.
+     *
+     * <p>
+     * Added after the first release of this enum. A peer on an older build reads the name as {@link #ERROR}
+     * ({@link #fromWireName(String, boolean)}).
+     */
+    QUOTA_EXCEEDED,
+    /**
      * Execution was aborted by a framework-initiated cancellation (parent agent shutdown, system shutdown, or other
      * non-user-initiated stop). User- or queue-initiated interrupts use {@link #INTERRUPTED} instead.
      */

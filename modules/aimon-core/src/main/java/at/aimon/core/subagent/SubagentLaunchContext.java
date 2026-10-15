@@ -10,6 +10,7 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.NoopCancellationSignal;
 import at.aimon.core.agent.queue.MessageQueueManager;
+import at.aimon.core.agent.quota.QuotaGuard;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
@@ -109,6 +110,7 @@ public final class SubagentLaunchContext {
     private final List<AllowedTool> callerAllowedTools;
     private final ExecutionEnvironment executionEnvironment;
     private final ExecutionEnvironmentProvider executionEnvironmentProvider;
+    private final QuotaGuard quotaGuard;
 
     private SubagentLaunchContext(Builder builder) {
         agentRuntimeId = Objects.requireNonNull(builder.agentRuntimeId, "Agent runtime ID cannot be null");
@@ -140,6 +142,7 @@ public final class SubagentLaunchContext {
         callerAllowedTools = List.copyOf(builder.callerAllowedTools);
         executionEnvironment = builder.executionEnvironment;
         executionEnvironmentProvider = builder.executionEnvironmentProvider;
+        quotaGuard = builder.quotaGuard != null ? builder.quotaGuard : QuotaGuard.disabled();
     }
 
     /**
@@ -421,6 +424,18 @@ public final class SubagentLaunchContext {
     }
 
     /**
+     * Returns the spawning execution's usage-quota guard, which the fork checks and charges as its own. Forwarded from
+     * {@code ToolContextKeys.QUOTA_GUARD}: the fork is charged to the scopes its spawning turn resolved — the session
+     * among them, which a fork has none of — and never resolves its own.
+     *
+     * @return the guard (never null; {@link QuotaGuard#disabled()} when the spawner has none, e.g. a runtime-level
+     *         runner with no calling execution)
+     */
+    public QuotaGuard getQuotaGuard() {
+        return quotaGuard;
+    }
+
+    /**
      * Returns a builder seeded with every field of this launch context, for deriving a variant that shares all borrowed
      * collaborators (registries, stores, model, ...) but overrides selected fields.
      *
@@ -444,7 +459,7 @@ public final class SubagentLaunchContext {
                 .sessionSnapshotStore(sessionSnapshotStore).previousSnapshot(previousSnapshot)
                 .messageQueueManager(messageQueueManager).parentEventSink(parentEventSink)
                 .callerAllowedTools(callerAllowedTools).executionEnvironment(executionEnvironment)
-                .executionEnvironmentProvider(executionEnvironmentProvider);
+                .executionEnvironmentProvider(executionEnvironmentProvider).quotaGuard(quotaGuard);
     }
 
     @Override
@@ -479,6 +494,7 @@ public final class SubagentLaunchContext {
         private List<AllowedTool> callerAllowedTools = List.of();
         private ExecutionEnvironment executionEnvironment;
         private ExecutionEnvironmentProvider executionEnvironmentProvider;
+        private QuotaGuard quotaGuard;
 
         private Builder() {
         }
@@ -776,6 +792,18 @@ public final class SubagentLaunchContext {
          */
         public Builder executionEnvironmentProvider(ExecutionEnvironmentProvider executionEnvironmentProvider) {
             this.executionEnvironmentProvider = executionEnvironmentProvider;
+            return this;
+        }
+
+        /**
+         * Sets the spawning execution's usage-quota guard.
+         *
+         * @param quotaGuard
+         *            the guard, or null for {@link QuotaGuard#disabled()}
+         * @return this builder
+         */
+        public Builder quotaGuard(QuotaGuard quotaGuard) {
+            this.quotaGuard = quotaGuard;
             return this;
         }
 

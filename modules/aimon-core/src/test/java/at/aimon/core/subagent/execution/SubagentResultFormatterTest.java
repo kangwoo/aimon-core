@@ -108,4 +108,11 @@ class SubagentResultFormatterTest {
         assertThat(SubagentResultFormatter.completionReasonLine(CompletionReason.BLOCKED, false))
                 .contains("Completion reason: BLOCKED");
     }
+
+    @Test
+    void aQuotaStoppedForkTellsTheParentThatRetryingWillNotHelp() {
+        // The quota is the whole execution tree's, so the parent model must not read the stop as "try another fork".
+        assertThat(SubagentResultFormatter.completionReasonLine(CompletionReason.QUOTA_EXCEEDED, false))
+                .hasValue("Completion reason: QUOTA_EXCEEDED (" + SubagentResultFormatter.QUOTA_EXCEEDED_HINT + ")");
+    }
 }
