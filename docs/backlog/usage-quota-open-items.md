@@ -25,6 +25,9 @@
 **어디.** (2026-10-15)
 
 - `DefaultCompactionEngine.java:460` · `:471` — 컴팩션 요약 호출
+- `LlmSkillExecutor.java:240` · `:284` — 포크하지 않는 슬래시 명령 스킬(`/skill`)의 자체 루프. 턴 안에서 불리지만
+  guard 를 판정하지도 기록하지도 않아서, 쿼터를 다 쓴 사용자도 이 경로로는 LLM 을 계속 부를 수 있다. 가장 싼 막기는
+  `executeCommand` 앞의 guard 판정 하나다
 - `SubagentBehaviorSupport` 를 쓰는 코드 동작(code behavior) 서브에이전트 — 요청에는 guard 가 실려 오지만
   (`SubagentExecutionRequest#getQuotaGuard`), 동작이 직접 부르는 게이트웨이 호출은 기록되지 않는다
 - `at.aimon.core.memory.{deriver,dreamer,dialectic,reconciler}` · `at.aimon.core.knowledge.wiki` 의 LLM 전략들 —

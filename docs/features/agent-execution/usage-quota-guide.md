@@ -1,7 +1,7 @@
 # Usage Quota 가이드 — 세션·사용자·테넌트별 사용량 한도
 
-> NOTE: 이 기능은 1단계 구현이 진행 중이다. 아래의 타입·메서드 이름은 설계 문서 기준이며, 구현이 들어오면
-> 그것과 대조해 확정한다.
+> NOTE: 지금 들어가 있는 것은 설계의 1단계다 — 노드 하나 안에서 세는 in-memory 장부와 `AimonStackSpec` 배선.
+> CLI 표시와 Spring Boot 프로퍼티(2단계), 노드 간 공유 장부(3단계)는 아직 없다.
 
 에이전트가 쓰는 LLM 토큰과 비용에 **누적 한도**를 걸어, 한도에 닿으면 실행을 멈추게 하는 기능이다. 한도는
 세션 하나, 사용자(`Principal`) 하나, 테넌트 하나 단위로 걸 수 있고, 전체 누적이나 하루 단위로 셀 수 있다.
@@ -43,7 +43,7 @@ AimonStackSpec spec = AimonStackSpec.builder()
                         // 한 사용자가 하루에 쓸 수 있는 비용
                         .limit(QuotaScope.Kind.PRINCIPAL, QuotaLimit.daily().maxCost(Money.usd(20)).build())
                         .build())
-                .zone(ZoneId.of("Asia/Seoul"))   // 하루의 경계
+                .zone(ZoneId.of("Asia/Seoul"))   // 하루의 경계. 생략하면 UTC
                 .build())
         .build();
 ```
@@ -55,6 +55,9 @@ AimonStackSpec spec = AimonStackSpec.builder()
 | `UsageLedger` | 누적 사용량을 저장하는 장부 | `InMemoryUsageLedger` |
 | `QuotaPolicy` | 범위마다 어떤 한도를 거는지 | `StaticQuotaPolicy` |
 | `QuotaScopeResolver` | 실행 하나가 어느 범위에 속하는지 | `DefaultQuotaScopeResolver` (세션 · 사용자) |
+
+`policy` 를 생략하면 한도가 하나도 없는 정책이, `resolver` 를 생략하면 `DefaultQuotaScopeResolver.create()` 가
+쓰인다. 장부는 **빌려 온 것**으로 취급된다 — 스택이 닫힐 때 장부를 닫지 않는다(`@ExternallyManaged`).
 
 ## 3. 범위와 기간
 
@@ -71,6 +74,9 @@ AimonStackSpec spec = AimonStackSpec.builder()
 IMPORTANT: 사용자 한도를 쓰려면 턴을 넣을 때 `Principal` 을 넘겨야 한다. 넘기지 않은 턴은 사용자 한도에
 잡히지 않는다.
 
+사용자 범위는 `Principal` 의 **종류와 id** 로 식별한다(`user/alice`). id 가 같아도 사용자와 서비스는 서로 다른
+범위다.
+
 ### 3.2 기간 (window)
 
 | 기간 | 의미 |
@@ -84,9 +90,13 @@ IMPORTANT: 사용자 한도를 쓰려면 턴을 넣을 때 `Principal` 을 넘�
 
 `QuotaLimit` 은 토큰(`maxTokens`)과 비용(`maxCost`, USD) 중 하나 이상을 갖는다.
 
-IMPORTANT: 비용 한도는 `CostEstimator` 가 배선되어 있어야 동작한다(`ExecutorSpec.costEstimator(...)`). 없으면
-모든 호출이 0원으로 기록되어 비용 한도는 절대 발동하지 않는다. 비용 한도를 설정했는데 estimator 가 없으면 기동
-시 WARN 이 한 번 남는다.
+토큰은 호출 1회의 전체 토큰(`TokenUsage#getTotalTokens()`, 입력 + 출력)으로 센다.
+
+IMPORTANT: 비용 한도는 호출의 비용을 매기는 `CostEstimator` 가 있어야 동작한다. bootstrap 의 기본 estimator 는
+가격표 기반이라 따로 설정하지 않았다면 이미 동작한다. `ExecutorSpec.costEstimator(CostEstimator.NOOP)` 처럼
+가격 매기기를 끄면 모든 호출이 0원으로 기록되어 비용 한도가 절대 발동하지 않는다. 이때 정책이
+`StaticQuotaPolicy` 이고 비용 한도를 갖고 있으면 스택이 `quota-cost` degradation 을 기록한다. 직접 구현한
+`QuotaPolicy` 는 이 검사를 받지 않는다.
 
 ## 4. 테넌트 한도
 
@@ -108,7 +118,14 @@ QuotaSpec.builder()
 돌지만 부모의 범위를 물려받으므로, 포크로 한도를 우회할 수 없다.
 
 - 포크 안에서도 한도 판정이 걸린다. 부모 세션의 한도가 포크 도중에 소진되면 포크가 `QUOTA_EXCEEDED` 로 멈춘다
-- 백그라운드로 돌린 포크는 부모 턴이 끝난 뒤에도 계속 기록한다
+- 백그라운드로 돌린 포크와 `Workflow` 도구의 `mode=background` 실행도 같은 범위에 기록하며, 부모 턴이 끝난 뒤에도
+  계속 기록한다
+
+반대로 **포크를 띄운 실행이 턴이 아니면** 물려받을 범위가 없어서 쿼터 없이 돈다. 지금 그런 경로는 둘이다
+([UQ-2](../../backlog/usage-quota-open-items.md)).
+
+- 예약 루틴(`RoutineExecutor`)의 단계가 부르는 `Task` · `Workflow` · 포크 스킬
+- 애플리케이션 코드가 에이전트의 `WorkflowRunner` 를 직접 부르는 경우
 
 ## 6. 한도에 닿았을 때
 
@@ -125,6 +142,12 @@ if (result.getCompletionReason() == CompletionReason.QUOTA_EXCEEDED) {
 ```
 
 이미 한도가 소진된 상태에서 새 턴을 넣으면, LLM 을 한 번도 부르지 않고 iteration 0 으로 같은 결과가 나온다.
+
+포크가 쿼터로 멈추면 `Task` 도구는 그 사실을 부모 LLM 에게 알린다 — 다시 시도해도 같은 한도에 막힌다는 뜻이다.
+
+NOTE: `getQuotaViolation()` 은 턴이 **같은 노드에서** 실행됐을 때만 채워진다. `SessionRouter` 를 거쳐 다른 노드에서
+실행된 턴의 결과와 멱등성 저장소에 남은 결과에는 완료 사유와 한 줄 메시지만 남는다
+([UQ-3](../../backlog/usage-quota-open-items.md)).
 
 `/budget` 으로 턴 예산을 올려도 quota 는 풀리지 않는다. 풀려면 정책의 한도를 올리거나, `DAILY` 라면 다음 날을
 기다린다.
@@ -147,8 +170,12 @@ quota 는 **soft limit** 이다. 호출 전에 누적치를 보고, 호출이 �
 `UsageLedger` 호출이 실패하면 기본은 **fail-open** 이다 — WARN 을 남기고 실행을 계속한다. 장부 장애로 모든
 에이전트가 멈추는 것을 막기 위해서다.
 
-반대로 하려면 `QuotaSpec.failClosed(true)` 를 준다. 그때 장부 장애는 `ERROR` 로 끝난다(`QUOTA_EXCEEDED` 가
-아니다 — 한도를 넘은 것이 아니라 판정을 못 한 것이므로).
+반대로 하려면 `QuotaSpec.failClosed(true)` 를 준다. 그때 장부 장애는 판정(호출 전)에서든 기록(호출 후)에서든
+실행을 `ERROR` 로 끝낸다(`QUOTA_EXCEEDED` 가 아니다 — 한도를 넘은 것이 아니라 판정을 못 한 것이므로).
+
+`failClosed` 는 **장부 장애에만** 적용된다. 애플리케이션이 준 `QuotaScopeResolver` 나 `QuotaPolicy` 가 턴 시작
+시점에 예외를 던지면, 그 턴은 `failClosed` 와 상관없이 WARN 을 남기고 쿼터 없이 실행된다. 그 자리에서 실패시키면
+턴의 대화 기록을 잃기 때문이다.
 
 ## 9. 여러 노드에서 쓰기
 
@@ -164,12 +191,19 @@ quota 는 **soft limit** 이다. 호출 전에 누적치를 보고, 호출이 �
 
 ## 10. 아직 세지 않는 것
 
-- **대화 압축(compaction) 요약 호출** 등 ReAct 루프 밖의 LLM 호출
+쿼터는 턴 루프와 포크 루프의 LLM 호출만 센다. 그 밖의 호출은 쿼터를 다 쓴 뒤에도 나가고, 장부의 사용량은
+프로바이더 청구서보다 늘 적다([UQ-1](../../backlog/usage-quota-open-items.md)).
+
+- **대화 압축(compaction) 요약 호출**
+- 포크하지 않는 슬래시 명령 스킬(`/skill`)의 LLM 호출
+- 코드 동작(code behavior) 서브에이전트가 직접 부르는 LLM 호출
+- 메모리 파생 · 위키 합성 같은 실행 밖의 LLM 호출
 - 임베딩 · 지식 검색 비용
 - 도구 실행 횟수와 시간
 
 ## 관련 문서
 
-- [`usage-quota.md`](../../design/agent-execution/usage-quota.md) — 설계 근거
+- [`usage-quota.md`](../../design/agent-execution/usage-quota.md) — 설계 근거. 구현이 설계와 달라진 점은 §11
+- [`usage-quota-open-items.md`](../../backlog/usage-quota-open-items.md) — 열린 항목 (UQ-1 ~ UQ-3)
 - [`orca-executor.md`](../../design/agent-execution/orca-executor.md) — ReAct 루프와 `ExecutionBudget`
 - [`scope-model.md`](../../overview/scope-model.md) — 컴포넌트 수명 규칙

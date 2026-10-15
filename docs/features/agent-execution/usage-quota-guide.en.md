@@ -1,12 +1,13 @@
 ---
 translated_from: docs/features/agent-execution/usage-quota-guide.md
-source_commit: 2b618ad
+source_commit: 158e83c
 ---
 
 # Usage Quota Guide — usage limits per session, user and tenant
 
-> NOTE: Phase 1 of this feature is being implemented. The type and method names below follow the design document,
-> and are confirmed against the implementation once it lands.
+> NOTE: What is in place today is phase 1 of the design — an in-memory ledger that counts within one node, and the
+> `AimonStackSpec` wiring. CLI display and Spring Boot properties (phase 2) and a ledger shared across nodes (phase 3)
+> do not exist yet.
 
 This feature puts a **cumulative limit** on the LLM tokens and cost an agent uses, and stops execution when the limit
 is reached. A limit can be set per session, per user (`Principal`) or per tenant, and counted over all time or per
@@ -49,7 +50,7 @@ AimonStackSpec spec = AimonStackSpec.builder()
                         // cost one user may spend per day
                         .limit(QuotaScope.Kind.PRINCIPAL, QuotaLimit.daily().maxCost(Money.usd(20)).build())
                         .build())
-                .zone(ZoneId.of("Asia/Seoul"))   // where a day begins
+                .zone(ZoneId.of("Asia/Seoul"))   // where a day begins. UTC when omitted
                 .build())
         .build();
 ```
@@ -61,6 +62,9 @@ There are three parts.
 | `UsageLedger` | the ledger that stores cumulative usage | `InMemoryUsageLedger` |
 | `QuotaPolicy` | which limits apply to each scope | `StaticQuotaPolicy` |
 | `QuotaScopeResolver` | which scopes an execution belongs to | `DefaultQuotaScopeResolver` (session · user) |
+
+Omitting `policy` gives a policy with no limits at all; omitting `resolver` gives `DefaultQuotaScopeResolver.create()`.
+The ledger is treated as **borrowed** — the stack does not close it when it closes (`@ExternallyManaged`).
 
 ## 3. Scopes and windows
 
@@ -78,6 +82,9 @@ reaches its limit.
 IMPORTANT: To use per-user limits you must pass a `Principal` when you submit a turn. A turn submitted without one is
 not counted against any user limit.
 
+A user scope is identified by the `Principal`'s **type and id** (`user/alice`). A user and a service with the same id
+are different scopes.
+
 ### 3.2 Window
 
 | Window | Meaning |
@@ -91,9 +98,13 @@ The same scope can carry both windows — for example "$20 a day, $500 in total"
 
 A `QuotaLimit` has at least one of tokens (`maxTokens`) and cost (`maxCost`, USD).
 
-IMPORTANT: A cost limit works only when a `CostEstimator` is wired (`ExecutorSpec.costEstimator(...)`). Without one
-every call is recorded at zero and a cost limit never fires. If a cost limit is set and no estimator is wired, a WARN
-is logged once at startup.
+Tokens are counted as the call's total tokens (`TokenUsage#getTotalTokens()`, input + output).
+
+IMPORTANT: A cost limit needs a `CostEstimator` to price each call. The bootstrap's default estimator is backed by a
+price table, so unless you changed it, it already works. If you turn pricing off, as with
+`ExecutorSpec.costEstimator(CostEstimator.NOOP)`, every call is recorded at zero and a cost limit never fires. When
+that happens and the policy is a `StaticQuotaPolicy` with a cost limit, the stack records a `quota-cost` degradation.
+A `QuotaPolicy` you implement yourself is not checked this way.
 
 ## 4. Tenant limits
 
@@ -118,7 +129,14 @@ around a limit.
 
 - The limit is checked inside the fork as well. If the parent session's limit runs out while a fork is running, the
   fork stops with `QUOTA_EXCEEDED`
-- A fork running in the background keeps recording after the parent turn has ended
+- A fork running in the background, and a `Workflow` tool run with `mode=background`, record to the same scopes and
+  keep recording after the parent turn has ended
+
+Conversely, **when the execution that launches a fork is not a turn**, there are no scopes to inherit and the fork runs
+without a quota. There are two such paths today ([UQ-2](../../backlog/usage-quota-open-items.md)).
+
+- `Task` · `Workflow` · forked skills called by a step of a scheduled routine (`RoutineExecutor`)
+- application code calling the agent's `WorkflowRunner` directly
 
 ## 6. When a limit is reached
 
@@ -136,6 +154,12 @@ if (result.getCompletionReason() == CompletionReason.QUOTA_EXCEEDED) {
 
 Submitting a new turn when the limit is already exhausted gives the same result at iteration 0, without calling the
 LLM at all.
+
+When a fork stops on a quota, the `Task` tool tells the parent LLM so — retrying would hit the same limit.
+
+NOTE: `getQuotaViolation()` is filled only when the turn ran **on the same node**. The result of a turn run on another
+node through `SessionRouter`, and a result kept in the idempotency store, carry only the completion reason and a
+one-line message ([UQ-3](../../backlog/usage-quota-open-items.md)).
 
 Raising the turn budget with `/budget` does not lift a quota. To lift it, raise the limit in the policy, or, for
 `DAILY`, wait for the next day.
@@ -159,8 +183,13 @@ though — the provider's invoice is the reference for that.
 When a `UsageLedger` call fails, the default is **fail-open** — it logs a WARN and execution continues. This keeps a
 ledger outage from stopping every agent.
 
-To do the opposite, set `QuotaSpec.failClosed(true)`. A ledger failure then ends with `ERROR` (not `QUOTA_EXCEEDED` —
-the limit was not exceeded, it could not be checked).
+To do the opposite, set `QuotaSpec.failClosed(true)`. A ledger failure then ends the execution with `ERROR`, whether it
+happens at the check (before the call) or at the charge (after it) — not `QUOTA_EXCEEDED`, because the limit was not
+exceeded, it could not be checked.
+
+`failClosed` applies **to ledger failures only**. If the `QuotaScopeResolver` or `QuotaPolicy` the application supplied
+throws when a turn starts, that turn logs a WARN and runs without a quota, whatever `failClosed` says. Failing there
+would lose the turn's transcript.
 
 ## 9. Running on several nodes
 
@@ -178,12 +207,21 @@ contracts to keep.
 
 ## 10. What is not counted yet
 
-- LLM calls outside the ReAct loop, such as **compaction** summary calls
+A quota counts only the LLM calls of the turn loop and the fork loop. Other calls still go out after the quota is
+spent, and the ledger's usage is always lower than the provider's invoice
+([UQ-1](../../backlog/usage-quota-open-items.md)).
+
+- **compaction** summary calls
+- LLM calls of a slash-command skill that does not fork (`/skill`)
+- LLM calls a code-behavior subagent makes directly
+- LLM calls outside any execution, such as memory derivation and wiki synthesis
 - Embedding and knowledge search cost
 - Tool execution count and time
 
 ## Related documents
 
-- [`usage-quota.md`](../../design/agent-execution/usage-quota.md) — design rationale
+- [`usage-quota.md`](../../design/agent-execution/usage-quota.md) — design rationale. Where the implementation departs
+  from the design is in §11
+- [`usage-quota-open-items.md`](../../backlog/usage-quota-open-items.md) — open items (UQ-1 to UQ-3)
 - [`orca-executor.md`](../../design/agent-execution/orca-executor.md) — the ReAct loop and `ExecutionBudget`
 - [`scope-model.en.md`](../../overview/scope-model.en.md) — component lifetime rules
