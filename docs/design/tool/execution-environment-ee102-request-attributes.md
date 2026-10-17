@@ -389,7 +389,7 @@ The second design review passed with five non-blocking notes. Three were folded 
 
 - **Q1 and Q5** (typed field vs. prefix, prefix spelling) — built as their defaults (prefix, `environment.`). Both
   change a public contract that aimon-sandbox will build on, so they move to EE-103 to be settled before the release
-  that ships this.
+  that ships this. EE-103 closed on 2026-10-17 keeping both defaults.
 - **Q2** (`EXECUTION_ATTRIBUTES_KEY` on routine steps) — built as its default (yes, from the same resolver result).
   Closed here.
 - **Q3** (EE-30's background runner) — built as its default (not carried). Recorded as a line on EE-30.

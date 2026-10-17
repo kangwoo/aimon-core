@@ -134,9 +134,8 @@ class RedisSessionRecordStoreIntegrationTest {
     @Test
     @DisplayName("each optional provision argument is skipped on its own: no agent with an owner, an agent without one")
     void eachOptionalArgumentIsIndependent() {
-        // The script reads both optional arguments positionally with "" as the absent sentinel; this pins that a
-        // missing
-        // first one does not shift the second into its place, and a missing second one writes nothing.
+        // The script reads both optional arguments positionally with "" as the absent sentinel; this pins that
+        // a missing first one does not shift the second into its place, and a missing second one writes nothing.
         final Principal alice = Principal.user("u-1", "alice");
         final SessionId ownerOnly = SessionId.of("rec-owner-only");
         final SessionRecordView unbound = store.provision(ownerOnly, null, alice);

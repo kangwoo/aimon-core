@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 108건 (열림 32 · 닫힘 76)
+# 실행 환경 — 등록 항목 108건 (열림 31 · 닫힘 77)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -4482,7 +4482,7 @@ the hook returned a verdict" 사유로 끝난다. 같은 정지가 ReAct 포크�
 `scheduling/SchedulingEngineBuilder.java`, `aimon-bootstrap` 의 `spec/SchedulingSpec.java` · `AimonStackBuilder.java`,
 `aimon-spring-boot-starter` 의 `AimonSchedulingAutoConfiguration.java`.
 
-## EE-103 — 실행별 환경 속성의 통로 모양은 릴리스 전에만 값없이 바뀐다 · **열림**
+## EE-103 — 실행별 환경 속성의 통로 모양은 릴리스 전에만 값없이 바뀐다 · **닫힘** *(2026-10-17)*
 
 *(2026-10-17 등록. 출처는 EE-102 설계 Q1 · Q5.)*
 
@@ -4501,6 +4501,17 @@ the hook returned a verdict" 사유로 끝난다. 같은 정지가 ReAct 포크�
 
 **언제 다시 볼까.** EE-102 를 싣는 릴리스를 자르기 전, 또는 aimon-sandbox 가 이 통로로 워크스페이스 옵션을 지을 때 — 둘 중
 먼저 오는 쪽.
+
+### 닫힘 (2026-10-17)
+
+지금 모양 그대로 확정했다 — 통로는 `executionAttributes` 안의 접두사, 철자는 `environment.`. 코드는 바뀌지 않는다.
+
+- **철자.** 이슈 #252 가 든 예와 같고, `definitionAttributes()` 가 쓰는 키와 접두사를 뗀 뒤의 모양이 맞는다. 비문자열 값을 이미
+  싣던 호스트가 환경을 잃는 변화는 `CHANGELOG.md` 의 "Operator-visible" 항목이 알린다.
+- **통로.** 타입 필드는 세션 인박스 코덱 셋과 `SubmitOptionsCodec` 에 새 필드를 들이고 실행 속성 옆에 둘째 통로를 만든다. 문자열
+  규칙은 지금도 `EnvironmentRequestAttributes.extract` 한 곳이 실행마다 지킨다.
+
+이 결정은 다음 릴리스부터 공개 계약이다. 바꾸려면 새 항목을 연다.
 
 ## EE-104 — 포크가 실행별 환경 속성을 명시적으로 받을 길이 없다 · **열림** *(트리거 대기)*
 

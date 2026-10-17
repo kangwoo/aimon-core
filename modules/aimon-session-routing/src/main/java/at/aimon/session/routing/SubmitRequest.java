@@ -177,8 +177,8 @@ public final class SubmitRequest {
      * ignored on a session that already has an owner: the first provisioning that carries one wins and nothing
      * overwrites it. A submit to a session this node already holds does not provision, and neither does a running
      * turn's post-turn re-collect of a forwarded request, so neither records anything. Set it on the <em>first</em>
-     * submit when ownership must
-     * be strict. The same "read on provisioning only" shape as {@link OpenAttributes}' "read on cache miss only".
+     * submit when ownership must be strict. The same "read on provisioning only" shape as {@link OpenAttributes}' "read
+     * on cache miss only".
      *
      * <p>
      * Not derived from {@link #getInitiator()}, which is mandatory and is often a system or service principal posting
