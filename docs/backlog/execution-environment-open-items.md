@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 101건 (열림 26 · 닫힘 75)
+# 실행 환경 — 등록 항목 108건 (열림 32 · 닫힘 76)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -77,6 +77,17 @@ EE-93 은 값싼 절반 둘만 짓고 남은 것("도는 슬래시 명령은 멈
 것을 옮긴 것이다. EE-98 은 2026-10-08 에 메인테이너가 정했고 같은 변경에서 닫았다 — 기본값을 뒤집고 옵션을 없앴다: 보고
 이벤트의 셸 명령은 인터럽트에 멈추지 않는다. 그 결정이 EE-80 과 EE-97 의 닫힘 노트에 적힌 것 일부를 사실이 아니게 했으므로
 두 항목에 날짜 붙은 절을 더했다. EE-101 은 그 결정이 짓지 않고 남긴 반대쪽 옵션이다.
+
+EE-102 는 GitHub 이슈 #252 — 실행 환경 제공자가 "이번 실행" 의 호출자 옵션을 볼 수 없다 — 를 2026-10-17 에 한 변경에서
+등록하고 닫은 것이다. 그 변경의 설계와 구현이 설계에서 벗어난 점은
+[`../design/tool/execution-environment-ee102-request-attributes.md`](../design/tool/execution-environment-ee102-request-attributes.md)
+에 있다. EE-103~EE-105 는 그 설계의 열린 질문(Q1 · Q5 → EE-103, Q6 → EE-104)과 설계 리뷰(EE-105) 가운데 이 변경 밖으로
+결과가 번지는 것을 옮긴 것이고, Q3 은 EE-30 에 한 줄로 더했다.
+
+EE-106~EE-108 은 환경의 알림을 모든 도구 결과에 싣게 한 변경(#254, 2026-10-17)의 승인된 설계
+([`../design/tool/execution-environment-notices.md`](../design/tool/execution-environment-notices.md))가 남긴 열린 질문과 그
+설계 리뷰 가운데 이 변경 밖으로 결과가 번지는 것을 옮긴 것이다(Q6 → EE-106, Q2 · Q3 · 리뷰 → EE-107, Q4 → EE-108). 그
+변경 자체는 백로그 항목이 아니었으므로 여기서 닫힌 항목은 없다.
 
 ---
 
@@ -1371,6 +1382,10 @@ not supported: this environment is already the isolated workflow branch 'k' (.wo
 **언제 다시 볼까.** 격리 브랜치 안에서 백그라운드 워크플로를 돌릴 때, 또는 샌드박스 제공자를 붙일 때. 부모 환경 없이
 해석하는 그 요청에는 에이전트 런타임 id 와 주체만 실리고 세션·실행 id·에이전트가 없다. 워크스페이스 샌드박스의 바인딩
 정책은 그런 요청으로 워크스페이스를 정할 수 없으므로 사용 불가 환경을 돌려주고, 그 러너의 격리 단계는 C30 으로 실패한다.
+
+*(2026-10-17 더함, EE-102 설계 Q3.)* 이 러너의 요청에는 호출한 턴의 `requestAttributes` 도 실리지 않는다 — EE-102 가 일부러
+싣지 않았다. 이 항목을 고칠 때 함께 정한다: 부모 환경을 넘기면 속성은 군더더기이고, 속성으로 새로 해석하면 부모와 다른 답이
+나올 수 있다.
 
 출처: 빌드 리뷰 4.
 
@@ -4423,3 +4438,154 @@ the hook returned a verdict" 사유로 끝난다. 같은 정지가 ReAct 포크�
 그 훅에 다시 생긴다는 것을 옵션의 문서에 적어야 한다.
 
 **언제 다시 볼까.** 보고 훅 때문에 인터럽트 뒤의 다음 입력이 늦는다는 보고가, `timeout` 을 줄여서는 풀리지 않는 형태로 올 때.
+
+## EE-102 — 실행 환경 제공자가 "이번 실행" 의 호출자 옵션을 볼 수 없다 · **닫힘** *(2026-10-17)*
+
+*(2026-10-17 등록. 출처는 GitHub 이슈 #252 — aimon-sandbox 의 워크스페이스 관리(kangwoo/aimon-sandbox#25) 설계가 짚었다.)*
+
+**무엇을.** `EnvironmentRequest` 에 호출자가 이번 실행에 붙인 값을 싣는다. 제공자는 정의(`definitionAttributes()`)나 세션으로만
+배치를 정할 수 있었고, "이번 실행은 워크스페이스 X 에서", "붙은 것이 없으면 거절" 같은 실행별 옵션은 호스트가 실행 전에 따로
+쓰는 세션별 저장소가 되거나(턴마다 저장소 읽기 하나), 실행 id 를 미리 알 수 없는 루틴에서는 아예 표현할 수 없었다.
+
+### 닫힘 (2026-10-17)
+
+`EnvironmentRequest.requestAttributes(): Map<String, String>` 을 더했다. 기본은 빈 맵이고, 제공자 SPI 에는 메서드를 더하지 않았다.
+
+- **무엇이 실리나.** 실행 속성 가운데 `environment.` 로 시작하는 것만, 접두사를 떼고. 규칙은 `EnvironmentRequestAttributes.extract`
+  한 곳에 있다. 값은 `String` 만 받는다 — 다른 타입(그리고 `null`)이나 접두사뿐인 키는 그 실행의 환경을 사용 불가로 만들고
+  제공자를 부르지 않는다. 버리거나 `toString` 으로 바꾸지 않는 것은, 배치 입력이 조용히 사라지면 "붙은 것이 없으면 거절" 이
+  열려 버리기 때문이다. 오류 메시지와 `EnvironmentRequest.toString()` 은 키 이름만 찍고 값은 찍지 않는다.
+- **어느 경로가.** 메인 턴(슬래시 · rewake 리플레이 포함)은 `SubmitOptions` 의 실행 속성에서. 스케줄 루틴은 호스트가 주는 새
+  해석기 `RoutineExecutionAttributes` 에서 — 실행 id 를 만든 뒤 실행마다 한 번 묻고, 그 답 전체를 단계의 `ToolContext` 에도
+  `EXECUTION_ATTRIBUTES_KEY` 로 싣는다. 해석기는 `SchedulingEngineBuilder.routineExecutionAttributes` ·
+  `SchedulingSpec.withRoutineExecutionAttributes` · 스타터의 `RoutineExecutionAttributes` 빈으로 닿는다(엔진을 만들지 않는
+  백엔드에서 빈을 정의하면 시작이 실패한다). 해석기가 던지거나 `null` 을 주면 실행은 멈추지 않고 환경이 사용 불가가 된다.
+- **어느 경로가 아닌가.** 포크 · 스킬 포크 · 워크플로 단계 · 워크플로 러너 · CLI 부트스트랩 탐색. 포크의 배치는 `parent` 의
+  몫이다. 부모 턴의 `environment.*` 속성은 포크의 도구에는 여전히 보인다.
+- **신뢰.** 실행 속성은 호스트가 채운다. 루틴의 값을 `ScheduledTask` 필드가 아니라 해석기에서 받는 것은, 태스크를 모델이
+  만들기 때문이다(`ScheduleTaskTool`).
+
+**운영자에게 보이는 변화.** `environment.` 는 이제 예약된 접두사다. 그 아래에 `String` 이 아닌 값을 이미 싣던 호스트의 턴은
+파일 · 셸 도구가 실패한다. `CHANGELOG.md` 의 `[Unreleased]` 에 적었다.
+
+**테스트.** `EnvironmentRequestAttributesTest`, `EnvironmentRequestTest`, `ExecutionEnvironmentsTest`(새 오버로드),
+`OrcaAgentExecutorRequestAttributesTest`(`DefaultLiveSession.submit` 부터 제공자까지, 비문자열 값, enricher 가 바꿀 수 없음),
+`DefaultSubagentExecutorTest.environmentRequestOmitsParentRequestAttributes`, `WorkflowToolAttributesTest.stepsCarryNoRequestAttributes`,
+`GraalJsEnvironmentRequestTest.stepsCarryNoRequestAttributes`, `RoutineExecutorExecutionAttributesTest`,
+`SchedulingEngineBuilderTest.routineExecutionAttributesReachTheRoutineExecutor`,
+`AimonStackBuilderTest.suppliedRoutineExecutionAttributesReachTheEnvironmentRequest`,
+`AimonSpecSliceTest.routineExecutionAttributesBean`.
+
+**어디** *(2026-10-17)* — `environment/EnvironmentRequest.java`, `environment/EnvironmentRequestAttributes.java`,
+`environment/ExecutionEnvironments.java`(세 인자 오버로드), `agent/impl/orca/OrcaAgentExecutor.java`(`execute` 의 해석 자리),
+`scheduling/RoutineExecutionAttributes.java`, `scheduling/RoutineExecutor.java`(`resolveExecutionAttributes`),
+`scheduling/SchedulingEngineBuilder.java`, `aimon-bootstrap` 의 `spec/SchedulingSpec.java` · `AimonStackBuilder.java`,
+`aimon-spring-boot-starter` 의 `AimonSchedulingAutoConfiguration.java`.
+
+## EE-103 — 실행별 환경 속성의 통로 모양은 릴리스 전에만 값없이 바뀐다 · **열림**
+
+*(2026-10-17 등록. 출처는 EE-102 설계 Q1 · Q5.)*
+
+**무엇을.** 다음 릴리스 전에 둘을 정한다. (1) 접두사의 철자 — 지금의 `environment.` 냐, 호스트 키와 덜 부딪힐
+`aimon.environment.` 냐. (2) 통로 — `executionAttributes` 안의 접두사냐, 따로 타입을 가진 `SubmitOptions.environmentAttributes(Map<String, String>)`
+냐.
+
+**왜.** 둘 다 공개 계약이고, aimon-sandbox 의 워크스페이스 관리가 그 위에 지어진다. 릴리스에 실리면 바꾸는 값이 붙는다 — 지금은
+`CHANGELOG.md` 의 `[Unreleased]` 에 있어 붙지 않는다. (1) `environment.` 는 이슈의 예를 따른 것이고, 그 아래에 비문자열 값을 이미
+싣던 호스트의 턴은 이 변경으로 환경을 잃는다(EE-102 의 "운영자에게 보이는 변화"). 접두사가 길수록 그런 호스트가 줄어든다. (2) 타입
+필드는 더 엄격하지만(문자열 규칙을 컴파일러가 지킨다) 세션 인박스 코덱 셋(Mongo · Postgres · Redis)과 `SubmitOptionsCodec` 에 새
+필드가 들어가고, 실행 속성 옆에 둘째 통로가 생긴다.
+
+**어디** *(2026-10-17)* — `environment/EnvironmentRequestAttributes.java`(`PREFIX`), `agent/SubmitOptions.java`,
+`CHANGELOG.md` 의 `[Unreleased]`.
+
+**언제 다시 볼까.** EE-102 를 싣는 릴리스를 자르기 전, 또는 aimon-sandbox 가 이 통로로 워크스페이스 옵션을 지을 때 — 둘 중
+먼저 오는 쪽.
+
+## EE-104 — 포크가 실행별 환경 속성을 명시적으로 받을 길이 없다 · **열림** *(트리거 대기)*
+
+*(2026-10-17 등록. 출처는 EE-102 설계 Q6.)*
+
+**무엇을.** 호스트가 켜는 옵트인으로, 포크(서브에이전트 · 스킬 포크 · 워크플로 단계)의 요청에도 부모 실행의 `requestAttributes`
+를 실을지 정한다.
+
+**왜.** EE-102 는 이슈가 말한 대로 포크가 암묵적으로 물려받지 않게 했다 — 포크의 배치는 `parent` 의 몫이고, 물려받으면 포크가
+부모와 다른 격리 단위를 청할 수 있다(설계 §5.2 "포크는 부모의 격리 단위 밖으로 나가지 않는다"). 이슈는 명시적인 길에 대해서는
+말하지 않았다. 부모와 같은 격리 단위 안에서 슬롯만 다르게 고르는 제공자라면 실행별 값이 포크에도 쓸모 있을 수 있다.
+
+**어디** *(2026-10-17)* — `subagent/execution/DefaultSubagentExecutor.java`(`resolveExecutionEnvironment`).
+
+**언제 다시 볼까.** 포크의 배치를 실행별 값으로 정해야 하는 제공자가 생길 때.
+
+## EE-105 — 메인 턴의 환경 요청에는 실행 id 가 없다 · **열림**
+
+*(2026-10-17 등록. 출처는 EE-102 설계 리뷰 2. 이 변경 전부터 있던 모양이다.)*
+
+**무엇을.** 메인 턴의 `EnvironmentRequest` 에도 그 실행을 가리키는 값(`executionId()` 또는 턴 id)을 실을지 정한다.
+
+**왜.** 메인 턴의 요청은 `sessionId` 만 싣고 `executionId()` 는 비어 있다(포크와 루틴만 싣는다). 그래서 EE-102 의
+`requestAttributes()` 로 "이번 실행" 의 옵션을 받은 제공자도, 그 옵션을 같은 턴의 다른 관측(로그, 자기 저장소의 기록)과 맞출 키는
+세션밖에 없다. aimon-sandbox #25 가 원한 것이 실행별 배치였으므로 그 쪽에서 먼저 부딪힐 것이다. 실행 id 는 세션 없는 실행에만
+발급한다는 규칙(`docs/overview/glossary.md` §4)이 있어, 턴에 무엇을 실을지는 그 규칙과 함께 정해야 한다.
+
+**어디** *(2026-10-17)* — `agent/impl/orca/OrcaAgentExecutor.java`(`execute` 의 해석 자리), `environment/EnvironmentRequest.java`
+(`executionId` 의 javadoc: "session-less execution").
+
+**언제 다시 볼까.** 제공자가 턴 단위로 상태를 맞춰야 한다고 보고할 때.
+
+## EE-106 — 도구를 부르지 않는 턴은 환경의 알림을 듣지 못한다 · **열림** *(트리거 대기)*
+
+*(2026-10-17 등록. 출처는 환경 알림 설계 §7 Q6 과 그 설계 리뷰. 읽어서 본 것이고 돌려 보지 않았다.)*
+
+**무엇을.** 제공자가 첫 도구 호출 전에 이미 아는 환경의 사실 — `resolve()` 에서 정한 "이 세션은 이제 다른 워크스페이스에서
+돈다" 같은 것 — 을 턴 시작에 한 번 비워 모델에게 보일지 정한다. 같은 `drainNotices()` 를 첫 LLM 호출 전에 부르고
+`<system-reminder>` 로 렌더하면 된다. 그것을 "훅 결과" 로 볼지(이슈는 훅 결과에는 싣지 말라고 했다)가 함께 정할 것이다.
+
+**왜.** #254 는 모델에게 가는 **도구 결과**에만 싣는다. 모델이 도구를 부르지 않고 답하는 턴은 아무것도 비우지 않으므로,
+제공자가 알고 있는 사실도 그 턴에는 전해지지 않고 다음 도구 호출까지 남는다. 게으른 프로비저닝에서 재생성은 첫 도구
+호출에서야 드러나므로 이슈가 겨눈 경우에는 문제가 없지만, aimon-sandbox 는 "다른 워크스페이스로 옮겨 갔다" 를 도구 호출
+전에 알리는 데 이 경로를 기댈 수 없다.
+
+**어디** *(2026-10-17)* — `core/environment/ExecutionEnvironment.java`(`drainNotices`),
+`core/agent/impl/orca/OrcaAgentExecutor.java`(턴의 첫 LLM 호출 전 컨텍스트 조립).
+
+**언제 다시 볼까.** 제공자가 `resolve()` 시점의 사실을 도구 호출 없는 턴에도 알려야 한다고 요청할 때.
+
+## EE-107 — 환경 알림의 큐를 포크와 나누면 부모가 듣지 못하고, 받은 순간 확정이라 취소된 결과와 함께 사라진다 · **열림**
+
+*(2026-10-17 등록. 출처는 환경 알림 설계 §7 Q2 · Q3 과 그 설계 리뷰. 읽어서 본 것이고 돌려 보지 않았다.)*
+
+**무엇을.** aimon-sandbox 가 `drainNotices()` 를 구현할 때 큐의 범위와 수신 확인을 어떻게 둘지 그쪽 저장소에서 정한다. 코어의
+계약(설계 §8.1 · §13, `ExecutionEnvironment.drainNotices` javadoc)은 "큐는 환경 인스턴스마다, 포크와 공유하지 않는다" 와
+"돌려준 것이 곧 전달한 것" 이다.
+
+**왜.** 셋이다. (1) 로컬 제공자처럼 포크에 부모의 인스턴스를 그대로 주는 제공자라면 포크의 첫 `Read` 가 "샌드박스가
+재생성되었다" 를 가져가 포크의 모델만 듣는다. 부모의 `Task` 결과는 그 뒤에 비워지므로 부모는 비워진 트리를 모른 채 고친다 —
+이슈가 막으려던 실패 그대로다. (2) 같은 일이 사용자가 친 `/skill` 에서도 일어난다. 그 루프의 도구 호출은 `SingleToolInvoker`
+를 지나므로 비우지만, 결과는 스킬의 스크래치 루프로 가고 그 전사는 끝나면 버려진다. 메인 에이전트의 다음 턴은 듣지 못한다.
+(3) 코어는 최대 한 번이다. 도구가 돌아온 뒤 결과가 기록되기 전에 실행이 버려지면 notice 도 사라지는데, 샌드박스가
+`lastWorkspaceId` 같은 장부를 "비워졌다" 에 맞춰 옮기면 다음 턴은 그 사실을 다시 듣지 못한다. 엿보기/확인의 두 단계
+SPI 는 설계에서 기각했다(§2.2) — 창이 작고, 다음 재생성이 새 notice 를 만든다는 이유다.
+
+**어디** *(2026-10-17)* — `core/subagent/execution/DefaultSubagentExecutor.java`(포크의 `EnvironmentRequest`, 부모 인스턴스를
+그대로 받는 로컬 제공자의 주석), `core/agent/impl/orca/OrcaAgentExecutor.java`(슬래시 스킬 디스패처),
+`core/tools/EnvironmentNotices.java`. aimon-sandbox 쪽은 `PendingNotices` 와 kangwoo/aimon-sandbox#25.
+
+**언제 다시 볼까.** aimon-sandbox 가 `PendingNotices` 를 `drainNotices()` 로 옮길 때. 포크나 슬래시 스킬 뒤에 부모가 재생성을
+모른다는 보고가 오면 바로.
+
+## EE-108 — 훅이 `drainNotices()` 를 부르는 것을 막는 것은 문서뿐이다 · **열림** *(트리거 대기)*
+
+*(2026-10-17 등록. 출처는 환경 알림 설계 §7 Q4.)*
+
+**무엇을.** 훅 컨텍스트가 내주는 환경을 `drainNotices()` 만 빈 목록으로 답하는 뷰로 감쌀지 정한다.
+
+**왜.** `HookContext.getExecutionEnvironment()` 는 날 환경을 준다. Java 훅이 거기서 `drainNotices()` 를 부르면 그 notice 는
+모델에게 가지 않고 사라진다. 지금은 javadoc 이 "도구와 훅은 부르지 말 것" 이라고 적을 뿐 강제하지 않는다. 감싸는 뷰는
+나머지 메서드를 모두 넘겨야 하고, 훅의 셸 액션이 도구와 **같은 인스턴스**의 셸에서 돈다는 성질(EE-9)을 깨지 않아야 한다 —
+`isolatedFrom()` 의 동일성 비교도 걸린다.
+
+**어디** *(2026-10-17)* — `core/hook/execution/HookContext.java`(`getExecutionEnvironment`, 이벤트 컨텍스트 열 곳이 같은 모양),
+`core/toolinvocation/SingleToolInvoker.java`(`environmentOf`).
+
+**언제 다시 볼까.** 훅이 notice 를 비우는 것이 실제로 발견될 때.

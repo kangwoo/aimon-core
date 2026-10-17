@@ -7,6 +7,55 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: per-execution environment attributes (`EnvironmentRequest#requestAttributes`)
+
+An `ExecutionEnvironmentProvider` could key placement on the agent or fork definition, or on the session, but never on
+"this run" — nothing the caller attached to one execution reached it (#252). Design and departures:
+`docs/design/tool/execution-environment-ee102-request-attributes.md`; backlog EE-102.
+
+- **Opt-in, no change by default.** `EnvironmentRequest.requestAttributes()` is a new accessor, empty unless a caller
+  attaches something; no method was added to the provider SPI, and providers that never call it are unaffected.
+- **A reserved prefix.** Execution attributes under `environment.` reach the provider with the prefix removed:
+  `SubmitOptions.executionAttribute("environment.sandbox.workspace", "ws-7")` arrives as
+  `requestAttributes().get("sandbox.workspace")`, the spelling `definitionAttributes()` uses. Values must be `String`s.
+  The one extraction rule is `EnvironmentRequestAttributes.extract`; `EnvironmentRequest#toString` prints the key names,
+  never the values.
+- **Main turns and scheduled routines; never forks.** A turn takes them from its `SubmitOptions`. A routine has no
+  submit call, so the host supplies a `RoutineExecutionAttributes` resolver, asked once per run after its execution id
+  is minted — `SchedulingEngineBuilder#routineExecutionAttributes`, `SchedulingSpec#withRoutineExecutionAttributes`, or a
+  `RoutineExecutionAttributes` bean in the Spring Boot starter (refused at startup under `aimon.scheduling.backend=none`,
+  like the other scheduling beans). The resolver's whole map also reaches the routine steps' `ToolContext` under
+  `EXECUTION_ATTRIBUTES_KEY`, which routine steps never had. Subagent forks, skill forks and workflow steps always get an
+  empty map: their placement is the parent environment's business.
+- **Host-only.** The `environment.*` namespace is placement input; a host must never fill it from model output. Routines
+  take it from the host resolver, not from `ScheduledTask`, because the model creates tasks.
+- **Operator-visible: `environment.` is now reserved.** A non-`String` value (or `null`) under it, or a key that is
+  exactly `environment.`, makes that execution's environment unavailable — file and shell tools fail with the cause, the
+  turn still runs, and the provider is not called. A host that already sent such a key for another purpose (say
+  `executionAttribute("environment.debug", true)` read only by a hook) loses its environment on those turns. A routine
+  resolver that throws or returns `null` does the same to that run rather than aborting it. The prefix spelling is open
+  until release (backlog EE-103).
+
+### Added: environment notices on every tool result — `ExecutionEnvironment.drainNotices()` (#254)
+
+Only a `Bash` result could carry what an environment had to tell the model (`ShellCommandResult.notices()`), so a turn
+that only read and edited files never heard that its sandbox had been re-created and `/workspace` was empty.
+
+- **New SPI method, default empty.** `ExecutionEnvironment.drainNotices()` returns and removes the environment's queued
+  notices. The core calls it once after every model-facing tool call, whichever tool it was, and puts the notices at
+  the head of that call's result as `[environment] …` lines — the shape `Bash` already uses. Denied, blocked, unknown
+  and failed calls carry them too.
+- **Never into hooks.** The drain runs after the PostTool hooks, so no hook sees or rewrites a notice, and a notice a
+  hook's own shell command caused still reaches the model on that tool's result. Workflow-script tool calls and
+  scheduled routine steps do not drain.
+- **Nothing changes for local or custom environments** that do not override the method. External providers
+  (aimon-sandbox) may move environment-level notices off `ShellCommandResult` onto this method. Per-command notices
+  stay where they are. The contract — atomic, one-shot, one queue per environment instance, never shared with a fork —
+  is in the method's javadoc and in `docs/design/tool/execution-environment.md` §8.1 · §13.
+- `EnvironmentNotices.PREFIX` (`at.aimon.core.tools`) is the shared `[environment] ` prefix.
+- Not yet: a turn whose model makes no tool call hears nothing (backlog `EE-106`). Queue scope across forks and slash
+  skills is the provider's call (`EE-107`). Hooks are told, not prevented, not to drain (`EE-108`).
+
 ### Added: session owner and session deletion listener (#253)
 
 A session record had no owner and nothing observed its deletion, so every multi-tenant extension kept its own

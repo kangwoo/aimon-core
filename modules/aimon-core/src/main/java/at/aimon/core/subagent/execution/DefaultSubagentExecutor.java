@@ -785,6 +785,12 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * Resolves the fork's execution environment through the provider forwarded from the spawning execution, passing
      * the spawner's environment as the parent and the fork's own definition, so a provider can place each subagent
      * differently (design §5.2).
+     *
+     * <p>
+     * The request carries no {@link EnvironmentRequest#requestAttributes() request attributes}, on purpose (issue
+     * #252): the request's execution attributes may still hold the parent turn's {@code environment.*} entries, and
+     * they keep reaching the fork's tools, but a fork's placement is its parent environment's business. Forwarding
+     * them would let a fork ask for a different isolation unit than its parent's.
      */
     private static ExecutionEnvironment resolveExecutionEnvironment(SubagentExecutionContext context,
             SubagentExecutionRequest request, ExecutionId executionId) {

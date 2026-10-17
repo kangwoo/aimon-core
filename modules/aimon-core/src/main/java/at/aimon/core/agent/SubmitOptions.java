@@ -109,6 +109,14 @@ public final class SubmitOptions {
     /**
      * Returns the per-turn execution attributes propagated to {@code ToolContext} / {@code HookContext}.
      *
+     * <p>
+     * Keys under {@code environment.} are reserved as placement input (issue #252): the turn's
+     * {@code ExecutionEnvironmentProvider} receives them, prefix removed, as
+     * {@code EnvironmentRequest.requestAttributes()}. Their values must be {@code String}s — any other value makes the
+     * turn's execution environment unavailable — and a host must never fill them from model output (tool arguments,
+     * model-written routine parameters, workflow script values). Forks the turn starts still see them here, but are
+     * not placed by them.
+     *
      * @return an unmodifiable map (never null, may be empty)
      */
     public Map<String, Object> getExecutionAttributes() {

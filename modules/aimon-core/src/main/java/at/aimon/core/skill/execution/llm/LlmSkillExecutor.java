@@ -3,6 +3,7 @@ package at.aimon.core.skill.execution.llm;
 import static at.aimon.core.agent.tool.execution.ToolExecutionResultConverter.toToolUseResults;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -27,9 +28,9 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolExecutionManager;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.exception.ToolPermissionViolationException;
-import at.aimon.core.agent.tool.execution.ToolExecutionResult;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.agent.tool.permission.AllowedTools;
+import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
@@ -52,6 +53,8 @@ import at.aimon.core.skill.hook.NoOpSkillHookActivator;
 import at.aimon.core.skill.hook.SkillHookScope;
 import at.aimon.core.skill.render.SkillContentRenderer;
 import at.aimon.core.tools.CallerAllowedTools;
+import at.aimon.core.tools.EnvironmentNotices;
+import at.aimon.core.tools.ExecutionEnvironmentAccess;
 import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
@@ -488,9 +491,18 @@ public class LlmSkillExecutor implements SkillExecutor {
      */
     private List<ToolUseResult> dispatchWithoutHooks(ToolRegistry toolRegistry, ToolContext toolContext,
             List<ToolUse> toolUses, List<AllowedTool> allowedTools, int iterationCount) {
-        final List<ToolExecutionResult> results = toolExecutionManager.executeAll(toolRegistry, toolContext, toolUses,
-                allowedTools);
-        return toToolUseResults(results);
+        final List<ToolUseResult> results = toToolUseResults(
+                toolExecutionManager.executeAll(toolRegistry, toolContext, toolUses, allowedTools));
+        // These results feed this loop's LLM just as a bound dispatcher's do, so they carry the environment's notices
+        // too (SingleToolInvoker does it on the dispatcher path). executeAll keeps toolUses' order; the name is only
+        // for the drain's WARN line, so a manager that breaks that contract costs the log its name, not the result.
+        final ExecutionEnvironment environment = ExecutionEnvironmentAccess.of(toolContext).orElse(null);
+        final List<ToolUseResult> delivered = new ArrayList<>(results.size());
+        for (int i = 0; i < results.size(); i++) {
+            final String toolName = i < toolUses.size() ? toolUses.get(i).getName() : null;
+            delivered.add(EnvironmentNotices.deliver(results.get(i), environment, toolName));
+        }
+        return delivered;
     }
 
     /**

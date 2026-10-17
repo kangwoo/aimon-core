@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Map;
 import java.util.Properties;
 
 import org.junit.jupiter.api.DisplayName;
@@ -35,6 +36,7 @@ import at.aimon.core.agent.session.store.SessionLeaseStore;
 import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.scheduling.RoutineExecutionAttributes;
 import at.aimon.core.scheduling.repository.InMemoryScheduledTaskRepository;
 import at.aimon.core.scheduling.repository.ScheduledTaskRepository;
 import at.aimon.core.scheduling.scheduler.TaskScheduler;
@@ -207,6 +209,20 @@ class AimonSpecSliceTest {
                 .run(ctx -> assertThat(ctx).hasFailed().getFailure()
                         .hasStackTraceContaining(AimonProperties.SCHEDULING_BACKEND)
                         .hasStackTraceContaining(ScheduledTaskRepository.class.getSimpleName()));
+    }
+
+    @Test
+    @DisplayName("a routine execution attributes bean reaches the spec, and is refused under a backend with no engine")
+    void routineExecutionAttributesBean(@TempDir Path workspace) {
+        schedulingRunner(workspace).withPropertyValues("aimon.scheduling.backend=in-memory")
+                .withUserConfiguration(ApplicationRoutineExecutionAttributesConfiguration.class)
+                .run(ctx -> assertThat(ctx.getBean(SchedulingSpec.class).getRoutineExecutionAttributes())
+                        .containsSame(ApplicationRoutineExecutionAttributesConfiguration.INSTANCE));
+
+        schedulingRunner(workspace).withPropertyValues("aimon.scheduling.backend=none")
+                .withUserConfiguration(ApplicationRoutineExecutionAttributesConfiguration.class)
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure().hasStackTraceContaining("bean is defined but")
+                        .hasStackTraceContaining(RoutineExecutionAttributes.class.getSimpleName()));
     }
 
     @Test
@@ -611,6 +627,17 @@ class AimonSpecSliceTest {
 
         @Bean
         ScheduledTaskRepository applicationTaskRepository() {
+            return INSTANCE;
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class ApplicationRoutineExecutionAttributesConfiguration {
+
+        static final RoutineExecutionAttributes INSTANCE = (task, executionId) -> Map.of();
+
+        @Bean
+        RoutineExecutionAttributes applicationRoutineExecutionAttributes() {
             return INSTANCE;
         }
     }

@@ -1,8 +1,11 @@
 package at.aimon.core.environment;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
 
 import at.aimon.core.agent.tool.ToolContext;
@@ -157,6 +160,7 @@ public final class TestExecutionEnvironments {
         private String workingDirectory;
         private boolean durable = true;
         private ContentSearch contentSearch;
+        private Queue<String> notices;
 
         private Builder() {
         }
@@ -191,6 +195,15 @@ public final class TestExecutionEnvironments {
             return this;
         }
 
+        /**
+         * Makes {@code drainNotices()} empty this queue, oldest first — the test pushes onto it what the environment
+         * would have queued. Unset, the environment keeps the SPI default of no notices.
+         */
+        public Builder notices(Queue<String> notices) {
+            this.notices = notices;
+            return this;
+        }
+
         public ExecutionEnvironment build() {
             final ExecutionEnvironment unavailable = UnavailableExecutionEnvironment.of("not configured in this test");
             final VirtualFileSystem fs = fileSystem != null ? fileSystem : unavailable.fileSystem();
@@ -204,6 +217,7 @@ public final class TestExecutionEnvironments {
                     .platform("linux").osVersion("test").shellName("bash").build();
             final boolean isDurable = durable;
             final ContentSearch search = contentSearch;
+            final Queue<String> queued = notices;
             return new ExecutionEnvironment() {
                 @Override
                 public VirtualFileSystem fileSystem() {
@@ -234,6 +248,18 @@ public final class TestExecutionEnvironments {
                 @Override
                 public Optional<ContentSearch> contentSearch() {
                     return Optional.ofNullable(search);
+                }
+
+                @Override
+                public List<String> drainNotices() {
+                    if (queued == null) {
+                        return List.of();
+                    }
+                    final List<String> drained = new ArrayList<>();
+                    for (String notice = queued.poll(); notice != null; notice = queued.poll()) {
+                        drained.add(notice);
+                    }
+                    return drained;
                 }
 
                 @Override

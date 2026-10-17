@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/tool/tool-development-guide.md
-source_commit: 79d78a7
+source_commit: ff0e6ff2
 ---
 
 # Tool Development Guide
@@ -414,6 +414,11 @@ system. In an execution whose environment is missing or unavailable (`Unavailabl
 file and shell calls throw `ExecutionEnvironmentUnavailableException`), catch `IllegalStateException` /
 `ExecutionEnvironmentUnavailableException` and return `ToolResult.error`. There is no path back to the host
 environment (design: [`design/tool/execution-environment.md`](../../design/tool/execution-environment.md)).
+
+**Environment notices are not a tool's business.** Facts the environment has for the model ("the sandbox was
+re-created") are drained by the core with `ExecutionEnvironment.drainNotices()` after every model-facing tool call and
+put at the head of that call's result as `[environment] …` lines — whichever tool it was. So a tool need not render
+them, and must not call `drainNotices()`: a notice a tool drains never reaches the model (design §8.1).
 
 **Stale-write protection.** A tool that modifies an existing file checks the stamp in
 `ReadTool.FILE_STAMPS_KEY`. Not read in this execution → `"Read the file before modifying it"`; changed since it

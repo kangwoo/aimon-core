@@ -1076,12 +1076,15 @@ public class OrcaAgentExecutor
 
         // Resolve the execution environment once, before prompt assembly and before any tool runs (design §5.1): the
         // environment the prompt describes and the one the tools use are then the same value. A failing or missing
-        // provider yields an unavailable environment whose tools fail with the cause — never the host.
+        // provider yields an unavailable environment whose tools fail with the cause — never the host. The request
+        // carries the environment.* subset of this turn's execution attributes (issue #252), read from the request
+        // itself rather than from a tool context, so no enricher or hook can change what the provider sees.
         final ExecutionEnvironment executionEnvironment = ExecutionEnvironments.resolveOrUnavailable(
                 agentRuntime.getExecutionEnvironmentProvider(),
                 EnvironmentRequest.builder().agentRuntimeId(agentRuntime.getId()).agent(agent)
                         .sessionId(executionRequest.getSessionId())
-                        .principal(executionRequest.getPrincipal().orElse(null)).build());
+                        .principal(executionRequest.getPrincipal().orElse(null)),
+                executionRequest.getExecutionAttributes());
 
         // Assemble the runtime context blocks once at turn start. Empty under the NOOP assembler, so the prompt
         // shape is unchanged unless an assembler is wired. SYSTEM blocks fold into the system prompt; USER_PREPEND /

@@ -3,6 +3,10 @@ package at.aimon.core.environment;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -49,6 +53,39 @@ class ExecutionEnvironmentsTest {
     void nullReturn() {
         assertThat(ExecutionEnvironments.resolveOrUnavailable(r -> null, request))
                 .isInstanceOf(UnavailableExecutionEnvironment.class);
+    }
+
+    @Test
+    @DisplayName("the execution-attributes overload hands the provider the prefix-stripped environment.* subset")
+    void attributesOverloadForwardsSubset() {
+        final List<EnvironmentRequest> seen = new CopyOnWriteArrayList<>();
+        final ExecutionEnvironment env = TestExecutionEnvironments.of(null);
+
+        assertThat(ExecutionEnvironments.resolveOrUnavailable(r -> {
+            seen.add(r);
+            return env;
+        }, EnvironmentRequest.builder().agentRuntimeId(AgentRuntimeId.of("agent:test")),
+                Map.of("environment.sandbox.workspace", "ws-7", "other", 1))).isSameAs(env);
+        assertThat(seen).singleElement().satisfies(
+                r -> assertThat(r.requestAttributes()).containsExactly(Map.entry("sandbox.workspace", "ws-7")));
+    }
+
+    @Test
+    @DisplayName("the execution-attributes overload turns a refused attribute into an unavailable environment without "
+            + "calling the provider")
+    void attributesOverloadRefusal() {
+        final List<EnvironmentRequest> seen = new CopyOnWriteArrayList<>();
+
+        final ExecutionEnvironment env = ExecutionEnvironments.resolveOrUnavailable(r -> {
+            seen.add(r);
+            return TestExecutionEnvironments.of(null);
+        }, EnvironmentRequest.builder().agentRuntimeId(AgentRuntimeId.of("agent:test")),
+                Map.of("environment.sandbox.workspace", 7));
+
+        assertThat(seen).isEmpty();
+        assertThat(env).isInstanceOf(UnavailableExecutionEnvironment.class);
+        assertThat(env.descriptor().notes())
+                .hasValueSatisfying(n -> assertThat(n).contains("environment.sandbox.workspace").doesNotContain("7"));
     }
 
     @Test

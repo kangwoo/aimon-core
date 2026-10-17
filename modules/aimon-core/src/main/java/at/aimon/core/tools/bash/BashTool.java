@@ -34,6 +34,7 @@ import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.shell.exception.ShellCancelledException;
 import at.aimon.core.shell.exception.ShellExecutionException;
 import at.aimon.core.shell.exception.ShellTimeoutException;
+import at.aimon.core.tools.EnvironmentNotices;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
 
 /**
@@ -159,8 +160,11 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
     static final String CAPTURE_TRUNCATION_NOTICE = "[Output truncated: the shell reached its capture limit, "
             + "so some output was discarded and is not recoverable]";
 
-    /** Prefix of each {@link ShellCommandResult#notices() environment notice} line placed before the output. */
-    static final String ENVIRONMENT_NOTICE_PREFIX = "[environment] ";
+    /**
+     * Prefix of each {@link ShellCommandResult#notices() environment notice} line placed before the output. The same
+     * string the core uses for the environment's own queued notices, so both channels read alike.
+     */
+    static final String ENVIRONMENT_NOTICE_PREFIX = EnvironmentNotices.PREFIX;
 
     private final BackgroundBashManager backgroundManager;
 

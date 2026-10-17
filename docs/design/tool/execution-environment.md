@@ -175,7 +175,7 @@ public interface ExecutionEnvironmentProvider {
 | 타입 | 내용 |
 |------|------|
 | `EnvironmentDescriptor` | `workingDirectory` · `platform` · `osVersion` · `shellName` · `notes`(자유 텍스트 한두 줄, e.g. "isolated sandbox; network restricted"). 불변 + 빌더 |
-| `EnvironmentRequest` | `Agent` · `AgentRuntimeId` · `SessionId`? · `ExecutionId`? · `invokingSessionId`? · `Principal`? · `parent`(`ExecutionEnvironment`?, 포크의 부모 환경) · `branchKey`? · `fork`(`ForkDefinition`?, 포크가 도는 서브에이전트의 이름과 `attributes`) |
+| `EnvironmentRequest` | `Agent` · `AgentRuntimeId` · `SessionId`? · `ExecutionId`? · `invokingSessionId`? · `Principal`? · `parent`(`ExecutionEnvironment`?, 포크의 부모 환경) · `branchKey`? · `fork`(`ForkDefinition`?, 포크가 도는 서브에이전트의 이름과 `attributes`) · `requestAttributes`(이 실행의 호출자가 붙인 `environment.*` 실행 속성, 접두사를 뗀 `Map<String, String>` — 메인 턴과 루틴만, 포크에는 언제나 빈 맵. EE-102) |
 | `ContentSearch` | `search(ContentQuery) → ContentSearchResult`. `GrepTool` 의 입력(패턴 · 경로 · glob · 대소문자 · 컨텍스트 줄 · 출력 모드 · head limit)을 그대로 옮긴 값 |
 | `StagedResource` | 제어 저장소 쪽 파일 묶음 — `sourceFileSystem` · `sourceDir` · `contentKey`(디렉터리 해시, 사본 경로의 일부, §4.4) · `name`. 스킬의 것은 `SkillRepository.resolveSource` 가 낸다 |
 | `FileStamp` | `size` · `modifiedAt` · `etag`? (§7) |
@@ -462,7 +462,10 @@ public interface ExecutionEnvironmentProvider {
 
 실행마다 `resolve()` 를 부르는 곳은 셋이다 — `OrcaAgentExecutor.execute()` 의 시작(메인 턴과 슬래시 커맨드 흐름이
 같은 값을 쓴다. 커맨드 흐름은 ReAct 루프 대신 도는 같은 실행의 분기이지 별도 실행이 아니다), `DefaultSubagentExecutor`
-(포크 — 워크플로 단계도 포크로 돈다), `RoutineExecutor`(스케줄 루틴). 실행 밖의 호출이 하나 더 있다: CLI 의
+(포크 — 워크플로 단계도 포크로 돈다), `RoutineExecutor`(스케줄 루틴). 메인 턴은 `SubmitOptions` 의 실행 속성에서, 루틴은
+호스트가 `SchedulingEngineBuilder.routineExecutionAttributes`(스택에서는 `SchedulingSpec.withRoutineExecutionAttributes`)로
+준 해석기에서 `environment.*` 속성을 꺼내 요청의 `requestAttributes` 로 싣는다 — 두 자리가 같은
+`EnvironmentRequestAttributes.extract` 를 쓴다(EE-102). 실행 밖의 호출이 하나 더 있다: CLI 의
 `AgentSetupFactory.workingDirectoryOf` 가 부트스트랩 때 작업 디렉터리를 알아내려고 한 번 부른다. 어떤 실행에도 속하지
 않으므로 "실행당 한 번" 규칙과 부딪히지 않는다. 이 밖에 `ToolContext` 를 손으로 조립하는 경로는 `resolve()` 를 다시
 부르지 않고, 이미 해석된 실행의 환경을 싣는다. 한 실행에서 두 번 부르면 한 실행에 환경이 둘이 된다.
@@ -509,7 +512,11 @@ public interface ExecutionEnvironmentProvider {
   `workflow-skeptic`)으로 등록된 서브에이전트의 속성을 복사한다. 그렇게 속성만 주려고 둔 정의는 `hidden: true` 로 모델에게서
   숨긴다 — `Task` 의 목록에 나오지 않고 모델이 이름을 대도 거절되며, 이름으로 찾는 쪽은 그대로 찾는다(EE-44). 어느 쪽이든 등록된 정의에서 가져오는 것은 속성뿐이고,
   이름·프롬프트·도구는 단계의 것 그대로다. 속성이 비면 제공자는 위의 기본(부모와 같은 샌드박스)을 따른다. 설계와
-  구현이 달라진 점은 [`execution-environment-ee42-workflow-attributes.md`](execution-environment-ee42-workflow-attributes.md)
+  구현이 달라진 점은 [`execution-environment-ee42-workflow-attributes.md`](execution-environment-ee42-workflow-attributes.md) 에
+  있다. 포크와 워크플로 단계의 요청에는 `requestAttributes` 가 **언제나 비어 있다.** 부모 턴의 `environment.*` 실행 속성은 포크의
+  도구에 그대로 보이지만 포크의 배치를 정하지 않는다 — 포크의 배치는 `parent` 의 몫이고, 그것을 넘기면 포크가 부모와 다른
+  격리 단위를 청할 수 있게 된다. 설계와 구현이 달라진 점은
+  [`execution-environment-ee102-request-attributes.md`](execution-environment-ee102-request-attributes.md) 에 있다
 - **워크플로 격리 브랜치** — 러너는 `parentEnv.isolate(branchKey)` 를 부른다. 비어 있으면(격리를 지원하지 않는
   환경) 브랜치를 격리 없이 돌리지 않고 **실행을 거부**한다. 격리를 요청한 스크립트가 격리 없이 돌면 병렬 브랜치가
   서로의 파일을 덮는다. `isolate()` 가 던지면(격리를 여기서 거절한다 — 사용 불가 환경, 이미 브랜치인 환경) 러너는
@@ -688,6 +695,36 @@ stamp 맵의 키는 모델이 넘긴 문자열이 아니라 **환경의 파일 �
 
 stderr 에 섞지 않는다. stderr 는 명령이 낸 것이고, 모델은 그것을 명령의 오류로 해석한다. 로컬 셸은 notice 를
 만들 일이 없다.
+
+### 8.1 환경 자체의 알림 — `drainNotices()`
+
+`notices()` 는 **명령 하나**에 붙는 채널이라 `Bash` 결과만 싣는다. "샌드박스가 재생성되어 `/workspace` 가 비었다",
+"이 세션은 이제 다른 워크스페이스에서 돈다" 같은 **환경 자체**의 사실은 어느 명령의 것도 아니어서, 파일 도구만 쓰는
+턴은 그것을 듣지 못했다(#254). 그래서 `ExecutionEnvironment` 에 두 번째 채널을 둔다 —
+`default List<String> drainNotices()`(기본 빈 목록). 코어는 **모델에게 가는 도구 호출 하나가 끝날 때마다**, 어떤 도구였든,
+그 실행의 환경을 한 번 비우고 나온 notice 를 그 결과 앞에 `[environment] …` 줄로 붙인다. `Bash` 의 notice 와 같은 모양이고,
+`Bash` 결과에서는 환경의 줄이 먼저, 명령의 줄이 다음, 출력이 마지막이다.
+
+- **어디서 비우는가.** `SingleToolInvoker.invoke` 가 PostTool 훅 뒤에(메인 에이전트 · 서브에이전트 · 슬래시 스킬의
+  디스패처가 모두 이것을 지난다), 그리고 디스패처가 바인딩되지 않은 스킬 루프(`LlmSkillExecutor` 의 폴백)가 결과마다.
+  거부 · 차단 · 모르는 도구 · 예외로 끝난 호출도 결과가 모델에게 가므로 싣는다. 모델에게 가지 않는 경로 — 워크플로
+  스크립트의 도구 호출, 스케줄 루틴 단계, 훅 — 는 비우지 않는다. 그 notice 는 다음 모델 쪽 호출까지 남는다.
+- **훅은 보지 못한다.** PostTool 훅이 받는 결과에 notice 는 없고, 훅이 결과를 고쳐 써도 notice 는 그 뒤에 붙는다. 훅의 셸
+  명령이 일으킨 재생성도 그 도구의 결과에 실린다. 훅의 셸 결과(`ShellCommandResult.notices()`)는 여전히 버린다.
+- **어느 채널인가.** 명령 하나의 실행에 관한 사실은 `notices()`(백그라운드 명령이면 `BashOutput` 까지 간다), 환경에 관한
+  사실은 `drainNotices()`. 같은 사실을 둘 다에 싣지 않는다.
+- **한 번만, 받은 순간 확정.** 돌려준 notice 는 다시 돌려주지 않는다 — 병렬 배치에서는 여러 스레드가 비우므로 원자적이어야
+  한다. 코어는 따로 수신 확인을 하지 않는다: 돌려준 것이 곧 전달한 것이다(최대 한 번). 던지면 코어는 WARN 을 남기고 결과를
+  그대로 돌려준다.
+- **큐는 환경 인스턴스마다.** 포크에 부모와 큐를 공유하는 인스턴스를 주면 포크의 첫 호출이 notice 를 가져가 포크의 모델만
+  듣고, 부모는 비워진 트리를 모른 채 고친다. 포크의 큐는 공유하지 말고 포크도 들어야 할 것으로 채운다. 같은 이유로
+  사용자가 친 `/skill` 의 루프가 비운 notice 는 그 스킬의 LLM 만 듣는다 — 그 루프의 전사는 끝나면 버려진다.
+- **도구를 부르지 않는 턴은 듣지 못한다.** 턴 시작에 비우는 경로는 없다 — 게으른 프로비저닝(§13)에서는 재생성을 첫 도구
+  호출에서야 알기 때문이다. 이 공백은
+  [EE-106](../../backlog/execution-environment-open-items.md#ee-106--도구를-부르지-않는-턴은-환경의-알림을-듣지-못한다--열림-트리거-대기)
+  에 있다.
+
+설계와, 구현이 그 설계에서 벗어난 점은 [`execution-environment-notices.md`](execution-environment-notices.md) 에 있다.
 
 ---
 
@@ -883,6 +920,7 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 | 워크플로 브랜치는 `isolate()` 로만 만든다. 병합은 하지 않는다 — 조립 코드가 고른다(§5.2) | `isolate()` 는 git worktree 를 쓴다. 파일 복사 병합(`WorktreeMerge.promote`)이 그 환경에서도 동작해야 하고, git 병합은 자기 모듈 API 로 따로 준다 |
 | `durable() == false` 면 artifact 를 복사한다 | `/workspace` 에 대해 `durable() == false` 를 돌려준다 |
 | `notices()` 를 모델에게 보인다 | 셸 세션·샌드박스 재생성 시 notice 를 싣는다 |
+| 모델에게 가는 도구 호출이 끝날 때마다, 어떤 도구였든, `drainNotices()` 를 한 번 불러 그 결과 앞에 보인다. 훅에는 보이지 않는다(§8.1) | 환경 자체의 사실은 `ShellCommandResult` 가 아니라 `drainNotices()` 에 싣는다. 원자적이고 한 번만 돌려주며, 돌려준 것은 전달된 것으로 본다. 큐는 환경 인스턴스마다 두고 포크와 공유하지 않는다 |
 | 백그라운드 명령에 `ExecutionOptions.background` 를 켠다(§5.3) | 켜진 명령은 지속 셸 세션을 쥐지 않는다 |
 | 훅의 셸 액션(스킬 선언 훅과 `hooks.json` 훅)에 `ExecutionOptions.hook` 을 켠다(§10) | 켜진 명령은 지속 셸 세션 밖에서 돈다 — 세션 잠금을 잡지 않고 `cd`·`export` 를 세션에 저장하지 않는다. 세션의 현재 상태에서 시작해도 된다. 옵션을 파생하는 래퍼는 플래그를 넘긴다 |
 | 셸이 `ShellFeature.CANCELLATION` 을 선언하면 백그라운드 명령마다 `ExecutionOptions.getCancellation()` 에 신호를 싣고, `KillShell` 과 스택 종료가 그 신호를 건다. 포그라운드 명령에는 선언과 무관하게 언제나 신호를 싣고, 실행의 인터럽트가 그 신호를 건다(§5.3) | 선언했다면 신호가 걸릴 때 원격 명령과 그 명령이 띄운 것을 멈추고 그 `execute` 가 `ShellCancelledException` 을 던진다(멈춤을 요청만 하고 돌아와도 된다). 이미 걸린 신호면 명령을 띄우지 않는다. 옵션을 파생하는 래퍼는 신호를 넘긴다. 선언하지 않으면 `KillShell` 은 오류로 답한다 |
@@ -894,6 +932,7 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 | 스테이징 영역을 파일 도구에 읽기 전용으로 둔다(§4.4) — 경로 규칙으로. 로컬 제공자와 외부 제공자가 같은 공개 팩토리 `VirtualFileSystems.withPathRules` 를 쓴다 | 샌드박스의 스테이징 영역도 파일 도구에 읽기 전용이다. 셸은 쓸 수 있다 |
 | `WorktreeMerge.promote` 는 부모 자신·중복·부모와 파일 시스템을 공유하는 브랜치를 거부하고, `isolatedFrom()` 이 밝힌 계보가 다르면 거부한다(§5.2) | (권장) `isolate()` 가 만든 브랜치는 `isolatedFrom()` 으로 부모를 밝히고, 부모의 경로 규칙을 브랜치 루트 기준으로 `VirtualFileSystems.withPathRules` 로 건다(§9.2). 사용 불가이거나 이미 브랜치여서 격리를 거절할 때는 빈 값이 아니라 이유를 담은 예외를 던진다 |
 | `resolve()` 실패 시 호스트로 되돌아가지 않는다 | 실패를 예외로 알린다 |
+| 메인 턴과 루틴의 요청에 그 실행의 `environment.*` 실행 속성을 접두사를 떼고 `requestAttributes()` 로 싣는다. 값은 `String` 뿐이고(아니면 제공자를 부르지 않고 사용 불가), 모델 출력에서 오지 않으며(호스트가 채운다), 포크·워크플로 단계에는 싣지 않는다. `toString()` 은 키 이름만 찍는다(EE-102) | 배치 입력으로 다루고 `definitionAttributes()` 위에 자기 정책대로 얹는다. 따를 수 없는 요청(없는 워크스페이스, "붙은 것이 없으면 거절")은 예외로 알린다. 값을 로그에 남기지 않는다 |
 | 스킬 선언 훅의 셸 액션을 그 실행의 `shell().execute` 로 돌린다 — `ExecutionOptions` 에 `timeout`·`environment`(`AIMON_*` 변수)·`stdin`(JSON 페이로드)을 싣는다(§10) | 셸이 `environment` 와 `stdin` 옵션을 받는다. 받지 못하면 그 훅은 돌지 않은 것으로 처리된다 — 거부 채널이 있는 이벤트(`preTool` · `onStart` · `preCompact` · `permissionRequest`)에서는 `failOpen` 이 아닌 한 **거부**이고, 나머지는 WARN 후 진행이다. `shell()` · `execute` 가 사용 불가 예외를 던질 때도 같다(§10) |
 | 백그라운드 작업을 그것을 띄운 세션(또는 세션 없는 실행)에만 보인다. 레코드에 소유 필드 셋을 싣는다(§5.3) | `BackgroundBashStore` 를 구현한다면 소유 필드 셋을 그대로 저장하고 돌려준다 |
 | 프롬프트 조립이 `fileSystem()` 을 읽을 수 있다(옵트인 컨텍스트 제공자, §5.1) | 그 읽기가 프로비저닝을 일으킨다는 것을 문서에 밝힌다 |

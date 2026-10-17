@@ -282,6 +282,35 @@ class DefaultSubagentExecutorTest {
     }
 
     @Test
+    @DisplayName("포크의 EnvironmentRequest 에는 부모 턴의 environment.* 실행 속성이 실리지 않지만, 포크의 도구는 원래 맵을 그대로 본다 (#252)")
+    void environmentRequestOmitsParentRequestAttributes() {
+        final ProbeTool probe = new ProbeTool();
+        final DefaultToolRegistry registry = new DefaultToolRegistry();
+        registry.register(probe);
+        final StubLlmClient llm = new StubLlmClient();
+        llm.responses.add(LlmResponse.of("", List.of(ToolUse.of("p1", "Probe", Map.of()))));
+        llm.responses.add(LlmResponse.text("done"));
+
+        final AtomicReference<EnvironmentRequest> captured = new AtomicReference<>();
+        final ExecutionEnvironmentProvider provider = environmentRequest -> {
+            captured.set(environmentRequest);
+            return UnavailableExecutionEnvironment.of("not needed");
+        };
+        final SubagentExecutionContext context = SubagentExecutionContext.builder()
+                .agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent("explorer", 5))
+                .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(registry)
+                .hookRegistry(new DefaultHookRegistry()).executionEnvironmentProvider(provider).build();
+        final Map<String, Object> parentAttributes = Map.of("environment.sandbox.workspace", "ws-7", "ab.x", "on");
+
+        newExecutor(llm).execute(context, SubagentExecutionRequest.builder().taskId("t").goal("probe")
+                .executionAttributes(parentAttributes).build());
+
+        assertThat(captured.get()).isNotNull();
+        assertThat(captured.get().requestAttributes()).isEmpty();
+        assertThat(probe.captured.get().get(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY)).contains(parentAttributes);
+    }
+
+    @Test
     @DisplayName("ExecutionBudget 의 maxIterations 가 subagent maxIterations 보다 먼저 루프를 멈춘다")
     void budgetMaxIterationsStopsLoop() {
         final StubLlmClient llm = new StubLlmClient();
