@@ -22,8 +22,8 @@ import at.aimon.core.llm.Message;
  * immutable {@link SessionTranscript}. The second is bookkeeping written by different owners at different times:
  * {@code compactionFailureCount} (the compaction circuit breaker), {@code agentRef} (the agent binding, sole-written
  * by {@code SessionRouter}), {@code owner} (the owning principal, written under the same fill-if-empty rule),
- * {@code sessionTotals}, and {@code budgetOverride}. Only the transcript half
- * crosses the wire — see {@link SessionSnapshot}, which is the sole owner of the persisted format.
+ * {@code sessionTotals}, and {@code budgetOverride}. Only the transcript half crosses the wire — see
+ * {@link SessionSnapshot}, which is the sole owner of the persisted format.
  *
  * <p>
  * <strong>This is not the live history of a running turn.</strong> A turn appends to {@link TranscriptBuffer},
