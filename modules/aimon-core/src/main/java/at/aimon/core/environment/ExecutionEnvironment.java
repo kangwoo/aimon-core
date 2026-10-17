@@ -147,8 +147,7 @@ public interface ExecutionEnvironment {
      * <li><b>Cheap and quiet.</b> No long remote I/O, and no exception; the core treats a throw as "nothing to
      * deliver" and logs it. A {@code null} return, and {@code null} or blank entries, are ignored.
      * <li><b>One line per notice.</b> Each entry becomes one {@code [environment]} line. A line break inside an entry
-     * is
-     * not re-prefixed, so its continuation reads as the tool's own output; split a long fact into several entries.
+     * is not re-prefixed, so its continuation reads as the tool's own output; split a long fact into several entries.
      * <li><b>One queue per environment instance.</b> The core drains whichever instance sits in the dispatching tool
      * context. If a subagent fork is answered with an instance that shares the parent's queue, the fork's first call
      * consumes notices only the fork's model then hears, and the parent edits a reset tree unaware. Seed a fork's
