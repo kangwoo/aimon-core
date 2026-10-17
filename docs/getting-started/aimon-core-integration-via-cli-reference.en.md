@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/aimon-core-integration-via-cli-reference.md
-source_commit: fc539d3b
+source_commit: 5eb24cf0
 ---
 
 # aimon-core integration guide — following aimon-cli as the reference
@@ -1799,7 +1799,7 @@ hookRegistry.register(HookEventType.PRE_TOOL, (PreToolHook) ctx -> {
 
 For the kinds of hook and what blocking means, follow [hook-development-guide.en.md](../features/hook/hook-development-guide.en.md). **Only `PreToolHook` has a meaningful block (`HookResult.block(reason)`)** — every other hook is non-blocking.
 
-> If you want the user's identity in the audit log, note that you cannot pull it out of the hook context — there is no `getUserId()` on `PreToolContext`. Load it at submit time with `SubmitOptions.builder().executionAttribute("userId", ...)` and it arrives intact in `getExecutionAttributes()`. Hook registration happens against the **agent-scoped `HookRegistry`**, so this too is once per runtime rather than once per connection — user identity has to ride along at submit time, not at registration time.
+> If you want the user's identity in the audit log, note that you cannot pull it out of the hook context — there is no `getUserId()` on `PreToolContext`. Load it at submit time with `SubmitOptions.builder().executionAttribute("userId", ...)` and it arrives intact in `getExecutionAttributes()`. Hook registration happens against the **agent-scoped `HookRegistry`**, so this too is once per runtime rather than once per connection — user identity has to ride along at submit time, not at registration time. Keys starting with `environment.` are reserved, though — they are placement input that the turn's `ExecutionEnvironmentProvider` receives, prefix removed, as `EnvironmentRequest.requestAttributes()`. Their values must be `String`s (any other type makes that turn's execution environment unavailable), and they must never be filled from model output. A scheduled routine has no submit call, so it gets the same values from `SchedulingEngineBuilder.routineExecutionAttributes(...)` (on a stack, `SchedulingSpec.withRoutineExecutionAttributes(...)`).
 
 ---
 

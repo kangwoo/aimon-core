@@ -94,11 +94,25 @@ class GraalJsEnvironmentRequestTest {
                         "graaljs:builder {sandbox.slot=build, gpu=true}");
     }
 
+    @Test
+    @DisplayName("the launching turn's environment.* execution attributes never reach a step's request (#252)")
+    void stepsCarryNoRequestAttributes() {
+        final List<EnvironmentRequest> requests = run(
+                "agent({ agentType: 'builder', goal: 'compile' });\n" + "return 'done';",
+                Map.of("environment.sandbox.workspace", "ws-7"));
+
+        assertThat(requests).singleElement().satisfies(request -> assertThat(request.requestAttributes()).isEmpty());
+    }
+
     /**
      * Runs {@code js} over a registry holding {@code builder} ({@code sandbox.slot: build}), with the keys these
      * scripts set allowed (EE-45), and returns the requests the provider saw.
      */
     private List<EnvironmentRequest> run(String js) {
+        return run(js, Map.of());
+    }
+
+    private List<EnvironmentRequest> run(String js, Map<String, Object> executionAttributes) {
         final InMemorySubagentRegistry registry = new InMemorySubagentRegistry();
         registry.register(Subagent.builder().name("builder").systemPrompt("unused")
                 .attributes(Map.of("sandbox.slot", "build")).build());
@@ -111,18 +125,19 @@ class GraalJsEnvironmentRequestTest {
                 engines, SubagentResolver.inline(registry, List.of("sandbox.profile", "sandbox.slot", "gpu")), null);
         final DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(new DefaultSubagentExecutor(
                 new DoneLlmClient(), new DefaultToolExecutionManager(), new DefaultHookExecutionManager()), pool);
-        try (WorkflowRunner runner = WorkflowRunners.create(manager, env(registry, provider),
+        try (WorkflowRunner runner = WorkflowRunners.create(manager, env(registry, provider, executionAttributes),
                 WorkflowRunnerOptions.defaults())) {
             assertThat(runner.run(script, RunId.from("ee42-run"))).isEqualTo("done");
         }
         return requests;
     }
 
-    private static SubagentLaunchContext env(InMemorySubagentRegistry registry, ExecutionEnvironmentProvider provider) {
+    private static SubagentLaunchContext env(InMemorySubagentRegistry registry, ExecutionEnvironmentProvider provider,
+            Map<String, Object> executionAttributes) {
         return SubagentLaunchContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test"))
-                .subagentRegistry(registry).toolRegistry(new DefaultToolRegistry())
-                .hookRegistry(new DefaultHookRegistry()).defaultModel(LlmModel.builder().name("gpt-4").build())
-                .executionEnvironmentProvider(provider).build();
+                .executionAttributes(executionAttributes).subagentRegistry(registry)
+                .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry())
+                .defaultModel(LlmModel.builder().name("gpt-4").build()).executionEnvironmentProvider(provider).build();
     }
 
     /** An LLM that answers every call with a final "done". */

@@ -9,7 +9,9 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.DisplayName;
@@ -19,6 +21,7 @@ import org.junit.jupiter.api.io.TempDir;
 import at.aimon.bootstrap.assemble.MemoryAssembly;
 import at.aimon.bootstrap.spec.AgentSpec;
 import at.aimon.bootstrap.spec.AgentWorkspaceLayout;
+import at.aimon.bootstrap.spec.ExecutionEnvironmentSpec;
 import at.aimon.bootstrap.spec.ExecutorSpec;
 import at.aimon.bootstrap.spec.FileSystemSpec;
 import at.aimon.bootstrap.spec.LlmSpec;
@@ -41,6 +44,9 @@ import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.base.Principal;
+import at.aimon.core.environment.EnvironmentRequest;
+import at.aimon.core.environment.ExecutionEnvironmentProvider;
+import at.aimon.core.environment.UnavailableExecutionEnvironment;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
@@ -509,6 +515,43 @@ class AimonStackBuilderTest {
             assertThat(repository.findById(ScheduledTaskId.of("nightly")).orElseThrow().getLastExecutedAt())
                     .as("a denied fire must not have run").isEmpty();
         }
+    }
+
+    @Test
+    @DisplayName("the supplied routine execution attributes reach a routine run's EnvironmentRequest (#252)")
+    void suppliedRoutineExecutionAttributesReachTheEnvironmentRequest(@TempDir Path workspace) {
+        // The spec carrying the resolver is not enough: the stack builder has to hand it to the engine builder, and
+        // the engine builder to the routine executor it builds privately. Only a fire shows all three hops.
+        final List<EnvironmentRequest> requests = new CopyOnWriteArrayList<>();
+        final ExecutionEnvironmentProvider provider = request -> {
+            requests.add(request);
+            return UnavailableExecutionEnvironment.of("not needed");
+        };
+        final SchedulingSpec scheduling = SchedulingSpec.enabled(executor -> NO_OP_SCHEDULER)
+                .withRoutineExecutionAttributes((task, executionId) -> Map.of("environment.sandbox.workspace",
+                        "ws-" + task.getId().value(), "feature.flag", "on"));
+
+        try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").scheduling(scheduling)
+                .executionEnvironment(ExecutionEnvironmentSpec.shared(provider)).build())) {
+            final ScheduledTask task = ScheduledTask.builder().id(ScheduledTaskId.of("nightly")).name("nightly sweep")
+                    .cronExpression("0 3 * * *").owner(Principal.user("ops")).boundRuntimeId(stack.primaryRuntimeId())
+                    .addStep(RoutineStep.of("Read", "{}")).build();
+            stack.schedulingEngine().orElseThrow().getTaskManager().register(task);
+            requests.clear();
+
+            stack.schedulingEngine().orElseThrow().getTaskManager().executeTask(ScheduledTaskId.of("nightly"));
+
+            assertThat(requests).singleElement().satisfies(request -> assertThat(request.requestAttributes())
+                    .containsExactly(Map.entry("sandbox.workspace", "ws-nightly")));
+        }
+    }
+
+    @Test
+    @DisplayName("routine execution attributes on a disabled spec are refused")
+    void routineExecutionAttributesOnDisabledSchedulingAreRefused() {
+        assertThatThrownBy(() -> SchedulingSpec.disabled().withRoutineExecutionAttributes((task, id) -> Map.of()))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("Scheduling is disabled");
+        assertThat(SchedulingSpec.enabled().getRoutineExecutionAttributes()).isEmpty();
     }
 
     @Test

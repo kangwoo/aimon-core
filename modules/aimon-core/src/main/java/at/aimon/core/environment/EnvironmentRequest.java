@@ -18,6 +18,12 @@ import at.aimon.core.base.Principal;
  * workflow runs do not (they know their runtime id and their {@link #parent()} instead). A fork carries its parent's
  * environment so a provider can answer with the same place — the local provider returns the parent as-is — and its
  * own {@link #fork() definition}, so a provider can answer with a different place per subagent instead.
+ *
+ * <p>
+ * Two attribute maps describe what the execution asks for. {@link #definitionAttributes()} comes from the agent or
+ * fork <em>definition</em> and is the same for every run of it; {@link #requestAttributes()} comes from the caller of
+ * <em>this</em> run — the {@code environment.*} execution attributes of a main turn or a scheduled routine (issue
+ * #252). A provider can layer the second over the first however its policy says.
  */
 public final class EnvironmentRequest {
 
@@ -30,6 +36,7 @@ public final class EnvironmentRequest {
     private final ExecutionEnvironment parent;
     private final String branchKey;
     private final ForkDefinition fork;
+    private final Map<String, String> requestAttributes;
 
     private EnvironmentRequest(Builder builder) {
         this.agentRuntimeId = Objects.requireNonNull(builder.agentRuntimeId, "agentRuntimeId must not be null");
@@ -41,6 +48,7 @@ public final class EnvironmentRequest {
         this.parent = builder.parent;
         this.branchKey = builder.branchKey;
         this.fork = builder.fork;
+        this.requestAttributes = builder.requestAttributes;
     }
 
     /** @return the agent runtime the execution belongs to */
@@ -105,6 +113,23 @@ public final class EnvironmentRequest {
         return agent != null ? agent.getAttributes() : Map.of();
     }
 
+    /**
+     * Returns the attributes the caller attached to <em>this</em> run: the {@code environment.*} subset of a main
+     * turn's or a routine's execution attributes, prefix removed (see {@link EnvironmentRequestAttributes}). Forks,
+     * workflow steps and workflow runners never carry them — a fork's placement is its {@link #parent()}'s business.
+     *
+     * <p>
+     * They are placement input and are host-supplied: a host must never fill the {@code environment.*} namespace from
+     * model output (tool arguments, model-written routine parameters, workflow script values). Core forwards them and
+     * does not read them; the key names belong to the provider. {@link #toString()} prints the key names only, and a
+     * provider that logs this map should do the same.
+     *
+     * @return the attributes (never null; unmodifiable; empty when the caller attached none)
+     */
+    public Map<String, String> requestAttributes() {
+        return requestAttributes;
+    }
+
     /** @return a new builder */
     public static Builder builder() {
         return new Builder();
@@ -114,7 +139,11 @@ public final class EnvironmentRequest {
     public String toString() {
         return "EnvironmentRequest{agentRuntimeId=" + agentRuntimeId + ", sessionId=" + sessionId + ", executionId="
                 + executionId + ", parent=" + (parent != null) + ", branchKey=" + branchKey
-                + (fork != null ? ", fork=" + fork.name() : "") + '}';
+                + (fork != null ? ", fork=" + fork.name() : "")
+                + (requestAttributes.isEmpty()
+                        ? ""
+                        : ", requestAttributes=" + requestAttributes.keySet().stream().sorted().toList())
+                + '}';
     }
 
     /** Builder for {@link EnvironmentRequest}. */
@@ -128,6 +157,7 @@ public final class EnvironmentRequest {
         private ExecutionEnvironment parent;
         private String branchKey;
         private ForkDefinition fork;
+        private Map<String, String> requestAttributes = Map.of();
 
         private Builder() {
         }
@@ -219,6 +249,18 @@ public final class EnvironmentRequest {
          */
         public Builder fork(ForkDefinition fork) {
             this.fork = fork;
+            return this;
+        }
+
+        /**
+         * @param requestAttributes
+         *            the attributes the caller attached to this run, prefix already removed, or null for none
+         * @return this builder
+         * @throws NullPointerException
+         *             if the map holds a null key or value
+         */
+        public Builder requestAttributes(Map<String, String> requestAttributes) {
+            this.requestAttributes = requestAttributes == null ? Map.of() : Map.copyOf(requestAttributes);
             return this;
         }
 

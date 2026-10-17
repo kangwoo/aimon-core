@@ -274,6 +274,32 @@ class WorkflowToolAttributesTest {
         return behaviors;
     }
 
+    @Test
+    @DisplayName("a calling turn's environment.* execution attributes never reach a step's EnvironmentRequest (#252)")
+    void stepsCarryNoRequestAttributes() {
+        final List<EnvironmentRequest> requests = new CopyOnWriteArrayList<>();
+        final ExecutionEnvironmentProvider provider = request -> {
+            requests.add(request);
+            return UnavailableExecutionEnvironment.of("not needed");
+        };
+        final SubagentExecutor executor = new DefaultSubagentExecutor(new DoneLlmClient(),
+                new DefaultToolExecutionManager(), new DefaultHookExecutionManager());
+        final WorkflowTool tool = new WorkflowTool(LlmModel.builder().name("gpt-4").build(),
+                new InMemorySubagentRegistry(), new DefaultToolRegistry(), new DefaultHookRegistry(),
+                new DefaultSubagentExecutionManager(executor, pool), List.of());
+        final ToolContext context = ToolContext.builder()
+                .put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeId.of("agent:test"))
+                .put(ToolContextKeys.EXECUTION_ENVIRONMENT_PROVIDER, provider)
+                .put(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY, Map.of("environment.sandbox.workspace", "ws-7")).build();
+
+        final ToolResult result = tool.execute(
+                ToolInput.of(Map.of("prompt", "ship?", "perspectives", "risk,cost", "synthesize", Boolean.FALSE)),
+                context);
+
+        assertThat(result.isSuccess()).as(result.getContent()).isTrue();
+        assertThat(requests).hasSize(2).allSatisfy(request -> assertThat(request.requestAttributes()).isEmpty());
+    }
+
     private static Subagent roleDefinition(String role, Map<String, String> attributes) {
         return Subagent.builder().name(role).systemPrompt("placement only").attributes(attributes).build();
     }
