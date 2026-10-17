@@ -33,8 +33,8 @@ An `ExecutionEnvironmentProvider` could key placement on the agent or fork defin
   exactly `environment.`, makes that execution's environment unavailable — file and shell tools fail with the cause, the
   turn still runs, and the provider is not called. A host that already sent such a key for another purpose (say
   `executionAttribute("environment.debug", true)` read only by a hook) loses its environment on those turns. A routine
-  resolver that throws or returns `null` does the same to that run rather than aborting it. The prefix spelling is open
-  until release (backlog EE-103).
+  resolver that throws or returns `null` does the same to that run rather than aborting it. The prefix and its spelling
+  are settled (backlog EE-103): `environment.` inside the execution attributes, with no separate typed field.
 
 ### Added: environment notices on every tool result — `ExecutionEnvironment.drainNotices()` (#254)
 
