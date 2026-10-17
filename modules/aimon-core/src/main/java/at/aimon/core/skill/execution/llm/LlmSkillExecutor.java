@@ -494,11 +494,13 @@ public class LlmSkillExecutor implements SkillExecutor {
         final List<ToolUseResult> results = toToolUseResults(
                 toolExecutionManager.executeAll(toolRegistry, toolContext, toolUses, allowedTools));
         // These results feed this loop's LLM just as a bound dispatcher's do, so they carry the environment's notices
-        // too (SingleToolInvoker does it on the dispatcher path). executeAll keeps toolUses' order.
+        // too (SingleToolInvoker does it on the dispatcher path). executeAll keeps toolUses' order; the name is only
+        // for the drain's WARN line, so a manager that breaks that contract costs the log its name, not the result.
         final ExecutionEnvironment environment = ExecutionEnvironmentAccess.of(toolContext).orElse(null);
         final List<ToolUseResult> delivered = new ArrayList<>(results.size());
         for (int i = 0; i < results.size(); i++) {
-            delivered.add(EnvironmentNotices.deliver(results.get(i), environment, toolUses.get(i).getName()));
+            final String toolName = i < toolUses.size() ? toolUses.get(i).getName() : null;
+            delivered.add(EnvironmentNotices.deliver(results.get(i), environment, toolName));
         }
         return delivered;
     }

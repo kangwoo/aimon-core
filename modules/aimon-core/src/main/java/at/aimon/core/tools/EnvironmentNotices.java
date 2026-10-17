@@ -48,7 +48,7 @@ public final class EnvironmentNotices {
      * @param environment
      *            the environment the call ran against, or {@code null} when the tool context carries none
      * @param toolName
-     *            the tool's name, for the log line when draining fails
+     *            the tool's name, for the log line when draining fails, or {@code null} when unknown
      * @return the result carrying the notices, or {@code result} unchanged
      */
     public static ToolUseResult deliver(ToolUseResult result, ExecutionEnvironment environment, String toolName) {
@@ -77,7 +77,8 @@ public final class EnvironmentNotices {
     }
 
     /**
-     * Renders notices as {@value #PREFIX} lines, skipping {@code null} and blank entries.
+     * Renders notices as {@value #PREFIX} lines, one per entry, skipping {@code null} and blank entries. Only the first
+     * line of an entry is prefixed, as in {@code BashTool}: the SPI asks providers for single-line entries.
      *
      * @param notices
      *            the notices, or {@code null} for none
