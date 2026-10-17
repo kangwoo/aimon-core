@@ -248,6 +248,7 @@ QuartzTaskSchedulerBuilder.create()
 | `defaultMaxQuota` (`SchedulingEngineBuilder`) | 10 | agent runtime당 **10–20** | LLM 비용·과도한 cron 등록 방어 |
 | `executionGuard` (`SchedulingEngineBuilder`) | `InMemoryScheduledExecutionGuard` (노드 로컬) | 분산 구현 | 노드 간 중복 발화에 대한 코어 레벨 2차 방어선 |
 | `interruptBus` (`SchedulingEngineBuilder`) | `ScheduledTaskInterruptBus.LOCAL_ONLY` (노드 로컬) | 분산 구현 (MongoDB: `MongoScheduledTaskInterruptBus`) | 취소가 **발화한 노드**의 실행까지 멈추게 한다 |
+| `routineExecutionAttributes` (`SchedulingEngineBuilder`) | `RoutineExecutionAttributes.NONE` (속성 없음) | 쓸 때는 공유 저장소를 읽는 구현 | 발화한 노드에서 불리므로, 어느 노드에서 불려도 같은 답을 내야 한다 |
 
 `defaultMaxQuota`는 **agent runtime 단위** 상한이다(`TaskQuotaManager` 를 직접 주입하면 무시된다).
 
@@ -263,6 +264,14 @@ QuartzTaskSchedulerBuilder.create()
 `aimon-session-mongodb` 의 `MongoScheduledTaskInterruptBus` 를 넘기면 되고(`init.js` 가 만드는 capped 컬렉션
 `scheduled_task_interrupts` 와 replica set 이 필요하다), 그 밖의 저장소에서는 애플리케이션이 쓴다.
 설계 근거는 [`interrupt.md` §12.7](../../design/agent-execution/interrupt.md).
+
+`routineExecutionAttributes`는 루틴 실행 1회마다 호스트에게 그 실행의 execution attributes 를 묻는 자리다 — 턴에서
+`SubmitOptions.executionAttribute(...)` 가 하는 일이며, 그 `environment.*` 부분집합이 환경 provider 의
+`EnvironmentRequest.requestAttributes()` 가 된다. 이 resolver 는 cron 이 **발화한 노드**에서, 그 실행의 스레드 위에서
+불린다. 따라서 **어느 노드에서 불려도 같은 답을 내야 한다**: task 별 배치 정보를 노드 로컬 메모리에 두면 같은 task 가
+발화한 노드에 따라 다른 곳에 배치된다. task 별 값은 공유 저장소에서 `ScheduledTask#getId()` 로 찾아 읽는다. 스타터에서는
+`RoutineExecutionAttributes` 빈 하나로 배선된다(`SchedulingSpec.withRoutineExecutionAttributes`). 설계 근거는
+[`execution-environment-ee102-request-attributes.md`](../../design/tool/execution-environment-ee102-request-attributes.md).
 
 ### 6.4 모니터링
 

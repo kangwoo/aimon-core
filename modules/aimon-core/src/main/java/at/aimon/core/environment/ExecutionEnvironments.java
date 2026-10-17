@@ -26,7 +26,8 @@ public final class ExecutionEnvironments {
      * @param provider
      *            the provider, or null if none is configured
      * @param request
-     *            the request, filled except for its request attributes (must not be null)
+     *            the request, filled except for its request attributes (must not be null); any request attributes
+     *            already set on it are replaced by the extracted subset
      * @param executionAttributes
      *            the run's execution attributes, or null
      * @return the resolved environment, or an unavailable one carrying the cause (never null)
