@@ -24,8 +24,8 @@ that only read and edited files never heard that its sandbox had been re-created
   stay where they are. The contract — atomic, one-shot, one queue per environment instance, never shared with a fork —
   is in the method's javadoc and in `docs/design/tool/execution-environment.md` §8.1 · §13.
 - `EnvironmentNotices.PREFIX` (`at.aimon.core.tools`) is the shared `[environment] ` prefix.
-- Not yet: a turn whose model makes no tool call hears nothing (backlog `EE-102`). Queue scope across forks and slash
-  skills is the provider's call (`EE-103`). Hooks are told, not prevented, not to drain (`EE-104`).
+- Not yet: a turn whose model makes no tool call hears nothing (backlog `EE-106`). Queue scope across forks and slash
+  skills is the provider's call (`EE-107`). Hooks are told, not prevented, not to drain (`EE-108`).
 
 ### Added: usage quotas — accumulated session, principal and tenant limits, in total or per day (`at.aimon.core.agent.quota`)
 

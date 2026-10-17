@@ -8,8 +8,8 @@
 > One section was added: §8 records where the implementation departed from this design, and why — including which
 > review notes were applied. Note in particular §8.1: the helper lives in `at.aimon.core.tools`, not
 > `at.aimon.core.toolinvocation`. The open questions in §7 whose consequences reach beyond this change are tracked in
-> [`../../backlog/execution-environment-open-items.md`](../../backlog/execution-environment-open-items.md) (EE-102 ← Q6,
-> EE-103 ← Q2 · Q3 and the review's fork / slash-skill notes, EE-104 ← Q4), which is the canonical open/closed list.
+> [`../../backlog/execution-environment-open-items.md`](../../backlog/execution-environment-open-items.md) (EE-106 ← Q6,
+> EE-107 ← Q2 · Q3 and the review's fork / slash-skill notes, EE-108 ← Q4), which is the canonical open/closed list.
 > The spec this extends is [`execution-environment.md`](execution-environment.md) §8.1 and §13.
 
 ## 1. Problem
@@ -265,12 +265,12 @@ All six non-blocking notes were adopted.
 - **Fork queue sharing** — the rule "one queue per environment instance; seed a fork's queue instead of sharing" is
   in the `drainNotices()` javadoc and the §13 contract row of `execution-environment.md`, not only in Q3.
 - **Slash-command skills** — `execution-environment.md` §8.1 says that a notice drained inside a user-typed `/skill`
-  reaches only that skill's scratch LLM loop. It is recorded with the fork case in EE-103.
+  reaches only that skill's scratch LLM loop. It is recorded with the fork case in EE-107.
 - **Prefix constant** — §8.1 above.
 - **Same instance** — `deliver` returns `result` itself when there is no environment, nothing was queued, the drain
   returned `null` or only blank entries, or it threw. `EnvironmentNoticesTest` asserts `isSameAs`.
 - **Helper placement** — §8.1 above.
-- **Turn-start gap** — recorded as EE-102.
+- **Turn-start gap** — recorded as EE-106.
 
 ### 8.5 Test shape
 
@@ -292,9 +292,9 @@ The tests in §6 are all there, with these differences:
 
 - **Q1** (other model-facing loops): confirmed during implementation. The only two are `SingleToolInvoker` and
   `LlmSkillExecutor.dispatchWithoutHooks`. The review found the same.
-- **Q2, Q3**: EE-103, together with the review's fork and slash-skill notes.
-- **Q4**: EE-104.
+- **Q2, Q3**: EE-107, together with the review's fork and slash-skill notes.
+- **Q4**: EE-108.
 - **Q5** (caps): not promoted. Left uncapped for consistency with `Bash`, as the design says. It changes nothing
   outside this change until a provider produces many notices.
-- **Q6**: EE-102.
-- **Q7**: the backlog numbers are EE-102 to EE-104. The CHANGELOG entry is under `[Unreleased]` › Added.
+- **Q6**: EE-106.
+- **Q7**: the backlog numbers are EE-106 to EE-108 (EE-102 to EE-105 belong to the concurrent PR #257). The CHANGELOG entry is under `[Unreleased]` › Added.

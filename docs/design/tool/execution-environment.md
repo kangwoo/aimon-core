@@ -714,10 +714,10 @@ stderr 에 섞지 않는다. stderr 는 명령이 낸 것이고, 모델은 그�
   사용자가 친 `/skill` 의 루프가 비운 notice 는 그 스킬의 LLM 만 듣는다 — 그 루프의 전사는 끝나면 버려진다.
 - **도구를 부르지 않는 턴은 듣지 못한다.** 턴 시작에 비우는 경로는 없다 — 게으른 프로비저닝(§13)에서는 재생성을 첫 도구
   호출에서야 알기 때문이다. 이 공백은
-  [EE-102](../../backlog/execution-environment-open-items.md#ee-102--도구를-부르지-않는-턴은-환경의-알림을-듣지-못한다--열림-트리거-대기)
+  [EE-106](../../backlog/execution-environment-open-items.md#ee-106--도구를-부르지-않는-턴은-환경의-알림을-듣지-못한다--열림-트리거-대기)
   에 있다.
 
-설계와 구현이 설계에서 벗어난 점은 [`execution-environment-notices.md`](execution-environment-notices.md) 에 있다.
+설계와, 구현이 그 설계에서 벗어난 점은 [`execution-environment-notices.md`](execution-environment-notices.md) 에 있다.
 
 ---
 
