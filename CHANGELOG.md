@@ -7,6 +7,35 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: per-execution environment attributes (`EnvironmentRequest#requestAttributes`)
+
+An `ExecutionEnvironmentProvider` could key placement on the agent or fork definition, or on the session, but never on
+"this run" — nothing the caller attached to one execution reached it (#252). Design and departures:
+`docs/design/tool/execution-environment-ee102-request-attributes.md`; backlog EE-102.
+
+- **Opt-in, no change by default.** `EnvironmentRequest.requestAttributes()` is a new accessor, empty unless a caller
+  attaches something; no method was added to the provider SPI, and providers that never call it are unaffected.
+- **A reserved prefix.** Execution attributes under `environment.` reach the provider with the prefix removed:
+  `SubmitOptions.executionAttribute("environment.sandbox.workspace", "ws-7")` arrives as
+  `requestAttributes().get("sandbox.workspace")`, the spelling `definitionAttributes()` uses. Values must be `String`s.
+  The one extraction rule is `EnvironmentRequestAttributes.extract`; `EnvironmentRequest#toString` prints the key names,
+  never the values.
+- **Main turns and scheduled routines; never forks.** A turn takes them from its `SubmitOptions`. A routine has no
+  submit call, so the host supplies a `RoutineExecutionAttributes` resolver, asked once per run after its execution id
+  is minted — `SchedulingEngineBuilder#routineExecutionAttributes`, `SchedulingSpec#withRoutineExecutionAttributes`, or a
+  `RoutineExecutionAttributes` bean in the Spring Boot starter (refused at startup under `aimon.scheduling.backend=none`,
+  like the other scheduling beans). The resolver's whole map also reaches the routine steps' `ToolContext` under
+  `EXECUTION_ATTRIBUTES_KEY`, which routine steps never had. Subagent forks, skill forks and workflow steps always get an
+  empty map: their placement is the parent environment's business.
+- **Host-only.** The `environment.*` namespace is placement input; a host must never fill it from model output. Routines
+  take it from the host resolver, not from `ScheduledTask`, because the model creates tasks.
+- **Operator-visible: `environment.` is now reserved.** A non-`String` value (or `null`) under it, or a key that is
+  exactly `environment.`, makes that execution's environment unavailable — file and shell tools fail with the cause, the
+  turn still runs, and the provider is not called. A host that already sent such a key for another purpose (say
+  `executionAttribute("environment.debug", true)` read only by a hook) loses its environment on those turns. A routine
+  resolver that throws or returns `null` does the same to that run rather than aborting it. The prefix spelling is open
+  until release (backlog EE-103).
+
 ### Added: usage quotas — accumulated session, principal and tenant limits, in total or per day (`at.aimon.core.agent.quota`)
 
 `ExecutionBudget` bounds one execution and starts again on the next, so nothing bounded what a session spends over

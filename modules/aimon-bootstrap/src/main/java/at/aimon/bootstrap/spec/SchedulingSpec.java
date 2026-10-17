@@ -3,6 +3,7 @@ package at.aimon.bootstrap.spec;
 import java.util.Objects;
 import java.util.Optional;
 
+import at.aimon.core.scheduling.RoutineExecutionAttributes;
 import at.aimon.core.scheduling.ScheduledExecutionGuard;
 import at.aimon.core.scheduling.ScheduledTaskInterruptBus;
 import at.aimon.core.scheduling.repository.ScheduledTaskRepository;
@@ -47,16 +48,18 @@ public final class SchedulingSpec {
     private final ScheduledTaskRepository taskRepository;
     private final ScheduledTaskInterruptBus interruptBus;
     private final ScheduledExecutionGuard executionGuard;
+    private final RoutineExecutionAttributes routineExecutionAttributes;
 
     private SchedulingSpec(boolean enabled, TaskScheduler taskScheduler, TaskSchedulerFactory taskSchedulerFactory,
             ScheduledTaskRepository taskRepository, ScheduledTaskInterruptBus interruptBus,
-            ScheduledExecutionGuard executionGuard) {
+            ScheduledExecutionGuard executionGuard, RoutineExecutionAttributes routineExecutionAttributes) {
         this.enabled = enabled;
         this.taskScheduler = taskScheduler;
         this.taskSchedulerFactory = taskSchedulerFactory;
         this.taskRepository = taskRepository;
         this.interruptBus = interruptBus;
         this.executionGuard = executionGuard;
+        this.routineExecutionAttributes = routineExecutionAttributes;
     }
 
     /**
@@ -65,7 +68,7 @@ public final class SchedulingSpec {
      * @return the spec
      */
     public static SchedulingSpec disabled() {
-        return new SchedulingSpec(false, null, null, null, null, null);
+        return new SchedulingSpec(false, null, null, null, null, null, null);
     }
 
     /**
@@ -78,7 +81,7 @@ public final class SchedulingSpec {
      * @return the spec
      */
     public static SchedulingSpec enabled() {
-        return new SchedulingSpec(true, null, null, null, null, null);
+        return new SchedulingSpec(true, null, null, null, null, null, null);
     }
 
     /**
@@ -97,7 +100,7 @@ public final class SchedulingSpec {
      */
     public static SchedulingSpec enabled(TaskSchedulerFactory taskSchedulerFactory) {
         Objects.requireNonNull(taskSchedulerFactory, "taskSchedulerFactory must not be null");
-        return new SchedulingSpec(true, null, taskSchedulerFactory, null, null, null);
+        return new SchedulingSpec(true, null, taskSchedulerFactory, null, null, null, null);
     }
 
     /**
@@ -114,7 +117,7 @@ public final class SchedulingSpec {
      */
     public static SchedulingSpec enabled(TaskScheduler taskScheduler) {
         Objects.requireNonNull(taskScheduler, "taskScheduler must not be null");
-        return new SchedulingSpec(true, taskScheduler, null, null, null, null);
+        return new SchedulingSpec(true, taskScheduler, null, null, null, null, null);
     }
 
     /**
@@ -145,7 +148,7 @@ public final class SchedulingSpec {
                     + " Enable scheduling first, or drop the repository.");
         }
         return new SchedulingSpec(true, taskScheduler, taskSchedulerFactory, taskRepository, interruptBus,
-                executionGuard);
+                executionGuard, routineExecutionAttributes);
     }
 
     /**
@@ -175,7 +178,7 @@ public final class SchedulingSpec {
                     + " Enable scheduling first, or drop the bus.");
         }
         return new SchedulingSpec(true, taskScheduler, taskSchedulerFactory, taskRepository, interruptBus,
-                executionGuard);
+                executionGuard, routineExecutionAttributes);
     }
 
     /**
@@ -241,7 +244,33 @@ public final class SchedulingSpec {
                     + " Enable scheduling first, or drop the guard.");
         }
         return new SchedulingSpec(true, taskScheduler, taskSchedulerFactory, taskRepository, interruptBus,
-                executionGuard);
+                executionGuard, routineExecutionAttributes);
+    }
+
+    /**
+     * Returns this spec with the host resolver asked once per routine run for that run's execution attributes.
+     *
+     * <p>
+     * A routine has no submit call to attach per-run data to, and its execution id does not exist until it fires, so
+     * this is how a host gives a routine run what {@code SubmitOptions.executionAttribute(...)} gives a turn — above
+     * all the {@code environment.*} entries an {@code ExecutionEnvironmentProvider} reads as
+     * {@code EnvironmentRequest.requestAttributes()}. Here for the same reason as the guard: the engine builder takes
+     * one, and nothing else would pass it along from an assembled stack.
+     *
+     * @param routineExecutionAttributes
+     *            the resolver (must not be null)
+     * @return a spec carrying the resolver
+     * @throws IllegalStateException
+     *             when scheduling is disabled — there would be no routine to ask it for
+     */
+    public SchedulingSpec withRoutineExecutionAttributes(RoutineExecutionAttributes routineExecutionAttributes) {
+        Objects.requireNonNull(routineExecutionAttributes, "routineExecutionAttributes must not be null");
+        if (!enabled) {
+            throw new IllegalStateException("Scheduling is disabled, so the routine execution attributes would never"
+                    + " be asked for. Enable scheduling first, or drop the resolver.");
+        }
+        return new SchedulingSpec(true, taskScheduler, taskSchedulerFactory, taskRepository, interruptBus,
+                executionGuard, routineExecutionAttributes);
     }
 
     /**
@@ -262,12 +291,22 @@ public final class SchedulingSpec {
         return Optional.ofNullable(executionGuard);
     }
 
+    /**
+     * Returns the caller-supplied routine execution attributes resolver, when there is one.
+     *
+     * @return the resolver, or empty to give routine runs no execution attributes
+     */
+    public Optional<RoutineExecutionAttributes> getRoutineExecutionAttributes() {
+        return Optional.ofNullable(routineExecutionAttributes);
+    }
+
     @Override
     public String toString() {
         return "SchedulingSpec[enabled=" + enabled + describeScheduler()
                 + (taskRepository != null ? ", custom task repository" : "")
                 + (interruptBus != null ? ", custom interrupt bus" : "")
-                + (executionGuard != null ? ", custom execution guard" : "") + "]";
+                + (executionGuard != null ? ", custom execution guard" : "")
+                + (routineExecutionAttributes != null ? ", routine execution attributes" : "") + "]";
     }
 
     private String describeScheduler() {

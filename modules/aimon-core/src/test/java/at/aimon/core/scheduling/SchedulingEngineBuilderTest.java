@@ -8,13 +8,19 @@ import static org.mockito.Mockito.verify;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.DefaultAgent;
 import at.aimon.core.agent.DefaultAgentRuntimeRegistry;
 import at.aimon.core.base.Principal;
+import at.aimon.core.scheduling.RoutineExecutorExecutionAttributesTest.ContextCapturingTool;
+import at.aimon.core.scheduling.RoutineExecutorExecutionAttributesTest.ProvidingRuntime;
+import at.aimon.core.scheduling.RoutineExecutorExecutionAttributesTest.RecordingProvider;
 import at.aimon.core.scheduling.event.SimpleScheduledTaskEventPublisher;
 import at.aimon.core.scheduling.quota.DefaultTaskQuotaManager;
 import at.aimon.core.scheduling.repository.InMemoryScheduledTaskExecutionHistoryRepository;
@@ -140,6 +146,43 @@ class SchedulingEngineBuilderTest {
                 assertThat(span.getType()).isEqualTo(SpanType.ROUTINE);
                 assertThat(span.getStatus()).isEqualTo(SpanStatus.ERROR);
             });
+        } finally {
+            engine.close();
+        }
+    }
+
+    @Test
+    void routineExecutionAttributesReachTheRoutineExecutor() {
+        assertThat(firedRequestAttributes(
+                (task, executionId) -> Map.of("environment.sandbox.workspace", "ws-7", "feature.flag", "on")))
+                .containsExactly(Map.entry("sandbox.workspace", "ws-7"));
+    }
+
+    @Test
+    void withoutRoutineExecutionAttributesTheRequestCarriesNone() {
+        assertThat(firedRequestAttributes(null)).isEmpty();
+    }
+
+    /** Fires one task through an engine built with {@code resolver} and returns what its provider was asked for. */
+    private static Map<String, String> firedRequestAttributes(RoutineExecutionAttributes resolver) {
+        DefaultAgentRuntimeRegistry registry = new DefaultAgentRuntimeRegistry();
+        Agent agent = DefaultAgent.builder().name("orca-attrs").systemPrompt("test").build();
+        RecordingProvider provider = new RecordingProvider();
+        registry.register(
+                new ProvidingRuntime(AgentRuntimeId.from(agent), agent, List.of(new ContextCapturingTool()), provider));
+        SchedulingEngineBuilder builder = SchedulingEngineBuilder.create().taskScheduler(mock(TaskScheduler.class))
+                .agentRuntimeRegistry(registry);
+        if (resolver != null) {
+            builder.routineExecutionAttributes(resolver);
+        }
+        SchedulingEngine engine = builder.build();
+        try {
+            ScheduledTask task = RoutineExecutorExecutionAttributesTest.task(AgentRuntimeId.from(agent));
+            engine.getTaskManager().register(task);
+            engine.getTaskManager().executeTask(task.getId());
+
+            assertThat(provider.requests).hasSize(1);
+            return provider.requests.get(0).requestAttributes();
         } finally {
             engine.close();
         }
