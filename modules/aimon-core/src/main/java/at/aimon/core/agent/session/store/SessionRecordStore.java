@@ -39,9 +39,9 @@ import at.aimon.core.base.Principal;
  * That is also why none of them has a {@code default} implementation — the owner-carrying
  * {@link #provision(SessionId, String, Principal)} overload aside, whose default writes nothing at all (see there). A
  * default could only be written in terms of load-mutate-store, i.e. non-atomically, and a backend author who
- * implemented the obvious members and inherited the
- * rest would silently get the losing behaviour. Each is abstract so the compiler asks the question the javadoc used to
- * only shout about: implement this with whatever atomic primitive you have.
+ * implemented the obvious members and inherited the rest would silently get the losing behaviour. Each is abstract so
+ * the compiler asks the question the javadoc used to only shout about: implement this with whatever atomic primitive
+ * you have.
  *
  * <p>
  * Reads return {@link SessionRecordView}, never the mutable {@link SessionRecord} — see {@link #load(SessionId)}.

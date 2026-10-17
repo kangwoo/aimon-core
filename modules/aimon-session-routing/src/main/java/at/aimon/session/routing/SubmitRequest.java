@@ -3,6 +3,7 @@ package at.aimon.session.routing;
 import java.util.Objects;
 import java.util.Optional;
 
+import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.SubmitOptions;
 import at.aimon.core.agent.input.TextInput;
 import at.aimon.core.agent.input.UserInput;
@@ -65,14 +66,18 @@ public final class SubmitRequest {
      * before anything is written. The router claims — and so binds — the session first and derives the runtime id
      * only afterwards, and a binding is first-wins and never overwritten: a name that fails there would leave the
      * session bound to an agent no turn can ever open, and refuse every later submit naming a valid one.
+     *
+     * <p>
+     * Delegates to {@code fromName} rather than restating its rules, so the two cannot drift apart: a name it accepts
+     * here is exactly a name the turn can open. The null check comes first so a missing name stays a
+     * {@link NullPointerException}, like every other required field.
      */
     private static String requireValidAgentRef(String agentRef) {
         Objects.requireNonNull(agentRef, "agentRef must not be null");
-        if (agentRef.isBlank()) {
-            throw new IllegalArgumentException("agentRef must not be blank");
-        }
-        if (agentRef.indexOf(':') >= 0) {
-            throw new IllegalArgumentException("agentRef must not contain ':' (reserved separator); got: " + agentRef);
+        try {
+            AgentRuntimeId.fromName(agentRef);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid agentRef '" + agentRef + "': " + e.getMessage(), e);
         }
         return agentRef;
     }

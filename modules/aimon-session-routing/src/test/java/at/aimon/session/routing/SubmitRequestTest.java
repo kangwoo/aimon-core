@@ -36,7 +36,7 @@ class SubmitRequestTest {
     @DisplayName("a blank agentRef is refused")
     void blankAgentRef(String agentRef) {
         assertThatIllegalArgumentException().isThrownBy(() -> request(agentRef).build())
-                .withMessageContaining("agentRef must not be blank");
+                .withMessageContaining("Invalid agentRef").withMessageContaining("blank");
     }
 
     @ParameterizedTest

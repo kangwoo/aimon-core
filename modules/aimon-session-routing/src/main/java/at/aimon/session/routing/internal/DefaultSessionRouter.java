@@ -604,10 +604,10 @@ public final class DefaultSessionRouter implements SessionRouter {
         if (reused != null) {
             // No claim, and so no binding or owner work either — the owner was decided when the session was
             // provisioned, and a write per turn to re-assert it would buy nothing. The claim that won this lease
-            // already validated the requested agent against the record and wrote it if the session was unbound. Nothing
-            // can have changed it since,
-            // because only a holder may write it and this node has been the holder throughout. submit's advisory
-            // precheckAgentBinding is therefore authoritative on this path, not merely advisory.
+            // already validated the requested agent against the record and wrote it if the session was unbound.
+            // Nothing can have changed it since, because only a holder may write it and this node has been the holder
+            // throughout. submit's advisory precheckAgentBinding is therefore authoritative on this path, not merely
+            // advisory.
             safeMetric(() -> metrics.onLockAcquireSucceeded(elapsedSince(acquireStart)), "onLockAcquireSucceeded");
             return reused;
         }
