@@ -131,8 +131,8 @@ public final class RedisSessionRecordStore implements SessionRecordStore {
     // Both optional arguments are always passed, and "" means absent. Position used to carry absence — ARGV[2] was
     // simply omitted to provision without binding — but with two optional arguments an omitted second one would shift
     // the third into its place. So "" is now a sentinel, and that has a price: an agent named "" would read as "no
-    // agent". Nothing upstream stops one reaching here (SubmitRequest only rejects null, and AgentRuntimeId.fromName's
-    // blank check runs after the claim), so provision() refuses an empty agentRef instead of letting the script skip
+    // agent". SubmitRequest refuses a blank agentRef, so the router never sends one, but this store can be called
+    // without the router; provision() therefore still refuses an empty agentRef instead of letting the script skip
     // the binding silently. An encoded owner is a JSON object and is never "", so the owner needs no such guard.
     private static final String PROVISION_SCRIPT = "redis.call('HSET', KEYS[1], 'sessionId', ARGV[1]) "
             + "if ARGV[2] ~= '' then redis.call('HSETNX', KEYS[1], 'agentRef', ARGV[2]) end "

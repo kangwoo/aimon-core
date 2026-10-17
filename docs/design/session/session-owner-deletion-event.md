@@ -535,3 +535,9 @@ and DV-3 → SO-6 (blank `agentRef`). Q4 and Q7 were decided as written and are 
   renewals succeed. The listener javadoc, `routing.md` §7.7 and the guide now say so.
 - **DV-7 is softened.** `SessionLifecycleListener.whenDeleted(Consumer)` wraps a lambda. It is not named
   `onDeleted`, because the overload makes `onDeleted(null)` ambiguous. See SO-4.
+- **DV-3's uniform fix landed (#260, SO-6 closed).** `SubmitRequest` now refuses, at `build()`, any `agentRef` that
+  `AgentRuntimeId.fromName` would refuse: blank, or containing `:`. The review found that the problem was wider than
+  DV-3 recorded. It was not that the backends disagreed about `""`. The router claims, and so binds, the session
+  before it derives the runtime id, and the binding is first-wins. So any name `fromName` refuses bound the session
+  permanently to an agent no turn could open, on every backend. Redis's rejection of `""` stays as a second line of
+  defence for callers that use the store without the router.

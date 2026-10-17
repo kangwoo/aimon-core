@@ -48,7 +48,7 @@ public final class SubmitRequest {
 
     private SubmitRequest(Builder b) {
         this.sessionId = Objects.requireNonNull(b.sessionId, "sessionId must not be null");
-        this.agentRef = Objects.requireNonNull(b.agentRef, "agentRef must not be null");
+        this.agentRef = requireValidAgentRef(b.agentRef);
         this.contextDiscriminator = b.contextDiscriminator;
         this.userInput = Objects.requireNonNull(b.userInput, "userInput must not be null");
         this.options = b.options != null ? b.options : LiveSessionOptions.defaults();
@@ -60,6 +60,23 @@ public final class SubmitRequest {
         this.owner = b.owner;
     }
 
+    /**
+     * Rejects an {@code agentRef} that {@link at.aimon.core.agent.AgentRuntimeId#fromName(String)} would refuse,
+     * before anything is written. The router claims — and so binds — the session first and derives the runtime id
+     * only afterwards, and a binding is first-wins and never overwritten: a name that fails there would leave the
+     * session bound to an agent no turn can ever open, and refuse every later submit naming a valid one.
+     */
+    private static String requireValidAgentRef(String agentRef) {
+        Objects.requireNonNull(agentRef, "agentRef must not be null");
+        if (agentRef.isBlank()) {
+            throw new IllegalArgumentException("agentRef must not be blank");
+        }
+        if (agentRef.indexOf(':') >= 0) {
+            throw new IllegalArgumentException("agentRef must not contain ':' (reserved separator); got: " + agentRef);
+        }
+        return agentRef;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -68,6 +85,12 @@ public final class SubmitRequest {
         return sessionId;
     }
 
+    /**
+     * The agent the caller intends to run, and to bind the session to if it is unbound.
+     *
+     * @return the agent name — never null, never blank, and free of {@code ':'}, the rules
+     *         {@link at.aimon.core.agent.AgentRuntimeId#fromName(String)} applies
+     */
     public String getAgentRef() {
         return agentRef;
     }
@@ -185,6 +208,14 @@ public final class SubmitRequest {
             return this;
         }
 
+        /**
+         * Sets the agent to run. Checked at {@code build()} time, not here, like every other required field.
+         *
+         * @param v
+         *            the agent name (must be non-null, non-blank and free of {@code ':'} by {@code build()} time —
+         *            the rules {@link at.aimon.core.agent.AgentRuntimeId#fromName(String)} enforces)
+         * @return this builder
+         */
         public Builder agentRef(String v) {
             this.agentRef = v;
             return this;

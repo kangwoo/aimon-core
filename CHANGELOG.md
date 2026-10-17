@@ -34,6 +34,14 @@ session → owner map and had to be told by the host about every delete. Design:
   EXISTS owner jsonb`) **before** rolling out: this build reads the column on every provision and load, whether or not
   a host sets an owner. The README's not-yet-shipped `V3__indexes.sql` is now `V4__indexes.sql`.
 
+### Fixed: an invalid `agentRef` no longer poisons a session (#260)
+
+`SubmitRequest.Builder#build()` now throws `IllegalArgumentException` for an `agentRef` that is blank or contains `:`.
+These are the names `AgentRuntimeId.fromName` refuses. Before, the router claimed the session and bound it to such a
+name, and only then failed to derive the runtime id. Because the binding is first-wins, every later submit with a
+valid agent was refused with `ConflictingAgentException` until the session was deleted. A caller that sent such a
+name now fails at `build()` instead of at the first turn.
+
 ### Added: usage quotas — accumulated session, principal and tenant limits, in total or per day (`at.aimon.core.agent.quota`)
 
 `ExecutionBudget` bounds one execution and starts again on the next, so nothing bounded what a session spends over

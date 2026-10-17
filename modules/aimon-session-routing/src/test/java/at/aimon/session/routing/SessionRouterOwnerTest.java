@@ -1,6 +1,7 @@
 package at.aimon.session.routing;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -128,6 +129,24 @@ class SessionRouterOwnerTest {
     }
 
     // -------------------------------------------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("an agentRef the runtime id would refuse never reaches the claim, so it cannot poison the session (#260)")
+    void invalidAgentRefCannotBindTheSession() throws Exception {
+        final TestManagerHarness harness = node("node-A");
+        final SessionId id = SessionId.of("c-owner-poison");
+
+        assertThatThrownBy(() -> harness.manager()
+                .submit(SubmitRequest.builder().sessionId(id).agentRef("ops:prod").userInput("hi")
+                        .initiator(Principal.system()).owner(MALLORY).build()))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(repository.exists(id)).as("nothing was provisioned or bound").isFalse();
+
+        runOneTurn(harness, withOwner(id, ALICE));
+
+        assertThat(repository.load(id).orElseThrow().getAgentRef()).contains("alpha");
+        assertThat(repository.load(id).orElseThrow().getOwner()).contains(ALICE);
+    }
 
     private TestManagerHarness node(String nodeId) {
         final TestManagerHarness harness = TestManagerHarness.builder().nodeId(nodeId).leaseStore(leaseStore)

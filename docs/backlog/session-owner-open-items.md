@@ -1,4 +1,4 @@
-# 세션 소유자 · 삭제 리스너 — 등록 항목 6건 (열림 6 · 닫힘 0)
+# 세션 소유자 · 삭제 리스너 — 등록 항목 6건 (열림 5 · 닫힘 1)
 
 출처는 [`../design/session/session-owner-deletion-event.md`](../design/session/session-owner-deletion-event.md)
 (#253) 의 구현이다. 그 문서 §8 의 열린 질문 가운데 **이 변경 밖으로 결과가 나가는 것**과, §9(구현 뒤 — 설계와 달라진
@@ -94,7 +94,7 @@ provision. 둘 다 "비어 있을 때만 쓴다" 만 하고 비교하지 않는�
 
 ---
 
-## SO-6 — 빈 문자열 `agentRef` 를 Redis 만 거부한다 · **열림**
+## SO-6 — 빈 문자열 `agentRef` 를 Redis 만 거부한다 · **닫힘** *(2026-10-17, #260)*
 
 **무엇을.** 빈(또는 공백뿐인) `agentRef` 를 `SubmitRequest` 에서 거부해 네 저장소의 규칙을 맞춘다.
 
@@ -106,3 +106,18 @@ provision. 둘 다 "비어 있을 때만 쓴다" 만 하고 비교하지 않는�
 **어디.** (2026-10-17) `SubmitRequest` 생성자(`agentRef` 는 null 검사뿐), `RedisSessionRecordStore.provision`.
 
 **언제 다시 볼까.** `SubmitRequest` 의 검증을 손볼 때. 바꾸면 Redis 의 거부는 방어선으로만 남는다.
+
+**닫음 (2026-10-17, #260).** `SubmitRequest` 가 `build()` 에서 `AgentRuntimeId.fromName` 과 같은 규칙으로 `agentRef`
+를 검사한다 — 공백뿐이거나 `:` 를 담으면 `IllegalArgumentException`. 그래서 잘못된 이름은 claim 에 닿지 않는다.
+Redis 의 `""` 거부는 라우터를 거치지 않고 저장소를 직접 부르는 호출자를 위한 두 번째 방어선으로 남는다.
+`contextDiscriminator` 는 원래부터 빌더에서 같은 규칙으로 검사하고 있었으므로 손대지 않았다. 테스트:
+`SubmitRequestTest`, `SessionRouterOwnerTest.invalidAgentRefCannotBindTheSession`.
+
+- **근거가 달랐다 (규칙 둘).** 이 항목은 문제를 "백엔드마다 다르게 동작한다" 는 **불일치**로 적었다. PR #259 리뷰 1
+  이 짚은 실제 결과는 그보다 크다. 라우터는 claim(바인딩)을 먼저 하고 `fromName` 을 나중에 부르며, 바인딩은
+  first-wins 다. 그래서 `fromName` 이 거부하는 이름은 **백엔드와 상관없이** 세션을 영구히 그 이름에 묶었고,
+  이후 유효한 agent 로 오는 제출은 모두 `ConflictingAgentException` 으로 거절됐다. 세션을 지우기 전까지 풀리지
+  않았다. 이 상태를 만든 것은 빈 문자열만이 아니었다. 공백뿐인 이름과 `:` 를 담은 이름(`"ops:prod"`)도 같았고,
+  `:` 쪽은 어디에도 등록돼 있지 않았다. 이 결함은 #253 이전부터 있었다.
+- **심각도 (규칙 셋).** 적힌 것보다 무겁다. "같은 잘못된 요청이 백엔드에 따라 다르게 실패한다" 가 아니라 "잘못된
+  요청 한 번이 그 세션 id 를 쓸 수 없게 만든다" 였다. 다만 호출자가 잘못된 이름을 보낼 때만 일어난다.
