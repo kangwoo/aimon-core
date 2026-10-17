@@ -31,7 +31,9 @@ TURN  turn:<agent>                       ← 한 turn = 한 trace (root span)
 │  └─ TOOL <name>        (입력/출력/성공·실패)
 ├─ ITERATION iteration#2
 │  ├─ LLM  ...
-│  └─ SUBAGENT ...        (TOOL이 subagent를 spawn하면 중첩)
+│  └─ TOOL Task          (subagent를 띄운 도구 호출)
+│     └─ SUBAGENT subagent:<name>   (goal/결과/토큰 합계)
+│        └─ ITERATION iteration#1 ─ LLM / TOOL ...   (subagent 자신의 ReAct step)
 └─ ITERATION iteration#3
    └─ LLM  ...
 ```
@@ -277,7 +279,7 @@ cli:
 | 항목 | 현재 |
 |------|------|
 | 추적 대상 | **agent turn(ReAct 루프 + subagent)만** 추적. 배경 subsystem(wiki 인덱싱, peer memory, dreamer)은 의도적으로 미추적 — 해당 호출은 turn span 컨텍스트가 없어 wrap해도 span이 생기지 않는다 |
-| subagent | subagent의 LLM/도구는 현재 **부모 iteration 아래 평면**으로 붙는다. 전용 `SUBAGENT` 중첩 계층은 후속 |
+| subagent | subagent 실행마다 `SUBAGENT` span 하나가 그것을 띄운 도구 호출(`Task` · `Workflow` · fork 스킬)의 `TOOL` span 아래 생기고, subagent 자신의 `ITERATION` / `LLM` / `TOOL` 이 그 아래 중첩된다(subagent 안의 subagent도 재귀적으로). 백그라운드 subagent의 span은 부모가 닫힌 뒤 시작할 수 있다 — 부모-자식은 id로 이어진다. `OrcaAgentExecutorFactory` 로 만들지 않은 subagent 매니저에는 tracer를 직접 걸어야 한다 |
 | 입출력 캡처 | 기본은 요약(메시지 수/토큰/도구 입력)만 저장. `TracePayloadPolicy.full(maxChars)`로 **도구 결과·LLM 응답 본문**을 옵션 캡처(상한 절단). 저장 직전 `SpanRedactor`로 민감 키 마스킹 — [§본문 캡처](#본문-캡처와-마스킹-trace-02) |
 | 샘플링/비차단 워커 | 미구현. 운영 대량 트래픽에서는 후속 `TraceSampler` + bounded-queue 워커 권장 |
 | 외부 백엔드 | `aimon-tracing-otlp`/`aimon-tracing-postgres` 모듈은 후속. 현재는 in-memory 기본 + `SpanExporter` SPI 제공 |

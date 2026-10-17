@@ -549,8 +549,10 @@ public class OrcaAgentExecutorFactory {
     }
 
     /**
-     * TRACE-01: installs the tracer that records the per-turn span tree on the created executor. When unset (or
-     * {@code null}), the executor keeps {@link Tracer#noop()} and behaviour is unchanged.
+     * TRACE-01: installs the tracer that records the per-turn span tree on the created executor, and on the subagent
+     * executor and execution manager {@link #createDefaultSubagentExecutionManager} builds, so subagent runs nest
+     * under the tool call that launched them. When unset (or {@code null}), all keep {@link Tracer#noop()} and
+     * behaviour is unchanged. A subclass overriding {@code createDefaultSubagentExecutionManager} wires its own.
      *
      * @param tracer
      *            the tracer (may be {@code null} to clear)
@@ -563,7 +565,8 @@ public class OrcaAgentExecutorFactory {
 
     /**
      * TRACE-02: installs the payload capture policy on the created executor, governing whether tool result content is
-     * captured in {@code TOOL} span outputs. When unset (or {@code null}), the executor keeps
+     * captured in {@code TOOL} span outputs (and the final answer in {@code SUBAGENT} span outputs). When unset (or
+     * {@code null}), the executor keeps
      * {@link TracePayloadPolicy#summaryOnly()} and only the summary (length/error) is recorded.
      *
      * @param tracePayloadPolicy
@@ -776,6 +779,14 @@ public class OrcaAgentExecutorFactory {
         if (approvalGate != null) {
             subagentExecutor.withApprovalGate(approvalGate);
         }
+        // TRACE-01: trace the subagent loop with the same tracer the main executor and the TracingLlmClient use, so a
+        // fork's ITERATION/TOOL spans land in the same store and nest under its SUBAGENT span.
+        if (tracer != null) {
+            subagentExecutor.withTracer(tracer);
+        }
+        if (tracePayloadPolicy != null) {
+            subagentExecutor.withTracePayloadPolicy(tracePayloadPolicy);
+        }
 
         // When a background config is supplied, bound the pool; otherwise retain the legacy unbounded cached pool.
         // Subagent §4: inject the configured store, else a node-local in-memory one; the configured cross-node stop
@@ -784,9 +795,9 @@ public class OrcaAgentExecutorFactory {
         // path is byte-for-byte the prior behaviour.
         if (subagentBackgroundConfig == null && backgroundTaskStore == null && taskStopSignal == null
                 && taskLeaseConfig == null) {
-            return new DefaultSubagentExecutionManager(subagentExecutor,
+            return withSubagentTracing(new DefaultSubagentExecutionManager(subagentExecutor,
                     DefaultSubagentExecutionManager.newUnboundedBackgroundExecutor(), hookExecutionManager,
-                    behaviorRegistry, llmClient);
+                    behaviorRegistry, llmClient));
         }
         final BackgroundTaskStore store = backgroundTaskStore != null
                 ? backgroundTaskStore
@@ -797,9 +808,24 @@ public class OrcaAgentExecutorFactory {
         final ExecutorService backgroundExecutor = subagentBackgroundConfig != null
                 ? DefaultSubagentExecutionManager.newBackgroundExecutor(subagentBackgroundConfig)
                 : DefaultSubagentExecutionManager.newUnboundedBackgroundExecutor();
-        return new DefaultSubagentExecutionManager(subagentExecutor, hookExecutionManager, behaviorRegistry, llmClient,
-                SubagentBackgroundExecutionOptions.builder().executorService(backgroundExecutor).taskStore(store)
-                        .taskStopSignal(stopSignal).leaseConfig(taskLeaseConfig).build());
+        return withSubagentTracing(
+                new DefaultSubagentExecutionManager(subagentExecutor, hookExecutionManager, behaviorRegistry, llmClient,
+                        SubagentBackgroundExecutionOptions.builder().executorService(backgroundExecutor)
+                                .taskStore(store).taskStopSignal(stopSignal).leaseConfig(taskLeaseConfig).build()));
+    }
+
+    /**
+     * TRACE-01: installs the configured tracer and payload policy on a manager this factory built, so each run gets a
+     * SUBAGENT span under the tool call that launched it. Left at the manager's no-op defaults when unset.
+     */
+    private DefaultSubagentExecutionManager withSubagentTracing(DefaultSubagentExecutionManager manager) {
+        if (tracer != null) {
+            manager.withTracer(tracer);
+        }
+        if (tracePayloadPolicy != null) {
+            manager.withTracePayloadPolicy(tracePayloadPolicy);
+        }
+        return manager;
     }
 
     /**

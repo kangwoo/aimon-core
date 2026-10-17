@@ -3,8 +3,9 @@
 > LangSmith 스타일의 계층형 실행 트레이스를 남겨 LLM 에이전트 실행을 사후 디버깅한다.
 >
 > 적용 대상: `aimon-core` (`at.aimon.core.tracing`), `aimon-cli`
-> Status: **핵심 경로 구현 완료** — TURN→ITERATION→{LLM, TOOL} 트리 + payload 캡처 + 레닥션.
-> 미구현 항목은 §9 에 명시한다.
+> Status: **핵심 경로 구현 완료** — TURN→ITERATION→{LLM, TOOL} 트리 + 서브에이전트 중첩
+> (TOOL→SUBAGENT→ITERATION→{LLM, TOOL}) + payload 캡처 + 레닥션. 미구현 항목은 §9 에 명시한다.
+> 서브에이전트 중첩의 설계와 구현 차이는 [`subagent-trace-nesting.md`](subagent-trace-nesting.md) 에 있다.
 
 ---
 
@@ -273,17 +274,25 @@ metadata.tags["aimon.parent_span_id"]  = spanId     (이 호출의 부모 = 현�
 executor: effectiveMetadata 빌드 지점에서 root/iteration SpanContext 를 writeInto
    │  (= 기존 component/feature/traceId enrich 지점에 태그 2개 추가 — 변경 한 곳)
    ├─▶ LLM 호출:  gateway.sendMessage(..., metadata)     → TracingLlmClient 가 readFrom
-   └─▶ ToolContext: LLM_CALL_METADATA_KEY = metadata     (이미 주입되어 있음)
-            └─▶ TaskTool → SubagentLlmDefaults.effectiveMetadata(parentMetadata)
-                   │  withDefaults(parentMetadata) 로 태그 자동 상속
-                   └─▶ 서브에이전트는 자기 span 으로 parent_span_id 를 "회전"시켜 자식에 전파
+   └─▶ ToolContext: LLM_CALL_METADATA_KEY = metadata     (iteration span 을 가리킨다)
+            └─▶ [R1] executeSingleTool 이 TOOL span 을 열고, 도구에 주는 컨텍스트의 metadata 를
+                     TOOL span 으로 회전 (ToolCallTracing.contextUnder)
+                   └─▶ TaskTool → SubagentLaunchContext.parentLlmCallMetadata  (TOOL span)
+                          └─▶ [R2] DefaultSubagentExecutionManager.runResolvedSubagent 가 SUBAGENT span 을
+                                   열고 그 metadata 를 SUBAGENT span 으로 회전한 뒤 실행기에 넘긴다
+                                 └─▶ SubagentLlmDefaults.effectiveMetadata(rotated)  — withDefaults 로 상속
+                                        └─▶ [R3] DefaultSubagentExecutor 가 iteration 마다 ITERATION span 을
+                                                 열고 그 iteration 의 LLM 호출과 도구 컨텍스트를 회전
+                                               └─▶ 그 안의 도구 호출이 다시 R1 — 중첩 서브에이전트는 재귀
 ```
 
 > **`withDefaults` 태그 병합 주의**: `SubagentLlmDefaults.effectiveMetadata` 는
 > `builder(...).build().withDefaults(parentMetadata)` 형태이고 `withDefaults` 는 **`this` 가 태그
-> 충돌 시 승리**한다. 따라서 서브에이전트가 자기 span id 로 `aimon.parent_span_id` 를 회전시키려면
-> 그 태그를 `builder(...)` 쪽(=`this`)에 써야 부모 값을 덮어쓴다. 회전 없이 단순 상속하면 부모 태그가
-> 그대로 흘러 LLM 호출이 tool Span 아래 직접 매달린다 — **회전이 필요한 곳은 서브에이전트 경계뿐**이다.
+> 충돌 시 승리**한다. 따라서 회전된 `aimon.parent_span_id` 를 실으려면 그 태그를 `builder(...)` 쪽(=`this`)에
+> 쓰거나, **병합 전에 부모 metadata 자체를 회전**해야 한다. 구현은 후자다(R2) — 매니저가
+> `subagentSpan.enrich(parent)`(=`withTags`, 기존 값을 덮어씀)로 부모를 먼저 회전시키고, `this` 쪽에는 태그가
+> 없으므로 회전된 태그가 그대로 상속된다. 그래서 `SubagentLlmDefaults` 와 code-behavior 경로는 바뀌지 않았다.
+> 회전 지점이 이 셋인 이유는 D11 이다.
 
 ### 4.4 `TraceSpanStore` / `SpanExporter`
 
@@ -326,8 +335,8 @@ public interface SpanExporter {
 | **TURN** (root) | `execute()` 진입/`finally` | userMessage → finalAnswer + `ExecutionMetadata` | `traceId` 발급 지점 |
 | **ITERATION** | `executeReActLoop` 의 step try/finally | ReAct step 경계 | iteration 번호 보유 |
 | **LLM** | `TracingLlmClient` 데코레이터 | `sendMessage` 진입 → 응답 | **유일한 LLM 캡처 경로**. 프롬프트·토큰·모델·지연 |
-| **TOOL** | executor 의 `executeSingleTool` 얇은 래퍼 | 도구 입력 → 출력 | Event 보다 payload 가 풍부 |
-| **SUBAGENT** | `SubagentStart` / `SubagentStop` Hook | goal → summary·success | 내부 Span 은 상속한 SpanContext 로 중첩 |
+| **TOOL** | 두 executor 의 `executeSingleTool` 얇은 래퍼(`toolinvocation.ToolCallTracing`) | 도구 입력 → 출력 | Event 보다 payload 가 풍부. 도구가 받는 컨텍스트의 metadata 를 TOOL span 으로 회전(R1) |
+| **SUBAGENT** | `DefaultSubagentExecutionManager.runResolvedSubagent` | goal → 결과·completionReason·토큰 합계 | 서브에이전트 실행당 1개. 포크의 ITERATION/TOOL/LLM 은 그 아래(R2·R3). 해석 실패·ceiling 거부도 ERROR span 으로 남는다 |
 | **COMPACTION** | `PreCompact` / `PostCompact` Hook | trigger → 결과 | `Feature.COMPACTION` LLM 호출이 자식으로 매달림 |
 
 **턴 root 발급 시점** — `OrcaAgentExecutor.execute()` 는 **턴당 정확히 1회** 호출된다
@@ -349,14 +358,24 @@ TURN  "turn:ops-bot"                               [traceId=T1]
 │  └─ TOOL Read  (file_path=...)   ┘  ← SpanContext 로 부모 정확히 연결
 └─ ITERATION #3
    ├─ LLM  anthropic/claude   (tokens=1.8k/512, 1.9s)
-   └─ SUBAGENT "log-analyzer"  (goal="200줄 로그 요약")
-      ├─ ITERATION #1 └─ LLM ...
-      └─ TOOL ...
+   ├─ TOOL Task  (prompt="200줄 로그 요약")
+   │  └─ SUBAGENT "subagent:log-analyzer"  (taskId, goal, tokens=Σ, success)
+   │     ├─ ITERATION #1
+   │     │  ├─ LLM ...
+   │     │  └─ TOOL Grep ...              (invokerType=SUBAGENT)
+   │     └─ ITERATION #2 └─ LLM ...
+   └─ TOOL Task  (run_in_background)       ← 즉시 close
+      └─ SUBAGENT "subagent:indexer"  background=true   ← 부모 close 뒤 시작·종료, parentSpanId 는 유지
 ```
 
 **중첩 배선** — `ExecutionScope.activeSpan`(volatile)을 통해 LLM 은 `invokeGatewayOnce` 에서,
 TOOL 은 `executeToolUses` 의 per-iteration `ToolContext` 재구성으로 iteration 아래에 매달린다.
-Span 시작은 `safeStartChild` 로 감싸 fail-safe 를 유지한다.
+Span 시작은 `tracing.Spans.startChildSafely` 로 감싸 fail-safe 를 유지한다. 서브에이전트 쪽은 §4.3 의
+R1 ~ R3 이다. 백그라운드 서브에이전트의 SUBAGENT span 은 worker 에서 열리므로 큐 대기 시간을 포함하지 않고,
+부모(TOOL · ITERATION · TURN)가 이미 닫힌 뒤 시작할 수 있다 — 부모-자식은 id 로만 이어진다.
+
+SUBAGENT span 의 상태는 TURN 과 같은 규칙이다 — 취소는 `INTERRUPTED`, 예산 · iteration 상한 · 쿼터로 멈춘 실행은
+`OK`(이유는 outputs 의 `completionReason`), 그 밖의 실패만 `ERROR`. `tokenUsage` 는 포크 루프가 이미 누적한 합계다.
 
 ### 5.2 상관키 규약
 
@@ -451,6 +470,7 @@ Map/List 도 처리한다.
 | D8 | 캡처(`TracePayloadPolicy`)와 마스킹(`SpanRedactor`)을 **분리** | 캡처는 요약을 만드는 두 지점의 관심사이고 마스킹은 모든 span 에 균일해야 한다. 분리하면 캡처를 끈 채 마스킹만 켤 수 있다 |
 | D9 | `startRoot` / `startChild` **분리** (nullable parent 금지) | nullable 하나로 겸하면 "root 의도" 와 "부모 유실" 을 호출부에서 구분할 수 없다 |
 | D10 | 패키지는 **top-level `at.aimon.core.tracing`** | 트레이싱은 `agent` 뿐 아니라 `llm`(데코레이터)·`subagent`·`knowledge`(retriever)를 가로지른다. `agent.tracing` 하위로 넣으면 의존 방향이 뒤틀린다. `observability` umbrella 는 메트릭 체계가 없는 현재로선 `tracing` 이 더 정확하며, 메트릭이 생기면 `observability.tracing` 승격은 순수 이동 리팩터로 가능하다 |
+| D11 | 서브에이전트 회전은 **세 경계**(도구 컨텍스트 · 매니저 · 포크 iteration)에서만, SUBAGENT span 은 **매니저**에 | 매니저의 `runResolvedSubagent` 는 모든 서브에이전트 실행(포그라운드/백그라운드, ReAct/code behavior, Task/Workflow/포크 스킬)이 지나는 유일한 지점이다. `SubagentStart`/`SubagentStop` Hook 은 metadata 를 받지 못해 부모를 모르고, 회전된 metadata 를 실행에 되돌려줄 수 없으며, start/stop 을 짝짓는 `taskId → Span` 상태가 필요해 기각. 실행기에 SUBAGENT span 을 두면 code behavior 경로와 해석 실패가 빠져 기각. 새 `ToolContextKey` 는 네 sub-execution 진입점을 모두 고쳐야 해 기각 — 기존 키의 값만 TOOL span 으로 바꾼다 |
 
 `TracingLlmClient` 를 `tracing.impl` 에 두는 것도 D10 의 따름정리다 — `LlmClient`(llm 도메인 인터페이스)를
 구현하지만 본질이 트레이싱 데코레이터이고 `tracing` SPI 에 의존한다. `OpenAiLlmClient` 가 별도 모듈에
@@ -471,12 +491,16 @@ at.aimon.core.tracing/
 ├── SpanExporter.java         # 외부 반출 SPI
 ├── SpanRedactor.java         # 민감정보 마스킹 SPI
 ├── TracePayloadPolicy.java   # 본문 캡처 정책 값 객체
+├── Spans.java                # fail-safe 자식 시작 · metadata 회전 정적 헬퍼 (세 계측 지점 공용)
 └── impl/
     ├── NoopTracer.java             # 기본값 (제로 오버헤드)
     ├── DefaultTracer.java          # Clock·idGen·redactor 주입, fail-safe close
     ├── InMemoryTraceSpanStore.java # bounded, traceId/sessionId 인덱스
     ├── KeyPatternSpanRedactor.java
     └── TracingLlmClient.java       # LlmClient 데코레이터 → LLM Span
+
+at.aimon.core.toolinvocation/
+└── ToolCallTracing.java      # 두 executor 공용 TOOL span — open · contextUnder(R1) · recordOutcome
 
 (외부 모듈, 미구현)
 aimon-tracing-otlp/      # SpanExporter → OpenTelemetry OTLP
@@ -511,7 +535,7 @@ CLI 는 `cli.tracing: true` 일 때 store + tracer + `TracingLlmClient` 를 배�
 
 | 항목 | 상태 | 비고 |
 |---|---|---|
-| 서브에이전트 span "회전" | 미구현 | 서브에이전트 LLM 은 현재 부모 iteration 아래 평면 부착(`withDefaults` 상속). 전용 SUBAGENT span 중첩은 후속 |
+| 서브에이전트 span "회전" | **구현** (2026-10-17) | §4.3 R1 ~ R3, D11. 남은 갈래(TOOL span 없는 포크, 공장 밖 배선, 백그라운드 시각 …)는 백로그 [`subagent-tracing-open-items.md`](../../backlog/subagent-tracing-open-items.md) |
 | `TracingHookAdapter` (compaction span) | 미구현 | tool span 은 executor 직접 계측으로 대체됨 |
 | `TraceSampler` (트레이스 단위 샘플링) | 미구현 | 운영에서 100% 저장은 비현실적 — head 샘플링 vs tail 중 **에러 trace 100% 보존**을 권장 |
 | 비차단 워커 (bounded queue + 손실 카운터) | 미구현 | `record()`/`export()` 를 fire-and-forget 으로. 큐 포화 시 가장 오래된 것을 drop 하고 카운터 증가(관측 가능한 손실). 직렬화·레닥션도 워커 스레드로 옮겨 호출 경로를 막지 않게 한다 |
@@ -523,8 +547,9 @@ CLI 는 `cli.tracing: true` 일 때 store + tracer + `TracingLlmClient` 를 배�
   세션일 수 있다. `sessionId` 가 매 발화마다 바뀌는지 정책 확인 필요.
 - **스트리밍 LLM Span** — `sendMessageStreaming` 은 부분 텍스트를 sink 로 흘린다. Span 은 완료 응답
   기준 1개로 기록하되 첫 토큰까지의 지연(TTFT)을 별도 속성으로 남길지 검토.
-- **토큰 합산** — turn/subagent Span 의 `tokenUsage` 는 자식 LLM Span 의 합이다. close 시점 집계 책임의
-  위치를 정해야 한다.
+- **토큰 합산** — turn Span 의 `tokenUsage` 는 자식 LLM Span 의 합이다. close 시점 집계 책임의
+  위치를 정해야 한다. (SUBAGENT 는 해소 — 포크 루프가 누적한 결과의 합계를 매니저가 싣는다. 자식 LLM span 을
+  다시 더하지 않는다.)
 - **MCP 도구 호출** — 원격 MCP 도구도 tool Span 으로 자연히 잡히나, 원격 측 트레이스와의 연결
   (W3C `traceparent`)은 범위 밖이다 (§1.4).
 
@@ -533,6 +558,7 @@ CLI 는 `cli.tracing: true` 일 때 store + tracer + `TracingLlmClient` 를 배�
 ## 관련 문서
 
 - [`../../features/observability/execution-tracing-guide.md`](../../features/observability/execution-tracing-guide.md) — 사용·배선·범위
+- [`subagent-trace-nesting.md`](subagent-trace-nesting.md) — 서브에이전트 중첩(R1 ~ R3)의 승인 설계와 구현 차이
 - [`../agent-execution/interceptor.md`](../agent-execution/interceptor.md) — 4계층 관계 (§3.1)
 - [`../tool/parallel-execution.md`](../tool/parallel-execution.md) — SpanContext 명시 전파의 근거
 - [`../../overview/glossary.md`](../../overview/glossary.md) — 턴·iteration·실행 어휘

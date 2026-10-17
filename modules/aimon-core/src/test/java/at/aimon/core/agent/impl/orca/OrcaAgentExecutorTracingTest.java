@@ -6,7 +6,9 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.DisplayName;
@@ -15,12 +17,16 @@ import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.DefaultAgent;
+import at.aimon.core.agent.prompt.SystemPromptParts;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.tool.AbstractTool;
+import at.aimon.core.agent.tool.ConcurrencyBehavior;
+import at.aimon.core.agent.tool.DefaultParallelToolDispatcher;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.agent.tool.ToolConcurrencyConfig;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
@@ -31,16 +37,27 @@ import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
+import at.aimon.core.llm.LlmCallMetadata;
+import at.aimon.core.llm.LlmCancellation;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.StopReason;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
+import at.aimon.core.llm.streaming.LlmStreamChunk;
+import at.aimon.core.llm.streaming.LlmStreamSink;
+import at.aimon.core.llm.streaming.LlmStreamingOptions;
 import at.aimon.core.skill.DefaultSkillRegistry;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.DefaultSubagentRegistry;
+import at.aimon.core.subagent.InMemorySubagentRegistry;
+import at.aimon.core.subagent.Subagent;
+import at.aimon.core.subagent.SubagentRegistry;
+import at.aimon.core.tools.ToolContextKeys;
+import at.aimon.core.tools.task.TaskTool;
 import at.aimon.core.tracing.SpanContext;
 import at.aimon.core.tracing.SpanExporter;
 import at.aimon.core.tracing.SpanStatus;
@@ -108,6 +125,99 @@ class OrcaAgentExecutorTracingTest {
 
         // The whole turn shares one trace id (the turn root span id).
         assertThat(spans).allSatisfy(s -> assertThat(s.getTraceId()).isEqualTo(turn.getSpanId()));
+    }
+
+    @Test
+    @DisplayName("factory-wired: TURN → ITERATION → TOOL(Task) → SUBAGENT → ITERATION → {LLM, TOOL}")
+    void taskNestsTheSubagentTreeUnderItsToolSpan() {
+        final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+        final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
+
+        // main#1 launches the helper; helper#1 calls Echo; helper#2 answers; main#2 answers.
+        final RecordingLlmClient stub = new RecordingLlmClient();
+        stub.enqueue(LlmResponse.of("",
+                List.of(ToolUse.of("call-1", "Task",
+                        Map.of("subagent_name", "helper", "prompt", "echo once", "description", "echo"))),
+                TokenUsage.of(5, 3, 8)));
+        stub.enqueue(LlmResponse.of("", List.of(ToolUse.of("call-2", "Echo", Map.of())), TokenUsage.of(4, 2, 6)));
+        stub.enqueue(LlmResponse.text("helper done"));
+        stub.enqueue(LlmResponse.text("done"));
+
+        // Only the factory is told about the tracer: it must reach the subagent manager and executor it builds.
+        final OrcaAgentExecutor executor = new OrcaAgentExecutorFactory().withTracer(tracer).create(
+                new TracingLlmClient(stub, tracer), new DefaultTranscriptManager(new InMemorySessionRecordStore()));
+        final InMemorySubagentRegistry subagents = new InMemorySubagentRegistry();
+        subagents.register(Subagent.builder().name("helper").systemPrompt("help").maxIterations(3).build());
+        final DefaultToolRegistry toolRegistry = new DefaultToolRegistry();
+        toolRegistry.register(new EchoTool("Echo"));
+        final DefaultHookRegistry hookRegistry = new DefaultHookRegistry();
+        toolRegistry.register(new TaskTool(LlmModel.builder().name("gpt-4").build(), subagents, toolRegistry,
+                hookRegistry, executor.getSubagentExecutionManager()));
+
+        final OrcaAgentExecutionResult result = executor.execute(createContext(toolRegistry, subagents),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-task")).build());
+
+        assertThat(result.isSuccess()).isTrue();
+        final List<TraceSpan> spans = store.bySession("conv-task");
+        final TraceSpan subagent = spans.stream().filter(s -> s.getType() == SpanType.SUBAGENT).findFirst()
+                .orElseThrow();
+        assertThat(subagent.getName()).isEqualTo("subagent:helper");
+
+        final TraceSpan task = parentOf(store, subagent);
+        assertThat(task.getType()).isEqualTo(SpanType.TOOL);
+        assertThat(task.getName()).isEqualTo("Task");
+        assertThat(task.getAttributes()).containsEntry("invokerType", "MAIN_AGENT");
+        final TraceSpan mainIteration = parentOf(store, task);
+        assertThat(mainIteration.getType()).isEqualTo(SpanType.ITERATION);
+        final TraceSpan turn = parentOf(store, mainIteration);
+        assertThat(turn.getType()).isEqualTo(SpanType.TURN);
+
+        final List<TraceSpan> forkIterations = spans.stream().filter(s -> s.getType() == SpanType.ITERATION)
+                .filter(s -> s.getParentSpanId().orElse("").equals(subagent.getSpanId())).toList();
+        assertThat(forkIterations).hasSize(2);
+        final Set<String> forkIterationIds = forkIterations.stream().map(TraceSpan::getSpanId)
+                .collect(Collectors.toSet());
+        final TraceSpan echo = spans.stream().filter(s -> s.getType() == SpanType.TOOL && s.getName().equals("Echo"))
+                .findFirst().orElseThrow();
+        assertThat(forkIterationIds).contains(echo.getParentSpanId().orElseThrow());
+        assertThat(echo.getAttributes()).containsEntry("invokerType", "SUBAGENT");
+        assertThat(spans.stream().filter(s -> s.getType() == SpanType.LLM)
+                .filter(s -> forkIterationIds.contains(s.getParentSpanId().orElse("")))).hasSize(2);
+
+        // One turn, one trace — the fork included.
+        assertThat(spans).allSatisfy(s -> assertThat(s.getTraceId()).isEqualTo(turn.getSpanId()));
+    }
+
+    @Test
+    @DisplayName("a tool started eagerly during the token stream also receives metadata pointing at its TOOL span")
+    void eagerlyDispatchedToolSeesItsToolSpan() {
+        final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+        final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
+        final CapturingTool probe = new CapturingTool("Probe");
+        final DefaultToolRegistry toolRegistry = new DefaultToolRegistry();
+        toolRegistry.register(probe);
+        final LlmClient client = new StreamingToolUseClient(ToolUse.of("call-1", "Probe", Map.of()));
+
+        try (DefaultParallelToolDispatcher dispatcher = new DefaultParallelToolDispatcher(
+                ToolConcurrencyConfig.builder().enabled(true).maxConcurrency(2).streamingOverlap(true).build())) {
+            final DefaultToolExecutionManager toolManager = new DefaultToolExecutionManager();
+            final DefaultHookExecutionManager hookManager = new DefaultHookExecutionManager();
+            final OrcaAgentExecutor executor = OrcaAgentExecutor.builder().llmClient(client)
+                    .transcriptManager(new DefaultTranscriptManager(new InMemorySessionRecordStore()))
+                    .toolExecutionManager(toolManager).hookExecutionManager(hookManager)
+                    .commandExecutionManager(new DefaultCommandExecutionManager(client))
+                    .subagentExecutionManager(new DefaultSubagentExecutionManager(client, toolManager, hookManager))
+                    .useStreaming(true).parallelToolDispatcher(dispatcher).tracer(tracer).build();
+
+            executor.execute(createContext(toolRegistry),
+                    OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-eager")).build());
+        }
+
+        final TraceSpan toolSpan = store.bySession("conv-eager").stream().filter(s -> s.getType() == SpanType.TOOL)
+                .findFirst().orElseThrow();
+        assertThat(probe.received).hasSize(1);
+        assertThat(SpanContext.readFrom(probe.received.get(0)).orElseThrow().getSpanId())
+                .isEqualTo(toolSpan.getSpanId());
     }
 
     @Test
@@ -291,7 +401,15 @@ class OrcaAgentExecutorTracingTest {
                 toolManager, hookManager, commandManager, subagentManager);
     }
 
+    private static TraceSpan parentOf(InMemoryTraceSpanStore store, TraceSpan span) {
+        return store.get(span.getParentSpanId().orElseThrow()).orElseThrow();
+    }
+
     private OrcaAgentRuntime createContext(DefaultToolRegistry toolRegistry) {
+        return createContext(toolRegistry, null);
+    }
+
+    private OrcaAgentRuntime createContext(DefaultToolRegistry toolRegistry, SubagentRegistry subagentRegistry) {
         final LocalFileSystem fileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
         fileSystem.initialize();
         return OrcaAgentRuntime.builder().id(AgentRuntimeId.of("agent:trace-1"))
@@ -299,7 +417,9 @@ class OrcaAgentExecutorTracingTest {
                         .build())
                 .toolRegistry(toolRegistry).hookRegistry(new DefaultHookRegistry())
                 .commandRegistry(new DefaultCommandRegistry(fileSystem, ".aimon/commands"))
-                .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
+                .subagentRegistry(subagentRegistry != null
+                        ? subagentRegistry
+                        : new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
                 .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
                 .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem)).build();
     }
@@ -313,6 +433,62 @@ class OrcaAgentExecutorTracingTest {
         @Override
         public ToolResult execute(ToolInput input, ToolContext context) {
             return ToolResult.success("echoed");
+        }
+    }
+
+    /** A CONCURRENT_SAFE tool recording the LLM call metadata its ToolContext carried. */
+    private static final class CapturingTool extends AbstractTool {
+        private final List<LlmCallMetadata> received = new CopyOnWriteArrayList<>();
+
+        CapturingTool(String name) {
+            super(name, "capturing tool", Map.of("type", "object", "properties", Map.of(), "required", List.of()));
+        }
+
+        @Override
+        public ConcurrencyBehavior getConcurrencyBehavior() {
+            return ConcurrencyBehavior.CONCURRENT_SAFE;
+        }
+
+        @Override
+        public ToolResult execute(ToolInput input, ToolContext context) {
+            context.get(ToolContextKeys.LLM_CALL_METADATA_KEY).ifPresent(received::add);
+            return ToolResult.success("ok");
+        }
+    }
+
+    /** Streams one closed tool_use block (eligible for eager dispatch), then a plain final answer. */
+    private static final class StreamingToolUseClient implements LlmClient {
+        private static final TokenUsage USAGE = TokenUsage.of(10, 10, 20);
+        private final ToolUse toolUse;
+        private int calls;
+
+        StreamingToolUseClient(ToolUse toolUse) {
+            this.toolUse = toolUse;
+        }
+
+        @Override
+        public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
+                LlmModel modelConfig) {
+            throw new UnsupportedOperationException("streaming-only fake");
+        }
+
+        @Override
+        public LlmResponse sendMessageStreaming(SystemPromptParts systemPromptParts, List<Message> messages,
+                List<ToolDefinition> tools, LlmModel modelConfig, LlmCallMetadata metadata, LlmStreamingOptions options,
+                LlmStreamSink sink, LlmCancellation cancellation) {
+            if (calls++ == 0) {
+                sink.accept(LlmStreamChunk.toolUseReady(0, toolUse));
+                sink.accept(LlmStreamChunk.streamEnd(1, USAGE, Optional.of("tool_use"), StopReason.TOOL_USE));
+                return LlmResponse.of("", List.of(toolUse), USAGE, StopReason.TOOL_USE);
+            }
+            sink.accept(LlmStreamChunk.textDelta(0, "done"));
+            sink.accept(LlmStreamChunk.streamEnd(1, USAGE, Optional.of("end_turn"), StopReason.END_TURN));
+            return LlmResponse.of("done", List.of(), USAGE, StopReason.END_TURN);
+        }
+
+        @Override
+        public String getProviderName() {
+            return "StreamingToolUse";
         }
     }
 

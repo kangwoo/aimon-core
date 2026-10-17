@@ -157,6 +157,7 @@ import at.aimon.core.skill.policy.pending.PendingTurnId;
 import at.aimon.core.skill.policy.pending.PendingTurnRegistry;
 import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.toolinvocation.SingleToolInvoker;
+import at.aimon.core.toolinvocation.ToolCallTracing;
 import at.aimon.core.toolinvocation.ToolInvocationSpec;
 import at.aimon.core.toolinvocation.approval.SideEffectApprovalGate;
 import at.aimon.core.tools.ToolContextKeys;
@@ -165,6 +166,7 @@ import at.aimon.core.tools.session.SessionHistoryTool;
 import at.aimon.core.tools.todo.TodoWriteTool;
 import at.aimon.core.tracing.SpanContext;
 import at.aimon.core.tracing.SpanType;
+import at.aimon.core.tracing.Spans;
 import at.aimon.core.tracing.TracePayloadPolicy;
 import at.aimon.core.tracing.Tracer;
 
@@ -1134,7 +1136,8 @@ public class OrcaAgentExecutor
         Tracer.Span turnSpan;
         LlmCallMetadata effectiveMetadata;
         // Snapshot the volatile payload policy once so the turn-span inputs are built against a single, consistent
-        // policy (the executor is agent-scoped and the policy may be swapped concurrently); mirrors recordToolOutcome.
+        // policy (the executor is agent-scoped and the policy may be swapped concurrently); mirrors
+        // ToolCallTracing.recordOutcome.
         final TracePayloadPolicy payloadPolicy = tracePayloadPolicy;
         try {
             turnSpan = tracer.startRoot(transcriptBuffer.getSessionId().value(), SpanType.TURN,
@@ -1405,7 +1408,8 @@ public class OrcaAgentExecutor
      * full prompt text is attached (truncated to the policy cap) only when {@code policy} captures content. The policy
      * is
      * passed in (rather than read from the field) so the caller can snapshot the volatile once, mirroring
-     * {@link #recordToolOutcome}. Secret masking is applied separately by the tracer's {@code SpanRedactor} at storage
+     * {@link ToolCallTracing#recordOutcome}. Secret masking is applied separately by the tracer's {@code SpanRedactor}
+     * at storage
      * time.
      *
      * @param userMessage
@@ -2341,8 +2345,9 @@ public class OrcaAgentExecutor
     }
 
     /**
-     * TRACE-01: when tracing is active, give tools the active (ITERATION) span's metadata so TOOL spans — and any
-     * subagents they spawn — nest under the current iteration. A no-op tracer returns the same metadata instance, so
+     * TRACE-01: when tracing is active, give tools the active (ITERATION) span's metadata so TOOL spans nest under the
+     * current iteration; {@link #executeSingleTool} then rotates it once more so a subagent a tool spawns nests under
+     * that tool's span. A no-op tracer returns the same metadata instance, so
      * the tool context is passed through unchanged (zero overhead when tracing is off).
      */
     private ToolContext resolveEffectiveToolContext(ExecutionScope scope, ToolContext toolContext) {
@@ -2528,22 +2533,26 @@ public class OrcaAgentExecutor
     }
 
     /**
-     * TRACE-01: wraps {@link #dispatchSingleTool} in a {@code TOOL} span parented to the active turn span (read from
-     * the tool context metadata). Captures the tool name, input, iteration, and success/error outcome. When tracing is
-     * off (no enriched span context in the metadata), no span is created and dispatch runs unchanged.
+     * TRACE-01: wraps {@link #dispatchSingleTool} in a {@code TOOL} span parented to the active iteration span (read
+     * from the tool context metadata). Captures the tool name, input, iteration, invoker type, and success/error
+     * outcome. The tool itself receives a context whose metadata points at the TOOL span, so a sub-execution it starts
+     * ({@code Task}, {@code Workflow}, a fork-mode skill) nests under this call. When tracing is off (no enriched span
+     * context in the metadata), no span is created and dispatch runs unchanged with the original context.
      */
     private ToolUseResult executeSingleTool(OrcaAgentRuntime agentRuntime, ToolContext toolContext, ToolUse toolUse,
             int iterationCount, Map<String, Object> executionAttributes, InterruptCoordinator coordinator,
             ToolRegistry sessionRegistry) {
-        final Tracer.Span toolSpan = openToolSpan(toolContext, toolUse, iterationCount);
+        final Tracer.Span toolSpan = ToolCallTracing.open(tracer, toolContext, toolUse, iterationCount,
+                InvokerType.MAIN_AGENT);
         if (toolSpan == null) {
             return dispatchSingleTool(agentRuntime, toolContext, toolUse, iterationCount, executionAttributes,
                     coordinator, sessionRegistry);
         }
         try {
-            final ToolUseResult result = dispatchSingleTool(agentRuntime, toolContext, toolUse, iterationCount,
-                    executionAttributes, coordinator, sessionRegistry);
-            recordToolOutcome(toolSpan, result, tracePayloadPolicy);
+            final ToolUseResult result = dispatchSingleTool(agentRuntime,
+                    ToolCallTracing.contextUnder(toolSpan, toolContext), toolUse, iterationCount, executionAttributes,
+                    coordinator, sessionRegistry);
+            ToolCallTracing.recordOutcome(toolSpan, result, tracePayloadPolicy);
             return result;
         } catch (RuntimeException e) {
             toolSpan.error(e);
@@ -2554,52 +2563,11 @@ public class OrcaAgentExecutor
     }
 
     /**
-     * Opens a {@code TOOL} span as a child of the turn span encoded in the tool context's
-     * {@link ToolContextKeys#LLM_CALL_METADATA_KEY} metadata, or returns {@code null} when tracing is off / the call
-     * was not enriched (so no orphan span is produced).
-     */
-    private Tracer.Span openToolSpan(ToolContext toolContext, ToolUse toolUse, int iterationCount) {
-        final Optional<SpanContext> parent = toolContext.get(ToolContextKeys.LLM_CALL_METADATA_KEY)
-                .flatMap(SpanContext::readFrom);
-        if (parent.isEmpty()) {
-            return null;
-        }
-        final Tracer.Span span = safeStartChild(parent.get(), SpanType.TOOL, toolUse.getName(),
-                Map.of("toolUseId", toolUse.getId(), "input", toolUse.getInput()));
-        span.setAttribute("iteration", String.valueOf(iterationCount));
-        return span;
-    }
-
-    /**
      * Fail-safe span start: a misbehaving {@link Tracer} that throws from {@code startChild} falls back to a no-op span
      * so tracing can never break agent execution (mirrors the turn-span guard in {@link #execute}).
      */
     private Tracer.Span safeStartChild(SpanContext parent, SpanType type, String name, Map<String, Object> inputs) {
-        try {
-            return tracer.startChild(parent, type, name, inputs);
-        } catch (RuntimeException e) {
-            log.warn("Tracer.startChild failed; using a no-op span: {}", e.getMessage());
-            return Tracer.noop().startChild(parent, type, name, inputs);
-        }
-    }
-
-    /**
-     * Records the tool span outcome. Always captures the {@code isError}/{@code contentChars} summary; TRACE-02: when
-     * {@code policy} {@link TracePayloadPolicy#capturesContent() captures content}, the (truncated) result content is
-     * additionally attached under {@code content}.
-     */
-    private static void recordToolOutcome(Tracer.Span toolSpan, ToolUseResult result, TracePayloadPolicy policy) {
-        final String content = result.getContent();
-        final Map<String, Object> outputs = new LinkedHashMap<>();
-        outputs.put("isError", result.isError());
-        outputs.put("contentChars", content == null ? 0 : content.length());
-        if (policy.capturesContent() && content != null) {
-            outputs.put("content", policy.truncate(content));
-        }
-        toolSpan.setOutputs(outputs);
-        if (result.isError()) {
-            toolSpan.error(content);
-        }
+        return Spans.startChildSafely(tracer, parent, type, name, inputs);
     }
 
     /**
