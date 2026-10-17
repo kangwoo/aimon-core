@@ -119,6 +119,23 @@ class TracingLlmClientTest {
     }
 
     @Test
+    @DisplayName("the call's feature becomes a span attribute; a call without one records none")
+    void featureBecomesAttribute() {
+        final InMemoryTraceSpanStore compactionStore = new InMemoryTraceSpanStore();
+        new TracingLlmClient(new RecordingLlmClient(LlmResponse.text("x")), tracer(compactionStore)).sendMessage("sys",
+                MESSAGES, TOOLS, MODEL, enrichedMetadata()
+                        .withDefaults(LlmCallMetadata.builder().feature(LlmCallMetadata.Feature.COMPACTION).build()));
+        final InMemoryTraceSpanStore plainStore = new InMemoryTraceSpanStore();
+        new TracingLlmClient(new RecordingLlmClient(LlmResponse.text("x")), tracer(plainStore)).sendMessage("sys",
+                MESSAGES, TOOLS, MODEL, enrichedMetadata());
+
+        assertThat(compactionStore.byTrace("span-root")).singleElement().satisfies(
+                span -> assertThat(span.getAttributes()).containsEntry("feature", LlmCallMetadata.Feature.COMPACTION));
+        assertThat(plainStore.byTrace("span-root")).singleElement()
+                .satisfies(span -> assertThat(span.getAttributes()).doesNotContainKey("feature"));
+    }
+
+    @Test
     @DisplayName("non-metadata methods delegate transparently")
     void nonMetadataMethodsDelegate() {
         final RecordingLlmClient delegate = new RecordingLlmClient(LlmResponse.text("x"));

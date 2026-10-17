@@ -175,7 +175,7 @@ id 는 예약 태그로 분리해 싣는다 (§4.3, §6.3).
 ### 4.1 도메인 모델
 
 ```java
-public enum SpanType   { TURN, ITERATION, LLM, TOOL, SUBAGENT, COMPACTION }
+public enum SpanType   { TURN, ITERATION, LLM, TOOL, SUBAGENT, COMPACTION, RETRIEVER, COMMAND, ROUTINE }
 public enum SpanStatus { OK, ERROR, INTERRUPTED }
 ```
 
@@ -197,6 +197,9 @@ public enum SpanStatus { OK, ERROR, INTERRUPTED }
 | `attributes` | Map | ● | ● | ● | ● | ● | agentRuntimeId, sessionId, iteration, principal, invokerType |
 
 (● 필수 / △ 조건부 / – 해당 없음)
+
+`COMMAND` 는 `TOOL` 과, `ROUTINE` 은 `TURN` 과 같은 필드 규칙을 따른다(`ROUTINE` 의 `sessionId` 는
+`routine:<taskId>`). `COMPACTION` · `RETRIEVER` 는 예약 상수이고 지금 만드는 곳이 없다(§5).
 
 > **시각 주의**: 값 객체는 시각을 **받기만** 한다. `Instant.now()` 호출은 `DefaultTracer` 내부 한
 > 지점으로 격리하여 고정 `Clock` 주입으로 테스트 가능하게 한다.
@@ -337,7 +340,9 @@ public interface SpanExporter {
 | **LLM** | `TracingLlmClient` 데코레이터 | `sendMessage` 진입 → 응답 | **유일한 LLM 캡처 경로**. 프롬프트·토큰·모델·지연 |
 | **TOOL** | 두 executor 의 `executeSingleTool` 얇은 래퍼(`toolinvocation.ToolCallTracing`) | 도구 입력 → 출력 | Event 보다 payload 가 풍부. 도구가 받는 컨텍스트의 metadata 를 TOOL span 으로 회전(R1) |
 | **SUBAGENT** | `DefaultSubagentExecutionManager.runResolvedSubagent` | goal → 결과·completionReason·토큰 합계 | 서브에이전트 실행당 1개. 포크의 ITERATION/TOOL/LLM 은 그 아래(R2·R3). 해석 실패·ceiling 거부도 ERROR span 으로 남는다 |
-| **COMPACTION** | `PreCompact` / `PostCompact` Hook | trigger → 결과 | `Feature.COMPACTION` LLM 호출이 자식으로 매달림 |
+| **COMMAND** | `OrcaAgentExecutor.executeCommand`(`CommandTrace`) | 명령 이름·인자 길이 → 성공 여부·응답 길이 | 슬래시 명령 턴마다 1개, TURN 아래. 명령 도구 컨텍스트의 metadata 를 이 span 으로 회전 — 포크 스킬의 SUBAGENT 가 그 아래 붙는다 |
+| **ROUTINE** (root) | `RoutineExecutor.execute` | taskId·단계 수 → 성공 여부·완료 단계 수 | 예약 루틴 실행(발화)마다 1개. 단계 **시도**마다 `TOOL` 자식(`invoker=ROUTINE`, `stepIndex`, `attempt`)을 열고 그 도구 컨텍스트를 회전 |
+| **COMPACTION** | — (**미구현**) | — | 요약 LLM 호출은 COMPACTION span 없이 `feature=compaction` 속성을 단 **LLM span** 으로 남는다 — 메인 턴은 TURN 아래, 포크는 ITERATION 아래. span 자체는 `TracingHookAdapter`(§9)와 함께 남은 작업 |
 
 **턴 root 발급 시점** — `OrcaAgentExecutor.execute()` 는 **턴당 정확히 1회** 호출된다
 (`DefaultLiveSession` 이 "Submitting turn" 과 함께 호출하고, `execute()` 가 `SessionId` 로 전사를
@@ -365,14 +370,30 @@ TURN  "turn:ops-bot"                               [traceId=T1]
    │     │  └─ TOOL Grep ...              (invokerType=SUBAGENT)
    │     └─ ITERATION #2 └─ LLM ...
    └─ TOOL Task  (run_in_background)       ← 즉시 close
-      └─ SUBAGENT "subagent:indexer"  background=true   ← 부모 close 뒤 시작·종료, parentSpanId 는 유지
+      └─ SUBAGENT "subagent:indexer"  background=true, queuedMs   ← 부모 close 뒤 시작·종료, parentSpanId 는 유지
+```
+
+도구 호출을 거치지 않는 두 모양 — 슬래시 명령 턴과 예약 루틴 실행:
+
+```
+TURN "turn:ops-bot"
+└─ COMMAND "command:/triage"           (command=triage, argsChars)
+   └─ SUBAGENT "subagent:triage" → ITERATION → {LLM, TOOL}
+
+ROUTINE "routine:<taskId>"             [sessionId=routine:<taskId>]
+├─ TOOL Bash  (stepIndex=0, attempt=1)  OK
+├─ TOOL Task  (stepIndex=1, attempt=1)  ERROR (timed out)
+└─ TOOL Task  (stepIndex=1, attempt=2)  OK
+   └─ SUBAGENT "subagent:reporter" → ITERATION → {LLM, TOOL}
 ```
 
 **중첩 배선** — `ExecutionScope.activeSpan`(volatile)을 통해 LLM 은 `invokeGatewayOnce` 에서,
 TOOL 은 `executeToolUses` 의 per-iteration `ToolContext` 재구성으로 iteration 아래에 매달린다.
 Span 시작은 `tracing.Spans.startChildSafely` 로 감싸 fail-safe 를 유지한다. 서브에이전트 쪽은 §4.3 의
-R1 ~ R3 이다. 백그라운드 서브에이전트의 SUBAGENT span 은 worker 에서 열리므로 큐 대기 시간을 포함하지 않고,
-부모(TOOL · ITERATION · TURN)가 이미 닫힌 뒤 시작할 수 있다 — 부모-자식은 id 로만 이어진다.
+R1 ~ R3 이다. 백그라운드 서브에이전트의 SUBAGENT span 은 worker 에서 열리므로 시작 시각에 큐 대기 시간을 포함하지
+않고, 그 대기는 `queuedMs` 속성(pool 에 넘긴 순간 → worker 시작)으로 남는다. 부모(TOOL · ITERATION · TURN)가 이미 닫힌
+뒤 시작할 수 있다 — 부모-자식은 id 로만 이어진다. pool 이 거부한 백그라운드 작업도 `rejected=true` 인 ERROR SUBAGENT
+span 을 남긴다. 포크의 `ExecutionId` 는 `executionId` 속성이다(ReAct 경로만 — 코드 behavior 와 실행 전 실패에는 없다).
 
 SUBAGENT span 의 상태는 TURN 과 같은 규칙이다 — 취소는 `INTERRUPTED`, 예산 · iteration 상한 · 쿼터로 멈춘 실행은
 `OK`(이유는 outputs 의 `completionReason`), 그 밖의 실패만 `ERROR`. `tokenUsage` 는 포크 루프가 이미 누적한 합계다.
@@ -383,6 +404,10 @@ SUBAGENT span 의 상태는 TURN 과 같은 규칙이다 — 취소는 `INTERRUP
 `principal` 을 태깅한다. **`sessionId` 는 `LlmCallMetadata.traceId` 에서 오고**, **`traceId` 는 턴
 시작 시 root span id 로 발급**되어 예약 태그 `aimon.trace_id` 로 하위 호출에 전파된다. 한 세션의 N개
 턴은 같은 `sessionId` 아래 N개 trace 로 묶인다.
+
+예약 루틴은 세션이 없다. 그 trace 의 그룹 키는 `routine:<ScheduledTaskId>` 이고 — 문자열 그룹 키일 뿐 `SessionId` 가
+아니다 — 루틴 root 가 그 값을 `traceId` 로 실은 metadata 를 회전해 단계에 넘기므로 하위 span 전부가 같은 키에 묶인다. 한
+작업의 N번 발화는 같은 키 아래 N개 trace 이고, 발화마다 새로 발급되는 `ExecutionId` 는 root 의 `executionId` 속성이다.
 
 ---
 
@@ -535,16 +560,17 @@ CLI 는 `cli.tracing: true` 일 때 store + tracer + `TracingLlmClient` 를 배�
 
 | 항목 | 상태 | 비고 |
 |---|---|---|
-| 서브에이전트 span "회전" | **구현** (2026-10-17) | §4.3 R1 ~ R3, D11. 남은 갈래(TOOL span 없는 포크, 공장 밖 배선, 백그라운드 시각 …)는 백로그 [`subagent-tracing-open-items.md`](../../backlog/subagent-tracing-open-items.md) |
-| `TracingHookAdapter` (compaction span) | 미구현 | tool span 은 executor 직접 계측으로 대체됨 |
+| 서브에이전트 span "회전" | **구현** (2026-10-17) | §4.3 R1 ~ R3, D11. 그 뒤 백로그 처리(2026-10-17)로 슬래시 명령(`COMMAND`) · 예약 루틴(`ROUTINE`) · 공장 밖 매니저 · 큐 대기와 거부 · 포크 `ExecutionId` 가 닫혔다. 남은 갈래(직접 호출 `WorkflowRunner`, 외부 뷰어 렌더링 …)는 백로그 [`subagent-tracing-open-items.md`](../../backlog/subagent-tracing-open-items.md) |
+| `TracingHookAdapter` (compaction span) | 미구현 | tool span 은 executor 직접 계측으로 대체됨. COMPACTION span 의 남은 갈래도 여기다 — 요약 LLM 호출은 이제 트리 안(메인=TURN 아래, 포크=ITERATION 아래)에 `feature=compaction` LLM span 으로 남는다(백로그 ST-5) |
 | `TraceSampler` (트레이스 단위 샘플링) | 미구현 | 운영에서 100% 저장은 비현실적 — head 샘플링 vs tail 중 **에러 trace 100% 보존**을 권장 |
 | 비차단 워커 (bounded queue + 손실 카운터) | 미구현 | `record()`/`export()` 를 fire-and-forget 으로. 큐 포화 시 가장 오래된 것을 drop 하고 카운터 증가(관측 가능한 손실). 직렬화·레닥션도 워커 스레드로 옮겨 호출 경로를 막지 않게 한다 |
 | `aimon-tracing-otlp` / `aimon-tracing-postgres` | 미구현 | 외부 모듈. 보존 정책(`deleteOlderThan`) 스케줄링 포함 |
 
 ### 9.1 미해결 질문
 
-- **스케줄 재발화의 세션 입도** — cron 재발화는 `boundRuntimeId`(agent-scoped)로 resolve 되지만 새
-  세션일 수 있다. `sessionId` 가 매 발화마다 바뀌는지 정책 확인 필요.
+- ~~**스케줄 재발화의 세션 입도**~~ — **해소** (2026-10-17): 루틴 trace 의 그룹 키는 발화마다 바뀌지 않는
+  `routine:<ScheduledTaskId>` 다(§5.2). 발화별 `ExecutionId` 를 키로 삼는 대안은
+  [`subagent-tracing-backlog.md`](subagent-tracing-backlog.md) OQ-1.
 - **스트리밍 LLM Span** — `sendMessageStreaming` 은 부분 텍스트를 sink 로 흘린다. Span 은 완료 응답
   기준 1개로 기록하되 첫 토큰까지의 지연(TTFT)을 별도 속성으로 남길지 검토.
 - **토큰 합산** — turn Span 의 `tokenUsage` 는 자식 LLM Span 의 합이다. close 시점 집계 책임의
@@ -559,6 +585,7 @@ CLI 는 `cli.tracing: true` 일 때 store + tracer + `TracingLlmClient` 를 배�
 
 - [`../../features/observability/execution-tracing-guide.md`](../../features/observability/execution-tracing-guide.md) — 사용·배선·범위
 - [`subagent-trace-nesting.md`](subagent-trace-nesting.md) — 서브에이전트 중첩(R1 ~ R3)의 승인 설계와 구현 차이
+- [`subagent-tracing-backlog.md`](subagent-tracing-backlog.md) — 그 백로그(ST-1 ~ ST-6) 처리의 승인 설계와 구현 차이
 - [`../agent-execution/interceptor.md`](../agent-execution/interceptor.md) — 4계층 관계 (§3.1)
 - [`../tool/parallel-execution.md`](../tool/parallel-execution.md) — SpanContext 명시 전파의 근거
 - [`../../overview/glossary.md`](../../overview/glossary.md) — 턴·iteration·실행 어휘

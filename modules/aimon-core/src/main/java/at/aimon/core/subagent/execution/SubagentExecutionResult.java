@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
+import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.quota.QuotaViolation;
 import at.aimon.core.agent.session.SessionId;
@@ -105,7 +106,8 @@ public final class SubagentExecutionResult {
         Objects.requireNonNull(snapshot, "Session snapshot cannot be null");
         Objects.requireNonNull(metadata, "Execution metadata cannot be null");
         Objects.requireNonNull(completionReason, "Completion reason cannot be null");
-        return new SubagentExecutionResult(finalAnswer, snapshot, metadata, true, null, completionReason, cost, null);
+        return new SubagentExecutionResult(finalAnswer, snapshot, metadata, true, null, completionReason, cost, null,
+                null);
     }
 
     /**
@@ -170,7 +172,8 @@ public final class SubagentExecutionResult {
         Objects.requireNonNull(snapshot, "Session snapshot cannot be null");
         Objects.requireNonNull(metadata, "Execution metadata cannot be null");
         Objects.requireNonNull(completionReason, "Completion reason cannot be null");
-        return new SubagentExecutionResult(null, snapshot, metadata, false, errorMessage, completionReason, cost, null);
+        return new SubagentExecutionResult(null, snapshot, metadata, false, errorMessage, completionReason, cost, null,
+                null);
     }
 
     /**
@@ -229,12 +232,13 @@ public final class SubagentExecutionResult {
     private final CompletionReason completionReason;
     private final Money cost;
     private final QuotaViolation quotaViolation;
+    private final ExecutionId executionId;
 
     // One argument per field of an immutable value; bundling them would only move the list.
     @SuppressWarnings("checkstyle:ParameterNumber")
     private SubagentExecutionResult(String finalAnswer, SessionSnapshot snapshot, ExecutionMetadata metadata,
             boolean success, String errorMessage, CompletionReason completionReason, Money cost,
-            QuotaViolation quotaViolation) {
+            QuotaViolation quotaViolation, ExecutionId executionId) {
         this.finalAnswer = finalAnswer;
         this.snapshot = Objects.requireNonNull(snapshot, "Session snapshot cannot be null");
         this.metadata = Objects.requireNonNull(metadata, "Execution metadata cannot be null");
@@ -243,6 +247,7 @@ public final class SubagentExecutionResult {
         this.completionReason = Objects.requireNonNull(completionReason, "Completion reason cannot be null");
         this.cost = cost != null ? cost : Money.zeroUsd();
         this.quotaViolation = quotaViolation;
+        this.executionId = executionId;
     }
 
     /**
@@ -397,7 +402,31 @@ public final class SubagentExecutionResult {
     public SubagentExecutionResult withQuotaViolation(QuotaViolation quotaViolation) {
         Objects.requireNonNull(quotaViolation, "Quota violation cannot be null");
         return new SubagentExecutionResult(finalAnswer, snapshot, metadata, success, errorMessage, completionReason,
-                cost, quotaViolation);
+                cost, quotaViolation, executionId);
+    }
+
+    /**
+     * Gets the identity of the fork execution that produced this result — the key its artifacts, execution environment
+     * and tool state live under.
+     *
+     * @return the fork's execution id, or empty when the result never ran the ReAct loop (a code behavior, or a
+     *         dispatch failure before the fork started)
+     */
+    public Optional<ExecutionId> getExecutionId() {
+        return Optional.ofNullable(executionId);
+    }
+
+    /**
+     * Returns a copy of this result naming the fork execution that produced it.
+     *
+     * @param executionId
+     *            the fork's execution id (must not be null)
+     * @return a new result carrying the execution id; the original is unchanged
+     */
+    public SubagentExecutionResult withExecutionId(ExecutionId executionId) {
+        Objects.requireNonNull(executionId, "Execution id cannot be null");
+        return new SubagentExecutionResult(finalAnswer, snapshot, metadata, success, errorMessage, completionReason,
+                cost, quotaViolation, executionId);
     }
 
     @Override
@@ -412,24 +441,26 @@ public final class SubagentExecutionResult {
         return success == that.success && Objects.equals(finalAnswer, that.finalAnswer)
                 && snapshot.equals(that.snapshot) && metadata.equals(that.metadata)
                 && Objects.equals(errorMessage, that.errorMessage) && completionReason == that.completionReason
-                && cost.equals(that.cost) && Objects.equals(quotaViolation, that.quotaViolation);
+                && cost.equals(that.cost) && Objects.equals(quotaViolation, that.quotaViolation)
+                && Objects.equals(executionId, that.executionId);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(finalAnswer, snapshot, metadata, success, errorMessage, completionReason, cost,
-                quotaViolation);
+                quotaViolation, executionId);
     }
 
     @Override
     public String toString() {
         if (success) {
             return "SubagentExecutionResult{" + "success=true" + ", reason=" + completionReason + ", cost=" + cost
-                    + ", metadata=" + metadata + ", answer='"
+                    + ", executionId=" + executionId + ", metadata=" + metadata + ", answer='"
                     + (finalAnswer.length() > 100 ? finalAnswer.substring(0, 100) + "..." : finalAnswer) + '\'' + '}';
         } else {
             return "SubagentExecutionResult{" + "success=false" + ", reason=" + completionReason + ", cost=" + cost
-                    + ", metadata=" + metadata + ", error='" + errorMessage + '\'' + '}';
+                    + ", executionId=" + executionId + ", metadata=" + metadata + ", error='" + errorMessage + '\''
+                    + '}';
         }
     }
 }

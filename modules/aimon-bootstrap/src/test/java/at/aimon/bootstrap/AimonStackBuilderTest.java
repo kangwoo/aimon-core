@@ -63,6 +63,11 @@ import at.aimon.core.tools.memory.MemoryRecallTool;
 import at.aimon.core.tools.memory.MemorySearchTool;
 import at.aimon.core.tools.memory.ObserveTool;
 import at.aimon.core.tools.session.SessionHistoryTool;
+import at.aimon.core.tracing.SpanExporter;
+import at.aimon.core.tracing.SpanType;
+import at.aimon.core.tracing.TraceSpan;
+import at.aimon.core.tracing.impl.DefaultTracer;
+import at.aimon.core.tracing.impl.InMemoryTraceSpanStore;
 
 /**
  * Stands a real stack up and tears it down — the whole point of the neutral layer being pure Java.
@@ -456,6 +461,29 @@ class AimonStackBuilderTest {
                     Principal.user("ops"));
 
             assertThat(bus.published).containsExactly(ScheduledTaskId.of("nightly"));
+        }
+    }
+
+    @Test
+    @DisplayName("the executor spec's tracer also traces scheduled routine runs")
+    void executorTracerReachesTheSchedulingRoutine(@TempDir Path workspace) {
+        final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+        final ExecutorSpec traced = ExecutorSpec.builder().tracer(new DefaultTracer(store, SpanExporter.noop()))
+                .build();
+        final SchedulingSpec scheduling = SchedulingSpec.enabled(executor -> NO_OP_SCHEDULER);
+
+        try (AimonStack stack = AimonStackBuilder
+                .build(specFor(workspace, "ops").executor(traced).scheduling(scheduling).build())) {
+            // A tool the agent does not have: the run fails at its first step, which is still a traced run.
+            final ScheduledTask task = ScheduledTask.builder().id(ScheduledTaskId.of("traced")).name("traced sweep")
+                    .cronExpression("0 3 * * *").owner(Principal.user("ops")).boundRuntimeId(stack.primaryRuntimeId())
+                    .addStep(RoutineStep.of("NoSuchTool", "{}")).build();
+            stack.schedulingEngine().orElseThrow().getTaskManager().register(task);
+
+            stack.schedulingEngine().orElseThrow().getTaskManager().executeTask(ScheduledTaskId.of("traced"));
+
+            assertThat(store.bySession("routine:traced")).extracting(TraceSpan::getType)
+                    .containsExactly(SpanType.ROUTINE);
         }
     }
 

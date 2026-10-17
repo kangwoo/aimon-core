@@ -5,6 +5,9 @@
 > 자리는 거기에 있다.** 이 머리말과 §8 사이의 본문은 승인된 그대로 두었다 — 고치지 않고 §8 에서 정정한다.
 > 현재의 트레이싱 설계 전체는 [`tracing.md`](tracing.md) 가 갖는다. 열린 항목의 정본은
 > [`../../backlog/subagent-tracing-open-items.md`](../../backlog/subagent-tracing-open-items.md) 다.
+> §8.8 이 백로그로 보낸 여섯 갈래(ST-1 ~ ST-6)는 그 뒤 처리되었다(2026-10-17) — 무엇이 닫히고 무엇이 남았는지는 백로그가,
+> 그 설계와 구현 차이는 [`subagent-tracing-backlog.md`](subagent-tracing-backlog.md) 가 갖는다. 이 문서의 §3 · §8 이
+> "없다" 고 적은 것 가운데 일부(SUBAGENT 의 `queuedMs` · `executionId`, 거부 span, 소유 실행기로의 tracer 전달)는 이제 있다.
 
 > 대상 브랜치: `herdr/subagent-trace-nesting` (base `d05f107b`)
 > 범위: `aimon-core` (subagent · toolinvocation · tracing · agent.impl.orca), 문서. CLI/Spring/bootstrap 은

@@ -8,6 +8,7 @@ import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
+import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
 
 /**
@@ -31,6 +32,7 @@ public final class CompactionGuardRequest {
     private final ExecutionEnvironment executionEnvironment;
     private final CancellationSignal executionCancellation;
     private final boolean budgetForced;
+    private final LlmCallMetadata callMetadata;
 
     private CompactionGuardRequest(Builder builder) {
         this.transcriptBuffer = Objects.requireNonNull(builder.transcriptBuffer, "transcriptBuffer cannot be null");
@@ -40,6 +42,7 @@ public final class CompactionGuardRequest {
         this.executionEnvironment = builder.executionEnvironment;
         this.executionCancellation = builder.executionCancellation;
         this.budgetForced = builder.budgetForced;
+        this.callMetadata = builder.callMetadata;
     }
 
     public static Builder builder() {
@@ -96,6 +99,17 @@ public final class CompactionGuardRequest {
         return budgetForced;
     }
 
+    /**
+     * The caller's metadata for the summary LLM call, merged under the engine's own defaults (caller fields win) — a
+     * traced execution passes only its span position here, so the summary call nests in its trace. Empty when the
+     * caller has none.
+     *
+     * @return the caller's summary-call metadata, or empty
+     */
+    public Optional<LlmCallMetadata> getCallMetadata() {
+        return Optional.ofNullable(callMetadata);
+    }
+
     /** Builder for {@link CompactionGuardRequest}. */
     public static final class Builder {
         private TranscriptBuffer transcriptBuffer;
@@ -105,6 +119,7 @@ public final class CompactionGuardRequest {
         private ExecutionEnvironment executionEnvironment;
         private CancellationSignal executionCancellation;
         private boolean budgetForced;
+        private LlmCallMetadata callMetadata;
 
         private Builder() {
         }
@@ -147,6 +162,16 @@ public final class CompactionGuardRequest {
 
         public Builder budgetForced(boolean budgetForced) {
             this.budgetForced = budgetForced;
+            return this;
+        }
+
+        /**
+         * @param callMetadata
+         *            the caller's metadata for the summary LLM call, or {@code null} for none
+         * @return this builder
+         */
+        public Builder callMetadata(LlmCallMetadata callMetadata) {
+            this.callMetadata = callMetadata;
             return this;
         }
 

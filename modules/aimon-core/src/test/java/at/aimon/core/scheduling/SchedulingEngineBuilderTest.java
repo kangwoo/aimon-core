@@ -20,6 +20,12 @@ import at.aimon.core.scheduling.quota.DefaultTaskQuotaManager;
 import at.aimon.core.scheduling.repository.InMemoryScheduledTaskExecutionHistoryRepository;
 import at.aimon.core.scheduling.repository.InMemoryScheduledTaskRepository;
 import at.aimon.core.scheduling.scheduler.TaskScheduler;
+import at.aimon.core.tracing.SpanExporter;
+import at.aimon.core.tracing.SpanStatus;
+import at.aimon.core.tracing.SpanType;
+import at.aimon.core.tracing.TraceSpan;
+import at.aimon.core.tracing.impl.DefaultTracer;
+import at.aimon.core.tracing.impl.InMemoryTraceSpanStore;
 
 class SchedulingEngineBuilderTest {
 
@@ -112,6 +118,28 @@ class SchedulingEngineBuilderTest {
             engine.getTaskManager().executeTask(task.getId());
 
             assertThat(historyRepo.findByTaskIdOrderByStartedAtDesc(task.getId(), 5)).hasSize(1);
+        } finally {
+            engine.close();
+        }
+    }
+
+    @Test
+    void tracerReachesTheRoutineExecutor() {
+        InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+        SchedulingEngine engine = SchedulingEngineBuilder.create().taskScheduler(mock(TaskScheduler.class))
+                .tracer(new DefaultTracer(store, SpanExporter.noop())).build();
+        try {
+            ScheduledTask task = newTask();
+            engine.getTaskManager().register(task);
+
+            // The bound runtime is not registered, so the run fails at its first step — still a traced run.
+            engine.getTaskManager().executeTask(task.getId());
+
+            List<TraceSpan> spans = store.bySession("routine:" + task.getId().value());
+            assertThat(spans).singleElement().satisfies(span -> {
+                assertThat(span.getType()).isEqualTo(SpanType.ROUTINE);
+                assertThat(span.getStatus()).isEqualTo(SpanStatus.ERROR);
+            });
         } finally {
             engine.close();
         }

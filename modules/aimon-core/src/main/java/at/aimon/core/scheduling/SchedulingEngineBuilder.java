@@ -21,6 +21,8 @@ import at.aimon.core.scheduling.scheduler.InMemoryTaskScheduler;
 import at.aimon.core.scheduling.scheduler.ScheduledTaskExecutor;
 import at.aimon.core.scheduling.scheduler.TaskScheduler;
 import at.aimon.core.scheduling.scheduler.TaskSchedulerFactory;
+import at.aimon.core.tracing.TracePayloadPolicy;
+import at.aimon.core.tracing.Tracer;
 
 /**
  * Builder for creating {@link SchedulingEngine} instances.
@@ -61,6 +63,8 @@ public final class SchedulingEngineBuilder {
     private AgentRuntimeRegistry agentRuntimeRegistry;
     private int defaultMaxQuota = 10;
     private boolean multiNode;
+    private Tracer tracer;
+    private TracePayloadPolicy tracePayloadPolicy;
 
     private SchedulingEngineBuilder() {
     }
@@ -252,6 +256,40 @@ public final class SchedulingEngineBuilder {
     }
 
     /**
+     * Sets the tracer that records each routine run as a {@code ROUTINE} span with a {@code TOOL} span per step
+     * attempt, so a subagent a step starts lands in a trace. Pass the same instance the agent executors use.
+     *
+     * <p>
+     * If not set, routine runs record nothing. The tracer is application-scoped, like the engine; the engine neither
+     * owns nor closes it.
+     * </p>
+     *
+     * @param tracer
+     *            the tracer
+     * @return this builder
+     */
+    public SchedulingEngineBuilder tracer(Tracer tracer) {
+        this.tracer = tracer;
+        return this;
+    }
+
+    /**
+     * Sets the policy deciding whether routine step spans capture the tool result content.
+     *
+     * <p>
+     * If not set, {@link TracePayloadPolicy#summaryOnly()} is used.
+     * </p>
+     *
+     * @param policy
+     *            the payload capture policy
+     * @return this builder
+     */
+    public SchedulingEngineBuilder tracePayloadPolicy(TracePayloadPolicy policy) {
+        this.tracePayloadPolicy = policy;
+        return this;
+    }
+
+    /**
      * Builds the scheduling engine.
      *
      * <p>
@@ -302,6 +340,12 @@ public final class SchedulingEngineBuilder {
 
         // Create routine executor with context registry for dynamic tool resolution
         final RoutineExecutor routineExecutor = new RoutineExecutor(agentRuntimeRegistry, eventPublisher);
+        if (tracer != null) {
+            routineExecutor.withTracer(tracer);
+        }
+        if (tracePayloadPolicy != null) {
+            routineExecutor.withTracePayloadPolicy(tracePayloadPolicy);
+        }
 
         // Resolve circular dependency: TaskScheduler needs ScheduledTaskExecutor,
         // ScheduledTaskManager needs TaskScheduler, and ScheduledTaskManager IS the executor.

@@ -32,6 +32,7 @@ import at.aimon.core.tracing.Tracer;
  * transparently and creates no span — it never produces orphan spans.
  *
  * <p>
+ * The call's {@link LlmCallMetadata#getFeature() feature}, when set, becomes the span's {@code feature} attribute.
  * Inputs are summarized (message/tool counts, model). Outputs are summarized too (text length, tool-use count, tokens);
  * TRACE-02: when the injected {@link TracePayloadPolicy} {@link TracePayloadPolicy#capturesContent() captures content},
  * the response text is additionally attached (truncated to the policy cap). Secret masking is applied separately by the
@@ -144,6 +145,8 @@ public final class TracingLlmClient implements LlmClient {
         final Tracer.Span span = tracer.startChild(parent.get(), SpanType.LLM, "llm:" + model,
                 inputsSummary(messages, tools, model));
         try {
+            // The usage feature tells calls apart that share a parent — a compaction summary call under an iteration.
+            metadata.getFeature().ifPresent(feature -> span.setAttribute("feature", feature));
             final LlmResponse response = call.get();
             span.setModel(model);
             if (response.hasTokenUsage()) {

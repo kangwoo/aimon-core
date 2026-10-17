@@ -17,6 +17,15 @@ import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.DefaultAgent;
+import at.aimon.core.agent.compact.CompactionEngine;
+import at.aimon.core.agent.compact.CompactionResult;
+import at.aimon.core.agent.compact.DefaultCompactionEngine;
+import at.aimon.core.agent.compact.DefaultCompactionGuard;
+import at.aimon.core.agent.context.ContextDecision;
+import at.aimon.core.agent.context.ContextEngine;
+import at.aimon.core.agent.context.ContextRequest;
+import at.aimon.core.agent.context.ContextView;
+import at.aimon.core.agent.context.DefaultContextEngine;
 import at.aimon.core.agent.prompt.SystemPromptParts;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
@@ -37,19 +46,23 @@ import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
+import at.aimon.core.llm.InMemoryModelContextWindowRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmCancellation;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.ModelContextLimits;
 import at.aimon.core.llm.StopReason;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
+import at.aimon.core.llm.exception.LlmPromptTooLongException;
 import at.aimon.core.llm.streaming.LlmStreamChunk;
 import at.aimon.core.llm.streaming.LlmStreamSink;
 import at.aimon.core.llm.streaming.LlmStreamingOptions;
+import at.aimon.core.llm.token.TokenEstimator;
 import at.aimon.core.skill.DefaultSkillRegistry;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.DefaultSubagentRegistry;
@@ -389,7 +402,107 @@ class OrcaAgentExecutorTracingTest {
         assertThat(result.getFinalAnswer()).isEqualTo("done");
     }
 
+    @Test
+    @DisplayName("ST-5: the main turn's compaction summary call is an LLM span under the TURN, in the turn's session")
+    void compactionSummaryCallNestsUnderTheTurn() {
+        final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+        final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
+        final RecordingLlmClient stub = new RecordingLlmClient();
+        stub.enqueue(LlmResponse.text("the summary"));
+        stub.enqueue(LlmResponse.text("done"));
+        final LlmClient traced = new TracingLlmClient(stub, tracer);
+        final OrcaAgentExecutor executor = createExecutor(traced);
+        executor.tracer = tracer;
+
+        final OrcaAgentExecutionResult result = executor.execute(
+                createContext(new DefaultToolRegistry(), null, compactingEngine(traced)),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-compact")).build());
+
+        assertThat(result.isSuccess()).isTrue();
+        final List<TraceSpan> spans = store.bySession("conv-compact");
+        final TraceSpan turn = spans.stream().filter(s -> s.getType() == SpanType.TURN).findFirst().orElseThrow();
+        final TraceSpan summary = spans.stream().filter(s -> s.getType() == SpanType.LLM)
+                .filter(s -> LlmCallMetadata.Feature.COMPACTION.equals(s.getAttributes().get("feature"))).findFirst()
+                .orElseThrow();
+        // The gate runs before the iteration span opens, so the summary call hangs off the turn.
+        assertThat(summary.getParentSpanId()).contains(turn.getSpanId());
+        assertThat(summary.getSessionId()).isEqualTo(turn.getSessionId());
+        assertThat(summary.getTraceId()).isEqualTo(turn.getSpanId());
+
+        // Usage attribution stays the engine's: the turn's react-loop feature did not leak into the summary call.
+        final LlmCallMetadata summaryCall = stub.metadata.stream()
+                .filter(m -> m.getFeature().filter(LlmCallMetadata.Feature.COMPACTION::equals).isPresent()).findFirst()
+                .orElseThrow();
+        assertThat(summaryCall.getComponent()).contains("compaction-engine");
+        assertThat(summaryCall.getTraceId()).contains("conv-compact");
+    }
+
+    @Test
+    @DisplayName("ST-5: tracing off, the main turn's context request carries no call metadata")
+    void compactionRequestCarriesNoMetadataWhenTracingOff() {
+        final RecordingLlmClient stub = new RecordingLlmClient();
+        stub.enqueue(LlmResponse.text("done"));
+        final List<ContextRequest> requests = new CopyOnWriteArrayList<>();
+        final OrcaAgentExecutor executor = createExecutor(stub); // tracer left at default Tracer.noop()
+
+        executor.execute(createContext(new DefaultToolRegistry(), null, capturingEngine(requests)),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-off")).build());
+
+        assertThat(requests).isNotEmpty().allSatisfy(r -> assertThat(r.getCallMetadata()).isEmpty());
+    }
+
     // ── wiring helpers (mirrors OrcaAgentExecutorParallelToolTest) ───────────────
+
+    /** The default engine with every estimate fixed in the auto-compact band, so iteration 1 compacts. */
+    private static ContextEngine compactingEngine(LlmClient client) {
+        final TokenEstimator fixed = new TokenEstimator() {
+            @Override
+            public int estimate(String systemPrompt, List<Message> messages) {
+                return 7_500;
+            }
+
+            @Override
+            public int estimateMessage(Message message) {
+                return 0;
+            }
+
+            @Override
+            public int estimateText(String text) {
+                return 0;
+            }
+        };
+        final CompactionEngine compactionEngine = DefaultCompactionEngine.withDefaults(client, fixed,
+                new DefaultHookExecutionManager());
+        final DefaultCompactionGuard guard = new DefaultCompactionGuard(compactionEngine,
+                InMemoryModelContextWindowRegistry.builder()
+                        .defaultLimits(ModelContextLimits.builder().contextWindow(10_000).reservedOutputTokens(1_000)
+                                .autoCompactBuffer(2_000).warningBuffer(1_000).blockingBuffer(500).build())
+                        .build(),
+                fixed);
+        return DefaultContextEngine.builder().compactionGuard(guard).compactionEngine(compactionEngine)
+                .tokenEstimator(fixed).build();
+    }
+
+    /** Records every request and answers with the transcript unchanged. */
+    private static ContextEngine capturingEngine(List<ContextRequest> requests) {
+        return new ContextEngine() {
+            @Override
+            public ContextDecision prepare(ContextRequest request) {
+                requests.add(request);
+                return ContextEngine.passthrough().prepare(request);
+            }
+
+            @Override
+            public Optional<ContextView> recover(ContextRequest request, LlmPromptTooLongException error) {
+                return Optional.empty();
+            }
+
+            @Override
+            public CompactionResult compactNow(ContextRequest request, String instructions) {
+                throw new UnsupportedOperationException("not under test");
+            }
+        };
+    }
 
     private OrcaAgentExecutor createExecutor(LlmClient client) {
         final DefaultToolExecutionManager toolManager = new DefaultToolExecutionManager();
@@ -410,6 +523,11 @@ class OrcaAgentExecutorTracingTest {
     }
 
     private OrcaAgentRuntime createContext(DefaultToolRegistry toolRegistry, SubagentRegistry subagentRegistry) {
+        return createContext(toolRegistry, subagentRegistry, null);
+    }
+
+    private OrcaAgentRuntime createContext(DefaultToolRegistry toolRegistry, SubagentRegistry subagentRegistry,
+            ContextEngine contextEngine) {
         final LocalFileSystem fileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
         fileSystem.initialize();
         return OrcaAgentRuntime.builder().id(AgentRuntimeId.of("agent:trace-1"))
@@ -421,7 +539,8 @@ class OrcaAgentExecutorTracingTest {
                         ? subagentRegistry
                         : new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
                 .skillRegistry(new DefaultSkillRegistry(fileSystem, ".aimon/skills")).controlFileSystem(fileSystem)
-                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem)).build();
+                .executionEnvironmentProvider(TestExecutionEnvironments.provider(fileSystem))
+                .contextEngine(contextEngine).build();
     }
 
     /** Echoes a fixed success result. */
@@ -492,9 +611,10 @@ class OrcaAgentExecutorTracingTest {
         }
     }
 
-    /** Minimal scripted LLM client: returns enqueued responses in order. */
+    /** Minimal scripted LLM client: returns enqueued responses in order, recording each call's metadata. */
     private static final class RecordingLlmClient implements LlmClient {
         private final List<LlmResponse> responses = new ArrayList<>();
+        private final List<LlmCallMetadata> metadata = new CopyOnWriteArrayList<>();
 
         void enqueue(LlmResponse response) {
             responses.add(response);
@@ -504,6 +624,13 @@ class OrcaAgentExecutorTracingTest {
         public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
                 LlmModel modelConfig) {
             return responses.isEmpty() ? LlmResponse.text("unexpected-extra-call") : responses.remove(0);
+        }
+
+        @Override
+        public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
+                LlmModel modelConfig, LlmCallMetadata callMetadata) {
+            metadata.add(callMetadata);
+            return sendMessage(systemPrompt, messages, tools, modelConfig);
         }
 
         @Override

@@ -2143,6 +2143,10 @@ public class OrcaAgentExecutor
      */
     private CommandExecutionResult executeCommand(ExecutionScope scope, OrcaAgentExecutionRequest executionRequest,
             TranscriptBuffer transcriptBuffer) {
+        // The command's own span under the turn, so a fork it starts nests under the command that started it rather
+        // than straight under the turn. Snapshot the volatile tracing fields once, as the turn span does.
+        final CommandTrace commandTrace = CommandTrace.open(tracer, scope.llmCallMetadata,
+                executionRequest.getUserInput().asText(), tracePayloadPolicy);
         // One coordinator per command, closed on every exit path so no terminator outlives the command that
         // registered it. It is not the turn's coordinator that runTurn created for the OnStart hooks: that one
         // is published to the interrupt observer, and handing its signal to the command's tools would make a slash
@@ -2190,7 +2194,7 @@ public class OrcaAgentExecutor
                     // approvals granted in the session the user typed it into.
                     .put(ToolContextKeys.SESSION_ID, transcriptBuffer.getSessionId())
                     .put(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY, scope.getExecutionAttributes())
-                    .put(ToolContextKeys.LLM_CALL_METADATA_KEY, scope.llmCallMetadata)
+                    .put(ToolContextKeys.LLM_CALL_METADATA_KEY, commandTrace.metadata())
                     .put(ToolContextKeys.SKILL_FORK_EXECUTOR_KEY, skillForkExecutor)
                     // The activator SkillTool is given, so a `/my-skill` fork runs under the skill's own hooks (EE-68).
                     .put(ToolContextKeys.SKILL_HOOK_ACTIVATOR_KEY,
@@ -2203,11 +2207,13 @@ public class OrcaAgentExecutor
                     .put(ToolContextKeys.CALLER_ALLOWED_TOOLS, agentRuntime.getAgent().getAllowedTools())
                     .put(ToolContextKeys.SKILL_TOOL_DISPATCHER_KEY, commandToolDispatcher(scope, commandCoordinator))
                     .build();
-            return commandExecutionManager.execute(executionRequest, transcriptBuffer,
+            return commandTrace.record(commandExecutionManager.execute(executionRequest, transcriptBuffer,
                     agentRuntime.getCommandRegistry(), agentRuntime.getToolRegistry(),
-                    agentRuntime.getAgent().getMetadata().getModel(), commandToolContext);
+                    agentRuntime.getAgent().getMetadata().getModel(), commandToolContext));
         } catch (Exception e) {
-            return CommandExecutionResult.failure("Command execution error: " + e.getMessage(), e);
+            return commandTrace.record(CommandExecutionResult.failure("Command execution error: " + e.getMessage(), e));
+        } finally {
+            commandTrace.close();
         }
     }
 
@@ -3290,13 +3296,21 @@ public class OrcaAgentExecutor
     /**
      * Builds the {@link ContextRequest} of one iteration's LLM call. Carries no execution id: the main loop runs a
      * session's turn, so the buffer's session id is the identity a compaction's hooks are given.
+     *
+     * <p>
+     * The request carries the active span's position — and only that — so a compaction summary call nests in the
+     * trace. The gate runs before the iteration span opens, so that position is the turn span. Attribution stays the
+     * engine's: it merges with caller fields winning, and the turn's {@code react-loop} feature would otherwise book
+     * the summary call. Tracing off, there is no position to carry and the request is unchanged.
      */
     private static ContextRequest contextRequest(ExecutionScope scope, boolean budgetForced) {
-        return ContextRequest.builder().transcriptBuffer(scope.transcriptBuffer)
+        final ContextRequest.Builder request = ContextRequest.builder().transcriptBuffer(scope.transcriptBuffer)
                 .model(scope.getAgent().getMetadata().getModel()).hookRegistry(scope.getHookRegistry())
                 .executionEnvironment(scope.executionEnvironment).executionCancellation(scope.coordinator.getSignal())
-                .caller(ContextCaller.builder().principal(scope.getPrincipal()).build()).budgetForced(budgetForced)
-                .build();
+                .caller(ContextCaller.builder().principal(scope.getPrincipal()).build()).budgetForced(budgetForced);
+        Spans.traceCarrier(Spans.enrichSafely(scope.activeSpan, scope.llmCallMetadata))
+                .ifPresent(request::callMetadata);
+        return request.build();
     }
 
     private LlmResponse invokeGatewayOnce(ExecutionScope scope, ContextView view, int iteration,

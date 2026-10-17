@@ -467,7 +467,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                         // Snapshot the volatile tracing fields once, so one execution traces consistently.
                         .tracer(tracer).tracePayloadPolicy(tracePayloadPolicy).build();
 
-                return runReActLoop(lc);
+                // Every exit of the loop passes here, so one stamp names the fork on every result it can return.
+                return runReActLoop(lc).withExecutionId(executionId);
             } finally {
                 parentCancelReg.remove();
             }
@@ -529,9 +530,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 final IterationTrace trace = IterationTrace.open(lc, iterationCount);
                 try {
                     // AUTO compaction gate. The passthrough engine returns NONE, leaving behavior unchanged; either
-                    // way the engine returns the view this iteration's call is sent. Run inside the ITERATION span
-                    // so a COMPACTION span can nest under it once compaction calls carry metadata.
-                    final ContextView view = applyCompactionGate(lc, iterationCount);
+                    // way the engine returns the view this iteration's call is sent. Run inside the ITERATION span,
+                    // whose position the summary call carries, so its LLM span nests under this iteration.
+                    final ContextView view = applyCompactionGate(lc, iterationCount, trace.metadata);
 
                     // Re-read every iteration so newly activated deferred tools are included. See the method for the
                     // two things it withholds and why.
@@ -719,22 +720,30 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      *            the loop context
      * @param iterationCount
      *            the current iteration count (for logging)
+     * @param iterationMetadata
+     *            this iteration's call metadata; only its span position reaches the summary call
      * @return the view to send (never null)
      * @throws ContextWindowExceededException
      *             if the engine blocks the iteration
      * @throws CancelledExecutionException
      *             if the engine blocks the iteration of a fork that has been cancelled
      */
-    private ContextView applyCompactionGate(LoopContext lc, int iterationCount) {
+    private ContextView applyCompactionGate(LoopContext lc, int iterationCount, LlmCallMetadata iterationMetadata) {
         // Hand the engine this fork's run identity. Without it the compaction engine has only the transcript label to
         // go on, and that label is a SessionId wrapping this very execution id — so a PreCompact hook would be told the
         // fork had a session, and told an execution id as its name. The two are tied together at both entries into
         // execute(): a fresh fork derives the label from the id (forkTranscriptLabel), a resume derives the id back out
         // of the restored label (ExecutionId.of), which is why the round trip has to survive the snapshot.
-        final ContextDecision decision = contextEngine.prepare(ContextRequest.builder()
-                .transcriptBuffer(lc.transcriptBuffer).model(lc.modelConfig).hookRegistry(lc.hookRegistry())
-                .executionEnvironment(lc.executionEnvironment()).executionCancellation(lc.coordinator.getSignal())
-                .caller(ContextCaller.builder().executionId(lc.executionId).build()).build());
+        final ContextRequest.Builder request = ContextRequest.builder().transcriptBuffer(lc.transcriptBuffer)
+                .model(lc.modelConfig).hookRegistry(lc.hookRegistry()).executionEnvironment(lc.executionEnvironment())
+                .executionCancellation(lc.coordinator.getSignal())
+                .caller(ContextCaller.builder().executionId(lc.executionId).build());
+        // Only the span position, never the iteration's attribution: the engine merges with caller fields winning, so
+        // handing it the whole metadata would book the summary call under this fork's feature instead of COMPACTION.
+        // The group key travels too, or the engine would fill it from the transcript label — this execution id
+        // dressed as a session.
+        Spans.traceCarrier(iterationMetadata).ifPresent(request::callMetadata);
+        final ContextDecision decision = contextEngine.prepare(request.build());
         switch (decision.getAction()) {
             case BLOCK :
                 // An interrupted preCompact guard blocks, the compaction is skipped, and a view over the blocking
