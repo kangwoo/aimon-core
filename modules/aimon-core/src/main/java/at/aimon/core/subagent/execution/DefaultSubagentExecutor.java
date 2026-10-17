@@ -92,11 +92,16 @@ import at.aimon.core.llm.invoke.LlmCallGateway;
 import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentToolScope;
 import at.aimon.core.toolinvocation.SingleToolInvoker;
+import at.aimon.core.toolinvocation.ToolCallTracing;
 import at.aimon.core.toolinvocation.ToolInvocationSpec;
 import at.aimon.core.toolinvocation.approval.SideEffectApprovalGate;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.file.ReadTool;
 import at.aimon.core.tools.todo.TodoWriteTool;
+import at.aimon.core.tracing.SpanType;
+import at.aimon.core.tracing.Spans;
+import at.aimon.core.tracing.TracePayloadPolicy;
+import at.aimon.core.tracing.Tracer;
 
 /**
  * Default implementation of {@link SubagentExecutor}.
@@ -193,6 +198,20 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * {@link #parallelToolDispatcher}: set after construction, read on (possibly background) execution threads.
      */
     private volatile CostEstimator costEstimator = CostEstimator.NOOP;
+
+    /**
+     * TRACE-01: tracer that records this fork's ITERATION and TOOL spans under the span its caller's metadata points
+     * at. Defaults to {@link Tracer#noop()}, so tracing is inert until wired via {@link #withTracer(Tracer)}.
+     * {@code volatile} for the same reason as {@link #parallelToolDispatcher}.
+     */
+    private volatile Tracer tracer = Tracer.noop();
+
+    /**
+     * TRACE-02: how much tool-result content this fork's TOOL spans capture. Defaults to
+     * {@link TracePayloadPolicy#summaryOnly()}. {@code volatile} for the same reason as
+     * {@link #parallelToolDispatcher}.
+     */
+    private volatile TracePayloadPolicy tracePayloadPolicy = TracePayloadPolicy.summaryOnly();
 
     /**
      * Creates a new DefaultSubagentExecutor backed by a raw {@link LlmClient}.
@@ -338,6 +357,33 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         return this;
     }
 
+    /**
+     * TRACE-01: injects the tracer that records this fork's ITERATION and TOOL spans. Pass the same instance the main
+     * executor and its {@code TracingLlmClient} use, or the spans land in a different store from their parents. When
+     * unset, the executor keeps {@link Tracer#noop()} and behaviour is unchanged.
+     *
+     * @param tracer
+     *            the tracer (must not be null)
+     * @return this executor
+     */
+    public DefaultSubagentExecutor withTracer(Tracer tracer) {
+        this.tracer = Objects.requireNonNull(tracer, "tracer cannot be null");
+        return this;
+    }
+
+    /**
+     * TRACE-02: injects the policy deciding whether this fork's TOOL spans capture result content. When unset, the
+     * executor keeps {@link TracePayloadPolicy#summaryOnly()}.
+     *
+     * @param policy
+     *            the payload capture policy (must not be null)
+     * @return this executor
+     */
+    public DefaultSubagentExecutor withTracePayloadPolicy(TracePayloadPolicy policy) {
+        this.tracePayloadPolicy = Objects.requireNonNull(policy, "policy cannot be null");
+        return this;
+    }
+
     @Override
     public SubagentExecutionResult execute(SubagentExecutionContext context, SubagentExecutionRequest request) {
         Objects.requireNonNull(context, "Context cannot be null");
@@ -417,7 +463,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                         .stalledIterationGuard(new StalledIterationGuard()).quotaGuard(request.getQuotaGuard())
                         .startTime(Instant.now()).toolContext(toolContext).sessionRegistry(sessionRegistry)
                         .coordinator(coordinator).goal(request.getGoal())
-                        .executionAttributes(request.getExecutionAttributes()).build();
+                        .executionAttributes(request.getExecutionAttributes())
+                        // Snapshot the volatile tracing fields once, so one execution traces consistently.
+                        .tracer(tracer).tracePayloadPolicy(tracePayloadPolicy).build();
 
                 return runReActLoop(lc);
             } finally {
@@ -477,74 +525,76 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 lc.budgetTracker.recordIteration();
                 stream(lc, "\n[iteration " + iterationCount + "]\n");
 
-                // AUTO compaction gate. The passthrough engine returns NONE, leaving behavior unchanged; either way the
-                // engine returns the view this iteration's call is sent.
-                final ContextView view = applyCompactionGate(lc, iterationCount);
-
-                // Re-read every iteration so newly activated deferred tools are included. See the method for the
-                // two things it withholds and why.
-                final List<ToolDefinition> availableTools = availableToolDefinitions(lc, iterationCount);
-
-                // Send message to LLM via the gateway (retry/fallback aware, metadata-carrying parts overload). The
-                // LlmCancellation lets a trip abort the in-flight call; clear the per-call abort lever in a finally
-                // (hygiene) so a trip landing between calls (e.g. while tools run) never fires a completed call's
-                // stale abort.
-                final LlmResponse response;
+                // TRACE-01: this iteration's LLM call and tool calls nest under its ITERATION span.
+                final IterationTrace trace = IterationTrace.open(lc, iterationCount);
                 try {
-                    response = gateway.sendMessage(lc.systemPromptParts, view.getMessages(), availableTools,
-                            lc.modelConfig, lc.effectiveMetadata, llmCancellation);
-                } finally {
-                    llmCancellation.clearAbort();
-                }
+                    // AUTO compaction gate. The passthrough engine returns NONE, leaving behavior unchanged; either
+                    // way the engine returns the view this iteration's call is sent. Run inside the ITERATION span
+                    // so a COMPACTION span can nest under it once compaction calls carry metadata.
+                    final ContextView view = applyCompactionGate(lc, iterationCount);
 
-                accumulatedTokens = accumulatedTokens.add(response.getTokenUsage());
-                lc.budgetTracker.recordTokens(response.getTokenUsage());
+                    // Re-read every iteration so newly activated deferred tools are included. See the method for the
+                    // two things it withholds and why.
+                    final List<ToolDefinition> availableTools = availableToolDefinitions(lc, iterationCount);
 
-                recordCallCost(lc, response);
-
-                // A response cut off at max_tokens is read once, here, and both shapes below branch on it: the same two
-                // answers OrcaAgentExecutor gives a turn (TruncatedResponses).
-                final boolean truncated = TruncatedResponses.isTruncated(response);
-
-                // If no tool uses, we have the final answer
-                if (!response.hasToolUses()) {
-                    if (truncated) {
-                        // Not a clean final answer: surface the partial text with the shared marker and end as
-                        // TRUNCATED, so a parent, a workflow judge or a task record can tell it from a COMPLETED one.
-                        final String flaggedAnswer = response.getTextContent() + TruncatedResponses.TRUNCATION_MARKER;
-                        lc.transcriptBuffer.addMessage(
-                                Message.assistant(flaggedAnswer).withReasoningTraces(response.getReasoningTraces()));
-                        return createTruncatedResult(lc, flaggedAnswer, iterationCount, accumulatedTokens,
-                                response.getTokenUsage());
+                    // Send message to LLM via the gateway (retry/fallback aware, metadata-carrying parts overload). The
+                    // LlmCancellation lets a trip abort the in-flight call; clear the per-call abort lever in a finally
+                    // (hygiene) so a trip landing between calls (e.g. while tools run) never fires a completed call's
+                    // stale abort.
+                    final LlmResponse response;
+                    try {
+                        response = gateway.sendMessage(lc.systemPromptParts, view.getMessages(), availableTools,
+                                lc.modelConfig, trace.metadata, llmCancellation);
+                    } finally {
+                        llmCancellation.clearAbort();
                     }
-                    lc.transcriptBuffer.addMessage(Message.assistant(response.getTextContent())
+
+                    accumulatedTokens = accumulatedTokens.add(response.getTokenUsage());
+                    lc.budgetTracker.recordTokens(response.getTokenUsage());
+
+                    recordCallCost(lc, response);
+
+                    // A response cut off at max_tokens is read once, here, and both shapes below branch on it: the
+                    // same two answers OrcaAgentExecutor gives a turn (TruncatedResponses).
+                    final boolean truncated = TruncatedResponses.isTruncated(response);
+
+                    // If no tool uses, we have the final answer
+                    if (!response.hasToolUses()) {
+                        return finishWithAnswer(lc, response, truncated, iterationCount, accumulatedTokens);
+                    }
+
+                    // Add assistant response with tool uses to context
+                    lc.transcriptBuffer.addMessage(Message.assistant(response.getTextContent(), response.getToolUses())
                             .withReasoningTraces(response.getReasoningTraces()));
-                    return createSuccessResult(lc, response.getTextContent(), iterationCount, accumulatedTokens);
-                }
 
-                // Add assistant response with tool uses to context
-                lc.transcriptBuffer.addMessage(Message.assistant(response.getTextContent(), response.getToolUses())
-                        .withReasoningTraces(response.getReasoningTraces()));
+                    // Stream the assistant's reasoning preamble (the text accompanying tool calls) for progress
+                    // visibility.
+                    final String preamble = response.getTextContent();
+                    if (preamble != null && !preamble.isBlank()) {
+                        stream(lc, preamble + "\n");
+                    }
 
-                // Stream the assistant's reasoning preamble (the text accompanying tool calls) for progress visibility.
-                final String preamble = response.getTextContent();
-                if (preamble != null && !preamble.isBlank()) {
-                    stream(lc, preamble + "\n");
-                }
+                    // Execute tools with PermissionRequest/PreTool/PostTool hooks per tool — unless the response was
+                    // cut off at max_tokens, in which case none of them runs and each is answered with the refusal.
+                    final List<ToolUseResult> toolUseResults = truncated
+                            ? refuseTruncatedToolUses(lc, response, iterationCount)
+                            : executeToolUses(lc, trace.toolContext, response.getToolUses(), iterationCount);
+                    lc.transcriptBuffer.addMessage(Message.toolUseResults(toolUseResults));
 
-                // Execute tools with PermissionRequest/PreTool/PostTool hooks per tool — unless the response was
-                // cut off at max_tokens, in which case none of them runs and each is answered with the refusal.
-                final List<ToolUseResult> toolUseResults = truncated
-                        ? refuseTruncatedToolUses(lc, response, iterationCount)
-                        : executeToolUses(lc, response.getToolUses(), iterationCount);
-                lc.transcriptBuffer.addMessage(Message.toolUseResults(toolUseResults));
-
-                // Iteration-tail cancellation check (a tool or the parent may have tripped the signal), then the stall
-                // guard — in that order, so an iteration a cancellation cut short is never counted as a stall.
-                if (isCancelledOrInterrupted(cancellationSignal)) {
-                    return createInterruptedResult(lc, iterationCount, accumulatedTokens);
-                } else if (lc.stalledIterationGuard.recordToolIteration(toolUseResults, truncated)) {
-                    return createStalledResult(lc, iterationCount, accumulatedTokens);
+                    // Iteration-tail cancellation check (a tool or the parent may have tripped the signal), then
+                    // the stall guard — in that order, so an iteration a cancellation cut short is never counted as
+                    // a stall.
+                    if (isCancelledOrInterrupted(cancellationSignal)) {
+                        trace.interrupted();
+                        return createInterruptedResult(lc, iterationCount, accumulatedTokens);
+                    } else if (lc.stalledIterationGuard.recordToolIteration(toolUseResults, truncated)) {
+                        return createStalledResult(lc, iterationCount, accumulatedTokens);
+                    }
+                } catch (RuntimeException | Error e) {
+                    trace.fail(e, cancellationSignal);
+                    throw e;
+                } finally {
+                    trace.close();
                 }
             }
 
@@ -1003,14 +1053,18 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * Executes multiple tool uses and returns their results.
      *
      * @param lc
-     *            the loop context (carries context, tool context, coordinator, registry, attributes)
+     *            the loop context (carries context, coordinator, registry, attributes)
+     * @param toolContext
+     *            this iteration's tool context — the loop context's, with its metadata pointing at the iteration span
+     *            when tracing is on. Captured by the per-call lambda, so parallel workers receive their parent as data
      * @param toolUses
      *            The list of tool uses to execute
      * @param iterationCount
      *            The current iteration count
      * @return The list of tool use results (never null)
      */
-    private List<ToolUseResult> executeToolUses(LoopContext lc, List<ToolUse> toolUses, int iterationCount) {
+    private List<ToolUseResult> executeToolUses(LoopContext lc, ToolContext toolContext, List<ToolUse> toolUses,
+            int iterationCount) {
         // PAR-04: delegate to the dispatcher. The start/completed callbacks serialize per-tool progress into the output
         // sink (a no-op for foreground; a TaskOutputStore append for background tasks). onCompleted may fire on a
         // shared
@@ -1018,7 +1072,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // the per-session registry (the same source executeSingleTool reads interrupt behaviour from). With the
         // default sequential dispatcher this is 1:1 equivalent to the previous for-loop.
         return parallelToolDispatcher.dispatch(toolUses, lc.sessionRegistry,
-                toolUse -> executeSingleTool(lc, toolUse, iterationCount),
+                toolUse -> executeSingleTool(lc, toolContext, toolUse, iterationCount),
                 toolUse -> stream(lc, "\n→ " + toolUse.getName() + "\n"),
                 (toolUse, result) -> stream(lc, formatStreamedToolResult(toolUse, result)));
     }
@@ -1108,15 +1162,42 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * so
      * a hook exception never discards the real tool result.
      *
+     * <p>
+     * TRACE-01: when {@code toolContext} carries a span parent, the call runs inside a {@code TOOL} span, and the tool
+     * receives a context pointing at that span — so a {@code Task} this fork launches nests its SUBAGENT span under the
+     * call, exactly as on the main agent. Without a parent, no span is created and the context is passed unchanged.
+     *
      * @param lc
      *            the loop context
+     * @param toolContext
+     *            this iteration's tool context
      * @param toolUse
      *            the tool use request from the LLM
      * @param iterationCount
      *            the current iteration count
      * @return The tool use result (never null)
      */
-    private ToolUseResult executeSingleTool(LoopContext lc, ToolUse toolUse, int iterationCount) {
+    private ToolUseResult executeSingleTool(LoopContext lc, ToolContext toolContext, ToolUse toolUse,
+            int iterationCount) {
+        final Tracer.Span toolSpan = ToolCallTracing.open(lc.tracer, toolContext, toolUse, iterationCount,
+                InvokerType.SUBAGENT);
+        if (toolSpan == null) {
+            return invokeTool(lc, toolContext, toolUse, iterationCount);
+        }
+        try {
+            final ToolUseResult result = invokeTool(lc, ToolCallTracing.contextUnder(toolSpan, toolContext), toolUse,
+                    iterationCount);
+            ToolCallTracing.recordOutcome(toolSpan, result, lc.tracePayloadPolicy);
+            return result;
+        } catch (RuntimeException | Error e) {
+            ToolCallTracing.recordFailure(toolSpan, e, toolContext);
+            throw e;
+        } finally {
+            toolSpan.close();
+        }
+    }
+
+    private ToolUseResult invokeTool(LoopContext lc, ToolContext toolContext, ToolUse toolUse, int iterationCount) {
         final Subagent subagent = lc.subagent();
         // Delegate the interrupt-registrar + PermissionRequest/PreTool/execute/PostTool sequence to the shared
         // pipeline. The subagent variance is the SUBAGENT invoker identity and its declared allow-list.
@@ -1124,9 +1205,29 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 .invokerName(subagent.getName()).hookRegistry(lc.hookRegistry())
                 .executionAttributes(lc.executionAttributes).toolRegistry(lc.context.getToolRegistry())
                 .sessionRegistry(lc.sessionRegistry).allowedTools(subagent.getAllowedTools())
-                .coordinator(lc.coordinator).toolContext(lc.toolContext).toolUse(toolUse).iterationCount(iterationCount)
+                .coordinator(lc.coordinator).toolContext(toolContext).toolUse(toolUse).iterationCount(iterationCount)
                 .build();
         return singleToolInvoker.invoke(spec);
+    }
+
+    /**
+     * Ends the fork on a response without tool calls: its text is the final answer. A response cut off at
+     * {@code max_tokens} is not a clean answer — the partial text gets the shared marker and the fork ends as
+     * {@link CompletionReason#TRUNCATED}, so a parent, a workflow judge or a task record can tell it from a
+     * {@link CompletionReason#COMPLETED} one.
+     */
+    private SubagentExecutionResult finishWithAnswer(LoopContext lc, LlmResponse response, boolean truncated,
+            int iterationCount, TokenUsage accumulatedTokens) {
+        if (truncated) {
+            final String flaggedAnswer = response.getTextContent() + TruncatedResponses.TRUNCATION_MARKER;
+            lc.transcriptBuffer
+                    .addMessage(Message.assistant(flaggedAnswer).withReasoningTraces(response.getReasoningTraces()));
+            return createTruncatedResult(lc, flaggedAnswer, iterationCount, accumulatedTokens,
+                    response.getTokenUsage());
+        }
+        lc.transcriptBuffer.addMessage(
+                Message.assistant(response.getTextContent()).withReasoningTraces(response.getReasoningTraces()));
+        return createSuccessResult(lc, response.getTextContent(), iterationCount, accumulatedTokens);
     }
 
     /**
@@ -1367,6 +1468,79 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     }
 
     /**
+     * TRACE-01: one iteration's {@code ITERATION} span, opened under the span the fork's metadata points at (the
+     * SUBAGENT span when the manager launched it), with the LLM call metadata and tool context that point at it.
+     *
+     * <p>
+     * When that metadata names no parent (tracing off, or a caller that never enriched it) there is no span, and
+     * {@link #metadata} and {@link #toolContext} are the loop context's own instances — the tracing-off path
+     * allocates nothing.
+     */
+    private static final class IterationTrace {
+        /** The iteration span, or {@code null} when there is no parent to nest under. */
+        private final Tracer.Span span;
+        private final LlmCallMetadata metadata;
+        private final ToolContext toolContext;
+
+        private IterationTrace(Tracer.Span span, LlmCallMetadata metadata, ToolContext toolContext) {
+            this.span = span;
+            this.metadata = metadata;
+            this.toolContext = toolContext;
+        }
+
+        private static IterationTrace open(LoopContext lc, int iterationCount) {
+            final Tracer.Span span = Spans.startChildOf(lc.tracer, lc.effectiveMetadata, SpanType.ITERATION,
+                    "iteration#" + iterationCount, null).orElse(null);
+            if (span == null) {
+                return new IterationTrace(null, lc.effectiveMetadata, lc.toolContext);
+            }
+            span.setAttribute("iteration", String.valueOf(iterationCount));
+            span.setAttribute("invokerType", InvokerType.SUBAGENT.name());
+            span.setAttribute("subagent", lc.subagent().getName());
+            final LlmCallMetadata metadata = Spans.enrichSafely(span, lc.effectiveMetadata);
+            final ToolContext toolContext = metadata == lc.effectiveMetadata
+                    ? lc.toolContext
+                    : ToolContext.builder().putAll(lc.toolContext.getContext())
+                            .put(ToolContextKeys.LLM_CALL_METADATA_KEY, metadata).build();
+            return new IterationTrace(span, metadata, toolContext);
+        }
+
+        /**
+         * Marks the iteration as unwound by {@code t}. A cancellation ends it interrupted — the fork reports
+         * {@link CompletionReason#INTERRUPTED} for those, so its iteration must not read as an error — anything else,
+         * an {@link Error} included, ends it in error.
+         */
+        private void fail(Throwable t, CancellationSignal cancellationSignal) {
+            if (span == null) {
+                return;
+            }
+            if (t instanceof LlmCallCancelledException || t instanceof CancelledExecutionException
+                    || isCancelledOrInterrupted(cancellationSignal)) {
+                span.interrupted();
+            } else {
+                span.error(t);
+            }
+        }
+
+        /**
+         * Marks the iteration as ended by the tail cancellation check. Set explicitly at that return rather than
+         * inferred from the signal at close, so a cancel landing after an iteration completed normally (a final answer,
+         * a stall stop) does not relabel it.
+         */
+        private void interrupted() {
+            if (span != null) {
+                span.interrupted();
+            }
+        }
+
+        private void close() {
+            if (span != null) {
+                span.close();
+            }
+        }
+    }
+
+    /**
      * Immutable per-execution loop context. Bundles the values shared across the ReAct loop and tool execution so the
      * loop/tool helpers stay within the project's parameter-count budget. Built once per {@link #execute} call.
      */
@@ -1395,6 +1569,10 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         private final InterruptCoordinator coordinator;
         private final Map<String, Object> executionAttributes;
         private final String goal;
+        /** The executor's tracer, snapshotted once per execution. */
+        private final Tracer tracer;
+        /** The executor's payload capture policy, snapshotted once per execution. */
+        private final TracePayloadPolicy tracePayloadPolicy;
 
         private LoopContext(Builder b) {
             this.context = b.context;
@@ -1412,6 +1590,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             this.coordinator = b.coordinator;
             this.executionAttributes = b.executionAttributes;
             this.goal = b.goal;
+            this.tracer = b.tracer;
+            this.tracePayloadPolicy = b.tracePayloadPolicy;
         }
 
         private Subagent subagent() {
@@ -1458,6 +1638,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             private InterruptCoordinator coordinator;
             private Map<String, Object> executionAttributes;
             private String goal;
+            private Tracer tracer;
+            private TracePayloadPolicy tracePayloadPolicy;
 
             private Builder context(SubagentExecutionContext context) {
                 this.context = context;
@@ -1531,6 +1713,16 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
             private Builder goal(String goal) {
                 this.goal = goal;
+                return this;
+            }
+
+            private Builder tracer(Tracer tracer) {
+                this.tracer = tracer;
+                return this;
+            }
+
+            private Builder tracePayloadPolicy(TracePayloadPolicy tracePayloadPolicy) {
+                this.tracePayloadPolicy = tracePayloadPolicy;
                 return this;
             }
 

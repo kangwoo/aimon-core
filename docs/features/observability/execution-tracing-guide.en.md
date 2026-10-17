@@ -36,7 +36,9 @@ TURN  turn:<agent>                       ← one turn = one trace (root span)
 │  └─ TOOL <name>        (input/output/success·failure)
 ├─ ITERATION iteration#2
 │  ├─ LLM  ...
-│  └─ SUBAGENT ...        (nested when a TOOL spawns a subagent)
+│  └─ TOOL Task          (the tool call that launched a subagent)
+│     └─ SUBAGENT subagent:<name>   (goal/result/token total)
+│        └─ ITERATION iteration#1 ─ LLM / TOOL ...   (the subagent's own ReAct step)
 └─ ITERATION iteration#3
    └─ LLM  ...
 ```
@@ -288,7 +290,7 @@ exceptions too.
 | Item | Today |
 |------|------|
 | What is traced | **Agent turns only** (the ReAct loop + subagents). Background subsystems (wiki indexing, peer memory, the dreamer) are deliberately untraced — those calls have no turn span context, so wrapping them would produce no span anyway |
-| Subagents | A subagent's LLM and tool spans currently attach **flat, under the parent iteration**. A dedicated `SUBAGENT` nesting layer is future work |
+| Subagents | Each subagent run gets one `SUBAGENT` span under the `TOOL` span of the tool call that launched it (`Task`, `Workflow`, a fork-mode skill), and the subagent's own `ITERATION` / `LLM` / `TOOL` spans nest under it (recursively, for a subagent inside a subagent). A background subagent's span can start after its parent has closed — parent and child are linked by id. A subagent manager not built by `OrcaAgentExecutorFactory` needs its tracer wired by hand |
 | Input/output capture | By default only the summary is stored (message count/tokens/tool input). `TracePayloadPolicy.full(maxChars)` optionally captures the **tool-result and LLM-response bodies** (truncated at the ceiling). A `SpanRedactor` masks sensitive keys just before storage — [§payload capture](#payload-capture-and-masking-trace-02) |
 | Sampling / a non-blocking worker | Not implemented. Under heavy production traffic, a follow-up `TraceSampler` plus a bounded-queue worker is recommended |
 | External backends | The `aimon-tracing-otlp`/`aimon-tracing-postgres` modules are future work. Today there is the in-memory default plus the `SpanExporter` SPI |

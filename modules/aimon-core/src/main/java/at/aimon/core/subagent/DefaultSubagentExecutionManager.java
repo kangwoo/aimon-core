@@ -1,6 +1,7 @@
 package at.aimon.core.subagent;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -23,6 +24,7 @@ import org.slf4j.LoggerFactory;
 import at.aimon.core.agent.AgentExecutionRequest;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
@@ -40,6 +42,7 @@ import at.aimon.core.agent.tool.permission.AllowedTools;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.event.SubagentStartContext;
 import at.aimon.core.hook.event.SubagentStopContext;
+import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.subagent.behavior.SubagentBehavior;
 import at.aimon.core.subagent.behavior.SubagentBehaviorRegistry;
@@ -69,6 +72,10 @@ import at.aimon.core.subagent.task.TaskResult;
 import at.aimon.core.subagent.task.TaskStopSignal;
 import at.aimon.core.subagent.task.ZombieTaskReaper;
 import at.aimon.core.tools.task.AgentOutputTool;
+import at.aimon.core.tracing.SpanType;
+import at.aimon.core.tracing.Spans;
+import at.aimon.core.tracing.TracePayloadPolicy;
+import at.aimon.core.tracing.Tracer;
 
 /**
  * Handles subagent spawning and execution for CoreAgent.
@@ -158,6 +165,20 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
      */
     private final TaskHeartbeatPublisher heartbeatPublisher;
     private final ZombieTaskReaper zombieReaper;
+
+    /**
+     * TRACE-01: tracer that records one {@code SUBAGENT} span per run, under the span the launch context's parent
+     * metadata points at (the launching tool call's span). Defaults to {@link Tracer#noop()}; wired via
+     * {@link #withTracer(Tracer)}. {@code volatile} because it is set after construction and read on background
+     * workers.
+     */
+    private volatile Tracer tracer = Tracer.noop();
+
+    /**
+     * TRACE-02: whether SUBAGENT spans capture the final answer. Defaults to {@link TracePayloadPolicy#summaryOnly()};
+     * {@code volatile} for the same reason as {@link #tracer}.
+     */
+    private volatile TracePayloadPolicy tracePayloadPolicy = TracePayloadPolicy.summaryOnly();
 
     /**
      * Creates a new DefaultSubagentExecutionManager.
@@ -472,6 +493,40 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
     }
 
     /**
+     * TRACE-01: injects the tracer that records a {@code SUBAGENT} span per run and rotates the metadata the run
+     * receives so its own spans nest under it. Returns {@code this} for fluent configuration; when unset, the manager
+     * keeps {@link Tracer#noop()} and behaviour is unchanged.
+     *
+     * <p>
+     * This sets the manager's tracer only. The {@link SubagentExecutor} the manager was built with records the run's
+     * ITERATION and TOOL spans and needs its own ({@link DefaultSubagentExecutor#withTracer}); pass both the same
+     * instance the main executor uses. {@code OrcaAgentExecutorFactory} does this for the manager it builds; a manager
+     * injected into the executor builder directly is the embedder's to wire. Wiring only this one leaves a run as a
+     * SUBAGENT span with its LLM calls directly under it.
+     *
+     * @param tracer
+     *            the tracer (must not be null)
+     * @return this manager
+     */
+    public DefaultSubagentExecutionManager withTracer(Tracer tracer) {
+        this.tracer = Objects.requireNonNull(tracer, "tracer cannot be null");
+        return this;
+    }
+
+    /**
+     * TRACE-02: injects the policy deciding whether SUBAGENT spans capture the final answer (and how much of the goal
+     * they keep). When unset, the manager keeps {@link TracePayloadPolicy#summaryOnly()}.
+     *
+     * @param policy
+     *            the payload capture policy (must not be null)
+     * @return this manager
+     */
+    public DefaultSubagentExecutionManager withTracePayloadPolicy(TracePayloadPolicy policy) {
+        this.tracePayloadPolicy = Objects.requireNonNull(policy, "policy cannot be null");
+        return this;
+    }
+
+    /**
      * Executes a subagent from agent execution request.
      *
      * <p>
@@ -584,20 +639,50 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         // (executeInBackground) fires SubagentStart itself BEFORE dispatch — so the launch is observed on the launching
         // thread, immediately and in order, rather than late on a pool worker — and calls runResolvedSubagent directly.
         fireSubagentStart(launchContext, taskId, target.name(), goal, description, cancellationSignal);
-        return runResolvedSubagent(launchContext, taskId, target, goal, cancellationSignal, outputSink);
+        return runResolvedSubagent(launchContext, taskId, target, goal, cancellationSignal, outputSink, false);
     }
 
     /**
      * Runs the resolved subagent (or its registered code behavior) and fires the SubagentStop hook. The SubagentStart
      * hook is fired by the caller — {@link #runExecute} for the foreground path, {@link #executeInBackground} for the
      * background path — so a background launch can be observed on the launching thread rather than a pool worker.
+     *
+     * <p>
+     * TRACE-01: the run is wrapped in a {@code SUBAGENT} span under the span the parent metadata points at, and the
+     * metadata handed on is rotated to point at that span — before the executor merges it with its subagent defaults,
+     * so the rotated tags are the ones inherited. Every run passes through here (foreground and background, ReAct and
+     * code behavior, Task, Workflow and fork-mode skills), which is why the span opens here: a run whose subagent
+     * cannot be resolved or is refused by the caller ceiling still leaves an ERROR span. The span closes before the
+     * SubagentStop hook fires. A background run opens it on the worker, after the launching tool call's span has
+     * closed; it still nests under that span by id.
+     *
+     * @param background
+     *            whether this run is a background task (recorded on the span)
      */
     private SubagentExecutionResult runResolvedSubagent(SubagentLaunchContext launchContext, String taskId,
-            SubagentTarget target, String goal, CancellationSignal cancellationSignal, SubagentOutputSink outputSink) {
+            SubagentTarget target, String goal, CancellationSignal cancellationSignal, SubagentOutputSink outputSink,
+            boolean background) {
         final Instant startTime = Instant.now();
         final String subagentName = target.name();
 
-        SubagentExecutionResult result;
+        // Snapshot the volatile tracing fields once so the span's inputs and outputs follow one policy.
+        final TracePayloadPolicy payloadPolicy = tracePayloadPolicy;
+        final LlmCallMetadata parentMetadata = launchContext.getParentLlmCallMetadata();
+        final Tracer.Span subagentSpan = Spans.startChildOfLazily(tracer, parentMetadata, SpanType.SUBAGENT,
+                "subagent:" + subagentName, () -> subagentSpanInputs(subagentName, taskId, goal, payloadPolicy))
+                .orElse(null);
+        final LlmCallMetadata forwardedMetadata = subagentSpan != null
+                ? Spans.enrichSafely(subagentSpan, parentMetadata)
+                : parentMetadata;
+        if (subagentSpan != null) {
+            subagentSpan.setAttribute("invokerType", InvokerType.SUBAGENT.name());
+            subagentSpan.setAttribute("subagent", subagentName);
+            subagentSpan.setAttribute("taskId", taskId);
+            subagentSpan.setAttribute("background", String.valueOf(background));
+            subagentSpan.setAttribute("resumed", String.valueOf(launchContext.getPreviousSnapshot().isPresent()));
+        }
+
+        SubagentExecutionResult result = null;
         try {
             // Resolve the subagent: an inline (code-defined) subagent is used as-is; otherwise look it up by name in
             // the launch context's registry. The lookup stays inside this try so an unknown name still yields a failure
@@ -640,8 +725,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             // spawned this run apply to it: the fork mints its own session id, under which nothing was ever
             // granted, and it can never prompt for one of its own.
             final SubagentExecutionRequest request = SubagentExecutionRequest.builder().taskId(taskId).goal(goal)
-                    .executionAttributes(launchContext.getExecutionAttributes())
-                    .llmCallMetadata(launchContext.getParentLlmCallMetadata())
+                    .executionAttributes(launchContext.getExecutionAttributes()).llmCallMetadata(forwardedMetadata)
                     .principal(launchContext.getPrincipal().orElse(null))
                     .invokingSessionId(launchContext.getInvokingSessionId().orElse(null))
                     .previousSnapshot(launchContext.getPreviousSnapshot().orElse(null))
@@ -653,6 +737,9 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             // the unchanged ReAct path — origin-agnostic execution among data subagents is preserved.
             // SubagentStart/Stop hooks and this try/catch error shaping apply to both branches.
             final Optional<SubagentBehavior> behavior = subagentBehaviorRegistry.getBehavior(subagentName);
+            if (subagentSpan != null) {
+                subagentSpan.setAttribute("codeBehavior", String.valueOf(behavior.isPresent()));
+            }
             result = behavior.isPresent()
                     ? subagentBehaviorRunner.run(behavior.get(), executionContext, request)
                     : subagentExecutor.execute(executionContext, request);
@@ -660,10 +747,88 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             result = createFailureResult(startTime, e.getMessage());
         } catch (Exception e) {
             result = createFailureResult(startTime, "Subagent execution error: " + e.getMessage());
+        } finally {
+            // A real finally: an Error escaping the catches above still closes the span.
+            if (subagentSpan != null) {
+                recordSubagentOutcome(subagentSpan, result, payloadPolicy);
+                subagentSpan.close();
+            }
         }
 
         fireSubagentStop(launchContext, taskId, subagentName, result, cancellationSignal);
         return result;
+    }
+
+    /**
+     * Builds the SUBAGENT span inputs. {@code goalChars} is always recorded; the (truncated) goal text only when
+     * {@code policy} captures content — the same rule the final answer follows, so a summary-only deployment keeps
+     * delegated prompts out of the trace store.
+     */
+    private static Map<String, Object> subagentSpanInputs(String subagentName, String taskId, String goal,
+            TracePayloadPolicy policy) {
+        final Map<String, Object> inputs = new LinkedHashMap<>();
+        inputs.put("subagent", subagentName);
+        inputs.put("taskId", taskId);
+        inputs.put("goalChars", goal == null ? 0 : goal.length());
+        if (policy.capturesContent() && goal != null) {
+            inputs.put("goal", policy.truncate(goal));
+        }
+        return inputs;
+    }
+
+    /**
+     * Records the SUBAGENT span outcome: success, status, completion reason, iterations and final-answer size always;
+     * the (truncated) final answer only when {@code policy} captures content; and the run's accumulated token usage,
+     * which its executor already summed, so the child LLM spans are not added up again.
+     *
+     * <p>
+     * The status follows the rule the TURN span follows — only a genuine error is ERROR. A cancelled run is
+     * INTERRUPTED; a run a budget, the iteration cap or a quota stopped is OK, with the reason in the outputs.
+     *
+     * @param result
+     *            the run's result, or {@code null} when an {@link Error} escaped before one was produced
+     */
+    private static void recordSubagentOutcome(Tracer.Span span, SubagentExecutionResult result,
+            TracePayloadPolicy policy) {
+        if (result == null) {
+            span.error("Subagent execution did not complete");
+            return;
+        }
+        final String finalAnswer = result.getFinalAnswer();
+        final Map<String, Object> outputs = new LinkedHashMap<>();
+        outputs.put("success", result.isSuccess());
+        outputs.put("status", result.getStatus());
+        outputs.put("completionReason", String.valueOf(result.getCompletionReason()));
+        outputs.put("iterations", result.getIterationCount());
+        outputs.put("finalAnswerChars", finalAnswer == null ? 0 : finalAnswer.length());
+        if (policy.capturesContent() && finalAnswer != null) {
+            outputs.put("finalAnswer", policy.truncate(finalAnswer));
+        }
+        if (!result.isSuccess() && result.getErrorMessage() != null) {
+            outputs.put("errorMessage", result.getErrorMessage());
+        }
+        span.setOutputs(outputs);
+        if (result.getMetadata() != null && result.getMetadata().hasTokenUsage()) {
+            span.setTokenUsage(result.getMetadata().getTokenUsage());
+        }
+        final CompletionReason reason = result.getCompletionReason();
+        if (reason == CompletionReason.INTERRUPTED) {
+            span.interrupted();
+        } else if (!result.isSuccess() && !isBoundedStop(reason)) {
+            span.error(result.getErrorMessage());
+        }
+    }
+
+    /**
+     * Returns whether {@code reason} is a stop a configured bound imposed rather than a failure: the run did what it
+     * was allowed to, and the outputs say which bound ended it.
+     */
+    private static boolean isBoundedStop(CompletionReason reason) {
+        return switch (reason) {
+            case MAX_ITERATIONS, TOKEN_BUDGET_EXCEEDED, COST_BUDGET_EXCEEDED, WALL_CLOCK_EXCEEDED, QUOTA_EXCEEDED ->
+                true;
+            default -> false;
+        };
     }
 
     /**
@@ -859,7 +1024,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
                 taskStore.transition(taskId, BackgroundTaskState.RUNNING);
                 // Background tasks are always dispatched by registered name. SubagentStart already fired above.
                 final SubagentExecutionResult result = runResolvedSubagent(launchContext, taskId,
-                        SubagentTarget.byName(subagentName), goal, handle.getSignal(), outputSink);
+                        SubagentTarget.byName(subagentName), goal, handle.getSignal(), outputSink, true);
                 // Persist the finished transcript so Task(resume=<taskId>) can continue it. Background-only —
                 // a foreground run's taskId is never surfaced, so its snapshot would be unreachable.
                 saveSessionSnapshot(launchContext, taskId, subagentName, result);
