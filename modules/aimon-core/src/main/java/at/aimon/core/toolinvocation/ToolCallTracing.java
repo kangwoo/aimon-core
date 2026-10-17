@@ -6,6 +6,9 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.interrupt.CancellationSignal;
+import at.aimon.core.agent.interrupt.CancelledExecutionException;
+import at.aimon.core.agent.tool.InterruptToolKeys;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.ToolUse;
@@ -53,12 +56,15 @@ public final class ToolCallTracing {
     public static Tracer.Span open(Tracer tracer, ToolContext toolContext, ToolUse toolUse, int iterationCount,
             InvokerType invokerType) {
         Objects.requireNonNull(tracer, "tracer cannot be null");
+        Objects.requireNonNull(toolContext, "toolContext cannot be null");
+        Objects.requireNonNull(toolUse, "toolUse cannot be null");
         Objects.requireNonNull(invokerType, "invokerType cannot be null");
         final Optional<SpanContext> parent = toolContext.get(ToolContextKeys.LLM_CALL_METADATA_KEY)
                 .flatMap(SpanContext::readFrom);
         if (parent.isEmpty()) {
             return null;
         }
+        // ToolUse guarantees a non-null id and input, so Map.of cannot throw here.
         final Tracer.Span span = Spans.startChildSafely(tracer, parent.get(), SpanType.TOOL, toolUse.getName(),
                 Map.of("toolUseId", toolUse.getId(), "input", toolUse.getInput()));
         span.setAttribute("iteration", String.valueOf(iterationCount));
@@ -113,6 +119,29 @@ public final class ToolCallTracing {
         toolSpan.setOutputs(outputs);
         if (result.isError()) {
             toolSpan.error(content);
+        }
+    }
+
+    /**
+     * Records a tool call that threw instead of returning a result. A cancellation — a
+     * {@link CancelledExecutionException}, or any throwable while the context's
+     * {@link InterruptToolKeys#CANCELLATION_SIGNAL} is tripped — ends the span interrupted, matching the ITERATION it
+     * belongs to; anything else, an {@link Error} included, ends it in error.
+     *
+     * @param toolSpan
+     *            the tool call's span (must not be null)
+     * @param failure
+     *            what the call threw (must not be null)
+     * @param toolContext
+     *            the context the tool received (must not be null)
+     */
+    public static void recordFailure(Tracer.Span toolSpan, Throwable failure, ToolContext toolContext) {
+        final boolean cancelled = failure instanceof CancelledExecutionException || toolContext
+                .get(InterruptToolKeys.CANCELLATION_SIGNAL).map(CancellationSignal::isCancelled).orElse(false);
+        if (cancelled) {
+            toolSpan.interrupted();
+        } else {
+            toolSpan.error(failure);
         }
     }
 }

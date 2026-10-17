@@ -668,8 +668,9 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         // Snapshot the volatile tracing fields once so the span's inputs and outputs follow one policy.
         final TracePayloadPolicy payloadPolicy = tracePayloadPolicy;
         final LlmCallMetadata parentMetadata = launchContext.getParentLlmCallMetadata();
-        final Tracer.Span subagentSpan = Spans.startChildOf(tracer, parentMetadata, SpanType.SUBAGENT,
-                "subagent:" + subagentName, subagentSpanInputs(subagentName, taskId, goal, payloadPolicy)).orElse(null);
+        final Tracer.Span subagentSpan = Spans.startChildOfLazily(tracer, parentMetadata, SpanType.SUBAGENT,
+                "subagent:" + subagentName, () -> subagentSpanInputs(subagentName, taskId, goal, payloadPolicy))
+                .orElse(null);
         final LlmCallMetadata forwardedMetadata = subagentSpan != null
                 ? Spans.enrichSafely(subagentSpan, parentMetadata)
                 : parentMetadata;
@@ -759,9 +760,9 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
     }
 
     /**
-     * Builds the SUBAGENT span inputs. The goal is recorded in either policy mode — the launching tool call's span
-     * already holds it in full as its input — but truncated to the policy cap, since a workflow fan-out repeats one
-     * goal across many runs; {@code goalChars} keeps its full length.
+     * Builds the SUBAGENT span inputs. {@code goalChars} is always recorded; the (truncated) goal text only when
+     * {@code policy} captures content — the same rule the final answer follows, so a summary-only deployment keeps
+     * delegated prompts out of the trace store.
      */
     private static Map<String, Object> subagentSpanInputs(String subagentName, String taskId, String goal,
             TracePayloadPolicy policy) {
@@ -769,7 +770,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         inputs.put("subagent", subagentName);
         inputs.put("taskId", taskId);
         inputs.put("goalChars", goal == null ? 0 : goal.length());
-        if (goal != null) {
+        if (policy.capturesContent() && goal != null) {
             inputs.put("goal", policy.truncate(goal));
         }
         return inputs;

@@ -585,15 +585,16 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                     // the stall guard — in that order, so an iteration a cancellation cut short is never counted as
                     // a stall.
                     if (isCancelledOrInterrupted(cancellationSignal)) {
+                        trace.interrupted();
                         return createInterruptedResult(lc, iterationCount, accumulatedTokens);
                     } else if (lc.stalledIterationGuard.recordToolIteration(toolUseResults, truncated)) {
                         return createStalledResult(lc, iterationCount, accumulatedTokens);
                     }
-                } catch (RuntimeException e) {
+                } catch (RuntimeException | Error e) {
                     trace.fail(e, cancellationSignal);
                     throw e;
                 } finally {
-                    trace.close(cancellationSignal);
+                    trace.close();
                 }
             }
 
@@ -1188,8 +1189,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                     iterationCount);
             ToolCallTracing.recordOutcome(toolSpan, result, lc.tracePayloadPolicy);
             return result;
-        } catch (RuntimeException e) {
-            toolSpan.error(e);
+        } catch (RuntimeException | Error e) {
+            ToolCallTracing.recordFailure(toolSpan, e, toolContext);
             throw e;
         } finally {
             toolSpan.close();
@@ -1480,7 +1481,6 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         private final Tracer.Span span;
         private final LlmCallMetadata metadata;
         private final ToolContext toolContext;
-        private boolean failed;
 
         private IterationTrace(Tracer.Span span, LlmCallMetadata metadata, ToolContext toolContext) {
             this.span = span;
@@ -1506,32 +1506,37 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         }
 
         /**
-         * Marks the iteration as unwound by {@code e}. A cancellation ends it interrupted — the fork reports
-         * {@link CompletionReason#INTERRUPTED} for those, so its iteration must not read as an error — anything else
-         * ends it in error.
+         * Marks the iteration as unwound by {@code t}. A cancellation ends it interrupted — the fork reports
+         * {@link CompletionReason#INTERRUPTED} for those, so its iteration must not read as an error — anything else,
+         * an {@link Error} included, ends it in error.
          */
-        private void fail(RuntimeException e, CancellationSignal cancellationSignal) {
-            failed = true;
+        private void fail(Throwable t, CancellationSignal cancellationSignal) {
             if (span == null) {
                 return;
             }
-            if (e instanceof LlmCallCancelledException || e instanceof CancelledExecutionException
-                    || cancellationSignal.isCancelled()) {
+            if (t instanceof LlmCallCancelledException || t instanceof CancelledExecutionException
+                    || isCancelledOrInterrupted(cancellationSignal)) {
                 span.interrupted();
             } else {
-                span.error(e);
+                span.error(t);
             }
         }
 
-        /** Closes the span; an iteration that returned because the fork was cancelled ends interrupted, not OK. */
-        private void close(CancellationSignal cancellationSignal) {
-            if (span == null) {
-                return;
-            }
-            if (!failed && cancellationSignal.isCancelled()) {
+        /**
+         * Marks the iteration as ended by the tail cancellation check. Set explicitly at that return rather than
+         * inferred from the signal at close, so a cancel landing after an iteration completed normally (a final answer,
+         * a stall stop) does not relabel it.
+         */
+        private void interrupted() {
+            if (span != null) {
                 span.interrupted();
             }
-            span.close();
+        }
+
+        private void close() {
+            if (span != null) {
+                span.close();
+            }
         }
     }
 

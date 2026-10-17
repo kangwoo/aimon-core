@@ -1,6 +1,7 @@
 package at.aimon.core.subagent;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -36,6 +37,7 @@ import at.aimon.core.subagent.behavior.InMemorySubagentBehaviorRegistry;
 import at.aimon.core.subagent.execution.DefaultSubagentExecutor;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.tools.task.TaskTool;
+import at.aimon.core.tracing.SpanContext;
 import at.aimon.core.tracing.SpanExporter;
 import at.aimon.core.tracing.SpanStatus;
 import at.aimon.core.tracing.SpanType;
@@ -100,8 +102,9 @@ class DefaultSubagentExecutionManagerTracingTest {
                 .containsEntry("subagent", "explorer").containsEntry("taskId", "task-1")
                 .containsEntry("background", "false").containsEntry("resumed", "false")
                 .containsEntry("codeBehavior", "false");
-        assertThat(inputs(subagent)).containsEntry("goal", "find the bug").containsEntry("goalChars", 12)
-                .containsEntry("taskId", "task-1");
+        // Summary-only (the default) records the goal's size, never its text.
+        assertThat(inputs(subagent)).containsEntry("goalChars", 12).containsEntry("taskId", "task-1")
+                .doesNotContainKey("goal");
         assertThat(outputs(subagent)).containsEntry("success", true).containsEntry("iterations", 1)
                 .containsEntry("completionReason", "COMPLETED").containsEntry("finalAnswerChars", 8)
                 .doesNotContainKey("finalAnswer");
@@ -113,14 +116,16 @@ class DefaultSubagentExecutionManagerTracingTest {
     }
 
     @Test
-    @DisplayName("a FULL payload policy also records the final answer")
+    @DisplayName("a FULL payload policy also records the goal and the final answer")
     void fullPolicyCapturesFinalAnswer() {
         llm.responses.add(LlmResponse.text("found it"));
 
         manager().withTracePayloadPolicy(TracePayloadPolicy.full()).execute(launch(seededMetadata), "task-1",
                 "explorer", "find the bug", "search");
 
-        assertThat(outputs(only(SpanType.SUBAGENT))).containsEntry("finalAnswer", "found it");
+        final TraceSpan subagent = only(SpanType.SUBAGENT);
+        assertThat(inputs(subagent)).containsEntry("goal", "find the bug");
+        assertThat(outputs(subagent)).containsEntry("finalAnswer", "found it");
     }
 
     @Test
@@ -250,6 +255,46 @@ class DefaultSubagentExecutionManagerTracingTest {
                 .filter(s -> s.getParentSpanId().orElse("").equals(inner.getSpanId())).findFirst().orElseThrow();
         assertThat(spansOf(SpanType.LLM))
                 .anySatisfy(s -> assertThat(s.getParentSpanId()).contains(innerIteration.getSpanId()));
+    }
+
+    @Test
+    @DisplayName("a throwing tracer never breaks the run (fail-safe at the SUBAGENT site)")
+    void throwingTracerIsFailSafe() {
+        llm.responses.add(LlmResponse.text("found it"));
+        final Tracer throwing = new Tracer() {
+            @Override
+            public Span startRoot(String sessionId, SpanType type, String name, Map<String, Object> inputs) {
+                throw new IllegalStateException("tracer down");
+            }
+
+            @Override
+            public Span startChild(SpanContext parent, SpanType type, String name, Map<String, Object> inputs) {
+                throw new IllegalStateException("tracer down");
+            }
+        };
+        final DefaultSubagentExecutor executor = new DefaultSubagentExecutor(llm, new DefaultToolExecutionManager(),
+                new DefaultHookExecutionManager()).withTracer(throwing);
+
+        final SubagentExecutionResult result = new DefaultSubagentExecutionManager(executor, bgPool, null, behaviors,
+                llm).withTracer(throwing).execute(launch(seededMetadata), "task-1", "explorer", "go", "d");
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getFinalAnswer()).isEqualTo("found it");
+    }
+
+    @Test
+    @DisplayName("an Error escaping the run still closes the SUBAGENT span, as ERROR")
+    void errorEscapingRunClosesSpanAsError() {
+        behaviors.register("explorer", (ctx, req, support) -> {
+            throw new AssertionError("boom");
+        });
+
+        assertThatThrownBy(() -> manager().execute(launch(seededMetadata), "task-1", "explorer", "go", "d"))
+                .isInstanceOf(AssertionError.class);
+
+        final TraceSpan subagent = only(SpanType.SUBAGENT);
+        assertThat(subagent.getStatus()).isEqualTo(SpanStatus.ERROR);
+        assertThat(subagent.getEndTime()).isPresent();
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@ package at.aimon.core.tracing;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,6 +50,31 @@ public final class Spans {
         Objects.requireNonNull(tracer, "tracer cannot be null");
         Objects.requireNonNull(parentCarrier, "parentCarrier cannot be null");
         return SpanContext.readFrom(parentCarrier).map(parent -> startChildSafely(tracer, parent, type, name, inputs));
+    }
+
+    /**
+     * Like {@link #startChildOf(Tracer, LlmCallMetadata, SpanType, String, Map)}, but builds the input snapshot only
+     * once a parent is found — so a caller whose inputs cost something to assemble pays nothing when tracing is off.
+     *
+     * @param tracer
+     *            the tracer (must not be null)
+     * @param parentCarrier
+     *            the metadata carrying the parent span in its reserved tags (must not be null)
+     * @param type
+     *            the span type (must not be null)
+     * @param name
+     *            the span name (must not be null)
+     * @param inputs
+     *            supplies the input snapshot (must not be null; may supply null); called at most once
+     * @return the started span, or empty when {@code parentCarrier} names no parent
+     */
+    public static Optional<Tracer.Span> startChildOfLazily(Tracer tracer, LlmCallMetadata parentCarrier, SpanType type,
+            String name, Supplier<Map<String, Object>> inputs) {
+        Objects.requireNonNull(tracer, "tracer cannot be null");
+        Objects.requireNonNull(parentCarrier, "parentCarrier cannot be null");
+        Objects.requireNonNull(inputs, "inputs cannot be null");
+        return SpanContext.readFrom(parentCarrier)
+                .map(parent -> startChildSafely(tracer, parent, type, name, inputs.get()));
     }
 
     /**

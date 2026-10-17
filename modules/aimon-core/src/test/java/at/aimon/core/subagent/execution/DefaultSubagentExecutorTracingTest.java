@@ -13,6 +13,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.interrupt.CancellationSignal;
+import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
+import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.prompt.SystemPromptParts;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.ConcurrencyBehavior;
@@ -252,6 +255,37 @@ class DefaultSubagentExecutorTracingTest {
         assertThat(iterationNamed("iteration#1").getStatus()).isEqualTo(SpanStatus.INTERRUPTED);
     }
 
+    @Test
+    @DisplayName("a cancel landing after an iteration produced its final answer does not relabel it INTERRUPTED")
+    void lateCancelKeepsCompletedIterationOk() {
+        final DefaultInterruptCoordinator parent = new DefaultInterruptCoordinator();
+        // The cancel arrives while the final answer is in flight: the iteration still completes normally.
+        llm.onCall = () -> parent.requestInterrupt(InterruptReason.USER_SIGINT);
+        llm.responses.add(LlmResponse.text("done"));
+
+        final SubagentExecutionResult result = tracedExecutor()
+                .execute(context(new DefaultToolRegistry(), parent.getSignal()), request(seededMetadata));
+
+        assertThat(result.getFinalAnswer()).isEqualTo("done");
+        assertThat(iterationNamed("iteration#1").getStatus()).isEqualTo(SpanStatus.OK);
+    }
+
+    @Test
+    @DisplayName("an iteration ended by the tail cancellation check is INTERRUPTED")
+    void tailCancelEndsIterationInterrupted() {
+        final DefaultInterruptCoordinator parent = new DefaultInterruptCoordinator();
+        final DefaultToolRegistry registry = new DefaultToolRegistry();
+        registry.register(new CapturingTool("Probe", false));
+        llm.onCall = () -> parent.requestInterrupt(InterruptReason.USER_SIGINT);
+        llm.responses.add(LlmResponse.of("", List.of(ToolUse.of("p1", "Probe", Map.of()))));
+
+        final SubagentExecutionResult result = tracedExecutor().execute(context(registry, parent.getSignal()),
+                request(seededMetadata));
+
+        assertThat(result.getCompletionReason()).hasToString("INTERRUPTED");
+        assertThat(iterationNamed("iteration#1").getStatus()).isEqualTo(SpanStatus.INTERRUPTED);
+    }
+
     // ── helpers ────────────────────────────────────────────────────────────────
 
     private DefaultSubagentExecutor tracedExecutor() {
@@ -272,11 +306,19 @@ class DefaultSubagentExecutorTracingTest {
     }
 
     private static SubagentExecutionContext context(DefaultToolRegistry registry) {
+        return contextBuilder(registry).build();
+    }
+
+    private static SubagentExecutionContext context(DefaultToolRegistry registry, CancellationSignal parentSignal) {
+        return contextBuilder(registry).parentCancellationSignal(parentSignal).build();
+    }
+
+    private static SubagentExecutionContext.Builder contextBuilder(DefaultToolRegistry registry) {
         final Subagent subagent = Subagent.of("explorer",
                 SubagentMetadata.builder().description("d").maxIterations(5).build(), SubagentContent.of("explore"));
         return SubagentExecutionContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test-1")).subagent(subagent)
                 .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(registry)
-                .hookRegistry(new DefaultHookRegistry()).build();
+                .hookRegistry(new DefaultHookRegistry());
     }
 
     private static SubagentExecutionRequest request(LlmCallMetadata metadata) {
@@ -310,12 +352,16 @@ class DefaultSubagentExecutorTracingTest {
         private final List<LlmResponse> responses = Collections.synchronizedList(new ArrayList<>());
         private final List<LlmCallMetadata> metadata = new CopyOnWriteArrayList<>();
         private RuntimeException failure;
+        /** Runs inside every call, before it answers. */
+        private Runnable onCall = () -> {
+        };
 
         @Override
         public LlmResponse sendMessage(SystemPromptParts systemPromptParts, List<Message> messages,
                 List<ToolDefinition> tools, LlmModel modelConfig, LlmCallMetadata callMetadata,
                 LlmCancellation cancellation) {
             metadata.add(callMetadata);
+            onCall.run();
             if (failure != null) {
                 throw failure;
             }

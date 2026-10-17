@@ -164,7 +164,6 @@ import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.file.ReadTool;
 import at.aimon.core.tools.session.SessionHistoryTool;
 import at.aimon.core.tools.todo.TodoWriteTool;
-import at.aimon.core.tracing.SpanContext;
 import at.aimon.core.tracing.SpanType;
 import at.aimon.core.tracing.Spans;
 import at.aimon.core.tracing.TracePayloadPolicy;
@@ -1775,8 +1774,8 @@ public class OrcaAgentExecutor
 
                 // TRACE-01: open an ITERATION span; this iteration's LLM and tool spans nest under it. The active
                 // span is restored and the iteration span closed in the finally below (covers every exit path).
-                final Tracer.Span iterationSpan = safeStartChild(scope.activeSpan.context(), SpanType.ITERATION,
-                        "iteration#" + iterationCount, null);
+                final Tracer.Span iterationSpan = Spans.startChildSafely(tracer, scope.activeSpan.context(),
+                        SpanType.ITERATION, "iteration#" + iterationCount, null);
                 final Tracer.Span parentActiveSpan = scope.activeSpan;
                 scope.activeSpan = iterationSpan;
                 // Tag every re-entry (iteration 2+) with why the loop continued. The first iteration is the
@@ -2554,20 +2553,12 @@ public class OrcaAgentExecutor
                     coordinator, sessionRegistry);
             ToolCallTracing.recordOutcome(toolSpan, result, tracePayloadPolicy);
             return result;
-        } catch (RuntimeException e) {
-            toolSpan.error(e);
+        } catch (RuntimeException | Error e) {
+            ToolCallTracing.recordFailure(toolSpan, e, toolContext);
             throw e;
         } finally {
             toolSpan.close();
         }
-    }
-
-    /**
-     * Fail-safe span start: a misbehaving {@link Tracer} that throws from {@code startChild} falls back to a no-op span
-     * so tracing can never break agent execution (mirrors the turn-span guard in {@link #execute}).
-     */
-    private Tracer.Span safeStartChild(SpanContext parent, SpanType type, String name, Map<String, Object> inputs) {
-        return Spans.startChildSafely(tracer, parent, type, name, inputs);
     }
 
     /**

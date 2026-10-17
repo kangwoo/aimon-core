@@ -93,7 +93,7 @@ public static Tracer.Span startChildSafely(Tracer tracer, SpanContext parent, Sp
 public static LlmCallMetadata enrichSafely(Tracer.Span span, LlmCallMetadata base);
 ```
 
-`OrcaAgentExecutor.safeStartChild`(`:2577`) 는 `Spans.startChildSafely(tracer, …)` 위임으로 바뀐다(동작 동일).
+`OrcaAgentExecutor.safeStartChild`(`:2577`) 는 없어지고 그 호출부가 `Spans.startChildSafely(tracer, …)` 를 직접 부른다(동작 동일).
 
 ### 3.2 `OrcaAgentExecutor` — R1 (TOOL span 컨텍스트 회전)
 
@@ -359,10 +359,10 @@ TURN turn:ops-bot
 ### 8.1 `runReActLoop` 는 iteration 본문을 직접 감싸지 않는다 — `IterationTrace`
 
 §3.4 의 1 ~ 5 단계를 루프 본문에 그대로 쓰면 `runReActLoop` 가 checkstyle `MethodLength`(150줄)를 넘는다(182줄).
-그래서 iteration span 의 수명을 `DefaultSubagentExecutor` 안의 private 홀더 `IterationTrace`(`:1478`)로 옮겼다 —
+그래서 iteration span 의 수명을 `DefaultSubagentExecutor` 안의 private 홀더 `IterationTrace`(`:1479`)로 옮겼다 —
 `open(lc, n)` 이 span 을 열고 iteration 의 metadata 와 도구 컨텍스트를 만들고, 루프는
-`try { … } catch (RuntimeException e) { trace.fail(e, signal); throw e; } finally { trace.close(signal); }` 만 쓴다.
-같은 이유로 도구 호출이 없는 응답의 결말(정상 답 / `TRUNCATED`)을 `finishWithAnswer`(`:1218`)로 뺐다 — 동작은 그대로다.
+`try { … } catch (RuntimeException | Error e) { trace.fail(e, signal); throw e; } finally { trace.close(); }` 만 쓴다.
+같은 이유로 도구 호출이 없는 응답의 결말(정상 답 / `TRUNCATED`)을 `finishWithAnswer`(`:1219`)로 뺐다 — 동작은 그대로다.
 
 이 때문에 §3.4 · §5 의 "트레이싱 오프면 할당 0" 은 **글자 그대로는** 틀렸다. 부모 태그가 없으면 metadata 와 도구
 컨텍스트는 여전히 원본 인스턴스 그대로지만(재구성 없음), iteration 마다 필드 세 개짜리 홀더 객체 하나는 생긴다.
@@ -372,16 +372,25 @@ TURN turn:ops-bot
 본문 §3.4 의 5 단계는 예외를 모두 `span.error(e)` 로 표시했다. 그러면 `LlmCallCancelledException` 과
 `CancelledExecutionException` — 바깥 catch 가 `INTERRUPTED` 결과로 바꾸는 두 예외 — 이 `ERROR` iteration 을
 남겨, `INTERRUPTED` 인 SUBAGENT 아래에 `ERROR` 자식이 보인다(리뷰 지적). 구현은 둘 중 하나이거나 실행의 신호가 이미
-울렸으면 `interrupted()`, 그 밖이면 `error(e)` 로 둔다. 또 예외 없이 끝났더라도 신호가 울린 iteration(꼬리의 취소 검사로
-돌아간 경우)은 `interrupted()` 로 닫힌다.
+울렸으면(스레드 interrupt 포함) `interrupted()`, 그 밖이면 — `Error` 포함 — `error(e)` 로 둔다. 예외 없이 끝난
+iteration 은 **꼬리의 취소 검사로 돌아간 경우에만** `interrupted()` 로 닫힌다. 그 반환 지점에서 `trace.interrupted()` 를
+명시적으로 부르고, close 시점에 신호를 다시 읽어 추론하지 않는다 — 최종 답이나 stall 정지로 정상 종료한 뒤에 늦게 도착한
+취소가 그 iteration 을 `INTERRUPTED` 로 바꿔 적지 않게 하려는 것이다.
+
+TOOL span 도 같은 규칙이다. 도구 호출이 결과 대신 예외를 던지면 `ToolCallTracing.recordFailure` 가
+`CancelledExecutionException` 이거나 도구 컨텍스트의 `InterruptToolKeys.CANCELLATION_SIGNAL` 이 울린 상태면
+`interrupted()`, 그 밖이면(`Error` 포함) `error(e)` 로 닫는다. 두 실행기(Orca · 서브에이전트)가 이 헬퍼를 공유한다.
 
 ### 8.3 SUBAGENT span — 입력, 상태, `finally`
 
 - **`description` 은 입력에 없다.** §3.5 는 `description(있으면)` 을 입력에 넣었지만 `runResolvedSubagent` 는 그 값을
   받지 않고, 받게 하면 파라미터가 8개가 되어 checkstyle `ParameterNumber`(7)에 걸린다. 늘린 파라미터는 `background`
   하나뿐이다. `description` 은 부모 `Task` TOOL span 의 `input` 에 이미 원문으로 있다.
-- **goal 은 정책 상한으로 자른다(Q1).** 두 모드 모두에서 기록하는 것은 본문대로지만 `policy.truncate(goal)` 을 거친다 —
-  워크플로 fan-out 이 같은 goal 을 N 번 반복하기 때문이다(리뷰 지적). `goalChars` 는 자르기 전 길이다.
+- **goal 원문은 정책이 내용을 캡처할 때만 싣는다(Q1).** 본문 잠정안(두 모드에서 항상 기록)과 다르다. `goalChars` 는
+  항상 남고, `goal` 은 `TracePayloadPolicy.capturesContent()` 일 때만 `policy.truncate(goal)` 로 남는다 — finalAnswer 와
+  같은 규칙이다. 부모 TOOL span 의 `input` 에 원문이 이미 있다는 근거는 그 자체가 summary-only 에서도 프롬프트가 새는
+  기존 동작이지 사본을 하나 더 둘 이유가 아니고, 워크플로 fan-out 은 같은 goal 을 N 번 복제한다. 입력 map 은
+  `Spans.startChildOfLazily` 로 부모가 확인된 뒤에만 만든다 — 트레이싱이 꺼진 경로는 그 비용을 내지 않는다.
 - **경계 정지는 `OK` 다(Q10, 리뷰 권고로 결정).** `MAX_ITERATIONS` · `TOKEN_BUDGET_EXCEEDED` · `COST_BUDGET_EXCEEDED` ·
   `WALL_CLOCK_EXCEEDED` · `QUOTA_EXCEEDED` 로 끝난 실행은 `OK` 이고 이유는 outputs 의 `completionReason` 에 남는다.
   `INTERRUPTED` 는 `interrupted()`, 그 밖의 실패(`ERROR` · `BLOCKED` · `ABORTED` …)는 `error(errorMessage)` 다.
@@ -425,7 +434,7 @@ tracer 를 옮겨 주지 않는다 — 호출자가 넘긴 실행기를 몰래 �
 
 | # | 결말 |
 |---|---|
-| Q1 | 본문 잠정안대로 goal 을 두 모드에서 기록하되 상한으로 자른다(§8.3) |
+| Q1 | goal 원문은 내용 캡처 정책에서만, `goalChars` 는 항상(§8.3) |
 | Q2 | 본문대로 worker 에서 연다. 큐 대기 시간을 넣는 일은 `ST-3` |
 | Q3 | 본문대로 모든 도구에 적용. 외부 저장소의 독자는 확인하지 못했다 — `ST-6` |
 | Q4 | 본문대로 `volatile` 사후 setter |
@@ -451,7 +460,9 @@ tracer 를 옮겨 주지 않는다 — 호출자가 넘긴 실행기를 몰래 �
 
 ### 8.9 확인한 것과 확인하지 못한 것
 
-- 확인: 새 테스트 클래스 둘(`DefaultSubagentExecutorTracingTest` 9건 · `DefaultSubagentExecutionManagerTracingTest`
-  10건)과 `OrcaAgentExecutorTracingTest` 에 더한 2건(공장 end-to-end · eager 디스패치), 그리고 `./gradlew checkAll`.
+- 확인: 새 테스트 클래스 셋(`DefaultSubagentExecutorTracingTest` 11건 · `DefaultSubagentExecutionManagerTracingTest`
+  12건 · `ToolCallTracingTest` 3건)과 `OrcaAgentExecutorTracingTest` 에 더한 2건(공장 end-to-end · eager 디스패치),
+  그리고 `./gradlew checkAll`. 매니저 쪽 fail-safe(던지는 tracer), `Error` 경로, summary-only 의 goal 생략, 늦은
+  취소·꼬리 취소의 ITERATION 상태를 각각 단언한다.
 - 확인하지 못함: 실제 LLM 프로바이더와 OTLP 같은 외부 뷰어에서 부모보다 늦게 시작한 백그라운드 SUBAGENT span 이 어떻게
   그려지는지(`ST-3`). macOS 한 플랫폼에서만 돌렸다. docker 계층은 돌리지 않았다(이 변경이 닿지 않는다).
