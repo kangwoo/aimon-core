@@ -31,7 +31,7 @@ public enum SpanType {
 
     /**
      * A conversation compaction operation. Reserved: nothing emits it yet — a compaction summary call is recorded as an
-     * {@link #LLM} span with a {@code feature=COMPACTION} attribute.
+     * {@link #LLM} span with a {@code feature=compaction} attribute.
      */
     COMPACTION,
 

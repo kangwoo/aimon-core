@@ -654,3 +654,20 @@ compaction — 은 `CompactionGuard.maybeCompact(CompactionGuardRequest)` 를 �
 
 그래서 백로그 제목은 §2.2 의 "열림 3 · 닫힘 3" 이 아니라 **"등록 항목 11건 (열림 8 · 닫힘 3)"** 이고, `docs/backlog/README.md`
 의 색인 행도 같은 수로 고쳤다(리뷰 2회차가 지적한 대로 `scripts/check-backlog-registers.py` 가 둘을 비교한다).
+
+### 8.11 PR 리뷰 뒤 고친 것
+
+PR #256 의 독립 리뷰가 낸 지적을 반영했다. 모두 동작 정정이며 공개 시그니처는 바뀌지 않았다.
+
+- **루틴 단계 TOOL span 의 상태.** §ST-1 의 상태 규칙("실행 신호가 울렸으면 `interrupted()`")이 던진 예외에만 적용되고 있었다.
+  terminator 가 끊은 `THREAD_INTERRUPT` 단계, 또는 신호를 보고 오류 결과를 돌려준 협조적 도구는 INTERRUPTED root 아래
+  ERROR TOOL span 을 남겼다. 이제 신호가 울린 뒤의 오류 결과도 INTERRUPTED 다(`StepAttemptTrace.recordResult`).
+- **루틴 단계 TOOL span 의 입력.** §4.2 의 `input`(템플릿을 푼 파라미터)은 `$step.N.result` 치환과 `_steps` 로 앞 단계의
+  출력을 담는다. 그 출력은 앞 단계 자신의 span 에서는 내용 캡처 정책에서만 남으므로, 요약 정책에서 다음 단계의 입력으로
+  새어 나가면 안 된다. 그래서 입력은 `{stepIndex, attempt, toolParams}`(작성된 파라미터, 템플릿 그대로)이고 `input` 은 내용
+  캡처 정책에서만 더한다. 실행기의 `toolUse.getInput()` 을 늘 남기는 규칙은 모델이 쓴 인자에 대한 것이라 여기에 그대로
+  옮겨지지 않는다.
+- **`queuedMs` 의 끝점.** §8.1 이 시작점을 옮긴 것과 같은 이유로 끝점도 옮겼다. worker 의 첫 문장에서 재므로
+  `attachWorker` 와 `RUNNING` 전이 쓰기는 대기에 들어가지 않는다(`RunMode.startedAt`).
+- **슬래시 명령 오프 경로.** `CommandTrace.open` 이 부모 span 이 있는지 먼저 보고, 없으면 명령을 파싱하지 않는다.
+- **이름.** §3.5 의 `StepTrace` 는 코드에서 `StepAttemptTrace`(시도 단위)와 `RoutineTrace`(실행 단위) 둘로 나뉘었다.

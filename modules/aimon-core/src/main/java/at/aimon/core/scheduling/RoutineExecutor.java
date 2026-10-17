@@ -585,7 +585,7 @@ public class RoutineExecutor {
 
                 final ToolResult toolResult = executeWithTimeout(task.getBoundRuntimeId(), step, context, stepOutputs,
                         coordinator, attemptTrace);
-                attemptTrace.recordResult(toolResult);
+                attemptTrace.recordResult(toolResult, signal);
 
                 if (toolResult.isSuccess()) {
                     final Instant completedAt = clock.instant();
@@ -690,7 +690,7 @@ public class RoutineExecutor {
         final TerminatorRegistrar registrar = needsRegistrar ? coordinator.newTerminatorRegistrar() : null;
 
         try {
-            final ToolContext tracedContext = attemptTrace.open(step.getTool(), input, context);
+            final ToolContext tracedContext = attemptTrace.open(step, input, context);
             final ToolContext stepContext = registrar == null
                     ? tracedContext
                     : ToolContext.builder().putAll(tracedContext.getContext())
@@ -919,9 +919,7 @@ public class RoutineExecutor {
             root.setAttribute("taskId", task.getId().value());
             root.setAttribute("agentRuntimeId", task.getBoundRuntimeId().value());
             root.setAttribute("executionId", executionId.value());
-            if (task.getOwner() != null) {
-                root.setAttribute("principal", task.getOwner().getType() + ":" + task.getOwner().getId());
-            }
+            root.setAttribute("principal", task.getOwner().getType() + ":" + task.getOwner().getId());
             final LlmCallMetadata base = LlmCallMetadata.builder().traceId(groupKey).build();
             final LlmCallMetadata rotated = Spans.enrichSafely(root, base);
             // An unchanged instance means a no-op root (the tracer failed): publish no key, as with tracing off.
@@ -978,16 +976,25 @@ public class RoutineExecutor {
         /**
          * Opens the span under the run's root and returns {@code context} rotated to it, or {@code context} itself
          * when the run has no root to nest under.
+         *
+         * <p>
+         * The resolved input is not like an executor's {@code toolUse.getInput()}: its {@code $step.N.result}
+         * substitutions and its {@code _steps} map carry earlier steps' output, which {@link #recordResult} keeps out
+         * of those steps' own spans unless the policy captures content. So the same gate applies here — the step's
+         * authored parameters (templates unresolved) are always recorded, the resolved input only with content.
          */
-        ToolContext open(String toolName, ToolInput input, ToolContext context) {
+        ToolContext open(RoutineStep step, ToolInput input, ToolContext context) {
             if (trace.metadata == null) {
                 return context;
             }
-            span = Spans.startChildOfLazily(trace.tracer, trace.metadata, SpanType.TOOL, toolName, () -> {
+            span = Spans.startChildOfLazily(trace.tracer, trace.metadata, SpanType.TOOL, step.getTool(), () -> {
                 final Map<String, Object> inputs = new LinkedHashMap<>();
                 inputs.put("stepIndex", stepIndex);
                 inputs.put("attempt", attempt);
-                inputs.put("input", input.toMap());
+                inputs.put("toolParams", step.getToolParams());
+                if (trace.policy.capturesContent()) {
+                    inputs.put("input", input.toMap());
+                }
                 return inputs;
             }).orElse(null);
             if (span == null) {
@@ -1000,7 +1007,12 @@ public class RoutineExecutor {
             return ToolCallTracing.contextUnder(span, context);
         }
 
-        void recordResult(ToolResult result) {
+        /**
+         * Records how the attempt ended. An error result returned once the run's signal tripped is the tool reporting
+         * the stop — a terminated {@code THREAD_INTERRUPT} future, or a cooperative tool that gave up — so it ends the
+         * span INTERRUPTED, as a thrown failure does, rather than ERROR under an INTERRUPTED root.
+         */
+        void recordResult(ToolResult result, CancellationSignal signal) {
             if (span == null) {
                 return;
             }
@@ -1013,7 +1025,11 @@ public class RoutineExecutor {
             }
             span.setOutputs(outputs);
             if (!result.isSuccess()) {
-                span.error(content);
+                if (signal.isCancelled()) {
+                    span.interrupted();
+                } else {
+                    span.error(content);
+                }
             }
         }
 

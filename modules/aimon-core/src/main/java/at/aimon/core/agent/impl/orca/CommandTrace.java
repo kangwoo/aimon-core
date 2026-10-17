@@ -6,6 +6,7 @@ import java.util.Map;
 import at.aimon.core.agent.CommandInputParser;
 import at.aimon.core.command.execution.CommandExecutionResult;
 import at.aimon.core.llm.LlmCallMetadata;
+import at.aimon.core.tracing.SpanContext;
 import at.aimon.core.tracing.SpanType;
 import at.aimon.core.tracing.Spans;
 import at.aimon.core.tracing.TracePayloadPolicy;
@@ -21,8 +22,8 @@ import at.aimon.core.tracing.Tracer;
  * slash command gets one, not only fork-mode skills: whether a command leaves a span should not depend on its kind.
  *
  * <p>
- * With no parent to nest under (tracing off) nothing is opened, no input map is built, and {@link #metadata()} is the
- * turn's metadata itself.
+ * With no parent to nest under (tracing off) nothing is opened, the command is not parsed, no input map is built, and
+ * {@link #metadata()} is the turn's metadata itself.
  */
 final class CommandTrace {
 
@@ -51,6 +52,10 @@ final class CommandTrace {
      */
     static CommandTrace open(Tracer tracer, LlmCallMetadata turnMetadata, String commandInput,
             TracePayloadPolicy policy) {
+        // Checked before parsing: with tracing off a slash command pays for nothing here, not even the tokenising.
+        if (SpanContext.readFrom(turnMetadata).isEmpty()) {
+            return new CommandTrace(null, turnMetadata);
+        }
         final String trimmed = commandInput == null ? "" : commandInput.trim();
         final CommandInputParser.ParsedCommand parsed = parse(trimmed);
         final String name = parsed == null ? "command" : "command:/" + parsed.name();

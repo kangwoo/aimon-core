@@ -11,6 +11,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -29,11 +31,15 @@ import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.tool.AbstractTool;
+import at.aimon.core.agent.tool.DefaultToolExecutionManager;
+import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
+import at.aimon.core.hook.DefaultHookExecutionManager;
+import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
@@ -49,6 +55,11 @@ import at.aimon.core.scheduling.event.TaskCompletedEvent;
 import at.aimon.core.scheduling.event.TaskFailedEvent;
 import at.aimon.core.scheduling.event.TaskInterruptedEvent;
 import at.aimon.core.scheduling.event.TaskStartedEvent;
+import at.aimon.core.subagent.DefaultSubagentExecutionManager;
+import at.aimon.core.subagent.InMemorySubagentRegistry;
+import at.aimon.core.subagent.Subagent;
+import at.aimon.core.subagent.SubagentLaunchContext;
+import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.subagent.execution.SubagentLlmDefaults;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tracing.SpanContext;
@@ -56,6 +67,7 @@ import at.aimon.core.tracing.SpanExporter;
 import at.aimon.core.tracing.SpanStatus;
 import at.aimon.core.tracing.SpanType;
 import at.aimon.core.tracing.Spans;
+import at.aimon.core.tracing.TracePayloadPolicy;
 import at.aimon.core.tracing.TraceSpan;
 import at.aimon.core.tracing.Tracer;
 import at.aimon.core.tracing.impl.DefaultTracer;
@@ -203,6 +215,138 @@ class RoutineExecutorTracingTest {
     }
 
     @Test
+    @DisplayName("a THREAD_INTERRUPT step cancelled mid-call ends its TOOL span INTERRUPTED, not ERROR")
+    void terminatedStepEndsToolInterrupted() {
+        executor.withTracer(tracer);
+        final AtomicReference<ScheduledTaskId> taskId = new AtomicReference<>();
+        final Tool blocking = new ScriptedTool("Blocking", InterruptBehavior.THREAD_INTERRUPT, context -> {
+            executor.interrupt(taskId.get(), InterruptReason.TASK_CANCELLED);
+            Thread.sleep(5_000);
+            return ToolResult.success("never");
+        });
+        final ScheduledTask task = register(List.of(blocking), step("Blocking", 0));
+        taskId.set(task.getId());
+
+        assertThat(executor.execute(task).isCancelled()).isTrue();
+
+        final List<TraceSpan> spans = store.bySession("routine:" + task.getId().value());
+        assertThat(only(spans, SpanType.ROUTINE).getStatus()).isEqualTo(SpanStatus.INTERRUPTED);
+        assertThat(only(spans, SpanType.TOOL).getStatus()).isEqualTo(SpanStatus.INTERRUPTED);
+    }
+
+    @Test
+    @DisplayName("a cooperative step that returns an error once the run is cancelled ends INTERRUPTED")
+    void cooperativeErrorAfterCancelEndsToolInterrupted() {
+        executor.withTracer(tracer);
+        final AtomicReference<ScheduledTaskId> taskId = new AtomicReference<>();
+        final Tool stoppable = new ScriptedTool("Stoppable", InterruptBehavior.COOPERATIVE, context -> {
+            executor.interrupt(taskId.get(), InterruptReason.TASK_CANCELLED);
+            return ToolResult.error("gave up: cancelled");
+        });
+        final ScheduledTask task = register(List.of(stoppable), step("Stoppable", 0));
+        taskId.set(task.getId());
+
+        assertThat(executor.execute(task).isCancelled()).isTrue();
+
+        final List<TraceSpan> spans = store.bySession("routine:" + task.getId().value());
+        assertThat(only(spans, SpanType.TOOL).getStatus()).isEqualTo(SpanStatus.INTERRUPTED);
+    }
+
+    @Test
+    @DisplayName("summary-only: a step's TOOL inputs hold its authored params, never an earlier step's output")
+    void summaryOnlyKeepsEarlierOutputOutOfToolInputs() {
+        executor.withTracer(tracer);
+        final Tool producer = new ScriptedTool("Producer", InterruptBehavior.NON_INTERRUPTIBLE,
+                context -> ToolResult.success("SECRET-OUTPUT"));
+        final ContextCapturingTool consumer = new ContextCapturingTool("Consumer");
+        final RoutineStep consume = RoutineStep.builder().tool("Consumer").toolParams("{\"q\":\"$step.0.result\"}")
+                .maxRetries(0).timeout(Duration.ofSeconds(5)).build();
+        final ScheduledTask task = register(List.of(producer, consumer), List.of(step("Producer", 0), consume));
+
+        assertThat(executor.execute(task).isSuccess()).isTrue();
+
+        final TraceSpan consumerSpan = toolSpan(task, "Consumer");
+        assertThat(inputs(consumerSpan)).containsEntry("toolParams", "{\"q\":\"$step.0.result\"}")
+                .doesNotContainKey("input");
+        assertThat(String.valueOf(inputs(consumerSpan))).doesNotContain("SECRET-OUTPUT");
+    }
+
+    @Test
+    @DisplayName("full payload policy: the resolved input, earlier output included, is recorded")
+    void fullPolicyRecordsTheResolvedInput() {
+        executor.withTracer(tracer).withTracePayloadPolicy(TracePayloadPolicy.full());
+        final Tool producer = new ScriptedTool("Producer", InterruptBehavior.NON_INTERRUPTIBLE,
+                context -> ToolResult.success("SECRET-OUTPUT"));
+        final ContextCapturingTool consumer = new ContextCapturingTool("Consumer");
+        final RoutineStep consume = RoutineStep.builder().tool("Consumer").toolParams("{\"q\":\"$step.0.result\"}")
+                .maxRetries(0).timeout(Duration.ofSeconds(5)).build();
+        final ScheduledTask task = register(List.of(producer, consumer), List.of(step("Producer", 0), consume));
+
+        assertThat(executor.execute(task).isSuccess()).isTrue();
+
+        assertThat(inputs(toolSpan(task, "Consumer"))).containsKey("input");
+        assertThat(String.valueOf(inputs(toolSpan(task, "Consumer")).get("input"))).contains("SECRET-OUTPUT");
+    }
+
+    @Test
+    @DisplayName("end to end: a step driving the real subagent manager nests ROUTINE → TOOL → SUBAGENT → ITERATION → LLM")
+    void realManagerForkNestsUnderTheStep() {
+        executor.withTracer(tracer);
+        final ManagerForkingTool fork = new ManagerForkingTool("Task", tracer);
+        final ScheduledTask task = register(List.of(fork), step("Task", 0));
+        final String groupKey = "routine:" + task.getId().value();
+
+        assertThat(executor.execute(task).isSuccess()).isTrue();
+
+        final List<TraceSpan> spans = store.bySession(groupKey);
+        final TraceSpan root = only(spans, SpanType.ROUTINE);
+        final TraceSpan tool = only(spans, SpanType.TOOL);
+        final TraceSpan subagent = only(spans, SpanType.SUBAGENT);
+        final List<TraceSpan> iterations = ofType(spans, SpanType.ITERATION);
+        final List<TraceSpan> llms = ofType(spans, SpanType.LLM);
+        assertThat(tool.getParentSpanId()).contains(root.getSpanId());
+        assertThat(subagent.getParentSpanId()).contains(tool.getSpanId());
+        assertThat(subagent.getStatus()).isEqualTo(SpanStatus.OK);
+        assertThat(subagent.getAttributes()).containsKey("executionId");
+        assertThat(iterations).isNotEmpty()
+                .allSatisfy(it -> assertThat(it.getParentSpanId()).contains(subagent.getSpanId()));
+        assertThat(llms).isNotEmpty().allSatisfy(llm -> assertThat(iterations).extracting(TraceSpan::getSpanId)
+                .contains(llm.getParentSpanId().orElseThrow()));
+        assertThat(spans).allSatisfy(span -> assertThat(span.getTraceId()).isEqualTo(root.getTraceId()));
+    }
+
+    @Test
+    @DisplayName("a timed-out step whose tool keeps running: its late SUBAGENT still nests under the closed TOOL span")
+    void lateSubagentAfterTimeoutNestsUnderTheClosedToolSpan() throws InterruptedException {
+        executor.withTracer(tracer);
+        final CountDownLatch forked = new CountDownLatch(1);
+        final Tool stubborn = new ScriptedTool("Stubborn", InterruptBehavior.NON_INTERRUPTIBLE, context -> {
+            // Ignores the timeout's interrupt, as a tool that does not check it would, then starts a subagent.
+            final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(300);
+            while (System.nanoTime() < deadline) {
+                Thread.onSpinWait();
+            }
+            final LlmCallMetadata parent = context.get(ToolContextKeys.LLM_CALL_METADATA_KEY).orElseThrow();
+            Spans.startChildOf(tracer, parent, SpanType.SUBAGENT, "subagent:late", null).ifPresent(Tracer.Span::close);
+            forked.countDown();
+            return ToolResult.success("late");
+        });
+        final ScheduledTask task = register(List.of(stubborn), RoutineStep.builder().tool("Stubborn").toolParams("{}")
+                .maxRetries(0).timeout(Duration.ofMillis(50)).build());
+
+        assertThat(executor.execute(task).isSuccess()).isFalse();
+        assertThat(forked.await(5, TimeUnit.SECONDS)).isTrue();
+
+        final List<TraceSpan> spans = store.bySession("routine:" + task.getId().value());
+        final TraceSpan tool = only(spans, SpanType.TOOL);
+        final TraceSpan subagent = only(spans, SpanType.SUBAGENT);
+        assertThat(tool.getStatus()).isEqualTo(SpanStatus.ERROR);
+        assertThat(subagent.getParentSpanId()).contains(tool.getSpanId());
+        assertThat(subagent.getTraceId()).isEqualTo(tool.getTraceId());
+        assertThat(subagent.getStartTime()).isAfter(tool.getEndTime().orElseThrow());
+    }
+
+    @Test
     @DisplayName("an attempt that never reached its tool leaves no TOOL span; the root carries the error")
     void attemptThatNeverRanLeavesNoToolSpan() {
         executor.withTracer(tracer);
@@ -274,13 +418,17 @@ class RoutineExecutorTracingTest {
     // ── helpers ─────────────────────────────────────────────────────────────────
 
     private ScheduledTask register(List<Tool> tools, RoutineStep step) {
+        return register(tools, List.of(step));
+    }
+
+    private ScheduledTask register(List<Tool> tools, List<RoutineStep> steps) {
         final Agent agent = DefaultAgent.builder().name("orca-trace").systemPrompt("test").build();
         final AgentRuntimeId runtimeId = AgentRuntimeId.from(agent);
         if (agentRuntimeRegistry.get(runtimeId).isEmpty()) {
             agentRuntimeRegistry.register(new StubAgentRuntime(runtimeId, agent, tools));
         }
         return ScheduledTask.builder().id(ScheduledTaskId.generate()).name("traced-task").cronExpression("*/5 * * * *")
-                .routine(List.of(step)).owner(Principal.user("alice")).boundRuntimeId(runtimeId).enabled(true).build();
+                .routine(steps).owner(Principal.user("alice")).boundRuntimeId(runtimeId).enabled(true).build();
     }
 
     private static RoutineStep step(String tool, int maxRetries) {
@@ -301,6 +449,46 @@ class RoutineExecutorTracingTest {
     @SuppressWarnings("unchecked")
     private static Map<String, Object> outputs(TraceSpan span) {
         return (Map<String, Object>) span.getOutputs().orElseThrow();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> inputs(TraceSpan span) {
+        return (Map<String, Object>) span.getInputs().orElseThrow();
+    }
+
+    private TraceSpan toolSpan(ScheduledTask task, String toolName) {
+        final List<TraceSpan> matching = ofType(store.bySession("routine:" + task.getId().value()), SpanType.TOOL)
+                .stream().filter(s -> toolName.equals(s.getName())).toList();
+        assertThat(matching).hasSize(1);
+        return matching.get(0);
+    }
+
+    /**
+     * Stands in for {@code Task} only as far as the tool boundary: it hands the step's call metadata to a real
+     * {@link DefaultSubagentExecutionManager}, built through the convenience constructor and traced with
+     * {@code withTracer} alone (ST-2), so the SUBAGENT, ITERATION and LLM spans are the production ones.
+     */
+    private static final class ManagerForkingTool extends AbstractTool {
+        private final DefaultSubagentExecutionManager manager;
+        private final InMemorySubagentRegistry subagents = new InMemorySubagentRegistry();
+
+        ManagerForkingTool(String name, Tracer tracer) {
+            super(name, "test tool", Map.of("type", "object", "properties", Map.of()));
+            this.manager = new DefaultSubagentExecutionManager(new TracingLlmClient(new CapturingLlmClient(), tracer),
+                    new DefaultToolExecutionManager(), new DefaultHookExecutionManager()).withTracer(tracer);
+            subagents.register(Subagent.builder().name("reporter").systemPrompt("report").maxIterations(2).build());
+        }
+
+        @Override
+        public ToolResult execute(ToolInput input, ToolContext toolContext) {
+            final LlmCallMetadata parent = toolContext.get(ToolContextKeys.LLM_CALL_METADATA_KEY).orElseThrow();
+            final SubagentLaunchContext launch = SubagentLaunchContext.builder()
+                    .agentRuntimeId(AgentRuntimeId.of("agent:orca-trace")).subagentRegistry(subagents)
+                    .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry())
+                    .defaultModel(LlmModel.builder().name("m").build()).parentLlmCallMetadata(parent).build();
+            final SubagentExecutionResult result = manager.execute(launch, "task-1", "reporter", "summarize", "d");
+            return result.isSuccess() ? ToolResult.success("forked") : ToolResult.error("fork failed");
+        }
     }
 
     /**

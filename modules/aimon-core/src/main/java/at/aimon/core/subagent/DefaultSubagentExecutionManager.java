@@ -714,8 +714,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         final Tracer.Span subagentSpan = openSubagentSpan(launchContext, subagentName, taskId, goal, mode,
                 payloadPolicy);
         if (subagentSpan != null) {
-            mode.queuedSince(startTime)
-                    .ifPresent(queued -> subagentSpan.setAttribute("queuedMs", String.valueOf(queued.toMillis())));
+            mode.queued().ifPresent(queued -> subagentSpan.setAttribute("queuedMs", String.valueOf(queued.toMillis())));
         }
         final LlmCallMetadata forwardedMetadata = subagentSpan != null
                 ? Spans.enrichSafely(subagentSpan, parentMetadata)
@@ -1103,11 +1102,14 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         final CompletableFuture<SubagentExecutionResult> future;
         try {
             future = CompletableFuture.supplyAsync(() -> {
+                // The worker's first statement: the queue wait ends here, before the RUNNING write (a network round
+                // trip with a remote task store) that the span would otherwise count as waiting for a worker.
+                final RunMode startedMode = backgroundMode.startedAt(Instant.now());
                 handle.attachWorker(Thread.currentThread());
                 taskStore.transition(taskId, BackgroundTaskState.RUNNING);
                 // Background tasks are always dispatched by registered name. SubagentStart already fired above.
                 final SubagentExecutionResult result = runResolvedSubagent(launchContext, taskId,
-                        SubagentTarget.byName(subagentName), goal, handle.getSignal(), outputSink, backgroundMode);
+                        SubagentTarget.byName(subagentName), goal, handle.getSignal(), outputSink, startedMode);
                 // Persist the finished transcript so Task(resume=<taskId>) can continue it. Background-only —
                 // a foreground run's taskId is never surfaced, so its snapshot would be unreachable.
                 saveSessionSnapshot(launchContext, taskId, subagentName, result);
@@ -1594,18 +1596,21 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
      * before it ever ran.
      */
     private static final class RunMode {
-        private static final RunMode FOREGROUND = new RunMode(false, false, null);
-        private static final RunMode REJECTED = new RunMode(true, true, null);
+        private static final RunMode FOREGROUND = new RunMode(false, false, null, null);
+        private static final RunMode REJECTED = new RunMode(true, true, null, null);
 
         private final boolean background;
         private final boolean rejected;
         /** When the run was handed to the pool; {@code null} unless it went through the queue. */
         private final Instant enqueuedAt;
+        /** When a worker picked the run up; {@code null} until {@link #startedAt} records it. */
+        private final Instant workerStartedAt;
 
-        private RunMode(boolean background, boolean rejected, Instant enqueuedAt) {
+        private RunMode(boolean background, boolean rejected, Instant enqueuedAt, Instant workerStartedAt) {
             this.background = background;
             this.rejected = rejected;
             this.enqueuedAt = enqueuedAt;
+            this.workerStartedAt = workerStartedAt;
         }
 
         static RunMode foreground() {
@@ -1613,19 +1618,27 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         }
 
         static RunMode background(Instant enqueuedAt) {
-            return new RunMode(true, false, Objects.requireNonNull(enqueuedAt, "enqueuedAt cannot be null"));
+            return new RunMode(true, false, Objects.requireNonNull(enqueuedAt, "enqueuedAt cannot be null"), null);
         }
 
         static RunMode rejected() {
             return REJECTED;
         }
 
+        /** Returns this queued run as picked up by a worker at {@code workerStart}. */
+        RunMode startedAt(Instant workerStart) {
+            return new RunMode(background, rejected, enqueuedAt,
+                    Objects.requireNonNull(workerStart, "workerStart cannot be null"));
+        }
+
         /**
-         * Returns how long the run waited for a worker before {@code workerStart}, or empty when it never queued (a
-         * foreground run has no wait to report, which is not the same as a wait of zero).
+         * Returns how long the run waited for a worker, or empty when it never queued (a foreground run has no wait to
+         * report, which is not the same as a wait of zero).
          */
-        Optional<Duration> queuedSince(Instant workerStart) {
-            return enqueuedAt == null ? Optional.empty() : Optional.of(Duration.between(enqueuedAt, workerStart));
+        Optional<Duration> queued() {
+            return enqueuedAt == null || workerStartedAt == null
+                    ? Optional.empty()
+                    : Optional.of(Duration.between(enqueuedAt, workerStartedAt));
         }
     }
 

@@ -144,9 +144,9 @@ public final class TracingLlmClient implements LlmClient {
                 .orElseGet(delegate::getProviderName);
         final Tracer.Span span = tracer.startChild(parent.get(), SpanType.LLM, "llm:" + model,
                 inputsSummary(messages, tools, model));
-        // The usage feature tells calls apart that share a parent — a compaction summary call under an iteration.
-        metadata.getFeature().ifPresent(feature -> span.setAttribute("feature", feature));
         try {
+            // The usage feature tells calls apart that share a parent — a compaction summary call under an iteration.
+            metadata.getFeature().ifPresent(feature -> span.setAttribute("feature", feature));
             final LlmResponse response = call.get();
             span.setModel(model);
             if (response.hasTokenUsage()) {

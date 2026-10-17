@@ -130,7 +130,12 @@ metadata 는 그룹 키를 `traceId` 로 실은 뒤 회전한 것이다. 그 결
 - **(3) pool 거부 — 닫힘.** 거부 분기도 SUBAGENT span 을 남긴다(`:1124`) — 같은 부모 · 입력 · 속성에 `rejected=true`,
   `queuedMs` 없음, 상태 ERROR. Stop hook 보다 먼저 닫히고, SubagentStart/Stop 의 순서와 횟수는 그대로다.
 - **(2) 외부 뷰어 렌더링 — 열림.** 부모보다 늦게 시작하는 span 을 OTLP 뷰어가 어떻게 그리는지는 `aimon-tracing-otlp` 가 없어
-  여전히 확인하지 못했다. 위 "언제 다시 볼까" 가 그대로 남은 부분의 트리거다.
+  여전히 확인하지 못했다. 위 "언제 다시 볼까" 가 그대로 남은 부분의 트리거다. 뷰어가 받을 **데이터**는 테스트로 고정했다 —
+  부모가 닫힌 뒤 시작한 SUBAGENT 도 그 부모의 span id · trace id 를 가리키고 시작 시각이 부모 종료보다 뒤다
+  (`RoutineExecutorTracingTest#lateSubagentAfterTimeoutNestsUnderTheClosedToolSpan`). 남은 것은 외부 UI 의 그리기뿐이며,
+  이 저장소에는 아직 확인할 변환(exporter) 코드가 없다.
+- **(1) 측정점 보정 (PR #256 리뷰).** worker 쪽 끝점은 worker 람다의 첫 문장이다 — `RUNNING` 전이 쓰기(원격 task store 면
+  네트워크 왕복)를 대기로 세지 않는다.
 
 **착수해 보니.** 대기를 재는 시작점이 항목이 짐작한 것과 달랐다. `executeInBackground` 가 이미 잡는 시각(PENDING
 스냅샷)은 **동기** SubagentStart hook 과 저장소 쓰기보다 앞이라, 그것을 쓰면 `queuedMs` 가 hook 시간(셸 명령 hook 이면 수
