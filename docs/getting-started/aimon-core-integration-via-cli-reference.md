@@ -1746,7 +1746,7 @@ hookRegistry.register(HookEventType.PRE_TOOL, (PreToolHook) ctx -> {
 
 훅 종류와 차단 의미는 [hook-development-guide.md](../features/hook/hook-development-guide.md)를 따른다. **`PreToolHook`만 차단(`HookResult.block(reason)`) 의미가 있다** — 다른 훅은 비차단이다.
 
-> 감사 로그에 사용자 신원을 남기려면 훅 컨텍스트에서 꺼낼 수 없다는 점에 주의한다 — `PreToolContext`에 `getUserId()` 같은 것은 없다. 제출 시점에 `SubmitOptions.builder().executionAttribute("userId", ...)` 로 실어 보내면 `getExecutionAttributes()` 로 그대로 도착한다. 훅 등록은 **agent 스코프 `HookRegistry`** 에 대해 일어나므로 이 역시 접속마다가 아니라 runtime 당 한 번이다 — 사용자 식별은 등록 시점이 아니라 제출 시점에 실려야 한다.
+> 감사 로그에 사용자 신원을 남기려면 훅 컨텍스트에서 꺼낼 수 없다는 점에 주의한다 — `PreToolContext`에 `getUserId()` 같은 것은 없다. 제출 시점에 `SubmitOptions.builder().executionAttribute("userId", ...)` 로 실어 보내면 `getExecutionAttributes()` 로 그대로 도착한다. 훅 등록은 **agent 스코프 `HookRegistry`** 에 대해 일어나므로 이 역시 접속마다가 아니라 runtime 당 한 번이다 — 사용자 식별은 등록 시점이 아니라 제출 시점에 실려야 한다. 단, `environment.` 로 시작하는 키는 예약되어 있다 — 그 턴의 `ExecutionEnvironmentProvider` 가 접두사를 뗀 채 `EnvironmentRequest.requestAttributes()` 로 받는 배치 입력이다. 값은 `String` 이어야 하고(다른 타입이면 그 턴의 실행 환경이 사용 불가가 된다), 모델 출력으로 채우면 안 된다. 스케줄 루틴은 제출 호출이 없으므로 같은 값을 `SchedulingEngineBuilder.routineExecutionAttributes(...)`(스택에서는 `SchedulingSpec.withRoutineExecutionAttributes(...)`)로 준다.
 
 ---
 

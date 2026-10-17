@@ -65,6 +65,7 @@ public final class SchedulingEngineBuilder {
     private boolean multiNode;
     private Tracer tracer;
     private TracePayloadPolicy tracePayloadPolicy;
+    private RoutineExecutionAttributes routineExecutionAttributes;
 
     private SchedulingEngineBuilder() {
     }
@@ -290,6 +291,25 @@ public final class SchedulingEngineBuilder {
     }
 
     /**
+     * Sets the host resolver asked once per routine run for that run's execution attributes — what
+     * {@code SubmitOptions.executionAttribute(...)} is for a session turn. Their {@code environment.*} subset reaches
+     * the run's {@code EnvironmentRequest.requestAttributes()}, so a provider can place one routine's runs per task,
+     * and the whole map reaches the steps' tool context.
+     *
+     * <p>
+     * If not set, {@link RoutineExecutionAttributes#NONE} is used and routine runs carry no execution attributes.
+     * </p>
+     *
+     * @param resolver
+     *            the resolver
+     * @return this builder
+     */
+    public SchedulingEngineBuilder routineExecutionAttributes(RoutineExecutionAttributes resolver) {
+        this.routineExecutionAttributes = resolver;
+        return this;
+    }
+
+    /**
      * Builds the scheduling engine.
      *
      * <p>
@@ -345,6 +365,9 @@ public final class SchedulingEngineBuilder {
         }
         if (tracePayloadPolicy != null) {
             routineExecutor.withTracePayloadPolicy(tracePayloadPolicy);
+        }
+        if (routineExecutionAttributes != null) {
+            routineExecutor.withExecutionAttributes(routineExecutionAttributes);
         }
 
         // Resolve circular dependency: TaskScheduler needs ScheduledTaskExecutor,

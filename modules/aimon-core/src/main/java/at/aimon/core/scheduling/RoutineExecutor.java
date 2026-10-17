@@ -167,6 +167,12 @@ public class RoutineExecutor {
     private volatile TracePayloadPolicy tracePayloadPolicy = TracePayloadPolicy.summaryOnly();
 
     /**
+     * Asked once per run for the run's execution attributes (issue #252). Defaults to
+     * {@link RoutineExecutionAttributes#NONE}; {@code volatile} for the same reason as {@link #tracer}.
+     */
+    private volatile RoutineExecutionAttributes executionAttributes = RoutineExecutionAttributes.NONE;
+
+    /**
      * RoutineExecutor를 생성한다 (system UTC clock 사용).
      */
     public RoutineExecutor(@ExternallyManaged AgentRuntimeRegistry agentRuntimeRegistry,
@@ -219,6 +225,21 @@ public class RoutineExecutor {
      */
     public RoutineExecutor withTracePayloadPolicy(TracePayloadPolicy policy) {
         this.tracePayloadPolicy = Objects.requireNonNull(policy, "policy cannot be null");
+        return this;
+    }
+
+    /**
+     * Injects the host resolver asked once per run for the run's execution attributes: their {@code environment.*}
+     * subset reaches the run's {@link EnvironmentRequest#requestAttributes()}, and the whole map reaches its steps'
+     * {@link ToolContextKeys#EXECUTION_ATTRIBUTES_KEY}. When unset, the executor keeps
+     * {@link RoutineExecutionAttributes#NONE} and behaviour is unchanged.
+     *
+     * @param executionAttributes
+     *            the resolver (must not be null)
+     * @return this executor
+     */
+    public RoutineExecutor withExecutionAttributes(RoutineExecutionAttributes executionAttributes) {
+        this.executionAttributes = Objects.requireNonNull(executionAttributes, "executionAttributes cannot be null");
         return this;
     }
 
@@ -343,7 +364,8 @@ public class RoutineExecutor {
         logDefinitionDrift(task);
         eventPublisher.publish(new TaskStartedEvent(task));
 
-        final ToolContext context = buildToolContext(task, signal, executionId, trace);
+        final RunAttributes attributes = resolveExecutionAttributes(task, executionId);
+        final ToolContext context = buildToolContext(task, signal, executionId, trace, attributes);
 
         for (int i = 0; i < task.getRoutine().size(); i++) {
             // Step boundary gate. Every step from here on is simply not started, which is why the run stops within
@@ -493,6 +515,10 @@ public class RoutineExecutor {
      * </ul>
      *
      * <p>
+     * With a {@link RoutineExecutionAttributes} resolver wired, the context also carries the run's attributes under
+     * {@link ToolContextKeys#EXECUTION_ATTRIBUTES_KEY}, as a turn's does; without one the key is absent, as before.
+     *
+     * <p>
      * {@link ToolContextKeys#SESSION_ID} and {@link ToolContextKeys#INVOKING_SESSION_ID} remain deliberately
      * <b>not</b> set, and the execution id is what makes leaving them empty affordable. A scheduled run has no
      * session: nobody is waiting on it and there is no transcript to attribute it to. Minting a synthetic
@@ -513,13 +539,16 @@ public class RoutineExecutor {
      * ROUTINE span; each step attempt rotates it to its own TOOL span. Tracing off, the key is absent, as before.
      */
     private ToolContext buildToolContext(ScheduledTask task, CancellationSignal signal, ExecutionId executionId,
-            RoutineTrace trace) {
+            RoutineTrace trace, RunAttributes attributes) {
         final ToolContext.Builder builder = ToolContext.builder()
                 .put(ToolContextKeys.AGENT_RUNTIME_ID, task.getBoundRuntimeId())
                 .put(ToolContextKeys.PRINCIPAL, task.getOwner()).put(ToolContextKeys.EXECUTION_ID, executionId)
                 .put(InterruptToolKeys.CANCELLATION_SIGNAL, signal)
                 .put(ReadTool.FILE_STAMPS_KEY, new ConcurrentHashMap<>());
-        putExecutionEnvironment(builder, task, executionId);
+        if (!attributes.values.isEmpty()) {
+            builder.put(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY, attributes.values);
+        }
+        putExecutionEnvironment(builder, task, executionId, attributes);
         trace.metadata().ifPresent(metadata -> builder.put(ToolContextKeys.LLM_CALL_METADATA_KEY, metadata));
         return builder.build();
     }
@@ -528,9 +557,11 @@ public class RoutineExecutor {
      * Resolves the run's execution environment once, from the bound runtime's provider, so a routine's
      * {@code Bash}/{@code Read} steps run where the agent's executions do (execution-environment design §5.1). A
      * runtime that is not registered, or that carries no provider, yields an unavailable environment whose tools fail
-     * with the cause — a routine never falls back to the host.
+     * with the cause — a routine never falls back to the host. So does a resolver that failed to answer: its
+     * placement intent is unknown, and resolving without it would silently ignore it.
      */
-    private void putExecutionEnvironment(ToolContext.Builder builder, ScheduledTask task, ExecutionId executionId) {
+    private void putExecutionEnvironment(ToolContext.Builder builder, ScheduledTask task, ExecutionId executionId,
+            RunAttributes attributes) {
         final Optional<AgentRuntime> runtime = agentRuntimeRegistry.get(task.getBoundRuntimeId());
         final ExecutionEnvironmentProvider provider = runtime.filter(EnvironmentProviding.class::isInstance)
                 .map(EnvironmentProviding.class::cast).map(EnvironmentProviding::getExecutionEnvironmentProvider)
@@ -542,15 +573,51 @@ public class RoutineExecutor {
         } else if (provider == null) {
             environment = UnavailableExecutionEnvironment.of("agent runtime " + runtime.get().getClass().getName()
                     + " provides no ExecutionEnvironmentProvider");
+        } else if (attributes.failure != null) {
+            environment = UnavailableExecutionEnvironment.of(attributes.failure);
         } else {
             environment = ExecutionEnvironments.resolveOrUnavailable(provider,
                     EnvironmentRequest.builder().agentRuntimeId(task.getBoundRuntimeId())
-                            .agent(runtime.get().getAgent()).executionId(executionId).principal(task.getOwner())
-                            .build());
+                            .agent(runtime.get().getAgent()).executionId(executionId).principal(task.getOwner()),
+                    attributes.values);
         }
         builder.put(ToolContextKeys.EXECUTION_ENVIRONMENT, environment);
         if (provider != null) {
             builder.put(ToolContextKeys.EXECUTION_ENVIRONMENT_PROVIDER, provider);
+        }
+    }
+
+    /**
+     * Asks the host resolver for the run's execution attributes, once. Never throws: a resolver that throws, returns
+     * null, or returns a map {@link Map#copyOf} refuses (a null key or value) yields no attributes and a failure that
+     * makes the run's environment unavailable, rather than aborting the run.
+     */
+    private RunAttributes resolveExecutionAttributes(ScheduledTask task, ExecutionId executionId) {
+        final RoutineExecutionAttributes resolver = executionAttributes;
+        try {
+            final Map<String, Object> resolved = resolver.resolve(task, executionId);
+            if (resolved == null) {
+                throw new IllegalStateException(resolver.getClass().getName() + " returned no execution attributes");
+            }
+            return new RunAttributes(Map.copyOf(resolved), null);
+        } catch (RuntimeException e) {
+            log.warn("Execution attributes for task '{}' could not be resolved; the run's environment is unavailable:"
+                    + " {}", task.getId(), e.getMessage(), e);
+            return new RunAttributes(Map.of(), e);
+        }
+    }
+
+    /**
+     * One run's execution attributes, or why there are none. A failure is kept rather than logged and dropped,
+     * because it decides the run's environment.
+     */
+    private static final class RunAttributes {
+        private final Map<String, Object> values;
+        private final RuntimeException failure;
+
+        private RunAttributes(Map<String, Object> values, RuntimeException failure) {
+            this.values = values;
+            this.failure = failure;
         }
     }
 
