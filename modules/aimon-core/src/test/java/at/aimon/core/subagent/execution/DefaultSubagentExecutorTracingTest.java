@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -13,10 +14,20 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.compact.CompactionEngine;
+import at.aimon.core.agent.compact.CompactionResult;
+import at.aimon.core.agent.compact.DefaultCompactionEngine;
+import at.aimon.core.agent.compact.DefaultCompactionGuard;
+import at.aimon.core.agent.context.ContextDecision;
+import at.aimon.core.agent.context.ContextEngine;
+import at.aimon.core.agent.context.ContextRequest;
+import at.aimon.core.agent.context.ContextView;
+import at.aimon.core.agent.context.DefaultContextEngine;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.prompt.SystemPromptParts;
+import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.ConcurrencyBehavior;
 import at.aimon.core.agent.tool.DefaultParallelToolDispatcher;
@@ -28,17 +39,22 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
+import at.aimon.core.llm.InMemoryModelContextWindowRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmCancellation;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.ModelContextLimits;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.exception.LlmCallCancelledException;
 import at.aimon.core.llm.exception.LlmClientException;
+import at.aimon.core.llm.exception.LlmPromptTooLongException;
+import at.aimon.core.llm.invoke.LlmCallGateway;
+import at.aimon.core.llm.token.TokenEstimator;
 import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentContent;
 import at.aimon.core.subagent.SubagentMetadata;
@@ -286,7 +302,107 @@ class DefaultSubagentExecutorTracingTest {
         assertThat(iterationNamed("iteration#1").getStatus()).isEqualTo(SpanStatus.INTERRUPTED);
     }
 
+    @Test
+    @DisplayName("ST-5: the compaction summary call is an LLM span under the iteration, filed under the caller's group key")
+    void compactionSummaryCallNestsUnderTheIteration() {
+        llm.responses.add(LlmResponse.text("the summary"));
+        llm.responses.add(LlmResponse.text("done"));
+        final LlmClient traced = new TracingLlmClient(llm, tracer);
+        final DefaultSubagentExecutor executor = new DefaultSubagentExecutor(
+                LlmCallGateway.<TranscriptBuffer>withDefaultRetry(traced), new DefaultToolExecutionManager(),
+                new DefaultHookExecutionManager(), compactingEngine(traced)).withTracer(tracer);
+
+        final SubagentExecutionResult result = executor.execute(context(new DefaultToolRegistry()),
+                request(seededMetadata));
+
+        assertThat(result.isSuccess()).isTrue();
+        final TraceSpan iteration = iterationNamed("iteration#1");
+        System.out.println(
+                "DBG meta=" + llm.metadata + " spans=" + store.bySession(SESSION) + " all=" + result.getFinalAnswer());
+        final List<TraceSpan> llmSpans = spansOf(SpanType.LLM);
+        assertThat(llmSpans).hasSize(2)
+                .allSatisfy(s -> assertThat(s.getParentSpanId()).contains(iteration.getSpanId()));
+        final TraceSpan summary = llmSpans.stream()
+                .filter(s -> LlmCallMetadata.Feature.COMPACTION.equals(s.getAttributes().get("feature"))).findFirst()
+                .orElseThrow();
+        // Same group key as the iteration — the caller's session, not the fork's transcript label.
+        assertThat(summary.getSessionId()).isEqualTo(iteration.getSessionId()).isEqualTo(SESSION);
+
+        // The usage attribution stays the engine's: the carrier brought only the span position.
+        final LlmCallMetadata summaryCall = llm.metadata.stream()
+                .filter(m -> m.getFeature().filter(LlmCallMetadata.Feature.COMPACTION::equals).isPresent()).findFirst()
+                .orElseThrow();
+        assertThat(summaryCall.getComponent()).contains("compaction-engine");
+        assertThat(summaryCall.getTraceId()).contains(SESSION);
+    }
+
+    @Test
+    @DisplayName("ST-5: tracing off, the fork's context request carries no call metadata")
+    void compactionRequestCarriesNoMetadataWhenTracingOff() {
+        llm.responses.add(LlmResponse.text("done"));
+        final List<ContextRequest> requests = new CopyOnWriteArrayList<>();
+        final DefaultSubagentExecutor executor = new DefaultSubagentExecutor(
+                LlmCallGateway.<TranscriptBuffer>withDefaultRetry(llm), new DefaultToolExecutionManager(),
+                new DefaultHookExecutionManager(), capturingEngine(requests));
+
+        executor.execute(context(new DefaultToolRegistry()),
+                request(LlmCallMetadata.builder().traceId(SESSION).build()));
+
+        assertThat(requests).isNotEmpty().allSatisfy(r -> assertThat(r.getCallMetadata()).isEmpty());
+    }
+
     // ── helpers ────────────────────────────────────────────────────────────────
+
+    /** The default engine with every estimate fixed in the auto-compact band, so iteration 1 compacts. */
+    private static ContextEngine compactingEngine(LlmClient client) {
+        final TokenEstimator fixed = new TokenEstimator() {
+            @Override
+            public int estimate(String systemPrompt, List<Message> messages) {
+                return 7_500;
+            }
+
+            @Override
+            public int estimateMessage(Message message) {
+                return 0;
+            }
+
+            @Override
+            public int estimateText(String text) {
+                return 0;
+            }
+        };
+        final CompactionEngine compactionEngine = DefaultCompactionEngine.withDefaults(client, fixed,
+                new DefaultHookExecutionManager());
+        final DefaultCompactionGuard guard = new DefaultCompactionGuard(compactionEngine,
+                InMemoryModelContextWindowRegistry.builder()
+                        .defaultLimits(ModelContextLimits.builder().contextWindow(10_000).reservedOutputTokens(1_000)
+                                .autoCompactBuffer(2_000).warningBuffer(1_000).blockingBuffer(500).build())
+                        .build(),
+                fixed);
+        return DefaultContextEngine.builder().compactionGuard(guard).compactionEngine(compactionEngine)
+                .tokenEstimator(fixed).build();
+    }
+
+    /** Records every request and answers with the transcript unchanged. */
+    private static ContextEngine capturingEngine(List<ContextRequest> requests) {
+        return new ContextEngine() {
+            @Override
+            public ContextDecision prepare(ContextRequest request) {
+                requests.add(request);
+                return ContextEngine.passthrough().prepare(request);
+            }
+
+            @Override
+            public Optional<ContextView> recover(ContextRequest request, LlmPromptTooLongException error) {
+                return Optional.empty();
+            }
+
+            @Override
+            public CompactionResult compactNow(ContextRequest request, String instructions) {
+                throw new UnsupportedOperationException("not under test");
+            }
+        };
+    }
 
     private DefaultSubagentExecutor tracedExecutor() {
         return new DefaultSubagentExecutor(new TracingLlmClient(llm, tracer), new DefaultToolExecutionManager(),

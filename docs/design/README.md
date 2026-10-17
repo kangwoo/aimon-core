@@ -116,6 +116,7 @@
 | [`scheduling/llm-scheduling-agent.md`](scheduling/llm-scheduling-agent.md) | 자연어를 cron + routine 으로 굳혀 세션 없이 다시 돌리는 경로 |
 | [`observability/tracing.md`](observability/tracing.md) | 실행 트레이싱 — 계측 지점, payload 캡처, 레닥션 |
 | [`observability/subagent-trace-nesting.md`](observability/subagent-trace-nesting.md) | (IMPLEMENTED, 승인본, 차이는 §8) 서브에이전트 실행을 `TOOL(Task) → SUBAGENT → ITERATION → {LLM, TOOL}` 로 중첩시킨 설계 — span 부모를 바꾸는 세 경계(도구 컨텍스트 · 매니저 · 포크 iteration), SUBAGENT span 을 hook 이 아니라 매니저에 둔 이유, 백그라운드 포크의 부모, 기각한 대안 |
+| [`observability/subagent-tracing-backlog.md`](observability/subagent-tracing-backlog.md) | (IMPLEMENTED, 승인본, 차이는 §8) 서브에이전트 트레이싱 백로그 ST-1 ~ ST-6 처리 — 슬래시 명령 `COMMAND` span, 예약 루틴 `ROUTINE` root, 매니저가 만든 실행기로의 tracer 전달, 백그라운드 `queuedMs` · 거부 span, SUBAGENT 의 `executionId`, compaction 요약 호출의 span 위치, 기각한 대안 |
 
 ### integration — 바깥과 만나는 자리
 

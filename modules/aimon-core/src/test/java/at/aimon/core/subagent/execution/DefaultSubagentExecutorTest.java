@@ -368,6 +368,75 @@ class DefaultSubagentExecutorTest {
         assertThat(result.isSuccess()).isTrue();
     }
 
+    @Test
+    @DisplayName("every result names the fork's execution id — the one its tools saw — however the run ended")
+    void everyResultCarriesTheForkExecutionId() {
+        // Success: the id equals the EXECUTION_ID key the fork's tool received.
+        final ProbeTool probe = new ProbeTool();
+        final DefaultToolRegistry registry = new DefaultToolRegistry();
+        registry.register(probe);
+        final StubLlmClient llm = new StubLlmClient();
+        llm.responses.add(LlmResponse.of("", List.of(ToolUse.of("p1", "Probe", Map.of()))));
+        llm.responses.add(LlmResponse.text("done"));
+        final SubagentExecutionResult success = newExecutor(llm)
+                .execute(createContext("explorer", NoopCancellationSignal.INSTANCE, registry, 5), request("probe"));
+        assertThat(success.isSuccess()).isTrue();
+        assertThat(success.getExecutionId()).isPresent()
+                .isEqualTo(probe.captured.get().get(ToolContextKeys.EXECUTION_ID));
+        assertThat(success.getExecutionId().orElseThrow().value()).startsWith("subagent:explorer");
+
+        // Interrupted before the first call.
+        final DefaultInterruptCoordinator parent = new DefaultInterruptCoordinator();
+        parent.requestInterrupt(InterruptReason.USER_SIGINT);
+        assertThat(newExecutor(new StubLlmClient())
+                .execute(createContext("explorer", parent.getSignal(), new DefaultToolRegistry(), 5), request("x"))
+                .getExecutionId()).isPresent();
+
+        // Budget stop.
+        final StubLlmClient looping = new StubLlmClient();
+        looping.alwaysToolUse = true;
+        final SubagentExecutionResult budgetStop = newExecutor(looping).execute(
+                createContext("explorer", NoopCancellationSignal.INSTANCE, new DefaultToolRegistry(), 5),
+                SubagentExecutionRequest.builder().taskId("t").goal("loop")
+                        .budget(ExecutionBudget.builder().maxIterations(1).build()).build());
+        assertThat(budgetStop.isSuccess()).isFalse();
+        assertThat(budgetStop.getExecutionId()).isPresent();
+
+        // Failure: the provider throws.
+        final LlmClient failing = new LlmClient() {
+            @Override
+            public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
+                    LlmModel modelConfig) {
+                throw new IllegalStateException("provider down");
+            }
+
+            @Override
+            public String getProviderName() {
+                return "Failing";
+            }
+        };
+        final SubagentExecutionResult failure = newExecutor(failing).execute(
+                createContext("explorer", NoopCancellationSignal.INSTANCE, new DefaultToolRegistry(), 5),
+                request("go"));
+        assertThat(failure.isSuccess()).isFalse();
+        assertThat(failure.getExecutionId()).isPresent();
+    }
+
+    @Test
+    @DisplayName("a resumed run carries the execution id of the run it continues")
+    void resumedRunCarriesTheInheritedExecutionId() {
+        final StubLlmClient llm = new StubLlmClient();
+        final SubagentExecutionContext context = createContext("explorer", NoopCancellationSignal.INSTANCE,
+                new DefaultToolRegistry(), 5);
+        final SubagentExecutionResult first = newExecutor(llm).execute(context, request("first"));
+
+        final SubagentExecutionResult resumed = newExecutor(llm).execute(context, SubagentExecutionRequest.builder()
+                .taskId("task-1").goal("second").previousSnapshot(first.getSnapshot()).build());
+
+        assertThat(first.getExecutionId()).isPresent();
+        assertThat(resumed.getExecutionId()).isEqualTo(first.getExecutionId());
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────────────
 
     @Test

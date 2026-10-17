@@ -78,6 +78,32 @@ public final class Spans {
     }
 
     /**
+     * Starts a root span, falling back to a no-op span when {@code tracer} throws, so tracing can never break the run
+     * the root stands for.
+     *
+     * @param tracer
+     *            the tracer (must not be null)
+     * @param sessionId
+     *            the group key the trace is recorded under (must not be null)
+     * @param type
+     *            the span type (must not be null)
+     * @param name
+     *            the span name (must not be null)
+     * @param inputs
+     *            an input snapshot, or null
+     * @return the started span, or a no-op span when the tracer failed (never null)
+     */
+    public static Tracer.Span startRootSafely(Tracer tracer, String sessionId, SpanType type, String name,
+            Map<String, Object> inputs) {
+        try {
+            return tracer.startRoot(sessionId, type, name, inputs);
+        } catch (RuntimeException e) {
+            log.warn("Tracer.startRoot failed; using a no-op span: {}", e.getMessage());
+            return Tracer.noop().startRoot(sessionId, type, name, inputs);
+        }
+    }
+
+    /**
      * Starts a child span, falling back to a no-op span when {@code tracer} throws, so tracing can never break agent
      * execution.
      *
@@ -121,5 +147,29 @@ public final class Spans {
             log.warn("Tracer.Span.enrich failed; keeping the parent span: {}", e.getMessage());
             return base;
         }
+    }
+
+    /**
+     * Returns metadata that carries only where {@code metadata} sits in the span tree: its group key
+     * ({@link LlmCallMetadata#getTraceId()}) and the two reserved span tags. Every attribution field — component,
+     * feature, principal, other tags — is left out, so a callee that merges it with its own defaults (caller fields
+     * win) keeps its own attribution and only learns its parent span.
+     *
+     * @param metadata
+     *            the metadata to read (must not be null)
+     * @return the carrier, or empty when {@code metadata} names no parent span (tracing off, or never enriched)
+     */
+    public static Optional<LlmCallMetadata> traceCarrier(LlmCallMetadata metadata) {
+        Objects.requireNonNull(metadata, "metadata cannot be null");
+        final Map<String, String> tags = metadata.getTags();
+        final String traceId = tags.get(SpanContext.TAG_TRACE_ID);
+        final String parentSpanId = tags.get(SpanContext.TAG_PARENT_SPAN_ID);
+        if (traceId == null || parentSpanId == null) {
+            return Optional.empty();
+        }
+        final LlmCallMetadata.Builder carrier = LlmCallMetadata.builder()
+                .tags(Map.of(SpanContext.TAG_TRACE_ID, traceId, SpanContext.TAG_PARENT_SPAN_ID, parentSpanId));
+        metadata.getTraceId().ifPresent(carrier::traceId);
+        return Optional.of(carrier.build());
     }
 }

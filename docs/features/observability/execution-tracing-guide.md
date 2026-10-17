@@ -121,6 +121,28 @@ executor는 `Tracer.noop()`을 유지한다(회귀 없음).
 > 같은 store에 모이고, executor가 metadata에 심은 span 태그를 데코레이터가 읽어 LLM span을 올바른 부모
 > 아래 매단다.
 
+공장 밖에서 subagent 매니저를 직접 만들거나 예약 루틴을 쓰는 경우에도 **같은 트레이서**를 건다. `LlmClient` 편의
+생성자로 만든 매니저는 안에서 만든 실행기에도 트레이서를 옮겨 주므로 `withTracer` 한 번으로 `SUBAGENT → ITERATION →
+{LLM, TOOL}` 전체가 나온다. 실행기를 직접 넘긴 매니저는 실행기(`DefaultSubagentExecutor#withTracer`)에도 따로 건다 —
+매니저는 넘겨받은 객체를 바꾸지 않는다.
+
+```java
+// 공장 밖의 subagent 매니저 — 편의 생성자면 이 한 줄로 실행기까지
+DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(tracedClient, tools, hooks)
+        .withTracer(tracer)
+        .withTracePayloadPolicy(policy);
+
+// 예약 루틴 — 발화마다 ROUTINE root, 단계 시도마다 TOOL
+SchedulingEngine engine = SchedulingEngineBuilder.create()
+        .agentRuntimeRegistry(registry)
+        .tracer(tracer)
+        .tracePayloadPolicy(policy)
+        .build();
+```
+
+`aimon-bootstrap`(그 위의 Spring starter · CLI 포함)은 executor spec 의 트레이서를 스케줄링 엔진에도 같은 인스턴스로
+건다.
+
 ---
 
 ## Span 모델
@@ -132,13 +154,18 @@ executor는 `Tracer.noop()`을 유지한다(회귀 없음).
 | `sessionId` | 대화 단위 그룹 (= conversationId) |
 | `traceId` | turn 단위 (= turn root span id) |
 | `spanId` / `parentSpanId` | 이 span / 부모 span (root는 parent 없음) |
-| `type` | `TURN` / `ITERATION` / `LLM` / `TOOL` / `SUBAGENT` / `COMPACTION` / `RETRIEVER` |
+| `type` | `TURN` / `ITERATION` / `LLM` / `TOOL` / `SUBAGENT` / `COMMAND` / `ROUTINE` (`COMPACTION` / `RETRIEVER` 는 예약 — 지금 만드는 곳이 없다) |
 | `name` | 예: `turn:<agent>`, `iteration#3`, `llm:<model>`, 도구명 |
 | `startTime` / `endTime` / `latency()` | 시각·지연 |
 | `status` | `OK` / `ERROR` / `INTERRUPTED` |
 | `inputs` / `outputs` | 입력·출력 **요약**(메시지 수, 토큰, 도구 입력 등) |
 | `tokenUsage` / `model` | LLM span 한정 |
-| `attributes` | `iteration` 등 부가 정보 |
+| `attributes` | `iteration` 등 부가 정보. LLM span 은 호출의 `feature`(예: compaction 요약 호출의 `compaction`), SUBAGENT 는 포크의 `executionId` · 백그라운드 대기 `queuedMs` · pool 거부 `rejected` |
+
+도구 호출을 거치지 않는 두 경로에도 부모가 있다. 슬래시 명령 턴은 TURN 아래 `COMMAND` span(`command:/<name>`)을 열고,
+그 명령이 띄운 fork 스킬의 `SUBAGENT` 가 그 아래 붙는다. 예약 루틴은 세션이 없으므로 실행(발화)마다 `ROUTINE` root
+span 을 열고 단계 **시도**마다 그 아래 `TOOL` span(`invoker=ROUTINE`, `stepIndex`, `attempt`)을 둔다 — 그 trace 의
+`sessionId` 는 `routine:<taskId>` 다.
 
 **Span 컨텍스트 전파**는 thread-local이 아니라 `LlmCallMetadata`의 예약 태그(`aimon.trace_id`,
 `aimon.parent_span_id`)로 명시적으로 흐른다. 따라서 병렬 도구 디스패치·async 스트리밍에서도 부모-자식
@@ -279,7 +306,10 @@ cli:
 | 항목 | 현재 |
 |------|------|
 | 추적 대상 | **agent turn(ReAct 루프 + subagent)만** 추적. 배경 subsystem(wiki 인덱싱, peer memory, dreamer)은 의도적으로 미추적 — 해당 호출은 turn span 컨텍스트가 없어 wrap해도 span이 생기지 않는다 |
-| subagent | subagent 실행마다 `SUBAGENT` span 하나가 그것을 띄운 도구 호출(`Task` · `Workflow` · fork 스킬)의 `TOOL` span 아래 생기고, subagent 자신의 `ITERATION` / `LLM` / `TOOL` 이 그 아래 중첩된다(subagent 안의 subagent도 재귀적으로). 백그라운드 subagent의 span은 부모가 닫힌 뒤 시작할 수 있다 — 부모-자식은 id로 이어진다. `OrcaAgentExecutorFactory` 로 만들지 않은 subagent 매니저에는 tracer를 직접 걸어야 한다 |
+| subagent | subagent 실행마다 `SUBAGENT` span 하나가 그것을 띄운 도구 호출(`Task` · `Workflow` · fork 스킬)의 `TOOL` span(슬래시 명령이면 `COMMAND`, 루틴 단계면 그 시도의 `TOOL`) 아래 생기고, subagent 자신의 `ITERATION` / `LLM` / `TOOL` 이 그 아래 중첩된다(subagent 안의 subagent도 재귀적으로). 백그라운드 subagent의 span은 부모가 닫힌 뒤 시작할 수 있다 — 부모-자식은 id로 이어진다. 실행기를 직접 넘겨 만든 subagent 매니저에는 실행기에도 tracer를 걸어야 한다([배선](#프로그래밍-방식-배선)) |
+| 예약 루틴 | 트레이서가 걸려 있으면 발화마다 `ROUTINE` trace 를 남긴다. 트레이싱이 켜진 루틴에서 띄운 포크의 LLM 호출 metadata 는 `traceId = routine:<taskId>` 를 갖고, 꺼져 있으면 오늘처럼 비어 있다 — 사용량 metadata 의 이 필드가 트레이싱 켜짐 여부에 따라 달라진다. CLI `/trace` 는 TURN 만 보여 주므로 루틴 trace 는 store(`bySession("routine:<taskId>")`)로 조회한다 |
+| compaction | `COMPACTION` span 은 아직 없다. 요약 LLM 호출은 `feature=compaction` 속성의 LLM span 으로 남는다 — 메인 턴은 TURN 아래(게이트가 ITERATION 보다 먼저 돈다), 포크는 그 ITERATION 아래. 이 저장소가 조립하는 포크 실행기는 passthrough 엔진이라 포크가 compact 하지 않는다 — 포크 쪽은 실제 `ContextEngine` 을 건 실행기에서만 보인다. `/compact` 명령의 요약 호출은 COMMAND span 아래 붙지 않는다 |
+| 미추적 경로 | 앱이 에이전트 단위 `WorkflowRunner` 를 직접 부르는 실행은 부모 span 이 없어 아무것도 남기지 않는다(orphan 금지). 부모보다 늦게 시작하는 백그라운드 SUBAGENT 를 외부 뷰어(OTLP)가 어떻게 그리는지는 확인하지 못했다 |
 | 입출력 캡처 | 기본은 요약(메시지 수/토큰/도구 입력)만 저장. `TracePayloadPolicy.full(maxChars)`로 **도구 결과·LLM 응답 본문**을 옵션 캡처(상한 절단). 저장 직전 `SpanRedactor`로 민감 키 마스킹 — [§본문 캡처](#본문-캡처와-마스킹-trace-02) |
 | 샘플링/비차단 워커 | 미구현. 운영 대량 트래픽에서는 후속 `TraceSampler` + bounded-queue 워커 권장 |
 | 외부 백엔드 | `aimon-tracing-otlp`/`aimon-tracing-postgres` 모듈은 후속. 현재는 in-memory 기본 + `SpanExporter` SPI 제공 |

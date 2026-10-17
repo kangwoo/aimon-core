@@ -7,23 +7,37 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.prompt.SystemPromptParts;
+import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.agent.tool.ToolContext;
+import at.aimon.core.agent.tool.ToolInput;
+import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
+import at.aimon.core.hook.event.SubagentStopContext;
+import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmCancellation;
 import at.aimon.core.llm.LlmClient;
@@ -36,6 +50,8 @@ import at.aimon.core.llm.ToolUse;
 import at.aimon.core.subagent.behavior.InMemorySubagentBehaviorRegistry;
 import at.aimon.core.subagent.execution.DefaultSubagentExecutor;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
+import at.aimon.core.subagent.task.InMemoryBackgroundTaskStore;
+import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.task.TaskTool;
 import at.aimon.core.tracing.SpanContext;
 import at.aimon.core.tracing.SpanExporter;
@@ -297,6 +313,197 @@ class DefaultSubagentExecutionManagerTracingTest {
         assertThat(subagent.getEndTime()).isPresent();
     }
 
+    // ── ST-2: a manager that built its own executor hands the tracer on ─────────
+
+    @Test
+    @DisplayName("ST-2: the LlmClient convenience constructor plus withTracer alone yields SUBAGENT → ITERATION → LLM")
+    void convenienceConstructorWithTracerYieldsFullTree() {
+        llm.responses.add(LlmResponse.text("found it"));
+        final DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(
+                new TracingLlmClient(llm, tracer), new DefaultToolExecutionManager(), new DefaultHookExecutionManager())
+                .withTracer(tracer);
+        try {
+            manager.execute(launch(seededMetadata), "task-1", "explorer", "find the bug", "search");
+        } finally {
+            manager.close();
+        }
+
+        final TraceSpan subagent = only(SpanType.SUBAGENT);
+        final TraceSpan iteration = only(SpanType.ITERATION);
+        assertThat(iteration.getParentSpanId()).contains(subagent.getSpanId());
+        assertThat(only(SpanType.LLM).getParentSpanId()).contains(iteration.getSpanId());
+    }
+
+    static Stream<Arguments> convenienceConstructors() {
+        final Function<LlmClient, DefaultSubagentExecutionManager> threeArg = client -> new DefaultSubagentExecutionManager(
+                client, new DefaultToolExecutionManager(), new DefaultHookExecutionManager());
+        final Function<LlmClient, DefaultSubagentExecutionManager> withBehaviors = client -> new DefaultSubagentExecutionManager(
+                client, new DefaultToolExecutionManager(), new DefaultHookExecutionManager(),
+                new InMemorySubagentBehaviorRegistry());
+        final Function<LlmClient, DefaultSubagentExecutionManager> withPoolAndStore = client -> new DefaultSubagentExecutionManager(
+                client, new DefaultToolExecutionManager(), new DefaultHookExecutionManager(),
+                new InMemorySubagentBehaviorRegistry(), Executors.newSingleThreadExecutor(),
+                new InMemoryBackgroundTaskStore());
+        final Function<LlmClient, DefaultSubagentExecutionManager> withOptions = client -> new DefaultSubagentExecutionManager(
+                client, new DefaultToolExecutionManager(), new DefaultHookExecutionManager(),
+                new InMemorySubagentBehaviorRegistry(),
+                SubagentBackgroundExecutionOptions.of(Executors.newSingleThreadExecutor()));
+        return Stream.of(Arguments.of("(llm, tools, hooks)", threeArg),
+                Arguments.of("(llm, tools, hooks, behaviors)", withBehaviors),
+                Arguments.of("(llm, tools, hooks, behaviors, pool, store)", withPoolAndStore),
+                Arguments.of("(llm, tools, hooks, behaviors, options)", withOptions));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("convenienceConstructors")
+    @DisplayName("ST-2: every LlmClient convenience constructor forwards the tracer to the executor it built")
+    void everyConvenienceConstructorForwardsTheTracer(String shape,
+            Function<LlmClient, DefaultSubagentExecutionManager> constructor) {
+        llm.responses.add(LlmResponse.text("found it"));
+        final DefaultSubagentExecutionManager manager = constructor.apply(new TracingLlmClient(llm, tracer))
+                .withTracer(tracer);
+        try {
+            manager.execute(launch(seededMetadata), "task-1", "explorer", "go", "d");
+        } finally {
+            manager.close();
+        }
+
+        assertThat(only(SpanType.ITERATION).getParentSpanId()).as(shape).contains(only(SpanType.SUBAGENT).getSpanId());
+    }
+
+    @Test
+    @DisplayName("ST-2: a manager handed an executor does not touch it — the run stays flat (principle guard)")
+    void suppliedExecutorIsNotChanged() {
+        llm.responses.add(LlmResponse.text("found it"));
+        final TracingLlmClient client = new TracingLlmClient(llm, tracer);
+        final DefaultSubagentExecutor untraced = new DefaultSubagentExecutor(client, new DefaultToolExecutionManager(),
+                new DefaultHookExecutionManager());
+
+        new DefaultSubagentExecutionManager(untraced, bgPool, null, behaviors, client).withTracer(tracer)
+                .withTracePayloadPolicy(TracePayloadPolicy.full())
+                .execute(launch(seededMetadata), "task-1", "explorer", "go", "d");
+
+        assertThat(spansOf(SpanType.ITERATION)).isEmpty();
+        assertThat(only(SpanType.LLM).getParentSpanId()).contains(only(SpanType.SUBAGENT).getSpanId());
+    }
+
+    @Test
+    @DisplayName("ST-2: withTracePayloadPolicy reaches the owned executor's TOOL span content")
+    void payloadPolicyReachesOwnedExecutor() {
+        final ContextProbeTool probe = new ContextProbeTool();
+        tools.register(probe);
+        llm.responses.add(LlmResponse.of("", List.of(ToolUse.of("p1", "Probe", Map.of()))));
+        llm.responses.add(LlmResponse.text("done"));
+        final DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(
+                new TracingLlmClient(llm, tracer), new DefaultToolExecutionManager(), new DefaultHookExecutionManager())
+                .withTracer(tracer).withTracePayloadPolicy(TracePayloadPolicy.full());
+        try {
+            manager.execute(launch(seededMetadata), "task-1", "explorer", "go", "d");
+        } finally {
+            manager.close();
+        }
+
+        assertThat(outputs(only(SpanType.TOOL))).containsEntry("content", "probed");
+    }
+
+    // ── ST-3: queue wait and pool rejection ──────────────────────────────────────
+
+    @Test
+    @DisplayName("ST-3: a background run records how long it waited for a worker; a foreground run records nothing")
+    void backgroundRunRecordsQueueWait() throws Exception {
+        llm.responses.add(LlmResponse.text("indexed"));
+        final CountDownLatch release = new CountDownLatch(1);
+        final CountDownLatch workerBusy = new CountDownLatch(1);
+        // Pin the single worker so the background task has to wait in the queue.
+        bgPool.submit(() -> {
+            workerBusy.countDown();
+            release.await();
+            return null;
+        });
+        assertThat(workerBusy.await(5, TimeUnit.SECONDS)).isTrue();
+
+        final var future = manager().executeInBackground(launch(seededMetadata), "task-bg", "explorer", "index", "d");
+        Thread.sleep(150);
+        release.countDown();
+        future.get(5, TimeUnit.SECONDS);
+
+        final TraceSpan subagent = only(SpanType.SUBAGENT);
+        assertThat(subagent.getAttributes()).containsEntry("background", "true").doesNotContainKey("rejected");
+        assertThat(Long.parseLong(subagent.getAttributes().get("queuedMs"))).isGreaterThanOrEqualTo(150L);
+    }
+
+    @Test
+    @DisplayName("ST-3: a foreground run has no queuedMs attribute")
+    void foregroundRunHasNoQueueWait() {
+        llm.responses.add(LlmResponse.text("ok"));
+
+        manager().execute(launch(seededMetadata), "task-1", "explorer", "go", "d");
+
+        assertThat(only(SpanType.SUBAGENT).getAttributes()).doesNotContainKey("queuedMs");
+    }
+
+    @Test
+    @DisplayName("ST-3: a task the pool rejects leaves a SUBAGENT ERROR span, closed before the SubagentStop hook")
+    void rejectedTaskLeavesErrorSpanBeforeStopHook() throws Exception {
+        final ExecutorService rejecting = Executors.newSingleThreadExecutor();
+        rejecting.shutdown(); // every submission is now rejected
+        final AtomicReference<List<TraceSpan>> seenByStopHook = new AtomicReference<>();
+        final DefaultHookExecutionManager hooks = new DefaultHookExecutionManager() {
+            @Override
+            public List<HookResult> executeSubagentStop(SubagentStopContext context) {
+                seenByStopHook.set(spansOf(SpanType.SUBAGENT));
+                return super.executeSubagentStop(context);
+            }
+        };
+        final TracingLlmClient client = new TracingLlmClient(llm, tracer);
+        final DefaultSubagentExecutor executor = new DefaultSubagentExecutor(client, new DefaultToolExecutionManager(),
+                hooks).withTracer(tracer);
+
+        final SubagentExecutionResult result = new DefaultSubagentExecutionManager(executor, rejecting, hooks,
+                behaviors, client).withTracer(tracer)
+                .executeInBackground(launch(seededMetadata), "task-rej", "explorer", "index", "d")
+                .get(5, TimeUnit.SECONDS);
+
+        assertThat(result.isSuccess()).isFalse();
+        final TraceSpan subagent = only(SpanType.SUBAGENT);
+        assertThat(subagent.getStatus()).isEqualTo(SpanStatus.ERROR);
+        assertThat(subagent.getParentSpanId()).contains(toolSpan.context().getSpanId());
+        assertThat(subagent.getAttributes()).containsEntry("rejected", "true").containsEntry("background", "true")
+                .containsEntry("taskId", "task-rej").doesNotContainKey("queuedMs").doesNotContainKey("executionId");
+        assertThat(seenByStopHook.get()).as("the span was recorded before the Stop hook ran").singleElement()
+                .satisfies(span -> assertThat(span.getEndTime()).isPresent());
+    }
+
+    // ── ST-4: the fork's execution id on the SUBAGENT span ───────────────────────
+
+    @Test
+    @DisplayName("ST-4: the SUBAGENT span names the execution id the fork's tools ran under")
+    void subagentSpanCarriesForkExecutionId() {
+        final ContextProbeTool probe = new ContextProbeTool();
+        tools.register(probe);
+        llm.responses.add(LlmResponse.of("", List.of(ToolUse.of("p1", "Probe", Map.of()))));
+        llm.responses.add(LlmResponse.text("done"));
+
+        final SubagentExecutionResult result = manager().execute(launch(seededMetadata), "task-1", "explorer", "go",
+                "d");
+
+        final ExecutionId seen = probe.captured.get().get(ToolContextKeys.EXECUTION_ID).orElseThrow();
+        assertThat(result.getExecutionId()).contains(seen);
+        assertThat(only(SpanType.SUBAGENT).getAttributes()).containsEntry("executionId", seen.value());
+    }
+
+    @Test
+    @DisplayName("ST-4: a code behavior and an unresolved subagent mint no execution id, so the span has none")
+    void noExecutionIdWithoutReActLoop() {
+        behaviors.register("explorer", (ctx, req, support) -> support.success("behaved"));
+
+        manager().execute(launch(seededMetadata), "task-1", "explorer", "go", "d");
+        manager().execute(launch(seededMetadata), "task-2", "nobody", "go", "d");
+
+        assertThat(spansOf(SpanType.SUBAGENT)).hasSize(2)
+                .allSatisfy(span -> assertThat(span.getAttributes()).doesNotContainKey("executionId"));
+    }
+
     // ── helpers ────────────────────────────────────────────────────────────────
 
     private DefaultSubagentExecutionManager manager() {
@@ -338,6 +545,21 @@ class DefaultSubagentExecutionManagerTracingTest {
     @SuppressWarnings("unchecked")
     private static Map<String, Object> outputs(TraceSpan span) {
         return (Map<String, Object>) span.getOutputs().orElseThrow();
+    }
+
+    /** Captures the context a fork's tool call receives. */
+    private static final class ContextProbeTool extends AbstractTool {
+        private final AtomicReference<ToolContext> captured = new AtomicReference<>();
+
+        ContextProbeTool() {
+            super("Probe", "Captures its tool context", Map.of("type", "object", "properties", Map.of()));
+        }
+
+        @Override
+        public ToolResult execute(ToolInput input, ToolContext context) {
+            captured.set(context);
+            return ToolResult.success("probed");
+        }
     }
 
     /** Returns scripted responses in order. */

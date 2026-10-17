@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/observability/execution-tracing-guide.md
-source_commit: eec9ccd
+source_commit: fdc751a8
 ---
 
 # Execution Tracing Guide
@@ -126,6 +126,28 @@ List<TraceSpan> allSpans  = store.bySession(conversationId); // every turn of on
 > turn/tool spans into the same store, and what lets the decorator read the span tags the executor planted in the
 > metadata so it can hang LLM spans under the right parent.
 
+Wire **the same tracer** when you build a subagent manager outside the factory or use scheduled routines. A manager made
+through an `LlmClient` convenience constructor hands the tracer on to the executor it built, so a single `withTracer`
+yields the whole `SUBAGENT → ITERATION → {LLM, TOOL}` tree. A manager handed an executor needs the tracer on that
+executor too (`DefaultSubagentExecutor#withTracer`) — the manager does not change an object it was given.
+
+```java
+// a subagent manager outside the factory — with a convenience constructor this one line reaches the executor too
+DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(tracedClient, tools, hooks)
+        .withTracer(tracer)
+        .withTracePayloadPolicy(policy);
+
+// scheduled routines — a ROUTINE root per fire, a TOOL per step attempt
+SchedulingEngine engine = SchedulingEngineBuilder.create()
+        .agentRuntimeRegistry(registry)
+        .tracer(tracer)
+        .tracePayloadPolicy(policy)
+        .build();
+```
+
+`aimon-bootstrap` (and so the Spring starter and the CLI on top of it) wires the executor spec's tracer into the
+scheduling engine as the same instance.
+
 ---
 
 ## The span model
@@ -137,13 +159,18 @@ The principal fields of `TraceSpan` (an immutable value object):
 | `sessionId` | The conversation-level group (= conversationId) |
 | `traceId` | The turn level (= the turn root span id) |
 | `spanId` / `parentSpanId` | This span / its parent (a root has no parent) |
-| `type` | `TURN` / `ITERATION` / `LLM` / `TOOL` / `SUBAGENT` / `COMPACTION` / `RETRIEVER` |
+| `type` | `TURN` / `ITERATION` / `LLM` / `TOOL` / `SUBAGENT` / `COMMAND` / `ROUTINE` (`COMPACTION` / `RETRIEVER` are reserved — nothing emits them yet) |
 | `name` | For example `turn:<agent>`, `iteration#3`, `llm:<model>`, a tool name |
 | `startTime` / `endTime` / `latency()` | Timing and latency |
 | `status` | `OK` / `ERROR` / `INTERRUPTED` |
 | `inputs` / `outputs` | A **summary** of input and output (message count, tokens, tool input …) |
 | `tokenUsage` / `model` | LLM spans only |
-| `attributes` | Extra information such as `iteration` |
+| `attributes` | Extra information such as `iteration`. An LLM span carries the call's `feature` (for a compaction summary call, `compaction`); a SUBAGENT span the fork's `executionId`, the background wait `queuedMs` and a pool rejection's `rejected` |
+
+The two paths that start work without a tool call have a parent too. A slash-command turn opens a `COMMAND` span
+(`command:/<name>`) under its TURN, and a fork-mode skill's `SUBAGENT` that the command starts nests under it. A
+scheduled routine has no session, so each run (fire) opens a `ROUTINE` root span with a `TOOL` span per step **attempt**
+under it (`invoker=ROUTINE`, `stepIndex`, `attempt`) — that trace's `sessionId` is `routine:<taskId>`.
 
 **Span context propagation** is not thread-local; it flows explicitly through the reserved tags on `LlmCallMetadata`
 (`aimon.trace_id`, `aimon.parent_span_id`). Parent-child links therefore stay correct even under parallel tool dispatch
@@ -290,7 +317,10 @@ exceptions too.
 | Item | Today |
 |------|------|
 | What is traced | **Agent turns only** (the ReAct loop + subagents). Background subsystems (wiki indexing, peer memory, the dreamer) are deliberately untraced — those calls have no turn span context, so wrapping them would produce no span anyway |
-| Subagents | Each subagent run gets one `SUBAGENT` span under the `TOOL` span of the tool call that launched it (`Task`, `Workflow`, a fork-mode skill), and the subagent's own `ITERATION` / `LLM` / `TOOL` spans nest under it (recursively, for a subagent inside a subagent). A background subagent's span can start after its parent has closed — parent and child are linked by id. A subagent manager not built by `OrcaAgentExecutorFactory` needs its tracer wired by hand |
+| Subagents | Each subagent run gets one `SUBAGENT` span under the `TOOL` span of the tool call that launched it (`Task`, `Workflow`, a fork-mode skill) — under the `COMMAND` span for a slash command, under the attempt's `TOOL` for a routine step — and the subagent's own `ITERATION` / `LLM` / `TOOL` spans nest under it (recursively, for a subagent inside a subagent). A background subagent's span can start after its parent has closed — parent and child are linked by id. A subagent manager built by handing it an executor needs the tracer on that executor too ([wiring](#wiring-it-programmatically)) |
+| Scheduled routines | With a tracer wired, every fire leaves a `ROUTINE` trace. The LLM-call metadata of a fork started from a traced routine carries `traceId = routine:<taskId>`; with tracing off it stays empty as before — so this usage-metadata field depends on whether tracing is on. The CLI's `/trace` shows TURNs only, so read routine traces from the store (`bySession("routine:<taskId>")`) |
+| Compaction | There is no `COMPACTION` span yet. A summary LLM call is an LLM span with a `feature=compaction` attribute — under the TURN for the main turn (the gate runs before the ITERATION opens), under its ITERATION for a fork. The fork executors this repository assembles use the passthrough engine, so their forks never compact — the fork side shows only on an executor given a real `ContextEngine`. The `/compact` command's summary call does not nest under the COMMAND span |
+| Untraced paths | An app calling an agent-level `WorkflowRunner` directly has no parent span, so it records nothing (no orphans). How an external viewer (OTLP) draws a background SUBAGENT that starts after its parent is unverified |
 | Input/output capture | By default only the summary is stored (message count/tokens/tool input). `TracePayloadPolicy.full(maxChars)` optionally captures the **tool-result and LLM-response bodies** (truncated at the ceiling). A `SpanRedactor` masks sensitive keys just before storage — [§payload capture](#payload-capture-and-masking-trace-02) |
 | Sampling / a non-blocking worker | Not implemented. Under heavy production traffic, a follow-up `TraceSampler` plus a bounded-queue worker is recommended |
 | External backends | The `aimon-tracing-otlp`/`aimon-tracing-postgres` modules are future work. Today there is the in-memory default plus the `SpanExporter` SPI |

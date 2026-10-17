@@ -717,6 +717,10 @@ public final class AimonStackBuilder {
         spec.getScheduling().getTaskRepository().ifPresent(builder::taskRepository);
         spec.getScheduling().getInterruptBus().ifPresent(builder::interruptBus);
         spec.getScheduling().getExecutionGuard().ifPresent(builder::executionGuard);
+        // The executors' tracer, so a routine's step that starts a subagent lands in a trace like a turn's tool call
+        // does. Borrowed, as the executor factory borrows it — the engine never closes it.
+        spec.getExecutor().getTracer().ifPresent(builder::tracer);
+        spec.getExecutor().getTracePayloadPolicy().ifPresent(builder::tracePayloadPolicy);
         // Registered even though it has not been started: the engine's builder already stood up the pools it
         // will run on, so an assembled-but-never-started stack still has them to release.
         final SchedulingEngine engine = builder.build();

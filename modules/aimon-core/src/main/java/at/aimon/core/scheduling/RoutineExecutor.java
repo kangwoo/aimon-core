@@ -9,6 +9,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -57,6 +58,7 @@ import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.environment.ExecutionEnvironments;
 import at.aimon.core.environment.UnavailableExecutionEnvironment;
+import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.scheduling.event.ScheduledTaskEventPublisher;
 import at.aimon.core.scheduling.event.StepCompletedEvent;
 import at.aimon.core.scheduling.event.StepFailedEvent;
@@ -64,8 +66,13 @@ import at.aimon.core.scheduling.event.TaskCompletedEvent;
 import at.aimon.core.scheduling.event.TaskFailedEvent;
 import at.aimon.core.scheduling.event.TaskInterruptedEvent;
 import at.aimon.core.scheduling.event.TaskStartedEvent;
+import at.aimon.core.toolinvocation.ToolCallTracing;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.file.ReadTool;
+import at.aimon.core.tracing.SpanType;
+import at.aimon.core.tracing.Spans;
+import at.aimon.core.tracing.TracePayloadPolicy;
+import at.aimon.core.tracing.Tracer;
 
 /**
  * Executes routines for scheduled tasks.
@@ -105,6 +112,15 @@ import at.aimon.core.tools.file.ReadTool;
  * <b>Node-locality.</b> The in-flight registry is this instance's; an interrupt can only be honoured by the node
  * running the work. In a scale-out deployment a run on another node is reported as "nothing running here" rather than
  * stopped, the same limitation {@code TaskStop} carries for background subagent tasks.
+ *
+ * <h2>Tracing</h2>
+ *
+ * <p>
+ * With a tracer wired ({@link #withTracer(Tracer)}), each run is a {@link SpanType#ROUTINE ROUTINE} root span and each
+ * step attempt a {@link SpanType#TOOL TOOL} child of it. The attempt's tool receives call metadata pointing at that
+ * span, so a subagent the step starts ({@code Task}, {@code Workflow}, a fork-mode skill) nests under it. A routine
+ * has no session, so the trace's group key is {@code routine:<taskId>}: every fire of one task groups together, each
+ * fire its own trace. Without a tracer nothing is recorded and the step context is unchanged.
  */
 public class RoutineExecutor {
 
@@ -139,6 +155,18 @@ public class RoutineExecutor {
     private final Map<ScheduledTaskId, Set<InterruptCoordinator>> inFlightRuns = new ConcurrentHashMap<>();
 
     /**
+     * Records a ROUTINE span per run and a TOOL span per step attempt. Defaults to {@link Tracer#noop()}; wired via
+     * {@link #withTracer(Tracer)}. {@code volatile} because it is set after construction and read by every fire.
+     */
+    private volatile Tracer tracer = Tracer.noop();
+
+    /**
+     * Whether step TOOL spans capture the tool result content. Defaults to {@link TracePayloadPolicy#summaryOnly()};
+     * {@code volatile} for the same reason as {@link #tracer}.
+     */
+    private volatile TracePayloadPolicy tracePayloadPolicy = TracePayloadPolicy.summaryOnly();
+
+    /**
      * RoutineExecutor를 생성한다 (system UTC clock 사용).
      */
     public RoutineExecutor(@ExternallyManaged AgentRuntimeRegistry agentRuntimeRegistry,
@@ -168,6 +196,33 @@ public class RoutineExecutor {
     }
 
     /**
+     * Injects the tracer that records a ROUTINE span per run and a TOOL span per step attempt. Returns {@code this} for
+     * fluent configuration; when unset, the executor keeps {@link Tracer#noop()} and behaviour is unchanged. The tracer
+     * is application-scoped like this executor; neither owns nor closes the other.
+     *
+     * @param tracer
+     *            the tracer (must not be null)
+     * @return this executor
+     */
+    public RoutineExecutor withTracer(Tracer tracer) {
+        this.tracer = Objects.requireNonNull(tracer, "tracer cannot be null");
+        return this;
+    }
+
+    /**
+     * Injects the policy deciding whether step TOOL spans capture the tool result content. When unset, the executor
+     * keeps {@link TracePayloadPolicy#summaryOnly()}.
+     *
+     * @param policy
+     *            the payload capture policy (must not be null)
+     * @return this executor
+     */
+    public RoutineExecutor withTracePayloadPolicy(TracePayloadPolicy policy) {
+        this.tracePayloadPolicy = Objects.requireNonNull(policy, "policy cannot be null");
+        return this;
+    }
+
+    /**
      * Executes a routine for the given scheduled task.
      *
      * @param task
@@ -177,11 +232,18 @@ public class RoutineExecutor {
     public RoutineResult execute(ScheduledTask task) {
         Objects.requireNonNull(task, "Task cannot be null");
 
+        // Minted here rather than with the step context so the run's root span can name it too.
+        final ExecutionId executionId = ExecutionId.generate("routine:" + task.getId());
+        // Snapshot the volatile tracing fields once, so one run traces consistently.
+        final RoutineTrace trace = RoutineTrace.open(tracer, tracePayloadPolicy, task, executionId);
         final InterruptCoordinator coordinator = new DefaultInterruptCoordinator();
         registerRun(task.getId(), coordinator);
+        RoutineResult result = null;
         try {
-            return runRoutine(task, coordinator);
+            result = runRoutine(task, coordinator, executionId, trace);
+            return result;
         } finally {
+            trace.close(result);
             // Deregister before closing, so an interrupt racing this teardown either finds the coordinator and trips
             // a run that is already unwinding (harmless), or does not find it at all. Closing first would leave a
             // window where the registry hands out a coordinator that rejects new registrars.
@@ -270,7 +332,8 @@ public class RoutineExecutor {
         }
     }
 
-    private RoutineResult runRoutine(ScheduledTask task, InterruptCoordinator coordinator) {
+    private RoutineResult runRoutine(ScheduledTask task, InterruptCoordinator coordinator, ExecutionId executionId,
+            RoutineTrace trace) {
         final CancellationSignal signal = coordinator.getSignal();
         final Instant startedAt = clock.instant();
         final List<StepResult> stepResults = new ArrayList<>();
@@ -280,7 +343,7 @@ public class RoutineExecutor {
         logDefinitionDrift(task);
         eventPublisher.publish(new TaskStartedEvent(task));
 
-        final ToolContext context = buildToolContext(task, signal);
+        final ToolContext context = buildToolContext(task, signal, executionId, trace);
 
         for (int i = 0; i < task.getRoutine().size(); i++) {
             // Step boundary gate. Every step from here on is simply not started, which is why the run stops within
@@ -291,7 +354,8 @@ public class RoutineExecutor {
             }
 
             final RoutineStep step = task.getRoutine().get(i);
-            final Optional<StepResult> attempted = executeStep(task, step, i, context, stepOutputs, coordinator);
+            final Optional<StepResult> attempted = executeStep(task, step, i, context, stepOutputs,
+                    new StepRun(coordinator, trace));
             if (attempted.isEmpty()) {
                 // An interrupt arrived between the gate above and the step's own, so the step never started. Record
                 // nothing for it: a run's step results are what it attempted, and counting a step it never began
@@ -443,15 +507,20 @@ public class RoutineExecutor {
      * an explicit "always allow for this agent" grant now also covers this agent's unattended runs, which is precisely
      * what that grant is documented to mean: agent-wide, no TTL, not cleared by {@code /clear}. Narrow it with
      * {@code /revoke}, or approve per-session instead.
+     *
+     * <p>
+     * With tracing on, the context also carries {@link ToolContextKeys#LLM_CALL_METADATA_KEY} pointing at the run's
+     * ROUTINE span; each step attempt rotates it to its own TOOL span. Tracing off, the key is absent, as before.
      */
-    private ToolContext buildToolContext(ScheduledTask task, CancellationSignal signal) {
-        final ExecutionId executionId = ExecutionId.generate("routine:" + task.getId());
+    private ToolContext buildToolContext(ScheduledTask task, CancellationSignal signal, ExecutionId executionId,
+            RoutineTrace trace) {
         final ToolContext.Builder builder = ToolContext.builder()
                 .put(ToolContextKeys.AGENT_RUNTIME_ID, task.getBoundRuntimeId())
                 .put(ToolContextKeys.PRINCIPAL, task.getOwner()).put(ToolContextKeys.EXECUTION_ID, executionId)
                 .put(InterruptToolKeys.CANCELLATION_SIGNAL, signal)
                 .put(ReadTool.FILE_STAMPS_KEY, new ConcurrentHashMap<>());
         putExecutionEnvironment(builder, task, executionId);
+        trace.metadata().ifPresent(metadata -> builder.put(ToolContextKeys.LLM_CALL_METADATA_KEY, metadata));
         return builder.build();
     }
 
@@ -492,7 +561,8 @@ public class RoutineExecutor {
      *         records nothing for a step that never started
      */
     private Optional<StepResult> executeStep(ScheduledTask task, RoutineStep step, int stepIndex, ToolContext context,
-            Map<String, String> stepOutputs, InterruptCoordinator coordinator) {
+            Map<String, String> stepOutputs, StepRun run) {
+        final InterruptCoordinator coordinator = run.coordinator;
         final CancellationSignal signal = coordinator.getSignal();
         final Instant startedAt = clock.instant();
         int attemptCount = 0;
@@ -506,13 +576,16 @@ public class RoutineExecutor {
                 break;
             }
             attemptCount++;
+            // Each attempt is its own TOOL span: a retry runs the tool again and may start a different subagent.
+            final StepAttemptTrace attemptTrace = new StepAttemptTrace(run.trace, stepIndex, attemptCount);
 
             try {
                 log.debug("Executing step {} (tool: '{}') (attempt {}/{}) for task '{}'", stepIndex, step.getTool(),
                         attemptCount, step.getMaxRetries() + 1, task.getId());
 
                 final ToolResult toolResult = executeWithTimeout(task.getBoundRuntimeId(), step, context, stepOutputs,
-                        coordinator);
+                        coordinator, attemptTrace);
+                attemptTrace.recordResult(toolResult);
 
                 if (toolResult.isSuccess()) {
                     final Instant completedAt = clock.instant();
@@ -525,11 +598,15 @@ public class RoutineExecutor {
                 }
             } catch (TimeoutException e) {
                 lastError = "Step timed out after " + step.getTimeout();
+                attemptTrace.recordError(lastError);
                 log.warn("Step {} attempt {} timed out for task '{}'", stepIndex, attemptCount, task.getId());
             } catch (Exception e) {
                 lastError = e.getMessage();
+                attemptTrace.recordFailure(e, context);
                 log.warn("Step {} attempt {} threw exception for task '{}': {}", stepIndex, attemptCount, task.getId(),
                         e.getMessage(), e);
+            } finally {
+                attemptTrace.close();
             }
 
             if (attemptCount <= step.getMaxRetries() && !awaitRetryDelay(step.getRetryDelay(), coordinator)) {
@@ -588,9 +665,15 @@ public class RoutineExecutor {
      * pool worker rather than on this thread, so cancelling the future is what "interrupt the tool thread" means
      * here. {@link InterruptBehavior#EXTERNALLY_TERMINATED} steps register their own handle through the registrar on
      * their {@link ToolContext}.
+     *
+     * <p>
+     * The attempt's TOOL span opens once the tool is found and its input is resolved, right before the tool is handed
+     * to the pool: an attempt that fails before that never ran a tool, so it leaves no TOOL span, and its error reaches
+     * the ROUTINE span through the run's result.
      */
     private ToolResult executeWithTimeout(AgentRuntimeId boundRuntimeId, RoutineStep step, ToolContext context,
-            Map<String, String> stepOutputs, InterruptCoordinator coordinator) throws TimeoutException {
+            Map<String, String> stepOutputs, InterruptCoordinator coordinator, StepAttemptTrace attemptTrace)
+            throws TimeoutException {
         // Resolve agent runtime at execution time and capture in local variable for thread safety
         final AgentRuntime agentRuntime = agentRuntimeRegistry.get(boundRuntimeId)
                 .orElseThrow(() -> new IllegalStateException("No agent runtime registered for binding: "
@@ -607,9 +690,10 @@ public class RoutineExecutor {
         final TerminatorRegistrar registrar = needsRegistrar ? coordinator.newTerminatorRegistrar() : null;
 
         try {
+            final ToolContext tracedContext = attemptTrace.open(step.getTool(), input, context);
             final ToolContext stepContext = registrar == null
-                    ? context
-                    : ToolContext.builder().putAll(context.getContext())
+                    ? tracedContext
+                    : ToolContext.builder().putAll(tracedContext.getContext())
                             .put(InterruptToolKeys.TERMINATOR_REGISTRAR, registrar).build();
 
             final Future<ToolResult> future = timeoutExecutor.submit(() -> tool.execute(input, stepContext));
@@ -781,6 +865,174 @@ public class RoutineExecutor {
         } catch (InterruptedException e) {
             timeoutExecutor.shutdownNow();
             Thread.currentThread().interrupt();
+        }
+    }
+
+    /** What every step of one run shares beyond its context: the run's coordinator and its trace. */
+    private static final class StepRun {
+        private final InterruptCoordinator coordinator;
+        private final RoutineTrace trace;
+
+        private StepRun(InterruptCoordinator coordinator, RoutineTrace trace) {
+            this.coordinator = coordinator;
+            this.trace = trace;
+        }
+    }
+
+    /**
+     * The ROUTINE root span of one run, and the call metadata its steps nest under.
+     *
+     * <p>
+     * The metadata starts from the group key ({@code routine:<taskId>}) before it is rotated under the root: a child
+     * span reads its group key from {@link LlmCallMetadata#getTraceId()}, not from the reserved tags, so without it
+     * only the root would be filed under the task and every descendant under an empty key.
+     */
+    private static final class RoutineTrace {
+        /** The no-op tracer's trace: nothing is opened and nothing is allocated per fire. */
+        private static final RoutineTrace OFF = new RoutineTrace(Tracer.noop(), TracePayloadPolicy.summaryOnly(), null,
+                null);
+
+        private final Tracer tracer;
+        private final TracePayloadPolicy policy;
+        /** The root span, or {@code null} when tracing is off. */
+        private final Tracer.Span root;
+        /** The metadata steps nest under, or {@code null} when there is no real root to nest under. */
+        private final LlmCallMetadata metadata;
+
+        private RoutineTrace(Tracer tracer, TracePayloadPolicy policy, Tracer.Span root, LlmCallMetadata metadata) {
+            this.tracer = tracer;
+            this.policy = policy;
+            this.root = root;
+            this.metadata = metadata;
+        }
+
+        static RoutineTrace open(Tracer tracer, TracePayloadPolicy policy, ScheduledTask task,
+                ExecutionId executionId) {
+            if (tracer == Tracer.noop()) {
+                return OFF;
+            }
+            final String groupKey = "routine:" + task.getId().value();
+            final Map<String, Object> inputs = new LinkedHashMap<>();
+            inputs.put("taskId", task.getId().value());
+            inputs.put("totalSteps", task.getRoutine().size());
+            final Tracer.Span root = Spans.startRootSafely(tracer, groupKey, SpanType.ROUTINE, groupKey, inputs);
+            root.setAttribute("taskId", task.getId().value());
+            root.setAttribute("agentRuntimeId", task.getBoundRuntimeId().value());
+            root.setAttribute("executionId", executionId.value());
+            if (task.getOwner() != null) {
+                root.setAttribute("principal", task.getOwner().getType() + ":" + task.getOwner().getId());
+            }
+            final LlmCallMetadata base = LlmCallMetadata.builder().traceId(groupKey).build();
+            final LlmCallMetadata rotated = Spans.enrichSafely(root, base);
+            // An unchanged instance means a no-op root (the tracer failed): publish no key, as with tracing off.
+            return new RoutineTrace(tracer, policy, root, rotated == base ? null : rotated);
+        }
+
+        Optional<LlmCallMetadata> metadata() {
+            return Optional.ofNullable(metadata);
+        }
+
+        /**
+         * Closes the root with the run's outcome: OK for a run that finished, INTERRUPTED for one that was stopped,
+         * ERROR for one that failed — or that threw before producing a result at all.
+         */
+        void close(RoutineResult result) {
+            if (root == null) {
+                return;
+            }
+            if (result == null) {
+                root.error("Routine run did not complete");
+            } else {
+                final Map<String, Object> outputs = new LinkedHashMap<>();
+                outputs.put("success", result.isSuccess());
+                outputs.put("completedSteps", result.getCompletedStepCount());
+                outputs.put("totalSteps", result.getTotalStepCount());
+                root.setOutputs(outputs);
+                if (result.isCancelled()) {
+                    root.interrupted();
+                } else if (!result.isSuccess()) {
+                    root.error(result.getErrorMessage().orElse("Routine run failed"));
+                }
+            }
+            root.close();
+        }
+    }
+
+    /**
+     * The TOOL span of one step attempt. Opened by {@link #executeWithTimeout} once the tool is about to run, and
+     * recorded and closed by {@link #executeStep}, which sees how the attempt ended.
+     */
+    private static final class StepAttemptTrace {
+        private final RoutineTrace trace;
+        private final int stepIndex;
+        private final int attempt;
+        /** The attempt's span, or {@code null} until opened (and when there is no parent to nest under). */
+        private Tracer.Span span;
+
+        private StepAttemptTrace(RoutineTrace trace, int stepIndex, int attempt) {
+            this.trace = trace;
+            this.stepIndex = stepIndex;
+            this.attempt = attempt;
+        }
+
+        /**
+         * Opens the span under the run's root and returns {@code context} rotated to it, or {@code context} itself
+         * when the run has no root to nest under.
+         */
+        ToolContext open(String toolName, ToolInput input, ToolContext context) {
+            if (trace.metadata == null) {
+                return context;
+            }
+            span = Spans.startChildOfLazily(trace.tracer, trace.metadata, SpanType.TOOL, toolName, () -> {
+                final Map<String, Object> inputs = new LinkedHashMap<>();
+                inputs.put("stepIndex", stepIndex);
+                inputs.put("attempt", attempt);
+                inputs.put("input", input.toMap());
+                return inputs;
+            }).orElse(null);
+            if (span == null) {
+                return context;
+            }
+            // Not an InvokerType: those name the agent hierarchy, and a routine is not part of it.
+            span.setAttribute("invoker", "ROUTINE");
+            span.setAttribute("stepIndex", String.valueOf(stepIndex));
+            span.setAttribute("attempt", String.valueOf(attempt));
+            return ToolCallTracing.contextUnder(span, context);
+        }
+
+        void recordResult(ToolResult result) {
+            if (span == null) {
+                return;
+            }
+            final String content = result.getContent();
+            final Map<String, Object> outputs = new LinkedHashMap<>();
+            outputs.put("isError", !result.isSuccess());
+            outputs.put("contentChars", content == null ? 0 : content.length());
+            if (trace.policy.capturesContent() && content != null) {
+                outputs.put("content", trace.policy.truncate(content));
+            }
+            span.setOutputs(outputs);
+            if (!result.isSuccess()) {
+                span.error(content);
+            }
+        }
+
+        void recordError(String message) {
+            if (span != null) {
+                span.error(message);
+            }
+        }
+
+        void recordFailure(Exception failure, ToolContext context) {
+            if (span != null) {
+                ToolCallTracing.recordFailure(span, failure, context);
+            }
+        }
+
+        void close() {
+            if (span != null) {
+                span.close();
+            }
         }
     }
 }

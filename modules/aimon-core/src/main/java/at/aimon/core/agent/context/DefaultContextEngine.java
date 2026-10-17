@@ -186,7 +186,7 @@ public final class DefaultContextEngine implements ContextEngine {
                 .transcriptBuffer(buffer).model(request.getModel()).hookRegistry(hookRegistry).executionId(executionId)
                 .executionEnvironment(request.getExecutionEnvironment().orElse(null))
                 .executionCancellation(request.getExecutionCancellation().orElse(null))
-                .budgetForced(request.isBudgetForced()).build());
+                .budgetForced(request.isBudgetForced()).callMetadata(request.getCallMetadata().orElse(null)).build());
         // Read after the guard: a compaction rewrote the buffer in place, and the view is what it left behind.
         return ContextDecision.from(decision, viewOf(request), sizeBefore);
     }
