@@ -12,6 +12,8 @@ import static org.mockito.Mockito.when;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -603,6 +605,165 @@ class SingleToolInvokerTest {
 
         assertThat(result.isError()).isTrue();
         assertThat(result.getContent()).contains("tool not found");
+    }
+
+    // --- environment notices (#254) ---------------------------------------------------------------------------------
+
+    private final Queue<String> notices = new ConcurrentLinkedQueue<>();
+
+    private ToolInvocationSpec specWithNotices() {
+        return specIn(TestExecutionEnvironments.withoutStamps(
+                TestExecutionEnvironments.builder().workingDirectory("/workspace").notices(notices).build()));
+    }
+
+    @Test
+    @DisplayName("a non-shell tool's result carries the environment's queued notices at its head, once")
+    void invoke_environmentNotices_prependedOnceToAnyToolsResult() {
+        givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
+        when(toolExecutionManager.execute(any(), any(), any(), any()))
+                .thenReturn(ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("file contents")));
+        notices.add("The sandbox was re-created; /workspace is empty.");
+        notices.add("Provisioning took 94 s.");
+
+        final ToolUseResult first = invoker.invoke(specWithNotices());
+        final ToolUseResult second = invoker.invoke(specWithNotices());
+
+        assertThat(first.isSuccess()).isTrue();
+        assertThat(first.getContent()).isEqualTo("[environment] The sandbox was re-created; /workspace is empty.\n"
+                + "[environment] Provisioning took 94 s.\n" + "file contents");
+        assertThat(second.getContent()).isEqualTo("file contents");
+    }
+
+    @Test
+    @DisplayName("an error result stays an error when it carries notices")
+    void invoke_environmentNotices_errorResultStaysError() {
+        givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
+        when(toolExecutionManager.execute(any(), any(), any(), any()))
+                .thenReturn(ToolExecutionResult.error(TOOL_USE_ID, "File not found: /x"));
+        notices.add("reset");
+
+        final ToolUseResult result = invoker.invoke(specWithNotices());
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).isEqualTo("[environment] reset\nFile not found: /x");
+    }
+
+    @Test
+    @DisplayName("notices ride out on every exit path: permission deny, PreTool block, unknown tool, catch-all")
+    void invoke_environmentNotices_deliveredOnEveryExitPath() {
+        givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
+        when(hookExecutionManager.hasBlockedResult(any())).thenReturn(true);
+        when(hookExecutionManager.collectBlockedReasons(any())).thenReturn(List.of("not allowed"));
+        notices.add("on deny");
+        assertThat(invoker.invoke(specWithNotices()).getContent()).startsWith("[environment] on deny\n")
+                .contains("denied by permission hook");
+
+        // permission passes, PreTool blocks
+        when(hookExecutionManager.hasBlockedResult(any())).thenReturn(false, true);
+        notices.add("on block");
+        assertThat(invoker.invoke(specWithNotices()).getContent()).startsWith("[environment] on block\n")
+                .contains("Tool blocked by hook");
+
+        when(hookExecutionManager.hasBlockedResult(any())).thenReturn(false);
+        when(sessionRegistry.findByName(TOOL_NAME)).thenReturn(Optional.empty());
+        when(toolExecutionManager.execute(any(), any(), any(), any()))
+                .thenReturn(ToolExecutionResult.error(TOOL_USE_ID, "Tool not found: Read"));
+        notices.add("on unknown");
+        assertThat(invoker.invoke(specWithNotices()).getContent())
+                .isEqualTo("[environment] on unknown\nTool not found: Read");
+
+        when(toolExecutionManager.execute(any(), any(), any(), any())).thenThrow(new IllegalStateException("boom"));
+        notices.add("on throw");
+        final ToolUseResult thrown = invoker.invoke(specWithNotices());
+        assertThat(thrown.isError()).isTrue();
+        assertThat(thrown.getContent()).isEqualTo("[environment] on throw\nTool execution error: boom");
+    }
+
+    @Test
+    @DisplayName("a declined approval still carries the notices")
+    void invoke_environmentNotices_deliveredOnApprovalDenial() {
+        givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE, SideEffectLevel.MUTATING);
+        final SingleToolInvoker gated = new SingleToolInvoker(toolExecutionManager, hookExecutionManager,
+                new SideEffectApprovalGate(AskPromptHandler.denyAll()));
+        notices.add("reset");
+
+        final ToolUseResult result = gated.invoke(specWithNotices());
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).startsWith("[environment] reset\n").contains("was not approved by the user");
+    }
+
+    @Test
+    @DisplayName("PostTool hooks never see the notices, a PostTool rewrite cannot drop them, and one a hook caused rides"
+            + " out on this result")
+    void invoke_environmentNotices_drainedAfterPostToolHooks() {
+        givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
+        when(toolExecutionManager.execute(any(), any(), any(), any()))
+                .thenReturn(ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("raw secret")));
+        when(hookExecutionManager.finalUpdatedOutput(any())).thenReturn(Optional.of(ToolResult.success("masked")));
+        notices.add("queued before the call");
+        // The hook's own shell command re-created the sandbox: the environment queues that while the hook runs.
+        when(hookExecutionManager.executePostTool(any())).thenAnswer(invocation -> {
+            notices.add("queued by the hook's command");
+            return List.of();
+        });
+
+        final ToolUseResult result = invoker.invoke(specWithNotices());
+
+        final ArgumentCaptor<PostToolContext> post = ArgumentCaptor.forClass(PostToolContext.class);
+        verify(hookExecutionManager).executePostTool(post.capture());
+        assertThat(post.getValue().getOriginalToolUseResult().getContent()).isEqualTo("raw secret");
+        assertThat(result.getContent())
+                .isEqualTo("[environment] queued before the call\n[environment] queued by the hook's command\nmasked");
+    }
+
+    @Test
+    @DisplayName("notices go to the head and hook feedback to the tail of the same result")
+    void invoke_environmentNotices_coexistWithHookFeedback() {
+        givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
+        when(toolExecutionManager.execute(any(), any(), any(), any()))
+                .thenReturn(ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("done")));
+        when(hookExecutionManager.executePostTool(any()))
+                .thenReturn(List.of(HookResult.withFeedback("lint reported 3 warnings")));
+        notices.add("reset");
+
+        final ToolUseResult result = invoker.invoke(specWithNotices());
+
+        assertThat(result.getContent())
+                .startsWith("[environment] reset\ndone\n\n<system-reminder key=\"hook-feedback\">")
+                .contains("lint reported 3 warnings");
+    }
+
+    @Test
+    @DisplayName("an environment whose drain throws costs the model nothing: the result is returned as it was")
+    void invoke_environmentNotices_throwingDrainLeavesResultUnchanged() {
+        givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
+        when(toolExecutionManager.execute(any(), any(), any(), any()))
+                .thenReturn(ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("done")));
+        final ExecutionEnvironment base = TestExecutionEnvironments.builder().workingDirectory("/workspace").build();
+        final ExecutionEnvironment failing = mock(ExecutionEnvironment.class);
+        when(failing.descriptor()).thenReturn(base.descriptor());
+        when(failing.drainNotices()).thenThrow(new IllegalStateException("queue unreachable"));
+
+        final ToolUseResult result = invoker.invoke(specIn(TestExecutionEnvironments.withoutStamps(failing)));
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getContent()).isEqualTo("done");
+    }
+
+    @Test
+    @DisplayName("an environment that never queues anything leaves the result exactly as before")
+    void invoke_environmentNotices_noNoticesNoChange() {
+        givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
+        final ToolUseResult toolResult = ToolUseResult.success(TOOL_USE_ID, "done");
+        when(toolExecutionManager.execute(any(), any(), any(), any()))
+                .thenReturn(ToolExecutionResult.of(TOOL_USE_ID, ToolResult.success("done")));
+
+        final ToolUseResult withEnvironment = invoker.invoke(specWithNotices());
+        final ToolUseResult withoutEnvironment = invoker.invoke(specIn(ToolContext.empty()));
+
+        assertThat(withEnvironment).isEqualTo(toolResult);
+        assertThat(withoutEnvironment).isEqualTo(toolResult);
     }
 
     @Test

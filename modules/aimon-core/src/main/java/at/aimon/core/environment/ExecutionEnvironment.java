@@ -1,6 +1,7 @@
 package at.aimon.core.environment;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
 
 import at.aimon.core.filesystem.VirtualFileSystem;
@@ -124,5 +125,42 @@ public interface ExecutionEnvironment {
      */
     default Optional<Duration> backgroundCommandTimeout() {
         return Optional.empty();
+    }
+
+    /**
+     * Removes and returns the facts this environment has queued for the model — facts about the environment itself,
+     * not about one command ("the sandbox was re-created and {@code /workspace} is empty", "this session now runs in
+     * another workspace"). The core calls this once after each <b>model-facing</b> tool call, whichever tool it was,
+     * and shows the notices at the head of that call's result as {@code [environment] ...} lines (issue #254). It
+     * does so after the PostTool hooks, so no hook sees or rewrites them.
+     *
+     * <p>
+     * A fact about one command's run belongs in {@code ShellCommandResult.notices()} instead, which also reaches
+     * {@code BashOutput} for a background command. A provider must not put the same fact in both.
+     *
+     * <p>
+     * Contract for implementations:
+     * <ul>
+     * <li><b>One-shot and atomic.</b> A notice returned once is never returned again, by this call or a concurrent
+     * one. A parallel tool batch drains from several threads, and each notice must land on exactly one result.
+     * Returning a notice is committing it: the core does not acknowledge delivery separately.
+     * <li><b>Cheap and quiet.</b> No long remote I/O, and no exception; the core treats a throw as "nothing to
+     * deliver" and logs it. A {@code null} return, and {@code null} or blank entries, are ignored.
+     * <li><b>One queue per environment instance.</b> The core drains whichever instance sits in the dispatching tool
+     * context. If a subagent fork is answered with an instance that shares the parent's queue, the fork's first call
+     * consumes notices only the fork's model then hears, and the parent edits a reset tree unaware. Seed a fork's
+     * queue with what it must also hear rather than share one.
+     * </ul>
+     *
+     * <p>
+     * Only the core's tool dispatch calls this. A tool or a hook must not: whatever it drains is lost to the model.
+     * Calls made outside a model-facing dispatch (workflow scripts, scheduled routine steps) leave the queue alone, so
+     * their notices wait for the next model-facing call. A turn whose model makes no tool call drains nothing.
+     *
+     * @return the queued notices, oldest first; empty if there are none (the default: an environment that never has
+     *         anything to say)
+     */
+    default List<String> drainNotices() {
+        return List.of();
     }
 }

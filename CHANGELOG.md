@@ -7,6 +7,26 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: environment notices on every tool result — `ExecutionEnvironment.drainNotices()` (#254)
+
+Only a `Bash` result could carry what an environment had to tell the model (`ShellCommandResult.notices()`), so a turn
+that only read and edited files never heard that its sandbox had been re-created and `/workspace` was empty.
+
+- **New SPI method, default empty.** `ExecutionEnvironment.drainNotices()` returns and removes the environment's queued
+  notices. The core calls it once after every model-facing tool call, whichever tool it was, and puts the notices at
+  the head of that call's result as `[environment] …` lines — the shape `Bash` already uses. Denied, blocked, unknown
+  and failed calls carry them too.
+- **Never into hooks.** The drain runs after the PostTool hooks, so no hook sees or rewrites a notice, and a notice a
+  hook's own shell command caused still reaches the model on that tool's result. Workflow-script tool calls and
+  scheduled routine steps do not drain.
+- **Nothing changes for local or custom environments** that do not override the method. External providers
+  (aimon-sandbox) may move environment-level notices off `ShellCommandResult` onto this method. Per-command notices
+  stay where they are. The contract — atomic, one-shot, one queue per environment instance, never shared with a fork —
+  is in the method's javadoc and in `docs/design/tool/execution-environment.md` §8.1 · §13.
+- `EnvironmentNotices.PREFIX` (`at.aimon.core.tools`) is the shared `[environment] ` prefix.
+- Not yet: a turn whose model makes no tool call hears nothing (backlog `EE-102`). Queue scope across forks and slash
+  skills is the provider's call (`EE-103`). Hooks are told, not prevented, not to drain (`EE-104`).
+
 ### Added: usage quotas — accumulated session, principal and tenant limits, in total or per day (`at.aimon.core.agent.quota`)
 
 `ExecutionBudget` bounds one execution and starts again on the next, so nothing bounded what a session spends over
