@@ -38,6 +38,8 @@
  * deferred it onto the mid-turn injection queue.
  * <li>{@link at.aimon.core.agent.session.OpenAttributes} — caller-domain attributes threaded to a custom session
  * opener, consumed on cache miss only.
+ * <li>{@link at.aimon.core.agent.session.SessionLifecycleListener} — the hook an extension registers once to hear that
+ * a session record was deleted, with {@link at.aimon.core.agent.session.SessionDeletedEvent} as what it is told.
  * </ul>
  *
  * <h2>Lifecycle</h2>

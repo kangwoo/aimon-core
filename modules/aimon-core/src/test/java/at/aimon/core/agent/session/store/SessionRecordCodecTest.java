@@ -1,6 +1,7 @@
 package at.aimon.core.agent.session.store;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.base.Principal;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.TokenUsage;
@@ -179,6 +181,57 @@ class SessionRecordCodecTest {
 
         assertThat(decoded).isEqualTo(snapshot);
         assertThat(decoded.getConversationHistory().get(0).getReasoningTraces()).containsExactly(trace);
+    }
+
+    @Test
+    @DisplayName("an owner survives the round trip, display name included")
+    void ownerRoundTrip() {
+        final Principal owner = Principal.user("u-1", "Ada Lovelace");
+
+        final Principal decoded = SessionRecordCodec.decodeOwner(SessionRecordCodec.encodeOwner(owner));
+
+        assertThat(decoded).isEqualTo(owner);
+        // equals ignores the display name, so it is checked on its own — it is stored to be shown.
+        assertThat(decoded.getDisplayName()).isEqualTo("Ada Lovelace");
+        assertThat(decoded.getType()).isEqualTo(Principal.Type.USER);
+    }
+
+    @Test
+    @DisplayName("every principal type round-trips")
+    void everyOwnerTypeRoundTrips() {
+        for (Principal owner : List.of(Principal.user("u"), Principal.group("g", "G"), Principal.system(),
+                Principal.service("s", "S"))) {
+            assertThat(SessionRecordCodec.decodeOwner(SessionRecordCodec.encodeOwner(owner))).isEqualTo(owner);
+        }
+    }
+
+    @Test
+    @DisplayName("no owner encodes to null, and null or blank decodes to no owner")
+    void absentOwner() {
+        assertThat(SessionRecordCodec.encodeOwner(null)).isNull();
+        assertThat(SessionRecordCodec.decodeOwner(null)).isNull();
+        assertThat(SessionRecordCodec.decodeOwner("  ")).isNull();
+    }
+
+    @Test
+    @DisplayName("a document without a display name falls back to the id")
+    void ownerWithoutDisplayName() {
+        final Principal decoded = SessionRecordCodec.decodeOwner("{\"version\":1,\"type\":\"SERVICE\",\"id\":\"svc\"}");
+
+        assertThat(decoded).isEqualTo(Principal.service("svc", "anything"));
+        assertThat(decoded.getDisplayName()).isEqualTo("svc");
+    }
+
+    @Test
+    @DisplayName("a malformed owner, an unknown type or a missing id is refused rather than read as no owner")
+    void malformedOwnerIsRefused() {
+        assertThatIllegalArgumentException().isThrownBy(() -> SessionRecordCodec.decodeOwner("{not json"));
+        assertThatIllegalArgumentException().isThrownBy(() -> SessionRecordCodec.decodeOwner("[1,2]"));
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> SessionRecordCodec.decodeOwner("{\"type\":\"ROBOT\",\"id\":\"r\"}"));
+        assertThatIllegalArgumentException().isThrownBy(() -> SessionRecordCodec.decodeOwner("{\"type\":\"USER\"}"));
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> SessionRecordCodec.decodeOwner("{\"type\":\"USER\",\"id\":\" \"}"));
     }
 
 }

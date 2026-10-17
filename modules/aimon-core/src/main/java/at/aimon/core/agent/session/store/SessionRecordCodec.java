@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.base.Principal;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.cost.Money;
@@ -27,11 +28,12 @@ import at.aimon.core.subagent.task.codec.SessionSnapshotCodec;
  * would each carry their own copy of the same mapping, and a fleet running two of them would agree only by
  * coincidence. This class is the one place that decides what a persisted record looks like.
  *
- * <h2>Four values, not one blob</h2>
+ * <h2>Separate values, not one blob</h2>
  *
  * <p>
- * A record is <b>not</b> encoded whole. {@code SessionRecordStore} has no full-record write precisely because its four
- * concerns have four owners, and a backend can only honour that if each concern is separately addressable in storage.
+ * A record is <b>not</b> encoded whole. {@code SessionRecordStore} has no full-record write precisely because its
+ * concerns have different owners, and a backend can only honour that if each concern is separately addressable in
+ * storage.
  * So this codec encodes each independently and the backend gives each its own column / field:
  *
  * <ul>
@@ -39,6 +41,7 @@ import at.aimon.core.subagent.task.codec.SessionSnapshotCodec;
  * <li>{@link #encodeTotals(SessionTotals) encodeTotals} — the cumulative counters
  * <li>{@link #encodeBudgetOverride(ExecutionBudget) encodeBudgetOverride} — the runtime budget override, or
  * {@code null} when there is none
+ * <li>{@link #encodeOwner(Principal) encodeOwner} — the owning principal, or {@code null} when none is recorded
  * <li>{@code agentRef} and {@code compactionFailureCount} are not encoded at all — a string and an integer go to
  * storage natively, which is what lets the counter be a server-side {@code $inc} / {@code n = n + 1} instead of a
  * read-modify-write
@@ -88,6 +91,10 @@ public final class SessionRecordCodec {
     private static final String FIELD_COMPACTION_THRESHOLD = "compactionTokenThreshold";
     private static final String FIELD_MAX_COST_AMOUNT = "maxCostAmount";
     private static final String FIELD_MAX_COST_CURRENCY = "maxCostCurrency";
+
+    private static final String FIELD_OWNER_TYPE = "type";
+    private static final String FIELD_OWNER_ID = "id";
+    private static final String FIELD_OWNER_DISPLAY_NAME = "displayName";
 
     private SessionRecordCodec() {
     }
@@ -263,6 +270,64 @@ public final class SessionRecordCodec {
             builder.maxCostUsd(Money.of(new BigDecimal(node.get(FIELD_MAX_COST_AMOUNT).asText()), currency));
         }
         return builder.build();
+    }
+
+    /**
+     * Encodes the owning principal of a session.
+     *
+     * <p>
+     * Returns {@code null} for a {@code null} owner, and every backend stores that as SQL {@code NULL} / an absent
+     * field — the state of every record whose host never named an owner. The display name travels although it is not
+     * part of a principal's identity ({@link Principal#equals(Object)} compares type and id only), so a reader can
+     * show the owner without asking anyone else.
+     *
+     * @param owner
+     *            the owner to encode (may be null)
+     * @return the encoded owner, or null when there is none
+     */
+    public static String encodeOwner(Principal owner) {
+        if (owner == null) {
+            return null;
+        }
+        final ObjectNode node = MAPPER.createObjectNode();
+        node.put(FIELD_VERSION, FORMAT_VERSION);
+        node.put(FIELD_OWNER_TYPE, owner.getType().name());
+        node.put(FIELD_OWNER_ID, owner.getId());
+        node.put(FIELD_OWNER_DISPLAY_NAME, owner.getDisplayName());
+        return node.toString();
+    }
+
+    /**
+     * Decodes an owner previously produced by {@link #encodeOwner(Principal)}.
+     *
+     * @param encoded
+     *            the stored owner (may be null or blank)
+     * @return the decoded owner, or null when none is recorded
+     * @throws IllegalArgumentException
+     *             if a non-blank input is malformed, names an unknown principal type, or has no id
+     */
+    public static Principal decodeOwner(String encoded) {
+        if (encoded == null || encoded.isBlank()) {
+            return null;
+        }
+        final JsonNode node = read(encoded, "session owner");
+        if (!node.isObject()) {
+            throw new IllegalArgumentException("Malformed stored session owner: not a JSON object");
+        }
+        final String typeName = node.path(FIELD_OWNER_TYPE).asText(null);
+        final String id = node.path(FIELD_OWNER_ID).asText(null);
+        if (typeName == null || id == null || id.isBlank()) {
+            throw new IllegalArgumentException("Malformed stored session owner: type and id are required");
+        }
+        final Principal.Type type;
+        try {
+            type = Principal.Type.valueOf(typeName);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Malformed stored session owner: unknown principal type " + typeName, e);
+        }
+        // A document without a display name is still the same principal; fall back the way Principal.user(id) does.
+        final String displayName = node.path(FIELD_OWNER_DISPLAY_NAME).asText(id);
+        return Principal.builder().type(type).id(id).displayName(displayName).build();
     }
 
     private static JsonNode read(String encoded, String what) {

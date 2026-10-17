@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
+import at.aimon.core.agent.session.SessionLifecycleListener;
 import at.aimon.core.agent.session.idempotency.IdempotencyStore;
 import at.aimon.core.agent.session.inbox.SessionInbox;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
@@ -68,6 +69,7 @@ public final class SessionSpec {
     private final SessionSignalBus signalBus;
     private final SessionInbox inbox;
     private final IdempotencyStore idempotencyStore;
+    private final List<SessionLifecycleListener> lifecycleListeners;
 
     private SessionSpec(Builder builder) {
         this.recordStore = builder.recordStore;
@@ -84,6 +86,7 @@ public final class SessionSpec {
         this.signalBus = builder.signalBus;
         this.inbox = builder.inbox;
         this.idempotencyStore = builder.idempotencyStore;
+        this.lifecycleListeners = List.copyOf(builder.lifecycleListeners);
 
         if (this.drainTimeout.isNegative()) {
             throw new IllegalArgumentException("drainTimeout must not be negative: " + this.drainTimeout);
@@ -331,6 +334,19 @@ public final class SessionSpec {
         return Optional.ofNullable(idempotencyStore);
     }
 
+    /**
+     * Returns the listeners the session router tells about a deleted session, in registration order.
+     *
+     * <p>
+     * Borrowed, like the stores above: the stack calls them and closes none of them.
+     *
+     * @return the listeners (never null, may be empty, immutable)
+     * @see SessionLifecycleListener
+     */
+    public List<SessionLifecycleListener> getLifecycleListeners() {
+        return lifecycleListeners;
+    }
+
     /** Builder for {@link SessionSpec}. */
     public static final class Builder {
 
@@ -348,8 +364,38 @@ public final class SessionSpec {
         private SessionSignalBus signalBus;
         private SessionInbox inbox;
         private IdempotencyStore idempotencyStore;
+        private final List<SessionLifecycleListener> lifecycleListeners = new ArrayList<>();
 
         private Builder() {
+        }
+
+        /**
+         * Adds a listener told when the session router has deleted a session's record. Repeatable; called in the order
+         * added. See {@link SessionLifecycleListener} for the delivery contract.
+         *
+         * @param listener
+         *            the listener (must not be null)
+         * @return this builder
+         * @throws NullPointerException
+         *             if {@code listener} is null
+         */
+        public Builder lifecycleListener(@ExternallyManaged SessionLifecycleListener listener) {
+            this.lifecycleListeners.add(Objects.requireNonNull(listener, "lifecycleListener must not be null"));
+            return this;
+        }
+
+        /**
+         * Adds every listener in {@code listeners}, in order. See {@link #lifecycleListener(SessionLifecycleListener)}.
+         *
+         * @param listeners
+         *            the listeners (must not be null, nor contain null)
+         * @return this builder
+         * @throws NullPointerException
+         *             if {@code listeners} or any element is null
+         */
+        public Builder lifecycleListeners(@ExternallyManaged List<? extends SessionLifecycleListener> listeners) {
+            Objects.requireNonNull(listeners, "lifecycleListeners must not be null").forEach(this::lifecycleListener);
+            return this;
         }
 
         /**

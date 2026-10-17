@@ -1,7 +1,9 @@
 package at.aimon.session.routing.internal;
 
 import java.time.Duration;
+import java.util.List;
 
+import at.aimon.core.agent.session.SessionLifecycleListener;
 import at.aimon.core.agent.session.idempotency.IdempotencyStore;
 import at.aimon.core.agent.session.inbox.SessionInbox;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
@@ -39,6 +41,7 @@ public final class SessionRouterConfig {
     private final SessionMetrics metrics;
     private final SessionApprovalStore sessionApprovalStore;
     private final SessionLogSegmentStore segmentStore;
+    private final List<SessionLifecycleListener> lifecycleListeners;
 
     private SessionRouterConfig(Builder builder) {
         this.store = builder.store;
@@ -60,6 +63,9 @@ public final class SessionRouterConfig {
         this.metrics = builder.metrics;
         this.sessionApprovalStore = builder.sessionApprovalStore;
         this.segmentStore = builder.segmentStore;
+        this.lifecycleListeners = builder.lifecycleListeners == null
+                ? List.of()
+                : List.copyOf(builder.lifecycleListeners);
     }
 
     public static Builder builder() {
@@ -180,6 +186,15 @@ public final class SessionRouterConfig {
         return segmentStore;
     }
 
+    /**
+     * The listeners a session delete notifies once the record is gone, in registration order.
+     *
+     * @return the listeners (never null, may be empty, immutable)
+     */
+    public List<SessionLifecycleListener> lifecycleListeners() {
+        return lifecycleListeners;
+    }
+
     public static final class Builder {
 
         private SessionStore store;
@@ -201,6 +216,7 @@ public final class SessionRouterConfig {
         private SessionMetrics metrics;
         private SessionApprovalStore sessionApprovalStore;
         private SessionLogSegmentStore segmentStore;
+        private List<SessionLifecycleListener> lifecycleListeners;
 
         private Builder() {
         }
@@ -297,6 +313,11 @@ public final class SessionRouterConfig {
 
         public Builder segmentStore(SessionLogSegmentStore segmentStore) {
             this.segmentStore = segmentStore;
+            return this;
+        }
+
+        public Builder lifecycleListeners(List<SessionLifecycleListener> lifecycleListeners) {
+            this.lifecycleListeners = lifecycleListeners;
             return this;
         }
 

@@ -18,7 +18,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Freeze tests over the shipped operator DDL, {@code db/postgres/V1__init.sql}.
+ * Freeze tests over the shipped operator DDL, {@code db/postgres/V1__init.sql}, and over
+ * {@code db/postgres/V3__session_record_owner.sql}, the column V3 adds to V1's {@code session_record}. (V2 has its own,
+ * {@link PostgresSegmentSchemaFreezeTest}.)
  *
  * <p>
  * Nothing else in this module can catch a rename of these identifiers. {@link PostgresTestSupport} applies this very
@@ -33,11 +35,16 @@ import org.junit.jupiter.api.Test;
  * the assertion travel with the rename and never fail. The file is read straight off the test classpath — no
  * container, no connection — so this stays in the daemonless {@code test} task.
  */
-@DisplayName("V1__init.sql — schema identifiers frozen against already-migrated databases")
+@DisplayName("V1__init.sql and V3__session_record_owner.sql — schema identifiers frozen against already-migrated databases")
 class PostgresSchemaFreezeTest {
 
     /** Same path {@link PostgresTestSupport} feeds to {@code applySchema}, i.e. the file operators actually ran. */
     private static final String DDL_RESOURCE = "/db/postgres/V1__init.sql";
+
+    /**
+     * The owner column, applied after V1 and V2. Pinned here rather than in a class of its own: it alters V1's table.
+     */
+    private static final String OWNER_DDL_RESOURCE = "/db/postgres/V3__session_record_owner.sql";
 
     private static final Pattern LINE_COMMENT = Pattern.compile("--[^\\n]*");
 
@@ -46,7 +53,7 @@ class PostgresSchemaFreezeTest {
     /** Greedy body group: table declarations end on the last {@code )}, past the {@code now()} defaults. */
     private static final Pattern CREATE_TABLE = Pattern.compile("create table if not exists (\\w+) \\((.*)\\)");
 
-    private final List<String> statements = readStatements();
+    private final List<String> statements = readStatements(DDL_RESOURCE);
 
     @Test
     @DisplayName("the DDL is on the test classpath, so the assertions below read the shipped file")
@@ -104,6 +111,15 @@ class PostgresSchemaFreezeTest {
         assertThat(tablesDeclaringColumn("context_id")).containsExactly("background_task");
     }
 
+    @Test
+    @DisplayName("V3 adds exactly the session_record.owner jsonb column, idempotently")
+    void ownerColumnIsFrozen() {
+        // The column name and type are what PostgresSessionRecordStore's COLUMNS / SQL_PROVISION name, and what every
+        // already-migrated database holds owners under. IF NOT EXISTS is pinned too: operators may re-run the file.
+        assertThat(readStatements(OWNER_DDL_RESOURCE))
+                .containsExactly("alter table session_record add column if not exists owner jsonb");
+    }
+
     private List<String> tableNames() {
         final List<String> names = new ArrayList<>();
         for (String statement : statements) {
@@ -152,8 +168,8 @@ class PostgresSchemaFreezeTest {
      * Reads the DDL and splits it into single-line statements: comments dropped, whitespace collapsed, no trailing
      * {@code ;}. That normalization is what lets the expectations above be written as one flat literal each.
      */
-    private List<String> readStatements() {
-        final String ddl = LINE_COMMENT.matcher(readResource()).replaceAll("");
+    private static List<String> readStatements(String resource) {
+        final String ddl = LINE_COMMENT.matcher(readResource(resource)).replaceAll("");
         final String flattened = WHITESPACE.matcher(ddl).replaceAll(" ").toLowerCase(Locale.ROOT);
         final List<String> statements = new ArrayList<>();
         for (String raw : Arrays.asList(flattened.split(";"))) {
@@ -165,12 +181,12 @@ class PostgresSchemaFreezeTest {
         return statements;
     }
 
-    private String readResource() {
-        try (InputStream in = PostgresSchemaFreezeTest.class.getResourceAsStream(DDL_RESOURCE)) {
-            Objects.requireNonNull(in, "resource not on classpath: " + DDL_RESOURCE);
+    private static String readResource(String resource) {
+        try (InputStream in = PostgresSchemaFreezeTest.class.getResourceAsStream(resource)) {
+            Objects.requireNonNull(in, "resource not on classpath: " + resource);
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         } catch (IOException e) {
-            throw new UncheckedIOException("Failed to read " + DDL_RESOURCE, e);
+            throw new UncheckedIOException("Failed to read " + resource, e);
         }
     }
 }

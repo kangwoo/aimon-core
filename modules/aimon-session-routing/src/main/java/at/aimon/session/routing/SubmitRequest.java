@@ -18,7 +18,8 @@ import at.aimon.core.base.Principal;
  * <p>
  * Carries the target {@link SessionId}, the {@code agentRef} the caller intends to bind to the session, the
  * {@link UserInput}, optional session options, optional idempotency key, priority tier (defaults to {@link
- * QueuedInputPriority#NEXT}), and the {@link Principal} that initiated the input.
+ * QueuedInputPriority#NEXT}), the {@link Principal} that initiated the input, and optionally the {@link Principal}
+ * that owns the session.
  *
  * <p>
  * The optional {@code contextDiscriminator} selects which {@code AgentRuntime} instance the session should
@@ -43,6 +44,7 @@ public final class SubmitRequest {
     private final String idempotencyKey;
     private final QueuedInputPriority priority;
     private final Principal initiator;
+    private final Principal owner;
 
     private SubmitRequest(Builder b) {
         this.sessionId = Objects.requireNonNull(b.sessionId, "sessionId must not be null");
@@ -55,6 +57,7 @@ public final class SubmitRequest {
         this.idempotencyKey = b.idempotencyKey;
         this.priority = b.priority != null ? b.priority : QueuedInputPriority.NEXT;
         this.initiator = Objects.requireNonNull(b.initiator, "initiator must not be null");
+        this.owner = b.owner;
     }
 
     public static Builder builder() {
@@ -137,6 +140,27 @@ public final class SubmitRequest {
         return initiator;
     }
 
+    /**
+     * The principal to record as the session's owner, when the session has none yet.
+     *
+     * <p>
+     * Consumed only when the session's record is provisioned — by the claim that wins the session for this node, or
+     * by the holder that drains this request from the inbox — and ignored on a session that already has an owner: the
+     * first provisioning that carries one wins and nothing overwrites it. A submit to a session this node already
+     * holds does not provision, so it records nothing either. Set it on the <em>first</em> submit when ownership must
+     * be strict. The same "read on provisioning only" shape as {@link OpenAttributes}' "read on cache miss only".
+     *
+     * <p>
+     * Not derived from {@link #getInitiator()}, which is mandatory and is often a system or service principal posting
+     * into a session it does not own. And <b>not enforced</b>: a submit naming a different owner is not rejected. The
+     * recorded owner is readable through {@code SessionRecordView.getOwner()}; authorization is the host's.
+     *
+     * @return the owner to record, or empty to record none
+     */
+    public Optional<Principal> getOwner() {
+        return Optional.ofNullable(owner);
+    }
+
     /** Builder for {@link SubmitRequest}. */
     public static final class Builder {
         private SessionId sessionId;
@@ -149,6 +173,7 @@ public final class SubmitRequest {
         private String idempotencyKey;
         private QueuedInputPriority priority;
         private Principal initiator;
+        private Principal owner;
 
         private Builder() {
         }
@@ -245,6 +270,18 @@ public final class SubmitRequest {
 
         public Builder initiator(Principal v) {
             this.initiator = v;
+            return this;
+        }
+
+        /**
+         * Sets the principal to record as the session's owner. See {@link SubmitRequest#getOwner()}.
+         *
+         * @param v
+         *            the owner, or {@code null} to record none
+         * @return this builder
+         */
+        public Builder owner(Principal v) {
+            this.owner = v;
             return this;
         }
 

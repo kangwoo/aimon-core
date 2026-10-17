@@ -56,6 +56,7 @@
 | [`backends.md`](session/backends.md) | PostgreSQL · MongoDB · Redis 세 백엔드의 스키마와 보장 차이 |
 | [`inbox-collect-durability.md`](session/inbox-collect-durability.md) | 인박스 `collect` 가 한 항목의 디코드 실패로 배치를 잃지 않게 — 후보 셋의 백엔드별 비용과 기각 사유 |
 | [`session-log.md`](session/session-log.md) | (IMPLEMENTED, 차이는 §12) transcript 를 append-only 로그 + 뷰 상태로 분리. seq 주소, 봉인, `/clear`·rewind, v1 이행 |
+| [`session-owner-deletion-event.md`](session/session-owner-deletion-event.md) | (IMPLEMENTED, 승인본, 영어, 차이는 §9) 세션 소유자와 삭제 리스너(#253) — 소유자를 `provision` 이 "비어 있으면 채운다" 로 쓰고 `initiator` 에서 끌어내지 않는 이유, 기록만 하고 강제하지 않는 것, 리스너를 리스 안에서 `recordDeleted` 로 부르는 자리, 기각한 대안 |
 
 ### tool — 도구 계약
 

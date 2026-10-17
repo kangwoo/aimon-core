@@ -2,10 +2,14 @@ package at.aimon.session.routing.builder;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
 import at.aimon.core.agent.session.LiveSessionFactory;
+import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.SessionLifecycleListener;
 import at.aimon.core.agent.session.idempotency.IdempotencyStore;
 import at.aimon.core.agent.session.idempotency.InMemoryIdempotencyStore;
 import at.aimon.core.agent.session.inbox.InMemorySessionInbox;
@@ -128,6 +132,7 @@ public final class SessionRouterBuilder {
     private SessionMetrics metrics = SessionMetrics.NOOP;
     private boolean statusBroadcast;
     private SessionApprovalStore sessionApprovalStore;
+    private final List<SessionLifecycleListener> lifecycleListeners = new ArrayList<>();
     private SessionLogSegmentStore sessionLogSegmentStore;
 
     /**
@@ -512,6 +517,38 @@ public final class SessionRouterBuilder {
     }
 
     /**
+     * Adds a listener told when {@link SessionRouter#deleteSession(SessionId)} has deleted a session's record.
+     *
+     * <p>
+     * Repeatable; listeners are called in the order they were added. The router does not close them — they belong to
+     * whoever built them. See {@link SessionLifecycleListener} for the delivery contract.
+     *
+     * @param v
+     *            the listener (must not be null)
+     * @return this builder
+     * @throws NullPointerException
+     *             if {@code v} is null
+     */
+    public SessionRouterBuilder lifecycleListener(SessionLifecycleListener v) {
+        lifecycleListeners.add(Objects.requireNonNull(v, "lifecycleListener must not be null"));
+        return this;
+    }
+
+    /**
+     * Adds every listener in {@code v}, in order. See {@link #lifecycleListener(SessionLifecycleListener)}.
+     *
+     * @param v
+     *            the listeners (must not be null, nor contain null)
+     * @return this builder
+     * @throws NullPointerException
+     *             if {@code v} or any element is null
+     */
+    public SessionRouterBuilder lifecycleListeners(List<? extends SessionLifecycleListener> v) {
+        Objects.requireNonNull(v, "lifecycleListeners must not be null").forEach(this::lifecycleListener);
+        return this;
+    }
+
+    /**
      * Validates configuration and constructs a {@link SessionRouter}. In
      * {@link DeploymentMode#DISTRIBUTED} mode, fails fast if any SPI or {@code nodeId} is missing.
      *
@@ -576,7 +613,8 @@ public final class SessionRouterBuilder {
                 .idempotencyPrimaryTtl(idempotencyPrimaryTtl).idempotencySecondaryTtl(idempotencySecondaryTtl)
                 .idempotencyForwardTtl(idempotencyForwardTtl).releaseInterruptTimeout(releaseInterruptTimeout)
                 .relayCloseDrainTimeout(relayCloseDrainTimeout).metrics(metrics)
-                .sessionApprovalStore(sessionApprovalStore).segmentStore(sessionLogSegmentStore).build();
+                .sessionApprovalStore(sessionApprovalStore).segmentStore(sessionLogSegmentStore)
+                .lifecycleListeners(List.copyOf(lifecycleListeners)).build();
 
         final DefaultSessionRouter manager;
         if (sessionOpener != null) {

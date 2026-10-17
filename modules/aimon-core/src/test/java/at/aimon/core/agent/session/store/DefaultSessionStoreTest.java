@@ -30,6 +30,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.exception.SessionNotHeldException;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.base.Principal;
 import at.aimon.core.llm.TokenUsage;
 
 /**
@@ -206,6 +207,81 @@ class DefaultSessionStoreTest {
     }
 
     @Nested
+    @DisplayName("claim with an owner")
+    class ClaimWithOwner {
+
+        private final Principal alice = Principal.user("alice", "Alice");
+        private final Principal mallory = Principal.user("mallory", "Mallory");
+
+        @Test
+        @DisplayName("records the owner and reports it in the acquired record")
+        void recordsTheOwner() {
+            final ClaimResult result = nodeA.claim(conv, AGENT, alice, "node-A", LEASE);
+
+            assertThat(((ClaimResult.Acquired) result).getRecord().getOwner()).contains(alice);
+            assertThat(repository.load(conv).orElseThrow().getOwner()).contains(alice);
+        }
+
+        @Test
+        @DisplayName("a later claim naming another owner neither replaces it nor is refused for it")
+        void firstOwnerWins() {
+            final ClaimResult first = nodeA.claim(conv, AGENT, alice, "node-A", LEASE);
+            nodeA.release(((ClaimResult.Acquired) first).getLease());
+
+            final ClaimResult second = nodeB.claim(conv, AGENT, mallory, "node-B", LEASE);
+
+            // Recorded, not enforced: the claim is acquired, and it reports the owner that is actually there.
+            assertThat(second).isInstanceOf(ClaimResult.Acquired.class);
+            assertThat(((ClaimResult.Acquired) second).getRecord().getOwner()).contains(alice);
+        }
+
+        @Test
+        @DisplayName("fills the owner of a session first claimed without one")
+        void fillsAnEmptyOwner() {
+            final ClaimResult first = nodeA.claim(conv, AGENT, "node-A", LEASE);
+            nodeA.release(((ClaimResult.Acquired) first).getLease());
+
+            final ClaimResult second = nodeB.claim(conv, AGENT, alice, "node-B", LEASE);
+
+            assertThat(((ClaimResult.Acquired) second).getRecord().getOwner()).contains(alice);
+        }
+
+        @Test
+        @DisplayName("a claim refused for AgentConflict writes no owner")
+        void conflictWritesNoOwner() {
+            final ClaimResult first = nodeA.claim(conv, AGENT, "node-A", LEASE);
+            nodeA.release(((ClaimResult.Acquired) first).getLease());
+
+            final ClaimResult result = nodeB.claim(conv, "agent:other", mallory, "node-B", LEASE);
+
+            assertThat(result).isInstanceOf(ClaimResult.AgentConflict.class);
+            assertThat(repository.load(conv).orElseThrow().getOwner()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("the fenced provision passes the owner through to the backend")
+        void fencedProvisionCarriesTheOwner() {
+            nodeA.acquire(conv, "node-A", LEASE).orElseThrow();
+
+            final SessionRecordView provisioned = nodeA.records().provision(conv, AGENT, alice);
+
+            assertThat(provisioned.getOwner()).contains(alice);
+        }
+
+        @Test
+        @DisplayName("a store that cannot record owners refuses one loudly and still claims without one")
+        void interfaceDefault() {
+            final SessionStore legacy = mock(SessionStore.class, CALLS_REAL_METHODS);
+            final ClaimResult answer = new ClaimResult.HeldElsewhere(null);
+            doReturn(answer).when(legacy).claim(conv, AGENT, "node-A", LEASE);
+
+            assertThat(legacy.claim(conv, AGENT, null, "node-A", LEASE)).isSameAs(answer);
+            assertThatExceptionOfType(UnsupportedOperationException.class)
+                    .isThrownBy(() -> legacy.claim(conv, AGENT, alice, "node-A", LEASE));
+        }
+    }
+
+    @Nested
     @DisplayName("acquire")
     class Acquire {
 
@@ -334,6 +410,8 @@ class DefaultSessionStoreTest {
                 Arguments.of("mergeFromSnapshot",
                         (Consumer<SessionRecordStore>) r -> r.mergeFromSnapshot(SessionSnapshot.of(CONV))),
                 Arguments.of("provision", (Consumer<SessionRecordStore>) r -> r.provision(CONV, AGENT)),
+                Arguments.of("provision",
+                        (Consumer<SessionRecordStore>) r -> r.provision(CONV, AGENT, Principal.user("alice"))),
                 Arguments.of("setTotalsAndBudgetOverride",
                         (Consumer<SessionRecordStore>) r -> r.setTotalsAndBudgetOverride(CONV, SessionTotals.empty(),
                                 null)),

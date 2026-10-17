@@ -20,6 +20,7 @@ import at.aimon.core.agent.session.store.SessionRecordView;
 import at.aimon.core.agent.session.store.SessionTotals;
 import at.aimon.core.agent.session.store.StoredSessionRecord;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.base.Principal;
 
 /**
  * Postgres-backed {@link SessionRecordStore}: the transcript half of the session, which until now only the in-memory
@@ -34,13 +35,14 @@ import at.aimon.core.agent.session.transcript.SessionSnapshot;
  *
  * <p>
  * One row per session in {@code session_record}: {@code transcript} (text), {@code agent_ref} (text),
- * {@code compaction_failure_count} (integer, {@code NOT NULL DEFAULT 0}), {@code session_totals} and
- * {@code budget_override} (jsonb), {@code updated_at} (timestamptz).
+ * {@code compaction_failure_count} (integer, {@code NOT NULL DEFAULT 0}), {@code session_totals},
+ * {@code budget_override} and {@code owner} (jsonb), {@code updated_at} (timestamptz). {@code owner} arrives with
+ * {@code V3__session_record_owner.sql}; the others are V1's.
  *
  * <p>
  * <b>NULL is not a separate state.</b> Every nullable column decodes to the same default the in-memory store reports
- * for a record that has one — no transcript, no totals, no override — so the first turn of a session, which runs
- * against a row the claim path provisioned and nothing has written to yet, behaves identically on both.
+ * for a record that has one — no transcript, no totals, no override, no owner — so the first turn of a session, which
+ * runs against a row the claim path provisioned and nothing has written to yet, behaves identically on both.
  *
  * <p>
  * {@code transcript} is {@code text} rather than {@code jsonb}, and that is forced rather than chosen: a tool use's
@@ -57,9 +59,11 @@ import at.aimon.core.agent.session.transcript.SessionSnapshot;
  * here; each maps to a single one:
  *
  * <ul>
- * <li>{@link #provision(SessionId, String) provision} — {@code INSERT … ON CONFLICT DO UPDATE SET agent_ref =
- * COALESCE(session_record.agent_ref, EXCLUDED.agent_ref) … RETURNING}, so "create if missing", "bind if unbound" and
- * "tell me who owns this" settle in one round trip and an existing binding is never overwritten
+ * <li>{@link #provision(SessionId, String, Principal) provision} — {@code INSERT … ON CONFLICT DO UPDATE SET
+ * agent_ref = COALESCE(session_record.agent_ref, EXCLUDED.agent_ref), owner = COALESCE(session_record.owner,
+ * EXCLUDED.owner) … RETURNING}, so "create if missing", "bind if unbound", "record the owner if none" and "tell me
+ * who is bound and who owns this" settle in one round trip, and neither an existing binding nor an existing owner is
+ * ever overwritten. The two-argument overload is the same statement with a {@code NULL} owner
  * <li>{@link #mergeFromSnapshot(SessionSnapshot) mergeFromSnapshot} — an upsert naming the transcript alone; the side
  * columns are not in the statement, so a concurrent writer of any of them cannot lose its write here
  * <li>{@link #setTotalsAndBudgetOverride(SessionId, SessionTotals, ExecutionBudget) setTotalsAndBudgetOverride} — one
@@ -86,7 +90,7 @@ import at.aimon.core.agent.session.transcript.SessionSnapshot;
 public final class PostgresSessionRecordStore implements SessionRecordStore {
 
     private static final String COLUMNS = "transcript, agent_ref, compaction_failure_count, "
-            + "session_totals, budget_override";
+            + "session_totals, budget_override, owner";
 
     private static final String SQL_MERGE = "INSERT INTO session_record (session_id, transcript, updated_at) "
             + "VALUES (?, ?, now()) " + "ON CONFLICT (session_id) DO UPDATE SET "
@@ -95,10 +99,11 @@ public final class PostgresSessionRecordStore implements SessionRecordStore {
     // DO UPDATE rather than DO NOTHING, so RETURNING always yields the row: DO NOTHING returns nothing on conflict and
     // would force a second, non-atomic SELECT. COALESCE is the binding rule -- an existing agent_ref wins, so a node
     // that wanted a different agent learns so from the returned row instead of having already stolen the session.
-    private static final String SQL_PROVISION = "INSERT INTO session_record (session_id, agent_ref, updated_at) "
-            + "VALUES (?, ?, now()) " + "ON CONFLICT (session_id) DO UPDATE SET "
-            + "  agent_ref = COALESCE(session_record.agent_ref, EXCLUDED.agent_ref), updated_at = now() " + "RETURNING "
-            + COLUMNS;
+    // The owner follows the same rule in the same statement: first owner wins, and a NULL one never clears it.
+    private static final String SQL_PROVISION = "INSERT INTO session_record (session_id, agent_ref, owner, updated_at) "
+            + "VALUES (?, ?, ?::jsonb, now()) " + "ON CONFLICT (session_id) DO UPDATE SET "
+            + "  agent_ref = COALESCE(session_record.agent_ref, EXCLUDED.agent_ref), "
+            + "  owner = COALESCE(session_record.owner, EXCLUDED.owner), updated_at = now() " + "RETURNING " + COLUMNS;
 
     // No upsert: this write follows provisioning, and a row that is not there yet is a no-op, not a create. A null
     // budget_override does not mean "leave it alone" -- it clears one that was set, so the next open falls back to the
@@ -150,10 +155,16 @@ public final class PostgresSessionRecordStore implements SessionRecordStore {
 
     @Override
     public SessionRecordView provision(SessionId sessionId, String agentRef) {
+        return provision(sessionId, agentRef, null);
+    }
+
+    @Override
+    public SessionRecordView provision(SessionId sessionId, String agentRef, Principal owner) {
         Objects.requireNonNull(sessionId, "sessionId must not be null");
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(SQL_PROVISION)) {
             ps.setString(1, sessionId.value());
             ps.setString(2, agentRef);
+            ps.setString(3, SessionRecordCodec.encodeOwner(owner));
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     return toRecord(sessionId, rs);
@@ -164,7 +175,7 @@ public final class PostgresSessionRecordStore implements SessionRecordStore {
         }
         // Unreachable in practice: DO UPDATE fires on conflict, so the statement always returns its row. Reporting the
         // defaults rather than null keeps the SPI's "never null" promise if a future rewrite makes it reachable.
-        return StoredSessionRecord.empty(sessionId, agentRef);
+        return StoredSessionRecord.empty(sessionId, agentRef, owner);
     }
 
     @Override
@@ -275,11 +286,13 @@ public final class PostgresSessionRecordStore implements SessionRecordStore {
         final int failures = rs.getInt("compaction_failure_count");
         final String totals = rs.getString("session_totals");
         final String override = rs.getString("budget_override");
+        final String owner = rs.getString("owner");
         try {
             return StoredSessionRecord.builder(sessionId)
                     .transcript(SessionRecordCodec.decodeTranscript(sessionId, transcript)).agentRef(agentRef)
                     .compactionFailureCount(failures).sessionTotals(SessionRecordCodec.decodeTotals(totals))
-                    .budgetOverride(SessionRecordCodec.decodeBudgetOverride(override)).build();
+                    .budgetOverride(SessionRecordCodec.decodeBudgetOverride(override))
+                    .owner(SessionRecordCodec.decodeOwner(owner)).build();
         } catch (RuntimeException e) {
             // A row that will not decode is an infrastructure failure from the caller's side, not a missing one:
             // reporting it as absent would let a session silently resume with an empty history.

@@ -1,12 +1,17 @@
 package at.aimon.session.routing.fixture;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.function.Consumer;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.session.SessionDeletedEvent;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.SessionLifecycleListener;
 import at.aimon.core.agent.session.idempotency.IdempotencyStore;
 import at.aimon.core.agent.session.idempotency.InMemoryIdempotencyStore;
 import at.aimon.core.agent.session.inbox.InMemorySessionInbox;
@@ -160,6 +165,7 @@ public final class TestManagerHarness implements AutoCloseable {
         private SessionMetrics metrics = SessionMetrics.NOOP;
         private SessionApprovalStore sessionApprovals;
         private SessionLogSegmentStore segmentStore;
+        private final List<SessionLifecycleListener> lifecycleListeners = new ArrayList<>();
 
         private Builder() {
         }
@@ -311,6 +317,21 @@ public final class TestManagerHarness implements AutoCloseable {
             return this;
         }
 
+        public Builder lifecycleListener(SessionLifecycleListener v) {
+            this.lifecycleListeners.add(v);
+            return this;
+        }
+
+        /** Lambda form: {@link SessionLifecycleListener} has only default methods, so it takes no lambda itself. */
+        public Builder lifecycleListener(Consumer<SessionDeletedEvent> onDeleted) {
+            return lifecycleListener(new SessionLifecycleListener() {
+                @Override
+                public void onDeleted(SessionDeletedEvent event) {
+                    onDeleted.accept(event);
+                }
+            });
+        }
+
         public Builder sessionApprovals(SessionApprovalStore v) {
             this.sessionApprovals = v;
             return this;
@@ -330,7 +351,8 @@ public final class TestManagerHarness implements AutoCloseable {
                     .statusHeartbeatInterval(statusHeartbeatInterval).holderLossSweepInterval(holderLossSweepInterval)
                     .idempotencyPrimaryTtl(idempotencyPrimaryTtl).idempotencySecondaryTtl(idempotencySecondaryTtl)
                     .idempotencyForwardTtl(idempotencyForwardTtl).releaseInterruptTimeout(releaseInterruptTimeout)
-                    .metrics(metrics).sessionApprovalStore(sessionApprovals).segmentStore(segmentStore).build();
+                    .metrics(metrics).sessionApprovalStore(sessionApprovals).segmentStore(segmentStore)
+                    .lifecycleListeners(lifecycleListeners).build();
             final SessionRouter manager = new DefaultSessionRouter(opener, config);
             return new TestManagerHarness(manager, leaseStore, signalBus, inbox, idempotencyStore, repository,
                     sessionApprovals, sessions, openedRuntimeIds);

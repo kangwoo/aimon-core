@@ -22,8 +22,9 @@ import com.zaxxer.hikari.HikariDataSource;
  * {@code TRUNCATE} between tests so each test sees a clean schema.
  *
  * <p>
- * The DDL in {@code src/main/resources/db/postgres/V1__init.sql} is applied here — and only here — at static-init time
- * via plain JDBC. Production code never executes DDL.
+ * The DDL in {@code src/main/resources/db/postgres/} ({@code V1__init.sql}, then {@code V2__session_log_segment.sql},
+ * then {@code V3__session_record_owner.sql}, in the order operators apply them) is applied here — and only here — at
+ * static-init time via plain JDBC. Production code never executes DDL.
  */
 public final class PostgresTestSupport {
 
@@ -36,6 +37,7 @@ public final class PostgresTestSupport {
         PG.start();
         applySchema(PG, "/db/postgres/V1__init.sql");
         applySchema(PG, "/db/postgres/V2__session_log_segment.sql");
+        applySchema(PG, "/db/postgres/V3__session_record_owner.sql");
         SHARED = buildHikari(PG, 8);
     }
 

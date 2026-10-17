@@ -175,7 +175,15 @@ public final class DocumentKeys {
     /** Background-task document — output streaming cursor. */
     public static final String F_OUTPUT_OFFSET = "outputOffset";
 
-    /** Background-task document — owning principal subtree (omitted when absent). */
+    /**
+     * Owning principal subtree (omitted when absent) — shared by the background-task, scheduled-task and session-record
+     * documents.
+     *
+     * <p>
+     * On a session record it is written once, by the first provisioning that names an owner, and never overwritten.
+     * Its shape there is {@code SessionRecordCodec.encodeOwner}'s, parsed into a subdocument the way
+     * {@link #F_SESSION_TOTALS} is.
+     */
     public static final String F_OWNER = "owner";
 
     /**

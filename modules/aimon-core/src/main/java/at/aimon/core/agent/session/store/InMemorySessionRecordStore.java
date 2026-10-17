@@ -10,6 +10,7 @@ import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.session.transcript.SessionTranscript;
+import at.aimon.core.base.Principal;
 
 /**
  * In-memory implementation of SessionRecordStore.
@@ -93,6 +94,7 @@ public class InMemorySessionRecordStore implements SessionRecordStore {
                 if (existing.getAgentRef().isPresent()) {
                     merged.setAgentRef(existing.getAgentRef().get());
                 }
+                merged.setOwner(existing.getOwner().orElse(null));
                 merged.setSessionTotals(existing.getSessionTotals());
                 if (existing.getBudgetOverride().isPresent()) {
                     merged.setBudgetOverride(existing.getBudgetOverride().get());
@@ -117,6 +119,19 @@ public class InMemorySessionRecordStore implements SessionRecordStore {
      */
     @Override
     public SessionRecordView provision(SessionId sessionId, String agentRef) {
+        return provision(sessionId, agentRef, null);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * The owner is filled inside the same {@link ConcurrentHashMap#compute} as the binding, so "bind if unbound" and
+     * "own if unowned" are one step; each is skipped independently when the record already has a value or none was
+     * asked for.
+     */
+    @Override
+    public SessionRecordView provision(SessionId sessionId, String agentRef, Principal owner) {
         Objects.requireNonNull(sessionId, "sessionId cannot be null");
         final SessionRecord stored = storage.compute(sessionId, (id, existing) -> {
             if (existing == null) {
@@ -124,14 +139,22 @@ public class InMemorySessionRecordStore implements SessionRecordStore {
                 if (agentRef != null) {
                     created.setAgentRef(agentRef);
                 }
+                created.setOwner(owner);
                 return created;
             }
-            if (agentRef == null || existing.getAgentRef().isPresent()) {
+            final boolean bind = agentRef != null && existing.getAgentRef().isEmpty();
+            final boolean own = owner != null && existing.getOwner().isEmpty();
+            if (!bind && !own) {
                 return existing;
             }
-            final SessionRecord bound = copySessionRecord(existing);
-            bound.setAgentRef(agentRef);
-            return bound;
+            final SessionRecord updated = copySessionRecord(existing);
+            if (bind) {
+                updated.setAgentRef(agentRef);
+            }
+            if (own) {
+                updated.setOwner(owner);
+            }
+            return updated;
         });
         // Copy on the way out for the same reason load() does: callers must not hold the stored instance.
         return copySessionRecord(stored);
@@ -250,7 +273,7 @@ public class InMemorySessionRecordStore implements SessionRecordStore {
      *
      * <p>
      * This ensures that external modifications to the record do not affect the stored version, and vice versa.
-     * Preserves all persisted state including {@code compactionFailureCount}, {@code agentRef},
+     * Preserves all persisted state including {@code compactionFailureCount}, {@code agentRef}, {@code owner},
      * {@code sessionTotals}, and {@code budgetOverride} so that side-field writers (e.g.
      * {@link #provision(SessionId, String)} and
      * {@link #setTotalsAndBudgetOverride(SessionId, SessionTotals, ExecutionBudget)}) see a stable view

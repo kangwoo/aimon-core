@@ -9,6 +9,7 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionLogState;
 import at.aimon.core.agent.session.transcript.SessionRewindPoint;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.base.Principal;
 import at.aimon.core.llm.Message;
 
 /**
@@ -36,6 +37,7 @@ public final class StoredSessionRecord implements SessionRecordView {
     private final int compactionFailureCount;
     private final SessionTotals sessionTotals;
     private final ExecutionBudget budgetOverride;
+    private final Principal owner;
 
     private StoredSessionRecord(Builder builder) {
         this.id = Objects.requireNonNull(builder.id, "Session id cannot be null");
@@ -45,6 +47,7 @@ public final class StoredSessionRecord implements SessionRecordView {
         this.compactionFailureCount = Math.max(0, builder.compactionFailureCount);
         this.sessionTotals = builder.sessionTotals == null ? SessionTotals.empty() : builder.sessionTotals;
         this.budgetOverride = builder.budgetOverride;
+        this.owner = builder.owner;
     }
 
     /**
@@ -72,7 +75,24 @@ public final class StoredSessionRecord implements SessionRecordView {
      * @return the record, never null
      */
     public static StoredSessionRecord empty(SessionId id, String agentRef) {
-        return builder(id).agentRef(agentRef).build();
+        return empty(id, agentRef, null);
+    }
+
+    /**
+     * The record a backend reports for a session that has just been provisioned with an owner and holds nothing else
+     * yet.
+     *
+     * @param id
+     *            the session id (must not be null)
+     * @param agentRef
+     *            the agent binding, or {@code null} when the record is provisioned unbound
+     * @param owner
+     *            the owning principal, or {@code null} when none is recorded
+     * @return the record, never null
+     * @see #empty(SessionId, String)
+     */
+    public static StoredSessionRecord empty(SessionId id, String agentRef, Principal owner) {
+        return builder(id).agentRef(agentRef).owner(owner).build();
     }
 
     @Override
@@ -116,6 +136,11 @@ public final class StoredSessionRecord implements SessionRecordView {
     }
 
     @Override
+    public Optional<Principal> getOwner() {
+        return Optional.ofNullable(owner);
+    }
+
+    @Override
     public Optional<SessionRewindPoint> getRewindPoint() {
         return logState.getRewindPoint();
     }
@@ -123,6 +148,7 @@ public final class StoredSessionRecord implements SessionRecordView {
     @Override
     public String toString() {
         return "StoredSessionRecord{id=" + id + ", messages=" + logState.getMessages().size() + ", agentRef=" + agentRef
+                + ", owner=" + (owner == null ? null : owner.getType() + ":" + owner.getId())
                 + ", compactionFailureCount=" + compactionFailureCount + '}';
     }
 
@@ -136,6 +162,7 @@ public final class StoredSessionRecord implements SessionRecordView {
         private int compactionFailureCount;
         private SessionTotals sessionTotals;
         private ExecutionBudget budgetOverride;
+        private Principal owner;
 
         private Builder(SessionId id) {
             this.id = Objects.requireNonNull(id, "Session id cannot be null");
@@ -216,6 +243,16 @@ public final class StoredSessionRecord implements SessionRecordView {
          */
         public Builder budgetOverride(ExecutionBudget budgetOverride) {
             this.budgetOverride = budgetOverride;
+            return this;
+        }
+
+        /**
+         * @param owner
+         *            the owning principal, or null when none is recorded
+         * @return this builder
+         */
+        public Builder owner(Principal owner) {
+            this.owner = owner;
             return this;
         }
 

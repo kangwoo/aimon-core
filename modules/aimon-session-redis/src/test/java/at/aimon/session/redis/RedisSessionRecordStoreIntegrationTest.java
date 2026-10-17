@@ -1,6 +1,7 @@
 package at.aimon.session.redis;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -25,6 +26,7 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.SessionRecordView;
 import at.aimon.core.agent.session.store.SessionTotals;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.base.Principal;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.TokenUsage;
@@ -96,6 +98,90 @@ class RedisSessionRecordStoreIntegrationTest {
         assertThat(store.exists(id)).isTrue();
         assertThat(connection.sync().hget("aimon:session:record:rec-unbound", "sessionId")).isEqualTo("rec-unbound");
         assertThat(connection.sync().hexists("aimon:session:record:rec-unbound", "agentRef")).isFalse();
+    }
+
+    @Test
+    @DisplayName("provision with an owner records it, and a second owner never replaces the first")
+    void provisionRecordsOwnerOnce() {
+        final SessionId id = SessionId.of("rec-owner");
+        final Principal alice = Principal.user("u-1", "alice");
+
+        final SessionRecordView first = store.provision(id, "agent-A", alice);
+        assertThat(first.getAgentRef()).contains("agent-A");
+        assertThat(first.getOwner()).contains(alice);
+        assertThat(first.getOwner().orElseThrow().getDisplayName()).isEqualTo("alice");
+
+        // HSETNX again: the owner follows the binding's rule, so the later caller reads the existing owner back.
+        final SessionRecordView second = store.provision(id, "agent-A", Principal.user("u-2", "bob"));
+        assertThat(second.getOwner()).contains(alice);
+        assertThat(store.load(id).orElseThrow().getOwner()).contains(alice);
+    }
+
+    @Test
+    @DisplayName("a record provisioned without an owner gets one from the first provision that carries it")
+    void ownerFillsWhenEmpty() {
+        final SessionId id = SessionId.of("rec-owner-late");
+        final Principal alice = Principal.user("u-1", "alice");
+
+        assertThat(store.provision(id, "agent-A").getOwner()).isEmpty();
+        assertThat(connection.sync().hexists("aimon:session:record:rec-owner-late", "owner")).isFalse();
+
+        final SessionRecordView filled = store.provision(id, "agent-A", alice);
+        assertThat(filled.getOwner()).contains(alice);
+        assertThat(filled.getAgentRef()).contains("agent-A");
+    }
+
+    @Test
+    @DisplayName("each optional provision argument is skipped on its own: no agent with an owner, an agent without one")
+    void eachOptionalArgumentIsIndependent() {
+        // The script reads both optional arguments positionally with "" as the absent sentinel; this pins that a
+        // missing
+        // first one does not shift the second into its place, and a missing second one writes nothing.
+        final Principal alice = Principal.user("u-1", "alice");
+        final SessionId ownerOnly = SessionId.of("rec-owner-only");
+        final SessionRecordView unbound = store.provision(ownerOnly, null, alice);
+        assertThat(unbound.getAgentRef()).isEmpty();
+        assertThat(unbound.getOwner()).contains(alice);
+        assertThat(connection.sync().hexists("aimon:session:record:rec-owner-only", "agentRef")).isFalse();
+        // The binding can still be established later; the owner is untouched by it.
+        final SessionRecordView bound = store.provision(ownerOnly, "agent-A");
+        assertThat(bound.getAgentRef()).contains("agent-A");
+        assertThat(bound.getOwner()).contains(alice);
+
+        final SessionId agentOnly = SessionId.of("rec-agent-only");
+        final SessionRecordView noOwner = store.provision(agentOnly, "agent-A", null);
+        assertThat(noOwner.getAgentRef()).contains("agent-A");
+        assertThat(noOwner.getOwner()).isEmpty();
+        assertThat(connection.sync().hexists("aimon:session:record:rec-agent-only", "owner")).isFalse();
+    }
+
+    @Test
+    @DisplayName("an empty agentRef is refused, since the script reserves \"\" to mean no agent")
+    void emptyAgentRefIsRefused() {
+        final SessionId id = SessionId.of("rec-empty-agent");
+
+        assertThatThrownBy(() -> store.provision(id, "")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> store.provision(id, "", Principal.user("u-1", "alice")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(store.exists(id)).isFalse();
+    }
+
+    @Test
+    @DisplayName("the owner survives the transcript merge and the totals/override write")
+    void ownerSurvivesOtherWrites() {
+        final SessionId id = SessionId.of("rec-owner-kept");
+        final Principal alice = Principal.user("u-1", "alice");
+        store.provision(id, "agent-A", alice);
+
+        store.mergeFromSnapshot(SessionSnapshot.of(id, null, List.of(Message.user("hi"))));
+        assertThat(store.load(id).orElseThrow().getOwner()).contains(alice);
+
+        store.setTotalsAndBudgetOverride(id, SessionTotals.of(1, 2, TokenUsage.of(1, 1, 2)),
+                ExecutionBudget.builder().maxIterations(3).build());
+        store.setTotalsAndBudgetOverride(id, SessionTotals.of(2, 4, TokenUsage.of(2, 2, 4)), null);
+        final SessionRecordView view = store.load(id).orElseThrow();
+        assertThat(view.getOwner()).contains(alice);
+        assertThat(view.getMessages()).hasSize(1);
     }
 
     @Test

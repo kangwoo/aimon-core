@@ -469,6 +469,74 @@ public abstract class AbstractMultiNodeSessionContractTest {
                 .isEqualTo("second-done");
     }
 
+    @Test
+    @DisplayName("owner: survives a holder move, and a later submit naming another owner changes nothing")
+    void ownerSurvivesAHolderMove() throws Exception {
+        final TwoNodeSessionHarness nodes = newHarness(Duration.ofSeconds(30), Duration.ofSeconds(10));
+        final SessionId id = SessionId.of("c-multi-owner-1");
+        final Principal alice = Principal.user("alice", "Alice");
+
+        final SubmitDisposition a = nodes.nodeA().manager().submit(SubmitRequest.builder().sessionId(id)
+                .agentRef("alpha").userInput("first").initiator(Principal.system()).owner(alice).build());
+        assertThat(a.getKind()).isEqualTo(SubmitDisposition.Kind.EXECUTED_LOCALLY);
+        final RecordingTestSession sessionA = awaitSession(nodes.nodeA(), id, 2_000L);
+        sessionA.completeWhenReady(RecordingTestSession.ok("done"), 2_000L);
+        a.getFuture().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        nodes.nodeA().manager().releaseSession(id);
+        Thread.sleep(settle().toMillis());
+
+        final SubmitDisposition b = nodes.nodeB().manager()
+                .submit(SubmitRequest.builder().sessionId(id).agentRef("alpha").userInput("second")
+                        .initiator(Principal.system()).owner(Principal.user("mallory")).build());
+        assertThat(b.getKind()).as("A gave the lease back, so B claims the session")
+                .isEqualTo(SubmitDisposition.Kind.EXECUTED_LOCALLY);
+        awaitSession(nodes.nodeB(), id, 2_000L).completeWhenReady(RecordingTestSession.ok("done"), 2_000L);
+        b.getFuture().toCompletableFuture().get(10, TimeUnit.SECONDS);
+
+        assertThat(nodes.sharedRepository().load(id).orElseThrow().getOwner()).contains(alice);
+    }
+
+    @Test
+    @DisplayName("owner: a forwarded submit carries its owner through this backend's inbox to the holder")
+    void forwardedOwnerIsRecordedByTheHolder() throws Exception {
+        final TwoNodeSessionHarness nodes = newHarness(Duration.ofSeconds(30), Duration.ofSeconds(10));
+        final SessionId id = SessionId.of("c-multi-owner-2");
+        final Principal alice = Principal.user("alice", "Alice");
+
+        // A holds the session without an owner; B's submit is forwarded, and A's drain pass provisions with its owner.
+        final SubmitDisposition a = nodes.nodeA().manager().submit(submit(id, "first"));
+        final RecordingTestSession sessionA = awaitSession(nodes.nodeA(), id, 2_000L);
+        sessionA.completeWhenReady(RecordingTestSession.ok("first-done"), 2_000L);
+        a.getFuture().toCompletableFuture().get(10, TimeUnit.SECONDS);
+
+        final SubmitDisposition b = nodes.nodeB().manager().submit(SubmitRequest.builder().sessionId(id)
+                .agentRef("alpha").userInput("second").initiator(Principal.system()).owner(alice).build());
+        assertThat(b.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+        assertThat(sessionA.awaitSubmittedInputs(2, 5_000L)).as("A must drain B's message").isTrue();
+        sessionA.completeWhenReady(RecordingTestSession.ok("second-done"), 2_000L);
+        b.getFuture().toCompletableFuture().get(10, TimeUnit.SECONDS);
+
+        final Principal recorded = nodes.sharedRepository().load(id).orElseThrow().getOwner().orElseThrow();
+        assertThat(recorded).isEqualTo(alice);
+        assertThat(recorded.getDisplayName()).as("the display name crosses the wire too").isEqualTo("Alice");
+    }
+
+    @Test
+    @DisplayName("delete: only the deleting node's lifecycle listener fires, once, with the recorded owner")
+    void deleteFiresTheDeletingNodesListenerOnly() throws Exception {
+        final TwoNodeSessionHarness nodes = newHarness(Duration.ofSeconds(30), Duration.ofSeconds(10));
+        final SessionId id = SessionId.of("c-multi-owner-3");
+        nodes.sharedRepository().provision(id, "alpha", Principal.user("alice"));
+
+        nodes.nodeA().manager().deleteSession(id);
+        Thread.sleep(settle().toMillis());
+
+        assertThat(nodes.sharedRepository().exists(id)).isFalse();
+        assertThat(nodes.nodeA().deletions()).singleElement()
+                .satisfies(event -> assertThat(event.getOwner()).contains(Principal.user("alice")));
+        assertThat(nodes.nodeB().deletions()).as("a peer is not told; shared state needs one cleanup").isEmpty();
+    }
+
     private static boolean awaitRemoteProjection(SessionRouter manager, SessionId id, long millis)
             throws InterruptedException {
         final long deadline = System.nanoTime() + Duration.ofMillis(millis).toNanos();

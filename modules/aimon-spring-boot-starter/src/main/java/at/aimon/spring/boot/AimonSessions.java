@@ -103,6 +103,11 @@ public interface AimonSessions {
      * bare builder drops the configured budget back to unlimited and forces the caller to restate the agent and
      * the initiator, both of which are mandatory on the underlying request.
      *
+     * <p>
+     * No owner is pre-filled: the system initiator is not the session's owner. A multi-tenant application names the
+     * owning user with {@link SubmitRequest.Builder#owner(at.aimon.core.base.Principal) owner(...)} on the first
+     * submit; see {@link SubmitRequest#getOwner()}.
+     *
      * @param sessionId
      *            the session to continue (must not be null)
      * @param input

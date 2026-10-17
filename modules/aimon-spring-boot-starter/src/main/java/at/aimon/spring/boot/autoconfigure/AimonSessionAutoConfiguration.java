@@ -12,6 +12,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 
 import at.aimon.bootstrap.spec.SessionSpec;
+import at.aimon.core.agent.session.SessionLifecycleListener;
 import at.aimon.core.agent.session.idempotency.IdempotencyStore;
 import at.aimon.core.agent.session.inbox.SessionInbox;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
@@ -99,6 +100,10 @@ public class AimonSessionAutoConfiguration {
      *            the idempotency store, when the application published one
      * @param segmentStores
      *            the log segment store, when the application published one
+     * @param lifecycleListeners
+     *            every {@link SessionLifecycleListener} bean, in {@code @Order} order — each told when the router
+     *            deletes a session; resolved through {@link ApplicationBeans#resolveAll} so a listener holding a
+     *            connection outlives the stack that calls it
      * @param beanFactory
      *            the context's bean factory, used to register the destruction edges
      * @return the spec
@@ -109,7 +114,8 @@ public class AimonSessionAutoConfiguration {
     SessionSpec aimonSessionSpec(AimonProperties properties, ObjectProvider<SessionRecordStore> recordStores,
             ObjectProvider<SessionLeaseStore> leaseStores, ObjectProvider<SessionSignalBus> signalBuses,
             ObjectProvider<SessionInbox> inboxes, ObjectProvider<IdempotencyStore> idempotencyStores,
-            ObjectProvider<SessionLogSegmentStore> segmentStores, ConfigurableListableBeanFactory beanFactory) {
+            ObjectProvider<SessionLogSegmentStore> segmentStores,
+            ObjectProvider<SessionLifecycleListener> lifecycleListeners, ConfigurableListableBeanFactory beanFactory) {
         final AimonProperties.SessionProperties session = properties.getSession();
         final SessionSpec.Builder builder = SessionSpec.builder().drainTimeout(session.getShutdownDrainTimeout())
                 .idleTtl(session.getCache().getIdleTtl()).maxCachedSessions(session.getCache().getMaxEntries())
@@ -144,6 +150,8 @@ public class AimonSessionAutoConfiguration {
         builder.leaseStore(leaseStore).signalBus(signalBus).inbox(inbox).idempotencyStore(idempotencyStore);
         builder.segmentStore(
                 ApplicationBeans.resolve(segmentStores, SessionLogSegmentStore.class, beanFactory, SESSION_SPEC_BEAN));
+        builder.lifecycleListeners(ApplicationBeans.resolveAll(lifecycleListeners, SessionLifecycleListener.class,
+                beanFactory, SESSION_SPEC_BEAN));
 
         if (session.getMode() == DeploymentMode.DISTRIBUTED) {
             final List<String> missing = describeMissing(leaseStore, signalBus, inbox, idempotencyStore);

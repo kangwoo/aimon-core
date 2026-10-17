@@ -91,6 +91,45 @@ Spring Boot 스타터에서는 `SessionApprovalStore` · `AgentApprovalStore` ·
 세션의 id (`invokingSessionId` — 와이어 키는 동결되어 `"invokingConversationId"` 그대로다) 로만 조회되므로,
 그 세션 하나를 `invalidate` 하면 그 세션이 위임했던 실행들의 도달 범위도 함께 사라진다.
 
+### 세션 소유자와 삭제 리스너 (선택)
+
+멀티 테넌트 확장(예: 샌드박스의 세션별 옵션)은 두 가지를 알아야 한다 — 세션의 주인이 누구인지, 세션이 언제
+지워졌는지. 둘 다 코어가 준다.
+
+**소유자.** 세션의 **첫** 제출에 `owner` 를 단다. 레코드를 프로비저닝할 때 한 번 기록되고 덮어쓰이지 않는다.
+
+```java
+router.submit(SubmitRequest.builder().sessionId(id).agentRef("ops").userInput(text)
+        .initiator(Principal.system())          // 필수 — 누가 보냈는가
+        .owner(Principal.user(userId, name))    // 선택 — 누구의 세션인가
+        .build());
+
+Optional<Principal> owner = stack.sessionRecordStore().load(id).flatMap(SessionRecordView::getOwner);
+```
+
+- `initiator` 에서 끌어내지 않는다. Spring 스타터의 `AimonSessions.newRequest(...)` 도 소유자를 채우지 않는다
+- **코어는 소유자를 기록할 뿐 강제하지 않는다.** 다른 소유자를 단 제출도 그대로 실행된다. "소유자만 할 수 있다" 는
+  규칙은 호스트나 확장이 위의 값을 읽어 적용한다
+- 이미 이 노드가 쥐고 있는 세션에 대한 제출은 소유자를 쓰지 않는다. 소유자 없이 시작된 세션은 다음 프로비저닝
+  (다른 노드의 claim, drain)에서 채워진다
+
+**삭제 리스너.** `SessionLifecycleListener` 를 한 번 등록하면 `SessionRouter.deleteSession` 이 레코드를 지운 뒤
+`onDeleted(SessionDeletedEvent)` 를 부른다. 이벤트는 삭제 직전의 소유자와 바인딩을 담는다.
+
+| 조립 | 등록 |
+|------|------|
+| Spring Boot 스타터 | `SessionLifecycleListener` 빈. 여럿이면 `@Order` 순서 |
+| `AimonStackSpec` | `SessionSpec.builder().lifecycleListener(...)` |
+| 손 조립 | `SessionRouterBuilder.lifecycleListener(...)` |
+
+`onDeleted` 가 `default` 메서드라 람다로는 만들 수 없다 — 클래스나 익명 클래스로 구현한다. 리스너는 삭제한 노드에서
+**한 번**, 리스를 쥔 채로 불리고, 뒤따르는 정리 단계가 실패해도 불린다. 노드가 그 사이에 죽으면 이벤트를 잃으므로
+(at-most-once) 재조정 경로를 둔다. 예외는 로그로 남고 삭제를 실패시키지 않는다. 짧게 끝내고, 지우는 중인 세션에
+대해 라우터를 다시 부르지 않는다. 날것의 `SessionRecordStore.delete` 는 리스너를 부르지 않는다.
+
+Postgres 를 쓰면 `V3__session_record_owner.sql` 을 먼저 적용한다(§2). 설계:
+`docs/design/session/session-owner-deletion-event.md`.
+
 ---
 
 ## 2. 필요한 SPI 구현 (DISTRIBUTED 모드)
@@ -106,7 +145,7 @@ Spring Boot 스타터에서는 `SessionApprovalStore` · `AgentApprovalStore` ·
 
 백엔드를 직접 구현할 때, 계약은 각 SPI 인터페이스의 javadoc 이 적고, 관찰 가능한 동작은 참조 구현의 통합 테스트(`aimon-session-redis` 의 `Redis*IntegrationTest`, 그리고 `Mongo*` / `Postgres*` 의 대응물)가 고정한다.
 
-**봉인된 세션 로그 세그먼트**는 다섯 번째 저장소이고 선택이다. 버전 2 세션 로그에서는 LLM 뷰가 더는 원문으로 보여 주지 않는 구간이 레코드에서 `SessionLogSegmentStore`(`at.aimon.core.agent.session.store`)로 옮겨지고, 레코드의 manifest 가 그것을 가리킨다. Spring Boot 스타터에서는 레코드 저장소 옆에 빈으로 노출하고, `AimonStackSpec` 에서는 `SessionSpec.segmentStore(...)` 로 넘긴다. 어느 쪽이든 스택은 같은 인스턴스를 transcript manager 와 라우터에 건네므로, 세션을 지우면 레코드 뒤에 그 세그먼트도 지워진다. 손으로 조립할 때는 transcript manager 에 (`SessionLogStorage` 를 통해), 그리고 `SessionRouterBuilder.sessionLogSegmentStore(...)` 에 넘긴다. 세그먼트 저장소 없이 레코드 저장소만 주면 아무것도 봉인되지 않는다 — 버전 2 쓰기 형식에서는 레코드가 모든 항목을 영영 들고 있게 되고, 스택은 `session-log-sealing` degradation 을 남긴다. 레코드와 같은 데이터베이스에 둔다 — 세그먼트는 레코드에서 옮겨 낸 데이터다: `MongoSessionLogSegmentStore`(컬렉션 `session_log_segments`, `init.js` 참조), `PostgresSessionLogSegmentStore`(테이블 `session_log_segment`, `V1__init.sql` 뒤에 `V2__session_log_segment.sql` 로 적용), 또는 `RedisSessionLogSegmentStore`(standalone 연결 또는 Redis Cluster 연결 — 클러스터면 스캔이 모든 마스터를 돈다). 삭제는 펜스 뷰인 `SessionStore.segments(...)` 로 간다. 쓰기는 펜스하지 않는다 — 어떤 manifest 도 가리키지 않는 세그먼트는 읽히지 않기 때문이다. 스택은 transcript manager 의 **레코드 쓰기**(턴 종료 저장, 체크포인트)와 **세그먼트 삭제**(턴 종료 GC, `/clear`)도 라우터의 펜스 뷰(`SessionRouter.fencedRecordStore(fence)` · `fencedSegmentStore(fence)`)로 보낸다. `DeploymentMode.DISTRIBUTED` 에서는 `SessionFence.HOLDER_ONLY` 다 — 리스를 잃은 노드의 늦은 저장은 새 홀더의 레코드를 덮어쓰지 못하고, 새 홀더의 manifest 가 가리키는 세그먼트를 지우지도 못한다. 거절된 턴 종료 저장은 WARN 한 줄로 남고 턴은 깨지지 않는다 — 잃은 것은 리스를 잃으면서 이미 잃은 그 턴의 끝이다. 그래서 이 모드에서는 모든 라이브 세션을 라우터로 열어야 한다. 라우터 밖에서 연 세션은 리스가 없어 저장이 모두 거절된다. 리스 저장소를 준 단일 노드 모드는 `SessionFence.UNLESS_HELD_ELSEWHERE` 다 — 다른 노드가 쥔 세션만 거절하고, 아무도 쥐지 않은 세션(라우터 밖에서 연 CLI 의 세션)은 전처럼 통과한다. 리스 저장소가 기본값인 단일 노드 모드는 펜스 없이 원시 저장소로 간다. 설계: `docs/design/session/session-log.md` §5, §12.3.
+**봉인된 세션 로그 세그먼트**는 다섯 번째 저장소이고 선택이다. 버전 2 세션 로그에서는 LLM 뷰가 더는 원문으로 보여 주지 않는 구간이 레코드에서 `SessionLogSegmentStore`(`at.aimon.core.agent.session.store`)로 옮겨지고, 레코드의 manifest 가 그것을 가리킨다. Spring Boot 스타터에서는 레코드 저장소 옆에 빈으로 노출하고, `AimonStackSpec` 에서는 `SessionSpec.segmentStore(...)` 로 넘긴다. 어느 쪽이든 스택은 같은 인스턴스를 transcript manager 와 라우터에 건네므로, 세션을 지우면 레코드 뒤에 그 세그먼트도 지워진다. 손으로 조립할 때는 transcript manager 에 (`SessionLogStorage` 를 통해), 그리고 `SessionRouterBuilder.sessionLogSegmentStore(...)` 에 넘긴다. 세그먼트 저장소 없이 레코드 저장소만 주면 아무것도 봉인되지 않는다 — 버전 2 쓰기 형식에서는 레코드가 모든 항목을 영영 들고 있게 되고, 스택은 `session-log-sealing` degradation 을 남긴다. 레코드와 같은 데이터베이스에 둔다 — 세그먼트는 레코드에서 옮겨 낸 데이터다: `MongoSessionLogSegmentStore`(컬렉션 `session_log_segments`, `init.js` 참조), `PostgresSessionLogSegmentStore`(테이블 `session_log_segment`, `V1__init.sql` 뒤에 `V2__session_log_segment.sql` 로 적용 — 그 뒤 `V3__session_record_owner.sql` 도 필요하다), 또는 `RedisSessionLogSegmentStore`(standalone 연결 또는 Redis Cluster 연결 — 클러스터면 스캔이 모든 마스터를 돈다). 삭제는 펜스 뷰인 `SessionStore.segments(...)` 로 간다. 쓰기는 펜스하지 않는다 — 어떤 manifest 도 가리키지 않는 세그먼트는 읽히지 않기 때문이다. 스택은 transcript manager 의 **레코드 쓰기**(턴 종료 저장, 체크포인트)와 **세그먼트 삭제**(턴 종료 GC, `/clear`)도 라우터의 펜스 뷰(`SessionRouter.fencedRecordStore(fence)` · `fencedSegmentStore(fence)`)로 보낸다. `DeploymentMode.DISTRIBUTED` 에서는 `SessionFence.HOLDER_ONLY` 다 — 리스를 잃은 노드의 늦은 저장은 새 홀더의 레코드를 덮어쓰지 못하고, 새 홀더의 manifest 가 가리키는 세그먼트를 지우지도 못한다. 거절된 턴 종료 저장은 WARN 한 줄로 남고 턴은 깨지지 않는다 — 잃은 것은 리스를 잃으면서 이미 잃은 그 턴의 끝이다. 그래서 이 모드에서는 모든 라이브 세션을 라우터로 열어야 한다. 라우터 밖에서 연 세션은 리스가 없어 저장이 모두 거절된다. 리스 저장소를 준 단일 노드 모드는 `SessionFence.UNLESS_HELD_ELSEWHERE` 다 — 다른 노드가 쥔 세션만 거절하고, 아무도 쥐지 않은 세션(라우터 밖에서 연 CLI 의 세션)은 전처럼 통과한다. 리스 저장소가 기본값인 단일 노드 모드는 펜스 없이 원시 저장소로 간다. 설계: `docs/design/session/session-log.md` §5, §12.3.
 
 **고아 세그먼트 스윕.** GC 는 세션을 저장할 때만 돌므로, 아무도 다시 열지 않는 세션은 고아를 그대로 둔다 — rewind 가 잘라 낸 세그먼트, 실패한 `/clear` 삭제, 저장되지 못한 봉인, 세그먼트 삭제에 실패한 삭제된 레코드. 그것을 주우려면 저장소 단위 스윕을 켠다: 스타터에서는 `aimon.session.segment-sweep-interval`(예: `1h`), `AimonStackSpec` 에서는 `SessionSpec.segmentSweepInterval(...)`. 설정하지 않으면 꺼져 있다. 세그먼트는 grace — `aimon.session.segment-sweep-grace` / `segmentSweepGrace(...)`, 기본 24시간 — 보다 오래됐고, 세그먼트 목록을 읽은 **뒤에** 읽은 세션 레코드가 그것을 가리키지 않을 때만 지워진다. 스윕은 세션 리스를 쥐지 않고 원시 저장소로 지우는데, 세션 단위 GC 가 안전한 것과 같은 두 이유로 안전하다. 모든 노드에서 한꺼번에 켜도 안전하고, 비용도 곱해지지 않는다: 리스 저장소가 있으면 노드들은 **스윕 리스**(예약 id `aimon:segment-sweep`)를 번갈아 잡아, 클러스터 전체가 간격마다 한 번만 저장소를 훑는다. 리스는 간격 하나만큼 잡고 회차가 끝나도 놓지 않으며, 쥔 노드가 죽으면 리스가 만료된 뒤 다음 노드가 이어받는다. 스윕에는 세그먼트 저장소가 필요하고, 그것 없이 스윕을 설정하면 기동 시 거절한다. 스윕이 페이지를 넘기는 SPI 는 `SessionLogSegmentStore.scanSessions(...)` 이고, 직접 만든 백엔드는 그것을 구현한다(계약은 `AbstractSessionLogSegmentStoreContractTest` 에 있다).
 

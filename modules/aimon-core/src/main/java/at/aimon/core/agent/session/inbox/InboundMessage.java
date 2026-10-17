@@ -21,7 +21,8 @@ import at.aimon.core.base.Principal;
  * session it did not originally receive: target {@link SessionId}, the {@code agentRef} the requester
  * targeted (validated against the session's binding per design §3.6), the optional {@code contextDiscriminator}
  * naming which runtime of that agent to open, the {@link UserInput}, priority tier, optional idempotency key, the
- * {@link Principal} that initiated the input, and arbitrary string metadata.
+ * {@link Principal} that initiated the input, the optional owning {@link Principal} to record when the session is
+ * provisioned, and arbitrary string metadata.
  *
  * <p>
  * Notably absent from this envelope is {@code agentRuntimeId}: the deliver-side context id is meaningless on
@@ -44,6 +45,7 @@ public final class InboundMessage {
     private final QueuedInputPriority priority;
     private final String idempotencyKey;
     private final Principal initiator;
+    private final Principal owner;
     private final Instant deliveredAt;
     private final Map<String, String> metadata;
     private final SubmitOptions submitOptions;
@@ -58,6 +60,7 @@ public final class InboundMessage {
         this.priority = Objects.requireNonNull(b.priority, "priority must not be null");
         this.idempotencyKey = b.idempotencyKey;
         this.initiator = Objects.requireNonNull(b.initiator, "initiator must not be null");
+        this.owner = b.owner;
         this.deliveredAt = Objects.requireNonNull(b.deliveredAt, "deliveredAt must not be null");
         this.metadata = b.metadata != null ? Map.copyOf(b.metadata) : Map.of();
         this.submitOptions = b.submitOptions != null ? b.submitOptions : SubmitOptions.empty();
@@ -180,6 +183,29 @@ public final class InboundMessage {
         return initiator;
     }
 
+    /**
+     * The {@code SubmitRequest.owner} the submitting node was given, so a holder that provisions the session to run
+     * this message records the owner the submitter named — a forwarded first submit must not lose it.
+     *
+     * <p>
+     * Not the {@link #getInitiator() initiator}: that one is mandatory and is often a system or service principal
+     * posting into a session it does not own. The owner is consumed only when the holder provisions a record that has
+     * none, and only when this message's agent matches the session's binding.
+     *
+     * <p>
+     * Optional, on the same terms as {@link #getTurnId()}: envelopes written before this field existed must still
+     * decode, and a submission that named no owner has none to carry.
+     *
+     * <p>
+     * <b>Codec note:</b> all four built-in inbox codecs (in-memory, Redis, Postgres, MongoDB) round-trip this field,
+     * and absence round-trips as absence.
+     *
+     * @return the owner, or {@link Optional#empty()} when the submitter named none
+     */
+    public Optional<Principal> getOwner() {
+        return Optional.ofNullable(owner);
+    }
+
     public Instant getDeliveredAt() {
         return deliveredAt;
     }
@@ -217,6 +243,7 @@ public final class InboundMessage {
         private QueuedInputPriority priority;
         private String idempotencyKey;
         private Principal initiator;
+        private Principal owner;
         private Instant deliveredAt;
         private Map<String, String> metadata;
         private SubmitOptions submitOptions;
@@ -290,6 +317,18 @@ public final class InboundMessage {
 
         public Builder initiator(Principal v) {
             this.initiator = v;
+            return this;
+        }
+
+        /**
+         * Optional — see {@link InboundMessage#getOwner()}.
+         *
+         * @param v
+         *            the owner to record when the session is provisioned, or {@code null} to leave the field unset
+         * @return this builder
+         */
+        public Builder owner(Principal v) {
+            this.owner = v;
             return this;
         }
 

@@ -51,6 +51,15 @@
 반면 side field 넷은 **부분 원자 쓰기**가 가능해야 하므로 네이티브 타입으로 남는다 — 카운터는
 `$inc`/`UPDATE … + 1`, totals·override 는 쌍으로 덮어쓴다.
 
+나중에 들어온 다섯 번째 side field 인 **소유자**(`owner`, #253)도 코덱이 인코딩한다
+(`encodeOwner` — `{"version":1,"type":"USER","id":…,"displayName":…}`). 쓰는 곳은 `provision` 뿐이고, 세 백엔드
+모두 바인딩과 **같은 원자 연산 안에서** "비어 있을 때만" 채운다 — Postgres 는 upsert 의
+`COALESCE(session_record.owner, EXCLUDED.owner)`, MongoDB 는 파이프라인의 `$ifNull` + `$literal`(id 나 표시 이름이
+`$` 로 시작해도 연산자로 읽히지 않게), Redis 는 provision 스크립트의 `HSETNX`. 머지·totals·카운터 쓰기는 소유자를
+건드리지 않는다. 인박스 봉투도 선택 필드 `owner` 를 `initiator` 와 같은 `type/id/displayName` 모양으로 싣는다 —
+없으면 쓰지 않으므로 소유자 없는 봉투는 이전 빌드가 쓴 것과 같다. 설계는
+[`session-owner-deletion-event.md`](session-owner-deletion-event.md).
+
 ### 1.2 "없음" 은 별도 상태가 아니다
 
 셋 다 같은 규칙을 지킨다.
@@ -96,7 +105,10 @@
 
 ### 3.1 스키마
 
-`V1__init.sql` 하나. 운영자가 **환경당 한 번** 적용하고, **런타임은 DDL 을 실행하지 않는다.**
+`V1__init.sql` · `V2__session_log_segment.sql` · `V3__session_record_owner.sql` 를 이 순서로. 운영자가
+**환경당 한 번** 적용하고, **런타임은 DDL 을 실행하지 않는다.** V3 은 `session_record` 에 `owner jsonb` 컬럼을 더하며,
+이 컬럼을 읽는 빌드는 **V3 을 적용하기 전에는** 모든 provision·load 가 `column "owner" does not exist` 로 실패한다 —
+호스트가 소유자를 쓰든 안 쓰든.
 
 | 테이블 | 역할 | 핵심 |
 |--------|------|------|
@@ -106,7 +118,7 @@
 | `conversation_inbox` | 우선순위 mailbox | `(conversation_id, priority, id)` 인덱스로 드레인 |
 | `idempotency_entry` | 멱등 원장 | 24h primary TTL — Postgres 는 자동 만료가 없어 sweeper 가 지운다 |
 | `background_task` | 태스크 메타데이터 | owner `Principal` 을 세 컬럼으로 펼침 |
-| `session_record` | 전사 + side field | `transcript` 는 `text`(§1.1), side field 는 네이티브 |
+| `session_record` | 전사 + side field | `transcript` 는 `text`(§1.1), side field 는 네이티브. `owner` 는 V3 의 `jsonb` |
 
 펜싱 카운터를 락 행과 **따로** 두는 것이 핵심이다. 한 테이블이면 락 행이 만료·삭제될 때 카운터도 함께
 사라지고, 다음 획득자가 이전 홀더와 같은 토큰을 받아 펜싱이 무의미해진다.
@@ -176,6 +188,10 @@ LISTEN 커넥션이 풀 밖인 것은 **LISTEN 상태가 커넥션에 묶여 있
 psql "$DATABASE_URL" -c 'CREATE SCHEMA IF NOT EXISTS aimon_session;'
 psql "$DATABASE_URL" --set=search_path=aimon_session,public \
      -v ON_ERROR_STOP=1 -f V1__init.sql
+psql "$DATABASE_URL" --set=search_path=aimon_session,public \
+     -v ON_ERROR_STOP=1 -f V2__session_log_segment.sql
+psql "$DATABASE_URL" --set=search_path=aimon_session,public \
+     -v ON_ERROR_STOP=1 -f V3__session_record_owner.sql
 ```
 
 Flyway / Liquibase 를 쓰면 같은 파일을 그 도구에 먹이면 된다 — 모듈은 무엇이 적용했는지 가정하지 않는다.
@@ -223,7 +239,7 @@ mongosh "mongodb://localhost:27017/aimon_session?replicaSet=rs0" \
 | `background_task` | `by_state`, `by_context` |
 | `scheduled_tasks` | 스케줄 태스크 레코드(`MongoScheduledTaskRepository`). `by_owner` = `(owner.type, owner.id)`, `by_enabled`. 세션 컬렉션이 아니다 |
 | `scheduled_task_interrupts` | **capped, 1 MiB** — 스케줄 태스크의 노드 간 중지 요청. 세션 컬렉션이 아니다(키가 `ScheduledTaskId`) |
-| `session_records` | 전사(문자열) + side field |
+| `session_records` | 전사(문자열) + side field. `owner` 는 하위 문서 |
 
 **런타임은 이 스크립트를 실행하지 않는다.** 저장소 생성자는 인덱스 존재 여부를 *확인조차 하지 않는다* —
 운영자가 적용했다고 가정한다. 잊었을 때의 피드백은 성능 저하와, 신호 버스의 경우
@@ -297,7 +313,9 @@ Postgres 도 같은 원칙이다 — 모든 시간 비교가 `now()` 이지 `Ins
 가장 단순하고 가장 빠르며, 전달 보장이 가장 약하다.
 
 - **키 레이아웃**: 레코드는 `{keyPrefix}:{sessionId}` HASH 하나. `sessionId` 필드가 **레코드의 존재
-  자체**를 뜻하고 나머지는 §1.2 대로 없으면 기본값이다
+  자체**를 뜻하고 나머지는 §1.2 대로 없으면 기본값이다. 소유자는 `owner` 필드(코덱 JSON 문자열)다. provision
+  스크립트는 `agentRef` 와 소유자 인자를 **언제나** 넘기고 빈 문자열을 "없음" 표지로 쓴다 — 그래서 이 저장소는 빈
+  문자열 `agentRef` 를 거부한다(`null` 이 "바인딩 없음" 이다)
 - **신호**: `RedisPubSubSignalBus` — pub/sub 은 **연결이 끊긴 동안 at-most-once** 다. 끊긴 사이의
   신호는 복구되지 않는다. 이벤트가 best-effort 라는 계약이 여기서 나온다
 - **멱등 TTL**: Redis 가 자체 만료를 하므로 sweeper 가 primary TTL 을 대신 돌 필요가 없다

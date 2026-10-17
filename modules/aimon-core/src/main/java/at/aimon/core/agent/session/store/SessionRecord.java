@@ -11,6 +11,7 @@ import at.aimon.core.agent.session.transcript.SessionRewindPoint;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.session.transcript.SessionTranscript;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.base.Principal;
 import at.aimon.core.llm.Message;
 
 /**
@@ -20,7 +21,8 @@ import at.aimon.core.llm.Message;
  * It carries two unrelated halves. The first is the LLM-visible history — system prompt plus messages — held as one
  * immutable {@link SessionTranscript}. The second is bookkeeping written by different owners at different times:
  * {@code compactionFailureCount} (the compaction circuit breaker), {@code agentRef} (the agent binding, sole-written
- * by {@code SessionRouter}), {@code sessionTotals}, and {@code budgetOverride}. Only the transcript half
+ * by {@code SessionRouter}), {@code owner} (the owning principal, written under the same fill-if-empty rule),
+ * {@code sessionTotals}, and {@code budgetOverride}. Only the transcript half
  * crosses the wire — see {@link SessionSnapshot}, which is the sole owner of the persisted format.
  *
  * <p>
@@ -73,6 +75,7 @@ public class SessionRecord implements SessionRecordView {
     private String agentRef;
     private SessionTotals sessionTotals;
     private ExecutionBudget budgetOverride;
+    private Principal owner;
 
     /**
      * Creates a new empty session record without a system prompt.
@@ -280,8 +283,10 @@ public class SessionRecord implements SessionRecordView {
         final SessionTranscript sourceTranscript = view instanceof SessionRecord record
                 ? record.getTranscript()
                 : SessionTranscript.fromLog(view.getSystemPrompt(), view.getLogState());
-        return new SessionRecord(view.getId(), sourceTranscript, view.getCompactionFailureCount(),
+        final SessionRecord copy = new SessionRecord(view.getId(), sourceTranscript, view.getCompactionFailureCount(),
                 view.getAgentRef().orElse(null), view.getSessionTotals(), view.getBudgetOverride().orElse(null));
+        copy.setOwner(view.getOwner().orElse(null));
+        return copy;
     }
 
     /**
@@ -476,6 +481,32 @@ public class SessionRecord implements SessionRecordView {
     }
 
     /**
+     * Gets the principal that owns this session.
+     *
+     * @return the owning principal, or empty when none is recorded
+     * @see SessionRecordView#getOwner()
+     */
+    @Override
+    public Optional<Principal> getOwner() {
+        return Optional.ofNullable(owner);
+    }
+
+    /**
+     * Sets the owning principal of this session.
+     *
+     * <p>
+     * Sole-writer invariant, the same as {@link #setAgentRef(String)}'s: in production reachable only from
+     * {@link SessionRecordStore#provision(SessionId, String, Principal)}, called on a copy inside the store's atomic
+     * primitive, which decides "fill if empty" there. Nothing outside this package can reach the mutable record.
+     *
+     * @param owner
+     *            the owning principal (may be null when none is recorded)
+     */
+    public void setOwner(Principal owner) {
+        this.owner = owner;
+    }
+
+    /**
      * Gets the persisted cumulative session totals for this session.
      *
      * <p>
@@ -540,7 +571,7 @@ public class SessionRecord implements SessionRecordView {
     public String toString() {
         return "SessionRecord{" + "id=" + id + ", hasSystemPrompt=" + (transcript.getSystemPrompt() != null)
                 + ", messages=" + transcript.size() + ", compactionFailureCount=" + compactionFailureCount
-                + ", agentRef=" + agentRef + ", sessionTotals=" + sessionTotals + ", budgetOverride=" + budgetOverride
-                + "}";
+                + ", agentRef=" + agentRef + ", owner=" + (owner == null ? null : owner.getType() + ":" + owner.getId())
+                + ", sessionTotals=" + sessionTotals + ", budgetOverride=" + budgetOverride + "}";
     }
 }
