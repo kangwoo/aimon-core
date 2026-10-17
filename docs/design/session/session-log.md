@@ -533,7 +533,8 @@ v1 쓰기 모드에서 `DefaultContextEngine` 은 기록을 고쳐 쓰는 지금
   세그먼트를 한 번만 가져오고 해시 검사하고 디코드한다. 읽지 못한 세그먼트도 기억하므로 WARN 은 작업당 한 번이다. 작업을
   넘어 두지 않는다 — manifest 가 바뀌면 GC 가 지운 세그먼트를 캐시가 붙들고 있게 된다
 - **백엔드.** Postgres 는 `V2__session_log_segment.sql`(운영자가 `V1__init.sql` 뒤에 적용)이고, README 가 미래 인덱스용으로
-  예약해 둔 이름은 `V3__indexes.sql` 로 밀렸다. Redis 는 세션당 해시 둘 — `<prefix>:{s:<sid>}:data`(id → payload 를
+  예약해 둔 이름은 `V3__indexes.sql` 로 밀렸다(그 V3 은 #253 의 `V3__session_record_owner.sql` 이 가져가서 지금은
+  `V4__indexes.sql` 이다). Redis 는 세션당 해시 둘 — `<prefix>:{s:<sid>}:data`(id → payload 를
   든 JSON)와 `<prefix>:{s:<sid>}:created`(id → createdAt) — 이라 `list` 가 payload 를 끌어오지 않고, Lua 스크립트가 둘을
   맞춘다. 중괄호는 hash tag 라서 두 키가 Redis Cluster 의 한 슬롯에 들고, 두 키 스크립트와 `DEL` 이 `CROSSSLOT` 을 내지
   않는다. tag 는 고정 표식 `s:` 로 시작한다 — Redis 는 첫 `{` 와 그 뒤 첫 `}` 사이가 비면 키 **전체**를 해시하므로,

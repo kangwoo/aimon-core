@@ -25,6 +25,7 @@ import at.aimon.core.agent.session.store.SessionRecordView;
 import at.aimon.core.agent.session.store.SessionTotals;
 import at.aimon.core.agent.session.store.StoredSessionRecord;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.base.Principal;
 import at.aimon.session.mongodb.internal.DocumentKeys;
 
 /**
@@ -46,14 +47,16 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  * "compactionFailureCount": <int>, // absent until the first increment
  * "sessionTotals": { ... }, // absent until the first turn ends
  * "budgetOverride": { ... }, // absent when there is no override
+ * "owner": { ... }, // absent until a provisioning names one
  * "updatedAt": ISODate
  * }
  * }</pre>
  *
  * <p>
  * <b>Absent is not a separate state.</b> Every field above decodes to the same default the in-memory store reports for
- * a record that has one — no transcript, no totals, no override, a count of zero — so the first turn of a session,
- * which runs against a record the claim path provisioned and nothing has written to yet, behaves identically on both.
+ * a record that has one — no transcript, no totals, no override, no owner, a count of zero — so the first turn of a
+ * session, which runs against a record the claim path provisioned and nothing has written to yet, behaves identically
+ * on both.
  *
  * <p>
  * The transcript is a string rather than a subdocument, and that is forced rather than chosen: a tool use's input is
@@ -68,9 +71,10 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  * on each method asks for one atomic operation rather than a read-modify-write. The mapping:
  *
  * <ul>
- * <li>{@link #provision(SessionId, String) provision} — {@code findOneAndUpdate} with {@code upsert} and a pipeline
- * {@code $set} whose binding stage is {@code $ifNull}, so "create if missing", "bind if unbound" and "tell me who owns
- * this" settle in one round trip and an existing binding is never overwritten
+ * <li>{@link #provision(SessionId, String, Principal) provision} — {@code findOneAndUpdate} with {@code upsert} and a
+ * pipeline {@code $set} whose binding and owner stages are each an {@code $ifNull}, so "create if missing", "bind if
+ * unbound", "record the owner if there is none" and "tell me who owns this" settle in one round trip and neither an
+ * existing binding nor an existing owner is ever overwritten
  * <li>{@link #mergeFromSnapshot(SessionSnapshot) mergeFromSnapshot} — an upserting {@code $set} of the transcript
  * alone; the side fields are not named, so a concurrent writer of any of them cannot lose its write here
  * <li>{@link #setTotalsAndBudgetOverride(SessionId, SessionTotals, ExecutionBudget) setTotalsAndBudgetOverride} — one
@@ -140,6 +144,11 @@ public final class MongoSessionRecordStore implements SessionRecordStore {
 
     @Override
     public SessionRecordView provision(SessionId sessionId, String agentRef) {
+        return provision(sessionId, agentRef, null);
+    }
+
+    @Override
+    public SessionRecordView provision(SessionId sessionId, String agentRef, Principal owner) {
         Objects.requireNonNull(sessionId, "sessionId must not be null");
         final Document set = new Document(DocumentKeys.F_UPDATED_AT, "$$NOW");
         if (agentRef != null) {
@@ -150,8 +159,15 @@ public final class MongoSessionRecordStore implements SessionRecordStore {
             set.append(DocumentKeys.F_AGENT_REF, new Document("$ifNull",
                     List.of("$" + DocumentKeys.F_AGENT_REF, new Document("$literal", agentRef))));
         }
+        if (owner != null) {
+            // The binding's rule, in the same stage: the first owner wins. $literal for the same reason as above,
+            // and here it guards a whole subdocument — an id or display name beginning with "$" would otherwise be
+            // evaluated as a field path inside it.
+            set.append(DocumentKeys.F_OWNER, new Document("$ifNull", List.of("$" + DocumentKeys.F_OWNER,
+                    new Document("$literal", Document.parse(SessionRecordCodec.encodeOwner(owner))))));
+        }
         final Document after = provisionOnce(sessionId, set);
-        return after == null ? StoredSessionRecord.empty(sessionId, agentRef) : toRecord(sessionId, after);
+        return after == null ? StoredSessionRecord.empty(sessionId, agentRef, owner) : toRecord(sessionId, after);
     }
 
     @Override
@@ -313,7 +329,7 @@ public final class MongoSessionRecordStore implements SessionRecordStore {
                     .compactionFailureCount(intValue(doc, DocumentKeys.F_COMPACTION_FAILURE_COUNT))
                     .sessionTotals(SessionRecordCodec.decodeTotals(json(doc, DocumentKeys.F_SESSION_TOTALS)))
                     .budgetOverride(SessionRecordCodec.decodeBudgetOverride(json(doc, DocumentKeys.F_BUDGET_OVERRIDE)))
-                    .build();
+                    .owner(SessionRecordCodec.decodeOwner(json(doc, DocumentKeys.F_OWNER))).build();
         } catch (RuntimeException e) {
             // A record that will not decode is an infrastructure failure from the caller's side, not a missing one:
             // reporting it as absent would let a session silently resume with an empty history.

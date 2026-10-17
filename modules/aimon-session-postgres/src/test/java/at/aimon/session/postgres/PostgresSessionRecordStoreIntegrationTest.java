@@ -25,6 +25,7 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.SessionRecordView;
 import at.aimon.core.agent.session.store.SessionTotals;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.base.Principal;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.TokenUsage;
@@ -69,6 +70,73 @@ class PostgresSessionRecordStoreIntegrationTest {
     }
 
     @Test
+    @DisplayName("provision records the owner, and a second provision with another owner keeps the first")
+    void provisionRecordsOwnerOnce() {
+        final SessionId id = SessionId.of("rec-owner");
+        final Principal alice = Principal.user("u-alice", "Alice");
+
+        final SessionRecordView first = store.provision(id, "agent-A", alice);
+        assertThat(first.getOwner()).contains(alice);
+        assertThat(first.getOwner().orElseThrow().getDisplayName()).isEqualTo("Alice");
+
+        // COALESCE(session_record.owner, EXCLUDED.owner), the binding's rule in the binding's statement: the second
+        // caller reads the recorded owner back instead of replacing it.
+        final SessionRecordView second = store.provision(id, "agent-A", Principal.user("u-bob", "Bob"));
+        assertThat(second.getOwner()).contains(alice);
+        assertThat(store.load(id).orElseThrow().getOwner()).contains(alice);
+    }
+
+    @Test
+    @DisplayName("a record provisioned without an owner gets one from the first provision that names one")
+    void ownerFillsWhenEmpty() {
+        final SessionId id = SessionId.of("rec-owner-late");
+        final Principal alice = Principal.user("u-alice", "Alice");
+
+        assertThat(store.provision(id, "agent-A").getOwner()).isEmpty();
+        assertThat(store.load(id).orElseThrow().getOwner()).isEmpty();
+
+        assertThat(store.provision(id, "agent-A", alice).getOwner()).contains(alice);
+        // And a later owner-less provision does not clear it: NULL in EXCLUDED loses to the stored value.
+        assertThat(store.provision(id, "agent-A").getOwner()).contains(alice);
+        assertThat(store.load(id).orElseThrow().getOwner()).contains(alice);
+    }
+
+    @Test
+    @DisplayName("provision without a binding can still record an owner")
+    void ownerWithoutBinding() {
+        final SessionId id = SessionId.of("rec-owner-unbound");
+        final Principal service = Principal.builder().type(Principal.Type.SERVICE).id("svc-1").displayName("dispatcher")
+                .build();
+
+        final SessionRecordView view = store.provision(id, null, service);
+
+        assertThat(view.getAgentRef()).isEmpty();
+        assertThat(view.getOwner()).contains(service);
+        // The two COALESCEs are independent: binding later leaves the owner alone, and the owner did not bind.
+        final SessionRecordView bound = store.provision(id, "agent-A");
+        assertThat(bound.getAgentRef()).contains("agent-A");
+        assertThat(bound.getOwner()).contains(service);
+    }
+
+    @Test
+    @DisplayName("the owner survives transcript merges and totals writes, which do not name its column")
+    void ownerSurvivesOtherWriters() {
+        final SessionId id = SessionId.of("rec-owner-preserved");
+        final Principal alice = Principal.user("u-alice", "Alice");
+        store.provision(id, "agent-A", alice);
+
+        store.mergeFromSnapshot(SessionSnapshot.of(id, "sys", List.of(Message.user("hi"))));
+        store.setTotalsAndBudgetOverride(id, SessionTotals.of(1, 1, TokenUsage.of(1, 1, 2)), null);
+        store.incrementCompactionFailureCount(id);
+        store.resetCompactionFailureCount(id);
+
+        final SessionRecordView view = store.load(id).orElseThrow();
+        assertThat(view.getOwner()).contains(alice);
+        assertThat(view.getOwner().orElseThrow().getDisplayName()).isEqualTo("Alice");
+        assertThat(view.getMessages()).hasSize(1);
+    }
+
+    @Test
     @DisplayName("provision without a binding materializes an unbound row")
     void provisionWithoutBinding() {
         final SessionId id = SessionId.of("rec-unbound");
@@ -80,6 +148,7 @@ class PostgresSessionRecordStoreIntegrationTest {
         assertThat(view.getCompactionFailureCount()).isZero();
         assertThat(view.getSessionTotals()).isEqualTo(SessionTotals.empty());
         assertThat(view.getBudgetOverride()).isEmpty();
+        assertThat(view.getOwner()).isEmpty();
         // Existence is the whole point of this call: a row that reads as absent would be re-provisioned, and the
         // binding a later claim writes would look like a first binding rather than a conflict.
         assertThat(store.exists(id)).isTrue();

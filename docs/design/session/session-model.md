@@ -104,6 +104,7 @@ class SessionRecord implements SessionRecordView {
     private String agentRef;                   // side
     private SessionTotals sessionTotals;       // side
     private ExecutionBudget budgetOverride;    // side
+    private Principal owner;                   // side — §3.6
 }
 ```
 
@@ -148,7 +149,7 @@ side field 는 하나도 담지 않는다. 그래서 저장 경로가 규칙을 
 
 > `SessionRecordStore.mergeFromSnapshot` 은 기존 레코드에서 네 side field
 > (`compactionFailureCount` / `agentRef` / `sessionTotals` / `budgetOverride`)를 **되살린 뒤** 전사만
-> 덮어쓴다.
+> 덮어쓴다. 나중에 들어온 `owner`(§3.6)도 같은 규칙으로 되살린다.
 
 이것을 잊으면 턴이 끝날 때마다 누적 통계와 예산 오버라이드가 0 으로 돌아간다. 변환의 방향도 여기서
 정해졌다 — `SessionRecord.fromSnapshot(SessionSnapshot)` 이지 `SessionSnapshot.toSessionRecord()` 가
@@ -165,6 +166,25 @@ side field 는 하나도 담지 않는다. 그래서 저장 경로가 규칙을 
 승격하면 컴파일이 깨진다.
 
 ---
+
+### 3.6 소유자 — 기록이지 권한이 아니다
+
+레코드는 선택적으로 소유 `Principal` 을 갖는다(`SessionRecordView.getOwner()`, #253). 멀티 테넌트 확장이
+"세션 → 소유자" 맵을 각자 들고 있지 않게 하려는 것이다.
+
+- **쓰는 곳은 `provision` 하나다.** `provision(id, agentRef, owner)` 가 바인딩과 같은 원자 연산 안에서
+  "비어 있으면 채우고, 있으면 절대 덮어쓰지 않는다". 첫 소유자가 이기고, 소유자를 지우거나 바꾸는 SPI 는 없다
+- **어디서 오는가.** `SubmitRequest.owner(...)` 로 명시한 값뿐이다. 필수인 `initiator` 에서 끌어내지 않는다 —
+  시스템·서비스 주체가 남의 세션에 글을 넣는 일이 흔하기 때문이다. 포워딩된 첫 제출은 `InboundMessage` 가
+  소유자를 실어 홀더의 drain 경로가 기록한다
+- **거절된 요청은 소유자가 되지 못한다.** `claim` 은 바인딩이 맞는다는 것을 확인한 뒤에 소유자를 쓰고,
+  drain 경로도 메시지의 에이전트가 바인딩과 같을 때만 쓴다
+- **코어는 강제하지 않는다.** 다른 소유자를 단 제출도 거절되지 않는다. 기록된 값을 읽고 규칙을 적용하는 것은
+  호스트나 확장의 몫이다
+
+이미 이 노드가 리스를 들고 있는 세션에 대한 제출은 프로비저닝하지 않으므로 소유자도 쓰지 않는다. 엄격한
+소유가 필요하면 **첫** 제출에 `owner` 를 단다. 근거와 기각한 대안은
+[`session-owner-deletion-event.md`](session-owner-deletion-event.md) 에 있다.
 
 ## 4. 영속 — 무엇이 재시작을 넘는가
 
@@ -231,6 +251,7 @@ claim(sessionId, agentRef, holderId, lease)
   1. 리스 선출         — 이 노드가 홀더가 될 수 있는가?
   2. 에이전트 바인딩 검증 — 이 세션이 다른 에이전트에 묶여 있지 않은가?
   3. 레코드 프로비저닝   — 없으면 만든다
+  4. 소유자 기록        — owner 를 넘긴 claim 이고 레코드에 소유자가 없을 때만 (§3.6)
 ```
 
 선출에서 **진 노드는 레코드를 아예 건드리지 않는다.** 그래서 이 연산은 분산 트랜잭션 없이 순서만으로

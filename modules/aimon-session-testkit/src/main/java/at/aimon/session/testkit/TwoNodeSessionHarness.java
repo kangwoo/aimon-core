@@ -6,8 +6,11 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
+import at.aimon.core.agent.session.SessionDeletedEvent;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.SessionLifecycleListener;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.session.routing.DeploymentMode;
@@ -86,14 +89,18 @@ public final class TwoNodeSessionHarness implements AutoCloseable {
         final LiveSessionOpener opener = (id, agentRuntimeId, options, openAttributes) -> sessions.computeIfAbsent(id,
                 RecordingTestSession::new);
 
+        // Each node records the deletions it was told about, so a scenario can tell which node's listener fired.
+        final List<SessionDeletedEvent> deletions = new CopyOnWriteArrayList<>();
+        final SessionLifecycleListener recorder = SessionLifecycleListener.whenDeleted(deletions::add);
+
         final SessionRouter manager = SessionRouter.builder().sessionOpener(opener).sessionRecordStore(sharedRepository)
                 .sessionLeaseStore(spis.leaseStore()).signalBus(spis.signalBus()).sessionInbox(spis.inbox())
                 .idempotencyStore(spis.idempotencyStore()).mode(DeploymentMode.DISTRIBUTED).nodeId(nodeId)
                 .idleTtl(Duration.ofMinutes(10)).maxCachedSessions(1000).lockLease(lockLease)
                 .lockExtendInterval(lockExtendInterval).holderLossSweepInterval(holderLossSweepInterval)
                 .idempotencyPrimaryTtl(Duration.ofHours(24)).idempotencySecondaryTtl(idempotencySecondaryTtl)
-                .releaseInterruptTimeout(Duration.ofSeconds(2)).build();
-        return new Node(nodeId, manager, sessions);
+                .releaseInterruptTimeout(Duration.ofSeconds(2)).lifecycleListener(recorder).build();
+        return new Node(nodeId, manager, sessions, deletions);
     }
 
     /** @return the first node */
@@ -138,10 +145,19 @@ public final class TwoNodeSessionHarness implements AutoCloseable {
 
         private final ConcurrentMap<SessionId, RecordingTestSession> sessions;
 
-        Node(String nodeId, SessionRouter manager, ConcurrentMap<SessionId, RecordingTestSession> sessions) {
+        private final List<SessionDeletedEvent> deletions;
+
+        Node(String nodeId, SessionRouter manager, ConcurrentMap<SessionId, RecordingTestSession> sessions,
+                List<SessionDeletedEvent> deletions) {
             this.nodeId = nodeId;
             this.manager = manager;
             this.sessions = sessions;
+            this.deletions = deletions;
+        }
+
+        /** @return every deletion this node's lifecycle listener was told about, in order (live view) */
+        public List<SessionDeletedEvent> deletions() {
+            return deletions;
         }
 
         /** @return this node's id */

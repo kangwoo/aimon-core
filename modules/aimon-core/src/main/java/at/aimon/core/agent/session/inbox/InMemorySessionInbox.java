@@ -102,6 +102,7 @@ public final class InMemorySessionInbox implements SessionInbox {
         src.getIdempotencyKey().ifPresent(b::idempotencyKey);
         src.getTurnId().ifPresent(b::turnId);
         src.getContextDiscriminator().ifPresent(b::contextDiscriminator);
+        src.getOwner().ifPresent(b::owner);
         return b.build();
     }
 

@@ -6,6 +6,7 @@ import java.util.Optional;
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.base.Principal;
 
 /**
  * Storage for session records. Implementations can use different backends (memory, database, ...).
@@ -13,14 +14,16 @@ import at.aimon.core.agent.session.transcript.SessionSnapshot;
  * <h2>There is no "write the record" operation, and that is the design</h2>
  *
  * <p>
- * A record has four owners writing four different concerns, and no writer holds all of them: the checkpoint writer
- * thread owns the messages, the claim path owns {@code agentRef}, the session owns the
- * {@code sessionTotals} / {@code budgetOverride} pair, and the compaction guard owns
- * {@code compactionFailureCount}. So every write here is a <b>partial</b> write that preserves what it does not own:
+ * A record has several writers, each owning a different concern, and no writer holds all of them: the checkpoint
+ * writer thread owns the messages, the provisioning paths (the claim, and a drain pass that provisions the record)
+ * own {@code agentRef} and {@code owner}, the session owns the {@code sessionTotals} / {@code budgetOverride} pair,
+ * and the compaction guard owns {@code compactionFailureCount}. So every write here is a <b>partial</b> write that
+ * preserves what it does not own:
  *
  * <ul>
  * <li>{@link #mergeFromSnapshot(SessionSnapshot)} — the messages
- * <li>{@link #provision(SessionId, String)} — the record's existence, and its binding when unbound
+ * <li>{@link #provision(SessionId, String)} / {@link #provision(SessionId, String, Principal)} — the record's
+ * existence, its binding, and its owner, each filled only when empty
  * <li>{@link #setTotalsAndBudgetOverride(SessionId, SessionTotals, ExecutionBudget)} — the session's pair
  * <li>{@link #incrementCompactionFailureCount(SessionId)} / {@link #resetCompactionFailureCount(SessionId)} — the
  * compaction guard's counter
@@ -33,10 +36,12 @@ import at.aimon.core.agent.session.transcript.SessionSnapshot;
  * the primitives above close. It had no production caller and it is gone.
  *
  * <p>
- * That is also why none of them has a {@code default} implementation. A default could only be written in terms of
- * load-mutate-store, i.e. non-atomically, and a backend author who implemented the obvious members and inherited the
- * rest would silently get the losing behaviour. Each is abstract so the compiler asks the question the javadoc used to
- * only shout about: implement this with whatever atomic primitive you have.
+ * That is also why none of them has a {@code default} implementation — the owner-carrying
+ * {@link #provision(SessionId, String, Principal)} overload aside, whose default writes nothing at all (see there). A
+ * default could only be written in terms of load-mutate-store, i.e. non-atomically, and a backend author who
+ * implemented the obvious members and inherited the rest would silently get the losing behaviour. Each is abstract so
+ * the compiler asks the question the javadoc used to only shout about: implement this with whatever atomic primitive
+ * you have.
  *
  * <p>
  * Reads return {@link SessionRecordView}, never the mutable {@link SessionRecord} — see {@link #load(SessionId)}.
@@ -72,7 +77,8 @@ public interface SessionRecordStore {
      * fields, none of which a {@link SessionSnapshot} represents — {@code compactionFailureCount} (written by the
      * compaction guard through {@link #incrementCompactionFailureCount(SessionId)} and
      * {@link #resetCompactionFailureCount(SessionId)}),
-     * {@code agentRef} (established by {@link #provision(SessionId, String)}), and the pair
+     * {@code agentRef} and {@code owner} (established by {@link #provision(SessionId, String)} and
+     * {@link #provision(SessionId, String, Principal)}), and the pair
      * {@code sessionTotals} / {@code budgetOverride} (written by the live session that runs the session's turns,
      * through {@link #setTotalsAndBudgetOverride(SessionId, SessionTotals, ExecutionBudget)}). If no record
      * exists yet, a fresh record is created from the snapshot, with every side field at its default.
@@ -139,6 +145,46 @@ public interface SessionRecordStore {
     SessionRecordView provision(SessionId sessionId, String agentRef);
 
     /**
+     * Ensures a record exists for {@code sessionId}, binds it to {@code agentRef} when unbound, and records
+     * {@code owner} as its owning principal when it has none. Returns the record as it stands afterwards.
+     *
+     * <p>
+     * The owner follows the binding's rule exactly: filled if empty, never overwritten, decided in the same atomic
+     * operation that establishes the row. The first provisioning that carries an owner wins; every later one reads the
+     * existing owner back from the returned record. {@code null} for {@code owner} leaves the owner as it is, which
+     * makes this {@link #provision(SessionId, String)}.
+     *
+     * <p>
+     * The owner is recorded, not enforced — see {@link SessionRecordView#getOwner()}.
+     *
+     * @implSpec The one write on this interface with a {@code default}, and the default is not a write. The rule
+     *           against defaults exists because one could only be a non-atomic load-mutate-store; this one performs no
+     *           owner write at all. With a {@code null} owner it delegates to the atomic two-argument primitive; with
+     *           an owner it throws, so a store written before owners existed keeps compiling and keeps working until a
+     *           host actually asks it to persist one — and then fails at the first submit instead of silently dropping
+     *           the owner. A backend that can persist the owner overrides this with the same atomic primitive its
+     *           two-argument {@code provision} uses.
+     *
+     * @param sessionId
+     *            the session id (must not be null)
+     * @param agentRef
+     *            the agent to bind if the record has no binding yet, or {@code null} to provision without binding
+     * @param owner
+     *            the principal to record if the record has no owner yet, or {@code null} to leave the owner as it is
+     * @return the record after the operation, never null
+     * @throws NullPointerException
+     *             if {@code sessionId} is null
+     * @throws UnsupportedOperationException
+     *             if {@code owner} is non-null and this store does not persist session owners
+     */
+    default SessionRecordView provision(SessionId sessionId, String agentRef, Principal owner) {
+        if (owner == null) {
+            return provision(sessionId, agentRef);
+        }
+        throw new UnsupportedOperationException(getClass().getName() + " does not persist session owners");
+    }
+
+    /**
      * Ensures a record exists for {@code sessionId} without touching its agent binding.
      *
      * @param sessionId
@@ -155,7 +201,7 @@ public interface SessionRecordStore {
     /**
      * Atomically writes the two side fields whose writer is the session rather than the turn — the absolute
      * {@code sessionTotals} and the runtime {@code budgetOverride} — without touching any other persisted state
-     * (messages, systemPrompt, compactionFailureCount, agentRef).
+     * (messages, systemPrompt, compactionFailureCount, agentRef, owner).
      *
      * <p>
      * The pair travels together because one writer owns both and always knows both. A session hydrates them from the
@@ -266,6 +312,11 @@ public interface SessionRecordStore {
      *
      * <p>
      * If the record does not exist, this method does nothing.
+     *
+     * <p>
+     * A raw delete fires no {@link at.aimon.core.agent.session.SessionLifecycleListener}: the router's
+     * {@code deleteSession} does, once it has deleted the record under the session's lease. Calling this directly
+     * bypasses that lock as well as the listeners, and is meant for maintenance and tests.
      *
      * @param sessionId
      *            The session id (must not be null)

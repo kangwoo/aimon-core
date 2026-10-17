@@ -3,6 +3,7 @@ package at.aimon.session.routing;
 import java.util.Objects;
 import java.util.Optional;
 
+import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.SubmitOptions;
 import at.aimon.core.agent.input.TextInput;
 import at.aimon.core.agent.input.UserInput;
@@ -18,7 +19,8 @@ import at.aimon.core.base.Principal;
  * <p>
  * Carries the target {@link SessionId}, the {@code agentRef} the caller intends to bind to the session, the
  * {@link UserInput}, optional session options, optional idempotency key, priority tier (defaults to {@link
- * QueuedInputPriority#NEXT}), and the {@link Principal} that initiated the input.
+ * QueuedInputPriority#NEXT}), the {@link Principal} that initiated the input, and optionally the {@link Principal}
+ * that owns the session.
  *
  * <p>
  * The optional {@code contextDiscriminator} selects which {@code AgentRuntime} instance the session should
@@ -43,10 +45,11 @@ public final class SubmitRequest {
     private final String idempotencyKey;
     private final QueuedInputPriority priority;
     private final Principal initiator;
+    private final Principal owner;
 
     private SubmitRequest(Builder b) {
         this.sessionId = Objects.requireNonNull(b.sessionId, "sessionId must not be null");
-        this.agentRef = Objects.requireNonNull(b.agentRef, "agentRef must not be null");
+        this.agentRef = requireValidAgentRef(b.agentRef);
         this.contextDiscriminator = b.contextDiscriminator;
         this.userInput = Objects.requireNonNull(b.userInput, "userInput must not be null");
         this.options = b.options != null ? b.options : LiveSessionOptions.defaults();
@@ -55,6 +58,28 @@ public final class SubmitRequest {
         this.idempotencyKey = b.idempotencyKey;
         this.priority = b.priority != null ? b.priority : QueuedInputPriority.NEXT;
         this.initiator = Objects.requireNonNull(b.initiator, "initiator must not be null");
+        this.owner = b.owner;
+    }
+
+    /**
+     * Rejects an {@code agentRef} that {@link at.aimon.core.agent.AgentRuntimeId#fromName(String)} would refuse,
+     * before anything is written. The router claims — and so binds — the session first and derives the runtime id
+     * only afterwards, and a binding is first-wins and never overwritten: a name that fails there would leave the
+     * session bound to an agent no turn can ever open, and refuse every later submit naming a valid one.
+     *
+     * <p>
+     * Delegates to {@code fromName} rather than restating its rules, so the two cannot drift apart: a name it accepts
+     * here is exactly a name the turn can open. The null check comes first so a missing name stays a
+     * {@link NullPointerException}, like every other required field.
+     */
+    private static String requireValidAgentRef(String agentRef) {
+        Objects.requireNonNull(agentRef, "agentRef must not be null");
+        try {
+            AgentRuntimeId.fromName(agentRef);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid agentRef '" + agentRef + "': " + e.getMessage(), e);
+        }
+        return agentRef;
     }
 
     public static Builder builder() {
@@ -65,6 +90,12 @@ public final class SubmitRequest {
         return sessionId;
     }
 
+    /**
+     * The agent the caller intends to run, and to bind the session to if it is unbound.
+     *
+     * @return the agent name — never null, never blank, and free of {@code ':'}, the rules
+     *         {@link at.aimon.core.agent.AgentRuntimeId#fromName(String)} applies
+     */
     public String getAgentRef() {
         return agentRef;
     }
@@ -137,6 +168,29 @@ public final class SubmitRequest {
         return initiator;
     }
 
+    /**
+     * The principal to record as the session's owner, when the session has none yet.
+     *
+     * <p>
+     * Consumed only when the session's record is provisioned — by the claim that wins the session for this node, or,
+     * for a forwarded request, by a doorbell drain pass that picks it up while no turn is running on the holder — and
+     * ignored on a session that already has an owner: the first provisioning that carries one wins and nothing
+     * overwrites it. A submit to a session this node already holds does not provision, and neither does a running
+     * turn's post-turn re-collect of a forwarded request, so neither records anything. Set it on the <em>first</em>
+     * submit when ownership must
+     * be strict. The same "read on provisioning only" shape as {@link OpenAttributes}' "read on cache miss only".
+     *
+     * <p>
+     * Not derived from {@link #getInitiator()}, which is mandatory and is often a system or service principal posting
+     * into a session it does not own. And <b>not enforced</b>: a submit naming a different owner is not rejected. The
+     * recorded owner is readable through {@code SessionRecordView.getOwner()}; authorization is the host's.
+     *
+     * @return the owner to record, or empty to record none
+     */
+    public Optional<Principal> getOwner() {
+        return Optional.ofNullable(owner);
+    }
+
     /** Builder for {@link SubmitRequest}. */
     public static final class Builder {
         private SessionId sessionId;
@@ -149,6 +203,7 @@ public final class SubmitRequest {
         private String idempotencyKey;
         private QueuedInputPriority priority;
         private Principal initiator;
+        private Principal owner;
 
         private Builder() {
         }
@@ -158,6 +213,14 @@ public final class SubmitRequest {
             return this;
         }
 
+        /**
+         * Sets the agent to run. Checked at {@code build()} time, not here, like every other required field.
+         *
+         * @param v
+         *            the agent name (must be non-null, non-blank and free of {@code ':'} by {@code build()} time —
+         *            the rules {@link at.aimon.core.agent.AgentRuntimeId#fromName(String)} enforces)
+         * @return this builder
+         */
         public Builder agentRef(String v) {
             this.agentRef = v;
             return this;
@@ -245,6 +308,18 @@ public final class SubmitRequest {
 
         public Builder initiator(Principal v) {
             this.initiator = v;
+            return this;
+        }
+
+        /**
+         * Sets the principal to record as the session's owner. See {@link SubmitRequest#getOwner()}.
+         *
+         * @param v
+         *            the owner, or {@code null} to record none
+         * @return this builder
+         */
+        public Builder owner(Principal v) {
+            this.owner = v;
             return this;
         }
 

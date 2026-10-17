@@ -133,6 +133,43 @@ class InboundMessageRowCodecTest {
     }
 
     @Test
+    @DisplayName("owner round-trips through the JSONB payload in the initiator's shape, and its absence as absence")
+    void ownerRoundTrip() throws IOException {
+        final Principal owner = Principal.builder().type(Principal.Type.GROUP).id("g-7").displayName("ops").build();
+        final String json = codec.encode(baseMessage().owner(owner).build());
+
+        final InboundMessage decoded = codec.decode(json, "42");
+        assertThat(decoded.getOwner()).contains(owner);
+        // Principal equality is type + id only, so the display name is checked on its own.
+        assertThat(decoded.getOwner().orElseThrow().getDisplayName()).isEqualTo("ops");
+        final JsonNode node = mapper.readTree(json).get("owner");
+        assertThat(node.get("type").asText()).isEqualTo("GROUP");
+        assertThat(node.get("id").asText()).isEqualTo("g-7");
+        assertThat(node.get("displayName").asText()).isEqualTo("ops");
+
+        // The holder records an owner only because it can see one was sent, so absence must stay absence — an
+        // invented owner would be first-wins and could never be corrected.
+        final String bare = codec.encode(baseMessage().build());
+        assertThat(mapper.readTree(bare).has("owner")).isFalse();
+        assertThat(codec.decode(bare, "42").getOwner()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a row written before the owner field existed still decodes, with no owner")
+    void preOwnerRowDecodesWithoutOwner() {
+        // Rolling upgrade: rows undelivered at deploy time carry no owner key. Hand-built JSON, so the writer cannot
+        // supply the shape the reader is being tested for.
+        final String stored = "{\"conversationId\":\"c-42\",\"agentRef\":\"agent-x\",\"userInput\":\"hello\","
+                + "\"priority\":\"NEXT\",\"initiator\":{\"type\":\"USER\",\"id\":\"u-1\",\"displayName\":\"alice\"},"
+                + "\"deliveredAt\":\"2026-04-27T10:00:00Z\"}";
+
+        final InboundMessage decoded = codec.decode(stored, "7");
+
+        assertThat(decoded.getOwner()).isEmpty();
+        assertThat(decoded.getInitiator().getId()).isEqualTo("u-1");
+    }
+
+    @Test
     @DisplayName("a row written before the turn stamp existed still decodes, with no turn")
     void preTurnStampRowStillDecodes() {
         // Rolling upgrade: rows undelivered at deploy time have no turnId. The reader must degrade to "unknown turn"

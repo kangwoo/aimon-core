@@ -31,7 +31,8 @@ import at.aimon.core.subagent.task.codec.UserInputCodec;
  * itself; on decode the caller passes the entry id and the codec stamps it onto the rebuilt envelope.
  *
  * <p>
- * {@link Principal} is serialized as {@code {type, id, displayName}}; {@link SessionId} as its string value;
+ * {@link Principal} — the {@code initiator}, and the optional {@code owner} — is serialized as
+ * {@code {type, id, displayName}}; {@link SessionId} as its string value;
  * {@link QueuedInputPriority} as its enum name; {@link Instant} as ISO-8601 string. Metadata is a flat
  * {@code Map<String, String>} per the envelope contract.
  *
@@ -103,6 +104,8 @@ public final class InboundMessageCodec {
             message.getContextDiscriminator().ifPresent(d -> root.put("contextDiscriminator", d));
             message.getIdempotencyKey().ifPresent(k -> root.put("idempotencyKey", k));
             root.set("initiator", encodePrincipal(message.getInitiator()));
+            // Only when present, so an entry without an owner is byte-for-byte what the previous build wrote.
+            message.getOwner().ifPresent(o -> root.set("owner", encodePrincipal(o)));
             root.put("deliveredAt", message.getDeliveredAt().toString());
             final ObjectNode meta = mapper.createObjectNode();
             for (Map.Entry<String, String> e : message.getMetadata().entrySet()) {
@@ -136,7 +139,7 @@ public final class InboundMessageCodec {
                     .sessionId(SessionId.of(root.get("conversationId").asText()))
                     .agentRef(root.get("agentRef").asText()).userInput(decodeUserInput(root))
                     .priority(QueuedInputPriority.valueOf(root.get("priority").asText()))
-                    .initiator(decodePrincipal(root.get("initiator")))
+                    .initiator(decodePrincipal(root.get("initiator"), "initiator"))
                     .deliveredAt(Instant.parse(root.get("deliveredAt").asText()));
             final JsonNode turn = root.get("turnId");
             if (turn != null && !turn.isNull()) {
@@ -145,6 +148,11 @@ public final class InboundMessageCodec {
             final JsonNode discriminator = root.get("contextDiscriminator");
             if (discriminator != null && !discriminator.isNull()) {
                 b.contextDiscriminator(discriminator.asText());
+            }
+            // Optional for the same reason the discriminator is: entries the previous build wrote carry no owner.
+            final JsonNode owner = root.get("owner");
+            if (owner != null && !owner.isNull()) {
+                b.owner(decodePrincipal(owner, "owner"));
             }
             final JsonNode key = root.get("idempotencyKey");
             if (key != null && !key.isNull()) {
@@ -253,9 +261,9 @@ public final class InboundMessageCodec {
         return node;
     }
 
-    private Principal decodePrincipal(JsonNode node) {
+    private Principal decodePrincipal(JsonNode node, String field) {
         if (node == null || !node.isObject()) {
-            throw new IllegalStateException("Missing initiator field");
+            throw new IllegalStateException("Missing " + field + " field");
         }
         return Principal.builder().type(Principal.Type.valueOf(node.get("type").asText())).id(node.get("id").asText())
                 .displayName(node.get("displayName").asText()).build();

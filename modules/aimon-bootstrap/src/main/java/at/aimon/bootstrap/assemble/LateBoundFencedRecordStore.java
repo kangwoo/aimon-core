@@ -11,6 +11,7 @@ import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.session.store.SessionRecordView;
 import at.aimon.core.agent.session.store.SessionTotals;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.base.Principal;
 
 /**
  * The record store the stack's transcript manager and live sessions write through, fenced by a session store that does
@@ -81,6 +82,13 @@ public final class LateBoundFencedRecordStore implements SessionRecordStore {
     @Override
     public SessionRecordView provision(SessionId sessionId) {
         return requireBound().provision(sessionId);
+    }
+
+    // Forwarded rather than inherited: the interface default refuses an owner, and the store this wraps may persist
+    // one.
+    @Override
+    public SessionRecordView provision(SessionId sessionId, String agentRef, Principal owner) {
+        return requireBound().provision(sessionId, agentRef, owner);
     }
 
     @Override

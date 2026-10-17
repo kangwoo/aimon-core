@@ -138,6 +138,39 @@ class InboundMessageCodecTest {
     }
 
     @Test
+    @DisplayName("owner round-trips in the initiator's shape, and its absence round-trips as absence")
+    void ownerRoundTrip() throws IOException {
+        final Principal owner = Principal.builder().type(Principal.Type.GROUP).id("g-7").displayName("ops").build();
+        final String json = codec.encode(baseMessage().owner(owner).build());
+
+        final JsonNode node = new ObjectMapper().readTree(json).get("owner");
+        assertThat(node.get("type").asText()).isEqualTo("GROUP");
+        assertThat(node.get("id").asText()).isEqualTo("g-7");
+        assertThat(node.get("displayName").asText()).isEqualTo("ops");
+        final Principal decoded = codec.decode(json, ENTRY_ID).getOwner().orElseThrow();
+        assertThat(decoded).isEqualTo(owner);
+        assertThat(decoded.getDisplayName()).isEqualTo("ops");
+
+        // Absent stays absent, and the key is not written at all, so the entry is the document the previous build
+        // wrote.
+        final String bare = codec.encode(baseMessage().build());
+        assertThat(bare).doesNotContain("\"owner\"");
+        assertThat(codec.decode(bare, ENTRY_ID).getOwner()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("an entry written before the owner existed still decodes, with no owner")
+    void preOwnerEntryStillDecodes() {
+        final InboundMessage decoded = codec.decode("{\"conversationId\":\"c-9\",\"agentRef\":\"agent-x\","
+                + "\"userInput\":\"hello\",\"priority\":\"NEXT\","
+                + "\"initiator\":{\"type\":\"USER\",\"id\":\"u-1\",\"displayName\":\"alice\"},"
+                + "\"deliveredAt\":\"2026-04-27T10:00:00Z\"}", ENTRY_ID);
+
+        assertThat(decoded.getOwner()).isEmpty();
+        assertThat(decoded.getInitiator().getId()).isEqualTo("u-1");
+    }
+
+    @Test
     @DisplayName("an entry written before the turn stamp existed still decodes, with no turn")
     void preTurnStampEntryStillDecodes() {
         // Rolling upgrade: the stream holds work the previous build wrote. Those entries have no turnId, and the reader

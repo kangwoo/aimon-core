@@ -16,6 +16,7 @@ import at.aimon.core.agent.session.store.SessionRecordView;
 import at.aimon.core.agent.session.store.SessionTotals;
 import at.aimon.core.agent.session.store.StoredSessionRecord;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.base.Principal;
 import io.lettuce.core.RedisException;
 import io.lettuce.core.ScanArgs;
 import io.lettuce.core.ScanCursor;
@@ -39,6 +40,7 @@ import io.lettuce.core.api.sync.RedisCommands;
  *       sessionId               — always present; this is what makes the record exist
  *       transcript              — absent until the first merge
  *       agentRef                — absent while unbound
+ *       owner                   — absent while no owner is recorded; the {@link SessionRecordCodec#encodeOwner} JSON
  *       compactionFailureCount  — absent until the first increment
  *       sessionTotals           — absent until the first turn ends
  *       budgetOverride          — absent when there is no override
@@ -65,17 +67,18 @@ import io.lettuce.core.api.sync.RedisCommands;
  * <h2>Every write is partial, and each is one round trip</h2>
  *
  * <p>
- * {@link SessionRecordStore} has no full-record write because four writers own four fields, and the {@code @implSpec}
- * on each method asks for one atomic operation rather than a read-modify-write. Redis makes that cheap: a hash field is
- * exactly the granularity the SPI wants, so nothing here reads a field it does not own.
+ * {@link SessionRecordStore} has no full-record write because several writers each own different fields, and the
+ * {@code @implSpec} on each method asks for one atomic operation rather than a read-modify-write. Redis makes that
+ * cheap: a hash field is exactly the granularity the SPI wants, so nothing here reads a field it does not own.
  *
  * <ul>
- * <li>{@link #provision(SessionId, String) provision} — one script: {@code HSET} the sentinel, {@code HSETNX} the
- * binding, {@code HGETALL} the result. {@code HSETNX} is the binding rule — an existing {@code agentRef} wins, so a
- * node that wanted a different agent learns so from the returned record instead of having already stolen the session
+ * <li>{@link #provision(SessionId, String, Principal) provision} — one script: {@code HSET} the sentinel,
+ * {@code HSETNX} the binding, {@code HSETNX} the owner, {@code HGETALL} the result. {@code HSETNX} is the binding rule
+ * — an existing {@code agentRef} wins, so a node that wanted a different agent learns so from the returned record
+ * instead of having already stolen the session — and it is the owner's first-wins rule too
  * <li>{@link #mergeFromSnapshot(SessionSnapshot) mergeFromSnapshot} — a plain {@code HSET} of the transcript (plus the
- * sentinel, in case the record is being created here); the side fields are not named, so a concurrent writer of any of
- * them cannot lose its write
+ * sentinel, in case the record is being created here); the side fields, the owner among them, are not named, so a
+ * concurrent writer of any of them cannot lose its write
  * <li>{@link #setTotalsAndBudgetOverride(SessionId, SessionTotals, ExecutionBudget) setTotalsAndBudgetOverride} — one
  * script carrying both fields ({@code HDEL} for a cleared override), so the pair moves together
  * <li>{@link #incrementCompactionFailureCount(SessionId) incrementCompactionFailureCount} — {@code HINCRBY}, which
@@ -115,18 +118,25 @@ public final class RedisSessionRecordStore implements SessionRecordStore {
 
     private static final String F_AGENT_REF = "agentRef";
 
+    private static final String F_OWNER = "owner";
+
     private static final String F_COMPACTION_FAILURE_COUNT = "compactionFailureCount";
 
     private static final String F_SESSION_TOTALS = "sessionTotals";
 
     private static final String F_BUDGET_OVERRIDE = "budgetOverride";
 
-    // KEYS = [recordKey], ARGV = [sessionId, agentRef?]. Returns the hash as a flat field/value array.
+    // KEYS = [recordKey], ARGV = [sessionId, agentRef, owner]. Returns the hash as a flat field/value array.
     //
-    // ARGV[2] is genuinely absent — not an empty-string sentinel — when the caller provisions without binding, so a
-    // Lua `if ARGV[2] then` is the whole test and an agent named "" could never be confused with "no agent".
+    // Both optional arguments are always passed, and "" means absent. Position used to carry absence — ARGV[2] was
+    // simply omitted to provision without binding — but with two optional arguments an omitted second one would shift
+    // the third into its place. So "" is now a sentinel, and that has a price: an agent named "" would read as "no
+    // agent". SubmitRequest refuses a blank agentRef, so the router never sends one, but this store can be called
+    // without the router; provision() therefore still refuses an empty agentRef instead of letting the script skip
+    // the binding silently. An encoded owner is a JSON object and is never "", so the owner needs no such guard.
     private static final String PROVISION_SCRIPT = "redis.call('HSET', KEYS[1], 'sessionId', ARGV[1]) "
-            + "if ARGV[2] then redis.call('HSETNX', KEYS[1], 'agentRef', ARGV[2]) end "
+            + "if ARGV[2] ~= '' then redis.call('HSETNX', KEYS[1], 'agentRef', ARGV[2]) end "
+            + "if ARGV[3] ~= '' then redis.call('HSETNX', KEYS[1], 'owner', ARGV[3]) end "
             + "return redis.call('HGETALL', KEYS[1])";
 
     // KEYS = [recordKey], ARGV = [sessionTotals, budgetOverride?]. Returns 1 when written, 0 when there is no record.
@@ -175,8 +185,8 @@ public final class RedisSessionRecordStore implements SessionRecordStore {
         Objects.requireNonNull(snapshot, "snapshot must not be null");
         final SessionId id = snapshot.getSessionId();
         // Names the transcript and the sentinel, nothing else. Everything the snapshot cannot carry — the binding, the
-        // counter, the totals, the override — is simply not in the write, so it survives by not being mentioned
-        // rather than by being read and written back.
+        // owner, the counter, the totals, the override — is simply not in the write, so it survives by not being
+        // mentioned rather than by being read and written back.
         final Map<String, String> fields = new LinkedHashMap<>();
         fields.put(F_SESSION_ID, id.value());
         fields.put(F_TRANSCRIPT, SessionRecordCodec.encodeTranscript(snapshot));
@@ -189,10 +199,28 @@ public final class RedisSessionRecordStore implements SessionRecordStore {
 
     @Override
     public SessionRecordView provision(SessionId sessionId, String agentRef) {
+        return provision(sessionId, agentRef, null);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * The binding and the owner are two {@code HSETNX}es in the one provisioning script, so each is first-wins on its
+     * own and neither can be observed half-written.
+     *
+     * @throws IllegalArgumentException
+     *             if {@code agentRef} is the empty string, which this store's script reserves to mean "no agent"
+     */
+    @Override
+    public SessionRecordView provision(SessionId sessionId, String agentRef, Principal owner) {
         Objects.requireNonNull(sessionId, "sessionId must not be null");
-        final String[] argv = agentRef == null
-                ? new String[]{sessionId.value()}
-                : new String[]{sessionId.value(), agentRef};
+        if (agentRef != null && agentRef.isEmpty()) {
+            throw new IllegalArgumentException("agentRef must not be empty; pass null to provision without binding");
+        }
+        final String encodedOwner = SessionRecordCodec.encodeOwner(owner);
+        final String[] argv = {sessionId.value(), agentRef == null ? "" : agentRef,
+                encodedOwner == null ? "" : encodedOwner};
         try {
             final List<Object> flat = commands.eval(PROVISION_SCRIPT, ScriptOutputType.MULTI,
                     new String[]{recordKey(sessionId)}, argv);
@@ -323,7 +351,8 @@ public final class RedisSessionRecordStore implements SessionRecordStore {
         try {
             return StoredSessionRecord.builder(sessionId)
                     .transcript(SessionRecordCodec.decodeTranscript(sessionId, hash.get(F_TRANSCRIPT)))
-                    .agentRef(hash.get(F_AGENT_REF)).compactionFailureCount(intValue(hash))
+                    .agentRef(hash.get(F_AGENT_REF)).owner(SessionRecordCodec.decodeOwner(hash.get(F_OWNER)))
+                    .compactionFailureCount(intValue(hash))
                     .sessionTotals(SessionRecordCodec.decodeTotals(hash.get(F_SESSION_TOTALS)))
                     .budgetOverride(SessionRecordCodec.decodeBudgetOverride(hash.get(F_BUDGET_OVERRIDE))).build();
         } catch (RuntimeException e) {

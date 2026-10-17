@@ -134,6 +134,25 @@ class InboundMessageCodecTest {
     }
 
     @Test
+    @DisplayName("owner round-trips in the initiator's shape, and its absence writes no key and decodes as absence")
+    void ownerRoundTrip() {
+        final InboundMessage owned = baseMessage().owner(Principal.group("g-7", "Ops")).build();
+
+        final Document payload = codec.encodePayload(owned);
+        assertThat(payload.get("owner", Document.class)).isEqualTo(new Document(SubmitOptionsCodec.FIELD_TYPE, "GROUP")
+                .append(SubmitOptionsCodec.FIELD_ID, "g-7").append(SubmitOptionsCodec.FIELD_DISPLAY_NAME, "Ops"));
+        final Principal decoded = codec.decode(wrap(payload, owned)).getOwner().orElseThrow();
+        assertThat(decoded).isEqualTo(Principal.group("g-7", "Ops"));
+        assertThat(decoded.getDisplayName()).isEqualTo("Ops");
+
+        // No owner, no key: the payload is exactly what a build without owners wrote, and it reads back as absent.
+        final InboundMessage bare = baseMessage().build();
+        final Document barePayload = codec.encodePayload(bare);
+        assertThat(barePayload).doesNotContainKey("owner");
+        assertThat(codec.decode(wrap(barePayload, bare)).getOwner()).isEmpty();
+    }
+
+    @Test
     @DisplayName("a message written before the turn stamp existed still decodes, with no turn")
     void preTurnStampMessageStillDecodes() {
         // Rolling upgrade: the collection holds work the previous build wrote, whose payload has no turnId key at all.

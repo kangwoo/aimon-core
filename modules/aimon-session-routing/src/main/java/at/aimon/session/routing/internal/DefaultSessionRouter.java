@@ -49,7 +49,9 @@ import at.aimon.core.agent.session.LiveSessionFactory;
 import at.aimon.core.agent.session.LiveSessionOptions;
 import at.aimon.core.agent.session.LiveSessionStatus;
 import at.aimon.core.agent.session.OpenAttributes;
+import at.aimon.core.agent.session.SessionDeletedEvent;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.SessionLifecycleListener;
 import at.aimon.core.agent.session.TurnId;
 import at.aimon.core.agent.session.exception.ConflictingAgentException;
 import at.aimon.core.agent.session.exception.IdempotencyConflictException;
@@ -71,6 +73,7 @@ import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.session.store.SessionRecordView;
 import at.aimon.core.agent.session.store.SessionStore;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
+import at.aimon.core.base.Principal;
 import at.aimon.core.skill.policy.session.SessionApprovalStore;
 import at.aimon.core.subagent.task.codec.UserInputCodec;
 import at.aimon.session.routing.ClusterSessionStatus;
@@ -152,6 +155,8 @@ public final class DefaultSessionRouter implements SessionRouter {
     private final SessionLogSegmentStore fencedSegments;
     /** The raw segment store under {@link #fencedSegments}; the other fence policies are built over it on request. */
     private final SessionLogSegmentStore rawSegments;
+    /** Told by {@link #deleteSession} once a record is gone; see {@link #fireDeleted}. Immutable, possibly empty. */
+    private final List<SessionLifecycleListener> lifecycleListeners;
 
     private final LiveSessionCache sessionCache;
     private final InProcessEventPublisher eventPublisher;
@@ -415,6 +420,7 @@ public final class DefaultSessionRouter implements SessionRouter {
         this.sessionApprovalStore = config.sessionApprovalStore();
         this.rawSegments = config.segmentStore();
         this.fencedSegments = rawSegments == null ? null : store.segments(rawSegments);
+        this.lifecycleListeners = config.lifecycleListeners();
 
         // The close listener is how a held lease gets back to the cluster: every way a session can end — idle TTL, LRU,
         // an explicit release, an EVICT signal, shutdown — ends in a close, and none of them knows about leases.
@@ -530,7 +536,8 @@ public final class DefaultSessionRouter implements SessionRouter {
 
         boolean turnStarted = false;
         try {
-            final HeldLease held = holdOrClaim(convId, requestedAgent, idem, acquireStart);
+            final HeldLease held = holdOrClaim(convId, requestedAgent, request.getOwner().orElse(null), idem,
+                    acquireStart);
             if (held == null) {
                 return forwardToInbox(request, turnId, idem);
             }
@@ -591,14 +598,16 @@ public final class DefaultSessionRouter implements SessionRouter {
      *         be
      *         forwarded
      */
-    private HeldLease holdOrClaim(SessionId convId, String requestedAgent, IdempotencyDecision idem,
+    private HeldLease holdOrClaim(SessionId convId, String requestedAgent, Principal owner, IdempotencyDecision idem,
             long acquireStart) {
         final HeldLease reused = heldLease(convId);
         if (reused != null) {
-            // No claim, and so no binding work either: the claim that won this lease already validated the requested
-            // agent against the record and wrote it if the session was unbound. Nothing can have changed it since,
-            // because only a holder may write it and this node has been the holder throughout. submit's advisory
-            // precheckAgentBinding is therefore authoritative on this path, not merely advisory.
+            // No claim, and so no binding or owner work either — the owner was decided when the session was
+            // provisioned, and a write per turn to re-assert it would buy nothing. The claim that won this lease
+            // already validated the requested agent against the record and wrote it if the session was unbound.
+            // Nothing can have changed it since, because only a holder may write it and this node has been the holder
+            // throughout. submit's advisory precheckAgentBinding is therefore authoritative on this path, not merely
+            // advisory.
             safeMetric(() -> metrics.onLockAcquireSucceeded(elapsedSince(acquireStart)), "onLockAcquireSucceeded");
             return reused;
         }
@@ -612,7 +621,7 @@ public final class DefaultSessionRouter implements SessionRouter {
             // on expiry alone. What it buys is that a turn, a drain pass and a delete on this node are
             // indistinguishable
             // by holder id, which is the premise "am I the holder?" needs.
-            claimed = store.claim(convId, requestedAgent, nodeId, lockLease);
+            claimed = store.claim(convId, requestedAgent, owner, nodeId, lockLease);
         } catch (RuntimeException e) {
             if (idem.acquiredKey != null) {
                 safeCompareAndReset(idem.acquiredKey, idem.reserverId);
@@ -1190,7 +1199,8 @@ public final class DefaultSessionRouter implements SessionRouter {
                     .id(InboundMessageId.of("local-" + UUID.randomUUID())).sessionId(convId).agentRef(requestedAgent)
                     .userInput(request.getUserInput()).priority(request.getPriority()).turnId(turnId)
                     .idempotencyKey(request.getIdempotencyKey().orElse(null)).initiator(request.getInitiator())
-                    .deliveredAt(Instant.now()).submitOptions(request.getSubmitOptions()).build();
+                    .owner(request.getOwner().orElse(null)).deliveredAt(Instant.now())
+                    .submitOptions(request.getSubmitOptions()).build();
             final List<InboundMessage> initial = new ArrayList<>(orphans.size() + 1);
             initial.addAll(orphans);
             initial.add(selfMessage);
@@ -1464,9 +1474,18 @@ public final class DefaultSessionRouter implements SessionRouter {
             // nobody owns it yet" as one write, and it returns the binding that is actually there rather than the one
             // we offered.
             final InboundMessage first = pendingQueue.peek();
-            final String boundAgent = store.records().provision(convId, first.getAgentRef()).getAgentRef()
-                    .orElseThrow(() -> new IllegalStateException(
-                            "Session " + convId + " is still unbound after provisioning it with a candidate."));
+            final SessionRecordView provisioned = store.records().provision(convId, first.getAgentRef());
+            final String boundAgent = provisioned.getAgentRef().orElseThrow(() -> new IllegalStateException(
+                    "Session " + convId + " is still unbound after provisioning it with a candidate."));
+
+            // The owner comes from the same message as the binding candidate, and only once that message's agent is
+            // known to be the session's: a message drain is about to refuse must not become the session's permanent
+            // owner. The same "never let a refused request win ownership" rule SessionStore#claim follows, and the
+            // same first-wins write — an owner already on the record is left alone.
+            if (first.getOwner().isPresent() && provisioned.getOwner().isEmpty()
+                    && first.getAgentRef().equals(boundAgent)) {
+                store.records().provision(convId, boundAgent, first.getOwner().get());
+            }
 
             // Which runtime of that agent is the message's to say, though — unlike which agent. Nothing durable records
             // a discriminator, so a holder that ignored the envelope's could only open the bare agent:<ref> runtime,
@@ -2123,7 +2142,8 @@ public final class DefaultSessionRouter implements SessionRouter {
                 .contextDiscriminator(request.getContextDiscriminator().orElse(null)).userInput(request.getUserInput())
                 .priority(request.getPriority()).turnId(pending.turnId)
                 .idempotencyKey(request.getIdempotencyKey().orElse(null)).initiator(request.getInitiator())
-                .deliveredAt(Instant.now()).submitOptions(request.getSubmitOptions()).build();
+                .owner(request.getOwner().orElse(null)).deliveredAt(Instant.now())
+                .submitOptions(request.getSubmitOptions()).build();
         final InboundMessageId id;
         try {
             id = inbox.deliver(message);
@@ -2744,6 +2764,9 @@ public final class DefaultSessionRouter implements SessionRouter {
             final HeldLease held = borrowed != null
                     ? borrowed
                     : installLease(sessionId, awaitLeaseForDelete(sessionId));
+            // What the listeners are told the record carried. Read before the row goes, because afterwards there is
+            // nothing to read, and only when somebody is listening: the read is the whole record, transcript included.
+            SessionRecordView recordBeforeDelete = null;
             try {
                 sessionCache.evict(sessionId);
                 try {
@@ -2755,6 +2778,7 @@ public final class DefaultSessionRouter implements SessionRouter {
                 // Before the repository row goes: if the delete fails we have dropped approvals for a session that
                 // still exists (one extra prompt), whereas purging afterwards would leak them whenever delete throws.
                 purgeSessionApprovals(sessionId);
+                recordBeforeDelete = readRecordForListeners(sessionId);
                 try {
                     // Through the fenced view, not the raw repository: the lease acquired above is what authorises the
                     // delete, and routing it here makes the store prove the lease is still current at the moment of the
@@ -2782,11 +2806,24 @@ public final class DefaultSessionRouter implements SessionRouter {
                         .originNodeId(nodeId).payload(Map.of("reason", InterruptReason.SESSION_RELEASED.name()))
                         .build());
             } finally {
-                // Unconditionally, even for a borrowed lease and even if a pinned entry's close is still pending: the
-                // session no longer exists, so there is nothing left for the lease to protect. Nested inside the gate
-                // so the release happens before the gate is given back — a submission slipping in between would run a
-                // turn under a lease this node is about to hand back.
-                returnLease(sessionId, held);
+                try {
+                    // Decided by recordDeleted, not by reaching the end of the block: once the row is gone the
+                    // listeners are owed their call even if a teardown step above threw — the EVICT publish does
+                    // during a bus outage. Before the lease goes back, so no new turn can provision this id again and
+                    // race their cleanup. fireDeleted contains a listener's RuntimeException, so it cannot mask the
+                    // exception that may be propagating; an Error it lets through.
+                    if (recordDeleted) {
+                        fireDeleted(sessionId, recordBeforeDelete);
+                    }
+                } finally {
+                    // Unconditionally, even for a borrowed lease, even if a pinned entry's close is still pending, and
+                    // even if a listener threw an Error: the session no longer exists, so there is nothing left for
+                    // the lease to protect, and nothing else would ever return it — its renewer stops only here, and
+                    // the cache entry whose close could have triggered a return was evicted at the top. Nested inside
+                    // the gate so the release happens before the gate is given back — a submission slipping in
+                    // between would run a turn under a lease this node is about to hand back.
+                    returnLease(sessionId, held);
+                }
             }
         } finally {
             endTurnAndSettleLeaseReturn(sessionId);
@@ -2807,6 +2844,55 @@ public final class DefaultSessionRouter implements SessionRouter {
                 // session and its queued messages are exactly as they were, so the swallowed doorbell is owed an
                 // answer like any other.
                 rerunDoorbellIfRung(sessionId);
+            }
+        }
+    }
+
+    /**
+     * Reads the record {@link #deleteSession} is about to delete, for the listeners' event — or nothing, when there are
+     * no listeners. A failed read is logged and reported as "nothing recorded": an observer being installed must not
+     * make a record undeletable, so the listeners then hear of the delete with an empty owner and binding.
+     */
+    private SessionRecordView readRecordForListeners(SessionId sessionId) {
+        if (lifecycleListeners.isEmpty()) {
+            return null;
+        }
+        try {
+            return store.load(sessionId).orElse(null);
+        } catch (RuntimeException e) {
+            log.warn("Could not read session {} before deleting it; its lifecycle listeners will see no owner: {}",
+                    sessionId.value(), e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * Tells every lifecycle listener, in registration order, that the record of {@code sessionId} is gone. Throws no
+     * {@link RuntimeException}: a listener's is logged and the next listener still runs, because the record is already
+     * irreversibly deleted and a failure here would only invite a retry that provisions and deletes a fresh empty
+     * record. An {@link Error} is not caught — it ends the loop and propagates — which is why the caller returns the
+     * lease from a {@code finally} of its own.
+     */
+    private void fireDeleted(SessionId sessionId, SessionRecordView recordBeforeDelete) {
+        if (lifecycleListeners.isEmpty()) {
+            return;
+        }
+        final SessionDeletedEvent event;
+        try {
+            event = SessionDeletedEvent.builder().sessionId(sessionId)
+                    .owner(recordBeforeDelete == null ? null : recordBeforeDelete.getOwner().orElse(null))
+                    .agentRef(recordBeforeDelete == null ? null : recordBeforeDelete.getAgentRef().orElse(null))
+                    .deletedAt(Instant.now()).build();
+        } catch (RuntimeException e) {
+            log.warn("Could not build the deletion event for session {}: {}", sessionId.value(), e.toString());
+            return;
+        }
+        for (SessionLifecycleListener listener : lifecycleListeners) {
+            try {
+                listener.onDeleted(event);
+            } catch (RuntimeException e) {
+                log.warn("Session lifecycle listener {} threw on deletion of session {}: {}",
+                        listener.getClass().getName(), sessionId.value(), e.toString(), e);
             }
         }
     }

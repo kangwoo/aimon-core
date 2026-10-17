@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/session/web-session-deployment-guide.md
-source_commit: 66e8d69
+source_commit: dabaafc3
 ---
 
 # Web Session Manager — Deployment & Operations Guide
@@ -101,6 +101,49 @@ subagent fork has **no `SessionId` at all** (the tool context carries `EXECUTION
 (`invokingSessionId` — the wire key is frozen and stays `"invokingConversationId"`), so invalidating that
 one session also removes the reach of every execution it had delegated.
 
+### Session owner and deletion listener (optional)
+
+A multi-tenant extension (a sandbox's per-session options, for example) needs two facts: who owns a session,
+and when it was deleted. Core provides both.
+
+**Owner.** Set `owner` on a session's **first** submit. It is recorded once, when the record is provisioned, and
+never overwritten.
+
+```java
+router.submit(SubmitRequest.builder().sessionId(id).agentRef("ops").userInput(text)
+        .initiator(Principal.system())          // required — who sent it
+        .owner(Principal.user(userId, name))    // optional — whose session it is
+        .build());
+
+Optional<Principal> owner = stack.sessionRecordStore().load(id).flatMap(SessionRecordView::getOwner);
+```
+
+- It is not derived from `initiator`. The Spring starter's `AimonSessions.newRequest(...)` does not fill it either
+- **Core records the owner; it does not enforce it.** A submit naming a different owner still runs. A rule such as
+  "only the owner may ..." is the host's or the extension's, applied to the value above
+- A submit to a session this node already holds writes no owner. A session that started without one gets it filled
+  on the next provisioning (another node's claim, a drain)
+
+**Deletion listener.** Register a `SessionLifecycleListener` once, and `SessionRouter.deleteSession` calls
+`onDeleted(SessionDeletedEvent)` after it has deleted the record. The event carries the owner and binding the record
+had just before deletion.
+
+| Assembly | Registration |
+|------|------|
+| Spring Boot starter | a `SessionLifecycleListener` bean; several are called in `@Order` order |
+| `AimonStackSpec` | `SessionSpec.builder().lifecycleListener(...)` |
+| Hand assembly | `SessionRouterBuilder.lifecycleListener(...)` |
+
+`onDeleted` is a `default` method, so the interface itself takes no lambda — wrap one in
+`SessionLifecycleListener.whenDeleted(event -> ...)`. The listener is called **once**, on the deleting node, with the
+lease still held, and also when a later teardown step fails. A node that dies in between loses the event
+(at-most-once), so keep a reconciliation path. The lease guarantee also holds only while lease renewals succeed. A
+`RuntimeException` is logged and does not fail the delete. Keep it short, and do not call the router back for the session being deleted.
+A raw `SessionRecordStore.delete` calls no listener.
+
+On Postgres, apply `V3__session_record_owner.sql` first (§2). Design:
+`docs/design/session/session-owner-deletion-event.md`.
+
 ---
 
 ## 2. Required SPI Implementations (DISTRIBUTED mode)
@@ -116,7 +159,7 @@ All four are declared in `aimon-core`, one package each — `at.aimon.core.agent
 
 When implementing your own backends, each SPI interface's javadoc states the contract and the reference implementations' integration tests (`Redis*IntegrationTest` in `aimon-session-redis`, and the `Mongo*` / `Postgres*` equivalents) pin the observable behaviour.
 
-**Sealed session-log segments** are a fifth, optional store. On a version-2 session log, ranges the LLM view no longer shows verbatim are moved out of the record into a `SessionLogSegmentStore` (`at.aimon.core.agent.session.store`), and the record's manifest names them. With the Spring Boot starter, expose it as a bean beside the record store; with `AimonStackSpec`, pass it through `SessionSpec.segmentStore(...)`. Either way the stack hands the same instance to the transcript manager and to the router, so a session delete removes its segments after the record. A hand assembly passes it to the transcript manager (through `SessionLogStorage`) and to `SessionRouterBuilder.sessionLogSegmentStore(...)`. A supplied record store with no segment store seals nothing — on the version-2 write format the record then keeps every entry for good, and the stack records a `session-log-sealing` degradation. Keep it in the same database as the records — a segment is data moved out of a record: `MongoSessionLogSegmentStore` (collection `session_log_segments`, see `init.js`), `PostgresSessionLogSegmentStore` (table `session_log_segment`, applied with `V2__session_log_segment.sql` after `V1__init.sql`) or `RedisSessionLogSegmentStore` (over a standalone connection or a Redis Cluster connection — on a cluster its scan walks every master). Deletes go through `SessionStore.segments(...)`, the fenced view; writes are not fenced, because a segment no manifest names is never read. The stack also routes the transcript manager's **record writes** (turn-end saves, checkpoints) and **segment deletes** (turn-end garbage collection, `/clear`) through the router's fenced views (`SessionRouter.fencedRecordStore(fence)` · `fencedSegmentStore(fence)`). In `DeploymentMode.DISTRIBUTED` the fence is `SessionFence.HOLDER_ONLY`: a node that lost a session's lease can neither overwrite the record the new holder writes nor delete segments the new holder's manifest names. A refused turn-end save is one WARN line and does not break the turn — what is lost is the end of that turn, which losing the lease had already lost. It follows that in this mode every live session must be opened through the router; one opened outside it holds no lease, and all of its saves are refused. A single-node stack given a lease store uses `SessionFence.UNLESS_HELD_ELSEWHERE`: only a session another node holds is refused, and a session nobody holds — the CLI's, opened outside the router — passes as before. A single-node stack on the default lease store goes to the raw stores, unfenced. Design: `docs/design/session/session-log.md` §5, §12.3.
+**Sealed session-log segments** are a fifth, optional store. On a version-2 session log, ranges the LLM view no longer shows verbatim are moved out of the record into a `SessionLogSegmentStore` (`at.aimon.core.agent.session.store`), and the record's manifest names them. With the Spring Boot starter, expose it as a bean beside the record store; with `AimonStackSpec`, pass it through `SessionSpec.segmentStore(...)`. Either way the stack hands the same instance to the transcript manager and to the router, so a session delete removes its segments after the record. A hand assembly passes it to the transcript manager (through `SessionLogStorage`) and to `SessionRouterBuilder.sessionLogSegmentStore(...)`. A supplied record store with no segment store seals nothing — on the version-2 write format the record then keeps every entry for good, and the stack records a `session-log-sealing` degradation. Keep it in the same database as the records — a segment is data moved out of a record: `MongoSessionLogSegmentStore` (collection `session_log_segments`, see `init.js`), `PostgresSessionLogSegmentStore` (table `session_log_segment`, applied with `V2__session_log_segment.sql` after `V1__init.sql`, and `V3__session_record_owner.sql` after that) or `RedisSessionLogSegmentStore` (over a standalone connection or a Redis Cluster connection — on a cluster its scan walks every master). Deletes go through `SessionStore.segments(...)`, the fenced view; writes are not fenced, because a segment no manifest names is never read. The stack also routes the transcript manager's **record writes** (turn-end saves, checkpoints) and **segment deletes** (turn-end garbage collection, `/clear`) through the router's fenced views (`SessionRouter.fencedRecordStore(fence)` · `fencedSegmentStore(fence)`). In `DeploymentMode.DISTRIBUTED` the fence is `SessionFence.HOLDER_ONLY`: a node that lost a session's lease can neither overwrite the record the new holder writes nor delete segments the new holder's manifest names. A refused turn-end save is one WARN line and does not break the turn — what is lost is the end of that turn, which losing the lease had already lost. It follows that in this mode every live session must be opened through the router; one opened outside it holds no lease, and all of its saves are refused. A single-node stack given a lease store uses `SessionFence.UNLESS_HELD_ELSEWHERE`: only a session another node holds is refused, and a session nobody holds — the CLI's, opened outside the router — passes as before. A single-node stack on the default lease store goes to the raw stores, unfenced. Design: `docs/design/session/session-log.md` §5, §12.3.
 
 **Sweeping orphan segments.** Garbage collection runs only when a session is saved, so a session nobody reopens keeps its orphans — segments a rewind cut, a `/clear` delete that failed, a sealing that was never saved, a deleted record whose segment delete failed. Turn on the store-wide sweep to collect them: `aimon.session.segment-sweep-interval` (for example `1h`) with the starter, `SessionSpec.segmentSweepInterval(...)` with `AimonStackSpec`. It is off unless set. A segment is deleted only once it is older than the grace — `aimon.session.segment-sweep-grace` / `segmentSweepGrace(...)`, 24 hours by default — and the session's record, read after the segments were listed, does not name it. The sweep holds no session lease and deletes through the raw store, which is safe for the same two reasons per-session collection is. It is safe to switch on on every node at once, and the cost does not multiply either: with a lease store the nodes take the **sweep lease** (reserved id `aimon:segment-sweep`) in turns, so the cluster scans the store once per interval. The lease is taken for one interval and kept when the pass ends; if the node holding it dies, the next node takes over once it lapses. It needs a segment store, and a sweep configured without one is refused at startup. `SessionLogSegmentStore.scanSessions(...)` is the SPI it pages with; a custom backend implements it (the contract is in `AbstractSessionLogSegmentStoreContractTest`).
 

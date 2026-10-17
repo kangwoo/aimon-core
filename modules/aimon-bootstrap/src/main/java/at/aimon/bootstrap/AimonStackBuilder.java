@@ -788,7 +788,8 @@ public final class AimonStackBuilder {
         final SessionSpec session = spec.getSession();
         final SessionRouterBuilder builder = SessionRouter.builder().sessionOpener(opener)
                 .sessionRecordStore(sessionRecordStore).sessionApprovalStore(sessionApprovalStore)
-                .sessionLogSegmentStore(segmentStore).mode(session.getMode());
+                .sessionLogSegmentStore(segmentStore).mode(session.getMode())
+                .lifecycleListeners(session.getLifecycleListeners());
         session.getNodeId().ifPresent(builder::nodeId);
         session.getLeaseStore().ifPresent(builder::sessionLeaseStore);
         session.getSignalBus().ifPresent(builder::signalBus);

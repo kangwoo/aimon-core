@@ -90,6 +90,7 @@ public final class InboundMessageRowCodec {
             message.getContextDiscriminator().ifPresent(d -> root.put("contextDiscriminator", d));
             message.getIdempotencyKey().ifPresent(k -> root.put("idempotencyKey", k));
             root.set("initiator", encodePrincipal(message.getInitiator()));
+            message.getOwner().ifPresent(o -> root.set("owner", encodePrincipal(o)));
             root.put("deliveredAt", message.getDeliveredAt().toString());
             final ObjectNode meta = mapper.createObjectNode();
             for (Map.Entry<String, String> e : message.getMetadata().entrySet()) {
@@ -115,7 +116,7 @@ public final class InboundMessageRowCodec {
                     .sessionId(SessionId.of(root.get("conversationId").asText()))
                     .agentRef(root.get("agentRef").asText()).userInput(decodeUserInput(root))
                     .priority(QueuedInputPriority.valueOf(root.get("priority").asText()))
-                    .initiator(decodePrincipal(root.get("initiator")))
+                    .initiator(decodePrincipal(root.get("initiator"), "initiator"))
                     .deliveredAt(Instant.parse(root.get("deliveredAt").asText()));
             final JsonNode turn = root.get("turnId");
             if (turn != null && !turn.isNull()) {
@@ -124,6 +125,12 @@ public final class InboundMessageRowCodec {
             final JsonNode discriminator = root.get("contextDiscriminator");
             if (discriminator != null && !discriminator.isNull()) {
                 b.contextDiscriminator(discriminator.asText());
+            }
+            // Optional like turnId: rows written before the field existed carry none, and neither does a submission
+            // that named no owner. Present means the same shape as the initiator, decoded with the same strictness.
+            final JsonNode owner = root.get("owner");
+            if (owner != null && !owner.isNull()) {
+                b.owner(decodePrincipal(owner, "owner"));
             }
             final JsonNode key = root.get("idempotencyKey");
             if (key != null && !key.isNull()) {
@@ -232,9 +239,9 @@ public final class InboundMessageRowCodec {
         return node;
     }
 
-    private Principal decodePrincipal(JsonNode node) {
+    private Principal decodePrincipal(JsonNode node, String field) {
         if (node == null || !node.isObject()) {
-            throw new IllegalStateException("Missing initiator field");
+            throw new IllegalStateException("Missing " + field + " field");
         }
         return Principal.builder().type(Principal.Type.valueOf(node.get("type").asText())).id(node.get("id").asText())
                 .displayName(node.get("displayName").asText()).build();

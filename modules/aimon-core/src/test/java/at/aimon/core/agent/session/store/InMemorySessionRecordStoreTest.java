@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.base.Principal;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.TokenUsage;
 
@@ -807,4 +808,81 @@ class InMemorySessionRecordStoreTest {
         assertThat(observed)
                 .containsExactlyInAnyOrderElementsOf(java.util.stream.IntStream.rangeClosed(1, total).boxed().toList());
     }
+
+    // --- owner: filled if empty, never overwritten, preserved by every other writer ---
+
+    private static final Principal ALICE = Principal.user("alice", "Alice");
+    private static final Principal MALLORY = Principal.user("mallory", "Mallory");
+
+    @Test
+    void provisionWithOwnerRecordsIt() {
+        final SessionId id = SessionId.of("owned");
+
+        final SessionRecordView provisioned = repository.provision(id, "agent-a", ALICE);
+
+        assertThat(provisioned.getOwner()).contains(ALICE);
+        assertThat(provisioned.getAgentRef()).contains("agent-a");
+        assertThat(repository.load(id).orElseThrow().getOwner()).contains(ALICE);
+    }
+
+    @Test
+    void laterProvisionNeverReplacesTheOwner() {
+        final SessionId id = SessionId.of("owned");
+        repository.provision(id, "agent-a", ALICE);
+
+        final SessionRecordView second = repository.provision(id, "agent-a", MALLORY);
+
+        assertThat(second.getOwner()).contains(ALICE);
+        assertThat(repository.load(id).orElseThrow().getOwner()).contains(ALICE);
+    }
+
+    @Test
+    void provisionWithoutOwnerLeavesItAloneAndALaterOneFillsAnEmptyOwner() {
+        final SessionId id = SessionId.of("late-owner");
+        repository.provision(id, "agent-a");
+        assertThat(repository.load(id).orElseThrow().getOwner()).isEmpty();
+
+        repository.provision(id, null, ALICE);
+        repository.provision(id, "agent-a");
+
+        assertThat(repository.load(id).orElseThrow().getOwner()).contains(ALICE);
+        assertThat(repository.load(id).orElseThrow().getAgentRef()).contains("agent-a");
+    }
+
+    @Test
+    void ownerAndBindingAreFilledIndependently() {
+        final SessionId id = SessionId.of("independent");
+        repository.provision(id, null, ALICE);
+
+        final SessionRecordView bound = repository.provision(id, "agent-a", MALLORY);
+
+        assertThat(bound.getAgentRef()).contains("agent-a");
+        assertThat(bound.getOwner()).contains(ALICE);
+    }
+
+    @Test
+    void everyOtherWriterPreservesTheOwner() {
+        final SessionId id = SessionId.of("preserved");
+        repository.provision(id, "agent-a", ALICE);
+
+        repository.mergeFromSnapshot(SessionSnapshot.of(id, "sys", List.of(Message.user("hi"))));
+        repository.setTotalsAndBudgetOverride(id, SessionTotals.of(1, 1, TokenUsage.of(1, 1, 2)), null);
+        repository.incrementCompactionFailureCount(id);
+        repository.resetCompactionFailureCount(id);
+
+        final SessionRecordView loaded = repository.load(id).orElseThrow();
+        assertThat(loaded.getOwner()).contains(ALICE);
+        assertThat(loaded.getMessages()).hasSize(1);
+    }
+
+    @Test
+    void copyOfCarriesTheOwner() {
+        final SessionRecord record = new SessionRecord(SessionId.of("copy"));
+        record.setOwner(ALICE);
+
+        assertThat(SessionRecord.copyOf(record).getOwner()).contains(ALICE);
+        assertThat(SessionRecord.copyOf(StoredSessionRecord.empty(SessionId.of("copy"), null, ALICE)).getOwner())
+                .contains(ALICE);
+    }
+
 }

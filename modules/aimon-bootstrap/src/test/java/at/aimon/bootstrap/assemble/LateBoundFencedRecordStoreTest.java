@@ -14,6 +14,7 @@ import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.session.store.SessionTotals;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.base.Principal;
 
 class LateBoundFencedRecordStoreTest {
 
@@ -26,6 +27,7 @@ class LateBoundFencedRecordStoreTest {
     private static final List<Consumer<SessionRecordStore>> MUTATIONS = List.of(
             s -> s.mergeFromSnapshot(SessionSnapshot.of(SESSION, "prompt", List.of())),
             s -> s.provision(SESSION, "agent:ops"), s -> s.provision(SESSION),
+            s -> s.provision(SESSION, "agent:ops", Principal.user("alice")),
             s -> s.setTotalsAndBudgetOverride(SESSION, SessionTotals.empty(), null),
             s -> s.incrementCompactionFailureCount(SESSION), s -> s.resetCompactionFailureCount(SESSION),
             s -> s.delete(SESSION), SessionRecordStore::clear);
@@ -67,6 +69,16 @@ class LateBoundFencedRecordStoreTest {
         assertThat(raw.exists(SESSION)).as("the raw store is reached only through the view").isFalse();
         store.delete(SESSION);
         assertThat(fenced.exists(SESSION)).isFalse();
+    }
+
+    @Test
+    @DisplayName("an owner is forwarded to the bound view rather than refused by the interface default")
+    void ownerIsForwarded() {
+        store.bind(fenced);
+
+        store.provision(SESSION, "agent:ops", Principal.user("alice"));
+
+        assertThat(fenced.load(SESSION).orElseThrow().getOwner()).contains(Principal.user("alice"));
     }
 
     @Test

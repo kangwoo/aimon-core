@@ -15,6 +15,7 @@ import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.exception.SessionNotHeldException;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.base.Principal;
 
 /**
  * The composite {@link SessionStore}: a shared {@link SessionLeaseStore} for election, a shared
@@ -61,6 +62,11 @@ public final class DefaultSessionStore implements SessionStore {
 
     @Override
     public ClaimResult claim(SessionId sessionId, String agentRef, String holderId, Duration lease) {
+        return claim(sessionId, agentRef, null, holderId, lease);
+    }
+
+    @Override
+    public ClaimResult claim(SessionId sessionId, String agentRef, Principal owner, String holderId, Duration lease) {
         Objects.requireNonNull(sessionId, "sessionId must not be null");
         Objects.requireNonNull(agentRef, "agentRef must not be null");
         Objects.requireNonNull(holderId, "holderId must not be null");
@@ -82,13 +88,19 @@ public final class DefaultSessionStore implements SessionStore {
             // it is not bound yet, and report the binding that is actually there. The returned binding — never the one
             // we asked for — decides whether this is a conflict, so an already-bound session is detected without
             // ever having been written to.
-            final SessionRecordView record = repository.provision(sessionId, agentRef);
+            SessionRecordView record = repository.provision(sessionId, agentRef);
             final String boundAgentRef = record.getAgentRef()
                     .orElseThrow(() -> new IllegalStateException("provision(" + sessionId.value() + ", " + agentRef
                             + ") returned an unbound record; the repository is not honouring the primitive."));
             if (!boundAgentRef.equals(agentRef)) {
                 release(acquired);
                 return new ClaimResult.AgentConflict(boundAgentRef, agentRef);
+            }
+            // The owner is a second step, after the binding is known to match, so a refused claim cannot win ownership.
+            // Safe without a transaction for the reason the provision above is: this node won the lease one statement
+            // ago and is the only writer. Still first-wins at the backend, and paid only by the claim that fills it.
+            if (owner != null && record.getOwner().isEmpty()) {
+                record = repository.provision(sessionId, agentRef, owner);
             }
             return new ClaimResult.Acquired(acquired, record);
         } catch (RuntimeException e) {
@@ -329,6 +341,14 @@ public final class DefaultSessionStore implements SessionStore {
         public SessionRecordView provision(SessionId sessionId, String agentRef) {
             guard.check(sessionId, "provision");
             return repository.provision(sessionId, agentRef);
+        }
+
+        // Overridden although the interface has a default: that default forwards an owner-less call to the
+        // two-argument provision and refuses the rest, so inheriting it would refuse owners the backend can persist.
+        @Override
+        public SessionRecordView provision(SessionId sessionId, String agentRef, Principal owner) {
+            guard.check(sessionId, "provision");
+            return repository.provision(sessionId, agentRef, owner);
         }
 
         @Override

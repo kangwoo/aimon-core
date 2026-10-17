@@ -7,6 +7,7 @@ import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionLogState;
 import at.aimon.core.agent.session.transcript.SessionRewindPoint;
+import at.aimon.core.base.Principal;
 import at.aimon.core.llm.Message;
 
 /**
@@ -77,6 +78,26 @@ public interface SessionRecordView {
      * @return the bound agent reference, or empty if not yet bound
      */
     Optional<String> getAgentRef();
+
+    /**
+     * Gets the principal that owns this session.
+     *
+     * <p>
+     * Recorded by {@link SessionRecordStore#provision(SessionId, String, Principal)} under the rule the agent binding
+     * follows: filled when the record has none, never overwritten. The first provisioning that carries an owner
+     * decides it, and no SPI method clears or replaces it afterwards.
+     *
+     * <p>
+     * <b>A record, not an authorization.</b> Core reads nothing from this value and rejects no submit because of it.
+     * A host or an extension that needs "only the owner may ..." reads the owner here and applies its own rule.
+     * Defaults to empty for views that do not persist this side field, and is empty on every session whose host never
+     * named an owner — a single-user deployment sees no difference.
+     *
+     * @return the owning principal, or empty when none is recorded
+     */
+    default Optional<Principal> getOwner() {
+        return Optional.empty();
+    }
 
     /**
      * Gets the persisted consecutive AUTO compaction failure count.

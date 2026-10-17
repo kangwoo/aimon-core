@@ -88,6 +88,18 @@ class InMemorySessionInboxTest {
     }
 
     @Test
+    @DisplayName("an owner survives the rebuild, and a message without one stays without one")
+    void ownerSurvivesDelivery() {
+        inbox.deliver(baseMessage().owner(Principal.user("alice", "Alice")).build());
+        inbox.deliver(baseMessage().build());
+
+        final List<InboundMessage> collected = inbox.collect(CONV, QueuedInputPriority.NEXT).getMessages();
+
+        assertThat(collected.get(0).getOwner()).contains(Principal.user("alice"));
+        assertThat(collected.get(1).getOwner()).isEmpty();
+    }
+
+    @Test
     @DisplayName("a multimodal input is the same object on the way out — this inbox does not serialize")
     void multimodalSurvivesTheRebuild() {
         // The in-memory inbox is the one of the four that never encodes anything, so what it has to get right is the

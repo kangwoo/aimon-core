@@ -8,7 +8,9 @@
  * {@link at.aimon.core.agent.session.store.SessionLease} is the proof of holdership it hands back,
  * {@link at.aimon.core.agent.session.store.SessionLeaseStore} is the pluggable election backend, and
  * {@link at.aimon.core.agent.session.store.DefaultSessionStore} composes that backend with a
- * {@link at.aimon.core.agent.session.store.SessionRecordStore}.
+ * {@link at.aimon.core.agent.session.store.SessionRecordStore}. A record may name its owning principal
+ * ({@link at.aimon.core.agent.session.store.SessionRecordView#getOwner()}), recorded at provisioning and never
+ * overwritten.
  *
  * <h2>The shared wire shape</h2>
  *

@@ -33,7 +33,7 @@ import at.aimon.core.subagent.task.codec.UserInputCodec;
  *
  * <p>
  * Mirrors {@code at.aimon.session.redis.internal.InboundMessageCodec} field-for-field (Principal, SessionId,
- * priority, deliveredAt, idempotencyKey, metadata) so cross-backend behavior is identical.
+ * priority, deliveredAt, idempotencyKey, metadata, the optional owner) so cross-backend behavior is identical.
  *
  * <p>
  * <b>This is the second representation of the {@code submitOptions} shape, and it is meant to stay that way.</b> The
@@ -100,6 +100,8 @@ public final class InboundMessageCodec {
         payload.append("turnId", message.getTurnId().map(TurnId::value).orElse(null));
         payload.append("idempotencyKey", message.getIdempotencyKey().orElse(null));
         payload.append("initiator", encodePrincipal(message.getInitiator()));
+        // Only when present: an envelope without an owner is the document the previous build wrote.
+        message.getOwner().ifPresent(owner -> payload.append("owner", encodePrincipal(owner)));
         payload.append("deliveredAt", Date.from(message.getDeliveredAt()));
         final Document meta = new Document();
         for (Map.Entry<String, String> e : message.getMetadata().entrySet()) {
@@ -182,6 +184,10 @@ public final class InboundMessageCodec {
         final String contextDiscriminator = payload.getString("contextDiscriminator");
         if (contextDiscriminator != null) {
             b.contextDiscriminator(contextDiscriminator);
+        }
+        final Document owner = payload.get("owner", Document.class);
+        if (owner != null) {
+            b.owner(decodePrincipal(owner));
         }
         final String idempotencyKey = payload.getString("idempotencyKey");
         if (idempotencyKey != null) {

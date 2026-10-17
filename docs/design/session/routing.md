@@ -692,7 +692,30 @@ deleteSession(id)
      releaseInterruptTimeout 까지 bounded retry
   3. 그 안에 못 잡으면 IllegalStateException — 호출자가 재시도한다
   4. 잡았으면 records().delete(id)
+  5. 레코드가 지워졌으면 — 뒤따르는 정리 단계가 실패해도 — SessionLifecycleListener.onDeleted 를
+     리스를 돌려주기 전에 한 번 호출
 ```
+
+**삭제 리스너 (#253).** `SessionRouterBuilder.lifecycleListener(...)`(스택에서는 `SessionSpec`, Spring 에서는
+`SessionLifecycleListener` 빈)로 등록한 리스너는 레코드가 사라진 뒤 **삭제한 노드에서 한 번** 불린다. 리스너가
+전달받는 `SessionDeletedEvent` 의 소유자와 바인딩은 삭제 직전에 읽은 값이다 — 리스너가 등록돼 있을 때만 읽고,
+읽기가 실패해도 삭제는 진행되며 리스너는 빈 소유자를 받는다. 전달 계약은 다음과 같다.
+
+- **호출 여부는 `recordDeleted` 가 정한다.** 세그먼트 삭제·종료 interrupt·`EVICT` publish(버스 장애 때 던진다)가
+  실패해도 리스너는 불리고, 원래 예외는 그대로 호출자에게 간다. 레코드를 지우기 전에 실패하면 아무것도 부르지 않는다
+- **리스 안에서.** 리스는 리스너가 도는 동안에도 갱신되므로, 리스를 쥐고 있는 동안에는 같은 `SessionId` 가 정리
+  도중에 다시 프로비저닝되는 경쟁이 없다. 갱신이 성공하는 동안만이다 — 느린 리스너가 도는 사이 리스 저장소가 갱신을
+  거절하면(장애, 리스 상실) 다른 노드가 먼저 그 id 를 claim 할 수 있다. 그 경쟁을 견딜 수 없는 리스너는 상태를 지우기
+  전에 `SessionRecordStore.exists(id)` 를 보거나 재조정 경로에 맡긴다. 리스는 리스너가 `Error` 를 던져도 돌려준다
+  (`fireDeleted` 를 감싼 `finally` 가 `returnLease` 를 부른다)
+- **at-most-once.** 레코드 삭제와 리스너 호출 사이에 노드가 죽으면 이벤트는 사라진다. 확장은 재조정 경로를 둔다
+- **격리.** 리스너의 `RuntimeException` 은 로그로 남기고 다음 리스너로 넘어가며, 삭제를 실패시키지 않는다. `Error` 는
+  잡지 않는다 — 남은 리스너는 건너뛰고 호출자에게 전파된다
+- **라우터만 부른다.** 날것의 `SessionRecordStore.delete` · `clear()` 는 부르지 않는다. 다른 노드에도 알리지 않는다 —
+  공유 상태는 정리가 한 번이면 된다
+
+리스너 안에서 지우는 중인 세션에 대해 `SessionRouter` 를 다시 부르면 안 된다 — 삭제 스레드가 그 세션의 턴 게이트를
+쥐고 있다. 근거와 기각한 대안은 [`session-owner-deletion-event.md`](session-owner-deletion-event.md) §2.2 · §6.
 
 이 경로가 손대는 노드 로컬 상태가 셋 더 있다 — 바인딩 캐시, 세션 승인, 상태 투영. **승인은 노드 로컬이라
 다른 노드의 `deleteSession` 이 여기 캐시된 사본에 닿지 못한다.** 그래서 `EVICT` 수신 핸들러가 같은 정리를

@@ -21,11 +21,13 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.NestedExceptionUtils;
+import org.springframework.core.annotation.Order;
 
 import at.aimon.bootstrap.spec.FileSystemSpec;
 import at.aimon.bootstrap.spec.SchedulingSpec;
 import at.aimon.bootstrap.spec.SessionSpec;
 import at.aimon.bootstrap.spec.VirtualFileSystemFactory;
+import at.aimon.core.agent.session.SessionLifecycleListener;
 import at.aimon.core.agent.session.idempotency.IdempotencyStore;
 import at.aimon.core.agent.session.inbox.SessionInbox;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
@@ -349,6 +351,17 @@ class AimonSpecSliceTest {
     }
 
     @Test
+    @DisplayName("every SessionLifecycleListener bean reaches the spec, in @Order order, and none is required")
+    void lifecycleListenerBeansReachTheSpec(@TempDir Path workspace) {
+        sessionRunner(workspace).withUserConfiguration(ApplicationLifecycleListenerConfiguration.class)
+                .run(ctx -> assertThat(ctx.getBean(SessionSpec.class).getLifecycleListeners()).containsExactly(
+                        ApplicationLifecycleListenerConfiguration.FIRST,
+                        ApplicationLifecycleListenerConfiguration.SECOND));
+        sessionRunner(workspace)
+                .run(ctx -> assertThat(ctx.getBean(SessionSpec.class).getLifecycleListeners()).isEmpty());
+    }
+
+    @Test
     @DisplayName("cache properties reach the spec")
     void cachePropertiesReachTheSpec(@TempDir Path workspace) {
         sessionRunner(workspace).withPropertyValues("aimon.session.cache.max-entries=7",
@@ -469,6 +482,26 @@ class AimonSpecSliceTest {
         @Bean
         SessionRecordStore applicationRecordStore() {
             return INSTANCE;
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class ApplicationLifecycleListenerConfiguration {
+
+        static final SessionLifecycleListener FIRST = mock(SessionLifecycleListener.class);
+        static final SessionLifecycleListener SECOND = mock(SessionLifecycleListener.class);
+
+        // Declared out of order on purpose: @Order, not declaration order, is what the spec must follow.
+        @Bean
+        @Order(2)
+        SessionLifecycleListener secondListener() {
+            return SECOND;
+        }
+
+        @Bean
+        @Order(1)
+        SessionLifecycleListener firstListener() {
+            return FIRST;
         }
     }
 

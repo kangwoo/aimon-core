@@ -24,6 +24,7 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.SessionRecordView;
 import at.aimon.core.agent.session.store.SessionTotals;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.base.Principal;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.TokenUsage;
@@ -78,6 +79,83 @@ class MongoSessionRecordStoreIntegrationTest {
     }
 
     @Test
+    @DisplayName("provision records the owner, and a second provision never replaces it")
+    void provisionRecordsOwnerOnce() {
+        final SessionId id = SessionId.of("rec-owner");
+
+        final SessionRecordView first = store.provision(id, "agent-A", Principal.user("u-1", "Alice"));
+        assertThat(first.getOwner()).contains(Principal.user("u-1"));
+        assertThat(first.getOwner().orElseThrow().getDisplayName()).isEqualTo("Alice");
+
+        // First-wins, like the binding: the second caller reads the existing owner back instead of taking the session.
+        final SessionRecordView second = store.provision(id, "agent-A", Principal.user("u-2", "Bob"));
+        assertThat(second.getOwner()).contains(Principal.user("u-1"));
+        final Principal loaded = store.load(id).orElseThrow().getOwner().orElseThrow();
+        assertThat(loaded).isEqualTo(Principal.user("u-1"));
+        assertThat(loaded.getDisplayName()).isEqualTo("Alice");
+    }
+
+    @Test
+    @DisplayName("a record provisioned without an owner gets one from the first provision that names it")
+    void provisionFillsMissingOwner() {
+        final SessionId id = SessionId.of("rec-owner-late");
+
+        assertThat(store.provision(id, "agent-A").getOwner()).isEmpty();
+        assertThat(store.provision(id, "agent-A", null).getOwner()).isEmpty();
+
+        final SessionRecordView filled = store.provision(id, "agent-B", Principal.service("svc-1", "Billing"));
+        assertThat(filled.getOwner()).contains(Principal.service("svc-1", "Billing"));
+        // The binding still follows its own rule in the same operation.
+        assertThat(filled.getAgentRef()).contains("agent-A");
+        assertThat(store.load(id).orElseThrow().getOwner()).contains(Principal.service("svc-1", "Billing"));
+    }
+
+    @Test
+    @DisplayName("provision can record an owner without binding an agent")
+    void provisionOwnerWithoutBinding() {
+        final SessionId id = SessionId.of("rec-owner-unbound");
+
+        final SessionRecordView view = store.provision(id, null, Principal.user("u-1"));
+
+        assertThat(view.getAgentRef()).isEmpty();
+        assertThat(view.getOwner()).contains(Principal.user("u-1"));
+        assertThat(store.provision(id, "agent-A").getAgentRef()).contains("agent-A");
+        assertThat(store.load(id).orElseThrow().getOwner()).contains(Principal.user("u-1"));
+    }
+
+    @Test
+    @DisplayName("an owner whose id and display name begin with $ is stored as data, not evaluated")
+    void provisionStoresDollarPrefixedOwner() {
+        final SessionId id = SessionId.of("rec-owner-dollar");
+        final Principal owner = Principal.user("$where", "$set");
+
+        // Inside $ifNull the subdocument is an expression: without $literal, "$where" would be read as a field path.
+        assertThat(store.provision(id, "agent-A", owner).getOwner().orElseThrow().getId()).isEqualTo("$where");
+
+        final Principal loaded = store.load(id).orElseThrow().getOwner().orElseThrow();
+        assertThat(loaded.getId()).isEqualTo("$where");
+        assertThat(loaded.getDisplayName()).isEqualTo("$set");
+    }
+
+    @Test
+    @DisplayName("the owner survives transcript merges and totals writes")
+    void ownerSurvivesOtherWriters() {
+        final SessionId id = SessionId.of("rec-owner-preserved");
+        store.provision(id, "agent-A", Principal.user("u-1", "Alice"));
+
+        store.mergeFromSnapshot(SessionSnapshot.of(id, null, List.of(Message.user("hi"))));
+        store.setTotalsAndBudgetOverride(id, SessionTotals.of(1, 2, TokenUsage.of(3, 4, 7)),
+                ExecutionBudget.builder().maxIterations(5).build());
+        store.setTotalsAndBudgetOverride(id, SessionTotals.of(2, 3, TokenUsage.of(4, 5, 9)), null);
+        store.incrementCompactionFailureCount(id);
+
+        final SessionRecordView view = store.load(id).orElseThrow();
+        assertThat(view.getMessages()).hasSize(1);
+        assertThat(view.getOwner()).contains(Principal.user("u-1"));
+        assertThat(view.getOwner().orElseThrow().getDisplayName()).isEqualTo("Alice");
+    }
+
+    @Test
     @DisplayName("provision without a binding materializes an unbound record")
     void provisionWithoutBinding() {
         final SessionId id = SessionId.of("rec-unbound");
@@ -89,6 +167,7 @@ class MongoSessionRecordStoreIntegrationTest {
         assertThat(view.getCompactionFailureCount()).isZero();
         assertThat(view.getSessionTotals()).isEqualTo(SessionTotals.empty());
         assertThat(view.getBudgetOverride()).isEmpty();
+        assertThat(view.getOwner()).isEmpty();
         // Existence is the whole point of this call: a record that reads as absent would be re-provisioned, and the
         // binding a later claim writes would look like a first binding rather than a conflict.
         assertThat(store.exists(id)).isTrue();

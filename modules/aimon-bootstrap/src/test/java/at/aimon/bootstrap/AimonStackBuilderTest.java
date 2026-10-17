@@ -37,7 +37,9 @@ import at.aimon.core.agent.context.RollingContextEngine;
 import at.aimon.core.agent.impl.AgentBundle;
 import at.aimon.core.agent.impl.orca.OrcaAgentRuntime;
 import at.aimon.core.agent.interrupt.InterruptReason;
+import at.aimon.core.agent.session.SessionDeletedEvent;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.SessionLifecycleListener;
 import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
@@ -233,6 +235,31 @@ class AimonStackBuilderTest {
             assertThat(stack.runtime(stack.primaryRuntimeId())).isPresent();
             assertThat(stack.isClosed()).isFalse();
         }
+    }
+
+    @Test
+    @DisplayName("SessionSpec's lifecycle listeners reach the router, which tells them about a delete")
+    void lifecycleListenersReachTheRouter(@TempDir Path workspace) {
+        final List<SessionDeletedEvent> deleted = new ArrayList<>();
+        final InMemorySessionRecordStore records = new InMemorySessionRecordStore();
+        final SessionSpec session = SessionSpec.builder().recordStore(records)
+                .lifecycleListener(new SessionLifecycleListener() {
+                    @Override
+                    public void onDeleted(SessionDeletedEvent event) {
+                        deleted.add(event);
+                    }
+                }).build();
+        final SessionId id = SessionId.of("stack-listener");
+        records.provision(id, "ops", Principal.user("alice"));
+
+        try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").session(session).build())) {
+            stack.sessionRouter().deleteSession(id);
+        }
+
+        assertThat(deleted).singleElement().satisfies(event -> {
+            assertThat(event.getSessionId()).isEqualTo(id);
+            assertThat(event.getOwner()).contains(Principal.user("alice"));
+        });
     }
 
     @Test

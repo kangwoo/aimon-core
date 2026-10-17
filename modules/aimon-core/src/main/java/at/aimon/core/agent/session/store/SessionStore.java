@@ -6,6 +6,7 @@ import java.util.Optional;
 
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.exception.SessionLeaseException;
+import at.aimon.core.base.Principal;
 
 /**
  * One session store: holder election, the agent binding, and the durable record behind a single door.
@@ -86,6 +87,43 @@ public interface SessionStore {
      *             on lease-backend communication failure
      */
     ClaimResult claim(SessionId sessionId, String agentRef, String holderId, Duration lease);
+
+    /**
+     * {@link #claim(SessionId, String, String, Duration)}, and on success also records {@code owner} as the session's
+     * owning principal when it has none.
+     *
+     * <p>
+     * A rejected claim writes no owner: the owner is settled only once the binding is known to match, so a request
+     * answered with {@link ClaimResult.AgentConflict} cannot become the session's permanent owner. An owner already on
+     * the record is never replaced — the returned {@link ClaimResult.Acquired#getRecord() record} reports the one that
+     * is actually there.
+     *
+     * @implSpec The default delegates when {@code owner} is {@code null} and otherwise throws, for the reason
+     *           {@link SessionRecordStore#provision(SessionId, String, Principal)} gives: an implementation written
+     *           before owners existed keeps working until a host actually asks it to record one.
+     *
+     * @param sessionId
+     *            the session to claim (must not be null)
+     * @param agentRef
+     *            the agent the caller intends to run (must not be null)
+     * @param owner
+     *            the principal to record if the session has no owner yet, or {@code null} to leave the owner alone
+     * @param holderId
+     *            the requesting holder identity (must not be null)
+     * @param lease
+     *            requested lease duration (must not be null, must be positive)
+     * @return which of the three outcomes occurred; never null
+     * @throws SessionLeaseException
+     *             on lease-backend communication failure
+     * @throws UnsupportedOperationException
+     *             if {@code owner} is non-null and this store cannot record owners
+     */
+    default ClaimResult claim(SessionId sessionId, String agentRef, Principal owner, String holderId, Duration lease) {
+        if (owner == null) {
+            return claim(sessionId, agentRef, holderId, lease);
+        }
+        throw new UnsupportedOperationException(getClass().getName() + " does not record session owners");
+    }
 
     /**
      * Becomes the holder of {@code sessionId} and provisions its record, without touching the agent binding.

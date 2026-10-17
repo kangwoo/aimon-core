@@ -143,6 +143,15 @@ public interface SessionRouter extends AutoCloseable {
      * eviction, inbox purge, terminal {@code InterruptedAt}, {@code onComplete}, {@code EVICT} broadcast).
      *
      * <p>
+     * Once the record is gone, every {@link at.aimon.core.agent.session.SessionLifecycleListener} registered on the
+     * builder is called once per call that deletes the record, on this node, before the lease is returned — also when
+     * one of the teardown steps above then fails and this call throws. Delivery is at most once: a node that crashes
+     * between the delete and the call loses the event. The lease is renewed while the listeners run, but that protects
+     * them only as long as the renewals succeed. A listener's {@link RuntimeException} is logged and does not fail the
+     * call; an {@link Error} propagates, after the lease has been returned. A raw {@code repository.delete(id)}
+     * fires no listener. The full contract is on {@code SessionLifecycleListener}.
+     *
+     * <p>
      * The default implementation throws {@link UnsupportedOperationException} so existing in-process tests and minimal
      * implementations remain source-compatible.
      *

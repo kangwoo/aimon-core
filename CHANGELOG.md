@@ -56,6 +56,41 @@ that only read and edited files never heard that its sandbox had been re-created
 - Not yet: a turn whose model makes no tool call hears nothing (backlog `EE-106`). Queue scope across forks and slash
   skills is the provider's call (`EE-107`). Hooks are told, not prevented, not to drain (`EE-108`).
 
+### Added: session owner and session deletion listener (#253)
+
+A session record had no owner and nothing observed its deletion, so every multi-tenant extension kept its own
+session → owner map and had to be told by the host about every delete. Design:
+`docs/design/session/session-owner-deletion-event.md`.
+
+- **Owner.** `SubmitRequest.Builder#owner(Principal)` records the session's owning principal when its record is
+  provisioned; `SessionRecordView#getOwner()` reads it. First wins and nothing overwrites it, like the agent binding. It
+  is not derived from `initiator`, and a forwarded first submit carries it through the inbox
+  (`InboundMessage#getOwner()`).
+- **Core records the owner but does not enforce it.** A submit naming a different owner is not rejected —
+  authorization is the host's or the extension's.
+- **Deletion listener.** `SessionLifecycleListener#onDeleted(SessionDeletedEvent)` is called once, on the deleting
+  node, under the lease, after `SessionRouter#deleteSession` has deleted the record — also when a later teardown step
+  fails. At most once; a listener's `RuntimeException` is logged, and the lease is returned even when a listener
+  throws an `Error`. Register it with `SessionRouterBuilder#lifecycleListener`, `SessionSpec.Builder#lifecycleListener`,
+  or as a Spring bean; `SessionLifecycleListener.whenDeleted(Consumer)` wraps a lambda. A raw
+  `SessionRecordStore#delete` fires nothing.
+- **SPI.** `SessionRecordStore#provision(SessionId, String, Principal)` and
+  `SessionStore#claim(SessionId, String, Principal, String, Duration)` are new `default` methods: an existing store
+  keeps working and throws `UnsupportedOperationException` only when asked to persist an owner. All shipped stores
+  (in-memory, Postgres, MongoDB, Redis) persist it. `RedisSessionRecordStore#provision` now rejects an empty-string
+  `agentRef` (pass `null` for no binding).
+- **Upgrade note — Postgres.** Apply `V3__session_record_owner.sql` (`ALTER TABLE session_record ADD COLUMN IF NOT
+  EXISTS owner jsonb`) **before** rolling out: this build reads the column on every provision and load, whether or not
+  a host sets an owner. The README's not-yet-shipped `V3__indexes.sql` is now `V4__indexes.sql`.
+
+### Fixed: an invalid `agentRef` no longer poisons a session (#260)
+
+`SubmitRequest.Builder#build()` now throws `IllegalArgumentException` for an `agentRef` that is blank or contains `:`.
+These are the names `AgentRuntimeId.fromName` refuses. Before, the router claimed the session and bound it to such a
+name, and only then failed to derive the runtime id. Because the binding is first-wins, every later submit with a
+valid agent was refused with `ConflictingAgentException` until the session was deleted. A caller that sent such a
+name now fails at `build()` instead of at the first turn.
+
 ### Added: usage quotas — accumulated session, principal and tenant limits, in total or per day (`at.aimon.core.agent.quota`)
 
 `ExecutionBudget` bounds one execution and starts again on the next, so nothing bounded what a session spends over
