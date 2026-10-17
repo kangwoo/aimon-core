@@ -30,6 +30,7 @@ import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.ToolUseResult;
 import at.aimon.core.toolinvocation.approval.SideEffectApprovalGate;
+import at.aimon.core.tools.EnvironmentNotices;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
@@ -63,6 +64,10 @@ import at.aimon.core.tools.ToolContextKeys;
  * unless a hook blocked it.
  * <li>Fire PostTool hooks (isolated so a hook failure never discards the real tool result), applying any rewritten
  * output.
+ * <li>Drain the execution environment's {@linkplain ExecutionEnvironment#drainNotices() queued notices} once and
+ * prepend them to the result as {@code [environment]} lines ({@link EnvironmentNotices}). This runs on every exit path,
+ * denials and the catch-all included, because each of them hands a result to the model; and it runs last, so no hook
+ * sees the notices or can rewrite them, while a notice a hook's own shell command caused still rides out here.
  * </ol>
  *
  * <p>
@@ -143,7 +148,12 @@ public final class SingleToolInvoker {
      */
     public ToolUseResult invoke(ToolInvocationSpec spec) {
         Objects.requireNonNull(spec, "spec cannot be null");
+        // Applied to the one value every exit path of dispatch returns, so no branch can forget it.
+        return EnvironmentNotices.deliver(dispatch(spec), environmentOf(spec), spec.getToolUse().getName());
+    }
 
+    /** Steps 1-5 of the pipeline; {@link #invoke} adds the environment's notices to what this returns. */
+    private ToolUseResult dispatch(ToolInvocationSpec spec) {
         final ToolUse toolUse = spec.getToolUse();
 
         // Resolve the target tool's interrupt behaviour. Unknown tool names (e.g. a hallucinated name) fall through to
@@ -259,8 +269,9 @@ public final class SingleToolInvoker {
     }
 
     /**
-     * The execution environment the tool runs in, for the four tool-scoped hook chains (design §10). Null when the
-     * tool context carries none — the hooks then see an empty environment rather than the host.
+     * The execution environment the tool runs in, for the four tool-scoped hook chains (design §10) and the notice
+     * drain. Null when the tool context carries none — the hooks then see an empty environment rather than the host,
+     * and there is nothing to drain.
      */
     private static ExecutionEnvironment environmentOf(ToolInvocationSpec spec) {
         return ExecutionEnvironmentAccess.of(spec.getToolContext()).orElse(null);

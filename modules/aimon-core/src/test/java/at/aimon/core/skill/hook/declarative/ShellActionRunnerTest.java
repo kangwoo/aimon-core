@@ -98,4 +98,19 @@ class ShellActionRunnerTest {
         assertThat(outcome.asGuardAnswer().getUnrunCause()).contains(ShellHookOutcome.Unrun.COMMAND_NOT_FOUND);
         assertThat(outcome.asGuardAnswer().unrunReason()).isEqualTo("command not found: exit code 127");
     }
+
+    @Test
+    void run_commandWithEnvironmentNotices_keepsThemOutOfTheHookOutcome() throws Exception {
+        // A hook result is never where an environment notice is delivered (#254): the notice is about the
+        // environment, and the model hears the environment's own queue on the tool result instead.
+        VirtualShell shell = mock(VirtualShell.class);
+        when(shell.execute(any(ShellCommand.class), any(ExecutionOptions.class))).thenReturn(new ShellCommandResult(0,
+                "ok", "", Duration.ofMillis(3), false, java.util.List.of("shell session was reopened")));
+
+        ShellHookOutcome outcome = ShellActionRunner.run(shell, ACTION, Map.of(), null, java.util.Optional.empty());
+
+        assertThat(outcome.getStdout()).isEqualTo("ok");
+        assertThat(outcome.getStderr()).isEmpty();
+        assertThat(outcome.toString()).doesNotContain("shell session was reopened");
+    }
 }

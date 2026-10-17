@@ -413,6 +413,11 @@ Map<String, Object> all = context.getContext();
 `ToolResult.error` 로 돌려준다. 호스트 환경으로 되돌아가는 경로는 두지 않는다
 (설계: [`design/tool/execution-environment.md`](../../design/tool/execution-environment.md)).
 
+**환경의 알림은 도구가 다루지 않는다.** 환경이 모델에게 알릴 사실("샌드박스가 재생성되었다")은 코어가 모델에게 가는 도구
+호출이 끝날 때마다 `ExecutionEnvironment.drainNotices()` 로 비워 그 결과 앞에 `[environment] …` 줄로 붙인다 — 어떤 도구였든
+같다. 그러니 도구는 그것을 렌더할 필요가 없고, `drainNotices()` 를 불러서도 안 된다. 도구가 비운 notice 는 모델에게 가지
+않고 사라진다(설계 §8.1).
+
 **낡은 쓰기 방지.** 기존 파일을 고치는 도구는 `ReadTool.FILE_STAMPS_KEY` 의 stamp 를 대조한다. 이번
 실행에서 읽지 않았으면 `"Read the file before modifying it"`, 읽은 뒤 바뀌었으면
 `"File changed since it was read; Read it again"` 을 낸다. 키는 환경이 정규화한 경로라 `a.txt`·`./a.txt`·

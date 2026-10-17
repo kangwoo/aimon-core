@@ -7,6 +7,8 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -26,6 +28,7 @@ import at.aimon.core.agent.tool.exception.ToolPermissionViolationException;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.agent.tool.permission.PermissionSubject;
 import at.aimon.core.agent.tool.permission.ToolPermissionSubjectAware;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.llm.LlmClient;
@@ -507,6 +510,32 @@ class LlmSkillExecutorTest {
 
         assertThat(result.isSuccess()).isTrue();
         assertThat(counter.executions).isOne();
+    }
+
+    @Test
+    @DisplayName("No bound dispatcher — the fallback still hands the skill's LLM the environment's notices, once (#254)")
+    void absentDispatcherDeliversEnvironmentNotices() {
+        final ToolUse first = ToolUse.of("id-1", "Counter", Map.of("n", 1));
+        final ToolUse second = ToolUse.of("id-2", "Counter", Map.of("n", 2));
+        mockLlmClient.setResponses(List.of(LlmResponse.of("Counting", List.of(first)),
+                LlmResponse.of("Again", List.of(second)), LlmResponse.text("Done")));
+        final Queue<String> notices = new ConcurrentLinkedQueue<>(List.of("The sandbox was re-created."));
+        final ToolContext toolContext = TestExecutionEnvironments.withoutStamps(
+                TestExecutionEnvironments.builder().workingDirectory("/workspace").notices(notices).build());
+
+        final SkillExecutionResult result = executeSkill(counterSkill(), new CountingTool(), toolContext);
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(toolResultsSent(1)).singleElement()
+                .satisfies(r -> assertThat(r.getContent()).startsWith("[environment] The sandbox was re-created.\n"));
+        assertThat(toolResultsSent(2)).singleElement()
+                .satisfies(r -> assertThat(r.getContent()).doesNotContain("[environment]"));
+    }
+
+    /** The tool results the {@code call}-th LLM request carried, newest message last. */
+    private List<ToolUseResult> toolResultsSent(int call) {
+        final List<Message> messages = mockLlmClient.seen.get(call);
+        return messages.get(messages.size() - 1).getToolUseResults();
     }
 
     private static Skill counterSkill() {
