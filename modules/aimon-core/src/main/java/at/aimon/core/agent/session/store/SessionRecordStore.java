@@ -14,10 +14,11 @@ import at.aimon.core.base.Principal;
  * <h2>There is no "write the record" operation, and that is the design</h2>
  *
  * <p>
- * A record has four owners writing four different concerns, and no writer holds all of them: the checkpoint writer
- * thread owns the messages, the claim path owns {@code agentRef} and {@code owner}, the session owns the
- * {@code sessionTotals} / {@code budgetOverride} pair, and the compaction guard owns
- * {@code compactionFailureCount}. So every write here is a <b>partial</b> write that preserves what it does not own:
+ * A record has several writers, each owning a different concern, and no writer holds all of them: the checkpoint
+ * writer thread owns the messages, the provisioning paths (the claim, and a drain pass that provisions the record)
+ * own {@code agentRef} and {@code owner}, the session owns the {@code sessionTotals} / {@code budgetOverride} pair,
+ * and the compaction guard owns {@code compactionFailureCount}. So every write here is a <b>partial</b> write that
+ * preserves what it does not own:
  *
  * <ul>
  * <li>{@link #mergeFromSnapshot(SessionSnapshot)} — the messages
@@ -37,8 +38,8 @@ import at.aimon.core.base.Principal;
  * <p>
  * That is also why none of them has a {@code default} implementation — the owner-carrying
  * {@link #provision(SessionId, String, Principal)} overload aside, whose default writes nothing at all (see there). A
- * default could only be written in terms of
- * load-mutate-store, i.e. non-atomically, and a backend author who implemented the obvious members and inherited the
+ * default could only be written in terms of load-mutate-store, i.e. non-atomically, and a backend author who
+ * implemented the obvious members and inherited the
  * rest would silently get the losing behaviour. Each is abstract so the compiler asks the question the javadoc used to
  * only shout about: implement this with whatever atomic primitive you have.
  *
@@ -159,8 +160,7 @@ public interface SessionRecordStore {
      * @implSpec The one write on this interface with a {@code default}, and the default is not a write. The rule
      *           against defaults exists because one could only be a non-atomic load-mutate-store; this one performs no
      *           owner write at all. With a {@code null} owner it delegates to the atomic two-argument primitive; with
-     *           an
-     *           owner it throws, so a store written before owners existed keeps compiling and keeps working until a
+     *           an owner it throws, so a store written before owners existed keeps compiling and keeps working until a
      *           host actually asks it to persist one — and then fails at the first submit instead of silently dropping
      *           the owner. A backend that can persist the owner overrides this with the same atomic primitive its
      *           two-argument {@code provision} uses.

@@ -520,3 +520,18 @@ The open questions in §8 whose consequences reach past this change are filed in
 [`../../backlog/session-owner-open-items.md`](../../backlog/session-owner-open-items.md): Q1 → SO-1 (enforcement),
 Q2 → SO-2 (transfer), Q3 → SO-3 (peer-node fan-out), Q5 → SO-4 (`onCreated`), Q6 → SO-5 (a named owner-lookup SPI),
 and DV-3 → SO-6 (blank `agentRef`). Q4 and Q7 were decided as written and are not filed.
+
+### 9.4 After PR #259 review 1
+
+*Appended 2026-10-17.*
+
+- **The listener call no longer guards the lease return by convention alone.** The inner `finally` called
+  `fireDeleted` and then `returnLease` in sequence. `fireDeleted` contains only `RuntimeException` (DV-13), so an
+  `Error` from a listener skipped `returnLease`. The lease's renewer is stopped only by `returnLease`, and the cache
+  entry whose close could have returned it was already evicted. So the node renewed the lease on a deleted id
+  indefinitely. `fireDeleted` now sits in a `try` whose `finally` is `returnLease`; test
+  `errorFromListenerStillReturnsLease`. DV-13 stands: the `Error` still propagates.
+- **The lease guarantee is qualified.** "No new turn can provision the same id and race the cleanup" holds only while
+  renewals succeed. The listener javadoc, `routing.md` §7.7 and the guide now say so.
+- **DV-7 is softened.** `SessionLifecycleListener.whenDeleted(Consumer)` wraps a lambda. It is not named
+  `onDeleted`, because the overload makes `onDeleted(null)` ambiguous. See SO-4.

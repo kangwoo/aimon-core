@@ -105,6 +105,24 @@ class SessionRouterDeleteListenerTest {
     }
 
     @Test
+    @DisplayName("a listener throwing an Error propagates, and the delete still returns the lease")
+    void errorFromListenerStillReturnsLease() {
+        harness = TestManagerHarness.builder().nodeId("node-A").lifecycleListener(event -> {
+            throw new AssertionError("listener error");
+        }).build();
+        final SessionId id = SessionId.of("c-listen-10");
+        harness.repository().provision(id, "alpha");
+
+        assertThatThrownBy(() -> harness.manager().deleteSession(id)).isInstanceOf(AssertionError.class)
+                .hasMessage("listener error");
+
+        assertThat(harness.repository().exists(id)).isFalse();
+        // Before the fix the Error skipped returnLease: the lease was never released and its renewer kept it alive.
+        assertThat(harness.leaseStore().findHolder(id)).as("the lease went back although the listener threw an Error")
+                .isEmpty();
+    }
+
+    @Test
     @DisplayName("an EVICT publish that throws after the record is gone still fires the listeners, then propagates")
     void firesWhenTeardownThrows() {
         final List<SessionDeletedEvent> events = new CopyOnWriteArrayList<>();

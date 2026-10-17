@@ -33,8 +33,7 @@ import at.aimon.core.subagent.task.codec.SessionSnapshotCodec;
  * <p>
  * A record is <b>not</b> encoded whole. {@code SessionRecordStore} has no full-record write precisely because its
  * concerns have different owners, and a backend can only honour that if each concern is separately addressable in
- * storage.
- * So this codec encodes each independently and the backend gives each its own column / field:
+ * storage. So this codec encodes each independently and the backend gives each its own column / field:
  *
  * <ul>
  * <li>{@code encodeTranscript} — system prompt + messages, the only large one

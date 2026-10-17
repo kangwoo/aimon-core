@@ -59,19 +59,23 @@ provision. 둘 다 "비어 있을 때만 쓴다" 만 하고 비교하지 않는�
 
 ---
 
-## SO-4 — `onCreated` 가 없다, 그리고 리스너는 람다로 만들 수 없다 · **열림**
+## SO-4 — `onCreated` 가 없다 · **열림**
 
 **무엇을.** 세션 생성 이벤트를 더할지 정한다. 더한다면 `provision` 이 "새로 만들었다" 를 보고해야 한다.
 
 **왜.** 이슈는 "최소한 `onDeleted`" 를 요구했고 생성은 미뤘다(설계 Q5). 프로비저닝은 여러 곳(claim, acquire, drain)
 에서 일어나고 새 행인지는 백엔드만 알기 때문이다. 부수 결과 하나: 인터페이스의 유일한 메서드가 `default` 라서
-**`SessionLifecycleListener` 는 함수형 인터페이스가 아니고 람다로 구현할 수 없다**(설계 §9 DV-7). 콜백이 둘 이상이
-되면 이 불편은 자연히 정당해지지만, 하나뿐인 지금은 사용자 코드가 익명 클래스를 쓴다.
+**`SessionLifecycleListener` 는 함수형 인터페이스가 아니고 람다로 구현할 수 없다**(설계 §9 DV-7).
+
+*(2026-10-17, PR #259 리뷰 1)* 람다 쪽은 해결했다 — `static SessionLifecycleListener whenDeleted(Consumer<SessionDeletedEvent>)`
+팩토리를 더했다. 아래 "언제 다시 볼까" 가 적어 둔 바로 그 처방인데, 이름 하나가 달랐다: 처방대로 `onDeleted` 로
+이름 붙이면 인스턴스 메서드 `onDeleted(SessionDeletedEvent)` 와 겹쳐 `onDeleted(null)` 호출이 모호해져 컴파일되지
+않는다(테스트를 쓰다 걸렸다). 그래서 `whenDeleted` 다. 이 항목에 남은 것은 `onCreated` 하나다.
 
 **어디.** (2026-10-17) `at.aimon.core.agent.session.SessionLifecycleListener`.
 
-**언제 다시 볼까.** 생성 시점에 세션별 상태를 만들어야 하는 확장이 나올 때. 그때까지 람다가 꼭 필요하다는 요구가
-먼저 오면 `static SessionLifecycleListener onDeleted(Consumer<SessionDeletedEvent>)` 팩토리를 더하는 것이 가장 싸다.
+**언제 다시 볼까.** 생성 시점에 세션별 상태를 만들어야 하는 확장이 나올 때. 그때 `onCreated` 를 더하면 람다 형태도
+`whenCreated` 로 나란히 둔다.
 
 ---
 

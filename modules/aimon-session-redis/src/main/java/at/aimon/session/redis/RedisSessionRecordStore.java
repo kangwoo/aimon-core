@@ -67,10 +67,9 @@ import io.lettuce.core.api.sync.RedisCommands;
  * <h2>Every write is partial, and each is one round trip</h2>
  *
  * <p>
- * {@link SessionRecordStore} has no full-record write because four writers own different fields, and the
+ * {@link SessionRecordStore} has no full-record write because several writers each own different fields, and the
  * {@code @implSpec} on each method asks for one atomic operation rather than a read-modify-write. Redis makes that
- * cheap: a hash field is
- * exactly the granularity the SPI wants, so nothing here reads a field it does not own.
+ * cheap: a hash field is exactly the granularity the SPI wants, so nothing here reads a field it does not own.
  *
  * <ul>
  * <li>{@link #provision(SessionId, String, Principal) provision} — one script: {@code HSET} the sentinel,

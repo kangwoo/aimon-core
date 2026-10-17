@@ -1,5 +1,8 @@
 package at.aimon.core.agent.session;
 
+import java.util.Objects;
+import java.util.function.Consumer;
+
 /**
  * Observes the lifecycle of durable sessions — today, the deletion of a session record.
  *
@@ -11,7 +14,8 @@ package at.aimon.core.agent.session;
  *
  * <p>
  * Every callback is a {@code default} no-op, so a callback added later (an {@code onCreated}, say) breaks no
- * implementor.
+ * implementor. That also means the interface is not functional and takes no lambda; {@link #whenDeleted(Consumer)}
+ * builds a listener from one.
  *
  * <h2>Delivery contract of {@link #onDeleted(SessionDeletedEvent)}</h2>
  *
@@ -20,8 +24,12 @@ package at.aimon.core.agent.session;
  * later teardown step of that same call (segment deletion, the terminal interrupt, the cluster {@code EVICT} broadcast)
  * fails and the call throws. A delete that fails before the record goes fires nothing.
  * <li><b>Under the session's lease.</b> The listener runs before the deleting node hands the lease back, and the lease
- * keeps being renewed while it runs, so no new turn can provision the same {@code SessionId} again and race the
- * cleanup: "delete the options of session X" cannot delete the options of a new session X created a moment later.
+ * keeps being renewed while it runs, so while the lease is held no new turn can provision the same {@code SessionId}
+ * again and race the cleanup: "delete the options of session X" cannot delete the options of a new session X created
+ * a moment later. The guarantee lasts only as long as the renewals succeed — if the lease store refuses one during a
+ * slow listener (an outage, a lost lease), a peer can claim the id before the listener returns. A listener that
+ * cannot tolerate that race checks {@code SessionRecordStore.exists(id)} before dropping state, or leaves the
+ * leftover to the reconciliation path below.
  * <li><b>Synchronously.</b> A slow listener delays the delete and blocks submits to that one session id. Keep it short
  * and hand heavy work to an executor of your own.
  * <li><b>At most once.</b> A node that crashes between deleting the record and calling the listener loses the event.
@@ -51,5 +59,29 @@ public interface SessionLifecycleListener {
      *            what was deleted (never null)
      */
     default void onDeleted(SessionDeletedEvent event) {
+    }
+
+    /**
+     * A listener that hands every deletion to {@code onDeleted} and ignores any other callback — the lambda form the
+     * interface itself cannot take.
+     *
+     * <pre>{@code
+     * builder.lifecycleListener(SessionLifecycleListener.whenDeleted(e -> options.drop(e.getSessionId())));
+     * }</pre>
+     *
+     * @param onDeleted
+     *            what to do with each deletion (must not be null)
+     * @return the listener (never null)
+     * @throws NullPointerException
+     *             if {@code onDeleted} is null
+     */
+    static SessionLifecycleListener whenDeleted(Consumer<SessionDeletedEvent> onDeleted) {
+        Objects.requireNonNull(onDeleted, "onDeleted must not be null");
+        return new SessionLifecycleListener() {
+            @Override
+            public void onDeleted(SessionDeletedEvent event) {
+                onDeleted.accept(event);
+            }
+        };
     }
 }

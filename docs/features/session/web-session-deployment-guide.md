@@ -122,9 +122,11 @@ Optional<Principal> owner = stack.sessionRecordStore().load(id).flatMap(SessionR
 | `AimonStackSpec` | `SessionSpec.builder().lifecycleListener(...)` |
 | 손 조립 | `SessionRouterBuilder.lifecycleListener(...)` |
 
-`onDeleted` 가 `default` 메서드라 람다로는 만들 수 없다 — 클래스나 익명 클래스로 구현한다. 리스너는 삭제한 노드에서
+`onDeleted` 가 `default` 메서드라 인터페이스 자체는 람다로 만들 수 없다 — 람다는
+`SessionLifecycleListener.whenDeleted(event -> ...)` 로 감싼다. 리스너는 삭제한 노드에서
 **한 번**, 리스를 쥔 채로 불리고, 뒤따르는 정리 단계가 실패해도 불린다. 노드가 그 사이에 죽으면 이벤트를 잃으므로
-(at-most-once) 재조정 경로를 둔다. 예외는 로그로 남고 삭제를 실패시키지 않는다. 짧게 끝내고, 지우는 중인 세션에
+(at-most-once) 재조정 경로를 둔다. 리스를 쥔 채라는 보장도 리스 갱신이 성공하는 동안만이다. `RuntimeException` 은
+로그로 남고 삭제를 실패시키지 않는다. 짧게 끝내고, 지우는 중인 세션에
 대해 라우터를 다시 부르지 않는다. 날것의 `SessionRecordStore.delete` 는 리스너를 부르지 않는다.
 
 Postgres 를 쓰면 `V3__session_record_owner.sql` 을 먼저 적용한다(§2). 설계:

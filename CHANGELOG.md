@@ -21,8 +21,10 @@ session → owner map and had to be told by the host about every delete. Design:
   authorization is the host's or the extension's.
 - **Deletion listener.** `SessionLifecycleListener#onDeleted(SessionDeletedEvent)` is called once, on the deleting
   node, under the lease, after `SessionRouter#deleteSession` has deleted the record — also when a later teardown step
-  fails. At most once; a listener's exception is logged. Register it with `SessionRouterBuilder#lifecycleListener`,
-  `SessionSpec.Builder#lifecycleListener`, or as a Spring bean. A raw `SessionRecordStore#delete` fires nothing.
+  fails. At most once; a listener's `RuntimeException` is logged, and the lease is returned even when a listener
+  throws an `Error`. Register it with `SessionRouterBuilder#lifecycleListener`, `SessionSpec.Builder#lifecycleListener`,
+  or as a Spring bean; `SessionLifecycleListener.whenDeleted(Consumer)` wraps a lambda. A raw
+  `SessionRecordStore#delete` fires nothing.
 - **SPI.** `SessionRecordStore#provision(SessionId, String, Principal)` and
   `SessionStore#claim(SessionId, String, Principal, String, Duration)` are new `default` methods: an existing store
   keeps working and throws `UnsupportedOperationException` only when asked to persist an owner. All shipped stores

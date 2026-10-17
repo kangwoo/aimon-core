@@ -603,10 +603,9 @@ public final class DefaultSessionRouter implements SessionRouter {
         final HeldLease reused = heldLease(convId);
         if (reused != null) {
             // No claim, and so no binding or owner work either — the owner was decided when the session was
-            // provisioned,
-            // and a write per turn to re-assert it would buy nothing. the claim that won this lease already validated
-            // the requested
-            // agent against the record and wrote it if the session was unbound. Nothing can have changed it since,
+            // provisioned, and a write per turn to re-assert it would buy nothing. The claim that won this lease
+            // already validated the requested agent against the record and wrote it if the session was unbound. Nothing
+            // can have changed it since,
             // because only a holder may write it and this node has been the holder throughout. submit's advisory
             // precheckAgentBinding is therefore authoritative on this path, not merely advisory.
             safeMetric(() -> metrics.onLockAcquireSucceeded(elapsedSince(acquireStart)), "onLockAcquireSucceeded");
@@ -2807,19 +2806,24 @@ public final class DefaultSessionRouter implements SessionRouter {
                         .originNodeId(nodeId).payload(Map.of("reason", InterruptReason.SESSION_RELEASED.name()))
                         .build());
             } finally {
-                // Decided by recordDeleted, not by reaching the end of the block: once the row is gone the listeners
-                // are owed their call even if a teardown step above threw — the EVICT publish does during a bus outage.
-                // Before the lease goes back, so no new turn can provision this id again and race their cleanup.
-                // fireDeleted never throws, which is what makes calling it here safe: it cannot mask the exception
-                // that may be propagating.
-                if (recordDeleted) {
-                    fireDeleted(sessionId, recordBeforeDelete);
+                try {
+                    // Decided by recordDeleted, not by reaching the end of the block: once the row is gone the
+                    // listeners are owed their call even if a teardown step above threw — the EVICT publish does
+                    // during a bus outage. Before the lease goes back, so no new turn can provision this id again and
+                    // race their cleanup. fireDeleted contains a listener's RuntimeException, so it cannot mask the
+                    // exception that may be propagating; an Error it lets through.
+                    if (recordDeleted) {
+                        fireDeleted(sessionId, recordBeforeDelete);
+                    }
+                } finally {
+                    // Unconditionally, even for a borrowed lease, even if a pinned entry's close is still pending, and
+                    // even if a listener threw an Error: the session no longer exists, so there is nothing left for
+                    // the lease to protect, and nothing else would ever return it — its renewer stops only here, and
+                    // the cache entry whose close could have triggered a return was evicted at the top. Nested inside
+                    // the gate so the release happens before the gate is given back — a submission slipping in
+                    // between would run a turn under a lease this node is about to hand back.
+                    returnLease(sessionId, held);
                 }
-                // Unconditionally, even for a borrowed lease and even if a pinned entry's close is still pending: the
-                // session no longer exists, so there is nothing left for the lease to protect. Nested inside the gate
-                // so the release happens before the gate is given back — a submission slipping in between would run a
-                // turn under a lease this node is about to hand back.
-                returnLease(sessionId, held);
             }
         } finally {
             endTurnAndSettleLeaseReturn(sessionId);
@@ -2863,10 +2867,11 @@ public final class DefaultSessionRouter implements SessionRouter {
     }
 
     /**
-     * Tells every lifecycle listener, in registration order, that the record of {@code sessionId} is gone. Never
-     * throws:
-     * a listener's failure is logged and the next one still runs, because the record is already irreversibly deleted
-     * and a failure here would only invite a retry that provisions and deletes a fresh empty record.
+     * Tells every lifecycle listener, in registration order, that the record of {@code sessionId} is gone. Throws no
+     * {@link RuntimeException}: a listener's is logged and the next listener still runs, because the record is already
+     * irreversibly deleted and a failure here would only invite a retry that provisions and deletes a fresh empty
+     * record. An {@link Error} is not caught — it ends the loop and propagates — which is why the caller returns the
+     * lease from a {@code finally} of its own.
      */
     private void fireDeleted(SessionId sessionId, SessionRecordView recordBeforeDelete) {
         if (lifecycleListeners.isEmpty()) {

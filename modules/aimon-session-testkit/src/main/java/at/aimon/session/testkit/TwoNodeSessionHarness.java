@@ -91,12 +91,7 @@ public final class TwoNodeSessionHarness implements AutoCloseable {
 
         // Each node records the deletions it was told about, so a scenario can tell which node's listener fired.
         final List<SessionDeletedEvent> deletions = new CopyOnWriteArrayList<>();
-        final SessionLifecycleListener recorder = new SessionLifecycleListener() {
-            @Override
-            public void onDeleted(SessionDeletedEvent event) {
-                deletions.add(event);
-            }
-        };
+        final SessionLifecycleListener recorder = SessionLifecycleListener.whenDeleted(deletions::add);
 
         final SessionRouter manager = SessionRouter.builder().sessionOpener(opener).sessionRecordStore(sharedRepository)
                 .sessionLeaseStore(spis.leaseStore()).signalBus(spis.signalBus()).sessionInbox(spis.inbox())

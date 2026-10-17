@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/session/web-session-deployment-guide.md
-source_commit: 249191fb
+source_commit: dabaafc3
 ---
 
 # Web Session Manager — Deployment & Operations Guide
@@ -134,10 +134,11 @@ had just before deletion.
 | `AimonStackSpec` | `SessionSpec.builder().lifecycleListener(...)` |
 | Hand assembly | `SessionRouterBuilder.lifecycleListener(...)` |
 
-`onDeleted` is a `default` method, so a lambda cannot implement the interface — use a class or an anonymous class.
-The listener is called **once**, on the deleting node, with the lease still held, and also when a later teardown step
-fails. A node that dies in between loses the event (at-most-once), so keep a reconciliation path. An exception is
-logged and does not fail the delete. Keep it short, and do not call the router back for the session being deleted.
+`onDeleted` is a `default` method, so the interface itself takes no lambda — wrap one in
+`SessionLifecycleListener.whenDeleted(event -> ...)`. The listener is called **once**, on the deleting node, with the
+lease still held, and also when a later teardown step fails. A node that dies in between loses the event
+(at-most-once), so keep a reconciliation path. The lease guarantee also holds only while lease renewals succeed. A
+`RuntimeException` is logged and does not fail the delete. Keep it short, and do not call the router back for the session being deleted.
 A raw `SessionRecordStore.delete` calls no listener.
 
 On Postgres, apply `V3__session_record_owner.sql` first (§2). Design:

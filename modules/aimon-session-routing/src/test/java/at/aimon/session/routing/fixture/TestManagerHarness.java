@@ -322,14 +322,9 @@ public final class TestManagerHarness implements AutoCloseable {
             return this;
         }
 
-        /** Lambda form: {@link SessionLifecycleListener} has only default methods, so it takes no lambda itself. */
+        /** Lambda form, through {@link SessionLifecycleListener#whenDeleted(Consumer)}. */
         public Builder lifecycleListener(Consumer<SessionDeletedEvent> onDeleted) {
-            return lifecycleListener(new SessionLifecycleListener() {
-                @Override
-                public void onDeleted(SessionDeletedEvent event) {
-                    onDeleted.accept(event);
-                }
-            });
+            return lifecycleListener(SessionLifecycleListener.whenDeleted(onDeleted));
         }
 
         public Builder sessionApprovals(SessionApprovalStore v) {
