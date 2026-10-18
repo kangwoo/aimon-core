@@ -92,9 +92,8 @@ public abstract class AbstractSessionRecordStoreContractTest {
     }
 
     /**
-     * @return whether {@link SessionRecordStore#clear()} is supported — {@code true} by default; the fenced record
-     *         views
-     *         refuse it by design, since holdership cannot be proven for every session at once
+     * @return whether {@link SessionRecordStore#clear()} is supported ({@code true} by default). The fenced record
+     *         views refuse it by design, since holdership cannot be proven for every session at once.
      */
     protected boolean supportsClear() {
         return true;
@@ -192,7 +191,7 @@ public abstract class AbstractSessionRecordStoreContractTest {
         final Principal alice = Principal.user("u-alice", "Alice");
         store().provision(id, "agent-A", alice);
 
-        store().mergeFromSnapshot(SessionSnapshot.of(id, null, List.of(Message.user("hi"))));
+        store().mergeFromSnapshot(SessionSnapshot.of(id, "sys", List.of(Message.user("hi"))));
         final Principal afterMerge = store().load(id).orElseThrow().getOwner().orElseThrow();
         assertThat(afterMerge).isEqualTo(alice);
         assertThat(afterMerge.getDisplayName()).isEqualTo("Alice");
@@ -207,6 +206,7 @@ public abstract class AbstractSessionRecordStoreContractTest {
         assertThat(view.getOwner()).contains(alice);
         assertThat(view.getOwner().orElseThrow().getDisplayName()).isEqualTo("Alice");
         assertThat(view.getMessages()).hasSize(1);
+        assertThat(view.getSystemPrompt()).isEqualTo("sys");
     }
 
     @Test

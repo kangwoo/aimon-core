@@ -72,12 +72,19 @@ class RedisSessionRecordStoreIntegrationTest extends AbstractSessionRecordStoreC
 
     @Override
     protected void corruptTranscript(SessionId id) {
-        connection.sync().hset(key(id), "transcript", "not-a-transcript");
+        rawHset(id, "transcript", "not-a-transcript");
     }
 
     @Override
     protected void corruptOwner(SessionId id) {
-        connection.sync().hset(key(id), "owner", "{\"displayName\":\"x\"}");
+        rawHset(id, "owner", "{\"displayName\":\"x\"}");
+    }
+
+    private void rawHset(SessionId id, String field, String value) {
+        // HSET on a missing key would create a one-field hash; insist on a provisioned record, as the Postgres and
+        // Mongo hooks do with their row counts.
+        assertThat(connection.sync().exists(key(id))).isEqualTo(1L);
+        connection.sync().hset(key(id), field, value);
     }
 
     @Test
