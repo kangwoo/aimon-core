@@ -3,7 +3,10 @@ package at.aimon.bootstrap.assemble;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.lang.reflect.Method;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 import org.junit.jupiter.api.DisplayName;
@@ -12,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
+import at.aimon.core.agent.session.store.SessionRecordView;
 import at.aimon.core.agent.session.store.SessionTotals;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.base.Principal;
@@ -50,8 +54,37 @@ class LateBoundFencedRecordStoreTest {
         assertThat(store.load(SESSION)).isPresent();
         assertThat(store.exists(SESSION)).isTrue();
         assertThat(store.listSessionIds()).containsExactly(SESSION);
+        assertThat(store.loadOwner(SESSION)).isEmpty();
+        raw.provision(SESSION, "agent:ops", Principal.user("alice"));
+        assertThat(store.loadOwner(SESSION)).contains(Principal.user("alice"));
         store.bind(fenced);
         assertThat(store.load(SESSION).orElseThrow().getSystemPrompt()).isEqualTo("raw");
+        assertThat(store.loadOwner(SESSION)).contains(Principal.user("alice"));
+    }
+
+    @Test
+    @DisplayName("loadOwner reaches the raw store's own narrow read rather than the interface default")
+    void loadOwnerIsForwarded() {
+        // A raw store whose full load fails: the interface default would go through it, a forward does not.
+        final InMemorySessionRecordStore narrowOnly = new InMemorySessionRecordStore() {
+            @Override
+            public Optional<SessionRecordView> load(SessionId sessionId) {
+                throw new AssertionError("loadOwner fell back to a full load");
+            }
+        };
+        narrowOnly.provision(SESSION, "agent:ops", Principal.user("alice"));
+
+        assertThat(new LateBoundFencedRecordStore(narrowOnly).loadOwner(SESSION)).contains(Principal.user("alice"));
+    }
+
+    @Test
+    @DisplayName("overrides every default of SessionRecordStore, so none answers for the wrapper")
+    void everyDefaultIsForwarded() {
+        final List<Method> inherited = Arrays.stream(SessionRecordStore.class.getMethods()).filter(Method::isDefault)
+                .filter(m -> !isDeclaredOn(LateBoundFencedRecordStore.class, m)).toList();
+
+        assertThat(inherited).as("LateBoundFencedRecordStore must forward these rather than inherit the default")
+                .isEmpty();
     }
 
     @Test
@@ -86,5 +119,14 @@ class LateBoundFencedRecordStoreTest {
     void bindsOnce() {
         store.bind(fenced);
         assertThatThrownBy(() -> store.bind(fenced)).isInstanceOf(IllegalStateException.class);
+    }
+
+    private static boolean isDeclaredOn(Class<?> type, Method method) {
+        try {
+            type.getDeclaredMethod(method.getName(), method.getParameterTypes());
+            return true;
+        } catch (NoSuchMethodException e) {
+            return false;
+        }
     }
 }

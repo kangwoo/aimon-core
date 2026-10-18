@@ -885,4 +885,32 @@ class InMemorySessionRecordStoreTest {
                 .contains(ALICE);
     }
 
+    @Test
+    void loadOwnerReadsTheOwnerAndIsEmptyWithoutOneOrWithoutARecord() {
+        final SessionId owned = SessionId.of("owned");
+        final SessionId unowned = SessionId.of("unowned");
+        repository.provision(owned, "agent-a", ALICE);
+        repository.provision(unowned, "agent-a");
+
+        assertThat(repository.loadOwner(owned)).contains(ALICE);
+        assertThat(repository.loadOwner(owned).orElseThrow().getDisplayName()).isEqualTo("Alice");
+        assertThat(repository.loadOwner(unowned)).isEmpty();
+        assertThat(repository.loadOwner(SessionId.of("missing"))).isEmpty();
+        assertThrows(NullPointerException.class, () -> repository.loadOwner(null));
+    }
+
+    @Test
+    void loadOwnerDoesNotGoThroughLoad() {
+        final InMemorySessionRecordStore store = new InMemorySessionRecordStore() {
+            @Override
+            public Optional<SessionRecordView> load(SessionId sessionId) {
+                throw new AssertionError("loadOwner must not load the whole record");
+            }
+        };
+        final SessionId id = SessionId.of("narrow");
+        store.provision(id, "agent-a", ALICE);
+
+        assertThat(store.loadOwner(id)).contains(ALICE);
+    }
+
 }

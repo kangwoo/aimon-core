@@ -7,6 +7,27 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: read a session's owner without its transcript — `SessionRecordStore#loadOwner` (#262)
+
+The only way to read the owner core records for a session (#253) was `SessionRecordStore.load(id)`, which decodes the
+whole record, transcript included. So each owner check cost time in proportion to the session's length, and
+aimon-sandbox makes one on every root bind. Design and departures: `docs/design/session/session-owner-narrow-read.md`;
+backlog SO-5 (closed).
+
+- **Opt-in default, no change for third-party stores.** `loadOwner(SessionId)` is a `default` method that returns
+  `load(id).flatMap(SessionRecordView::getOwner)`. A store that does not override it keeps compiling and answers
+  correctly, at the old cost.
+- **Every shipped store reads the owner alone.** Postgres selects the `owner` column, MongoDB projects `owner`, Redis
+  does one `HGET`, and the in-memory store returns the field without the deep copy `load` makes. No schema change or
+  migration. A corrupt owner fails with `SessionRecordStoreException`; it never reads as "no owner". A corrupt
+  transcript fails `load` but not `loadOwner`, because `loadOwner` never reads it.
+- **Forwarded through the fenced views.** `SessionStore.records()` (both fences) and the bootstrap's
+  `LateBoundFencedRecordStore` forward it unfenced, as they forward `load`, so the narrow read is not lost behind
+  them. A store that wraps another should do the same.
+- **Empty means no record or no owner.** A caller that must tell the two apart asks `exists(id)`.
+- Not yet: aimon-sandbox's `SessionOwnerLookup.recorded` still calls `load` until it moves to a core release that
+  contains this method (backlog SO-8).
+
 ### Added: per-execution environment attributes (`EnvironmentRequest#requestAttributes`)
 
 An `ExecutionEnvironmentProvider` could key placement on the agent or fork definition, or on the session, but never on

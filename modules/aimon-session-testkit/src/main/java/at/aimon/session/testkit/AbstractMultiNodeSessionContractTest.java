@@ -494,6 +494,8 @@ public abstract class AbstractMultiNodeSessionContractTest {
         b.getFuture().toCompletableFuture().get(10, TimeUnit.SECONDS);
 
         assertThat(nodes.sharedRepository().load(id).orElseThrow().getOwner()).contains(alice);
+        assertThat(nodes.sharedRepository().loadOwner(id)).as("the narrow read agrees with the full one")
+                .contains(alice);
     }
 
     @Test
@@ -519,6 +521,8 @@ public abstract class AbstractMultiNodeSessionContractTest {
         final Principal recorded = nodes.sharedRepository().load(id).orElseThrow().getOwner().orElseThrow();
         assertThat(recorded).isEqualTo(alice);
         assertThat(recorded.getDisplayName()).as("the display name crosses the wire too").isEqualTo("Alice");
+        assertThat(nodes.sharedRepository().loadOwner(id).orElseThrow().getDisplayName())
+                .as("the narrow read agrees with the full one").isEqualTo("Alice");
     }
 
     @Test

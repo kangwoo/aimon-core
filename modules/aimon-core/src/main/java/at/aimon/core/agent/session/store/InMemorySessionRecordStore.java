@@ -237,6 +237,14 @@ public class InMemorySessionRecordStore implements SessionRecordStore {
         return Optional.of(copySessionRecord(record));
     }
 
+    // The stored instance is read in place: Principal is immutable, and skipping the copy load() makes is the point.
+    @Override
+    public Optional<Principal> loadOwner(SessionId sessionId) {
+        Objects.requireNonNull(sessionId, "Session id cannot be null");
+        final SessionRecord record = storage.get(sessionId);
+        return record == null ? Optional.empty() : record.getOwner();
+    }
+
     @Override
     public void delete(SessionId sessionId) {
         Objects.requireNonNull(sessionId, "Session id cannot be null");

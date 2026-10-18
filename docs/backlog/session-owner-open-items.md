@@ -1,9 +1,13 @@
-# 세션 소유자 · 삭제 리스너 — 등록 항목 6건 (열림 5 · 닫힘 1)
+# 세션 소유자 · 삭제 리스너 — 등록 항목 8건 (열림 6 · 닫힘 2)
 
 출처는 [`../design/session/session-owner-deletion-event.md`](../design/session/session-owner-deletion-event.md)
 (#253) 의 구현이다. 그 문서 §8 의 열린 질문 가운데 **이 변경 밖으로 결과가 나가는 것**과, §9(구현 뒤 — 설계와 달라진
 점)가 새로 연 것 하나가 여기로 올라왔다. §8 의 Q4(Postgres 마이그레이션 정책)와 Q7(drain 경로에서 소유자를 주는
 메시지)은 설계대로 정해져 올리지 않는다.
+
+SO-7 · SO-8 의 출처는 SO-5 를 닫은 소유자 좁은 읽기(#262)
+[`../design/session/session-owner-narrow-read.md`](../design/session/session-owner-narrow-read.md) 의 §8 Q1 · Q2 다
+(그 문서 §9.3).
 
 `README.md` 의 규칙대로 **열림/닫힘의 정본은 이 문서**이고 설계 문서 §8 · §9 는 설계·구현 시점의 기록이다.
 
@@ -79,7 +83,7 @@ provision. 둘 다 "비어 있을 때만 쓴다" 만 하고 비교하지 않는�
 
 ---
 
-## SO-5 — 샌드박스의 `SessionOwnerLookup` 에 대응하는 이름 붙은 SPI 가 없다 · **열림**
+## SO-5 — 샌드박스의 `SessionOwnerLookup` 에 대응하는 이름 붙은 SPI 가 없다 · **닫힘** *(2026-10-18, #262)*
 
 **무엇을.** 코어가 `SessionOwnerResolver` 같은 이름 붙은 SPI 를 낼지, `SessionRecordView.getOwner()` 로 충분한지
 정한다.
@@ -91,6 +95,20 @@ provision. 둘 다 "비어 있을 때만 쓴다" 만 하고 비교하지 않는�
 **어디.** (2026-10-17) `SessionRecordStore.load` — side field 만 읽는 좁은 읽기가 없다.
 
 **언제 다시 볼까.** aimon-sandbox 가 이 seam 에 호스트 배선을 요구하거나, 소유자 조회가 프로파일에 보일 때.
+
+**닫음 (2026-10-18, #262).** `SessionRecordStore.loadOwner(id)` 가 소유자 하나만 읽는다. `load(id).flatMap(
+SessionRecordView::getOwner)` 로 떨어지는 `default` 라서 서드파티 저장소는 고치지 않아도 같은 답을 낸다(비용만 예전
+그대로). 출하되는 저장소는 모두 재정의한다 — Postgres 는 `owner` 열 하나, MongoDB 는 프로젝션, Redis 는 `HGET`,
+in-memory 는 필드를 복사 없이. 감싸는 두 저장소(`DefaultSessionStore` 의 펜스 뷰, `LateBoundFencedRecordStore`)는
+`load` 처럼 펜스 없이 넘긴다. 빈 답은 "레코드 없음" 과 "소유자 없음" 을 함께 뜻한다 — 샌드박스의
+`require-principal` 경로는 둘을 가르지 않는다. 설계와 이탈:
+[`../design/session/session-owner-narrow-read.md`](../design/session/session-owner-narrow-read.md).
+
+- **"이름 붙은 SPI" 쪽은 하지 않기로 했다.** 이 항목의 제목은 `SessionOwnerResolver` 같은 별도 SPI 를 물었다. 저장소가
+  이미 소유자를 갖고 있으므로 SPI 를 하나 더 두면 호스트가 이을 것만 늘어난다. 실제 비용 — 소유자 하나를 위해 전사
+  전체를 디코드하는 것 — 은 저장소의 좁은 읽기로 닫힌다.
+- **샌드박스는 아직 이 이득을 받지 않는다.** `SessionOwnerLookup.recorded` 가 `loadOwner` 를 부르게 바뀌어야 한다.
+  그 일은 SO-8 이다.
 
 ---
 
@@ -121,3 +139,38 @@ Redis 의 `""` 거부는 라우터를 거치지 않고 저장소를 직접 부�
   `:` 쪽은 어디에도 등록돼 있지 않았다. 이 결함은 #253 이전부터 있었다.
 - **심각도 (규칙 셋).** 적힌 것보다 무겁다. "같은 잘못된 요청이 백엔드에 따라 다르게 실패한다" 가 아니라 "잘못된
   요청 한 번이 그 세션 id 를 쓸 수 없게 만든다" 였다. 다만 호출자가 잘못된 이름을 보낼 때만 일어난다.
+
+---
+
+## SO-7 — `SessionRecordStore` 하나만을 위한 계약 스위트가 없다 · **열림**
+
+**무엇을.** 세 백엔드의 `*SessionRecordStoreIntegrationTest` 가 각자 반복하는 검사를 `aimon-session-testkit` 의
+`AbstractSessionRecordStoreContractTest` 로 뽑아, 모든 백엔드(그리고 서드파티 저장소)가 같은 계약을 통과하게 한다.
+
+**왜.** 레코드 저장소 계약 — provision 의 first-wins, 쓰기마다 side field 를 지키는 것, `loadOwner` 가 `load` 와 같은
+답을 내는 것 — 은 백엔드마다 따로 쓴 테스트로만 지켜진다. 멀티 노드 계약 스위트는 이것을 대신하지 못한다.
+`TwoNodeSessionHarness` 가 두 노드에 `InMemorySessionRecordStore` 하나를 나눠 주므로, 백엔드 실행에서도 레코드
+저장소는 in-memory 다. #253 이 그것을 적었고(DV-9), #262 의 설계는 그것을 놓쳤다(설계 §9.1 DV-1). 관측 가능한 결과는
+**새 백엔드나 새 계약 메서드가 셋 중 한 테스트에서만 검사되고 나머지에서 빠져도 빌드가 모른다**는 것이다.
+
+**어디.** (2026-10-18) `TwoNodeSessionHarness` 의 `sharedRepository`, 세 백엔드의
+`*SessionRecordStoreIntegrationTest`.
+
+**언제 다시 볼까.** `SessionRecordStore` 에 메서드가 하나 더 붙을 때, 또는 네 번째 백엔드가 생길 때.
+
+---
+
+## SO-8 — aimon-sandbox 는 아직 소유자를 위해 레코드 전체를 읽는다 · **열림**
+
+**무엇을.** aimon-sandbox 의 `SessionOwnerLookup.recorded(...)` 가 `load(id).flatMap(SessionRecordView::getOwner)`
+대신 `loadOwner(id)` 를 부르게 하고, 그것이 실릴 코어 릴리스를 정한다.
+
+**왜.** SO-5 의 비용은 코어가 아니라 샌드박스의 hot path(메인 턴 루트 바인드마다, 세션 옵션 호출마다)에서 난다.
+코어가 좁은 읽기를 내도 샌드박스가 옛 호출을 쓰는 동안은 **소유자 확인 한 번의 비용이 여전히 전사 길이에 비례한다.**
+샌드박스는 `loadOwner` 를 담은 코어 릴리스가 나와야 바꿀 수 있다.
+
+**어디.** (2026-10-18) aimon-sandbox `SessionOwnerLookup.recorded` 와 그 javadoc 의 "core has no narrower read yet"
+문장(aimon-sandbox `847dad2`). 이 저장소는 고치지 않는다.
+
+**언제 다시 볼까.** `loadOwner` 를 담은 코어 릴리스가 나갈 때. 그때 aimon-sandbox 에 이슈를 연다(#27 에 이어서).
+

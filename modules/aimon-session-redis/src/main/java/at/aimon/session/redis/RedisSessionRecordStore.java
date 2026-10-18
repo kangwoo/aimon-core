@@ -91,6 +91,14 @@ import io.lettuce.core.api.sync.RedisCommands;
  * defensive coding: {@code HSET} creates the hash it writes to, so without it a side-field write against a session that
  * was never provisioned would conjure a record holding only that field, where the SPI says it must be a no-op.
  *
+ * <h2>Reads</h2>
+ *
+ * <p>
+ * {@link #load(SessionId) load} is one {@code HGETALL} and decodes every field, transcript included.
+ * {@link #loadOwner(SessionId) loadOwner} is one {@code HGET} of {@code owner}, so an owner check costs the same
+ * however
+ * long the session has run — and a transcript that will not decode fails {@code load} but not it.
+ *
  * <h2>Fencing</h2>
  *
  * <p>
@@ -285,6 +293,21 @@ public final class RedisSessionRecordStore implements SessionRecordStore {
     }
 
     @Override
+    public Optional<Principal> loadOwner(SessionId sessionId) {
+        Objects.requireNonNull(sessionId, "sessionId must not be null");
+        final String owner;
+        try {
+            // null for a missing key and for a missing field alike; both mean "no owner".
+            owner = commands.hget(recordKey(sessionId), F_OWNER);
+        } catch (RedisException e) {
+            throw failure("loadOwner", sessionId, e);
+        }
+        // An "" here — PROVISION_SCRIPT never writes one, it is its ARGV sentinel only — decodes as no owner too, the
+        // same answer load() gives for it.
+        return Optional.ofNullable(toOwner(sessionId, owner));
+    }
+
+    @Override
     public void delete(SessionId sessionId) {
         Objects.requireNonNull(sessionId, "sessionId must not be null");
         try {
@@ -376,6 +399,15 @@ public final class RedisSessionRecordStore implements SessionRecordStore {
     private static int intValue(Map<String, String> hash) {
         final String raw = hash.get(F_COMPACTION_FAILURE_COUNT);
         return raw == null ? 0 : Integer.parseInt(raw);
+    }
+
+    private static Principal toOwner(SessionId sessionId, String owner) {
+        try {
+            return SessionRecordCodec.decodeOwner(owner);
+        } catch (RuntimeException e) {
+            // As in toRecord: reporting a corrupt owner as absent would let it pass as "no owner".
+            throw new SessionRecordStoreException("Failed to decode stored session owner for " + sessionId, e);
+        }
     }
 
     private static SessionRecordStoreException failure(String operation, SessionId sessionId, Exception cause) {

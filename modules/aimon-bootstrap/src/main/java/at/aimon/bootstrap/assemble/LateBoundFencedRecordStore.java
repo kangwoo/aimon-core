@@ -111,6 +111,13 @@ public final class LateBoundFencedRecordStore implements SessionRecordStore {
         return raw.load(sessionId);
     }
 
+    // Forwarded rather than inherited: the interface default reads the whole record, and the store this wraps may read
+    // the owner alone.
+    @Override
+    public Optional<Principal> loadOwner(SessionId sessionId) {
+        return raw.loadOwner(sessionId);
+    }
+
     @Override
     public void delete(SessionId sessionId) {
         requireBound().delete(sessionId);

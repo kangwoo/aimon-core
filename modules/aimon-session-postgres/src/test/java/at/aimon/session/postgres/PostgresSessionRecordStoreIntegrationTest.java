@@ -1,7 +1,11 @@
 package at.aimon.session.postgres;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +26,7 @@ import com.zaxxer.hikari.HikariDataSource;
 
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.exception.SessionRecordStoreException;
 import at.aimon.core.agent.session.store.SessionRecordView;
 import at.aimon.core.agent.session.store.SessionTotals;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
@@ -345,5 +350,51 @@ class PostgresSessionRecordStoreIntegrationTest {
         assertThat(view).isPresent();
         assertThat(view.orElseThrow().getSystemPrompt()).isNull();
         assertThat(view.orElseThrow().getMessages()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("loadOwner is empty without a record or an owner, and reads the owner back once there is one")
+    void loadOwnerReadsTheOwner() {
+        final SessionId id = SessionId.of("rec-load-owner");
+        final Principal alice = Principal.user("u-1", "Alice");
+
+        assertThat(store.loadOwner(id)).isEmpty();
+        store.provision(id, "agent-A");
+        assertThat(store.loadOwner(id)).isEmpty();
+        store.provision(id, "agent-A", alice);
+        assertThat(store.loadOwner(id)).contains(alice);
+        assertThat(store.loadOwner(id).orElseThrow().getDisplayName()).isEqualTo("Alice");
+    }
+
+    @Test
+    @DisplayName("loadOwner selects the owner column alone: a transcript that fails load does not fail it")
+    void loadOwnerDoesNotDecodeTheTranscript() throws SQLException {
+        final SessionId id = SessionId.of("rec-load-owner-narrow");
+        final Principal alice = Principal.user("u-1", "Alice");
+        store.provision(id, "agent-A", alice);
+        rawUpdate("UPDATE session_record SET transcript = ? WHERE session_id = ?", "not-a-transcript", id);
+
+        assertThatThrownBy(() -> store.load(id)).isInstanceOf(SessionRecordStoreException.class);
+        assertThat(store.loadOwner(id)).contains(alice);
+    }
+
+    @Test
+    @DisplayName("an owner that will not decode fails loadOwner rather than reading as no owner")
+    void loadOwnerRefusesACorruptOwner() throws SQLException {
+        final SessionId id = SessionId.of("rec-load-owner-corrupt");
+        store.provision(id, "agent-A", Principal.user("u-1", "Alice"));
+        rawUpdate("UPDATE session_record SET owner = ?::jsonb WHERE session_id = ?", "{\"displayName\":\"x\"}", id);
+
+        assertThatThrownBy(() -> store.loadOwner(id)).isInstanceOf(SessionRecordStoreException.class)
+                .hasMessageContaining("Failed to decode stored session owner for");
+    }
+
+    private static void rawUpdate(String sql, String value, SessionId id) throws SQLException {
+        try (Connection c = PostgresTestSupport.dataSource().getConnection();
+                PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, value);
+            ps.setString(2, id.value());
+            assertThat(ps.executeUpdate()).isEqualTo(1);
+        }
     }
 }
