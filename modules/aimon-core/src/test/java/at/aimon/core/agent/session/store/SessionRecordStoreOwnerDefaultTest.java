@@ -2,9 +2,12 @@ package at.aimon.core.agent.session.store;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 import java.util.Optional;
 
@@ -74,12 +77,12 @@ class SessionRecordStoreOwnerDefaultTest {
     }
 
     @Test
-    @DisplayName("loadOwner without an override refuses a null id itself")
+    @DisplayName("loadOwner without an override refuses a null id itself, before it delegates to load")
     void loadOwnerFallbackRefusesANullId() {
         final SessionRecordStore legacy = mock(SessionRecordStore.class, CALLS_REAL_METHODS);
-        doReturn(Optional.empty()).when(legacy).load(null);
 
         assertThatExceptionOfType(NullPointerException.class).isThrownBy(() -> legacy.loadOwner(null));
+        verify(legacy, never()).load(any());
     }
 
     @Test
