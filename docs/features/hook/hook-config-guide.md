@@ -307,13 +307,17 @@ WARN 이 아니라 **시작 실패**다(`… is invalid: unknown event 'preTol' 
   커맨드는 **돌지 않는다** — 가드 이벤트에서는 `failOpen` 이 아닌 한 막는다. 그 경우 제공자를 올리거나 `"shell": "host"` 를 쓴다.
 - **실행이 없는 발화.** 에이전트 단위 워크플로 러너(백그라운드 `Workflow`)가 띄운 SubAgent 의 `subagentStart` 는 뒤에 실행이
   없으므로 `"shell"` 이 없으면 호스트에서 돈다. 그 SubAgent 가 루프를 돌았다면 `subagentStop` 은 SubAgent 자신의 환경에서 돈다.
+  실행이 없다는 판단은 **스폰한 쪽에 환경이 있었는지**로 한다. 그래서 환경을 싣지 않은 `ToolContext` 를 직접 만들어 `Task` 를
+  부르면, 그 컨텍스트의 `preTool` 은 `NO_ENVIRONMENT` 로 돌지 않는데 그것이 띄운 `subagentStart` 는 실행이 없는 발화로 읽혀
+  호스트에서 돈다. 조립된 런타임에서는 생기지 않는 경우다.
 - **`subagentStart` 와 `subagentStop`.** `subagentStart` 는 스폰한 쪽의 환경이다 — SubAgent 의 환경은 아직 정해지지 않았다.
   `subagentStop` 은 **SubAgent 의 환경**이다(SubAgent 가 환경을 정하지 못하고 끝났으면 스폰한 쪽의 것).
 - **워크플로 격리 브랜치.** `isolate=true` 단계 안에서도 커맨드는 브랜치의 기반 환경에서 돈다 — 로컬 제공자에서는 브랜치
   디렉터리(`.worktrees/{key}/`)가 아니라 워크스페이스 루트다. 브랜치의 파일은 그 기준으로 `.worktrees/{key}/…` 에 있다. 커맨드가
   상대 경로로 쓴 파일은 워크스페이스 루트에 남고 병합에서 승격되지 않는다.
 - **`asyncRewake`.** rewake 가능한 이벤트에서 `asyncRewake` 를 선언하고 `"shell"` 이 없는 커맨드는 **호스트**에 남는다 — rewake
-  재발화는 실행 밖에서 일어나기 때문이다. 시작할 때 그렇게 한다는 WARN 이 남고, `"shell": "host"` 를 적으면 사라진다.
+  재발화는 실행 밖에서 일어나기 때문이다. 설정을 적용할 때마다(시작할 때와 핫 리로드마다) 그렇게 한다는 WARN 이 다시 남고,
+  `"shell": "host"` 를 적으면 사라진다.
 - **스크립트 — `AIMON_HOOK_DIR`.** 커맨드 문자열에 `AIMON_HOOK_DIR` 가 있으면 그 변수가 선언한 층의 `hooks/` 디렉터리를 가리킨다
   (사용자 층 `~/.aimon/hooks/`, 프로젝트 · 로컬 층 `<project>/.aimon/hooks/`). 호스트에서 돌면 그 경로 그대로이고, 환경에서
   돌면 그 환경에 스테이징한 사본의 경로다 — 그래서 `bash "$AIMON_HOOK_DIR/guard.sh"` 는 어느 배치에서나 같다. 커맨드가 그 변수를

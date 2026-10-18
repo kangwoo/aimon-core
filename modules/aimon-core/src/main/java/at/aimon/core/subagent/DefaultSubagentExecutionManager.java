@@ -1026,7 +1026,9 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
     // Both are empty when a runtime-level runner spawned the fork from no calling execution, and then the firing is
     // marked as having no execution behind it (spawnedOutsideExecution) — for subagentStop only when the fork never
     // resolved an environment either, since a fork that ran had an execution of its own. A hooks.json command with no
-    // "shell" key runs on the host for such a firing.
+    // "shell" key runs on the host for such a firing. The launch context cannot say whether a calling execution
+    // exists, only whether it carries an environment, so a hand-built ToolContext with no environment that calls Task
+    // is read as "no execution" too (documented on HookContext#hasExecution, #273 review).
     //
     // The cancellation signal they carry is the one that governs the fork, which is the answer to "whose work is this
     // hook doing": the spawner's for a foreground fork, the per-task coordinator's for a background one — it cascades

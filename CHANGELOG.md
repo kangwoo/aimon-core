@@ -28,7 +28,9 @@ workspace it polices under a provider that gives executions another environment.
   `subagentStop` only when that subagent never resolved an environment — runs on the host
   (`HookContext.hasExecution()`). A context that has an execution but carries no environment (a hand-built
   `ToolContext`, a third-party `CompactionGuard` that does not forward one) is now `notRun(NO_ENVIRONMENT)` where it
-  used to run on the host; guards block. The remedy is `"shell": "host"`.
+  used to run on the host; guards block. The remedy is `"shell": "host"`. One exception: `subagentStart` and
+  `subagentStop` judge "no execution" from the spawner's environment, so the `subagentStart` of a `Task` called from
+  such a hand-built `ToolContext` reads as a firing with no execution and runs on the host.
 - **An isolated exec.** A command placed in the environment runs as a separate exec, not in the agent's shell session:
   it sees none of the agent's `export`s (`PATH`, `BASH_ENV` …) or its `cd`, and starts at the environment's root with
   the environment's base variables. Core sets no `PATH`. New SPI: `ExecutionOptions.isIsolated()` /
@@ -50,7 +52,8 @@ workspace it polices under a provider that gives executions another environment.
   scripts become readable by the model's file tools there; `"shell": "host"` keeps them out of reach (EE-109). A
   command placed in an environment that names a host `.aimon` path and exits 126/127 gets a hint in its deny reason.
 - **`asyncRewake`.** A command handler with no `"shell"` that declares `asyncRewake` on a rewake-capable event stays on
-  the host (the replay fires outside any execution), with a WARN that `"shell": "host"` silences.
+  the host (the replay fires outside any execution), with a WARN that `"shell": "host"` silences. The WARN is logged
+  each time the config is applied, so it repeats on every hot reload.
 - **`"shell"` is strict.** An unknown value, or `"shell"` on a handler that is not a `command`, fails the parse:
   startup stops and a hot reload keeps the previous config.
 - **`subagentStop` runs in, and carries, the fork's environment** (EE-52); `subagentStart` keeps the spawner's, since

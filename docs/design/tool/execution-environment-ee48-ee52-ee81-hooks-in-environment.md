@@ -892,6 +892,14 @@ The final design review passed with seven non-blocking notes. All seven were tak
    in code) is inapplicable, by the same rule as a missing `hooks/` directory.
 9. **Resource names.** The staged copies are filed under `hooks-user`, `hooks-project` and `hooks-local`. The project and
    local layers share `<project>/.aimon/hooks/`, so if both name the variable the directory is staged under both names.
+10. **The subagent hooks read "no execution" from the spawner's environment** (PR review, round 1). §2.1 derives
+    `spawnedOutsideExecution` from an empty `SubagentLaunchContext#getExecutionEnvironment()`. A spawner that has an
+    execution but no environment, such as a hand-built `ToolContext` that calls `Task`, is therefore read as "no
+    execution", and its `subagentStart` runs a default-placed command on the host, while its own `preTool` is
+    `NO_ENVIRONMENT`. The documentation now carves this case out (`HookContext#hasExecution()`, the CHANGELOG and the
+    guide). The alternative was a "has a calling execution" flag on the launch context, set by `TaskTool`,
+    `WorkflowTool` and `SubagentBackedSkillForkExecutor`. It was not built: no assembled runtime produces the case, and
+    `subagentStart` is not a guard event.
 
 ### 10.3 What the design left to the builder
 

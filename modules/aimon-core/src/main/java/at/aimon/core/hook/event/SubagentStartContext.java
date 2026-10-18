@@ -135,7 +135,9 @@ public final class SubagentStartContext implements HookContext {
      *
      * <p>
      * {@code false} when a runtime-level runner spawned the fork from no calling execution and the fork's environment
-     * is not resolved yet when this event fires, so the environment is always the spawner's.
+     * is not resolved yet when this event fires, so the environment is always the spawner's. The firing site derives
+     * it from the spawner's environment being absent, so a spawner with an execution but no environment (a hand-built
+     * {@code ToolContext}) also answers {@code false}; see {@link HookContext#hasExecution()}.
      */
     @Override
     public boolean hasExecution() {

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: 2a1a59b2
+source_commit: 0f7a0c73
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -332,7 +332,10 @@ used only when there is no execution. Each handler can say where with a `"shell"
   the provider, or use `"shell": "host"`.
 - **A firing with no execution.** The `subagentStart` of a subagent launched by the agent-scoped workflow runner
   (background `Workflow`) has no execution behind it, so without `"shell"` it runs on the host. If that subagent ran its
-  loop, its `subagentStop` runs in the subagent's own environment.
+  loop, its `subagentStop` runs in the subagent's own environment. Whether there is an execution is judged by **whether
+  the spawner had an environment**. So when a hand-built `ToolContext` that carries no environment calls `Task`, that
+  context's `preTool` is not run (`NO_ENVIRONMENT`), but the `subagentStart` it spawns reads as a firing with no
+  execution and runs on the host. An assembled runtime never produces this case.
 - **`subagentStart` and `subagentStop`.** `subagentStart` gets the spawner's environment — the subagent's is not
   resolved yet. `subagentStop` gets the **subagent's environment** (the spawner's when the subagent ended before it
   resolved one).
@@ -341,8 +344,8 @@ used only when there is no execution. Each handler can say where with a `"shell"
   branch's files are at `.worktrees/{key}/…`. Files the command writes by relative path stay in the workspace root and
   are not promoted by a merge.
 - **`asyncRewake`.** A command with no `"shell"` that declares `asyncRewake` on a rewake-capable event stays on the
-  **host** — the rewake replay fires outside any execution. A WARN says so at startup; writing `"shell": "host"` silences
-  it.
+  **host** — the rewake replay fires outside any execution. A WARN says so each time the config is applied (at startup
+  and again on every hot reload); writing `"shell": "host"` silences it.
 - **Scripts — `AIMON_HOOK_DIR`.** When the command string contains `AIMON_HOOK_DIR`, the variable names the `hooks/`
   directory of the layer that declared it (`~/.aimon/hooks/` for the user layer, `<project>/.aimon/hooks/` for the
   project and local layers). On the host it is that path itself; in an environment it is the path of the copy staged
