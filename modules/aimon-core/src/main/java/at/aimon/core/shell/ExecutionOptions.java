@@ -36,6 +36,7 @@ public final class ExecutionOptions {
     private final String stdin;
     private final boolean background;
     private final boolean hook;
+    private final boolean isolated;
     private final ShellCancellation cancellation;
 
     private ExecutionOptions(Builder builder) {
@@ -49,6 +50,7 @@ public final class ExecutionOptions {
         this.stdin = builder.stdin;
         this.background = builder.background;
         this.hook = builder.hook;
+        this.isolated = builder.isolated;
         this.cancellation = Objects.requireNonNull(builder.cancellation, "cancellation");
     }
 
@@ -67,6 +69,7 @@ public final class ExecutionOptions {
      * <li>No capture-limit override (implementation default is used)
      * <li>Not a background command ({@link #isBackground()} is {@code false})
      * <li>Not a hook command ({@link #isHook()} is {@code false})
+     * <li>Not an isolated command ({@link #isIsolated()} is {@code false})
      * <li>No cancellation ({@link ShellCancellation#none()})
      * </ul>
      *
@@ -203,6 +206,37 @@ public final class ExecutionOptions {
     }
 
     /**
+     * Whether the command must run as a fresh shell of this environment would run it, reading and writing no
+     * per-session state.
+     *
+     * <p>
+     * The contract, for a shell that declares {@link ShellFeature#ISOLATED_EXECUTION}: the command starts in the
+     * environment's root (unless {@link #getWorkingDirectory()} names a directory) with the environment's <b>base</b>
+     * variables plus {@link #getEnvironment()}. It reads no per-session state &mdash; no {@code cd}, no
+     * {@code export} a previous command left behind &mdash; saves none, and takes no session lock. Whatever an earlier
+     * command of the model did to its shell therefore cannot reach this one: that is what lets an operator's policy
+     * hook ({@code hooks.json}) run inside an execution environment without the agent being able to steer it.
+     *
+     * <p>
+     * Independent of {@link #isHook()}, which may still start from the session's current state; the configured hook
+     * path sets both. A shell that keeps no state between commands &mdash; {@code LocalShell} &mdash; honours the flag
+     * trivially. A shell that does not declare the feature ignores the flag, so a caller that needs isolation asks
+     * {@link VirtualShell#supports(ShellFeature)} first and refuses to run without it. A wrapper that derives new
+     * options must carry it over &mdash; {@link #toBuilder()} does.
+     *
+     * <p>
+     * <b>Branches are views.</b> An environment that declares its lineage through
+     * {@code ExecutionEnvironment.isolatedFrom()} is a view of its base environment, not an environment with a root of
+     * its own, and core runs isolated commands on that base environment's shell. A provider whose
+     * {@code isolate(...)} returns a genuinely separate environment must not declare lineage that way.
+     *
+     * @return {@code true} for a command that must not see or leave per-session state
+     */
+    public boolean isIsolated() {
+        return isolated;
+    }
+
+    /**
      * Returns the signal that stops this command while it runs.
      *
      * <p>
@@ -224,7 +258,8 @@ public final class ExecutionOptions {
     public Builder toBuilder() {
         final Builder builder = new Builder().timeout(timeout).environment(environment)
                 .workingDirectory(workingDirectory).charset(charset).redirectErrorStream(redirectErrorStream)
-                .unixShell(unixShell).stdin(stdin).background(background).hook(hook).cancellation(cancellation);
+                .unixShell(unixShell).stdin(stdin).background(background).hook(hook).isolated(isolated)
+                .cancellation(cancellation);
         if (maxCaptureBytes != null) {
             builder.maxCaptureBytes(maxCaptureBytes);
         }
@@ -245,6 +280,7 @@ public final class ExecutionOptions {
         private String stdin;
         private boolean background;
         private boolean hook;
+        private boolean isolated;
         private ShellCancellation cancellation = ShellCancellation.none();
 
         private Builder() {
@@ -379,6 +415,19 @@ public final class ExecutionOptions {
          */
         public Builder hook(boolean hook) {
             this.hook = hook;
+            return this;
+        }
+
+        /**
+         * Marks the command as isolated from every per-session state of the shell (default {@code false}).
+         *
+         * @param isolated
+         *            whether the command must neither read nor leave per-session state
+         * @return this builder
+         * @see ExecutionOptions#isIsolated()
+         */
+        public Builder isolated(boolean isolated) {
+            this.isolated = isolated;
             return this;
         }
 

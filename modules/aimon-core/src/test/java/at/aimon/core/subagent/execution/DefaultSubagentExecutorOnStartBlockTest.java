@@ -215,7 +215,9 @@ class DefaultSubagentExecutorOnStartBlockTest {
                 .put(HookConfigSource.PROJECT, new JacksonHookConfigParser().parse(
                         "{\"hooks\":{\"onStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"./gate.sh\"}]}]}}"))
                 .build();
-        new HookRegistryApplier(new HostShellActionExecutor(hostShell), null, null, Map.of())
+        // The same executor in both places: what is under test is the block, not where the command runs (#273).
+        final HostShellActionExecutor hostExecutor = new HostShellActionExecutor(hostShell);
+        new HookRegistryApplier(hostExecutor, hostExecutor, null, null, Map.of())
                 .apply(new HookConfigMerger().merge(layered), hooks);
 
         final SubagentExecutionResult result = execute(null);

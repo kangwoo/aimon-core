@@ -7,6 +7,75 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed (behaviour change): `hooks.json` commands and fork hooks run in the execution's environment (#273)
+
+> **Required with a sandbox provider: aimon-sandbox with `ShellFeature.ISOLATED_EXECUTION` support, or `"shell": "host"`
+> on each `hooks.json` command handler.** A command placed in an environment whose shell does not declare the feature is
+> not run (`ISOLATION_UNSUPPORTED`), and a guard then blocks every matching tool call. No shipped assembly combines
+> `hooks.json` with the sandbox today; the CLI pins the local provider, whose `LocalShell` declares the feature. The
+> sandbox side is tracked as EE-111 and [kangwoo/aimon-sandbox#31](https://github.com/kangwoo/aimon-sandbox/issues/31).
+
+A hook now runs in the environment of the execution it is about, and on the host only when there is no execution.
+Before, operator `hooks.json` commands always ran on a host shell, so a `preTool` policy hook could not see the
+workspace it polices under a provider that gives executions another environment. Design and departures:
+`docs/design/tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md`; backlog EE-48, EE-52 and EE-81
+(closed), EE-109 – EE-112 (new).
+
+- **Placement.** A `command` handler with no `"shell"` key runs in the execution's environment on events that fire
+  inside an execution (`preTool`, `postTool` and the rest), and on the host on `onSessionStart`, `onSessionEnd` and
+  `onConfigReload`. `"shell": "host"` keeps a handler on the host on every event; `"shell": "environment"` forces the
+  environment (skipped with a WARN on the three out-of-execution events). A firing with no execution behind it — the
+  `subagentStart` of a subagent the agent-scoped workflow runner (background `Workflow`) launched, and its
+  `subagentStop` only when that subagent never resolved an environment — runs on the host
+  (`HookContext.hasExecution()`). A context that has an execution but carries no environment (a hand-built
+  `ToolContext`, a third-party `CompactionGuard` that does not forward one) is now `notRun(NO_ENVIRONMENT)` where it
+  used to run on the host; guards block. The remedy is `"shell": "host"`. One exception: `subagentStart` and
+  `subagentStop` judge "no execution" from the spawner's environment, so the `subagentStart` of a `Task` called from
+  such a hand-built `ToolContext` reads as a firing with no execution and runs on the host.
+- **An isolated exec.** A command placed in the environment runs as a separate exec, not in the agent's shell session:
+  it sees none of the agent's `export`s (`PATH`, `BASH_ENV` …) or its `cd`, and starts at the environment's root with
+  the environment's base variables. Core sets no `PATH`. New SPI: `ExecutionOptions.isIsolated()` /
+  `Builder.isolated(boolean)` (carried by `toBuilder()`) and `ShellFeature.ISOLATED_EXECUTION`, declared by
+  `LocalShell`. In an isolated workflow branch the command runs on the branch's base environment (the end of
+  `isolatedFrom()`), so under the local provider it runs at the workspace root, not in `.worktrees/{key}/`; relative
+  writes land in the workspace root and are not promoted by a merge. Skill-declared hooks are not isolated and are
+  unchanged.
+- **The CLI's `hooks.json` commands run in the workspace root, for every event.** The host shell used to run in the
+  JVM's `user.dir`; it is now rooted at the workspace root (the jar's directory under `java -jar`, otherwise
+  `user.dir`), where environment-placed commands, the agent's `Bash` and the project-layer `hooks.json` already are.
+  Nothing changes when the two are the same (an IDE run, `./gradlew :aimon-cli:run`, launching from the jar's
+  directory). Under `java -jar modules/aimon-cli/build/libs/aimon-cli-*.jar` run from the repository root, relative
+  paths in commands now resolve against the jar's directory.
+- **`AIMON_HOOK_DIR`.** A command that names it gets its layer's `hooks/` directory: the host path on the host, a copy
+  staged into the environment otherwise (re-scanned at every firing, so an edited script runs from the next firing). A
+  missing `hooks/` makes the handler inapplicable (startup stops under a guard event); a staging failure is
+  `notRun(HOOK_DIR_STAGING_FAILED)`. A staged copy sits in the agent-writable `.aimon-staged/`, and the user layer's
+  scripts become readable by the model's file tools there; `"shell": "host"` keeps them out of reach (EE-109,
+  [#275](https://github.com/kangwoo/aimon-core/issues/275)). A
+  command placed in an environment that names a host `.aimon` path and exits 126/127 gets a hint in its deny reason.
+- **`asyncRewake`.** A command handler with no `"shell"` that declares `asyncRewake` on a rewake-capable event stays on
+  the host (the replay fires outside any execution), with a WARN that `"shell": "host"` silences. The WARN is logged
+  each time the config is applied, so it repeats on every hot reload.
+- **`"shell"` is strict.** An unknown value, or `"shell"` on a handler that is not a `command`, fails the parse:
+  startup stops and a hot reload keeps the previous config.
+- **`subagentStop` runs in, and carries, the fork's environment** (EE-52); `subagentStart` keeps the spawner's, since
+  the fork's is not resolved yet. `SubagentExecutionResult` gains `withExecutionEnvironment` /
+  `getExecutionEnvironment()` (a live handle, not part of the value). Under today's sandbox the difference is only the
+  fork's `exec:` shell state, which an isolated `hooks.json` command does not read.
+- **A fork-mode skill body's `${AIMON_SKILL_DIR}` is the fork's staged path** when the fork runs in another
+  environment and the body names the variable (EE-81). A staging failure there fails the fork before `onStart`. New
+  API: `ForkGoalRenderer`, `SubagentLaunchContext.Builder#forkGoalRenderer`,
+  `SubagentExecutionRequest.Builder#forkGoalRenderer`, `SkillRenderContextAccess.builderFor(Skill, ToolContext,
+  ExecutionEnvironment)`, `RenderContext#toBuilder()` and a default `SkillForkExecutor#fork(Skill, String,
+  ForkGoalRenderer, ToolContext)` that a custom executor need not override (it then keeps the spawner's path).
+- **Embedders.** `HookRegistryApplier` takes a host and an environment executor; the four-argument constructor is
+  deprecated and now feeds only host-placed handlers, as does `HookHotReloadBootstrap.Builder#shellExecutor(...)`. The
+  environment side defaults to the new `IsolatedShellActionExecutor`; `Builder#environmentShellExecutor(...)` replaces
+  it, and a replacement must export `AIMON_HOOK_DIR` itself (`ShellAction#getScriptDirectory()`). Also new:
+  `ExecutionOrHostShellActionExecutor`, `HookScriptDirectory`, `HookHandlerSpec.Shell` / `getShell()`,
+  `ShellHookOutcome.Unrun.ISOLATION_UNSUPPORTED` and `HOOK_DIR_STAGING_FAILED`, `SkillHookEnv.AIMON_HOOK_DIR`,
+  `SubagentStartContext` / `SubagentStopContext.Builder#spawnedOutsideExecution`.
+
 ### Fixed: scheduled routine forks are charged to the task owner's usage quota (#267)
 
 A scheduled routine called tools without a turn, so its steps' context carried no `QuotaGuard`, and a `Task`,

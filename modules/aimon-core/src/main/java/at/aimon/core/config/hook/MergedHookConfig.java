@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * The flattened result of merging the layered configs into a single per-event dispatch list.
@@ -45,6 +46,18 @@ public final class MergedHookConfig {
     public String describe(HookConfigSource source) {
         Objects.requireNonNull(source, "source cannot be null");
         return fileLabel(origins.get(source), source);
+    }
+
+    /**
+     * Returns the file a layer was read from, so the applier can find the {@code hooks/} directory next to it.
+     *
+     * @param source
+     *            the layer (must not be null)
+     * @return the file, or empty when the layer's file is not known (a config assembled in code)
+     */
+    public Optional<Path> origin(HookConfigSource source) {
+        Objects.requireNonNull(source, "source cannot be null");
+        return Optional.ofNullable(origins.get(source));
     }
 
     /**

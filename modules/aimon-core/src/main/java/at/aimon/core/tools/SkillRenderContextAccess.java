@@ -11,8 +11,10 @@ import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.base.Principal;
+import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.StagedResource;
 import at.aimon.core.skill.Skill;
+import at.aimon.core.skill.render.DefaultSkillContentRenderer;
 import at.aimon.core.skill.render.RenderContext;
 import at.aimon.core.skill.render.SkillRenderContexts;
 
@@ -84,6 +86,36 @@ public final class SkillRenderContextAccess {
     public static RenderContext.Builder builderFor(Skill skill, ToolContext context) {
         Objects.requireNonNull(skill, "Skill cannot be null");
         Objects.requireNonNull(context, "Context cannot be null");
+        // The run's own environment, looked up only when there is something to stage.
+        return builderFor(skill, context, null, false);
+    }
+
+    /**
+     * {@link #builderFor(Skill, ToolContext)}, staging the skill into the given environment instead of the context's
+     * own (EE-81): a fork-mode skill's body is rendered again for the fork, in the environment the fork was placed in.
+     * Every other field still comes from {@code context}, the spawner's.
+     *
+     * @param skill
+     *            The skill being rendered (must not be null)
+     * @param context
+     *            The tool context of the invoking run (must not be null)
+     * @param environment
+     *            The environment to stage the skill into (must not be null)
+     * @return A pre-populated builder (never null)
+     * @throws at.aimon.core.environment.exception.StagingException
+     *             if the skill cannot be staged there
+     * @throws at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException
+     *             if that environment is unavailable
+     */
+    public static RenderContext.Builder builderFor(Skill skill, ToolContext context, ExecutionEnvironment environment) {
+        Objects.requireNonNull(skill, "Skill cannot be null");
+        Objects.requireNonNull(context, "Context cannot be null");
+        Objects.requireNonNull(environment, "Environment cannot be null");
+        return builderFor(skill, context, environment, true);
+    }
+
+    private static RenderContext.Builder builderFor(Skill skill, ToolContext context, ExecutionEnvironment environment,
+            boolean environmentGiven) {
 
         final RenderContext.Builder builder = SkillRenderContexts.builderFor(skill);
         context.get(ToolContextKeys.AGENT_RUNTIME_ID).map(AgentRuntimeId::value).ifPresent(builder::agentRuntimeId);
@@ -98,8 +130,26 @@ public final class SkillRenderContextAccess {
             // No environment is an error, as it is for every tool that needs one (design §3: no host fallback). It
             // used to be a WARN and an empty ${AIMON_SKILL_DIR}, which renders `bash ${AIMON_SKILL_DIR}/x.sh` as
             // `bash /x.sh` and reports success (EE-20).
-            builder.skillBaseDir(ExecutionEnvironmentAccess.require(context).stage(resource.get()));
+            builder.skillBaseDir((environmentGiven ? environment : ExecutionEnvironmentAccess.require(context))
+                    .stage(resource.get()));
         }
         return builder;
+    }
+
+    /**
+     * Whether the skill's body names {@code ${AIMON_SKILL_DIR}} &mdash; the one rendered value that depends on the
+     * environment the body is rendered in. A fork-mode skill's body is rendered again in the fork's environment only
+     * when it does (EE-81); any other body reads the same wherever it is rendered, and staging the skill into the fork
+     * just for it would be a copy nobody reads.
+     *
+     * @param skill
+     *            The skill (must not be null)
+     * @return true when rendering the body in another environment can give another text
+     */
+    public static boolean rendersSkillDir(Skill skill) {
+        Objects.requireNonNull(skill, "Skill cannot be null");
+        final String body = skill.getContent().getInstructions();
+        return skill.getStagedResource().isPresent() && body != null
+                && body.contains(DefaultSkillContentRenderer.VAR_AIMON_SKILL_DIR);
     }
 }

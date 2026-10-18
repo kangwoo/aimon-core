@@ -102,4 +102,25 @@ class HostShellActionExecutorTest {
         assertThat(outcome.isObserved()).isFalse();
         assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.TIMEOUT);
     }
+
+    @Test
+    void run_aCommandThatNamesTheHookDir_getsTheHostPathAndIsNotIsolated(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path tmp) throws Exception {
+        VirtualShell fixed = mock(VirtualShell.class);
+        when(fixed.execute(any(ShellCommand.class), any(ExecutionOptions.class)))
+                .thenReturn(new ShellCommandResult(0, "", "", Duration.ofMillis(1)));
+        java.nio.file.Path layer = tmp.resolve(".aimon");
+        ShellAction action = new ShellAction("bash \"$AIMON_HOOK_DIR/guard.sh\"", Duration.ofSeconds(3),
+                at.aimon.core.skill.hook.action.HookScriptDirectory.of(layer, "hooks-project"));
+        HookContext context = OnSessionStartContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("agent")
+                .hookRegistry(new DefaultHookRegistry()).build();
+
+        new HostShellActionExecutor(fixed).run(action, context, Map.of(), null);
+
+        ArgumentCaptor<ExecutionOptions> options = ArgumentCaptor.forClass(ExecutionOptions.class);
+        verify(fixed).execute(any(ShellCommand.class), options.capture());
+        assertThat(options.getValue().getEnvironment()).containsEntry(SkillHookEnv.AIMON_HOOK_DIR,
+                layer.toAbsolutePath().resolve("hooks").toString());
+        assertThat(options.getValue().isIsolated()).isFalse();
+    }
 }

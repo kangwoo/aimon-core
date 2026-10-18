@@ -407,6 +407,22 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // was handed no provider gets an unavailable environment naming the wiring gap, never the host.
         final ExecutionEnvironment executionEnvironment = resolveExecutionEnvironment(context, request, executionId);
 
+        // EE-81: a goal the spawner rendered (a fork-mode skill's body) names paths staged where the spawner runs. When
+        // the fork was placed elsewhere it is rendered again here, in the fork's environment. A fork answered with its
+        // parent (the local provider) keeps the spawner's text: same environment, same copy.
+        final String goal;
+        try {
+            goal = forkGoal(context, request, executionEnvironment);
+        } catch (RuntimeException e) {
+            // Before onStart, so no onStop fires; the manager still fires subagentStop with this environment.
+            log.warn("Fork '{}' could not render its goal in its own environment: {}", subagent.getName(),
+                    e.getMessage());
+            return SubagentExecutionResult
+                    .emptyFailure("Failed to render the fork's goal in its own environment: " + e.getMessage(),
+                            Instant.now())
+                    .withExecutionId(executionId).withExecutionEnvironment(executionEnvironment);
+        }
+
         // Build dynamic system prompt with environment information
         final String systemPrompt = buildDynamicSystemPrompt(subagent.getContent().getSystemPrompt(),
                 executionEnvironment.descriptor());
@@ -462,13 +478,13 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                         .effectiveMetadata(effectiveMetadata).modelConfig(modelConfig).budgetTracker(budgetTracker)
                         .stalledIterationGuard(new StalledIterationGuard()).quotaGuard(request.getQuotaGuard())
                         .startTime(Instant.now()).toolContext(toolContext).sessionRegistry(sessionRegistry)
-                        .coordinator(coordinator).goal(request.getGoal())
-                        .executionAttributes(request.getExecutionAttributes())
+                        .coordinator(coordinator).goal(goal).executionAttributes(request.getExecutionAttributes())
                         // Snapshot the volatile tracing fields once, so one execution traces consistently.
                         .tracer(tracer).tracePayloadPolicy(tracePayloadPolicy).build();
 
-                // Every exit of the loop passes here, so one stamp names the fork on every result it can return.
-                return runReActLoop(lc).withExecutionId(executionId);
+                // Every exit of the loop passes here, so one stamp names the fork, and the environment it ran in, on
+                // every result it can return.
+                return runReActLoop(lc).withExecutionId(executionId).withExecutionEnvironment(executionEnvironment);
             } finally {
                 parentCancelReg.remove();
             }
@@ -808,6 +824,22 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         }
         return ExecutionEnvironments.resolveOrUnavailable(context.getExecutionEnvironmentProvider().get(),
                 environmentRequest);
+    }
+
+    /**
+     * The fork's goal: the request's, or &mdash; when the request carries a {@link ForkGoalRenderer} and the fork's
+     * environment is not the spawner's &mdash; that renderer's answer for the fork's environment (EE-81).
+     *
+     * @throws RuntimeException
+     *             whatever the renderer throws (a staging failure, an unavailable environment)
+     */
+    private static String forkGoal(SubagentExecutionContext context, SubagentExecutionRequest request,
+            ExecutionEnvironment forkEnvironment) {
+        final Optional<ForkGoalRenderer> renderer = request.getForkGoalRenderer();
+        if (renderer.isEmpty() || forkEnvironment == context.getExecutionEnvironment().orElse(null)) {
+            return request.getGoal();
+        }
+        return Objects.requireNonNull(renderer.get().render(forkEnvironment), "the fork goal renderer returned null");
     }
 
     /**

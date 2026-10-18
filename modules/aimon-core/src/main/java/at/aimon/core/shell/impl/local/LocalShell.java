@@ -548,7 +548,9 @@ public final class LocalShell implements VirtualShell {
     public boolean supports(ShellFeature feature) {
         // Local shell generally supports these, but "INTERACTIVE" is tricky without PTY handling.
         return switch (feature) {
-            case PIPE, REDIRECTION, CANCELLATION -> true;
+            // Every command is a new process with no state carried between commands, so an isolated command needs
+            // nothing beyond what every command already gets.
+            case PIPE, REDIRECTION, CANCELLATION, ISOLATED_EXECUTION -> true;
             case INTERACTIVE -> false;
         };
     }

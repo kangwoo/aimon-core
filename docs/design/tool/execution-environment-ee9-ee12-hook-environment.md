@@ -18,6 +18,12 @@
 > 기록이다. 설계는
 > [`execution-environment-ee49-ee51-ee58-isolation-boundary.md`](execution-environment-ee49-ee51-ee58-isolation-boundary.md).
 >
+> **덧붙임 (2026-10-18, EE-48 · EE-52 · EE-81, #273).** §9 Q1 의 EE-48 과 Q3 의 EE-52 는 닫혔다. `hooks.json` 의 셸 명령은
+> 이제 실행 안 이벤트에서 그 실행의 환경에서 **격리된 실행**으로 돌고(`"shell": "host"` 로 호스트에 남길 수 있다), 실행 밖
+> 이벤트와 실행이 없는 발화에서만 호스트에서 돈다. `subagentStop` 은 포크의 환경을 싣는다. 아래 본문 §3.3 의 "`hooks.json` 은
+> 호스트 셸에 둔다" 서술과 §9 의 두 질문은 그 시점의 기록이다. 설계는
+> [`execution-environment-ee48-ee52-ee81-hooks-in-environment.md`](execution-environment-ee48-ee52-ee81-hooks-in-environment.md).
+>
 > **덧붙임 (2026-10-03, EE-14).** 이 문서가 말하는 `Environment`(`agent.Environment`)는 이제 없다. 하나 남았던 필드는
 > `at.aimon.core.base.UserLocale` 로 옮겨 갔다가, 읽는 곳이 없어 2026-10-05 에 그 타입과 `getUserLocale()` 도 지워졌다(EE-60).
 > 본문의 `SubagentExecutionEnvironment` 는 같은 날 `SubagentLaunchContext` 로 개명되었다(EE-61). 본문은 승인본 그대로 두었고, 대응표는

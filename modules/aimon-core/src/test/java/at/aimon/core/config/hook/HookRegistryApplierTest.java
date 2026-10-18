@@ -81,7 +81,9 @@ class HookRegistryApplierTest {
                 .thenThrow(new ShellTimeoutException("timeout", Duration.ofSeconds(1), "", ""));
         final DefaultHookRegistry registry = new DefaultHookRegistry();
 
-        new HookRegistryApplier(new HostShellActionExecutor(hostShell), null, null, Map.of()).apply(merged("""
+        // One executor for both placements: what is under test is failOpen, not where the command runs.
+        final HostShellActionExecutor hostExecutor = new HostShellActionExecutor(hostShell);
+        new HookRegistryApplier(hostExecutor, hostExecutor, null, null, Map.of()).apply(merged("""
                 {"hooks":{"onStart":[{"hooks":[
                   {"type":"command","command":"gate.sh"},
                   {"type":"command","command":"audit.sh","failOpen":true}

@@ -54,6 +54,7 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
     private final ShellActionExecutor shellExecutor;
     private final RewakeSpec rewakeSpec;
     private final boolean failOpen;
+    private final String hostPathHint;
 
     /**
      * Whether {@code eventName} is one of the {@linkplain SkillHookSet#reportEvents() report events}, whose command
@@ -92,6 +93,7 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
         this.hookId = DeclarativeHookId.of(hookClass, this.skillName, options.getHookIdDiscriminator());
         this.rewakeSpec = options.getRewakeSpec().orElse(null);
         this.failOpen = options.isFailOpen();
+        this.hostPathHint = options.getHostPathHint().orElse(null);
         this.reportEvent = SkillHookSet.reportEvents().stream().anyMatch(type -> type.name().equals(this.eventName));
         this.action = Objects.requireNonNull(action, "Action cannot be null");
         this.shellExecutor = Objects.requireNonNull(shellExecutor, "Shell executor cannot be null");
@@ -182,8 +184,9 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
             if (!canVeto()) {
                 return HookResult.success();
             }
-            return ShellHookVerdicts.guard(outcome, failOpen, skillName, eventName).flatMap(this::vetoResult)
-                    .orElseGet(HookResult::success);
+            return ShellHookVerdicts
+                    .guard(outcome.asGuardAnswer().withCouldNotStartHint(hostPathHint), failOpen, skillName, eventName)
+                    .flatMap(this::vetoResult).orElseGet(HookResult::success);
         }
         final Optional<HookResult> veto = vetoResult(outcome.denyReason());
         if (veto.isEmpty()) {

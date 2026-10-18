@@ -73,6 +73,31 @@ public interface HookContext {
     }
 
     /**
+     * Whether an execution is behind this firing at all (aimon-core #273).
+     *
+     * <p>
+     * {@code false} means no execution is behind it, which is different from an execution whose environment did not
+     * reach the hook ({@link #getExecutionEnvironment()} empty while this answers {@code true}). The three events
+     * outside any execution ({@code onSessionStart}, {@code onSessionEnd}, {@code onConfigReload}) answer
+     * {@code false}, and so do {@code subagentStart} and {@code subagentStop} when a runtime-level runner spawned the
+     * fork from no calling execution and the fork never resolved an environment of its own. A {@code hooks.json}
+     * command with no {@code "shell"} key runs on the host for such a firing and in the execution's environment
+     * otherwise; the second case, a missing environment, is a wiring gap and never falls back to the host.
+     *
+     * <p>
+     * The subagent events are the one exception to that split. Their firing site cannot see whether a calling
+     * execution exists, only whether the spawner handed over an environment, so it derives this from the environment.
+     * A spawner whose context carries no environment (a hand-built {@code ToolContext} calling {@code Task}) therefore
+     * fires a {@code subagentStart} that answers {@code false}, and a default-placed command runs on the host, while
+     * the same context's {@code preTool} is {@code NO_ENVIRONMENT}. An assembled runtime never produces that case.
+     *
+     * @return {@code true} unless the firing site says no execution is behind it
+     */
+    default boolean hasExecution() {
+        return true;
+    }
+
+    /**
      * Describes where the execution's commands run — its execution environment's descriptor, not the JVM host
      * (execution-environment design §10). A hook that reasons about platform or paths reads this rather than
      * assuming the host.

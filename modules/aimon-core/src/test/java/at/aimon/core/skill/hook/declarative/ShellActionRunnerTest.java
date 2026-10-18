@@ -60,7 +60,8 @@ class ShellActionRunnerTest {
         VirtualShell shell = mock(VirtualShell.class);
         when(shell.execute(any(ShellCommand.class), any(ExecutionOptions.class))).thenThrow(failure);
 
-        ShellHookOutcome outcome = ShellActionRunner.run(shell, ACTION, Map.of(), null, java.util.Optional.empty());
+        ShellHookOutcome outcome = ShellActionRunner.run(shell, ACTION, Map.of(), null, java.util.Optional.empty(),
+                false);
 
         assertThat(outcome.isObserved()).isFalse();
         assertThat(outcome.getUnrunCause()).contains(cause);
@@ -74,7 +75,8 @@ class ShellActionRunnerTest {
         VirtualShell shell = new LocalShell(tmp.resolve("does-not-exist"));
         ShellAction action = new ShellAction("guard.sh --token s3cret", Duration.ofSeconds(5));
 
-        ShellHookOutcome outcome = ShellActionRunner.run(shell, action, Map.of(), null, java.util.Optional.empty());
+        ShellHookOutcome outcome = ShellActionRunner.run(shell, action, Map.of(), null, java.util.Optional.empty(),
+                false);
 
         assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.EXECUTION_FAILED);
         assertThat(outcome.unrunReason()).doesNotContain("guard.sh").doesNotContain("s3cret")
@@ -87,7 +89,8 @@ class ShellActionRunnerTest {
         when(shell.execute(any(ShellCommand.class), any(ExecutionOptions.class)))
                 .thenReturn(new ShellCommandResult(127, "", "guard.sh: not found", Duration.ofMillis(3)));
 
-        ShellHookOutcome outcome = ShellActionRunner.run(shell, ACTION, Map.of(), null, java.util.Optional.empty());
+        ShellHookOutcome outcome = ShellActionRunner.run(shell, ACTION, Map.of(), null, java.util.Optional.empty(),
+                false);
 
         // The runner reports the exit code as it came: it serves advisory events too, and there 127 is only logged.
         assertThat(outcome.isObserved()).isTrue();
@@ -107,7 +110,8 @@ class ShellActionRunnerTest {
         when(shell.execute(any(ShellCommand.class), any(ExecutionOptions.class))).thenReturn(new ShellCommandResult(0,
                 "ok", "", Duration.ofMillis(3), false, java.util.List.of("shell session was reopened")));
 
-        ShellHookOutcome outcome = ShellActionRunner.run(shell, ACTION, Map.of(), null, java.util.Optional.empty());
+        ShellHookOutcome outcome = ShellActionRunner.run(shell, ACTION, Map.of(), null, java.util.Optional.empty(),
+                false);
 
         assertThat(outcome.getStdout()).isEqualTo("ok");
         assertThat(outcome.getStderr()).isEmpty();

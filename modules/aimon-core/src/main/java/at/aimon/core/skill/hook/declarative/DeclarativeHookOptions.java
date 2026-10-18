@@ -26,6 +26,10 @@ import at.aimon.core.hook.rewake.RewakeSpec;
  * verdict. Off by default: on the four events that can block ({@code preTool}, {@code onStart}, {@code preCompact},
  * {@code permissionRequest}) a guard that could not decide blocks. Read on those events only; it never weakens a
  * verdict (exit 2, {@code decision: deny}, a {@code deny} action).
+ * <li><b>hostPathHint</b> — set by {@code HookRegistryApplier} for a {@code hooks.json} command placed in the
+ * execution's environment whose text names a path inside a layer's {@code .aimon} directory. When such a command's
+ * shell reports it could not start it (exit 126 / 127), the hint is appended to the reason, because the likely cause
+ * is a host path the environment does not have.
  * </ul>
  *
  * <p>
@@ -45,11 +49,13 @@ public final class DeclarativeHookOptions {
     private final String hookIdDiscriminator;
     private final RewakeSpec rewakeSpec;
     private final boolean failOpen;
+    private final String hostPathHint;
 
     private DeclarativeHookOptions(Builder builder) {
         this.hookIdDiscriminator = builder.hookIdDiscriminator;
         this.rewakeSpec = builder.rewakeSpec;
         this.failOpen = builder.failOpen;
+        this.hostPathHint = builder.hostPathHint;
     }
 
     /**
@@ -102,6 +108,14 @@ public final class DeclarativeHookOptions {
         return failOpen;
     }
 
+    /**
+     * @return the hint appended to a "could not start the command" reason, or empty when the command names no host
+     *         path
+     */
+    public Optional<String> getHostPathHint() {
+        return Optional.ofNullable(hostPathHint);
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -111,18 +125,19 @@ public final class DeclarativeHookOptions {
             return false;
         }
         return Objects.equals(hookIdDiscriminator, that.hookIdDiscriminator)
-                && Objects.equals(rewakeSpec, that.rewakeSpec) && failOpen == that.failOpen;
+                && Objects.equals(rewakeSpec, that.rewakeSpec) && failOpen == that.failOpen
+                && Objects.equals(hostPathHint, that.hostPathHint);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(hookIdDiscriminator, rewakeSpec, failOpen);
+        return Objects.hash(hookIdDiscriminator, rewakeSpec, failOpen, hostPathHint);
     }
 
     @Override
     public String toString() {
         return "DeclarativeHookOptions{hookIdDiscriminator='" + hookIdDiscriminator + "', rewakeSpec=" + rewakeSpec
-                + ", failOpen=" + failOpen + '}';
+                + ", failOpen=" + failOpen + ", hostPathHint=" + hostPathHint + '}';
     }
 
     /** Builder for {@link DeclarativeHookOptions}. */
@@ -131,6 +146,7 @@ public final class DeclarativeHookOptions {
         private String hookIdDiscriminator;
         private RewakeSpec rewakeSpec;
         private boolean failOpen;
+        private String hostPathHint;
 
         private Builder() {
         }
@@ -164,6 +180,16 @@ public final class DeclarativeHookOptions {
          */
         public Builder failOpen(boolean failOpen) {
             this.failOpen = failOpen;
+            return this;
+        }
+
+        /**
+         * @param hostPathHint
+         *            the hint appended when the shell could not start the command, or null for none
+         * @return this builder
+         */
+        public Builder hostPathHint(String hostPathHint) {
+            this.hostPathHint = hostPathHint;
             return this;
         }
 

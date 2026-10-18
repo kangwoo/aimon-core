@@ -44,6 +44,7 @@ public final class SubagentStopContext implements HookContext {
     private final String errorMessage;
     private final Instant timestamp;
     private final Map<String, Object> executionAttributes;
+    private final boolean spawnedOutsideExecution;
 
     private SubagentStopContext(Builder builder) {
         invokerType = Objects.requireNonNull(builder.invokerType, "Invoker type cannot be null");
@@ -57,6 +58,7 @@ public final class SubagentStopContext implements HookContext {
         errorMessage = builder.errorMessage;
         timestamp = Objects.requireNonNull(builder.timestamp, "Timestamp cannot be null");
         executionAttributes = builder.executionAttributes != null ? Map.copyOf(builder.executionAttributes) : Map.of();
+        spawnedOutsideExecution = builder.spawnedOutsideExecution;
     }
 
     @Override
@@ -128,6 +130,19 @@ public final class SubagentStopContext implements HookContext {
         return Optional.ofNullable(errorMessage);
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * {@code false} when a runtime-level runner spawned the fork from no calling execution and the fork resolved no
+     * environment of its own (an unknown subagent, a refusal, a pool rejection, an exception before resolution, a code
+     * behaviour).
+     */
+    @Override
+    public boolean hasExecution() {
+        return !spawnedOutsideExecution;
+    }
+
     @Override
     public Instant getTimestamp() {
         return timestamp;
@@ -158,6 +173,7 @@ public final class SubagentStopContext implements HookContext {
         private String errorMessage;
         private Instant timestamp = Instant.now();
         private Map<String, Object> executionAttributes;
+        private boolean spawnedOutsideExecution;
 
         private Builder() {
         }
@@ -292,6 +308,20 @@ public final class SubagentStopContext implements HookContext {
          */
         public Builder executionAttributes(Map<String, Object> executionAttributes) {
             this.executionAttributes = executionAttributes;
+            return this;
+        }
+
+        /**
+         * Marks a firing with no execution behind it: the fork was spawned by a runtime-level runner from no calling
+         * execution, and the fork resolved no environment either (default {@code false}).
+         * {@link SubagentStopContext#hasExecution()} answers its negation.
+         *
+         * @param spawnedOutsideExecution
+         *            true when no execution is behind this firing
+         * @return this builder
+         */
+        public Builder spawnedOutsideExecution(boolean spawnedOutsideExecution) {
+            this.spawnedOutsideExecution = spawnedOutsideExecution;
             return this;
         }
 

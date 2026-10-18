@@ -81,6 +81,13 @@ import at.aimon.core.agent.session.SessionId;
  * stack, call {@code start()} here, then {@code AimonStack.startScheduling()} &mdash; because a stored routine can fire
  * as soon as the engine starts, and until the file is loaded it runs without the file's guards.
  *
+ * <p>
+ * Where the commands run follows the execution they are about, whatever the environment provider: a {@code command}
+ * handler on an event inside an execution runs in that execution's environment as an isolated exec, and the host
+ * shell handed to {@code shellExecutor(...)} serves the events outside any execution and handlers that declare
+ * {@code "shell": "host"} (aimon-core #273). Under a sandbox provider that means the sandbox must declare
+ * {@code ShellFeature.ISOLATED_EXECUTION}, or the environment-placed commands are not run.
+ *
  * <h2>Re-open semantics</h2>
  *
  * <p>

@@ -2,6 +2,7 @@ package at.aimon.core.config.hook;
 
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -12,6 +13,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import at.aimon.core.config.hook.rewake.RewakeSpecConfig;
@@ -63,6 +65,15 @@ import at.aimon.core.config.hook.rewake.RewakeSpecConfig;
  * guards off to punish a typo in a key that can only take one off.
  *
  * <p>
+ * <b>{@code shell}</b> (aimon-core #273). Where a {@code command} handler runs: {@code "host"} keeps it on the host
+ * shell the assembly opened for {@code hooks.json}; {@code "environment"} places it in the firing execution's
+ * environment, as an isolated exec. Without the key, a handler on an event that fires inside an execution runs in
+ * that execution's environment (on the host only when no execution is behind a firing), and one on
+ * {@code onSessionStart}, {@code onSessionEnd} or {@code onConfigReload} runs on the host. Matching ignores case. Any
+ * other value fails the parse, as an unknown {@code type} does, and so does the key on a handler that is not a
+ * {@code command}: a typo that silently moved a guard to another shell is worse than a file that does not load.
+ *
+ * <p>
  * Immutable; thread-safe.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -106,10 +117,46 @@ public final class HookHandlerSpec {
         }
     }
 
+    /** Where a {@code command} handler runs — AIMON extension, aimon-core #273. */
+    public enum Shell {
+
+        /** The host shell the assembly opened for {@code hooks.json}. */
+        HOST,
+
+        /** The firing execution's environment, as an isolated exec. */
+        ENVIRONMENT;
+
+        /**
+         * Resolves the JSON token (case-insensitive) to a {@link Shell}.
+         *
+         * @param raw
+         *            the raw JSON string (must not be null)
+         * @return the matching enum
+         * @throws IllegalArgumentException
+         *             if {@code raw} is not a known value
+         */
+        public static Shell fromJson(String raw) {
+            Objects.requireNonNull(raw, "shell cannot be null");
+            return switch (raw.toLowerCase(Locale.ROOT)) {
+                case "host" -> HOST;
+                case "environment" -> ENVIRONMENT;
+                default -> throw new IllegalArgumentException(
+                        "Unknown hook handler shell: '" + raw + "' (expected 'host' or 'environment')");
+            };
+        }
+
+        /** @return the JSON token (never null) */
+        @JsonValue
+        public String toJson() {
+            return name().toLowerCase(Locale.ROOT);
+        }
+    }
+
     private final Type type;
 
     // command
     private final String command;
+    private final Shell shell;
 
     // http
     private final String url;
@@ -140,6 +187,10 @@ public final class HookHandlerSpec {
     private HookHandlerSpec(Builder b) {
         this.type = Objects.requireNonNull(b.type, "type cannot be null");
         this.command = b.command;
+        this.shell = b.shell;
+        if (this.shell != null && this.type != Type.COMMAND) {
+            throw new IllegalArgumentException("'shell' applies only to command handlers, not to type " + this.type);
+        }
         this.url = b.url;
         this.method = b.method;
         this.headers = b.headers == null ? Map.of() : Map.copyOf(b.headers);
@@ -166,6 +217,22 @@ public final class HookHandlerSpec {
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public String getCommand() {
         return command;
+    }
+
+    /**
+     * @return where a {@link Type#COMMAND} handler asked to run, or empty when it did not say (the placement then
+     *         follows the event)
+     */
+    @JsonIgnore
+    public Optional<Shell> getShell() {
+        return Optional.ofNullable(shell);
+    }
+
+    /** The wire form of {@link #getShell()}: left out when the handler did not say. */
+    @JsonProperty("shell")
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    Shell shellForJson() {
+        return shell;
     }
 
     /** @return the URL for {@link Type#HTTP}, or {@code null} */
@@ -312,9 +379,12 @@ public final class HookHandlerSpec {
      *            optional {@code asyncRewake} block describing how the framework should re-fire the hook
      * @param failOpen
      *            optional {@code failOpen} flag; bound as a raw node so that only a JSON boolean can open it
+     * @param shellRaw
+     *            optional {@code shell} placement ({@code host} / {@code environment}, used when type=command)
      * @return the spec (never null)
      * @throws IllegalArgumentException
-     *             if {@code typeRaw} is unknown or either timeout is not positive
+     *             if {@code typeRaw} or {@code shellRaw} is unknown, {@code shell} is set on a handler that is not a
+     *             command, or either timeout is not positive
      */
     // Jackson @JsonCreator: each param binds a distinct wire field 1:1, so they cannot be grouped.
     @SuppressWarnings("checkstyle:ParameterNumber")
@@ -326,8 +396,10 @@ public final class HookHandlerSpec {
             @JsonProperty("server") String serverName, @JsonProperty("tool") String toolName,
             @JsonProperty("args") Map<String, Object> args, @JsonProperty("reason") String reason,
             @JsonProperty("timeout") Long timeoutSeconds, @JsonProperty("timeoutMs") Long timeoutMs,
-            @JsonProperty("asyncRewake") RewakeSpecConfig asyncRewake, @JsonProperty("failOpen") JsonNode failOpen) {
-        return builder().type(Type.fromJson(typeRaw)).command(command).url(url).method(method).headers(headers)
+            @JsonProperty("asyncRewake") RewakeSpecConfig asyncRewake, @JsonProperty("failOpen") JsonNode failOpen,
+            @JsonProperty("shell") String shellRaw) {
+        return builder().type(Type.fromJson(typeRaw)).command(command)
+                .shell(shellRaw == null ? null : Shell.fromJson(shellRaw)).url(url).method(method).headers(headers)
                 .bodyTemplate(body)
                 .allowedEnvVars(allowedEnvVars == null ? Set.of() : new LinkedHashSet<>(allowedEnvVars))
                 .serverName(serverName).toolName(toolName).args(args).reason(reason)
@@ -394,6 +466,7 @@ public final class HookHandlerSpec {
     public static final class Builder {
         private Type type;
         private String command;
+        private Shell shell;
         private String url;
         private String method;
         private Map<String, String> headers;
@@ -418,6 +491,17 @@ public final class HookHandlerSpec {
 
         public Builder command(String command) {
             this.command = command;
+            return this;
+        }
+
+        /**
+         * @param shell
+         *            where a command handler runs, or null to let the event decide; only valid on
+         *            {@link Type#COMMAND}
+         * @return this builder
+         */
+        public Builder shell(Shell shell) {
+            this.shell = shell;
             return this;
         }
 

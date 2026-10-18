@@ -11,6 +11,7 @@ import at.aimon.core.agent.quota.QuotaViolation;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.command.execution.ExecutionMetadata;
+import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.cost.Money;
@@ -107,7 +108,7 @@ public final class SubagentExecutionResult {
         Objects.requireNonNull(metadata, "Execution metadata cannot be null");
         Objects.requireNonNull(completionReason, "Completion reason cannot be null");
         return new SubagentExecutionResult(finalAnswer, snapshot, metadata, true, null, completionReason, cost, null,
-                null);
+                null, null);
     }
 
     /**
@@ -173,7 +174,7 @@ public final class SubagentExecutionResult {
         Objects.requireNonNull(metadata, "Execution metadata cannot be null");
         Objects.requireNonNull(completionReason, "Completion reason cannot be null");
         return new SubagentExecutionResult(null, snapshot, metadata, false, errorMessage, completionReason, cost, null,
-                null);
+                null, null);
     }
 
     /**
@@ -233,12 +234,13 @@ public final class SubagentExecutionResult {
     private final Money cost;
     private final QuotaViolation quotaViolation;
     private final ExecutionId executionId;
+    private final ExecutionEnvironment executionEnvironment;
 
     // One argument per field of an immutable value; bundling them would only move the list.
     @SuppressWarnings("checkstyle:ParameterNumber")
     private SubagentExecutionResult(String finalAnswer, SessionSnapshot snapshot, ExecutionMetadata metadata,
             boolean success, String errorMessage, CompletionReason completionReason, Money cost,
-            QuotaViolation quotaViolation, ExecutionId executionId) {
+            QuotaViolation quotaViolation, ExecutionId executionId, ExecutionEnvironment executionEnvironment) {
         this.finalAnswer = finalAnswer;
         this.snapshot = Objects.requireNonNull(snapshot, "Session snapshot cannot be null");
         this.metadata = Objects.requireNonNull(metadata, "Execution metadata cannot be null");
@@ -248,6 +250,7 @@ public final class SubagentExecutionResult {
         this.cost = cost != null ? cost : Money.zeroUsd();
         this.quotaViolation = quotaViolation;
         this.executionId = executionId;
+        this.executionEnvironment = executionEnvironment;
     }
 
     /**
@@ -402,7 +405,7 @@ public final class SubagentExecutionResult {
     public SubagentExecutionResult withQuotaViolation(QuotaViolation quotaViolation) {
         Objects.requireNonNull(quotaViolation, "Quota violation cannot be null");
         return new SubagentExecutionResult(finalAnswer, snapshot, metadata, success, errorMessage, completionReason,
-                cost, quotaViolation, executionId);
+                cost, quotaViolation, executionId, executionEnvironment);
     }
 
     /**
@@ -426,7 +429,35 @@ public final class SubagentExecutionResult {
     public SubagentExecutionResult withExecutionId(ExecutionId executionId) {
         Objects.requireNonNull(executionId, "Execution id cannot be null");
         return new SubagentExecutionResult(finalAnswer, snapshot, metadata, success, errorMessage, completionReason,
-                cost, quotaViolation, executionId);
+                cost, quotaViolation, executionId, executionEnvironment);
+    }
+
+    /**
+     * Gets the execution environment the fork ran in (EE-52): the one its tools and hooks used, and the one the
+     * {@code subagentStop} hook is handed.
+     *
+     * <p>
+     * A live handle, not a value: it is left out of {@link #equals(Object)}, {@link #hashCode()} and
+     * {@link #toString()}, and is not persisted with a task's result.
+     *
+     * @return the fork's environment, or empty when the result never resolved one (a code behavior, or a dispatch
+     *         failure before the fork started)
+     */
+    public Optional<ExecutionEnvironment> getExecutionEnvironment() {
+        return Optional.ofNullable(executionEnvironment);
+    }
+
+    /**
+     * Returns a copy of this result naming the execution environment the fork ran in.
+     *
+     * @param executionEnvironment
+     *            the fork's resolved environment (must not be null)
+     * @return a new result carrying the environment; the original is unchanged
+     */
+    public SubagentExecutionResult withExecutionEnvironment(ExecutionEnvironment executionEnvironment) {
+        Objects.requireNonNull(executionEnvironment, "Execution environment cannot be null");
+        return new SubagentExecutionResult(finalAnswer, snapshot, metadata, success, errorMessage, completionReason,
+                cost, quotaViolation, executionId, executionEnvironment);
     }
 
     @Override

@@ -395,6 +395,15 @@ public interface ExecutionEnvironmentProvider {
 실패하면 명령을 돌리지 않는다(변수 없이 돌리면 다른 명령이 된다). 가드 이벤트에서는 그것이 거부이고 `failOpen` 이면
 통과다.
 
+**포크 모드 스킬의 본문은 포크의 환경에서 다시 렌더한다 (EE-81).** 본문은 호출한 실행에서 렌더되므로 그 안의
+`${AIMON_SKILL_DIR}` 는 호출한 쪽에 스테이징한 경로다. 제공자가 포크를 다른 환경에 두면 포크의 도구에는 그 경로가 없다. 그래서
+본문이 그 변수를 쓰는 포크 모드 스킬은 `ForkGoalRenderer` 를 함께 넘기고(`SkillForkExecutor` 의 4인자 `fork`,
+`SubagentLaunchContext` → `SubagentExecutionRequest`), `DefaultSubagentExecutor` 가 포크의 환경을 해석한 직후 그 환경에
+스테이징해 다시 렌더한다. 포크의 환경이 부모와 같은 인스턴스면(로컬 제공자) 다시 렌더하지 않는다. 포크에서 스테이징이 실패하면
+포크는 `onStart` 전에 실패로 끝난다. `subagentStart` 의 goal 과 스팬 입력은 호출한 쪽의 글이다. 설계는
+[`execution-environment-ee48-ee52-ee81-hooks-in-environment.md`](execution-environment-ee48-ee52-ee81-hooks-in-environment.md)
+§2.3.
+
 **모든 스킬 저장소가 스테이징 소스를 낸다.** `SkillRepository` 는 스킬마다 `stage()` 에 넘길 소스 — 읽기만 하는
 `VirtualFileSystem` 과 그 안의 스킬 디렉터리 — 를 돌려준다(`resolveSource`). VFS 저장소는 자기 VFS 를, 호스트
 경로 저장소(`PathSkillRepository`)는 그 루트 위의 읽기 전용 로컬 파일 시스템(`ReadOnlyLocalFileSystem`)을, 클래스패스 저장소
@@ -840,7 +849,7 @@ CLI 처럼 "사용자 프로젝트 디렉터리에서 돈다"는 배치에서는
 **훅의 명령은 모델의 셸 세션 밖에서 돈다.** 훅의 셸 액션은 `Bash` 와 같은 `VirtualShell.execute(command, options)` 로
 들어가므로, 셸은 옵션 없이는 그것을 모델의 도구 호출과 구별할 수 없다. 그래서 `ExecutionOptions` 에 `hook`(기본 false)을
 두고, 훅의 셸 액션을 돌리는 공용 사다리(`ShellActionRunner`)가 켠다 — 스킬 선언 훅(`DefaultShellActionExecutor`)과
-`hooks.json` 훅(`HostShellActionExecutor`)이 모두 그 사다리를 지난다. 세션별 상태를 지닌 셸(`cd`·`export` 가 명령 사이에
+`hooks.json` 훅(`HostShellActionExecutor` · `IsolatedShellActionExecutor`)이 모두 그 사다리를 지난다. 세션별 상태를 지닌 셸(`cd`·`export` 가 명령 사이에
 남고 세션마다 한 번에 명령 하나만 도는 샌드박스)은 켜진 명령을 그 세션 밖에서 돌린다: 세션 잠금을 잡지 않고 상태를 저장하지
 않는다. 세션의 현재 상태에서 시작하는 것은 된다. 그렇지 않으면 병렬 도구 호출의 `preTool` 셸 가드가 모델의 명령을 기다리다
 "셸이 바쁘다" 로 실패해 **거부**로 읽히고(EE-51), 훅의 `cd`·`export` 가 모델의 셸 상태에 남는다. 명령마다 프로세스를 새로
@@ -861,6 +870,18 @@ CLI 처럼 "사용자 프로젝트 디렉터리에서 돈다"는 배치에서는
 두 변경의 설계는
 [`execution-environment-ee49-ee51-ee58-isolation-boundary.md`](execution-environment-ee49-ee51-ee58-isolation-boundary.md) 에
 있다.
+
+**`hooks.json` 의 셸 명령도 그 실행의 환경에서, 격리되어 돈다 (EE-48).** 실행 안에서 발화하는 이벤트의 `command` 핸들러는
+`"shell"` 키가 없으면 그 실행의 환경에서 돌고, 실행 밖 셋과 `"shell": "host"` 는 호스트 셸에서 돈다. 이벤트는 실행 안이지만
+실행이 없는 발화 — 에이전트 단위 러너가 스폰한 포크의 `subagentStart`, 포크가 환경을 해석하지 못한 경우의 `subagentStop` — 는
+`HookContext.hasExecution()` 이 `false` 로 답하고 호스트로 간다. 실행은 있는데 환경이 닿지 않은 컨텍스트는 호스트로 가지 않는다.
+운영자의 정책 훅이라 모델이 조종할 수 없어야 하므로, 환경에 놓인 명령은 `ExecutionOptions.isolated` 를 켠 **격리된 실행**이다 —
+세션의 상태를 읽지도 남기지도 않고, 환경의 루트에서 기본 변수로 시작한다. 셸이 `ShellFeature.ISOLATED_EXECUTION` 을 선언하지
+않으면 돌리지 않는다(`ISOLATION_UNSUPPORTED`). 계보를 밝힌 워크플로 브랜치(`isolatedFrom()`)는 기반 환경의 보기로 다루어, 명령을
+그 끝의 환경에서 돌린다. 스킬 훅은 격리하지 않는다 — 그 스킬의 도구와 같은 셸 상태에서 시작한다. `subagentStop` 은 포크의 환경을
+싣는다(EE-52). 설계는
+[`execution-environment-ee48-ee52-ee81-hooks-in-environment.md`](execution-environment-ee48-ee52-ee81-hooks-in-environment.md)
+에 있다.
 
 프롬프트 캐시에 대한 영향: 서술자는 환경마다 한 번 정해지고 한 세션 안에서는 바뀌지 않는다(샌드박스가 재생성되어도
 이미지가 같으면 같다). 따라서 세션 단위 캐시 접두부는 안정적이다. 서술자가 에이전트 단위로 캐시되던 자리
@@ -923,6 +944,7 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 | 모델에게 가는 도구 호출이 끝날 때마다, 어떤 도구였든, `drainNotices()` 를 한 번 불러 그 결과 앞에 보인다. 훅에는 보이지 않는다(§8.1) | 환경 자체의 사실은 `ShellCommandResult` 가 아니라 `drainNotices()` 에 싣는다. 원자적이고 한 번만 돌려주며, 돌려준 것은 전달된 것으로 본다. 큐는 환경 인스턴스마다 두고 포크와 공유하지 않는다 |
 | 백그라운드 명령에 `ExecutionOptions.background` 를 켠다(§5.3) | 켜진 명령은 지속 셸 세션을 쥐지 않는다 |
 | 훅의 셸 액션(스킬 선언 훅과 `hooks.json` 훅)에 `ExecutionOptions.hook` 을 켠다(§10) | 켜진 명령은 지속 셸 세션 밖에서 돈다 — 세션 잠금을 잡지 않고 `cd`·`export` 를 세션에 저장하지 않는다. 세션의 현재 상태에서 시작해도 된다. 옵션을 파생하는 래퍼는 플래그를 넘긴다 |
+| 환경에 놓인 `hooks.json` 명령에 `ExecutionOptions.isolated` 도 켜고, 셸이 `ShellFeature.ISOLATED_EXECUTION` 을 선언했을 때만 돌린다. 계보를 밝힌 브랜치의 명령은 그 기반 환경의 셸에서 돌린다(§10) | 선언했다면 켜진 명령은 세션의 상태(`cd`·`export`)를 읽지도 저장하지도 않고, 세션 잠금 없이, 샌드박스 루트에서 프로파일의 기본 환경 위에 `environment` 만 얹어 시작한다. 옵션을 파생하는 래퍼는 플래그를 넘긴다. 선언하지 않으면 그 명령은 돌지 않는다(가드는 막는다) |
 | 셸이 `ShellFeature.CANCELLATION` 을 선언하면 백그라운드 명령마다 `ExecutionOptions.getCancellation()` 에 신호를 싣고, `KillShell` 과 스택 종료가 그 신호를 건다. 포그라운드 명령에는 선언과 무관하게 언제나 신호를 싣고, 실행의 인터럽트가 그 신호를 건다(§5.3) | 선언했다면 신호가 걸릴 때 원격 명령과 그 명령이 띄운 것을 멈추고 그 `execute` 가 `ShellCancelledException` 을 던진다(멈춤을 요청만 하고 돌아와도 된다). 이미 걸린 신호면 명령을 띄우지 않는다. 옵션을 파생하는 래퍼는 신호를 넘긴다. 선언하지 않으면 `KillShell` 은 오류로 답한다 |
 | 백그라운드 명령의 timeout 으로 `backgroundCommandTimeout()` 을 쓴다. 비어 있으면 24시간(§5.3) | 도는 명령이 슬롯을 깨워 두는 배치라면 감당할 수 있는 상한을 돌려준다. 0 이하는 무시된다 |
 | 런타임을 만들 때마다 `bindRuntime(id)` 를 부르고, 그 런타임이 사라질 때 핸들을 닫는다. 제공자 자체는 스택이 끝날 때 닫는다(§4.3) | 런타임별 자원을 쥔다면 `bindRuntime` 으로 통지를 받는다. 핸들이 닫혀도 **도는 명령은 멈추지 않고**, 같은 id 의 다른 바인딩이 쓰는 것은 놓지 않는다. 바인딩되지 않은 id 의 `resolve` 도 답한다 |
@@ -980,9 +1002,11 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 - **enricher 에서 `EXECUTION_ENVIRONMENT` 를 덮어쓰지 말 것.** write-once 이며 제공자만 쓴다(§5.1)
 - **실행이 끝날 때 환경의 셸·파일 시스템을 닫지 말 것.** 제공자 소유다(§4.3)
 - **훅 실행기가 셸을 생성자로 쥐지 말 것.** 스킬 선언 훅의 셸 액션은 발화 시점의 `HookContext.getExecutionEnvironment()`
-  에서 셸을 얻는다(§10). 스킬을 파싱할 때 묶은 셸은 호스트의 것이다. 예외는 운영자가 쓴 `hooks.json` 전용
+  에서 셸을 얻는다(§10). 스킬을 파싱할 때 묶은 셸은 호스트의 것이다. 예외는 운영자가 쓴 `hooks.json` 의 호스트 배치 전용
   `HostShellActionExecutor` 하나이고, 그것을 스킬 파서에 넘기면 안 된다. `PackageDependencyArchitectureTest.skillHooksHoldNoShell`
   이 강제한다
+- **환경에 놓인 `hooks.json` 명령을 격리 없이 돌리지 말 것.** 셸이 `ISOLATED_EXECUTION` 을 선언하지 않으면 돌리지 않는다 —
+  모델의 `export` 로 조종되는 정책 훅은 정책이 아니다(§10)
 - **스킬 훅을 런타임의 `HookRegistry` 에 등록하지 말 것.** 그 레지스트리는 같은 에이전트의 모든 세션이 디스패치한다.
   스킬 훅은 포크가 받는 레지스트리에 얹는다(§10). 포크를 띄우는 코드는 생성자에서 받은 레지스트리가 아니라
   `HookRegistryAccess.of(toolContext)` 를 먼저 쓴다 — 아니면 스킬의 가드가 그 하위 트리에서 조용히 꺼진다
@@ -1014,6 +1038,7 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 문서가
 - [`execution-environment-ee14-user-locale.md`](execution-environment-ee14-user-locale.md) — `Environment` 를 없애고 `timeZone` 을 `UserLocale` 로 옮긴 설계(EE-14). 그 `UserLocale` 을 지운 기록(EE-60)은 §12
 - [`execution-environment-ee49-ee51-ee58-isolation-boundary.md`](execution-environment-ee49-ee51-ee58-isolation-boundary.md) — 한 런타임을 나눠 쓰는 실행들 사이의 경계 셋: 스킬 훅의 발화 범위, 명령을 돌리지 못한 가드의 fail-closed, 백그라운드 작업의 가시 범위(EE-49 · EE-51 · EE-58)
 - [`execution-environment-ee70-ee71-fail-closed.md`](execution-environment-ee70-ee71-fail-closed.md) — 그 fail-closed 를 두 곳에 더 이은 설계: `onStart` 훅이 막으면 포크가 시작하지 않는다, 로드되지 않는 `hooks.json` 으로는 뜨지 않는다(EE-70 · EE-71)
+- [`execution-environment-ee48-ee52-ee81-hooks-in-environment.md`](execution-environment-ee48-ee52-ee81-hooks-in-environment.md) — `hooks.json` 명령을 실행의 환경에서 격리된 실행으로 돌리고, `subagentStop` 에 포크의 환경을 싣고, 포크 모드 스킬의 본문을 포크의 환경에서 다시 렌더한 설계(EE-48 · EE-52 · EE-81)
 - [`../workflow/workflow.md`](../workflow/workflow.md) §6.3 — worktree 격리
 - [`../agent-execution/artifact.md`](../agent-execution/artifact.md) — `ArtifactCollector`
 - [`../filesystem/backend-contract.md`](../filesystem/backend-contract.md) — VFS 백엔드 계약 (§7 의 `getMetadata` 조항이 들어갈 자리)

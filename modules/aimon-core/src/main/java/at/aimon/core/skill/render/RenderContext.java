@@ -49,6 +49,17 @@ public final class RenderContext {
     }
 
     /**
+     * Returns a builder seeded with every field of this context, for deriving a variant (a fork's render with its own
+     * {@code skillBaseDir}).
+     *
+     * @return A pre-populated builder (never null)
+     */
+    public Builder toBuilder() {
+        return new Builder().agentRuntimeId(agentRuntimeId).sessionId(sessionId).executionId(executionId)
+                .principal(principal).skillBaseDir(skillBaseDir).additionalVariables(additionalVariables);
+    }
+
+    /**
      * Returns a shared empty context with no fields populated.
      *
      * @return The empty context (never null)

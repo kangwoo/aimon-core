@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-development-guide.md
-source_commit: 8613c51b
+source_commit: 2a1a59b2
 ---
 
 # Hook Development Guide
@@ -268,6 +268,7 @@ Each hook receives the context object that matches its firing point. Every conte
 | `getInvokerName()` | `String` | Invoker name |
 | `getHookRegistry()` | `HookRegistry` | The hook registry |
 | `getExecutionEnvironment()` | `Optional<ExecutionEnvironment>` | The execution environment of the execution the hook fires in — the file system and shell that execution's tools use. Empty for events that fire outside any execution (`onSessionStart`, `onSessionEnd`, `onConfigReload`) and for a rewake replay. Do not fall back to the host when it is empty |
+| `hasExecution()` | `boolean` | Whether any execution is behind this firing. `false` for the three events outside any execution, and for the `subagentStart` of a subagent the agent-scoped runner launched with no calling execution (and its `subagentStop` when that subagent ended before it resolved an environment). If `getExecutionEnvironment()` is empty while this is `true`, there is an execution whose environment did not reach the hook — do not fall back to the host. A `hooks.json` command with no `"shell"` uses this answer to choose between the host and the execution's environment |
 | `getEnvironmentDescriptor()` | `Optional<EnvironmentDescriptor>` | The descriptor of that environment (working directory, platform, OS). Use this, not the host, to tell **where commands run** |
 | `getExecutionCancellation()` | `Optional<CancellationSignal>` | The cancellation signal of the execution the hook fires in. A hook that starts something long-running on the execution's behalf ties it to this signal so an interrupt stops it. The guard events (`onStart`, `preCompact`, `preTool`, `permissionRequest`) always carry it; the events that report something that already happened (`onStop`, `postCompact`, `subagentStart`, `subagentStop`, `postTool`, `permissionDenied`) carry it **only until it trips** — so the answer can change on one and the same context, and it is read when the work starts, not when the context arrives. Empty for events outside any execution, for a slash-command turn's `onStop` and for `/compact`'s compaction events. This answer is for a hook written in code. A declarative hook's shell command does not use the signal on a report event (an interrupt does not stop it) — the hook hands its shell executor a **view** in which this is empty, so a `ShellActionExecutor` uses the context it is given through `HookContext` only and does not downcast it to the event's type |
 | `getTimestamp()` | `Instant` | Timestamp |

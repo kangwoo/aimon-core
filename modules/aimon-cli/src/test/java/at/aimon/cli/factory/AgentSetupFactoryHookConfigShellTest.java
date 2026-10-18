@@ -7,14 +7,18 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.filesystem.impl.local.LocalFileSystem;
+import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.event.OnSessionStartContext;
@@ -23,14 +27,16 @@ import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCommand;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.VirtualShell;
+import at.aimon.core.shell.impl.local.LocalShell;
 import at.aimon.core.skill.hook.action.ShellAction;
 import at.aimon.core.skill.hook.declarative.ShellActionExecutor;
 import at.aimon.core.skill.hook.declarative.ShellHookOutcome;
 
 /**
- * EE-48 on the CLI assembly: {@code hooks.json} shell actions run on the CLI's host shell, not in an execution
- * environment. The file is operator configuration and declares session- and config-lifecycle events that fire outside
- * any execution, so an environment-bound executor here would silently skip them.
+ * EE-48 on the CLI assembly: the executor for the {@code hooks.json} shell actions placed on the host &mdash; the
+ * session- and config-lifecycle events, {@code "shell": "host"} and the rest &mdash; runs them on the CLI's host shell,
+ * whatever the context says. Since #273 that shell is rooted at the workspace root, so host-placed and
+ * environment-placed commands share one working directory.
  */
 @DisplayName("AgentSetupFactory hooks.json executor: host shell")
 class AgentSetupFactoryHookConfigShellTest {
@@ -84,5 +90,17 @@ class AgentSetupFactoryHookConfigShellTest {
 
         verify(host).execute(any(ShellCommand.class), any(ExecutionOptions.class));
         verifyNoInteractions(environmentShell);
+    }
+
+    @Test
+    @DisplayName("the host shell is rooted at the workspace root, not the JVM's user.dir (#273)")
+    void hostShellIsRootedAtTheWorkspaceRoot(@TempDir Path workspace) {
+        final LocalFileSystem fileSystem = new LocalFileSystem(new LocalFileSystemConfig(workspace.toString()));
+        fileSystem.initialize();
+
+        try (LocalShell shell = AgentSetupFactory.createHookConfigShell(fileSystem)) {
+            assertThat(shell.getWorkingDirectory()).isEqualTo(fileSystem.getWorkingDirectory());
+            assertThat(shell.getWorkingDirectory()).isNotEqualTo(System.getProperty("user.dir"));
+        }
     }
 }

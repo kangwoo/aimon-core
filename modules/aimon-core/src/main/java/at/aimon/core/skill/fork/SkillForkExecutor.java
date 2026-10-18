@@ -2,6 +2,7 @@ package at.aimon.core.skill.fork;
 
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.skill.Skill;
+import at.aimon.core.subagent.execution.ForkGoalRenderer;
 
 /**
  * Executes a skill in fork mode by delegating its rendered instructions to a named subagent.
@@ -37,4 +38,33 @@ public interface SkillForkExecutor {
      * @return A non-null outcome describing success (with final answer) or failure (with error message)
      */
     SkillForkOutcome fork(Skill skill, String goal, ToolContext toolContext);
+
+    /**
+     * Executes the given skill in fork mode, handing the fork a way to render the body again in its own execution
+     * environment (EE-81).
+     *
+     * <p>
+     * {@code goal} is the body rendered by the spawner, with {@code ${AIMON_SKILL_DIR}} staged where the spawner runs.
+     * When the provider places the fork elsewhere, the fork renders its goal with {@code forkGoal} instead, so the path
+     * it is given exists where its tools run. The spawner's text is still what {@code subagentStart} and the span
+     * input show.
+     *
+     * <p>
+     * The default ignores {@code forkGoal} and delegates to {@link #fork(Skill, String, ToolContext)}: a custom
+     * executor that does not override this keeps the behaviour it had, the spawner's path. The in-tree
+     * {@code SubagentBackedSkillForkExecutor} overrides it.
+     *
+     * @param skill
+     *            The skill to fork (must not be null)
+     * @param goal
+     *            The body rendered by the spawner (must not be null)
+     * @param forkGoal
+     *            Renders the body for the fork's environment (must not be null)
+     * @param toolContext
+     *            The active tool context (must not be null)
+     * @return A non-null outcome describing success (with final answer) or failure (with error message)
+     */
+    default SkillForkOutcome fork(Skill skill, String goal, ForkGoalRenderer forkGoal, ToolContext toolContext) {
+        return fork(skill, goal, toolContext);
+    }
 }

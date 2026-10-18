@@ -53,6 +53,13 @@ class LocalShellCancellationTest {
     }
 
     @Test
+    @DisplayName("declares ISOLATED_EXECUTION: every command is a new process with no state carried over")
+    void declaresIsolatedExecution() {
+        assertThat(shell.supports(ShellFeature.ISOLATED_EXECUTION)).isTrue();
+        assertThat(shell.supports(ShellFeature.INTERACTIVE)).isFalse();
+    }
+
+    @Test
     @DisplayName("a cancelled command throws ShellCancelledException, and the shell and the child it spawned are dead")
     void cancelKillsTheProcessTree(@TempDir Path dir) throws Exception {
         final ShellCancellationSource source = ShellCancellationSource.create();

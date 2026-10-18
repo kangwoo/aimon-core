@@ -44,6 +44,7 @@ public final class SubagentStartContext implements HookContext {
     private final String description;
     private final Instant timestamp;
     private final Map<String, Object> executionAttributes;
+    private final boolean spawnedOutsideExecution;
 
     private SubagentStartContext(Builder builder) {
         invokerType = Objects.requireNonNull(builder.invokerType, "Invoker type cannot be null");
@@ -57,6 +58,7 @@ public final class SubagentStartContext implements HookContext {
         description = builder.description != null ? builder.description : "";
         timestamp = Objects.requireNonNull(builder.timestamp, "Timestamp cannot be null");
         executionAttributes = builder.executionAttributes != null ? Map.copyOf(builder.executionAttributes) : Map.of();
+        spawnedOutsideExecution = builder.spawnedOutsideExecution;
     }
 
     @Override
@@ -128,6 +130,20 @@ public final class SubagentStartContext implements HookContext {
         return description;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * {@code false} when a runtime-level runner spawned the fork from no calling execution and the fork's environment
+     * is not resolved yet when this event fires, so the environment is always the spawner's. The firing site derives
+     * it from the spawner's environment being absent, so a spawner with an execution but no environment (a hand-built
+     * {@code ToolContext}) also answers {@code false}; see {@link HookContext#hasExecution()}.
+     */
+    @Override
+    public boolean hasExecution() {
+        return !spawnedOutsideExecution;
+    }
+
     @Override
     public Instant getTimestamp() {
         return timestamp;
@@ -158,6 +174,7 @@ public final class SubagentStartContext implements HookContext {
         private String description;
         private Instant timestamp = Instant.now();
         private Map<String, Object> executionAttributes;
+        private boolean spawnedOutsideExecution;
 
         private Builder() {
         }
@@ -292,6 +309,19 @@ public final class SubagentStartContext implements HookContext {
          */
         public Builder executionAttributes(Map<String, Object> executionAttributes) {
             this.executionAttributes = executionAttributes;
+            return this;
+        }
+
+        /**
+         * Marks a firing with no execution behind it: the fork was spawned by a runtime-level runner from no calling
+         * execution (default {@code false}). {@link SubagentStartContext#hasExecution()} answers its negation.
+         *
+         * @param spawnedOutsideExecution
+         *            true when no execution is behind this firing
+         * @return this builder
+         */
+        public Builder spawnedOutsideExecution(boolean spawnedOutsideExecution) {
+            this.spawnedOutsideExecution = spawnedOutsideExecution;
             return this;
         }
 

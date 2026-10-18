@@ -37,6 +37,7 @@ public final class ShellAction implements HookAction {
 
     private final String command;
     private final Duration timeout;
+    private final HookScriptDirectory scriptDirectory;
 
     /**
      * Creates a new shell action.
@@ -51,6 +52,29 @@ public final class ShellAction implements HookAction {
      *             if command is blank or timeout is non-positive
      */
     public ShellAction(String command, Duration timeout) {
+        this(command, timeout, null);
+    }
+
+    /**
+     * Creates a new shell action that carries the {@code hooks/} directory of the {@code hooks.json} layer it was
+     * declared in, for {@code AIMON_HOOK_DIR}.
+     *
+     * <p>
+     * Only {@code HookRegistryApplier} sets one, and only when the command names {@code AIMON_HOOK_DIR}; a
+     * skill-declared action never carries one.
+     *
+     * @param command
+     *            The shell command to execute (must not be null or blank)
+     * @param timeout
+     *            The execution timeout; {@code null} resolves to {@link #DEFAULT_TIMEOUT}. Must be positive when set.
+     * @param scriptDirectory
+     *            The layer's script directory, or {@code null} for none
+     * @throws NullPointerException
+     *             if command is null
+     * @throws IllegalArgumentException
+     *             if command is blank or timeout is non-positive
+     */
+    public ShellAction(String command, Duration timeout, HookScriptDirectory scriptDirectory) {
         Objects.requireNonNull(command, "Command cannot be null");
         if (command.isBlank()) {
             throw new IllegalArgumentException("Command cannot be blank");
@@ -60,6 +84,7 @@ public final class ShellAction implements HookAction {
         }
         this.command = command;
         this.timeout = timeout == null ? DEFAULT_TIMEOUT : timeout;
+        this.scriptDirectory = scriptDirectory;
     }
 
     /**
@@ -80,6 +105,16 @@ public final class ShellAction implements HookAction {
         return timeout;
     }
 
+    /**
+     * Returns the script directory whose path the running executor exports as {@code AIMON_HOOK_DIR}.
+     *
+     * @return the directory, or empty when the command does not name the variable or the action was not declared in
+     *         a {@code hooks.json} layer
+     */
+    public Optional<HookScriptDirectory> getScriptDirectory() {
+        return Optional.ofNullable(scriptDirectory);
+    }
+
     @Override
     public Optional<Duration> getExecutionBudget() {
         return Optional.of(timeout);
@@ -93,12 +128,13 @@ public final class ShellAction implements HookAction {
         if (!(o instanceof ShellAction that)) {
             return false;
         }
-        return command.equals(that.command) && timeout.equals(that.timeout);
+        return command.equals(that.command) && timeout.equals(that.timeout)
+                && Objects.equals(scriptDirectory, that.scriptDirectory);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(command, timeout);
+        return Objects.hash(command, timeout, scriptDirectory);
     }
 
     @Override

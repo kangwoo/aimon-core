@@ -45,5 +45,16 @@ public enum ShellFeature {
      * {@link at.aimon.core.shell.exception.ShellCancelledException}. A shell that does not support it ignores the
      * signal, and the command runs to its end or its timeout. The full contract is on {@link VirtualShell}.
      */
-    CANCELLATION
+    CANCELLATION,
+
+    /**
+     * Running a command {@linkplain ExecutionOptions#isIsolated() isolated}: as a fresh shell of the environment would,
+     * reading and saving no per-session state ({@code cd}, {@code export}) and taking no session lock.
+     *
+     * <p>
+     * A shell that keeps no state between commands supports this trivially. A shell that does not declare it ignores
+     * the flag, so a caller that must not run a command from the model's shell state &mdash; the configured
+     * {@code hooks.json} path &mdash; refuses to run on it.
+     */
+    ISOLATED_EXECUTION
 }

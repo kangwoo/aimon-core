@@ -12,6 +12,7 @@ import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.rewake.RewakeService;
 import at.aimon.core.skill.hook.declarative.HttpActionExecutor;
+import at.aimon.core.skill.hook.declarative.IsolatedShellActionExecutor;
 import at.aimon.core.skill.hook.declarative.McpActionExecutor;
 import at.aimon.core.skill.hook.declarative.ShellActionExecutor;
 
@@ -39,6 +40,16 @@ import at.aimon.core.skill.hook.declarative.ShellActionExecutor;
  * failure. A host that would rather start without its file hooks has to say so in code, by catching the exception.
  * Watcher-start failure stays non-fatal (the hooks are already applied): the call returns a {@code Started} whose
  * {@link Started#isWatcherActive()} reports {@code false}, and a WARN is logged.
+ *
+ * <p>
+ * <b>Where the commands run</b> (aimon-core #273). A {@code command} handler on an event that fires inside an
+ * execution runs in that execution's environment, as an isolated exec, through
+ * {@link Builder#environmentShellExecutor(ShellActionExecutor)} (an {@code IsolatedShellActionExecutor} unless set).
+ * The {@link Builder#shellExecutor(ShellActionExecutor) shell executor} serves the rest: the events outside any
+ * execution, handlers that declare {@code "shell": "host"}, {@code asyncRewake} handlers with no {@code "shell"}, and
+ * firings with no execution behind them. Nothing here depends on the environment provider, so the same wiring works
+ * under any provider; under the local provider an environment-placed command runs on the same machine with the same
+ * process environment, at the workspace root.
  *
  * <p>
  * <b>Web bootstrap usage.</b> Web entry points (those that call
@@ -130,6 +141,7 @@ public final class HookHotReloadBootstrap {
         private Path userHome;
         private Path projectRoot;
         private ShellActionExecutor shellExecutor;
+        private ShellActionExecutor environmentShellExecutor;
         private HttpActionExecutor httpExecutor;
         private McpActionExecutor mcpExecutor;
         private Map<String, String> processEnv;
@@ -157,12 +169,38 @@ public final class HookHotReloadBootstrap {
         }
 
         /**
-         * Shell executor used by {@link HookRegistryApplier}. Required. {@code hooks.json} can declare events that fire
-         * outside any execution, so this is normally a {@code HostShellActionExecutor}; an executor that needs an
-         * execution environment has its shell handlers on those events skipped at apply time.
+         * The <b>host</b> shell executor used by {@link HookRegistryApplier}. Required. Normally a
+         * {@code HostShellActionExecutor}.
+         *
+         * <p>
+         * Since aimon-core #273 it serves only the host-placed handlers: the events outside any execution
+         * ({@code onSessionStart}, {@code onSessionEnd}, {@code onConfigReload}), handlers that declare
+         * {@code "shell": "host"}, {@code asyncRewake} handlers with no {@code "shell"}, and firings with no execution
+         * behind them. A handler with no {@code "shell"} on an event that fires inside an execution runs through
+         * {@link #environmentShellExecutor(ShellActionExecutor)} instead. An executor that needs an execution
+         * environment, passed here, has its handlers on the events outside any execution skipped at apply time.
          */
         public Builder shellExecutor(ShellActionExecutor shellExecutor) {
             this.shellExecutor = shellExecutor;
+            return this;
+        }
+
+        /**
+         * Optional executor for the commands placed in the firing execution's environment; an
+         * {@code IsolatedShellActionExecutor} when not set (or set to {@code null}).
+         *
+         * <p>
+         * A replacement must run the command so that agent-controlled shell state cannot steer it (see
+         * {@code ExecutionOptions.isIsolated()}), and must export {@code AIMON_HOOK_DIR} itself: the directory travels
+         * on {@code ShellAction.getScriptDirectory()}, and the executor that runs a command is the one that stages it
+         * where its shell can read it. One that does not leaves the variable unset.
+         *
+         * @param environmentShellExecutor
+         *            the executor, or null for the default
+         * @return this builder
+         */
+        public Builder environmentShellExecutor(ShellActionExecutor environmentShellExecutor) {
+            this.environmentShellExecutor = environmentShellExecutor;
             return this;
         }
 
@@ -256,8 +294,9 @@ public final class HookHotReloadBootstrap {
             final HookConfigLoader loader = new HookConfigLoader(new JacksonHookConfigParser(), userHookDir,
                     projectHookDir);
             final HookConfigMerger merger = new HookConfigMerger();
-            final HookRegistryApplier bootstrap = new HookRegistryApplier(shellExecutor, httpExecutor, mcpExecutor,
-                    processEnv);
+            final HookRegistryApplier bootstrap = new HookRegistryApplier(shellExecutor,
+                    environmentShellExecutor == null ? new IsolatedShellActionExecutor() : environmentShellExecutor,
+                    httpExecutor, mcpExecutor, processEnv);
             final HookRegistryReloader reloader = new HookRegistryReloader(loader, merger, bootstrap, registry,
                     executionManager, invoker, rewakeService);
 

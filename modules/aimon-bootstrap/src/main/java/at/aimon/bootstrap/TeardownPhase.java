@@ -285,6 +285,12 @@ public enum TeardownPhase {
      * and enrolls it here with {@code own}; a stack without such an assembly has nothing in this phase.
      *
      * <p>
+     * Since aimon-core #273 it serves only the {@code hooks.json} commands placed on the host: the events outside any
+     * execution, handlers that declare {@code "shell": "host"}, {@code asyncRewake} handlers with no {@code "shell"},
+     * and firings with no execution behind them. A command on an event inside an execution runs in that execution's
+     * environment, whose shell the environment provider owns, like a skill hook's below.
+     *
+     * <p>
      * Skill-declared hooks are not served by it: their shell actions run in the execution environment's shell, which
      * the stack's environment provider owns (closed at the end of {@link #AGENT_RESOURCES}). A skill hook that fires
      * after that phase finds its shell closed and is skipped with a WARN, exactly as a tool call in that execution

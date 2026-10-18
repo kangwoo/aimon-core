@@ -72,6 +72,7 @@ public final class DeclarativePreToolHook implements PreToolHook {
     private final String hookId;
     private final RewakeSpec rewakeSpec;
     private final boolean failOpen;
+    private final String hostPathHint;
     private final ToolInputPredicate predicate;
     private final HookAction action;
     private final ShellActionExecutor shellExecutor;
@@ -172,6 +173,7 @@ public final class DeclarativePreToolHook implements PreToolHook {
         this.action = Objects.requireNonNull(action, "Action cannot be null");
         // Decided here as well as by the two config front-ends, so a hook built in code cannot open a deny either.
         this.failOpen = options.isFailOpen() && !(this.action instanceof DenyAction);
+        this.hostPathHint = options.getHostPathHint().orElse(null);
         this.shellExecutor = Objects.requireNonNull(shellExecutor, "Shell executor cannot be null");
         this.httpExecutor = httpExecutor;
         this.mcpExecutor = mcpExecutor;
@@ -242,7 +244,8 @@ public final class DeclarativePreToolHook implements PreToolHook {
                         outcome.getExitCode(), outcome.denyReason());
                 return withRewake(HookResult.block(outcome.denyReason()));
             }
-            final Optional<String> unrun = ShellHookVerdicts.guard(outcome, failOpen, skillName, EVENT_NAME);
+            final Optional<String> unrun = ShellHookVerdicts.guard(
+                    outcome.asGuardAnswer().withCouldNotStartHint(hostPathHint), failOpen, skillName, EVENT_NAME);
             if (unrun.isPresent()) {
                 return withRewake(HookResult.block(unrun.get()));
             }

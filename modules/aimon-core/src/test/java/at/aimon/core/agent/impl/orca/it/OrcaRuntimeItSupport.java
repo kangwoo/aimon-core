@@ -15,6 +15,7 @@ import java.util.function.UnaryOperator;
 import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.DefaultAgent;
+import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.impl.AgentBundle;
 import at.aimon.core.agent.impl.orca.OrcaAgentExecutionRequest;
@@ -34,6 +35,8 @@ import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.session.transcript.TranscriptManager;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.command.DefaultCommandExecutionManager;
+import at.aimon.core.config.hook.HookHotReloadBootstrap;
+import at.aimon.core.config.hook.ReloadInvoker;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
 import at.aimon.core.environment.impl.LocalExecutionEnvironmentProvider;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
@@ -45,7 +48,9 @@ import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.cost.CostEstimator;
 import at.aimon.core.mcp.McpClientFactory;
 import at.aimon.core.mcp.McpServerConfigProvider;
+import at.aimon.core.shell.impl.local.LocalShell;
 import at.aimon.core.skill.hook.declarative.DefaultShellActionExecutor;
+import at.aimon.core.skill.hook.declarative.HostShellActionExecutor;
 import at.aimon.core.skill.parser.MarkdownSkillParser;
 import at.aimon.core.skill.parser.SkillHookSetParser;
 import at.aimon.core.skill.policy.SkillInvocationPolicy;
@@ -204,6 +209,10 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
 
         final Node node = new Node(runtime, executor, fileSystem, subagentManager, ownsSubagentManager, recordStore,
                 hookManager, root);
+        if (options.hooksJson != null) {
+            node.startHooksJson(name, baseDir.resolve(name + "-home"), options.hooksJson,
+                    options.hooksJsonHostDir == null ? root : options.hooksJsonHostDir);
+        }
         nodes.add(node);
         return node;
     }
@@ -224,6 +233,14 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
     /** Writes a skill to {@code <baseDir>/<nodeName>/.aimon/skills/<skillName>/SKILL.md}. */
     void seedSkill(String nodeName, String skillName, String markdown) {
         seedFile(nodeName, ".aimon/skills/" + skillName + "/SKILL.md", markdown);
+    }
+
+    /**
+     * Writes a file under a node's root before the node exists, at {@code <baseDir>/<nodeName>/<relativePath>} &mdash;
+     * a {@code .aimon/hooks/} script beside the {@code hooks.json} that {@link Options#hooksJson} writes, say.
+     */
+    void seedNodeFile(String nodeName, String relativePath, String content) {
+        seedFile(nodeName, relativePath, content);
     }
 
     /** Writes one more file of a skill, at {@code <baseDir>/<nodeName>/.aimon/skills/<skillName>/<relativePath>}. */
@@ -280,6 +297,12 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
             } catch (RuntimeException e) {
                 failure = record(failure, e);
             }
+            // After the sessions, whose close fires onSessionEnd through the host shell.
+            try {
+                node.stopHooksJson();
+            } catch (RuntimeException e) {
+                failure = record(failure, e);
+            }
             // Borrowed managers belong to the node that built them, which closes them on its own pass. Closing one
             // twice would shut the pool down while the owner's teardown assertions still need it.
             if (node.ownsSubagentManager) {
@@ -315,6 +338,8 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
         private final DefaultHookExecutionManager hookManager;
         private final List<DefaultLiveSession> liveSessions = new ArrayList<>();
         private final Path root;
+        private HookHotReloadBootstrap.Started hooksJsonReload;
+        private LocalShell hooksJsonHostShell;
 
         Node(OrcaAgentRuntime runtime, OrcaAgentExecutor executor, LocalFileSystem fileSystem,
                 DefaultSubagentExecutionManager subagentManager, boolean ownsSubagentManager,
@@ -331,6 +356,44 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
 
         OrcaAgentRuntime runtime() {
             return runtime;
+        }
+
+        /**
+         * Loads {@code <root>/.aimon/hooks.json} into this node's hook registry the way an assembly does
+         * ({@code HookHotReloadBootstrap}), with the host-placed commands on a {@code LocalShell} rooted at
+         * {@code hostDir} and the environment-placed ones on the bootstrap's default executor.
+         */
+        private void startHooksJson(String name, Path userHome, String json, Path hostDir) {
+            try {
+                Files.createDirectories(root.resolve(".aimon"));
+                Files.writeString(root.resolve(".aimon/hooks.json"), json, StandardCharsets.UTF_8);
+                Files.createDirectories(hostDir);
+            } catch (IOException e) {
+                throw new IllegalStateException("failed to seed hooks.json", e);
+            }
+            hooksJsonHostShell = new LocalShell(hostDir);
+            hooksJsonReload = HookHotReloadBootstrap.builder().userHome(userHome).projectRoot(root)
+                    .shellExecutor(new HostShellActionExecutor(hooksJsonHostShell)).processEnv(System.getenv())
+                    .registry(runtime.getHookRegistry()).executionManager(hookManager)
+                    .invoker(new ReloadInvoker(InvokerType.MAIN_AGENT, name)).start();
+        }
+
+        private void stopHooksJson() {
+            if (hooksJsonReload != null) {
+                hooksJsonReload.close();
+            }
+            if (hooksJsonHostShell != null) {
+                hooksJsonHostShell.close();
+            }
+        }
+
+        /** Rewrites {@code <root>/.aimon/hooks.json}; the watcher picks the edit up and fires onConfigReload. */
+        void rewriteHooksJson(String json) {
+            try {
+                Files.writeString(root.resolve(".aimon/hooks.json"), json, StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                throw new IllegalStateException("failed to rewrite hooks.json", e);
+            }
         }
 
         /**
@@ -501,6 +564,8 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
         private int maxIterations = MAX_ITERATIONS;
         private UnaryOperator<ExecutionEnvironmentProvider> environmentProviderDecorator = UnaryOperator.identity();
         private boolean skillShellHooks;
+        private String hooksJson;
+        private Path hooksJsonHostDir;
 
         /** Appends a provider after the default ones. Use for probes that observe state production tools do not. */
         Options extraToolProvider(OrcaToolProvider provider) {
@@ -612,6 +677,19 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
          */
         Options skillShellHooks(boolean enabled) {
             this.skillShellHooks = enabled;
+            return this;
+        }
+
+        /**
+         * Writes {@code json} to the node's {@code .aimon/hooks.json} and loads it through
+         * {@code HookHotReloadBootstrap}, as an assembly that wires {@code hooks.json} does. Host-placed commands run
+         * on
+         * a {@code LocalShell} rooted at {@code hostDir} &mdash; a directory other than the workspace, so a test can
+         * see from the files a command writes where it ran &mdash; and the watcher is closed with the node.
+         */
+        Options hooksJson(String json, Path hostDir) {
+            this.hooksJson = Objects.requireNonNull(json, "json must not be null");
+            this.hooksJsonHostDir = hostDir;
             return this;
         }
 

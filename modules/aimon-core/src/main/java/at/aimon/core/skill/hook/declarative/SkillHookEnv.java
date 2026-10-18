@@ -98,6 +98,27 @@ public final class SkillHookEnv {
      */
     public static final String AIMON_SKILL_DIR = "AIMON_SKILL_DIR";
 
+    /**
+     * The {@code hooks/} directory next to the {@code hooks.json} that declared the command, as a path the shell
+     * running it can read (aimon-core #273): the host path itself when the command runs on the host, the path
+     * {@code ExecutionEnvironment.stage(...)} returned when it runs in an execution's environment.
+     *
+     * <p>
+     * <b>Set only for {@code hooks.json} commands that name it.</b> The applier attaches the directory to the action
+     * when the command text contains {@code AIMON_HOOK_DIR}; any other command, and every skill-declared hook, runs
+     * without the variable and stages nothing. It is exported by the executor that runs the command, after the
+     * placement has been decided, so the value always belongs to the shell the command runs in. Not part of the stdin
+     * payload, which is built before that decision.
+     *
+     * <p>
+     * <b>If the directory cannot be staged, the command is not run</b>
+     * ({@code ShellHookOutcome.Unrun.HOOK_DIR_STAGING_FAILED}), on the rule {@link #AIMON_SKILL_DIR} follows.
+     *
+     * <p>
+     * Never truncated, for the same reason.
+     */
+    public static final String AIMON_HOOK_DIR = "AIMON_HOOK_DIR";
+
     /** Invoker name (typically the agent name). */
     public static final String AIMON_INVOKER_NAME = "AIMON_INVOKER_NAME";
 

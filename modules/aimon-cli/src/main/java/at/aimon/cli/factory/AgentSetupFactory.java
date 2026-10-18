@@ -548,15 +548,17 @@ public class AgentSetupFactory {
         // executors its parser had. The mcp one is bound to the runtime's MCP clients in decorate().
         final HookActionExecutors hookActions = HookActionExecutors.create(hasMcpServers(config));
         final SkillParser skillParser = createSkillParser(hookActions);
-        // The host shell is for hooks.json only: operator configuration, and the one place that can declare events
-        // firing outside any execution, where there is no execution environment to run in.
-        final LocalShell hookConfigShell = new LocalShell();
         final AgentBundleLoader effectiveBundleLoader = (this.agentBundleLoader != null)
                 ? this.agentBundleLoader
                 : new AdaptiveAgentBundleLoader(DEFAULT_AGENT_BUNDLE_BASE_PATH, new MarkdownAgentDefinitionParser(),
                         Thread.currentThread().getContextClassLoader(), skillParser, allowedSkillLinkRoots(config));
         final AgentBundle agentBundle = effectiveBundleLoader.load(extractAgentName(config));
         final LocalFileSystem fileSystem = createFileSystem();
+        // The host shell is for hooks.json only: the commands that run outside the execution's environment (the events
+        // outside any execution, "shell": "host", asyncRewake, firings with no execution behind them). The rest run in
+        // the execution's environment (#273). Rooted at the workspace root, where those run too, so one hooks.json
+        // never splits across two working directories.
+        final LocalShell hookConfigShell = createHookConfigShell(fileSystem);
 
         // SK-MEM Stage 9: optional Honcho-analogue peer memory. When config.memory is populated we build a file-backed
         // RepresentationStore and a MemoryToolContextEnricher that injects workspace + observer + sessionId before
@@ -1080,9 +1082,13 @@ public class AgentSetupFactory {
      * helper get the same wiring shape.
      *
      * <p>
-     * {@code hooks.json} shell actions run on the host shell through a {@link HostShellActionExecutor}, unlike
-     * skill-declared ones: the file is operator configuration and can declare session- and config-lifecycle events,
-     * which have no execution environment.
+     * {@code hooks.json} shell actions on events that fire inside an execution run in that execution's environment,
+     * as an isolated exec ({@code IsolatedShellActionExecutor}, the bootstrap's default), so an agent's
+     * {@code export}s and {@code cd} cannot steer them (#273). The host shell, through a
+     * {@link HostShellActionExecutor}, serves the rest: the session- and config-lifecycle events, which have no
+     * execution environment, handlers that declare {@code "shell": "host"}, {@code asyncRewake} handlers with no
+     * {@code "shell"}, and firings with no execution behind them. The CLI's provider is the local one, so both run on
+     * this machine, in the workspace root.
      *
      * <p>
      * {@code http} and {@code mcp} handlers run through the CLI's {@link HookActionExecutors}; the {@code mcp} one is
@@ -1123,12 +1129,23 @@ public class AgentSetupFactory {
     }
 
     /**
-     * The executor for {@code hooks.json} shell actions: a {@link HostShellActionExecutor} over the CLI's host shell
-     * (EE-48). Not a {@link DefaultShellActionExecutor} — that one runs in the firing execution's environment, and
-     * {@code hooks.json} can declare session- and config-lifecycle events that fire outside any execution.
+     * The executor for the host-placed {@code hooks.json} shell actions: a {@link HostShellActionExecutor} over the
+     * CLI's host shell. Not a {@link DefaultShellActionExecutor} — that one runs a skill's hook in the firing
+     * execution's environment from the agent's shell state. The environment-placed actions take the bootstrap's
+     * isolated default (EE-48, #273).
      */
     static ShellActionExecutor createHookConfigShellExecutor(VirtualShell hookConfigShell) {
         return new HostShellActionExecutor(hookConfigShell);
+    }
+
+    /**
+     * The CLI's host shell for {@code hooks.json}, rooted at the workspace root &mdash; the file system's working
+     * directory, where the agent's {@code Bash} and the environment-placed {@code hooks.json} commands run, and where
+     * the project layer's {@code hooks.json} is read from. It used to be the JVM's {@code user.dir}, which differs from
+     * the workspace root when the CLI is started with {@code java -jar} from another directory (#273).
+     */
+    static LocalShell createHookConfigShell(LocalFileSystem fileSystem) {
+        return new LocalShell(Path.of(fileSystem.getWorkingDirectory()));
     }
 
     /**

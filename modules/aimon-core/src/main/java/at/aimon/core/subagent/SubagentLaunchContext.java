@@ -25,6 +25,7 @@ import at.aimon.core.knowledge.KnowledgeScope;
 import at.aimon.core.knowledge.KnowledgeStore;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
+import at.aimon.core.subagent.execution.ForkGoalRenderer;
 import at.aimon.core.subagent.task.SessionSnapshotStore;
 import at.aimon.core.subagent.task.TaskOutputStore;
 import at.aimon.core.subagent.task.TaskResultStore;
@@ -111,6 +112,7 @@ public final class SubagentLaunchContext {
     private final ExecutionEnvironment executionEnvironment;
     private final ExecutionEnvironmentProvider executionEnvironmentProvider;
     private final QuotaGuard quotaGuard;
+    private final ForkGoalRenderer forkGoalRenderer;
 
     private SubagentLaunchContext(Builder builder) {
         agentRuntimeId = Objects.requireNonNull(builder.agentRuntimeId, "Agent runtime ID cannot be null");
@@ -143,6 +145,7 @@ public final class SubagentLaunchContext {
         executionEnvironment = builder.executionEnvironment;
         executionEnvironmentProvider = builder.executionEnvironmentProvider;
         quotaGuard = builder.quotaGuard != null ? builder.quotaGuard : QuotaGuard.disabled();
+        forkGoalRenderer = builder.forkGoalRenderer;
     }
 
     /**
@@ -436,6 +439,17 @@ public final class SubagentLaunchContext {
     }
 
     /**
+     * Returns the renderer that renders the goal again in the fork's own environment, when the provider places the
+     * fork somewhere other than the spawner (EE-81). A fork-mode skill hands one over so its body's
+     * {@code ${AIMON_SKILL_DIR}} is a path staged where the fork runs.
+     *
+     * @return the renderer, or empty when the goal is used as it is
+     */
+    public Optional<ForkGoalRenderer> getForkGoalRenderer() {
+        return Optional.ofNullable(forkGoalRenderer);
+    }
+
+    /**
      * Returns a builder seeded with every field of this launch context, for deriving a variant that shares all borrowed
      * collaborators (registries, stores, model, ...) but overrides selected fields.
      *
@@ -459,7 +473,8 @@ public final class SubagentLaunchContext {
                 .sessionSnapshotStore(sessionSnapshotStore).previousSnapshot(previousSnapshot)
                 .messageQueueManager(messageQueueManager).parentEventSink(parentEventSink)
                 .callerAllowedTools(callerAllowedTools).executionEnvironment(executionEnvironment)
-                .executionEnvironmentProvider(executionEnvironmentProvider).quotaGuard(quotaGuard);
+                .executionEnvironmentProvider(executionEnvironmentProvider).quotaGuard(quotaGuard)
+                .forkGoalRenderer(forkGoalRenderer);
     }
 
     @Override
@@ -495,6 +510,7 @@ public final class SubagentLaunchContext {
         private ExecutionEnvironment executionEnvironment;
         private ExecutionEnvironmentProvider executionEnvironmentProvider;
         private QuotaGuard quotaGuard;
+        private ForkGoalRenderer forkGoalRenderer;
 
         private Builder() {
         }
@@ -804,6 +820,18 @@ public final class SubagentLaunchContext {
          */
         public Builder quotaGuard(QuotaGuard quotaGuard) {
             this.quotaGuard = quotaGuard;
+            return this;
+        }
+
+        /**
+         * Sets the renderer that renders the goal in the fork's own environment.
+         *
+         * @param forkGoalRenderer
+         *            the renderer, or null to use the goal as it is
+         * @return this builder
+         */
+        public Builder forkGoalRenderer(ForkGoalRenderer forkGoalRenderer) {
+            this.forkGoalRenderer = forkGoalRenderer;
             return this;
         }
 

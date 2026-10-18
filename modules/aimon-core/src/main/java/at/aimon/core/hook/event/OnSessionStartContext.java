@@ -106,6 +106,12 @@ public final class OnSessionStartContext implements HookContext {
         return agentRuntimeId;
     }
 
+    /** Always false: this event fires outside any execution. */
+    @Override
+    public boolean hasExecution() {
+        return false;
+    }
+
     @Override
     public Instant getTimestamp() {
         return timestamp;
