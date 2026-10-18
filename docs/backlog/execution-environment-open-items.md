@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 108건 (열림 31 · 닫힘 77)
+# 실행 환경 — 등록 항목 108건 (열림 30 · 닫힘 78)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -88,6 +88,12 @@ EE-106~EE-108 은 환경의 알림을 모든 도구 결과에 싣게 한 변경(
 ([`../design/tool/execution-environment-notices.md`](../design/tool/execution-environment-notices.md))가 남긴 열린 질문과 그
 설계 리뷰 가운데 이 변경 밖으로 결과가 번지는 것을 옮긴 것이다(Q6 → EE-106, Q2 · Q3 · 리뷰 → EE-107, Q4 → EE-108). 그
 변경 자체는 백로그 항목이 아니었으므로 여기서 닫힌 항목은 없다.
+
+2026-10-18 에 aimon-sandbox `main`(`80b9998`)을 읽고 이 문서를 그쪽에 맞췄다. EE-43 은 닫았다 — 그쪽의 기본 바인딩이 처음부터
+부모의 슬롯을 따르고 있었다. EE-107 은 셋 가운데 둘을 그쪽이 정했고(PR #29 까지), 그쪽이 풀 수 없는 인라인 `/skill`
+갈래만 남겨 제목을 좁혔다. 트리거가 샌드박스 제공자에 걸려 있던 다섯(EE-30 · EE-48 · EE-52 · EE-81, 그리고 EE-30 에 매인
+EE-63)에는 트리거가 왔다는 날짜 붙은 줄을 더했다. 결정은 하나도 내리지 않았고, 그중 셋(EE-48 · EE-52 · EE-81)은 오늘의
+제공자로는 항목이 걱정한 결과가 아직 다 나지 않는다는 것도 함께 적었다.
 
 ---
 
@@ -1387,6 +1393,14 @@ not supported: this environment is already the isolated workflow branch 'k' (.wo
 싣지 않았다. 이 항목을 고칠 때 함께 정한다: 부모 환경을 넘기면 속성은 군더더기이고, 속성으로 새로 해석하면 부모와 다른 답이
 나올 수 있다.
 
+*(2026-10-18 — 트리거가 왔다.)* 샌드박스 제공자가 붙었다(aimon-sandbox `main` `80b9998`). 위 문단이 예측한 대로 답한다 —
+부모 환경이 없는 포크 요청을 `"this fork has no parent environment, so it cannot share a sandbox workspace (EE-30)"` 로
+거부하고(그쪽 `SandboxExecutionEnvironmentProvider.java:128-129`), 그쪽 설계 `workspace-sandbox.md` §8.1 의 요청 표가 이
+러너의 단계를 **사용 불가**로 적는다. 코어 쪽은 그대로다 — 에이전트 범위 러너의 `SubagentLaunchContext` 에는 여전히
+부모 환경이 없다(`OrcaAgentRuntimeFactory.java` 의 `WorkflowRunners.create` `:1162`, 2026-10-18). 그러니 그 제공자 아래서
+`Workflow` · `WorkflowJs` 의 백그라운드 단계는 파일 · 셸 도구를 쓸 수 없다. 정할 것은 이 항목의 "무엇을" 그대로다 —
+러너에 호출한 실행의 부모 환경을 넘길지, 넘긴다면 위 `requestAttributes` 를 어떻게 할지. EE-63 과 함께 정한다.
+
 출처: 빌드 리뷰 4.
 
 ## EE-31 — 슬래시 커맨드 인라인 스킬에는 read stamp 가 없다 · **닫힘** *(2026-10-05)*
@@ -1855,7 +1869,7 @@ javadoc 에 적었다).
 `GraalJsEnvironmentRequestTest`(실제 실행 관리자로 `agent()`·`parallel()`·`pipeline()` 단계의 요청까지). 설계와 구현이 달라진 점은 설계
 문서 §8 에 있다.
 
-## EE-43 — 속성이 빈 포크를 제공자가 어디에 두는지 정해지지 않았다 · **열림**
+## EE-43 — 속성이 빈 포크를 제공자가 어디에 두는지 정해지지 않았다 · **닫힘** *(2026-10-18)*
 
 **무엇을.** 속성이 빈 포크(속성을 적지 않은 서브에이전트, 역할 정의가 없는 `Workflow` 단계)에 대해 제공자가 "부모와 같은
 샌드박스"(설계 §5.2 의 기본)를 따르는지 "전역 기본 슬롯"을 쓰는지를 워크스페이스 샌드박스 제공자 쪽에서 확정한다. 후자라면
@@ -1872,6 +1886,30 @@ javadoc 에 적었다).
 **언제 다시 볼까.** 워크스페이스 샌드박스 구현 순서 4단계(멀티 슬롯)의 바인딩 정책을 정할 때.
 
 출처: EE-42 설계 §7 Q2.
+
+### 닫힘 (2026-10-18)
+
+aimon-sandbox 가 정했다 — **부모를 따른다.** 설계 §5.2 의 기본과 같다. 그쪽 `main` `80b9998` 에서 읽었다.
+
+- 포크의 슬롯은 바인딩 정책의 `forkSlot` 이 정하고, 기본 구현은 `SlotChoice.fromAttributes` 다
+  (`SandboxBindingPolicy.java:33-35`). 그 첫 줄이 `attributes.getOrDefault(SLOT_ATTRIBUTE, parent.slot())` 이다
+  (`SlotChoice.java:73`). 속성이 빈 포크는 부모의 슬롯에 남고, 그때는 요구 프로파일도 부모의 것을 물려받는다(`:78`).
+- 워크스페이스 · owner 는 정책과 무관하게 부모의 바인딩에서 온다 — `bindFork` 가 `parentBinding.toBuilder()` 위에 슬롯만
+  얹는다(`SandboxExecutionEnvironmentProvider.java:127` 부터). root 도 같은 슬롯이면 부모의 것이다(`:146`). 그쪽 설계
+  `docs/design/workspace-sandbox.md` §8.2 가 같은 규칙을 적는다.
+
+그래서 이 항목이 걱정한 경우 — 슬롯 X 의 포크가 부른 `Workflow` 의 단계가 조용히 기본 슬롯으로 가는 것 — 는 기본 정책에서
+일어나지 않고, 기각안 C 를 다시 볼 이유도 생기지 않았다.
+
+**착수해 보니 적힌 것과 달랐던 것.**
+
+1. **이 답은 처음부터 있었다.** 같은 기본 규칙은 이 항목이 등록된 날 aimon-sandbox PR #3(2026-09-29, `88a22db`)으로 이미
+   들어가 있었다. 이 항목은 그쪽 체크아웃 없이 쓰였고, 트리거로 잡은 "구현 순서 4단계(멀티 슬롯)" 는 그쪽 번호와도
+   맞지 않는다 — 그쪽은 여러 슬롯을 **5단계**로 미뤘다.
+2. **지금은 슬롯이 하나뿐이다.** 제공자는 `primary` 가 아닌 슬롯을 거부한다(`SandboxExecutionEnvironmentProvider.java:105`,
+   "until more slots arrive (implementation step 5)"). 그래서 오늘은 어느 정책을 꽂아도 포크가 다른 슬롯으로 갈 수 없다.
+   애플리케이션이 `forkSlot` 을 재정의해 부모를 무시하게 할 수는 있지만, 그것은 이 항목이 물은 "제공자의 기본값" 이
+   아니라 그 애플리케이션의 선택이다.
 
 ## EE-44 — `Workflow` 역할 정의가 모델에게 `Task` 서브에이전트로도 보인다 · **닫힘** *(2026-10-05)*
 
@@ -2023,6 +2061,15 @@ javadoc 에 적었다).
 `modules/aimon-bootstrap/src/main/java/at/aimon/bootstrap/TeardownPhase.java` 의 `HOOK_CONFIG_SHELL`.
 
 **언제 다시 볼까.** 샌드박스 제공자를 붙일 때.
+
+*(2026-10-18 — 트리거는 왔지만, 출하되는 조립에서는 아직 비대칭이 생기지 않는다.)* 샌드박스 제공자가 붙었다(aimon-sandbox
+`main` `80b9998`). 그쪽은 `hooks.json` 의 셸을 건드리지 않는다 — 그쪽 `src/main` 에 `hooks.json` · `HostShellActionExecutor`
+를 다루는 코드가 없다. 코어 쪽도 그대로다 — CLI 는 여전히 호스트 `LocalShell` 을 만들어 `hooks.json` 핫리로드에 쓴다
+(`AgentSetupFactory.java` 의 `hookConfigShell` `:553`, `setupHookHotReload` `:1096`, `TeardownPhase.HOOK_CONFIG_SHELL` `:300`,
+2026-10-18). 다만 `hooks.json` 을 싣는 조립은 **CLI 하나**이고, CLI 는 실행 환경 제공자를 `LocalExecutionEnvironmentProvider`
+로 고정해 둔다(`AgentSetupFactory.java:613`). 부트스트랩과 스타터는 `hooks.json` 을 싣지 않는다. 그래서 위 "왜" 의 비대칭은
+**호스트가 `HookHotReloadBootstrap` 과 샌드박스 제공자를 직접 함께 조립할 때만** 생긴다. 정할 것은 이 항목의 "무엇을"
+그대로다. 거기에 하나가 붙는다 — 그 결정을 지금 내릴지, `hooks.json` 을 싣는 조립이 샌드박스 제공자를 받게 될 때까지 둘지.
 
 출처: [`../design/tool/execution-environment-ee9-ee12-hook-environment.md`](../design/tool/execution-environment-ee9-ee12-hook-environment.md)
 §3.3 · §9 Q1.
@@ -2240,6 +2287,15 @@ WARN), `HookRegistryApplierTest`(셸 미지원 실행기 · 옵션 전달), `Age
 `subagent/execution/DefaultSubagentExecutor.java` 의 `resolveExecutionEnvironment`.
 
 **언제 다시 볼까.** 포크에 부모와 다른 환경을 주는 제공자가 생길 때.
+
+*(2026-10-18 — 트리거가 왔다. 다만 이 항목이 걱정한 결과는 아직 절반만 난다.)* aimon-sandbox(`main` `80b9998`)는 포크마다
+**새 환경 인스턴스**를 만든다 — `bindFork` 가 부모의 바인딩을 복사하고 셸 키를 `exec:{executionId}` 로 바꾼다(그쪽
+`SandboxExecutionEnvironmentProvider.java:127` · `:159`). 그래서 `subagentStop` 의 셸 훅은 포크의 셸이 아니라 스폰한 쪽의
+셸(메인 턴이면 `session:{sessionId}`)에서 돌고, 포크가 남긴 cwd · export 한 변수를 보지 못한다. 반면 **파일은 같다** —
+슬롯이 같으면 워크스페이스도 root 도 부모의 것이고(`:146`), 제공자는 지금 `primary` 가 아닌 슬롯을 거부한다(`:105`). "포크의
+워크스페이스가 아니라 스폰한 쪽의 것을 본다" 는 여러 슬롯이 들어오기 전까지 일어나지 않는다. 코어 쪽은 그대로다
+(`DefaultSubagentExecutionManager.java` 의 `fireSubagentStart` `:1023` · `fireSubagentStop` `:1041`, 2026-10-18). 정할 것은 이
+항목의 "무엇을" 그대로다 — EE-81 과 같은 트리거이므로 함께 본다.
 
 출처: [`../design/tool/execution-environment-ee9-ee12-hook-environment.md`](../design/tool/execution-environment-ee9-ee12-hook-environment.md)
 §9 Q3.
@@ -2675,6 +2731,10 @@ runId)` 를 부르고, 그 러너의 기반 환경은 런타임을 조립할 때
 **언제 다시 볼까.** EE-30(백그라운드 워크플로가 호출자의 실행 환경을 잃는다)을 고칠 때 — 같은 러너, 같은 원인이라 함께
 풀어야 한다. 또는 가드 스킬 안에서 백그라운드 워크플로가 필요하다는 요청이 올 때. 감사 훅을 가드만큼 무겁게 보는 배포가
 생기면 관찰 전용도 거절로 바꾼다(판정 한 줄).
+
+*(2026-10-18.)* 이 항목 자신의 트리거(EE-30 을 고칠 때)는 오지 않았다 — EE-30 은 열려 있다. 그러나 EE-30 의 트리거가
+왔으므로(샌드박스 제공자가 붙었다, EE-30 의 2026-10-18 줄) 그 결정이 열리면 이 항목도 같은 자리에서 열린다. 같은 러너가
+부모 환경도 스킬 훅의 뷰도 받지 못한다는 원인은 그대로다(`OrcaAgentRuntimeFactory.java` `:1162`, 2026-10-18).
 
 출처: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) §3.1 · §8 · §9 Q8 · 설계 리뷰 1.
 
@@ -3403,6 +3463,13 @@ main 코드가 없고, 스냅숏의 `userLocale` 은 블록을 만드는 쪽이 
 **어디** *(2026-10-05)* — `at.aimon.core.tools.SkillRenderContextAccess`, `LocalExecutionEnvironmentProvider.resolve`.
 
 **언제 다시 볼까.** 포크에 부모와 다른 환경을 주는 제공자를 붙일 때(EE-52 와 같은 트리거).
+
+*(2026-10-18 — 트리거는 왔지만 이 항목의 관측은 아직 나지 않는다.)* aimon-sandbox(`main` `80b9998`)는 포크마다 새 환경
+인스턴스를 만든다(EE-52 의 같은 날 줄). 그러나 스테이징 경로는 인스턴스가 아니라 워크스페이스에 매여 있다 — 언제나
+`/workspace/.aimon-staged/{name}/{contentKey}/` 다(그쪽 `SandboxStaging.java:57`). 슬롯이 하나뿐인 지금은 부모와 포크가 같은
+샌드박스의 같은 경로를 받으므로 본문과 훅의 `${AIMON_SKILL_DIR}` 는 같다. 둘이 갈리는 것은 포크가 다른 슬롯(다른 샌드박스)에
+놓일 때이고, 그쪽은 그것을 구현 5단계로 미뤘다(`SandboxExecutionEnvironmentProvider.java:105`). 정할 것은 이 항목의
+"무엇을" 그대로이고, 오늘의 제공자로는 재현할 수 없다.
 
 ## EE-82 — 허용 루트로 적재된 링크 스킬은 머티리얼라이즈되지 않고, 번들의 `agents/` 에는 링크 규칙이 없다 · **열림**
 
@@ -4562,7 +4629,7 @@ the hook returned a verdict" 사유로 끝난다. 같은 정지가 ReAct 포크�
 
 **언제 다시 볼까.** 제공자가 `resolve()` 시점의 사실을 도구 호출 없는 턴에도 알려야 한다고 요청할 때.
 
-## EE-107 — 환경 알림의 큐를 포크와 나누면 부모가 듣지 못하고, 받은 순간 확정이라 취소된 결과와 함께 사라진다 · **열림**
+## EE-107 — 사용자가 친 인라인 `/skill` 은 메인 턴의 환경 알림을 자기 스크래치 루프로 비운다 · **열림**
 
 *(2026-10-17 등록. 출처는 환경 알림 설계 §7 Q2 · Q3 과 그 설계 리뷰. 읽어서 본 것이고 돌려 보지 않았다.)*
 
@@ -4584,6 +4651,39 @@ SPI 는 설계에서 기각했다(§2.2) — 창이 작고, 다음 재생성이 
 
 **언제 다시 볼까.** aimon-sandbox 가 `PendingNotices` 를 `drainNotices()` 로 옮길 때. 포크나 슬래시 스킬 뒤에 부모가 재생성을
 모른다는 보고가 오면 바로.
+
+> **2026-10-18 — (1) 과 (3) 은 aimon-sandbox 가 정했다. (2) 는 그쪽에서 풀 수 없어 남고, 항목은 그것으로 좁혀 열려 있다.**
+> 제목도 그에 맞게 바꿨다(옛 제목: "환경 알림의 큐를 포크와 나누면 부모가 듣지 못하고, 받은 순간 확정이라 취소된 결과와
+> 함께 사라진다"). 트리거는 왔다 — aimon-sandbox 가 `PendingNotices` 를 `drainNotices()` 로 옮겼다
+> (`SandboxExecutionEnvironment.java:145`). 아래는 그쪽 `main` `80b9998` 에서 읽은 것이다. 그쪽의 설계는
+> `docs/design/workspace-sandbox-core-033.md` §6.4 · §6.5 · §10, 미전달 초기화는 `docs/design/workspace-sandbox-unannounced-reset.md`
+> (aimon-sandbox PR #29, 2026-10-18) 다.
+>
+> **(1) 은 닫혔다 — 큐는 인스턴스마다 하나이고, 포크가 만든 재생성은 부모의 다음 접속이 알린다.** 제공자는 루트든 포크든
+> 요청마다 새 환경과 새 `PendingNotices` 를 만든다(`PendingNotices.java:31`). 큐를 나누지 않으니 포크가 부모의 notice 를
+> 가져가지 못한다. 반대 방향 — 포크의 첫 접속이 샌드박스를 다시 만들어 그 notice 가 포크의 큐로 가는 것 — 은 인스턴스가
+> 마지막으로 접속한 슬롯의 `(incarnation, generation)` 을 기억해 막는다. 부모의 다음 접속이 더 새 세대를 보고 자기 접속이
+> 초기화를 보고하지 않았으면 "the sandbox was re-created since this execution last used it" 를 쌓는다
+> (`PendingNotices.java:180-189`). 그래서 부모의 다음 도구 결과가 그것을 싣는다.
+>
+> **(3) 은 그쪽이 받아들였다 — 최대 한 번 그대로다.** 꺼낸 것이 곧 전달한 것이고, `drain()` 이 그 자리에서 장부를 옮긴다
+> (`PendingNotices.java:316-340`). 결과가 기록되기 전에 버려진 drain 의 notice 는 사라진다 — 그쪽 설계 §6.4 가
+> "Accepted, as core recommends" 로 적었다. PR #29 가 세션 레코드에 남기는 `unannouncedReset` 은 이 창을 덮지 않는다. 그것은
+> **코어가 비우지 않는 경로**(훅 · 워크플로 단계 · 스테이징)에서 난 초기화를 위한 것이고, drain 이 그 notice 를 돌려주는
+> 순간 지운다. 이 항목이 물은 것("수신 확인을 어떻게 둘지 그쪽에서 정한다")에는 답이 났으므로 닫힌 것으로 센다.
+>
+> **(2) 는 남는다 — 그리고 이제 코어의 일이다.** 다시 읽었다(2026-10-18). `OrcaAgentExecutor.executeCommand`(`:2147`)는 명령
+> 컨텍스트에 **턴의 환경 인스턴스를 그대로** 싣고(`putExecutionEnvironment(commandContextBuilder, scope)`, `:2171`), 인라인
+> 스킬의 도구 호출은 `SKILL_TOOL_DISPATCHER_KEY`(`:2211`) → `SingleToolInvoker`(`:152`, `EnvironmentNotices.deliver`) 로 그
+> 인스턴스를 비운다. 결과는 스킬의 스크래치 루프로 가고 그 전사는 끝나면 버려진다. 포크 모드 스킬은 해당하지 않는다 —
+> 포크 요청은 제공자에게서 자기 환경을 받는다. 그쪽은 이것을 코어의 빈틈으로 적었다 — *"The sandbox cannot tell a scratch
+> loop from the main loop"*, *"only core can route or re-queue"*(그쪽 설계 §6.5 · §10 의 2). 그리고 PR #29 의 지속 기록도
+> 여기서는 도움이 되지 않는다. 스크래치 루프의 drain 도 drain 이므로 레코드를 함께 지운다(`PendingNotices.java:335-337`).
+> 그 notice 가 재생성이 아니라 워크스페이스 전환이나 세대 notice 였어도 결과는 같다.
+>
+> **정할 것(정하지 않았다).** 코어가 인라인 `/skill` 의 루프에서 비운 notice 를 메인 에이전트의 다음 턴에 다시 실을지,
+> 그 루프에서는 아예 비우지 않을지, 지금 모양을 계약으로 적을지. **언제 다시 볼까** 는 그대로 둔다 — 슬래시 스킬 뒤에
+> 부모가 재생성을 모른다는 보고가 오면 바로.
 
 ## EE-108 — 훅이 `drainNotices()` 를 부르는 것을 막는 것은 문서뿐이다 · **열림** *(트리거 대기)*
 

@@ -1,4 +1,4 @@
-# Context engine 뷰 압력 리그가 남긴 열린 항목 — 등록 항목 6건 (열림 5 · 닫힘 1)
+# Context engine 뷰 압력 리그가 남긴 열린 항목 — 등록 항목 6건 (열림 4 · 닫힘 2)
 
 출처는 2026-10-07 의 작업이다 — `ContextEngineLiveRig` 에 `default` · `rolling` engine 을 같은 과제로 재는 비교 과제를
 붙였다. 설계 기록은 [`design/agent-execution/context-engine-pressure-rig.md`](../design/agent-execution/context-engine-pressure-rig.md),
@@ -115,7 +115,7 @@ export 한 셸의 모든 `checkAll` 이 프로바이더당 수백만 토큰을 �
 
 **언제 다시 볼까.** CP-1 을 돌리기 직전. 명령을 치는 사람이 그 클래스의 javadoc 에서 비용을 읽고, 그 옆에 모델 상수가 있다.
 
-## CP-5 — `release-gate-provider-keys.md` 는 라이브 클래스가 넷이라고 적는다 · **열림**
+## CP-5 — `release-gate-provider-keys.md` 는 라이브 클래스가 넷이라고 적는다 · **닫힘** *(2026-10-18)*
 
 **무엇을.** 그 문서 §1.1 의 클래스 수와 목록을 지금의 트리에 맞추거나, 그 문장이 설계 시점의 수임을 밝힌다.
 
@@ -128,6 +128,18 @@ export 한 셸의 모든 `checkAll` 이 프로바이더당 수백만 토큰을 �
 
 **언제 다시 볼까.** 그 문서를 다음에 고치는 사람이 §1.1 을 지나간다. `Status` 가 `IMPLEMENTED` 이고 표지가 없는 기록이라
 제자리에서 고칠 수 있다.
+
+### 닫힘 (2026-10-18)
+
+그 문서 §1.1 의 수와 목록을 지금의 트리에 맞췄다. 다시 셌다 — `modules/aimon-llm-*/src/test` 에서
+`@EnabledIfEnvironmentVariable(named = "ANTHROPIC_KEY" | "OPENAI_KEY")` 를 단 클래스는 여덟이고, 각 모듈에 넷씩이다
+(`*ThinkingLiveTest` / `*ReasoningLiveTest` · `*LlmClientIntegrationTest` · `*ContextEngineLiveTest` ·
+`*ContextPressureLiveTest`). `CONTRIBUTING.md` 의 표와 같다. 문장은 둘을 함께 고쳤다 — 수(넷 → 여덟, 설계 시점의 넷이
+무엇이었는지와 나머지가 언제 들어왔는지)와 "키 하나로만 켜진다"(`*ContextPressureLiveTest` 둘은 `AIMON_CONTEXT_PRESSURE` 도
+본다 — CP-2 가 짚은 그 문장이다). 지금의 목록은 `CONTRIBUTING.md` 를 정본으로 가리키게 했다. 같은 문서의 부록 표("라이브
+API 클래스 넷") 도 여덟으로 고쳤다. 그 문서에는 번역본이 없다.
+
+CP-2 는 이것으로 닫히지 않는다 — 그 항목이 묻는 것은 문장이 아니라 인구조사가 opt-in 변수를 읽을지다.
 
 ## CP-6 — 실제 모델이 `SessionHistory` 조회를 되풀이하다 턴을 실패시킨다 · **열림**
 

@@ -15,9 +15,15 @@
 
 ### 1.1 키 하나가 평범한 빌드를 청구되는 라이브 실행으로 바꾼다
 
-프로바이더의 실제 API 를 부르는 테스트 클래스는 넷이다 — `aimon-llm-anthropic` 의 `AnthropicThinkingLiveTest` ·
-`AnthropicLlmClientIntegrationTest`, `aimon-llm-openai` 의 `OpenAIReasoningLiveTest` · `OpenAILlmClientIntegrationTest`.
-넷 모두 태그가 없고, `@EnabledIfEnvironmentVariable` 의 프로바이더 키(`ANTHROPIC_KEY` · `OPENAI_KEY`) 하나로만 켜진다.
+프로바이더의 실제 API 를 부르는 테스트 클래스는 여덟이다(2026-10-18) — `aimon-llm-anthropic` 의
+`AnthropicThinkingLiveTest` · `AnthropicLlmClientIntegrationTest` · `AnthropicContextEngineLiveTest` ·
+`AnthropicContextPressureLiveTest`, `aimon-llm-openai` 의 `OpenAIReasoningLiveTest` · `OpenAILlmClientIntegrationTest` ·
+`OpenAIContextEngineLiveTest` · `OpenAIContextPressureLiveTest`. 이 설계를 쓸 때는 모듈마다 앞의 둘, 넷이었다 —
+`*ContextEngineLiveTest` 둘(2026-09-25)과 `*ContextPressureLiveTest` 둘(2026-10-07)은 그 뒤에 들어왔다. 지금의 목록은
+[`CONTRIBUTING.md` › Live-API tests](../../../CONTRIBUTING.md#live-api-tests) 의 표가 정본이다.
+여덟 모두 태그가 없고, `@EnabledIfEnvironmentVariable` 의 프로바이더 키(`ANTHROPIC_KEY` · `OPENAI_KEY`)로 켜진다.
+`*ContextPressureLiveTest` 둘은 그 안에서 `AIMON_CONTEXT_PRESSURE` 를 `assumeTrue` 로 한 번 더 보므로 키만으로는 돌지
+않는다(백로그 [`CP-2`](../../backlog/context-engine-pressure-rig-open-items.md)). 나머지 여섯은 키 하나로 켜진다.
 모듈 `test` 태스크의 제외는 태그로만 한다 — 컨벤션 플러그인이 모든 모듈에서 빼는 `docker` · `packaging`, 그리고
 `aimon-browser-playwright` 가 더 빼는 `playwright`. 그래서 키가 export 된 셸의 `./gradlew test` 와 `checkAll` 은 그
 클래스를 함께 돌린다. 그 호출은 키 주인의 계정에 청구되고, 빌드하는 변경과 무관한 이유(더는 유효하지 않은 키의
@@ -489,7 +495,7 @@ CI 워크플로 · 릴리스 스크립트 · `/release` 스킬은 한 태스크 
 | `.claude/skills/release/SKILL.md` | 안전 게이트 목록, Notes 의 키 거부 bullet, `Quality gate =` 줄 |
 | `.github/workflows/build.yml` | `build` · `integration` · `coverage` 잡의 Gradle 스텝 |
 | `buildSrc/src/main/kotlin/aimon.java-conventions.gradle.kts` · `modules/aimon-browser-playwright/build.gradle.kts` | `test` 의 태그 제외, 계층 태스크의 `shouldRunAfter(test)` |
-| `modules/aimon-llm-anthropic/src/test/…` · `modules/aimon-llm-openai/src/test/…` | 라이브 API 클래스 넷의 `@EnabledIfEnvironmentVariable` |
+| `modules/aimon-llm-anthropic/src/test/…` · `modules/aimon-llm-openai/src/test/…` | 라이브 API 클래스 여덟의 `@EnabledIfEnvironmentVariable` |
 | `docs/project/publishing-guide.md` | 스크립트 단계 표 — 대조되지 않는 게이트 사본 |
 | `docs/backlog/live-api-test-tier.md` | `LA-1`(닫힘 — 수동 전용), `LA-2`(열림) |
 
