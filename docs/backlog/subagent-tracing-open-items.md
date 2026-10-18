@@ -206,8 +206,8 @@ span 이 부모 세션의 trace 에서 빠지므로 `traceId` 도 함께 싣는�
 
 **적힌 것보다 좁게 보이는 것.** 이 저장소가 조립하는 포크 실행기(`OrcaAgentExecutorFactory` 와 매니저의 편의 생성자)는
 `ContextEngine.passthrough()` 이라 포크가 compact 하지 않는다. 포크 쪽 변경은 맞지만 실제 `ContextEngine` 을 건 실행기를 쓰는
-임베더에게만 보인다 — "닫힘" 을 "운영 트레이스에 포크의 요약 호출이 나온다" 로 읽지 말 것. `/compact` 명령의 요약 호출은
-COMMAND span 아래 붙지 않는다 — ST-10.
+임베더에게만 보인다 — "닫힘" 을 "운영 트레이스에 포크의 요약 호출이 나온다" 로 읽지 말 것. 이때 `/compact` 명령의 요약 호출은
+COMMAND span 아래 붙지 않았다 — ST-10 에서 닫았다 (2026-10-18, #265).
 
 ---
 
