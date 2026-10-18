@@ -2065,8 +2065,8 @@ aimon-sandbox 가 정했다 — **부모를 따른다.** 설계 §5.2 의 기본
 *(2026-10-18 — 트리거는 왔지만, 출하되는 조립에서는 아직 비대칭이 생기지 않는다.)* 샌드박스 제공자가 붙었다(aimon-sandbox
 `main` `80b9998`). 그쪽은 `hooks.json` 의 셸을 건드리지 않는다 — 그쪽 `src/main` 에 `hooks.json` · `HostShellActionExecutor`
 를 다루는 코드가 없다. 코어 쪽도 그대로다 — CLI 는 여전히 호스트 `LocalShell` 을 만들어 `hooks.json` 핫리로드에 쓴다
-(`AgentSetupFactory.java` 의 `hookConfigShell` `:553`, `setupHookHotReload` `:1096`, `TeardownPhase.HOOK_CONFIG_SHELL` `:300`,
-2026-10-18). 다만 `hooks.json` 을 싣는 조립은 **CLI 하나**이고, CLI 는 실행 환경 제공자를 `LocalExecutionEnvironmentProvider`
+(`AgentSetupFactory.java` 의 `hookConfigShell` `:553`, `setupHookHotReload` `:1096`, 그 셸을 `TeardownPhase.HOOK_CONFIG_SHELL` 로
+소유시키는 `:677` — 상수는 `aimon-bootstrap` 의 `TeardownPhase.java:300`, 2026-10-18). 다만 `hooks.json` 을 싣는 조립은 **CLI 하나**이고, CLI 는 실행 환경 제공자를 `LocalExecutionEnvironmentProvider`
 로 고정해 둔다(`AgentSetupFactory.java:613`). 부트스트랩과 스타터는 `hooks.json` 을 싣지 않는다. 그래서 위 "왜" 의 비대칭은
 **호스트가 `HookHotReloadBootstrap` 과 샌드박스 제공자를 직접 함께 조립할 때만** 생긴다. 정할 것은 이 항목의 "무엇을"
 그대로다. 거기에 하나가 붙는다 — 그 결정을 지금 내릴지, `hooks.json` 을 싣는 조립이 샌드박스 제공자를 받게 될 때까지 둘지.
@@ -4655,7 +4655,7 @@ SPI 는 설계에서 기각했다(§2.2) — 창이 작고, 다음 재생성이 
 > **2026-10-18 — (1) 과 (3) 은 aimon-sandbox 가 정했다. (2) 는 그쪽에서 풀 수 없어 남고, 항목은 그것으로 좁혀 열려 있다.**
 > 제목도 그에 맞게 바꿨다(옛 제목: "환경 알림의 큐를 포크와 나누면 부모가 듣지 못하고, 받은 순간 확정이라 취소된 결과와
 > 함께 사라진다"). 트리거는 왔다 — aimon-sandbox 가 `PendingNotices` 를 `drainNotices()` 로 옮겼다
-> (`SandboxExecutionEnvironment.java:145`). 아래는 그쪽 `main` `80b9998` 에서 읽은 것이다. 그쪽의 설계는
+> (`SandboxExecutionEnvironment.java:144`). 아래는 그쪽 `main` `80b9998` 에서 읽은 것이다. 그쪽의 설계는
 > `docs/design/workspace-sandbox-core-033.md` §6.4 · §6.5 · §10, 미전달 초기화는 `docs/design/workspace-sandbox-unannounced-reset.md`
 > (aimon-sandbox PR #29, 2026-10-18) 다.
 >

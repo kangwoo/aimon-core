@@ -80,6 +80,10 @@ keyValue 는 오류 대신 결과가 나왔다). 보고서의 `summary failures`
 아니게 되었고, 과제의 기준 5("기존 키 게이트를 그대로")를 "키만으로 돈다" 로 읽는다면 opt-in 은 빠져야 한다 — 그러면 키를
 export 한 셸의 모든 `checkAll` 이 프로바이더당 수백만 토큰을 쓴다.
 
+*(2026-10-18.)* 위에서 인용한 문장은 이제 두 문서 어디에도 없다 — `CONTRIBUTING.md` 의 표는 이미 `AIMON_CONTEXT_PRESSURE` 를
+적고 있었고, `release-gate-provider-keys.md` §1.1 은 CP-5 를 닫으며 고쳤다. 남은 것은 문장이 아니라 인구조사다 — 이 항목의
+"무엇을" 은 그대로다.
+
 **어디.** 두 `*ContextPressureLiveTest` 의 `assumeTrue`, `ContextPressureRun.OPT_IN_VARIABLE`.
 
 **언제 다시 볼까.** `assumeTrue` 로 읽는 변수로 과금 실행을 여는 클래스가 하나 더 생길 때 — 그때는 관례가 되므로
