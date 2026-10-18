@@ -41,7 +41,7 @@
 **좁힘 (2026-10-18, #265) — `/skill` 의 비용.** `LlmSkillExecutor` 가 `CostEstimator` 를 받는다
 (`withCostEstimator`, `LlmSkillExecutor.java:200`). 포크 실행기가 받는 길과 같다 — 팩토리의
 `withCostEstimator` 가 메인 실행기와 포크 실행기에 주는 그 estimator 를 기본 명령 실행 매니저의 스킬 실행기에도 준다
-(`createDefaultCommandExecutionManager`, `OrcaAgentExecutorFactory.java:899`). 그래서 `/skill` 루프의 호출은 이제 가격을
+(`createDefaultCommandExecutionManager`, `OrcaAgentExecutorFactory.java:904`). 그래서 `/skill` 루프의 호출은 이제 가격을
 달고 기록되어(`sendAndCharge`, `:432`) 비용 한도에 잡힌다. estimator 가 없으면(`CostEstimator.NOOP`) 예전처럼 토큰만
 기록한다. 팩토리를 거치지 않고 명령 실행 매니저를 직접 넘기는 호스트는 `LlmSkillExecutor#withCostEstimator` 를 스스로
 불러야 한다 — 포크 실행기와 같은 조건이다.
