@@ -1,4 +1,4 @@
-# 서브에이전트 트레이싱 — 등록 항목 11건 (열림 8 · 닫힘 3)
+# 서브에이전트 트레이싱 — 등록 항목 11건 (열림 6 · 닫힘 5)
 
 출처는 [`../design/observability/subagent-trace-nesting.md`](../design/observability/subagent-trace-nesting.md) 의 구현이다.
 그 문서 §7(Open questions)과 §8(구현 뒤 — 설계와 달라진 점)이 적은 것 가운데 **이번 변경 밖으로 결과가 나가는 것**만
@@ -273,7 +273,7 @@ grep 했다. **도구 쪽 독자는 0건이다.** `aimon-ops` 는 `AgentTracingC
 
 ---
 
-## ST-9 — 메인 턴의 compaction 요약 호출 metadata 에 principal 이 없다 · **열림**
+## ST-9 — 메인 턴의 compaction 요약 호출 metadata 에 principal 이 없다 · **닫힘** *(2026-10-18, #265)*
 
 **무엇을.** 메인 턴의 요약 호출 metadata 에 호출자 principal 을 실어 `/compact`(`CompactCommand`) 경로와 맞출지 정한다.
 
@@ -286,9 +286,25 @@ compaction 의 요약 비용은 principal 별 사용량 집계에서 빠진다.
 
 **언제 다시 볼까.** principal 별 사용량 · 쿼터가 compaction 비용을 세야 할 때. 설계 OQ-6.
 
+**닫음 (2026-10-18, #265).** `/compact` 쪽에 맞췄다 — 메인 턴의 요약 호출도 호출자 principal 을 싣는다.
+`OrcaAgentExecutor#contextRequest`(`OrcaAgentExecutor.java:3310`)가 span 위치 carrier 에 principal **하나만** 더해
+`ContextRequest.callMetadata` 로 넘기고, 엔진은 그대로 병합한다(호출자 필드가 이긴다) — `component` · `feature` 는 여전히
+엔진의 `compaction-engine` · `compaction` 이다. 그래서 자동 compaction 의 요약 비용이 principal 별 사용량 집계
+(`LlmUsageKey`)에 그 턴의 주체로 잡힌다.
+
+- **트레이싱이 꺼져 있어도 싣는다.** ST-5 는 트레이싱이 꺼지면 요청에 metadata 를 싣지 않았다. 이제 principal 이 있으면
+  principal 만 담은 metadata 가 간다 — principal 도 span 위치도 없을 때만 예전처럼 비어 있다. 커스텀 `ContextEngine` ·
+  `CompactionEngine` 구현은 트레이싱이 꺼진 턴에서도 `ContextRequest.getCallMetadata()` 에 값을 받는다(ST-6 의 릴리스
+  노트 메모에 더할 한 줄).
+- **포크는 그대로다.** 포크의 `ContextRequest` 는 `ContextCaller` 에도 principal 이 없다(실행 id 만 싣는다,
+  `DefaultSubagentExecutor#applyCompactionGate`). 이 항목은 메인 턴만 물었고, 이 저장소가 조립하는 포크는 compact 하지
+  않는다(ST-5 "적힌 것보다 좁게 보이는 것").
+- **쿼터는 이 항목 밖이다.** principal 이 실린 것은 usage attribution 이지 `QuotaGuard` 기록이 아니다 — compaction 요약
+  호출은 여전히 쿼터 장부에 기록되지 않는다(UQ-1).
+
 ---
 
-## ST-10 — `/compact` 명령의 요약 호출은 COMMAND span 아래 붙지 않는다 · **열림**
+## ST-10 — `/compact` 명령의 요약 호출은 COMMAND span 아래 붙지 않는다 · **닫힘** *(2026-10-18, #265)*
 
 **무엇을.** `CompactCommand.buildCallMetadata` 가 명령 도구 컨텍스트 키의 span 위치를 합치게 해, `/compact` 의 요약 LLM span 이
 COMMAND 아래 붙게 한다.
@@ -299,6 +315,13 @@ COMMAND 아래 붙게 한다.
 **어디.** (2026-10-17) `CompactCommand#buildCallMetadata`.
 
 **언제 다시 볼까.** COMPACTION span(ST-5 의 남은 부분) 작업과 함께. 설계 OQ-7.
+
+**닫음 (2026-10-18, #265).** COMPACTION span 작업을 기다리지 않았다 — 메인 턴(ST-5)과 같은 처방이면 됐다.
+`CompactCommand#buildCallMetadata`(`CompactCommand.java:197`)가 명령 도구 컨텍스트의 `LLM_CALL_METADATA_KEY` 에서
+`Spans.traceCarrier(…)` 로 span 위치(예약 태그 둘 + 그룹 키)만 꺼내 명령 자신의 attribution(`compact-command` ·
+`compaction` · principal)에 합친다. 그래서 `/compact` 의 요약 LLM span 이 그 COMMAND span 아래, 턴과 같은 trace 에 붙는다.
+그룹 키는 carrier 쪽이 이긴다 — 메인 턴에서는 둘 다 세션 id 라 값은 같다. 트레이싱이 꺼져 있거나 컨텍스트에 키가 없으면
+metadata 는 예전과 한 글자도 다르지 않다. COMPACTION span 자체는 ST-5 의 남은 부분으로 그대로 열려 있다.
 
 ---
 

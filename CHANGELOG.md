@@ -7,6 +7,25 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: compaction summary calls carry their caller, `/compact` nests under its command span, `/skill` calls are priced (#265)
+
+Three LLM calls outside the ReAct loops were booked less completely than the loops' own calls. Backlog ST-9 and ST-10
+(closed) and UQ-1 (narrowed).
+
+- **Automatic compaction is booked to the turn's principal.** The main turn's compaction summary call now carries the
+  caller's principal in its call metadata, as `/compact`'s already did, so per-principal usage (`LlmUsageKey`) counts
+  it. Component and feature stay the engine's (`compaction-engine` · `compaction`). With tracing off the
+  `ContextRequest` used to carry no call metadata; it now carries the principal alone when there is one — visible to a
+  custom `ContextEngine` / `CompactionEngine`. Forks are unchanged.
+- **`/compact`'s summary LLM span nests under the COMMAND span.** `CompactCommand` takes the span position from its
+  command tool context (`LLM_CALL_METADATA_KEY`), so the summary call is no longer missing from the trace. Its usage
+  attribution is unchanged; with tracing off its metadata is byte-for-byte the same.
+- **`/skill` calls are charged with their cost.** `LlmSkillExecutor#withCostEstimator` prices each call of an inline
+  slash skill when it is charged to the turn's usage quota, so a cost quota now stops it. The factory's
+  `withCostEstimator` (and so `AimonStack`) wires it into the default command execution manager, as it already did for
+  forks. Without an estimator calls are charged tokens only, as before. A host that supplies its own command execution
+  manager calls `withCostEstimator` itself. Compaction summary calls are still not recorded on the quota ledger (UQ-1).
+
 ### Added: read a session's owner without its transcript — `SessionRecordStore#loadOwner` (#262)
 
 The only way to read the owner core records for a session (#253) was `SessionRecordStore.load(id)`, which decodes the
