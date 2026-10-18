@@ -23,6 +23,7 @@ import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.base.Principal;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.command.SystemCommand;
@@ -81,6 +82,7 @@ class SlashCommandTracingTest {
 
     private InMemoryTraceSpanStore store;
     private Tracer tracer;
+    private FixedAnswerLlmClient answers;
     private LlmClient llm;
     private DefaultHookExecutionManager hookManager;
     private DefaultSubagentExecutionManager subagentManager;
@@ -94,7 +96,8 @@ class SlashCommandTracingTest {
     void setUp() {
         store = new InMemoryTraceSpanStore();
         tracer = new DefaultTracer(store, SpanExporter.noop());
-        llm = new TracingLlmClient(new FixedAnswerLlmClient("reviewed"), tracer);
+        answers = new FixedAnswerLlmClient("reviewed");
+        llm = new TracingLlmClient(answers, tracer);
         final DefaultToolExecutionManager toolManager = new DefaultToolExecutionManager();
         hookManager = new DefaultHookExecutionManager();
         // The convenience constructor: withTracer reaches the executor it built (ST-2), so the fork has iterations.
@@ -199,7 +202,9 @@ class SlashCommandTracingTest {
         final OrcaAgentRuntime runtime = runtime(compact);
         executor.execute(runtime, request("hi")); // something to compact
 
-        final OrcaAgentExecutionResult result = executor.execute(runtime, request("/compact"));
+        final Principal alice = Principal.user("alice");
+        final OrcaAgentExecutionResult result = executor.execute(runtime, OrcaAgentExecutionRequest.builder()
+                .userInput("/compact").sessionId(SessionId.of(SESSION)).principal(alice).build());
 
         assertThat(result.isSuccess()).isTrue();
         final List<TraceSpan> spans = store.bySession(SESSION);
@@ -211,6 +216,13 @@ class SlashCommandTracingTest {
         assertThat(summary.getParentSpanId()).contains(command.getSpanId());
         assertThat(summary.getTraceId()).isEqualTo(command.getTraceId());
         assertThat(summary.getSessionId()).isEqualTo(command.getSessionId());
+        // Only the span position is taken from the command context: the call is still attributed to /compact.
+        final LlmCallMetadata summaryCall = answers.metadata.stream()
+                .filter(m -> m.getFeature().filter(LlmCallMetadata.Feature.COMPACTION::equals).isPresent()).findFirst()
+                .orElseThrow(() -> new AssertionError("no COMPACTION call"));
+        assertThat(summaryCall.getComponent()).contains("compact-command");
+        assertThat(summaryCall.getPrincipal()).contains(alice);
+        assertThat(summaryCall.getTraceId()).contains(SESSION);
     }
 
     /**
@@ -299,9 +311,10 @@ class SlashCommandTracingTest {
         }
     }
 
-    /** Answers every call with one fixed final answer. */
+    /** Answers every call with one fixed final answer, recording each call's metadata. */
     private static final class FixedAnswerLlmClient implements LlmClient {
         private final String answer;
+        private final List<LlmCallMetadata> metadata = new ArrayList<>();
 
         FixedAnswerLlmClient(String answer) {
             this.answer = answer;
@@ -311,6 +324,13 @@ class SlashCommandTracingTest {
         public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
                 LlmModel modelConfig) {
             return LlmResponse.text(answer);
+        }
+
+        @Override
+        public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
+                LlmModel modelConfig, LlmCallMetadata callMetadata) {
+            metadata.add(callMetadata);
+            return sendMessage(systemPrompt, messages, tools, modelConfig);
         }
 
         @Override
