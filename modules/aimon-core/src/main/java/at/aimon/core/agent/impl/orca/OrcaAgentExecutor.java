@@ -3301,18 +3301,26 @@ public class OrcaAgentExecutor
      * session's turn, so the buffer's session id is the identity a compaction's hooks are given.
      *
      * <p>
-     * The request carries the active span's position — and only that — so a compaction summary call nests in the
-     * trace. The gate runs before the iteration span opens, so that position is the turn span. Attribution stays the
-     * engine's: it merges with caller fields winning, and the turn's {@code react-loop} feature would otherwise book
-     * the summary call. Tracing off, there is no position to carry and the request is unchanged.
+     * The request carries the active span's position and the caller's principal — and only those — so a compaction
+     * summary call nests in the trace and is booked to the principal whose turn triggered it, as a {@code /compact}
+     * summary call is. The gate runs before the iteration span opens, so that position is the turn span. The rest of
+     * the attribution stays the engine's: it merges with caller fields winning, and the turn's {@code react-loop}
+     * feature would otherwise book the summary call. Tracing off and no principal, the request carries no metadata.
      */
     private static ContextRequest contextRequest(ExecutionScope scope, boolean budgetForced) {
         final ContextRequest.Builder request = ContextRequest.builder().transcriptBuffer(scope.transcriptBuffer)
                 .model(scope.getAgent().getMetadata().getModel()).hookRegistry(scope.getHookRegistry())
                 .executionEnvironment(scope.executionEnvironment).executionCancellation(scope.coordinator.getSignal())
                 .caller(ContextCaller.builder().principal(scope.getPrincipal()).build()).budgetForced(budgetForced);
-        Spans.traceCarrier(Spans.enrichSafely(scope.activeSpan, scope.llmCallMetadata))
-                .ifPresent(request::callMetadata);
+        final LlmCallMetadata principal = scope.getPrincipal() != null
+                ? LlmCallMetadata.builder().principal(scope.getPrincipal()).build()
+                : LlmCallMetadata.empty();
+        final LlmCallMetadata callMetadata = Spans
+                .traceCarrier(Spans.enrichSafely(scope.activeSpan, scope.llmCallMetadata))
+                .map(carrier -> carrier.withDefaults(principal)).orElse(principal);
+        if (!callMetadata.isEmpty()) {
+            request.callMetadata(callMetadata);
+        }
         return request.build();
     }
 

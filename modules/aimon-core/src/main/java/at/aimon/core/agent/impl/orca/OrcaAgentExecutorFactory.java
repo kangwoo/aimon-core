@@ -32,8 +32,10 @@ import at.aimon.core.llm.retry.LlmRetryPolicy;
 import at.aimon.core.llm.streaming.LlmStreamingOptions;
 import at.aimon.core.memory.ExecutionMemorySink;
 import at.aimon.core.memory.MemoryContextProvider;
+import at.aimon.core.skill.execution.llm.LlmSkillExecutor;
 import at.aimon.core.skill.policy.SkillPreflightScanner;
 import at.aimon.core.skill.policy.pending.PendingTurnRegistry;
+import at.aimon.core.skill.render.DefaultSkillContentRenderer;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.SubagentBackgroundConfig;
 import at.aimon.core.subagent.SubagentBackgroundExecutionOptions;
@@ -670,6 +672,11 @@ public class OrcaAgentExecutorFactory {
      * This method allows full customization of all manager dependencies. Use this when you need to provide custom
      * implementations for testing or specialized behavior.
      *
+     * <p>
+     * The supplied managers are used as given: this factory's cost estimator is not attached to them. A host that
+     * wants {@code /my-skill} calls or subagent calls priced wires the estimator itself
+     * ({@link LlmSkillExecutor#withCostEstimator}, {@link DefaultSubagentExecutor#withCostEstimator}).
+     *
      * @param llmClient
      *            The LLM client (must not be null)
      * @param transcriptManager
@@ -882,6 +889,12 @@ public class OrcaAgentExecutorFactory {
      * default manager would run tools this factory's own {@code maxSideEffectLevel} refuses. Sharing carries the
      * schema validation mode along with it, which is why there is no {@link SchemaValidationMode} parameter here.
      *
+     * <p>
+     * The skill executor is priced with the same cost estimator as the main executor, so a {@code /my-skill} loop's
+     * calls are charged to the turn's quota with their cost, not tokens only. The skill executor is built as
+     * {@link DefaultCommandExecutionManager#DefaultCommandExecutionManager(LlmClient, ToolExecutionManager)} builds it,
+     * on one path whether or not an estimator is configured; the estimator is only attached when it is.
+     *
      * @param llmClient
      *            The LLM client for command execution (must not be null)
      * @param toolExecutionManager
@@ -890,7 +903,13 @@ public class OrcaAgentExecutorFactory {
      */
     protected CommandExecutionManager createDefaultCommandExecutionManager(LlmClient llmClient,
             ToolExecutionManager toolExecutionManager) {
-        return new DefaultCommandExecutionManager(llmClient, toolExecutionManager);
+        final LlmSkillExecutor skillExecutor = new LlmSkillExecutor(
+                Objects.requireNonNull(llmClient, "LLM client cannot be null"), new DefaultSkillContentRenderer(),
+                Objects.requireNonNull(toolExecutionManager, "Tool execution manager cannot be null"));
+        if (costEstimator != null) {
+            skillExecutor.withCostEstimator(costEstimator);
+        }
+        return new DefaultCommandExecutionManager(llmClient, skillExecutor);
     }
 
 }

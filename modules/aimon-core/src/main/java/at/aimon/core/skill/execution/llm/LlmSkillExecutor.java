@@ -38,6 +38,8 @@ import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.ToolUseResult;
+import at.aimon.core.llm.cost.CostEstimator;
+import at.aimon.core.llm.cost.Money;
 import at.aimon.core.skill.ExecutionMode;
 import at.aimon.core.skill.Skill;
 import at.aimon.core.skill.execution.SkillExecutionContext;
@@ -132,6 +134,14 @@ public class LlmSkillExecutor implements SkillExecutor {
     private final SkillForkExecutor forkExecutor;
 
     /**
+     * Cost estimator that prices each LLM call of the skill loop for the turn's usage quota. Defaults to
+     * {@link CostEstimator#NOOP}, under which a call is charged tokens only, until pricing is wired via
+     * {@link #withCostEstimator(CostEstimator)}. {@code volatile} because it is set after construction and read on the
+     * executing turn's thread.
+     */
+    private volatile CostEstimator costEstimator = CostEstimator.NOOP;
+
+    /**
      * Creates a new executor with a {@link NoOpSkillForkExecutor}.
      *
      * <p>
@@ -177,6 +187,19 @@ public class LlmSkillExecutor implements SkillExecutor {
                 "Tool execution manager cannot be null");
         this.forkExecutor = Objects.requireNonNull(forkExecutor, "Fork executor cannot be null");
         this.systemPromptBuilder = new SkillSystemPromptBuilder();
+    }
+
+    /**
+     * Injects a cost estimator so each LLM call of the skill loop is priced when it is charged to the turn's usage
+     * quota, as the turn's and a fork's calls are. Default is {@link CostEstimator#NOOP} (charged tokens only).
+     *
+     * @param estimator
+     *            the cost estimator (must not be null)
+     * @return this executor
+     */
+    public LlmSkillExecutor withCostEstimator(CostEstimator estimator) {
+        this.costEstimator = Objects.requireNonNull(estimator, "estimator cannot be null");
+        return this;
     }
 
     @Override
@@ -390,8 +413,9 @@ public class LlmSkillExecutor implements SkillExecutor {
     }
 
     /**
-     * Makes one LLM call of the skill loop and charges its tokens to the turn's usage quota. There is no cost estimator
-     * here, so the call is charged tokens only, as an unpriced fork call is.
+     * Makes one LLM call of the skill loop and charges it to the turn's usage quota. With a cost estimator wired the
+     * call is priced, as the turn's own calls are; with {@link CostEstimator#NOOP} it is charged tokens only, as an
+     * unpriced fork call is.
      *
      * @param systemPrompt
      *            the system prompt to send
@@ -409,7 +433,11 @@ public class LlmSkillExecutor implements SkillExecutor {
             SkillExecutionContext context, QuotaGuard quotaGuard) {
         final LlmResponse response = llmClient.sendMessage(systemPrompt,
                 CONTEXT_ENGINE.prepare(contextRequest).getView().getMessages(), tools, context.getDefaultModel());
-        quotaGuard.charge(context.getDefaultModel().getName().orElse(null), response.getTokenUsage(), null);
+        final String modelName = context.getDefaultModel().getName().orElse(null);
+        final Money callCost = costEstimator != CostEstimator.NOOP
+                ? costEstimator.estimate(modelName, response.getTokenUsage())
+                : null;
+        quotaGuard.charge(modelName, response.getTokenUsage(), callCost);
         return response;
     }
 
