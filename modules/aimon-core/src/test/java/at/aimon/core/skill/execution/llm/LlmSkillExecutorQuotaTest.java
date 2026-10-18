@@ -3,6 +3,7 @@ package at.aimon.core.skill.execution.llm;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
@@ -106,6 +107,58 @@ class LlmSkillExecutorQuotaTest {
         assertThat(ledger.get(List.of(SESSION_TOTAL)).get(SESSION_TOTAL).getTokens()).isEqualTo(40);
     }
 
+    @Test
+    @DisplayName("UQ-1: with a cost estimator wired, every call is charged with its price, under the configured model")
+    void pricedWhenACostEstimatorIsWired() {
+        final List<String> pricedModels = new ArrayList<>();
+        executor.withCostEstimator((model, usage) -> {
+            pricedModels.add(model);
+            return Money.usd(0.01 * usage.getTotalTokens());
+        });
+        llm.responses.add(
+                LlmResponse.of("", List.of(ToolUse.of("t1", NoopTool.NAME, Map.of())), USAGE, StopReason.TOOL_USE));
+        llm.responses.add(LlmResponse.of("done", List.of(), USAGE, StopReason.END_TURN));
+
+        final SkillExecutionResult result = execute(guard(1_000), LlmModel.builder().name("gpt-4o").build());
+
+        assertThat(result.isSuccess()).isTrue();
+        final QuotaUsage used = ledger.get(List.of(SESSION_TOTAL)).get(SESSION_TOTAL);
+        assertThat(used.getTokens()).isEqualTo(40);
+        assertThat(used.getCost()).isEqualTo(Money.usd(0.40));
+        assertThat(pricedModels).containsExactly("gpt-4o", "gpt-4o");
+    }
+
+    @Test
+    @DisplayName("UQ-1: a cost quota stops the skill before the call after the one that spent it")
+    void costQuotaStopsMidLoop() {
+        executor.withCostEstimator((model, usage) -> Money.usd(1.00));
+        llm.responses.add(
+                LlmResponse.of("", List.of(ToolUse.of("t1", NoopTool.NAME, Map.of())), USAGE, StopReason.TOOL_USE));
+        llm.responses.add(LlmResponse.of("done", List.of(), USAGE, StopReason.END_TURN));
+        final StaticQuotaPolicy policy = StaticQuotaPolicy.builder()
+                .limit(QuotaScope.Kind.SESSION, QuotaLimit.total().maxCost(Money.usd(1.00)).build()).build();
+
+        final SkillExecutionResult result = execute(
+                QuotaGuard.builder().ledger(ledger).policy(policy).scopes(List.of(SESSION)).build(),
+                LlmModel.builder().build());
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.getResponse()).startsWith("Execution stopped: QUOTA_EXCEEDED");
+        assertThat(llm.calls).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("UQ-1: without a cost estimator the calls are charged tokens only, as before")
+    void unpricedWithoutACostEstimator() {
+        llm.responses.add(LlmResponse.of("done", List.of(), USAGE, StopReason.END_TURN));
+
+        assertThat(execute(guard(1_000)).isSuccess()).isTrue();
+
+        final QuotaUsage used = ledger.get(List.of(SESSION_TOTAL)).get(SESSION_TOTAL);
+        assertThat(used.getTokens()).isEqualTo(20);
+        assertThat(used.getCost()).isEqualTo(Money.zeroUsd());
+    }
+
     private QuotaGuard guard(long maxTokens) {
         final StaticQuotaPolicy policy = StaticQuotaPolicy.builder()
                 .limit(QuotaScope.Kind.SESSION, QuotaLimit.total().maxTokens(maxTokens).build()).build();
@@ -113,14 +166,17 @@ class LlmSkillExecutorQuotaTest {
     }
 
     private SkillExecutionResult execute(QuotaGuard guard) {
+        return execute(guard, LlmModel.builder().build());
+    }
+
+    private SkillExecutionResult execute(QuotaGuard guard, LlmModel model) {
         final ToolRegistry registry = new DefaultToolRegistry();
         registry.register(new NoopTool());
         final Skill skill = Skill.builder().name("audit")
                 .metadata(SkillMetadata.builder().name("audit").description("quota fixture").maxIterations(10).build())
                 .content(SkillContent.of("Audit the module")).build();
-        final SkillExecutionContext context = SkillExecutionContext.builder().skill(skill)
-                .defaultModel(LlmModel.builder().build()).toolRegistry(registry)
-                .executionId(ExecutionId.generate("skill:test"))
+        final SkillExecutionContext context = SkillExecutionContext.builder().skill(skill).defaultModel(model)
+                .toolRegistry(registry).executionId(ExecutionId.generate("skill:test"))
                 .toolContext(ToolContext.builder().put(ToolContextKeys.QUOTA_GUARD, guard).build()).build();
         return executor.execute(context, SkillExecutionRequest.builder().build());
     }

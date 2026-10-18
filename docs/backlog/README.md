@@ -366,10 +366,10 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | [`config-value-expansion-open-items.md`](config-value-expansion-open-items.md) | `docs/design/integration/config-value-expansion-and-frontmatter-strictness.md` §9 (#53) | 2 | 0 | 2 | 0 |
 | [`live-api-test-tier.md`](live-api-test-tier.md) | 라이브 API 테스트 계층의 CI 신호 결정 — #81 (2026-09-10) | 2 | 0 | 1 | 1 |
 | [`session-log-open-items.md`](session-log-open-items.md) | `docs/design/session/session-log.md` §12 · `docs/design/agent-execution/context-engine.md` §13 (2026-09-24 · 2026-09-25) | 6 | 0 | 6 | 0 |
-| [`context-engine-pressure-rig-open-items.md`](context-engine-pressure-rig-open-items.md) | `docs/design/agent-execution/context-engine-pressure-rig.md` §7 · §9.4 (2026-10-07) · 기준선 측정 (2026-10-07) | 6 | 5 | 1 | 0 |
-| [`execution-environment-open-items.md`](execution-environment-open-items.md) | `docs/design/tool/execution-environment-implementation.md` §9 · §10 · `docs/design/tool/execution-environment.md` §14 (2026-09-28) · 빌드 리뷰 4 · PR #195 리뷰 1 · 워크스페이스 샌드박스 설계 리뷰 (2026-09-29) · PR #196 리뷰 · EE-42 설계 §7 · §8 (2026-09-29) · `docs/design/tool/workflow-isolation-hardening.md` §7 · PR #202 (2026-09-30) · EE-9 · EE-12 설계 §8 · §9 (2026-10-03) · EE-13 · EE-7 설계 §8 · §9 와 그 리뷰 (2026-10-03) · EE-14 설계 §2.3 · §10 · PR #206 리뷰 (2026-10-03) · EE-49 · EE-51 · EE-58 설계 §8 · §9 와 그 리뷰 · PR #207 리뷰 (2026-10-04) · EE-70 · EE-71 설계 §9 (2026-10-04) · aimon-sandbox PR #6 (2026-10-04) · EE-83 · EE-85 · EE-88 · EE-90 착수 (2026-10-06) · EE-80 설계 §9 와 그 리뷰 (2026-10-07) · EE-93~EE-97 설계 §12 와 그 리뷰 (2026-10-07) · EE-98 의 결정 (2026-10-08) · 이슈 #252 와 EE-102 설계 §7 · §8 (2026-10-17) · 환경 알림 설계 §7 과 그 리뷰 (#254, 2026-10-17) · EE-103 의 결정 (2026-10-17) | 108 | 31 | 77 | 0 |
+| [`context-engine-pressure-rig-open-items.md`](context-engine-pressure-rig-open-items.md) | `docs/design/agent-execution/context-engine-pressure-rig.md` §7 · §9.4 (2026-10-07) · 기준선 측정 (2026-10-07) · CP-5 닫음 (2026-10-18) | 6 | 4 | 2 | 0 |
+| [`execution-environment-open-items.md`](execution-environment-open-items.md) | `docs/design/tool/execution-environment-implementation.md` §9 · §10 · `docs/design/tool/execution-environment.md` §14 (2026-09-28) · 빌드 리뷰 4 · PR #195 리뷰 1 · 워크스페이스 샌드박스 설계 리뷰 (2026-09-29) · PR #196 리뷰 · EE-42 설계 §7 · §8 (2026-09-29) · `docs/design/tool/workflow-isolation-hardening.md` §7 · PR #202 (2026-09-30) · EE-9 · EE-12 설계 §8 · §9 (2026-10-03) · EE-13 · EE-7 설계 §8 · §9 와 그 리뷰 (2026-10-03) · EE-14 설계 §2.3 · §10 · PR #206 리뷰 (2026-10-03) · EE-49 · EE-51 · EE-58 설계 §8 · §9 와 그 리뷰 · PR #207 리뷰 (2026-10-04) · EE-70 · EE-71 설계 §9 (2026-10-04) · aimon-sandbox PR #6 (2026-10-04) · EE-83 · EE-85 · EE-88 · EE-90 착수 (2026-10-06) · EE-80 설계 §9 와 그 리뷰 (2026-10-07) · EE-93~EE-97 설계 §12 와 그 리뷰 (2026-10-07) · EE-98 의 결정 (2026-10-08) · 이슈 #252 와 EE-102 설계 §7 · §8 (2026-10-17) · 환경 알림 설계 §7 과 그 리뷰 (#254, 2026-10-17) · EE-103 의 결정 (2026-10-17) · aimon-sandbox `80b9998` 대조 (2026-10-18) | 108 | 30 | 78 | 0 |
 | [`usage-quota-open-items.md`](usage-quota-open-items.md) | `docs/design/agent-execution/usage-quota.md` §10 · §11 — 1단계 구현 (2026-10-15) | 3 | 3 | 0 | 0 |
-| [`subagent-tracing-open-items.md`](subagent-tracing-open-items.md) | `docs/design/observability/subagent-trace-nesting.md` §7 · §8 — 서브에이전트 trace 중첩 구현 (2026-10-17) · `docs/design/observability/subagent-tracing-backlog.md` §7 — ST-1 ~ ST-6 처리 (2026-10-17) | 11 | 8 | 3 | 0 |
+| [`subagent-tracing-open-items.md`](subagent-tracing-open-items.md) | `docs/design/observability/subagent-trace-nesting.md` §7 · §8 — 서브에이전트 trace 중첩 구현 (2026-10-17) · `docs/design/observability/subagent-tracing-backlog.md` §7 — ST-1 ~ ST-6 처리 (2026-10-17) | 11 | 6 | 5 | 0 |
 | [`session-owner-open-items.md`](session-owner-open-items.md) | `docs/design/session/session-owner-deletion-event.md` §8 · §9 — 세션 소유자 · 삭제 리스너 구현, #253 (2026-10-17) · SO-6 닫음, #260 (2026-10-17) · SO-5 닫음, SO-7 · SO-8 등록, #262 (2026-10-18) · SO-8 닫음, aimon-sandbox#30 (2026-10-18) · SO-7 닫음, SO-9 등록, #266 (2026-10-18) | 9 | 5 | 4 | 0 |
 
 > **2026-10-06 — 위 배치가 연 다섯 가운데 셋을 닫았다 (`fix/ee89-ee90-t11`).** 닫힌 것은 EE-89 · EE-90 · T-11 이고, 그러다
@@ -556,10 +556,9 @@ degradation 으로 이미 보고되고 있었다), 하나는 진단이 **이 저
 하는지까지 스스로 골라** 그 자리마다 포인터를 달았다. 그렇게 할 수 있었던 이유는 그 문서가 구현 **후에**
 §11 을 얻어 무엇이 실제로 남았는지 알고 있었기 때문이다 — 설계 시점에는 고를 수 없는 구분이다.
 
-**열린 항목은 GitHub Issues 에도 열려 있다** ([#49](https://github.com/kangwoo/aimon-core/issues/49) ·
-[#50](https://github.com/kangwoo/aimon-core/issues/50) · [#51](https://github.com/kangwoo/aimon-core/issues/51)).
-정본은 여전히 이 디렉토리다 — 이슈는 바깥에서 오는 문이고, 위 규칙 일곱 개가 만들어 내는 기록은 이슈
-스레드에 담기지 않는다. 닫힌 항목은 옮기지 않았다. 이유는 옮기지 않은 자리에 적혀 있다.
+**열린 항목은 GitHub Issues 에 없다.** 이 문단은 그 이슈로 #49 · #50 · #51 을 걸어 두었는데, 이 저장소에서 그 번호는
+LLM 능력 PR 이고 B-7 · B-15 · B-25 를 다루는 이슈는 없다(2026-10-18 정정, `spring-boot-starter-open-items.md` 머리의
+표 밑). 정본은 이 디렉토리다 — 위 규칙 일곱 개가 만들어 내는 기록은 이슈 스레드에 담기지 않는다.
 
 번호는 재사용하지 않고, 닫힌 항목은 지우지 않는다 — 위 규칙들이 그 이유다. 항목 수가 출처의 25건보다
 많은 것도 같은 규칙의 결과다 — 착수 중에 나온 것은 별도 번호로 등록하고, 원래 항목에 몰래 끼워 넣지

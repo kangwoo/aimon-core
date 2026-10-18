@@ -24,6 +24,25 @@ Postgres none. Design and departures: `docs/design/session/session-record-store-
 - Not published: every `SessionRecordStore` lives in this repository. If one appears outside it, the class can move
   into a published testkit unchanged (backlog SO-9).
 
+### Fixed: compaction summary calls carry their caller, `/compact` nests under its command span, `/skill` calls are priced (#265)
+
+Three LLM calls outside the ReAct loops were booked less completely than the loops' own calls. Backlog ST-9 and ST-10
+(closed) and UQ-1 (narrowed).
+
+- **Automatic compaction is booked to the turn's principal.** The main turn's compaction summary call now carries the
+  caller's principal in its call metadata, as `/compact`'s already did, so per-principal usage (`LlmUsageKey`) counts
+  it. Component and feature stay the engine's (`compaction-engine` · `compaction`). With tracing off the
+  `ContextRequest` used to carry no call metadata; it now carries the principal alone when there is one — visible to a
+  custom `ContextEngine` / `CompactionEngine`. Forks are unchanged.
+- **`/compact`'s summary LLM span nests under the COMMAND span.** `CompactCommand` takes the span position from its
+  command tool context (`LLM_CALL_METADATA_KEY`), so the summary call is no longer missing from the trace. Its usage
+  attribution is unchanged; with tracing off its metadata is byte-for-byte the same.
+- **`/skill` calls are charged with their cost.** `LlmSkillExecutor#withCostEstimator` prices each call of an inline
+  slash skill when it is charged to the turn's usage quota, so a cost quota now stops it. The factory's
+  `withCostEstimator` (and so `AimonStack`) wires it into the default command execution manager, as it already did for
+  forks. Without an estimator calls are charged tokens only, as before. A host that supplies its own command execution
+  manager calls `withCostEstimator` itself. Compaction summary calls are still not recorded on the quota ledger (UQ-1).
+
 ### Added: read a session's owner without its transcript — `SessionRecordStore#loadOwner` (#262)
 
 The only way to read the owner core records for a session (#253) was `SessionRecordStore.load(id)`, which decodes the
@@ -42,8 +61,9 @@ backlog SO-5 (closed).
   `LateBoundFencedRecordStore` forward it unfenced, as they forward `load`, so the narrow read is not lost behind
   them. A store that wraps another should do the same.
 - **Empty means no record or no owner.** A caller that must tell the two apart asks `exists(id)`.
-- Not yet: aimon-sandbox's `SessionOwnerLookup.recorded` still calls `load` until it moves to a core release that
-  contains this method (backlog SO-8).
+- aimon-sandbox's `SessionOwnerLookup.recorded` already calls `loadOwner` (kangwoo/aimon-sandbox#30), so a root bind
+  no longer reads the whole record for its owner. It builds against `0.3.3-SNAPSHOT`; 0.3.3 is the release it ships
+  against (backlog SO-8, closed).
 
 ### Added: per-execution environment attributes (`EnvironmentRequest#requestAttributes`)
 
@@ -91,8 +111,10 @@ that only read and edited files never heard that its sandbox had been re-created
   stay where they are. The contract — atomic, one-shot, one queue per environment instance, never shared with a fork —
   is in the method's javadoc and in `docs/design/tool/execution-environment.md` §8.1 · §13.
 - `EnvironmentNotices.PREFIX` (`at.aimon.core.tools`) is the shared `[environment] ` prefix.
-- Not yet: a turn whose model makes no tool call hears nothing (backlog `EE-106`). Queue scope across forks and slash
-  skills is the provider's call (`EE-107`). Hooks are told, not prevented, not to drain (`EE-108`).
+- Not yet: a turn whose model makes no tool call hears nothing (backlog `EE-106`). A user-typed inline `/skill` drains
+  the main turn's environment, so its notices land in the skill's own loop and the main agent never hears them; no
+  provider can tell the two loops apart (`EE-107`, narrowed to this on 2026-10-18 — queue scope across forks is settled
+  in aimon-sandbox). Hooks are told, not prevented, not to drain (`EE-108`).
 
 ### Added: session owner and session deletion listener (#253)
 
