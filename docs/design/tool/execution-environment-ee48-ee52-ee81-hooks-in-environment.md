@@ -9,7 +9,8 @@
 > One thing was added. §10 records where the implementation departed from this design, and why — including how the
 > review notes were applied. The open questions in §9 whose consequences reach beyond this change are tracked in
 > [`../../backlog/execution-environment-open-items.md`](../../backlog/execution-environment-open-items.md) (EE-109 ← F12,
-> EE-110 ← §8, EE-111 ← §8 · Q1, EE-112 ← Q3), which is the source of truth for what is open. The specification this
+> filed as [#275](https://github.com/kangwoo/aimon-core/issues/275); EE-110 ← §8; EE-111 ← §8 · Q1, filed in aimon-sandbox as [kangwoo/aimon-sandbox#31](https://github.com/kangwoo/aimon-sandbox/issues/31); EE-112 ← Q3), which is the
+> source of truth for what is open. The specification this
 > design extends is [`execution-environment.md`](execution-environment.md) §4.4 · §10 · §13; the record it follows is
 > [`execution-environment-ee9-ee12-hook-environment.md`](execution-environment-ee9-ee12-hook-environment.md).
 
@@ -956,7 +957,8 @@ after the build (2026-10-18).
 The open questions whose consequences reach beyond this change are tracked in
 [`../../backlog/execution-environment-open-items.md`](../../backlog/execution-environment-open-items.md):
 EE-109 ← F12 (the integrity of staged hook scripts), EE-110 ← §8 EE-new-2 (`subagentStart` in the fork's environment),
-EE-111 ← §8 and Q1 (aimon-sandbox must declare `ISOLATED_EXECUTION`; until it does, fail-closed), EE-112 ← Q3 (an
+EE-111 ← §8 and Q1 (aimon-sandbox must declare `ISOLATED_EXECUTION`; until it does, fail-closed; filed as
+[kangwoo/aimon-sandbox#31](https://github.com/kangwoo/aimon-sandbox/issues/31)), EE-112 ← Q3 (an
 operator-defined environment for the isolated exec). Q2, Q4–Q7 are settled inside this change as the body says. Q8 (the
 CLI's cwd) is recorded as a behaviour change in the CHANGELOG; the older question of why the CLI's workspace is the jar
 directory stays out of scope.

@@ -12,7 +12,8 @@ Central is versioned independently).
 > **Required with a sandbox provider: aimon-sandbox with `ShellFeature.ISOLATED_EXECUTION` support, or `"shell": "host"`
 > on each `hooks.json` command handler.** A command placed in an environment whose shell does not declare the feature is
 > not run (`ISOLATION_UNSUPPORTED`), and a guard then blocks every matching tool call. No shipped assembly combines
-> `hooks.json` with the sandbox today; the CLI pins the local provider, whose `LocalShell` declares the feature.
+> `hooks.json` with the sandbox today; the CLI pins the local provider, whose `LocalShell` declares the feature. The
+> sandbox side is tracked as EE-111 and [kangwoo/aimon-sandbox#31](https://github.com/kangwoo/aimon-sandbox/issues/31).
 
 A hook now runs in the environment of the execution it is about, and on the host only when there is no execution.
 Before, operator `hooks.json` commands always ran on a host shell, so a `preTool` policy hook could not see the
@@ -49,7 +50,8 @@ workspace it polices under a provider that gives executions another environment.
   staged into the environment otherwise (re-scanned at every firing, so an edited script runs from the next firing). A
   missing `hooks/` makes the handler inapplicable (startup stops under a guard event); a staging failure is
   `notRun(HOOK_DIR_STAGING_FAILED)`. A staged copy sits in the agent-writable `.aimon-staged/`, and the user layer's
-  scripts become readable by the model's file tools there; `"shell": "host"` keeps them out of reach (EE-109). A
+  scripts become readable by the model's file tools there; `"shell": "host"` keeps them out of reach (EE-109,
+  [#275](https://github.com/kangwoo/aimon-core/issues/275)). A
   command placed in an environment that names a host `.aimon` path and exits 126/127 gets a hint in its deny reason.
 - **`asyncRewake`.** A command handler with no `"shell"` that declares `asyncRewake` on a rewake-capable event stays on
   the host (the replay fires outside any execution), with a WARN that `"shell": "host"` silences. The WARN is logged

@@ -305,6 +305,7 @@ WARN 이 아니라 **시작 실패**다(`… is invalid: unknown event 'preTol' 
   포함)와 `cd` 를 보지 않고, 환경의 루트에서 환경의 기본 변수로 시작한다 — 정책 훅을 에이전트가 조종할 수 없게. 코어는 `PATH` 를
   정하지 않는다(로컬은 JVM 의 환경, 샌드박스는 프로파일의 것). 셸이 그런 실행을 지원한다고 밝히지 않으면(`ISOLATED_EXECUTION`)
   커맨드는 **돌지 않는다** — 가드 이벤트에서는 `failOpen` 이 아닌 한 막는다. 그 경우 제공자를 올리거나 `"shell": "host"` 를 쓴다.
+  aimon-sandbox 의 지원은 [kangwoo/aimon-sandbox#31](https://github.com/kangwoo/aimon-sandbox/issues/31) 에서 다룬다.
 - **실행이 없는 발화.** 에이전트 단위 워크플로 러너(백그라운드 `Workflow`)가 띄운 SubAgent 의 `subagentStart` 는 뒤에 실행이
   없으므로 `"shell"` 이 없으면 호스트에서 돈다. 그 SubAgent 가 루프를 돌았다면 `subagentStop` 은 SubAgent 자신의 환경에서 돈다.
   실행이 없다는 판단은 **스폰한 쪽에 환경이 있었는지**로 한다. 그래서 환경을 싣지 않은 `ToolContext` 를 직접 만들어 `Task` 를

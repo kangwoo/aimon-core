@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: 0f7a0c73
+source_commit: dc9f7028
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -329,7 +329,7 @@ used only when there is no execution. Each handler can say where with a `"shell"
   root with the environment's base variables — so the agent cannot steer a policy hook. Core sets no `PATH` (the local
   provider uses the JVM's environment, a sandbox its profile's). When the shell does not declare that it can run such a
   command (`ISOLATED_EXECUTION`), the command is **not run** — on a guard event that blocks unless `failOpen`. Upgrade
-  the provider, or use `"shell": "host"`.
+  the provider, or use `"shell": "host"`. aimon-sandbox support is tracked in [kangwoo/aimon-sandbox#31](https://github.com/kangwoo/aimon-sandbox/issues/31).
 - **A firing with no execution.** The `subagentStart` of a subagent launched by the agent-scoped workflow runner
   (background `Workflow`) has no execution behind it, so without `"shell"` it runs on the host. If that subagent ran its
   loop, its `subagentStop` runs in the subagent's own environment. Whether there is an execution is judged by **whether

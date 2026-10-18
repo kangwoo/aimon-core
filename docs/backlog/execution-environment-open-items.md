@@ -2117,8 +2117,9 @@ aimon-sandbox 가 정했다 — **부모를 따른다.** 설계 §5.2 의 기본
    실행(`java -jar …` 을 저장소 루트에서)에서는 이제 모든 `hooks.json` 명령이 워크스페이스 루트에서 돈다. CHANGELOG 의 동작
    변경이다.
 
-**남은 것.** EE-109(스테이징한 훅 스크립트의 무결성), EE-111(aimon-sandbox 가 격리된 실행을 선언해야 한다), EE-112(운영자가
-정하는 환경 변수).
+**남은 것.** EE-109(스테이징한 훅 스크립트의 무결성, [#275](https://github.com/kangwoo/aimon-core/issues/275)),
+EE-111(aimon-sandbox 가 격리된 실행을 선언해야 한다,
+[kangwoo/aimon-sandbox#31](https://github.com/kangwoo/aimon-sandbox/issues/31)), EE-112(운영자가 정하는 환경 변수).
 
 ## EE-49 — 스킬 훅은 에이전트 단위 레지스트리에 등록되어 다른 실행에서도 발화한다 · **닫힘** *(2026-10-04)*
 
@@ -4793,7 +4794,8 @@ SPI 는 설계에서 기각했다(§2.2) — 창이 작고, 다음 재생성이 
 
 ## EE-109 — 스테이징한 `hooks.json` 스크립트를 에이전트가 고칠 수 있다 · **열림**
 
-*(2026-10-18 등록. 출처는 #273 설계의 실패 모드 F12.)*
+*(2026-10-18 등록. 출처는 #273 설계의 실패 모드 F12. GitHub 이슈는 [#275](https://github.com/kangwoo/aimon-core/issues/275) 다 —
+두 제공자에 걸친 설계 변경이라 #273 에서는 고치지 않는다.)*
 
 **무엇을.** `AIMON_HOOK_DIR` 로 스테이징한 운영자 훅 스크립트를, 첫 확인 뒤에 에이전트가 고친 사본이 그대로 돌지 않게 한다.
 
@@ -4838,7 +4840,8 @@ SPI 는 설계에서 기각했다(§2.2) — 창이 작고, 다음 재생성이 
 `"shell": "host"` 다.
 
 **어디.** aimon-sandbox 의 `SandboxShell.supports` · `execute`, `ShellWrapper.INNER`(그쪽 `docs/design/workspace-sandbox.md` §9).
-코어 쪽은 `core/skill/hook/declarative/IsolatedShellActionExecutor.java`. 그쪽에 낼 초안은 #273 빌드의 `sandbox-followup.md` 다.
+코어 쪽은 `core/skill/hook/declarative/IsolatedShellActionExecutor.java`. aimon-sandbox 쪽 이슈는 [kangwoo/aimon-sandbox#31](https://github.com/kangwoo/aimon-sandbox/issues/31) 다(2026-10-18 등록, #273
+빌드의 초안 `sandbox-followup.md` 를 옮긴 것).
 
 **언제 다시 볼까.** aimon-sandbox 가 이 기능을 내보낼 때(닫는다), 또는 `hooks.json` 과 샌드박스 제공자를 함께 조립하는 호스트가
 생길 때.
