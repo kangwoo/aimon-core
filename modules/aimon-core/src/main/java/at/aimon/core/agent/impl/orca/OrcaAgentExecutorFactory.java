@@ -32,8 +32,10 @@ import at.aimon.core.llm.retry.LlmRetryPolicy;
 import at.aimon.core.llm.streaming.LlmStreamingOptions;
 import at.aimon.core.memory.ExecutionMemorySink;
 import at.aimon.core.memory.MemoryContextProvider;
+import at.aimon.core.skill.execution.llm.LlmSkillExecutor;
 import at.aimon.core.skill.policy.SkillPreflightScanner;
 import at.aimon.core.skill.policy.pending.PendingTurnRegistry;
+import at.aimon.core.skill.render.DefaultSkillContentRenderer;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.SubagentBackgroundConfig;
 import at.aimon.core.subagent.SubagentBackgroundExecutionOptions;
@@ -882,6 +884,12 @@ public class OrcaAgentExecutorFactory {
      * default manager would run tools this factory's own {@code maxSideEffectLevel} refuses. Sharing carries the
      * schema validation mode along with it, which is why there is no {@link SchemaValidationMode} parameter here.
      *
+     * <p>
+     * The skill executor is priced with the same cost estimator as the main executor, so a {@code /my-skill} loop's
+     * calls are charged to the turn's quota with their cost, not tokens only. It is built exactly as
+     * {@link DefaultCommandExecutionManager#DefaultCommandExecutionManager(LlmClient, ToolExecutionManager)} builds it;
+     * the estimator is only attached when configured.
+     *
      * @param llmClient
      *            The LLM client for command execution (must not be null)
      * @param toolExecutionManager
@@ -890,7 +898,14 @@ public class OrcaAgentExecutorFactory {
      */
     protected CommandExecutionManager createDefaultCommandExecutionManager(LlmClient llmClient,
             ToolExecutionManager toolExecutionManager) {
-        return new DefaultCommandExecutionManager(llmClient, toolExecutionManager);
+        if (costEstimator == null) {
+            return new DefaultCommandExecutionManager(llmClient, toolExecutionManager);
+        }
+        final LlmSkillExecutor skillExecutor = new LlmSkillExecutor(
+                Objects.requireNonNull(llmClient, "LLM client cannot be null"), new DefaultSkillContentRenderer(),
+                Objects.requireNonNull(toolExecutionManager, "Tool execution manager cannot be null"))
+                .withCostEstimator(costEstimator);
+        return new DefaultCommandExecutionManager(llmClient, skillExecutor);
     }
 
 }
