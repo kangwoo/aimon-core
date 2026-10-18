@@ -18,6 +18,7 @@ import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.context.ContextRequest;
 import at.aimon.core.agent.context.DefaultContextEngine;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.base.Principal;
 import at.aimon.core.command.SystemCommand;
 import at.aimon.core.command.execution.CommandExecutionContext;
@@ -31,6 +32,8 @@ import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.OnStopContext;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
+import at.aimon.core.tools.ToolContextKeys;
+import at.aimon.core.tracing.Spans;
 
 /**
  * Built-in command that performs a MANUAL conversation compaction.
@@ -40,7 +43,8 @@ import at.aimon.core.tools.ExecutionEnvironmentAccess;
  *
  * <ul>
  * <li>Builds a {@link ContextRequest} carrying caller-supplied {@link LlmCallMetadata} (principal + traceId) so the
- * summary LLM call is properly attributed to the invoking user
+ * summary LLM call is properly attributed to the invoking user, and — with tracing on — the command span's position,
+ * so the summary LLM span nests under the executor's COMMAND span
  * <li>Runs it through the agent's {@link ContextEngine#compactNow}, which performs a {@link CompactionTrigger#MANUAL}
  * compaction and resets the AUTO circuit breaker on success so AUTO compactions can resume
  * <li>Fires {@code OnStopHook} after the compaction completes — observability tools that listen for execution-stop
@@ -144,7 +148,7 @@ public final class CompactCommand extends SystemCommand implements DirectExecuta
         final ContextRequest contextRequest = ContextRequest.builder().transcriptBuffer(memory)
                 .model(context.getDefaultModel()).hookRegistry(hookRegistry).executionEnvironment(executionEnvironment)
                 .caller(ContextCaller.builder().principal(principal).build())
-                .callMetadata(buildCallMetadata(memory, principal)).build();
+                .callMetadata(buildCallMetadata(memory, principal, context.getToolContext())).build();
 
         final Instant startedAt = Instant.now();
         CompactionResult result = null;
@@ -184,13 +188,22 @@ public final class CompactCommand extends SystemCommand implements DirectExecuta
         return CommandExecutionResult.success(formatSuccessMessage(result.getMetadata()));
     }
 
-    private LlmCallMetadata buildCallMetadata(TranscriptBuffer memory, Principal principal) {
+    /**
+     * Builds the summary call's metadata: this command's attribution, plus — when the command's tool context names a
+     * parent span (tracing on, the executor's COMMAND span) — that span's position, so the summary LLM span nests
+     * under the COMMAND span. Only the position is taken from the context; its group key wins so the span lands in the
+     * parent's trace.
+     */
+    private static LlmCallMetadata buildCallMetadata(TranscriptBuffer memory, Principal principal,
+            ToolContext toolContext) {
         final LlmCallMetadata.Builder builder = LlmCallMetadata.builder().component(COMPONENT_NAME)
                 .feature(LlmCallMetadata.Feature.COMPACTION).traceId(memory.getSessionId().toString());
         if (principal != null) {
             builder.principal(principal);
         }
-        return builder.build();
+        final LlmCallMetadata attribution = builder.build();
+        return toolContext.get(ToolContextKeys.LLM_CALL_METADATA_KEY).flatMap(Spans::traceCarrier)
+                .map(carrier -> carrier.withDefaults(attribution)).orElse(attribution);
     }
 
     private void invokeOnStop(CommandExecutionResult commandResult, ExecutionEnvironment executionEnvironment,
