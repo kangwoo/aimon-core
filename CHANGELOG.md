@@ -7,6 +7,23 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: a shared `SessionRecordStore` contract suite (tests only) (#266)
+
+The Postgres, MongoDB and Redis record-store integration tests restated the same cases separately and had begun to
+drift: each checked a round trip the others did not. They now extend one `AbstractSessionRecordStoreContractTest` (22
+cases) in the unpublished `aimon-session-testkit` and keep only what needs raw backend access — Redis 8 cases, Mongo 1,
+Postgres none. Design and departures: `docs/design/session/session-record-store-contract.md`; backlog SO-7 (closed).
+
+- **Six subjects.** The three backends (`integrationTest`), and in the unit tier `InMemorySessionRecordStore`,
+  `DefaultSessionStore`'s fenced record view and the bootstrap's `LateBoundFencedRecordStore` — so a decorator that
+  inherits the owner-refusing `provision` default instead of forwarding fails the build.
+- **New coverage per backend, no backend change.** NUL bytes in the transcript and system prompt (new for Mongo and
+  Redis), tool-input keys with `.` and a leading `$` (new for Postgres), `$`-prefixed `agentRef` and owner values (new
+  for Postgres and Redis), and session ids containing `:` through `listSessionIds` (new for Postgres and Mongo). All
+  passed as they stood.
+- Not published: every `SessionRecordStore` lives in this repository. If one appears outside it, the class can move
+  into a published testkit unchanged (backlog SO-9).
+
 ### Fixed: compaction summary calls carry their caller, `/compact` nests under its command span, `/skill` calls are priced (#265)
 
 Three LLM calls outside the ReAct loops were booked less completely than the loops' own calls. Backlog ST-9 and ST-10

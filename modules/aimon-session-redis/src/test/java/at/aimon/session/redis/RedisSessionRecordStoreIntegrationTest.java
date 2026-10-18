@@ -3,18 +3,6 @@ package at.aimon.session.redis;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.Callable;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -23,32 +11,32 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.session.SessionId;
-import at.aimon.core.agent.session.exception.SessionRecordStoreException;
-import at.aimon.core.agent.session.store.SessionRecordView;
+import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.session.store.SessionTotals;
-import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.base.Principal;
-import at.aimon.core.llm.Message;
-import at.aimon.core.llm.ReasoningTrace;
 import at.aimon.core.llm.TokenUsage;
-import at.aimon.core.llm.ToolUse;
+import at.aimon.session.testkit.AbstractSessionRecordStoreContractTest;
 import io.lettuce.core.api.StatefulRedisConnection;
 
 /**
  * Integration tests for {@link RedisSessionRecordStore} against a real Redis container.
  *
  * <p>
- * Two things are being checked here, and only one of them is the SPI contract. The other is the reason this store
- * exists at all: before it, the lease, the inbox, the signal bus and the idempotency ledger were all distributed while
- * the transcript was not, so a session could be handed from one node to another and arrive with its history gone. The
- * handoff test below is that scenario written down — two store instances over two separate connections.
+ * The SPI contract is the shared {@link AbstractSessionRecordStoreContractTest}. What this class supplies is the
+ * backend: a second store over its own connection for the node-handoff case — the reason this store exists at all,
+ * since before it the lease, the inbox, the signal bus and the idempotency ledger were all distributed while the
+ * transcript was not — and raw {@code HSET}s that corrupt the {@code transcript} and {@code owner} fields. The cases of
+ * its own are what the SPI cannot see: which hash fields the scripts write, the {@code ""} sentinel they reserve, and
+ * the keyspace this store shares with the other Redis backends.
  */
 @DisplayName("RedisSessionRecordStore integration")
 @Tag("docker")
-class RedisSessionRecordStoreIntegrationTest {
+class RedisSessionRecordStoreIntegrationTest extends AbstractSessionRecordStoreContractTest {
 
     private StatefulRedisConnection<String, String> connection;
     private RedisSessionRecordStore store;
+    private StatefulRedisConnection<String, String> peerConnection;
+    private RedisSessionRecordStore peer;
 
     @BeforeEach
     void setUp() {
@@ -59,77 +47,68 @@ class RedisSessionRecordStoreIntegrationTest {
 
     @AfterEach
     void tearDown() {
+        if (peerConnection != null) {
+            peerConnection.close();
+        }
         if (connection != null) {
             connection.close();
         }
     }
 
-    @Test
-    @DisplayName("provision creates the hash, and a second provision never re-binds it")
-    void provisionBindsOnce() {
-        final SessionId id = SessionId.of("rec-provision");
+    @Override
+    protected SessionRecordStore store() {
+        return store;
+    }
 
-        final SessionRecordView first = store.provision(id, "agent-A");
-        assertThat(first.getAgentRef()).contains("agent-A");
-        assertThat(store.exists(id)).isTrue();
+    @Override
+    protected SessionRecordStore peerStore() {
+        // Its own connection, sharing nothing with store() but Redis, as after an eviction or a restart.
+        if (peer == null) {
+            peerConnection = RedisTestSupport.connect();
+            peer = new RedisSessionRecordStore(peerConnection);
+        }
+        return peer;
+    }
 
-        // HSETNX on agentRef, and this is what it buys: the second caller is told who actually owns the session rather
-        // than having already taken it. Both nodes then agree, and the loser can reject the request instead of serving
-        // a session under an agent it was never bound to.
-        final SessionRecordView second = store.provision(id, "agent-B");
-        assertThat(second.getAgentRef()).contains("agent-A");
-        assertThat(store.load(id).orElseThrow().getAgentRef()).contains("agent-A");
+    @Override
+    protected void corruptTranscript(SessionId id) {
+        rawHset(id, "transcript", "not-a-transcript");
+    }
+
+    @Override
+    protected void corruptOwner(SessionId id) {
+        rawHset(id, "owner", "{\"displayName\":\"x\"}");
+    }
+
+    private void rawHset(SessionId id, String field, String value) {
+        // HSET on a missing key would create a one-field hash; insist on a provisioned record, as the Postgres and
+        // Mongo hooks do with their row counts.
+        assertThat(connection.sync().exists(key(id))).isEqualTo(1L);
+        connection.sync().hset(key(id), field, value);
     }
 
     @Test
-    @DisplayName("provision without a binding still materializes a hash — a field-less hash does not exist in Redis")
-    void provisionWithoutBinding() {
+    @DisplayName("provision without a binding still writes a field — a field-less hash does not exist in Redis")
+    void provisionWithoutBindingWritesTheSentinelField() {
         final SessionId id = SessionId.of("rec-unbound");
 
-        final SessionRecordView view = store.provision(id);
+        store.provision(id);
 
-        assertThat(view.getAgentRef()).isEmpty();
-        assertThat(view.getMessages()).isEmpty();
-        assertThat(view.getCompactionFailureCount()).isZero();
-        assertThat(view.getSessionTotals()).isEqualTo(SessionTotals.empty());
-        assertThat(view.getBudgetOverride()).isEmpty();
         // The sentinel field earns its keep exactly here. Redis has no empty hash, so provisioning without a binding
         // would otherwise write nothing at all and leave the session reading as absent -- it would be re-provisioned,
         // and the binding a later claim writes would look like a first binding rather than a conflict.
-        assertThat(store.exists(id)).isTrue();
-        assertThat(connection.sync().hget("aimon:session:record:rec-unbound", "sessionId")).isEqualTo("rec-unbound");
-        assertThat(connection.sync().hexists("aimon:session:record:rec-unbound", "agentRef")).isFalse();
+        assertThat(connection.sync().hget(key(id), "sessionId")).isEqualTo("rec-unbound");
+        assertThat(connection.sync().hexists(key(id), "agentRef")).isFalse();
     }
 
     @Test
-    @DisplayName("provision with an owner records it, and a second owner never replaces the first")
-    void provisionRecordsOwnerOnce() {
-        final SessionId id = SessionId.of("rec-owner");
-        final Principal alice = Principal.user("u-1", "alice");
-
-        final SessionRecordView first = store.provision(id, "agent-A", alice);
-        assertThat(first.getAgentRef()).contains("agent-A");
-        assertThat(first.getOwner()).contains(alice);
-        assertThat(first.getOwner().orElseThrow().getDisplayName()).isEqualTo("alice");
-
-        // HSETNX again: the owner follows the binding's rule, so the later caller reads the existing owner back.
-        final SessionRecordView second = store.provision(id, "agent-A", Principal.user("u-2", "bob"));
-        assertThat(second.getOwner()).contains(alice);
-        assertThat(store.load(id).orElseThrow().getOwner()).contains(alice);
-    }
-
-    @Test
-    @DisplayName("a record provisioned without an owner gets one from the first provision that carries it")
-    void ownerFillsWhenEmpty() {
+    @DisplayName("an owner-less provision writes no owner field")
+    void ownerlessProvisionWritesNoOwnerField() {
         final SessionId id = SessionId.of("rec-owner-late");
-        final Principal alice = Principal.user("u-1", "alice");
 
-        assertThat(store.provision(id, "agent-A").getOwner()).isEmpty();
-        assertThat(connection.sync().hexists("aimon:session:record:rec-owner-late", "owner")).isFalse();
+        store.provision(id, "agent-A");
 
-        final SessionRecordView filled = store.provision(id, "agent-A", alice);
-        assertThat(filled.getOwner()).contains(alice);
-        assertThat(filled.getAgentRef()).contains("agent-A");
+        assertThat(connection.sync().hexists(key(id), "owner")).isFalse();
     }
 
     @Test
@@ -137,22 +116,14 @@ class RedisSessionRecordStoreIntegrationTest {
     void eachOptionalArgumentIsIndependent() {
         // The script reads both optional arguments positionally with "" as the absent sentinel; this pins that
         // a missing first one does not shift the second into its place, and a missing second one writes nothing.
-        final Principal alice = Principal.user("u-1", "alice");
+        // The suite's ownerWithoutBinding and bindingWithoutOwner check what the SPI reads back; this checks the hash.
         final SessionId ownerOnly = SessionId.of("rec-owner-only");
-        final SessionRecordView unbound = store.provision(ownerOnly, null, alice);
-        assertThat(unbound.getAgentRef()).isEmpty();
-        assertThat(unbound.getOwner()).contains(alice);
-        assertThat(connection.sync().hexists("aimon:session:record:rec-owner-only", "agentRef")).isFalse();
-        // The binding can still be established later; the owner is untouched by it.
-        final SessionRecordView bound = store.provision(ownerOnly, "agent-A");
-        assertThat(bound.getAgentRef()).contains("agent-A");
-        assertThat(bound.getOwner()).contains(alice);
+        store.provision(ownerOnly, null, Principal.user("u-1", "alice"));
+        assertThat(connection.sync().hexists(key(ownerOnly), "agentRef")).isFalse();
 
         final SessionId agentOnly = SessionId.of("rec-agent-only");
-        final SessionRecordView noOwner = store.provision(agentOnly, "agent-A", null);
-        assertThat(noOwner.getAgentRef()).contains("agent-A");
-        assertThat(noOwner.getOwner()).isEmpty();
-        assertThat(connection.sync().hexists("aimon:session:record:rec-agent-only", "owner")).isFalse();
+        store.provision(agentOnly, "agent-A", null);
+        assertThat(connection.sync().hexists(key(agentOnly), "owner")).isFalse();
     }
 
     @Test
@@ -167,211 +138,32 @@ class RedisSessionRecordStoreIntegrationTest {
     }
 
     @Test
-    @DisplayName("the owner survives the transcript merge and the totals/override write")
-    void ownerSurvivesOtherWrites() {
-        final SessionId id = SessionId.of("rec-owner-kept");
-        final Principal alice = Principal.user("u-1", "alice");
-        store.provision(id, "agent-A", alice);
-
-        store.mergeFromSnapshot(SessionSnapshot.of(id, null, List.of(Message.user("hi"))));
-        assertThat(store.load(id).orElseThrow().getOwner()).contains(alice);
-
-        store.setTotalsAndBudgetOverride(id, SessionTotals.of(1, 2, TokenUsage.of(1, 1, 2)),
-                ExecutionBudget.builder().maxIterations(3).build());
-        store.setTotalsAndBudgetOverride(id, SessionTotals.of(2, 4, TokenUsage.of(2, 2, 4)), null);
-        final SessionRecordView view = store.load(id).orElseThrow();
-        assertThat(view.getOwner()).contains(alice);
-        assertThat(view.getMessages()).hasSize(1);
-    }
-
-    @Test
-    @DisplayName("a transcript survives the round trip and does not disturb the side fields")
-    void transcriptRoundTripLeavesSideFieldsAlone() {
-        final SessionId id = SessionId.of("rec-transcript");
-        store.provision(id, "agent-A");
-        store.setTotalsAndBudgetOverride(id, SessionTotals.of(2, 5, TokenUsage.of(10, 20, 30, 7)),
-                ExecutionBudget.builder().maxIterations(9).build());
-        store.incrementCompactionFailureCount(id);
-
-        // The assistant message carries a reasoning trace: an opaque provider payload that lands in the persisted
-        // transcript. The backend stores the transcript as an opaque string and cannot see the field, which is the
-        // argument -- this test is what turns that argument into an observation on a real database.
-        final ReasoningTrace trace = ReasoningTrace.builder().providerName("OpenAI")
-                .payload("{\"type\":\"reasoning\",\"id\":\"rs_1\",\"encrypted_content\":\"gAAAAA==\"}")
-                .toolUseId("call_1").build();
-        store.mergeFromSnapshot(SessionSnapshot.of(id, "You are a helper.",
-                List.of(Message.user("hi"), Message.assistant("hello").withReasoningTraces(List.of(trace)))));
-
-        final SessionRecordView view = store.load(id).orElseThrow();
-        assertThat(view.getSystemPrompt()).isEqualTo("You are a helper.");
-        assertThat(view.getMessages()).hasSize(2);
-        assertThat(view.getMessages().get(1).getReasoningTraces()).containsExactly(trace);
-        // The merge names the transcript field and nothing else, so the four fields it cannot carry survive by not
-        // being written. A load-mutate-store implementation would pass this only until two writers overlapped.
-        assertThat(view.getAgentRef()).contains("agent-A");
-        assertThat(view.getCompactionFailureCount()).isEqualTo(1);
-        assertThat(view.getSessionTotals().getTurnCount()).isEqualTo(2);
-        assertThat(view.getSessionTotals().getTokenUsage().getReasoningTokens()).isEqualTo(7);
-        assertThat(view.getBudgetOverride().orElseThrow().getMaxIterations()).contains(9);
-    }
-
-    @Test
-    @DisplayName("a tool-call input with arbitrary keys survives the encoding")
-    void arbitraryToolInputKeysSurvive() {
-        // A tool_use input is a map the model wrote, so its keys are outside anyone's control. Redis would not object
-        // to any of these, but the encoding is shared with the Mongo and Postgres stores and this pins that the three
-        // agree on what comes back -- a session must read the same whichever backend a deployment picked.
-        final SessionId id = SessionId.of("rec-keys");
-        final Map<String, Object> input = new LinkedHashMap<>();
-        input.put("filters.status", "open");
-        input.put("$where", "1 == 1");
-        input.put("nested", Map.of("a.b", 1));
-        store.provision(id, "agent-A");
-
-        store.mergeFromSnapshot(SessionSnapshot.of(id, null,
-                List.of(Message.assistant("calling", List.of(ToolUse.of("tu-1", "Search", input))))));
-
-        final List<ToolUse> toolUses = store.load(id).orElseThrow().getMessages().get(0).getToolUses();
-        assertThat(toolUses).hasSize(1);
-        assertThat(toolUses.get(0).getInput()).containsEntry("filters.status", "open").containsEntry("$where", "1 == 1")
-                .containsEntry("nested", Map.of("a.b", 1));
-    }
-
-    @Test
-    @DisplayName("totals and budget override move as a pair, and a null override clears one that was set")
-    void totalsAndOverrideMoveTogether() {
+    @DisplayName("a null budget override is an HDEL, not a write")
+    void nullOverrideIsAnHdel() {
         final SessionId id = SessionId.of("rec-totals");
         store.provision(id, "agent-A");
-
         store.setTotalsAndBudgetOverride(id, SessionTotals.of(1, 3, TokenUsage.of(5, 6, 11)),
                 ExecutionBudget.builder().maxTokens(1_000).build());
-        assertThat(store.load(id).orElseThrow().getBudgetOverride()).isPresent();
 
-        // Null is not "leave it alone". A session whose /budget override was lifted must fall back to the opener's
-        // default on the next open -- keeping the stale override would silently re-impose a limit the user removed.
-        // Redis needs an HDEL rather than a write to express that, which is why the script branches.
+        // Redis needs an HDEL rather than a write to express "cleared", which is why the script branches.
         store.setTotalsAndBudgetOverride(id, SessionTotals.of(2, 7, TokenUsage.of(9, 9, 18)), null);
 
-        final SessionRecordView view = store.load(id).orElseThrow();
-        assertThat(view.getSessionTotals().getTurnCount()).isEqualTo(2);
-        assertThat(view.getSessionTotals().getIterations()).isEqualTo(7);
-        assertThat(view.getSessionTotals().getTokenUsage().getTotalTokens()).isEqualTo(18);
-        assertThat(view.getBudgetOverride()).isEmpty();
-        assertThat(connection.sync().hexists("aimon:session:record:rec-totals", "budgetOverride")).isFalse();
+        assertThat(connection.sync().hexists(key(id), "budgetOverride")).isFalse();
     }
 
     @Test
     @DisplayName("writes against a session that was never provisioned leave no key behind")
-    void sideFieldWritesDoNotCreateRecords() {
+    void sideFieldWritesLeaveNoKey() {
         final SessionId id = SessionId.of("rec-absent");
 
         store.setTotalsAndBudgetOverride(id, SessionTotals.of(1, 1, TokenUsage.of(1, 1, 2)), null);
         store.resetCompactionFailureCount(id);
-        final int count = store.incrementCompactionFailureCount(id);
+        store.incrementCompactionFailureCount(id);
 
         // The EXISTS guard in front of each script is what makes this pass, and it is not defensive coding: HSET and
         // HINCRBY both create the hash they write to, so without the guard each of these three calls would conjure a
         // record holding one field and no transcript, and the next claim would find the session already provisioned.
-        assertThat(count).isZero();
-        assertThat(store.exists(id)).isFalse();
-        assertThat(store.load(id)).isEmpty();
-        assertThat(connection.sync().exists("aimon:session:record:rec-absent")).isZero();
-    }
-
-    @Test
-    @DisplayName("each concurrent increment gets its own number, and reset returns to zero")
-    void concurrentIncrementsAreDistinct() throws Exception {
-        final SessionId id = SessionId.of("rec-counter");
-        store.provision(id, "agent-A");
-        final int writers = 8;
-        final CountDownLatch start = new CountDownLatch(1);
-        final ExecutorService pool = Executors.newFixedThreadPool(writers);
-        try {
-            final List<Future<Integer>> attempts = new ArrayList<>();
-            for (int i = 0; i < writers; i++) {
-                final Callable<Integer> attempt = () -> {
-                    start.await();
-                    return store.incrementCompactionFailureCount(id);
-                };
-                attempts.add(pool.submit(attempt));
-            }
-            start.countDown();
-
-            final List<Integer> observed = new ArrayList<>();
-            for (Future<Integer> attempt : attempts) {
-                observed.add(attempt.get(30, TimeUnit.SECONDS));
-            }
-            // HINCRBY returns the value its own increment produced. A read-after-write would let another node's
-            // increment land in between and hand two callers the same number, which is the one miscount a compaction
-            // circuit breaker must not make: it would trip late, or never.
-            assertThat(observed).containsExactlyInAnyOrder(1, 2, 3, 4, 5, 6, 7, 8);
-            assertThat(store.load(id).orElseThrow().getCompactionFailureCount()).isEqualTo(writers);
-
-            store.resetCompactionFailureCount(id);
-            assertThat(store.load(id).orElseThrow().getCompactionFailureCount()).isZero();
-        } finally {
-            pool.shutdownNow();
-        }
-    }
-
-    @Test
-    @DisplayName("a session handed to another node arrives with its history — the gap this store closes")
-    void nodeHandoffCarriesTheTranscript() {
-        final SessionId id = SessionId.of("rec-handoff");
-
-        // Node A: claims the session, runs a turn, records what the turn cost.
-        store.provision(id, "agent-A");
-        store.mergeFromSnapshot(SessionSnapshot.of(id, "You are a helper.",
-                List.of(Message.user("deploy the thing"), Message.assistant("deployed"))));
-        store.setTotalsAndBudgetOverride(id, SessionTotals.of(1, 4, TokenUsage.of(120, 60, 180)),
-                ExecutionBudget.builder().maxIterations(20).build());
-
-        // Node B: its own connection and its own store, sharing nothing but Redis, as after an eviction or a restart.
-        try (StatefulRedisConnection<String, String> nodeB = RedisTestSupport.connect()) {
-            final SessionRecordView resumed = new RedisSessionRecordStore(nodeB).load(id).orElseThrow();
-
-            assertThat(resumed.getSystemPrompt()).isEqualTo("You are a helper.");
-            assertThat(resumed.getMessages()).extracting(Message::getContent).containsExactly("deploy the thing",
-                    "deployed");
-            assertThat(resumed.getAgentRef()).contains("agent-A");
-            // Not just the messages: totals restore so status reporting resumes from where it was rather than from
-            // zero, and the override wins over node B's opener default exactly as it did on node A.
-            assertThat(resumed.getSessionTotals().getTurnCount()).isEqualTo(1);
-            assertThat(resumed.getSessionTotals().getTokenUsage().getTotalTokens()).isEqualTo(180);
-            assertThat(resumed.getBudgetOverride().orElseThrow().getMaxIterations()).contains(20);
-        }
-    }
-
-    @Test
-    @DisplayName("load, delete, listSessionIds and clear agree on what exists")
-    void enumerationAndRemoval() {
-        assertThat(store.load(SessionId.of("nobody"))).isEmpty();
-        assertThat(store.exists(SessionId.of("nobody"))).isFalse();
-
-        store.provision(SessionId.of("rec-a"), "agent-A");
-        store.provision(SessionId.of("rec-b"), "agent-A");
-        assertThat(store.listSessionIds()).containsExactlyInAnyOrder(SessionId.of("rec-a"), SessionId.of("rec-b"));
-
-        store.delete(SessionId.of("rec-a"));
-        assertThat(store.listSessionIds()).containsExactly(SessionId.of("rec-b"));
-        // Deleting what is not there is a no-op, not an error: teardown paths run without first checking.
-        store.delete(SessionId.of("rec-a"));
-
-        store.clear();
-        assertThat(store.listSessionIds()).isEmpty();
-    }
-
-    @Test
-    @DisplayName("enumeration reads its ids off the keys, and a ':' inside one is not a delimiter")
-    void sessionIdsContainingColons() {
-        // The SCAN pattern is prefix + ":*" and the id is the whole remainder, taken by prefix length. Splitting on
-        // ':' instead would truncate any id that carries one -- and ids are caller-supplied, so some deployments' are
-        // structured strings. A truncated id here means listSessionIds reports sessions that cannot then be loaded.
-        final SessionId id = SessionId.of("tenant:acme:sess:1");
-        store.provision(id, "agent-A");
-
-        assertThat(store.listSessionIds()).containsExactly(id);
-        assertThat(store.load(id)).isPresent();
+        assertThat(connection.sync().exists(key(id))).isZero();
     }
 
     @Test
@@ -392,67 +184,18 @@ class RedisSessionRecordStoreIntegrationTest {
     }
 
     @Test
-    @DisplayName("a hash whose transcript was never written reads as an empty record, not a missing one")
-    void provisionedButNeverWritten() {
-        // Every session's first turn hits this: the claim path provisions before anything has a transcript to store,
-        // and the load that follows must report empty history rather than an absent session. The field is genuinely
-        // absent at that point, and absent is not a state of its own here.
-        final SessionId id = SessionId.of("rec-fresh");
-        store.provision(id, "agent-A");
-
-        final Optional<SessionRecordView> view = store.load(id);
-
-        assertThat(view).isPresent();
-        assertThat(view.orElseThrow().getSystemPrompt()).isNull();
-        assertThat(view.orElseThrow().getMessages()).isEmpty();
-    }
-
-    @Test
-    @DisplayName("loadOwner is empty without a record or an owner, and reads the owner back once there is one")
-    void loadOwnerReadsTheOwner() {
-        final SessionId id = SessionId.of("rec-load-owner");
-        final Principal alice = Principal.user("u-1", "Alice");
-
-        assertThat(store.loadOwner(id)).isEmpty();
-        store.provision(id, "agent-A");
-        assertThat(store.loadOwner(id)).isEmpty();
-        store.provision(id, "agent-A", alice);
-        assertThat(store.loadOwner(id)).contains(alice);
-        assertThat(store.loadOwner(id).orElseThrow().getDisplayName()).isEqualTo("Alice");
-    }
-
-    @Test
-    @DisplayName("loadOwner is one HGET of the owner: a transcript that fails load does not fail it")
-    void loadOwnerDoesNotDecodeTheTranscript() {
-        final SessionId id = SessionId.of("rec-load-owner-narrow");
-        final Principal alice = Principal.user("u-1", "Alice");
-        store.provision(id, "agent-A", alice);
-        connection.sync().hset("aimon:session:record:rec-load-owner-narrow", "transcript", "not-a-transcript");
-
-        assertThatThrownBy(() -> store.load(id)).isInstanceOf(SessionRecordStoreException.class);
-        assertThat(store.loadOwner(id)).contains(alice);
-    }
-
-    @Test
-    @DisplayName("an owner that will not decode fails loadOwner rather than reading as no owner")
-    void loadOwnerRefusesACorruptOwner() {
-        final SessionId id = SessionId.of("rec-load-owner-corrupt");
-        store.provision(id, "agent-A", Principal.user("u-1", "Alice"));
-        connection.sync().hset("aimon:session:record:rec-load-owner-corrupt", "owner", "{\"displayName\":\"x\"}");
-
-        assertThatThrownBy(() -> store.loadOwner(id)).isInstanceOf(SessionRecordStoreException.class)
-                .hasMessageContaining("Failed to decode stored session owner for");
-    }
-
-    @Test
     @DisplayName("an owner field holding the \"\" sentinel reads as no owner, as it does through load")
     void loadOwnerTreatsTheEmptySentinelAsNoOwner() {
         final SessionId id = SessionId.of("rec-load-owner-blank");
         store.provision(id, "agent-A");
         // PROVISION_SCRIPT never writes this; hand-written or older data might.
-        connection.sync().hset("aimon:session:record:rec-load-owner-blank", "owner", "");
+        connection.sync().hset(key(id), "owner", "");
 
         assertThat(store.load(id).orElseThrow().getOwner()).isEmpty();
         assertThat(store.loadOwner(id)).isEmpty();
+    }
+
+    private static String key(SessionId id) {
+        return "aimon:session:record:" + id.value();
     }
 }

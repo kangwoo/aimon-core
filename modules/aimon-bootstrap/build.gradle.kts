@@ -14,5 +14,10 @@ dependencies {
     // Logging
     implementation(libs.slf4j.api)
 
+    // The shared SessionRecordStore contract, run against LateBoundFencedRecordStore. The testkit is unpublished and
+    // brings nothing this module's tests do not already resolve: core and routing are `api` above, and its JUnit and
+    // AssertJ are the conventions plugin's.
+    testImplementation(project(":aimon-session-testkit"))
+
     testRuntimeOnly(libs.logback.classic)
 }
