@@ -42,7 +42,7 @@ hedging but an exhaustive list: in the main sources `new BudgetTracker(` appears
 them. (grep reports 3, but the third is example code inside `BudgetTracker`'s javadoc.)
 
 An accumulated limit is not a budget but a **quota**. Its counters live in the application-scoped
-`UsageLedger`, and the `QuotaGuard` built once per turn is **shared, not rebuilt,** by every fork
+`UsageLedger`, and the `QuotaGuard` built once per turn (once per run for a scheduled routine) is **shared, not rebuilt,** by every fork
 that turn starts — a fork has no session, so resolving again would drop the session key
 ([`../design/agent-execution/usage-quota.md`](../design/agent-execution/usage-quota.md) §4.3).
 

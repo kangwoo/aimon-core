@@ -35,7 +35,7 @@ AIMON 컴포넌트의 **수명(lifetime)**, **소유권(ownership)**, **소멸 �
 가 전부다. (grep 은 3건을 뱉지만 세 번째는 `BudgetTracker` javadoc 안의 사용 예시 코드다.)
 
 누적 한도는 예산이 아니라 **쿼터**다. 그 카운터는 application-scoped `UsageLedger` 에 있고, 턴마다 하나
-만들어지는 `QuotaGuard` 는 그 턴이 시작한 모든 포크가 **새로 만들지 않고 그대로 공유한다** — 포크에는
+만들어지는(예약 루틴은 실행마다 하나) `QuotaGuard` 는 그 턴이 시작한 모든 포크가 **새로 만들지 않고 그대로 공유한다** — 포크에는
 세션이 없으므로 다시 해석하면 세션 키가 빠진다
 ([`../design/agent-execution/usage-quota.md`](../design/agent-execution/usage-quota.md) §4.3).
 

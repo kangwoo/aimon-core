@@ -162,7 +162,8 @@ iteration, 인라인 LLM 스킬의 호출 — 은 모두 물려받은 guard 를 
 이유로 실패한 시도는 — 클라우드 CLI 가 내는 자기 자원 쿼터의 `QUOTA_EXCEEDED` 처럼 낱말만 같은 오류도 — 소유자가
 한도를 넘었어도 설정대로 재시도한다. 또 루틴 실행이 성공으로 끝나는데 guard 가 위반을 보고하면
 `Routine run for task '...' completed while its owner's usage quota is reached` 로 시작하는 WARN 로그를 남긴다 —
-`Task` 단계처럼 멈춤이 성공으로 기록되는 경우에 알림을 걸 곳이다. 쿼터 장부를 붙이지 않은 스택에서는 아무것도
+`Task` 단계처럼 멈춤이 성공으로 기록되는 경우에 알림을 걸 곳이다. 다만 guard 는 단계가 LLM 작업을 시작했는지 모르므로
+토큰을 쓰지 않는 루틴(`Bash` 만 쓰는 헬스 체크 등)에서도 남는다 — 알림은 LLM 을 쓰는 단계가 있는 작업에만 거는 것이 좋다. 쿼터 장부를 붙이지 않은 스택에서는 아무것도
 달라지지 않는다.
 
 NOTE: `getQuotaViolation()` 은 턴이 **같은 노드에서** 실행됐을 때만 채워진다. `SessionRouter` 를 거쳐 다른 노드에서

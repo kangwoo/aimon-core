@@ -731,8 +731,7 @@ public class RoutineExecutor {
      * <p>
      * No attempt is refused for quota: the LLM calls a step can reach check the run's guard themselves. Only a retry
      * is, when the failed attempt reports a {@code QUOTA_EXCEEDED} stop and the guard still reports a violation &mdash;
-     * the
-     * retry would stop the same way, so the step fails at once, before its backoff, with
+     * the retry would stop the same way, so the step fails at once, before its backoff, with
      * {@code "Execution stopped by quota: ..."} and the attempt's own error. A cancelled run is not asked, so
      * cancellation keeps winning.
      *
@@ -821,7 +820,9 @@ public class RoutineExecutor {
      * can be recorded as having worked while its LLM work never ran, and no {@code TaskFailedEvent} fires. This line
      * is what an operator can alert on until the result carries the stop structurally (backlog UQ-4). It refuses
      * nothing, costs one ledger read per successful metered run, and also fires when the last step's fork overshot the
-     * limit &mdash; the next run's forks will stop either way. A ledger that cannot be read is skipped quietly: the
+     * limit &mdash; the next run's forks will stop either way. The guard cannot tell whether the run's steps started
+     * any LLM work, so a routine of token-free steps logs it too, and the message says "may". A ledger that cannot be
+     * read is skipped quietly: the
      * run is over, and the forks already reported their own ledger failures.
      */
     private static void warnIfCompletedOverQuota(ScheduledTask task, QuotaGuard guard) {
@@ -836,8 +837,8 @@ public class RoutineExecutor {
             return;
         }
         violation.ifPresent(v -> log.warn("Routine run for task '{}' completed while its owner's usage quota is"
-                + " reached ({}): LLM work its steps started was stopped before it ran, so the run may have done less"
-                + " than its success suggests", task.getId(), v.describe()));
+                + " reached ({}): any LLM work its steps started (a Task, Workflow or skill fork) was stopped before it"
+                + " ran, so the run may have done less than its success suggests", task.getId(), v.describe()));
     }
 
     /**
@@ -846,8 +847,8 @@ public class RoutineExecutor {
      * <p>
      * Only an attempt whose own error carries a quota stop ({@link #QUOTA_STOP_PREFIX}) &mdash; a fork or skill the
      * guard stopped &mdash; is a candidate, so a step that spends no usage keeps every retry it was configured with
-     * even while its owner is
-     * over quota. The guard then confirms the violation still stands. The message is worded as a turn's quota stop
+     * even while its owner is over quota. The guard then confirms the violation still stands. The message is worded as
+     * a turn's quota stop
      * ({@code OrcaAgentExecutor#handleQuotaStop}), so logs and alerts match one string, and keeps the attempt's error.
      * A fail-closed ledger that fails here gives no answer, so the retry goes ahead and meets the ledger itself.
      *

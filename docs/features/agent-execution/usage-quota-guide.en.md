@@ -178,7 +178,9 @@ violation) would hit the same limit again, so the step fails at once, without wa
 error that merely shares the word, such as a cloud CLI's own `QUOTA_EXCEEDED` for its resource quota — is retried as
 configured, even while the owner is over the limit. And when a routine run ends as a success while the guard reports
 a violation, a WARN log starting `Routine run for task '...' completed while its owner's usage quota is reached` is
-written — the place to hang an alert for cases such as a `Task` step, whose stop is recorded as a success. A stack
+written — the place to hang an alert for cases such as a `Task` step, whose stop is recorded as a success. The guard
+cannot tell whether a step started any LLM work, so token-free routines (a `Bash`-only health check, say) log it too —
+hang the alert only on tasks that have a step using an LLM. A stack
 with no quota ledger attached sees no change at all.
 
 NOTE: `getQuotaViolation()` is filled only when the turn ran **on the same node**. The result of a turn run on another

@@ -31,7 +31,8 @@ up a principal quota in sessions could run the same LLM work through a cron task
   configured retries, including one that merely names `QUOTA_EXCEEDED`, such as a cloud CLI's resource quota.
 - **A WARN when a run that did less is filed as a success.** A metered run that completes while the guard reports a
   violation logs `Routine run for task '…' completed while its owner's usage quota is reached (…)`. It refuses
-  nothing; it is what to alert on until a quota stop reaches `RoutineResult` structurally (backlog UQ-4).
+  nothing; it is what to alert on until a quota stop reaches `RoutineResult` structurally (backlog UQ-4). It also fires
+  for token-free routines, since the guard cannot tell what the steps did, so alert only on tasks with an LLM step.
 - **Only with a `QuotaSpec` ledger.** `AimonStackBuilder` hands the scheduling engine the same factory it gives the
   executors. Without a ledger the factory is disabled: no guard is resolved, the steps' context has no `QUOTA_GUARD`,
   and routines behave exactly as before.
