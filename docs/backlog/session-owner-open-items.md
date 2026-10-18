@@ -1,4 +1,4 @@
-# 세션 소유자 · 삭제 리스너 — 등록 항목 8건 (열림 6 · 닫힘 2)
+# 세션 소유자 · 삭제 리스너 — 등록 항목 8건 (열림 5 · 닫힘 3)
 
 출처는 [`../design/session/session-owner-deletion-event.md`](../design/session/session-owner-deletion-event.md)
 (#253) 의 구현이다. 그 문서 §8 의 열린 질문 가운데 **이 변경 밖으로 결과가 나가는 것**과, §9(구현 뒤 — 설계와 달라진
@@ -108,7 +108,7 @@ in-memory 는 필드를 복사 없이. 감싸는 두 저장소(`DefaultSessionSt
   이미 소유자를 갖고 있으므로 SPI 를 하나 더 두면 호스트가 이을 것만 늘어난다. 실제 비용 — 소유자 하나를 위해 전사
   전체를 디코드하는 것 — 은 저장소의 좁은 읽기로 닫힌다.
 - **샌드박스는 아직 이 이득을 받지 않는다.** `SessionOwnerLookup.recorded` 가 `loadOwner` 를 부르게 바뀌어야 한다.
-  그 일은 SO-8 이다.
+  그 일은 SO-8 이다 — 같은 날 aimon-sandbox#30 으로 닫혔다.
 
 ---
 
@@ -160,7 +160,7 @@ Redis 의 `""` 거부는 라우터를 거치지 않고 저장소를 직접 부�
 
 ---
 
-## SO-8 — aimon-sandbox 는 아직 소유자를 위해 레코드 전체를 읽는다 · **열림**
+## SO-8 — aimon-sandbox 는 아직 소유자를 위해 레코드 전체를 읽는다 · **닫힘** *(2026-10-18, kangwoo/aimon-sandbox#30)*
 
 **무엇을.** aimon-sandbox 의 `SessionOwnerLookup.recorded(...)` 가 `load(id).flatMap(SessionRecordView::getOwner)`
 대신 `loadOwner(id)` 를 부르게 하고, 그것이 실릴 코어 릴리스를 정한다.
@@ -173,4 +173,11 @@ Redis 의 `""` 거부는 라우터를 거치지 않고 저장소를 직접 부�
 문장(aimon-sandbox `847dad2`). 이 저장소는 고치지 않는다.
 
 **언제 다시 볼까.** `loadOwner` 를 담은 코어 릴리스가 나갈 때. 그때 aimon-sandbox 에 이슈를 연다(#27 에 이어서).
+
+**닫음 (2026-10-18, kangwoo/aimon-sandbox#30).** 코어 릴리스를 기다리지 않았다 — aimon-sandbox `main` 은 이미
+`0.3.3-SNAPSHOT` 에 고정돼 있어서, #262 머지 뒤 다시 올린 스냅샷으로 바로 옮길 수 있었다. `SessionOwnerLookup.recorded`
+가 `loadOwner(id)` 를 부르고, `load` 를 부르면 실패하는 저장소로 그것을 고정하는 테스트가 붙었다. 실릴 코어 릴리스는
+**0.3.3** 이다 — 샌드박스의 `[Unreleased]` 가 이미 0.3.3 을 요구하고, 그 SNAPSHOT 고정은 릴리스 전에 지워야 하므로
+`loadOwner` 없는 0.3.3 으로 풀릴 길이 없다. 같은 PR 이 SNAPSHOT 고정이 있는 동안 매 빌드 스냅샷을 다시 확인하게 했다
+(CI 의 Gradle 캐시가 하루 지난 스냅샷으로 `loadOwner` 를 못 찾았다).
 
