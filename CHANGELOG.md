@@ -25,9 +25,13 @@ up a principal quota in sessions could run the same LLM work through a cron task
   before. A forked skill's stop fails its step with `QUOTA_EXCEEDED` in the error; `Task` reports it, like any fork
   stop, as a `Completion reason: QUOTA_EXCEEDED` line in a successful result, so such a run can end as a success
   (backlog UQ-4).
-- **No retry into the same wall.** An attempt that failed with `QUOTA_EXCEEDED` in its error, while the guard still
-  reports a violation, is not retried: the step fails at once, without its backoff, with
-  `Execution stopped by quota: … (last attempt: …)`. Any other failure keeps its configured retries.
+- **No retry into the same wall.** An attempt whose error carries a fork's or skill's quota stop
+  (`Execution stopped: QUOTA_EXCEEDED`), while the guard still reports a violation, is not retried: the step fails at
+  once, without its backoff, with `Execution stopped by quota: … (last attempt: …)`. Any other failure keeps its
+  configured retries, including one that merely names `QUOTA_EXCEEDED`, such as a cloud CLI's resource quota.
+- **A WARN when a run that did less is filed as a success.** A metered run that completes while the guard reports a
+  violation logs `Routine run for task '…' completed while its owner's usage quota is reached (…)`. It refuses
+  nothing; it is what to alert on until a quota stop reaches `RoutineResult` structurally (backlog UQ-4).
 - **Only with a `QuotaSpec` ledger.** `AimonStackBuilder` hands the scheduling engine the same factory it gives the
   executors. Without a ledger the factory is disabled: no guard is resolved, the steps' context has no `QUOTA_GUARD`,
   and routines behave exactly as before.

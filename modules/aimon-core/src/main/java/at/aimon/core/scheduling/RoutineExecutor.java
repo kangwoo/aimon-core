@@ -143,14 +143,24 @@ import at.aimon.core.tracing.Tracer;
  * check a turn makes before each iteration. So once the owner is over quota, the forks and skills a step starts stop
  * before their first call, while a step that calls no LLM ({@code Bash}, {@code Read}) runs as it always did. How the
  * stop shows depends on the tool: a fork-mode skill fails with {@code QUOTA_EXCEEDED} in its error, while {@code Task}
- * reports every fork stop, this one included, as a {@code Completion reason:} line in a successful result. The one
- * thing the executor adds is at the retry boundary: an attempt that failed <em>because</em> of the quota, while the
- * guard still reports it, is not retried, since the retry would stop the same way. Without a factory no guard is
- * resolved and the key is absent, as before (usage-quota design §4.3, §4.4).
+ * reports every fork stop, this one included, as a {@code Completion reason:} line in a successful result. The
+ * executor adds two things, neither of which refuses a step. An attempt that failed <em>because</em> of the quota,
+ * while the guard still reports it, is not retried, since the retry would stop the same way. And a run filed as a
+ * success while the guard reports a violation logs a WARN, so a run whose LLM work was stopped does not pass silently
+ * (backlog UQ-4). Without a factory no guard is resolved and the key is absent, as before (usage-quota design §4.3,
+ * §4.4).
  */
 public class RoutineExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(RoutineExecutor.class);
+
+    /**
+     * How a usage-quota stop opens wherever it reaches a step's error: a fork's stop result
+     * ({@code DefaultSubagentExecutor}) and an inline skill's ({@code LlmSkillExecutor}) both say it this way, and a
+     * fork-mode skill's error carries the fork's. The bare reason name is not enough &mdash; a cloud CLI's own
+     * {@code QUOTA_EXCEEDED} error has nothing to do with LLM usage.
+     */
+    private static final String QUOTA_STOP_PREFIX = "Execution stopped: " + CompletionReason.QUOTA_EXCEEDED.name();
 
     /**
      * Pattern for template variables: $step.index.result where index is a 0-based step index.
@@ -465,6 +475,7 @@ public class RoutineExecutor {
         final Instant completedAt = clock.instant();
         final RoutineResult result = RoutineResult.success(task.getId(), stepResults, startedAt, completedAt);
 
+        warnIfCompletedOverQuota(task, quota.guard);
         log.info("Routine execution completed successfully for task '{}'", task.getId());
         eventPublisher.publish(new TaskCompletedEvent(task, result));
 
@@ -719,7 +730,8 @@ public class RoutineExecutor {
      *
      * <p>
      * No attempt is refused for quota: the LLM calls a step can reach check the run's guard themselves. Only a retry
-     * is, when the failed attempt names {@code QUOTA_EXCEEDED} and the guard still reports a violation &mdash; the
+     * is, when the failed attempt reports a {@code QUOTA_EXCEEDED} stop and the guard still reports a violation &mdash;
+     * the
      * retry would stop the same way, so the step fails at once, before its backoff, with
      * {@code "Execution stopped by quota: ..."} and the attempt's own error. A cancelled run is not asked, so
      * cancellation keeps winning.
@@ -802,11 +814,39 @@ public class RoutineExecutor {
     }
 
     /**
+     * Says so, at WARN, when a run is about to be filed as a success while its owner's usage quota is reached.
+     *
+     * <p>
+     * {@code Task} and {@code Workflow} report a quota-stopped fork as a successful result, so a routine of such steps
+     * can be recorded as having worked while its LLM work never ran, and no {@code TaskFailedEvent} fires. This line
+     * is what an operator can alert on until the result carries the stop structurally (backlog UQ-4). It refuses
+     * nothing, costs one ledger read per successful metered run, and also fires when the last step's fork overshot the
+     * limit &mdash; the next run's forks will stop either way. A ledger that cannot be read is skipped quietly: the
+     * run is over, and the forks already reported their own ledger failures.
+     */
+    private static void warnIfCompletedOverQuota(ScheduledTask task, QuotaGuard guard) {
+        if (!guard.isEnabled()) {
+            return;
+        }
+        final Optional<QuotaViolation> violation;
+        try {
+            violation = guard.check();
+        } catch (QuotaLedgerUnavailableException e) {
+            log.debug("Usage ledger unavailable at the end of task '{}': {}", task.getId(), e.toString());
+            return;
+        }
+        violation.ifPresent(v -> log.warn("Routine run for task '{}' completed while its owner's usage quota is"
+                + " reached ({}): LLM work its steps started was stopped before it ran, so the run may have done less"
+                + " than its success suggests", task.getId(), v.describe()));
+    }
+
+    /**
      * Decides whether a failed attempt is retried, as far as the usage quota goes.
      *
      * <p>
-     * Only an attempt whose own error names {@code QUOTA_EXCEEDED} &mdash; a fork or skill the guard stopped &mdash;
-     * is a candidate, so a step that spends no usage keeps every retry it was configured with even while its owner is
+     * Only an attempt whose own error carries a quota stop ({@link #QUOTA_STOP_PREFIX}) &mdash; a fork or skill the
+     * guard stopped &mdash; is a candidate, so a step that spends no usage keeps every retry it was configured with
+     * even while its owner is
      * over quota. The guard then confirms the violation still stands. The message is worded as a turn's quota stop
      * ({@code OrcaAgentExecutor#handleQuotaStop}), so logs and alerts match one string, and keeps the attempt's error.
      * A fail-closed ledger that fails here gives no answer, so the retry goes ahead and meets the ledger itself.
@@ -818,7 +858,7 @@ public class RoutineExecutor {
      */
     private static Optional<String> quotaStopsRetry(QuotaGuard guard, ScheduledTask task, int stepIndex,
             String lastError) {
-        if (lastError == null || !lastError.contains(CompletionReason.QUOTA_EXCEEDED.name())) {
+        if (lastError == null || !lastError.contains(QUOTA_STOP_PREFIX)) {
             return Optional.empty();
         }
         final Optional<QuotaViolation> violation;

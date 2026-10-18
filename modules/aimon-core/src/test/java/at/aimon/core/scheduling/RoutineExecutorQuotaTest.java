@@ -22,6 +22,7 @@ import java.util.function.BiFunction;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.AgentRuntime;
@@ -55,6 +56,10 @@ import at.aimon.core.scheduling.event.SimpleScheduledTaskEventPublisher;
 import at.aimon.core.scheduling.event.StepFailedEvent;
 import at.aimon.core.scheduling.event.TaskFailedEvent;
 import at.aimon.core.tools.ToolContextKeys;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 
 /**
  * A routine run resolves one usage-quota guard for its owner and publishes it to its steps, so the forks they start are
@@ -70,6 +75,10 @@ class RoutineExecutorQuotaTest {
 
     private static final Principal OWNER = Principal.user("alice");
     private static final long LIMIT = 100;
+    /**
+     * How a fork's and an inline skill's quota stop opens ({@code DefaultSubagentExecutor}, {@code LlmSkillExecutor}).
+     */
+    private static final String QUOTA_STOP = "Execution stopped: QUOTA_EXCEEDED — ";
 
     private DefaultAgentRuntimeRegistry agentRuntimeRegistry;
     private SimpleScheduledTaskEventPublisher eventPublisher;
@@ -196,7 +205,7 @@ class RoutineExecutorQuotaTest {
         executor.withQuotaGuardFactory(factory(ledger));
         step.behaviour = (input, context) -> {
             charge(context, LIMIT);
-            return ToolResult.error("fork stopped: QUOTA_EXCEEDED");
+            return ToolResult.error(QUOTA_STOP + overQuota());
         };
         // A retry delay long enough that waiting it out would time the test out: the refusal must come before it.
         final ScheduledTask task = task(RoutineStep.withRetry(ScriptedTool.NAME, "{}", 2, Duration.ofMinutes(5)));
@@ -211,7 +220,7 @@ class RoutineExecutorQuotaTest {
             assertThat(stepResult.getAttemptCount()).isEqualTo(1);
             assertThat(stepResult.getErrorMessage())
                     .hasValueSatisfying(message -> assertThat(message).startsWith("Execution stopped by quota:")
-                            .endsWith("(last attempt: fork stopped: QUOTA_EXCEEDED)"));
+                            .endsWith("(last attempt: " + QUOTA_STOP + overQuota() + ")"));
         });
     }
 
@@ -293,7 +302,7 @@ class RoutineExecutorQuotaTest {
         // The guard cannot answer, so the retry is not refused for quota: it meets the ledger itself.
         executor.withQuotaGuardFactory(QuotaGuardFactory.builder().ledger(new FailingLedger()).policy(policy())
                 .resolver(DefaultQuotaScopeResolver.create()).failClosed(true).build());
-        step.behaviour = (input, context) -> ToolResult.error("fork stopped: QUOTA_EXCEEDED");
+        step.behaviour = (input, context) -> ToolResult.error(QUOTA_STOP + "ledger down");
 
         final RoutineResult result = executor
                 .execute(task(RoutineStep.withRetry(ScriptedTool.NAME, "{}", 1, Duration.ZERO)));
@@ -302,7 +311,7 @@ class RoutineExecutorQuotaTest {
         assertThat(step.calls).hasSize(2);
         assertThat(result.getStepResults()).singleElement()
                 .satisfies(stepResult -> assertThat(stepResult.getErrorMessage())
-                        .hasValueSatisfying(message -> assertThat(message).isEqualTo("fork stopped: QUOTA_EXCEEDED")));
+                        .hasValueSatisfying(message -> assertThat(message).isEqualTo(QUOTA_STOP + "ledger down")));
     }
 
     @Test
@@ -351,6 +360,62 @@ class RoutineExecutorQuotaTest {
         assertThat(result.isSuccess()).isTrue();
         assertThat(bash.calls).singleElement()
                 .satisfies(context -> assertThat(context.get(ToolContextKeys.QUOTA_GUARD)).isPresent());
+    }
+
+    @Test
+    void aStepErrorThatMerelyNamesQuotaExceededIsNotTakenForAUsageQuotaStop() {
+        // A cloud CLI's resource quota (Compute Engine says QUOTA_EXCEEDED) has nothing to do with LLM usage: the step
+        // keeps its retries even while its owner is over the usage quota.
+        executor.withQuotaGuardFactory(factory(ledger));
+        spend(LIMIT);
+        final List<Boolean> failFirst = new CopyOnWriteArrayList<>(List.of(true));
+        step.behaviour = (input, context) -> failFirst.isEmpty() || !failFirst.remove(0)
+                ? ToolResult.success("instance created")
+                : ToolResult.error("ERROR: (gcloud.compute.instances.create) QUOTA_EXCEEDED: Quota 'CPUS' exceeded");
+
+        final RoutineResult result = executor
+                .execute(task(RoutineStep.withRetry(ScriptedTool.NAME, "{}", 1, Duration.ZERO)));
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(step.calls).hasSize(2);
+    }
+
+    @Test
+    void aRunFiledAsASuccessWhileTheOwnerIsOverQuotaLogsAWarn() {
+        executor.withQuotaGuardFactory(factory(ledger));
+        spend(LIMIT);
+        step.behaviour = (input, context) -> taskLike(context);
+
+        final List<ILoggingEvent> logged = captureLogs(() -> {
+            final RoutineResult result = executor.execute(task(RoutineStep.of(ScriptedTool.NAME, "{}")));
+            assertThat(result.isSuccess()).as("Task reports a quota-stopped fork as a success").isTrue();
+        });
+
+        assertThat(logged).filteredOn(event -> event.getLevel() == Level.WARN).singleElement()
+                .satisfies(event -> assertThat(event.getFormattedMessage()).contains("quota-task")
+                        .contains("usage quota is reached").contains(overQuota()));
+    }
+
+    @Test
+    void aRunUnderQuotaLogsNoQuotaWarn() {
+        executor.withQuotaGuardFactory(factory(ledger));
+        step.behaviour = (input, context) -> taskLike(context);
+
+        final List<ILoggingEvent> logged = captureLogs(
+                () -> assertThat(executor.execute(task(RoutineStep.of(ScriptedTool.NAME, "{}"))).isSuccess()).isTrue());
+
+        assertThat(logged).noneMatch(event -> event.getLevel() == Level.WARN);
+    }
+
+    @Test
+    void withoutAFactoryAnOverQuotaOwnerLogsNoQuotaWarn() {
+        spend(LIMIT);
+        step.behaviour = (input, context) -> taskLike(context);
+
+        final List<ILoggingEvent> logged = captureLogs(
+                () -> assertThat(executor.execute(task(RoutineStep.of(ScriptedTool.NAME, "{}"))).isSuccess()).isTrue());
+
+        assertThat(logged).noneMatch(event -> event.getLevel() == Level.WARN);
     }
 
     @Test
@@ -403,10 +468,39 @@ class RoutineExecutorQuotaTest {
         final Optional<QuotaViolation> violation = context.get(ToolContextKeys.QUOTA_GUARD)
                 .orElseGet(QuotaGuard::disabled).check();
         if (violation.isPresent()) {
-            return ToolResult.error("Execution stopped: QUOTA_EXCEEDED — " + violation.get().describe());
+            return ToolResult.error(QUOTA_STOP + violation.get().describe());
         }
         charge(context, tokens);
         return ToolResult.success("forked work done");
+    }
+
+    /**
+     * What a {@code Task} step does: its fork checks the guard and stops before calling the LLM, but {@code Task}
+     * reports that stop as a successful result carrying a {@code Completion reason:} line.
+     */
+    private static ToolResult taskLike(ToolContext context) {
+        final Optional<QuotaViolation> violation = context.get(ToolContextKeys.QUOTA_GUARD)
+                .orElseGet(QuotaGuard::disabled).check();
+        if (violation.isPresent()) {
+            return ToolResult.success("Status: FAILED\nCompletion reason: QUOTA_EXCEEDED");
+        }
+        // Unmetered without a factory: nothing to charge.
+        context.get(ToolContextKeys.QUOTA_GUARD).ifPresent(guard -> charge(context, 10));
+        return ToolResult.success("Status: COMPLETED");
+    }
+
+    /** Runs {@code action} with this executor's logger captured, and returns what it logged. */
+    private static List<ILoggingEvent> captureLogs(Runnable action) {
+        final Logger logger = (Logger) LoggerFactory.getLogger(RoutineExecutor.class);
+        final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            action.run();
+        } finally {
+            logger.detachAppender(appender);
+        }
+        return List.copyOf(appender.list);
     }
 
     /** What a fork's LLM call does with the guard it inherited. */

@@ -156,10 +156,14 @@ iteration, 인라인 LLM 스킬의 호출 — 은 모두 물려받은 guard 를 
 루틴 실행 자체는 성공으로 기록될 수 있다([UQ-4](../../backlog/usage-quota-open-items.md)). 단계 도중에 포크가 한도를
 넘기면 그 포크와 뒤의 포크들이 각자 다음 호출 전에 멈춘다. 마지막 단계에서 넘긴 것은 §7 의 초과분이다.
 
-실행기가 더하는 것은 재시도 판정 하나다. 쿼터 때문에 실패한 시도(오류에 `QUOTA_EXCEEDED` 가 있고 guard 가 여전히
-위반을 보고할 때)는 다시 해도 같은 한도에 막히므로, 백오프를 기다리지 않고 `"Execution stopped by quota: ...
-(last attempt: ...)"` 메시지로 단계를 실패시킨다. 다른 이유로 실패한 시도는 소유자가 한도를 넘었어도 설정대로
-재시도한다. 쿼터 장부를 붙이지 않은 스택에서는 아무것도 달라지지 않는다.
+실행기가 더하는 것은 둘이고, 어느 것도 단계를 거절하지 않는다. 쿼터 때문에 실패한 시도(오류에 포크·스킬의 멈춤
+문구 `Execution stopped: QUOTA_EXCEEDED` 가 있고 guard 가 여전히 위반을 보고할 때)는 다시 해도 같은 한도에 막히므로,
+백오프를 기다리지 않고 `"Execution stopped by quota: ... (last attempt: ...)"` 메시지로 단계를 실패시킨다. 다른
+이유로 실패한 시도는 — 클라우드 CLI 가 내는 자기 자원 쿼터의 `QUOTA_EXCEEDED` 처럼 낱말만 같은 오류도 — 소유자가
+한도를 넘었어도 설정대로 재시도한다. 또 루틴 실행이 성공으로 끝나는데 guard 가 위반을 보고하면
+`Routine run for task '...' completed while its owner's usage quota is reached` 로 시작하는 WARN 로그를 남긴다 —
+`Task` 단계처럼 멈춤이 성공으로 기록되는 경우에 알림을 걸 곳이다. 쿼터 장부를 붙이지 않은 스택에서는 아무것도
+달라지지 않는다.
 
 NOTE: `getQuotaViolation()` 은 턴이 **같은 노드에서** 실행됐을 때만 채워진다. `SessionRouter` 를 거쳐 다른 노드에서
 실행된 턴의 결과와 멱등성 저장소에 남은 결과에는 완료 사유와 한 줄 메시지만 남는다

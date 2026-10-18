@@ -276,8 +276,8 @@ QuartzTaskSchedulerBuilder.create()
 
 `quotaGuardFactory`는 LLM **사용량** 쿼터다 — 위의 `defaultMaxQuota`(등록할 수 있는 task 개수)와 다르다. 이것을 주면
 루틴 실행 1회가 소유자를 주체로 guard 하나를 만들고, 단계가 띄운 `Task` · `Workflow` · 포크 스킬이 그 guard 에
-기록되며, 한도에 닿은 소유자의 포크는 첫 LLM 호출 전에 멈춘다(LLM 을 부르지 않는 단계는 그대로 돈다). 판정은 장부를 읽으므로, 클러스터에서 노드 간에
-합산하려면 공유 장부를 써야 한다. `AimonStackSpec.quota(QuotaSpec)` 로 장부를 준 스택에서는 부트스트랩이 실행기와
+기록되며, 한도에 닿은 소유자의 포크는 첫 LLM 호출 전에 멈춘다(LLM 을 부르지 않는 단계는 그대로 돈다). 판정은
+장부를 읽으므로, 클러스터에서 노드 간에 합산하려면 공유 장부를 써야 한다. `AimonStackSpec.quota(QuotaSpec)` 로 장부를 준 스택에서는 부트스트랩이 실행기와
 같은 인스턴스를 자동으로 넘긴다. 스타터에는 아직 쿼터 프로퍼티가 없다. 동작과 주의점은
 [`usage-quota-guide.md` §5 · §6](../agent-execution/usage-quota-guide.md#5-포크도-같이-센다).
 

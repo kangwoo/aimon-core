@@ -456,3 +456,26 @@ The unit tests' fork stand-in now checks the guard itself before "calling the LL
 `RoutineUsageQuotaIntegrationTest` and `AimonStackQuotaTest` drive real `Task` forks. With quotas off, the bootstrap
 test makes one LLM call. Over quota, it makes none and the step output carries `Completion reason: QUOTA_EXCEEDED`.
 This replaces the earlier `Read` step that proved "ran" through a validation failure.
+
+### 8.5 After PR review 2 — the stop prefix, and a WARN for a run filed as a success
+
+*Appended 2026-10-18, after PR #271 review 2 (PASS, two nits).*
+
+- **The retry check matches the stop's wording, not the bare reason name.** §8.4's check looked for `QUOTA_EXCEEDED`
+  anywhere in the attempt's error. A `Bash` step running a cloud CLI whose own resource quota fails with
+  `QUOTA_EXCEEDED` would have lost its retries while its owner happened to be over the usage quota. It also would have
+  been reported as stopped by the wrong quota. The check now looks for `Execution stopped: QUOTA_EXCEEDED`. That is the
+  opening of every usage-quota stop that can reach a step's error: a fork's (`DefaultSubagentExecutor`), an inline
+  skill's (`LlmSkillExecutor`), and a fork-mode skill's, which wraps the fork's. It is still a substring match, because
+  a fork-mode skill's error starts with `Skill fork failed for '…': `. A test pins the cloud-CLI case.
+- **A WARN when a metered run completes over quota.** This is the visibility gap §8.4 left. `Task` and `Workflow`
+  report a quota-stopped fork as a success, so such a routine is filed as a success and fires no `TaskFailedEvent`.
+  When a run is about to be filed as a success, the executor now asks the guard once more. If it reports a violation,
+  the run logs one WARN naming the task and the violation.
+  - It refuses nothing, and it costs one ledger read per successful metered run.
+  - It also fires after a last-step overshoot, which is accurate: the next run's forks will stop.
+  - A ledger that cannot be read at that point is logged at DEBUG and skipped. The run is over, and the forks already
+    reported their own ledger failures.
+  - Failed and cancelled runs do not log it, because they are already filed as failures.
+
+  This is a stopgap. The fix is still UQ-4, a structured stop on the result, and UQ-4 says so.

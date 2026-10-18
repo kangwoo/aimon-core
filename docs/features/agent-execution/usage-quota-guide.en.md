@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/agent-execution/usage-quota-guide.md
-source_commit: 69c6e224
+source_commit: e8df5f74
 ---
 
 # Usage Quota Guide — usage limits per session, user and tenant
@@ -171,11 +171,15 @@ itself can be recorded as a success ([UQ-4](../../backlog/usage-quota-open-items
 partway through a step, it and every later fork each stop before their next call. Crossing on the last step is the
 overshoot of §7.
 
-The one thing the executor adds is a retry decision. An attempt that failed because of the quota (its error contains
-`QUOTA_EXCEEDED` and the guard still reports a violation) would hit the same limit again, so the step fails at once,
-without waiting out the backoff, with the message `"Execution stopped by quota: ... (last attempt: ...)"`. An attempt
-that failed for any other reason is retried as configured, even while the owner is over the limit. A stack with no
-quota ledger attached sees no change at all.
+The executor adds two things, and neither refuses a step. An attempt that failed because of the quota (its error
+contains the fork's or skill's stop wording `Execution stopped: QUOTA_EXCEEDED` and the guard still reports a
+violation) would hit the same limit again, so the step fails at once, without waiting out the backoff, with the message
+`"Execution stopped by quota: ... (last attempt: ...)"`. An attempt that failed for any other reason — including an
+error that merely shares the word, such as a cloud CLI's own `QUOTA_EXCEEDED` for its resource quota — is retried as
+configured, even while the owner is over the limit. And when a routine run ends as a success while the guard reports
+a violation, a WARN log starting `Routine run for task '...' completed while its owner's usage quota is reached` is
+written — the place to hang an alert for cases such as a `Task` step, whose stop is recorded as a success. A stack
+with no quota ledger attached sees no change at all.
 
 NOTE: `getQuotaViolation()` is filled only when the turn ran **on the same node**. The result of a turn run on another
 node through `SessionRouter`, and a result kept in the idempotency store, carry only the completion reason and a

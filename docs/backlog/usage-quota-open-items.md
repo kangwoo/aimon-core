@@ -98,12 +98,14 @@ QuotaGuard)`, 설계 §11.4), 앱 코드가 runner 를 직접 부르면 비활�
 `"Execution stopped by quota: ..."` 메시지로 실패하고, `Task` 단계는 다른 포크 멈춤처럼 **성공한** 단계 출력 안의
 `Completion reason: QUOTA_EXCEEDED` 줄로만 남는다. 턴은 `CompletionReason.QUOTA_EXCEEDED` 와 `getQuotaViolation()` 을
 내놓는다. 관측 가능한 결과는 **루틴의 쿼터 멈춤을 알림·대시보드로 따로 보이려면 문자열을 파싱해야 하고**, `Task`
-단계의 경우에는 실행이 성공으로 기록되어 실패 알림에도 걸리지 않는다는 것이다. 어느 범위의 어느 기간이 다 찼는지도
+단계의 경우에는 실행이 성공으로 기록되어 실패 알림에도 걸리지 않는다는 것이다 — PR #271 이 그 경우에 WARN 로그
+하나를 남기게 했지만, 로그는 결과가 아니다. 어느 범위의 어느 기간이 다 찼는지도
 문자열 안에만 있다. 출처는 설계 [`usage-quota-routine-forks.md`](../design/agent-execution/usage-quota-routine-forks.md) §7 Q3 —
 저장 모양과 코덱을 건드리는 일이라 #267 범위 밖에 두었다.
 
-**어디.** (2026-10-18) `RoutineResult.java:58` (`failure` — 메시지 하나), `RoutineExecutor.java:820`
-(`quotaStopsRetry` — 위반을 문자열로 만든다), `TaskTool.java:495` (포크 멈춤을 성공 결과로 돌려준다), `ScheduledTaskExecutionHistoryRepository` 와 그 구현들(이력에 남는 모양).
+**어디.** (2026-10-18) `RoutineResult.java:58` (`failure` — 메시지 하나), `RoutineExecutor.java:859`
+(`quotaStopsRetry` — 위반을 문자열로 만든다), `RoutineExecutor.java:827` (`warnIfCompletedOverQuota` — 성공으로 끝난
+실행의 WARN, 임시 신호), `TaskTool.java:495` (포크 멈춤을 성공 결과로 돌려준다), `ScheduledTaskExecutionHistoryRepository` 와 그 구현들(이력에 남는 모양).
 
 **언제 다시 볼까.** 루틴의 쿼터 멈춤을 운영 알림이나 UI 에서 일반 실패와 구분해 보여 줘야 할 때, 또는 UQ-3 처럼
 결과에 `QuotaViolation` 을 싣는 저장 모양 작업이 시작될 때 — 둘은 같은 직렬화 결정을 공유한다.
