@@ -338,3 +338,12 @@ The open questions in §8 whose consequences reach past this change are filed in
 
 Q3 was decided as written: SO-5 is closed in full, and no residual item was opened. Q4 was decided as written: the
 delete path stays on `load`. Neither was filed.
+
+### 9.4 Q1 / SO-7 closed (#266)
+
+*Appended 2026-10-18.*
+
+- **SO-7 is closed.** The three backends, the in-memory store and both decorators now run one
+  `AbstractSessionRecordStoreContractTest`, `loadOwner` cases included, so DV-1's gap is gone. Design and departures:
+  [`session-record-store-contract.md`](session-record-store-contract.md). Publishing the suite for stores outside
+  this repository was deferred, as backlog SO-9.
