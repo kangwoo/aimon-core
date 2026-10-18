@@ -113,8 +113,8 @@ QuotaGuard)`, 설계 §11.4), 앱 코드가 runner 를 직접 부르면 비활�
 문자열 안에만 있다. 출처는 설계 [`usage-quota-routine-forks.md`](../design/agent-execution/usage-quota-routine-forks.md) §7 Q3 —
 저장 모양과 코덱을 건드리는 일이라 #267 범위 밖에 두었다.
 
-**어디.** (2026-10-18) `RoutineResult.java:58` (`failure` — 메시지 하나), `RoutineExecutor.java:859`
-(`quotaStopsRetry` — 위반을 문자열로 만든다), `RoutineExecutor.java:827` (`warnIfCompletedOverQuota` — 성공으로 끝난
+**어디.** (2026-10-18) `RoutineResult.java:58` (`failure` — 메시지 하나), `RoutineExecutor.java:860`
+(`quotaStopsRetry` — 위반을 문자열로 만든다), `RoutineExecutor.java:828` (`warnIfCompletedOverQuota` — 성공으로 끝난
 실행의 WARN, 임시 신호), `TaskTool.java:495` (포크 멈춤을 성공 결과로 돌려준다), `ScheduledTaskExecutionHistoryRepository` 와 그 구현들(이력에 남는 모양).
 
 **언제 다시 볼까.** 루틴의 쿼터 멈춤을 운영 알림이나 UI 에서 일반 실패와 구분해 보여 줘야 할 때, 또는 UQ-3 처럼

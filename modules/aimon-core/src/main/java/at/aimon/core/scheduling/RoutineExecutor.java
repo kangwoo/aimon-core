@@ -837,8 +837,8 @@ public class RoutineExecutor {
             return;
         }
         violation.ifPresent(v -> log.warn("Routine run for task '{}' completed while its owner's usage quota is"
-                + " reached ({}): any LLM work its steps started (a Task, Workflow or skill fork) was stopped before it"
-                + " ran, so the run may have done less than its success suggests", task.getId(), v.describe()));
+                + " reached ({}): LLM work its steps started after the limit (a Task, Workflow or skill fork) was"
+                + " stopped, so the run may have done less than its success suggests", task.getId(), v.describe()));
     }
 
     /**
