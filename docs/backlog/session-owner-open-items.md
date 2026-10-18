@@ -1,4 +1,4 @@
-# 세션 소유자 · 삭제 리스너 — 등록 항목 8건 (열림 5 · 닫힘 3)
+# 세션 소유자 · 삭제 리스너 — 등록 항목 9건 (열림 5 · 닫힘 4)
 
 출처는 [`../design/session/session-owner-deletion-event.md`](../design/session/session-owner-deletion-event.md)
 (#253) 의 구현이다. 그 문서 §8 의 열린 질문 가운데 **이 변경 밖으로 결과가 나가는 것**과, §9(구현 뒤 — 설계와 달라진
@@ -7,11 +7,13 @@
 
 SO-7 · SO-8 의 출처는 SO-5 를 닫은 소유자 좁은 읽기(#262)
 [`../design/session/session-owner-narrow-read.md`](../design/session/session-owner-narrow-read.md) 의 §8 Q1 · Q2 다
-(그 문서 §9.3).
+(그 문서 §9.3). SO-9 의 출처는 SO-7 을 닫은 레코드 저장소 계약 스위트(#266)
+[`../design/session/session-record-store-contract.md`](../design/session/session-record-store-contract.md) 의 §9 Q1 이다
+(그 문서 §10.3).
 
 `README.md` 의 규칙대로 **열림/닫힘의 정본은 이 문서**이고 설계 문서 §8 · §9 는 설계·구현 시점의 기록이다.
 
-줄 번호는 **마지막 확인 날짜와 함께** 적는다. SO-1~SO-6 의 인용은 2026-10-17, SO-7 · SO-8 의 인용은 2026-10-18 기준이다.
+줄 번호는 **마지막 확인 날짜와 함께** 적는다. SO-1~SO-6 의 인용은 2026-10-17, SO-7 · SO-8 · SO-9 의 인용과 SO-7 을 닫은 문단의 인용은 2026-10-18 기준이다.
 
 ---
 
@@ -142,7 +144,7 @@ Redis 의 `""` 거부는 라우터를 거치지 않고 저장소를 직접 부�
 
 ---
 
-## SO-7 — `SessionRecordStore` 하나만을 위한 계약 스위트가 없다 · **열림**
+## SO-7 — `SessionRecordStore` 하나만을 위한 계약 스위트가 없다 · **닫힘** *(2026-10-18, #266)*
 
 **무엇을.** 세 백엔드의 `*SessionRecordStoreIntegrationTest` 가 각자 반복하는 검사를 `aimon-session-testkit` 의
 `AbstractSessionRecordStoreContractTest` 로 뽑아, 모든 백엔드(그리고 서드파티 저장소)가 같은 계약을 통과하게 한다.
@@ -157,6 +159,22 @@ Redis 의 `""` 거부는 라우터를 거치지 않고 저장소를 직접 부�
 `*SessionRecordStoreIntegrationTest`.
 
 **언제 다시 볼까.** `SessionRecordStore` 에 메서드가 하나 더 붙을 때, 또는 네 번째 백엔드가 생길 때.
+
+**닫음 (2026-10-18, #266).** `aimon-session-testkit` 의 `AbstractSessionRecordStoreContractTest`(22건)를 여섯이 돈다
+— 세 백엔드의 `*SessionRecordStoreIntegrationTest`(이름과 `@Tag("docker")` 는 그대로, 이제 스위트를 상속한다),
+in-memory(`InMemorySessionRecordStoreContractTest`), `DefaultSessionStore` 의 펜스 뷰
+(`FencedSessionRecordStoreContractTest`), 그리고 `aimon-bootstrap` 의 `LateBoundFencedRecordStoreContractTest`.
+백엔드 테스트에는 원시 접근이 필요한 검사만 남았다 — Redis 8건(`""` 표지, `HEXISTS`, 공유 키 공간), Mongo 1건(문서가
+아닌 owner), Postgres 0건. 옮기면서 백엔드마다 처음 받는 검사가 생겼다 — NUL 바이트(Mongo · Redis), `.` · `$` 로 시작하는
+도구 입력 키(Postgres), `$` 로 시작하는 `agentRef` · 소유자(Postgres · Redis), `:` 를 담은 id 의 열거(Postgres · Mongo).
+모두 고치지 않은 채로 통과했다. 설계와 이탈:
+[`../design/session/session-record-store-contract.md`](../design/session/session-record-store-contract.md).
+
+- **서드파티 쪽은 미뤘다.** 이 항목의 "무엇을" 은 서드파티 저장소도 같은 계약을 통과하게 한다고 적었다. 스위트는
+  공개하지 않은 모듈에 있으므로 이 저장소 밖의 저장소는 돌릴 수 없다. 지금은 모든 `SessionRecordStore` 가 이 저장소에
+  있고(aimon-sandbox 는 `loadOwner` 를 부를 뿐 구현하지 않는다), Maven Central 공개는 되돌릴 수 없다. 그 절반은 SO-9 다.
+- **감싸는 저장소가 `loadOwner` 를 넘기는지는 스위트가 보지 못한다.** 넘기든 `default` 로 떨어지든 답이 같기 때문이다.
+  그 검사는 각 데코레이터의 기존 테스트에 남는다(설계 §9 Q4).
 
 ---
 
@@ -181,3 +199,22 @@ Redis 의 `""` 거부는 라우터를 거치지 않고 저장소를 직접 부�
 `loadOwner` 없는 0.3.3 으로 풀릴 길이 없다. 같은 PR 이 SNAPSHOT 고정이 있는 동안 매 빌드 스냅샷을 다시 확인하게 했다
 (CI 의 Gradle 캐시가 하루 지난 스냅샷으로 `loadOwner` 를 못 찾았다).
 
+---
+
+## SO-9 — `SessionRecordStore` 계약 스위트를 저장소 밖에서 돌릴 수 없다 · **열림**
+
+**무엇을.** `AbstractSessionRecordStoreContractTest` 를 `aimon-memory-testkit` 처럼 공개되는 모듈로 옮겨, 이 저장소 밖의
+`SessionRecordStore` 구현도 같은 계약을 돌릴 수 있게 할지 정한다.
+
+**왜.** 스위트는 공개하지 않는 `aimon-session-testkit` 에 있다(SO-7). 관측 가능한 결과는 **서드파티 저장소는 provision 의
+first-wins, side field 보존, `loadOwner` 의 답을 스스로 다시 써서 검사해야 한다**는 것이다 — SO-7 이 세 백엔드 사이에서
+없앤 어긋남이 그 저장소와 이 저장소 사이에 그대로 남는다. 지금은 그런 저장소가 없다. 미룬 근거는 둘이다 — Maven Central
+공개는 되돌릴 수 없고, `api` 의존은 모두 공개 API 가 된다. `settings.gradle.kts` 가 `aimon-memory-testkit` 을 공개하는
+이유도 같은 규칙이다(그 모듈의 대상 하나가 다른 저장소에 있다).
+
+**어디.** (2026-10-18) `modules/aimon-session-testkit/build.gradle.kts`(`aimon.publishable` 없음),
+`AbstractSessionRecordStoreContractTest` — `aimon-core` 타입 · JUnit · AssertJ 만 쓰므로 그대로 옮길 수 있다.
+
+**언제 다시 볼까.** 이 저장소 밖에 `SessionRecordStore` 구현이 생길 때(aimon-sandbox 든 고객 저장소든). 그때 할 일은
+공개 모듈 하나, `aimon-bom` 항목, CLAUDE.md 모듈 목록, `PublishedModuleApiScopeTest` 의 목록, "tests only" 가 아닌
+CHANGELOG 항목이다(설계 §9 Q1).

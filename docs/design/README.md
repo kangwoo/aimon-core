@@ -59,6 +59,7 @@
 | [`session-log.md`](session/session-log.md) | (IMPLEMENTED, 차이는 §12) transcript 를 append-only 로그 + 뷰 상태로 분리. seq 주소, 봉인, `/clear`·rewind, v1 이행 |
 | [`session-owner-deletion-event.md`](session/session-owner-deletion-event.md) | (IMPLEMENTED, 승인본, 영어, 차이는 §9) 세션 소유자와 삭제 리스너(#253) — 소유자를 `provision` 이 "비어 있으면 채운다" 로 쓰고 `initiator` 에서 끌어내지 않는 이유, 기록만 하고 강제하지 않는 것, 리스너를 리스 안에서 `recordDeleted` 로 부르는 자리, 기각한 대안 |
 | [`session-owner-narrow-read.md`](session/session-owner-narrow-read.md) | (IMPLEMENTED, 승인본, 영어, 차이는 §9) 세션 소유자만 읽는 `SessionRecordStore.loadOwner`(#262, 백로그 SO-5) — 별도 SPI 가 아니라 `load` 로 떨어지는 `default` 인 이유, 소유자 하나로 범위를 정한 이유, "레코드 없음" 과 "소유자 없음" 을 가르지 않는 이유, 백엔드별 읽기와 감싸는 저장소의 전달, 전사가 깨져도 답하는 차이, 기각한 대안 |
+| [`session-record-store-contract.md`](session/session-record-store-contract.md) | (IMPLEMENTED — 테스트 소스만, 승인본, 영어, 차이는 §10) 세 백엔드 · in-memory · 감싸는 두 저장소가 함께 도는 `SessionRecordStore` 계약 스위트(#266, 백로그 SO-7) — 공개하지 않은 `aimon-session-testkit` 에 둔 이유(공개는 저장소 밖에 구현이 생길 때), 스위트로 옮길 검사와 백엔드에 남길 검사를 가르는 규칙, 손상 훅이 통과가 아니라 건너뜀으로 보고되는 이유, 펜스 뷰가 `clear()` 를 거절하는 경로, 기각한 대안 |
 
 ### tool — 도구 계약
 

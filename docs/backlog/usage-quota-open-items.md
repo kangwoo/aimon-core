@@ -25,9 +25,8 @@
 **어디.** (2026-10-15)
 
 - `DefaultCompactionEngine.java:460` · `:471` — 컴팩션 요약 호출
-- `LlmSkillExecutor` — 포크하지 않는 슬래시 명령 스킬(`/skill`)의 자체 루프. 판정과 **토큰** 기록은 들어갔다
-  (명령 도구 컨텍스트의 `QUOTA_GUARD` 를 읽는다). 남은 것은 **비용**이다 — 이 실행기에는 `CostEstimator` 가 없어서
-  호출을 가격 없이 기록하므로 비용 한도에는 잡히지 않는다
+- ~~`LlmSkillExecutor` — 포크하지 않는 슬래시 명령 스킬(`/skill`)의 자체 루프.~~ 판정과 토큰 기록은 먼저 들어갔고
+  (명령 도구 컨텍스트의 `QUOTA_GUARD` 를 읽는다), 남았던 **비용**도 들어갔다 — 2026-10-18 아래 "좁힘" 참고
 - `SubagentBehaviorSupport` 를 쓰는 코드 동작(code behavior) 서브에이전트 — 요청에는 guard 가 실려 오지만
   (`SubagentExecutionRequest#getQuotaGuard`), 동작이 직접 부르는 게이트웨이 호출은 기록되지 않는다
 - `at.aimon.core.memory.{deriver,dreamer,dialectic,reconciler}` · `at.aimon.core.knowledge.wiki` 의 LLM 전략들 —
@@ -38,6 +37,17 @@
 1. 쿼터 사용량이 청구서와 크게 어긋난다는 보고가 들어올 때 — 그때 어느 호출이 몫이 큰지부터 잰다.
 2. LLM 호출 계측을 한 자리로 모으는 작업(예: 게이트웨이 수준의 사용량 훅)이 시작될 때. 쿼터는 그 자리에 붙는다.
 3. 설계 §9 3단계(공유 장부)가 들어가 테넌트 단위 청구 근사에 쓰이기 시작할 때.
+
+**좁힘 (2026-10-18, #265) — `/skill` 의 비용.** `LlmSkillExecutor` 가 `CostEstimator` 를 받는다
+(`withCostEstimator`, `LlmSkillExecutor.java:200`). 포크 실행기가 받는 길과 같다 — 팩토리의
+`withCostEstimator` 가 메인 실행기와 포크 실행기에 주는 그 estimator 를 기본 명령 실행 매니저의 스킬 실행기에도 준다
+(`createDefaultCommandExecutionManager`, `OrcaAgentExecutorFactory.java:904`). 그래서 `/skill` 루프의 호출은 이제 가격을
+달고 기록되어(`sendAndCharge`, `:432`) 비용 한도에 잡힌다. estimator 가 없으면(`CostEstimator.NOOP`) 예전처럼 토큰만
+기록한다. 팩토리를 거치지 않고 명령 실행 매니저를 직접 넘기는 호스트는 `LlmSkillExecutor#withCostEstimator` 를 스스로
+불러야 한다 — 포크 실행기와 같은 조건이다.
+
+이 항목에 **남은 것**은 위 목록의 나머지 셋이다 — 컴팩션 요약 호출(쿼터에 기록되지 않는다; ST-9 가 실은 principal 은
+usage attribution 이지 쿼터 기록이 아니다), 코드 동작 서브에이전트의 게이트웨이 호출, 메모리 · 위키의 LLM 전략들.
 
 ---
 

@@ -16,11 +16,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.agent.DefaultAgent;
+import at.aimon.core.agent.compact.DefaultCompactionEngine;
+import at.aimon.core.agent.compact.DefaultCompactionGuard;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.base.Principal;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.command.SystemCommand;
@@ -28,17 +31,20 @@ import at.aimon.core.command.execution.CommandExecutionContext;
 import at.aimon.core.command.execution.CommandExecutionResult;
 import at.aimon.core.command.execution.direct.DirectCommandExecutionRequest;
 import at.aimon.core.command.execution.direct.DirectExecutable;
+import at.aimon.core.command.system.CompactCommand;
 import at.aimon.core.environment.impl.LocalExecutionEnvironmentProvider;
 import at.aimon.core.filesystem.impl.local.LocalFileSystem;
 import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
+import at.aimon.core.llm.InMemoryModelContextWindowRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ToolDefinition;
+import at.aimon.core.llm.token.HeuristicTokenEstimator;
 import at.aimon.core.skill.ExecutionMode;
 import at.aimon.core.skill.InvokePolicy;
 import at.aimon.core.skill.Skill;
@@ -76,6 +82,9 @@ class SlashCommandTracingTest {
 
     private InMemoryTraceSpanStore store;
     private Tracer tracer;
+    private FixedAnswerLlmClient answers;
+    private LlmClient llm;
+    private DefaultHookExecutionManager hookManager;
     private DefaultSubagentExecutionManager subagentManager;
     private OrcaAgentExecutor executor;
     private InMemorySkillRegistry skillRegistry;
@@ -87,9 +96,10 @@ class SlashCommandTracingTest {
     void setUp() {
         store = new InMemoryTraceSpanStore();
         tracer = new DefaultTracer(store, SpanExporter.noop());
-        final LlmClient llm = new TracingLlmClient(new FixedAnswerLlmClient("reviewed"), tracer);
+        answers = new FixedAnswerLlmClient("reviewed");
+        llm = new TracingLlmClient(answers, tracer);
         final DefaultToolExecutionManager toolManager = new DefaultToolExecutionManager();
-        final DefaultHookExecutionManager hookManager = new DefaultHookExecutionManager();
+        hookManager = new DefaultHookExecutionManager();
         // The convenience constructor: withTracer reaches the executor it built (ST-2), so the fork has iterations.
         subagentManager = new DefaultSubagentExecutionManager(llm, toolManager, hookManager).withTracer(tracer);
         executor = new OrcaAgentExecutor(llm, new DefaultTranscriptManager(new InMemorySessionRecordStore()),
@@ -180,6 +190,41 @@ class SlashCommandTracingTest {
                 .containsEntry("argsChars", "some args".length()).containsEntry("rawArguments", "some args");
     }
 
+    @Test
+    @DisplayName("ST-10: /compact's summary call is an LLM span under its COMMAND span, in the turn's trace")
+    void compactSummaryCallNestsUnderTheCommand() {
+        final DefaultCompactionEngine compactionEngine = DefaultCompactionEngine.withDefaults(llm,
+                new HeuristicTokenEstimator(), hookManager);
+        final CompactCommand compact = new CompactCommand(
+                compactionEngine, new DefaultCompactionGuard(compactionEngine,
+                        InMemoryModelContextWindowRegistry.withDefaults(), new HeuristicTokenEstimator()),
+                new DefaultHookRegistry(), hookManager);
+        final OrcaAgentRuntime runtime = runtime(compact);
+        executor.execute(runtime, request("hi")); // something to compact
+
+        final Principal alice = Principal.user("alice");
+        final OrcaAgentExecutionResult result = executor.execute(runtime, OrcaAgentExecutionRequest.builder()
+                .userInput("/compact").sessionId(SessionId.of(SESSION)).principal(alice).build());
+
+        assertThat(result.isSuccess()).isTrue();
+        final List<TraceSpan> spans = store.bySession(SESSION);
+        final TraceSpan command = only(spans, SpanType.COMMAND);
+        assertThat(command.getName()).isEqualTo("command:/compact");
+        final TraceSpan summary = spans.stream().filter(s -> s.getType() == SpanType.LLM)
+                .filter(s -> LlmCallMetadata.Feature.COMPACTION.equals(s.getAttributes().get("feature"))).findFirst()
+                .orElseThrow(() -> new AssertionError("no COMPACTION LLM span"));
+        assertThat(summary.getParentSpanId()).contains(command.getSpanId());
+        assertThat(summary.getTraceId()).isEqualTo(command.getTraceId());
+        assertThat(summary.getSessionId()).isEqualTo(command.getSessionId());
+        // Only the span position is taken from the command context: the call is still attributed to /compact.
+        final LlmCallMetadata summaryCall = answers.metadata.stream()
+                .filter(m -> m.getFeature().filter(LlmCallMetadata.Feature.COMPACTION::equals).isPresent()).findFirst()
+                .orElseThrow(() -> new AssertionError("no COMPACTION call"));
+        assertThat(summaryCall.getComponent()).contains("compact-command");
+        assertThat(summaryCall.getPrincipal()).contains(alice);
+        assertThat(summaryCall.getTraceId()).contains(SESSION);
+    }
+
     /**
      * Tracing off, the command's tools get the turn's metadata untouched. The turn's own metadata instance is not
      * observable from outside the executor, so this asserts what it must be — the turn defaults with no reserved span
@@ -224,11 +269,15 @@ class SlashCommandTracingTest {
     }
 
     private OrcaAgentRuntime runtime() {
+        return runtime(probe);
+    }
+
+    private OrcaAgentRuntime runtime(SystemCommand command) {
         environmentProvider = LocalExecutionEnvironmentProvider.builder().workspaceRoot(tempDir.resolve("workspace"))
                 .contentSearch(false).build();
         final LocalFileSystem fileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
         fileSystem.initialize();
-        final DefaultCommandRegistry commandRegistry = new DefaultCommandRegistry(List.of(probe), skillRegistry,
+        final DefaultCommandRegistry commandRegistry = new DefaultCommandRegistry(List.of(command), skillRegistry,
                 fileSystem, ".aimon/commands");
         commandRegistry.initialize();
         return OrcaAgentRuntime.builder()
@@ -262,9 +311,10 @@ class SlashCommandTracingTest {
         }
     }
 
-    /** Answers every call with one fixed final answer. */
+    /** Answers every call with one fixed final answer, recording each call's metadata. */
     private static final class FixedAnswerLlmClient implements LlmClient {
         private final String answer;
+        private final List<LlmCallMetadata> metadata = new ArrayList<>();
 
         FixedAnswerLlmClient(String answer) {
             this.answer = answer;
@@ -274,6 +324,13 @@ class SlashCommandTracingTest {
         public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
                 LlmModel modelConfig) {
             return LlmResponse.text(answer);
+        }
+
+        @Override
+        public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
+                LlmModel modelConfig, LlmCallMetadata callMetadata) {
+            metadata.add(callMetadata);
+            return sendMessage(systemPrompt, messages, tools, modelConfig);
         }
 
         @Override
