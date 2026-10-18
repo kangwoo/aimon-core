@@ -39,6 +39,7 @@ import at.aimon.core.agent.tool.ToolConcurrencyConfig;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.base.Principal;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.environment.TestExecutionEnvironments;
@@ -449,6 +450,54 @@ class OrcaAgentExecutorTracingTest {
                 OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-off")).build());
 
         assertThat(requests).isNotEmpty().allSatisfy(r -> assertThat(r.getCallMetadata()).isEmpty());
+    }
+
+    @Test
+    @DisplayName("ST-9: the main turn's compaction summary call is booked to the turn's principal, as /compact's is")
+    void compactionSummaryCallCarriesThePrincipal() {
+        final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+        final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
+        final RecordingLlmClient stub = new RecordingLlmClient();
+        stub.enqueue(LlmResponse.text("the summary"));
+        stub.enqueue(LlmResponse.text("done"));
+        final LlmClient traced = new TracingLlmClient(stub, tracer);
+        final OrcaAgentExecutor executor = createExecutor(traced);
+        executor.tracer = tracer;
+        final Principal alice = Principal.user("alice");
+
+        executor.execute(createContext(new DefaultToolRegistry(), null, compactingEngine(traced)),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-principal"))
+                        .principal(alice).build());
+
+        final LlmCallMetadata summaryCall = stub.metadata.stream()
+                .filter(m -> m.getFeature().filter(LlmCallMetadata.Feature.COMPACTION::equals).isPresent()).findFirst()
+                .orElseThrow();
+        assertThat(summaryCall.getPrincipal()).contains(alice);
+        // The principal is the only attribution the turn hands over; the rest stays the engine's.
+        assertThat(summaryCall.getComponent()).contains("compaction-engine");
+        assertThat(SpanContext.readFrom(summaryCall)).isPresent();
+    }
+
+    @Test
+    @DisplayName("ST-9: tracing off, the main turn's context request still carries the principal, and only it")
+    void compactionRequestCarriesThePrincipalWhenTracingOff() {
+        final RecordingLlmClient stub = new RecordingLlmClient();
+        stub.enqueue(LlmResponse.text("the summary"));
+        stub.enqueue(LlmResponse.text("done"));
+        final OrcaAgentExecutor executor = createExecutor(stub); // tracer left at default Tracer.noop()
+        final Principal alice = Principal.user("alice");
+
+        executor.execute(createContext(new DefaultToolRegistry(), null, compactingEngine(stub)),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-principal-off"))
+                        .principal(alice).build());
+
+        final LlmCallMetadata summaryCall = stub.metadata.stream()
+                .filter(m -> m.getFeature().filter(LlmCallMetadata.Feature.COMPACTION::equals).isPresent()).findFirst()
+                .orElseThrow();
+        assertThat(summaryCall.getPrincipal()).contains(alice);
+        assertThat(summaryCall.getComponent()).contains("compaction-engine");
+        assertThat(summaryCall.getTraceId()).contains("conv-principal-off");
+        assertThat(summaryCall.getTags()).isEmpty();
     }
 
     // ── wiring helpers (mirrors OrcaAgentExecutorParallelToolTest) ───────────────
