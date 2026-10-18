@@ -6,13 +6,14 @@ import java.time.ZoneOffset;
 import java.util.Objects;
 
 /**
- * Builds each turn's {@link QuotaGuard} from the application's quota configuration: the ledger, the policy, the
- * resolver, the clock and zone, and the failure mode.
+ * Builds each turn's, and each scheduled routine run's, {@link QuotaGuard} from the application's quota configuration:
+ * the ledger, the policy, the resolver, the clock and zone, and the failure mode.
  *
  * <p>
  * <b>Application-scoped</b>, like the {@link UsageLedger} it holds: one factory is handed to the executor, which is
- * shared by every agent runtime. The executor calls {@link #create(QuotaResolutionContext)} once per turn; a fork does
- * not call it at all, it inherits the turn's guard.
+ * shared by every agent runtime, and the same one to the {@code RoutineExecutor}. The executor calls
+ * {@link #create(QuotaResolutionContext)} once per turn, the routine executor once per run; a fork does not call it at
+ * all, it inherits the guard of the execution that spawned it.
  *
  * <p>
  * Immutable. Use {@link #builder()} or {@link #disabled()}.

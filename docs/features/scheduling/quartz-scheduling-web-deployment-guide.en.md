@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/scheduling/quartz-scheduling-web-deployment-guide.md
-source_commit: 3e3b7a09
+source_commit: 9d0a3a52
 ---
 
 # Quartz Scheduling — Deployment Guide for a Web-Based Agent System
@@ -255,6 +255,7 @@ though. HikariCP loads the driver class while the pool is being configured, so a
 | `executionGuard` (`SchedulingEngineBuilder`) | `InMemoryScheduledExecutionGuard` (node-local) | A distributed implementation | The core-level second line of defence against duplicate firing across nodes |
 | `interruptBus` (`SchedulingEngineBuilder`) | `ScheduledTaskInterruptBus.LOCAL_ONLY` (node-local) | A distributed implementation (MongoDB: `MongoScheduledTaskInterruptBus`) | Lets a cancellation also stop the run on **the node that fired** |
 | `routineExecutionAttributes` (`SchedulingEngineBuilder`) | `RoutineExecutionAttributes.NONE` (no attributes) | When used, an implementation that reads a shared store | It is called on the node that fired, so it must give the same answer on whichever node calls it |
+| `quotaGuardFactory` (`SchedulingEngineBuilder`) | `QuotaGuardFactory.disabled()` (nothing metered) | The same instance the executors get, over a shared ledger | Records a routine step's forks against the task owner's usage quota, and refuses the steps of an owner who has used it up |
 
 `defaultMaxQuota` is a ceiling **per agent runtime** (it is ignored if you inject a `TaskQuotaManager` directly).
 
@@ -263,6 +264,8 @@ though. HikariCP loads the driver class while the pool is being configured, so a
 `interruptBus` points the other way — it is where something already running is **stopped**. `RoutineExecutor`'s in-flight registry is node-local, so without a bus `cancel` only cuts the runs held by the node the cancellation was entered on. In a cluster that node is usually not the one the cron fired on, and the run over there then works through its remaining steps on behalf of a task that has just been deleted. With the starter, a single `ScheduledTaskInterruptBus` bean wires it (`SchedulingSpec.withInterruptBus`); what the core ships reaches one node (`LOCAL_ONLY`) and one JVM (`InMemoryScheduledTaskInterruptBus`). For the cluster-wide one, a deployment on MongoDB passes `MongoScheduledTaskInterruptBus` from `aimon-session-mongodb` (it needs the capped collection `scheduled_task_interrupts` that `init.js` creates, and a replica set); on any other store the application writes it. The design note is [`interrupt.md` §12.7](../../design/agent-execution/interrupt.md).
 
 `routineExecutionAttributes` is where the host is asked, once per routine run, for that run's execution attributes — what `SubmitOptions.executionAttribute(...)` does for a turn; their `environment.*` subset becomes the environment provider's `EnvironmentRequest.requestAttributes()`. The resolver is called on **the node the cron fired on**, on the run's own thread. So **it must give the same answer whichever node calls it**: keep per-task placement in node-local memory and the same task is placed differently depending on which node fired it. Look per-task values up in a shared store by `ScheduledTask#getId()`. Under the starter a single `RoutineExecutionAttributes` bean wires it (`SchedulingSpec.withRoutineExecutionAttributes`). The design note is [`execution-environment-ee102-request-attributes.md`](../../design/tool/execution-environment-ee102-request-attributes.md).
+
+`quotaGuardFactory` is the LLM **usage** quota, not the same thing as `defaultMaxQuota` above (how many tasks may be registered). When it is given, each routine run builds one guard with the owner as principal, the `Task` · `Workflow` · forked-skill runs a step starts are recorded against that guard, and a step of an owner who has reached a limit is not started and the run fails. The check reads the ledger, so to add usage up across nodes in a cluster, use a shared ledger. On a stack given a ledger through `AimonStackSpec.quota(QuotaSpec)`, the bootstrap hands over the same instance the executors get, automatically. The starter has no quota properties yet. For behaviour and caveats see [`usage-quota-guide.md` §5 · §6](../agent-execution/usage-quota-guide.en.md#5-forks-are-counted-too).
 
 ### 6.4 Monitoring
 

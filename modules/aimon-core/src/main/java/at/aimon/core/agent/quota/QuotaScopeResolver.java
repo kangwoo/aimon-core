@@ -6,8 +6,9 @@ import java.util.List;
  * Picks the scopes one execution's usage is charged to. Supplied by the application.
  *
  * <p>
- * Called once per turn, when the executor builds the turn's {@link QuotaGuard}. Never called for a fork — a fork
- * shares its parent's guard, so its usage lands on the scopes its parent's turn resolved.
+ * Called once per turn, when the executor builds the turn's {@link QuotaGuard}, or once per scheduled routine run
+ * (no session; the task's owner as principal). Never called for a fork — a fork shares its parent's guard, so its usage
+ * lands on the scopes its parent's turn or routine run resolved.
  */
 public interface QuotaScopeResolver {
 

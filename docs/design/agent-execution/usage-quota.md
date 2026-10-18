@@ -365,6 +365,12 @@ DefaultSubagentExecutor ── QUOTA_GUARD 를 그대로 다시 싣는다 ──
 앱 코드가 그 runner 를 직접 부르는 경우, 그리고 같은 이유로 `RoutineExecutor` 의 단계가 띄우는 포크는 1단계에서
 계량되지 않는다 — `UQ-2`.
 
+*2026-10-18 덧붙임.* 루틴 쪽 절반은 #267 이 닫았다. `RoutineExecutor` 가 애플리케이션 범위의 `QuotaGuardFactory` 를
+받아 실행 1회에 guard 하나를 만들고(세션 없음, 주체는 태스크 소유자 — §4.4), 단계 컨텍스트에 실어 포크가 물려받게
+하며, 단계 경계에서 같은 guard 로 판정해 한도에 닿은 단계를 시작하지 않는다. 설계와 그 뒤의 차이는
+[`usage-quota-routine-forks.md`](usage-quota-routine-forks.md) 에 있다. 앱이 `WorkflowRunner` 를 직접 부르는 경로는
+여전히 `UQ-2` 로 열려 있다.
+
 ### 11.5 결과와 `CompletionReason` 의 소비자
 
 `QUOTA_EXCEEDED` 는 `TOKEN_BUDGET_EXCEEDED` 와 `COST_BUDGET_EXCEEDED` 사이에 들어갔다. 소비자를 전수로 읽은

@@ -7,6 +7,31 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: scheduled routine forks are charged to the task owner's usage quota (#267)
+
+A scheduled routine called tools without a turn, so its steps' context carried no `QuotaGuard`, and a `Task`,
+`Workflow` or fork-mode skill step ran its subagent unmetered even though the task has an owner. An owner who had used
+up a principal quota in sessions could run the same LLM work through a cron task. Design and departures:
+`docs/design/agent-execution/usage-quota-routine-forks.md`; backlog UQ-2 (routine half closed, the app-invoked
+`WorkflowRunner` half still open).
+
+- **One guard per routine run.** With a quota factory wired, `RoutineExecutor` resolves one guard per run: no
+  session (so no `SESSION` scope), the task owner as principal, and the run's execution attributes. Every step and
+  retry shares it, and so do the forks the steps start, background ones included. An inline (non-fork) LLM skill
+  called from a step is metered by it too.
+- **A step is refused at the step boundary once the quota is reached.** Before each attempt (and before a retry's
+  backoff), the run checks the guard. A reached quota starts no further attempt and fails the run with
+  `Execution stopped by quota: …`, the same wording as a turn's stop. The gate applies to **every** step, whatever its
+  tool, because the executor cannot tell which tools call an LLM: with a quota ledger configured, an over-quota
+  owner's pure `Bash` / `Read` routines fail too, and so do tasks owned by `Principal.system()` if the policy limits
+  every principal. A fail-closed ledger that fails at the gate fails the step with `Usage ledger unavailable: …`.
+- **Only with a `QuotaSpec` ledger.** `AimonStackBuilder` hands the scheduling engine the same factory it gives the
+  executors. Without a ledger the factory is disabled: no guard is resolved, the steps' context has no `QUOTA_GUARD`,
+  and routines behave exactly as before.
+- **New API (additive):** `RoutineExecutor#withQuotaGuardFactory(QuotaGuardFactory)` and
+  `SchedulingEngineBuilder#quotaGuardFactory(QuotaGuardFactory)`. The latter is the LLM **usage** quota; the builder's
+  existing `quotaManager` / `defaultMaxQuota` still cap how many tasks a runtime may schedule.
+
 ### Added: read a session's owner without its transcript — `SessionRecordStore#loadOwner` (#262)
 
 The only way to read the owner core records for a session (#253) was `SessionRecordStore.load(id)`, which decodes the

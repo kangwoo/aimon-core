@@ -46,6 +46,11 @@ import at.aimon.core.agent.interrupt.InterruptBehavior;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.interrupt.TerminatorRegistrar;
+import at.aimon.core.agent.quota.QuotaGuard;
+import at.aimon.core.agent.quota.QuotaGuardFactory;
+import at.aimon.core.agent.quota.QuotaResolutionContext;
+import at.aimon.core.agent.quota.QuotaViolation;
+import at.aimon.core.agent.quota.exception.QuotaLedgerUnavailableException;
 import at.aimon.core.agent.tool.InterruptToolKeys;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
@@ -121,6 +126,19 @@ import at.aimon.core.tracing.Tracer;
  * span, so a subagent the step starts ({@code Task}, {@code Workflow}, a fork-mode skill) nests under it. A routine
  * has no session, so the trace's group key is {@code routine:<taskId>}: every fire of one task groups together, each
  * fire its own trace. Without a tracer nothing is recorded and the step context is unchanged.
+ *
+ * <h2>Usage quota</h2>
+ *
+ * <p>
+ * With a {@link QuotaGuardFactory} wired ({@link #withQuotaGuardFactory(QuotaGuardFactory)}), each run resolves
+ * <b>one</b> {@link QuotaGuard}, as a turn does: no session, the task's owner as principal, the run's execution
+ * attributes. The steps' context carries it under {@link ToolContextKeys#QUOTA_GUARD}, so a subagent a step starts
+ * ({@code Task}, {@code Workflow}, a fork-mode skill) charges the owner's keys instead of none, and every step and
+ * retry
+ * of the run shares it. The step boundary checks it before each attempt, the routine's counterpart of a turn's
+ * iteration check: once a key has reached its limit no further attempt starts &mdash; whatever tool the step names
+ * &mdash; and the run fails with {@code "Execution stopped by quota: ..."}. Without a factory no guard is resolved, the
+ * key is absent and the gate never refuses, as before (usage-quota design §4.3, §4.4).
  */
 public class RoutineExecutor {
 
@@ -171,6 +189,12 @@ public class RoutineExecutor {
      * {@link RoutineExecutionAttributes#NONE}; {@code volatile} for the same reason as {@link #tracer}.
      */
     private volatile RoutineExecutionAttributes executionAttributes = RoutineExecutionAttributes.NONE;
+
+    /**
+     * Builds each run's usage-quota guard. Defaults to {@link QuotaGuardFactory#disabled()}; wired via
+     * {@link #withQuotaGuardFactory(QuotaGuardFactory)}. {@code volatile} for the same reason as {@link #tracer}.
+     */
+    private volatile QuotaGuardFactory quotaGuardFactory = QuotaGuardFactory.disabled();
 
     /**
      * RoutineExecutor를 생성한다 (system UTC clock 사용).
@@ -240,6 +264,21 @@ public class RoutineExecutor {
      */
     public RoutineExecutor withExecutionAttributes(RoutineExecutionAttributes executionAttributes) {
         this.executionAttributes = Objects.requireNonNull(executionAttributes, "executionAttributes cannot be null");
+        return this;
+    }
+
+    /**
+     * Injects the factory that builds each run's usage-quota guard, so the forks a step starts are charged to the
+     * task's owner as a turn's forks are charged to its caller. Returns {@code this} for fluent configuration; when
+     * unset, the executor keeps {@link QuotaGuardFactory#disabled()} and behaviour is unchanged. The factory, and the
+     * ledger it holds, are application-scoped like this executor: borrowed, never closed.
+     *
+     * @param quotaGuardFactory
+     *            the factory (must not be null)
+     * @return this executor
+     */
+    public RoutineExecutor withQuotaGuardFactory(QuotaGuardFactory quotaGuardFactory) {
+        this.quotaGuardFactory = Objects.requireNonNull(quotaGuardFactory, "quotaGuardFactory cannot be null");
         return this;
     }
 
@@ -365,7 +404,8 @@ public class RoutineExecutor {
         eventPublisher.publish(new TaskStartedEvent(task));
 
         final RunAttributes attributes = resolveExecutionAttributes(task, executionId);
-        final ToolContext context = buildToolContext(task, signal, executionId, trace, attributes);
+        final RunQuota quota = createQuotaGuard(task, attributes);
+        final ToolContext context = buildToolContext(task, signal, executionId, trace, attributes, quota);
 
         for (int i = 0; i < task.getRoutine().size(); i++) {
             // Step boundary gate. Every step from here on is simply not started, which is why the run stops within
@@ -377,7 +417,7 @@ public class RoutineExecutor {
 
             final RoutineStep step = task.getRoutine().get(i);
             final Optional<StepResult> attempted = executeStep(task, step, i, context, stepOutputs,
-                    new StepRun(coordinator, trace));
+                    new StepRun(coordinator, trace, quota.guard));
             if (attempted.isEmpty()) {
                 // An interrupt arrived between the gate above and the step's own, so the step never started. Record
                 // nothing for it: a run's step results are what it attempted, and counting a step it never began
@@ -537,9 +577,14 @@ public class RoutineExecutor {
      * <p>
      * With tracing on, the context also carries {@link ToolContextKeys#LLM_CALL_METADATA_KEY} pointing at the run's
      * ROUTINE span; each step attempt rotates it to its own TOOL span. Tracing off, the key is absent, as before.
+     *
+     * <p>
+     * With a {@link QuotaGuardFactory} wired, the context carries the run's guard under
+     * {@link ToolContextKeys#QUOTA_GUARD} &mdash; the disabled guard if resolving it failed, so the write-once slot is
+     * filled honestly. Without one the key is absent, as before.
      */
     private ToolContext buildToolContext(ScheduledTask task, CancellationSignal signal, ExecutionId executionId,
-            RoutineTrace trace, RunAttributes attributes) {
+            RoutineTrace trace, RunAttributes attributes, RunQuota quota) {
         final ToolContext.Builder builder = ToolContext.builder()
                 .put(ToolContextKeys.AGENT_RUNTIME_ID, task.getBoundRuntimeId())
                 .put(ToolContextKeys.PRINCIPAL, task.getOwner()).put(ToolContextKeys.EXECUTION_ID, executionId)
@@ -547,6 +592,9 @@ public class RoutineExecutor {
                 .put(ReadTool.FILE_STAMPS_KEY, new ConcurrentHashMap<>());
         if (!attributes.values.isEmpty()) {
             builder.put(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY, attributes.values);
+        }
+        if (quota.published) {
+            builder.put(ToolContextKeys.QUOTA_GUARD, quota.guard);
         }
         putExecutionEnvironment(builder, task, executionId, attributes);
         trace.metadata().ifPresent(metadata -> builder.put(ToolContextKeys.LLM_CALL_METADATA_KEY, metadata));
@@ -622,7 +670,51 @@ public class RoutineExecutor {
     }
 
     /**
+     * Builds the run's usage-quota guard, once, the way a turn's executor builds a turn's: the bound runtime, no
+     * session (a routine has none, so no {@code SESSION} scope), the task's owner as principal, and the run's
+     * execution attributes, from which a resolver may read a tenant.
+     *
+     * <p>
+     * Fail-safe, as a turn's is (usage-quota §11.2): an application resolver or policy that throws leaves the run
+     * unmetered, loudly, rather than stopping it. Only the ledger's failures are subject to {@code failClosed}.
+     */
+    private RunQuota createQuotaGuard(ScheduledTask task, RunAttributes attributes) {
+        // Read once, so one run uses one factory. No ledger, no work: nothing is resolved and nothing is published.
+        final QuotaGuardFactory factory = quotaGuardFactory;
+        if (!factory.isEnabled()) {
+            return RunQuota.UNCONFIGURED;
+        }
+        try {
+            return new RunQuota(factory.create(QuotaResolutionContext.builder().agentRuntimeId(task.getBoundRuntimeId())
+                    .sessionId(null).principal(task.getOwner()).attributes(attributes.values).build()), true);
+        } catch (RuntimeException e) {
+            log.warn("Quota guard setup failed for task '{}'; this run is not metered: {}", task.getId(), e.toString());
+            return new RunQuota(QuotaGuard.disabled(), true);
+        }
+    }
+
+    /** One run's usage-quota guard, and whether it goes on the step context (only when a factory is wired). */
+    private static final class RunQuota {
+        private static final RunQuota UNCONFIGURED = new RunQuota(QuotaGuard.disabled(), false);
+
+        private final QuotaGuard guard;
+        private final boolean published;
+
+        private RunQuota(QuotaGuard guard, boolean published) {
+            this.guard = guard;
+            this.published = published;
+        }
+    }
+
+    /**
      * Runs one step, retries included.
+     *
+     * <p>
+     * Before each attempt, and again before a retry's backoff, the run's quota guard is checked. A reached quota
+     * starts no further attempt: a retry would stop the same way, and waiting out its backoff first would only delay
+     * the verdict. The step then fails with the turn's wording, {@code "Execution stopped by quota: ..."}, with as many
+     * attempts as already ran &mdash; zero when the first was refused. The cancellation gate is read first, so a run
+     * that is both stopped and over quota is filed as cancelled.
      *
      * @return the step's result, or empty if the run was cancelled before a single attempt was made — the caller
      *         records nothing for a step that never started
@@ -634,12 +726,20 @@ public class RoutineExecutor {
         final Instant startedAt = clock.instant();
         int attemptCount = 0;
         String lastError = null;
+        // Set when the quota gate refused an attempt: the step then has a verdict even with zero attempts.
+        boolean quotaStopped = false;
 
         while (attemptCount <= step.getMaxRetries()) {
             // Retrying a cancelled run spends its whole backoff budget on work nobody is waiting for. The first pass
             // through this gate is normally a formality — the run's own boundary gate already checked — but not
             // always: an interrupt can arrive between the two, and every retry after the first reaches it for real.
             if (signal.isCancelled()) {
+                break;
+            }
+            final Optional<String> refusal = checkQuota(run.quotaGuard, task, stepIndex, lastError);
+            if (refusal.isPresent()) {
+                lastError = refusal.get();
+                quotaStopped = true;
                 break;
             }
             attemptCount++;
@@ -676,18 +776,65 @@ public class RoutineExecutor {
                 attemptTrace.close();
             }
 
-            if (attemptCount <= step.getMaxRetries() && !awaitRetryDelay(step.getRetryDelay(), coordinator)) {
-                break;
+            if (attemptCount <= step.getMaxRetries()) {
+                // Ask before the backoff rather than after it: a fork that crossed the limit in this attempt would
+                // otherwise hold the run for the whole retry delay only to be refused at the top of the loop.
+                final Optional<String> retryRefusal = signal.isCancelled()
+                        ? Optional.empty()
+                        : checkQuota(run.quotaGuard, task, stepIndex, lastError);
+                if (retryRefusal.isPresent()) {
+                    lastError = retryRefusal.get();
+                    quotaStopped = true;
+                    break;
+                }
+                if (!awaitRetryDelay(step.getRetryDelay(), coordinator)) {
+                    break;
+                }
             }
         }
 
-        if (attemptCount == 0) {
+        if (attemptCount == 0 && !quotaStopped) {
             // Only reachable through the gate at the top of the loop on its first pass: the step was never begun.
             return Optional.empty();
         }
 
         final Instant completedAt = clock.instant();
         return Optional.of(StepResult.failure(stepIndex, step, lastError, attemptCount, startedAt, completedAt));
+    }
+
+    /**
+     * Asks the run's quota guard whether another attempt may start.
+     *
+     * <p>
+     * A violation is worded as a turn's quota stop ({@code OrcaAgentExecutor#handleQuotaStop}), so logs and alerts
+     * match one string. A fail-closed ledger that fails is not a quota stop and is not worded as one: it is the
+     * routine's counterpart of a turn ending {@code ERROR} (usage-quota §5.1). Either way the tool's own error from
+     * the last real attempt, if there was one, is kept in the message rather than overwritten.
+     *
+     * @param lastError
+     *            the previous attempt's error, or null when no attempt has failed yet
+     * @return the step's error message if no further attempt may start, empty otherwise (always empty on a disabled
+     *         guard)
+     */
+    private static Optional<String> checkQuota(QuotaGuard guard, ScheduledTask task, int stepIndex, String lastError) {
+        final Optional<QuotaViolation> violation;
+        try {
+            violation = guard.check();
+        } catch (QuotaLedgerUnavailableException e) {
+            log.warn("Usage ledger unavailable for task '{}' at step {}; the step is not run: {}", task.getId(),
+                    stepIndex, e.toString());
+            return Optional.of(withLastError("Usage ledger unavailable: " + e.getMessage(), lastError));
+        }
+        if (violation.isEmpty()) {
+            return Optional.empty();
+        }
+        log.warn("Usage quota reached for task '{}' at step {}: {}", task.getId(), stepIndex,
+                violation.get().describe());
+        return Optional.of(withLastError("Execution stopped by quota: " + violation.get().describe(), lastError));
+    }
+
+    private static String withLastError(String refusal, String lastError) {
+        return lastError == null ? refusal : refusal + " (last attempt: " + lastError + ")";
     }
 
     /**
@@ -935,14 +1082,18 @@ public class RoutineExecutor {
         }
     }
 
-    /** What every step of one run shares beyond its context: the run's coordinator and its trace. */
+    /**
+     * What every step of one run shares beyond its context: the run's coordinator, its trace and its quota guard.
+     */
     private static final class StepRun {
         private final InterruptCoordinator coordinator;
         private final RoutineTrace trace;
+        private final QuotaGuard quotaGuard;
 
-        private StepRun(InterruptCoordinator coordinator, RoutineTrace trace) {
+        private StepRun(InterruptCoordinator coordinator, RoutineTrace trace, QuotaGuard quotaGuard) {
             this.coordinator = coordinator;
             this.trace = trace;
+            this.quotaGuard = quotaGuard;
         }
     }
 

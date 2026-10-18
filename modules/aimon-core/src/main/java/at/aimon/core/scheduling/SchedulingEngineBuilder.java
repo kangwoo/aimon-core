@@ -8,6 +8,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import at.aimon.core.agent.AgentRuntimeRegistry;
 import at.aimon.core.agent.DefaultAgentRuntimeRegistry;
+import at.aimon.core.agent.quota.QuotaGuardFactory;
 import at.aimon.core.base.ExternallyManaged;
 import at.aimon.core.scheduling.event.ScheduledTaskEventPublisher;
 import at.aimon.core.scheduling.event.SimpleScheduledTaskEventPublisher;
@@ -66,6 +67,7 @@ public final class SchedulingEngineBuilder {
     private Tracer tracer;
     private TracePayloadPolicy tracePayloadPolicy;
     private RoutineExecutionAttributes routineExecutionAttributes;
+    private QuotaGuardFactory quotaGuardFactory;
 
     private SchedulingEngineBuilder() {
     }
@@ -310,6 +312,31 @@ public final class SchedulingEngineBuilder {
     }
 
     /**
+     * Sets the factory that builds each routine run's <b>usage</b> quota guard &mdash; LLM tokens and cost per
+     * principal or tenant, accumulated across executions &mdash; so a {@code Task}, {@code Workflow} or fork-mode skill
+     * step is charged to the task's owner the way a turn's forks are charged to its caller, and a step is refused once
+     * the owner's quota is reached. Pass the same instance the agent executors use.
+     *
+     * <p>
+     * Not to be confused with {@link #quotaManager(TaskQuotaManager)} and {@link #defaultMaxQuota(int)}, which cap
+     * how many <em>tasks</em> a runtime may schedule.
+     * </p>
+     *
+     * <p>
+     * If not set, {@link QuotaGuardFactory#disabled()} is used and routine runs are not metered. The factory is
+     * application-scoped, like the engine; the engine neither owns nor closes it.
+     * </p>
+     *
+     * @param quotaGuardFactory
+     *            the usage-quota guard factory
+     * @return this builder
+     */
+    public SchedulingEngineBuilder quotaGuardFactory(QuotaGuardFactory quotaGuardFactory) {
+        this.quotaGuardFactory = quotaGuardFactory;
+        return this;
+    }
+
+    /**
      * Builds the scheduling engine.
      *
      * <p>
@@ -368,6 +395,9 @@ public final class SchedulingEngineBuilder {
         }
         if (routineExecutionAttributes != null) {
             routineExecutor.withExecutionAttributes(routineExecutionAttributes);
+        }
+        if (quotaGuardFactory != null) {
+            routineExecutor.withQuotaGuardFactory(quotaGuardFactory);
         }
 
         // Resolve circular dependency: TaskScheduler needs ScheduledTaskExecutor,

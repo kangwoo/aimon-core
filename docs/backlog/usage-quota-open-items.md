@@ -1,4 +1,4 @@
-# 사용량 쿼터 — 등록 항목 3건 (열림 3 · 닫힘 0)
+# 사용량 쿼터 — 등록 항목 4건 (열림 4 · 닫힘 0)
 
 출처는 [`../design/agent-execution/usage-quota.md`](../design/agent-execution/usage-quota.md) 의 1단계 구현이다.
 그 문서 §11(구현 뒤 — 설계와 달라진 점)이 적은 것 가운데 **1단계 밖으로 결과가 나가는 것**만 여기로 올라왔다.
@@ -7,7 +7,7 @@
 
 `README.md` 의 규칙대로 **열림/닫힘의 정본은 이 문서**이고 설계 문서 §10 · §11 은 설계·구현 시점의 기록이다.
 
-줄 번호는 **마지막 확인 날짜와 함께** 적는다. 아래 인용은 전부 2026-10-15 기준이다.
+줄 번호는 **마지막 확인 날짜와 함께** 적는다. 각 인용의 기준 날짜는 그 항목의 **어디** 줄에 있다.
 
 ---
 
@@ -43,27 +43,30 @@
 
 ## UQ-2 — 호출한 실행이 없는 포크는 쿼터 없이 돈다 · **열림**
 
-**무엇을.** 턴을 거치지 않고 포크를 시작하는 두 경로에 쿼터를 거는 방법을 정한다.
+**무엇을.** 앱 코드가 에이전트 단위 `WorkflowRunner` 를 직접 부를 때 그 포크에 쿼터를 거는 방법을 정한다.
 
 **왜.** 포크는 부모의 `QuotaGuard` 를 물려받을 뿐 스스로 해석하지 않는다(설계 §4.3). 그러니 **부모가 턴이 아니면
-물려받을 guard 가 없다.** 1단계가 그 자리를 비활성 guard 로 둔 경로가 둘이다.
+물려받을 guard 가 없다.** `OrcaAgentRuntimeFactory` 가 만드는 runner 의 기본 launch context 에는 호출한 실행이 없다.
+도구 경유의 백그라운드 실행은 1단계에서 guard 를 실어 보내도록 고쳤지만(`WorkflowRunner#runInBackground(...,
+QuotaGuard)`, 설계 §11.4), 앱 코드가 runner 를 직접 부르면 비활성 guard 다 — 그 포크의 LLM 호출은 어느 주체에도
+기록되지 않는다.
 
-- **예약 루틴의 단계.** `RoutineExecutor` 는 턴을 돌리지 않고 도구를 직접 부른다. `Task` · `Workflow` · 포크 스킬을
-  부르는 단계의 포크는 소유자(`task.getOwner()`)가 있는데도 **주체 쿼터에 잡히지 않는다** — 세션 한도를 다 쓴
-  사용자가 같은 일을 cron 으로 걸면 계량되지 않는다.
-- **에이전트 단위 `WorkflowRunner` 를 앱이 직접 부를 때.** `OrcaAgentRuntimeFactory` 가 만드는 runner 의 기본 launch
-  context 에는 호출한 실행이 없다. 도구 경유의 백그라운드 실행은 1단계에서 guard 를 실어 보내도록 고쳤지만
-  (`WorkflowRunner#runInBackground(..., QuotaGuard)`, 설계 §11), 앱 코드가 runner 를 직접 부르면 비활성 guard 다.
+*(2026-10-18, #267)* 처음 등록할 때 이 항목에는 경로가 둘이었다. 다른 하나인 **예약 루틴의 단계**는 닫았다 —
+`RoutineExecutor` 가 애플리케이션 범위의 `QuotaGuardFactory` 를 빌더로 받아(`SchedulingEngineBuilder#quotaGuardFactory`,
+부트스트랩은 실행기와 같은 인스턴스를 넘긴다) 실행 1회에 guard 하나를 만들고(세션 없음, 주체는 `task.getOwner()` —
+설계 §4.4), 단계 컨텍스트의 `QUOTA_GUARD` 로 포크에 물려주며, 단계 경계에서 같은 guard 로 판정해 한도에 닿은 단계를
+시작하지 않는다. 설계와 구현의 차이는
+[`../design/agent-execution/usage-quota-routine-forks.md`](../design/agent-execution/usage-quota-routine-forks.md) §8.
+루틴의 쿼터 멈춤이 문자열로만 남는다는 새 문제는 UQ-4 로 따로 올렸다.
 
-**어디.** (2026-10-15) `RoutineExecutor.java:447` (`buildToolContext` — `QUOTA_GUARD` 를 싣지 않는다),
-`OrcaAgentRuntimeFactory.java:1157` (기본 launch context).
+**어디.** (2026-10-18) `OrcaAgentRuntimeFactory.java:1157` (기본 launch context — `quotaGuard` 를 싣지 않는다).
 
-**막힌 것.** 둘 다 **애플리케이션 범위의 `QuotaGuardFactory` 를 그 자리까지 가져가는 배선**이 필요하다 —
-`RoutineExecutor` 는 실행기를 모르고, 기본 launch context 는 런타임 팩토리가 만든다. 어느 쪽이든
-`QuotaResolutionContext` 를 무엇으로 채울지(세션 없음, 주체는 소유자)는 설계 §4.4 가 이미 답한다.
+**막힌 것.** **애플리케이션 범위의 `QuotaGuardFactory` 를 그 자리까지 가져가는 배선**, 그리고 무엇으로 해석할지다.
+루틴은 태스크에 소유자가 있어 주체가 정해졌지만, 앱이 runner 를 직접 부를 때는 runner 가 호출자를 모른다 — 주체를
+`WorkflowRunner` 호출 인자로 받을지, 앱이 만든 guard 를 그대로 받을지(`runInBackground(..., QuotaGuard)` 처럼)가
+먼저 정해져야 한다. `QuotaResolutionContext` 의 나머지(세션 없음)는 설계 §4.4 가 이미 답한다.
 
-**언제 다시 볼까.** 예약 루틴이 LLM 을 쓰는 단계를 사용자 대신 돌리는 배포가 나올 때, 또는 앱이 `WorkflowRunner` 를
-사용자 요청으로 직접 띄우기 시작할 때.
+**언제 다시 볼까.** 앱이 `WorkflowRunner` 를 사용자 요청으로 직접 띄우기 시작할 때.
 
 ---
 
@@ -82,3 +85,24 @@
 **언제 다시 볼까.** 설계 §9 2단계(CLI 표시)가 라우팅을 거친 결과를 보여 주게 될 때, 또는 `SessionRouter` 위의 웹
 프런트엔드가 쿼터 멈춤을 사용자에게 구조적으로 보여 줘야 할 때. 와이어 필드를 더하는 일이므로 롤링 업그레이드
 규칙(`CompletionReason#fromWireName` 과 같은 "모르는 것은 버리고 읽는다")을 함께 정한다.
+
+---
+
+## UQ-4 — 예약 루틴의 쿼터 멈춤은 메시지 문자열로만 남는다 · **열림**
+
+**무엇을.** `RoutineResult` · `StepResult`(와 그것을 저장하는 실행 이력)에 쿼터 멈춤을 구조로 싣는다 — 상태 하나,
+또는 턴처럼 `QuotaViolation`(키 · 한도 · 사용량).
+
+**왜.** #267 이 루틴에 쿼터를 걸면서 한도에 닿은 단계를 거절하게 했는데, `RoutineResult` 에는 성공 · 실패 · 취소
+셋뿐이라 쿼터 멈춤은 **실패 + `"Execution stopped by quota: ..."` 메시지**로 기록된다. 턴은
+`CompletionReason.QUOTA_EXCEEDED` 와 `getQuotaViolation()` 을 내놓는다. 관측 가능한 결과는 **루틴의 쿼터 멈춤을
+알림·대시보드로 따로 보이려면 메시지 접두어를 파싱해야 하고**, 어느 범위의 어느 기간이 다 찼는지도 문자열 안에만
+있다는 것이다. fail-closed 장부 장애(`"Usage ledger unavailable: ..."`)와 쿼터 멈춤, 도구 자체의 실패도 메시지로만
+갈린다. 출처는 설계 [`usage-quota-routine-forks.md`](../design/agent-execution/usage-quota-routine-forks.md) §7 Q3 —
+저장 모양과 코덱을 건드리는 일이라 #267 범위 밖에 두었다.
+
+**어디.** (2026-10-18) `RoutineResult.java:58` (`failure` — 메시지 하나), `RoutineExecutor.java:819`
+(`checkQuota` — 위반을 문자열로 만든다), `ScheduledTaskExecutionHistoryRepository` 와 그 구현들(이력에 남는 모양).
+
+**언제 다시 볼까.** 루틴의 쿼터 멈춤을 운영 알림이나 UI 에서 일반 실패와 구분해 보여 줘야 할 때, 또는 UQ-3 처럼
+결과에 `QuotaViolation` 을 싣는 저장 모양 작업이 시작될 때 — 둘은 같은 직렬화 결정을 공유한다.

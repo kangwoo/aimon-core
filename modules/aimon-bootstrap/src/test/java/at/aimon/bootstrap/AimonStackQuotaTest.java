@@ -3,7 +3,9 @@ package at.aimon.bootstrap;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.DisplayName;
@@ -14,6 +16,7 @@ import at.aimon.bootstrap.spec.AgentSpec;
 import at.aimon.bootstrap.spec.ExecutorSpec;
 import at.aimon.bootstrap.spec.LlmSpec;
 import at.aimon.bootstrap.spec.QuotaSpec;
+import at.aimon.bootstrap.spec.SchedulingSpec;
 import at.aimon.core.agent.DefaultAgent;
 import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.impl.AgentBundle;
@@ -27,6 +30,7 @@ import at.aimon.core.agent.quota.QuotaWindow;
 import at.aimon.core.agent.quota.impl.InMemoryUsageLedger;
 import at.aimon.core.agent.quota.impl.StaticQuotaPolicy;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.base.Principal;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
@@ -35,10 +39,19 @@ import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.cost.CostEstimator;
 import at.aimon.core.llm.cost.Money;
+import at.aimon.core.scheduling.RoutineResult;
+import at.aimon.core.scheduling.RoutineStep;
+import at.aimon.core.scheduling.ScheduledTask;
+import at.aimon.core.scheduling.ScheduledTaskId;
+import at.aimon.core.scheduling.SchedulingEngine;
+import at.aimon.core.scheduling.event.ScheduledTaskEventListener;
+import at.aimon.core.scheduling.event.TaskCompletedEvent;
+import at.aimon.core.scheduling.event.TaskFailedEvent;
 
 /**
- * The bootstrap half of usage quotas (usage-quota §7.1): a {@link QuotaSpec} reaches the executor, its absence leaves
- * the executor unmetered, and a cost limit the stack can see would never fire is reported.
+ * The bootstrap half of usage quotas (usage-quota §7.1): a {@link QuotaSpec} reaches the executor and the scheduling
+ * engine's routine runs (issue #267), its absence leaves both unmetered, and a cost limit the stack can see would never
+ * fire is reported.
  */
 @DisplayName("AimonStack usage quota wiring")
 class AimonStackQuotaTest {
@@ -109,6 +122,68 @@ class AimonStackQuotaTest {
             assertThat(stopped.getCompletionReason()).isEqualTo(CompletionReason.QUOTA_EXCEEDED);
             assertThat(other.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
             assertThat(llm.calls).hasValue(1);
+        }
+    }
+
+    /** Fires a one-step routine owned by {@code owner} through the stack's engine and returns how the run ended. */
+    private static RoutineResult fireRoutine(AimonStack stack, Principal owner) {
+        final SchedulingEngine engine = stack.schedulingEngine().orElseThrow();
+        final List<RoutineResult> results = new CopyOnWriteArrayList<>();
+        engine.addEventListener(new ScheduledTaskEventListener() {
+            @Override
+            public void onTaskCompleted(TaskCompletedEvent event) {
+                results.add(event.getResult());
+            }
+
+            @Override
+            public void onTaskFailed(TaskFailedEvent event) {
+                results.add(event.getResult());
+            }
+        });
+        // A step that starts no LLM work: the quota gate refuses every step of an over-quota owner (design Q1).
+        final ScheduledTask task = ScheduledTask.builder().id(ScheduledTaskId.of("nightly")).name("nightly sweep")
+                .cronExpression("0 3 * * *").owner(owner).boundRuntimeId(stack.primaryRuntimeId())
+                .addStep(RoutineStep.withRetry("Read", "{}", 0, Duration.ZERO)).build();
+        engine.getTaskManager().register(task);
+        engine.getTaskManager().executeTask(task.getId());
+        assertThat(results).hasSize(1);
+        return results.get(0);
+    }
+
+    @Test
+    @DisplayName("a QuotaSpec with a ledger reaches the scheduling engine: an over-quota owner's routine step is refused")
+    void quotaSpecReachesTheSchedulingEngine(@TempDir Path workspace) {
+        final Principal owner = Principal.user("alice");
+        final InMemoryUsageLedger ledger = new InMemoryUsageLedger();
+        ledger.charge(List.of(QuotaKey.of(QuotaScope.principal(owner), QuotaWindow.TOTAL, "")),
+                QuotaUsage.of(100, Money.zeroUsd()));
+        final QuotaSpec quota = QuotaSpec.builder().ledger(ledger).policy(StaticQuotaPolicy.builder()
+                .limit(QuotaScope.Kind.PRINCIPAL, QuotaLimit.total().maxTokens(100).build()).build()).build();
+
+        try (AimonStack stack = AimonStackBuilder.build(
+                specFor(workspace, new CountingLlm()).quota(quota).scheduling(SchedulingSpec.enabled()).build())) {
+            final RoutineResult result = fireRoutine(stack, owner);
+
+            assertThat(result.isSuccess()).isFalse();
+            assertThat(result.getStepResults()).singleElement()
+                    .satisfies(step -> assertThat(step.getAttemptCount()).isZero());
+            assertThat(result.getErrorMessage())
+                    .hasValueSatisfying(message -> assertThat(message).startsWith("Execution stopped by quota:"));
+        }
+    }
+
+    @Test
+    @DisplayName("without a QuotaSpec a routine step runs whatever the owner has spent")
+    void noQuotaSpecLeavesRoutinesUnmetered(@TempDir Path workspace) {
+        try (AimonStack stack = AimonStackBuilder
+                .build(specFor(workspace, new CountingLlm()).scheduling(SchedulingSpec.enabled()).build())) {
+            final RoutineResult result = fireRoutine(stack, Principal.user("alice"));
+
+            // The Read step fails on its missing argument — it ran, which is all this asserts.
+            assertThat(result.getStepResults()).singleElement()
+                    .satisfies(step -> assertThat(step.getAttemptCount()).isEqualTo(1));
+            assertThat(result.getErrorMessage()).hasValueSatisfying(
+                    message -> assertThat(message).doesNotContain("quota").doesNotContain("Usage ledger"));
         }
     }
 

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/agent-execution/usage-quota-guide.md
-source_commit: 158e83c
+source_commit: 1ce4783
 ---
 
 # Usage Quota Guide — usage limits per session, user and tenant
@@ -132,11 +132,15 @@ around a limit.
 - A fork running in the background, and a `Workflow` tool run with `mode=background`, record to the same scopes and
   keep recording after the parent turn has ended
 
-Conversely, **when the execution that launches a fork is not a turn**, there are no scopes to inherit and the fork runs
-without a quota. There are two such paths today ([UQ-2](../../backlog/usage-quota-open-items.md)).
+A scheduled routine (`RoutineExecutor`) is the same. One routine run builds one guard, as a turn does — with no
+session and the task owner (`task.getOwner()`) as the principal. So `Task` · `Workflow` · forked skills called by a
+routine step, and LLM skills that do not fork, are recorded in the owner's `PRINCIPAL` scope (and any `TENANT` scope
+the resolver picks). A user who has used up a session limit cannot get around it by scheduling the same work with
+cron. A routine has no session, though, so `SESSION` limits do not apply to it.
 
-- `Task` · `Workflow` · forked skills called by a step of a scheduled routine (`RoutineExecutor`)
-- application code calling the agent's `WorkflowRunner` directly
+Conversely, **when the execution that launches a fork is neither a turn nor a routine**, there are no scopes to
+inherit and the fork runs without a quota. There is one such path today: application code calling the agent's
+`WorkflowRunner` directly ([UQ-2](../../backlog/usage-quota-open-items.md)).
 
 ## 6. When a limit is reached
 
@@ -156,6 +160,18 @@ Submitting a new turn when the limit is already exhausted gives the same result 
 LLM at all.
 
 When a fork stops on a quota, the `Task` tool tells the parent LLM so — retrying would hit the same limit.
+
+**A scheduled routine checks at the step boundary.** A routine has no iterations, so the moment before each step
+attempt (retries included) plays the role of a turn's iteration boundary. If a limit has been reached, the step is
+**not started** and not retried, and the routine run fails with the message `"Execution stopped by quota: ..."` (a
+failed `RoutineResult`, `TaskFailedEvent`). If a fork crosses the limit partway through a step, the fork stops itself
+and the next step or retry is refused at the boundary. If it crosses on the last step there is no next boundary, so
+the routine can end successfully — that is the overshoot of §7.
+
+WARNING: This check **does not look at which tool a step uses**, because the executor cannot tell which tools call the
+LLM. In a deployment with quotas on, a routine owned by a principal who has used up their limit also fails its `Bash`
+· `Read` steps. The same happens to `Principal.system()`, the owner recorded for a task created without a known caller, if the
+policy limits every principal. A stack with no quota ledger attached sees no change at all.
 
 NOTE: `getQuotaViolation()` is filled only when the turn ran **on the same node**. The result of a turn run on another
 node through `SessionRouter`, and a result kept in the idempotency store, carry only the completion reason and a
@@ -231,6 +247,6 @@ spent, and the ledger's usage is always lower than the provider's invoice
 
 - [`usage-quota.md`](../../design/agent-execution/usage-quota.md) — design rationale. Where the implementation departs
   from the design is in §11
-- [`usage-quota-open-items.md`](../../backlog/usage-quota-open-items.md) — open items (UQ-1 to UQ-3)
+- [`usage-quota-open-items.md`](../../backlog/usage-quota-open-items.md) — open items (UQ-1 to UQ-4)
 - [`orca-executor.md`](../../design/agent-execution/orca-executor.md) — the ReAct loop and `ExecutionBudget`
 - [`scope-model.en.md`](../../overview/scope-model.en.md) — component lifetime rules

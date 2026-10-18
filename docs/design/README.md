@@ -44,6 +44,7 @@
 | [`integration-test-layers.md`](agent-execution/integration-test-layers.md) | `OrcaAgentRuntime` 통합 테스트의 계층 구분과 무엇을 어디서 검증하는가 |
 | [`max-tokens-truncation-reporting.md`](agent-execution/max-tokens-truncation-reporting.md) | `max_tokens` 에서 잘린 응답에 두 ReAct 루프가 같은 답을 주는 자리 — 잘린 도구 호출을 실행하지 않고 거절하는 이유, 포크의 `TRUNCATED`, 추론 토큰을 숫자로만 붙이는 WARN, thinking 기록 §16.8 과 백로그 L-16 의 정정 |
 | [`usage-quota.md`](agent-execution/usage-quota.md) | (IMPLEMENTED — 1단계, 차이는 §11) 세션·사용자·테넌트·일 단위 누적 사용량 한도 — 실행 1회의 `ExecutionBudget` 과 따로 두는 이유, 포크까지 한 장부에 기록하는 경로, soft limit 의 초과 상한 |
+| [`usage-quota-routine-forks.md`](agent-execution/usage-quota-routine-forks.md) | (IMPLEMENTED, 승인본, 영어, 차이는 §8) 예약 루틴의 포크에 쿼터를 건 #267 설계(백로그 UQ-2 의 루틴 절반) — 실행 1회에 guard 하나인 이유, 세션 없이 태스크 소유자로 해석하는 것, 거절을 단계 경계에서 하는 이유와 §4.2 의 "판정은 한 곳" 과 부딪히지 않는 이유, 모든 단계를 막는 결정, 기각한 대안 |
 | [`skill-loop-truncation-and-fork-stall.md`](agent-execution/skill-loop-truncation-and-fork-stall.md) | 그 판정이 스킬 루프와 `ReActLlmDeriver` 에 닿는 자리 — 포크와 스킬 루프가 턴의 정체 가드를 함께 쓰는 이유, 멈춘 포크를 새 값이 아닌 `ERROR` 로 두고 열한 독자가 그것을 읽는 방식, `Task` 도구가 잘린 포크를 말하는 줄 |
 
 ### session — 영속 세션과 노드 로컬 핸들
