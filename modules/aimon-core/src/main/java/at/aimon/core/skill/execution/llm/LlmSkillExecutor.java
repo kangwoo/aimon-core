@@ -53,11 +53,14 @@ import at.aimon.core.skill.fork.SkillForkExecutor;
 import at.aimon.core.skill.fork.SkillForkOutcome;
 import at.aimon.core.skill.hook.NoOpSkillHookActivator;
 import at.aimon.core.skill.hook.SkillHookScope;
+import at.aimon.core.skill.render.RenderContext;
 import at.aimon.core.skill.render.SkillContentRenderer;
+import at.aimon.core.subagent.execution.ForkGoalRenderer;
 import at.aimon.core.tools.CallerAllowedTools;
 import at.aimon.core.tools.EnvironmentNotices;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
 import at.aimon.core.tools.HookRegistryAccess;
+import at.aimon.core.tools.SkillRenderContextAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
 /**
@@ -220,7 +223,8 @@ public class LlmSkillExecutor implements SkillExecutor {
             // keeps the historical ReAct-loop behaviour. Mirrors SkillTool's fork branching so user-slash and
             // LLM tool-call invocation paths agree on what fork-mode means.
             if (skill.getMetadata().getExecutionMode() == ExecutionMode.FORK) {
-                return executeFork(skill, renderedBody, context.getToolContext(), startTime, accumulatedTokens);
+                return executeFork(skill, renderedBody, forkGoalRenderer(skill, rawArguments, request),
+                        context.getToolContext(), startTime, accumulatedTokens);
             }
 
             final List<AllowedTool> callerAllowed = CallerAllowedTools.of(context.getToolContext());
@@ -562,6 +566,21 @@ public class LlmSkillExecutor implements SkillExecutor {
     }
 
     /**
+     * Renders the body again in the fork's environment when the fork is placed elsewhere (EE-81): the same render
+     * context with the skill staged where the fork runs. Only a body that names {@code ${AIMON_SKILL_DIR}} needs it.
+     *
+     * @return the renderer, or null when the body reads the same in every environment
+     */
+    private ForkGoalRenderer forkGoalRenderer(Skill skill, String rawArguments, SkillExecutionRequest request) {
+        if (!SkillRenderContextAccess.rendersSkillDir(skill)) {
+            return null;
+        }
+        final RenderContext spawnerContext = request.getRenderContext();
+        return forkEnvironment -> renderer.render(skill, rawArguments, spawnerContext.toBuilder()
+                .skillBaseDir(forkEnvironment.stage(skill.getStagedResource().orElseThrow())).build());
+    }
+
+    /**
      * Delegates a fork-mode skill invocation to the configured {@link SkillForkExecutor} and translates the resulting
      * {@link SkillForkOutcome} into a {@link SkillExecutionResult}.
      *
@@ -580,9 +599,12 @@ public class LlmSkillExecutor implements SkillExecutor {
      * <p>
      * Token usage is reported as zero — the forked subagent owns its own token accounting, which is propagated through
      * its execution attribution rather than aggregated into the parent skill's metadata.
+     *
+     * @param forkGoal
+     *            renders the body in the fork's environment, or null when the body reads the same everywhere
      */
-    private SkillExecutionResult executeFork(Skill skill, String renderedBody, ToolContext toolContext,
-            Instant startTime, TokenUsage accumulatedTokens) {
+    private SkillExecutionResult executeFork(Skill skill, String renderedBody, ForkGoalRenderer forkGoal,
+            ToolContext toolContext, Instant startTime, TokenUsage accumulatedTokens) {
         final SkillForkExecutor effectiveForkExecutor = toolContext.get(ToolContextKeys.SKILL_FORK_EXECUTOR_KEY)
                 .orElse(forkExecutor);
         final SkillForkOutcome outcome;
@@ -590,7 +612,9 @@ public class LlmSkillExecutor implements SkillExecutor {
                 .activate(skill, toolContext)) {
             final ToolContext forkContext = hookScope.hookRegistry()
                     .map(registry -> HookRegistryAccess.withHookRegistry(toolContext, registry)).orElse(toolContext);
-            outcome = effectiveForkExecutor.fork(skill, renderedBody, forkContext);
+            outcome = forkGoal == null
+                    ? effectiveForkExecutor.fork(skill, renderedBody, forkContext)
+                    : effectiveForkExecutor.fork(skill, renderedBody, forkGoal, forkContext);
         }
         final SkillExecutionMetadata metadata = buildMetadata(0, accumulatedTokens, startTime);
         if (outcome.isTruncated()) {

@@ -257,6 +257,7 @@ registry.register(HookEventType.PRE_TOOL, rateLimitHook);
 | `getInvokerName()` | `String` | 실행자 이름 |
 | `getHookRegistry()` | `HookRegistry` | Hook 레지스트리 |
 | `getExecutionEnvironment()` | `Optional<ExecutionEnvironment>` | 훅이 발화한 실행의 실행 환경 — 그 실행의 도구가 쓰는 파일 시스템·셸. 실행 밖에서 발화하는 이벤트(`onSessionStart` · `onSessionEnd` · `onConfigReload`)와 rewake 리플레이에서는 비어 있다. 비어 있을 때 호스트로 되돌아가지 말 것 |
+| `hasExecution()` | `boolean` | 이 발화 뒤에 실행이 있는가. 실행 밖 세 이벤트와, 에이전트 단위 러너가 호출한 실행 없이 띄운 SubAgent 의 `subagentStart`(그리고 그 SubAgent 가 환경을 정하지 못하고 끝난 경우의 `subagentStop`)는 `false` 다. `getExecutionEnvironment()` 가 비어 있는데 이것이 `true` 면 실행은 있는데 환경이 닿지 않은 것이다 — 호스트로 되돌아가지 말 것. `"shell"` 이 없는 `hooks.json` 커맨드는 이 답으로 호스트와 실행 환경 사이를 고른다 |
 | `getEnvironmentDescriptor()` | `Optional<EnvironmentDescriptor>` | 위 환경의 서술자(작업 디렉터리 · platform · OS). 명령이 **어디서 도는지**는 호스트가 아니라 이것으로 판단한다 |
 | `getExecutionCancellation()` | `Optional<CancellationSignal>` | 훅이 발화한 실행의 취소 신호. 훅이 실행을 대신해 오래 걸리는 일을 시작하면 이 신호에 묶어 인터럽트에 멈추게 한다. 가드 이벤트(`onStart` · `preCompact` · `preTool` · `permissionRequest`)는 항상 싣고, 이미 일어난 일을 알리는 이벤트(`onStop` · `postCompact` · `subagentStart` · `subagentStop` · `postTool` · `permissionDenied`)는 **신호가 서기 전까지만** 싣는다 — 그래서 같은 컨텍스트에서도 답이 바뀔 수 있으니 컨텍스트를 받을 때가 아니라 일을 시작할 때 읽는다. 실행 밖 이벤트와 슬래시 명령 턴의 `onStop` · `/compact` 의 압축 이벤트에서는 비어 있다. 이 답은 코드로 쓴 hook 의 것이다. 선언적 hook 의 셸 커맨드는 보고 이벤트에서 이 신호를 쓰지 않는다(인터럽트에 멈추지 않는다) — 그 hook 은 자기 셸 실행기에게 이 값이 비어 있는 **뷰**를 넘기므로, `ShellActionExecutor` 는 받은 컨텍스트를 이벤트 타입으로 내려받지 말고 `HookContext` 로만 쓴다 |
 | `getTimestamp()` | `Instant` | 타임스탬프 |

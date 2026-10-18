@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/subagent/subagent-development-guide.md
-source_commit: ca68a22
+source_commit: ff0e6ff2
 ---
 
 # Subagent Development Guide
@@ -426,6 +426,15 @@ hook receives is not the fork's but **the spawning execution's** (the one the be
 `context.getExecutionEnvironment()` — the runner creates no environment for the fork). **OnStop does not fire** (its
 termination signal duplicates SubagentStop). The dispatch-boundary hooks **SubagentStart and SubagentStop still fire as
 they always did**, so nothing is lost for observability or auditing.
+
+**SubagentStart and SubagentStop carry different environments.** `SubagentStart` fires before the subagent's
+environment is resolved, so it carries **the spawning execution's environment**. `SubagentStop` carries **the
+subagent's own environment** — wherever the execution environment provider placed it (another sandbox, another
+workspace), and that hook's shell commands run there too. A subagent that resolves no environment of its own, such as
+a code behaviour, and one that failed before it started get the spawner's. A subagent launched by the agent-scoped
+workflow runner (background `Workflow`) has no spawning execution: its `SubagentStart` is a firing with no execution
+behind it (`hasExecution()` is `false`), and a `hooks.json` command with no `"shell"` runs on the host. If that subagent
+ran its loop, its `SubagentStop` gets the subagent's environment.
 
 ### A full example
 

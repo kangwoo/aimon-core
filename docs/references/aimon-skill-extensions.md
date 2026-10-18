@@ -73,7 +73,7 @@ Fork 시맨틱은 두 호출 경로 모두에 적용된다:
 
 공통 흐름:
 
-1. 본문이 일반 절차대로 렌더링된다. `$ARGUMENTS`/`$1..$9` 치환은 fork에서도 동일하게 일어나며, 렌더된 본문이 SubAgent의 **goal**이 된다.
+1. 본문이 일반 절차대로 렌더링된다. `$ARGUMENTS`/`$1..$9` 치환은 fork에서도 동일하게 일어나며, 렌더된 본문이 SubAgent의 **goal**이 된다. 본문이 `${AIMON_SKILL_DIR}` 를 쓰고 실행 환경 제공자가 fork 를 호출한 쪽과 다른 환경에 두면, fork 는 자기 환경이 정해진 뒤 본문을 **그 환경에 스테이징한 경로로 다시 렌더한다** — fork 의 도구가 읽을 수 있는 사본이다(EE-81). 로컬 제공자처럼 fork 가 호출한 쪽의 환경을 그대로 받으면 다시 렌더하지 않는다. fork 의 환경에 스테이징하지 못하면 fork 는 시작하지 않고 실패한다. `subagentStart` 훅이 받는 goal 은 호출한 쪽에서 렌더한 글이다.
 2. `SubagentBackedSkillForkExecutor`가 `SubagentRegistry`에 `execution.agent`가 등록돼 있는지 먼저 확인한다 — 없으면 `Skill 'X' references unknown subagent 'Y'`로 즉시 실패하고 `SubagentExecutionManager`를 호출하지 않는다.
 3. `ToolContext`에 `AGENT_RUNTIME_ID`가 없으면 fork를 진행하지 않고 명확한 에러를 반환한다. User-slash 경로에서는 `OrcaAgentExecutor`가 현재 `AgentRuntime`의 ID를 `CommandExecutionManager`에 함께 전달하므로 정상 호출 시 항상 채워진다.
 4. SubAgent 실행 결과가 `success`면 LLM tool-call 경로(SkillTool)는 다음 형식으로 결과를 감싸 반환한다:
@@ -148,7 +148,7 @@ action-def := { type: "deny", reason: string }
 ### 셸 실행 시맨틱
 
 - 모든 셸 액션은 동일 스킬 호출 안에서 **동기·순차** 실행된다(병렬 발화 없음).
-- **어디서 도는가.** 명령은 호스트 JVM 이 아니라 **hook 이 발화한 실행의 실행 환경**(`HookContext.getExecutionEnvironment()`)의 셸에서 돈다 — 같은 스킬의 `Bash` 호출이 도는 바로 그 셸이다. fork 모드에서는 **fork 자신의** 환경이다. 실행자(`DefaultShellActionExecutor`)는 셸을 쥐지 않고 발화할 때마다 컨텍스트에서 얻는다.
+- **어디서 도는가.** 명령은 호스트 JVM 이 아니라 **hook 이 발화한 실행의 실행 환경**(`HookContext.getExecutionEnvironment()`)의 셸에서 돈다 — 같은 스킬의 `Bash` 호출이 도는 바로 그 셸이다. fork 모드에서는 **fork 자신의** 환경이다. 실행자(`DefaultShellActionExecutor`)는 셸을 쥐지 않고 발화할 때마다 컨텍스트에서 얻는다. 스킬의 훅은 스킬 자신의 코드이므로 **격리하지 않는다** — 같은 셸의 상태(`cd` · `export`)에서 시작해도 된다. 운영자의 `hooks.json` 커맨드는 다르다: 격리된 실행으로 돈다([`hook-config-guide.md`](../features/hook/hook-config-guide.md) › `command`).
   - **작업 디렉터리는 워크스페이스다.** 로컬 환경에서도 그렇다 — 예전에는 호스트 JVM 의 작업 디렉터리였다. 상대 경로로 스크립트를 부르는 명령은 워크스페이스 기준으로 풀린다. 자기 스킬 디렉터리의 스크립트는 환경 변수 `AIMON_SKILL_DIR` 로 부른다 — `bash "$AIMON_SKILL_DIR/scripts/guard.sh"`. 사본에는 실행 비트가 없으므로 인터프리터로 실행한다.
   - **`AIMON_SKILL_DIR` 는 발화할 때마다, hook 이 도는 환경에 스테이징해서 얻는다.** 값은 그 실행의 `ExecutionEnvironment.stage(...)` 가 돌려준 경로다. 스킬을 호출한 쪽에서 본문을 렌더하며 스테이징한 경로를 물려받지 않는다 — hook 은 fork(와 fork 가 띄운 실행)에서 발화하고, fork 가 다른 환경에 놓이면 호출한 쪽의 사본은 거기에 없다. 이미 사본이 있는 환경에서는 마커 하나를 확인하는 비용이다.
   - **스테이징하지 못하면 명령은 돌지 않는다**(크기 상한 초과, 적재 뒤 디스크에서 바뀐 스킬 등). 변수 없이 돌리면 `"$AIMON_SKILL_DIR/scripts/guard.sh"` 가 `/scripts/guard.sh` 가 되어 다른 명령이 된다. 그 다음은 아래 "명령을 돌리지 못했을 때" 와 같다 — 가드 이벤트는 막고(`failOpen: true` 면 통과), 나머지는 WARN 만 남긴다.

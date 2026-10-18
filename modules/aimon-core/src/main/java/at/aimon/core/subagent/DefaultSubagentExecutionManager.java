@@ -40,6 +40,7 @@ import at.aimon.core.agent.stream.SubagentTaskCompleted;
 import at.aimon.core.agent.tool.ToolExecutionManager;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.agent.tool.permission.AllowedTools;
+import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.event.SubagentStartContext;
 import at.aimon.core.hook.event.SubagentStopContext;
@@ -768,7 +769,10 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
                     .invokingSessionId(launchContext.getInvokingSessionId().orElse(null))
                     .previousSnapshot(launchContext.getPreviousSnapshot().orElse(null))
                     // The spawning turn's quota guard, so the fork is charged to the turn's keys (usage-quota §4.3).
-                    .quotaGuard(launchContext.getQuotaGuard()).build();
+                    .quotaGuard(launchContext.getQuotaGuard())
+                    // A fork-mode skill's body, rendered again in the fork's environment when that is not the
+                    // spawner's (EE-81).
+                    .forkGoalRenderer(launchContext.getForkGoalRenderer().orElse(null)).build();
 
             // Execute subagent. A code behavior registered for this name REPLACES the ReAct loop, receiving the SAME
             // context/request (cancellation signal, principal, metadata, tools). When absent, the data subagent runs
@@ -1012,9 +1016,17 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         });
     }
 
-    // Both subagent hooks fire in the spawning execution's registry, so the environment they carry is the spawner's
-    // (SubagentLaunchContext#getExecutionEnvironment), not the fork's — at subagentStart the fork's has not been
-    // resolved yet. Empty when a runtime-level runner spawned the fork.
+    // Both subagent hooks fire in the spawning execution's registry. The environment they carry differs (EE-52):
+    // - subagentStart carries the spawner's (SubagentLaunchContext#getExecutionEnvironment). The fork's has not been
+    // resolved yet, and resolving it here would mint the fork's identity early and move the single resolution site.
+    // - subagentStop carries the fork's, stamped on the result by DefaultSubagentExecutor, and falls back to the
+    // spawner's on the paths that never resolved one (a code behavior, an unknown subagent, a caller-ceiling refusal,
+    // an exception, a pool rejection). The fork's environment is still open: core never closes one, and the stop
+    // fires before control returns to the spawning tool.
+    // Both are empty when a runtime-level runner spawned the fork from no calling execution, and then the firing is
+    // marked as having no execution behind it (spawnedOutsideExecution) — for subagentStop only when the fork never
+    // resolved an environment either, since a fork that ran had an execution of its own. A hooks.json command with no
+    // "shell" key runs on the host for such a firing.
     //
     // The cancellation signal they carry is the one that governs the fork, which is the answer to "whose work is this
     // hook doing": the spawner's for a foreground fork, the per-task coordinator's for a background one — it cascades
@@ -1029,6 +1041,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             final SubagentStartContext ctx = SubagentStartContext.builder().invokerType(InvokerType.MAIN_AGENT)
                     .invokerName(subagentName).hookRegistry(launchContext.getHookRegistry())
                     .executionEnvironment(launchContext.getExecutionEnvironment().orElse(null))
+                    .spawnedOutsideExecution(launchContext.getExecutionEnvironment().isEmpty())
                     .executionCancellation(governingSignal).subagentName(subagentName).taskId(taskId).goal(goal)
                     .description(description).executionAttributes(launchContext.getExecutionAttributes()).build();
             hookExecutionManager.executeSubagentStart(ctx);
@@ -1044,9 +1057,11 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             return;
         }
         try {
+            final Optional<ExecutionEnvironment> environment = result.getExecutionEnvironment()
+                    .or(launchContext::getExecutionEnvironment);
             final SubagentStopContext ctx = SubagentStopContext.builder().invokerType(InvokerType.MAIN_AGENT)
                     .invokerName(subagentName).hookRegistry(launchContext.getHookRegistry())
-                    .executionEnvironment(launchContext.getExecutionEnvironment().orElse(null))
+                    .executionEnvironment(environment.orElse(null)).spawnedOutsideExecution(environment.isEmpty())
                     .executionCancellation(governingSignal).subagentName(subagentName).taskId(taskId)
                     .success(result.isSuccess()).errorMessage(result.isSuccess() ? null : result.getErrorMessage())
                     .executionAttributes(launchContext.getExecutionAttributes()).build();

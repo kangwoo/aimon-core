@@ -28,9 +28,10 @@ import at.aimon.core.skill.hook.declarative.ShellActionExecutor;
 import at.aimon.core.skill.hook.declarative.ShellHookOutcome;
 
 /**
- * EE-48 on the CLI assembly: {@code hooks.json} shell actions run on the CLI's host shell, not in an execution
- * environment. The file is operator configuration and declares session- and config-lifecycle events that fire outside
- * any execution, so an environment-bound executor here would silently skip them.
+ * EE-48 on the CLI assembly: the executor for the {@code hooks.json} shell actions placed on the host &mdash; the
+ * session- and config-lifecycle events, {@code "shell": "host"} and the rest &mdash; runs them on the CLI's host shell,
+ * whatever the context says. Since #273 that shell is rooted at the workspace root, so host-placed and
+ * environment-placed commands share one working directory.
  */
 @DisplayName("AgentSetupFactory hooks.json executor: host shell")
 class AgentSetupFactoryHookConfigShellTest {
@@ -84,5 +85,18 @@ class AgentSetupFactoryHookConfigShellTest {
 
         verify(host).execute(any(ShellCommand.class), any(ExecutionOptions.class));
         verifyNoInteractions(environmentShell);
+    }
+
+    @Test
+    @DisplayName("the host shell is rooted at the workspace root, not the JVM's user.dir (#273)")
+    void hostShellIsRootedAtTheWorkspaceRoot(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workspace) {
+        final at.aimon.core.filesystem.impl.local.LocalFileSystem fileSystem = new at.aimon.core.filesystem.impl.local.LocalFileSystem(
+                new at.aimon.core.filesystem.impl.local.LocalFileSystemConfig(workspace.toString()));
+        fileSystem.initialize();
+
+        try (at.aimon.core.shell.impl.local.LocalShell shell = AgentSetupFactory.createHookConfigShell(fileSystem)) {
+            assertThat(shell.getWorkingDirectory()).isEqualTo(fileSystem.getWorkingDirectory());
+            assertThat(shell.getWorkingDirectory()).isNotEqualTo(System.getProperty("user.dir"));
+        }
     }
 }

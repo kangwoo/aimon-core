@@ -123,6 +123,37 @@ class SubagentBackedSkillForkExecutorTest {
     }
 
     @Test
+    void fork_WithAForkGoalRenderer_HandsItToTheFork() {
+        // EE-81: the renderer travels on the launch context, so the fork can render the body where it runs.
+        when(subagentRegistry.getSubagent("code-reviewer")).thenReturn(Optional.of(subagent("code-reviewer")));
+        when(subagentExecutionManager.executeInline(any(SubagentLaunchContext.class), any(), any(), eq("rendered body"),
+                any())).thenReturn(SubagentExecutionResult.emptySuccess("LGTM", Instant.now()));
+        final at.aimon.core.subagent.execution.ForkGoalRenderer renderer = environment -> "rendered there";
+
+        executor.fork(forkSkill("code-reviewer"), "rendered body", renderer, contextWithExecutionId("ctx-42"));
+
+        ArgumentCaptor<SubagentLaunchContext> envCaptor = ArgumentCaptor.forClass(SubagentLaunchContext.class);
+        verify(subagentExecutionManager).executeInline(envCaptor.capture(), any(), any(), eq("rendered body"), any());
+        assertThat(envCaptor.getValue().getForkGoalRenderer()).containsSame(renderer);
+    }
+
+    @Test
+    void fork_DefaultOverloadIgnoresTheRendererAndDelegates() {
+        // A custom executor that does not override the four-argument fork keeps its behaviour: the spawner's text.
+        final java.util.concurrent.atomic.AtomicReference<String> seen = new java.util.concurrent.atomic.AtomicReference<>();
+        final SkillForkExecutor custom = (skill, goal, toolContext) -> {
+            seen.set(goal);
+            return SkillForkOutcome.success("ok");
+        };
+
+        final SkillForkOutcome outcome = custom.fork(forkSkill("code-reviewer"), "rendered body",
+                environment -> "never", contextWithExecutionId("ctx-42"));
+
+        assertThat(outcome.isSuccess()).isTrue();
+        assertThat(seen).hasValue("rendered body");
+    }
+
+    @Test
     void fork_ReportsAForkCutAtMaxTokensAsTruncated() {
         // L-26: a cut fork is a success whose answer is partial. The outcome says so by type, so the slash path can end
         // its turn TRUNCATED without reading the marker out of the text.

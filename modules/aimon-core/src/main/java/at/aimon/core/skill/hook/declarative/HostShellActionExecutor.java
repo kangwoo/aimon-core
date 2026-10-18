@@ -1,5 +1,6 @@
 package at.aimon.core.skill.hook.declarative;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
@@ -20,6 +21,13 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * <strong>Do not hand this to a skill parser.</strong> A skill file is not operator configuration; a skill's hook
  * command must run where that skill's tools run, which is what {@link DefaultShellActionExecutor} does. Wiring this
  * executor into {@code SkillHookSetParser} gives every skill author the host shell.
+ *
+ * <p>
+ * Since aimon-core #273 it serves only the {@code hooks.json} commands that are placed on the host: the events outside
+ * any execution, a handler that declares {@code "shell": "host"}, an {@code asyncRewake} handler with no
+ * {@code "shell"}, and a firing with no execution behind it. A command that names {@code AIMON_HOOK_DIR} gets the host
+ * path of its layer's {@code hooks/} directory. The command is not isolated: a host shell keeps no session state of
+ * the agent's to isolate from.
  *
  * <p>
  * Thread-safe as long as the supplied {@link VirtualShell} is thread-safe (the in-tree {@code LocalShell} is).
@@ -57,7 +65,8 @@ public final class HostShellActionExecutor implements ShellActionExecutor {
         Objects.requireNonNull(action, "Action cannot be null");
         Objects.requireNonNull(context, "Context cannot be null");
         Objects.requireNonNull(environmentOverrides, "Environment overrides cannot be null");
-        return ShellActionRunner.run(shell, action, environmentOverrides, stdinPayload,
-                context.getExecutionCancellation());
+        final Map<String, String> env = new LinkedHashMap<>(environmentOverrides);
+        ConfigHookDirectory.exportHost(env, action);
+        return ShellActionRunner.run(shell, action, env, stdinPayload, context.getExecutionCancellation(), false);
     }
 }

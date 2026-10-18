@@ -333,6 +333,88 @@ class DefaultSubagentExecutionManagerTest {
         verify(hooks).executeSubagentStop(stop.capture());
         assertThat(start.getValue().getExecutionEnvironment().orElseThrow()).isSameAs(spawner);
         assertThat(stop.getValue().getExecutionEnvironment().orElseThrow()).isSameAs(spawner);
+        assertThat(start.getValue().hasExecution()).isTrue();
+        assertThat(stop.getValue().hasExecution()).isTrue();
+    }
+
+    @Test
+    @DisplayName("subagentStop carries the fork's environment when the fork resolved one; subagentStart the spawner's (EE-52)")
+    void subagentStopCarriesTheForksEnvironment() {
+        InMemorySubagentRegistry dataRegistry = new InMemorySubagentRegistry();
+        dataRegistry.register(Subagent.builder().name("explore").systemPrompt("(data)").build());
+        ExecutionEnvironment fork = TestExecutionEnvironments.builder().workingDirectory("/fork").build();
+        when(reactExecutor.execute(any(), any())).thenReturn(reactResult("from-react").withExecutionEnvironment(fork));
+        HookExecutionManager hooks = mock(HookExecutionManager.class);
+        DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(reactExecutor, bgPool, hooks,
+                new InMemorySubagentBehaviorRegistry());
+        ExecutionEnvironment spawner = TestExecutionEnvironments.builder().workingDirectory("/spawner").build();
+
+        manager.execute(env(dataRegistry).toBuilder().executionEnvironment(spawner).build(), "task-1", "explore", "go",
+                "");
+
+        ArgumentCaptor<SubagentStartContext> start = ArgumentCaptor.forClass(SubagentStartContext.class);
+        ArgumentCaptor<SubagentStopContext> stop = ArgumentCaptor.forClass(SubagentStopContext.class);
+        verify(hooks).executeSubagentStart(start.capture());
+        verify(hooks).executeSubagentStop(stop.capture());
+        assertThat(start.getValue().getExecutionEnvironment().orElseThrow()).isSameAs(spawner);
+        assertThat(stop.getValue().getExecutionEnvironment().orElseThrow()).isSameAs(fork);
+    }
+
+    @Test
+    @DisplayName("a runtime-level runner's fork that resolved an environment has an execution at subagentStop, none at subagentStart")
+    void runtimeRunnerForkThatRanHasAnExecutionAtStop() {
+        InMemorySubagentRegistry dataRegistry = new InMemorySubagentRegistry();
+        dataRegistry.register(Subagent.builder().name("explore").systemPrompt("(data)").build());
+        ExecutionEnvironment fork = TestExecutionEnvironments.builder().workingDirectory("/fork").build();
+        when(reactExecutor.execute(any(), any())).thenReturn(reactResult("from-react").withExecutionEnvironment(fork));
+        HookExecutionManager hooks = mock(HookExecutionManager.class);
+        DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(reactExecutor, bgPool, hooks,
+                new InMemorySubagentBehaviorRegistry());
+
+        manager.execute(env(dataRegistry), "task-1", "explore", "go", "");
+
+        ArgumentCaptor<SubagentStartContext> start = ArgumentCaptor.forClass(SubagentStartContext.class);
+        ArgumentCaptor<SubagentStopContext> stop = ArgumentCaptor.forClass(SubagentStopContext.class);
+        verify(hooks).executeSubagentStart(start.capture());
+        verify(hooks).executeSubagentStop(stop.capture());
+        assertThat(start.getValue().hasExecution()).isFalse();
+        assertThat(stop.getValue().hasExecution()).isTrue();
+        assertThat(stop.getValue().getExecutionEnvironment().orElseThrow()).isSameAs(fork);
+    }
+
+    @Test
+    @DisplayName("an unknown subagent spawned by a runtime-level runner has no execution at either hook")
+    void runtimeRunnerUnknownSubagentHasNoExecution() {
+        HookExecutionManager hooks = mock(HookExecutionManager.class);
+        DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(reactExecutor, bgPool, hooks,
+                new InMemorySubagentBehaviorRegistry());
+
+        manager.execute(env(new InMemorySubagentRegistry()), "task-1", "ghost", "go", "");
+
+        ArgumentCaptor<SubagentStartContext> start = ArgumentCaptor.forClass(SubagentStartContext.class);
+        ArgumentCaptor<SubagentStopContext> stop = ArgumentCaptor.forClass(SubagentStopContext.class);
+        verify(hooks).executeSubagentStart(start.capture());
+        verify(hooks).executeSubagentStop(stop.capture());
+        assertThat(start.getValue().hasExecution()).isFalse();
+        assertThat(stop.getValue().hasExecution()).isFalse();
+    }
+
+    @Test
+    @DisplayName("the launch context's fork goal renderer reaches the executor's request (EE-81)")
+    void forkGoalRendererReachesTheRequest() {
+        InMemorySubagentRegistry dataRegistry = new InMemorySubagentRegistry();
+        dataRegistry.register(Subagent.builder().name("explore").systemPrompt("(data)").build());
+        when(reactExecutor.execute(any(), any())).thenReturn(reactResult("from-react"));
+        DefaultSubagentExecutionManager manager = newManager(new InMemorySubagentBehaviorRegistry());
+        at.aimon.core.subagent.execution.ForkGoalRenderer renderer = environment -> "rendered";
+
+        manager.execute(env(dataRegistry).toBuilder().forkGoalRenderer(renderer).build(), "task-1", "explore", "go",
+                "");
+
+        ArgumentCaptor<SubagentExecutionRequest> request = ArgumentCaptor.forClass(SubagentExecutionRequest.class);
+        verify(reactExecutor).execute(any(), request.capture());
+        assertThat(request.getValue().getForkGoalRenderer()).containsSame(renderer);
+        assertThat(request.getValue().getGoal()).isEqualTo("go");
     }
 
     @Test
@@ -354,6 +436,9 @@ class DefaultSubagentExecutionManagerTest {
         verify(hooks).executeSubagentStop(stop.capture());
         assertThat(start.getValue().getExecutionEnvironment()).isEmpty();
         assertThat(stop.getValue().getExecutionEnvironment()).isEmpty();
+        // A code behavior resolves no environment, so neither hook has an execution behind it (#273).
+        assertThat(start.getValue().hasExecution()).isFalse();
+        assertThat(stop.getValue().hasExecution()).isFalse();
     }
 
     @Test

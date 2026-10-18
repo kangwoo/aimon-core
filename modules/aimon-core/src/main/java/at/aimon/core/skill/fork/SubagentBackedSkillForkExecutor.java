@@ -25,6 +25,7 @@ import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.subagent.SubagentToolScope;
+import at.aimon.core.subagent.execution.ForkGoalRenderer;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.tools.CallerAllowedTools;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
@@ -84,6 +85,25 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
         Objects.requireNonNull(skill, "Skill cannot be null");
         Objects.requireNonNull(goal, "Goal cannot be null");
         Objects.requireNonNull(toolContext, "Tool context cannot be null");
+        return forkWith(skill, goal, null, toolContext);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * The renderer is handed to the fork through {@link SubagentLaunchContext#getForkGoalRenderer()}.
+     */
+    @Override
+    public SkillForkOutcome fork(Skill skill, String goal, ForkGoalRenderer forkGoal, ToolContext toolContext) {
+        Objects.requireNonNull(skill, "Skill cannot be null");
+        Objects.requireNonNull(goal, "Goal cannot be null");
+        Objects.requireNonNull(forkGoal, "Fork goal renderer cannot be null");
+        Objects.requireNonNull(toolContext, "Tool context cannot be null");
+        return forkWith(skill, goal, forkGoal, toolContext);
+    }
+
+    private SkillForkOutcome forkWith(Skill skill, String goal, ForkGoalRenderer forkGoal, ToolContext toolContext) {
 
         final String agentName = skill.getMetadata().getForkAgentName();
         if (agentName == null || agentName.isBlank()) {
@@ -148,7 +168,9 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
                 .executionEnvironment(ExecutionEnvironmentAccess.of(toolContext).orElse(null))
                 .executionEnvironmentProvider(ExecutionEnvironmentAccess.providerOf(toolContext).orElse(null))
                 // The spawning execution's quota guard: the fork is charged to its keys, never resolves its own.
-                .quotaGuard(toolContext.get(ToolContextKeys.QUOTA_GUARD).orElse(null)).build();
+                .quotaGuard(toolContext.get(ToolContextKeys.QUOTA_GUARD).orElse(null))
+                // The body rendered again where the fork runs, when that is not here (EE-81).
+                .forkGoalRenderer(forkGoal).build();
 
         final String taskId = UUID.randomUUID().toString();
         final String description = "skill:" + skill.getName();

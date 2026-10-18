@@ -8,9 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.environment.ExecutionEnvironment;
-import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.hook.execution.HookContext;
-import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.skill.hook.action.ShellAction;
 
 /**
@@ -75,22 +73,9 @@ public final class DefaultShellActionExecutor implements ShellActionExecutor {
             return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.NO_ENVIRONMENT,
                     "the hook context carries no execution environment");
         }
-        final VirtualShell shell;
-        try {
-            shell = executionEnvironment.get().shell();
-        } catch (ExecutionEnvironmentUnavailableException e) {
-            // The message is passed on: it is what a tool call in this environment already returns to the model.
-            log.warn("Skill hook shell action not run: the execution environment is unavailable (command={}): {}",
-                    action.getCommand(), e.getMessage());
-            return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE, e.getMessage());
-        } catch (RuntimeException e) {
-            log.warn("Skill hook shell action not run: the execution environment gave no shell (command={}): {}",
-                    action.getCommand(), e.getMessage(), e);
-            // The type only: the message is the provider's, and the detail becomes a deny reason the model reads.
-            return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE,
-                    "the environment gave no shell (" + ShellActionRunner.failureDetail(e) + ")");
-        }
-        return ShellActionRunner.run(shell, action, environmentOverrides, stdinPayload,
-                context.getExecutionCancellation());
+        // Not isolated: a skill's hook runs where that skill's tools run, and may start from their shell state.
+        return EnvironmentShells.withShell(executionEnvironment.get(), action.getCommand(), "Skill hook",
+                shell -> ShellActionRunner.run(shell, action, environmentOverrides, stdinPayload,
+                        context.getExecutionCancellation(), false));
     }
 }

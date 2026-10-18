@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 108건 (열림 30 · 닫힘 78)
+# 실행 환경 — 등록 항목 112건 (열림 31 · 닫힘 81)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -94,6 +94,13 @@ EE-106~EE-108 은 환경의 알림을 모든 도구 결과에 싣게 한 변경(
 갈래만 남겨 제목을 좁혔다. 트리거가 샌드박스 제공자에 걸려 있던 다섯(EE-30 · EE-48 · EE-52 · EE-81, 그리고 EE-30 에 매인
 EE-63)에는 트리거가 왔다는 날짜 붙은 줄을 더했다. 결정은 하나도 내리지 않았고, 그중 셋(EE-48 · EE-52 · EE-81)은 오늘의
 제공자로는 항목이 걱정한 결과가 아직 다 나지 않는다는 것도 함께 적었다.
+
+그 셋(EE-48 · EE-52 · EE-81)은 같은 날 메인테이너의 결정 — 훅은 그 훅이 말하는 실행의 환경에서 돌고, 호스트는 실행이 없을
+때만 쓴다 — 으로 한 변경(#273)에서 닫았다. 결정과 닫힘이 한 변경 안에 있어 "결정됨이되 열림" 구간을 지나지 않았다. 그
+변경의 설계(승인본, 영어)와 구현이 설계에서 벗어난 점은
+[`../design/tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md`](../design/tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md)
+에 있다. EE-109~EE-112 는 그 설계의 실패 모드(F12 → EE-109), 새 항목 후보(§8 → EE-110), aimon-sandbox 후속 작업과 열린 질문
+(§8 · Q1 → EE-111, Q3 → EE-112) 가운데 이 변경 밖으로 결과가 번지는 것을 옮긴 것이다.
 
 ---
 
@@ -2046,7 +2053,7 @@ aimon-sandbox 가 정했다 — **부모를 따른다.** 설계 §5.2 의 기본
 
 출처: [`../design/tool/workflow-isolation-hardening.md`](../design/tool/workflow-isolation-hardening.md) §7 Q1 · Q4.
 
-## EE-48 — `hooks.json` 선언 훅의 셸은 여전히 호스트다 · **열림**
+## EE-48 — `hooks.json` 선언 훅의 셸은 여전히 호스트다 · **닫힘** *(2026-10-18)*
 
 **무엇을.** 운영자가 `hooks.json` 에 쓴 셸(`command`) 핸들러를 실행 환경의 셸로 보낼지, 호스트에 둘지 정한다. 보낸다면
 실행 밖 이벤트(`onSessionStart` · `onSessionEnd` · `onConfigReload`)의 핸들러를 어디서 돌릴지도 함께 정한다.
@@ -2074,6 +2081,44 @@ aimon-sandbox 가 정했다 — **부모를 따른다.** 설계 §5.2 의 기본
 
 출처: [`../design/tool/execution-environment-ee9-ee12-hook-environment.md`](../design/tool/execution-environment-ee9-ee12-hook-environment.md)
 §3.3 · §9 Q1.
+
+### 닫힘 (2026-10-18)
+
+메인테이너가 정했다 — **실행 안 이벤트의 `hooks.json` 명령은 그 실행의 환경에서, 실행 밖 이벤트는 호스트에서 돈다.**
+설계는
+[`../design/tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md`](../design/tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md)
+(#273).
+
+- **배치.** `"shell"` 키가 없는 `command` 핸들러는 실행 안 이벤트(`preTool` · `postTool` 과 나머지)에서 실행 환경의 셸로,
+  `onSessionStart` · `onSessionEnd` · `onConfigReload` 에서 호스트로 간다. `"shell": "host"` 는 어느 이벤트에서나 호스트에
+  둔다. `"shell": "environment"` 는 환경에만 두고, 실행 밖 이벤트에서는 WARN 과 함께 빠진다. 다른 값과 `command` 가 아닌
+  핸들러의 `"shell"` 은 파싱 오류다. `HookRegistryApplier` 가 핸들러마다 실행기를 고른다.
+- **실행이 없는 발화는 호스트.** `HookContext.hasExecution()` 이 답한다. 에이전트 단위 러너(백그라운드 `Workflow`)가
+  스폰한 포크의 `subagentStart`, 그리고 포크가 환경을 끝내 해석하지 못한 경우의 `subagentStop` 이 그렇다. 실행은 있는데
+  환경이 닿지 않은 컨텍스트는 호스트로 가지 않고 `NO_ENVIRONMENT` 다(설계 §15).
+- **무결성.** 환경에 놓인 명령은 **격리된 실행**이다 — 새 SPI `ExecutionOptions.isIsolated()` · `ShellFeature.ISOLATED_EXECUTION`.
+  에이전트가 남긴 `export` · `cd` 를 읽지 않고, 환경의 루트에서 기본 변수로 시작한다. 그 기능을 선언하지 않은 셸에서는
+  돌리지 않는다(`ISOLATION_UNSUPPORTED`, 가드는 막는다). `LocalShell` 은 선언한다. 워크플로 격리 브랜치에서는 브랜치의
+  기반 환경(`isolatedFrom()` 의 끝)에서 돌아 로컬 제공자의 cwd 는 워크스페이스 루트다.
+- **스크립트.** 명령이 `AIMON_HOOK_DIR` 를 쓰면 그 층의 `hooks/` 디렉터리가 명령을 실제로 돌리는 실행기에서 스테이징된다
+  (호스트에서는 호스트 경로 그대로).
+- **어느 조립이든.** 환경 쪽 기본 실행기(`IsolatedShellActionExecutor`)는 발화 컨텍스트에서 셸을 받으므로
+  `HookHotReloadBootstrap` 과 어떤 제공자의 조합에서도 같다. CLI 의 호스트 셸은 워크스페이스 루트에 놓였다.
+
+**착수해 보니 적힌 것과 달랐던 것.**
+
+1. **"반대로 전부 환경 셸로 옮기면 실행 밖 이벤트의 훅은 돌 곳이 없다"** 는 맞지만 둘 중 하나를 고를 일이 아니었다 —
+   이벤트마다 정적으로 나누면 된다. 정적으로 나눌 수 없는 것은 **같은 이벤트가 실행 없이 발화하는 경우**였고(에이전트 단위
+   러너의 `subagentStart`), 그것은 컨텍스트가 스스로 말하게 했다.
+2. **비대칭은 셸만이 아니었다.** 환경 셸로 옮기기만 하면 샌드박스는 세션의 상태 파일을 읽고 시작하므로(그쪽
+   `ShellWrapper`), 에이전트가 `export PATH=…` 로 운영자의 정책 훅을 조종할 수 있다. 그래서 격리된 실행이라는 SPI 가 한 줄
+   필요했다.
+3. **CLI 의 cwd 가 하나 바뀌었다.** 호스트 셸은 JVM 의 `user.dir` 에서 돌았고 워크스페이스 루트는 jar 디렉터리다. 둘이 다른
+   실행(`java -jar …` 을 저장소 루트에서)에서는 이제 모든 `hooks.json` 명령이 워크스페이스 루트에서 돈다. CHANGELOG 의 동작
+   변경이다.
+
+**남은 것.** EE-109(스테이징한 훅 스크립트의 무결성), EE-111(aimon-sandbox 가 격리된 실행을 선언해야 한다), EE-112(운영자가
+정하는 환경 변수).
 
 ## EE-49 — 스킬 훅은 에이전트 단위 레지스트리에 등록되어 다른 실행에서도 발화한다 · **닫힘** *(2026-10-04)*
 
@@ -2273,7 +2318,7 @@ WARN), `HookRegistryApplierTest`(셸 미지원 실행기 · 옵션 전달), `Age
 
 설계와 구현이 설계에서 벗어난 점: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md).
 
-## EE-52 — `subagentStart` / `subagentStop` 훅은 스폰한 쪽의 환경을 싣는다 · **열림**
+## EE-52 — `subagentStart` / `subagentStop` 훅은 스폰한 쪽의 환경을 싣는다 · **닫힘** *(2026-10-18)*
 
 **무엇을.** 두 서브에이전트 훅이 싣는 환경을 스폰한 실행의 것으로 둘지, `subagentStop` 만이라도 포크의 것으로 바꿀지 정한다.
 
@@ -2300,6 +2345,30 @@ WARN), `HookRegistryApplierTest`(셸 미지원 실행기 · 옵션 전달), `Age
 
 출처: [`../design/tool/execution-environment-ee9-ee12-hook-environment.md`](../design/tool/execution-environment-ee9-ee12-hook-environment.md)
 §9 Q3.
+
+### 닫힘 (2026-10-18)
+
+메인테이너가 정했다 — **`subagentStop` 은 포크의 환경을 싣고 거기서 돈다. `subagentStart` 는 스폰한 쪽의 환경이다**(포크의
+환경이 아직 해석되지 않았다). 설계는
+[`../design/tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md`](../design/tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md)
+§2.2 (#273).
+
+- `DefaultSubagentExecutor` 는 실행 id 를 찍던 자리에서 포크의 환경도 결과에 찍는다
+  (`SubagentExecutionResult.withExecutionEnvironment` · `getExecutionEnvironment`). 살아 있는 핸들이라 값의 일부가 아니다
+  — `equals` · `hashCode` · `toString` · `TaskResult` 에 들어가지 않는다.
+- `fireSubagentStop` 은 결과의 환경을, 없으면 스폰한 쪽의 것을 싣는다. 환경을 해석하지 않은 경로(코드 behavior, 없는
+  서브에이전트, 호출자 상한 거절, 예외, 풀 거절)는 스폰한 쪽의 것이다. 둘 다 없으면 실행이 없는 발화
+  (`spawnedOutsideExecution`)로 표시되고, `"shell"` 이 없는 `hooks.json` 명령은 호스트에서 돈다.
+- **해체 순서.** 코어는 포크의 환경을 닫지 않는다(`ExecutionEnvironmentProvider` 에는 반환 메서드가 없다).
+  `subagentStop` 은 `execute(...)` 가 돌아온 직후, `Task` · `SkillTool` · 워크플로 브랜치로 제어가 돌아가기 전에 발화한다.
+  샌드박스 쪽 `exec:{id}` 셸 디렉터리는 유휴 스윕만 지운다. 그래서 훅이 발화할 때 환경은 열려 있다.
+
+**착수해 보니 적힌 것과 달랐던 것.** 2026-10-18 줄이 적은 대로, 오늘의 샌드박스에서 포크의 환경과 부모의 것은 `exec:{id}`
+셸 상태만 다르다. `hooks.json` 의 `subagentStop` 명령은 이제 격리된 실행이라 어느 쪽 상태도 읽지 않으므로 **보이는 차이가
+없다.** 차이가 보이는 것은 스킬이 선언한 `subagentStop` 훅뿐이다 — 격리되지 않으므로 포크의 `exec:` 상태에서 시작한다.
+`hooks.json` 훅에서 변화를 기대하지 말 것.
+
+**남은 것.** EE-110(`subagentStart` 가 포크의 환경을 실을 일이 생기면).
 
 ## EE-53 — 백그라운드 `Bash` 를 다른 노드에서 읽거나 멈출 수 없다 · **열림**
 
@@ -3451,7 +3520,7 @@ main 코드가 없고, 스냅숏의 `userLocale` 은 블록을 만드는 쪽이 
 
 ---
 
-## EE-81 — 포크가 다른 환경에 놓이면 스킬 본문의 `${AIMON_SKILL_DIR}` 는 스폰한 쪽의 경로다 · **열림** *(트리거 대기)*
+## EE-81 — 포크가 다른 환경에 놓이면 스킬 본문의 `${AIMON_SKILL_DIR}` 는 스폰한 쪽의 경로다 · **닫힘** *(2026-10-18)*
 
 *(2026-10-05 등록. 출처는 EE-50 착수.)*
 
@@ -3471,6 +3540,26 @@ main 코드가 없고, 스냅숏의 `userLocale` 은 블록을 만드는 쪽이 
 샌드박스의 같은 경로를 받으므로 본문과 훅의 `${AIMON_SKILL_DIR}` 는 같다. 둘이 갈리는 것은 포크가 다른 슬롯(다른 샌드박스)에
 놓일 때이고, 그쪽은 그것을 구현 5단계로 미뤘다(`SandboxExecutionEnvironmentProvider.java:105`). 정할 것은 이 항목의
 "무엇을" 그대로이고, 오늘의 제공자로는 재현할 수 없다.
+
+### 닫힘 (2026-10-18)
+
+포크 모드 스킬의 본문이 `${AIMON_SKILL_DIR}` 를 쓰면, 포크가 스폰한 쪽과 다른 환경에 놓였을 때 **포크의 환경에서 다시
+렌더된다.** 설계는
+[`../design/tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md`](../design/tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md)
+§2.3 (#273).
+
+- 렌더는 포크의 환경이 존재하는 유일한 자리로 미뤘다 — `DefaultSubagentExecutor.execute` 가 환경을 해석한 직후. 스폰한 쪽은
+  `ForkGoalRenderer` 를 넘긴다(`SubagentLaunchContext` → `SubagentExecutionRequest`). 포크의 환경이 부모와 **같은 인스턴스**면
+  (로컬 제공자) 부르지 않는다 — 다시 렌더하지도 스테이징하지도 않는다.
+- 두 진입점(`SkillTool` 과 슬래시 경로의 `LlmSkillExecutor`)이 `SkillForkExecutor` 의 새 4인자 `fork` 를 부른다. 기본 구현은
+  3인자로 넘기므로, 그것을 재정의하지 않은 사용자 정의 실행기는 지금처럼 스폰한 쪽의 경로를 쓴다.
+- 포크에서 스테이징이 실패하면 포크는 `onStart` 전에 실패 결과로 끝난다. `onStop` 은 발화하지 않고 `subagentStop` 은 발화한다.
+- `subagentStart` 의 goal, SUBAGENT 스팬의 입력, 코드 behavior 는 스폰한 쪽에서 렌더한 글을 그대로 쓴다.
+
+**착수해 보니 적힌 것과 달랐던 것.** 설계는 포크 모드 스킬마다 렌더러를 넘기게 했다. 그러나 다시 렌더하면 스킬이 포크의
+환경에 스테이징되고, `${AIMON_SKILL_DIR}` 를 쓰지 않는 본문은 어디서 렌더해도 같다. 그렇게 지었더니 포크의 환경이 아무것도
+스테이징할 수 없는 기존 테스트 둘(EE-50 의 `maxStagedBytes(1)` 경우)이 깨졌다 — 포크가 목표를 만들다 끝나서, 테스트가 겨눈
+훅까지 가지 못했다. 그래서 본문이 변수를 쓸 때만 넘긴다(`SkillRenderContextAccess.rendersSkillDir`). 설계 기록 §10.2 의 4.
 
 ## EE-82 — 허용 루트로 적재된 링크 스킬은 머티리얼라이즈되지 않고, 번들의 `agents/` 에는 링크 규칙이 없다 · **열림**
 
@@ -4701,3 +4790,71 @@ SPI 는 설계에서 기각했다(§2.2) — 창이 작고, 다음 재생성이 
 `core/toolinvocation/SingleToolInvoker.java`(`environmentOf`).
 
 **언제 다시 볼까.** 훅이 notice 를 비우는 것이 실제로 발견될 때.
+
+## EE-109 — 스테이징한 `hooks.json` 스크립트를 에이전트가 고칠 수 있다 · **열림**
+
+*(2026-10-18 등록. 출처는 #273 설계의 실패 모드 F12.)*
+
+**무엇을.** `AIMON_HOOK_DIR` 로 스테이징한 운영자 훅 스크립트를, 첫 확인 뒤에 에이전트가 고친 사본이 그대로 돌지 않게 한다.
+
+**왜.** 스테이징 계층은 내용 키 하나당 사본의 **마커를 첫 확인 뒤로 믿는다**(`LocalStaging`). 사본은 에이전트가 쓸 수 있는
+워크스페이스(`.aimon-staged/`)에 있다. 그래서 에이전트가 셸로 사본의 `guard.sh` 를 고치면 다음 발화도 그 고친 사본을 돌린다.
+발화마다 다시 스캔하는 것은 **원본**의 수정을 잡을 뿐 사본의 수정은 잡지 못한다. 스킬 훅도 같은 노출이지만(EE-37 · EE-50),
+운영자의 정책 훅이라 걸린 것이 더 크다. 사용자 층의 `~/.aimon/hooks/` 를 스테이징하면 그 사본을 모델이 파일 도구로 읽을 수도
+있다. 지금 변조를 막는 배치는 `"shell": "host"` 하나다(가이드에 적었다).
+
+**어디** *(2026-10-18)* — `core/skill/hook/declarative/ConfigHookDirectory.java`(`exportStaged`),
+`core/environment/impl/LocalStaging.java`(마커 확인), 샌드박스 쪽 `SandboxStaging`.
+
+**언제 다시 볼까.** 에이전트가 쓸 수 없는 자리에 스테이징하는 제공자가 생길 때, 또는 `hooks.json` 가드를 샌드박스에서
+운영하기 시작할 때.
+
+## EE-110 — `subagentStart` 는 포크의 환경을 싣지 않는다 · **열림** *(트리거 대기)*
+
+*(2026-10-18 등록. 출처는 #273 설계 §8.)*
+
+**무엇을.** `subagentStart` 가 포크의 환경을 실어야 할 쓰임이 생기면, 포크의 환경을 그 훅보다 먼저 해석한다.
+
+**왜.** EE-52 는 `subagentStop` 만 포크의 환경으로 옮겼다. `subagentStart` 시점에는 포크의 환경이 아직 없고, 먼저 해석하려면
+포크의 `ExecutionId` 를 일찍 발급해야 하며(샌드박스는 셸을 `exec:{id}` 로 키를 단다) 해석 자리가 하나에서 둘로 나뉜다. 지금은
+스폰한 쪽의 환경을 싣는 것이 문서화된 계약이다.
+
+**어디** *(2026-10-18)* — `core/subagent/DefaultSubagentExecutionManager.java`(`fireSubagentStart`),
+`core/subagent/execution/DefaultSubagentExecutor.java`(`resolveExecutionEnvironment`).
+
+**언제 다시 볼까.** 포크의 워크스페이스를 시작 전에 준비하려는 `subagentStart` 훅의 요구가 실제로 올 때.
+
+## EE-111 — aimon-sandbox 가 격리된 실행을 선언해야 한다 · **열림**
+
+*(2026-10-18 등록. 출처는 #273 설계 §8 과 §9 Q1.)*
+
+**무엇을.** aimon-sandbox 의 셸이 `ShellFeature.ISOLATED_EXECUTION` 을 선언하고 `ExecutionOptions.isIsolated()` 를 지키게 한다
+— 상태 파일을 읽지도 저장하지도 않고, 세션 잠금 없이, 샌드박스 루트에서 프로파일의 기본 환경으로 시작한다. 그전까지 코어가
+막을지(지금) 격리 없이 돌릴지(Q1)는 메인테이너가 다시 정할 수 있다.
+
+**왜.** #273 뒤로 `hooks.json` 의 실행 안 명령은 실행 환경에서 **격리된 실행**으로만 돈다. 그 기능을 선언하지 않은 셸에서는
+돌리지 않으므로(`ISOLATION_UNSUPPORTED`), 오늘의 샌드박스(`main` `80b9998`)에 `hooks.json` 을 함께 조립하면 `preTool` 가드가
+일치하는 모든 도구 호출을 막는다(`failOpen` 이면 그냥 지나간다). 출하되는 조립 가운데 그 조합은 아직 없다. 우회는 핸들러마다
+`"shell": "host"` 다.
+
+**어디.** aimon-sandbox 의 `SandboxShell.supports` · `execute`, `ShellWrapper.INNER`(그쪽 `docs/design/workspace-sandbox.md` §9).
+코어 쪽은 `core/skill/hook/declarative/IsolatedShellActionExecutor.java`. 그쪽에 낼 초안은 #273 빌드의 `sandbox-followup.md` 다.
+
+**언제 다시 볼까.** aimon-sandbox 가 이 기능을 내보낼 때(닫는다), 또는 `hooks.json` 과 샌드박스 제공자를 함께 조립하는 호스트가
+생길 때.
+
+## EE-112 — 격리된 훅 실행의 환경 변수를 운영자가 정할 수 없다 · **열림** *(트리거 대기)*
+
+*(2026-10-18 등록. 출처는 #273 설계 §9 Q3.)*
+
+**무엇을.** `hooks.json` 의 격리된 실행이 받는 `PATH` 와 환경 변수를, 제공자의 기본값 밖에서 운영자가 정할 수 있게 할지 정한다.
+가장 작은 모양은 `HookHotReloadBootstrap.Builder.commandEnvironment(Map<String,String>)` 다(조립 코드이지 `hooks.json` 이
+아니다).
+
+**왜.** 지금 격리된 실행은 환경의 **기본** 변수에 훅의 `AIMON_*` 만 더한다 — 로컬 제공자는 JVM 의 환경, 샌드박스는 프로파일의
+환경이다. 에이전트는 그것을 바꿀 수 없으므로 무결성은 지켜지지만, 운영자가 훅에만 다른 `PATH` 를 주고 싶을 때 길이 없다.
+`hooks.json` 의 프로젝트 층은 로컬 제공자에서 에이전트가 쓸 수 있는 경우가 많아, 거기에 키를 두면 기본 `PATH` 보다 강하지 않다.
+
+**어디** *(2026-10-18)* — `core/skill/hook/declarative/IsolatedShellActionExecutor.java`, `core/config/hook/HookHotReloadBootstrap.java`.
+
+**언제 다시 볼까.** 훅 전용 `PATH` 나 비밀이 필요하다는 운영 요구가 올 때.

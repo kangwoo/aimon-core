@@ -69,12 +69,15 @@ final class ShellActionRunner {
      * @param executionCancellation
      *            the cancellation signal of the execution the hook fired in, or empty for an event outside any
      *            execution (never null)
+     * @param isolated
+     *            whether the command must also be {@linkplain ExecutionOptions#isIsolated() isolated} from the
+     *            shell's per-session state; the caller has checked that the shell supports it
      * @return what the command did (never null)
      */
     static ShellHookOutcome run(VirtualShell shell, ShellAction action, Map<String, String> environmentOverrides,
-            String stdinPayload, Optional<CancellationSignal> executionCancellation) {
+            String stdinPayload, Optional<CancellationSignal> executionCancellation, boolean isolated) {
         final ExecutionOptions.Builder builder = ExecutionOptions.builder().timeout(action.getTimeout())
-                .environment(new HashMap<>(environmentOverrides)).stdin(stdinPayload).hook(true);
+                .environment(new HashMap<>(environmentOverrides)).stdin(stdinPayload).hook(true).isolated(isolated);
         CancellationSignal.Registration stopOnInterrupt = CancellationSignal.Registration.NONE;
         if (executionCancellation.isPresent()) {
             final ShellCancellationSource stop = ShellCancellationSource.create();

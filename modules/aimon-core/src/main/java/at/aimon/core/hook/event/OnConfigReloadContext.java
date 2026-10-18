@@ -113,6 +113,12 @@ public final class OnConfigReloadContext implements HookContext {
         return failureReason;
     }
 
+    /** Always false: this event fires outside any execution. */
+    @Override
+    public boolean hasExecution() {
+        return false;
+    }
+
     @Override
     public Instant getTimestamp() {
         return timestamp;

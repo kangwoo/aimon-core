@@ -64,6 +64,11 @@ final class SignalDetachedHookContext implements HookContext {
         return delegate.getEnvironmentDescriptor();
     }
 
+    @Override
+    public boolean hasExecution() {
+        return delegate.hasExecution();
+    }
+
     /** Always empty: the command this view is handed to is not tied to the execution's signal. */
     @Override
     public Optional<CancellationSignal> getExecutionCancellation() {

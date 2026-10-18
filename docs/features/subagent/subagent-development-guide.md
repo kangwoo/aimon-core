@@ -413,6 +413,13 @@ ReAct 포크와 같은 실패 결과(`Execution blocked by OnStart hook [SUBAGEN
 **OnStop 은 발화하지 않는다**(종료 신호는 SubagentStop 과 중복이다). 디스패치 경계 훅인
 **SubagentStart/SubagentStop은 그대로 발화**되므로 옵저버빌리티/감사에는 손실이 없다.
 
+**SubagentStart 와 SubagentStop 이 싣는 환경은 다르다.** `SubagentStart` 는 SubAgent 의 환경이 정해지기 전에 발화하므로
+**스폰한 실행의 환경**을 싣는다. `SubagentStop` 은 **SubAgent 자신의 환경**을 싣는다 — 실행 환경 제공자가 SubAgent 를 다른
+곳(다른 샌드박스, 다른 워크스페이스)에 두었다면 그곳이고, 그 훅의 셸 커맨드도 거기서 돈다. 코드 behavior 처럼 환경을 따로
+정하지 않은 SubAgent 와 시작 전에 실패한 SubAgent 는 스폰한 쪽의 환경이다. 에이전트 단위 워크플로 러너(백그라운드
+`Workflow`)가 띄운 SubAgent 에는 스폰한 실행이 없다 — 그 `SubagentStart` 는 실행이 없는 발화(`hasExecution()` 이 `false`)이고
+`"shell"` 이 없는 `hooks.json` 커맨드는 호스트에서 돈다. SubAgent 가 루프를 돌았다면 `SubagentStop` 은 SubAgent 의 환경이다.
+
 ### 전체 예제
 
 ```java

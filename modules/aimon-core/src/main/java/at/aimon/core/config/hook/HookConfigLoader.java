@@ -38,7 +38,8 @@ import org.slf4j.LoggerFactory;
  * file) cannot hold the file either: skipped too, with a WARN naming that component.
  * <li><b>Empty files</b> &mdash; a file that is empty, whitespace only or {@code null} is an empty document: the layer
  * is present and declares no hooks.
- * <li><b>Parse failures</b> (malformed JSON, unknown handler {@code type}, a non-positive timeout) &mdash; raise
+ * <li><b>Parse failures</b> (malformed JSON, unknown handler {@code type}, a non-positive timeout, an unknown
+ * {@code shell} value or {@code shell} on a handler that is not a {@code command}) &mdash; raise
  * {@link HookConfigParseException}, whose message names the file, its layer and the parser's detail (line and
  * column for malformed JSON).
  * <li><b>Files that are there but cannot be read</b> &mdash; a non-regular file (e.g. a directory at the expected

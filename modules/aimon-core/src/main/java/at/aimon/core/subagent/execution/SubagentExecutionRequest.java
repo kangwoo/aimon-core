@@ -49,6 +49,7 @@ public final class SubagentExecutionRequest {
     private final LlmCallMetadata llmCallMetadata;
     private final ExecutionBudget budget;
     private final QuotaGuard quotaGuard;
+    private final ForkGoalRenderer forkGoalRenderer;
 
     private SubagentExecutionRequest(Builder builder) {
         this.taskId = Objects.requireNonNull(builder.taskId, "Task ID cannot be null");
@@ -62,6 +63,7 @@ public final class SubagentExecutionRequest {
         this.llmCallMetadata = builder.llmCallMetadata != null ? builder.llmCallMetadata : LlmCallMetadata.empty();
         this.budget = builder.budget;
         this.quotaGuard = builder.quotaGuard != null ? builder.quotaGuard : QuotaGuard.disabled();
+        this.forkGoalRenderer = builder.forkGoalRenderer;
     }
 
     public String getTaskId() {
@@ -158,6 +160,19 @@ public final class SubagentExecutionRequest {
         return quotaGuard;
     }
 
+    /**
+     * Gets the renderer that renders the goal again in the fork's own environment, when that environment is not the
+     * spawner's (EE-81).
+     *
+     * <p>
+     * Not part of {@link #equals(Object)}: it is behaviour, not a value of the request.
+     *
+     * @return the renderer, or empty when {@link #getGoal()} is used as it is
+     */
+    public Optional<ForkGoalRenderer> getForkGoalRenderer() {
+        return Optional.ofNullable(forkGoalRenderer);
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -199,6 +214,7 @@ public final class SubagentExecutionRequest {
         private LlmCallMetadata llmCallMetadata;
         private ExecutionBudget budget;
         private QuotaGuard quotaGuard;
+        private ForkGoalRenderer forkGoalRenderer;
 
         /** taskId를 설정한다. */
         public Builder taskId(String taskId) {
@@ -279,6 +295,18 @@ public final class SubagentExecutionRequest {
          */
         public Builder quotaGuard(QuotaGuard quotaGuard) {
             this.quotaGuard = quotaGuard;
+            return this;
+        }
+
+        /**
+         * Sets the renderer that renders the goal in the fork's own environment.
+         *
+         * @param forkGoalRenderer
+         *            the renderer (nullable; the goal is then used as it is)
+         * @return this builder
+         */
+        public Builder forkGoalRenderer(ForkGoalRenderer forkGoalRenderer) {
+            this.forkGoalRenderer = forkGoalRenderer;
             return this;
         }
 

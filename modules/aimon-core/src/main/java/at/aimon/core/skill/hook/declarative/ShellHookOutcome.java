@@ -72,6 +72,20 @@ public final class ShellHookOutcome {
          */
         STAGING_FAILED("skill directory could not be staged"),
 
+        /**
+         * The {@code hooks/} directory of the {@code hooks.json} layer that declared the command could not be staged
+         * into the environment the command runs in, so {@code AIMON_HOOK_DIR} has no value. The command is not run
+         * without it, for the reason {@link #STAGING_FAILED} gives.
+         */
+        HOOK_DIR_STAGING_FAILED("hook script directory could not be staged"),
+
+        /**
+         * The environment's shell does not declare {@code ShellFeature.ISOLATED_EXECUTION}, so a {@code hooks.json}
+         * command placed in it would start from the model's shell state ({@code cd}, {@code export}). The command is
+         * not run: a policy hook the agent can steer is no policy.
+         */
+        ISOLATION_UNSUPPORTED("the environment's shell cannot run an isolated command"),
+
         /** The executor does not run shell actions at all. */
         SHELL_UNSUPPORTED("shell actions not supported"),
 
@@ -242,6 +256,22 @@ public final class ShellHookOutcome {
             return "";
         }
         return unrunDetail.isEmpty() ? unrunCause.description() : cap(unrunCause.description() + ": " + unrunDetail);
+    }
+
+    /**
+     * Returns this outcome with {@code hint} appended to the reason when the shell could not start the command (a
+     * {@link Unrun#COMMAND_NOT_FOUND} or {@link Unrun#COMMAND_NOT_EXECUTABLE} guard answer); otherwise this outcome.
+     *
+     * @param hint
+     *            what the reader should check, or null for none
+     * @return the outcome (never null)
+     */
+    ShellHookOutcome withCouldNotStartHint(String hint) {
+        if (hint == null || hint.isBlank() || unrunCause == null
+                || (unrunCause != Unrun.COMMAND_NOT_FOUND && unrunCause != Unrun.COMMAND_NOT_EXECUTABLE)) {
+            return this;
+        }
+        return notRun(unrunCause, unrunDetail.isEmpty() ? hint : unrunDetail + "; " + hint);
     }
 
     /**

@@ -26,6 +26,7 @@ class ExecutionOptionsTest {
         assertThat(options.getUnixShell()).isNull();
         assertThat(options.isBackground()).isFalse();
         assertThat(options.isHook()).isFalse();
+        assertThat(options.isIsolated()).isFalse();
     }
 
     @Test
@@ -104,6 +105,19 @@ class ExecutionOptionsTest {
         assertThat(derived.isHook()).isTrue();
         assertThat(derived.getWorkingDirectory()).isEqualTo("/tmp");
         assertThat(derived.toBuilder().hook(false).build().isHook()).isFalse();
+    }
+
+    @Test
+    @DisplayName("isolated is set by the builder and carried by toBuilder(), independently of hook")
+    void isolated_setByBuilderAndCarriedByToBuilder() {
+        ExecutionOptions options = ExecutionOptions.builder().hook(true).isolated(true).build();
+
+        ExecutionOptions derived = options.toBuilder().workingDirectory("/tmp").build();
+
+        assertThat(derived.isIsolated()).isTrue();
+        assertThat(derived.isHook()).isTrue();
+        assertThat(derived.toBuilder().hook(false).build().isIsolated()).isTrue();
+        assertThat(derived.toBuilder().isolated(false).build().isHook()).isTrue();
     }
 
     @Test

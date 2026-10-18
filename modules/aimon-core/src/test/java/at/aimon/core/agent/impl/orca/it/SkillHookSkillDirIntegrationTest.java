@@ -203,4 +203,62 @@ class SkillHookSkillDirIntegrationTest {
             assertThat(marker).doesNotExist();
         }
     }
+
+    // --- EE-81: the fork's body is rendered where the fork runs -----------------------------------------------------
+
+    private static final String BODY_SKILL = "it-body";
+
+    /** A fork-mode skill with no hooks whose body names a script in its own directory; returns the fork's goal. */
+    private String forkGoalOf(String nodeName, UnaryOperator<ExecutionEnvironmentProvider> environments) {
+        support.seedSkill(nodeName, BODY_SKILL,
+                "---\nname: " + BODY_SKILL + "\ndescription: Runs a script of its own\n"
+                        + "execution:\n  mode: fork\n  agent: " + WORKER
+                        + "\n---\n\nRun ${AIMON_SKILL_DIR}/scripts/guard.sh\n");
+        support.seedSkillFile(nodeName, BODY_SKILL, "scripts/guard.sh", GUARD_SCRIPT);
+        final InMemorySubagentRegistry codeSubagents = new InMemorySubagentRegistry();
+        codeSubagents.register(Subagent.builder().name(WORKER).description("Integration-test worker subagent")
+                .systemPrompt("You are the integration-test worker.").maxIterations(6).build());
+        final OrcaRuntimeItSupport.Node node = support.newNode(nodeName, llm,
+                OrcaRuntimeItSupport.options().codeSubagents(codeSubagents).environmentProvider(environments));
+        final SessionId sessionId = OrcaRuntimeItSupport.newSession();
+        final String forkRoute = ScriptedLlmClient.forkRoute(sessionId.value(), WORKER);
+        llm.script(sessionId.value(), ScriptedLlmClient.callTool("Skill", Map.of("skill", BODY_SKILL)),
+                ScriptedLlmClient.text("done"));
+        llm.script(forkRoute, ScriptedLlmClient.text("fork finished"));
+
+        assertThat(node.run(sessionId, "run the body skill").isSuccess()).isTrue();
+        return llm.firstCallFor(forkRoute).messageContents().stream()
+                .filter(content -> content.contains("scripts/guard.sh")).findFirst()
+                .orElseThrow(() -> new AssertionError("the fork was not given the body"));
+    }
+
+    private static Path stagedScriptIn(String goal) {
+        final int from = goal.indexOf("Run ") + "Run ".length();
+        return Path.of(goal.substring(from).strip());
+    }
+
+    @Test
+    @DisplayName("a fork placed in another environment gets a body that names the copy staged there (EE-81)")
+    void forkBodyNamesTheCopyStagedInTheForksEnvironment() throws Exception {
+        final Path elsewhere = Files.createDirectories(tempDir.resolve("body-fork-workspace"));
+        try (LocalExecutionEnvironmentProvider forkEnvironments = LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(elsewhere).contentSearch(false).build()) {
+            final String goal = forkGoalOf("agent-body-elsewhere", placingTheForkIn(forkEnvironments));
+
+            final Path script = stagedScriptIn(goal);
+            assertThat(script.toRealPath()).startsWith(elsewhere.toRealPath()
+                    .resolve(LocalExecutionEnvironmentProvider.DEFAULT_STAGING_ROOT).resolve(BODY_SKILL));
+            assertThat(script).exists();
+        }
+    }
+
+    @Test
+    @DisplayName("a fork in its spawner's environment keeps the spawner's staged path")
+    void forkBodyInTheSpawnersEnvironmentKeepsTheSpawnersPath() throws Exception {
+        final String goal = forkGoalOf("agent-body-local", UnaryOperator.identity());
+
+        final Path script = stagedScriptIn(goal);
+        assertThat(script.toRealPath()).startsWith(tempDir.resolve("agent-body-local").toRealPath()
+                .resolve(LocalExecutionEnvironmentProvider.DEFAULT_STAGING_ROOT).resolve(BODY_SKILL));
+    }
 }

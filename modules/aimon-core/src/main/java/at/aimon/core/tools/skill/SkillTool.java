@@ -39,6 +39,7 @@ import at.aimon.core.skill.policy.SkillInvocationRequest;
 import at.aimon.core.skill.render.NoOpSkillContentRenderer;
 import at.aimon.core.skill.render.RenderContext;
 import at.aimon.core.skill.render.SkillContentRenderer;
+import at.aimon.core.subagent.execution.ForkGoalRenderer;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
 import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.InvokingSessionAccess;
@@ -385,7 +386,16 @@ public class SkillTool extends AbstractTool {
                 if (skill.getMetadata().getExecutionMode() == ExecutionMode.FORK) {
                     final ToolContext forkContext = hookScope.hookRegistry()
                             .map(registry -> HookRegistryAccess.withHookRegistry(context, registry)).orElse(context);
-                    final SkillForkOutcome outcome = forkExecutor.fork(skill, renderedInstructions, forkContext);
+                    // A body that names ${AIMON_SKILL_DIR} is rendered again in the fork's environment when the fork
+                    // is placed elsewhere, so the path is a copy staged where it runs (EE-81). Session id and
+                    // principal stay this run's; only the staged directory depends on the environment.
+                    final SkillForkOutcome outcome = SkillRenderContextAccess.rendersSkillDir(skill)
+                            ? forkExecutor.fork(skill, renderedInstructions,
+                                    (ForkGoalRenderer) forkEnvironment -> renderer.render(skill, args,
+                                            SkillRenderContextAccess.builderFor(skill, context, forkEnvironment)
+                                                    .build()),
+                                    forkContext)
+                            : forkExecutor.fork(skill, renderedInstructions, forkContext);
                     if (outcome.isSuccess()) {
                         return ToolResult.success(formatForkResult(skill, outcome.getFinalAnswer().orElse("")));
                     }

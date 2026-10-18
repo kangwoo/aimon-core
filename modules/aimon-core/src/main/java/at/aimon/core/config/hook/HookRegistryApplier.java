@@ -2,13 +2,18 @@ package at.aimon.core.config.hook;
 
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,6 +26,7 @@ import at.aimon.core.hook.execution.ExecutionHook;
 import at.aimon.core.hook.rewake.RewakeSpec;
 import at.aimon.core.skill.hook.action.DenyAction;
 import at.aimon.core.skill.hook.action.HookAction;
+import at.aimon.core.skill.hook.action.HookScriptDirectory;
 import at.aimon.core.skill.hook.action.HttpAction;
 import at.aimon.core.skill.hook.action.HttpMethod;
 import at.aimon.core.skill.hook.action.McpToolAction;
@@ -33,9 +39,12 @@ import at.aimon.core.skill.hook.declarative.DeclarativePostToolHook;
 import at.aimon.core.skill.hook.declarative.DeclarativePreCompactHook;
 import at.aimon.core.skill.hook.declarative.DeclarativePreToolHook;
 import at.aimon.core.skill.hook.declarative.DeclarativeShellHookBinding;
+import at.aimon.core.skill.hook.declarative.ExecutionOrHostShellActionExecutor;
 import at.aimon.core.skill.hook.declarative.HttpActionExecutor;
+import at.aimon.core.skill.hook.declarative.IsolatedShellActionExecutor;
 import at.aimon.core.skill.hook.declarative.McpActionExecutor;
 import at.aimon.core.skill.hook.declarative.ShellActionExecutor;
+import at.aimon.core.skill.hook.declarative.SkillHookEnv;
 import at.aimon.core.skill.hook.declarative.ToolInputPredicate;
 import at.aimon.core.skill.hook.declarative.predicate.NameOnlyPredicate;
 import at.aimon.core.skill.hook.declarative.predicate.PredicateParser;
@@ -78,6 +87,24 @@ import at.aimon.core.skill.hook.declarative.predicate.PredicateParser;
  * {@code failOpen} is not a guard, and one that merely cannot run in this assembly is still skipped.
  *
  * <p>
+ * <b>Where a {@code command} handler runs</b> (aimon-core #273). The applier holds two executors &mdash; a host one and
+ * an environment one &mdash; and builds each handler with the one its placement picks:
+ * <ul>
+ * <li>no {@code "shell"} key, on an event that fires inside an execution: the execution's environment, as an isolated
+ * exec, and the host only for a firing that has no execution behind it ({@link ExecutionOrHostShellActionExecutor});
+ * <li>no {@code "shell"} key, on {@code onSessionStart}, {@code onSessionEnd} or {@code onConfigReload}: the host;
+ * <li>{@code "shell": "host"}: the host, on every event;
+ * <li>{@code "shell": "environment"}: the environment executor on its own, so a firing without an environment is not
+ * run; on the three events outside any execution it cannot run at all and is skipped with a WARN;
+ * <li>one exception to the default: a handler with no {@code "shell"} that declares {@code asyncRewake} on a
+ * rewakeable in-execution event stays on the host, with a WARN, because the rewake replay fires outside every
+ * execution.
+ * </ul>
+ * A command that names {@code AIMON_HOOK_DIR} carries its layer's {@code hooks/} directory on its action; the executor
+ * that runs it exports the path that belongs to its shell. A missing {@code hooks/} directory makes the handler
+ * inapplicable.
+ *
+ * <p>
  * Stateless and thread-safe; the registry must itself be thread-safe.
  */
 public final class HookRegistryApplier {
@@ -96,16 +123,55 @@ public final class HookRegistryApplier {
             DeclarativeOnSessionStartHook.EVENT_NAME, DeclarativeOnSessionEndHook.EVENT_NAME,
             DeclarativePreCompactHook.EVENT_NAME, DeclarativeOnConfigReloadHook.EVENT_NAME);
 
-    private final ShellActionExecutor shellExecutor;
+    /** The name {@code hooks.json} commands use for the layer's script directory. */
+    private static final String HOOK_DIR_REFERENCE = SkillHookEnv.AIMON_HOOK_DIR;
+
+    /**
+     * Literal spellings of a path inside a layer's {@code .aimon} directory: the home forms, and a relative
+     * {@code .aimon/} that is not the staging area. The absolute layer directories are checked separately.
+     */
+    private static final Pattern HOST_AIMON_PATH = Pattern
+            .compile("(~/\\.aimon/|\\$HOME/\\.aimon/|\\$\\{HOME\\}/\\.aimon/|(?<![\\w./~}-])\\.aimon/)");
+
+    private final ShellActionExecutor hostShellExecutor;
+    private final ShellActionExecutor environmentShellExecutor;
+    private final ShellActionExecutor defaultShellExecutor;
     private final HttpActionExecutor httpExecutor;
     private final McpActionExecutor mcpExecutor;
     private final Map<String, String> processEnv;
 
     /**
-     * Creates a bootstrap.
+     * Creates a bootstrap whose environment-placed commands run through an {@link IsolatedShellActionExecutor}.
      *
      * @param shellExecutor
-     *            shell executor (must not be null)
+     *            the <b>host</b> shell executor (must not be null). Since aimon-core #273 it serves only the
+     *            host-placed handlers: the events outside any execution, {@code "shell": "host"}, an
+     *            {@code asyncRewake} handler with no {@code "shell"}, and a firing with no execution behind it. A
+     *            handler with no {@code "shell"} on an in-execution event no longer runs through it
+     * @param httpExecutor
+     *            HTTP executor (may be null)
+     * @param mcpExecutor
+     *            MCP executor (may be null)
+     * @param processEnv
+     *            process env snapshot for HTTP / MCP env whitelist evaluation (must not be null)
+     * @deprecated name the environment executor explicitly with the five-argument constructor; the executor passed
+     *             here no longer serves default-placed in-execution handlers
+     */
+    @Deprecated
+    public HookRegistryApplier(ShellActionExecutor shellExecutor, HttpActionExecutor httpExecutor,
+            McpActionExecutor mcpExecutor, Map<String, String> processEnv) {
+        this(shellExecutor, new IsolatedShellActionExecutor(), httpExecutor, mcpExecutor, processEnv);
+    }
+
+    /**
+     * Creates a bootstrap.
+     *
+     * @param hostShellExecutor
+     *            the executor for host-placed commands (must not be null); normally a {@code HostShellActionExecutor}
+     * @param environmentShellExecutor
+     *            the executor for commands placed in the firing execution's environment (must not be null); normally
+     *            an {@link IsolatedShellActionExecutor}. A custom one must export {@code AIMON_HOOK_DIR} itself from
+     *            {@code ShellAction.getScriptDirectory()}, or a command that names the variable sees it unset
      * @param httpExecutor
      *            HTTP executor (may be null; an {@code http} handler then cannot be applied — fatal under a guard
      *            event, a WARN at hook time elsewhere)
@@ -115,9 +181,12 @@ public final class HookRegistryApplier {
      * @param processEnv
      *            process env snapshot for HTTP / MCP env whitelist evaluation (must not be null)
      */
-    public HookRegistryApplier(ShellActionExecutor shellExecutor, HttpActionExecutor httpExecutor,
-            McpActionExecutor mcpExecutor, Map<String, String> processEnv) {
-        this.shellExecutor = Objects.requireNonNull(shellExecutor, "shellExecutor cannot be null");
+    public HookRegistryApplier(ShellActionExecutor hostShellExecutor, ShellActionExecutor environmentShellExecutor,
+            HttpActionExecutor httpExecutor, McpActionExecutor mcpExecutor, Map<String, String> processEnv) {
+        this.hostShellExecutor = Objects.requireNonNull(hostShellExecutor, "hostShellExecutor cannot be null");
+        this.environmentShellExecutor = Objects.requireNonNull(environmentShellExecutor,
+                "environmentShellExecutor cannot be null");
+        this.defaultShellExecutor = new ExecutionOrHostShellActionExecutor(environmentShellExecutor, hostShellExecutor);
         this.httpExecutor = httpExecutor;
         this.mcpExecutor = mcpExecutor;
         this.processEnv = Map.copyOf(Objects.requireNonNull(processEnv, "processEnv cannot be null"));
@@ -175,7 +244,7 @@ public final class HookRegistryApplier {
             final HookHandlerSpec spec = handlers.get(handlerIdx);
             final HookAction action;
             try {
-                action = toAction(spec, event);
+                action = toAction(spec, event, scriptDirectoryFor(merged, mhe, spec));
             } catch (IllegalArgumentException ex) {
                 if (guardEvent) {
                     throw inapplicable(merged, mhe, event, idx, handlerIdx, ex.getMessage());
@@ -200,6 +269,8 @@ public final class HookRegistryApplier {
             // the handlers of one entry, which would collapse their ids and break rewake routing / reload
             // cancellation.
             final String discriminator = event + "[" + idx + "][" + handlerIdx + "]";
+            // Where a command runs; every other action ignores the executor it is built with.
+            final ShellActionExecutor shellExecutor = shellExecutorFor(spec, event, mhe);
             if (action instanceof ShellAction && !shellExecutor.isShellSupported()) {
                 // Registering it anyway would not be harmless: the command can never run, and a guard event reads
                 // "could not run" as a block, so every matching preTool / onStart would be refused. Dropping a guard
@@ -214,7 +285,8 @@ public final class HookRegistryApplier {
             }
             // Honoured for command, http and mcp alike: each can fail to produce a verdict.
             final DeclarativeHookOptions options = DeclarativeHookOptions.builder().hookIdDiscriminator(discriminator)
-                    .rewakeSpec(toRewakeSpec(spec, mhe, event, action)).failOpen(failOpen).build();
+                    .rewakeSpec(toRewakeSpec(spec, mhe, event, action, shellExecutor)).failOpen(failOpen)
+                    .hostPathHint(hostPathHint(merged, action, shellExecutor)).build();
             switch (event) {
                 case DeclarativePreToolHook.EVENT_NAME -> {
                     // The shell question again, for the other two transports: a guard that can never be asked.
@@ -268,7 +340,7 @@ public final class HookRegistryApplier {
                                 event, mhe.getSource());
                         continue;
                     }
-                    register(registry, binding, pseudoSkillName, shell, options);
+                    register(registry, binding, pseudoSkillName, shell, shellExecutor, options);
                 }
             }
         }
@@ -310,7 +382,8 @@ public final class HookRegistryApplier {
      * {@linkplain ShellActionExecutor#requiresExecutionEnvironment() needs an execution environment}: the replay
      * rebuilds its context outside the execution that first fired the hook, so every replay would be skipped.
      */
-    private RewakeSpec toRewakeSpec(HookHandlerSpec spec, MergedHookEntry mhe, String event, HookAction action) {
+    private RewakeSpec toRewakeSpec(HookHandlerSpec spec, MergedHookEntry mhe, String event, HookAction action,
+            ShellActionExecutor shellExecutor) {
         if (spec.getAsyncRewake() == null) {
             return null;
         }
@@ -380,14 +453,106 @@ public final class HookRegistryApplier {
         }
     }
 
-    private HookAction toAction(HookHandlerSpec spec, String event) {
+    /**
+     * Picks the executor a handler's command runs through, by the placement table in the class javadoc.
+     */
+    private ShellActionExecutor shellExecutorFor(HookHandlerSpec spec, String event, MergedHookEntry mhe) {
+        final Optional<HookHandlerSpec.Shell> declared = spec.getShell();
+        if (declared.isPresent()) {
+            return declared.get() == HookHandlerSpec.Shell.HOST ? hostShellExecutor : environmentShellExecutor;
+        }
+        final Optional<HookEventType<?>> eventType = eventTypeOf(event);
+        if (eventType.isEmpty() || !eventType.get().firesInsideExecution()) {
+            return hostShellExecutor;
+        }
+        if (spec.getType() == HookHandlerSpec.Type.COMMAND && spec.getAsyncRewake() != null
+                && REWAKEABLE_EVENTS.contains(event)) {
+            // The rewake replay rebuilds its context outside every execution, so a command placed in the
+            // environment would have its rewake dropped. Kept where it ran before, and said so.
+            log.warn("hooks: a 'command' handler with 'asyncRewake' on event '{}' ({}) runs on the host, not in the"
+                    + " execution's environment: the rewake replay fires outside the execution. Declare \"shell\":"
+                    + " \"host\" on the handler to silence this", event, mhe.getSource());
+            return hostShellExecutor;
+        }
+        return defaultShellExecutor;
+    }
+
+    /** The event constant behind an AIMON event name, or empty for a name this applier does not register. */
+    private static Optional<HookEventType<?>> eventTypeOf(String event) {
+        if (DeclarativePreToolHook.EVENT_NAME.equals(event)) {
+            return Optional.of(HookEventType.PRE_TOOL);
+        }
+        if (DeclarativePostToolHook.EVENT_NAME.equals(event)) {
+            return Optional.of(HookEventType.POST_TOOL);
+        }
+        return DeclarativeShellHookBinding.forEvent(event).map(DeclarativeShellHookBinding::getEventType);
+    }
+
+    /**
+     * The {@code hooks/} directory a command that names {@code AIMON_HOOK_DIR} carries, or null for a command that
+     * does not name it.
+     *
+     * @throws IllegalArgumentException
+     *             when the command names the variable and the directory is missing, is not a directory, or the
+     *             layer's file is not known; the caller turns that into a skip or, on a guard event, a stop
+     */
+    private static HookScriptDirectory scriptDirectoryFor(MergedHookConfig merged, MergedHookEntry mhe,
+            HookHandlerSpec spec) {
+        if (spec.getType() != HookHandlerSpec.Type.COMMAND || spec.getCommand() == null
+                || !spec.getCommand().contains(HOOK_DIR_REFERENCE)) {
+            return null;
+        }
+        final Path origin = merged.origin(mhe.getSource()).orElseThrow(() -> new IllegalArgumentException(
+                "the command names " + HOOK_DIR_REFERENCE + ", but the layer's file is not known"));
+        final Path layerDirectory = origin.toAbsolutePath().getParent();
+        final Path hooksDirectory = layerDirectory.resolve(HookScriptDirectory.DIRECTORY_NAME);
+        if (!Files.isDirectory(hooksDirectory)) {
+            throw new IllegalArgumentException("the command names " + HOOK_DIR_REFERENCE + ", but " + hooksDirectory
+                    + " is missing or not a directory");
+        }
+        return HookScriptDirectory.of(layerDirectory,
+                HookScriptDirectory.DIRECTORY_NAME + "-" + mhe.getSource().name().toLowerCase(Locale.ROOT));
+    }
+
+    /**
+     * The hint for a command placed in an execution's environment whose text names a path inside a layer's
+     * {@code .aimon} directory, or null. Such a path exists on the host, and may not in the environment: when the shell
+     * there cannot start the command, the reason says so. Nothing is refused here &mdash; whether the environment is
+     * the host cannot be known when the file is applied. The hint names the spelling it found, never the command.
+     */
+    private String hostPathHint(MergedHookConfig merged, HookAction action, ShellActionExecutor shellExecutor) {
+        if (!(action instanceof ShellAction shell) || shellExecutor == hostShellExecutor) {
+            return null;
+        }
+        final String command = shell.getCommand();
+        String found = null;
+        final Matcher matcher = HOST_AIMON_PATH.matcher(command);
+        if (matcher.find()) {
+            found = matcher.group(1);
+        } else {
+            for (HookConfigSource source : HookConfigSource.values()) {
+                final Optional<Path> origin = merged.origin(source);
+                if (origin.isPresent() && command.contains(origin.get().toAbsolutePath().getParent().toString())) {
+                    found = origin.get().toAbsolutePath().getParent().toString();
+                    break;
+                }
+            }
+        }
+        if (found == null) {
+            return null;
+        }
+        return "the command names host path " + found + ", which this execution environment may not have — use $"
+                + HOOK_DIR_REFERENCE + "/… or \"shell\": \"host\"";
+    }
+
+    private HookAction toAction(HookHandlerSpec spec, String event, HookScriptDirectory scriptDirectory) {
         return switch (spec.getType()) {
             case COMMAND -> {
                 if (spec.getCommand() == null || spec.getCommand().isBlank()) {
                     throw new IllegalArgumentException("type=command requires non-blank 'command'");
                 }
                 yield new ShellAction(spec.getCommand(),
-                        spec.getTimeoutMs() == null ? null : Duration.ofMillis(spec.getTimeoutMs()));
+                        spec.getTimeoutMs() == null ? null : Duration.ofMillis(spec.getTimeoutMs()), scriptDirectory);
             }
             case HTTP -> toHttp(spec);
             case MCP -> toMcp(spec);
@@ -439,7 +604,7 @@ public final class HookRegistryApplier {
      * {@link HookRegistry#register} stays type-safe without a cast.
      */
     private <H extends ExecutionHook<?>> void register(HookRegistry registry, DeclarativeShellHookBinding<H> binding,
-            String skillName, ShellAction action, DeclarativeHookOptions options) {
+            String skillName, ShellAction action, ShellActionExecutor shellExecutor, DeclarativeHookOptions options) {
         registry.register(binding.getEventType(), binding.create(skillName, action, shellExecutor, options));
     }
 

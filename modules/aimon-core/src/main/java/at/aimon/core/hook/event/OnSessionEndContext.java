@@ -127,6 +127,12 @@ public final class OnSessionEndContext implements HookContext {
         return Optional.ofNullable(terminationReason).filter(s -> !s.isEmpty());
     }
 
+    /** Always false: this event fires outside any execution. */
+    @Override
+    public boolean hasExecution() {
+        return false;
+    }
+
     @Override
     public Instant getTimestamp() {
         return timestamp;
