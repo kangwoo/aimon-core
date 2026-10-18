@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: dc9f7028
+source_commit: c5359d9c
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -356,7 +356,12 @@ used only when there is no execution. Each handler can say where with a `"shell"
   next startup sweep.
 - **Commands that name a host path.** A host path such as `~/.aimon/…` may not exist in a sandbox. When a command
   placed in the environment names one and the shell cannot start it (exit 126 or 127), the deny reason gains a hint
-  naming the path — use `$AIMON_HOOK_DIR/…` or `"shell": "host"`.
+  naming the path — use `$AIMON_HOOK_DIR/…` or `"shell": "host"`. **A script launched by an interpreter gets no such
+  hint.** Written as `python3 ~/.aimon/guard.py`, the missing file is reported by the interpreter, not the shell, and
+  the interpreter exits with its own code (`python3` 2, `node` 1). On an event with a decision channel exit 2 reads as
+  a **veto**, so every matching tool call is denied (the reason is the interpreter's stderr), and `failOpen` cannot open
+  it because the hook gave a verdict. Write such a command as `python3 "$AIMON_HOOK_DIR/guard.py"` from the start, or
+  set `"shell": "host"`.
 
 > ⚠️ **Staged scripts are within the agent's reach.** The copy lands in the workspace's `.aimon-staged/`, and the user
 > layer's `~/.aimon/hooks/` is copied there too, where the model's file tools can read it — do not keep secrets beside
