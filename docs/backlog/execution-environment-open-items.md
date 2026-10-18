@@ -2066,7 +2066,8 @@ aimon-sandbox 가 정했다 — **부모를 따른다.** 설계 §5.2 의 기본
 `main` `80b9998`). 그쪽은 `hooks.json` 의 셸을 건드리지 않는다 — 그쪽 `src/main` 에 `hooks.json` · `HostShellActionExecutor`
 를 다루는 코드가 없다. 코어 쪽도 그대로다 — CLI 는 여전히 호스트 `LocalShell` 을 만들어 `hooks.json` 핫리로드에 쓴다
 (`AgentSetupFactory.java` 의 `hookConfigShell` `:553`, `setupHookHotReload` `:1096`, 그 셸을 `TeardownPhase.HOOK_CONFIG_SHELL` 로
-소유시키는 `:677` — 상수는 `aimon-bootstrap` 의 `TeardownPhase.java:300`, 2026-10-18). 다만 `hooks.json` 을 싣는 조립은 **CLI 하나**이고, CLI 는 실행 환경 제공자를 `LocalExecutionEnvironmentProvider`
+소유시키는 `:677` — 상수는 `aimon-bootstrap` 의 `TeardownPhase.java:300`, 2026-10-18). 다만 `hooks.json` 을 싣는 조립은
+**CLI 하나**이고, CLI 는 실행 환경 제공자를 `LocalExecutionEnvironmentProvider`
 로 고정해 둔다(`AgentSetupFactory.java:613`). 부트스트랩과 스타터는 `hooks.json` 을 싣지 않는다. 그래서 위 "왜" 의 비대칭은
 **호스트가 `HookHotReloadBootstrap` 과 샌드박스 제공자를 직접 함께 조립할 때만** 생긴다. 정할 것은 이 항목의 "무엇을"
 그대로다. 거기에 하나가 붙는다 — 그 결정을 지금 내릴지, `hooks.json` 을 싣는 조립이 샌드박스 제공자를 받게 될 때까지 둘지.
