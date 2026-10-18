@@ -25,8 +25,9 @@ backlog SO-5 (closed).
   `LateBoundFencedRecordStore` forward it unfenced, as they forward `load`, so the narrow read is not lost behind
   them. A store that wraps another should do the same.
 - **Empty means no record or no owner.** A caller that must tell the two apart asks `exists(id)`.
-- Not yet: aimon-sandbox's `SessionOwnerLookup.recorded` still calls `load` until it moves to a core release that
-  contains this method (backlog SO-8).
+- aimon-sandbox's `SessionOwnerLookup.recorded` already calls `loadOwner` (kangwoo/aimon-sandbox#30), so a root bind
+  no longer reads the whole record for its owner. It builds against `0.3.3-SNAPSHOT`; 0.3.3 is the release it ships
+  against (backlog SO-8, closed).
 
 ### Added: per-execution environment attributes (`EnvironmentRequest#requestAttributes`)
 
