@@ -96,8 +96,7 @@ import io.lettuce.core.api.sync.RedisCommands;
  * <p>
  * {@link #load(SessionId) load} is one {@code HGETALL} and decodes every field, transcript included.
  * {@link #loadOwner(SessionId) loadOwner} is one {@code HGET} of {@code owner}, so an owner check costs the same
- * however
- * long the session has run — and a transcript that will not decode fails {@code load} but not it.
+ * however long the session has run — and a transcript that will not decode fails {@code load} but not it.
  *
  * <h2>Fencing</h2>
  *

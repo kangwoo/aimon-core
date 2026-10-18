@@ -84,8 +84,7 @@ import at.aimon.core.base.Principal;
  * <p>
  * {@link #load(SessionId) load} selects every column above and decodes them all, transcript included.
  * {@link #loadOwner(SessionId) loadOwner} selects {@code owner} alone, so an owner check costs the same however long
- * the
- * session has run — and a transcript that will not decode fails {@code load} but not it.
+ * the session has run — and a transcript that will not decode fails {@code load} but not it.
  *
  * <h2>Fencing</h2>
  *
