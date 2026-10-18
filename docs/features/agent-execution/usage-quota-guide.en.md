@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/agent-execution/usage-quota-guide.md
-source_commit: 1ce4783
+source_commit: 69c6e224
 ---
 
 # Usage Quota Guide — usage limits per session, user and tenant
@@ -161,17 +161,21 @@ LLM at all.
 
 When a fork stops on a quota, the `Task` tool tells the parent LLM so — retrying would hit the same limit.
 
-**A scheduled routine checks at the step boundary.** A routine has no iterations, so the moment before each step
-attempt (retries included) plays the role of a turn's iteration boundary. If a limit has been reached, the step is
-**not started** and not retried, and the routine run fails with the message `"Execution stopped by quota: ..."` (a
-failed `RoutineResult`, `TaskFailedEvent`). If a fork crosses the limit partway through a step, the fork stops itself
-and the next step or retry is refused at the boundary. If it crosses on the last step there is no next boundary, so
-the routine can end successfully — that is the overshoot of §7.
+**A scheduled routine does not refuse steps.** A quota stops LLM calls, and every LLM call a routine step can reach —
+a fork's iterations, an inline LLM skill's calls — checks the inherited guard right before it is made. So in a routine
+owned by a principal who has used up their limit, steps that call no LLM, such as `Bash` · `Read`, run as usual, and
+the fork of a `Task` · `Workflow` · forked-skill step stops before its first LLM call. How the stop shows depends on
+the tool. A forked skill fails the step with an error that contains `QUOTA_EXCEEDED`, while `Task`, as for any other
+fork stop, reports it as a `Completion reason: QUOTA_EXCEEDED` line inside a successful result — so the routine run
+itself can be recorded as a success ([UQ-4](../../backlog/usage-quota-open-items.md)). If a fork crosses the limit
+partway through a step, it and every later fork each stop before their next call. Crossing on the last step is the
+overshoot of §7.
 
-WARNING: This check **does not look at which tool a step uses**, because the executor cannot tell which tools call the
-LLM. In a deployment with quotas on, a routine owned by a principal who has used up their limit also fails its `Bash`
-· `Read` steps. The same happens to `Principal.system()`, the owner recorded for a task created without a known caller, if the
-policy limits every principal. A stack with no quota ledger attached sees no change at all.
+The one thing the executor adds is a retry decision. An attempt that failed because of the quota (its error contains
+`QUOTA_EXCEEDED` and the guard still reports a violation) would hit the same limit again, so the step fails at once,
+without waiting out the backoff, with the message `"Execution stopped by quota: ... (last attempt: ...)"`. An attempt
+that failed for any other reason is retried as configured, even while the owner is over the limit. A stack with no
+quota ledger attached sees no change at all.
 
 NOTE: `getQuotaViolation()` is filled only when the turn ran **on the same node**. The result of a turn run on another
 node through `SessionRouter`, and a result kept in the idempotency store, carry only the completion reason and a

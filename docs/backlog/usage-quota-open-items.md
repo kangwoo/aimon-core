@@ -54,8 +54,8 @@ QuotaGuard)`, 설계 §11.4), 앱 코드가 runner 를 직접 부르면 비활�
 *(2026-10-18, #267)* 처음 등록할 때 이 항목에는 경로가 둘이었다. 다른 하나인 **예약 루틴의 단계**는 닫았다 —
 `RoutineExecutor` 가 애플리케이션 범위의 `QuotaGuardFactory` 를 빌더로 받아(`SchedulingEngineBuilder#quotaGuardFactory`,
 부트스트랩은 실행기와 같은 인스턴스를 넘긴다) 실행 1회에 guard 하나를 만들고(세션 없음, 주체는 `task.getOwner()` —
-설계 §4.4), 단계 컨텍스트의 `QUOTA_GUARD` 로 포크에 물려주며, 단계 경계에서 같은 guard 로 판정해 한도에 닿은 단계를
-시작하지 않는다. 설계와 구현의 차이는
+설계 §4.4), 단계 컨텍스트의 `QUOTA_GUARD` 로 포크에 물려준다. 판정은 포크와 스킬이 각자 LLM 호출 전에 하고, 실행기는
+단계를 거절하지 않는다 — 쿼터로 실패한 시도의 재시도만 건너뛴다(PR #271 리뷰에서 바꿨다, 설계 §8.4). 설계와 구현의 차이는
 [`../design/agent-execution/usage-quota-routine-forks.md`](../design/agent-execution/usage-quota-routine-forks.md) §8.
 루틴의 쿼터 멈춤이 문자열로만 남는다는 새 문제는 UQ-4 로 따로 올렸다.
 
@@ -93,16 +93,17 @@ QuotaGuard)`, 설계 §11.4), 앱 코드가 runner 를 직접 부르면 비활�
 **무엇을.** `RoutineResult` · `StepResult`(와 그것을 저장하는 실행 이력)에 쿼터 멈춤을 구조로 싣는다 — 상태 하나,
 또는 턴처럼 `QuotaViolation`(키 · 한도 · 사용량).
 
-**왜.** #267 이 루틴에 쿼터를 걸면서 한도에 닿은 단계를 거절하게 했는데, `RoutineResult` 에는 성공 · 실패 · 취소
-셋뿐이라 쿼터 멈춤은 **실패 + `"Execution stopped by quota: ..."` 메시지**로 기록된다. 턴은
-`CompletionReason.QUOTA_EXCEEDED` 와 `getQuotaViolation()` 을 내놓는다. 관측 가능한 결과는 **루틴의 쿼터 멈춤을
-알림·대시보드로 따로 보이려면 메시지 접두어를 파싱해야 하고**, 어느 범위의 어느 기간이 다 찼는지도 문자열 안에만
-있다는 것이다. fail-closed 장부 장애(`"Usage ledger unavailable: ..."`)와 쿼터 멈춤, 도구 자체의 실패도 메시지로만
-갈린다. 출처는 설계 [`usage-quota-routine-forks.md`](../design/agent-execution/usage-quota-routine-forks.md) §7 Q3 —
+**왜.** #267 이 루틴에 쿼터를 걸었지만 `RoutineResult` 에는 성공 · 실패 · 취소 셋뿐이라 쿼터 멈춤이 구조로 남지
+않는다. 포크 스킬 단계는 `QUOTA_EXCEEDED` 를 담은 오류 문자열로, 재시도를 건너뛴 단계는
+`"Execution stopped by quota: ..."` 메시지로 실패하고, `Task` 단계는 다른 포크 멈춤처럼 **성공한** 단계 출력 안의
+`Completion reason: QUOTA_EXCEEDED` 줄로만 남는다. 턴은 `CompletionReason.QUOTA_EXCEEDED` 와 `getQuotaViolation()` 을
+내놓는다. 관측 가능한 결과는 **루틴의 쿼터 멈춤을 알림·대시보드로 따로 보이려면 문자열을 파싱해야 하고**, `Task`
+단계의 경우에는 실행이 성공으로 기록되어 실패 알림에도 걸리지 않는다는 것이다. 어느 범위의 어느 기간이 다 찼는지도
+문자열 안에만 있다. 출처는 설계 [`usage-quota-routine-forks.md`](../design/agent-execution/usage-quota-routine-forks.md) §7 Q3 —
 저장 모양과 코덱을 건드리는 일이라 #267 범위 밖에 두었다.
 
-**어디.** (2026-10-18) `RoutineResult.java:58` (`failure` — 메시지 하나), `RoutineExecutor.java:819`
-(`checkQuota` — 위반을 문자열로 만든다), `ScheduledTaskExecutionHistoryRepository` 와 그 구현들(이력에 남는 모양).
+**어디.** (2026-10-18) `RoutineResult.java:58` (`failure` — 메시지 하나), `RoutineExecutor.java:820`
+(`quotaStopsRetry` — 위반을 문자열로 만든다), `TaskTool.java:495` (포크 멈춤을 성공 결과로 돌려준다), `ScheduledTaskExecutionHistoryRepository` 와 그 구현들(이력에 남는 모양).
 
 **언제 다시 볼까.** 루틴의 쿼터 멈춤을 운영 알림이나 UI 에서 일반 실패와 구분해 보여 줘야 할 때, 또는 UQ-3 처럼
 결과에 `QuotaViolation` 을 싣는 저장 모양 작업이 시작될 때 — 둘은 같은 직렬화 결정을 공유한다.

@@ -42,8 +42,10 @@ import at.aimon.core.subagent.Subagent;
  *
  * <p>
  * What only this layer shows: that a fork started by a routine step lands on the task owner's principal key — the run
- * has no session and the fork never resolves a guard of its own — and that the owner's quota then refuses the next
- * step before its fork reaches the LLM. This is the bypass issue #267 closed (usage-quota §4.3, UQ-2).
+ * has no session and the fork never resolves a guard of its own — and that the owner's quota then stops the next
+ * step's fork before it reaches the LLM. This is the bypass issue #267 closed (usage-quota §4.3, UQ-2). The routine
+ * does not refuse the step: the fork's own check does, and {@code Task} reports that stop the way it reports every
+ * fork stop, as a {@code Completion reason:} line in a successful result.
  */
 @DisplayName("Usage quota across a scheduled routine's forks")
 class RoutineUsageQuotaIntegrationTest {
@@ -104,28 +106,28 @@ class RoutineUsageQuotaIntegrationTest {
     }
 
     @Test
-    @DisplayName("a routine fork is charged to the owner, and the owner's quota refuses the next fork step")
-    void routineForkIsChargedToTheOwnerAndTheNextStepIsRefused() {
+    @DisplayName("a routine fork is charged to the owner, and the owner's quota stops the next step's fork")
+    void routineForkIsChargedToTheOwnerAndTheNextForkIsStopped() {
         routines.withQuotaGuardFactory(principalLimit(ledger, TOKENS_PER_CALL));
         llm.script(ScriptedLlmClient.UNROUTED, ScriptedLlmClient.text("worked"), ScriptedLlmClient.text("never sent"));
 
         final RoutineResult result = routines.execute(twoTaskSteps());
 
-        // Step 0's fork made one call (15 = the limit) on the owner's key; step 1 is refused before its fork starts.
-        assertThat(llm.callCount(ScriptedLlmClient.UNROUTED)).as("the refused step must not reach the LLM")
+        // Step 0's fork made one call (15 = the limit) on the owner's key; step 1's fork stops before its first call.
+        assertThat(llm.callCount(ScriptedLlmClient.UNROUTED)).as("the stopped fork must not reach the LLM")
                 .isEqualTo(1);
         assertThat(ownerTotal().getTokens()).isEqualTo(TOKENS_PER_CALL);
-        assertThat(result.isSuccess()).isFalse();
         assertThat(result.getStepResults()).hasSize(2);
-        assertThat(result.getStepResults().get(0).isSuccess()).isTrue();
-        assertThat(result.getStepResults().get(1).getAttemptCount()).isZero();
-        assertThat(result.getErrorMessage()).hasValueSatisfying(
-                message -> assertThat(message).startsWith("Execution stopped by quota:").contains(OWNER.getId()));
+        assertThat(result.getStepResults().get(0).getStdout())
+                .hasValueSatisfying(output -> assertThat(output).doesNotContain("QUOTA_EXCEEDED"));
+        assertThat(result.getStepResults().get(1).getAttemptCount()).isEqualTo(1);
+        assertThat(result.getStepResults().get(1).getStdout()).hasValueSatisfying(
+                output -> assertThat(output).contains("Completion reason: QUOTA_EXCEEDED").contains(OWNER.getId()));
     }
 
     @Test
-    @DisplayName("an owner already over quota cannot start a routine's fork step at all")
-    void ownerOverQuotaCannotRunAForkStep() {
+    @DisplayName("an owner already over quota gets no LLM call out of a routine's fork steps")
+    void ownerOverQuotaGetsNoLlmCallOutOfForkSteps() {
         routines.withQuotaGuardFactory(principalLimit(ledger, TOKENS_PER_CALL));
         ledger.charge(List.of(QuotaKey.of(QuotaScope.principal(OWNER), QuotaWindow.TOTAL, "")),
                 QuotaUsage.of(TOKENS_PER_CALL, Money.zeroUsd()));
@@ -134,9 +136,9 @@ class RoutineUsageQuotaIntegrationTest {
         final RoutineResult result = routines.execute(twoTaskSteps());
 
         assertThat(llm.callCount(ScriptedLlmClient.UNROUTED)).isZero();
-        assertThat(result.isSuccess()).isFalse();
-        assertThat(result.getStepResults()).singleElement()
-                .satisfies(step -> assertThat(step.getAttemptCount()).isZero());
+        assertThat(ownerTotal().getTokens()).isEqualTo(TOKENS_PER_CALL);
+        assertThat(result.getStepResults()).hasSize(2).allSatisfy(step -> assertThat(step.getStdout())
+                .hasValueSatisfying(output -> assertThat(output).contains("Completion reason: QUOTA_EXCEEDED")));
     }
 
     @Test

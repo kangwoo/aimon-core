@@ -1,6 +1,7 @@
 # Design — #267: scheduled routine forks run without a quota guard (UQ-2, routine half)
 
-> Status: **IMPLEMENTED** — `aimon-core` (`RoutineExecutor#withQuotaGuardFactory`, the step-boundary quota gate,
+> Status: **IMPLEMENTED** — `aimon-core` (`RoutineExecutor#withQuotaGuardFactory`, a retry check for quota-stopped
+> attempts — the step-boundary gate of the body was removed in PR review, §8.4 — and
 > `SchedulingEngineBuilder#quotaGuardFactory`) and `aimon-bootstrap` (`AimonStackBuilder` hands the scheduling engine
 > the executors' factory). Records: [`usage-quota.md`](usage-quota.md) §11.4 (dated note), and backlog UQ-2 (routine
 > half closed, still open for the app-invoked `WorkflowRunner`) and UQ-4 in
@@ -351,6 +352,9 @@ attributes), publishes it under `QUOTA_GUARD` only when a factory is wired, and 
 the cancellation gate. A refused step is not retried and fails the run with `Execution stopped by quota: …`. Without
 a factory nothing is resolved, nothing is published and the gate never refuses.
 
+*The step gate did not survive PR review: §8.4 reverses Q1 and removes it. §8.1 – §8.3 are kept as written at build
+time.*
+
 ### 8.1 Where the build departed from the body
 
 - **DV-1 — the gate also runs before a retry's backoff.** §2.1 item 4 and §4 put the check only at the top of the
@@ -395,7 +399,7 @@ a factory nothing is resolved, nothing is published and the gate never refuses.
 
 ### 8.3 Open questions: decided, and what went to the backlog
 
-- **Q1 (gate every step).** Decided as written, with the reviewer's agreement. `aStepThatStartsNoLlmWorkIsRefusedToo`
+- **Q1 (gate every step).** *(Reversed in PR review — §8.4.)* Decided as written, with the reviewer's agreement. `aStepThatStartsNoLlmWorkIsRefusedToo`
   pins it, so reversing it shows up as a test change. Nothing was filed. Narrowing the gate needs a marker for tools
   that can start an LLM execution, and no such marker exists. Reconsider if one is ever added for another reason.
 - **Q2 (overshoot on the last step).** Decided as written: soft-limit overshoot, as for a turn.
@@ -410,3 +414,45 @@ a factory nothing is resolved, nothing is published and the gate never refuses.
 
 UQ-2 stays open for its other half: application code calling an agent's `WorkflowRunner` directly
 (`OrcaAgentRuntimeFactory`'s default launch context carries no guard).
+
+### 8.4 After PR review — Q1 reversed: no step gate
+
+*Appended 2026-10-18, after PR #271 review 1, whose blocking finding was Q1.*
+
+**What changed.** The pre-attempt gate is gone. `RoutineExecutor` resolves and publishes the run's guard exactly as
+before, but it no longer refuses a step. What remains of §2.1 item 4 is a narrowed retry check. After a failed attempt
+whose own error contains `QUOTA_EXCEEDED`, the guard is asked before the backoff. If it still reports a violation, the
+step fails at once with `Execution stopped by quota: <describe> (last attempt: <error>)`. Any other failure keeps its
+configured retries, whatever the owner has spent. A fail-closed ledger that fails at that check gives no answer, so the
+retry goes ahead. `RunQuota`, `StepRun`'s guard and the resolver fail-safe (DV-3) stand. DV-1 survives in narrowed
+form and DV-2 for the retry message. DV-4's `checkQuota` became `quotaStopsRetry`.
+
+**Why.** §7 Q1 argued that the executor cannot tell which tools call an LLM, and that a turn of an over-quota principal
+runs no tool either. Both premises were wrong.
+- **Narrowing needs no marker.** The check already sits where the tokens are spent.
+  `DefaultSubagentExecutor` checks the inherited guard before every iteration, iteration 0 included, and `Task`,
+  `Workflow` and fork-mode skill forks all run through it. `LlmSkillExecutor` checks before its first call and before
+  every later one. Verified in code: a search for LLM call sites reachable from a tool found no other one that would be
+  charged. Calls that bypass the two recording points (compaction, knowledge and memory LLM calls) are outside the
+  quota for a turn too (usage-quota §10).
+- **A turn's gate stops the next LLM call.** Its tools stop only as a consequence, since they run because an LLM asked
+  for them. The tool calls in the response that crossed the limit still run.
+
+The gate added no protection where tokens are spent. Its only extra effect was refusing `Bash` / `Read` routines of
+an over-quota owner, and every `Principal.system()`-owned task once one system routine had used up the shared key.
+With a `TOTAL` window that refusal lasts indefinitely, which is an availability regression for an IT-operations
+framework.
+
+**One correction to the review.** The review expected a refused fork step to "fail with the fork's own
+`QUOTA_EXCEEDED` error". That holds for a fork-mode skill (`SkillTool` returns `Skill fork failed for …` with the
+fork's error). It does not hold for `Task`. `TaskTool` returns `ToolResult.success` for every fork stop, quota
+included, and reports the stop as a `Completion reason: QUOTA_EXCEEDED` line (`TaskTool.java:495`). So the step
+succeeds, and a routine of `Task` steps whose forks were all quota-stopped ends as a successful run that spent no
+tokens. This is how `Task` already treats every other fork stop (`MAX_ITERATIONS`, budget stops), so it is left as is,
+and UQ-4 now records it: a structured quota stop on `RoutineResult` would also make this case visible.
+
+**Tests.** `aStepThatStartsNoLlmWorkRunsWhileItsOwnerIsOverQuota` replaces `aStepThatStartsNoLlmWorkIsRefusedToo`.
+The unit tests' fork stand-in now checks the guard itself before "calling the LLM", as a fork does.
+`RoutineUsageQuotaIntegrationTest` and `AimonStackQuotaTest` drive real `Task` forks. With quotas off, the bootstrap
+test makes one LLM call. Over quota, it makes none and the step output carries `Completion reason: QUOTA_EXCEEDED`.
+This replaces the earlier `Read` step that proved "ran" through a validation failure.

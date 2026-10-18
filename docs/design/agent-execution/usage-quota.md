@@ -367,7 +367,7 @@ DefaultSubagentExecutor ── QUOTA_GUARD 를 그대로 다시 싣는다 ──
 
 *2026-10-18 덧붙임.* 루틴 쪽 절반은 #267 이 닫았다. `RoutineExecutor` 가 애플리케이션 범위의 `QuotaGuardFactory` 를
 받아 실행 1회에 guard 하나를 만들고(세션 없음, 주체는 태스크 소유자 — §4.4), 단계 컨텍스트에 실어 포크가 물려받게
-하며, 단계 경계에서 같은 guard 로 판정해 한도에 닿은 단계를 시작하지 않는다. 설계와 그 뒤의 차이는
+한다. 판정은 턴의 포크와 같이 포크와 스킬이 LLM 호출 전에 하며, 실행기는 단계를 거절하지 않는다. 설계와 그 뒤의 차이는
 [`usage-quota-routine-forks.md`](usage-quota-routine-forks.md) 에 있다. 앱이 `WorkflowRunner` 를 직접 부르는 경로는
 여전히 `UQ-2` 로 열려 있다.
 

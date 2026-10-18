@@ -47,6 +47,8 @@ import at.aimon.core.scheduling.SchedulingEngine;
 import at.aimon.core.scheduling.event.ScheduledTaskEventListener;
 import at.aimon.core.scheduling.event.TaskCompletedEvent;
 import at.aimon.core.scheduling.event.TaskFailedEvent;
+import at.aimon.core.subagent.InMemorySubagentRegistry;
+import at.aimon.core.subagent.Subagent;
 
 /**
  * The bootstrap half of usage quotas (usage-quota §7.1): a {@link QuotaSpec} reaches the executor and the scheduling
@@ -125,7 +127,23 @@ class AimonStackQuotaTest {
         }
     }
 
-    /** Fires a one-step routine owned by {@code owner} through the stack's engine and returns how the run ended. */
+    /** {@link #specFor} plus a {@code worker} subagent for a routine's {@code Task} step to fork. */
+    private static AimonStackSpec.Builder specWithWorker(Path workspace, LlmClient llm) {
+        final InMemorySubagentRegistry subagents = new InMemorySubagentRegistry();
+        subagents.register(Subagent.builder().name("worker").description("Routine quota test worker")
+                .systemPrompt("You are the worker.").maxIterations(3).build());
+        return AimonStackSpec.builder().workspaceRoot(workspace.toString()).llm(LlmSpec.of(llm))
+                .agent(AgentSpec
+                        .of(AgentBundle
+                                .builder().agent(DefaultAgent.builder().name("ops")
+                                        .systemPrompt("You are a test agent.").maxIterations(5).build())
+                                .subagentRegistry(subagents).build()));
+    }
+
+    /**
+     * Fires a one-step routine owned by {@code owner} through the stack's engine — a {@code Task} step forking the
+     * {@code worker} subagent — and returns how the run ended.
+     */
     private static RoutineResult fireRoutine(AimonStack stack, Principal owner) {
         final SchedulingEngine engine = stack.schedulingEngine().orElseThrow();
         final List<RoutineResult> results = new CopyOnWriteArrayList<>();
@@ -140,10 +158,12 @@ class AimonStackQuotaTest {
                 results.add(event.getResult());
             }
         });
-        // A step that starts no LLM work: the quota gate refuses every step of an over-quota owner (design Q1).
         final ScheduledTask task = ScheduledTask.builder().id(ScheduledTaskId.of("nightly")).name("nightly sweep")
                 .cronExpression("0 3 * * *").owner(owner).boundRuntimeId(stack.primaryRuntimeId())
-                .addStep(RoutineStep.withRetry("Read", "{}", 0, Duration.ZERO)).build();
+                .addStep(RoutineStep.withRetry("Task",
+                        "{\"subagent_name\":\"worker\",\"prompt\":\"sweep\",\"description\":\"sweep\"}", 0,
+                        Duration.ZERO))
+                .build();
         engine.getTaskManager().register(task);
         engine.getTaskManager().executeTask(task.getId());
         assertThat(results).hasSize(1);
@@ -151,8 +171,9 @@ class AimonStackQuotaTest {
     }
 
     @Test
-    @DisplayName("a QuotaSpec with a ledger reaches the scheduling engine: an over-quota owner's routine step is refused")
+    @DisplayName("a QuotaSpec with a ledger reaches the scheduling engine: an over-quota owner's routine fork stops")
     void quotaSpecReachesTheSchedulingEngine(@TempDir Path workspace) {
+        final CountingLlm llm = new CountingLlm();
         final Principal owner = Principal.user("alice");
         final InMemoryUsageLedger ledger = new InMemoryUsageLedger();
         ledger.charge(List.of(QuotaKey.of(QuotaScope.principal(owner), QuotaWindow.TOTAL, "")),
@@ -160,30 +181,30 @@ class AimonStackQuotaTest {
         final QuotaSpec quota = QuotaSpec.builder().ledger(ledger).policy(StaticQuotaPolicy.builder()
                 .limit(QuotaScope.Kind.PRINCIPAL, QuotaLimit.total().maxTokens(100).build()).build()).build();
 
-        try (AimonStack stack = AimonStackBuilder.build(
-                specFor(workspace, new CountingLlm()).quota(quota).scheduling(SchedulingSpec.enabled()).build())) {
+        try (AimonStack stack = AimonStackBuilder
+                .build(specWithWorker(workspace, llm).quota(quota).scheduling(SchedulingSpec.enabled()).build())) {
             final RoutineResult result = fireRoutine(stack, owner);
 
-            assertThat(result.isSuccess()).isFalse();
-            assertThat(result.getStepResults()).singleElement()
-                    .satisfies(step -> assertThat(step.getAttemptCount()).isZero());
-            assertThat(result.getErrorMessage())
-                    .hasValueSatisfying(message -> assertThat(message).startsWith("Execution stopped by quota:"));
+            // The step runs; the fork it starts finds the owner's guard on the step context and stops before its
+            // first LLM call. Task reports that as a completion reason, as it reports every fork stop.
+            assertThat(llm.calls).hasValue(0);
+            assertThat(result.getStepResults()).singleElement().satisfies(step -> assertThat(step.getStdout())
+                    .hasValueSatisfying(output -> assertThat(output).contains("Completion reason: QUOTA_EXCEEDED")));
         }
     }
 
     @Test
-    @DisplayName("without a QuotaSpec a routine step runs whatever the owner has spent")
+    @DisplayName("without a QuotaSpec a routine's fork runs and is not metered")
     void noQuotaSpecLeavesRoutinesUnmetered(@TempDir Path workspace) {
+        final CountingLlm llm = new CountingLlm();
         try (AimonStack stack = AimonStackBuilder
-                .build(specFor(workspace, new CountingLlm()).scheduling(SchedulingSpec.enabled()).build())) {
+                .build(specWithWorker(workspace, llm).scheduling(SchedulingSpec.enabled()).build())) {
             final RoutineResult result = fireRoutine(stack, Principal.user("alice"));
 
-            // The Read step fails on its missing argument — it ran, which is all this asserts.
-            assertThat(result.getStepResults()).singleElement()
-                    .satisfies(step -> assertThat(step.getAttemptCount()).isEqualTo(1));
-            assertThat(result.getErrorMessage()).hasValueSatisfying(
-                    message -> assertThat(message).doesNotContain("quota").doesNotContain("Usage ledger"));
+            assertThat(result.isSuccess()).isTrue();
+            assertThat(llm.calls).hasValue(1);
+            assertThat(result.getStepResults()).singleElement().satisfies(step -> assertThat(step.getStdout())
+                    .hasValueSatisfying(output -> assertThat(output).doesNotContain("QUOTA_EXCEEDED")));
         }
     }
 

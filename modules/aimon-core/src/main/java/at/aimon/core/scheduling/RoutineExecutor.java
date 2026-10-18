@@ -40,6 +40,7 @@ import at.aimon.core.agent.AgentRuntime;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.AgentRuntimeRegistry;
 import at.aimon.core.agent.ExecutionId;
+import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
@@ -133,12 +134,19 @@ import at.aimon.core.tracing.Tracer;
  * With a {@link QuotaGuardFactory} wired ({@link #withQuotaGuardFactory(QuotaGuardFactory)}), each run resolves
  * <b>one</b> {@link QuotaGuard}, as a turn does: no session, the task's owner as principal, the run's execution
  * attributes. The steps' context carries it under {@link ToolContextKeys#QUOTA_GUARD}, so a subagent a step starts
- * ({@code Task}, {@code Workflow}, a fork-mode skill) charges the owner's keys instead of none, and every step and
- * retry
- * of the run shares it. The step boundary checks it before each attempt, the routine's counterpart of a turn's
- * iteration check: once a key has reached its limit no further attempt starts &mdash; whatever tool the step names
- * &mdash; and the run fails with {@code "Execution stopped by quota: ..."}. Without a factory no guard is resolved, the
- * key is absent and the gate never refuses, as before (usage-quota design §4.3, §4.4).
+ * ({@code Task}, {@code Workflow}, a fork-mode skill) or an inline LLM skill charges the owner's keys instead of none,
+ * and every step and retry of the run shares it.
+ *
+ * <p>
+ * The executor does not refuse a step itself. A usage quota limits LLM spend, and every LLM call a step can reach
+ * &mdash; a fork's iterations, an inline skill's calls &mdash; already checks this guard before it is made, the same
+ * check a turn makes before each iteration. So once the owner is over quota, the forks and skills a step starts stop
+ * before their first call, while a step that calls no LLM ({@code Bash}, {@code Read}) runs as it always did. How the
+ * stop shows depends on the tool: a fork-mode skill fails with {@code QUOTA_EXCEEDED} in its error, while {@code Task}
+ * reports every fork stop, this one included, as a {@code Completion reason:} line in a successful result. The one
+ * thing the executor adds is at the retry boundary: an attempt that failed <em>because</em> of the quota, while the
+ * guard still reports it, is not retried, since the retry would stop the same way. Without a factory no guard is
+ * resolved and the key is absent, as before (usage-quota design §4.3, §4.4).
  */
 public class RoutineExecutor {
 
@@ -710,11 +718,11 @@ public class RoutineExecutor {
      * Runs one step, retries included.
      *
      * <p>
-     * Before each attempt, and again before a retry's backoff, the run's quota guard is checked. A reached quota
-     * starts no further attempt: a retry would stop the same way, and waiting out its backoff first would only delay
-     * the verdict. The step then fails with the turn's wording, {@code "Execution stopped by quota: ..."}, with as many
-     * attempts as already ran &mdash; zero when the first was refused. The cancellation gate is read first, so a run
-     * that is both stopped and over quota is filed as cancelled.
+     * No attempt is refused for quota: the LLM calls a step can reach check the run's guard themselves. Only a retry
+     * is, when the failed attempt names {@code QUOTA_EXCEEDED} and the guard still reports a violation &mdash; the
+     * retry would stop the same way, so the step fails at once, before its backoff, with
+     * {@code "Execution stopped by quota: ..."} and the attempt's own error. A cancelled run is not asked, so
+     * cancellation keeps winning.
      *
      * @return the step's result, or empty if the run was cancelled before a single attempt was made — the caller
      *         records nothing for a step that never started
@@ -726,20 +734,12 @@ public class RoutineExecutor {
         final Instant startedAt = clock.instant();
         int attemptCount = 0;
         String lastError = null;
-        // Set when the quota gate refused an attempt: the step then has a verdict even with zero attempts.
-        boolean quotaStopped = false;
 
         while (attemptCount <= step.getMaxRetries()) {
             // Retrying a cancelled run spends its whole backoff budget on work nobody is waiting for. The first pass
             // through this gate is normally a formality — the run's own boundary gate already checked — but not
             // always: an interrupt can arrive between the two, and every retry after the first reaches it for real.
             if (signal.isCancelled()) {
-                break;
-            }
-            final Optional<String> refusal = checkQuota(run.quotaGuard, task, stepIndex, lastError);
-            if (refusal.isPresent()) {
-                lastError = refusal.get();
-                quotaStopped = true;
                 break;
             }
             attemptCount++;
@@ -777,14 +777,13 @@ public class RoutineExecutor {
             }
 
             if (attemptCount <= step.getMaxRetries()) {
-                // Ask before the backoff rather than after it: a fork that crossed the limit in this attempt would
-                // otherwise hold the run for the whole retry delay only to be refused at the top of the loop.
+                // Ask before the backoff, not after: an attempt the quota stopped would otherwise hold the run for
+                // the whole retry delay, only for the retry to be stopped the same way.
                 final Optional<String> retryRefusal = signal.isCancelled()
                         ? Optional.empty()
-                        : checkQuota(run.quotaGuard, task, stepIndex, lastError);
+                        : quotaStopsRetry(run.quotaGuard, task, stepIndex, lastError);
                 if (retryRefusal.isPresent()) {
                     lastError = retryRefusal.get();
-                    quotaStopped = true;
                     break;
                 }
                 if (!awaitRetryDelay(step.getRetryDelay(), coordinator)) {
@@ -793,7 +792,7 @@ public class RoutineExecutor {
             }
         }
 
-        if (attemptCount == 0 && !quotaStopped) {
+        if (attemptCount == 0) {
             // Only reachable through the gate at the top of the loop on its first pass: the step was never begun.
             return Optional.empty();
         }
@@ -803,38 +802,40 @@ public class RoutineExecutor {
     }
 
     /**
-     * Asks the run's quota guard whether another attempt may start.
+     * Decides whether a failed attempt is retried, as far as the usage quota goes.
      *
      * <p>
-     * A violation is worded as a turn's quota stop ({@code OrcaAgentExecutor#handleQuotaStop}), so logs and alerts
-     * match one string. A fail-closed ledger that fails is not a quota stop and is not worded as one: it is the
-     * routine's counterpart of a turn ending {@code ERROR} (usage-quota §5.1). Either way the tool's own error from
-     * the last real attempt, if there was one, is kept in the message rather than overwritten.
+     * Only an attempt whose own error names {@code QUOTA_EXCEEDED} &mdash; a fork or skill the guard stopped &mdash;
+     * is a candidate, so a step that spends no usage keeps every retry it was configured with even while its owner is
+     * over quota. The guard then confirms the violation still stands. The message is worded as a turn's quota stop
+     * ({@code OrcaAgentExecutor#handleQuotaStop}), so logs and alerts match one string, and keeps the attempt's error.
+     * A fail-closed ledger that fails here gives no answer, so the retry goes ahead and meets the ledger itself.
      *
      * @param lastError
-     *            the previous attempt's error, or null when no attempt has failed yet
-     * @return the step's error message if no further attempt may start, empty otherwise (always empty on a disabled
+     *            the failed attempt's error
+     * @return the step's error message if the retry is not to start, empty otherwise (always empty on a disabled
      *         guard)
      */
-    private static Optional<String> checkQuota(QuotaGuard guard, ScheduledTask task, int stepIndex, String lastError) {
+    private static Optional<String> quotaStopsRetry(QuotaGuard guard, ScheduledTask task, int stepIndex,
+            String lastError) {
+        if (lastError == null || !lastError.contains(CompletionReason.QUOTA_EXCEEDED.name())) {
+            return Optional.empty();
+        }
         final Optional<QuotaViolation> violation;
         try {
             violation = guard.check();
         } catch (QuotaLedgerUnavailableException e) {
-            log.warn("Usage ledger unavailable for task '{}' at step {}; the step is not run: {}", task.getId(),
+            log.warn("Usage ledger unavailable for task '{}' at step {}; retrying as configured: {}", task.getId(),
                     stepIndex, e.toString());
-            return Optional.of(withLastError("Usage ledger unavailable: " + e.getMessage(), lastError));
+            return Optional.empty();
         }
         if (violation.isEmpty()) {
             return Optional.empty();
         }
-        log.warn("Usage quota reached for task '{}' at step {}: {}", task.getId(), stepIndex,
+        log.warn("Usage quota reached for task '{}' at step {}; not retrying: {}", task.getId(), stepIndex,
                 violation.get().describe());
-        return Optional.of(withLastError("Execution stopped by quota: " + violation.get().describe(), lastError));
-    }
-
-    private static String withLastError(String refusal, String lastError) {
-        return lastError == null ? refusal : refusal + " (last attempt: " + lastError + ")";
+        return Optional
+                .of("Execution stopped by quota: " + violation.get().describe() + " (last attempt: " + lastError + ")");
     }
 
     /**

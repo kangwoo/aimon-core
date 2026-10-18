@@ -14,6 +14,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
@@ -35,6 +36,7 @@ import at.aimon.core.agent.quota.QuotaLimit;
 import at.aimon.core.agent.quota.QuotaResolutionContext;
 import at.aimon.core.agent.quota.QuotaScope;
 import at.aimon.core.agent.quota.QuotaUsage;
+import at.aimon.core.agent.quota.QuotaViolation;
 import at.aimon.core.agent.quota.QuotaWindow;
 import at.aimon.core.agent.quota.UsageLedger;
 import at.aimon.core.agent.quota.impl.DefaultQuotaScopeResolver;
@@ -55,13 +57,14 @@ import at.aimon.core.scheduling.event.TaskFailedEvent;
 import at.aimon.core.tools.ToolContextKeys;
 
 /**
- * A routine run resolves one usage-quota guard for its owner, publishes it to its steps so the forks they start are
- * metered, and refuses a step at the step boundary once the guard reports a violation (issue #267, UQ-2).
+ * A routine run resolves one usage-quota guard for its owner and publishes it to its steps, so the forks they start are
+ * metered and stopped by it (issue #267, UQ-2). The executor refuses no step itself: a step that calls no LLM runs
+ * whatever the owner has spent, and only a retry of an attempt the quota stopped is skipped.
  *
  * <p>
- * The steps here stand in for a {@code Task} / {@code Workflow} / fork-mode skill step: they read the guard off their
- * context and charge it the way a fork's LLM calls would. The real forks are exercised end to end in
- * {@code RoutineUsageQuotaIntegrationTest}.
+ * The fork-like steps here stand in for a {@code Task} / {@code Workflow} / fork-mode skill step: they check the guard
+ * off their context before "calling the LLM" and charge it afterwards, as a fork does ({@link #forkLike}). The real
+ * forks are exercised end to end in {@code RoutineUsageQuotaIntegrationTest}.
  */
 class RoutineExecutorQuotaTest {
 
@@ -96,9 +99,10 @@ class RoutineExecutorQuotaTest {
     }
 
     @Test
-    void anOwnerAlreadyOverQuotaCannotRunAStep() {
+    void anOwnerAlreadyOverQuotaHasItsForkStoppedByTheGuardTheStepInherits() {
         executor.withQuotaGuardFactory(factory(ledger));
         spend(LIMIT);
+        step.behaviour = (input, context) -> forkLike(context, 10);
 
         final RoutineResult result = executor.execute(task(RoutineStep.of(ScriptedTool.NAME, "{}")));
 
@@ -106,13 +110,13 @@ class RoutineExecutorQuotaTest {
         assertThat(result.isCancelled()).isFalse();
         assertThat(result.getStepResults()).singleElement().satisfies(stepResult -> {
             assertThat(stepResult.isSuccess()).isFalse();
-            assertThat(stepResult.getAttemptCount()).isZero();
-            assertThat(stepResult.getErrorMessage()).hasValueSatisfying(message -> assertThat(message)
-                    .startsWith("Execution stopped by quota:").contains("principal").doesNotContain("last attempt"));
+            // The fork's own check stopped it; the default retries are not spent on the same wall.
+            assertThat(stepResult.getAttemptCount()).as("the step itself is not refused").isEqualTo(1);
+            assertThat(stepResult.getErrorMessage()).hasValueSatisfying(
+                    message -> assertThat(message).startsWith("Execution stopped by quota:").contains("principal")
+                            .endsWith("(last attempt: Execution stopped: QUOTA_EXCEEDED — " + overQuota() + ")"));
         });
-        assertThat(result.getErrorMessage())
-                .hasValueSatisfying(message -> assertThat(message).startsWith("Execution stopped by quota:"));
-        assertThat(step.calls).as("a refused step never reaches its tool").isEmpty();
+        assertThat(usage().getTokens()).as("the fork stopped before spending anything").isEqualTo(LIMIT);
         assertThat(events.stepFailed).hasSize(1);
         assertThat(events.taskFailed).hasSize(1);
     }
@@ -212,23 +216,36 @@ class RoutineExecutorQuotaTest {
     }
 
     @Test
-    void theStepAfterAForkCrossedTheLimitIsRefused() {
+    void aFailedAttemptThatIsNotAQuotaStopKeepsItsRetriesWhileTheOwnerIsOverQuota() {
         executor.withQuotaGuardFactory(factory(ledger));
-        step.behaviour = (input, context) -> {
-            charge(context, LIMIT);
-            return ToolResult.success("forked work done");
-        };
+        spend(LIMIT);
+        final List<Boolean> failFirst = new CopyOnWriteArrayList<>(List.of(true));
+        step.behaviour = (input, context) -> failFirst.isEmpty() || !failFirst.remove(0)
+                ? ToolResult.success("ok")
+                : ToolResult.error("connection reset");
+
+        final RoutineResult result = executor
+                .execute(task(RoutineStep.withRetry(ScriptedTool.NAME, "{}", 1, Duration.ZERO)));
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(step.calls).hasSize(2);
+    }
+
+    @Test
+    void theForkInTheStepAfterTheLimitWasCrossedIsStoppedByTheSameGuard() {
+        executor.withQuotaGuardFactory(factory(ledger));
+        step.behaviour = (input, context) -> forkLike(context, LIMIT);
 
         final RoutineResult result = executor
                 .execute(task(RoutineStep.of(ScriptedTool.NAME, "{}"), RoutineStep.of(ScriptedTool.NAME, "{}")));
 
-        assertThat(step.calls).hasSize(1);
+        assertThat(step.calls).hasSize(2);
         assertThat(result.isSuccess()).isFalse();
         assertThat(result.getStepResults()).hasSize(2);
         assertThat(result.getStepResults().get(0).isSuccess()).isTrue();
-        assertThat(result.getStepResults().get(1).getAttemptCount()).isZero();
-        assertThat(result.getStepResults().get(1).getErrorMessage())
-                .hasValueSatisfying(message -> assertThat(message).startsWith("Execution stopped by quota:"));
+        assertThat(result.getStepResults().get(1).getAttemptCount()).isEqualTo(1);
+        assertThat(result.getStepResults().get(1).getErrorMessage()).hasValueSatisfying(
+                message -> assertThat(message).contains("(last attempt: Execution stopped: QUOTA_EXCEEDED"));
         assertThat(usage().getTokens()).isEqualTo(LIMIT);
     }
 
@@ -261,21 +278,31 @@ class RoutineExecutorQuotaTest {
     }
 
     @Test
-    void aFailClosedLedgerThatFailsAtTheGateFailsTheStepWithoutRetriesAndIsNotWordedAsAQuotaStop() {
+    void aFailClosedLedgerThatFailsDoesNotStopAStepThatSpendsNoUsage() {
         executor.withQuotaGuardFactory(QuotaGuardFactory.builder().ledger(new FailingLedger()).policy(policy())
                 .resolver(DefaultQuotaScopeResolver.create()).failClosed(true).build());
 
-        final RoutineResult result = executor
-                .execute(task(RoutineStep.withRetry(ScriptedTool.NAME, "{}", 2, Duration.ofMinutes(5))));
+        final RoutineResult result = executor.execute(task(RoutineStep.of(ScriptedTool.NAME, "{}")));
 
-        assertThat(step.calls).isEmpty();
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(step.calls).hasSize(1);
+    }
+
+    @Test
+    void aFailClosedLedgerThatFailsAtTheRetryBoundaryLetsTheRetryGoAhead() {
+        // The guard cannot answer, so the retry is not refused for quota: it meets the ledger itself.
+        executor.withQuotaGuardFactory(QuotaGuardFactory.builder().ledger(new FailingLedger()).policy(policy())
+                .resolver(DefaultQuotaScopeResolver.create()).failClosed(true).build());
+        step.behaviour = (input, context) -> ToolResult.error("fork stopped: QUOTA_EXCEEDED");
+
+        final RoutineResult result = executor
+                .execute(task(RoutineStep.withRetry(ScriptedTool.NAME, "{}", 1, Duration.ZERO)));
+
         assertThat(result.isSuccess()).isFalse();
-        assertThat(result.isCancelled()).isFalse();
-        assertThat(result.getStepResults()).singleElement().satisfies(stepResult -> {
-            assertThat(stepResult.getAttemptCount()).isZero();
-            assertThat(stepResult.getErrorMessage()).hasValueSatisfying(message -> assertThat(message)
-                    .startsWith("Usage ledger unavailable:").doesNotContain("stopped by quota"));
-        });
+        assertThat(step.calls).hasSize(2);
+        assertThat(result.getStepResults()).singleElement()
+                .satisfies(stepResult -> assertThat(stepResult.getErrorMessage())
+                        .hasValueSatisfying(message -> assertThat(message).isEqualTo("fork stopped: QUOTA_EXCEEDED")));
     }
 
     @Test
@@ -307,9 +334,9 @@ class RoutineExecutorQuotaTest {
     }
 
     @Test
-    void aStepThatStartsNoLlmWorkIsRefusedToo() {
-        // Design decision Q1: the executor cannot tell which tools fork, so every step is gated, as a turn of an
-        // over-quota principal runs no tool at all. Reversing this should be a visible change to this test.
+    void aStepThatStartsNoLlmWorkRunsWhileItsOwnerIsOverQuota() {
+        // Design Q1, reversed in review: a usage quota limits LLM spend, and every LLM call a step can reach checks the
+        // guard itself. A step that spends none is not refused.
         executor.withQuotaGuardFactory(factory(ledger));
         spend(LIMIT);
         final ScriptedTool bash = new ScriptedTool("Bash", (input, context) -> ToolResult.success("ls output"));
@@ -321,14 +348,16 @@ class RoutineExecutorQuotaTest {
                 .name("quota-bash").cronExpression("*/5 * * * *").routine(List.of(RoutineStep.of("Bash", "{}")))
                 .owner(OWNER).boundRuntimeId(bashRuntime).enabled(true).build());
 
-        assertThat(result.isSuccess()).isFalse();
-        assertThat(bash.calls).isEmpty();
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(bash.calls).singleElement()
+                .satisfies(context -> assertThat(context.get(ToolContextKeys.QUOTA_GUARD)).isPresent());
     }
 
     @Test
     void anotherOwnerIsNotAffected() {
         executor.withQuotaGuardFactory(factory(ledger));
         spend(LIMIT);
+        step.behaviour = (input, context) -> forkLike(context, 10);
 
         final RoutineResult result = executor
                 .execute(ScheduledTask.builder().id(ScheduledTaskId.of("quota-bob")).name("quota-bob")
@@ -357,8 +386,27 @@ class RoutineExecutorQuotaTest {
         ledger.charge(List.of(ownerKey()), QuotaUsage.of(tokens, Money.zeroUsd()));
     }
 
+    /** What the guard says about the owner once the limit is reached. */
+    private static String overQuota() {
+        return "quota principal:user/alice:total reached: " + LIMIT + " tokens / " + LIMIT + " tokens";
+    }
+
     private QuotaUsage usage() {
         return ledger.get(List.of(ownerKey())).getOrDefault(ownerKey(), QuotaUsage.zero());
+    }
+
+    /**
+     * What a fork does with the guard it inherited: checks it before its first LLM call, stopping with the fork's
+     * {@code QUOTA_EXCEEDED} wording, and charges it afterwards.
+     */
+    private static ToolResult forkLike(ToolContext context, long tokens) {
+        final Optional<QuotaViolation> violation = context.get(ToolContextKeys.QUOTA_GUARD)
+                .orElseGet(QuotaGuard::disabled).check();
+        if (violation.isPresent()) {
+            return ToolResult.error("Execution stopped: QUOTA_EXCEEDED — " + violation.get().describe());
+        }
+        charge(context, tokens);
+        return ToolResult.success("forked work done");
     }
 
     /** What a fork's LLM call does with the guard it inherited. */

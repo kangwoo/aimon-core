@@ -249,7 +249,7 @@ QuartzTaskSchedulerBuilder.create()
 | `executionGuard` (`SchedulingEngineBuilder`) | `InMemoryScheduledExecutionGuard` (노드 로컬) | 분산 구현 | 노드 간 중복 발화에 대한 코어 레벨 2차 방어선 |
 | `interruptBus` (`SchedulingEngineBuilder`) | `ScheduledTaskInterruptBus.LOCAL_ONLY` (노드 로컬) | 분산 구현 (MongoDB: `MongoScheduledTaskInterruptBus`) | 취소가 **발화한 노드**의 실행까지 멈추게 한다 |
 | `routineExecutionAttributes` (`SchedulingEngineBuilder`) | `RoutineExecutionAttributes.NONE` (속성 없음) | 쓸 때는 공유 저장소를 읽는 구현 | 발화한 노드에서 불리므로, 어느 노드에서 불려도 같은 답을 내야 한다 |
-| `quotaGuardFactory` (`SchedulingEngineBuilder`) | `QuotaGuardFactory.disabled()` (계량 없음) | 실행기에 준 것과 같은 인스턴스, 공유 장부 위에서 | 루틴 단계의 포크를 태스크 소유자의 사용량 쿼터에 기록하고, 다 쓴 소유자의 단계를 거절한다 |
+| `quotaGuardFactory` (`SchedulingEngineBuilder`) | `QuotaGuardFactory.disabled()` (계량 없음) | 실행기에 준 것과 같은 인스턴스, 공유 장부 위에서 | 루틴 단계의 포크를 태스크 소유자의 사용량 쿼터에 기록하고, 다 쓴 소유자의 포크를 첫 LLM 호출 전에 멈춘다 |
 
 `defaultMaxQuota`는 **agent runtime 단위** 상한이다(`TaskQuotaManager` 를 직접 주입하면 무시된다).
 
@@ -276,7 +276,7 @@ QuartzTaskSchedulerBuilder.create()
 
 `quotaGuardFactory`는 LLM **사용량** 쿼터다 — 위의 `defaultMaxQuota`(등록할 수 있는 task 개수)와 다르다. 이것을 주면
 루틴 실행 1회가 소유자를 주체로 guard 하나를 만들고, 단계가 띄운 `Task` · `Workflow` · 포크 스킬이 그 guard 에
-기록되며, 한도에 닿은 소유자의 단계는 시작하지 않고 실행이 실패한다. 판정은 장부를 읽으므로, 클러스터에서 노드 간에
+기록되며, 한도에 닿은 소유자의 포크는 첫 LLM 호출 전에 멈춘다(LLM 을 부르지 않는 단계는 그대로 돈다). 판정은 장부를 읽으므로, 클러스터에서 노드 간에
 합산하려면 공유 장부를 써야 한다. `AimonStackSpec.quota(QuotaSpec)` 로 장부를 준 스택에서는 부트스트랩이 실행기와
 같은 인스턴스를 자동으로 넘긴다. 스타터에는 아직 쿼터 프로퍼티가 없다. 동작과 주의점은
 [`usage-quota-guide.md` §5 · §6](../agent-execution/usage-quota-guide.md#5-포크도-같이-센다).

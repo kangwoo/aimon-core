@@ -19,12 +19,15 @@ up a principal quota in sessions could run the same LLM work through a cron task
   session (so no `SESSION` scope), the task owner as principal, and the run's execution attributes. Every step and
   retry shares it, and so do the forks the steps start, background ones included. An inline (non-fork) LLM skill
   called from a step is metered by it too.
-- **A step is refused at the step boundary once the quota is reached.** Before each attempt (and before a retry's
-  backoff), the run checks the guard. A reached quota starts no further attempt and fails the run with
-  `Execution stopped by quota: …`, the same wording as a turn's stop. The gate applies to **every** step, whatever its
-  tool, because the executor cannot tell which tools call an LLM: with a quota ledger configured, an over-quota
-  owner's pure `Bash` / `Read` routines fail too, and so do tasks owned by `Principal.system()` if the policy limits
-  every principal. A fail-closed ledger that fails at the gate fails the step with `Usage ledger unavailable: …`.
+- **The forks stop, not the steps.** Every LLM call a step can reach — a fork's iterations, an inline skill's calls —
+  already checks the inherited guard before it is made, so an over-quota owner's forks stop before their first LLM
+  call. The executor refuses no step: steps that call no LLM (`Bash`, `Read`) run whatever the owner has spent, as
+  before. A forked skill's stop fails its step with `QUOTA_EXCEEDED` in the error; `Task` reports it, like any fork
+  stop, as a `Completion reason: QUOTA_EXCEEDED` line in a successful result, so such a run can end as a success
+  (backlog UQ-4).
+- **No retry into the same wall.** An attempt that failed with `QUOTA_EXCEEDED` in its error, while the guard still
+  reports a violation, is not retried: the step fails at once, without its backoff, with
+  `Execution stopped by quota: … (last attempt: …)`. Any other failure keeps its configured retries.
 - **Only with a `QuotaSpec` ledger.** `AimonStackBuilder` hands the scheduling engine the same factory it gives the
   executors. Without a ledger the factory is disabled: no guard is resolved, the steps' context has no `QUOTA_GUARD`,
   and routines behave exactly as before.
