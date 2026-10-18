@@ -24,10 +24,11 @@ import at.aimon.core.llm.cost.Money;
  * the ledger holding the counters.
  *
  * <p>
- * <b>One per turn, shared by its forks.</b> The turn's executor builds it; every fork the turn starts — a {@code Task}
- * subagent, a workflow step, a forked skill, a fork inside a fork, a background fork that outlives the turn — receives
- * the same instance and charges the same keys. A fork never builds its own: it has no session, and a guard resolved
- * for it would lose the session scope, which is the bypass this type exists to close.
+ * <b>One per turn, shared by its forks</b> &mdash; or one per scheduled routine run, shared by the forks its steps
+ * start. The turn's executor builds it (the {@code RoutineExecutor}, for a routine run); every fork the turn starts — a
+ * {@code Task} subagent, a workflow step, a forked skill, a fork inside a fork, a background fork that outlives the
+ * turn — receives the same instance and charges the same keys. A fork never builds its own: it has no session, and a
+ * guard resolved for it would lose the session scope, which is the bypass this type exists to close.
  *
  * <p>
  * The scopes and their limits are fixed when the guard is built. The window bucket is not: {@link #check()} and

@@ -121,11 +121,14 @@ QuotaSpec.builder()
 - 백그라운드로 돌린 포크와 `Workflow` 도구의 `mode=background` 실행도 같은 범위에 기록하며, 부모 턴이 끝난 뒤에도
   계속 기록한다
 
-반대로 **포크를 띄운 실행이 턴이 아니면** 물려받을 범위가 없어서 쿼터 없이 돈다. 지금 그런 경로는 둘이다
-([UQ-2](../../backlog/usage-quota-open-items.md)).
+예약 루틴(`RoutineExecutor`)도 같다. 루틴 실행 1회는 턴처럼 guard 를 하나 만든다 — 세션 없이, 태스크 소유자
+(`task.getOwner()`)를 주체로. 그래서 루틴 단계가 부르는 `Task` · `Workflow` · 포크 스킬, 그리고 포크하지 않는 LLM
+스킬도 소유자의 `PRINCIPAL`(과 해석기가 고른 `TENANT`) 범위에 기록된다. 세션 한도를 다 쓴 사용자가 같은 일을
+cron 으로 걸어 우회할 수는 없다. 다만 루틴에는 세션이 없으므로 `SESSION` 한도는 걸리지 않는다.
 
-- 예약 루틴(`RoutineExecutor`)의 단계가 부르는 `Task` · `Workflow` · 포크 스킬
-- 애플리케이션 코드가 에이전트의 `WorkflowRunner` 를 직접 부르는 경우
+반대로 **포크를 띄운 실행이 턴도 루틴도 아니면** 물려받을 범위가 없어서 쿼터 없이 돈다. 지금 그런 경로는
+애플리케이션 코드가 에이전트의 `WorkflowRunner` 를 직접 부르는 경우 하나다
+([UQ-2](../../backlog/usage-quota-open-items.md)).
 
 ## 6. 한도에 닿았을 때
 
@@ -144,6 +147,24 @@ if (result.getCompletionReason() == CompletionReason.QUOTA_EXCEEDED) {
 이미 한도가 소진된 상태에서 새 턴을 넣으면, LLM 을 한 번도 부르지 않고 iteration 0 으로 같은 결과가 나온다.
 
 포크가 쿼터로 멈추면 `Task` 도구는 그 사실을 부모 LLM 에게 알린다 — 다시 시도해도 같은 한도에 막힌다는 뜻이다.
+
+**예약 루틴은 단계를 거절하지 않는다.** 쿼터가 막는 것은 LLM 호출이고, 루틴 단계가 닿을 수 있는 LLM 호출 — 포크의
+iteration, 인라인 LLM 스킬의 호출 — 은 모두 물려받은 guard 를 호출 직전에 판정한다. 그래서 한도를 다 쓴 소유자의
+루틴에서도 `Bash` · `Read` 처럼 LLM 을 부르지 않는 단계는 그대로 돌고, `Task` · `Workflow` · 포크 스킬 단계의 포크는
+첫 LLM 호출 전에 멈춘다. 멈춤이 드러나는 모양은 도구마다 다르다. 포크 스킬은 `QUOTA_EXCEEDED` 를 담은 오류로 단계를
+실패시키고, `Task` 는 다른 포크 멈춤과 똑같이 성공 결과 안의 `Completion reason: QUOTA_EXCEEDED` 줄로 알린다 — 그러니
+루틴 실행 자체는 성공으로 기록될 수 있다([UQ-4](../../backlog/usage-quota-open-items.md)). 단계 도중에 포크가 한도를
+넘기면 그 포크와 뒤의 포크들이 각자 다음 호출 전에 멈춘다. 마지막 단계에서 넘긴 것은 §7 의 초과분이다.
+
+실행기가 더하는 것은 둘이고, 어느 것도 단계를 거절하지 않는다. 쿼터 때문에 실패한 시도(오류에 포크·스킬의 멈춤
+문구 `Execution stopped: QUOTA_EXCEEDED` 가 있고 guard 가 여전히 위반을 보고할 때)는 다시 해도 같은 한도에 막히므로,
+백오프를 기다리지 않고 `"Execution stopped by quota: ... (last attempt: ...)"` 메시지로 단계를 실패시킨다. 다른
+이유로 실패한 시도는 — 클라우드 CLI 가 내는 자기 자원 쿼터의 `QUOTA_EXCEEDED` 처럼 낱말만 같은 오류도 — 소유자가
+한도를 넘었어도 설정대로 재시도한다. 또 루틴 실행이 성공으로 끝나는데 guard 가 위반을 보고하면
+`Routine run for task '...' completed while its owner's usage quota is reached` 로 시작하는 WARN 로그를 남긴다 —
+`Task` 단계처럼 멈춤이 성공으로 기록되는 경우에 알림을 걸 곳이다. 다만 guard 는 단계가 LLM 작업을 시작했는지 모르므로
+토큰을 쓰지 않는 루틴(`Bash` 만 쓰는 헬스 체크 등)에서도 남는다 — 알림은 LLM 을 쓰는 단계가 있는 작업에만 거는 것이 좋다. 쿼터 장부를 붙이지 않은 스택에서는 아무것도
+달라지지 않는다.
 
 NOTE: `getQuotaViolation()` 은 턴이 **같은 노드에서** 실행됐을 때만 채워진다. `SessionRouter` 를 거쳐 다른 노드에서
 실행된 턴의 결과와 멱등성 저장소에 남은 결과에는 완료 사유와 한 줄 메시지만 남는다
@@ -212,6 +233,6 @@ quota 는 **soft limit** 이다. 호출 전에 누적치를 보고, 호출이 �
 ## 관련 문서
 
 - [`usage-quota.md`](../../design/agent-execution/usage-quota.md) — 설계 근거. 구현이 설계와 달라진 점은 §11
-- [`usage-quota-open-items.md`](../../backlog/usage-quota-open-items.md) — 열린 항목 (UQ-1 ~ UQ-3)
+- [`usage-quota-open-items.md`](../../backlog/usage-quota-open-items.md) — 열린 항목 (UQ-1 ~ UQ-4)
 - [`orca-executor.md`](../../design/agent-execution/orca-executor.md) — ReAct 루프와 `ExecutionBudget`
 - [`scope-model.md`](../../overview/scope-model.md) — 컴포넌트 수명 규칙

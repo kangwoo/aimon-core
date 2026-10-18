@@ -17,6 +17,14 @@ import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.DefaultAgent;
 import at.aimon.core.agent.DefaultAgentRuntimeRegistry;
+import at.aimon.core.agent.quota.QuotaGuard;
+import at.aimon.core.agent.quota.QuotaGuardFactory;
+import at.aimon.core.agent.quota.QuotaLimit;
+import at.aimon.core.agent.quota.QuotaScope;
+import at.aimon.core.agent.quota.impl.DefaultQuotaScopeResolver;
+import at.aimon.core.agent.quota.impl.InMemoryUsageLedger;
+import at.aimon.core.agent.quota.impl.StaticQuotaPolicy;
+import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.base.Principal;
 import at.aimon.core.scheduling.RoutineExecutorExecutionAttributesTest.ContextCapturingTool;
 import at.aimon.core.scheduling.RoutineExecutorExecutionAttributesTest.ProvidingRuntime;
@@ -26,6 +34,7 @@ import at.aimon.core.scheduling.quota.DefaultTaskQuotaManager;
 import at.aimon.core.scheduling.repository.InMemoryScheduledTaskExecutionHistoryRepository;
 import at.aimon.core.scheduling.repository.InMemoryScheduledTaskRepository;
 import at.aimon.core.scheduling.scheduler.TaskScheduler;
+import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tracing.SpanExporter;
 import at.aimon.core.tracing.SpanStatus;
 import at.aimon.core.tracing.SpanType;
@@ -183,6 +192,48 @@ class SchedulingEngineBuilderTest {
 
             assertThat(provider.requests).hasSize(1);
             return provider.requests.get(0).requestAttributes();
+        } finally {
+            engine.close();
+        }
+    }
+
+    @Test
+    void quotaGuardFactoryReachesTheRoutineExecutor() {
+        QuotaGuardFactory factory = QuotaGuardFactory.builder().ledger(new InMemoryUsageLedger())
+                .policy(StaticQuotaPolicy.builder()
+                        .limit(QuotaScope.Kind.PRINCIPAL, QuotaLimit.total().maxTokens(1_000).build()).build())
+                .resolver(DefaultQuotaScopeResolver.create()).build();
+
+        Optional<QuotaGuard> guard = firedStepContext(factory).get(ToolContextKeys.QUOTA_GUARD);
+
+        assertThat(guard).hasValueSatisfying(g -> assertThat(g.isEnabled()).isTrue());
+    }
+
+    @Test
+    void withoutAQuotaGuardFactoryTheStepContextCarriesNoGuard() {
+        assertThat(firedStepContext(null).get(ToolContextKeys.QUOTA_GUARD)).isEmpty();
+    }
+
+    /** Fires one task through an engine built with {@code factory} and returns the context its step ran with. */
+    private static ToolContext firedStepContext(QuotaGuardFactory factory) {
+        DefaultAgentRuntimeRegistry registry = new DefaultAgentRuntimeRegistry();
+        Agent agent = DefaultAgent.builder().name("orca-quota").systemPrompt("test").build();
+        ContextCapturingTool tool = new ContextCapturingTool();
+        registry.register(
+                new ProvidingRuntime(AgentRuntimeId.from(agent), agent, List.of(tool), new RecordingProvider()));
+        SchedulingEngineBuilder builder = SchedulingEngineBuilder.create().taskScheduler(mock(TaskScheduler.class))
+                .agentRuntimeRegistry(registry);
+        if (factory != null) {
+            builder.quotaGuardFactory(factory);
+        }
+        SchedulingEngine engine = builder.build();
+        try {
+            ScheduledTask task = RoutineExecutorExecutionAttributesTest.task(AgentRuntimeId.from(agent));
+            engine.getTaskManager().register(task);
+            engine.getTaskManager().executeTask(task.getId());
+
+            assertThat(tool.captured.get()).isNotNull();
+            return tool.captured.get();
         } finally {
             engine.close();
         }

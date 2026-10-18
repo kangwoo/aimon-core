@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/agent-execution/usage-quota-guide.md
-source_commit: 158e83c
+source_commit: e8df5f74
 ---
 
 # Usage Quota Guide — usage limits per session, user and tenant
@@ -132,11 +132,15 @@ around a limit.
 - A fork running in the background, and a `Workflow` tool run with `mode=background`, record to the same scopes and
   keep recording after the parent turn has ended
 
-Conversely, **when the execution that launches a fork is not a turn**, there are no scopes to inherit and the fork runs
-without a quota. There are two such paths today ([UQ-2](../../backlog/usage-quota-open-items.md)).
+A scheduled routine (`RoutineExecutor`) is the same. One routine run builds one guard, as a turn does — with no
+session and the task owner (`task.getOwner()`) as the principal. So `Task` · `Workflow` · forked skills called by a
+routine step, and LLM skills that do not fork, are recorded in the owner's `PRINCIPAL` scope (and any `TENANT` scope
+the resolver picks). A user who has used up a session limit cannot get around it by scheduling the same work with
+cron. A routine has no session, though, so `SESSION` limits do not apply to it.
 
-- `Task` · `Workflow` · forked skills called by a step of a scheduled routine (`RoutineExecutor`)
-- application code calling the agent's `WorkflowRunner` directly
+Conversely, **when the execution that launches a fork is neither a turn nor a routine**, there are no scopes to
+inherit and the fork runs without a quota. There is one such path today: application code calling the agent's
+`WorkflowRunner` directly ([UQ-2](../../backlog/usage-quota-open-items.md)).
 
 ## 6. When a limit is reached
 
@@ -156,6 +160,28 @@ Submitting a new turn when the limit is already exhausted gives the same result 
 LLM at all.
 
 When a fork stops on a quota, the `Task` tool tells the parent LLM so — retrying would hit the same limit.
+
+**A scheduled routine does not refuse steps.** A quota stops LLM calls, and every LLM call a routine step can reach —
+a fork's iterations, an inline LLM skill's calls — checks the inherited guard right before it is made. So in a routine
+owned by a principal who has used up their limit, steps that call no LLM, such as `Bash` · `Read`, run as usual, and
+the fork of a `Task` · `Workflow` · forked-skill step stops before its first LLM call. How the stop shows depends on
+the tool. A forked skill fails the step with an error that contains `QUOTA_EXCEEDED`, while `Task`, as for any other
+fork stop, reports it as a `Completion reason: QUOTA_EXCEEDED` line inside a successful result — so the routine run
+itself can be recorded as a success ([UQ-4](../../backlog/usage-quota-open-items.md)). If a fork crosses the limit
+partway through a step, it and every later fork each stop before their next call. Crossing on the last step is the
+overshoot of §7.
+
+The executor adds two things, and neither refuses a step. An attempt that failed because of the quota (its error
+contains the fork's or skill's stop wording `Execution stopped: QUOTA_EXCEEDED` and the guard still reports a
+violation) would hit the same limit again, so the step fails at once, without waiting out the backoff, with the message
+`"Execution stopped by quota: ... (last attempt: ...)"`. An attempt that failed for any other reason — including an
+error that merely shares the word, such as a cloud CLI's own `QUOTA_EXCEEDED` for its resource quota — is retried as
+configured, even while the owner is over the limit. And when a routine run ends as a success while the guard reports
+a violation, a WARN log starting `Routine run for task '...' completed while its owner's usage quota is reached` is
+written — the place to hang an alert for cases such as a `Task` step, whose stop is recorded as a success. The guard
+cannot tell whether a step started any LLM work, so token-free routines (a `Bash`-only health check, say) log it too —
+hang the alert only on tasks that have a step using an LLM. A stack
+with no quota ledger attached sees no change at all.
 
 NOTE: `getQuotaViolation()` is filled only when the turn ran **on the same node**. The result of a turn run on another
 node through `SessionRouter`, and a result kept in the idempotency store, carry only the completion reason and a
@@ -231,6 +257,6 @@ spent, and the ledger's usage is always lower than the provider's invoice
 
 - [`usage-quota.md`](../../design/agent-execution/usage-quota.md) — design rationale. Where the implementation departs
   from the design is in §11
-- [`usage-quota-open-items.md`](../../backlog/usage-quota-open-items.md) — open items (UQ-1 to UQ-3)
+- [`usage-quota-open-items.md`](../../backlog/usage-quota-open-items.md) — open items (UQ-1 to UQ-4)
 - [`orca-executor.md`](../../design/agent-execution/orca-executor.md) — the ReAct loop and `ExecutionBudget`
 - [`scope-model.en.md`](../../overview/scope-model.en.md) — component lifetime rules

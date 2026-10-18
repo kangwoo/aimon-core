@@ -46,6 +46,7 @@ import at.aimon.core.agent.impl.orca.OrcaAgentRuntimeFactory;
 import at.aimon.core.agent.queue.DefaultMessageQueueManager;
 import at.aimon.core.agent.queue.InMemoryMessageQueueRepository;
 import at.aimon.core.agent.queue.MessageQueueManager;
+import at.aimon.core.agent.quota.QuotaGuardFactory;
 import at.aimon.core.agent.quota.impl.StaticQuotaPolicy;
 import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
@@ -397,8 +398,10 @@ public final class AimonStackBuilder {
                 .withCostEstimator(costEstimator);
         // Usage quotas (usage-quota §7.1). Off without a ledger: the factory is then the disabled one, which is what
         // the executor holds anyway. The ledger is borrowed — application-scoped, never enrolled for teardown.
+        // One instance, shared with the scheduling engine below, so a turn and a routine provably meter alike.
         final QuotaSpec quotaSpec = spec.getQuota();
-        executorFactory.withQuotaGuardFactory(quotaSpec.toGuardFactory());
+        final QuotaGuardFactory quotaGuardFactory = quotaSpec.toGuardFactory();
+        executorFactory.withQuotaGuardFactory(quotaGuardFactory);
         if (quotaSpec.getLedger().isPresent() && costEstimator == CostEstimator.NOOP
                 && quotaSpec.getPolicy() instanceof StaticQuotaPolicy staticPolicy && staticPolicy.hasCostLimit()) {
             degradations.add("quota-cost",
@@ -433,8 +436,8 @@ public final class AimonStackBuilder {
         // --- Scheduling -----------------------------------------------------------------------------------
         // The teardown entry holds the lifecycle rather than the engine, so "the container already stopped it"
         // and "nobody did" are the same code path. See SchedulingLifecycle.
-        final SchedulingLifecycle schedulingLifecycle = createSchedulingEngine(spec, agentRuntimeRegistry, teardown,
-                degradations);
+        final SchedulingLifecycle schedulingLifecycle = createSchedulingEngine(spec, agentRuntimeRegistry,
+                quotaGuardFactory, teardown, degradations);
 
         // --- Agent runtimes -------------------------------------------------------------------------------
         // One pass per declared agent. Everything above is shared; everything inside the loop is per-agent, and
@@ -701,7 +704,7 @@ public final class AimonStackBuilder {
     }
 
     private static SchedulingLifecycle createSchedulingEngine(AimonStackSpec spec,
-            AgentRuntimeRegistry agentRuntimeRegistry, TeardownRegistry teardown,
+            AgentRuntimeRegistry agentRuntimeRegistry, QuotaGuardFactory quotaGuardFactory, TeardownRegistry teardown,
             RuntimeDegradations.Collector degradations) {
         if (!spec.getScheduling().isEnabled()) {
             degradations.add("scheduling",
@@ -722,6 +725,9 @@ public final class AimonStackBuilder {
         // does. Borrowed, as the executor factory borrows it — the engine never closes it.
         spec.getExecutor().getTracer().ifPresent(builder::tracer);
         spec.getExecutor().getTracePayloadPolicy().ifPresent(builder::tracePayloadPolicy);
+        // The executors' quota factory, so a routine's forks are charged to the task owner as a turn's are.
+        // Borrowed — never closed.
+        builder.quotaGuardFactory(quotaGuardFactory);
         // Registered even though it has not been started: the engine's builder already stood up the pools it
         // will run on, so an assembled-but-never-started stack still has them to release.
         final SchedulingEngine engine = builder.build();

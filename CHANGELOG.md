@@ -7,6 +7,39 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: scheduled routine forks are charged to the task owner's usage quota (#267)
+
+A scheduled routine called tools without a turn, so its steps' context carried no `QuotaGuard`, and a `Task`,
+`Workflow` or fork-mode skill step ran its subagent unmetered even though the task has an owner. An owner who had used
+up a principal quota in sessions could run the same LLM work through a cron task. Design and departures:
+`docs/design/agent-execution/usage-quota-routine-forks.md`; backlog UQ-2 (routine half closed, the app-invoked
+`WorkflowRunner` half still open).
+
+- **One guard per routine run.** With a quota factory wired, `RoutineExecutor` resolves one guard per run: no
+  session (so no `SESSION` scope), the task owner as principal, and the run's execution attributes. Every step and
+  retry shares it, and so do the forks the steps start, background ones included. An inline (non-fork) LLM skill
+  called from a step is metered by it too.
+- **The forks stop, not the steps.** Every LLM call a step can reach — a fork's iterations, an inline skill's calls —
+  already checks the inherited guard before it is made, so an over-quota owner's forks stop before their first LLM
+  call. The executor refuses no step: steps that call no LLM (`Bash`, `Read`) run whatever the owner has spent, as
+  before. A forked skill's stop fails its step with `QUOTA_EXCEEDED` in the error; `Task` reports it, like any fork
+  stop, as a `Completion reason: QUOTA_EXCEEDED` line in a successful result, so such a run can end as a success
+  (backlog UQ-4).
+- **No retry into the same wall.** An attempt whose error carries a fork's or skill's quota stop
+  (`Execution stopped: QUOTA_EXCEEDED`), while the guard still reports a violation, is not retried: the step fails at
+  once, without its backoff, with `Execution stopped by quota: … (last attempt: …)`. Any other failure keeps its
+  configured retries, including one that merely names `QUOTA_EXCEEDED`, such as a cloud CLI's resource quota.
+- **A WARN when a run that did less is filed as a success.** A metered run that completes while the guard reports a
+  violation logs `Routine run for task '…' completed while its owner's usage quota is reached (…)`. It refuses
+  nothing; it is what to alert on until a quota stop reaches `RoutineResult` structurally (backlog UQ-4). It also fires
+  for token-free routines, since the guard cannot tell what the steps did, so alert only on tasks with an LLM step.
+- **Only with a `QuotaSpec` ledger.** `AimonStackBuilder` hands the scheduling engine the same factory it gives the
+  executors. Without a ledger the factory is disabled: no guard is resolved, the steps' context has no `QUOTA_GUARD`,
+  and routines behave exactly as before.
+- **New API (additive):** `RoutineExecutor#withQuotaGuardFactory(QuotaGuardFactory)` and
+  `SchedulingEngineBuilder#quotaGuardFactory(QuotaGuardFactory)`. The latter is the LLM **usage** quota; the builder's
+  existing `quotaManager` / `defaultMaxQuota` still cap how many tasks a runtime may schedule.
+
 ### Added: a shared `SessionRecordStore` contract suite (tests only) (#266)
 
 The Postgres, MongoDB and Redis record-store integration tests restated the same cases separately and had begun to

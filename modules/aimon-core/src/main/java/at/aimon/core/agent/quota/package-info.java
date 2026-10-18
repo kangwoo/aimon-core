@@ -20,7 +20,7 @@
  * <li>{@link at.aimon.core.agent.quota.QuotaScopeResolver} · {@link at.aimon.core.agent.quota.QuotaPolicy} — the
  * application's answer to "whose execution is this" and "how much may they use"
  * <li>{@link at.aimon.core.agent.quota.QuotaGuard} — the per-turn check and charge, shared by the turn's forks;
- * {@link at.aimon.core.agent.quota.QuotaGuardFactory} builds one per turn
+ * {@link at.aimon.core.agent.quota.QuotaGuardFactory} builds one per turn, or one per scheduled routine run
  * <li>{@link at.aimon.core.agent.quota.QuotaViolation} — which key stopped an execution, on its result
  * </ul>
  *

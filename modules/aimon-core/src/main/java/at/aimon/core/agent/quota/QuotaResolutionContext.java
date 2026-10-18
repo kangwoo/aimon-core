@@ -12,8 +12,9 @@ import at.aimon.core.base.Principal;
  * What a {@link QuotaScopeResolver} is told about the execution whose scopes it picks.
  *
  * <p>
- * Built once per turn, from the execution request. A fork never builds one: it inherits its parent's
- * {@link QuotaGuard}, scopes and all, because a fork has no session and resolving again would drop the session scope.
+ * Built once per turn, from the execution request, or once per scheduled routine run, from the task. A fork never
+ * builds one: it inherits its parent's {@link QuotaGuard}, scopes and all, because a fork has no session and resolving
+ * again would drop the session scope.
  *
  * <p>
  * Immutable value object. Use builder to create instances.
