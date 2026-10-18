@@ -2,6 +2,8 @@ package at.aimon.core.skill.execution.llm;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.io.IOException;
 import java.util.List;
@@ -28,7 +30,10 @@ import at.aimon.core.agent.tool.exception.ToolPermissionViolationException;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.agent.tool.permission.PermissionSubject;
 import at.aimon.core.agent.tool.permission.ToolPermissionSubjectAware;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.StagedResource;
 import at.aimon.core.environment.TestExecutionEnvironments;
+import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.llm.LlmClient;
@@ -55,6 +60,8 @@ import at.aimon.core.skill.fork.SkillForkOutcome;
 import at.aimon.core.skill.hook.ScopedSkillHookActivator;
 import at.aimon.core.skill.hook.SkillHookSet;
 import at.aimon.core.skill.render.DefaultSkillContentRenderer;
+import at.aimon.core.skill.render.RenderContext;
+import at.aimon.core.subagent.execution.ForkGoalRenderer;
 import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
@@ -329,6 +336,62 @@ class LlmSkillExecutorTest {
         assertThat(recordingFork.lastGoal).contains("Forked body").contains("payload");
         assertThat(recordingFork.lastToolContext).isSameAs(toolContext);
         assertThat(mockLlmClient.getLastCalledMessages()).isNull();
+    }
+
+    @Test
+    @DisplayName("EE-81: a fork body naming ${AIMON_SKILL_DIR} is handed a renderer that stages the skill in the fork")
+    void forkBodyNamingSkillDirIsHandedAForkGoalRenderer() {
+        final RecordingSkillForkExecutor recordingFork = new RecordingSkillForkExecutor(
+                SkillForkOutcome.success("subagent answer"));
+        final LlmSkillExecutor forkExecutor = new LlmSkillExecutor(mockLlmClient, renderer,
+                new DefaultToolExecutionManager(), recordingFork);
+        final StagedResource resource = StagedResource.builder().sourceFileSystem(mock(VirtualFileSystem.class))
+                .sourceDir("skills/test").contentKey("k1").name("test").files(List.of("SKILL.md")).build();
+        final Skill skill = Skill.builder().name("test")
+                .metadata(SkillMetadata.builder().name("test").description("Test").executionMode(ExecutionMode.FORK)
+                        .forkAgentName("researcher").build())
+                .content(SkillContent.of("Run ${AIMON_SKILL_DIR}/run.sh $ARGUMENTS")).stagedResource(resource).build();
+        final SkillExecutionContext context = SkillExecutionContext.builder().skill(skill)
+                .defaultModel(LlmModel.builder().build()).toolRegistry(new DefaultToolRegistry()).executionId(runId())
+                .toolContext(ToolContext.empty()).build();
+        final SkillExecutionRequest request = SkillExecutionRequest.builder().rawArguments("payload")
+                .renderContext(RenderContext.builder().skillBaseDir("/spawner/.aimon-staged/test/k1").build()).build();
+        final ExecutionEnvironment forkEnvironment = mock(ExecutionEnvironment.class);
+        when(forkEnvironment.stage(resource)).thenReturn("/fork/.aimon-staged/test/k1");
+
+        final SkillExecutionResult result = forkExecutor.execute(context, request);
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(recordingFork.lastGoal).isEqualTo("Run /spawner/.aimon-staged/test/k1/run.sh payload");
+        assertThat(recordingFork.lastForkGoal).isNotNull();
+        assertThat(recordingFork.lastForkGoal.render(forkEnvironment))
+                .isEqualTo("Run /fork/.aimon-staged/test/k1/run.sh payload");
+    }
+
+    @Test
+    @DisplayName("EE-81: a fork body that does not name ${AIMON_SKILL_DIR} takes the three-argument fork")
+    void forkBodyWithoutSkillDirIsHandedNoRenderer() {
+        final RecordingSkillForkExecutor recordingFork = new RecordingSkillForkExecutor(
+                SkillForkOutcome.success("subagent answer"));
+        final LlmSkillExecutor forkExecutor = new LlmSkillExecutor(mockLlmClient, renderer,
+                new DefaultToolExecutionManager(), recordingFork);
+        final StagedResource resource = StagedResource.builder().sourceFileSystem(mock(VirtualFileSystem.class))
+                .sourceDir("skills/test").contentKey("k1").name("test").files(List.of("SKILL.md")).build();
+        final Skill skill = Skill.builder().name("test")
+                .metadata(SkillMetadata.builder().name("test").description("Test").executionMode(ExecutionMode.FORK)
+                        .forkAgentName("researcher").build())
+                .content(SkillContent.of("Forked body $ARGUMENTS")).stagedResource(resource).build();
+        final SkillExecutionContext context = SkillExecutionContext.builder().skill(skill)
+                .defaultModel(LlmModel.builder().build()).toolRegistry(new DefaultToolRegistry()).executionId(runId())
+                .toolContext(ToolContext.empty()).build();
+
+        final SkillExecutionResult result = forkExecutor.execute(context,
+                SkillExecutionRequest.builder().rawArguments("payload").build());
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(recordingFork.lastGoal).isEqualTo("Forked body payload");
+        assertThat(recordingFork.threeArgumentForks).isEqualTo(1);
+        assertThat(recordingFork.lastForkGoal).isNull();
     }
 
     @Test
@@ -670,6 +733,8 @@ class LlmSkillExecutorTest {
         Skill lastSkill;
         String lastGoal;
         ToolContext lastToolContext;
+        ForkGoalRenderer lastForkGoal;
+        int threeArgumentForks;
 
         RecordingSkillForkExecutor(SkillForkOutcome outcome) {
             this.outcome = outcome;
@@ -680,6 +745,16 @@ class LlmSkillExecutorTest {
             this.lastSkill = skill;
             this.lastGoal = goal;
             this.lastToolContext = toolContext;
+            this.threeArgumentForks++;
+            return outcome;
+        }
+
+        @Override
+        public SkillForkOutcome fork(Skill skill, String goal, ForkGoalRenderer forkGoal, ToolContext toolContext) {
+            this.lastSkill = skill;
+            this.lastGoal = goal;
+            this.lastToolContext = toolContext;
+            this.lastForkGoal = forkGoal;
             return outcome;
         }
     }
