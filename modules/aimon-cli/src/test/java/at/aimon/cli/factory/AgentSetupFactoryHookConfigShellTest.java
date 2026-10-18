@@ -7,14 +7,18 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.filesystem.impl.local.LocalFileSystem;
+import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.event.OnSessionStartContext;
@@ -23,6 +27,7 @@ import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCommand;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.VirtualShell;
+import at.aimon.core.shell.impl.local.LocalShell;
 import at.aimon.core.skill.hook.action.ShellAction;
 import at.aimon.core.skill.hook.declarative.ShellActionExecutor;
 import at.aimon.core.skill.hook.declarative.ShellHookOutcome;
@@ -89,12 +94,11 @@ class AgentSetupFactoryHookConfigShellTest {
 
     @Test
     @DisplayName("the host shell is rooted at the workspace root, not the JVM's user.dir (#273)")
-    void hostShellIsRootedAtTheWorkspaceRoot(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workspace) {
-        final at.aimon.core.filesystem.impl.local.LocalFileSystem fileSystem = new at.aimon.core.filesystem.impl.local.LocalFileSystem(
-                new at.aimon.core.filesystem.impl.local.LocalFileSystemConfig(workspace.toString()));
+    void hostShellIsRootedAtTheWorkspaceRoot(@TempDir Path workspace) {
+        final LocalFileSystem fileSystem = new LocalFileSystem(new LocalFileSystemConfig(workspace.toString()));
         fileSystem.initialize();
 
-        try (at.aimon.core.shell.impl.local.LocalShell shell = AgentSetupFactory.createHookConfigShell(fileSystem)) {
+        try (LocalShell shell = AgentSetupFactory.createHookConfigShell(fileSystem)) {
             assertThat(shell.getWorkingDirectory()).isEqualTo(fileSystem.getWorkingDirectory());
             assertThat(shell.getWorkingDirectory()).isNotEqualTo(System.getProperty("user.dir"));
         }

@@ -418,7 +418,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             log.warn("Fork '{}' could not render its goal in its own environment: {}", subagent.getName(),
                     e.getMessage());
             return SubagentExecutionResult
-                    .emptyFailure("Failed to stage the fork's goal in its own environment: " + e.getMessage(),
+                    .emptyFailure("Failed to render the fork's goal in its own environment: " + e.getMessage(),
                             Instant.now())
                     .withExecutionId(executionId).withExecutionEnvironment(executionEnvironment);
         }

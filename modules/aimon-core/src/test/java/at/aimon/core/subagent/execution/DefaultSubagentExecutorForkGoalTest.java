@@ -97,7 +97,8 @@ class DefaultSubagentExecutorForkGoalTest {
         });
 
         assertThat(result.isSuccess()).isFalse();
-        assertThat(result.getErrorMessage()).contains("over the limit");
+        assertThat(result.getErrorMessage()).startsWith("Failed to render the fork's goal in its own environment: ")
+                .contains("over the limit");
         assertThat(result.getExecutionEnvironment()).containsSame(forkEnvironment);
         assertThat(result.getExecutionId()).isPresent();
         assertThat(onStarts).hasValue(0);

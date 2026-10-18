@@ -876,8 +876,10 @@ The final design review passed with seven non-blocking notes. All seven were tak
    `SkillRenderContextAccess.rendersSkillDir(Skill)` decides it, and `SkillTool` and `LlmSkillExecutor` call the
    four-argument `fork` only when it answers `true`. For a body that names the variable, F10 holds as designed.
 5. **The fork's goal-render failure message.** §2.3 words it "Failed to stage skill 'x' in the fork's environment: …".
-   The executor does not know the skill, so the message is "Failed to stage the fork's goal in its own environment: " +
-   the exception's message. A `StagingException` from staging a skill already names it ("Cannot stage 'x': …").
+   The executor does not know the skill, so the message is "Failed to render the fork's goal in its own environment: "
+   + the exception's message. It says "render", not "stage", because the cause is not always staging: a fork that
+   resolved an unavailable environment fails here too, and the unavailable environment's own message follows. A
+   `StagingException` from staging a skill already names it ("Cannot stage 'x': …").
 6. **The env→shell lookup is a function, not a holder.** §4.2 asks for a package helper shared by
    `DefaultShellActionExecutor` and `IsolatedShellActionExecutor`. A helper returning "the shell or the refusal" failed
    `PackageDependencyArchitectureTest.skillHooksHoldNoShell` (no class under `skill.hook..` may have a `VirtualShell`

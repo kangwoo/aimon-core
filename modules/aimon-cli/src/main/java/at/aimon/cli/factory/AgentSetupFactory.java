@@ -1141,9 +1141,8 @@ public class AgentSetupFactory {
     /**
      * The CLI's host shell for {@code hooks.json}, rooted at the workspace root &mdash; the file system's working
      * directory, where the agent's {@code Bash} and the environment-placed {@code hooks.json} commands run, and where
-     * the
-     * project layer's {@code hooks.json} is read from. It used to be the JVM's {@code user.dir}, which differs from the
-     * workspace root when the CLI is started with {@code java -jar} from another directory (#273).
+     * the project layer's {@code hooks.json} is read from. It used to be the JVM's {@code user.dir}, which differs from
+     * the workspace root when the CLI is started with {@code java -jar} from another directory (#273).
      */
     static LocalShell createHookConfigShell(LocalFileSystem fileSystem) {
         return new LocalShell(Path.of(fileSystem.getWorkingDirectory()));
