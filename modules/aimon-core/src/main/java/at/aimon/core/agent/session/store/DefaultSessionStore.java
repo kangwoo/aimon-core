@@ -381,6 +381,13 @@ public final class DefaultSessionStore implements SessionStore {
             return repository.load(sessionId);
         }
 
+        // Overridden although the interface has a default: inheriting it would turn the backend's narrow read into a
+        // full load.
+        @Override
+        public Optional<Principal> loadOwner(SessionId sessionId) {
+            return repository.loadOwner(sessionId);
+        }
+
         @Override
         public List<SessionId> listSessionIds() {
             return repository.listSessionIds();

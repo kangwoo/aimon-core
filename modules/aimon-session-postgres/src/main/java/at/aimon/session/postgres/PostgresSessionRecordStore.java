@@ -79,6 +79,13 @@ import at.aimon.core.base.Principal;
  * exists for operator triage — but a per-node clock would make it lie about ordering in exactly the situation an
  * operator consults it.
  *
+ * <h2>Reads</h2>
+ *
+ * <p>
+ * {@link #load(SessionId) load} selects every column above and decodes them all, transcript included.
+ * {@link #loadOwner(SessionId) loadOwner} selects {@code owner} alone, so an owner check costs the same however long
+ * the session has run — and a transcript that will not decode fails {@code load} but not it.
+ *
  * <h2>Fencing</h2>
  *
  * <p>
@@ -119,6 +126,8 @@ public final class PostgresSessionRecordStore implements SessionRecordStore {
             + "updated_at = now() WHERE session_id = ?";
 
     private static final String SQL_LOAD = "SELECT " + COLUMNS + " FROM session_record WHERE session_id = ?";
+
+    private static final String SQL_LOAD_OWNER = "SELECT owner FROM session_record WHERE session_id = ?";
 
     private static final String SQL_DELETE = "DELETE FROM session_record WHERE session_id = ?";
 
@@ -233,6 +242,19 @@ public final class PostgresSessionRecordStore implements SessionRecordStore {
     }
 
     @Override
+    public Optional<Principal> loadOwner(SessionId sessionId) {
+        Objects.requireNonNull(sessionId, "sessionId must not be null");
+        try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(SQL_LOAD_OWNER)) {
+            ps.setString(1, sessionId.value());
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Optional.ofNullable(toOwner(sessionId, rs.getString("owner"))) : Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw failure("loadOwner", sessionId, e);
+        }
+    }
+
+    @Override
     public void delete(SessionId sessionId) {
         Objects.requireNonNull(sessionId, "sessionId must not be null");
         try (Connection c = dataSource.getConnection(); PreparedStatement ps = c.prepareStatement(SQL_DELETE)) {
@@ -297,6 +319,15 @@ public final class PostgresSessionRecordStore implements SessionRecordStore {
             // A row that will not decode is an infrastructure failure from the caller's side, not a missing one:
             // reporting it as absent would let a session silently resume with an empty history.
             throw new SessionRecordStoreException("Failed to decode stored session record for " + sessionId, e);
+        }
+    }
+
+    private static Principal toOwner(SessionId sessionId, String owner) {
+        try {
+            return SessionRecordCodec.decodeOwner(owner);
+        } catch (RuntimeException e) {
+            // As in toRecord: reporting a corrupt owner as absent would let it pass as "no owner".
+            throw new SessionRecordStoreException("Failed to decode stored session owner for " + sessionId, e);
         }
     }
 

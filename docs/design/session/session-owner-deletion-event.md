@@ -541,3 +541,14 @@ and DV-3 → SO-6 (blank `agentRef`). Q4 and Q7 were decided as written and are 
   before it derives the runtime id, and the binding is first-wins. So any name `fromName` refuses bound the session
   permanently to an agent no turn could open, on every backend. Redis's rejection of `""` stays as a second line of
   defence for callers that use the store without the router.
+
+### 9.5 SO-5 closed (#262)
+
+*Appended 2026-10-18.*
+
+- **Q6 / SO-5 is closed.** The cost it recorded, decoding the whole transcript to read one owner, is gone.
+  `SessionRecordStore.loadOwner(id)` reads the owner alone on every shipped backend, and both fenced wrappers forward
+  it. The "named SPI" half was decided against, because the store already holds the owner. Design and departures:
+  [`session-owner-narrow-read.md`](session-owner-narrow-read.md).
+- **DV-9 bit again.** That design assumed the multi-node contract suite exercises each backend's record store. It
+  does not, for the reason DV-9 gives. The gap is now backlog SO-7.

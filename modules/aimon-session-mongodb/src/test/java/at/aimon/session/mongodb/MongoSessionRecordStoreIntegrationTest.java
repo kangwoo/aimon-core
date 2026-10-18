@@ -1,6 +1,7 @@
 package at.aimon.session.mongodb;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -14,6 +15,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
+import org.bson.Document;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
@@ -21,6 +23,7 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.exception.SessionRecordStoreException;
 import at.aimon.core.agent.session.store.SessionRecordView;
 import at.aimon.core.agent.session.store.SessionTotals;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
@@ -362,5 +365,54 @@ class MongoSessionRecordStoreIntegrationTest {
         assertThat(view).isPresent();
         assertThat(view.orElseThrow().getSystemPrompt()).isNull();
         assertThat(view.orElseThrow().getMessages()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("loadOwner is empty without a record or an owner, and reads the owner back once there is one")
+    void loadOwnerReadsTheOwner() {
+        final SessionId id = SessionId.of("rec-load-owner");
+        final Principal alice = Principal.user("u-1", "Alice");
+
+        assertThat(store.loadOwner(id)).isEmpty();
+        store.provision(id, "agent-A");
+        assertThat(store.loadOwner(id)).isEmpty();
+        store.provision(id, "agent-A", alice);
+        assertThat(store.loadOwner(id)).contains(alice);
+        assertThat(store.loadOwner(id).orElseThrow().getDisplayName()).isEqualTo("Alice");
+    }
+
+    @Test
+    @DisplayName("loadOwner projects the owner alone: a transcript that fails load does not fail it")
+    void loadOwnerDoesNotDecodeTheTranscript() {
+        final SessionId id = SessionId.of("rec-load-owner-narrow");
+        final Principal alice = Principal.user("u-1", "Alice");
+        store.provision(id, "agent-A", alice);
+        rawSet(id, "transcript", "not-a-transcript");
+
+        assertThatThrownBy(() -> store.load(id)).isInstanceOf(SessionRecordStoreException.class);
+        assertThat(store.loadOwner(id)).contains(alice);
+    }
+
+    @Test
+    @DisplayName("an owner that will not decode fails loadOwner rather than reading as no owner")
+    void loadOwnerRefusesACorruptOwner() {
+        final SessionId malformed = SessionId.of("rec-load-owner-corrupt");
+        store.provision(malformed, "agent-A", Principal.user("u-1", "Alice"));
+        rawSet(malformed, "owner", new Document("displayName", "x"));
+        // Not a subdocument at all: the cast fails before the codec runs, and must fail the same way.
+        final SessionId notADocument = SessionId.of("rec-load-owner-string");
+        store.provision(notADocument, "agent-A", Principal.user("u-1", "Alice"));
+        rawSet(notADocument, "owner", "u-1");
+
+        assertThatThrownBy(() -> store.loadOwner(malformed)).isInstanceOf(SessionRecordStoreException.class)
+                .hasMessageContaining("Failed to decode stored session owner for");
+        assertThatThrownBy(() -> store.loadOwner(notADocument)).isInstanceOf(SessionRecordStoreException.class)
+                .hasMessageContaining("Failed to decode stored session owner for");
+    }
+
+    private static void rawSet(SessionId id, String field, Object value) {
+        assertThat(MongoTestSupport.sharedDatabase().getCollection("session_records")
+                .updateOne(new Document("_id", id.value()), new Document("$set", new Document(field, value)))
+                .getMatchedCount()).isEqualTo(1);
     }
 }

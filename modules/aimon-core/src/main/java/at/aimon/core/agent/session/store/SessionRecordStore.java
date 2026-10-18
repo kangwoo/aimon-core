@@ -1,6 +1,7 @@
 package at.aimon.core.agent.session.store;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.budget.ExecutionBudget;
@@ -45,6 +46,7 @@ import at.aimon.core.base.Principal;
  *
  * <p>
  * Reads return {@link SessionRecordView}, never the mutable {@link SessionRecord} — see {@link #load(SessionId)}.
+ * The owner alone can be read without the rest of the record through {@link #loadOwner(SessionId)}.
  * When reached through {@code SessionStore.records()} every write above is additionally fenced against the lease
  * this node holds.
  *
@@ -306,6 +308,41 @@ public interface SessionRecordStore {
      *             if sessionId is null
      */
     Optional<SessionRecordView> load(SessionId sessionId);
+
+    /**
+     * Reads the owner recorded for a session — {@code load(sessionId).flatMap(SessionRecordView::getOwner)} — without
+     * reading the rest of the record.
+     *
+     * <p>
+     * An owner check runs on hot paths (a sandbox resolves it on every root bind), and {@link #load(SessionId)} decodes
+     * the whole transcript to answer it, so its cost grows with the session. This read does not: a backend that
+     * overrides it touches the owner field and nothing else.
+     *
+     * <p>
+     * Empty means there is no record <em>or</em> the record has no owner; a caller that must tell the two apart asks
+     * {@link #exists(SessionId)}. Like {@link #load(SessionId)} it is not fenced — it may read a session another node
+     * holds — and it is a single point-in-time read. Since an owner is never overwritten once set, a concurrent
+     * {@link #provision(SessionId, String, Principal)} can only move the answer from empty to present.
+     *
+     * <p>
+     * An owner that will not decode is a failure, never an empty answer: an empty answer would let a corrupt owner pass
+     * as "no owner". A corrupt transcript or other side field, on the other hand, does not fail this read the way it
+     * fails {@link #load(SessionId)} — this read never looks at them.
+     *
+     * @implSpec The default is exactly the expression above, so a store that does not override it answers correctly
+     *           and pays for a full load. A backend that can read the owner on its own should override this. A store
+     *           that wraps another must forward it, or the backend's narrow read is lost behind the wrapper.
+     *
+     * @param sessionId
+     *            the session id (must not be null)
+     * @return the recorded owner, or empty if there is no record or it has no owner
+     * @throws NullPointerException
+     *             if sessionId is null
+     */
+    default Optional<Principal> loadOwner(SessionId sessionId) {
+        Objects.requireNonNull(sessionId, "Session id cannot be null");
+        return load(sessionId).flatMap(SessionRecordView::getOwner);
+    }
 
     /**
      * Deletes a session record by id.

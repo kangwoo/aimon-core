@@ -8,11 +8,13 @@ import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 
+import java.lang.reflect.Method;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
@@ -562,6 +564,65 @@ class DefaultSessionStoreTest {
             assertThatNullPointerException().isThrownBy(() -> nodeA.load(null));
             assertThatNullPointerException().isThrownBy(() -> nodeA.findHolder(null));
         }
+    }
+
+    @Nested
+    @DisplayName("loadOwner — forwarded, not inherited")
+    class OwnerRead {
+
+        private final Principal alice = Principal.user("alice", "Alice");
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("at.aimon.core.agent.session.store.DefaultSessionStoreTest#fences")
+        @DisplayName("reaches the backend's own loadOwner, unfenced, without a full load")
+        void forwardsToTheBackend(SessionFence fence) {
+            // A backend whose full load fails: the interface default would go through it, a forward does not.
+            final SessionRecordStore narrowOnly = new InMemorySessionRecordStore() {
+                @Override
+                public Optional<SessionRecordView> load(SessionId sessionId) {
+                    throw new AssertionError("loadOwner fell back to a full load");
+                }
+            };
+            narrowOnly.provision(conv, AGENT, alice);
+            final DefaultSessionStore node = new DefaultSessionStore(leases, narrowOnly);
+
+            // No lease is held by anyone, so a guard on this read would refuse it under HOLDER_ONLY.
+            assertThat(node.records(fence).loadOwner(conv)).contains(alice);
+            assertThat(node.records(fence).loadOwner(SessionId.of("missing"))).isEmpty();
+        }
+
+        /**
+         * Every {@code default} of {@link SessionRecordStore} the fenced view inherits instead of forwarding answers
+         * for the wrapper — at best through the slow path, at worst around the guard. The exemptions are the ones whose
+         * default only re-enters a method the view does override.
+         */
+        @Test
+        @DisplayName("the fenced view overrides every default of SessionRecordStore but the exempt ones")
+        void everyDefaultIsForwarded() throws NoSuchMethodException {
+            // provision(id) defaults to provision(id, null), which the view overrides and guards.
+            final List<Method> exempt = List.of(SessionRecordStore.class.getMethod("provision", SessionId.class));
+            final Class<?> view = nodeA.records().getClass();
+
+            final List<Method> inherited = Arrays.stream(SessionRecordStore.class.getMethods())
+                    .filter(Method::isDefault).filter(m -> !exempt.contains(m)).filter(m -> !isDeclaredOn(view, m))
+                    .toList();
+
+            assertThat(inherited).as("the fenced record view must forward these rather than inherit the default")
+                    .isEmpty();
+        }
+
+        private boolean isDeclaredOn(Class<?> type, Method method) {
+            try {
+                type.getDeclaredMethod(method.getName(), method.getParameterTypes());
+                return true;
+            } catch (NoSuchMethodException e) {
+                return false;
+            }
+        }
+    }
+
+    static Stream<SessionFence> fences() {
+        return Stream.of(SessionFence.values());
     }
 
     @Test

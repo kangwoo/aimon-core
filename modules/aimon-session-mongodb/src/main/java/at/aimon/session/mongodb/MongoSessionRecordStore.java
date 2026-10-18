@@ -91,6 +91,13 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  * reads it — it exists for operator triage — but a per-node clock would make it lie about ordering in exactly the
  * situation an operator consults it.
  *
+ * <h2>Reads</h2>
+ *
+ * <p>
+ * {@link #load(SessionId) load} fetches the whole document and decodes every field, transcript included.
+ * {@link #loadOwner(SessionId) loadOwner} projects {@code owner} alone, so an owner check costs the same however long
+ * the session has run — and a transcript that will not decode fails {@code load} but not it.
+ *
  * <h2>Fencing</h2>
  *
  * <p>
@@ -236,6 +243,18 @@ public final class MongoSessionRecordStore implements SessionRecordStore {
     }
 
     @Override
+    public Optional<Principal> loadOwner(SessionId sessionId) {
+        Objects.requireNonNull(sessionId, "sessionId must not be null");
+        final Document found;
+        try {
+            found = collection.find(byId(sessionId)).projection(new Document(DocumentKeys.F_OWNER, 1)).first();
+        } catch (MongoException e) {
+            throw failure("loadOwner", sessionId, e);
+        }
+        return found == null ? Optional.empty() : Optional.ofNullable(toOwner(sessionId, found));
+    }
+
+    @Override
     public void delete(SessionId sessionId) {
         Objects.requireNonNull(sessionId, "sessionId must not be null");
         try {
@@ -334,6 +353,16 @@ public final class MongoSessionRecordStore implements SessionRecordStore {
             // A record that will not decode is an infrastructure failure from the caller's side, not a missing one:
             // reporting it as absent would let a session silently resume with an empty history.
             throw new SessionRecordStoreException("Failed to decode stored session record for " + sessionId, e);
+        }
+    }
+
+    private static Principal toOwner(SessionId sessionId, Document doc) {
+        try {
+            // json() is inside the try too: an owner stored as something other than a subdocument fails its cast.
+            return SessionRecordCodec.decodeOwner(json(doc, DocumentKeys.F_OWNER));
+        } catch (RuntimeException e) {
+            // As in toRecord: reporting a corrupt owner as absent would let it pass as "no owner".
+            throw new SessionRecordStoreException("Failed to decode stored session owner for " + sessionId, e);
         }
     }
 
