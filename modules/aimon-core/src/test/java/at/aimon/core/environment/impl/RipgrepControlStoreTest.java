@@ -163,22 +163,15 @@ class RipgrepControlStoreTest {
     }
 
     /**
-     * The stand-ins are written once for the class, and each is executed once before any test uses it, because on
-     * macOS a script is not executed the moment it is written. Since macOS 13, the first {@code execve} of a new
-     * executable written by a process that carries app provenance — a test JVM started from a terminal does — waits
-     * for syspolicyd's Gatekeeper scan of it. The verdict is cached per file, so later executions start at once, but
-     * the first one queues behind every other scan on the machine: the queue is serialised machine-wide, and an
-     * unsigned binary built elsewhere holds it for about 20 seconds. A stand-in written per test paid that queue inside
-     * the timed region, so the timeout case killed an rg that had not started yet (no pid file) and the cancellation
-     * case waited out the queue (62 seconds against a 10-second limit). Linux has no such step, which is why CI never
-     * saw it.
+     * The stand-ins are written once for the class and each executed once before any test uses it. On macOS 13+ the
+     * first execution of a newly written script waits for syspolicyd's Gatekeeper scan, which is serialised
+     * machine-wide; paid inside a timed region, it made the timeout case kill an rg that had not started and the
+     * cancellation case overrun its limit. The verdict is cached per file, so the warm-up pays it up front. A stand-in
+     * answers {@value #WARM_UP} — which rg is never passed first — by exiting at once.
      *
      * <p>
-     * Warming is the only way around the scan here. {@link RipgrepContentSearch} executes the configured path with
-     * rg's own arguments, so the stand-in cannot be an already-trusted interpreter ({@code /bin/sh} rejects
-     * {@code --json}), and clearing the file's extended attributes leaves {@code com.apple.provenance} in place. A
-     * stand-in answers {@value #WARM_UP} — which rg is never passed first — by exiting at once, so the warm-up runs
-     * none of what the tests assert and the timed regions measure only the search.
+     * The stand-ins share one directory and its {@code args} / {@code pid} files, so these tests must not run
+     * concurrently with each other; the build runs tests sequentially.
      */
     @Nested
     @DisplayName("with a stand-in rg that always reports a control-store match")
@@ -187,7 +180,7 @@ class RipgrepControlStoreTest {
         /** The first argument on which a stand-in exits at once; {@link RipgrepContentSearch} always starts --json. */
         private static final String WARM_UP = "--warm-up";
 
-        /** How long a warm-up may queue for syspolicyd: up to minutes on a busy Mac, no time at all on Linux. */
+        /** How long both warm-ups together may queue for syspolicyd: minutes on a busy Mac, no time at all on Linux. */
         private static final long WARM_UP_TIMEOUT_MINUTES = 5;
 
         @TempDir
@@ -202,6 +195,7 @@ class RipgrepControlStoreTest {
         static void writeStandIns() throws Exception {
             assumeFalse(System.getProperty("os.name").toLowerCase(Locale.ENGLISH).contains("win"),
                     "the stand-in rg is a POSIX shell script");
+            final long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(WARM_UP_TIMEOUT_MINUTES);
             argsFile = bin.resolve("args");
             pidFile = bin.resolve("pid");
             final Path output = bin.resolve("output.jsonl");
@@ -209,9 +203,10 @@ class RipgrepControlStoreTest {
                     "{\"type\":\"begin\",\"data\":{\"path\":{\"text\":\"./.aimon/s/x.json\"}}}\n"
                             + match("./.aimon/s/x.json", "CONTROL-ONLY token")
                             + match(".aimon/s/x.json", "CONTROL-ONLY token") + match("./src/a.txt", "a token here"));
-            fakeRg = standIn("rg", "printf '%s\\n' \"$@\" > '" + argsFile + "'\ncat '" + output + "'\nexit 0\n");
+            fakeRg = standIn("rg", "printf '%s\\n' \"$@\" > '" + argsFile + "'\ncat '" + output + "'\nexit 0\n",
+                    deadline);
             // Records its pid and then sleeps far past any test's patience, holding stdout open.
-            slowRg = standIn("slow-rg", "echo $$ > '" + pidFile + "'\nexec sleep 60\n");
+            slowRg = standIn("slow-rg", "echo $$ > '" + pidFile + "'\nexec sleep 60\n", deadline);
         }
 
         @BeforeEach
@@ -222,18 +217,20 @@ class RipgrepControlStoreTest {
 
         /**
          * Writes an executable stand-in and runs it once with {@value #WARM_UP}, so its first execution is behind it.
+         * {@code deadline} ({@link System#nanoTime()}) is shared by every warm-up of the class.
          */
-        private static Path standIn(String name, String body) throws IOException, InterruptedException {
+        private static Path standIn(String name, String body, long deadline) throws IOException, InterruptedException {
             final Path script = bin.resolve(name);
-            Files.writeString(script, "#!/bin/sh\n[ \"$1\" = " + WARM_UP + " ] && exit 0\n" + body);
+            Files.writeString(script, "#!/bin/sh\nif [ \"$1\" = " + WARM_UP + " ]; then exit 0; fi\n" + body);
             assertThat(script.toFile().setExecutable(true)).isTrue();
             final Process process = new ProcessBuilder(script.toString(), WARM_UP).redirectErrorStream(true)
                     .redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
             process.getOutputStream().close();
-            if (!process.waitFor(WARM_UP_TIMEOUT_MINUTES, TimeUnit.MINUTES)) {
-                process.destroyForcibly();
+            if (!process.waitFor(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS)) {
+                process.destroyForcibly().waitFor();
                 throw new AssertionError("the stand-in " + script + " did not finish its warm-up within "
-                        + WARM_UP_TIMEOUT_MINUTES + " minutes. On macOS its first execution waits for syspolicyd's "
+                        + WARM_UP_TIMEOUT_MINUTES
+                        + " minutes of the class's warm-ups. On macOS its first execution waits for syspolicyd's "
                         + "Gatekeeper scan; `log show --predicate 'process == \"syspolicyd\"' --last 10m` shows the queue");
             }
             assertThat(process.exitValue()).as("warm-up exit status of %s", script).isZero();
