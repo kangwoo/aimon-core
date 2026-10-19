@@ -2125,9 +2125,9 @@ aimon-sandbox 가 정했다 — **부모를 따른다.** 설계 §5.2 의 기본
    실행(`java -jar …` 을 저장소 루트에서)에서는 이제 모든 `hooks.json` 명령이 워크스페이스 루트에서 돈다. CHANGELOG 의 동작
    변경이다.
 
-**남은 것.** EE-109(스테이징한 훅 스크립트의 무결성, [#275](https://github.com/kangwoo/aimon-core/issues/275)),
+**남은 것.** EE-109(스테이징한 훅 스크립트의 무결성, [#275](https://github.com/kangwoo/aimon-core/issues/275), 2026-10-19 닫힘),
 EE-111(aimon-sandbox 가 격리된 실행을 선언해야 한다,
-[kangwoo/aimon-sandbox#31](https://github.com/kangwoo/aimon-sandbox/issues/31)), EE-112(운영자가 정하는 환경 변수).
+[kangwoo/aimon-sandbox#31](https://github.com/kangwoo/aimon-sandbox/issues/31), 2026-10-19 닫힘), EE-112(운영자가 정하는 환경 변수).
 
 ## EE-49 — 스킬 훅은 에이전트 단위 레지스트리에 등록되어 다른 실행에서도 발화한다 · **닫힘** *(2026-10-04)*
 
