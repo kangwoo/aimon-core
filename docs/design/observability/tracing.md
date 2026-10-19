@@ -335,8 +335,8 @@ public interface SpanExporter {
 
 | Span | 소스 | 시작 → 종료 | 비고 |
 |---|---|---|---|
-| **TURN** (root) | `execute()` 진입/`finally` | userMessage → finalAnswer + `ExecutionMetadata` | `traceId` 발급 지점 |
-| **ITERATION** | `executeReActLoop` 의 step try/finally | ReAct step 경계 | iteration 번호 보유 |
+| **TURN** (root) | `execute()` 진입/`finally` | userMessage → `finalAnswerChars`(내용 캡처 정책이면 `finalAnswer` 도) + `ExecutionMetadata` | `traceId` 발급 지점 |
+| **ITERATION** | `executeReActLoop` 의 step try/finally | ReAct step 경계 | iteration 번호 보유. 재진입이면 `loop.transition*`, 직전 꼬리에서 백그라운드 완료 알림을 받았으면 `subagent.received.taskIds` |
 | **LLM** | `TracingLlmClient` 데코레이터 | `sendMessage` 진입 → 응답 | **유일한 LLM 캡처 경로**. 프롬프트·토큰·모델·지연 |
 | **TOOL** | 두 executor 의 `executeSingleTool` 얇은 래퍼(`toolinvocation.ToolCallTracing`) | 도구 입력 → 출력 | Event 보다 payload 가 풍부. 도구가 받는 컨텍스트의 metadata 를 TOOL span 으로 회전(R1) |
 | **SUBAGENT** | `DefaultSubagentExecutionManager.runResolvedSubagent` | goal → 결과·completionReason·토큰 합계 | 서브에이전트 실행당 1개. 포크의 ITERATION/TOOL/LLM 은 그 아래(R2·R3). 해석 실패·ceiling 거부도 ERROR span 으로 남는다 |
@@ -394,6 +394,8 @@ R1 ~ R3 이다. 백그라운드 서브에이전트의 SUBAGENT span 은 worker �
 않고, 그 대기는 `queuedMs` 속성(pool 에 넘긴 순간 → worker 시작)으로 남는다. 부모(TOOL · ITERATION · TURN)가 이미 닫힌
 뒤 시작할 수 있다 — 부모-자식은 id 로만 이어진다. pool 이 거부한 백그라운드 작업도 `rejected=true` 인 ERROR SUBAGENT
 span 을 남긴다. 포크의 `ExecutionId` 는 `executionId` 속성이다(ReAct 경로만 — 코드 behavior 와 실행 전 실패에는 없다).
+그 완료 알림이 턴 도중에 drain 되면 알림을 처음 읽는 ITERATION 이 `subagent.received.taskIds` 에 task id 를 남겨
+SUBAGENT span 의 `taskId` 와 이어진다(턴이 그 drain 직후 멈춘 경우와 부모가 쉬는 동안 도착한 경우는 남지 않는다 — 백로그 ST-12).
 
 SUBAGENT span 의 상태는 TURN 과 같은 규칙이다 — 취소는 `INTERRUPTED`, 예산 · iteration 상한 · 쿼터로 멈춘 실행은
 `OK`(이유는 outputs 의 `completionReason`), 그 밖의 실패만 `ERROR`. `tokenUsage` 는 포크 루프가 이미 누적한 합계다.
@@ -440,13 +442,14 @@ public final class TracePayloadPolicy {
 }
 ```
 
-캡처 여부와 상한은 **캡처 지점**(요약을 만드는 곳)의 관심사다. 본문에 실제로 접근하는 곳은
-`TracingLlmClient.outputsSummary`(LLM)와 `OrcaAgentExecutor.recordToolOutcome`(TOOL) **둘뿐**이므로
-정책을 이 두 곳에 주입한다. `ToolConcurrencyConfig` 처럼 작은 불변 값 객체로 옵션을 표현하는 기존
-패턴과 동형이며, enum 한 단계 + 상한이라 향후 확장(예: `INPUTS_ALSO`)도 열려 있다.
+캡처 여부와 상한은 **캡처 지점**(요약을 만드는 곳)의 관심사다. 본문에 접근하는 곳은
+`TracingLlmClient.outputsSummary`(LLM 응답), `ToolCallTracing.recordOutcome`(TOOL 결과), `OrcaAgentExecutor` 의 TURN
+입출력(시스템 프롬프트 · 최종 답변), `DefaultSubagentExecutionManager` 의 SUBAGENT 입출력(goal · 최종 답변), 그리고
+COMMAND · ROUTINE 단계 입력이며, 정책은 `TracingLlmClient` 와 실행기 · 매니저 · 루틴 실행기에 주입한다.
+`ToolConcurrencyConfig` 처럼 작은 불변 값 객체로 옵션을 표현하는 기존 패턴과 동형이며, enum 한 단계 + 상한이라 향후 확장(예: `INPUTS_ALSO`)도 열려 있다.
 
-**요약은 유지한다** — FULL 에서도 `contentChars`/`textChars` 요약 필드는 남긴다(절단 **전** 원본 길이를
-알 수 있어 디버깅에 유용). FULL 은 거기에 `content`/`text`(절단본)를 **추가**한다.
+**요약은 유지한다** — FULL 에서도 `contentChars`/`textChars`/`finalAnswerChars` 같은 요약 필드는 남긴다(절단
+**전** 원본 길이를 알 수 있어 디버깅에 유용). FULL 은 거기에 `content`/`text`/`finalAnswer` 같은 절단본을 **추가**한다.
 
 ### 6.2 마스킹은 close() 직전 SPI — `SpanRedactor`
 

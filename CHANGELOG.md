@@ -7,19 +7,23 @@ Central is versioned independently).
 
 ## [Unreleased]
 
-### Added: the TURN span records the final answer under FULL, and an iteration names the background tasks it received
+### Added: TURN `finalAnswer` under FULL; ITERATION `subagent.received.taskIds` (#293)
 
 - **TURN `finalAnswer`.** Under a content-capturing `TracePayloadPolicy` (`FULL`) the TURN span's outputs now carry
-  the turn's final answer as `finalAnswer`, truncated to the policy's `maxChars` and masked by the `SpanRedactor` like
-  every other payload — the rule the SUBAGENT span's `finalAnswer` already followed. `finalAnswerChars` stays the
-  untruncated length, so a cut answer can be told from a short one. Under the default summary-only policy the outputs
-  are unchanged. A turn with no final answer records `finalAnswerChars: 0` and no `finalAnswer`, as before.
+  the turn's final answer as `finalAnswer`, truncated to the policy's `maxChars` — the rule the SUBAGENT span's
+  `finalAnswer` already followed. It goes through the `SpanRedactor` like every payload, but that redactor is
+  key-based: free text is not scanned, so a secret the model repeats in its answer is stored as written.
+  `finalAnswerChars` stays the untruncated length, so a cut answer can be told from a short one. Under the default
+  summary-only policy the outputs are unchanged. A turn with no final answer records `finalAnswerChars: 0` and no
+  `finalAnswer`, as before.
 - **`subagent.received.taskIds` on ITERATION spans.** When background-subagent completion notifications are drained
-  into a running turn, the next ITERATION span (the one whose LLM call first reads them, already tagged
-  `loop.transition=QUEUED_INPUT`) records their task ids, comma-separated in drain order. Each matches the `taskId`
-  attribute of that task's SUBAGENT span, so a background result can be followed from where it ran to where the parent
-  received it. A notification that arrives while the parent is idle is delivered by the caller's between-turn drain as
-  a new turn; that path is unchanged. The attribute key is `OrcaAgentExecutor.RECEIVED_SUBAGENT_TASK_IDS_ATTR`.
+  into a running turn, the iteration whose LLM call first reads them records their task ids, comma-separated in drain
+  order. That iteration is normally tagged `loop.transition=QUEUED_INPUT` (`BUDGET_COMPACT` with a drain note when a
+  budget compaction coincides). Each id matches the `taskId` attribute of that task's SUBAGENT span, so a background
+  result can be followed from where it ran to where the parent received it. Two cases record nothing: a turn that
+  stops right after the drain (interrupt, budget, quota, the iteration cap), and a notification that arrives while the
+  parent is idle, which the caller's between-turn drain delivers as a new turn — backlog ST-12. The attribute key is
+  `OrcaAgentExecutor.RECEIVED_SUBAGENT_TASK_IDS_ATTR`.
 - **Queued-notification metadata keys are now constants** on `SubagentTaskCompleted` (`QUEUED_KIND_KEY`,
   `QUEUED_KIND`, `QUEUED_TASK_ID_KEY`, `QUEUED_OUTCOME_KEY`, and `notifiedTaskId(Map)`). The wire values
   (`kind=subagent-task-completed`, `taskId`, `outcome`) are unchanged.
