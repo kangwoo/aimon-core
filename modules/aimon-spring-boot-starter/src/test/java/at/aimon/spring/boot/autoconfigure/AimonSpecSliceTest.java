@@ -367,6 +367,21 @@ class AimonSpecSliceTest {
     }
 
     @Test
+    @DisplayName("with a sweep interval set, a missing segment store still gets the segment-store message")
+    void theSegmentStoreMessageWinsOverTheSweepCheck(@TempDir Path workspace) {
+        // SessionSpec refuses a sweep over a record store with no segment store too, but its remedy includes dropping
+        // the sweep — which would leave the record growing.
+        sessionRunner(workspace)
+                .withPropertyValues("aimon.session.store=postgres", "aimon.session.segment-sweep-interval=1h")
+                .withUserConfiguration(ApplicationRecordStoreConfiguration.class).run(ctx -> assertThat(ctx).hasFailed()
+                        .getFailure().hasStackTraceContaining(AimonProperties.SESSION_LOG_WRITE_FORMAT + "=v1"));
+        // An in-memory record store is paired before SessionSpec looks, so the sweep is accepted over it.
+        sessionRunner(workspace).withPropertyValues("aimon.session.segment-sweep-interval=1h")
+                .withUserConfiguration(InMemoryRecordStoreConfiguration.class)
+                .run(ctx -> assertThat(ctx.getBean(SessionSpec.class).getSegmentSweepInterval()).isPresent());
+    }
+
+    @Test
     @DisplayName("an application in-memory record store gets an in-memory segment store, as the stack's default does")
     void inMemoryRecordStoreBeanIsPairedWithAnInMemorySegmentStore(@TempDir Path workspace) {
         sessionRunner(workspace).withUserConfiguration(InMemoryRecordStoreConfiguration.class)

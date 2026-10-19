@@ -2358,7 +2358,8 @@ public class AimonProperties implements InitializingBean {
         }
 
         public void setLogWriteFormat(SessionLogFormat logWriteFormat) {
-            this.logWriteFormat = logWriteFormat;
+            // Null restores the default, as SessionSpec and the CLI read it, so the starter's own check agrees.
+            this.logWriteFormat = logWriteFormat == null ? SessionLogFormat.V2 : logWriteFormat;
         }
 
         public Duration getSegmentSweepInterval() {

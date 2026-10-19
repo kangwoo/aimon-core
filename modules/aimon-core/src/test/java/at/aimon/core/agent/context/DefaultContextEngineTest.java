@@ -36,6 +36,11 @@ import at.aimon.core.llm.token.TokenEstimator;
 /**
  * Pins {@link DefaultContextEngine} as a pure router: each entry reaches the collaborator that decided it before the
  * engine existed, with the same arguments, and the view it hands back is the buffer as that collaborator left it.
+ *
+ * <p>
+ * The engines that take a recording guard or a non-summarizing compaction engine declare
+ * {@link SessionLogFormat#V1}: those collaborators can only compact in place, and the version-2 default refuses them
+ * at build time. The view-mode path is {@code DefaultContextEngineViewModeTest}'s.
  */
 class DefaultContextEngineTest {
 

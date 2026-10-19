@@ -184,9 +184,10 @@ public class AimonSessionAutoConfiguration {
                         + " — expose them as beans, or set " + AimonProperties.SESSION_MODE + "=single-node.");
             }
         }
-        // After the distributed check, which names more of what is missing in one message, and after build(), which
-        // refuses an in-memory record store in distributed mode — the more basic mistake.
-        final SessionSpec spec = builder.build();
+        // After the distributed check, which names more of what is missing in one message, and before build(), whose
+        // segment-sweep check would otherwise answer the same missing bean with "or drop the sweep". An in-memory
+        // record store never reaches it — it was paired above — so build()'s refusal of one in distributed mode
+        // still comes first.
         if (supplied != null && segmentStore == null && session.getLogWriteFormat() == SessionLogFormat.V2) {
             throw new IllegalStateException("A SessionRecordStore bean is defined but no SessionLogSegmentStore bean,"
                     + " and " + AimonProperties.SESSION_LOG_WRITE_FORMAT + "=v2 never rewrites the log in place: every"
@@ -195,7 +196,7 @@ public class AimonSessionAutoConfiguration {
                     + " MongoSessionLogSegmentStore / RedisSessionLogSegmentStore) as a bean, or set "
                     + AimonProperties.SESSION_LOG_WRITE_FORMAT + "=v1.");
         }
-        return spec;
+        return builder.build();
     }
 
     /**

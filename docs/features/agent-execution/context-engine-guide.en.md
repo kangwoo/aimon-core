@@ -46,11 +46,13 @@ aimon:
       prune-min-tokens: 1000
 ```
 
-When `aimon.session.store` is not `in-memory`, also expose the same backend module's `SessionLogSegmentStore` as a bean
+If you expose a `SessionRecordStore` bean, also expose the same backend module's `SessionLogSegmentStore` as a bean
 (`MongoSessionLogSegmentStore`, `PostgresSessionLogSegmentStore` or `RedisSessionLogSegmentStore`). Version 2 never
 shrinks the log in place, so without a segment store nothing is sealed and the record carries the session's whole
-history forever — the stack then records a `session-log-sealing` degradation. An `AimonStackSpec` assembly passes it
-through `SessionSpec.segmentStore(...)`. To also clear the orphan segments of sessions nobody reopens, turn on the
+history forever — the starter therefore **fails startup** in that case (pinning `log-write-format: v1` removes the
+need; an `InMemorySessionRecordStore` bean is paired with an in-memory segment store on its own). An `AimonStackSpec`
+assembly passes it through `SessionSpec.segmentStore(...)`; without one the stack records a `session-log-sealing`
+degradation. To also clear the orphan segments of sessions nobody reopens, turn on the
 store-wide sweep with `aimon.session.segment-sweep-interval` — see the
 [web session deployment guide](../session/web-session-deployment-guide.en.md).
 

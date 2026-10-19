@@ -239,6 +239,7 @@ class ContextEngineExecutionEnvironmentTest {
                         "positional guard", 0, 0);
             }
         };
+        // A custom guard compacts in place only, which the version-2 default refuses; declare version 1.
         final DefaultContextEngine engine = DefaultContextEngine.builder().compactionGuard(positionalOnly)
                 .writeFormat(SessionLogFormat.V1).build();
 
