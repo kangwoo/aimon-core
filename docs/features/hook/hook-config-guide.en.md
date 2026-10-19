@@ -333,8 +333,9 @@ used only when there is no execution. Each handler can say where with a `"shell"
 - **What a hook leaves running.** An execution environment may end what a hook started and left running (a `cmd &`)
   when the hook ends. Under the local provider such a job keeps running after the hook (a hook ended by a timeout, a
   cancellation or an interrupt takes the descendants still reachable with it). On aimon-sandbox its process group is
-  ended about half a second after the hook exits. Either way the run directory (`AIMON_HOOK_DIR`, `AIMON_SKILL_DIR`)
-  is removed as soon as the hook ends. Work that must outlive the hook goes to something that is not the hook's
+  ended about half a second after the hook exits. Either way, where the variable names a run directory (`AIMON_HOOK_DIR`, `AIMON_SKILL_DIR`), it
+  is removed as soon as the hook ends; the persistent staged copy `AIMON_SKILL_DIR` names for a skill over 4 MiB, or on a
+  shell without `RUN_DIRECTORY`, stays. Work that must outlive the hook goes to something that is not the hook's
   process (a queue, a service the hook calls, an `http` handler).
 - **A firing with no execution.** The `subagentStart` of a subagent launched by the agent-scoped workflow runner
   (background `Workflow`) has no execution behind it, so without `"shell"` it runs on the host. If that subagent ran its

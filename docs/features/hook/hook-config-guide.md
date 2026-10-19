@@ -308,8 +308,8 @@ WARN 이 아니라 **시작 실패**다(`… is invalid: unknown event 'preTol' 
   aimon-sandbox 는 `main` `553be78` 부터 지원한다([kangwoo/aimon-sandbox#31](https://github.com/kangwoo/aimon-sandbox/issues/31)).
 - **훅이 남긴 백그라운드 작업.** 실행 환경은 훅이 끝날 때 그 훅이 띄워 두고 간 것(`cmd &`)을 함께 끝낼 수 있다. 로컬 제공자에서는
   그런 작업이 훅 뒤에도 계속 돈다(timeout · 취소 · 인터럽트로 끝난 훅이면 아직 닿는 자손까지 끝난다). aimon-sandbox 에서는 훅이
-  끝나고 약 0.5초 뒤 그 프로세스 그룹이 끝난다. 어느 쪽이든 실행 디렉터리(`AIMON_HOOK_DIR` · `AIMON_SKILL_DIR`)는 훅이 끝나는 즉시
-  지워진다. 훅보다 오래 가야 하는 일은 훅의 프로세스가 아닌 곳(큐, 훅이 부르는 서비스, `http` handler)에 넘긴다.
+  끝나고 약 0.5초 뒤 그 프로세스 그룹이 끝난다. 어느 쪽이든 그 변수가 실행 디렉터리를 가리키면(`AIMON_HOOK_DIR` · `AIMON_SKILL_DIR`) 훅이 끝나는 즉시
+  지워진다 — 4 MiB 를 넘는 스킬이나 `RUN_DIRECTORY` 가 없는 셸에서 `AIMON_SKILL_DIR` 이 가리키는 영속 스테이징 사본은 남는다. 훅보다 오래 가야 하는 일은 훅의 프로세스가 아닌 곳(큐, 훅이 부르는 서비스, `http` handler)에 넘긴다.
 - **실행이 없는 발화.** 에이전트 단위 워크플로 러너(백그라운드 `Workflow`)가 띄운 SubAgent 의 `subagentStart` 는 뒤에 실행이
   없으므로 `"shell"` 이 없으면 호스트에서 돈다. 그 SubAgent 가 루프를 돌았다면 `subagentStop` 은 SubAgent 자신의 환경에서 돈다.
   실행이 없다는 판단은 **스폰한 쪽에 환경이 있었는지**로 한다. 그래서 환경을 싣지 않은 `ToolContext` 를 직접 만들어 `Task` 를

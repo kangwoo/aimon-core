@@ -215,7 +215,7 @@ public final class ExecutionOptions {
      * background job outliving it. {@code LocalShell} does not do this. A descendant of a hook's command that exited by
      * itself keeps running, and only a timeout, a cancellation or an interrupt ends the descendants still reachable.
      * Even there, the {@linkplain #getRunDirectory() run directory} is removed as soon as the command ends, so a
-     * background job cannot read the hook's files after that.
+     * background job cannot open the hook's files by path after that.
      *
      * @return {@code true} for a command run on behalf of a hook
      */
