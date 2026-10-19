@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/observability/execution-tracing-guide.md
-source_commit: d31fd44d
+source_commit: c7be9c38
 ---
 
 # Execution Tracing Guide
@@ -163,9 +163,9 @@ The principal fields of `TraceSpan` (an immutable value object):
 | `name` | For example `turn:<agent>`, `iteration#3`, `llm:<model>`, a tool name |
 | `startTime` / `endTime` / `latency()` | Timing and latency |
 | `status` | `OK` / `ERROR` / `INTERRUPTED` |
-| `inputs` / `outputs` | A **summary** of input and output (message count, tokens, tool input …) |
+| `inputs` / `outputs` | A **summary** of input and output (message count, tokens, tool input …). An LLM span's outputs also carry the `stopReason` the provider reported (e.g. `MAX_TOKENS`) |
 | `tokenUsage` / `model` | LLM spans only |
-| `attributes` | Extra information such as `iteration`. An LLM span carries the call's `feature` (for a compaction summary call, `compaction`); a SUBAGENT span the fork's `executionId`, the background wait `queuedMs` and a pool rejection's `rejected`; an ITERATION span the task ids of the background completion notifications the previous tail received, `subagent.received.taskIds` |
+| `attributes` | Extra information such as `iteration`. An LLM span carries the call's `feature` (for a compaction summary call, `compaction`) and, for a streaming call, `streaming=true` and `ttftMs` to the first content chunk; a SUBAGENT span the fork's `executionId`, the background wait `queuedMs` and a pool rejection's `rejected`; an ITERATION span the task ids of the background completion notifications the previous tail received, `subagent.received.taskIds` |
 
 The two paths that start work without a tool call have a parent too. A slash-command turn opens a `COMMAND` span
 (`command:/<name>`) under its TURN, and a fork-mode skill's `SUBAGENT` that the command starts nests under it. A
@@ -304,7 +304,7 @@ throw*).
 - `Tracer.Span#close()` never throws — it swallows exceptions from `record()`/`export()` and logs a WARN.
 - The executor wraps its tracer calls (`startRoot`/`startChild`) defensively. **Even if the tracer implementation
   throws**, it falls back to a no-op span, carries the turn through, and does not skip conversation persistence
-  (`saveSilently`).
+  (`saveSilently`). `TracingLlmClient` does the same — if it cannot open the span, the LLM call goes ahead untraced.
 - So agent execution stays safe even when a custom `TraceSpanStore`/`SpanExporter`/`Tracer` throws through a bug.
 
 When writing your own implementation, make `record`/`export` non-blocking and have them swallow their internal

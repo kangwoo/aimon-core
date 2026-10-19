@@ -7,6 +7,25 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed (behaviour change): a cancelled LLM call's span is INTERRUPTED, not ERROR; LLM spans add `stopReason` and streaming `ttftMs` (#294)
+
+`TracingLlmClient` records more of each LLM call:
+
+- **`stopReason`** in the outputs whenever the provider reported one (`END_TURN`, `TOOL_USE`, `MAX_TOKENS`, …), so an
+  answer cut at `max_tokens` is visible in the trace. It is a summary field and is recorded under every payload policy.
+- **Streaming calls** carry `streaming=true` and `ttftMs`: milliseconds from the call's start to the first content
+  chunk (text, reasoning or a ready tool_use; the end marker does not count) handed to the sink the client was given.
+  Under `LlmCallGateway` that is the gateway's per-attempt sink, so the value is the provider's latency for that
+  attempt, not what an end user saw behind the gateway's buffering. `ttftMs` is absent when the stream delivered no
+  content. Chunks reach the caller's sink unchanged. Constants:
+  `TracingLlmClient.STREAMING_ATTR`, `TracingLlmClient.TTFT_ATTR`.
+- **A cancelled call** (`LlmCallCancelledException`) now ends `INTERRUPTED` — it used to end `ERROR` — matching the
+  TURN and SUBAGENT status rule. Anything that counts or alerts on ERROR LLM spans stops seeing cancellations. The
+  exception is still rethrown. A cancellation that reaches the client as another exception type is still `ERROR`.
+- **Fail-safe span start.** A tracer that throws while opening the LLM span used to fail the LLM call; the span now
+  falls back to a no-op and the call goes ahead untraced (`Spans.startChildSafely`), as the executors already did. The
+  new streaming attributes are set fail-safe too; the span's other setters are unchanged.
+
 ### Added: TURN `finalAnswer` under FULL; ITERATION `subagent.received.taskIds` (#293)
 
 - **TURN `finalAnswer`.** Under a content-capturing `TracePayloadPolicy` (`FULL`) the TURN span's outputs now carry

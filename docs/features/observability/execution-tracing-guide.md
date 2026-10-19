@@ -158,9 +158,9 @@ SchedulingEngine engine = SchedulingEngineBuilder.create()
 | `name` | 예: `turn:<agent>`, `iteration#3`, `llm:<model>`, 도구명 |
 | `startTime` / `endTime` / `latency()` | 시각·지연 |
 | `status` | `OK` / `ERROR` / `INTERRUPTED` |
-| `inputs` / `outputs` | 입력·출력 **요약**(메시지 수, 토큰, 도구 입력 등) |
+| `inputs` / `outputs` | 입력·출력 **요약**(메시지 수, 토큰, 도구 입력 등). LLM span 의 출력에는 provider 가 알려 준 `stopReason`(예: `MAX_TOKENS`)도 있다 |
 | `tokenUsage` / `model` | LLM span 한정 |
-| `attributes` | `iteration` 등 부가 정보. LLM span 은 호출의 `feature`(예: compaction 요약 호출의 `compaction`), SUBAGENT 는 포크의 `executionId` · 백그라운드 대기 `queuedMs` · pool 거부 `rejected`, ITERATION 은 직전 꼬리에서 받은 백그라운드 완료 알림의 task id `subagent.received.taskIds` |
+| `attributes` | `iteration` 등 부가 정보. LLM span 은 호출의 `feature`(예: compaction 요약 호출의 `compaction`)와 스트리밍 호출이면 `streaming=true` · 첫 내용 chunk 까지의 `ttftMs`, SUBAGENT 는 포크의 `executionId` · 백그라운드 대기 `queuedMs` · pool 거부 `rejected`, ITERATION 은 직전 꼬리에서 받은 백그라운드 완료 알림의 task id `subagent.received.taskIds` |
 
 도구 호출을 거치지 않는 두 경로에도 부모가 있다. 슬래시 명령 턴은 TURN 아래 `COMMAND` span(`command:/<name>`)을 열고,
 그 명령이 띄운 fork 스킬의 `SUBAGENT` 가 그 아래 붙는다. 예약 루틴은 세션이 없으므로 실행(발화)마다 `ROUTINE` root
@@ -295,7 +295,8 @@ cli:
 
 - `Tracer.Span#close()`는 절대 throw하지 않는다 — `record()`/`export()` 예외를 삼키고 WARN 로그만 남긴다.
 - executor는 트레이서 호출(`startRoot`/`startChild`)을 방어적으로 감싼다. **트레이서 구현이 throw해도**
-  no-op span으로 폴백하고 turn을 계속 진행하며, 대화 영속(`saveSilently`)을 건너뛰지 않는다.
+  no-op span으로 폴백하고 turn을 계속 진행하며, 대화 영속(`saveSilently`)을 건너뛰지 않는다. `TracingLlmClient` 도
+  같다 — span 을 열지 못하면 LLM 호출은 trace 없이 그대로 진행된다.
 - 따라서 커스텀 `TraceSpanStore`/`SpanExporter`/`Tracer`가 버그로 예외를 던져도 agent 실행은 안전하다.
 
 직접 구현체를 작성할 때도 `record`/`export`는 비차단으로, 내부 예외는 삼키도록 작성하는 것을 권장한다.
