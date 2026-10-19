@@ -423,7 +423,7 @@ class OrcaAgentExecutorHookCancellationTest {
         return engineAt(9_000);
     }
 
-    /** The default engine with every estimate fixed: auto-compact from 7000, blocking from 8500. */
+    /** The default engine with every estimate fixed: auto-compact from 7200, blocking from 8500. */
     private ContextEngine engineAt(int estimate) {
         final TokenEstimator overTheLimit = new FixedTokenEstimator(estimate);
         final CompactionEngine compactionEngine = DefaultCompactionEngine.withDefaults(llmClient, overTheLimit,
@@ -431,7 +431,7 @@ class OrcaAgentExecutorHookCancellationTest {
         final DefaultCompactionGuard guard = new DefaultCompactionGuard(compactionEngine,
                 InMemoryModelContextWindowRegistry.builder()
                         .defaultLimits(ModelContextLimits.builder().contextWindow(10_000).reservedOutputTokens(1_000)
-                                .autoCompactBuffer(2_000).warningBuffer(1_000).blockingBuffer(500).build())
+                                .autoCompactRatio(0.8).warningBuffer(1_000).blockingBuffer(500).build())
                         .build(),
                 overTheLimit);
         return DefaultContextEngine.builder().compactionGuard(guard).compactionEngine(compactionEngine)

@@ -93,7 +93,7 @@ class OpenAIStreamAbortTest {
 
     /** Auto-compact at 1200 estimated tokens, warning at 1000, blocking at 1400. */
     private static final ModelContextLimits TINY = ModelContextLimits.builder().contextWindow(2000)
-            .reservedOutputTokens(500).autoCompactBuffer(300).warningBuffer(200).blockingBuffer(100).build();
+            .reservedOutputTokens(500).autoCompactRatio(0.8).warningBuffer(200).blockingBuffer(100).build();
 
     /** The two endpoints, each with a model that routes to it and the opening of its stream. */
     enum Endpoint {

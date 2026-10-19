@@ -293,6 +293,14 @@ public class AimonProperties implements InitializingBean {
     /** Prefix of the rolling context engine's tuning properties. */
     public static final String CONTEXT_ROLLING = PREFIX + ".context.rolling";
 
+    /**
+     * Removed: where the rolling engine started compacting. Bound only so that setting it fails startup by name.
+     *
+     * @deprecated auto compaction starts at one ratio for both engines, AGENT.md {@code context.auto-compact-ratio}
+     */
+    @Deprecated
+    public static final String CONTEXT_ROLLING_AUTO_COMPACT_RATIO = CONTEXT_ROLLING + ".auto-compact-ratio";
+
     /** Whether the scheduling engine starts with the application context. */
     public static final String SCHEDULING_AUTO_STARTUP = PREFIX + ".scheduling.auto-startup";
 
@@ -897,7 +905,12 @@ public class AimonProperties implements InitializingBean {
         // Checked here, not only when a rolling runtime is built: an agent can pick rolling in its AGENT.md later,
         // and a bad ratio should not wait for that agent to be the one that fails.
         final ContextProperties.Rolling rolling = context.getRolling();
-        requireRatio(rolling.getAutoCompactRatio(), CONTEXT_ROLLING + ".auto-compact-ratio");
+        if (rolling.getAutoCompactRatio() != null) {
+            // Bound and refused, not dropped: an ignored key would read as if the rolling engine still started there.
+            throw new IllegalStateException(CONTEXT_ROLLING_AUTO_COMPACT_RATIO + "=" + rolling.getAutoCompactRatio()
+                    + " is no longer supported: " + ContextProperties.Rolling.AUTO_COMPACT_RATIO_REMOVED
+                    + ". Remove the property.");
+        }
         requireRatio(rolling.getHeadTokenRatio(), CONTEXT_ROLLING + ".head-token-ratio");
         requireRatio(rolling.getTailTokenRatio(), CONTEXT_ROLLING + ".tail-token-ratio");
         requireRatio(rolling.getSummaryTokenRatio(), CONTEXT_ROLLING + ".summary-token-ratio");
@@ -2150,7 +2163,12 @@ public class AimonProperties implements InitializingBean {
         /** The rolling engine's thresholds; ratios are fractions of the model's effective window, in (0, 1]. */
         public static class Rolling {
 
-            /** Where rolling compaction starts (engine default 0.6). */
+            /** Why {@code auto-compact-ratio} is refused, and what replaced it. */
+            static final String AUTO_COMPACT_RATIO_REMOVED = "auto compaction now starts at one ratio of the"
+                    + " effective window for both context engines, set per agent with AGENT.md"
+                    + " context.auto-compact-ratio (default 0.8)";
+
+            /** Removed; setting it fails startup (see {@link #getAutoCompactRatio()}). */
             private Double autoCompactRatio;
 
             /** Cap on the head's conversation tokens (engine default 0.05). */
@@ -2168,10 +2186,28 @@ public class AimonProperties implements InitializingBean {
             /** Smallest tool result, in tokens, worth eliding before summarizing (engine default 500). */
             private Integer pruneMinTokens;
 
+            /**
+             * Returns the removed rolling start ratio, bound so that {@link AimonProperties#afterPropertiesSet()} can
+             * refuse it by name.
+             *
+             * @return the written value, or {@code null} when the key is absent
+             * @deprecated removed — auto compaction starts at one ratio for both engines, set per agent with AGENT.md
+             *             {@code context.auto-compact-ratio}; setting this property fails startup
+             */
+            @Deprecated
+            @DeprecatedConfigurationProperty(reason = AUTO_COMPACT_RATIO_REMOVED)
             public Double getAutoCompactRatio() {
                 return autoCompactRatio;
             }
 
+            /**
+             * Sets the removed rolling start ratio; any value fails startup.
+             *
+             * @param autoCompactRatio
+             *            the written value
+             * @deprecated see {@link #getAutoCompactRatio()}
+             */
+            @Deprecated
             public void setAutoCompactRatio(Double autoCompactRatio) {
                 this.autoCompactRatio = autoCompactRatio;
             }
@@ -2218,8 +2254,8 @@ public class AimonProperties implements InitializingBean {
 
             /** Whether any threshold is set. */
             public boolean isTuned() {
-                return autoCompactRatio != null || headTokenRatio != null || tailTokenRatio != null
-                        || summaryTokenRatio != null || minTailRatio != null || pruneMinTokens != null;
+                return headTokenRatio != null || tailTokenRatio != null || summaryTokenRatio != null
+                        || minTailRatio != null || pruneMinTokens != null;
             }
         }
     }

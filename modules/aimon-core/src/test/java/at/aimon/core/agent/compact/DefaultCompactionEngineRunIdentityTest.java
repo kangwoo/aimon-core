@@ -213,9 +213,9 @@ class DefaultCompactionEngineRunIdentityTest {
     private static DefaultCompactionGuard newGuard(CompactionEngine engine) {
         final ModelContextWindowRegistry registry = InMemoryModelContextWindowRegistry.builder()
                 .defaultLimits(ModelContextLimits.builder().contextWindow(10_000).reservedOutputTokens(1_000)
-                        .autoCompactBuffer(2_000).warningBuffer(1_000).blockingBuffer(500).build())
+                        .autoCompactRatio(0.8).warningBuffer(1_000).blockingBuffer(500).build())
                 .build();
-        // 7_500 sits in the auto-compact band [7_000, 8_500) — compaction happens, blocking-limit forcing does not.
+        // 7_500 sits in the auto-compact band [7_200, 8_500) — compaction happens, blocking-limit forcing does not.
         return new DefaultCompactionGuard(engine, registry, new FixedTokenEstimator(7_500));
     }
 

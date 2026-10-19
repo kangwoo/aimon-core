@@ -56,7 +56,7 @@ class DefaultContextEngineTwoSummaryPassHooksTest {
 
     /** Auto-compact at 1200 estimated tokens, blocking at 1400. */
     private static final ModelContextLimits TINY = ModelContextLimits.builder().contextWindow(2000)
-            .reservedOutputTokens(500).autoCompactBuffer(300).warningBuffer(200).blockingBuffer(100).build();
+            .reservedOutputTokens(500).autoCompactRatio(0.8).warningBuffer(200).blockingBuffer(100).build();
 
     private static final String ATTACHMENT = "re-attached file";
 

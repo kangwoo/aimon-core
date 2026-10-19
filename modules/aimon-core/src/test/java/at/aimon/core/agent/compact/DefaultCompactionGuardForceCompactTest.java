@@ -34,21 +34,21 @@ import at.aimon.core.llm.token.TokenEstimator;
  *
  * <pre>
  * effectiveWindow      = contextWindow - reservedOutputTokens = 10_000 - 1_000 = 9_000
- * autoCompactThreshold = effectiveWindow - autoCompactBuffer  = 9_000  - 2_000 = 7_000
- * warningThreshold     = autoCompactThreshold - warningBuffer = 7_000  - 1_000 = 6_000
+ * autoCompactThreshold = effectiveWindow * autoCompactRatio   = 9_000  * 0.8   = 7_200
+ * warningThreshold     = autoCompactThreshold - warningBuffer = 7_200  - 1_000 = 6_200
  * blockingLimit        = effectiveWindow - blockingBuffer     = 9_000  - 500   = 8_500
  * </pre>
  *
  * <p>
  * A {@link FixedTokenEstimator} pins the estimate at a chosen constant, independent of message content, so the
- * warning band ({@code [6_000, 7_000)}) and the auto-compact band ({@code [7_000, 8_500)}) can be targeted precisely.
+ * warning band ({@code [6_200, 7_200)}) and the auto-compact band ({@code [7_200, 8_500)}) can be targeted precisely.
  */
 class DefaultCompactionGuardForceCompactTest {
 
-    /** In the warning band: {@literal >=} warningThreshold(6_000) and {@literal <} autoCompactThreshold(7_000). */
+    /** In the warning band: {@literal >=} warningThreshold(6_200) and {@literal <} autoCompactThreshold(7_200). */
     private static final int WARNING_BAND_ESTIMATE = 6_500;
 
-    /** In the auto-compact band: {@literal >=} autoCompactThreshold(7_000) and {@literal <} blockingLimit(8_500). */
+    /** In the auto-compact band: {@literal >=} autoCompactThreshold(7_200) and {@literal <} blockingLimit(8_500). */
     private static final int AUTO_BAND_ESTIMATE = 7_500;
 
     private HookRegistry hookRegistry;
@@ -59,7 +59,7 @@ class DefaultCompactionGuardForceCompactTest {
         hookRegistry = new DefaultHookRegistry();
         modelContextWindowRegistry = InMemoryModelContextWindowRegistry.builder()
                 .defaultLimits(ModelContextLimits.builder().contextWindow(10_000).reservedOutputTokens(1_000)
-                        .autoCompactBuffer(2_000).warningBuffer(1_000).blockingBuffer(500).build())
+                        .autoCompactRatio(0.8).warningBuffer(1_000).blockingBuffer(500).build())
                 .build();
     }
 

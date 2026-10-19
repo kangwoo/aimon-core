@@ -43,6 +43,7 @@ public final class AgentMetadata {
     private final Set<String> tags;
     private final List<AllowedTool> allowedTools;
     private final ContextEngineKind contextEngine;
+    private final ContextPolicy contextPolicy;
     private final Map<String, String> attributes;
 
     private AgentMetadata(Builder builder) {
@@ -55,6 +56,7 @@ public final class AgentMetadata {
         this.tags = Collections.unmodifiableSet(new LinkedHashSet<>(builder.tags));
         this.allowedTools = List.copyOf(builder.allowedTools);
         this.contextEngine = builder.contextEngine;
+        this.contextPolicy = Objects.requireNonNullElse(builder.contextPolicy, ContextPolicy.none());
         this.attributes = DefinitionAttributes.copyOf(builder.attributes);
     }
 
@@ -138,6 +140,16 @@ public final class AgentMetadata {
     }
 
     /**
+     * Returns when this agent's context is compacted, from AGENT.md frontmatter {@code context}. Applied on top of the
+     * model's window to every model the agent's runtime calls.
+     *
+     * @return the policy ({@link ContextPolicy#none()} when the agent declares none)
+     */
+    public ContextPolicy getContextPolicy() {
+        return contextPolicy;
+    }
+
+    /**
      * Returns the free-form attributes from the definition's {@code attributes} frontmatter, flattened to dotted keys
      * ({@code sandbox.slot}). The framework carries them and never reads them: they are for a component it does not
      * know about, such as an execution environment provider picking a sandbox (see {@link DefinitionAttributes}).
@@ -159,12 +171,13 @@ public final class AgentMetadata {
         AgentMetadata that = (AgentMetadata) o;
         return name.equals(that.name) && maxIterations == that.maxIterations && model.equals(that.model)
                 && tags.equals(that.tags) && allowedTools.equals(that.allowedTools)
-                && contextEngine == that.contextEngine && attributes.equals(that.attributes);
+                && contextEngine == that.contextEngine && contextPolicy.equals(that.contextPolicy)
+                && attributes.equals(that.attributes);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(name, maxIterations, model, tags, allowedTools, contextEngine, attributes);
+        return Objects.hash(name, maxIterations, model, tags, allowedTools, contextEngine, contextPolicy, attributes);
     }
 
     @Override
@@ -172,6 +185,7 @@ public final class AgentMetadata {
         return "AgentMetadata{" + "name='" + name + "', maxIterations=" + maxIterations + ", model=" + model + ", tags="
                 + tags + ", allowedTools=" + allowedTools
                 + (contextEngine != null ? ", contextEngine=" + contextEngine.configValue() : "")
+                + (contextPolicy.isEmpty() ? "" : ", contextPolicy=" + contextPolicy)
                 + (attributes.isEmpty() ? "" : ", attributes=" + attributes) + '}';
     }
 
@@ -183,9 +197,22 @@ public final class AgentMetadata {
         private Set<String> tags = new LinkedHashSet<>();
         private List<AllowedTool> allowedTools = List.of();
         private ContextEngineKind contextEngine;
+        private ContextPolicy contextPolicy;
         private Map<String, String> attributes = Map.of();
 
         private Builder() {
+        }
+
+        /**
+         * Sets when this agent's context is compacted.
+         *
+         * @param contextPolicy
+         *            the policy, or {@code null} for none
+         * @return This builder
+         */
+        public Builder contextPolicy(ContextPolicy contextPolicy) {
+            this.contextPolicy = contextPolicy;
+            return this;
         }
 
         /**

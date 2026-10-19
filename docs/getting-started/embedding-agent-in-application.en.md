@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: ac5ce989
+source_commit: 5eb24cf0
 ---
 
 # Embedding an AIMON agent in your application
@@ -331,7 +331,8 @@ aimon:
   context:
     engine: default                 # default (default) | rolling — rolling needs session.log-write-format: v2
     rolling:                        # optional — the rolling engine's thresholds. Unset values keep the engine default
-      auto-compact-ratio: 0.6       # every ratio is in (0, 1] — the other keys: context-engine guide §4
+      tail-token-ratio: 0.2         # every ratio is in (0, 1] — the other keys: context-engine guide §4. Where
+                                    # compaction starts is AGENT.md context.auto-compact-ratio (default 0.8), not here
 
   skill:
     approval:

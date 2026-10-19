@@ -5,6 +5,9 @@
 > §1 ~ §8 은 리뷰를 통과한 설계 그대로다(기준 커밋 `a65392d0`, 승인 뒤 고치지 않았다). 구현이 그 글에서 갈라진 자리는
 > [§9](#9-구현이-이-설계와-갈라진-자리)에 있다. 지금의 리그를 서술하는 글은 이 기록이 아니라
 > [`context-engine.md` §13.11](context-engine.md#1311-engine-을-비교하는-과제) 이다.
+> *(2026-10-19)* §2 · §6 의 비교 프로파일 숫자 가운데 `autoCompactBuffer 1_000`, 기본 engine AUTO 13,000, 롤링 비율 0.6 과
+> 그 임계값 8,400 은 지금의 API · 값이 아니다. `ModelContextLimits.autoCompactBuffer` 와 롤링 engine 자신의 비율은 없어졌고,
+> 두 engine 은 같은 auto 임계값 11,200(`0.8 × effective 14,000`)에서 압축한다. 대조의 여유도 그 값의 0.6 배다.
 
 대상 브랜치 `herdr/context-engine-pressure-rig` (기준 `a65392d0`). 이 문서는 설계만 담는다. 코드 조각은 모양을 보이기 위한 것이다.
 2차 판이다 — `review-1.md` 의 blocking 셋을 모두 받아들여 고쳤고, 무엇이 바뀌었는지는 §8 에 있다.

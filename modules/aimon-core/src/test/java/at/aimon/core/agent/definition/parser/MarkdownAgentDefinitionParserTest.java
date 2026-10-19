@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.ContextEngineKind;
+import at.aimon.core.agent.ContextPolicy;
 import at.aimon.core.agent.definition.AgentDefinition;
 import at.aimon.core.agent.definition.exception.AgentDefinitionParseException;
 import at.aimon.core.agent.tool.permission.AllowedTool;
@@ -655,6 +656,106 @@ class MarkdownAgentDefinitionParserTest {
         void shouldRejectCamelCase() {
             assertThatThrownBy(() -> parser.parse(stream(withContextEngine("contextEngine: rolling"))))
                     .isInstanceOf(AgentDefinitionParseException.class).hasMessageContaining("context-engine");
+        }
+    }
+
+    @Nested
+    @DisplayName("context")
+    class ContextPolicyParsing {
+
+        private String withContext(String block) {
+            return "---\nname: test\n" + block + "\n---\nbody";
+        }
+
+        @Test
+        @DisplayName("Should bind max-window-tokens and auto-compact-ratio")
+        void shouldBindThePolicy() {
+            assertThat(parser
+                    .parse(stream(withContext("context:\n  max-window-tokens: 500000\n  auto-compact-ratio: 0.5")))
+                    .getContextPolicy())
+                    .isEqualTo(ContextPolicy.builder().maxWindowTokens(500_000).autoCompactRatio(0.5).build());
+        }
+
+        @Test
+        @DisplayName("Should bind either key alone")
+        void shouldBindEitherKeyAlone() {
+            assertThat(parser.parse(stream(withContext("context:\n  auto-compact-ratio: 0.7"))).getContextPolicy())
+                    .isEqualTo(ContextPolicy.builder().autoCompactRatio(0.7).build());
+            assertThat(parser.parse(stream(withContext("context:\n  max-window-tokens: 200000"))).getContextPolicy())
+                    .isEqualTo(ContextPolicy.builder().maxWindowTokens(200_000).build());
+        }
+
+        @Test
+        @DisplayName("Should accept a whole-valued number for max-window-tokens, as the other integer keys do")
+        void shouldAcceptAnIntegralDouble() {
+            assertThat(parser.parse(stream(withContext("context:\n  max-window-tokens: 500000.0"))).getContextPolicy())
+                    .isEqualTo(ContextPolicy.builder().maxWindowTokens(500_000).build());
+        }
+
+        @Test
+        @DisplayName("An absent block is the empty policy")
+        void anAbsentBlockIsEmpty() {
+            assertThat(parser.parse(stream(withContext("maxIterations: 3"))).getContextPolicy().isEmpty()).isTrue();
+        }
+
+        @Test
+        @DisplayName("Should reject a block written with nothing after it")
+        void shouldRejectAnEmptyBlock() {
+            assertThatThrownBy(() -> parser.parse(stream(withContext("context:"))))
+                    .isInstanceOf(AgentDefinitionParseException.class).hasMessageContaining("Invalid context: null")
+                    .hasMessageContaining("'max-window-tokens' and 'auto-compact-ratio'");
+            assertThatThrownBy(() -> parser.parse(stream(withContext("context: 0.5"))))
+                    .isInstanceOf(AgentDefinitionParseException.class).hasMessageContaining("Expected a map");
+        }
+
+        @Test
+        @DisplayName("Should reject an unknown key, naming the accepted ones")
+        void shouldRejectAnUnknownKey() {
+            assertThatThrownBy(() -> parser.parse(stream(withContext("context:\n  max-tokens: 500000"))))
+                    .isInstanceOf(AgentDefinitionParseException.class).hasMessageContaining("context.max-tokens")
+                    .hasMessageContaining("'max-window-tokens' and 'auto-compact-ratio'");
+            assertThatThrownBy(() -> parser.parse(stream(withContext("context:\n  maxWindowTokens: 500000"))))
+                    .isInstanceOf(AgentDefinitionParseException.class).hasMessageContaining("context.maxWindowTokens");
+        }
+
+        @Test
+        @DisplayName("Should reject a fraction, an overflowing number and a value-less key for max-window-tokens")
+        void shouldRejectBadCaps() {
+            assertThatThrownBy(() -> parser.parse(stream(withContext("context:\n  max-window-tokens: 500000.5"))))
+                    .isInstanceOf(AgentDefinitionParseException.class)
+                    .hasMessageContaining("Invalid context.max-window-tokens: 500000.5");
+            assertThatThrownBy(() -> parser.parse(stream(withContext("context:\n  max-window-tokens: 9999999999"))))
+                    .isInstanceOf(AgentDefinitionParseException.class)
+                    .hasMessageContaining("Invalid context.max-window-tokens: 9999999999")
+                    .hasMessageContaining("32-bit");
+            assertThatThrownBy(() -> parser.parse(stream(withContext("context:\n  max-window-tokens:"))))
+                    .isInstanceOf(AgentDefinitionParseException.class)
+                    .hasMessageContaining("Invalid context.max-window-tokens: null");
+        }
+
+        @Test
+        @DisplayName("Should reject a cap below the smallest window the compaction buffers fit in")
+        void shouldRejectACapBelowTheMinimum() {
+            final int tooSmall = ContextPolicy.MIN_MAX_WINDOW_TOKENS - 1;
+            assertThatThrownBy(() -> parser.parse(stream(withContext("context:\n  max-window-tokens: " + tooSmall))))
+                    .isInstanceOf(AgentDefinitionParseException.class)
+                    .hasMessageContaining("Invalid context.max-window-tokens: " + tooSmall)
+                    .hasMessageContaining(String.valueOf(ContextPolicy.MIN_MAX_WINDOW_TOKENS));
+        }
+
+        @Test
+        @DisplayName("Should reject a string ratio and a ratio outside [0.1, 1]")
+        void shouldRejectBadRatios() {
+            assertThatThrownBy(() -> parser.parse(stream(withContext("context:\n  auto-compact-ratio: \"0.5\""))))
+                    .isInstanceOf(AgentDefinitionParseException.class)
+                    .hasMessageContaining("Invalid context.auto-compact-ratio: 0.5. Expected a number.");
+            assertThatThrownBy(() -> parser.parse(stream(withContext("context:\n  auto-compact-ratio: 2"))))
+                    .isInstanceOf(AgentDefinitionParseException.class)
+                    .hasMessageContaining("Invalid context.auto-compact-ratio: 2.0");
+            assertThatThrownBy(() -> parser.parse(stream(withContext("context:\n  auto-compact-ratio: 0.05"))))
+                    .isInstanceOf(AgentDefinitionParseException.class)
+                    .hasMessageContaining("Invalid context.auto-compact-ratio: 0.05")
+                    .hasMessageContaining(String.valueOf(ContextPolicy.MIN_AUTO_COMPACT_RATIO));
         }
     }
 

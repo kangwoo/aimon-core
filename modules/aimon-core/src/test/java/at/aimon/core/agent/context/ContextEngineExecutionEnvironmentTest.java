@@ -79,7 +79,7 @@ class ContextEngineExecutionEnvironmentTest {
             post.set(context);
             return HookResult.success();
         });
-        // 7_500 sits in the auto-compact band [7_000, 8_500): prepare() always compacts, never by the blocking limit.
+        // 7_500 sits in the auto-compact band [7_200, 8_500): prepare() always compacts, never by the blocking limit.
         compactionEngine = DefaultCompactionEngine.withDefaults(new StubSummaryClient(), new FixedTokenEstimator(7_500),
                 new DefaultHookExecutionManager());
     }
@@ -92,7 +92,7 @@ class ContextEngineExecutionEnvironmentTest {
         final DefaultCompactionGuard guard = new DefaultCompactionGuard(compactionEngine,
                 InMemoryModelContextWindowRegistry.builder()
                         .defaultLimits(ModelContextLimits.builder().contextWindow(10_000).reservedOutputTokens(1_000)
-                                .autoCompactBuffer(2_000).warningBuffer(1_000).blockingBuffer(500).build())
+                                .autoCompactRatio(0.8).warningBuffer(1_000).blockingBuffer(500).build())
                         .build(),
                 new FixedTokenEstimator(estimatedTokens));
         return DefaultContextEngine.builder().compactionGuard(guard).compactionEngine(compactionEngine)

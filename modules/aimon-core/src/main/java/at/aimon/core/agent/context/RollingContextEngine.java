@@ -77,8 +77,10 @@ import at.aimon.core.llm.token.TokenEstimator;
  *
  * <p>
  * <b>When.</b> The decision ladder is the default engine's (blocking &rarr; circuit breaker &rarr; auto &rarr;
- * warning), with an earlier trigger: {@code rollingAuto = min(autoCompactRatio × effective, autoCompactThreshold)},
- * {@code warning = rollingAuto − warningBuffer}, and a budget-forced call compacts at {@code warning}. Every size
+ * warning) over the same thresholds: {@link ModelContextLimits#getAutoCompactThreshold() auto} is
+ * {@code autoCompactRatio × effective} from the resolved {@link ModelContextLimits} (an agent sets the ratio with
+ * AGENT.md {@code context.auto-compact-ratio}), {@code warning = auto − warningBuffer}, and a budget-forced call
+ * compacts at {@code warning}. Every size
  * counts the system prompt. The cut is chosen from estimates <em>before</em> the summary is asked for, retreating from
  * the tail budget to half of it to the last legal cut; if even that would not end below the threshold the engine warns
  * instead of compacting ({@link CompactionKind#FALLBACK}), except at the blocking limit, where the head is absorbed
@@ -111,7 +113,6 @@ import at.aimon.core.llm.token.TokenEstimator;
  */
 public final class RollingContextEngine implements ContextEngine {
 
-    public static final double DEFAULT_AUTO_COMPACT_RATIO = 0.6;
     public static final double DEFAULT_HEAD_TOKEN_RATIO = 0.05;
     public static final double DEFAULT_TAIL_TOKEN_RATIO = 0.20;
     public static final double DEFAULT_SUMMARY_TOKEN_RATIO = 0.08;
@@ -154,7 +155,6 @@ public final class RollingContextEngine implements ContextEngine {
     private final CompactionFailureStore failureStore;
     private final int maxConsecutiveFailures;
     private final LlmModel summaryModel;
-    private final double autoCompactRatio;
     private final double headTokenRatio;
     private final double tailTokenRatio;
     private final double summaryTokenRatio;
@@ -187,7 +187,6 @@ public final class RollingContextEngine implements ContextEngine {
         this.failureStore = builder.failureStore != null ? builder.failureStore : new InMemoryCompactionFailureStore();
         this.maxConsecutiveFailures = builder.maxConsecutiveFailures;
         this.summaryModel = builder.summaryModel;
-        this.autoCompactRatio = requireRatio(builder.autoCompactRatio, "autoCompactRatio");
         this.headTokenRatio = requireRatio(builder.headTokenRatio, "headTokenRatio");
         this.tailTokenRatio = requireRatio(builder.tailTokenRatio, "tailTokenRatio");
         this.summaryTokenRatio = requireRatio(builder.summaryTokenRatio, "summaryTokenRatio");
@@ -229,11 +228,6 @@ public final class RollingContextEngine implements ContextEngine {
     /** The default engine this one falls back to, and whose recovery it uses. Never null. */
     public DefaultContextEngine getFallback() {
         return fallback;
-    }
-
-    /** Rolling auto-compact trigger as a fraction of the effective window. */
-    public double getAutoCompactRatio() {
-        return autoCompactRatio;
     }
 
     /** Cap on the head's conversation tokens as a fraction of the effective window. */
@@ -363,9 +357,8 @@ public final class RollingContextEngine implements ContextEngine {
         final String modelName = model.getName().orElse("");
         final ModelContextLimits limits = modelContextWindowRegistry.resolve(modelName);
         final int effective = limits.getEffectiveContextWindow();
-        final int rollingAuto = Math.min((int) (autoCompactRatio * effective), limits.getAutoCompactThreshold());
-        final int warning = Math.max(0, rollingAuto - limits.getWarningBuffer());
-        return new Thresholds(modelName, effective, rollingAuto, warning, limits.getBlockingLimit());
+        return new Thresholds(modelName, effective, limits.getAutoCompactThreshold(), limits.getWarningThreshold(),
+                limits.getBlockingLimit());
     }
 
     /** The decision ladder: blocking → circuit breaker → auto → warning (context-engine §5.6). */
@@ -676,9 +669,9 @@ public final class RollingContextEngine implements ContextEngine {
 
     @Override
     public String toString() {
-        return "RollingContextEngine{autoCompactRatio=" + autoCompactRatio + ", headTokenRatio=" + headTokenRatio
-                + ", tailTokenRatio=" + tailTokenRatio + ", summaryTokenRatio=" + summaryTokenRatio + ", engine="
-                + compactionEngine.getClass().getSimpleName() + '}';
+        return "RollingContextEngine{headTokenRatio=" + headTokenRatio + ", tailTokenRatio=" + tailTokenRatio
+                + ", summaryTokenRatio=" + summaryTokenRatio + ", engine=" + compactionEngine.getClass().getSimpleName()
+                + '}';
     }
 
     /** The thresholds of one model. */
@@ -1046,7 +1039,6 @@ public final class RollingContextEngine implements ContextEngine {
         private int maxConsecutiveFailures = DefaultCompactionGuard.DEFAULT_MAX_CONSECUTIVE_FAILURES;
         private PromptSizeRecoveryStrategy recoveryStrategy;
         private LlmModel summaryModel;
-        private double autoCompactRatio = DEFAULT_AUTO_COMPACT_RATIO;
         private double headTokenRatio = DEFAULT_HEAD_TOKEN_RATIO;
         private double tailTokenRatio = DEFAULT_TAIL_TOKEN_RATIO;
         private double summaryTokenRatio = DEFAULT_SUMMARY_TOKEN_RATIO;
@@ -1112,12 +1104,6 @@ public final class RollingContextEngine implements ContextEngine {
          */
         public Builder summaryModel(LlmModel summaryModel) {
             this.summaryModel = summaryModel;
-            return this;
-        }
-
-        /** Rolling auto-compact trigger as a fraction of the effective window (default 0.6). */
-        public Builder autoCompactRatio(double autoCompactRatio) {
-            this.autoCompactRatio = autoCompactRatio;
             return this;
         }
 

@@ -226,6 +226,19 @@ public final class DefaultAgent implements Agent {
         }
 
         /**
+         * Sets when this agent's context is compacted (see {@link AgentMetadata#getContextPolicy()}).
+         *
+         * @param contextPolicy
+         *            the policy, or {@code null} for none
+         * @return This builder
+         */
+        public Builder contextPolicy(ContextPolicy contextPolicy) {
+            ensureMetadataBuilder();
+            this.metadataBuilder.contextPolicy(contextPolicy);
+            return this;
+        }
+
+        /**
          * Sets the free-form attributes (see {@link AgentMetadata#getAttributes()}).
          *
          * @param attributes

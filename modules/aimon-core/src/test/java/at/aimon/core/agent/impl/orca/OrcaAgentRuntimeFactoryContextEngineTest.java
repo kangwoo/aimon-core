@@ -15,7 +15,9 @@ import org.junit.jupiter.api.io.TempDir;
 import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.ContextEngineKind;
+import at.aimon.core.agent.ContextPolicy;
 import at.aimon.core.agent.DefaultAgent;
+import at.aimon.core.agent.compact.DefaultCompactionGuard;
 import at.aimon.core.agent.context.DefaultContextEngine;
 import at.aimon.core.agent.context.RollingContextEngine;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
@@ -107,18 +109,17 @@ class OrcaAgentRuntimeFactoryContextEngineTest {
     @Test
     @DisplayName("the rolling customizer tunes the engine's thresholds")
     void theRollingCustomizerTunesTheEngine() {
-        final OrcaAgentRuntime runtime = create(
-                new OrcaAgentRuntimeFactory().withContextEngine(ContextEngineKind.ROLLING)
-                        .withSessionLogWriteFormat(SessionLogFormat.V2).withRollingContextEngineCustomizer(
-                                b -> b.autoCompactRatio(0.5).tailTokenRatio(0.3).pruneMinTokens(800)),
+        final OrcaAgentRuntime runtime = create(new OrcaAgentRuntimeFactory()
+                .withContextEngine(ContextEngineKind.ROLLING).withSessionLogWriteFormat(SessionLogFormat.V2)
+                .withRollingContextEngineCustomizer(b -> b.headTokenRatio(0.1).tailTokenRatio(0.3).pruneMinTokens(800)),
                 agent(null));
 
         final RollingContextEngine engine = (RollingContextEngine) runtime.getContextEngine();
-        assertThat(engine.getAutoCompactRatio()).isEqualTo(0.5);
+        assertThat(engine.getHeadTokenRatio()).isEqualTo(0.1);
         assertThat(engine.getTailTokenRatio()).isEqualTo(0.3);
         assertThat(engine.getPruneMinTokens()).isEqualTo(800);
-        assertThat(engine.getHeadTokenRatio()).as("untouched values keep the engine default")
-                .isEqualTo(RollingContextEngine.DEFAULT_HEAD_TOKEN_RATIO);
+        assertThat(engine.getSummaryTokenRatio()).as("untouched values keep the engine default")
+                .isEqualTo(RollingContextEngine.DEFAULT_SUMMARY_TOKEN_RATIO);
     }
 
     @Test
@@ -139,14 +140,14 @@ class OrcaAgentRuntimeFactoryContextEngineTest {
         final OrcaAgentRuntimeFactory factory = new OrcaAgentRuntimeFactory()
                 .withSessionLogWriteFormat(SessionLogFormat.V2).withRollingContextEngineCustomizer(b -> {
                     calls.incrementAndGet();
-                    b.autoCompactRatio(1.5);
+                    b.tailTokenRatio(1.5);
                 });
 
         assertThat(create(factory, agent(ContextEngineKind.DEFAULT)).getContextEngine())
                 .isInstanceOf(DefaultContextEngine.class);
         assertThat(calls).hasValue(0);
         assertThatThrownBy(() -> create(factory, agent(ContextEngineKind.ROLLING)))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("autoCompactRatio");
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("tailTokenRatio");
     }
 
     private OrcaAgentExecutor createExecutor() {
@@ -179,5 +180,39 @@ class OrcaAgentRuntimeFactoryContextEngineTest {
             return "Stub";
         }
 
+    }
+
+    @Test
+    @DisplayName("the agent's context policy sizes its compaction guard, over the model's own window")
+    void theAgentsContextPolicySizesTheGuard() {
+        final Agent capped = DefaultAgent.builder().name("TestAgent").maxIterations(10).systemPrompt("p")
+                .contextPolicy(ContextPolicy.builder().maxWindowTokens(500_000).build()).build();
+        final DefaultCompactionGuard cappedGuard = (DefaultCompactionGuard) create(new OrcaAgentRuntimeFactory(),
+                capped).getCompactionGuard().orElseThrow();
+        final DefaultCompactionGuard plainGuard = (DefaultCompactionGuard) create(new OrcaAgentRuntimeFactory(),
+                agent(null)).getCompactionGuard().orElseThrow();
+
+        final LlmModel gpt6 = LlmModel.builder().name("gpt-6-sol").build();
+        assertThat(cappedGuard.blockingLimit(gpt6)).isEqualTo(500_000 - 20_000 - 3_000);
+        assertThat(plainGuard.blockingLimit(gpt6)).isEqualTo(1_050_000 - 20_000 - 3_000);
+        // The cap never raises a smaller model's window.
+        assertThat(cappedGuard.blockingLimit(LlmModel.builder().name("gpt-4o").build()))
+                .isEqualTo(128_000 - 20_000 - 3_000);
+    }
+
+    @Test
+    @DisplayName("the agent's context policy reaches the rolling engine too")
+    void theAgentsContextPolicyReachesTheRollingEngine() {
+        final Agent capped = DefaultAgent.builder().name("TestAgent").maxIterations(10).systemPrompt("p")
+                .contextEngine(ContextEngineKind.ROLLING)
+                .contextPolicy(ContextPolicy.builder().maxWindowTokens(500_000).build()).build();
+        final RollingContextEngine engine = (RollingContextEngine) create(
+                new OrcaAgentRuntimeFactory().withSessionLogWriteFormat(SessionLogFormat.V2), capped)
+                .getContextEngine();
+
+        // The rolling engine and its default-engine fallback resolve limits through the same registry view.
+        final DefaultCompactionGuard fallbackGuard = (DefaultCompactionGuard) engine.getFallback().getCompactionGuard();
+        assertThat(fallbackGuard.blockingLimit(LlmModel.builder().name("gpt-6-sol").build()))
+                .isEqualTo(500_000 - 20_000 - 3_000);
     }
 }

@@ -945,7 +945,10 @@ public class OrcaAgentRuntimeFactory {
         final CompactionFailureStore failureStore = compactionFailureStore != null
                 ? compactionFailureStore
                 : new InMemoryCompactionFailureStore();
-        final CompactionGuard compactionGuard = new DefaultCompactionGuard(compactionEngine, modelContextWindowRegistry,
+        // The model registry says how big each model's window is; the agent's AGENT.md context says when to compact.
+        final ModelContextWindowRegistry agentWindows = agent.getMetadata().getContextPolicy()
+                .applyTo(modelContextWindowRegistry);
+        final CompactionGuard compactionGuard = new DefaultCompactionGuard(compactionEngine, agentWindows,
                 tokenEstimator, DefaultCompactionGuard.DEFAULT_MAX_CONSECUTIVE_FAILURES,
                 DefaultCompactionGuard.DEFAULT_MAX_TRACKED_SESSIONS, failureStore);
         // The one place the agent's LLM view is shrunk: the compaction gate, prompt-too-long recovery and /compact all
@@ -954,7 +957,7 @@ public class OrcaAgentRuntimeFactory {
         final PromptSizeRecoveryStrategy recoveryStrategy = new DefaultPromptSizeRecoveryStrategy();
         final ContextEngineKind engineKind = agent.getMetadata().getContextEngine().orElse(defaultContextEngine);
         final ContextEngine contextEngine = buildContextEngine(agentRuntimeId, engineKind, compactionEngine,
-                compactionGuard, failureStore, recoveryStrategy);
+                compactionGuard, failureStore, recoveryStrategy, agentWindows);
 
         // Back background-subagent live output with a VFS-persisted segment log rooted in this context's file
         // system, so the AgentOutput tool can tail progress incrementally and (in a scale-out deployment) any node can
@@ -1113,7 +1116,7 @@ public class OrcaAgentRuntimeFactory {
     @SuppressWarnings("deprecation") // the default engine wraps the version-1 guard on purpose
     private ContextEngine buildContextEngine(AgentRuntimeId agentRuntimeId, ContextEngineKind kind,
             CompactionEngine compactionEngine, CompactionGuard compactionGuard, CompactionFailureStore failureStore,
-            PromptSizeRecoveryStrategy recoveryStrategy) {
+            PromptSizeRecoveryStrategy recoveryStrategy, ModelContextWindowRegistry agentWindows) {
         if (kind == ContextEngineKind.ROLLING) {
             if (sessionLogWriteFormat == SessionLogFormat.V1) {
                 throw new IllegalStateException("Agent runtime " + agentRuntimeId + " asks for the rolling context"
@@ -1126,7 +1129,7 @@ public class OrcaAgentRuntimeFactory {
                 rollingContextEngineCustomizer.accept(builder);
             }
             // Wired after the customizer, so a customizer tunes the engine but cannot unplug it from this runtime.
-            return builder.compactionEngine(compactionEngine).modelContextWindowRegistry(modelContextWindowRegistry)
+            return builder.compactionEngine(compactionEngine).modelContextWindowRegistry(agentWindows)
                     .tokenEstimator(tokenEstimator).failureStore(failureStore).recoveryStrategy(recoveryStrategy)
                     .writeFormat(sessionLogWriteFormat).build();
         }
