@@ -7,6 +7,16 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: the release-gate refusal tests no longer time out on macOS (tests only) (#288)
+
+`ReleaseGateMatchesCiGateTest`'s key-refusal cases put a freshly written `#!/bin/sh` stub `git` on `PATH` and
+executed it. On macOS 13+ the first `execve` of a new executable written by a process with app provenance waits for
+syspolicyd's Gatekeeper scan, which is serialised machine-wide and was observed at 19–75 seconds per unsigned file; with
+other unsigned binaries being built on the same machine the stub queued past the harness's 30-second timeout, so the
+cases failed locally while Linux CI passed. The stub is now a bash function passed in `BASH_FUNC_git%%` with an empty
+`PATH`, so the harness executes nothing but bash; the refusal assertions, including the call log that pins the
+refusal's ordering, are unchanged, and a self-check fails the test if bash did not import the function.
+
 ### Changed (behaviour change): the session log is written as version 2 by default (#286)
 
 Every assembly now writes the session log as version 2 unless told otherwise: `SessionSpec.logWriteFormat`, Spring
