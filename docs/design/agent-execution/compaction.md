@@ -92,16 +92,29 @@ OrcaAgentExecutor.executeReActLoop()
 |------|--------|-----|
 | `contextWindow` | 128,000 | 모델이 한 번에 처리 가능한 토큰 수 |
 | `reservedOutputTokens` | 20,000 | 출력용으로 남겨 두는 몫 |
-| `autoCompactBuffer` | 13,000 | 자동 compaction 여유 |
+| `autoCompactRatio` | 0.8 | 자동 compaction 이 시작되는 유효 창 대비 비율, (0, 1] |
 | `warningBuffer` | 20,000 | 경고 여유 |
 | `blockingBuffer` | 3,000 | 차단 여유 |
 
-생성자가 강제하는 불변 규칙이 둘 있다 — `reservedOutputTokens + autoCompactBuffer + warningBuffer <
-contextWindow` (임계값이 음수가 되는 것을 막는다), `blockingBuffer ≤ reservedOutputTokens`. 위반은
-`IllegalArgumentException` 이다.
+```
+effectiveWindow      = contextWindow − reservedOutputTokens
+autoCompactThreshold = (int) (autoCompactRatio × effectiveWindow)
+warningThreshold     = max(0, autoCompactThreshold − warningBuffer)
+blockingLimit        = effectiveWindow − blockingBuffer
+```
+
+시작점을 정하는 규칙은 비율 하나다. 고정 버퍼로 정하면 창이 클수록 시작점이 창 끝에 붙고(1M 창에서 99%), 비율이면
+창 크기와 무관하게 같은 몫의 여유가 남는다. 128K 창이면 auto 86,400 · warning 66,400 · blocking 105,000 이다.
+rolling engine 도 같은 `autoCompactThreshold` 에서 시작한다(context-engine §5.6). 에이전트는 AGENT.md `context` 블록으로
+비율을 바꾸고 창에 상한을 건다 — `ContextPolicy` 가 레지스트리 위에 얹는 뷰이며, 모델 레지스트리의 값 자체는 바꾸지 않는다.
+
+생성자가 강제하는 불변 규칙은 넷이다 — 비율은 (0, 1], `reservedOutputTokens + warningBuffer < contextWindow`(유효 창이 경고
+대역을 담는다), `reservedOutputTokens + blockingBuffer < contextWindow`(blocking 한계가 양수), `blockingBuffer ≤
+reservedOutputTokens`. 위반은 `IllegalArgumentException` 이다. 비율이 1 에 가까우면 auto 가 blocking 한계보다 위에 올 수
+있다 — 판정이 blocking 을 먼저 보므로(§3.2) 그때는 blocking 한계에서 압축이 시작된다.
 
 `InMemoryModelContextWindowRegistry` 가 모델명을 여기에 매핑한다 (Claude 계열 200K, GPT-4 계열 128K,
-미등록 모델은 기본값). 읽기 전용 설정이므로 in-memory 구현으로 충분하고, 어셈블리가 build-time 에 구성한다.
+`gpt-6` 계열 1,050,000, 미등록 모델은 기본값). 읽기 전용 설정이므로 in-memory 구현으로 충분하고, 어셈블리가 build-time 에 구성한다.
 
 ### 3.2 판정 순서
 

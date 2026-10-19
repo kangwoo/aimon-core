@@ -26,7 +26,7 @@ public final class InMemoryModelContextWindowRegistry implements ModelContextWin
         this.defaultLimits = Objects.requireNonNull(builder.defaultLimits, "defaultLimits cannot be null");
     }
 
-    /** Returns a registry with framework-default mappings (gpt-4o, o1, claude-3.x, claude-4.x, ...). */
+    /** Returns a registry with framework-default mappings (gpt-4o, o1, gpt-6, claude-3.x, claude-4.x, ...). */
     public static InMemoryModelContextWindowRegistry withDefaults() {
         return builder().register("gpt-4o", ModelContextLimits.ofContextWindow(128_000))
                 .register("gpt-4-turbo", ModelContextLimits.ofContextWindow(128_000))
@@ -34,6 +34,9 @@ public final class InMemoryModelContextWindowRegistry implements ModelContextWin
                 .registerPrefix("gpt-4o", ModelContextLimits.ofContextWindow(128_000))
                 .registerPrefix("gpt-4-turbo", ModelContextLimits.ofContextWindow(128_000))
                 .registerPrefix("o1", ModelContextLimits.ofContextWindow(200_000))
+                // A prefix, unlike the exact gpt-6 names in InMemoryModelCapabilityRegistry: a window is a family-wide
+                // fact whose error prompt-too-long recovery absorbs, a capability claim's is a failed request.
+                .registerPrefix("gpt-6", ModelContextLimits.ofContextWindow(1_050_000))
                 .registerPrefix("claude-3-5-sonnet", ModelContextLimits.ofContextWindow(200_000))
                 .registerPrefix("claude-3-5-haiku", ModelContextLimits.ofContextWindow(200_000))
                 .registerPrefix("claude-3-7", ModelContextLimits.ofContextWindow(200_000))

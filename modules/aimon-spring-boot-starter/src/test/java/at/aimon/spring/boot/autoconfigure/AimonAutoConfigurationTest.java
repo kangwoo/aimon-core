@@ -141,12 +141,12 @@ class AimonAutoConfigurationTest {
     void rollingTuningProperties(@TempDir Path workspace) {
         minimal(workspace)
                 .withPropertyValues("aimon.context.engine=rolling", "aimon.session.log-write-format=v2",
-                        "aimon.context.rolling.auto-compact-ratio=0.5", "aimon.context.rolling.prune-min-tokens=1000")
+                        "aimon.context.rolling.head-token-ratio=0.1", "aimon.context.rolling.prune-min-tokens=1000")
                 .run(ctx -> {
                     final AimonStack stack = ctx.getBean(AimonStack.class);
                     final RollingContextEngine engine = (RollingContextEngine) stack.runtimes()
                             .get(stack.primaryRuntimeId()).getContextEngine();
-                    assertThat(engine.getAutoCompactRatio()).isEqualTo(0.5);
+                    assertThat(engine.getHeadTokenRatio()).isEqualTo(0.1);
                     assertThat(engine.getPruneMinTokens()).isEqualTo(1000);
                     assertThat(engine.getTailTokenRatio()).isEqualTo(RollingContextEngine.DEFAULT_TAIL_TOKEN_RATIO);
                 });
@@ -155,6 +155,16 @@ class AimonAutoConfigurationTest {
         // Refused even while no agent runs rolling: an AGENT.md may choose it later.
         minimal(workspace).withPropertyValues("aimon.context.rolling.tail-token-ratio=1.2").run(ctx -> assertThat(ctx)
                 .hasFailed().getFailure().hasStackTraceContaining("aimon.context.rolling.tail-token-ratio"));
+    }
+
+    @Test
+    @DisplayName("the removed aimon.context.rolling.auto-compact-ratio fails startup and names its replacement")
+    void removedRollingAutoCompactRatioFailsStartup(@TempDir Path workspace) {
+        minimal(workspace).withPropertyValues("aimon.context.rolling.auto-compact-ratio=0.5")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining("aimon.context.rolling.auto-compact-ratio=0.5 is no longer supported")
+                        .hasStackTraceContaining("both context engines")
+                        .hasStackTraceContaining("AGENT.md context.auto-compact-ratio (default 0.8)"));
     }
 
     @Test

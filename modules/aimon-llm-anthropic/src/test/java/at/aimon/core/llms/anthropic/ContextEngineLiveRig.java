@@ -130,15 +130,15 @@ final class ContextEngineLiveRig {
 
     private static final ModelContextWindowRegistry SMALL_WINDOW = InMemoryModelContextWindowRegistry.builder()
             .defaultLimits(ModelContextLimits.builder().contextWindow(8_000).reservedOutputTokens(1_000)
-                    .autoCompactBuffer(500).warningBuffer(500).blockingBuffer(300).build())
+                    .autoCompactRatio(0.3).warningBuffer(500).blockingBuffer(300).build())
             .build();
 
     /**
-     * The comparison profile's window: effective 14,000, the default engine's AUTO at 13,000 and blocking at 13,600.
-     * The buffers keep the proportions the 200K defaults have.
+     * The comparison profile's window: effective 14,000, both engines' AUTO at the shipped ratio (11,200) and blocking
+     * at 13,600.
      */
     static final ModelContextLimits COMPARISON_LIMITS = ModelContextLimits.builder().contextWindow(16_000)
-            .reservedOutputTokens(2_000).autoCompactBuffer(1_000).warningBuffer(1_000).blockingBuffer(400).build();
+            .reservedOutputTokens(2_000).warningBuffer(1_000).blockingBuffer(400).build();
 
     private static final ModelContextWindowRegistry COMPARISON_WINDOW = InMemoryModelContextWindowRegistry.builder()
             .defaultLimits(COMPARISON_LIMITS).build();
@@ -243,11 +243,12 @@ final class ContextEngineLiveRig {
                 new SummaryCallRecorder(client));
     }
 
-    /** The view size at which the comparison profile's rolling engine compacts: 60% of the effective window. */
+    /**
+     * The view size at which the comparison profile's rolling engine compacts: the profile's auto-compact threshold,
+     * which both engines share.
+     */
     static int comparisonRollingThreshold() {
-        return Math.min(
-                (int) (RollingContextEngine.DEFAULT_AUTO_COMPACT_RATIO * COMPARISON_LIMITS.getEffectiveContextWindow()),
-                COMPARISON_LIMITS.getAutoCompactThreshold());
+        return COMPARISON_LIMITS.getAutoCompactThreshold();
     }
 
     /** The shipped ratios, untouched: what is measured is the configuration that is deployed. */
@@ -267,8 +268,7 @@ final class ContextEngineLiveRig {
     private static ContextEngine rollingEngine(CompactionEngine compactionEngine, TokenEstimator estimator) {
         return RollingContextEngine.builder().compactionEngine(compactionEngine)
                 .modelContextWindowRegistry(SMALL_WINDOW).tokenEstimator(estimator).writeFormat(SessionLogFormat.V2)
-                .autoCompactRatio(0.3).tailTokenRatio(0.1).summaryTokenRatio(0.08).minTailRatio(0.04)
-                .pruneMinTokens(300).build();
+                .tailTokenRatio(0.1).summaryTokenRatio(0.08).minTailRatio(0.04).pruneMinTokens(300).build();
     }
 
     @SuppressWarnings("deprecation") // view mode is decided by the guard's type; DefaultCompactionGuard is the one

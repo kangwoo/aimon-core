@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.ContextPolicy;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.llm.InMemoryModelContextWindowRegistry;
 import at.aimon.core.llm.LlmModel;
@@ -29,7 +30,7 @@ class DefaultCompactionGuardDecideTest {
 
     /** Auto-compact at 1200 estimated tokens, warning at 1000, blocking at 1400. */
     private static final ModelContextLimits TINY = ModelContextLimits.builder().contextWindow(2000)
-            .reservedOutputTokens(500).autoCompactBuffer(300).warningBuffer(200).blockingBuffer(100).build();
+            .reservedOutputTokens(500).autoCompactRatio(0.8).warningBuffer(200).blockingBuffer(100).build();
 
     private final InMemoryCompactionFailureStore failures = new InMemoryCompactionFailureStore();
     @SuppressWarnings("deprecation")
@@ -69,6 +70,30 @@ class DefaultCompactionGuardDecideTest {
         }).getAction()).as("blocking limit").isEqualTo(CompactionDecision.Action.COMPACT);
 
         assertThat(forcedFlags).containsExactly(false, true);
+    }
+
+    @Test
+    @SuppressWarnings("deprecation")
+    void anAgentsContextPolicyRatioMovesTheAutoThreshold() {
+        // The policy's 0.6 puts auto at 900 (warning 700) on the same model, before the model's own 0.8 (1200).
+        final DefaultCompactionGuard policyGuard = new DefaultCompactionGuard(request -> {
+            throw new AssertionError("decide() must not call the guard's own engine");
+        }, ContextPolicy.builder().autoCompactRatio(0.6).build()
+                .applyTo(InMemoryModelContextWindowRegistry.builder().defaultLimits(TINY).build()),
+                new HeuristicTokenEstimator(), DefaultCompactionGuard.DEFAULT_MAX_CONSECUTIVE_FAILURES,
+                DefaultCompactionGuard.DEFAULT_MAX_TRACKED_SESSIONS, new InMemoryCompactionFailureStore());
+        final List<Boolean> forcedFlags = new ArrayList<>();
+
+        // 3700 chars sit between the policy's threshold (900) and the model's own (1200).
+        assertThat(guard.decide(SESSION, "sys", viewOf(3700), MODEL, false, forced -> success()).getAction())
+                .as("without the policy: still the warning band").isEqualTo(CompactionDecision.Action.WARN);
+        assertThat(policyGuard.decide(SESSION, "sys", viewOf(3700), MODEL, false, forced -> {
+            forcedFlags.add(forced);
+            return success();
+        }).getAction()).as("with the policy: auto compaction").isEqualTo(CompactionDecision.Action.COMPACT);
+        assertThat(forcedFlags).as("an ordinary auto pass, not a forced one").containsExactly(false);
+        assertThat(policyGuard.decide(SESSION, "sys", viewOf(100), MODEL, false, forced -> success()).getAction())
+                .isEqualTo(CompactionDecision.Action.NONE);
     }
 
     @Test

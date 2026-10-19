@@ -58,6 +58,25 @@ context-engine: rolling     # default | rolling. 적지 않으면 배포의 기�
 키는 `allowed-tools` 처럼 kebab 이다. `contextEngine` 이라고 적으면 무시되지 않고 파싱이 실패한다 — 무시하면 작성자는
 rolling 이라고 믿는 채 기본 engine 으로 돈다.
 
+**언제 압축할지**도 에이전트가 정한다. 모델의 창 크기는 모델에 대한 사실이라 모델 레지스트리에 그대로 두고, `context`
+블록은 그 위에 얹는 정책이다. 에이전트 자신의 턴에서, 호출마다 해석된 모델의 창 위에 적용된다.
+
+```yaml
+---
+name: ops
+context:
+  max-window-tokens: 500000   # 창 상한. min(모델 창, 이 값) — 모델 창을 넘겨 올리지는 못한다
+  auto-compact-ratio: 0.5     # 유효 창(창 − 출력 예약)의 이 비율을 넘으면 자동 압축. [0.1, 1], 기본 0.8
+---
+```
+
+자동 압축의 시작점은 두 엔진 모두 이 비율 하나로 정해진다 — `auto-compact-ratio × 유효 창`. 적지 않으면 모델 항목의
+기본값 0.8 이다(128K 창이면 86,400, 1.05M 창이면 824,000). blocking 한계는 비율이 아니라 (상한이 걸린) 창을 따른다.
+`max-window-tokens` 는 출력 예약과 경고 대역이 들어갈 만큼(40,001 이상)이어야 하고, 모델의 출력 예약이 그보다 넓어
+상한이 맞지 않으면 그 모델에는 상한 없이 모델의 창을 쓰고 WARN 을 한 번 남긴다. 이 키는 `model.maxTokens`(출력 토큰
+상한)와 다른 값이다. 모르는 키, 값 없이 적은 `context:`, 소수나 32비트를 넘는 상한, 문자열 비율은 파싱이 실패한다.
+서브에이전트 · 스킬 · 워크플로 포크는 압축 게이트 없이 돌므로 이 정책이 닿지 않는다.
+
 ### 2.3 Spring 이 아닌 조립 — `AimonStackSpec`
 
 ```java
@@ -89,7 +108,8 @@ AGENT.md 에서 고른다(§2.2).
 뷰:  [ head ][ 경계 요약 ][ 원문 ........ ][ tail ...... ]
 ```
 
-- **언제** — `min(0.6 × effective window, auto-compact 임계값)` 에서 압축한다. 예산이 강제한 패스(budget-forced)는 그보다
+- **언제** — 기본 engine 과 같은 auto-compact 임계값(`autoCompactRatio × effective window`, 기본 0.8)에서 압축한다.
+  예산이 강제한 패스(budget-forced)는 그보다
   `warningBuffer` 만큼 낮은 선에서 한다. 모든 크기는 시스템 프롬프트를 포함한다
 - **무엇을 먼저** — 흡수될 구간의 큰 도구 결과(기본 500 토큰 이상)를 `[tool result elided: seq=N]` 으로 가리는 것부터 해 본다.
   그것만으로 임계값 아래로 내려가면 요약하지 않는다
@@ -114,7 +134,9 @@ tail 이 이미 원문이고, 붙인 파일이 tail 에 쌓여 다음 압축을 
 
 ## 4. 조정
 
-`RollingContextEngine.Builder` 의 값이다. 조립 방식마다 넣는 자리가 다르다.
+`RollingContextEngine.Builder` 의 값이다. 조립 방식마다 넣는 자리가 다르다. 압축을 **언제** 시작할지는 여기 없다 — 두
+엔진이 같은 시작점을 쓰고, 에이전트마다 AGENT.md `context.auto-compact-ratio`(기본 0.8, §2.2)로 정한다. 예전의
+`aimon.context.rolling.auto-compact-ratio` 를 적으면 스타터가 기동을 거부한다.
 
 - **Spring Boot 스타터** — `aimon.context.rolling.*` 프로퍼티(아래 표의 kebab 이름). `summaryModel` 은 프로퍼티가 없다
 - **`AimonStackSpec`** — `ExecutorSpec.builder().rollingContextEngineCustomizer(builder -> ...)`
@@ -127,7 +149,6 @@ customizer 는 rolling 을 쓰는 런타임마다(배포 기본값으로 골랐�
 
 | 값 | 스타터 프로퍼티 | 기본 | 뜻 |
 |----|----------------|------|----|
-| `autoCompactRatio` | `auto-compact-ratio` | 0.6 | 압축 시작점, effective window 대비 |
 | `headTokenRatio` | `head-token-ratio` | 0.05 | head 의 대화 부분 상한. 넘으면 head 는 비고 요약이 맡는다 |
 | `tailTokenRatio` | `tail-token-ratio` | 0.20 | 원문으로 남길 tail 예산 |
 | `summaryTokenRatio` | `summary-token-ratio` | 0.08 | 요약에 요구하는 길이 |

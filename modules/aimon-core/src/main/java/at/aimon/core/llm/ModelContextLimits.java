@@ -10,8 +10,9 @@ package at.aimon.core.llm;
  * <ul>
  * <li>{@code contextWindow} — total context window of the model in tokens.
  * <li>{@code reservedOutputTokens} — slack reserved for the assistant response.
- * <li>{@code autoCompactBuffer} — additional buffer above which auto compaction kicks in.
- * <li>{@code warningBuffer} — earlier warning band (above {@code autoCompactBuffer}).
+ * <li>{@code autoCompactRatio} — fraction of the effective window past which auto compaction starts, in (0, 1]
+ * (default {@value #DEFAULT_AUTO_COMPACT_RATIO}). Both context engines start compacting here.
+ * <li>{@code warningBuffer} — earlier warning band below the auto-compact threshold.
  * <li>{@code blockingBuffer} — final hard blocking band; if exceeded, the conversation cannot continue.
  * </ul>
  *
@@ -20,10 +21,14 @@ package at.aimon.core.llm;
  *
  * <pre>
  * effectiveWindow      = contextWindow - reservedOutputTokens
- * autoCompactThreshold = effectiveWindow - autoCompactBuffer
- * warningThreshold     = autoCompactThreshold - warningBuffer
+ * autoCompactThreshold = (int) (effectiveWindow * autoCompactRatio)
+ * warningThreshold     = max(0, autoCompactThreshold - warningBuffer)
  * blockingLimit        = effectiveWindow - blockingBuffer
  * </pre>
+ *
+ * <p>
+ * With a ratio close to 1 the auto-compact threshold can sit above the blocking limit; the blocking limit is checked
+ * first, so compaction then starts there.
  *
  * <p>
  * Immutable value object built via {@link Builder}.
@@ -32,20 +37,21 @@ public final class ModelContextLimits {
 
     public static final int DEFAULT_CONTEXT_WINDOW = 128_000;
     public static final int DEFAULT_RESERVED_OUTPUT_TOKENS = 20_000;
-    public static final int DEFAULT_AUTO_COMPACT_BUFFER = 13_000;
+    /** The default fraction of the effective window past which auto compaction starts. */
+    public static final double DEFAULT_AUTO_COMPACT_RATIO = 0.8;
     public static final int DEFAULT_WARNING_BUFFER = 20_000;
     public static final int DEFAULT_BLOCKING_BUFFER = 3_000;
 
     private final int contextWindow;
     private final int reservedOutputTokens;
-    private final int autoCompactBuffer;
+    private final double autoCompactRatio;
     private final int warningBuffer;
     private final int blockingBuffer;
 
     private ModelContextLimits(Builder builder) {
         this.contextWindow = builder.contextWindow;
         this.reservedOutputTokens = builder.reservedOutputTokens;
-        this.autoCompactBuffer = builder.autoCompactBuffer;
+        this.autoCompactRatio = builder.autoCompactRatio;
         this.warningBuffer = builder.warningBuffer;
         this.blockingBuffer = builder.blockingBuffer;
         validate();
@@ -58,8 +64,8 @@ public final class ModelContextLimits {
         if (reservedOutputTokens <= 0) {
             throw new IllegalArgumentException("reservedOutputTokens must be > 0, got: " + reservedOutputTokens);
         }
-        if (autoCompactBuffer <= 0) {
-            throw new IllegalArgumentException("autoCompactBuffer must be > 0, got: " + autoCompactBuffer);
+        if (!(autoCompactRatio > 0.0 && autoCompactRatio <= 1.0)) {
+            throw new IllegalArgumentException("autoCompactRatio must be in (0, 1], got: " + autoCompactRatio);
         }
         if (warningBuffer <= 0) {
             throw new IllegalArgumentException("warningBuffer must be > 0, got: " + warningBuffer);
@@ -67,11 +73,17 @@ public final class ModelContextLimits {
         if (blockingBuffer <= 0) {
             throw new IllegalArgumentException("blockingBuffer must be > 0, got: " + blockingBuffer);
         }
-        // Ensure thresholds remain positive
-        if ((long) reservedOutputTokens + autoCompactBuffer + warningBuffer >= contextWindow) {
-            throw new IllegalArgumentException("reservedOutputTokens + autoCompactBuffer + warningBuffer ("
-                    + ((long) reservedOutputTokens + autoCompactBuffer + warningBuffer) + ") must be < contextWindow ("
-                    + contextWindow + ")");
+        // The effective window must hold the warning band, so a full-ratio threshold leaves a warning above zero.
+        if ((long) reservedOutputTokens + warningBuffer >= contextWindow) {
+            throw new IllegalArgumentException(
+                    "reservedOutputTokens + warningBuffer (" + ((long) reservedOutputTokens + warningBuffer)
+                            + ") must be < contextWindow (" + contextWindow + ")");
+        }
+        // The blocking limit must stay above zero.
+        if ((long) reservedOutputTokens + blockingBuffer >= contextWindow) {
+            throw new IllegalArgumentException(
+                    "reservedOutputTokens + blockingBuffer (" + ((long) reservedOutputTokens + blockingBuffer)
+                            + ") must be < contextWindow (" + contextWindow + ")");
         }
         if (blockingBuffer > reservedOutputTokens) {
             throw new IllegalArgumentException("blockingBuffer (" + blockingBuffer
@@ -88,6 +100,16 @@ public final class ModelContextLimits {
         return new Builder();
     }
 
+    /**
+     * Returns a builder pre-populated with this instance's values.
+     *
+     * @return a new builder
+     */
+    public Builder toBuilder() {
+        return builder().contextWindow(contextWindow).reservedOutputTokens(reservedOutputTokens)
+                .autoCompactRatio(autoCompactRatio).warningBuffer(warningBuffer).blockingBuffer(blockingBuffer);
+    }
+
     public int getContextWindow() {
         return contextWindow;
     }
@@ -96,8 +118,13 @@ public final class ModelContextLimits {
         return reservedOutputTokens;
     }
 
-    public int getAutoCompactBuffer() {
-        return autoCompactBuffer;
+    /**
+     * Returns the fraction of the effective window past which auto compaction starts.
+     *
+     * @return the ratio, in (0, 1]
+     */
+    public double getAutoCompactRatio() {
+        return autoCompactRatio;
     }
 
     public int getWarningBuffer() {
@@ -113,11 +140,11 @@ public final class ModelContextLimits {
     }
 
     public int getAutoCompactThreshold() {
-        return getEffectiveContextWindow() - autoCompactBuffer;
+        return (int) (autoCompactRatio * getEffectiveContextWindow());
     }
 
     public int getWarningThreshold() {
-        return getAutoCompactThreshold() - warningBuffer;
+        return Math.max(0, getAutoCompactThreshold() - warningBuffer);
     }
 
     public int getBlockingLimit() {
@@ -127,7 +154,7 @@ public final class ModelContextLimits {
     @Override
     public String toString() {
         return "ModelContextLimits{contextWindow=" + contextWindow + ", reservedOutputTokens=" + reservedOutputTokens
-                + ", autoCompactBuffer=" + autoCompactBuffer + ", warningBuffer=" + warningBuffer + ", blockingBuffer="
+                + ", autoCompactRatio=" + autoCompactRatio + ", warningBuffer=" + warningBuffer + ", blockingBuffer="
                 + blockingBuffer + '}';
     }
 
@@ -135,7 +162,7 @@ public final class ModelContextLimits {
     public static final class Builder {
         private int contextWindow = DEFAULT_CONTEXT_WINDOW;
         private int reservedOutputTokens = DEFAULT_RESERVED_OUTPUT_TOKENS;
-        private int autoCompactBuffer = DEFAULT_AUTO_COMPACT_BUFFER;
+        private double autoCompactRatio = DEFAULT_AUTO_COMPACT_RATIO;
         private int warningBuffer = DEFAULT_WARNING_BUFFER;
         private int blockingBuffer = DEFAULT_BLOCKING_BUFFER;
 
@@ -152,8 +179,15 @@ public final class ModelContextLimits {
             return this;
         }
 
-        public Builder autoCompactBuffer(int autoCompactBuffer) {
-            this.autoCompactBuffer = autoCompactBuffer;
+        /**
+         * Sets the fraction of the effective window past which auto compaction starts.
+         *
+         * @param autoCompactRatio
+         *            the ratio, in (0, 1] (default {@value ModelContextLimits#DEFAULT_AUTO_COMPACT_RATIO})
+         * @return this builder
+         */
+        public Builder autoCompactRatio(double autoCompactRatio) {
+            this.autoCompactRatio = autoCompactRatio;
             return this;
         }
 

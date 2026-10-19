@@ -251,10 +251,10 @@ iteration, 예산 정지, 중단) 대기열은 버려진다. 잃는 것은 없�
 `recover` 와 `compactNow` 는 안의 롤링 engine 에 위임한다. `recover` 가 돌려준 뷰에는 크기 알림을 다시 싣는다.
 `compactNow` 는 뷰가 아니라 `CompactionResult` 를 돌려주므로 싣는 것이 없다.
 
-- **임계값을 늦춘다 — 롤링을 `autoCompactRatio = 1.0` 으로 만든다.** 그러면 롤링의 임계값은
-  `min(effective, limits.autoCompactThreshold)` 가 되고, warning · budget-forced · "이 모델이 롤링을 감당하는가" 검사는 거기서
-  그대로 파생된다. 코드 변경이 없다. 롤링이 0.6 에서 일찍 · 자주 · 작게 압축하는 것은 그것이 유일한 주체일 때의 정책이다.
-  여기서 안전망이 60% 에서 먼저 움직이면 모델이 관리할 틈이 없다. pi-clm 은 같은 이유로 호스트의 자동 압축을 멈춘다 —
+- **임계값을 늦춘다 — 안의 롤링이 읽는 레지스트리 뷰의 `autoCompactRatio` 를 높인다**(예: 0.95. `ContextPolicy.applyTo`
+  가 만드는 것과 같은 뷰다). 롤링의 임계값은 `ModelContextLimits.getAutoCompactThreshold()` 그대로이므로 warning ·
+  budget-forced · "이 모델이 롤링을 감당하는가" 검사는 거기서 그대로 파생된다. engine 코드 변경이 없다. 기본 비율 0.8 은
+  하네스가 유일한 주체일 때의 정책이다. 여기서 안전망이 80% 에서 먼저 움직이면 모델이 관리할 틈이 없다. pi-clm 은 같은 이유로 호스트의 자동 압축을 멈춘다 —
   그것이 모델의 편집을 버리기 때문이다
 - **전제는 롤링과 같다.** 뷰 상태를 가질 수 있는 쓰기 형식이 필요하고, 그렇지 않은 노드에 배선하면 기동 시 실패한다
 - **작은 창에서는 판정이 기본 engine 의 것이 된다.** 롤링이 감당하지 못하는 모델 · 시스템 프롬프트 조합(논문의 32K 도
@@ -268,7 +268,7 @@ iteration, 예산 정지, 중단) 대기열은 버려진다. 잃는 것은 없�
 모델에게 말할 때 쓰는 `SystemReminderFormatter` 로 포장하고 key 는 `context-size` 다.
 
 ```
-[context: estimated 91,400 of 167,000 tokens before auto-compaction (55%); last request measured 96,200 including tool definitions]
+[context: estimated 91,400 of 144,000 tokens before auto-compaction (63%); last request measured 96,200 including tool definitions]
 ```
 
 - **하네스가 쓴 글만 들어간다.** 모델이 쓴 글이 이 포장에 들어가면 다른 문제가 생긴다(§8.4)
@@ -370,7 +370,7 @@ seq 는 알림에 싣지 않는다. 모델이 구간을 고르려면 지도가 �
 | 고정 범위 | head 영역, 현재 턴의 입력, 요청 뒤에 온 것 | **시스템 프롬프트만**(논문, pi-clm 의 `clm`) — 미응답 규칙은 이 저장소가 값을 치르고 얻은 것이다(SL-6). pi-clm 도 넘침 방지에서 같은 것을 배웠다 — 방금 요청한 결과를 가리면 가리기가 되풀이된다. **롤링의 head 를 그대로** — 크기 상한과 blocking 흡수로 비는 값이다 |
 | rewind point 를 걸치는 구간 | 거절(G4b) | **rewind 때 통째로 버린다** — 앞쪽 절반이 이미 봉인되었을 수 있고, 그러면 레코드가 일관성 검사에서 떨어진다(§3.4). **rewind point 에서 잘라 낸다** — 노트가 가리키는 구간이 바뀌어 노트의 내용과 어긋난다 |
 | 줄이지 않는 편집 | 거절(G8). 순 절감에 하한 | **허용**(pi-clm 의 `clm`) — 뷰를 줄이는 연산이 내용을 주입하는 연산이 된다. **하한 0** — 편집은 그 지점 뒤의 prefix 캐시를 버린다 |
-| 안전망 | 롤링 engine 을 안에 든다. `autoCompactRatio = 1.0` | **없음**(pi-clm 은 호스트의 자동 압축을 멈추고 넘침 방지만 둔다) — 편집하지 않는 모델이 실재한다(§1.3). **롤링의 0.6 그대로** — 모델보다 안전망이 먼저 움직인다. **새 임계값 로직** — 같은 판정을 세 번째로 구현한다 |
+| 안전망 | 롤링 engine 을 안에 든다. 레지스트리 뷰의 높은 `autoCompactRatio` | **없음**(pi-clm 은 호스트의 자동 압축을 멈추고 넘침 방지만 둔다) — 편집하지 않는 모델이 실재한다(§1.3). **기본 비율 0.8 그대로** — 모델보다 안전망이 먼저 움직인다. **새 임계값 로직** — 같은 판정을 세 번째로 구현한다 |
 | 편집의 기록 | `ContextDecision` 의 별도 필드. 액션은 롤링의 것 그대로 | **`COMPACT` 와 `kind = EDIT`** — `BLOCK` 을 삼키고, `WARN` 에서는 기록이 실행 결과에 실리지 않으며, 편집하는 iteration 마다 경계 이벤트가 나간다 |
 | 크기 알림의 자리 | `ContextView` 의 별도 필드, 보낼 때 끝에 | **로그에 `SYNTHETIC` append** — iteration 마다 쌓인다. **시스템 프롬프트** — prefix 가 매번 바뀐다. **도구 결과마다 크기를 덧붙인다**(pi-clm 의 선택 스위치) — 로그에 남는 결과를 바꾸거나 뷰 계산에 뷰 밖의 값을 넣게 된다 |
 | 크기 알림의 빈도 | 임계값의 절반 이상일 때 매 호출 | **단계별로 한 번씩, 내려가면 다시 장전**(pi-clm) — "이미 알렸는가" 가 실행 단위의 상태다. engine 은 agent-scoped 이고 그 상태를 실을 자리가 없다 |
@@ -500,7 +500,7 @@ seq 는 알림에 싣지 않는다. 모델이 구간을 고르려면 지도가 �
 | `OrcaAgentExecutionResult` | 편집 요약의 목록 |
 | `SessionHistoryTool` · `SessionLogSource` | `ContextEdit` 이 같은 소스로 뷰 상태를 읽는다. 되찾기의 새 주소는 §8.3 |
 | 메모리 ingest | `IngestChunks` 옆의 도우미가 `ContextEdit` 의 `note` 입력을 가린다. 실행 끝과 세션 끝의 두 경로가 그것을 지난다 |
-| `ContextEngineKind` · `OrcaAgentRuntimeFactory` | `SELF_MANAGED`, 롤링을 `autoCompactRatio = 1.0` 으로 감싸는 배선, 두 도구의 등록 |
+| `ContextEngineKind` · `OrcaAgentRuntimeFactory` | `SELF_MANAGED`, 높은 `autoCompactRatio` 의 레지스트리 뷰 위에 롤링을 감싸는 배선, 두 도구의 등록 |
 | 선택 키가 지나는 자리 | `ExecutorSpec`, `AimonProperties`, `MarkdownAgentDefinitionParser`, CLI 의 `AgentSetupFactory` |
 | 사용 가이드 | `docs/features/agent-execution/context-engine-guide.md` 와 그 번역본, `system-reminder` 규약 문서의 key 목록 |
 

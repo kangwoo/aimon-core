@@ -7,6 +7,32 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed (behaviour change): auto compaction starts at one ratio of the effective window; per-agent `context` policy (#285)
+
+Auto compaction now starts at `autoCompactRatio × effective window` (effective = window − 20,000 reserved output),
+default **0.8**, for every model and for both context engines. The fixed 13,000-token buffer below the window and the
+rolling engine's own 0.6 ratio are gone. Warning stays 20,000 below the start point (never below 0) and the blocking
+limit stays 3,000 under the effective window.
+
+| Model window | Default engine before | Rolling engine before | Both engines now |
+|---|---|---|---|
+| 128K | 95,000 | 64,800 | 86,400 |
+| 200K | 167,000 | 108,000 | 144,000 |
+| `gpt-6*` 1.05M | 95,000 (fell to the 128K default) | 64,800 | 824,000 |
+
+- **AGENT.md `context` block** — `max-window-tokens` caps the window the agent uses (`min(model window, cap)`, never
+  raising it; at least 40,001) and `auto-compact-ratio` (0.1 – 1) replaces the model entry's ratio. Applied per resolved
+  model in the agent's own turns; subagent, skill and workflow forks have no compaction gate. Unknown keys, an empty
+  `context:`, a fractional or out-of-range cap and a non-numeric ratio fail parsing. Code-defined agents use
+  `DefaultAgent.Builder.contextPolicy(ContextPolicy)`.
+- **`gpt-6` window** — `InMemoryModelContextWindowRegistry.withDefaults()` maps the `gpt-6` prefix (`gpt-6.1-*`
+  included) to 1,050,000 tokens.
+- **Removed**: `ModelContextLimits.autoCompactBuffer` / `getAutoCompactBuffer()` / `DEFAULT_AUTO_COMPACT_BUFFER`;
+  `RollingContextEngine.Builder.autoCompactRatio`, `getAutoCompactRatio()` and `DEFAULT_AUTO_COMPACT_RATIO`. Added
+  `ModelContextLimits.autoCompactRatio` / `DEFAULT_AUTO_COMPACT_RATIO` and `toBuilder()`.
+- **Spring Boot starter**: setting `aimon.context.rolling.auto-compact-ratio` now **fails startup**, naming AGENT.md
+  `context.auto-compact-ratio` as the replacement.
+
 ### Security (narrowing) · Changed (behaviour change): hooks no longer run from agent-writable staged copies (#275, EE-109)
 
 > **Required with a sandbox provider: aimon-sandbox with `ShellFeature.RUN_DIRECTORY` support, or `"shell": "host"` on

@@ -77,7 +77,7 @@ class CompactionConcurrencyScenarioHTest {
         // Tiny limits so the fixed-cost stub estimator easily clears the auto-compact threshold.
         modelContextWindowRegistry = InMemoryModelContextWindowRegistry.builder()
                 .defaultLimits(ModelContextLimits.builder().contextWindow(1000).reservedOutputTokens(200)
-                        .autoCompactBuffer(100).warningBuffer(100).blockingBuffer(50).build())
+                        .autoCompactRatio(0.875).warningBuffer(100).blockingBuffer(50).build())
                 .build();
     }
 

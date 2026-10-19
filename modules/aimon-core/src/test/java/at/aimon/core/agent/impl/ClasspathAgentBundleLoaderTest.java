@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.LoggerFactory;
 
+import at.aimon.core.agent.ContextPolicy;
 import at.aimon.core.agent.definition.exception.AgentDefinitionLoadException;
 import at.aimon.core.agent.definition.exception.AgentDefinitionNotFoundException;
 import at.aimon.core.agent.definition.parser.MarkdownAgentDefinitionParser;
@@ -121,6 +122,17 @@ class ClasspathAgentBundleLoaderTest {
 
             assertThat(bundle.getAgent().getMetadata().getAttributes())
                     .containsExactly(Map.entry("sandbox.slot", "build"));
+        }
+
+        @Test
+        @DisplayName("Should carry the definition's context policy into the agent metadata")
+        void shouldCarryContextPolicy() {
+            ClasspathAgentBundleLoader loader = new ClasspathAgentBundleLoader("agents");
+
+            AgentBundle bundle = loader.load("agent-context-policy");
+
+            assertThat(bundle.getAgent().getMetadata().getContextPolicy())
+                    .isEqualTo(ContextPolicy.builder().maxWindowTokens(500_000).autoCompactRatio(0.5).build());
         }
 
         @Test

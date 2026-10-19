@@ -10,6 +10,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import at.aimon.core.agent.ContextEngineKind;
+import at.aimon.core.agent.ContextPolicy;
 import at.aimon.core.agent.Version;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.base.DefinitionAttributes;
@@ -65,6 +66,7 @@ public final class AgentDefinition {
     private final Map<String, Object> variables;
     private final List<AllowedTool> allowedTools;
     private final ContextEngineKind contextEngine;
+    private final ContextPolicy contextPolicy;
     private final Map<String, String> attributes;
 
     /**
@@ -83,6 +85,7 @@ public final class AgentDefinition {
         variables = builder.variables != null ? Map.copyOf(builder.variables) : Map.of();
         allowedTools = builder.allowedTools != null ? List.copyOf(builder.allowedTools) : List.of();
         contextEngine = builder.contextEngine;
+        contextPolicy = Objects.requireNonNullElse(builder.contextPolicy, ContextPolicy.none());
         attributes = builder.attributes != null ? DefinitionAttributes.copyOf(builder.attributes) : Map.of();
     }
 
@@ -181,6 +184,15 @@ public final class AgentDefinition {
     }
 
     /**
+     * Returns when the agent's context is compacted ({@code context}).
+     *
+     * @return the policy ({@link ContextPolicy#none()} when the frontmatter declares none)
+     */
+    public ContextPolicy getContextPolicy() {
+        return contextPolicy;
+    }
+
+    /**
      * Returns the free-form attributes from the {@code attributes} frontmatter, flattened to dotted keys. The framework
      * carries them and never reads them — they are for a component it does not know about, such as an execution
      * environment provider (see {@link DefinitionAttributes}).
@@ -207,7 +219,20 @@ public final class AgentDefinition {
         private Map<String, Object> variables;
         private List<AllowedTool> allowedTools;
         private ContextEngineKind contextEngine;
+        private ContextPolicy contextPolicy;
         private Map<String, String> attributes;
+
+        /**
+         * Sets when the agent's context is compacted.
+         *
+         * @param contextPolicy
+         *            the policy, or {@code null} for none
+         * @return This builder for method chaining
+         */
+        public Builder contextPolicy(ContextPolicy contextPolicy) {
+            this.contextPolicy = contextPolicy;
+            return this;
+        }
 
         /**
          * Sets the free-form attributes.

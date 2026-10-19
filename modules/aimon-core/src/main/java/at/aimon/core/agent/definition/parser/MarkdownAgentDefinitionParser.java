@@ -18,6 +18,7 @@ import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import at.aimon.core.agent.ContextEngineKind;
+import at.aimon.core.agent.ContextPolicy;
 import at.aimon.core.agent.Version;
 import at.aimon.core.agent.definition.AgentDefinition;
 import at.aimon.core.agent.definition.exception.AgentDefinitionParseException;
@@ -52,6 +53,9 @@ import at.aimon.core.llm.ReasoningSummary;
  *   - java
  * allowed-tools: Read, Grep, Bash(git:*)
  * context-engine: rolling
+ * context:
+ *   max-window-tokens: 500000
+ *   auto-compact-ratio: 0.5
  * attributes:
  *   sandbox:
  *     slot: build
@@ -67,6 +71,12 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
     private static final Version DEFAULT_VERSION = new Version(1, 0, 0);
 
     private static final String FRONTMATTER_DELIMITER = "---";
+
+    private static final String CONTEXT_KEY = "context";
+    private static final String CONTEXT_MAX_WINDOW_TOKENS = "max-window-tokens";
+    private static final String CONTEXT_AUTO_COMPACT_RATIO = "auto-compact-ratio";
+    private static final String CONTEXT_ACCEPTED_KEYS = "'" + CONTEXT_MAX_WINDOW_TOKENS + "' and '"
+            + CONTEXT_AUTO_COMPACT_RATIO + "'";
 
     /**
      * A parser for one call and one call only.
@@ -128,12 +138,13 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
             final Map<String, Object> variables = (Map<String, Object>) frontmatter.getOrDefault("variables", Map.of());
 
             final ContextEngineKind contextEngine = extractContextEngine(frontmatter);
+            final ContextPolicy contextPolicy = extractContextPolicy(frontmatter);
 
             final Map<String, String> attributes = extractAttributes(frontmatter);
 
             return AgentDefinition.builder().name(name).version(version).model(model).maxIterations(maxIterations)
                     .systemPrompt(body).tags(tags).variables(variables).allowedTools(allowedTools)
-                    .contextEngine(contextEngine).attributes(attributes).build();
+                    .contextEngine(contextEngine).contextPolicy(contextPolicy).attributes(attributes).build();
         } catch (AgentDefinitionParseException e) {
             throw e;
         } catch (Exception e) {
@@ -185,6 +196,54 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
             return ContextEngineKind.fromConfig(text);
         } catch (IllegalArgumentException e) {
             throw new AgentDefinitionParseException("Invalid 'context-engine' value: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Extracts the {@code context} block: {@code max-window-tokens} (caps the model's window) and
+     * {@code auto-compact-ratio} (fraction of the effective window past which auto compaction starts).
+     *
+     * <p>
+     * Read by the frontmatter rule the rest of this parser follows: an absent block is the empty policy; a block
+     * written with nothing after it, a value the parser cannot use (a fraction or an out-of-range number for the cap,
+     * a string for the ratio) and an unknown key are errors naming the key. The cap accepts a whole-valued number
+     * ({@code 500000.0}) as the other integer keys do. An unknown key is an error for the reason {@code context-engine}
+     * gives: ignoring it would leave the agent compacting where its author believes it does not.
+     *
+     * @return the policy ({@link ContextPolicy#none()} when the key is absent)
+     */
+    @SuppressWarnings("unchecked")
+    private ContextPolicy extractContextPolicy(Map<String, Object> frontmatter) {
+        if (!frontmatter.containsKey(CONTEXT_KEY)) {
+            return ContextPolicy.none();
+        }
+        final Object raw = frontmatter.get(CONTEXT_KEY);
+        if (!(raw instanceof Map<?, ?>)) {
+            throw new AgentDefinitionParseException(
+                    "Invalid " + CONTEXT_KEY + ": " + raw + ". Expected a map with " + CONTEXT_ACCEPTED_KEYS + ".");
+        }
+        final Map<String, Object> block = (Map<String, Object>) raw;
+        for (Object key : block.keySet()) {
+            if (!CONTEXT_MAX_WINDOW_TOKENS.equals(key) && !CONTEXT_AUTO_COMPACT_RATIO.equals(key)) {
+                throw new AgentDefinitionParseException("Unknown key '" + CONTEXT_KEY + "." + key + "'. The "
+                        + CONTEXT_KEY + " block takes " + CONTEXT_ACCEPTED_KEYS + ".");
+            }
+        }
+        final String capLabel = CONTEXT_KEY + "." + CONTEXT_MAX_WINDOW_TOKENS;
+        final String ratioLabel = CONTEXT_KEY + "." + CONTEXT_AUTO_COMPACT_RATIO;
+        final Integer cap = block.containsKey(CONTEXT_MAX_WINDOW_TOKENS) ? requireInt(block, capLabel) : null;
+        final Double ratio = block.containsKey(CONTEXT_AUTO_COMPACT_RATIO) ? requireDouble(block, ratioLabel) : null;
+        // Each value is checked on its own first, so the error names the key that is out of range.
+        buildContextPolicy(capLabel, cap, ContextPolicy.builder().maxWindowTokens(cap));
+        buildContextPolicy(ratioLabel, ratio, ContextPolicy.builder().autoCompactRatio(ratio));
+        return ContextPolicy.builder().maxWindowTokens(cap).autoCompactRatio(ratio).build();
+    }
+
+    private static ContextPolicy buildContextPolicy(String label, Object value, ContextPolicy.Builder builder) {
+        try {
+            return builder.build();
+        } catch (IllegalArgumentException e) {
+            throw new AgentDefinitionParseException("Invalid " + label + ": " + value + ". " + e.getMessage(), e);
         }
     }
 

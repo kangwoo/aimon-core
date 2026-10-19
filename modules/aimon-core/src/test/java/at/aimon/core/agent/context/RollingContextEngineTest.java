@@ -15,6 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.ContextPolicy;
 import at.aimon.core.agent.compact.CompactBoundary;
 import at.aimon.core.agent.compact.CompactionContendedException;
 import at.aimon.core.agent.compact.CompactionDecision;
@@ -53,7 +54,7 @@ import at.aimon.core.llm.token.TokenEstimator;
  * fallbacks to the default engine (context-engine §5).
  *
  * <p>
- * Sizes use a one-character-per-token estimator. With the limits below the effective window is 1000, so: rolling auto
+ * Sizes use a one-character-per-token estimator. With the limits below the effective window is 1000, so: auto
  * 600, warning 500, blocking 950; summary budget 80, tail budget 200 (half: 100), minimum tail 50, head cap 50.
  */
 @SuppressWarnings("deprecation") // the version-1 fallback reaches the deprecated compact() on purpose
@@ -66,7 +67,7 @@ class RollingContextEngineTest {
             .getSignal();
 
     private static final ModelContextLimits LIMITS = ModelContextLimits.builder().contextWindow(1200)
-            .reservedOutputTokens(200).autoCompactBuffer(100).warningBuffer(100).blockingBuffer(50).build();
+            .reservedOutputTokens(200).autoCompactRatio(0.6).warningBuffer(100).blockingBuffer(50).build();
 
     private final CharEstimator estimator = new CharEstimator();
     private final InMemoryCompactionFailureStore failures = new InMemoryCompactionFailureStore();
@@ -129,7 +130,7 @@ class RollingContextEngineTest {
 
         @Test
         void theMiddleIsSummarizedWhileHeadAndTailStayVerbatim() {
-            conversation(10, 60); // 604 tokens: past rolling auto (600), far from the default engine's 900
+            conversation(10, 60); // 604 tokens: past auto (600)
             final List<Message> logBefore = buffer.getMessages();
 
             final ContextDecision decision = engine().prepare(request());
@@ -273,6 +274,23 @@ class RollingContextEngineTest {
 
             assertThat(engine().prepare(request()).getAction()).isEqualTo(CompactionDecision.Action.WARN);
             assertThat(engine().prepare(request(null, true)).getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+        }
+
+        @Test
+        void anAgentsContextPolicyRatioMovesTheRollingStart() {
+            conversation(8, 60); // 484: under the model's warning (500), past the policy's auto (0.45 x 1000 = 450)
+
+            assertThat(engine().prepare(request()).getAction()).as("the model's own ratio")
+                    .isEqualTo(CompactionDecision.Action.NONE);
+            final RollingContextEngine withPolicy = RollingContextEngine.builder().compactionEngine(summarizer)
+                    .modelContextWindowRegistry(ContextPolicy.builder().autoCompactRatio(0.45).build()
+                            .applyTo(InMemoryModelContextWindowRegistry.builder().defaultLimits(LIMITS).build()))
+                    .tokenEstimator(estimator).failureStore(failures)
+                    .recoveryStrategy(new DefaultPromptSizeRecoveryStrategy()).build();
+            assertThat(withPolicy.prepare(request()).getAction()).as("the agent's ratio")
+                    .isEqualTo(CompactionDecision.Action.COMPACT);
+            assertThat(summarizer.summarized).singleElement()
+                    .satisfies(summary -> assertThat(summary.isRolling()).isTrue());
         }
     }
 
@@ -655,7 +673,7 @@ class RollingContextEngineTest {
 
         @Test
         void aModelThatCannotSustainRollingIsCompactedAsTheDefaultEngineDoes() {
-            conversation(9, 60); // 544, plus a 400-token system prompt: 944, past the default engine's auto (900)
+            conversation(9, 60); // 544, plus a 400-token system prompt: 944, past auto (600)
             final String systemPrompt = "p".repeat(400); // system + head + 80 + 50 = 534 >= warning 500
 
             final ContextDecision decision = engine().prepare(request(systemPrompt, false));

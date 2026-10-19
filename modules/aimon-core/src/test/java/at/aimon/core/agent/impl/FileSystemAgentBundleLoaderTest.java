@@ -14,6 +14,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import at.aimon.core.agent.ContextPolicy;
 import at.aimon.core.agent.definition.exception.AgentDefinitionLoadException;
 import at.aimon.core.agent.definition.exception.AgentDefinitionNotFoundException;
 import at.aimon.core.agent.definition.parser.MarkdownAgentDefinitionParser;
@@ -58,6 +59,18 @@ class FileSystemAgentBundleLoaderTest {
         final AgentBundle bundle = loader.load("attributed");
 
         assertEquals(Map.of("sandbox.slot", "build"), bundle.getAgent().getMetadata().getAttributes());
+    }
+
+    @Test
+    void load_agentContextPolicyReachesTheAgentMetadata() throws IOException {
+        final Path agentDir = Files.createDirectories(tempDir.resolve("compacting"));
+        Files.writeString(agentDir.resolve("agent.md"), "---\nname: compacting\ncontext:\n  max-window-tokens: 500000\n"
+                + "  auto-compact-ratio: 0.5\n---\nYou are a test agent.\n");
+
+        final AgentBundle bundle = loader.load("compacting");
+
+        assertEquals(ContextPolicy.builder().maxWindowTokens(500_000).autoCompactRatio(0.5).build(),
+                bundle.getAgent().getMetadata().getContextPolicy());
     }
 
     @Test

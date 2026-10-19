@@ -253,15 +253,16 @@ LLM 요약 전에 무비용 정리를 먼저 시도한다.
 `DefaultCompactionGuard` 가 `tokenEstimator.estimate(systemPrompt, messages)` 로 재는 것과 같다.
 
 ```
-rollingAuto = min(autoCompactRatio × effective, limits.autoCompactThreshold)
-warning     = rollingAuto − limits.warningBuffer
-blocking    = limits.blockingLimit                        (engine 이 바꾸지 않는다)
-threshold   = budgetForced ? warning : rollingAuto        (유효 임계값)
+auto      = limits.autoCompactThreshold    = (int) (autoCompactRatio × effective)
+warning   = limits.warningThreshold        = max(0, auto − warningBuffer)
+blocking  = limits.blockingLimit           = effective − blockingBuffer
+threshold = budgetForced ? warning : auto  (유효 임계값)
 ```
 
-`autoCompactRatio` 기본 0.6 — 일찍·자주·작게 압축해야 tail 예산이 의미를 갖는다. warning 을 rollingAuto 에서 다시 파생하는
-것은 순서를 지키기 위해서다 — 200K 모델에서 기본 auto 는 167K, warning 은 147K 인데, 롤링 auto 만 108K 로 내리면
-budget-forced 패스가 일반 AUTO 보다 늦게 발동한다.
+engine 은 임계값을 만들지 않고 `ModelContextLimits` 의 것을 그대로 쓴다. 시작점은 두 engine 에 같은 비율 하나
+(`autoCompactRatio`, 기본 0.8)이고, 에이전트가 AGENT.md `context.auto-compact-ratio` 로 바꾼다(`ContextPolicy`). 그래서
+budget-forced 패스의 warning 이 언제나 같은 auto 에서 파생되어 일반 AUTO 보다 먼저 발동한다 — 200K 모델에서 기본값이면
+auto 144K, warning 124K, blocking 177K 다.
 
 **후퇴** — 구간은 요약 **전에** 토큰 추정으로 정한다. 예상 크기 = `system + head + summaryTokenRatio × effective + 원문 나머지`.
 
@@ -287,8 +288,9 @@ budget-forced 패스가 일반 AUTO 보다 늦게 발동한다.
   ```
 
   시스템 프롬프트 크기는 빌드 시점에 알 수 없으므로 판정 시점에 본다. 불가능하면 그 모델·그 시스템 프롬프트 조합에서는
-  **`DefaultContextEngine` 의 동작으로 물러나고** 한 번 WARN 을 남긴다. 128K 창(effective 108K)에서 기본값이면 rollingAuto
-  64.8K, warning 44.8K 라서 시스템 프롬프트 30K 인 에이전트는 이 검사에서 걸린다. 32K 창에서는 warning 이 음수가 된다. 작은
+  **`DefaultContextEngine` 의 동작으로 물러나고** 한 번 WARN 을 남긴다. 128K 창(effective 108K)에서 기본값이면 auto
+  86.4K, warning 66.4K 라서 시스템 프롬프트와 head 가 합쳐 약 52K 를 넘는 에이전트는 이 검사에서 걸린다. 32K 창에서는
+  warning 이 0 으로 clamp 된다. 작은
   창에서 롤링을 강행하면 매 iteration `WARN` 에 머물다 blocking 에서 head 까지 삼키는, 기본 engine 보다 나쁜 결과가 나온다
 
 **`/compact`** — `compactNow` 는 임계값 판정만 건너뛰고 구간 선택은 따른다(`WARN` 행 없이 — 사용자가 요청했다).
@@ -850,9 +852,9 @@ live 테스트의 keyless 쌍둥이가 처음 돌 때 드러난 결함이다. �
 
 | 항목 | 값 |
 |------|----|
-| 창 | `contextWindow 16_000`, `reservedOutputTokens 2_000` → effective 14,000. 버퍼 1,000 / 1,000 / 400 |
-| 기본 engine | 그 창 위의 `DefaultCompactionGuard` + `DefaultContextEngine`(V2, 뷰 모드). AUTO 13,000, blocking 13,600 |
-| 롤링 engine | `RollingContextEngine.builder()` 에 **비율을 주지 않는다** — 배포되는 기본값 그대로. 임계값 8,400, tail 2,800, 요약 목표 1,120, prune 하한 500 |
+| 창 | `contextWindow 16_000`, `reservedOutputTokens 2_000` → effective 14,000. 비율은 기본 0.8, warning / blocking 버퍼 1,000 / 400 |
+| 기본 engine | 그 창 위의 `DefaultCompactionGuard` + `DefaultContextEngine`(V2, 뷰 모드). AUTO 11,200, blocking 13,600 |
+| 롤링 engine | `RollingContextEngine.builder()` 에 **비율을 주지 않는다** — 배포되는 기본값 그대로. 임계값 11,200(기본 engine 과 같다), tail 2,800, 요약 목표 1,120, prune 하한 500 |
 | 도구 | 두 engine 모두 `fetch_report`. `SessionHistoryTool` 은 `OrcaAgentRuntimeFactory` 가 하는 대로 **롤링에만**(§13.4) |
 | 시스템 프롬프트 | 두 engine 에 같은 문장이고 도구를 이름으로 부르지 않는다. 다른 것은 도구 목록뿐이다 |
 | 실행기의 클라이언트 | `MainCallRecorder` 로 감싼다 — 호출마다 보낸 뷰의 추정 토큰, 프로바이더가 센 입력 토큰, 응답이 요청한 도구 이름. `LlmClient` 의 모든 오버로드를 **같은 오버로드로** 넘긴다. `String` 오버로드만 감싸면 default 구현이 system prompt parts 를 이어 붙여 프로바이더가 받는 요청의 모양이 바뀐다 |

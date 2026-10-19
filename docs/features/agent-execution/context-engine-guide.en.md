@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/agent-execution/context-engine-guide.md
-source_commit: 5c43f5f
+source_commit: 2840dcf8
 ---
 
 # Context Engine Guide — shrinking the context of long conversations
@@ -67,6 +67,27 @@ context-engine: rolling     # default | rolling. Unset means the deployment's de
 The key is kebab-case, like `allowed-tools`. Writing `contextEngine` is not ignored; parsing fails — ignoring it would
 leave the agent on the default engine while its author believes it rolls.
 
+The agent also decides **when to compact**. A model's window is a fact about the model and stays in the model registry;
+the `context` block is policy on top of it, applied in the agent's own turns over the window of whichever model each
+call resolves to.
+
+```yaml
+---
+name: ops
+context:
+  max-window-tokens: 500000   # window cap: min(model window, this) — it never raises the model's window
+  auto-compact-ratio: 0.5     # auto-compact past this fraction of the effective window (window − reserved output). [0.1, 1], default 0.8
+---
+```
+
+For both engines, auto compaction starts at this one ratio — `auto-compact-ratio × effective window`. Left out, it is
+the model entry's default of 0.8 (86,400 on a 128K window, 824,000 on a 1.05M one). The blocking limit follows the
+(capped) window, not the ratio. `max-window-tokens` must leave room for the reserved output and the warning band (40,001
+or more); where a model's reserved output is wider and the cap does not fit, that model keeps its own window and a WARN
+is logged once. The key is not `model.maxTokens` (the output-token limit). An unknown key, a `context:` written with
+nothing after it, a fractional or beyond-32-bit cap, and a string ratio all fail parsing. Subagent, skill and workflow
+forks run without a compaction gate, so the policy does not reach them.
+
 ### 2.3 Non-Spring assembly — `AimonStackSpec`
 
 ```java
@@ -98,8 +119,8 @@ record and `SessionHistory` reads them back. The `context-engine` itself is chos
 view:  [ head ][ boundary summary ][ verbatim ........ ][ tail ...... ]
 ```
 
-- **When** — it compacts at `min(0.6 × effective window, auto-compact threshold)`. A budget-forced pass compacts at a
-  line `warningBuffer` lower. Every size includes the system prompt
+- **When** — it compacts at the default engine's auto-compact threshold (`autoCompactRatio × effective window`, 0.8 by
+  default). A budget-forced pass compacts at a line `warningBuffer` lower. Every size includes the system prompt
 - **What first** — it first tries hiding the large tool results (500 tokens or more by default) in the range about to be
   absorbed behind `[tool result elided: seq=N]`. If that alone brings the view under the threshold, nothing is
   summarized
@@ -133,7 +154,10 @@ tail and bring the next compaction forward.
 
 ## 4. Tuning
 
-These are values of `RollingContextEngine.Builder`. Where they go depends on how the stack is assembled.
+These are values of `RollingContextEngine.Builder`. Where they go depends on how the stack is assembled. **When**
+compaction starts is not among them — both engines share one start point, set per agent with AGENT.md
+`context.auto-compact-ratio` (default 0.8, §2.2). The starter refuses to start if the former
+`aimon.context.rolling.auto-compact-ratio` is set.
 
 - **Spring Boot starter** — the `aimon.context.rolling.*` properties (the kebab names in the table below). `summaryModel`
   has no property
@@ -148,7 +172,6 @@ even while no agent runs rolling yet.
 
 | Value | Starter property | Default | Meaning |
 |-------|------------------|---------|---------|
-| `autoCompactRatio` | `auto-compact-ratio` | 0.6 | Where compaction starts, relative to the effective window |
 | `headTokenRatio` | `head-token-ratio` | 0.05 | Cap on the head's conversation part. Beyond it the head is empty and the summary takes over |
 | `tailTokenRatio` | `tail-token-ratio` | 0.20 | The tail budget kept verbatim |
 | `summaryTokenRatio` | `summary-token-ratio` | 0.08 | The summary length asked for |

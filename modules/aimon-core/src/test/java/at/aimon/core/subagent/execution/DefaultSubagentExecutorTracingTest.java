@@ -376,7 +376,7 @@ class DefaultSubagentExecutorTracingTest {
         final DefaultCompactionGuard guard = new DefaultCompactionGuard(compactionEngine,
                 InMemoryModelContextWindowRegistry.builder()
                         .defaultLimits(ModelContextLimits.builder().contextWindow(10_000).reservedOutputTokens(1_000)
-                                .autoCompactBuffer(2_000).warningBuffer(1_000).blockingBuffer(500).build())
+                                .autoCompactRatio(0.8).warningBuffer(1_000).blockingBuffer(500).build())
                         .build(),
                 fixed);
         return DefaultContextEngine.builder().compactionGuard(guard).compactionEngine(compactionEngine)

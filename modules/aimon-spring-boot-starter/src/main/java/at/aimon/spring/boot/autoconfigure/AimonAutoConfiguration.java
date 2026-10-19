@@ -827,9 +827,6 @@ public class AimonAutoConfiguration {
                 return null;
             }
             return builder -> {
-                if (rolling.getAutoCompactRatio() != null) {
-                    builder.autoCompactRatio(rolling.getAutoCompactRatio());
-                }
                 if (rolling.getHeadTokenRatio() != null) {
                     builder.headTokenRatio(rolling.getHeadTokenRatio());
                 }
