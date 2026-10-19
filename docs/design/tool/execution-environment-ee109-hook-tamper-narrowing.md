@@ -8,7 +8,8 @@
 > a translation target (`docs/project/documentation-guide.md` §5.1).
 >
 > One thing was added. §11 records where the implementation departed from this design, and why, including which review
-> notes were taken, and §11.7 the follow-ups of #283. The open questions in §10 whose consequences reach beyond this change are tracked in
+> notes were taken, and §11.7 the follow-ups of #283. The open questions in §10 whose consequences reach beyond this
+> change are tracked in
 > [`../../backlog/execution-environment-open-items.md`](../../backlog/execution-environment-open-items.md) (EE-113 ← §7;
 > EE-114 ← §8 · Q5 · Q7 · Q8; EE-115 ← Q6; EE-116 ← Q3), which is the source of truth for what is open. The record it
 > follows is [`execution-environment-ee48-ee52-ee81-hooks-in-environment.md`](execution-environment-ee48-ee52-ee81-hooks-in-environment.md)

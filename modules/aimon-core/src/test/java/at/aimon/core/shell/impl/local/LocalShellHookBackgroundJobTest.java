@@ -4,8 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -43,16 +43,19 @@ class LocalShellHookBackgroundJobTest {
     @Test
     @DisplayName("a timeout ends the background job still reachable as a descendant")
     void timeoutEndsTheBackgroundJob() throws Exception {
+        // Long enough for bash to start and print the pid on a loaded host; the 30 s job still ends by the timeout.
         final ShellTimeoutException timeout = catchThrowableOfType(
                 () -> shell.execute(() -> "sleep 30 & echo $!; wait",
-                        ExecutionOptions.builder().hook(true).timeout(Duration.ofMillis(500)).build()),
+                        ExecutionOptions.builder().hook(true).timeout(Duration.ofSeconds(2)).build()),
                 ShellTimeoutException.class);
         assertThat(timeout).isNotNull();
+        assertThat(timeout.stdout()).as("the background job's pid").isNotBlank();
         final long pid = Long.parseLong(timeout.stdout().strip());
         try {
-            final Instant deadline = Instant.now().plusSeconds(5);
-            while (isAlive(pid) && Instant.now().isBefore(deadline)) {
-                Thread.onSpinWait();
+            final Optional<ProcessHandle> handle = ProcessHandle.of(pid);
+            if (handle.isPresent()) {
+                // Bounded: get() throws TimeoutException if the job is still running after 5 s.
+                handle.get().onExit().get(5, TimeUnit.SECONDS);
             }
             assertThat(isAlive(pid)).isFalse();
         } finally {

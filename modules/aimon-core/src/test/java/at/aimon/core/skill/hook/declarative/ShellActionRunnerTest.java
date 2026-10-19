@@ -73,8 +73,7 @@ class ShellActionRunnerTest {
     @Test
     void run_tamperedStdinWithNoRunDirectory_isTamperingAndBlocksWithFailOpen() throws Exception {
         // #283 F2: a shell that uploads the stdin payload checks it too, and reports a mismatch with the same
-        // exception,
-        // for a hook that has no run directory at all.
+        // exception, for a hook that has no run directory at all.
         VirtualShell shell = mock(VirtualShell.class);
         when(shell.execute(any(ShellCommand.class), any(ExecutionOptions.class)))
                 .thenThrow(new RunDirectoryIntegrityException("the hook's input does not match"));

@@ -275,7 +275,7 @@ class SkillHookRunDirectoryTest {
                     .contains(StagedResource.STAGE_IGNORE_FILE).doesNotContain("\u009b")
                     .doesNotContain(controlDir.toString());
         }
-        // Staging could not place it either: no staged copy, and no fallback.
+        // Refused rather than moved to the staged copy: no staged copy, and no fallback.
         assertThat(workspace.resolve(LocalExecutionEnvironmentProvider.DEFAULT_STAGING_ROOT).resolve("demo"))
                 .doesNotExist();
         assertThat(warnings(log, "run from a staged copy")).isZero();

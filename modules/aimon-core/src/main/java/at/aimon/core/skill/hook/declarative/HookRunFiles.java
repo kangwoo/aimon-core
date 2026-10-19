@@ -49,8 +49,11 @@ import at.aimon.core.skill.hook.action.HookScriptDirectory;
  * <p>
  * Both are capped at {@link RunDirectory#MAX_TOTAL_BYTES}. A {@code hooks.json} directory over it is refused; a skill
  * over it is left to the staging fallback ({@link DefaultShellActionExecutor}). A file whose name a run directory
- * cannot place (a control character, or a file and a directory of one name) is refused in both cases, never staged:
- * staging could not place it either, and the fix is to rename it or exclude it.
+ * cannot place (a control character, or a file and a directory of one name) is refused in both cases rather than moved
+ * to the staged copy, which the agent can rewrite: a malformed name is no reason to weaken the hook's files, and
+ * staging cannot place a file and a directory of one name at all. The fix is to rename the file or exclude it. This
+ * holds where a run directory is read at all &mdash; a skill over the cap, or on a shell without
+ * {@link at.aimon.core.shell.ShellFeature#RUN_DIRECTORY}, is staged before its names are looked at.
  */
 final class HookRunFiles {
 
@@ -72,8 +75,7 @@ final class HookRunFiles {
      * @throws StagingException
      *             with a message that may be shown to the model, when the directory is over
      *             {@link RunDirectory#MAX_TOTAL_BYTES}, keeps changing while it is read, or holds a file a run
-     *             directory
-     *             cannot place
+     *             directory cannot place
      * @throws RuntimeException
      *             whatever the scan throws when the directory cannot be read (its message may name host paths)
      */
@@ -165,8 +167,7 @@ final class HookRunFiles {
      * Reads the resource's files and checks them against its content key.
      *
      * @return the run directory, or empty when a file could not be read, the files outgrew
-     *         {@link RunDirectory#MAX_TOTAL_BYTES}, or the
-     *         bytes read do not hash to the key
+     *         {@link RunDirectory#MAX_TOTAL_BYTES}, or the bytes read do not hash to the key
      */
     private static Optional<RunDirectory> read(StagedResource resource, String variable) {
         final RunDirectory.Builder builder = RunDirectory.builder().variable(variable);
