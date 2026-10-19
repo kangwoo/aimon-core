@@ -27,7 +27,7 @@ import ch.qos.logback.core.read.ListAppender;
  * the whole batch with it: the readable messages were deleted and returned to nobody, and their submitters were left
  * waiting on turns that no node would ever run. The contract here is the fix, and it is a contract rather than three
  * tests because the three backends have to answer it identically — the design is
- * <a href="../../../../../../../../docs/design/session/inbox-collect-durability.md">inbox-collect-durability.md</a>.
+ * <a href="../../../../../../../../docs/design/session/inbox.md">inbox.md</a>.
  *
  * <p>
  * A backend joins by subclassing, implementing the three hooks below, and tagging itself {@code @Tag("docker")}.

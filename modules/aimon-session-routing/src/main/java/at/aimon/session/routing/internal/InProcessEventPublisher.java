@@ -21,7 +21,7 @@ import at.aimon.core.agent.stream.AgentExecutionEvent;
  * Multi-subscriber: every {@code Flow.Subscriber} attached to a publisher receives the same event stream.
  *
  * <p>
- * Producer non-blocking invariant (design §5.5.1): {@link #emit(SessionId, AgentExecutionEvent)} must never
+ * Producer non-blocking invariant (routing.md §6.1): {@link #emit(SessionId, AgentExecutionEvent)} must never
  * block the turn thread. We use {@code SubmissionPublisher.offer(item, 0L, NANOS, onDrop)} so demand-saturated
  * subscribers cause oldest events to be dropped rather than parking the producer.
  */

@@ -1,162 +1,111 @@
 # 세션 라우팅 — sticky 없이 세션을 직렬화한다
 
-> Status: **IMPLEMENTED** — `aimon-session-routing` (25파일). 공개 표면은 `SessionRouter` ·
-> `SubmitRequest` · `SubmitDisposition` · `LiveSessionCache` · `LiveSessionOpener` ·
-> `ClusterSessionStatus` · `DeploymentMode` · `SessionRouterBuilder` · `SessionMetrics` 이고,
-> 나머지는 `at.aimon.session.routing.internal` 에 있다. 이 문서가 의존하는 SPI 4종
-> (`SessionRecordStore`/`SessionLeaseStore`, `SessionInbox`, `SessionSignalBus`,
-> `IdempotencyStore`)은 `aimon-core` 에 있고 — 그 이관 경위는 [`spi-extraction.md`](spi-extraction.md) —
-> 분산 구현은 `aimon-session-{redis,mongodb,postgres}` 다([`backends.md`](backends.md)).
-> 남은 것은 §14.
+**Status**: IMPLEMENTED — `aimon-session-routing`. 공개 표면은 `SessionRouter` · `SubmitRequest` · `SubmitDisposition` ·
+`LiveSessionCache` · `LiveSessionOpener` · `ClusterSessionStatus` · `DeploymentMode` · `SessionRouterBuilder` · `SessionMetrics` 이고,
+나머지는 `at.aimon.session.routing.internal` 에 있다. 라우터가 쓰는 SPI 는 `aimon-core` 에 있다([`session-store.md`](session-store.md) §1).
+남은 것은 [마지막 절](#남은-것).
+
+이 문서는 라우터 자체를 다룬다. 라우터가 기대는 두 계약 — 크로스 노드 우편함과 멱등 원장 — 은 각자 문서가 있다:
+[`inbox.md`](inbox.md), [`idempotency.md`](idempotency.md). 세 백엔드는 [`backends.md`](backends.md).
 
 ---
 
 ## 1. 무엇을 푸는가
 
-웹 서버(HTTP/WebSocket/SSE) 여러 대 앞에 로드밸런서가 있고, 같은 세션의 요청이 매번 다른 노드로 갈 수
-있다. 이때 **sticky routing 없이** 세션의 턴을 클러스터 전체에서 하나씩만 돌게 만드는 것이 이 모듈이다.
+웹 서버(HTTP/WebSocket/SSE) 여러 대 앞에 로드밸런서가 있고, 같은 세션의 요청이 매번 다른 노드로 갈 수 있다. 이때 **sticky
+routing 없이** 세션의 턴을 클러스터 전체에서 하나씩만 돌게 만드는 것이 이 모듈이다.
 
-### 1.1 목표
+**목표**
 
-- **Sticky 미사용** — LB 가 어느 노드로 보내든 동작한다.
-- **세션 단위 직렬화** — 같은 `SessionId` 의 턴은 전 클러스터에서 한 번에 하나.
-- **자원 재사용** — `AgentRuntime` 재구축 비용(MCP 클라이언트, knowledge store)을 매 요청마다 물지 않는다.
-- **장애 복원** — 홀더 노드가 죽어도 다른 노드가 이어받고, 그 사실이 구독자에게 전달된다.
-- **저장소 교체 가능** — 상태는 SPI 뒤에 있고 기본 구현은 in-memory 다.
+- **sticky 미사용** — LB 가 어느 노드로 보내든 동작한다
+- **세션 단위 직렬화** — 같은 `SessionId` 의 턴은 전 클러스터에서 한 번에 하나
+- **자원 재사용** — `AgentRuntime` 재구축 비용(MCP 클라이언트, knowledge store)을 매 요청마다 물지 않는다
+- **장애 복원** — 홀더 노드가 죽어도 다른 노드가 이어받고, 그 사실이 구독자에게 전달된다
+- **저장소 교체 가능** — 상태는 SPI 뒤에 있고 기본 구현은 in-memory 다
 
-### 1.2 비목표
+**비목표**
 
-- **세션 소유권 고정** — 명시적으로 배제한다. LB 계층에 의존하지 않는 모델만 다룬다.
-- **인증·권한** — 라우터는 `Principal` 을 받아 나르기만 한다. 누가 어느 세션에 접근할 수 있는지는 상위 계층.
-- **서브에이전트의 분산 실행** — 포크는 부모 턴 안에서 같은 노드에 머문다(§7.6).
+- **세션 소유권 고정** — LB 계층에 의존하지 않는 모델만 다룬다
+- **인증·권한** — 라우터는 `Principal` 을 받아 나르기만 한다. 누가 어느 세션에 접근할 수 있는지는 상위 계층이다. 세션 소유자도
+  기록할 뿐 강제하지 않는다([`session-model.md`](session-model.md) §5)
+- **서브에이전트의 분산 실행** — 포크는 부모 턴 안에서 같은 노드에 머문다(§7.5)
 
 ---
 
 ## 2. 제약 — 라이브 세션은 노드 로컬이다
 
-이 설계 전체가 하나의 사실에서 나온다: **`LiveSession` 은 JVM 힙에 사는 노드 로컬 핸들이고,
-`SessionRecord` 만 영속이다.** 관계는 1 : 0..N 이고 비대칭이다 —
-[`overview/scope-model.md` §3](../../overview/scope-model.md).
-
-따라서 라우터가 할 수 있는 일과 할 수 없는 일이 갈린다.
+이 설계 전체가 하나의 사실에서 나온다: **`LiveSession` 은 JVM 힙에 사는 노드 로컬 핸들이고 `SessionRecord` 만 영속이다**
+([`session-model.md`](session-model.md) §1).
 
 | | 노드 로컬 (핸들이 죽으면 사라짐) | 공유 (SPI 뒤) |
 |---|---|---|
-| 무엇 | `LiveSession`, 이벤트 publisher, 캐시 항목, 리스 갱신 스케줄 | 레코드, 리스, inbox, 시그널, idempotency |
-| 라우터의 역할 | 만들고 닫는다 | 읽고 쓴다 — **소유하지 않는다** |
+| 무엇 | `LiveSession`, 이벤트 publisher, 캐시 항목, 리스 갱신 스케줄, 턴 게이트 | 레코드, 리스, 인박스, 시그널, 멱등 원장, 세그먼트 |
+| 라우터의 역할 | 만들고 닫는다 | 읽고 쓴다 — 소유하지 않는다 |
 
-여기서 세 가지 규칙이 따라 나온다.
+여기서 세 규칙이 나온다.
 
-- **`AgentRuntime` 은 라우터의 것이 아니다.** agent-scoped 이고 세션들을 가로질러 산다.
-  `LiveSessionOpener` 는 미리 등록된 런타임을 **찾아 쓸 뿐** 열 때마다 만들지 않으며,
-  `SessionRouter.close()` 도 `LiveSession.close()` 도 그것을 닫지 않는다. 닫는 것은 부트스트랩의 일이다
-  ([`../agent-execution/agent-runtime-scope.md`](../agent-execution/agent-runtime-scope.md)).
-- **진행 중 턴의 상태는 노드와 함께 죽는다.** 그래서 턴 도중 partial state 를 커밋하지 않는 것이 중요하고,
-  홀더 유실을 **감지해서 알려 주는 경로**(§6.3 D)가 별도로 필요하다.
-- **크로스 노드로 나가는 것은 전부 JSON 원시값이다.** 시그널 코덱은 페이로드를 `LinkedHashMap` 으로 풀 뿐
-  타입 객체를 복원하지 않는다. 타입 객체를 실어 보내고 `instanceof` 로 받는 설계는 in-process 버스에서만
-  동작하고 실제 버스에서는 **조용한 no-op** 이 된다 — §5.5 의 페이로드 코덱 3종이 존재하는 이유다.
+- **`AgentRuntime` 은 라우터의 것이 아니다.** agent-scoped 이고 세션들을 가로질러 산다. `LiveSessionOpener` 는 미리 등록된 런타임을
+  찾아 쓸 뿐 열 때마다 만들지 않으며, `SessionRouter.close()` 도 `LiveSession.close()` 도 그것을 닫지 않는다. 닫는 것은 부트스트랩의
+  일이다([`../agent-execution/agent-runtime-scope.md`](../agent-execution/agent-runtime-scope.md))
+- **진행 중 턴의 상태는 노드와 함께 죽는다.** 그래서 턴 도중 partial state 를 커밋하지 않고, 홀더 유실을 감지해 알려 주는 경로가
+  따로 있다([`idempotency.md`](idempotency.md) §6)
+- **크로스 노드로 나가는 것은 전부 JSON 원시값이다.** 시그널 코덱은 페이로드를 `LinkedHashMap` 으로 풀 뿐 타입 객체를 복원하지
+  않는다. 타입 객체를 실어 보내고 `instanceof` 로 받는 설계는 in-process 버스에서만 동작하고 실제 버스에서는 조용한 no-op 이
+  된다(§6.3)
 
 ---
 
-## 3. 핵심 설계 결정
+## 3. 핵심 결정
 
-### 3.1 세션 핸들은 노드마다 중복될 수 있다 — 허용한다
+### 3.1 세션 핸들은 노드마다 중복될 수 있다
 
-같은 `SessionId` 에 대해 두 노드가 각자 `LiveSession` 을 들고 있을 수 있다. 버그가 아니라 설계다.
+같은 `SessionId` 에 대해 두 노드가 각자 `LiveSession` 을 들고 있을 수 있다. 설계다.
 
-- 핸들 소유권을 강제하면 그것이 곧 sticky 다(포워딩 비용이든 hand-off 비용이든 어딘가에서 물어야 한다).
-- 메시지 이력의 권위는 `SessionRecordStore` 다. 핸들이 든 사본은 캐시일 뿐이고, 매 턴 시작 시
-  `TranscriptManager.initialize` 가 레코드에서 다시 읽는다(§10.4).
-- 중복된 MCP 클라이언트 비용은 idle TTL(기본 10분)이 정리한다.
+- 핸들 소유권을 강제하면 그것이 곧 sticky 다. 포워딩 비용이든 hand-off 비용이든 어딘가에서 문다
+- 메시지 이력의 권위는 레코드다. 핸들이 든 사본은 캐시이고, 매 턴 시작 시 `TranscriptManager.initialize` 가 레코드에서 다시
+  읽는다(§12.4)
+- 중복된 MCP 클라이언트 비용은 idle TTL(기본 10분)이 정리한다
 
-대신 **턴 실행은 리스로 직렬화**한다 — 어느 노드가 돌리든 한 번에 하나.
+대신 **턴 실행은 리스로 직렬화**한다. 어느 노드가 돌리든 한 번에 하나다.
 
-### 3.2 리스는 세션 수명, 턴 게이트는 그 안에 따로 있다
+### 3.2 리스는 세션 수명, 턴 게이트는 그 안에 따로
 
-처음 설계에서 리스는 턴 단위였다: `submit` 이 따고, 턴 루프가 갱신하고, `finally` 가 놓았다. 지금은
-**리스가 세션 수명**이다 — 한 턴이 따서 다음 다섯 턴이 쓰고, 세션을 끝내는 무엇(유휴 정리, release,
-셧다운, 갱신 실패)이 놓는다. 이유는 hand-off 다: 매 턴 리스를 놓으면 같은 노드가 다음 턴에서 다시 따야
-하고, 그 사이가 전부 경합 구간이 된다.
+**리스는 세션 수명이다** — 한 턴이 따서 다음 턴들이 쓰고, 세션을 끝내는 무엇(유휴 정리, release, 셧다운, 갱신 실패)이 놓는다.
+리스를 턴마다 놓으면 같은 노드의 연속 턴도 매번 다시 경합하고, hand-off 가 리스 만료 대기가 된다.
 
-리스가 턴 경계를 넘어 살게 되면 **"지금 이 노드에서 턴이 돌고 있는가"** 에 리스가 답을 못 한다. 그래서
-그 질문 전용의 노드 로컬 게이트(`tryBeginTurn` / `endTurn`, `Set<SessionId>`)를 따로 둔다. 순서는
-**게이트 먼저, 리스 나중**이다(§7.4). 게이트에서 지면 이 노드에 이미 턴·드레인·삭제가 돌고 있다는 뜻이므로
-리스를 건드릴 이유가 없다.
+리스가 턴 경계를 넘어 살면 **"지금 이 노드에서 턴이 돌고 있는가"** 에 리스가 답하지 못한다. 그래서 그 질문 전용의 노드 로컬
+게이트(`tryBeginTurn` / `endTurn`, `Set<SessionId>`)를 따로 둔다. **순서는 게이트 먼저, 리스 나중**이다. 게이트에서 지면 이 노드에
+이미 턴 · 드레인 · 삭제가 돌고 있다는 뜻이므로 리스를 건드릴 이유가 없다.
 
-이 분리 때문에 `HeldLease` 가 존재한다 — 리스 + 갱신 스케줄 + idempotency 슬롯을 묶고, `returned` /
-`lost` 두 래치로 여러 종료 경로가 서로를 밟지 않게 한다.
+이 분리 때문에 `HeldLease` 가 있다 — 리스 + 갱신 스케줄 + 멱등 touch slot 을 묶고, `returned` / `lost` 두 래치로 여러 종료
+경로가 서로를 밟지 않게 한다.
 
-### 3.3 크로스 노드 시그널은 하나의 버스, 채널은 **빈도**로 가른다
+### 3.3 라우터는 어느 노드에서 불러도 같게 보인다
 
-`SessionSignalBus` 의 `SignalKind` 는 일곱이다.
+`submit` / `interrupt` / `events` / `releaseSession` 은 호출자에게 노드를 노출하지 않는다. 캐시 hit/miss 도, 어느 노드가 턴을
+돌렸는지도 투명하다. 다른 노드가 홀더면 호출자는 `FORWARDED` 를 받지만 **완결되는 future 를 함께 받는다**(§11.1).
 
-| Kind | 뜻 | 빈도 |
-|---|---|---|
-| `INTERRUPT` | 홀더의 활성 턴을 멈춘다. 세션은 그대로 | 드묾 |
-| `EVICT` | 세션이 **없어졌다** — 구독자 완료, 전달된 future 실패, 승인 폐기, 상태 투영 제거 | 드묾 |
-| `YIELD` | 세션을 넘겨라 — 턴을 멈추고 핸들을 버리고 **리스를 반납**한다 | 드묾 |
-| `MESSAGE_ENQUEUED` | inbox 에 메시지가 들어왔다(초인종) | 턴당 ~1 |
-| `TURN_RESULT` | 전달된 턴 1건의 종료 결과 | 턴당 1 |
-| `EVENT` | `AgentExecutionEvent` 프레임 | 토큰 단위 |
-| `STATUS` | 클러스터 관측용 상태 스냅샷 | 하트비트 |
-
-`INTERRUPT` / `EVICT` / `YIELD` 셋이 나뉘어 있는 것이 이 표의 핵심이다. **멈추기**만 하면 홀더가 리스를
-내놓을 이유가 없어 요청 노드가 영원히 기다리고, **축출**은 사후 종결이라 세션이 곧 다른 데서 서빙될
-상황에 쓰면 대기 중인 모든 호출자에게 "삭제됐다"고 거짓말을 한다. 그래서 이동에는 `YIELD` 가 따로 있다.
-`YIELD` 는 나중에 추가된 값이라, 모르는 노드가 시그널 전체를 드롭하지 않도록 발행 측이 레거시
-`INTERRUPT(SESSION_RELEASED)` 를 **함께** 보내고 수신 측이 둘 다 존중하는 shim 이 `DefaultSessionRouter`
-양쪽에 표시되어 있다.
-
-채널 분배 기준은 의미가 아니라 **빈도**다 — `EVENT` 와 `STATUS` 는 events 채널로, 나머지는 control
-채널로 간다(`RedisPubSubSignalBus.channelFor`). 구독자는 양쪽을 다 듣기 때문에 이 분배는 수신 여부가
-아니라 폭주 격리에만 영향을 준다.
-
-### 3.4 hand-off 는 `SessionInbox`, 세션 내부 큐와는 별개다
-
-`MessageQueueManager` 는 **단일 세션 scope** 다 — `QueuedInput` 에 `sessionId`/`agentRef`/
-`idempotencyKey` 가 없고, mid-turn 주입이라는 다른 목적을 위해 존재한다. 라우터가 필요로 하는 것은
-actor 의 mailbox 의미론이다: 아무 노드나 넣을 수 있고 리스 홀더만 꺼낸다.
-
-| | `MessageQueueManager` | `SessionInbox` |
-|---|---|---|
-| scope | 세션 하나, 프로세스 안 | 크로스 노드, 멀티 세션 |
-| 역할 | mid-turn 주입 | 비홀더의 deliver → 홀더의 collect |
-| payload | `QueuedInput` | `InboundMessage` (봉투에 `sessionId`/`agentRef`/`idempotencyKey`/`Principal`) |
-
-두 채널은 공존한다. 라우터는 inbox 만 만지고, 세션 내부 큐는 홀더가 collect 한 메시지를 `QueuedInput`
-으로 다시 싸서 넣을 때만 닿는다(§9.3).
-
-### 3.5 라우터는 어느 노드에서 불러도 같게 보인다
-
-`submit` / `interrupt` / `events` / `releaseSession` 은 호출자에게 노드를 노출하지 않는다. 캐시
-hit/miss 도, 실제로 어느 노드가 턴을 돌렸는지도 투명하다. 다른 노드가 홀더면 호출자는 `FORWARDED` 를
-받지만 — **그래도 완결되는 future 를 함께 받는다**(§9.1). "어디서 도느냐"는 라우터 안쪽 사정이다.
-
-### 3.6 `SessionId` 가 agent 를 결정한다
+### 3.4 `SessionId` 가 agent 를 결정한다 — 바인딩
 
 세션 하나에 agent 하나다. `LiveSession` 의 계약과 같다.
 
-- **첫 턴에서만 결정**한다. 이후 `submit` 의 `agentRef` 는 기록된 값과 비교만 한다.
-- 다르면 `ConflictingAgentException` — 웹 어댑터가 409 로 매핑한다.
-- 캐시 키는 `SessionId` **단일**이다. `(SessionId, agentRef)` 합성 키는 같은 세션에 두 핸들이 공존하는
-  모순을 만든다.
+- **첫 턴에서만 결정**한다. 이후 `submit` 의 `agentRef` 는 기록된 값과 비교만 한다. 다르면 `ConflictingAgentException`(웹 어댑터의
+  409)이다
+- 캐시 키는 `SessionId` **단일**이다. `(SessionId, agentRef)` 합성 키는 같은 세션에 두 핸들이 공존하는 모순을 만든다
+- 바인딩은 `SessionRecord.agentRef` 에 있고 쓰는 것은 `provision` 뿐이다 — claim 과, 레코드를 프로비저닝하는 드레인 패스
+  ([`session-store.md`](session-store.md) §2.1, §4). 리스가 보장하는 것은 턴 직렬화이지 레코드 write 직렬화가 아니므로 이 규칙이
+  깨지면 리스 기반 분석이 통째로 무너진다
+- **`SubmitRequest.build()` 는 `AgentRuntimeId.fromName` 이 거부할 `agentRef` 를 거부한다** — 공백이거나 `:` 를 포함한 이름. 라우터는
+  런타임 id 를 끌어내기 전에 claim 하고, 그래서 바인딩한다. 바인딩은 first-wins 이므로 그런 이름은 어떤 턴도 열 수 없는 agent 에
+  세션을 영구히 묶는다
 
-바인딩은 `SessionRecord.agentRef` 에 얹혀 있고, **쓰는 것은 `SessionStore.claim` 하나뿐**이다. 리스가
-보장하는 것은 턴 직렬화이지 레코드 write 직렬화가 아니므로, 이 sole-writer 규칙이 깨지면 리스 기반 분석이
-통째로 무너진다. 그래서 `SessionRecordStore.load` 는 읽기 전용 `SessionRecordView` 를 돌려주고, mutable
-`SessionRecord` 직접 import 는 ArchUnit 이 막는다.
-
-**첫 턴 경합**은 검증을 두 번 해서 수렴시킨다. 두 노드가 동시에 첫 턴을 시도하면 둘 다 "바인딩 없음"을
-보고 통과하지만, 실제 write 는 `claim` 안에서 일어나므로 진 쪽의 메시지는 inbox 에 남는다. 그래서 홀더는
-**collect 시점에 `InboundMessage.agentRef` 를 다시 비교**하고, mismatch 면 그 메시지를 처리하지 않고
-`RejectedAt(CONFLICTING_AGENT)` 를 emit 한 뒤 버린다. 봉투가 `agentRef` 를 나르는 이유가 이것이다.
+**첫 턴 경합**은 검증을 두 번 해서 수렴시킨다. 두 노드가 동시에 첫 턴을 시도하면 둘 다 "바인딩 없음" 을 보고 통과하지만 실제
+쓰기는 claim 안에서 일어나므로 진 쪽의 메시지는 인박스에 남는다. 홀더는 collect 시점에 봉투의 `agentRef` 를 다시 비교하고, 다르면
+그 메시지를 처리하지 않고 `RejectedAt(CONFLICTING_AGENT)` 를 낸 뒤 버린다([`inbox.md`](inbox.md) §2).
 
 ---
 
-## 4. 아키텍처
-
-### 4.1 컴포넌트 배치
+## 4. 컴포넌트
 
 ```
 ┌─ SessionRouter (노드당 1개) ────────────────────────────────────────────────┐
@@ -164,80 +113,64 @@ hit/miss 도, 실제로 어느 노드가 턴을 돌렸는지도 투명하다. �
 │  submit / interrupt / events / status / releaseSession / deleteSession      │
 │       │                                                                    │
 │       ├─▶ IdempotencyStore ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┐   │
-│       │        (§9.2)                                                  │   │
+│       │        (idempotency.md)                                        │   │
 │       ├─▶ 턴 게이트 (activeTurns, 노드 로컬)  ── §3.2                   │   │
 │       │                                                                │   │
 │       ├─▶ SessionStore ─ ─ ─▶ SessionLeaseStore  (리스 선출 + 펜싱)  ─ ┤   │
-│       │      (§5.3)     └ ─ ─▶ SessionRecordStore (레코드 + 바인딩)  ─ ┤   │
+│       │  (session-store.md) └ ─▶ SessionRecordStore (레코드 + 바인딩)─ ┤   │
 │       │        ▲                                                       │   │
-│       │        └── HeldLease ◀── LeaseRenewer (§7.4) ◀── lease sched   │   │
+│       │        └── HeldLease ◀── LeaseRenewer (§4.3) ◀── lease sched   │   │
 │       │                 └── IdempotencyTouchSlot                       │   │
 │       │                                                                │   │
 │       ├─▶ LiveSessionCache ─▶ LiveSessionOpener ─▶ LiveSession         │   │
-│       │      (§5.2)                                    │ listener      │   │
+│       │      (§4.2)                                    │ listener      │   │
 │       │      idle TTL + LRU, pin                       ▼               │   │
-│       │                                    SessionEventRelay (§5.5)    │   │
+│       │                                    SessionEventRelay (§6)      │   │
 │       │                                      ├─▶ InProcessEventPublisher   │
 │       │                                      └─▶ EVENT rail ─ ─ ─ ─ ─ ┤   │
 │       │                                                                │   │
-│       ├─▶ SessionInbox ─ ─ ─ ─ ─ (deliver / collect) ─ ─ ─ ─ ─ ─ ─ ─ ─ ┤   │
-│       ├─▶ SessionSignalBus ─ ─ ─ (7 kinds, 2 channels) ─ ─ ─ ─ ─ ─ ─ ─ ┤   │
+│       ├─▶ SessionInbox ─ ─ ─ ─ ─ (deliver / collect — inbox.md) ─ ─ ─ ┤   │
+│       ├─▶ SessionSignalBus ─ ─ ─ (7 kinds, 2 channels — §5) ─ ─ ─ ─ ─ ┤   │
 │       │        └── StatusProjection (원격 STATUS 접기)                  │   │
 │       │                                                                │   │
-│       └─▶ HolderLossSweeper (§6.3 D) ─▶ LostTurnAnnouncer               │   │
+│       └─▶ HolderLossSweeper ─▶ LostTurnAnnouncer (idempotency.md §6)    │   │
 │                                                                        │   │
 └────────────────────────────────────────────────────────────────────────┼───┘
                                                                          ▼
                           분산 백엔드 (Redis / MongoDB / PostgreSQL — backends.md)
 ```
 
-**스케줄러는 셋으로 나뉜다.** 한 작업의 지연이 다른 작업을 막지 않게 하기 위해서다.
+**스케줄러는 셋이다.** 한 작업의 지연이 다른 작업을 막지 않게 하기 위해서다.
 
 | 스케줄러 | 담당 | 크기·주기 |
 |---|---|---|
-| lease | `LeaseRenewer` | `max(2, availableProcessors())`, `lockExtendInterval` (기본 10초) |
+| lease | `LeaseRenewer` | `max(2, availableProcessors())`, `lockExtendInterval`(기본 10초) |
 | cache sweeper | `LiveSessionCache.sweep()` | 단일 스레드, 1분 |
-| holder-loss sweeper | `HolderLossSweeper` | 단일 스레드, `holderLossSweepInterval` (기본 15초) |
+| holder-loss sweeper | `HolderLossSweeper` | 단일 스레드, `holderLossSweepInterval`(기본 15초) |
 
-리스 갱신이 자기 풀을 갖는 것이 특히 중요하다 — 갱신 틱이 **큐에 밀린 것**과 리스를 **빼앗긴 것**은
-구분되지 않는다. 그리고 relay 의 원격 fan-out 은 별도 `ExecutorService` 로 빠진다(§5.5).
+이벤트 릴레이의 원격 fan-out 은 별도 `ExecutorService` 로 빠진다(§6.1).
 
-### 4.2 의존 방향
-
-```
-aimon-core (SPI + LiveSession 계약)  ◀── aimon-session-routing  ◀── (어셈블리)
-        ▲
-        └── aimon-session-{redis,mongodb,postgres}  (SPI 구현, main 은 routing 을 모른다)
-```
-
-백엔드 모듈의 **main** 은 `aimon-core` 만 본다. 라우팅은 `testImplementation` 으로만 끌어온다 —
-멀티 노드 테스트가 진짜 라우터를 돌려야 하기 때문이다. 경위는 [`spi-extraction.md`](spi-extraction.md) §5.
-
----
-
-## 5. 컴포넌트
-
-### 5.1 `SessionRouter` — 공개 계약
+### 4.1 `SessionRouter` — 공개 계약
 
 | 메서드 | 계약 |
 |---|---|
 | `submit(SubmitRequest)` | `SubmitDisposition` 반환. agent 불일치면 `ConflictingAgentException` |
 | `events(SessionId)` | `Flow.Publisher<AgentExecutionEvent>`. 로컬 발생분 + 원격 릴레이분 |
 | `interrupt(id, reason)` | 라이브 세션 스코프 — 이 세션의 활성 턴을 멈춘다 |
-| `interrupt(id, turnId, reason)` | **겨냥한** 형태. 활성 턴과 다르면 no-op |
+| `interrupt(id, turnId, reason)` | 겨냥한 형태. 활성 턴과 다르면 no-op |
 | `releaseSession(id)` | 핸들 반납. 이력은 남는다 |
-| `deleteSession(id)` | 이력까지 삭제. **홀더만** 할 수 있다 (§7.7) |
+| `deleteSession(id)` | 이력까지 삭제. 홀더만 할 수 있다(§9) |
 | `status(id)` | `ClusterSessionStatus` — best-effort 관측, **제어 게이트 아님** |
+| `fencedRecordStore(fence)` / `fencedSegmentStore(fence)` | 이 라우터의 `SessionStore` 가 주는 펜스 뷰([`session-store.md`](session-store.md) §5.2) |
 | `close()` / `closeGracefully(timeout)` | 노드 로컬 자원만. `AgentRuntime` 은 건드리지 않는다 |
 
-`interrupt` 의 두 형태는 의도적으로 다르다. `TurnId` 를 준 쪽은 "내가 보고 있던 그 턴"을 겨냥한 것이므로
-활성 턴이 이미 다음 턴으로 넘어갔으면 아무것도 하지 않는다 — 취소를 누른 사용자에게는 그게 맞다. id 가
-**없는 것은 "모름"이 아니라 옛 의미**(세션 스코프)다.
+`interrupt` 의 두 형태는 의도적으로 다르다. `TurnId` 를 준 쪽은 "내가 보고 있던 그 턴" 을 겨냥했으므로 활성 턴이 이미 다음 턴으로
+넘어갔으면 아무것도 하지 않는다 — 취소를 누른 사용자에게는 그게 맞다. id 가 없는 것은 옛 의미(세션 스코프)다.
 
-`status()` 를 제어에 쓰면 안 된다는 규칙은 여기서도 같다 — 읽는 순간과 행동하는 순간 사이에 상태가 바뀐다.
-턴을 시작할 수 있는지는 `submit` 의 `SubmitDisposition` 이 답한다.
+`status()` 를 제어에 쓰지 않는다. 읽는 순간과 행동하는 순간 사이에 상태가 바뀐다. 턴을 시작할 수 있는지는 `submit` 의
+`SubmitDisposition` 이 답한다.
 
-### 5.2 `LiveSessionCache` — 두 개의 상한, 비대칭 pin
+### 4.2 `LiveSessionCache` — 두 상한, 비대칭 pin
 
 노드당·세션당 핸들 캐시다(Caffeine). 상한이 둘이고, **pin 이 둘에 다르게 작용한다.**
 
@@ -246,484 +179,325 @@ aimon-core (SPI + LiveSession 계약)  ◀── aimon-session-routing  ◀─�
 | idle TTL | 축출 자체를 **막는다** | 만료된 항목은 즉시 맵을 떠나므로, 닫기만 미루면 같은 세션에 두 번째 핸들이 열린다 |
 | LRU (`maxEntries`) | 닫기를 **미룰 뿐** 축출은 일어난다 | 이 상한은 힙 경계다. 늦게 닫는 것보다 경계에 대해 거짓말하는 쪽이 나쁘다 |
 
-LRU 쪽에 남는 이중 핸들 창은 한 단계 위에서 닫는다 — 라우터가 pin 을 푸는 **같은 턴 게이트 안에서**
-리스를 반납한다.
+LRU 쪽에 남는 이중 핸들 창은 한 단계 위에서 닫는다 — 라우터가 pin 을 푸는 같은 턴 게이트 안에서 리스를 반납한다.
 
-두 가지가 이 클래스에서 미묘하다.
+- **`PinAwareExpiry` 는 세 콜백을 모두 재정의한다.** 하나라도 빠지면 pin 된 항목을 읽는 것만으로 보호가 풀린다
+- **`sessionClosedListener` 는 `session.close()` 뒤에 발화한다.** Caffeine 의 `removalListener` 로는 안 된다 — pin 된 채 축출된 항목은
+  세션이 닫히기 한참 전에 맵을 떠나고, 그때 리스를 반납하면 아직 도는 턴이 자기가 더 이상 쥐지 않은 이력에 쓰게 된다
+- **`SessionEntry` 는 `pins` / `closeRequested` / `closed` 를 한 모니터 아래 둔다.** 나누면 세션이 아예 닫히지 않는 창이 생긴다.
+  단 `unpin()` 의 `onLastPinReleased` 호출만은 모니터 **밖**에서 한다 — 안에서 부르면 락 순서 역전으로 데드락이 난다
+- Caffeine 에는 백그라운드 청소부가 없으므로 라우터의 스케줄러가 `sweep()` 을 주기 호출한다
 
-- **`PinAwareExpiry` 는 세 콜백을 모두 재정의한다.** 하나라도 빠지면 pin 된 항목을 읽는 것만으로 보호가
-  풀린다.
-- **`sessionClosedListener` 는 `session.close()` **뒤에** 발화한다.** Caffeine 의 `removalListener` 로는
-  안 되는데, pin 된 채 축출된 항목은 세션이 닫히기 한참 전에 맵을 떠나기 때문이다. 그때 리스를 반납하면
-  아직 도는 턴이 자기가 더 이상 들고 있지 않은 이력에 쓰게 된다.
+### 4.3 리스의 수명과 갱신
 
-`SessionEntry` 는 `pins` / `closeRequested` / `closed` 를 **한 모니터** 아래 둔다. lock-free 판본에는
-세션이 아예 닫히지 않는 창이 있었다. 단 `unpin()` 의 `onLastPinReleased` 호출만은 모니터 **밖**에서 —
-안에서 부르면 락 순서 역전으로 데드락이 난다.
+리스 SPI 의 의미(펜싱 토큰, `extend` 가 만료를 보지 않는다)는 [`session-store.md`](session-store.md) §3 이 정본이다. 여기서는 라우터가
+리스를 어떻게 들고 있는지를 다룬다.
 
-Caffeine 에는 백그라운드 청소부가 없으므로 `sweep()` 을 라우터의 스케줄러가 주기 호출한다.
+- **`LeaseRenewer` 는 전용 스케줄러에서 돈다.** 턴 스레드에서 돌리면 LLM 호출이나 도구 실행에 막혀 리스가 조용히 만료된다. 스윕 ·
+  하트비트 · 폴링과 풀을 공유하지 않는다 — **큐에 밀린 틱은 빼앗긴 리스와 구분되지 않는다**
+- **권장 간격은 `lease/3`** 이고 기본값 30초/10초가 그것이다. 두 틱을 놓칠 여유다
+- **갱신은 백엔드가 아니라 `SessionStore.renew` 를 통한다.** 갱신이 실패하면 스토어가 자기 리스 기록을 버리고, 그래서 바로 다음
+  펜스된 레코드 쓰기가 새 홀더의 이력 위에 얹히지 않고 거부된다. 백엔드를 직접 갱신하면 스토어는 잃은 리스를 아직 들고 있다고 믿는다
+- **`onExtendFailed` 는 스케줄러 스레드에서 돌고 블록하면 안 된다.** 세션 정리, 훅 발화, 리스 반납은 전부 다른 실행기의 일이다.
+  리스 하나를 잃는 것은 국소 사건이지만, 배포된 `OnSessionEnd` 코드를 기다리는 훅은 이 스레드를 공유하는 모든 세션의 리스를 같이
+  잃게 만든다
+- **갱신 틱마다 멱등 예약을 touch 한다** — `IdempotencyTouchSlot` 의 규칙은 [`idempotency.md`](idempotency.md) §3
 
-### 5.3 `SessionStore` — 문 하나 뒤의 리스·레코드·바인딩
+**리스 숫자를 줄이지 않는다** — 30초 리스 / 10초 갱신 / 15초 홀더 손실 스윕. 리스가 세션 수명이 되면서 갱신 부하의 모집단이 "실행
+중인 턴" 에서 "보유 중인 세션" 으로 바뀌었다. 1000 세션 × 30s/10s ≈ 100 extends/sec 이고, 그 부하는 유휴 스윕 · 홀더 손실 스윕 ·
+상태 하트비트 · forward 폴이 함께 도는 스케줄러들 위에 얹힌다. 리스를 절반으로 줄이면 그 수가 두 배가 된다. 장애 뒤의 블랙아웃은
+리스 길이가 아니라 **기다림의 상한**으로 줄인다 — 턴 스코프 실패 신호로 대기 중인 future 를 즉시 실패시키고, 대기 노드가 이미
+돌리고 있는 폴이 선제적 재claim 을 촉발한다([`idempotency.md`](idempotency.md) §6).
 
-`SessionLeaseStore` 와 `SessionRecordStore` 는 서로 다른 백엔드일 수 있다. 그 둘을 노드 스코프 합성물
-하나로 묶은 것이 `SessionStore` 이고, `claim` 이 **이 순서로** 수행한다.
+---
 
-```
-claim(sessionId, agentRef, nodeId, lease)
-  1. 리스 선출        → 진 노드는 여기서 끝난다 (HeldElsewhere)
-  2. agent 바인딩 검증 → 불일치면 AgentConflict
-  3. 레코드 프로비저닝 → 없으면 만들고 agentRef 를 기록
-```
+## 5. 크로스 노드 시그널
 
-순서가 이래야 **분산 트랜잭션이 필요 없다.** 선출에서 진 노드는 레코드를 아예 건드리지 않으므로, 두
-백엔드가 서로 다른 시스템이어도 half-committed 상태가 생기지 않는다.
+`SessionSignalBus` 의 `SignalKind` 는 일곱이다.
 
-이 스토어가 **이 노드가 쥔 리스를 추적**하기 때문에 `records()` 가 펜싱 토큰을 ReAct 콜체인으로 흘리지
-않고도 쓰기를 펜싱할 수 있다. 대가는 하나다 — **한 JVM 에 라우터가 둘이면 스토어도 둘 만들어야 한다.**
-같은 두 백엔드 위에 각자. 빌더가 두 백엔드를 받아 스토어를 **직접 조립**하는 것은 이 규칙을 사람이
-기억할 것이 아니라 구조로 만들기 위해서다.
-
-### 5.4 `SessionSignalBus`
-
-발행은 **at-least-once** 다. 같은 신호가 두 번 와도 견뎌야 하고, 순서 보장은 없다. 그래서:
-
-- `StatusProjection` 은 `seq` 스탬프로 최신만 남긴다 — **다른** origin 이면 무조건 수용(홀더 교체는 항상
-  이겨야 한다. 새 홀더의 `seq` 는 옛 홀더와 독립이다), **같은** origin 이면 `seq` 가 더 클 때만.
-- `MESSAGE_ENQUEUED` 는 초인종일 뿐이다. 홀더가 처리하는 시점에 inbox 가 이미 비어 있어도 정상(앞선
-  collect 가 가져갔다). 빈 결과는 no-op.
-- 모르는 `SignalKind` 이름은 `valueOf` 에서 던지고 시그널 전체가 드롭된다. 그래서 새 kind 는 §3.3 의
-  shim 을 거쳐 굴러 들어온다.
-
-### 5.5 `SessionEventRelay` — 턴당 하나
-
-세션의 `submitAsync(input, listener)` 리스너로 주입되어 프레임을 두 곳으로 가른다: 로컬
-`InProcessEventPublisher`, 그리고 `EVENT` rail.
-
-**턴당 하나**다. 자기가 서비스하는 턴의 `TurnId` 를 생성자로 받아 모든 페이로드에 찍는다. 두 턴이 릴레이를
-공유하면 두 번째 턴의 프레임이 첫 번째 턴의 것으로 표시되는데, 그것이 정확히 턴별 구독이 봐서는 안 되는
-장면이다.
-
-#### 5.5.1 프로듀서는 절대 블록하지 않는다
-
-`accept()` 는 턴 실행 스레드에서 돈다. 그러므로:
-
-- 로컬 fan-out 은 `SubmissionPublisher.offer(item, 0L, NANOS, onDrop)` — demand 가 없는 구독자가 있으면
-  **가장 오래된 이벤트를 버리지** 프로듀서를 세우지 않는다.
-- 원격 fan-out 은 유한 `ArrayBlockingQueue` 로 분리하고 라우터 소유 디스패처(`web-session-relay`, 2~4
-  스레드)가 뺀다. 버스의 publish 지연이 턴을 세울 수 없다.
-
-**버스가 빠르다고 가정하지 않는다.** publish 는 pub/sub 쓰기일 수도 있고 문서 insert 일 수도 있으며, 모델은
-데이터베이스가 insert 를 확인해 주는 것보다 훨씬 빨리 델타를 낸다. 여기서 두 가지가 나온다.
-
-- **배치로 뺀다.** 쌓인 프레임을 최대 256개(`MAX_BATCH`)씩 `SessionSignalBus.publishAll` 한 번으로 보낸다.
-  왕복 수가 backlog 건수가 아니라 건수 ÷ 배치에 비례한다. `publishAll` 의 기본 구현은 한 건씩 publish 하고,
-  publish 가 왕복인 백엔드(`MongoSessionSignalBus` — ordered `insertMany`, `PostgresSessionSignalBus` — 여러 행
-  `INSERT` 하나와 `NOTIFY` 한 번)가 재정의한다.
-- **디스패처 작업 하나에 배치 하나, 릴레이 하나에 작업 하나.** 릴레이는 drain 을 동시에 둘 띄우지 않는다
-  (`wip` 카운터). 그래서 두 배치가 순서를 바꿔 나갈 수 없고, 한 릴레이가 디스패처 스레드를 둘 차지하지도
-  않는다. 배치를 하나 보낸 뒤에는 디스패처 큐의 맨 뒤로 간다 — 버스가 모델보다 느리면 버퍼는 스트림이
-  끝날 때까지 비지 않으므로, 빌 때까지 도는 루프는 그 스레드를 다른 세션에게서 턴 내내 빼앗는다.
-- **`close()` 에는 상한이 있다.** `close()` 는 턴 스레드에서, 실행이 끝난 뒤 결과를 알리기 **전에** 돈다.
-  그러니 `close()` 가 기다리는 만큼 호출자가 기다린다. 발행은 디스패처에 남겨 두고 `close()` 는
-  `relayCloseDrainTimeout`(기본 2초)까지만 기다린다. 시간이 다하면 버퍼에 남은 델타(등급 0·1)를 버리고
-  세며, 구조 프레임은 버퍼에 남겨 디스패처가 마저 발행한다 — 이때 종결 프레임은 `TURN_RESULT` **뒤에**
-  도착할 수 있다. 턴의 결과가 best-effort rail 뒤에 붙잡히는 일은 없다. 디스패처가 이미 내려간 뒤(라우터
-  종료)에는 발행할 다른 스레드가 없으므로 호출 스레드에서, 상한 없이 뺀다. 남겨 둔 프레임은 라우터가
-  종료되면 함께 사라진다.
-- **한 턴의 프레임이 다음 턴의 프레임 사이에 끼지 않는다.** 마감에서 프레임을 남긴 릴레이는 같은 세션의
-  다음 턴 릴레이에 `after(predecessor)` 로 넘겨지고(`DefaultSessionRouter.unfinishedRelays`), 후임은 전임이 다
-  내보낼 때까지 아무것도 발행하지 않는다. 수신 측은 `EVENT` 를 턴이 아니라 세션 단위로 읽으므로, 턴 N+1
-  한가운데에서 턴 N 의 종결 프레임을 보면 엉뚱한 스트림을 끝낸다. 버스가 건강하면 전임은 다음 턴이 시작하기
-  전에 이미 비어 있고 이 장치는 아무 일도 하지 않는다.
-
-**오버플로 정책**은 프레임이 다 같지 않다는 데서 나오고, 등급은 둘이 아니라 **셋**이다.
-
-| 등급 | 프레임 | 왜 그 자리인가 |
+| Kind | 뜻 | 빈도 |
 |---|---|---|
-| 0 (가장 먼저 희생) | `AssistantReasoningDelta` | 양이 텍스트보다도 많고, 하류에서 필요로 하는 것이 **아무것도 없다** — 전사도, 요약도, 결과 필드도 |
-| 1 | `AssistantTextDelta` | 양이 많고 개별 가치가 낮지만, 그것이 쌓아 올린 assistant 메시지를 `AssistantMessageReceived` 가 이터레이션 끝에 다시 요약한다 |
-| 2 (희생하지 않는다) | 그 외 전부 | 종결 프레임(`ExecutionCompleted` / `ExecutionError` / `InterruptedAt` / `RejectedAt`)은 원격 구독자에게 **턴이 끝났음을 알리는 유일한 것**이고, 그것을 잃은 구독자는 영영 완료되지 않는다 |
+| `INTERRUPT` | 홀더의 활성 턴을 멈춘다. 세션은 그대로 | 드묾 |
+| `EVICT` | 세션이 **없어졌다** — 구독자 완료, 전달된 future 실패, 승인 폐기, 상태 투영 제거 | 드묾 |
+| `YIELD` | 세션을 넘겨라 — 턴을 멈추고 핸들을 버리고 **리스를 반납**한다 | 드묾 |
+| `MESSAGE_ENQUEUED` | 인박스에 메시지가 들어왔다 (초인종) | 턴당 ~1 |
+| `TURN_RESULT` | 전달된 턴 1건의 종료 결과 | 턴당 1 |
+| `EVENT` | `AgentExecutionEvent` 프레임 | 토큰 단위 |
+| `STATUS` | 클러스터 관측용 상태 스냅샷 | 하트비트 |
 
-버퍼가 넘치면 **들어오는 프레임보다 등급이 높지 않은** 버퍼 프레임 중 가장 오래된 것을 등급 오름차순으로
-찾아 버린다. 등급 비교가 있어야 하는 이유는 단순히 "둘 다 버릴 수 있다" 로 넓히면 두 등급이 **같아져서**
-숙고 폭주가 답 텍스트를 밀어내기 때문이다 — 압박 아래의 선택은 정반대여야 한다. 버릴 것이 하나도 없고
-들어오는 것도 구조 프레임일 때만 구조 프레임을 희생한다. 드롭은 세고(`getDroppedEventCount()`)
-`close()` 에서 보고한다 — 빈틈이 조용한 적은 없다. `close()` 가 마감에서 버리는 델타도 같은 등급을 따르고
-같은 수에 더해진다.
+**`INTERRUPT` / `EVICT` / `YIELD` 는 서로 다르다.** 멈추기만 하면 홀더가 리스를 내놓을 이유가 없어 요청 노드가 영원히 기다린다.
+축출은 사후 종결이라, 세션이 곧 다른 데서 서빙될 상황에 쓰면 대기 중인 모든 호출자에게 "삭제됐다" 고 거짓말을 한다. 그래서 이동에는
+`YIELD` 가 따로 있다. yield 에서는 큐에 있던 인박스 메시지, 전달된 future, 구독자의 스트림이 그대로 남는다. 준수는 best-effort 다 —
+pin 된 세션은 닫기를 진행 중인 턴의 끝으로 미루므로 요청자가 무는 비용은 턴 하나의 나머지다.
 
-#### 5.5.2 페이로드 코덱 3종 — 평평한 원시값만
+**`YIELD` 를 모르는 노드를 위한 shim.** 모르는 `SignalKind` 이름은 `valueOf` 에서 던지고 시그널 전체가 드롭된다. 그래서 발행 측은
+레거시 `INTERRUPT(SESSION_RELEASED)` 를 함께 보내고 수신 측은 둘 다 존중한다. 새 kind 는 이렇게 굴러 들어온다.
 
-`AgentExecutionEventPayload` / `TurnResultPayload` / `StatusSnapshotPayload`. 셋 다 같은 이유로 존재한다
-(§2 마지막 규칙). 알려진 손실은 명시해 둔다.
+**채널은 의미가 아니라 빈도로 가른다.** `EVENT` 와 `STATUS` 는 events 채널로, 나머지는 control 채널로 간다. 구독자는 양쪽을 다
+들으므로 이 분배는 수신 여부가 아니라 폭주 격리에만 영향을 준다.
+
+**발행은 at-least-once 이고 순서 보장은 없다.** 그래서
+
+- `StatusProjection` 은 `seq` 스탬프로 최신만 남긴다. **다른** origin 이면 무조건 수용한다 — 홀더 교체는 항상 이겨야 하고 새 홀더의
+  `seq` 는 옛 홀더와 독립이다. **같은** origin 이면 `seq` 가 더 클 때만
+- `MESSAGE_ENQUEUED` 는 초인종일 뿐이다. 홀더가 처리할 때 인박스가 이미 비어 있어도 정상이다(앞선 collect 가 가져갔다)
+
+백엔드마다 전달 보장이 다르다 — Redis pub/sub 은 연결이 끊긴 동안 at-most-once, Postgres 는 행으로 남아 재연결이 백로그를 되읽고,
+Mongo 는 resume token 이 oplog 구간 안에서 at-least-once 를 준다([`backends.md`](backends.md) §8).
+
+---
+
+## 6. 이벤트 릴레이 — `SessionEventRelay`
+
+세션의 `submitAsync(input, listener)` 리스너로 주입되어 프레임을 두 곳으로 가른다 — 로컬 `InProcessEventPublisher`, 그리고 `EVENT`
+rail(이 노드에서 다른 노드로 `EVENT` 시그널을 내보내는 경로).
+
+**턴당 하나다.** 자기가 서비스하는 턴의 `TurnId` 를 생성자로 받아 모든 페이로드에 찍는다. 두 턴이 릴레이를 공유하면 두 번째 턴의
+프레임이 첫 번째 턴의 것으로 표시된다.
+
+### 6.1 프로듀서는 블록하지 않는다
+
+`accept()` 는 턴 실행 스레드에서 돈다.
+
+- 로컬 fan-out 은 `SubmissionPublisher.offer(item, 0L, NANOS, onDrop)` — demand 가 없는 구독자가 있으면 가장 오래된 이벤트를 버리지
+  프로듀서를 세우지 않는다
+- 원격 fan-out 은 유한 `ArrayBlockingQueue` 로 분리하고 라우터 소유 디스패처(`web-session-relay`, 2~4 스레드)가 뺀다
+
+**버스가 빠르다고 가정하지 않는다.** publish 는 pub/sub 쓰기일 수도 있고 문서 insert 일 수도 있으며, 모델은 데이터베이스가 insert 를
+확인해 주는 것보다 훨씬 빨리 델타를 낸다.
+
+- **배치로 뺀다.** 쌓인 프레임을 최대 256개(`MAX_BATCH`)씩 `SessionSignalBus.publishAll` 한 번으로 보낸다. 왕복 수가 백로그 건수가 아니라
+  건수 ÷ 배치에 비례한다. `publishAll` 의 기본 구현은 한 건씩 publish 하고, publish 가 왕복인 백엔드가 재정의한다
+- **디스패처 작업 하나에 배치 하나, 릴레이 하나에 작업 하나.** 릴레이는 drain 을 동시에 둘 띄우지 않는다(`wip` 카운터). 그래서 두
+  배치가 순서를 바꿔 나갈 수 없고 한 릴레이가 디스패처 스레드를 둘 차지하지도 않는다. 배치를 하나 보낸 뒤에는 디스패처 큐의 맨 뒤로
+  간다 — 버스가 모델보다 느리면 버퍼는 스트림이 끝날 때까지 비지 않으므로, 빌 때까지 도는 루프는 그 스레드를 다른 세션에게서 턴
+  내내 빼앗는다
+- **`close()` 에는 상한이 있다.** `close()` 는 턴 스레드에서, 실행이 끝난 뒤 결과를 알리기 **전에** 돈다. 그러니 `close()` 가 기다리는
+  만큼 호출자가 기다린다. `close()` 는 `relayCloseDrainTimeout`(기본 2초)까지만 기다리고, 시간이 다하면 버퍼에 남은 델타(등급 0·1)를
+  버리고 세며 구조 프레임은 디스패처가 마저 발행하게 남긴다. 그래서 종결 프레임이 `TURN_RESULT` 뒤에 도착할 수 있지만, 턴의 결과가
+  best-effort rail 뒤에 붙잡히지는 않는다. 디스패처가 이미 내려간 뒤(라우터 종료)에는 호출 스레드에서 상한 없이 뺀다
+- **한 턴의 프레임이 다음 턴의 프레임 사이에 끼지 않는다.** 마감에서 프레임을 남긴 릴레이는 같은 세션의 다음 턴 릴레이에
+  `after(predecessor)` 로 넘겨지고, 후임은 전임이 다 내보낼 때까지 발행하지 않는다. 수신 측은 `EVENT` 를 턴이 아니라 세션 단위로 읽으므로
+  턴 N+1 한가운데에서 턴 N 의 종결 프레임을 보면 엉뚱한 스트림을 끝낸다. 버스가 건강하면 이 장치는 아무 일도 하지 않는다
+
+### 6.2 오버플로 정책 — 세 등급
+
+| 등급 | 프레임 | 이유 |
+|---|---|---|
+| 0 (가장 먼저 희생) | `AssistantReasoningDelta` | 양이 텍스트보다도 많고, 하류에서 필요로 하는 것이 없다 — 전사도, 요약도, 결과 필드도 |
+| 1 | `AssistantTextDelta` | 양이 많고 개별 가치가 낮지만, 그것이 쌓은 assistant 메시지를 `AssistantMessageReceived` 가 iteration 끝에 다시 요약한다 |
+| 2 (희생하지 않는다) | 그 외 전부 | 종결 프레임(`ExecutionCompleted` / `ExecutionError` / `InterruptedAt` / `RejectedAt`)은 원격 구독자에게 턴이 끝났음을 알리는 유일한 것이고, 그것을 잃은 구독자는 영영 완료되지 않는다 |
+
+버퍼가 넘치면 **들어오는 프레임보다 등급이 높지 않은** 버퍼 프레임 중 가장 오래된 것을 등급 오름차순으로 찾아 버린다. 등급 비교가
+있어야 하는 이유 — "둘 다 버릴 수 있다" 로 넓히면 두 등급이 같아져 숙고 폭주가 답 텍스트를 밀어낸다. 버릴 것이 하나도 없고 들어오는
+것도 구조 프레임일 때만 구조 프레임을 희생한다. 드롭은 세고(`getDroppedEventCount()`) `close()` 에서 보고한다 — 빈틈이 조용하지 않다.
+
+### 6.3 페이로드 코덱 셋 — 평평한 원시값만
+
+`AgentExecutionEventPayload` / `TurnResultPayload` / `StatusSnapshotPayload` 는 §2 마지막 규칙 때문에 있다.
 
 | 코덱 | 잃는 것 |
 |---|---|
-| `AgentExecutionEventPayload` | `ExecutionError.getCause()` 는 메시지만 — 원 타입·스택트레이스 소실. `ToolUseStarted.getInputSummary()` 의 비원시 값. Duration 은 ms 단위 |
-| `TurnResultPayload` | **artifacts 전부** — §9.4 |
-| `StatusSnapshotPayload` | `LiveSessionStatus.getOptions()` (관측에 불필요, 페이로드만 키움) |
+| `AgentExecutionEventPayload` | `ExecutionError.getCause()` 는 메시지만(원 타입·스택트레이스 소실), `ToolUseStarted.getInputSummary()` 의 비원시 값, Duration 은 ms 단위 |
+| `TurnResultPayload` | artifacts 전부(§11.2) |
+| `StatusSnapshotPayload` | `LiveSessionStatus.getOptions()` — 관측에 불필요하고 페이로드만 키운다 |
 
-숫자는 전부 `Number` 로 읽는다. JSON 왕복이 int 범위의 `long` 을 `Integer` 로 좁히고 정수를 `Double` 로
-넓히기 때문이다(`PayloadValues`). 모르는 `type` 은 `Optional.empty()` 로 — 롤링 배포에서 새 노드의 이벤트를
-옛 노드가 만나도 우아하게 무시한다.
-
-### 5.6 `SessionInbox`
-
-봉투(`InboundMessage`)가 나르는 것은 `sessionId` · `agentRef` · `userInput` · `priority` ·
-`idempotencyKey` · `Principal` · `deliveredAt` 다. `LiveSessionOptions` 와 `OpenAttributes` 는 **나르지
-않는다** — 그 결정은 §7.1 F2 에 있다.
-
-`collect` 는 원자 배치다. 시그널이 at-least-once 여도 collect 가 배치라서 순서와 정합성이 모두 보존된다.
-
-**`userInput` 은 `UserInput` 이고, 와이어는 키를 하나 더 갖는다.** 설계 시점에는 `String` 이었고, 그래서
-멀티모달은 노드 경계를 **넘지 못했다** — 조용히 잘린 것이 아니라 빌더가 텍스트만 받아 아예 컴파일되지
-않았다. 그 항목과 닫은 내역은
-[`backlog/interrupt-open-items.md` §2](../../backlog/interrupt-open-items.md). 와이어 쪽 결론만 옮기면:
-`userInput` 키는 **철자도 타입도 그대로**(이제 `asText()`)이고, 비텍스트 입력만
-`at.aimon.core.subagent.task.codec.UserInputCodec` 의 인코딩을 `userInputEncoded` 에 더한다. 인박스는
-**아직 안 된 일**을 담으므로 업그레이드 시점에 양쪽 빌드가 쓴 항목이 섞여 있고, 이 비대칭이 그것을 서로
-읽게 만든다. 근거는 [`migration/frozen-names.md`](../../migration/frozen-names.md).
+숫자는 전부 `Number` 로 읽는다 — JSON 왕복이 int 범위의 `long` 을 `Integer` 로 좁히고 정수를 `Double` 로 넓힌다(`PayloadValues`).
+모르는 `type` 은 `Optional.empty()` 로 읽어, 롤링 배포에서 옛 노드가 새 노드의 이벤트를 무시한다.
 
 ---
 
-## 6. 라이프사이클
-
-### 6.1 열기
-
-| 단계 | 시점 | 동작 |
-|---|---|---|
-| 라우터 | 부팅 | 노드당 1회. 애플리케이션 스코프 자원 주입 |
-| 세션 | 첫 `submit` | 레코드 lazy 생성 (`SessionStore.claim` 3단계) |
-| 핸들 | 그 노드에 첫 요청 도착 | `LiveSessionCache.ensureOpen` → `LiveSessionOpener` → 등록된 `AgentRuntime` **조회** |
-
-warm-up 은 하지 않는다. 어차피 어느 노드로 갈지 모르고, 안 쓰인 핸들은 곧 유휴 정리된다.
-
-### 6.2 활동 중
-
-- 같은 노드로 후속 메시지 → 캐시 hit, `lastActivityAt` 갱신.
-- 다른 노드로 → 그 노드에서 lazy open. 두 노드 공존 가능, 리스가 턴 직렬성을 지킨다(§3.1).
-- 긴 턴 → `LeaseRenewer` 가 `lockExtendInterval` 마다 갱신(§7.4).
-
-### 6.3 종료 — 네 가지
-
-#### A. 명시적 release — `releaseSession(id)`
-
-"end" 가 아닌 이유: 이력을 지우지 않는다. 같은 `SessionId` 로 다시 보내면 이력이 그대로 살아난다. 이 API 는
-**핸들 반납**이지 세션 종료가 아니다.
-
-진행 중 턴이 있으면 순서가 보장된다 — `interrupt(SESSION_RELEASED)` → 턴 future await
-(`releaseInterruptTimeout`, 기본 5초) → `session.close()` → 캐시 evict → 리스 반납 → 크로스 노드 `EVICT` →
-publisher `complete()`. await 이 타임아웃하면 강제 close + 즉시 onComplete (일부 in-flight 이벤트 손실,
-warn 로그).
-
-inbox 를 purge 했으므로 이 노드가 들고 있던 **초인종 표시도 함께 버린다**(`forgetDoorbell`). 남겨 두면 다음 리스
-반납 때 빈 드레인 패스를 한 번 사고, 같은 `SessionId` 를 재사용하는 나중 세션이 자기 것이 아닌 통지를 물려받는다.
-delete 와 피어의 `EVICT` 수신도 같은 이유로 같은 일을 한다.
-
-#### B. 유휴 타임아웃
-
-노드별 sweeper 가 `lastActivityAt + idleTtl < now` 항목을 정리한다. **크로스 노드 broadcast 는 하지
-않는다** — 다른 노드는 자기 기준으로 알아서 한다. 기본 10분. 너무 짧으면 다음 메시지마다 MCP 재연결 비용을
-문다.
-
-#### C. 셧다운 (graceful)
-
-1. 새 제출 거부 (`acceptingSubmits` 를 내린다 — `submit` 은 `IllegalStateException`).
-2. 진행 중 턴 완료 대기 (`closeGracefully(timeout)`).
-3. 타임아웃 후 남은 턴에 `interrupt(SYSTEM_SHUTDOWN)`.
-4. 모든 핸들 close.
-5. **이 노드가 쥔 리스를 명시적으로 반납** — 다른 노드가 lease 만료를 기다리지 않아도 된다. 실패는 삼킨다
-   (어차피 TTL 로 풀린다).
-6. publisher `onComplete`, 시그널 구독 해제, 스케줄러 종료.
-7. **애플리케이션 스코프 자원은 건드리지 않는다** (§2).
-
-#### D. 홀더 유실 (crash / OOM)
-
-홀더가 죽으면 리스는 TTL 로 풀리고 다른 노드가 이어받는다. 문제는 **구독자**다 — `EVENT` 가 그냥 끊기면
-원격 `events(id)` 구독자는 무한 대기한다. `HolderLossSweeper` 가 이것을 자가 회복시킨다.
-
-```
-매 holderLossSweepInterval:
-  IdempotencyStore 에서 lastTouchedAt < now - secondaryTtl 인 IN_FLIGHT 를 훑는다
-    └─ compareAndReset(key, expectedHolder)   ← 클러스터 전체에서 정확히 한 노드만 이긴다
-         ├─ EventSink.emit(InterruptedAt(HOLDER_LOST))  — 로컬 + EVENT rail
-         └─ LostTurnAnnouncer.announceHolderLost(...)   — 그 턴을 기다리던 future 들을 지금 실패시킨다
-```
-
-**회복은 턴 스코프다.** 예전에는 세션 스코프였다 — 이벤트 스트림을 완료시키고 `EVICT` 를 broadcast 해서
-모든 노드가 세션을 헐었다. 그런데 **홀더 유실은 세션 유실이 아니다.** 리스가 만료되면 후계자가 이어받고,
-스윕이 돌기도 전에 이미 다음 턴을 돌고 있을 수 있다. 그 broadcast 는 후계자의 `claim` 과 경합해 **살아 있는
-세션을 축출**했다 — 캐시를 버리고, 승인을 폐기하고, 구독자의 스트림을 다른 노드에서 죽은 턴 때문에 완료시켰다.
-스위퍼가 감지하는 것은 **죽은 시도 하나**이고, 지금은 그것만 보고한다.
-
-이 축소가 `EventSink` 에 `complete` 가 없는 이유이기도 하다 — 추상화가 그 말을 **할 수 없게** 만들었다.
-`complete` 는 진짜로 세션을 끝내는 경로(`releaseSession`, `deleteSession`, `EVICT` 수신)에만 남아 있고,
-그 경로들은 구체 타입을 들고 있다.
-
-`LostTurnAnnouncer` 가 턴을 `TurnId` 가 아니라 **idempotency key 로** 지목하는 것도 같은 사정이다. 살아남은
-어느 노드도 그 턴의 id 를 모른다 — 예약은 홀더를 기록하지 홀더가 돌리던 턴을 기록하지 않고, 그 id 는 죽은
-홀더가 소비한 inbox 봉투 안에 있었다. 추측해서 채울 빈칸이 아니다.
-
-감지 지연 = `max(리스 TTL, secondary TTL)` + 스윕 지연. 기본값 기준 최대 ~45초.
-
-**수집된 메시지도 로컬 턴과 똑같이 보인다.** 드레인 패스는 메시지를 하나 돌리기 직전에 그 예약의 홀더를
-`acquireHolder` 로 넘겨받고, `(키, reserverId)` 를 리스의 `IdempotencyTouchSlot` 에 바인딩한다(§7.4). 그래서 그
-메시지를 돌리던 노드가 죽으면 touch 가 멈추고, secondary TTL 이 지난 뒤 위와 **같은 스윕**이 그것을 잡는다 —
-제출 노드의 forward 는 `HOLDER_LOST` 로 같은 ~45초 안에 답을 받는다. 넘겨받기 이전에는 이 턴만 **이름이 없어서**
-스윕에서 빠졌고, 호출자는 `idempotencyForwardTtl`(기본 5분) 타임아웃으로만 답을 받았다. 재-초인종은 여기에
-쓸모가 없다 — 메시지가 이미 inbox 밖이라 드레인 패스가 집어 올 것이 없다.
-
-넘겨받기가 **실패해도 그 메시지는 그대로 실행한다.** 실패는 **넷** 중 하나이고 모두 "가져가면 안 되는" 경우이지
-"돌리면 안 되는" 경우가 아니다 — `DONE`(누군가의 캐시된 답), 홀더가 있는 예약(다른 노드가 돌고 있다), 만료된
-예약(그 forward 는 이미 포기했다), 그리고 저장소가 던진 경우. 메시지는 이미 at-most-once inbox 밖이라 거절하면
-아무 노드도 복구할 수 없다. (패스를 연 제출 자신의 메시지는 애초에 시도하지 않는다 — 그 예약에는 제출 시점에
-이미 이 노드 이름이 적혀 있어서 넘겨받기가 거절할 수밖에 없다.)
-
-**그 넷은 한 가지 결과가 아니다.** 앞의 셋은 저장소가 **대답한** 것이고 그 대답은 "이 항목은 당신 것이 아니다"
-이지만, 넷째는 저장소가 **아무 말도 하지 않은** 것이다. 침묵을 거절로 읽으면 안 된다 — 읽지 못한 호출자는 소유에
-대해 아무것도 배우지 않았다.
-
-지는 대가는 둘인데 **둘이 같이 없어지지 않는다.** (1) **스위퍼가 이 노드의 죽음을 그 턴에 대해 볼 수 없다** —
-항목에 이 노드 이름이 남지 않는 경우 전부가 여기 해당하며, 그것은 **거절**과 **쓰기가 적용되기 전에 던진 경우**
-둘이다. 호출자는 forward 마감으로 되돌아가며, 그것이 이 연산이 없던 때의 상태다. (2) 그 결과를 멱등 캐시에 쓰지
-않는다 — 이쪽은 **거절뿐**이다. `markDone` 은 네 백엔드 모두 키만 보고 매치하므로 방금 "남의 것"이라고 판정한
-항목을 덮어쓰는 것이 안전이 아니라 해악이지만(§9.2), 던진 저장소는 아무것도 판정하지 않았다. 즉 **던진 경우가
-반드시 둘 다 지키는 것은 아니다** — 캐시는 언제나 지키고, 스위퍼의 시야는 쓰기가 적용됐을 때만 지킨다(§9.2 의
-서술이 이것이다). 호출자는 네 경우 모두 rail 로 답을 받는다.
-
-**예외 경로에서까지 쓰기를 걸러 내면 그것 자체가 회귀다.** 성공한 턴의 항목이 홀더 없는 `IN_FLIGHT` 로 forward
-TTL 내내 남고, 홀더가 없으니 스위퍼도 보지 못하며, rail 을 놓친 노드는 그것을 5분 동안 폴링하다가 이미 몇 분 전에
-성공한 턴에 대해 타임아웃한다 — 그 사이 재시도는 `alreadyInFlight` 로 그 죽은 예약에 붙는다. 시도했다가 실패하는
-`markDone` 보다 엄격히 나쁘다(시도는 공짜다).
-
-**"침묵 = 아무 일도 없었음" 도 같은 종류의 오독이고, 이쪽이 더 비싸다.** 원격 저장소가 던지는 가장 흔한 방식은
-**쓰기는 적용되고 응답만 유실되는 것**이다. 그러면 항목에는 이 노드 이름이 박혀 있는데 그것을 touch 하는 것은
-아무것도 없게 되고, 이름이 있으면서 갱신되지 않는 항목이야말로 `findStaleInFlight` 가 **죽음으로 읽는** 모양이다
-— 멀쩡히 돌고 있는 턴이 `HOLDER_LOST` 로 통보되고, 키가 풀리므로 클라이언트 재시도가 같은 요청을 두 번 실행한다.
-바로 이 문서가 §9.2 에서 "거짓 양성이 더 나쁜 쪽" 이라고 적은 방향이다. 그래서 예외 경로도 예약을 touch slot 에
-바인딩한다. 쓰기가 **적용되지 않았다면** 그 바인딩은 무해하고, 동시에 **아무 효력도 없다** — `touch` 와
-`compareAndReset` 은 둘 다 홀더 일치로 매칭하고 `reserverId` 는 시도마다 새로 발급되므로 이 노드를 이름으로 갖지
-않는 항목에 대해 양쪽 다 no-op 이고, 같은 이유로 그 턴을 지켜보는 것도 없다(항목이 아무 이름도 갖지 않으므로).
-그래서 그 경우의 커버리지 손실은 **거절과 같다.** 두 가능성 중 조치가 필요한 것은 하나뿐이고, 그 조치를 소비할
-수 있는 것도 하나뿐이다.
-
-그래서 넘겨받기는 **승리 / 거절 / 알 수 없음**을 구분해서 돌려준다. "알 수 없음" 은 캐시 쓰기에서도 승리처럼
-굴고(쓴다), 정리에서도 승리처럼 군다(바인딩하고, 턴이 실패하면 리셋한다). 둘 다 하지 않는 것은 **거절뿐**이다 —
-저장소가 그 항목은 남의 것이라고 **말한** 유일한 경우이기 때문이다.
-
-**대가가 하나 더 있고, 그것은 이 변경이 새로 만든 것이다.** 전달된 턴의 예약은 이전에는 아무도 touch 할 필요가
-없어 forward TTL(5분) 위에 얹혀 있었고, 따라서 touch 실패로 스윕당할 수가 없었다. 이제는 **리스 갱신은 되는데
-`touch` 만 secondary TTL 을 넘겨 실패하는 경우** — 리스 백엔드는 멀쩡한데 멱등 백엔드만 흔들리는 구간이고,
-`IdempotencyTouchSlot.touch()` 는 예외를 삼킨다 — 살아 있는 전달 턴이 스윕되고, 호출자가 실패하고, 클라이언트
-재시도가 **같은 요청을 두 번 실행**한다. 이것은 로컬 키 있는 턴이 이미 살고 있던 조건과 같은 것이고 그 대칭이
-이 변경의 목적이지만, 순이익만은 아니다. 두 백엔드를 같은 저장소에 두면 이 구간 자체가 없어진다.
-
-**아직 실행되지 않은 메시지는 스위퍼가 보지 못한다.** 스위퍼가 훑는 것은 `IN_FLIGHT` 예약, 즉 누군가 **돌리던**
-턴이다. 홀더가 죽은 시점에 그 세션의 inbox 에 아직 collect 되지 않은 메시지가 남아 있으면 그 예약에는 홀더가
-없고(제출 노드가 forward 하면서 `releaseHolder` 로 비웠다) 따라서 스윕 대상이 아니다. 리스는 TTL 로 풀리지만
-**죽은 노드는 재-초인종(`republishDoorbell`)을 울려 줄 수 없고**, 그 초인종을 들었던 피어들은 전부 "세션이 잡혀
-있다"를 보고 물러난 뒤다. 그래서 그 메시지는 세션의 **다음 제출**까지 기다렸다 — 올지 안 올지 모르는 제출을.
-그 사이 호출자의 forward 는 `idempotencyForwardTtl`(기본 5분)을 통째로 기다린 뒤 타임아웃했다.
-
-닫는 쪽은 **기다리고 있는 노드**다. `pollForward` 는 forward 가 미해결인 동안에만 도는 타이머이므로, 매 틱마다
-그 세션의 초인종을 다시 울린다. `tryDrainOnce` 를 직접 부르지 않고 `ringDoorbell` 을 쓰는 것은 그 스레드가
-스케줄러 스레드이기 때문이다(드레인 패스는 턴을 통째로 돌린다 — §7.4 의 "블록하면 안 된다"와 같은 규칙).
-
-- **inbox 가 비어 있으면 울리지 않는다.** 드레인 패스가 집어 올 수 있는 것은 아직 수집되지 않은 메시지뿐이다.
-  누군가 이미 collect 했다면 그 메시지는 at-most-once inbox 밖으로 나갔고 결과를 낼 수 있는 것은 그 노드뿐이므로,
-  재-초인종은 아무것도 찾지 못하고 빈 패스 하나를 살 뿐이다 — 건강한 홀더가 턴 중인 경우와 같다. 이 검사는 피어가
-  delete 한 세션으로 이 경로가 들어가지 않게 하는 일도 겸한다 — delete 가 purge 한 메시지에 대해서는 inbox 가 비어
-  보이므로, 그 피어의 `EVICT` 가 이 forward 를 실패시키기 전이라도 재시도가 조용해진다. **다만 되살아나지 않는다는
-  보장은 아니다**: purge 와 레코드 삭제 사이에 배달된 메시지는 여전히 큐에 남고, 드레인 패스는 레코드를 되살린다
-  (§7.7 delete 의 finally 가 그 창을 명시한다). 그 창을 닫는 것은 `EVICT` 이며 — 폴 1틱이 오기 훨씬 전에 forward 를
-  실패시킨다 — 재시도는 그 창을 물려받을 뿐 넓히지 않는다. 그 메시지의 `MESSAGE_ENQUEUED` 를 들은 아무 피어나
-  똑같이 드레인하기 때문이다. 읽기가 실패하면 울린다 — 큐를 볼 수 없다는 것이 큐가 비었다는 증거는 아니다.
-- **회복 시간**은 리스 만료 + 폴 간격 1회로 묶인다. 기본값(리스 30초, 폴 간격 = secondary/2 = 15초) 기준
-  최대 ~45초로, 위 홀더 유실 감지와 같은 자릿수다.
-- **살아 있는 홀더에게는 아무 일도 일어나지 않는다.** 갱신 중인 리스는 `acquire` 로 뺏기지 않으므로 대기 중인
-  호출자 하나당 폴 간격마다 실패하는 acquire 1회가 전부이고, 그 `acquire` 가 성공한다는 것 자체가 아무도
-  갱신하지 않는다는 증거다.
-- 재시도 횟수는 `SessionMetrics.onForwardDoorbellRerung` 이 센다(§12).
-
-여전히 남는 것은 **기다리는 노드까지 같이 죽은 경우**다 — 그 메시지는 inbox 에 남아 세션의 다음 제출을 기다린다.
-자동으로 줍게 하려면 inbox 쪽에 스캔 SPI 가 필요하다(§14).
-
-### 6.4 끝나지 않는 턴
-
-`extend` 가 실패하면(펜싱 토큰 불일치 = 리스가 이미 넘어감) `onExtendFailed` 가 **정확히 한 번** 발화하고
-라우터가 턴을 `interrupt(LEASE_LOST)` 로 끊는다. 이후 틱은 `lostLease` 래치로 no-op 이다.
-
-이것은 `ExecutionBudget` 의 시간 상한과 **별개의** 안전망이다. 예산이 먼저고, 리스는 분산 쪽 그물이다.
-
----
-
-## 7. 동시성 — 게이트, 리스, 제출 시퀀스
+## 7. 제출과 드레인
 
 ### 7.1 제출 시퀀스 (F0–F7)
 
 ```
 [제출 노드]
  F0  시그널 구독 먼저 — I/O 보다, disposition 이 정해지기보다 앞
- F1  바인딩 사전 검증 → 불일치면 ConflictingAgentException
-       (리스도 idempotency 도 건드리지 않는다)
- F2  IdempotencyStore.putIfAbsent → §9.2 매트릭스
+ F1  바인딩 사전 검증 → 불일치면 ConflictingAgentException (리스도 멱등 원장도 건드리지 않는다)
+ F2  IdempotencyStore.putIfAbsent → 매트릭스 (idempotency.md §2)
        턴 게이트 시도  ─┐  게이트나 리스에서 지면:
-       SessionStore.claim ┘    inbox.deliver(InboundMessage) + MESSAGE_ENQUEUED broadcast
+       SessionStore.claim ┘    inbox.deliver(InboundMessage) + MESSAGE_ENQUEUED
                               → SubmitDisposition.forwarded(turnId, future)
 
 [홀더 노드]
- F3  MESSAGE_ENQUEUED 수신 → 아직 돌고 있지 않던 세션이면 드레인 시작 (초인종 경로)
- F4  드레인 루프: collect(LATER) 로 전 tier 수령 → priority-then-FIFO 정렬 → 하나씩
-       각 메시지마다 바인딩 재검증(§3.6). mismatch 면 RejectedAt + drop
+ F3  MESSAGE_ENQUEUED 수신 → 돌고 있지 않던 세션이면 드레인 시작
+ F4  드레인: collect(LATER) 로 전 tier 수령 → priority-then-FIFO → 하나씩
+       각 메시지마다 바인딩 재검증(§3.4). 다르면 RejectedAt + drop
  F5  session.submitAsync(input, relay) — relay 가 로컬 publisher 와 EVENT rail 로 fan-out
- F6  턴 종료: markDone **먼저**, 그다음 TURN_RESULT broadcast
-       (broadcast 를 놓친 노드에게 권위는 스토어다 — 순서가 거꾸로면 놓친 노드가 볼 것이 없다)
- F7  제출 노드가 rail 로 받아 future 완결.
-       rail 을 놓치면 IdempotencyStore 폴링 fallback 이 같은 일을 한다
+ F6  턴 종료: markDone 먼저, 그다음 TURN_RESULT
+ F7  제출 노드가 TURN_RESULT 로 future 완결. 놓치면 IdempotencyStore 폴링 fallback 이 같은 일을 한다
 ```
 
-**순서가 이런 이유.** F1 이 F2 보다 앞인 것은 명백히 거절될 요청이 예약도 남기지 않게 하기 위해서다. 리스
-시도가 세션 열기보다 앞인 것은 옛 초안(open → acquire)이 리스 실패 시 방금 연 핸들을 유휴 TTL 까지 띄워
-두었기 때문이다 — 리스 실패는 **다른 노드가 활발히 처리 중**이라는 뜻이므로 이 노드가 핸들을 들고 있을
-이유가 없다.
-
-**F0 이 맨 앞인 이유.** 구독을 disposition 이 정해진 뒤로 미루면, 그 사이에 홀더가 낸 `TURN_RESULT` 를
-놓친다. 그러면 F7 은 폴링 fallback 에만 의존하게 되고, 그것은 느린 길이다.
-
-**F4 의 always-collect.** 직전 홀더가 `collect` 와 리스 반납 사이에 다른 노드가 넣은 메시지(orphan)를 다음
-홀더가 자기 턴 직전에 한 번 더 수령한다. 이 단순한 "턴 전에는 항상 collect" 규칙 하나로 release-deliver
-경합에 의한 영구 누락이 사라진다. tier 를 `LATER` 까지 전부 가져오는 이유는 NOW orphan 이 직전 턴에 주입되지
-못하고 남았을 수 있기 때문이다 — 그것은 다음 턴의 첫 후보가 되는 게 자연스럽다.
-
-**F2 가 나르지 않는 것.** 봉투에 `LiveSessionOptions` 와 `OpenAttributes` 는 넣지 않는다. 홀더는 자기가
-이미 연 핸들로 처리하므로 제출 노드의 열기 파라미터가 의미를 갖지 않는다.
+- **F0 이 맨 앞이다.** 구독을 disposition 이 정해진 뒤로 미루면 그 사이 홀더가 낸 `TURN_RESULT` 를 놓치고, F7 이 느린 폴링에만 기댄다
+- **F1 이 F2 보다 앞이다.** 명백히 거절될 요청이 예약을 남기지 않게 한다
+- **리스 시도가 세션 열기보다 앞이다.** 리스 실패는 다른 노드가 활발히 처리 중이라는 뜻이므로 이 노드가 핸들을 열어 유휴 TTL 까지 띄워
+  둘 이유가 없다
+- **F6 은 `markDone` 이 먼저다.** `TURN_RESULT` 를 놓친 노드에게 권위는 저장소다. 순서가 거꾸로면 놓친 노드가 볼 것이 없다
+- **F4 는 언제나 collect 한다.** 직전 홀더가 collect 와 리스 반납 사이에 다른 노드가 넣은 메시지(orphan)를 다음 홀더가 자기 턴 직전에 한
+  번 더 수령한다. 이 규칙 하나로 release-deliver 경합에 의한 영구 누락이 사라진다. tier 를 `LATER` 까지 전부 가져오는 것은 NOW orphan 이
+  직전 턴에 주입되지 못하고 남았을 수 있기 때문이다
+- 인박스 봉투가 무엇을 나르고 무엇을 나르지 않는지, collect 의 원자성과 못 읽는 항목의 처분은 [`inbox.md`](inbox.md) 가 정본이다
 
 ### 7.2 홀더 쪽 드레인
 
-F4 루프의 종료 조건이 §7.2 의 전부다.
-
 ```
 턴 완료 (리스 보유 중, 게이트 보유 중)
-  ├─ extra = inbox.collect(id, LATER)
+  ├─ extra = collect(id, LATER)
   ├─ pendingQueue 도 extra 도 비었으면 → 루프 종료 (리스는 반납하지 않는다 — 세션 수명이다)
   └─ 아니면 priority-then-FIFO 로 병합하고 다음 턴
 ```
 
-리스가 여기서 풀리지 않는 것이 §3.2 의 실제 결과다. 리스는 §6.3 의 네 경로 중 하나가 놓는다.
+리스는 여기서 풀리지 않는다. §8.2 의 종료 경로 중 하나가 놓는다.
 
-### 7.3 `holderId` 와 — `NOT_HOLDER` 대신 hand-off
+### 7.3 hand-off — `NOT_HOLDER` 대신 `YIELD`
 
-리스 홀더는 노드 id 로 식별된다. 예전에는 `{nodeId}/{thread}/{turnSeq}` 였으나, 리스가 세션 수명이 되면서
-턴·스레드를 붙일 이유가 없어졌다. (idempotency 예약의 홀더는 이와 **다른** 문자열이다 — §7.4 마지막 문단.)
+리스 홀더는 **노드 id** 로 식별된다. 리스가 세션 수명이므로 턴·스레드를 붙일 이유가 없다. 멱등 예약의 홀더는 이와 다른 문자열이다
+([`idempotency.md`](idempotency.md) §4).
 
-원 설계는 홀더가 아닌 노드에 큐잉된 턴을 `NOT_HOLDER` 로 실패시키려 했다. 실제 구현은 **hand-off** 를 한다:
-요청 노드가 `YIELD` 를 보내고 현 홀더가 턴을 멈추고 리스를 반납한다. 이유는 `NOT_HOLDER` 가 답으로서
-쓸모없기 때문이다 — 호출자가 할 수 있는 일이 "리스 TTL 만큼 기다렸다 재시도" 뿐이라면, 그 기다림을
-프로토콜이 대신 하는 편이 낫다. 준수는 best-effort 다: pin 된 세션은 닫기를 진행 중인 턴의 끝으로 미루므로
-요청자가 무는 비용은 턴 하나의 나머지이지 즉시성이 아니다.
+홀더가 아닌 노드에 들어온 턴을 `NOT_HOLDER` 로 실패시키지 않는다. 요청 노드가 `YIELD` 를 보내고 현 홀더가 턴을 멈추고 리스를 반납한다.
+호출자가 `NOT_HOLDER` 로 할 수 있는 일이 "리스 TTL 만큼 기다렸다 재시도" 뿐이라면 그 기다림은 프로토콜이 대신 하는 편이 낫다.
 
-재진입은 허용하지 않는다. 턴 안에서 `submit` 을 다시 부르는 패턴은 라우터가 아니라 서브에이전트 계층의
-책임이다(§7.6).
+재진입은 허용하지 않는다. 턴 안에서 `submit` 을 다시 부르는 패턴은 라우터가 아니라 서브에이전트 계층의 책임이다.
 
-### 7.4 리스 수명과 갱신
+### 7.4 공정성 — 보장하지 않는다
 
-**순서는 게이트 먼저, 리스 나중**이다(§3.2). 게이트에서 지면 리스를 아예 건드리지 않는다.
+1. **선출 unfairness** — 동시 도착 시 누가 이길지 결정적이지 않다. 인박스 안에서 priority-then-FIFO 가 살아 있으므로 메시지 처리 순서는
+   보존된다
+2. **affinity starvation** — 홀더가 같은 리스 안에서 자기 노드의 후속 입력을 계속 처리하므로, 다른 노드에서 deliver 된 메시지는 홀더가
+   collect 할 때까지 기다린다
 
-`LeaseRenewer` 는 **전용 스케줄러**에서 돈다. 턴 스레드에서 돌리면 LLM 호출이나 도구 실행에 막혀 리스가
-조용히 만료된다. 권장 간격은 `lease/3` — 두 틱을 놓칠 여유이고, 기본값 30초/10초가 정확히 그것이다. 이
-여유를 지키기 위해 스위프·하트비트·폴링과 풀을 공유하지 않는다. **큐에 밀린 틱은 빼앗긴 리스와 구분되지
-않기 때문이다.**
+둘 다 받아들인다. 크로스 노드 EVENT 전달 지연은 단일 Redis 기준 p50/p95/p99 가 1.73 / 2.97 / 3.74 ms(paced), 0.15 / 0.22 / 0.33 ms
+(burst, ~6.3K ev/s 지속)로 측정되었고, 전형적인 LLM 턴 시간(수 초~수 분)에 비해 무시할 수준이다. starvation 의 경계를 정하는 것은
+broadcast 비용이 아니라 턴 길이다. 한쪽 노드의 long-tail wait 이 관찰되면 FCFS 인박스 기반 선출을 검토한다.
 
-갱신은 백엔드가 아니라 **`SessionStore.renew` 를 통한다.** 단정함의 문제가 아니다 — 갱신이 실패하면 스토어가
-자기 리스 기록을 버리고, 그래서 바로 다음 펜싱된 레코드 write 가 새 홀더의 이력 위에 얹히는 대신 거부된다.
-백엔드를 직접 갱신하면 스토어는 잃은 리스를 아직 들고 있다고 믿는다.
+### 7.5 서브에이전트
 
-`onExtendFailed` 는 스케줄러 스레드에서 돈다. 그 스레드는 절대 바쁘면 안 되는 것이 존재 이유이므로
-**블록하면 안 된다.** 세션 정리, 훅 발화, 리스 반납은 전부 다른 실행기의 일이다. 리스 하나를 잃는 것은 국소
-사건이지만, 배포된 `OnSessionEnd` 코드가 끝나기를 기다리는 훅은 **이 스레드를 공유하는 모든 세션의 리스를
-같이 잃게 만든다.**
-
-**idempotency 슬롯이 여기 얹혀 있다.** 갱신이 성공할 때마다 그 시점에 `IdempotencyTouchSlot` 에 바인딩된
-예약의 secondary TTL 을 함께 갱신한다(§9.2). 키를 스케줄 시점에 캡처하지 않고 **틱마다 읽는** 이유는 리스가
-이제 턴보다 오래 살기 때문이다 — 턴 1 을 위해 시작된 스케줄이 턴 5 가 돌 때도 살아 있다. 캡처했다면 첫 턴
-이후 모든 턴이 이미 끝난 예약을 갱신하고 자기 것은 방치했을 것이고, 스위퍼가 secondary TTL 후에 **살아 있는
-턴의 키를 리셋**해 같은 요청이 두 번 실행됐을 것이다. 슬롯은 **예약 하나에 칸 하나**이고 칸 하나가
-`(키, reserverId)` 쌍이다 — 둘을 따로 두면 틱이 턴 5 의 키를 턴 4 의 reserver 로 읽을 수 있고, `touch` 는
-홀더가 어긋나면 **조용히 무시**한다.
-
-칸이 하나가 아닌 이유는 한 패스가 두 예약을 동시에 책임질 수 있기 때문이다. 제출된 턴이 여는 드레인 패스는
-inbox 에 있던 메시지도 함께 돌리는데, **제출 자신의 예약**은 호출자가 기다리고 있으므로 패스 내내 살아 있어야
-하고, **큐에 있던 메시지의 예약**은 그 메시지가 도는 동안만 이 노드 것이다(§6.3 D). 칸이 하나뿐이면 둘이 서로를
-밀어내고, 형제 턴 하나가 secondary TTL 을 넘기는 것은 LLM 턴에서 흔한 일이므로 밀려난 쪽이 **멀쩡히 돌고 있는
-노드에서 홀더 유실로 스윕된다.**
-
-그 touch 가 지목하는 것은 **예약의 홀더**이지 `SessionLease.getHolderId()` 가 아니다. 예전에는 같은
-문자열이었지만 리스가 맨 노드 id 로 잡히게 된 뒤로는 그것으로 touch 하면 아무 일도 일어나지 않는다.
-
-### 7.5 Fairness — 보장하지 않는다
-
-분산 리스는 공정하지 않다. 두 종류가 있다.
-
-1. **선출 unfairness** — 동시 도착 시 누가 이길지 결정적이지 않다. 다만 inbox 안에서 priority-then-FIFO 가
-   살아 있으므로 **메시지 처리 순서는 보존된다.**
-2. **affinity starvation** — 홀더가 같은 리스 안에서 자기 노드의 후속 입력을 계속 처리하므로, 다른 노드에서
-   deliver 된 메시지는 홀더가 collect 할 때까지 기다린다.
-
-둘 다 받아들인다. 근거는 측정이다 — 크로스 노드 EVENT 전달 p50/p95/p99 가 단일 Redis 기준 1.73 / 2.97 /
-3.74 ms(paced), 0.15 / 0.22 / 0.33 ms(burst, ~6.3 K ev/s 지속)로, 전형적인 LLM 턴 시간(수 초~수 분)에 비해
-무시할 수준이다. **starvation 경계를 정하는 것은 broadcast 비용이 아니라 턴 길이**이므로 affinity 를 그대로
-수용한다. 운영 메트릭에서 한쪽 노드의 long-tail wait 이 관찰되면 그때 FCFS inbox 기반 선출을 검토한다.
-
-### 7.6 서브에이전트
-
-포크는 부모 턴 안에서 같은 노드에 머문다. 부모가 리스를 들고 있는 동안 포크도 그 안에서 도는 **하나의 턴**
-이므로 nested 리스 문제가 없다. 분산 포크는 이 설계 범위 밖이다.
-
-### 7.7 삭제는 홀더만 한다
-
-`deleteSession(id)` 는 이력을 지우는 유일한 API 다. 라우터를 우회한 `SessionRecordStore.delete(id)` 직접
-호출은 진행 중 턴과 경합하므로 javadoc 에서 명시적으로 비권장한다.
-
-절차는 이렇다.
-
-```
-deleteSession(id)
-  1. 리스를 먼저 잡는다
-  2. 경합하면 YIELD broadcast (+ 레거시 INTERRUPT(SESSION_RELEASED) shim) 로 현 홀더에게 양보를 요구
-     releaseInterruptTimeout 까지 bounded retry
-  3. 그 안에 못 잡으면 IllegalStateException — 호출자가 재시도한다
-  4. 잡았으면 records().delete(id)
-  5. 레코드가 지워졌으면 — 뒤따르는 정리 단계가 실패해도 — SessionLifecycleListener.onDeleted 를
-     리스를 돌려주기 전에 한 번 호출
-```
-
-**삭제 리스너 (#253).** `SessionRouterBuilder.lifecycleListener(...)`(스택에서는 `SessionSpec`, Spring 에서는
-`SessionLifecycleListener` 빈)로 등록한 리스너는 레코드가 사라진 뒤 **삭제한 노드에서 한 번** 불린다. 리스너가
-전달받는 `SessionDeletedEvent` 의 소유자와 바인딩은 삭제 직전에 읽은 값이다 — 리스너가 등록돼 있을 때만 읽고,
-읽기가 실패해도 삭제는 진행되며 리스너는 빈 소유자를 받는다. 전달 계약은 다음과 같다.
-
-- **호출 여부는 `recordDeleted` 가 정한다.** 세그먼트 삭제·종료 interrupt·`EVICT` publish(버스 장애 때 던진다)가
-  실패해도 리스너는 불리고, 원래 예외는 그대로 호출자에게 간다. 레코드를 지우기 전에 실패하면 아무것도 부르지 않는다
-- **리스 안에서.** 리스는 리스너가 도는 동안에도 갱신되므로, 리스를 쥐고 있는 동안에는 같은 `SessionId` 가 정리
-  도중에 다시 프로비저닝되는 경쟁이 없다. 갱신이 성공하는 동안만이다 — 느린 리스너가 도는 사이 리스 저장소가 갱신을
-  거절하면(장애, 리스 상실) 다른 노드가 먼저 그 id 를 claim 할 수 있다. 그 경쟁을 견딜 수 없는 리스너는 상태를 지우기
-  전에 `SessionRecordStore.exists(id)` 를 보거나 재조정 경로에 맡긴다. 리스는 리스너가 `Error` 를 던져도 돌려준다
-  (`fireDeleted` 를 감싼 `finally` 가 `returnLease` 를 부른다)
-- **at-most-once.** 레코드 삭제와 리스너 호출 사이에 노드가 죽으면 이벤트는 사라진다. 확장은 재조정 경로를 둔다
-- **격리.** 리스너의 `RuntimeException` 은 로그로 남기고 다음 리스너로 넘어가며, 삭제를 실패시키지 않는다. `Error` 는
-  잡지 않는다 — 남은 리스너는 건너뛰고 호출자에게 전파된다
-- **라우터만 부른다.** 날것의 `SessionRecordStore.delete` · `clear()` 는 부르지 않는다. 다른 노드에도 알리지 않는다 —
-  공유 상태는 정리가 한 번이면 된다
-
-리스너 안에서 지우는 중인 세션에 대해 `SessionRouter` 를 다시 부르면 안 된다 — 삭제 스레드가 그 세션의 턴 게이트를
-쥐고 있다. 근거와 기각한 대안은 [`session-owner-deletion-event.md`](session-owner-deletion-event.md) §2.2 · §6.
-
-이 경로가 손대는 노드 로컬 상태가 셋 더 있다 — 바인딩 캐시, 세션 승인, 상태 투영. **승인은 노드 로컬이라
-다른 노드의 `deleteSession` 이 여기 캐시된 사본에 닿지 못한다.** 그래서 `EVICT` 수신 핸들러가 같은 정리를
-자기 노드에서 반복한다.
+포크는 부모 턴 안에서 같은 노드에 머문다. 부모가 리스를 들고 있는 동안 포크도 그 안에서 도는 하나의 턴이므로 nested 리스 문제가 없다.
 
 ---
 
-## 8. Interrupt 전파
+## 8. 라이프사이클
+
+### 8.1 열기와 활동
+
+| 단계 | 시점 | 동작 |
+|---|---|---|
+| 라우터 | 부팅 | 노드당 1회. 애플리케이션 스코프 자원 주입 |
+| 세션 | 첫 `submit` | 레코드 lazy 생성(claim) |
+| 핸들 | 그 노드에 첫 요청 도착 | `LiveSessionCache.ensureOpen` → `LiveSessionOpener` → 등록된 `AgentRuntime` 조회 |
+
+warm-up 은 하지 않는다. 어느 노드로 갈지 모르고, 안 쓰인 핸들은 곧 유휴 정리된다. 같은 노드로 후속 메시지가 오면 캐시 hit 과
+`lastActivityAt` 갱신, 다른 노드로 오면 그 노드에서 lazy open 이다.
+
+### 8.2 종료 — 넷
+
+**A. 명시적 release — `releaseSession(id)`.** 이력을 지우지 않는 **핸들 반납**이다. 같은 `SessionId` 로 다시 보내면 이력이 살아난다.
+진행 중 턴이 있으면 순서가 보장된다 — `interrupt(SESSION_RELEASED)` → 턴 future 대기(`releaseInterruptTimeout`, 기본 5초) →
+`session.close()` → 캐시 evict → 리스 반납 → 크로스 노드 `EVICT` → publisher `complete()`. 대기가 타임아웃하면 강제 close + 즉시
+onComplete(일부 in-flight 이벤트 손실, WARN). 인박스를 purge 했으므로 이 노드가 들고 있던 초인종 표시도 버린다(`forgetDoorbell`) —
+남겨 두면 다음 리스 반납 때 빈 드레인 패스를 사고, 같은 `SessionId` 를 재사용하는 나중 세션이 자기 것이 아닌 통지를 물려받는다.
+delete 와 피어의 `EVICT` 수신도 같은 일을 한다.
+
+**B. 유휴 타임아웃.** 노드별 sweeper 가 `lastActivityAt + idleTtl < now` 항목을 정리한다. 크로스 노드 broadcast 는 하지 않는다 — 다른
+노드는 자기 기준으로 한다. 기본 10분이다. 너무 짧으면 다음 메시지마다 MCP 재연결 비용을 문다.
+
+**C. 셧다운.**
+
+1. 새 제출 거부(`submit` 은 `IllegalStateException`)
+2. 진행 중 턴 완료 대기(`closeGracefully(timeout)`)
+3. 타임아웃 후 남은 턴에 `interrupt(SYSTEM_SHUTDOWN)`
+4. 모든 핸들 close
+5. 이 노드가 쥔 리스를 명시적으로 반납 — 다른 노드가 만료를 기다리지 않게. 실패는 삼킨다(어차피 TTL 로 풀린다)
+6. publisher `onComplete`, 시그널 구독 해제, 스케줄러 종료
+7. 애플리케이션 스코프 자원은 건드리지 않는다
+
+**D. 홀더 유실(crash / OOM).** 리스는 TTL 로 풀리고 다른 노드가 이어받는다. 문제는 구독자와 대기 중인 future 다 — `EVENT` 가 그냥
+끊기면 원격 구독자는 무한 대기한다. `HolderLossSweeper` 가 멱등 원장의 오래된 `IN_FLIGHT` 예약을 찾아 그 **턴 하나**에 대해
+`InterruptedAt(HOLDER_LOST)` 를 내고 대기 중인 future 를 실패시킨다. 세션은 헐지 않는다 — 홀더 유실은 세션 유실이 아니다. 감지 지연은
+기본값 기준 최대 ~45초다. 정본은 [`idempotency.md`](idempotency.md) §6 이다.
+
+### 8.3 끝나지 않는 턴
+
+`extend` 가 실패하면(펜싱 토큰 불일치 = 리스가 이미 넘어감) `onExtendFailed` 가 정확히 한 번 발화하고 라우터가 턴을
+`interrupt(LEASE_LOST)` 로 끊는다. 이후 틱은 `lostLease` 래치로 no-op 이다. 이것은 `ExecutionBudget` 의 시간 상한과 별개의 그물이다.
+예산이 먼저고 리스는 분산 쪽 그물이다.
+
+---
+
+## 9. 삭제와 삭제 리스너
+
+`deleteSession(id)` 는 이력을 지우는 유일한 API 이고 **홀더만** 한다. 라우터를 우회한 `SessionRecordStore.delete(id)` 직접 호출은 진행
+중 턴과 경합하므로 하지 않는다.
+
+```
+deleteSession(id)
+  1. 리스를 먼저 잡는다 — 레코드가 없던 id 면 이 claim 이 프로비저닝한다
+  2. 경합하면 YIELD (+ 레거시 INTERRUPT(SESSION_RELEASED)) 로 현 홀더에게 양보를 요구, releaseInterruptTimeout 까지 bounded retry
+  3. 그 안에 못 잡으면 IllegalStateException — 호출자가 재시도한다
+  4. 리스너가 있으면 소유자·바인딩을 읽어 둔다
+  5. records().delete(id) — HOLDER_ONLY 펜스 뷰
+  6. 세그먼트 deleteAll, 종료 interrupt, 구독 종료, EVICT publish
+  7. 레코드가 지워졌으면 — 6 이 실패해도 — 리스를 돌려주기 전에 리스너를 한 번 호출
+  8. 리스 반납 (리스너가 Error 를 던져도)
+```
+
+**노드 로컬 정리.** 이 경로는 바인딩 캐시, 세션 승인, 상태 투영을 정리한다. 승인은 노드 로컬이라 다른 노드의 `deleteSession` 이 여기
+캐시된 사본에 닿지 못하므로, `EVICT` 수신 핸들러가 같은 정리를 자기 노드에서 반복한다.
+
+### 9.1 `SessionLifecycleListener`
+
+확장(예: aimon-sandbox)이 세션별 공유 상태를 정리하도록, 레코드가 사라진 뒤 리스너를 부른다.
+
+```java
+package at.aimon.core.agent.session;
+
+public interface SessionLifecycleListener {
+    default void onDeleted(SessionDeletedEvent event) { }
+    static SessionLifecycleListener whenDeleted(Consumer<SessionDeletedEvent> onDeleted) { … }
+}
+
+public final class SessionDeletedEvent {          // 불변 + 빌더
+    SessionId getSessionId();
+    Optional<Principal> getOwner();                // 삭제 직전에 기록된 값
+    Optional<String> getAgentRef();
+    Instant getDeletedAt();
+}
+```
+
+- **core 에 있다.** 외부 확장은 core 의 공개 SPI 에만 대고 컴파일한다. 레코드 삭제를 알리므로 이름은 `Session*` 이다
+- **유일한 메서드가 `default` no-op 이다.** `onCreated` 같은 콜백을 나중에 더해도 구현이 깨지지 않게. 그래서 함수형 인터페이스가 아니고,
+  람다는 `whenDeleted(Consumer)` 로 감싼다 — 이름이 `onDeleted` 가 아닌 것은 오버로드가 `onDeleted(null)` 을 모호하게 만들기 때문이다
+- **등록** — `SessionRouterBuilder.lifecycleListener(...)`(반복 가능) ← `SessionSpec.lifecycleListener(...)` ← Spring 의 모든
+  `SessionLifecycleListener` 빈(`ApplicationBeans.resolveAll` — `@Order` 순서, 그리고 리스너를 부르는 스택보다 리스너가 나중에 파괴되는
+  순서). 리스너는 `@ExternallyManaged` 이고 스택이 닫지 않는다
+
+**전달 계약**
+
+- **삭제한 노드에서, 레코드를 지운 호출마다 한 번.** 호출 여부는 `recordDeleted` 가 정한다 — 뒤따르는 세그먼트 삭제 · 종료 interrupt ·
+  `EVICT` publish(버스 장애 때 던진다)가 실패해도 리스너는 불리고, 원래 예외는 그대로 호출자에게 간다. 레코드를 지우기 전에 실패하면
+  아무것도 부르지 않는다. 존재한 적 없는 id 의 삭제는 claim 이 프로비저닝한 뒤 지우므로 빈 소유자로 불린다 — 리스너는 멱등해야 한다
+- **리스 안에서.** 리스는 리스너가 도는 동안에도 갱신되므로, 갱신이 성공하는 동안에는 같은 `SessionId` 가 정리 도중 다시 프로비저닝되는
+  경쟁이 없다 — "세션 X 의 옵션" 을 지우는 리스너가 1ms 뒤 새로 생긴 세션 X 의 옵션을 지우지 않는다. 느린 리스너가 도는 사이 리스 저장소가
+  갱신을 거절하면 다른 노드가 먼저 그 id 를 claim 할 수 있다. 그 경쟁을 견딜 수 없는 리스너는 상태를 지우기 전에
+  `SessionRecordStore.exists(id)` 를 보거나 재조정 경로에 맡긴다. 리스너가 `Error` 를 던져도 리스는 돌려준다 — 그렇지 않으면 갱신기가
+  삭제된 id 의 리스를 무한정 갱신한다
+- **소유자를 읽지 못해도 삭제한다.** 삭제 전 읽기가 실패하면 WARN 을 남기고 빈 소유자·바인딩으로 리스너를 부른다. 읽기 실패가 레코드를
+  지울 수 없게 만들면 안 된다. 읽기는 리스너가 있을 때만 한다
+- **at-most-once.** 레코드 삭제와 리스너 사이에 노드가 죽으면 이벤트는 사라진다. 확장은 재조정 경로를 둔다(예: `exists(id)` 가 false 인
+  세션별 상태를 주기적으로 버린다)
+- **격리.** 리스너의 `RuntimeException` 은 세션 id 와 리스너 클래스를 담은 WARN 으로 남기고 다음 리스너로 넘어가며 삭제를 실패시키지
+  않는다 — 레코드는 이미 되돌릴 수 없이 사라졌고, 던지면 빈 레코드를 프로비저닝하고 지우는 재시도를 부른다. `Error` 는 잡지 않는다 —
+  남은 리스너는 건너뛰고 호출자에게 전파된다. 정리 단계의 예외와 리스너의 예외가 겹치면 정리 단계의 것이 호출자에게 간다
+- **동기다.** 리스너는 턴 게이트와 리스를 쥔 채 돌아 그 세션 id 에 대한 제출을 막는다. 짧게 끝내고 무거운 일은 실행기로 넘긴다
+- **라우터만 부른다.** 날것의 `SessionRecordStore.delete` · `clear()` 는 부르지 않는다. 다른 노드에도 알리지 않는다 — 공유 상태는 정리가 한
+  번이면 된다
+- **리스너 안에서 지우는 중인 세션에 대해 `SessionRouter` 를 다시 부르지 않는다.** 삭제 스레드가 그 세션의 턴 게이트를 쥐고 있다 — 제출은
+  인박스에 떨어진 채 초인종이 다시 울리지 않고, 중첩 삭제는 쥔 게이트에 재진입한다
+
+---
+
+## 10. 인터럽트 전파
 
 사용자가 노드 B 에서 "stop" 을 눌렀는데 턴은 노드 A 에서 돈다.
 
@@ -732,278 +506,198 @@ deleteSession(id)
    └─ SessionSignalBus.publish(INTERRUPT, id, reason, originNode=B)
 
 [모든 구독 노드]
-   └─ 이 노드에 활성 턴 또는 캐시 항목이 있으면 → session.interrupt(reason)
-                                              (없으면 무시)
+   └─ 이 노드에 활성 턴 또는 캐시 항목이 있으면 → session.interrupt(reason)   (없으면 무시)
 ```
 
-멈출 세션을 고를 때 **진행 중 턴의 세션이 캐시 항목보다 우선**이다. 캐시가 틀리는 경우가 정확히 그것이기
-때문이다 — mid-turn 축출은 항목을 맵에서 지우지만 턴은 자기가 pin 한 세션 위에서 계속 돈다.
-
-경합은 안전하게 수렴한다. 신호 도착 직전에 턴이 끝났으면 `LiveSession.interrupt()` 의 idempotency 계약
-(활성 턴 없음 → 조용한 no-op)이 받아 준다. 겨냥한 형태(`turnId` 있음)는 활성 턴과 다르면 no-op 이고,
-`FORWARDED` 턴은 애초에 이 노드에서 돌지 않으므로 여기서 no-op 이다.
+멈출 세션을 고를 때 **진행 중 턴의 세션이 캐시 항목보다 우선**이다. mid-turn 축출은 항목을 맵에서 지우지만 턴은 자기가 pin 한 세션 위에서
+계속 돈다. 경합은 안전하게 수렴한다 — 신호 도착 직전에 턴이 끝났으면 `LiveSession.interrupt()` 의 계약(활성 턴 없음 → 조용한 no-op)이
+받는다. 겨냥한 형태는 활성 턴과 다르면 no-op 이고, `FORWARDED` 턴은 이 노드에서 돌지 않으므로 여기서 no-op 이다.
 
 ---
 
-## 9. 비동기 실행
+## 11. 비동기 결과
 
-### 9.1 `SubmitDisposition`
+### 11.1 `SubmitDisposition`
 
 ```java
 enum Kind { EXECUTED_LOCALLY, FORWARDED }
 ```
 
-**두 종류 모두** `TurnId` 와 `CompletionStage<AgentExecutionResult>` 를 필수로 나른다. `FORWARDED` 가
-"기다려 봐라"가 아니라 완결되는 future 를 주는 것이 §3.5 의 실현이다. `FORWARDED` 만 추가로
-`Optional<InboundMessageId>` 를 갖는다.
+두 종류 모두 `TurnId` 와 `CompletionStage<AgentExecutionResult>` 를 필수로 나른다. `FORWARDED` 만 `Optional<InboundMessageId>` 를 더 갖는다.
+전달된 future 는 F7 의 두 경로 중 하나로 완결되고, 다음 경우 예외로 완결된다 — agent 충돌, 세션 축출·삭제, 홀더 유실, 인박스가 그 메시지를
+읽지 못함([`inbox.md`](inbox.md) §4), forward TTL 경과(기본 5분).
 
-전달된 future 는 F7 의 두 경로 중 하나로 완결되고, 다음 경우 **예외로** 완결된다.
+이 타입은 `at.aimon.core.agent.session.SubmitOutcome` 과 **의도적으로 다르다.** 후자는 `EXECUTED`/`QUEUED` 로 한 라이브 세션 안에서의
+즉시성을 말하고, 이쪽은 클러스터에서 어느 노드가 돌리는지를 말한다. 축이 다르므로 한 타입으로 겸하면 둘 다 흐려진다.
 
-- agentRef 충돌 (`ConflictingAgentException`)
-- 세션 축출 또는 삭제
-- forward TTL 경과 (기본 5분)
+### 11.2 전달된 턴은 artifacts 를 나르지 않는다
 
-이 타입은 `at.aimon.core.agent.session.SubmitOutcome` 과 **의도적으로 다르다.** 후자는 `EXECUTED`/`QUEUED`
-로 한 라이브 세션 안에서의 즉시성만 말하고, 이쪽은 클러스터에서 어느 노드가 돌리는지를 말한다. 두 축이
-다르므로 한 타입으로 겸하면 둘 다 흐려진다.
+`AgentExecutionResult.getArtifacts()` 에는 와이어 인코딩이 없으므로 `TURN_RESULT` 로 돌아온 결과는 artifacts 가 비어 있다. **계약이지
+우회할 버그가 아니다** — 파일 아티팩트는 만든 노드의 가상 파일시스템에 있고, 그 바이트를 시그널 페이로드에 실어 나르는 것은 이 rail 의
+목적이 아니다. 필요하면 공유 파일시스템(`aimon-filesystem-{gridfs,s3}`)을 쓴다([`../agent-execution/artifact.md`](../agent-execution/artifact.md)).
 
-### 9.2 Idempotency
-
-`SubmitRequest.idempotencyKey`(클라이언트 발급)로 at-most-once 를 보장한다. **메시지 내용으로 dedup 하지
-않는다** — 그것은 inbox 의 일도 이 저장소의 일도 아니다.
-
-| 케이스 | 라우터 동작 | 응답 |
-|---|---|---|
-| 키 없음 | dedup 안 함 | 정상 |
-| 처음 보는 키 | `IN_FLIGHT` 기록 후 정상 처리 | 정상 |
-| 같은 키 + 같은 입력 + 진행 중 | 새 턴 없음, **기존 턴에 attach** | 합성 id 로 `FORWARDED` — 결과는 그 턴의 future |
-| 같은 키 + 같은 입력 + 완료 | 캐시된 result 로 즉시 완결 | `EXECUTED_LOCALLY`(이미 완료된 future) |
-| 같은 키 + **다른** 입력 | 명백한 클라이언트 버그 | `IdempotencyConflictException` (409) |
-| 같은 키 + primary TTL 경과 | 새 키처럼 | 정상 |
-| 같은 키 + `IN_FLIGHT` + stale | `compareAndReset` 후 재진입 | 정상 |
-
-입력 비교는 `inputHash`(정규화 후 SHA-256)로 한다.
-
-**두 개의 TTL 이 있는 이유.** primary(기본 24시간)만 있으면 홀더가 죽었을 때 `IN_FLIGHT` 항목이 24시간 내내
-박혀 있다. 그래서 `IN_FLIGHT` 에는 짧은 secondary TTL(기본 30초 = 리스와 동일)을 따로 두고, 홀더가 살아
-있는 동안 리스 갱신이 함께 touch 한다(§7.4). 홀더가 죽으면 secondary 가 만료되어 항목이 없는 것처럼 되고,
-primary 는 `DONE` 전이 후에야 효력을 갖는다.
-
-**홀더 이름은 노드 사이를 오간다.** 제출 노드가 선출에서 지면 `releaseHolder` 로 홀더를 비운 채 메시지를
-inbox 로 넘기고(§7.1 F2), 그 메시지를 수집한 노드가 `acquireHolder` 로 자기 이름을 다시 적으면서 TTL 을
-secondary 로 되돌린다. 두 연산은 서로의 역이고 둘 다 원자적이다 — 같은 예약을 두 노드가 동시에 집어도 정확히
-하나만 이긴다. 그래서 이름이 비어 있는 구간은 **아무도 돌고 있다고 알려지지 않은** 구간이고, 그것이
-`findStaleInFlight` 가 홀더 없는 항목을 건너뛰는 근거다. **"아무도 돌지 않는" 과 같지는 않다** — 넘겨받기가
-거절되면 이름 없는 예약 위에서 도는 턴이 생기고, 그 턴에 대해서는 이 배제가 실제로 커버리지를 잃는다. (넘겨받기가
-**던진** 경우는 여기 들어가지 않는다: 쓰기가 적용됐다면 이름이 있고, 적용되지 않았다면 거절과 같아진다 — §6.3 D.)
-의도한 교환이다: 거짓 양성은 멀쩡한 턴을 죽이고 재시도를 이중 실행시키지만, 놓친 것의 대가는 호출자가 forward
-마감까지 기다리는 것뿐이다(§6.3 D).
-
-`markDone` 은 이 이름을 보지 않고 키만 본다. 그래서 **저장소가 "남의 것" 이라고 답한** 노드는 결과를 캐시에 쓰지
-않는다 — 쓰면 클라이언트가 이미 받은 답을 그가 본 적 없는 답으로 바꾼다. **저장소를 읽지 못한** 노드는 다르다:
-아무것도 배우지 않았으므로 이 연산이 없던 때처럼 쓴다(§6.3 D). 홀더 일치 조건부 `markDone` 을 SPI 에 두면 이
-구분을 저장소 쪽에서 강제할 수 있지만 지금은 라우터가 지킨다(§14).
-
-**stale 정리의 경합 안전성**은 `compareAndReset(key, expectedHolderId)` 하나가 담당한다. 여러 노드가 동시에
-같은 stale 항목을 발견해도 홀더가 일치하는 한 노드만 이기고, 나머지는 새 항목을 본다. 이긴 노드가 §6.3 D 의
-두 단계를 수행한다.
-
-운영 기본값: 리스 30초, secondary 30초, 스윕 15초. 감지 지연 최대 ~45초. stale-reset 빈도가 높으면 노드
-안정성 신호로 읽는다(§12).
-
-### 9.3 우선순위
-
-`QueuedInputPriority` 는 `NOW` / `NEXT` / `LATER` 셋이고 봉투가 그대로 나른다.
-
-- **`NOW`** — 홀더가 `MESSAGE_ENQUEUED` 를 받고 턴이 돌고 있으면 `collect(id, NOW)` 로 NOW 만 잘라
-  `QueuedInput` 으로 다시 싸서 세션 내부 큐에 넣는다. 기존 mid-turn 주입 로직이 이어받는다.
-- **`NEXT` / `LATER`** — 턴이 끝난 뒤 §7.2 의 collect 에서 처리된다.
-
-정렬은 `(priority.ordinal, deliveredAt)` 안정 정렬이다 — NOW 가 NEXT/LATER 보다 앞이고, 같은 priority
-안에서는 도착 순서가 보존된다.
-
-한 가지 정직하게 적어 둔다. **`NOW` 의 즉시성은 홀더 노드에서만 성립한다.** 라우터는 턴 경계에서 회수하고,
-mid-turn 주입은 `MESSAGE_ENQUEUED` 를 받은 홀더가 능동적으로 할 때만 일어난다. 그 밖의 경우 `NOW` 의 의미는
-"다음 턴에서 가장 먼저" 로 축소된다.
-
-### 9.4 전달된 턴은 artifacts 를 나르지 않는다
-
-`AgentExecutionResult.getArtifacts()` 에는 와이어 인코딩이 없다. 그래서 `TURN_RESULT` rail 로 돌아온 결과는
-artifacts 가 비어 있다. **이것은 계약이지 우회할 버그가 아니다** — 파일 아티팩트는 만든 노드의 가상
-파일시스템에 있고, 그 바이트를 시그널 페이로드에 실어 나르는 것은 이 rail 의 목적이 아니다. 필요하면
-공유 파일시스템(`aimon-filesystem-{gridfs,s3}`)을 쓴다
-([`../agent-execution/artifact.md`](../agent-execution/artifact.md)).
-
-실패 코드는 **전방 호환**이다. 모르는 `Failure.Code` 이름은 메시지를 보존한 채 `FAILED` 로 디코드한다 —
-롤링 배포에서 덜 정확한 이유로 열화될 뿐 시그널이 통째로 드롭되지는 않는다. `SignalKind.valueOf` 가 던져서
-시그널 전체를 날리는 것과 정반대의 선택이며, 이유는 여기서 잃는 것이 **호출자의 future** 이기 때문이다.
+실패 코드는 **전방 호환**이다. 모르는 `Failure.Code` 이름은 메시지를 보존한 채 `FAILED` 로 디코드한다. 롤링 배포에서 덜 정확한 이유로
+열화될 뿐 시그널이 통째로 드롭되지 않는다. `SignalKind.valueOf` 가 던지는 것과 정반대의 선택이고, 이유는 여기서 잃는 것이 호출자의
+future 이기 때문이다.
 
 ---
 
-## 10. 장애 시나리오
+## 12. 장애
 
-### 10.1 분산 백엔드 일시 장애
+### 12.1 분산 백엔드 일시 장애
 
 | 영향 | 응답 |
 |---|---|
-| `claim` 실패 | `submit` 이 실패한다. 웹 어댑터가 503 으로 매핑, 재시도 권장 |
+| `claim` 실패 | `submit` 이 실패한다. 웹 어댑터가 503 으로, 재시도 권장 |
 | `renew` 실패 | 진행 중 턴은 `interrupt(LEASE_LOST)`. partial state 는 커밋되지 않는다 |
-| pub/sub 끊김 | interrupt 전파 불가. 재연결 후 재구독하며, 끊긴 동안의 신호는 손실 |
-| 백엔드 영구 손실 | 모든 in-flight 턴 중단. `SessionRecordStore` 가 별도 백엔드면 이력은 보존 |
+| pub/sub 끊김 | 인터럽트 전파 불가. 재연결 후 재구독하며, 백엔드에 따라 끊긴 동안의 신호는 손실된다 |
+| 백엔드 영구 손실 | 모든 in-flight 턴 중단. 레코드 저장소가 별도 백엔드면 이력은 보존 |
 
-권장: 리스·시그널 백엔드는 HA 로 구성한다.
+리스·시그널 백엔드는 HA 로 구성한다.
 
-### 10.2 노드 다운
+### 12.2 노드 다운
 
-리스는 TTL 로 풀리고, 캐시는 사라지고, 진행 중 턴은 손실된다. inbox 가 분산 백엔드면 deliver 된 메시지는
-살아남아 다른 노드가 collect 한다. 구독자는 §6.3 D 로 `InterruptedAt(HOLDER_LOST)` 를 받는다.
+리스는 TTL 로 풀리고, 캐시는 사라지고, 진행 중 턴은 손실된다. 인박스가 분산 백엔드면 deliver 된 메시지는 살아남아 다른 노드가 collect
+한다. 구독자는 `InterruptedAt(HOLDER_LOST)` 를 받는다(§8.2 D).
 
-### 10.3 Split-brain
+### 12.3 Split-brain
 
-파티션으로 두 노드가 동시에 리스를 들었다고 믿는 경우, `SessionStore` 의 펜싱 토큰이 write 단계에서 걸러
-낸다(§5.3). 리스를 짧게 잡고 갱신 실패 시 즉시 중단하는 정책이 창을 좁힌다.
+파티션으로 두 노드가 동시에 리스를 들었다고 믿으면, 쓰기 펜스가 리스를 잃은 쪽의 다음 쓰기를 거절한다
+([`session-store.md`](session-store.md) §5). 리스를 짧게 잡고 갱신 실패 시 즉시 중단하는 정책이 창을 좁힌다. 펜스는 완전한 해법이 아니다.
 
-`DeploymentMode.DISTRIBUTED` 가 SPI 미주입 시 **fail-fast** 하는 이유가 이것이다 — in-memory SPI 로 멀티
-노드를 돌리면 조용한 split-brain 이 된다(§11.2).
+`DeploymentMode.DISTRIBUTED` 는 SPI 가 하나라도 주입되지 않으면 `build()` 에서 실패한다. in-memory SPI 로 멀티 노드를 돌리면 조용한
+split-brain 이 되기 때문이다.
 
-### 10.4 Stale 캐시
+### 12.4 Stale 캐시
 
-두 노드가 같은 세션을 캐시하고 A 에서 턴이 돌면 B 의 사본은 낡는다. B 에 다음 요청이 오면 턴 시작 전에
-레코드에서 다시 읽어야 한다.
-
-이 불변식은 이미 성립한다. `OrcaAgentExecutor` 가 매 턴 시작 시 `TranscriptManager.initialize(sessionId,
-systemPrompt)` 를 호출하고, 그 계약이 *"세션이 있으면 읽고 없으면 새로 만든다"* 이다. 즉 **다시 읽는 책임자는
-핸들이 아니라 executor** 이고, 핸들의 사본은 권위가 아니다. 두 노드의 핸들이 잠시 서로 다른 시점의 view 를
-들고 있어도 실제 턴은 항상 레코드 최신 상태에서 시작한다.
+두 노드가 같은 세션을 캐시하고 A 에서 턴이 돌면 B 의 사본은 낡는다. 그래도 문제가 없다 — `OrcaAgentExecutor` 가 매 턴 시작 시
+`TranscriptManager.initialize(sessionId, systemPrompt)` 를 부르고, 그 계약이 "세션이 있으면 읽고 없으면 새로 만든다" 이다. 다시 읽는
+책임자는 핸들이 아니라 executor 이고, 핸들의 사본은 권위가 아니다.
 
 ---
 
-## 11. 공개 API
+## 13. 공개 API
 
-### 11.1 `SubmitRequest`
+### 13.1 `SubmitRequest`
 
-불변 클래스 + 빌더(프로젝트 규약). 필드:
+불변 클래스 + 빌더.
 
 | 필드 | 기본값 | 비고 |
 |---|---|---|
 | `sessionId` | (필수) | |
-| `agentRef` | (필수) | §3.6 — 첫 턴 이후에는 비교만 |
-| `contextDiscriminator` | 없음 | 공백과 `':'` 를 거부한다 — `AgentRuntimeId` 형식이 `:` 로 갈리기 때문 |
+| `agentRef` | (필수) | §3.4 — 첫 턴 이후에는 비교만. `AgentRuntimeId.fromName` 이 거부할 이름은 `build()` 가 거부 |
+| `contextDiscriminator` | 없음 | 공백과 `':'` 를 거부한다 — `AgentRuntimeId` 형식이 `:` 로 갈린다 |
 | `userInput` | (필수) | `UserInput` — 텍스트·이미지·문서·조합. 빌더는 `String` 오버로드를 유지한다(=`TextInput.of`) |
 | `options` | `LiveSessionOptions.defaults()` | 열 때만 쓰인다 |
 | `submitOptions` | `SubmitOptions.empty()` | 턴 단위 메타데이터 |
 | `openAttributes` | `OpenAttributes.empty()` | 캐시 미스 시에만 opener 로 간다 |
-| `idempotencyKey` | 없음 | §9.2 |
-| `priority` | `NEXT` | §9.3 |
-| `initiator` | 없음 | `Principal` |
+| `idempotencyKey` | 없음 | [`idempotency.md`](idempotency.md) |
+| `priority` | `NEXT` | [`inbox.md`](inbox.md) §5 |
+| `initiator` | 없음 | `Principal` — 제출한 주체 |
+| `owner` | 없음 | 세션 소유자. 레코드를 프로비저닝할 때만 쓰이고 이미 소유자가 있는 세션에서는 무시된다([`session-model.md`](session-model.md) §5) |
 
-`options` / `openAttributes` 가 "열 때만" 인 것에 주의한다. 캐시 hit 이면 무시된다 — 턴마다 달라져야 하는
-값은 `submitOptions` 에 넣는다.
+`options` / `openAttributes` 는 "열 때만" 이다. 캐시 hit 이면 무시되므로 턴마다 달라져야 하는 값은 `submitOptions` 에 넣는다.
 
-### 11.2 빌더와 `DeploymentMode`
+### 13.2 빌더와 `DeploymentMode`
 
-`sessionFactory(...)` 와 `sessionOpener(...)` 중 **정확히 하나**를 설정한다. 전자는 무상태
-`LiveSessionFactory` 를 위한 람다 친화 경로이고(`OpenAttributes` 를 무시한다 — `aimon-cli` 가 쓴다), 후자는
-호출자 도메인 속성(tenant id 등)을 세션 열기까지 흘린다.
+`sessionFactory(...)` 와 `sessionOpener(...)` 중 **정확히 하나**를 설정한다. 전자는 무상태 `LiveSessionFactory` 를 위한 람다 친화 경로이고
+(`OpenAttributes` 를 무시한다), 후자는 호출자 도메인 속성(tenant id 등)을 세션 열기까지 흘린다.
 
-빌더는 `SessionRecordStore` 와 `SessionLeaseStore` 를 **따로** 받아 `SessionStore` 를 여기서 조립한다.
-이유는 §5.3 — "라우터당 스토어 하나"를 사람이 기억할 것이 아니라 구조로 만들기 위해서다.
+빌더는 `SessionRecordStore` 와 `SessionLeaseStore` 를 **따로** 받아 `SessionStore` 를 직접 조립한다 — "라우터당 스토어 하나" 를 사람이
+기억할 것이 아니라 구조로 만들기 위해서다([`session-store.md`](session-store.md) §4.1).
 
 | 모드 | SPI | nodeId |
 |---|---|---|
-| `SINGLE_NODE` | 미주입 SPI 는 in-memory 로 채운다 | 불필요 |
-| `DISTRIBUTED` | **전부 주입 필수**, 하나라도 빠지면 `build()` 가 실패 | 필수 |
-
-기본값:
+| `SINGLE_NODE` | 주입하지 않은 SPI 는 in-memory 로 채운다 | 불필요 |
+| `DISTRIBUTED` | 전부 주입 필수, 하나라도 빠지면 `build()` 실패 | 필수 |
 
 | 튜너블 | 기본 | 비고 |
 |---|---|---|
-| `idleTtl` | 10분 | §6.3 B |
-| `maxCachedSessions` | 1000 | 힙 경계 (§5.2) |
-| `lockLease` / `lockExtendInterval` | 30초 / 10초 | 정확히 두 틱의 여유 (§7.4) |
+| `idleTtl` | 10분 | §8.2 B |
+| `maxCachedSessions` | 1000 | 힙 경계(§4.2) |
+| `lockLease` / `lockExtendInterval` | 30초 / 10초 | 두 틱의 여유(§4.3) |
 | `statusHeartbeatInterval` | 10초 | 위와 수치만 같고 무관 |
-| `holderLossSweepInterval` | 15초 | §6.3 D |
-| `idempotencyPrimaryTtl` / `secondaryTtl` | 24시간 / 30초 | §9.2 |
-| `idempotencyForwardTtl` | 5분 | 전달된 future 의 마감 (§9.1) |
-| `releaseInterruptTimeout` | 5초 | §6.3 A, §7.7 |
-| `relayCloseDrainTimeout` | 2초 | 턴 종료가 `EVENT` rail 을 기다리는 상한 (§5.5.1) |
+| `holderLossSweepInterval` | 15초 | [`idempotency.md`](idempotency.md) §6 |
+| `idempotencyPrimaryTtl` / `secondaryTtl` | 24시간 / 30초 | [`idempotency.md`](idempotency.md) §3 |
+| `idempotencyForwardTtl` | 5분 | 전달된 future 의 마감(§11.1) |
+| `releaseInterruptTimeout` | 5초 | §8.2 A, §9 |
+| `relayCloseDrainTimeout` | 2초 | 턴 종료가 `EVENT` rail 을 기다리는 상한(§6.1) |
 
-내부 컴포넌트(`LeaseRenewer`, `InProcessEventPublisher`, `LiveSessionCache`)는 라우터가 소유하며 외부에서
-주입하지 않는다.
+내부 컴포넌트(`LeaseRenewer`, `InProcessEventPublisher`, `LiveSessionCache`)는 라우터가 소유하며 외부에서 주입하지 않는다.
 
 ---
 
-## 12. 운영 계측
+## 14. 계측 — `SessionMetrics`
 
-`SessionMetrics` 는 프레임워크 중립이고 모든 메서드가 no-op 기본 구현을 갖는다 — 필요한 것만 구현하면 되고,
-계측을 요구하지 않은 애플리케이션에는 `NOOP` 이 들어간다.
+`SessionMetrics` 는 프레임워크 중립이고 모든 메서드가 no-op 기본 구현을 갖는다. 필요한 것만 구현하면 되고, 계측을 요구하지 않은
+애플리케이션에는 `NOOP` 이 들어간다. 백엔드 모듈은 이 타입을 볼 수 없다 — 그것이 라우팅에 있고 백엔드 main 은 core 만 본다. 그래서
+세션 메트릭을 셀 수 있는 자리는 라우터다.
 
 | 훅 | 답하는 질문 |
 |---|---|
-| lock acquire latency (성공/거절) | 선출이 느려지고 있나 |
-| 캐시 hit-rate | idle TTL 이 너무 짧은가 |
-| evict 빈도 | `maxCachedSessions` 가 부족한가 |
-| lease extend 실패 | 노드가 리스를 잃고 있나 |
-| submit outcome (`EXECUTED_LOCALLY` / `FORWARDED`) | 노드들이 inbox 에 쌓이고 있나 |
-| holder loss | 프로덕션에서 회복 경로가 실제로 발동했나 |
-| 예약 넘겨받기 거절 | 이 클러스터가 같은 요청을 두 번 실행했나 — **정상 상태에서 0 이어야 한다.** 거절은 저장소가 "이 키는 남의 것" 이라고 **대답한** 것이고(`DONE` = 이미 나온 답, 홀더 있음 = 다른 노드가 도는 중), 그래도 메시지는 실행된다(§6.3 D). 이 사건은 다른 흔적을 남기지 않는다 — 결과는 의도적으로 캐시에 쓰이지 않고, 호출자는 rail 로 평소처럼 답을 받으며, 구분되는 announcement 도 없다. 저장소가 **던진** 경우는 세지 않는다(소유에 대해 아무것도 배우지 않았다) |
-| forward 재-초인종 | 아무도 수집하지 않은 메시지를 기다리는 호출자가 있나 — **재시도 횟수이지 회복 횟수가 아니다.** 인수에 성공하면 메시지가 inbox 밖으로 나가 재시도가 멎으므로 이 카운터 자체가 성공 신호다(멎지 않는 비율이 경보 대상). 인수를 따로 알려 주는 훅은 없다 — 드레인 경로의 acquire 는 `onLockAcquire*` 를 내지 않는다 |
+| `onLockAcquireSucceeded` / `onLockAcquireRejected` | 선출이 느려지고 있나 |
+| `onCacheHit` / `onCacheMiss` | idle TTL 이 너무 짧은가 |
+| `onCacheEviction` | `maxCachedSessions` 가 부족한가 |
+| `onLeaseExtendSucceeded` / `onLeaseExtendFailed` | 노드가 리스를 잃고 있나 |
+| `onSubmitOutcome` (`EXECUTED_LOCALLY` / `FORWARDED`) | 노드들이 인박스에 쌓이고 있나 |
+| `onHolderLossRecovered` | 프로덕션에서 회복 경로가 실제로 발동했나 |
+| `onReservationTakeOverRefused` | 이 클러스터가 같은 요청을 두 번 실행했나 — **정상 상태에서 0** 이어야 한다([`idempotency.md`](idempotency.md) §5) |
+| `onForwardDoorbellRerung` | 아무도 수집하지 않은 메시지를 기다리는 호출자가 있나 — 재시도 횟수이지 회복 횟수가 아니다([`idempotency.md`](idempotency.md) §6) |
 
-호출 규약이 셋 있다 — 훅은 **이벤트를 낸 스레드에서** 돌고(턴 실행기, 스케줄러, 시그널 디스패처),
-**블록하면 안 되며**, **던지면 안 된다.** 라우터가 방어적으로 감싸긴 하지만(`safeMetric`), 계측 장애가 세션
-수명을 깨는 것은 어느 쪽에도 이롭지 않다.
-
----
-
-## 13. 기각한 대안
-
-**세션 소유권 고정(sticky).** LB 계층에 배포 제약을 떠넘긴다. 그리고 sticky 는 노드가 죽는 순간 아무것도
-해 주지 않으므로, 어차피 이 문서의 회복 경로를 전부 만들어야 한다 — 그러고 나면 sticky 는 순수한 추가
-제약이다.
-
-**턴 단위 리스.** 원래 그랬고 §3.2 에서 버렸다. 매 턴 반납은 같은 노드가 연속 턴을 돌 때조차 경합을
-만들고, hand-off 를 리스 만료 대기로 바꾼다.
-
-**타입 객체를 시그널에 싣기.** 처음 릴레이는 `Map.of("event", typedEvent)` 를 발행하고 수신 측이
-`instanceof AgentExecutionEvent` 로 받았다. in-process 버스에서만 참이고 실제 버스에서는 크로스 노드
-`events()` 가 **아무것도 전달하지 않았다.** 평평한 원시값 코덱 3종이 그 자리를 대신한다(§5.5.2).
-
-**홀더 유실 시 `EVICT` broadcast.** §6.3 D 에 적은 대로, 죽은 턴 하나 때문에 살아 있는 세션을 헐었다.
-
-**전달된 턴에 `NOT_HOLDER` 응답.** §7.3 — 호출자가 할 수 있는 일이 대기뿐이면 프로토콜이 대신 기다린다.
-
-**`SubmitOutcome` 재사용.** §9.1 — 축이 다르다.
+호출 규약은 셋이다 — 훅은 이벤트를 낸 스레드에서 돌고(턴 실행기, 스케줄러, 시그널 디스패처), 블록하면 안 되며, 던지면 안 된다.
+라우터가 방어적으로 감싸지만(`safeMetric`), 계측 장애가 세션 수명을 깨는 것은 어느 쪽에도 이롭지 않다.
 
 ---
 
-## 14. 남은 것
+## 15. 설계 결정
 
-| 항목 | 지금 상태 |
+| 쟁점 | 결정 | 기각한 대안과 이유 |
+|------|------|-------------------|
+| 세션 배치 | sticky 없음, 리스로 직렬화 | **세션 소유권 고정(sticky)** — LB 계층에 배포 제약을 떠넘기고, 노드가 죽는 순간 아무것도 해 주지 않으므로 이 문서의 회복 경로를 어차피 만들어야 한다. 그러고 나면 순수한 추가 제약이다 |
+| 리스 수명 | 세션 수명 + 노드 로컬 턴 게이트 | **턴 단위 리스** — 같은 노드의 연속 턴도 경합하고, hand-off 가 리스 만료 대기가 된다 |
+| 핸들 중복 | 허용, 권위는 레코드 | **핸들 소유권 강제** — 그것이 곧 sticky 다 |
+| 캐시 키 | `SessionId` 단일 | **`(SessionId, agentRef)`** — 같은 세션에 두 핸들이 공존한다 |
+| 시그널 페이로드 | 평평한 원시값 코덱 셋 | **타입 객체를 싣기** — in-process 버스에서만 참이고 실제 버스에서는 크로스 노드 `events()` 가 아무것도 전달하지 않는다 |
+| 세션 이동 | `YIELD` | **`INTERRUPT`** — 홀더가 리스를 놓지 않는다. **`EVICT`** — 대기 중인 호출자에게 삭제됐다고 거짓말을 한다 |
+| 비홀더에 들어온 턴 | hand-off | **`NOT_HOLDER` 응답** — 호출자가 할 수 있는 일이 대기뿐이면 프로토콜이 대신 기다린다 |
+| 홀더 유실 회복 | 턴 스코프 | **세션 스코프 `EVICT`** — 죽은 턴 하나 때문에 살아 있는 세션을 헌다([`idempotency.md`](idempotency.md) §6) |
+| 제출 결과 타입 | `SubmitDisposition` 별도 | **`SubmitOutcome` 재사용** — 축이 다르다 |
+| 오버플로 | 세 등급, 구조 프레임 보존 | **델타 둘을 같은 등급으로** — 숙고 폭주가 답 텍스트를 밀어낸다 |
+| 실패 코드 디코드 | 모르는 값은 `FAILED` | **`valueOf` 로 던짐** — 호출자의 future 를 잃는다 |
+| 리스 숫자 | 30/10/15 유지 | **리스 단축** — 갱신 부하가 두 배가 된다. 블랙아웃은 기다림의 상한으로 줄인다 |
+| 삭제 이벤트 | 라우터가 삭제한 노드에서, 리스 안에서 부르는 core SPI | **`SessionRecordStore.delete` 를 꾸미기** — 락을 우회하는 raw delete 에도 발화하고 리스 밖에서 발화해 같은 id 경쟁이 다시 열린다. **세션별 `events()` 의 종결 프레임** — release 와 delete 를 구분하지 못하고 삭제 전에 세션마다 구독이 필요하다. **`EVICT` 에 `reason=DELETED`** — best-effort 이고 모든 노드에서 발화한다. 공유 상태는 정리가 한 번이면 된다. **durable outbox** — 새 저장 SPI 와 백엔드 구현 넷이 필요하다. 확장에는 어차피 재조정 경로가 있으므로 at-most-once 로 충분하다 |
+
+---
+
+## 하지 말 것
+
+- **`LiveSession.close()` 나 `SessionRouter.close()` 에서 `AgentRuntime` 을 닫지 않는다.** 같은 agent 의 다른 세션이 아직 쓴다
+- **`status()` 를 제어 게이트로 쓰지 않는다.** best-effort 관측이다
+- **라우터를 우회해 `SessionRecordStore.delete(id)` 를 부르지 않는다.** 진행 중 턴과 경합하고 리스너도 불리지 않는다
+- **`onExtendFailed` 에서 블록하지 않는다.** 그 스레드를 공유하는 모든 세션이 리스를 잃는다
+- **리스 갱신을 다른 스케줄러와 같은 풀에 두지 않는다.** 큐에 밀린 틱은 빼앗긴 리스와 구분되지 않는다
+- **크로스 노드 페이로드에 타입 객체를 싣지 않는다**
+- **새 `SignalKind` 를 shim 없이 내보내지 않는다.** 모르는 노드가 시그널 전체를 드롭한다
+- **`sessionClosedListener` 를 Caffeine 의 `removalListener` 로 바꾸지 않는다.** pin 된 채 축출된 세션의 리스가 턴 도중 반납된다
+- **삭제 리스너 안에서 지우는 중인 세션에 대해 `SessionRouter` 를 부르지 않는다**
+- **삭제 리스너를 무겁게 만들지 않는다.** 그 세션의 제출을 막는다
+
+---
+
+## 남은 것
+
+| 항목 | 지금 |
 |---|---|
-| 이벤트 replay | 라이브만. 진행 중 재시도로 붙은 구독자는 이미 흘러간 프레임을 못 본다 — 최종 결과는 `IdempotencyStore` 조회로 안전하다. UI 가 progressive rendering 을 요구하면 그때 버퍼 정책을 정한다 |
-| 같은 세션의 다중 구독자 (collaboration) | `events()` 는 멀티 구독자지만, 여러 사용자가 한 세션을 동시에 보는 UX 는 웹 어댑터 설계 사안 |
-| 분산 서브에이전트 | 범위 밖 (§7.6) |
+| 이벤트 replay | 라이브만. 진행 중 재시도로 붙은 구독자는 이미 흘러간 프레임을 못 본다 — 최종 결과는 멱등 원장으로 안전하다. UI 가 progressive rendering 을 요구하면 그때 버퍼 정책을 정한다 |
+| 같은 세션의 다중 구독자(collaboration) | `events()` 는 멀티 구독자지만, 여러 사용자가 한 세션을 동시에 보는 UX 는 웹 어댑터 설계 사안이다 |
+| 분산 서브에이전트 | 범위 밖(§7.5) |
 | `YIELD` shim 제거 | 클러스터 전 노드가 이 kind 를 이해하게 되면 레거시 `INTERRUPT(SESSION_RELEASED)` 동반 발행을 걷어낸다 |
-| forward TTL 의 폴링 fallback | 동작하지만 rail 보다 느리다. 다만 이제 이 타이머가 고아 메시지 재-초인종도 겸하므로(§6.3 D), 간격을 늘리면 회복 시간이 같이 늘어난다 |
-| 홀더 일치 조건부 `markDone` | `markDone` 은 네 백엔드 모두 **키만 보고** 매치한다. 도달 가능한 오염 경로(넘겨받기에 진 노드가 남의 항목을 덮어쓰는 것)는 라우터가 그 경우 쓰지 않는 것으로 닫았고 테스트가 지킨다 — 하지만 그것은 규율이지 저장소가 강제하는 계약이 아니다. 넘겨받기와 쓰기 사이에 스위퍼가 예약을 리셋하면 그 사이에 낀 쓰기는 여전히 막을 것이 없다. 저장소 쪽에서 닫으려면 SPI 에 `markDone(key, holderId, result)` 를 추가하고 백엔드 4종의 조건을 조여야 하며, 그것은 이 항목의 크기가 아니라 이 항목이 미뤄진 이유다 |
-| 실패한 키 있는 로컬 턴의 키가 늦게 풀린다 | `announceTurnFailure` 는 "실패를 알리기 **전에** 키를 풀어라" 를 규칙으로 적고 있지만, 패스를 연 제출의 예약은 `runTurnLoop` 이 소유하므로 드레인 패스가 **다 끝난 뒤에야** `safeCompareAndReset` 으로 풀린다. 그 사이에 도착한 재시도는 방금 죽었다고 통보받은 시도에 `alreadyInFlight` 로 붙는다. **선재 결함**이며 base 의 drain 은 실패 시 아무 reset 도 하지 않았다 — 드레인 루프로 옮기면 순서는 나아지지만 그 예약의 소유권이 바뀌므로 별건이다(`Takeover.alreadyHeldBySubmit` javadoc 참조) |
-| `pollForward` 가 종료하지 않는 한 경로 | `find` 가 던지면 마감 검사 **앞에서** return 하므로, 멱등 저장소가 지속적으로 불가할 때 forward 는 forward TTL 이 지나도 실패하지 않는다(풀리는 것은 `EVICT` 나 `closeGracefully` 뿐). 같은 메서드의 javadoc 은 "마감이 backstop" 이라고 단언하는데 그 분기에서는 거짓이다. **선재 결함**이며 이 PR 이전부터 동일하다 — 고치려면 예외 카운터나 마감 우선 검사가 필요하고, 그것은 폴링 fallback 의 실패 정책 전체를 다시 정하는 일이다 |
-| 기다리는 노드까지 죽은 고아 메시지 | inbox 에 남지만 그것을 기다리는 forward 가 어디에도 없어 세션의 다음 제출까지 대기한다. 자동으로 주우려면 `SessionInbox` 에 "대기 메시지가 있는 세션" 스캔을 추가하고 백엔드 4종에 인덱스를 붙여야 한다 — 운영에서 실제로 관측되면 그때 한다 |
-
-### 하지 말 것
-
-- **`LiveSession.close()` 나 `SessionRouter.close()` 에서 `AgentRuntime` 을 닫지 말 것.** 같은 agent 의 다른
-  세션이 아직 쓰고 있다. 닫는 것은 부트스트랩의 일이다(§2).
-- **`status()` 를 제어 게이트로 쓰지 말 것.** best-effort 관측이다(§5.1).
-- **라우터를 우회해 `SessionRecordStore.delete(id)` 를 부르지 말 것.** 진행 중 턴과 경합한다(§7.7).
-- **한 JVM 의 두 라우터가 `SessionStore` 를 공유하지 말 것.** 펜싱이 무너진다(§5.3).
-- **`onExtendFailed` 에서 블록하지 말 것.** 그 스레드를 공유하는 모든 세션이 리스를 잃는다(§7.4).
-- **크로스 노드 페이로드에 타입 객체를 싣지 말 것.** 실제 버스에서 조용한 no-op 이 된다(§2).
-- **`IdempotencyTouchSlot` 의 키를 스케줄 시점에 캡처하지 말 것.** 살아 있는 턴이 두 번 실행된다(§7.4).
+| 다른 노드의 삭제 통지 · `onCreated` | 백로그 [SO-3 · SO-4](../../backlog/session-owner-open-items.md) |
+| 멱등·홀더 유실 쪽 | [`idempotency.md`](idempotency.md) 의 남은 것 |
 
 ---
 
-## 부록. 참조 파일 지도
+## 참조 파일 지도
 
 | 개념 | 파일 |
 |---|---|
@@ -1011,25 +705,25 @@ systemPrompt)` 를 호출하고, 그 계약이 *"세션이 있으면 읽고 없�
 | 구현 | [`DefaultSessionRouter`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/DefaultSessionRouter.java) |
 | 조립 | [`SessionRouterBuilder`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/builder/SessionRouterBuilder.java), [`DeploymentMode`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/DeploymentMode.java) |
 | 제출·결과 | [`SubmitRequest`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/SubmitRequest.java), [`SubmitDisposition`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/SubmitDisposition.java) |
-| 핸들 캐시 (§5.2) | [`LiveSessionCache`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/LiveSessionCache.java), [`LiveSessionOpener`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/LiveSessionOpener.java) |
-| 리스 (§7.4) | [`HeldLease`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/HeldLease.java), [`LeaseRenewer`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/LeaseRenewer.java), [`IdempotencyTouchSlot`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/IdempotencyTouchSlot.java) |
-| 이벤트 (§5.5) | [`SessionEventRelay`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/SessionEventRelay.java), [`InProcessEventPublisher`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/InProcessEventPublisher.java), [`EventSink`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/EventSink.java) |
-| 페이로드 코덱 (§5.5.2) | [`AgentExecutionEventPayload`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/AgentExecutionEventPayload.java), [`TurnResultPayload`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/TurnResultPayload.java), [`StatusSnapshotPayload`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/StatusSnapshotPayload.java), [`PayloadValues`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/PayloadValues.java) |
-| 홀더 유실 (§6.3 D) | [`HolderLossSweeper`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/HolderLossSweeper.java), [`LostTurnAnnouncer`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/LostTurnAnnouncer.java) |
+| 핸들 캐시 (§4.2) | [`LiveSessionCache`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/LiveSessionCache.java), [`LiveSessionOpener`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/LiveSessionOpener.java) |
+| 리스 (§4.3) | [`HeldLease`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/HeldLease.java), [`LeaseRenewer`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/LeaseRenewer.java) |
+| 시그널 (§5) | [`SessionSignal`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/signal/SessionSignal.java), [`SessionSignalBus`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/signal/SessionSignalBus.java) |
+| 이벤트 (§6) | [`SessionEventRelay`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/SessionEventRelay.java), [`InProcessEventPublisher`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/InProcessEventPublisher.java), [`EventSink`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/EventSink.java) |
+| 페이로드 코덱 (§6.3) | [`AgentExecutionEventPayload`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/AgentExecutionEventPayload.java), [`TurnResultPayload`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/TurnResultPayload.java), [`StatusSnapshotPayload`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/StatusSnapshotPayload.java), [`PayloadValues`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/PayloadValues.java) |
+| 삭제 리스너 (§9) | [`SessionLifecycleListener`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/SessionLifecycleListener.java), [`SessionDeletedEvent`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/SessionDeletedEvent.java) |
 | 관측 | [`ClusterSessionStatus`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/ClusterSessionStatus.java), [`StatusProjection`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/internal/StatusProjection.java), [`SessionMetrics`](../../../modules/aimon-session-routing/src/main/java/at/aimon/session/routing/metrics/SessionMetrics.java) |
-| SPI (core) | [`SessionStore`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/store/SessionStore.java), [`SessionInbox`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/inbox/SessionInbox.java), [`SessionSignal`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/signal/SessionSignal.java), [`IdempotencyStore`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/idempotency/IdempotencyStore.java) |
 | 세션 계약 | [`LiveSession`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/LiveSession.java), [`TranscriptManager`](../../../modules/aimon-core/src/main/java/at/aimon/core/agent/session/transcript/TranscriptManager.java) |
 
 ---
 
 ## 관련 문서
 
-- [`session-model.md`](session-model.md) — `SessionRecord` / `LiveSession` 두 수명과 영속 모델
-- [`spi-extraction.md`](spi-extraction.md) — SPI 가 core 로 내려오고 이 모듈이 라우팅만 남은 경위
+- [`session-model.md`](session-model.md) — 두 수명과 영속 모델
+- [`session-store.md`](session-store.md) — 라우터가 쓰는 SPI, `SessionStore`, 쓰기 펜스
+- [`inbox.md`](inbox.md) — 크로스 노드 우편함
+- [`idempotency.md`](idempotency.md) — 멱등 제출과 홀더 유실 회복
 - [`backends.md`](backends.md) — Redis / MongoDB / PostgreSQL 구현
 - [`../agent-execution/agent-runtime-scope.md`](../agent-execution/agent-runtime-scope.md) — `AgentRuntime` 소유권
 - [`../agent-execution/interrupt.md`](../agent-execution/interrupt.md) — `InterruptCoordinator` 와 도구별 중단 동작
 - [`../../overview/scope-model.md`](../../overview/scope-model.md) — 수명·소유권·소멸 책임
-- [`../../features/session/agent-session-guide.md`](../../features/session/agent-session-guide.md) — `LiveSession` API 와 이벤트 스트리밍
-</content>
-</invoke>
+- [`../../features/session/web-session-deployment-guide.md`](../../features/session/web-session-deployment-guide.md) — 배포·운영 가이드

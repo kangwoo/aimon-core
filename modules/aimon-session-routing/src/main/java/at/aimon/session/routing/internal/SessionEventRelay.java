@@ -33,7 +33,7 @@ import at.aimon.core.agent.stream.AssistantTextDelta;
 /**
  * Bridges the session's {@code submitAsync(input, listener)} listener channel to (1) the local
  * {@link InProcessEventPublisher} and (2) the cross-node {@link SessionSignalBus} for
- * {@link SessionSignal.SignalKind#EVENT} broadcast (design §5.5).
+ * {@link SessionSignal.SignalKind#EVENT} broadcast (routing.md §6).
  *
  * <p>
  * <b>One relay per turn.</b> The relay is constructed with the {@link TurnId} of the turn it serves and stamps it onto
@@ -71,7 +71,7 @@ import at.aimon.core.agent.stream.AssistantTextDelta;
  * </ul>
  *
  * <p>
- * <b>Overflow policy</b> (design §5.5: relay_remote_buffer_drop_total). The remote channel is best-effort, but not all
+ * <b>Overflow policy</b> (routing.md §6.2). The remote channel is best-effort, but not all
  * frames are equally droppable, and there are <b>three</b> ranks rather than two:
  *
  * <ol>
@@ -99,7 +99,7 @@ import at.aimon.core.agent.stream.AssistantTextDelta;
  */
 public final class SessionEventRelay implements Consumer<AgentExecutionEvent>, AutoCloseable {
 
-    /** Bounded queue capacity per relay — design §5.5 recommended size. */
+    /** Bounded queue capacity per relay — routing.md §6.1 bound. */
     public static final int RELAY_QUEUE_CAPACITY = 1024;
 
     /**

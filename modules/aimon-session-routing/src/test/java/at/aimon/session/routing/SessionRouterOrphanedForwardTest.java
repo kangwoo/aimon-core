@@ -40,7 +40,7 @@ import at.aimon.session.routing.fixture.TestLiveSession;
 import at.aimon.session.routing.fixture.TestManagerHarness;
 
 /**
- * The retry that gets a forwarded message run when the node it was queued for is gone (design §6.3 D).
+ * The retry that gets a forwarded message run when the node it was queued for is gone (idempotency.md §6.1).
  *
  * <p>
  * A submission that loses the election is handed to the inbox and announced with {@code MESSAGE_ENQUEUED}. That

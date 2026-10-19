@@ -202,7 +202,7 @@ rewind 는 rewind point 부터 로그를 자른다. G4b 가 그 지점을 걸치
 시작되면 rewind point 가 찍히고, 사용자 입력보다 **먼저** 조립된 user-context 가 `SYNTHETIC` 으로 append 된다.
 
 rewind 는 **되돌린 턴 안에서 그 앞쪽 구간에 한 편집**을 되돌리지 않는다. 뷰 상태에는 이력이 없다. 그 노트는 사라진 턴의
-모델이 쓴 글이고 사라진 턴의 사정을 담고 있을 수 있다 — [`session-log.md` §6.1](../session/session-log.md) 이 span 에
+모델이 쓴 글이고 사라진 턴의 사정을 담고 있을 수 있다 — [`session-log.md` §8.1](../session/session-log.md) 이 span 에
 대해 받아들인 것과 같은 종류의 부정확이다.
 
 ### 3.5 봉인
@@ -419,9 +419,9 @@ seq 는 알림에 싣지 않는다. 모델이 구간을 고르려면 지도가 �
 - 가려진 양의 측정은 뷰 상태와 hot 항목만 읽는다. engine 은 저장소의 설정(`minSealTokens`)을 모른다
 - 발췌를 뷰 상태에 저장하면 원문과 발췌가 **둘 다** 레코드에 있다. 측정이 "원문 − 보이는 것" 이면 그 중복을 세지 않는다
 - prune 의 `elisions` 는 모델의 선택이 아니다. 그 원문은 요약에 쓰여야 하므로 요약 전에 봉인되면 안 된다
-- 세그먼트 저장소가 없는 조립에서는 아무것도 봉인되지 않는다([`session-log.md` §12.2](../session/session-log.md)).
+- 세그먼트 저장소가 없는 조립에서는 아무것도 봉인되지 않는다([`session-log.md` §6](../session/session-log.md)).
   롤링에서는 degradation 이지만 여기서는 레코드가 끝없이 자라는 구성이다. 그 조립에서 이 engine 을 거절할지 정해야 한다
-- [`session-log.md` §11](../session/session-log.md) 의 세그먼트 병합이 선행 조건일 수 있다
+- [`session-log.md`](../session/session-log.md) 남은 것의 세그먼트 병합이 선행 조건일 수 있다
 
 ### 8.2 롤링이 편집을 만났을 때
 

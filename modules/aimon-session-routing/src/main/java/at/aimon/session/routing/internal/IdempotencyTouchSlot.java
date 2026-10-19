@@ -12,8 +12,8 @@ import at.aimon.core.agent.session.idempotency.IdempotencyStore;
 
 /**
  * The idempotency reservations that work running on this node wants refreshed on every successful lease renewal — a
- * mutable slot per reservation, written by the turn loop and the drain pass and read by the renewal tick (design §9.2
- * stale cleanup).
+ * mutable slot per reservation, written by the turn loop and the drain pass and read by the renewal tick
+ * (idempotency.md §3 stale cleanup).
  *
  * <p>
  * Before Stage 3b the renewal schedule and the reservation had the same lifetime, so the key could simply be a

@@ -1,14 +1,14 @@
 # 세션 소유자 · 삭제 리스너 — 등록 항목 9건 (열림 5 · 닫힘 4)
 
-출처는 [`../design/session/session-owner-deletion-event.md`](../design/session/session-owner-deletion-event.md)
-(#253) 의 구현이다. 그 문서 §8 의 열린 질문 가운데 **이 변경 밖으로 결과가 나가는 것**과, §9(구현 뒤 — 설계와 달라진
+출처는 옛 `session-owner-deletion-event.md`(#253, 마지막 판본 `08c686e8` — 지금은 [`../design/session/session-model.md`](../design/session/session-model.md) §5 · [`../design/session/routing.md`](../design/session/routing.md) §9)
+의 구현이다. 그 문서 §8 의 열린 질문 가운데 **이 변경 밖으로 결과가 나가는 것**과, §9(구현 뒤 — 설계와 달라진
 점)가 새로 연 것 하나가 여기로 올라왔다. §8 의 Q4(Postgres 마이그레이션 정책)와 Q7(drain 경로에서 소유자를 주는
 메시지)은 설계대로 정해져 올리지 않는다.
 
 SO-7 · SO-8 의 출처는 SO-5 를 닫은 소유자 좁은 읽기(#262)
-[`../design/session/session-owner-narrow-read.md`](../design/session/session-owner-narrow-read.md) 의 §8 Q1 · Q2 다
+옛 `session-owner-narrow-read.md`(마지막 판본 `afe227bc` — 지금은 [`../design/session/session-store.md`](../design/session/session-store.md) §2.3) 의 §8 Q1 · Q2 다
 (그 문서 §9.3). SO-9 의 출처는 SO-7 을 닫은 레코드 저장소 계약 스위트(#266)
-[`../design/session/session-record-store-contract.md`](../design/session/session-record-store-contract.md) 의 §9 Q1 이다
+옛 `session-record-store-contract.md`(마지막 판본 `afe227bc` — 지금은 [`../design/session/session-store.md`](../design/session/session-store.md) §6) 의 §9 Q1 이다
 (그 문서 §10.3).
 
 `README.md` 의 규칙대로 **열림/닫힘의 정본은 이 문서**이고 설계 문서 §8 · §9 는 설계·구현 시점의 기록이다.
@@ -103,8 +103,7 @@ SessionRecordView::getOwner)` 로 떨어지는 `default` 라서 서드파티 저
 그대로). 출하되는 저장소는 모두 재정의한다 — Postgres 는 `owner` 열 하나, MongoDB 는 프로젝션, Redis 는 `HGET`,
 in-memory 는 필드를 복사 없이. 감싸는 두 저장소(`DefaultSessionStore` 의 펜스 뷰, `LateBoundFencedRecordStore`)는
 `load` 처럼 펜스 없이 넘긴다. 빈 답은 "레코드 없음" 과 "소유자 없음" 을 함께 뜻한다 — 샌드박스의
-`require-principal` 경로는 둘을 가르지 않는다. 설계와 이탈:
-[`../design/session/session-owner-narrow-read.md`](../design/session/session-owner-narrow-read.md).
+`require-principal` 경로는 둘을 가르지 않는다. 설계: [`../design/session/session-store.md`](../design/session/session-store.md) §2.3 (옛 `session-owner-narrow-read.md`).
 
 - **"이름 붙은 SPI" 쪽은 하지 않기로 했다.** 이 항목의 제목은 `SessionOwnerResolver` 같은 별도 SPI 를 물었다. 저장소가
   이미 소유자를 갖고 있으므로 SPI 를 하나 더 두면 호스트가 이을 것만 늘어난다. 실제 비용 — 소유자 하나를 위해 전사
@@ -167,8 +166,7 @@ in-memory(`InMemorySessionRecordStoreContractTest`), `DefaultSessionStore` 의 �
 백엔드 테스트에는 원시 접근이 필요한 검사만 남았다 — Redis 8건(`""` 표지, `HEXISTS`, 공유 키 공간), Mongo 1건(문서가
 아닌 owner), Postgres 0건. 옮기면서 백엔드마다 처음 받는 검사가 생겼다 — NUL 바이트(Mongo · Redis), `.` · `$` 로 시작하는
 도구 입력 키(Postgres), `$` 로 시작하는 `agentRef` · 소유자(Postgres · Redis), `:` 를 담은 id 의 열거(Postgres · Mongo).
-모두 고치지 않은 채로 통과했다. 설계와 이탈:
-[`../design/session/session-record-store-contract.md`](../design/session/session-record-store-contract.md).
+모두 고치지 않은 채로 통과했다. 설계: [`../design/session/session-store.md`](../design/session/session-store.md) §6 (옛 `session-record-store-contract.md`).
 
 - **서드파티 쪽은 미뤘다.** 이 항목의 "무엇을" 은 서드파티 저장소도 같은 계약을 통과하게 한다고 적었다. 스위트는
   공개하지 않은 모듈에 있으므로 이 저장소 밖의 저장소는 돌릴 수 없다. 지금은 모든 `SessionRecordStore` 가 이 저장소에

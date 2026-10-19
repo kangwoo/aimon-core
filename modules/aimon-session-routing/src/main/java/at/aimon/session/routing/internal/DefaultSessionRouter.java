@@ -87,7 +87,7 @@ import at.aimon.session.routing.metrics.SessionMetrics;
 
 /**
  * Default {@link SessionRouter} implementation that wires the in-memory and SPI components together to
- * realize design §7.1's submit flow on a single node, with cross-node hooks for distributed deployments.
+ * realize routing.md §7.1's submit flow on a single node, with cross-node hooks for distributed deployments.
  *
  * <p>
  * The manager is intentionally stateless beyond the per-session collaborators: the session store, inbox,
@@ -296,7 +296,7 @@ public final class DefaultSessionRouter implements SessionRouter {
     private final Set<SessionId> doorbellRelayOwed = ConcurrentHashMap.newKeySet();
 
     /**
-     * The session leases this node currently holds, one per open session (design §7.4).
+     * The session leases this node currently holds, one per open session (routing.md §4.3).
      *
      * <p>
      * Before Stage 3b there was no such map: a lease was a local of {@code submit} that {@link #runTurnLoop}'s
@@ -474,7 +474,7 @@ public final class DefaultSessionRouter implements SessionRouter {
         final SessionId convId = request.getSessionId();
         final String requestedAgent = request.getAgentRef();
 
-        // Subscribe before any I/O, not after the disposition is known (design §7.1 F0). The moment this submission
+        // Subscribe before any I/O, not after the disposition is known (routing.md §7.1 F0). The moment this submission
         // touches the inbox a peer can drain it and announce the result, and a subscription armed after that point
         // misses the announcement entirely — leaving the caller's future to the polling fallback at best, and to the
         // forward deadline when the submission carried no idempotency key. Subscribing unconditionally also covers the
@@ -520,11 +520,11 @@ public final class DefaultSessionRouter implements SessionRouter {
             return outcome;
         }
 
-        // Gate first, lease second (design §7.4). The lease no longer answers "is a turn already running here?" — this
-        // node holds it for the whole session — so that question goes to the node-local turn gate, and asking it before
-        // the store saves a round trip on the busiest path there is. A gate miss can only mean a turn on this node, so
-        // forwarding is unconditionally right: the running turn's post-turn re-collect picks the message up, and a
-        // message that arrives too late for that leaves the doorbell ringing past the end of the turn.
+        // Gate first, lease second (routing.md §3.2). The lease no longer answers "is a turn already running here?" —
+        // this node holds it for the whole session — so that question goes to the node-local turn gate, and asking it
+        // before the store saves a round trip on the busiest path there is. A gate miss can only mean a turn on this
+        // node, so forwarding is unconditionally right: the running turn's post-turn re-collect picks the message up,
+        // and a message that arrives too late for that leaves the doorbell ringing past the end of the turn.
         final long acquireStart = System.nanoTime();
         if (!tryBeginTurn(convId)) {
             // Reported as a rejected acquire although no lease was attempted. To an operator the two are the same event
@@ -843,7 +843,7 @@ public final class DefaultSessionRouter implements SessionRouter {
     }
 
     // ---------------------------------------------------------------------------------------------------------------
-    // Session-lifetime lease and the turn gate (design §7.4)
+    // Session-lifetime lease and the turn gate (routing.md §3.2)
     // ---------------------------------------------------------------------------------------------------------------
 
     /**
@@ -1138,8 +1138,8 @@ public final class DefaultSessionRouter implements SessionRouter {
      * @param held
      *            the session lease this turn runs under — either won for it or inherited from the session's
      *            previous
-     *            turn. <b>Not</b> released here: it lives as long as the session does (design §7.4), and the one case
-     *            this method has to put it back is the one where no session ever took it over.
+     *            turn. <b>Not</b> released here: it lives as long as the session does (routing.md §3.2), and the one
+     *            case this method has to put it back is the one where no session ever took it over.
      * @param idem
      *            the idempotency decision taken at submit time
      * @param future
@@ -1268,7 +1268,7 @@ public final class DefaultSessionRouter implements SessionRouter {
     }
 
     // ---------------------------------------------------------------------------------------------------------------
-    // Holder-side drain (design §7.1 F3/F4/F6)
+    // Holder-side drain (routing.md §7.1 F3/F4/F6)
     // ---------------------------------------------------------------------------------------------------------------
 
     /**
@@ -1423,7 +1423,7 @@ public final class DefaultSessionRouter implements SessionRouter {
     }
 
     /**
-     * Drains messages for a session this node was not already running: the doorbell path (design §7.1 F3).
+     * Drains messages for a session this node was not already running: the doorbell path (routing.md §7.1 F3).
      *
      * <p>
      * The gap this closes is narrow and permanent without it. A submission that loses the election is picked up by the
@@ -1500,10 +1500,10 @@ public final class DefaultSessionRouter implements SessionRouter {
                     ? first.getContextDiscriminator()
                     : Optional.empty();
 
-            // LiveSessionOptions and OpenAttributes still do not travel — design §7.1 F2 leaves them out of the
-            // envelope — so a drain-only open uses defaults for both. Like the discriminator they are read on cache
-            // miss only, so this differs from the submitting node's intent solely when no node in the cluster had the
-            // session open.
+            // LiveSessionOptions and OpenAttributes still do not travel — routing.md §7.1 / inbox.md §2 leaves them out
+            // of the envelope — so a drain-only open uses defaults for both. Like the discriminator they are read on
+            // cache miss only, so this differs from the submitting node's intent solely when no node in the cluster had
+            // the session open.
             entry = sessionCache.acquire(convId,
                     discriminator.map(d -> AgentRuntimeId.fromName(boundAgent, d))
                             .orElseGet(() -> AgentRuntimeId.fromName(boundAgent)),
@@ -1699,13 +1699,13 @@ public final class DefaultSessionRouter implements SessionRouter {
      * while the origin's forward waits out the whole {@code idempotencyForwardTtl}.
      *
      * <p>
-     * <b>Why a hand-off rather than the {@code NOT_HOLDER} answer design §7.3 asked for.</b> Failing the queued turn
-     * would resolve the origin's forward, but the message is still <em>in</em> the inbox and would then be run by
-     * whoever collects it next: a caller told its input never ran, retrying it, and a turn that runs anyway — a
-     * duplicate execution invented by the very signal meant to prevent one. {@code NOT_HOLDER} is honest only about
-     * messages already taken out of the at-most-once inbox, which nobody else can ever run; that is the one place
-     * {@link #drain} uses it, and only once the grace window is over. Here the truthful answer is to stop holding the
-     * session and say so on the rail that means "somebody collect this".
+     * <b>Why a hand-off rather than the {@code NOT_HOLDER} answer the original routing design asked for (routing.md
+     * §7.3).</b> Failing the queued turn would resolve the origin's forward, but the message is still <em>in</em> the
+     * inbox and would then be run by whoever collects it next: a caller told its input never ran, retrying it, and a
+     * turn that runs anyway — a duplicate execution invented by the very signal meant to prevent one. {@code
+     * NOT_HOLDER} is honest only about messages already taken out of the at-most-once inbox, which nobody else can ever
+     * run; that is the one place {@link #drain} uses it, and only once the grace window is over. Here the truthful
+     * answer is to stop holding the session and say so on the rail that means "somebody collect this".
      *
      * <p>
      * Terminates, and relays once. {@link #yieldSession} ends in {@link #returnLeaseWhenIdle}, whose
@@ -1752,7 +1752,7 @@ public final class DefaultSessionRouter implements SessionRouter {
      * <p>
      * Normally the first peer to hear this is the origin of the message itself: it is subscribed for as long as it is
      * waiting on the forward. So the session is re-claimed within a signal round-trip instead of after the whole
-     * lease TTL, which is the outcome design §7.3 asked {@code NOT_HOLDER} for.
+     * lease TTL, which is the outcome routing.md §7.3 explains.
      */
     private void republishDoorbell(SessionId sessionId) {
         try {
@@ -1860,9 +1860,10 @@ public final class DefaultSessionRouter implements SessionRouter {
      * Publish a turn's result and hand it to whoever is waiting for it.
      *
      * <p>
-     * {@code markDone} first, then the broadcast (design §7.1 F6): the store is what a node that misses the broadcast
-     * falls back to, so announcing first would advertise a result that a holder crash could still erase. Never throws —
-     * a control-plane failure must not abort a drain pass whose remaining messages are already out of the inbox.
+     * {@code markDone} first, then the broadcast (routing.md §7.1 F6): the store is what a node that misses the
+     * broadcast falls back to, so announcing first would advertise a result that a holder crash could still erase.
+     * Never throws — a control-plane failure must not abort a drain pass whose remaining messages are already out of
+     * the inbox.
      *
      * <p>
      * <b>The cache write is conditional; the delivery is not.</b> {@code markDone} matches on the key alone in every
@@ -2162,7 +2163,7 @@ public final class DefaultSessionRouter implements SessionRouter {
     }
 
     // ---------------------------------------------------------------------------------------------------------------
-    // Forwarded-turn bookkeeping (design §7.1 F0/F2/F6/F7)
+    // Forwarded-turn bookkeeping (routing.md §7.1 F0/F2/F6/F7)
     // ---------------------------------------------------------------------------------------------------------------
 
     /**
@@ -2204,7 +2205,7 @@ public final class DefaultSessionRouter implements SessionRouter {
     }
 
     /**
-     * The fallback that makes the {@code TURN_RESULT} rail optional rather than load-bearing (design §7.1 F7).
+     * The fallback that makes the {@code TURN_RESULT} rail optional rather than load-bearing (routing.md §7.1 F7).
      *
      * <p>
      * The rail is a fire-and-forget broadcast with no replay, and a peer running an older build rejects the whole
@@ -2973,7 +2974,7 @@ public final class DefaultSessionRouter implements SessionRouter {
     /**
      * Acquire the session lease for delete when this node does not already hold one: try once, on contention
      * broadcast a {@code YIELD} so the current holder hands it over, then retry up to a small bounded budget. Closes
-     * design §7.7 — only the holder may delete history.
+     * routing.md §9 — only the holder may delete history.
      *
      * <p>
      * Acquires rather than claims: the record is about to be removed, so which agent it is bound to is not a question

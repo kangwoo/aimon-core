@@ -81,7 +81,7 @@ flowchart TB
 
 공유 상자 다섯은 **한 백엔드에 몰아도 되고 갈라도 된다.** Redis · PostgreSQL · MongoDB 세 모듈이
 각각 다섯을 전부 구현하므로(`aimon-session-{redis,postgres,mongodb}`), 어느 것을 고를지는
-[`backends.md` §7](../design/session/backends.md) 의 표가 답한다. 이미 운영 중인 것을 쓰는 것이
+[`backends.md` §8](../design/session/backends.md) 의 표가 답한다. 이미 운영 중인 것을 쓰는 것이
 첫 번째 기준이다.
 
 ---

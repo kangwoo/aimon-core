@@ -45,7 +45,7 @@ import at.aimon.session.routing.fixture.TestManagerHarness;
 
 /**
  * Holder-loss recovery seen from the manager: a caller waiting on a turn whose node died is failed by the sweeper's
- * announcement rather than left to its five-minute forward deadline (design §6.3 D).
+ * announcement rather than left to its five-minute forward deadline (idempotency.md §6).
  *
  * <p>
  * The announcement is addressed by <em>idempotency key alone</em>, and that is the property these tests exist to pin.

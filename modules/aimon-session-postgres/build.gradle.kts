@@ -23,7 +23,7 @@ dependencies {
     //
     // Routing is still absent from `main` for its original reason: every SPI this module implements —
     // SessionRecordStore, SessionLeaseStore, SessionInbox, SessionSignalBus, IdempotencyStore — lives in
-    // aimon-core (SPX, docs/design/session/spi-extraction.md).
+    // aimon-core (SPX, docs/design/session/session-store.md §1.3).
     testImplementation(project(":aimon-session-testkit"))
 
     testImplementation(libs.testcontainers)
