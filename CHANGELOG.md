@@ -39,7 +39,9 @@ and departures: `docs/design/tool/execution-environment-ee109-hook-tamper-narrow
   writes beside itself loses that file at the next firing. `hooks/` is capped at 4 MiB (`.stageignore` excludes);
   over that, or unreadable, is `HOOK_DIR_STAGING_FAILED`. Host placement is unchanged.
 - **A skill hook's `AIMON_SKILL_DIR` is a per-firing run directory** of the skill as loaded (checked against its
-  content key, kept in a bounded in-memory cache) where the shell declares `RUN_DIRECTORY`. Elsewhere, or for a skill
+  content key, kept in a bounded in-memory cache) where the shell declares `RUN_DIRECTORY`. That holds while the
+  skill's entry stays in the cache (32 MiB, least recently used first); once it is evicted, a skill edited since load
+  runs as it is now (EE-3), as when no staged copy of the loaded version exists. Elsewhere, or for a skill
   over 4 MiB, it is still the staged path — now checked on every firing — and one WARN per shell class and skill says
   so. The skill **body**'s `${AIMON_SKILL_DIR}` is unchanged. The stdin payload of a skill hook no longer carries
   `skill_dir` (the shell decides the value); the variable is still set. A provider's `maxStagedBytes` no longer bounds

@@ -382,7 +382,8 @@ used only when there is no execution. Each handler can say where with a `"shell"
 A `shell` action declared by a skill's frontmatter is different: it is the skill's own code, so it is not isolated and
 starts from the shell state that skill's tools run in. It cannot be declared on an event outside an execution. A
 skill's hook receives `AIMON_SKILL_DIR`: where the shell supports it, a run directory of that firing alone holding the
-skill's bytes as loaded; where it does not, or for a skill over 4 MiB, the path of the copy staged (and checked at every
+skill's bytes as loaded (while they stay in the in-memory cache — once evicted, a skill edited since load runs as it is
+now); where it does not, or for a skill over 4 MiB, the path of the copy staged (and checked at every
 firing) in the environment the hook runs in. The stdin payload carries no `skill_dir` field (the shell decides the
 value). A `hooks.json` command has no skill directory, so the variable is **not set** there — unset, not an empty
 string.

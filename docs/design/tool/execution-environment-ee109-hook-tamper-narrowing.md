@@ -782,3 +782,9 @@ the sandbox half stays open as EE-114 / aimon-sandbox#33.
   differs; `LocalExecutionEnvironmentProviderStagingTest.editedAfterScanWarnsOnceAndIsRemembered` now pins that cost
   instead of "reads nothing". `execution-environment.md` §4.4 says so. Test:
   `LocalStagingTest.editedThenRevertedAndReloadedIsStagedAsReloaded`.
+- **"Served until the registry reloads" holds only while the cache keeps the loaded entry.** §2.2 says the skill-bytes
+  cache serves the loaded version until the registry reloads. The cache is bounded (32 MiB, entries up to 4 MiB, least
+  recently used first), and F13 already says an evicted entry is read again from the source; for a source edited since
+  load that read goes the EE-3 way and serves the edit. So the rule is "until the registry reloads or the entry is
+  evicted" — the same shape as staging, whose loaded copy is served only while it exists, and within R4 (skill hooks
+  are not a policy boundary). The `HookRunFiles` class doc, the CHANGELOG and the hook and skill guides (ko/en) say so.
