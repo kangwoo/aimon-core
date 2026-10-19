@@ -26,7 +26,7 @@ psql "$DATABASE_URL" --set=search_path=aimon_session,public \
   `conversation_inbox`, `idempotency_entry`).
 - `V2__session_log_segment.sql` — required at deploy, after V1. The
   `session_log_segment` table that `PostgresSessionLogSegmentStore` writes sealed
-  session-log ranges to (`docs/design/session/session-log.md` §5.6).
+  session-log ranges to (`docs/design/session/session-log.md` §6).
 - `V3__session_record_owner.sql` — required at deploy, after V2. Adds the nullable
   `session_record.owner` (jsonb) column that `PostgresSessionRecordStore` records a
   session's owning principal in. Apply it before rolling out the build that ships it:
@@ -34,7 +34,7 @@ psql "$DATABASE_URL" --set=search_path=aimon_session,public \
   it those fail whether or not a host names an owner.
 - `V4__indexes.sql` — **opt-in / future-work, not yet shipped**. Operators add
   this only when concrete monitoring thresholds trigger (see
-  `docs/design/session/backends.md` §7.4).
+  `docs/design/session/backends.md` §3.4).
 
 ## Server settings
 

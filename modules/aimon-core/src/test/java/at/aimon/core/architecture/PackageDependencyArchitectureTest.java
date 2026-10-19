@@ -135,7 +135,7 @@ class PackageDependencyArchitectureTest {
     // hooks at construction and close. The session package therefore needs to reference HookExecutionManager,
     // HookRegistry, HookResult, OnSessionStartContext, OnSessionEndContext — but nothing else from at.aimon.core.hook.
     private static final String PKG_AGENT_SESSION = AgentCorePackage.class.getPackageName() + ".session..";
-    // Narrow carve-out (SPX-0, docs/design/session/spi-extraction.md §4): SessionRecordCodec — the wire
+    // Narrow carve-out (SPX-0, docs/design/session/session-store.md §1.4): SessionRecordCodec — the wire
     // encoding every distributed SessionRecordStore backend shares — moves into agent.session.store, and it encodes
     // the transcript half by delegating to SessionSnapshotCodec / JsonSessionSnapshotCodec rather than duplicating
     // that mapping. Those two live under subagent.task.codec because their first consumer was the subagent-resume
@@ -148,7 +148,7 @@ class PackageDependencyArchitectureTest {
     // invisible to it. It is accepted here because both directions carry only value types, and because the real fix
     // is to relocate the two codecs to agent.session.transcript (their name stopped matching their consumers once
     // workflow, the runtime factory and this SPI joined the subagent one). That relocation is deliberately NOT part
-    // of the SPI extraction — see design §4 option B and §7 open question 3.
+    // of the SPI extraction — see session-store.md §1.4 and its open items.
     private static final String PKG_SUBAGENT_TASK_CODEC = "at.aimon.core.subagent.task.codec..";
     // Narrow carve-out: SK-11 atomic-suspension exposes a SkillTurnSuspendedEvent in agent.stream that carries the
     // PendingTurnId + PendingSkillRequest value types from the skill policy package. These are pure DTOs (no behaviour

@@ -4493,7 +4493,7 @@ compatibility layer (`docs/project/api-stability.md` §5).
 
 - **Not covered:** the dropped entry's bytes are gone. A dead-letter surface was considered and
   deferred — the reasoning, and the trigger that would reopen it, are in
-  [`inbox-collect-durability.md`](docs/design/session/inbox-collect-durability.md).
+  [`inbox.md`](docs/design/session/inbox.md) (formerly `inbox-collect-durability.md`).
 
 ### Sessions: a routed submission carries the input, not a rendering of it
 

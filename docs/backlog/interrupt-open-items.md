@@ -503,7 +503,7 @@ IMPORTANT: **`priority` 는 여기 있으면 안 된다** *(2026-09-06 정정)*.
 `SQLException` / `MongoException`)뿐이고 코덱의 `RuntimeException` 은 통과한다.
 
 ~~**처방을 적지 않는 이유**~~ — **처방이 정해졌고 들어갔다** *(2026-09-06)*.
-[`design/session/inbox-collect-durability.md`](../design/session/inbox-collect-durability.md) 가 후보
+옛 `design/session/inbox-collect-durability.md`(지금은 [`design/session/inbox.md`](../design/session/inbox.md)) 가 후보
 셋을 백엔드 셋에 각각 대고 평가해 **(a) 항목 단위 격리**를 골랐고, (b)·(c) 의 기각 사유를 적었다.
 남은 처방 하나(dead-letter)는 기각이 아니라 **보류**이고 재검토 트리거는 그 문서 §9 에 있다.
 

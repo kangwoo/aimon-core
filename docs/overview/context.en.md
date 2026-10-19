@@ -136,7 +136,7 @@ host's job, and designing on the expectation that the core will do it for you wi
 
 | Not done here | Whose job it is |
 |---|---|
-| **Authentication and authorization** | The host. The router accepts a `Principal` and carries it, nothing more — who may reach which session is decided by a layer above ([`routing.md` §1.2](../design/session/routing.md)) |
+| **Authentication and authorization** | The host. The router accepts a `Principal` and carries it, nothing more — who may reach which session is decided by a layer above ([`routing.md` §1](../design/session/routing.md)) |
 | **HTTP/WebSocket termination** | The host. There is no web server in the core (`aimon-rewake-webhook` is the one exception that opens its own port) |
 | **Load balancing · service discovery** | Infrastructure. The routing design **rules out sticky routing explicitly** ([`deployment.en.md`](deployment.en.md)) |
 | **Observability backends** | The host. The core holds only the `SpanExporter` · `SessionMetrics` interfaces |

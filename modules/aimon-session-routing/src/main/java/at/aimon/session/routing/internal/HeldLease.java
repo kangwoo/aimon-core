@@ -7,7 +7,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import at.aimon.core.agent.session.store.SessionLease;
 
 /**
- * A session lease this node holds for as long as its session lives (design §7.4), bundled with the renewal
+ * A session lease this node holds for as long as its session lives (routing.md §3.2), bundled with the renewal
  * schedule and the idempotency slot whose lifetimes are now the lease's rather than a turn's.
  *
  * <p>

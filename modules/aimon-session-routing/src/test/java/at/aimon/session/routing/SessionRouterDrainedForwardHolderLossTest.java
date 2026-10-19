@@ -43,7 +43,7 @@ import at.aimon.session.routing.fixture.TestLiveSession;
 import at.aimon.session.routing.fixture.TestManagerHarness;
 
 /**
- * The half of holder loss that a forwarded turn used to fall outside of (design §6.3 D).
+ * The half of holder loss that a forwarded turn used to fall outside of (idempotency.md §5).
  *
  * <p>
  * A submission that loses the election hands its reservation over holderless — deliberately, because nobody executes a

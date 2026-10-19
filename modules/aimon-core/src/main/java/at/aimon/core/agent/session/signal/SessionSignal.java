@@ -16,7 +16,7 @@ import at.aimon.core.agent.session.SessionId;
 public final class SessionSignal {
 
     /**
-     * Distinguishes the cross-node signal flavors per design §5.4.
+     * Distinguishes the cross-node signal flavors per routing.md §5.
      */
     public enum SignalKind {
         /** User-requested interrupt; trips the active turn on the holder node. */
@@ -25,7 +25,7 @@ public final class SessionSignal {
         EVICT,
         /**
          * Hand this session over: the holder stops whatever turn is running, drops its cached live session, and returns
-         * the session lease so the asking node can take it (design §7.4).
+         * the session lease so the asking node can take it (routing.md §7.3).
          *
          * <p>
          * The two neighbours above are what this is <em>not</em>. {@link #INTERRUPT} stops a turn and leaves the
@@ -56,7 +56,7 @@ public final class SessionSignal {
         EVENT,
         /**
          * Terminal outcome of one forwarded turn, published by the holder so the node that accepted the submission can
-         * complete the future it handed its caller (design §7.1 F6/F7).
+         * complete the future it handed its caller (routing.md §7.1 F6/F7).
          *
          * <p>
          * Published <em>after</em> {@code IdempotencyStore.markDone} so durability never lags the notification: a node

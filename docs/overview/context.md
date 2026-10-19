@@ -124,7 +124,7 @@ IMPORTANT (이름의 함정): `ExecutorSpec` 은 **스레드풀 스펙이 아니
 
 | 하지 않는 것 | 누구의 일인가 |
 |---|---|
-| **인증·인가** | 호스트. 라우터는 `Principal` 을 받아 나르기만 한다 — 누가 어느 세션에 접근할 수 있는지는 상위 계층이 정한다 ([`routing.md` §1.2](../design/session/routing.md)) |
+| **인증·인가** | 호스트. 라우터는 `Principal` 을 받아 나르기만 한다 — 누가 어느 세션에 접근할 수 있는지는 상위 계층이 정한다 ([`routing.md` §1](../design/session/routing.md)) |
 | **HTTP/WebSocket 종단** | 호스트. 코어에 웹 서버가 없다 (`aimon-rewake-webhook` 만 예외적으로 자기 포트를 연다) |
 | **로드밸런싱 · 서비스 디스커버리** | 인프라. 라우팅 설계는 **sticky 를 명시적으로 배제**한다 ([`deployment.md`](deployment.md)) |
 | **관측 백엔드** | 호스트. 코어는 `SpanExporter` · `SessionMetrics` 인터페이스만 갖는다 |

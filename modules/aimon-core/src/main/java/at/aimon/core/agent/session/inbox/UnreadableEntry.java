@@ -11,8 +11,8 @@ import java.util.Optional;
  * rejection — the entry is already gone and no node will ever run its turn. What is left is the chance to say so
  * to whoever is waiting: this value carries what could still be read of the entry's address after the failure, and
  * the router turns it into an addressed turn failure rather than letting the submitter wait out the forward TTL.
- * The design is <a href="../../../../../../../../../docs/design/session/inbox-collect-durability.md">
- * inbox-collect-durability.md</a>.
+ * The design is <a href="../../../../../../../../../docs/design/session/inbox.md">
+ * inbox.md</a>.
  *
  * <p>
  * <b>Both addresses are unvalidated strings, deliberately.</b> They come out of a payload that has already proved

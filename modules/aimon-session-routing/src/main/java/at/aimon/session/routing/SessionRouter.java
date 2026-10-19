@@ -28,7 +28,7 @@ import at.aimon.session.routing.builder.SessionRouterBuilder;
  * backends.
  *
  * <p>
- * Design reference: {@code docs/design/session/routing.md} §5.1.
+ * Design reference: {@code docs/design/session/routing.md} §4.1.
  */
 public interface SessionRouter extends AutoCloseable {
 
@@ -121,7 +121,7 @@ public interface SessionRouter extends AutoCloseable {
      * <p>
      * History stored in {@code SessionRecordStore} is preserved — submitting again with the same id resumes the
      * session. For permanent deletion (history removal) call {@link #deleteSession(SessionId)} instead;
-     * direct {@code repository.delete(id)} bypasses the manager's lock and races in-flight turns (design §7.7).
+     * direct {@code repository.delete(id)} bypasses the manager's lock and races in-flight turns (routing.md §9).
      *
      * @param sessionId
      *            the session (must not be null)

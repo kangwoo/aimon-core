@@ -40,7 +40,7 @@ import at.aimon.session.routing.fixture.TestLiveSession;
 import at.aimon.session.routing.fixture.TestManagerHarness;
 
 /**
- * What a node does with inbox work that reaches it while {@code closeGracefully} is draining (design §7.3).
+ * What a node does with inbox work that reaches it while {@code closeGracefully} is draining (routing.md §7.3).
  *
  * <p>
  * Before this stage the answer was "nothing at all", and that was the defect. A doorbell arriving after the shutdown

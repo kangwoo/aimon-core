@@ -5,7 +5,7 @@ import java.time.Duration;
 import at.aimon.session.routing.SubmitDisposition;
 
 /**
- * Operational metric hooks for {@link at.aimon.session.routing.SessionRouter} (design §12).
+ * Operational metric hooks for {@link at.aimon.session.routing.SessionRouter} (routing.md §14).
  *
  * <p>
  * Implementations forward to a metrics backend (Micrometer, OpenTelemetry, Dropwizard, …). The interface itself is

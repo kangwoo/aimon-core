@@ -15,7 +15,7 @@ import at.aimon.core.agent.session.store.SessionStore;
 import at.aimon.session.routing.metrics.SessionMetrics;
 
 /**
- * Periodically renews a {@link SessionLease} (design §7.4) on a manager-owned
+ * Periodically renews a {@link SessionLease} (routing.md §4.3) on a manager-owned
  * {@link ScheduledExecutorService}.
  *
  * <p>
@@ -47,7 +47,7 @@ import at.aimon.session.routing.metrics.SessionMetrics;
  * <p>
  * A successful extend also piggybacks the secondary-TTL refresh of whatever idempotency reservation is bound to the
  * {@link IdempotencyTouchSlot} at that moment, so the holder-loss sweeper does not pick a live turn's entry as stale
- * (design §9.2 stale cleanup). The slot is read per tick rather than captured at schedule time because a lease now
+ * (idempotency.md §3). The slot is read per tick rather than captured at schedule time because a lease now
  * outlives the turn that won it — see {@link IdempotencyTouchSlot} for what a captured key would break.
  *
  * <p>
@@ -109,7 +109,7 @@ public final class LeaseRenewer {
 
     /**
      * The periodic lease-extend tick. Extracted from an anonymous {@link Runnable} so its body stays within the
-     * anon-inner-length limit; holds the per-schedule {@code lostLease} latch (design §7.4).
+     * anon-inner-length limit; holds the per-schedule {@code lostLease} latch (routing.md §8.3).
      */
     private static final class LeaseRenewalTask implements Runnable {
 

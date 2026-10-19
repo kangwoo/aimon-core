@@ -280,7 +280,7 @@ provider 별로 게이트가 서는 자리:
 
 원격 버퍼가 넘칠 때 추론 delta 는 **가장 먼저 희생된다**(추론 < 텍스트 < 구조 프레임). 등급과 그 이유, 그리고
 "둘 다 버릴 수 있다" 로 넓힌 boolean 이 왜 틀린지는
-[`../session/routing.md` §5.5.1](../session/routing.md#551-프로듀서는-절대-블록하지-않는다) 가 정본이다.
+[`../session/routing.md` §6](../session/routing.md#6-이벤트-릴레이--sessioneventrelay) 가 정본이다.
 
 롤링 배포 중 옛 노드는 모르는 프레임 타입을 건너뛴다. 섞인 버전의 클러스터에서 옛 노드는 추론 프레임만 잃고
 그 밖에는 바뀌지 않는다 — 드롭 정책이 압박 아래에서 내는 결과와 같다.
@@ -529,7 +529,7 @@ CLI 플래그는 picocli `negatable = true` 로 필드 하나가 `--streaming` /
 | 추론 reset · completed 이벤트를 따로 | sealed 파급이 세 배가 되고, 기존 시도 경계 두 이벤트가 이미 싣지 않는 정보는 없다(§7.4) |
 | 추론 텍스트를 `ReasoningTrace` 에도 넣는다 | 모델에게 되실리는 것이 바뀐다. 서명된 블록은 수정하면 거절되고, 요약은 `encrypted_content` 의 대체물이 아니다(§5.4) |
 | 숙고를 `AssistantMessageReceived` 로 렌더 | 그 이벤트는 assistant 메시지로 만들어져 결과에 요약되는데 숙고는 둘 다 아니다. 게다가 숙고가 끝난 뒤에 도착한다 — 이 기능이 피하려는 바로 그것이다 |
-| 원격 드롭 정책의 `isDroppable` 을 두 delta 로 넓힌다 | 두 등급이 같아져 숙고 폭주가 답 텍스트를 밀어낸다 — [`../session/routing.md`](../session/routing.md#551-프로듀서는-절대-블록하지-않는다) |
+| 원격 드롭 정책의 `isDroppable` 을 두 delta 로 넓힌다 | 두 등급이 같아져 숙고 폭주가 답 텍스트를 밀어낸다 — [`../session/routing.md`](../session/routing.md#62-오버플로-정책--세-등급) |
 | REPL 의 `/thinking` 토글 · 접기 · 스크롤백 영역 | 채널이 제공되면 터미널이 그것으로 무엇을 할지는 코어 의존이 없는 CLI 결정이다(§8.2) |
 
 ---

@@ -20,7 +20,7 @@ import at.aimon.core.agent.session.store.StoredAgentExecutionResult;
  * Flattens the terminal outcome of one turn to/from a JSON-primitive {@code Map<String, Object>} so the holder node can
  * announce it on the {@link at.aimon.core.agent.session.signal.SessionSignal.SignalKind#TURN_RESULT} rail and the node
  * that
- * accepted the submission can complete the future it handed its caller (design §7.1 F6/F7).
+ * accepted the submission can complete the future it handed its caller (routing.md §7.1 F6/F7).
  *
  * <p>
  * <b>Why flat primitives.</b> Same reason as {@link AgentExecutionEventPayload} and {@code StatusSnapshotPayload}: the
@@ -48,7 +48,7 @@ import at.aimon.core.agent.session.store.StoredAgentExecutionResult;
  * <p>
  * <b>Artifacts are dropped</b> — see {@link StoredAgentExecutionResult}. A forwarded turn's result reports no
  * artifacts;
- * that is the contract, not a bug to work around (design §9.4).
+ * that is the contract, not a bug to work around (routing.md §11.2).
  *
  * <p>
  * <b>Failure codes are forward-tolerant.</b> An unrecognized {@link Failure.Code} name (a newer node's code an older

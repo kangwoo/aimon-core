@@ -51,15 +51,13 @@
 
 | 문서 | 무엇이 있나 |
 |------|------------|
-| [`session-model.md`](session/session-model.md) | `SessionRecord` : `LiveSession` = 1 : 0..N 비대칭. 무엇이 재시작을 넘는가, 식별자 축, 함정 |
-| [`spi-extraction.md`](session/spi-extraction.md) | 세션 SPI 를 `aimon-core` 로 내리고 라우팅만 밖에 남긴 이관 |
-| [`routing.md`](session/routing.md) | sticky 라우팅 없이 세션당 턴을 직렬화하는 멀티 노드 계층 |
-| [`backends.md`](session/backends.md) | PostgreSQL · MongoDB · Redis 세 백엔드의 스키마와 보장 차이 |
-| [`inbox-collect-durability.md`](session/inbox-collect-durability.md) | 인박스 `collect` 가 한 항목의 디코드 실패로 배치를 잃지 않게 — 후보 셋의 백엔드별 비용과 기각 사유 |
-| [`session-log.md`](session/session-log.md) | (IMPLEMENTED, 차이는 §12) transcript 를 append-only 로그 + 뷰 상태로 분리. seq 주소, 봉인, `/clear`·rewind, v1 이행 |
-| [`session-owner-deletion-event.md`](session/session-owner-deletion-event.md) | (IMPLEMENTED, 승인본, 영어, 차이는 §9) 세션 소유자와 삭제 리스너(#253) — 소유자를 `provision` 이 "비어 있으면 채운다" 로 쓰고 `initiator` 에서 끌어내지 않는 이유, 기록만 하고 강제하지 않는 것, 리스너를 리스 안에서 `recordDeleted` 로 부르는 자리, 기각한 대안 |
-| [`session-owner-narrow-read.md`](session/session-owner-narrow-read.md) | (IMPLEMENTED, 승인본, 영어, 차이는 §9) 세션 소유자만 읽는 `SessionRecordStore.loadOwner`(#262, 백로그 SO-5) — 별도 SPI 가 아니라 `load` 로 떨어지는 `default` 인 이유, 소유자 하나로 범위를 정한 이유, "레코드 없음" 과 "소유자 없음" 을 가르지 않는 이유, 백엔드별 읽기와 감싸는 저장소의 전달, 전사가 깨져도 답하는 차이, 기각한 대안 |
-| [`session-record-store-contract.md`](session/session-record-store-contract.md) | (IMPLEMENTED — 테스트 소스만, 승인본, 영어, 차이는 §10) 세 백엔드 · in-memory · 감싸는 두 저장소가 함께 도는 `SessionRecordStore` 계약 스위트(#266, 백로그 SO-7) — 공개하지 않은 `aimon-session-testkit` 에 둔 이유(공개는 저장소 밖에 구현이 생길 때), 스위트로 옮길 검사와 백엔드에 남길 검사를 가르는 규칙, 손상 훅이 통과가 아니라 건너뜀으로 보고되는 이유, 펜스 뷰가 `clear()` 를 거절하는 경로, 기각한 대안 |
+| [`session-model.md`](session/session-model.md) | `SessionRecord` : `LiveSession` = 1 : 0..N 비대칭. 타입과 이름, 레코드 구조와 side field, 세션 소유자(기록이지 권한이 아니다), 무엇이 재시작을 넘는가, 식별자 축 |
+| [`session-store.md`](session/session-store.md) | 영속 SPI 경계(계약은 core, 정책은 routing), `SessionRecordStore` 의 부분 쓰기 primitive 와 `default` 정책, `loadOwner`, 리스 SPI, `SessionStore` 의 claim 순서, 쓰기 펜스(`SessionFence`)와 남는 창, 레코드 저장소 계약 스위트 |
+| [`session-log.md`](session/session-log.md) | transcript 를 append-only 로그 + 뷰 상태로 분리. seq 주소, origin, 봉인과 manifest, 세그먼트 SPI, GC 와 저장소 단위 스윕, `/clear`·rewind, v1/v2 이행 |
+| [`routing.md`](session/routing.md) | sticky 라우팅 없이 세션당 턴을 직렬화하는 멀티 노드 계층 — 세션 수명 리스와 턴 게이트, 시그널 7종, 이벤트 릴레이, 제출 시퀀스, 라이프사이클, 삭제와 삭제 리스너, 계측 |
+| [`inbox.md`](session/inbox.md) | 크로스 노드 우편함 `SessionInbox` — 봉투, `collect` 의 원자성, 한 항목의 디코드 실패를 그 항목에 가두는 격리와 주소 회수, `UNREADABLE`, 우선순위, 기각한 지우기 전 디코드·dead-letter |
+| [`idempotency.md`](session/idempotency.md) | 멱등 제출 — 매트릭스, 두 TTL 과 touch, 예약 홀더, 수집된 메시지의 넘겨받기(승리·거절·알 수 없음), 홀더 유실 회복과 고아 메시지 재-초인종 |
+| [`backends.md`](session/backends.md) | PostgreSQL · MongoDB · Redis 세 백엔드의 스키마·전달 메커니즘·보장 차이, 소유자와 세그먼트의 저장 모양, 선택 기준 |
 
 ### tool — 도구 계약
 
@@ -293,10 +291,15 @@
 | `implemented/session-first-restructure-design.md` | [`session/session-model.md`](session/session-model.md) |
 | `implemented/conversation-state-persistence-design.md` | [`session/session-model.md`](session/session-model.md) |
 | `implemented/conversation-decomposition-scope.md` | [`session/session-model.md`](session/session-model.md) |
-| `session-spi-extraction-design.md` | [`session/spi-extraction.md`](session/spi-extraction.md) |
+| `session-spi-extraction-design.md` | [`session/session-store.md`](session/session-store.md) |
 | `implemented/web-agent-session-manager-design.md` | [`session/routing.md`](session/routing.md) |
 | `implemented/web-agent-session-postgres-design.md` | [`session/backends.md`](session/backends.md) |
 | `implemented/web-agent-session-mongodb-design.md` | [`session/backends.md`](session/backends.md) |
+| `session/spi-extraction.md` | [`session/session-store.md`](session/session-store.md) — 마지막 판본 `d4608ba2` |
+| `session/inbox-collect-durability.md` | [`session/inbox.md`](session/inbox.md) — 마지막 판본 `ac4b3266` |
+| `session/session-owner-deletion-event.md` | [`session/session-model.md`](session/session-model.md) · [`session/session-store.md`](session/session-store.md) · [`session/routing.md`](session/routing.md) · [`session/backends.md`](session/backends.md) — 마지막 판본 `08c686e8` |
+| `session/session-owner-narrow-read.md` | [`session/session-store.md`](session/session-store.md) — 마지막 판본 `afe227bc` |
+| `session/session-record-store-contract.md` | [`session/session-store.md`](session/session-store.md) — 마지막 판본 `afe227bc` |
 | `tool-contract-hardening-design.md` | [`tool/contract-hardening.md`](tool/contract-hardening.md) |
 | `tool-side-effect-axes-review.md` | [`tool/side-effect-axes.md`](tool/side-effect-axes.md) |
 | `implemented/tool-parallel-execution-design.md` | [`tool/parallel-execution.md`](tool/parallel-execution.md) |
@@ -347,6 +350,9 @@
 llm 의 옛 기록 16종은 트리에서 지웠다 — 원문은 표의 마지막 판본 커밋에서 `git show <커밋>:docs/design/llm/<파일>` 로 읽는다.
 경로가 그대로인 `streaming.md` · `cancellation.md` · `multimodal-content.md` · `openai-responses-path.md` 도 내용이 다시 쓰여
 옛 절 번호가 맞지 않는다.
+session 의 옛 기록 5종도 같은 방식으로 지웠다(`git show <커밋>:docs/design/session/<파일>`). 경로가 그대로인 `session-model.md` ·
+`routing.md` · `backends.md` · `session-log.md` 도 내용이 다시 쓰여 옛 절 번호가 맞지 않는다 — 마지막 판본은 각각
+`08c686e8` · `18fe9033` · `dabaafc3` · `2ba9ec61` 이다.
 
 ---
 

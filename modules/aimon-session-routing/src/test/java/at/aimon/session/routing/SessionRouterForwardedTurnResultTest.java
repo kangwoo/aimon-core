@@ -41,7 +41,7 @@ import at.aimon.session.routing.fixture.TestLiveSession;
 import at.aimon.session.routing.fixture.TestManagerHarness;
 
 /**
- * The forwarded-turn return path (design §7.1 F0/F3/F6/F7): a submission that loses the session lock is answered
+ * The forwarded-turn return path (routing.md §7.1 F0/F3/F6/F7): a submission that loses the session lock is answered
  * by
  * whichever node runs it, and the answer travels back over the {@code TURN_RESULT} rail.
  *

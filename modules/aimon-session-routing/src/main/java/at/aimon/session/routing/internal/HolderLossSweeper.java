@@ -22,7 +22,7 @@ import at.aimon.session.routing.metrics.SessionMetrics;
 
 /**
  * Periodic sweeper that detects holder loss via the {@link IdempotencyStore} and emits the recovery sequence
- * required by design §6.3 D / §9.2 stale cleanup.
+ * required by idempotency.md §6.
  *
  * <p>
  * For every IN_FLIGHT entry whose {@code lastTouchedAt} is older than {@code now - secondaryTtl}, the sweeper

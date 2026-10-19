@@ -88,7 +88,7 @@ flowchart TB
 
 The five shared boxes **may share one backend or be split across several.** All three modules
 (`aimon-session-{redis,postgres,mongodb}`) implement all five, so which one to pick is answered
-by the table in [`backends.md` §7](../design/session/backends.md). Using what you already
+by the table in [`backends.md` §8](../design/session/backends.md). Using what you already
 operate is the first criterion.
 
 ---

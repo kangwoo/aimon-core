@@ -4,7 +4,7 @@ package at.aimon.session.routing;
  * Deployment topology declared at builder time.
  *
  * <p>
- * Drives the SPI default-injection policy (design §11.2):
+ * Drives the SPI default-injection policy (routing.md §13.2):
  *
  * <ul>
  * <li>{@link #SINGLE_NODE} — missing SPIs default to in-memory implementations. Suitable for single-process

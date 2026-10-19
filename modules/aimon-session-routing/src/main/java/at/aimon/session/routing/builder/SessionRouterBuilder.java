@@ -32,7 +32,7 @@ import at.aimon.session.routing.internal.SessionRouterConfig;
 import at.aimon.session.routing.metrics.SessionMetrics;
 
 /**
- * Fluent builder for {@link SessionRouter} (design §11.2).
+ * Fluent builder for {@link SessionRouter} (routing.md §13.2).
  *
  * <p>
  * Exactly one of {@link #sessionFactory(LiveSessionFactory)} or {@link #sessionOpener(LiveSessionOpener)} must be

@@ -11,8 +11,8 @@ import java.util.Objects;
  * The second list exists because the two are not the same question. Every backend removes an entry from storage
  * before its codec runs, so an entry that fails to decode is gone either way — returning fewer messages and saying
  * nothing would make that loss silent, which is the failure this seam was opened to remove. The design is
- * <a href="../../../../../../../../../docs/design/session/inbox-collect-durability.md">
- * inbox-collect-durability.md</a>.
+ * <a href="../../../../../../../../../docs/design/session/inbox.md">
+ * inbox.md</a>.
  *
  * <p>
  * A batch with nothing in {@link #getMessages()} and one entry in {@link #getUnreadable()} is the ordinary shape

@@ -17,7 +17,7 @@ import at.aimon.core.agent.session.inbox.InboundMessageId;
  * holds it to drain). <b>Both carry a future</b>: the disposition tells the caller <em>where</em> the work runs, not
  * whether they get an answer. A forwarded turn's future completes when the holder announces the terminal result on the
  * {@code TURN_RESULT} rail — or, if that broadcast is lost, when this node's polling fallback reads the result out of
- * the {@code IdempotencyStore} (design §7.1 F2/F7).
+ * the {@code IdempotencyStore} (routing.md §7.1 F2/F7).
  *
  * <p>
  * A forwarded future can also complete exceptionally without the turn ever running: the holder refuses a message whose
@@ -33,7 +33,7 @@ import at.aimon.core.agent.session.inbox.InboundMessageId;
  * result object.
  *
  * <p>
- * Per design §9.1 this is intentionally distinct from {@link at.aimon.core.agent.session.SubmitOutcome} (which has
+ * Per routing.md §11.1 this is intentionally distinct from {@link at.aimon.core.agent.session.SubmitOutcome} (which has
  * session-level idle/busy semantics rather than node-level inline-vs-deferred semantics).
  */
 public final class SubmitDisposition {

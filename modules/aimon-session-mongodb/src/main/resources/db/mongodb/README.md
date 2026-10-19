@@ -8,5 +8,19 @@ it is applied manually once per cluster via:
 mongosh "<connection-uri>" db/mongodb/init.js
 ```
 
-For the full operational guide and the rationale for the manual-DDL stance see
-`docs/design/session/backends.md` §3.4 and §7.
+## Replica set
+
+The signal bus uses Change Streams, which require a replica set even on a single
+node. `init.js` warns when `replSetGetStatus` fails but does not initiate one.
+For development:
+
+```bash
+mongod --replSet rs0 --dbpath /tmp/mongo
+mongosh --eval 'rs.initiate()'
+```
+
+Production: three members (PSS), oplog sized for at least 24 hours of peak
+writes, `?w=majority&readConcernLevel=majority` on the URI, primary reads.
+
+For the rationale behind the manual-DDL stance and these requirements see
+`docs/design/session/backends.md` §2.4 and §4.

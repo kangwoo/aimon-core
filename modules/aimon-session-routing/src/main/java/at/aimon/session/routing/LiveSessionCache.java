@@ -29,7 +29,7 @@ import at.aimon.session.routing.metrics.SessionMetrics.CacheEvictionReason;
  * Per-node, per-session handle cache backed by Caffeine.
  *
  * <p>
- * Applies two simultaneous caps per design §5.2:
+ * Applies two simultaneous caps per routing.md §4.2:
  *
  * <ul>
  * <li>{@code idleTtl} — idle-after-access TTL ensures heavy session-scoped resources (MCP connections, knowledge

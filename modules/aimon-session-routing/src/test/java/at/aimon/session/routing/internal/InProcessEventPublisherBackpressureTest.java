@@ -18,7 +18,7 @@ import at.aimon.core.agent.stream.AssistantTextDelta;
 import at.aimon.session.routing.fixture.TestLiveSession;
 
 /**
- * WS-02-B9: a slow subscriber must NEVER block the producer (design §5.5.1 invariant).
+ * WS-02-B9: a slow subscriber must NEVER block the producer (routing.md §6.1 invariant).
  *
  * <p>
  * The producer thread emits events one after another with no parking. With a non-requesting subscriber,
