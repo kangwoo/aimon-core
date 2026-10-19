@@ -17,6 +17,7 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -161,33 +162,82 @@ class RipgrepControlStoreTest {
         }
     }
 
+    /**
+     * The stand-ins are written once for the class and each executed once before any test uses it. On macOS 13+ the
+     * first execution of a newly written script waits for syspolicyd's Gatekeeper scan, which is serialised
+     * machine-wide; paid inside a timed region, it made the timeout case kill an rg that had not started and the
+     * cancellation case overrun its limit. The verdict is cached per file, so the warm-up pays it up front. A stand-in
+     * answers {@value #WARM_UP} — which rg is never passed first — by exiting at once.
+     *
+     * <p>
+     * The stand-ins share one directory and its {@code args} / {@code pid} files, so these tests must not run
+     * concurrently with each other; the build runs tests sequentially.
+     */
     @Nested
     @DisplayName("with a stand-in rg that always reports a control-store match")
     class StandInRipgrep {
 
+        /** The first argument on which a stand-in exits at once; {@link RipgrepContentSearch} always starts --json. */
+        private static final String WARM_UP = "--warm-up";
+
+        /** How long both warm-ups together may queue for syspolicyd: minutes on a busy Mac, no time at all on Linux. */
+        private static final long WARM_UP_TIMEOUT_MINUTES = 5;
+
         @TempDir
-        Path bin;
+        static Path bin;
 
-        private Path fakeRg;
-        private Path argsFile;
+        private static Path fakeRg;
+        private static Path argsFile;
+        private static Path slowRg;
+        private static Path pidFile;
 
-        @BeforeEach
-        void writeFakeRg() throws IOException {
+        @BeforeAll
+        static void writeStandIns() throws Exception {
             assumeFalse(System.getProperty("os.name").toLowerCase(Locale.ENGLISH).contains("win"),
                     "the stand-in rg is a POSIX shell script");
+            final long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(WARM_UP_TIMEOUT_MINUTES);
             argsFile = bin.resolve("args");
-            fakeRg = bin.resolve("rg");
+            pidFile = bin.resolve("pid");
             final Path output = bin.resolve("output.jsonl");
             Files.writeString(output,
                     "{\"type\":\"begin\",\"data\":{\"path\":{\"text\":\"./.aimon/s/x.json\"}}}\n"
                             + match("./.aimon/s/x.json", "CONTROL-ONLY token")
                             + match(".aimon/s/x.json", "CONTROL-ONLY token") + match("./src/a.txt", "a token here"));
-            Files.writeString(fakeRg,
-                    "#!/bin/sh\nprintf '%s\\n' \"$@\" > '" + argsFile + "'\ncat '" + output + "'\nexit 0\n");
-            assertThat(fakeRg.toFile().setExecutable(true)).isTrue();
+            fakeRg = standIn("rg", "printf '%s\\n' \"$@\" > '" + argsFile + "'\ncat '" + output + "'\nexit 0\n",
+                    deadline);
+            // Records its pid and then sleeps far past any test's patience, holding stdout open.
+            slowRg = standIn("slow-rg", "echo $$ > '" + pidFile + "'\nexec sleep 60\n", deadline);
         }
 
-        private String match(String path, String line) {
+        @BeforeEach
+        void forgetLastRun() throws IOException {
+            Files.deleteIfExists(argsFile);
+            Files.deleteIfExists(pidFile);
+        }
+
+        /**
+         * Writes an executable stand-in and runs it once with {@value #WARM_UP}, so its first execution is behind it.
+         * {@code deadline} ({@link System#nanoTime()}) is shared by every warm-up of the class.
+         */
+        private static Path standIn(String name, String body, long deadline) throws IOException, InterruptedException {
+            final Path script = bin.resolve(name);
+            Files.writeString(script, "#!/bin/sh\nif [ \"$1\" = " + WARM_UP + " ]; then exit 0; fi\n" + body);
+            assertThat(script.toFile().setExecutable(true)).isTrue();
+            final Process process = new ProcessBuilder(script.toString(), WARM_UP).redirectErrorStream(true)
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
+            process.getOutputStream().close();
+            if (!process.waitFor(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS)) {
+                process.destroyForcibly().waitFor();
+                throw new AssertionError("the stand-in " + script + " did not finish its warm-up within "
+                        + WARM_UP_TIMEOUT_MINUTES
+                        + " minutes of the class's warm-ups. On macOS its first execution waits for syspolicyd's "
+                        + "Gatekeeper scan; `log show --predicate 'process == \"syspolicyd\"' --last 10m` shows the queue");
+            }
+            assertThat(process.exitValue()).as("warm-up exit status of %s", script).isZero();
+            return script;
+        }
+
+        private static String match(String path, String line) {
             return "{\"type\":\"match\",\"data\":{\"path\":{\"text\":\"" + path + "\"},\"lines\":{\"text\":\"" + line
                     + "\\n\"},\"line_number\":1}}\n";
         }
@@ -248,8 +298,6 @@ class RipgrepControlStoreTest {
         @Test
         @DisplayName("a stuck rg is killed at the timeout instead of blocking the call")
         void stuckRgTimesOut() throws Exception {
-            final Path pidFile = bin.resolve("pid");
-            final Path slowRg = sleepingRg(pidFile);
             final RipgrepContentSearch search = new RipgrepContentSearch(slowRg, workspace, List.of(".aimon"),
                     Duration.ofSeconds(2));
 
@@ -258,14 +306,12 @@ class RipgrepControlStoreTest {
                     .isInstanceOf(IllegalStateException.class).hasMessageContaining("timed out");
 
             assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(10));
-            assertProcessGone(pidFile);
+            assertProcessGone();
         }
 
         @Test
         @DisplayName("a cancelled query kills rg while it is still running")
         void cancelledQueryKillsRg() throws Exception {
-            final Path pidFile = bin.resolve("pid");
-            final Path slowRg = sleepingRg(pidFile);
             final RipgrepContentSearch search = new RipgrepContentSearch(slowRg, workspace, List.of(".aimon"));
             final AtomicBoolean cancelled = new AtomicBoolean();
             final ContentQuery query = ContentQuery.builder().pattern("token").path("src").cancellation(() -> {
@@ -281,18 +327,10 @@ class RipgrepControlStoreTest {
                     .hasMessageContaining("cancelled");
 
             assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(10));
-            assertProcessGone(pidFile);
+            assertProcessGone();
         }
 
-        /** An rg that records its pid and then sleeps far past any test's patience, holding stdout open. */
-        private Path sleepingRg(Path pidFile) throws IOException {
-            final Path slowRg = bin.resolve("slow-rg");
-            Files.writeString(slowRg, "#!/bin/sh\necho $$ > '" + pidFile + "'\nexec sleep 60\n");
-            assertThat(slowRg.toFile().setExecutable(true)).isTrue();
-            return slowRg;
-        }
-
-        private void assertProcessGone(Path pidFile) throws Exception {
+        private void assertProcessGone() throws Exception {
             final long pid = Long.parseLong(Files.readString(pidFile).trim());
             final Optional<ProcessHandle> handle = ProcessHandle.of(pid);
             if (handle.isPresent()) {
