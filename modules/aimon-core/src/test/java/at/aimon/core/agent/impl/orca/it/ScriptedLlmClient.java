@@ -359,6 +359,11 @@ final class ScriptedLlmClient implements LlmClient {
             return tools;
         }
 
+        /** The messages sent on this call, in order. */
+        List<Message> messages() {
+            return messages;
+        }
+
         /** Names of the tools the runtime offered on this call. */
         List<String> toolNames() {
             return tools.stream().map(ToolDefinition::getName).collect(Collectors.toList());

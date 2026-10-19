@@ -88,7 +88,8 @@ class CompactionTurnIntegrationTest {
         support = new OrcaRuntimeItSupport(tempDir);
         llm = new ScriptedLlmClient();
         // In-place compaction is what these tests pin: the transcript itself is rewritten. The version-2 view path,
-        // where the log keeps its entries, is OrcaAgentExecutorViewModeTest's and SealedLogRewindIntegrationTest's.
+        // where the log keeps its entries, is ViewModeCompactionIntegrationTest's on this same assembly, and
+        // OrcaAgentExecutorViewModeTest's and SealedLogRewindIntegrationTest's below it.
         node = support.newNode("agent-a", llm,
                 OrcaRuntimeItSupport.options().sessionLogWriteFormat(SessionLogFormat.V1));
         node.writeFile("big.txt", fixtureContent());

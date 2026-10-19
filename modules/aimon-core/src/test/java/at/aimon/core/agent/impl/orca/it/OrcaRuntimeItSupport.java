@@ -34,6 +34,7 @@ import at.aimon.core.agent.session.store.SessionCheckpointMailbox;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
+import at.aimon.core.agent.session.transcript.SessionLogStorage;
 import at.aimon.core.agent.session.transcript.TranscriptManager;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.command.DefaultCommandExecutionManager;
@@ -152,9 +153,14 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
         final DefaultSubagentExecutionManager subagentManager = ownsSubagentManager
                 ? new DefaultSubagentExecutionManager(llmClient, toolManager, hookManager)
                 : options.sharedSubagentManager;
-        final InMemorySessionRecordStore recordStore = new InMemorySessionRecordStore();
-        final TranscriptManager transcriptManager = new DefaultTranscriptManager(recordStore,
-                SessionCheckpointMailbox.disabled(), options.sessionLogWriteFormat);
+        final InMemorySessionRecordStore recordStore = options.recordStore != null
+                ? options.recordStore
+                : new InMemorySessionRecordStore();
+        final TranscriptManager transcriptManager = options.sessionLogStorage == null
+                ? new DefaultTranscriptManager(recordStore, SessionCheckpointMailbox.disabled(),
+                        options.sessionLogWriteFormat)
+                : new DefaultTranscriptManager(recordStore, SessionCheckpointMailbox.disabled(),
+                        options.sessionLogWriteFormat, options.sessionLogStorage);
 
         // The builder rather than the six-arg constructor, and it is the same assembly: OrcaAgentExecutor.Builder
         // #llmClient wraps the client in LlmCallGateway.withDefaultRetry, which is exactly what that constructor
@@ -212,7 +218,7 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
                         options.mcpClientFactory, options.mcpServerConfigProvider);
 
         final Node node = new Node(runtime, executor, fileSystem, subagentManager, ownsSubagentManager, recordStore,
-                hookManager, root);
+                transcriptManager, hookManager, root);
         if (options.hooksJson != null) {
             node.startHooksJson(name, baseDir.resolve(name + "-home"), options.hooksJson,
                     options.hooksJsonHostDir == null ? root : options.hooksJsonHostDir);
@@ -339,6 +345,7 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
         private final DefaultSubagentExecutionManager subagentManager;
         private final boolean ownsSubagentManager;
         private final InMemorySessionRecordStore recordStore;
+        private final TranscriptManager transcriptManager;
         private final DefaultHookExecutionManager hookManager;
         private final List<DefaultLiveSession> liveSessions = new ArrayList<>();
         private final Path root;
@@ -347,13 +354,15 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
 
         Node(OrcaAgentRuntime runtime, OrcaAgentExecutor executor, LocalFileSystem fileSystem,
                 DefaultSubagentExecutionManager subagentManager, boolean ownsSubagentManager,
-                InMemorySessionRecordStore recordStore, DefaultHookExecutionManager hookManager, Path root) {
+                InMemorySessionRecordStore recordStore, TranscriptManager transcriptManager,
+                DefaultHookExecutionManager hookManager, Path root) {
             this.runtime = runtime;
             this.executor = executor;
             this.fileSystem = fileSystem;
             this.subagentManager = subagentManager;
             this.ownsSubagentManager = ownsSubagentManager;
             this.recordStore = recordStore;
+            this.transcriptManager = transcriptManager;
             this.hookManager = hookManager;
             this.root = root;
         }
@@ -410,6 +419,14 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
          */
         InMemorySessionRecordStore recordStore() {
             return recordStore;
+        }
+
+        /**
+         * The transcript manager this node's executor writes through — for reading a version-2 log back whole, sealed
+         * ranges included, which the record alone no longer holds.
+         */
+        TranscriptManager transcriptManager() {
+            return transcriptManager;
         }
 
         /**
@@ -567,6 +584,8 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
         private QuotaGuardFactory quotaGuardFactory;
         private int maxIterations = MAX_ITERATIONS;
         private SessionLogFormat sessionLogWriteFormat = SessionLogFormat.V2;
+        private SessionLogStorage sessionLogStorage;
+        private InMemorySessionRecordStore recordStore;
         private UnaryOperator<ExecutionEnvironmentProvider> environmentProviderDecorator = UnaryOperator.identity();
         private boolean skillShellHooks;
         private String hooksJson;
@@ -627,6 +646,31 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
             return this;
         }
 
+        /** Selects the session-log version this node writes; the harness default is version 2, as in production. */
+        Options sessionLogWriteFormat(SessionLogFormat format) {
+            this.sessionLogWriteFormat = Objects.requireNonNull(format, "format must not be null");
+            return this;
+        }
+
+        /**
+         * Seals a version-2 log's compacted ranges through {@code storage}, as {@code AimonStackBuilder} does — with
+         * an in-memory segment store by default when its record store is in-memory too. Without it, the harness
+         * default, nothing is sealed and the record keeps its whole history.
+         */
+        Options sessionLogStorage(SessionLogStorage storage) {
+            this.sessionLogStorage = Objects.requireNonNull(storage, "storage must not be null");
+            return this;
+        }
+
+        /**
+         * Starts the node over an existing record store instead of an empty one — with {@link #sessionLogStorage},
+         * what a restart or another node over the same backends looks like.
+         */
+        Options recordStore(InMemorySessionRecordStore store) {
+            this.recordStore = Objects.requireNonNull(store, "store must not be null");
+            return this;
+        }
+
         /**
          * Prices the executor's LLM calls, turning the {@code maxCostUsd} budget dimension on.
          *
@@ -637,11 +681,6 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
          * zero total would cross. That is the production default and a test pins it; this option is what gives that
          * test a counterpart which actually reaches the stop.
          */
-        Options sessionLogWriteFormat(SessionLogFormat format) {
-            this.sessionLogWriteFormat = Objects.requireNonNull(format, "format must not be null");
-            return this;
-        }
-
         Options costEstimator(CostEstimator costEstimator) {
             this.costEstimator = Objects.requireNonNull(costEstimator, "costEstimator must not be null");
             return this;
