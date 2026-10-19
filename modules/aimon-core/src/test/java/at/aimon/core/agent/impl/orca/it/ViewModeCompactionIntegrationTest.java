@@ -52,7 +52,8 @@ import at.aimon.core.subagent.task.codec.JsonSessionSnapshotCodec;
  * <h2>Why compaction lands on the second turn</h2>
  *
  * <p>
- * In view mode the part the model has not answered yet is never summarized — everything after the view's last
+ * In view mode the part the model has not answered yet is not summarized short of the blocking limit — everything after
+ * the view's last
  * assistant message, together with the call that message made (context-engine §13.10). A big tool result read in the
  * current iteration is exactly that part, so it cannot be folded away until the model has answered it. The oversized
  * read therefore happens on turn 1, which answers it, and the compaction hint is given to turn 2. The fixture is sized
@@ -154,13 +155,13 @@ class ViewModeCompactionIntegrationTest {
      * Turn 1 reads the big file and answers; turn 2, under a compaction hint, reads the note and answers. The script
      * also carries {@code extra} responses for the turns a test runs after these two.
      */
-    private SessionId compactAcrossTwoTurns(String... extra) {
+    private SessionId compactAcrossTwoTurns(LlmResponse... extra) {
         final SessionId sessionId = OrcaRuntimeItSupport.newSession();
         final List<LlmResponse> responses = Stream
                 .concat(Stream.of(ScriptedLlmClient.callTool("Read", Map.of("file_path", "big.txt")),
                         ScriptedLlmClient.text("read it"),
                         ScriptedLlmClient.callTool("tu-note", "Read", Map.of("file_path", "note.txt")),
-                        ScriptedLlmClient.text("noted")), Stream.of(extra).map(ScriptedLlmClient::text))
+                        ScriptedLlmClient.text("noted")), Stream.of(extra))
                 .toList();
         llm.script(sessionId.value(), responses.toArray(LlmResponse[]::new));
         scriptSummariser(sessionId, SUMMARY_SENTINEL);
@@ -187,16 +188,22 @@ class ViewModeCompactionIntegrationTest {
      * read is bounded by {@code maxReadTokens} and the big file alone is over it.
      */
     private static List<String> wholeLogText(OrcaRuntimeItSupport.Node node, SessionId sessionId) {
+        return logPages(node, sessionId).stream().flatMap(page -> page.getEntries().stream())
+                .filter(entry -> entry.getOrigin() == LogOrigin.CONVERSATION)
+                .flatMap(entry -> textOf(entry.getMessage())).toList();
+    }
+
+    /** The log read from its start to its end, one page per bounded read. */
+    private static List<SessionLogPage> logPages(OrcaRuntimeItSupport.Node node, SessionId sessionId) {
         final SessionLogReader reader = node.transcriptManager().getLogReader().orElseThrow();
-        final List<String> text = new ArrayList<>();
+        final List<SessionLogPage> pages = new ArrayList<>();
         long from = 0;
-        for (int pages = 1; pages <= MAX_LOG_PAGES; pages++) {
+        while (pages.size() < MAX_LOG_PAGES) {
             final SessionLogPage page = reader.read(sessionId, from, Long.MAX_VALUE);
             assertThat(page.getGaps()).as("no sealed range is unreadable").isEmpty();
-            page.getEntries().stream().filter(entry -> entry.getOrigin() == LogOrigin.CONVERSATION)
-                    .flatMap(entry -> textOf(entry.getMessage())).forEach(text::add);
+            pages.add(page);
             if (!page.hasMore()) {
-                return text;
+                return pages;
             }
             final long next = page.getNextFromSeq().orElseThrow();
             assertThat(next).as("a page must advance the read").isGreaterThan(from);
@@ -249,9 +256,8 @@ class ViewModeCompactionIntegrationTest {
 
     /**
      * The durable half. The record is version 2 and the summarized range went to the segment store; reading the log
-     * back
-     * through it yields every word of both turns, and none of the summary — the summary lives in the view state, not
-     * in the log.
+     * back through it yields every word of both turns, and none of the summary — the summary lives in the view state,
+     * not in the log.
      */
     @Test
     @DisplayName("an auto compaction seals the summarized range and the log still holds every word")
@@ -260,7 +266,8 @@ class ViewModeCompactionIntegrationTest {
 
         final SessionLogState stored = logState(node.recordStore(), sessionId);
         assertThat(stored.getFormat()).isEqualTo(SessionLogFormat.V2);
-        assertThat(stored.getViewState().getSummarySpan()).isPresent();
+        assertThat(stored.getViewState().getSummarySpan())
+                .hasValueSatisfying(span -> assertThat(span.getRange()).isEqualTo(SeqRange.of(0, 5)));
         // The span covers seqs 0-4: turn 1's four messages and turn 2's input. Sealing never straddles a turn's rewind
         // point, so the span is sealed as two runs that meet at turn 2's start (seq 4) rather than as one.
         assertThat(stored.getManifest()).extracting(SessionLogManifestEntry::getRange)
@@ -276,18 +283,32 @@ class ViewModeCompactionIntegrationTest {
                 .contains(TURN_1_INPUT, "read it", TURN_2_INPUT, "noted")
                 .anyMatch(text -> text.contains(BIG_FILE_SENTINEL)).anyMatch(text -> text.contains(NOTE_SENTINEL))
                 .noneMatch(text -> text.contains(SUMMARY_SENTINEL));
+        assertThat(logPages(node, sessionId)).as("the big file alone is over one read's bound").hasSizeGreaterThan(1);
+    }
+
+    /**
+     * Turn 3 re-reads the note and answers, under the same compaction hint as turn 2 — a two-iteration turn on which
+     * the guard is forced at the top of iteration 2.
+     */
+    private static LlmResponse[] hintedThirdTurn(String answer) {
+        return new LlmResponse[]{ScriptedLlmClient.callTool("tu-note-again", "Read", Map.of("file_path", "note.txt")),
+                ScriptedLlmClient.text(answer)};
     }
 
     /**
      * The next turn's buffer is rebuilt from the record, so this is where a span that was written but not projected
      * would show: turn 3 must go out on the same summary, and must not summarize again.
+     *
+     * <p>
+     * Turn 3 runs under the compaction hint, so "not again" can fail: the forced pass compacts whatever is over the
+     * warning band, which a view that lost its span — the big file back in it — is, and a view that kept it is not.
      */
     @Test
     @DisplayName("the turn after an auto compaction runs on the same summary without compacting again")
     void theTurnAfterAnAutoCompactionRunsOnTheSameSummary() {
-        final SessionId sessionId = compactAcrossTwoTurns("continued");
+        final SessionId sessionId = compactAcrossTwoTurns(hintedThirdTurn("continued"));
 
-        final OrcaAgentExecutionResult third = node.run(sessionId, "and then?");
+        final OrcaAgentExecutionResult third = node.run(sessionId, "and then?", compactionHintBudget());
 
         assertThat(third.isSuccess()).isTrue();
         assertThat(third.getFinalAnswer()).isEqualTo("continued");
@@ -307,7 +328,7 @@ class ViewModeCompactionIntegrationTest {
     @Test
     @DisplayName("a node over the same backends, the record reloaded through the codec, continues from the summary")
     void aReloadedRecordContinuesFromTheSummary() {
-        final SessionId sessionId = compactAcrossTwoTurns("continued elsewhere");
+        final SessionId sessionId = compactAcrossTwoTurns(hintedThirdTurn("continued elsewhere"));
 
         final SessionSnapshot stored = SessionSnapshot.from(node.recordStore().load(sessionId).orElseThrow());
         final JsonSessionSnapshotCodec codec = new JsonSessionSnapshotCodec(SessionLogFormat.V2);
@@ -316,15 +337,16 @@ class ViewModeCompactionIntegrationTest {
                 .isEqualTo(stored.getLogState());
         final InMemorySessionRecordStore reloaded = new InMemorySessionRecordStore();
         reloaded.mergeFromSnapshot(decoded);
-        // The same agent name on purpose: the record is bound to the agent that wrote it, and a restart brings that
-        // agent back over the same workspace root.
+        // The same agent name, so the second node works over the same workspace root. The first node stays up: this
+        // is another node over the same backends rather than a restart, and nothing here depends on the difference.
         final OrcaRuntimeItSupport.Node restarted = support.newNode("agent-a", llm,
                 OrcaRuntimeItSupport.options().sessionLogStorage(storage).recordStore(reloaded));
 
-        final OrcaAgentExecutionResult continued = restarted.run(sessionId, "and then?");
+        final OrcaAgentExecutionResult continued = restarted.run(sessionId, "and then?", compactionHintBudget());
 
         assertThat(continued.isSuccess()).isTrue();
         assertThat(continued.getFinalAnswer()).isEqualTo("continued elsewhere");
+        assertThat(continued.getCompactionEvents()).isEmpty();
         final ScriptedLlmClient.Call call = llm.lastCallFor(sessionId.value());
         assertThat(call.messageContents().get(1)).contains(SUMMARY_SENTINEL);
         assertThat(call.allText()).contains("noted", "and then?").anyMatch(text -> text.contains(NOTE_SENTINEL))
@@ -349,7 +371,7 @@ class ViewModeCompactionIntegrationTest {
         llm.script(sessionId.value(), ScriptedLlmClient.text("remembered"), ScriptedLlmClient.text("continued"));
         scriptSummariser(sessionId, SUMMARY_SENTINEL);
 
-        node.run(sessionId, "remember " + HISTORY_SENTINEL);
+        assertThat(node.run(sessionId, "remember " + HISTORY_SENTINEL).isSuccess()).isTrue();
         final OrcaAgentExecutionResult compacted = node.run(sessionId, "/compact");
         final OrcaAgentExecutionResult after = node.run(sessionId, "what did I ask you to remember?");
 
@@ -370,7 +392,8 @@ class ViewModeCompactionIntegrationTest {
         // The history left the record for a segment — so finding it in the log below is a read through the seal, not
         // the record still holding it.
         final SessionLogState stored = logState(node.recordStore(), sessionId);
-        assertThat(stored.getManifest()).isNotEmpty();
+        assertThat(stored.getManifest()).extracting(SessionLogManifestEntry::getRange)
+                .containsExactly(SeqRange.of(0, 2));
         assertThat(
                 stored.getConversationMessages().stream().flatMap(ViewModeCompactionIntegrationTest::textOf).toList())
                 .noneMatch(text -> text.contains(HISTORY_SENTINEL));
