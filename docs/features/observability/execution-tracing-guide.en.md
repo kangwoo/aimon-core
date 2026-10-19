@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/observability/execution-tracing-guide.md
-source_commit: 2f992c98
+source_commit: d31fd44d
 ---
 
 # Execution Tracing Guide
@@ -165,7 +165,7 @@ The principal fields of `TraceSpan` (an immutable value object):
 | `status` | `OK` / `ERROR` / `INTERRUPTED` |
 | `inputs` / `outputs` | A **summary** of input and output (message count, tokens, tool input …) |
 | `tokenUsage` / `model` | LLM spans only |
-| `attributes` | Extra information such as `iteration`. An LLM span carries the call's `feature` (for a compaction summary call, `compaction`); a SUBAGENT span the fork's `executionId`, the background wait `queuedMs` and a pool rejection's `rejected` |
+| `attributes` | Extra information such as `iteration`. An LLM span carries the call's `feature` (for a compaction summary call, `compaction`); a SUBAGENT span the fork's `executionId`, the background wait `queuedMs` and a pool rejection's `rejected`; an ITERATION span the task ids of the background completion notifications the previous tail received, `subagent.received.taskIds` |
 
 The two paths that start work without a tool call have a parent too. A slash-command turn opens a `COMMAND` span
 (`command:/<name>`) under its TURN, and a fork-mode skill's `SUBAGENT` that the command starts nests under it. A
@@ -251,9 +251,9 @@ Tracer tracer = new DefaultTracer(store, SpanExporter.noop(),
 ## Payload capture and masking (TRACE-02)
 
 A span carries only a **summary** by default (the length of a tool result, the length of the LLM's response text). To
-put the **body of a tool result** and the **LLM's response text** into the span for debugging and evaluation, switch
-`TracePayloadPolicy` to `FULL`. The body is always truncated at a ceiling (`maxChars`), and a `SpanRedactor` masks
-sensitive keys immediately before storage.
+put the **body of a tool result**, the **LLM's response text** and the **final answer** of a TURN or SUBAGENT
+(`finalAnswer`) into the span for debugging and evaluation, switch `TracePayloadPolicy` to `FULL`. The body is always
+truncated at a ceiling (`maxChars`), and a `SpanRedactor` masks sensitive keys immediately before storage.
 
 ```java
 import at.aimon.core.tracing.SpanRedactor;
@@ -284,12 +284,12 @@ cli:
 ```
 
 Under `tracing: true` the CLI **always** wires the default redactor (`SpanRedactor.defaultRedactor()`), so sensitive
-keys stay masked even with payload capture on. The summary fields (`contentChars`/`textChars`) survive FULL mode too,
+keys stay masked even with payload capture on. The summary fields (`contentChars`/`textChars`/`finalAnswerChars`) survive FULL mode too,
 so the pre-truncation length is still knowable.
 
 > **Careful — the cost and the limits of capture:** tool results can be large (file reads, command output), which
 > drives up the memory, storage and export cost. Set `maxChars` conservatively when switching this on in production.
-> The default redactor is **key-based**, so it cannot catch a secret embedded in free-text prose — in a sensitive
+> The default redactor is **key-based**, so it cannot catch a secret embedded in free-text prose (a tool result, an LLM response, a final answer) — in a sensitive
 > environment, think hard before persisting, or harden it with a custom `SpanRedactor`.
 
 For the design background, see the [Trace Payload Capture design](../../design/observability/tracing.md).
@@ -317,11 +317,11 @@ exceptions too.
 | Item | Today |
 |------|------|
 | What is traced | **Agent turns only** (the ReAct loop + subagents). Background subsystems (wiki indexing, peer memory, the dreamer) are deliberately untraced — those calls have no turn span context, so wrapping them would produce no span anyway |
-| Subagents | Each subagent run gets one `SUBAGENT` span under the `TOOL` span of the tool call that launched it (`Task`, `Workflow`, a fork-mode skill) — under the `COMMAND` span for a slash command, under the attempt's `TOOL` for a routine step — and the subagent's own `ITERATION` / `LLM` / `TOOL` spans nest under it (recursively, for a subagent inside a subagent). A background subagent's span can start after its parent has closed — parent and child are linked by id. A subagent manager built by handing it an executor needs the tracer on that executor too ([wiring](#wiring-it-programmatically)) |
+| Subagents | Each subagent run gets one `SUBAGENT` span under the `TOOL` span of the tool call that launched it (`Task`, `Workflow`, a fork-mode skill) — under the `COMMAND` span for a slash command, under the attempt's `TOOL` for a routine step — and the subagent's own `ITERATION` / `LLM` / `TOOL` spans nest under it (recursively, for a subagent inside a subagent). A background subagent's span can start after its parent has closed — parent and child are linked by id. When its completion notification arrives mid-turn, the ITERATION that reads it records the task id in `subagent.received.taskIds`, matching the SUBAGENT span's `taskId` (if the turn stops right after that drain — interrupt, budget, quota, the iteration cap — there is no ITERATION to read it, and nothing is recorded). A notification that arrives while the parent is idle is delivered as a new turn by the caller's between-turn drain, and that TURN's `userMessage` carries the task id (recording the queued input's `taskId` metadata is the caller's job). A subagent manager built by handing it an executor needs the tracer on that executor too ([wiring](#wiring-it-programmatically)) |
 | Scheduled routines | With a tracer wired, every fire leaves a `ROUTINE` trace. The LLM-call metadata of a fork started from a traced routine carries `traceId = routine:<taskId>`; with tracing off it stays empty as before — so this usage-metadata field depends on whether tracing is on. The CLI's `/trace` shows TURNs only, so read routine traces from the store (`bySession("routine:<taskId>")`). Under the default (summary) policy a step's TOOL span input is only the parameters written for that step (`toolParams`, templates unresolved) — the resolved input mixes in earlier steps' output, so it is recorded as `input` only under a content-capturing policy. A timed-out step's TOOL span closes at once, but a tool that ignores the cancel can keep running, so a SUBAGENT it starts appears late under the already-closed TOOL span (still linked by id) |
-| Compaction | There is no `COMPACTION` span yet. A summary LLM call is an LLM span with a `feature=compaction` attribute — under the TURN for the main turn (the gate runs before the ITERATION opens), under its ITERATION for a fork. The fork executors this repository assembles use the passthrough engine, so their forks never compact — the fork side shows only on an executor given a real `ContextEngine`. The `/compact` command's summary call does not nest under the COMMAND span |
+| Compaction | There is no `COMPACTION` span yet. A summary LLM call is an LLM span with a `feature=compaction` attribute — under the TURN for the main turn (the gate runs before the ITERATION opens), under its ITERATION for a fork. The fork executors this repository assembles use the passthrough engine, so their forks never compact — the fork side shows only on an executor given a real `ContextEngine`. The `/compact` command's summary call nests under its COMMAND span |
 | Untraced paths | An app calling an agent-level `WorkflowRunner` directly has no parent span, so it records nothing (no orphans). How an external viewer (OTLP) draws a background SUBAGENT that starts after its parent is unverified |
-| Input/output capture | By default only the summary is stored (message count/tokens/tool input). `TracePayloadPolicy.full(maxChars)` optionally captures the **tool-result and LLM-response bodies** (truncated at the ceiling). A `SpanRedactor` masks sensitive keys just before storage — [§payload capture](#payload-capture-and-masking-trace-02) |
+| Input/output capture | By default only the summary is stored (message count/tokens/tool input). `TracePayloadPolicy.full(maxChars)` optionally captures the **tool-result and LLM-response bodies** and the TURN/SUBAGENT **final answer** (truncated at the ceiling). A `SpanRedactor` masks sensitive keys just before storage — [§payload capture](#payload-capture-and-masking-trace-02) |
 | Sampling / a non-blocking worker | Not implemented. Under heavy production traffic, a follow-up `TraceSampler` plus a bounded-queue worker is recommended |
 | External backends | The `aimon-tracing-otlp`/`aimon-tracing-postgres` modules are future work. Today there is the in-memory default plus the `SpanExporter` SPI |
 

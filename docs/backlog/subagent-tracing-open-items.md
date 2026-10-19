@@ -1,4 +1,4 @@
-# 서브에이전트 트레이싱 — 등록 항목 11건 (열림 6 · 닫힘 5)
+# 서브에이전트 트레이싱 — 등록 항목 12건 (열림 7 · 닫힘 5)
 
 출처는 [`../design/observability/subagent-trace-nesting.md`](../design/observability/subagent-trace-nesting.md) 의 구현이다.
 그 문서 §7(Open questions)과 §8(구현 뒤 — 설계와 달라진 점)이 적은 것 가운데 **이번 변경 밖으로 결과가 나가는 것**만
@@ -11,7 +11,8 @@ ST-1 ~ ST-6 은 같은 날 한 변경으로 처리되었다(2026-10-17, 설계
 [`../design/observability/subagent-tracing-backlog.md`](../design/observability/subagent-tracing-backlog.md)). ST-2 · ST-4 ·
 ST-6 은 닫혔고, ST-1 · ST-3 · ST-5 는 **닫힌 부분과 남은 부분**으로 나뉘어 열림으로 남는다 — 외부에서 ST-n 으로 참조되므로
 항목을 쪼개 번호를 새로 매기지 않았다. 각 항목의 "처리" 절이 무엇을 어떻게 닫았는지와 착수해 보니 적힌 것과 달랐던 점을
-적는다. ST-7 ~ ST-11 은 그 설계의 열린 질문(§7) 가운데 **이 변경 밖으로 결과가 나가는 것**을 올린 것이다.
+적는다. ST-7 ~ ST-11 은 그 설계의 열린 질문(§7) 가운데 **이 변경 밖으로 결과가 나가는 것**을 올린 것이다. ST-12 는 그
+뒤 백그라운드 결과의 수신 측 기록(#293)에서 남은 갈래다.
 
 줄 번호는 **마지막 확인 날짜와 함께** 적는다. 아래 "어디" 칸의 인용은 등록 시점(2026-10-17, `d22d2908`) 기준이고, "처리"
 절의 인용은 처리 시점(2026-10-17, 이 변경의 작업 트리) 기준이다.
@@ -129,6 +130,8 @@ metadata 는 그룹 키를 `traceId` 로 실은 뒤 회전한 것이다. 그 결
   (`DefaultSubagentExecutionManager.java:718`). 포그라운드는 남기지 않는다 — 없음은 0 이 아니라 대기 개념이 없다는 뜻이다.
 - **(3) pool 거부 — 닫힘.** 거부 분기도 SUBAGENT span 을 남긴다(`:1124`) — 같은 부모 · 입력 · 속성에 `rejected=true`,
   `queuedMs` 없음, 상태 ERROR. Stop hook 보다 먼저 닫히고, SubagentStart/Stop 의 순서와 횟수는 그대로다.
+- **수신 측 — ST-12.** 백그라운드 결과가 부모에게 어디서 읽혔는지는 SUBAGENT span 이 아니라 수신 ITERATION 의
+  `subagent.received.taskIds` 가 갖는다(#293). 그것이 남지 않는 경로는 ST-12 다.
 - **(2) 외부 뷰어 렌더링 — 열림.** 부모보다 늦게 시작하는 span 을 OTLP 뷰어가 어떻게 그리는지는 `aimon-tracing-otlp` 가 없어
   여전히 확인하지 못했다. 위 "언제 다시 볼까" 가 그대로 남은 부분의 트리거다. 뷰어가 받을 **데이터**는 테스트로 고정했다 —
   부모가 닫힌 뒤 시작한 SUBAGENT 도 그 부모의 span id · trace id 를 가리키고 시작 시각이 부모 종료보다 뒤다
@@ -336,3 +339,24 @@ metadata 는 예전과 한 글자도 다르지 않다. COMPACTION span 자체는
 **어디.** (2026-10-17) `modules/aimon-cli/src/main/java/at/aimon/cli/repl/ReplSession.java:412` (`/trace` 의 TURN 필터).
 
 **언제 다시 볼까.** CLI 사용자가 루틴 실행을 디버깅해야 할 때, 또는 `aimon-tracing-postgres` 의 보존 정책을 정할 때. 설계 OQ-8.
+
+---
+
+## ST-12 — 백그라운드 완료 알림을 받은 자리가 trace 에 남지 않는 두 경로 · **열림**
+
+**무엇을.** 백그라운드 서브에이전트의 완료 알림을 부모가 읽은 자리를, 지금 `subagent.received.taskIds` 가 덮지 못하는 두
+경로에서도 trace 에 남길지 정한다.
+
+**왜.** #293 은 턴 도중 drain 된 알림의 task id 를 그 알림을 처음 읽는 ITERATION span 에 남긴다. 남지 않는 경로는 둘이다.
+
+- **drain 직후 턴이 멈출 때** — 꼬리 drain 뒤 중단 확인, 다음 iteration 머리의 예산 · 쿼터 · compaction BLOCK, iteration 상한
+  중 하나로 턴이 끝나면 알림은 transcript 에 이미 들어갔지만 읽을 ITERATION 이 없다. 다음 턴의 첫 LLM 호출이 그것을 읽지만,
+  그 턴의 iteration 1 에는 표시가 없고 TURN `userMessage` 는 사용자의 새 입력이다.
+- **부모가 쉬는 동안 도착할 때** — 호출자의 턴 사이 drain(CLI `ReplSession`)이 알림 본문을 새 턴의 입력으로 넘긴다. task id 는
+  TURN `userMessage` 의 본문(`Task ID: …`)에만 있고, 큐 입력 metadata 의 `taskId` 를 span 에 기록하는 곳은 없다.
+
+**어디.** (2026-10-20) `OrcaAgentExecutor#injectQueuedMessages` · `#annotateReceivedSubagentTasks`, `ReplSession` 의 턴 사이 drain
+(`modules/aimon-cli/src/main/java/at/aimon/cli/repl/ReplSession.java:733`).
+
+**언제 다시 볼까.** 운영에서 백그라운드 결과를 trace 로 따라가다 이 두 경로에서 끊긴다는 보고가 들어올 때. 앞의 것은 남은 id 를
+TURN outputs 에 싣는 방식, 뒤의 것은 `OrcaAgentExecutionRequest` 가 큐 입력 metadata 를 받아 TURN 에 싣는 방식이 후보다.

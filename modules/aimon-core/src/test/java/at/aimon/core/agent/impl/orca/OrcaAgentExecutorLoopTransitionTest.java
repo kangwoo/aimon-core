@@ -177,6 +177,54 @@ class OrcaAgentExecutorLoopTransitionTest {
                     .containsEntry(OrcaAgentExecutor.LOOP_TRANSITION_ITERATION_ATTR, "2");
             assertThat(iter2.getAttributes().get(OrcaAgentExecutor.LOOP_TRANSITION_NOTE_ATTR))
                     .contains("queued input(s) drained");
+            // A plain user input is not a background-task notification.
+            assertThat(iter2.getAttributes()).doesNotContainKey(OrcaAgentExecutor.RECEIVED_SUBAGENT_TASK_IDS_ATTR);
+        }
+
+        @Test
+        @DisplayName("background-task completion notifications drained at the tail name their task ids on the next span")
+        void drainedTaskNotificationsNamedOnNextIterationSpan() {
+            final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+            final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
+
+            // Three iterations: the notifications drain at iteration 1's tail; iteration 2's tail drains nothing, so
+            // iteration 3 must not repeat them.
+            final RecordingLlmClient stub = new RecordingLlmClient();
+            stub.enqueue(LlmResponse.of("", List.of(ToolUse.of("call-1", "Echo", Map.of())), TokenUsage.of(5, 3, 8)));
+            stub.enqueue(LlmResponse.of("", List.of(ToolUse.of("call-2", "Echo", Map.of())), TokenUsage.of(5, 3, 8)));
+            stub.enqueue(LlmResponse.text("done"));
+
+            final DefaultToolRegistry toolRegistry = new DefaultToolRegistry();
+            toolRegistry.register(new EchoTool("Echo"));
+
+            final MessageQueueManager queueManager = new DefaultMessageQueueManager(
+                    new InMemoryMessageQueueRepository());
+            final AgentRuntimeId agentRuntimeId = AgentRuntimeId.of("agent:loop-transition-notified");
+            final OrcaAgentRuntime context = createContext(agentRuntimeId, toolRegistry, 5);
+
+            final OrcaAgentExecutor executor = createExecutor(new TracingLlmClient(stub, tracer), queueManager);
+            executor.tracer = tracer;
+
+            // The wire values DefaultSubagentExecutionManager writes, spelled out so a rename shows up here.
+            queueManager.enqueue(QueuedInput.builder().agentRuntimeId(agentRuntimeId).inputText("task t1 completed")
+                    .priority(QueuedInputPriority.NEXT)
+                    .metadata(Map.of("kind", "subagent-task-completed", "taskId", "t1", "outcome", "COMPLETED"))
+                    .build());
+            queueManager.enqueue(QueuedInput.builder().agentRuntimeId(agentRuntimeId).inputText("also check the logs")
+                    .priority(QueuedInputPriority.NEXT).build());
+            queueManager.enqueue(QueuedInput.builder().agentRuntimeId(agentRuntimeId).inputText("task t2 failed")
+                    .priority(QueuedInputPriority.NEXT)
+                    .metadata(Map.of("kind", "subagent-task-completed", "taskId", "t2", "outcome", "FAILED")).build());
+
+            executor.execute(context, OrcaAgentExecutionRequest.builder().userInput("hi")
+                    .sessionId(SessionId.of("conv-lt-notified")).build());
+
+            assertThat(iterationSpan(store, "conv-lt-notified", 1).getAttributes())
+                    .doesNotContainKey(OrcaAgentExecutor.RECEIVED_SUBAGENT_TASK_IDS_ATTR);
+            assertThat(iterationSpan(store, "conv-lt-notified", 2).getAttributes())
+                    .containsEntry(OrcaAgentExecutor.RECEIVED_SUBAGENT_TASK_IDS_ATTR, "t1,t2");
+            assertThat(iterationSpan(store, "conv-lt-notified", 3).getAttributes())
+                    .doesNotContainKey(OrcaAgentExecutor.RECEIVED_SUBAGENT_TASK_IDS_ATTR);
         }
     }
 
