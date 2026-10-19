@@ -7,6 +7,18 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: the stand-in rg timeout and cancellation tests no longer fail on macOS (tests only)
+
+`RipgrepControlStoreTest`'s stand-in rg cases wrote fresh `#!/bin/sh` stand-ins for every test and executed them inside
+the timed region. On macOS 13+ the first `execve` of a new executable written by a process with app provenance waits
+for syspolicyd's Gatekeeper scan, which is serialised machine-wide; with other unsigned binaries being built on the
+same machine (about 20 seconds each) the stand-in queued behind them, so the timeout case killed an rg that had not
+started yet (no pid file) and the cancellation case ran 62 seconds against a 10-second limit, while Linux CI passed.
+The stand-in cannot become an exported function as in the release-gate fix — `RipgrepContentSearch` executes the
+configured path directly with rg's arguments — so the stand-ins are now written once per class and each executed once
+with a `--warm-up` argument rg is never given first, which pays the scan before any test starts. The scan's verdict
+is cached per file, so the timed regions measure only the search; every assertion is unchanged.
+
 ### Changed (behaviour change): the session log is written as version 2 by default (#286)
 
 Every assembly now writes the session log as version 2 unless told otherwise: `SessionSpec.logWriteFormat`, Spring
