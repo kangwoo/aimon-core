@@ -82,6 +82,8 @@ import org.junit.jupiter.api.io.TempDir;
  * without the check — no real {@code git}, {@code docker} or {@code ./gradlew} is reachable, and a run nothing
  * refuses stops at {@code gradle.properties not found} — so removing the check turns these tests red instead of
  * starting a release.
+ *
+ * <p>
  * The call log is what pins the ordering. A check moved below the {@code cd} that calls {@code git}, or below the
  * {@code EXIT} trap that calls it again on a non-zero exit, still refuses before "Pre-flight checks" and would pass
  * every other assertion here.
@@ -248,7 +250,9 @@ class ReleaseGateMatchesCiGateTest {
 
     /**
      * The environment variable bash imports as a function named {@code git}. {@code BASH_FUNC_<name>%%} is the
-     * encoding every bash since the 2014 Shellshock fixes reads — Apple's 3.2 as much as Linux's 5.x.
+     * encoding upstream bash reads from 4.3 patch 27 on, and Apple's patched 3.2.57 reads too; some older vendor
+     * patches used {@code BASH_FUNC_<name>()} instead. {@code requireImportedStub} is the safeguard — a bash that
+     * does not import it fails the test rather than letting it pass.
      */
     private static final String GIT_STUB_FUNCTION_VARIABLE = "BASH_FUNC_git%%";
 
