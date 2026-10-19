@@ -39,7 +39,7 @@ hikari = "7.1.0"
 mongodb = "5.13.0"
 
 # Cloud & Storage
-aws-sdk = "2.55.13"
+aws-sdk = "2.56.0"
 
 # Testing
 # Test classpaths against shipped versions (#99). #91's bar: a module's tests run against the versions the module
@@ -183,7 +183,7 @@ quartz = "2.5.2"
 caffeine = "3.3.0"
 
 # Redis
-lettuce = "7.8.0.RELEASE"
+lettuce = "7.9.0.RELEASE"
 
 # Utilities
 guava = "33.7.2-jre"
