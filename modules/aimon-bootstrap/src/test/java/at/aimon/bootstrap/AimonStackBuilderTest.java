@@ -185,7 +185,8 @@ class AimonStackBuilderTest {
         try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").session(sealed).build())) {
             assertThat(stack.degradations().has("session-log-sealing")).isFalse();
         }
-        final SessionSpec versionOne = SessionSpec.builder().recordStore(new InMemorySessionRecordStore()).build();
+        final SessionSpec versionOne = SessionSpec.builder().recordStore(new InMemorySessionRecordStore())
+                .logWriteFormat(SessionLogFormat.V1).build();
         try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").session(versionOne).build())) {
             assertThat(stack.degradations().has("session-log-sealing")).as("v1 compacts in place").isFalse();
         }
@@ -196,12 +197,13 @@ class AimonStackBuilderTest {
     void rollingNeedsTheVersionTwoWriteFormat(@TempDir Path workspace) {
         final ExecutorSpec rolling = ExecutorSpec.builder().contextEngine(ContextEngineKind.ROLLING).build();
 
-        assertThatThrownBy(() -> AimonStackBuilder.build(specFor(workspace, "ops").executor(rolling).build()))
+        final SessionSpec versionOne = SessionSpec.builder().logWriteFormat(SessionLogFormat.V1).build();
+        assertThatThrownBy(
+                () -> AimonStackBuilder.build(specFor(workspace, "ops").executor(rolling).session(versionOne).build()))
                 .hasStackTraceContaining("version 1").hasStackTraceContaining("rolling");
 
-        final SessionSpec versionTwo = SessionSpec.builder().logWriteFormat(SessionLogFormat.V2).build();
-        try (AimonStack stack = AimonStackBuilder
-                .build(specFor(workspace, "ops").executor(rolling).session(versionTwo).build())) {
+        // Version 2 is the default, so a spec that names no format gets the rolling engine.
+        try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").executor(rolling).build())) {
             final OrcaAgentRuntime runtime = stack.runtimes().get(stack.primaryRuntimeId());
             assertThat(runtime.getContextEngine()).isInstanceOf(RollingContextEngine.class);
             assertThat(runtime.getToolRegistry().findByName(SessionHistoryTool.TOOL_NAME)).isPresent();

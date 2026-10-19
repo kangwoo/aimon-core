@@ -22,6 +22,7 @@ import at.aimon.core.agent.compact.CompactionResult;
 import at.aimon.core.agent.compact.CompactionTrigger;
 import at.aimon.core.agent.compact.PromptSizeRecoveryDecision;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.base.Principal;
 import at.aimon.core.hook.DefaultHookRegistry;
@@ -62,7 +63,8 @@ class DefaultContextEngineTest {
         @Test
         void routesAnOrdinaryCallToMaybeCompact() {
             final RecordingGuard guard = new RecordingGuard(CompactionDecision.none());
-            final DefaultContextEngine engine = DefaultContextEngine.builder().compactionGuard(guard).build();
+            final DefaultContextEngine engine = DefaultContextEngine.builder().compactionGuard(guard)
+                    .writeFormat(SessionLogFormat.V1).build();
 
             final ContextDecision decision = engine.prepare(request().build());
 
@@ -75,7 +77,8 @@ class DefaultContextEngineTest {
         @Test
         void routesABudgetForcedCallToForceCompact() {
             final RecordingGuard guard = new RecordingGuard(CompactionDecision.none());
-            final DefaultContextEngine engine = DefaultContextEngine.builder().compactionGuard(guard).build();
+            final DefaultContextEngine engine = DefaultContextEngine.builder().compactionGuard(guard)
+                    .writeFormat(SessionLogFormat.V1).build();
 
             engine.prepare(request().budgetForced(true).build());
 
@@ -85,7 +88,8 @@ class DefaultContextEngineTest {
         @Test
         void handsASessionLessCallersExecutionIdToTheGuard() {
             final RecordingGuard guard = new RecordingGuard(CompactionDecision.none());
-            final DefaultContextEngine engine = DefaultContextEngine.builder().compactionGuard(guard).build();
+            final DefaultContextEngine engine = DefaultContextEngine.builder().compactionGuard(guard)
+                    .writeFormat(SessionLogFormat.V1).build();
             final ExecutionId executionId = ExecutionId.generate("subagent:researcher");
             final ContextCaller fork = ContextCaller.builder().executionId(executionId).build();
 
@@ -107,7 +111,8 @@ class DefaultContextEngineTest {
                     memory.replaceWith(compacted);
                 }
             };
-            final DefaultContextEngine engine = DefaultContextEngine.builder().compactionGuard(rewriting).build();
+            final DefaultContextEngine engine = DefaultContextEngine.builder().compactionGuard(rewriting)
+                    .writeFormat(SessionLogFormat.V1).build();
 
             final ContextDecision decision = engine.prepare(request().build());
 
@@ -121,7 +126,8 @@ class DefaultContextEngineTest {
         @Test
         void aBlockCarriesTheNumbersTheCallerBuildsItsExceptionFrom() {
             final DefaultContextEngine engine = DefaultContextEngine.builder()
-                    .compactionGuard(new RecordingGuard(CompactionDecision.block("too big", 1200, 1000))).build();
+                    .compactionGuard(new RecordingGuard(CompactionDecision.block("too big", 1200, 1000)))
+                    .writeFormat(SessionLogFormat.V1).build();
 
             final ContextDecision decision = engine.prepare(request().build());
 
@@ -214,7 +220,7 @@ class DefaultContextEngineTest {
         void runsAManualCompactionCarryingTheCallersAttribution() {
             final RecordingCompactionEngine compactionEngine = new RecordingCompactionEngine(true);
             final DefaultContextEngine engine = DefaultContextEngine.builder().compactionEngine(compactionEngine)
-                    .build();
+                    .writeFormat(SessionLogFormat.V1).build();
             final LlmCallMetadata callMetadata = LlmCallMetadata.builder().component("compact-command")
                     .principal(Principal.user("u-1")).build();
 
@@ -237,11 +243,11 @@ class DefaultContextEngineTest {
             final RecordingGuard guard = new RecordingGuard(CompactionDecision.none());
 
             DefaultContextEngine.builder().compactionGuard(guard).compactionEngine(new RecordingCompactionEngine(false))
-                    .build().compactNow(request().build(), null);
+                    .writeFormat(SessionLogFormat.V1).build().compactNow(request().build(), null);
             assertThat(guard.resetSessionId.get()).isNull();
 
             DefaultContextEngine.builder().compactionGuard(guard).compactionEngine(new RecordingCompactionEngine(true))
-                    .build().compactNow(request().build(), null);
+                    .writeFormat(SessionLogFormat.V1).build().compactNow(request().build(), null);
             assertThat(guard.resetSessionId.get()).isEqualTo(buffer.getSessionId());
         }
 
@@ -250,7 +256,8 @@ class DefaultContextEngineTest {
             final CompactionEngine throwing = request -> {
                 throw new IllegalStateException("boom");
             };
-            final DefaultContextEngine engine = DefaultContextEngine.builder().compactionEngine(throwing).build();
+            final DefaultContextEngine engine = DefaultContextEngine.builder().compactionEngine(throwing)
+                    .writeFormat(SessionLogFormat.V1).build();
 
             assertThatThrownBy(() -> engine.compactNow(request().build(), null)).hasMessage("boom");
         }

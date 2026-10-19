@@ -74,7 +74,7 @@ public final class SessionSpec {
     private SessionSpec(Builder builder) {
         this.recordStore = builder.recordStore;
         this.segmentStore = builder.segmentStore;
-        this.logWriteFormat = Objects.requireNonNullElse(builder.logWriteFormat, SessionLogFormat.V1);
+        this.logWriteFormat = Objects.requireNonNullElse(builder.logWriteFormat, SessionLogFormat.V2);
         this.segmentSweepInterval = builder.segmentSweepInterval;
         this.segmentSweepGrace = builder.segmentSweepGrace;
         this.drainTimeout = Objects.requireNonNullElse(builder.drainTimeout, DEFAULT_DRAIN_TIMEOUT);
@@ -217,13 +217,13 @@ public final class SessionSpec {
      * Returns the session log format this node writes (session-log §7.3).
      *
      * <p>
-     * Every build reads both formats; this decides only what is written. It is switched in two steps across a
-     * cluster: deploy with {@link SessionLogFormat#V1} until every node runs a build that reads version 2, then switch
-     * to {@link SessionLogFormat#V2}. A record already read as version 2 is written as version 2 either way. The
-     * version-2 format is what keeps the log append-only, and the rolling context engine requires it: a runtime asking
-     * for rolling on a version-1 node fails to build.
+     * Every build reads both formats; this decides only what is written. A cluster that still runs nodes of a build
+     * that cannot read version 2 must pin {@link SessionLogFormat#V1} until every node can, then drop the pin. A record
+     * already read as version 2 is written as version 2 either way. The version-2 format is what keeps the log
+     * append-only, and the rolling context engine requires it: a runtime asking for rolling on a version-1 node fails
+     * to build.
      *
-     * @return the format, {@link SessionLogFormat#V1} by default
+     * @return the format, {@link SessionLogFormat#V2} by default
      */
     public SessionLogFormat getLogWriteFormat() {
         return logWriteFormat;
@@ -427,7 +427,7 @@ public final class SessionSpec {
          * Sets the session log format this node writes.
          *
          * @param logWriteFormat
-         *            the format, or null for {@link SessionLogFormat#V1} (see {@link SessionSpec#getLogWriteFormat()})
+         *            the format, or null for {@link SessionLogFormat#V2} (see {@link SessionSpec#getLogWriteFormat()})
          * @return this builder
          */
         public Builder logWriteFormat(SessionLogFormat logWriteFormat) {

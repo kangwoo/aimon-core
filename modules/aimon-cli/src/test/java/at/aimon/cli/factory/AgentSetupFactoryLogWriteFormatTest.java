@@ -107,9 +107,9 @@ class AgentSetupFactoryLogWriteFormatTest {
     }
 
     @Test
-    @DisplayName("the default is version 1, and a rolling agent does not start on it")
-    void rollingAgentFailsOnTheDefault() {
-        assertThat(new CliSettings().getSessionLogWriteFormat()).isEqualTo(SessionLogFormat.V1);
+    @DisplayName("the default is version 2, and a rolling agent does not start on version 1")
+    void rollingAgentFailsOnVersionOne() {
+        assertThat(new CliSettings().getSessionLogWriteFormat()).isEqualTo(SessionLogFormat.V2);
 
         assertThatThrownBy(
                 () -> new AgentSetupFactory(llmClientFactory, AgentSetupFactoryLogWriteFormatTest::rollingBundle)

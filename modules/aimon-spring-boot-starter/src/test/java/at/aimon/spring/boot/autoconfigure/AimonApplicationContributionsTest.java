@@ -31,7 +31,9 @@ import at.aimon.core.agent.DefaultAgent;
 import at.aimon.core.agent.impl.AgentBundle;
 import at.aimon.core.agent.queue.InMemoryMessageQueueRepository;
 import at.aimon.core.agent.queue.MessageQueueRepository;
+import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
+import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.skill.policy.agent.AgentApprovalStore;
@@ -101,6 +103,8 @@ class AimonApplicationContributionsTest {
             final ConfigurableApplicationContext context = (ConfigurableApplicationContext) ctx
                     .getSourceApplicationContext();
             assertThat(dependentsOf(context, "sliceRecordStore")).as("destruction edge for the record store")
+                    .contains(AimonSessionAutoConfiguration.SESSION_SPEC_BEAN);
+            assertThat(dependentsOf(context, "sliceSegmentStore")).as("destruction edge for the segment store")
                     .contains(AimonSessionAutoConfiguration.SESSION_SPEC_BEAN);
             assertThat(dependentsOf(context, "sliceFileSystem")).as("destruction edge for the filesystem")
                     .contains(AimonFileSystemAutoConfiguration.FILE_SYSTEM_SPEC_BEAN);
@@ -287,6 +291,11 @@ class AimonApplicationContributionsTest {
         }
 
         @Bean
+        SessionLogSegmentStore sliceSegmentStore() {
+            return new InMemorySessionLogSegmentStore();
+        }
+
+        @Bean
         VirtualFileSystem sliceFileSystem() {
             // Stubbed rather than bare: assembly reads the working directory, and a mock's null fails the stack
             // before any edge could be asserted.
@@ -316,6 +325,12 @@ class AimonApplicationContributionsTest {
                     return SessionRecordStore.class;
                 }
             };
+        }
+
+        /** The segment store a version-2 log needs beside an application record store. */
+        @Bean
+        SessionLogSegmentStore factoryBeanSegmentStore() {
+            return new InMemorySessionLogSegmentStore();
         }
     }
 

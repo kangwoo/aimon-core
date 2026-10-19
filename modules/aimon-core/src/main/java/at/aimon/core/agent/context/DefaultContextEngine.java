@@ -732,7 +732,7 @@ public final class DefaultContextEngine implements ContextEngine {
         private PromptSizeRecoveryStrategy recoveryStrategy;
         private CompactionEngine compactionEngine;
         private TokenEstimator tokenEstimator;
-        private SessionLogFormat writeFormat = SessionLogFormat.V1;
+        private SessionLogFormat writeFormat = SessionLogFormat.V2;
 
         private Builder() {
         }
@@ -746,10 +746,11 @@ public final class DefaultContextEngine implements ContextEngine {
          * {@link DefaultCompactionGuard} or {@link NoOpCompactionGuard}, and a {@link CompactionEngine} that does not
          * {@linkplain CompactionEngine#supportsSummarize() summarize} — neither can keep the log append-only
          * (context-engine §8.2). The mode itself is chosen per transcript by its log format; a version-1 node still
-         * serves an upgraded record in view mode when it can.
+         * serves an upgraded record in view mode when it can. A caller injecting any other guard or a non-summarizing
+         * engine must therefore declare {@link SessionLogFormat#V1} here.
          *
          * @param writeFormat
-         *            the format this node writes (must not be null; default {@link SessionLogFormat#V1})
+         *            the format this node writes (must not be null; default {@link SessionLogFormat#V2})
          * @return this builder
          */
         public Builder writeFormat(SessionLogFormat writeFormat) {

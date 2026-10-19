@@ -101,9 +101,9 @@ class OrcaAgentRuntimeFactoryContextEngineTest {
     @Test
     @DisplayName("rolling on a version-1 node fails when the runtime is built")
     void rollingOnAVersionOneNodeFails() {
-        assertThatThrownBy(() -> create(new OrcaAgentRuntimeFactory(), agent(ContextEngineKind.ROLLING)))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("version 1")
-                .hasMessageContaining("rolling");
+        assertThatThrownBy(() -> create(new OrcaAgentRuntimeFactory().withSessionLogWriteFormat(SessionLogFormat.V1),
+                agent(ContextEngineKind.ROLLING))).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("version 1").hasMessageContaining("rolling");
     }
 
     @Test

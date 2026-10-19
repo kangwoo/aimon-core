@@ -20,18 +20,19 @@
 ## 2. 켜기
 
 `rolling` 은 **버전 2 로그 쓰기 형식**을 요구한다 — 요약 구간을 뷰 상태에 적어야 하는데 버전 1 레코드는 그것을 담지 못한다.
-버전 1 쓰기 노드에서 `rolling` 을 고르면 **기동이 실패한다.** CLI(`aimon-cli`)도 기본은 `v1` 이므로, AGENT.md 에
-`context-engine: rolling` 을 적은 에이전트를 CLI 로 띄우려면 `cli.sessionLogWriteFormat: v2` 를 준다(§2.4).
+기본 쓰기 형식이 `v2` 이므로(스타터 · `SessionSpec` · CLI 모두) 따로 설정할 것은 없다. 쓰기 형식을 `v1` 로 고정한 노드에서
+`rolling` 을 고르면 **기동이 실패한다.**
 
-IMPORTANT: 쓰기 형식은 클러스터 전체가 두 단계로 바꾼다. 먼저 모든 노드를 버전 2 를 **읽을 수 있는** 빌드로 배포하고(쓰기는
-여전히 `v1`), 그 배포가 끝난 뒤에 `v2` 로 바꾼다. 한번 버전 2 로 쓰인 레코드는 버전 1 쓰기 노드도 버전 2 로 다시 쓴다.
+IMPORTANT: 클러스터에 버전 2 를 **읽지 못하는** 빌드의 노드가 아직 남아 있으면, 그 노드가 모두 교체될 때까지 쓰기 형식을
+`v1` 로 고정한다(아래 예시의 값을 `v1` 로). 교체가 끝난 뒤에 고정을 푼다. 한번 버전 2 로 쓰인 레코드는 버전 1 쓰기 노드도
+버전 2 로 다시 쓴다.
 
 ### 2.1 Spring Boot 스타터
 
 ```yaml
 aimon:
   session:
-    log-write-format: v2    # v1(기본) | v2
+    log-write-format: v2    # v2(기본) | v1
   context:
     engine: rolling         # default(기본) | rolling — 에이전트가 따로 적지 않았을 때의 값
     rolling:                # 선택 — rolling 의 임계값 (§4). 적지 않은 값은 engine 기본값
@@ -95,10 +96,10 @@ rolling 의 임계값은 `ExecutorSpec.builder().rollingContextEngineCustomizer(
 
 ```yaml
 cli:
-  sessionLogWriteFormat: v2   # v1(기본) | v2 — CLI 설정의 다른 키처럼 camelCase
+  sessionLogWriteFormat: v2   # v2(기본) | v1 — CLI 설정의 다른 키처럼 camelCase
 ```
 
-CLI 는 세션을 메모리에 두므로 §2 의 두 단계 배포가 필요 없다 — 이 값만 바꾸면 된다. `v2` 면 CLI 는 in-memory 세그먼트
+CLI 는 세션을 메모리에 두므로 §2 의 `v1` 고정이 필요 없다. `v2` 면 CLI 는 in-memory 세그먼트
 저장소를 함께 붙여, 압축이 가린 구간을 레코드 밖으로 봉인하고 `SessionHistory` 가 그것을 다시 읽는다. `context-engine` 은
 AGENT.md 에서 고른다(§2.2).
 

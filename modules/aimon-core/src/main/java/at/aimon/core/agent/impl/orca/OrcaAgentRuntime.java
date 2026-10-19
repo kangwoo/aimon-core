@@ -16,6 +16,7 @@ import at.aimon.core.agent.compact.CompactionGuard;
 import at.aimon.core.agent.compact.PromptSizeRecoveryStrategy;
 import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.context.DefaultContextEngine;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolRegistry;
@@ -507,8 +508,10 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
             }
             final ContextEngine effectiveEngine = contextEngine != null
                     ? contextEngine
+                    // Wraps whatever guard was injected, so it declares version 1 — the only mode that accepts one.
                     : DefaultContextEngine.builder().compactionGuard(compactionGuard)
-                            .recoveryStrategy(promptSizeRecoveryStrategy).compactionEngine(compactionEngine).build();
+                            .recoveryStrategy(promptSizeRecoveryStrategy).compactionEngine(compactionEngine)
+                            .writeFormat(SessionLogFormat.V1).build();
             return new OrcaAgentRuntime(id, agent, toolRegistry, hookRegistry, commandRegistry, subagentRegistry,
                     skillRegistry, controlFileSystem, mcpClientManager, knowledgeStore, compactionEngine,
                     compactionGuard, promptSizeRecoveryStrategy, effectiveEngine, toolContextEnrichers, workflowRunner,

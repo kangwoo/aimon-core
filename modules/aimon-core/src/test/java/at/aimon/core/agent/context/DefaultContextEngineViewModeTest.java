@@ -784,7 +784,8 @@ class DefaultContextEngineViewModeTest {
                 memory.replaceWith(List.of(Message.user("rewritten")));
                 return CompactionDecision.compact(CompactionResult.success("s", metadata()), "custom", 1, 2);
             };
-            final DefaultContextEngine engine = DefaultContextEngine.builder().compactionGuard(rewriting).build();
+            final DefaultContextEngine engine = DefaultContextEngine.builder().compactionGuard(rewriting)
+                    .writeFormat(SessionLogFormat.V1).build();
 
             final ContextDecision decision = engine.prepare(request());
 
@@ -803,7 +804,7 @@ class DefaultContextEngineViewModeTest {
         private DefaultContextEngine inPlaceOnly(CompactionGuard guard) {
             return DefaultContextEngine.builder().compactionGuard(guard)
                     .recoveryStrategy(new DefaultPromptSizeRecoveryStrategy()).compactionEngine(summarizer)
-                    .tokenEstimator(estimator).build();
+                    .tokenEstimator(estimator).writeFormat(SessionLogFormat.V1).build();
         }
 
         private void summarizedLog() {
