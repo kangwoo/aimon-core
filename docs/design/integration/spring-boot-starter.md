@@ -1520,6 +1520,7 @@ SIGTERM
 | 스킬 승인 ASK, 채널 없음 | 모드에 따라 DENY 확정 또는 SUSPENDED |
 | `aimon.enabled=false` + `AimonSessions` 호출 | 기동은 정상. 호출 시 `AimonDisabledException` — 프로퍼티 이름이 메시지에 나온다 (§4.2) |
 | `aimon.enabled=false` + 내부 빈 직접 주입 | 기동 실패. 문서화된 주입점은 `AimonSessions` 하나뿐이므로 **의도된 동작** (§4.2) |
+| 레코드 저장소 빈은 있는데 `SessionLogSegmentStore` 빈이 없음 (쓰기 형식 v2) | 기동 중단 — 같은 모듈의 세그먼트 저장소 빈을 등록하거나 `log-write-format=v1` 로 고정하라는 메시지. 봉인 없이 v2 로 쓰면 레코드가 무한히 커진다 |
 | 선택자 프로퍼티 오타 (`store: postgress`) | enum 바인딩이 기동 시점에 거부 — 백오프로 흘러 in-memory 가 되지 않는다 (§4.3) |
 | 런타임에 `aimon.*` 프로퍼티 변경 (`/actuator/refresh`) | 반영되지 않음. 변경 키를 열거한 WARN + health `stale-config` degradation (§6 D13) |
 | 알 수 없는 `agentRef` 로 `submit` | `IllegalArgumentException` — 알려진 `agentRef` 목록을 메시지에 넣는다. 기본 에이전트로 조용히 폴백하지 않는다 (§4.11) |

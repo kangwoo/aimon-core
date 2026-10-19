@@ -122,7 +122,7 @@ class SessionLogStateChainTest {
     }
 
     @Test
-    void theTranscriptManagerWritesVersionOneByDefault() throws Exception {
+    void theTranscriptManagerWritesVersionTwoByDefault() throws Exception {
         final InMemorySessionRecordStore store = new InMemorySessionRecordStore();
         final DefaultTranscriptManager manager = new DefaultTranscriptManager(store);
 
@@ -130,8 +130,8 @@ class SessionLogStateChainTest {
         buffer.addMessage(ASK);
         manager.save(buffer);
 
-        assertThat(manager.getWriteFormat()).isEqualTo(SessionLogFormat.V1);
-        assertThat(version(SessionRecordCodec.encodeTranscript(store.load(ID).orElseThrow()))).isEqualTo(1);
+        assertThat(manager.getWriteFormat()).isEqualTo(SessionLogFormat.V2);
+        assertThat(version(SessionRecordCodec.encodeTranscript(store.load(ID).orElseThrow()))).isEqualTo(2);
     }
 
     @Test
@@ -155,7 +155,8 @@ class SessionLogStateChainTest {
     void aVersionOneManagerKeepsAVersionTwoRecordAtVersionTwo() {
         final InMemorySessionRecordStore store = new InMemorySessionRecordStore();
         store.mergeFromSnapshot(SessionSnapshot.fromLog(ID, "sys", v2State()));
-        final DefaultTranscriptManager manager = new DefaultTranscriptManager(store);
+        final DefaultTranscriptManager manager = new DefaultTranscriptManager(store,
+                SessionCheckpointMailbox.disabled(), SessionLogFormat.V1);
 
         final TranscriptBuffer buffer = manager.initialize(ID, "sys");
         manager.save(buffer);

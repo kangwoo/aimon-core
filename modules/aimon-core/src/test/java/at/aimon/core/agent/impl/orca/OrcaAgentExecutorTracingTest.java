@@ -29,7 +29,9 @@ import at.aimon.core.agent.context.DefaultContextEngine;
 import at.aimon.core.agent.prompt.SystemPromptParts;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
+import at.aimon.core.agent.session.store.SessionCheckpointMailbox;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.ConcurrencyBehavior;
 import at.aimon.core.agent.tool.DefaultParallelToolDispatcher;
@@ -158,8 +160,8 @@ class OrcaAgentExecutorTracingTest {
         stub.enqueue(LlmResponse.text("done"));
 
         // Only the factory is told about the tracer: it must reach the subagent manager and executor it builds.
-        final OrcaAgentExecutor executor = new OrcaAgentExecutorFactory().withTracer(tracer).create(
-                new TracingLlmClient(stub, tracer), new DefaultTranscriptManager(new InMemorySessionRecordStore()));
+        final OrcaAgentExecutor executor = new OrcaAgentExecutorFactory().withTracer(tracer)
+                .create(new TracingLlmClient(stub, tracer), versionOneTranscripts());
         final InMemorySubagentRegistry subagents = new InMemorySubagentRegistry();
         subagents.register(Subagent.builder().name("helper").systemPrompt("help").maxIterations(3).build());
         final DefaultToolRegistry toolRegistry = new DefaultToolRegistry();
@@ -217,8 +219,8 @@ class OrcaAgentExecutorTracingTest {
             final DefaultToolExecutionManager toolManager = new DefaultToolExecutionManager();
             final DefaultHookExecutionManager hookManager = new DefaultHookExecutionManager();
             final OrcaAgentExecutor executor = OrcaAgentExecutor.builder().llmClient(client)
-                    .transcriptManager(new DefaultTranscriptManager(new InMemorySessionRecordStore()))
-                    .toolExecutionManager(toolManager).hookExecutionManager(hookManager)
+                    .transcriptManager(versionOneTranscripts()).toolExecutionManager(toolManager)
+                    .hookExecutionManager(hookManager)
                     .commandExecutionManager(new DefaultCommandExecutionManager(client))
                     .subagentExecutionManager(new DefaultSubagentExecutionManager(client, toolManager, hookManager))
                     .useStreaming(true).parallelToolDispatcher(dispatcher).tracer(tracer).build();
@@ -553,14 +555,24 @@ class OrcaAgentExecutorTracingTest {
         };
     }
 
+    /**
+     * The compaction fixtures here run a one-message turn, which only in-place compaction summarizes — the version-2
+     * view
+     * keeps the tail verbatim and has nothing before it. The attribution under test is the same on both paths.
+     */
+    private static DefaultTranscriptManager versionOneTranscripts() {
+        return new DefaultTranscriptManager(new InMemorySessionRecordStore(), SessionCheckpointMailbox.disabled(),
+                SessionLogFormat.V1);
+    }
+
     private OrcaAgentExecutor createExecutor(LlmClient client) {
         final DefaultToolExecutionManager toolManager = new DefaultToolExecutionManager();
         final DefaultHookExecutionManager hookManager = new DefaultHookExecutionManager();
         final DefaultCommandExecutionManager commandManager = new DefaultCommandExecutionManager(client);
         final DefaultSubagentExecutionManager subagentManager = new DefaultSubagentExecutionManager(client, toolManager,
                 hookManager);
-        return new OrcaAgentExecutor(client, new DefaultTranscriptManager(new InMemorySessionRecordStore()),
-                toolManager, hookManager, commandManager, subagentManager);
+        return new OrcaAgentExecutor(client, versionOneTranscripts(), toolManager, hookManager, commandManager,
+                subagentManager);
     }
 
     private static TraceSpan parentOf(InMemoryTraceSpanStore store, TraceSpan span) {

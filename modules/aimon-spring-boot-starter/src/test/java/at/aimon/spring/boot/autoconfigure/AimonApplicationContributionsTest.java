@@ -31,7 +31,9 @@ import at.aimon.core.agent.DefaultAgent;
 import at.aimon.core.agent.impl.AgentBundle;
 import at.aimon.core.agent.queue.InMemoryMessageQueueRepository;
 import at.aimon.core.agent.queue.MessageQueueRepository;
+import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
+import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.skill.policy.agent.AgentApprovalStore;
@@ -101,6 +103,8 @@ class AimonApplicationContributionsTest {
             final ConfigurableApplicationContext context = (ConfigurableApplicationContext) ctx
                     .getSourceApplicationContext();
             assertThat(dependentsOf(context, "sliceRecordStore")).as("destruction edge for the record store")
+                    .contains(AimonSessionAutoConfiguration.SESSION_SPEC_BEAN);
+            assertThat(dependentsOf(context, "sliceSegmentStore")).as("destruction edge for the segment store")
                     .contains(AimonSessionAutoConfiguration.SESSION_SPEC_BEAN);
             assertThat(dependentsOf(context, "sliceFileSystem")).as("destruction edge for the filesystem")
                     .contains(AimonFileSystemAutoConfiguration.FILE_SYSTEM_SPEC_BEAN);
@@ -284,6 +288,11 @@ class AimonApplicationContributionsTest {
         @Bean
         SessionRecordStore sliceRecordStore() {
             return new InMemorySessionRecordStore();
+        }
+
+        @Bean
+        SessionLogSegmentStore sliceSegmentStore() {
+            return new InMemorySessionLogSegmentStore();
         }
 
         @Bean

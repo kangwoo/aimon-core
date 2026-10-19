@@ -28,6 +28,7 @@ import at.aimon.core.agent.session.idempotency.IdempotencyStore;
 import at.aimon.core.agent.session.inbox.SessionInbox;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
 import at.aimon.core.agent.session.store.SessionLeaseStore;
+import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
@@ -38,6 +39,7 @@ import at.aimon.session.redis.RedisIdempotencyStore;
 import at.aimon.session.redis.RedisPubSubSignalBus;
 import at.aimon.session.redis.RedisSessionInbox;
 import at.aimon.session.redis.RedisSessionLeaseStore;
+import at.aimon.session.redis.RedisSessionLogSegmentStore;
 import at.aimon.session.redis.RedisSessionRecordStore;
 import at.aimon.session.routing.SubmitDisposition;
 import at.aimon.spring.boot.AimonSessions;
@@ -171,7 +173,8 @@ class AimonClusterIntegrationTest {
     }
 
     /**
-     * The five Redis-backed collaborators distributed mode needs, over this node's own connections.
+     * The five Redis-backed collaborators distributed mode needs, plus the segment store a version-2 log seals into,
+     * over this node's own connections.
      *
      * <p>
      * Spring owns every one of them, which is the ownership rule this configuration also demonstrates: the
@@ -200,6 +203,11 @@ class AimonClusterIntegrationTest {
         @Bean
         SessionRecordStore recordStore(@Qualifier("dataConnection") StatefulRedisConnection<String, String> data) {
             return new RedisSessionRecordStore(data);
+        }
+
+        @Bean
+        SessionLogSegmentStore segmentStore(@Qualifier("dataConnection") StatefulRedisConnection<String, String> data) {
+            return new RedisSessionLogSegmentStore(data);
         }
 
         @Bean

@@ -104,7 +104,7 @@ class CliConfigLoaderTest {
         }
 
         @Test
-        @DisplayName("cli.sessionLogWriteFormat binds v2 in any case, and defaults to v1")
+        @DisplayName("cli.sessionLogWriteFormat binds v1 in any case, and defaults to v2")
         void sessionLogWriteFormatBinds() throws IOException {
             final Path configFile = tempDir.resolve("format.yaml");
             Files.writeString(configFile, """
@@ -112,10 +112,10 @@ class CliConfigLoaderTest {
                       provider: "openai"
                       apiKey: "test-api-key"
                     cli:
-                      sessionLogWriteFormat: v2
+                      sessionLogWriteFormat: V1
                     """);
             assertThat(loader.load(configFile.toString()).getCliSettings().getSessionLogWriteFormat())
-                    .isEqualTo(SessionLogFormat.V2);
+                    .isEqualTo(SessionLogFormat.V1);
 
             Files.writeString(configFile, """
                     llm:
@@ -125,7 +125,7 @@ class CliConfigLoaderTest {
                       streaming: false
                     """);
             assertThat(loader.load(configFile.toString()).getCliSettings().getSessionLogWriteFormat())
-                    .isEqualTo(SessionLogFormat.V1);
+                    .isEqualTo(SessionLogFormat.V2);
 
             Files.writeString(configFile, """
                     llm:

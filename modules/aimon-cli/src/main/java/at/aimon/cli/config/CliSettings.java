@@ -29,11 +29,11 @@ public class CliSettings {
     // several sub-agent LLM calls. Enable via `cli.enableWorkflowJs: true`. Independent of enableWorkflow, but either
     // flag enables the per-context WorkflowRunner used by both tools' background mode.
     private boolean enableWorkflowJs = false;
-    // The session log format the CLI writes (session-log §7.3): v1 (default) or v2. v2 keeps the log append-only and
-    // is what an agent with `context-engine: rolling` needs; set `cli.sessionLogWriteFormat: v2` to run one. The CLI
-    // keeps sessions in memory, so there is no older node that could fail to read v2 — the switch exists only so the
-    // default stays the format every other assembly defaults to.
-    private SessionLogFormat sessionLogWriteFormat = SessionLogFormat.V1;
+    // The session log format the CLI writes (session-log §7.3): v2 (default) or v1. v2 keeps the log append-only and
+    // is what an agent with `context-engine: rolling` needs. The CLI keeps sessions in memory, so there is no older
+    // node that could fail to read v2 — the switch exists only so the default stays the format every other assembly
+    // defaults to.
+    private SessionLogFormat sessionLogWriteFormat = SessionLogFormat.V2;
 
     /** CliSettings를 생성한다. */
     public CliSettings() {
@@ -125,10 +125,10 @@ public class CliSettings {
 
     /**
      * @param sessionLogWriteFormat
-     *            the format; null restores the default {@link SessionLogFormat#V1}
+     *            the format; null restores the default {@link SessionLogFormat#V2}
      */
     public void setSessionLogWriteFormat(SessionLogFormat sessionLogWriteFormat) {
-        this.sessionLogWriteFormat = sessionLogWriteFormat == null ? SessionLogFormat.V1 : sessionLogWriteFormat;
+        this.sessionLogWriteFormat = sessionLogWriteFormat == null ? SessionLogFormat.V2 : sessionLogWriteFormat;
     }
 
     @Override

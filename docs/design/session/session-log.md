@@ -335,8 +335,9 @@ v2 상태는 다음 타입을 지난다. 지금은 모두 `systemPrompt`·`messa
 
 **혼합 버전 클러스터** — 두 단계로 켠다.
 
-1. **읽기** — 모든 노드가 v1·v2 를 읽을 수 있게 배포한다. 쓰기는 v1 이다
-2. **쓰기** — 전 노드 배포가 끝난 뒤 쓰기를 v2 로 바꾼다
+1. **읽기** — 모든 노드가 v1·v2 를 읽을 수 있게 배포한다. 기본 쓰기 형식이 v2 이므로 이 단계에서는 쓰기 형식을
+   v1 으로 **명시해** 고정한다
+2. **쓰기** — 전 노드 배포가 끝난 뒤 그 고정을 풀어 쓰기를 v2 로 바꾼다
 
 두 규칙을 더한다.
 
@@ -476,7 +477,8 @@ v1 쓰기 모드에서 `DefaultContextEngine` 은 기록을 고쳐 쓰는 지금
   들고 언제나 `V2` 로 쓰인다. 노드 스위치는 `DefaultTranscriptManager(store, mailbox, SessionLogFormat)` 이고(내주는 버퍼를
   전부 그 형식으로 올린다) `JsonSessionSnapshotCodec(SessionLogFormat)` 이 `VfsSessionSnapshotStore` 를 덮는다
 - **스위치의 노출.** `SessionSpec.logWriteFormat(...)`, Spring `aimon.session.log-write-format`,
-  `OrcaAgentRuntimeFactory.withSessionLogWriteFormat(...)`. **CLI 에는 없다** — CLI 는 언제나 v1 로 쓴다
+  `OrcaAgentRuntimeFactory.withSessionLogWriteFormat(...)`. CLI 의 스위치는 나중에 생겼다 — §12.6 의
+  `cli.sessionLogWriteFormat`
 - **뷰 상태 타입의 자리.** `SessionViewState` · `SummarySpan` · `SeqRange` · `LegalCuts` 는 `agent.session.transcript` 에
   있고, 연산(`summarize` / `drop` / `elide`)은 합법 절단 불변식이 항목을 필요로 하므로 `SessionLogState` 에 있다. 버퍼는
   `summarizeView` / `dropFromView` / `elideInView` 로 그것을 비춘다. 투영(`ViewProjection`)은 `agent.context` 에 있다 —
@@ -552,7 +554,8 @@ v1 쓰기 모드에서 `DefaultContextEngine` 은 기록을 고쳐 쓰는 지금
   짝을 이루고, 공급된 레코드 저장소는 세그먼트 저장소 없이 **아무것도 봉인하지 않는다** — 영속 manifest 뒤에 재시작하면
   사라지는 세그먼트를 두면 봉인 구간이 전부 gap 이 된다. 이때 쓰기 형식이 v2 이면 스택이 `session-log-sealing`
   degradation 을 남긴다(v1 은 제자리에서 압축하므로 아니다). Spring 스타터는 `SessionLogSegmentStore` 빈을 읽어 넘긴다 —
-  속성은 없고 빈이 선택자다
+  속성은 없고 빈이 선택자다. 스타터는 degradation 으로 두지 않고 **기동을 실패시킨다**(레코드 저장소 빈 + 세그먼트
+  저장소 빈 없음 + v2). 애플리케이션의 `InMemorySessionRecordStore` 빈만은 in-memory 세그먼트 저장소와 짝지어 준다
 
 ### 12.3 GC 와 두 삭제 경로 (§5.4, §6)
 
@@ -646,8 +649,8 @@ v1 쓰기 모드에서 `DefaultContextEngine` 은 기록을 고쳐 쓰는 지금
   `SESSIONS` 단계에서 라우터보다 먼저 닫는다. 첫 회차는 간격 하나를 기다린다. grace 만 있고 간격이 없는 설정, 그리고 세그먼트
   저장소 없이 레코드 저장소만 준 설정(봉인되는 것이 없어 스윕할 것도 없다)은 조립 시점에 거절한다
 - **CLI 의 쓰기 형식 스위치.** `cli.sessionLogWriteFormat: v2`. v2 면 CLI 는 in-memory 레코드 옆에 in-memory 세그먼트
-  저장소를 붙인다 — 둘이 같은 프로세스와 함께 사라지므로 manifest 가 세그먼트보다 오래 살 수 없다. 기본은 v1 이고,
-  `context-engine: rolling` 에이전트는 v2 에서만 뜬다 —
+  저장소를 붙인다 — 둘이 같은 프로세스와 함께 사라지므로 manifest 가 세그먼트보다 오래 살 수 없다. 기본은 v2 이고(모든
+  조립의 기본과 함께 v1 에서 바뀌었다), `context-engine: rolling` 에이전트는 v2 에서만 뜬다 —
   [`context-engine.md` §13.7](../agent-execution/context-engine.md#137-cli-의-쓰기-형식-스위치)
 
 ### 12.7 레코드 쓰기 펜스와 스윕 조정

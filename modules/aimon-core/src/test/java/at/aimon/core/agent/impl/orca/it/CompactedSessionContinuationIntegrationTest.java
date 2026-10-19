@@ -16,6 +16,7 @@ import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.compact.CompactBoundary;
 import at.aimon.core.agent.impl.orca.OrcaAgentExecutionResult;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.Role;
 
@@ -89,7 +90,10 @@ class CompactedSessionContinuationIntegrationTest {
     void setUp() {
         support = new OrcaRuntimeItSupport(tempDir);
         llm = new ScriptedLlmClient();
-        node = support.newNode("agent-a", llm);
+        // In-place compaction is what these tests pin: the transcript itself is rewritten. The version-2 view path,
+        // where the log keeps its entries, is OrcaAgentExecutorViewModeTest's and SealedLogRewindIntegrationTest's.
+        node = support.newNode("agent-a", llm,
+                OrcaRuntimeItSupport.options().sessionLogWriteFormat(SessionLogFormat.V1));
         node.writeFile("big.txt", fixtureContent());
     }
 

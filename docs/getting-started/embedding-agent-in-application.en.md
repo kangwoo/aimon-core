@@ -1,6 +1,6 @@
 ---
 translated_from: docs/getting-started/embedding-agent-in-application.md
-source_commit: 5eb24cf0
+source_commit: 7da424e4
 ---
 
 # Embedding an AIMON agent in your application
@@ -321,7 +321,7 @@ aimon:
     mode: single-node               # single-node (default) | distributed
     node-id: ${HOSTNAME}
     shutdown-drain-timeout: 30s
-    log-write-format: v1            # v1 (default) | v2 — switch to v2 only once every node reads it
+    log-write-format: v2            # v2 (default) | v1 — pin v1 only while older nodes that cannot read v2 remain
     segment-sweep-interval: 1h      # unset means off (default) — clears orphan segments of sessions nobody reopens
     segment-sweep-grace: 24h        # 24h by default — only segments older than this, named by no record, are deleted
     cache:
@@ -1153,6 +1153,11 @@ What happens then:
   `PostgresSessionRecordStore` (`aimon-session-postgres`), `MongoSessionRecordStore`
   (`aimon-session-mongodb`), `RedisSessionRecordStore` (`aimon-session-redis`). (You have to put the
   module on your dependencies.)
+- **`SessionLogSegmentStore`** — register the same module's one (`PostgresSessionLogSegmentStore` and so on)
+  as a bean as well. The default write format, v2, never rewrites the log, so with nowhere to move the ranges
+  a compaction hides, the record carries the session's whole history for good. The starter therefore **fails
+  startup** when a record store bean is defined without a segment store bean (pinning
+  `aimon.session.log-write-format: v1` removes the need).
 - **`SessionStore`** ties the two together and **fences** them — only the node that won the lease writes
   the record. `claim` performs lease election → agent binding validation → record provisioning **in that
   order**, so a node that loses the election never touches the record at all (the reason no distributed

@@ -242,7 +242,7 @@ public class OrcaAgentRuntimeFactory {
     // format this node writes. The two meet at runtime creation: rolling keeps its summary span in the view state,
     // which a version-1 record cannot store, so asking for it on a version-1 node fails there (session-log §7.3).
     private ContextEngineKind defaultContextEngine = ContextEngineKind.DEFAULT;
-    private SessionLogFormat sessionLogWriteFormat = SessionLogFormat.V1;
+    private SessionLogFormat sessionLogWriteFormat = SessionLogFormat.V2;
     // Tunes the rolling engine's thresholds before the factory wires its collaborators in; null keeps the defaults.
     private Consumer<RollingContextEngine.Builder> rollingContextEngineCustomizer;
 
@@ -586,7 +586,7 @@ public class OrcaAgentRuntimeFactory {
      * append-only; with {@link SessionLogFormat#V1} a runtime asking for the rolling engine fails to build.
      *
      * @param writeFormat
-     *            the format (must not be null; default {@link SessionLogFormat#V1})
+     *            the format (must not be null; default {@link SessionLogFormat#V2})
      * @return this factory (for chaining)
      */
     public OrcaAgentRuntimeFactory withSessionLogWriteFormat(SessionLogFormat writeFormat) {

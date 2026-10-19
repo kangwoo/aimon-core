@@ -121,19 +121,19 @@ class AimonAutoConfigurationTest {
     }
 
     @Test
-    @DisplayName("aimon.context.engine=rolling needs aimon.session.log-write-format=v2, and rolls with it")
+    @DisplayName("aimon.context.engine=rolling fails on aimon.session.log-write-format=v1, and rolls on the v2 default")
     void rollingNeedsTheVersionTwoWriteFormat(@TempDir Path workspace) {
-        minimal(workspace).withPropertyValues("aimon.context.engine=rolling").run(ctx -> assertThat(ctx).hasFailed()
-                .getFailure().hasStackTraceContaining("rolling").hasStackTraceContaining("version 1"));
+        minimal(workspace).withPropertyValues("aimon.context.engine=rolling", "aimon.session.log-write-format=v1")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure().hasStackTraceContaining("rolling")
+                        .hasStackTraceContaining("version 1"));
 
-        minimal(workspace).withPropertyValues("aimon.context.engine=rolling", "aimon.session.log-write-format=v2")
-                .run(ctx -> {
-                    final AimonStack stack = ctx.getBean(AimonStack.class);
-                    assertThat(stack.spec().getExecutor().getContextEngine()).isEqualTo(ContextEngineKind.ROLLING);
-                    assertThat(stack.spec().getSession().getLogWriteFormat()).isEqualTo(SessionLogFormat.V2);
-                    assertThat(stack.runtimes().get(stack.primaryRuntimeId()).getContextEngine())
-                            .isInstanceOf(RollingContextEngine.class);
-                });
+        minimal(workspace).withPropertyValues("aimon.context.engine=rolling").run(ctx -> {
+            final AimonStack stack = ctx.getBean(AimonStack.class);
+            assertThat(stack.spec().getExecutor().getContextEngine()).isEqualTo(ContextEngineKind.ROLLING);
+            assertThat(stack.spec().getSession().getLogWriteFormat()).isEqualTo(SessionLogFormat.V2);
+            assertThat(stack.runtimes().get(stack.primaryRuntimeId()).getContextEngine())
+                    .isInstanceOf(RollingContextEngine.class);
+        });
     }
 
     @Test
@@ -186,12 +186,12 @@ class AimonAutoConfigurationTest {
     }
 
     @Test
-    @DisplayName("without the two properties the stack keeps the default engine and version-1 writes")
-    void theDefaultsAreTheDefaultEngineAndVersionOne(@TempDir Path workspace) {
+    @DisplayName("without the two properties the stack keeps the default engine and version-2 writes")
+    void theDefaultsAreTheDefaultEngineAndVersionTwo(@TempDir Path workspace) {
         minimal(workspace).run(ctx -> {
             final AimonStack stack = ctx.getBean(AimonStack.class);
             assertThat(stack.spec().getExecutor().getContextEngine()).isEqualTo(ContextEngineKind.DEFAULT);
-            assertThat(stack.spec().getSession().getLogWriteFormat()).isEqualTo(SessionLogFormat.V1);
+            assertThat(stack.spec().getSession().getLogWriteFormat()).isEqualTo(SessionLogFormat.V2);
         });
     }
 

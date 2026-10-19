@@ -17,7 +17,9 @@ import at.aimon.core.agent.compact.PromptSizeRecoveryDecision;
 import at.aimon.core.agent.compact.PromptSizeRecoveryStrategy;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
+import at.aimon.core.agent.session.store.SessionCheckpointMailbox;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.command.DefaultCommandExecutionManager;
@@ -121,7 +123,10 @@ class OrcaAgentExecutorPromptSizeRecoveryTest {
         final DefaultCommandExecutionManager commandManager = new DefaultCommandExecutionManager(client);
         final DefaultSubagentExecutionManager subagentManager = new DefaultSubagentExecutionManager(client, toolManager,
                 hookManager);
-        return new OrcaAgentExecutor(client, new DefaultTranscriptManager(new InMemorySessionRecordStore()),
+        return new OrcaAgentExecutor(client, // Recovery here replaces the transcript in place; the version-2 view drops
+                                             // from the view instead.
+                new DefaultTranscriptManager(new InMemorySessionRecordStore(), SessionCheckpointMailbox.disabled(),
+                        SessionLogFormat.V1),
                 toolManager, hookManager, commandManager, subagentManager);
     }
 

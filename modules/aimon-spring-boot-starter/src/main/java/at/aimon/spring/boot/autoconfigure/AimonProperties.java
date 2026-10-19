@@ -272,6 +272,9 @@ public class AimonProperties implements InitializingBean {
     /** Deployment topology of the session layer. */
     public static final String SESSION_MODE = PREFIX + ".session.mode";
 
+    /** The session log format this node writes. */
+    public static final String SESSION_LOG_WRITE_FORMAT = PREFIX + ".session.log-write-format";
+
     /** Identity this node claims session leases under. */
     public static final String SESSION_NODE_ID = PREFIX + ".session.node-id";
 
@@ -2297,11 +2300,11 @@ public class AimonProperties implements InitializingBean {
         private Duration shutdownDrainTimeout = SessionSpec.DEFAULT_DRAIN_TIMEOUT;
 
         /**
-         * The session log format this node writes: {@code v1} (default) or {@code v2}. Every build reads both;
-         * switch a cluster to {@code v2} only once every node runs a build that reads it. {@code v2} keeps the log
-         * append-only and is what {@code aimon.context.engine=rolling} requires.
+         * The session log format this node writes: {@code v2} (default) or {@code v1}. Every build reads both; a
+         * cluster that still runs nodes of a build that cannot read {@code v2} pins {@code v1} until every node can.
+         * {@code v2} keeps the log append-only and is what {@code aimon.context.engine=rolling} requires.
          */
-        private SessionLogFormat logWriteFormat = SessionLogFormat.V1;
+        private SessionLogFormat logWriteFormat = SessionLogFormat.V2;
 
         /**
          * How often this node sweeps the segment store for orphan log segments — the ones per-session garbage
@@ -2355,7 +2358,8 @@ public class AimonProperties implements InitializingBean {
         }
 
         public void setLogWriteFormat(SessionLogFormat logWriteFormat) {
-            this.logWriteFormat = logWriteFormat;
+            // Null restores the default, as SessionSpec and the CLI read it, so the starter's own check agrees.
+            this.logWriteFormat = logWriteFormat == null ? SessionLogFormat.V2 : logWriteFormat;
         }
 
         public Duration getSegmentSweepInterval() {

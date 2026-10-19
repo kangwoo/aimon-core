@@ -47,6 +47,7 @@ import at.aimon.core.agent.quota.QuotaGuard;
 import at.aimon.core.agent.quota.QuotaViolation;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.LogOrigin;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.DefaultParallelToolDispatcher;
@@ -275,8 +276,10 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     @SuppressWarnings("deprecation") // the version-1 compaction SPI is carried through on purpose
     public DefaultSubagentExecutor(LlmCallGateway<TranscriptBuffer> gateway, ToolExecutionManager toolExecutionManager,
             HookExecutionManager hookExecutionManager, CompactionGuard compactionGuard) {
-        this(gateway, toolExecutionManager, hookExecutionManager, DefaultContextEngine.builder()
-                .compactionGuard(Objects.requireNonNull(compactionGuard, "Compaction guard cannot be null")).build());
+        this(gateway, toolExecutionManager, hookExecutionManager,
+                DefaultContextEngine.builder()
+                        .compactionGuard(Objects.requireNonNull(compactionGuard, "Compaction guard cannot be null"))
+                        .writeFormat(SessionLogFormat.V1).build());
     }
 
     /**
