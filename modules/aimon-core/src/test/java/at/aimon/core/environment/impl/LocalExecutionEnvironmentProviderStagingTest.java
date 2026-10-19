@@ -579,7 +579,8 @@ class LocalExecutionEnvironmentProviderStagingTest {
     }
 
     @Test
-    @DisplayName("EE-3: the change is reported once, by name, at WARN — and later calls copy and read nothing")
+    @DisplayName("EE-3: the change is reported once, by name, at WARN — and later calls copy nothing, reading the"
+            + " source once to see whether it went back (#281)")
     void editedAfterScanWarnsOnceAndIsRemembered() {
         final List<String> sourceReads = new ArrayList<>();
         final VirtualFileSystem countingSource = new DelegatingFileSystem(control) {
@@ -602,7 +603,9 @@ class LocalExecutionEnvironmentProviderStagingTest {
             assertThat(env.stage(loaded)).isEqualTo(first);
             assertThat(env.stage(loaded)).isEqualTo(first);
 
-            assertThat(sourceReads).as("a remembered re-keyed copy costs what any staged copy costs").isEmpty();
+            assertThat(sourceReads).as("one read of each recorded file per call, to see whether it went back")
+                    .hasSize(2 * loaded.getFiles().size())
+                    .containsOnlyElementsOf(loaded.getFiles().stream().map(loaded::sourcePath).toList());
             assertThat(appender.list).filteredOn(e -> e.getLevel() == Level.WARN)
                     .extracting(ILoggingEvent::getFormattedMessage).singleElement().asString().contains("'demo'")
                     .contains("changed on disk");

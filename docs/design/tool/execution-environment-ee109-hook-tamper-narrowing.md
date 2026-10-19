@@ -773,3 +773,12 @@ the sandbox half stays open as EE-114 / aimon-sandbox#33.
   Windows was not tested.
 - **The CHANGELOG says what a workspace skill loses.** `stage()` answered a skill inside the workspace with its live
   source directory; a run directory has only the listed files, as loaded, all 0600, so a script run directly exits 126.
+- **`LocalStaging` no longer serves a remembered EE-3 copy once the source is back at the loaded version (#281).** This
+  was older than this change (`016e2680` had the same logic) and the cache above copied it. `rescanned` mapped the
+  loaded target to the rescanned resource, and every later call staged that one, so a skill edited before its first
+  stage, then reverted and reloaded, was still staged as edited for the provider's lifetime. Now a call that finds a
+  remembered answer first hashes the source's recorded files (writing nothing): if they hash to the loaded key again
+  the answer is dropped and the resource is staged as loaded. The cost is one read of the source per call while it
+  differs; `LocalExecutionEnvironmentProviderStagingTest.editedAfterScanWarnsOnceAndIsRemembered` now pins that cost
+  instead of "reads nothing". `execution-environment.md` §4.4 says so. Test:
+  `LocalStagingTest.editedThenRevertedAndReloadedIsStagedAsReloaded`.

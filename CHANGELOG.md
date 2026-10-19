@@ -67,6 +67,14 @@ and departures: `docs/design/tool/execution-environment-ee109-hook-tamper-narrow
   through `/proc`, or signal it into a timeout. Only `"shell": "host"` is out of reach of an agent whose shell runs in a
   sandbox; under the local provider the agent's `Bash` is the host user, so no placement is. The hook guides say so.
 
+### Fixed: a skill edited, then reverted and reloaded, is staged as reloaded (#281)
+
+`LocalStaging` remembered what an edited skill was staged as (EE-3) and kept staging that for the provider's
+lifetime, even after the source was reverted and the registry reloaded it under its original content key. A call that
+finds such an answer now first hashes the source's recorded files (no copy is written); if they are back at the loaded
+version, the resource is staged as loaded. While the source differs, each `stage()` reads it once more. The bug was
+older than EE-109.
+
 ### Changed (behaviour change): `hooks.json` commands and fork hooks run in the execution's environment (#273)
 
 > **Required with a sandbox provider: aimon-sandbox with `ShellFeature.ISOLATED_EXECUTION` support, or `"shell": "host"`

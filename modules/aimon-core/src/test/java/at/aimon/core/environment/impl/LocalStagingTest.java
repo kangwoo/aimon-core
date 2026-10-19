@@ -515,6 +515,24 @@ class LocalStagingTest {
         assertThat(Path.of(env.stage(loaded)).resolve("scripts/run.sh")).hasContent("echo edited");
     }
 
+    @Test
+    @DisplayName("EE-3 (#281): a skill edited before its first stage, then reverted and reloaded, is staged as reloaded")
+    void editedThenRevertedAndReloadedIsStagedAsReloaded() {
+        final StagedResource loaded = StagedResource.scan(control, "skills/demo", "demo");
+        control.write("skills/demo/scripts/run.sh", "echo edited");
+        final ExecutionEnvironment env = process();
+        assertThat(Path.of(env.stage(loaded)).resolve("scripts/run.sh")).hasContent("echo edited");
+
+        control.write("skills/demo/scripts/run.sh", "echo staged-script");
+        final StagedResource reloaded = StagedResource.scan(control, "skills/demo", "demo");
+
+        assertThat(reloaded.getContentKey()).isEqualTo(loaded.getContentKey());
+        final Path copy = Path.of(env.stage(reloaded));
+        assertThat(copy).isEqualTo(target(loaded));
+        assertThat(copy.resolve("scripts/run.sh")).hasContent("echo staged-script");
+        assertThat(Path.of(env.stage(loaded)).resolve("scripts/run.sh")).hasContent("echo staged-script");
+    }
+
     // ---- helpers --------------------------------------------------------------------------------------------------
 
     private static EnvironmentRequest request() {

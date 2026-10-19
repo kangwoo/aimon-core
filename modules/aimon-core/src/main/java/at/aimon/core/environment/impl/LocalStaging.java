@@ -56,8 +56,10 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  * key they do not hash to, and reverting the source cannot bring edited bytes back under the loaded key. The second
  * scan takes the current file set — files added, files removed, a changed {@code .stageignore} — rather than the
  * loaded list with new bytes, and its size is what the limit is checked against. The answer is remembered for the
- * loaded resource while that copy's marker exists and matches its key, so later calls cost what any staged copy
- * costs; a source that
+ * loaded resource while that copy's marker exists and matches its key, but only while the source still differs from
+ * the loaded version: every call first hashes the source's recorded files (writing nothing), so a source reverted to
+ * the loaded version — reloaded or not — is staged as loaded again, not as the edit (#281). While the source differs,
+ * a call therefore costs one read of the source on top of what any staged copy costs; a source that
  * changes again between the second scan and its copy is refused, and the next call starts over. This is only about
  * the <em>first</em> copy: once a copy under the loaded key exists it is what is served, in this process and in any
  * that loaded the same version, and an edit made afterwards is not seen until the registry reads the resource again
@@ -143,8 +145,9 @@ final class LocalStaging {
     private final ConcurrentMap<String, Object> sourceLocks = new ConcurrentHashMap<>();
     /**
      * The target a caller's resource names, to the resource its source was found to be when that one could not be
-     * copied (EE-3). Used only while the copy it names has its marker and matches its key: it is checked like any
-     * other copy.
+     * copied (EE-3). Used only while the source still differs from the loaded version and the copy it names has its
+     * marker and matches its key: it is checked like any other copy. Dropped once the source holds the loaded
+     * version again.
      */
     private final ConcurrentMap<String, StagedResource> rescanned = new ConcurrentHashMap<>();
 
@@ -209,9 +212,22 @@ final class LocalStaging {
         final String asked = targetOf(resource);
         // One caller at a time finds out that a source changed; the others then find its answer in the map.
         synchronized (sourceLocks.computeIfAbsent(asked, k -> new Object())) {
-            final StagedResource known = rescanned.getOrDefault(asked, resource);
+            final StagedResource known = rescanned.get(asked);
+            if (known != null) {
+                // The remembered answer only while the source still differs from the loaded version: a source
+                // reverted to it is staged as loaded again, not as the edit (#281).
+                if (!mayHoldLoadedVersion(resource, reader)) {
+                    try {
+                        return copyVerified(known, reader);
+                    } catch (SourceChangedException stale) {
+                        log.debug("The re-scanned copy of '{}' is stale ({}); asking the source again",
+                                resource.getName(), stale.what);
+                    }
+                }
+                rescanned.remove(asked, known);
+            }
             try {
-                return copyVerified(known, reader);
+                return copyVerified(resource, reader);
             } catch (SourceChangedException changed) {
                 if (!resource.isScanned()) {
                     throw changed.ifUnchanged != null ? changed.ifUnchanged : changedSinceLoad(resource);
@@ -219,7 +235,7 @@ final class LocalStaging {
                 if (changed.recordedOverLimit) {
                     refuseWhileOverLimit(resource, reader);
                 }
-                final StagedResource current = scanAgain(resource, known, reader, changed);
+                final StagedResource current = scanAgain(resource, reader, changed);
                 final String path;
                 try {
                     path = copyVerified(current, reader);
@@ -233,6 +249,31 @@ final class LocalStaging {
                         resource.getName(), changed.what, path);
                 return path;
             }
+        }
+    }
+
+    /**
+     * Whether the source may hold the loaded version again: its recorded files hash to the content key, read without
+     * writing anything. A resource recorded over the limit is not read; it may hold that version while the source is
+     * still over the limit by its current sizes. A source that cannot be read or sized may hold it too, which sends
+     * the caller to the path that finds out.
+     */
+    private boolean mayHoldLoadedVersion(StagedResource resource, VirtualFileSystem reader) {
+        try {
+            if (resource.getTotalBytes() > maxStagedBytes) {
+                return StagedResource.sizeOf(reader, resource.getSourceDir()) > maxStagedBytes;
+            }
+            final StagedResource.ContentKeyBuilder hasher = new StagedResource.ContentKeyBuilder();
+            for (String relPath : resource.getFiles()) {
+                try (InputStream in = reader.read(resource.sourcePath(relPath))) {
+                    hasher.add(relPath, in.readAllBytes());
+                }
+            }
+            return hasher.build().equals(resource.getContentKey());
+        } catch (IOException | RuntimeException e) {
+            log.debug("Could not tell whether {} holds its loaded version again: {}", resource.getSourceDir(),
+                    e.getMessage());
+            return !resource.getFiles().isEmpty() && reader.exists(resource.getSourceDir());
         }
     }
 
@@ -318,7 +359,7 @@ final class LocalStaging {
      *             if the source turns out to hold what the key names after all (the copy failed for another reason, or
      *             the source changed back), cannot be scanned, or has no file left
      */
-    private StagedResource scanAgain(StagedResource resource, StagedResource known, VirtualFileSystem reader,
+    private StagedResource scanAgain(StagedResource resource, VirtualFileSystem reader,
             SourceChangedException changed) {
         final StagedResource current;
         try {
@@ -330,7 +371,7 @@ final class LocalStaging {
             throw new StagingException("Cannot stage '" + resource.getName() + "': it changed on disk since it was"
                     + " loaded and could not be read again: " + e.getMessage(), e);
         }
-        if (current.getContentKey().equals(known.getContentKey())) {
+        if (current.getContentKey().equals(resource.getContentKey())) {
             throw changed.ifUnchanged != null ? changed.ifUnchanged : stillChanging(resource);
         }
         if (current.getFiles().isEmpty()) {
