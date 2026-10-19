@@ -92,16 +92,17 @@ public class DefaultTranscriptManager implements TranscriptManager {
      *             if any parameter is null
      */
     public DefaultTranscriptManager(SessionRecordStore repository, SessionCheckpointMailbox mailbox) {
-        this(repository, mailbox, SessionLogFormat.V1);
+        this(repository, mailbox, SessionLogFormat.V2);
     }
 
     /**
      * Creates a new TranscriptManager that writes the transcripts it hands out in at least {@code writeFormat}.
      *
      * <p>
-     * This is the node's write-format switch. It defaults to {@link SessionLogFormat#V1}, and a cluster turns it to
-     * {@link SessionLogFormat#V2} only once every node reads version 2 (see {@link SessionLogFormat}). It can only
-     * raise a buffer's format: a record read as version 2 is written as version 2 on a node still set to version 1.
+     * This is the node's write-format switch. It defaults to {@link SessionLogFormat#V2}; a cluster that still runs
+     * nodes of a build that cannot read version 2 sets {@link SessionLogFormat#V1} until every node can (see
+     * {@link SessionLogFormat}). It can only raise a buffer's format: a record read as version 2 is written as version
+     * 2 on a node set to version 1.
      *
      * @param repository
      *            The session record store used to load and save the transcript (must not be null)

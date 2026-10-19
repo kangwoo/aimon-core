@@ -11,8 +11,8 @@ Central is versioned independently).
 
 Every assembly now writes the session log as version 2 unless told otherwise: `SessionSpec.logWriteFormat`, Spring
 `aimon.session.log-write-format`, the CLI's `cli.sessionLogWriteFormat`,
-`OrcaAgentRuntimeFactory.withSessionLogWriteFormat` and `DefaultContextEngine.Builder.writeFormat` all default to
-`V2`. Version 2 keeps the log append-only — compaction, prompt-too-long recovery and pruning are recorded in the view
+`OrcaAgentRuntimeFactory.withSessionLogWriteFormat`, `DefaultContextEngine.Builder.writeFormat` and the
+`DefaultTranscriptManager` constructors that take no format all default to `V2`. Version 2 keeps the log append-only — compaction, prompt-too-long recovery and pruning are recorded in the view
 state instead of rewriting the log, so memory ingest and rewind see the original messages — and it is what the rolling
 context engine needs, which therefore now starts without any setting.
 
@@ -24,7 +24,10 @@ context engine needs, which therefore now starts without any setting.
   stack reports this as the `session-log-sealing` degradation, and the Spring starter **fails startup** on it (a
   `SessionRecordStore` bean, no `SessionLogSegmentStore` bean, `log-write-format=v2`). Register the backend's segment
   store (`PostgresSessionLogSegmentStore`, `MongoSessionLogSegmentStore`, `RedisSessionLogSegmentStore`) as a bean or
-  pass it to `SessionSpec.segmentStore(...)`, or pin `v1`.
+  pass it to `SessionSpec.segmentStore(...)`, or pin `v1`. An application `InMemorySessionRecordStore` bean is paired
+  with an `InMemorySessionLogSegmentStore` instead, as the stack's own in-memory default is.
+- **A one-message turn is no longer summarized.** The version-2 view keeps the tail verbatim and summarizes only what
+  comes before it, so a compaction over a lone user message has nothing to summarize; version 1 rewrote it in place.
 - **`DefaultContextEngine.builder()` with a custom `CompactionGuard`** (anything but `DefaultCompactionGuard` /
   `NoOpCompactionGuard`) or a `CompactionEngine` that does not summarize now fails `build()` unless it declares
   `.writeFormat(SessionLogFormat.V1)`. The in-tree adapters over the version-1 compaction SPI

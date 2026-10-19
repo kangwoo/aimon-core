@@ -42,7 +42,9 @@ import at.aimon.core.agent.interrupt.InterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
+import at.aimon.core.agent.session.store.SessionCheckpointMailbox;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.command.DefaultCommandExecutionManager;
@@ -127,7 +129,9 @@ class OrcaAgentExecutorHookCancellationTest {
     private final CountingLlmClient llmClient = new CountingLlmClient();
     private final PingCommand ping = new PingCommand();
     private final InMemorySessionRecordStore store = new InMemorySessionRecordStore();
-    private final DefaultTranscriptManager transcriptManager = new DefaultTranscriptManager(store);
+    // One-message turns, which only in-place compaction summarizes; the version-2 view keeps the tail verbatim.
+    private final DefaultTranscriptManager transcriptManager = new DefaultTranscriptManager(store,
+            SessionCheckpointMailbox.disabled(), SessionLogFormat.V1);
     private DefaultHookRegistry hookRegistry;
     private LocalFileSystem fileSystem;
 

@@ -326,12 +326,6 @@ class AimonApplicationContributionsTest {
                 }
             };
         }
-
-        /** The segment store a version-2 log needs beside an application record store. */
-        @Bean
-        SessionLogSegmentStore factoryBeanSegmentStore() {
-            return new InMemorySessionLogSegmentStore();
-        }
     }
 
     /** A registry whose type no definition declares — knowable only by instantiating the factory. */

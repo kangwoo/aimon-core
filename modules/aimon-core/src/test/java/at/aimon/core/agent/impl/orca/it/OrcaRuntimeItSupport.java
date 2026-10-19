@@ -30,8 +30,10 @@ import at.aimon.core.agent.session.DefaultLiveSession;
 import at.aimon.core.agent.session.LiveSessionOptions;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
+import at.aimon.core.agent.session.store.SessionCheckpointMailbox;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.TranscriptManager;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.command.DefaultCommandExecutionManager;
@@ -151,7 +153,8 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
                 ? new DefaultSubagentExecutionManager(llmClient, toolManager, hookManager)
                 : options.sharedSubagentManager;
         final InMemorySessionRecordStore recordStore = new InMemorySessionRecordStore();
-        final TranscriptManager transcriptManager = new DefaultTranscriptManager(recordStore);
+        final TranscriptManager transcriptManager = new DefaultTranscriptManager(recordStore,
+                SessionCheckpointMailbox.disabled(), options.sessionLogWriteFormat);
 
         // The builder rather than the six-arg constructor, and it is the same assembly: OrcaAgentExecutor.Builder
         // #llmClient wraps the client in LlmCallGateway.withDefaultRetry, which is exactly what that constructor
@@ -180,6 +183,7 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
             factory.withSkillInvocationPolicy(options.skillInvocationPolicy);
         }
         factory.withWorkflowRunnerEnabled(options.workflowRunnerEnabled);
+        factory.withSessionLogWriteFormat(options.sessionLogWriteFormat);
         // One filesystem serves as both the control store (its .aimon/ directories) and, behind the provider's path
         // rules, the workspace the tools see — the "supplied file system" shape. rg is left out so Grep takes the same
         // path on every machine.
@@ -562,6 +566,7 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
         private CostEstimator costEstimator;
         private QuotaGuardFactory quotaGuardFactory;
         private int maxIterations = MAX_ITERATIONS;
+        private SessionLogFormat sessionLogWriteFormat = SessionLogFormat.V2;
         private UnaryOperator<ExecutionEnvironmentProvider> environmentProviderDecorator = UnaryOperator.identity();
         private boolean skillShellHooks;
         private String hooksJson;
@@ -632,6 +637,11 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
          * zero total would cross. That is the production default and a test pins it; this option is what gives that
          * test a counterpart which actually reaches the stop.
          */
+        Options sessionLogWriteFormat(SessionLogFormat format) {
+            this.sessionLogWriteFormat = Objects.requireNonNull(format, "format must not be null");
+            return this;
+        }
+
         Options costEstimator(CostEstimator costEstimator) {
             this.costEstimator = Objects.requireNonNull(costEstimator, "costEstimator must not be null");
             return this;

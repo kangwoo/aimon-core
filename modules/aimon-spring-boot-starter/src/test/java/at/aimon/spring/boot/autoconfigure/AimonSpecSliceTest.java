@@ -31,6 +31,7 @@ import at.aimon.core.agent.session.SessionLifecycleListener;
 import at.aimon.core.agent.session.idempotency.IdempotencyStore;
 import at.aimon.core.agent.session.inbox.SessionInbox;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
+import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionLeaseStore;
 import at.aimon.core.agent.session.store.SessionLogSegmentStore;
@@ -363,6 +364,14 @@ class AimonSpecSliceTest {
         sessionRunner(workspace).withPropertyValues("aimon.session.store=postgres", "aimon.session.log-write-format=v1")
                 .withUserConfiguration(ApplicationRecordStoreConfiguration.class)
                 .run(ctx -> assertThat(ctx.getBean(SessionSpec.class).getSegmentStore()).isEmpty());
+    }
+
+    @Test
+    @DisplayName("an application in-memory record store gets an in-memory segment store, as the stack's default does")
+    void inMemoryRecordStoreBeanIsPairedWithAnInMemorySegmentStore(@TempDir Path workspace) {
+        sessionRunner(workspace).withUserConfiguration(InMemoryRecordStoreConfiguration.class)
+                .run(ctx -> assertThat(ctx.getBean(SessionSpec.class).getSegmentStore()).hasValueSatisfying(
+                        store -> assertThat(store).isInstanceOf(InMemorySessionLogSegmentStore.class)));
     }
 
     @Test
