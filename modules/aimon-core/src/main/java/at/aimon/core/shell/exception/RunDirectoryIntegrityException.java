@@ -3,13 +3,15 @@ package at.aimon.core.shell.exception;
 import java.io.Serial;
 
 /**
- * Exception thrown when the files a shell placed in a
- * {@linkplain at.aimon.core.shell.ExecutionOptions#getRunDirectory()
- * run directory} do not hold the bytes it was given, so the command was not run
- * ({@link at.aimon.core.shell.ShellFeature#RUN_DIRECTORY}).
+ * Exception thrown when what a shell placed for the run from bytes it was given &mdash; the
+ * {@linkplain at.aimon.core.shell.ExecutionOptions#getRunDirectory() run directory}'s files, or the command's
+ * {@linkplain at.aimon.core.shell.ExecutionOptions#getStdin() stdin} when the shell moved it through something the
+ * agent can write (an upload) &mdash; no longer holds those bytes, so the command was not run
+ * ({@link at.aimon.core.shell.ShellFeature#RUN_DIRECTORY}). It may be thrown for a command with no run directory: a
+ * hook whose stdin was uploaded.
  *
  * <p>
- * It is evidence that something rewrote the files between their transfer and the check — an upload the agent can
+ * It is evidence that something rewrote them between their transfer and the check — an upload the agent can
  * write, a race on the directory — and not an infrastructure failure: a hook caller treats it as a reason to block,
  * not to fail open. The message names no file content.
  */

@@ -20,7 +20,9 @@ An operator's in-environment hook runs as the same uid as the agent's shell, so 
 the agent can rewrite. This change closes the two windows that did not need the hook to be running — a staged copy
 trusted after its first check, and a checked copy reopened by path — without introducing a privilege boundary. Design
 and departures: `docs/design/tool/execution-environment-ee109-hook-tamper-narrowing.md`; backlog EE-109 and EE-111
-(closed), EE-113 – EE-116 (new).
+(closed), EE-113 – EE-116 (new). The follow-ups from the aimon-sandbox implementation (#283, F1–F4 under EE-114) are
+folded into the bullets below; their design is `docs/design/tool/execution-environment-283-run-directory-followups.md`,
+and EE-117 – EE-118 (new) hold its open questions.
 
 - **Staged copies are checked on every call.** `ExecutionEnvironment.stage()`'s contract now says an existing copy is
   checked against the resource's content key on every call, never served because an earlier call checked it.
@@ -32,12 +34,16 @@ and departures: `docs/design/tool/execution-environment-ee109-hook-tamper-narrow
   `RunDirectoryIntegrityException`. A shell that declares the feature places the given bytes in a fresh directory for
   that one command, exports it in the named variable (over the same name in `getEnvironment()`), and removes it
   afterwards; bytes that travelled through something the agent can write are checked against digests before the
-  command starts. `LocalShell` declares it (`aimon-run-*` under `java.io.tmpdir`, 0700 / 0600).
+  command starts. `LocalShell` declares it (`aimon-run-*` under `java.io.tmpdir`, 0700 / 0600). The builder refuses what
+  no shell could place, so a shell can rely on it (#283): at most `RunDirectory.MAX_TOTAL_BYTES` (4 MiB, public, the
+  cap a shell sizes its transfer for), no path with a control character (`Character.isISOControl`: U+0000–U+001F,
+  U+007F, U+0080–U+009F, escaped as `\uXXXX` in the message), and no path that is both a file and the parent directory
+  of another. A raise of the cap is an SPI change: shells that check it must be rebuilt and released first.
 - **`AIMON_HOOK_DIR` (environment placement) is a per-firing run directory, not a staged copy.** Core reads and hashes
   the layer's `hooks/` at every firing (an edit still runs from the next firing) and hands the bytes to the shell; no
   `.aimon-staged/hooks-*` copy is made any more, so nothing of the user layer lands in the workspace. A script that
-  writes beside itself loses that file at the next firing. `hooks/` is capped at 4 MiB (`.stageignore` excludes);
-  over that, or unreadable, is `HOOK_DIR_STAGING_FAILED`. Host placement is unchanged.
+  writes beside itself loses that file at the next firing. `hooks/` is capped at `RunDirectory.MAX_TOTAL_BYTES`,
+  4 MiB (`.stageignore` excludes); over that, or unreadable, is `HOOK_DIR_STAGING_FAILED`. Host placement is unchanged.
 - **A skill hook's `AIMON_SKILL_DIR` is a per-firing run directory** of the skill as loaded (checked against its
   content key, kept in a bounded in-memory cache) where the shell declares `RUN_DIRECTORY`. That holds while the
   skill's entry stays in the cache (32 MiB, least recently used first); once it is evicted, a skill edited since load
@@ -55,10 +61,23 @@ and departures: `docs/design/tool/execution-environment-ee109-hook-tamper-narrow
   before, and feeds its stdin through a pipe. On Windows an open file cannot be unlinked, so the capture files keep
   their names until the command ends (not tested on Windows). Model-facing commands are unchanged.
 - **New not-run causes.** `ShellHookOutcome.Unrun.RUN_DIRECTORY_UNSUPPORTED` (fail closed, like
-  `ISOLATION_UNSUPPORTED`) and `HOOK_FILES_TAMPERED` — the shell found the placed files changed and did not run the
-  command. **`HOOK_FILES_TAMPERED` blocks a guard whatever `failOpen` says**, as `CANCELLED` does: it is evidence of
-  tampering, and honouring `failOpen` would let whoever can touch the files switch the guard off. Observer events only
-  log it.
+  `ISOLATION_UNSUPPORTED`) and `HOOK_FILES_TAMPERED` — the shell found the placed files, or the hook's input (a stdin it
+  uploaded, with or without a run directory), changed and did not run the command (#283; the deny reason reads "the
+  hook's files or input changed before the run"). **`HOOK_FILES_TAMPERED` blocks a guard whatever `failOpen` says**,
+  as `CANCELLED` does: it is evidence of tampering, and honouring `failOpen` would let whoever can touch the files
+  switch the guard off. Observer events only log it.
+- **Changed (#283): a hook file name a run directory cannot place is refused, not placed or staged.** On a shell that
+  declares `RUN_DIRECTORY`, a skill or `hooks/` directory holding a name with a control character, or a file and a
+  directory of one name, is `STAGING_FAILED` / `HOOK_DIR_STAGING_FAILED`: a guard blocks unless it declares `failOpen`
+  (it is the hook's own defect, not tampering), and a skill within the cap does not fall back to staging. The names
+  this newly reaches are DEL and C1 controls from a local source — the local filesystem's scan already refused C0 ones
+  (`\n`, `\r`, `\t`) — and any of them from another source (S3, GridFS, an in-memory filesystem), which the shell used
+  to place or fail on (`EXECUTION_FAILED`). Rename the file, or list it in `.stageignore`.
+- **Docs (#283): what a hook leaves running.** `ExecutionOptions.isHook()` / `isIsolated()` and the hook guides say an
+  execution environment may end what a hook started and left running (`cmd &`) when the hook ends; aimon-sandbox does,
+  about half a second after the hook exits. `LocalShell` leaves it running (a timeout, cancellation or interrupt ends
+  the descendants still reachable), but removes the run directory at once. The guide no longer advises a report hook
+  to hand long work to the background: work that must outlive the hook goes to something that is not its process.
 - **Embedders.** `ShellActionExecutor` gains `run(action, context, env, stdin, Optional<StagedResource>)`; its default
   stages the skill and exports the path, as every executor did before, so a third-party executor keeps working.
   `DefaultShellActionExecutor` overrides it. A replacement environment executor for `hooks.json`

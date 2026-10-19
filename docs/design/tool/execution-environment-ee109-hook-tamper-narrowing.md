@@ -8,7 +8,8 @@
 > a translation target (`docs/project/documentation-guide.md` §5.1).
 >
 > One thing was added. §11 records where the implementation departed from this design, and why, including which review
-> notes were taken. The open questions in §10 whose consequences reach beyond this change are tracked in
+> notes were taken, and §11.7 the follow-ups of #283. The open questions in §10 whose consequences reach beyond this
+> change are tracked in
 > [`../../backlog/execution-environment-open-items.md`](../../backlog/execution-environment-open-items.md) (EE-113 ← §7;
 > EE-114 ← §8 · Q5 · Q7 · Q8; EE-115 ← Q6; EE-116 ← Q3), which is the source of truth for what is open. The record it
 > follows is [`execution-environment-ee48-ee52-ee81-hooks-in-environment.md`](execution-environment-ee48-ee52-ee81-hooks-in-environment.md)
@@ -788,3 +789,30 @@ the sandbox half stays open as EE-114 / aimon-sandbox#33.
   load that read goes the EE-3 way and serves the edit. So the rule is "until the registry reloads or the entry is
   evicted" — the same shape as staging, whose loaded copy is served only while it exists, and within R4 (skill hooks
   are not a policy boundary). The `HookRunFiles` class doc, the CHANGELOG and the hook and skill guides (ko/en) say so.
+
+### 11.7 Follow-ups from the sandbox implementation (#283)
+
+When aimon-sandbox implemented `RUN_DIRECTORY` ([kangwoo/aimon-sandbox PR #35](https://github.com/kangwoo/aimon-sandbox/pull/35)),
+four places came up where this SPI was looser or less precise than a shell needs. Issue
+[#283](https://github.com/kangwoo/aimon-core/issues/283) closed them on the core side; its approved design and where the
+build departed from it are in [`execution-environment-283-run-directory-followups.md`](execution-environment-283-run-directory-followups.md).
+
+- **F1 — the builder refuses unplaceable paths.** `RunDirectory.Builder.file` refuses a path with any
+  `Character.isISOControl` character (checked first, so no message prints one raw; each is escaped as `\uXXXX`) and a
+  path that is both a file and the parent directory of another, in either order. In a hook that is `STAGING_FAILED` /
+  `HOOK_DIR_STAGING_FAILED` — the "could not run" class, which `failOpen` may open — never `HOOK_FILES_TAMPERED`, and a
+  skill does not fall back to staging. A C0 control from a local source is already refused by the filesystem's own
+  path check during the scan. Tests: `RunDirectoryTest.controlCharactersAreRefused`, `fileAndDirectoryOfOneNameAreRefused`,
+  `SkillHookRunDirectoryTest.unplaceableNameIsRefusedWithoutFallback`,
+  `IsolatedShellActionExecutorTest.run_aFileNameARunDirectoryCannotPlace_isNotRun`,
+  `DeclarativePreToolHookTest.execute_hookFileARunDirectoryCannotPlace_blocksUnlessFailOpen`.
+- **F2 — "files or input".** `RunDirectoryIntegrityException`, `ExecutionOptions.getStdin()`, `RUN_DIRECTORY` item 3 and
+  `HOOK_FILES_TAMPERED` now cover a stdin the shell uploaded, with or without a run directory. The deny reason reads
+  "the hook's files or input changed before the run". No kind enum and no rename. Test:
+  `ShellActionRunnerTest.run_tamperedStdinWithNoRunDirectory_isTamperingAndBlocksWithFailOpen`.
+- **F3 — the cap is public and enforced.** `HookRunFiles.MAX_BYTES`, which the body above names, is now
+  `RunDirectory.MAX_TOTAL_BYTES` (4 MiB); the builder refuses more, and `HookRunFiles` keeps its pre-checks so a skill
+  still falls back to staging. Test: `RunDirectoryTest.totalIsCapped`.
+- **F4 — what a hook leaves running.** `ExecutionOptions.isHook()` / `isIsolated()` and the hook guide say a shell may end
+  a hook's background jobs when it ends; `LocalShell` does not, but removes the run directory at once. The guide no
+  longer advises handing long work to the background. Tests: `LocalShellHookBackgroundJobTest`.

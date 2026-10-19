@@ -47,13 +47,15 @@ import at.aimon.core.skill.hook.action.HookScriptDirectory;
  * The cache belongs to the {@link DefaultShellActionExecutor} that created it.
  *
  * <p>
- * Both are capped at {@link #MAX_BYTES}. A {@code hooks.json} directory over it is refused; a skill over it is left
- * to the staging fallback ({@link DefaultShellActionExecutor}).
+ * Both are capped at {@link RunDirectory#MAX_TOTAL_BYTES}. A {@code hooks.json} directory over it is refused; a skill
+ * over it is left to the staging fallback ({@link DefaultShellActionExecutor}). A file whose name a run directory
+ * cannot place (a control character, or a file and a directory of one name) is refused in both cases rather than moved
+ * to the staged copy, which the agent can rewrite: a malformed name is no reason to weaken the hook's files, and
+ * staging cannot place a file and a directory of one name at all. The fix is to rename the file or exclude it. This
+ * holds where a run directory is read at all &mdash; a skill over the cap, or on a shell without
+ * {@link at.aimon.core.shell.ShellFeature#RUN_DIRECTORY}, is staged before its names are looked at.
  */
 final class HookRunFiles {
-
-    /** The most a run directory may hold: it is written, and on a remote shell uploaded, at every firing. */
-    static final long MAX_BYTES = 4L * 1024 * 1024;
 
     /** The most the skill cache holds, summed over its entries; the least recently used go first. */
     static final long MAX_CACHED_BYTES = 32L * 1024 * 1024;
@@ -71,8 +73,9 @@ final class HookRunFiles {
      *            the directory the action carries (never null)
      * @return the run directory (never null)
      * @throws StagingException
-     *             with a message that may be shown to the model, when the directory is over {@link #MAX_BYTES} or
-     *             keeps changing while it is read
+     *             with a message that may be shown to the model, when the directory is over
+     *             {@link RunDirectory#MAX_TOTAL_BYTES}, keeps changing while it is read, or holds a file a run
+     *             directory cannot place
      * @throws RuntimeException
      *             whatever the scan throws when the directory cannot be read (its message may name host paths)
      */
@@ -81,7 +84,7 @@ final class HookRunFiles {
         for (int attempt = 0; attempt < 2; attempt++) {
             final StagedResource scanned = StagedResource.scan(directory.getSourceFileSystem(),
                     directory.getSourceDirectory(), directory.getResourceName());
-            if (scanned.getTotalBytes() > MAX_BYTES) {
+            if (scanned.getTotalBytes() > RunDirectory.MAX_TOTAL_BYTES) {
                 throw overLimit("The hooks directory", scanned.getTotalBytes());
             }
             final Optional<RunDirectory> read = read(scanned, SkillHookEnv.AIMON_HOOK_DIR);
@@ -101,10 +104,12 @@ final class HookRunFiles {
      *            the cache of the executor asking (never null)
      * @param resource
      *            the declaring skill's resource, as the registry loaded it (never null)
-     * @return the run directory, or empty when the skill is over {@link #MAX_BYTES} and has to be staged instead
+     * @return the run directory, or empty when the skill is over {@link RunDirectory#MAX_TOTAL_BYTES} and has to be
+     *         staged instead
      * @throws StagingException
      *             with a message that may be shown to the model, when the source no longer holds what the resource
-     *             names and cannot be followed (assembled by hand, or changing while it is read)
+     *             names and cannot be followed (assembled by hand, or changing while it is read), or when it holds a
+     *             file a run directory cannot place
      * @throws RuntimeException
      *             whatever the source throws when it cannot be read
      */
@@ -116,7 +121,7 @@ final class HookRunFiles {
         if (cached.isPresent()) {
             return cached;
         }
-        if (resource.getTotalBytes() > MAX_BYTES) {
+        if (resource.getTotalBytes() > RunDirectory.MAX_TOTAL_BYTES) {
             return Optional.empty();
         }
         final Optional<RunDirectory> loaded = read(resource, SkillHookEnv.AIMON_SKILL_DIR);
@@ -132,7 +137,7 @@ final class HookRunFiles {
         }
         final StagedResource current = StagedResource.scan(resource.getSourceFileSystem(), resource.getSourceDir(),
                 resource.getName());
-        if (current.getTotalBytes() > MAX_BYTES) {
+        if (current.getTotalBytes() > RunDirectory.MAX_TOTAL_BYTES) {
             return Optional.empty();
         }
         // Filed under the key the bytes hash to, not the loaded one: a source reverted to the loaded version must find
@@ -161,8 +166,8 @@ final class HookRunFiles {
     /**
      * Reads the resource's files and checks them against its content key.
      *
-     * @return the run directory, or empty when a file could not be read, the files outgrew {@link #MAX_BYTES}, or the
-     *         bytes read do not hash to the key
+     * @return the run directory, or empty when a file could not be read, the files outgrew
+     *         {@link RunDirectory#MAX_TOTAL_BYTES}, or the bytes read do not hash to the key
      */
     private static Optional<RunDirectory> read(StagedResource resource, String variable) {
         final RunDirectory.Builder builder = RunDirectory.builder().variable(variable);
@@ -179,15 +184,16 @@ final class HookRunFiles {
                 return Optional.empty();
             }
             total += bytes.length;
-            if (total > MAX_BYTES) {
+            if (total > RunDirectory.MAX_TOTAL_BYTES) {
                 return Optional.empty();
             }
             hasher.add(relPath, bytes);
             try {
                 builder.file(relPath, bytes);
             } catch (IllegalArgumentException e) {
-                throw new StagingException("Cannot read '" + resource.getName() + "' for the hook: the file path '"
-                        + relPath + "' is not a relative path inside it", e);
+                // The message names the path inside the resource, with control characters escaped: no host path.
+                throw new StagingException("Cannot read '" + resource.getName() + "' for the hook: " + e.getMessage()
+                        + ". Rename the file, or exclude it with " + StagedResource.STAGE_IGNORE_FILE, e);
             }
         }
         if (!hasher.build().equals(resource.getContentKey())) {
@@ -197,7 +203,7 @@ final class HookRunFiles {
     }
 
     private static StagingException overLimit(String what, long bytes) {
-        return new StagingException(what + " holds " + bytes + " bytes, over the " + MAX_BYTES
+        return new StagingException(what + " holds " + bytes + " bytes, over the " + RunDirectory.MAX_TOTAL_BYTES
                 + "-byte limit for a hook's files; exclude large files with " + StagedResource.STAGE_IGNORE_FILE);
     }
 

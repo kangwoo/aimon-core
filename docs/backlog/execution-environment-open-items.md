@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 116건 (열림 33 · 닫힘 83)
+# 실행 환경 — 등록 항목 118건 (열림 35 · 닫힘 83)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -109,6 +109,11 @@ EE-109 는 2026-10-19 에 한 변경(#275)에서 닫았다. 목표는 메인테�
 [`../design/tool/execution-environment-ee109-hook-tamper-narrowing.md`](../design/tool/execution-environment-ee109-hook-tamper-narrowing.md)
 에 있다. EE-113~EE-116 은 그 설계의 권한 경계 조건(§7 → EE-113), aimon-sandbox 후속 작업과 열린 질문(§8 · Q5 · Q7 · Q8 →
 EE-114), 그리고 열린 질문 Q6 → EE-115, Q3 → EE-116 을 옮긴 것이다.
+
+aimon-sandbox 가 실행 디렉터리를 구현하며(aimon-sandbox PR #35) 드러난 코어 쪽 후속 넷(F1–F4)은 2026-10-19 에 한 변경(#283)에서
+닫았고, EE-114 아래 "후속" 에 적었다. 그 변경의 설계(승인본, 영어)와 구현이 설계에서 벗어난 점은
+[`../design/tool/execution-environment-283-run-directory-followups.md`](../design/tool/execution-environment-283-run-directory-followups.md)
+에 있다. EE-117 · EE-118 은 그 설계의 열린 질문(Q2 → EE-117, Q4 · Q3 → EE-118)을 옮긴 것이다.
 
 ---
 
@@ -4915,8 +4920,9 @@ aimon-sandbox#32 로 합쳐졌고, `main` `553be78` 의 `SandboxShell.supports` 
 
 ## EE-113 — 에이전트와 실행 환경 안 정책 훅 사이에 권한 경계가 없다 · **열림** *(트리거 대기)*
 
-*(2026-10-19 등록. 출처는 EE-109 설계 §7. aimon-sandbox 쪽 짝은 "run policy-hook execs under a separate uid" 로 등록할 이슈다 —
-`sandbox-followup` 초안에 본문이 있다.)*
+*(2026-10-19 등록. 출처는 EE-109 설계 §7. aimon-sandbox 쪽 짝은
+[kangwoo/aimon-sandbox#34](https://github.com/kangwoo/aimon-sandbox/issues/34) "Run policy-hook execs under a separate uid (core
+EE-113)" 다 — `sandbox-followup` 초안의 본문을 옮긴 것.)*
 
 **무엇을.** `hooks.json` 의 실행 안 명령을 에이전트와 **다른 uid** 로 돌려, 같은 uid 라서 남는 위험을 경계로 바꾼다. EE-109 는
 좁히기였고 이것은 경계다.
@@ -4952,7 +4958,7 @@ files API 가 uid 인자를 얻을 때.
 
 *(2026-10-19 등록. 출처는 EE-109 설계 §8 과 §10 Q5 · Q7 · Q8. aimon-sandbox 쪽 이슈는
 [kangwoo/aimon-sandbox#33](https://github.com/kangwoo/aimon-sandbox/issues/33) 이며, #275 빌드의 `sandbox-followup.md` 로 그 범위를
-넓힌다.)*
+넓힌다. 구현은 [kangwoo/aimon-sandbox PR #35](https://github.com/kangwoo/aimon-sandbox/pull/35) 다 — 2026-10-19 확인 때 열려 있다.)*
 
 **무엇을.** 두 가지다. (1) `SandboxShell` 이 `ShellFeature.RUN_DIRECTORY` 를 선언한다 — 실행 디렉터리의 파일을 exec 인자에
 싣거나(작으면) 업로드한 뒤, 인자에 실은 SHA-256 다이제스트로 놓인 파일을 확인하고 나서 명령을 시작한다(규칙 3). 다르면
@@ -4968,13 +4974,34 @@ files API 가 uid 인자를 얻을 때.
 **정할 것.** Q5 — 샌드박스의 비공개 실행 디렉터리를 어디에 둘지(`/workspace/.aimon-shell/.run.*` 는 이미지 계약상 쓸 수 있지만
 #33 류의 감시 루프가 이미 아는 디렉터리다; `${TMPDIR:-/tmp}` 는 워크스페이스 밖이지만 이미지 계약에 없다 — 같은 uid 에게는 둘 다
 닿는다). Q7 — 64 KiB 를 넘는 훅 명령을 거절할지(권장) 업로드 · 다이제스트로 받을지. Q8 — 트레일러가 오면 훅의 백그라운드 자식을
-끝낼지(샌드박스 쪽 동작 변화).
+끝낼지(샌드박스 쪽 동작 변화). 결정됨(샌드박스 #35): 트레일러가 오고 약 0.5초 뒤 그 exec 의 프로세스 그룹을 끝낸다 — 코어 문서는
+#283 F4 가 맞췄다. 메인테이너의 확인은 샌드박스 쪽에서 아직 기다린다.
 
 **어디** *(2026-10-19)* — aimon-sandbox 의 `SandboxShell.supports`(`:609-611`) · `execute`, `ShellWrapper`(`INNER`,
 `INLINE_*_LIMIT`), `SandboxStaging`(주석과 테스트만). 코어 쪽은 끝났다(`IsolatedShellActionExecutor`, `DefaultShellActionExecutor`).
 
 **언제 다시 볼까.** aimon-sandbox 가 이 기능을 내보낼 때(닫는다), 또는 `hooks.json` 과 샌드박스 제공자를 함께 조립하는 호스트가
 `AIMON_HOOK_DIR` 을 쓰려 할 때.
+
+### 후속 — 코어 #283 (F1–F4) · 닫힘 (2026-10-19)
+
+aimon-sandbox 가 실행 디렉터리를 구현하며([kangwoo/aimon-sandbox#33](https://github.com/kangwoo/aimon-sandbox/issues/33),
+[PR #35](https://github.com/kangwoo/aimon-sandbox/pull/35)) 코어의 계약이 셸이 지켜야 할 것보다 느슨하거나, 셸이 알리는 것보다
+덜 정확한 자리 넷이 나왔다. 코어 쪽은 [#283](https://github.com/kangwoo/aimon-core/issues/283) 에서 닫았다. EE-114 자체는 PR #35
+가 합쳐질 때까지 **열림**이다. 설계와 그 차이는
+[`../design/tool/execution-environment-283-run-directory-followups.md`](../design/tool/execution-environment-283-run-directory-followups.md).
+
+- **F1** — `RunDirectory.Builder.file` 이 둘 수 없는 경로를 미리 거절한다: 제어 문자(`Character.isISOControl` — U+0000–U+001F ·
+  U+007F · U+0080–U+009F)가 든 경로와, 파일이면서 다른 경로의 부모 디렉터리인 경로(어느 순서로 더하든). 훅에서는
+  `STAGING_FAILED` · `HOOK_DIR_STAGING_FAILED` 로 끝나고(가드는 `failOpen` 이 아니면 막는다), 변조(`HOOK_FILES_TAMPERED`)가
+  아니며 스킬은 스테이징으로 물러나지 않는다.
+- **F2** — `RunDirectoryIntegrityException` 과 `HOOK_FILES_TAMPERED` 의 말을 훅의 파일**이나 입력**(업로드한 stdin)으로 넓혔다.
+  종류 enum 은 두지 않았다.
+- **F3** — 실행 디렉터리 상한을 공개했다: `RunDirectory.MAX_TOTAL_BYTES`(4 MiB, 빌더가 강제). `HookRunFiles.MAX_BYTES` 는 없어졌다.
+  샌드박스는 자기 8 MiB 추정 대신 이 상수를 따르면 된다.
+- **F4** — `ExecutionOptions.isHook()` · `isIsolated()` 와 hook 가이드(ko/en)가, 실행 환경이 훅이 끝날 때 훅이 남긴 백그라운드
+  작업을 끝낼 수 있다고 말한다. 로컬 제공자는 그런 작업을 두고 간다(실행 디렉터리는 곧바로 지운다).
+- F5 는 샌드박스 쪽에서 #35 로 풀렸고 코어 변경이 필요 없다.
 
 ## EE-115 — 코어가 인터프리터에 직접 넘기는 `"script"` 핸들러 필드가 없다 · **열림** *(트리거 대기)*
 
@@ -4996,13 +5023,47 @@ files API 가 uid 인자를 얻을 때.
 
 *(2026-10-19 등록. 출처는 EE-109 설계 §10 Q3.)*
 
-**무엇을.** `HookRunFiles.MAX_BYTES`(실행 디렉터리 한 개, 4 MiB)와 `HookRunFiles.MAX_CACHED_BYTES`(스킬 바이트 캐시, 32 MiB)를
-설정으로 열지 정한다(`AimonProperties` 나 `ExecutionEnvironmentSpec`).
+**무엇을.** `RunDirectory.MAX_TOTAL_BYTES`(실행 디렉터리 한 개, 4 MiB — #283 뒤로 공개 상수이고 빌더가 강제한다)와
+`HookRunFiles.MAX_CACHED_BYTES`(스킬 바이트 캐시, 32 MiB)를 설정으로 열지 정한다(`AimonProperties` 나 `ExecutionEnvironmentSpec`).
+설정으로 연 훅 한도는 이제 그 상수를 **낮출** 수만 있다. 올리는 것은 셸 SPI 의 변경이라, 상한을 확인하는 모든 셸이 새 값으로 다시
+빌드되어 배포된 뒤에야 할 수 있다(#283 설계 Q6).
 
 **왜.** 두 값 모두 근거 있는 측정 없이 정한 값이다. `hooks.json` 의 `hooks/` 가 4 MiB 를 넘으면 그 핸들러는 돌지 않고(가드는
 막는다, 사유에 `.stageignore` 가 나온다), 스킬이 넘으면 스테이징으로 물러선다. 캐시가 넘치면 가장 오래 안 쓴 스킬부터 버리고 다음
 발화에 원본을 다시 읽는다.
 
-**어디** *(2026-10-19)* — `core/skill/hook/declarative/HookRunFiles.java`.
+**어디** *(2026-10-19)* — `core/skill/hook/declarative/HookRunFiles.java`, `core/shell/RunDirectory.java`.
 
 **언제 다시 볼까.** 누군가 한도에 걸렸다고 알려 올 때.
+
+## EE-117 — 실행 디렉터리의 파일 이름이 유니코드 서식 문자를 실을 수 있다 · **열림** *(트리거 대기)*
+
+*(2026-10-19 등록. 출처는 #283 설계 §7 Q2.)*
+
+**무엇을.** `RunDirectory.Builder` (또는 스킬 적재)가 제어 문자 말고도 유니코드 서식 문자(`Cf` — 양방향 재정의 U+202A–U+202E ·
+U+2066–U+2069, ZWJ)와 줄 · 문단 구분자(U+2028 · U+2029)가 든 파일 이름을 거절할지 정한다.
+
+**왜.** #283 F1 은 **둘 수 있는가**를 기준으로 `Character.isISOControl` 만 거절했다. 위 문자들은 `sha256sum -c` 도, 바이트 단위
+배치도 깨지 않는다. 다만 로그와 거부 사유에서 이름을 다르게 보이게 할 수 있다(`gaurd.sh` 처럼 보이는 `guard\u202e…`). 거절하면
+배치의 문제가 아니라 이름 위조에 대한 정책이 되므로, 그 정책을 어디에 둘지(빌더, 스킬 적재, 로그의 이스케이프)부터 정해야 한다.
+`RunDirectoryTest.nonControlCharactersAreAccepted` 가 지금의 결정(받는다)을 고정한다.
+
+**어디** *(2026-10-19)* — `core/shell/RunDirectory.java`, 스킬 적재(`core/skill/repository`).
+
+**언제 다시 볼까.** 서식 문자가 든 스킬 파일 이름으로 운영자를 속인 사례나 요구가 나올 때.
+
+## EE-118 — 훅이 남긴 백그라운드 작업을 끝내는지 셸이 밝히지 않는다 · **열림** *(트리거 대기)*
+
+*(2026-10-19 등록. 출처는 #283 설계 §7 Q4 · Q3.)*
+
+**무엇을.** "명령이 끝나면 그 명령이 남긴 것을 끝낸다" 를 `ShellFeature` 로 선언하게 할지(Q4), 그리고 훅보다 오래 가야 하는
+작업의 길로 hook 가이드가 `setsid` · `nohup` 을 안내할지(Q3) 정한다.
+
+**왜.** #283 F4 는 `ExecutionOptions.isHook()` 에 "셸은 끝낼 수 **있다**" 고만 적었다. aimon-sandbox(#35)는 끝내고 `LocalShell` 은
+두고 간다. 지금은 그 차이로 갈라지는 호출자가 없고, 가이드의 권고(훅의 프로세스가 아닌 곳에 넘긴다)는 어느 쪽에서도 맞다.
+`setsid` 는 제공자가 고른 동작을 제공자마다 다르게 비켜 가는 길이라 안내하지 않았다 — 샌드박스 쪽 Q8 의 메인테이너 확인과 함께 다시
+본다(EE-114).
+
+**어디** *(2026-10-19)* — `core/shell/ShellFeature.java`, `core/shell/ExecutionOptions.java`, `docs/features/hook/hook-config-guide.md`.
+
+**언제 다시 볼까.** 호스트가 셸마다 그 동작을 알아야 할 때, 또는 메인테이너가 샌드박스 #35 의 Q8 을 다르게 정할 때.

@@ -317,7 +317,7 @@ class DeclarativeShellHookBindingTest {
         // Evidence of tampering, not a guard that could not run: failOpen does not open it (EE-109).
         assertThat(result.getStatus()).isEqualTo(HookStatus.BLOCKED);
         assertThat(result.getFeedback().orElseThrow()).contains("hook '" + SKILL + "' (" + eventName + ")")
-                .contains("the hook's files changed before the run").doesNotContain("failOpen")
+                .contains("the hook's files or input changed before the run").doesNotContain("failOpen")
                 .doesNotContain(ACTION.getCommand());
     }
 

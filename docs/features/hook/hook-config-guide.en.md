@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: 8474690a
+source_commit: a6e0c3db
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -330,6 +330,13 @@ used only when there is no execution. Each handler can say where with a `"shell"
   provider uses the JVM's environment, a sandbox its profile's). When the shell does not declare that it can run such a
   command (`ISOLATED_EXECUTION`), the command is **not run** — on a guard event that blocks unless `failOpen`. Upgrade
   the provider, or use `"shell": "host"`. aimon-sandbox supports it from `main` `553be78` ([kangwoo/aimon-sandbox#31](https://github.com/kangwoo/aimon-sandbox/issues/31)).
+- **What a hook leaves running.** An execution environment may end what a hook started and left running (a `cmd &`)
+  when the hook ends. Under the local provider such a job keeps running after the hook (a hook ended by a timeout, a
+  cancellation or an interrupt takes the descendants still reachable with it). On aimon-sandbox its process group is
+  ended about half a second after the hook exits. Either way, where the variable names a run directory (`AIMON_HOOK_DIR`, `AIMON_SKILL_DIR`), it
+  is removed as soon as the hook ends; the persistent staged copy `AIMON_SKILL_DIR` names for a skill over 4 MiB, or on a
+  shell without `RUN_DIRECTORY`, stays. Work that must outlive the hook goes to something that is not the hook's
+  process (a queue, a service the hook calls, an `http` handler).
 - **A firing with no execution.** The `subagentStart` of a subagent launched by the agent-scoped workflow runner
   (background `Workflow`) has no execution behind it, so without `"shell"` it runs on the host. If that subagent ran its
   loop, its `subagentStop` runs in the subagent's own environment. Whether there is an execution is judged by **whether
@@ -355,7 +362,8 @@ used only when there is no execution. Each handler can say where with a `"shell"
   (no more `.aimon-staged/hooks-*` copies). The directory does not survive between firings, so a file a script writes
   beside itself is gone at the next one. A handler whose command names the variable while `hooks/` is missing is an
   entry that cannot be applied (a startup failure under a guard event). If the directory cannot be read (the 4 MiB
-  limit, an unreadable file) or the shell does not support run directories (`RUN_DIRECTORY`), the command is not run.
+  limit, an unreadable file, a file name a run directory cannot place — one with a control character, or a file and a
+  directory of one name) or the shell does not support run directories (`RUN_DIRECTORY`), the command is not run.
   The directory is read again at every firing, so an edit to `guard.sh` runs from the next firing on.
 - **Commands that name a host path.** A host path such as `~/.aimon/…` may not exist in a sandbox. When a command
   placed in the environment names one and the shell cannot start it (exit 126 or 127), the deny reason gains a hint
@@ -658,7 +666,7 @@ verdict.** On the other 9 events no row blocks (a WARN, then the event proceeds)
 | `command` exits 126 or 127 (not executable · not found) | could not run | **blocks** | proceeds (WARN) |
 | `command` exits with any other code (1, 3, 130, …) | script malfunction | proceeds (WARN) | proceeds (WARN) |
 | `command` produces no exit code — a timeout, a shell failure, no execution environment or an unavailable one, a skill directory that could not be staged or a `hooks/` directory that could not be read, an environment shell that cannot run an isolated command or place a run directory, an executor without shell support, an executor that throws | could not run | **blocks** | proceeds (WARN) |
-| the shell found that the hook files it placed in the run directory differ from the bytes it was given, and did not start the `command` (`HOOK_FILES_TAMPERED`) | tampering | **blocks** | **blocks** — not a guard that could not decide, but evidence of tampering |
+| the shell found that the hook files it placed in the run directory, or the input (stdin) it uploaded, differ from the bytes it was given, and did not start the `command` (`HOOK_FILES_TAMPERED`) | tampering | **blocks** | **blocks** — not a guard that could not decide, but evidence of tampering |
 | `deny` handler | verdict: refuse | **blocks** | **blocks** — `failOpen` is not read on a `deny` (WARN). In the three "follows the event policy" rows below, a `deny` handler blocks as the default column says |
 | `http` or `mcp` answers with a refusal (`decision: deny` or `block`; on `http` also `permissionDecision: deny`, `continue: false`) | verdict: refuse (the partner of the field that refused is the reason) | **blocks** | **blocks** |
 | `http` answers `permissionDecision: ask` | verdict: ask | as the `AskPromptHandler` answers — by default **blocks** | the same — a verdict, so `failOpen` does not apply |
@@ -739,8 +747,12 @@ what is left of its `timeout`, every report hook after it can take all of its ow
 then `subagentStop`, which still fire as the execution ends, add theirs in turn — three `onStop` handlers at the
 30-second default hold the next input for up to 90 seconds. One hook is cut off at its `timeout` plus 5 seconds, and
 at 10 minutes plus 5 seconds whatever it declares. So **keep a report hook's `timeout` short** — do not leave it at
-the 30-second default, set it to what the cleanup really takes, and have the command hand long work to the background
-and return at once. `http` and `mcp` handlers on `postTool` are not covered by this rule.
+the 30-second default, set it to what the cleanup really takes, and have the command return at once. Work that must
+outlive the hook goes to something that is not the hook's process (a queue, a service the hook calls, an `http`
+handler), because **an execution environment may end what a hook leaves running when the hook ends.** Under the local
+provider a background job keeps running, but the run directory is removed as soon as the hook ends; on aimon-sandbox
+its process group is ended about half a second after the hook exits. `http` and `mcp` handlers on `postTool` are not
+covered by this rule.
 
 ---
 
@@ -1174,9 +1186,9 @@ are in [`aimon-skill-extensions.md`](../../references/aimon-skill-extensions.md)
 | A tool is refused with `Blocked: guard hook '...' could not get a verdict from its http call` (or `mcp call`) | An `http` or `mcp` handler on `preTool` got no verdict. Read the cause in the reason — `action executor not wired` (the host wired no executor — `aimon-cli` wires them, so this is an embedding host), `call failed: MCP server not registered` (`server` is not the name of a configured MCP server), `call failed: HTTP 307` (redirects are not followed), `call failed: HTTP 503` or `call failed: ConnectException` (the policy server), `timed out`, `response could not be read` (the `decision` or `permissionDecision` value is not a known one — the table under [http](#http)). Declare `"failOpen": true` if the handler only observes. |
 | A tool is blocked with `… could not run its command — the environment's shell cannot run an isolated command` | The execution environment's shell does not declare that it can run an isolated command (`ISOLATED_EXECUTION`) — a sandbox provider without that support. Upgrade the provider, or write `"shell": "host"` on that handler. See [Where it runs](#command). |
 | The deny reason ends with `the command names host path …, which this execution environment may not have` | A command placed in the environment names a host path such as `~/.aimon/…`, and the environment's shell could not start it. Put the script in `hooks/` and call it as `$AIMON_HOOK_DIR/…`, or use `"shell": "host"`. |
-| The deny reason is `hook script directory could not be staged: …` | The `hooks/` directory behind `AIMON_HOOK_DIR` could not be read at that firing (the 4 MiB limit — exclude large files with `.stageignore` —, an unreadable file, a directory that changed while it was read). Fix the cause the reason names. |
+| The deny reason is `hook script directory could not be staged: …` | The `hooks/` directory behind `AIMON_HOOK_DIR` could not be read at that firing (the 4 MiB limit — exclude large files with `.stageignore` —, an unreadable file, a directory that changed while it was read, a file name with a control character or a file and a directory of one name — rename it, or exclude it with `.stageignore`). Fix the cause the reason names. |
 | A tool is blocked with `… could not run its command — the environment's shell cannot place the hook's files for the run` | The execution environment's shell does not declare that it can place a run directory (`RUN_DIRECTORY`); only handlers that name `AIMON_HOOK_DIR` are affected. Upgrade to a provider that supports it (for aimon-sandbox, EE-114), or write `"shell": "host"` on that handler. |
-| A tool is blocked with `Blocked: hook '…' (…) was not run — the hook's files changed before the run` | The hook files the shell placed in the run directory differed from the bytes core handed it (someone rewrote the upload). `failOpen` does not open this. Look at what writes to the hook files in that execution environment. |
+| A tool is blocked with `Blocked: hook '…' (…) was not run — the hook's files or input changed before the run` | The hook files the shell placed in the run directory, or the hook's input (stdin) the shell moved by upload, differed from the bytes core handed it (someone rewrote the upload). `failOpen` does not open this. Look at what writes to the hook files in that execution environment. |
 | Startup fails with `… handler #m: Unknown hook handler shell: '…'` or `'shell' applies only to command handlers` | `"shell"` takes `"host"` or `"environment"` and only on a `command` handler. A typo does not move the handler to another shell; it stops the file from loading. |
 | Startup fails with `… the command names AIMON_HOOK_DIR, but … is missing or not a directory` | Create that layer's `.aimon/hooks/` directory. On an event that is not a guard it is a WARN and a skip, not a startup failure. |
 | `WARN hooks: a 'command' handler with 'asyncRewake' on event '…' runs on the host` | The rewake replay fires outside any execution, so the handler stays on the host. If that is what you want, write `"shell": "host"` to silence the WARN. |

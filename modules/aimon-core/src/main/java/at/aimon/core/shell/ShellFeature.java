@@ -68,11 +68,15 @@ public enum ShellFeature {
      * <li>Before the command starts, create a directory that did not exist before, with permissions as tight as the
      * environment allows, outside the paths the model's file tools are given where the environment has such a
      * place.</li>
-     * <li>Write exactly {@link RunDirectory#getPaths()} with their bytes. Two paths the filesystem would keep as one
-     * file are an error, and the command is not run.</li>
+     * <li>Write exactly {@link RunDirectory#getPaths()} with their bytes. The builder guarantees that no path holds a
+     * control character ({@link Character#isISOControl(int)}), that no path is both a file and the parent directory
+     * of another, and that the total is at most {@link RunDirectory#MAX_TOTAL_BYTES}, so the shell need not check
+     * those. Two paths the filesystem would keep as one file (letter case, Unicode form) remain the shell's error, and
+     * the command is not run.</li>
      * <li>If the bytes travelled through anything the agent can write (an upload), check the placed files against
      * digests that did not travel that way, after placing them and before the command starts. On a mismatch, do not
-     * run the command and throw {@link at.aimon.core.shell.exception.RunDirectoryIntegrityException}.</li>
+     * run the command and throw {@link at.aimon.core.shell.exception.RunDirectoryIntegrityException}. The same
+     * exception covers a {@linkplain ExecutionOptions#getStdin() stdin} the shell moved that way.</li>
      * <li>Export the directory's absolute path in {@link RunDirectory#getVariable()}; it wins over the same name in
      * {@link ExecutionOptions#getEnvironment()}.</li>
      * <li>Remove the directory after the command ends, on every outcome. A failure to remove it is logged, not the

@@ -72,7 +72,8 @@ final class ConfigHookDirectory {
         try {
             return Prepared.of(HookRunFiles.forHookDirectory(directory));
         } catch (StagingException e) {
-            // HookRunFiles' own message (over the limit, changing on disk): fixed text plus sizes, no host path.
+            // HookRunFiles' own message (over the limit, changing on disk, an unplaceable file name): fixed text plus
+            // sizes and the escaped path inside the directory, no host path.
             return refuse(env, e.getMessage(), null);
         } catch (RuntimeException | LinkageError e) {
             // The type only: a scan failure's message names host paths, and this becomes a deny reason.

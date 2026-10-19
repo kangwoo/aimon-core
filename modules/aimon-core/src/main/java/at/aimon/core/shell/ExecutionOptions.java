@@ -170,6 +170,12 @@ public final class ExecutionOptions {
      * ever writes to. When non-null the implementation must deliver exactly this text, encoded with
      * {@link #getCharset()}, followed by EOF. Either way a command that reads stdin to exhaustion must terminate.
      *
+     * <p>
+     * A shell that passes the payload through anything the agent can write (an upload) checks it as
+     * {@link ShellFeature#RUN_DIRECTORY} item 3 describes, and reports a mismatch as
+     * {@link at.aimon.core.shell.exception.RunDirectoryIntegrityException}, not as a generic failure. A shell that
+     * pipes it straight to the command &mdash; {@code LocalShell} &mdash; has nothing to check.
+     *
      * @return the stdin payload, or null to leave stdin at the implementation default
      */
     public String getStdin() {
@@ -203,6 +209,14 @@ public final class ExecutionOptions {
      * shell that starts a new process per command with no persisted state — {@code LocalShell} — ignores the flag. A
      * wrapper that derives new options must carry it over — {@link #toBuilder()} does.
      *
+     * <p>
+     * <b>What the command leaves running.</b> When such a command ends, a shell may end what it started and left
+     * running (a {@code cmd &}), for instance by ending the command's process group: a hook must not rely on a
+     * background job outliving it. {@code LocalShell} does not do this. A descendant of a hook's command that exited by
+     * itself keeps running, and only a timeout, a cancellation or an interrupt ends the descendants still reachable.
+     * Even there, the {@linkplain #getRunDirectory() run directory} is removed as soon as the command ends, so a
+     * background job cannot open the hook's files by path after that.
+     *
      * @return {@code true} for a command run on behalf of a hook
      */
     public boolean isHook() {
@@ -226,7 +240,8 @@ public final class ExecutionOptions {
      * path sets both. A shell that keeps no state between commands &mdash; {@code LocalShell} &mdash; honours the flag
      * trivially. A shell that does not declare the feature ignores the flag, so a caller that needs isolation asks
      * {@link VirtualShell#supports(ShellFeature)} first and refuses to run without it. A wrapper that derives new
-     * options must carry it over &mdash; {@link #toBuilder()} does.
+     * options must carry it over &mdash; {@link #toBuilder()} does. What an isolated command leaves running may be
+     * ended with it, as for a hook command (see {@link #isHook()}).
      *
      * <p>
      * <b>Branches are views.</b> An environment that declares its lineage through
@@ -261,8 +276,9 @@ public final class ExecutionOptions {
      * A shell that declares {@link ShellFeature#RUN_DIRECTORY} places them as that feature describes and removes them
      * when the command ends; any other shell ignores the option, so a caller that needs the files asks
      * {@link VirtualShell#supports(ShellFeature)} first. This is how a hook gets the bytes core verified rather than
-     * a staged copy that the agent's shell can rewrite between the check and the run (EE-109). A wrapper that derives
-     * new options must carry it over &mdash; {@link #toBuilder()} does.
+     * a staged copy that the agent's shell can rewrite between the check and the run (EE-109). It holds at most
+     * {@link RunDirectory#MAX_TOTAL_BYTES}. A wrapper that derives new options must carry it over &mdash;
+     * {@link #toBuilder()} does.
      *
      * @return the run directory, or empty when the command needs none
      */

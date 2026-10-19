@@ -21,6 +21,7 @@ import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCommand;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.VirtualShell;
+import at.aimon.core.shell.exception.RunDirectoryIntegrityException;
 import at.aimon.core.shell.exception.ShellExecutionException;
 import at.aimon.core.shell.exception.ShellTimeoutException;
 import at.aimon.core.shell.impl.local.LocalShell;
@@ -67,6 +68,23 @@ class ShellActionRunnerTest {
         assertThat(outcome.getUnrunCause()).contains(cause);
         assertThat(outcome.unrunReason())
                 .isEqualTo(detail.isEmpty() ? cause.description() : cause.description() + ": " + detail);
+    }
+
+    @Test
+    void run_tamperedStdinWithNoRunDirectory_isTamperingAndBlocksWithFailOpen() throws Exception {
+        // #283 F2: a shell that uploads the stdin payload checks it too, and reports a mismatch with the same
+        // exception, for a hook that has no run directory at all.
+        VirtualShell shell = mock(VirtualShell.class);
+        when(shell.execute(any(ShellCommand.class), any(ExecutionOptions.class)))
+                .thenThrow(new RunDirectoryIntegrityException("the hook's input does not match"));
+
+        ShellHookOutcome outcome = ShellActionRunner.run(shell, ACTION, Map.of(), "{\"tool\":\"Bash\"}",
+                java.util.Optional.empty(), true, null);
+
+        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.HOOK_FILES_TAMPERED);
+        assertThat(outcome.unrunReason()).isEqualTo("the hook's files or input changed before the run");
+        assertThat(ShellHookVerdicts.guard(outcome, true, "audit", "preTool"))
+                .hasValueSatisfying(reason -> assertThat(reason).contains("files or input changed before the run"));
     }
 
     @Test

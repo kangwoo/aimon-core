@@ -48,10 +48,11 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * {@linkplain at.aimon.core.shell.ExecutionOptions#getRunDirectory() run directory} when the shell declares
  * {@link ShellFeature#RUN_DIRECTORY}: the skill's bytes, checked against its content key and kept in memory
  * ({@link HookRunFiles}), placed in a fresh directory for that run. On a shell without the feature, or for a skill
- * over {@link HookRunFiles#MAX_BYTES}, the hook falls back to a staged copy ({@link SkillHookDirectory#stageInto}),
- * which {@code stage()} checks on every call but which the agent's shell can still rewrite between that check and the
- * run; one WARN per shell class and skill says so. A skill hook starts from the agent's shell state anyway, so it was
- * never a policy boundary, and failing it closed would break it on every such shell.
+ * over {@link RunDirectory#MAX_TOTAL_BYTES}, the hook falls back to a staged copy
+ * ({@link SkillHookDirectory#stageInto}), which {@code stage()} checks on every call but which the agent's shell can
+ * still rewrite between that check and the run; one WARN per shell class and skill says so. A skill hook starts from
+ * the agent's shell state anyway, so it was never a policy boundary, and failing it closed would break it on every
+ * such shell.
  *
  * <p>
  * Thread-safe. The state is this executor's cache of skill run directories ({@link HookRunFiles.SkillCache}, bounded
@@ -133,7 +134,7 @@ public final class DefaultShellActionExecutor implements ShellActionExecutor {
                             .get();
                 }
                 if (runDirectory.isEmpty()) {
-                    warnFallback(shell, resource, "it is over the " + HookRunFiles.MAX_BYTES + "-byte limit");
+                    warnFallback(shell, resource, "it is over the " + RunDirectory.MAX_TOTAL_BYTES + "-byte limit");
                 }
             } else {
                 runDirectory = Optional.empty();
