@@ -2,7 +2,9 @@ package at.aimon.core.skill.hook.declarative;
 
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
+import at.aimon.core.environment.StagedResource;
 import at.aimon.core.hook.execution.HookContext;
 import at.aimon.core.skill.hook.action.ShellAction;
 
@@ -64,6 +66,14 @@ public final class ExecutionOrHostShellActionExecutor implements ShellActionExec
         Objects.requireNonNull(context, "Context cannot be null");
         final ShellActionExecutor chosen = context.hasExecution() ? environmentExecutor : hostExecutor;
         return chosen.run(action, context, environmentOverrides, stdinPayload);
+    }
+
+    @Override
+    public ShellHookOutcome run(ShellAction action, HookContext context, Map<String, String> environmentOverrides,
+            String stdinPayload, Optional<StagedResource> skillDirectory) {
+        Objects.requireNonNull(context, "Context cannot be null");
+        final ShellActionExecutor chosen = context.hasExecution() ? environmentExecutor : hostExecutor;
+        return chosen.run(action, context, environmentOverrides, stdinPayload, skillDirectory);
     }
 
     /** @return the executor for a firing with an execution behind it (never null) */

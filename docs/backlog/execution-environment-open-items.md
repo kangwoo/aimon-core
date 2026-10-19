@@ -1,4 +1,4 @@
-# 실행 환경 — 등록 항목 112건 (열림 31 · 닫힘 81)
+# 실행 환경 — 등록 항목 116건 (열림 33 · 닫힘 83)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
@@ -101,6 +101,14 @@ EE-63)에는 트리거가 왔다는 날짜 붙은 줄을 더했다. 결정은 �
 [`../design/tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md`](../design/tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md)
 에 있다. EE-109~EE-112 는 그 설계의 실패 모드(F12 → EE-109), 새 항목 후보(§8 → EE-110), aimon-sandbox 후속 작업과 열린 질문
 (§8 · Q1 → EE-111, Q3 → EE-112) 가운데 이 변경 밖으로 결과가 번지는 것을 옮긴 것이다.
+
+EE-109 는 2026-10-19 에 한 변경(#275)에서 닫았다. 목표는 메인테이너가 정한 대로 **권한 경계가 아니라 좁히기**였다 — 스테이징
+사본은 매 호출 검증하고, 정책 훅의 파일은 바이트로 셸에 넘겨 그 실행만의 디렉터리에 둔다. 같은 변경에서 EE-111 도 닫았다
+(aimon-sandbox#31 이 aimon-sandbox#32 로 합쳐졌다 — 정리만 남아 있던 항목이다). 그 변경의 설계(승인본, 영어)와 구현이 설계에서
+벗어난 점은
+[`../design/tool/execution-environment-ee109-hook-tamper-narrowing.md`](../design/tool/execution-environment-ee109-hook-tamper-narrowing.md)
+에 있다. EE-113~EE-116 은 그 설계의 권한 경계 조건(§7 → EE-113), aimon-sandbox 후속 작업과 열린 질문(§8 · Q5 · Q7 · Q8 →
+EE-114), 그리고 열린 질문 Q6 → EE-115, Q3 → EE-116 을 옮긴 것이다.
 
 ---
 
@@ -2117,9 +2125,9 @@ aimon-sandbox 가 정했다 — **부모를 따른다.** 설계 §5.2 의 기본
    실행(`java -jar …` 을 저장소 루트에서)에서는 이제 모든 `hooks.json` 명령이 워크스페이스 루트에서 돈다. CHANGELOG 의 동작
    변경이다.
 
-**남은 것.** EE-109(스테이징한 훅 스크립트의 무결성, [#275](https://github.com/kangwoo/aimon-core/issues/275)),
+**남은 것.** EE-109(스테이징한 훅 스크립트의 무결성, [#275](https://github.com/kangwoo/aimon-core/issues/275), 2026-10-19 닫힘),
 EE-111(aimon-sandbox 가 격리된 실행을 선언해야 한다,
-[kangwoo/aimon-sandbox#31](https://github.com/kangwoo/aimon-sandbox/issues/31)), EE-112(운영자가 정하는 환경 변수).
+[kangwoo/aimon-sandbox#31](https://github.com/kangwoo/aimon-sandbox/issues/31), 2026-10-19 닫힘), EE-112(운영자가 정하는 환경 변수).
 
 ## EE-49 — 스킬 훅은 에이전트 단위 레지스트리에 등록되어 다른 실행에서도 발화한다 · **닫힘** *(2026-10-04)*
 
@@ -4792,7 +4800,7 @@ SPI 는 설계에서 기각했다(§2.2) — 창이 작고, 다음 재생성이 
 
 **언제 다시 볼까.** 훅이 notice 를 비우는 것이 실제로 발견될 때.
 
-## EE-109 — 스테이징한 `hooks.json` 스크립트를 에이전트가 고칠 수 있다 · **열림**
+## EE-109 — 스테이징한 `hooks.json` 스크립트를 에이전트가 고칠 수 있다 · **닫힘** *(2026-10-19)*
 
 *(2026-10-18 등록. 출처는 #273 설계의 실패 모드 F12. GitHub 이슈는 [#275](https://github.com/kangwoo/aimon-core/issues/275) 다 —
 두 제공자에 걸친 설계 변경이라 #273 에서는 고치지 않는다.)*
@@ -4811,6 +4819,41 @@ SPI 는 설계에서 기각했다(§2.2) — 창이 작고, 다음 재생성이 
 **언제 다시 볼까.** 에이전트가 쓸 수 없는 자리에 스테이징하는 제공자가 생길 때, 또는 `hooks.json` 가드를 샌드박스에서
 운영하기 시작할 때.
 
+### 닫힘 (2026-10-19)
+
+#275 에서 코어 쪽을 다 고쳤다. 목표는 **좁히기**다 — 사본이 첫 확인 뒤로 신뢰받는 *지속* 창과, 확인한 파일을 경로로 다시 여는
+*파일 경합* 창을 닫았다. 같은 uid 의 에이전트가 **실행 중인** 훅 프로세스에 끼어드는 것은 막지 않으며, 그 조건은 EE-113 이다.
+
+- **스테이징은 매 호출 검증한다.** `ExecutionEnvironment.stage()` 계약에 "기존 사본은 호출마다 내용 키에 대조하고, 앞선 호출이
+  확인했다는 이유로 내주지 않는다" 를 적었다. `LocalStaging` 의 `verified` 집합을 없앴다 — 이 인스턴스가 만든 사본도 매번
+  목록 · 해시를 확인하고, 다르면 다시 복사한다(나머지 파일 제거도 매번). 비용은 호출당 사본 목록 하나와 해시 하나다. 샌드박스의
+  `SandboxStaging` 은 이미 매 호출 검증하고 있었다(#275 본문과 다르다 — 설계 §1).
+- **정책 훅은 스테이징 사본에서 돌지 않는다.** 새 셸 SPI `RunDirectory` · `ShellFeature.RUN_DIRECTORY` ·
+  `ExecutionOptions.getRunDirectory()` 로, 코어가 읽고 확인한 바이트를 명령과 함께 셸에 넘기고 셸이 그 실행만의 새 디렉터리에
+  둔 뒤 끝나면 지운다. `hooks.json` 의 `AIMON_HOOK_DIR` 은 발화마다 원본을 읽어 그 디렉터리로 주고, 기능이 없는 셸에서는 돌리지
+  않는다(`RUN_DIRECTORY_UNSUPPORTED`). 스킬 훅의 `AIMON_SKILL_DIR` 은 로드한 버전의 바이트(메모리 캐시)로 주고, 기능이 없는 셸에서는
+  매 호출 검증하는 스테이징으로 물러선다. 셸이 둔 파일이 받은 바이트와 다르면 `HOOK_FILES_TAMPERED` 이고, 가드는 `failOpen` 과
+  상관없이 막는다.
+- **훅 명령의 입출력이 이름 있는 파일을 지나지 않는다(로컬).** `LocalShell` 은 훅 · 격리 명령에서 캡처 파일을 시작 직후 지우고
+  열어 둔 채널로 읽으며, stdin 은 파이프로 준다.
+
+샌드박스 쪽(`SandboxShell` 의 `RUN_DIRECTORY` 와 훅 · 격리 모드의 실행 파일 — kangwoo/aimon-sandbox#33)은 EE-114 로 옮겼다.
+그전까지 샌드박스에서 `AIMON_HOOK_DIR` 을 쓰는 `hooks.json` 핸들러는 돌지 않는다(가드는 막는다). 운영자에게 보이는 변화는
+`CHANGELOG.md` 의 `[Unreleased]` 와 훅 설정 가이드에 적었다.
+
+**테스트.** `LocalStagingTest`(EE-109 절), `LocalExecutionEnvironmentProviderStagingTest`(EE-37 이 매 호출로),
+`RunDirectoryTest`, `LocalShellRunDirectoryTest`, `LocalShellHookIoTest`, `IsolatedShellActionExecutorTest`,
+`SkillHookRunDirectoryTest`, `RunDirectoryUploadContractTest`(에이전트가 쓸 수 있는 업로드를 거치는 두 번째 제공자),
+`DeclarativePreToolHookTest` · `DeclarativeShellHookBindingTest`(`HOOK_FILES_TAMPERED`), 그리고 두 통합 테스트
+`HooksJsonExecutionEnvironmentIntegrationTest` · `SkillHookSkillDirIntegrationTest`.
+
+**어디** *(2026-10-19)* — `core/environment/ExecutionEnvironment.java`(`stage` 계약), `core/environment/impl/LocalStaging.java`,
+`core/shell/RunDirectory.java`, `core/shell/ShellFeature.java`, `core/shell/ExecutionOptions.java`,
+`core/shell/exception/RunDirectoryIntegrityException.java`, `core/shell/impl/local/LocalShell.java`,
+`core/skill/hook/declarative/HookRunFiles.java` · `ConfigHookDirectory.java` · `SkillHookDirectory.java` ·
+`IsolatedShellActionExecutor.java` · `DefaultShellActionExecutor.java` · `ShellActionExecutor.java` · `ShellActionRunner.java` ·
+`ShellHookOutcome.java` · `ShellHookVerdicts.java`.
+
 ## EE-110 — `subagentStart` 는 포크의 환경을 싣지 않는다 · **열림** *(트리거 대기)*
 
 *(2026-10-18 등록. 출처는 #273 설계 §8.)*
@@ -4826,7 +4869,7 @@ SPI 는 설계에서 기각했다(§2.2) — 창이 작고, 다음 재생성이 
 
 **언제 다시 볼까.** 포크의 워크스페이스를 시작 전에 준비하려는 `subagentStart` 훅의 요구가 실제로 올 때.
 
-## EE-111 — aimon-sandbox 가 격리된 실행을 선언해야 한다 · **열림**
+## EE-111 — aimon-sandbox 가 격리된 실행을 선언해야 한다 · **닫힘** *(2026-10-19)*
 
 *(2026-10-18 등록. 출처는 #273 설계 §8 과 §9 Q1.)*
 
@@ -4846,6 +4889,14 @@ SPI 는 설계에서 기각했다(§2.2) — 창이 작고, 다음 재생성이 
 **언제 다시 볼까.** aimon-sandbox 가 이 기능을 내보낼 때(닫는다), 또는 `hooks.json` 과 샌드박스 제공자를 함께 조립하는 호스트가
 생길 때.
 
+### 닫힘 (2026-10-19)
+
+aimon-sandbox 가 내보냈다. [kangwoo/aimon-sandbox#31](https://github.com/kangwoo/aimon-sandbox/issues/31) 이
+aimon-sandbox#32 로 합쳐졌고, `main` `553be78` 의 `SandboxShell.supports` 가 `ISOLATED_EXECUTION` 을 선언한다(`SandboxShell.java:609-611`,
+2026-10-19 확인). 코어 쪽에서 바뀐 것은 없다 — 정리만 남아 있던 항목을 EE-109 의 변경(#275)에서 닫는다. Q1(그전까지 막을지)은
+답할 필요가 없어졌다. 다만 같은 조합의 다음 조건이 새로 생겼다: `AIMON_HOOK_DIR` 을 쓰는 핸들러는 이제 `RUN_DIRECTORY` 도
+필요하다(EE-114).
+
 ## EE-112 — 격리된 훅 실행의 환경 변수를 운영자가 정할 수 없다 · **열림** *(트리거 대기)*
 
 *(2026-10-18 등록. 출처는 #273 설계 §9 Q3.)*
@@ -4861,3 +4912,97 @@ SPI 는 설계에서 기각했다(§2.2) — 창이 작고, 다음 재생성이 
 **어디** *(2026-10-18)* — `core/skill/hook/declarative/IsolatedShellActionExecutor.java`, `core/config/hook/HookHotReloadBootstrap.java`.
 
 **언제 다시 볼까.** 훅 전용 `PATH` 나 비밀이 필요하다는 운영 요구가 올 때.
+
+## EE-113 — 에이전트와 실행 환경 안 정책 훅 사이에 권한 경계가 없다 · **열림** *(트리거 대기)*
+
+*(2026-10-19 등록. 출처는 EE-109 설계 §7. aimon-sandbox 쪽 짝은 "run policy-hook execs under a separate uid" 로 등록할 이슈다 —
+`sandbox-followup` 초안에 본문이 있다.)*
+
+**무엇을.** `hooks.json` 의 실행 안 명령을 에이전트와 **다른 uid** 로 돌려, 같은 uid 라서 남는 위험을 경계로 바꾼다. EE-109 는
+좁히기였고 이것은 경계다.
+
+**왜.** 샌드박스 안의 모든 명령은 execd 의 uid 로 돌고, 에이전트의 셸도 같은 uid 다. 그래서 EE-109 뒤에도 에이전트는 **실행 중인**
+훅에 끼어들 수 있다 — 실행 디렉터리를 쓰고, `/proc/<pid>/fd` 로 입출력에 끼어들고, 트레일러 nonce 를 읽고, `ptrace` 하거나
+신호를 보낸다(`TIMEOUT` · `EXECUTION_FAILED` → `failOpen` 가드는 통과). 로컬 제공자에서는 에이전트의 `Bash` 가 JVM 의 uid 라
+`"shell": "host"` 도 지켜지지 않는다.
+
+**경계가 서는 조건**(설계 §7, 전부 성립해야 한다):
+
+1. 에이전트 uid A 가 root 가 아니고 H 나 root 가 될 수 없다 — `runAsNonRoot`, no-new-privileges, `CAP_SETUID` ·
+   `CAP_DAC_OVERRIDE` · `CAP_FOWNER` · `CAP_SYS_PTRACE` · `CAP_KILL` 없음, H 에 닿는 setuid 바이너리 없음.
+2. 훅 exec 가 H ≠ A 로 돈다. OpenSandbox `/command` 의 uid 인자를 쓰려면 execd 가 uid 를 바꿀 수 있어야 하고, 그 권한이 A 의
+   프로세스에서 닿지 않아야 한다.
+3. 훅 파일과 실행 파일, 그 **부모 디렉터리**가 H 소유이고 A 가 쓸 수 없다. A 가 `/workspace` 를 가지므로 그 아래의 자리는 이름을
+   바꿔 치울 수 있다 — H 의 자리는 A 가 쓸 수 있는 트리 밖(`/opt/aimon/hooks`, `/run/aimon`)이어야 한다.
+4. 파일 도구의 소유자 불일치(aimon-sandbox `workspace-sandbox.md` §13.3)를 푼다 — files API 가 A 로 쓰고, 코어의 실행 디렉터리
+   업로드는 H 로 써야 한다.
+5. H 의 프로세스가 A 에서 닿지 않는다(`ptrace_scope` ≥ 1 이거나 uid 가 다르다). 훅의 출력 파이프는 파일이 아니라 execd 로 간다.
+6. 이미지가 사용자 H, H 소유 디렉터리, `sha256sum` · `base64` 를 준다. 시드가 uid 1000 을 확인하듯 H 와 그 디렉터리를 확인한다.
+7. 로컬 제공자에서는 에이전트의 `Bash` 가 JVM 과 다른 OS 사용자(또는 컨테이너)여야 한다 — `LocalShell` 안에서는 할 수 없다.
+8. 훅이 들여다보는 워크스페이스는 언제나 A 가 쓸 수 있다 — 정책은 워크스페이스 파일을 믿지 않는다.
+
+**어디** *(2026-10-19)* — 코어: `core/skill/hook/declarative/IsolatedShellActionExecutor.java`, 셸 SPI(`ExecutionOptions` 의 "환경의
+훅 신원으로 실행" 표지나 `ShellFeature.HOOK_IDENTITY`), `core/environment/impl/LocalStaging.java`. aimon-sandbox: `SandboxShell`,
+`SandboxStaging`, 이미지 계약.
+
+**언제 다시 볼까.** 운영자가 신뢰하지 않는 에이전트를 상대로 샌드박스에서 `hooks.json` 가드를 돌리려 할 때, 또는 OpenSandbox 의
+files API 가 uid 인자를 얻을 때.
+
+## EE-114 — aimon-sandbox 가 실행 디렉터리를 선언하고, 훅 · 격리 명령의 실행 파일을 없애야 한다 · **열림**
+
+*(2026-10-19 등록. 출처는 EE-109 설계 §8 과 §10 Q5 · Q7 · Q8. aimon-sandbox 쪽 이슈는
+[kangwoo/aimon-sandbox#33](https://github.com/kangwoo/aimon-sandbox/issues/33) 이며, #275 빌드의 `sandbox-followup.md` 로 그 범위를
+넓힌다.)*
+
+**무엇을.** 두 가지다. (1) `SandboxShell` 이 `ShellFeature.RUN_DIRECTORY` 를 선언한다 — 실행 디렉터리의 파일을 exec 인자에
+싣거나(작으면) 업로드한 뒤, 인자에 실은 SHA-256 다이제스트로 놓인 파일을 확인하고 나서 명령을 시작한다(규칙 3). 다르면
+`RunDirectoryIntegrityException`. (2) `HOOK` · `ISOLATED` 모드에서 명령 · stdin · 출력이 `/workspace/.aimon-shell/<h>/run-*` 파일을
+지나지 않게 한다(#33).
+
+**왜.** EE-109 뒤로 `AIMON_HOOK_DIR` 을 쓰는 `hooks.json` 핸들러는 `RUN_DIRECTORY` 가 없는 셸에서 돌지 않는다
+(`RUN_DIRECTORY_UNSUPPORTED`). 그래서 오늘의 샌드박스(`553be78`)에서는 그런 `preTool` 가드가 일치하는 모든 도구 호출을 막는다
+(`failOpen` 이면 지나간다). 우회는 핸들러마다 `"shell": "host"` 다. 스킬 훅은 매 호출 검증하는 스테이징으로 물러서므로 돌지만,
+확인과 인터프리터가 여는 사이의 경합은 남는다. 실행 파일(`run-*.cmd|.out|.err`)은 백그라운드 루프가 명령이나 판정을 위조할 수
+있는 자리다.
+
+**정할 것.** Q5 — 샌드박스의 비공개 실행 디렉터리를 어디에 둘지(`/workspace/.aimon-shell/.run.*` 는 이미지 계약상 쓸 수 있지만
+#33 류의 감시 루프가 이미 아는 디렉터리다; `${TMPDIR:-/tmp}` 는 워크스페이스 밖이지만 이미지 계약에 없다 — 같은 uid 에게는 둘 다
+닿는다). Q7 — 64 KiB 를 넘는 훅 명령을 거절할지(권장) 업로드 · 다이제스트로 받을지. Q8 — 트레일러가 오면 훅의 백그라운드 자식을
+끝낼지(샌드박스 쪽 동작 변화).
+
+**어디** *(2026-10-19)* — aimon-sandbox 의 `SandboxShell.supports`(`:609-611`) · `execute`, `ShellWrapper`(`INNER`,
+`INLINE_*_LIMIT`), `SandboxStaging`(주석과 테스트만). 코어 쪽은 끝났다(`IsolatedShellActionExecutor`, `DefaultShellActionExecutor`).
+
+**언제 다시 볼까.** aimon-sandbox 가 이 기능을 내보낼 때(닫는다), 또는 `hooks.json` 과 샌드박스 제공자를 함께 조립하는 호스트가
+`AIMON_HOOK_DIR` 을 쓰려 할 때.
+
+## EE-115 — 코어가 인터프리터에 직접 넘기는 `"script"` 핸들러 필드가 없다 · **열림** *(트리거 대기)*
+
+*(2026-10-19 등록. 출처는 EE-109 설계 §10 Q6.)*
+
+**무엇을.** `hooks.json` 의 `command` 핸들러에 `"script"` 필드(진입 파일 하나)를 더해, 코어가 그 바이트를 인터프리터에 직접
+넘기게 할지 정한다. 한 파일짜리 훅에서는 "확인한 바이트가 곧 도는 바이트" 가 경로를 다시 여는 일 없이 성립한다.
+
+**왜.** 명령은 운영자의 임의 텍스트라 코어가 그 안에서 "스크립트" 를 찾을 수 없다. 그래서 EE-109 는 확인을 실행 디렉터리로
+옮겼고, 셸의 확인과 인터프리터가 파일을 여는 사이의 창은 실행마다 남는다. `"script"` 는 그 창을 진입 파일에 대해서만 없앤다 —
+형제 파일의 `source` · `import` 는 여전히 경로로 연다. stdin 은 이미 JSON 페이로드가 쓴다.
+
+**어디** *(2026-10-19)* — `core/config/hook/HookRegistryApplier.java`, `core/skill/hook/action/ShellAction.java`,
+`core/skill/hook/declarative/IsolatedShellActionExecutor.java`.
+
+**언제 다시 볼까.** 실행 중 창(EE-113 의 R1 가운데 파일 쪽)을 한 파일 훅에서라도 없애 달라는 요구가 올 때.
+
+## EE-116 — 훅 실행 디렉터리의 두 한도가 상수다 · **열림** *(트리거 대기)*
+
+*(2026-10-19 등록. 출처는 EE-109 설계 §10 Q3.)*
+
+**무엇을.** `HookRunFiles.MAX_BYTES`(실행 디렉터리 한 개, 4 MiB)와 `HookRunFiles.MAX_CACHED_BYTES`(스킬 바이트 캐시, 32 MiB)를
+설정으로 열지 정한다(`AimonProperties` 나 `ExecutionEnvironmentSpec`).
+
+**왜.** 두 값 모두 근거 있는 측정 없이 정한 값이다. `hooks.json` 의 `hooks/` 가 4 MiB 를 넘으면 그 핸들러는 돌지 않고(가드는
+막는다, 사유에 `.stageignore` 가 나온다), 스킬이 넘으면 스테이징으로 물러선다. 캐시가 넘치면 가장 오래 안 쓴 스킬부터 버리고 다음
+발화에 원본을 다시 읽는다.
+
+**어디** *(2026-10-19)* — `core/skill/hook/declarative/HookRunFiles.java`.
+
+**언제 다시 볼까.** 누군가 한도에 걸렸다고 알려 올 때.

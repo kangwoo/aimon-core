@@ -64,6 +64,14 @@ public interface ExecutionEnvironment {
      * use (design §4.4). The copy is content-addressed ({@code {stagingRoot}/{name}/{contentKey}/}) and skipped only
      * when the target's {@code .staged} marker exists — never from provider memory.
      *
+     * <p>
+     * <b>Every call checks the copy.</b> An existing copy is checked against the resource's content key on every call
+     * — the files are exactly the resource's and hash to the key — and copied again when it does not match. A provider
+     * never serves a copy because an earlier call checked it: the environment's shell may run as the same user as
+     * whatever reads the copy and can rewrite it in between (EE-109). The check does not cover what happens after the
+     * path is returned; a caller that needs the checked bytes to be the ones that run hands them to the shell instead
+     * ({@link at.aimon.core.shell.ExecutionOptions#getRunDirectory()}).
+     *
      * @param resource
      *            the file set to stage (must not be null)
      * @return the absolute path of the staged directory as this environment's shell and file tools see it

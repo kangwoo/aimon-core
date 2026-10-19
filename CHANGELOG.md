@@ -7,6 +7,76 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Security (narrowing) · Changed (behaviour change): hooks no longer run from agent-writable staged copies (#275, EE-109)
+
+> **Required with a sandbox provider: aimon-sandbox with `ShellFeature.RUN_DIRECTORY` support, or `"shell": "host"` on
+> each `hooks.json` command handler that names `AIMON_HOOK_DIR`.** Such a handler placed in an environment whose shell
+> does not declare the feature is not run (`RUN_DIRECTORY_UNSUPPORTED`), and a guard then blocks every matching tool call
+> unless it declares `failOpen`. Upgrade core and aimon-sandbox together, or move those handlers to `"shell": "host"`
+> first. Handlers that do not name the variable, and every handler under the local provider, are unaffected. The
+> sandbox side is tracked as EE-114 and [kangwoo/aimon-sandbox#33](https://github.com/kangwoo/aimon-sandbox/issues/33).
+
+An operator's in-environment hook runs as the same uid as the agent's shell, so anything it reads from the workspace
+the agent can rewrite. This change closes the two windows that did not need the hook to be running — a staged copy
+trusted after its first check, and a checked copy reopened by path — without introducing a privilege boundary. Design
+and departures: `docs/design/tool/execution-environment-ee109-hook-tamper-narrowing.md`; backlog EE-109 and EE-111
+(closed), EE-113 – EE-116 (new).
+
+- **Staged copies are checked on every call.** `ExecutionEnvironment.stage()`'s contract now says an existing copy is
+  checked against the resource's content key on every call, never served because an earlier call checked it.
+  `LocalStaging` re-lists and re-hashes the copy each time (bounded by the staging limit) and copies again on a
+  mismatch; files that are not the resource's (`__pycache__`) are removed at every call, not only the first. A copy a
+  skill script rewrote is restored at the next `stage()`.
+- **A hook's files travel with the command.** New shell SPI: `RunDirectory`, `ExecutionOptions.getRunDirectory()` /
+  `Builder.runDirectory(...)` (carried by `toBuilder()`), `ShellFeature.RUN_DIRECTORY` and
+  `RunDirectoryIntegrityException`. A shell that declares the feature places the given bytes in a fresh directory for
+  that one command, exports it in the named variable (over the same name in `getEnvironment()`), and removes it
+  afterwards; bytes that travelled through something the agent can write are checked against digests before the
+  command starts. `LocalShell` declares it (`aimon-run-*` under `java.io.tmpdir`, 0700 / 0600).
+- **`AIMON_HOOK_DIR` (environment placement) is a per-firing run directory, not a staged copy.** Core reads and hashes
+  the layer's `hooks/` at every firing (an edit still runs from the next firing) and hands the bytes to the shell; no
+  `.aimon-staged/hooks-*` copy is made any more, so nothing of the user layer lands in the workspace. A script that
+  writes beside itself loses that file at the next firing. `hooks/` is capped at 4 MiB (`.stageignore` excludes);
+  over that, or unreadable, is `HOOK_DIR_STAGING_FAILED`. Host placement is unchanged.
+- **A skill hook's `AIMON_SKILL_DIR` is a per-firing run directory** of the skill as loaded (checked against its
+  content key, kept in a bounded in-memory cache) where the shell declares `RUN_DIRECTORY`. That holds while the
+  skill's entry stays in the cache (32 MiB, least recently used first); once it is evicted, a skill edited since load
+  runs as it is now (EE-3), as when no staged copy of the loaded version exists. Elsewhere, or for a skill
+  over 4 MiB, it is still the staged path — now checked on every firing — and one WARN per shell class and skill says
+  so. The skill **body**'s `${AIMON_SKILL_DIR}` is unchanged. The stdin payload of a skill hook no longer carries
+  `skill_dir` (the shell decides the value); the variable is still set. A provider's `maxStagedBytes` no longer bounds
+  a skill hook that gets a run directory. **A skill inside the workspace loses its in-place directory:** `stage()`
+  answered such a skill with its live source directory, so a hook saw the source's file modes, the files
+  `.stageignore` excludes and any edit since load. A run directory holds only the listed files, as loaded, all 0600 — a
+  guard that runs `"$AIMON_SKILL_DIR/scripts/guard.sh"` directly now exits 126 and blocks. Run scripts through an
+  interpreter (`bash "$AIMON_SKILL_DIR/scripts/guard.sh"`), as `docs/references/aimon-skill-extensions.md` advises.
+- **Hook and isolated commands keep no I/O file reachable by name (local, on Unix).** `LocalShell` unlinks a hook's or
+  isolated command's capture files as soon as the process has started and reads them through descriptors opened
+  before, and feeds its stdin through a pipe. On Windows an open file cannot be unlinked, so the capture files keep
+  their names until the command ends (not tested on Windows). Model-facing commands are unchanged.
+- **New not-run causes.** `ShellHookOutcome.Unrun.RUN_DIRECTORY_UNSUPPORTED` (fail closed, like
+  `ISOLATION_UNSUPPORTED`) and `HOOK_FILES_TAMPERED` — the shell found the placed files changed and did not run the
+  command. **`HOOK_FILES_TAMPERED` blocks a guard whatever `failOpen` says**, as `CANCELLED` does: it is evidence of
+  tampering, and honouring `failOpen` would let whoever can touch the files switch the guard off. Observer events only
+  log it.
+- **Embedders.** `ShellActionExecutor` gains `run(action, context, env, stdin, Optional<StagedResource>)`; its default
+  stages the skill and exports the path, as every executor did before, so a third-party executor keeps working.
+  `DefaultShellActionExecutor` overrides it. A replacement environment executor for `hooks.json`
+  (`HookHotReloadBootstrap.Builder#environmentShellExecutor`) that honours `AIMON_HOOK_DIR` must now hand the files to
+  the shell as a run directory rather than staging them.
+- **What remains (by design, see EE-113).** A same-uid agent can still interfere with a hook *while it runs*: rewrite
+  its run directory between the shell's check and the interpreter opening a file, inject into its stdin or output
+  through `/proc`, or signal it into a timeout. Only `"shell": "host"` is out of reach of an agent whose shell runs in a
+  sandbox; under the local provider the agent's `Bash` is the host user, so no placement is. The hook guides say so.
+
+### Fixed: a skill edited, then reverted and reloaded, is staged as reloaded (#281)
+
+`LocalStaging` remembered what an edited skill was staged as (EE-3) and kept staging that for the provider's
+lifetime, even after the source was reverted and the registry reloaded it under its original content key. A call that
+finds such an answer now first hashes the source's recorded files (no copy is written); if they are back at the loaded
+version, the resource is staged as loaded. While the source differs, each `stage()` reads it once more. The bug was
+older than EE-109.
+
 ### Changed (behaviour change): `hooks.json` commands and fork hooks run in the execution's environment (#273)
 
 > **Required with a sandbox provider: aimon-sandbox with `ShellFeature.ISOLATED_EXECUTION` support, or `"shell": "host"`

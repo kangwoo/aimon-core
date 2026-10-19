@@ -579,7 +579,8 @@ class LocalExecutionEnvironmentProviderStagingTest {
     }
 
     @Test
-    @DisplayName("EE-3: the change is reported once, by name, at WARN — and later calls copy and read nothing")
+    @DisplayName("EE-3: the change is reported once, by name, at WARN — and later calls copy nothing, reading the"
+            + " source once to see whether it went back (#281)")
     void editedAfterScanWarnsOnceAndIsRemembered() {
         final List<String> sourceReads = new ArrayList<>();
         final VirtualFileSystem countingSource = new DelegatingFileSystem(control) {
@@ -602,7 +603,9 @@ class LocalExecutionEnvironmentProviderStagingTest {
             assertThat(env.stage(loaded)).isEqualTo(first);
             assertThat(env.stage(loaded)).isEqualTo(first);
 
-            assertThat(sourceReads).as("a remembered re-keyed copy costs what any staged copy costs").isEmpty();
+            assertThat(sourceReads).as("one read of each recorded file per call, to see whether it went back")
+                    .hasSize(2 * loaded.getFiles().size())
+                    .containsOnlyElementsOf(loaded.getFiles().stream().map(loaded::sourcePath).toList());
             assertThat(appender.list).filteredOn(e -> e.getLevel() == Level.WARN)
                     .extracting(ILoggingEvent::getFormattedMessage).singleElement().asString().contains("'demo'")
                     .contains("changed on disk");
@@ -1056,8 +1059,8 @@ class LocalExecutionEnvironmentProviderStagingTest {
     }
 
     @Test
-    @DisplayName("EE-37: an intact copy left by an earlier process is reused without copying, and verified only once")
-    void intactCopyReusedAndVerifiedOnce() throws Exception {
+    @DisplayName("EE-37/EE-109: an intact copy left by an earlier process is reused without copying, and verified on every call")
+    void intactCopyReusedAndVerifiedOnEveryCall() throws Exception {
         final StagedResource resource = scan();
         final String first = ownedEnv().stage(resource);
 
@@ -1084,7 +1087,8 @@ class LocalExecutionEnvironmentProviderStagingTest {
 
         reads.clear();
         assertThat(restarted.stage(resource)).isEqualTo(first);
-        assertThat(reads).as("once per environment").isEmpty();
+        // EE-109: an earlier check is no reason to trust the copy now; the agent's shell can rewrite it in between.
+        assertThat(reads).as("checked again on the second call").isNotEmpty();
         assertThat(writes).isEmpty();
     }
 

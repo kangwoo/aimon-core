@@ -155,7 +155,7 @@ tier 가 디스패치 순서에서 뒤에 서고 순서에 의존하는 결과(`
 | `http` · `mcp` 핸들러가 판정을 받지 못함 (연결 실패 · timeout · non-2xx · 읽을 수 없는 답 · 실행기 미배선) | `preTool` 에서는 **거부**(fail-closed), 핸들러가 `failOpen: true` 면 허용. `postTool` 에서는 WARN 후 진행 | AIMON 고유 |
 | 사유 길이 | 4000자에서 자른다 (`MAX_DENY_REASON_LENGTH`) | AIMON 이 정한 상한 |
 | 어디서 도는가 | 실행 안 이벤트는 **그 실행의 환경**에서 격리된 실행으로(에이전트의 `export` · `cd` 를 보지 않는다), 실행 밖 이벤트와 실행이 없는 발화는 호스트. 핸들러의 `"shell": "host"` · `"environment"` 로 정할 수 있다 | AIMON 고유 (Claude Code 의 훅은 언제나 사용자의 기계에서 돈다) |
-| `AIMON_HOOK_DIR` | 커맨드가 쓰면, 선언한 층의 `hooks/` 디렉터리 — 호스트에서는 그 경로, 환경에서는 거기에 스테이징한 사본의 경로 | AIMON 고유 (Claude Code 의 `CLAUDE_PROJECT_DIR` 와 비슷한 자리) |
+| `AIMON_HOOK_DIR` | 커맨드가 쓰면, 선언한 층의 `hooks/` 디렉터리 — 호스트에서는 그 경로, 환경에서는 그 발화만을 위해 셸이 둔 실행 디렉터리(발화 때 읽은 바이트, 끝나면 지워진다 — EE-109) | AIMON 고유 (Claude Code 의 `CLAUDE_PROJECT_DIR` 와 비슷한 자리) |
 
 exit 2 가 실제로 효력을 갖는 곳은 결정 채널이 있는 네 이벤트뿐이다 —
 `preTool` / `onStart` / `preCompact` 는 block, `permissionRequest` 는 deny. 나머지는 로그만 남고

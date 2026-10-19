@@ -962,3 +962,8 @@ EE-111 ← §8 and Q1 (aimon-sandbox must declare `ISOLATED_EXECUTION`; until it
 operator-defined environment for the isolated exec). Q2, Q4–Q7 are settled inside this change as the body says. Q8 (the
 CLI's cwd) is recorded as a behaviour change in the CHANGELOG; the older question of why the CLI's workspace is the jar
 directory stays out of scope.
+
+*(2026-10-19)* F12 is addressed by EE-109's record,
+[`execution-environment-ee109-hook-tamper-narrowing.md`](execution-environment-ee109-hook-tamper-narrowing.md): staged
+copies are verified on every call, and a `hooks.json` command's `AIMON_HOOK_DIR` is now a run directory of the bytes
+core read at the firing, not a staged copy (#275).

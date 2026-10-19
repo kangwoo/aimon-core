@@ -2,14 +2,13 @@ package at.aimon.core.skill.hook.declarative;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -29,7 +28,6 @@ import at.aimon.core.environment.EnvironmentRequest;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.StagedResource;
 import at.aimon.core.environment.TestExecutionEnvironments;
-import at.aimon.core.environment.exception.StagingException;
 import at.aimon.core.environment.impl.LocalExecutionEnvironmentProvider;
 import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.hook.DefaultHookRegistry;
@@ -37,10 +35,12 @@ import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.event.OnStartContext;
 import at.aimon.core.hook.execution.HookContext;
 import at.aimon.core.shell.ExecutionOptions;
+import at.aimon.core.shell.RunDirectory;
 import at.aimon.core.shell.ShellCommand;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.ShellFeature;
 import at.aimon.core.shell.VirtualShell;
+import at.aimon.core.shell.exception.RunDirectoryIntegrityException;
 import at.aimon.core.skill.hook.action.HookScriptDirectory;
 import at.aimon.core.skill.hook.action.ShellAction;
 
@@ -111,14 +111,15 @@ class IsolatedShellActionExecutorTest {
     }
 
     @Test
-    void run_aBranch_runsOnTheBaseEnvironmentsShellAndStagesThere(@TempDir Path tmp) throws Exception {
+    void run_aBranch_runsOnTheBaseEnvironmentsShellWithTheHookFilesAndStagesNothing(@TempDir Path tmp)
+            throws Exception {
         final Path layer = Files.createDirectories(tmp.resolve(".aimon"));
-        Files.createDirectories(layer.resolve("hooks"));
+        Files.createDirectories(layer.resolve("hooks/lib"));
         Files.writeString(layer.resolve("hooks/guard.sh"), "exit 0\n");
+        Files.writeString(layer.resolve("hooks/lib/common.sh"), "true\n");
         final VirtualShell baseShell = isolatingShell();
         final VirtualShell branchShell = isolatingShell();
         final ExecutionEnvironment base = spy(TestExecutionEnvironments.ofShell(baseShell));
-        doReturn("/base/.aimon-staged/hooks-project/k").when(base).stage(any(StagedResource.class));
         final ExecutionEnvironment branch = branchOf(base, branchShell);
 
         executor.run(scripted(layer), contextIn(branch), Map.of(), null);
@@ -126,24 +127,84 @@ class IsolatedShellActionExecutorTest {
         final ArgumentCaptor<ExecutionOptions> options = ArgumentCaptor.forClass(ExecutionOptions.class);
         verify(baseShell).execute(any(ShellCommand.class), options.capture());
         verify(branchShell, never()).execute(any(ShellCommand.class), any(ExecutionOptions.class));
-        verify(base).stage(any(StagedResource.class));
-        assertThat(options.getValue().getEnvironment()).containsEntry(SkillHookEnv.AIMON_HOOK_DIR,
-                "/base/.aimon-staged/hooks-project/k");
+        // EE-109: the bytes travel with the command; nothing is staged into an agent-writable workspace.
+        verify(base, never()).stage(any(StagedResource.class));
+        final RunDirectory run = options.getValue().getRunDirectory().orElseThrow();
+        assertThat(run.getVariable()).isEqualTo(SkillHookEnv.AIMON_HOOK_DIR);
+        assertThat(run.getPaths()).containsExactly("guard.sh", "lib/common.sh");
+        assertThat(new String(run.getContent("guard.sh"), StandardCharsets.UTF_8)).isEqualTo("exit 0\n");
+        assertThat(options.getValue().getEnvironment()).doesNotContainKey(SkillHookEnv.AIMON_HOOK_DIR);
     }
 
     @Test
-    void run_aStagingFailure_isNotRun(@TempDir Path tmp) throws Exception {
+    void run_aShellWithoutRunDirectory_isNotRun(@TempDir Path tmp) throws Exception {
         final Path layer = Files.createDirectories(tmp.resolve(".aimon"));
         Files.createDirectories(layer.resolve("hooks"));
         final VirtualShell shell = isolatingShell();
+        when(shell.supports(ShellFeature.RUN_DIRECTORY)).thenReturn(false);
         final ExecutionEnvironment environment = spy(TestExecutionEnvironments.ofShell(shell));
-        doThrow(new StagingException("over the limit")).when(environment).stage(any(StagedResource.class));
 
         final ShellHookOutcome outcome = executor.run(scripted(layer), contextIn(environment), Map.of(), null);
 
-        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.HOOK_DIR_STAGING_FAILED);
-        assertThat(outcome.unrunReason()).contains("over the limit");
+        // Fail closed (F1): neither a staged copy the agent can rewrite nor an unset variable.
+        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.RUN_DIRECTORY_UNSUPPORTED);
         verify(shell, never()).execute(any(ShellCommand.class), any(ExecutionOptions.class));
+        verify(environment, never()).stage(any(StagedResource.class));
+    }
+
+    @Test
+    void run_aShellThatCannotAnswerForRunDirectory_isNotRun(@TempDir Path tmp) throws Exception {
+        final Path layer = Files.createDirectories(tmp.resolve(".aimon"));
+        Files.createDirectories(layer.resolve("hooks"));
+        final VirtualShell shell = isolatingShell();
+        when(shell.supports(ShellFeature.RUN_DIRECTORY)).thenThrow(new IncompatibleClassChangeError("enum"));
+
+        final ShellHookOutcome outcome = executor.run(scripted(layer),
+                contextIn(TestExecutionEnvironments.ofShell(shell)), Map.of(), null);
+
+        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.RUN_DIRECTORY_UNSUPPORTED);
+        verify(shell, never()).execute(any(ShellCommand.class), any(ExecutionOptions.class));
+    }
+
+    @Test
+    void run_aShellWithoutRunDirectory_stillRunsAHandlerThatDoesNotNameTheVariable() throws Exception {
+        final VirtualShell shell = isolatingShell();
+        when(shell.supports(ShellFeature.RUN_DIRECTORY)).thenReturn(false);
+
+        final ShellHookOutcome outcome = executor.run(new ShellAction("guard", Duration.ofSeconds(1)),
+                contextIn(TestExecutionEnvironments.ofShell(shell)), Map.of(), null);
+
+        assertThat(outcome.getExitCode()).isZero();
+    }
+
+    @Test
+    void run_aDirectoryOverTheLimit_isNotRun(@TempDir Path tmp) throws Exception {
+        final Path layer = Files.createDirectories(tmp.resolve(".aimon"));
+        Files.createDirectories(layer.resolve("hooks"));
+        Files.write(layer.resolve("hooks/big.bin"), new byte[(int) HookRunFiles.MAX_BYTES + 1]);
+        final VirtualShell shell = isolatingShell();
+
+        final ShellHookOutcome outcome = executor.run(scripted(layer),
+                contextIn(TestExecutionEnvironments.ofShell(shell)), Map.of(), null);
+
+        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.HOOK_DIR_STAGING_FAILED);
+        assertThat(outcome.unrunReason()).contains(String.valueOf(HookRunFiles.MAX_BYTES + 1)).contains(".stageignore")
+                .doesNotContain(tmp.toString());
+        verify(shell, never()).execute(any(ShellCommand.class), any(ExecutionOptions.class));
+    }
+
+    @Test
+    void run_aShellThatFindsTheFilesChanged_reportsTampering(@TempDir Path tmp) throws Exception {
+        final Path layer = Files.createDirectories(tmp.resolve(".aimon"));
+        Files.createDirectories(layer.resolve("hooks"));
+        final VirtualShell shell = isolatingShell();
+        when(shell.execute(any(ShellCommand.class), any(ExecutionOptions.class)))
+                .thenThrow(new RunDirectoryIntegrityException("guard.sh does not match"));
+
+        final ShellHookOutcome outcome = executor.run(scripted(layer),
+                contextIn(TestExecutionEnvironments.ofShell(shell)), Map.of(), null);
+
+        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.HOOK_FILES_TAMPERED);
     }
 
     @Test
@@ -184,6 +245,42 @@ class IsolatedShellActionExecutorTest {
         }
     }
 
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    void run_withTheLocalProvider_theHookDirIsAPrivateRunDirectoryAndTamperingTheWorkspaceChangesNothing(
+            @TempDir Path tmp) throws Exception {
+        // The EE-109 scenario: the agent's shell rewrites a staged copy of guard.sh. There is none any more, so the
+        // only file the next firing reads is the operator's own.
+        final Path layer = Files.createDirectories(tmp.resolve("project/.aimon"));
+        Files.createDirectories(layer.resolve("hooks"));
+        Files.writeString(layer.resolve("hooks/guard.sh"), "echo operator\n");
+        final Path workspace = Files.createDirectories(tmp.resolve("workspace"));
+        try (LocalExecutionEnvironmentProvider provider = LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(workspace).contentSearch(false).build()) {
+            final ExecutionEnvironment environment = provider
+                    .resolve(EnvironmentRequest.builder().agentRuntimeId(AgentRuntimeId.fromName("hooks")).build());
+            final ShellAction action = new ShellAction(
+                    "printf '%s|' \"$AIMON_HOOK_DIR\"; stat -c %a \"$AIMON_HOOK_DIR\" 2>/dev/null"
+                            + " || stat -f %Lp \"$AIMON_HOOK_DIR\"; bash \"$AIMON_HOOK_DIR/guard.sh\"",
+                    Duration.ofSeconds(10), HookScriptDirectory.of(layer, "hooks-project"));
+
+            final ShellHookOutcome first = executor.run(action, contextIn(environment), Map.of(), null);
+            try (var staged = Files.walk(workspace)) {
+                assertThat(staged.map(path -> workspace.relativize(path).toString()))
+                        .noneMatch(path -> path.contains("hooks-project"));
+            }
+            final String[] parts = first.getStdout().split("\\|", 2);
+            final Path hookDir = Path.of(parts[0]);
+            assertThat(hookDir).doesNotExist();
+            assertThat(hookDir.toAbsolutePath().startsWith(workspace.toAbsolutePath())).isFalse();
+            assertThat(parts[1]).startsWith("700").contains("operator");
+
+            Files.writeString(layer.resolve("hooks/guard.sh"), "echo edited\n");
+            final ShellHookOutcome second = executor.run(action, contextIn(environment), Map.of(), null);
+            assertThat(second.getStdout()).contains("edited").doesNotContain(parts[0]);
+        }
+    }
+
     private static ShellAction scripted(Path layer) {
         return new ShellAction("bash \"$AIMON_HOOK_DIR/guard.sh\"", Duration.ofSeconds(1),
                 HookScriptDirectory.of(layer, "hooks-project"));
@@ -192,6 +289,7 @@ class IsolatedShellActionExecutorTest {
     private static VirtualShell isolatingShell() throws Exception {
         final VirtualShell shell = mock(VirtualShell.class);
         when(shell.supports(ShellFeature.ISOLATED_EXECUTION)).thenReturn(true);
+        when(shell.supports(ShellFeature.RUN_DIRECTORY)).thenReturn(true);
         when(shell.execute(any(ShellCommand.class), any(ExecutionOptions.class)))
                 .thenReturn(new ShellCommandResult(0, "", "", Duration.ofMillis(1)));
         return shell;

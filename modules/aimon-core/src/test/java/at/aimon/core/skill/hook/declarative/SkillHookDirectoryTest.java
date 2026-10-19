@@ -83,7 +83,7 @@ class SkillHookDirectoryTest {
     // --- when the variable is exported -----------------------------------------------------------------------
 
     @Test
-    @DisplayName("a skill's hook gets the path the firing execution's environment staged, on both channels")
+    @DisplayName("an executor without a run directory (the default overload) gives the hook the path the firing execution's environment staged")
     void skillHookGetsTheStagedPath() {
         final StagedResource review = resource("review");
         final DeclarativePreToolHook hook = preToolHook("review", DeclarativeHookOptions.none());
@@ -93,8 +93,9 @@ class SkillHookDirectoryTest {
 
         assertThat(executor.calls).hasSize(1);
         assertThat(executor.calls.get(0).env()).containsEntry(SkillHookEnv.AIMON_SKILL_DIR, STAGED);
-        // The stdin document is rendered from the same map, so a script reading JSON finds it as skill_dir.
-        assertThat(executor.calls.get(0).stdinPayload()).contains("\"skill_dir\":\"" + STAGED + "\"");
+        // The stdin document is rendered before the executor decides the value (EE-109: a run directory exists only
+        // in the shell), so it carries no skill_dir, as it never carried hook_dir.
+        assertThat(executor.calls.get(0).stdinPayload()).doesNotContain("skill_dir");
     }
 
     @Test
@@ -176,17 +177,17 @@ class SkillHookDirectoryTest {
     }
 
     @Test
-    @DisplayName("without an environment in the context nothing is staged, and the executor decides what that means")
+    @DisplayName("without an environment in the context there is no skill directory, and the executor decides what that means")
     void noEnvironmentLeavesTheDecisionToTheExecutor() {
         final StagedResource review = resource("review");
         final DeclarativePreToolHook hook = preToolHook("review", DeclarativeHookOptions.none());
-        final Map<String, String> env = new LinkedHashMap<>();
 
-        final Optional<ShellHookOutcome> refused = SkillHookDirectory.export(env,
-                preTool(layer(new DefaultHookRegistry(), "review", hook, review), null), hook, executor);
-
-        assertThat(refused).isEmpty();
-        assertThat(env).doesNotContainKey(SkillHookEnv.AIMON_SKILL_DIR);
+        assertThat(SkillHookDirectory
+                .resourceFor(preTool(layer(new DefaultHookRegistry(), "review", hook, review), null), hook, executor))
+                .isEmpty();
+        assertThat(SkillHookDirectory.resourceFor(
+                preTool(layer(new DefaultHookRegistry(), "review", hook, review), environment), hook, executor))
+                .contains(review);
     }
 
     // --- when staging fails: the command is not run ----------------------------------------------------------
@@ -288,8 +289,8 @@ class SkillHookDirectoryTest {
         when(environment.stage(review))
                 .thenThrow(new ExecutionEnvironmentUnavailableException("sandbox is down", null));
 
-        final Optional<ShellHookOutcome> refused = SkillHookDirectory.export(new LinkedHashMap<>(),
-                preTool(layer(new DefaultHookRegistry(), "review", hook, review), environment), hook, executor);
+        final Optional<ShellHookOutcome> refused = SkillHookDirectory.stageInto(new LinkedHashMap<>(), environment,
+                review);
 
         assertThat(refused).hasValueSatisfying(outcome -> {
             assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE);
@@ -304,8 +305,8 @@ class SkillHookDirectoryTest {
         final DeclarativePreToolHook hook = preToolHook("review", DeclarativeHookOptions.none());
         when(environment.stage(review)).thenThrow(new IllegalStateException("token=s3cret at /host/internal"));
 
-        final Optional<ShellHookOutcome> refused = SkillHookDirectory.export(new LinkedHashMap<>(),
-                preTool(layer(new DefaultHookRegistry(), "review", hook, review), environment), hook, executor);
+        final Optional<ShellHookOutcome> refused = SkillHookDirectory.stageInto(new LinkedHashMap<>(), environment,
+                review);
 
         assertThat(refused).hasValueSatisfying(outcome -> {
             assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.STAGING_FAILED);
@@ -321,8 +322,7 @@ class SkillHookDirectoryTest {
         when(environment.stage(review)).thenReturn("  ");
         final Map<String, String> env = new LinkedHashMap<>();
 
-        final Optional<ShellHookOutcome> refused = SkillHookDirectory.export(env,
-                preTool(layer(new DefaultHookRegistry(), "review", hook, review), environment), hook, executor);
+        final Optional<ShellHookOutcome> refused = SkillHookDirectory.stageInto(env, environment, review);
 
         assertThat(refused).hasValueSatisfying(
                 outcome -> assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.STAGING_FAILED));

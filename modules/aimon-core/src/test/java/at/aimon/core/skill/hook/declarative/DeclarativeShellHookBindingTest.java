@@ -267,9 +267,10 @@ class DeclarativeShellHookBindingTest {
             DeclarativePreCompactHook.EVENT_NAME, DeclarativePermissionRequestHook.EVENT_NAME);
 
     static Stream<Arguments> bindingsByUnrunCause() {
-        // CANCELLED is not "the guard could not run": it has its own rule and its own test below.
+        // CANCELLED and HOOK_FILES_TAMPERED are not "the guard could not run": each has its own rule and test below.
         return bindings().flatMap(row -> Stream.of(ShellHookOutcome.Unrun.values())
-                .filter(cause -> cause != ShellHookOutcome.Unrun.CANCELLED)
+                .filter(cause -> cause != ShellHookOutcome.Unrun.CANCELLED
+                        && cause != ShellHookOutcome.Unrun.HOOK_FILES_TAMPERED)
                 .map(cause -> Arguments.of(row.get()[0], row.get()[3], cause)));
     }
 
@@ -296,6 +297,28 @@ class DeclarativeShellHookBindingTest {
         assertThat(result.getStatus()).isEqualTo(HookStatus.BLOCKED);
         assertThat(result.getFeedback().orElseThrow()).contains("hook '" + SKILL + "' (" + eventName + ")")
                 .contains("execution cancelled").doesNotContain("failOpen").doesNotContain(ACTION.getCommand());
+    }
+
+    @ParameterizedTest(name = "{0} / failOpen={2}")
+    @MethodSource("bindingsByFailOpen")
+    void create_hookFilesTampered_blocksOnGuardEventsWhateverFailOpenSaysAndIsOnlyLoggedElsewhere(String eventName,
+            HookContext context, boolean failOpen) {
+        final ExecutionHook<?> hook = DeclarativeShellHookBinding.forEvent(eventName).orElseThrow().create(SKILL,
+                ACTION, RecordingExecutor.notRunning(ShellHookOutcome.Unrun.HOOK_FILES_TAMPERED),
+                DeclarativeHookOptions.builder().failOpen(failOpen).build());
+
+        final HookResult result = execute(hook, context);
+
+        if (!GUARD_EVENTS.contains(eventName)) {
+            // An observer event has nothing to block: the tamper is logged and the event proceeds (EE-109).
+            assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
+            return;
+        }
+        // Evidence of tampering, not a guard that could not run: failOpen does not open it (EE-109).
+        assertThat(result.getStatus()).isEqualTo(HookStatus.BLOCKED);
+        assertThat(result.getFeedback().orElseThrow()).contains("hook '" + SKILL + "' (" + eventName + ")")
+                .contains("the hook's files changed before the run").doesNotContain("failOpen")
+                .doesNotContain(ACTION.getCommand());
     }
 
     @ParameterizedTest(name = "{0} / {2}")

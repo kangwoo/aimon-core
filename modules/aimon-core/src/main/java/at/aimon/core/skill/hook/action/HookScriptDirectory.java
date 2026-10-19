@@ -13,13 +13,14 @@ import at.aimon.core.filesystem.VirtualFileSystems;
  * <p>
  * A configured command runs either on the host or in the firing execution's environment, and which one is decided
  * per firing. The executor that ends up running the command is therefore the one that gives the variable its value:
- * the host path itself on the host, the path a fresh {@code stage(...)} returned in an environment. This value is
+ * the host path itself on the host, a run directory of the bytes read at the firing in an environment (EE-109). This
+ * value is
  * what both need &mdash; the host path, and a read-only source over it to scan from &mdash; so it travels on the
  * action rather than through the hook.
  *
  * <p>
  * The source is a read-only view of the layer's {@code .aimon} directory, and {@link #getSourceDirectory()} names
- * {@code hooks} inside it: nothing outside that subdirectory is ever scanned or staged.
+ * {@code hooks} inside it: nothing outside that subdirectory is ever scanned or read.
  *
  * <p>
  * Immutable and thread-safe.
@@ -45,7 +46,8 @@ public final class HookScriptDirectory {
      * @param layerDirectory
      *            the layer's {@code .aimon} directory, the one holding its {@code hooks.json} (must not be null)
      * @param resourceName
-     *            the name the staged copy is filed under; one path segment (must not be null or blank)
+     *            the name the directory is known by (the resource name it is scanned under); one path segment (must
+     *            not be null or blank)
      * @return the value (never null)
      * @throws NullPointerException
      *             if an argument is null
@@ -71,7 +73,7 @@ public final class HookScriptDirectory {
     }
 
     /**
-     * @return the name the staged copy is filed under (never null)
+     * @return the name the directory is known by (never null)
      */
     public String getResourceName() {
         return resourceName;

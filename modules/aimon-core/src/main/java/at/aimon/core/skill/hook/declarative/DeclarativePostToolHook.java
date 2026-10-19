@@ -194,13 +194,10 @@ public final class DeclarativePostToolHook implements PostToolHook {
             // postTool reports: the executor gets a view with no cancellation signal, so the command is not tied
             // to the execution's and an interrupt does not stop it.
             final HookContext shellContext = new SignalDetachedHookContext(context);
-            if (SkillHookDirectory.export(env, shellContext, this, shellExecutor).isPresent()) {
-                // The skill's directory could not be staged, so the command is not run (already logged): postTool
-                // cannot block, but it does not run a command whose "$AIMON_SKILL_DIR/..." would resolve to "/...".
-                return HookResult.success();
-            }
-            // The outcome is deliberately ignored: postTool cannot block, so an exit code carries no decision here.
-            shellExecutor.run(shell, shellContext, env, ShellHookPayload.render(env, toolInput.toMap()));
+            // The outcome is deliberately ignored: postTool cannot block, so an exit code carries no decision here,
+            // and a skill directory that could not be given (already logged) leaves the command unrun.
+            SkillHookDirectory.run(shellExecutor, shell, shellContext, env,
+                    ShellHookPayload.render(env, toolInput.toMap()), this);
             return HookResult.success();
         }
         if (action instanceof HttpAction http) {

@@ -11,8 +11,10 @@ import org.slf4j.LoggerFactory;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.execution.HookContext;
 import at.aimon.core.shell.ExecutionOptions;
+import at.aimon.core.shell.RunDirectory;
 import at.aimon.core.shell.ShellFeature;
 import at.aimon.core.shell.VirtualShell;
+import at.aimon.core.skill.hook.action.HookScriptDirectory;
 import at.aimon.core.skill.hook.action.ShellAction;
 
 /**
@@ -35,8 +37,18 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * <b>On the base environment.</b> A workflow branch that declares its lineage through
  * {@link ExecutionEnvironment#isolatedFrom()} is a view of the environment it was isolated from. The command runs on
  * the shell at the end of that chain, at its root &mdash; under the local provider the workspace root, for a root
- * execution and a branch alike &mdash; and {@code AIMON_HOOK_DIR} is staged into that same environment, so the path
- * and the shell always agree. An environment with no lineage is used as it is.
+ * execution and a branch alike &mdash; and that same shell places {@code AIMON_HOOK_DIR}, so the path and the shell
+ * always agree. An environment with no lineage is used as it is.
+ *
+ * <p>
+ * <b>The hook's files travel with the command (EE-109).</b> A handler that names {@code AIMON_HOOK_DIR} gets the
+ * layer's {@code hooks/} directory as a {@linkplain ExecutionOptions#getRunDirectory() run directory}: core reads and
+ * hashes the bytes at the firing, and the shell places them in a fresh directory for that one run. Nothing is staged
+ * into the workspace, where the agent's shell could rewrite a copy between a check and the run. A shell that does not
+ * declare {@link ShellFeature#RUN_DIRECTORY} cannot do that, and such a handler is <b>not run</b>
+ * ({@link ShellHookOutcome.Unrun#RUN_DIRECTORY_UNSUPPORTED}), on the rule {@code ISOLATION_UNSUPPORTED} follows. A
+ * shell that found the files changed when it placed them reports
+ * {@link ShellHookOutcome.Unrun#HOOK_FILES_TAMPERED}, which blocks a guard whatever {@code failOpen} says.
  *
  * <p>
  * When the context carries no environment the command is not run ({@link ShellHookOutcome.Unrun#NO_ENVIRONMENT});
@@ -91,11 +103,25 @@ public final class IsolatedShellActionExecutor implements ShellActionExecutor {
                         "the shell does not declare ISOLATED_EXECUTION");
             }
             final Map<String, String> env = new LinkedHashMap<>(environmentOverrides);
-            final Optional<ShellHookOutcome> unstaged = ConfigHookDirectory.exportStaged(env, action, base);
-            if (unstaged.isPresent()) {
-                return unstaged.get();
+            RunDirectory runDirectory = null;
+            final Optional<HookScriptDirectory> directory = action.getScriptDirectory();
+            if (directory.isPresent()) {
+                if (!EnvironmentShells.declares(shell, ShellFeature.RUN_DIRECTORY)) {
+                    log.warn("Hook shell action not run: the environment's shell ({}) does not declare RUN_DIRECTORY,"
+                            + " so the files under AIMON_HOOK_DIR cannot be handed to it for the run (command={})."
+                            + " Upgrade the environment provider, or declare \"shell\": \"host\" on the handler",
+                            shell.getClass().getName(), action.getCommand());
+                    return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.RUN_DIRECTORY_UNSUPPORTED,
+                            "the shell does not declare RUN_DIRECTORY");
+                }
+                final ConfigHookDirectory.Prepared prepared = ConfigHookDirectory.runDirectory(env, directory.get());
+                if (prepared.refusal().isPresent()) {
+                    return prepared.refusal().get();
+                }
+                runDirectory = prepared.runDirectory();
             }
-            return ShellActionRunner.run(shell, action, env, stdinPayload, context.getExecutionCancellation(), true);
+            return ShellActionRunner.run(shell, action, env, stdinPayload, context.getExecutionCancellation(), true,
+                    runDirectory);
         });
     }
 

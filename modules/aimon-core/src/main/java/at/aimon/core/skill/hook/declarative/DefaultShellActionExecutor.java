@@ -1,14 +1,22 @@
 package at.aimon.core.skill.hook.declarative;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.StagedResource;
+import at.aimon.core.environment.exception.StagingException;
 import at.aimon.core.hook.execution.HookContext;
+import at.aimon.core.shell.RunDirectory;
+import at.aimon.core.shell.ShellFeature;
+import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.skill.hook.action.ShellAction;
 
 /**
@@ -36,11 +44,32 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * regardless of what the command returned.
  *
  * <p>
- * Stateless and thread-safe.
+ * <b>{@code AIMON_SKILL_DIR} (EE-109).</b> A skill hook's directory is handed to the shell as a
+ * {@linkplain at.aimon.core.shell.ExecutionOptions#getRunDirectory() run directory} when the shell declares
+ * {@link ShellFeature#RUN_DIRECTORY}: the skill's bytes, checked against its content key and kept in memory
+ * ({@link HookRunFiles}), placed in a fresh directory for that run. On a shell without the feature, or for a skill
+ * over {@link HookRunFiles#MAX_BYTES}, the hook falls back to a staged copy ({@link SkillHookDirectory#stageInto}),
+ * which {@code stage()} checks on every call but which the agent's shell can still rewrite between that check and the
+ * run; one WARN per shell class and skill says so. A skill hook starts from the agent's shell state anyway, so it was
+ * never a policy boundary, and failing it closed would break it on every such shell.
+ *
+ * <p>
+ * Thread-safe. The state is this executor's cache of skill run directories ({@link HookRunFiles.SkillCache}, bounded
+ * by {@link HookRunFiles#MAX_CACHED_BYTES}), and the set of fallbacks already warned about, bounded at
+ * {@value #MAX_FALLBACK_WARNINGS} entries, after which further fallbacks are logged at DEBUG.
  */
 public final class DefaultShellActionExecutor implements ShellActionExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultShellActionExecutor.class);
+
+    /** How many (shell class, skill) fallbacks are remembered so their WARN is logged once. */
+    static final int MAX_FALLBACK_WARNINGS = 256;
+
+    /** The (shell class, skill) pairs whose fallback to staging was already logged at WARN. */
+    private static final Set<String> WARNED_FALLBACKS = ConcurrentHashMap.newKeySet();
+
+    /** The run directories of the skills whose hooks this executor ran; it lives and goes with the executor. */
+    private final HookRunFiles.SkillCache skills = new HookRunFiles.SkillCache(HookRunFiles.MAX_CACHED_BYTES);
 
     /** Creates an executor that runs each action in the firing context's execution environment. */
     public DefaultShellActionExecutor() {
@@ -77,5 +106,66 @@ public final class DefaultShellActionExecutor implements ShellActionExecutor {
         return EnvironmentShells.withShell(executionEnvironment.get(), action.getCommand(), "Skill hook",
                 shell -> ShellActionRunner.run(shell, action, environmentOverrides, stdinPayload,
                         context.getExecutionCancellation(), false));
+    }
+
+    @Override
+    public ShellHookOutcome run(ShellAction action, HookContext context, Map<String, String> environmentOverrides,
+            String stdinPayload, Optional<StagedResource> skillDirectory) {
+        Objects.requireNonNull(skillDirectory, "skillDirectory cannot be null");
+        final Optional<ExecutionEnvironment> executionEnvironment = context.getExecutionEnvironment();
+        if (skillDirectory.isEmpty() || executionEnvironment.isEmpty()) {
+            return run(action, context, environmentOverrides, stdinPayload);
+        }
+        final StagedResource resource = skillDirectory.get();
+        return EnvironmentShells.withShell(executionEnvironment.get(), action.getCommand(), "Skill hook", shell -> {
+            final Map<String, String> env = new LinkedHashMap<>(environmentOverrides);
+            final Optional<RunDirectory> runDirectory;
+            if (EnvironmentShells.declares(shell, ShellFeature.RUN_DIRECTORY)) {
+                try {
+                    runDirectory = HookRunFiles.forSkill(skills, resource);
+                } catch (StagingException e) {
+                    // The message is fixed text naming the skill, as the staging layer's own is.
+                    return SkillHookDirectory.refuse(env, ShellHookOutcome.Unrun.STAGING_FAILED, e.getMessage(), null)
+                            .get();
+                } catch (RuntimeException | LinkageError e) {
+                    return SkillHookDirectory
+                            .refuse(env, ShellHookOutcome.Unrun.STAGING_FAILED, ShellActionRunner.failureDetail(e), e)
+                            .get();
+                }
+                if (runDirectory.isEmpty()) {
+                    warnFallback(shell, resource, "it is over the " + HookRunFiles.MAX_BYTES + "-byte limit");
+                }
+            } else {
+                runDirectory = Optional.empty();
+                warnFallback(shell, resource, "the shell does not declare RUN_DIRECTORY");
+            }
+            if (runDirectory.isEmpty()) {
+                final Optional<ShellHookOutcome> unstaged = SkillHookDirectory.stageInto(env,
+                        executionEnvironment.get(), resource);
+                if (unstaged.isPresent()) {
+                    return unstaged.get();
+                }
+            }
+            return ShellActionRunner.run(shell, action, env, stdinPayload, context.getExecutionCancellation(), false,
+                    runDirectory.orElse(null));
+        });
+    }
+
+    private static void warnFallback(VirtualShell shell, StagedResource resource, String why) {
+        final String key = shell.getClass().getName() + '\0' + resource.getName();
+        final boolean first = WARNED_FALLBACKS.size() < MAX_FALLBACK_WARNINGS && WARNED_FALLBACKS.add(key);
+        if (first) {
+            log.warn("Skill '{}' hooks run from a staged copy of the skill, not from a run directory, because {} ({})."
+                    + " The copy is checked on every firing, but the agent's shell can rewrite it between that check"
+                    + " and the run", resource.getName(), why, shell.getClass().getName());
+        } else {
+            log.debug("Skill '{}' hook runs from a staged copy ({}; {})", resource.getName(), why,
+                    shell.getClass().getName());
+        }
+    }
+
+    /** Forgets which fallbacks were warned about; for tests. */
+    static void resetFallbackWarnings() {
+        WARNED_FALLBACKS.clear();
     }
 }

@@ -25,6 +25,11 @@ import org.slf4j.LoggerFactory;
  * path is reachable only when the execution is ending anyway.
  *
  * <p>
+ * {@link ShellHookOutcome.Unrun#HOOK_FILES_TAMPERED} is the other (EE-109). The hook's files were rewritten between
+ * the check and the run: an attack, not a hook that could not run, and opening on it would let whoever can touch the
+ * files switch every {@code failOpen} guard off.
+ *
+ * <p>
  * Shared by {@link DeclarativePreToolHook} and {@link AbstractDeclarativeShellHook} so the two cannot word or decide
  * this differently. Every other exit status is not a block here: 2 is the caller's veto, and the rest are allowed.
  */
@@ -97,6 +102,13 @@ final class ShellHookVerdicts {
                     eventName);
             return Optional.of("Blocked: hook '" + skillName + "' (" + eventName
                     + ") was stopped — execution cancelled. An interrupted execution does not proceed.");
+        }
+        if (outcome.getUnrunCause().get() == ShellHookOutcome.Unrun.HOOK_FILES_TAMPERED) {
+            // Not a guard that failed to decide either: failOpen opens infrastructure failures, not tampering.
+            log.warn("Hook '{}' ({}) was not run: its files changed between their check and the run; blocking",
+                    skillName, eventName);
+            return Optional.of("Blocked: hook '" + skillName + "' (" + eventName
+                    + ") was not run — the hook's files changed before the run.");
         }
         if (failOpen) {
             log.warn("Hook '{}' ({}) could not {} ({}); it declares failOpen, so the operation proceeds", skillName,

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: c5359d9c
+source_commit: 8474690a
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -329,7 +329,7 @@ used only when there is no execution. Each handler can say where with a `"shell"
   root with the environment's base variables — so the agent cannot steer a policy hook. Core sets no `PATH` (the local
   provider uses the JVM's environment, a sandbox its profile's). When the shell does not declare that it can run such a
   command (`ISOLATED_EXECUTION`), the command is **not run** — on a guard event that blocks unless `failOpen`. Upgrade
-  the provider, or use `"shell": "host"`. aimon-sandbox support is tracked in [kangwoo/aimon-sandbox#31](https://github.com/kangwoo/aimon-sandbox/issues/31).
+  the provider, or use `"shell": "host"`. aimon-sandbox supports it from `main` `553be78` ([kangwoo/aimon-sandbox#31](https://github.com/kangwoo/aimon-sandbox/issues/31)).
 - **A firing with no execution.** The `subagentStart` of a subagent launched by the agent-scoped workflow runner
   (background `Workflow`) has no execution behind it, so without `"shell"` it runs on the host. If that subagent ran its
   loop, its `subagentStop` runs in the subagent's own environment. Whether there is an execution is judged by **whether
@@ -348,12 +348,15 @@ used only when there is no execution. Each handler can say where with a `"shell"
   and again on every hot reload); writing `"shell": "host"` silences it.
 - **Scripts — `AIMON_HOOK_DIR`.** When the command string contains `AIMON_HOOK_DIR`, the variable names the `hooks/`
   directory of the layer that declared it (`~/.aimon/hooks/` for the user layer, `<project>/.aimon/hooks/` for the
-  project and local layers). On the host it is that path itself; in an environment it is the path of the copy staged
-  there — so `bash "$AIMON_HOOK_DIR/guard.sh"` works under either placement. A handler whose command names the variable
-  while `hooks/` is missing is an entry that cannot be applied (a startup failure under a guard event). If staging
-  fails, the command is not run. The directory is read again at every firing, so an edit to `guard.sh` runs from the
-  next firing on. Each edit stages one more copy, and the old ones (`.aimon-staged/hooks-*`) stay until the provider's
-  next startup sweep.
+  project and local layers). On the host it is that path itself. In an environment it is **a run directory of that
+  firing alone**: the shell places the bytes of `hooks/` that core read and hashed at the firing in a fresh directory
+  (under the local provider an `aimon-run-*` directory under `java.io.tmpdir`, mode 0700) and removes it when the
+  command ends. So `bash "$AIMON_HOOK_DIR/guard.sh"` works under either placement. Nothing is staged into the workspace
+  (no more `.aimon-staged/hooks-*` copies). The directory does not survive between firings, so a file a script writes
+  beside itself is gone at the next one. A handler whose command names the variable while `hooks/` is missing is an
+  entry that cannot be applied (a startup failure under a guard event). If the directory cannot be read (the 4 MiB
+  limit, an unreadable file) or the shell does not support run directories (`RUN_DIRECTORY`), the command is not run.
+  The directory is read again at every firing, so an edit to `guard.sh` runs from the next firing on.
 - **Commands that name a host path.** A host path such as `~/.aimon/…` may not exist in a sandbox. When a command
   placed in the environment names one and the shell cannot start it (exit 126 or 127), the deny reason gains a hint
   naming the path — use `$AIMON_HOOK_DIR/…` or `"shell": "host"`. **A script launched by an interpreter gets no such
@@ -363,17 +366,27 @@ used only when there is no execution. Each handler can say where with a `"shell"
   it because the hook gave a verdict. Write such a command as `python3 "$AIMON_HOOK_DIR/guard.py"` from the start, or
   set `"shell": "host"`.
 
-> ⚠️ **Staged scripts are within the agent's reach.** The copy lands in the workspace's `.aimon-staged/`, and the user
-> layer's `~/.aimon/hooks/` is copied there too, where the model's file tools can read it — do not keep secrets beside
-> hook scripts. And the staging layer **trusts a copy's marker after its first verification.** Re-scanning at every
-> firing only catches edits to the source, so a copy the agent rewrites through its shell goes on running (backlog
-> EE-109). The one placement that is safe from tampering is `"shell": "host"`.
+> ⚠️ **In-environment hooks are protected against tampering with their files *before* they run, not against
+> interference *while* they run.** Every command in an environment runs as the same uid as the agent's shell. While a
+> hook runs, the agent can rewrite its run directory (the window between the shell's check and the interpreter opening
+> a file, and any later `source`, remains — now per run instead of persistent), inject into the hook process's input or
+> output, or signal it into a timeout or an execution failure (a `failOpen` guard then lets the call through). Do not
+> trust workspace files for a policy decision — the agent can write them. When the agent's shell runs in a sandbox,
+> `"shell": "host"` is the only placement out of its reach. **Under the local provider no placement is** — the agent's
+> `Bash` is the host user itself and can rewrite `~/.aimon/hooks/guard.sh`, or `<project>/.aimon/hooks.json`, which
+> hot-reloads. What a real boundary would need is in backlog EE-113. On a sandbox, a handler that names
+> `AIMON_HOOK_DIR` does not run until aimon-sandbox supports `RUN_DIRECTORY` (EE-114), so upgrade core and aimon-sandbox
+> together, or move those handlers to `"shell": "host"` first. The user layer's `~/.aimon/hooks/` is readable by the
+> hook process in that run directory — do not keep secrets beside hook scripts.
 
 A `shell` action declared by a skill's frontmatter is different: it is the skill's own code, so it is not isolated and
 starts from the shell state that skill's tools run in. It cannot be declared on an event outside an execution. A
-skill's hook receives `AIMON_SKILL_DIR` (the path that skill's directory was staged to in the environment the hook runs
-in). A `hooks.json` command has no skill directory, so the variable is **not set** there — unset, not an empty string,
-and the stdin payload carries no `skill_dir` field either.
+skill's hook receives `AIMON_SKILL_DIR`: where the shell supports it, a run directory of that firing alone holding the
+skill's bytes as loaded (while they stay in the in-memory cache — once evicted, a skill edited since load runs as it is
+now); where it does not, or for a skill over 4 MiB, the path of the copy staged (and checked at every
+firing) in the environment the hook runs in. The stdin payload carries no `skill_dir` field (the shell decides the
+value). A `hooks.json` command has no skill directory, so the variable is **not set** there — unset, not an empty
+string.
 
 **How input is passed.** The command string is **not template-rendered** — it goes to the shell
 verbatim, so writing `${tool_input.x}` in a command gives you an (empty) shell variable rather
@@ -644,7 +657,8 @@ verdict.** On the other 9 events no row blocks (a WARN, then the event proceeds)
 | `command` exits 2 | verdict: refuse (stderr is the reason) | **blocks** | **blocks** |
 | `command` exits 126 or 127 (not executable · not found) | could not run | **blocks** | proceeds (WARN) |
 | `command` exits with any other code (1, 3, 130, …) | script malfunction | proceeds (WARN) | proceeds (WARN) |
-| `command` produces no exit code — a timeout, a shell failure, no execution environment or an unavailable one, a skill directory or a `hooks/` directory that could not be staged, an environment shell that cannot run an isolated command, an executor without shell support, an executor that throws | could not run | **blocks** | proceeds (WARN) |
+| `command` produces no exit code — a timeout, a shell failure, no execution environment or an unavailable one, a skill directory that could not be staged or a `hooks/` directory that could not be read, an environment shell that cannot run an isolated command or place a run directory, an executor without shell support, an executor that throws | could not run | **blocks** | proceeds (WARN) |
+| the shell found that the hook files it placed in the run directory differ from the bytes it was given, and did not start the `command` (`HOOK_FILES_TAMPERED`) | tampering | **blocks** | **blocks** — not a guard that could not decide, but evidence of tampering |
 | `deny` handler | verdict: refuse | **blocks** | **blocks** — `failOpen` is not read on a `deny` (WARN). In the three "follows the event policy" rows below, a `deny` handler blocks as the default column says |
 | `http` or `mcp` answers with a refusal (`decision: deny` or `block`; on `http` also `permissionDecision: deny`, `continue: false`) | verdict: refuse (the partner of the field that refused is the reason) | **blocks** | **blocks** |
 | `http` answers `permissionDecision: ask` | verdict: ask | as the `AskPromptHandler` answers — by default **blocks** | the same — a verdict, so `failOpen` does not apply |
@@ -660,7 +674,7 @@ that could not run has the form `Blocked: guard hook '<name>' (<event>) could no
 cannot decide blocks (fail-closed).` (for `http` and `mcp`: `could not get a verdict from its http call` / `… its mcp
 call`), and it never carries the command string, the shell's stderr, a URL, a header, a response body, an exception
 message or the name `failOpen` — the reader of that reason is the party the guard constrains. Only two causes carry a
-message: a skill directory or a `hooks/` directory that could not be staged, and an execution environment that is unavailable (`execution
+message: a skill directory or a `hooks/` directory that could not be given to the command, and an execution environment that is unavailable (`execution
 environment unavailable: …`). Both are word for word what a tool call (`Skill`; `Bash`, `Read` and the rest) already
 returns to the model for the same failure. `http` and `mcp` handlers
 can only be placed on `preTool` and `postTool`, so the one guard event those four rows apply to is `preTool`.
@@ -1160,7 +1174,9 @@ are in [`aimon-skill-extensions.md`](../../references/aimon-skill-extensions.md)
 | A tool is refused with `Blocked: guard hook '...' could not get a verdict from its http call` (or `mcp call`) | An `http` or `mcp` handler on `preTool` got no verdict. Read the cause in the reason — `action executor not wired` (the host wired no executor — `aimon-cli` wires them, so this is an embedding host), `call failed: MCP server not registered` (`server` is not the name of a configured MCP server), `call failed: HTTP 307` (redirects are not followed), `call failed: HTTP 503` or `call failed: ConnectException` (the policy server), `timed out`, `response could not be read` (the `decision` or `permissionDecision` value is not a known one — the table under [http](#http)). Declare `"failOpen": true` if the handler only observes. |
 | A tool is blocked with `… could not run its command — the environment's shell cannot run an isolated command` | The execution environment's shell does not declare that it can run an isolated command (`ISOLATED_EXECUTION`) — a sandbox provider without that support. Upgrade the provider, or write `"shell": "host"` on that handler. See [Where it runs](#command). |
 | The deny reason ends with `the command names host path …, which this execution environment may not have` | A command placed in the environment names a host path such as `~/.aimon/…`, and the environment's shell could not start it. Put the script in `hooks/` and call it as `$AIMON_HOOK_DIR/…`, or use `"shell": "host"`. |
-| The deny reason is `hook script directory could not be staged: …` | The `hooks/` directory behind `AIMON_HOOK_DIR` could not be staged into that environment (the size limit, an unreadable file, an unavailable environment). Fix the cause the reason names. |
+| The deny reason is `hook script directory could not be staged: …` | The `hooks/` directory behind `AIMON_HOOK_DIR` could not be read at that firing (the 4 MiB limit — exclude large files with `.stageignore` —, an unreadable file, a directory that changed while it was read). Fix the cause the reason names. |
+| A tool is blocked with `… could not run its command — the environment's shell cannot place the hook's files for the run` | The execution environment's shell does not declare that it can place a run directory (`RUN_DIRECTORY`); only handlers that name `AIMON_HOOK_DIR` are affected. Upgrade to a provider that supports it (for aimon-sandbox, EE-114), or write `"shell": "host"` on that handler. |
+| A tool is blocked with `Blocked: hook '…' (…) was not run — the hook's files changed before the run` | The hook files the shell placed in the run directory differed from the bytes core handed it (someone rewrote the upload). `failOpen` does not open this. Look at what writes to the hook files in that execution environment. |
 | Startup fails with `… handler #m: Unknown hook handler shell: '…'` or `'shell' applies only to command handlers` | `"shell"` takes `"host"` or `"environment"` and only on a `command` handler. A typo does not move the handler to another shell; it stops the file from loading. |
 | Startup fails with `… the command names AIMON_HOOK_DIR, but … is missing or not a directory` | Create that layer's `.aimon/hooks/` directory. On an event that is not a guard it is a WARN and a skip, not a startup failure. |
 | `WARN hooks: a 'command' handler with 'asyncRewake' on event '…' runs on the host` | The rewake replay fires outside any execution, so the handler stays on the host. If that is what you want, write `"shell": "host"` to silence the WARN. |

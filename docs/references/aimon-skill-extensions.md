@@ -150,8 +150,8 @@ action-def := { type: "deny", reason: string }
 - 모든 셸 액션은 동일 스킬 호출 안에서 **동기·순차** 실행된다(병렬 발화 없음).
 - **어디서 도는가.** 명령은 호스트 JVM 이 아니라 **hook 이 발화한 실행의 실행 환경**(`HookContext.getExecutionEnvironment()`)의 셸에서 돈다 — 같은 스킬의 `Bash` 호출이 도는 바로 그 셸이다. fork 모드에서는 **fork 자신의** 환경이다. 실행자(`DefaultShellActionExecutor`)는 셸을 쥐지 않고 발화할 때마다 컨텍스트에서 얻는다. 스킬의 훅은 스킬 자신의 코드이므로 **격리하지 않는다** — 같은 셸의 상태(`cd` · `export`)에서 시작해도 된다. 운영자의 `hooks.json` 커맨드는 다르다: 격리된 실행으로 돈다([`hook-config-guide.md`](../features/hook/hook-config-guide.md) › `command`).
   - **작업 디렉터리는 워크스페이스다.** 로컬 환경에서도 그렇다 — 예전에는 호스트 JVM 의 작업 디렉터리였다. 상대 경로로 스크립트를 부르는 명령은 워크스페이스 기준으로 풀린다. 자기 스킬 디렉터리의 스크립트는 환경 변수 `AIMON_SKILL_DIR` 로 부른다 — `bash "$AIMON_SKILL_DIR/scripts/guard.sh"`. 사본에는 실행 비트가 없으므로 인터프리터로 실행한다.
-  - **`AIMON_SKILL_DIR` 는 발화할 때마다, hook 이 도는 환경에 스테이징해서 얻는다.** 값은 그 실행의 `ExecutionEnvironment.stage(...)` 가 돌려준 경로다. 스킬을 호출한 쪽에서 본문을 렌더하며 스테이징한 경로를 물려받지 않는다 — hook 은 fork(와 fork 가 띄운 실행)에서 발화하고, fork 가 다른 환경에 놓이면 호출한 쪽의 사본은 거기에 없다. 이미 사본이 있는 환경에서는 마커 하나를 확인하는 비용이다.
-  - **스테이징하지 못하면 명령은 돌지 않는다**(크기 상한 초과, 적재 뒤 디스크에서 바뀐 스킬 등). 변수 없이 돌리면 `"$AIMON_SKILL_DIR/scripts/guard.sh"` 가 `/scripts/guard.sh` 가 되어 다른 명령이 된다. 그 다음은 아래 "명령을 돌리지 못했을 때" 와 같다 — 가드 이벤트는 막고(`failOpen: true` 면 통과), 나머지는 WARN 만 남긴다.
+  - **`AIMON_SKILL_DIR` 는 발화할 때마다, hook 이 도는 셸에서 얻는다(EE-109).** 셸이 실행 디렉터리(`ShellFeature.RUN_DIRECTORY`)를 지원하면, 로드한 버전의 스킬 바이트(코어가 내용 키에 대조해 메모리에 둔 것. 그 캐시는 32 MiB 이고 오래 안 쓴 것부터 밀려나며, 밀려난 뒤에는 로드 이후 고친 스킬이 지금 모습으로 돈다 — EE-3)를 셸이 그 발화만의 새 디렉터리에 두고 끝나면 지운다 — 워크스페이스의 스테이징 사본을 거치지 않으므로 에이전트가 사본을 고쳐 hook 을 바꿀 수 없다. 지원하지 않거나 스킬이 4 MiB 를 넘으면 그 실행의 `ExecutionEnvironment.stage(...)` 가 돌려준 경로이고, 사본은 발화마다 검증된다. 어느 쪽이든 스킬을 호출한 쪽에서 본문을 렌더하며 스테이징한 경로를 물려받지 않는다 — hook 은 fork(와 fork 가 띄운 실행)에서 발화하고, fork 가 다른 환경에 놓이면 호출한 쪽의 사본은 거기에 없다. 실행 디렉터리는 발화 사이에 남지 않으므로 스크립트가 자기 옆에 쓴 파일은 다음 발화에 없다.
+  - **스킬 디렉터리를 주지 못하면 명령은 돌지 않는다**(크기 상한 초과, 손으로 조립한 스킬이 적재 뒤 디스크에서 바뀜 등). 변수 없이 돌리면 `"$AIMON_SKILL_DIR/scripts/guard.sh"` 가 `/scripts/guard.sh` 가 되어 다른 명령이 된다. 그 다음은 아래 "명령을 돌리지 못했을 때" 와 같다 — 가드 이벤트는 막고(`failOpen: true` 면 통과), 나머지는 WARN 만 남긴다.
   - **변수가 없는 경우**(빈 문자열이 아니라 unset): `hooks.json` 의 hook(스킬 디렉터리가 없다), 레지스트리를 거치지 않고 손으로 조립해 `StagedResource` 가 없는 스킬, 그리고 발화한 실행의 환경이 아닌 곳에서 명령을 돌리는 실행기(`HostShellActionExecutor`)를 스킬 파서에 물린 호스트.
   - **실행 환경이 없거나 사용 불가면 명령은 돌지 않는다.** 호스트로 되돌아가지 않는다. WARN 로그가 남고, 그 다음은 이벤트에 달렸다 — 아래 "명령을 돌리지 못했을 때" 를 볼 것.
   - 그래서 실행 밖에서 발화하는 이벤트(`onSessionStart` · `onSessionEnd` · `onConfigReload`)는 스킬 frontmatter 에 선언할 수 없다 — 실행 환경이 없어 셸 액션이 돌 곳이 없다. 파서가 스킬 로드 시점에 이유와 함께 거부한다. 그 이벤트는 `hooks.json` 에 선언한다(운영자 설정이며 호스트 셸에서 돈다).
@@ -172,13 +172,13 @@ hooks:
       action: { type: shell, command: "audit.sh", timeoutMs: 5000 }
       failOpen: true   # 관찰용 — audit.sh 를 돌리지 못해도 Bash 는 실행된다
 ```
-- 환경 변수가 매 발화마다 주입된다. 아래 표는 `SkillHookEnv` 상수와 1:1 대응한다(이름을 바꾸는 것은 break change). 같은 값이 stdin 의 JSON 에도 접두어를 떼고 소문자로 실린다(`AIMON_SKILL_DIR` → `skill_dir`).
+- 환경 변수가 매 발화마다 주입된다. 아래 표는 `SkillHookEnv` 상수와 1:1 대응한다(이름을 바꾸는 것은 break change). 같은 값이 stdin 의 JSON 에도 접두어를 떼고 소문자로 실린다(`AIMON_HOOK_EVENT` → `hook_event`). 예외는 `AIMON_SKILL_DIR` 이다 — 값을 셸이 정하므로(EE-109) stdin 에는 `skill_dir` 이 없다.
 
 | 변수 | 값 | 발화 이벤트 |
 |------|----|------------|
 | `AIMON_HOOK_EVENT` | `preTool` / `postTool` / `onStart` / `onStop` | 모든 이벤트 |
 | `AIMON_SKILL_NAME` | `SkillMetadata.name` | 모든 이벤트 |
-| `AIMON_SKILL_DIR` | 스킬 디렉터리를 hook 이 도는 환경에 스테이징한 절대 경로. 자르지 않는다 | 모든 이벤트 (스킬이 선언한 hook 만. `hooks.json` 에서는 unset) |
+| `AIMON_SKILL_DIR` | 스킬 파일을 둔 절대 경로 — hook 이 도는 셸이 그 발화만을 위해 둔 실행 디렉터리, 셸이 지원하지 않으면 그 환경에 스테이징한 경로. 자르지 않는다. stdin 에는 실리지 않는다 | 모든 이벤트 (스킬이 선언한 hook 만. `hooks.json` 에서는 unset) |
 | `AIMON_INVOKER_NAME` | 호출 에이전트 이름 | 모든 이벤트 |
 | `AIMON_INVOKER_TYPE` | `MAIN_AGENT` / `SUBAGENT` | 모든 이벤트 |
 | `AIMON_TOOL_NAME` | 발화 대상 도구 이름 | `preTool`, `postTool` |

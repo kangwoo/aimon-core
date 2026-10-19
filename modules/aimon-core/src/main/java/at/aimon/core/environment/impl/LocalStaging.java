@@ -34,10 +34,12 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  * A resource is copied to {@code {stagingRoot}/{name}/{contentKey}/} on the <b>raw</b> workspace filesystem (the
  * model's file tools see the staging area read-only through the path rules). The copy is skipped only when the
  * target's {@value #MARKER} marker exists — the target is asked every time, never an in-memory record — and the copy
- * on disk is the one its path names: the first time this instance meets a target it did not copy itself, it checks
- * that the marker holds the content key, that the files are exactly the resource's, and that they hash to the key, and
- * copies again otherwise (EE-37). That check is remembered per target, so it costs one read of the copy per process;
- * a shell can still change a copy afterwards (design §2 non-goals). The first copy also writes
+ * on disk is the one its path names: on <b>every</b> call, a copy this instance made included, it checks that the
+ * marker holds the content key, that the files are exactly the resource's, and that they hash to the key, and copies
+ * again otherwise (EE-37, EE-109). Nothing about an earlier check is remembered, because a shell running as the same
+ * user can rewrite a copy at any time; the cost is one listing and one read of the copy per call, bounded by the
+ * staging limit. What this does not close is the moment between the check and a process opening the files by path
+ * (EE-109 record §3). The first copy also writes
  * {@code {stagingRoot}/}{@value #GITIGNORE} containing {@code *} unless one exists (EE-4). The copy takes exactly
  * {@link StagedResource#getFiles()}, hashes what it copies with the same algorithm as
  * {@link StagedResource#scan}, and writes the marker last; a size over the limit or an unreadable recorded file fails
@@ -54,11 +56,15 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  * key they do not hash to, and reverting the source cannot bring edited bytes back under the loaded key. The second
  * scan takes the current file set — files added, files removed, a changed {@code .stageignore} — rather than the
  * loaded list with new bytes, and its size is what the limit is checked against. The answer is remembered for the
- * loaded resource while that copy's marker exists, so later calls cost what any staged copy costs; a source that
+ * loaded resource while that copy's marker exists and matches its key, but only while the source still differs from
+ * the loaded version: every call first hashes the source's recorded files (writing nothing), so a source reverted to
+ * the loaded version — reloaded or not — is staged as loaded again, not as the edit (#281). While the source differs,
+ * a call therefore costs one read of the source on top of what any staged copy costs; a source that
  * changes again between the second scan and its copy is refused, and the next call starts over. This is only about
  * the <em>first</em> copy: once a copy under the loaded key exists it is what is served, in this process and in any
  * that loaded the same version, and an edit made afterwards is not seen until the registry reads the resource again
- * (design §4.4 — the hash is taken when the registry reads, not on every call). What is staged is the resource's
+ * (design §4.4 — the source is hashed when the registry reads it; later calls check the copy, not the source). What
+ * is staged is the resource's
  * files; whatever the registry parsed from them at load (a skill's rendered body, its tool restrictions and hooks)
  * stays the loaded version until then.
  *
@@ -139,11 +145,11 @@ final class LocalStaging {
     private final ConcurrentMap<String, Object> sourceLocks = new ConcurrentHashMap<>();
     /**
      * The target a caller's resource names, to the resource its source was found to be when that one could not be
-     * copied (EE-3). Used only while the copy it names has its marker, like {@link #verified}.
+     * copied (EE-3). Used only while the source still differs from the loaded version and the copy it names has its
+     * marker and matches its key: it is checked like any other copy. Dropped once the source holds the loaded
+     * version again.
      */
     private final ConcurrentMap<String, StagedResource> rescanned = new ConcurrentHashMap<>();
-    /** Targets this instance copied, or found already staged and checked against their content key. */
-    private final Set<String> verified = ConcurrentHashMap.newKeySet();
 
     LocalStaging(VirtualFileSystem rawFileSystem, VirtualFileSystem passthroughFileSystem, Path hostRoot,
             String stagingRoot, long maxStagedBytes) {
@@ -204,15 +210,24 @@ final class LocalStaging {
         // Read a workspace resource through the unguarded filesystem: the tools' view may hide it.
         final VirtualFileSystem reader = inWorkspace ? rawFileSystem : source;
         final String asked = targetOf(resource);
-        final String staged = stagedAlready(rescanned.getOrDefault(asked, resource));
-        if (staged != null) {
-            return staged;
-        }
         // One caller at a time finds out that a source changed; the others then find its answer in the map.
         synchronized (sourceLocks.computeIfAbsent(asked, k -> new Object())) {
-            final StagedResource known = rescanned.getOrDefault(asked, resource);
+            final StagedResource known = rescanned.get(asked);
+            if (known != null) {
+                // The remembered answer only while the source still differs from the loaded version: a source
+                // reverted to it is staged as loaded again, not as the edit (#281).
+                if (!mayHoldLoadedVersion(resource, reader)) {
+                    try {
+                        return copyVerified(known, reader);
+                    } catch (SourceChangedException stale) {
+                        log.debug("The re-scanned copy of '{}' is stale ({}); asking the source again",
+                                resource.getName(), stale.what);
+                    }
+                }
+                rescanned.remove(asked, known);
+            }
             try {
-                return copyVerified(known, reader);
+                return copyVerified(resource, reader);
             } catch (SourceChangedException changed) {
                 if (!resource.isScanned()) {
                     throw changed.ifUnchanged != null ? changed.ifUnchanged : changedSinceLoad(resource);
@@ -220,7 +235,7 @@ final class LocalStaging {
                 if (changed.recordedOverLimit) {
                     refuseWhileOverLimit(resource, reader);
                 }
-                final StagedResource current = scanAgain(resource, known, reader, changed);
+                final StagedResource current = scanAgain(resource, reader, changed);
                 final String path;
                 try {
                     path = copyVerified(current, reader);
@@ -234,6 +249,31 @@ final class LocalStaging {
                         resource.getName(), changed.what, path);
                 return path;
             }
+        }
+    }
+
+    /**
+     * Whether the source may hold the loaded version again: its recorded files hash to the content key, read without
+     * writing anything. A resource recorded over the limit is not read; it may hold that version while the source is
+     * still over the limit by its current sizes. A source that cannot be read or sized may hold it too, which sends
+     * the caller to the path that finds out.
+     */
+    private boolean mayHoldLoadedVersion(StagedResource resource, VirtualFileSystem reader) {
+        try {
+            if (resource.getTotalBytes() > maxStagedBytes) {
+                return StagedResource.sizeOf(reader, resource.getSourceDir()) > maxStagedBytes;
+            }
+            final StagedResource.ContentKeyBuilder hasher = new StagedResource.ContentKeyBuilder();
+            for (String relPath : resource.getFiles()) {
+                try (InputStream in = reader.read(resource.sourcePath(relPath))) {
+                    hasher.add(relPath, in.readAllBytes());
+                }
+            }
+            return hasher.build().equals(resource.getContentKey());
+        } catch (IOException | RuntimeException e) {
+            log.debug("Could not tell whether {} holds its loaded version again: {}", resource.getSourceDir(),
+                    e.getMessage());
+            return !resource.getFiles().isEmpty() && reader.exists(resource.getSourceDir());
         }
     }
 
@@ -267,12 +307,6 @@ final class LocalStaging {
 
     private String targetOf(StagedResource resource) {
         return VfsPaths.join(stagingRoot, resource.getName(), resource.getContentKey());
-    }
-
-    /** The path of a copy this instance has already checked and whose marker is still there, or null. */
-    private String stagedAlready(StagedResource resource) {
-        final String target = targetOf(resource);
-        return verified.contains(target) && rawFileSystem.exists(target + "/" + MARKER) ? absolute(target) : null;
     }
 
     private StagingException overLimit(StagedResource resource, long bytes) {
@@ -325,7 +359,7 @@ final class LocalStaging {
      *             if the source turns out to hold what the key names after all (the copy failed for another reason, or
      *             the source changed back), cannot be scanned, or has no file left
      */
-    private StagedResource scanAgain(StagedResource resource, StagedResource known, VirtualFileSystem reader,
+    private StagedResource scanAgain(StagedResource resource, VirtualFileSystem reader,
             SourceChangedException changed) {
         final StagedResource current;
         try {
@@ -337,7 +371,7 @@ final class LocalStaging {
             throw new StagingException("Cannot stage '" + resource.getName() + "': it changed on disk since it was"
                     + " loaded and could not be read again: " + e.getMessage(), e);
         }
-        if (current.getContentKey().equals(known.getContentKey())) {
+        if (current.getContentKey().equals(resource.getContentKey())) {
             throw changed.ifUnchanged != null ? changed.ifUnchanged : stillChanging(resource);
         }
         if (current.getFiles().isEmpty()) {
@@ -349,7 +383,8 @@ final class LocalStaging {
     }
 
     /**
-     * Stages a resource under its own content key, or reuses the copy that is there.
+     * Stages a resource under its own content key, or reuses the copy that is there once it has been checked against
+     * the key — on every call, never on the strength of an earlier one (EE-109).
      *
      * @throws SourceChangedException
      *             if the source no longer holds what the content key names, or the resource's recorded size is over
@@ -358,15 +393,11 @@ final class LocalStaging {
     private String copyVerified(StagedResource resource, VirtualFileSystem reader) {
         final String target = targetOf(resource);
         final String marker = target + "/" + MARKER;
-        if (verified.contains(target) && rawFileSystem.exists(marker)) {
-            return absolute(target);
-        }
         synchronized (locks.computeIfAbsent(target, k -> new Object())) {
             // Also on the reuse path: a workspace whose copies predate EE-4 would otherwise never get the file.
             ensureGitignore();
             if (rawFileSystem.exists(marker)) {
-                if (verified.contains(target) || matchesContentKey(resource, target)) {
-                    verified.add(target);
+                if (matchesContentKey(resource, target)) {
                     return absolute(target);
                 }
                 log.warn("Staged copy {} does not match its content key; staging it again", target);
@@ -387,7 +418,6 @@ final class LocalStaging {
                 discard(staging);
                 throw e;
             }
-            verified.add(target);
         }
         log.debug("Staged {} ({} files) to {}", resource.getName(), resource.getFiles().size(), target);
         return absolute(target);
@@ -421,7 +451,7 @@ final class LocalStaging {
             }
             onDisk.removeAll(expected);
             for (String extra : onDisk) {
-                log.info("Removing {} from staged copy {}: it is not one of the resource's files", extra, target);
+                log.debug("Removing {} from staged copy {}: it is not one of the resource's files", extra, target);
                 rawFileSystem.delete(prefix + extra);
             }
             return true;
