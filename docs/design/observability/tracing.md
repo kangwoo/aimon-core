@@ -337,7 +337,7 @@ public interface SpanExporter {
 |---|---|---|---|
 | **TURN** (root) | `execute()` 진입/`finally` | userMessage → `finalAnswerChars`(내용 캡처 정책이면 `finalAnswer` 도) + `ExecutionMetadata` | `traceId` 발급 지점 |
 | **ITERATION** | `executeReActLoop` 의 step try/finally | ReAct step 경계 | iteration 번호 보유. 재진입이면 `loop.transition*`, 직전 꼬리에서 백그라운드 완료 알림을 받았으면 `subagent.received.taskIds` |
-| **LLM** | `TracingLlmClient` 데코레이터 | `sendMessage` 진입 → 응답 | **유일한 LLM 캡처 경로**. 프롬프트·토큰·모델·지연 · `stopReason`. 스트리밍이면 `ttftMs`. 취소(`LlmCallCancelledException`)는 `INTERRUPTED` |
+| **LLM** | `TracingLlmClient` 데코레이터 | `sendMessage` 진입 → 응답 | **유일한 LLM 캡처 경로**. 프롬프트·토큰·모델·지연 · `stopReason`. 스트리밍이면 `streaming=true` · `ttftMs`. 요청된 취소(토큰이 취소된 `LlmCallCancelledException`)는 `INTERRUPTED` |
 | **TOOL** | 두 executor 의 `executeSingleTool` 얇은 래퍼(`toolinvocation.ToolCallTracing`) | 도구 입력 → 출력 | Event 보다 payload 가 풍부. 도구가 받는 컨텍스트의 metadata 를 TOOL span 으로 회전(R1) |
 | **SUBAGENT** | `DefaultSubagentExecutionManager.runResolvedSubagent` | goal → 결과·completionReason·토큰 합계 | 서브에이전트 실행당 1개. 포크의 ITERATION/TOOL/LLM 은 그 아래(R2·R3). 해석 실패·ceiling 거부도 ERROR span 으로 남는다 |
 | **COMMAND** | `OrcaAgentExecutor.executeCommand`(`CommandTrace`) | 명령 이름·인자 길이 → 성공 여부·응답 길이 | 슬래시 명령 턴마다 1개, TURN 아래. 명령 도구 컨텍스트의 metadata 를 이 span 으로 회전 — 포크 스킬의 SUBAGENT 가 그 아래 붙는다 |

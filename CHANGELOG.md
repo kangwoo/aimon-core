@@ -19,12 +19,15 @@ Central is versioned independently).
   attempt, not what an end user saw behind the gateway's buffering. `ttftMs` is absent when the stream delivered no
   content. Chunks reach the caller's sink unchanged. Constants:
   `TracingLlmClient.STREAMING_ATTR`, `TracingLlmClient.TTFT_ATTR`.
-- **A cancelled call** (`LlmCallCancelledException`) now ends `INTERRUPTED` — it used to end `ERROR` — matching the
-  TURN and SUBAGENT status rule. Anything that counts or alerts on ERROR LLM spans stops seeing cancellations. The
-  exception is still rethrown. A cancellation that reaches the client as another exception type is still `ERROR`.
-- **Fail-safe span start.** A tracer that throws while opening the LLM span used to fail the LLM call; the span now
-  falls back to a no-op and the call goes ahead untraced (`Spans.startChildSafely`), as the executors already did. The
-  new streaming attributes are set fail-safe too; the span's other setters are unchanged.
+- **A cancelled call** (`LlmCallCancelledException` on a call whose `LlmCancellation` token was cancelled) now ends
+  `INTERRUPTED` — it used to end `ERROR` — matching the TURN and SUBAGENT status rule. Anything that counts or alerts
+  on ERROR LLM spans stops seeing requested cancellations. The exception is still rethrown. A cancellation nobody
+  requested (the token is not cancelled, or the overload takes no token) and one that reaches the client as another
+  exception type are still `ERROR` — the rule `DefaultCompactionEngine` applies to the same exception.
+- **Fail-safe span start and recording.** A tracer that throws while opening the LLM span used to fail the LLM call;
+  the span now falls back to a no-op and the call goes ahead untraced (`Spans.startChildSafely`), as the executors
+  already did. Recording is fail-safe too: a span whose setters throw neither fails a call that succeeded nor
+  replaces the exception of one that failed.
 
 ### Added: TURN `finalAnswer` under FULL; ITERATION `subagent.received.taskIds` (#293)
 

@@ -54,9 +54,9 @@ import at.aimon.core.tracing.Tracer;
  * does not count) handed to the sink this client was given. Under {@code LlmCallGateway} that sink is the gateway's
  * per-attempt sink (a buffering one when it buffers until the first success), so the value is the provider's latency
  * for that attempt, not what an end user saw. It is absent when the stream delivered no content chunk. A call
- * cancelled through its {@link LlmCancellation} ({@link LlmCallCancelledException}) ends {@code INTERRUPTED}, not
- * {@code ERROR}; any other failure is an error. A tracer that fails to start the span leaves the call untraced, never
- * failed.
+ * cancelled through its {@link LlmCancellation} ({@link LlmCallCancelledException} with the token cancelled) ends
+ * {@code INTERRUPTED}, not {@code ERROR}; any other failure is an error. A tracer that fails to start or record the
+ * span leaves the call untraced, never failed.
  *
  * <p>
  * Thread-safe and stateless (delegates own any state).
@@ -115,21 +115,21 @@ public final class TracingLlmClient implements LlmClient {
     @Override
     public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
             LlmModel modelConfig, LlmCallMetadata metadata) {
-        return traced(messages, tools, modelConfig, metadata,
+        return traced(messages, tools, modelConfig, metadata, LlmCancellation.none(),
                 () -> delegate.sendMessage(systemPrompt, messages, tools, modelConfig, metadata));
     }
 
     @Override
     public LlmResponse sendMessage(SystemPromptParts systemPromptParts, List<Message> messages,
             List<ToolDefinition> tools, LlmModel modelConfig, LlmCallMetadata metadata) {
-        return traced(messages, tools, modelConfig, metadata,
+        return traced(messages, tools, modelConfig, metadata, LlmCancellation.none(),
                 () -> delegate.sendMessage(systemPromptParts, messages, tools, modelConfig, metadata));
     }
 
     @Override
     public LlmResponse sendMessage(SystemPromptParts systemPromptParts, List<Message> messages,
             List<ToolDefinition> tools, LlmModel modelConfig, LlmCallMetadata metadata, LlmCancellation cancellation) {
-        return traced(messages, tools, modelConfig, metadata,
+        return traced(messages, tools, modelConfig, metadata, cancellation,
                 () -> delegate.sendMessage(systemPromptParts, messages, tools, modelConfig, metadata, cancellation));
     }
 
@@ -137,15 +137,16 @@ public final class TracingLlmClient implements LlmClient {
     public LlmResponse sendMessageStreaming(SystemPromptParts systemPromptParts, List<Message> messages,
             List<ToolDefinition> tools, LlmModel modelConfig, LlmCallMetadata metadata, LlmStreamingOptions options,
             LlmStreamSink sink) {
-        return tracedStreaming(messages, tools, modelConfig, metadata, sink, timedSink -> delegate
-                .sendMessageStreaming(systemPromptParts, messages, tools, modelConfig, metadata, options, timedSink));
+        return tracedStreaming(messages, tools, modelConfig, metadata, LlmCancellation.none(), sink,
+                timedSink -> delegate.sendMessageStreaming(systemPromptParts, messages, tools, modelConfig, metadata,
+                        options, timedSink));
     }
 
     @Override
     public LlmResponse sendMessageStreaming(SystemPromptParts systemPromptParts, List<Message> messages,
             List<ToolDefinition> tools, LlmModel modelConfig, LlmCallMetadata metadata, LlmStreamingOptions options,
             LlmStreamSink sink, LlmCancellation cancellation) {
-        return tracedStreaming(messages, tools, modelConfig, metadata, sink,
+        return tracedStreaming(messages, tools, modelConfig, metadata, cancellation, sink,
                 timedSink -> delegate.sendMessageStreaming(systemPromptParts, messages, tools, modelConfig, metadata,
                         options, timedSink, cancellation));
     }
@@ -161,7 +162,7 @@ public final class TracingLlmClient implements LlmClient {
     }
 
     private LlmResponse traced(List<Message> messages, List<ToolDefinition> tools, LlmModel modelConfig,
-            LlmCallMetadata metadata, Supplier<LlmResponse> call) {
+            LlmCallMetadata metadata, LlmCancellation cancellation, Supplier<LlmResponse> call) {
         final Optional<SpanContext> parent = SpanContext.readFrom(metadata);
         if (parent.isEmpty()) {
             // Not enriched by the executor — delegate without producing an orphan span.
@@ -170,7 +171,7 @@ public final class TracingLlmClient implements LlmClient {
         final String model = spanModel(modelConfig);
         final Tracer.Span span = Spans.startChildSafely(tracer, parent.get(), SpanType.LLM, "llm:" + model,
                 inputsSummary(messages, tools, model));
-        return record(span, model, metadata, call);
+        return record(span, model, metadata, cancellation, call);
     }
 
     /**
@@ -179,7 +180,8 @@ public final class TracingLlmClient implements LlmClient {
      * unchanged. Without a parent the delegate receives the caller's sink itself.
      */
     private LlmResponse tracedStreaming(List<Message> messages, List<ToolDefinition> tools, LlmModel modelConfig,
-            LlmCallMetadata metadata, LlmStreamSink sink, Function<LlmStreamSink, LlmResponse> call) {
+            LlmCallMetadata metadata, LlmCancellation cancellation, LlmStreamSink sink,
+            Function<LlmStreamSink, LlmResponse> call) {
         final Optional<SpanContext> parent = SpanContext.readFrom(metadata);
         if (parent.isEmpty()) {
             return call.apply(sink);
@@ -198,7 +200,7 @@ public final class TracingLlmClient implements LlmClient {
             sink.accept(chunk);
         };
         setAttributeSafely(span, STREAMING_ATTR, "true");
-        return record(span, model, metadata, () -> call.apply(timedSink));
+        return record(span, model, metadata, cancellation, () -> call.apply(timedSink));
     }
 
     /**
@@ -222,26 +224,58 @@ public final class TracingLlmClient implements LlmClient {
         return modelConfig.getName().or(delegate::getDefaultModelName).orElseGet(delegate::getProviderName);
     }
 
-    /** Runs {@code call} inside {@code span}, records its outcome and closes the span. */
-    private LlmResponse record(Tracer.Span span, String model, LlmCallMetadata metadata, Supplier<LlmResponse> call) {
+    /**
+     * Runs {@code call} inside {@code span}, records its outcome and closes the span. The call's own result or
+     * exception is what the caller gets: recording it is fail-safe, so a span that throws cannot fail a call that
+     * succeeded or replace the exception of one that failed.
+     *
+     * <p>
+     * An {@link LlmCallCancelledException} ends the span {@code INTERRUPTED} only when {@code cancellation} reports
+     * the cancel was requested; one nobody asked for (a misbehaving client, or an overload that takes no token) is an
+     * ordinary error — the rule {@code DefaultCompactionEngine} applies to the same exception.
+     */
+    private LlmResponse record(Tracer.Span span, String model, LlmCallMetadata metadata, LlmCancellation cancellation,
+            Supplier<LlmResponse> call) {
         try {
             // The usage feature tells calls apart that share a parent — a compaction summary call under an iteration.
-            metadata.getFeature().ifPresent(feature -> span.setAttribute("feature", feature));
+            metadata.getFeature().ifPresent(feature -> setAttributeSafely(span, "feature", feature));
             final LlmResponse response = call.get();
+            recordResponseSafely(span, model, response);
+            return response;
+        } catch (LlmCallCancelledException e) {
+            recordFailureSafely(span, e, cancellation.isCancelled());
+            throw e;
+        } catch (RuntimeException e) {
+            recordFailureSafely(span, e, false);
+            throw e;
+        } finally {
+            span.close();
+        }
+    }
+
+    /** Records a completed call's model, usage and outputs, swallowing a failing span. */
+    private void recordResponseSafely(Tracer.Span span, String model, LlmResponse response) {
+        try {
             span.setModel(model);
             if (response.hasTokenUsage()) {
                 span.setTokenUsage(response.getTokenUsage());
             }
             span.setOutputs(outputsSummary(response));
-            return response;
-        } catch (LlmCallCancelledException e) {
-            span.interrupted();
-            throw e;
         } catch (RuntimeException e) {
-            span.error(e);
-            throw e;
-        } finally {
-            span.close();
+            log.debug("Recording the LLM response on its span failed: {}", e.getMessage());
+        }
+    }
+
+    /** Marks a failed call's span interrupted or errored, swallowing a failing span so the call's exception wins. */
+    private static void recordFailureSafely(Tracer.Span span, RuntimeException failure, boolean requestedCancel) {
+        try {
+            if (requestedCancel) {
+                span.interrupted();
+            } else {
+                span.error(failure);
+            }
+        } catch (RuntimeException e) {
+            log.debug("Recording the LLM failure on its span failed: {}", e.getMessage());
         }
     }
 

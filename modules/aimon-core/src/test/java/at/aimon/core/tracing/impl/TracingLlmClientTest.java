@@ -239,8 +239,8 @@ class TracingLlmClientTest {
     }
 
     @Test
-    @DisplayName("a cancelled call ends INTERRUPTED, not ERROR, and rethrows")
-    void cancelledCallIsInterrupted() {
+    @DisplayName("a cancel nobody requested (no token to cancel) is an ordinary ERROR, and rethrows")
+    void unrequestedCancelIsError() {
         final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
         final LlmClient client = new TracingLlmClient(
                 new RecordingLlmClient(new LlmCallCancelledException("cancelled")), tracer(store));
@@ -248,8 +248,44 @@ class TracingLlmClientTest {
         assertThatThrownBy(() -> client.sendMessage("sys", MESSAGES, TOOLS, MODEL, enrichedMetadata()))
                 .isInstanceOf(LlmCallCancelledException.class);
 
-        final TraceSpan span = store.byTrace("span-root").stream().findFirst().orElseThrow();
-        assertThat(span.getStatus()).isEqualTo(SpanStatus.INTERRUPTED);
+        assertThat(store.byTrace("span-root").get(0).getStatus()).isEqualTo(SpanStatus.ERROR);
+    }
+
+    @Test
+    @DisplayName("a cancel the token did not request is ERROR even on the cancellation-aware overload")
+    void cancelWithUncancelledTokenIsError() {
+        final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+        assertThatThrownBy(
+                () -> new TracingLlmClient(new RecordingLlmClient(new LlmCallCancelledException("cancelled")),
+                        tracer(store)).sendMessage(SystemPromptParts.empty(), MESSAGES, TOOLS, MODEL,
+                                enrichedMetadata(), LlmCancellation.none()))
+                .isInstanceOf(LlmCallCancelledException.class);
+        assertThat(store.byTrace("span-root").get(0).getStatus()).isEqualTo(SpanStatus.ERROR);
+    }
+
+    @Test
+    @DisplayName("a span whose setters throw neither fails a successful call nor replaces a failed call's exception")
+    void throwingSettersDoNotChangeTheOutcome() {
+        final Tracer throwingSpans = new Tracer() {
+            @Override
+            public Span startRoot(String sessionId, SpanType type, String name, Map<String, Object> inputs) {
+                throw new IllegalStateException("tracer down");
+            }
+
+            @Override
+            public Span startChild(SpanContext parent, SpanType type, String name, Map<String, Object> inputs) {
+                return new ThrowingAttributeSpan(Tracer.noop().startChild(parent, type, name, inputs));
+            }
+        };
+        final LlmCallMetadata withFeature = enrichedMetadata()
+                .withDefaults(LlmCallMetadata.builder().feature("f").build());
+
+        assertThat(new TracingLlmClient(new RecordingLlmClient(LlmResponse.text("ok")), throwingSpans)
+                .sendMessage("sys", MESSAGES, TOOLS, MODEL, withFeature).getTextContent()).isEqualTo("ok");
+        assertThatThrownBy(
+                () -> new TracingLlmClient(new RecordingLlmClient(new IllegalStateException("api down")), throwingSpans)
+                        .sendMessage("sys", MESSAGES, TOOLS, MODEL, withFeature))
+                .hasMessage("api down");
     }
 
     @Test
@@ -319,7 +355,7 @@ class TracingLlmClientTest {
                 new LlmCallCancelledException("cancelled")), tracer(store))
                 .sendMessageStreaming(SystemPromptParts.empty(), MESSAGES, TOOLS, MODEL, enrichedMetadata(),
                         LlmStreamingOptions.defaults(), chunk -> {
-                        }, LlmCancellation.none()))
+                        }, CANCELLED))
                 .isInstanceOf(LlmCallCancelledException.class);
         final TraceSpan cancelled = store.byTrace("span-root").get(0);
         assertThat(cancelled.getStatus()).isEqualTo(SpanStatus.INTERRUPTED);
@@ -361,18 +397,30 @@ class TracingLlmClientTest {
     }
 
     @Test
-    @DisplayName("the cancellation-aware sendMessage overload also ends a cancelled call INTERRUPTED")
+    @DisplayName("a call whose token was cancelled ends INTERRUPTED, not ERROR, and rethrows")
     void cancellationOverloadIsInterrupted() {
         final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
         assertThatThrownBy(
                 () -> new TracingLlmClient(new RecordingLlmClient(new LlmCallCancelledException("cancelled")),
-                        tracer(store)).sendMessage(SystemPromptParts.empty(), MESSAGES, TOOLS, MODEL,
-                                enrichedMetadata(), LlmCancellation.none()))
+                        tracer(store))
+                        .sendMessage(SystemPromptParts.empty(), MESSAGES, TOOLS, MODEL, enrichedMetadata(), CANCELLED))
                 .isInstanceOf(LlmCallCancelledException.class);
         assertThat(store.byTrace("span-root").get(0).getStatus()).isEqualTo(SpanStatus.INTERRUPTED);
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────────
+
+    /** A token whose cancel was requested. */
+    private static final LlmCancellation CANCELLED = new LlmCancellation() {
+        @Override
+        public boolean isCancelled() {
+            return true;
+        }
+
+        @Override
+        public void onCancel(Runnable abort) {
+        }
+    };
 
     private static LlmStreamChunk streamEnd(int index) {
         return LlmStreamChunk.streamEnd(index, TokenUsage.of(1, 1, 2), Optional.empty());
@@ -499,7 +547,7 @@ class TracingLlmClientTest {
         }
     }
 
-    /** A span whose attribute setter throws, standing in for a misbehaving custom tracer. */
+    /** A span whose setters and error call throw, standing in for a misbehaving custom tracer. */
     private static final class ThrowingAttributeSpan extends ForwardingSpan {
         ThrowingAttributeSpan(Tracer.Span delegate) {
             super(delegate);
@@ -508,6 +556,21 @@ class TracingLlmClientTest {
         @Override
         public void setAttribute(String key, String value) {
             throw new IllegalStateException("attribute store down");
+        }
+
+        @Override
+        public void setModel(String model) {
+            throw new IllegalStateException("span store down");
+        }
+
+        @Override
+        public void setOutputs(Object outputs) {
+            throw new IllegalStateException("span store down");
+        }
+
+        @Override
+        public void error(Throwable t) {
+            throw new IllegalStateException("span store down");
         }
     }
 
