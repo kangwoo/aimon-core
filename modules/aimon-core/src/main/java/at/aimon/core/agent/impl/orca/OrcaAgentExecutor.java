@@ -2104,10 +2104,13 @@ public class OrcaAgentExecutor
             // or addMessage() must not abort the turn or discard the co-drained siblings. Log and skip just the bad
             // one.
             try {
+                // Read before the message is added, so an entry whose metadata cannot be read is skipped whole
+                // rather than injected and then logged as skipped.
+                final Optional<String> notifiedTaskId = SubagentTaskCompleted.notifiedTaskId(queued.getMetadata());
                 final String wrapped = SystemReminderFormatter.wrap(MID_TURN_INJECTION_KEY, queued.getInputText());
                 scope.transcriptBuffer.addMessage(Message.user(wrapped));
                 injected++;
-                SubagentTaskCompleted.notifiedTaskId(queued.getMetadata()).ifPresent(injectedTaskIds::add);
+                notifiedTaskId.ifPresent(injectedTaskIds::add);
                 log.debug("Injected queued user message uuid={} priority={} into session {}", queued.getUuid(),
                         queued.getPriority(), scope.transcriptBuffer.getSessionId().value());
             } catch (RuntimeException e) {

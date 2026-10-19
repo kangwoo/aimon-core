@@ -187,8 +187,11 @@ class OrcaAgentExecutorLoopTransitionTest {
             final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
             final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
 
+            // Three iterations: the notifications drain at iteration 1's tail; iteration 2's tail drains nothing, so
+            // iteration 3 must not repeat them.
             final RecordingLlmClient stub = new RecordingLlmClient();
             stub.enqueue(LlmResponse.of("", List.of(ToolUse.of("call-1", "Echo", Map.of())), TokenUsage.of(5, 3, 8)));
+            stub.enqueue(LlmResponse.of("", List.of(ToolUse.of("call-2", "Echo", Map.of())), TokenUsage.of(5, 3, 8)));
             stub.enqueue(LlmResponse.text("done"));
 
             final DefaultToolRegistry toolRegistry = new DefaultToolRegistry();
@@ -220,6 +223,8 @@ class OrcaAgentExecutorLoopTransitionTest {
                     .doesNotContainKey(OrcaAgentExecutor.RECEIVED_SUBAGENT_TASK_IDS_ATTR);
             assertThat(iterationSpan(store, "conv-lt-notified", 2).getAttributes())
                     .containsEntry(OrcaAgentExecutor.RECEIVED_SUBAGENT_TASK_IDS_ATTR, "t1,t2");
+            assertThat(iterationSpan(store, "conv-lt-notified", 3).getAttributes())
+                    .doesNotContainKey(OrcaAgentExecutor.RECEIVED_SUBAGENT_TASK_IDS_ATTR);
         }
     }
 
