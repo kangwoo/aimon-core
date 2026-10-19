@@ -7,7 +7,7 @@ Central is versioned independently).
 
 ## [Unreleased]
 
-### Changed (behaviour change): the session log is written as version 2 by default
+### Changed (behaviour change): the session log is written as version 2 by default (#286)
 
 Every assembly now writes the session log as version 2 unless told otherwise: `SessionSpec.logWriteFormat`, Spring
 `aimon.session.log-write-format`, the CLI's `cli.sessionLogWriteFormat`,
