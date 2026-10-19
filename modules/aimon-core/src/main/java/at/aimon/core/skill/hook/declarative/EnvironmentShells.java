@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
+import at.aimon.core.shell.ShellFeature;
 import at.aimon.core.shell.VirtualShell;
 
 /**
@@ -62,5 +63,25 @@ final class EnvironmentShells {
                     "the environment gave no shell (" + ShellActionRunner.failureDetail(e) + ")");
         }
         return body.apply(shell);
+    }
+
+    /**
+     * Whether the shell declares a feature. A {@code supports} that throws &mdash; a shell compiled against an older
+     * {@link ShellFeature} with an exhaustive {@code switch} &mdash; is read as {@code false}, with a WARN.
+     *
+     * @param shell
+     *            the shell to ask (never null)
+     * @param feature
+     *            the feature (never null)
+     * @return {@code true} only when the shell answered that it supports the feature
+     */
+    static boolean declares(VirtualShell shell, ShellFeature feature) {
+        try {
+            return shell.supports(feature);
+        } catch (RuntimeException | LinkageError e) {
+            log.warn("The environment's shell ({}) could not say whether it supports {}: {}",
+                    shell.getClass().getName(), feature, e.toString());
+            return false;
+        }
     }
 }

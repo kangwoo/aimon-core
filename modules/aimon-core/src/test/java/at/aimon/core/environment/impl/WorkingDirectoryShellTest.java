@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.shell.ExecutionOptions;
+import at.aimon.core.shell.RunDirectory;
 import at.aimon.core.shell.ShellCommand;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.ShellFeature;
@@ -33,6 +34,18 @@ class WorkingDirectoryShellTest {
         assertThat(delegate.lastOptions.isHook()).isTrue();
         assertThat(delegate.lastOptions.isBackground()).isTrue();
         assertThat(branch).isDirectory();
+    }
+
+    @Test
+    @DisplayName("Applying the branch working directory keeps the run directory (EE-109)")
+    void execute_appliesWorkingDirectoryAndKeepsTheRunDirectory() throws Exception {
+        RecordingShell delegate = new RecordingShell();
+        WorkingDirectoryShell shell = new WorkingDirectoryShell(delegate, tempDir.resolve("branch"));
+        RunDirectory run = RunDirectory.builder().variable("AIMON_SKILL_DIR").file("a", new byte[0]).build();
+
+        shell.execute(() -> "true", ExecutionOptions.builder().hook(true).runDirectory(run).build());
+
+        assertThat(delegate.lastOptions.getRunDirectory()).containsSame(run);
     }
 
     @Test

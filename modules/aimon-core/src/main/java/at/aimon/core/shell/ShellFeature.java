@@ -56,5 +56,35 @@ public enum ShellFeature {
      * the flag, so a caller that must not run a command from the model's shell state &mdash; the configured
      * {@code hooks.json} path &mdash; refuses to run on it.
      */
-    ISOLATED_EXECUTION
+    ISOLATED_EXECUTION,
+
+    /**
+     * Placing a {@linkplain ExecutionOptions#getRunDirectory() run directory}: the files a hook runs from, handed to
+     * the shell as bytes with the command rather than staged ahead of it (EE-109).
+     *
+     * <p>
+     * The contract, for a shell that declares it:
+     * <ol>
+     * <li>Before the command starts, create a directory that did not exist before, with permissions as tight as the
+     * environment allows, outside the paths the model's file tools are given where the environment has such a
+     * place.</li>
+     * <li>Write exactly {@link RunDirectory#getPaths()} with their bytes. Two paths the filesystem would keep as one
+     * file are an error, and the command is not run.</li>
+     * <li>If the bytes travelled through anything the agent can write (an upload), check the placed files against
+     * digests that did not travel that way, after placing them and before the command starts. On a mismatch, do not
+     * run the command and throw {@link at.aimon.core.shell.exception.RunDirectoryIntegrityException}.</li>
+     * <li>Export the directory's absolute path in {@link RunDirectory#getVariable()}; it wins over the same name in
+     * {@link ExecutionOptions#getEnvironment()}.</li>
+     * <li>Remove the directory after the command ends, on every outcome. A failure to remove it is logged, not the
+     * command's failure.</li>
+     * <li>Independent of {@link ExecutionOptions#isIsolated()} and {@link ExecutionOptions#isHook()}.</li>
+     * </ol>
+     *
+     * <p>
+     * A shell that does not declare the feature ignores the option, so a caller that needs the files asks
+     * {@link VirtualShell#supports(ShellFeature)} first and does not run the command without it. What this closes is
+     * a copy that outlives the run; a process running as the same user can still reach the directory while the
+     * command runs.
+     */
+    RUN_DIRECTORY
 }

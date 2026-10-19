@@ -163,13 +163,8 @@ public abstract class AbstractDeclarativeShellHook<C extends HookContext> implem
         try {
             contributeEnv(context, env);
             final HookContext shellContext = ignoresInterrupt() ? new SignalDetachedHookContext(context) : context;
-            final Optional<ShellHookOutcome> unstaged = SkillHookDirectory.export(env, shellContext, this,
-                    shellExecutor);
-            if (unstaged.isPresent()) {
-                return unstaged.get();
-            }
-            return shellExecutor.run(action, shellContext, env,
-                    ShellHookPayload.render(env, payloadToolInput(context).orElse(null)));
+            return SkillHookDirectory.run(shellExecutor, action, shellContext, env,
+                    ShellHookPayload.render(env, payloadToolInput(context).orElse(null)), this);
         } catch (RuntimeException | LinkageError e) {
             log.warn("Skill '{}' {} shell hook threw instead of reporting an outcome", skillName, eventName, e);
             return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.EXECUTION_FAILED, ShellActionRunner.failureDetail(e));

@@ -1056,8 +1056,8 @@ class LocalExecutionEnvironmentProviderStagingTest {
     }
 
     @Test
-    @DisplayName("EE-37: an intact copy left by an earlier process is reused without copying, and verified only once")
-    void intactCopyReusedAndVerifiedOnce() throws Exception {
+    @DisplayName("EE-37/EE-109: an intact copy left by an earlier process is reused without copying, and verified on every call")
+    void intactCopyReusedAndVerifiedOnEveryCall() throws Exception {
         final StagedResource resource = scan();
         final String first = ownedEnv().stage(resource);
 
@@ -1084,7 +1084,8 @@ class LocalExecutionEnvironmentProviderStagingTest {
 
         reads.clear();
         assertThat(restarted.stage(resource)).isEqualTo(first);
-        assertThat(reads).as("once per environment").isEmpty();
+        // EE-109: an earlier check is no reason to trust the copy now; the agent's shell can rewrite it in between.
+        assertThat(reads).as("checked again on the second call").isNotEmpty();
         assertThat(writes).isEmpty();
     }
 

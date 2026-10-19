@@ -84,7 +84,8 @@ class DeclarativePreToolHookTest {
     }
 
     @ParameterizedTest
-    @EnumSource(value = ShellHookOutcome.Unrun.class, mode = EnumSource.Mode.EXCLUDE, names = "CANCELLED")
+    @EnumSource(value = ShellHookOutcome.Unrun.class, mode = EnumSource.Mode.EXCLUDE, names = {"CANCELLED",
+            "HOOK_FILES_TAMPERED"})
     void execute_shellCommandThatCouldNotRun_blocksWithTheCause(ShellHookOutcome.Unrun cause) {
         DeclarativePreToolHook hook = new DeclarativePreToolHook("my-skill", NameOnlyPredicate.ANY,
                 new ShellAction("guard.sh --token s3cret", Duration.ofSeconds(1)),
@@ -100,7 +101,8 @@ class DeclarativePreToolHookTest {
     }
 
     @ParameterizedTest
-    @EnumSource(value = ShellHookOutcome.Unrun.class, mode = EnumSource.Mode.EXCLUDE, names = "CANCELLED")
+    @EnumSource(value = ShellHookOutcome.Unrun.class, mode = EnumSource.Mode.EXCLUDE, names = {"CANCELLED",
+            "HOOK_FILES_TAMPERED"})
     void execute_failOpen_letsAShellCommandThatCouldNotRunPass(ShellHookOutcome.Unrun cause) {
         DeclarativePreToolHook hook = new DeclarativePreToolHook("my-skill", NameOnlyPredicate.ANY,
                 new ShellAction("audit.sh", Duration.ofSeconds(1)),
@@ -108,6 +110,23 @@ class DeclarativePreToolHookTest {
                 DeclarativeHookOptions.builder().failOpen(true).build());
 
         assertThat(hook.execute(contextFor("Bash")).getStatus()).isEqualTo(HookStatus.SUCCESS);
+    }
+
+    @Test
+    void execute_hookFilesTampered_blocksEvenWithFailOpen() {
+        // EE-109: the files were rewritten between their check and the run. That is an attack, not a guard that could
+        // not run, so failOpen does not open it.
+        DeclarativePreToolHook hook = new DeclarativePreToolHook("my-skill", NameOnlyPredicate.ANY,
+                new ShellAction("guard.sh --token s3cret", Duration.ofSeconds(1)),
+                fixedOutcome(ShellHookOutcome.notRun(ShellHookOutcome.Unrun.HOOK_FILES_TAMPERED, "")), null, null,
+                Map.of(), DeclarativeHookOptions.builder().failOpen(true).build());
+
+        HookResult result = hook.execute(contextFor("Bash"));
+
+        assertThat(result.getStatus()).isEqualTo(HookStatus.BLOCKED);
+        assertThat(result.getFeedback().orElseThrow()).contains("hook 'my-skill' (preTool)")
+                .contains("the hook's files changed before the run").doesNotContain("failOpen")
+                .doesNotContain("s3cret");
     }
 
     @Test

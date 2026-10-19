@@ -374,8 +374,8 @@ class HooksJsonExecutionEnvironmentIntegrationTest {
     }
 
     @Test
-    @DisplayName("AIMON_HOOK_DIR under default placement is a copy staged in the environment")
-    void hookDirIsStagedIntoTheEnvironment() {
+    @DisplayName("AIMON_HOOK_DIR under default placement is a run directory outside the workspace, gone after the run")
+    void hookDirIsARunDirectoryOutsideTheWorkspace() {
         support.seedNodeFile("agent-hook-dir", ".aimon/hooks/guard.sh", SCRIPT);
         final OrcaRuntimeItSupport.Node node = node("agent-hook-dir",
                 preTool(command("bash \"$AIMON_HOOK_DIR/guard.sh\"")));
@@ -384,10 +384,14 @@ class HooksJsonExecutionEnvironmentIntegrationTest {
 
         // Denied by the script itself, not by a 127.
         assertThat(seen).noneMatch(observation -> observation.contains("Todo list updated"));
-        final Path self = real(Path.of(selfReportedIn(seen)));
-        assertThat(self).startsWith(real(node.root()).resolve(LocalExecutionEnvironmentProvider.DEFAULT_STAGING_ROOT)
-                .resolve("hooks-project"));
+        // EE-109: the bytes were handed to the shell for this run; no copy was staged where the agent can write.
+        final Path self = Path.of(selfReportedIn(seen));
         assertThat(self.getFileName()).hasToString("guard.sh");
+        assertThat(self.getParent().getFileName().toString()).startsWith("aimon-run-");
+        assertThat(self.toAbsolutePath().startsWith(real(node.root()))).isFalse();
+        assertThat(self.getParent()).doesNotExist();
+        assertThat(node.root().resolve(LocalExecutionEnvironmentProvider.DEFAULT_STAGING_ROOT).resolve("hooks-project"))
+                .doesNotExist();
     }
 
     @Test

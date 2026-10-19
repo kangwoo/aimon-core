@@ -1,7 +1,12 @@
 package at.aimon.core.skill.hook.declarative;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.StagedResource;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.execution.HookContext;
 import at.aimon.core.skill.hook.action.ShellAction;
@@ -112,4 +117,46 @@ public interface ShellActionExecutor {
      */
     ShellHookOutcome run(ShellAction action, HookContext context, Map<String, String> environmentOverrides,
             String stdinPayload);
+
+    /**
+     * Runs a skill-declared hook's action with the declaring skill's directory in
+     * {@link SkillHookEnv#AIMON_SKILL_DIR}. The hook decides <em>whether</em> there is a directory; the executor
+     * decides how its value reaches the shell. Same contract as
+     * {@link #run(ShellAction, HookContext, Map, String)} otherwise: never throws.
+     *
+     * <p>
+     * The default stages the skill into the context's execution environment and exports the path it returned, then
+     * runs the four-argument {@code run}: what every executor did before EE-109, and still verified on every call
+     * ({@link ExecutionEnvironment#stage}). An executor that cannot be given a directory at all must not run the
+     * command without the variable: when the skill cannot be staged the command is not run.
+     * {@link DefaultShellActionExecutor} overrides this to hand the skill's bytes to the shell as a run directory, so
+     * no staged copy stands between them and the run.
+     *
+     * @param action
+     *            The action to execute (must not be null)
+     * @param context
+     *            The context of the hook firing the action (must not be null)
+     * @param environmentOverrides
+     *            Extra environment variables provided by the firing hook (never null; may be empty)
+     * @param stdinPayload
+     *            JSON document to feed the command on standard input, or null to leave stdin empty
+     * @param skillDirectory
+     *            the declaring skill's resource, or empty when the command gets no {@code AIMON_SKILL_DIR}
+     * @return what the command did (never null); {@link ShellHookOutcome#notRun} when no status was produced
+     */
+    default ShellHookOutcome run(ShellAction action, HookContext context, Map<String, String> environmentOverrides,
+            String stdinPayload, Optional<StagedResource> skillDirectory) {
+        Objects.requireNonNull(skillDirectory, "skillDirectory cannot be null");
+        final Optional<ExecutionEnvironment> environment = context.getExecutionEnvironment();
+        if (skillDirectory.isEmpty() || environment.isEmpty()) {
+            return run(action, context, environmentOverrides, stdinPayload);
+        }
+        final Map<String, String> env = new LinkedHashMap<>(environmentOverrides);
+        final Optional<ShellHookOutcome> unstaged = SkillHookDirectory.stageInto(env, environment.get(),
+                skillDirectory.get());
+        if (unstaged.isPresent()) {
+            return unstaged.get();
+        }
+        return run(action, context, env, stdinPayload);
+    }
 }

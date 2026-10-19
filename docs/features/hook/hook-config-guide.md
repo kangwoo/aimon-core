@@ -305,7 +305,7 @@ WARN 이 아니라 **시작 실패**다(`… is invalid: unknown event 'preTol' 
   포함)와 `cd` 를 보지 않고, 환경의 루트에서 환경의 기본 변수로 시작한다 — 정책 훅을 에이전트가 조종할 수 없게. 코어는 `PATH` 를
   정하지 않는다(로컬은 JVM 의 환경, 샌드박스는 프로파일의 것). 셸이 그런 실행을 지원한다고 밝히지 않으면(`ISOLATED_EXECUTION`)
   커맨드는 **돌지 않는다** — 가드 이벤트에서는 `failOpen` 이 아닌 한 막는다. 그 경우 제공자를 올리거나 `"shell": "host"` 를 쓴다.
-  aimon-sandbox 의 지원은 [kangwoo/aimon-sandbox#31](https://github.com/kangwoo/aimon-sandbox/issues/31) 에서 다룬다.
+  aimon-sandbox 는 `main` `553be78` 부터 지원한다([kangwoo/aimon-sandbox#31](https://github.com/kangwoo/aimon-sandbox/issues/31)).
 - **실행이 없는 발화.** 에이전트 단위 워크플로 러너(백그라운드 `Workflow`)가 띄운 SubAgent 의 `subagentStart` 는 뒤에 실행이
   없으므로 `"shell"` 이 없으면 호스트에서 돈다. 그 SubAgent 가 루프를 돌았다면 `subagentStop` 은 SubAgent 자신의 환경에서 돈다.
   실행이 없다는 판단은 **스폰한 쪽에 환경이 있었는지**로 한다. 그래서 환경을 싣지 않은 `ToolContext` 를 직접 만들어 `Task` 를
@@ -320,11 +320,13 @@ WARN 이 아니라 **시작 실패**다(`… is invalid: unknown event 'preTol' 
   재발화는 실행 밖에서 일어나기 때문이다. 설정을 적용할 때마다(시작할 때와 핫 리로드마다) 그렇게 한다는 WARN 이 다시 남고,
   `"shell": "host"` 를 적으면 사라진다.
 - **스크립트 — `AIMON_HOOK_DIR`.** 커맨드 문자열에 `AIMON_HOOK_DIR` 가 있으면 그 변수가 선언한 층의 `hooks/` 디렉터리를 가리킨다
-  (사용자 층 `~/.aimon/hooks/`, 프로젝트 · 로컬 층 `<project>/.aimon/hooks/`). 호스트에서 돌면 그 경로 그대로이고, 환경에서
-  돌면 그 환경에 스테이징한 사본의 경로다 — 그래서 `bash "$AIMON_HOOK_DIR/guard.sh"` 는 어느 배치에서나 같다. 커맨드가 그 변수를
-  쓰는데 `hooks/` 가 없으면 그 handler 는 적용할 수 없는 항목이다(가드 이벤트에서는 시작 실패). 스테이징이 실패하면 커맨드를
-  돌리지 않는다. 디렉터리는 발화마다 다시 읽으므로 `guard.sh` 를 고치면 다음 발화부터 새 내용이 돈다. 고칠 때마다 사본이 하나씩
-  생기고, 지난 사본(`.aimon-staged/hooks-*`)은 제공자의 다음 시작 스윕까지 남는다.
+  (사용자 층 `~/.aimon/hooks/`, 프로젝트 · 로컬 층 `<project>/.aimon/hooks/`). 호스트에서 돌면 그 경로 그대로다. 환경에서 돌면
+  **그 발화만의 실행 디렉터리**다 — 코어가 발화 때 읽어 해시한 `hooks/` 의 바이트를 셸이 새 디렉터리에 두고(로컬 제공자는
+  `java.io.tmpdir` 아래 `aimon-run-*`, 0700), 커맨드가 끝나면 지운다. 그래서 `bash "$AIMON_HOOK_DIR/guard.sh"` 는 어느 배치에서나
+  같다. 워크스페이스에는 아무것도 스테이징하지 않는다(`.aimon-staged/hooks-*` 사본은 더 생기지 않는다). 그 디렉터리는 발화 사이에
+  남지 않으므로, 스크립트가 자기 옆에 쓴 파일은 다음 발화에 없다. 커맨드가 그 변수를 쓰는데 `hooks/` 가 없으면 그 handler 는 적용할
+  수 없는 항목이다(가드 이벤트에서는 시작 실패). 읽지 못하거나(4 MiB 상한, 읽을 수 없는 파일) 셸이 실행 디렉터리를 지원하지 않으면
+  (`RUN_DIRECTORY`) 커맨드를 돌리지 않는다. 디렉터리는 발화마다 다시 읽으므로 `guard.sh` 를 고치면 다음 발화부터 새 내용이 돈다.
 - **호스트 경로를 쓴 커맨드.** `~/.aimon/…` 같은 호스트 경로는 샌드박스에 없을 수 있다. 환경에 놓인 커맨드가 그런 경로를 쓰고
   셸이 시작하지 못하면(exit 126 · 127) 거부 사유에 그 경로를 짚는 안내가 붙는다 — `$AIMON_HOOK_DIR/…` 나 `"shell": "host"` 를 쓴다.
   **인터프리터로 띄운 스크립트에는 이 안내가 붙지 않는다.** `python3 ~/.aimon/guard.py` 처럼 쓰면 파일을 찾지 못한 것은 셸이
@@ -332,15 +334,22 @@ WARN 이 아니라 **시작 실패**다(`… is invalid: unknown event 'preTol' 
   는 **veto** 로 읽히므로 일치하는 도구 호출이 모두 거부되고(사유는 인터프리터의 stderr), 판정을 낸 것이라 `failOpen` 으로도
   열리지 않는다. 그런 커맨드는 처음부터 `python3 "$AIMON_HOOK_DIR/guard.py"` 로 쓰거나 `"shell": "host"` 를 적는다.
 
-> ⚠️ **스테이징한 스크립트는 에이전트의 손이 닿는다.** 사본은 워크스페이스의 `.aimon-staged/` 에 놓이고, 사용자 층의
-> `~/.aimon/hooks/` 도 거기로 복사되어 모델의 파일 도구가 읽을 수 있다 — 훅 스크립트 옆에 비밀을 두지 않는다. 그리고 스테이징
-> 계층은 사본의 **마커를 첫 확인 뒤로 믿는다.** 발화마다 다시 스캔하는 것은 원본의 수정을 잡을 뿐이라, 에이전트가 셸로 사본을
-> 고치면 그 사본이 계속 돈다(백로그 EE-109). 변조를 막는 배치는 `"shell": "host"` 하나다.
+> ⚠️ **환경 안의 훅은 실행 *전의* 변조를 막을 뿐, 실행 *중의* 개입은 막지 않는다.** 환경 안의 모든 명령은 에이전트의 셸과
+> 같은 uid 로 돈다. 그래서 훅이 도는 동안 에이전트는 실행 디렉터리를 고치거나(셸의 확인과 인터프리터가 파일을 여는 사이,
+> 그리고 뒤따르는 `source` 의 창은 실행마다 남는다), 훅 프로세스의 입출력에 끼어들거나, 신호를 보내 timeout · 실행 실패로
+> 만들 수 있다(`failOpen` 가드는 그때 통과한다). 정책 판단에 워크스페이스 파일을 믿지 않는다 — 에이전트가 쓸 수 있다.
+> 에이전트의 셸이 샌드박스에서 돈다면, 그 손이 닿지 않는 배치는 `"shell": "host"` 하나다. **로컬 제공자에서는 어느 배치도
+> 아니다** — 에이전트의 `Bash` 가 호스트 사용자 그 자체라 `~/.aimon/hooks/guard.sh`, 핫 리로드되는 `<project>/.aimon/hooks.json`
+> 까지 고칠 수 있다. 진짜 경계에 필요한 조건은 백로그 EE-113 에 있다. 샌드박스에서 `AIMON_HOOK_DIR` 을 쓰는 핸들러는
+> aimon-sandbox 가 `RUN_DIRECTORY` 를 지원할 때까지(EE-114) 돌지 않으므로, 코어와 aimon-sandbox 를 함께 올리거나 그 핸들러를 먼저
+> `"shell": "host"` 로 옮긴다. 사용자 층의 `~/.aimon/hooks/` 는 그 실행 디렉터리에서 훅 프로세스가 읽을 수 있다 — 훅 스크립트 옆에
+> 비밀을 두지 않는다.
 
 스킬 frontmatter 가 선언한 훅의 `shell` 액션은 다르다 — 그것은 스킬 자신의 코드라 격리하지 않고, 그 스킬의 도구가 도는 셸 상태에서
-시작한다. 실행 밖 이벤트에는 선언할 수 없다. 스킬 훅은 `AIMON_SKILL_DIR`(그 스킬 디렉터리를 훅이 도는 환경에 스테이징한 경로)를
-받는다. `hooks.json` 의 커맨드에는 스킬 디렉터리가 없으므로 그 변수가 **설정되지 않는다** — 빈 문자열이 아니라 unset 이고, stdin
-payload 에도 `skill_dir` 필드가 없다.
+시작한다. 실행 밖 이벤트에는 선언할 수 없다. 스킬 훅은 `AIMON_SKILL_DIR` 를 받는다 — 셸이 지원하면 로드한 버전의 스킬 바이트를
+둔 그 발화만의 실행 디렉터리이고, 지원하지 않거나 스킬이 4 MiB 를 넘으면 훅이 도는 환경에 스테이징한(매 발화 검증하는) 사본의
+경로다. stdin payload 에는 `skill_dir` 필드가 없다(값은 셸이 정한다). `hooks.json` 의 커맨드에는 스킬 디렉터리가 없으므로 그
+변수가 **설정되지 않는다** — 빈 문자열이 아니라 unset 이다.
 
 **입력 전달.** 커맨드 문자열은 **템플릿 렌더링되지 않는다** — 셸에 verbatim 으로 전달되므로
 `${tool_input.x}` 를 커맨드에 써도 placeholder 가 아니라 (비어 있는) 셸 변수일 뿐이다.
@@ -587,7 +596,8 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 | `command` 가 exit 2 | 판정: 거부 (stderr 가 사유) | **막는다** | **막는다** |
 | `command` 가 exit 126 · 127 (실행할 수 없음 · 찾지 못함) | 돌리지 못함 | **막는다** | 진행 (WARN) |
 | `command` 가 그 밖의 종료 코드 (1 · 3 · 130 …) | 스크립트 오작동 | 진행 (WARN) | 진행 (WARN) |
-| `command` 가 종료 코드를 내지 못함 — timeout, 셸 실패, 실행 환경 없음 · 사용 불가, 스킬 디렉터리 · `hooks/` 디렉터리 스테이징 실패, 격리된 실행을 지원하지 않는 환경의 셸, 셸을 지원하지 않는 실행기, 실행기가 던진 예외 | 돌리지 못함 | **막는다** | 진행 (WARN) |
+| `command` 가 종료 코드를 내지 못함 — timeout, 셸 실패, 실행 환경 없음 · 사용 불가, 스킬 디렉터리 스테이징 실패 · `hooks/` 디렉터리 읽기 실패, 격리된 실행이나 실행 디렉터리를 지원하지 않는 환경의 셸, 셸을 지원하지 않는 실행기, 실행기가 던진 예외 | 돌리지 못함 | **막는다** | 진행 (WARN) |
+| 셸이 실행 디렉터리에 둔 훅 파일이 받은 바이트와 달라 `command` 를 시작하지 않음 (`HOOK_FILES_TAMPERED`) | 변조 | **막는다** | **막는다** — 판단하지 못한 것이 아니라 변조의 증거다 |
 | `deny` handler | 판정: 거부 | **막는다** | **막는다** — `deny` 에서는 `failOpen` 을 읽지 않는다(WARN). 아래 "이벤트 정책을 따른다" 세 행에서도 `deny` handler 는 기본 열대로 막는다 |
 | `http` · `mcp` 가 거부로 답함 (`decision: deny` · `block`; `http` 는 `permissionDecision: deny`, `continue: false` 도) | 판정: 거부 (거부한 필드의 짝이 사유) | **막는다** | **막는다** |
 | `http` 가 `permissionDecision: ask` 로 답함 | 판정: 묻는다 | `AskPromptHandler` 의 답대로 — 기본은 **막는다** | 같다 — 판정이므로 `failOpen` 과 무관 |
@@ -602,7 +612,7 @@ MCP 서버의 tool 을 호출한다. `McpToolAction` + `McpActionExecutor`.
 `Blocked: guard hook '<이름>' (<이벤트>) could not run its command — <원인>. A guard that cannot decide blocks
 (fail-closed).` 꼴이고(`http` · `mcp` 는 `could not get a verdict from its http call` · `… its mcp call`), 커맨드 문자열 ·
 셸의 stderr · URL · 헤더 · 응답 본문 · 예외 메시지 · `failOpen` 이라는 이름은 싣지 않는다 — 그 사유를 읽는 쪽이 가드가
-제약하는 당사자이기 때문이다. 메시지가 실리는 원인은 둘뿐이다: 스킬 디렉터리 · `hooks/` 디렉터리 스테이징 실패와 실행 환경 사용 불가
+제약하는 당사자이기 때문이다. 메시지가 실리는 원인은 둘뿐이다: 스킬 디렉터리 · `hooks/` 디렉터리를 주지 못함과 실행 환경 사용 불가
 (`execution environment unavailable: …`). 둘 다 같은 실패에서 도구 호출(`Skill`, `Bash` · `Read` 등)이 모델에게 이미
 돌려주는 문장 그대로다. `http` · `mcp` handler 는 `preTool` 과 `postTool` 에만 둘 수 있으므로, 이 표에서 그 네 행이
 해당하는 가드 이벤트는 `preTool` 하나다.
@@ -1076,7 +1086,9 @@ fork 가 없어 발화하지 않는다. 전체 규칙은 [`aimon-skill-extension
 | 도구가 `Blocked: guard hook '...' could not get a verdict from its http call` (또는 `mcp call`) 로 막힘 | `preTool` 의 `http` · `mcp` handler 가 판정을 받지 못했다. 사유의 원인을 본다 — `action executor not wired`(호스트가 실행기를 배선하지 않았다 — `aimon-cli` 는 배선하므로 임베딩 호스트의 경우다), `call failed: MCP server not registered`(`server` 가 설정된 MCP 서버 이름이 아니다), `call failed: HTTP 307`(리다이렉트는 따라가지 않는다), `call failed: HTTP 503` · `call failed: ConnectException`(정책 서버), `timed out`, `response could not be read`(`decision` · `permissionDecision` 값이 아는 값이 아니다 — [http](#http) 의 표). 관찰용 handler 라면 `"failOpen": true`. |
 | 도구가 `… could not run its command — the environment's shell cannot run an isolated command` 로 막힘 | 실행 환경의 셸이 격리된 실행(`ISOLATED_EXECUTION`)을 지원한다고 밝히지 않았다 — 지원하지 않는 샌드박스 제공자에서 난다. 제공자를 올리거나, 그 handler 에 `"shell": "host"` 를 적는다. [어디서 도는가](#command). |
 | 거부 사유에 `the command names host path …, which this execution environment may not have` 가 붙음 | 환경에 놓인 커맨드가 `~/.aimon/…` 같은 호스트 경로를 쓰는데 그 환경의 셸이 시작하지 못했다. 스크립트를 `hooks/` 에 두고 `$AIMON_HOOK_DIR/…` 로 부르거나, `"shell": "host"`. |
-| 거부 사유가 `hook script directory could not be staged: …` | `AIMON_HOOK_DIR` 의 `hooks/` 를 그 환경에 스테이징하지 못했다(크기 상한, 읽을 수 없는 파일, 환경 사용 불가). 사유의 원인을 고친다. |
+| 거부 사유가 `hook script directory could not be staged: …` | `AIMON_HOOK_DIR` 의 `hooks/` 를 그 발화에 읽지 못했다(4 MiB 상한 — 큰 파일은 `.stageignore` 로 뺀다, 읽을 수 없는 파일, 읽는 동안 바뀜). 사유의 원인을 고친다. |
+| 도구가 `… could not run its command — the environment's shell cannot place the hook's files for the run` 로 막힘 | 실행 환경의 셸이 실행 디렉터리(`RUN_DIRECTORY`)를 지원한다고 밝히지 않았다 — `AIMON_HOOK_DIR` 을 쓰는 핸들러만 그렇다. 지원하는 제공자로 올리거나(aimon-sandbox 는 EE-114), 그 handler 에 `"shell": "host"` 를 적는다. |
+| 도구가 `Blocked: hook '…' (…) was not run — the hook's files changed before the run` 로 막힘 | 셸이 실행 디렉터리에 둔 훅 파일이 코어가 넘긴 바이트와 달랐다(업로드를 누가 고쳤다). `failOpen` 으로도 열리지 않는다. 그 실행 환경에서 무엇이 훅 파일을 쓰고 있는지 본다. |
 | 시작 시 `… handler #m: Unknown hook handler shell: '…'` 또는 `'shell' applies only to command handlers` | `"shell"` 은 `"host"` 와 `"environment"` 뿐이고 `command` handler 에만 쓴다. 오타는 handler 를 다른 셸로 옮기지 않고 파일 로드를 멈춘다. |
 | 시작 시 `… the command names AIMON_HOOK_DIR, but … is missing or not a directory` | 그 층의 `.aimon/hooks/` 디렉터리를 만든다. 가드가 아닌 이벤트면 시작 실패가 아니라 WARN 후 skip 이다. |
 | `WARN hooks: a 'command' handler with 'asyncRewake' on event '…' runs on the host` | rewake 재발화가 실행 밖에서 일어나므로 그 handler 는 호스트에 남는다. 의도한 것이면 `"shell": "host"` 를 적어 WARN 을 없앤다. |

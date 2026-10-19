@@ -26,7 +26,7 @@ package at.aimon.core.skill.hook.declarative;
  * <li>{@link #AIMON_HOOK_EVENT}, {@link #AIMON_SKILL_NAME}, {@link #AIMON_INVOKER_NAME},
  * {@link #AIMON_INVOKER_TYPE} — set on every event.
  * <li>{@link #AIMON_SKILL_DIR} — set on every event, but only for a hook a skill declared, and only when there is a
- * staged copy to point at. Absent (not empty) for a {@code hooks.json} hook.
+ * skill directory to give it. Absent (not empty) for a {@code hooks.json} hook.
  * <li>{@link #AIMON_TOOL_NAME} — set on {@code preTool}, {@code postTool}, {@code permissionRequest} and
  * {@code permissionDenied}.
  * <li>{@link #AIMON_ITERATION} — set on {@code preTool} and {@code postTool}.
@@ -76,11 +76,15 @@ public final class SkillHookEnv {
      * hook can run its own script with {@code bash "$AIMON_SKILL_DIR/scripts/guard.sh"}.
      *
      * <p>
-     * The value is what the firing execution's {@code ExecutionEnvironment.stage(...)} returned for the skill: a
-     * staged copy in the environment the command runs in, the same kind of path a skill body gets as
-     * {@code ${AIMON_SKILL_DIR}}. It is staged when the hook fires, not carried over from the skill's activation,
-     * because the hook fires in the skill's fork (or an execution that fork started), which may be placed in a
-     * different environment from the one that invoked the skill.
+     * The value is a directory made for that one firing (EE-109): the skill's files, as the registry loaded them,
+     * placed by the shell the command runs in, outside the workspace (under the local provider, an
+     * {@code aimon-run-*} directory under {@code java.io.tmpdir}), and removed when the command ends. It is not the
+     * path a skill body gets as {@code ${AIMON_SKILL_DIR}}, does not persist between firings, and a script must not
+     * write next to itself expecting to find the file again. On a shell that cannot place such a directory, and for
+     * a skill over the run-directory limit, it is what the firing execution's {@code ExecutionEnvironment.stage(...)}
+     * returned instead: a staged copy, checked on every firing. Either way it is decided when the hook fires, not
+     * carried over from the skill's activation, because the hook fires in the skill's fork (or an execution that fork
+     * started), which may be placed in a different environment from the one that invoked the skill.
      *
      * <p>
      * <b>Set only for skill-declared hooks.</b> The variable is <em>absent</em> &mdash; not empty &mdash; for a
@@ -89,7 +93,7 @@ public final class SkillHookEnv {
      * A script shared between the two front-ends should test for it ({@code [ -n "${AIMON_SKILL_DIR:-}" ]}).
      *
      * <p>
-     * <b>If the skill cannot be staged, the command is not run</b> rather than run without the variable: see
+     * <b>If the skill cannot be given, the command is not run</b> rather than run without the variable: see
      * {@code SkillHookDirectory}. On an event that can block that is a block unless the hook declared
      * {@code failOpen}.
      *
@@ -100,18 +104,21 @@ public final class SkillHookEnv {
 
     /**
      * The {@code hooks/} directory next to the {@code hooks.json} that declared the command, as a path the shell
-     * running it can read (aimon-core #273): the host path itself when the command runs on the host, the path
-     * {@code ExecutionEnvironment.stage(...)} returned when it runs in an execution's environment.
+     * running it can read (aimon-core #273): the host path itself when the command runs on the host; when it runs in
+     * an execution's environment, a directory made for that one firing that holds the files as core read them at the
+     * firing, outside the workspace, removed when the command ends (EE-109). Nothing of the layer is staged into the
+     * workspace any more, and a shell that cannot place such a directory does not run the command
+     * ({@code ShellHookOutcome.Unrun.RUN_DIRECTORY_UNSUPPORTED}).
      *
      * <p>
      * <b>Set only for {@code hooks.json} commands that name it.</b> The applier attaches the directory to the action
      * when the command text contains {@code AIMON_HOOK_DIR}; any other command, and every skill-declared hook, runs
-     * without the variable and stages nothing. It is exported by the executor that runs the command, after the
+     * without the variable and reads nothing. It is exported by the executor that runs the command, after the
      * placement has been decided, so the value always belongs to the shell the command runs in. Not part of the stdin
      * payload, which is built before that decision.
      *
      * <p>
-     * <b>If the directory cannot be staged, the command is not run</b>
+     * <b>If the directory cannot be read, the command is not run</b>
      * ({@code ShellHookOutcome.Unrun.HOOK_DIR_STAGING_FAILED}), on the rule {@link #AIMON_SKILL_DIR} follows.
      *
      * <p>

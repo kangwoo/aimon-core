@@ -34,10 +34,12 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  * A resource is copied to {@code {stagingRoot}/{name}/{contentKey}/} on the <b>raw</b> workspace filesystem (the
  * model's file tools see the staging area read-only through the path rules). The copy is skipped only when the
  * target's {@value #MARKER} marker exists — the target is asked every time, never an in-memory record — and the copy
- * on disk is the one its path names: the first time this instance meets a target it did not copy itself, it checks
- * that the marker holds the content key, that the files are exactly the resource's, and that they hash to the key, and
- * copies again otherwise (EE-37). That check is remembered per target, so it costs one read of the copy per process;
- * a shell can still change a copy afterwards (design §2 non-goals). The first copy also writes
+ * on disk is the one its path names: on <b>every</b> call, a copy this instance made included, it checks that the
+ * marker holds the content key, that the files are exactly the resource's, and that they hash to the key, and copies
+ * again otherwise (EE-37, EE-109). Nothing about an earlier check is remembered, because a shell running as the same
+ * user can rewrite a copy at any time; the cost is one listing and one read of the copy per call, bounded by the
+ * staging limit. What this does not close is the moment between the check and a process opening the files by path
+ * (EE-109 record §3). The first copy also writes
  * {@code {stagingRoot}/}{@value #GITIGNORE} containing {@code *} unless one exists (EE-4). The copy takes exactly
  * {@link StagedResource#getFiles()}, hashes what it copies with the same algorithm as
  * {@link StagedResource#scan}, and writes the marker last; a size over the limit or an unreadable recorded file fails
@@ -54,11 +56,13 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  * key they do not hash to, and reverting the source cannot bring edited bytes back under the loaded key. The second
  * scan takes the current file set — files added, files removed, a changed {@code .stageignore} — rather than the
  * loaded list with new bytes, and its size is what the limit is checked against. The answer is remembered for the
- * loaded resource while that copy's marker exists, so later calls cost what any staged copy costs; a source that
+ * loaded resource while that copy's marker exists and matches its key, so later calls cost what any staged copy
+ * costs; a source that
  * changes again between the second scan and its copy is refused, and the next call starts over. This is only about
  * the <em>first</em> copy: once a copy under the loaded key exists it is what is served, in this process and in any
  * that loaded the same version, and an edit made afterwards is not seen until the registry reads the resource again
- * (design §4.4 — the hash is taken when the registry reads, not on every call). What is staged is the resource's
+ * (design §4.4 — the source is hashed when the registry reads it; later calls check the copy, not the source). What
+ * is staged is the resource's
  * files; whatever the registry parsed from them at load (a skill's rendered body, its tool restrictions and hooks)
  * stays the loaded version until then.
  *
@@ -139,11 +143,10 @@ final class LocalStaging {
     private final ConcurrentMap<String, Object> sourceLocks = new ConcurrentHashMap<>();
     /**
      * The target a caller's resource names, to the resource its source was found to be when that one could not be
-     * copied (EE-3). Used only while the copy it names has its marker, like {@link #verified}.
+     * copied (EE-3). Used only while the copy it names has its marker and matches its key: it is checked like any
+     * other copy.
      */
     private final ConcurrentMap<String, StagedResource> rescanned = new ConcurrentHashMap<>();
-    /** Targets this instance copied, or found already staged and checked against their content key. */
-    private final Set<String> verified = ConcurrentHashMap.newKeySet();
 
     LocalStaging(VirtualFileSystem rawFileSystem, VirtualFileSystem passthroughFileSystem, Path hostRoot,
             String stagingRoot, long maxStagedBytes) {
@@ -204,10 +207,6 @@ final class LocalStaging {
         // Read a workspace resource through the unguarded filesystem: the tools' view may hide it.
         final VirtualFileSystem reader = inWorkspace ? rawFileSystem : source;
         final String asked = targetOf(resource);
-        final String staged = stagedAlready(rescanned.getOrDefault(asked, resource));
-        if (staged != null) {
-            return staged;
-        }
         // One caller at a time finds out that a source changed; the others then find its answer in the map.
         synchronized (sourceLocks.computeIfAbsent(asked, k -> new Object())) {
             final StagedResource known = rescanned.getOrDefault(asked, resource);
@@ -267,12 +266,6 @@ final class LocalStaging {
 
     private String targetOf(StagedResource resource) {
         return VfsPaths.join(stagingRoot, resource.getName(), resource.getContentKey());
-    }
-
-    /** The path of a copy this instance has already checked and whose marker is still there, or null. */
-    private String stagedAlready(StagedResource resource) {
-        final String target = targetOf(resource);
-        return verified.contains(target) && rawFileSystem.exists(target + "/" + MARKER) ? absolute(target) : null;
     }
 
     private StagingException overLimit(StagedResource resource, long bytes) {
@@ -349,7 +342,8 @@ final class LocalStaging {
     }
 
     /**
-     * Stages a resource under its own content key, or reuses the copy that is there.
+     * Stages a resource under its own content key, or reuses the copy that is there once it has been checked against
+     * the key — on every call, never on the strength of an earlier one (EE-109).
      *
      * @throws SourceChangedException
      *             if the source no longer holds what the content key names, or the resource's recorded size is over
@@ -358,15 +352,11 @@ final class LocalStaging {
     private String copyVerified(StagedResource resource, VirtualFileSystem reader) {
         final String target = targetOf(resource);
         final String marker = target + "/" + MARKER;
-        if (verified.contains(target) && rawFileSystem.exists(marker)) {
-            return absolute(target);
-        }
         synchronized (locks.computeIfAbsent(target, k -> new Object())) {
             // Also on the reuse path: a workspace whose copies predate EE-4 would otherwise never get the file.
             ensureGitignore();
             if (rawFileSystem.exists(marker)) {
-                if (verified.contains(target) || matchesContentKey(resource, target)) {
-                    verified.add(target);
+                if (matchesContentKey(resource, target)) {
                     return absolute(target);
                 }
                 log.warn("Staged copy {} does not match its content key; staging it again", target);
@@ -387,7 +377,6 @@ final class LocalStaging {
                 discard(staging);
                 throw e;
             }
-            verified.add(target);
         }
         log.debug("Staged {} ({} files) to {}", resource.getName(), resource.getFiles().size(), target);
         return absolute(target);

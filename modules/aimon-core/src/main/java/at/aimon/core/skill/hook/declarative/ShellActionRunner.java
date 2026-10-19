@@ -10,9 +10,11 @@ import org.slf4j.LoggerFactory;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.environment.exception.ExecutionEnvironmentUnavailableException;
 import at.aimon.core.shell.ExecutionOptions;
+import at.aimon.core.shell.RunDirectory;
 import at.aimon.core.shell.ShellCancellationSource;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.VirtualShell;
+import at.aimon.core.shell.exception.RunDirectoryIntegrityException;
 import at.aimon.core.shell.exception.ShellCancelledException;
 import at.aimon.core.shell.exception.ShellExecutionException;
 import at.aimon.core.shell.exception.ShellTimeoutException;
@@ -76,8 +78,24 @@ final class ShellActionRunner {
      */
     static ShellHookOutcome run(VirtualShell shell, ShellAction action, Map<String, String> environmentOverrides,
             String stdinPayload, Optional<CancellationSignal> executionCancellation, boolean isolated) {
+        return run(shell, action, environmentOverrides, stdinPayload, executionCancellation, isolated, null);
+    }
+
+    /**
+     * {@link #run(VirtualShell, ShellAction, Map, String, Optional, boolean)} with the hook's files handed to the
+     * shell for the run (EE-109). A shell that finds them changed when it placed them does not run the command, and
+     * that is reported as {@link ShellHookOutcome.Unrun#HOOK_FILES_TAMPERED}.
+     *
+     * @param runDirectory
+     *            the files to place for the run, or null for none; the caller has checked that the shell declares
+     *            {@code ShellFeature.RUN_DIRECTORY}
+     */
+    static ShellHookOutcome run(VirtualShell shell, ShellAction action, Map<String, String> environmentOverrides,
+            String stdinPayload, Optional<CancellationSignal> executionCancellation, boolean isolated,
+            RunDirectory runDirectory) {
         final ExecutionOptions.Builder builder = ExecutionOptions.builder().timeout(action.getTimeout())
-                .environment(new HashMap<>(environmentOverrides)).stdin(stdinPayload).hook(true).isolated(isolated);
+                .environment(new HashMap<>(environmentOverrides)).stdin(stdinPayload).hook(true).isolated(isolated)
+                .runDirectory(runDirectory);
         CancellationSignal.Registration stopOnInterrupt = CancellationSignal.Registration.NONE;
         if (executionCancellation.isPresent()) {
             final ShellCancellationSource stop = ShellCancellationSource.create();
@@ -114,6 +132,11 @@ final class ShellActionRunner {
             log.warn("Hook shell action not run: the execution environment is unavailable (command={}): {}",
                     action.getCommand(), e.getMessage());
             return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE, e.getMessage());
+        } catch (RunDirectoryIntegrityException e) {
+            // Evidence, not a failure to run: blocks whatever failOpen says (ShellHookVerdicts). No content logged.
+            log.warn("Hook shell action not run: the shell found the hook's files changed before the run (command={},"
+                    + " {}): {}", action.getCommand(), runDirectory, e.getMessage());
+            return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.HOOK_FILES_TAMPERED, "");
         } catch (ShellExecutionException e) {
             if (e.getCause() instanceof InterruptedException) {
                 // The same interrupt arriving by the other road: a shell that answers a thread interrupt (the

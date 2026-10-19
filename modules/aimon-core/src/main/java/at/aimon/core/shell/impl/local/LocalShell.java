@@ -3,13 +3,24 @@ package at.aimon.core.shell.impl.local;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.FileAttribute;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -17,16 +28,20 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.shell.ExecutionOptions;
+import at.aimon.core.shell.RunDirectory;
 import at.aimon.core.shell.ShellCancellation;
 import at.aimon.core.shell.ShellCommand;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.ShellFeature;
 import at.aimon.core.shell.VirtualShell;
+import at.aimon.core.shell.exception.RunDirectoryIntegrityException;
 import at.aimon.core.shell.exception.ShellCancelledException;
 import at.aimon.core.shell.exception.ShellExecutionException;
 import at.aimon.core.shell.exception.ShellTimeoutException;
@@ -45,6 +60,9 @@ import at.aimon.core.shell.exception.ShellTimeoutException;
  * <li>Cancellation of a running command ({@link ShellFeature#CANCELLATION}): the process and its descendants are
  * terminated the same way a timeout terminates them. A process the command detached from itself (its parent has
  * exited: a double fork, a daemon) is not a descendant any more and is not reached
+ * <li>A {@linkplain ExecutionOptions#getRunDirectory() run directory} ({@link ShellFeature#RUN_DIRECTORY}): a fresh
+ * {@code aimon-run-*} directory under {@code java.io.tmpdir}, mode 0700 with 0600 files where the filesystem has POSIX
+ * permissions, removed when the command ends
  * </ul>
  *
  * <p>
@@ -57,6 +75,16 @@ import at.aimon.core.shell.exception.ShellTimeoutException;
  * when it exits, so after {@code waitFor()} the result is read directly from the file — no reader thread, no
  * delayed-EOF
  * drain, and no thread/stream leak (issue #13, superseding the drain-based workaround from issue #10).
+ *
+ * <p>
+ * <b>Hook and isolated commands keep no file reachable by name (EE-109).</b> For a command that is
+ * {@linkplain ExecutionOptions#isHook() a hook's} or {@linkplain ExecutionOptions#isIsolated() isolated}, whose output
+ * is a policy verdict, the capture files are opened for reading before the process starts and unlinked as soon as it
+ * has: the child holds its own descriptors, this class reads through its own, and nothing else can find the files
+ * afterwards. Its stdin goes through a pipe that a daemon thread writes and closes, so the payload never sits in a
+ * file. What is left is the moment between creating the capture files and starting the process, on 0600 files with
+ * random names; anything written there is truncated by the child's redirect. Model-facing commands keep the stdin
+ * file, which cannot block.
  *
  * <p>
  * Example usage:
@@ -80,6 +108,9 @@ public final class LocalShell implements VirtualShell {
     private static final int STREAM_BUFFER_SIZE = 8192;
     private static final Duration PROCESS_DESTROY_TIMEOUT = Duration.ofMillis(200);
     private static final String TEMP_FILE_PREFIX = "aimon-shell-";
+    private static final String RUN_DIRECTORY_PREFIX = "aimon-run-";
+    private static final Set<PosixFilePermission> PRIVATE_DIRECTORY = PosixFilePermissions.fromString("rwx------");
+    private static final Set<PosixFilePermission> PRIVATE_FILE = PosixFilePermissions.fromString("rw-------");
 
     /**
      * Default upper bound on how many bytes of each captured stream are read into memory. The child writes its full
@@ -93,6 +124,9 @@ public final class LocalShell implements VirtualShell {
     private final boolean isWindows;
     private final Path defaultWorkingDirectory;
     private final String defaultUnixShell;
+    /** Runs between writing a run directory and reading it back; a test seam, otherwise does nothing. */
+    private volatile Consumer<Path> runDirectoryWritten = dir -> {
+    };
 
     /**
      * Creates a new local shell with default settings.
@@ -339,10 +373,13 @@ public final class LocalShell implements VirtualShell {
      * Reads up to {@code maxBytes} of a captured output file and decodes it. If the file holds more than
      * {@code maxBytes}
      * the extra is dropped and the result is flagged truncated. An I/O error while reading degrades to an empty,
-     * truncated capture rather than failing the whole execution (the exit code is still authoritative).
+     * truncated capture rather than failing the whole execution (the exit code is still authoritative). The file is
+     * read through {@code channel} when there is one, opened before the file was unlinked (class doc).
      */
-    private static Capture readCapped(Path file, Charset charset, long maxBytes) {
-        try (InputStream in = Files.newInputStream(file); ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+    private static Capture readCapped(Path file, FileChannel channel, Charset charset, long maxBytes) {
+        try (InputStream in = channel != null
+                ? Channels.newInputStream(channel.position(0))
+                : Files.newInputStream(file); ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
             final byte[] buf = new byte[STREAM_BUFFER_SIZE];
             long total = 0;
             int n;
@@ -378,6 +415,114 @@ public final class LocalShell implements VirtualShell {
                     e.toString());
             file.toFile().deleteOnExit();
         }
+    }
+
+    private static void closeQuietly(FileChannel channel) {
+        if (channel == null) {
+            return;
+        }
+        try {
+            channel.close();
+        } catch (IOException e) {
+            log.debug("Failed to close a capture channel ({})", e.toString());
+        }
+    }
+
+    /**
+     * Writes a hook's stdin payload to the child's pipe on a daemon thread, which closes the pipe when it is done.
+     *
+     * <p>
+     * Writing on the caller's thread would deadlock whenever the payload exceeds the pipe buffer and the child has not
+     * started reading. The thread ends when the payload is written, or with an {@code IOException} once no process
+     * holds the read end any more: at the child's exit, or when the tree is destroyed on a timeout or a cancel. A
+     * background process that inherited the read end keeps the thread waiting until it exits or closes it; bash gives
+     * {@code cmd &} {@code /dev/null} as stdin, so that takes an explicit {@code <&3} or a program that forks itself
+     * away. The call itself never waits for the thread, and nothing else can close the pipe without waiting on the
+     * stream the thread is blocked in.
+     */
+    private static void startStdinWriter(Process p, byte[] payload) throws IOException {
+        final OutputStream stdin = p.getOutputStream();
+        if (payload.length == 0) {
+            stdin.close();
+            return;
+        }
+        final Thread writer = new Thread(() -> {
+            try (OutputStream out = stdin) {
+                out.write(payload);
+            } catch (IOException e) {
+                log.debug("Stopped writing stdin to process {} ({})", p.pid(), e.toString());
+            }
+        }, "aimon-shell-stdin-" + p.pid());
+        writer.setDaemon(true);
+        writer.start();
+    }
+
+    /**
+     * Creates and fills a fresh run directory, then reads every file back and compares it with the bytes it was
+     * given. The comparison is a self-check of the write, not tamper protection: here the bytes never travelled
+     * through anything the agent can write, and a writer running as the same user can change them after it.
+     */
+    private Path placeRunDirectory(RunDirectory run) throws ShellExecutionException {
+        final boolean posix = FileSystems.getDefault().supportedFileAttributeViews().contains("posix");
+        final FileAttribute<?>[] dirAttributes = posix
+                ? new FileAttribute<?>[]{PosixFilePermissions.asFileAttribute(PRIVATE_DIRECTORY)}
+                : new FileAttribute<?>[0];
+        final FileAttribute<?>[] fileAttributes = posix
+                ? new FileAttribute<?>[]{PosixFilePermissions.asFileAttribute(PRIVATE_FILE)}
+                : new FileAttribute<?>[0];
+        Path dir = null;
+        try {
+            // A new name every time: createTempDirectory never returns a directory that already existed.
+            dir = Files.createTempDirectory(RUN_DIRECTORY_PREFIX, dirAttributes);
+            for (String relPath : run.getPaths()) {
+                final Path file = dir.resolve(relPath);
+                if (!file.normalize().startsWith(dir) || file.getParent() == null) {
+                    throw new ShellExecutionException("Run directory path is not inside it: " + relPath);
+                }
+                Files.createDirectories(file.getParent(), dirAttributes);
+                try (OutputStream out = Channels.newOutputStream(Files.newByteChannel(file,
+                        Set.of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE), fileAttributes))) {
+                    out.write(run.getContent(relPath));
+                } catch (FileAlreadyExistsException e) {
+                    throw new ShellExecutionException("Cannot place the run directory: " + relPath
+                            + " differs from another of its files only by letter case or Unicode form, and this"
+                            + " filesystem keeps one file for both", e);
+                }
+            }
+            runDirectoryWritten.accept(dir);
+            for (String relPath : run.getPaths()) {
+                if (!MessageDigest.isEqual(Files.readAllBytes(dir.resolve(relPath)), run.getContent(relPath))) {
+                    throw new RunDirectoryIntegrityException(
+                            "Run directory file " + relPath + " does not hold the bytes it was given");
+                }
+            }
+            return dir;
+        } catch (IOException e) {
+            deleteRunDirectory(dir);
+            throw new ShellExecutionException("Cannot place the run directory for " + run.getVariable() + ": " + e, e);
+        } catch (ShellExecutionException | RuntimeException e) {
+            deleteRunDirectory(dir);
+            throw e;
+        }
+    }
+
+    /** Removes a run directory and what is in it; a failure is logged, never the command's. */
+    private static void deleteRunDirectory(Path dir) {
+        if (dir == null) {
+            return;
+        }
+        try (Stream<Path> walk = Files.walk(dir)) {
+            for (Path path : walk.sorted(Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(path);
+            }
+        } catch (IOException | RuntimeException e) {
+            log.warn("Could not remove run directory {}: {}", dir, e.toString());
+        }
+    }
+
+    /** Test seam: runs between writing a run directory and reading it back. */
+    void onRunDirectoryWritten(Consumer<Path> probe) {
+        this.runDirectoryWritten = Objects.requireNonNull(probe, "probe");
     }
 
     private static String safe(ShellCommand cmd) {
@@ -431,29 +576,19 @@ public final class LocalShell implements VirtualShell {
                 ? options.getMaxCaptureBytes()
                 : DEFAULT_MAX_CAPTURE_BYTES;
         final boolean mergeErr = options.isRedirectErrorStream();
+        // A hook's or an isolated command's I/O must not be reachable by name while it runs (class doc).
+        final boolean privateIo = options.isHook() || options.isIsolated();
 
-        Path outFile = null;
-        Path errFile = null;
-        Path inFile = null;
+        Path runDirectory = null;
+        Redirects io = null;
         try {
-            // stdin goes through a temp file for the same reason stdout does: a file redirect cannot block. Writing
-            // to the child's pipe instead would deadlock whenever the payload exceeds the pipe buffer and the child
-            // has not started reading yet.
-            //
-            // The redirect is unconditional: ProcessBuilder's default is a pipe that this implementation never writes
-            // to and never closes, so a child that reads stdin to EOF (cat, read, jq, `while read line`) would block
-            // until its timeout. Redirecting from an empty temp file gives it immediate EOF instead.
-            inFile = Files.createTempFile(TEMP_FILE_PREFIX, ".in");
-            Files.writeString(inFile, options.getStdin() != null ? options.getStdin() : "", charset);
-            pb.redirectInput(inFile.toFile());
-            outFile = Files.createTempFile(TEMP_FILE_PREFIX, ".out");
-            pb.redirectOutput(outFile.toFile());
-            if (mergeErr) {
-                pb.redirectErrorStream(true);
-            } else {
-                errFile = Files.createTempFile(TEMP_FILE_PREFIX, ".err");
-                pb.redirectError(errFile.toFile());
+            if (options.getRunDirectory().isPresent()) {
+                final RunDirectory run = options.getRunDirectory().get();
+                runDirectory = placeRunDirectory(run);
+                // After the caller's variables, so it wins over the same name among them.
+                pb.environment().put(run.getVariable(), runDirectory.toString());
             }
+            io = Redirects.prepare(pb, options.getStdin(), charset, mergeErr, privateIo);
 
             final Instant start = Instant.now();
             final Process p;
@@ -462,6 +597,7 @@ public final class LocalShell implements VirtualShell {
             } catch (IOException e) {
                 throw new ShellExecutionException("Failed to start process: " + safe(command), e);
             }
+            io.started(p);
 
             // Registered once the process exists, so the listener has something to kill; a signal tripped between the
             // check above and this line runs the listener right here. The flag is set before the kill and only while
@@ -491,8 +627,8 @@ public final class LocalShell implements VirtualShell {
                 destroyForciblyQuietly(p);
                 // The command a caller interrupted is usually the one whose output they most want to see, so carry
                 // whatever was flushed before the kill instead of dropping it (same treatment as the timeout path).
-                final Capture out = readCapped(outFile, charset, maxCaptureBytes);
-                final Capture err = mergeErr ? Capture.EMPTY : readCapped(errFile, charset, maxCaptureBytes);
+                final Capture out = io.out(maxCaptureBytes);
+                final Capture err = io.err(maxCaptureBytes);
                 Thread.currentThread().interrupt();
                 throw new ShellExecutionException("Interrupted while waiting for process: " + safe(command), ie,
                         out.content(), err.content(), out.truncated() || err.truncated());
@@ -506,8 +642,8 @@ public final class LocalShell implements VirtualShell {
                 if (!finished) {
                     destroyForciblyQuietly(p);
                 }
-                final Capture out = readCapped(outFile, charset, maxCaptureBytes);
-                final Capture err = mergeErr ? Capture.EMPTY : readCapped(errFile, charset, maxCaptureBytes);
+                final Capture out = io.out(maxCaptureBytes);
+                final Capture err = io.err(maxCaptureBytes);
                 throw new ShellCancelledException("Process cancelled: " + safe(command), out.content(), err.content(),
                         out.truncated() || err.truncated());
             }
@@ -515,8 +651,8 @@ public final class LocalShell implements VirtualShell {
             if (!finished) {
                 destroyForciblyQuietly(p);
                 // Capture whatever the (now killed) process had flushed to the files before termination.
-                final Capture out = readCapped(outFile, charset, maxCaptureBytes);
-                final Capture err = mergeErr ? Capture.EMPTY : readCapped(errFile, charset, maxCaptureBytes);
+                final Capture out = io.out(maxCaptureBytes);
+                final Capture err = io.err(maxCaptureBytes);
                 throw new ShellTimeoutException(
                         "Process timed out after " + options.getTimeout() + ": " + safe(command), options.getTimeout(),
                         out.content(), err.content(), out.truncated() || err.truncated());
@@ -525,8 +661,8 @@ public final class LocalShell implements VirtualShell {
             final int exit = p.exitValue();
             // The parent's output is fully flushed to the file(s) on exit; read it directly (bounded by
             // maxCaptureBytes).
-            final Capture out = readCapped(outFile, charset, maxCaptureBytes);
-            final Capture err = mergeErr ? Capture.EMPTY : readCapped(errFile, charset, maxCaptureBytes);
+            final Capture out = io.out(maxCaptureBytes);
+            final Capture err = io.err(maxCaptureBytes);
             final boolean truncated = out.truncated() || err.truncated();
             if (truncated) {
                 log.warn("Captured stdout/stderr for [{}] exceeded the {}-byte capture limit; output was truncated. "
@@ -538,9 +674,10 @@ public final class LocalShell implements VirtualShell {
         } catch (IOException e) {
             throw new ShellExecutionException("Failed to prepare process I/O redirection for: " + safe(command), e);
         } finally {
-            deleteQuietly(outFile);
-            deleteQuietly(errFile);
-            deleteQuietly(inFile);
+            if (io != null) {
+                io.close();
+            }
+            deleteRunDirectory(runDirectory);
         }
     }
 
@@ -551,6 +688,8 @@ public final class LocalShell implements VirtualShell {
             // Every command is a new process with no state carried between commands, so an isolated command needs
             // nothing beyond what every command already gets.
             case PIPE, REDIRECTION, CANCELLATION, ISOLATED_EXECUTION -> true;
+            // A directory under java.io.tmpdir, written by this JVM itself: outside the workspace, never uploaded.
+            case RUN_DIRECTORY -> true;
             case INTERACTIVE -> false;
         };
     }
@@ -576,6 +715,109 @@ public final class LocalShell implements VirtualShell {
         }
         // Unix shell (sh, bash, zsh, etc.)
         return List.of(unixShell, "-c", script);
+    }
+
+    /**
+     * The temp files a command's stdin, stdout and stderr are redirected to, and the channels its hook-mode capture is
+     * read through (class doc).
+     */
+    private static final class Redirects {
+
+        private final Charset charset;
+        private final boolean privateIo;
+        private final byte[] stdin;
+        private Path inFile;
+        private Path outFile;
+        private Path errFile;
+        private FileChannel outChannel;
+        private FileChannel errChannel;
+
+        private Redirects(Charset charset, boolean privateIo, byte[] stdin) {
+            this.charset = charset;
+            this.privateIo = privateIo;
+            this.stdin = stdin;
+        }
+
+        /**
+         * Points the builder's redirects at fresh temp files. The caller closes the result even when this throws
+         * halfway, so it is filled in step by step.
+         */
+        static Redirects prepare(ProcessBuilder pb, String stdin, Charset charset, boolean mergeErr, boolean privateIo)
+                throws IOException {
+            final Redirects io = new Redirects(charset, privateIo,
+                    stdin != null ? stdin.getBytes(charset) : new byte[0]);
+            try {
+                io.redirect(pb, mergeErr);
+            } catch (IOException | RuntimeException e) {
+                io.close();
+                throw e;
+            }
+            return io;
+        }
+
+        private void redirect(ProcessBuilder pb, boolean mergeErr) throws IOException {
+            // stdin goes through a temp file for the same reason stdout does: a file redirect cannot block. Writing
+            // to the child's pipe instead would deadlock whenever the payload exceeds the pipe buffer and the child
+            // has not started reading yet.
+            //
+            // The redirect is unconditional: ProcessBuilder's default is a pipe that this implementation never writes
+            // to and never closes, so a child that reads stdin to EOF (cat, read, jq, `while read line`) would block
+            // until its timeout. Redirecting from an empty temp file gives it immediate EOF instead.
+            //
+            // A hook's stdin is the exception: it goes through a pipe a daemon thread writes, so the payload is never
+            // a file anything else could rewrite before the child reads it (startStdinWriter).
+            if (privateIo) {
+                pb.redirectInput(ProcessBuilder.Redirect.PIPE);
+            } else {
+                inFile = Files.createTempFile(TEMP_FILE_PREFIX, ".in");
+                Files.write(inFile, stdin);
+                pb.redirectInput(inFile.toFile());
+            }
+            outFile = Files.createTempFile(TEMP_FILE_PREFIX, ".out");
+            pb.redirectOutput(outFile.toFile());
+            if (privateIo) {
+                outChannel = FileChannel.open(outFile, StandardOpenOption.READ);
+            }
+            if (mergeErr) {
+                pb.redirectErrorStream(true);
+            } else {
+                errFile = Files.createTempFile(TEMP_FILE_PREFIX, ".err");
+                pb.redirectError(errFile.toFile());
+                if (privateIo) {
+                    errChannel = FileChannel.open(errFile, StandardOpenOption.READ);
+                }
+            }
+        }
+
+        /** For a hook: unlinks the capture files, which the child already holds open, and starts feeding stdin. */
+        void started(Process p) {
+            if (!privateIo) {
+                return;
+            }
+            deleteQuietly(outFile);
+            deleteQuietly(errFile);
+            try {
+                startStdinWriter(p, stdin);
+            } catch (IOException e) {
+                log.debug("Could not close stdin of process {} ({})", p.pid(), e.toString());
+            }
+        }
+
+        Capture out(long maxBytes) {
+            return readCapped(outFile, outChannel, charset, maxBytes);
+        }
+
+        Capture err(long maxBytes) {
+            return errFile == null ? Capture.EMPTY : readCapped(errFile, errChannel, charset, maxBytes);
+        }
+
+        void close() {
+            closeQuietly(outChannel);
+            closeQuietly(errChannel);
+            deleteQuietly(outFile);
+            deleteQuietly(errFile);
+            deleteQuietly(inFile);
+        }
     }
 
     /**

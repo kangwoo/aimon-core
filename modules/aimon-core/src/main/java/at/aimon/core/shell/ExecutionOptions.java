@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Configuration options for shell command execution.
@@ -38,6 +39,7 @@ public final class ExecutionOptions {
     private final boolean hook;
     private final boolean isolated;
     private final ShellCancellation cancellation;
+    private final RunDirectory runDirectory;
 
     private ExecutionOptions(Builder builder) {
         this.timeout = builder.timeout;
@@ -52,6 +54,7 @@ public final class ExecutionOptions {
         this.hook = builder.hook;
         this.isolated = builder.isolated;
         this.cancellation = Objects.requireNonNull(builder.cancellation, "cancellation");
+        this.runDirectory = builder.runDirectory;
     }
 
     /**
@@ -71,6 +74,7 @@ public final class ExecutionOptions {
      * <li>Not a hook command ({@link #isHook()} is {@code false})
      * <li>Not an isolated command ({@link #isIsolated()} is {@code false})
      * <li>No cancellation ({@link ShellCancellation#none()})
+     * <li>No run directory ({@link #getRunDirectory()} is empty)
      * </ul>
      *
      * @return default execution options
@@ -251,6 +255,22 @@ public final class ExecutionOptions {
     }
 
     /**
+     * Returns the files the shell places in a fresh directory for this command alone, and the variable that names it.
+     *
+     * <p>
+     * A shell that declares {@link ShellFeature#RUN_DIRECTORY} places them as that feature describes and removes them
+     * when the command ends; any other shell ignores the option, so a caller that needs the files asks
+     * {@link VirtualShell#supports(ShellFeature)} first. This is how a hook gets the bytes core verified rather than
+     * a staged copy that the agent's shell can rewrite between the check and the run (EE-109). A wrapper that derives
+     * new options must carry it over &mdash; {@link #toBuilder()} does.
+     *
+     * @return the run directory, or empty when the command needs none
+     */
+    public Optional<RunDirectory> getRunDirectory() {
+        return Optional.ofNullable(runDirectory);
+    }
+
+    /**
      * Returns a builder seeded with every option of this instance, for deriving a variant.
      *
      * @return a pre-populated builder
@@ -259,7 +279,7 @@ public final class ExecutionOptions {
         final Builder builder = new Builder().timeout(timeout).environment(environment)
                 .workingDirectory(workingDirectory).charset(charset).redirectErrorStream(redirectErrorStream)
                 .unixShell(unixShell).stdin(stdin).background(background).hook(hook).isolated(isolated)
-                .cancellation(cancellation);
+                .cancellation(cancellation).runDirectory(runDirectory);
         if (maxCaptureBytes != null) {
             builder.maxCaptureBytes(maxCaptureBytes);
         }
@@ -282,6 +302,7 @@ public final class ExecutionOptions {
         private boolean hook;
         private boolean isolated;
         private ShellCancellation cancellation = ShellCancellation.none();
+        private RunDirectory runDirectory;
 
         private Builder() {
         }
@@ -443,6 +464,19 @@ public final class ExecutionOptions {
          */
         public Builder cancellation(ShellCancellation cancellation) {
             this.cancellation = Objects.requireNonNull(cancellation, "cancellation");
+            return this;
+        }
+
+        /**
+         * Sets the files the shell places for this command alone (default none).
+         *
+         * @param runDirectory
+         *            the run directory, or null for none
+         * @return this builder
+         * @see ExecutionOptions#getRunDirectory()
+         */
+        public Builder runDirectory(RunDirectory runDirectory) {
+            this.runDirectory = runDirectory;
             return this;
         }
 

@@ -18,9 +18,19 @@ import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.agent.impl.orca.OrcaAgentExecutionResult;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.environment.EnvironmentDescriptor;
 import at.aimon.core.environment.EnvironmentRequest;
+import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
+import at.aimon.core.environment.StagedResource;
 import at.aimon.core.environment.impl.LocalExecutionEnvironmentProvider;
+import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.shell.ExecutionOptions;
+import at.aimon.core.shell.ShellCommand;
+import at.aimon.core.shell.ShellCommandResult;
+import at.aimon.core.shell.ShellFeature;
+import at.aimon.core.shell.VirtualShell;
+import at.aimon.core.shell.exception.ShellExecutionException;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.Subagent;
 
@@ -98,6 +108,75 @@ class SkillHookSkillDirIntegrationTest {
         };
     }
 
+    /**
+     * Another provider's environments with a shell that does not declare {@link ShellFeature#RUN_DIRECTORY}, the way
+     * a sandbox shell built before EE-109 does: a skill hook there falls back to a staged copy.
+     */
+    private static ExecutionEnvironmentProvider withoutRunDirectory(ExecutionEnvironmentProvider provider) {
+        return request -> {
+            final ExecutionEnvironment environment = provider.resolve(request);
+            final VirtualShell shell = environment.shell();
+            final VirtualShell older = new VirtualShell() {
+                @Override
+                public ShellCommandResult execute(ShellCommand command) throws ShellExecutionException {
+                    return shell.execute(command);
+                }
+
+                @Override
+                public ShellCommandResult execute(ShellCommand command, ExecutionOptions options)
+                        throws ShellExecutionException {
+                    return shell.execute(command, options);
+                }
+
+                @Override
+                public String getWorkingDirectory() {
+                    return shell.getWorkingDirectory();
+                }
+
+                @Override
+                public boolean supports(ShellFeature feature) {
+                    return feature != ShellFeature.RUN_DIRECTORY && shell.supports(feature);
+                }
+
+                @Override
+                public void close() {
+                }
+            };
+            return new ExecutionEnvironment() {
+                @Override
+                public VirtualFileSystem fileSystem() {
+                    return environment.fileSystem();
+                }
+
+                @Override
+                public VirtualShell shell() {
+                    return older;
+                }
+
+                @Override
+                public EnvironmentDescriptor descriptor() {
+                    return environment.descriptor();
+                }
+
+                @Override
+                public String stage(StagedResource resource) {
+                    return environment.stage(resource);
+                }
+            };
+        };
+    }
+
+    /** Whether a reported directory is a run directory the shell made for that firing and has removed since. */
+    private static void assertRunDirectory(String reported, Path... workspaces) throws Exception {
+        final Path dir = Path.of(reported);
+        assertThat(dir).isAbsolute();
+        assertThat(dir.getFileName().toString()).startsWith("aimon-run-");
+        assertThat(dir).as("removed when the command ended").doesNotExist();
+        for (Path workspace : workspaces) {
+            assertThat(dir.startsWith(workspace.toRealPath())).as("outside " + workspace).isFalse();
+        }
+    }
+
     /** Runs the skill; its fork calls TodoWrite once. Returns what the fork's model saw. */
     private List<String> runSkill(OrcaRuntimeItSupport.Node node) {
         final SessionId sessionId = OrcaRuntimeItSupport.newSession();
@@ -124,7 +203,7 @@ class SkillHookSkillDirIntegrationTest {
 
     @Test
     @DisplayName("the guard script is found and its veto stops the tool")
-    void guardScriptIsFoundThroughSkillDir() {
+    void guardScriptIsFoundThroughSkillDir() throws Exception {
         final List<String> seenByFork = runSkill(node("agent-skill-dir", HOOKS, UnaryOperator.identity()));
 
         // The script ran: its stderr is the veto the model reads. Without the variable the command is
@@ -133,18 +212,14 @@ class SkillHookSkillDirIntegrationTest {
         assertThat(seenByFork)
                 .noneMatch(observation -> observation.contains("Todo list updated") || observation.contains(TODO));
 
-        // And it ran from a staged copy: a directory that holds the script, outside the control store the shell
-        // is not meant to read.
-        final String stagedDir = stagedDirReportedIn(seenByFork);
-        assertThat(Path.of(stagedDir)).isAbsolute();
-        assertThat(Path.of(stagedDir, "scripts", "guard.sh")).exists();
-        assertThat(stagedDir).contains(LocalExecutionEnvironmentProvider.DEFAULT_STAGING_ROOT + "/" + SKILL + "/")
-                .doesNotContain("/" + LocalExecutionEnvironmentProvider.CONTROL_DIRECTORY + "/");
+        // And it ran from a run directory (EE-109): the skill's bytes, placed for that firing outside the workspace
+        // and gone afterwards, not a staged copy the agent's shell could rewrite.
+        assertRunDirectory(stagedDirReportedIn(seenByFork), tempDir);
     }
 
     @Test
-    @DisplayName("a fork placed in another environment gets the copy staged into that environment")
-    void forkInAnotherEnvironmentGetsItsOwnStagedCopy() throws Exception {
+    @DisplayName("a fork placed in another environment runs its hook from a run directory that environment's shell made")
+    void forkInAnotherEnvironmentGetsItsOwnRunDirectory() throws Exception {
         final Path elsewhere = Files.createDirectories(tempDir.resolve("fork-workspace"));
         try (LocalExecutionEnvironmentProvider forkEnvironments = LocalExecutionEnvironmentProvider.builder()
                 .workspaceRoot(elsewhere).contentSearch(false).build()) {
@@ -154,9 +229,47 @@ class SkillHookSkillDirIntegrationTest {
             final List<String> seenByFork = runSkill(node);
 
             // The Skill tool staged the skill where the invoking turn runs. The hook fires in the fork, whose shell
-            // sees a different workspace: the path it is given has to exist there, not on the spawning side.
+            // places the run directory itself, so the path is valid where the command runs; nothing is staged into
+            // the fork's workspace for the hook.
+            assertRunDirectory(stagedDirReportedIn(seenByFork), tempDir);
+            assertThat(elsewhere.resolve(LocalExecutionEnvironmentProvider.DEFAULT_STAGING_ROOT).resolve(SKILL))
+                    .doesNotExist();
+            assertThat(seenByFork)
+                    .noneMatch(observation -> observation.contains("Todo list updated") || observation.contains(TODO));
+        }
+    }
+
+    @Test
+    @DisplayName("a staging limit does not stop a hook that runs from a run directory")
+    void stagingLimitDoesNotApplyToARunDirectory() throws Exception {
+        final Path elsewhere = Files.createDirectories(tempDir.resolve("tight-workspace-run"));
+        try (LocalExecutionEnvironmentProvider forkEnvironments = LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(elsewhere).maxStagedBytes(1).contentSearch(false).build()) {
+            final OrcaRuntimeItSupport.Node node = node("agent-fork-tight-run", HOOKS,
+                    placingTheForkIn(forkEnvironments));
+
+            final List<String> seenByFork = runSkill(node);
+
+            assertThat(seenByFork).anyMatch(observation -> observation.contains(GUARD_SAYS));
+            assertRunDirectory(stagedDirReportedIn(seenByFork), tempDir);
+        }
+    }
+
+    @Test
+    @DisplayName("a shell without RUN_DIRECTORY falls back to a staged copy, checked on every firing")
+    void shellWithoutRunDirectoryFallsBackToAStagedCopy() throws Exception {
+        final Path elsewhere = Files.createDirectories(tempDir.resolve("older-workspace"));
+        try (LocalExecutionEnvironmentProvider forkEnvironments = LocalExecutionEnvironmentProvider.builder()
+                .workspaceRoot(elsewhere).contentSearch(false).build()) {
+            final OrcaRuntimeItSupport.Node node = node("agent-fork-older", HOOKS,
+                    placingTheForkIn(withoutRunDirectory(forkEnvironments)));
+
+            final List<String> seenByFork = runSkill(node);
+
             final String stagedDir = stagedDirReportedIn(seenByFork);
             assertThat(Path.of(stagedDir).toRealPath()).startsWith(elsewhere.toRealPath());
+            assertThat(stagedDir).contains(LocalExecutionEnvironmentProvider.DEFAULT_STAGING_ROOT + "/" + SKILL + "/")
+                    .doesNotContain("/" + LocalExecutionEnvironmentProvider.CONTROL_DIRECTORY + "/");
             assertThat(Path.of(stagedDir, "scripts", "guard.sh")).exists();
             assertThat(seenByFork)
                     .noneMatch(observation -> observation.contains("Todo list updated") || observation.contains(TODO));
@@ -168,9 +281,11 @@ class SkillHookSkillDirIntegrationTest {
     void guardBlocksWhenTheSkillCannotBeStaged() throws Exception {
         final Path elsewhere = Files.createDirectories(tempDir.resolve("tight-workspace"));
         // One byte: nothing can be staged into the fork's environment, while the invoking turn's keeps the default.
+        // Its shell cannot place a run directory, so staging is the only way to give the hook its directory.
         try (LocalExecutionEnvironmentProvider forkEnvironments = LocalExecutionEnvironmentProvider.builder()
                 .workspaceRoot(elsewhere).maxStagedBytes(1).contentSearch(false).build()) {
-            final OrcaRuntimeItSupport.Node node = node("agent-fork-tight", HOOKS, placingTheForkIn(forkEnvironments));
+            final OrcaRuntimeItSupport.Node node = node("agent-fork-tight", HOOKS,
+                    placingTheForkIn(withoutRunDirectory(forkEnvironments)));
 
             final List<String> seenByFork = runSkill(node);
 
@@ -195,7 +310,7 @@ class SkillHookSkillDirIntegrationTest {
         try (LocalExecutionEnvironmentProvider forkEnvironments = LocalExecutionEnvironmentProvider.builder()
                 .workspaceRoot(elsewhere).maxStagedBytes(1).contentSearch(false).build()) {
             final OrcaRuntimeItSupport.Node node = node("agent-fork-tight-open", hooks,
-                    placingTheForkIn(forkEnvironments));
+                    placingTheForkIn(withoutRunDirectory(forkEnvironments)));
 
             final List<String> seenByFork = runSkill(node);
 

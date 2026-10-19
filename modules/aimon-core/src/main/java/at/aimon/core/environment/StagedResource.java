@@ -38,7 +38,8 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  *
  * <p>
  * The key is computed when the registry loads the resource, not on every {@code stage()} call, so staging never
- * re-reads the whole directory just to decide whether a copy exists.
+ * re-reads the source just to decide whether a copy exists. What it does read on every call is the copy, which it
+ * checks against the key (EE-109).
  *
  * <p>
  * <b>Scanned or assembled.</b> A resource {@link #scan} produced {@linkplain #isScanned() says so}: its file list

@@ -49,7 +49,7 @@ import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
  * share the disk and nothing else — no lock, no memory of what is staged. The interleavings are driven from a hook on
  * the source filesystem, not by timing: the hook runs while one stager is in the middle of its copy.
  */
-@DisplayName("LocalStaging across stagers and file-name folding (EE-17, EE-38)")
+@DisplayName("LocalStaging across stagers, file-name folding and rewritten copies (EE-17, EE-38, EE-109)")
 class LocalStagingTest {
 
     @TempDir
@@ -455,6 +455,64 @@ class LocalStagingTest {
         // A case-sensitive disk keeps both, and such a skill stages as it always did.
         assertThat(Path.of(path, "scripts/RUN.sh")).hasContent("echo UPPER");
         assertThat(Path.of(path, "scripts/run.sh")).hasContent("echo lower");
+    }
+
+    // ---- EE-109 ---------------------------------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("EE-109: a copy this stager made itself and the shell rewrote is copied again on the next call")
+    void ownCopyRewrittenIsCopiedAgain() throws Exception {
+        final StagedResource resource = StagedResource.scan(control, "skills/demo", "demo");
+        final ExecutionEnvironment env = process();
+        final Path copy = Path.of(env.stage(resource));
+        Files.writeString(copy.resolve("scripts/run.sh"), "echo tampered");
+
+        final Path again = Path.of(env.stage(resource));
+
+        assertThat(again).isEqualTo(copy);
+        assertThat(again.resolve("scripts/run.sh")).hasContent("echo staged-script");
+        assertThat(describe(again)).isEqualTo("complete");
+    }
+
+    @Test
+    @DisplayName("EE-109: a copy rewritten after the first check of another stager's copy is copied again too")
+    void adoptedCopyRewrittenIsCopiedAgain() throws Exception {
+        final StagedResource resource = StagedResource.scan(control, "skills/demo", "demo");
+        final Path copy = Path.of(process().stage(resource));
+        final ExecutionEnvironment second = process();
+        assertThat(Path.of(second.stage(resource))).isEqualTo(copy);
+        Files.writeString(copy.resolve("SKILL.md"), "# planted");
+
+        assertThat(Path.of(second.stage(resource)).resolve("SKILL.md")).hasContent("# demo");
+    }
+
+    @Test
+    @DisplayName("EE-109: a file planted beside the resource's files is removed at every call, not only the first")
+    void plantedSiblingIsRemovedOnEveryCall() throws Exception {
+        final StagedResource resource = StagedResource.scan(control, "skills/demo", "demo");
+        final ExecutionEnvironment env = process();
+        final Path copy = Path.of(env.stage(resource));
+        env.stage(resource);
+        Files.writeString(copy.resolve("scripts/helper.py"), "import os");
+
+        env.stage(resource);
+
+        assertThat(copy.resolve("scripts/helper.py")).doesNotExist();
+        assertThat(copy.resolve("scripts/run.sh")).hasContent("echo staged-script");
+    }
+
+    @Test
+    @DisplayName("EE-109 + EE-3: the copy of a re-scanned skill is checked on every call too")
+    void rescannedCopyIsCheckedOnEveryCall() throws Exception {
+        final StagedResource loaded = StagedResource.scan(control, "skills/demo", "demo");
+        control.write("skills/demo/scripts/run.sh", "echo edited");
+        final StagedResource current = StagedResource.scan(control, "skills/demo", "demo");
+        final ExecutionEnvironment env = process();
+        final Path copy = Path.of(env.stage(loaded));
+        assertThat(copy).isEqualTo(target(current));
+        Files.writeString(copy.resolve("scripts/run.sh"), "echo tampered");
+
+        assertThat(Path.of(env.stage(loaded)).resolve("scripts/run.sh")).hasContent("echo edited");
     }
 
     // ---- helpers --------------------------------------------------------------------------------------------------

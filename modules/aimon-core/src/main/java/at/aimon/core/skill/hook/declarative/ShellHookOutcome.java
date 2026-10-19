@@ -66,15 +66,17 @@ public final class ShellHookOutcome {
         ENVIRONMENT_UNAVAILABLE("execution environment unavailable"),
 
         /**
-         * The declaring skill's directory could not be staged into the environment the command runs in, so
-         * {@code AIMON_SKILL_DIR} has no value. The command is not run without it: a command written against
+         * The declaring skill's directory could not be given to the command &mdash; read for a run directory, or
+         * staged into the environment the command runs in &mdash; so {@code AIMON_SKILL_DIR} has no value. The command
+         * is not run without it: a command written against
          * {@code "$AIMON_SKILL_DIR/scripts/x.sh"} would otherwise run {@code /scripts/x.sh}.
          */
         STAGING_FAILED("skill directory could not be staged"),
 
         /**
-         * The {@code hooks/} directory of the {@code hooks.json} layer that declared the command could not be staged
-         * into the environment the command runs in, so {@code AIMON_HOOK_DIR} has no value. The command is not run
+         * The {@code hooks/} directory of the {@code hooks.json} layer that declared the command could not be read
+         * for the run (unreadable, over the limit, or changing while it was read), so {@code AIMON_HOOK_DIR} has no
+         * value. The name is kept from when the directory was staged. The command is not run
          * without it, for the reason {@link #STAGING_FAILED} gives.
          */
         HOOK_DIR_STAGING_FAILED("hook script directory could not be staged"),
@@ -85,6 +87,22 @@ public final class ShellHookOutcome {
          * not run: a policy hook the agent can steer is no policy.
          */
         ISOLATION_UNSUPPORTED("the environment's shell cannot run an isolated command"),
+
+        /**
+         * The environment's shell does not declare {@code ShellFeature.RUN_DIRECTORY}, so the files of a
+         * {@code hooks.json} command that names {@code AIMON_HOOK_DIR} cannot be handed to it for the run (EE-109).
+         * The command is not run: running it from a staged copy the agent can rewrite is what the run directory
+         * replaced, and running it without the variable is the {@link #STAGING_FAILED} case.
+         */
+        RUN_DIRECTORY_UNSUPPORTED("the environment's shell cannot place the hook's files for the run"),
+
+        /**
+         * The shell found that the hook's files it placed for the run did not hold the bytes it was given, and did
+         * not run the command (EE-109). That is evidence that something rewrote them, not an infrastructure failure,
+         * so like {@link #CANCELLED} it blocks on a guard event <em>whatever</em> {@code failOpen} says (see
+         * {@code ShellHookVerdicts}).
+         */
+        HOOK_FILES_TAMPERED("the hook's files changed before the run"),
 
         /** The executor does not run shell actions at all. */
         SHELL_UNSUPPORTED("shell actions not supported"),

@@ -27,6 +27,7 @@ class ExecutionOptionsTest {
         assertThat(options.isBackground()).isFalse();
         assertThat(options.isHook()).isFalse();
         assertThat(options.isIsolated()).isFalse();
+        assertThat(options.getRunDirectory()).isEmpty();
     }
 
     @Test
@@ -136,5 +137,17 @@ class ExecutionOptionsTest {
     void negativeMaxCaptureBytes_rejected() {
         assertThatThrownBy(() -> ExecutionOptions.builder().maxCaptureBytes(-1))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("maxCaptureBytes");
+    }
+
+    @Test
+    @DisplayName("runDirectory is set by the builder and carried by toBuilder(), so a wrapping shell cannot drop it")
+    void runDirectory_setByBuilderAndCarriedByToBuilder() {
+        RunDirectory run = RunDirectory.builder().variable("AIMON_HOOK_DIR").file("guard.sh", new byte[]{1}).build();
+        ExecutionOptions options = ExecutionOptions.builder().hook(true).isolated(true).runDirectory(run).build();
+
+        ExecutionOptions derived = options.toBuilder().workingDirectory("/tmp").build();
+
+        assertThat(derived.getRunDirectory()).containsSame(run);
+        assertThat(derived.toBuilder().runDirectory(null).build().getRunDirectory()).isEmpty();
     }
 }
