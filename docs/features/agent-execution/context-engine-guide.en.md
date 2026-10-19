@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/agent-execution/context-engine-guide.md
-source_commit: 2840dcf8
+source_commit: 7da424e4
 ---
 
 # Context Engine Guide — shrinking the context of long conversations
@@ -26,20 +26,19 @@ ingest receives the original rather than a summary.
 ## 2. Turning it on
 
 `rolling` requires the **version-2 log write format** — the summarized range has to be written to the view state, and
-a version-1 record cannot hold it. Choosing `rolling` on a node that writes version 1 **fails startup.** The CLI
-(`aimon-cli`) also defaults to `v1`, so to run an agent whose AGENT.md says `context-engine: rolling` under the CLI,
-set `cli.sessionLogWriteFormat: v2` (§2.4).
+a version-1 record cannot hold it. The default write format is `v2` (the starter, `SessionSpec` and the CLI alike), so
+there is nothing to set. Choosing `rolling` on a node whose write format is pinned to `v1` **fails startup.**
 
-IMPORTANT: The write format is switched across the whole cluster in two steps. First deploy a build that **can read**
-version 2 to every node (still writing `v1`), and only once that deployment is complete switch to `v2`. A record
-already written as version 2 is written as version 2 again, even by a version-1 write node.
+IMPORTANT: While the cluster still has nodes on a build that **cannot read** version 2, pin the write format to `v1`
+(the value in the examples below set to `v1`) until every such node is replaced, then drop the pin. A record already
+written as version 2 is written as version 2 again, even by a version-1 write node.
 
 ### 2.1 Spring Boot starter
 
 ```yaml
 aimon:
   session:
-    log-write-format: v2    # v1 (default) | v2
+    log-write-format: v2    # v2 (default) | v1
   context:
     engine: rolling         # default (default) | rolling — the value when the agent names none
     rolling:                # optional — rolling's thresholds (§4). Unset values keep the engine default
@@ -47,11 +46,13 @@ aimon:
       prune-min-tokens: 1000
 ```
 
-When `aimon.session.store` is not `in-memory`, also expose the same backend module's `SessionLogSegmentStore` as a bean
+If you expose a `SessionRecordStore` bean, also expose the same backend module's `SessionLogSegmentStore` as a bean
 (`MongoSessionLogSegmentStore`, `PostgresSessionLogSegmentStore` or `RedisSessionLogSegmentStore`). Version 2 never
 shrinks the log in place, so without a segment store nothing is sealed and the record carries the session's whole
-history forever — the stack then records a `session-log-sealing` degradation. An `AimonStackSpec` assembly passes it
-through `SessionSpec.segmentStore(...)`. To also clear the orphan segments of sessions nobody reopens, turn on the
+history forever — the starter therefore **fails startup** in that case (pinning `log-write-format: v1` removes the
+need; an `InMemorySessionRecordStore` bean is paired with an in-memory segment store on its own). An `AimonStackSpec`
+assembly passes it through `SessionSpec.segmentStore(...)`; without one the stack records a `session-log-sealing`
+degradation. To also clear the orphan segments of sessions nobody reopens, turn on the
 store-wide sweep with `aimon.session.segment-sweep-interval` — see the
 [web session deployment guide](../session/web-session-deployment-guide.en.md).
 
@@ -106,10 +107,10 @@ Rolling's thresholds are changed with `ExecutorSpec.builder().rollingContextEngi
 
 ```yaml
 cli:
-  sessionLogWriteFormat: v2   # v1 (default) | v2 — camelCase, like the CLI's other keys
+  sessionLogWriteFormat: v2   # v2 (default) | v1 — camelCase, like the CLI's other keys
 ```
 
-The CLI keeps sessions in memory, so the two-step rollout of §2 does not apply — changing this value is all it takes.
+The CLI keeps sessions in memory, so the `v1` pin of §2 does not apply.
 With `v2` the CLI also attaches an in-memory segment store, so the ranges a compaction hides are sealed out of the
 record and `SessionHistory` reads them back. The `context-engine` itself is chosen in AGENT.md (§2.2).
 

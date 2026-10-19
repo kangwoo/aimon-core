@@ -16,9 +16,12 @@ import at.aimon.core.agent.session.SessionLifecycleListener;
 import at.aimon.core.agent.session.idempotency.IdempotencyStore;
 import at.aimon.core.agent.session.inbox.SessionInbox;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
+import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
+import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionLeaseStore;
 import at.aimon.core.agent.session.store.SessionLogSegmentStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.session.routing.DeploymentMode;
 
 /**
@@ -58,6 +61,17 @@ import at.aimon.session.routing.DeploymentMode;
  * see that class for why the reverse creation order it would otherwise fall back to is right only by accident.
  * Adding them to the stack's own teardown plan as well would give one resource two destruction edges, which is
  * the thing {@code scope-model.md} exists to prevent.
+ *
+ * <p>
+ * <b>A version-2 log over an application record store needs the segment store too.</b> Version 2 never rewrites the
+ * log in place, so without somewhere to seal the ranges a compaction hides, a durable record carries every entry of
+ * the session for good and each save rewrites all of it. The stack would only record that as a degradation; this
+ * slice fails instead, for the same reason it fails on a missing record store — a deployment that grows without bound
+ * is found in production rather than at startup. The fix is a bean from the module that already supplies the record
+ * store, or pinning {@code v1}. An application {@code InMemorySessionRecordStore} is the exception: it gets an
+ * in-memory segment store, the same pairing the stack makes for its own default. An application that publishes its
+ * own {@code SessionSpec} bypasses this slice, and the stack records the {@code session-log-sealing} degradation
+ * instead.
  */
 @AutoConfiguration
 @ConditionalOnProperty(name = AimonProperties.ENABLED, havingValue = "true", matchIfMissing = true)
@@ -77,8 +91,9 @@ public class AimonSessionAutoConfiguration {
      *
      * <p>
      * The sixth, {@link SessionLogSegmentStore}, is where a version-2 log seals the ranges its view hides
-     * (session-log §5). It is optional in every mode: without it a supplied record store seals nothing and the stack
-     * records a {@code session-log-sealing} degradation when the write format is {@code v2}.
+     * (session-log §5). It is required beside an application record store when the write format is {@code v2}, and
+     * optional otherwise: an in-memory record store, supplied or defaulted, is paired with an in-memory one, and a
+     * {@code v1} log compacts in place.
      *
      * <p>
      * All six go through {@link ApplicationBeans#resolve}, which registers the destruction edge an
@@ -148,8 +163,14 @@ public class AimonSessionAutoConfiguration {
         final IdempotencyStore idempotencyStore = ApplicationBeans.resolve(idempotencyStores, IdempotencyStore.class,
                 beanFactory, SESSION_SPEC_BEAN);
         builder.leaseStore(leaseStore).signalBus(signalBus).inbox(inbox).idempotencyStore(idempotencyStore);
-        builder.segmentStore(
-                ApplicationBeans.resolve(segmentStores, SessionLogSegmentStore.class, beanFactory, SESSION_SPEC_BEAN));
+        SessionLogSegmentStore segmentStore = ApplicationBeans.resolve(segmentStores, SessionLogSegmentStore.class,
+                beanFactory, SESSION_SPEC_BEAN);
+        if (segmentStore == null && supplied instanceof InMemorySessionRecordStore) {
+            // The pairing the stack makes for its own in-memory default: both die with the process, so no manifest
+            // can outlive the segments it names, and there is no connection here to build.
+            segmentStore = new InMemorySessionLogSegmentStore();
+        }
+        builder.segmentStore(segmentStore);
         builder.lifecycleListeners(ApplicationBeans.resolveAll(lifecycleListeners, SessionLifecycleListener.class,
                 beanFactory, SESSION_SPEC_BEAN));
 
@@ -162,6 +183,18 @@ public class AimonSessionAutoConfiguration {
                         + "\nEach backing module ships all four over the connection the application already opened"
                         + " — expose them as beans, or set " + AimonProperties.SESSION_MODE + "=single-node.");
             }
+        }
+        // After the distributed check, which names more of what is missing in one message, and before build(), whose
+        // segment-sweep check would otherwise answer the same missing bean with "or drop the sweep". An in-memory
+        // record store never reaches it — it was paired above — so build()'s refusal of one in distributed mode
+        // still comes first.
+        if (supplied != null && segmentStore == null && session.getLogWriteFormat() == SessionLogFormat.V2) {
+            throw new IllegalStateException("A SessionRecordStore bean is defined but no SessionLogSegmentStore bean,"
+                    + " and " + AimonProperties.SESSION_LOG_WRITE_FORMAT + "=v2 never rewrites the log in place: every"
+                    + " record would keep its whole history and each save would rewrite it. Expose the segment store"
+                    + " of the module that supplies the record store (PostgresSessionLogSegmentStore /"
+                    + " MongoSessionLogSegmentStore / RedisSessionLogSegmentStore) as a bean, or set "
+                    + AimonProperties.SESSION_LOG_WRITE_FORMAT + "=v1.");
         }
         return builder.build();
     }

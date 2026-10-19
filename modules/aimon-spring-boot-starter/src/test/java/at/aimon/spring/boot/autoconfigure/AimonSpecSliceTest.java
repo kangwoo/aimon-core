@@ -31,6 +31,7 @@ import at.aimon.core.agent.session.SessionLifecycleListener;
 import at.aimon.core.agent.session.idempotency.IdempotencyStore;
 import at.aimon.core.agent.session.inbox.SessionInbox;
 import at.aimon.core.agent.session.signal.SessionSignalBus;
+import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionLeaseStore;
 import at.aimon.core.agent.session.store.SessionLogSegmentStore;
@@ -333,7 +334,8 @@ class AimonSpecSliceTest {
     @DisplayName("an application record store is adopted and the selector agrees")
     void applicationRecordStoreIsAdopted(@TempDir Path workspace) {
         sessionRunner(workspace).withPropertyValues("aimon.session.store=postgres")
-                .withUserConfiguration(ApplicationRecordStoreConfiguration.class)
+                .withUserConfiguration(ApplicationRecordStoreConfiguration.class,
+                        ApplicationSegmentStoreConfiguration.class)
                 .run(ctx -> assertThat(ctx.getBean(SessionSpec.class).getRecordStore())
                         .contains(ApplicationRecordStoreConfiguration.INSTANCE));
     }
@@ -348,6 +350,43 @@ class AimonSpecSliceTest {
                 .run(ctx -> assertThat(ctx.getBean(SessionSpec.class).getSegmentStore())
                         .contains(ApplicationSegmentStoreConfiguration.INSTANCE));
         sessionRunner(workspace).run(ctx -> assertThat(ctx.getBean(SessionSpec.class).getSegmentStore()).isEmpty());
+    }
+
+    @Test
+    @DisplayName("a v2 record store without a segment store fails by naming both exits; v1 starts without one")
+    void versionTwoRecordStoreWithoutASegmentStoreFails(@TempDir Path workspace) {
+        // The stack alone would only record a degradation, and the record would grow with every turn from then on.
+        sessionRunner(workspace).withPropertyValues("aimon.session.store=postgres")
+                .withUserConfiguration(ApplicationRecordStoreConfiguration.class)
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining("PostgresSessionLogSegmentStore")
+                        .hasStackTraceContaining(AimonProperties.SESSION_LOG_WRITE_FORMAT + "=v1"));
+        sessionRunner(workspace).withPropertyValues("aimon.session.store=postgres", "aimon.session.log-write-format=v1")
+                .withUserConfiguration(ApplicationRecordStoreConfiguration.class)
+                .run(ctx -> assertThat(ctx.getBean(SessionSpec.class).getSegmentStore()).isEmpty());
+    }
+
+    @Test
+    @DisplayName("with a sweep interval set, a missing segment store still gets the segment-store message")
+    void theSegmentStoreMessageWinsOverTheSweepCheck(@TempDir Path workspace) {
+        // SessionSpec refuses a sweep over a record store with no segment store too, but its remedy includes dropping
+        // the sweep — which would leave the record growing.
+        sessionRunner(workspace)
+                .withPropertyValues("aimon.session.store=postgres", "aimon.session.segment-sweep-interval=1h")
+                .withUserConfiguration(ApplicationRecordStoreConfiguration.class).run(ctx -> assertThat(ctx).hasFailed()
+                        .getFailure().hasStackTraceContaining(AimonProperties.SESSION_LOG_WRITE_FORMAT + "=v1"));
+        // An in-memory record store is paired before SessionSpec looks, so the sweep is accepted over it.
+        sessionRunner(workspace).withPropertyValues("aimon.session.segment-sweep-interval=1h")
+                .withUserConfiguration(InMemoryRecordStoreConfiguration.class)
+                .run(ctx -> assertThat(ctx.getBean(SessionSpec.class).getSegmentSweepInterval()).isPresent());
+    }
+
+    @Test
+    @DisplayName("an application in-memory record store gets an in-memory segment store, as the stack's default does")
+    void inMemoryRecordStoreBeanIsPairedWithAnInMemorySegmentStore(@TempDir Path workspace) {
+        sessionRunner(workspace).withUserConfiguration(InMemoryRecordStoreConfiguration.class)
+                .run(ctx -> assertThat(ctx.getBean(SessionSpec.class).getSegmentStore()).hasValueSatisfying(
+                        store -> assertThat(store).isInstanceOf(InMemorySessionLogSegmentStore.class)));
     }
 
     @Test
@@ -407,7 +446,8 @@ class AimonSpecSliceTest {
     @DisplayName("a complete distributed configuration reaches the spec whole")
     void distributedConfigurationReachesTheSpec(@TempDir Path workspace) {
         distributedRunner(workspace).withUserConfiguration(ApplicationRecordStoreConfiguration.class,
-                ThreeOfFourSpiConfiguration.class, IdempotencyStoreConfiguration.class).run(ctx -> {
+                ApplicationSegmentStoreConfiguration.class, ThreeOfFourSpiConfiguration.class,
+                IdempotencyStoreConfiguration.class).run(ctx -> {
                     final SessionSpec spec = ctx.getBean(SessionSpec.class);
                     assertThat(spec.getMode()).isEqualTo(DeploymentMode.DISTRIBUTED);
                     assertThat(spec.getNodeId()).contains("pod-a");
@@ -416,6 +456,7 @@ class AimonSpecSliceTest {
                     assertThat(spec.getSignalBus()).contains(ThreeOfFourSpiConfiguration.SIGNAL_BUS);
                     assertThat(spec.getInbox()).contains(ThreeOfFourSpiConfiguration.INBOX);
                     assertThat(spec.getIdempotencyStore()).contains(IdempotencyStoreConfiguration.INSTANCE);
+                    assertThat(spec.getSegmentStore()).contains(ApplicationSegmentStoreConfiguration.INSTANCE);
                 });
     }
 

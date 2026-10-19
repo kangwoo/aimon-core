@@ -17,6 +17,7 @@ import at.aimon.core.agent.context.ContextCaller;
 import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.context.ContextRequest;
 import at.aimon.core.agent.context.DefaultContextEngine;
+import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.base.Principal;
@@ -102,8 +103,8 @@ public final class CompactCommand extends SystemCommand implements DirectExecuta
             HookExecutionManager hookExecutionManager) {
         this(DefaultContextEngine.builder()
                 .compactionEngine(Objects.requireNonNull(compactionEngine, "compactionEngine cannot be null"))
-                .compactionGuard(Objects.requireNonNull(compactionGuard, "compactionGuard cannot be null")).build(),
-                hookRegistry, hookExecutionManager);
+                .compactionGuard(Objects.requireNonNull(compactionGuard, "compactionGuard cannot be null"))
+                .writeFormat(SessionLogFormat.V1).build(), hookRegistry, hookExecutionManager);
     }
 
     /**

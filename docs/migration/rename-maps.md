@@ -310,8 +310,8 @@ getter that answered with a count would reintroduce the index the change exists 
 **The stored form did not change for version-1 documents.** A version-1 transcript still stores
 `rewindPoint.messageCount`; the codec converts at the boundary. A version-2 document (`JsonSessionSnapshotCodec`
 `version: 2`) stores `rewindPoint.seq`. Every build that knows `SessionLogState` reads both; which one it writes is
-`SessionLogFormat` — version 1 by default, version 2 when the write switch says so or the record was read as
-version 2.
+`SessionLogFormat` — the write switch (version 2 by default since the default flipped; version 1 when pinned), raised
+to version 2 for a record that was read as version 2.
 
 ---
 

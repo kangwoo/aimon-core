@@ -305,7 +305,7 @@ aimon:
     mode: single-node               # single-node(기본) | distributed
     node-id: ${HOSTNAME}
     shutdown-drain-timeout: 30s
-    log-write-format: v1            # v1(기본) | v2 — 모든 노드가 v2 를 읽게 배포된 뒤에 v2 로 바꾼다
+    log-write-format: v2            # v2(기본) | v1 — v2 를 못 읽는 옛 노드가 남아 있는 동안만 v1 로 고정한다
     segment-sweep-interval: 1h      # 비우면 꺼짐(기본) — 다시 열리지 않는 세션의 고아 세그먼트를 치운다
     segment-sweep-grace: 24h        # 기본 24h — 이보다 오래된, 레코드가 가리키지 않는 세그먼트만 지운다
     cache:
@@ -1099,6 +1099,10 @@ aimon:
 - **`SessionRecordStore`** 는 분산 백엔드로 갑니다. 세 구현이 in-tree 에 있습니다 —
   `PostgresSessionRecordStore`(`aimon-session-postgres`), `MongoSessionRecordStore`(`aimon-session-mongodb`),
   `RedisSessionRecordStore`(`aimon-session-redis`). (해당 모듈을 의존성에 넣어야 합니다.)
+- **`SessionLogSegmentStore`** 도 같은 모듈의 것(`PostgresSessionLogSegmentStore` 등)을 빈으로 함께 등록합니다.
+  기본 쓰기 형식 v2 는 로그를 고쳐 쓰지 않으므로, 압축이 가린 구간을 옮겨 둘 곳이 없으면 레코드가 세션의 전체
+  이력을 계속 들고 다닙니다. 그래서 스타터는 레코드 저장소 빈만 있고 세그먼트 저장소 빈이 없으면 **기동을
+  실패시킵니다**(`aimon.session.log-write-format: v1` 로 고정하면 필요 없습니다).
 - **`SessionStore`** 가 둘을 묶어 **fencing** 합니다 — 리스를 이긴 노드만 레코드를 씁니다. `claim` 이
   리스 선출 → 에이전트 바인딩 검증 → 레코드 프로비저닝을 **그 순서로** 하므로, 선출에서 진 노드는 레코드를
   아예 건드리지 않습니다(분산 트랜잭션이 필요 없는 이유).
