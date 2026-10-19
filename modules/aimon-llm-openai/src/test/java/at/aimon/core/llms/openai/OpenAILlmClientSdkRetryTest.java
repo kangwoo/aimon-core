@@ -8,6 +8,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -20,6 +21,7 @@ import at.aimon.core.llm.LlmCancellation;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.exception.LlmCallCancelledException;
 import at.aimon.core.llm.exception.LlmClientException;
 import at.aimon.core.llm.streaming.LlmStreamChunk;
 import at.aimon.core.llm.streaming.LlmStreamSink;
@@ -246,6 +248,47 @@ class OpenAILlmClientSdkRetryTest {
         }
     }
 
+    @ParameterizedTest
+    @EnumSource(Endpoint.class)
+    @DisplayName("streaming: a cancellation tripped mid-stream ends the call without another attempt, even with retries left")
+    void cancelMidStreamIsNotRetried(Endpoint endpoint) throws Exception {
+        CountDownLatch deltaSeen = new CountDownLatch(1);
+        TrippableCancellation cancellation = new TrippableCancellation();
+        try (CountingHttpServer server = CountingHttpServer
+                .answering(Step.sseThenReset(endpoint.partialStream, deltaSeen))) {
+            OpenAILlmClient client = client(server, endpoint, 3);
+
+            assertThatThrownBy(() -> stream(client, chunk -> {
+                if (chunk.getTextDelta().filter("partial"::equals).isPresent()) {
+                    cancellation.trip();
+                    deltaSeen.countDown();
+                }
+            }, cancellation)).isInstanceOf(LlmCallCancelledException.class);
+
+            assertThat(deltaSeen.getCount()).as("the delta reached the sink before the cancellation").isZero();
+            assertThat(server.requestCount()).isEqualTo(1);
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(Endpoint.class)
+    @DisplayName("a call cancelled before it starts sends no request, blocking or streaming")
+    void cancelledBeforeStartSendsNothing(Endpoint endpoint) throws Exception {
+        TrippableCancellation cancellation = new TrippableCancellation();
+        cancellation.trip();
+        try (CountingHttpServer server = CountingHttpServer.answering(Step.json(200, endpoint.success))) {
+            OpenAILlmClient client = client(server, endpoint, 3);
+
+            assertThatThrownBy(() -> client.sendMessage(SystemPromptParts.empty(), List.of(Message.user("hi")),
+                    Collections.emptyList(), LlmModel.builder().build(), LlmCallMetadata.empty(), cancellation))
+                    .isInstanceOf(LlmCallCancelledException.class);
+            assertThatThrownBy(() -> stream(client, chunk -> {
+            }, cancellation)).isInstanceOf(LlmCallCancelledException.class);
+
+            assertThat(server.requestCount()).isZero();
+        }
+    }
+
     private static OpenAILlmClient client(CountingHttpServer server, Endpoint endpoint, Integer maxRetries) {
         return new OpenAILlmClient(OpenAIConfig.builder().apiKey("test-key").model(endpoint.model)
                 .baseUrl(server.url() + "/v1").maxRetries(maxRetries).build());
@@ -257,8 +300,40 @@ class OpenAILlmClientSdkRetryTest {
     }
 
     private static LlmResponse stream(OpenAILlmClient client, LlmStreamSink sink) {
+        return stream(client, sink, LlmCancellation.none());
+    }
+
+    private static LlmResponse stream(OpenAILlmClient client, LlmStreamSink sink, LlmCancellation cancellation) {
         return client.sendMessageStreaming(SystemPromptParts.empty(), List.of(Message.user("hi")),
                 Collections.emptyList(), LlmModel.builder().build(), LlmCallMetadata.empty(),
-                LlmStreamingOptions.defaults(), sink, LlmCancellation.none());
+                LlmStreamingOptions.defaults(), sink, cancellation);
+    }
+
+    /**
+     * A token the test trips from its sink, the way a {@code TaskStop} would from another thread: the levers registered
+     * so far run on the tripping thread, and one registered afterwards runs at once.
+     */
+    private static final class TrippableCancellation implements LlmCancellation {
+        private final AtomicBoolean cancelled = new AtomicBoolean();
+        private final List<Runnable> levers = new CopyOnWriteArrayList<>();
+
+        @Override
+        public boolean isCancelled() {
+            return cancelled.get();
+        }
+
+        @Override
+        public void onCancel(Runnable abort) {
+            levers.add(abort);
+            if (cancelled.get()) {
+                abort.run();
+            }
+        }
+
+        void trip() {
+            if (cancelled.compareAndSet(false, true)) {
+                levers.forEach(Runnable::run);
+            }
+        }
     }
 }

@@ -316,7 +316,9 @@ tests), so an application had no supported way to turn that off.
 - It touches nothing above the client: a retry made by the caller still goes through any wrapper again. Builder only —
   no CLI or starter key. `OpenAIEmbeddingConfig` is unchanged.
 - Verified by counting the requests a local HTTP server receives (`*LlmClientSdkRetryTest`), including the SDK
-  default (two retries in OpenAI 4.69.2 / Anthropic 2.65.0) for the unset case.
+  default (two retries in OpenAI 4.69.2 / Anthropic 2.65.0) for the unset case. The same server pins the cancellation
+  side: a call cancelled before it starts sends no request, and one cancelled mid-stream is not sent again even with
+  retries left.
 
 ### Added: name the OpenAI endpoint explicitly — `OpenAIConfig.endpoint(OpenAiEndpoint)`, `llm.openai.endpoint`, `aimon.llm.openai.endpoint`
 
