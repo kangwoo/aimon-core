@@ -59,8 +59,8 @@ fail() {
 # This runs first. It needs nothing from the repository; a shell about to be refused should not trigger
 # `git fetch` or `docker info` first; and a refusal is not a failed release, so the EXIT trap's
 # gradle.properties note must not print beside it. It runs after the argument loop, so a bad argument still
-# gets exit 2 and the usage line. ReleaseGateMatchesCiGateTest runs this file from an empty directory with a
-# PATH holding only a stub `git` that records its calls, and fails if this check moves above the argument
+# gets exit 2 and the usage line. ReleaseGateMatchesCiGateTest runs this file from an empty directory with an
+# empty PATH and a stub `git` function that records its calls, and fails if this check moves above the argument
 # loop, below the `cd` that calls `git`, below `trap cleanup EXIT` (the trap calls `git` when a refusal exits
 # non-zero), or below `log "Pre-flight checks"`.
 provider_keys_set=""

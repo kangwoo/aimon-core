@@ -9,7 +9,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -78,10 +77,11 @@ import org.junit.jupiter.api.io.TempDir;
  * <p>
  * The refusal is behaviour, not a task name, so those tests run the script rather than read it: a commented-out,
  * inverted or unreachable check passes any scan, and no scan can show that a value is never printed. They run the
- * real file with {@code --dry-run} from an empty directory, with the environment cleared and a {@code PATH} holding
- * only a stub {@code git} that records every call. The sandbox is inert with or without the check — no real
- * {@code git}, {@code docker} or {@code ./gradlew} is reachable, and a run nothing refuses stops at
- * {@code gradle.properties not found} — so removing the check turns these tests red instead of starting a release.
+ * real file with {@code --dry-run} from an empty directory, with the environment cleared, a {@code PATH} that holds
+ * nothing, and a stub {@code git} — an exported bash function — that records every call. The sandbox is inert with or
+ * without the check — no real {@code git}, {@code docker} or {@code ./gradlew} is reachable, and a run nothing
+ * refuses stops at {@code gradle.properties not found} — so removing the check turns these tests red instead of
+ * starting a release.
  * The call log is what pins the ordering. A check moved below the {@code cd} that calls {@code git}, or below the
  * {@code EXIT} trap that calls it again on a non-zero exit, still refuses before "Pre-flight checks" and would pass
  * every other assertion here.
@@ -245,6 +245,12 @@ class ReleaseGateMatchesCiGateTest {
      * {@code read} in the script comes after the gate — so this only has to outlast a slow machine starting bash.
      */
     private static final long SCRIPT_TIMEOUT_SECONDS = 30;
+
+    /**
+     * The environment variable bash imports as a function named {@code git}. {@code BASH_FUNC_<name>%%} is the
+     * encoding every bash since the 2014 Shellshock fixes reads — Apple's 3.2 as much as Linux's 5.x.
+     */
+    private static final String GIT_STUB_FUNCTION_VARIABLE = "BASH_FUNC_git%%";
 
     private static final Path REPOSITORY_ROOT = locateRepositoryRoot();
 
@@ -448,8 +454,8 @@ class ReleaseGateMatchesCiGateTest {
     /**
      * The refusal cases assert absences — no pre-flight, no {@code git} call — and an absence proves nothing unless the
      * same sandbox without a key produces the presence. This run must get past the check to pre-flight and must call
-     * the stub, which shows the stub was on {@code PATH} and could execute. It also catches a check that refuses
-     * whether or not a key is set.
+     * the stub, which shows the script's bash imported it and resolved {@code git} to it. It also catches a check that
+     * refuses whether or not a key is set.
      */
     @Test
     @DisplayName("the release script starts without a provider API key, so the refusal cases are not vacuous")
@@ -468,8 +474,8 @@ class ReleaseGateMatchesCiGateTest {
                     .doesNotContain(key);
         }
         assertThat(run.gitCalls).withFailMessage(
-                "with no provider key set, %s never called the stub git — the stub is not reachable on PATH, so every "
-                        + "\"no git call\" assertion in the refusal cases would pass without checking anything:%n%s",
+                "with no provider key set, %s never called the stub git — the script's bash did not resolve `git` to "
+                        + "it, so every \"no git call\" assertion in the refusal cases would pass without checking anything:%n%s",
                 RELEASE_SCRIPT, run).contains("rev-parse --show-toplevel");
     }
 
@@ -567,10 +573,21 @@ class ReleaseGateMatchesCiGateTest {
 
     /**
      * Runs the real release script in {@code tempDir}/{@code caseName}, from an empty working directory, with a
-     * cleared environment that holds only {@code PATH}, {@code HOME} and the case's variables. {@code PATH} holds a
-     * single stub {@code git} that appends each call's arguments to a log outside the working directory, answers
-     * {@code rev-parse} with the directory it runs in, and exits 0, so the {@code EXIT} trap's
+     * cleared environment that holds only {@code PATH}, {@code HOME}, the stub {@code git} and the case's variables.
+     * {@code PATH} is an empty directory. The stub is a bash function the script's shell imports from
+     * {@link #GIT_STUB_FUNCTION_VARIABLE}: it appends each call's arguments to a log outside the working directory,
+     * answers {@code rev-parse} with the directory it runs in, and returns 0, so the {@code EXIT} trap's
      * {@code git diff --quiet} prints no note either.
+     *
+     * <p>
+     * A function rather than an executable file on {@code PATH}, because on macOS a file is not executed the moment it
+     * is written. Since macOS 13, the first {@code execve} of a new executable written by a process that carries app
+     * provenance — a test JVM started from a terminal does — waits for syspolicyd's Gatekeeper scan of it. That scan is
+     * serialised machine-wide and, for unsigned code, waits on an online lookup that takes about 20 seconds; on a
+     * developer machine compiling other unsigned binaries the queue in front of a fresh stub ran past the 30-second
+     * timeout, and this harness failed before the release script ran at all. Linux has no such step, which is why CI
+     * never saw it. Only bash, which is already trusted, is executed here, and a function needs no execute bit, so the
+     * harness no longer asks the temp file system for POSIX permissions either.
      *
      * <p>
      * Output goes to a file that is read only after the process exits, so a script that hangs cannot block the read
@@ -581,23 +598,21 @@ class ReleaseGateMatchesCiGateTest {
             String... arguments) throws IOException, InterruptedException {
         final Path bash = locateBash();
         assumeTrue(bash != null, "no bash on PATH — " + RELEASE_SCRIPT + " cannot run here either");
-        assumeTrue(Files.getFileStore(tempDir).supportsFileAttributeView("posix"),
-                "the temp directory's file system has no POSIX permissions, so the stub git this test puts on PATH "
-                        + "cannot be made executable");
 
         final Path sandbox = Files.createDirectories(tempDir.resolve(caseName));
         final Path work = Files.createDirectories(sandbox.resolve("work"));
-        final Path bin = Files.createDirectories(sandbox.resolve("bin"));
+        final Path emptyPath = Files.createDirectories(sandbox.resolve("bin"));
         final Path gitCallLog = sandbox.resolve("git-calls.log");
         final Path output = sandbox.resolve("output.txt");
 
         // The stub names its log single-quoted, which a quote in the temp path would break.
         assertThat(gitCallLog.toString()).doesNotContain("'");
-        final Path stub = bin.resolve("git");
-        Files.writeString(stub, "#!/bin/sh\n" + "printf '%s\\n' \"$*\" >> '" + gitCallLog + "'\n"
-                + "[ \"$1\" = rev-parse ] && pwd\n" + "exit 0\n");
-        Files.setPosixFilePermissions(stub, PosixFilePermissions.fromString("rwxr-xr-x"));
-        requireRunnableStub(stub, gitCallLog);
+        final Map<String, String> sandboxEnvironment = new TreeMap<>();
+        sandboxEnvironment.put("PATH", emptyPath.toString());
+        sandboxEnvironment.put("HOME", work.toString());
+        sandboxEnvironment.put(GIT_STUB_FUNCTION_VARIABLE,
+                "() { printf '%s\\n' \"$*\" >> '" + gitCallLog + "'; " + "[ \"$1\" = rev-parse ] && pwd; return 0; }");
+        requireImportedStub(bash, work, sandboxEnvironment, gitCallLog);
 
         final ProcessBuilder builder = new ProcessBuilder(bash.toString(),
                 REPOSITORY_ROOT.resolve(RELEASE_SCRIPT).toString());
@@ -605,8 +620,7 @@ class ReleaseGateMatchesCiGateTest {
         builder.directory(work.toFile()).redirectErrorStream(true).redirectOutput(output.toFile());
         final Map<String, String> processEnvironment = builder.environment();
         processEnvironment.clear();
-        processEnvironment.put("PATH", bin.toString());
-        processEnvironment.put("HOME", work.toString());
+        processEnvironment.putAll(sandboxEnvironment);
         processEnvironment.putAll(environment);
 
         final Process process = builder.start();
@@ -618,32 +632,30 @@ class ReleaseGateMatchesCiGateTest {
     }
 
     /**
-     * Runs the stub once on its own and requires it to record the call. Every refusal case asserts that the log stayed
-     * empty, and a stub that cannot execute would satisfy that without the script being checked at all.
+     * Calls the stub once from the same bash, in the same environment, and requires it to record the call. Every
+     * refusal case asserts that the log stayed empty, and a stub that bash never imported would satisfy that without
+     * the script being checked at all — {@code git} would only meet an empty {@code PATH}.
      *
      * <p>
-     * This fails where the two assumptions before it skip, because it answers a different question. Those two say
-     * the harness cannot be built on this machine: without bash the release script cannot run here either, and
-     * without POSIX permissions there is no execute bit to give the stub. A stub that was built and still does not
-     * run — a {@code noexec} temp mount, say — turns up on a machine that can run the release script, and skipping
-     * there would leave the refusal unpinned exactly where a release can still be cut. The remedy is to point
-     * {@code java.io.tmpdir} at a directory that allows execution.
+     * This fails where the assumption before it skips, because it answers a different question. That one says the
+     * harness cannot be built on this machine: without bash the release script cannot run here either. A bash that is
+     * there and still does not import the function — one started in POSIX mode, say — turns up on a machine that can
+     * run the release script, and skipping there would leave the refusal unpinned exactly where a release can still be
+     * cut.
      */
-    private static void requireRunnableStub(Path stub, Path gitCallLog) throws IOException, InterruptedException {
-        final Process process;
-        try {
-            process = new ProcessBuilder(stub.toString(), "self-check").redirectErrorStream(true)
-                    .redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
-        } catch (final IOException e) {
-            throw new AssertionError("the stub git at " + stub + " cannot be started (" + e.getMessage() + "), so no "
-                    + "assertion that the release script never called git would check anything. Point "
-                    + "java.io.tmpdir at a directory that allows execution.", e);
-        }
+    private static void requireImportedStub(Path bash, Path work, Map<String, String> sandboxEnvironment,
+            Path gitCallLog) throws IOException, InterruptedException {
+        final ProcessBuilder builder = new ProcessBuilder(bash.toString(), "-c", "git self-check")
+                .directory(work.toFile()).redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD);
+        builder.environment().clear();
+        builder.environment().putAll(sandboxEnvironment);
+        final Process process = builder.start();
         process.getOutputStream().close();
-        awaitExit(process, "the stub git at " + stub);
+        awaitExit(process, "the stub git self-check in " + bash);
         if (!Files.exists(gitCallLog)) {
-            throw new AssertionError("the stub git at " + stub + " ran but recorded nothing in " + gitCallLog
-                    + ", so no assertion that the release script never called git would check anything");
+            throw new AssertionError(bash + " did not import the stub git from " + GIT_STUB_FUNCTION_VARIABLE
+                    + " — nothing was recorded in " + gitCallLog + " — so no assertion that the release script never "
+                    + "called git would check anything");
         }
         Files.delete(gitCallLog);
     }
