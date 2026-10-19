@@ -316,6 +316,9 @@ class ViewModeCompactionIntegrationTest {
         assertThat(call.messageContents().get(1)).contains(SUMMARY_SENTINEL);
         assertThat(call.allText()).contains("noted", "and then?").anyMatch(text -> text.contains(NOTE_SENTINEL))
                 .noneMatch(text -> text.contains(BIG_FILE_SENTINEL)).doesNotContain(TURN_1_INPUT, TURN_2_INPUT);
+        // Two reads of the note: turn 2's, still verbatim behind the summary — an in-place (version-1) compaction
+        // would have folded it in — and turn 3's own.
+        assertThat(call.observations()).hasSize(2).allMatch(text -> text.contains(NOTE_SENTINEL));
         assertThat(summariserCalls(sessionId)).isEqualTo(1);
     }
 
