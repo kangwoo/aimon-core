@@ -87,6 +87,7 @@ import at.aimon.core.agent.stream.ExecutionCompleted;
 import at.aimon.core.agent.stream.ExecutionError;
 import at.aimon.core.agent.stream.SkillTurnSuspendedEvent;
 import at.aimon.core.agent.stream.StreamingAgentExecutor;
+import at.aimon.core.agent.stream.SubagentTaskCompleted;
 import at.aimon.core.agent.stream.ToolResultReady;
 import at.aimon.core.agent.stream.ToolUseStarted;
 import at.aimon.core.agent.tool.DefaultParallelToolDispatcher;
@@ -276,6 +277,13 @@ public class OrcaAgentExecutor
      * Tracing-span attribute key carrying a {@link LoopTransition}'s optional secondary note (omitted if absent).
      */
     public static final String LOOP_TRANSITION_NOTE_ATTR = "loop.transition.note";
+
+    /**
+     * Tracing-span attribute key on an ITERATION span listing the background subagent task ids whose completion
+     * notifications were drained into the conversation just before it (comma-separated, drain order). Omitted when
+     * none were.
+     */
+    public static final String RECEIVED_SUBAGENT_TASK_IDS_ATTR = "subagent.received.taskIds";
 
     /**
      * {@link CompactBoundary#getStrategyName() strategy name} reported when a compaction step runs before an
@@ -1183,7 +1191,7 @@ public class OrcaAgentExecutor
             // was wired or the command flow ran (no LLM calls).
             final OrcaAgentExecutionResult result = runTurn(scope, userMessage.getContent())
                     .withCostSummary(scope.costSummary);
-            recordTurnOutcome(turnSpan, result);
+            recordTurnOutcome(turnSpan, result, payloadPolicy);
             turnResult = result;
             return result;
         } catch (RuntimeException e) {
@@ -1392,12 +1400,25 @@ public class OrcaAgentExecutor
     /**
      * TRACE-01: records the turn span's outcome (success, iterations, completion reason, final-answer size). Only a
      * genuine error message flips the span to ERROR; interrupted/budget stops are reflected via the outputs.
+     *
+     * <p>
+     * TRACE-02: the (truncated) final answer itself is attached only when {@code policy} captures content — the rule
+     * the SUBAGENT span's {@code finalAnswer} follows — so a summary-only deployment keeps answers out of the trace
+     * store. {@code finalAnswerChars} stays the untruncated length, which is what tells a cut answer from a short one.
+     * The policy is the snapshot the turn inputs were built against, so one turn span follows one policy.
      */
-    private static void recordTurnOutcome(Tracer.Span turnSpan, OrcaAgentExecutionResult result) {
+    private static void recordTurnOutcome(Tracer.Span turnSpan, OrcaAgentExecutionResult result,
+            TracePayloadPolicy policy) {
         final String finalAnswer = result.getFinalAnswer();
-        turnSpan.setOutputs(Map.of("success", result.isSuccess(), "iterations", result.getIterationCount(),
-                "completionReason", String.valueOf(result.getCompletionReason()), "finalAnswerChars",
-                finalAnswer == null ? 0 : finalAnswer.length()));
+        final Map<String, Object> outputs = new LinkedHashMap<>();
+        outputs.put("success", result.isSuccess());
+        outputs.put("iterations", result.getIterationCount());
+        outputs.put("completionReason", String.valueOf(result.getCompletionReason()));
+        outputs.put("finalAnswerChars", finalAnswer == null ? 0 : finalAnswer.length());
+        if (policy.capturesContent() && finalAnswer != null) {
+            outputs.put("finalAnswer", policy.truncate(finalAnswer));
+        }
+        turnSpan.setOutputs(outputs);
         if (!result.isSuccess() && result.getErrorMessage() != null) {
             turnSpan.error(result.getErrorMessage());
         }
@@ -1665,6 +1686,9 @@ public class OrcaAgentExecutor
         // Number of queued user inputs drained at the PREVIOUS iteration's tail. Read at the top of the next
         // iteration to tag its LoopTransition as QUEUED_INPUT (observation-only; never drives control flow).
         int injectedLastTail = 0;
+        // Task ids of the background-subagent completion notifications among those inputs, recorded on the
+        // iteration that reads them so a background result can be traced to where the parent received it.
+        final List<String> injectedTaskIdsLastTail = new ArrayList<>();
         final int maxIterations = scope.getAgent().getMetadata().getMaxIterations();
         // The agent's own allow-list, reduced to a name-admission predicate once per execution: the list is fixed
         // for the execution, while the registry it filters is re-read every iteration for newly activated
@@ -1787,6 +1811,7 @@ public class OrcaAgentExecutor
                 if (iterationCount > 1) {
                     annotateLoopTransition(iterationSpan,
                             resolveLoopTransition(iterationCount, budgetForcedCompaction, injectedLastTail));
+                    annotateReceivedSubagentTasks(iterationSpan, injectedTaskIdsLastTail);
                 }
                 try {
 
@@ -1962,7 +1987,7 @@ public class OrcaAgentExecutor
                     // a
                     // no-op, preserving legacy behavior. The drained count is carried into the next iteration
                     // so its LoopTransition can be tagged QUEUED_INPUT.
-                    injectedLastTail = injectQueuedMessages(scope);
+                    injectedLastTail = injectQueuedMessages(scope, injectedTaskIdsLastTail);
 
                     // Iteration-tail trip check. A tool may have cooperatively tripped the signal during
                     // this
@@ -2056,10 +2081,14 @@ public class OrcaAgentExecutor
      *
      * @param scope
      *            the active execution scope; must not be null
+     * @param injectedTaskIds
+     *            cleared, then filled with the task ids of the background-subagent completion notifications that were
+     *            appended, in drain order (see {@link #annotateReceivedSubagentTasks})
      * @return the number of queued inputs drained and appended (0 when the queue is disabled or empty); used by the
      *         loop to tag the next iteration's {@link LoopTransition} as {@link LoopTransitionReason#QUEUED_INPUT}
      */
-    private int injectQueuedMessages(ExecutionScope scope) {
+    private int injectQueuedMessages(ExecutionScope scope, List<String> injectedTaskIds) {
+        injectedTaskIds.clear();
         if (messageQueueManager == null) {
             return 0;
         }
@@ -2078,6 +2107,7 @@ public class OrcaAgentExecutor
                 final String wrapped = SystemReminderFormatter.wrap(MID_TURN_INJECTION_KEY, queued.getInputText());
                 scope.transcriptBuffer.addMessage(Message.user(wrapped));
                 injected++;
+                SubagentTaskCompleted.notifiedTaskId(queued.getMetadata()).ifPresent(injectedTaskIds::add);
                 log.debug("Injected queued user message uuid={} priority={} into session {}", queued.getUuid(),
                         queued.getPriority(), scope.transcriptBuffer.getSessionId().value());
             } catch (RuntimeException e) {
@@ -2131,6 +2161,30 @@ public class OrcaAgentExecutor
         span.setAttribute(LOOP_TRANSITION_ATTR, transition.getReason().name());
         span.setAttribute(LOOP_TRANSITION_ITERATION_ATTR, Integer.toString(transition.getIteration()));
         transition.getNote().ifPresent(note -> span.setAttribute(LOOP_TRANSITION_NOTE_ATTR, note));
+    }
+
+    /**
+     * Records on an ITERATION span the background subagent tasks whose completion notifications the previous
+     * iteration's tail drained into the conversation — the iteration whose LLM call first reads those results. The
+     * value is the comma-separated task ids in drain order, matching the {@code taskId} attribute of each task's
+     * SUBAGENT span (same trace, nested under the {@code Task} call that launched it), so a background result can be
+     * followed from where it ran to where the parent received it. Absent when no such notification was drained.
+     *
+     * <p>
+     * Covers the mid-turn drain only. A notification that arrives while the parent is idle is delivered by the
+     * caller's own between-turn drain and starts a new turn whose user message carries it; that turn's TURN span
+     * {@code userMessage} holds the task id, and the queued input's metadata
+     * ({@link SubagentTaskCompleted#QUEUED_TASK_ID_KEY}) is the caller's to record.
+     *
+     * @param span
+     *            the iteration span to annotate (must not be null)
+     * @param taskIds
+     *            the task ids drained at the previous tail; nothing is recorded when empty
+     */
+    private static void annotateReceivedSubagentTasks(Tracer.Span span, List<String> taskIds) {
+        if (!taskIds.isEmpty()) {
+            span.setAttribute(RECEIVED_SUBAGENT_TASK_IDS_ATTR, String.join(",", taskIds));
+        }
     }
 
     /**

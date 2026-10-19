@@ -1,6 +1,7 @@
 package at.aimon.core.agent.stream;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -47,6 +48,36 @@ import at.aimon.core.agent.AgentRuntimeId;
  * Immutable value object.
  */
 public final class SubagentTaskCompleted extends AgentExecutionEvent {
+
+    /**
+     * {@link at.aimon.core.agent.queue.QueuedInput#getMetadata() Queued-input metadata} key whose value
+     * {@link #QUEUED_KIND} marks the input as the model-facing completion notification of a background task.
+     */
+    public static final String QUEUED_KIND_KEY = "kind";
+
+    /** Value of {@link #QUEUED_KIND_KEY} on a background task's queued completion notification. */
+    public static final String QUEUED_KIND = "subagent-task-completed";
+
+    /** Queued-input metadata key carrying the notified background task's id. */
+    public static final String QUEUED_TASK_ID_KEY = "taskId";
+
+    /** Queued-input metadata key carrying the notified task's {@link Outcome} name. */
+    public static final String QUEUED_OUTCOME_KEY = "outcome";
+
+    /**
+     * Reads the task id of a background task's queued completion notification from its queued-input metadata.
+     *
+     * @param queuedMetadata
+     *            the metadata of a queued input (must not be null)
+     * @return the notified task id, or empty when the input is not such a notification
+     */
+    public static Optional<String> notifiedTaskId(Map<String, String> queuedMetadata) {
+        Objects.requireNonNull(queuedMetadata, "queuedMetadata cannot be null");
+        if (!QUEUED_KIND.equals(queuedMetadata.get(QUEUED_KIND_KEY))) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(queuedMetadata.get(QUEUED_TASK_ID_KEY));
+    }
 
     /** Terminal outcome of a background subagent task. */
     public enum Outcome {

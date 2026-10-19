@@ -338,6 +338,59 @@ class OrcaAgentExecutorTracingTest {
     }
 
     @Test
+    @DisplayName("TRACE-02 — a FULL payload policy captures the final answer in the TURN span outputs")
+    void fullPolicyCapturesFinalAnswer() {
+        final Map<String, Object> outputs = turnOutputs(TracePayloadPolicy.full(), "FINAL_ANSWER_MARKER",
+                "conv-answer-full");
+
+        assertThat(outputs).containsEntry("success", true)
+                .containsEntry("finalAnswerChars", "FINAL_ANSWER_MARKER".length())
+                .containsEntry("finalAnswer", "FINAL_ANSWER_MARKER");
+    }
+
+    @Test
+    @DisplayName("TRACE-02 — a FULL policy truncates a long final answer and keeps its untruncated length")
+    void fullPolicyTruncatesLongFinalAnswer() {
+        final String answer = "x".repeat(50);
+        final Map<String, Object> outputs = turnOutputs(TracePayloadPolicy.full(10), answer, "conv-answer-trunc");
+
+        assertThat(outputs).containsEntry("finalAnswerChars", 50);
+        assertThat(outputs.get("finalAnswer")).asString().startsWith("x".repeat(10)).contains("(truncated");
+    }
+
+    @Test
+    @DisplayName("the default summary-only policy records finalAnswerChars but omits the final answer text")
+    void summaryPolicyOmitsFinalAnswerText() {
+        final Map<String, Object> outputs = turnOutputs(TracePayloadPolicy.summaryOnly(), "FINAL_ANSWER_MARKER",
+                "conv-answer-summary");
+
+        assertThat(outputs).containsEntry("finalAnswerChars", "FINAL_ANSWER_MARKER".length())
+                .doesNotContainKey("finalAnswer");
+    }
+
+    /** Runs a one-response turn under {@code policy} and returns its TURN span outputs. */
+    private Map<String, Object> turnOutputs(TracePayloadPolicy policy, String answer, String sessionId) {
+        final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+        final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
+
+        final RecordingLlmClient stub = new RecordingLlmClient();
+        stub.enqueue(LlmResponse.text(answer));
+
+        final OrcaAgentExecutor executor = createExecutor(new TracingLlmClient(stub, tracer));
+        executor.tracer = tracer;
+        executor.tracePayloadPolicy = policy;
+
+        executor.execute(createContext(new DefaultToolRegistry()),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of(sessionId)).build());
+
+        final TraceSpan turn = store.bySession(sessionId).stream().filter(s -> s.getType() == SpanType.TURN).findFirst()
+                .orElseThrow();
+        @SuppressWarnings("unchecked")
+        final Map<String, Object> outputs = (Map<String, Object>) turn.getOutputs().orElseThrow();
+        return outputs;
+    }
+
+    @Test
     @DisplayName("the default summary-only policy omits tool result content")
     void summaryPolicyOmitsToolContent() {
         final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();

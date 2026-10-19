@@ -1373,7 +1373,9 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             final QueuedInput notification = QueuedInput.builder()
                     .inputText(completionMessageBody(taskId, subagentName, outcome, detail))
                     .priority(QueuedInputPriority.NEXT).agentRuntimeId(agentRuntimeId).sourceAgentId(subagentName)
-                    .metadata(Map.of("kind", "subagent-task-completed", "taskId", taskId, "outcome", outcome.name()))
+                    .metadata(Map.of(SubagentTaskCompleted.QUEUED_KIND_KEY, SubagentTaskCompleted.QUEUED_KIND,
+                            SubagentTaskCompleted.QUEUED_TASK_ID_KEY, taskId, SubagentTaskCompleted.QUEUED_OUTCOME_KEY,
+                            outcome.name()))
                     .build();
             queue.enqueue(notification);
             log.debug("Enqueued background task completion notification: taskId={} subagent={} outcome={}", taskId,

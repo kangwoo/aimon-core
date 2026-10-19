@@ -7,6 +7,23 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: the TURN span records the final answer under FULL, and an iteration names the background tasks it received
+
+- **TURN `finalAnswer`.** Under a content-capturing `TracePayloadPolicy` (`FULL`) the TURN span's outputs now carry
+  the turn's final answer as `finalAnswer`, truncated to the policy's `maxChars` and masked by the `SpanRedactor` like
+  every other payload — the rule the SUBAGENT span's `finalAnswer` already followed. `finalAnswerChars` stays the
+  untruncated length, so a cut answer can be told from a short one. Under the default summary-only policy the outputs
+  are unchanged. A turn with no final answer records `finalAnswerChars: 0` and no `finalAnswer`, as before.
+- **`subagent.received.taskIds` on ITERATION spans.** When background-subagent completion notifications are drained
+  into a running turn, the next ITERATION span (the one whose LLM call first reads them, already tagged
+  `loop.transition=QUEUED_INPUT`) records their task ids, comma-separated in drain order. Each matches the `taskId`
+  attribute of that task's SUBAGENT span, so a background result can be followed from where it ran to where the parent
+  received it. A notification that arrives while the parent is idle is delivered by the caller's between-turn drain as
+  a new turn; that path is unchanged. The attribute key is `OrcaAgentExecutor.RECEIVED_SUBAGENT_TASK_IDS_ATTR`.
+- **Queued-notification metadata keys are now constants** on `SubagentTaskCompleted` (`QUEUED_KIND_KEY`,
+  `QUEUED_KIND`, `QUEUED_TASK_ID_KEY`, `QUEUED_OUTCOME_KEY`, and `notifiedTaskId(Map)`). The wire values
+  (`kind=subagent-task-completed`, `taskId`, `outcome`) are unchanged.
+
 ### Fixed: the stand-in rg timeout and cancellation tests no longer fail on macOS (tests only) (#289)
 
 `RipgrepControlStoreTest`'s stand-in rg cases wrote fresh `#!/bin/sh` stand-ins for every test and executed them inside
