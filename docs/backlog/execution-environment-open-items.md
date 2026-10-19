@@ -4918,11 +4918,12 @@ aimon-sandbox#32 로 합쳐졌고, `main` `553be78` 의 `SandboxShell.supports` 
 
 **언제 다시 볼까.** 훅 전용 `PATH` 나 비밀이 필요하다는 운영 요구가 올 때.
 
-## EE-113 — 에이전트와 실행 환경 안 정책 훅 사이에 권한 경계가 없다 · **열림** *(트리거 대기)*
+## EE-113 — 에이전트와 실행 환경 안 정책 훅 사이에 권한 경계가 없다 · **열림** *(상류 블로커 대기)*
 
 *(2026-10-19 등록. 출처는 EE-109 설계 §7. aimon-sandbox 쪽 짝은
 [kangwoo/aimon-sandbox#34](https://github.com/kangwoo/aimon-sandbox/issues/34) "Run policy-hook execs under a separate uid (core
-EE-113)" 다 — `sandbox-followup` 초안의 본문을 옮긴 것.)*
+EE-113)" 다 — `sandbox-followup` 초안의 본문을 옮긴 것. 셸 SPI 제안은
+[kangwoo/aimon-core#287](https://github.com/kangwoo/aimon-core/issues/287).)*
 
 **무엇을.** `hooks.json` 의 실행 안 명령을 에이전트와 **다른 uid** 로 돌려, 같은 uid 라서 남는 위험을 경계로 바꾼다. EE-109 는
 좁히기였고 이것은 경계다.
@@ -4947,12 +4948,25 @@ EE-113)" 다 — `sandbox-followup` 초안의 본문을 옮긴 것.)*
 7. 로컬 제공자에서는 에이전트의 `Bash` 가 JVM 과 다른 OS 사용자(또는 컨테이너)여야 한다 — `LocalShell` 안에서는 할 수 없다.
 8. 훅이 들여다보는 워크스페이스는 언제나 A 가 쓸 수 있다 — 정책은 워크스페이스 파일을 믿지 않는다.
 
+**진행** *(2026-10-19)*. 두 트리거 중 하나(OpenSandbox files API 의 uid 인자)가 왔다 — `release-1.1.1` 의
+`/v1/filesystem/{uid}/{gid}/...`(opensandbox-group/OpenSandbox#2070)로 조건 4(파일 도구는 A, 실행 디렉터리 업로드는 H)가 풀린다.
+`/command` 는 전부터 `uid`/`gid` 를 받되 execd 가 root(`CAP_SETUID`·`CAP_SETGID`, 그리고 프로세스 그룹 kill 에 `CAP_KILL`)여야
+한다. 셸 SPI 는 #287 로 제안했다(`ShellFeature.HOOK_IDENTITY` / `ExecutionOptions.isHookIdentity()`, 기능이 없으면 오늘처럼 같은
+uid 로 돌되 운영자가 opt-in 으로 필수화하면 `HOOK_IDENTITY_UNSUPPORTED` 로 막는다).
+
+**남은 블로커는 상류다(조건 1).** execd 를 root 로 두면 에이전트 uid(A)가 localhost 로 execd 의 root API 에 닿고, 그 API 가 uid 0
+명령까지 돌린다. HEAD(`0548e18f`)와 로컬 실행에서 토큰을 우회하는 두 경로를 확인했다 — 재실행 가능한 `/internal/init`(인증 앞단),
+그리고 hardening launcher 가 꺼진 기본 상태에서 `EXECD_ACCESS_TOKEN` 을 env 로 받으면 `/command` 자식이 그 토큰을 상속한다. 둘 다
+OpenSandbox 쪽 수정이 필요하며 그쪽 비공개 보안 채널로 올릴 사안이다. 분석과 이미지 계약·seed 초안은 aimon-sandbox
+[`workspace-sandbox-hook-identity.md`](https://github.com/kangwoo/aimon-sandbox/blob/main/docs/design/workspace-sandbox-hook-identity.md)
+(PR #37, 머지됨) 에 있다.
+
 **어디** *(2026-10-19)* — 코어: `core/skill/hook/declarative/IsolatedShellActionExecutor.java`, 셸 SPI(`ExecutionOptions` 의 "환경의
-훅 신원으로 실행" 표지나 `ShellFeature.HOOK_IDENTITY`), `core/environment/impl/LocalStaging.java`. aimon-sandbox: `SandboxShell`,
+훅 신원으로 실행" 표지나 `ShellFeature.HOOK_IDENTITY` — #287), `core/environment/impl/LocalStaging.java`. aimon-sandbox: `SandboxShell`,
 `SandboxStaging`, 이미지 계약.
 
-**언제 다시 볼까.** 운영자가 신뢰하지 않는 에이전트를 상대로 샌드박스에서 `hooks.json` 가드를 돌리려 할 때, 또는 OpenSandbox 의
-files API 가 uid 인자를 얻을 때.
+**언제 다시 볼까.** 다른 트리거(운영자가 신뢰하지 않는 에이전트를 상대로 샌드박스에서 `hooks.json` 가드를 돌리려 할 때)가 오거나,
+위 상류 블로커(조건 1)가 OpenSandbox 에서 닫힐 때.
 
 ## EE-114 — aimon-sandbox 가 실행 디렉터리를 선언하고, 훅 · 격리 명령의 실행 파일을 없애야 한다 · **열림**
 
