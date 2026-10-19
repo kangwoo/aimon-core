@@ -7,7 +7,7 @@ Central is versioned independently).
 
 ## [Unreleased]
 
-### Changed (behaviour change): auto compaction starts at one ratio of the effective window; per-agent `context` policy
+### Changed (behaviour change): auto compaction starts at one ratio of the effective window; per-agent `context` policy (#285)
 
 Auto compaction now starts at `autoCompactRatio × effective window` (effective = window − 20,000 reserved output),
 default **0.8**, for every model and for both context engines. The fixed 13,000-token buffer below the window and the
