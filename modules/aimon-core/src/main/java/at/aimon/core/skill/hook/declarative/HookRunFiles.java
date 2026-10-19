@@ -39,6 +39,12 @@ import at.aimon.core.skill.hook.action.HookScriptDirectory;
  * </ul>
  *
  * <p>
+ * Every cache entry is filed under the content key its own bytes hash to, never under another. The answer for an
+ * edited skill is therefore not remembered as the loaded version: each firing first asks whether the source holds the
+ * loaded version again, so a skill that is reverted and reloaded runs as the registry now has it, not as it was edited.
+ * The cache belongs to the {@link DefaultShellActionExecutor} that created it.
+ *
+ * <p>
  * Both are capped at {@link #MAX_BYTES}. A {@code hooks.json} directory over it is refused; a skill over it is left
  * to the staging fallback ({@link DefaultShellActionExecutor}).
  */
@@ -51,8 +57,6 @@ final class HookRunFiles {
     static final long MAX_CACHED_BYTES = 32L * 1024 * 1024;
 
     private static final Logger log = LoggerFactory.getLogger(HookRunFiles.class);
-
-    private static final SkillCache SKILLS = new SkillCache(MAX_CACHED_BYTES);
 
     private HookRunFiles() {
         throw new AssertionError("This class should not be instantiated");
@@ -91,6 +95,8 @@ final class HookRunFiles {
      * Returns the run directory for a skill hook's {@code AIMON_SKILL_DIR}, from the cache or read from the skill's
      * source.
      *
+     * @param cache
+     *            the cache of the executor asking (never null)
      * @param resource
      *            the declaring skill's resource, as the registry loaded it (never null)
      * @return the run directory, or empty when the skill is over {@link #MAX_BYTES} and has to be staged instead
@@ -100,10 +106,11 @@ final class HookRunFiles {
      * @throws RuntimeException
      *             whatever the source throws when it cannot be read
      */
-    static Optional<RunDirectory> forSkill(StagedResource resource) {
+    static Optional<RunDirectory> forSkill(SkillCache cache, StagedResource resource) {
+        Objects.requireNonNull(cache, "cache cannot be null");
         Objects.requireNonNull(resource, "resource cannot be null");
-        final String key = resource.getName() + '\0' + resource.getSourceDir() + '\0' + resource.getContentKey();
-        final Optional<RunDirectory> cached = SKILLS.get(key);
+        final String key = cacheKey(resource);
+        final Optional<RunDirectory> cached = cache.get(key);
         if (cached.isPresent()) {
             return cached;
         }
@@ -112,7 +119,7 @@ final class HookRunFiles {
         }
         final Optional<RunDirectory> loaded = read(resource, SkillHookEnv.AIMON_SKILL_DIR);
         if (loaded.isPresent()) {
-            SKILLS.put(key, loaded.get());
+            cache.put(key, loaded.get());
             return loaded;
         }
         // The source no longer holds what the registry loaded (EE-3).
@@ -126,20 +133,27 @@ final class HookRunFiles {
         if (current.getTotalBytes() > MAX_BYTES) {
             return Optional.empty();
         }
+        // Filed under the key the bytes hash to, not the loaded one: a source reverted to the loaded version must find
+        // that version again at the next firing, not this answer.
+        final String currentKey = cacheKey(current);
+        final Optional<RunDirectory> known = cache.get(currentKey);
+        if (known.isPresent()) {
+            log.debug("Skill '{}' still differs from the version loaded; its hooks run it as it is now",
+                    resource.getName());
+            return known;
+        }
         final RunDirectory now = read(current, SkillHookEnv.AIMON_SKILL_DIR)
                 .orElseThrow(() -> new StagingException("Skill '" + resource.getName() + "' is changing on disk while"
                         + " it is being read, so no consistent copy of it could be made. Try again once its files are"
                         + " no longer being written."));
         log.warn("Skill '{}' changed on disk since it was loaded; its hooks run it as it is now. What was parsed from"
                 + " it at load stays as it is until the skill registry reads it again", resource.getName());
-        // Filed under the loaded version, as staging remembers it: later firings serve this answer.
-        SKILLS.put(key, now);
+        cache.put(currentKey, now);
         return Optional.of(now);
     }
 
-    /** Drops every cached skill; for tests. */
-    static void clearCache() {
-        SKILLS.clear();
+    private static String cacheKey(StagedResource resource) {
+        return resource.getName() + '\0' + resource.getSourceDir() + '\0' + resource.getContentKey();
     }
 
     /**
@@ -185,7 +199,10 @@ final class HookRunFiles {
                 + "-byte limit for a hook's files; exclude large files with " + StagedResource.STAGE_IGNORE_FILE);
     }
 
-    /** An LRU map of run directories bounded by the bytes they hold. */
+    /**
+     * An LRU map of run directories bounded by the bytes they hold, each filed under the content key its bytes hash to.
+     * Thread-safe.
+     */
     static final class SkillCache {
 
         private final long maxBytes;
@@ -217,9 +234,5 @@ final class HookRunFiles {
             }
         }
 
-        synchronized void clear() {
-            entries.clear();
-            bytes = 0;
-        }
     }
 }

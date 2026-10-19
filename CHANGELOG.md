@@ -43,10 +43,15 @@ and departures: `docs/design/tool/execution-environment-ee109-hook-tamper-narrow
   over 4 MiB, it is still the staged path — now checked on every firing — and one WARN per shell class and skill says
   so. The skill **body**'s `${AIMON_SKILL_DIR}` is unchanged. The stdin payload of a skill hook no longer carries
   `skill_dir` (the shell decides the value); the variable is still set. A provider's `maxStagedBytes` no longer bounds
-  a skill hook that gets a run directory.
-- **Hook and isolated commands keep no I/O file reachable by name (local).** `LocalShell` unlinks a hook's or isolated
-  command's capture files as soon as the process has started and reads them through descriptors opened before, and
-  feeds its stdin through a pipe. Model-facing commands are unchanged.
+  a skill hook that gets a run directory. **A skill inside the workspace loses its in-place directory:** `stage()`
+  answered such a skill with its live source directory, so a hook saw the source's file modes, the files
+  `.stageignore` excludes and any edit since load. A run directory holds only the listed files, as loaded, all 0600 — a
+  guard that runs `"$AIMON_SKILL_DIR/scripts/guard.sh"` directly now exits 126 and blocks. Run scripts through an
+  interpreter (`bash "$AIMON_SKILL_DIR/scripts/guard.sh"`), as `docs/references/aimon-skill-extensions.md` advises.
+- **Hook and isolated commands keep no I/O file reachable by name (local, on Unix).** `LocalShell` unlinks a hook's or
+  isolated command's capture files as soon as the process has started and reads them through descriptors opened
+  before, and feeds its stdin through a pipe. On Windows an open file cannot be unlinked, so the capture files keep
+  their names until the command ends (not tested on Windows). Model-facing commands are unchanged.
 - **New not-run causes.** `ShellHookOutcome.Unrun.RUN_DIRECTORY_UNSUPPORTED` (fail closed, like
   `ISOLATION_UNSUPPORTED`) and `HOOK_FILES_TAMPERED` — the shell found the placed files changed and did not run the
   command. **`HOOK_FILES_TAMPERED` blocks a guard whatever `failOpen` says**, as `CANCELLED` does: it is evidence of

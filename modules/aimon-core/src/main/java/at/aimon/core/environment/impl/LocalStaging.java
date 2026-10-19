@@ -410,7 +410,7 @@ final class LocalStaging {
             }
             onDisk.removeAll(expected);
             for (String extra : onDisk) {
-                log.info("Removing {} from staged copy {}: it is not one of the resource's files", extra, target);
+                log.debug("Removing {} from staged copy {}: it is not one of the resource's files", extra, target);
                 rawFileSystem.delete(prefix + extra);
             }
             return true;

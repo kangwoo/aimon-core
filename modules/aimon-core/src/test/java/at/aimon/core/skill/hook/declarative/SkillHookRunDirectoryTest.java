@@ -80,7 +80,6 @@ class SkillHookRunDirectoryTest {
 
     @BeforeEach
     void setUp() {
-        HookRunFiles.clearCache();
         DefaultShellActionExecutor.resetFallbackWarnings();
         control = new LocalFileSystem(new LocalFileSystemConfig(controlDir.toString()));
         control.initialize();
@@ -98,7 +97,6 @@ class SkillHookRunDirectoryTest {
         }
         provider.close();
         control.close();
-        HookRunFiles.clearCache();
         DefaultShellActionExecutor.resetFallbackWarnings();
     }
 
@@ -199,6 +197,35 @@ class SkillHookRunDirectoryTest {
         assertThat(contentOf(fire(resource))).isEqualTo("edited");
         assertThat(contentOf(fire(resource))).isEqualTo("edited");
         assertThat(warnings(log, "changed on disk since it was loaded")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("EE-3: a skill edited before its first firing, then reverted and reloaded, runs as reloaded")
+    void editedThenRevertedAndReloadedRunsAsReloaded() {
+        final StagedResource loaded = StagedResource.scan(control, "skills/demo", "demo");
+        control.write("skills/demo/scripts/say.txt", "edited");
+        assertThat(contentOf(fire(loaded))).isEqualTo("edited");
+
+        control.write("skills/demo/scripts/say.txt", "loaded");
+        final StagedResource reloaded = StagedResource.scan(control, "skills/demo", "demo");
+
+        assertThat(reloaded.getContentKey()).isEqualTo(loaded.getContentKey());
+        assertThat(contentOf(fire(reloaded))).isEqualTo("loaded");
+        assertThat(contentOf(fire(loaded))).isEqualTo("loaded");
+    }
+
+    @Test
+    @DisplayName("the cache belongs to the executor: a new executor reads the skill again")
+    void cacheBelongsToTheExecutor() {
+        final StagedResource resource = StagedResource.scan(control, "skills/demo", "demo");
+        fire(resource);
+        control.write("skills/demo/scripts/say.txt", "edited");
+
+        final ShellHookOutcome fresh = new DefaultShellActionExecutor().run(SAY, contextIn(environment),
+                Map.of(SkillHookEnv.AIMON_SKILL_NAME, "demo"), null, Optional.of(resource));
+
+        assertThat(contentOf(fresh)).isEqualTo("edited");
+        assertThat(contentOf(fire(resource))).isEqualTo("loaded");
     }
 
     @Test

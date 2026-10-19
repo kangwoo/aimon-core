@@ -77,11 +77,13 @@ import at.aimon.core.shell.exception.ShellTimeoutException;
  * drain, and no thread/stream leak (issue #13, superseding the drain-based workaround from issue #10).
  *
  * <p>
- * <b>Hook and isolated commands keep no file reachable by name (EE-109).</b> For a command that is
+ * <b>Hook and isolated commands keep no file reachable by name, on Unix (EE-109).</b> For a command that is
  * {@linkplain ExecutionOptions#isHook() a hook's} or {@linkplain ExecutionOptions#isIsolated() isolated}, whose output
  * is a policy verdict, the capture files are opened for reading before the process starts and unlinked as soon as it
  * has: the child holds its own descriptors, this class reads through its own, and nothing else can find the files
- * afterwards. Its stdin goes through a pipe that a daemon thread writes and closes, so the payload never sits in a
+ * afterwards. On Windows a file another process holds open cannot be deleted, so the unlink fails (logged at DEBUG)
+ * and the capture files keep their names until the command ends; the stdin pipe below holds there too. Its stdin goes
+ * through a pipe that a daemon thread writes and closes, so the payload never sits in a
  * file. What is left is the moment between creating the capture files and starting the process, on 0600 files with
  * random names; anything written there is truncated by the child's redirect. Model-facing commands keep the stdin
  * file, which cannot block.

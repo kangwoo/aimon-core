@@ -751,3 +751,25 @@ declares `RUN_DIRECTORY` and takes hook/isolated I/O off run files; [kangwoo/aim
 EE-115 ← Q6 (a `"script"` handler field), EE-116 ← Q3 (the two limits as constants). Q1, Q2 and Q4 are settled inside
 this change as the body recommends. Q9 is settled by the task: the core half has landed, so the change closes #275 and
 the sandbox half stays open as EE-114 / aimon-sandbox#33.
+
+### 11.6 Changed after the PR review
+
+- **The skill cache files every answer under the key its bytes hash to.** `HookRunFiles.forSkill` used to file the EE-3
+  answer (the skill as it was after an edit) under the *loaded* content key, and to serve it on every later hit without
+  looking at the source. A skill edited before its first firing, then reverted and reloaded, has the loaded key again
+  and kept running the edited bytes. Now the EE-3 answer is filed under the rescanned key; a firing whose loaded
+  version is not cached reads the source first, so a reverted source is served as the registry has it. The cost is one
+  read of the source per firing while a skill differs from its loaded version, and one WARN per edited version. Test:
+  `SkillHookRunDirectoryTest.editedThenRevertedAndReloadedRunsAsReloaded`.
+- **The cache belongs to its executor.** It was a static field of `HookRunFiles`, so it outlived any runtime, provider
+  or registry reload. Each `DefaultShellActionExecutor` now holds its own (`HookRunFiles.SkillCache`, still 32 MiB):
+  the executor is made with the skill parser and lives as long as it does, and the cache holds only memory, so nothing
+  has to close it. The WARN-once set stays static: it decides only WARN against DEBUG and is bounded. Test:
+  `SkillHookRunDirectoryTest.cacheBelongsToTheExecutor`.
+- **A file removed from a staged copy is logged at DEBUG.** Since every call checks the copy, the INFO line fired at
+  every call for whatever a script left behind (`__pycache__/*.pyc`).
+- **`LocalShell`'s "no file reachable by name" holds on Unix only.** On Windows the unlink of a file the child holds
+  open fails, and the capture files keep their names until the command ends. The class doc and the CHANGELOG say so;
+  Windows was not tested.
+- **The CHANGELOG says what a workspace skill loses.** `stage()` answered a skill inside the workspace with its live
+  source directory; a run directory has only the listed files, as loaded, all 0600, so a script run directly exits 126.

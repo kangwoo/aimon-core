@@ -54,7 +54,8 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * never a policy boundary, and failing it closed would break it on every such shell.
  *
  * <p>
- * Thread-safe. The only state is the set of fallbacks already warned about, bounded at
+ * Thread-safe. The state is this executor's cache of skill run directories ({@link HookRunFiles.SkillCache}, bounded
+ * by {@link HookRunFiles#MAX_CACHED_BYTES}), and the set of fallbacks already warned about, bounded at
  * {@value #MAX_FALLBACK_WARNINGS} entries, after which further fallbacks are logged at DEBUG.
  */
 public final class DefaultShellActionExecutor implements ShellActionExecutor {
@@ -66,6 +67,9 @@ public final class DefaultShellActionExecutor implements ShellActionExecutor {
 
     /** The (shell class, skill) pairs whose fallback to staging was already logged at WARN. */
     private static final Set<String> WARNED_FALLBACKS = ConcurrentHashMap.newKeySet();
+
+    /** The run directories of the skills whose hooks this executor ran; it lives and goes with the executor. */
+    private final HookRunFiles.SkillCache skills = new HookRunFiles.SkillCache(HookRunFiles.MAX_CACHED_BYTES);
 
     /** Creates an executor that runs each action in the firing context's execution environment. */
     public DefaultShellActionExecutor() {
@@ -118,7 +122,7 @@ public final class DefaultShellActionExecutor implements ShellActionExecutor {
             final Optional<RunDirectory> runDirectory;
             if (EnvironmentShells.declares(shell, ShellFeature.RUN_DIRECTORY)) {
                 try {
-                    runDirectory = HookRunFiles.forSkill(resource);
+                    runDirectory = HookRunFiles.forSkill(skills, resource);
                 } catch (StagingException e) {
                     // The message is fixed text naming the skill, as the staging layer's own is.
                     return SkillHookDirectory.refuse(env, ShellHookOutcome.Unrun.STAGING_FAILED, e.getMessage(), null)
