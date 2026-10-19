@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -156,7 +157,7 @@ class DeclarativePreToolHookTest {
         Files.writeString(layer.resolve("hooks/guard.sh"), "exit 0\n");
         try {
             Files.writeString(layer.resolve("hooks/bad\u007fname.sh"), "true\n");
-        } catch (InvalidPathException e) {
+        } catch (IOException | InvalidPathException e) {
             Assumptions.abort("the filesystem refuses the name");
         }
         final VirtualShell shell = mock(VirtualShell.class);
