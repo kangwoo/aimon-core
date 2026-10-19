@@ -107,7 +107,7 @@ class RunDirectoryUploadContractTest {
         final HookResult result = fire(hook(guard(layer(), marker), true), shell);
 
         assertThat(result.getStatus()).isEqualTo(HookStatus.BLOCKED);
-        assertThat(result.getFeedback().orElseThrow()).contains("the hook's files changed before the run");
+        assertThat(result.getFeedback().orElseThrow()).contains("the hook's files or input changed before the run");
         assertThat(marker).as("the command never started").doesNotExist();
     }
 

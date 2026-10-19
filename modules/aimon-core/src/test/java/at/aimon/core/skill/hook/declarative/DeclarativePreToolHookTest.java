@@ -2,17 +2,28 @@ package at.aimon.core.skill.hook.declarative;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.PreToolContext;
@@ -20,8 +31,13 @@ import at.aimon.core.hook.execution.HookContext;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.hook.execution.HookStatus;
 import at.aimon.core.llm.ToolUse;
+import at.aimon.core.shell.ExecutionOptions;
+import at.aimon.core.shell.ShellCommand;
+import at.aimon.core.shell.ShellFeature;
+import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.skill.hook.action.DenyAction;
 import at.aimon.core.skill.hook.action.HookAction;
+import at.aimon.core.skill.hook.action.HookScriptDirectory;
 import at.aimon.core.skill.hook.action.ShellAction;
 import at.aimon.core.skill.hook.declarative.predicate.NameOnlyPredicate;
 
@@ -125,8 +141,43 @@ class DeclarativePreToolHookTest {
 
         assertThat(result.getStatus()).isEqualTo(HookStatus.BLOCKED);
         assertThat(result.getFeedback().orElseThrow()).contains("hook 'my-skill' (preTool)")
-                .contains("the hook's files changed before the run").doesNotContain("failOpen")
+                .contains("the hook's files or input changed before the run").doesNotContain("failOpen")
                 .doesNotContain("s3cret");
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void execute_hookFileARunDirectoryCannotPlace_blocksUnlessFailOpen(boolean failOpen, @TempDir Path tmp)
+            throws Exception {
+        // #283 F1: an unplaceable name is the hook's own defect, not tampering, so failOpen opens it as for any other
+        // command that could not run.
+        final Path layer = Files.createDirectories(tmp.resolve(".aimon"));
+        Files.createDirectories(layer.resolve("hooks"));
+        Files.writeString(layer.resolve("hooks/guard.sh"), "exit 0\n");
+        try {
+            Files.writeString(layer.resolve("hooks/bad\u007fname.sh"), "true\n");
+        } catch (InvalidPathException e) {
+            Assumptions.abort("the filesystem refuses the name");
+        }
+        final VirtualShell shell = mock(VirtualShell.class);
+        when(shell.supports(any(ShellFeature.class))).thenReturn(true);
+        final DeclarativePreToolHook hook = new DeclarativePreToolHook("hooks.json", NameOnlyPredicate.ANY,
+                new ShellAction("bash \"$AIMON_HOOK_DIR/guard.sh\"", Duration.ofSeconds(1),
+                        HookScriptDirectory.of(layer, "hooks-project")),
+                new IsolatedShellActionExecutor(), null, null, Map.of(),
+                DeclarativeHookOptions.builder().failOpen(failOpen).build());
+
+        final HookResult result = hook.execute(PreToolContext.builder().executorType(InvokerType.MAIN_AGENT)
+                .invokerName("default-agent").hookRegistry(REGISTRY).toolUse(ToolUse.of("call-1", "Bash", Map.of()))
+                .iterationCount(3).executionEnvironment(TestExecutionEnvironments.ofShell(shell)).build());
+
+        assertThat(result.getStatus()).isEqualTo(failOpen ? HookStatus.SUCCESS : HookStatus.BLOCKED);
+        if (!failOpen) {
+            assertThat(result.getFeedback().orElseThrow())
+                    .contains(ShellHookOutcome.Unrun.HOOK_DIR_STAGING_FAILED.description())
+                    .doesNotContain("files or input changed");
+        }
+        verify(shell, never()).execute(any(ShellCommand.class), any(ExecutionOptions.class));
     }
 
     @Test

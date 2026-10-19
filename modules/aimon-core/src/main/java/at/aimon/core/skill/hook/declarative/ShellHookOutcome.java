@@ -67,7 +67,9 @@ public final class ShellHookOutcome {
 
         /**
          * The declaring skill's directory could not be given to the command &mdash; read for a run directory, or
-         * staged into the environment the command runs in &mdash; so {@code AIMON_SKILL_DIR} has no value. The command
+         * staged into the environment the command runs in &mdash; or holds a file name that a run directory cannot
+         * place (a control character, or a file and a directory of one name), so {@code AIMON_SKILL_DIR} has no value.
+         * The command
          * is not run without it: a command written against
          * {@code "$AIMON_SKILL_DIR/scripts/x.sh"} would otherwise run {@code /scripts/x.sh}.
          */
@@ -75,7 +77,8 @@ public final class ShellHookOutcome {
 
         /**
          * The {@code hooks/} directory of the {@code hooks.json} layer that declared the command could not be read
-         * for the run (unreadable, over the limit, or changing while it was read), so {@code AIMON_HOOK_DIR} has no
+         * for the run (unreadable, over the limit, changing while it was read, or holding a file name that a run
+         * directory cannot place), so {@code AIMON_HOOK_DIR} has no
          * value. The name is kept from when the directory was staged. The command is not run
          * without it, for the reason {@link #STAGING_FAILED} gives.
          */
@@ -97,12 +100,14 @@ public final class ShellHookOutcome {
         RUN_DIRECTORY_UNSUPPORTED("the environment's shell cannot place the hook's files for the run"),
 
         /**
-         * The shell found that the hook's files it placed for the run did not hold the bytes it was given, and did
-         * not run the command (EE-109). That is evidence that something rewrote them, not an infrastructure failure,
+         * The shell found that what it placed for the run &mdash; the hook's files, or its input (the stdin payload)
+         * when the shell moved it through something the agent can write &mdash; did not hold the bytes it was given,
+         * and did not run the command (EE-109). That is evidence that something rewrote them, not an infrastructure
+         * failure,
          * so like {@link #CANCELLED} it blocks on a guard event <em>whatever</em> {@code failOpen} says (see
          * {@code ShellHookVerdicts}).
          */
-        HOOK_FILES_TAMPERED("the hook's files changed before the run"),
+        HOOK_FILES_TAMPERED("the hook's files or input changed before the run"),
 
         /** The executor does not run shell actions at all. */
         SHELL_UNSUPPORTED("shell actions not supported"),

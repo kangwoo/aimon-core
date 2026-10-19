@@ -2,6 +2,7 @@ package at.aimon.core.skill.hook.declarative;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -40,6 +41,7 @@ import at.aimon.core.hook.execution.HookStatus;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.ToolUseResult;
 import at.aimon.core.shell.ExecutionOptions;
+import at.aimon.core.shell.RunDirectory;
 import at.aimon.core.shell.ShellCommand;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.ShellFeature;
@@ -249,11 +251,61 @@ class SkillHookRunDirectoryTest {
     @Test
     @DisplayName("a skill over the run-directory limit falls back to a staged copy")
     void overTheLimitFallsBack() throws Exception {
-        control.write("skills/demo/big.bin", new byte[(int) HookRunFiles.MAX_BYTES + 1]);
+        control.write("skills/demo/big.bin", new byte[(int) RunDirectory.MAX_TOTAL_BYTES + 1]);
         final ShellHookOutcome outcome = fire(StagedResource.scan(control, "skills/demo", "demo"));
 
         assertThat(Path.of(dirOf(outcome)).toRealPath()).startsWith(workspace.toRealPath());
         assertThat(contentOf(outcome)).isEqualTo("loaded");
+    }
+
+    @Test
+    @DisplayName("#283 F1: a file name with a control character is refused, not staged, and refused again next time")
+    void unplaceableNameIsRefusedWithoutFallback() {
+        final ListAppender<ILoggingEvent> log = capture(DefaultShellActionExecutor.class);
+        // A C1 control (CSI): the local filesystem reads it, unlike a C0 one (\n, \t), which its scan already refuses.
+        control.write("skills/demo/scripts/bad\u009bname.sh", "true");
+        final StagedResource resource = StagedResource.scan(control, "skills/demo", "demo");
+
+        final ShellHookOutcome first = fire(resource);
+        final ShellHookOutcome second = fire(resource);
+
+        for (ShellHookOutcome outcome : List.of(first, second)) {
+            assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.STAGING_FAILED);
+            assertThat(outcome.unrunReason()).contains("'scripts/bad\\u009bname.sh' contains a control character")
+                    .contains(StagedResource.STAGE_IGNORE_FILE).doesNotContain("\u009b")
+                    .doesNotContain(controlDir.toString());
+        }
+        // Staging could not place it either: no staged copy, and no fallback.
+        assertThat(workspace.resolve(LocalExecutionEnvironmentProvider.DEFAULT_STAGING_ROOT).resolve("demo"))
+                .doesNotExist();
+        assertThat(warnings(log, "run from a staged copy")).isZero();
+    }
+
+    @Test
+    @DisplayName("#283 F1: a file and a directory of one name, from a source that holds both, is refused")
+    void fileAndDirectoryOfOneNameIsRefused() {
+        // A local directory cannot hold both; an object store (S3, GridFS keys) can.
+        final Map<String, byte[]> objects = Map.of("skills/demo/lib", "a".getBytes(), "skills/demo/lib/x.py",
+                "b".getBytes());
+        final VirtualFileSystem store = new DelegatingFileSystem(control) {
+            @Override
+            public InputStream read(String path) {
+                return new ByteArrayInputStream(objects.get(path));
+            }
+        };
+        final StagedResource resource = StagedResource.builder().sourceFileSystem(store).sourceDir("skills/demo")
+                .name("demo")
+                .contentKey(new StagedResource.ContentKeyBuilder().add("lib", "a".getBytes())
+                        .add("lib/x.py", "b".getBytes()).build())
+                .totalBytes(2).files(List.of("lib", "lib/x.py")).build();
+
+        final ShellHookOutcome outcome = fire(resource);
+
+        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.STAGING_FAILED);
+        assertThat(outcome.unrunReason()).contains("'lib' is a file and also the parent directory of 'lib/x.py'")
+                .contains(StagedResource.STAGE_IGNORE_FILE);
+        assertThat(workspace.resolve(LocalExecutionEnvironmentProvider.DEFAULT_STAGING_ROOT).resolve("demo"))
+                .doesNotExist();
     }
 
     // --- the fallback ------------------------------------------------------------------------------------------

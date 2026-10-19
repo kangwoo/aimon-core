@@ -47,7 +47,7 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * into the workspace, where the agent's shell could rewrite a copy between a check and the run. A shell that does not
  * declare {@link ShellFeature#RUN_DIRECTORY} cannot do that, and such a handler is <b>not run</b>
  * ({@link ShellHookOutcome.Unrun#RUN_DIRECTORY_UNSUPPORTED}), on the rule {@code ISOLATION_UNSUPPORTED} follows. A
- * shell that found the files changed when it placed them reports
+ * shell that found the files or the hook's input changed when it placed them reports
  * {@link ShellHookOutcome.Unrun#HOOK_FILES_TAMPERED}, which blocks a guard whatever {@code failOpen} says.
  *
  * <p>

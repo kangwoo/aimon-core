@@ -83,8 +83,9 @@ final class ShellActionRunner {
 
     /**
      * {@link #run(VirtualShell, ShellAction, Map, String, Optional, boolean)} with the hook's files handed to the
-     * shell for the run (EE-109). A shell that finds them changed when it placed them does not run the command, and
-     * that is reported as {@link ShellHookOutcome.Unrun#HOOK_FILES_TAMPERED}.
+     * shell for the run (EE-109). A shell that finds them, or the stdin payload it moved, changed when it placed them
+     * does not run the command, and that is reported as {@link ShellHookOutcome.Unrun#HOOK_FILES_TAMPERED} &mdash;
+     * with or without a run directory.
      *
      * @param runDirectory
      *            the files to place for the run, or null for none; the caller has checked that the shell declares
@@ -134,8 +135,8 @@ final class ShellActionRunner {
             return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.ENVIRONMENT_UNAVAILABLE, e.getMessage());
         } catch (RunDirectoryIntegrityException e) {
             // Evidence, not a failure to run: blocks whatever failOpen says (ShellHookVerdicts). No content logged.
-            log.warn("Hook shell action not run: the shell found the hook's files changed before the run (command={},"
-                    + " {}): {}", action.getCommand(), runDirectory, e.getMessage());
+            log.warn("Hook shell action not run: the shell found the hook's files or input changed before the run"
+                    + " (command={}, {}): {}", action.getCommand(), runDirectory, e.getMessage());
             return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.HOOK_FILES_TAMPERED, "");
         } catch (ShellExecutionException e) {
             if (e.getCause() instanceof InterruptedException) {

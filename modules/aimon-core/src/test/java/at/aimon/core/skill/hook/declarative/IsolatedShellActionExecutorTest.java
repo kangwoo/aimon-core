@@ -1,6 +1,7 @@
 package at.aimon.core.skill.hook.declarative;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -8,8 +9,10 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
@@ -181,15 +184,50 @@ class IsolatedShellActionExecutorTest {
     void run_aDirectoryOverTheLimit_isNotRun(@TempDir Path tmp) throws Exception {
         final Path layer = Files.createDirectories(tmp.resolve(".aimon"));
         Files.createDirectories(layer.resolve("hooks"));
-        Files.write(layer.resolve("hooks/big.bin"), new byte[(int) HookRunFiles.MAX_BYTES + 1]);
+        Files.write(layer.resolve("hooks/big.bin"), new byte[(int) RunDirectory.MAX_TOTAL_BYTES + 1]);
         final VirtualShell shell = isolatingShell();
 
         final ShellHookOutcome outcome = executor.run(scripted(layer),
                 contextIn(TestExecutionEnvironments.ofShell(shell)), Map.of(), null);
 
         assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.HOOK_DIR_STAGING_FAILED);
-        assertThat(outcome.unrunReason()).contains(String.valueOf(HookRunFiles.MAX_BYTES + 1)).contains(".stageignore")
-                .doesNotContain(tmp.toString());
+        assertThat(outcome.unrunReason()).contains(String.valueOf(RunDirectory.MAX_TOTAL_BYTES + 1))
+                .contains(".stageignore").doesNotContain(tmp.toString());
+        verify(shell, never()).execute(any(ShellCommand.class), any(ExecutionOptions.class));
+    }
+
+    @Test
+    void run_aFileNameARunDirectoryCannotPlace_isNotRun(@TempDir Path tmp) throws Exception {
+        // #283 F1: DEL passes the local filesystem's own path check and reaches the run-directory builder.
+        final Path layer = Files.createDirectories(tmp.resolve(".aimon"));
+        Files.createDirectories(layer.resolve("hooks"));
+        Files.writeString(layer.resolve("hooks/guard.sh"), "exit 0\n");
+        assumeTrue(createdFile(layer.resolve("hooks/bad\u007fname.sh")), "the filesystem refuses the name");
+        final VirtualShell shell = isolatingShell();
+
+        final ShellHookOutcome outcome = executor.run(scripted(layer),
+                contextIn(TestExecutionEnvironments.ofShell(shell)), Map.of(), null);
+
+        // A defect in the hook's own files, not tampering: the "could not run" class, which failOpen may open.
+        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.HOOK_DIR_STAGING_FAILED);
+        assertThat(outcome.unrunReason()).contains("'bad\\u007fname.sh' contains a control character")
+                .contains(".stageignore").doesNotContain("\u007f").doesNotContain(tmp.toString());
+        verify(shell, never()).execute(any(ShellCommand.class), any(ExecutionOptions.class));
+    }
+
+    @Test
+    void run_aFileNameWithANewline_isRefusedByTheScan(@TempDir Path tmp) throws Exception {
+        // The local filesystem refuses a C0 control in a path before the builder sees it; still not run, not tampering.
+        final Path layer = Files.createDirectories(tmp.resolve(".aimon"));
+        Files.createDirectories(layer.resolve("hooks"));
+        assumeTrue(createdFile(layer.resolve("hooks/bad\nname.sh")), "the filesystem refuses the name");
+        final VirtualShell shell = isolatingShell();
+
+        final ShellHookOutcome outcome = executor.run(scripted(layer),
+                contextIn(TestExecutionEnvironments.ofShell(shell)), Map.of(), null);
+
+        assertThat(outcome.getUnrunCause()).contains(ShellHookOutcome.Unrun.HOOK_DIR_STAGING_FAILED);
+        assertThat(outcome.unrunReason()).doesNotContain(tmp.toString());
         verify(shell, never()).execute(any(ShellCommand.class), any(ExecutionOptions.class));
     }
 
@@ -278,6 +316,15 @@ class IsolatedShellActionExecutorTest {
             Files.writeString(layer.resolve("hooks/guard.sh"), "echo edited\n");
             final ShellHookOutcome second = executor.run(action, contextIn(environment), Map.of(), null);
             assertThat(second.getStdout()).contains("edited").doesNotContain(parts[0]);
+        }
+    }
+
+    private static boolean createdFile(Path path) {
+        try {
+            Files.writeString(path, "true\n");
+            return true;
+        } catch (IOException | InvalidPathException e) {
+            return false;
         }
     }
 
