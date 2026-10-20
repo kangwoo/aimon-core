@@ -65,6 +65,15 @@ public final class SubagentTaskCompleted extends AgentExecutionEvent {
     public static final String QUEUED_OUTCOME_KEY = "outcome";
 
     /**
+     * Execution attribute a caller sets on the turn it starts to deliver a background task's completion notification
+     * (a between-turn drain replaying the queued notification as the turn's input), naming the notified task id as a
+     * {@code String}. The executor records it on the TURN span so the receiving turn links to the task's SUBAGENT
+     * span. Like any execution attribute it also reaches the turn's tools and hooks, and the subagents the turn forks
+     * inherit it.
+     */
+    public static final String RECEIVED_TASK_ID_ATTRIBUTE = "aimon.subagent.received_task_id";
+
+    /**
      * Reads the task id of a background task's queued completion notification from its queued-input metadata.
      *
      * @param queuedMetadata

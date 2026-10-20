@@ -6,6 +6,8 @@ import static org.mockito.Mockito.when;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
@@ -17,11 +19,13 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 import at.aimon.cli.config.CliSettings;
 import at.aimon.cli.factory.AgentSetupFactory;
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.impl.orca.OrcaAgentExecutionRequest;
 import at.aimon.core.agent.impl.orca.OrcaAgentExecutionResult;
 import at.aimon.core.agent.impl.orca.OrcaAgentExecutor;
 import at.aimon.core.agent.impl.orca.OrcaAgentRuntime;
@@ -237,6 +241,48 @@ class ReplSessionQueueTest {
         Mockito.verify(executor, Mockito.times(3)).executeAsync(Mockito.any(), Mockito.any(), Mockito.any());
         Mockito.verify(executor, Mockito.never()).executeAsync(Mockito.any(),
                 Mockito.argThat(req -> req != null && "/quit".equals(req.getUserInput().asText())), Mockito.any());
+        assertThat(queueManager.snapshot()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("turn-end drain replays a background-task notification with its task id as an execution attribute")
+    void turnEndDrainTagsANotificationTurnWithItsTaskId() {
+        final AgentRuntimeId agentRuntimeId = AgentRuntimeId.of("agent:test-5");
+        final MessageQueueManager queueManager = new DefaultMessageQueueManager(new InMemoryMessageQueueRepository());
+
+        final OrcaAgentExecutor executor = mock(OrcaAgentExecutor.class);
+        final OrcaAgentRuntime context = mock(OrcaAgentRuntime.class);
+        when(context.getId()).thenReturn(agentRuntimeId);
+        when(executor.executeAsync(Mockito.any(), Mockito.any(), Mockito.any())).thenReturn(CompletableFuture
+                .completedFuture(OrcaAgentExecutionResult.success("done", SessionSnapshot.of(SessionId.of("default")),
+                        ExecutionMetadata.simple(Duration.ZERO, Instant.EPOCH, Instant.EPOCH))));
+
+        final CliSettings settings = new CliSettings();
+        final OutputFormatter formatter = new OutputFormatter(settings);
+        final LiveSession liveSession = new DefaultLiveSession(SessionId.of("default"), context, executor,
+                LiveSessionOptions.defaults(), queueManager);
+        final AgentSetupFactory.AgentSetup agentSetup = AgentSetupFactory.AgentSetup.builder().agentExecutor(executor)
+                .agentRuntime(context).outputFormatter(formatter).messageQueueManager(queueManager)
+                .liveSession(liveSession).build();
+        final ReplSession session = new ReplSession(agentSetup, settings, null);
+
+        // The wire values DefaultSubagentExecutionManager writes, spelled out so a rename shows up here.
+        queueManager.enqueue(QueuedInput.builder().inputText("Background task t7 completed")
+                .priority(QueuedInputPriority.NEXT).agentRuntimeId(agentRuntimeId)
+                .metadata(Map.of("kind", "subagent-task-completed", "taskId", "t7", "outcome", "COMPLETED")).build());
+        queueManager.enqueue(QueuedInput.builder().inputText("plain prompt").priority(QueuedInputPriority.NEXT)
+                .agentRuntimeId(agentRuntimeId).build());
+
+        session.processInput("kickoff");
+
+        final ArgumentCaptor<OrcaAgentExecutionRequest> requests = ArgumentCaptor
+                .forClass(OrcaAgentExecutionRequest.class);
+        Mockito.verify(executor, Mockito.times(3)).executeAsync(Mockito.any(), requests.capture(), Mockito.any());
+        final List<OrcaAgentExecutionRequest> sent = requests.getAllValues();
+        assertThat(sent.get(1).getUserInput().asText()).isEqualTo("Background task t7 completed");
+        assertThat(sent.get(1).getExecutionAttributes()).containsEntry("aimon.subagent.received_task_id", "t7");
+        assertThat(sent.get(0).getExecutionAttributes()).doesNotContainKey("aimon.subagent.received_task_id");
+        assertThat(sent.get(2).getExecutionAttributes()).doesNotContainKey("aimon.subagent.received_task_id");
         assertThat(queueManager.snapshot()).isEmpty();
     }
 

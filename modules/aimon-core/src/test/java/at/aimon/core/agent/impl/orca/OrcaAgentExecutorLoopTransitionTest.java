@@ -225,6 +225,98 @@ class OrcaAgentExecutorLoopTransitionTest {
                     .containsEntry(OrcaAgentExecutor.RECEIVED_SUBAGENT_TASK_IDS_ATTR, "t1,t2");
             assertThat(iterationSpan(store, "conv-lt-notified", 3).getAttributes())
                     .doesNotContainKey(OrcaAgentExecutor.RECEIVED_SUBAGENT_TASK_IDS_ATTR);
+            // Read by iteration 2, so nothing is left unread on the turn.
+            assertThat(turnSpan(store, "conv-lt-notified").getAttributes()).doesNotContainKeys(
+                    OrcaAgentExecutor.UNREAD_SUBAGENT_TASK_IDS_ATTR, OrcaAgentExecutor.RECEIVED_SUBAGENT_TASK_IDS_ATTR);
+        }
+
+        @Test
+        @DisplayName("notifications drained at the tail of a turn that then stops are named unread on the TURN span")
+        void notificationsDrainedBeforeAStopAreUnreadOnTheTurn() {
+            final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+            final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
+
+            // One iteration allowed: it runs a tool, its tail drains the notification, and the cap ends the turn
+            // before any LLM call reads it.
+            final RecordingLlmClient stub = new RecordingLlmClient();
+            stub.enqueue(LlmResponse.of("", List.of(ToolUse.of("call-1", "Echo", Map.of())), TokenUsage.of(5, 3, 8)));
+
+            final DefaultToolRegistry toolRegistry = new DefaultToolRegistry();
+            toolRegistry.register(new EchoTool("Echo"));
+
+            final MessageQueueManager queueManager = new DefaultMessageQueueManager(
+                    new InMemoryMessageQueueRepository());
+            final AgentRuntimeId agentRuntimeId = AgentRuntimeId.of("agent:loop-transition-unread");
+            final OrcaAgentRuntime context = createContext(agentRuntimeId, toolRegistry, 1);
+
+            final OrcaAgentExecutor executor = createExecutor(new TracingLlmClient(stub, tracer), queueManager);
+            executor.tracer = tracer;
+
+            queueManager.enqueue(QueuedInput.builder().agentRuntimeId(agentRuntimeId).inputText("task t1 completed")
+                    .priority(QueuedInputPriority.NEXT)
+                    .metadata(Map.of("kind", "subagent-task-completed", "taskId", "t1", "outcome", "COMPLETED"))
+                    .build());
+
+            executor.execute(context, OrcaAgentExecutionRequest.builder().userInput("hi")
+                    .sessionId(SessionId.of("conv-lt-unread")).build());
+
+            assertThat(turnSpan(store, "conv-lt-unread").getAttributes())
+                    .containsEntry(OrcaAgentExecutor.UNREAD_SUBAGENT_TASK_IDS_ATTR, "t1");
+            assertThat(iterationSpan(store, "conv-lt-unread", 1).getAttributes())
+                    .doesNotContainKey(OrcaAgentExecutor.RECEIVED_SUBAGENT_TASK_IDS_ATTR);
+
+            // The next turn on the same executor starts from a clean scope: nothing carries over as unread.
+            stub.enqueue(LlmResponse.text("done"));
+            executor.execute(context, OrcaAgentExecutionRequest.builder().userInput("again")
+                    .sessionId(SessionId.of("conv-lt-unread-next")).build());
+            assertThat(turnSpan(store, "conv-lt-unread-next").getAttributes())
+                    .doesNotContainKey(OrcaAgentExecutor.UNREAD_SUBAGENT_TASK_IDS_ATTR);
+        }
+
+        @Test
+        @DisplayName("a turn started to deliver a notification names the task on its TURN span")
+        void deliveredNotificationNamedOnTheTurn() {
+            final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+            final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
+
+            final RecordingLlmClient stub = new RecordingLlmClient();
+            stub.enqueue(LlmResponse.text("noted"));
+
+            final OrcaAgentExecutor executor = createExecutor(new TracingLlmClient(stub, tracer));
+            executor.tracer = tracer;
+
+            executor.execute(createContext(new DefaultToolRegistry(), 5),
+                    OrcaAgentExecutionRequest.builder().userInput("task t9 completed")
+                            .executionAttributes(Map.of("aimon.subagent.received_task_id", "t9"))
+                            .sessionId(SessionId.of("conv-lt-delivered")).build());
+
+            assertThat(turnSpan(store, "conv-lt-delivered").getAttributes())
+                    .containsEntry(OrcaAgentExecutor.RECEIVED_SUBAGENT_TASK_IDS_ATTR, "t9")
+                    .doesNotContainKey(OrcaAgentExecutor.UNREAD_SUBAGENT_TASK_IDS_ATTR);
+        }
+
+        @Test
+        @DisplayName("a turn with no delivered task and nothing unread carries neither attribute")
+        void plainTurnCarriesNeither() {
+            final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+            final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
+            final RecordingLlmClient stub = new RecordingLlmClient();
+            final OrcaAgentExecutor executor = createExecutor(new TracingLlmClient(stub, tracer));
+            executor.tracer = tracer;
+
+            // A non-string and a blank value are both ignored.
+            for (Object value : List.of(42, " ")) {
+                stub.enqueue(LlmResponse.text("done"));
+                final String sessionId = "conv-lt-plain-" + value.toString().isBlank();
+                executor.execute(createContext(new DefaultToolRegistry(), 5),
+                        OrcaAgentExecutionRequest.builder().userInput("hi")
+                                .executionAttributes(Map.of("aimon.subagent.received_task_id", value))
+                                .sessionId(SessionId.of(sessionId)).build());
+
+                assertThat(turnSpan(store, sessionId).getAttributes()).doesNotContainKeys(
+                        OrcaAgentExecutor.RECEIVED_SUBAGENT_TASK_IDS_ATTR,
+                        OrcaAgentExecutor.UNREAD_SUBAGENT_TASK_IDS_ATTR);
+            }
         }
     }
 
@@ -249,6 +341,10 @@ class OrcaAgentExecutorLoopTransitionTest {
             assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.MAX_ITERATIONS);
             assertThat(result.getIterationCount()).isEqualTo(2);
         }
+    }
+
+    private static TraceSpan turnSpan(InMemoryTraceSpanStore store, String sessionId) {
+        return store.bySession(sessionId).stream().filter(s -> s.getType() == SpanType.TURN).findFirst().orElseThrow();
     }
 
     private static TraceSpan iterationSpan(InMemoryTraceSpanStore store, String sessionId, int iteration) {

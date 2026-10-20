@@ -50,6 +50,7 @@ import at.aimon.core.agent.session.RewoundTurn;
 import at.aimon.core.agent.session.SubmitOutcome;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.stream.SkillTurnSuspendedEvent;
+import at.aimon.core.agent.stream.SubagentTaskCompleted;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.skill.policy.pending.PendingTurnId;
 import at.aimon.core.skill.policy.pending.PendingTurnRegistry;
@@ -715,9 +716,10 @@ public class ReplSession {
      * <p>
      * Called from {@link #executeAgent(String)}'s {@code finally} block so the slot is already released. Anything the
      * Orca ReAct loop could not inject mid-turn — either enqueued too late in the turn or parked at a priority the
-     * mid-turn drain skipped — is replayed here in FIFO order. Each entry round-trips through
-     * {@link #processInput(String)} so that slash commands take the command path and prompts take the agent path,
-     * preserving the semantic boundary between the two.
+     * mid-turn drain skipped — is replayed here in FIFO order through {@link #replay(QueuedInput)}: a background
+     * subagent's completion notification goes to the agent tagged with its task id, and every other entry round-trips
+     * through {@link #processInput(String)} so that slash commands take the command path and prompts take the agent
+     * path, preserving the semantic boundary between the two.
      *
      * <p>
      * {@link #draining} prevents the replay from calling itself: each replayed prompt will re-enter
@@ -733,10 +735,29 @@ public class ReplSession {
             final List<QueuedInput> drained = messageQueueManager.drainForInjection(
                     q -> agentRuntime.getId().equals(q.getAgentRuntimeId()), QueuedInputPriority.LATER);
             for (QueuedInput entry : drained) {
-                processInput(entry.getInputText());
+                replay(entry);
             }
         } finally {
             draining = false;
+        }
+    }
+
+    /**
+     * Replays one drained entry. A background subagent's completion notification goes straight to the agent with the
+     * notified task id as the {@link SubagentTaskCompleted#RECEIVED_TASK_ID_ATTRIBUTE} execution attribute, so the
+     * turn that receives it is recorded against that task on its TURN span; anything else round-trips through
+     * {@link #processInput(String)} as before. A notification body is never a slash command, so skipping the command
+     * routing changes nothing for it.
+     */
+    private void replay(QueuedInput entry) {
+        final Optional<String> notifiedTaskId = SubagentTaskCompleted.notifiedTaskId(entry.getMetadata());
+        if (notifiedTaskId.isPresent()) {
+            executeAgent(TextInput.of(entry.getInputText()),
+                    SubmitOptions.builder()
+                            .executionAttribute(SubagentTaskCompleted.RECEIVED_TASK_ID_ATTRIBUTE, notifiedTaskId.get())
+                            .build());
+        } else {
+            processInput(entry.getInputText());
         }
     }
 

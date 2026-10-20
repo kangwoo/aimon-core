@@ -335,7 +335,7 @@ public interface SpanExporter {
 
 | Span | 소스 | 시작 → 종료 | 비고 |
 |---|---|---|---|
-| **TURN** (root) | `execute()` 진입/`finally` | userMessage → `finalAnswerChars`(내용 캡처 정책이면 `finalAnswer` 도) + `ExecutionMetadata` | `traceId` 발급 지점 |
+| **TURN** (root) | `execute()` 진입/`finally` | userMessage → `finalAnswerChars`(내용 캡처 정책이면 `finalAnswer` 도) + `ExecutionMetadata` | `traceId` 발급 지점. 백그라운드 완료 알림을 전달받은 턴이면 `subagent.received.taskIds`, 읽지 못하고 끝났으면 `subagent.received.unreadTaskIds` |
 | **ITERATION** | `executeReActLoop` 의 step try/finally | ReAct step 경계 | iteration 번호 보유. 재진입이면 `loop.transition*`, 직전 꼬리에서 백그라운드 완료 알림을 받았으면 `subagent.received.taskIds` |
 | **LLM** | `TracingLlmClient` 데코레이터 | `sendMessage` 진입 → 응답 | **유일한 LLM 캡처 경로**. 프롬프트·토큰·모델·지연 · `stopReason`. 스트리밍이면 `streaming=true` · `ttftMs`. 요청된 취소(토큰이 취소된 `LlmCallCancelledException`)는 `INTERRUPTED` |
 | **TOOL** | 두 executor 의 `executeSingleTool` 얇은 래퍼(`toolinvocation.ToolCallTracing`) | 도구 입력 → 출력 | Event 보다 payload 가 풍부. 도구가 받는 컨텍스트의 metadata 를 TOOL span 으로 회전(R1) |
@@ -395,7 +395,9 @@ R1 ~ R3 이다. 백그라운드 서브에이전트의 SUBAGENT span 은 worker �
 뒤 시작할 수 있다 — 부모-자식은 id 로만 이어진다. pool 이 거부한 백그라운드 작업도 `rejected=true` 인 ERROR SUBAGENT
 span 을 남긴다. 포크의 `ExecutionId` 는 `executionId` 속성이다(ReAct 경로만 — 코드 behavior 와 실행 전 실패에는 없다).
 그 완료 알림이 턴 도중에 drain 되면 알림을 처음 읽는 ITERATION 이 `subagent.received.taskIds` 에 task id 를 남겨
-SUBAGENT span 의 `taskId` 와 이어진다(턴이 그 drain 직후 멈춘 경우와 부모가 쉬는 동안 도착한 경우는 남지 않는다 — 백로그 ST-12).
+SUBAGENT span 의 `taskId` 와 이어진다. 턴이 그 drain 직후 멈추면 TURN 이 `subagent.received.unreadTaskIds` 에, 부모가 쉬는
+동안 도착해 호출자의 턴 사이 drain 이 새 턴으로 전달한 알림은 그 TURN 이 `subagent.received.taskIds` 에 남긴다(호출자가
+execution attribute `aimon.subagent.received_task_id` 를 실을 때 — CLI 는 싣는다. 백로그 ST-12).
 
 SUBAGENT span 의 상태는 TURN 과 같은 규칙이다 — 취소는 `INTERRUPTED`, 예산 · iteration 상한 · 쿼터로 멈춘 실행은
 `OK`(이유는 outputs 의 `completionReason`), 그 밖의 실패만 `ERROR`. `tokenUsage` 는 포크 루프가 이미 누적한 합계다.

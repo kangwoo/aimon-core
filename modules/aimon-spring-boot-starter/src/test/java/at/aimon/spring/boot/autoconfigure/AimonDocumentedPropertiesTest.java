@@ -22,6 +22,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.stream.SubagentTaskCompleted;
 import at.aimon.core.tracing.SpanContext;
 import at.aimon.spring.boot.metrics.AimonMetrics;
 
@@ -71,7 +72,9 @@ import at.aimon.spring.boot.metrics.AimonMetrics;
  * {@code aimon.*} is not one namespace. Three naming systems share the prefix in these guides: configuration
  * properties, Micrometer meters, and the CLI's own {@code aimon.yaml} file. The meter and tag families are derived
  * from the constants that emit them ({@link AimonMetrics#PREFIX}, {@link SpanContext#TAG_TRACE_ID}), so renaming a
- * meter moves its exemption with it. The rest are named one by one in {@link #EXEMPT_REFERENCES} with a reason.
+ * meter moves its exemption with it; so is the one execution-attribute name the guides cite
+ * ({@link SubagentTaskCompleted#RECEIVED_TASK_ID_ATTRIBUTE}). The rest are named one by one in
+ * {@link #EXEMPT_REFERENCES} with a reason.
  *
  * <p>
  * Exemptions are exact names, never prefixes, and {@code aimon.session.cache.hits} is why: that meter shares its
@@ -439,7 +442,8 @@ class AimonDocumentedPropertiesTest {
         if (reference.equals(AimonMetrics.PREFIX) || reference.startsWith(AimonMetrics.PREFIX + ".")) {
             return true;
         }
-        return reference.equals(SpanContext.TAG_TRACE_ID) || reference.equals(SpanContext.TAG_PARENT_SPAN_ID);
+        return reference.equals(SpanContext.TAG_TRACE_ID) || reference.equals(SpanContext.TAG_PARENT_SPAN_ID)
+                || reference.equals(SubagentTaskCompleted.RECEIVED_TASK_ID_ATTRIBUTE);
     }
 
     private static String trimTrailingPunctuation(String reference) {
