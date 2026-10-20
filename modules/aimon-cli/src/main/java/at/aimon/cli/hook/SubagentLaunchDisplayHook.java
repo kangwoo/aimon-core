@@ -1,11 +1,13 @@
 package at.aimon.cli.hook;
 
 import java.util.Objects;
+import java.util.Optional;
 
 import at.aimon.cli.repl.OutputFormatter;
 import at.aimon.core.hook.event.SubagentStartContext;
 import at.aimon.core.hook.event.SubagentStartHook;
 import at.aimon.core.hook.execution.HookResult;
+import at.aimon.core.tools.ForkAccess;
 
 /**
  * Displays a {@code [Subagent] <name>: <goal>} line whenever a subagent begins executing.
@@ -35,7 +37,15 @@ public class SubagentLaunchDisplayHook implements SubagentStartHook {
 
     @Override
     public HookResult execute(SubagentStartContext context) {
-        outputFormatter.displaySubagentLaunch(context.getSubagentName(), context.getGoal());
+        // Labelled only when the fork carries its task id attribute (parallel foreground tasks on), so the output is
+        // unchanged otherwise. The attribute is this fork's own id: the manager adds it before SubagentStart fires.
+        Optional<String> taskId = ForkAccess.taskIdOf(context.getExecutionAttributes());
+        if (taskId.isPresent()) {
+            outputFormatter.displaySubagentLaunch(context.getSubagentName(), context.getGoal(),
+                    ForkAccess.shortTaskId(taskId.get()));
+        } else {
+            outputFormatter.displaySubagentLaunch(context.getSubagentName(), context.getGoal());
+        }
         return HookResult.success();
     }
 }

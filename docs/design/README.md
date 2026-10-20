@@ -66,6 +66,7 @@
 | [`contract-hardening.md`](tool/contract-hardening.md) | 스키마 게이트, `additionalProperties: false`, `GenericTool` 바인딩 |
 | [`side-effect-axes.md`](tool/side-effect-axes.md) | 부작용을 하나의 등급이 아니라 축으로 나눈 이유 |
 | [`parallel-execution.md`](tool/parallel-execution.md) | `ConcurrencyBehavior` 와 2단 게이트(모델 의도 + 프레임워크 안전성) |
+| [`subagent/parallel-foreground-task.md`](subagent/parallel-foreground-task.md) | (IMPLEMENTED, 승인본, 차이는 §9) `ConcurrencyBehavior.DEDICATED_THREAD` — 전부 `CONCURRENT_SAFE` 가 아니면 순차인 게이트 옆에, 연속된 포그라운드 `Task` 구간만 재사용하지 않는 전용 스레드로 펴는 데코레이터. 정본은 `subagent` 표의 같은 행 |
 | [`tool-search.md`](tool/tool-search.md) | 도구가 많아졌을 때 스키마를 지연 로드하는 검색 계층 |
 | [`execution-environment.md`](tool/execution-environment.md) | (IMPLEMENTED) 도구의 파일 시스템·셸을 실행마다 고르는 `ExecutionEnvironment` — 제어 저장소 분리, 격리를 환경 기능으로, 파일 stamp |
 | [`execution-environment-implementation.md`](tool/execution-environment-implementation.md) | 위 설계의 구현 계획(승인본, 영어) — 코드 위치·단계·ArchUnit 변경·테스트, 그리고 구현이 계획에서 벗어난 점(§10) |
@@ -95,6 +96,7 @@
 | [`subagent/execution.md`](subagent/execution.md) | 포크 실행 — 세션 없는 실행의 정체성, 예산, 격리 |
 | [`subagent/background-task-result-persistence.md`](subagent/background-task-result-persistence.md) | 백그라운드 태스크의 **결과**를 저장소로 내린 자리 — 순서 계약, `block=true` 폴링, 크기 정책 |
 | [`subagent/code-defined-registration.md`](subagent/code-defined-registration.md) | 마크다운이 아니라 코드로 서브에이전트를 등록하는 경로 |
+| [`subagent/parallel-foreground-task.md`](subagent/parallel-foreground-task.md) | (IMPLEMENTED, 승인본, 차이는 §9) 한 배치의 포그라운드 `Task` 를 동시에 돌리는 설계 — 도구가 `DEDICATED_THREAD` 를 선언하고 디스패처 데코레이터가 연속 구간을 호출마다 새 스레드로 펴는 이유(늦은 interrupt), 비블로킹 허가와 inline fallback 으로 얻은 교착 없음, 포크 깊이 상한, 같은 승인 질문을 한 번만 묻는 게이트, 포크의 task id 속성과 CLI 라벨, 기능 off 시 바이트 동일의 전수 목록(§3.16), 기각한 대안, 그리고 구현이 설계에서 벗어난 점(§9) |
 | [`workflow/workflow.md`](workflow/workflow.md) | 서브에이전트 오케스트레이션 — 스크립트 프론트엔드, 러너 수명, GraalJS 샌드박스 |
 
 ### llm — 프로바이더 계약

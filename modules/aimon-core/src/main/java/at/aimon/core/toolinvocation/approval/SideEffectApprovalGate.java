@@ -3,6 +3,10 @@ package at.aimon.core.toolinvocation.approval;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutionException;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -17,6 +21,7 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.hook.execution.AskPromptHandler;
 import at.aimon.core.hook.execution.Decision;
 import at.aimon.core.llm.ToolUse;
+import at.aimon.core.tools.ForkAccess;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
@@ -93,7 +98,23 @@ import at.aimon.core.tools.ToolContextKeys;
  *
  * <p>
  * Thread-safe, given a thread-safe handler and store — both are required to be. A parallel tool batch may evaluate
- * several tools against one gate at once.
+ * several tools against one gate at once, and parallel foreground forks of one session share its scope.
+ *
+ * <p>
+ * <b>The same question is asked once even when it arrives several times at once.</b> Looking an answer up, asking and
+ * remembering is not atomic on its own, so two forks of one session calling the same tool together would both miss
+ * and both ask. The gate therefore keeps the question currently in front of the user per (scope, tool): the first
+ * caller asks, the others wait for that answer and share it, and nothing is remembered twice. Different questions —
+ * another scope, or another tool in the same scope — never wait for each other here; putting several distinct prompts
+ * on one console one at a time is the {@link AskPromptHandler}'s job. A caller interrupted while waiting for someone
+ * else's prompt returns a refusal rather than an approval and remembers nothing. An asker whose run was cancelled
+ * while it asked — interrupted, so its handler's answer is not the user's — remembers nothing either, and neither a
+ * cancelled nor a failed prompt is handed to the waiters as the user's answer: they go back and ask for themselves.
+ *
+ * <p>
+ * When the run is a fork labelled with its task id ({@link ForkAccess#TASK_ID_ATTRIBUTE}, present only when parallel
+ * foreground tasks are enabled), the prompt starts with {@code [task <first 8 chars>]} so the user can tell which of
+ * several concurrent forks is asking.
  *
  * @see SideEffectLevel
  * @see DestructiveBehavior
@@ -114,6 +135,12 @@ public final class SideEffectApprovalGate {
     private final SideEffectLevel exemptAtOrBelow;
     private final AskPromptHandler channel;
     private final ToolApprovalStore store;
+
+    /**
+     * The questions currently in front of the user, keyed by scope and tool — the unit {@link #store} remembers
+     * answers in. Holds an entry only while its prompt is open.
+     */
+    private final ConcurrentMap<String, CompletableFuture<Outcome>> inFlight = new ConcurrentHashMap<>();
 
     /**
      * Creates a gate that asks about every tool declaring more than {@link SideEffectLevel#READ_ONLY}, remembering
@@ -201,10 +228,101 @@ public final class SideEffectApprovalGate {
             return remembered.get() ? Optional.empty() : Optional.of(declinedMessage(toolName, true));
         }
 
-        final Decision answer = channel.resolve(promptFor(toolName, toolUse, declared, destructive));
-        final boolean allowed = answer == Decision.ALLOW;
-        scopeKey.ifPresent(key -> store.remember(key, toolName, allowed));
+        final String prompt = promptFor(labelOf(context), toolName, toolUse, declared, destructive);
+        if (scopeKey.isEmpty()) {
+            // No scope: nothing to remember and nothing to share — asked every time, as always.
+            return decided(toolName, declared, destructive, scopeKey, channel.resolve(prompt) == Decision.ALLOW);
+        }
 
+        final String key = scopeKey.get();
+        final String question = key + '\0' + toolName;
+        while (true) {
+            final CompletableFuture<Outcome> mine = new CompletableFuture<>();
+            final CompletableFuture<Outcome> prior = inFlight.putIfAbsent(question, mine);
+            if (prior != null) {
+                // The same question is already in front of the user: wait for that answer instead of asking again.
+                final Optional<Outcome> shared = awaitShared(prior);
+                if (shared.isEmpty()) {
+                    // This run was cancelled while it waited: a refusal, never an approval, and nothing remembered.
+                    return Optional.of(cancelledMessage(toolName));
+                }
+                if (shared.get() == Outcome.ALLOWED) {
+                    return Optional.empty();
+                }
+                if (shared.get() == Outcome.DECLINED) {
+                    return Optional.of(declinedMessage(toolName, false));
+                }
+                // The asker got no answer from the user (its run was cancelled or its prompt failed): look again, and
+                // ask for ourselves if the question is still unanswered. The asker may not have cleared its finished
+                // slot yet; clearing it here (only if it is still that slot) keeps us from spinning on it.
+                inFlight.remove(question, prior);
+                final Optional<Boolean> answered = store.lookup(key, toolName);
+                if (answered.isPresent()) {
+                    return answered.get() ? Optional.empty() : Optional.of(declinedMessage(toolName, true));
+                }
+                continue;
+            }
+            return askAsOwner(mine, key, prompt, toolName, declared, destructive);
+        }
+    }
+
+    /**
+     * Asks the question this caller won the in-flight slot for, remembers the user's answer and hands it to the
+     * waiters.
+     */
+    private Optional<String> askAsOwner(CompletableFuture<Outcome> mine, String key, String prompt, String toolName,
+            SideEffectLevel declared, DestructiveBehavior destructive) {
+        final String question = key + '\0' + toolName;
+        try {
+            // Won the slot, but another caller may have asked, remembered and left between our lookup and now.
+            final Optional<Boolean> answeredMeanwhile = store.lookup(key, toolName);
+            if (answeredMeanwhile.isPresent()) {
+                mine.complete(Outcome.of(answeredMeanwhile.get()));
+                return answeredMeanwhile.get() ? Optional.empty() : Optional.of(declinedMessage(toolName, true));
+            }
+            final boolean allowed = channel.resolve(prompt) == Decision.ALLOW;
+            if (Thread.currentThread().isInterrupted()) {
+                // This run was cancelled while it asked: whatever the handler returned (the CLI denies an interrupted
+                // caller without prompting) is not the user's answer, so it is neither remembered nor shared.
+                mine.complete(Outcome.NO_ANSWER);
+                log.info("Approval prompt for tool '{}' cancelled for scope {}; nothing remembered", toolName, key);
+                return Optional.of(cancelledMessage(toolName));
+            }
+            // Remember before completing, so a waiter that wakes and looks at the store already finds the answer.
+            store.remember(key, toolName, allowed);
+            mine.complete(Outcome.of(allowed));
+            return decided(toolName, declared, destructive, Optional.of(key), allowed);
+        } finally {
+            if (!mine.isDone()) {
+                // The prompt threw (RuntimeException or Error): never leave a waiter hanging, and do not pass the
+                // failure off as the user's refusal — the waiters ask for themselves. The throwable itself still
+                // propagates to the invoker's catch-all, as it always has.
+                log.warn("Approval prompt for tool '{}' failed for scope {}; waiting calls will ask again", toolName,
+                        key);
+                mine.complete(Outcome.NO_ANSWER);
+            }
+            inFlight.remove(question, mine);
+        }
+    }
+
+    /**
+     * Waits for the outcome of a question another caller is asking right now. Empty when this caller is interrupted
+     * while waiting — its run was cancelled; the flag is restored for the caller.
+     */
+    private static Optional<Outcome> awaitShared(CompletableFuture<Outcome> prior) {
+        try {
+            return Optional.of(prior.get());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Optional.empty();
+        } catch (ExecutionException e) {
+            // Never completed exceptionally; treated as no answer so the caller asks for itself.
+            return Optional.of(Outcome.NO_ANSWER);
+        }
+    }
+
+    private static Optional<String> decided(String toolName, SideEffectLevel declared, DestructiveBehavior destructive,
+            Optional<String> scopeKey, boolean allowed) {
         if (allowed) {
             log.debug("Tool '{}' ({}/{}) approved for scope {}", toolName, declared, destructive,
                     scopeKey.orElse("<none>"));
@@ -252,14 +370,22 @@ public final class SideEffectApprovalGate {
      * call — the store is keyed by tool, so approving {@code Bash(ls)} approves every later {@code Bash}. Showing the
      * arguments without saying that would be worse than not showing them: it reads as consent to one command.
      */
-    private static String promptFor(String toolName, ToolUse toolUse, SideEffectLevel declared,
+    private static String promptFor(String label, String toolName, ToolUse toolUse, SideEffectLevel declared,
             DestructiveBehavior destructive) {
         final String what = destructive == DestructiveBehavior.DESTRUCTIVE
                 ? ", so it may overwrite or remove state that already exists"
                 : ", so it may change state outside this agent";
-        return "Allow " + renderCall(toolName, toolUse) + "? It declares " + declared + " / " + destructive + what
-                + ". Approving covers every '" + toolName
+        return label + "Allow " + renderCall(toolName, toolUse) + "? It declares " + declared + " / " + destructive
+                + what + ". Approving covers every '" + toolName
                 + "' call for the rest of this session, whatever its arguments.";
+    }
+
+    /**
+     * Returns {@code "[task <first 8 chars>] "} when the run is a fork labelled with its task id, otherwise the empty
+     * string — so a prompt from an unlabelled run is exactly what it always was.
+     */
+    private static String labelOf(ToolContext context) {
+        return ForkAccess.taskIdOf(context).map(taskId -> "[task " + ForkAccess.shortTaskId(taskId) + "] ").orElse("");
     }
 
     /**
@@ -283,6 +409,11 @@ public final class SideEffectApprovalGate {
         return oneLine.length() <= limit ? oneLine : oneLine.substring(0, limit) + "...";
     }
 
+    /** The refusal the model sees when its run was cancelled before the user answered. */
+    private static String cancelledMessage(String toolName) {
+        return "Tool '" + toolName + "' was not approved: this run was cancelled while waiting for the user's answer.";
+    }
+
     /**
      * The refusal the model sees. It names the user as the decider on purpose: told only that a tool "failed", a model
      * retries it, and a retry loop against a declined tool re-prompts nobody and accomplishes nothing.
@@ -290,5 +421,19 @@ public final class SideEffectApprovalGate {
     private static String declinedMessage(String toolName, boolean remembered) {
         return "Tool '" + toolName + "' was not approved by the user" + (remembered ? " earlier in this session" : "")
                 + ". Do not retry it; " + "either continue without it or ask the user how they would like to proceed.";
+    }
+
+    /** What a question in front of the user came to, as handed to the callers waiting on it. */
+    private enum Outcome {
+        ALLOWED, DECLINED,
+        /**
+         * The user gave no answer — the asker's run was cancelled while it asked, or its prompt failed. Nothing was
+         * remembered, and the waiters ask again.
+         */
+        NO_ANSWER;
+
+        static Outcome of(boolean allowed) {
+            return allowed ? ALLOWED : DECLINED;
+        }
     }
 }

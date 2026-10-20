@@ -29,6 +29,7 @@ import at.aimon.core.subagent.execution.ForkGoalRenderer;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.tools.CallerAllowedTools;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
+import at.aimon.core.tools.ForkAccess;
 import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.ToolContextKeys;
@@ -170,7 +171,9 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
                 // The spawning execution's quota guard: the fork is charged to its keys, never resolves its own.
                 .quotaGuard(toolContext.get(ToolContextKeys.QUOTA_GUARD).orElse(null))
                 // The body rendered again where the fork runs, when that is not here (EE-81).
-                .forkGoalRenderer(forkGoal).build();
+                .forkGoalRenderer(forkGoal)
+                // One deeper than the calling run.
+                .forkDepth(ForkAccess.childDepthOf(toolContext)).build();
 
         final String taskId = UUID.randomUUID().toString();
         final String description = "skill:" + skill.getName();

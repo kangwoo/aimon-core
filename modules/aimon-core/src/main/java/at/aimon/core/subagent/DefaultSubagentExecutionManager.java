@@ -73,6 +73,7 @@ import at.aimon.core.subagent.task.TaskQuery;
 import at.aimon.core.subagent.task.TaskResult;
 import at.aimon.core.subagent.task.TaskStopSignal;
 import at.aimon.core.subagent.task.ZombieTaskReaper;
+import at.aimon.core.tools.ForkAccess;
 import at.aimon.core.tools.task.AgentOutputTool;
 import at.aimon.core.tracing.SpanType;
 import at.aimon.core.tracing.Spans;
@@ -181,6 +182,13 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
      * {@code volatile} for the same reason as {@link #tracer}.
      */
     private volatile TracePayloadPolicy tracePayloadPolicy = TracePayloadPolicy.summaryOnly();
+
+    /**
+     * Whether each fork carries its own task id as the {@link ForkAccess#TASK_ID_ATTRIBUTE} execution attribute.
+     * Defaults to {@code false}; set via {@link #withForkTaskIdAttribute()}. {@code volatile} for the same reason as
+     * {@link #tracer}.
+     */
+    private volatile boolean forkTaskIdAttribute;
 
     /**
      * The executor this manager built itself — the same instance as {@link #subagentExecutor} — when it was created
@@ -569,6 +577,46 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
     }
 
     /**
+     * Makes every fork this manager launches carry its own task id as the {@link ForkAccess#TASK_ID_ATTRIBUTE}
+     * execution attribute, so that several forks running at once can be told apart: by their
+     * {@code SubagentStart}/{@code SubagentStop} hooks, by the hooks of the tools they call, and by an approval prompt
+     * they raise. The attribute is added once at each entry point (foreground and background) before the Start hook
+     * fires, and a nested fork overwrites its parent fork's id with its own. Returns {@code this} for fluent
+     * configuration; when unset, a fork's execution attributes are exactly its spawner's.
+     *
+     * <p>
+     * {@code OrcaAgentExecutorFactory} calls this only when parallel foreground tasks
+     * ({@code DedicatedThreadConfig}) are enabled.
+     *
+     * @return this manager
+     */
+    public DefaultSubagentExecutionManager withForkTaskIdAttribute() {
+        this.forkTaskIdAttribute = true;
+        return this;
+    }
+
+    /**
+     * @return {@code true} once {@link #withForkTaskIdAttribute()} was called. Package-private for tests.
+     */
+    boolean isForkTaskIdAttribute() {
+        return forkTaskIdAttribute;
+    }
+
+    /**
+     * Returns the launch context the run should use: unchanged when the task id attribute is off, otherwise a copy
+     * whose execution attributes carry {@code taskId} under {@link ForkAccess#TASK_ID_ATTRIBUTE}. Called once at each
+     * entry point, so the Start hook, the request handed to the executor and the Stop hook all see the same map.
+     */
+    private SubagentLaunchContext withTaskIdAttribute(SubagentLaunchContext launchContext, String taskId) {
+        if (!forkTaskIdAttribute || taskId == null) {
+            return launchContext;
+        }
+        final Map<String, Object> attributes = new LinkedHashMap<>(launchContext.getExecutionAttributes());
+        attributes.put(ForkAccess.TASK_ID_ATTRIBUTE, taskId);
+        return launchContext.toBuilder().executionAttributes(attributes).build();
+    }
+
+    /**
      * Executes a subagent from agent execution request.
      *
      * <p>
@@ -674,9 +722,12 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
      *            the live output sink to stream progress to (must not be null; {@link SubagentOutputSink#NO_OP} for
      *            foreground)
      */
-    private SubagentExecutionResult runExecute(SubagentLaunchContext launchContext, String taskId,
+    private SubagentExecutionResult runExecute(SubagentLaunchContext requestedLaunchContext, String taskId,
             SubagentTarget target, String goal, String description, CancellationSignal cancellationSignal,
             SubagentOutputSink outputSink) {
+        // Label the fork with its own task id (when enabled) before anything reads the attributes, so the Start hook,
+        // the executor's request and the Stop hook see the same map.
+        final SubagentLaunchContext launchContext = withTaskIdAttribute(requestedLaunchContext, taskId);
         // Foreground path: fire SubagentStart on the calling thread, then run the body. The background path
         // (executeInBackground) fires SubagentStart itself BEFORE dispatch — so the launch is observed on the launching
         // thread, immediately and in order, rather than late on a pool worker — and calls runResolvedSubagent directly.
@@ -769,7 +820,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
                     .invokingSessionId(launchContext.getInvokingSessionId().orElse(null))
                     .previousSnapshot(launchContext.getPreviousSnapshot().orElse(null))
                     // The spawning turn's quota guard, so the fork is charged to the turn's keys (usage-quota §4.3).
-                    .quotaGuard(launchContext.getQuotaGuard())
+                    .quotaGuard(launchContext.getQuotaGuard()).forkDepth(launchContext.getForkDepth())
                     // A fork-mode skill's body, rendered again in the fork's environment when that is not the
                     // spawner's (EE-81).
                     .forkGoalRenderer(launchContext.getForkGoalRenderer().orElse(null)).build();
@@ -1074,9 +1125,11 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
     }
 
     @Override
-    public CompletableFuture<SubagentExecutionResult> executeInBackground(SubagentLaunchContext launchContext,
+    public CompletableFuture<SubagentExecutionResult> executeInBackground(SubagentLaunchContext requestedLaunchContext,
             String taskId, String subagentName, String goal, String description) {
-        Objects.requireNonNull(launchContext, "Launch context cannot be null");
+        Objects.requireNonNull(requestedLaunchContext, "Launch context cannot be null");
+        // Same labelling as the foreground entry point (runExecute), for the same reason.
+        final SubagentLaunchContext launchContext = withTaskIdAttribute(requestedLaunchContext, taskId);
         final Instant startTime = Instant.now();
 
         // Record a durable PENDING snapshot up front so the task is listable/queryable even while it waits for a

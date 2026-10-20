@@ -70,6 +70,11 @@ public final class SubagentTaskCompleted extends AgentExecutionEvent {
      * {@code String}. The executor records it on the TURN span so the receiving turn links to the task's SUBAGENT
      * span. Like any execution attribute it also reaches the turn's tools and hooks, and the subagents the turn forks
      * inherit it.
+     *
+     * <p>
+     * Not to be confused with {@link at.aimon.core.tools.ForkAccess#TASK_ID_ATTRIBUTE}: that one names the task a fork
+     * run <em>itself</em> is (set on each fork, overwritten by a nested fork, only with parallel foreground tasks
+     * enabled), whereas this one names a background task whose result the receiving turn is delivering.
      */
     public static final String RECEIVED_TASK_ID_ATTRIBUTE = "aimon.subagent.received_task_id";
 

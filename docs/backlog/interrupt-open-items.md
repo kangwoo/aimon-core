@@ -472,6 +472,15 @@ step-down · 권한 오류도 그 예외이고 토큰과는 무관하다 — 토
 도는 병렬 디스패치 위에서는 돌릴 수 없었다** — 그 선언이 생길 때 함께 돌린다. 같은 방식으로 취소를 듣는 도구가 더 생기면 이 문단이 아니라 전제 쪽을
 다시 쓴다.
 
+**덧붙임 (2026-10-20, 포그라운드 Task 병렬 실행).** `EXTERNALLY_TERMINATED` 도구(`Task`)가 처음으로 **동시에** 돌게 되었지만
+집합은 이번에도 넓어지지 않았다 — `isParallelizableInterrupt` 는 그대로이고 `Task` 는 공유 워커 풀에 오르지 않는다. 대신
+`ConcurrencyBehavior.DEDICATED_THREAD` 를 선언하고, `DedicatedThreadDispatcher` 가 호출마다 **새로 만들고 다시 쓰지 않는**
+스레드에서 돌린다. 늦게 도착한 terminator 의 interrupt 는 그 스레드와 함께 사라지므로 "워커에서 관측되는 플래그는 그 워커에
+대한 실제 인터럽트뿐" 이라는 전제가 지켜진다. 허가가 없어 호출 스레드에서 inline 으로 도는 호출은 오늘과 같은 경로라 오늘의
+흡수가 그대로 적용된다. 근거와 테스트는
+[`../design/subagent/parallel-foreground-task.md`](../design/subagent/parallel-foreground-task.md) §2.3 · §6.7 이고, 그 변경이 남긴
+늦은 interrupt 창(오늘도 있는 것)은 [`parallel-foreground-task-open-items.md`](parallel-foreground-task-open-items.md) PF-3 이다.
+
 ---
 
 ## 5. 한 항목을 못 읽으면 같은 `collect` 의 정상 항목까지 사라진다 — **닫힘** *(2026-09-06)*

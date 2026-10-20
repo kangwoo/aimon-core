@@ -41,5 +41,21 @@ public enum ConcurrencyBehavior {
      * Declaring this is a contract: the tool's {@code execute} method, and any Pre/PostTool hooks registered for it,
      * must tolerate being invoked from a worker thread concurrently with other tools.
      */
-    CONCURRENT_SAFE
+    CONCURRENT_SAFE,
+
+    /**
+     * The tool may run at the same time as neighbouring tools that declare the same value, but each call must get a
+     * thread of its own that is created for that call and never reused. Use for a tool that registers a terminator
+     * bound to its executing thread ({@code THREAD_INTERRUPT} / {@code EXTERNALLY_TERMINATED}) around a long blocking
+     * call such as a subagent run ({@code Task}): a late interrupt then lands on a thread that dies with the call
+     * rather than on a pooled worker's next task.
+     *
+     * <p>
+     * Such a tool never goes onto the shared worker pool — the batch gate treats it exactly like {@link #SEQUENTIAL}.
+     * Only {@link DedicatedThreadDispatcher}, installed when {@link DedicatedThreadConfig#isEnabled()} is set, fans a
+     * run of consecutive {@code DEDICATED_THREAD} calls out onto dedicated threads; without it the tool runs in order
+     * on the calling thread as before. The same contract as {@link #CONCURRENT_SAFE} applies to the tool's {@code
+     * execute} method and its Pre/PostTool hooks: they must tolerate running concurrently with each other.
+     */
+    DEDICATED_THREAD
 }

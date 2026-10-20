@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/tool/parallel-tool-execution-guide.md
-source_commit: eec9ccd
+source_commit: 9a45db56
 ---
 
 # Parallel tool execution guide
@@ -81,6 +81,76 @@ ToolConcurrencyConfig.builder().enabled(true).maxConcurrency(8).perBatchMax(2).b
 - Permits are acquired **on the calling thread, just before submit**, so a tool waiting for a slot does not occupy a shared worker thread (it does not starve other turns). If a batch is larger than `perBatchMax`, submission simply serialises at that point through backpressure — the global pool and result-order preservation are untouched.
 
 > **Note:** `perBatchMax` is a cap per *batch (within a turn)*. It cannot stop a chatty conversation from firing batches back to back — fairness per conversation or tenant, and cluster-wide ceilings, belong to the session/request admission layer rather than to the tool dispatcher.
+
+### 2.4 Parallel foreground Task (`DedicatedThreadConfig`) — optional
+
+Foreground `Task` (subagent) calls in one response are not parallelised by the gate above — `Task` registers a terminator that interrupts its executing thread, so on the shared pool an interrupt that arrives late would hit the worker's next task. `Task` therefore declares `ConcurrencyBehavior.DEDICATED_THREAD`, and when a separate switch is on, **runs of consecutive `Task` calls** run at the same time, each on a dedicated thread created for that call and never reused:
+
+#### Enabling through the factory (recommended)
+
+If you build executors with `OrcaAgentExecutorFactory`, one setting is enough. The factory installs the dispatcher on both the main executor and the fork executor, makes the two share one permit set, and tells the manager to label forks with their task id:
+
+```java
+import at.aimon.core.agent.impl.orca.OrcaAgentExecutorFactory;
+import at.aimon.core.agent.tool.DedicatedThreadConfig;
+
+OrcaAgentExecutor executor = new OrcaAgentExecutorFactory()
+        .withDedicatedThreadConfig(DedicatedThreadConfig.enabled(4))  // at most 4 dedicated threads
+        .create(llmClient, transcriptManager);
+
+// to fan out Task calls inside forks too, raise the depth bound (default 1 = only root executions: a session's turn, a routine, a rewake replay)
+DedicatedThreadConfig.builder().enabled(true).maxThreads(4).maxForkDepth(2).build();
+```
+
+`withDedicatedThreadConfig` applies only to executors created after it. An executor already built keeps the config and permit set it was built with.
+
+#### Wiring it by hand, without the factory
+
+If you assemble `OrcaAgentExecutor.builder()` and `DefaultSubagentExecutor` yourself, do all three steps below **together**. Leaving one out degrades silently: installed on the main executor only, `Task` calls inside forks stay sequential whatever `maxForkDepth` says; without `withForkTaskIdAttribute()` the calls run in parallel but the CLI labels and the `[task …]` prefix on approval prompts are missing.
+
+```java
+import at.aimon.core.agent.tool.DedicatedThreadConfig;
+import at.aimon.core.agent.tool.DedicatedThreadDispatcher;
+import at.aimon.core.agent.tool.DedicatedThreadPermits;
+import at.aimon.core.agent.tool.DefaultParallelToolDispatcher;
+
+DedicatedThreadConfig config = DedicatedThreadConfig.enabled(4);
+DedicatedThreadPermits permits = DedicatedThreadPermits.of(config);  // the main and fork executors share this instance
+
+// 1) main executor — if ToolConcurrencyConfig is on too, wrap that pool dispatcher instead of sequential()
+OrcaAgentExecutor executor = OrcaAgentExecutor.builder()
+        // ... required managers ...
+        .parallelToolDispatcher(
+                new DedicatedThreadDispatcher(DefaultParallelToolDispatcher.sequential(), config, permits))
+        .build();
+
+// 2) fork executor — needed to fan out Task calls inside forks (maxForkDepth >= 2)
+subagentExecutor.withParallelToolDispatcher(
+        new DedicatedThreadDispatcher(DefaultParallelToolDispatcher.sequential(), config, permits));
+
+// 3) have each fork carry its own task id in its execution attributes (CLI labels, [task …] prefix)
+subagentExecutionManager.withForkTaskIdAttribute();
+```
+
+Creating a separate `permits` per executor turns `maxThreads` into a per-executor bound, multiplying the total thread count.
+
+#### AimonStack, CLI and Spring
+
+`AimonStackBuilder` (and the CLI and Spring starter built on it) does not expose this setting yet — the same status as `ToolConcurrencyConfig`. An application assembled that way cannot turn it on today; exposing it is tracked as [backlog PF-1](../../backlog/parallel-foreground-task-open-items.md).
+
+#### Checking that it is on
+
+- Threads named `tool-dedicated-<n>` appear in a thread dump or the logs — foreground `Task` calls are running on dedicated threads.
+- In the CLI, a subagent name carries its task id, as in `[Subagent] Explore#3fa2c1d0` (when step 3 is wired).
+- If several `Task` calls in one response still run in order, see item 7 of §8.
+
+#### Behaviour in brief
+
+
+- It is **independent** of `ToolConcurrencyConfig`. Turn both on and the decorator wraps the pool dispatcher; segments that are not `Task` are still judged by the pool gate. A mixed batch runs segment by segment (a segment starts only after the previous one finished) and results come back in `tool_use` order.
+- `maxThreads` bounds the **whole factory** (the main executor and the fork executor, every session). A call that finds no free permit does not wait: it runs on the calling thread as it does today — so at most `maxThreads + 1` foreground subagents of one batch run at once, and nested fan-out cannot deadlock.
+- When it is on, each fork carries its own task id in the execution attribute `aimon.subagent.task_id` (`ForkAccess.TASK_ID_ATTRIBUTE`). The CLI uses it to tell forks apart — `[Subagent] Explore#3fa2c1d0`, `[Tool] (Explore#3fa2c1d0) Read` — and an approval prompt raised inside a fork starts with `[task 3fa2c1d0]`.
+- When it is off (the default) nothing is installed and `Task` calls run in order as before. The design rationale is in [parallel-foreground-task.md](../../design/subagent/parallel-foreground-task.md).
 
 ---
 
@@ -187,6 +257,8 @@ On the parallel path the whole of `executeSingleTool` (the call site of the Perm
 
 The framework plumbing (`DefaultHookRegistry` = `CopyOnWriteArrayList`, `DefaultHookExecutionManager`/`DefaultHookExecutor` = per-call local state plus immutable context/result, `executionAttributes` = `Map.copyOf` immutable sharing) is all safe under concurrent calls. **What remains is the hook author's responsibility.**
 
+With parallel foreground `Task` (§2.4) turned on, the same holds on the dedicated threads, and the scope widens to the subagent lifecycle hooks — within one fork the order `SubagentStart` → (that fork's Pre/PostTool …) → `SubagentStop` holds, but there is no order **between** forks.
+
 #### (1) Mutable state inside a hook → races
 
 If a user-registered Pre/PostTool hook holds internal mutable state (a turn counter, "previous tool" tracking, an unsynchronised collection …), it is called concurrently from worker threads and races. **Hooks attached to parallelisable tools have to be thread-safe** (`AtomicInteger`, `ConcurrentHashMap`, synchronisation …).
@@ -199,7 +271,7 @@ The dispatcher reassembles **the result list** in input order, but **a hook's si
 
 #### (3) Concurrent interactive ASK
 
-When a PreTool/PermissionRequest hook returns `Decision.ASK` it is promoted to `AskPromptHandler.resolve()`, and an interactive handler can block on user input. If two tools raise ASK at once, the prompts contend for the same stdin (rare, since `CONCURRENT_SAFE` mostly means read-only, but possible). If you use interactive ASK together with parallelism, make sure `AskPromptHandler` serialises its prompts.
+When a PreTool/PermissionRequest hook returns `Decision.ASK` it is promoted to `AskPromptHandler.resolve()`, and an interactive handler can block on user input. If two tools raise ASK at once, the prompts contend for the same stdin (rare, since `CONCURRENT_SAFE` mostly means read-only, but possible). If you use interactive ASK together with parallelism, make sure `AskPromptHandler` serialises its prompts. The CLI's `InteractiveAskPromptHandler` uses the console one prompt at a time, and a call interrupted while waiting for its turn is denied without being asked. The side-effect approval gate (`SideEffectApprovalGate`) asks once when the same question — same session, same tool — arrives several times at once, and shares the answer. Only the user's answer is shared and remembered — if the asking run was cancelled or the prompt failed, no denial is stored for the session, and the calls waiting on that question ask for themselves.
 
 #### (4) Concurrent `RewakeService.schedule()`
 
@@ -215,11 +287,13 @@ The default `DefaultHookExecutor` is an unbounded cached pool, which is safe. In
 
 | Type | Package | Role |
 |------|---------|------|
-| `ConcurrencyBehavior` | `at.aimon.core.agent.tool` | The `SEQUENTIAL` (default) / `CONCURRENT_SAFE` enum |
+| `ConcurrencyBehavior` | `at.aimon.core.agent.tool` | The `SEQUENTIAL` (default) / `CONCURRENT_SAFE` / `DEDICATED_THREAD` (§2.4) enum |
 | `Tool#getConcurrencyBehavior()` | `at.aimon.core.agent.tool` | Per-tool policy declaration (default `SEQUENTIAL`) |
 | `ToolConcurrencyConfig` | `at.aimon.core.agent.tool` | Immutable configuration: `enabled` (false by default) + `maxConcurrency` (the global pool, 4 by default) + `perBatchMax` (the per-batch cap, = maxConcurrency by default) |
 | `ParallelToolDispatcher` | `at.aimon.core.agent.tool` | The gating, distribution and order-reassembly interface |
 | `DefaultParallelToolDispatcher` | `at.aimon.core.agent.tool` | The bounded daemon-pool implementation, `AutoCloseable` |
+| `DedicatedThreadConfig` | `at.aimon.core.agent.tool` | Immutable configuration: `enabled` (false by default) + `maxThreads` (dedicated threads across the factory, 4 by default) + `maxForkDepth` (only executions below this depth fan out, 1 by default) |
+| `DedicatedThreadDispatcher` | `at.aimon.core.agent.tool` | The decorator that fans runs of consecutive `DEDICATED_THREAD` calls out onto dedicated threads and hands the rest to the dispatcher it wraps |
 
 ```java
 // creating the configuration
@@ -257,13 +331,17 @@ If a batch runs sequentially, it is one of the following (the gate did not pass)
 4. A tool is declared `THREAD_INTERRUPT`/`EXTERNALLY_TERMINATED` → automatically excluded by the gate.
 5. A tool name does not resolve in the registry (an LLM hallucination or typo) → conservatively sequential.
 6. The dispatcher has been `close()`d → sequential fallback.
+7. Foreground `Task` calls run in order → they follow §2.4's `DedicatedThreadConfig`, not this gate; check that it is on and that the execution's fork depth is below `maxForkDepth`.
 
 ---
 
 ## 9. Limitations / known issues
 
-- **A mixed batch runs entirely sequentially.** Partial parallelisation — splitting into "the safe ones in parallel, the rest sequentially" — was deliberately excluded because of order-dependence risk (a candidate for a future extension).
-- **`THREAD_INTERRUPT`/`EXTERNALLY_TERMINATED` tools are excluded from parallelism.** Cross-thread interrupt semantics are ambiguous, so they were left out of the initial scope.
+- **A mixed batch runs entirely sequentially.** Partial parallelisation — splitting into "the safe ones in parallel, the rest sequentially" — was deliberately excluded because of order-dependence risk (a candidate for a future extension). The one exception is §2.4's runs of consecutive `DEDICATED_THREAD` calls.
+- **`THREAD_INTERRUPT`/`EXTERNALLY_TERMINATED` tools are excluded from pool parallelism.** Cross-thread interrupt semantics are ambiguous, so they were left out of the initial scope. `Task` runs concurrently on the dedicated-thread path (§2.4), not on the pool.
+- **At most `maxThreads + 1` foreground `Task` calls run at once,** because a call that finds no permit runs inline on the calling thread. Nested forks fan out only when `maxForkDepth` is raised.
+- **Background `Task` calls also take a dedicated permit briefly.** They return at once, so the cost is small, but a background launch's `SubagentStart` is no longer guaranteed to appear in input order, and a batch crowded with background launches can push the same batch's foreground `Task` calls inline.
+- **LLM provider rate limits are controlled through `maxThreads` only.** One dedicated thread is one subagent, that is one concurrent LLM call. There is no separate throttle; a 429 is handled by `LlmCallGateway`'s retry policy.
 - **MCP tools (`McpTool`) stay `SEQUENTIAL`.** An MCP server's tools can have arbitrary side effects (writes included), so the framework cannot guarantee safety for them wholesale. Review a specific MCP tool individually, and only when it is certainly read-only and idempotent.
 - **Concurrent WebFetch of the same URL**: the cache is check-then-act, so concurrent misses can send duplicate requests. It is an idempotent GET, so there is no consistency problem — just one wasted request.
 - **No automatic wiring of pool close**: the threads are daemons so nothing hangs, but frequent runtime agent hot-reloads can accumulate pool threads. Wire the dispatcher's `close()` into the agent-removal path if you need to.
@@ -276,4 +354,5 @@ If a batch runs sequentially, it is one of the following (the gate did not pass)
 - [Design document: ConcurrencyBehavior — parallel tool execution](../../design/tool/parallel-execution.md)
 - [Tool development guide](tool-development-guide.en.md)
 - [InterruptBehavior design document](../../design/agent-execution/interrupt.md) — the precedent for separating capability from coordinator
+- [Design document: parallel foreground Task](../../design/subagent/parallel-foreground-task.md) — `DEDICATED_THREAD` and the dedicated-thread decorator
 - [SOLID principles](../../project/solid-principles.md)

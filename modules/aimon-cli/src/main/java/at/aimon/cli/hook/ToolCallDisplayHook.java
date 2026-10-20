@@ -2,6 +2,7 @@ package at.aimon.cli.hook;
 
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 import at.aimon.cli.repl.OutputFormatter;
 import at.aimon.core.agent.InvokerType;
@@ -9,6 +10,7 @@ import at.aimon.core.hook.event.PreToolContext;
 import at.aimon.core.hook.event.PreToolHook;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.llm.ToolUse;
+import at.aimon.core.tools.ForkAccess;
 
 /**
  * Hook that displays tools call information in the CLI before tools execution.
@@ -43,7 +45,15 @@ public class ToolCallDisplayHook implements PreToolHook {
         InvokerType invokerType = context.getInvokerType();
 
         String inputStr = formatInput(toolUse.getInput());
-        outputFormatter.displayToolCall(toolUse.getName(), inputStr, invokerType);
+        // A fork labelled with its task id (only when parallel foreground tasks are on) names itself, so the lines of
+        // two concurrent forks of the same subagent can be told apart; otherwise the line is what it always was.
+        Optional<String> taskId = ForkAccess.taskIdOf(context.getExecutionAttributes());
+        if (taskId.isPresent()) {
+            outputFormatter.displayToolCall(toolUse.getName(), inputStr, invokerType,
+                    context.getInvokerName() + "#" + ForkAccess.shortTaskId(taskId.get()));
+        } else {
+            outputFormatter.displayToolCall(toolUse.getName(), inputStr, invokerType);
+        }
 
         return HookResult.success();
     }

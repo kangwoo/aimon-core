@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/subagent/subagent-development-guide.md
-source_commit: ff0e6ff2
+source_commit: 22ef0ce4
 ---
 
 # Subagent Development Guide
@@ -458,7 +458,7 @@ public final class ClockSubagentBehavior implements SubagentBehavior {
 Sometimes you want to run several subagents **at once** to cut a turn's wall-clock time. Do not try to parallelise it
 in the foreground by making the `Task` tool `CONCURRENT_SAFE` — `Task` carries the `EXTERNALLY_TERMINATED` interrupt
 behaviour, so the parallelism gate (§ the parallel tool execution guide) **excludes it automatically**. Express a
-fan-out on **the background path**.
+fan-out on **the background path**, or, if the host turned it on, use "Parallel foreground execution" below.
 
 ### The mechanism
 
@@ -520,6 +520,24 @@ OrcaAgentExecutor executor = new OrcaAgentExecutorFactory()
   queue. → the thread and LLM fan-out is capped but a burst is not refused ("everything runs eventually").
 - **State a queue** and the excess is refused when saturated, which behaves as load shedding.
 - A spawn beyond the ceiling is **not refused; it waits in the queue** and runs when a slot frees up (under the default settings).
+
+### Parallel foreground execution and the same file
+
+If the host turned on `OrcaAgentExecutorFactory.withDedicatedThreadConfig(DedicatedThreadConfig.enabled(n))`, **consecutive
+foreground `Task` calls** in one response run at the same time while the parent still waits for their results — `Task`
+declares `ConcurrencyBehavior.DEDICATED_THREAD` and gets a thread created for that call and never reused. Results come
+back in `tool_use` order, and cancelling the parent stops every child. How to turn it on and the bounds are in
+[the parallel tool execution guide §2.4](../tool/parallel-tool-execution-guide.en.md).
+
+Do not let two forks edit the same file. The framework does not prevent it; it turns the lost update into an **explicit
+refusal** instead — if forks A and B read the same file and A then edits it, B's `Edit` is refused with "File changed since
+it was read; Read it again". To give the model this guidance, put it in the agent's instructions or the system prompt.
+
+- Giving each fork its own files or directories is the default. If several need the same file, parallelise the reads and let the parent do the writes.
+- With the feature on, each fork carries its own task id in its execution attributes as `aimon.subagent.task_id`
+  (`ForkAccess.TASK_ID_ATTRIBUTE`). The fork's `SubagentStart`/`SubagentStop` hooks and the hooks of the tools inside it see
+  the same value, which tells apart concurrent forks of the same kind. A nested fork overwrites it with its own id. With the
+  feature off the key is absent.
 
 ### When to use it
 

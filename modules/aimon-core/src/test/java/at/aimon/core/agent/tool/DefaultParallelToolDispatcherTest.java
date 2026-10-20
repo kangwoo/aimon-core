@@ -129,6 +129,18 @@ class DefaultParallelToolDispatcherTest {
         }
 
         @Test
+        @DisplayName("a DEDICATED_THREAD tool counts as SEQUENTIAL for the gate")
+        void dedicatedThreadIsSequentialForTheGate() {
+            final DefaultToolRegistry registry = registryWith(
+                    tool("A", ConcurrencyBehavior.CONCURRENT_SAFE, InterruptBehavior.COOPERATIVE),
+                    tool("T", ConcurrencyBehavior.DEDICATED_THREAD, InterruptBehavior.COOPERATIVE));
+            assertThat(DefaultParallelToolDispatcher.shouldParallelize(List.of(use("1", "A"), use("2", "T")), registry,
+                    enabled)).isFalse();
+            assertThat(DefaultParallelToolDispatcher.shouldParallelize(List.of(use("1", "T"), use("2", "T")), registry,
+                    enabled)).isFalse();
+        }
+
+        @Test
         @DisplayName("THREAD_INTERRUPT tool excluded even when CONCURRENT_SAFE")
         void threadInterruptExcluded() {
             final DefaultToolRegistry registry = registryWith(
@@ -652,6 +664,17 @@ class DefaultParallelToolDispatcherTest {
                 assertThat(dispatcher.isEagerEligible(use("4", "ThreadInt"), registry)).isFalse();
                 assertThat(dispatcher.isEagerEligible(use("5", "ExtTerm"), registry)).isFalse();
                 assertThat(dispatcher.isEagerEligible(use("6", "Ghost"), registry)).isFalse();
+            }
+        }
+
+        @Test
+        @DisplayName("a DEDICATED_THREAD tool is never eager; the pool dispatcher does not route the harvest tail")
+        void dedicatedThreadNotEager() {
+            final DefaultToolRegistry registry = registryWith(
+                    tool("Task", ConcurrencyBehavior.DEDICATED_THREAD, InterruptBehavior.COOPERATIVE));
+            try (DefaultParallelToolDispatcher dispatcher = new DefaultParallelToolDispatcher(overlap(4, 4))) {
+                assertThat(dispatcher.isEagerEligible(use("1", "Task"), registry)).isFalse();
+                assertThat(dispatcher.routesHarvestTail()).isFalse();
             }
         }
 

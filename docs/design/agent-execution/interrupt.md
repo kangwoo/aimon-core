@@ -330,6 +330,15 @@ stalled-iteration 가드는 `signal.isCancelled()` 를 **직접** 읽는다. 여
 관측되는 플래그는 그 워커에 대한 실제 인터럽트뿐이다. **이 전제가 깨지면(=병렬화 대상 확대)
 승격 규칙을 재검토해야 한다.**
 
+**포그라운드 `Task` 병렬 실행 뒤에도 전제는 유지된다 (2026-10-20).** `EXTERNALLY_TERMINATED` 인 `Task` 가 처음으로 동시에
+돌게 되었지만 워커 풀에는 오르지 않는다. `ConcurrencyBehavior.DEDICATED_THREAD` 를 선언하고, `DedicatedThreadDispatcher` 가
+호출마다 **새로 만들고 다시 쓰지 않는** 스레드에서 돌린다. `runForeground` 의 `Thread.currentThread()::interrupt` terminator
+는 그 전용 스레드를 가리키고, 늦게 도착한 interrupt 는 그 스레드와 함께 사라진다 — 다음 작업이 없고, 부모 스레드에는
+terminator 가 등록된 적이 없다. 허가가 없어 호출 스레드에서 inline 으로 도는 호출은 오늘과 같은 경로라 이 절의 흡수가 그대로
+적용된다. 호출 스레드 자신이 join 중에 인터럽트되면 미완 전용 스레드에 같은 지렛대를 걸고, 끝난 뒤 자기 플래그를 되돌려 이
+절의 승격 지점이 보게 한다. 근거와 테스트는
+[`../subagent/parallel-foreground-task.md`](../subagent/parallel-foreground-task.md) §2.3 · §6.7 이다.
+
 ### 8.6 대안을 기각한 이유
 
 | 대안 | 기각 사유 |

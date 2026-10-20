@@ -7,6 +7,46 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: parallel foreground `Task` — consecutive subagent calls of one batch run at once, opt-in
+
+Foreground `Task` calls in one LLM response used to run one after another. With
+`OrcaAgentExecutorFactory.withDedicatedThreadConfig(DedicatedThreadConfig.enabled(n))`, each run of consecutive
+foreground `Task` calls fans out onto dedicated threads — one per call, created for it and never reused, so a late
+terminator interrupt dies with its thread instead of hitting a pooled worker's next task. Results still come back in
+`tool_use` order, other tools keep their existing rules, and a parent cancel reaches every child. Off by default; with
+it off nothing is installed. Design: `docs/design/subagent/parallel-foreground-task.md`.
+
+- **`ConcurrencyBehavior.DEDICATED_THREAD`**, declared by `TaskTool`. The batch gate treats it as `SEQUENTIAL`, so the
+  pool path is unchanged; `DedicatedThreadDispatcher` (a `ParallelToolDispatcher` decorator) fans those segments out.
+- **`DedicatedThreadConfig`** — `maxThreads` (default 4) bounds dedicated threads across everything one factory built;
+  a call that finds no free permit runs inline on the calling thread instead of waiting, so nesting cannot deadlock.
+  `maxForkDepth` (default 1) lets only root executions — a session's turn, a routine, a rewake replay; anything with
+  no fork ancestor — fan out unless raised; forks now carry their depth
+  (`ToolContextKeys.FORK_DEPTH`, `SubagentLaunchContext.getForkDepth()`, read through `ForkAccess`).
+- **`ParallelToolDispatcher`** gains two default methods: a `dispatch` overload taking `DispatchOptions` (the fork depth)
+  and `routesHarvestTail()`. Existing implementations are unaffected.
+- With the feature on, each fork carries its task id as the execution attribute `aimon.subagent.task_id`
+  (`ForkAccess.TASK_ID_ATTRIBUTE`) — the fork's **own** id, seen by its hooks and tools. It is not the tracing-side
+  `aimon.subagent.received_task_id`, which marks a turn started to deliver a finished background task. The CLI labels
+  concurrent forks (`[Subagent] Explore#3fa2c1d0`, `[Tool] (Explore#3fa2c1d0) Read`) and an approval prompt raised
+  inside a fork starts with `[task 3fa2c1d0]` (both use `ForkAccess.shortTaskId`). With the feature off the attribute is absent and CLI output is
+  byte-identical to before.
+
+### Changed (behaviour change): the same approval question asked concurrently is asked once; the CLI prompt is one at a time
+
+- **`SideEffectApprovalGate`** now shares the question in front of the user per (scope, tool): concurrent calls of the
+  same tool in the same session prompt once and share the answer; different questions never wait on each other. Only a
+  real answer is shared and remembered: if the asking caller's prompt is cancelled (its thread was interrupted) the
+  resulting denial is not stored in the session's approval store, and the callers waiting on that question ask for
+  themselves; if the asking caller throws, the waiters retry rather than being told the user did not approve. This
+  also changes two configurations reachable with the new feature off — background forks, and a pool-parallel batch of
+  `CONCURRENT_SAFE` tools that the gate covers — where the same question used to be asked twice.
+- **`InteractiveAskPromptHandler`** (CLI) shows one prompt at a time. A caller interrupted while waiting for the console,
+  or already interrupted when its turn comes, is denied without a prompt — for that call only: the gate does not
+  remember a denial that came from a cancelled prompt, so the question is asked again the next time.
+- **`OutputFormatter.displaySubagentResult`** (CLI) writes its multi-line block in one call so concurrent subagents'
+  output cannot interleave inside it. The bytes are unchanged.
+
 ### Fixed: an LLM call's cancellation cuts the transport, not the stream, and a cancelled request is never re-sent (aimon-llm-openai, aimon-llm-anthropic)
 
 Both provider clients registered `StreamResponse.close()` as the cancellation lever. On the cancelling thread that closed

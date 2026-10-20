@@ -371,6 +371,7 @@ B-6 이 그렇게 어긋나 있었다. §7 은 그 항목을 "MCP 를 실제로 
 | [`usage-quota-open-items.md`](usage-quota-open-items.md) | `docs/design/agent-execution/usage-quota.md` §10 · §11 — 1단계 구현 (2026-10-15) · UQ-2 루틴 절반 닫음, UQ-4 등록, #267 (2026-10-18) | 4 | 4 | 0 | 0 |
 | [`subagent-tracing-open-items.md`](subagent-tracing-open-items.md) | `docs/design/observability/subagent-trace-nesting.md` §7 · §8 — 서브에이전트 trace 중첩 구현 (2026-10-17) · `docs/design/observability/subagent-tracing-backlog.md` §7 — ST-1 ~ ST-6 처리 (2026-10-17) · 백그라운드 결과 수신 측 기록, #293 · ST-12 · ST-5 닫음 (2026-10-20) | 12 | 5 | 7 | 0 |
 | [`session-owner-open-items.md`](session-owner-open-items.md) | `docs/design/session/session-owner-deletion-event.md` §8 · §9 — 세션 소유자 · 삭제 리스너 구현, #253 (2026-10-17) · SO-6 닫음, #260 (2026-10-17) · SO-5 닫음, SO-7 · SO-8 등록, #262 (2026-10-18) · SO-8 닫음, aimon-sandbox#30 (2026-10-18) · SO-7 닫음, SO-9 등록, #266 (2026-10-18) | 9 | 5 | 4 | 0 |
+| [`parallel-foreground-task-open-items.md`](parallel-foreground-task-open-items.md) | `docs/design/subagent/parallel-foreground-task.md` §8 · §9 — 포그라운드 Task 병렬 실행 구현 (2026-10-20) | 6 | 6 | 0 | 0 |
 
 > **2026-10-06 — 위 배치가 연 다섯 가운데 셋을 닫았다 (`fix/ee89-ee90-t11`).** 닫힌 것은 EE-89 · EE-90 · T-11 이고, 그러다
 > 나온 EE-92 를 등록한 날 닫았다. 이번에도 새 항목은 닫는 항목을 **돌려 보다가** 나왔다 — EE-90 의 폴백을 읽으려고 돌린

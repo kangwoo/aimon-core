@@ -13,8 +13,12 @@ import at.aimon.core.agent.quota.QuotaGuardFactory;
 import at.aimon.core.agent.session.transcript.ThrowingPromptTooLongHandler;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.session.transcript.TranscriptManager;
+import at.aimon.core.agent.tool.DedicatedThreadConfig;
+import at.aimon.core.agent.tool.DedicatedThreadDispatcher;
+import at.aimon.core.agent.tool.DedicatedThreadPermits;
 import at.aimon.core.agent.tool.DefaultParallelToolDispatcher;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
+import at.aimon.core.agent.tool.ParallelToolDispatcher;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.ToolConcurrencyConfig;
 import at.aimon.core.agent.tool.ToolExecutionManager;
@@ -122,6 +126,10 @@ public class OrcaAgentExecutorFactory {
     private ExecutionMemorySink executionMemorySink;
     private RewakeService rewakeService;
     private ToolConcurrencyConfig toolConcurrencyConfig;
+    // Parallel foreground Task: fans consecutive DEDICATED_THREAD calls out onto dedicated threads. Null => off.
+    private DedicatedThreadConfig dedicatedThreadConfig;
+    // The permits bounding dedicated threads, shared by every executor this factory builds. Created lazily.
+    private DedicatedThreadPermits dedicatedThreadPermits;
     private SideEffectLevel maxSideEffectLevel;
     // Interactive approval for tools that write. Shared with the subagent executor so a fork honours the answer the
     // user gave in the session that launched it. Null => no approval is requested (unchanged behaviour).
@@ -392,6 +400,50 @@ public class OrcaAgentExecutorFactory {
     public OrcaAgentExecutorFactory withToolConcurrencyConfig(ToolConcurrencyConfig toolConcurrencyConfig) {
         this.toolConcurrencyConfig = toolConcurrencyConfig;
         return this;
+    }
+
+    /**
+     * Configures parallel foreground {@code Task} execution. When set to an {@link DedicatedThreadConfig#isEnabled()
+     * enabled} config, the built {@link OrcaAgentExecutor} and the subagent executor
+     * {@link #createDefaultSubagentExecutionManager} builds both get a {@link DedicatedThreadDispatcher}, which runs
+     * each run of consecutive {@link at.aimon.core.agent.tool.ConcurrencyBehavior#DEDICATED_THREAD DEDICATED_THREAD}
+     * calls (foreground {@code Task}) at the same time, one dedicated thread per call. The manager is also told to
+     * label each fork with its task id. When {@code null} (the default) or {@link DedicatedThreadConfig#disabled()
+     * disabled}, nothing is installed and behaviour is unchanged.
+     *
+     * <p>
+     * Independent of {@link #withToolConcurrencyConfig}: the decorator wraps the pool dispatcher when that is enabled
+     * and a sequential one otherwise. Unlike that pool, the thread bound is <b>factory-wide</b>: one
+     * {@link DedicatedThreadPermits} is shared by every executor this factory creates and by their forks, so
+     * {@link DedicatedThreadConfig#getMaxThreads()} bounds dedicated threads across all of them. A subclass overriding
+     * {@code createDefaultSubagentExecutionManager} wires its own: its forks get neither the fan-out nor the task id
+     * label. Calling this again starts a new permit set sized by the new config for executors created afterwards;
+     * executors already created keep the one they were built with.
+     *
+     * @param dedicatedThreadConfig
+     *            the configuration (may be {@code null} to clear the override)
+     * @return this factory (for chaining)
+     */
+    public synchronized OrcaAgentExecutorFactory withDedicatedThreadConfig(
+            DedicatedThreadConfig dedicatedThreadConfig) {
+        this.dedicatedThreadConfig = dedicatedThreadConfig;
+        // The cached set was sized by the previous config; the next executor must see the new maxThreads.
+        this.dedicatedThreadPermits = null;
+        return this;
+    }
+
+    private boolean dedicatedThreadsEnabled() {
+        return dedicatedThreadConfig != null && dedicatedThreadConfig.isEnabled();
+    }
+
+    /**
+     * The factory-wide permit set, created on first use from the current config. Package-private for tests.
+     */
+    synchronized DedicatedThreadPermits dedicatedThreadPermits() {
+        if (dedicatedThreadPermits == null) {
+            dedicatedThreadPermits = DedicatedThreadPermits.of(dedicatedThreadConfig);
+        }
+        return dedicatedThreadPermits;
     }
 
     /**
@@ -722,8 +774,17 @@ public class OrcaAgentExecutorFactory {
      * executor's default when the corresponding override is unset.
      */
     private OrcaAgentExecutor applyExecutorOverrides(OrcaAgentExecutor executor) {
+        ParallelToolDispatcher dispatcher = null;
         if (toolConcurrencyConfig != null && toolConcurrencyConfig.isEnabled()) {
-            executor.parallelToolDispatcher = new DefaultParallelToolDispatcher(toolConcurrencyConfig);
+            dispatcher = new DefaultParallelToolDispatcher(toolConcurrencyConfig);
+        }
+        if (dedicatedThreadsEnabled()) {
+            dispatcher = new DedicatedThreadDispatcher(
+                    dispatcher != null ? dispatcher : DefaultParallelToolDispatcher.sequential(), dedicatedThreadConfig,
+                    dedicatedThreadPermits());
+        }
+        if (dispatcher != null) {
+            executor.parallelToolDispatcher = dispatcher;
         }
         if (maxSideEffectLevel != null) {
             executor.maxSideEffectLevel = maxSideEffectLevel;
@@ -794,6 +855,13 @@ public class OrcaAgentExecutorFactory {
         if (tracePayloadPolicy != null) {
             subagentExecutor.withTracePayloadPolicy(tracePayloadPolicy);
         }
+        // Parallel foreground Task inside forks, bounded by the same factory-wide permits as the main executor. The
+        // pool path stays sequential here, as it always has been for forks; only dedicated-thread fan-out is added, and
+        // the decorator's maxForkDepth decides which forks may use it.
+        if (dedicatedThreadsEnabled()) {
+            subagentExecutor.withParallelToolDispatcher(new DedicatedThreadDispatcher(
+                    DefaultParallelToolDispatcher.sequential(), dedicatedThreadConfig, dedicatedThreadPermits()));
+        }
 
         // When a background config is supplied, bound the pool; otherwise retain the legacy unbounded cached pool.
         // Subagent §4: inject the configured store, else a node-local in-memory one; the configured cross-node stop
@@ -831,6 +899,10 @@ public class OrcaAgentExecutorFactory {
         }
         if (tracePayloadPolicy != null) {
             manager.withTracePayloadPolicy(tracePayloadPolicy);
+        }
+        // Concurrent forks need to be told apart (CLI labels, approval prompts); only when they can be concurrent.
+        if (dedicatedThreadsEnabled()) {
+            manager.withForkTaskIdAttribute();
         }
         return manager;
     }

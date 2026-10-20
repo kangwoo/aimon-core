@@ -71,6 +71,50 @@ public interface ParallelToolDispatcher {
     List<ToolUseResult> dispatch(List<ToolUse> toolUses, ToolRegistry registry, Function<ToolUse, ToolUseResult> runner,
             Consumer<ToolUse> onStarted, BiConsumer<ToolUse, ToolUseResult> onCompleted);
 
+    /**
+     * Executes the batch on behalf of an execution described by {@code options}, under the same contract as
+     * {@link #dispatch(List, ToolRegistry, Function, Consumer, BiConsumer)}.
+     *
+     * <p>
+     * The default ignores {@code options} and delegates to the five-argument method, so an implementation that has no
+     * use for the execution's fork depth needs no change. {@link DedicatedThreadDispatcher} overrides it to decide
+     * whether the execution may fan out at all.
+     *
+     * @param toolUses
+     *            the batch to execute (must not be null)
+     * @param registry
+     *            the per-session registry (nullable — see the five-argument method)
+     * @param options
+     *            facts about the dispatching execution (must not be null)
+     * @param runner
+     *            single-tool execution callback (must not be null)
+     * @param onStarted
+     *            invoked before each tool is dispatched, in input order (nullable)
+     * @param onCompleted
+     *            invoked after each tool completes, with the produced result (nullable)
+     * @return the per-tool results in the same order as {@code toolUses} (never null)
+     */
+    default List<ToolUseResult> dispatch(List<ToolUse> toolUses, ToolRegistry registry, DispatchOptions options,
+            Function<ToolUse, ToolUseResult> runner, Consumer<ToolUse> onStarted,
+            BiConsumer<ToolUse, ToolUseResult> onCompleted) {
+        return dispatch(toolUses, registry, runner, onStarted, onCompleted);
+    }
+
+    /**
+     * Whether the executor should hand the deferred tail of a streaming batch — the tool uses after the first one that
+     * could not run eagerly — to {@link #dispatch} instead of running it inline on the calling thread.
+     *
+     * <p>
+     * The default is {@code false}, which keeps the harvest path running the tail inline exactly as it always has.
+     * Only {@link DedicatedThreadDispatcher} returns {@code true}, so a tail of foreground {@code Task} calls can still
+     * fan out after an eager prefix ran.
+     *
+     * @return {@code true} if the harvest tail should go through {@link #dispatch}
+     */
+    default boolean routesHarvestTail() {
+        return false;
+    }
+
     // --- Eager (incremental) dispatch: streaming-tool overlap (design §7)
     // --------------------------------------
     //

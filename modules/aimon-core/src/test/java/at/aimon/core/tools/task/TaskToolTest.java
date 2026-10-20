@@ -27,6 +27,7 @@ import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.budget.TruncatedResponses;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.agent.tool.ConcurrencyBehavior;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
@@ -248,6 +249,32 @@ class TaskToolTest {
                 HookRegistryAccess.withHookRegistry(contextWithId(), fromContext));
 
         assertThat(env.getHookRegistry()).isSameAs(fromContext);
+    }
+
+    @Test
+    void declaresDedicatedThreadConcurrency() {
+        assertThat(tool.getConcurrencyBehavior()).isEqualTo(ConcurrencyBehavior.DEDICATED_THREAD);
+    }
+
+    @Test
+    void descriptionDoesNotAdvertiseConcurrency() {
+        // The description goes to the LLM in every request, feature on or off, so it must not claim that foreground
+        // tasks run at the same time: with the feature off that would be false, and the request bytes would change.
+        assertThat(tool.getDefinition().getDescription()).doesNotContainIgnoringCase("concurren")
+                .doesNotContainIgnoringCase("parallel").doesNotContainIgnoringCase("at the same time");
+    }
+
+    @Test
+    void launchContextIsOneForkDeeperThanTheCaller() {
+        assertThat(captureEnvFor(contextWithId()).getForkDepth()).isEqualTo(1);
+    }
+
+    @Test
+    void launchContextInsideAForkIsOneDeeperThanThatFork() {
+        final ToolContext insideFork = ToolContext.builder()
+                .put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeId.of("agent:test"))
+                .put(ToolContextKeys.FORK_DEPTH, 1).build();
+        assertThat(captureEnvFor(insideFork).getForkDepth()).isEqualTo(2);
     }
 
     @Test

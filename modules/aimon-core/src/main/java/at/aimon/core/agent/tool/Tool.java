@@ -206,7 +206,8 @@ public interface Tool {
      * The {@code ParallelToolDispatcher} reads this declaration (together with {@link #getInterruptBehavior()}) before
      * deciding whether the tools in a single LLM-returned batch may run concurrently. A batch is parallelised only when
      * <em>every</em> tool in it is {@code CONCURRENT_SAFE}; a single {@code SEQUENTIAL} tool forces the whole batch to
-     * run sequentially.
+     * run sequentially. A {@link ConcurrencyBehavior#DEDICATED_THREAD} tool counts as {@code SEQUENTIAL} for that gate;
+     * {@link DedicatedThreadDispatcher} fans such tools out separately when it is installed.
      *
      * @return the tool's concurrency behavior (never null)
      */

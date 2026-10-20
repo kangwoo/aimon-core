@@ -24,6 +24,7 @@ import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.tool.AbstractTool;
+import at.aimon.core.agent.tool.ConcurrencyBehavior;
 import at.aimon.core.agent.tool.InterruptToolKeys;
 import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
@@ -52,6 +53,7 @@ import at.aimon.core.subagent.task.TaskOutputStore;
 import at.aimon.core.subagent.task.TaskResultStore;
 import at.aimon.core.tools.CallerAllowedTools;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
+import at.aimon.core.tools.ForkAccess;
 import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.ToolContextKeys;
@@ -288,6 +290,24 @@ public class TaskTool extends AbstractTool {
     @Override
     public InterruptBehavior getInterruptBehavior() {
         return InterruptBehavior.EXTERNALLY_TERMINATED;
+    }
+
+    /**
+     * Declares {@link ConcurrencyBehavior#DEDICATED_THREAD}: several foreground subagents of one batch may run at once,
+     * but each needs a thread of its own that is never reused. The foreground path registers a
+     * {@code Thread.currentThread()::interrupt} terminator, and that interrupt can arrive after the subagent returned;
+     * on a dedicated thread it dies with the thread instead of landing on a pooled worker's next task.
+     *
+     * <p>
+     * The batch gate treats this like {@link ConcurrencyBehavior#SEQUENTIAL}, so without a
+     * {@code DedicatedThreadDispatcher} installed (the default) every {@code Task} call still runs in order on the
+     * calling thread.
+     *
+     * @return {@link ConcurrencyBehavior#DEDICATED_THREAD}
+     */
+    @Override
+    public ConcurrencyBehavior getConcurrencyBehavior() {
+        return ConcurrencyBehavior.DEDICATED_THREAD;
     }
 
     /**
@@ -582,7 +602,9 @@ public class TaskTool extends AbstractTool {
                 .executionEnvironment(ExecutionEnvironmentAccess.of(context).orElse(null))
                 .executionEnvironmentProvider(ExecutionEnvironmentAccess.providerOf(context).orElse(null))
                 // The spawning execution's quota guard: the fork is charged to its keys, never resolves its own.
-                .quotaGuard(context.get(ToolContextKeys.QUOTA_GUARD).orElse(null)).build();
+                .quotaGuard(context.get(ToolContextKeys.QUOTA_GUARD).orElse(null))
+                // One deeper than the calling run, so a dispatcher inside the fork knows how deep it is.
+                .forkDepth(ForkAccess.childDepthOf(context)).build();
     }
 
     /**

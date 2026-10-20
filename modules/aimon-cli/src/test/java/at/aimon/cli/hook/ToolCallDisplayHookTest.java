@@ -26,6 +26,7 @@ import at.aimon.core.hook.event.PreToolContext;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.hook.execution.HookStatus;
 import at.aimon.core.llm.ToolUse;
+import at.aimon.core.tools.ForkAccess;
 
 @DisplayName("ToolCallDisplayHook Tests")
 @ExtendWith(MockitoExtension.class)
@@ -87,6 +88,21 @@ class ToolCallDisplayHookTest {
             assertThat(nameCaptor.getValue()).isEqualTo("Read");
             assertThat(inputCaptor.getValue()).contains("file_path");
             assertThat(typeCaptor.getValue()).isEqualTo(InvokerType.MAIN_AGENT);
+        }
+
+        @Test
+        @DisplayName("a fork carrying its task id is labelled with the invoker name and the short id")
+        void labelsAForkWithItsTaskId() {
+            ToolUse toolUse = ToolUse.of("id-3", "Read", Map.of("file_path", "/tmp/a"));
+            PreToolContext context = mockPreToolContext(toolUse, InvokerType.SUBAGENT);
+            when(context.getInvokerName()).thenReturn("Explore");
+            when(context.getExecutionAttributes())
+                    .thenReturn(Map.of(ForkAccess.TASK_ID_ATTRIBUTE, "3fa2c1d0-aaaa-bbbb-cccc-ddddeeeeffff"));
+
+            hook.execute(context);
+
+            verify(outputFormatter).displayToolCall(eq("Read"), org.mockito.ArgumentMatchers.anyString(),
+                    eq(InvokerType.SUBAGENT), eq("Explore#3fa2c1d0"));
         }
 
         @Test

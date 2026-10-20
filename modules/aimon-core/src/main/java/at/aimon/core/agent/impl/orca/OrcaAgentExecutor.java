@@ -2414,7 +2414,7 @@ public class OrcaAgentExecutor
         // batch-dispatch path unchanged.
         final StreamingToolScheduler scheduler = scope.streamingToolScheduler;
         if (scheduler != null && scheduler.hasAnyEager()) {
-            return harvestEagerToolUses(scope, iterationCount, toolUses, runner, scheduler);
+            return harvestEagerToolUses(scope, iterationCount, toolUses, runner, scheduler, sessionRegistry);
         }
 
         // PAR-03: delegate batch execution to the dispatcher. The gate (inside the dispatcher) consults
@@ -2486,13 +2486,23 @@ public class OrcaAgentExecutor
      * Harvests a batch whose safe prefix already executed eagerly during the token stream. Iterates the batch in
      * the model's original order: an eager tool's result is joined; a deferred (non-eager) tool runs inline here,
      * exactly as the sequential dispatch path would. {@code onStarted}/{@code onCompleted} fire per tool in input
-     * order,
-     * so the event stream matches the non-overlap path.
+     * order, so the event stream matches the non-overlap path.
+     *
+     * <p>
+     * When the dispatcher {@linkplain ParallelToolDispatcher#routesHarvestTail() routes the harvest tail} (a
+     * dedicated-thread dispatcher, installed only when parallel foreground tasks are enabled), the tail from the first
+     * deferred tool to the end is handed to it in one {@code dispatch} call instead, so foreground {@code Task} calls
+     * after an eager prefix still fan out. The prefix is harvested exactly as above; the dispatcher fires the tail's
+     * events under the same contract (started on this thread in input order, ready as each completes). Any other
+     * dispatcher keeps the inline loop byte for byte.
      */
     private List<ToolUseResult> harvestEagerToolUses(ExecutionScope scope, int iterationCount, List<ToolUse> toolUses,
-            Function<ToolUse, ToolUseResult> runner, StreamingToolScheduler scheduler) {
+            Function<ToolUse, ToolUseResult> runner, StreamingToolScheduler scheduler, ToolRegistry sessionRegistry) {
         final List<ToolUseResult> results = new ArrayList<>(toolUses.size());
-        for (ToolUse toolUse : toolUses) {
+        final int tailStart = parallelToolDispatcher.routesHarvestTail()
+                ? deferredTailStart(toolUses, scheduler)
+                : toolUses.size();
+        for (ToolUse toolUse : toolUses.subList(0, tailStart)) {
             scope.eventDispatcher.emitToolUseStarted(iterationCount, toolUse);
             final ToolUseResult result = scheduler.hasEager(toolUse.getId())
                     ? scheduler.joinEager(toolUse)
@@ -2500,7 +2510,31 @@ public class OrcaAgentExecutor
             scope.eventDispatcher.emitToolResultReady(iterationCount, toolUse, result);
             results.add(result);
         }
+        if (tailStart < toolUses.size()) {
+            results.addAll(parallelToolDispatcher.dispatch(List.copyOf(toolUses.subList(tailStart, toolUses.size())),
+                    sessionRegistry, runner,
+                    toolUse -> scope.eventDispatcher.emitToolUseStarted(iterationCount, toolUse),
+                    (toolUse, result) -> scope.eventDispatcher.emitToolResultReady(iterationCount, toolUse, result)));
+        }
         return results;
+    }
+
+    /**
+     * Returns the index of the first tool the scheduler did not run eagerly, or {@code toolUses.size()} when every
+     * tool ran eagerly. Prefix-safety makes the eager set a prefix; should a later tool still have an eager result,
+     * this returns {@code toolUses.size()} so the whole batch takes the inline harvest loop and no tool runs twice.
+     */
+    private static int deferredTailStart(List<ToolUse> toolUses, StreamingToolScheduler scheduler) {
+        int first = 0;
+        while (first < toolUses.size() && scheduler.hasEager(toolUses.get(first).getId())) {
+            first++;
+        }
+        for (int i = first; i < toolUses.size(); i++) {
+            if (scheduler.hasEager(toolUses.get(i).getId())) {
+                return toolUses.size();
+            }
+        }
+        return first;
     }
 
     /**

@@ -36,6 +36,20 @@ class SubagentExecutionRequestTest {
     }
 
     @Test
+    void forkDepth_defaultsToOne_rejectsBelowOne_andIsNotPartOfEquals() {
+        final SubagentExecutionRequest unlabelled = SubagentExecutionRequest.builder().taskId("task-1").goal("g")
+                .build();
+        final SubagentExecutionRequest deeper = SubagentExecutionRequest.builder().taskId("task-1").goal("g")
+                .forkDepth(2).build();
+
+        assertThat(unlabelled.getForkDepth()).isEqualTo(1);
+        assertThat(deeper.getForkDepth()).isEqualTo(2);
+        assertThat(deeper).isEqualTo(unlabelled).hasSameHashCodeAs(unlabelled);
+        assertThatThrownBy(() -> SubagentExecutionRequest.builder().taskId("task-1").goal("g").forkDepth(0).build())
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void builder_withExecutionAttributes_returnsSetAttributes() {
         Map<String, Object> attrs = Map.of("key1", "value1", "key2", 42);
 

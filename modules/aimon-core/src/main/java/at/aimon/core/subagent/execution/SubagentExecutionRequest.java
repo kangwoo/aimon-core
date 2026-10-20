@@ -50,6 +50,7 @@ public final class SubagentExecutionRequest {
     private final ExecutionBudget budget;
     private final QuotaGuard quotaGuard;
     private final ForkGoalRenderer forkGoalRenderer;
+    private final int forkDepth;
 
     private SubagentExecutionRequest(Builder builder) {
         this.taskId = Objects.requireNonNull(builder.taskId, "Task ID cannot be null");
@@ -64,6 +65,10 @@ public final class SubagentExecutionRequest {
         this.budget = builder.budget;
         this.quotaGuard = builder.quotaGuard != null ? builder.quotaGuard : QuotaGuard.disabled();
         this.forkGoalRenderer = builder.forkGoalRenderer;
+        if (builder.forkDepth < 1) {
+            throw new IllegalArgumentException("forkDepth must be >= 1, got: " + builder.forkDepth);
+        }
+        this.forkDepth = builder.forkDepth;
     }
 
     public String getTaskId() {
@@ -173,6 +178,20 @@ public final class SubagentExecutionRequest {
         return Optional.ofNullable(forkGoalRenderer);
     }
 
+    /**
+     * Gets how many forks deep this fork is, copied from its launch context. The fork publishes it to its tools as
+     * {@code ToolContextKeys.FORK_DEPTH} and passes it to its tool dispatcher.
+     *
+     * <p>
+     * Not part of {@link #equals(Object)}: it describes where the fork sits in the execution tree, not the work it is
+     * asked to do.
+     *
+     * @return the fork depth (always &gt;= 1)
+     */
+    public int getForkDepth() {
+        return forkDepth;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -215,6 +234,7 @@ public final class SubagentExecutionRequest {
         private ExecutionBudget budget;
         private QuotaGuard quotaGuard;
         private ForkGoalRenderer forkGoalRenderer;
+        private int forkDepth = 1;
 
         /** taskId를 설정한다. */
         public Builder taskId(String taskId) {
@@ -307,6 +327,18 @@ public final class SubagentExecutionRequest {
          */
         public Builder forkGoalRenderer(ForkGoalRenderer forkGoalRenderer) {
             this.forkGoalRenderer = forkGoalRenderer;
+            return this;
+        }
+
+        /**
+         * Sets how many forks deep the fork is.
+         *
+         * @param forkDepth
+         *            the fork depth (validated &gt;= 1 in {@link #build()}); defaults to 1
+         * @return this builder
+         */
+        public Builder forkDepth(int forkDepth) {
+            this.forkDepth = forkDepth;
             return this;
         }
 

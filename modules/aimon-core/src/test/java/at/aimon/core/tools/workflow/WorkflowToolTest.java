@@ -122,6 +122,24 @@ class WorkflowToolTest {
     }
 
     @Test
+    @DisplayName("each perspective's fork is one deeper than the caller")
+    void perspectivesAreOneForkDeeper() {
+        final java.util.List<Integer> depths = new java.util.concurrent.CopyOnWriteArrayList<>();
+        behaviors.register("workflow:perspective:cost", (c, r, s) -> {
+            depths.add(r.getForkDepth());
+            return s.success("cost");
+        });
+        final ToolContext insideFork = ToolContext.builder().putAll(context().getContext())
+                .put(ToolContextKeys.FORK_DEPTH, 1).build();
+
+        final ToolResult result = tool.execute(
+                ToolInput.of(Map.of("prompt", "p", "perspectives", "cost", "synthesize", Boolean.FALSE)), insideFork);
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(depths).containsExactly(2);
+    }
+
+    @Test
     @DisplayName("returns an error (never throws) when the agent runtime id is missing")
     void errorsWhenNoAgentRuntimeId() {
         final ToolResult result = tool.execute(ToolInput.of(Map.of("prompt", "hi")), ToolContext.empty());
