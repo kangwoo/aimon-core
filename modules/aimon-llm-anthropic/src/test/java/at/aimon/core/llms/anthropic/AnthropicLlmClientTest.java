@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Duration;
@@ -560,6 +562,19 @@ class AnthropicLlmClientTest {
 
             // When/Then: close() should not throw
             assertThatCode(client::close).doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("close() closes the SDK client once, however often it is called")
+        void closeIsIdempotent() throws Exception {
+            AnthropicClient mockClient = mock(AnthropicClient.class);
+            AnthropicConfig config = AnthropicConfig.builder().apiKey("test-key").build();
+            AnthropicLlmClient client = new AnthropicLlmClient(config, mockClient);
+
+            client.close();
+            client.close();
+
+            verify(mockClient, times(1)).close();
         }
     }
 }

@@ -104,7 +104,9 @@
 | 문서 | 무엇이 있나 |
 |------|------------|
 | [`streaming.md`](llm/streaming.md) | LLM 응답을 provider 중립 청크로 흘리는 전송 — 청크 kind 와 싱크 계약, 게이트웨이 재시도와 reset, 실행기 이벤트와 프리픽스 보존, 전사에 답으로 남지 않는 추론 델타 채널 |
-| [`cancellation.md`](llm/cancellation.md) | 진행 중인 LLM 호출을 끊는 경로 |
+| [`cancellation.md`](llm/cancellation.md) | 진행 중인 LLM 호출을 끊는 경로 — 중립 토큰, 요청 전에 등록되는 transport abort 레버와 소비 스레드의 단 한 번 close, 종료 이벤트 뒤의 전송 실패는 정상 반환이라는 불변식, SDK 재시도를 거부하는 전송 훅 |
+| [`cancellation-abort-close.md`](llm/cancellation-abort-close.md) | (IMPLEMENTED) 취소 콜백이 `StreamResponse.close()` 였던 결함의 원인 분석과 수정 계획 — SDK 소스로 확인한 사실(close 는 `Call.cancel()` 이 아니다 · SDK 는 끊긴 요청을 재시도한다), 처리 계약, 회귀 테스트 표. 결정 기록이고 규범은 `cancellation.md` §4 |
+| [`cancellation-abort-close-design.md`](llm/cancellation-abort-close-design.md) | (IMPLEMENTED, 승인본, 영어, 차이는 §11) 위 계획을 다듬은 설계 — transport spike 의 결정(OpenAI 는 자체 OkHttp 전송, Anthropic 은 SDK 어댑터 위의 데코레이터, 헤더로 호출과 시도를 잇는 시도별 훅), terminal event 뒤의 취소와 정상 완료 뒤 close 실패의 두 정책, JDK 만 쓰는 테스트 서버와 기준 커밋에서 실패하는 회귀 표, 기각한 대안 |
 | [`multimodal-content.md`](llm/multimodal-content.md) | 이미지·문서를 메시지에 싣는 콘텐츠 모델 |
 | [`model-capabilities.md`](llm/model-capabilities.md) | "이 모델이 무엇을 받는가" 를 조회할 수 있는 사실로 만드는 능력 기술자와 레지스트리 — fail-open 의 정의, 모델 이름을 스니핑하지 않는 이유, 내장 표의 행과 그 측정 근거 |
 | [`request-parameters.md`](llm/request-parameters.md) | 두 provider 가 와이어 요청을 조립할 때 함께 지키는 규칙 — 값을 지어내지 않는 우선순위, 샘플링 파라미터의 생략, reasoning effort ladder, 요청과 모델이 어긋날 때의 보고 |

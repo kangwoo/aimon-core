@@ -19,11 +19,13 @@ import at.aimon.core.agent.compact.CompactionGuard;
 import at.aimon.core.agent.compact.CompactionMetadata;
 import at.aimon.core.agent.compact.CompactionRequest;
 import at.aimon.core.agent.compact.CompactionResult;
+import at.aimon.core.agent.compact.CompactionStart;
 import at.aimon.core.agent.compact.CompactionTrigger;
 import at.aimon.core.agent.compact.DefaultCompactionGuard;
 import at.aimon.core.agent.compact.DefaultPromptSizeRecoveryStrategy;
 import at.aimon.core.agent.compact.InMemoryCompactionFailureStore;
 import at.aimon.core.agent.compact.PromptSizeRecoveryDecision;
+import at.aimon.core.agent.compact.RecordingCompactionObserver;
 import at.aimon.core.agent.compact.SummaryRequest;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.LogOrigin;
@@ -32,6 +34,7 @@ import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.InMemoryModelContextWindowRegistry;
+import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ModelContextLimits;
@@ -885,6 +888,151 @@ class DefaultContextEngineViewModeTest {
 
             assertThat(decision.getView().getMessages())
                     .isEqualTo(ViewProjection.of(buffer.getLogState()).getMessages());
+        }
+    }
+
+    /**
+     * The request's compaction observer in view mode: one attempt per compaction that asks for a summary, begun with
+     * the first summary call.
+     */
+    @Nested
+    class Observer {
+
+        private static final LlmCallMetadata CALLER = LlmCallMetadata.builder().traceId("caller").build();
+
+        private final RecordingCompactionObserver observer = new RecordingCompactionObserver();
+
+        private ContextRequest observed() {
+            return ContextRequest.builder().transcriptBuffer(buffer).model(MODEL)
+                    .hookRegistry(new DefaultHookRegistry()).callMetadata(CALLER).compactionObserver(observer).build();
+        }
+
+        private String attemptTagOf(SummaryRequest request) {
+            return request.getCallMetadata().orElseThrow().getTags().get(RecordingCompactionObserver.ATTEMPT_TAG);
+        }
+
+        @Test
+        void anAutoCompactionIsOneAttemptRecordedAfterTheSummaryIsInstalled() {
+            fillPastTheAutoThreshold();
+
+            final ContextDecision decision = engine().prepare(observed());
+
+            final RecordingCompactionObserver.RecordedAttempt attempt = observer.single();
+            assertThat(attempt.start().getTrigger()).isEqualTo(CompactionTrigger.AUTO);
+            assertThat(attempt.start().getStrategy()).isEqualTo(CompactionStart.VIEW);
+            assertThat(attempt.start().isBlockingForced()).isFalse();
+            assertThat(attempt.start().getMessagesBefore()).isEqualTo(3);
+            assertThat(attempt.enriched()).containsExactly(CALLER);
+            assertThat(attemptTagOf(summarizer.summarized.get(0))).isEqualTo(attempt.number());
+            assertThat(attempt.result().isSuccess()).isTrue();
+            assertThat(attempt.result().getMetadata().getPostCompactTokenCount()).as("the installed view's size")
+                    .isPositive().isEqualTo(decision.getCompactionMetadata().orElseThrow().getPostCompactTokenCount());
+            assertThat(attempt.closes()).isEqualTo(1);
+        }
+
+        @Test
+        void nothingToCompactIsNoAttempt() {
+            buffer.addUserMessage("go");
+            buffer.addAssistantMessage("on it");
+            buffer.addMessage(Message.assistant("", List.of(ToolUse.of("t1", "Read", Map.of()))));
+            buffer.addMessage(Message.toolUseResults(List.of(ToolUseResult.success("t1", "x".repeat(4300)))));
+            final DefaultContextEngine engine = engine();
+            engine.prepare(request());
+
+            final ContextDecision again = engine.prepare(observed());
+
+            assertThat(again.getReason()).contains("nothing to compact");
+            assertThat(observer.attempts()).isEmpty();
+        }
+
+        @Test
+        void anEmptyViewIsNoAttempt() {
+            engine().compactNow(observed(), null);
+
+            assertThat(observer.attempts()).isEmpty();
+        }
+
+        @Test
+        void aViewWithNoLegalCutAtTheBlockingLimitIsNoAttempt() {
+            buffer.addMessage(Message.assistant("",
+                    List.of(ToolUse.of("t1", "Read", Map.of()), ToolUse.of("t2", "Read", Map.of()))));
+            buffer.addMessage(Message.toolUseResults(List.of(ToolUseResult.success("t1", "x".repeat(6000)))));
+
+            final ContextDecision decision = engine().prepare(observed());
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.BLOCK);
+            assertThat(observer.attempts()).isEmpty();
+        }
+
+        @Test
+        void theTwoSummaryPassIsOneAttemptCoveringBothCalls() {
+            buffer.addUserMessage("x".repeat(600));
+            buffer.addAssistantMessage("on it");
+            buffer.addUserMessage("x".repeat(4500));
+            summarizer.text = "S".repeat(800);
+
+            engine().prepare(observed());
+
+            assertThat(summarizer.summarized).hasSize(2);
+            final RecordingCompactionObserver.RecordedAttempt attempt = observer.single();
+            assertThat(attempt.start().isBlockingForced()).isTrue();
+            assertThat(summarizer.summarized).allSatisfy(r -> assertThat(attemptTagOf(r)).isEqualTo(attempt.number()));
+            assertThat(attempt.recorded()).hasSize(1);
+            assertThat(attempt.result().getMetadata().getSummaryCalls()).isEqualTo(2);
+        }
+
+        @Test
+        void aFailedSecondCallRecordsTheFirstCompactionAsTheResult() {
+            buffer.addUserMessage("x".repeat(600));
+            buffer.addAssistantMessage("on it");
+            buffer.addUserMessage("x".repeat(4500));
+            summarizer.text = "S".repeat(800);
+            summarizer.failFromCall = 2;
+
+            engine().prepare(observed());
+
+            final CompactionResult recorded = observer.single().result();
+            assertThat(recorded.isSuccess()).isTrue();
+            assertThat(recorded.getMetadata().getSummaryCalls()).isEqualTo(1);
+            assertThat(recorded.getMetadata().isOverBlockingLimit()).isTrue();
+        }
+
+        @Test
+        void aViewModeCompactNowIsOneManualAttempt() {
+            buffer.addUserMessage("hello");
+            buffer.addAssistantMessage("hi");
+
+            engine().compactNow(observed(), null);
+
+            final RecordingCompactionObserver.RecordedAttempt attempt = observer.single();
+            assertThat(attempt.start().getTrigger()).isEqualTo(CompactionTrigger.MANUAL);
+            assertThat(attempt.start().getStrategy()).isEqualTo(CompactionStart.VIEW);
+            assertThat(attempt.result().isSuccess()).isTrue();
+        }
+
+        @Test
+        void anInPlaceRefusalIsNoAttempt() {
+            fillPastTheAutoThreshold();
+            buffer.addAssistantMessage("answer");
+            engine().prepare(request());
+            final CompactionGuard custom = (memory, model, hookRegistry) -> CompactionDecision.none();
+
+            final CompactionResult result = DefaultContextEngine.builder().compactionGuard(custom)
+                    .compactionEngine(summarizer).writeFormat(SessionLogFormat.V1).build().compactNow(observed(), null);
+
+            assertThat(result.getError()).hasValueSatisfying(
+                    error -> assertThat(error).hasMessageContaining(DefaultContextEngine.IN_PLACE_REFUSED));
+            assertThat(observer.attempts()).isEmpty();
+        }
+
+        @Test
+        void withoutAnObserverTheSummaryCallCarriesTheRequestsMetadataInstance() {
+            fillPastTheAutoThreshold();
+
+            engine().prepare(ContextRequest.builder().transcriptBuffer(buffer).model(MODEL)
+                    .hookRegistry(new DefaultHookRegistry()).callMetadata(CALLER).build());
+
+            assertThat(summarizer.summarized.get(0).getCallMetadata()).containsSame(CALLER);
         }
     }
 

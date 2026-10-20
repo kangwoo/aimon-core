@@ -23,5 +23,11 @@
  * {@code at.aimon.core.agent..}. It also must be reachable from both {@code at.aimon.core.agent.impl.orca} and
  * {@code at.aimon.core.subagent.execution}, ruling out {@code at.aimon.core.agent.impl}. A neutral top-level package
  * satisfies both constraints without introducing a package cycle.
+ *
+ * <p>
+ * The same two constraints place the tracing helpers both executors share here:
+ * {@link at.aimon.core.toolinvocation.ToolCallTracing} (the TOOL span) and
+ * {@link at.aimon.core.toolinvocation.TracingCompactionObserver} (the COMPACTION span). Each depends on
+ * {@code at.aimon.core.tracing}, which no package under {@code at.aimon.core.agent..} may reach.
  */
 package at.aimon.core.toolinvocation;

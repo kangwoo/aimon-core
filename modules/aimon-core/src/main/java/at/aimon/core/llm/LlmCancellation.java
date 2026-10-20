@@ -20,8 +20,10 @@ package at.aimon.core.llm;
  * thread.</li>
  * <li><b>Off-thread firing</b> — the trip typically arrives on a different thread than the {@code sendMessage} worker
  * (a {@code TaskStop} handler or a parent-cancellation cascade), so a registered abort callback must be thread-safe,
- * idempotent, non-blocking, and must not throw. Typical implementations call
- * {@code StreamResponse.close()} or {@code future.cancel(true)}, both of which satisfy that contract.</li>
+ * idempotent, non-blocking, and must not throw. The callback is the provider's <em>transport</em> abort: it cuts the
+ * transport of that one call and never touches the call's stream or its reader — releasing those is the consumer
+ * thread's own close, after its read has unwound, because closing a stream under the thread reading it is neither
+ * non-blocking nor safe. How the transport is cut is the provider module's business.</li>
  * </ul>
  *
  * <p>
@@ -77,9 +79,9 @@ public interface LlmCancellation {
      *
      * <p>
      * The callback must be idempotent, non-blocking, and must not throw — it may be invoked from a thread other than
-     * the
-     * one that registered it, possibly concurrently with the call it aborts. A typical callback is
-     * {@code streamResponse::close}.
+     * the one that registered it, possibly concurrently with the call it aborts. It is the provider's transport abort
+     * lever for the call being made, registered before the request goes out so that a trip during the connection or
+     * header wait is observed too; it is not the stream's close (see the class Javadoc).
      *
      * @param abort
      *            the abort callback (must not be {@code null})

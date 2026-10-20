@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -68,14 +69,16 @@ import at.aimon.core.llm.token.HeuristicTokenEstimator;
 import at.aimon.core.skill.DefaultSkillRegistry;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.DefaultSubagentRegistry;
+import at.aimon.llm.testkit.StallingSseServer;
 
 /**
  * What an interrupt does to a streaming call that is in flight, over the real transport.
  *
  * <p>
- * The SDK does not throw out of a stream that is closed under it — the stream ends. Before EE-95's follow-up the
- * client took that for the end of the answer and returned what had arrived. These tests pin the three places that
- * mattered: the client reports a cancellation, an AUTO-compaction summary is not installed and does not move the
+ * A stream the SDK closes under its reader ends silently, and a stream whose transport is cut fails loudly; before
+ * EE-95's follow-up the client took the silent end for the end of the answer and returned what had arrived. These
+ * tests pin the three places that mattered: the client reports a cancellation, an AUTO-compaction summary is not
+ * installed and does not move the
  * circuit breaker, and a turn ends {@code INTERRUPTED} rather than completing with the part of the answer that got
  * through.
  *
@@ -119,7 +122,7 @@ class AnthropicStreamAbortTest {
     @Test
     @DisplayName("the client: aborted after some text, the call is a cancellation and the sink is given no end")
     void client_abortedAfterSomeText_isACancellation() throws Exception {
-        try (StallingSseServer server = StallingSseServer.sending(AFTER_SOME_TEXT);
+        try (StallingSseServer server = StallingSseServer.sending(AFTER_SOME_TEXT, "");
                 DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator()) {
             final RecordingSink sink = new RecordingSink();
 
@@ -137,12 +140,12 @@ class AnthropicStreamAbortTest {
     @Test
     @DisplayName("the client: aborted before any text, the call is a cancellation and not an empty answer")
     void client_abortedBeforeAnyText_isACancellation() throws Exception {
-        try (StallingSseServer server = StallingSseServer.sending(BEFORE_ANY_TEXT);
+        try (StallingSseServer server = StallingSseServer.sending(BEFORE_ANY_TEXT, "");
                 DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator()) {
             final RecordingSink sink = new RecordingSink();
 
             final Future<LlmResponse> running = stream(client(server), sink, coordinator);
-            assertThat(server.awaitAnswered(HANG_GUARD_SECONDS)).isTrue();
+            assertThat(server.awaitAnswered(1, Duration.ofSeconds(HANG_GUARD_SECONDS))).isTrue();
             coordinator.requestInterrupt(InterruptReason.USER_SIGINT);
 
             assertThatThrownBy(() -> running.get(HANG_GUARD_SECONDS, TimeUnit.SECONDS))
@@ -167,7 +170,7 @@ class AnthropicStreamAbortTest {
 
     @SuppressWarnings("deprecation")
     private void assertAnAbortedSummaryInstallsNothing(String sse) throws Exception {
-        try (StallingSseServer server = StallingSseServer.sending(sse);
+        try (StallingSseServer server = StallingSseServer.sending(sse, "");
                 DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator()) {
             final DefaultCompactionEngine engine = DefaultCompactionEngine.withDefaults(client(server),
                     new HeuristicTokenEstimator(), new DefaultHookExecutionManager());
@@ -196,7 +199,7 @@ class AnthropicStreamAbortTest {
                                 attempt.set(result);
                                 return result;
                             }));
-            assertThat(server.awaitAnswered(HANG_GUARD_SECONDS)).isTrue();
+            assertThat(server.awaitAnswered(1, Duration.ofSeconds(HANG_GUARD_SECONDS))).isTrue();
             coordinator.requestInterrupt(InterruptReason.USER_SIGINT);
             running.get(HANG_GUARD_SECONDS, TimeUnit.SECONDS);
 
@@ -212,7 +215,7 @@ class AnthropicStreamAbortTest {
     @Test
     @DisplayName("a turn: aborted after some text, it ends INTERRUPTED and the transcript keeps the streamed prefix")
     void turn_abortedAfterSomeText_endsInterruptedWithThePrefix() throws Exception {
-        try (StallingSseServer server = StallingSseServer.sending(AFTER_SOME_TEXT)) {
+        try (StallingSseServer server = StallingSseServer.sending(AFTER_SOME_TEXT, "")) {
             final FirstTextTap client = new FirstTextTap(client(server));
             final AtomicReference<InterruptCoordinator> coordinator = new AtomicReference<>();
 
@@ -232,11 +235,11 @@ class AnthropicStreamAbortTest {
     @Test
     @DisplayName("a turn: aborted before any text, it ends INTERRUPTED and no empty answer is written")
     void turn_abortedBeforeAnyText_endsInterruptedWithNoAnswer() throws Exception {
-        try (StallingSseServer server = StallingSseServer.sending(BEFORE_ANY_TEXT)) {
+        try (StallingSseServer server = StallingSseServer.sending(BEFORE_ANY_TEXT, "")) {
             final AtomicReference<InterruptCoordinator> coordinator = new AtomicReference<>();
 
             final Future<OrcaAgentExecutionResult> running = runTurn(client(server), coordinator);
-            assertThat(server.awaitAnswered(HANG_GUARD_SECONDS)).isTrue();
+            assertThat(server.awaitAnswered(1, Duration.ofSeconds(HANG_GUARD_SECONDS))).isTrue();
             coordinator.get().requestInterrupt(InterruptReason.USER_SIGINT);
             final OrcaAgentExecutionResult result = running.get(HANG_GUARD_SECONDS, TimeUnit.SECONDS);
 

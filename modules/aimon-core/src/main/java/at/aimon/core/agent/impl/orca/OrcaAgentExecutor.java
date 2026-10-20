@@ -160,6 +160,7 @@ import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.toolinvocation.SingleToolInvoker;
 import at.aimon.core.toolinvocation.ToolCallTracing;
 import at.aimon.core.toolinvocation.ToolInvocationSpec;
+import at.aimon.core.toolinvocation.TracingCompactionObserver;
 import at.aimon.core.toolinvocation.approval.SideEffectApprovalGate;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.file.ReadTool;
@@ -1755,7 +1756,7 @@ public class OrcaAgentExecutor
                 // event below. An engine that reports the view's own sizes wins: with an append-only log the
                 // log does not shrink, only the view does (context-engine §10).
                 final int messagesBeforeCompaction = scope.transcriptBuffer.size();
-                final ContextRequest contextRequest = contextRequest(scope, budgetForcedCompaction);
+                final ContextRequest contextRequest = contextRequest(scope, budgetForcedCompaction, iterationCount);
                 final ContextDecision compactionDecision = contextEngine.prepare(contextRequest);
                 switch (compactionDecision.getAction()) {
                     case BLOCK :
@@ -1850,8 +1851,8 @@ public class OrcaAgentExecutor
                                 iterationCount, availableTools, cancellationSignal, llmCancellation);
                     } finally {
                         // LLM-CANCEL: drop the just-finished call's abort lever so a trip landing while the next
-                        // tools run cannot invoke a stale (already-closed) stream. Idempotent close() makes this
-                        // hygiene rather than strictly required.
+                        // tools run does not fire a stale one. A lever only ever reaches its own call and is a no-op
+                        // once that call is over, so this is hygiene rather than strictly required.
                         llmCancellation.clearAbort();
                     }
 
@@ -2257,8 +2258,10 @@ public class OrcaAgentExecutor
             TranscriptBuffer transcriptBuffer) {
         // The command's own span under the turn, so a fork it starts nests under the command that started it rather
         // than straight under the turn. Snapshot the volatile tracing fields once, as the turn span does.
-        final CommandTrace commandTrace = CommandTrace.open(tracer, scope.llmCallMetadata,
-                executionRequest.getUserInput().asText(), tracePayloadPolicy);
+        final Tracer commandTracer = tracer;
+        final TracePayloadPolicy commandPayloadPolicy = tracePayloadPolicy;
+        final CommandTrace commandTrace = CommandTrace.open(commandTracer, scope.llmCallMetadata,
+                executionRequest.getUserInput().asText(), commandPayloadPolicy);
         // One coordinator per command, closed on every exit path so no terminator outlives the command that
         // registered it. It is not the turn's coordinator that runTurn created for the OnStart hooks: that one
         // is published to the interrupt observer, and handing its signal to the command's tools would make a slash
@@ -2298,6 +2301,10 @@ public class OrcaAgentExecutor
             // The turn's quota guard, by hand like the keys above: a `/my-skill` fork charges the session that typed
             // it, as a Skill tool call's fork does.
             commandContextBuilder.put(ToolContextKeys.QUOTA_GUARD, scope.quotaGuard);
+            // A `/compact` opens its COMPACTION span under the command span through this observer. Tracing off there
+            // is no command span and no key, so the context is the one built before the key existed.
+            commandTrace.compactionObserver(commandTracer, commandPayloadPolicy)
+                    .ifPresent(observer -> commandContextBuilder.put(ToolContextKeys.COMPACTION_OBSERVER, observer));
             final ToolContext commandToolContext = commandContextBuilder
                     .put(ToolContextKeys.AGENT_RUNTIME_ID, agentRuntime.getId())
                     // The session id belongs here too: a `/my-skill` invocation of a fork-mode skill spawns a
@@ -3449,8 +3456,14 @@ public class OrcaAgentExecutor
      * summary call is. The gate runs before the iteration span opens, so that position is the turn span. The rest of
      * the attribution stays the engine's: it merges with caller fields winning, and the turn's {@code react-loop}
      * feature would otherwise book the summary call. Tracing off and no principal, the request carries no metadata.
+     *
+     * <p>
+     * With tracing on the request also carries a {@link TracingCompactionObserver} over that same position, so a
+     * compaction the engine attempts opens a COMPACTION span under the turn span — a preceding sibling of the
+     * iteration it gates — and the summary LLM span nests under it. Tracing off, no observer is set and the request is
+     * the one built before the observer existed. {@code recover} reuses the request and never reads the observer.
      */
-    private static ContextRequest contextRequest(ExecutionScope scope, boolean budgetForced) {
+    private ContextRequest contextRequest(ExecutionScope scope, boolean budgetForced, int iterationCount) {
         final ContextRequest.Builder request = ContextRequest.builder().transcriptBuffer(scope.transcriptBuffer)
                 .model(scope.getAgent().getMetadata().getModel()).hookRegistry(scope.getHookRegistry())
                 .executionEnvironment(scope.executionEnvironment).executionCancellation(scope.coordinator.getSignal())
@@ -3458,13 +3471,28 @@ public class OrcaAgentExecutor
         final LlmCallMetadata principal = scope.getPrincipal() != null
                 ? LlmCallMetadata.builder().principal(scope.getPrincipal()).build()
                 : LlmCallMetadata.empty();
-        final LlmCallMetadata callMetadata = Spans
+        final Optional<LlmCallMetadata> carrier = Spans
                 .traceCarrier(Spans.enrichSafely(scope.activeSpan, scope.llmCallMetadata))
-                .map(carrier -> carrier.withDefaults(principal)).orElse(principal);
+                .map(position -> position.withDefaults(principal));
+        final LlmCallMetadata callMetadata = carrier.orElse(principal);
         if (!callMetadata.isEmpty()) {
             request.callMetadata(callMetadata);
         }
+        carrier.flatMap(position -> TracingCompactionObserver.under(tracer, position, tracePayloadPolicy,
+                scope.coordinator.getSignal(), compactionSpanAttributes(iterationCount, budgetForced)))
+                .ifPresent(request::compactionObserver);
         return request.build();
+    }
+
+    /** The attributes of a turn's COMPACTION span: the iteration it gates, and the budget hint only when it forced. */
+    private static Map<String, String> compactionSpanAttributes(int iterationCount, boolean budgetForced) {
+        final Map<String, String> attributes = new LinkedHashMap<>();
+        attributes.put("iteration", String.valueOf(iterationCount));
+        attributes.put("invokerType", InvokerType.MAIN_AGENT.name());
+        if (budgetForced) {
+            attributes.put("budgetForced", "true");
+        }
+        return attributes;
     }
 
     private LlmResponse invokeGatewayOnce(ExecutionScope scope, ContextView view, int iteration,
@@ -3480,7 +3508,7 @@ public class OrcaAgentExecutor
             } catch (LlmCallCancelledException e) {
                 // Two sources can raise this on the blocking path: the gateway's pre-attempt short-circuit, and a
                 // genuine in-flight abort — a cancellable token (isSupported()) makes the provider reroute the blocking
-                // call through its streaming path, which owns a StreamResponse.close() abort lever. Both translate to
+                // call through its streaming path, which owns a transport abort lever. Both translate to
                 // CancelledExecutionException so the ReAct loop unwinds through handleInterrupted like every other
                 // cancellation.
                 throw toCancelledExecution(cancellationSignal, e);
@@ -3643,10 +3671,11 @@ public class OrcaAgentExecutor
                     // No cancellation checkpoint here, deliberately, and the reason has to be the abort lever rather
                     // than the next chunk: a long deliberation is exactly the case this channel exists for, so "the
                     // next text delta follows closely" is the one thing it does not promise. What does hold is that
-                    // both providers register cancellation.onCancel(<stream>::close) before consuming
-                    // (AnthropicLlmClient, OpenAILlmClient), so a trip during a reasoning-only window closes the HTTP
-                    // stream from the interrupting thread and the call unwinds as LlmCallCancelledException — the
-                    // same preserve-the-prefix arm a checkpoint here would have reached, one exception later.
+                    // both providers register a per-call transport abort with cancellation.onCancel before the
+                    // request is sent (AnthropicLlmClient, OpenAILlmClient), so a trip during a reasoning-only window
+                    // cuts the HTTP transport from the interrupting thread, the consumer's blocked read fails, and the
+                    // call unwinds as LlmCallCancelledException — the same preserve-the-prefix arm a checkpoint here
+                    // would have reached, one exception later.
                     final String delta = chunk.getReasoningDelta().orElseThrow();
                     scope.eventDispatcher.emitAssistantReasoningDelta(iteration, delta, nextReasoningChunkIndex++);
                 }

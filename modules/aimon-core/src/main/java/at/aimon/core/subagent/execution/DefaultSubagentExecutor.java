@@ -2,6 +2,7 @@ package at.aimon.core.subagent.execution;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -96,6 +97,7 @@ import at.aimon.core.subagent.SubagentToolScope;
 import at.aimon.core.toolinvocation.SingleToolInvoker;
 import at.aimon.core.toolinvocation.ToolCallTracing;
 import at.aimon.core.toolinvocation.ToolInvocationSpec;
+import at.aimon.core.toolinvocation.TracingCompactionObserver;
 import at.aimon.core.toolinvocation.approval.SideEffectApprovalGate;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.file.ReadTool;
@@ -547,14 +549,13 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 lc.budgetTracker.recordIteration();
                 stream(lc, "\n[iteration " + iterationCount + "]\n");
 
+                // AUTO compaction gate, returning the view this iteration's call is sent. Run before the ITERATION span
+                // opens, as the main turn's is: a compaction is a COMPACTION span ahead of the iteration it gates, and
+                // a block (unwound by the catches below the loop) leaves no iteration span behind.
+                final ContextView view = applyCompactionGate(lc, iterationCount);
                 // TRACE-01: this iteration's LLM call and tool calls nest under its ITERATION span.
                 final IterationTrace trace = IterationTrace.open(lc, iterationCount);
                 try {
-                    // AUTO compaction gate. The passthrough engine returns NONE, leaving behavior unchanged; either
-                    // way the engine returns the view this iteration's call is sent. Run inside the ITERATION span,
-                    // whose position the summary call carries, so its LLM span nests under this iteration.
-                    final ContextView view = applyCompactionGate(lc, iterationCount, trace.metadata);
-
                     // Re-read every iteration so newly activated deferred tools are included. See the method for the
                     // two things it withholds and why.
                     final List<ToolDefinition> availableTools = availableToolDefinitions(lc, iterationCount);
@@ -737,19 +738,22 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * Asks the context engine for the upcoming LLM call's view and applies its decision (BLOCK throws, COMPACT and WARN
      * log, NONE is a no-op).
      *
+     * <p>
+     * With tracing on, the request carries the fork's span position — the run root, since the gate runs before the
+     * iteration span opens — and a {@link TracingCompactionObserver} over it, so a compaction opens a COMPACTION span
+     * there and its summary LLM span nests under that.
+     *
      * @param lc
      *            the loop context
      * @param iterationCount
-     *            the current iteration count (for logging)
-     * @param iterationMetadata
-     *            this iteration's call metadata; only its span position reaches the summary call
+     *            the iteration the gate runs before (for logging and the COMPACTION span)
      * @return the view to send (never null)
      * @throws ContextWindowExceededException
      *             if the engine blocks the iteration
      * @throws CancelledExecutionException
      *             if the engine blocks the iteration of a fork that has been cancelled
      */
-    private ContextView applyCompactionGate(LoopContext lc, int iterationCount, LlmCallMetadata iterationMetadata) {
+    private ContextView applyCompactionGate(LoopContext lc, int iterationCount) {
         // Hand the engine this fork's run identity. Without it the compaction engine has only the transcript label to
         // go on, and that label is a SessionId wrapping this very execution id — so a PreCompact hook would be told the
         // fork had a session, and told an execution id as its name. The two are tied together at both entries into
@@ -763,7 +767,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // handing it the whole metadata would book the summary call under this fork's feature instead of COMPACTION.
         // The group key travels too, or the engine would fill it from the transcript label — this execution id
         // dressed as a session.
-        Spans.traceCarrier(iterationMetadata).ifPresent(request::callMetadata);
+        Spans.traceCarrier(lc.effectiveMetadata).ifPresent(carrier -> {
+            request.callMetadata(carrier);
+            TracingCompactionObserver.under(lc.tracer, carrier, lc.tracePayloadPolicy, lc.coordinator.getSignal(),
+                    compactionSpanAttributes(lc, iterationCount)).ifPresent(request::compactionObserver);
+        });
         final ContextDecision decision = contextEngine.prepare(request.build());
         switch (decision.getAction()) {
             case BLOCK :
@@ -785,6 +793,15 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 break;
         }
         return decision.getView();
+    }
+
+    /** The attributes of a fork's COMPACTION span: the iteration it gates, and the fork's run identity. */
+    private static Map<String, String> compactionSpanAttributes(LoopContext lc, int iterationCount) {
+        final Map<String, String> attributes = new LinkedHashMap<>();
+        attributes.put("iteration", String.valueOf(iterationCount));
+        attributes.put("invokerType", InvokerType.SUBAGENT.name());
+        attributes.put("executionId", lc.executionId.value());
+        return attributes;
     }
 
     /**

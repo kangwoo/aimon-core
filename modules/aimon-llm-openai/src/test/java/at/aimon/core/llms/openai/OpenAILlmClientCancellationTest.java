@@ -3,10 +3,10 @@ package at.aimon.core.llms.openai;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -50,7 +50,8 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
  * Covers the three observable contract points documented on the streaming method:
  * <ul>
  * <li>the fast path that rejects an already-cancelled call before opening the HTTP stream;
- * <li>the abort lever registered via {@code cancellation.onCancel(streamResponse::close)};
+ * <li>the abort lever registered via {@code cancellation.onCancel(abort::abort)} <em>before</em> the stream opens —
+ * the call's transport abort, which is not the stream's {@code close()};
  * <li>mapping a mid-stream failure to {@link LlmCallCancelledException} when the token is cancelled.
  * </ul>
  *
@@ -101,20 +102,25 @@ class OpenAILlmClientCancellationTest {
     }
 
     @Test
-    @DisplayName("Should invoke the registered abort callback (StreamResponse.close()) when cancellation fires")
-    void shouldInvokeAbortCallback_WhenCancellationFiresDuringRegistration() {
+    @DisplayName("The abort lever is registered before the stream opens, and it is not the stream's close()")
+    void shouldRegisterAbortLeverBeforeTheStreamOpens_AndNeverCloseTheStreamFromIt() {
         // Given: the SDK call succeeds and returns an empty stream so mapper.consume() unwinds cleanly
         @SuppressWarnings("unchecked")
         StreamResponse<ChatCompletionChunk> streamResponse = mock(StreamResponse.class);
         when(streamResponse.stream()).thenReturn(Stream.empty());
+        AtomicBoolean streamOpened = new AtomicBoolean();
         when(mockChatCompletionService.createStreaming(any(ChatCompletionCreateParams.class)))
-                .thenReturn(streamResponse);
+                .thenAnswer(invocation -> {
+                    streamOpened.set(true);
+                    return streamResponse;
+                });
 
         OpenAILlmClient client = createClientWithMock();
 
         // A cancellation whose isCancelled() guard passes at entry (so the call proceeds) but whose onCancel()
         // registration fires the abort callback synchronously -- mirroring the documented "already cancelled at
-        // registration time" contract of LlmCancellation.onCancel().
+        // registration time" contract of LlmCancellation.onCancel(). What it sees at that moment is the point.
+        AtomicBoolean openedAtRegistration = new AtomicBoolean(true);
         LlmCancellation cancellation = new LlmCancellation() {
             @Override
             public boolean isCancelled() {
@@ -123,6 +129,7 @@ class OpenAILlmClientCancellationTest {
 
             @Override
             public void onCancel(Runnable abort) {
+                openedAtRegistration.set(streamOpened.get());
                 abort.run();
             }
         };
@@ -133,11 +140,56 @@ class OpenAILlmClientCancellationTest {
                 LlmStreamingOptions.defaults(), chunk -> {
                 }, cancellation);
 
-        // Then: the registered abort lever (streamResponse::close) was actually invoked. It fires once from the
-        // onCancel() registration and once more from the try-with-resources auto-close on the way out -- close() is
-        // documented as idempotent, so at-least-once is the correct assertion here rather than an exact count.
+        // Then: the lever was registered before createStreaming() ran (so a trip during the header wait is covered),
+        // and running it did not close the stream -- the one close() is the consumer thread's own, on the way out.
         assertThat(response).isNotNull();
-        verify(streamResponse, atLeastOnce()).close();
+        assertThat(openedAtRegistration).as("the lever is registered before the stream opens").isFalse();
+        verify(streamResponse, times(1)).close();
+    }
+
+    @Test
+    @DisplayName("A token that can never fire opens no abort: nothing is registered and the request carries no key")
+    void nonCancellableStreamRegistersNothingAndSendsNoAbortKey() {
+        // The gateway streams with LlmCancellation.none() in production; such a call must not ride the abort path.
+        @SuppressWarnings("unchecked")
+        StreamResponse<ChatCompletionChunk> streamResponse = mock(StreamResponse.class);
+        when(streamResponse.stream()).thenAnswer(invocation -> Stream.empty());
+        when(mockChatCompletionService.createStreaming(any(ChatCompletionCreateParams.class)))
+                .thenReturn(streamResponse);
+        OpenAILlmClient client = createClientWithMock();
+        AtomicBoolean registered = new AtomicBoolean();
+        LlmCancellation inert = new LlmCancellation() {
+            @Override
+            public boolean isCancelled() {
+                return false;
+            }
+
+            @Override
+            public boolean isSupported() {
+                return false;
+            }
+
+            @Override
+            public void onCancel(Runnable abort) {
+                registered.set(true);
+            }
+        };
+
+        LlmResponse response = client.sendMessageStreaming(SystemPromptParts.empty(), List.of(Message.user("hi")),
+                Collections.emptyList(), LlmModel.builder().build(), LlmCallMetadata.empty(),
+                LlmStreamingOptions.defaults(), chunk -> {
+                }, inert);
+        client.sendMessageStreaming(SystemPromptParts.empty(), List.of(Message.user("hi")), Collections.emptyList(),
+                LlmModel.builder().build(), LlmCallMetadata.empty(), LlmStreamingOptions.defaults(), chunk -> {
+                }, LlmCancellation.none());
+
+        assertThat(response).isNotNull();
+        assertThat(registered).as("no lever is registered with a token that can never fire").isFalse();
+        ArgumentCaptor<ChatCompletionCreateParams> sent = ArgumentCaptor.forClass(ChatCompletionCreateParams.class);
+        verify(mockChatCompletionService, times(2)).createStreaming(sent.capture());
+        assertThat(sent.getAllValues()).allSatisfy(
+                params -> assertThat(params._headers().values(OpenAICallAbort.HEADER)).as("no abort key").isEmpty());
+        verify(streamResponse, times(2)).close();
     }
 
     @Test
@@ -308,11 +360,15 @@ class OpenAILlmClientCancellationTest {
                 .forClass(ChatCompletionCreateParams.class);
         verify(mockChatCompletionService).create(blocking.capture());
         verify(mockChatCompletionService).createStreaming(streaming.capture());
-        // The streaming call's one addition (stream_options, to get usage) put onto the blocking request makes the
-        // two equal: everything else is the same request.
+        // The streaming call's two additions -- stream_options, to get usage, and the abort key header the transport
+        // strips before the wire -- put onto the blocking request make the two equal: everything else is the same
+        // request.
         assertThat(blocking.getValue().streamOptions()).isEmpty();
-        assertThat(streaming.getValue()).isEqualTo(blocking.getValue().toBuilder()
-                .streamOptions(streaming.getValue().streamOptions().orElseThrow()).build());
+        assertThat(blocking.getValue()._headers().values(OpenAICallAbort.HEADER)).isEmpty();
+        assertThat(streaming.getValue()._headers().values(OpenAICallAbort.HEADER)).hasSize(1);
+        assertThat(streaming.getValue().toBuilder().removeAdditionalHeaders(OpenAICallAbort.HEADER).build())
+                .isEqualTo(blocking.getValue().toBuilder()
+                        .streamOptions(streaming.getValue().streamOptions().orElseThrow()).build());
         assertThat(streaming.getValue().messages()).isEqualTo(blocking.getValue().messages());
     }
 }

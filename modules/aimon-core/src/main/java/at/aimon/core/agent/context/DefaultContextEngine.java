@@ -19,8 +19,10 @@ import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionGuard;
 import at.aimon.core.agent.compact.CompactionGuardRequest;
 import at.aimon.core.agent.compact.CompactionMetadata;
+import at.aimon.core.agent.compact.CompactionObserver;
 import at.aimon.core.agent.compact.CompactionRequest;
 import at.aimon.core.agent.compact.CompactionResult;
+import at.aimon.core.agent.compact.CompactionStart;
 import at.aimon.core.agent.compact.CompactionTrigger;
 import at.aimon.core.agent.compact.DefaultCompactionGuard;
 import at.aimon.core.agent.compact.NoOpCompactionGuard;
@@ -36,6 +38,7 @@ import at.aimon.core.agent.session.transcript.SessionLogState;
 import at.aimon.core.agent.session.transcript.SummarySpan;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.hook.HookRegistry;
+import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.exception.LlmPromptTooLongException;
 import at.aimon.core.llm.token.TokenEstimator;
@@ -186,7 +189,8 @@ public final class DefaultContextEngine implements ContextEngine {
                 .transcriptBuffer(buffer).model(request.getModel()).hookRegistry(hookRegistry).executionId(executionId)
                 .executionEnvironment(request.getExecutionEnvironment().orElse(null))
                 .executionCancellation(request.getExecutionCancellation().orElse(null))
-                .budgetForced(request.isBudgetForced()).callMetadata(request.getCallMetadata().orElse(null)).build());
+                .budgetForced(request.isBudgetForced()).callMetadata(request.getCallMetadata().orElse(null))
+                .compactionObserver(request.getCompactionObserver()).build());
         // Read after the guard: a compaction rewrote the buffer in place, and the view is what it left behind.
         return ContextDecision.from(decision, viewOf(request), sizeBefore);
     }
@@ -331,17 +335,35 @@ public final class DefaultContextEngine implements ContextEngine {
             }
             return result;
         }
-        final CompactionRequest compactionRequest = CompactionRequest.builder().transcriptBuffer(buffer)
-                .trigger(CompactionTrigger.MANUAL).model(request.getModel()).hookRegistry(requireHookRegistry(request))
-                .executionEnvironment(request.getExecutionEnvironment().orElse(null))
-                .executionCancellation(request.getExecutionCancellation().orElse(null)).customInstructions(instructions)
-                .callMetadata(request.getCallMetadata().orElse(null))
-                .executionId(request.getCaller().getExecutionId().orElse(null)).build();
-        final CompactionResult result = compactionEngine.compact(compactionRequest);
-        if (result != null && result.isSuccess()) {
-            compactionGuard.recordExternalSuccess(buffer.getSessionId());
+        final HookRegistry hookRegistry = requireHookRegistry(request);
+        // An engine that throws closes the attempt unrecorded — reported as not completed — and the exception goes on
+        // to the caller as before.
+        try (CompactionObserver.Attempt attempt = request.getCompactionObserver()
+                .begin(start(CompactionTrigger.MANUAL, CompactionStart.IN_PLACE, false, buffer.size()))) {
+            final CompactionRequest compactionRequest = CompactionRequest.builder().transcriptBuffer(buffer)
+                    .trigger(CompactionTrigger.MANUAL).model(request.getModel()).hookRegistry(hookRegistry)
+                    .executionEnvironment(request.getExecutionEnvironment().orElse(null))
+                    .executionCancellation(request.getExecutionCancellation().orElse(null))
+                    .customInstructions(instructions)
+                    .callMetadata(attempt.enrich(request.getCallMetadata().orElse(null)))
+                    .executionId(request.getCaller().getExecutionId().orElse(null)).build();
+            final CompactionResult result = compactionEngine.compact(compactionRequest);
+            // A null result breaks the engine's contract; it leaves the attempt unrecorded, which the span reports as
+            // ERROR "did not complete" — the same as an engine that threw.
+            if (result != null) {
+                attempt.record(result);
+            }
+            if (result != null && result.isSuccess()) {
+                compactionGuard.recordExternalSuccess(buffer.getSessionId());
+            }
+            return result;
         }
-        return result;
+    }
+
+    private static CompactionStart start(CompactionTrigger trigger, String strategy, boolean blockingForced,
+            int messagesBefore) {
+        return CompactionStart.builder().trigger(trigger).strategy(strategy).blockingForced(blockingForced)
+                .messagesBefore(messagesBefore).build();
     }
 
     /**
@@ -390,11 +412,26 @@ public final class DefaultContextEngine implements ContextEngine {
      * send a request that is over the limit: the caller asks once per iteration and sends what it is given, and
      * recovery may drop neither the unanswered part nor the markers. See {@link #summarizeAtBlockingLimit}.
      *
+     * <p>
+     * <b>One attempt for the request's observer.</b> It begins with the first summary call — so a pass that ends
+     * before one (an empty view, nothing to compact, no legal cut) reports nothing — covers the second call of a
+     * two-summary pass, and records the result this method returns.
+     *
      * @param blocking
      *            the limit the blocking-limit compaction is held to, or null when the limit did not force this one
      */
     private CompactionResult summarizeIntoView(ContextRequest request, CompactionTrigger trigger, String instructions,
             ViewProjection before, BlockingLimit blocking) {
+        final Pass pass = new Pass(request.getCompactionObserver(), trigger, blocking != null, before.size());
+        try {
+            return pass.record(summarizeIntoView(request, trigger, instructions, before, blocking, pass));
+        } finally {
+            pass.close();
+        }
+    }
+
+    private CompactionResult summarizeIntoView(ContextRequest request, CompactionTrigger trigger, String instructions,
+            ViewProjection before, BlockingLimit blocking, Pass pass) {
         final TranscriptBuffer buffer = request.getTranscriptBuffer();
         final SessionLogState state = buffer.getLogState();
         if (before.size() == 0) {
@@ -402,7 +439,7 @@ public final class DefaultContextEngine implements ContextEngine {
         }
         final int prefix = absorbablePrefix(state, before);
         if (blocking != null) {
-            return summarizeAtBlockingLimit(request, trigger, instructions, before, prefix, blocking);
+            return summarizeAtBlockingLimit(request, trigger, instructions, before, prefix, blocking, pass);
         }
         if (prefix == 0) {
             final int unreadFrom = before.firstUnreadPosition();
@@ -411,7 +448,7 @@ public final class DefaultContextEngine implements ContextEngine {
                             + (before.size() - unreadFrom) + " message(s) the model has not answered yet"
                             + (unreadFrom > 0 ? " after an earlier summary" : "")));
         }
-        return summarizeSpan(request, trigger, instructions, before, prefix, null, null);
+        return summarizeSpan(request, trigger, instructions, before, prefix, null, null, pass);
     }
 
     /**
@@ -467,11 +504,11 @@ public final class DefaultContextEngine implements ContextEngine {
      * limit; neither exists.
      */
     private CompactionResult summarizeAtBlockingLimit(ContextRequest request, CompactionTrigger trigger,
-            String instructions, ViewProjection before, int prefix, BlockingLimit blocking) {
+            String instructions, ViewProjection before, int prefix, BlockingLimit blocking, Pass pass) {
         final TranscriptBuffer buffer = request.getTranscriptBuffer();
         final int size = before.size();
         if (prefix == size) {
-            return summarizeSpan(request, trigger, instructions, before, size, blocking, null);
+            return summarizeSpan(request, trigger, instructions, before, size, blocking, null, pass);
         }
         final int unanswered = size - before.firstUnreadPosition();
         final boolean prefixCanFit = prefix > 0 && !blocking.reachedBy(before.getMessages().subList(prefix, size));
@@ -487,11 +524,12 @@ public final class DefaultContextEngine implements ContextEngine {
                             + " the model has not answered yet would not bring it under; summarizing them too, since"
                             + " the request cannot be sent as it is",
                     buffer.getSessionId(), blocking.limit, unanswered);
-            return summarizeSpan(request, trigger, instructions, before, size, blocking, null);
+            return summarizeSpan(request, trigger, instructions, before, size, blocking, null, pass);
         }
         // Counted before anything is summarized: the size of the view the pass starts from, should it take two calls.
         final int viewTokensBefore = blocking.tokens(before.getMessages());
-        final CompactionResult first = summarizeSpan(request, trigger, instructions, before, prefix, blocking, null);
+        final CompactionResult first = summarizeSpan(request, trigger, instructions, before, prefix, blocking, null,
+                pass);
         if (first.isFailure() || !first.getMetadata().isOverBlockingLimit()) {
             return first;
         }
@@ -505,7 +543,7 @@ public final class DefaultContextEngine implements ContextEngine {
                 buffer.getSessionId(), first.getMetadata().getPostCompactTokenCount(), blocking.limit);
         final ViewProjection rest = ViewProjection.of(afterFirst);
         final CompactionResult second = summarizeSpan(request, trigger, instructions, rest, rest.size(), blocking,
-                new PassStart(viewTokensBefore, size, first.getMetadata()));
+                new PassStart(viewTokensBefore, size, first.getMetadata()), pass);
         if (second.isFailure()) {
             log.warn("The whole-view summary of session {} failed ({}); the view is sent over the blocking limit",
                     buffer.getSessionId(), second.getError().map(Throwable::getMessage).orElse("unknown error"));
@@ -531,9 +569,12 @@ public final class DefaultContextEngine implements ContextEngine {
      * @param passStart
      *            when not null, this is the second summary of one blocking-limit pass, and the record &mdash; the one
      *            returned and the one the PostCompact hooks are shown &mdash; describes the pass from its start
+     * @param pass
+     *            the observed attempt this summary call belongs to; it begins with the pass's first call
      */
+    @SuppressWarnings("checkstyle:ParameterNumber")
     private CompactionResult summarizeSpan(ContextRequest request, CompactionTrigger trigger, String instructions,
-            ViewProjection before, int absorbed, BlockingLimit blocking, PassStart passStart) {
+            ViewProjection before, int absorbed, BlockingLimit blocking, PassStart passStart, Pass pass) {
         final TranscriptBuffer buffer = request.getTranscriptBuffer();
         final SessionLogState state = buffer.getLogState();
         final List<Message> absorbedMessages = absorbed == before.size()
@@ -546,7 +587,7 @@ public final class DefaultContextEngine implements ContextEngine {
                 .model(request.getModel()).hookRegistry(requireHookRegistry(request))
                 .executionEnvironment(request.getExecutionEnvironment().orElse(null))
                 .executionCancellation(request.getExecutionCancellation().orElse(null)).customInstructions(instructions)
-                .callMetadata(request.getCallMetadata().orElse(null)).build();
+                .callMetadata(pass.summaryMetadata(request.getCallMetadata().orElse(null))).build();
         final CompactionResult summarized = compactionEngine.summarize(summaryRequest);
         if (summarized == null) {
             // compactNow reads the result's isSuccess(); a null would surface there as an NPE, not a failure.
@@ -622,6 +663,47 @@ public final class DefaultContextEngine implements ContextEngine {
             this.viewTokens = viewTokens;
             this.viewMessages = viewMessages;
             this.first = first;
+        }
+    }
+
+    /**
+     * The request observer's attempt for one view-mode compaction, begun lazily by the first summary call so a pass
+     * that never asks for a summary reports nothing. Used by one thread, inside the guard's per-session lock.
+     */
+    private static final class Pass {
+        private final CompactionObserver observer;
+        private final CompactionTrigger trigger;
+        private final boolean blockingForced;
+        private final int messagesBefore;
+        private CompactionObserver.Attempt attempt;
+
+        private Pass(CompactionObserver observer, CompactionTrigger trigger, boolean blockingForced,
+                int messagesBefore) {
+            this.observer = observer;
+            this.trigger = trigger;
+            this.blockingForced = blockingForced;
+            this.messagesBefore = messagesBefore;
+        }
+
+        /** The metadata a summary call of this pass carries; the first call begins the attempt. */
+        private LlmCallMetadata summaryMetadata(LlmCallMetadata base) {
+            if (attempt == null) {
+                attempt = observer.begin(start(trigger, CompactionStart.VIEW, blockingForced, messagesBefore));
+            }
+            return attempt.enrich(base);
+        }
+
+        private CompactionResult record(CompactionResult result) {
+            if (attempt != null && result != null) {
+                attempt.record(result);
+            }
+            return result;
+        }
+
+        private void close() {
+            if (attempt != null) {
+                attempt.close();
+            }
         }
     }
 

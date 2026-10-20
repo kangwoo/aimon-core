@@ -47,7 +47,110 @@ it off nothing is installed. Design: `docs/design/subagent/parallel-foreground-t
 - **`OutputFormatter.displaySubagentResult`** (CLI) writes its multi-line block in one call so concurrent subagents'
   output cannot interleave inside it. The bytes are unchanged.
 
-### Added: the TURN span records background tasks it received outside the loop or never read (ST-12)
+### Fixed: an LLM call's cancellation cuts the transport, not the stream, and a cancelled request is never re-sent (aimon-llm-openai, aimon-llm-anthropic)
+
+Both provider clients registered `StreamResponse.close()` as the cancellation lever. On the cancelling thread that closed
+the OkHttp response body under the consumer's in-flight read — on HTTP/1.1 a body close *reads* the socket to drain it,
+so Okio failed it with `IllegalStateException("Unbalanced enter/exit")` and the consumer stayed blocked until the read
+timeout — and then took the reader's lock, so the lever itself blocked. The lever was also registered only after the
+stream had opened, so a cancellation during the header wait was not observed until headers arrived, and because the SDKs
+retry every `IOException`, an attempt cut during the header wait could be answered with a fresh request.
+
+- **The lever cuts the transport only.** Each cancellable streaming call (a token whose `isSupported()` is true) gets
+  an abort object registered with its `LlmCancellation` *before* the request is sent. Its `abort()` is thread-safe,
+  idempotent and never throws, and cancels that call's current attempt: `okhttp3.Call.cancel()` on OpenAI, which
+  returns at once; on Anthropic, the SDK adapter's future cancel during the header wait and its race-safe response
+  close during the body — bounded rather than instant, because with no read in flight that close drains the body on
+  the cancelling thread for up to about 100 ms on HTTP/1.1. It closes the adapter's response, never `StreamResponse`
+  or its reader. `StreamResponse.close()` now
+  runs on the consumer thread only, exactly once, after its own read has unwound — also after an abort. For this the
+  OpenAI client is assembled over the module's own OkHttp transport (`OpenAIAbortableHttpClient`; the SDK's adapter
+  exposes no safe lever) and the Anthropic client over a decorator of the SDK's adapter
+  (`AnthropicAbortableHttpClient`). New public types: `OpenAICallAbortedException` and `AnthropicCallAbortedException`,
+  the non-retryable failures of a refused or cut attempt (they surface as `LlmCallCancelledException`).
+  `LlmCancellation.onCancel` is unchanged; its Javadoc no longer names `StreamResponse.close()` as a typical lever.
+- **No retry after a cancellation.** The transport hook sees every attempt the SDK makes, including its retries, and
+  refuses any attempt of a call that was aborted with a type the SDK does not retry, so exactly one request reaches
+  the wire. A cancellation that lands during an SDK backoff sleep is observed when the next attempt starts; the sleep
+  itself is not cut (`docs/design/llm/cancellation.md` §4.4).
+- **Behaviour change: a transport failure after the terminal event returns the whole answer.** Once a mapper has
+  recorded the stream's terminal event (`message_stop`, the `finish_reason` chunk, `response.completed` /
+  `response.incomplete`), a cut or reset of the trailing transport no longer fails the call as a cancellation or a
+  provider failure: the answer is complete and is returned, `STREAM_END` reaches the sink exactly once, and the
+  failure is logged (DEBUG under a cancelled token, WARN otherwise). Before, a reset after `message_stop` or
+  `response.completed` was a provider failure the gateway retried, discarding a complete answer; on Chat Completions a
+  cut between `finish_reason` and the usage chunk now returns the text with empty usage rather than failing.
+- **Behaviour change: a close failure after a complete response no longer fails the call.** The response is returned
+  and the failure logged at WARN; after a cancellation or a provider failure it is attached to that exception as
+  suppressed. The clients no longer close the stream with try-with-resources.
+- **Behaviour change: both clients' `close()` now really release the SDK client.** `AnthropicLlmClient.close()` now
+  closes the SDK client it built, and with it the transport; it used to test for `AutoCloseable`, which
+  `AnthropicClient` deliberately is not, so nothing was closed. `OpenAILlmClient` is now `AutoCloseable` too, and its
+  `close()` closes the SDK client and the OkHttp client the module now owns (dispatcher threads, pooled connections).
+  Both are idempotent. Calls made after `close()` are not supported (nothing refuses them up front; a cancellable
+  Anthropic call then fails as an I/O error). A container that calls `close()` on a client bean it shares — Spring infers `close()` as a
+  destroy method — now really shuts that client down, so a client shared beyond the container's lifetime must not be
+  registered as a closeable bean.
+- A cancellable Anthropic call's header wait now goes through OkHttp's `Dispatcher` (64 concurrent per client, a slot
+  held only until the headers arrive); the body phase is uncapped as before. Non-cancellable calls — blocking or
+  streaming with `LlmCancellation.none()` (the gateway's non-cancellable streams), or the SDK used directly — open no
+  abort object and carry no abort key, so they keep the adapter's synchronous path and take no slot.
+- OpenAI's non-cancellable calls run over `OpenAIAbortableHttpClient` too. For the settings this module passes that is
+  behaviourally equivalent to the SDK's adapter, not identical: the adapter's Azure cross-origin `api-key` redirect
+  interceptor is not replicated, and fixes to the SDK's OkHttp adapter are no longer picked up by an SDK upgrade, so
+  each openai-java upgrade re-checks that adapter against this transport (`docs/backlog/interrupt-open-items.md` items
+  6 and 8).
+- Tests only: `StallingSseServer` moved to `aimon-llm-testkit` and can stall before the headers, hold the chunk
+  terminator or reset the connection; the regression tests are `OpenAICancellationTransportTest` and
+  `AnthropicCancellationTransportTest`, over the real SDKs and a local HTTP/1.1 server.
+
+Design: `docs/design/llm/cancellation-abort-close.md` (the plan) and `docs/design/llm/cancellation-abort-close-design.md`
+(the approved design, with its §11 recording where the build departed); the normative text is
+`docs/design/llm/cancellation.md` §4.1 and §4.4.
+
+### Added: a COMPACTION span around each compaction attempt, with the summary LLM call under it (ST-5) (#296)
+
+With tracing on, every compaction **attempt** now leaves one `COMPACTION` span — `compaction:auto` before an
+iteration, `compaction:manual` for `/compact` — and the summary LLM span (`feature=compaction`) nests under it. An AUTO
+compaction sits under the run root (the TURN, or the SUBAGENT in a fork) as the preceding sibling of the ITERATION it
+gates, with `iteration`, `invokerType`, `budgetForced` (only when a budget hint forced it) and, in a fork, `executionId`
+attributes; `/compact` sits under its COMMAND span. Inputs: `trigger`, `strategy` (`in-place` / `view` / `rolling`),
+`blockingForced`, `messagesBefore`. Outputs, read after the summary is installed: `success`, `outcome` (`compacted` /
+`blocked` / `failed` / `interrupted`), `kind`, `trigger`, `preTokens`, `postTokens`, `messagesSummarized`,
+`summaryCalls`, `summaryChars`, `discoveredToolCount`; `blockingLimit` / `overBlockingLimit` when the record reports a
+limit; the view shape, `summaryTokens` and the absorbed seq range for a rolling compaction; `errorType` / `errorMessage`
+on failure; the summary text as `summary` only under a content-capturing policy. No token usage — the LLM children
+carry it.
+
+- **Status.** An attempt whose engine threw ends `ERROR` ("Compaction did not complete"); one that failed because the
+  execution was cancelled (signal tripped, and the failure is the cancelled summary call or a cancelled PreCompact
+  hook's block) ends `INTERRUPTED`, while another failure that merely coincides with a cancel stays `ERROR`; one a PreCompact hook blocked ends `OK` with
+  `outcome=blocked`; any other failure ends `ERROR`; a success is `OK`, also when the view is still over the blocking
+  limit. `/compact` passes no signal, so it never ends `INTERRUPTED`.
+- **No span when nothing was attempted** — under the threshold, the warning band, the circuit breaker, a concurrent
+  compaction, a precondition not met, nothing to summarize, no legal cut. The blocking-limit two-summary pass is one
+  span with two LLM children. A rolling prune is a span with no LLM child.
+- **New public SPI**, with no tracing dependency: `at.aimon.core.agent.compact.CompactionObserver` (`begin` →
+  `Attempt.enrich` / `record` / `close`; `none()`, `failSafe()`) and `CompactionStart`, carried by
+  `ContextRequest.Builder.compactionObserver(…)` and `CompactionGuardRequest.Builder.compactionObserver(…)` (default
+  `none()`, wrapped fail-safe). The tracing implementation is `at.aimon.core.toolinvocation.TracingCompactionObserver`.
+  The executor hands `/compact` its observer through the new `ToolContextKeys.COMPACTION_OBSERVER`, set only when the
+  command has a span. A custom `CompactionGuard` that relies on the interface's default
+  `maybeCompact(CompactionGuardRequest)` drops the observer, so it produces no COMPACTION span.
+- **Tracing off is unchanged**: no observer is set, the requests, the summary call's metadata and the command's tool
+  context are what they were, and no span is opened. An observer or tracer that throws is swallowed.
+
+### Changed (behaviour change): the summary LLM span moves under COMPACTION; a fork's compaction gate runs before its ITERATION span (ST-5) (#296)
+
+- **The compaction summary LLM span's parent changes** from the TURN (main turn), the ITERATION (fork) or the COMMAND
+  (`/compact`) to the new COMPACTION span. A custom `ContextEngine` / `CompactionEngine` that reads the summary call's
+  metadata sees `aimon.parent_span_id` name the COMPACTION span; every other field is as before.
+- **`DefaultSubagentExecutor` runs its compaction gate before opening the iteration's ITERATION span**, as the main
+  turn already did, and hands the engine the fork's own span position (the SUBAGENT span) instead of the iteration's.
+  A fork whose gate blocks therefore leaves no ITERATION span — it used to leave one in `ERROR` — and ends with the
+  same `Context window exceeded` failure (or `INTERRUPTED`) as before.
+
+### Added: the TURN span records background tasks it received outside the loop or never read (ST-12) (#295)
 
 Closes the two cases #293 left unrecorded, both on the TURN span under the same key family:
 

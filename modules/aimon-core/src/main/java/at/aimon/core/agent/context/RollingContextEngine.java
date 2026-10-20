@@ -26,8 +26,10 @@ import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionFailureStore;
 import at.aimon.core.agent.compact.CompactionKind;
 import at.aimon.core.agent.compact.CompactionMetadata;
+import at.aimon.core.agent.compact.CompactionObserver;
 import at.aimon.core.agent.compact.CompactionReentrancyException;
 import at.aimon.core.agent.compact.CompactionResult;
+import at.aimon.core.agent.compact.CompactionStart;
 import at.aimon.core.agent.compact.CompactionTrigger;
 import at.aimon.core.agent.compact.DefaultCompactionEngine;
 import at.aimon.core.agent.compact.DefaultCompactionGuard;
@@ -311,7 +313,7 @@ public final class RollingContextEngine implements ContextEngine {
                 return failure(CompactionTrigger.MANUAL,
                         new IllegalStateException("nothing to compact: no part of the view can be summarized"));
             }
-            final CompactionResult result = summarizeSpan(call, plan, CompactionTrigger.MANUAL, instructions);
+            final CompactionResult result = summarizeSpan(call, plan, CompactionTrigger.MANUAL, instructions, false);
             if (result != null && result.isSuccess()) {
                 failureStore.reset(call.buffer.getSessionId());
             }
@@ -408,7 +410,7 @@ public final class RollingContextEngine implements ContextEngine {
                                 + " tokens (estimated=" + estimated + "); not compacting", estimated, call.blocking),
                         fallbackMetadata);
             }
-            final CompactionResult result = summarizeSpan(call, plan, CompactionTrigger.AUTO, null);
+            final CompactionResult result = summarizeSpan(call, plan, CompactionTrigger.AUTO, null, false);
             if (result.isSuccess()) {
                 failureStore.reset(sessionId);
                 final String reason = call.request.isBudgetForced()
@@ -437,7 +439,7 @@ public final class RollingContextEngine implements ContextEngine {
     private CompactionResult compact(Call call, int threshold, boolean blocking) {
         final Plan prune = call.prunePlan(threshold, pruneMinTokens);
         if (prune != null) {
-            return applyPruneResult(call, prune, call.estimated);
+            return applyPruneResult(call, prune, call.estimated, blocking);
         }
         Plan plan = call.spanPlan(false, threshold);
         if (plan == null && blocking) {
@@ -451,7 +453,7 @@ public final class RollingContextEngine implements ContextEngine {
             return failure(CompactionTrigger.AUTO,
                     new IllegalStateException("no legal cut leaves anything for the summary to absorb" + unread));
         }
-        final CompactionResult result = summarizeSpan(call, plan, CompactionTrigger.AUTO, null);
+        final CompactionResult result = summarizeSpan(call, plan, CompactionTrigger.AUTO, null, blocking);
         if (blocking && result.isSuccess() && result.getMetadata().getPostCompactTokenCount() >= call.blocking) {
             // Absorbing everything before the unread part was the last resort; the request goes out as it is and the
             // provider, or prompt-too-long recovery, has the last word. Compacting again would find nothing new.
@@ -479,23 +481,32 @@ public final class RollingContextEngine implements ContextEngine {
     }
 
     private CompactionDecision applyPrune(Call call, Plan plan, int estimated) {
-        final CompactionResult result = applyPruneResult(call, plan, estimated);
+        final CompactionResult result = applyPruneResult(call, plan, estimated, false);
         return CompactionDecision.compact(result, "tool results elided (no summary needed)", estimated, call.blocking);
     }
 
-    private CompactionResult applyPruneResult(Call call, Plan plan, int estimated) {
-        final Instant startedAt = Instant.now();
-        for (long seq : plan.elisions) {
-            call.buffer.elideInView(seq, placeholder(seq));
+    /** Elides the plan's tool results from the view: an observed attempt with no summary call. */
+    private CompactionResult applyPruneResult(Call call, Plan plan, int estimated, boolean blocking) {
+        try (CompactionObserver.Attempt attempt = call.request.getCompactionObserver()
+                .begin(start(CompactionTrigger.AUTO, blocking, call.view.size()))) {
+            final Instant startedAt = Instant.now();
+            for (long seq : plan.elisions) {
+                call.buffer.elideInView(seq, placeholder(seq));
+            }
+            final ViewProjection after = ViewProjection.of(call.buffer.getLogState());
+            final int postTokens = tokenEstimator.estimate(call.request.getSystemPrompt(), after.getMessages());
+            log.info("Rolling compaction pruned {} tool results from the view of session {} ({} -> {} tokens)",
+                    plan.elisions.size(), call.buffer.getSessionId(), estimated, postTokens);
+            return attempt.record(CompactionResult.success("",
+                    CompactionMetadata.builder().trigger(CompactionTrigger.AUTO).kind(CompactionKind.PRUNE)
+                            .preCompactTokenCount(estimated).postCompactTokenCount(postTokens).startedAt(startedAt)
+                            .completedAt(Instant.now()).build()));
         }
-        final ViewProjection after = ViewProjection.of(call.buffer.getLogState());
-        final int postTokens = tokenEstimator.estimate(call.request.getSystemPrompt(), after.getMessages());
-        log.info("Rolling compaction pruned {} tool results from the view of session {} ({} -> {} tokens)",
-                plan.elisions.size(), call.buffer.getSessionId(), estimated, postTokens);
-        return CompactionResult.success("",
-                CompactionMetadata.builder().trigger(CompactionTrigger.AUTO).kind(CompactionKind.PRUNE)
-                        .preCompactTokenCount(estimated).postCompactTokenCount(postTokens).startedAt(startedAt)
-                        .completedAt(Instant.now()).build());
+    }
+
+    private static CompactionStart start(CompactionTrigger trigger, boolean blockingForced, int messagesBefore) {
+        return CompactionStart.builder().trigger(trigger).strategy(CompactionStart.ROLLING)
+                .blockingForced(blockingForced).messagesBefore(messagesBefore).build();
     }
 
     /**
@@ -524,10 +535,16 @@ public final class RollingContextEngine implements ContextEngine {
     /**
      * Summarizes what {@code plan} absorbs — updating the held summary — and records the widened span. The log is not
      * touched; PostCompact hooks fire through {@link CompactionEngine#summaryInstalled} once the span is in place.
+     *
+     * <p>
+     * Once the cut is known to absorb something, the rest is one attempt for the request's observer: the summary call
+     * carries its metadata, and whatever this returns is recorded.
+     *
+     * @param blocking
+     *            whether the blocking limit forced this compaction
      */
-    private CompactionResult summarizeSpan(Call call, Plan plan, CompactionTrigger trigger, String instructions) {
-        final TranscriptBuffer buffer = call.buffer;
-        final SummarySpan held = call.held;
+    private CompactionResult summarizeSpan(Call call, Plan plan, CompactionTrigger trigger, String instructions,
+            boolean blocking) {
         final List<Message> absorbed = new ArrayList<>();
         long absorbedFrom = -1;
         for (int p = 0; p < call.view.size(); p++) {
@@ -545,6 +562,17 @@ public final class RollingContextEngine implements ContextEngine {
         if (absorbed.isEmpty()) {
             return failure(trigger, new IllegalStateException("nothing to compact: the cut absorbs no message"));
         }
+        try (CompactionObserver.Attempt attempt = call.request.getCompactionObserver()
+                .begin(start(trigger, blocking, call.view.size()))) {
+            return attempt
+                    .record(summarizeAbsorbed(call, plan, trigger, instructions, absorbed, absorbedFrom, attempt));
+        }
+    }
+
+    private CompactionResult summarizeAbsorbed(Call call, Plan plan, CompactionTrigger trigger, String instructions,
+            List<Message> absorbed, long absorbedFrom, CompactionObserver.Attempt attempt) {
+        final TranscriptBuffer buffer = call.buffer;
+        final SummarySpan held = call.held;
         final List<Message> input = new ArrayList<>(absorbed.size() + 1);
         if (absorbed.get(0).getRole() != Role.USER) {
             input.add(Message.user(CONTINUATION_NOTE));
@@ -558,9 +586,10 @@ public final class RollingContextEngine implements ContextEngine {
                 .hookRegistry(call.request.getHookRegistry().orElseThrow())
                 .executionEnvironment(call.request.getExecutionEnvironment().orElse(null))
                 .executionCancellation(call.request.getExecutionCancellation().orElse(null))
-                .customInstructions(instructions).callMetadata(call.request.getCallMetadata().orElse(null))
-                .rolling(true).previousSummary(held != null ? held.getSummaryText() : null)
-                .targetSummaryTokens(call.summaryBudget).build();
+                .customInstructions(instructions)
+                .callMetadata(attempt.enrich(call.request.getCallMetadata().orElse(null))).rolling(true)
+                .previousSummary(held != null ? held.getSummaryText() : null).targetSummaryTokens(call.summaryBudget)
+                .build();
         final CompactionResult summarized;
         try {
             summarized = compactionEngine.summarize(summaryRequest);

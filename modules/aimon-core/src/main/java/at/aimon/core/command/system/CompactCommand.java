@@ -45,7 +45,8 @@ import at.aimon.core.tracing.Spans;
  * <ul>
  * <li>Builds a {@link ContextRequest} carrying caller-supplied {@link LlmCallMetadata} (principal + traceId) so the
  * summary LLM call is properly attributed to the invoking user, and — with tracing on — the command span's position,
- * so the summary LLM span nests under the executor's COMMAND span
+ * so the summary LLM span nests under the executor's COMMAND span — under a COMPACTION span, when the executor
+ * handed over a {@link ToolContextKeys#COMPACTION_OBSERVER}
  * <li>Runs it through the agent's {@link ContextEngine#compactNow}, which performs a {@link CompactionTrigger#MANUAL}
  * compaction and resets the AUTO circuit breaker on success so AUTO compactions can resume
  * <li>Fires {@code OnStopHook} after the compaction completes — observability tools that listen for execution-stop
@@ -146,10 +147,15 @@ public final class CompactCommand extends SystemCommand implements DirectExecuta
         // environment; the compaction hooks and the OnStop hooks below are handed the same one.
         final ExecutionEnvironment executionEnvironment = ExecutionEnvironmentAccess.of(context.getToolContext())
                 .orElse(null);
-        final ContextRequest contextRequest = ContextRequest.builder().transcriptBuffer(memory)
+        final ContextRequest.Builder contextRequestBuilder = ContextRequest.builder().transcriptBuffer(memory)
                 .model(context.getDefaultModel()).hookRegistry(hookRegistry).executionEnvironment(executionEnvironment)
                 .caller(ContextCaller.builder().principal(principal).build())
-                .callMetadata(buildCallMetadata(memory, principal, context.getToolContext())).build();
+                .callMetadata(buildCallMetadata(memory, principal, context.getToolContext()));
+        // With tracing on the executor hands over an observer that opens a COMPACTION span under the COMMAND span,
+        // and the summary LLM span nests under that. Absent (tracing off), the request keeps the no-op observer.
+        context.getToolContext().get(ToolContextKeys.COMPACTION_OBSERVER)
+                .ifPresent(contextRequestBuilder::compactionObserver);
+        final ContextRequest contextRequest = contextRequestBuilder.build();
 
         final Instant startedAt = Instant.now();
         CompactionResult result = null;

@@ -3,10 +3,10 @@ package at.aimon.core.llms.anthropic;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -49,7 +49,8 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
  * Covers the three observable contract points documented on the streaming method:
  * <ul>
  * <li>the fast path that rejects an already-cancelled call before opening the HTTP stream;
- * <li>the abort lever registered via {@code cancellation.onCancel(streamResponse::close)};
+ * <li>the abort lever registered via {@code cancellation.onCancel(abort::abort)} <em>before</em> the stream opens —
+ * the call's transport abort, which is not the stream's {@code close()};
  * <li>mapping a mid-stream failure to {@link LlmCallCancelledException} when the token is cancelled.
  * </ul>
  *
@@ -96,19 +97,24 @@ class AnthropicLlmClientCancellationTest {
     }
 
     @Test
-    @DisplayName("Should invoke the registered abort callback (StreamResponse.close()) when cancellation fires")
-    void shouldInvokeAbortCallback_WhenCancellationFiresDuringRegistration() {
+    @DisplayName("The abort lever is registered before the stream opens, and it is not the stream's close()")
+    void shouldRegisterAbortLeverBeforeTheStreamOpens_AndNeverCloseTheStreamFromIt() {
         // Given: the SDK call succeeds and returns an empty stream so mapper.consume() unwinds cleanly
         @SuppressWarnings("unchecked")
         StreamResponse<RawMessageStreamEvent> streamResponse = mock(StreamResponse.class);
         when(streamResponse.stream()).thenReturn(Stream.empty());
-        when(mockMessageService.createStreaming(any(MessageCreateParams.class))).thenReturn(streamResponse);
+        AtomicBoolean streamOpened = new AtomicBoolean();
+        when(mockMessageService.createStreaming(any(MessageCreateParams.class))).thenAnswer(invocation -> {
+            streamOpened.set(true);
+            return streamResponse;
+        });
 
         AnthropicLlmClient client = createClientWithMock();
 
         // A cancellation whose isCancelled() guard passes at entry (so the call proceeds) but whose onCancel()
         // registration fires the abort callback synchronously -- mirroring the documented "already cancelled at
-        // registration time" contract of LlmCancellation.onCancel().
+        // registration time" contract of LlmCancellation.onCancel(). What it sees at that moment is the point.
+        AtomicBoolean openedAtRegistration = new AtomicBoolean(true);
         LlmCancellation cancellation = new LlmCancellation() {
             @Override
             public boolean isCancelled() {
@@ -117,6 +123,7 @@ class AnthropicLlmClientCancellationTest {
 
             @Override
             public void onCancel(Runnable abort) {
+                openedAtRegistration.set(streamOpened.get());
                 abort.run();
             }
         };
@@ -127,11 +134,56 @@ class AnthropicLlmClientCancellationTest {
                 LlmStreamingOptions.defaults(), chunk -> {
                 }, cancellation);
 
-        // Then: the registered abort lever (streamResponse::close) was actually invoked. It fires once from the
-        // onCancel() registration and once more from the try-with-resources auto-close on the way out -- close() is
-        // documented as idempotent, so at-least-once is the correct assertion here rather than an exact count.
+        // Then: the lever was registered before createStreaming() ran (so a trip during the header wait is covered),
+        // and running it did not close the stream -- the one close() is the consumer thread's own, on the way out.
         assertThat(response).isNotNull();
-        verify(streamResponse, atLeastOnce()).close();
+        assertThat(openedAtRegistration).as("the lever is registered before the stream opens").isFalse();
+        verify(streamResponse, times(1)).close();
+    }
+
+    @Test
+    @DisplayName("A token that can never fire opens no abort: nothing is registered and the request carries no key")
+    void nonCancellableStreamRegistersNothingAndSendsNoAbortKey() {
+        // The gateway streams with LlmCancellation.none() in production; such a call must not ride the abort path,
+        // whose decorator would otherwise run the attempt through executeAsync().join().
+        @SuppressWarnings("unchecked")
+        StreamResponse<RawMessageStreamEvent> streamResponse = mock(StreamResponse.class);
+        when(streamResponse.stream()).thenAnswer(invocation -> Stream.empty());
+        when(mockMessageService.createStreaming(any(MessageCreateParams.class))).thenReturn(streamResponse);
+        AnthropicLlmClient client = createClientWithMock();
+        AtomicBoolean registered = new AtomicBoolean();
+        LlmCancellation inert = new LlmCancellation() {
+            @Override
+            public boolean isCancelled() {
+                return false;
+            }
+
+            @Override
+            public boolean isSupported() {
+                return false;
+            }
+
+            @Override
+            public void onCancel(Runnable abort) {
+                registered.set(true);
+            }
+        };
+
+        LlmResponse response = client.sendMessageStreaming(SystemPromptParts.empty(), List.of(Message.user("hi")),
+                Collections.emptyList(), LlmModel.builder().build(), LlmCallMetadata.empty(),
+                LlmStreamingOptions.defaults(), chunk -> {
+                }, inert);
+        client.sendMessageStreaming(SystemPromptParts.empty(), List.of(Message.user("hi")), Collections.emptyList(),
+                LlmModel.builder().build(), LlmCallMetadata.empty(), LlmStreamingOptions.defaults(), chunk -> {
+                }, LlmCancellation.none());
+
+        assertThat(response).isNotNull();
+        assertThat(registered).as("no lever is registered with a token that can never fire").isFalse();
+        ArgumentCaptor<MessageCreateParams> sent = ArgumentCaptor.forClass(MessageCreateParams.class);
+        verify(mockMessageService, times(2)).createStreaming(sent.capture());
+        assertThat(sent.getAllValues()).allSatisfy(
+                params -> assertThat(params._headers().values(AnthropicCallAbort.HEADER)).as("no abort key").isEmpty());
+        verify(streamResponse, times(2)).close();
     }
 
     @Test
@@ -298,6 +350,11 @@ class AnthropicLlmClientCancellationTest {
         ArgumentCaptor<MessageCreateParams> streaming = ArgumentCaptor.forClass(MessageCreateParams.class);
         verify(mockMessageService).create(blocking.capture());
         verify(mockMessageService).createStreaming(streaming.capture());
-        assertThat(streaming.getValue()).isEqualTo(blocking.getValue());
+        // The streaming call's one addition is the abort key header, which the transport decorator strips before
+        // the SDK's adapter sees the request; without it the two requests are the same.
+        assertThat(blocking.getValue()._headers().values(AnthropicCallAbort.HEADER)).isEmpty();
+        assertThat(streaming.getValue()._headers().values(AnthropicCallAbort.HEADER)).hasSize(1);
+        assertThat(streaming.getValue().toBuilder().removeAdditionalHeaders(AnthropicCallAbort.HEADER).build())
+                .isEqualTo(blocking.getValue());
     }
 }

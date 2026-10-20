@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.compact.CompactionEngine;
+import at.aimon.core.agent.compact.CompactionObserver;
 import at.aimon.core.agent.compact.CompactionResult;
 import at.aimon.core.agent.compact.DefaultCompactionEngine;
 import at.aimon.core.agent.compact.DefaultCompactionGuard;
@@ -303,8 +304,9 @@ class DefaultSubagentExecutorTracingTest {
     }
 
     @Test
-    @DisplayName("ST-5: the compaction summary call is an LLM span under the iteration, filed under the caller's group key")
-    void compactionSummaryCallNestsUnderTheIteration() {
+    @DisplayName("ST-5: the fork's compaction is a COMPACTION span under the caller's span, ahead of iteration#1, with the"
+            + " summary LLM span inside it, filed under the caller's group key")
+    void compactionNestsUnderTheForkAheadOfTheIteration() {
         llm.responses.add(LlmResponse.text("the summary"));
         llm.responses.add(LlmResponse.text("done"));
         final LlmClient traced = new TracingLlmClient(llm, tracer);
@@ -317,14 +319,25 @@ class DefaultSubagentExecutorTracingTest {
 
         assertThat(result.isSuccess()).isTrue();
         final TraceSpan iteration = iterationNamed("iteration#1");
-        System.out.println(
-                "DBG meta=" + llm.metadata + " spans=" + store.bySession(SESSION) + " all=" + result.getFinalAnswer());
+        final List<TraceSpan> compactions = spansOf(SpanType.COMPACTION);
+        assertThat(compactions).hasSize(1);
+        final TraceSpan compaction = compactions.get(0);
+        // The gate runs before the iteration span opens: the compaction is the iteration's preceding sibling.
+        assertThat(compaction.getParentSpanId()).contains(seedSpan.context().getSpanId());
+        assertThat(iteration.getParentSpanId()).contains(seedSpan.context().getSpanId());
+        assertThat(compaction.getEndTime().orElseThrow()).isBeforeOrEqualTo(iteration.getStartTime());
+        assertThat(compaction.getName()).isEqualTo("compaction:auto");
+        assertThat(compaction.getStatus()).isEqualTo(SpanStatus.OK);
+        assertThat(compaction.getAttributes()).containsEntry("iteration", "1").containsEntry("invokerType", "SUBAGENT")
+                .containsEntry("executionId", result.getExecutionId().orElseThrow().value());
         final List<TraceSpan> llmSpans = spansOf(SpanType.LLM);
-        assertThat(llmSpans).hasSize(2)
-                .allSatisfy(s -> assertThat(s.getParentSpanId()).contains(iteration.getSpanId()));
+        assertThat(llmSpans).hasSize(2);
         final TraceSpan summary = llmSpans.stream()
                 .filter(s -> LlmCallMetadata.Feature.COMPACTION.equals(s.getAttributes().get("feature"))).findFirst()
                 .orElseThrow();
+        assertThat(summary.getParentSpanId()).contains(compaction.getSpanId());
+        assertThat(llmSpans).filteredOn(s -> s != summary)
+                .allSatisfy(s -> assertThat(s.getParentSpanId()).contains(iteration.getSpanId()));
         // Same group key as the iteration — the caller's session, not the fork's transcript label.
         assertThat(summary.getSessionId()).isEqualTo(iteration.getSessionId()).isEqualTo(SESSION);
 
@@ -348,17 +361,46 @@ class DefaultSubagentExecutorTracingTest {
         executor.execute(context(new DefaultToolRegistry()),
                 request(LlmCallMetadata.builder().traceId(SESSION).build()));
 
-        assertThat(requests).isNotEmpty().allSatisfy(r -> assertThat(r.getCallMetadata()).isEmpty());
+        assertThat(requests).isNotEmpty().allSatisfy(r -> {
+            assertThat(r.getCallMetadata()).isEmpty();
+            assertThat(r.getCompactionObserver()).isSameAs(CompactionObserver.none());
+        });
+    }
+
+    @Test
+    @DisplayName("ST-5: a fork whose gate blocks leaves a COMPACTION span in error and no ITERATION span")
+    void aBlockedGateLeavesNoIterationSpan() {
+        llm.failure = new LlmClientException("summary provider down");
+        final LlmClient traced = new TracingLlmClient(llm, tracer);
+        final DefaultSubagentExecutor executor = new DefaultSubagentExecutor(
+                LlmCallGateway.<TranscriptBuffer>withDefaultRetry(traced), new DefaultToolExecutionManager(),
+                new DefaultHookExecutionManager(), compactingEngine(traced, 9_000)).withTracer(tracer);
+
+        final SubagentExecutionResult result = executor.execute(context(new DefaultToolRegistry()),
+                request(seededMetadata));
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.getErrorMessage()).contains("Context window exceeded");
+        assertThat(spansOf(SpanType.ITERATION)).isEmpty();
+        assertThat(spansOf(SpanType.COMPACTION)).singleElement().satisfies(s -> {
+            assertThat(s.getParentSpanId()).contains(seedSpan.context().getSpanId());
+            assertThat(s.getStatus()).isEqualTo(SpanStatus.ERROR);
+        });
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────
 
     /** The default engine with every estimate fixed in the auto-compact band, so iteration 1 compacts. */
     private static ContextEngine compactingEngine(LlmClient client) {
+        return compactingEngine(client, 7_500);
+    }
+
+    /** The default engine with every estimate fixed: 7500 is the auto-compact band, 9000 past the blocking limit. */
+    private static ContextEngine compactingEngine(LlmClient client, int estimate) {
         final TokenEstimator fixed = new TokenEstimator() {
             @Override
             public int estimate(String systemPrompt, List<Message> messages) {
-                return 7_500;
+                return estimate;
             }
 
             @Override

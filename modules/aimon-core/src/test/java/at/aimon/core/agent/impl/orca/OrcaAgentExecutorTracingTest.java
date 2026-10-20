@@ -17,7 +17,10 @@ import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.DefaultAgent;
+import at.aimon.core.agent.budget.CompletionReason;
+import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.compact.CompactionEngine;
+import at.aimon.core.agent.compact.CompactionObserver;
 import at.aimon.core.agent.compact.CompactionResult;
 import at.aimon.core.agent.compact.DefaultCompactionEngine;
 import at.aimon.core.agent.compact.DefaultCompactionGuard;
@@ -26,6 +29,9 @@ import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.context.ContextRequest;
 import at.aimon.core.agent.context.ContextView;
 import at.aimon.core.agent.context.DefaultContextEngine;
+import at.aimon.core.agent.context.RollingContextEngine;
+import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
+import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.prompt.SystemPromptParts;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
@@ -61,6 +67,7 @@ import at.aimon.core.llm.StopReason;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
+import at.aimon.core.llm.exception.LlmClientException;
 import at.aimon.core.llm.exception.LlmPromptTooLongException;
 import at.aimon.core.llm.streaming.LlmStreamChunk;
 import at.aimon.core.llm.streaming.LlmStreamSink;
@@ -459,7 +466,8 @@ class OrcaAgentExecutorTracingTest {
     }
 
     @Test
-    @DisplayName("ST-5: the main turn's compaction summary call is an LLM span under the TURN, in the turn's session")
+    @DisplayName("ST-5: the main turn's compaction is a COMPACTION span under the TURN, ahead of the iteration it gates,"
+            + " with the summary LLM span inside it")
     void compactionSummaryCallNestsUnderTheTurn() {
         final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
         final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
@@ -480,10 +488,22 @@ class OrcaAgentExecutorTracingTest {
         final TraceSpan summary = spans.stream().filter(s -> s.getType() == SpanType.LLM)
                 .filter(s -> LlmCallMetadata.Feature.COMPACTION.equals(s.getAttributes().get("feature"))).findFirst()
                 .orElseThrow();
-        // The gate runs before the iteration span opens, so the summary call hangs off the turn.
-        assertThat(summary.getParentSpanId()).contains(turn.getSpanId());
+        // The gate runs before the iteration span opens: the compaction hangs off the turn, the summary call off it.
+        final TraceSpan compaction = singleOfType(spans, SpanType.COMPACTION);
+        assertThat(compaction.getParentSpanId()).contains(turn.getSpanId());
+        assertThat(compaction.getName()).isEqualTo("compaction:auto");
+        assertThat(compaction.getStatus()).isEqualTo(SpanStatus.OK);
+        assertThat(compaction.getAttributes()).containsEntry("iteration", "1")
+                .containsEntry("invokerType", "MAIN_AGENT").doesNotContainKey("budgetForced");
+        assertThat(compaction.getOutputs()).hasValueSatisfying(outputs -> assertThat(asMap(outputs))
+                .containsEntry("outcome", "compacted").containsEntry("summaryCalls", 1));
+        assertThat(summary.getParentSpanId()).contains(compaction.getSpanId());
         assertThat(summary.getSessionId()).isEqualTo(turn.getSessionId());
         assertThat(summary.getTraceId()).isEqualTo(turn.getSpanId());
+        // A preceding sibling of ITERATION #1: it ended before the iteration started.
+        final TraceSpan iteration = singleOfType(spans, SpanType.ITERATION);
+        assertThat(iteration.getParentSpanId()).contains(turn.getSpanId());
+        assertThat(compaction.getEndTime().orElseThrow()).isBeforeOrEqualTo(iteration.getStartTime());
 
         // Usage attribution stays the engine's: the turn's react-loop feature did not leak into the summary call.
         final LlmCallMetadata summaryCall = stub.metadata.stream()
@@ -504,7 +524,129 @@ class OrcaAgentExecutorTracingTest {
         executor.execute(createContext(new DefaultToolRegistry(), null, capturingEngine(requests)),
                 OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-off")).build());
 
-        assertThat(requests).isNotEmpty().allSatisfy(r -> assertThat(r.getCallMetadata()).isEmpty());
+        assertThat(requests).isNotEmpty().allSatisfy(r -> {
+            assertThat(r.getCallMetadata()).isEmpty();
+            assertThat(r.getCompactionObserver()).isSameAs(CompactionObserver.none());
+        });
+    }
+
+    @Test
+    @DisplayName("ST-5: a turn whose gate compacts nothing has no COMPACTION span")
+    void noCompactionNoCompactionSpan() {
+        final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+        final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
+        final RecordingLlmClient stub = new RecordingLlmClient();
+        stub.enqueue(LlmResponse.text("done"));
+        final List<ContextRequest> requests = new CopyOnWriteArrayList<>();
+        final OrcaAgentExecutor executor = createExecutor(new TracingLlmClient(stub, tracer));
+        executor.tracer = tracer;
+
+        executor.execute(createContext(new DefaultToolRegistry(), null, capturingEngine(requests)),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-none")).build());
+
+        assertThat(store.bySession("conv-none")).noneMatch(s -> s.getType() == SpanType.COMPACTION);
+        assertThat(requests).singleElement()
+                .satisfies(r -> assertThat(r.getCompactionObserver()).isNotSameAs(CompactionObserver.none()));
+    }
+
+    @Test
+    @DisplayName("ST-5: a budget-forced compaction says so on its COMPACTION span")
+    void budgetForcedCompactionIsAttributed() {
+        final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+        final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
+        final RecordingLlmClient stub = new RecordingLlmClient();
+        // Iteration 1 spends tokens past the budget's compaction threshold; iteration 2's gate is budget-forced and
+        // compacts from the warning band, which the fixed estimate sits in.
+        stub.enqueue(LlmResponse.of("", List.of(ToolUse.of("call-1", "Echo", Map.of())), TokenUsage.of(5, 3, 8)));
+        stub.enqueue(LlmResponse.text("the summary"));
+        stub.enqueue(LlmResponse.text("done"));
+        final LlmClient traced = new TracingLlmClient(stub, tracer);
+        final DefaultToolRegistry toolRegistry = new DefaultToolRegistry();
+        toolRegistry.register(new EchoTool("Echo"));
+        final OrcaAgentExecutor executor = createExecutor(traced);
+        executor.tracer = tracer;
+
+        executor.execute(createContext(toolRegistry, null, compactingEngine(traced, 6_500)),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-budget"))
+                        .budget(ExecutionBudget.builder().compactionTokenThreshold(1).build()).build());
+
+        final TraceSpan compaction = singleOfType(store.bySession("conv-budget"), SpanType.COMPACTION);
+        assertThat(compaction.getAttributes()).containsEntry("iteration", "2").containsEntry("budgetForced", "true");
+    }
+
+    @Test
+    @DisplayName("ST-5: a summary that fails at the blocking limit ends the COMPACTION and the TURN in error, and"
+            + " opens no iteration")
+    void failedBlockingCompaction() {
+        final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+        final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
+        final RecordingLlmClient stub = new RecordingLlmClient();
+        stub.failCompaction = true;
+        final LlmClient traced = new TracingLlmClient(stub, tracer);
+        final OrcaAgentExecutor executor = createExecutor(traced);
+        executor.tracer = tracer;
+
+        final OrcaAgentExecutionResult result = executor.execute(
+                createContext(new DefaultToolRegistry(), null, compactingEngine(traced, 9_000)),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-block")).build());
+
+        assertThat(result.isSuccess()).isFalse();
+        final List<TraceSpan> spans = store.bySession("conv-block");
+        final TraceSpan compaction = singleOfType(spans, SpanType.COMPACTION);
+        assertThat(compaction.getStatus()).isEqualTo(SpanStatus.ERROR);
+        assertThat(compaction.getInputs())
+                .hasValueSatisfying(inputs -> assertThat(asMap(inputs)).containsEntry("blockingForced", true));
+        assertThat(singleOfType(spans, SpanType.TURN).getStatus()).isEqualTo(SpanStatus.ERROR);
+        assertThat(spans).noneMatch(s -> s.getType() == SpanType.ITERATION);
+    }
+
+    @Test
+    @DisplayName("ST-5: a turn interrupted during its summary call ends the COMPACTION span INTERRUPTED")
+    void interruptedDuringTheSummary() {
+        final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+        final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
+        final DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator();
+        final RecordingLlmClient stub = new RecordingLlmClient();
+        stub.onCompaction = () -> coordinator.requestInterrupt(InterruptReason.USER_SIGINT);
+        stub.enqueue(LlmResponse.text("the summary"));
+        final LlmClient traced = new TracingLlmClient(stub, tracer);
+        final OrcaAgentExecutor executor = createExecutor(traced);
+        executor.tracer = tracer;
+        executor.interruptCoordinatorFactory = () -> coordinator;
+
+        final OrcaAgentExecutionResult result = executor.execute(
+                createContext(new DefaultToolRegistry(), null, compactingEngine(traced)),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-int")).build());
+
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
+        final TraceSpan compaction = singleOfType(store.bySession("conv-int"), SpanType.COMPACTION);
+        assertThat(compaction.getStatus()).isEqualTo(SpanStatus.INTERRUPTED);
+        assertThat(compaction.getOutputs())
+                .hasValueSatisfying(outputs -> assertThat(asMap(outputs)).containsEntry("outcome", "interrupted"));
+    }
+
+    @Test
+    @DisplayName("ST-5: a rolling engine's turn gets the same COMPACTION span (version-1 log: its default-engine"
+            + " fallback)")
+    void rollingEngineRun() {
+        final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+        final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
+        final RecordingLlmClient stub = new RecordingLlmClient();
+        stub.enqueue(LlmResponse.text("the summary"));
+        stub.enqueue(LlmResponse.text("done"));
+        final LlmClient traced = new TracingLlmClient(stub, tracer);
+        final OrcaAgentExecutor executor = createExecutor(traced);
+        executor.tracer = tracer;
+
+        executor.execute(createContext(new DefaultToolRegistry(), null, rollingEngine(traced)),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-rolling")).build());
+
+        final List<TraceSpan> spans = store.bySession("conv-rolling");
+        final TraceSpan compaction = singleOfType(spans, SpanType.COMPACTION);
+        assertThat(compaction.getParentSpanId()).contains(singleOfType(spans, SpanType.TURN).getSpanId());
+        assertThat(spans).filteredOn(s -> s.getType() == SpanType.LLM)
+                .filteredOn(s -> LlmCallMetadata.Feature.COMPACTION.equals(s.getAttributes().get("feature")))
+                .singleElement().satisfies(s -> assertThat(s.getParentSpanId()).contains(compaction.getSpanId()));
     }
 
     @Test
@@ -557,12 +699,54 @@ class OrcaAgentExecutorTracingTest {
 
     // ── wiring helpers (mirrors OrcaAgentExecutorParallelToolTest) ───────────────
 
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> asMap(Object snapshot) {
+        return (Map<String, Object>) snapshot;
+    }
+
+    private static TraceSpan singleOfType(List<TraceSpan> spans, SpanType type) {
+        final List<TraceSpan> ofType = spans.stream().filter(s -> s.getType() == type).toList();
+        assertThat(ofType).as("spans of type %s", type).hasSize(1);
+        return ofType.get(0);
+    }
+
+    private static final ModelContextLimits LIMITS = ModelContextLimits.builder().contextWindow(10_000)
+            .reservedOutputTokens(1_000).autoCompactRatio(0.8).warningBuffer(1_000).blockingBuffer(500).build();
+
     /** The default engine with every estimate fixed in the auto-compact band, so iteration 1 compacts. */
     private static ContextEngine compactingEngine(LlmClient client) {
-        final TokenEstimator fixed = new TokenEstimator() {
+        return compactingEngine(client, 7_500);
+    }
+
+    /** A rolling engine; over the version-1 transcripts here it compacts as its default-engine fallback does. */
+    private static ContextEngine rollingEngine(LlmClient client) {
+        final TokenEstimator fixed = fixedEstimator(7_500);
+        return RollingContextEngine.builder()
+                .compactionEngine(
+                        DefaultCompactionEngine.withDefaults(client, fixed, new DefaultHookExecutionManager()))
+                .modelContextWindowRegistry(InMemoryModelContextWindowRegistry.builder().defaultLimits(LIMITS).build())
+                .tokenEstimator(fixed).build();
+    }
+
+    /**
+     * The default engine with every estimate fixed: 7500 is the auto-compact band (7200..8500), 6500 the warning band
+     * (6200..7200), 9000 past the blocking limit.
+     */
+    private static ContextEngine compactingEngine(LlmClient client, int estimate) {
+        final TokenEstimator fixed = fixedEstimator(estimate);
+        final CompactionEngine compactionEngine = DefaultCompactionEngine.withDefaults(client, fixed,
+                new DefaultHookExecutionManager());
+        final DefaultCompactionGuard guard = new DefaultCompactionGuard(compactionEngine,
+                InMemoryModelContextWindowRegistry.builder().defaultLimits(LIMITS).build(), fixed);
+        return DefaultContextEngine.builder().compactionGuard(guard).compactionEngine(compactionEngine)
+                .tokenEstimator(fixed).build();
+    }
+
+    private static TokenEstimator fixedEstimator(int estimate) {
+        return new TokenEstimator() {
             @Override
             public int estimate(String systemPrompt, List<Message> messages) {
-                return 7_500;
+                return estimate;
             }
 
             @Override
@@ -575,16 +759,6 @@ class OrcaAgentExecutorTracingTest {
                 return 0;
             }
         };
-        final CompactionEngine compactionEngine = DefaultCompactionEngine.withDefaults(client, fixed,
-                new DefaultHookExecutionManager());
-        final DefaultCompactionGuard guard = new DefaultCompactionGuard(compactionEngine,
-                InMemoryModelContextWindowRegistry.builder()
-                        .defaultLimits(ModelContextLimits.builder().contextWindow(10_000).reservedOutputTokens(1_000)
-                                .autoCompactRatio(0.8).warningBuffer(1_000).blockingBuffer(500).build())
-                        .build(),
-                fixed);
-        return DefaultContextEngine.builder().compactionGuard(guard).compactionEngine(compactionEngine)
-                .tokenEstimator(fixed).build();
     }
 
     /** Records every request and answers with the transcript unchanged. */
@@ -729,6 +903,11 @@ class OrcaAgentExecutorTracingTest {
     private static final class RecordingLlmClient implements LlmClient {
         private final List<LlmResponse> responses = new ArrayList<>();
         private final List<LlmCallMetadata> metadata = new CopyOnWriteArrayList<>();
+        /** Runs when a summary call arrives, before it is answered. */
+        private Runnable onCompaction = () -> {
+        };
+        /** Makes every summary call fail. */
+        private boolean failCompaction;
 
         void enqueue(LlmResponse response) {
             responses.add(response);
@@ -744,6 +923,13 @@ class OrcaAgentExecutorTracingTest {
         public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
                 LlmModel modelConfig, LlmCallMetadata callMetadata) {
             metadata.add(callMetadata);
+            if (callMetadata != null
+                    && callMetadata.getFeature().filter(LlmCallMetadata.Feature.COMPACTION::equals).isPresent()) {
+                onCompaction.run();
+                if (failCompaction) {
+                    throw new LlmClientException("summary provider down");
+                }
+            }
             return sendMessage(systemPrompt, messages, tools, modelConfig);
         }
 

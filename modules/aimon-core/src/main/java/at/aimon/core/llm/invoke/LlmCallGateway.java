@@ -524,8 +524,9 @@ public final class LlmCallGateway<M> {
      *
      * <p>
      * The {@code cancellation} token is forwarded to the underlying {@link LlmClient}; a native-streaming provider
-     * registers its {@code StreamResponse.close()} lever against it so a mid-stream cancellation aborts the HTTP
-     * connection immediately. The gateway short-circuits at the top of every attempt and treats a
+     * registers a per-call transport abort against it before the request is sent, so a cancellation during the header
+     * wait or mid-stream cuts that call's HTTP transport immediately (the stream itself is closed by the consumer
+     * thread, not by the lever). The gateway short-circuits at the top of every attempt and treats a
      * {@link LlmCallCancelledException} as terminal (never retried, never used to trigger fallback).
      *
      * @param cancellation

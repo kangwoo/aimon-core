@@ -7,6 +7,7 @@ import java.util.function.Consumer;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.artifact.ArtifactCollector;
+import at.aimon.core.agent.compact.CompactionObserver;
 import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.quota.QuotaGuard;
 import at.aimon.core.agent.session.SessionId;
@@ -303,6 +304,20 @@ public final class ToolContextKeys {
      */
     public static final ToolContextKey<SkillForkExecutor> SKILL_FORK_EXECUTOR_KEY = ToolContextKey
             .of("skillForkExecutor", SkillForkExecutor.class);
+
+    /**
+     * Typed key for the {@link CompactionObserver} a {@code /compact} command hands its {@code ContextRequest}.
+     *
+     * <p>
+     * Set by the agent executor on the user-slash command path, and only when tracing is on and the command has a
+     * COMMAND span: the observer opens a COMPACTION span under it, so the trace reads COMMAND &gt; COMPACTION &gt; LLM.
+     * With tracing off the key is absent and the command's tool context is the one it was before the key existed. It is
+     * put on every slash command's context, not only {@code /compact}'s (matching on the command name was rejected as
+     * brittle), so the tools an LLM-backed slash command runs inherit it with the rest of that context; a tool that
+     * reads it would open its COMPACTION spans under the same COMMAND span. No tool in this repository reads it.
+     */
+    public static final ToolContextKey<CompactionObserver> COMPACTION_OBSERVER = ToolContextKey.of("compactionObserver",
+            CompactionObserver.class);
 
     /**
      * Typed key for a per-execution {@link SkillHookActivator}.
