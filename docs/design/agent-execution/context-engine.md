@@ -483,6 +483,13 @@ CTX-05 가 선행 조건이다. 그때 되살린다면 고정 단위는 "메모�
 - **`ContextRequest` 에 `callMetadata` 가 있다.** §3.1 목록에는 없다. `/compact` 는 `LlmCallMetadata`
   (`component = compact-command`, traceId, principal)를 붙이는데 `ContextCaller(executionId, principal)` 로는 component
   이름을 나를 수 없다. 선택 필드이고 engine 은 그대로 `CompactionRequest` 로 넘긴다
+- **`ContextRequest` 에 `compactionObserver` 도 있다** (2026-10-20, 트레이싱 ST-5). §3.1 목록에는 없다. 압축 **시도**를
+  알리는 `agent.compact.CompactionObserver` 로, 기본은 `CompactionObserver.none()` 이고 빌더가 `failSafe` 로 감싼다.
+  engine 은 시도를 실제로 할 때만 `begin` 하고(가드의 엔진 호출, 뷰 모드의 첫 요약 호출, `compactNow`, 롤링의 요약·prune),
+  요약 호출의 metadata 를 시도의 `enrich` 로 넘기며, 설치까지 끝난 결과를 `record` 한다. in-place AUTO 는
+  `CompactionGuardRequest.compactionObserver` 로 가드까지 간다 — 인터페이스 기본 `maybeCompact(CompactionGuardRequest)` 에
+  기대는 커스텀 가드는 그것을 버린다. 트레이싱 실행기는 여기에 COMPACTION span 을 여는 관찰자를 싣는다
+  ([`tracing.md`](../observability/tracing.md) D12). `recover` 는 읽지 않는다
 - **`hookRegistry` · `environment` 는 선택이다.** 스킬 루프(`LlmSkillExecutor`)는 scratch 버퍼 위에서 돌고 둘 다 없으며
   `passthrough()` 를 쓴다. `DefaultContextEngine` 은 둘 중 하나가 빠지면 `IllegalArgumentException` 을 던진다
 - **`summarize` 의 모양.** `CompactionEngine.summarize(SummaryRequest)` 는 새 타입이 아니라 `CompactionResult` 를 돌려준다.

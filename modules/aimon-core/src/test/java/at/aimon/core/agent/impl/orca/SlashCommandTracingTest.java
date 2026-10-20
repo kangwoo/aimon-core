@@ -191,7 +191,7 @@ class SlashCommandTracingTest {
     }
 
     @Test
-    @DisplayName("ST-10: /compact's summary call is an LLM span under its COMMAND span, in the turn's trace")
+    @DisplayName("ST-10/ST-5: /compact nests COMMAND > COMPACTION > LLM, in the turn's trace")
     void compactSummaryCallNestsUnderTheCommand() {
         final DefaultCompactionEngine compactionEngine = DefaultCompactionEngine.withDefaults(llm,
                 new HeuristicTokenEstimator(), hookManager);
@@ -213,7 +213,13 @@ class SlashCommandTracingTest {
         final TraceSpan summary = spans.stream().filter(s -> s.getType() == SpanType.LLM)
                 .filter(s -> LlmCallMetadata.Feature.COMPACTION.equals(s.getAttributes().get("feature"))).findFirst()
                 .orElseThrow(() -> new AssertionError("no COMPACTION LLM span"));
-        assertThat(summary.getParentSpanId()).contains(command.getSpanId());
+        final TraceSpan compaction = only(spans, SpanType.COMPACTION);
+        assertThat(compaction.getParentSpanId()).contains(command.getSpanId());
+        assertThat(compaction.getName()).isEqualTo("compaction:manual");
+        assertThat(compaction.getStatus()).isEqualTo(SpanStatus.OK);
+        assertThat(inputsOf(compaction)).containsEntry("trigger", "MANUAL");
+        assertThat(outputsOf(compaction)).containsEntry("outcome", "compacted");
+        assertThat(summary.getParentSpanId()).contains(compaction.getSpanId());
         assertThat(summary.getTraceId()).isEqualTo(command.getTraceId());
         assertThat(summary.getSessionId()).isEqualTo(command.getSessionId());
         // Only the span position is taken from the command context: the call is still attributed to /compact.
@@ -223,6 +229,34 @@ class SlashCommandTracingTest {
         assertThat(summaryCall.getComponent()).contains("compact-command");
         assertThat(summaryCall.getPrincipal()).contains(alice);
         assertThat(summaryCall.getTraceId()).contains(SESSION);
+    }
+
+    @Test
+    @DisplayName("ST-5: /compact on an empty conversation opens no COMPACTION span")
+    void compactOfAnEmptyConversationHasNoCompactionSpan() {
+        final DefaultCompactionEngine compactionEngine = DefaultCompactionEngine.withDefaults(llm,
+                new HeuristicTokenEstimator(), hookManager);
+        final CompactCommand compact = new CompactCommand(
+                compactionEngine, new DefaultCompactionGuard(compactionEngine,
+                        InMemoryModelContextWindowRegistry.withDefaults(), new HeuristicTokenEstimator()),
+                new DefaultHookRegistry(), hookManager);
+
+        executor.execute(runtime(compact), request("/compact"));
+
+        final List<TraceSpan> spans = store.bySession(SESSION);
+        assertThat(only(spans, SpanType.COMMAND).getName()).isEqualTo("command:/compact");
+        assertThat(spans).noneMatch(s -> s.getType() == SpanType.COMPACTION);
+    }
+
+    @Test
+    @DisplayName("ST-5: traced, the command's tool context carries the compaction observer; tracing off, it does not")
+    void compactionObserverKeyOnlyWhenTraced() {
+        executor.execute(runtime(), request("/probe"));
+        assertThat(probe.observerPresent).isTrue();
+
+        executor.tracer = Tracer.noop();
+        executor.execute(runtime(), request("/probe"));
+        assertThat(probe.observerPresent).isFalse();
     }
 
     /**
@@ -299,6 +333,7 @@ class SlashCommandTracingTest {
     /** A direct command recording the call metadata its tool context carried. */
     private static final class ProbeCommand extends SystemCommand implements DirectExecutable {
         private LlmCallMetadata metadata;
+        private boolean observerPresent;
 
         ProbeCommand() {
             super("probe", "records its tool context");
@@ -307,6 +342,7 @@ class SlashCommandTracingTest {
         @Override
         public CommandExecutionResult execute(CommandExecutionContext context, DirectCommandExecutionRequest request) {
             metadata = context.getToolContext().get(ToolContextKeys.LLM_CALL_METADATA_KEY).orElse(null);
+            observerPresent = context.getToolContext().get(ToolContextKeys.COMPACTION_OBSERVER).isPresent();
             return CommandExecutionResult.success("probed");
         }
     }

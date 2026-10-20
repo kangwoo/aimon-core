@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/observability/execution-tracing-guide.md
-source_commit: 3f6f6a43
+source_commit: 5a1e5ef7
 ---
 
 # Execution Tracing Guide
@@ -159,18 +159,37 @@ The principal fields of `TraceSpan` (an immutable value object):
 | `sessionId` | The conversation-level group (= conversationId) |
 | `traceId` | The turn level (= the turn root span id) |
 | `spanId` / `parentSpanId` | This span / its parent (a root has no parent) |
-| `type` | `TURN` / `ITERATION` / `LLM` / `TOOL` / `SUBAGENT` / `COMMAND` / `ROUTINE` (`COMPACTION` / `RETRIEVER` are reserved — nothing emits them yet) |
+| `type` | `TURN` / `ITERATION` / `LLM` / `TOOL` / `SUBAGENT` / `COMMAND` / `ROUTINE` / `COMPACTION` (`RETRIEVER` is reserved — nothing emits it yet) |
 | `name` | For example `turn:<agent>`, `iteration#3`, `llm:<model>`, a tool name |
 | `startTime` / `endTime` / `latency()` | Timing and latency |
 | `status` | `OK` / `ERROR` / `INTERRUPTED` |
 | `inputs` / `outputs` | A **summary** of input and output (message count, tokens, tool input …). An LLM span's outputs also carry the `stopReason` the provider reported (e.g. `MAX_TOKENS`) |
 | `tokenUsage` / `model` | LLM spans only |
-| `attributes` | Extra information such as `iteration`. An LLM span carries the call's `feature` (for a compaction summary call, `compaction`) and, for a streaming call, `streaming=true` and `ttftMs` to the first content chunk; a SUBAGENT span the fork's `executionId`, the background wait `queuedMs` and a pool rejection's `rejected`; an ITERATION span the task ids of the background completion notifications the previous tail received, `subagent.received.taskIds`; a TURN span the delivered notification's `subagent.received.taskIds` and the unread ones' `subagent.received.unreadTaskIds` |
+| `attributes` | Extra information such as `iteration`. An LLM span carries the call's `feature` (for a compaction summary call, `compaction`) and, for a streaming call, `streaming=true` and `ttftMs` to the first content chunk; a SUBAGENT span the fork's `executionId`, the background wait `queuedMs` and a pool rejection's `rejected`; an ITERATION span the task ids of the background completion notifications the previous tail received, `subagent.received.taskIds`; a TURN span the delivered notification's `subagent.received.taskIds` and the unread ones' `subagent.received.unreadTaskIds`; a COMPACTION span the iteration it gates, `iteration`, and `invokerType` (plus `budgetForced=true` when a budget hint forced it, and `executionId` in a fork) |
 
 The two paths that start work without a tool call have a parent too. A slash-command turn opens a `COMMAND` span
 (`command:/<name>`) under its TURN, and a fork-mode skill's `SUBAGENT` that the command starts nests under it. A
 scheduled routine has no session, so each run (fire) opens a `ROUTINE` root span with a `TOOL` span per step **attempt**
 under it (`invoker=ROUTINE`, `stepIndex`, `attempt`) — that trace's `sessionId` is `routine:<taskId>`.
+
+Each compaction **attempt** leaves one `COMPACTION` span (`compaction:auto`, `compaction:manual`), and the summary LLM
+call (`feature=compaction`) nests under it. An AUTO compaction sits under the run root (the TURN, or the SUBAGENT in a
+fork) as the **preceding sibling** of the ITERATION it gates — the gate runs before that ITERATION opens. `/compact` sits
+under its COMMAND. The inputs are `trigger`, `strategy` (`in-place` / `view` / `rolling`), `blockingForced` and
+`messagesBefore`; the outputs are `outcome` (`compacted` / `blocked` / `failed` / `interrupted`), `kind`, `preTokens` /
+`postTokens` (the view after the summary was installed), `messagesSummarized`, `summaryCalls` and `summaryChars`, plus
+`blockingLimit` and `overBlockingLimit` when the record reports a blocking limit, and the view shape and absorbed range
+for a rolling one. The summary text (`summary`) is kept only under a content-capturing policy. The LLM children carry the
+tokens. A decision not to compact — under the threshold, the warning band, the circuit breaker, a concurrent compaction,
+nothing to summarize — leaves no span.
+
+```
+TURN ─┬ COMPACTION compaction:auto (iteration=3) ── LLM (feature=compaction)
+      └ ITERATION #3 ── LLM, TOOL …
+SUBAGENT ─┬ COMPACTION … ── LLM
+          └ ITERATION #2 …
+COMMAND command:/compact ── COMPACTION compaction:manual ── LLM
+```
 
 **Span context propagation** is not thread-local; it flows explicitly through the reserved tags on `LlmCallMetadata`
 (`aimon.trace_id`, `aimon.parent_span_id`). Parent-child links therefore stay correct even under parallel tool dispatch
@@ -319,7 +338,7 @@ exceptions too.
 | What is traced | **Agent turns only** (the ReAct loop + subagents). Background subsystems (wiki indexing, peer memory, the dreamer) are deliberately untraced — those calls have no turn span context, so wrapping them would produce no span anyway |
 | Subagents | Each subagent run gets one `SUBAGENT` span under the `TOOL` span of the tool call that launched it (`Task`, `Workflow`, a fork-mode skill) — under the `COMMAND` span for a slash command, under the attempt's `TOOL` for a routine step — and the subagent's own `ITERATION` / `LLM` / `TOOL` spans nest under it (recursively, for a subagent inside a subagent). A background subagent's span can start after its parent has closed — parent and child are linked by id. When its completion notification arrives mid-turn, the ITERATION that reads it records the task id in `subagent.received.taskIds`, matching the SUBAGENT span's `taskId`. If the turn stops right after that drain (interrupt, budget, quota, the iteration cap), no ITERATION reads it, so the TURN records it in `subagent.received.unreadTaskIds` — the notification stays in the transcript and the next turn's first LLM call reads it (unless the turn is rewound or `/retry`-ed, which removes it with the turn's other messages, so nothing ever reads it). A notification that arrives while the parent is idle is delivered as a new turn by the caller's between-turn drain. If the caller puts the task id in the execution attribute `aimon.subagent.received_task_id` (`SubagentTaskCompleted.RECEIVED_TASK_ID_ATTRIBUTE`), that TURN records it in `subagent.received.taskIds` — the CLI does. The attribute also reaches that turn's tools and hooks, and the forks it starts. A subagent manager built by handing it an executor needs the tracer on that executor too ([wiring](#wiring-it-programmatically)) |
 | Scheduled routines | With a tracer wired, every fire leaves a `ROUTINE` trace. The LLM-call metadata of a fork started from a traced routine carries `traceId = routine:<taskId>`; with tracing off it stays empty as before — so this usage-metadata field depends on whether tracing is on. The CLI's `/trace` shows TURNs only, so read routine traces from the store (`bySession("routine:<taskId>")`). Under the default (summary) policy a step's TOOL span input is only the parameters written for that step (`toolParams`, templates unresolved) — the resolved input mixes in earlier steps' output, so it is recorded as `input` only under a content-capturing policy. A timed-out step's TOOL span closes at once, but a tool that ignores the cancel can keep running, so a SUBAGENT it starts appears late under the already-closed TOOL span (still linked by id) |
-| Compaction | There is no `COMPACTION` span yet. A summary LLM call is an LLM span with a `feature=compaction` attribute — under the TURN for the main turn (the gate runs before the ITERATION opens), under its ITERATION for a fork. The fork executors this repository assembles use the passthrough engine, so their forks never compact — the fork side shows only on an executor given a real `ContextEngine`. The `/compact` command's summary call nests under its COMMAND span |
+| Compaction | Each compaction attempt gets a `COMPACTION` span, with the summary LLM span under it ([the span model](#the-span-model)). The two-summary pass at the blocking limit is one COMPACTION with two LLM children. A summary that fails at the blocking limit ends the COMPACTION and the TURN in ERROR, with no ITERATION. An attempt that failed because the execution was cancelled (the summary call was cancelled, or a cancelled PreCompact hook blocked it) is `INTERRUPTED` — another failure that merely coincides with a cancel is `ERROR`; one a PreCompact hook blocked is `OK` (`outcome=blocked`). The fork executors this repository assembles still use the passthrough engine, so their forks never compact — the fork side shows only on an executor given a real `ContextEngine`. A custom `CompactionGuard` (one relying on the interface's default `maybeCompact(CompactionGuardRequest)`) and a custom `ContextEngine` that does not pass the observer on produce no COMPACTION span — the summary LLM span then nests under the run root |
 | Untraced paths | An app calling an agent-level `WorkflowRunner` directly has no parent span, so it records nothing (no orphans). How an external viewer (OTLP) draws a background SUBAGENT that starts after its parent is unverified |
 | Input/output capture | By default only the summary is stored (message count/tokens/tool input). `TracePayloadPolicy.full(maxChars)` optionally captures the **tool-result and LLM-response bodies** and the TURN/SUBAGENT **final answer** (truncated at the ceiling). A `SpanRedactor` masks sensitive keys just before storage — [§payload capture](#payload-capture-and-masking-trace-02) |
 | Sampling / a non-blocking worker | Not implemented. Under heavy production traffic, a follow-up `TraceSampler` plus a bounded-queue worker is recommended |

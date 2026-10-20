@@ -5,7 +5,9 @@ package at.aimon.core.tracing;
  *
  * <p>
  * A trace (one turn) is a tree of spans: a {@link #TURN} root contains {@link #ITERATION} spans, each of which contains
- * {@link #LLM} and {@link #TOOL} spans; a {@link #TOOL} that spawns a subagent contains a {@link #SUBAGENT} subtree.
+ * {@link #LLM} and {@link #TOOL} spans; a {@link #TOOL} that spawns a subagent contains a {@link #SUBAGENT} subtree. A
+ * compaction before an iteration is a {@link #COMPACTION} sibling ahead of it, with its summary {@link #LLM} call
+ * inside.
  *
  * <p>
  * Two shapes start a subagent without a model-chosen tool call. A turn that runs a slash command instead of the ReAct
@@ -30,8 +32,10 @@ public enum SpanType {
     SUBAGENT,
 
     /**
-     * A conversation compaction operation. Reserved: nothing emits it yet — a compaction summary call is recorded as an
-     * {@link #LLM} span with a {@code feature=compaction} attribute.
+     * One compaction attempt. AUTO compaction nests under the run root ({@link #TURN}, or {@link #SUBAGENT} in a fork)
+     * as a preceding sibling of the {@link #ITERATION} it gates; {@code /compact} nests under its {@link #COMMAND}. The
+     * summary call is an {@link #LLM} child with a {@code feature=compaction} attribute; an elision-only (prune)
+     * compaction has none.
      */
     COMPACTION,
 

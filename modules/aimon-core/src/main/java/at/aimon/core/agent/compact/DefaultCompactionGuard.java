@@ -158,14 +158,16 @@ public class DefaultCompactionGuard implements CompactionGuard {
 
     @Override
     public CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry) {
-        return serializedEvaluate(memory, model, hookRegistry, null, null, null, false, null);
+        return serializedEvaluate(memory, model, hookRegistry, null, null, null, false, null,
+                CompactionObserver.none());
     }
 
     @Override
     public CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
             ExecutionId executionId) {
         Objects.requireNonNull(executionId, "executionId cannot be null");
-        return serializedEvaluate(memory, model, hookRegistry, executionId, null, null, false, null);
+        return serializedEvaluate(memory, model, hookRegistry, executionId, null, null, false, null,
+                CompactionObserver.none());
     }
 
     /**
@@ -173,7 +175,10 @@ public class DefaultCompactionGuard implements CompactionGuard {
      *
      * <p>
      * Unlike the positional entry points, this one carries the request's execution environment and cancellation signal
-     * through to the {@link CompactionRequest}, so the compaction hooks see them.
+     * through to the {@link CompactionRequest}, so the compaction hooks see them, and its
+     * {@linkplain CompactionGuardRequest#getCompactionObserver() observer} around the engine call: it hears of an
+     * attempt only when the ladder actually calls the engine, never of a pass the breaker, the lock, the precondition
+     * or the warning band ended.
      */
     @Override
     public CompactionDecision maybeCompact(CompactionGuardRequest request) {
@@ -181,19 +186,20 @@ public class DefaultCompactionGuard implements CompactionGuard {
         return serializedEvaluate(request.getTranscriptBuffer(), request.getModel(), request.getHookRegistry(),
                 request.getExecutionId().orElse(null), request.getExecutionEnvironment().orElse(null),
                 request.getExecutionCancellation().orElse(null), request.isBudgetForced(),
-                request.getCallMetadata().orElse(null));
+                request.getCallMetadata().orElse(null), request.getCompactionObserver());
     }
 
     @Override
     public CompactionDecision forceCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry) {
-        return serializedEvaluate(memory, model, hookRegistry, null, null, null, true, null);
+        return serializedEvaluate(memory, model, hookRegistry, null, null, null, true, null, CompactionObserver.none());
     }
 
     @Override
     public CompactionDecision forceCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
             ExecutionId executionId) {
         Objects.requireNonNull(executionId, "executionId cannot be null");
-        return serializedEvaluate(memory, model, hookRegistry, executionId, null, null, true, null);
+        return serializedEvaluate(memory, model, hookRegistry, executionId, null, null, true, null,
+                CompactionObserver.none());
     }
 
     /**
@@ -219,11 +225,15 @@ public class DefaultCompactionGuard implements CompactionGuard {
      * @param callMetadata
      *            the caller's metadata for the summary LLM call, or {@code null} when it has none (every positional
      *            entry point)
+     * @param observer
+     *            told of the engine call, if there is one ({@link CompactionObserver#none()} from every positional
+     *            entry point)
      */
     @SuppressWarnings("checkstyle:ParameterNumber")
     private CompactionDecision serializedEvaluate(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
             ExecutionId executionId, ExecutionEnvironment executionEnvironment,
-            CancellationSignal executionCancellation, boolean budgetForced, LlmCallMetadata callMetadata) {
+            CancellationSignal executionCancellation, boolean budgetForced, LlmCallMetadata callMetadata,
+            CompactionObserver observer) {
         Objects.requireNonNull(memory, "memory cannot be null");
         Objects.requireNonNull(model, "model cannot be null");
         Objects.requireNonNull(hookRegistry, "hookRegistry cannot be null");
@@ -232,7 +242,7 @@ public class DefaultCompactionGuard implements CompactionGuard {
         return serialized(sessionId,
                 () -> evaluate(memory.getSystemPrompt(), memory.getMessages(), model, sessionId, budgetForced,
                         forced -> invokeEngine(memory, model, hookRegistry, sessionId, executionId,
-                                executionEnvironment, executionCancellation, callMetadata, forced)));
+                                executionEnvironment, executionCancellation, callMetadata, observer, forced)));
     }
 
     /**
@@ -428,21 +438,29 @@ public class DefaultCompactionGuard implements CompactionGuard {
     @SuppressWarnings("checkstyle:ParameterNumber")
     private CompactionResult invokeEngine(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
             SessionId sessionId, ExecutionId executionId, ExecutionEnvironment executionEnvironment,
-            CancellationSignal executionCancellation, LlmCallMetadata callMetadata, boolean forced) {
-        // executionId is null for a session-backed compaction; the builder treats that as "identify by session id",
-        // which is what the engine did before this channel existed.
-        final CompactionRequest request = CompactionRequest.builder().transcriptBuffer(memory)
-                .trigger(CompactionTrigger.AUTO).model(model).hookRegistry(hookRegistry)
-                .executionEnvironment(executionEnvironment).executionCancellation(executionCancellation).forced(forced)
-                .executionId(executionId).callMetadata(callMetadata).build();
-        try {
-            return compactionEngine.compact(request);
-        } catch (RuntimeException e) {
-            log.error("CompactionEngine threw unexpected exception for session {}: {}", sessionId, e.getMessage(), e);
-            // Defensive: engines should never escape exceptions, but if they do, surface as failure.
-            final CompactionMetadata metadata = CompactionMetadata.builder().trigger(CompactionTrigger.AUTO)
-                    .startedAt(Instant.now()).completedAt(Instant.now()).build();
-            return CompactionResult.failure(e, metadata);
+            CancellationSignal executionCancellation, LlmCallMetadata callMetadata, CompactionObserver observer,
+            boolean forced) {
+        // The attempt opens before the request is built, so the summary call's metadata can name it. With no observer
+        // (tracing off) enrich hands callMetadata back as it is, and the request is the one built before this seam.
+        try (CompactionObserver.Attempt attempt = observer
+                .begin(CompactionStart.builder().trigger(CompactionTrigger.AUTO).strategy(CompactionStart.IN_PLACE)
+                        .blockingForced(forced).messagesBefore(memory.size()).build())) {
+            // executionId is null for a session-backed compaction; the builder treats that as "identify by session
+            // id", which is what the engine did before this channel existed.
+            final CompactionRequest request = CompactionRequest.builder().transcriptBuffer(memory)
+                    .trigger(CompactionTrigger.AUTO).model(model).hookRegistry(hookRegistry)
+                    .executionEnvironment(executionEnvironment).executionCancellation(executionCancellation)
+                    .forced(forced).executionId(executionId).callMetadata(attempt.enrich(callMetadata)).build();
+            try {
+                return attempt.record(compactionEngine.compact(request));
+            } catch (RuntimeException e) {
+                log.error("CompactionEngine threw unexpected exception for session {}: {}", sessionId, e.getMessage(),
+                        e);
+                // Defensive: engines should never escape exceptions, but if they do, surface as failure.
+                final CompactionMetadata metadata = CompactionMetadata.builder().trigger(CompactionTrigger.AUTO)
+                        .startedAt(Instant.now()).completedAt(Instant.now()).build();
+                return attempt.record(CompactionResult.failure(e, metadata));
+            }
         }
     }
 

@@ -1,4 +1,4 @@
-# 서브에이전트 트레이싱 — 등록 항목 12건 (열림 6 · 닫힘 6)
+# 서브에이전트 트레이싱 — 등록 항목 12건 (열림 5 · 닫힘 7)
 
 출처는 [`../design/observability/subagent-trace-nesting.md`](../design/observability/subagent-trace-nesting.md) 의 구현이다.
 그 문서 §7(Open questions)과 §8(구현 뒤 — 설계와 달라진 점)이 적은 것 가운데 **이번 변경 밖으로 결과가 나가는 것**만
@@ -9,8 +9,8 @@
 
 ST-1 ~ ST-6 은 같은 날 한 변경으로 처리되었다(2026-10-17, 설계
 [`../design/observability/subagent-tracing-backlog.md`](../design/observability/subagent-tracing-backlog.md)). ST-2 · ST-4 ·
-ST-6 은 닫혔고, ST-1 · ST-3 · ST-5 는 **닫힌 부분과 남은 부분**으로 나뉘어 열림으로 남는다 — 외부에서 ST-n 으로 참조되므로
-항목을 쪼개 번호를 새로 매기지 않았다. 각 항목의 "처리" 절이 무엇을 어떻게 닫았는지와 착수해 보니 적힌 것과 달랐던 점을
+ST-6 은 닫혔고, ST-1 · ST-3 · ST-5 는 **닫힌 부분과 남은 부분**으로 나뉘어 열림으로 남았다 — 외부에서 ST-n 으로 참조되므로
+항목을 쪼개 번호를 새로 매기지 않았다. ST-5 의 남은 부분(COMPACTION span)은 그 뒤 따로 닫혔다(2026-10-20). 각 항목의 "처리" 절이 무엇을 어떻게 닫았는지와 착수해 보니 적힌 것과 달랐던 점을
 적는다. ST-7 ~ ST-11 은 그 설계의 열린 질문(§7) 가운데 **이 변경 밖으로 결과가 나가는 것**을 올린 것이다. ST-12 는 그
 뒤 백그라운드 결과의 수신 측 기록(#293)에서 남은 갈래다.
 
@@ -171,7 +171,7 @@ pool 거부, 루프 전에 던진 실행 — 는 속성이 없다. 결과는 직
 
 ---
 
-## ST-5 — 서브에이전트 compaction 호출과 COMPACTION span · **열림 (요약 호출의 위치는 닫힘)**
+## ST-5 — 서브에이전트 compaction 호출과 COMPACTION span · **닫힘** *(2026-10-20)*
 
 **무엇을.** 포크 루프의 compaction 요약 호출이 iteration metadata 를 싣게 하고, COMPACTION span 을 그 iteration 아래에 둔다.
 
@@ -212,6 +212,40 @@ span 이 부모 세션의 trace 에서 빠지므로 `traceId` 도 함께 싣는�
 임베더에게만 보인다 — "닫힘" 을 "운영 트레이스에 포크의 요약 호출이 나온다" 로 읽지 말 것. 이때 `/compact` 명령의 요약 호출은
 COMMAND span 아래 붙지 않았다 — ST-10 에서 닫았다 (2026-10-18, #265).
 
+### 처리 (2026-10-20) — COMPACTION span, 닫힘
+
+- **이음매 — 요청에 실린 관찰자.** 새 SPI `agent.compact.CompactionObserver`(`begin(CompactionStart)` → `Attempt` 의
+  `enrich` · `record` · `close`, `none()` · `failSafe()`)를 `ContextRequest` · `CompactionGuardRequest` 의
+  `compactionObserver` 로 싣는다. 시도를 실제로 하는 곳이 부른다 — 기본 가드의 엔진 호출(`DefaultCompactionGuard#invokeEngine`),
+  뷰 모드의 첫 요약 호출(`DefaultContextEngine` 의 `Pass`), in-place `compactNow`, 롤링 엔진의 `summarizeSpan` 과 prune.
+  그래서 NONE · WARN · 차단기 · 잠금 경합 · "요약할 것 없음" · 합법 컷 없음은 span 을 남기지 않고, 항목이 걱정한 "빈 span"
+  이 생기지 않는다. 트레이싱 구현은 `toolinvocation.TracingCompactionObserver` 다(`tracing.md` D12). 요약 호출은
+  `enrich` 가 회전한 metadata 를 받아 LLM span 이 COMPACTION 아래 붙는다. `Tracer` · `Spans` · `CompactionRequest` ·
+  `SummaryRequest` · `DefaultCompactionEngine` 은 바뀌지 않았다.
+- **중첩 — 런 루트 아래, 막는 iteration 의 앞 형제.** 메인 턴은 TURN 아래(`iteration=N` 속성), 포크는 SUBAGENT 아래,
+  `/compact` 는 COMMAND 아래(`ToolContextKeys.COMPACTION_OBSERVER` 로 넘긴다 — 트레이싱이 꺼지면 키가 없다). 항목이 적은
+  "그 iteration 아래" 대신 이것을 골랐다 — 메인 턴의 게이트는 원래 ITERATION 을 열기 전에 돌고, 막힌 게이트는 iteration 을
+  시작하지 않았으니 그 iteration 의 자식일 수 없다. 처리 1 이 남긴 비대칭(메인=TURN 아래, 포크=ITERATION 아래)은 포크 쪽을
+  옮겨 없앴다.
+- **포크 게이트를 옮겼다.** `DefaultSubagentExecutor` 의 `applyCompactionGate` 를 `IterationTrace.open` 앞으로 옮기고
+  `lc.effectiveMetadata`(SUBAGENT span)를 넘긴다. 보이는 변화: 막힌 포크 iteration 이 ERROR ITERATION span 을 더는 남기지
+  않는다(메인 턴과 같다). `ContextWindowExceededException` · `CancelledExecutionException` 은 루프 밖 catch 가 그대로 받는다.
+
+**착수해 보니 — 적힌 것과 달랐던 점.**
+
+- **트레이싱 구현을 `agent.compact` 에 둘 수 없었다.** 승인 설계는 `TracingCompactionObserver` 를 SPI 옆에 두었지만
+  `agent..` 아래 패키지는 `tracing` 에 의존할 수 없다(ArchUnit). `ToolCallTracing` 이 같은 이유로 사는 `toolinvocation`
+  으로 옮겼다. SPI 는 계획대로 `agent.compact` 에 있고 트레이싱 의존이 없다.
+- **두 번 요약 패스는 span 하나다.** 블로킹 한계에서 요약을 두 번 하는 패스는 COMPACTION 하나에 LLM 자식 둘이고, 두 번째
+  호출이 실패하면 첫 번째 compaction 이 결과로 남아 span 은 OK 다(실패한 LLM 자식만 ERROR).
+- **요약 실패는 COMPACTION 과 TURN 을 ERROR 로, iteration 은 0 개로 남긴다.** 블로킹 한계에서 요약이 실패한 턴은
+  COMPACTION ERROR → TURN ERROR 이고 ITERATION #1 이 없다 — 막힌 게이트가 iteration 을 시작하지 않으므로.
+- **취소와 hook 차단을 구별한다.** 신호가 선 채 실패한 시도는 `INTERRUPTED`, PreCompact 차단은 실패가 아니라
+  `OK` + `outcome=blocked`. 신호 없이 `LlmCallCancelledException` 으로 끝난 시도는 ERROR 다. `/compact` 는 신호를 넘기지
+  않아 INTERRUPTED 가 되지 않는다.
+- **커스텀 `CompactionGuard` 는 관찰자를 잃는다.** 인터페이스 기본 `maybeCompact(CompactionGuardRequest)` 는 positional
+  메서드로 위임하므로 관찰자를 버린다 — 그런 가드에서는 COMPACTION span 이 없고 요약 LLM span 은 예전처럼 런 루트 아래 붙는다.
+
 ---
 
 ## ST-6 — `LLM_CALL_METADATA_KEY` 의 부모가 TOOL span 으로 바뀐 것을 외부 저장소의 독자가 견디는가 · **닫힘**
@@ -240,7 +274,10 @@ grep 했다. **도구 쪽 독자는 0건이다.** `aimon-ops` 는 `AgentTracingC
 도구 컨텍스트의 키가 TURN 대신 COMMAND span 을 가리키고(ST-1), 예약 루틴 단계의 도구 컨텍스트에 트레이싱이 켜져 있으면 키가
 **새로 생긴다**(ST-1). 그리고 커스텀 `ContextEngine` · `CompactionEngine` 구현은 이제 트레이싱이 켜져 있으면
 `ContextRequest.getCallMetadata()` 에 값을 받는다(ST-5). 릴리스 노트 메모: "외부 독자 0건 — 2026-10-17 확인; 위 세 변화는
-공개 SPI 에서 관찰된다".
+공개 SPI 에서 관찰된다". ST-5 의 COMPACTION span 처리(2026-10-20)가 공개 SPI 를 더 늘렸다 — `CompactionObserver` ·
+`CompactionStart`, `ContextRequest` · `CompactionGuardRequest` 의 `compactionObserver`, `ToolContextKeys.COMPACTION_OBSERVER`,
+`toolinvocation.TracingCompactionObserver`. 그리고 트레이싱이 켜져 있으면 커스텀 엔진이 받는 요약 호출 metadata 의
+`aimon.parent_span_id` 가 런 루트 대신 COMPACTION span 을 가리킨다.
 
 ---
 

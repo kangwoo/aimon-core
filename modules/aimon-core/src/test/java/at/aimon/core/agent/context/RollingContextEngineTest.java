@@ -24,9 +24,11 @@ import at.aimon.core.agent.compact.CompactionKind;
 import at.aimon.core.agent.compact.CompactionMetadata;
 import at.aimon.core.agent.compact.CompactionRequest;
 import at.aimon.core.agent.compact.CompactionResult;
+import at.aimon.core.agent.compact.CompactionStart;
 import at.aimon.core.agent.compact.CompactionTrigger;
 import at.aimon.core.agent.compact.DefaultPromptSizeRecoveryStrategy;
 import at.aimon.core.agent.compact.InMemoryCompactionFailureStore;
+import at.aimon.core.agent.compact.RecordingCompactionObserver;
 import at.aimon.core.agent.compact.SummaryRequest;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.SegmentId;
@@ -40,6 +42,7 @@ import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.InMemoryModelContextWindowRegistry;
+import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ModelContextLimits;
@@ -842,6 +845,142 @@ class RollingContextEngineTest {
         }
     }
 
+    /** The request's compaction observer: one attempt per summary or prune, none for a pass that attempts nothing. */
+    @Nested
+    class Observer {
+
+        private final RecordingCompactionObserver observer = new RecordingCompactionObserver();
+
+        private ContextRequest observed() {
+            return ContextRequest.builder().transcriptBuffer(buffer).model(MODEL)
+                    .hookRegistry(new DefaultHookRegistry())
+                    .callMetadata(LlmCallMetadata.builder().traceId("t").build()).compactionObserver(observer).build();
+        }
+
+        @Test
+        void aRollingCompactionIsOneAttemptWhoseMetadataTheSummaryCallCarries() {
+            conversation(10, 60);
+
+            engine().prepare(observed());
+
+            final RecordingCompactionObserver.RecordedAttempt attempt = observer.single();
+            assertThat(attempt.start().getTrigger()).isEqualTo(CompactionTrigger.AUTO);
+            assertThat(attempt.start().getStrategy()).isEqualTo(CompactionStart.ROLLING);
+            assertThat(attempt.start().isBlockingForced()).isFalse();
+            assertThat(attempt.start().getMessagesBefore()).isEqualTo(11);
+            assertThat(summarizer.summarized).singleElement()
+                    .satisfies(r -> assertThat(r.getCallMetadata()).hasValueSatisfying(m -> assertThat(m.getTags())
+                            .containsEntry(RecordingCompactionObserver.ATTEMPT_TAG, attempt.number())));
+            assertThat(attempt.result().getMetadata().getKind()).isEqualTo(CompactionKind.ROLLING);
+            assertThat(attempt.result().getMetadata().getPostCompactTokenCount()).isPositive();
+            assertThat(attempt.closes()).isEqualTo(1);
+        }
+
+        @Test
+        void aPruneIsOneAttemptWithNoSummaryCall() {
+            buffer.addUserMessage("goal");
+            buffer.addMessage(Message.assistant("", List.of(ToolUse.of("t1", "Read", Map.of()))));
+            buffer.addMessage(Message.toolUseResults(List.of(ToolUseResult.success("t1", "x".repeat(700)))));
+            buffer.addAssistantMessage("a".repeat(60));
+            buffer.addUserMessage("u".repeat(60));
+            buffer.addAssistantMessage("a".repeat(60));
+            buffer.addUserMessage("u".repeat(60));
+
+            engine().prepare(observed());
+
+            final RecordingCompactionObserver.RecordedAttempt attempt = observer.single();
+            assertThat(attempt.start().getStrategy()).isEqualTo(CompactionStart.ROLLING);
+            assertThat(attempt.enriched()).as("no summary call").isEmpty();
+            assertThat(attempt.result().getMetadata().getKind()).isEqualTo(CompactionKind.PRUNE);
+            assertThat(summarizer.summarized).isEmpty();
+        }
+
+        @Test
+        void aFallbackWarningIsNoAttempt() {
+            buffer.addUserMessage("goal");
+            buffer.addAssistantMessage("a");
+            buffer.summarizeView(SummarySpan.builder().fromSeq(1).toSeq(2).summaryText("s".repeat(520))
+                    .boundaryId("b-1").trigger("AUTO").build());
+
+            final ContextDecision decision = engine().prepare(observed());
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.WARN);
+            assertThat(observer.attempts()).isEmpty();
+        }
+
+        @Test
+        void aConcurrentPassIsNoAttempt() {
+            conversation(10, 60);
+            final RollingContextEngine engine = engine();
+            final RecordingCompactionObserver concurrentObserver = new RecordingCompactionObserver();
+            final AtomicReference<ContextDecision> concurrent = new AtomicReference<>();
+            summarizer.duringSummarize = () -> {
+                try {
+                    concurrent.set(CompletableFuture.supplyAsync(() -> engine.prepare(ContextRequest.builder()
+                            .transcriptBuffer(buffer).model(MODEL).hookRegistry(new DefaultHookRegistry())
+                            .compactionObserver(concurrentObserver).build())).get(5, TimeUnit.SECONDS));
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+            };
+
+            engine.prepare(observed());
+
+            assertThat(concurrent.get().getReason()).contains("concurrent");
+            assertThat(concurrentObserver.attempts()).isEmpty();
+            assertThat(observer.attempts()).hasSize(1);
+        }
+
+        @Test
+        void aRollingCompactNowIsOneManualAttempt() {
+            conversation(6, 60);
+
+            engine().compactNow(observed(), "keep the numbers");
+
+            final RecordingCompactionObserver.RecordedAttempt attempt = observer.single();
+            assertThat(attempt.start().getTrigger()).isEqualTo(CompactionTrigger.MANUAL);
+            assertThat(attempt.start().getStrategy()).isEqualTo(CompactionStart.ROLLING);
+            assertThat(attempt.result().isSuccess()).isTrue();
+        }
+
+        @Test
+        void aVersionOneLogReachesTheFallbackWithTheObserver() {
+            buffer = new TranscriptBuffer(SessionId.of("s-v1"));
+            conversation(16, 60);
+
+            engine().prepare(observed());
+
+            final RecordingCompactionObserver.RecordedAttempt attempt = observer.single();
+            assertThat(attempt.start().getStrategy()).isEqualTo(CompactionStart.IN_PLACE);
+            assertThat(summarizer.compactRequests).singleElement()
+                    .satisfies(r -> assertThat(r.getCallMetadata()).hasValueSatisfying(m -> assertThat(m.getTags())
+                            .containsEntry(RecordingCompactionObserver.ATTEMPT_TAG, attempt.number())));
+        }
+
+        @Test
+        void aSummaryInstalledThatThrowsIsRecordedAsAFailure() {
+            summarizer.throwOnInstall = true;
+            conversation(10, 60);
+
+            engine().prepare(observed());
+
+            final CompactionResult recorded = observer.single().result();
+            assertThat(recorded.isFailure()).isTrue();
+            assertThat(recorded.getError())
+                    .hasValueSatisfying(e -> assertThat(e).hasMessage("PostCompact hook blew up"));
+        }
+
+        @Test
+        void aSummarizeThatThrowsIsRecordedAsAFailure() {
+            summarizer.throwOnSummarize = true;
+            conversation(10, 60);
+
+            engine().prepare(observed());
+
+            assertThat(observer.single().result().isFailure()).isTrue();
+        }
+    }
+
     @Nested
     class Construction {
 
@@ -908,6 +1047,7 @@ class RollingContextEngineTest {
 
         private final List<SummaryRequest> summarized = new ArrayList<>();
         private final List<CompactionResult> installed = new ArrayList<>();
+        private final List<CompactionRequest> compactRequests = new ArrayList<>();
         private int compacted;
         private boolean fail;
         private Exception failure = new IllegalStateException("provider down");
@@ -919,6 +1059,7 @@ class RollingContextEngineTest {
         @Override
         public CompactionResult compact(CompactionRequest request) {
             compacted++;
+            compactRequests.add(request);
             final Instant now = Instant.now();
             return CompactionResult.failure(new IllegalStateException("in place"),
                     CompactionMetadata.builder().trigger(request.getTrigger()).startedAt(now).completedAt(now).build());
