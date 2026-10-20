@@ -60,12 +60,16 @@ final class OpenAIChatCompletionsExchange implements OpenAIEndpointExchange {
 
     @Override
     public OpenAIStreamHandle openStream(RequestOptions options, LlmStreamSink sink, ChunkAggregator aggregator,
-            LlmCancellation cancellation) {
+            LlmCancellation cancellation, OpenAICallAbort abort) {
+        // The abort key rides on the params as an additional header: the SDK copies it onto every attempt's request,
+        // and the transport hook strips it before the wire. It is the only thing that crosses the SDK's layers.
+        final ChatCompletionCreateParams streamingParams = params.toBuilder()
+                .putAdditionalHeader(OpenAICallAbort.HEADER, abort.key()).build();
         final StreamResponse<ChatCompletionChunk> streamResponse = options == null
-                ? client.chat().completions().createStreaming(params)
-                : client.chat().completions().createStreaming(params, options);
+                ? client.chat().completions().createStreaming(streamingParams)
+                : client.chat().completions().createStreaming(streamingParams, options);
         final OpenAIStreamingMapper mapper = new OpenAIStreamingMapper(sink, aggregator);
-        return OpenAIStreamHandle.of(streamResponse, stream -> mapper.consume(stream, cancellation));
+        return OpenAIStreamHandle.of(abort, streamResponse, stream -> mapper.consume(stream, cancellation));
     }
 
     /**

@@ -18,7 +18,7 @@ import at.aimon.core.llm.LlmCancellation;
  * <h2>Why a single signal listener</h2>
  *
  * An execution issues many LLM calls (one per ReAct iteration, plus gateway retries), and each call wants to register
- * its own {@code StreamResponse.close()} abort. Registering one listener <em>per call</em> and leaving it there would
+ * its own abort lever. Registering one listener <em>per call</em> and leaving it there would
  * accumulate an unbounded number of listeners on the signal over a long execution, and on trip every one of them —
  * including those for calls that already completed — would fire. Instead this adapter registers <b>exactly one</b>
  * listener on the signal (in its constructor) and each call swaps its abort lever into a single
@@ -36,8 +36,9 @@ import at.aimon.core.llm.LlmCancellation;
  * <h2>Threading</h2>
  *
  * The trip typically arrives on a different thread than the LLM worker. {@link #onCancel(Runnable)} publishes the abort
- * through an {@link AtomicReference}; the listener reads and runs it. Aborts must be idempotent (they are —
- * {@code StreamResponse.close()} is), because a set-then-already-cancelled race can fire the same abort twice.
+ * through an {@link AtomicReference}; the listener reads and runs it. Aborts must be idempotent (they are: a
+ * provider's lever cuts its own call's transport and is a no-op once that call is over), because a
+ * set-then-already-cancelled race can fire the same abort twice.
  */
 public final class SignalBackedLlmCancellation implements LlmCancellation, AutoCloseable {
 
@@ -89,9 +90,9 @@ public final class SignalBackedLlmCancellation implements LlmCancellation, AutoC
 
     /**
      * Clears the currently active abort. An executor calls this after each LLM call returns or throws so that a signal
-     * trip occurring <em>between</em> calls (e.g. while tools run) does not invoke a stale, already-closed stream's
-     * abort. Because {@code StreamResponse.close()} is idempotent this is hygiene rather than strictly required, but it
-     * keeps the reference from pinning a completed call's resources.
+     * trip occurring <em>between</em> calls (e.g. while tools run) does not invoke a stale lever of a finished call.
+     * Because a lever only ever reaches its own call and is a no-op once that call is over, this is hygiene rather
+     * than strictly required, but it keeps the reference from pinning a completed call's resources.
      */
     public void clearAbort() {
         currentAbort.set(null);

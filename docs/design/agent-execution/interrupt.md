@@ -383,7 +383,7 @@ BLOCKED 를 강제하지 않는 자문 체인(PostTool·OnStop·세션/서브에
 agent 쪽에 산다.
 
 설계의 요점은 **리스너를 정확히 하나만 등록**하는 것이다. 한 실행은 LLM 호출을 여러 번 한다
-(iteration 당 1회 + 게이트웨이 재시도). 호출마다 자기 `StreamResponse.close()` 를 리스너로 등록하면
+(iteration 당 1회 + 게이트웨이 재시도). 호출마다 자기 abort 레버를 리스너로 등록하면
 장수 실행에서 리스너가 무한 누적되고, trip 시 **이미 끝난 호출의 abort 까지 전부 발화**한다.
 대신 어댑터가 생성자에서 리스너 하나를 등록하고, 각 호출은 자기 abort 레버를 단일
 `AtomicReference` 에 swap 한다. 신호가 trip 되면 그 하나의 리스너가 **현재 활성인** abort 만

@@ -14,8 +14,7 @@ import at.aimon.core.llm.streaming.LlmStreamSink;
  * Exactly four things vary by endpoint: how the params are built, how the blocking call is made, how the stream is
  * opened and consumed, and how the result becomes an {@link LlmResponse}. Params are built when the implementation is
  * constructed — at the same point in {@link OpenAILlmClient} that {@code buildRequest} used to run, i.e.
- * <em>before</em>
- * the streaming path's try-with-resources — so a failure while building them escapes exactly as it does today rather
+ * <em>before</em> the streaming path's try — so a failure while building them escapes exactly as it does today rather
  * than being accidentally improved or worsened.
  *
  * <p>
@@ -40,7 +39,8 @@ interface OpenAIEndpointExchange {
      *
      * <p>
      * The sink and aggregator are arguments rather than constructor state because the blocking path has neither, and a
-     * field that is only meaningful on one of two paths is a null waiting to be dereferenced.
+     * field that is only meaningful on one of two paths is a null waiting to be dereferenced. The abort object is an
+     * argument for the same reason: the blocking path has no lever.
      *
      * @param options
      *            per-request options, or {@code null} for the single-argument overload
@@ -51,10 +51,14 @@ interface OpenAIEndpointExchange {
      * @param cancellation
      *            the call's cancellation token (must not be null). The handle's mapper reads it once the stream has
      *            ended: a stream that stopped short of its terminal event under a tripped token is reported as an
-     *            {@link at.aimon.core.llm.exception.LlmCallCancelledException}, because the SDK ends a closed stream
-     *            without throwing
+     *            {@link at.aimon.core.llm.exception.LlmCallCancelledException}, because a stream the SDK closed
+     *            itself ends without throwing
+     * @param abort
+     *            the call's abort object (must not be null). Its key goes on the SDK params as
+     *            {@link OpenAICallAbort#HEADER}, which is how the transport hook finds the object on every attempt,
+     *            and the handle's {@code abort()} delegates to it
      * @return an open stream handle (never null)
      */
     OpenAIStreamHandle openStream(RequestOptions options, LlmStreamSink sink, ChunkAggregator aggregator,
-            LlmCancellation cancellation);
+            LlmCancellation cancellation, OpenAICallAbort abort);
 }

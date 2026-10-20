@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -69,14 +70,16 @@ import at.aimon.core.llm.token.HeuristicTokenEstimator;
 import at.aimon.core.skill.DefaultSkillRegistry;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.DefaultSubagentRegistry;
+import at.aimon.llm.testkit.StallingSseServer;
 
 /**
  * What an interrupt does to a streaming call that is in flight, over the real transport, on both endpoints.
  *
  * <p>
- * The SDK does not throw out of a stream that is closed under it — the stream ends. Before EE-95's follow-up the
- * client took that for the end of the answer and returned what had arrived. These tests pin the three places that
- * mattered: the client reports a cancellation, an AUTO-compaction summary is not installed and does not move the
+ * A stream the SDK closes under its reader ends silently, and a stream whose transport is cut fails loudly; before
+ * EE-95's follow-up the client took the silent end for the end of the answer and returned what had arrived. These
+ * tests pin the three places that mattered: the client reports a cancellation, an AUTO-compaction summary is not
+ * installed and does not move the
  * circuit breaker, and a turn ends {@code INTERRUPTED} rather than completing with the part of the answer that got
  * through.
  *
@@ -148,7 +151,7 @@ class OpenAIStreamAbortTest {
     @EnumSource(Endpoint.class)
     @DisplayName("the client: aborted after some text, the call is a cancellation and the sink is given no end")
     void client_abortedAfterSomeText_isACancellation(Endpoint endpoint) throws Exception {
-        try (StallingSseServer server = StallingSseServer.sending(endpoint.afterSomeText());
+        try (StallingSseServer server = StallingSseServer.sending(endpoint.afterSomeText(), "");
                 DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator()) {
             final RecordingSink sink = new RecordingSink();
 
@@ -167,12 +170,12 @@ class OpenAIStreamAbortTest {
     @EnumSource(Endpoint.class)
     @DisplayName("the client: aborted before any text, the call is a cancellation and not an empty answer")
     void client_abortedBeforeAnyText_isACancellation(Endpoint endpoint) throws Exception {
-        try (StallingSseServer server = StallingSseServer.sending(endpoint.beforeAnyText());
+        try (StallingSseServer server = StallingSseServer.sending(endpoint.beforeAnyText(), "");
                 DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator()) {
             final RecordingSink sink = new RecordingSink();
 
             final Future<LlmResponse> running = stream(client(server, endpoint), sink, coordinator);
-            assertThat(server.awaitAnswered(HANG_GUARD_SECONDS)).isTrue();
+            assertThat(server.awaitAnswered(1, Duration.ofSeconds(HANG_GUARD_SECONDS))).isTrue();
             coordinator.requestInterrupt(InterruptReason.USER_SIGINT);
 
             assertThatThrownBy(() -> running.get(HANG_GUARD_SECONDS, TimeUnit.SECONDS))
@@ -199,7 +202,7 @@ class OpenAIStreamAbortTest {
 
     @SuppressWarnings("deprecation")
     private void assertAnAbortedSummaryInstallsNothing(Endpoint endpoint, String sse) throws Exception {
-        try (StallingSseServer server = StallingSseServer.sending(sse);
+        try (StallingSseServer server = StallingSseServer.sending(sse, "");
                 DefaultInterruptCoordinator coordinator = new DefaultInterruptCoordinator()) {
             final DefaultCompactionEngine engine = DefaultCompactionEngine.withDefaults(client(server, endpoint),
                     new HeuristicTokenEstimator(), new DefaultHookExecutionManager());
@@ -228,7 +231,7 @@ class OpenAIStreamAbortTest {
                                 attempt.set(result);
                                 return result;
                             }));
-            assertThat(server.awaitAnswered(HANG_GUARD_SECONDS)).isTrue();
+            assertThat(server.awaitAnswered(1, Duration.ofSeconds(HANG_GUARD_SECONDS))).isTrue();
             coordinator.requestInterrupt(InterruptReason.USER_SIGINT);
             running.get(HANG_GUARD_SECONDS, TimeUnit.SECONDS);
 
@@ -245,7 +248,7 @@ class OpenAIStreamAbortTest {
     @EnumSource(Endpoint.class)
     @DisplayName("a turn: aborted after some text, it ends INTERRUPTED and the transcript keeps the streamed prefix")
     void turn_abortedAfterSomeText_endsInterruptedWithThePrefix(Endpoint endpoint) throws Exception {
-        try (StallingSseServer server = StallingSseServer.sending(endpoint.afterSomeText())) {
+        try (StallingSseServer server = StallingSseServer.sending(endpoint.afterSomeText(), "")) {
             final FirstTextTap client = new FirstTextTap(client(server, endpoint));
             final AtomicReference<InterruptCoordinator> coordinator = new AtomicReference<>();
 
@@ -266,11 +269,11 @@ class OpenAIStreamAbortTest {
     @EnumSource(Endpoint.class)
     @DisplayName("a turn: aborted before any text, it ends INTERRUPTED and no empty answer is written")
     void turn_abortedBeforeAnyText_endsInterruptedWithNoAnswer(Endpoint endpoint) throws Exception {
-        try (StallingSseServer server = StallingSseServer.sending(endpoint.beforeAnyText())) {
+        try (StallingSseServer server = StallingSseServer.sending(endpoint.beforeAnyText(), "")) {
             final AtomicReference<InterruptCoordinator> coordinator = new AtomicReference<>();
 
             final Future<OrcaAgentExecutionResult> running = runTurn(client(server, endpoint), coordinator);
-            assertThat(server.awaitAnswered(HANG_GUARD_SECONDS)).isTrue();
+            assertThat(server.awaitAnswered(1, Duration.ofSeconds(HANG_GUARD_SECONDS))).isTrue();
             coordinator.get().requestInterrupt(InterruptReason.USER_SIGINT);
             final OrcaAgentExecutionResult result = running.get(HANG_GUARD_SECONDS, TimeUnit.SECONDS);
 

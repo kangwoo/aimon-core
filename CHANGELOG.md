@@ -7,6 +7,51 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: an LLM call's cancellation cuts the transport, not the stream, and a cancelled request is never re-sent (aimon-llm-openai, aimon-llm-anthropic)
+
+Both provider clients registered `StreamResponse.close()` as the cancellation lever. On the cancelling thread that closed
+the OkHttp response body under the consumer's in-flight read — on HTTP/1.1 a body close *reads* the socket to drain it,
+so Okio failed it with `IllegalStateException("Unbalanced enter/exit")` and the consumer stayed blocked until the read
+timeout — and then took the reader's lock, so the lever itself blocked. The lever was also registered only after the
+stream had opened, so a cancellation during the header wait was not observed until headers arrived, and because the SDKs
+retry every `IOException`, an attempt cut during the header wait could be answered with a fresh request.
+
+- **The lever cuts the transport only.** Each streaming call gets an abort object registered with its
+  `LlmCancellation` *before* the request is sent. Its `abort()` is thread-safe, idempotent, non-blocking and never
+  throws, and cancels that call's current attempt: `okhttp3.Call.cancel()` on OpenAI, the SDK adapter's future cancel
+  during the header wait and its race-safe response close during the body on Anthropic. `StreamResponse.close()` now
+  runs on the consumer thread only, exactly once, after its own read has unwound — also after an abort. For this the
+  OpenAI client is assembled over the module's own OkHttp transport (`OpenAIAbortableHttpClient`; the SDK's adapter
+  exposes no safe lever) and the Anthropic client over a decorator of the SDK's adapter
+  (`AnthropicAbortableHttpClient`). New public types: `OpenAICallAbortedException` and `AnthropicCallAbortedException`,
+  the non-retryable failures of a refused or cut attempt (they surface as `LlmCallCancelledException`).
+  `LlmCancellation.onCancel` is unchanged; its Javadoc no longer names `StreamResponse.close()` as a typical lever.
+- **No retry after a cancellation.** The transport hook sees every attempt the SDK makes, including its retries, and
+  refuses any attempt of a call that was aborted with a type the SDK does not retry, so exactly one request reaches
+  the wire. A cancellation that lands during an SDK backoff sleep is observed when the next attempt starts; the sleep
+  itself is not cut (`docs/design/llm/cancellation.md` §4.4).
+- **Behaviour change: a transport failure after the terminal event returns the whole answer.** Once a mapper has
+  recorded the stream's terminal event (`message_stop`, the `finish_reason` chunk, `response.completed` /
+  `response.incomplete`), a cut or reset of the trailing transport no longer fails the call as a cancellation or a
+  provider failure: the answer is complete and is returned, `STREAM_END` reaches the sink exactly once, and the
+  failure is logged (DEBUG under a cancelled token, WARN otherwise). Before, a reset after `message_stop` or
+  `response.completed` was a provider failure the gateway retried, discarding a complete answer; on Chat Completions a
+  cut between `finish_reason` and the usage chunk now returns the text with empty usage rather than failing.
+- **Behaviour change: a close failure after a complete response no longer fails the call.** The response is returned
+  and the failure logged at WARN; after a cancellation or a provider failure it is attached to that exception as
+  suppressed. The clients no longer close the stream with try-with-resources.
+- `AnthropicLlmClient.close()` now closes the SDK client it built, and with it the transport; it used to test for
+  `AutoCloseable`, which `AnthropicClient` deliberately is not, so nothing was closed.
+- Anthropic's header wait now goes through OkHttp's `Dispatcher` (64 concurrent per client, a slot held only until the
+  headers arrive); the body phase is uncapped as before.
+- Tests only: `StallingSseServer` moved to `aimon-llm-testkit` and can stall before the headers, hold the chunk
+  terminator or reset the connection; the regression tests are `OpenAICancellationTransportTest` and
+  `AnthropicCancellationTransportTest`, over the real SDKs and a local HTTP/1.1 server.
+
+Design: `docs/design/llm/cancellation-abort-close.md` (the plan) and `docs/design/llm/cancellation-abort-close-design.md`
+(the approved design, with its §11 recording where the build departed); the normative text is
+`docs/design/llm/cancellation.md` §4.1 and §4.4.
+
 ### Added: a COMPACTION span around each compaction attempt, with the summary LLM call under it (ST-5) (#296)
 
 With tracing on, every compaction **attempt** now leaves one `COMPACTION` span — `compaction:auto` before an

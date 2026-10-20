@@ -131,8 +131,10 @@ public interface LlmStreamSink {
 
 **수명 계약.** `TEXT_DELTA` 0회 이상(배포가 요청했다면 `REASONING_DELTA` 가 그 사이에 섞인다) → 성공한
 스트림마다 `STREAM_END` 정확히 1회. **provider 오류에서는 스트리밍 호출 자체가 던지고 sink 는 `STREAM_END` 를
-받지 못한다.** delta 가 이미 흐른 시도라면 — 텍스트든 숙고든 — UI 가 "시작했는데 끝나지 않은 스트림" 을 보지
-않도록 실행기가 합성 종료 이벤트를 낸다(§7.2).
+받지 못한다.** 종료 이벤트 **뒤**의 전송 실패는 provider 오류가 아니다 — 답은 온전하므로 호출은 정상 반환하고 sink 는
+`STREAM_END` 를 받는다([`cancellation.md`](cancellation.md#41-스트리밍--transport-abort)). delta 가 이미 흐른
+시도라면 — 텍스트든 숙고든 — UI 가 "시작했는데 끝나지 않은 스트림" 을 보지 않도록 실행기가 합성 종료 이벤트를
+낸다(§7.2).
 
 `LlmStreamSink.discarding()` 은 모든 chunk 를 버린다. 취소 가능한 비스트리밍 호출이 abort 레버를 얻으려고
 스트리밍 경로를 탈 때 쓴다([`cancellation.md`](cancellation.md)). 그 경로에서도 추론 chunk 는 만들어졌다가

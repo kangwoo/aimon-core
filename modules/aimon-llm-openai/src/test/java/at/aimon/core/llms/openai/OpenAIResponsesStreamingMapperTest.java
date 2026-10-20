@@ -1,15 +1,20 @@
 package at.aimon.core.llms.openai;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import com.openai.errors.OpenAIIoException;
 import com.openai.models.responses.ResponseStreamEvent;
 
+import at.aimon.core.llm.LlmCancellation;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.StopReason;
 import at.aimon.core.llm.streaming.ChunkAggregator;
@@ -216,5 +221,50 @@ class OpenAIResponsesStreamingMapperTest {
 
         assertThat(emitted).filteredOn(c -> c.getKind() == LlmStreamChunk.Kind.STREAM_END).hasSize(1);
         assertThat(aggregator.isClosed()).isTrue();
+    }
+
+    // --- a stream cut short: by the token before the terminal event, by nothing after it ---------------------
+
+    /** The given events, then the SDK's transport failure — what a cut socket looks like out of the SDK's stream. */
+    private static Stream<ResponseStreamEvent> thenTransportFails(String... eventJson) {
+        final List<ResponseStreamEvent> events = new ArrayList<>();
+        for (String json : eventJson) {
+            events.add(ResponsesFixtures.event(json));
+        }
+        return Stream.concat(events.stream(), Stream.generate(() -> {
+            throw new OpenAIIoException("Stream failed", new IOException("Canceled"));
+        }));
+    }
+
+    private long streamEnds() {
+        return emitted.stream().filter(chunk -> chunk.getKind() == LlmStreamChunk.Kind.STREAM_END).count();
+    }
+
+    @Test
+    @DisplayName("a transport failure after response.completed is swallowed: the answer is whole, usage included")
+    void failureAfterTerminalEventReturnsTheAnswer() {
+        final OpenAIResponsesStreamingMapper mapper = new OpenAIResponsesStreamingMapper(sink, aggregator,
+                new OpenAIResponsesMessageConverter(), "OpenAI", SILENT, false);
+
+        mapper.consume(
+                thenTransportFails(textDelta("Hel", 1), textDelta("lo", 2),
+                        completed("completed", "{\"input_tokens\":3,\"output_tokens\":2,\"total_tokens\":5}", 3)),
+                LlmCancellation.none());
+
+        final LlmResponse response = aggregator.toLlmResponse();
+        assertThat(response.getTextContent()).isEqualTo("Hello");
+        assertThat(response.getTokenUsage().getTotalTokens()).isEqualTo(5);
+        assertThat(streamEnds()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("a transport failure before the terminal event propagates and emits no STREAM_END")
+    void failureBeforeTerminalEventPropagates() {
+        final OpenAIResponsesStreamingMapper mapper = new OpenAIResponsesStreamingMapper(sink, aggregator,
+                new OpenAIResponsesMessageConverter(), "OpenAI", SILENT, false);
+
+        assertThatThrownBy(() -> mapper.consume(thenTransportFails(textDelta("Hel", 1)), LlmCancellation.none()))
+                .isInstanceOf(OpenAIIoException.class);
+        assertThat(streamEnds()).isZero();
     }
 }

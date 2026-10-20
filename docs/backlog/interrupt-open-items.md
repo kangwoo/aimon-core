@@ -1,8 +1,11 @@
-# 중단·재시도가 남긴 열린 항목 — 등록 항목 5건 (열림 2 · 닫힘 3)
+# 중단·재시도가 남긴 열린 항목 — 등록 항목 9건 (열림 6 · 닫힘 3)
 
 [`design/agent-execution/interrupt.md`](../design/agent-execution/interrupt.md) 가 `IMPLEMENTED` 로
 닫힌 뒤에도 남은 항목들이다. **열림/닫힘의 정본은 이 문서다** — 설계 문서 §14 는 왜 미뤘는지의 근거를
-갖고, 무엇이 아직 열려 있는지는 여기가 말한다 ([`README.md`](README.md) 규칙 하나).
+갖고, 무엇이 아직 열려 있는지는 여기가 말한다 ([`README.md`](README.md) 규칙 하나). 6~9번은 LLM 취소의
+abort/close 분리 설계([`design/llm/cancellation-abort-close-design.md`](../design/llm/cancellation-abort-close-design.md)
+§10, 2026-10-20)가 "정하지 않고 적어 둔" 질문 중 이 변경 밖에까지 결과가 미치는 넷이다 — 신호가 LLM 호출에 닿는
+경로는 [`design/llm/cancellation.md`](../design/llm/cancellation.md) 가 정본이고, 그 문서 §11 이 여기를 가리킨다.
 
 줄 번호는 **마지막 확인 날짜와 함께** 적는다. 드리프트하므로 그 날짜 이후의 인용은 다시 세어야 한다.
 
@@ -537,3 +540,79 @@ JUnit 이 상위 클래스의 것을 먼저 돌리므로 그 시점에 서브클
 
 **남은 것** — 못 읽은 항목의 **바이트**는 복구되지 않는다. 그것이 (c) 이고 보류다. 재검토 트리거:
 운영에서 인박스 디코드 실패가 **반복** 관측될 때, 또는 dead-letter 를 읽는 소비자가 실제로 생길 때.
+
+---
+
+## 6. openai-java 의 응답 body close 는 아직 reader 와 경합한다 — 업스트림에 올릴 것인가 — **열림 (결정 대기)**
+
+**무엇을** — openai-java 에, anthropic-java 어댑터의 `ResponseBodyInputStream`(read 가 진행 중이면 body 대신
+`Call` 을 취소하고 아니면 body 를 닫는 race-safe close)에 해당하는 수정을 이슈나 PR 로 올릴지 정한다. 들어가면
+`OpenAIAbortableHttpClient` 는 자체 OkHttp 전송을 버리고 Anthropic 과 같은 데코레이터 모양으로 줄어든다.
+
+**왜** — `aimon-llm-openai` 가 자체 전송을 들고 있는 유일한 이유다. SDK 어댑터는 응답 `close()` 가 `body!!.close()`
+라 소비 스레드의 read 아래에서 소켓을 읽고(`Unbalanced enter/exit`), `okhttp3.Call` 을 밖에 내놓지 않는다. 복제한
+전송은 SDK 를 올릴 때마다 어댑터의 변경(타임아웃 헤더 · 리다이렉트 · 프록시 · Azure 인터셉터)을 다시 대조해야
+하는 표면이다. 2026-10-20 의 최신 4.86.0(2026-10-19 배포)에도 같은 수정은 없다. 저장소 밖의 일이라 누군가 맡아야
+한다.
+
+**어디** *(2026-10-20 확인)* — `modules/aimon-llm-openai/.../OpenAIAbortableHttpClient.java` 클래스 javadoc,
+[`design/llm/cancellation-abort-close-design.md`](../design/llm/cancellation-abort-close-design.md) §2.1 · §3.2 · §10 1번.
+
+**언제 다시 볼까** — openai-java 를 올릴 때마다 `openai-java-client-okhttp` 의 `OkHttpClient.kt` 에서
+`Response.toHttpResponse()` 의 `close()` 가 여전히 `body!!.close()` 인지 본다. 아니게 되는 날 자체 전송을 지운다.
+
+---
+
+## 7. SDK 의 backoff sleep 중에 온 취소는 sleep 이 끝나야 돌아온다 — **열림 (트리거 대기)**
+
+**무엇을** — 결정 항목이다. Anthropic 배포에서 `Retry-After` 대기 중의 즉시 취소가 필요한지, 필요하면 SDK
+`maxRetries(0)` + 게이트웨이 재시도(이미 문서화된 권고)로 갈지 아니면 호출별 상관 설계를 갖춘 wakeable `Sleeper` 를
+만들지 정한다.
+
+**왜** — 5xx/429/`IOException` 뒤 SDK 의 `RetryingHttpClient` 는 동기 `Sleeper.sleep()` 으로 쉰다. 그동안 도착한
+취소는 전송 훅이 **다음 시도**를 거부하는 것으로 관측되므로 요청은 나가지 않지만, 호출은 backoff 가 끝나야
+돌아온다 — OpenAI 는 최대 8초(`MAX_RETRY_DELAY`), Anthropic 은 `Retry-After` 가 말하는 만큼. `Sleeper` 에는 요청
+맥락이 없어 어느 호출의 취소인지 모르고, 클라이언트 전체를 깨우면 다른 호출의 `Retry-After` 대기까지 짧아진다.
+드물다(실패한 시도 뒤에만) — 그래서 받아들였다.
+
+**어디** *(2026-10-20 확인)* — [`design/llm/cancellation.md`](../design/llm/cancellation.md) §4.4,
+설계 기록 §4.3 · §10 2번.
+
+**언제 다시 볼까** — 운영에서 취소 뒤 수 초의 지연이 `Retry-After` 대기와 겹쳐 관측될 때.
+
+---
+
+## 8. 자체 OpenAI 전송은 Azure 의 cross-origin `api-key` 리다이렉트를 복제하지 않았다 — **열림 (결정 대기)**
+
+**무엇을** — Azure OpenAI 가 지원 배포인지 확인한다. 그렇다면 SDK 어댑터의 `apiKeyRedirectInterceptor`(cross-origin
+리다이렉트에서 `api-key` 헤더를 떼는 네트워크 인터셉터)와 같은 것을 `OpenAIAbortableHttpClient` 에 넣는다. 아니면
+"지원하지 않는다" 를 적고 닫는다.
+
+**왜** — 그 인터셉터는 SDK 의 Kotlin `internal` 이라 재사용할 수 없고, `OpenAIConfig` 에 Azure 표면이 없어
+도달 불가로 보고 복제하지 않았다. OkHttp 는 cross-origin 리다이렉트에서 `Authorization` 만 벗기고 `api-key` 는
+자격 증명으로 알지 못하므로, Azure 배포가 생기면 키가 리다이렉트를 따라가는 쪽이 문제다.
+
+**어디** *(2026-10-20 확인)* — `OpenAIAbortableHttpClient` 클래스 javadoc, 설계 기록 §5.1 · §10 4번,
+[`design/llm/cancellation.md`](../design/llm/cancellation.md) §4.4.
+
+**언제 다시 볼까** — `OpenAIConfig` 에 Azure 설정이 들어오거나 `baseUrl` 이 Azure 를 가리키는 배포가 생길 때.
+
+---
+
+## 9. Chat Completions 의 `finish_reason` 뒤 끊김은 usage 없는 정상 응답이다 — **열림 (결정됨이되 재검토 트리거 대기)**
+
+**무엇을** — 토큰이 살아 있는데 `finish_reason` 청크와 usage 청크 사이에서 전송이 끊기면 지금은 텍스트를 온전한
+답으로 돌려주고 usage 는 비운다(WARN). 설계 리뷰가 제안한 좁은 규칙 — 토큰이 살아 있는 동안은 usage 청크(또는
+`[DONE]`)까지를 terminal 로 보고, 그 전의 끊김은 전처럼 provider 실패로 두어 게이트웨이가 재시도하게 한다 — 로
+바꿀지 정한다.
+
+**왜** — 두 성질이 맞선다. 지금 규칙은 온전한 답을 재시도하지 않는다(두 번째 전체 응답은 두 번째 과금이다). 좁은
+규칙은 미터링을 지키되 그 경로에서 게이트웨이가 온전한 답을 다시 받는다. 세 매퍼의 규칙을 하나로 두려고 — 종료
+이벤트가 정하고 토큰은 정하지 않는다 — 전자를 택했다. usage 가 비는 폴백 자체는 [`design/llm/cancellation.md`](../design/llm/cancellation.md)
+§4.3 이 라우팅 경로에 이미 받아들인 것이고, 그것을 취소 없는 전송 실패로 넓힌 것이 이 결정이다.
+
+**어디** *(2026-10-20 확인)* — `OpenAIStreamingMapper.consume`, [`design/llm/cancellation.md`](../design/llm/cancellation.md)
+§4.1, 설계 기록 §4.1 · §10 7번 · §11.2.
+
+**언제 다시 볼까** — 취소되지 않은 호출에서 usage 가 빈 응답이 운영에서 관측되고 그것이 과금 정합성 문제로 번질
+때. 그때 바꾸는 것은 `OpenAIStreamingMapper` 의 terminal 판정 한 줄과 `cancellation.md` §4.1 의 Chat 문단이다.

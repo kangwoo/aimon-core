@@ -26,6 +26,8 @@ import com.tngtech.archunit.lang.ArchRule;
  * <li>com.openai.. (OpenAI Java SDK)
  * <li>com.fasterxml.jackson.. (JSON processing)
  * <li>com.knuddels.jtokkit.. (tiktoken Java port for token counting)
+ * <li>okhttp3.. and okio.. (the module's own transport for the SDK, so a cancelled call can cancel its
+ * {@code okhttp3.Call}; the same OkHttp the SDK's adapter runs on)
  * <li>java.. (Java standard library)
  * <li>org.slf4j.. (logging)
  * </ul>
@@ -47,6 +49,8 @@ class OpenAIArchitectureTest {
     private static final String PKG_OPENAI_SDK = "com.openai..";
     private static final String PKG_JACKSON = "com.fasterxml.jackson..";
     private static final String PKG_JTOKKIT = "com.knuddels.jtokkit..";
+    private static final String PKG_OKHTTP = "okhttp3..";
+    private static final String PKG_OKIO = "okio..";
     private static final String PKG_JAVA = "java..";
     private static final String PKG_SLF4J = "org.slf4j..";
 
@@ -61,7 +65,7 @@ class OpenAIArchitectureTest {
     void openaiModuleShouldOnlyDependOnAllowedPackages() {
         ArchRule rule = classes().that().resideInAPackage(PKG_OPENAI_MODULE).should().onlyDependOnClassesThat()
                 .resideInAnyPackage(PKG_OPENAI_MODULE, PKG_LLM_CORE, PKG_AGENT_PROMPT, PKG_KNOWLEDGE_EMBEDDING,
-                        PKG_BASE, PKG_OPENAI_SDK, PKG_JACKSON, PKG_JTOKKIT, PKG_JAVA, PKG_SLF4J);
+                        PKG_BASE, PKG_OPENAI_SDK, PKG_JACKSON, PKG_JTOKKIT, PKG_OKHTTP, PKG_OKIO, PKG_JAVA, PKG_SLF4J);
 
         rule.check(classes);
     }

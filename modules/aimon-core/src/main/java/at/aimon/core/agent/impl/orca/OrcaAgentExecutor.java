@@ -1851,8 +1851,8 @@ public class OrcaAgentExecutor
                                 iterationCount, availableTools, cancellationSignal, llmCancellation);
                     } finally {
                         // LLM-CANCEL: drop the just-finished call's abort lever so a trip landing while the next
-                        // tools run cannot invoke a stale (already-closed) stream. Idempotent close() makes this
-                        // hygiene rather than strictly required.
+                        // tools run does not fire a stale one. A lever only ever reaches its own call and is a no-op
+                        // once that call is over, so this is hygiene rather than strictly required.
                         llmCancellation.clearAbort();
                     }
 
@@ -3474,7 +3474,7 @@ public class OrcaAgentExecutor
             } catch (LlmCallCancelledException e) {
                 // Two sources can raise this on the blocking path: the gateway's pre-attempt short-circuit, and a
                 // genuine in-flight abort — a cancellable token (isSupported()) makes the provider reroute the blocking
-                // call through its streaming path, which owns a StreamResponse.close() abort lever. Both translate to
+                // call through its streaming path, which owns a transport abort lever. Both translate to
                 // CancelledExecutionException so the ReAct loop unwinds through handleInterrupted like every other
                 // cancellation.
                 throw toCancelledExecution(cancellationSignal, e);

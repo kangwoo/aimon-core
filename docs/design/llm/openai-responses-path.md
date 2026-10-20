@@ -76,18 +76,20 @@ AIMON 이 도는 바로 그 모양이다. 이것을 푸는 엔드포인트가 `/
 ```java
 interface OpenAIEndpointExchange {
     LlmResponse callBlocking(RequestOptions options);    // null → SDK 단일 인자 오버로드
-    OpenAIStreamHandle openStream(RequestOptions options, LlmStreamSink sink, ChunkAggregator aggregator);
+    OpenAIStreamHandle openStream(RequestOptions options, LlmStreamSink sink, ChunkAggregator aggregator,
+            LlmCancellation cancellation, OpenAICallAbort abort);   // abort 객체의 키를 params 에 싣는다
 }
 
 interface OpenAIStreamHandle extends AutoCloseable {   // StreamResponse<T> 의 제네릭을 지운다
     void consume();
-    @Override void close();                            // StreamResponse.close() 에 위임
+    void abort();                                      // 어느 스레드든: 그 호출의 전송만 끊는다
+    @Override void close();                            // 소비 스레드, 한 번: StreamResponse.close() 에 위임
 }
 ```
 
 - **`OpenAIStreamHandle` 이 있는 이유는 하나다.** `StreamResponse<ChatCompletionChunk>` 와
-  `StreamResponse<ResponseStreamEvent>` 에는 쓸모 있는 공통 상위 타입이 없다. 제네릭을 두 메서드 뒤로 지워야 클라이언트가
-  try-with-resources 하나, `onCancel` 등록 하나, catch 연쇄 하나를 유지할 수 있다
+  `StreamResponse<ResponseStreamEvent>` 에는 쓸모 있는 공통 상위 타입이 없다. 제네릭을 세 메서드 뒤로 지워야 클라이언트가
+  소비·close 순서 하나, `onCancel` 등록 하나, catch 연쇄 하나를 유지할 수 있다
 - **핸들에는 `toLlmResponse()` 가 없다.** aggregator 는 클라이언트가 소유하고, 클라이언트가 try 밖에서 직접
   `aggregator.toLlmResponse()` 로 끝낸다
 - **sink 와 aggregator 는 생성자 상태가 아니라 `openStream` 인자다.** 블로킹 경로에는 둘 다 없고, 두 경로 중 하나에서만
@@ -427,7 +429,7 @@ reasoning item 은 매 응답에 나오지 않는다 — 모델이 추론할 때
 
 | 보존 동작 | 두 엔드포인트에서 살아남는 이유 |
 |---|---|
-| **1.** `StreamResponse.close()` 가 abort 레버이고, `onCancel` 은 스트림을 연 **뒤에** 등록하며, 이미 취소된 호출은 연결 전에 빠른 경로로 끝난다 | 빠른 경로는 무엇도 열기 전인 `sendMessageStreaming` 첫머리에 그대로 있다. try-with-resources 가 `OpenAIStreamHandle` 을 쥐고, 그 `close()` 가 같은 스레드 안전·멱등 메서드에 위임한다. `onCancel(handle::close)` 는 try **안**에 있다 |
+| **1.** 호출의 abort 객체가 abort 레버이고(그 호출의 전송만 끊는다), `onCancel` 은 스트림을 열기 **전에** 등록하며, 이미 취소된 호출은 연결 전에 빠른 경로로 끝난다 | 빠른 경로는 무엇도 열기 전인 `sendMessageStreaming` 첫머리에 그대로 있다. abort 객체는 `exchangeFor` 아래가 아니라 클라이언트가 열고, `onCancel(abort::abort)` 는 `openStream` **앞**에 있으며, 핸들의 `close()` 는 소비 스레드가 `consumeAndClose` 에서 한 번 부른다 — 어느 엔드포인트든 같은 코드다([`cancellation.md`](cancellation.md) §4.1) |
 | **2.** 취소 가능한 비스트리밍 호출은 스트리밍 경로로 우회하고 chunk 는 버리며 usage 는 여전히 받는다 | 우회는 `sendMessage(SystemPromptParts, …, LlmCancellation)` 에서 `cancellation.isSupported()` 로 결정되고, 엔드포인트 선택(`exchangeFor`)은 그 아래에서 일어난다. 엔드포인트와 무관하다 |
 | **3.** `SseException` 은 HTTP 200 이 아니라 payload 로 분류한다 | exchange 에 catch 가 없어 SDK 가 실제로 던진 실패는 매퍼가 불리는 유일한 곳인 클라이언트 연쇄에 닿는다. Responses provider 오류는 애초에 SDK 예외가 아니므로 §7.1 이 매퍼가 만들었을 예외를 try 안에서 던진다 |
 | **4.** 요청 단위 timeout 은 `RequestOptions` 로 싣고, 설정이 없으면 `null` 을 돌려 SDK 단일 인자 오버로드를 유지한다 | `perRequestOptions` 는 클라이언트에 남고, 두 exchange 가 같은 `options == null ? svc.x(p) : svc.x(p, o)` 한 줄을 갖는다 |
