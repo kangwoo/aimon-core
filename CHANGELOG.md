@@ -17,7 +17,7 @@ Closes the two cases #293 left unrecorded, both on the TURN span under the same 
   retried, which removes them with the turn's other messages (they are already gone from the queue).
   Key: `OrcaAgentExecutor.UNREAD_SUBAGENT_TASK_IDS_ATTR`.
 - **`subagent.received.taskIds` on a TURN** — set when the turn was started to deliver a notification and carries the
-  new execution attribute `aimon.subagent.receivedTaskId` (`SubagentTaskCompleted.RECEIVED_TASK_ID_ATTRIBUTE`, a
+  new execution attribute `aimon.subagent.received_task_id` (`SubagentTaskCompleted.RECEIVED_TASK_ID_ATTRIBUTE`, a
   `String` task id). The CLI's between-turn drain now sets it when it replays a completion notification; other
   replayed input still goes through the slash-command routing as before. Like any execution attribute, the value also
   reaches the turn's tools and hooks, and the subagents it forks inherit it. An embedder with its own between-turn drain sets the same attribute to get the

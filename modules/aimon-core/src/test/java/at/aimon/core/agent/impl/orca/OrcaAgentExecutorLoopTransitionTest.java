@@ -287,7 +287,7 @@ class OrcaAgentExecutorLoopTransitionTest {
 
             executor.execute(createContext(new DefaultToolRegistry(), 5),
                     OrcaAgentExecutionRequest.builder().userInput("task t9 completed")
-                            .executionAttributes(Map.of("aimon.subagent.receivedTaskId", "t9"))
+                            .executionAttributes(Map.of("aimon.subagent.received_task_id", "t9"))
                             .sessionId(SessionId.of("conv-lt-delivered")).build());
 
             assertThat(turnSpan(store, "conv-lt-delivered").getAttributes())
@@ -310,7 +310,7 @@ class OrcaAgentExecutorLoopTransitionTest {
                 final String sessionId = "conv-lt-plain-" + value.toString().isBlank();
                 executor.execute(createContext(new DefaultToolRegistry(), 5),
                         OrcaAgentExecutionRequest.builder().userInput("hi")
-                                .executionAttributes(Map.of("aimon.subagent.receivedTaskId", value))
+                                .executionAttributes(Map.of("aimon.subagent.received_task_id", value))
                                 .sessionId(SessionId.of(sessionId)).build());
 
                 assertThat(turnSpan(store, sessionId).getAttributes()).doesNotContainKeys(

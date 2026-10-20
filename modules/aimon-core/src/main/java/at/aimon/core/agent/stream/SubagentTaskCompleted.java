@@ -71,7 +71,7 @@ public final class SubagentTaskCompleted extends AgentExecutionEvent {
      * span. Like any execution attribute it also reaches the turn's tools and hooks, and the subagents the turn forks
      * inherit it.
      */
-    public static final String RECEIVED_TASK_ID_ATTRIBUTE = "aimon.subagent.receivedTaskId";
+    public static final String RECEIVED_TASK_ID_ATTRIBUTE = "aimon.subagent.received_task_id";
 
     /**
      * Reads the task id of a background task's queued completion notification from its queued-input metadata.

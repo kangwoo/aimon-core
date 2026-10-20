@@ -280,9 +280,9 @@ class ReplSessionQueueTest {
         Mockito.verify(executor, Mockito.times(3)).executeAsync(Mockito.any(), requests.capture(), Mockito.any());
         final List<OrcaAgentExecutionRequest> sent = requests.getAllValues();
         assertThat(sent.get(1).getUserInput().asText()).isEqualTo("Background task t7 completed");
-        assertThat(sent.get(1).getExecutionAttributes()).containsEntry("aimon.subagent.receivedTaskId", "t7");
-        assertThat(sent.get(0).getExecutionAttributes()).doesNotContainKey("aimon.subagent.receivedTaskId");
-        assertThat(sent.get(2).getExecutionAttributes()).doesNotContainKey("aimon.subagent.receivedTaskId");
+        assertThat(sent.get(1).getExecutionAttributes()).containsEntry("aimon.subagent.received_task_id", "t7");
+        assertThat(sent.get(0).getExecutionAttributes()).doesNotContainKey("aimon.subagent.received_task_id");
+        assertThat(sent.get(2).getExecutionAttributes()).doesNotContainKey("aimon.subagent.received_task_id");
         assertThat(queueManager.snapshot()).isEmpty();
     }
 

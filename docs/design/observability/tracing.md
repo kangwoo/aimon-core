@@ -397,7 +397,7 @@ span 을 남긴다. 포크의 `ExecutionId` 는 `executionId` 속성이다(ReAct
 그 완료 알림이 턴 도중에 drain 되면 알림을 처음 읽는 ITERATION 이 `subagent.received.taskIds` 에 task id 를 남겨
 SUBAGENT span 의 `taskId` 와 이어진다. 턴이 그 drain 직후 멈추면 TURN 이 `subagent.received.unreadTaskIds` 에, 부모가 쉬는
 동안 도착해 호출자의 턴 사이 drain 이 새 턴으로 전달한 알림은 그 TURN 이 `subagent.received.taskIds` 에 남긴다(호출자가
-execution attribute `aimon.subagent.receivedTaskId` 를 실을 때 — CLI 는 싣는다. 백로그 ST-12).
+execution attribute `aimon.subagent.received_task_id` 를 실을 때 — CLI 는 싣는다. 백로그 ST-12).
 
 SUBAGENT span 의 상태는 TURN 과 같은 규칙이다 — 취소는 `INTERRUPTED`, 예산 · iteration 상한 · 쿼터로 멈춘 실행은
 `OK`(이유는 outputs 의 `completionReason`), 그 밖의 실패만 `ERROR`. `tokenUsage` 는 포크 루프가 이미 누적한 합계다.

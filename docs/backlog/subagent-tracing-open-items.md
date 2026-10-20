@@ -369,7 +369,7 @@ TURN outputs 에 싣는 방식, 뒤의 것은 `OrcaAgentExecutionRequest` 가 �
   에서). 알림은 transcript 에 남아 다음 턴의 첫 LLM 호출이 읽는다 — 그 턴의 iteration 1 에는 여전히 표시가 없고, 이전 TURN 의 이
   속성이 그 연결을 대신한다. 단, 멈춘 턴이 rewind · `/retry` 로 되돌려지면 그 알림은 턴의 다른 메시지와 함께 transcript 에서
   지워지고 큐에서도 이미 빠졌으므로 아무도 읽지 않는다 — 이 PR 이전부터 있던 손실이고, 속성은 그 사실을 보여 줄 뿐이다.
-- **부모가 쉬는 동안 도착할 때** — 새 execution attribute `aimon.subagent.receivedTaskId`
+- **부모가 쉬는 동안 도착할 때** — 새 execution attribute `aimon.subagent.received_task_id`
   (`SubagentTaskCompleted.RECEIVED_TASK_ID_ATTRIBUTE`)를 실은 턴은 그 값을 TURN 의 `subagent.received.taskIds` 로 남긴다
   (`#recordDeliveredSubagentTask`). CLI `ReplSession` 의 턴 사이 drain 은 완료 알림을 다시 보낼 때 그 attribute 를 싣는다(다른 입력은
   예전처럼 `processInput` 을 거친다). 항목이 후보로 적었던 `OrcaAgentExecutionRequest` 새 필드 대신 execution attribute 를 택했다 —
