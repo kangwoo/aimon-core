@@ -95,7 +95,15 @@ ToolConcurrencyConfig.builder().enabled(true).maxConcurrency(8).perBatchMax(2).b
 `ConcurrencyBehavior.DEDICATED_THREAD` 를 선언하고, 별도 스위치를 켜면 **연속된 `Task` 호출 구간**만 호출마다 새로 만들고
 다시 쓰지 않는 전용 스레드에서 동시에 돈다:
 
+#### 팩토리로 켜기 (권장)
+
+`OrcaAgentExecutorFactory` 로 실행기를 만든다면 설정 하나로 끝난다. 팩토리가 메인 실행기와 포크 실행기 양쪽에 디스패처를
+설치하고, 두 실행기가 한 허가 집합을 나눠 쓰게 하고, 포크에 task id 라벨을 붙이도록 매니저를 설정한다:
+
 ```java
+import at.aimon.core.agent.impl.orca.OrcaAgentExecutorFactory;
+import at.aimon.core.agent.tool.DedicatedThreadConfig;
+
 OrcaAgentExecutor executor = new OrcaAgentExecutorFactory()
         .withDedicatedThreadConfig(DedicatedThreadConfig.enabled(4))  // 전용 스레드 최대 4개
         .create(llmClient, transcriptManager);
@@ -103,6 +111,55 @@ OrcaAgentExecutor executor = new OrcaAgentExecutorFactory()
 // 포크 안의 Task 도 펴려면 깊이 상한을 올린다 (기본 1 = 포크 조상이 없는 실행 — 세션의 턴 · 루틴 · rewake 리플레이 — 만)
 DedicatedThreadConfig.builder().enabled(true).maxThreads(4).maxForkDepth(2).build();
 ```
+
+`withDedicatedThreadConfig` 는 그 뒤에 만드는 실행기에만 적용된다. 이미 만든 실행기는 만들 때의 설정과 허가 집합을 그대로 쓴다.
+
+#### 팩토리 없이 직접 배선
+
+`OrcaAgentExecutor.builder()` 와 `DefaultSubagentExecutor` 를 직접 조립한다면 아래 세 가지를 **함께** 해야 한다. 하나라도
+빠지면 조용히 덜 동작한다 — 메인 실행기에만 설치하면 포크 안의 `Task` 는 `maxForkDepth` 와 상관없이 순차이고,
+`withForkTaskIdAttribute()` 를 빼면 병렬로는 돌지만 CLI 라벨과 승인 프롬프트의 `[task …]` 접두가 붙지 않는다.
+
+```java
+import at.aimon.core.agent.tool.DedicatedThreadConfig;
+import at.aimon.core.agent.tool.DedicatedThreadDispatcher;
+import at.aimon.core.agent.tool.DedicatedThreadPermits;
+import at.aimon.core.agent.tool.DefaultParallelToolDispatcher;
+
+DedicatedThreadConfig config = DedicatedThreadConfig.enabled(4);
+DedicatedThreadPermits permits = DedicatedThreadPermits.of(config);  // 메인과 포크가 같은 인스턴스를 쓴다
+
+// 1) 메인 실행기 — ToolConcurrencyConfig 도 켰다면 sequential() 대신 그 풀 디스패처를 감싼다
+OrcaAgentExecutor executor = OrcaAgentExecutor.builder()
+        // ... 필수 매니저들 ...
+        .parallelToolDispatcher(
+                new DedicatedThreadDispatcher(DefaultParallelToolDispatcher.sequential(), config, permits))
+        .build();
+
+// 2) 포크 실행기 — 포크 안의 Task 를 펴려면(maxForkDepth >= 2) 필요하다
+subagentExecutor.withParallelToolDispatcher(
+        new DedicatedThreadDispatcher(DefaultParallelToolDispatcher.sequential(), config, permits));
+
+// 3) 포크가 실행 속성에 자기 task id 를 싣게 한다 (CLI 라벨 · [task …] 접두)
+subagentExecutionManager.withForkTaskIdAttribute();
+```
+
+`permits` 를 실행기마다 따로 만들면 `maxThreads` 가 실행기별 상한이 되어 전체 스레드 수가 그 배수로 늘어난다.
+
+#### AimonStack · CLI · Spring
+
+`AimonStackBuilder`(그리고 그 위의 CLI · Spring 스타터)는 아직 이 설정을 노출하지 않는다 — `ToolConcurrencyConfig` 와 같은
+상태다. 그 경로로 조립한 애플리케이션에서는 지금 켤 수 없고, 노출은
+[backlog PF-1](../../backlog/parallel-foreground-task-open-items.md) 에서 다룬다.
+
+#### 켜졌는지 확인
+
+- 스레드 덤프나 로그에 `tool-dedicated-<n>` 이름의 스레드가 보인다 — 포그라운드 `Task` 가 전용 스레드에서 돈다는 뜻이다.
+- CLI 에서 `[Subagent] Explore#3fa2c1d0` 처럼 서브에이전트 이름 뒤에 task id 가 붙는다(3단계까지 배선한 경우).
+- 한 응답에 `Task` 를 여러 개 담았는데도 순서대로 돈다면 §8 의 7 을 본다.
+
+#### 동작 요약
+
 
 - `ToolConcurrencyConfig` 와 **독립**이다. 둘 다 켜면 데코레이터가 풀 디스패처를 감싸고, `Task` 가 아닌 구간은 풀 게이트가
   그대로 판정한다. 섞인 배치는 구간 순서대로 돌며(앞 구간이 끝나야 다음 구간이 시작) 결과는 `tool_use` 순서다.

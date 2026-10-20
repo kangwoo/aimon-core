@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/tool/parallel-tool-execution-guide.md
-source_commit: 22ef0ce4
+source_commit: 9a45db56
 ---
 
 # Parallel tool execution guide
@@ -86,7 +86,14 @@ ToolConcurrencyConfig.builder().enabled(true).maxConcurrency(8).perBatchMax(2).b
 
 Foreground `Task` (subagent) calls in one response are not parallelised by the gate above — `Task` registers a terminator that interrupts its executing thread, so on the shared pool an interrupt that arrives late would hit the worker's next task. `Task` therefore declares `ConcurrencyBehavior.DEDICATED_THREAD`, and when a separate switch is on, **runs of consecutive `Task` calls** run at the same time, each on a dedicated thread created for that call and never reused:
 
+#### Enabling through the factory (recommended)
+
+If you build executors with `OrcaAgentExecutorFactory`, one setting is enough. The factory installs the dispatcher on both the main executor and the fork executor, makes the two share one permit set, and tells the manager to label forks with their task id:
+
 ```java
+import at.aimon.core.agent.impl.orca.OrcaAgentExecutorFactory;
+import at.aimon.core.agent.tool.DedicatedThreadConfig;
+
 OrcaAgentExecutor executor = new OrcaAgentExecutorFactory()
         .withDedicatedThreadConfig(DedicatedThreadConfig.enabled(4))  // at most 4 dedicated threads
         .create(llmClient, transcriptManager);
@@ -94,6 +101,51 @@ OrcaAgentExecutor executor = new OrcaAgentExecutorFactory()
 // to fan out Task calls inside forks too, raise the depth bound (default 1 = only root executions: a session's turn, a routine, a rewake replay)
 DedicatedThreadConfig.builder().enabled(true).maxThreads(4).maxForkDepth(2).build();
 ```
+
+`withDedicatedThreadConfig` applies only to executors created after it. An executor already built keeps the config and permit set it was built with.
+
+#### Wiring it by hand, without the factory
+
+If you assemble `OrcaAgentExecutor.builder()` and `DefaultSubagentExecutor` yourself, do all three steps below **together**. Leaving one out degrades silently: installed on the main executor only, `Task` calls inside forks stay sequential whatever `maxForkDepth` says; without `withForkTaskIdAttribute()` the calls run in parallel but the CLI labels and the `[task …]` prefix on approval prompts are missing.
+
+```java
+import at.aimon.core.agent.tool.DedicatedThreadConfig;
+import at.aimon.core.agent.tool.DedicatedThreadDispatcher;
+import at.aimon.core.agent.tool.DedicatedThreadPermits;
+import at.aimon.core.agent.tool.DefaultParallelToolDispatcher;
+
+DedicatedThreadConfig config = DedicatedThreadConfig.enabled(4);
+DedicatedThreadPermits permits = DedicatedThreadPermits.of(config);  // the main and fork executors share this instance
+
+// 1) main executor — if ToolConcurrencyConfig is on too, wrap that pool dispatcher instead of sequential()
+OrcaAgentExecutor executor = OrcaAgentExecutor.builder()
+        // ... required managers ...
+        .parallelToolDispatcher(
+                new DedicatedThreadDispatcher(DefaultParallelToolDispatcher.sequential(), config, permits))
+        .build();
+
+// 2) fork executor — needed to fan out Task calls inside forks (maxForkDepth >= 2)
+subagentExecutor.withParallelToolDispatcher(
+        new DedicatedThreadDispatcher(DefaultParallelToolDispatcher.sequential(), config, permits));
+
+// 3) have each fork carry its own task id in its execution attributes (CLI labels, [task …] prefix)
+subagentExecutionManager.withForkTaskIdAttribute();
+```
+
+Creating a separate `permits` per executor turns `maxThreads` into a per-executor bound, multiplying the total thread count.
+
+#### AimonStack, CLI and Spring
+
+`AimonStackBuilder` (and the CLI and Spring starter built on it) does not expose this setting yet — the same status as `ToolConcurrencyConfig`. An application assembled that way cannot turn it on today; exposing it is tracked as [backlog PF-1](../../backlog/parallel-foreground-task-open-items.md).
+
+#### Checking that it is on
+
+- Threads named `tool-dedicated-<n>` appear in a thread dump or the logs — foreground `Task` calls are running on dedicated threads.
+- In the CLI, a subagent name carries its task id, as in `[Subagent] Explore#3fa2c1d0` (when step 3 is wired).
+- If several `Task` calls in one response still run in order, see item 7 of §8.
+
+#### Behaviour in brief
+
 
 - It is **independent** of `ToolConcurrencyConfig`. Turn both on and the decorator wraps the pool dispatcher; segments that are not `Task` are still judged by the pool gate. A mixed batch runs segment by segment (a segment starts only after the previous one finished) and results come back in `tool_use` order.
 - `maxThreads` bounds the **whole factory** (the main executor and the fork executor, every session). A call that finds no free permit does not wait: it runs on the calling thread as it does today — so at most `maxThreads + 1` foreground subagents of one batch run at once, and nested fan-out cannot deadlock.
