@@ -27,7 +27,7 @@ plugins {
 // carries this project's version, and that comes from the root `VERSION_NAME`.
 dependencies {
     constraints {
-        publishedProjects().forEach { api(it) }
+        publishedProjects().forEach { api(dependencyFactory.createProjectDependency(it.path)) }
     }
 }
 
@@ -78,7 +78,7 @@ val requiredPomProperties = listOf("POM_ARTIFACT_ID", "POM_NAME", "POM_DESCRIPTI
 
 val generatePom = tasks.named("generatePomFileForMavenPublication")
 
-val verifyBom by tasks.registering {
+val verifyBom = tasks.register("verifyBom") {
     description = "Checks that the BOM manages exactly the modules this build publishes, and nothing else."
     group = "verification"
     dependsOn(generatePom)
