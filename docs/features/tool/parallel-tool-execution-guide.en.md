@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/tool/parallel-tool-execution-guide.md
-source_commit: 0f7a0c7
+source_commit: 22ef0ce4
 ---
 
 # Parallel tool execution guide
@@ -91,7 +91,7 @@ OrcaAgentExecutor executor = new OrcaAgentExecutorFactory()
         .withDedicatedThreadConfig(DedicatedThreadConfig.enabled(4))  // at most 4 dedicated threads
         .create(llmClient, transcriptManager);
 
-// to fan out Task calls inside forks too, raise the depth bound (default 1 = a session's turn only)
+// to fan out Task calls inside forks too, raise the depth bound (default 1 = only root executions: a session's turn, a routine, a rewake replay)
 DedicatedThreadConfig.builder().enabled(true).maxThreads(4).maxForkDepth(2).build();
 ```
 
@@ -219,7 +219,7 @@ The dispatcher reassembles **the result list** in input order, but **a hook's si
 
 #### (3) Concurrent interactive ASK
 
-When a PreTool/PermissionRequest hook returns `Decision.ASK` it is promoted to `AskPromptHandler.resolve()`, and an interactive handler can block on user input. If two tools raise ASK at once, the prompts contend for the same stdin (rare, since `CONCURRENT_SAFE` mostly means read-only, but possible). If you use interactive ASK together with parallelism, make sure `AskPromptHandler` serialises its prompts. The CLI's `InteractiveAskPromptHandler` uses the console one prompt at a time, and a call interrupted while waiting for its turn is denied without being asked. The side-effect approval gate (`SideEffectApprovalGate`) asks once when the same question — same session, same tool — arrives several times at once, and shares the answer.
+When a PreTool/PermissionRequest hook returns `Decision.ASK` it is promoted to `AskPromptHandler.resolve()`, and an interactive handler can block on user input. If two tools raise ASK at once, the prompts contend for the same stdin (rare, since `CONCURRENT_SAFE` mostly means read-only, but possible). If you use interactive ASK together with parallelism, make sure `AskPromptHandler` serialises its prompts. The CLI's `InteractiveAskPromptHandler` uses the console one prompt at a time, and a call interrupted while waiting for its turn is denied without being asked. The side-effect approval gate (`SideEffectApprovalGate`) asks once when the same question — same session, same tool — arrives several times at once, and shares the answer. Only the user's answer is shared and remembered — if the asking run was cancelled or the prompt failed, no denial is stored for the session, and the calls waiting on that question ask for themselves.
 
 #### (4) Concurrent `RewakeService.schedule()`
 

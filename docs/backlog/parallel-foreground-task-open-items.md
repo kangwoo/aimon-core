@@ -1,8 +1,8 @@
 # 포그라운드 Task 병렬 실행 — 등록 항목 6건 (열림 6 · 닫힘 0)
 
 출처는 [`../design/subagent/parallel-foreground-task.md`](../design/subagent/parallel-foreground-task.md) 의 구현이다. 그 문서
-§8(Open questions)과 §9(구현이 이 설계와 갈라진 자리), 그리고 설계 리뷰 3 의 non-blocking 지적 가운데 **이 변경 밖으로 결과가
-나가는 것**만 여기로 올라왔다. 이 변경 안에서 닫힌 결정(블로킹 대신 inline fallback, 기본 `maxForkDepth = 1`, 허가가 팩토리
+§8(Open questions)과 §9(구현이 이 설계와 갈라진 자리) 가운데 **이 변경 밖으로 결과가 나가는 것**만 여기로
+올라왔다. 이 변경 안에서 닫힌 결정(블로킹 대신 inline fallback, 기본 `maxForkDepth = 1`, 허가가 팩토리
 전체에 걸치는 것, 이름 등)은 설계 문서 §8 에 남고 여기 옮겨 적지 않는다.
 
 `README.md` 의 규칙대로 **열림/닫힘의 정본은 이 문서**이고 설계 문서 §8 · §9 는 설계·구현 시점의 기록이다.
@@ -73,7 +73,7 @@
 **왜.** 승인 게이트(`SideEffectApprovalGate`)는 (스코프 × 도구) 단위로 진행 중인 질문을 공유해 같은 질문을 한 번만 묻는다.
 PermissionRequest 훅의 `ASK` 는 그 게이트를 지나지 않고 `AskPromptHandler` 로 바로 간다. CLI 핸들러가 콘솔을 한 번에 하나씩
 쓰게 되었으므로 프롬프트가 섞이지는 않지만, 병렬 포크 N 개가 같은 `ASK` 를 내면 사용자는 같은 질문에 N 번 답한다. `ASK` 의
-답은 승인 게이트처럼 기억되지도 않으므로 "같은 질문" 의 단위부터 정해야 한다(설계 리뷰 3 의 지적 2).
+답은 승인 게이트처럼 기억되지도 않으므로 "같은 질문" 의 단위부터 정해야 한다(설계 §9.1 의 2).
 
 **어디** *(2026-10-20 확인)* — `hook/DefaultHookExecutionManager.java` 의 `AskPromptHandler` 사용부,
 `modules/aimon-cli/src/main/java/at/aimon/cli/hook/InteractiveAskPromptHandler.java`.

@@ -1,6 +1,7 @@
 package at.aimon.core.tools;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Map;
 
@@ -34,5 +35,14 @@ class ForkAccessTest {
         final ToolContext context = ToolContext.builder()
                 .put(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY, Map.of(ForkAccess.TASK_ID_ATTRIBUTE, "xyz")).build();
         assertThat(ForkAccess.taskIdOf(context)).contains("xyz");
+    }
+
+    @Test
+    @DisplayName("short task id is the first 8 characters, or the whole id when shorter")
+    void shortTaskId() {
+        assertThat(ForkAccess.shortTaskId("0123456789abcdef")).isEqualTo("01234567");
+        assertThat(ForkAccess.shortTaskId("01234567")).isEqualTo("01234567");
+        assertThat(ForkAccess.shortTaskId("abc")).isEqualTo("abc");
+        assertThatThrownBy(() -> ForkAccess.shortTaskId(null)).isInstanceOf(NullPointerException.class);
     }
 }

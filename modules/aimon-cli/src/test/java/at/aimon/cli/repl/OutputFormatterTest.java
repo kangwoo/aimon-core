@@ -433,6 +433,25 @@ class OutputFormatterTest {
         }
 
         @Test
+        @DisplayName("with colour on, an unlabelled tool call is byte for byte the line the base release printed")
+        void unlabelledColouredToolCallIsUnchanged() {
+            settings.setColorOutput(true);
+            // The exact expression OutputFormatter used before fork labels existed.
+            final String expected = ansi().a("  ".repeat(InvokerType.SUBAGENT.getDisplayDepth())).fgYellow()
+                    .a("[Tool] ").reset().fgCyan().a("Read").reset()
+                    .a(ansi().a(": ").fgBrightBlack().a("{path: a}").reset().toString()).reset()
+                    + System.lineSeparator();
+
+            formatter.displayToolCall("Read", "{path: a}", InvokerType.SUBAGENT);
+            final String threeArg = getOutput();
+            outputStream.reset();
+            formatter.displayToolCall("Read", "{path: a}", InvokerType.SUBAGENT, null);
+
+            assertThat(threeArg).isEqualTo(expected).contains("\u001B[");
+            assertThat(getOutput()).isEqualTo(expected);
+        }
+
+        @Test
         @DisplayName("a launch label follows the subagent name after '#'; no label prints the unlabelled line")
         void labelledSubagentLaunch() {
             formatter.displaySubagentLaunch("Explore", "find it", "3fa2c1d0");

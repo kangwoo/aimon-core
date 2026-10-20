@@ -21,8 +21,8 @@ public final class DispatchOptions {
     }
 
     /**
-     * @return the options of an execution with no fork ancestor — a session's turn, a routine run, a rewake replay
-     *         (fork depth 0)
+     * @return the options of an execution with no fork ancestor (a session's turn, a routine, a rewake replay): fork
+     *         depth 0
      */
     public static DispatchOptions root() {
         return ROOT;
@@ -36,8 +36,11 @@ public final class DispatchOptions {
     }
 
     /**
-     * @return how many forks deep the dispatching execution is: 0 for an execution with no fork ancestor, 1 for a fork
-     *         it spawned, and so on
+     * Returns the dispatching execution's own depth — for a fork, the same value as
+     * {@code SubagentExecutionRequest.getForkDepth()} (root = 0).
+     *
+     * @return how many forks deep the dispatching execution is: 0 for an execution with no fork ancestor (a session's
+     *         turn, a routine, a rewake replay), 1 for a fork it spawned, and so on
      */
     public int getForkDepth() {
         return forkDepth;

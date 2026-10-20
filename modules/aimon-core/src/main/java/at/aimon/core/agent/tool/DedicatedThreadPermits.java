@@ -2,6 +2,7 @@ package at.aimon.core.agent.tool;
 
 import java.util.Objects;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -22,9 +23,25 @@ public final class DedicatedThreadPermits {
 
     private final Semaphore permits;
     private final AtomicInteger counter = new AtomicInteger();
+    private final ThreadFactory threadFactory;
 
     private DedicatedThreadPermits(int maxThreads) {
         this.permits = new Semaphore(maxThreads);
+        this.threadFactory = this::newDaemonThread;
+    }
+
+    /**
+     * Creates a permit set whose threads come from {@code threadFactory} — for tests that need thread creation to
+     * fail.
+     *
+     * @param maxThreads
+     *            the number of permits
+     * @param threadFactory
+     *            creates (does not start) each dedicated thread (must not be null)
+     */
+    DedicatedThreadPermits(int maxThreads, ThreadFactory threadFactory) {
+        this.permits = new Semaphore(maxThreads);
+        this.threadFactory = Objects.requireNonNull(threadFactory, "threadFactory cannot be null");
     }
 
     /**
@@ -41,25 +58,29 @@ public final class DedicatedThreadPermits {
     /**
      * @return {@code true} if a permit was taken; never blocks
      */
-    public boolean tryAcquire() {
+    boolean tryAcquire() {
         return permits.tryAcquire();
     }
 
     /** Returns a permit taken by {@link #tryAcquire()}. */
-    public void release() {
+    void release() {
         permits.release();
     }
 
     /**
-     * Creates — does not start — a new daemon thread named {@code tool-dedicated-<n>}. Every call returns a fresh
-     * thread; none is pooled or reused.
+     * Creates — does not start — a new thread for {@code task}; by default a daemon thread named
+     * {@code tool-dedicated-<n>}. Every call returns a fresh thread; none is pooled or reused.
      *
      * @param task
      *            the body of the thread (must not be null)
      * @return the unstarted thread
      */
-    public Thread newThread(Runnable task) {
+    Thread newThread(Runnable task) {
         Objects.requireNonNull(task, "task cannot be null");
+        return threadFactory.newThread(task);
+    }
+
+    private Thread newDaemonThread(Runnable task) {
         final Thread thread = new Thread(task, "tool-dedicated-" + counter.incrementAndGet());
         thread.setDaemon(true);
         return thread;
@@ -68,7 +89,7 @@ public final class DedicatedThreadPermits {
     /**
      * @return the number of permits currently free; for tests and diagnostics
      */
-    public int availablePermits() {
+    int availablePermits() {
         return permits.availablePermits();
     }
 }

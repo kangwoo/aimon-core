@@ -47,9 +47,19 @@ import at.aimon.core.llm.ToolUseResult;
  * (the fork's output sink is a no-op or a thread-safe store append).
  *
  * <p>
- * If the calling thread is interrupted while it waits for the dedicated threads, it interrupts the ones still running,
- * keeps waiting for them, and restores its own interrupt flag before returning, so the executor's loop checkpoint
- * still sees the interrupt.
+ * If the calling thread is interrupted while it waits for the dedicated threads, it interrupts the ones whose call is
+ * still running, keeps waiting for them, and restores its own interrupt flag before returning, so the executor's loop
+ * checkpoint still sees the interrupt. Forwarding that interrupt is safe only because a tool's terminator fires solely
+ * from the coordinator's {@code requestInterrupt}, which has already tripped every sibling's registrar in the same
+ * pass: the forwarded interrupt repeats a cancel the siblings already have and can never start one on its own. A
+ * dedicated thread whose call has already returned is not interrupted, so the interrupt cannot land in its
+ * {@code onCompleted} listener. A caller that is already interrupted when a dedicated segment begins starts no thread:
+ * the segment goes to the delegate, whose runner skips each call exactly as the sequential path does.
+ *
+ * <p>
+ * If something escapes on the calling thread mid-segment — an {@link Error} from a call on the inline lane or from a
+ * listener — the dedicated threads already started are interrupted and joined before it propagates, so no thread
+ * outlives the dispatch call that started it.
  */
 public final class DedicatedThreadDispatcher implements ParallelToolDispatcher, AutoCloseable {
 
@@ -92,7 +102,7 @@ public final class DedicatedThreadDispatcher implements ParallelToolDispatcher, 
 
         if (!config.isEnabled() || registry == null || options.getForkDepth() >= config.getMaxForkDepth()
                 || toolUses.stream().noneMatch(toolUse -> isDedicated(toolUse, registry))) {
-            return delegate.dispatch(toolUses, registry, runner, onStarted, onCompleted);
+            return delegate.dispatch(toolUses, registry, options, runner, onStarted, onCompleted);
         }
         final List<ToolUseResult> results = new ArrayList<>(toolUses.size());
         int start = 0;
@@ -103,9 +113,14 @@ public final class DedicatedThreadDispatcher implements ParallelToolDispatcher, 
                 end++;
             }
             final List<ToolUse> segment = toolUses.subList(start, end);
-            results.addAll(dedicated
-                    ? runDedicated(segment, runner, onStarted, onCompleted)
-                    : delegate.dispatch(List.copyOf(segment), registry, runner, onStarted, onCompleted));
+            // An already-interrupted caller starts no thread: the delegate runs the segment sequentially, where the
+            // runner skips each call and leaves the flag for the loop checkpoint, exactly as without this decorator.
+            if (dedicated && !Thread.currentThread().isInterrupted()) {
+                results.addAll(runDedicated(segment, runner, onStarted, onCompleted));
+            } else {
+                results.addAll(
+                        delegate.dispatch(List.copyOf(segment), registry, options, runner, onStarted, onCompleted));
+            }
             start = end;
         }
         return results;
@@ -162,11 +177,22 @@ public final class DedicatedThreadDispatcher implements ParallelToolDispatcher, 
     private List<ToolUseResult> runDedicated(List<ToolUse> segment, Function<ToolUse, ToolUseResult> runner,
             Consumer<ToolUse> onStarted, BiConsumer<ToolUse, ToolUseResult> onCompleted) {
         final List<Slot> slots = new ArrayList<>(segment.size());
-        for (ToolUse toolUse : segment) {
-            safeOnStarted(onStarted, toolUse);
-            slots.add(startOrRunInline(toolUse, runner, onCompleted));
+        try {
+            for (ToolUse toolUse : segment) {
+                ToolDispatchCallbacks.safeOnStarted(log, onStarted, toolUse);
+                slots.add(startOrRunInline(toolUse, runner, onCompleted));
+            }
+            return joinAll(slots);
+        } catch (Throwable t) {
+            // Only an Error (from a call on the inline lane or a listener) can get here. Do not leave the threads
+            // already started: interrupt them and wait for them, then let the Error go on as it would without this
+            // decorator. Each thread hands its own permit back, so nothing is released here.
+            stopAndJoin(slots);
+            throw t;
         }
+    }
 
+    private List<ToolUseResult> joinAll(List<Slot> slots) {
         boolean callerInterrupted = false;
         final List<ToolUseResult> results = new ArrayList<>(slots.size());
         for (Slot slot : slots) {
@@ -183,11 +209,7 @@ public final class DedicatedThreadDispatcher implements ParallelToolDispatcher, 
                     // still running, keep waiting for them, and restore the flag afterwards so the executor's loop
                     // checkpoint — the one place that consumes it and promotes it to a signal — still sees it.
                     callerInterrupted = true;
-                    for (Slot other : slots) {
-                        if (other.future != null && !other.future.isDone()) {
-                            other.thread.interrupt();
-                        }
-                    }
+                    slots.forEach(Slot::interruptIfRunning);
                 } catch (ExecutionException e) {
                     final Throwable cause = e.getCause() != null ? e.getCause() : e;
                     log.error("Dedicated tool thread failed for tool_use {} ({}): {}", slot.toolUse.getId(),
@@ -204,24 +226,44 @@ public final class DedicatedThreadDispatcher implements ParallelToolDispatcher, 
         return results;
     }
 
+    /**
+     * Interrupts every started dedicated thread whose call is still running and joins all of them. The join is not
+     * bounded, for the same reason the normal join after a forwarded interrupt is not: the interrupt is the cancel
+     * lever these calls honour (a fork's loop checkpoint), and returning early would leave threads running that no
+     * dispatch call owns any more. An interrupt of the calling thread meanwhile is kept and restored.
+     */
+    private static void stopAndJoin(List<Slot> slots) {
+        slots.forEach(Slot::interruptIfRunning);
+        boolean callerInterrupted = false;
+        for (Slot slot : slots) {
+            if (slot.thread == null) {
+                continue;
+            }
+            while (true) {
+                try {
+                    slot.thread.join();
+                    break;
+                } catch (InterruptedException e) {
+                    callerInterrupted = true;
+                }
+            }
+        }
+        if (callerInterrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     private Slot startOrRunInline(ToolUse toolUse, Function<ToolUse, ToolUseResult> runner,
             BiConsumer<ToolUse, ToolUseResult> onCompleted) {
         if (!permits.tryAcquire()) {
             // No permit free: run on the calling thread, exactly as without this decorator.
-            return Slot.inline(toolUse, runAndComplete(runner, onCompleted, toolUse));
+            return Slot.inline(toolUse, ToolDispatchCallbacks.runAndComplete(log, runner, onCompleted, toolUse));
         }
-        final CompletableFuture<ToolUseResult> future = new CompletableFuture<>();
+        final Slot slot = Slot.dedicated(toolUse);
         final Thread thread;
         try {
-            thread = permits.newThread(() -> {
-                try {
-                    future.complete(runAndComplete(runner, onCompleted, toolUse));
-                } catch (Throwable t) {
-                    future.completeExceptionally(t);
-                } finally {
-                    permits.release();
-                }
-            });
+            thread = permits.newThread(() -> runOnDedicatedThread(slot, runner, onCompleted));
+            slot.thread = thread;
             thread.start();
         } catch (RuntimeException | OutOfMemoryError e) {
             // The thread could not be created or started (e.g. the OS refused a native thread), so its finally will
@@ -229,78 +271,96 @@ public final class DedicatedThreadDispatcher implements ParallelToolDispatcher, 
             permits.release();
             log.warn("Could not start a dedicated thread for tool_use {} ({}); running it on the calling thread: {}",
                     toolUse.getId(), toolUse.getName(), e.getMessage());
-            return Slot.inline(toolUse, runAndComplete(runner, onCompleted, toolUse));
+            return Slot.inline(toolUse, ToolDispatchCallbacks.runAndComplete(log, runner, onCompleted, toolUse));
         }
-        return Slot.dedicated(toolUse, future, thread);
+        return slot;
     }
 
-    private static ToolUseResult runAndComplete(Function<ToolUse, ToolUseResult> runner,
-            BiConsumer<ToolUse, ToolUseResult> onCompleted, ToolUse toolUse) {
-        final ToolUseResult result = runSafely(runner, toolUse);
-        safeOnCompleted(onCompleted, toolUse, result);
-        return result;
-    }
-
-    private static ToolUseResult runSafely(Function<ToolUse, ToolUseResult> runner, ToolUse toolUse) {
+    /**
+     * The body of a dedicated thread. Even a runner that throws an {@link Error} yields an error result that goes to
+     * {@code onCompleted}, so a UI that saw the call start also sees it finish. The slot is marked returned before
+     * {@code onCompleted} runs and the future is completed after it, so the event order stays start, completed, joined.
+     */
+    private void runOnDedicatedThread(Slot slot, Function<ToolUse, ToolUseResult> runner,
+            BiConsumer<ToolUse, ToolUseResult> onCompleted) {
+        final ToolUse toolUse = slot.toolUse;
         try {
-            final ToolUseResult result = runner.apply(toolUse);
-            if (result != null) {
-                return result;
+            ToolUseResult result;
+            try {
+                result = ToolDispatchCallbacks.runSafely(log, runner, toolUse);
+            } catch (Throwable t) {
+                log.error("Tool runner failed on its dedicated thread for tool_use {} ({}): {}", toolUse.getId(),
+                        toolUse.getName(), t.getMessage(), t);
+                result = ToolUseResult.error(toolUse.getId(), "Tool execution error: " + t.getMessage());
             }
-            log.error("Tool runner returned null for tool_use {} ({})", toolUse.getId(), toolUse.getName());
-            return ToolUseResult.error(toolUse.getId(), "Tool execution error: runner returned no result");
-        } catch (Exception e) {
-            log.error("Tool runner threw for tool_use {} ({}): {}", toolUse.getId(), toolUse.getName(), e.getMessage(),
-                    e);
-            return ToolUseResult.error(toolUse.getId(), "Tool execution error: " + e.getMessage());
+            slot.markRunnerReturned();
+            ToolDispatchCallbacks.safeOnCompleted(log, onCompleted, toolUse, result);
+            slot.future.complete(result);
+        } catch (Throwable t) {
+            // A listener threw an Error: the joiner turns it into an error result.
+            slot.future.completeExceptionally(t);
+        } finally {
+            permits.release();
         }
     }
 
-    private static void safeOnStarted(Consumer<ToolUse> onStarted, ToolUse toolUse) {
-        if (onStarted == null) {
-            return;
-        }
-        try {
-            onStarted.accept(toolUse);
-        } catch (Exception e) {
-            log.warn("onStarted listener threw for tool_use {} ({}): {}", toolUse.getId(), toolUse.getName(),
-                    e.getMessage(), e);
-        }
-    }
-
-    private static void safeOnCompleted(BiConsumer<ToolUse, ToolUseResult> onCompleted, ToolUse toolUse,
-            ToolUseResult result) {
-        if (onCompleted == null) {
-            return;
-        }
-        try {
-            onCompleted.accept(toolUse, result);
-        } catch (Exception e) {
-            log.warn("onCompleted listener threw for tool_use {} ({}): {}", toolUse.getId(), toolUse.getName(),
-                    e.getMessage(), e);
-        }
-    }
-
-    /** One call of a dedicated segment: either already run inline ({@code future == null}) or running on a thread. */
+    /**
+     * One call of a dedicated segment: either already run inline ({@code future == null}) or running on a thread of
+     * its own.
+     */
     private static final class Slot {
         private final ToolUse toolUse;
         private final ToolUseResult result;
         private final CompletableFuture<ToolUseResult> future;
-        private final Thread thread;
+        private final Object lock = new Object();
 
-        private Slot(ToolUse toolUse, ToolUseResult result, CompletableFuture<ToolUseResult> future, Thread thread) {
+        /** Set by the calling thread before {@link Thread#start()}; read only by the calling thread. */
+        private Thread thread;
+
+        /** Guarded by {@link #lock}; once set, a forwarded interrupt no longer reaches {@link #thread}. */
+        private boolean runnerReturned;
+
+        private Slot(ToolUse toolUse, ToolUseResult result, CompletableFuture<ToolUseResult> future) {
             this.toolUse = toolUse;
             this.result = result;
             this.future = future;
-            this.thread = thread;
         }
 
         static Slot inline(ToolUse toolUse, ToolUseResult result) {
-            return new Slot(toolUse, result, null, null);
+            return new Slot(toolUse, result, null);
         }
 
-        static Slot dedicated(ToolUse toolUse, CompletableFuture<ToolUseResult> future, Thread thread) {
-            return new Slot(toolUse, null, future, thread);
+        static Slot dedicated(ToolUse toolUse) {
+            return new Slot(toolUse, null, new CompletableFuture<>());
+        }
+
+        /**
+         * Called on the dedicated thread as soon as the runner returns, before {@code onCompleted} runs. Also clears
+         * the thread's interrupt flag, in case a forwarded interrupt landed between the runner's return and this
+         * call: the flag has no reader left on this thread (no loop checkpoint runs here; the caller restores its
+         * own), and the listener must not inherit it.
+         */
+        void markRunnerReturned() {
+            synchronized (lock) {
+                runnerReturned = true;
+                Thread.interrupted();
+            }
+        }
+
+        /**
+         * Interrupts the dedicated thread if its runner has not returned yet. Under the same lock as
+         * {@link #markRunnerReturned()}, so a forwarded interrupt never reaches the {@code onCompleted} listener that
+         * follows the runner.
+         */
+        void interruptIfRunning() {
+            if (thread == null) {
+                return;
+            }
+            synchronized (lock) {
+                if (!runnerReturned) {
+                    thread.interrupt();
+                }
+            }
         }
     }
 }

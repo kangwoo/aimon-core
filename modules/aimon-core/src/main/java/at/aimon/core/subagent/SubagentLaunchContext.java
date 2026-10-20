@@ -456,7 +456,8 @@ public final class SubagentLaunchContext {
 
     /**
      * Returns how many forks deep the fork launched with this context is: 1 for a fork its spawner started from a run
-     * with no fork ancestor (a session's turn), the spawner's own depth plus one for a fork started inside a fork.
+     * with no fork ancestor (a session's turn, a routine, a rewake replay), the spawner's own depth plus one for a fork
+     * started inside a fork.
      * Spawn sites that have a {@code ToolContext} set it from {@code ForkAccess.childDepthOf(context)}; a context
      * nobody labelled keeps the default 1, because a fork is at least one deep.
      *

@@ -88,7 +88,7 @@ ToolConcurrencyConfig.builder().enabled(true).maxConcurrency(8).perBatchMax(2).b
 > 못한다 — 대화/테넌트 단위 공정성이나 클러스터 전역 상한은 도구 디스패처가 아니라 세션/요청 수용(admission)
 > 레이어에서 다뤄야 한다.
 
-### 2.4 포그라운드 Task 병렬 실행 (DedicatedThreadConfig) — 선택
+### 2.4 포그라운드 Task 병렬 실행 (`DedicatedThreadConfig`) — 선택
 
 한 응답에 담긴 포그라운드 `Task`(서브에이전트) 호출은 위 게이트로는 병렬화되지 않는다 — `Task` 는 실행 스레드를
 인터럽트하는 terminator 를 등록하므로 공유 풀에 오르면 늦게 도착한 인터럽트가 워커의 다음 작업에 걸린다. 그래서 `Task` 는
@@ -100,7 +100,7 @@ OrcaAgentExecutor executor = new OrcaAgentExecutorFactory()
         .withDedicatedThreadConfig(DedicatedThreadConfig.enabled(4))  // 전용 스레드 최대 4개
         .create(llmClient, transcriptManager);
 
-// 포크 안의 Task 도 펴려면 깊이 상한을 올린다 (기본 1 = 세션의 턴만)
+// 포크 안의 Task 도 펴려면 깊이 상한을 올린다 (기본 1 = 포크 조상이 없는 실행 — 세션의 턴 · 루틴 · rewake 리플레이 — 만)
 DedicatedThreadConfig.builder().enabled(true).maxThreads(4).maxForkDepth(2).build();
 ```
 
@@ -258,7 +258,8 @@ PreTool/PermissionRequest 훅이 `Decision.ASK`를 반환하면 `AskPromptHandle
 (`CONCURRENT_SAFE`=주로 읽기전용이라 드물지만 가능). 인터랙티브 ASK와 병렬을 함께 쓴다면 `AskPromptHandler`가
 프롬프트를 직렬화하도록 보장한다. CLI 의 `InteractiveAskPromptHandler` 는 콘솔을 한 번에 하나씩 쓰고, 차례를 기다리다
 인터럽트된 호출은 묻지 않고 거절한다. 부작용 도구 승인 게이트(`SideEffectApprovalGate`)는 같은 세션 · 같은 도구의 질문이 동시에
-오면 한 번만 묻고 답을 나눈다.
+오면 한 번만 묻고 답을 나눈다. 나누고 기억하는 것은 사람의 답뿐이다 — 묻던 실행이 취소되었거나 프롬프트가 실패하면 그 거절은
+세션에 남지 않고, 같은 질문을 기다리던 호출은 스스로 다시 묻는다.
 
 #### (4) `RewakeService.schedule()` 동시 호출
 

@@ -1,7 +1,10 @@
 package at.aimon.core.agent.tool;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -15,6 +18,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -77,8 +81,17 @@ class DedicatedThreadDispatcherTest {
     /** Records every call the decorator hands it, then runs the batch sequentially. */
     private static final class RecordingDelegate implements ParallelToolDispatcher, AutoCloseable {
         private final List<List<ToolUse>> calls = new CopyOnWriteArrayList<>();
+        private final List<DispatchOptions> options = new CopyOnWriteArrayList<>();
         private final DefaultParallelToolDispatcher sequential = DefaultParallelToolDispatcher.sequential();
         private boolean closed;
+
+        @Override
+        public List<ToolUseResult> dispatch(List<ToolUse> toolUses, ToolRegistry registry, DispatchOptions options,
+                Function<ToolUse, ToolUseResult> runner, Consumer<ToolUse> onStarted,
+                BiConsumer<ToolUse, ToolUseResult> onCompleted) {
+            this.options.add(options);
+            return dispatch(toolUses, registry, runner, onStarted, onCompleted);
+        }
 
         @Override
         public List<ToolUseResult> dispatch(List<ToolUse> toolUses, ToolRegistry registry,
@@ -512,6 +525,287 @@ class DedicatedThreadDispatcherTest {
         assertThat(results).singleElement().satisfies(r -> assertThat(r.isError()).isFalse());
         assertThat(dedicated.get()).isNotSameAs(Thread.currentThread());
         assertThat(permits.availablePermits()).isEqualTo(4);
+    }
+
+    @Test
+    @DisplayName("back-to-back batches never share a thread: the first batch's threads are gone, not reused")
+    void backToBackBatchesUseFreshThreads() throws Exception {
+        final DedicatedThreadDispatcher dispatcher = dispatcher(new RecordingDelegate(), 4);
+        final List<Thread> first = new CopyOnWriteArrayList<>();
+        final List<Thread> second = new CopyOnWriteArrayList<>();
+
+        dispatcher.dispatch(List.of(use("a1", TASK), use("a2", TASK)), registry(), tu -> {
+            first.add(Thread.currentThread());
+            return ToolUseResult.success(tu.getId(), "ok");
+        }, null, null);
+        dispatcher.dispatch(List.of(use("b1", TASK), use("b2", TASK)), registry(), tu -> {
+            second.add(Thread.currentThread());
+            return ToolUseResult.success(tu.getId(), "ok");
+        }, null, null);
+
+        assertThat(first).hasSize(2);
+        assertThat(second).hasSize(2).doesNotContainAnyElementsOf(first);
+        // A late terminator interrupt aimed at a first-batch thread has nowhere to land: that thread has died.
+        for (Thread thread : first) {
+            thread.join(1_000);
+            assertThat(thread.isAlive()).isFalse();
+        }
+    }
+
+    @Test
+    @DisplayName("an Error on a dedicated thread still fires onCompleted, with the error result")
+    void errorOnDedicatedThreadFiresOnCompleted() {
+        final Map<String, ToolUseResult> completed = new ConcurrentHashMap<>();
+        final List<ToolUse> batch = List.of(use("t1", TASK), use("t2", TASK));
+
+        final List<ToolUseResult> results = dispatcher(new RecordingDelegate(), 4).dispatch(batch, registry(), tu -> {
+            if (tu.getId().equals("t1")) {
+                throw new AssertionError("fatal");
+            }
+            return ToolUseResult.success(tu.getId(), "ok");
+        }, null, (tu, r) -> completed.put(tu.getId(), r));
+
+        assertThat(completed).containsOnlyKeys("t1", "t2");
+        assertThat(completed.get("t1")).isSameAs(results.get(0));
+        assertThat(completed.get("t1").isError()).isTrue();
+        assertThat(completed.get("t1").getContent()).contains("fatal");
+    }
+
+    @Test
+    @DisplayName("a thread that cannot be created runs its call inline; order is kept and every permit comes back")
+    void threadStartFailureRunsInline() {
+        final DedicatedThreadConfig config = DedicatedThreadConfig.enabled(3);
+        final AtomicInteger created = new AtomicInteger();
+        final ThreadFactory failingSecond = task -> {
+            if (created.incrementAndGet() == 2) {
+                throw new OutOfMemoryError("unable to create native thread");
+            }
+            return new Thread(task, "tool-dedicated-test-" + created.get());
+        };
+        final DedicatedThreadPermits permits = new DedicatedThreadPermits(3, failingSecond);
+        final Map<String, Thread> threads = new ConcurrentHashMap<>();
+        final List<ToolUse> batch = List.of(use("t1", TASK), use("t2", TASK), use("t3", TASK));
+
+        final List<ToolUseResult> results = new DedicatedThreadDispatcher(new RecordingDelegate(), config, permits)
+                .dispatch(batch, registry(), tu -> {
+                    threads.put(tu.getId(), Thread.currentThread());
+                    return ToolUseResult.success(tu.getId(), "ok");
+                }, null, null);
+
+        assertThat(ids(results)).containsExactly("t1", "t2", "t3");
+        assertThat(results).allMatch(r -> !r.isError());
+        assertThat(threads.get("t2")).isSameAs(Thread.currentThread());
+        assertThat(threads.get("t1")).isNotSameAs(Thread.currentThread());
+        assertThat(threads.get("t3")).isNotSameAs(Thread.currentThread());
+        assertThat(permits.availablePermits()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("an Error on the inline lane interrupts and joins the started threads before it propagates")
+    void errorOnInlineLaneJoinsStartedThreads() {
+        final DedicatedThreadConfig config = DedicatedThreadConfig.enabled(1);
+        final DedicatedThreadPermits permits = DedicatedThreadPermits.of(config);
+        final CountDownLatch t1Running = new CountDownLatch(1);
+        final AtomicBoolean t1SawInterrupt = new AtomicBoolean();
+        final AtomicReference<Thread> t1Thread = new AtomicReference<>();
+        final List<ToolUse> started = new CopyOnWriteArrayList<>();
+        final List<ToolUse> batch = List.of(use("t1", TASK), use("t2", TASK), use("t3", TASK));
+        final DedicatedThreadDispatcher dispatcher = new DedicatedThreadDispatcher(new RecordingDelegate(), config,
+                permits);
+
+        assertThatThrownBy(() -> dispatcher.dispatch(batch, registry(), tu -> {
+            if (tu.getId().equals("t1")) {
+                t1Thread.set(Thread.currentThread());
+                t1Running.countDown();
+                try {
+                    Thread.sleep(10_000);
+                } catch (InterruptedException e) {
+                    t1SawInterrupt.set(true);
+                }
+                return ToolUseResult.success(tu.getId(), "ok");
+            }
+            // t2 runs inline (the only permit is taken); wait until t1 is really running, then fail hard.
+            try {
+                t1Running.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            throw new AssertionError("inline fatal");
+        }, started::add, null)).isInstanceOf(AssertionError.class).hasMessage("inline fatal");
+
+        assertThat(t1SawInterrupt).isTrue();
+        assertThat(t1Thread.get().isAlive()).isFalse();
+        assertThat(started).extracting(ToolUse::getId).containsExactly("t1", "t2");
+        assertThat(permits.availablePermits()).isEqualTo(1);
+        assertThat(Thread.interrupted()).isFalse();
+    }
+
+    @Test
+    @DisplayName("nested fan-out on one shared permit set does not deadlock")
+    void nestedFanOutDoesNotDeadlock() {
+        final DedicatedThreadConfig config = DedicatedThreadConfig.builder().enabled(true).maxThreads(2).maxForkDepth(2)
+                .build();
+        final DedicatedThreadPermits permits = DedicatedThreadPermits.of(config);
+        final DedicatedThreadDispatcher outer = new DedicatedThreadDispatcher(new RecordingDelegate(), config, permits);
+        final DedicatedThreadDispatcher inner = new DedicatedThreadDispatcher(new RecordingDelegate(), config, permits);
+        final DispatchOptions depthOne = DispatchOptions.builder().forkDepth(1).build();
+        final Map<String, List<String>> innerResults = new ConcurrentHashMap<>();
+        final List<ToolUse> batch = List.of(use("o1", TASK), use("o2", TASK));
+
+        final List<ToolUseResult> results = assertTimeoutPreemptively(Duration.ofSeconds(5),
+                () -> outer.dispatch(batch, registry(), tu -> {
+                    final List<ToolUse> children = List.of(use(tu.getId() + ".c1", TASK),
+                            use(tu.getId() + ".c2", TASK));
+                    innerResults.put(tu.getId(), ids(inner.dispatch(children, registry(), depthOne,
+                            child -> ToolUseResult.success(child.getId(), "ok"), null, null)));
+                    return ToolUseResult.success(tu.getId(), "ok");
+                }, null, null));
+
+        assertThat(ids(results)).containsExactly("o1", "o2");
+        assertThat(innerResults).containsEntry("o1", List.of("o1.c1", "o1.c2")).containsEntry("o2",
+                List.of("o2.c1", "o2.c2"));
+        assertThat(permits.availablePermits()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("the options reach the delegate, for the whole batch and for each non-dedicated segment")
+    void optionsReachTheDelegate() {
+        final DispatchOptions deep = DispatchOptions.builder().forkDepth(1).build();
+        final RecordingDelegate bypass = new RecordingDelegate();
+        dispatcher(bypass, 4).dispatch(List.of(use("t1", TASK)), registry(), deep,
+                tu -> ToolUseResult.success(tu.getId(), "ok"), null, null);
+        assertThat(bypass.options).containsExactly(deep);
+
+        final DispatchOptions root = DispatchOptions.root();
+        final RecordingDelegate segments = new RecordingDelegate();
+        dispatcher(segments, 4).dispatch(List.of(use("r1", READ), use("t1", TASK), use("g1", GREP)), registry(), root,
+                tu -> ToolUseResult.success(tu.getId(), "ok"), null, null);
+        assertThat(segments.options).containsExactly(root, root);
+    }
+
+    @Test
+    @DisplayName("an already-interrupted caller starts no thread; the segment runs sequentially and skips")
+    void interruptedOnEntryUsesTheSequentialPath() throws Exception {
+        final RecordingDelegate delegate = new RecordingDelegate();
+        final Set<Thread> threads = ConcurrentHashMap.newKeySet();
+        final AtomicReference<List<ToolUseResult>> results = new AtomicReference<>();
+        final AtomicBoolean flagAfter = new AtomicBoolean();
+        final AtomicReference<Thread> callerRef = new AtomicReference<>();
+        final List<ToolUse> batch = List.of(use("t1", TASK), use("t2", TASK));
+
+        final Thread caller = new Thread(() -> {
+            callerRef.set(Thread.currentThread());
+            Thread.currentThread().interrupt();
+            // Models the executor's runner: an interrupted execution skips the call and leaves the flag set.
+            results.set(dispatcher(delegate, 4).dispatch(batch, registry(), tu -> {
+                threads.add(Thread.currentThread());
+                return Thread.currentThread().isInterrupted()
+                        ? ToolUseResult.error(tu.getId(), "skipped")
+                        : ToolUseResult.success(tu.getId(), "ran");
+            }, null, null));
+            flagAfter.set(Thread.interrupted());
+        });
+        caller.start();
+        caller.join(5_000);
+
+        assertThat(caller.isAlive()).isFalse();
+        assertThat(delegate.calls).singleElement().satisfies(call -> assertThat(call).isEqualTo(batch));
+        assertThat(threads).containsExactly(callerRef.get());
+        assertThat(results.get()).extracting(ToolUseResult::getContent).containsExactly("skipped", "skipped");
+        assertThat(flagAfter).isTrue();
+    }
+
+    @Test
+    @DisplayName("a caller interrupted while it runs an inline call forwards the interrupt and restores its flag")
+    void callerInterruptedDuringInlineCall() throws Exception {
+        final DedicatedThreadConfig config = DedicatedThreadConfig.enabled(1);
+        final DedicatedThreadPermits permits = DedicatedThreadPermits.of(config);
+        final CountDownLatch bothRunning = new CountDownLatch(2);
+        final Map<String, Boolean> sawInterrupt = new ConcurrentHashMap<>();
+        final AtomicReference<List<ToolUseResult>> results = new AtomicReference<>();
+        final AtomicBoolean flagAfter = new AtomicBoolean();
+        final List<ToolUse> batch = List.of(use("t1", TASK), use("t2", TASK));
+
+        final Thread caller = new Thread(() -> {
+            results.set(new DedicatedThreadDispatcher(new RecordingDelegate(), config, permits).dispatch(batch,
+                    registry(), tu -> {
+                        bothRunning.countDown();
+                        try {
+                            Thread.sleep(10_000);
+                            sawInterrupt.put(tu.getId(), false);
+                        } catch (InterruptedException e) {
+                            sawInterrupt.put(tu.getId(), true);
+                            // Like the executor's runner, leave the flag for the loop checkpoint.
+                            Thread.currentThread().interrupt();
+                        }
+                        return ToolUseResult.success(tu.getId(), "ok");
+                    }, null, null));
+            flagAfter.set(Thread.interrupted());
+        });
+        caller.start();
+        assertThat(bothRunning.await(5, TimeUnit.SECONDS)).isTrue();
+        caller.interrupt();
+        caller.join(5_000);
+
+        assertThat(caller.isAlive()).isFalse();
+        assertThat(sawInterrupt).containsEntry("t1", true).containsEntry("t2", true);
+        assertThat(ids(results.get())).containsExactly("t1", "t2");
+        assertThat(flagAfter).isTrue();
+        assertThat(permits.availablePermits()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("a forwarded interrupt skips a call whose runner already returned (it never hits onCompleted)")
+    void forwardedInterruptSkipsReturnedRunner() throws Exception {
+        final CountDownLatch t1InCompleted = new CountDownLatch(1);
+        final CountDownLatch t2Running = new CountDownLatch(1);
+        final CountDownLatch t2Interrupted = new CountDownLatch(1);
+        final CountDownLatch releaseT1 = new CountDownLatch(1);
+        final AtomicBoolean t1ListenerInterrupted = new AtomicBoolean();
+        final AtomicBoolean flagAfter = new AtomicBoolean();
+        final List<ToolUse> batch = List.of(use("t1", TASK), use("t2", TASK));
+
+        final Thread caller = new Thread(() -> {
+            dispatcher(new RecordingDelegate(), 4).dispatch(batch, registry(), tu -> {
+                if (tu.getId().equals("t2")) {
+                    t2Running.countDown();
+                    try {
+                        Thread.sleep(10_000);
+                    } catch (InterruptedException e) {
+                        t2Interrupted.countDown();
+                    }
+                }
+                return ToolUseResult.success(tu.getId(), "ok");
+            }, null, (tu, r) -> {
+                if (!tu.getId().equals("t1")) {
+                    return;
+                }
+                t1InCompleted.countDown();
+                boolean interrupted = false;
+                while (true) {
+                    try {
+                        releaseT1.await();
+                        break;
+                    } catch (InterruptedException e) {
+                        interrupted = true;
+                    }
+                }
+                t1ListenerInterrupted.set(interrupted || Thread.interrupted());
+            });
+            flagAfter.set(Thread.interrupted());
+        });
+        caller.start();
+        assertThat(t1InCompleted.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(t2Running.await(5, TimeUnit.SECONDS)).isTrue();
+        // The caller is joining t1 (still in its listener); its interrupt is forwarded slot by slot, t1 before t2.
+        caller.interrupt();
+        assertThat(t2Interrupted.await(5, TimeUnit.SECONDS)).isTrue();
+        releaseT1.countDown();
+        caller.join(5_000);
+
+        assertThat(caller.isAlive()).isFalse();
+        assertThat(t1ListenerInterrupted).isFalse();
+        assertThat(flagAfter).isTrue();
     }
 
     // ---- delegation ---------------------------------------------------------

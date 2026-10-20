@@ -13,7 +13,8 @@ import at.aimon.core.agent.tool.ToolContext;
  * <p>
  * Exists for the same reason {@link CallerAllowedTools} and {@link InvokingSessionAccess} do: the values are read at a
  * handful of spawn and display sites, and every site must agree on what <b>absence</b> means. An absent
- * {@link ToolContextKeys#FORK_DEPTH} means depth 0 — a session's turn or a run with no fork ancestor. An absent
+ * {@link ToolContextKeys#FORK_DEPTH} means depth 0 — an execution with no fork ancestor (a session's turn, a routine, a
+ * rewake replay). An absent
  * {@link #TASK_ID_ATTRIBUTE} means the run is not a fork, or the parallel foreground task feature is off.
  */
 public final class ForkAccess {
@@ -24,8 +25,17 @@ public final class ForkAccess {
      * hooks, the hooks of the tools it calls and an approval prompt it raises can say which of several concurrent forks
      * they belong to. Set only when the parallel foreground task feature is enabled; a nested fork overwrites it with
      * its own id.
+     *
+     * <p>
+     * Not to be confused with {@link at.aimon.core.agent.stream.SubagentTaskCompleted#RECEIVED_TASK_ID_ATTRIBUTE}:
+     * that one names a <em>background</em> task whose completion notification a turn is delivering, is set on the
+     * receiving turn, and is inherited unchanged by the forks that turn spawns. This one names the task the run
+     * <em>itself</em> is, so it changes at every fork boundary.
      */
     public static final String TASK_ID_ATTRIBUTE = "aimon.subagent.task_id";
+
+    /** Number of task id characters in {@link #shortTaskId(String)}. */
+    private static final int SHORT_TASK_ID_CHARS = 8;
 
     private ForkAccess() {
         throw new AssertionError("This class should not be instantiated");
@@ -81,5 +91,21 @@ public final class ForkAccess {
     public static Optional<String> taskIdOf(ToolContext context) {
         Objects.requireNonNull(context, "context must not be null");
         return taskIdOf(context.get(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY).orElse(null));
+    }
+
+    /**
+     * Returns the short form of a fork's task id that labels it wherever several concurrent forks must be told apart —
+     * the approval gate's {@code [task ...]} prompt prefix and the CLI's fork labels — so every site shows the same
+     * characters.
+     *
+     * @param taskId
+     *            the fork's task id (must not be null)
+     * @return its first 8 characters, or the whole id when shorter
+     * @throws NullPointerException
+     *             if {@code taskId} is null
+     */
+    public static String shortTaskId(String taskId) {
+        Objects.requireNonNull(taskId, "taskId must not be null");
+        return taskId.length() <= SHORT_TASK_ID_CHARS ? taskId : taskId.substring(0, SHORT_TASK_ID_CHARS);
     }
 }

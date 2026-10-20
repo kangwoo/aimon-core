@@ -53,6 +53,7 @@ import at.aimon.core.agent.tool.ConcurrencyBehavior;
 import at.aimon.core.agent.tool.DedicatedThreadConfig;
 import at.aimon.core.agent.tool.DedicatedThreadDispatcher;
 import at.aimon.core.agent.tool.DedicatedThreadPermits;
+import at.aimon.core.agent.tool.DedicatedThreadPermitsAccess;
 import at.aimon.core.agent.tool.DefaultParallelToolDispatcher;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
@@ -214,6 +215,53 @@ class OrcaAgentExecutorDedicatedTaskTest {
         assertThat(signals).hasSize(3).allMatch(CancellationSignal::isCancelled);
         assertThat(interrupted).hasSize(3).doesNotContainValue(false);
         assertThat(turn.flagAfter.get()).as("no stale interrupt on the turn's thread").isFalse();
+    }
+
+    @Test
+    @DisplayName("cancel with the inline lane active: all three children stop, the permits come back, no stale flag")
+    void parentCancelWithInlineLane() throws Exception {
+        final CountDownLatch allRunning = new CountDownLatch(3);
+        final Map<String, Boolean> interrupted = new ConcurrentHashMap<>();
+        final List<Thread> threads = new CopyOnWriteArrayList<>();
+        final SubagentExecutionManager manager = fakeManager(launch -> {
+            threads.add(Thread.currentThread());
+            allRunning.countDown();
+            try {
+                Thread.sleep(10_000);
+                interrupted.put(Thread.currentThread().getName(), false);
+            } catch (InterruptedException e) {
+                interrupted.put(Thread.currentThread().getName(), true);
+            }
+            return success();
+        });
+        final ScriptedLlmClient llm = new ScriptedLlmClient();
+        llm.enqueue(LlmResponse.of("", threeTasks(), TokenUsage.empty()));
+        llm.enqueue(LlmResponse.text("should not be reached"));
+        final OrcaAgentExecutor executor = executor(llm, manager);
+        final DedicatedThreadConfig config = DedicatedThreadConfig.enabled(2);
+        final DedicatedThreadPermits permits = DedicatedThreadPermits.of(config);
+        executor.parallelToolDispatcher = new DedicatedThreadDispatcher(DefaultParallelToolDispatcher.sequential(),
+                config, permits);
+        final AtomicReference<InterruptCoordinator> coordinator = new AtomicReference<>();
+        executor.interruptCoordinatorFactory = () -> {
+            final DefaultInterruptCoordinator created = new DefaultInterruptCoordinator();
+            coordinator.compareAndSet(null, created);
+            return created;
+        };
+
+        final TurnThread turn = new TurnThread(() -> executor.execute(runtime(registryWith(manager)), request()));
+        turn.start();
+        assertThat(allRunning.await(5, TimeUnit.SECONDS)).isTrue();
+        coordinator.get().requestInterrupt(InterruptReason.USER_SIGINT);
+        turn.join(10_000);
+
+        assertThat(turn.isAlive()).isFalse();
+        // Two children on dedicated threads, the third inline on the turn's own thread.
+        assertThat(threads).hasSize(3).contains(turn);
+        assertThat(interrupted).hasSize(3).doesNotContainValue(false);
+        assertThat(turn.result.get().getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
+        assertThat(turn.flagAfter.get()).as("no stale interrupt on the turn's thread").isFalse();
+        assertThat(DedicatedThreadPermitsAccess.availablePermits(permits)).isEqualTo(2);
     }
 
     @Test
@@ -430,6 +478,22 @@ class OrcaAgentExecutorDedicatedTaskTest {
 
         assertThat(forkStartAttributes(new OrcaAgentExecutorFactory())).doesNotContainKey(ForkAccess.TASK_ID_ATTRIBUTE);
         assertThat(forkStartAttributes(factory)).containsEntry(ForkAccess.TASK_ID_ATTRIBUTE, "task-f");
+    }
+
+    @Test
+    @DisplayName("factory: reconfiguring dedicated threads resizes the permit set used by later executors")
+    void factoryReconfigurationChangesTheBound() {
+        final OrcaAgentExecutorFactory factory = new OrcaAgentExecutorFactory()
+                .withDedicatedThreadConfig(DedicatedThreadConfig.enabled(2));
+        final DedicatedThreadPermits first = factory.dedicatedThreadPermits();
+        assertThat(factory.dedicatedThreadPermits()).isSameAs(first);
+        assertThat(DedicatedThreadPermitsAccess.availablePermits(first)).isEqualTo(2);
+
+        factory.withDedicatedThreadConfig(DedicatedThreadConfig.enabled(5));
+        final DedicatedThreadPermits second = factory.dedicatedThreadPermits();
+
+        assertThat(second).isNotSameAs(first);
+        assertThat(DedicatedThreadPermitsAccess.availablePermits(second)).isEqualTo(5);
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────────

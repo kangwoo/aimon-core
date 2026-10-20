@@ -408,7 +408,8 @@ public final class ToolContextKeys {
      * Typed key for how many forks deep the run making this tool call is.
      *
      * <p>
-     * Absent on a session's turn and on any run with no fork ancestor, which means depth 0. A fork publishes its own
+     * Absent on an execution with no fork ancestor (a session's turn, a routine, a rewake replay), which means depth
+     * 0. A fork publishes its own
      * depth, which is its spawner's depth plus one. Because each run republishes it, it follows nesting to any depth,
      * as {@link #CALLER_ALLOWED_TOOLS} does. Spawn sites read it through {@link ForkAccess#childDepthOf(ToolContext)}
      * to label the fork they start; the dedicated-thread dispatcher compares the depth with its configured limit to

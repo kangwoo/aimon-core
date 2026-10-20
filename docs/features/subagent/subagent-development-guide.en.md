@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/subagent/subagent-development-guide.md
-source_commit: 0f7a0c73
+source_commit: 22ef0ce4
 ---
 
 # Subagent Development Guide
@@ -531,8 +531,7 @@ back in `tool_use` order, and cancelling the parent stops every child. How to tu
 
 Do not let two forks edit the same file. The framework does not prevent it; it turns the lost update into an **explicit
 refusal** instead — if forks A and B read the same file and A then edits it, B's `Edit` is refused with "File changed since
-it was read; Read it again". To give the model this guidance, put it in the agent's instructions or the system prompt
-(the tool description was left unchanged because it must be the same whether the feature is on or off).
+it was read; Read it again". To give the model this guidance, put it in the agent's instructions or the system prompt.
 
 - Giving each fork its own files or directories is the default. If several need the same file, parallelise the reads and let the parent do the writes.
 - With the feature on, each fork carries its own task id in its execution attributes as `aimon.subagent.task_id`

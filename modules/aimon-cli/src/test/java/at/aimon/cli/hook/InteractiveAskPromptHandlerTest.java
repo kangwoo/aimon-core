@@ -8,9 +8,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.Console;
 import java.io.PrintStream;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -49,21 +46,31 @@ class InteractiveAskPromptHandlerTest {
         final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         final InteractiveAskPromptHandler handler = new InteractiveAskPromptHandler(console,
                 new PrintStream(bytes, true), AskPromptHandler.denyAll());
-        final ExecutorService callers = Executors.newFixedThreadPool(2);
-        try {
-            final Future<Decision> first = callers.submit(() -> handler.resolve("first?"));
-            assertThat(firstReading.await(5, TimeUnit.SECONDS)).isTrue();
-            final Future<Decision> second = callers.submit(() -> handler.resolve("second?"));
-            Thread.sleep(200);
-            // The second prompt waits for the console: it has not been printed while the first is being answered.
-            assertThat(bytes.toString()).contains("first?").doesNotContain("second?");
+        final AtomicReference<Decision> firstDecision = new AtomicReference<>();
+        final AtomicReference<Decision> secondDecision = new AtomicReference<>();
+        final Thread first = new Thread(() -> firstDecision.set(handler.resolve("first?")));
+        first.start();
+        assertThat(firstReading.await(5, TimeUnit.SECONDS)).isTrue();
+        final Thread second = new Thread(() -> secondDecision.set(handler.resolve("second?")));
+        second.start();
+        awaitParked(second);
+        // The second prompt waits for the console: it has not been printed while the first is being answered.
+        assertThat(bytes.toString()).contains("first?").doesNotContain("second?");
 
-            releaseFirst.countDown();
-            assertThat(first.get(5, TimeUnit.SECONDS)).isEqualTo(Decision.ALLOW);
-            assertThat(second.get(5, TimeUnit.SECONDS)).isEqualTo(Decision.DENY);
-            assertThat(bytes.toString()).contains("second?");
-        } finally {
-            callers.shutdownNow();
+        releaseFirst.countDown();
+        first.join(5_000);
+        second.join(5_000);
+        assertThat(firstDecision.get()).isEqualTo(Decision.ALLOW);
+        assertThat(secondDecision.get()).isEqualTo(Decision.DENY);
+        assertThat(bytes.toString()).contains("second?");
+    }
+
+    /** Polls until {@code thread} is parked — here, waiting for the console lock. */
+    private static void awaitParked(Thread thread) throws InterruptedException {
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (thread.getState() != Thread.State.WAITING) {
+            assertThat(System.nanoTime()).as("thread never parked (state %s)", thread.getState()).isLessThan(deadline);
+            Thread.sleep(1);
         }
     }
 
@@ -91,7 +98,7 @@ class InteractiveAskPromptHandlerTest {
             secondFlag.set(Thread.currentThread().isInterrupted());
         });
         second.start();
-        Thread.sleep(200);
+        awaitParked(second);
         second.interrupt();
         second.join(5_000);
 

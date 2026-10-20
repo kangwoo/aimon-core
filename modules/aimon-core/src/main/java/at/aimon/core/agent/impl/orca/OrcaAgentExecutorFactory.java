@@ -417,14 +417,18 @@ public class OrcaAgentExecutorFactory {
      * {@link DedicatedThreadPermits} is shared by every executor this factory creates and by their forks, so
      * {@link DedicatedThreadConfig#getMaxThreads()} bounds dedicated threads across all of them. A subclass overriding
      * {@code createDefaultSubagentExecutionManager} wires its own: its forks get neither the fan-out nor the task id
-     * label.
+     * label. Calling this again starts a new permit set sized by the new config for executors created afterwards;
+     * executors already created keep the one they were built with.
      *
      * @param dedicatedThreadConfig
      *            the configuration (may be {@code null} to clear the override)
      * @return this factory (for chaining)
      */
-    public OrcaAgentExecutorFactory withDedicatedThreadConfig(DedicatedThreadConfig dedicatedThreadConfig) {
+    public synchronized OrcaAgentExecutorFactory withDedicatedThreadConfig(
+            DedicatedThreadConfig dedicatedThreadConfig) {
         this.dedicatedThreadConfig = dedicatedThreadConfig;
+        // The cached set was sized by the previous config; the next executor must see the new maxThreads.
+        this.dedicatedThreadPermits = null;
         return this;
     }
 
@@ -432,8 +436,10 @@ public class OrcaAgentExecutorFactory {
         return dedicatedThreadConfig != null && dedicatedThreadConfig.isEnabled();
     }
 
-    /** The factory-wide permit set, created on first use from the current config. */
-    private synchronized DedicatedThreadPermits dedicatedThreadPermits() {
+    /**
+     * The factory-wide permit set, created on first use from the current config. Package-private for tests.
+     */
+    synchronized DedicatedThreadPermits dedicatedThreadPermits() {
         if (dedicatedThreadPermits == null) {
             dedicatedThreadPermits = DedicatedThreadPermits.of(dedicatedThreadConfig);
         }

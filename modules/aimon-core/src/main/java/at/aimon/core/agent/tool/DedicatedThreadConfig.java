@@ -23,7 +23,8 @@ package at.aimon.core.agent.tool;
  * permit is free, a call runs inline on the calling thread instead of waiting, so the most foreground subagents one
  * batch can have running is {@code maxThreads + 1}.</li>
  * <li>{@link #getMaxForkDepth()} limits which executions fan out: only those whose fork depth is below it. The default
- * {@code 1} fans out a session's turn (and any execution without a fork ancestor); forks stay sequential.</li>
+ * {@code 1} fans out an execution with no fork ancestor (a session's turn, a routine, a rewake replay); forks stay
+ * sequential.</li>
  * </ul>
  *
  * <p>
@@ -96,7 +97,9 @@ public final class DedicatedThreadConfig {
 
     /**
      * @return the fork depth from which executions stop fanning out: an execution fans out only when its fork depth is
-     *         below this. Default {@value #DEFAULT_MAX_FORK_DEPTH} (a session's turn only).
+     *         below this. Default {@value #DEFAULT_MAX_FORK_DEPTH} (only an execution with no fork ancestor: a
+     *         session's turn, a
+     *         routine, a rewake replay).
      */
     public int getMaxForkDepth() {
         return maxForkDepth;

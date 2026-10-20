@@ -42,7 +42,7 @@ public class SubagentLaunchDisplayHook implements SubagentStartHook {
         Optional<String> taskId = ForkAccess.taskIdOf(context.getExecutionAttributes());
         if (taskId.isPresent()) {
             outputFormatter.displaySubagentLaunch(context.getSubagentName(), context.getGoal(),
-                    ForkLabels.shortTaskId(taskId.get()));
+                    ForkAccess.shortTaskId(taskId.get()));
         } else {
             outputFormatter.displaySubagentLaunch(context.getSubagentName(), context.getGoal());
         }

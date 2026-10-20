@@ -50,7 +50,7 @@ public class ToolCallDisplayHook implements PreToolHook {
         Optional<String> taskId = ForkAccess.taskIdOf(context.getExecutionAttributes());
         if (taskId.isPresent()) {
             outputFormatter.displayToolCall(toolUse.getName(), inputStr, invokerType,
-                    context.getInvokerName() + "#" + ForkLabels.shortTaskId(taskId.get()));
+                    context.getInvokerName() + "#" + ForkAccess.shortTaskId(taskId.get()));
         } else {
             outputFormatter.displayToolCall(toolUse.getName(), inputStr, invokerType);
         }

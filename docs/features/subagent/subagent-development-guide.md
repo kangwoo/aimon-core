@@ -511,8 +511,7 @@ OrcaAgentExecutor executor = new OrcaAgentExecutorFactory()
 
 같은 파일을 둘 이상의 포크가 고치게 하지 마세요. 프레임워크는 막지 않고, 대신 잃어버린 수정을 **명시적 거절**로 바꿉니다 —
 포크 A 와 B 가 같은 파일을 읽은 뒤 A 가 고치면, B 의 `Edit` 는 "File changed since it was read; Read it again" 으로 거절됩니다.
-모델에게 이 지침을 주려면 에이전트 지시문이나 시스템 프롬프트에 적습니다(도구 설명은 기능이 꺼져도 같아야 하므로 바꾸지
-않았습니다).
+모델에게 이 지침을 주려면 에이전트 지시문이나 시스템 프롬프트에 적습니다.
 
 - 서로 다른 파일 · 서로 다른 디렉터리를 맡기는 것이 기본입니다. 같은 파일이 필요하면 읽기만 병렬로 하고 쓰기는 부모가 합니다.
 - 기능이 켜지면 각 포크의 실행 속성에 자기 task id 가 `aimon.subagent.task_id`(`ForkAccess.TASK_ID_ATTRIBUTE`)로 실립니다.

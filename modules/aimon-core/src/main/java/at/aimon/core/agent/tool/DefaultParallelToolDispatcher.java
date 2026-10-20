@@ -102,9 +102,9 @@ public final class DefaultParallelToolDispatcher implements ParallelToolDispatch
             Consumer<ToolUse> onStarted, BiConsumer<ToolUse, ToolUseResult> onCompleted) {
         final List<ToolUseResult> results = new ArrayList<>(toolUses.size());
         for (ToolUse toolUse : toolUses) {
-            safeOnStarted(onStarted, toolUse);
-            final ToolUseResult result = runSafely(runner, toolUse);
-            safeOnCompleted(onCompleted, toolUse, result);
+            ToolDispatchCallbacks.safeOnStarted(log, onStarted, toolUse);
+            final ToolUseResult result = ToolDispatchCallbacks.runSafely(log, runner, toolUse);
+            ToolDispatchCallbacks.safeOnCompleted(log, onCompleted, toolUse, result);
             results.add(result);
         }
         return results;
@@ -136,12 +136,12 @@ public final class DefaultParallelToolDispatcher implements ParallelToolDispatch
         for (int idx = 0; idx < size; idx++) {
             final ToolUse current = toolUses.get(idx);
             batchPermits.acquireUninterruptibly();
-            safeOnStarted(onStarted, current);
+            ToolDispatchCallbacks.safeOnStarted(log, onStarted, current);
             try {
                 futures.add(CompletableFuture.supplyAsync(() -> {
                     try {
-                        final ToolUseResult result = runSafely(runner, current);
-                        safeOnCompleted(onCompleted, current, result);
+                        final ToolUseResult result = ToolDispatchCallbacks.runSafely(log, runner, current);
+                        ToolDispatchCallbacks.safeOnCompleted(log, onCompleted, current, result);
                         return result;
                     } finally {
                         batchPermits.release();
@@ -156,11 +156,11 @@ public final class DefaultParallelToolDispatcher implements ParallelToolDispatch
                 log.warn("Parallel tool dispatch pool rejected a task mid-batch (closed concurrently); "
                         + "running the remaining {} tool(s) sequentially", size - idx);
                 joinInto(results, futures, toolUses);
-                results.add(runAndComplete(runner, onCompleted, current));
+                results.add(ToolDispatchCallbacks.runAndComplete(log, runner, onCompleted, current));
                 for (int j = idx + 1; j < size; j++) {
                     final ToolUse tail = toolUses.get(j);
-                    safeOnStarted(onStarted, tail);
-                    results.add(runAndComplete(runner, onCompleted, tail));
+                    ToolDispatchCallbacks.safeOnStarted(log, onStarted, tail);
+                    results.add(ToolDispatchCallbacks.runAndComplete(log, runner, onCompleted, tail));
                 }
                 return results;
             }
@@ -229,7 +229,8 @@ public final class DefaultParallelToolDispatcher implements ParallelToolDispatch
             return Optional.empty();
         }
         try {
-            return Optional.of(CompletableFuture.supplyAsync(() -> runSafely(runner, toolUse), executor));
+            return Optional.of(CompletableFuture
+                    .supplyAsync(() -> ToolDispatchCallbacks.runSafely(log, runner, toolUse), executor));
         } catch (RejectedExecutionException e) {
             // A concurrent close() shut the pool between poolOrInit() and submission. Fall back to harvest-path
             // execution rather than throwing.
@@ -257,14 +258,6 @@ public final class DefaultParallelToolDispatcher implements ParallelToolDispatch
         for (int i = 0; i < futures.size(); i++) {
             results.add(joinSafely(futures.get(i), toolUses.get(i)));
         }
-    }
-
-    /** Runs a single tool on the calling thread and fires onCompleted; used by the sequential fallback paths. */
-    private ToolUseResult runAndComplete(Function<ToolUse, ToolUseResult> runner,
-            BiConsumer<ToolUse, ToolUseResult> onCompleted, ToolUse toolUse) {
-        final ToolUseResult result = runSafely(runner, toolUse);
-        safeOnCompleted(onCompleted, toolUse, result);
-        return result;
     }
 
     /**
@@ -321,23 +314,6 @@ public final class DefaultParallelToolDispatcher implements ParallelToolDispatch
         return behavior == InterruptBehavior.NON_INTERRUPTIBLE || behavior == InterruptBehavior.COOPERATIVE;
     }
 
-    private ToolUseResult runSafely(Function<ToolUse, ToolUseResult> runner, ToolUse toolUse) {
-        try {
-            final ToolUseResult result = runner.apply(toolUse);
-            if (result != null) {
-                return result;
-            }
-            log.error("Tool runner returned null for tool_use {} ({})", toolUse.getId(), toolUse.getName());
-            return ToolUseResult.error(toolUse.getId(), "Tool execution error: runner returned no result");
-        } catch (Exception e) {
-            // The executor's executeSingleTool already wraps tool failures, but a runner contract violation must not
-            // escape and break the batch.
-            log.error("Tool runner threw for tool_use {} ({}): {}", toolUse.getId(), toolUse.getName(), e.getMessage(),
-                    e);
-            return ToolUseResult.error(toolUse.getId(), "Tool execution error: " + e.getMessage());
-        }
-    }
-
     private ToolUseResult joinSafely(CompletableFuture<ToolUseResult> future, ToolUse toolUse) {
         try {
             return future.join();
@@ -346,31 +322,6 @@ public final class DefaultParallelToolDispatcher implements ParallelToolDispatch
             log.error("Tool task failed for tool_use {} ({}): {}", toolUse.getId(), toolUse.getName(),
                     cause.getMessage(), cause);
             return ToolUseResult.error(toolUse.getId(), "Tool execution error: " + cause.getMessage());
-        }
-    }
-
-    private void safeOnStarted(Consumer<ToolUse> onStarted, ToolUse toolUse) {
-        if (onStarted == null) {
-            return;
-        }
-        try {
-            onStarted.accept(toolUse);
-        } catch (Exception e) {
-            log.warn("onStarted listener threw for tool_use {} ({}): {}", toolUse.getId(), toolUse.getName(),
-                    e.getMessage(), e);
-        }
-    }
-
-    private void safeOnCompleted(BiConsumer<ToolUse, ToolUseResult> onCompleted, ToolUse toolUse,
-            ToolUseResult result) {
-        if (onCompleted == null) {
-            return;
-        }
-        try {
-            onCompleted.accept(toolUse, result);
-        } catch (Exception e) {
-            log.warn("onCompleted listener threw for tool_use {} ({}): {}", toolUse.getId(), toolUse.getName(),
-                    e.getMessage(), e);
         }
     }
 

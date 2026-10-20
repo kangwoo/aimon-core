@@ -509,6 +509,113 @@ class SideEffectApprovalGateTest {
             callers.shutdownNow();
         }
 
+        /** Polls until {@code thread} is parked — here, waiting on the open question's future. */
+        private void awaitParked(Thread thread) throws InterruptedException {
+            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (thread.getState() != Thread.State.WAITING) {
+                assertThat(System.nanoTime()).as("%s never parked (state %s)", thread.getName(), thread.getState())
+                        .isLessThan(deadline);
+                Thread.sleep(1);
+            }
+        }
+
+        /** Starts an owned thread that asks the gate and stores what it was told. */
+        private Thread askOn(String name, SideEffectApprovalGate gate, Tool tool, ToolContext context,
+                AtomicReference<Optional<String>> result) {
+            final Thread thread = new Thread(() -> result.set(ask(gate, tool, context)), name);
+            thread.start();
+            return thread;
+        }
+
+        @Test
+        @DisplayName("with a store that remembers nothing, concurrent callers still share one prompt (in-flight only)")
+        void inFlightCoordinationAloneSharesThePrompt() throws Exception {
+            final BlockingHandler handler = new BlockingHandler(Decision.ALLOW, 1);
+            final ToolApprovalStore forgetful = new ToolApprovalStore() {
+                @Override
+                public Optional<Boolean> lookup(String scopeKey, String toolName) {
+                    return Optional.empty();
+                }
+
+                @Override
+                public void remember(String scopeKey, String toolName, boolean allowed) {
+                    // Remembers nothing, so only the in-flight question can explain a single prompt.
+                }
+
+                @Override
+                public void revoke(String scopeKey) {
+                }
+            };
+            final SideEffectApprovalGate gate = new SideEffectApprovalGate(SideEffectLevel.READ_ONLY, handler,
+                    forgetful);
+            final Tool write = tool(TOOL_NAME, SideEffectLevel.MUTATING);
+            final List<AtomicReference<Optional<String>>> results = new ArrayList<>();
+            final List<Thread> threads = new ArrayList<>();
+            results.add(new AtomicReference<>());
+            threads.add(askOn("asker", gate, write, forkContext("s1"), results.get(0)));
+            assertThat(handler.entered.await(5, TimeUnit.SECONDS)).isTrue();
+            for (int i = 1; i < 6; i++) {
+                results.add(new AtomicReference<>());
+                threads.add(askOn("waiter-" + i, gate, write, forkContext("s1"), results.get(i)));
+            }
+            for (Thread waiter : threads.subList(1, threads.size())) {
+                awaitParked(waiter);
+            }
+            handler.release.countDown();
+            for (Thread thread : threads) {
+                thread.join(5_000);
+            }
+
+            assertThat(results).allSatisfy(result -> assertThat(result.get()).isEmpty());
+            assertThat(handler.calls.get()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("an asker cancelled while it asks remembers nothing; its waiter asks for itself, not refused")
+        void interruptedAskerRemembersNothingAndWaitersReAsk() throws Exception {
+            final CountDownLatch entered = new CountDownLatch(1);
+            final AtomicInteger calls = new AtomicInteger();
+            // Like the CLI handler: an interrupted caller gets DENY without the user being asked.
+            final AskPromptHandler handler = prompt -> {
+                if (calls.incrementAndGet() == 1) {
+                    entered.countDown();
+                    try {
+                        new CountDownLatch(1).await(10, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    return Decision.DENY;
+                }
+                return Decision.ALLOW;
+            };
+            final InMemoryToolApprovalStore store = new InMemoryToolApprovalStore();
+            final SideEffectApprovalGate gate = new SideEffectApprovalGate(SideEffectLevel.READ_ONLY, handler, store);
+            final Tool write = tool(TOOL_NAME, SideEffectLevel.MUTATING);
+            final AtomicReference<Optional<String>> askerResult = new AtomicReference<>();
+            final AtomicBoolean askerFlag = new AtomicBoolean();
+            final Thread asker = new Thread(() -> {
+                askerResult.set(ask(gate, write, forkContext("s1")));
+                askerFlag.set(Thread.currentThread().isInterrupted());
+            }, "asker");
+            asker.start();
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+            final AtomicReference<Optional<String>> waiterResult = new AtomicReference<>();
+            final Thread waiter = askOn("waiter", gate, write, forkContext("s1"), waiterResult);
+            awaitParked(waiter);
+
+            asker.interrupt();
+            asker.join(5_000);
+            waiter.join(5_000);
+
+            assertThat(askerResult.get()).hasValueSatisfying(
+                    reason -> assertThat(reason).contains("cancelled").doesNotContain("not approved by the user"));
+            assertThat(askerFlag).isTrue();
+            // The waiter was not handed the cancelled asker's DENY: it asked the user itself and was approved.
+            assertThat(waiterResult.get()).isEmpty();
+            assertThat(calls.get()).isEqualTo(2);
+            assertThat(store.lookup("session:s1", TOOL_NAME)).contains(true);
+        }
+
         @Test
         @DisplayName("the same question asked eight times at once prompts once and every caller gets the answer")
         void sameQuestionPromptsOnce() throws Exception {
@@ -585,7 +692,7 @@ class SideEffectApprovalGateTest {
                 waiterFlag.set(Thread.currentThread().isInterrupted());
             });
             waiter.start();
-            Thread.sleep(200);
+            awaitParked(waiter);
             waiter.interrupt();
             waiter.join(5_000);
 
@@ -599,7 +706,7 @@ class SideEffectApprovalGateTest {
         }
 
         @Test
-        @DisplayName("an asker that throws (RuntimeException or Error) does not strand waiters; the next call asks again")
+        @DisplayName("an asker that throws (RuntimeException or Error) does not strand waiters; they ask for themselves")
         void throwingAskerReleasesWaiters() throws Exception {
             for (Throwable failure : List.of(new IllegalStateException("console gone"), new AssertionError("fatal"))) {
                 final CountDownLatch entered = new CountDownLatch(1);
@@ -624,13 +731,18 @@ class SideEffectApprovalGateTest {
                 final Tool write = tool(TOOL_NAME, SideEffectLevel.MUTATING);
                 final Future<Optional<String>> asker = callers.submit(() -> ask(gate, write, forkContext("s1")));
                 assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
-                final Future<Optional<String>> waiter = callers.submit(() -> ask(gate, write, forkContext("s1")));
-                Thread.sleep(200);
+                final AtomicReference<Optional<String>> waiterResult = new AtomicReference<>();
+                final Thread waiter = askOn("waiter", gate, write, forkContext("s1"), waiterResult);
+                awaitParked(waiter);
                 fail.countDown();
+                waiter.join(5_000);
 
-                assertThat(waiter.get(5, TimeUnit.SECONDS)).isPresent();
                 assertThatThrownBy(() -> asker.get(5, TimeUnit.SECONDS)).hasCause(failure);
-                // Nothing was remembered and nothing is left in flight: the next call asks again.
+                // The failure was not passed off as the user's refusal: the waiter asked again, and was approved.
+                assertThat(waiter.isAlive()).isFalse();
+                assertThat(waiterResult.get()).isEmpty();
+                assertThat(calls.get()).isEqualTo(2);
+                // Nothing is left in flight, and the waiter's answer is the one remembered.
                 assertThat(ask(gate, write, forkContext("s1"))).isEmpty();
                 assertThat(calls.get()).isEqualTo(2);
             }

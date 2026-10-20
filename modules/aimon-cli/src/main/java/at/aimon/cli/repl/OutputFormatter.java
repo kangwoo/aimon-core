@@ -216,10 +216,15 @@ public class OutputFormatter {
 
         String suffix = hasContent(input) ? ": " + input : "";
         String prefix = label != null ? "(" + label + ") " : "";
-        colorPrintln(indent + "[Tool] " + prefix + toolName + suffix,
-                () -> ansi().a(indent).fgYellow().a("[Tool] ").reset().fgBrightBlack().a(prefix).reset().fgCyan()
-                        .a(toolName).reset()
-                        .a(hasContent(input) ? ansi().a(": ").fgBrightBlack().a(input).reset().toString() : ""));
+        colorPrintln(indent + "[Tool] " + prefix + toolName + suffix, () -> {
+            Ansi line = ansi().a(indent).fgYellow().a("[Tool] ").reset();
+            // Only a labelled call adds the label segment, so an unlabelled line is byte-for-byte what it always was.
+            if (label != null) {
+                line.fgBrightBlack().a(prefix).reset();
+            }
+            return line.fgCyan().a(toolName).reset()
+                    .a(hasContent(input) ? ansi().a(": ").fgBrightBlack().a(input).reset().toString() : "");
+        });
     }
 
     /**
@@ -306,9 +311,9 @@ public class OutputFormatter {
 
         boolean isSuccess = "SUCCESS".equals(status);
         String metrics = " (" + iterations + " iteration(s), " + tokens + " tokens)";
-        // The whole block goes out in one println: PrintStream is synchronized per call, so a block written line by
-        // line
-        // could interleave with another subagent's output when foreground subagents run in parallel.
+        // The whole block goes out in one println, deliberately for every run and not only parallel ones: PrintStream
+        // is synchronized per call, so a block written line by line could interleave with another subagent's output
+        // when foreground subagents run in parallel. The bytes are the same either way.
         StringBuilder block = new StringBuilder();
 
         if (settings.isColorOutput()) {
