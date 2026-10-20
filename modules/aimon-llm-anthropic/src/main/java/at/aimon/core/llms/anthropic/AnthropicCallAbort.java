@@ -14,8 +14,8 @@ import com.anthropic.core.http.HttpResponse;
  * flight. During the header wait it is the attempt's {@link CompletableFuture}, whose {@code cancel(true)} makes the
  * adapter cancel its {@code okhttp3.Call}. Once the headers are in it is the adapter's {@link HttpResponse}, whose
  * {@code close()} is documented race-safe: it cancels the call if a read is in flight, and closes the body itself
- * otherwise. Nothing here ever touches the SDK's stream or its reader: closing those is the consumer thread's job,
- * after its read has unwound.
+ * otherwise. That adapter response is the only thing this object ever closes — never the SDK's {@code StreamResponse}
+ * or its reader: closing those is the consumer thread's job, after its read has unwound.
  *
  * <p>
  * Two threads meet here. The transport decorator ({@link AnthropicAbortableHttpClient}) attaches once per attempt —
@@ -32,8 +32,9 @@ import com.anthropic.core.http.HttpResponse;
  * {@link #release()} the state is terminal and the levers are dropped.
  *
  * <p>
- * Thread-safe; every method is non-blocking and throws nothing. ("Non-blocking" is bounded rather than instant in one
- * window: a body close with no read in flight drains the body for up to OkHttp's 100 ms discard.)
+ * Thread-safe; every method throws nothing, and {@link #abort()} is bounded rather than instant. When no read is in
+ * flight, the lever closes the adapter's race-safe body on the calling thread, and on HTTP/1.1 OkHttp's chunked-source
+ * discard can take up to about 100 ms there; otherwise it returns at once.
  */
 final class AnthropicCallAbort {
 
@@ -78,7 +79,8 @@ final class AnthropicCallAbort {
     }
 
     /**
-     * Cuts the current attempt's transport. Any thread; idempotent; never throws.
+     * Cuts the current attempt's transport. Any thread; idempotent; never throws; bounded (up to about 100 ms on
+     * HTTP/1.1, when it closes a body with no read in flight).
      *
      * <p>
      * A no-op after {@link #complete()} or {@link #release()}: a completed answer cannot be un-completed, and a

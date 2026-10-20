@@ -49,9 +49,10 @@ class OpenAITransportResourceTest {
     @EnumSource(Endpoint.class)
     @DisplayName("after a cancelled call returns, inFlightCalls() is 0")
     void noCallInFlightAfterACancellation(Endpoint endpoint) throws Exception {
-        try (StallingSseServer server = StallingSseServer.sending(endpoint.afterSomeText(), "")) {
-            final OpenAILlmClient client = new OpenAILlmClient(OpenAIConfig.builder().apiKey("test-key")
-                    .model(endpoint.model()).baseUrl(server.url() + "/v1").timeout(Duration.ofSeconds(15)).build());
+        try (StallingSseServer server = StallingSseServer.sending(endpoint.afterSomeText(), "");
+                OpenAILlmClient client = new OpenAILlmClient(
+                        OpenAIConfig.builder().apiKey("test-key").model(endpoint.model()).baseUrl(server.url() + "/v1")
+                                .timeout(Duration.ofSeconds(15)).build())) {
             final OpenAIAbortableHttpClient transport = client.transport().orElseThrow();
             final RecordingCancellation cancellation = new RecordingCancellation();
             final RecordingSink sink = new RecordingSink(1);
@@ -75,9 +76,10 @@ class OpenAITransportResourceTest {
     @EnumSource(Endpoint.class)
     @DisplayName("after a whole answer, inFlightCalls() is 0 too")
     void noCallInFlightAfterAWholeAnswer(Endpoint endpoint) throws Exception {
-        try (StallingSseServer server = StallingSseServer.complete(endpoint.whole())) {
-            final OpenAILlmClient client = new OpenAILlmClient(OpenAIConfig.builder().apiKey("test-key")
-                    .model(endpoint.model()).baseUrl(server.url() + "/v1").timeout(Duration.ofSeconds(15)).build());
+        try (StallingSseServer server = StallingSseServer.complete(endpoint.whole());
+                OpenAILlmClient client = new OpenAILlmClient(
+                        OpenAIConfig.builder().apiKey("test-key").model(endpoint.model()).baseUrl(server.url() + "/v1")
+                                .timeout(Duration.ofSeconds(15)).build())) {
 
             final LlmResponse response = client.sendMessageStreaming(SystemPromptParts.empty(),
                     List.of(Message.user("hi")), List.of(), LlmModel.builder().build(), LlmCallMetadata.empty(),

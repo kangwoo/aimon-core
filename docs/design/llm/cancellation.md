@@ -129,9 +129,11 @@ abort 레버는 **그 호출의 전송(transport)만 끊는다.** 스트림과 r
 
 1. 토큰이 이미 취소 상태면 HTTP 연결을 열기 전에 `LlmCallCancelledException` 을 던진다 — 곧 끊을 요청을 보내지
    않는다
-2. 호출마다 abort 객체(`OpenAICallAbort` / `AnthropicCallAbort`)를 만들고, **요청을 보내기 전에**
-   `cancellation.onCancel(abort::abort)` 를 등록한다. 헤더 대기와 SDK 가 그 호출 안에서 하는 모든 재시도가 레버
-   아래에 들어온다. 이미 취소된 토큰이면 등록 시점에 레버가 돌고 첫 시도가 거부된다(§4.4)
+2. 취소될 수 있는 호출(`isSupported()` 가 `true` 인 토큰)마다 abort 객체(`OpenAICallAbort` /
+   `AnthropicCallAbort`)를 만들고, **요청을 보내기 전에** `cancellation.onCancel(abort::abort)` 를 등록한다. 헤더
+   대기와 SDK 가 그 호출 안에서 하는 모든 재시도가 레버 아래에 들어온다. 이미 취소된 토큰이면 등록 시점에 레버가
+   돌고 첫 시도가 거부된다(§4.4). `none()` 토큰으로 부른 스트리밍 호출은 abort 객체를 만들지 않는다 — 등록도,
+   `X-Aimon-Abort-Key` 헤더도 없으므로 전송의 키 없는 경로로 간다(Anthropic 은 어댑터의 동기 `execute`, §4.4)
 3. 레버는 전송만 끊는다. 끊긴 read 는 SDK 의 I/O 예외(`OpenAIIoException` / `AnthropicIoException`)로 루프 밖에
    떨어지고, 매퍼가 **종료 이벤트와 토큰**으로 분류한다 — 종료 이벤트(`message_stop` · `finish_reason` ·
    `response.completed` / `response.incomplete`) **전**이면 토큰이 선 상태에서 `LlmCallCancelledException`, 아니면
@@ -147,13 +149,13 @@ abort 레버는 **그 호출의 전송(transport)만 끊는다.** 스트림과 r
    provider 실패 뒤의 close 실패는 그 예외에 `addSuppressed` 로 붙는다
 
 ```java
-final Abort abort = aborts.open();                    // 호출 하나의 abort 객체
+final Abort abort = cancellation.isSupported() ? aborts.open() : null;   // 호출 하나의 abort 객체, none() 이면 없음
 try {
-    cancellation.onCancel(abort::abort);              // 요청 전에: 헤더 대기와 SDK 재시도까지 덮는다
-    stream = …createStreaming(params + X-Aimon-Abort-Key);
+    if (abort != null) cancellation.onCancel(abort::abort); // 요청 전에: 헤더 대기와 SDK 재시도까지 덮는다
+    stream = …createStreaming(abort == null ? params : params + X-Aimon-Abort-Key);
     consumeAndClose(stream);                          // 소비 스레드: 매퍼가 §4.1 로 분류, close 는 한 번
 } finally {
-    aborts.release(abort);                            // 늦은 abort 는 아무것도 못 한다
+    if (abort != null) aborts.release(abort);         // 늦은 abort 는 아무것도 못 한다
 }
 ```
 
@@ -178,7 +180,7 @@ reset · 이전 호출의 레버).
 | | `aimon-llm-openai` | `aimon-llm-anthropic` |
 |---|---|---|
 | 전송 | 자체 OkHttp 전송 `OpenAIAbortableHttpClient` — SDK 어댑터는 body close 가 read 와 경합하고 `okhttp3.Call` 을 내놓지 않는다 | SDK 어댑터 위의 데코레이터 `AnthropicAbortableHttpClient` — 어댑터의 `executeAsync` future 는 cancel 하면 Call 을 취소하고, 응답 `close()` 는 read 중이면 Call 을 취소하는 race-safe 구현이다 |
-| 레버 | 진행 중인 시도의 `okhttp3.Call.cancel()` | 헤더 대기: `future.cancel(true)` · body: `HttpResponse.close()` (read 가 없을 때는 OkHttp 의 100ms discard 만큼 머문다) |
+| 레버 | 진행 중인 시도의 `okhttp3.Call.cancel()` — 곧바로 돌아온다 | 헤더 대기: `future.cancel(true)` · body: 어댑터의 race-safe `HttpResponse.close()` — `StreamResponse` 나 그 reader 가 아니다. 상한이 있되 즉시는 아니다: read 가 없을 때는 취소 스레드에서 body 를 닫으므로 HTTP/1.1 에서 OkHttp 의 chunked discard 만큼(최대 약 100ms) 머문다 |
 | 호출 ↔ 시도 상관 | 요청 헤더 `X-Aimon-Abort-Key` — 클라이언트가 params 에 싣고 전송 훅이 와이어 전에 벗긴다(§4.4) | 같음 |
 
 OpenAI 클라이언트는 `OpenAIStreamHandle` 에 `abort()`(어느 스레드든, 전송만)와 `close()`(소비 스레드, 한 번)를
@@ -212,7 +214,8 @@ blocking `.create()` 에는 진행 중에 걸 수 있는 취소 핸들이 없다
 ### 4.3 라우팅이 남기는 관측 가능한 차이
 
 스트리밍으로 라우팅된 비스트리밍 호출은 blocking `.create()` 와 관측 가능한 차이가 생긴다. **전부 `isSupported()`
-토큰을 넘긴 호출에만 나타나므로 비취소 경로는 그대로다.**
+토큰을 넘긴 호출에만 나타나므로 비취소 경로에는 라우팅 차이가 없다.** (OpenAI 의 비취소 경로가 지나는 전송이
+바뀐 것은 라우팅과 별개다 — §4.4.)
 
 | 차이 | 발생 조건 | 방침 |
 |---|---|---|
@@ -229,7 +232,8 @@ SDK 의 `RetryingHttpClient` 는 `IOException` · `*IoException` · `*RetryableE
 `ClientOptions` 와 `*ClientImpl` 을 직접 조립해 그 자리에 자기 전송을 둔다. 훅은 시도마다 둘을 한다.
 
 - abort 객체를 `X-Aimon-Abort-Key` 로 찾아 레버를 붙이고(OpenAI 는 `Call`, Anthropic 은 future 와 response),
-  헤더를 벗긴다. 모르는 키(비스트리밍 경로, 이미 `release` 된 호출)는 그냥 지나간다
+  헤더를 벗긴다. 키가 없거나 모르는 요청(`none()` 으로 부른 호출, SDK 직접 호출, 이미 `release` 된 호출)은 그냥
+  지나간다
 - 그 호출이 이미 abort 됐으면 시도를 `OpenAICallAbortedException` / `AnthropicCallAbortedException` 으로
   **거부한다**. 두 타입은 모듈의 기반 예외(`OpenAIException` · `AnthropicException`)를 잇고 `IOException` 계열이
   아니라서 SDK 가 재시도하지 않는다 — 이 상속이 "취소 뒤 재전송 없음" 보장의 전부이므로 `IOException` 조상을
@@ -247,11 +251,16 @@ SDK 는 `maxRetries(0)`, 재시도는 게이트웨이(그 sleep 은 취소를 �
 - Anthropic 에서 **취소 가능한 호출**(abort 가 등록된 요청)의 동기 경로는 어댑터의 `executeAsync` 를 `join()`
   하므로 헤더 대기가 OkHttp `Dispatcher`(동시 64, per-host 도 64)를 지난다. 슬롯은 헤더가 올 때까지만 쥐므로
   상한은 클라이언트당 **취소 가능한 호출의 동시 헤더 대기** 수이지 동시 스트림 수가 아니다. abort 가 등록되지 않은
-  요청 — `none()` 으로 부른 블로킹 `sendMessage`, SDK 직접 호출 — 은 어댑터의 동기 `execute` 로 그대로 가므로
-  슬롯을 쓰지 않는다
+  요청 — `none()` 으로 부른 블로킹 `sendMessage` 와 스트리밍 호출(게이트웨이의 비취소 스트리밍이 이것이다), SDK
+  직접 호출 — 은 어댑터의 동기 `execute` 로 그대로 가므로 슬롯을 쓰지 않고 스레드도 갈아타지 않는다
 - OpenAI 의 자체 전송은 `HttpClient` 이지 `WebSocketClient` 가 아니다. SDK 의 realtime 서비스는 이 전송을
   `UnsupportedOperationException` 으로 거부한다 — 이 모듈에 realtime 사용은 없다. Azure 의 cross-origin `api-key`
   리다이렉트 인터셉터(SDK `internal`)도 복제하지 않았다(백로그 [8번](../../backlog/interrupt-open-items.md))
+- OpenAI 의 **비취소 호출도** 이 자체 전송을 지난다 — `none()` 으로 부른 블로킹·스트리밍 호출 모두. 이 모듈이 넘기는
+  설정에서는 SDK 어댑터와 동작이 같지만(behaviourally equivalent) 같은 코드는 아니다: 위의 Azure 인터셉터가 없고,
+  SDK 를 올려도 어댑터에 들어온 수정을 물려받지 않는다. 그래서 openai-java 를 올릴 때마다
+  `openai-java-client-okhttp` 의 OkHttp 어댑터를 이 전송과 다시 대조한다(백로그
+  [6번](../../backlog/interrupt-open-items.md) · [8번](../../backlog/interrupt-open-items.md))
 
 ---
 

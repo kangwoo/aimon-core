@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -105,6 +106,20 @@ class OpenAIResponsesCancellationTest {
 
         // The parameter type is named because ResponseService declares four createStreaming(...) overloads.
         verify(mockResponseService, never()).createStreaming(any(ResponseCreateParams.class));
+    }
+
+    @Test
+    @DisplayName("a token that can never fire opens no abort: nothing is registered and the request carries no key")
+    void nonCancellableStreamRegistersNothingAndSendsNoAbortKey() {
+        when(mockResponseService.createStreaming(any(ResponseCreateParams.class)))
+                .thenAnswer(invocation -> ResponsesFixtures.recordingStreamOf());
+
+        final LlmResponse response = stream(LlmCancellation.none());
+
+        assertThat(response).isNotNull();
+        final ArgumentCaptor<ResponseCreateParams> sent = ArgumentCaptor.forClass(ResponseCreateParams.class);
+        verify(mockResponseService).createStreaming(sent.capture());
+        assertThat(sent.getValue()._headers().values(OpenAICallAbort.HEADER)).as("no abort key").isEmpty();
     }
 
     @Test

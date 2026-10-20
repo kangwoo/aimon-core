@@ -8,7 +8,9 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.UnaryOperator;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +22,7 @@ import com.anthropic.client.okhttp.OkHttpClient;
 import com.anthropic.core.ClientOptions;
 import com.anthropic.core.JsonValue;
 import com.anthropic.core.RequestOptions;
+import com.anthropic.core.http.HttpClient;
 import com.anthropic.core.http.StreamResponse;
 import com.anthropic.models.messages.ContentBlock;
 import com.anthropic.models.messages.MessageCreateParams;
@@ -72,12 +75,14 @@ import at.aimon.core.llms.anthropic.exception.ToolConversionException;
  *
  * <p>
  * Cancellation cuts the transport, never the stream. The SDK is assembled over this module's decorator of its OkHttp
- * adapter ({@link AnthropicAbortableHttpClient}) so that each streaming call has an abort object
+ * adapter ({@link AnthropicAbortableHttpClient}) so that each cancellable streaming call has an abort object
  * ({@link AnthropicCallAbort}) whose lever is the adapter's own: the attempt's future during the header wait, the
  * adapter's race-safe response close once the body is streaming. It is registered with the token <em>before</em> the
  * request goes out, so the header wait and every SDK retry are covered, and the decorator refuses any attempt the SDK
  * would make after it. {@code StreamResponse.close()} is run on the consumer thread only, once, after its own read has
- * unwound; it takes that reader's lock and is not the lever.
+ * unwound; it takes that reader's lock and is not the lever. A call whose token can never fire
+ * ({@code LlmCancellation.none()}) opens no abort object and carries no abort key, so the decorator hands it to the
+ * adapter's synchronous {@code execute()} untouched.
  *
  * <p>
  * Thread-safe if AnthropicClient is thread-safe.
@@ -131,6 +136,8 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
     /** The abort objects of the streaming calls in flight; shared with the transport decorator. */
     private final AnthropicAbortRegistry aborts = new AnthropicAbortRegistry();
     private final AnthropicMessageConverter converter;
+    /** Set by the first {@link #close()}; later calls do nothing. */
+    private final AtomicBoolean closed = new AtomicBoolean();
 
     /**
      * The whole of the thinking decision, behind a class that cannot log.
@@ -183,8 +190,22 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
      *             if config is null
      */
     public AnthropicLlmClient(AnthropicConfig config) {
+        this(config, UnaryOperator.identity());
+    }
+
+    /**
+     * Creates a new AnthropicLlmClient whose SDK adapter is seen through {@code adapterView} (for testing): the view
+     * goes between the SDK's OkHttp adapter and this module's decorator, so a test can observe exactly what the
+     * decorator hands the adapter — which of {@code execute} and {@code executeAsync} it runs, and on what request.
+     *
+     * @param config
+     *            The Anthropic configuration (must not be null)
+     * @param adapterView
+     *            wraps the SDK's adapter before the decorator goes over it (must not be null)
+     */
+    AnthropicLlmClient(AnthropicConfig config, UnaryOperator<HttpClient> adapterView) {
         this.config = Objects.requireNonNull(config, "Config cannot be null");
-        this.client = createAnthropicClient(config);
+        this.client = createAnthropicClient(config, Objects.requireNonNull(adapterView, "adapterView"));
         this.converter = new AnthropicMessageConverter();
         this.thinkingResolver = new AnthropicThinkingResolver(this.config);
     }
@@ -201,9 +222,11 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
      *
      * @param config
      *            The Anthropic configuration
+     * @param adapterView
+     *            wraps the adapter before the decorator goes over it; the identity outside tests
      * @return Configured AnthropicClient instance
      */
-    private AnthropicClient createAnthropicClient(AnthropicConfig config) {
+    private AnthropicClient createAnthropicClient(AnthropicConfig config, UnaryOperator<HttpClient> adapterView) {
         final AnthropicBackend.Builder backendBuilder = AnthropicBackend.builder().apiKey(config.getApiKey());
         String baseUrl = config.getBaseUrl();
         if (baseUrl != null && !baseUrl.isEmpty()) {
@@ -218,7 +241,8 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
         final OkHttpClient adapter = OkHttpClient.builder().timeout(options.timeout()).backend(backend).build();
         options.baseUrl(backend.baseUrl());
         backend.applyCredentials(adapter, options);
-        return new AnthropicClientImpl(options.httpClient(new AnthropicAbortableHttpClient(adapter, aborts)).build());
+        return new AnthropicClientImpl(
+                options.httpClient(new AnthropicAbortableHttpClient(adapterView.apply(adapter), aborts)).build());
     }
 
     /**
@@ -361,26 +385,38 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
         // A per-request timeout, when set, also bounds the streaming call (worst-case ceiling incl. no-progress
         // stalls); when unset, keep the single-argument overload so the client-wide default applies unchanged.
         final RequestOptions requestOptions = perRequestOptions(modelConfig);
-        final AnthropicCallAbort abort = aborts.open();
+        // A token that can never fire (LlmCancellation.none()) gets no abort object at all: nothing to register, no
+        // key on the params, so the decorator finds no entry and runs the adapter's synchronous execute() — no
+        // Dispatcher slot and no thread handoff for a stream nobody can cancel.
+        final AnthropicCallAbort abort = cancellation.isSupported() ? aborts.open() : null;
         try {
-            // The abort lever, registered BEFORE the request goes out: a trip during the header wait, or during any
-            // retry the SDK makes inside this call, cuts the attempt in flight, and the transport decorator refuses
-            // to send another. If the token already fired, onCancel runs the lever now and the first attempt is
-            // refused before a byte is sent. The lever cuts the transport only; the mapper then sees the SDK's I/O
-            // failure and classifies it by the token and by message_stop (a cut after message_stop still returns the
-            // whole answer), and the catch blocks below map whatever reaches them. StreamResponse.close() is not the
-            // lever: it is the consumer thread's cleanup, run once in closeStream after this thread's read unwound.
-            cancellation.onCancel(abort::abort);
-            // The abort key rides on the params as an additional header: the SDK copies it onto every attempt's
-            // request, and the decorator strips it before the adapter sees it. It is all that crosses the SDK's layers.
-            final MessageCreateParams streamingRequest = request.toBuilder()
-                    .putAdditionalHeader(AnthropicCallAbort.HEADER, abort.key()).build();
+            final MessageCreateParams streamingRequest;
+            if (abort == null) {
+                streamingRequest = request;
+            } else {
+                // The abort lever, registered BEFORE the request goes out: a trip during the header wait, or during
+                // any retry the SDK makes inside this call, cuts the attempt in flight, and the transport decorator
+                // refuses to send another. If the token already fired, onCancel runs the lever now and the first
+                // attempt is refused before a byte is sent. The lever cuts the transport only; the mapper then sees
+                // the SDK's I/O failure and classifies it by the token and by message_stop (a cut after message_stop
+                // still returns the whole answer), and the catch blocks below map whatever reaches them.
+                // StreamResponse.close() is not the lever: it is the consumer thread's cleanup, run once in
+                // closeStream after this thread's read unwound.
+                cancellation.onCancel(abort::abort);
+                // The abort key rides on the params as an additional header: the SDK copies it onto every attempt's
+                // request, and the decorator strips it before the adapter sees it. It is all that crosses the SDK's
+                // layers.
+                streamingRequest = request.toBuilder().putAdditionalHeader(AnthropicCallAbort.HEADER, abort.key())
+                        .build();
+            }
             final StreamResponse<RawMessageStreamEvent> streamResponse = requestOptions == null
                     ? client.messages().createStreaming(streamingRequest)
                     : client.messages().createStreaming(streamingRequest, requestOptions);
             consumeAndClose(streamResponse, () -> {
                 mapper.consume(streamResponse.stream(), cancellation);
-                abort.complete();
+                if (abort != null) {
+                    abort.complete();
+                }
             });
         } catch (LlmCallCancelledException | MessageConversionException | ToolConversionException e) {
             throw e;
@@ -402,7 +438,9 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
             throw new LlmClientException("Anthropic streaming call failed: " + e.getMessage(), e);
         } finally {
             // The call is over, whichever way: a late abort finds nothing to cut, and the decorator finds no entry.
-            aborts.release(abort);
+            if (abort != null) {
+                aborts.release(abort);
+            }
         }
 
         return aggregator.toLlmResponse();
@@ -879,11 +917,22 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
         return Optional.of(config.getModel());
     }
 
+    /**
+     * Closes the SDK client, which closes the transport under it — for a client built from {@link AnthropicConfig},
+     * this module's {@link AnthropicAbortableHttpClient} and the SDK's OkHttp adapter under it (dispatcher threads,
+     * pooled connections). Idempotent: only the first call closes anything. Calls in flight are not cancelled.
+     *
+     * <p>
+     * Calls made after {@code close()} are not supported: nothing refuses them up front, and what they do is the
+     * closed transport's business — a cancellable call, which needs the adapter's dispatcher, fails as an I/O error.
+     */
     @Override
     public void close() throws Exception {
-        // AnthropicClient declares its own close() and deliberately is not AutoCloseable; closing it closes the
-        // options' transport — this module's decorator and the SDK adapter under it.
-        client.close();
+        if (closed.compareAndSet(false, true)) {
+            // AnthropicClient declares its own close() and deliberately is not AutoCloseable; closing it closes the
+            // options' transport — this module's decorator and the SDK adapter under it.
+            client.close();
+        }
     }
 
     /**

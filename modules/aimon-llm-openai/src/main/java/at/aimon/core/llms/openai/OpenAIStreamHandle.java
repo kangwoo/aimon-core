@@ -42,7 +42,7 @@ interface OpenAIStreamHandle extends AutoCloseable {
     /**
      * Cuts the call's transport: the current attempt's {@code okhttp3.Call} is cancelled and nothing else is touched.
      * Any thread; thread-safe, idempotent, non-blocking, never throws. A no-op once {@link #consume()} has returned
-     * normally.
+     * normally, and always for a call whose token can never fire (it has no abort object).
      */
     void abort();
 
@@ -59,7 +59,8 @@ interface OpenAIStreamHandle extends AutoCloseable {
      * @param <T>
      *            the SDK's stream element type, which does not escape this method
      * @param abort
-     *            the call's abort object, opened before the request was sent (must not be null)
+     *            the call's abort object, opened before the request was sent, or {@code null} for a call whose token
+     *            can never fire: the handle's {@code abort()} then has nothing to cut
      * @param streamResponse
      *            the open stream (must not be null)
      * @param consumer
@@ -68,7 +69,6 @@ interface OpenAIStreamHandle extends AutoCloseable {
      */
     static <T> OpenAIStreamHandle of(OpenAICallAbort abort, StreamResponse<T> streamResponse,
             Consumer<Stream<T>> consumer) {
-        Objects.requireNonNull(abort, "abort");
         Objects.requireNonNull(streamResponse, "streamResponse");
         Objects.requireNonNull(consumer, "consumer");
         return new OpenAIStreamHandle() {
@@ -77,12 +77,16 @@ interface OpenAIStreamHandle extends AutoCloseable {
             @Override
             public void consume() {
                 consumer.accept(streamResponse.stream());
-                abort.complete();
+                if (abort != null) {
+                    abort.complete();
+                }
             }
 
             @Override
             public void abort() {
-                abort.abort();
+                if (abort != null) {
+                    abort.abort();
+                }
             }
 
             @Override

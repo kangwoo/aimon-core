@@ -268,8 +268,9 @@ abort key the registry knows — means that attempt is enqueued through the adap
 `maxRequestsPerHost` raised to the same by the adapter), which sync `call.execute()` never was; the decorator cannot
 raise the limit (`okHttpClient` is `internal` on the adapter). A slot is held only until `onResponse` completes the
 future — time to first byte — so the cap is on *concurrent cancellable header waits per client*, not on concurrent
-streams. A request with no abort registered for it — a non-cancellable blocking call (`sendMessage(…, none())`), the
-SDK used directly (`messages().create()`), or a key already released — skips this: the hook strips any key and
+streams. A request with no abort registered for it — a non-cancellable call (`sendMessage(…, none())`, or
+`sendMessageStreaming(…, none())`, which opens no abort object and puts no key on the params — `LlmCallGateway`
+streams this way), the SDK used directly (`messages().create()`), or a key already released — skips this: the hook strips any key and
 returns `delegate.execute(…)`, the adapter's own synchronous path, with no `Dispatcher` slot and no thread handoff.
 Recorded here and in `cancellation.md` §4.4; not expected to bind at AIMON's concurrency.
 
@@ -734,10 +735,10 @@ part, or declined with the reason. The run record (`build/deviations.md`, `build
 - **§5.2 — where the Anthropic header is added.** On the streaming path, by `request.toBuilder()
   .putAdditionalHeader(...)` after `buildRequest`, rather than inside `buildRequest` with a flag; `buildRequest` is
   unchanged.
-- **§6.3 — "only on the cancellable streaming path".** An abort object is opened, and its key put on the params, for
-  every streaming call, including one made with `LlmCancellation.none()`; the no-op token discards the lever, the
-  header is stripped by the hook like any other, and the blocking path still carries nothing. One path to test rather
-  than two.
+- **§6.3 — "only on the cancellable streaming path".** As built at first, an abort object was opened, and its key
+  put on the params, for every streaming call, including one made with `LlmCancellation.none()` — one path to test
+  rather than two. That put every non-cancellable Anthropic stream through the decorator's `executeAsync(…).join()`
+  (§4.5), so it was reverted after review (§11.6): the code now does what §6.3 says.
 - **§6.2 — rebuilding the OkHttp client per attempt.** The SDK's adapter rebuilds its `okhttp3.OkHttpClient` through
   `newBuilder()` on every attempt; this module's transport does so only when the `RequestOptions` carry a `Timeout`,
   which in practice is every attempt the SDK makes (it merges the client default in before calling the transport).
@@ -781,3 +782,29 @@ found; `X-Aimon-Abort-Key` stands) are closed here.
   sleep 100 ms before tripping: the OpenAI mappers emit nothing to the sink at the terminal event, so the fixture puts
   the last text delta <em>after</em> it as a probe (`terminalEventThenProbe()`), and the sink's latch on that delta is
   the gate — events are dispatched in order on the consumer thread. The answer's text and usage are unchanged.
+
+### 11.6.1 Post-review fixes, round 2
+
+- **Non-cancellable streams stay off the abort path.** §11.3's "one path" for §6.3 had a cost the first post-review fix
+  did not see: the streaming path opened an abort object, registered it and put its key on the params whatever the
+  token, so the Anthropic decorator found an entry for every stream and took `executeAsync(…).join()` — a `Dispatcher`
+  slot and a thread handoff for each non-cancellable stream (`LlmCallGateway` streams with `LlmCancellation.none()` in
+  production). Both clients now open an abort object only when `cancellation.isSupported()`; otherwise nothing is
+  registered, no key is put on the params, and the request takes the transport's no-key path — on Anthropic the
+  adapter's synchronous `execute`. `OpenAIStreamHandle` and `OpenAIEndpointExchange.openStream` take a `null` abort
+  for that case. Tests: `nonCancellableStreamRegistersNothingAndSendsNoAbortKey` (both clients, and the Responses
+  path) and `AnthropicCancellationTransportTest.nonCancellableStreamTakesTheSynchronousPath`, which records the
+  adapter's calls through a package-private `AnthropicLlmClient(AnthropicConfig, UnaryOperator<HttpClient>)` seam.
+- **Anthropic's lever is bounded, not instant.** When no read is in flight, `AnthropicCallAbort` closes the adapter's
+  race-safe body on the cancelling thread, and on HTTP/1.1 OkHttp's chunked-source discard can hold it for up to about
+  100 ms. It closes that adapter response only — never `StreamResponse` or its reader. `AnthropicCallAbort`'s Javadoc,
+  `cancellation.md` §4.1 and the CHANGELOG say so; "non-blocking" and "returns in microseconds" stay OpenAI-only.
+- **`AnthropicLlmClient.close()` is idempotent**, guarded by an `AtomicBoolean` as `OpenAILlmClient.close()` is. Both
+  Javadocs now say calls after `close()` are not supported: nothing refuses them up front (no fail-fast was added),
+  and a cancellable Anthropic call then fails as an I/O error from the closed adapter.
+- **OpenAI's non-cancellable path is behaviourally equivalent, not unchanged.** It runs over `OpenAIAbortableHttpClient`
+  like every other call, so it no longer has the SDK adapter's Azure cross-origin `api-key` redirect interceptor
+  (backlog item 8) and no longer inherits fixes to the SDK's OkHttp adapter. On every openai-java upgrade, re-check
+  `openai-java-client-okhttp`'s `OkHttpClient.kt` against this transport (backlog items 6 and 8).
+- **Tests close their clients.** `OpenAICancellationTransportTest` and `OpenAITransportResourceTest` open each
+  `OpenAILlmClient` in try-with-resources, as `AnthropicCancellationTransportTest` does.

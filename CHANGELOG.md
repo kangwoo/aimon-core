@@ -16,10 +16,13 @@ timeout — and then took the reader's lock, so the lever itself blocked. The le
 stream had opened, so a cancellation during the header wait was not observed until headers arrived, and because the SDKs
 retry every `IOException`, an attempt cut during the header wait could be answered with a fresh request.
 
-- **The lever cuts the transport only.** Each streaming call gets an abort object registered with its
-  `LlmCancellation` *before* the request is sent. Its `abort()` is thread-safe, idempotent, non-blocking and never
-  throws, and cancels that call's current attempt: `okhttp3.Call.cancel()` on OpenAI, the SDK adapter's future cancel
-  during the header wait and its race-safe response close during the body on Anthropic. `StreamResponse.close()` now
+- **The lever cuts the transport only.** Each cancellable streaming call (a token whose `isSupported()` is true) gets
+  an abort object registered with its `LlmCancellation` *before* the request is sent. Its `abort()` is thread-safe,
+  idempotent and never throws, and cancels that call's current attempt: `okhttp3.Call.cancel()` on OpenAI, which
+  returns at once; on Anthropic, the SDK adapter's future cancel during the header wait and its race-safe response
+  close during the body — bounded rather than instant, because with no read in flight that close drains the body on
+  the cancelling thread for up to about 100 ms on HTTP/1.1. It closes the adapter's response, never `StreamResponse`
+  or its reader. `StreamResponse.close()` now
   runs on the consumer thread only, exactly once, after its own read has unwound — also after an abort. For this the
   OpenAI client is assembled over the module's own OkHttp transport (`OpenAIAbortableHttpClient`; the SDK's adapter
   exposes no safe lever) and the Anthropic client over a decorator of the SDK's adapter
@@ -43,14 +46,20 @@ retry every `IOException`, an attempt cut during the header wait could be answer
 - **Behaviour change: both clients' `close()` now really release the SDK client.** `AnthropicLlmClient.close()` now
   closes the SDK client it built, and with it the transport; it used to test for `AutoCloseable`, which
   `AnthropicClient` deliberately is not, so nothing was closed. `OpenAILlmClient` is now `AutoCloseable` too, and its
-  `close()` closes the SDK client and the OkHttp client the module now owns (dispatcher threads, pooled connections);
-  it is idempotent. A container that calls `close()` on a client bean it shares — Spring infers `close()` as a
+  `close()` closes the SDK client and the OkHttp client the module now owns (dispatcher threads, pooled connections).
+  Both are idempotent. Calls made after `close()` are not supported (nothing refuses them up front; a cancellable
+  Anthropic call then fails as an I/O error). A container that calls `close()` on a client bean it shares — Spring infers `close()` as a
   destroy method — now really shuts that client down, so a client shared beyond the container's lifetime must not be
   registered as a closeable bean.
 - A cancellable Anthropic call's header wait now goes through OkHttp's `Dispatcher` (64 concurrent per client, a slot
-  held only until the headers arrive); the body phase is uncapped as before. Non-cancellable calls
-  (`sendMessage(..., LlmCancellation.none())`, the SDK used directly) keep the adapter's synchronous path and take no
-  slot.
+  held only until the headers arrive); the body phase is uncapped as before. Non-cancellable calls — blocking or
+  streaming with `LlmCancellation.none()` (the gateway's non-cancellable streams), or the SDK used directly — open no
+  abort object and carry no abort key, so they keep the adapter's synchronous path and take no slot.
+- OpenAI's non-cancellable calls run over `OpenAIAbortableHttpClient` too. For the settings this module passes that is
+  behaviourally equivalent to the SDK's adapter, not identical: the adapter's Azure cross-origin `api-key` redirect
+  interceptor is not replicated, and fixes to the SDK's OkHttp adapter are no longer picked up by an SDK upgrade, so
+  each openai-java upgrade re-checks that adapter against this transport (`docs/backlog/interrupt-open-items.md` items
+  6 and 8).
 - Tests only: `StallingSseServer` moved to `aimon-llm-testkit` and can stall before the headers, hold the chunk
   terminator or reset the connection; the regression tests are `OpenAICancellationTransportTest` and
   `AnthropicCancellationTransportTest`, over the real SDKs and a local HTTP/1.1 server.

@@ -208,11 +208,12 @@ class OpenAICancellationTransportTest {
     @DisplayName("row 1: a cancel while the reader is blocked returns at once, throws nothing, and ends the call")
     void abortWhileReadBlocked(Endpoint endpoint) throws Exception {
         for (int round = 0; round < READ_BLOCKED_ROUNDS; round++) {
-            try (StallingSseServer server = StallingSseServer.sending(endpoint.afterSomeText(), "")) {
+            try (StallingSseServer server = StallingSseServer.sending(endpoint.afterSomeText(), "");
+                    OpenAILlmClient client = client(server, endpoint, null)) {
                 final RecordingCancellation cancellation = new RecordingCancellation();
                 final RecordingSink sink = new RecordingSink(1);
 
-                final Future<LlmResponse> running = stream(client(server, endpoint, null), sink, cancellation);
+                final Future<LlmResponse> running = stream(client, sink, cancellation);
                 assertThat(sink.awaitAllText(HANG_GUARD)).as("round %d: the delta reached the sink", round).isTrue();
                 tripper.execute(cancellation::trip);
 
@@ -238,11 +239,12 @@ class OpenAICancellationTransportTest {
     @EnumSource(Endpoint.class)
     @DisplayName("row 2: a cancel during the header wait ends the call and the SDK does not send the request again")
     void abortDuringHeaderWait(Endpoint endpoint) throws Exception {
-        try (StallingSseServer server = StallingSseServer.stallingBeforeHeaders()) {
+        try (StallingSseServer server = StallingSseServer.stallingBeforeHeaders();
+                OpenAILlmClient client = client(server, endpoint, 2)) {
             final RecordingCancellation cancellation = new RecordingCancellation();
             final RecordingSink sink = new RecordingSink(0);
 
-            final Future<LlmResponse> running = stream(client(server, endpoint, 2), sink, cancellation);
+            final Future<LlmResponse> running = stream(client, sink, cancellation);
             assertThat(server.awaitAnswered(1, HANG_GUARD)).as("the request reached the server").isTrue();
             tripper.execute(cancellation::trip);
 
@@ -267,11 +269,11 @@ class OpenAICancellationTransportTest {
     void cancelAfterTerminalEvent(Endpoint endpoint) throws Exception {
         for (int round = 0; round < TERMINAL_HELD_ROUNDS; round++) {
             try (StallingSseServer server = StallingSseServer.sending(endpoint.terminalEventThenProbe(),
-                    endpoint.tail())) {
+                    endpoint.tail()); OpenAILlmClient client = client(server, endpoint, null)) {
                 final RecordingCancellation cancellation = new RecordingCancellation();
                 final RecordingSink sink = new RecordingSink(2);
 
-                final Future<LlmResponse> running = stream(client(server, endpoint, null), sink, cancellation);
+                final Future<LlmResponse> running = stream(client, sink, cancellation);
                 assertThat(server.awaitAnswered(1, HANG_GUARD)).isTrue();
                 // The probe delta follows the terminal event: once the sink has it, the consumer has recorded the
                 // terminal event and is reading toward the held tail.
@@ -295,14 +297,15 @@ class OpenAICancellationTransportTest {
     @DisplayName("row 3: a cancel racing the terminal event yields STREAM_END with a response or neither, never else")
     void cancelRacesTerminalEvent(Endpoint endpoint) throws Exception {
         for (int round = 0; round < TERMINAL_RACE_ROUNDS; round++) {
-            try (StallingSseServer server = StallingSseServer.complete(endpoint.whole())) {
+            try (StallingSseServer server = StallingSseServer.complete(endpoint.whole());
+                    OpenAILlmClient client = client(server, endpoint, null)) {
                 final RecordingCancellation cancellation = new RecordingCancellation();
                 final RecordingSink sink = new RecordingSink(2);
                 // Tripped from inside the sink on the last delta: the consumer is between events, the terminal event
                 // is in flight or already buffered, and which side wins is the race.
                 sink.onLastText(cancellation::trip);
 
-                final Future<LlmResponse> running = stream(client(server, endpoint, null), sink, cancellation);
+                final Future<LlmResponse> running = stream(client, sink, cancellation);
 
                 assertInvariant(round, running, sink, cancellation);
             }
@@ -343,18 +346,20 @@ class OpenAICancellationTransportTest {
     void staleAbortDoesNotReachNextCall(Endpoint endpoint) throws Exception {
         final RecordingCancellation cancellation = new RecordingCancellation();
         final Runnable previousLever;
-        try (StallingSseServer first = StallingSseServer.complete(endpoint.whole())) {
-            final LlmResponse previous = stream(client(first, endpoint, null), new RecordingSink(2), cancellation)
-                    .get(HANG_GUARD.toMillis(), TimeUnit.MILLISECONDS);
+        try (StallingSseServer first = StallingSseServer.complete(endpoint.whole());
+                OpenAILlmClient client = client(first, endpoint, null)) {
+            final LlmResponse previous = stream(client, new RecordingSink(2), cancellation).get(HANG_GUARD.toMillis(),
+                    TimeUnit.MILLISECONDS);
             assertThat(previous.getTextContent()).isEqualTo(WHOLE);
             assertThat(cancellation.levers()).hasSize(1);
             previousLever = cancellation.levers().get(0);
         }
 
         try (StallingSseServer next = StallingSseServer.sending(endpoint.afterSomeText(),
-                endpoint.delta(SECOND) + endpoint.terminal() + endpoint.tail())) {
+                endpoint.delta(SECOND) + endpoint.terminal() + endpoint.tail());
+                OpenAILlmClient client = client(next, endpoint, null)) {
             final RecordingSink sink = new RecordingSink(1);
-            final Future<LlmResponse> running = stream(client(next, endpoint, null), sink, cancellation);
+            final Future<LlmResponse> running = stream(client, sink, cancellation);
             assertThat(sink.awaitAllText(HANG_GUARD)).isTrue();
 
             // The race the executor's single-listener bridge leaves open: the cancel thread read the previous call's
@@ -375,11 +380,12 @@ class OpenAICancellationTransportTest {
     @EnumSource(Endpoint.class)
     @DisplayName("row 6: after a cancel, the server sees the connection closed")
     void connectionIsReleasedAfterAbort(Endpoint endpoint) throws Exception {
-        try (StallingSseServer server = StallingSseServer.sending(endpoint.afterSomeText(), "")) {
+        try (StallingSseServer server = StallingSseServer.sending(endpoint.afterSomeText(), "");
+                OpenAILlmClient client = client(server, endpoint, null)) {
             final RecordingCancellation cancellation = new RecordingCancellation();
             final RecordingSink sink = new RecordingSink(1);
 
-            final Future<LlmResponse> running = stream(client(server, endpoint, null), sink, cancellation);
+            final Future<LlmResponse> running = stream(client, sink, cancellation);
             assertThat(sink.awaitAllText(HANG_GUARD)).isTrue();
             tripper.execute(cancellation::trip);
             assertThatThrownBy(() -> running.get(RESULT_GUARD.toMillis(), TimeUnit.MILLISECONDS))
@@ -395,19 +401,19 @@ class OpenAICancellationTransportTest {
     @EnumSource(Endpoint.class)
     @DisplayName("the abort key the client puts on the SDK params never reaches the wire")
     void abortKeyNeverReachesTheWire(Endpoint endpoint) throws Exception {
-        try (StallingSseServer server = StallingSseServer.complete(endpoint.whole())) {
-            final OpenAILlmClient client = client(server, endpoint, null);
+        try (StallingSseServer server = StallingSseServer.complete(endpoint.whole());
+                OpenAILlmClient client = client(server, endpoint, null)) {
             final LlmResponse streamed = stream(client, new RecordingSink(2), new RecordingCancellation())
                     .get(HANG_GUARD.toMillis(), TimeUnit.MILLISECONDS);
             assertThat(streamed.getTextContent()).isEqualTo(WHOLE);
             assertThat(server.requestHeaders()).hasSize(1);
             assertThat(server.requestHeaders().get(0)).doesNotContainKey("x-aimon-abort-key");
         }
-        try (StallingSseServer server = StallingSseServer.complete(endpoint.whole())) {
+        try (StallingSseServer server = StallingSseServer.complete(endpoint.whole());
+                OpenAILlmClient client = client(server, endpoint, null)) {
             // The cancellable non-streaming call is rerouted through the streaming path and carries the key too.
-            final LlmResponse rerouted = client(server, endpoint, null).sendMessage(SystemPromptParts.empty(),
-                    List.of(Message.user("hi")), List.of(), LlmModel.builder().build(), LlmCallMetadata.empty(),
-                    new RecordingCancellation());
+            final LlmResponse rerouted = client.sendMessage(SystemPromptParts.empty(), List.of(Message.user("hi")),
+                    List.of(), LlmModel.builder().build(), LlmCallMetadata.empty(), new RecordingCancellation());
             assertThat(rerouted.getTextContent()).isEqualTo(WHOLE);
             assertThat(server.requestHeaders()).hasSize(1);
             assertThat(server.requestHeaders().get(0)).doesNotContainKey("x-aimon-abort-key");
@@ -420,11 +426,12 @@ class OpenAICancellationTransportTest {
     @EnumSource(Endpoint.class)
     @DisplayName("a reset after the terminal event returns the whole answer and is not retried")
     void trailingResetAfterTerminalEventReturnsTheAnswer(Endpoint endpoint) throws Exception {
-        try (StallingSseServer server = StallingSseServer.sending(endpoint.terminalEventThenProbe(), endpoint.tail())) {
+        try (StallingSseServer server = StallingSseServer.sending(endpoint.terminalEventThenProbe(), endpoint.tail());
+                OpenAILlmClient client = client(server, endpoint, 3)) {
             final RecordingCancellation live = new RecordingCancellation();
             final RecordingSink sink = new RecordingSink(2);
 
-            final Future<LlmResponse> running = stream(client(server, endpoint, 3), sink, live);
+            final Future<LlmResponse> running = stream(client, sink, live);
             // The probe delta follows the terminal event: the reset lands after it was recorded, never before.
             assertThat(sink.awaitAllText(HANG_GUARD)).isTrue();
             server.reset();

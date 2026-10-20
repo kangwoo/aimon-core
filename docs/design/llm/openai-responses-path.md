@@ -77,7 +77,7 @@ AIMON 이 도는 바로 그 모양이다. 이것을 푸는 엔드포인트가 `/
 interface OpenAIEndpointExchange {
     LlmResponse callBlocking(RequestOptions options);    // null → SDK 단일 인자 오버로드
     OpenAIStreamHandle openStream(RequestOptions options, LlmStreamSink sink, ChunkAggregator aggregator,
-            LlmCancellation cancellation, OpenAICallAbort abort);   // abort 객체의 키를 params 에 싣는다
+            LlmCancellation cancellation, OpenAICallAbort abort);   // abort 객체의 키를 params 에 싣는다(none() 이면 null — 키 없음)
 }
 
 interface OpenAIStreamHandle extends AutoCloseable {   // StreamResponse<T> 의 제네릭을 지운다

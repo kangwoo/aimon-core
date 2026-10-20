@@ -53,11 +53,13 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
  *
  * <p>
  * Cancellation cuts the transport, never the stream. The SDK is assembled over this module's own OkHttp transport
- * ({@link OpenAIAbortableHttpClient}) so that each streaming call has an abort object ({@link OpenAICallAbort}) whose
+ * ({@link OpenAIAbortableHttpClient}) so that each cancellable streaming call has an abort object
+ * ({@link OpenAICallAbort}) whose
  * lever is {@code okhttp3.Call.cancel()} on the attempt in flight — registered with the token <em>before</em> the
  * request goes out, so the header wait and every SDK retry are covered, and refused by the transport hook on any
  * attempt the SDK would make after it. {@code StreamResponse.close()} is run on the consumer thread only, once, after
- * its own read has unwound; it is not thread-safe against that read and is not the lever.
+ * its own read has unwound; it is not thread-safe against that read and is not the lever. A call whose token can
+ * never fire ({@code LlmCancellation.none()}) opens no abort object and carries no abort key.
  *
  * <p>
  * Key features:
@@ -259,8 +261,9 @@ public class OpenAILlmClient implements LlmClient, AutoCloseable {
         // chunks into a single response. The caller wanted a non-streaming *result*, not incremental delivery, so chunk
         // emissions are discarded; usage is still requested (includeUsage defaults to true, wiring
         // stream_options.include_usage) so token accounting matches the blocking path. When the token can never fire
-        // (LlmCancellation.none(), the common non-cancellation case), keep the cheaper single-shot blocking call
-        // unchanged — zero behaviour change for that path.
+        // (LlmCancellation.none(), the common non-cancellation case), keep the cheaper single-shot blocking call. It
+        // runs over this module's transport like every other call, which is behaviourally equivalent to the SDK's
+        // adapter for the settings this module passes (see OpenAIAbortableHttpClient for what is not replicated).
         if (!cancellation.isSupported()) {
             return sendMessage(systemPromptParts, messages, tools, modelConfig, metadata);
         }
@@ -309,16 +312,21 @@ public class OpenAILlmClient implements LlmClient, AutoCloseable {
         // A per-request timeout, when set, also bounds the streaming call (worst-case ceiling incl. no-progress
         // stalls); when unset, keep the single-argument overload so the client-wide default applies unchanged.
         final RequestOptions requestOptions = perRequestOptions(modelConfig);
-        final OpenAICallAbort abort = aborts.open();
+        // A token that can never fire (LlmCancellation.none()) gets no abort object at all: nothing to register and
+        // no key on the params, so the transport hook finds no entry and the attempt runs as a plain OkHttp call.
+        final OpenAICallAbort abort = cancellation.isSupported() ? aborts.open() : null;
         try {
-            // The abort lever, registered BEFORE the request goes out: a trip during the header wait, or during any
-            // retry the SDK makes inside this call, cancels the attempt in flight, and the transport hook refuses to
-            // send another. If the token already fired, onCancel runs the lever now and the first attempt is refused
-            // before a byte is sent. The lever cuts the transport only; the mapper then sees the SDK's I/O failure
-            // and classifies it by the token and the terminal event (a cut after the terminal event still returns the
-            // whole answer), and the catch blocks below map whatever reaches them. StreamResponse.close() is not the
-            // lever: it is the consumer thread's cleanup, run once in closeHandle after this thread's read unwound.
-            cancellation.onCancel(abort::abort);
+            if (abort != null) {
+                // The abort lever, registered BEFORE the request goes out: a trip during the header wait, or during
+                // any retry the SDK makes inside this call, cancels the attempt in flight, and the transport hook
+                // refuses to send another. If the token already fired, onCancel runs the lever now and the first
+                // attempt is refused before a byte is sent. The lever cuts the transport only; the mapper then sees
+                // the SDK's I/O failure and classifies it by the token and the terminal event (a cut after the
+                // terminal event still returns the whole answer), and the catch blocks below map whatever reaches
+                // them. StreamResponse.close() is not the lever: it is the consumer thread's cleanup, run once in
+                // closeHandle after this thread's read unwound.
+                cancellation.onCancel(abort::abort);
+            }
             final OpenAIStreamHandle handle = exchange.openStream(requestOptions, sink, aggregator, cancellation,
                     abort);
             consumeAndClose(handle);
@@ -340,7 +348,9 @@ public class OpenAILlmClient implements LlmClient, AutoCloseable {
             throw OpenAIExceptionMapper.map(e, "OpenAI streaming call failed");
         } finally {
             // The call is over, whichever way: a late abort finds nothing to cut, and the hook finds no entry.
-            aborts.release(abort);
+            if (abort != null) {
+                aborts.release(abort);
+            }
         }
 
         return aggregator.toLlmResponse();
@@ -851,8 +861,11 @@ public class OpenAILlmClient implements LlmClient, AutoCloseable {
     /**
      * Closes the SDK client, which closes the transport under it — for a client built from {@link OpenAIConfig}, this
      * module's {@link OpenAIAbortableHttpClient} and the {@code okhttp3.OkHttpClient} it owns (dispatcher threads,
-     * pooled connections). Idempotent: only the first call closes anything. Calls in flight are not cancelled; the
-     * client is not meant to be used afterwards.
+     * pooled connections). Idempotent: only the first call closes anything. Calls in flight are not cancelled.
+     *
+     * <p>
+     * Calls made after {@code close()} are not supported: nothing refuses them up front, and what they do is the
+     * closed transport's business.
      */
     @Override
     public void close() {

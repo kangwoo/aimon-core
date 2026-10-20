@@ -76,8 +76,9 @@ final class OpenAIResponsesExchange implements OpenAIEndpointExchange {
     public OpenAIStreamHandle openStream(RequestOptions options, LlmStreamSink sink, ChunkAggregator aggregator,
             LlmCancellation cancellation, OpenAICallAbort abort) {
         // As on the Chat path: the abort key rides on the params and is stripped by the transport hook.
-        final ResponseCreateParams streamingParams = params.toBuilder()
-                .putAdditionalHeader(OpenAICallAbort.HEADER, abort.key()).build();
+        final ResponseCreateParams streamingParams = abort == null
+                ? params
+                : params.toBuilder().putAdditionalHeader(OpenAICallAbort.HEADER, abort.key()).build();
         final StreamResponse<ResponseStreamEvent> streamResponse = options == null
                 ? client.responses().createStreaming(streamingParams)
                 : client.responses().createStreaming(streamingParams, options);

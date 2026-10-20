@@ -590,12 +590,16 @@ JUnit 이 상위 클래스의 것을 먼저 돌리므로 그 시점에 서브클
 
 **왜** — 그 인터셉터는 SDK 의 Kotlin `internal` 이라 재사용할 수 없고, `OpenAIConfig` 에 Azure 표면이 없어
 도달 불가로 보고 복제하지 않았다. OkHttp 는 cross-origin 리다이렉트에서 `Authorization` 만 벗기고 `api-key` 는
-자격 증명으로 알지 못하므로, Azure 배포가 생기면 키가 리다이렉트를 따라가는 쪽이 문제다.
+자격 증명으로 알지 못하므로, Azure 배포가 생기면 키가 리다이렉트를 따라가는 쪽이 문제다. 이 차이는 취소 경로만의
+것이 아니다 — `LlmCancellation.none()` 으로 부른 비취소 호출도 이 전송을 지나므로, 이 모듈의 설정에서 SDK 어댑터와
+동작이 같을 뿐 같은 코드는 아니고, 어댑터에 들어오는 수정을 SDK 업그레이드로 물려받지도 못한다.
 
 **어디** *(2026-10-20 확인)* — `OpenAIAbortableHttpClient` 클래스 javadoc, 설계 기록 §5.1 · §10 4번,
 [`design/llm/cancellation.md`](../design/llm/cancellation.md) §4.4.
 
 **언제 다시 볼까** — `OpenAIConfig` 에 Azure 설정이 들어오거나 `baseUrl` 이 Azure 를 가리키는 배포가 생길 때.
+그리고 openai-java 를 올릴 때마다 — `openai-java-client-okhttp` 의 `OkHttpClient.kt` 를 이 전송과 다시 대조한다
+(인터셉터 · 타임아웃 헤더 · 리다이렉트 · 오류 래핑). 6번의 점검과 같은 자리다.
 
 ---
 

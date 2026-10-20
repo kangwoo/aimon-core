@@ -54,9 +54,10 @@ interface OpenAIEndpointExchange {
      *            {@link at.aimon.core.llm.exception.LlmCallCancelledException}, because a stream the SDK closed
      *            itself ends without throwing
      * @param abort
-     *            the call's abort object (must not be null). Its key goes on the SDK params as
-     *            {@link OpenAICallAbort#HEADER}, which is how the transport hook finds the object on every attempt,
-     *            and the handle's {@code abort()} delegates to it
+     *            the call's abort object, or {@code null} for a call whose token can never fire. Its key goes on the
+     *            SDK params as {@link OpenAICallAbort#HEADER}, which is how the transport hook finds the object on
+     *            every attempt, and the handle's {@code abort()} delegates to it; without one the params carry no
+     *            key and the handle's {@code abort()} does nothing
      * @return an open stream handle (never null)
      */
     OpenAIStreamHandle openStream(RequestOptions options, LlmStreamSink sink, ChunkAggregator aggregator,

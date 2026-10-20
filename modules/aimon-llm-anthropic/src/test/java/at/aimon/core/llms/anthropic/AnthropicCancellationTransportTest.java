@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -13,10 +14,16 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.UnaryOperator;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import com.anthropic.core.RequestOptions;
+import com.anthropic.core.http.HttpClient;
+import com.anthropic.core.http.HttpRequest;
+import com.anthropic.core.http.HttpResponse;
 
 import at.aimon.core.agent.prompt.SystemPromptParts;
 import at.aimon.core.llm.LlmCallMetadata;
@@ -265,6 +272,32 @@ class AnthropicCancellationTransportTest {
         }
     }
 
+    // --- a token that can never fire -----------------------------------------------------------------------------
+
+    @Test
+    @DisplayName("a stream with none() takes the adapter's synchronous execute(), never executeAsync()")
+    void nonCancellableStreamTakesTheSynchronousPath() throws Exception {
+        final RecordingAdapter adapter = new RecordingAdapter();
+        try (StallingSseServer server = StallingSseServer.complete(THROUGH_MESSAGE_STOP);
+                AnthropicLlmClient client = clientViewing(server, adapter)) {
+            final LlmResponse response = stream(client, new RecordingSink(2), LlmCancellation.none())
+                    .get(HANG_GUARD.toMillis(), TimeUnit.MILLISECONDS);
+
+            assertThat(response.getTextContent()).isEqualTo(WHOLE);
+            assertThat(adapter.calls()).as("no Dispatcher slot, no thread handoff").containsExactly("execute");
+        }
+        // The contrast, so the recorder is known to see the difference: a live token goes through executeAsync().
+        final RecordingAdapter cancellable = new RecordingAdapter();
+        try (StallingSseServer server = StallingSseServer.complete(THROUGH_MESSAGE_STOP);
+                AnthropicLlmClient client = clientViewing(server, cancellable)) {
+            final LlmResponse response = stream(client, new RecordingSink(2), new RecordingCancellation())
+                    .get(HANG_GUARD.toMillis(), TimeUnit.MILLISECONDS);
+
+            assertThat(response.getTextContent()).isEqualTo(WHOLE);
+            assertThat(cancellable.calls()).containsExactly("executeAsync");
+        }
+    }
+
     // --- §4.1: a transport failure after the terminal event, token live ---------------------------------------
 
     @Test
@@ -295,10 +328,49 @@ class AnthropicCancellationTransportTest {
                 .baseUrl(server.url()).maxRetries(maxRetries).timeout(CLIENT_TIMEOUT).build());
     }
 
+    private static AnthropicLlmClient clientViewing(StallingSseServer server, UnaryOperator<HttpClient> adapterView) {
+        return new AnthropicLlmClient(AnthropicConfig.builder().apiKey("test-key").model("claude-x")
+                .baseUrl(server.url()).timeout(CLIENT_TIMEOUT).build(), adapterView);
+    }
+
     private Future<LlmResponse> stream(AnthropicLlmClient client, LlmStreamSink sink, LlmCancellation cancellation) {
         return worker.submit(() -> client.sendMessageStreaming(SystemPromptParts.empty(), List.of(Message.user("hi")),
                 List.of(), LlmModel.builder().build(), LlmCallMetadata.empty(), LlmStreamingOptions.defaults(), sink,
                 cancellation));
+    }
+
+    /**
+     * Sits between the decorator and the SDK's adapter and records which of the adapter's two paths each attempt took.
+     */
+    static final class RecordingAdapter implements UnaryOperator<HttpClient> {
+        private final List<String> calls = new CopyOnWriteArrayList<>();
+
+        @Override
+        public HttpClient apply(HttpClient adapter) {
+            return new HttpClient() {
+                @Override
+                public HttpResponse execute(HttpRequest request, RequestOptions requestOptions) {
+                    calls.add("execute");
+                    return adapter.execute(request, requestOptions);
+                }
+
+                @Override
+                public CompletableFuture<HttpResponse> executeAsync(HttpRequest request,
+                        RequestOptions requestOptions) {
+                    calls.add("executeAsync");
+                    return adapter.executeAsync(request, requestOptions);
+                }
+
+                @Override
+                public void close() {
+                    adapter.close();
+                }
+            };
+        }
+
+        List<String> calls() {
+            return List.copyOf(calls);
+        }
     }
 
     /** One run of one lever: how long it took and what, if anything, it threw. */

@@ -148,6 +148,51 @@ class OpenAILlmClientCancellationTest {
     }
 
     @Test
+    @DisplayName("A token that can never fire opens no abort: nothing is registered and the request carries no key")
+    void nonCancellableStreamRegistersNothingAndSendsNoAbortKey() {
+        // The gateway streams with LlmCancellation.none() in production; such a call must not ride the abort path.
+        @SuppressWarnings("unchecked")
+        StreamResponse<ChatCompletionChunk> streamResponse = mock(StreamResponse.class);
+        when(streamResponse.stream()).thenAnswer(invocation -> Stream.empty());
+        when(mockChatCompletionService.createStreaming(any(ChatCompletionCreateParams.class)))
+                .thenReturn(streamResponse);
+        OpenAILlmClient client = createClientWithMock();
+        AtomicBoolean registered = new AtomicBoolean();
+        LlmCancellation inert = new LlmCancellation() {
+            @Override
+            public boolean isCancelled() {
+                return false;
+            }
+
+            @Override
+            public boolean isSupported() {
+                return false;
+            }
+
+            @Override
+            public void onCancel(Runnable abort) {
+                registered.set(true);
+            }
+        };
+
+        LlmResponse response = client.sendMessageStreaming(SystemPromptParts.empty(), List.of(Message.user("hi")),
+                Collections.emptyList(), LlmModel.builder().build(), LlmCallMetadata.empty(),
+                LlmStreamingOptions.defaults(), chunk -> {
+                }, inert);
+        client.sendMessageStreaming(SystemPromptParts.empty(), List.of(Message.user("hi")), Collections.emptyList(),
+                LlmModel.builder().build(), LlmCallMetadata.empty(), LlmStreamingOptions.defaults(), chunk -> {
+                }, LlmCancellation.none());
+
+        assertThat(response).isNotNull();
+        assertThat(registered).as("no lever is registered with a token that can never fire").isFalse();
+        ArgumentCaptor<ChatCompletionCreateParams> sent = ArgumentCaptor.forClass(ChatCompletionCreateParams.class);
+        verify(mockChatCompletionService, times(2)).createStreaming(sent.capture());
+        assertThat(sent.getAllValues()).allSatisfy(
+                params -> assertThat(params._headers().values(OpenAICallAbort.HEADER)).as("no abort key").isEmpty());
+        verify(streamResponse, times(2)).close();
+    }
+
+    @Test
     @DisplayName("Should map a mid-stream failure to LlmCallCancelledException when the token is cancelled")
     void shouldMapMidStreamFailureToCancelledException_WhenTokenCancelled() {
         // Given: a token that is not cancelled at entry but flips to cancelled concurrently with the stream unwind

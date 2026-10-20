@@ -88,7 +88,9 @@ cancel 이 전송 future 에 닿지 않고, 닿아도 헤더 단계뿐이라 (a)
 ## 4. 처리 계약
 
 - abort 콜백은 thread-safe·idempotent·non-blocking 이며 예외를 던지지 않는다. non-blocking 은 **측정한다** — 읽는
-  스레드가 막혀 있는 동안 `onCancel` 콜백이 짧은 시간(예: 100ms) 안에 돌아오는지 본다.
+  스레드가 막혀 있는 동안 `onCancel` 콜백이 짧은 시간(예: 100ms) 안에 돌아오는지 본다. 구현에서 Anthropic 레버는
+  즉시가 아니라 **상한이 있는** 쪽이다 — read 가 없을 때 어댑터의 race-safe body 를 취소 스레드에서 닫으므로
+  HTTP/1.1 에서 최대 약 100ms 머문다(`StreamResponse` 나 reader 는 건드리지 않는다). 설계 기록 §11.1 · §11.6.1.
 - 취소된 호출은 `LlmCallCancelledException` 으로 끝나고, **SDK 내부 재시도를 포함해** 재전송하지 않는다.
 - terminal event 전에 끊긴 응답은 정상 응답으로 반환하지 않는다. terminal event 를 받은 뒤 도착한 취소는 **정상 응답
   반환**으로 정했다(설계 §4.1) — 매퍼가 terminal event 를 기록한 뒤의 전송 실패는 취소든 reset 이든 답을 되돌리지 않고,
