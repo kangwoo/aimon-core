@@ -271,9 +271,12 @@ public interface LlmClient {
      *
      * <p>
      * The default implementation <b>ignores {@code cancellation}</b> and delegates to the non-cancellation overload.
-     * Native-streaming providers <b>SHOULD override</b> this method and register their {@code StreamResponse.close()}
-     * lever via {@link LlmCancellation#onCancel(Runnable)} so a mid-stream cancellation aborts the HTTP connection
-     * immediately instead of waiting for the next chunk. Decorators in the call chain <b>MUST override</b> it and
+     * Native-streaming providers <b>SHOULD override</b> this method and register a per-call transport abort via
+     * {@link LlmCancellation#onCancel(Runnable)} <em>before</em> the request is sent, so a cancellation during the
+     * header wait or mid-stream cuts that call's HTTP transport immediately instead of waiting for the next chunk. The
+     * lever must cut the transport only — never close the stream, which the consumer thread does once its read has
+     * unwound — and must keep the SDK from re-sending the cancelled request. Decorators in the call chain <b>MUST
+     * override</b> it and
      * forward {@code cancellation}, otherwise the token is silently dropped before it reaches the provider.
      *
      * @param systemPromptParts

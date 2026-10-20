@@ -1851,8 +1851,8 @@ public class OrcaAgentExecutor
                                 iterationCount, availableTools, cancellationSignal, llmCancellation);
                     } finally {
                         // LLM-CANCEL: drop the just-finished call's abort lever so a trip landing while the next
-                        // tools run cannot invoke a stale (already-closed) stream. Idempotent close() makes this
-                        // hygiene rather than strictly required.
+                        // tools run does not fire a stale one. A lever only ever reaches its own call and is a no-op
+                        // once that call is over, so this is hygiene rather than strictly required.
                         llmCancellation.clearAbort();
                     }
 
@@ -3474,7 +3474,7 @@ public class OrcaAgentExecutor
             } catch (LlmCallCancelledException e) {
                 // Two sources can raise this on the blocking path: the gateway's pre-attempt short-circuit, and a
                 // genuine in-flight abort — a cancellable token (isSupported()) makes the provider reroute the blocking
-                // call through its streaming path, which owns a StreamResponse.close() abort lever. Both translate to
+                // call through its streaming path, which owns a transport abort lever. Both translate to
                 // CancelledExecutionException so the ReAct loop unwinds through handleInterrupted like every other
                 // cancellation.
                 throw toCancelledExecution(cancellationSignal, e);
@@ -3637,10 +3637,11 @@ public class OrcaAgentExecutor
                     // No cancellation checkpoint here, deliberately, and the reason has to be the abort lever rather
                     // than the next chunk: a long deliberation is exactly the case this channel exists for, so "the
                     // next text delta follows closely" is the one thing it does not promise. What does hold is that
-                    // both providers register cancellation.onCancel(<stream>::close) before consuming
-                    // (AnthropicLlmClient, OpenAILlmClient), so a trip during a reasoning-only window closes the HTTP
-                    // stream from the interrupting thread and the call unwinds as LlmCallCancelledException — the
-                    // same preserve-the-prefix arm a checkpoint here would have reached, one exception later.
+                    // both providers register a per-call transport abort with cancellation.onCancel before the
+                    // request is sent (AnthropicLlmClient, OpenAILlmClient), so a trip during a reasoning-only window
+                    // cuts the HTTP transport from the interrupting thread, the consumer's blocked read fails, and the
+                    // call unwinds as LlmCallCancelledException — the same preserve-the-prefix arm a checkpoint here
+                    // would have reached, one exception later.
                     final String delta = chunk.getReasoningDelta().orElseThrow();
                     scope.eventDispatcher.emitAssistantReasoningDelta(iteration, delta, nextReasoningChunkIndex++);
                 }

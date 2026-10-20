@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -39,13 +40,14 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
  * <p>
  * The point of these six is that the Responses path <em>inherits</em> the cancellation machinery rather than
  * re-implementing it. Everything they assert lives in {@code OpenAILlmClient} and is shared: the fast path before
- * anything opens, the abort lever registered <em>after</em> the stream opens, the three-way catch cascade, and the
- * decision to reroute a cancellable non-streaming call through streaming. If one of these fails while its Chat sibling
- * passes, the refactor put a copy of that machinery somewhere it should not be.
+ * anything opens, the abort lever registered <em>before</em> the stream opens (the call's transport abort, never the
+ * stream's close), the three-way catch cascade, and the decision to reroute a cancellable non-streaming call through
+ * streaming. If one of these fails while its Chat sibling passes, the refactor put a copy of that machinery somewhere
+ * it should not be.
  *
  * <p>
- * The Chat siblings in {@code OpenAILlmClientCancellationTest} are <strong>unmodified</strong>, which is part of the
- * acceptance: editing them would hide exactly the regression they guard.
+ * The Chat siblings in {@code OpenAILlmClientCancellationTest} assert the same things in the same way, which is part
+ * of the acceptance: a difference between the two would hide exactly the regression they guard.
  */
 @DisplayName("OpenAI Responses - streaming cancellation")
 @ExtendWith(MockitoExtension.class)
@@ -107,20 +109,42 @@ class OpenAIResponsesCancellationTest {
     }
 
     @Test
-    @DisplayName("the abort lever registered after the stream opens really closes the stream")
-    void abortCallbackClosesTheStream() {
-        final ResponsesFixtures.RecordingStreamResponse streamResponse = ResponsesFixtures.recordingStreamOf();
-        when(mockResponseService.createStreaming(any(ResponseCreateParams.class))).thenReturn(streamResponse);
+    @DisplayName("a token that can never fire opens no abort: nothing is registered and the request carries no key")
+    void nonCancellableStreamRegistersNothingAndSendsNoAbortKey() {
+        when(mockResponseService.createStreaming(any(ResponseCreateParams.class)))
+                .thenAnswer(invocation -> ResponsesFixtures.recordingStreamOf());
 
-        // A token whose isCancelled() guard passes at entry but whose onCancel() fires synchronously -- the
-        // documented "already cancelled at registration time" contract. That the callback runs at all proves the
-        // registration happens AFTER openStream returns, not before.
-        final LlmResponse response = stream(cancellation(false, Runnable::run));
+        final LlmResponse response = stream(LlmCancellation.none());
 
         assertThat(response).isNotNull();
-        // At-least-once rather than exactly-once: close() fires from the registration and again from the
-        // try-with-resources, and it is documented as idempotent.
-        assertThat(streamResponse.closeCount()).isGreaterThanOrEqualTo(1);
+        final ArgumentCaptor<ResponseCreateParams> sent = ArgumentCaptor.forClass(ResponseCreateParams.class);
+        verify(mockResponseService).createStreaming(sent.capture());
+        assertThat(sent.getValue()._headers().values(OpenAICallAbort.HEADER)).as("no abort key").isEmpty();
+    }
+
+    @Test
+    @DisplayName("the abort lever is registered before the stream opens, and it is not the stream's close()")
+    void abortLeverIsRegisteredBeforeTheStreamOpensAndNeverClosesIt() {
+        final ResponsesFixtures.RecordingStreamResponse streamResponse = ResponsesFixtures.recordingStreamOf();
+        final AtomicBoolean streamOpened = new AtomicBoolean();
+        when(mockResponseService.createStreaming(any(ResponseCreateParams.class))).thenAnswer(invocation -> {
+            streamOpened.set(true);
+            return streamResponse;
+        });
+
+        // A token whose isCancelled() guard passes at entry but whose onCancel() fires synchronously -- the
+        // documented "already cancelled at registration time" contract. What the registration sees is the point:
+        // the stream has not been opened yet, so a trip during the header wait is covered.
+        final AtomicBoolean openedAtRegistration = new AtomicBoolean(true);
+        final LlmResponse response = stream(cancellation(false, abort -> {
+            openedAtRegistration.set(streamOpened.get());
+            abort.run();
+        }));
+
+        assertThat(response).isNotNull();
+        assertThat(openedAtRegistration).as("the lever is registered before the stream opens").isFalse();
+        // Exactly once: the lever did not close the stream; the consumer thread's own close on the way out did.
+        assertThat(streamResponse.closeCount()).isEqualTo(1);
     }
 
     @Test

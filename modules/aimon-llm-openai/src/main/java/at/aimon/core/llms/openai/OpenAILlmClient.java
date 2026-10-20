@@ -8,13 +8,15 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.openai.client.OpenAIClient;
-import com.openai.client.okhttp.OpenAIOkHttpClient;
+import com.openai.client.OpenAIClientImpl;
+import com.openai.core.ClientOptions;
 import com.openai.core.RequestOptions;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionMessageParam;
@@ -50,6 +52,16 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
  * lever, the catch cascade and the per-request timeout — stays here, once.
  *
  * <p>
+ * Cancellation cuts the transport, never the stream. The SDK is assembled over this module's own OkHttp transport
+ * ({@link OpenAIAbortableHttpClient}) so that each cancellable streaming call has an abort object
+ * ({@link OpenAICallAbort}) whose
+ * lever is {@code okhttp3.Call.cancel()} on the attempt in flight — registered with the token <em>before</em> the
+ * request goes out, so the header wait and every SDK retry are covered, and refused by the transport hook on any
+ * attempt the SDK would make after it. {@code StreamResponse.close()} is run on the consumer thread only, once, after
+ * its own read has unwound; it is not thread-safe against that read and is not the lever. A call whose token can
+ * never fire ({@code LlmCancellation.none()}) opens no abort object and carries no abort key.
+ *
+ * <p>
  * Key features:
  *
  * <ul>
@@ -78,7 +90,7 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
  * }
  * </pre>
  */
-public class OpenAILlmClient implements LlmClient {
+public class OpenAILlmClient implements LlmClient, AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(OpenAILlmClient.class);
 
     /**
@@ -97,9 +109,15 @@ public class OpenAILlmClient implements LlmClient {
 
     private final OpenAIConfig config;
     private final OpenAIClient client;
+    /** The abort objects of the streaming calls in flight; shared with the transport hook. */
+    private final OpenAIAbortRegistry aborts = new OpenAIAbortRegistry();
+    /** This module's transport under {@link #client}, or {@code null} when a client was supplied (tests). */
+    private final OpenAIAbortableHttpClient transport;
     private final OpenAIMessageConverter converter;
     private final OpenAIResponsesMessageConverter responsesConverter;
     private final OpenAIResponsesRequestFactory responsesRequestFactory;
+    /** Set by the first {@link #close()}; later calls do nothing. */
+    private final AtomicBoolean closed = new AtomicBoolean();
 
     /**
      * Request divergences already reported, so a value dropped on every request is said once instead of once per ReAct
@@ -136,7 +154,9 @@ public class OpenAILlmClient implements LlmClient {
      */
     public OpenAILlmClient(OpenAIConfig config) {
         this.config = Objects.requireNonNull(config, "Config cannot be null");
-        this.client = createOpenAIClient(config);
+        final ClientOptions.Builder options = clientOptions(config);
+        this.transport = new OpenAIAbortableHttpClient(options.timeout(), aborts);
+        this.client = new OpenAIClientImpl(options.httpClient(transport).build());
         this.converter = new OpenAIMessageConverter();
         this.responsesConverter = new OpenAIResponsesMessageConverter();
         this.responsesRequestFactory = new OpenAIResponsesRequestFactory(this.responsesConverter, this.config,
@@ -144,24 +164,30 @@ public class OpenAILlmClient implements LlmClient {
     }
 
     /**
-     * Creates OpenAIClient with configuration.
+     * The SDK client options for {@code config}, without a transport yet.
+     *
+     * <p>
+     * This is what {@code OpenAIOkHttpClient.Builder.build()} does for the four settings this client passes, taken
+     * apart because that builder offers no way to put a transport other than the SDK's own OkHttp adapter under the
+     * client, and the abort lever needs this module's ({@link OpenAIAbortableHttpClient}). The transport takes the
+     * same {@link com.openai.core.Timeout} the options carry, as the SDK's builder gives its adapter.
      *
      * @param config
      *            The OpenAI configuration
-     * @return Configured OpenAIClient instance
+     * @return the options, with the credential, base URL, timeout and retry policy set and the transport still to add
      */
-    private OpenAIClient createOpenAIClient(OpenAIConfig config) {
-        OpenAIOkHttpClient.Builder builder = OpenAIOkHttpClient.builder().apiKey(config.getApiKey())
+    private static ClientOptions.Builder clientOptions(OpenAIConfig config) {
+        final ClientOptions.Builder options = ClientOptions.builder().apiKey(config.getApiKey())
                 .timeout(config.getTimeout());
 
         String baseUrl = config.getBaseUrl();
         if (baseUrl != null && !baseUrl.isEmpty()) {
-            builder.baseUrl(baseUrl);
+            options.baseUrl(baseUrl);
         }
         // Only when set: an unset value must leave the SDK's own default in place, not a copy of it.
-        config.getMaxRetries().ifPresent(builder::maxRetries);
+        config.getMaxRetries().ifPresent(options::maxRetries);
 
-        return builder.build();
+        return options;
     }
 
     /**
@@ -175,10 +201,20 @@ public class OpenAILlmClient implements LlmClient {
     OpenAILlmClient(OpenAIConfig config, OpenAIClient client) {
         this.config = Objects.requireNonNull(config, "Config cannot be null");
         this.client = Objects.requireNonNull(client, "Client cannot be null");
+        // No transport of this module's under a supplied client: the abort objects are still opened and released,
+        // and their keys still go on the params, but nothing looks them up.
+        this.transport = null;
         this.converter = new OpenAIMessageConverter();
         this.responsesConverter = new OpenAIResponsesMessageConverter();
         this.responsesRequestFactory = new OpenAIResponsesRequestFactory(this.responsesConverter, this.config,
                 this::reportDivergence, this::reportRecurringDivergence);
+    }
+
+    /**
+     * This module's transport under the SDK client, for the resource checks in tests; empty under a supplied client.
+     */
+    Optional<OpenAIAbortableHttpClient> transport() {
+        return Optional.ofNullable(transport);
     }
 
     @Override
@@ -221,12 +257,13 @@ public class OpenAILlmClient implements LlmClient {
         // Non-streaming in-flight abort: a blocking chat().completions().create() call exposes no handle we can
         // trip mid-flight, so on its own it can only observe cancellation at the next iteration boundary. When the
         // caller supplied a live cancellation token, route the non-streaming request through the streaming path —
-        // which owns the proven, thread-safe StreamResponse.close() abort lever — and reassemble the aggregated chunks
-        // into a single response. The caller wanted a non-streaming *result*, not incremental delivery, so chunk
+        // which owns the per-call abort object whose lever cancels the transport — and reassemble the aggregated
+        // chunks into a single response. The caller wanted a non-streaming *result*, not incremental delivery, so chunk
         // emissions are discarded; usage is still requested (includeUsage defaults to true, wiring
         // stream_options.include_usage) so token accounting matches the blocking path. When the token can never fire
-        // (LlmCancellation.none(), the common non-cancellation case), keep the cheaper single-shot blocking call
-        // unchanged — zero behaviour change for that path.
+        // (LlmCancellation.none(), the common non-cancellation case), keep the cheaper single-shot blocking call. It
+        // runs over this module's transport like every other call, which is behaviourally equivalent to the SDK's
+        // adapter for the settings this module passes (see OpenAIAbortableHttpClient for what is not replicated).
         if (!cancellation.isSupported()) {
             return sendMessage(systemPromptParts, messages, tools, modelConfig, metadata);
         }
@@ -275,15 +312,24 @@ public class OpenAILlmClient implements LlmClient {
         // A per-request timeout, when set, also bounds the streaming call (worst-case ceiling incl. no-progress
         // stalls); when unset, keep the single-argument overload so the client-wide default applies unchanged.
         final RequestOptions requestOptions = perRequestOptions(modelConfig);
-        try (OpenAIStreamHandle handle = exchange.openStream(requestOptions, sink, aggregator, cancellation)) {
-            // Register the abort lever: the handle's close() delegates to StreamResponse.close(), which cancels the
-            // underlying OkHttp call — thread-safe and idempotent. If cancellation already fired, onCancel invokes
-            // close() synchronously now, so the stream read below is of an already-closed source. A closed source
-            // does not throw in this SDK: it ends. The handle's mapper holds the token for that reason, and reports a
-            // stream that stopped short of its terminal event under a tripped token as the cancellation it is; the
-            // catch blocks below cover a transport that does throw.
-            cancellation.onCancel(handle::close);
-            handle.consume();
+        // A token that can never fire (LlmCancellation.none()) gets no abort object at all: nothing to register and
+        // no key on the params, so the transport hook finds no entry and the attempt runs as a plain OkHttp call.
+        final OpenAICallAbort abort = cancellation.isSupported() ? aborts.open() : null;
+        try {
+            if (abort != null) {
+                // The abort lever, registered BEFORE the request goes out: a trip during the header wait, or during
+                // any retry the SDK makes inside this call, cancels the attempt in flight, and the transport hook
+                // refuses to send another. If the token already fired, onCancel runs the lever now and the first
+                // attempt is refused before a byte is sent. The lever cuts the transport only; the mapper then sees
+                // the SDK's I/O failure and classifies it by the token and the terminal event (a cut after the
+                // terminal event still returns the whole answer), and the catch blocks below map whatever reaches
+                // them. StreamResponse.close() is not the lever: it is the consumer thread's cleanup, run once in
+                // closeHandle after this thread's read unwound.
+                cancellation.onCancel(abort::abort);
+            }
+            final OpenAIStreamHandle handle = exchange.openStream(requestOptions, sink, aggregator, cancellation,
+                    abort);
+            consumeAndClose(handle);
         } catch (LlmCallCancelledException e) {
             throw e;
         } catch (LlmClientException e) {
@@ -292,16 +338,58 @@ public class OpenAILlmClient implements LlmClient {
             }
             throw e;
         } catch (Exception e) {
-            // A cancelled stream surfaces here as the SDK's stream-closed IOException; classify it as a cancellation
-            // (terminal, non-retryable) rather than a generic transient failure.
+            // A cut stream surfaces here as the SDK's I/O failure, or as the transport's OpenAICallAbortedException
+            // when the hook refused or cut an attempt; under a tripped token both are the cancellation they are
+            // (terminal, non-retryable), not a generic transient failure.
             if (cancellation.isCancelled()) {
                 throw new LlmCallCancelledException("OpenAI streaming call aborted by cancellation", e);
             }
             log.error("OpenAI streaming call failed: {}", e.getMessage(), e);
             throw OpenAIExceptionMapper.map(e, "OpenAI streaming call failed");
+        } finally {
+            // The call is over, whichever way: a late abort finds nothing to cut, and the hook finds no entry.
+            if (abort != null) {
+                aborts.release(abort);
+            }
         }
 
         return aggregator.toLlmResponse();
+    }
+
+    /**
+     * Drains the handle and closes it, on this thread, exactly once.
+     *
+     * <p>
+     * Not try-with-resources, because that classifies a close failure after a whole answer as a provider failure,
+     * which the gateway would retry — a second full response, billed twice, for a socket that did not close cleanly.
+     * The response is whole and billed; it is returned, and the close failure is logged at WARN. After a cancellation
+     * or a provider failure the close failure is attached to the thrown exception as suppressed, so the primary
+     * exception is still the cancellation or the mapped failure.
+     */
+    private static void consumeAndClose(OpenAIStreamHandle handle) {
+        Throwable failure = null;
+        try {
+            handle.consume();
+        } catch (Throwable t) {
+            failure = t;
+            throw t;
+        } finally {
+            closeHandle(handle, failure);
+        }
+    }
+
+    private static void closeHandle(OpenAIStreamHandle handle, Throwable failure) {
+        try {
+            handle.close();
+        } catch (RuntimeException e) {
+            if (failure != null) {
+                failure.addSuppressed(e);
+                return;
+            }
+            // OkHttp has already marked the connection unusable; the transport cancelled the call on top. Nothing
+            // leaks, and the answer is whole.
+            log.warn("OpenAI stream did not close cleanly after a complete response; the response is returned", e);
+        }
     }
 
     /**
@@ -627,7 +715,7 @@ public class OpenAILlmClient implements LlmClient {
      *
      * <p>
      * The registry is caller-supplied, and {@link #exchangeFor} — this method's only caller — runs <em>outside</em>
-     * the streaming path's try-with-resources: an exception escaping here would bypass both the exception mapper and
+     * the streaming path's try: an exception escaping here would bypass both the exception mapper and
      * the cancellation classification. Swallowing it applies this SPI's own fail-open rule to the SPI itself, so a
      * third-party bug
      * costs a warning rather than the request.
@@ -768,6 +856,22 @@ public class OpenAILlmClient implements LlmClient {
     @Override
     public Optional<String> getDefaultModelName() {
         return Optional.of(config.getModel());
+    }
+
+    /**
+     * Closes the SDK client, which closes the transport under it — for a client built from {@link OpenAIConfig}, this
+     * module's {@link OpenAIAbortableHttpClient} and the {@code okhttp3.OkHttpClient} it owns (dispatcher threads,
+     * pooled connections). Idempotent: only the first call closes anything. Calls in flight are not cancelled.
+     *
+     * <p>
+     * Calls made after {@code close()} are not supported: nothing refuses them up front, and what they do is the
+     * closed transport's business.
+     */
+    @Override
+    public void close() {
+        if (closed.compareAndSet(false, true)) {
+            client.close();
+        }
     }
 
     /**

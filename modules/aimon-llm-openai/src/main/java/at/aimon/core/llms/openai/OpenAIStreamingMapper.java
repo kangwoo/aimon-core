@@ -8,6 +8,7 @@ import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.openai.errors.OpenAIIoException;
 import com.openai.models.chat.completions.ChatCompletionChunk;
 import com.openai.models.completions.CompletionUsage;
 
@@ -79,23 +80,50 @@ final class OpenAIStreamingMapper {
      * {@code cancellation} is tripped.
      *
      * <p>
-     * The SDK does not throw out of a stream that was closed under it: {@code StreamResponse.close()} makes the
-     * sequence simply end. So an aborted call arrives here as a stream in which no choice ever finished, and closing
-     * it with the terminal chunk would hand the caller the part that had arrived as the whole answer. It is a
-     * cancellation, and no terminal chunk is emitted for it: the sink's stream is the caller's to end.
+     * A stream can end in two ways short of {@code [DONE]}, and the terminal event decides what either means. A
+     * stream the SDK closed itself ends silently: the sequence simply stops. A stream whose transport was cut — by
+     * the call's abort lever, or by the network — fails loudly, as the SDK's {@code OpenAIIoException} out of the
+     * loop. Before the {@code finish_reason} chunk both are classified by the token: a silent end under a tripped
+     * token is a cancellation (the part that arrived must not be handed back as the whole answer, so no terminal
+     * chunk is emitted — the sink's stream is the caller's to end), and a loud one propagates for the client's
+     * cascade to classify. After the {@code finish_reason} chunk neither changes the answer: it is complete, so a
+     * transport failure in the tail is logged and the terminal chunk is emitted as if the stream had ended well. On
+     * this endpoint usage may trail {@code finish_reason} in its own chunk; a tail cut before it leaves the usage
+     * empty, the same fallback a routed non-streaming call already accepts.
      *
      * @throws LlmCallCancelledException
      *             if the stream ended without a {@code finish_reason} and {@code cancellation} is tripped
+     * @throws OpenAIIoException
+     *             if the transport failed before any {@code finish_reason}
      */
     void consume(Stream<ChatCompletionChunk> stream, LlmCancellation cancellation) {
         Objects.requireNonNull(stream, "stream");
         Objects.requireNonNull(cancellation, "cancellation");
-        stream.forEach(this::onChunk);
+        try {
+            stream.forEach(this::onChunk);
+        } catch (OpenAIIoException e) {
+            if (lastFinishReason.isEmpty()) {
+                throw e;
+            }
+            logFailureAfterTerminalEvent(cancellation, e);
+        }
         if (lastFinishReason.isEmpty() && cancellation.isCancelled()) {
             throw new LlmCallCancelledException(
                     "OpenAI streaming call aborted by cancellation: the stream ended before a finish_reason");
         }
         emitStreamEnd();
+    }
+
+    /**
+     * DEBUG under a tripped token — the abort cut the tail, which is what it is for — and WARN otherwise, because a
+     * provider that resets after its answer is news an operator should see even though the call succeeds.
+     */
+    private static void logFailureAfterTerminalEvent(LlmCancellation cancellation, OpenAIIoException e) {
+        if (cancellation.isCancelled()) {
+            log.debug("OpenAI stream cut after its finish_reason; the answer is complete", e);
+        } else {
+            log.warn("OpenAI stream failed after its finish_reason; the answer is complete and is returned", e);
+        }
     }
 
     private void onChunk(ChatCompletionChunk chunk) {
