@@ -284,8 +284,9 @@ public final class DedicatedThreadDispatcher implements ParallelToolDispatcher, 
     private void runOnDedicatedThread(Slot slot, Function<ToolUse, ToolUseResult> runner,
             BiConsumer<ToolUse, ToolUseResult> onCompleted) {
         final ToolUse toolUse = slot.toolUse;
+        ToolUseResult result = null;
+        Throwable listenerFailure = null;
         try {
-            ToolUseResult result;
             try {
                 result = ToolDispatchCallbacks.runSafely(log, runner, toolUse);
             } catch (Throwable t) {
@@ -295,12 +296,19 @@ public final class DedicatedThreadDispatcher implements ParallelToolDispatcher, 
             }
             slot.markRunnerReturned();
             ToolDispatchCallbacks.safeOnCompleted(log, onCompleted, toolUse, result);
-            slot.future.complete(result);
         } catch (Throwable t) {
             // A listener threw an Error: the joiner turns it into an error result.
-            slot.future.completeExceptionally(t);
+            listenerFailure = t;
         } finally {
+            // Hand the permit back BEFORE completing the future, so that once dispatch() has joined every call, all of
+            // its permits are free again — a batch that follows right away must not run inline for want of a permit
+            // this thread was still about to return.
             permits.release();
+        }
+        if (listenerFailure == null) {
+            slot.future.complete(result);
+        } else {
+            slot.future.completeExceptionally(listenerFailure);
         }
     }
 
