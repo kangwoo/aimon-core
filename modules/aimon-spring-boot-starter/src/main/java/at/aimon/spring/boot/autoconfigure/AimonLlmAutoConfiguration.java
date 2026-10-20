@@ -59,9 +59,9 @@ import at.aimon.core.llms.openai.OpenAiReasoningSummary;
  * define the bean, set {@code aimon.llm.provider} to your own name, and no built-in branch matches.
  *
  * <p>
- * Neither bean overrides {@code destroyMethod}. {@code AnthropicLlmClient} is {@code AutoCloseable} and holds
- * an HTTP connection pool, so Spring's inferred {@code close()} is what releases it; {@code OpenAILlmClient}
- * has no {@code close()} and inference finds nothing to call. Ordering against the stack's own teardown is not
+ * Neither bean overrides {@code destroyMethod}. {@code AnthropicLlmClient} and {@code OpenAILlmClient} are
+ * both {@code AutoCloseable} and each owns an HTTP client (dispatcher threads, a connection pool), so Spring's
+ * inferred {@code close()} is what releases it. Ordering against the stack's own teardown is not
  * left to chance either: {@code AimonStackSpec} takes the client as a constructor-injected dependency, and
  * Spring destroys dependents before their dependencies, so the stack is fully torn down before the transport
  * underneath it goes away.

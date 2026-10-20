@@ -26,6 +26,7 @@ import com.anthropic.core.RequestOptions;
 import com.anthropic.core.http.HttpClient;
 import com.anthropic.core.http.HttpMethod;
 import com.anthropic.core.http.HttpRequest;
+import com.anthropic.core.http.HttpRequestBody;
 import com.anthropic.core.http.HttpResponse;
 import com.anthropic.errors.AnthropicIoException;
 import com.anthropic.errors.AnthropicRetryableException;
@@ -147,18 +148,56 @@ class AnthropicAbortableHttpClientTest {
     }
 
     @Test
-    @DisplayName("a request without the key goes through untouched")
+    @DisplayName("a request without the key goes through untouched, on the adapter's synchronous path")
     void requestsWithoutAKeyPassThrough() {
         final HttpResponse response = mock(HttpResponse.class);
-        when(adapter.executeAsync(any(), any())).thenReturn(CompletableFuture.completedFuture(response));
+        when(adapter.execute(any(), any())).thenReturn(response);
         final HttpRequest plain = HttpRequest.builder().method(HttpMethod.POST).baseUrl("http://127.0.0.1:1")
                 .addPathSegment("v1").build();
 
         assertThat(transport.execute(plain, RequestOptions.none())).isSameAs(response);
 
         final ArgumentCaptor<HttpRequest> wire = ArgumentCaptor.forClass(HttpRequest.class);
-        verify(adapter).executeAsync(wire.capture(), any());
+        verify(adapter).execute(wire.capture(), any());
         assertThat(wire.getValue()).isSameAs(plain);
+        // No Dispatcher slot and no thread handoff for a call nobody can cancel.
+        verify(adapter, never()).executeAsync(any(), any());
+    }
+
+    @Test
+    @DisplayName("a key with no abort registered for it is stripped, and the request takes the synchronous path")
+    void anUnregisteredKeyIsStrippedAndRunsSynchronously() {
+        final HttpResponse response = mock(HttpResponse.class);
+        when(adapter.execute(any(), any())).thenReturn(response);
+        final HttpRequest keyed = HttpRequest.builder().method(HttpMethod.POST).baseUrl("http://127.0.0.1:1")
+                .addPathSegment("v1").putHeader(AnthropicCallAbort.HEADER, "no-such-call").build();
+
+        assertThat(transport.execute(keyed, RequestOptions.none())).isSameAs(response);
+
+        final ArgumentCaptor<HttpRequest> wire = ArgumentCaptor.forClass(HttpRequest.class);
+        verify(adapter).execute(wire.capture(), any());
+        assertThat(wire.getValue().headers().values(AnthropicCallAbort.HEADER)).isEmpty();
+        verify(adapter, never()).executeAsync(any(), any());
+    }
+
+    @Test
+    @DisplayName("a refused attempt closes its request body, as the adapter does for one it sends")
+    void aRefusedAttemptClosesItsBody() {
+        final AnthropicCallAbort abort = registry.open();
+        abort.abort();
+        final HttpRequestBody syncBody = mock(HttpRequestBody.class);
+        final HttpRequestBody asyncBody = mock(HttpRequestBody.class);
+
+        assertThatThrownBy(
+                () -> transport.execute(requestFor(abort).toBuilder().body(syncBody).build(), RequestOptions.none()))
+                .isInstanceOf(AnthropicCallAbortedException.class);
+        assertThat(transport.executeAsync(requestFor(abort).toBuilder().body(asyncBody).build(), RequestOptions.none()))
+                .isCompletedExceptionally();
+
+        verify(syncBody, times(1)).close();
+        verify(asyncBody, times(1)).close();
+        verify(adapter, never()).execute(any(), any());
+        verify(adapter, never()).executeAsync(any(), any());
     }
 
     @Test

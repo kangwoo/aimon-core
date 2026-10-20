@@ -3637,10 +3637,11 @@ public class OrcaAgentExecutor
                     // No cancellation checkpoint here, deliberately, and the reason has to be the abort lever rather
                     // than the next chunk: a long deliberation is exactly the case this channel exists for, so "the
                     // next text delta follows closely" is the one thing it does not promise. What does hold is that
-                    // both providers register cancellation.onCancel(<stream>::close) before consuming
-                    // (AnthropicLlmClient, OpenAILlmClient), so a trip during a reasoning-only window closes the HTTP
-                    // stream from the interrupting thread and the call unwinds as LlmCallCancelledException — the
-                    // same preserve-the-prefix arm a checkpoint here would have reached, one exception later.
+                    // both providers register a per-call transport abort with cancellation.onCancel before the
+                    // request is sent (AnthropicLlmClient, OpenAILlmClient), so a trip during a reasoning-only window
+                    // cuts the HTTP transport from the interrupting thread, the consumer's blocked read fails, and the
+                    // call unwinds as LlmCallCancelledException — the same preserve-the-prefix arm a checkpoint here
+                    // would have reached, one exception later.
                     final String delta = chunk.getReasoningDelta().orElseThrow();
                     scope.eventDispatcher.emitAssistantReasoningDelta(iteration, delta, nextReasoningChunkIndex++);
                 }

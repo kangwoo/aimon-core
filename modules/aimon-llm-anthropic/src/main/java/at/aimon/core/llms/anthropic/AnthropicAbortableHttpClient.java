@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import com.anthropic.core.RequestOptions;
 import com.anthropic.core.http.HttpClient;
 import com.anthropic.core.http.HttpRequest;
+import com.anthropic.core.http.HttpRequestBody;
 import com.anthropic.core.http.HttpResponse;
 
 import at.aimon.core.llms.anthropic.exception.AnthropicCallAbortedException;
@@ -38,11 +39,16 @@ import at.aimon.core.llms.anthropic.exception.AnthropicCallAbortedException;
  * </ol>
  *
  * <p>
- * The synchronous path runs the adapter's {@code executeAsync} and joins it, so the header wait goes through OkHttp's
- * {@code Dispatcher} (64 concurrent, per host raised to the same by the adapter) where the adapter's own
- * {@code execute} did not. A slot is held only until the headers arrive, so the cap is on concurrent header waits per
- * client, not on concurrent streams. Everything the adapter does for a request — the backend's URL resolution and
- * headers, the credential headers, the {@code X-Stainless-*-Timeout} headers, per-request timeouts — is untouched.
+ * For a cancellable call the synchronous path runs the adapter's {@code executeAsync} and joins it, so the header
+ * wait goes through OkHttp's {@code Dispatcher} (64 concurrent, per host raised to the same by the adapter) where the
+ * adapter's own {@code execute} did not. A slot is held only until the headers arrive, so the cap is on concurrent
+ * cancellable header waits per client, not on concurrent streams. A request with no abort registered for it — a
+ * non-cancellable blocking call, or the SDK used directly — goes straight to the adapter's synchronous
+ * {@code execute} and takes no slot at all.
+ *
+ * <p>
+ * Everything the adapter does for a request — the backend's URL resolution and headers, the credential headers, the
+ * {@code X-Stainless-*-Timeout} headers, per-request timeouts — is untouched.
  */
 final class AnthropicAbortableHttpClient implements HttpClient {
 
@@ -66,7 +72,12 @@ final class AnthropicAbortableHttpClient implements HttpClient {
     public HttpResponse execute(HttpRequest request, RequestOptions requestOptions) {
         final Optional<AnthropicCallAbort> abort = registry.find(abortKey(request));
         final HttpRequest wire = withoutAbortKey(request);
-        refuseIfAborted(abort, "refused before it was sent");
+        if (abort.isEmpty()) {
+            // Not a cancellable call (a blocking sendMessage, or the SDK used directly): there is no lever to hand
+            // over, so the adapter's own synchronous path runs — no Dispatcher slot, no thread handoff.
+            return delegate.execute(wire, requestOptions);
+        }
+        refuseIfAborted(abort, wire, "refused before it was sent");
         final CompletableFuture<HttpResponse> attempt = delegate.executeAsync(wire, requestOptions);
         // Attached before the join: an abort landing from here on cancels this attempt, not a previous one.
         abort.ifPresent(a -> a.attachAttempt(attempt));
@@ -102,6 +113,7 @@ final class AnthropicAbortableHttpClient implements HttpClient {
         final Optional<AnthropicCallAbort> abort = registry.find(abortKey(request));
         final HttpRequest wire = withoutAbortKey(request);
         if (isAborted(abort)) {
+            closeQuietly(wire.body());
             final CompletableFuture<HttpResponse> refused = new CompletableFuture<>();
             refused.completeExceptionally(
                     new AnthropicCallAbortedException("Anthropic attempt refused before it was sent"));
@@ -142,8 +154,10 @@ final class AnthropicAbortableHttpClient implements HttpClient {
         return abort.map(AnthropicCallAbort::isAborted).orElse(false);
     }
 
-    private static void refuseIfAborted(Optional<AnthropicCallAbort> abort, String when) {
+    /** Refuses an attempt that was never handed to the adapter, closing its body as the adapter would have. */
+    private static void refuseIfAborted(Optional<AnthropicCallAbort> abort, HttpRequest wire, String when) {
         if (isAborted(abort)) {
+            closeQuietly(wire.body());
             log.debug("Anthropic attempt {} for call {}", when, abort.get().key());
             throw new AnthropicCallAbortedException("Anthropic attempt " + when + ": the call was aborted");
         }
@@ -164,6 +178,17 @@ final class AnthropicAbortableHttpClient implements HttpClient {
             throw error;
         }
         return wrapper;
+    }
+
+    private static void closeQuietly(HttpRequestBody body) {
+        if (body == null) {
+            return;
+        }
+        try {
+            body.close();
+        } catch (RuntimeException e) {
+            log.debug("Anthropic request body did not close cleanly: {}", e.getMessage());
+        }
     }
 
     private static void closeQuietly(HttpResponse response) {

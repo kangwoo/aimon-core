@@ -244,9 +244,11 @@ SDK 는 `maxRetries(0)`, 재시도는 게이트웨이(그 sleep 은 취소를 �
 
 받아들인 차이 둘:
 
-- Anthropic 의 동기 경로는 어댑터의 `executeAsync` 를 `join()` 하므로 헤더 대기가 OkHttp `Dispatcher`(동시 64,
-  per-host 도 64)를 지난다. 슬롯은 헤더가 올 때까지만 쥐므로 상한은 클라이언트당 **동시 헤더 대기** 수이지 동시
-  스트림 수가 아니다
+- Anthropic 에서 **취소 가능한 호출**(abort 가 등록된 요청)의 동기 경로는 어댑터의 `executeAsync` 를 `join()`
+  하므로 헤더 대기가 OkHttp `Dispatcher`(동시 64, per-host 도 64)를 지난다. 슬롯은 헤더가 올 때까지만 쥐므로
+  상한은 클라이언트당 **취소 가능한 호출의 동시 헤더 대기** 수이지 동시 스트림 수가 아니다. abort 가 등록되지 않은
+  요청 — `none()` 으로 부른 블로킹 `sendMessage`, SDK 직접 호출 — 은 어댑터의 동기 `execute` 로 그대로 가므로
+  슬롯을 쓰지 않는다
 - OpenAI 의 자체 전송은 `HttpClient` 이지 `WebSocketClient` 가 아니다. SDK 의 realtime 서비스는 이 전송을
   `UnsupportedOperationException` 으로 거부한다 — 이 모듈에 realtime 사용은 없다. Azure 의 cross-origin `api-key`
   리다이렉트 인터셉터(SDK `internal`)도 복제하지 않았다(백로그 [8번](../../backlog/interrupt-open-items.md))

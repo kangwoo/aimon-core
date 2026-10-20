@@ -383,7 +383,8 @@ Spring 서비스와 스케줄 루틴이 함께 읽는다. #61 이 `model.reasoni
 *(2026-09-10 등록. 출처는 #43 을 닫은 국면 — 그 실행의 `build/summary.md`.)*
 
 **무엇을.** #43 은 `OpenAILlmClient` 의 비자명한 동작들을 지목하며 Responses 경로가 그것을 되돌리지 말라고
-적었다 — 중단 레버(`StreamResponse.close()`), 이미 취소된 경우의 빠른 경로, 취소 가능한 비스트리밍 호출을
+적었다 — 중단 레버(당시 `StreamResponse.close()`. 지금은 요청을 보내기 전에 등록하는 호출별 transport abort 다 —
+[`cancellation.md`](../design/llm/cancellation.md) §4.1), 이미 취소된 경우의 빠른 경로, 취소 가능한 비스트리밍 호출을
 스트리밍 경로로 태우는 것, `SseException` 을 상태코드가 아니라 페이로드로 분류하는 것,
 `RequestOptions` 가 `null` 을 돌려주어 클라이언트 기본값을 건드리지 않는 것. **다섯 다 살아 있고, 근거는
 조심스럽게 옮겼다는 것이 아니라 애초에 옮긴 적이 없다는 것이다** — 엔드포인트 차이는

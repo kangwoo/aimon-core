@@ -8,6 +8,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
@@ -87,7 +88,7 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
  * }
  * </pre>
  */
-public class OpenAILlmClient implements LlmClient {
+public class OpenAILlmClient implements LlmClient, AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(OpenAILlmClient.class);
 
     /**
@@ -113,6 +114,8 @@ public class OpenAILlmClient implements LlmClient {
     private final OpenAIMessageConverter converter;
     private final OpenAIResponsesMessageConverter responsesConverter;
     private final OpenAIResponsesRequestFactory responsesRequestFactory;
+    /** Set by the first {@link #close()}; later calls do nothing. */
+    private final AtomicBoolean closed = new AtomicBoolean();
 
     /**
      * Request divergences already reported, so a value dropped on every request is said once instead of once per ReAct
@@ -843,6 +846,19 @@ public class OpenAILlmClient implements LlmClient {
     @Override
     public Optional<String> getDefaultModelName() {
         return Optional.of(config.getModel());
+    }
+
+    /**
+     * Closes the SDK client, which closes the transport under it — for a client built from {@link OpenAIConfig}, this
+     * module's {@link OpenAIAbortableHttpClient} and the {@code okhttp3.OkHttpClient} it owns (dispatcher threads,
+     * pooled connections). Idempotent: only the first call closes anything. Calls in flight are not cancelled; the
+     * client is not meant to be used afterwards.
+     */
+    @Override
+    public void close() {
+        if (closed.compareAndSet(false, true)) {
+            client.close();
+        }
     }
 
     /**

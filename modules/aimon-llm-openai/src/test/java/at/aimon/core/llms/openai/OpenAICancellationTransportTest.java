@@ -55,8 +55,13 @@ class OpenAICancellationTransportTest {
     private static final Duration HANG_GUARD = Duration.ofSeconds(20);
     /** A cancelled call must return within this; it is a guard, not a measurement. */
     private static final Duration RESULT_GUARD = Duration.ofSeconds(1);
-    /** The non-blocking bound on the lever itself: ~100x what {@code Call.cancel()} takes. */
-    private static final Duration LEVER_BOUND = Duration.ofMillis(100);
+    /**
+     * The non-blocking bound on the lever itself. {@code Call.cancel()} takes microseconds; a lever that blocked would
+     * block for the read timeout ({@link #CLIENT_TIMEOUT}), so 1 s separates the two by orders of magnitude either way
+     * while leaving a loaded CI machine's scheduling jitter out of the result — the same bound the Anthropic suite
+     * uses.
+     */
+    private static final Duration LEVER_BOUND = Duration.ofSeconds(1);
     /**
      * Comfortably above the SDK's first retry backoff (0.5 s x jitter in [0.75, 1.0], so 375-500 ms), so a hook that
      * stopped refusing an aborted attempt would have sent its second request before the count is read.
@@ -174,6 +179,17 @@ class OpenAICancellationTransportTest {
         String whole() {
             return throughTheTerminalEvent() + tail();
         }
+
+        /**
+         * As {@link #throughTheTerminalEvent()}, but with the last text delta moved to <em>after</em> the terminal
+         * event: a probe, not a wire shape a provider sends. Events are parsed and dispatched one at a time on the
+         * consumer thread, so once the sink has the second delta the terminal event has been recorded — a
+         * deterministic gate where a sleep would only make it likely. The text is unchanged, and so is the usage,
+         * which the terminal event carries.
+         */
+        String terminalEventThenProbe() {
+            return opening() + delta(FIRST) + terminal() + delta(SECOND);
+        }
     }
 
     private final ExecutorService worker = Executors.newCachedThreadPool();
@@ -250,17 +266,16 @@ class OpenAICancellationTransportTest {
     @DisplayName("row 3: a cancel after the terminal event, with the transport held open, returns the whole answer")
     void cancelAfterTerminalEvent(Endpoint endpoint) throws Exception {
         for (int round = 0; round < TERMINAL_HELD_ROUNDS; round++) {
-            try (StallingSseServer server = StallingSseServer.sending(endpoint.throughTheTerminalEvent(),
+            try (StallingSseServer server = StallingSseServer.sending(endpoint.terminalEventThenProbe(),
                     endpoint.tail())) {
                 final RecordingCancellation cancellation = new RecordingCancellation();
                 final RecordingSink sink = new RecordingSink(2);
 
                 final Future<LlmResponse> running = stream(client(server, endpoint, null), sink, cancellation);
                 assertThat(server.awaitAnswered(1, HANG_GUARD)).isTrue();
+                // The probe delta follows the terminal event: once the sink has it, the consumer has recorded the
+                // terminal event and is reading toward the held tail.
                 assertThat(sink.awaitAllText(HANG_GUARD)).as("round %d", round).isTrue();
-                // The terminal event is already in the client's buffer; the consumer records it in microseconds and
-                // then blocks on the held tail.
-                Thread.sleep(100);
                 tripper.execute(cancellation::trip);
 
                 final LlmResponse response = running.get(RESULT_GUARD.toMillis(), TimeUnit.MILLISECONDS);
@@ -385,6 +400,8 @@ class OpenAICancellationTransportTest {
             final LlmResponse streamed = stream(client, new RecordingSink(2), new RecordingCancellation())
                     .get(HANG_GUARD.toMillis(), TimeUnit.MILLISECONDS);
             assertThat(streamed.getTextContent()).isEqualTo(WHOLE);
+            assertThat(server.requestHeaders()).hasSize(1);
+            assertThat(server.requestHeaders().get(0)).doesNotContainKey("x-aimon-abort-key");
         }
         try (StallingSseServer server = StallingSseServer.complete(endpoint.whole())) {
             // The cancellable non-streaming call is rerouted through the streaming path and carries the key too.
@@ -403,14 +420,13 @@ class OpenAICancellationTransportTest {
     @EnumSource(Endpoint.class)
     @DisplayName("a reset after the terminal event returns the whole answer and is not retried")
     void trailingResetAfterTerminalEventReturnsTheAnswer(Endpoint endpoint) throws Exception {
-        try (StallingSseServer server = StallingSseServer.sending(endpoint.throughTheTerminalEvent(),
-                endpoint.tail())) {
+        try (StallingSseServer server = StallingSseServer.sending(endpoint.terminalEventThenProbe(), endpoint.tail())) {
             final RecordingCancellation live = new RecordingCancellation();
             final RecordingSink sink = new RecordingSink(2);
 
             final Future<LlmResponse> running = stream(client(server, endpoint, 3), sink, live);
+            // The probe delta follows the terminal event: the reset lands after it was recorded, never before.
             assertThat(sink.awaitAllText(HANG_GUARD)).isTrue();
-            Thread.sleep(100);
             server.reset();
 
             final LlmResponse response = running.get(HANG_GUARD.toMillis(), TimeUnit.MILLISECONDS);

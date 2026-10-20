@@ -619,7 +619,7 @@ class DefaultSubagentExecutorTest {
                 LlmCancellation cancellation) {
             calls++;
             capturedToken.set(cancellation);
-            // A real provider registers its SDK-specific abort lever (e.g. StreamResponse#close) here.
+            // A real provider registers its per-call transport abort here (e.g. OkHttp Call#cancel), before sending.
             cancellation.onCancel(abortFired::incrementAndGet);
             if (onCall != null) {
                 onCall.run();

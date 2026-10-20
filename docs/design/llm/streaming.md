@@ -392,7 +392,7 @@ aggregator 에 chunk 미러링, 텍스트 delta 에서의 IRQ checkpoint. 핵심
 | 예외 | 원인 | 처리 |
 |---|---|---|
 | `CancelledExecutionException` | sink 안의 checkpoint 가 취소를 관측 | eager 도구 작업 폐기 → `peekText()` 프리픽스가 비어 있지 않으면 `Message.assistant(partial, [])` 로 전사에 append → interrupted completion → rethrow |
-| `LlmCallCancelledException` | provider 가 HTTP 스트림을 능동 abort(`close()` 가 경합에서 이긴 경우) | **같은 처리** 후 `CancelledExecutionException` 으로 번역해 ReAct 루프의 중단 처리로 보낸다 |
+| `LlmCallCancelledException` | provider 가 그 호출의 전송을 능동 abort 해 종료 이벤트 전에 스트림이 끊긴 경우([`cancellation.md`](cancellation.md) §4.1) | **같은 처리** 후 `CancelledExecutionException` 으로 번역해 ReAct 루프의 중단 처리로 보낸다 |
 | 그 밖의 `RuntimeException` | provider 실패 / prompt-too-long 재발행 | eager 작업 폐기 → `emitErrorCompletion()` → rethrow |
 
 세 번째 줄이 §4.1 의 공백을 메운다 — provider 오류가 sink 를 침묵시키더라도 UI 소비자는 매달린 스트림을 보지
@@ -416,9 +416,11 @@ UI 가 스트림 시작을 보지 못했다면 닫을 것도 없다. 여기서 d
 착지하게 한다. **추론 delta arm 은 checkpoint 를 부르지 않는다.**
 
 이유는 "다음 chunk 가 곧 온다" 가 아니다 — 긴 숙고가 바로 이 채널이 존재하는 이유이므로, 숙고만 흐르는 동안
-다음 텍스트 delta 가 곧 뒤따른다는 보장은 없다. 성립하는 것은 **abort 레버**다. 두 provider 는 스트림을 소비하기
-전에 `cancellation.onCancel(<stream>::close)` 를 등록하므로, 숙고만 흐르는 창에서 취소가 걸리면 인터럽트를 건
-스레드가 HTTP 스트림을 닫고 호출은 `LlmCallCancelledException` 으로 풀린다. 그것은 여기에 checkpoint 를 두었다면
+다음 텍스트 delta 가 곧 뒤따른다는 보장은 없다. 성립하는 것은 **abort 레버**다. 두 provider 는 요청을 보내기
+전에 호출별 transport abort 를 `cancellation.onCancel(abort::abort)` 로 등록하므로, 숙고만 흐르는 창에서 취소가
+걸리면 인터럽트를 건 스레드가 그 호출의 전송을 끊고, 막혀 있던 소비 스레드의 read 가 실패해 호출은
+`LlmCallCancelledException` 으로 풀린다([`cancellation.md`](cancellation.md) §4.1). 스트림을 닫는 것은 레버가 아니라
+소비 스레드다. 그것은 여기에 checkpoint 를 두었다면
 닿았을 프리픽스 보존 경로와 같은 곳이며, 예외 하나 늦을 뿐이다.
 
 ### 7.4 새 이벤트는 최소로 — `AssistantReasoningDelta` 하나
@@ -607,7 +609,7 @@ CLI 플래그는 picocli `negatable = true` 로 필드 하나가 `--streaming` /
 | `agent/stream/AssistantTextDelta.java` | `chunkIndex` 순서 계약 |
 | `agent/AgentExecutionResult.java` | `default boolean wasStreamed()` |
 | `aimon-llm-anthropic` — `AnthropicStreamingMapper.java` | `forwardReasoning` 게이트, `thinking_delta` 의 두 소비자, `signature_delta` 미전달 |
-| `aimon-llm-anthropic` — `AnthropicLlmClient.java` | `getThinkingDisplay().isPresent()` 를 매퍼에 넘기는 자리, `onCancel(<stream>::close)` |
+| `aimon-llm-anthropic` — `AnthropicLlmClient.java` | `getThinkingDisplay().isPresent()` 를 매퍼에 넘기는 자리, 요청 전에 등록하는 `onCancel(abort::abort)` |
 | `aimon-llm-openai` — `OpenAIResponsesStreamingMapper.java` | 두 추론 이벤트 계열, `addReasoningTrace` 를 부르지 않는 `emitReasoningDelta` |
 | `aimon-llm-openai` — `OpenAILlmClient.java`, `OpenAIResponsesExchange.java` | `getReasoningSummary().isPresent()` 게이트 전달 |
 | `aimon-llm-openai` — `OpenAIStreamingMapper.java` | Chat Completions 매퍼 — 추론 chunk 없음, `TOOL_USE_READY` |

@@ -147,8 +147,9 @@ to a per-call abort object. The two modules differ only in what that lever is, b
   com.anthropic.core.http.HttpClient` wraps `com.anthropic.client.okhttp.OkHttpClient` built with its public builder.
   Header phase: `delegate.executeAsync(…)` + `future.cancel(true)` → the adapter cancels its `Call`. Body phase: keep
   the adapter's `HttpResponse` and call its `close()` — the adapter's documented cross-thread-safe close (cancel if a
-  read is in flight, body close otherwise). No okhttp3 types, no duplicated transport. The header phase thereby runs
-  through OkHttp's `Dispatcher` — an accepted difference recorded in §4.5.
+  read is in flight, body close otherwise). No okhttp3 types, no duplicated transport. A cancellable call's header
+  phase thereby runs through OkHttp's `Dispatcher` — an accepted difference recorded in §4.5; a request with no abort
+  registered goes to the adapter's synchronous `execute` unchanged.
 
 Both modules share the same shape above the transport: a per-call **`*CallAbort`** object (state machine,
 `abort()` thread-safe / idempotent / non-blocking / no-throw) looked up by the hook through a correlation **request
@@ -262,11 +263,15 @@ read fails immediately on a cancelled call). What *is* a no-op is `abort()` afte
 
 ### 4.5 Anthropic header phase runs through OkHttp's `Dispatcher` — accepted difference
 
-Using `delegate.executeAsync(…).join()` for the sync path means the attempt is enqueued through the adapter's
-`Dispatcher` (`maxRequests` 64, `maxRequestsPerHost` raised to the same by the adapter), which sync `call.execute()`
-never was; the decorator cannot raise the limit (`okHttpClient` is `internal` on the adapter). A slot is held only until
-`onResponse` completes the future — time to first byte — so the cap is on *concurrent header waits per client*, not on
-concurrent streams. Recorded here and in `cancellation.md` §4.4; not expected to bind at AIMON's concurrency.
+Using `delegate.executeAsync(…).join()` for the sync path of a **cancellable** call — one whose request carries an
+abort key the registry knows — means that attempt is enqueued through the adapter's `Dispatcher` (`maxRequests` 64,
+`maxRequestsPerHost` raised to the same by the adapter), which sync `call.execute()` never was; the decorator cannot
+raise the limit (`okHttpClient` is `internal` on the adapter). A slot is held only until `onResponse` completes the
+future — time to first byte — so the cap is on *concurrent cancellable header waits per client*, not on concurrent
+streams. A request with no abort registered for it — a non-cancellable blocking call (`sendMessage(…, none())`), the
+SDK used directly (`messages().create()`), or a key already released — skips this: the hook strips any key and
+returns `delegate.execute(…)`, the adapter's own synchronous path, with no `Dispatcher` slot and no thread handoff.
+Recorded here and in `cancellation.md` §4.4; not expected to bind at AIMON's concurrency.
 
 ---
 
@@ -435,7 +440,9 @@ the cache (OpenAI) / delegates (Anthropic).
 `putAdditionalHeader` only on the cancellable streaming path. `prepare()` copies it to the `HttpRequest`;
 `RetryingHttpClient`, `LoggingHttpClient` and the auth layers pass it through (Logging may log it at DEBUG — an opaque
 id); the hook strips it before building the OkHttp request. The blocking path with `LlmCancellation.none()` carries no
-header and passes through the hook untouched. A test asserts the header never reaches the local server.
+header and passes through the hook untouched — on Anthropic that means the adapter's synchronous `execute`, not the
+`executeAsync` + `join()` of a cancellable call, so it takes no `Dispatcher` slot (§4.5). A test asserts the header
+never reaches the local server.
 
 ### 6.4 `OpenAIStreamHandle`
 
@@ -525,8 +532,8 @@ void consume(Stream<T> stream, LlmCancellation cancellation) {
 | Failure after `call.execute()` returned (OpenAI transport) | the response is closed before the failure propagates (§6.2) | no body leak |
 | Hook finds no registry entry (blocking path, or a key after `release()`) | passes the request through unchanged (header stripped if present) | non-cancellable calls unaffected |
 | Transport/okhttp3 construction differences vs the SDK adapter | replicated settings listed in §5.1; `OpenAILlmClientSdkRetryTest` (real server, counts attempts) and the timeout tests pin `retryOnConnectionFailure(false)` and per-request timeouts | regression-tested, not promised |
-| Anthropic header waits > 64 concurrent on one client | queued by OkHttp's `Dispatcher` until a slot frees (§4.5) | accepted difference; streams are not capped |
-| `OpenAILlmClient.close()` — does not exist; transport lifetime | `ClientOptions` wraps the transport in `PhantomReachableClosingHttpClient`, as it does the SDK's own adapter today | no new leak class |
+| Anthropic cancellable header waits > 64 concurrent on one client | queued by OkHttp's `Dispatcher` until a slot frees (§4.5); non-cancellable calls take the adapter's sync path and no slot | accepted difference; streams are not capped |
+| `OpenAILlmClient.close()` — transport lifetime | `close()` (added after review, §11.6) closes the SDK client and so the transport; without it, `ClientOptions` wraps the transport in `PhantomReachableClosingHttpClient`, as it does the SDK's own adapter | no new leak class |
 
 ---
 
@@ -656,11 +663,14 @@ part, or declined with the reason. The run record (`build/deviations.md`, `build
   its retry after the count was read. Both transport tests wait 1.5 s (`RETRY_GRACE`) after the cancelled call returns
   and the client's disconnect was observed, then assert `requestCount() == 1`. The same grace is used by the
   trailing-reset test before asserting the whole answer was not retried.
-- **§8.2 row 1 — the Anthropic lever bound.** The design's 100 ms bound is kept for OpenAI, whose lever is a bare
-  `Call.cancel()`. For Anthropic the bound is 1 s (`LEVER_BOUND` in `AnthropicCancellationTransportTest`): the
-  design's own §7 "no read in flight" row says the adapter's race-safe close then drains the body for up to OkHttp's
-  100 ms discard on the aborting thread, so 100 ms itself was racy on that arm. The deterministic parts of the row —
-  the lever threw nothing, no `STREAM_END`, the result within 1 s — are asserted unchanged.
+- **§8.2 row 1 — the lever bound.** The bound is 1 s in both modules (`LEVER_BOUND` in
+  `AnthropicCancellationTransportTest` and `OpenAICancellationTransportTest`), not the design's 100 ms. For Anthropic
+  the design's own §7 "no read in flight" row says the adapter's race-safe close drains the body for up to OkHttp's
+  100 ms discard on the aborting thread, so 100 ms itself was racy on that arm. For OpenAI the lever is a bare
+  `Call.cancel()`, which takes microseconds; 100 ms was first kept there, then relaxed after review to the same 1 s,
+  because a blocking lever would block for the read timeout (15 s in these tests) and 1 s still separates the two by
+  an order of magnitude, while 100 ms put a loaded CI machine's scheduling jitter into the result. The deterministic
+  parts of the row — the lever threw nothing, no `STREAM_END`, the result within 1 s — are asserted unchanged.
 - **§5.1 / §5.2 — the exception's superclass.** `OpenAICallAbortedException extends OpenAIException` (the module's
   base, itself a `RuntimeException`) and `AnthropicCallAbortedException extends AnthropicException` (the module's
   base, itself an `LlmClientException`) rather than a bare `RuntimeException`. Both land in the clients' `catch
@@ -752,5 +762,22 @@ part, or declined with the reason. The run record (`build/deviations.md`, `build
 §10's questions 1 (upstreaming the body-close fix to openai-java), 2 (the backoff-sleep gap), 4 (Azure parity of the
 own transport) and 7 (Chat usage after a trailing failure) have consequences past this change and are registered in
 [`../../backlog/interrupt-open-items.md`](../../backlog/interrupt-open-items.md) as items 6–9. Questions 3 (the
-100 ms bound: kept for OpenAI, 1 s for Anthropic — §11.1), 5 (§11.4) and 6 (no house convention for internal
-correlation headers was found; `X-Aimon-Abort-Key` stands) are closed here.
+100 ms bound: 1 s in both modules — §11.1), 5 (§11.4) and 6 (no house convention for internal correlation headers was
+found; `X-Aimon-Abort-Key` stands) are closed here.
+
+### 11.6 Post-review fixes
+
+- **Anthropic's non-cancellable path stays synchronous.** As first built, the decorator's `execute` ran every request
+  through `delegate.executeAsync(…).join()`, so `sendMessage(…, none())` and `messages().create()` also took a
+  `Dispatcher` slot for the header wait and paid a thread handoff. Now a request with no abort registered goes straight
+  to `delegate.execute(…)` (key stripped if present); §4.5 and §6.3 describe the result.
+- **`OpenAILlmClient.close()`.** The client now owns its `okhttp3.OkHttpClient`, so it is `AutoCloseable` and
+  `close()` closes the SDK client — and with it this module's transport — once; a second call does nothing. With
+  `AnthropicLlmClient.close()` (§11.1) both clients' `close()` now really release the SDK client, which is a behaviour
+  change for a container that closes a client bean it shares.
+- **Refused attempts close their request body**, in both transports' `execute` and `executeAsync`, as the SDK's
+  adapters do for an attempt they send.
+- **Deterministic gates in `OpenAICancellationTransportTest`.** Row 3 (held tail) and the trailing-reset test no longer
+  sleep 100 ms before tripping: the OpenAI mappers emit nothing to the sink at the terminal event, so the fixture puts
+  the last text delta <em>after</em> it as a probe (`terminalEventThenProbe()`), and the sink's latch on that delta is
+  the gate — events are dispatched in order on the consumer thread. The answer's text and usage are unchanged.

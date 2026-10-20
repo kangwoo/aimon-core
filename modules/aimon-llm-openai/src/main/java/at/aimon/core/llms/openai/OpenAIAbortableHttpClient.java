@@ -104,12 +104,13 @@ final class OpenAIAbortableHttpClient implements HttpClient {
     public HttpResponse execute(HttpRequest request, RequestOptions requestOptions) {
         final Optional<OpenAICallAbort> abort = registry.find(abortKey(request));
         final HttpRequest wire = withoutAbortKey(request);
-        refuseIfAborted(abort, "refused before it was sent");
-        final Call call = newCall(wire, requestOptions);
-        // Attached before execute(): an abort landing from here on cancels this attempt, not a previous one.
-        abort.ifPresent(a -> a.attach(call));
         HttpResponse response = null;
         try (HttpRequestBody body = wire.body()) {
+            // Inside the try-with-resources: a refused attempt closes its body as a sent one does.
+            refuseIfAborted(abort, "refused before it was sent");
+            final Call call = newCall(wire, requestOptions);
+            // Attached before execute(): an abort landing from here on cancels this attempt, not a previous one.
+            abort.ifPresent(a -> a.attach(call));
             try {
                 response = toHttpResponse(call.execute(), call);
             } catch (IOException e) {
@@ -168,6 +169,11 @@ final class OpenAIAbortableHttpClient implements HttpClient {
             closeQuietly(wire.body());
         });
         return future;
+    }
+
+    /** Whether {@link #close()} has shut the dispatcher down, for the resource checks in tests. */
+    boolean isShutDown() {
+        return okHttpClient.dispatcher().executorService().isShutdown();
     }
 
     @Override

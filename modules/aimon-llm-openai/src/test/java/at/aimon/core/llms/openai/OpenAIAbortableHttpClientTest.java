@@ -2,6 +2,9 @@ package at.aimon.core.llms.openai;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -14,6 +17,7 @@ import com.openai.core.RequestOptions;
 import com.openai.core.Timeout;
 import com.openai.core.http.HttpMethod;
 import com.openai.core.http.HttpRequest;
+import com.openai.core.http.HttpRequestBody;
 import com.openai.core.http.HttpResponse;
 import com.openai.errors.OpenAIIoException;
 import com.openai.errors.OpenAIRetryableException;
@@ -68,6 +72,25 @@ class OpenAIAbortableHttpClientTest {
         assertThat(attempt).isCompletedExceptionally();
         assertThatThrownBy(attempt::get).isInstanceOf(ExecutionException.class)
                 .hasCauseInstanceOf(OpenAICallAbortedException.class);
+        assertThat(transport.inFlightCalls()).isZero();
+    }
+
+    @Test
+    @DisplayName("a refused attempt closes its request body, in both forms, as a sent one does")
+    void aRefusedAttemptClosesItsBody() {
+        final OpenAICallAbort abort = registry.open();
+        abort.abort();
+        final HttpRequestBody syncBody = mock(HttpRequestBody.class);
+        final HttpRequestBody asyncBody = mock(HttpRequestBody.class);
+
+        assertThatThrownBy(
+                () -> transport.execute(requestFor(abort).toBuilder().body(syncBody).build(), RequestOptions.none()))
+                .isInstanceOf(OpenAICallAbortedException.class);
+        assertThat(transport.executeAsync(requestFor(abort).toBuilder().body(asyncBody).build(), RequestOptions.none()))
+                .isCompletedExceptionally();
+
+        verify(syncBody, times(1)).close();
+        verify(asyncBody, times(1)).close();
         assertThat(transport.inFlightCalls()).isZero();
     }
 

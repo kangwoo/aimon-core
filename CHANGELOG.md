@@ -40,10 +40,17 @@ retry every `IOException`, an attempt cut during the header wait could be answer
 - **Behaviour change: a close failure after a complete response no longer fails the call.** The response is returned
   and the failure logged at WARN; after a cancellation or a provider failure it is attached to that exception as
   suppressed. The clients no longer close the stream with try-with-resources.
-- `AnthropicLlmClient.close()` now closes the SDK client it built, and with it the transport; it used to test for
-  `AutoCloseable`, which `AnthropicClient` deliberately is not, so nothing was closed.
-- Anthropic's header wait now goes through OkHttp's `Dispatcher` (64 concurrent per client, a slot held only until the
-  headers arrive); the body phase is uncapped as before.
+- **Behaviour change: both clients' `close()` now really release the SDK client.** `AnthropicLlmClient.close()` now
+  closes the SDK client it built, and with it the transport; it used to test for `AutoCloseable`, which
+  `AnthropicClient` deliberately is not, so nothing was closed. `OpenAILlmClient` is now `AutoCloseable` too, and its
+  `close()` closes the SDK client and the OkHttp client the module now owns (dispatcher threads, pooled connections);
+  it is idempotent. A container that calls `close()` on a client bean it shares — Spring infers `close()` as a
+  destroy method — now really shuts that client down, so a client shared beyond the container's lifetime must not be
+  registered as a closeable bean.
+- A cancellable Anthropic call's header wait now goes through OkHttp's `Dispatcher` (64 concurrent per client, a slot
+  held only until the headers arrive); the body phase is uncapped as before. Non-cancellable calls
+  (`sendMessage(..., LlmCancellation.none())`, the SDK used directly) keep the adapter's synchronous path and take no
+  slot.
 - Tests only: `StallingSseServer` moved to `aimon-llm-testkit` and can stall before the headers, hold the chunk
   terminator or reset the connection; the regression tests are `OpenAICancellationTransportTest` and
   `AnthropicCancellationTransportTest`, over the real SDKs and a local HTTP/1.1 server.
