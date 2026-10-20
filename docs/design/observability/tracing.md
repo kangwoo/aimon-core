@@ -337,7 +337,7 @@ public interface SpanExporter {
 |---|---|---|---|
 | **TURN** (root) | `execute()` 진입/`finally` | userMessage → `finalAnswerChars`(내용 캡처 정책이면 `finalAnswer` 도) + `ExecutionMetadata` | `traceId` 발급 지점 |
 | **ITERATION** | `executeReActLoop` 의 step try/finally | ReAct step 경계 | iteration 번호 보유. 재진입이면 `loop.transition*`, 직전 꼬리에서 백그라운드 완료 알림을 받았으면 `subagent.received.taskIds` |
-| **LLM** | `TracingLlmClient` 데코레이터 | `sendMessage` 진입 → 응답 | **유일한 LLM 캡처 경로**. 프롬프트·토큰·모델·지연 |
+| **LLM** | `TracingLlmClient` 데코레이터 | `sendMessage` 진입 → 응답 | **유일한 LLM 캡처 경로**. 프롬프트·토큰·모델·지연 · `stopReason`. 스트리밍이면 `streaming=true` · `ttftMs`. 요청된 취소(토큰이 취소된 `LlmCallCancelledException`)는 `INTERRUPTED` |
 | **TOOL** | 두 executor 의 `executeSingleTool` 얇은 래퍼(`toolinvocation.ToolCallTracing`) | 도구 입력 → 출력 | Event 보다 payload 가 풍부. 도구가 받는 컨텍스트의 metadata 를 TOOL span 으로 회전(R1) |
 | **SUBAGENT** | `DefaultSubagentExecutionManager.runResolvedSubagent` | goal → 결과·completionReason·토큰 합계 | 서브에이전트 실행당 1개. 포크의 ITERATION/TOOL/LLM 은 그 아래(R2·R3). 해석 실패·ceiling 거부도 ERROR span 으로 남는다 |
 | **COMMAND** | `OrcaAgentExecutor.executeCommand`(`CommandTrace`) | 명령 이름·인자 길이 → 성공 여부·응답 길이 | 슬래시 명령 턴마다 1개, TURN 아래. 명령 도구 컨텍스트의 metadata 를 이 span 으로 회전 — 포크 스킬의 SUBAGENT 가 그 아래 붙는다 |
@@ -574,8 +574,12 @@ CLI 는 `cli.tracing: true` 일 때 store + tracer + `TracingLlmClient` 를 배�
 - ~~**스케줄 재발화의 세션 입도**~~ — **해소** (2026-10-17): 루틴 trace 의 그룹 키는 발화마다 바뀌지 않는
   `routine:<ScheduledTaskId>` 다(§5.2). 발화별 `ExecutionId` 를 키로 삼는 대안은
   [`subagent-tracing-backlog.md`](subagent-tracing-backlog.md) OQ-1.
-- **스트리밍 LLM Span** — `sendMessageStreaming` 은 부분 텍스트를 sink 로 흘린다. Span 은 완료 응답
-  기준 1개로 기록하되 첫 토큰까지의 지연(TTFT)을 별도 속성으로 남길지 검토.
+- ~~**스트리밍 LLM Span**~~ — **해소** (2026-10-20): span 은 완료 응답 기준 1개이고, 스트리밍 호출은
+  `streaming=true` 와 `ttftMs`(호출 시작 → 이 클라이언트가 받은 sink 에 건넨 첫 내용 chunk — text · reasoning · 준비된 tool_use,
+  끝 표시는 세지 않는다) 속성을 갖는다. 한 호출 안에서 delegate 가 재시도해 스트림을 다시 시작해도
+  첫 chunk 는 처음 한 번만 잰다(그 위의 재시도는 호출이 따로라 span 도 따로다).
+  `LlmCallGateway` 아래에서 그 sink 는 gateway 의 시도별 sink 이므로, 값은 그 시도의 provider 지연이지 버퍼링 뒤의
+  최종 사용자가 본 지연이 아니다.
 - **토큰 합산** — turn Span 의 `tokenUsage` 는 자식 LLM Span 의 합이다. close 시점 집계 책임의
   위치를 정해야 한다. (SUBAGENT 는 해소 — 포크 루프가 누적한 결과의 합계를 매니저가 싣는다. 자식 LLM span 을
   다시 더하지 않는다.)
