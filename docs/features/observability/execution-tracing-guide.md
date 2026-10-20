@@ -154,18 +154,35 @@ SchedulingEngine engine = SchedulingEngineBuilder.create()
 | `sessionId` | 대화 단위 그룹 (= conversationId) |
 | `traceId` | turn 단위 (= turn root span id) |
 | `spanId` / `parentSpanId` | 이 span / 부모 span (root는 parent 없음) |
-| `type` | `TURN` / `ITERATION` / `LLM` / `TOOL` / `SUBAGENT` / `COMMAND` / `ROUTINE` (`COMPACTION` / `RETRIEVER` 는 예약 — 지금 만드는 곳이 없다) |
+| `type` | `TURN` / `ITERATION` / `LLM` / `TOOL` / `SUBAGENT` / `COMMAND` / `ROUTINE` / `COMPACTION` (`RETRIEVER` 는 예약 — 지금 만드는 곳이 없다) |
 | `name` | 예: `turn:<agent>`, `iteration#3`, `llm:<model>`, 도구명 |
 | `startTime` / `endTime` / `latency()` | 시각·지연 |
 | `status` | `OK` / `ERROR` / `INTERRUPTED` |
 | `inputs` / `outputs` | 입력·출력 **요약**(메시지 수, 토큰, 도구 입력 등). LLM span 의 출력에는 provider 가 알려 준 `stopReason`(예: `MAX_TOKENS`)도 있다 |
 | `tokenUsage` / `model` | LLM span 한정 |
-| `attributes` | `iteration` 등 부가 정보. LLM span 은 호출의 `feature`(예: compaction 요약 호출의 `compaction`)와 스트리밍 호출이면 `streaming=true` · 첫 내용 chunk 까지의 `ttftMs`, SUBAGENT 는 포크의 `executionId` · 백그라운드 대기 `queuedMs` · pool 거부 `rejected`, ITERATION 은 직전 꼬리에서 받은 백그라운드 완료 알림의 task id `subagent.received.taskIds`, TURN 은 전달받은 알림의 `subagent.received.taskIds` · 읽지 못하고 끝난 알림의 `subagent.received.unreadTaskIds` |
+| `attributes` | `iteration` 등 부가 정보. LLM span 은 호출의 `feature`(예: compaction 요약 호출의 `compaction`)와 스트리밍 호출이면 `streaming=true` · 첫 내용 chunk 까지의 `ttftMs`, SUBAGENT 는 포크의 `executionId` · 백그라운드 대기 `queuedMs` · pool 거부 `rejected`, ITERATION 은 직전 꼬리에서 받은 백그라운드 완료 알림의 task id `subagent.received.taskIds`, TURN 은 전달받은 알림의 `subagent.received.taskIds` · 읽지 못하고 끝난 알림의 `subagent.received.unreadTaskIds`, COMPACTION 은 막는 iteration `iteration` · `invokerType`(예산 힌트가 강제했으면 `budgetForced=true`, 포크면 `executionId`) |
 
 도구 호출을 거치지 않는 두 경로에도 부모가 있다. 슬래시 명령 턴은 TURN 아래 `COMMAND` span(`command:/<name>`)을 열고,
 그 명령이 띄운 fork 스킬의 `SUBAGENT` 가 그 아래 붙는다. 예약 루틴은 세션이 없으므로 실행(발화)마다 `ROUTINE` root
 span 을 열고 단계 **시도**마다 그 아래 `TOOL` span(`invoker=ROUTINE`, `stepIndex`, `attempt`)을 둔다 — 그 trace 의
 `sessionId` 는 `routine:<taskId>` 다.
+
+압축은 **시도**마다 `COMPACTION` span(`compaction:auto` · `compaction:manual`) 하나를 남기고, 요약 LLM 호출
+(`feature=compaction`)이 그 아래 붙는다. AUTO 압축은 런 루트(TURN, 포크는 SUBAGENT) 아래, 그것이 막는 ITERATION 의
+**앞 형제**다 — 게이트가 ITERATION 을 열기 전에 돌기 때문이다. `/compact` 는 그 COMMAND 아래다. 입력은 `trigger` ·
+`strategy`(`in-place` / `view` / `rolling`) · `blockingForced` · `messagesBefore`, 출력은 `outcome`(`compacted` /
+`blocked` / `failed` / `interrupted`) · `kind` · `preTokens` / `postTokens`(요약이 설치된 뒤의 뷰) · `messagesSummarized` ·
+`summaryCalls` · `summaryChars` 이고, 블로킹 한계를 보고한 기록이면 `blockingLimit` · `overBlockingLimit`, 롤링이면 뷰 모양과
+흡수 범위가 더해진다. 요약 본문(`summary`)은 내용 캡처 정책에서만 남는다. 토큰은 LLM 자식이 싣는다. 압축하지 않은 판단 —
+임계값 아래, 경고 대역, 차단기, 동시 압축, 요약할 것 없음 — 은 span 을 남기지 않는다.
+
+```
+TURN ─┬ COMPACTION compaction:auto (iteration=3) ── LLM (feature=compaction)
+      └ ITERATION #3 ── LLM, TOOL …
+SUBAGENT ─┬ COMPACTION … ── LLM
+          └ ITERATION #2 …
+COMMAND command:/compact ── COMPACTION compaction:manual ── LLM
+```
 
 **Span 컨텍스트 전파**는 thread-local이 아니라 `LlmCallMetadata`의 예약 태그(`aimon.trace_id`,
 `aimon.parent_span_id`)로 명시적으로 흐른다. 따라서 병렬 도구 디스패치·async 스트리밍에서도 부모-자식
@@ -310,7 +327,7 @@ cli:
 | 추적 대상 | **agent turn(ReAct 루프 + subagent)만** 추적. 배경 subsystem(wiki 인덱싱, peer memory, dreamer)은 의도적으로 미추적 — 해당 호출은 turn span 컨텍스트가 없어 wrap해도 span이 생기지 않는다 |
 | subagent | subagent 실행마다 `SUBAGENT` span 하나가 그것을 띄운 도구 호출(`Task` · `Workflow` · fork 스킬)의 `TOOL` span(슬래시 명령이면 `COMMAND`, 루틴 단계면 그 시도의 `TOOL`) 아래 생기고, subagent 자신의 `ITERATION` / `LLM` / `TOOL` 이 그 아래 중첩된다(subagent 안의 subagent도 재귀적으로). 백그라운드 subagent의 span은 부모가 닫힌 뒤 시작할 수 있다 — 부모-자식은 id로 이어진다. 그 완료 알림을 턴 도중에 받으면 알림을 읽는 ITERATION 이 `subagent.received.taskIds` 에 task id 를 남겨 SUBAGENT span 의 `taskId` 와 이어진다. 그 drain 직후 턴이 멈추면(중단·예산·쿼터·iteration 상한) 읽을 ITERATION 이 없으므로 TURN 이 `subagent.received.unreadTaskIds` 에 남긴다 — 알림은 transcript 에 남아 다음 턴의 첫 LLM 호출이 읽는다(그 턴이 rewind · `/retry` 로 되돌려지면 함께 지워져 아무도 읽지 않는다). 부모가 쉬는 동안 도착한 알림은 호출자의 턴 사이 drain 이 새 턴으로 전달한다. 그때 호출자가 execution attribute `aimon.subagent.received_task_id`(`SubagentTaskCompleted.RECEIVED_TASK_ID_ATTRIBUTE`)에 task id 를 실으면 그 TURN 이 `subagent.received.taskIds` 에 남긴다 — CLI 는 그렇게 한다. 이 attribute 는 그 턴의 도구 · hook 과, 그 턴이 띄운 포크에도 이어진다. 실행기를 직접 넘겨 만든 subagent 매니저에는 실행기에도 tracer를 걸어야 한다([배선](#프로그래밍-방식-배선)) |
 | 예약 루틴 | 트레이서가 걸려 있으면 발화마다 `ROUTINE` trace 를 남긴다. 트레이싱이 켜진 루틴에서 띄운 포크의 LLM 호출 metadata 는 `traceId = routine:<taskId>` 를 갖고, 꺼져 있으면 오늘처럼 비어 있다 — 사용량 metadata 의 이 필드가 트레이싱 켜짐 여부에 따라 달라진다. CLI `/trace` 는 TURN 만 보여 주므로 루틴 trace 는 store(`bySession("routine:<taskId>")`)로 조회한다. 단계 TOOL span 의 입력은 기본(요약) 정책에서 그 단계에 작성된 파라미터(`toolParams`, 템플릿을 풀기 전)뿐이다 — 템플릿을 푼 입력에는 앞 단계의 출력이 섞이므로 내용 캡처 정책에서만 `input` 으로 남는다. 시간이 초과된 단계의 TOOL span 은 바로 닫히지만, 취소를 무시한 도구는 계속 돌 수 있어 그 도구가 띄운 SUBAGENT 는 이미 닫힌 TOOL span 아래(id 로 이어진 채) 늦게 생긴다 |
-| compaction | `COMPACTION` span 은 아직 없다. 요약 LLM 호출은 `feature=compaction` 속성의 LLM span 으로 남는다 — 메인 턴은 TURN 아래(게이트가 ITERATION 보다 먼저 돈다), 포크는 그 ITERATION 아래. 이 저장소가 조립하는 포크 실행기는 passthrough 엔진이라 포크가 compact 하지 않는다 — 포크 쪽은 실제 `ContextEngine` 을 건 실행기에서만 보인다. `/compact` 명령의 요약 호출은 그 COMMAND span 아래 붙는다 |
+| compaction | 압축 시도마다 `COMPACTION` span 이 생기고 요약 LLM span 은 그 아래다([Span 모델](#span-모델)). 블로킹 한계의 두 번 요약 패스는 COMPACTION 하나에 LLM 자식 둘이다. 블로킹 한계에서 요약이 실패하면 COMPACTION · TURN 이 ERROR 이고 ITERATION 은 없다. 실행이 취소된 채 그 취소 때문에 실패한 시도(요약 호출이 취소됐거나 취소된 PreCompact hook 이 막은 것)는 `INTERRUPTED` — 취소와 겹쳤을 뿐인 다른 실패는 `ERROR` —, PreCompact hook 이 막은 시도는 `OK`(`outcome=blocked`)다. 이 저장소가 조립하는 포크 실행기는 여전히 passthrough 엔진이라 포크가 compact 하지 않는다 — 포크 쪽은 실제 `ContextEngine` 을 건 실행기에서만 보인다. 커스텀 `CompactionGuard`(인터페이스 기본 `maybeCompact(CompactionGuardRequest)` 를 쓰는 것)와 관찰자를 넘기지 않는 커스텀 `ContextEngine` 은 COMPACTION span 을 만들지 않는다 — 그때 요약 LLM span 은 런 루트 아래 붙는다 |
 | 미추적 경로 | 앱이 에이전트 단위 `WorkflowRunner` 를 직접 부르는 실행은 부모 span 이 없어 아무것도 남기지 않는다(orphan 금지). 부모보다 늦게 시작하는 백그라운드 SUBAGENT 를 외부 뷰어(OTLP)가 어떻게 그리는지는 확인하지 못했다 |
 | 입출력 캡처 | 기본은 요약(메시지 수/토큰/도구 입력)만 저장. `TracePayloadPolicy.full(maxChars)`로 **도구 결과·LLM 응답 본문**과 TURN·SUBAGENT **최종 답변**을 옵션 캡처(상한 절단). 저장 직전 `SpanRedactor`로 민감 키 마스킹 — [§본문 캡처](#본문-캡처와-마스킹-trace-02) |
 | 샘플링/비차단 워커 | 미구현. 운영 대량 트래픽에서는 후속 `TraceSampler` + bounded-queue 워커 권장 |

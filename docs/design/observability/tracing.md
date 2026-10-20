@@ -29,7 +29,7 @@ Span 트리로 영속화" 하지 못한다 — 특히 **LLM 호출 자체를 관
 | 메커니즘 | 패키지 | 경계 | 트레이싱 관점의 가치 |
 |---|---|---|---|
 | `AgentExecutionInterceptor` | `agent.interceptor` | `execute()` 1회 | 턴 root span 경계로 적합하나 ReAct 내부는 못 봄 |
-| Hook 시스템 | `hook` | 도구·라이프사이클 | 풍부한 입출력 payload. tool/subagent/compaction span 소스 |
+| Hook 시스템 | `hook` | 도구·라이프사이클 | 풍부한 입출력 payload. tool/subagent/compaction span 소스로 검토했으나, 구현은 셋 다 직접 계측이다(§5 · D11 · D12) |
 | `AgentExecutionEvent` | `agent.stream` | ReAct 내부 도달점 | iteration 경계를 주는 **유일한** 소스 |
 | `LlmCallMetadata` | `llm` | LLM 호출당 | `traceId`/`component`/`parentComponent`/`tags` 보유 → **Span 컨텍스트 캐리어로 재활용** |
 
@@ -157,6 +157,9 @@ id 는 예약 태그로 분리해 싣는다 (§4.3, §6.3).
               조회 (byTrace = 한 턴, bySession = 한 세션)
 ```
 
+위 그림은 초기 설계의 관찰 소스 구도다. 구현에서 tool · subagent · compaction span 은 Hook 이 아니라 각각 executor 의
+도구 호출 래퍼(`ToolCallTracing`), 서브에이전트 매니저(D11), 엔진 · 가드에 실린 `CompactionObserver`(D12)가 연다.
+
 ### 3.1 4계층에서의 위치
 
 인터셉터 설계가 정의한 3계층에 트레이싱을 더한다. 트레이싱은 이들을 **대체하지 않고 소비**한다.
@@ -164,7 +167,7 @@ id 는 예약 태그로 분리해 싣는다 (§4.3, §6.3).
 | 계층 | 메커니즘 | 관심사 | 트레이싱과의 관계 |
 |---|---|---|---|
 | 실행 체인 제어 | Interceptor | 차단·변환 | 턴 root span 경계로 활용 가능 |
-| 도구 라이프사이클 | Hook | 도구 제어·감사 | tool/subagent/compaction Span **소스** |
+| 도구 라이프사이클 | Hook | 도구 제어·감사 | tool/subagent/compaction Span 소스 후보(구현은 직접 계측 — §5) |
 | 진행 관찰 | Event | UI·로그 tail | iteration Span **소스** |
 | **사후 디버깅** | **Tracing** | **Span 트리 영속화** | 위 3종을 소비 + LLM Span 보강 |
 
@@ -198,8 +201,9 @@ public enum SpanStatus { OK, ERROR, INTERRUPTED }
 
 (● 필수 / △ 조건부 / – 해당 없음)
 
-`COMMAND` 는 `TOOL` 과, `ROUTINE` 은 `TURN` 과 같은 필드 규칙을 따른다(`ROUTINE` 의 `sessionId` 는
-`routine:<taskId>`). `COMPACTION` · `RETRIEVER` 는 예약 상수이고 지금 만드는 곳이 없다(§5).
+`COMMAND` · `COMPACTION` 은 `TOOL` 과, `ROUTINE` 은 `TURN` 과 같은 필드 규칙을 따른다(`ROUTINE` 의 `sessionId` 는
+`routine:<taskId>`). `COMPACTION` 은 `tokenUsage` 를 싣지 않는다 — 그 아래 요약 LLM span 이 싣는다. `RETRIEVER` 는
+예약 상수이고 지금 만드는 곳이 없다(§5).
 
 > **시각 주의**: 값 객체는 시각을 **받기만** 한다. `Instant.now()` 호출은 `DefaultTracer` 내부 한
 > 지점으로 격리하여 고정 `Clock` 주입으로 테스트 가능하게 한다.
@@ -342,7 +346,7 @@ public interface SpanExporter {
 | **SUBAGENT** | `DefaultSubagentExecutionManager.runResolvedSubagent` | goal → 결과·completionReason·토큰 합계 | 서브에이전트 실행당 1개. 포크의 ITERATION/TOOL/LLM 은 그 아래(R2·R3). 해석 실패·ceiling 거부도 ERROR span 으로 남는다 |
 | **COMMAND** | `OrcaAgentExecutor.executeCommand`(`CommandTrace`) | 명령 이름·인자 길이 → 성공 여부·응답 길이 | 슬래시 명령 턴마다 1개, TURN 아래. 명령 도구 컨텍스트의 metadata 를 이 span 으로 회전 — 포크 스킬의 SUBAGENT 가 그 아래 붙는다 |
 | **ROUTINE** (root) | `RoutineExecutor.execute` | taskId·단계 수 → 성공 여부·완료 단계 수 | 예약 루틴 실행(발화)마다 1개. 단계 **시도**마다 `TOOL` 자식(`invoker=ROUTINE`, `stepIndex`, `attempt`)을 열고 그 도구 컨텍스트를 회전 |
-| **COMPACTION** | — (**미구현**) | — | 요약 LLM 호출은 COMPACTION span 없이 `feature=compaction` 속성을 단 **LLM span** 으로 남는다 — 메인 턴은 TURN 아래, 포크는 ITERATION 아래. span 자체는 `TracingHookAdapter`(§9)와 함께 남은 작업 |
+| **COMPACTION** | 컨텍스트 엔진·가드 안의 시도 지점(`agent.compact.CompactionObserver`, 트레이싱 구현은 `toolinvocation.TracingCompactionObserver`) | `trigger`·`strategy`(`in-place`/`view`/`rolling`)·`blockingForced`·`messagesBefore` → `outcome`·`kind`·전후 토큰·`summaryCalls`·`summaryChars` 등 | 압축 **시도**마다 1개. 요약 LLM span(`feature=compaction`)은 그 아래. AUTO 는 런 루트(TURN, 포크는 SUBAGENT) 아래 — 막는 ITERATION 의 앞 형제이고 `iteration=N` 속성, `/compact` 는 COMMAND 아래. 요약이 설치된 뒤 닫으므로 `postTokens` 는 보내는 뷰의 크기. 결과 없이 닫히면(엔진이 throw) ERROR, 신호가 선 채 그 취소 때문에 실패하면(원인에 `LlmCallCancelledException` · `CancelledExecutionException`, 또는 취소된 PreCompact 의 차단) INTERRUPTED — 취소와 겹쳤을 뿐인 다른 실패는 ERROR, PreCompact 차단은 OK(`outcome=blocked`). **압축하지 않은 판단**(NONE·WARN·차단기·잠금 경합·요약할 것 없음·합법 컷 없음)은 span 을 남기지 않는다 |
 
 **턴 root 발급 시점** — `OrcaAgentExecutor.execute()` 는 **턴당 정확히 1회** 호출된다
 (`DefaultLiveSession` 이 "Submitting turn" 과 함께 호출하고, `execute()` 가 `SessionId` 로 전사를
@@ -371,6 +375,19 @@ TURN  "turn:ops-bot"                               [traceId=T1]
    │     └─ ITERATION #2 └─ LLM ...
    └─ TOOL Task  (run_in_background)       ← 즉시 close
       └─ SUBAGENT "subagent:indexer"  background=true, queuedMs   ← 부모 close 뒤 시작·종료, parentSpanId 는 유지
+```
+
+압축은 그것이 막는 iteration 의 **앞 형제**다 — 게이트가 ITERATION span 을 열기 전에 돌기 때문이다. 요약 LLM 호출은
+그 아래에 붙고, 블로킹 한계의 두 번 요약 패스는 COMPACTION 하나에 LLM 자식 둘이다:
+
+```
+TURN ─┬ COMPACTION "compaction:auto"  (iteration=3, invokerType=MAIN_AGENT)
+      │  └─ LLM  (feature=compaction)
+      └ ITERATION #3 ─ LLM, TOOL …
+SUBAGENT ─┬ COMPACTION "compaction:auto"  (iteration=2, invokerType=SUBAGENT, executionId)
+          │  └─ LLM  (feature=compaction)
+          └ ITERATION #2 …
+COMMAND "command:/compact" ─ COMPACTION "compaction:manual" ─ LLM  (component=compact-command)
 ```
 
 도구 호출을 거치지 않는 두 모양 — 슬래시 명령 턴과 예약 루틴 실행:
@@ -501,10 +518,17 @@ Map/List 도 처리한다.
 | D9 | `startRoot` / `startChild` **분리** (nullable parent 금지) | nullable 하나로 겸하면 "root 의도" 와 "부모 유실" 을 호출부에서 구분할 수 없다 |
 | D10 | 패키지는 **top-level `at.aimon.core.tracing`** | 트레이싱은 `agent` 뿐 아니라 `llm`(데코레이터)·`subagent`·`knowledge`(retriever)를 가로지른다. `agent.tracing` 하위로 넣으면 의존 방향이 뒤틀린다. `observability` umbrella 는 메트릭 체계가 없는 현재로선 `tracing` 이 더 정확하며, 메트릭이 생기면 `observability.tracing` 승격은 순수 이동 리팩터로 가능하다 |
 | D11 | 서브에이전트 회전은 **세 경계**(도구 컨텍스트 · 매니저 · 포크 iteration)에서만, SUBAGENT span 은 **매니저**에 | 매니저의 `runResolvedSubagent` 는 모든 서브에이전트 실행(포그라운드/백그라운드, ReAct/code behavior, Task/Workflow/포크 스킬)이 지나는 유일한 지점이다. `SubagentStart`/`SubagentStop` Hook 은 metadata 를 받지 못해 부모를 모르고, 회전된 metadata 를 실행에 되돌려줄 수 없으며, start/stop 을 짝짓는 `taskId → Span` 상태가 필요해 기각. 실행기에 SUBAGENT span 을 두면 code behavior 경로와 해석 실패가 빠져 기각. 새 `ToolContextKey` 는 네 sub-execution 진입점을 모두 고쳐야 해 기각 — 기존 키의 값만 TOOL span 으로 바꾼다 |
+| D12 | COMPACTION span 은 **요청에 실린 관찰자**(`CompactionObserver`)가 엔진·가드 **안에서** 연다 | 시작 시각 인자가 없는 `startChild` 로 요약 LLM span 을 그 아래 두려면 span 이 요약 호출 **전**에 열려 있어야 하고, 압축을 시도할지는 엔진 안에서만 정해지며, `postTokens` 는 요약이 설치된 뒤에야 있다 — 셋을 다 만족하는 곳은 엔진 안의 시도 지점뿐이다. 실행기는 `ContextRequest`/`CompactionGuardRequest` 에 관찰자를 싣고, 엔진은 호출자 metadata 의 예약 태그만 회전해 요약 호출에 넘긴다(`DefaultCompactionEngine` 무변경). 기각: ① 게이트 전에 열고 아무 일 없으면 `Span.discard()` — `Tracer` SPI 를 바꾸고 "연 span 은 기록된다" 를 깨며, BLOCK 이 "요약 실패" 인지 "시도 안 함" 인지 모호하고, LLM 을 부르고 WARN 을 답하는 커스텀 엔진은 고아 자식을 남긴다. ② PreCompact/PostCompact 에 `TracingHookAdapter` — `PreCompactContext` 에 span 위치가 없고 Hook 이 회전한 metadata 를 요약 호출에 돌려줄 길이 없으며, AUTO Hook 차단 · 요약 실패에는 PostCompact 가 오지 않아 span 이 닫히지 않고, 두 번 요약 패스는 두 번 오며, 롤링 PRUNE 은 둘 다 오지 않는다. ③ 엔진에 `Tracer` 주입 — 엔진은 agent-scoped 이고 tracer 가 없는 `OrcaAgentRuntimeFactory` 가 만들며, 임베더 엔진은 조용히 빠지고, 실행기의 tracer 는 volatile 이다. ④ `TracingCompactionEngine` 데코레이터 — 설치 전에 닫혀 뷰·롤링의 `postTokens` 가 없고, 두 번 요약은 span 둘, PRUNE 은 0, `getCompactionEngine()` 정체성이 바뀐다. ⑤ 명령 이름이 `compact` 일 때 실행기가 연다 — 이름에 기대고, "압축할 것 없음" 조기 반환에 빈 span 이 남는다 |
 
 `TracingLlmClient` 를 `tracing.impl` 에 두는 것도 D10 의 따름정리다 — `LlmClient`(llm 도메인 인터페이스)를
 구현하지만 본질이 트레이싱 데코레이터이고 `tracing` SPI 에 의존한다. `OpenAiLlmClient` 가 별도 모듈에
 사는 것과 같은 논리(인터페이스는 `llm`, 구현은 구현자 네임스페이스)다.
+
+D12 의 두 조각이 사는 곳도 같은 논리다. 관찰자 SPI(`CompactionObserver` · `CompactionStart`)는 압축 도메인인
+`agent.compact` 에 두고 트레이싱에 의존하지 않는다. 트레이싱 구현 `TracingCompactionObserver` 는 `ToolCallTracing` 옆
+`toolinvocation` 에 둔다 — `agent..` 아래 어느 패키지도 `tracing` 에 의존할 수 없고(ArchUnit
+`PackageDependencyArchitectureTest`), `agent.impl.orca` 와 `subagent.execution` 양쪽에서 닿아야 하기 때문이다. 그래서
+`tracing` 은 여전히 `llm` 에만 의존한다.
 
 ---
 
@@ -513,7 +537,7 @@ Map/List 도 처리한다.
 ```
 at.aimon.core.tracing/
 ├── TraceSpan.java            # 불변 Span 값 객체 (빌더)
-├── SpanType.java             # TURN, ITERATION, LLM, TOOL, SUBAGENT, COMPACTION
+├── SpanType.java             # TURN, ITERATION, LLM, TOOL, SUBAGENT, COMPACTION, RETRIEVER, COMMAND, ROUTINE
 ├── SpanStatus.java           # OK, ERROR, INTERRUPTED
 ├── SpanContext.java          # (sessionId, traceId, spanId, parentSpanId) 전파 토큰 + 예약 태그 상수
 ├── Tracer.java               # startRoot/startChild SPI (+ Tracer.Span)
@@ -530,7 +554,12 @@ at.aimon.core.tracing/
     └── TracingLlmClient.java       # LlmClient 데코레이터 → LLM Span
 
 at.aimon.core.toolinvocation/
-└── ToolCallTracing.java      # 두 executor 공용 TOOL span — open · contextUnder(R1) · recordOutcome
+├── ToolCallTracing.java            # 두 executor 공용 TOOL span — open · contextUnder(R1) · recordOutcome
+└── TracingCompactionObserver.java  # 두 executor · /compact 공용 COMPACTION span (D12)
+
+at.aimon.core.agent.compact/        # 트레이싱 의존 없음
+├── CompactionObserver.java         # 압축 시도 관찰 SPI — begin · Attempt.enrich/record/close, none() · failSafe()
+└── CompactionStart.java            # 시도 시작 값 객체 (trigger · strategy · blockingForced · messagesBefore)
 
 (외부 모듈, 미구현)
 aimon-tracing-otlp/      # SpanExporter → OpenTelemetry OTLP
@@ -566,7 +595,7 @@ CLI 는 `cli.tracing: true` 일 때 store + tracer + `TracingLlmClient` 를 배�
 | 항목 | 상태 | 비고 |
 |---|---|---|
 | 서브에이전트 span "회전" | **구현** (2026-10-17) | §4.3 R1 ~ R3, D11. 그 뒤 백로그 처리(2026-10-17)로 슬래시 명령(`COMMAND`) · 예약 루틴(`ROUTINE`) · 공장 밖 매니저 · 큐 대기와 거부 · 포크 `ExecutionId` 가 닫혔다. 남은 갈래(직접 호출 `WorkflowRunner`, 외부 뷰어 렌더링 …)는 백로그 [`subagent-tracing-open-items.md`](../../backlog/subagent-tracing-open-items.md) |
-| `TracingHookAdapter` (compaction span) | 미구현 | tool span 은 executor 직접 계측으로 대체됨. COMPACTION span 의 남은 갈래도 여기다 — 요약 LLM 호출은 이제 트리 안(메인=TURN 아래, 포크=ITERATION 아래)에 `feature=compaction` LLM span 으로 남는다(백로그 ST-5) |
+| COMPACTION span | **구현** (2026-10-20) | Hook 어댑터가 아니라 요청에 실린 `CompactionObserver` 로(D12). 요약 LLM span 은 COMPACTION 아래로 옮겨졌고, 포크의 압축 게이트는 ITERATION span 앞으로 옮겨졌다(백로그 ST-5). tool span 은 일찍이 executor 직접 계측으로 대체되어 `TracingHookAdapter` 는 만들 이유가 남지 않았다 |
 | `TraceSampler` (트레이스 단위 샘플링) | 미구현 | 운영에서 100% 저장은 비현실적 — head 샘플링 vs tail 중 **에러 trace 100% 보존**을 권장 |
 | 비차단 워커 (bounded queue + 손실 카운터) | 미구현 | `record()`/`export()` 를 fire-and-forget 으로. 큐 포화 시 가장 오래된 것을 drop 하고 카운터 증가(관측 가능한 손실). 직렬화·레닥션도 워커 스레드로 옮겨 호출 경로를 막지 않게 한다 |
 | `aimon-tracing-otlp` / `aimon-tracing-postgres` | 미구현 | 외부 모듈. 보존 정책(`deleteOlderThan`) 스케줄링 포함 |

@@ -19,17 +19,22 @@ import at.aimon.core.agent.compact.CompactionGuard;
 import at.aimon.core.agent.compact.CompactionMetadata;
 import at.aimon.core.agent.compact.CompactionRequest;
 import at.aimon.core.agent.compact.CompactionResult;
+import at.aimon.core.agent.compact.CompactionStart;
 import at.aimon.core.agent.compact.CompactionTrigger;
+import at.aimon.core.agent.compact.DefaultCompactionGuard;
 import at.aimon.core.agent.compact.PromptSizeRecoveryDecision;
+import at.aimon.core.agent.compact.RecordingCompactionObserver;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.base.Principal;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
+import at.aimon.core.llm.InMemoryModelContextWindowRegistry;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.Message;
+import at.aimon.core.llm.ModelContextLimits;
 import at.aimon.core.llm.exception.LlmPromptTooLongException;
 import at.aimon.core.llm.token.TokenEstimator;
 
@@ -273,6 +278,100 @@ class DefaultContextEngineTest {
 
             assertThat(result.isFailure()).isTrue();
             assertThat(result.getMetadata().getTrigger()).isEqualTo(CompactionTrigger.MANUAL);
+        }
+    }
+
+    /** The request's compaction observer on the in-place paths. */
+    @Nested
+    class Observer {
+
+        private final RecordingCompactionObserver observer = new RecordingCompactionObserver();
+
+        @Test
+        void anInPlaceAutoCompactionIsOneAttemptAroundTheEngineCall() {
+            final RecordingCompactionEngine compactionEngine = new RecordingCompactionEngine(true);
+            final DefaultCompactionGuard guard = new DefaultCompactionGuard(compactionEngine,
+                    InMemoryModelContextWindowRegistry.builder()
+                            .defaultLimits(
+                                    ModelContextLimits.builder().contextWindow(10_000).reservedOutputTokens(1_000)
+                                            .autoCompactRatio(0.8).warningBuffer(1_000).blockingBuffer(500).build())
+                            .build(),
+                    new FixedTokenEstimator(7_500, new AtomicReference<>()));
+            final DefaultContextEngine engine = DefaultContextEngine.builder().compactionGuard(guard)
+                    .compactionEngine(compactionEngine).writeFormat(SessionLogFormat.V1).build();
+
+            final ContextDecision decision = engine.prepare(request().compactionObserver(observer).build());
+
+            assertThat(decision.getAction()).isEqualTo(CompactionDecision.Action.COMPACT);
+            final RecordingCompactionObserver.RecordedAttempt attempt = observer.single();
+            assertThat(attempt.start().getTrigger()).isEqualTo(CompactionTrigger.AUTO);
+            assertThat(attempt.start().getStrategy()).isEqualTo(CompactionStart.IN_PLACE);
+            assertThat(attempt.start().getMessagesBefore()).isEqualTo(3);
+            assertThat(attempt.result().isSuccess()).isTrue();
+            assertThat(compactionEngine.last.get().getCallMetadata()).hasValueSatisfying(m -> assertThat(m.getTags())
+                    .containsEntry(RecordingCompactionObserver.ATTEMPT_TAG, attempt.number()));
+        }
+
+        @Test
+        void aCustomGuardDropsTheObserver() {
+            final RecordingGuard guard = new RecordingGuard(CompactionDecision.none());
+
+            DefaultContextEngine.builder().compactionGuard(guard).writeFormat(SessionLogFormat.V1).build()
+                    .prepare(request().compactionObserver(observer).build());
+
+            assertThat(guard.calls).containsExactly("maybeCompact");
+            assertThat(observer.attempts()).isEmpty();
+        }
+
+        @Test
+        void anInPlaceCompactNowIsOneManualAttempt() {
+            final RecordingCompactionEngine compactionEngine = new RecordingCompactionEngine(true);
+            final LlmCallMetadata callMetadata = LlmCallMetadata.builder().component("compact-command").build();
+
+            DefaultContextEngine.builder().compactionEngine(compactionEngine).writeFormat(SessionLogFormat.V1).build()
+                    .compactNow(request().callMetadata(callMetadata).compactionObserver(observer).build(), null);
+
+            final RecordingCompactionObserver.RecordedAttempt attempt = observer.single();
+            assertThat(attempt.start().getTrigger()).isEqualTo(CompactionTrigger.MANUAL);
+            assertThat(attempt.start().getStrategy()).isEqualTo(CompactionStart.IN_PLACE);
+            assertThat(attempt.start().isBlockingForced()).isFalse();
+            assertThat(attempt.enriched()).containsExactly(callMetadata);
+            assertThat(attempt.result().isSuccess()).isTrue();
+            assertThat(attempt.closes()).isEqualTo(1);
+            assertThat(compactionEngine.last.get().getCallMetadata()).hasValueSatisfying(m -> assertThat(m.getTags())
+                    .containsEntry(RecordingCompactionObserver.ATTEMPT_TAG, attempt.number()));
+        }
+
+        @Test
+        void anEngineThatThrowsClosesTheAttemptUnrecorded() {
+            final CompactionEngine throwing = request -> {
+                throw new IllegalStateException("boom");
+            };
+            final DefaultContextEngine engine = DefaultContextEngine.builder().compactionEngine(throwing)
+                    .writeFormat(SessionLogFormat.V1).build();
+
+            assertThatThrownBy(() -> engine.compactNow(request().compactionObserver(observer).build(), null))
+                    .hasMessage("boom");
+            assertThat(observer.single().recorded()).isEmpty();
+            assertThat(observer.single().closes()).isEqualTo(1);
+        }
+
+        @Test
+        void noEngineIsNoAttempt() {
+            DefaultContextEngine.builder().build().compactNow(request().compactionObserver(observer).build(), null);
+
+            assertThat(observer.attempts()).isEmpty();
+        }
+
+        @Test
+        void withoutAnObserverTheEngineSeesTheCallersMetadataInstance() {
+            final RecordingCompactionEngine compactionEngine = new RecordingCompactionEngine(true);
+            final LlmCallMetadata callMetadata = LlmCallMetadata.builder().component("compact-command").build();
+
+            DefaultContextEngine.builder().compactionEngine(compactionEngine).writeFormat(SessionLogFormat.V1).build()
+                    .compactNow(request().callMetadata(callMetadata).build(), null);
+
+            assertThat(compactionEngine.last.get().getCallMetadata()).containsSame(callMetadata);
         }
     }
 

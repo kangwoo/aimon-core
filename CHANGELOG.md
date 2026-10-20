@@ -7,7 +7,49 @@ Central is versioned independently).
 
 ## [Unreleased]
 
-### Added: the TURN span records background tasks it received outside the loop or never read (ST-12)
+### Added: a COMPACTION span around each compaction attempt, with the summary LLM call under it (ST-5) (#296)
+
+With tracing on, every compaction **attempt** now leaves one `COMPACTION` span — `compaction:auto` before an
+iteration, `compaction:manual` for `/compact` — and the summary LLM span (`feature=compaction`) nests under it. An AUTO
+compaction sits under the run root (the TURN, or the SUBAGENT in a fork) as the preceding sibling of the ITERATION it
+gates, with `iteration`, `invokerType`, `budgetForced` (only when a budget hint forced it) and, in a fork, `executionId`
+attributes; `/compact` sits under its COMMAND span. Inputs: `trigger`, `strategy` (`in-place` / `view` / `rolling`),
+`blockingForced`, `messagesBefore`. Outputs, read after the summary is installed: `success`, `outcome` (`compacted` /
+`blocked` / `failed` / `interrupted`), `kind`, `trigger`, `preTokens`, `postTokens`, `messagesSummarized`,
+`summaryCalls`, `summaryChars`, `discoveredToolCount`; `blockingLimit` / `overBlockingLimit` when the record reports a
+limit; the view shape, `summaryTokens` and the absorbed seq range for a rolling compaction; `errorType` / `errorMessage`
+on failure; the summary text as `summary` only under a content-capturing policy. No token usage — the LLM children
+carry it.
+
+- **Status.** An attempt whose engine threw ends `ERROR` ("Compaction did not complete"); one that failed because the
+  execution was cancelled (signal tripped, and the failure is the cancelled summary call or a cancelled PreCompact
+  hook's block) ends `INTERRUPTED`, while another failure that merely coincides with a cancel stays `ERROR`; one a PreCompact hook blocked ends `OK` with
+  `outcome=blocked`; any other failure ends `ERROR`; a success is `OK`, also when the view is still over the blocking
+  limit. `/compact` passes no signal, so it never ends `INTERRUPTED`.
+- **No span when nothing was attempted** — under the threshold, the warning band, the circuit breaker, a concurrent
+  compaction, a precondition not met, nothing to summarize, no legal cut. The blocking-limit two-summary pass is one
+  span with two LLM children. A rolling prune is a span with no LLM child.
+- **New public SPI**, with no tracing dependency: `at.aimon.core.agent.compact.CompactionObserver` (`begin` →
+  `Attempt.enrich` / `record` / `close`; `none()`, `failSafe()`) and `CompactionStart`, carried by
+  `ContextRequest.Builder.compactionObserver(…)` and `CompactionGuardRequest.Builder.compactionObserver(…)` (default
+  `none()`, wrapped fail-safe). The tracing implementation is `at.aimon.core.toolinvocation.TracingCompactionObserver`.
+  The executor hands `/compact` its observer through the new `ToolContextKeys.COMPACTION_OBSERVER`, set only when the
+  command has a span. A custom `CompactionGuard` that relies on the interface's default
+  `maybeCompact(CompactionGuardRequest)` drops the observer, so it produces no COMPACTION span.
+- **Tracing off is unchanged**: no observer is set, the requests, the summary call's metadata and the command's tool
+  context are what they were, and no span is opened. An observer or tracer that throws is swallowed.
+
+### Changed (behaviour change): the summary LLM span moves under COMPACTION; a fork's compaction gate runs before its ITERATION span (ST-5) (#296)
+
+- **The compaction summary LLM span's parent changes** from the TURN (main turn), the ITERATION (fork) or the COMMAND
+  (`/compact`) to the new COMPACTION span. A custom `ContextEngine` / `CompactionEngine` that reads the summary call's
+  metadata sees `aimon.parent_span_id` name the COMPACTION span; every other field is as before.
+- **`DefaultSubagentExecutor` runs its compaction gate before opening the iteration's ITERATION span**, as the main
+  turn already did, and hands the engine the fork's own span position (the SUBAGENT span) instead of the iteration's.
+  A fork whose gate blocks therefore leaves no ITERATION span — it used to leave one in `ERROR` — and ends with the
+  same `Context window exceeded` failure (or `INTERRUPTED`) as before.
+
+### Added: the TURN span records background tasks it received outside the loop or never read (ST-12) (#295)
 
 Closes the two cases #293 left unrecorded, both on the TURN span under the same key family:
 

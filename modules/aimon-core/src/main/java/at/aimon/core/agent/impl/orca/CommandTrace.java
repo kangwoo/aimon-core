@@ -2,10 +2,13 @@ package at.aimon.core.agent.impl.orca;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 
 import at.aimon.core.agent.CommandInputParser;
+import at.aimon.core.agent.compact.CompactionObserver;
 import at.aimon.core.command.execution.CommandExecutionResult;
 import at.aimon.core.llm.LlmCallMetadata;
+import at.aimon.core.toolinvocation.TracingCompactionObserver;
 import at.aimon.core.tracing.SpanContext;
 import at.aimon.core.tracing.SpanType;
 import at.aimon.core.tracing.Spans;
@@ -76,6 +79,29 @@ final class CommandTrace {
      */
     LlmCallMetadata metadata() {
         return metadata;
+    }
+
+    /**
+     * Returns the observer a {@code /compact} run by this command hands its compaction: one that opens a COMPACTION
+     * span under the command span. Empty when there is no command span (tracing off), so the command's tool context
+     * gains no key.
+     *
+     * <p>
+     * No cancellation signal is passed: a slash command is not interruptible, so its compaction never ends
+     * {@code INTERRUPTED}.
+     *
+     * @param tracer
+     *            the tracer snapshot the command span was opened with (must not be null)
+     * @param policy
+     *            the payload policy snapshot (must not be null)
+     * @return the observer, or empty when there is no command span
+     */
+    Optional<CompactionObserver> compactionObserver(Tracer tracer, TracePayloadPolicy policy) {
+        if (span == null) {
+            return Optional.empty();
+        }
+        return Spans.traceCarrier(metadata)
+                .flatMap(carrier -> TracingCompactionObserver.under(tracer, carrier, policy, null, Map.of()));
     }
 
     /**

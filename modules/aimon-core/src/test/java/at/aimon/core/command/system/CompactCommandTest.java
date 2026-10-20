@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -12,12 +13,19 @@ import org.junit.jupiter.api.Test;
 import at.aimon.core.agent.compact.CompactionEngine;
 import at.aimon.core.agent.compact.CompactionGuard;
 import at.aimon.core.agent.compact.CompactionMetadata;
+import at.aimon.core.agent.compact.CompactionObserver;
 import at.aimon.core.agent.compact.CompactionRequest;
 import at.aimon.core.agent.compact.CompactionResult;
 import at.aimon.core.agent.compact.CompactionTrigger;
+import at.aimon.core.agent.compact.RecordingCompactionObserver;
+import at.aimon.core.agent.context.ContextDecision;
+import at.aimon.core.agent.context.ContextEngine;
+import at.aimon.core.agent.context.ContextRequest;
+import at.aimon.core.agent.context.ContextView;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.base.Principal;
 import at.aimon.core.command.CommandType;
 import at.aimon.core.command.execution.CommandExecutionContext;
@@ -34,6 +42,8 @@ import at.aimon.core.hook.event.OnStopContext;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
+import at.aimon.core.llm.exception.LlmPromptTooLongException;
+import at.aimon.core.tools.ToolContextKeys;
 
 class CompactCommandTest {
 
@@ -310,6 +320,56 @@ class CompactCommandTest {
 
         LlmCallMetadata metadata = engine.lastRequest.get().getCallMetadata().orElseThrow();
         assertThat(metadata.getPrincipal()).isEmpty();
+    }
+
+    @Test
+    void handsTheToolContextsCompactionObserverToTheContextRequest() {
+        // Traced, the executor puts an observer on the command's tool context; the compaction reports to it.
+        TranscriptBuffer memory = memoryWith("hello");
+        engine.setNextResult(successResult(100, 50));
+        RecordingCompactionObserver observer = new RecordingCompactionObserver();
+        CommandExecutionContext context = CommandExecutionContext.builder().command(command)
+                .defaultModel(LlmModel.builder().name("test-model").build()).toolRegistry(new DefaultToolRegistry())
+                .transcriptBuffer(memory)
+                .toolContext(ToolContext.builder().put(ToolContextKeys.COMPACTION_OBSERVER, observer).build()).build();
+
+        command.execute(context, DirectCommandExecutionRequest.of(""));
+
+        RecordingCompactionObserver.RecordedAttempt attempt = observer.single();
+        assertThat(attempt.start().getTrigger()).isEqualTo(CompactionTrigger.MANUAL);
+        assertThat(attempt.result().isSuccess()).isTrue();
+        LlmCallMetadata metadata = engine.lastRequest.get().getCallMetadata().orElseThrow();
+        assertThat(metadata.getTags()).containsEntry(RecordingCompactionObserver.ATTEMPT_TAG, attempt.number());
+        assertThat(metadata.getComponent()).as("the base is still the command's attribution")
+                .contains(CompactCommand.COMPONENT_NAME);
+    }
+
+    @Test
+    void withoutAnObserverOnTheToolContextTheRequestKeepsTheNoOpObserver() {
+        TranscriptBuffer memory = memoryWith("hello");
+        AtomicReference<ContextRequest> seen = new AtomicReference<>();
+        ContextEngine capturing = new ContextEngine() {
+            @Override
+            public ContextDecision prepare(ContextRequest request) {
+                throw new UnsupportedOperationException("not under test");
+            }
+
+            @Override
+            public Optional<ContextView> recover(ContextRequest request, LlmPromptTooLongException error) {
+                return Optional.empty();
+            }
+
+            @Override
+            public CompactionResult compactNow(ContextRequest request, String instructions) {
+                seen.set(request);
+                return successResult(10, 5);
+            }
+        };
+
+        new CompactCommand(capturing, hookRegistry, hookExecutionManager).execute(contextWithMemory(memory),
+                DirectCommandExecutionRequest.of(""));
+
+        assertThat(seen.get().getCompactionObserver()).isSameAs(CompactionObserver.none());
     }
 
     private CommandExecutionContext contextWithMemory(TranscriptBuffer memory) {

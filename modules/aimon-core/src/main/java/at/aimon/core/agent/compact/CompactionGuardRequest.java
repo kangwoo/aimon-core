@@ -33,6 +33,7 @@ public final class CompactionGuardRequest {
     private final CancellationSignal executionCancellation;
     private final boolean budgetForced;
     private final LlmCallMetadata callMetadata;
+    private final CompactionObserver compactionObserver;
 
     private CompactionGuardRequest(Builder builder) {
         this.transcriptBuffer = Objects.requireNonNull(builder.transcriptBuffer, "transcriptBuffer cannot be null");
@@ -43,6 +44,7 @@ public final class CompactionGuardRequest {
         this.executionCancellation = builder.executionCancellation;
         this.budgetForced = builder.budgetForced;
         this.callMetadata = builder.callMetadata;
+        this.compactionObserver = builder.compactionObserver;
     }
 
     public static Builder builder() {
@@ -110,6 +112,17 @@ public final class CompactionGuardRequest {
         return Optional.ofNullable(callMetadata);
     }
 
+    /**
+     * The observer the compaction attempts of this pass report to: told when an attempt begins, given each summary
+     * call's metadata to enrich, and told how the attempt ended. A traced execution passes one that opens a
+     * {@code COMPACTION} span; otherwise it is {@link CompactionObserver#none()}.
+     *
+     * @return the observer, already {@linkplain CompactionObserver#failSafe fail-safe} (never null)
+     */
+    public CompactionObserver getCompactionObserver() {
+        return compactionObserver;
+    }
+
     /** Builder for {@link CompactionGuardRequest}. */
     public static final class Builder {
         private TranscriptBuffer transcriptBuffer;
@@ -120,6 +133,7 @@ public final class CompactionGuardRequest {
         private CancellationSignal executionCancellation;
         private boolean budgetForced;
         private LlmCallMetadata callMetadata;
+        private CompactionObserver compactionObserver = CompactionObserver.none();
 
         private Builder() {
         }
@@ -172,6 +186,19 @@ public final class CompactionGuardRequest {
          */
         public Builder callMetadata(LlmCallMetadata callMetadata) {
             this.callMetadata = callMetadata;
+            return this;
+        }
+
+        /**
+         * @param compactionObserver
+         *            the observer the compaction attempts report to, or {@code null} for
+         *            {@link CompactionObserver#none()}; wrapped in {@link CompactionObserver#failSafe}
+         * @return this builder
+         */
+        public Builder compactionObserver(CompactionObserver compactionObserver) {
+            this.compactionObserver = compactionObserver == null
+                    ? CompactionObserver.none()
+                    : CompactionObserver.failSafe(compactionObserver);
             return this;
         }
 
