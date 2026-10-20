@@ -7,6 +7,17 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-10-21
+
+> **This patch release is not compatible with 0.3.2 — an exception to the patch promise in
+> [`docs/project/api-stability.md`](docs/project/api-stability.md) §1, made knowingly: aimon-sandbox already requires
+> 0.3.3.** Upgrade from 0.3.2 as you would across a minor. The edges a library user hits: `ModelContextLimits` and
+> `RollingContextEngine.Builder` lose their auto-compact buffer and ratio members, and setting
+> `aimon.context.rolling.auto-compact-ratio` now fails startup (#285); the session log is written as version 2 by
+> default, so a mixed-version cluster must pin `v1` and a durable record store needs its segment store (#286); and with
+> a sandbox provider, `hooks.json` command handlers need an aimon-sandbox that declares `ShellFeature.ISOLATED_EXECUTION`
+> and `ShellFeature.RUN_DIRECTORY`, or `"shell": "host"` (#273, #275).
+
 ### Added: parallel foreground `Task` — consecutive subagent calls of one batch run at once, opt-in
 
 Foreground `Task` calls in one LLM response used to run one after another. With
@@ -742,6 +753,11 @@ says they reject. `InMemoryModelCapabilityRegistry.withDefaults()` now carries a
   capabilities were measured on, since `gpt-6-sol` and `gpt-6-luna` now reach it too.
 
 ## [0.3.2] - 2026-10-08
+
+> **This patch release is not compatible with 0.3.1 — an exception to the patch promise in
+> [`docs/project/api-stability.md`](docs/project/api-stability.md) §1, recorded here after the fact (at 0.3.3).**
+> It removed `UserLocale`, renamed `SubagentExecutionEnvironment` → `SubagentLaunchContext`, and made declarative guard
+> hooks fail closed. Upgrade from 0.3.1 as you would across a minor: read every `(breaking)` section below.
 
 ### Changed: the follow-ups to hook cancellation — report commands run through an interrupt, and four edges (EE-93 – EE-98)
 
