@@ -46,5 +46,6 @@ class SubagentTaskCompletedTest {
         assertThat(SubagentTaskCompleted.QUEUED_KIND).isEqualTo("subagent-task-completed");
         assertThat(SubagentTaskCompleted.QUEUED_TASK_ID_KEY).isEqualTo("taskId");
         assertThat(SubagentTaskCompleted.QUEUED_OUTCOME_KEY).isEqualTo("outcome");
+        assertThat(SubagentTaskCompleted.RECEIVED_TASK_ID_ATTRIBUTE).isEqualTo("aimon.subagent.receivedTaskId");
     }
 }
