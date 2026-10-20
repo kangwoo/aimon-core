@@ -716,9 +716,10 @@ public class ReplSession {
      * <p>
      * Called from {@link #executeAgent(String)}'s {@code finally} block so the slot is already released. Anything the
      * Orca ReAct loop could not inject mid-turn — either enqueued too late in the turn or parked at a priority the
-     * mid-turn drain skipped — is replayed here in FIFO order. Each entry round-trips through
-     * {@link #processInput(String)} so that slash commands take the command path and prompts take the agent path,
-     * preserving the semantic boundary between the two.
+     * mid-turn drain skipped — is replayed here in FIFO order through {@link #replay(QueuedInput)}: a background
+     * subagent's completion notification goes to the agent tagged with its task id, and every other entry round-trips
+     * through {@link #processInput(String)} so that slash commands take the command path and prompts take the agent
+     * path, preserving the semantic boundary between the two.
      *
      * <p>
      * {@link #draining} prevents the replay from calling itself: each replayed prompt will re-enter

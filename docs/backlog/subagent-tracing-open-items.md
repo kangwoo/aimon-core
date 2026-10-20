@@ -367,10 +367,12 @@ TURN outputs 에 싣는 방식, 뒤의 것은 `OrcaAgentExecutionRequest` 가 �
   ITERATION 이 `subagent.received.taskIds` 로 기록하면서 비운다. 턴이 끝날 때 남아 있는 것은 이 턴의 어떤 LLM 호출도 읽지 않은 것이므로
   TURN 이 `subagent.received.unreadTaskIds` 로 남긴다(`OrcaAgentExecutor#recordUnreadSubagentTasks`, 예외로 끝난 턴도 `finally`
   에서). 알림은 transcript 에 남아 다음 턴의 첫 LLM 호출이 읽는다 — 그 턴의 iteration 1 에는 여전히 표시가 없고, 이전 TURN 의 이
-  속성이 그 연결을 대신한다.
+  속성이 그 연결을 대신한다. 단, 멈춘 턴이 rewind · `/retry` 로 되돌려지면 그 알림은 턴의 다른 메시지와 함께 transcript 에서
+  지워지고 큐에서도 이미 빠졌으므로 아무도 읽지 않는다 — 이 PR 이전부터 있던 손실이고, 속성은 그 사실을 보여 줄 뿐이다.
 - **부모가 쉬는 동안 도착할 때** — 새 execution attribute `aimon.subagent.receivedTaskId`
   (`SubagentTaskCompleted.RECEIVED_TASK_ID_ATTRIBUTE`)를 실은 턴은 그 값을 TURN 의 `subagent.received.taskIds` 로 남긴다
   (`#recordDeliveredSubagentTask`). CLI `ReplSession` 의 턴 사이 drain 은 완료 알림을 다시 보낼 때 그 attribute 를 싣는다(다른 입력은
   예전처럼 `processInput` 을 거친다). 항목이 후보로 적었던 `OrcaAgentExecutionRequest` 새 필드 대신 execution attribute 를 택했다 —
-  `SubmitOptions` 가 이미 영속·전달하는 칸이라 코덱과 rewind 지점을 바꾸지 않는다. 대가로 그 값은 턴의 도구 · hook 에도 보인다.
+  `SubmitOptions` 가 이미 영속·전달하는 칸이라 코덱과 rewind 지점을 바꾸지 않는다. 대가로 그 값은 턴의 도구 · hook 에도 보이고, 그 턴이 띄운 포크도 execution attribute 를 물려받아 본다(포크는
+  `DefaultSubagentExecutor` 로 돌아 TURN span 이 없으므로 span 이 잘못 붙지는 않는다).
   다른 임베더(웹 등)의 턴 사이 drain 은 같은 attribute 를 실어야 기록된다 — 이 저장소의 그런 drain 은 CLI 하나다.

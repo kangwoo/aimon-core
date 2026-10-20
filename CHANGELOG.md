@@ -13,13 +13,14 @@ Closes the two cases #293 left unrecorded, both on the TURN span under the same 
 
 - **`subagent.received.unreadTaskIds`** — task ids of completion notifications drained at the tail of the turn's last
   iteration that no LLM call of the turn read, because the turn stopped right after the drain (interrupt, budget,
-  quota, compaction block, the iteration cap). The notifications stay in the transcript, so the next turn reads them.
+  quota, compaction block, the iteration cap). The notifications stay in the transcript, so the next turn reads them — unless the turn is rewound or
+  retried, which removes them with the turn's other messages (they are already gone from the queue).
   Key: `OrcaAgentExecutor.UNREAD_SUBAGENT_TASK_IDS_ATTR`.
 - **`subagent.received.taskIds` on a TURN** — set when the turn was started to deliver a notification and carries the
   new execution attribute `aimon.subagent.receivedTaskId` (`SubagentTaskCompleted.RECEIVED_TASK_ID_ATTRIBUTE`, a
   `String` task id). The CLI's between-turn drain now sets it when it replays a completion notification; other
   replayed input still goes through the slash-command routing as before. Like any execution attribute, the value also
-  reaches the turn's tools and hooks. An embedder with its own between-turn drain sets the same attribute to get the
+  reaches the turn's tools and hooks, and the subagents it forks inherit it. An embedder with its own between-turn drain sets the same attribute to get the
   record.
 
 ### Changed (behaviour change): a cancelled LLM call's span is INTERRUPTED, not ERROR; LLM spans add `stopReason` and streaming `ttftMs` (#294)

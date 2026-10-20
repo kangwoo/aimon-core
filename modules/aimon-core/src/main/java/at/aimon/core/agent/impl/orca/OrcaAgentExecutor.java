@@ -2191,9 +2191,16 @@ public class OrcaAgentExecutor
      *            the task ids drained at the previous tail; nothing is recorded when empty
      */
     private static void annotateReceivedSubagentTasks(Tracer.Span span, List<String> taskIds) {
-        if (!taskIds.isEmpty()) {
+        if (taskIds.isEmpty()) {
+            return;
+        }
+        try {
             span.setAttribute(RECEIVED_SUBAGENT_TASK_IDS_ATTR, String.join(",", taskIds));
-            // Read now: what is left at turn end is what no iteration of this turn read (recordUnreadSubagentTasks).
+        } catch (RuntimeException e) {
+            log.debug("Recording received subagent tasks on the iteration span failed: {}", e.getMessage());
+        } finally {
+            // Read now, recorded or not: what is left at turn end is what no iteration of this turn read
+            // (recordUnreadSubagentTasks).
             taskIds.clear();
         }
     }
@@ -2220,7 +2227,8 @@ public class OrcaAgentExecutor
      * Records on the TURN span the background subagent tasks whose completion notifications were drained into the
      * conversation at the tail of this turn's last iteration but read by no LLM call of the turn — it stopped right
      * after the drain (interrupt, budget, quota, compaction block, the iteration cap). The notifications stay in the
-     * transcript, so the next turn's first LLM call reads them. Recorded under
+     * transcript, so the next turn's first LLM call reads them — unless this turn is rewound or retried, which removes
+     * them with its other messages. Recorded under
      * {@link #UNREAD_SUBAGENT_TASK_IDS_ATTR}; absent when nothing was left. Fail-safe.
      */
     private static void recordUnreadSubagentTasks(Tracer.Span turnSpan, List<String> unreadTaskIds) {

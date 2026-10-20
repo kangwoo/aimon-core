@@ -264,6 +264,13 @@ class OrcaAgentExecutorLoopTransitionTest {
                     .containsEntry(OrcaAgentExecutor.UNREAD_SUBAGENT_TASK_IDS_ATTR, "t1");
             assertThat(iterationSpan(store, "conv-lt-unread", 1).getAttributes())
                     .doesNotContainKey(OrcaAgentExecutor.RECEIVED_SUBAGENT_TASK_IDS_ATTR);
+
+            // The next turn on the same executor starts from a clean scope: nothing carries over as unread.
+            stub.enqueue(LlmResponse.text("done"));
+            executor.execute(context, OrcaAgentExecutionRequest.builder().userInput("again")
+                    .sessionId(SessionId.of("conv-lt-unread-next")).build());
+            assertThat(turnSpan(store, "conv-lt-unread-next").getAttributes())
+                    .doesNotContainKey(OrcaAgentExecutor.UNREAD_SUBAGENT_TASK_IDS_ATTR);
         }
 
         @Test
@@ -294,17 +301,22 @@ class OrcaAgentExecutorLoopTransitionTest {
             final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
             final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
             final RecordingLlmClient stub = new RecordingLlmClient();
-            stub.enqueue(LlmResponse.text("done"));
             final OrcaAgentExecutor executor = createExecutor(new TracingLlmClient(stub, tracer));
             executor.tracer = tracer;
 
-            executor.execute(createContext(new DefaultToolRegistry(), 5),
-                    OrcaAgentExecutionRequest.builder().userInput("hi")
-                            .executionAttributes(Map.of("aimon.subagent.receivedTaskId", 42))
-                            .sessionId(SessionId.of("conv-lt-plain")).build());
+            // A non-string and a blank value are both ignored.
+            for (Object value : List.of(42, " ")) {
+                stub.enqueue(LlmResponse.text("done"));
+                final String sessionId = "conv-lt-plain-" + value.toString().isBlank();
+                executor.execute(createContext(new DefaultToolRegistry(), 5),
+                        OrcaAgentExecutionRequest.builder().userInput("hi")
+                                .executionAttributes(Map.of("aimon.subagent.receivedTaskId", value))
+                                .sessionId(SessionId.of(sessionId)).build());
 
-            assertThat(turnSpan(store, "conv-lt-plain").getAttributes()).doesNotContainKeys(
-                    OrcaAgentExecutor.RECEIVED_SUBAGENT_TASK_IDS_ATTR, OrcaAgentExecutor.UNREAD_SUBAGENT_TASK_IDS_ATTR);
+                assertThat(turnSpan(store, sessionId).getAttributes()).doesNotContainKeys(
+                        OrcaAgentExecutor.RECEIVED_SUBAGENT_TASK_IDS_ATTR,
+                        OrcaAgentExecutor.UNREAD_SUBAGENT_TASK_IDS_ATTR);
+            }
         }
     }
 
