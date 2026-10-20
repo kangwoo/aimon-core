@@ -259,6 +259,18 @@ class SubagentBackedSkillForkExecutorTest {
     }
 
     @Test
+    void fork_IsOneForkDeeperThanTheCaller() {
+        assertThat(captureEnvFor(contextWithExecutionId("ctx-42")).getForkDepth()).isEqualTo(1);
+    }
+
+    @Test
+    void fork_InsideAFork_IsOneDeeperThanThatFork() {
+        final ToolContext insideFork = ToolContext.builder().putAll(contextWithExecutionId("ctx-42").getContext())
+                .put(ToolContextKeys.FORK_DEPTH, 2).build();
+        assertThat(captureEnvFor(insideFork).getForkDepth()).isEqualTo(3);
+    }
+
+    @Test
     void fork_WithoutARegistryInTheToolContext_FallsBackToTheConstructorOne() {
         assertThat(captureEnvFor(contextWithExecutionId("ctx-42")).getHookRegistry()).isSameAs(hookRegistry);
     }

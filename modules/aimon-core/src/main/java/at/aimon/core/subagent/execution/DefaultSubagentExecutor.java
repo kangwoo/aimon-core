@@ -51,6 +51,7 @@ import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.DefaultParallelToolDispatcher;
+import at.aimon.core.agent.tool.DispatchOptions;
 import at.aimon.core.agent.tool.InterruptToolKeys;
 import at.aimon.core.agent.tool.ParallelToolDispatcher;
 import at.aimon.core.agent.tool.SideEffectLevel;
@@ -482,6 +483,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                         .stalledIterationGuard(new StalledIterationGuard()).quotaGuard(request.getQuotaGuard())
                         .startTime(Instant.now()).toolContext(toolContext).sessionRegistry(sessionRegistry)
                         .coordinator(coordinator).goal(goal).executionAttributes(request.getExecutionAttributes())
+                        .forkDepth(request.getForkDepth())
                         // Snapshot the volatile tracing fields once, so one execution traces consistently.
                         .tracer(tracer).tracePayloadPolicy(tracePayloadPolicy).build();
 
@@ -898,6 +900,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // Its run identity goes here instead — unique per fork, so per-run tool state stays partitioned rather than
         // bleeding into the parent's, and never forwarded, so a nested fork cannot mistake it for an inherited session.
         builder.put(ToolContextKeys.EXECUTION_ID, executionId);
+        // How deep this fork is, so a fork it spawns is labelled one deeper. Read-only for the fork's tools.
+        builder.put(ToolContextKeys.FORK_DEPTH, request.getForkDepth());
         // Which is why the invoking session is published beside it: an execution id names nobody and so grants
         // nothing, so a policy looking for the user's decision must ask under the id the user actually answered for.
         // Absent for runs nobody asked for (scheduled tasks), which inherit nothing — hence the guard,
@@ -1120,8 +1124,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // shared
         // worker thread under the parallel path, so the sink must be thread-safe — the store's append is. The gate uses
         // the per-session registry (the same source executeSingleTool reads interrupt behaviour from). With the
-        // default sequential dispatcher this is 1:1 equivalent to the previous for-loop.
+        // default sequential dispatcher this is 1:1 equivalent to the previous for-loop. The fork's depth goes along so
+        // a dedicated-thread dispatcher can decide whether a fork this deep may fan out; any other dispatcher ignores
+        // it.
         return parallelToolDispatcher.dispatch(toolUses, lc.sessionRegistry,
+                DispatchOptions.builder().forkDepth(lc.forkDepth).build(),
                 toolUse -> executeSingleTool(lc, toolContext, toolUse, iterationCount),
                 toolUse -> stream(lc, "\n→ " + toolUse.getName() + "\n"),
                 (toolUse, result) -> stream(lc, formatStreamedToolResult(toolUse, result)));
@@ -1619,6 +1626,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         private final InterruptCoordinator coordinator;
         private final Map<String, Object> executionAttributes;
         private final String goal;
+        /** How many forks deep this execution is (from the request); handed to the tool dispatcher. */
+        private final int forkDepth;
         /** The executor's tracer, snapshotted once per execution. */
         private final Tracer tracer;
         /** The executor's payload capture policy, snapshotted once per execution. */
@@ -1640,6 +1649,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             this.coordinator = b.coordinator;
             this.executionAttributes = b.executionAttributes;
             this.goal = b.goal;
+            this.forkDepth = b.forkDepth;
             this.tracer = b.tracer;
             this.tracePayloadPolicy = b.tracePayloadPolicy;
         }
@@ -1688,6 +1698,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             private InterruptCoordinator coordinator;
             private Map<String, Object> executionAttributes;
             private String goal;
+            private int forkDepth = 1;
             private Tracer tracer;
             private TracePayloadPolicy tracePayloadPolicy;
 
@@ -1763,6 +1774,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
             private Builder goal(String goal) {
                 this.goal = goal;
+                return this;
+            }
+
+            private Builder forkDepth(int forkDepth) {
+                this.forkDepth = forkDepth;
                 return this;
             }
 

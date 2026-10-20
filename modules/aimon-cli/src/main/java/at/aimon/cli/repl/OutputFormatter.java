@@ -183,6 +183,24 @@ public class OutputFormatter {
      *            The type of executor invoking the tools
      */
     public void displayToolCall(String toolName, String input, InvokerType invokerType) {
+        displayToolCall(toolName, input, invokerType, null);
+    }
+
+    /**
+     * Displays a tools call with executor type context and, when several subagents run at once, a label naming the
+     * one that made the call: {@code [Tool] (Explore#3fa2c1d0) Read: ...}. A {@code null} label prints exactly what
+     * {@link #displayToolCall(String, String, InvokerType)} prints.
+     *
+     * @param toolName
+     *            The name of the tools being called
+     * @param input
+     *            The input parameters as a formatted string
+     * @param invokerType
+     *            The type of executor invoking the tools
+     * @param label
+     *            the calling fork's label, or {@code null} for none
+     */
+    public void displayToolCall(String toolName, String input, InvokerType invokerType, String label) {
         if (!settings.isShowToolCalls()) {
             return;
         }
@@ -197,8 +215,10 @@ public class OutputFormatter {
         }
 
         String suffix = hasContent(input) ? ": " + input : "";
-        colorPrintln(indent + "[Tool] " + toolName + suffix,
-                () -> ansi().a(indent).fgYellow().a("[Tool] ").reset().fgCyan().a(toolName).reset()
+        String prefix = label != null ? "(" + label + ") " : "";
+        colorPrintln(indent + "[Tool] " + prefix + toolName + suffix,
+                () -> ansi().a(indent).fgYellow().a("[Tool] ").reset().fgBrightBlack().a(prefix).reset().fgCyan()
+                        .a(toolName).reset()
                         .a(hasContent(input) ? ansi().a(": ").fgBrightBlack().a(input).reset().toString() : ""));
     }
 
@@ -224,13 +244,30 @@ public class OutputFormatter {
      *            the goal/prompt (truncated and single-lined for display)
      */
     public void displaySubagentLaunch(String subagentName, String goal) {
+        displaySubagentLaunch(subagentName, goal, null);
+    }
+
+    /**
+     * Displays a subagent launch line with a label telling concurrent forks of the same subagent apart:
+     * {@code [Subagent] Explore#3fa2c1d0: ...}. A {@code null} label prints exactly what
+     * {@link #displaySubagentLaunch(String, String)} prints.
+     *
+     * @param subagentName
+     *            the subagent being launched
+     * @param goal
+     *            the goal/prompt (truncated and single-lined for display)
+     * @param label
+     *            the short task id appended to the name after {@code #}, or {@code null} for none
+     */
+    public void displaySubagentLaunch(String subagentName, String goal, String label) {
         if (!settings.isShowToolCalls()) {
             return;
         }
         String indent = "  ";
         String preview = truncateGoal(goal);
-        colorPrintln(indent + "[Subagent] " + subagentName + (hasContent(preview) ? ": " + preview : ""),
-                () -> ansi().a(indent).fgMagenta().a("[Subagent] ").reset().fgCyan().a(subagentName).reset()
+        String name = label != null ? subagentName + "#" + label : subagentName;
+        colorPrintln(indent + "[Subagent] " + name + (hasContent(preview) ? ": " + preview : ""),
+                () -> ansi().a(indent).fgMagenta().a("[Subagent] ").reset().fgCyan().a(name).reset()
                         .a(hasContent(preview) ? ansi().a(": ").fgBrightBlack().a(preview).reset().toString() : ""));
     }
 
@@ -269,6 +306,10 @@ public class OutputFormatter {
 
         boolean isSuccess = "SUCCESS".equals(status);
         String metrics = " (" + iterations + " iteration(s), " + tokens + " tokens)";
+        // The whole block goes out in one println: PrintStream is synchronized per call, so a block written line by
+        // line
+        // could interleave with another subagent's output when foreground subagents run in parallel.
+        StringBuilder block = new StringBuilder();
 
         if (settings.isColorOutput()) {
             Ansi header = ansi().a(indent).fgMagenta().a("[Subagent Result] ").reset().fgCyan().a(subagentName).reset()
@@ -279,23 +320,24 @@ public class OutputFormatter {
                 header.a(" ").fgRed().bold().a("\u2717 " + status).reset();
             }
             header.fgBrightBlack().a(metrics).reset();
-            System.out.println(header);
+            block.append(header);
         } else {
-            System.out.println(
-                    indent + "[Subagent Result] " + subagentName + " - " + description + " " + status + metrics);
+            block.append(indent + "[Subagent Result] " + subagentName + " - " + description + " " + status + metrics);
         }
 
         if (summary != null && !summary.trim().isEmpty()) {
             String summaryIndent = indent + "  ";
             for (String line : summary.split("\n")) {
+                block.append(System.lineSeparator());
                 if (settings.isColorOutput()) {
                     Ansi color = isSuccess ? ansi().fgGreen() : ansi().fgRed();
-                    System.out.println(summaryIndent + color.a(line).reset());
+                    block.append(summaryIndent + color.a(line).reset());
                 } else {
-                    System.out.println(summaryIndent + line);
+                    block.append(summaryIndent + line);
                 }
             }
         }
+        System.out.println(block);
     }
 
     /**

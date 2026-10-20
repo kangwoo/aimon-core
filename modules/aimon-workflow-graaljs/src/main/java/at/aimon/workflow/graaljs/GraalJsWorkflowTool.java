@@ -37,6 +37,7 @@ import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.tools.CallerAllowedTools;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
+import at.aimon.core.tools.ForkAccess;
 import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.ToolContextKeys;
@@ -278,7 +279,9 @@ public final class GraalJsWorkflowTool extends AbstractTool {
                 .executionEnvironment(ExecutionEnvironmentAccess.of(context).orElse(null))
                 .executionEnvironmentProvider(ExecutionEnvironmentAccess.providerOf(context).orElse(null))
                 // The spawning execution's quota guard: the fork is charged to its keys, never resolves its own.
-                .quotaGuard(context.get(ToolContextKeys.QUOTA_GUARD).orElse(null)).build();
+                .quotaGuard(context.get(ToolContextKeys.QUOTA_GUARD).orElse(null))
+                // One deeper than the calling run.
+                .forkDepth(ForkAccess.childDepthOf(context)).build();
     }
 
     private static Map<String, Object> readArgs(ToolInput input) {

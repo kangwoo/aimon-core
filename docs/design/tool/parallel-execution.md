@@ -62,12 +62,18 @@
 
 - **혼합 배치는 전체 순차다.** 하나라도 `SEQUENTIAL` 이면 배치 전부를 순차로 돌린다. "안전한 것만
   병렬 + 나머지 순차" 로 쪼개는 것은 순서 의존 가능성 때문에 미뤘다 (§9).
+  *그 뒤 바뀌었다 (2026-10-20):* 이 게이트는 그대로이지만, 그 위에 얹는 `DedicatedThreadDispatcher` 가 배치를 구간으로 잘라
+  연속된 `DEDICATED_THREAD` 구간(포그라운드 `Task`)만 따로 펴고 나머지 구간을 이 게이트에 넘긴다 — "쪼개기" 는 그 한 값에
+  대해서만 생겼다. "안전한 것만 병렬" 은 여전히 미뤄져 있다. 근거는 [parallel-foreground-task.md](../subagent/parallel-foreground-task.md) §2.
 - **미등록(hallucinated) 도구명은 `false` 다.** `registry.findByName` 이 빈 `Optional` 이면 게이트가
   떨어지고, 배치 전체가 순차 경로로 내려가 기존과 똑같은 "tool not found" 를 돌려준다.
 - **병렬 가능 InterruptBehavior 는 `NON_INTERRUPTIBLE` 과 `COOPERATIVE` 뿐이다**
   (`DefaultParallelToolDispatcher.java:320-322`). `THREAD_INTERRUPT` / `EXTERNALLY_TERMINATED` 도구는
   terminator 를 **실행 스레드 기준**으로 등록하는데 공유 워커 스레드에서는 그 의미가 모호해진다.
   그래서 `CONCURRENT_SAFE` 로 선언되어 있어도 게이트에서 빠진다.
+  *그 뒤 바뀌었다 (2026-10-20):* 이 집합은 그대로다. `EXTERNALLY_TERMINATED` 인 `Task` 는 풀에 오르지 않고, 호출마다 새로
+  만들고 다시 쓰지 않는 전용 스레드에서 돈다 — 그 스레드에서는 실행 스레드 기준 terminator 의 의미가 모호하지 않다
+  ([parallel-foreground-task.md](../subagent/parallel-foreground-task.md) §2.3).
 
 게이트 판정은 dispatch 직전 **호출 스레드에서 1회** 수행된다. `DefaultToolRegistry` 는 thread-safe 가
 아니지만, 한 턴 동안 register/unregister 로 변경되지 않으므로(동시 쓰기 없음) 게이트와 워커의 동시
@@ -172,6 +178,8 @@ iteration 에 걸쳐 정상 동작한다.
 
 나머지는 전부 기본값 `SEQUENTIAL` 이다 — `EditTool`/`WriteTool`(파일 변조 충돌), `BashTool`(부수효과 +
 `THREAD_INTERRUPT`), `TodoWriteTool`(공유 상태 변조).
+*그 뒤 바뀌었다 (2026-10-20):* `TaskTool` 은 세 번째 값 `DEDICATED_THREAD` 를 선언한다. 이 게이트에서는 `SEQUENTIAL` 과
+같이 떨어지고, 전용 스레드 데코레이터가 설치되었을 때만 따로 펴진다 ([parallel-foreground-task.md](../subagent/parallel-foreground-task.md)).
 
 선언 체크리스트(부수효과·공유 상태·InterruptBehavior·훅 thread-safety·외부 리소스 경합)는 사용자
 문서인 [도구 개발 가이드](../../features/tool/tool-development-guide.md#동시-실행-안전성-concurrencybehavior)
@@ -220,6 +228,8 @@ iteration 에 걸쳐 정상 동작한다.
 
 "읽기지만 다른 읽기와만 안전" 같은 세분화는 넣지 않았다. 리소스 키 기반 충돌 회피
 (`RESOURCE_EXCLUSIVE(key)` 류)는 실제로 그것을 요구하는 도구가 나타나면 그때 확장한다 (§9).
+*그 뒤 바뀌었다 (2026-10-20):* 세 번째 값 `DEDICATED_THREAD` 가 생겼다 — 세분화가 아니라 **다른 메커니즘**(공유 풀 대신 호출마다
+새 스레드)에 대한 동의다. 이 게이트는 그것을 `SEQUENTIAL` 로 읽는다 ([parallel-foreground-task.md](../subagent/parallel-foreground-task.md) §2.2).
 
 ### 8.3 이름이 `ConcurrencyPolicy` 가 아니라 `ConcurrencyBehavior` 인 이유
 
@@ -241,7 +251,7 @@ tool-use id 가 있어 렌더러가 정합을 맞춘다.
 |------|------|
 | 부분 병렬화 (혼합 배치에서 안전한 부분집합만 병렬) | 순서 의존 분석이 필요해 보류. 지금은 전체 순차 |
 | 리소스 키 기반 세분화 (`RESOURCE_EXCLUSIVE(key)`) | 요구하는 도구가 나타나면 |
-| `THREAD_INTERRUPT` 도구의 병렬 | 범위 밖. cross-thread terminator 의미가 모호 |
+| `THREAD_INTERRUPT` 도구의 병렬 | 범위 밖. cross-thread terminator 의미가 모호. *그 뒤 (2026-10-20):* 풀 경로는 여전히 범위 밖이고, `DEDICATED_THREAD` 를 선언한 도구(`Task`)는 전용 스레드 경로로 동시에 돈다 — [parallel-foreground-task.md](../subagent/parallel-foreground-task.md) |
 | 도구 간 의존성 그래프 자동 추론 | 과도한 복잡성 — 채택하지 않음 |
 | 모델 신호만으로의 무조건 병렬 | 채택하지 않음 (§2 가 이 문서의 결론) |
 | virtual thread 전환 | Java 21 채택 시 bounded platform pool 을 교체 가능. `ParallelToolDispatcher` 인터페이스는 불변 |
@@ -277,5 +287,6 @@ tool-use id 가 있어 렌더러가 정합을 맞춘다.
 - [orca-executor.md](../agent-execution/orca-executor.md) — §11 스트리밍 툴 중첩(G7)
 - [interrupt.md](../agent-execution/interrupt.md) — `InterruptBehavior` / `InterruptCoordinator` 분리 (본 설계의 선례)
 - [side-effect-axes.md](side-effect-axes.md) — `SideEffectLevel` 과의 축 분리
+- [parallel-foreground-task.md](../subagent/parallel-foreground-task.md) — 세 번째 값 `DEDICATED_THREAD` 와 그것을 펴는 데코레이터 (포그라운드 `Task` 병렬 실행)
 - [artifact.md](../agent-execution/artifact.md) — `ArtifactCollector` 의 병렬 안전 설계
 - [SOLID 원칙](../../project/solid-principles.md)

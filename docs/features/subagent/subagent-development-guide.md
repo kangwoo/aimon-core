@@ -442,7 +442,7 @@ public final class ClockSubagentBehavior implements SubagentBehavior {
 여러 서브에이전트를 **동시에** 돌려 한 턴의 벽시계 시간을 줄이고 싶을 때가 있습니다. 이때 `Task` 툴을
 `CONCURRENT_SAFE`로 만들어 foreground에서 병렬화하려는 시도는 하지 마세요 — `Task`는
 `EXTERNALLY_TERMINATED` 인터럽트 동작을 가지므로 병렬 게이트(§도구 병렬 실행 가이드)에서 **자동 제외**됩니다.
-팬아웃은 **백그라운드 경로**로 표현합니다.
+팬아웃은 **백그라운드 경로**로 표현하거나, 호스트가 켰다면 아래 "포그라운드 병렬 실행" 을 씁니다.
 
 ### 메커니즘
 
@@ -501,6 +501,23 @@ OrcaAgentExecutor executor = new OrcaAgentExecutorFactory()
   → thread/LLM fan-out은 상한하되 버스트는 거부하지 않음("결국 전부 실행").
 - **큐를 명시**하면 포화 시 초과분을 거부해 load-shedding으로 동작합니다.
 - 상한을 넘는 스폰은 **거부되지 않고 큐에서 대기**하다가 슬롯이 나면 실행됩니다(기본 설정 기준).
+
+### 포그라운드 병렬 실행과 같은 파일
+
+호스트가 `OrcaAgentExecutorFactory.withDedicatedThreadConfig(DedicatedThreadConfig.enabled(n))` 을 켰다면, 한 응답에 담긴
+**연속된 포그라운드 `Task` 호출**은 결과를 기다리는 그대로 동시에 돕니다 — `Task` 는 `ConcurrencyBehavior.DEDICATED_THREAD` 를
+선언하고, 호출마다 새로 만들고 다시 쓰지 않는 스레드를 받습니다. 결과는 `tool_use` 순서로 돌아오고, 부모가 취소되면 모든
+자식이 멈춥니다. 켜는 법과 상한은 [도구 병렬 실행 가이드 §2.4](../tool/parallel-tool-execution-guide.md) 에 있습니다.
+
+같은 파일을 둘 이상의 포크가 고치게 하지 마세요. 프레임워크는 막지 않고, 대신 잃어버린 수정을 **명시적 거절**로 바꿉니다 —
+포크 A 와 B 가 같은 파일을 읽은 뒤 A 가 고치면, B 의 `Edit` 는 "File changed since it was read; Read it again" 으로 거절됩니다.
+모델에게 이 지침을 주려면 에이전트 지시문이나 시스템 프롬프트에 적습니다(도구 설명은 기능이 꺼져도 같아야 하므로 바꾸지
+않았습니다).
+
+- 서로 다른 파일 · 서로 다른 디렉터리를 맡기는 것이 기본입니다. 같은 파일이 필요하면 읽기만 병렬로 하고 쓰기는 부모가 합니다.
+- 기능이 켜지면 각 포크의 실행 속성에 자기 task id 가 `aimon.subagent.task_id`(`ForkAccess.TASK_ID_ATTRIBUTE`)로 실립니다.
+  포크의 `SubagentStart`/`SubagentStop` 훅과 포크 안 도구의 훅이 같은 값을 보므로, 동시에 도는 같은 종류의 포크를 구분하는 데
+  씁니다. 중첩 포크는 자기 id 로 덮어씁니다. 기능이 꺼져 있으면 이 키는 없습니다.
 
 ### 언제 쓰나
 

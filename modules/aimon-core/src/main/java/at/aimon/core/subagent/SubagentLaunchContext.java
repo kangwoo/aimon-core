@@ -113,6 +113,7 @@ public final class SubagentLaunchContext {
     private final ExecutionEnvironmentProvider executionEnvironmentProvider;
     private final QuotaGuard quotaGuard;
     private final ForkGoalRenderer forkGoalRenderer;
+    private final int forkDepth;
 
     private SubagentLaunchContext(Builder builder) {
         agentRuntimeId = Objects.requireNonNull(builder.agentRuntimeId, "Agent runtime ID cannot be null");
@@ -146,6 +147,10 @@ public final class SubagentLaunchContext {
         executionEnvironmentProvider = builder.executionEnvironmentProvider;
         quotaGuard = builder.quotaGuard != null ? builder.quotaGuard : QuotaGuard.disabled();
         forkGoalRenderer = builder.forkGoalRenderer;
+        if (builder.forkDepth < 1) {
+            throw new IllegalArgumentException("forkDepth must be >= 1, got: " + builder.forkDepth);
+        }
+        forkDepth = builder.forkDepth;
     }
 
     /**
@@ -450,6 +455,18 @@ public final class SubagentLaunchContext {
     }
 
     /**
+     * Returns how many forks deep the fork launched with this context is: 1 for a fork its spawner started from a run
+     * with no fork ancestor (a session's turn), the spawner's own depth plus one for a fork started inside a fork.
+     * Spawn sites that have a {@code ToolContext} set it from {@code ForkAccess.childDepthOf(context)}; a context
+     * nobody labelled keeps the default 1, because a fork is at least one deep.
+     *
+     * @return the fork depth (always &gt;= 1)
+     */
+    public int getForkDepth() {
+        return forkDepth;
+    }
+
+    /**
      * Returns a builder seeded with every field of this launch context, for deriving a variant that shares all borrowed
      * collaborators (registries, stores, model, ...) but overrides selected fields.
      *
@@ -474,7 +491,7 @@ public final class SubagentLaunchContext {
                 .messageQueueManager(messageQueueManager).parentEventSink(parentEventSink)
                 .callerAllowedTools(callerAllowedTools).executionEnvironment(executionEnvironment)
                 .executionEnvironmentProvider(executionEnvironmentProvider).quotaGuard(quotaGuard)
-                .forkGoalRenderer(forkGoalRenderer);
+                .forkGoalRenderer(forkGoalRenderer).forkDepth(forkDepth);
     }
 
     @Override
@@ -511,6 +528,7 @@ public final class SubagentLaunchContext {
         private ExecutionEnvironmentProvider executionEnvironmentProvider;
         private QuotaGuard quotaGuard;
         private ForkGoalRenderer forkGoalRenderer;
+        private int forkDepth = 1;
 
         private Builder() {
         }
@@ -832,6 +850,18 @@ public final class SubagentLaunchContext {
          */
         public Builder forkGoalRenderer(ForkGoalRenderer forkGoalRenderer) {
             this.forkGoalRenderer = forkGoalRenderer;
+            return this;
+        }
+
+        /**
+         * Sets how many forks deep the launched fork is.
+         *
+         * @param forkDepth
+         *            the fork depth (validated &gt;= 1 in {@link #build()}); defaults to 1
+         * @return this builder
+         */
+        public Builder forkDepth(int forkDepth) {
+            this.forkDepth = forkDepth;
             return this;
         }
 

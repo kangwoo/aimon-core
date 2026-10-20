@@ -230,6 +230,22 @@ class GraalJsWorkflowToolTest extends AbstractGraalJsRunTest {
     }
 
     @Test
+    @DisplayName("a foreground run's subagents are one fork deeper than the caller")
+    void foregroundSubagentsAreOneForkDeeper() {
+        final ToolContext insideFork = ToolContext.builder()
+                .put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeId.of("agent:test"))
+                .put(ToolContextKeys.FORK_DEPTH, 1).build();
+
+        final ToolResult result = tool(null).execute(
+                ToolInput.of(Map.of("script", "return agent({ agentType: 'a', goal: 'g' }).text;")), insideFork);
+
+        assertThat(result.isSuccess()).as(result.getContent()).isTrue();
+        final ArgumentCaptor<SubagentLaunchContext> env = ArgumentCaptor.forClass(SubagentLaunchContext.class);
+        verify(manager).execute(env.capture(), any(Subagent.class), anyString());
+        assertThat(env.getValue().getForkDepth()).isEqualTo(2);
+    }
+
+    @Test
     @DisplayName("an active skill guard refuses background mode, and the runner is never reached")
     void activeSkillGuardRefusesBackgroundMode() {
         final WorkflowRunner backgroundRunner = mock(WorkflowRunner.class);

@@ -122,6 +122,8 @@ class AimonDocumentedPropertiesTest {
             // A different product's configuration file. The CLI reads aimon.yaml; the starter binds aimon.* from
             // the Spring environment. Same prefix, unrelated trees.
             Map.entry("aimon.openai.key", "CLI aimon.yaml key, not a starter property"),
+            // An execution attribute key (ForkAccess.TASK_ID_ATTRIBUTE), carried in a fork's execution attributes.
+            Map.entry("aimon.subagent.task_id", "execution attribute key, parallel foreground Task"),
             Map.entry("aimon.openai.model", "CLI aimon.yaml key, not a starter property"),
             Map.entry("aimon.java-conventions", "Gradle script plugin id"),
             Map.entry("aimon.publishable", "Gradle script plugin id"),

@@ -88,6 +88,26 @@ class SubagentLaunchContextTest {
     }
 
     @Test
+    void forkDepth_defaultsToOne_andToBuilderCopiesIt() {
+        final SubagentLaunchContext unlabelled = SubagentLaunchContext.builder().agentRuntimeId(CONTEXT_ID)
+                .subagentRegistry(SUBAGENT_REGISTRY).toolRegistry(TOOL_REGISTRY).hookRegistry(HOOK_REGISTRY)
+                .defaultModel(DEFAULT_MODEL).build();
+        assertThat(unlabelled.getForkDepth()).isEqualTo(1);
+
+        final SubagentLaunchContext nested = unlabelled.toBuilder().forkDepth(3).build();
+        assertThat(nested.getForkDepth()).isEqualTo(3);
+        assertThat(nested.toBuilder().build().getForkDepth()).isEqualTo(3);
+    }
+
+    @Test
+    void forkDepth_belowOne_rejected() {
+        assertThatThrownBy(() -> SubagentLaunchContext.builder().agentRuntimeId(CONTEXT_ID)
+                .subagentRegistry(SUBAGENT_REGISTRY).toolRegistry(TOOL_REGISTRY).hookRegistry(HOOK_REGISTRY)
+                .defaultModel(DEFAULT_MODEL).forkDepth(0).build()).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("forkDepth");
+    }
+
+    @Test
     void builder_nullRuntimeId_throwsNullPointerException() {
         assertThatThrownBy(() -> SubagentLaunchContext.builder().subagentRegistry(SUBAGENT_REGISTRY)
                 .toolRegistry(TOOL_REGISTRY).hookRegistry(HOOK_REGISTRY).defaultModel(DEFAULT_MODEL).build())

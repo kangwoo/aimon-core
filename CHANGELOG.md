@@ -7,6 +7,38 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: parallel foreground `Task` — consecutive subagent calls of one batch run at once, opt-in
+
+Foreground `Task` calls in one LLM response used to run one after another. With
+`OrcaAgentExecutorFactory.withDedicatedThreadConfig(DedicatedThreadConfig.enabled(n))`, each run of consecutive
+foreground `Task` calls fans out onto dedicated threads — one per call, created for it and never reused, so a late
+terminator interrupt dies with its thread instead of hitting a pooled worker's next task. Results still come back in
+`tool_use` order, other tools keep their existing rules, and a parent cancel reaches every child. Off by default; with
+it off nothing is installed. Design: `docs/design/subagent/parallel-foreground-task.md`.
+
+- **`ConcurrencyBehavior.DEDICATED_THREAD`**, declared by `TaskTool`. The batch gate treats it as `SEQUENTIAL`, so the
+  pool path is unchanged; `DedicatedThreadDispatcher` (a `ParallelToolDispatcher` decorator) fans those segments out.
+- **`DedicatedThreadConfig`** — `maxThreads` (default 4) bounds dedicated threads across everything one factory built;
+  a call that finds no free permit runs inline on the calling thread instead of waiting, so nesting cannot deadlock.
+  `maxForkDepth` (default 1) lets only a session's turn fan out unless raised; forks now carry their depth
+  (`ToolContextKeys.FORK_DEPTH`, `SubagentLaunchContext.getForkDepth()`, read through `ForkAccess`).
+- **`ParallelToolDispatcher`** gains two default methods: a `dispatch` overload taking `DispatchOptions` (the fork depth)
+  and `routesHarvestTail()`. Existing implementations are unaffected.
+- With the feature on, each fork carries its task id as the execution attribute `aimon.subagent.task_id`
+  (`ForkAccess.TASK_ID_ATTRIBUTE`); the CLI labels concurrent forks (`[Subagent] Explore#3fa2c1d0`,
+  `[Tool] (Explore#3fa2c1d0) Read`) and an approval prompt raised inside a fork starts with `[task 3fa2c1d0]`.
+
+### Changed (behaviour change): the same approval question asked concurrently is asked once; the CLI prompt is one at a time
+
+- **`SideEffectApprovalGate`** now shares the question in front of the user per (scope, tool): concurrent calls of the
+  same tool in the same session prompt once and share the answer; different questions never wait on each other. This
+  also changes two configurations reachable with the new feature off — background forks, and a pool-parallel batch of
+  `CONCURRENT_SAFE` tools that the gate covers — where the same question used to be asked twice.
+- **`InteractiveAskPromptHandler`** (CLI) shows one prompt at a time. A caller interrupted while waiting for the console,
+  or already interrupted when its turn comes, is denied without a prompt.
+- **`OutputFormatter.displaySubagentResult`** (CLI) writes its multi-line block in one call so concurrent subagents'
+  output cannot interleave inside it. The bytes are unchanged.
+
 ### Added: the TURN span records background tasks it received outside the loop or never read (ST-12)
 
 Closes the two cases #293 left unrecorded, both on the TURN span under the same key family:

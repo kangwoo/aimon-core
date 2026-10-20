@@ -88,6 +88,33 @@ ToolConcurrencyConfig.builder().enabled(true).maxConcurrency(8).perBatchMax(2).b
 > 못한다 — 대화/테넌트 단위 공정성이나 클러스터 전역 상한은 도구 디스패처가 아니라 세션/요청 수용(admission)
 > 레이어에서 다뤄야 한다.
 
+### 2.4 포그라운드 Task 병렬 실행 (DedicatedThreadConfig) — 선택
+
+한 응답에 담긴 포그라운드 `Task`(서브에이전트) 호출은 위 게이트로는 병렬화되지 않는다 — `Task` 는 실행 스레드를
+인터럽트하는 terminator 를 등록하므로 공유 풀에 오르면 늦게 도착한 인터럽트가 워커의 다음 작업에 걸린다. 그래서 `Task` 는
+`ConcurrencyBehavior.DEDICATED_THREAD` 를 선언하고, 별도 스위치를 켜면 **연속된 `Task` 호출 구간**만 호출마다 새로 만들고
+다시 쓰지 않는 전용 스레드에서 동시에 돈다:
+
+```java
+OrcaAgentExecutor executor = new OrcaAgentExecutorFactory()
+        .withDedicatedThreadConfig(DedicatedThreadConfig.enabled(4))  // 전용 스레드 최대 4개
+        .create(llmClient, transcriptManager);
+
+// 포크 안의 Task 도 펴려면 깊이 상한을 올린다 (기본 1 = 세션의 턴만)
+DedicatedThreadConfig.builder().enabled(true).maxThreads(4).maxForkDepth(2).build();
+```
+
+- `ToolConcurrencyConfig` 와 **독립**이다. 둘 다 켜면 데코레이터가 풀 디스패처를 감싸고, `Task` 가 아닌 구간은 풀 게이트가
+  그대로 판정한다. 섞인 배치는 구간 순서대로 돌며(앞 구간이 끝나야 다음 구간이 시작) 결과는 `tool_use` 순서다.
+- `maxThreads` 는 **팩토리 전체**(메인 실행기 + 포크 실행기, 모든 세션)의 상한이다. 허가가 없으면 그 호출은 기다리지 않고
+  호출 스레드에서 오늘처럼 돈다 — 그래서 한 배치에서 동시에 도는 포그라운드 서브에이전트는 최대 `maxThreads + 1` 이고, 중첩
+  fan-out 이 교착하지 않는다.
+- 켜면 각 포크가 실행 속성 `aimon.subagent.task_id`(`ForkAccess.TASK_ID_ATTRIBUTE`)에 자기 task id 를 싣는다. CLI 는 그것으로
+  `[Subagent] Explore#3fa2c1d0` · `[Tool] (Explore#3fa2c1d0) Read` 처럼 포크를 구분하고, 포크 안에서 묻는 승인 프롬프트는
+  `[task 3fa2c1d0]` 로 시작한다.
+- 꺼져 있으면(기본) 아무것도 설치되지 않고 `Task` 는 지금처럼 순서대로 돈다. 설계 근거는
+  [parallel-foreground-task.md](../../design/subagent/parallel-foreground-task.md).
+
 ---
 
 ## 3. 동작 원리
@@ -205,6 +232,9 @@ builder.put(ReadTool.FILE_STAMPS_KEY, new ConcurrentHashMap<>());
 `DefaultHookExecutor`=호출별 로컬 상태 + 불변 context/result, `executionAttributes`=`Map.copyOf` 불변 공유)은
 모두 동시 호출에 안전하다. **남은 책임은 훅 작성자에게 있다.**
 
+포그라운드 `Task` 병렬 실행(§2.4)을 켜면 같은 이야기가 전용 스레드에서도 성립하고, 범위가 서브에이전트 생명주기 훅까지
+넓어진다 — 포크마다 `SubagentStart` → (그 포크의 Pre/PostTool …) → `SubagentStop` 순서는 지켜지지만 포크 **사이**의 순서는 없다.
+
 #### (1) 훅 내부 가변 상태 → 레이스
 
 사용자가 등록한 Pre/PostTool 훅이 내부 가변 상태(turn 카운터, "직전 tool" 추적, 동기화 없는 컬렉션 등)를
@@ -226,7 +256,9 @@ dispatcher는 **결과 리스트**를 입력 순서로 재조립하지만, **훅
 PreTool/PermissionRequest 훅이 `Decision.ASK`를 반환하면 `AskPromptHandler.resolve()`로 승격되며, 인터랙티브
 핸들러는 사용자 입력으로 블로킹될 수 있다. 두 tool이 동시에 ASK를 띄우면 같은 stdin에서 프롬프트가 경합한다
 (`CONCURRENT_SAFE`=주로 읽기전용이라 드물지만 가능). 인터랙티브 ASK와 병렬을 함께 쓴다면 `AskPromptHandler`가
-프롬프트를 직렬화하도록 보장한다.
+프롬프트를 직렬화하도록 보장한다. CLI 의 `InteractiveAskPromptHandler` 는 콘솔을 한 번에 하나씩 쓰고, 차례를 기다리다
+인터럽트된 호출은 묻지 않고 거절한다. 부작용 도구 승인 게이트(`SideEffectApprovalGate`)는 같은 세션 · 같은 도구의 질문이 동시에
+오면 한 번만 묻고 답을 나눈다.
 
 #### (4) `RewakeService.schedule()` 동시 호출
 
@@ -245,11 +277,13 @@ PostTool 훅의 async rewake는 worker 스레드에서 `RewakeService.schedule(.
 
 | 타입 | 패키지 | 역할 |
 |------|--------|------|
-| `ConcurrencyBehavior` | `at.aimon.core.agent.tool` | `SEQUENTIAL`(기본) / `CONCURRENT_SAFE` enum |
+| `ConcurrencyBehavior` | `at.aimon.core.agent.tool` | `SEQUENTIAL`(기본) / `CONCURRENT_SAFE` / `DEDICATED_THREAD`(§2.4) enum |
 | `Tool#getConcurrencyBehavior()` | `at.aimon.core.agent.tool` | 도구별 정책 선언 (default `SEQUENTIAL`) |
 | `ToolConcurrencyConfig` | `at.aimon.core.agent.tool` | `enabled`(기본 false) + `maxConcurrency`(전역 풀, 기본 4) + `perBatchMax`(배치당 캡, 기본 = maxConcurrency) 불변 설정 |
 | `ParallelToolDispatcher` | `at.aimon.core.agent.tool` | 게이팅·분배·순서 재조립 인터페이스 |
 | `DefaultParallelToolDispatcher` | `at.aimon.core.agent.tool` | bounded daemon pool 구현, `AutoCloseable` |
+| `DedicatedThreadConfig` | `at.aimon.core.agent.tool` | `enabled`(기본 false) + `maxThreads`(팩토리 전체 전용 스레드 수, 기본 4) + `maxForkDepth`(이 깊이 미만의 실행만 편다, 기본 1) 불변 설정 |
+| `DedicatedThreadDispatcher` | `at.aimon.core.agent.tool` | 연속된 `DEDICATED_THREAD` 구간을 전용 스레드로 펴고 나머지를 감싼 디스패처에 넘기는 데코레이터 |
 
 ```java
 // 설정 생성
@@ -298,15 +332,24 @@ new DefaultParallelToolDispatcher(ToolConcurrencyConfig.enabled(4));
 4. 도구가 `THREAD_INTERRUPT`/`EXTERNALLY_TERMINATED`로 선언됨 → 게이트 자동 제외.
 5. 도구 이름이 registry에서 resolve되지 않음(LLM 환각/오타) → 보수적으로 순차.
 6. dispatcher가 `close()`된 상태 → 순차 폴백.
+7. 포그라운드 `Task` 가 순서대로 돈다 → 이 게이트가 아니라 §2.4 의 `DedicatedThreadConfig` 를 켰는지, 실행의 포크 깊이가
+   `maxForkDepth` 미만인지 확인한다.
 
 ---
 
 ## 9. 제한사항 / 알려진 이슈
 
 - **혼합 배치는 전체 순차**. "안전한 것만 병렬 + 나머지 순차"로 쪼개는 부분 병렬화는 순서 의존 위험 때문에
-  의도적으로 제외했다(향후 확장 후보).
-- **`THREAD_INTERRUPT`/`EXTERNALLY_TERMINATED` 도구는 병렬 제외**. cross-thread interrupt 의미가 모호해
-  초기 범위에서 뺐다.
+  의도적으로 제외했다(향후 확장 후보). 예외는 §2.4 의 연속된 `DEDICATED_THREAD` 구간 하나다.
+- **`THREAD_INTERRUPT`/`EXTERNALLY_TERMINATED` 도구는 풀 병렬에서 제외**. cross-thread interrupt 의미가 모호해
+  초기 범위에서 뺐다. `Task` 는 풀이 아니라 전용 스레드 경로(§2.4)로 동시에 돈다.
+- **포그라운드 `Task` 동시 실행 수는 `maxThreads + 1`까지다.** 허가가 없는 호출은 호출 스레드에서 inline 으로 돌기 때문이다.
+  중첩 포크는 `maxForkDepth` 를 올렸을 때만 편다.
+- **백그라운드 `Task` 호출도 전용 허가를 잠깐 쓴다.** 즉시 반환하므로 비용은 작지만, 백그라운드 launch 의 `SubagentStart`
+  가 입력 순서로 찍힌다는 보장이 없고, 한 배치에 백그라운드 launch 가 몰리면 같은 배치의 포그라운드 `Task` 가 inline 으로
+  밀릴 수 있다.
+- **LLM 공급자 rate limit 은 `maxThreads` 로만 조절한다.** 전용 스레드 하나가 서브에이전트 하나, 즉 동시 LLM 호출 하나다. 별도
+  스로틀은 없고 429 는 `LlmCallGateway` 의 재시도 정책이 다룬다.
 - **MCP 도구(`McpTool`)는 `SEQUENTIAL` 유지**. MCP 서버 도구는 임의의 부수효과(쓰기 포함)를 가질 수 있어
   프레임워크가 일괄로 안전성을 보장할 수 없다. 특정 MCP 도구가 읽기 전용·멱등임이 확실할 때만 개별적으로
   검토한다.
@@ -326,4 +369,5 @@ new DefaultParallelToolDispatcher(ToolConcurrencyConfig.enabled(4));
 - [설계 문서: ConcurrencyBehavior — 도구 병렬 실행](../../design/tool/parallel-execution.md)
 - [Tool 개발 가이드](tool-development-guide.md)
 - [InterruptBehavior 설계 문서](../../design/agent-execution/interrupt.md) — capability + coordinator 분리 선례
+- [설계 문서: 포그라운드 Task 병렬 실행](../../design/subagent/parallel-foreground-task.md) — `DEDICATED_THREAD` 와 전용 스레드 데코레이터
 - [SOLID 원칙](../../project/solid-principles.md)

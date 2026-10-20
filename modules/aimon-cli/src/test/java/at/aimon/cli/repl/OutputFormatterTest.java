@@ -11,6 +11,7 @@ import java.io.PrintStream;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -420,6 +421,30 @@ class OutputFormatterTest {
         }
 
         @Test
+        @DisplayName("a fork label goes between [Tool] and the tool name; no label prints the unlabelled line")
+        void labelledToolCall() {
+            formatter.displayToolCall("Read", "{path: a}", InvokerType.SUBAGENT, "Explore#3fa2c1d0");
+            formatter.displayToolCall("Read", "{path: a}", InvokerType.SUBAGENT, null);
+            formatter.displayToolCall("Read", "{path: a}", InvokerType.SUBAGENT);
+
+            final String[] lines = getOutput().split(System.lineSeparator());
+            assertThat(lines[0]).endsWith("[Tool] (Explore#3fa2c1d0) Read: {path: a}");
+            assertThat(lines[1]).isEqualTo(lines[2]).endsWith("[Tool] Read: {path: a}");
+        }
+
+        @Test
+        @DisplayName("a launch label follows the subagent name after '#'; no label prints the unlabelled line")
+        void labelledSubagentLaunch() {
+            formatter.displaySubagentLaunch("Explore", "find it", "3fa2c1d0");
+            formatter.displaySubagentLaunch("Explore", "find it", null);
+            formatter.displaySubagentLaunch("Explore", "find it");
+
+            final String[] lines = getOutput().split(System.lineSeparator());
+            assertThat(lines[0]).isEqualTo("  [Subagent] Explore#3fa2c1d0: find it");
+            assertThat(lines[1]).isEqualTo(lines[2]).isEqualTo("  [Subagent] Explore: find it");
+        }
+
+        @Test
         @DisplayName("Should default to MAIN_AGENT when invoker type not specified")
         void shouldDefaultToMainAgentWhenInvokerTypeNotSpecified() {
             formatter.displayToolCall("Read", "/path/to/file");
@@ -443,6 +468,33 @@ class OutputFormatterTest {
             assertThat(output).contains("SUCCESS");
             assertThat(output).contains("5 iteration(s), 1200 tokens");
             assertThat(output).contains("Found 3 issues");
+        }
+
+        @Test
+        @DisplayName("Should write the whole multi-line block in one call, byte for byte the line-by-line output")
+        void shouldWriteTheBlockInOneCall() {
+            final AtomicInteger writes = new AtomicInteger();
+            System.setOut(new PrintStream(outputStream) {
+                @Override
+                public void println(Object x) {
+                    writes.incrementAndGet();
+                    super.println(x);
+                }
+
+                @Override
+                public void println(String x) {
+                    writes.incrementAndGet();
+                    super.println(x);
+                }
+            });
+
+            formatter.displaySubagentResult("  ", "code-analyzer", "Analyze", "FAILURE", 2, 40, "line one\nline two");
+
+            final String sep = System.lineSeparator();
+            assertThat(writes).hasValue(1);
+            assertThat(getOutput())
+                    .isEqualTo("  [Subagent Result] code-analyzer - Analyze FAILURE (2 iteration(s), 40 tokens)" + sep
+                            + "    line one" + sep + "    line two" + sep);
         }
 
         @Test

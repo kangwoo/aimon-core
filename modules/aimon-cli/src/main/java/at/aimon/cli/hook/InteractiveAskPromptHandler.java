@@ -5,6 +5,7 @@ import java.io.PrintStream;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,7 +31,11 @@ import at.aimon.core.hook.execution.Decision;
  * fallback &mdash; respecting {@code AIMON_HOOK_ASK_DEFAULT}.
  *
  * <p>
- * Thread-safe.
+ * Thread-safe. Interactive prompts are shown one at a time: a console has one line of input, and two prompts printed
+ * together would leave the user's answer to whichever {@code readLine} won. A caller waiting for its turn can be
+ * interrupted — a cancelled run — and then resolves to {@link Decision#DENY} without printing anything; so does a
+ * caller already interrupted when its turn comes. The prompt being answered cannot be interrupted, since
+ * {@link Console#readLine()} does not respond to interrupts.
  */
 public final class InteractiveAskPromptHandler implements AskPromptHandler {
 
@@ -39,6 +44,7 @@ public final class InteractiveAskPromptHandler implements AskPromptHandler {
     private final Console console;
     private final PrintStream out;
     private final AskPromptHandler nonInteractiveFallback;
+    private final ReentrantLock consoleLock = new ReentrantLock();
 
     /**
      * Creates a handler that uses {@link System#console()} and {@link System#out} and falls back to
@@ -75,6 +81,18 @@ public final class InteractiveAskPromptHandler implements AskPromptHandler {
             return fallback;
         }
         try {
+            consoleLock.lockInterruptibly();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.info("Ask prompt cancelled while waiting for the console; resolving to DENY. prompt={}", prompt);
+            return Decision.DENY;
+        }
+        try {
+            if (Thread.currentThread().isInterrupted()) {
+                log.info("Ask prompt's run was cancelled before it reached the console; resolving to DENY. prompt={}",
+                        prompt);
+                return Decision.DENY;
+            }
             out.print("[ask] " + prompt + " [y/N]: ");
             out.flush();
             final String answer = console.readLine();
@@ -90,6 +108,8 @@ public final class InteractiveAskPromptHandler implements AskPromptHandler {
         } catch (RuntimeException e) {
             log.warn("Ask prompt failed; resolving to DENY (fail-safe). prompt={}", prompt, e);
             return Decision.DENY;
+        } finally {
+            consoleLock.unlock();
         }
     }
 }
