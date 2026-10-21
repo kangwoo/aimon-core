@@ -23,6 +23,9 @@ principal (`LlmUsageKey`), and a fork's summary call booked differently from the
   from the parent. The two-argument overload is unchanged.
 - **Usage keys change** for a caller that set a request principal but no metadata principal, or two different ones:
   those calls are now keyed by the request principal.
+- **Forks spawned by a scheduled routine** (`Task` from a routine step) are now booked to the task owner, which
+  `RoutineExecutor` hands the fork as its request principal; they used to be metered with no principal. Quota was
+  already keyed to the owner, so enforcement is unchanged.
 
 ### Changed (behaviour change): compaction summary calls carry the caller's principal and tags, not just its span position
 

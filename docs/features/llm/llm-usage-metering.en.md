@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/llm/llm-usage-metering.md
-source_commit: 82bcca30
+source_commit: 82bcca3
 ---
 
 # LLM Usage Metering Guide
@@ -115,7 +115,7 @@ When Orca runs a subagent through TaskTool, the parent metadata propagates autom
 | `principal` | `SubagentExecutionRequest.principal` when set, otherwise inherits the parent's value |
 | `tags` | inherits the parent's values |
 
-> **The merge direction is the opposite of Orca's**: Orca is "caller-supplied wins, auto-derived is the fallback", whereas a subagent is "the subagent's identity wins, the parent is the fallback". The asymmetry is deliberate — a sub-execution's token usage is only meaningful to track when it is aggregated under the name of the subagent that actually ran.
+> **The merge direction is the opposite of Orca's**: Orca is "caller-supplied wins, auto-derived is the fallback" (except `principal`, §3.1), whereas a subagent is "the subagent's identity wins, the parent is the fallback". The asymmetry is deliberate — a sub-execution's token usage is only meaningful to track when it is aggregated under the name of the subagent that actually ran.
 
 The same rules apply when you build a `SubagentExecutionRequest` and invoke it yourself. If you want to force a different component/feature tagging, it is cleaner to put another decorator in front of `MeteringLlmClient`.
 

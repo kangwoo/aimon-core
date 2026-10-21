@@ -108,7 +108,7 @@ Orca 가 TaskTool 을 통해 subagent 를 실행하면, 부모 metadata 가 `Sub
 | `principal` | `SubagentExecutionRequest.principal` 이 있으면 그 값, 없으면 parent 값 상속 |
 | `tags` | parent 값 상속 |
 
-> **머지 방향이 Orca 와 반대**: Orca 는 "caller-supplied wins, auto-derive 가 fallback" 이지만 subagent 는 "subagent identity wins, parent 가 fallback" 이다. 이는 의도된 비대칭이다 — sub-execution 의 토큰 사용량은 항상 실제로 실행된 subagent 이름으로 집계되어야 추적이 의미가 있다.
+> **머지 방향이 Orca 와 반대**: Orca 는 "caller-supplied wins, auto-derive 가 fallback"(`principal` 만 예외, §3.1) 이지만 subagent 는 "subagent identity wins, parent 가 fallback" 이다. 이는 의도된 비대칭이다 — sub-execution 의 토큰 사용량은 항상 실제로 실행된 subagent 이름으로 집계되어야 추적이 의미가 있다.
 
 직접 `SubagentExecutionRequest` 를 만들어 호출하는 경우에도 동일한 규칙이 적용된다. component/feature 를 강제로 다르게 태깅하고 싶다면 `MeteringLlmClient` 앞단에 별도 데코레이터를 두는 편이 깔끔하다.
 

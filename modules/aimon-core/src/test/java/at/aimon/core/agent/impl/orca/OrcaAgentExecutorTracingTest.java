@@ -810,6 +810,24 @@ class OrcaAgentExecutorTracingTest {
     }
 
     @Test
+    @DisplayName("a tool reading the tool context's LLM call metadata sees the request principal")
+    void toolContextMetadataCarriesTheRequestPrincipal() {
+        final RecordingLlmClient stub = new RecordingLlmClient();
+        stub.enqueue(LlmResponse.of("", List.of(ToolUse.of("call-1", "Probe", Map.of())), TokenUsage.of(5, 3, 8)));
+        stub.enqueue(LlmResponse.text("done"));
+        final CapturingTool probe = new CapturingTool("Probe");
+        final DefaultToolRegistry toolRegistry = new DefaultToolRegistry();
+        toolRegistry.register(probe);
+        final Principal alice = Principal.user("alice");
+
+        createExecutor(stub).execute(createContext(toolRegistry), OrcaAgentExecutionRequest.builder().userInput("hi")
+                .sessionId(SessionId.of("conv-tool-principal")).principal(alice).build());
+
+        assertThat(probe.received).singleElement()
+                .satisfies(metadata -> assertThat(metadata.getPrincipal()).contains(alice));
+    }
+
+    @Test
     @DisplayName("ST-9: two turns on one executor each hand their own tags to their summary call")
     void consecutiveTurnsDoNotShareTurnTags() {
         final RecordingLlmClient stub = new RecordingLlmClient();

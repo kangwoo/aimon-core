@@ -3458,11 +3458,9 @@ public class OrcaAgentExecutor
      * active span's position, the principal and every tag the caller attached, so a compaction summary call nests in
      * the trace, is booked to the principal whose turn triggered it, and reaches the provider with the same routing
      * and policy tags as the turn's own calls. The principal is the turn's: the request's, which already won over one
-     * in
-     * the caller's metadata when the turn's metadata was resolved. The gate runs before the iteration span opens, so
-     * that position is the turn span.
-     * Component and feature stay the engine's: it merges with caller fields winning, and the turn's
-     * {@code react-loop} feature would otherwise book the summary call.
+     * in the caller's metadata when the turn's metadata was resolved. The gate runs before the iteration span opens,
+     * so that position is the turn span. Component and feature stay the engine's: it merges with caller fields
+     * winning, and the turn's {@code react-loop} feature would otherwise book the summary call.
      *
      * <p>
      * With tracing on the request also carries a {@link TracingCompactionObserver} over that same position, so a

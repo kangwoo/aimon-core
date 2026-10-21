@@ -131,9 +131,8 @@ public final class SubagentExecutionRequest {
      * {@code feature} with subagent-derived values ({@code subagent.getName()} and {@code "subagent"}). Other fields
      * ({@code traceId}, {@code principal}, {@code tags}) are inherited from this metadata, except that
      * {@link #getPrincipal()}, when set, books the fork's calls over the inherited {@code principal} — the same rule
-     * the
-     * main agent's turn applies. This means a caller who
-     * sets {@code component}/{@code feature} on the request will have those fields silently ignored — subagent
+     * the main agent's turn applies. This means a caller who sets {@code component}/{@code feature} on the request
+     * will have those fields silently ignored — subagent
      * execution must always be attributed to the subagent that actually ran, regardless of caller intent. If a caller
      * needs to add orthogonal tags, use {@code tags} instead.
      *
