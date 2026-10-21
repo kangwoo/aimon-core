@@ -110,7 +110,9 @@ public final class ContextRequest {
 
     /**
      * Caller-supplied attribution for any LLM call the engine makes on the caller's behalf (a summary, typically).
-     * The engine merges it with its own defaults so caller fields win on overlap.
+     * The engine merges it with its own defaults so caller fields win on overlap. The framework's executors pass their
+     * own metadata without its call site ({@link LlmCallMetadata#withoutCallSite()}) — principal, group key and tags —
+     * so the summary call carries the caller's tags while its component and feature stay the engine's.
      */
     public Optional<LlmCallMetadata> getCallMetadata() {
         return Optional.ofNullable(callMetadata);

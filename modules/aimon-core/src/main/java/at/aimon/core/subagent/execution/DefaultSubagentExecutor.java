@@ -739,9 +739,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * log, NONE is a no-op).
      *
      * <p>
-     * With tracing on, the request carries the fork's span position — the run root, since the gate runs before the
-     * iteration span opens — and a {@link TracingCompactionObserver} over it, so a compaction opens a COMPACTION span
-     * there and its summary LLM span nests under that.
+     * The request carries the fork's metadata without its call site — principal, group key and the tags inherited
+     * from the caller — so the summary call reaches the provider with the same tags as the fork's own calls. With
+     * tracing on, those tags include the fork's span position — the run root, since the gate runs before the
+     * iteration span opens — and the request also carries a {@link TracingCompactionObserver} over it, so a compaction
+     * opens a COMPACTION span there and its summary LLM span nests under that.
      *
      * @param lc
      *            the loop context
@@ -763,15 +765,20 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 .model(lc.modelConfig).hookRegistry(lc.hookRegistry()).executionEnvironment(lc.executionEnvironment())
                 .executionCancellation(lc.coordinator.getSignal())
                 .caller(ContextCaller.builder().executionId(lc.executionId).build());
-        // Only the span position, never the iteration's attribution: the engine merges with caller fields winning, so
-        // handing it the whole metadata would book the summary call under this fork's feature instead of COMPACTION.
+        // The fork's metadata without its call site: the span position, the principal and the tags inherited from the
+        // parent travel, so the summary call nests in the trace and reaches the provider with the same routing and
+        // policy tags as the fork's own calls. Component and feature stay out: the engine merges with caller fields
+        // winning, so handing them over would book the summary call under this fork's feature instead of COMPACTION.
         // The group key travels too, or the engine would fill it from the transcript label — this execution id
         // dressed as a session.
-        Spans.traceCarrier(lc.effectiveMetadata).ifPresent(carrier -> {
-            request.callMetadata(carrier);
-            TracingCompactionObserver.under(lc.tracer, carrier, lc.tracePayloadPolicy, lc.coordinator.getSignal(),
-                    compactionSpanAttributes(lc, iterationCount)).ifPresent(request::compactionObserver);
-        });
+        final LlmCallMetadata callMetadata = lc.effectiveMetadata.withoutCallSite();
+        if (!callMetadata.isEmpty()) {
+            request.callMetadata(callMetadata);
+        }
+        Spans.traceCarrier(lc.effectiveMetadata)
+                .flatMap(carrier -> TracingCompactionObserver.under(lc.tracer, carrier, lc.tracePayloadPolicy,
+                        lc.coordinator.getSignal(), compactionSpanAttributes(lc, iterationCount)))
+                .ifPresent(request::compactionObserver);
         final ContextDecision decision = contextEngine.prepare(request.build());
         switch (decision.getAction()) {
             case BLOCK :

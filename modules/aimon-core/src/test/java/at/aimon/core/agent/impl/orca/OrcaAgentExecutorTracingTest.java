@@ -514,8 +514,9 @@ class OrcaAgentExecutorTracingTest {
     }
 
     @Test
-    @DisplayName("ST-5: tracing off, the main turn's context request carries no call metadata")
-    void compactionRequestCarriesNoMetadataWhenTracingOff() {
+    @DisplayName("ST-5: tracing off, a turn with no caller metadata hands the context request only its group key and"
+            + " no observer")
+    void compactionRequestCarriesOnlyTheGroupKeyWhenTracingOff() {
         final RecordingLlmClient stub = new RecordingLlmClient();
         stub.enqueue(LlmResponse.text("done"));
         final List<ContextRequest> requests = new CopyOnWriteArrayList<>();
@@ -525,7 +526,7 @@ class OrcaAgentExecutorTracingTest {
                 OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-off")).build());
 
         assertThat(requests).isNotEmpty().allSatisfy(r -> {
-            assertThat(r.getCallMetadata()).isEmpty();
+            assertThat(r.getCallMetadata()).contains(LlmCallMetadata.builder().traceId("conv-off").build());
             assertThat(r.getCompactionObserver()).isSameAs(CompactionObserver.none());
         });
     }
@@ -670,13 +671,13 @@ class OrcaAgentExecutorTracingTest {
                 .filter(m -> m.getFeature().filter(LlmCallMetadata.Feature.COMPACTION::equals).isPresent()).findFirst()
                 .orElseThrow();
         assertThat(summaryCall.getPrincipal()).contains(alice);
-        // The principal is the only attribution the turn hands over; the rest stays the engine's.
+        // The turn hands over its principal but not its call site: component and feature stay the engine's.
         assertThat(summaryCall.getComponent()).contains("compaction-engine");
         assertThat(SpanContext.readFrom(summaryCall)).isPresent();
     }
 
     @Test
-    @DisplayName("ST-9: tracing off, the main turn's context request still carries the principal, and only it")
+    @DisplayName("ST-9: tracing off, the main turn's context request still carries the principal")
     void compactionRequestCarriesThePrincipalWhenTracingOff() {
         final RecordingLlmClient stub = new RecordingLlmClient();
         stub.enqueue(LlmResponse.text("the summary"));
@@ -695,6 +696,109 @@ class OrcaAgentExecutorTracingTest {
         assertThat(summaryCall.getComponent()).contains("compaction-engine");
         assertThat(summaryCall.getTraceId()).contains("conv-principal-off");
         assertThat(summaryCall.getTags()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("ST-9: the tags a caller attaches to the turn reach the in-place compaction's summary call, under the"
+            + " engine's attribution")
+    void compactionSummaryCallCarriesTheTurnTags() {
+        final RecordingLlmClient stub = new RecordingLlmClient();
+        stub.enqueue(LlmResponse.text("the summary"));
+        stub.enqueue(LlmResponse.text("done"));
+        final OrcaAgentExecutor executor = createExecutor(stub); // tracer left at default Tracer.noop()
+        final Principal alice = Principal.user("alice");
+
+        executor.execute(createContext(new DefaultToolRegistry(), null, compactingEngine(stub)),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-tags"))
+                        .llmCallMetadata(LlmCallMetadata.builder().component("review-bot").feature("pr-review")
+                                .principal(alice).tag("routing", "review").build())
+                        .build());
+
+        final LlmCallMetadata turnCall = stub.metadata.stream()
+                .filter(m -> m.getFeature().filter("pr-review"::equals).isPresent()).findFirst().orElseThrow();
+        final LlmCallMetadata summaryCall = summaryCallOf(stub);
+        assertThat(summaryCall.getTags()).containsEntry("routing", "review");
+        assertThat(summaryCall.getPrincipal()).contains(alice);
+        // The turn's call site stays on the turn's calls; the summary call keeps the engine's.
+        assertThat(turnCall.getComponent()).contains("review-bot");
+        assertThat(summaryCall.getComponent()).contains("compaction-engine");
+        assertThat(summaryCall.getParentComponent()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("ST-9: traced, the rolling engine's summary call carries the turn tags beside its span position")
+    void rollingSummaryCallCarriesTheTurnTagsBesideTheSpanPosition() {
+        final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+        final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
+        final RecordingLlmClient stub = new RecordingLlmClient();
+        stub.enqueue(LlmResponse.text("the summary"));
+        stub.enqueue(LlmResponse.text("done"));
+        final LlmClient traced = new TracingLlmClient(stub, tracer);
+        final OrcaAgentExecutor executor = createExecutor(traced);
+        executor.tracer = tracer;
+
+        executor.execute(createContext(new DefaultToolRegistry(), null, rollingEngine(traced)),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-rolling-tags"))
+                        .llmCallMetadata(LlmCallMetadata.builder().tag("routing", "review").build()).build());
+
+        final LlmCallMetadata summaryCall = summaryCallOf(stub);
+        assertThat(summaryCall.getTags()).containsEntry("routing", "review");
+        assertThat(summaryCall.getComponent()).contains("compaction-engine");
+        // The summary span still nests under the COMPACTION span: the turn tags did not displace the position.
+        final List<TraceSpan> spans = store.bySession("conv-rolling-tags");
+        final TraceSpan compaction = singleOfType(spans, SpanType.COMPACTION);
+        final TraceSpan summary = spans.stream().filter(s -> s.getType() == SpanType.LLM)
+                .filter(s -> LlmCallMetadata.Feature.COMPACTION.equals(s.getAttributes().get("feature"))).findFirst()
+                .orElseThrow();
+        assertThat(summary.getParentSpanId()).contains(compaction.getSpanId());
+    }
+
+    @Test
+    @DisplayName("ST-9: the request's principal wins over one in the turn's metadata for the summary call")
+    void compactionSummaryCallPrefersTheRequestPrincipal() {
+        final RecordingLlmClient stub = new RecordingLlmClient();
+        stub.enqueue(LlmResponse.text("the summary"));
+        stub.enqueue(LlmResponse.text("done"));
+        final OrcaAgentExecutor executor = createExecutor(stub);
+        final Principal alice = Principal.user("alice");
+
+        executor.execute(createContext(new DefaultToolRegistry(), null, compactingEngine(stub)),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-two-principals"))
+                        .principal(alice)
+                        .llmCallMetadata(LlmCallMetadata.builder().principal(Principal.user("bob")).build()).build());
+
+        assertThat(summaryCallOf(stub).getPrincipal()).contains(alice);
+    }
+
+    @Test
+    @DisplayName("ST-9: two turns on one executor each hand their own tags to their summary call")
+    void consecutiveTurnsDoNotShareTurnTags() {
+        final RecordingLlmClient stub = new RecordingLlmClient();
+        stub.enqueue(LlmResponse.text("summary a"));
+        stub.enqueue(LlmResponse.text("done a"));
+        stub.enqueue(LlmResponse.text("summary b"));
+        stub.enqueue(LlmResponse.text("done b"));
+        final OrcaAgentExecutor executor = createExecutor(stub);
+        final OrcaAgentRuntime runtime = createContext(new DefaultToolRegistry(), null, compactingEngine(stub));
+
+        executor.execute(runtime, OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-a"))
+                .llmCallMetadata(LlmCallMetadata.builder().tag("marker", "a").build()).build());
+        executor.execute(runtime, OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-b"))
+                .llmCallMetadata(LlmCallMetadata.builder().tag("other", "b").build()).build());
+
+        final List<LlmCallMetadata> summaries = stub.metadata.stream()
+                .filter(m -> m.getFeature().filter(LlmCallMetadata.Feature.COMPACTION::equals).isPresent()).toList();
+        assertThat(summaries).hasSize(2);
+        assertThat(summaries.get(0).getTags()).containsEntry("marker", "a").doesNotContainKey("other");
+        assertThat(summaries.get(0).getTraceId()).contains("conv-a");
+        assertThat(summaries.get(1).getTags()).containsEntry("other", "b").doesNotContainKey("marker");
+        assertThat(summaries.get(1).getTraceId()).contains("conv-b");
+    }
+
+    private static LlmCallMetadata summaryCallOf(RecordingLlmClient stub) {
+        return stub.metadata.stream()
+                .filter(m -> m.getFeature().filter(LlmCallMetadata.Feature.COMPACTION::equals).isPresent()).findFirst()
+                .orElseThrow();
     }
 
     // ── wiring helpers (mirrors OrcaAgentExecutorParallelToolTest) ───────────────

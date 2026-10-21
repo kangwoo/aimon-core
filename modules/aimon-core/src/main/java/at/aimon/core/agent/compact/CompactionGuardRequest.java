@@ -102,9 +102,10 @@ public final class CompactionGuardRequest {
     }
 
     /**
-     * The caller's metadata for the summary LLM call, merged under the engine's own defaults (caller fields win) — a
-     * traced execution passes only its span position here, so the summary call nests in its trace. Empty when the
-     * caller has none.
+     * The caller's metadata for the summary LLM call, merged under the engine's own defaults (caller fields win) — an
+     * execution passes its own metadata without the call site ({@link LlmCallMetadata#withoutCallSite()}): its
+     * principal, group key and tags, including the span position, so the summary call nests in its trace and carries
+     * the caller's tags while its component and feature stay the engine's. Empty when the caller has none.
      *
      * @return the caller's summary-call metadata, or empty
      */

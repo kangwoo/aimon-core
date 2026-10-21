@@ -103,8 +103,10 @@ public final class CompactionRequest {
      *
      * <p>
      * The engine still owns its own framework defaults (component, feature, traceId); when both are present they are
-     * merged via {@link LlmCallMetadata#withDefaults(LlmCallMetadata)} so caller-supplied attribution (typically
-     * {@code principal} for a user-driven {@code /compact}) wins on overlap and engine defaults fill the rest.
+     * merged via {@link LlmCallMetadata#withDefaults(LlmCallMetadata)} so caller-supplied attribution (the
+     * {@code principal}, the group key and the caller's tags — an automatic compaction's caller hands over its metadata
+     * without the call site, see {@link LlmCallMetadata#withoutCallSite()}) wins on overlap and engine defaults fill
+     * the rest. A tag key the caller sets wins over the same key in the engine's defaults.
      */
     public Optional<LlmCallMetadata> getCallMetadata() {
         return Optional.ofNullable(callMetadata);
@@ -207,9 +209,8 @@ public final class CompactionRequest {
 
         /**
          * Optional caller-supplied {@link LlmCallMetadata}. Merged with the engine's framework defaults via
-         * {@link LlmCallMetadata#withDefaults(LlmCallMetadata)} so caller fields (e.g. {@code principal}) take
-         * precedence
-         * while engine fields ({@code component}, {@code feature}, {@code traceId}) fill any gaps.
+         * {@link LlmCallMetadata#withDefaults(LlmCallMetadata)} so caller fields (e.g. {@code principal}, tags) take
+         * precedence while engine fields ({@code component}, {@code feature}, {@code traceId}) fill any gaps.
          *
          * @param callMetadata
          *            caller-supplied metadata, or {@code null} to defer entirely to engine defaults
