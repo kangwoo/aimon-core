@@ -22,7 +22,9 @@ import at.aimon.core.agent.interrupt.NoopCancellationSignal;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.base.Principal;
 import at.aimon.core.hook.DefaultHookRegistry;
+import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
@@ -179,6 +181,21 @@ class SubagentBehaviorRunnerTest {
                 context(NoopCancellationSignal.INSTANCE), request());
 
         assertThat(result.getFinalAnswer()).isEqualTo("clock");
+    }
+
+    @Test
+    @DisplayName("effectiveLlmCallMetadata books the code behavior to the request principal over the inherited one")
+    void effectiveMetadataBookedToTheRequestPrincipal() {
+        SubagentExecutionRequest request = SubagentExecutionRequest.builder().taskId("task-1").goal("what time is it?")
+                .principal(Principal.user("alice"))
+                .llmCallMetadata(LlmCallMetadata.builder().principal(Principal.user("bob")).build()).build();
+
+        SubagentExecutionResult result = runner.run(
+                (ctx, req, support) -> support.success(
+                        support.effectiveLlmCallMetadata().getPrincipal().map(Principal::getId).orElse("none")),
+                context(NoopCancellationSignal.INSTANCE), request);
+
+        assertThat(result.getFinalAnswer()).isEqualTo("alice");
     }
 
     @Test

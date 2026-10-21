@@ -429,6 +429,29 @@ class DefaultSubagentExecutorTracingTest {
     }
 
     @Test
+    @DisplayName("the fork request's principal books the fork's iteration and summary calls over the inherited one")
+    void forkCallsAreBookedToTheRequestPrincipal() {
+        llm.responses.add(LlmResponse.text("the summary"));
+        llm.responses.add(LlmResponse.text("done"));
+        final DefaultSubagentExecutor executor = new DefaultSubagentExecutor(
+                LlmCallGateway.<TranscriptBuffer>withDefaultRetry(llm), new DefaultToolExecutionManager(),
+                new DefaultHookExecutionManager(), compactingEngine(llm));
+        final Principal alice = Principal.user("alice");
+
+        final SubagentExecutionResult result = executor.execute(context(new DefaultToolRegistry()),
+                SubagentExecutionRequest.builder().taskId("task-1").goal("explore").principal(alice)
+                        .llmCallMetadata(
+                                LlmCallMetadata.builder().principal(Principal.user("bob")).traceId(SESSION).build())
+                        .build());
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(llm.metadata).hasSize(2).allSatisfy(m -> assertThat(m.getPrincipal()).contains(alice));
+        assertThat(llm.metadata)
+                .anySatisfy(m -> assertThat(m.getFeature()).contains(LlmCallMetadata.Feature.COMPACTION))
+                .anySatisfy(m -> assertThat(m.getFeature()).contains("subagent"));
+    }
+
+    @Test
     @DisplayName("ST-5: a fork whose gate blocks leaves a COMPACTION span in error and no ITERATION span")
     void aBlockedGateLeavesNoIterationSpan() {
         llm.failure = new LlmClientException("summary provider down");

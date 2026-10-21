@@ -2,6 +2,7 @@ package at.aimon.core.subagent.execution;
 
 import java.util.Objects;
 
+import at.aimon.core.base.Principal;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.subagent.Subagent;
@@ -117,10 +118,29 @@ public final class SubagentLlmDefaults {
      * @return the effective metadata (never null)
      */
     public static LlmCallMetadata effectiveMetadata(String subagentName, LlmCallMetadata parentMetadata) {
+        return effectiveMetadata(subagentName, parentMetadata, null);
+    }
+
+    /**
+     * Builds the subagent-attributed LLM call metadata as {@link #effectiveMetadata(String, LlmCallMetadata)} does,
+     * then books it to {@code requestPrincipal} — the identity the fork runs as — over any principal inherited from the
+     * parent metadata. The main agent's turn does the same with its request's principal, so a fork's calls are booked
+     * like its caller's.
+     *
+     * @param subagentName
+     *            the subagent name (must not be null)
+     * @param parentMetadata
+     *            the parent's metadata (must not be null; use {@link LlmCallMetadata#empty()} if none)
+     * @param requestPrincipal
+     *            the fork request's principal, or {@code null} to keep the inherited one
+     * @return the effective metadata (never null)
+     */
+    public static LlmCallMetadata effectiveMetadata(String subagentName, LlmCallMetadata parentMetadata,
+            Principal requestPrincipal) {
         Objects.requireNonNull(subagentName, "subagentName cannot be null");
         Objects.requireNonNull(parentMetadata, "parentMetadata cannot be null");
         final String parentComponent = parentMetadata.getComponent().orElse(null);
         return LlmCallMetadata.builder().component(subagentName).parentComponent(parentComponent).feature("subagent")
-                .build().withDefaults(parentMetadata);
+                .build().withDefaults(parentMetadata).withPrincipal(requestPrincipal);
     }
 }

@@ -175,6 +175,33 @@ public final class LlmCallMetadata {
     }
 
     /**
+     * Returns a copy whose {@code principal} is {@code principal}, every other field unchanged — or this instance when
+     * {@code principal} is {@code null}.
+     *
+     * <p>
+     * Used by executors to book an execution's LLM calls to the identity the execution runs as (its request's
+     * principal), which wins over a principal the caller also put on the metadata. A caller that names no request
+     * principal keeps whatever the metadata says.
+     *
+     * @param principal
+     *            the principal to book the call to, or {@code null} to keep this instance's
+     * @return the copy, or this instance (never null)
+     */
+    public LlmCallMetadata withPrincipal(Principal principal) {
+        if (principal == null || principal.equals(this.principal)) {
+            return this;
+        }
+        final Builder copy = new Builder();
+        copy.component = this.component;
+        copy.parentComponent = this.parentComponent;
+        copy.feature = this.feature;
+        copy.principal = principal;
+        copy.traceId = this.traceId;
+        copy.tags = this.tags.isEmpty() ? null : new LinkedHashMap<>(this.tags);
+        return new LlmCallMetadata(copy);
+    }
+
+    /**
      * Returns a copy without the fields that name the call site — {@code component}, {@code parentComponent} and
      * {@code feature} — keeping {@code principal}, {@code traceId} and every tag.
      *

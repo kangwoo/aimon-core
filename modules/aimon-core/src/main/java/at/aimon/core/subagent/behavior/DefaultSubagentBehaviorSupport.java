@@ -45,7 +45,7 @@ final class DefaultSubagentBehaviorSupport implements SubagentBehaviorSupport {
         this.llmGateway = llmGateway; // nullable: empty Optional when no LLM client is wired
         final Subagent subagent = executionContext.getSubagent();
         this.effectiveLlmCallMetadata = SubagentLlmDefaults.effectiveMetadata(subagent.getName(),
-                request.getLlmCallMetadata());
+                request.getLlmCallMetadata(), request.getPrincipal().orElse(null));
         this.resolvedModel = SubagentLlmDefaults.resolveModel(subagent, executionContext.getDefaultModel(),
                 executionContext.getModelOverride().orElse(null));
         this.scopedToolRegistry = SubagentToolScope.scope(executionContext.getToolRegistry(), subagent);

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/llm/llm-usage-metering.md
-source_commit: 2d33f19
+source_commit: 82bcca3
 ---
 
 # LLM Usage Metering Guide
@@ -97,6 +97,10 @@ executor.execute(context, request);
 | `feature` | `"react-loop"` |
 | `traceId` | `conversationId.value()` |
 
+`principal` is the one exception. A `principal(…)` on the request **wins** over the metadata's `principal`, because it
+is the identity the turn runs as. The metadata's value is used only when the request has no principal. Compaction
+summary calls are booked to the same principal.
+
 This effective metadata applies to every LLM call in the ReAct loop, and propagates into sub-executions through the ToolContext.
 
 ### 3.2 Subagents
@@ -108,9 +112,10 @@ When Orca runs a subagent through TaskTool, the parent metadata propagates autom
 | `component` | `subagent.getName()` — **the subagent always wins** (overridden even if the parent set it) |
 | `feature` | `"subagent"` — **always wins** |
 | `traceId` | inherits the parent's traceId as-is |
-| `principal`/`tags` | inherits the parent's values |
+| `principal` | `SubagentExecutionRequest.principal` when set, otherwise inherits the parent's value |
+| `tags` | inherits the parent's values |
 
-> **The merge direction is the opposite of Orca's**: Orca is "caller-supplied wins, auto-derived is the fallback", whereas a subagent is "the subagent's identity wins, the parent is the fallback". The asymmetry is deliberate — a sub-execution's token usage is only meaningful to track when it is aggregated under the name of the subagent that actually ran.
+> **The merge direction is the opposite of Orca's**: Orca is "caller-supplied wins, auto-derived is the fallback" (except `principal`, §3.1), whereas a subagent is "the subagent's identity wins, the parent is the fallback". The asymmetry is deliberate — a sub-execution's token usage is only meaningful to track when it is aggregated under the name of the subagent that actually ran.
 
 The same rules apply when you build a `SubagentExecutionRequest` and invoke it yourself. If you want to force a different component/feature tagging, it is cleaner to put another decorator in front of `MeteringLlmClient`.
 
