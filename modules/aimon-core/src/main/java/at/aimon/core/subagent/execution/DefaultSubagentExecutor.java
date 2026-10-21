@@ -2,11 +2,13 @@ package at.aimon.core.subagent.execution;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
 
@@ -20,6 +22,7 @@ import at.aimon.core.agent.budget.BudgetDecision;
 import at.aimon.core.agent.budget.BudgetTracker;
 import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.budget.ExecutionBudget;
+import at.aimon.core.agent.budget.ExecutionDeadline;
 import at.aimon.core.agent.budget.StalledIterationGuard;
 import at.aimon.core.agent.budget.TruncatedResponses;
 import at.aimon.core.agent.compact.CompactionGuard;
@@ -93,7 +96,10 @@ import at.aimon.core.llm.exception.LlmCallCancelledException;
 import at.aimon.core.llm.exception.LlmClientException;
 import at.aimon.core.llm.invoke.LlmCallGateway;
 import at.aimon.core.subagent.Subagent;
+import at.aimon.core.subagent.SubagentExecutionPolicy;
+import at.aimon.core.subagent.SubagentPolicyCapability;
 import at.aimon.core.subagent.SubagentToolScope;
+import at.aimon.core.subagent.internal.DeadlineScheduler;
 import at.aimon.core.toolinvocation.SingleToolInvoker;
 import at.aimon.core.toolinvocation.ToolCallTracing;
 import at.aimon.core.toolinvocation.ToolInvocationSpec;
@@ -161,6 +167,14 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
     /** The message every interrupted fork reports, whenever the interrupt landed. */
     private static final String INTERRUPTED_MESSAGE = "Execution interrupted";
+
+    /** The message of a fork whose deadline passed while it ran. */
+    private static final String DEADLINE_MESSAGE = "Execution stopped: " + CompletionReason.WALL_CLOCK_EXCEEDED.name()
+            + " — the fork's deadline passed";
+
+    /** The message of a fork whose deadline passed before it started. */
+    private static final String DEADLINE_BEFORE_START_MESSAGE = "Execution stopped: "
+            + CompletionReason.WALL_CLOCK_EXCEEDED.name() + " — the fork's deadline passed before it started";
 
     /** {@code kind} label for the single system-prompt part backing the parts-aware gateway call. */
     private static final String SYSTEM_PROMPT_KIND = "subagent-instructions";
@@ -390,12 +404,37 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         return this;
     }
 
+    /**
+     * Enforces every capability a {@link SubagentExecutionPolicy} can ask for: the iteration and token caps through the
+     * fork's budget, the tool-call cap at dispatch, the deadline through a timer that trips the fork's cancellation,
+     * and the context settings on every context request.
+     *
+     * @return all of {@link SubagentPolicyCapability}
+     */
+    @Override
+    public Set<SubagentPolicyCapability> supportedPolicyCapabilities() {
+        return EnumSet.allOf(SubagentPolicyCapability.class);
+    }
+
     @Override
     public SubagentExecutionResult execute(SubagentExecutionContext context, SubagentExecutionRequest request) {
         Objects.requireNonNull(context, "Context cannot be null");
         Objects.requireNonNull(request, "Request cannot be null");
 
         final Subagent subagent = context.getSubagent();
+
+        // A deadline anchored at launch can pass before the fork gets here (a background fork waiting for a worker).
+        // Such a fork does not start at all: no environment, no OnStart hook, no LLM call.
+        final ExecutionDeadline deadline = request.getDeadline().orElse(null);
+        if (deadline != null && deadline.isExpired()) {
+            log.info("Subagent '{}' not started: its deadline ({}) passed before it could run", subagent.getName(),
+                    deadline.getBudget());
+            return SubagentExecutionResult.failure(DEADLINE_BEFORE_START_MESSAGE,
+                    SessionSnapshot.of(SessionId.generate()),
+                    ExecutionMetadata.builder().iterationCount(0).tokenUsage(TokenUsage.empty())
+                            .timestamps(Instant.now(), Instant.now()).build(),
+                    CompletionReason.WALL_CLOCK_EXCEEDED, null);
+        }
 
         // The fork's run identity. Deliberately not a SessionId: one of those means a durable record plus a
         // cluster-unique lease, and a fork is entitled to neither — it used to mint one anyway, which is the defect
@@ -457,6 +496,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         final BudgetTracker budgetTracker = new BudgetTracker(
                 request.getBudget().orElseGet(ExecutionBudget::unlimited));
 
+        final SubagentExecutionPolicy policy = request.getExecutionPolicy().orElse(null);
+        // The spawner's engine when the policy asks for it, else this executor's own. Shared, not copied: the engine
+        // keys what it remembers about a conversation (its lock, its failure count) on this fork's own transcript.
+        final ContextEngine engine = context.getContextEngine().orElse(contextEngine);
+
         // One coordinator per execute() call. AutoCloseable drops pending registrars on any exit path.
         try (InterruptCoordinator coordinator = new DefaultInterruptCoordinator()) {
             // Cascade parent cancellation: if the parent's signal is already (or becomes) tripped, trip ours too. The
@@ -468,6 +512,15 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             // coordinator, and those signals can outlive any single turn.
             final CancellationSignal.Registration parentCancelReg = context.getParentCancellationSignal()
                     .onCancel(() -> coordinator.requestInterrupt(InterruptReason.PARENT_CANCELLED));
+            // The deadline trips this fork's own signal with BUDGET_EXCEEDED — the first reason a signal records is the
+            // one it keeps, so a deadline that lands first is not later read as a parent's cancellation. Tripping the
+            // signal aborts an in-flight LLM call and fires the terminators of a running tool, so the fork stops
+            // mid-call instead of at the next iteration. Closed in the finally below, after which it can no longer
+            // fire.
+            final DeadlineScheduler.Handle deadlineTimer = deadline == null
+                    ? null
+                    : DeadlineScheduler.schedule(deadline.remaining(),
+                            () -> coordinator.requestInterrupt(InterruptReason.BUDGET_EXCEEDED));
             try {
                 final ToolRegistry sessionRegistry = createSessionRegistry(context.getToolRegistry());
                 // Per-execution artifact collector so artifact-producing subagent tools have the context key (parity
@@ -477,7 +530,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 final ArtifactCollector artifactCollector = new ArtifactCollector(executionId.value());
                 final ToolContext toolContext = createToolContext(context, request, sessionRegistry,
                         coordinator.getSignal(), effectiveMetadata, executionId, artifactCollector,
-                        executionEnvironment);
+                        executionEnvironment, engine);
 
                 final LoopContext lc = LoopContext.builder().context(context).transcriptBuffer(transcriptBuffer)
                         .executionId(executionId).systemPromptParts(systemPromptParts)
@@ -485,14 +538,25 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                         .stalledIterationGuard(new StalledIterationGuard()).quotaGuard(request.getQuotaGuard())
                         .startTime(Instant.now()).toolContext(toolContext).sessionRegistry(sessionRegistry)
                         .coordinator(coordinator).goal(goal).executionAttributes(request.getExecutionAttributes())
-                        .forkDepth(request.getForkDepth())
+                        .forkDepth(request.getForkDepth()).contextEngine(engine).policy(policy).deadline(deadline)
+                        .toolCalls(new ToolCallQuota(policy == null ? null : policy.getMaxToolCalls().orElse(null)))
                         // Snapshot the volatile tracing fields once, so one execution traces consistently.
                         .tracer(tracer).tracePayloadPolicy(tracePayloadPolicy).build();
 
                 // Every exit of the loop passes here, so one stamp names the fork, and the environment it ran in, on
                 // every result it can return.
-                return runReActLoop(lc).withExecutionId(executionId).withExecutionEnvironment(executionEnvironment);
+                return runReActLoop(lc).withExecutionId(executionId).withExecutionEnvironment(executionEnvironment)
+                        .withToolCallCount(lc.toolCalls.used());
             } finally {
+                if (deadlineTimer != null) {
+                    deadlineTimer.close();
+                    // A terminator the deadline fired may have interrupted this thread after the loop's last
+                    // checkpoint. The interrupt was this fork's; leaving it would break the next blocking call of
+                    // whatever runs on this thread next. A parent's cancellation is left alone — it is not ours.
+                    if (deadlineTimer.hasFired() && !context.getParentCancellationSignal().isCancelled()) {
+                        Thread.interrupted();
+                    }
+                }
                 parentCancelReg.remove();
             }
         }
@@ -518,6 +582,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         final SignalBackedLlmCancellation llmCancellation = new SignalBackedLlmCancellation(cancellationSignal);
         TokenUsage accumulatedTokens = TokenUsage.empty();
         int iterationCount = 0;
+        // The input size of the last LLM call, for the policy's context target (0 before the first call).
+        int lastPromptTokens = 0;
 
         try {
             // Goal, then OnStart hooks: a block, or a cancellation during them, ends the fork before its first LLM
@@ -528,31 +594,22 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             }
 
             while (iterationCount < lc.maxIterations()) {
-                // Honour a cancellation that landed before this iteration starts. The helper also clears the thread
-                // interrupt flag so a pooled background thread does not carry it into its next task.
-                if (isCancelledOrInterrupted(cancellationSignal)) {
-                    return createInterruptedResult(lc, iterationCount, accumulatedTokens);
-                }
-
-                // Consult the budget BEFORE starting a new iteration so an exhausted budget does not incur an LLM call.
-                if (lc.budgetTracker.check() == BudgetDecision.STOP) {
-                    return createBudgetStopResult(lc, iterationCount, accumulatedTokens);
-                }
-                // The spawning turn's quota, at the same boundary: what the turn, its other forks and the user's other
-                // sessions spent counts here too, so a fork is no way around a quota.
-                final Optional<QuotaViolation> quotaViolation = lc.quotaGuard.check();
-                if (quotaViolation.isPresent()) {
-                    return createQuotaStopResult(lc, iterationCount, accumulatedTokens, quotaViolation.get());
+                final BudgetDecision budgetDecision = lc.budgetTracker.check();
+                final Optional<SubagentExecutionResult> stopped = stopBeforeIteration(lc, budgetDecision,
+                        iterationCount, accumulatedTokens);
+                if (stopped.isPresent()) {
+                    return stopped.get();
                 }
 
                 iterationCount++;
                 lc.budgetTracker.recordIteration();
                 stream(lc, "\n[iteration " + iterationCount + "]\n");
 
-                // AUTO compaction gate, returning the view this iteration's call is sent. Run before the ITERATION span
-                // opens, as the main turn's is: a compaction is a COMPACTION span ahead of the iteration it gates, and
-                // a block (unwound by the catches below the loop) leaves no iteration span behind.
-                final ContextView view = applyCompactionGate(lc, iterationCount);
+                // AUTO compaction gate, returning the view this iteration's call is sent; run before the ITERATION span
+                // opens, as the main turn's is. Either soft hint (SHOULD_COMPACT, or the last input past the context
+                // target) asks the engine to compact at its lower band; the engine still decides.
+                final ContextView view = applyCompactionGate(lc, iterationCount,
+                        budgetDecision == BudgetDecision.SHOULD_COMPACT || lc.contextTargetReached(lastPromptTokens));
                 // TRACE-01: this iteration's LLM call and tool calls nest under its ITERATION span.
                 final IterationTrace trace = IterationTrace.open(lc, iterationCount);
                 try {
@@ -574,6 +631,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
                     accumulatedTokens = accumulatedTokens.add(response.getTokenUsage());
                     lc.budgetTracker.recordTokens(response.getTokenUsage());
+                    lastPromptTokens = response.getTokenUsage().getPromptTokens();
 
                     recordCallCost(lc, response);
 
@@ -601,7 +659,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                     // cut off at max_tokens, in which case none of them runs and each is answered with the refusal.
                     final List<ToolUseResult> toolUseResults = truncated
                             ? refuseTruncatedToolUses(lc, response, iterationCount)
-                            : executeToolUses(lc, trace.toolContext, response.getToolUses(), iterationCount);
+                            : executeAdmittedToolUses(lc, trace.toolContext, response.getToolUses(), iterationCount);
                     lc.transcriptBuffer.addMessage(Message.toolUseResults(toolUseResults));
 
                     // Iteration-tail cancellation check (a tool or the parent may have tripped the signal), then
@@ -610,6 +668,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                     if (isCancelledOrInterrupted(cancellationSignal)) {
                         trace.interrupted();
                         return createInterruptedResult(lc, iterationCount, accumulatedTokens);
+                    } else if (lc.toolCalls.isExceeded()) {
+                        // Calls over the cap were answered, not run; stop before the next LLM call is spent.
+                        return createToolCallBudgetResult(lc, iterationCount, accumulatedTokens);
                     } else if (lc.stalledIterationGuard.recordToolIteration(toolUseResults, truncated)) {
                         return createStalledResult(lc, iterationCount, accumulatedTokens);
                     }
@@ -641,6 +702,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             log.debug("Subagent LLM call cancelled in-flight: {}", e.getMessage());
             return createInterruptedResult(lc, iterationCount, accumulatedTokens);
         } catch (LlmClientException e) {
+            // A client that answers an abort with its own exception type: the fork was being stopped, so say that.
+            if (isCancelledOrInterrupted(cancellationSignal)) {
+                log.debug("Subagent LLM call failed after cancellation: {}", e.getMessage());
+                return createInterruptedResult(lc, iterationCount, accumulatedTokens);
+            }
             return createFailureResult(lc, "LLM client error: " + e.getMessage(), iterationCount, accumulatedTokens,
                     CompletionReason.ERROR);
         } catch (Exception e) {
@@ -654,6 +720,33 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             return createFailureResult(lc, "Subagent execution failed: " + e.getMessage(), iterationCount,
                     accumulatedTokens, CompletionReason.ERROR);
         }
+    }
+
+    /**
+     * The checks at an iteration boundary, before anything of the next iteration is spent, in the order they win:
+     * a cancellation that has landed (the helper also clears the thread's interrupt flag, so a pooled background
+     * thread does not carry it into its next task), the deadline (read here as well as by its timer, so a fork never
+     * starts an iteration past it even if the timer has not run yet), the budget, and the spawning turn's quota — what
+     * the turn, its other forks and the user's other sessions spent counts here too, so a fork is no way around a
+     * quota.
+     *
+     * @param budgetDecision
+     *            the budget tracker's decision for this boundary
+     * @return the result that ends the fork here, or empty to run the iteration
+     */
+    private Optional<SubagentExecutionResult> stopBeforeIteration(LoopContext lc, BudgetDecision budgetDecision,
+            int iterationCount, TokenUsage accumulatedTokens) {
+        if (isCancelledOrInterrupted(lc.coordinator.getSignal())) {
+            return Optional.of(createInterruptedResult(lc, iterationCount, accumulatedTokens));
+        }
+        if (lc.deadline != null && lc.deadline.isExpired()) {
+            return Optional.of(createDeadlineResult(lc, iterationCount, accumulatedTokens));
+        }
+        if (budgetDecision == BudgetDecision.STOP) {
+            return Optional.of(createBudgetStopResult(lc, iterationCount, accumulatedTokens));
+        }
+        final Optional<QuotaViolation> quotaViolation = lc.quotaGuard.check();
+        return quotaViolation.map(violation -> createQuotaStopResult(lc, iterationCount, accumulatedTokens, violation));
     }
 
     /**
@@ -755,7 +848,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * @throws CancelledExecutionException
      *             if the engine blocks the iteration of a fork that has been cancelled
      */
-    private ContextView applyCompactionGate(LoopContext lc, int iterationCount) {
+    private ContextView applyCompactionGate(LoopContext lc, int iterationCount, boolean budgetForced) {
         // Hand the engine this fork's run identity. Without it the compaction engine has only the transcript label to
         // go on, and that label is a SessionId wrapping this very execution id — so a PreCompact hook would be told the
         // fork had a session, and told an execution id as its name. The two are tied together at both entries into
@@ -764,7 +857,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         final ContextRequest.Builder request = ContextRequest.builder().transcriptBuffer(lc.transcriptBuffer)
                 .model(lc.modelConfig).hookRegistry(lc.hookRegistry()).executionEnvironment(lc.executionEnvironment())
                 .executionCancellation(lc.coordinator.getSignal())
-                .caller(ContextCaller.builder().executionId(lc.executionId).build());
+                .caller(ContextCaller.builder().executionId(lc.executionId).build()).budgetForced(budgetForced)
+                .compactionInstructions(lc.policy == null ? null : lc.policy.getCompactionInstructions().orElse(null));
         // The fork's metadata without its call site: the span position, the principal and the tags inherited from the
         // parent travel, so the summary call nests in the trace and reaches the provider with the same routing and
         // policy tags as the fork's own calls. Component and feature stay out: the engine merges with caller fields
@@ -777,9 +871,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         }
         Spans.traceCarrier(lc.effectiveMetadata)
                 .flatMap(carrier -> TracingCompactionObserver.under(lc.tracer, carrier, lc.tracePayloadPolicy,
-                        lc.coordinator.getSignal(), compactionSpanAttributes(lc, iterationCount)))
+                        lc.coordinator.getSignal(), compactionSpanAttributes(lc, iterationCount, budgetForced)))
                 .ifPresent(request::compactionObserver);
-        final ContextDecision decision = contextEngine.prepare(request.build());
+        final ContextDecision decision = lc.contextEngine.prepare(request.build());
         switch (decision.getAction()) {
             case BLOCK :
                 // An interrupted preCompact guard blocks, the compaction is skipped, and a view over the blocking
@@ -802,12 +896,19 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         return decision.getView();
     }
 
-    /** The attributes of a fork's COMPACTION span: the iteration it gates, and the fork's run identity. */
-    private static Map<String, String> compactionSpanAttributes(LoopContext lc, int iterationCount) {
+    /**
+     * The attributes of a fork's COMPACTION span: the iteration it gates, the fork's run identity, and the budget hint
+     * only when it forced.
+     */
+    private static Map<String, String> compactionSpanAttributes(LoopContext lc, int iterationCount,
+            boolean budgetForced) {
         final Map<String, String> attributes = new LinkedHashMap<>();
         attributes.put("iteration", String.valueOf(iterationCount));
         attributes.put("invokerType", InvokerType.SUBAGENT.name());
         attributes.put("executionId", lc.executionId.value());
+        if (budgetForced) {
+            attributes.put("budgetForced", "true");
+        }
         return attributes;
     }
 
@@ -910,13 +1011,16 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      *            the per-execution artifact collector exposed to artifact-producing tools
      * @param executionEnvironment
      *            the fork's execution environment, published under the write-once key before the enrichers run
+     * @param engine
+     *            the context engine the fork runs under, published so a fork it spawns can inherit it
      * @return the tool context (never null)
      */
     // Every argument is a distinct per-execution value the context publishes; bundling them would only move the list.
     @SuppressWarnings("checkstyle:ParameterNumber")
     private ToolContext createToolContext(SubagentExecutionContext context, SubagentExecutionRequest request,
             ToolRegistry sessionRegistry, CancellationSignal cancellationSignal, LlmCallMetadata effectiveMetadata,
-            ExecutionId executionId, ArtifactCollector artifactCollector, ExecutionEnvironment executionEnvironment) {
+            ExecutionId executionId, ArtifactCollector artifactCollector, ExecutionEnvironment executionEnvironment,
+            ContextEngine engine) {
         final ToolContext.Builder builder = ToolContext.builder();
         builder.put(ToolContextKeys.AGENT_RUNTIME_ID, context.getAgentRuntimeId());
         // No SESSION_ID: this run is not a session's turn. The fork used to publish the id it had minted for its own
@@ -979,6 +1083,10 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         builder.put(ToolContextKeys.HOOK_REGISTRY, context.getHookRegistry());
         context.getExecutionEnvironmentProvider()
                 .ifPresent(p -> builder.put(ToolContextKeys.EXECUTION_ENVIRONMENT_PROVIDER, p));
+        // The engine this fork runs under, and its deadline when it has one: a fork it spawns inherits the first on
+        // request and is always held to the second. Both write-once, so an enricher cannot lift the deadline.
+        builder.put(ToolContextKeys.CONTEXT_ENGINE, engine);
+        request.getDeadline().ifPresent(d -> builder.put(ToolContextKeys.EXECUTION_DEADLINE, d));
 
         // Apply forwarded ToolContextEnrichers last, mirroring the main-agent executor, so module-supplied keys are
         // present for subagent tools.
@@ -1125,6 +1233,41 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      */
     private LlmModel buildModelConfig(Subagent subagent, LlmModel defaultConfig, String modelOverride) {
         return SubagentLlmDefaults.resolveModel(subagent, defaultConfig, modelOverride);
+    }
+
+    /**
+     * Runs as many of {@code toolUses} as the fork's tool-call budget still allows, in order, and answers the rest
+     * with an error result that says they were not run. Without a cap this is {@link #executeToolUses}.
+     *
+     * <p>
+     * Every call of a parallel batch counts as one. The calls that run are the first ones of the response, so a model
+     * that lists them in the order it needs them loses the ones it needed least. The refused calls are not handed to
+     * the dispatcher at all — no hook, no permission prompt, no execution — and they do not count as run.
+     *
+     * @return one result per tool use, in the response's order (never null)
+     */
+    private List<ToolUseResult> executeAdmittedToolUses(LoopContext lc, ToolContext toolContext, List<ToolUse> toolUses,
+            int iterationCount) {
+        final int admitted = lc.toolCalls.admit(toolUses.size());
+        if (admitted == toolUses.size()) {
+            return executeToolUses(lc, toolContext, toolUses, iterationCount);
+        }
+        log.warn(
+                "Subagent '{}' asked for {} tool call(s) in iteration {} with {} left of its budget of {}; the other"
+                        + " {} are not run",
+                lc.subagent().getName(), toolUses.size(), iterationCount, admitted, lc.toolCalls.limit,
+                toolUses.size() - admitted);
+        final List<ToolUseResult> results = new ArrayList<>(toolUses.size());
+        if (admitted > 0) {
+            results.addAll(executeToolUses(lc, toolContext, toolUses.subList(0, admitted), iterationCount));
+        }
+        for (ToolUse toolUse : toolUses.subList(admitted, toolUses.size())) {
+            stream(lc, "\n→ " + toolUse.getName() + "\n");
+            final ToolUseResult refusal = ToolCallQuota.refusal(toolUse, lc.toolCalls.limit);
+            stream(lc, formatStreamedToolResult(toolUse, refusal));
+            results.add(refusal);
+        }
+        return results;
     }
 
     /**
@@ -1380,6 +1523,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      */
     private SubagentExecutionResult createInterruptedResult(LoopContext lc, int iterationCount,
             TokenUsage accumulatedTokens) {
+        if (stoppedByDeadline(lc)) {
+            return createDeadlineResult(lc, iterationCount, accumulatedTokens);
+        }
         log.info("Subagent execution interrupted: iterations={}, tokens={}", iterationCount,
                 accumulatedTokens.getTotalTokens());
         return createFailureResult(lc, INTERRUPTED_MESSAGE, iterationCount, accumulatedTokens,
@@ -1399,8 +1545,57 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      */
     private SubagentExecutionResult createInterruptedBeforeStartResult(LoopContext lc, SessionSnapshot beforeGoal) {
         log.info("Subagent '{}' interrupted during its OnStart hooks; not started", lc.subagent().getName());
+        if (stoppedByDeadline(lc)) {
+            return createFailureResult(lc, DEADLINE_MESSAGE, 0, TokenUsage.empty(),
+                    CompletionReason.WALL_CLOCK_EXCEEDED, beforeGoal);
+        }
         return createFailureResult(lc, INTERRUPTED_MESSAGE, 0, TokenUsage.empty(), CompletionReason.INTERRUPTED,
                 beforeGoal);
+    }
+
+    /**
+     * Whether the fork's signal was tripped by its own deadline, read from the reason the signal recorded first — so a
+     * deadline that landed after a parent's cancellation does not relabel it, and one that landed before is not
+     * relabelled by the cancellation that cascades after it. A fork stopped by a thread interrupt alone — its signal
+     * never tripped — was stopped by its deadline when that has passed: on a watched foreground run the manager
+     * interrupts the fork's thread at the deadline, and that may land before this fork's own timer trips the signal.
+     */
+    private static boolean stoppedByDeadline(LoopContext lc) {
+        if (lc.deadline == null) {
+            return false;
+        }
+        return lc.coordinator.getSignal().getReason().map(reason -> reason == InterruptReason.BUDGET_EXCEEDED)
+                .orElseGet(lc.deadline::isExpired);
+    }
+
+    /**
+     * Creates the result of a fork whose deadline passed: {@link CompletionReason#WALL_CLOCK_EXCEEDED}, whether the
+     * deadline was seen at an iteration boundary or broke a call in flight. OnStop hooks fire with
+     * {@code success=false}, as for a budget stop.
+     */
+    private SubagentExecutionResult createDeadlineResult(LoopContext lc, int iterationCount,
+            TokenUsage accumulatedTokens) {
+        log.info("Subagent '{}' stopped by its deadline ({}): iterations={}, tokens={}", lc.subagent().getName(),
+                lc.deadline.getBudget(), iterationCount, accumulatedTokens.getTotalTokens());
+        return createFailureResult(lc, DEADLINE_MESSAGE, iterationCount, accumulatedTokens,
+                CompletionReason.WALL_CLOCK_EXCEEDED);
+    }
+
+    /**
+     * Creates the result of a fork that asked for more tool calls than its policy allows:
+     * {@link CompletionReason#TOOL_CALL_BUDGET_EXCEEDED}. The calls over the cap were never run; their error results
+     * are in the transcript.
+     */
+    private SubagentExecutionResult createToolCallBudgetResult(LoopContext lc, int iterationCount,
+            TokenUsage accumulatedTokens) {
+        log.info("Subagent '{}' stopped by its tool-call budget: ran {} of {} allowed, refused {}, iterations={}",
+                lc.subagent().getName(), lc.toolCalls.used(), lc.toolCalls.limit, lc.toolCalls.refused(),
+                iterationCount);
+        return createFailureResult(lc,
+                "Execution stopped: " + CompletionReason.TOOL_CALL_BUDGET_EXCEEDED.name() + " — ran "
+                        + lc.toolCalls.used() + " tool call(s), the policy's limit; " + lc.toolCalls.refused()
+                        + " more were not run",
+                iterationCount, accumulatedTokens, CompletionReason.TOOL_CALL_BUDGET_EXCEEDED);
     }
 
     /**
@@ -1622,6 +1817,49 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     }
 
     /**
+     * One fork's tool-call budget: how many calls it may run, how many it has run, and whether it asked for more than
+     * it had. Without a limit it only counts. Touched only by the loop's thread — a parallel batch is admitted before
+     * it is dispatched — so it needs no synchronization.
+     */
+    private static final class ToolCallQuota {
+        /** The cap, or {@code null} for none. */
+        private final Integer limit;
+        private int used;
+        private int refused;
+
+        private ToolCallQuota(Integer limit) {
+            this.limit = limit;
+        }
+
+        /** Admits up to {@code requested} calls and returns how many may run; the rest count as refused. */
+        private int admit(int requested) {
+            final int admitted = limit == null ? requested : Math.max(0, Math.min(requested, limit - used));
+            used += admitted;
+            refused += requested - admitted;
+            return admitted;
+        }
+
+        private int used() {
+            return used;
+        }
+
+        private int refused() {
+            return refused;
+        }
+
+        /** Whether a call was refused for the cap — the fork asked for more than it may run. */
+        private boolean isExceeded() {
+            return refused > 0;
+        }
+
+        /** The answer to a call the cap refused: an error result, so the transcript stays well formed and honest. */
+        private static ToolUseResult refusal(ToolUse toolUse, Integer limit) {
+            return ToolUseResult.error(toolUse.getId(), "Not run: this subagent's tool-call budget (" + limit
+                    + " call(s)) is used up. Finish with what you have.");
+        }
+    }
+
+    /**
      * Immutable per-execution loop context. Bundles the values shared across the ReAct loop and tool execution so the
      * loop/tool helpers stay within the project's parameter-count budget. Built once per {@link #execute} call.
      */
@@ -1656,6 +1894,14 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         private final Tracer tracer;
         /** The executor's payload capture policy, snapshotted once per execution. */
         private final TracePayloadPolicy tracePayloadPolicy;
+        /** The context engine this fork runs under: the spawner's when its policy inherits it, else the executor's. */
+        private final ContextEngine contextEngine;
+        /** The fork's execution policy, or {@code null} when it runs without one. */
+        private final SubagentExecutionPolicy policy;
+        /** The deadline the fork must be over by, or {@code null}. */
+        private final ExecutionDeadline deadline;
+        /** The fork's tool-call budget and the count of calls run — the one mutable part, like the budget tracker. */
+        private final ToolCallQuota toolCalls;
 
         private LoopContext(Builder b) {
             this.context = b.context;
@@ -1676,6 +1922,16 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             this.forkDepth = b.forkDepth;
             this.tracer = b.tracer;
             this.tracePayloadPolicy = b.tracePayloadPolicy;
+            this.contextEngine = b.contextEngine;
+            this.policy = b.policy;
+            this.deadline = b.deadline;
+            this.toolCalls = b.toolCalls;
+        }
+
+        /** Whether the last call's input reached the policy's context target. */
+        private boolean contextTargetReached(int lastPromptTokens) {
+            return policy != null && lastPromptTokens > 0
+                    && policy.getContextTargetTokens().filter(target -> lastPromptTokens >= target).isPresent();
         }
 
         private Subagent subagent() {
@@ -1725,6 +1981,30 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             private int forkDepth = 1;
             private Tracer tracer;
             private TracePayloadPolicy tracePayloadPolicy;
+            private ContextEngine contextEngine;
+            private SubagentExecutionPolicy policy;
+            private ExecutionDeadline deadline;
+            private ToolCallQuota toolCalls;
+
+            private Builder contextEngine(ContextEngine contextEngine) {
+                this.contextEngine = contextEngine;
+                return this;
+            }
+
+            private Builder policy(SubagentExecutionPolicy policy) {
+                this.policy = policy;
+                return this;
+            }
+
+            private Builder deadline(ExecutionDeadline deadline) {
+                this.deadline = deadline;
+                return this;
+            }
+
+            private Builder toolCalls(ToolCallQuota toolCalls) {
+                this.toolCalls = toolCalls;
+                return this;
+            }
 
             private Builder context(SubagentExecutionContext context) {
                 this.context = context;

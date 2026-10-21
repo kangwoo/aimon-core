@@ -5,11 +5,13 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.budget.ExecutionBudget;
+import at.aimon.core.agent.budget.ExecutionDeadline;
 import at.aimon.core.agent.quota.QuotaGuard;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.base.Principal;
 import at.aimon.core.llm.LlmCallMetadata;
+import at.aimon.core.subagent.SubagentExecutionPolicy;
 
 /**
  * Request for subagent execution.
@@ -51,6 +53,8 @@ public final class SubagentExecutionRequest {
     private final QuotaGuard quotaGuard;
     private final ForkGoalRenderer forkGoalRenderer;
     private final int forkDepth;
+    private final SubagentExecutionPolicy executionPolicy;
+    private final ExecutionDeadline deadline;
 
     private SubagentExecutionRequest(Builder builder) {
         this.taskId = Objects.requireNonNull(builder.taskId, "Task ID cannot be null");
@@ -69,6 +73,8 @@ public final class SubagentExecutionRequest {
             throw new IllegalArgumentException("forkDepth must be >= 1, got: " + builder.forkDepth);
         }
         this.forkDepth = builder.forkDepth;
+        this.executionPolicy = builder.executionPolicy;
+        this.deadline = builder.deadline;
     }
 
     public String getTaskId() {
@@ -194,6 +200,30 @@ public final class SubagentExecutionRequest {
         return forkDepth;
     }
 
+    /**
+     * Gets the trusted policy the fork runs under — the instance the launch context carried, unchanged. The executor
+     * enforces its tool-call cap, its context settings and its hints from here; its iteration and token caps arrive as
+     * {@link #getBudget()}.
+     *
+     * @return the policy, or empty when the fork runs without one
+     */
+    public Optional<SubagentExecutionPolicy> getExecutionPolicy() {
+        return Optional.ofNullable(executionPolicy);
+    }
+
+    /**
+     * Gets the deadline the fork must be over by, anchored when it was launched: the earlier of its policy's wall
+     * clock and its spawner's deadline.
+     *
+     * <p>
+     * Not part of {@link #equals(Object)}: it is a point in time, not a value of the work.
+     *
+     * @return the deadline, or empty when the fork has none
+     */
+    public Optional<ExecutionDeadline> getDeadline() {
+        return Optional.ofNullable(deadline);
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -208,13 +238,14 @@ public final class SubagentExecutionRequest {
                 && Objects.equals(invokingSessionId, that.invokingSessionId)
                 && Objects.equals(previousSnapshot, that.previousSnapshot)
                 && Objects.equals(executionAttributes, that.executionAttributes)
-                && Objects.equals(llmCallMetadata, that.llmCallMetadata) && Objects.equals(budget, that.budget);
+                && Objects.equals(llmCallMetadata, that.llmCallMetadata) && Objects.equals(budget, that.budget)
+                && Objects.equals(executionPolicy, that.executionPolicy);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(taskId, goal, principal, invokingSessionId, previousSnapshot, executionAttributes,
-                llmCallMetadata, budget);
+                llmCallMetadata, budget, executionPolicy);
     }
 
     @Override
@@ -237,6 +268,8 @@ public final class SubagentExecutionRequest {
         private QuotaGuard quotaGuard;
         private ForkGoalRenderer forkGoalRenderer;
         private int forkDepth = 1;
+        private SubagentExecutionPolicy executionPolicy;
+        private ExecutionDeadline deadline;
 
         /** taskId를 설정한다. */
         public Builder taskId(String taskId) {
@@ -341,6 +374,30 @@ public final class SubagentExecutionRequest {
          */
         public Builder forkDepth(int forkDepth) {
             this.forkDepth = forkDepth;
+            return this;
+        }
+
+        /**
+         * Sets the trusted policy the fork runs under.
+         *
+         * @param executionPolicy
+         *            the policy (nullable)
+         * @return this builder
+         */
+        public Builder executionPolicy(SubagentExecutionPolicy executionPolicy) {
+            this.executionPolicy = executionPolicy;
+            return this;
+        }
+
+        /**
+         * Sets the deadline the fork must be over by.
+         *
+         * @param deadline
+         *            the deadline (nullable)
+         * @return this builder
+         */
+        public Builder deadline(ExecutionDeadline deadline) {
+            this.deadline = deadline;
             return this;
         }
 

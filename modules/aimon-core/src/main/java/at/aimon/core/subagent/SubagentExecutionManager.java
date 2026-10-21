@@ -1,5 +1,7 @@
 package at.aimon.core.subagent;
 
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 import at.aimon.core.agent.AgentExecutionRequest;
@@ -136,4 +138,31 @@ public interface SubagentExecutionManager extends SubagentTaskController {
     CompletableFuture<SubagentExecutionResult> executeInBackground(SubagentLaunchContext launchContext, String taskId,
             String subagentName, String goal, String description);
 
+    /**
+     * Returns the {@link SubagentExecutionPolicy} capabilities a launch through this manager can rely on for a
+     * subagent that runs the ReAct loop. A spawn site checks a policy against it before it launches
+     * ({@link SubagentExecutionPolicy#unsupportedBy(Set)}); the manager checks again when it runs the fork, and also
+     * refuses a policy for a subagent backed by a code behavior, which enforces none of them.
+     *
+     * <p>
+     * The default supports none, so a manager written before policies existed refuses them all.
+     *
+     * @return the supported capabilities (never null)
+     */
+    default Set<SubagentPolicyCapability> supportedPolicyCapabilities() {
+        return Set.of();
+    }
+
+    /**
+     * Returns the runs launched through this manager that were asked to stop and had not exited when their grace
+     * period ran out ({@link LingeringSubagentRun}). Node-local: the threads of this JVM.
+     *
+     * <p>
+     * The default lists none.
+     *
+     * @return a snapshot of the lingering runs (never null)
+     */
+    default List<LingeringSubagentRun> lingeringRuns() {
+        return List.of();
+    }
 }

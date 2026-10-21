@@ -15,6 +15,7 @@ import at.aimon.core.skill.policy.agent.AgentApprovalStore;
 import at.aimon.core.skill.policy.pending.PendingTurnRegistry;
 import at.aimon.core.skill.policy.session.SessionApprovalStore;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentExecutionPolicyResolver;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.subagent.task.SessionSnapshotStore;
 import at.aimon.core.subagent.task.TaskOutputStore;
@@ -70,6 +71,7 @@ public final class OrcaProviderDependencies {
     private final CompactionEngine compactionEngine;
     private final CompactionGuard compactionGuard;
     private final ContextEngine contextEngine;
+    private final SubagentExecutionPolicyResolver subagentExecutionPolicyResolver;
     private final PendingTurnRegistry pendingTurnRegistry;
     private final AgentApprovalStore agentApprovalStore;
     private final SessionApprovalStore sessionApprovalStore;
@@ -91,6 +93,9 @@ public final class OrcaProviderDependencies {
         compactionEngine = builder.compactionEngine;
         compactionGuard = builder.compactionGuard;
         contextEngine = builder.contextEngine;
+        subagentExecutionPolicyResolver = builder.subagentExecutionPolicyResolver != null
+                ? builder.subagentExecutionPolicyResolver
+                : SubagentExecutionPolicyResolver.none();
         pendingTurnRegistry = builder.pendingTurnRegistry;
         agentApprovalStore = builder.agentApprovalStore;
         sessionApprovalStore = builder.sessionApprovalStore;
@@ -230,6 +235,15 @@ public final class OrcaProviderDependencies {
     }
 
     /**
+     * Returns the trusted resolver of the execution policies the agent's {@code Task} tool launches subagents under.
+     *
+     * @return the resolver (never null; {@link SubagentExecutionPolicyResolver#none()} when none was configured)
+     */
+    public SubagentExecutionPolicyResolver getSubagentExecutionPolicyResolver() {
+        return subagentExecutionPolicyResolver;
+    }
+
+    /**
      * Returns the pending turn registry used by the SK-11 atomic-suspension flow.
      *
      * @return the pending turn registry, may be null when skill suspension is not configured
@@ -308,6 +322,7 @@ public final class OrcaProviderDependencies {
         private CompactionEngine compactionEngine;
         private CompactionGuard compactionGuard;
         private ContextEngine contextEngine;
+        private SubagentExecutionPolicyResolver subagentExecutionPolicyResolver;
         private PendingTurnRegistry pendingTurnRegistry;
         private AgentApprovalStore agentApprovalStore;
         private SessionApprovalStore sessionApprovalStore;
@@ -482,6 +497,19 @@ public final class OrcaProviderDependencies {
          */
         public Builder contextEngine(ContextEngine contextEngine) {
             this.contextEngine = contextEngine;
+            return this;
+        }
+
+        /**
+         * Sets the trusted resolver of subagent execution policies.
+         *
+         * @param subagentExecutionPolicyResolver
+         *            the resolver (may be null for none)
+         * @return this builder
+         */
+        public Builder subagentExecutionPolicyResolver(
+                SubagentExecutionPolicyResolver subagentExecutionPolicyResolver) {
+            this.subagentExecutionPolicyResolver = subagentExecutionPolicyResolver;
             return this;
         }
 

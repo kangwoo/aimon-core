@@ -108,7 +108,7 @@ public final class SubagentExecutionResult {
         Objects.requireNonNull(metadata, "Execution metadata cannot be null");
         Objects.requireNonNull(completionReason, "Completion reason cannot be null");
         return new SubagentExecutionResult(finalAnswer, snapshot, metadata, true, null, completionReason, cost, null,
-                null, null);
+                null, null, 0, true);
     }
 
     /**
@@ -174,7 +174,7 @@ public final class SubagentExecutionResult {
         Objects.requireNonNull(metadata, "Execution metadata cannot be null");
         Objects.requireNonNull(completionReason, "Completion reason cannot be null");
         return new SubagentExecutionResult(null, snapshot, metadata, false, errorMessage, completionReason, cost, null,
-                null, null);
+                null, null, 0, true);
     }
 
     /**
@@ -235,12 +235,15 @@ public final class SubagentExecutionResult {
     private final QuotaViolation quotaViolation;
     private final ExecutionId executionId;
     private final ExecutionEnvironment executionEnvironment;
+    private final int toolCallCount;
+    private final boolean exitConfirmed;
 
     // One argument per field of an immutable value; bundling them would only move the list.
     @SuppressWarnings("checkstyle:ParameterNumber")
     private SubagentExecutionResult(String finalAnswer, SessionSnapshot snapshot, ExecutionMetadata metadata,
             boolean success, String errorMessage, CompletionReason completionReason, Money cost,
-            QuotaViolation quotaViolation, ExecutionId executionId, ExecutionEnvironment executionEnvironment) {
+            QuotaViolation quotaViolation, ExecutionId executionId, ExecutionEnvironment executionEnvironment,
+            int toolCallCount, boolean exitConfirmed) {
         this.finalAnswer = finalAnswer;
         this.snapshot = Objects.requireNonNull(snapshot, "Session snapshot cannot be null");
         this.metadata = Objects.requireNonNull(metadata, "Execution metadata cannot be null");
@@ -251,6 +254,8 @@ public final class SubagentExecutionResult {
         this.quotaViolation = quotaViolation;
         this.executionId = executionId;
         this.executionEnvironment = executionEnvironment;
+        this.toolCallCount = toolCallCount;
+        this.exitConfirmed = exitConfirmed;
     }
 
     /**
@@ -405,7 +410,7 @@ public final class SubagentExecutionResult {
     public SubagentExecutionResult withQuotaViolation(QuotaViolation quotaViolation) {
         Objects.requireNonNull(quotaViolation, "Quota violation cannot be null");
         return new SubagentExecutionResult(finalAnswer, snapshot, metadata, success, errorMessage, completionReason,
-                cost, quotaViolation, executionId, executionEnvironment);
+                cost, quotaViolation, executionId, executionEnvironment, toolCallCount, exitConfirmed);
     }
 
     /**
@@ -429,7 +434,7 @@ public final class SubagentExecutionResult {
     public SubagentExecutionResult withExecutionId(ExecutionId executionId) {
         Objects.requireNonNull(executionId, "Execution id cannot be null");
         return new SubagentExecutionResult(finalAnswer, snapshot, metadata, success, errorMessage, completionReason,
-                cost, quotaViolation, executionId, executionEnvironment);
+                cost, quotaViolation, executionId, executionEnvironment, toolCallCount, exitConfirmed);
     }
 
     /**
@@ -457,7 +462,60 @@ public final class SubagentExecutionResult {
     public SubagentExecutionResult withExecutionEnvironment(ExecutionEnvironment executionEnvironment) {
         Objects.requireNonNull(executionEnvironment, "Execution environment cannot be null");
         return new SubagentExecutionResult(finalAnswer, snapshot, metadata, success, errorMessage, completionReason,
-                cost, quotaViolation, executionId, executionEnvironment);
+                cost, quotaViolation, executionId, executionEnvironment, toolCallCount, exitConfirmed);
+    }
+
+    /**
+     * Gets how many tool calls the fork actually ran — one per call of a parallel batch. Calls a cut response or an
+     * exhausted tool-call budget refused are not counted: they were answered, not run.
+     *
+     * @return the number of tool calls run (0 for a path that ran none or does not count them)
+     */
+    public int getToolCallCount() {
+        return toolCallCount;
+    }
+
+    /**
+     * Returns a copy of this result recording how many tool calls the fork ran.
+     *
+     * @param toolCallCount
+     *            the count (must not be negative)
+     * @return a new result; the original is unchanged
+     */
+    public SubagentExecutionResult withToolCallCount(int toolCallCount) {
+        if (toolCallCount < 0) {
+            throw new IllegalArgumentException("toolCallCount must not be negative, got: " + toolCallCount);
+        }
+        return new SubagentExecutionResult(finalAnswer, snapshot, metadata, success, errorMessage, completionReason,
+                cost, quotaViolation, executionId, executionEnvironment, toolCallCount, exitConfirmed);
+    }
+
+    /**
+     * Gets whether the run is known to have exited when this result was handed back.
+     *
+     * <p>
+     * Always {@code true} except for one case: a foreground fork under a deadline that was asked to stop — the deadline
+     * passed, or its spawner cancelled it — and was still running when its grace period ran out. Its result is handed
+     * back anyway, with this {@code false}, so the spawner is not blocked forever by a tool that ignores interrupts;
+     * the
+     * run itself goes on until it returns, listed meanwhile by
+     * {@link at.aimon.core.subagent.SubagentExecutionManager#lingeringRuns()}. Such a result is never a completion: do
+     * not treat its work as done, and do not launch the same work again while it is listed.
+     *
+     * @return whether the run had exited
+     */
+    public boolean isExitConfirmed() {
+        return exitConfirmed;
+    }
+
+    /**
+     * Returns a copy of this result saying the run had not exited when it was handed back.
+     *
+     * @return a new result with {@link #isExitConfirmed()} {@code false}; the original is unchanged
+     */
+    public SubagentExecutionResult withExitUnconfirmed() {
+        return new SubagentExecutionResult(finalAnswer, snapshot, metadata, success, errorMessage, completionReason,
+                cost, quotaViolation, executionId, executionEnvironment, toolCallCount, false);
     }
 
     @Override
@@ -473,13 +531,14 @@ public final class SubagentExecutionResult {
                 && snapshot.equals(that.snapshot) && metadata.equals(that.metadata)
                 && Objects.equals(errorMessage, that.errorMessage) && completionReason == that.completionReason
                 && cost.equals(that.cost) && Objects.equals(quotaViolation, that.quotaViolation)
-                && Objects.equals(executionId, that.executionId);
+                && Objects.equals(executionId, that.executionId) && toolCallCount == that.toolCallCount
+                && exitConfirmed == that.exitConfirmed;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(finalAnswer, snapshot, metadata, success, errorMessage, completionReason, cost,
-                quotaViolation, executionId);
+                quotaViolation, executionId, toolCallCount, exitConfirmed);
     }
 
     @Override
@@ -490,8 +549,8 @@ public final class SubagentExecutionResult {
                     + (finalAnswer.length() > 100 ? finalAnswer.substring(0, 100) + "..." : finalAnswer) + '\'' + '}';
         } else {
             return "SubagentExecutionResult{" + "success=false" + ", reason=" + completionReason + ", cost=" + cost
-                    + ", executionId=" + executionId + ", metadata=" + metadata + ", error='" + errorMessage + '\''
-                    + '}';
+                    + ", executionId=" + executionId + ", metadata=" + metadata + ", exitConfirmed=" + exitConfirmed
+                    + ", error='" + errorMessage + '\'' + '}';
         }
     }
 }

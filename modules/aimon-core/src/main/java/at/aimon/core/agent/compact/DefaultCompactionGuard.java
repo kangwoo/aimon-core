@@ -158,8 +158,8 @@ public class DefaultCompactionGuard implements CompactionGuard {
 
     @Override
     public CompactionDecision maybeCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry) {
-        return serializedEvaluate(memory, model, hookRegistry, null, null, null, false, null,
-                CompactionObserver.none());
+        return serializedEvaluate(memory, model, hookRegistry, null, null, null, false, null, CompactionObserver.none(),
+                null);
     }
 
     @Override
@@ -167,7 +167,7 @@ public class DefaultCompactionGuard implements CompactionGuard {
             ExecutionId executionId) {
         Objects.requireNonNull(executionId, "executionId cannot be null");
         return serializedEvaluate(memory, model, hookRegistry, executionId, null, null, false, null,
-                CompactionObserver.none());
+                CompactionObserver.none(), null);
     }
 
     /**
@@ -186,12 +186,14 @@ public class DefaultCompactionGuard implements CompactionGuard {
         return serializedEvaluate(request.getTranscriptBuffer(), request.getModel(), request.getHookRegistry(),
                 request.getExecutionId().orElse(null), request.getExecutionEnvironment().orElse(null),
                 request.getExecutionCancellation().orElse(null), request.isBudgetForced(),
-                request.getCallMetadata().orElse(null), request.getCompactionObserver());
+                request.getCallMetadata().orElse(null), request.getCompactionObserver(),
+                request.getCompactionInstructions().orElse(null));
     }
 
     @Override
     public CompactionDecision forceCompact(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry) {
-        return serializedEvaluate(memory, model, hookRegistry, null, null, null, true, null, CompactionObserver.none());
+        return serializedEvaluate(memory, model, hookRegistry, null, null, null, true, null, CompactionObserver.none(),
+                null);
     }
 
     @Override
@@ -199,7 +201,7 @@ public class DefaultCompactionGuard implements CompactionGuard {
             ExecutionId executionId) {
         Objects.requireNonNull(executionId, "executionId cannot be null");
         return serializedEvaluate(memory, model, hookRegistry, executionId, null, null, true, null,
-                CompactionObserver.none());
+                CompactionObserver.none(), null);
     }
 
     /**
@@ -228,12 +230,15 @@ public class DefaultCompactionGuard implements CompactionGuard {
      * @param observer
      *            told of the engine call, if there is one ({@link CompactionObserver#none()} from every positional
      *            entry point)
+     * @param compactionInstructions
+     *            the caller's instructions for the summary, or {@code null} for the default (every positional entry
+     *            point)
      */
     @SuppressWarnings("checkstyle:ParameterNumber")
     private CompactionDecision serializedEvaluate(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
             ExecutionId executionId, ExecutionEnvironment executionEnvironment,
             CancellationSignal executionCancellation, boolean budgetForced, LlmCallMetadata callMetadata,
-            CompactionObserver observer) {
+            CompactionObserver observer, String compactionInstructions) {
         Objects.requireNonNull(memory, "memory cannot be null");
         Objects.requireNonNull(model, "model cannot be null");
         Objects.requireNonNull(hookRegistry, "hookRegistry cannot be null");
@@ -242,7 +247,8 @@ public class DefaultCompactionGuard implements CompactionGuard {
         return serialized(sessionId,
                 () -> evaluate(memory.getSystemPrompt(), memory.getMessages(), model, sessionId, budgetForced,
                         forced -> invokeEngine(memory, model, hookRegistry, sessionId, executionId,
-                                executionEnvironment, executionCancellation, callMetadata, observer, forced)));
+                                executionEnvironment, executionCancellation, callMetadata, observer,
+                                compactionInstructions, forced)));
     }
 
     /**
@@ -439,7 +445,7 @@ public class DefaultCompactionGuard implements CompactionGuard {
     private CompactionResult invokeEngine(TranscriptBuffer memory, LlmModel model, HookRegistry hookRegistry,
             SessionId sessionId, ExecutionId executionId, ExecutionEnvironment executionEnvironment,
             CancellationSignal executionCancellation, LlmCallMetadata callMetadata, CompactionObserver observer,
-            boolean forced) {
+            String compactionInstructions, boolean forced) {
         // The attempt opens before the request is built, so the summary call's metadata can name it. With no observer
         // (tracing off) enrich hands callMetadata back as it is, and the request is the one built before this seam.
         try (CompactionObserver.Attempt attempt = observer
@@ -450,7 +456,8 @@ public class DefaultCompactionGuard implements CompactionGuard {
             final CompactionRequest request = CompactionRequest.builder().transcriptBuffer(memory)
                     .trigger(CompactionTrigger.AUTO).model(model).hookRegistry(hookRegistry)
                     .executionEnvironment(executionEnvironment).executionCancellation(executionCancellation)
-                    .forced(forced).executionId(executionId).callMetadata(attempt.enrich(callMetadata)).build();
+                    .forced(forced).executionId(executionId).callMetadata(attempt.enrich(callMetadata))
+                    .customInstructions(compactionInstructions).build();
             try {
                 return attempt.record(compactionEngine.compact(request));
             } catch (RuntimeException e) {

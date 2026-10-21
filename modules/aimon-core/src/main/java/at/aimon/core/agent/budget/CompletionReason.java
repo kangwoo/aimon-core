@@ -17,8 +17,22 @@ public enum CompletionReason {
     TOKEN_BUDGET_EXCEEDED,
     /** Execution halted because the cumulative monetary (cost) budget was exhausted. */
     COST_BUDGET_EXCEEDED,
-    /** Execution halted because the wall-clock budget elapsed. */
+    /**
+     * Execution halted because the wall-clock budget elapsed — at an iteration boundary, or, for a fork carrying a
+     * {@link ExecutionDeadline}, mid-call: the deadline trips the fork's cancellation, and the fork reports this
+     * reason rather than {@link #INTERRUPTED} for the call it broke.
+     */
     WALL_CLOCK_EXCEEDED,
+    /**
+     * A fork halted because it asked for more tool calls than its execution policy allows
+     * ({@code SubagentExecutionPolicy#getMaxToolCalls()}). The calls over the limit were not run: each was answered
+     * with an error result saying so. Only a fork ends with this reason; a turn has no tool-call limit.
+     *
+     * <p>
+     * Added after the first release of this enum. A peer on an older build reads the name as {@link #ERROR}
+     * ({@link #fromWireName(String, boolean)}).
+     */
+    TOOL_CALL_BUDGET_EXCEEDED,
     /**
      * Execution halted because an accumulated usage quota was reached — a session's, a principal's or a tenant's,
      * in total or for the day ({@code at.aimon.core.agent.quota}). Checked where the budget is, before the next LLM

@@ -7,6 +7,39 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: trusted execution policies for subagent forks
+
+A fork launched through `Task` can now run under limits supplied by code — never by the model's `Task` input or a
+subagent definition file — and its context can be managed by its spawner's context engine. Design:
+`docs/design/subagent/execution-policy.md`.
+
+- **`SubagentExecutionPolicy`** (new) — optional, independent caps on iterations, cumulative tokens, tool calls run and
+  wall clock from launch, plus compaction hints (`compactionTokenThreshold`, `contextTargetTokens`), AUTO-compaction
+  summary instructions, `inheritContextEngine` and an exit grace period. **`SubagentExecutionPolicyResolver`** (new)
+  supplies one per subagent name; install it with `TaskTool#withExecutionPolicyResolver` or
+  `OrcaAgentRuntimeFactory#withSubagentExecutionPolicies` (exposed to providers as
+  `OrcaToolProviderContext#getSubagentExecutionPolicyResolver`, beside a new `getContextEngine`).
+- **Refused, not dropped** — `SubagentPolicyCapability` (new); `SubagentExecutor#supportedPolicyCapabilities()` and
+  `SubagentExecutionManager#supportedPolicyCapabilities()` (new, default: none). `TaskTool` refuses a policy the
+  manager cannot enforce before spawning; the manager refuses it again at run time, and refuses any policy for a code
+  behavior.
+- **Tool-call cap** — calls over the cap are answered with an error result and not run; the fork ends with the new
+  **`CompletionReason.TOOL_CALL_BUDGET_EXCEEDED`** (an older peer reads it as `ERROR`).
+- **Deadline** — **`ExecutionDeadline`** (new, monotonic) anchored at launch, background queue wait included, and
+  held to a parent fork's deadline (`ToolContextKeys.EXECUTION_DEADLINE`, new). It trips the fork's cancellation —
+  aborting an in-flight LLM call, firing tool terminators — and the fork reports `WALL_CLOCK_EXCEEDED` rather than
+  `INTERRUPTED`; a fork whose deadline passed before it started does not start.
+- **Unconfirmed exits** — a foreground fork under a deadline runs on its own thread; one that has not exited a grace
+  period after its deadline or cancellation is returned with `SubagentExecutionResult#isExitConfirmed() == false` and
+  listed by `SubagentExecutionManager#lingeringRuns()` (`LingeringSubagentRun`, new) until it does.
+- **Context** — the fork honours `SHOULD_COMPACT` and the context target as `ContextRequest.budgetForced`;
+  `ContextRequest` / `CompactionGuardRequest` gain `compactionInstructions`, handed to the summary of an AUTO
+  compaction; `OrcaAgentExecutor` publishes the runtime's engine as `ToolContextKeys.CONTEXT_ENGINE` (new) and a fork
+  under `inheritContextEngine` runs under it.
+- **Results** — `SubagentExecutionResult#getToolCallCount()`; `TaskTool` attaches a structured
+  **`SubagentOutcomePayload`** as the `ToolResult` render payload, and adds an `Exit: UNCONFIRMED` line when the run
+  had not exited. A launch without a policy behaves exactly as before.
+
 ### Changed (behaviour change): the request principal books every LLM call of a turn or fork
 
 An execution's request principal (`OrcaAgentExecutionRequest.principal`, `SubagentExecutionRequest.principal`) reached

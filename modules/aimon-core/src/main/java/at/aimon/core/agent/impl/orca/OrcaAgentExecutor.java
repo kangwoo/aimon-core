@@ -894,6 +894,9 @@ public class OrcaAgentExecutor
         builder.put(TodoWriteTool.CONTEXT_ID_KEY, scope.transcriptBuffer.getSessionId().value());
         // The spawn tools read it into the launch context, so a fork charges this turn's quota keys.
         builder.put(ToolContextKeys.QUOTA_GUARD, scope.quotaGuard);
+        // The runtime's context engine, so a fork whose execution policy inherits it compacts under the same engine
+        // as this turn (each fork keyed on its own transcript). Unused by a fork without such a policy.
+        builder.put(ToolContextKeys.CONTEXT_ENGINE, scope.agentRuntime.getContextEngine());
 
         // PAR-05 / execution-environment §7: inject a thread-safe, execution-scoped map of read stamps. It backs the
         // stale-write guard of Edit (and of Write over an existing file), and it is concurrency-safe so parallel

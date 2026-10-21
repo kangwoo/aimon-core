@@ -5,6 +5,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.NoopCancellationSignal;
 import at.aimon.core.agent.tool.Tool;
@@ -79,6 +80,7 @@ public final class SubagentExecutionContext {
     private final SubagentOutputSink outputSink;
     private final ExecutionEnvironment executionEnvironment;
     private final ExecutionEnvironmentProvider executionEnvironmentProvider;
+    private final ContextEngine contextEngine;
 
     private SubagentExecutionContext(Builder builder) {
         this.agentRuntimeId = Objects.requireNonNull(builder.agentRuntimeId, "Agent runtime ID cannot be null");
@@ -98,6 +100,7 @@ public final class SubagentExecutionContext {
         this.outputSink = builder.outputSink != null ? builder.outputSink : SubagentOutputSink.NO_OP;
         this.executionEnvironment = builder.executionEnvironment;
         this.executionEnvironmentProvider = builder.executionEnvironmentProvider;
+        this.contextEngine = builder.contextEngine;
     }
 
     /**
@@ -240,6 +243,16 @@ public final class SubagentExecutionContext {
     }
 
     /**
+     * Returns the context engine this fork runs under in place of its executor's own: the spawner's, handed down when
+     * the fork's policy asks for it ({@code SubagentExecutionPolicy#isInheritContextEngine()}).
+     *
+     * @return the engine to use, or empty to keep the executor's own
+     */
+    public Optional<ContextEngine> getContextEngine() {
+        return Optional.ofNullable(contextEngine);
+    }
+
+    /**
      * Gets the available tools from the tool handler's registry.
      *
      * @return An immutable list of available tools (never null)
@@ -260,6 +273,7 @@ public final class SubagentExecutionContext {
         private KnowledgeScope knowledgeScope;
         private List<ToolContextEnricher> toolContextEnrichers;
         private SubagentOutputSink outputSink;
+        private ContextEngine contextEngine;
         private ExecutionEnvironment executionEnvironment;
         private ExecutionEnvironmentProvider executionEnvironmentProvider;
 
@@ -387,6 +401,18 @@ public final class SubagentExecutionContext {
          */
         public Builder executionEnvironmentProvider(ExecutionEnvironmentProvider executionEnvironmentProvider) {
             this.executionEnvironmentProvider = executionEnvironmentProvider;
+            return this;
+        }
+
+        /**
+         * Sets the context engine the fork runs under in place of its executor's own.
+         *
+         * @param contextEngine
+         *            the engine, or null to keep the executor's own
+         * @return this builder
+         */
+        public Builder contextEngine(ContextEngine contextEngine) {
+            this.contextEngine = contextEngine;
             return this;
         }
 

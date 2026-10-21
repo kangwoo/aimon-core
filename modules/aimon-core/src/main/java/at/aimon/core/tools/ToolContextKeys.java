@@ -7,7 +7,9 @@ import java.util.function.Consumer;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.artifact.ArtifactCollector;
+import at.aimon.core.agent.budget.ExecutionDeadline;
 import at.aimon.core.agent.compact.CompactionObserver;
+import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.quota.QuotaGuard;
 import at.aimon.core.agent.session.SessionId;
@@ -431,6 +433,38 @@ public final class ToolContextKeys {
      * decide whether the run may fan out.
      */
     public static final ToolContextKey<Integer> FORK_DEPTH = ToolContextKey.of("forkDepth", Integer.class);
+
+    /**
+     * Typed key for the deadline the run making this tool call must be over by.
+     *
+     * <p>
+     * Published by a fork running under a deadline (an execution policy with a wall clock). A spawn site reads it into
+     * the launch context ({@code SubagentLaunchContext#getParentDeadline()}) so the fork it starts is held to the
+     * earlier of its own policy's deadline and this one: a child is never given more time than its parent has left.
+     * Absent when the run has no deadline — a session's turn among them, whose wall-clock budget is checked between
+     * iterations rather than anchored as a deadline.
+     *
+     * <p>
+     * Write-once, so a {@code ToolContextEnricher} cannot lift it for the forks below.
+     */
+    public static final ToolContextKey<ExecutionDeadline> EXECUTION_DEADLINE = ToolContextKey
+            .writeOnce("executionDeadline", ExecutionDeadline.class);
+
+    /**
+     * Typed key for the context engine of the run making this tool call.
+     *
+     * <p>
+     * The turn's executor publishes its runtime's engine; a fork publishes the engine it runs under. A spawn site reads
+     * it into the launch context ({@code SubagentLaunchContext#getParentContextEngine()}), and a fork whose policy
+     * asks for it ({@code SubagentExecutionPolicy#isInheritContextEngine()}) runs under it instead of its executor's
+     * own.
+     * Shared, not copied: what the engine keeps per conversation is keyed on each run's own transcript.
+     *
+     * <p>
+     * Write-once, for the same reason as {@link #HOOK_REGISTRY}.
+     */
+    public static final ToolContextKey<ContextEngine> CONTEXT_ENGINE = ToolContextKey.writeOnce("contextEngine",
+            ContextEngine.class);
 
     private ToolContextKeys() {
         throw new AssertionError("This class should not be instantiated");

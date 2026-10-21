@@ -36,6 +36,7 @@ public final class ContextRequest {
     private final boolean budgetForced;
     private final LlmCallMetadata callMetadata;
     private final CompactionObserver compactionObserver;
+    private final String compactionInstructions;
 
     private ContextRequest(Builder builder) {
         this.transcriptBuffer = Objects.requireNonNull(builder.transcriptBuffer, "transcriptBuffer cannot be null");
@@ -48,6 +49,7 @@ public final class ContextRequest {
         this.budgetForced = builder.budgetForced;
         this.callMetadata = builder.callMetadata;
         this.compactionObserver = builder.compactionObserver;
+        this.compactionInstructions = builder.compactionInstructions;
     }
 
     public static Builder builder() {
@@ -129,6 +131,18 @@ public final class ContextRequest {
         return compactionObserver;
     }
 
+    /**
+     * Instructions for the summary of an AUTO compaction this call triggers — what the summary must keep — handed to
+     * the compaction engine as its custom instructions, the way {@code /compact <instructions>} hands them to a manual
+     * one. A fork under an execution policy passes its policy's
+     * ({@code SubagentExecutionPolicy#getCompactionInstructions()}).
+     *
+     * @return the instructions, or empty for the engine's default summary
+     */
+    public Optional<String> getCompactionInstructions() {
+        return Optional.ofNullable(compactionInstructions);
+    }
+
     /** Builder for {@link ContextRequest}. */
     public static final class Builder {
         private TranscriptBuffer transcriptBuffer;
@@ -141,6 +155,7 @@ public final class ContextRequest {
         private boolean budgetForced;
         private LlmCallMetadata callMetadata;
         private CompactionObserver compactionObserver = CompactionObserver.none();
+        private String compactionInstructions;
 
         private Builder() {
         }
@@ -221,6 +236,16 @@ public final class ContextRequest {
             this.compactionObserver = compactionObserver == null
                     ? CompactionObserver.none()
                     : CompactionObserver.failSafe(compactionObserver);
+            return this;
+        }
+
+        /**
+         * @param compactionInstructions
+         *            instructions for the summary of an AUTO compaction, or {@code null} for the default summary
+         * @return this builder
+         */
+        public Builder compactionInstructions(String compactionInstructions) {
+            this.compactionInstructions = compactionInstructions;
             return this;
         }
 

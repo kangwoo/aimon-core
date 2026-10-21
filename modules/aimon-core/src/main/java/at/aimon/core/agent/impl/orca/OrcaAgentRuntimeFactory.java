@@ -68,6 +68,7 @@ import at.aimon.core.skill.repository.BundledSkillMaterializer;
 import at.aimon.core.subagent.CompositeSubagentRegistry;
 import at.aimon.core.subagent.DefaultSubagentRegistry;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentExecutionPolicyResolver;
 import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.subagent.task.InMemorySessionSnapshotStore;
@@ -227,6 +228,8 @@ public class OrcaAgentRuntimeFactory {
     private Function<VirtualFileSystem, TaskOutputStore> taskOutputStoreFactory;
     private Function<VirtualFileSystem, SessionSnapshotStore> sessionSnapshotStoreFactory;
     private Function<VirtualFileSystem, TaskResultStore> taskResultStoreFactory;
+    // Trusted execution policies for the subagents each agent's Task tool launches. Null => none (unchanged).
+    private SubagentExecutionPolicyResolver subagentExecutionPolicyResolver;
     // Bootstrap override for the compaction circuit breaker's counter storage. Null => a fresh
     // InMemoryCompactionFailureStore per context, which breaks the circuit per process. A scale-out bootstrap passes
     // one SessionRecordCompactionFailureStore over its (fenced) record store so every node breaks the same circuit;
@@ -514,6 +517,21 @@ public class OrcaAgentRuntimeFactory {
      */
     public OrcaAgentRuntimeFactory withDistributedSnapshotStore() {
         this.sessionSnapshotStoreFactory = VfsSessionSnapshotStore::new;
+        return this;
+    }
+
+    /**
+     * Launches the subagents every agent's {@code Task} tool starts under the trusted execution policy
+     * {@code resolver} supplies for the subagent's name ({@link at.aimon.core.subagent.SubagentExecutionPolicy}): its
+     * iteration, token and tool-call caps, its deadline, and how its context is managed. When {@code null} (the
+     * default) no policy applies and subagents run exactly as before.
+     *
+     * @param resolver
+     *            the resolver (may be {@code null} to restore the default)
+     * @return this factory (for chaining)
+     */
+    public OrcaAgentRuntimeFactory withSubagentExecutionPolicies(SubagentExecutionPolicyResolver resolver) {
+        this.subagentExecutionPolicyResolver = resolver;
         return this;
     }
 
@@ -994,6 +1012,7 @@ public class OrcaAgentRuntimeFactory {
                 .hookRegistry(hookRegistry).hookExecutionManager(agentExecutor.getHookExecutionManager())
                 .scheduledTaskManager(scheduledTaskManager).credentialStore(credentialStore)
                 .compactionEngine(compactionEngine).compactionGuard(compactionGuard).contextEngine(contextEngine)
+                .subagentExecutionPolicyResolver(subagentExecutionPolicyResolver)
                 .pendingTurnRegistry(pendingTurnRegistry).agentApprovalStore(agentApprovalStore)
                 .sessionApprovalStore(sessionApprovalStore).skillInvocationPolicy(skillInvocationPolicy)
                 .rewakeService(rewakeService).build();
