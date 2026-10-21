@@ -102,7 +102,8 @@ public final class CompactionRequest {
      * Returns optional caller-supplied {@link LlmCallMetadata} that the engine should attach to its summary LLM call.
      *
      * <p>
-     * The engine still owns its own framework defaults (component, feature, traceId); when both are present they are
+     * The engine still owns its own framework defaults (component, feature, and a traceId that applies only when the
+     * caller supplies none — the framework's callers always do); when both are present they are
      * merged via {@link LlmCallMetadata#withDefaults(LlmCallMetadata)} so caller-supplied attribution (the
      * {@code principal}, the group key and the caller's tags — an automatic compaction's caller hands over its metadata
      * without the call site, see {@link LlmCallMetadata#withoutCallSite()}) wins on overlap and engine defaults fill

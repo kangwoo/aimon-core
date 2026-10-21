@@ -45,7 +45,8 @@ import at.aimon.core.tracing.Spans;
  *
  * <ul>
  * <li>Builds a {@link ContextRequest} carrying caller-supplied {@link LlmCallMetadata} (principal + traceId, plus the
- * tags of the tool context's metadata) so the summary LLM call is properly attributed to the invoking user and carries
+ * tags of the tool context's metadata, and its principal when the request names none) so the summary LLM call is
+ * properly attributed to the invoking user and carries
  * the caller's routing and policy tags, and — with tracing on — the command span's position,
  * so the summary LLM span nests under the executor's COMMAND span — under a COMPACTION span, when the executor
  * handed over a {@link ToolContextKeys#COMPACTION_OBSERVER}
@@ -212,13 +213,14 @@ public final class CompactCommand extends SystemCommand implements DirectExecuta
             builder.principal(principal);
         }
         final LlmCallMetadata attribution = builder.build();
-        final Optional<LlmCallMetadata> context = toolContext.get(ToolContextKeys.LLM_CALL_METADATA_KEY);
+        final Optional<LlmCallMetadata> contextMetadata = toolContext.get(ToolContextKeys.LLM_CALL_METADATA_KEY);
         // Three layers, earlier winning: the span position (so the summary nests under the COMMAND span, in the
         // parent's trace), this command's attribution, then the rest of the context's metadata. The last layer holds
-        // the position too, but under the attribution its group key would lose — hence the carrier on top.
-        final LlmCallMetadata positioned = context.flatMap(Spans::traceCarrier)
+        // the position too, but under the attribution its group key would lose — hence the carrier on top. With no
+        // request principal, the context's principal (the turn's) books the summary call, as an automatic compaction's.
+        final LlmCallMetadata positioned = contextMetadata.flatMap(Spans::traceCarrier)
                 .map(carrier -> carrier.withDefaults(attribution)).orElse(attribution);
-        return context.map(metadata -> positioned.withDefaults(metadata.withoutCallSite())).orElse(positioned);
+        return contextMetadata.map(metadata -> positioned.withDefaults(metadata.withoutCallSite())).orElse(positioned);
     }
 
     private void invokeOnStop(CommandExecutionResult commandResult, ExecutionEnvironment executionEnvironment,

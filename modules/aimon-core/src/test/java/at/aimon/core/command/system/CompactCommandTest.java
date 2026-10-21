@@ -247,6 +247,24 @@ class CompactCommandTest {
     }
 
     @Test
+    void fallsBackToTheToolContextsPrincipalWhenTheRequestNamesNone() {
+        TranscriptBuffer memory = memoryWith("hello");
+        engine.setNextResult(successResult(100, 50));
+        LlmCallMetadata turn = LlmCallMetadata.builder().component("review-bot").principal(Principal.user("bob"))
+                .build();
+        CommandExecutionContext context = CommandExecutionContext.builder().command(command)
+                .defaultModel(LlmModel.builder().name("test-model").build()).toolRegistry(new DefaultToolRegistry())
+                .transcriptBuffer(memory)
+                .toolContext(ToolContext.builder().put(ToolContextKeys.LLM_CALL_METADATA_KEY, turn).build()).build();
+
+        command.execute(context, DirectCommandExecutionRequest.of(""));
+
+        LlmCallMetadata metadata = engine.lastRequest.get().getCallMetadata().orElseThrow();
+        assertThat(metadata.getPrincipal()).hasValue(Principal.user("bob"));
+        assertThat(metadata.getComponent()).hasValue(CompactCommand.COMPONENT_NAME);
+    }
+
+    @Test
     void theToolContextsSpanPositionWinsOverItsTagsAndTheCommandsGroupKey() {
         // Traced, the context's metadata names the COMMAND span: that position — group key and parent span — wins, and
         // the context's other tags still travel.

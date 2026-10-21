@@ -18,12 +18,14 @@ their metadata without its call site; `DefaultCompactionEngine` is unchanged and
 - **`LlmCallMetadata.withoutCallSite()`** (new) — drops `component`, `parentComponent` and `feature`; keeps
   `principal`, `traceId` and every tag, the reserved span tags included.
 - **Main turn** (`OrcaAgentExecutor`) — the turn's principal, group key and tags reach the summary call; the request
-  principal still wins over one in the turn's metadata.
+  principal still wins over one in the turn's metadata, and a turn with no request principal now books its summary
+  call to the one in its metadata (it used to carry none). `ContextCaller.principal` is unchanged — still the
+  request's.
 - **Forks** (`DefaultSubagentExecutor`) — the summary call now carries the principal and tags the fork inherited from
   its caller (forks used to hand over the span position alone), and its group key is the caller's, as the fork's own
   calls are.
-- **`/compact`** — the tags of the tool context's metadata travel too; the command's own attribution, group key and
-  principal still win.
+- **`/compact`** — the tags of the tool context's metadata travel too, and so does its principal when the request
+  names none; the command's own attribution, group key and request principal still win.
 - **Tracing off is no longer metadata-free.** A `ContextRequest` built by either executor now carries at least the
   group key, plus the principal and tags when the caller has them. A custom `ContextEngine` or `CompactionEngine` that
   treated a present `callMetadata` as "traced" or "`/compact`" will see it on every automatic compaction.

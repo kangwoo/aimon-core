@@ -400,8 +400,9 @@ public class DefaultCompactionEngine implements CompactionEngine {
                 : summaryPromptTemplate.buildRollingSystemPrompt(mergedInstructions,
                         rolling.getPreviousSummary().orElse(null), rolling.getTargetSummaryTokens());
 
-        // 4) Summary LLM call (no tools, attribute as feature=COMPACTION). Caller-supplied metadata (e.g. the
-        // invoking principal for a /compact command) wins on overlap; engine defaults fill the rest.
+        // 4) Summary LLM call (no tools, attribute as feature=COMPACTION). Caller-supplied metadata (the principal,
+        // group key and tags of the compacting execution or /compact — never its component or feature) wins on
+        // overlap; engine defaults fill the rest.
         final LlmCallMetadata engineDefaults = LlmCallMetadata.builder().component("compaction-engine")
                 .feature(LlmCallMetadata.Feature.COMPACTION).traceId(sessionId.toString()).build();
         final LlmCallMetadata callMetadata = callerMetadata != null

@@ -771,6 +771,22 @@ class OrcaAgentExecutorTracingTest {
     }
 
     @Test
+    @DisplayName("ST-9: with no request principal, the summary call is booked to the principal in the turn's metadata")
+    void compactionSummaryCallFallsBackToTheTurnMetadataPrincipal() {
+        final RecordingLlmClient stub = new RecordingLlmClient();
+        stub.enqueue(LlmResponse.text("the summary"));
+        stub.enqueue(LlmResponse.text("done"));
+        final OrcaAgentExecutor executor = createExecutor(stub);
+        final Principal bob = Principal.user("bob");
+
+        executor.execute(createContext(new DefaultToolRegistry(), null, compactingEngine(stub)),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-meta-principal"))
+                        .llmCallMetadata(LlmCallMetadata.builder().principal(bob).build()).build());
+
+        assertThat(summaryCallOf(stub).getPrincipal()).contains(bob);
+    }
+
+    @Test
     @DisplayName("ST-9: two turns on one executor each hand their own tags to their summary call")
     void consecutiveTurnsDoNotShareTurnTags() {
         final RecordingLlmClient stub = new RecordingLlmClient();
