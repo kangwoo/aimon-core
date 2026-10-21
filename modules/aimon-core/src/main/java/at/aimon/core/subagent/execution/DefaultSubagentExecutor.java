@@ -450,7 +450,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // Resolve effective LLM call metadata (subagent attribution) — shared with the code-behavior path so the two
         // stay in lockstep.
         final LlmCallMetadata effectiveMetadata = SubagentLlmDefaults.effectiveMetadata(subagent.getName(),
-                request.getLlmCallMetadata());
+                request.getLlmCallMetadata(), request.getPrincipal().orElse(null));
 
         final LlmModel modelConfig = buildModelConfig(subagent, context.getDefaultModel(),
                 context.getModelOverride().orElse(null));

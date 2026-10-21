@@ -787,6 +787,29 @@ class OrcaAgentExecutorTracingTest {
     }
 
     @Test
+    @DisplayName("the request principal books the turn's react-loop call, over a principal on the caller's metadata")
+    void reactLoopCallIsBookedToTheRequestPrincipal() {
+        final RecordingLlmClient stub = new RecordingLlmClient();
+        stub.enqueue(LlmResponse.text("done a"));
+        stub.enqueue(LlmResponse.text("done b"));
+        final OrcaAgentExecutor executor = createExecutor(stub);
+        final OrcaAgentRuntime runtime = createContext(new DefaultToolRegistry());
+        final Principal alice = Principal.user("alice");
+
+        executor.execute(runtime, OrcaAgentExecutionRequest.builder().userInput("hi")
+                .sessionId(SessionId.of("conv-req-principal")).principal(alice).build());
+        executor.execute(runtime,
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.of("conv-both-principals"))
+                        .principal(alice)
+                        .llmCallMetadata(LlmCallMetadata.builder().principal(Principal.user("bob")).build()).build());
+
+        assertThat(stub.metadata).hasSize(2).allSatisfy(m -> {
+            assertThat(m.getFeature()).contains(LlmCallMetadata.Feature.REACT_LOOP);
+            assertThat(m.getPrincipal()).contains(alice);
+        });
+    }
+
+    @Test
     @DisplayName("ST-9: two turns on one executor each hand their own tags to their summary call")
     void consecutiveTurnsDoNotShareTurnTags() {
         final RecordingLlmClient stub = new RecordingLlmClient();

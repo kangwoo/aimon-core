@@ -53,4 +53,26 @@ class LlmCallMetadataTest {
         assertThat(merged.getFeature()).contains(LlmCallMetadata.Feature.COMPACTION);
         assertThat(merged.getTags()).containsEntry("routing", "review");
     }
+
+    @Test
+    @DisplayName("withPrincipal replaces the principal and keeps every other field")
+    void withPrincipalReplacesOnlyThePrincipal() {
+        final LlmCallMetadata metadata = LlmCallMetadata.builder().component("agent").parentComponent("parent")
+                .feature("f").principal(Principal.user("bob")).traceId("session-1").tag("routing", "review").build();
+
+        assertThat(metadata.withPrincipal(Principal.user("alice")))
+                .isEqualTo(LlmCallMetadata.builder().component("agent").parentComponent("parent").feature("f")
+                        .principal(Principal.user("alice")).traceId("session-1").tag("routing", "review").build());
+    }
+
+    @Test
+    @DisplayName("withPrincipal of null, or of the principal already set, returns the same instance")
+    void withPrincipalIsIdentityForNullOrSamePrincipal() {
+        final LlmCallMetadata metadata = LlmCallMetadata.builder().principal(Principal.user("bob")).build();
+
+        assertThat(metadata.withPrincipal(null)).isSameAs(metadata);
+        assertThat(metadata.withPrincipal(Principal.user("bob"))).isSameAs(metadata);
+        assertThat(LlmCallMetadata.empty().withPrincipal(Principal.user("alice")).getPrincipal())
+                .contains(Principal.user("alice"));
+    }
 }

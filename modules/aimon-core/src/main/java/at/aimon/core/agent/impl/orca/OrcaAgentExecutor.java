@@ -1142,10 +1142,13 @@ public class OrcaAgentExecutor
         injectAssembledUserContext(transcriptBuffer, assembledContext);
         transcriptBuffer.addMessage(userMessage);
 
-        // Resolve effective LLM call metadata: caller-supplied wins, otherwise auto-derive from agent + session.
+        // Resolve effective LLM call metadata: caller-supplied wins, otherwise auto-derive from agent + session. The
+        // request's principal is the identity the turn runs as, so it books the turn's calls even over a principal the
+        // caller also put on the metadata; with none, the metadata's principal stands.
         final LlmCallMetadata baseMetadata = executionRequest.getLlmCallMetadata()
                 .withDefaults(LlmCallMetadata.builder().component(agent.getName()).feature("react-loop")
-                        .traceId(transcriptBuffer.getSessionId().value()).build());
+                        .traceId(transcriptBuffer.getSessionId().value()).build())
+                .withPrincipal(executionRequest.getPrincipal().orElse(null));
 
         // TRACE-01: mint the per-turn root span and enrich the metadata so downstream LLM (decorator) and tool spans
         // nest under it. enrich(...) is a no-op under Tracer.noop(), so tracing-off leaves the metadata untouched.
@@ -3454,8 +3457,10 @@ public class OrcaAgentExecutor
      * The request carries the turn's metadata without its call site ({@link LlmCallMetadata#withoutCallSite()}): the
      * active span's position, the principal and every tag the caller attached, so a compaction summary call nests in
      * the trace, is booked to the principal whose turn triggered it, and reaches the provider with the same routing
-     * and policy tags as the turn's own calls. The request's principal wins over one in the turn's metadata, as it did
-     * before tags travelled. The gate runs before the iteration span opens, so that position is the turn span.
+     * and policy tags as the turn's own calls. The principal is the turn's: the request's, which already won over one
+     * in
+     * the caller's metadata when the turn's metadata was resolved. The gate runs before the iteration span opens, so
+     * that position is the turn span.
      * Component and feature stay the engine's: it merges with caller fields winning, and the turn's
      * {@code react-loop} feature would otherwise book the summary call.
      *
@@ -3470,12 +3475,9 @@ public class OrcaAgentExecutor
                 .model(scope.getAgent().getMetadata().getModel()).hookRegistry(scope.getHookRegistry())
                 .executionEnvironment(scope.executionEnvironment).executionCancellation(scope.coordinator.getSignal())
                 .caller(ContextCaller.builder().principal(scope.getPrincipal()).build()).budgetForced(budgetForced);
-        final LlmCallMetadata principalMetadata = scope.getPrincipal() != null
-                ? LlmCallMetadata.builder().principal(scope.getPrincipal()).build()
-                : LlmCallMetadata.empty();
         final LlmCallMetadata turnMetadata = Spans.enrichSafely(scope.activeSpan, scope.llmCallMetadata);
         final Optional<LlmCallMetadata> carrier = Spans.traceCarrier(turnMetadata);
-        final LlmCallMetadata callMetadata = principalMetadata.withDefaults(turnMetadata.withoutCallSite());
+        final LlmCallMetadata callMetadata = turnMetadata.withoutCallSite();
         if (!callMetadata.isEmpty()) {
             request.callMetadata(callMetadata);
         }

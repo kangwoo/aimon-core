@@ -170,7 +170,9 @@ public final class OrcaAgentExecutionRequest implements AgentExecutionRequest {
      *
      * <p>
      * The agent executor merges this value with auto-derived defaults (component=agent name, feature="react-loop",
-     * traceId=sessionId) before passing it to the LLM client. Caller-supplied fields always win.
+     * traceId=sessionId) before passing it to the LLM client. Caller-supplied fields always win, with one exception:
+     * {@link #getPrincipal()}, when set, books every LLM call of the turn — including its compaction summaries — over a
+     * {@code principal} on this metadata, because it is the identity the turn runs as.
      *
      * @return the metadata (never null, may be {@link LlmCallMetadata#empty()})
      */

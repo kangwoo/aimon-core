@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.base.Principal;
+import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.ReasoningSummary;
@@ -224,5 +226,30 @@ class SubagentLlmDefaultsTest {
         LlmModel grandchild = SubagentLlmDefaults.resolveModel(subagentWithModel("grandchild-model"), child);
 
         assertThat(grandchild.getReasoningEffort()).contains(ReasoningEffort.LOW);
+    }
+
+    @Test
+    @DisplayName("effectiveMetadata books the fork to the request principal over the inherited one")
+    void effectiveMetadataPrefersTheRequestPrincipal() {
+        LlmCallMetadata parent = LlmCallMetadata.builder().component("main").principal(Principal.user("bob"))
+                .tag("routing", "review").build();
+
+        LlmCallMetadata metadata = SubagentLlmDefaults.effectiveMetadata("explorer", parent, Principal.user("alice"));
+
+        assertThat(metadata.getPrincipal()).contains(Principal.user("alice"));
+        assertThat(metadata.getComponent()).contains("explorer");
+        assertThat(metadata.getParentComponent()).contains("main");
+        assertThat(metadata.getTags()).containsEntry("routing", "review");
+    }
+
+    @Test
+    @DisplayName("effectiveMetadata keeps the inherited principal when the request names none")
+    void effectiveMetadataKeepsTheInheritedPrincipalWithoutARequestPrincipal() {
+        LlmCallMetadata parent = LlmCallMetadata.builder().principal(Principal.user("bob")).build();
+
+        assertThat(SubagentLlmDefaults.effectiveMetadata("explorer", parent, null).getPrincipal())
+                .contains(Principal.user("bob"));
+        assertThat(SubagentLlmDefaults.effectiveMetadata("explorer", parent).getPrincipal())
+                .contains(Principal.user("bob"));
     }
 }

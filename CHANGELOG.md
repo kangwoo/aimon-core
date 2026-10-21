@@ -7,6 +7,23 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed (behaviour change): the request principal books every LLM call of a turn or fork
+
+An execution's request principal (`OrcaAgentExecutionRequest.principal`, `SubagentExecutionRequest.principal`) reached
+hooks, the execution environment and the tool context, but not the LLM call metadata — only a compaction summary call
+used it. A caller that set the principal on the request alone saw its turn's and its forks' calls metered with no
+principal (`LlmUsageKey`), and a fork's summary call booked differently from the main turn's.
+
+- **`LlmCallMetadata.withPrincipal(Principal)`** (new) — a copy with the principal replaced; `null` keeps the current one.
+- **Main turn** (`OrcaAgentExecutor`) — the request principal now wins over a `principal` on the caller's metadata for
+  every call of the turn (the react-loop calls, sub-executions that read the tool context's metadata, compaction).
+  With no request principal the metadata's principal stands, as before.
+- **Forks** (`SubagentLlmDefaults.effectiveMetadata(String, LlmCallMetadata, Principal)`, new overload; used by both
+  `DefaultSubagentExecutor` and the code-behavior path) — the fork request's principal wins over the one inherited
+  from the parent. The two-argument overload is unchanged.
+- **Usage keys change** for a caller that set a request principal but no metadata principal, or two different ones:
+  those calls are now keyed by the request principal.
+
 ### Changed (behaviour change): compaction summary calls carry the caller's principal and tags, not just its span position
 
 An automatic compaction's summary LLM call used to receive only the caller's span position (and, for a main turn, the
