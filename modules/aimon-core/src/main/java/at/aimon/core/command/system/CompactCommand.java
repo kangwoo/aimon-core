@@ -3,6 +3,7 @@ package at.aimon.core.command.system;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
+import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,8 +44,10 @@ import at.aimon.core.tracing.Spans;
  * The compact command:
  *
  * <ul>
- * <li>Builds a {@link ContextRequest} carrying caller-supplied {@link LlmCallMetadata} (principal + traceId) so the
- * summary LLM call is properly attributed to the invoking user, and — with tracing on — the command span's position,
+ * <li>Builds a {@link ContextRequest} carrying caller-supplied {@link LlmCallMetadata} (principal + traceId, plus the
+ * tags of the tool context's metadata, and its principal when the request names none) so the summary LLM call is
+ * properly attributed to the invoking user and carries
+ * the caller's routing and policy tags, and — with tracing on — the command span's position,
  * so the summary LLM span nests under the executor's COMMAND span — under a COMPACTION span, when the executor
  * handed over a {@link ToolContextKeys#COMPACTION_OBSERVER}
  * <li>Runs it through the agent's {@link ContextEngine#compactNow}, which performs a {@link CompactionTrigger#MANUAL}
@@ -198,8 +201,9 @@ public final class CompactCommand extends SystemCommand implements DirectExecuta
     /**
      * Builds the summary call's metadata: this command's attribution, plus — when the command's tool context names a
      * parent span (tracing on, the executor's COMMAND span) — that span's position, so the summary LLM span nests
-     * under the COMMAND span. Only the position is taken from the context; its group key wins so the span lands in the
-     * parent's trace.
+     * under the COMMAND span. The position's group key wins so the span lands in the parent's trace. Below this
+     * command's own attribution the context's metadata fills the rest without its call site
+     * ({@link LlmCallMetadata#withoutCallSite()}), so tags the caller attached reach the provider as well.
      */
     private static LlmCallMetadata buildCallMetadata(TranscriptBuffer memory, Principal principal,
             ToolContext toolContext) {
@@ -209,8 +213,14 @@ public final class CompactCommand extends SystemCommand implements DirectExecuta
             builder.principal(principal);
         }
         final LlmCallMetadata attribution = builder.build();
-        return toolContext.get(ToolContextKeys.LLM_CALL_METADATA_KEY).flatMap(Spans::traceCarrier)
+        final Optional<LlmCallMetadata> contextMetadata = toolContext.get(ToolContextKeys.LLM_CALL_METADATA_KEY);
+        // Three layers, earlier winning: the span position (so the summary nests under the COMMAND span, in the
+        // parent's trace), this command's attribution, then the rest of the context's metadata. The last layer holds
+        // the position too, but under the attribution its group key would lose — hence the carrier on top. With no
+        // request principal, the context's principal (the turn's) books the summary call, as an automatic compaction's.
+        final LlmCallMetadata positioned = contextMetadata.flatMap(Spans::traceCarrier)
                 .map(carrier -> carrier.withDefaults(attribution)).orElse(attribution);
+        return contextMetadata.map(metadata -> positioned.withDefaults(metadata.withoutCallSite())).orElse(positioned);
     }
 
     private void invokeOnStop(CommandExecutionResult commandResult, ExecutionEnvironment executionEnvironment,

@@ -170,8 +170,12 @@ tool_use 와 tool_result 가 짝을 잃은 메시지 배열은 프로바이더�
 4. **PreCompact 훅** — 지침(`customInstructions`)을 모은다. block 처리 규칙은 §6
 5. **정제** — `MessageStripper` 가 이미지 → `[image]`, 문서 → `[document]` 로 바꾸고, 설정된 경우
    `SensitivePatternRedactor` 를 텍스트에 적용한다
-6. **요약 LLM 호출** — `tools` 는 빈 리스트, `feature = COMPACTION`, `traceId` 는 세션 id.
+6. **요약 LLM 호출** — `tools` 는 빈 리스트, `component = compaction-engine`, `feature = COMPACTION`.
    호출자가 준 `LlmCallMetadata` 가 겹치는 필드에서 이기고 엔진 기본값이 나머지를 채운다.
+   실행기는 자기 metadata 에서 호출 지점(`component`·`parentComponent`·`feature`)을 뺀 것을 넘기므로
+   principal·그룹 키·태그는 호출자 것이, `component`·`feature` 는 엔진 것이 된다. 그룹 키(`traceId`)도
+   호출자 것이다 — 메인 턴은 턴의 `traceId`(호출자가 주지 않았으면 세션 id), 포크는 부모의 그룹 키, `/compact` 는
+   세션 id. 엔진의 세션 id 기본값은 호출자가 `traceId` 를 주지 않을 때만 쓰인다
    요청이 압축하는 실행의 취소 신호를 실어 왔으면 호출은 그 신호에 묶인다 — 인터럽트가 호출을 진행 중에 끊고,
    이미 선 신호면 호출하지 않는다. 신호가 없는 요청(`/compact`)은 전과 같은 오버로드로 불린다
 7. **교체** — 살아남은 prefix + `[boundary, summary]` + tail 을 만들어 **단 한 번의** `replaceWith()` 로

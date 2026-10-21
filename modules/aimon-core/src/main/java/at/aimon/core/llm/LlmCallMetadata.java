@@ -175,6 +175,31 @@ public final class LlmCallMetadata {
     }
 
     /**
+     * Returns a copy without the fields that name the call site — {@code component}, {@code parentComponent} and
+     * {@code feature} — keeping {@code principal}, {@code traceId} and every tag.
+     *
+     * <p>
+     * Used when one call hands its metadata to a framework call it triggers (e.g., a turn handing it to the compaction
+     * summary call). Merged under the callee's own defaults with {@link #withDefaults(LlmCallMetadata)}, the result
+     * keeps the callee's attribution while the caller's principal and tags — routing or policy markers an application
+     * attached — still reach the provider. The reserved span tags are tags like any other and are kept, so the result
+     * still names the caller's span position (see {@code at.aimon.core.tracing.Spans#traceCarrier}, which keeps only
+     * that position). On a tag key collision under {@code withDefaults} the caller's tag wins.
+     *
+     * @return a copy without call-site attribution, or this instance when it carries none (never null)
+     */
+    public LlmCallMetadata withoutCallSite() {
+        if (component == null && parentComponent == null && feature == null) {
+            return this;
+        }
+        final Builder copy = new Builder();
+        copy.principal = this.principal;
+        copy.traceId = this.traceId;
+        copy.tags = this.tags.isEmpty() ? null : new LinkedHashMap<>(this.tags);
+        return new LlmCallMetadata(copy);
+    }
+
+    /**
      * Returns a new metadata instance where this instance's fields take precedence and any unset fields fall back to
      * {@code defaults}. Tag maps are merged with {@code this} winning on key collision.
      *

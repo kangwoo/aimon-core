@@ -482,7 +482,11 @@ CTX-05 가 선행 조건이다. 그때 되살린다면 고정 단위는 "메모�
 
 - **`ContextRequest` 에 `callMetadata` 가 있다.** §3.1 목록에는 없다. `/compact` 는 `LlmCallMetadata`
   (`component = compact-command`, traceId, principal)를 붙이는데 `ContextCaller(executionId, principal)` 로는 component
-  이름을 나를 수 없다. 선택 필드이고 engine 은 그대로 `CompactionRequest` 로 넘긴다
+  이름을 나를 수 없다. 선택 필드이고 engine 은 그대로 `CompactionRequest` 로 넘긴다. 자동 압축에서도 실행기
+  (`OrcaAgentExecutor`, `DefaultSubagentExecutor`)가 자기 metadata 에서 호출 지점(`component`·`parentComponent`·`feature`)만
+  뺀 것(`LlmCallMetadata.withoutCallSite()`)을 싣는다 — principal·그룹 키·태그가 요약 호출까지 가므로, 애플리케이션이
+  턴에 붙인 라우팅·정책 태그를 요약 호출의 provider 도 본다. `/compact` 도 도구 컨텍스트의 metadata 에서 같은 방식으로
+  태그를 이어 받는다
 - **`ContextRequest` 에 `compactionObserver` 도 있다** (2026-10-20, 트레이싱 ST-5). §3.1 목록에는 없다. 압축 **시도**를
   알리는 `agent.compact.CompactionObserver` 로, 기본은 `CompactionObserver.none()` 이고 빌더가 `failSafe` 로 감싼다.
   engine 은 시도를 실제로 할 때만 `begin` 하고(가드의 엔진 호출, 뷰 모드의 첫 요약 호출, `compactNow`, 롤링의 요약·prune),

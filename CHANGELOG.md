@@ -7,6 +7,29 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed (behaviour change): compaction summary calls carry the caller's principal and tags, not just its span position
+
+An automatic compaction's summary LLM call used to receive only the caller's span position (and, for a main turn, the
+request principal), so tags an application attached to a turn — provider routing markers, markers an `LlmClient`
+wrapper checks before it lets a call through — never reached the summary call. All three callers now hand the engine
+their metadata without its call site; `DefaultCompactionEngine` is unchanged and still supplies `compaction-engine` /
+`COMPACTION`, which the caller no longer overrides.
+
+- **`LlmCallMetadata.withoutCallSite()`** (new) — drops `component`, `parentComponent` and `feature`; keeps
+  `principal`, `traceId` and every tag, the reserved span tags included.
+- **Main turn** (`OrcaAgentExecutor`) — the turn's principal, group key and tags reach the summary call; the request
+  principal still wins over one in the turn's metadata, and a turn with no request principal now books its summary
+  call to the one in its metadata (it used to carry none). `ContextCaller.principal` is unchanged — still the
+  request's.
+- **Forks** (`DefaultSubagentExecutor`) — the summary call now carries the principal and tags the fork inherited from
+  its caller (forks used to hand over the span position alone), and its group key is the caller's, as the fork's own
+  calls are.
+- **`/compact`** — the tags of the tool context's metadata travel too, and so does its principal when the request
+  names none; the command's own attribution, group key and request principal still win.
+- **Tracing off is no longer metadata-free.** A `ContextRequest` built by either executor now carries at least the
+  group key, plus the principal and tags when the caller has them. A custom `ContextEngine` or `CompactionEngine` that
+  treated a present `callMetadata` as "traced" or "`/compact`" will see it on every automatic compaction.
+
 ## [0.3.3] - 2026-10-21
 
 > **This patch release is not compatible with 0.3.2 — an exception to the patch promise in

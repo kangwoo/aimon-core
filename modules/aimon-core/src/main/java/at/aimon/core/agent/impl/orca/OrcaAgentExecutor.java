@@ -3451,11 +3451,13 @@ public class OrcaAgentExecutor
      * session's turn, so the buffer's session id is the identity a compaction's hooks are given.
      *
      * <p>
-     * The request carries the active span's position and the caller's principal — and only those — so a compaction
-     * summary call nests in the trace and is booked to the principal whose turn triggered it, as a {@code /compact}
-     * summary call is. The gate runs before the iteration span opens, so that position is the turn span. The rest of
-     * the attribution stays the engine's: it merges with caller fields winning, and the turn's {@code react-loop}
-     * feature would otherwise book the summary call. Tracing off and no principal, the request carries no metadata.
+     * The request carries the turn's metadata without its call site ({@link LlmCallMetadata#withoutCallSite()}): the
+     * active span's position, the principal and every tag the caller attached, so a compaction summary call nests in
+     * the trace, is booked to the principal whose turn triggered it, and reaches the provider with the same routing
+     * and policy tags as the turn's own calls. The request's principal wins over one in the turn's metadata, as it did
+     * before tags travelled. The gate runs before the iteration span opens, so that position is the turn span.
+     * Component and feature stay the engine's: it merges with caller fields winning, and the turn's
+     * {@code react-loop} feature would otherwise book the summary call.
      *
      * <p>
      * With tracing on the request also carries a {@link TracingCompactionObserver} over that same position, so a
@@ -3468,13 +3470,12 @@ public class OrcaAgentExecutor
                 .model(scope.getAgent().getMetadata().getModel()).hookRegistry(scope.getHookRegistry())
                 .executionEnvironment(scope.executionEnvironment).executionCancellation(scope.coordinator.getSignal())
                 .caller(ContextCaller.builder().principal(scope.getPrincipal()).build()).budgetForced(budgetForced);
-        final LlmCallMetadata principal = scope.getPrincipal() != null
+        final LlmCallMetadata principalMetadata = scope.getPrincipal() != null
                 ? LlmCallMetadata.builder().principal(scope.getPrincipal()).build()
                 : LlmCallMetadata.empty();
-        final Optional<LlmCallMetadata> carrier = Spans
-                .traceCarrier(Spans.enrichSafely(scope.activeSpan, scope.llmCallMetadata))
-                .map(position -> position.withDefaults(principal));
-        final LlmCallMetadata callMetadata = carrier.orElse(principal);
+        final LlmCallMetadata turnMetadata = Spans.enrichSafely(scope.activeSpan, scope.llmCallMetadata);
+        final Optional<LlmCallMetadata> carrier = Spans.traceCarrier(turnMetadata);
+        final LlmCallMetadata callMetadata = principalMetadata.withDefaults(turnMetadata.withoutCallSite());
         if (!callMetadata.isEmpty()) {
             request.callMetadata(callMetadata);
         }

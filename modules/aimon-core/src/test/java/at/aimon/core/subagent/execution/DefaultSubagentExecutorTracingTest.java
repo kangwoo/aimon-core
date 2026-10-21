@@ -38,6 +38,7 @@ import at.aimon.core.agent.tool.ToolConcurrencyConfig;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.base.Principal;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.llm.InMemoryModelContextWindowRegistry;
@@ -341,7 +342,7 @@ class DefaultSubagentExecutorTracingTest {
         // Same group key as the iteration — the caller's session, not the fork's transcript label.
         assertThat(summary.getSessionId()).isEqualTo(iteration.getSessionId()).isEqualTo(SESSION);
 
-        // The usage attribution stays the engine's: the carrier brought only the span position.
+        // The usage attribution stays the engine's: the fork's call site did not travel.
         final LlmCallMetadata summaryCall = llm.metadata.stream()
                 .filter(m -> m.getFeature().filter(LlmCallMetadata.Feature.COMPACTION::equals).isPresent()).findFirst()
                 .orElseThrow();
@@ -350,8 +351,9 @@ class DefaultSubagentExecutorTracingTest {
     }
 
     @Test
-    @DisplayName("ST-5: tracing off, the fork's context request carries no call metadata")
-    void compactionRequestCarriesNoMetadataWhenTracingOff() {
+    @DisplayName("ST-5: tracing off, a fork whose caller set only a group key hands the context request just that"
+            + " and no observer")
+    void compactionRequestCarriesOnlyTheGroupKeyWhenTracingOff() {
         llm.responses.add(LlmResponse.text("done"));
         final List<ContextRequest> requests = new CopyOnWriteArrayList<>();
         final DefaultSubagentExecutor executor = new DefaultSubagentExecutor(
@@ -362,9 +364,68 @@ class DefaultSubagentExecutorTracingTest {
                 request(LlmCallMetadata.builder().traceId(SESSION).build()));
 
         assertThat(requests).isNotEmpty().allSatisfy(r -> {
-            assertThat(r.getCallMetadata()).isEmpty();
+            assertThat(r.getCallMetadata()).contains(LlmCallMetadata.builder().traceId(SESSION).build());
             assertThat(r.getCompactionObserver()).isSameAs(CompactionObserver.none());
         });
+    }
+
+    @Test
+    @DisplayName("ST-9: the fork's first summary call carries the principal and tags it inherited from its caller,"
+            + " under the engine's attribution")
+    void compactionSummaryCallCarriesTheInheritedTags() {
+        llm.responses.add(LlmResponse.text("the summary"));
+        llm.responses.add(LlmResponse.text("done"));
+        final DefaultSubagentExecutor executor = new DefaultSubagentExecutor(
+                LlmCallGateway.<TranscriptBuffer>withDefaultRetry(llm), new DefaultToolExecutionManager(),
+                new DefaultHookExecutionManager(), compactingEngine(llm));
+        final Principal alice = Principal.user("alice");
+
+        final SubagentExecutionResult result = executor.execute(context(new DefaultToolRegistry()),
+                request(LlmCallMetadata.builder().component("review-bot").feature("pr-review").principal(alice)
+                        .traceId(SESSION).tag("routing", "review").build()));
+
+        assertThat(result.isSuccess()).isTrue();
+        final LlmCallMetadata summaryCall = llm.metadata.stream()
+                .filter(m -> m.getFeature().filter(LlmCallMetadata.Feature.COMPACTION::equals).isPresent()).findFirst()
+                .orElseThrow();
+        assertThat(summaryCall.getTags()).containsEntry("routing", "review");
+        assertThat(summaryCall.getPrincipal()).contains(alice);
+        assertThat(summaryCall.getTraceId()).contains(SESSION);
+        // The fork's call site (its own name, the caller as parent component, "subagent") stays off the summary call.
+        assertThat(summaryCall.getComponent()).contains("compaction-engine");
+        assertThat(summaryCall.getParentComponent()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("ST-9: traced, the fork's summary call carries the caller's principal and tags beside its span"
+            + " position, under the engine's attribution")
+    void tracedCompactionSummaryCallCarriesTheInheritedTagsBesideTheSpanPosition() {
+        llm.responses.add(LlmResponse.text("the summary"));
+        llm.responses.add(LlmResponse.text("done"));
+        final LlmClient traced = new TracingLlmClient(llm, tracer);
+        final DefaultSubagentExecutor executor = new DefaultSubagentExecutor(
+                LlmCallGateway.<TranscriptBuffer>withDefaultRetry(traced), new DefaultToolExecutionManager(),
+                new DefaultHookExecutionManager(), compactingEngine(traced)).withTracer(tracer);
+        final Principal alice = Principal.user("alice");
+        final LlmCallMetadata caller = seedSpan.enrich(LlmCallMetadata.builder().component("review-bot")
+                .feature("pr-review").principal(alice).traceId(SESSION).tag("routing", "review").build());
+
+        final SubagentExecutionResult result = executor.execute(context(new DefaultToolRegistry()), request(caller));
+
+        assertThat(result.isSuccess()).isTrue();
+        final LlmCallMetadata summaryCall = llm.metadata.stream()
+                .filter(m -> m.getFeature().filter(LlmCallMetadata.Feature.COMPACTION::equals).isPresent()).findFirst()
+                .orElseThrow();
+        assertThat(summaryCall.getTags()).containsEntry("routing", "review");
+        assertThat(summaryCall.getPrincipal()).contains(alice);
+        assertThat(summaryCall.getComponent()).contains("compaction-engine");
+        assertThat(summaryCall.getParentComponent()).isEmpty();
+        final TraceSpan compaction = spansOf(SpanType.COMPACTION).get(0);
+        assertThat(compaction.getParentSpanId()).contains(seedSpan.context().getSpanId());
+        final TraceSpan summary = spansOf(SpanType.LLM).stream()
+                .filter(s -> LlmCallMetadata.Feature.COMPACTION.equals(s.getAttributes().get("feature"))).findFirst()
+                .orElseThrow();
+        assertThat(summary.getParentSpanId()).contains(compaction.getSpanId());
     }
 
     @Test

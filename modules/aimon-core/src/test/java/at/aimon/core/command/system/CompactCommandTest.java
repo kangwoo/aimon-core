@@ -44,6 +44,7 @@ import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.exception.LlmPromptTooLongException;
 import at.aimon.core.tools.ToolContextKeys;
+import at.aimon.core.tracing.SpanContext;
 
 class CompactCommandTest {
 
@@ -216,6 +217,74 @@ class CompactCommandTest {
 
         LlmCallMetadata metadata = engine.lastRequest.get().getCallMetadata().orElseThrow();
         assertThat(metadata.getPrincipal()).hasValue(Principal.user("user-42", "Alice"));
+    }
+
+    @Test
+    void carriesTheToolContextsTagsAndPrincipalUnderTheCommandsAttribution() {
+        // The executor puts the turn's metadata on the command's tool context; its tags reach the summary call, its
+        // call site does not, and the command's own attribution and the request's principal win.
+        TranscriptBuffer memory = memoryWith("hello");
+        engine.setNextResult(successResult(100, 50));
+        LlmCallMetadata turn = LlmCallMetadata.builder().component("review-bot").parentComponent("parent")
+                .feature("pr-review").principal(Principal.user("bob")).traceId("other-trace").tag("routing", "review")
+                .build();
+        CommandExecutionContext context = CommandExecutionContext.builder().command(command)
+                .defaultModel(LlmModel.builder().name("test-model").build()).toolRegistry(new DefaultToolRegistry())
+                .transcriptBuffer(memory)
+                .toolContext(ToolContext.builder().put(ToolContextKeys.LLM_CALL_METADATA_KEY, turn).build()).build();
+        DirectCommandExecutionRequest request = DirectCommandExecutionRequest.builder()
+                .principal(Principal.user("user-42", "Alice")).build();
+
+        command.execute(context, request);
+
+        LlmCallMetadata metadata = engine.lastRequest.get().getCallMetadata().orElseThrow();
+        assertThat(metadata.getTags()).containsEntry("routing", "review");
+        assertThat(metadata.getComponent()).hasValue(CompactCommand.COMPONENT_NAME);
+        assertThat(metadata.getFeature()).hasValue(LlmCallMetadata.Feature.COMPACTION);
+        assertThat(metadata.getParentComponent()).isEmpty();
+        assertThat(metadata.getPrincipal()).hasValue(Principal.user("user-42", "Alice"));
+        assertThat(metadata.getTraceId()).hasValue(memory.getSessionId().toString());
+    }
+
+    @Test
+    void fallsBackToTheToolContextsPrincipalWhenTheRequestNamesNone() {
+        TranscriptBuffer memory = memoryWith("hello");
+        engine.setNextResult(successResult(100, 50));
+        LlmCallMetadata turn = LlmCallMetadata.builder().component("review-bot").principal(Principal.user("bob"))
+                .build();
+        CommandExecutionContext context = CommandExecutionContext.builder().command(command)
+                .defaultModel(LlmModel.builder().name("test-model").build()).toolRegistry(new DefaultToolRegistry())
+                .transcriptBuffer(memory)
+                .toolContext(ToolContext.builder().put(ToolContextKeys.LLM_CALL_METADATA_KEY, turn).build()).build();
+
+        command.execute(context, DirectCommandExecutionRequest.of(""));
+
+        LlmCallMetadata metadata = engine.lastRequest.get().getCallMetadata().orElseThrow();
+        assertThat(metadata.getPrincipal()).hasValue(Principal.user("bob"));
+        assertThat(metadata.getComponent()).hasValue(CompactCommand.COMPONENT_NAME);
+    }
+
+    @Test
+    void theToolContextsSpanPositionWinsOverItsTagsAndTheCommandsGroupKey() {
+        // Traced, the context's metadata names the COMMAND span: that position — group key and parent span — wins, and
+        // the context's other tags still travel.
+        TranscriptBuffer memory = memoryWith("hello");
+        engine.setNextResult(successResult(100, 50));
+        LlmCallMetadata turn = LlmCallMetadata.builder().component("review-bot").traceId("parent-session")
+                .tag(SpanContext.TAG_TRACE_ID, "trace-1").tag(SpanContext.TAG_PARENT_SPAN_ID, "command-span")
+                .tag("routing", "review").build();
+        CommandExecutionContext context = CommandExecutionContext.builder().command(command)
+                .defaultModel(LlmModel.builder().name("test-model").build()).toolRegistry(new DefaultToolRegistry())
+                .transcriptBuffer(memory)
+                .toolContext(ToolContext.builder().put(ToolContextKeys.LLM_CALL_METADATA_KEY, turn).build()).build();
+
+        command.execute(context, DirectCommandExecutionRequest.of(""));
+
+        LlmCallMetadata metadata = engine.lastRequest.get().getCallMetadata().orElseThrow();
+        assertThat(metadata.getTraceId()).hasValue("parent-session");
+        assertThat(metadata.getTags()).containsEntry(SpanContext.TAG_PARENT_SPAN_ID, "command-span")
+                .containsEntry("routing", "review");
+        assertThat(metadata.getComponent()).hasValue(CompactCommand.COMPONENT_NAME);
     }
 
     @Test
