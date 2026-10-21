@@ -2,6 +2,8 @@ package at.aimon.core.subagent.internal;
 
 import java.time.Duration;
 import java.util.Objects;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -20,15 +22,26 @@ import org.slf4j.LoggerFactory;
  * and a closed handle's action does nothing.
  *
  * <p>
- * One daemon thread serves every timer of the JVM; actions are expected to be short (trip a signal, interrupt a
- * thread, record a state) and are isolated from one another, so an action that throws is logged and does not take the
- * timer thread down.
+ * One daemon thread keeps every timer of the JVM and hands each due action to a cached pool of daemon threads, so a
+ * slow action (a terminator that cancels a network call) holds up no other timer. An action that throws is logged and
+ * affects nothing else. Holding the handle's lock while the action runs is what makes {@link Handle#close()} wait for
+ * a running action rather than return while it is still landing.
  */
 public final class DeadlineScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(DeadlineScheduler.class);
 
     private static final ScheduledThreadPoolExecutor TIMER = newTimer();
+
+    /**
+     * Where the actions run. The timer thread only hands them over, so an action that blocks — a terminator cancelling
+     * a network call — delays no other fork's deadline.
+     */
+    private static final ExecutorService ACTIONS = Executors.newCachedThreadPool(r -> {
+        final Thread t = new Thread(r, "subagent-deadline-action");
+        t.setDaemon(true);
+        return t;
+    });
 
     private DeadlineScheduler() {
     }
@@ -58,7 +71,7 @@ public final class DeadlineScheduler {
         Objects.requireNonNull(action, "action cannot be null");
         final Handle handle = new Handle(action);
         final long nanos = delay.isNegative() ? 0 : saturatedNanos(delay);
-        handle.future = TIMER.schedule(handle::fire, nanos, TimeUnit.NANOSECONDS);
+        handle.future = TIMER.schedule(() -> ACTIONS.execute(handle::fire), nanos, TimeUnit.NANOSECONDS);
         return handle;
     }
 
@@ -91,7 +104,7 @@ public final class DeadlineScheduler {
                 try {
                     action.run();
                 } catch (RuntimeException e) {
-                    log.warn("Deadline action failed: {}", e.toString());
+                    log.error("Deadline action failed", e);
                 }
             }
         }

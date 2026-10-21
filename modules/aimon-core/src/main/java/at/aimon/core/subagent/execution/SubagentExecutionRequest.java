@@ -149,7 +149,9 @@ public final class SubagentExecutionRequest {
     }
 
     /**
-     * Gets the execution budget that bounds the subagent's ReAct loop (iterations, tokens, wall-clock).
+     * Gets the execution budget that bounds the subagent's ReAct loop (iterations, tokens, cost, wall-clock). For a
+     * fork under a policy it is {@code SubagentExecutionPolicy#toBudget()}, which carries no wall clock: the policy's
+     * is the {@link #getDeadline() deadline}.
      *
      * <p>
      * When empty, the subagent executor applies {@link ExecutionBudget#unlimited()} and only the subagent's

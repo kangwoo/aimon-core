@@ -183,7 +183,7 @@ public final class OrcaToolProviderContext {
     /**
      * Returns the trusted resolver of the execution policies subagents are launched under
      * ({@code SubagentExecutionPolicy}). A provider that builds its own {@code TaskTool} applies it with
-     * {@code TaskTool#withExecutionPolicyResolver}.
+     * the {@code TaskTool} constructor that takes a resolver.
      *
      * @return the resolver (never null; it resolves nothing when none was configured)
      */

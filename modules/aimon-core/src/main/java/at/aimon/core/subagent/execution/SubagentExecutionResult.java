@@ -466,8 +466,10 @@ public final class SubagentExecutionResult {
     }
 
     /**
-     * Gets how many tool calls the fork actually ran — one per call of a parallel batch. Calls a cut response or an
-     * exhausted tool-call budget refused are not counted: they were answered, not run.
+     * Gets how many tool calls the fork handed to its tool pipeline — one per call of a parallel batch. That is the
+     * count its tool-call budget is charged with: a call the pipeline then declines (a permission denial, a PreTool
+     * block) counts, because the fork spent the call on it. Calls a cut response or an exhausted budget refused before
+     * the pipeline are not counted: they were answered, not run.
      *
      * @return the number of tool calls run (0 for a path that ran none or does not count them)
      */

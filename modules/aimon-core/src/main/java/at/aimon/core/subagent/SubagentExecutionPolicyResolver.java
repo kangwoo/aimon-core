@@ -8,7 +8,7 @@ import java.util.Optional;
  * Supplies the trusted {@link SubagentExecutionPolicy} a spawn site applies to the subagent it launches.
  *
  * <p>
- * Installed by code — on {@code TaskTool} ({@code TaskTool#withExecutionPolicyResolver}), or for every agent of a
+ * Installed by code — on {@code TaskTool} (the constructor that takes one), or for every agent of a
  * runtime factory ({@code OrcaAgentRuntimeFactory#withSubagentExecutionPolicies}) — and asked with the name of the
  * subagent about to run. The name is the one thing about the launch the model chooses; the policy for it is not, so a
  * model cannot raise a limit by what it writes into the {@code Task} call, and a subagent definition file cannot

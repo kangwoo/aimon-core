@@ -813,33 +813,60 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
                 }
             }
             if (!outcome.isDone()) {
-                worker.interrupt();
-                final long graceEnd = System.nanoTime() + policyRun.policy.getExitGracePeriod().toNanos();
-                while (!outcome.isDone()) {
-                    final long left = graceEnd - System.nanoTime();
-                    if (left <= 0) {
-                        break;
-                    }
-                    try {
-                        outcome.get(left, TimeUnit.NANOSECONDS);
-                    } catch (InterruptedException e) {
-                        callerInterrupted = true;
-                    } catch (ExecutionException | TimeoutException e) {
-                        break;
-                    }
+                // The first half of the grace belongs to the tripped signal alone: a fork that is already unwinding —
+                // running its OnStop hooks — must not have them cut off by an interrupt it did not need. Only a fork
+                // still running after that gets its thread interrupted.
+                final long grace = saturatedNanos(policyRun.policy.getExitGracePeriod());
+                final long start = System.nanoTime();
+                callerInterrupted |= awaitUntil(outcome, start + grace / 2);
+                if (!outcome.isDone()) {
+                    worker.interrupt();
+                    callerInterrupted |= awaitUntil(outcome, start + grace);
                 }
             }
             if (outcome.isDone()) {
                 return settled(outcome, startTime);
             }
             final CompletionReason stopReason = stopRequested.getNow(CompletionReason.INTERRUPTED);
-            return linger(launchContext, taskId, subagentName, stopReason, policyRun, outcome, false, startTime);
+            return linger(launchContext, taskId, subagentName, stopReason, policyRun, outcome, startTime);
         } finally {
             timer.close();
             cancelReg.remove();
             if (callerInterrupted) {
                 Thread.currentThread().interrupt();
             }
+        }
+    }
+
+    /**
+     * Waits for {@code outcome} until {@code endNanos} on {@link System#nanoTime()}. An interrupt of the waiting thread
+     * does not end the wait; it is reported so the caller can restore it.
+     *
+     * @return whether the waiting thread was interrupted
+     */
+    private static boolean awaitUntil(CompletableFuture<SubagentExecutionResult> outcome, long endNanos) {
+        boolean interrupted = false;
+        while (!outcome.isDone()) {
+            final long left = endNanos - System.nanoTime();
+            if (left <= 0) {
+                break;
+            }
+            try {
+                outcome.get(left, TimeUnit.NANOSECONDS);
+            } catch (InterruptedException e) {
+                interrupted = true;
+            } catch (ExecutionException | TimeoutException e) {
+                break;
+            }
+        }
+        return interrupted;
+    }
+
+    private static long saturatedNanos(Duration duration) {
+        try {
+            return duration.toNanos();
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE / 2;
         }
     }
 
@@ -860,7 +887,27 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
     @SuppressWarnings("checkstyle:ParameterNumber")
     private SubagentExecutionResult linger(SubagentLaunchContext launchContext, String taskId, String subagentName,
             CompletionReason stopReason, PolicyRun policyRun, CompletableFuture<SubagentExecutionResult> outcome,
-            boolean background, Instant startTime) {
+            Instant startTime) {
+        recordLingering(launchContext, taskId, subagentName, stopReason, policyRun, outcome, false);
+        final String message = "Execution stopped: " + stopReason.name() + " — the subagent was asked to stop and had"
+                + " not exited " + policyRun.policy.getExitGracePeriod() + " later; it may still be running, so its"
+                + " work is not complete and must not be relaunched while it is";
+        // What the run spent is not known until it returns; the counts here are zero, not its usage.
+        return SubagentExecutionResult
+                .failure(
+                        message, SessionSnapshot.of(SessionId.generate()), ExecutionMetadata.builder().iterationCount(0)
+                                .tokenUsage(TokenUsage.empty()).timestamps(startTime, Instant.now()).build(),
+                        stopReason, null)
+                .withExitUnconfirmed();
+    }
+
+    /**
+     * Lists a run as lingering until it returns. What it returns then is logged and dropped — its caller has already
+     * been answered, or, for a background task, will read the task's own terminal result.
+     */
+    private void recordLingering(SubagentLaunchContext launchContext, String taskId, String subagentName,
+            CompletionReason stopReason, PolicyRun policyRun, CompletableFuture<SubagentExecutionResult> outcome,
+            boolean background) {
         final LingeringSubagentRun record = LingeringSubagentRun.builder().taskId(taskId).subagentName(subagentName)
                 .agentRuntimeId(launchContext.getAgentRuntimeId()).stopReason(stopReason).background(background)
                 .reportedAt(Instant.now()).build();
@@ -874,15 +921,6 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             log.info("Lingering subagent '{}' (taskId={}) exited: {}", subagentName, taskId,
                     error != null ? error.toString() : late.getCompletionReason());
         });
-        final String message = "Execution stopped: " + stopReason.name() + " — the subagent was asked to stop and had"
-                + " not exited " + policyRun.policy.getExitGracePeriod() + " later; it may still be running, so its"
-                + " work is not complete and must not be relaunched while it is";
-        return SubagentExecutionResult
-                .failure(
-                        message, SessionSnapshot.of(SessionId.generate()), ExecutionMetadata.builder().iterationCount(0)
-                                .tokenUsage(TokenUsage.empty()).timestamps(startTime, Instant.now()).build(),
-                        stopReason, null)
-                .withExitUnconfirmed();
     }
 
     /**
@@ -1060,20 +1098,21 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
                             + " is backed by a code behavior, which enforces none of the policy's limits",
                     subagentName, policy.getRole()));
         }
+        final ContextEngine inherited = policy.isInheritContextEngine()
+                ? launchContext.getParentContextEngine()
+                        .orElseThrow(() -> new SubagentSpawnException(String.format(
+                                "Subagent '%s' cannot run under execution policy '%s': it inherits the spawner's"
+                                        + " context engine and the launch handed down none",
+                                subagentName, policy.getRole())))
+                : null;
         final Set<SubagentPolicyCapability> missing = policy
-                .unsupportedBy(subagentExecutor.supportedPolicyCapabilities());
+                .unsupportedBy(subagentExecutor.supportedPolicyCapabilities(), inherited);
         if (!missing.isEmpty()) {
-            throw new SubagentSpawnException(String.format(
-                    "Subagent '%s' cannot run under execution policy '%s': the" + " executor does not enforce %s",
-                    subagentName, policy.getRole(), missing));
+            throw new SubagentSpawnException(
+                    String.format("Subagent '%s' cannot run under execution policy '%s': it would not enforce %s",
+                            subagentName, policy.getRole(), missing));
         }
-        if (!policy.isInheritContextEngine()) {
-            return null;
-        }
-        return launchContext.getParentContextEngine()
-                .orElseThrow(() -> new SubagentSpawnException(String.format("Subagent '%s' cannot run under execution"
-                        + " policy '%s': it inherits the spawner's context engine and the launch handed down none",
-                        subagentName, policy.getRole())));
+        return inherited;
     }
 
     /**
@@ -1476,8 +1515,8 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         final DeadlineScheduler.Handle watch = DeadlineScheduler
                 .schedule(policyRun.deadline.remaining().plus(policyRun.policy.getExitGracePeriod()), () -> {
                     if (!future.isDone()) {
-                        linger(launchContext, taskId, subagentName, CompletionReason.WALL_CLOCK_EXCEEDED, policyRun,
-                                future, true, Instant.now());
+                        recordLingering(launchContext, taskId, subagentName, CompletionReason.WALL_CLOCK_EXCEEDED,
+                                policyRun, future, true);
                     }
                 });
         future.whenComplete((result, error) -> watch.close());

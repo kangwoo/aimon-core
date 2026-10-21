@@ -16,13 +16,17 @@ subagent definition file — and its context can be managed by its spawner's con
 - **`SubagentExecutionPolicy`** (new) — optional, independent caps on iterations, cumulative tokens, tool calls run and
   wall clock from launch, plus compaction hints (`compactionTokenThreshold`, `contextTargetTokens`), AUTO-compaction
   summary instructions, `inheritContextEngine` and an exit grace period. **`SubagentExecutionPolicyResolver`** (new)
-  supplies one per subagent name; install it with `TaskTool#withExecutionPolicyResolver` or
+  supplies one per subagent name; install it with the new `TaskTool` constructor that takes one or
   `OrcaAgentRuntimeFactory#withSubagentExecutionPolicies` (exposed to providers as
   `OrcaToolProviderContext#getSubagentExecutionPolicyResolver`, beside a new `getContextEngine`).
 - **Refused, not dropped** — `SubagentPolicyCapability` (new); `SubagentExecutor#supportedPolicyCapabilities()` and
   `SubagentExecutionManager#supportedPolicyCapabilities()` (new, default: none). `TaskTool` refuses a policy the
   manager cannot enforce before spawning; the manager refuses it again at run time, and refuses any policy for a code
-  behavior.
+  behavior. An executor whose own engine is `ContextEngine.passthrough()` (as `OrcaAgentExecutorFactory` builds it)
+  does not claim the compaction hints or instructions (`SubagentPolicyCapability.contextAxes()`), so a policy using
+  them must inherit a compacting engine.
+- **Token cap** — a response that pushes the fork past its budget has its tool calls answered, not run, and the fork
+  stops before its next LLM call.
 - **Tool-call cap** — calls over the cap are answered with an error result and not run; the fork ends with the new
   **`CompletionReason.TOOL_CALL_BUDGET_EXCEEDED`** (an older peer reads it as `ERROR`).
 - **Deadline** — **`ExecutionDeadline`** (new, monotonic) anchored at launch, background queue wait included, and

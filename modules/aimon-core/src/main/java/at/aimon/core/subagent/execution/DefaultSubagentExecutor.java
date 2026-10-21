@@ -405,15 +405,23 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     }
 
     /**
-     * Enforces every capability a {@link SubagentExecutionPolicy} can ask for: the iteration and token caps through the
-     * fork's budget, the tool-call cap at dispatch, the deadline through a timer that trips the fork's cancellation,
-     * and the context settings on every context request.
+     * Enforces the iteration and token caps through the fork's budget, the tool-call cap at dispatch, the deadline
+     * through a timer that trips the fork's cancellation, and the context settings on every context request — the last
+     * only when this executor's own engine compacts; with {@link ContextEngine#passthrough()} (how
+     * {@code OrcaAgentExecutorFactory} builds it) they are left out, because they would do nothing.
      *
-     * @return all of {@link SubagentPolicyCapability}
+     * @return the enforced capabilities
      */
     @Override
     public Set<SubagentPolicyCapability> supportedPolicyCapabilities() {
-        return EnumSet.allOf(SubagentPolicyCapability.class);
+        if (contextEngine != ContextEngine.passthrough()) {
+            return EnumSet.allOf(SubagentPolicyCapability.class);
+        }
+        // Its own engine never compacts, so a compaction hint or instruction would do nothing — unless the fork runs
+        // under an inherited engine, which the manager adds back for a policy that inherits one.
+        final EnumSet<SubagentPolicyCapability> supported = EnumSet.allOf(SubagentPolicyCapability.class);
+        supported.removeAll(SubagentPolicyCapability.contextAxes());
+        return supported;
     }
 
     @Override
@@ -692,18 +700,19 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             return createFailureResult(lc, e.getMessage(), iterationCount, accumulatedTokens,
                     CompletionReason.MAX_ITERATIONS);
         } catch (ContextWindowExceededException e) {
-            return createFailureResult(lc, "Context window exceeded: " + e.getMessage(), iterationCount,
-                    accumulatedTokens, CompletionReason.ERROR);
+            // A deadline that broke the preCompact guard before its timer tripped the signal is the deadline's.
+            return lc.deadlineExpired()
+                    ? createDeadlineResult(lc, iterationCount, accumulatedTokens)
+                    : createFailureResult(lc, "Context window exceeded: " + e.getMessage(), iterationCount,
+                            accumulatedTokens, CompletionReason.ERROR);
         } catch (LlmCallCancelledException e) {
             // The gateway/provider actively aborted the in-flight LLM call because the execution's signal tripped.
-            // This extends LlmClientException, so it MUST be caught BEFORE the generic LlmClientException handler —
-            // otherwise a cancellation would be misreported as an LLM failure. Route it to the interrupted result like
-            // every other cancellation.
+            // This extends LlmClientException, so it MUST be caught BEFORE the generic handler below.
             log.debug("Subagent LLM call cancelled in-flight: {}", e.getMessage());
             return createInterruptedResult(lc, iterationCount, accumulatedTokens);
         } catch (LlmClientException e) {
             // A client that answers an abort with its own exception type: the fork was being stopped, so say that.
-            if (isCancelledOrInterrupted(cancellationSignal)) {
+            if (isCancelledOrInterrupted(cancellationSignal) || lc.deadlineExpired()) {
                 log.debug("Subagent LLM call failed after cancellation: {}", e.getMessage());
                 return createInterruptedResult(lc, iterationCount, accumulatedTokens);
             }
@@ -711,8 +720,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                     CompletionReason.ERROR);
         } catch (Exception e) {
             // A blocking call broken by a cancellation-driven thread interrupt surfaces here — map it back to a clean
-            // interrupted result rather than a generic failure.
-            if (isCancelledOrInterrupted(cancellationSignal)) {
+            // interrupted result rather than a generic failure (or to the deadline's, when that is what broke it).
+            if (isCancelledOrInterrupted(cancellationSignal) || lc.deadlineExpired()) {
                 log.debug("Subagent execution unwound by cancellation: {}", e.getMessage());
                 return createInterruptedResult(lc, iterationCount, accumulatedTokens);
             }
@@ -1237,7 +1246,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
     /**
      * Runs as many of {@code toolUses} as the fork's tool-call budget still allows, in order, and answers the rest
-     * with an error result that says they were not run. Without a cap this is {@link #executeToolUses}.
+     * with an error result that says they were not run. Without a cap this is {@link #executeToolUses}. A fork under a
+     * policy whose budget the carrying response exhausted runs none of them.
      *
      * <p>
      * Every call of a parallel batch counts as one. The calls that run are the first ones of the response, so a model
@@ -1248,6 +1258,22 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      */
     private List<ToolUseResult> executeAdmittedToolUses(LoopContext lc, ToolContext toolContext, List<ToolUse> toolUses,
             int iterationCount) {
+        // The response that carried these calls may itself have spent the last of the budget: its usage is known only
+        // now. Then none of them runs; the next iteration boundary ends the fork with the budget's reason, before
+        // another LLM call.
+        if (lc.policy != null && lc.budgetTracker.check() == BudgetDecision.STOP) {
+            log.warn(
+                    "Subagent '{}' reached its budget ({}) with the response of iteration {}; its {} tool call(s)"
+                            + " are not run",
+                    lc.subagent().getName(), lc.budgetTracker.getStopReason().orElse(null), iterationCount,
+                    toolUses.size());
+            final List<ToolUseResult> refused = new ArrayList<>(toolUses.size());
+            for (ToolUse toolUse : toolUses) {
+                refused.add(ToolUseResult.error(toolUse.getId(),
+                        "Not run: this subagent's budget is used up. Finish with what you have."));
+            }
+            return refused;
+        }
         final int admitted = lc.toolCalls.admit(toolUses.size());
         if (admitted == toolUses.size()) {
             return executeToolUses(lc, toolContext, toolUses, iterationCount);
@@ -1558,14 +1584,24 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * deadline that landed after a parent's cancellation does not relabel it, and one that landed before is not
      * relabelled by the cancellation that cascades after it. A fork stopped by a thread interrupt alone — its signal
      * never tripped — was stopped by its deadline when that has passed: on a watched foreground run the manager
-     * interrupts the fork's thread at the deadline, and that may land before this fork's own timer trips the signal.
+     * interrupts the fork's thread once the deadline has passed, which may land before this fork's own timer trips the
+     * signal. And a fork cancelled by a parent whose own deadline tripped it was stopped by its deadline when that has
+     * passed too: a child holding its parent's deadline shares its instant, and the parent's timer usually fires first.
      */
     private static boolean stoppedByDeadline(LoopContext lc) {
         if (lc.deadline == null) {
             return false;
         }
-        return lc.coordinator.getSignal().getReason().map(reason -> reason == InterruptReason.BUDGET_EXCEEDED)
-                .orElseGet(lc.deadline::isExpired);
+        final Optional<InterruptReason> reason = lc.coordinator.getSignal().getReason();
+        if (reason.isEmpty()) {
+            return lc.deadline.isExpired();
+        }
+        if (reason.get() == InterruptReason.BUDGET_EXCEEDED) {
+            return true;
+        }
+        return reason.get() == InterruptReason.PARENT_CANCELLED && lc.deadline.isExpired()
+                && lc.context.getParentCancellationSignal().getReason()
+                        .filter(parent -> parent == InterruptReason.BUDGET_EXCEEDED).isPresent();
     }
 
     /**
@@ -1926,6 +1962,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             this.policy = b.policy;
             this.deadline = b.deadline;
             this.toolCalls = b.toolCalls;
+        }
+
+        /** Whether the fork has a deadline and it has passed. */
+        private boolean deadlineExpired() {
+            return deadline != null && deadline.isExpired();
         }
 
         /** Whether the last call's input reached the policy's context target. */

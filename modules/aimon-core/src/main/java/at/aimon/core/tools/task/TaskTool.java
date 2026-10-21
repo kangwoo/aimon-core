@@ -273,9 +273,39 @@ public class TaskTool extends AbstractTool {
                 taskOutputStore, sessionSnapshotStore, taskResultStore, SubagentExecutionPolicyResolver.none());
     }
 
-    /** The shared constructor body; {@link #withExecutionPolicyResolver} is the only other caller. */
+    /**
+     * Creates a TaskTool that launches every subagent under the trusted policy {@code executionPolicyResolver} supplies
+     * for its name ({@link SubagentExecutionPolicy}). The policy comes from code and only from code: nothing in the
+     * {@code Task} input reaches it, so a model cannot raise a limit by what it writes, and the subagent definition the
+     * name resolves to cannot either. A name the resolver has no policy for launches exactly as before.
+     *
+     * <p>
+     * A policy is checked against what the execution manager enforces before anything is spawned; a launch whose
+     * policy uses a limit the manager cannot enforce is refused rather than run unbounded.
+     *
+     * @param defaultModel
+     *            the default model for spawned subagents (must not be null)
+     * @param subagentRegistry
+     *            the subagent registry (must not be null)
+     * @param toolRegistry
+     *            the tool registry available to subagents (must not be null)
+     * @param hookRegistry
+     *            the hook registry (must not be null)
+     * @param subagentExecutionManager
+     *            the subagent execution manager (must not be null)
+     * @param toolContextEnrichers
+     *            the enrichers to forward (nullable; treated as empty when absent)
+     * @param taskOutputStore
+     *            the task output store for background live-output streaming (nullable)
+     * @param sessionSnapshotStore
+     *            the session snapshot store enabling resume (nullable)
+     * @param taskResultStore
+     *            the task result store (nullable)
+     * @param executionPolicyResolver
+     *            the trusted policies (must not be null; {@link SubagentExecutionPolicyResolver#none()} for none)
+     */
     @SuppressWarnings("checkstyle:ParameterNumber")
-    private TaskTool(LlmModel defaultModel, SubagentRegistry subagentRegistry, ToolRegistry toolRegistry,
+    public TaskTool(LlmModel defaultModel, SubagentRegistry subagentRegistry, ToolRegistry toolRegistry,
             HookRegistry hookRegistry, SubagentExecutionManager subagentExecutionManager,
             List<ToolContextEnricher> toolContextEnrichers, TaskOutputStore taskOutputStore,
             SessionSnapshotStore sessionSnapshotStore, TaskResultStore taskResultStore,
@@ -295,25 +325,6 @@ public class TaskTool extends AbstractTool {
         this.taskResultStore = taskResultStore;
         this.executionPolicyResolver = Objects.requireNonNull(executionPolicyResolver,
                 "Execution policy resolver cannot be null");
-    }
-
-    /**
-     * Returns a copy of this tool that launches every subagent under the trusted policy {@code resolver} supplies for
-     * its name ({@link SubagentExecutionPolicy}). The policy comes from code and only from code: nothing in the
-     * {@code Task} input reaches it, so a model cannot raise a limit by what it writes, and the subagent definition the
-     * name resolves to cannot either. A name the resolver has no policy for launches exactly as before.
-     *
-     * <p>
-     * A policy is checked against what the execution manager enforces before anything is spawned; a launch whose
-     * policy uses a limit the manager cannot enforce is refused rather than run unbounded.
-     *
-     * @param resolver
-     *            the resolver (must not be null; {@link SubagentExecutionPolicyResolver#none()} for no policies)
-     * @return a new tool; this one is unchanged
-     */
-    public TaskTool withExecutionPolicyResolver(SubagentExecutionPolicyResolver resolver) {
-        return new TaskTool(defaultModel, subagentRegistry, toolRegistry, hookRegistry, subagentExecutionManager,
-                toolContextEnrichers, taskOutputStore, sessionSnapshotStore, taskResultStore, resolver);
     }
 
     /**
@@ -510,13 +521,15 @@ public class TaskTool extends AbstractTool {
             // anything is spawned: a limit that would be dropped is a refusal, not an unbounded run.
             final SubagentExecutionPolicy policy = executionPolicyResolver.resolve(subagentName).orElse(null);
             if (policy != null) {
-                final Set<SubagentPolicyCapability> missing = policy
-                        .unsupportedBy(subagentExecutionManager.supportedPolicyCapabilities());
+                final Set<SubagentPolicyCapability> missing = policy.unsupportedBy(
+                        subagentExecutionManager.supportedPolicyCapabilities(),
+                        context.get(ToolContextKeys.CONTEXT_ENGINE).orElse(null));
                 if (!missing.isEmpty()) {
-                    log.warn("Task refused: execution policy '{}' for subagent '{}' needs {}, which the execution"
-                            + " manager does not enforce", policy.getRole(), subagentName, missing);
-                    return ToolResult.error("Subagent '" + subagentName + "' cannot be launched: its execution policy '"
-                            + policy.getRole() + "' needs " + missing + ", which this runtime does not enforce.");
+                    // The operator's misconfiguration, so the detail goes to the log; the model is told only that
+                    // this subagent cannot be launched here.
+                    log.warn("Task refused: execution policy '{}' for subagent '{}' needs {}, which this runtime does"
+                            + " not enforce", policy.getRole(), subagentName, missing);
+                    return ToolResult.error("Subagent '" + subagentName + "' cannot be launched in this runtime.");
                 }
             }
 

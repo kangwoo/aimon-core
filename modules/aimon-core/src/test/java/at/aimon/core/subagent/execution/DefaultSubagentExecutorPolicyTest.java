@@ -71,10 +71,14 @@ class DefaultSubagentExecutorPolicyTest {
     private static final TokenUsage USAGE = TokenUsage.of(5, 5, 10);
 
     @Test
-    @DisplayName("claims every policy capability")
+    @DisplayName("claims every capability with a compacting engine, and not the context axes with passthrough")
     void enforcesEveryCapability() {
+        assertThat(new DefaultSubagentExecutor(LlmCallGateway.<TranscriptBuffer>withDefaultRetry(new ScriptedClient()),
+                new DefaultToolExecutionManager(), new DefaultHookExecutionManager(), new RecordingEngine())
+                .supportedPolicyCapabilities()).containsExactlyInAnyOrder(SubagentPolicyCapability.values());
         assertThat(executor(new ScriptedClient()).supportedPolicyCapabilities())
-                .containsExactlyInAnyOrder(SubagentPolicyCapability.values());
+                .doesNotContainAnyElementsOf(SubagentPolicyCapability.contextAxes())
+                .contains(SubagentPolicyCapability.MAX_TOOL_CALLS, SubagentPolicyCapability.MAX_WALL_CLOCK);
     }
 
     @Test
@@ -135,6 +139,9 @@ class DefaultSubagentExecutorPolicyTest {
 
         assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.TOKEN_BUDGET_EXCEEDED);
         assertThat(llm.calls).hasValue(1);
+        // The response that overshot carried a tool call; it was answered, not run.
+        assertThat(tool.runs).hasValue(0);
+        assertThat(result.getToolCallCount()).isZero();
         assertThat(result.getMetadata().getTokenUsage().getTotalTokens()).isEqualTo(1100);
     }
 
@@ -207,6 +214,64 @@ class DefaultSubagentExecutorPolicyTest {
 
             assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.INTERRUPTED);
         }
+    }
+
+    @Test
+    @DisplayName("a deadline that lands first keeps its reason when the parent cancels after it")
+    void deadlineFirstStaysWallClock() {
+        try (InterruptCoordinator parent = new DefaultInterruptCoordinator()) {
+            final BlockingClient llm = new BlockingClient(() -> parent.requestInterrupt(InterruptReason.USER_SIGINT));
+
+            final SubagentExecutionResult result = executor(llm).execute(
+                    context(new DefaultToolRegistry(), parent.getSignal()),
+                    request(policyWithWallClock(), ExecutionDeadline.after(Duration.ofMillis(100))));
+
+            assertThat(parent.getSignal().isCancelled()).isTrue();
+            assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.WALL_CLOCK_EXCEEDED);
+        }
+    }
+
+    @Test
+    @DisplayName("a child cancelled by its parent's deadline, which it shares, reports WALL_CLOCK_EXCEEDED")
+    void sharedParentDeadlineIsTheChildsDeadline() {
+        try (InterruptCoordinator parent = new DefaultInterruptCoordinator()) {
+            final AtomicLong now = new AtomicLong();
+            final ExecutionDeadline deadline = ExecutionDeadline.after(Duration.ofHours(1), now::get);
+            final ScriptedClient llm = new ScriptedClient() {
+                @Override
+                public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
+                        LlmModel modelConfig, LlmCallMetadata metadata) {
+                    // The parent's timer fires first at the shared instant and cascades into the child.
+                    now.addAndGet(Duration.ofHours(2).toNanos());
+                    parent.requestInterrupt(InterruptReason.BUDGET_EXCEEDED);
+                    return super.sendMessage(systemPrompt, messages, tools, modelConfig, metadata);
+                }
+            };
+            llm.responses.add(calls("t1"));
+
+            final SubagentExecutionResult result = executor(llm).execute(
+                    context(registryWith(new CountingTool()), parent.getSignal()),
+                    request(policyWithWallClock(), deadline));
+
+            assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.WALL_CLOCK_EXCEEDED);
+        }
+    }
+
+    @Test
+    @DisplayName("a deadline passing during a blocking tool interrupts it and leaves no interrupt behind")
+    void deadlineInterruptsABlockingTool() {
+        final BlockingTool tool = new BlockingTool();
+        final ScriptedClient llm = new ScriptedClient();
+        llm.responses.add(LlmResponse.of("act", List.of(ToolUse.of("t1", BlockingTool.NAME, Map.of())), USAGE));
+        llm.responses.add(LlmResponse.text("never reached"));
+
+        final SubagentExecutionResult result = executor(llm).execute(context(registryWith(tool)),
+                request(policyWithWallClock(), ExecutionDeadline.after(Duration.ofMillis(100))));
+
+        assertThat(tool.interrupted.getCount()).isZero();
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.WALL_CLOCK_EXCEEDED);
+        assertThat(llm.calls).hasValue(1);
+        assertThat(Thread.currentThread().isInterrupted()).isFalse();
     }
 
     @Test
@@ -362,9 +427,45 @@ class DefaultSubagentExecutorPolicyTest {
         }
     }
 
+    /** Blocks on a latch until it is interrupted; declares THREAD_INTERRUPT so the deadline's terminators reach it. */
+    private static final class BlockingTool extends AbstractTool {
+        static final String NAME = "Blocker";
+        final CountDownLatch interrupted = new CountDownLatch(1);
+
+        BlockingTool() {
+            super(NAME, "blocks", Map.of("type", "object", "properties", Map.of(), "required", List.of()));
+        }
+
+        @Override
+        public at.aimon.core.agent.interrupt.InterruptBehavior getInterruptBehavior() {
+            return at.aimon.core.agent.interrupt.InterruptBehavior.THREAD_INTERRUPT;
+        }
+
+        @Override
+        public ToolResult execute(ToolInput input, ToolContext context) {
+            try {
+                new CountDownLatch(1).await(30, TimeUnit.SECONDS);
+                return ToolResult.error("never interrupted");
+            } catch (InterruptedException e) {
+                interrupted.countDown();
+                return ToolResult.error("interrupted");
+            }
+        }
+    }
+
     /** Blocks until its call is aborted through the cancellation token, then reports the abort. */
     private static final class BlockingClient implements LlmClient {
         final CountDownLatch aborted = new CountDownLatch(1);
+        private final Runnable afterAbort;
+
+        BlockingClient() {
+            this(() -> {
+            });
+        }
+
+        BlockingClient(Runnable afterAbort) {
+            this.afterAbort = afterAbort;
+        }
 
         @Override
         public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
@@ -384,6 +485,7 @@ class DefaultSubagentExecutorPolicyTest {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
+            afterAbort.run();
             throw new LlmCallCancelledException("aborted");
         }
 

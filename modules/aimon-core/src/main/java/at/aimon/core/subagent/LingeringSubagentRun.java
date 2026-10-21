@@ -64,7 +64,9 @@ public final class LingeringSubagentRun {
 
     /**
      * @return why it was asked to stop: {@link CompletionReason#WALL_CLOCK_EXCEEDED} for a deadline,
-     *         {@link CompletionReason#INTERRUPTED} for a cancellation
+     *         {@link CompletionReason#INTERRUPTED} for a cancellation. A background task is listed only for a deadline
+     *         (a {@code TaskStop} of one is tracked by its task state); it may then also be one that never left the
+     *         queue, which its own result says once a worker takes it
      */
     public CompletionReason getStopReason() {
         return stopReason;

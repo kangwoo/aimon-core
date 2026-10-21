@@ -56,7 +56,7 @@ manager 까지 예산을 실어 나를 경로도 없었다. 포크를 묶는 것
 
 배선 지점:
 
-- `TaskTool#withExecutionPolicyResolver(resolver)` — 자체 Task 도구를 만드는 provider 용.
+- resolver 를 받는 `TaskTool` 생성자 — 자체 Task 도구를 만드는 provider 용.
 - `OrcaAgentRuntimeFactory#withSubagentExecutionPolicies(resolver)` → `OrcaProviderDependencies` →
   `OrcaToolProviderContext#getSubagentExecutionPolicyResolver()` → `OrcaSubagentToolProvider` 가 등록하는 Task.
 
@@ -68,9 +68,14 @@ manager 까지 예산을 실어 나를 경로도 없었다. 포크를 묶는 것
 
 - `SubagentPolicyCapability` — 정책이 쓰는 축 (`getCapabilities()`).
 - `SubagentExecutor#supportedPolicyCapabilities()` — executor 가 강제하는 축. 기본값은 빈 집합이므로 정책 이전에
-  작성된 executor 는 모든 정책을 거부한다. `DefaultSubagentExecutor` 는 전부를 강제한다.
+  작성된 executor 는 모든 정책을 거부한다. `DefaultSubagentExecutor` 는 전부를 강제하되, 자기 engine 이
+  `ContextEngine.passthrough()` 이면(`OrcaAgentExecutorFactory` 가 만드는 모양) **context 축**
+  (`SubagentPolicyCapability.contextAxes()` — 두 compaction 힌트와 요약 지시)을 뺀다. 아무 일도 하지 않을 설정을
+  받아들이지 않기 위해서다. 정책이 compact 하는 engine 을 상속하면(`inheritContextEngine` + passthrough 아닌 부모
+  engine) context 축은 그 engine 이 채운다 — `SubagentExecutionPolicy#unsupportedBy(supported, inherited)`.
 - `SubagentExecutionManager#supportedPolicyCapabilities()` — `TaskTool` 이 spawn **전에** 비교한다. 빠진 축이
-  있으면 `ToolResult.error` 를 돌려주고 아무것도 띄우지 않는다.
+  있으면 `ToolResult.error` 를 돌려주고 아무것도 띄우지 않는다. 모델에게는 "이 런타임에서 띄울 수 없다" 만
+  알리고, 정책 이름과 빠진 축은 로그에 남긴다(운영자의 설정 문제이므로).
 - manager 가 실행 시점에 한 번 더 판정한다: 빠진 축, code behavior 로 등록된 이름(behavior 는 어떤 한도도 강제하지
   않는다), 부모 engine 이 없는데 `inheritContextEngine` 을 요구한 경우 — 모두 `SubagentSpawnException` 으로
   실패 결과가 되고 executor 는 호출되지 않는다.
@@ -90,7 +95,11 @@ manager 까지 예산을 실어 나를 경로도 없었다. 포크를 묶는 것
   `TOOL_CALL_BUDGET_EXCEEDED` 로 끝난다 — 다음 LLM 호출을 쓰지 않는다.
 - 정확히 한도만큼 쓴 포크는 다음 호출에서 답을 낼 수 있다. 그 호출이 또 도구를 요구하면 전부 거부되고 끝난다.
 - `max_tokens` 로 잘린 응답의 호출은 원래대로 거부되며 역시 세지 않는다.
-- `SubagentExecutionResult#getToolCallCount()` 가 실제 실행 수다.
+- **token 을 넘긴 응답의 호출도 실행하지 않는다.** 응답의 usage 는 응답이 온 뒤에야 알 수 있으므로, 정책 포크는
+  도구를 넘기기 직전에 예산을 다시 본다. 이미 STOP 이면 그 batch 전부를 `Not run` 으로 답하고, 다음 iteration
+  경계가 `TOKEN_BUDGET_EXCEEDED` 로 끝낸다(LLM 호출 없이).
+- `SubagentExecutionResult#getToolCallCount()` 는 **도구 파이프라인에 넘긴 수**다 — 예산이 차감되는 수와 같다.
+  파이프라인이 그 뒤에 거절한 호출(권한 거부, PreTool 차단)도 센다. 포크가 그 호출에 한도를 썼기 때문이다.
 
 ## 5. Deadline 과 실제 종료
 
@@ -112,13 +121,18 @@ signal 이 trip 되면 진행 중 LLM 호출의 abort lever(`SignalBackedLlmCanc
 
 - **사유 보존.** signal 은 처음 기록한 사유를 유지한다. 그래서 deadline 이 먼저면 이어서 cascade 되는
   `PARENT_CANCELLED` 가 덮어쓰지 못하고, 부모 취소가 먼저면 뒤늦은 deadline 이 덮어쓰지 못한다. 포크는 signal 의
-  사유가 `BUDGET_EXCEEDED` 일 때 `INTERRUPTED` 대신 `WALL_CLOCK_EXCEEDED` 를 보고한다. signal 없이 thread
-  interrupt 만으로 멈췄고 deadline 이 지났다면 역시 deadline 이다 (§5.3 의 watchdog interrupt 가 executor timer
-  보다 먼저 닿는 경합).
+  사유가 `BUDGET_EXCEEDED` 일 때 `INTERRUPTED` 대신 `WALL_CLOCK_EXCEEDED` 를 보고한다. 같은 판정이 두 경우를 더
+  덮는다.
+  - signal 없이 thread interrupt 만으로 멈췄고 deadline 이 지났다 — §5.3 의 watchdog interrupt 가 executor timer
+    보다 먼저 닿거나, 그 interrupt 를 HTTP client 가 자기 예외로 바꿔 던진 경우. `LlmClientException`·catch-all·
+    compaction BLOCK 경로도 deadline 이 지났으면 deadline 으로 보고한다.
+  - 사유가 `PARENT_CANCELLED` 이고 부모 signal 의 사유가 `BUDGET_EXCEEDED` 이며 자기 deadline 도 지났다 — 부모
+    deadline 을 물려받은 자식은 같은 시각을 가지고, 대개 부모 timer 가 먼저 발화해 cascade 된다.
 - **시작 전 만료.** executor 진입 시 이미 지났으면 환경 해석·OnStart hook·LLM 호출 없이
   `WALL_CLOCK_EXCEEDED` 로 끝난다 ("…before it started"). 큐에서 만료된 백그라운드 태스크가 이 경로다.
 - **늦은 interrupt 없음.** `DeadlineScheduler.Handle#close()` 와 action 은 같은 lock 을 잡고, 닫힌 handle 의
-  action 은 아무것도 하지 않는다. executor 는 반환 전에 handle 을 닫으므로 그 뒤에는 trip 이 없다. deadline 이
+  action 은 아무것도 하지 않는다. timer 스레드(JVM 에 하나)는 action 을 넘기기만 하고 action 은 daemon pool 에서
+  돈다 — 느린 terminator 하나가 다른 포크의 deadline 을 늦추지 않도록. executor 는 반환 전에 handle 을 닫으므로 그 뒤에는 trip 이 없다. deadline 이
   발화했고 부모가 취소되지 않았다면 반환 전에 자기 스레드의 interrupt flag 를 지운다 — 재사용 worker 가 다음
   작업에서 그것을 받지 않도록.
 - **compaction 도 포함.** compaction 은 포크의 cancellation signal 을 받으므로 deadline·취소에 걸린다.
@@ -130,8 +144,9 @@ interrupt 를 무시하는 도구는 JVM 안에서 안전하게 멈출 수 없�
 기다린다.
 
 1. 포크가 반환 → 그 결과.
-2. deadline 경과 또는 부모 signal trip → 포크 스레드를 interrupt (전용 스레드라 남의 작업에 떨어질 수 없다) 하고
-   `exitGracePeriod` 만큼 더 기다린다. 반환하면 그 결과.
+2. deadline 경과 또는 부모 signal trip → grace 의 **앞 절반은 trip 된 signal 만으로** 기다린다. 이미 정리 중인
+   포크(OnStop hook 실행 중)를 불필요한 interrupt 로 끊지 않기 위해서다. 그때까지 반환하지 않으면 포크 스레드를
+   interrupt 하고(전용 스레드라 남의 작업에 떨어질 수 없다) 나머지 절반을 기다린다. 반환하면 그 결과.
 3. 그래도 반환하지 않으면 **exit 미확인 결과**: `isExitConfirmed() == false`, 사유는 deadline 이면
    `WALL_CLOCK_EXCEEDED`, 취소면 `INTERRUPTED`. 포크는 `SubagentExecutionManager#lingeringRuns()` 에
    `LingeringSubagentRun` 으로 올라가고, 실제로 반환하면 내려간다. 늦게 나온 결과는 로그만 남기고 버린다.
@@ -144,6 +159,14 @@ deadline 이 있는 **background** 태스크는 worker 가 이미 전용이므�
 채로 남는다 — 둘 다 사실이고, slot 이 재사용되지 않는 이유이기도 하다.
 
 호출자에게 주는 규칙: exit 미확인 결과는 완료가 아니다. 같은 작업을 다시 띄우기 전에 `lingeringRuns()` 를 본다.
+core 는 재실행을 막지 않는다 — 무엇이 "같은 작업" 인지는 호출자만 안다. 호출자는 결과 payload 의 `taskId` 를
+자기 작업 키(finding 등)와 함께 보관하고, 그 `taskId` 가 `lingeringRuns()` 에 남아 있는 동안 다시 띄우지 않는다.
+`SubagentExecutionManager` 는 `OrcaToolProviderContext#getSubagentExecutionManager()` 로 얻는다.
+
+grace 는 deadline 이 있는 포크에만 적용된다. deadline 이 없는 정책 포크(자기 `maxWallClock` 도, 부모 deadline 도
+없음)는 이전처럼 호출 스레드에서 돌고 반환할 때까지 기다린다. deadline 을 가진 백그라운드 태스크는 deadline +
+grace 시점에 아직 큐에 있어도 lingering 으로 올라간다 — 그 태스크는 worker 를 얻는 즉시 "시작 전 만료" 로 끝나고
+목록에서 내려간다.
 
 ## 6. Context 관리
 
@@ -185,15 +208,17 @@ unit, limitations 와 UNVERIFIED 결과, 원문을 다시 읽을 식별 정보.
 
 | 항목 | 보장 | 한계 |
 |---|---|---|
-| token | 다음 LLM 호출·도구 batch 를 시작하지 않는다 | 사용량은 응답 후에만 알 수 있어 **한 호출만큼 overshoot** 할 수 있다 |
+| token | 한도를 넘긴 응답의 도구 batch 도, 다음 LLM 호출도 시작하지 않는다 | 사용량은 응답 후에만 알 수 있어 **한 호출만큼 overshoot** 할 수 있다 |
 | compaction 비용 | deadline·취소에 걸린다; `COMPACTION` feature 로 별도 집계 | 요약 호출의 token 은 포크의 `maxTokens` 에 **포함되지 않는다** |
-| 도구 호출 | 실행 수가 한도를 넘지 않는다 | 어느 호출을 실행할지는 응답 순서다 |
+| 도구 호출 | 파이프라인에 넘긴 수가 한도를 넘지 않는다 | 어느 호출을 실행할지는 응답 순서다; 파이프라인이 거절한 호출도 센다 |
 | deadline | 기준은 launch, monotonic; LLM abort·terminator 발화 | 협조하지 않는 I/O 는 멈추지 않는다 — §5.3 의 exit 미확인으로 드러날 뿐이다 |
 | 부모/자식 | 자식 deadline ≤ 부모 deadline (정책 포크가 부모일 때) | 세션 **턴**은 deadline 을 게시하지 않는다 — 턴의 벽시계는 iteration 경계 검사뿐이라 고정점이 없다 |
 | 사용량 합산 | 자식의 provider 호출은 자식 결과·SUBAGENT span 에 한 번 | 부모 `BudgetTracker` 에 **더하지 않는다** (중복 없음, 대신 부모 token 예산이 자식을 포함하지 않음). 실행 트리 전체 상한은 공유 `QuotaGuard` 의 몫이다 |
 | 요약 | 지시가 모든 AUTO 요약에 실린다 | 자연어 요약은 원문이나 COMPLETE proof 를 대체하지 않는다 — 원문이 사라졌으면 pinned 도구로 다시 읽어야 한다 |
 | context target | warning 문턱으로 낮추는 신호 | target 이 모델의 warning 문턱보다 낮으면 그 사이 구간에서는 compact 되지 않는다 |
-| lingering | 노드 로컬 목록, 실제 exit 시 제거 | 프로세스 재시작을 넘지 않는다 (JVM 스레드에 대한 사실이므로) |
+| lingering | 노드 로컬 목록, 실제 exit 시 제거 | 프로세스 재시작을 넘지 않는다 (JVM 스레드에 대한 사실이므로). 재실행 차단은 호출자의 몫이다 (§5.3) |
+| exit 미확인 결과의 사용량 | — | 포크가 반환하기 전이므로 iteration·token·도구 호출 수가 **0** 으로 보고된다. 실제 사용량은 포크가 끝날 때 SUBAGENT span 에 남는다 |
+| 스레드 | — | deadline 포크는 새 스레드에서 돌므로 spawner 의 `ThreadLocal`(예: ambient LLM 태그)을 물려받지 않는다. 명시적으로 전달되는 metadata·signal·principal 은 그대로다 |
 | 정책 없는 부모 deadline | — | 정책 없는 포크에는 부모 deadline 도 적용하지 않는다 (기존 동작 유지) |
 
 ## 8. 결과 계약
@@ -233,4 +258,10 @@ transcript 에는 가지 않는다. 키: `kind=subagent-outcome`, `taskId`, `sub
 | `budgetForced`(threshold·target), 정책 없을 때 미설정, 요약 지시 전달 | `DefaultSubagentExecutorPolicyTest`, `DefaultCompactionGuardObserverTest` |
 | 닫힌 timer 는 늦게 발화하지 않는다 | `DeadlineSchedulerTest` |
 
-외부 LLM 호출 없이 fake client·latch·조절 가능한 nano clock 을 쓴다. 경과 시간 자체를 assert 하지 않는다.
+| 실제 Task → `DefaultSubagentExecutionManager` → `DefaultSubagentExecutor` 경로의 도구 한도와 구조화 결과 | `TaskToolExecutionPolicyTest.endToEndThroughTheRealManagerAndExecutor` |
+| deadline 선행 후 부모 취소, 부모 deadline cascade, 블로킹 도구 interrupt, token 초과 batch 미실행 | `DefaultSubagentExecutorPolicyTest` |
+| passthrough engine 에서 context 축 거부, compact 하는 engine 상속 시 수락 | `DefaultSubagentExecutionManagerPolicyTest` |
+
+외부 LLM 호출 없이 fake client 와 latch 를 쓰고, deadline 판정은 조절 가능한 nano clock 으로 검증한다. 다만
+timer 가 실제로 발화하는 경로(블로킹 호출 중단, watchdog, 큐 만료)는 `DeadlineScheduler` 가 시계를 주입받지 않으므로
+50–200 ms 의 실제 deadline 을 쓴다. 그 테스트들도 경과 시간이 아니라 latch·사유·exit 여부를 assert 한다.

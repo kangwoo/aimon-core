@@ -173,6 +173,33 @@ class DefaultSubagentExecutionManagerPolicyTest {
     }
 
     @Test
+    @DisplayName("compaction settings are refused under a passthrough engine, and accepted when a compacting one is inherited")
+    void contextAxesNeedACompactingEngine() {
+        final DefaultSubagentExecutionManager manager = new DefaultSubagentExecutionManager(
+                new DefaultSubagentExecutor(new CountingClient(), new DefaultToolExecutionManager(),
+                        new DefaultHookExecutionManager()),
+                bgPool, null);
+        final SubagentExecutionPolicy own = SubagentExecutionPolicy.builder("verifier").compactionInstructions("keep")
+                .build();
+        final SubagentExecutionResult refused = manager.execute(launch().executionPolicy(own).build(), "t1", NAME,
+                "verify", "");
+        assertThat(refused.isSuccess()).isFalse();
+        assertThat(refused.getErrorMessage()).contains("COMPACTION_INSTRUCTIONS");
+
+        final SubagentExecutionPolicy inheriting = SubagentExecutionPolicy.builder("verifier")
+                .compactionInstructions("keep").inheritContextEngine(true).build();
+        final SubagentExecutionResult viaPassthrough = manager.execute(
+                launch().executionPolicy(inheriting).parentContextEngine(ContextEngine.passthrough()).build(), "t2",
+                NAME, "verify", "");
+        assertThat(viaPassthrough.isSuccess()).isFalse();
+
+        final SubagentExecutionResult accepted = manager.execute(launch().executionPolicy(inheriting)
+                .parentContextEngine(at.aimon.core.agent.context.DefaultContextEngine.builder().build()).build(), "t3",
+                NAME, "verify", "");
+        assertThat(accepted.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
+    }
+
+    @Test
     @DisplayName("a fork that ignores its deadline is reported unexited, listed as lingering, and delisted when it exits")
     void uncooperativeForkIsReportedNotWaitedFor() throws Exception {
         final CountDownLatch release = new CountDownLatch(1);

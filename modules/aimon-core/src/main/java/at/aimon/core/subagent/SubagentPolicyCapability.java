@@ -1,5 +1,9 @@
 package at.aimon.core.subagent;
 
+import java.util.Collections;
+import java.util.EnumSet;
+import java.util.Set;
+
 /**
  * One kind of limit or context setting a {@link SubagentExecutionPolicy} can ask for.
  *
@@ -30,5 +34,17 @@ public enum SubagentPolicyCapability {
     /**
      * Running the fork with its spawner's context engine ({@link SubagentExecutionPolicy#isInheritContextEngine()}).
      */
-    INHERIT_CONTEXT_ENGINE
+    INHERIT_CONTEXT_ENGINE;
+
+    /**
+     * The capabilities that only mean something when the fork's context engine compacts: the two compaction hints and
+     * the summary instructions. An executor whose own engine never compacts leaves them out; a fork that inherits its
+     * spawner's engine gets them from that engine.
+     *
+     * @return the context axes (immutable)
+     */
+    public static Set<SubagentPolicyCapability> contextAxes() {
+        return Collections.unmodifiableSet(
+                EnumSet.of(COMPACTION_TOKEN_THRESHOLD, CONTEXT_TARGET_TOKENS, COMPACTION_INSTRUCTIONS));
+    }
 }

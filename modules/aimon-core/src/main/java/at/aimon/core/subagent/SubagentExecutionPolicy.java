@@ -8,6 +8,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import at.aimon.core.agent.budget.ExecutionBudget;
+import at.aimon.core.agent.context.ContextEngine;
 
 /**
  * Trusted limits and context settings for one subagent run, supplied by code — never by the model, never by a
@@ -137,8 +138,11 @@ public final class SubagentExecutionPolicy {
     }
 
     /**
-     * @return how long a foreground fork is waited for past its deadline or its cancellation before it is reported
-     *         unexited
+     * @return how long a fork under a deadline is waited for once it has been asked to stop — its deadline passed or
+     *         its spawner cancelled it — before it is reported unexited. Applies only to a fork that has a deadline
+     *         (its
+     *         own {@link #getMaxWallClock()} or its spawner's); a fork without one runs on its spawner's thread as
+     *         before and is waited for until it returns
      */
     public Duration getExitGracePeriod() {
         return exitGracePeriod;
@@ -189,6 +193,34 @@ public final class SubagentExecutionPolicy {
         missing.addAll(getCapabilities());
         missing.removeAll(supported);
         return Collections.unmodifiableSet(missing);
+    }
+
+    /**
+     * Returns what of {@link #getCapabilities()} is missing from {@code supported} once the fork's context engine is
+     * accounted for: a policy that inherits a compacting engine ({@code inherited} is neither null nor
+     * {@link ContextEngine#passthrough()}) has the {@linkplain SubagentPolicyCapability#contextAxes() context axes}
+     * whatever the executor's own engine does; one that inherits a passthrough engine has none of them.
+     *
+     * @param supported
+     *            the capabilities the executor enforces (must not be null)
+     * @param inherited
+     *            the engine the fork inherits, or null when it does not inherit one
+     * @return the unsupported ones (never null)
+     */
+    public Set<SubagentPolicyCapability> unsupportedBy(Set<SubagentPolicyCapability> supported,
+            ContextEngine inherited) {
+        Objects.requireNonNull(supported, "supported cannot be null");
+        if (!inheritContextEngine || inherited == null) {
+            return unsupportedBy(supported);
+        }
+        final EnumSet<SubagentPolicyCapability> effective = EnumSet.noneOf(SubagentPolicyCapability.class);
+        effective.addAll(supported);
+        if (inherited == ContextEngine.passthrough()) {
+            effective.removeAll(SubagentPolicyCapability.contextAxes());
+        } else {
+            effective.addAll(SubagentPolicyCapability.contextAxes());
+        }
+        return unsupportedBy(effective);
     }
 
     /**
@@ -355,7 +387,7 @@ public final class SubagentExecutionPolicy {
 
         /**
          * @param exitGracePeriod
-         *            how long a foreground fork is waited for past its deadline or cancellation (must not be negative;
+         *            how long a fork under a deadline is waited for once asked to stop (must not be negative;
          *            defaults to {@link #DEFAULT_EXIT_GRACE_PERIOD})
          * @return this builder
          */

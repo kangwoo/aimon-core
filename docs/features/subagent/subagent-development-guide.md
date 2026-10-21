@@ -545,7 +545,7 @@ SubagentExecutionPolicy verifier = SubagentExecutionPolicy.builder("review-verif
 // 런타임의 모든 에이전트에
 runtimeFactory.withSubagentExecutionPolicies(SubagentExecutionPolicyResolver.of(Map.of("verifier", verifier)));
 // 또는 직접 만든 Task 도구에
-TaskTool task = new TaskTool(/* ... */).withExecutionPolicyResolver(resolver);
+TaskTool task = new TaskTool(/* model, registries, manager, enrichers, stores */ ..., resolver);
 ```
 
 - 강제할 수 없는 한도가 있으면 **띄우기 전에 거부**합니다 — 조용히 무제한으로 실행하지 않습니다.

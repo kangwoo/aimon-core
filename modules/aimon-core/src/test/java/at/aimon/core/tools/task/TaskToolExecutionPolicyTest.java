@@ -11,11 +11,15 @@ import static org.mockito.Mockito.when;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -28,20 +32,34 @@ import at.aimon.core.agent.budget.ExecutionDeadline;
 import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.agent.tool.AbstractTool;
+import at.aimon.core.agent.tool.DefaultToolExecutionManager;
+import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.command.execution.ExecutionMetadata;
+import at.aimon.core.hook.DefaultHookExecutionManager;
+import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
+import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmModel;
+import at.aimon.core.llm.LlmResponse;
+import at.aimon.core.llm.Message;
 import at.aimon.core.llm.TokenUsage;
+import at.aimon.core.llm.ToolDefinition;
+import at.aimon.core.llm.ToolUse;
+import at.aimon.core.subagent.DefaultSubagentExecutionManager;
+import at.aimon.core.subagent.InMemorySubagentRegistry;
+import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentExecutionPolicy;
 import at.aimon.core.subagent.SubagentExecutionPolicyResolver;
 import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentPolicyCapability;
 import at.aimon.core.subagent.SubagentRegistry;
+import at.aimon.core.subagent.execution.DefaultSubagentExecutor;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.subagent.execution.SubagentOutcomePayload;
 import at.aimon.core.tools.ToolContextKeys;
@@ -62,8 +80,8 @@ class TaskToolExecutionPolicyTest {
         lenient().when(registry.getAllSubagents()).thenReturn(List.of());
         manager = mock(SubagentExecutionManager.class);
         lenient().when(manager.supportedPolicyCapabilities()).thenReturn(EnumSet.allOf(SubagentPolicyCapability.class));
-        tool = new TaskTool(mock(LlmModel.class), registry, mock(ToolRegistry.class), mock(HookRegistry.class), manager)
-                .withExecutionPolicyResolver(SubagentExecutionPolicyResolver.of(Map.of("verifier", VERIFIER)));
+        tool = new TaskTool(mock(LlmModel.class), registry, mock(ToolRegistry.class), mock(HookRegistry.class), manager,
+                List.of(), null, null, null, SubagentExecutionPolicyResolver.of(Map.of("verifier", VERIFIER)));
     }
 
     @Test
@@ -116,7 +134,7 @@ class TaskToolExecutionPolicyTest {
         final ToolResult toolResult = tool.execute(input("verifier"), contextWithId());
 
         assertThat(toolResult.isError()).isTrue();
-        assertThat(toolResult.getContent()).contains("review-verifier").contains("MAX_TOOL_CALLS");
+        assertThat(toolResult.getContent()).contains("cannot be launched").doesNotContain("MAX_TOOL_CALLS");
         verify(manager, never()).execute(any(), anyString(), anyString(), anyString(), anyString());
         verify(manager, never()).executeInBackground(any(), anyString(), anyString(), anyString(), anyString());
     }
@@ -172,6 +190,60 @@ class TaskToolExecutionPolicyTest {
         assertThat(toolResult.getContent()).doesNotContain("Completion reason").doesNotContain("Exit:");
         assertThat(toolResult.getRenderPayload()).doesNotContainKey(SubagentOutcomePayload.POLICY_ROLE)
                 .containsEntry(SubagentOutcomePayload.EXIT_CONFIRMED, true);
+    }
+
+    @Test
+    @DisplayName("end to end: a real Task launch enforces the policy and reports the stop in the structured outcome")
+    void endToEndThroughTheRealManagerAndExecutor() {
+        final InMemorySubagentRegistry registry = new InMemorySubagentRegistry();
+        registry.register(Subagent.builder().name("verifier").systemPrompt("you verify").build());
+        final DefaultToolRegistry tools = new DefaultToolRegistry();
+        final AtomicInteger runs = new AtomicInteger();
+        tools.register(new AbstractTool("Probe", "probe",
+                Map.of("type", "object", "properties", Map.of(), "required", List.of())) {
+            @Override
+            public ToolResult execute(ToolInput input, ToolContext context) {
+                runs.incrementAndGet();
+                return ToolResult.success("ok");
+            }
+        });
+        final ArrayDeque<LlmResponse> script = new ArrayDeque<>(List.of(
+                LlmResponse.of("act", List.of(ToolUse.of("a", "Probe", Map.of()), ToolUse.of("b", "Probe", Map.of())),
+                        TokenUsage.of(5, 5, 10)),
+                LlmResponse.text("never reached")));
+        final LlmClient llm = new LlmClient() {
+            @Override
+            public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> defs,
+                    LlmModel modelConfig) {
+                return script.removeFirst();
+            }
+
+            @Override
+            public String getProviderName() {
+                return "Scripted";
+            }
+        };
+        final ExecutorService pool = Executors.newSingleThreadExecutor();
+        try (DefaultSubagentExecutionManager realManager = new DefaultSubagentExecutionManager(
+                new DefaultSubagentExecutor(llm, new DefaultToolExecutionManager(), new DefaultHookExecutionManager()),
+                pool, null)) {
+            final SubagentExecutionPolicy policy = SubagentExecutionPolicy.builder("review-verifier").maxToolCalls(1)
+                    .maxWallClock(Duration.ofMinutes(1)).build();
+            final TaskTool realTool = new TaskTool(LlmModel.builder().name("gpt-4").build(), registry, tools,
+                    new DefaultHookRegistry(), realManager, List.of(), null, null, null,
+                    SubagentExecutionPolicyResolver.of(Map.of("verifier", policy)));
+
+            final ToolResult toolResult = realTool.execute(input("verifier"), contextWithId());
+
+            // Delivering the result is not the subagent completing: the payload says which it was.
+            assertThat(toolResult.isSuccess()).isTrue();
+            assertThat(toolResult.getRenderPayload())
+                    .containsEntry(SubagentOutcomePayload.COMPLETION_REASON, "TOOL_CALL_BUDGET_EXCEEDED")
+                    .containsEntry(SubagentOutcomePayload.TOOL_CALLS, 1)
+                    .containsEntry(SubagentOutcomePayload.EXIT_CONFIRMED, true);
+            assertThat(runs).hasValue(1);
+            assertThat(script).hasSize(1);
+        }
     }
 
     private SubagentLaunchContext capturedLaunch() {

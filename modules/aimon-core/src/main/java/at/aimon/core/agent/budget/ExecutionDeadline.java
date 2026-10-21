@@ -20,11 +20,15 @@ import java.util.function.LongSupplier;
  * {@link #earlierOf(ExecutionDeadline)} refuses two that do not.
  *
  * <p>
- * Immutable value object — thread-safe and freely shareable.
+ * Immutable and thread-safe, but compared by identity: two deadlines are the same deadline only when they are the
+ * same instance, which is why {@code SubagentExecutionRequest#equals} leaves its deadline out.
  */
 public final class ExecutionDeadline {
 
     private static final LongSupplier SYSTEM_NANO_TIME = System::nanoTime;
+
+    /** The longest span a deadline counts; a longer budget is held at this. */
+    private static final Duration MAX_BUDGET = Duration.ofNanos(Long.MAX_VALUE / 2);
 
     private final LongSupplier nanoClock;
     private final long deadlineNanos;
@@ -66,7 +70,10 @@ public final class ExecutionDeadline {
         if (budget.isZero() || budget.isNegative()) {
             throw new IllegalArgumentException("budget must be positive, got: " + budget);
         }
-        return new ExecutionDeadline(nanoClock, nanoClock.getAsLong() + budget.toNanos(), budget);
+        // A budget too long to count in nanoseconds is, for every practical purpose, no deadline yet: saturate at a
+        // span the clock arithmetic below can still subtract without overflowing (about 146 years).
+        final long nanos = budget.compareTo(MAX_BUDGET) > 0 ? MAX_BUDGET.toNanos() : budget.toNanos();
+        return new ExecutionDeadline(nanoClock, nanoClock.getAsLong() + nanos, budget);
     }
 
     /**
@@ -85,7 +92,8 @@ public final class ExecutionDeadline {
     }
 
     /**
-     * @return the duration this deadline was anchored with, before any clamping by {@link #earlierOf}
+     * @return the duration this deadline was anchored with ({@link #earlierOf} picks one of two deadlines and never
+     *         changes either)
      */
     public Duration getBudget() {
         return budget;
