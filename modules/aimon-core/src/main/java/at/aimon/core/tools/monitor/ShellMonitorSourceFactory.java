@@ -2,9 +2,12 @@ package at.aimon.core.tools.monitor;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayDeque;
 import java.util.Arrays;
+import java.util.Deque;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +18,7 @@ import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCancellationSource;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.ShellFeature;
+import at.aimon.core.shell.ShellLineListener;
 import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.shell.exception.ShellCancelledException;
 import at.aimon.core.shell.exception.ShellExecutionException;
@@ -40,7 +44,8 @@ import at.aimon.core.tools.monitor.exception.MonitorRequestException;
  *
  * <p>
  * The command runs on a daemon thread of its own for the monitor's lifetime; the manager's caps bound how many there
- * are. Exit status 0 completes the monitor; any other status fails it, with the last lines of standard error.
+ * are. Exit status 0 completes the monitor; any other status fails it, with the last lines of standard error — kept
+ * as they stream ({@link ShellLineListener#onStderrLine(String)}), since the result holds only its first part.
  */
 public final class ShellMonitorSourceFactory implements MonitorSourceFactory {
 
@@ -58,6 +63,7 @@ public final class ShellMonitorSourceFactory implements MonitorSourceFactory {
     /** How much stderr is captured: only its last lines are ever shown. */
     private static final long MAX_STDERR_BYTES = 64 * 1024;
     private static final int STDERR_TAIL_LINES = 5;
+    private static final int STDERR_LINE_CHARS = 500;
 
     /** Past the monitor's own timeout, so the manager's timer — not the shell's — ends the monitor and says so. */
     private static final Duration SHELL_TIMEOUT_MARGIN = Duration.ofMinutes(1);
@@ -128,12 +134,27 @@ public final class ShellMonitorSourceFactory implements MonitorSourceFactory {
         }
 
         private void run(ExecutionOptions options, MonitorEventSink sink) {
+            final StderrTail stderr = new StderrTail();
             try {
-                final ShellCommandResult result = environment.shell().execute(() -> command, options, sink::emit);
+                final ShellCommandResult result = environment.shell().execute(() -> command, options,
+                        new ShellLineListener() {
+                            @Override
+                            public void onStdoutLine(String line) {
+                                sink.emit(line);
+                            }
+
+                            @Override
+                            public void onStderrLine(String line) {
+                                stderr.add(line);
+                            }
+                        });
                 if (result.exitCode() == 0) {
                     sink.complete("exit code 0");
                 } else {
-                    sink.fail("exit code " + result.exitCode() + stderrTail(result.stderr()));
+                    // The streamed last lines when the shell streams stderr; otherwise the result's, which is the
+                    // start of a long stderr rather than its end.
+                    sink.fail("exit code " + result.exitCode()
+                            + stderr.describe().orElseGet(() -> stderrTail(result.stderr())));
                 }
             } catch (ShellCancelledException e) {
                 // MonitorStop or the manager's timeout: the monitor has already ended, so this is not reported.
@@ -145,6 +166,30 @@ public final class ShellMonitorSourceFactory implements MonitorSourceFactory {
             } catch (RuntimeException e) {
                 log.warn("Shell monitor command failed unexpectedly", e);
                 sink.fail("the command could not run: " + e.getMessage());
+            }
+        }
+
+        /**
+         * The last {@value ShellMonitorSourceFactory#STDERR_TAIL_LINES} lines of standard error, kept as they stream:
+         * what a failure is reported with. Lines are cut to {@value ShellMonitorSourceFactory#STDERR_LINE_CHARS}
+         * characters, so the memory is fixed however long the command runs.
+         */
+        private static final class StderrTail {
+
+            private final Deque<String> lines = new ArrayDeque<>();
+
+            synchronized void add(String line) {
+                if (line.isBlank()) {
+                    return;
+                }
+                if (lines.size() == STDERR_TAIL_LINES) {
+                    lines.removeFirst();
+                }
+                lines.addLast(line.length() > STDERR_LINE_CHARS ? line.substring(0, STDERR_LINE_CHARS) + "…" : line);
+            }
+
+            synchronized Optional<String> describe() {
+                return lines.isEmpty() ? Optional.empty() : Optional.of("; stderr: " + String.join(" | ", lines));
             }
         }
 

@@ -48,6 +48,10 @@ default — so the agent reacts while nobody is typing. Opt-in: `SessionSpec.wak
 
 ### Added: line-by-line shell streaming
 
+- **`ShellLineListener#onStderrLine`** (default: nothing) — standard error streams too. `LocalShell` follows its stderr
+  capture file unless the call merges the streams. A monitor's failure notice now carries the *last* lines of stderr
+  kept as they streamed, not the end of the result's stderr, which is cut to the capture limit from its start.
+
 `ShellFeature.STREAMING` and `VirtualShell#execute(ShellCommand, ExecutionOptions, ShellLineListener)` (default:
 refuses). `LocalShell` implements it by reading its stdout capture file as it grows; `WorkingDirectoryShell` forwards
 it. A shell that wraps another and forwards `supports(...)` must forward the new method too. A shell may refuse a

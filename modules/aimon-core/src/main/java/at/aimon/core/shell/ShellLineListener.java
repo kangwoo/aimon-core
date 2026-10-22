@@ -1,7 +1,8 @@
 package at.aimon.core.shell;
 
 /**
- * Receives a running command's standard output one line at a time, as the command prints it.
+ * Receives a running command's output one line at a time, as the command prints it: standard output always, standard
+ * error when the shell streams it too ({@link #onStderrLine(String)}).
  *
  * <p>
  * Passed to {@link VirtualShell#execute(ShellCommand, ExecutionOptions, ShellLineListener)}, which a shell declaring
@@ -24,4 +25,18 @@ public interface ShellLineListener {
      *            the line without its terminator (never null; may be empty)
      */
     void onStdoutLine(String line);
+
+    /**
+     * Called for each complete line the command writes to its standard error, by a shell that streams it — the local
+     * shell and the sandbox shell do, unless the call merges the two streams. Does nothing by default.
+     *
+     * <p>
+     * Standard error is also in the result, cut to the capture limit from its <em>start</em>; a caller that wants the
+     * <em>last</em> lines of a long run — the failure that ended it — keeps them from here.
+     *
+     * @param line
+     *            the line without its terminator (never null; may be empty)
+     */
+    default void onStderrLine(String line) {
+    }
 }
