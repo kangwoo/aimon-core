@@ -383,7 +383,7 @@ public final class LocalShell implements VirtualShell {
      * Waits for a streaming command as {@code waitFor} would, reading its capture file in between. Returns whether the
      * process ended before the timeout; whatever it printed up to that point has been handed over either way.
      */
-    private static boolean awaitStreaming(Process p, Duration timeout, LineTail tail) throws InterruptedException {
+    private static boolean awaitStreaming(Process p, Duration timeout, StreamTails tail) throws InterruptedException {
         final boolean bounded = timeout != null && !timeout.isZero() && !timeout.isNegative();
         final long deadline = bounded ? System.nanoTime() + timeout.toNanos() : 0L;
         while (true) {
@@ -587,7 +587,9 @@ public final class LocalShell implements VirtualShell {
      * process runs, so no pipe is involved and a backgrounded child holding the output open cannot stall anything.
      * Lines are split on the {@code \n} byte, which is safe for UTF-8 and the other ASCII-compatible charsets; a run
      * of {@value #MAX_STREAMED_LINE_BYTES} bytes without one is handed over as a line of its own, and an unterminated
-     * tail is handed over when the process ends. The result carries no stdout.
+     * tail is handed over when the process ends. The result carries no stdout. Standard error is followed the same
+     * way, from its own capture file, into {@link ShellLineListener#onStderrLine(String)} — unless the call merges it
+     * into stdout — and is still in the result as well.
      */
     @Override
     public ShellCommandResult execute(ShellCommand command, ExecutionOptions options, ShellLineListener listener)
@@ -647,7 +649,7 @@ public final class LocalShell implements VirtualShell {
             }
             io = Redirects.prepare(pb, options.getStdin(), charset, mergeErr, privateIo);
             // Opened before the process starts: a hook's capture file is unlinked once it has (Redirects.started).
-            final LineTail tail = listener != null ? io.tail(listener) : null;
+            final StreamTails tail = listener != null ? io.tail(listener) : null;
 
             final Instant start = Instant.now();
             final Process p;
@@ -795,6 +797,7 @@ public final class LocalShell implements VirtualShell {
         private FileChannel outChannel;
         private FileChannel errChannel;
         private FileChannel tailChannel;
+        private FileChannel errTailChannel;
 
         private Redirects(Charset charset, boolean privateIo, byte[] stdin) {
             this.charset = charset;
@@ -871,9 +874,15 @@ public final class LocalShell implements VirtualShell {
          * For a streaming command: opens a second channel on the stdout capture file, read at its growing end. Its
          * stdout is then not read again into the result — {@link #out(long)} returns nothing.
          */
-        LineTail tail(ShellLineListener listener) throws IOException {
+        StreamTails tail(ShellLineListener listener) throws IOException {
             tailChannel = FileChannel.open(outFile, StandardOpenOption.READ);
-            return new LineTail(tailChannel, charset, listener);
+            final LineTail out = new LineTail(tailChannel, charset, listener::onStdoutLine);
+            if (errFile == null) {
+                // Merged into stdout: its lines are stdout's.
+                return new StreamTails(out, null);
+            }
+            errTailChannel = FileChannel.open(errFile, StandardOpenOption.READ);
+            return new StreamTails(out, new LineTail(errTailChannel, charset, listener::onStderrLine));
         }
 
         Capture out(long maxBytes) {
@@ -886,6 +895,7 @@ public final class LocalShell implements VirtualShell {
 
         void close() {
             closeQuietly(tailChannel);
+            closeQuietly(errTailChannel);
             closeQuietly(outChannel);
             closeQuietly(errChannel);
             deleteQuietly(outFile);
@@ -894,8 +904,34 @@ public final class LocalShell implements VirtualShell {
         }
     }
 
+    /** A streaming command's tails: stdout's, and stderr's unless the two are merged. Used by one thread at a time. */
+    private static final class StreamTails {
+
+        private final LineTail out;
+        private final LineTail err;
+
+        StreamTails(LineTail out, LineTail err) {
+            this.out = out;
+            this.err = err;
+        }
+
+        void poll() {
+            out.poll();
+            if (err != null) {
+                err.poll();
+            }
+        }
+
+        void finish() {
+            out.finish();
+            if (err != null) {
+                err.finish();
+            }
+        }
+    }
+
     /**
-     * Reads a streaming command's stdout capture file from where it last stopped, and hands each complete line to the
+     * Reads one of a streaming command's capture files from where it last stopped, and hands each complete line to the
      * listener. Positional reads, so the channel's own position — and any other channel on the file — is untouched.
      * Used by one thread at a time: the one waiting for the process.
      */
@@ -903,13 +939,13 @@ public final class LocalShell implements VirtualShell {
 
         private final FileChannel channel;
         private final Charset charset;
-        private final ShellLineListener listener;
+        private final Consumer<String> listener;
         private final ByteBuffer buffer = ByteBuffer.allocate(STREAM_BUFFER_SIZE);
         private final ByteArrayOutputStream pending = new ByteArrayOutputStream();
         private long position;
         private boolean readFailureLogged;
 
-        LineTail(FileChannel channel, Charset charset, ShellLineListener listener) {
+        LineTail(FileChannel channel, Charset charset, Consumer<String> listener) {
             this.channel = channel;
             this.charset = charset;
             this.listener = listener;
@@ -996,7 +1032,7 @@ public final class LocalShell implements VirtualShell {
                 line = line.substring(0, line.length() - 1);
             }
             try {
-                listener.onStdoutLine(line);
+                listener.accept(line);
             } catch (RuntimeException e) {
                 log.warn("Shell line listener failed; the line is dropped ({})", e.toString());
             }

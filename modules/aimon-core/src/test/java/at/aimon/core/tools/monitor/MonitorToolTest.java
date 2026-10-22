@@ -104,6 +104,20 @@ class MonitorToolTest {
     }
 
     @Test
+    @DisplayName("a failure is told with the LAST lines of stderr, even past the capture limit")
+    @DisabledOnOs(OS.WINDOWS)
+    void failureShowsTheLastStderrLines() {
+        tool.execute(
+                ToolInput.of(Map.of("description", "d", "command",
+                        "for i in $(seq 1 20000); do echo \"noise $i\" >&2; done; echo 'real cause' >&2; exit 4")),
+                context(shell));
+
+        await(() -> !queue.snapshot().isEmpty());
+        assertThat(queue.snapshot().get(0).getInputText()).contains("exit code 4").contains("real cause")
+                .contains("noise 20000");
+    }
+
+    @Test
     @DisplayName("MonitorStop ends an endless command")
     @DisabledOnOs(OS.WINDOWS)
     void stopEndsEndlessCommand() {

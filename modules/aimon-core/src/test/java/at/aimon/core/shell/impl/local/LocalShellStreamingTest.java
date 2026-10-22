@@ -21,6 +21,7 @@ import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCancellationSource;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.ShellFeature;
+import at.aimon.core.shell.ShellLineListener;
 import at.aimon.core.shell.exception.ShellCancelledException;
 import at.aimon.core.shell.exception.ShellExecutionException;
 import at.aimon.core.shell.exception.ShellTimeoutException;
@@ -60,6 +61,43 @@ class LocalShellStreamingTest {
         assertThat(result.exitCode()).isEqualTo(3);
         assertThat(result.stdout()).isEmpty();
         assertThat(result.stderr()).contains("oops");
+    }
+
+    @Test
+    @DisplayName("stderr lines stream to onStderrLine; merged into stdout they are stdout lines")
+    void stderrStreamsUnlessMerged() throws Exception {
+        final List<String> out = new CopyOnWriteArrayList<>();
+        final List<String> err = new CopyOnWriteArrayList<>();
+        final ShellLineListener both = new ShellLineListener() {
+            @Override
+            public void onStdoutLine(String line) {
+                out.add(line);
+            }
+
+            @Override
+            public void onStderrLine(String line) {
+                err.add(line);
+            }
+        };
+
+        shell.execute(() -> "echo out; echo err >&2",
+                ExecutionOptions.builder().timeout(Duration.ofSeconds(10)).build(), both);
+        assertThat(out).containsExactly("out");
+        assertThat(err).containsExactly("err");
+
+        out.clear();
+        err.clear();
+        shell.execute(() -> "echo out; echo err >&2",
+                ExecutionOptions.builder().timeout(Duration.ofSeconds(10)).redirectErrorStream(true).build(), both);
+        assertThat(out).containsExactlyInAnyOrder("out", "err");
+        assertThat(err).isEmpty();
+
+        // Isolated: the capture files are unlinked once the process starts, so both tails must already be open.
+        out.clear();
+        shell.execute(() -> "echo out; echo err >&2",
+                ExecutionOptions.builder().timeout(Duration.ofSeconds(10)).isolated(true).build(), both);
+        assertThat(out).containsExactly("out");
+        assertThat(err).containsExactly("err");
     }
 
     @Test
