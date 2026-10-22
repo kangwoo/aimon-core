@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -79,12 +80,14 @@ public final class IdleSessionWaker implements AutoCloseable {
 
     private static final String KIND_KEY = "kind";
     private static final Duration HOUR = Duration.ofHours(1);
+    private static final long CLOSE_WAIT_SECONDS = 5;
 
     private final SessionRouter router;
     private final MessageQueueManager queue;
     private final SessionRecordStore records;
     private final WakePolicy policy;
     private final WakeLedger ledger;
+    private final WakeRequestCustomizer customizer;
     private final Clock clock;
     private final ScheduledExecutorService scheduler;
     private final Map<SessionId, ScheduledFuture<?>> pending = new ConcurrentHashMap<>();
@@ -99,6 +102,7 @@ public final class IdleSessionWaker implements AutoCloseable {
         this.records = Objects.requireNonNull(builder.records, "records must not be null");
         this.policy = builder.policy;
         this.ledger = builder.ledger != null ? builder.ledger : new InMemoryWakeLedger();
+        this.customizer = builder.customizer;
         this.clock = builder.clock;
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             final Thread t = new Thread(r, "idle-session-waker");
@@ -144,6 +148,16 @@ public final class IdleSessionWaker implements AutoCloseable {
         }
         retryNotBefore.remove(sessionId);
         reported.remove(sessionId);
+        // On the waker's thread, after any wake of this session already running, so that wake cannot put the deleted
+        // session's counters back.
+        try {
+            scheduler.execute(() -> forgetCounters(sessionId));
+        } catch (RejectedExecutionException closing) {
+            forgetCounters(sessionId);
+        }
+    }
+
+    private void forgetCounters(SessionId sessionId) {
         try {
             ledger.remove(sessionId);
         } catch (RuntimeException e) {
@@ -152,7 +166,9 @@ public final class IdleSessionWaker implements AutoCloseable {
     }
 
     /**
-     * Stops listening to the queue and cancels every pending wake. Turns already submitted run on. Idempotent.
+     * Stops listening to the queue and cancels every pending wake, letting a wake already running finish its submit
+     * (up to {@value #CLOSE_WAIT_SECONDS} seconds) rather than interrupting it half-way. Turns already submitted run
+     * on. Idempotent.
      */
     @Override
     public void close() {
@@ -162,7 +178,15 @@ public final class IdleSessionWaker implements AutoCloseable {
         queue.removeListener(listener);
         pending.values().forEach(scheduled -> scheduled.cancel(false));
         pending.clear();
-        scheduler.shutdownNow();
+        scheduler.shutdown();
+        try {
+            if (!scheduler.awaitTermination(CLOSE_WAIT_SECONDS, TimeUnit.SECONDS)) {
+                scheduler.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            scheduler.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void onQueueEvent(MessageQueueListener.Event event) {
@@ -205,6 +229,21 @@ public final class IdleSessionWaker implements AutoCloseable {
         if (closed.get()) {
             return;
         }
+        final Instant now = clock.instant();
+        final Instant notBefore = retryNotBefore.get(sessionId);
+        if (notBefore != null && !now.isBefore(notBefore)) {
+            retryNotBefore.remove(sessionId, notBefore);
+        }
+        final List<QueuedInput> candidates = candidates(sessionId);
+        if (candidates.isEmpty()) {
+            return;
+        }
+        if (runningHere(sessionId)) {
+            // Its running turn reads them; look again while some are left, in case it ends without a tool-using
+            // iteration. Checked before any store read: this repeats for as long as the turn runs.
+            schedule(sessionId, recheckDelay());
+            return;
+        }
         // Read before anything is drained, and right before the submit: a session deleted meanwhile (on any node) must
         // not be recreated by the claim.
         final Optional<SessionRecordView> record = records.load(sessionId);
@@ -221,32 +260,62 @@ public final class IdleSessionWaker implements AutoCloseable {
             }
             return;
         }
-        final Instant now = clock.instant();
-        final WakeState state = refreshed(sessionId, record.get(), now);
-        if (state.getRecentWakes().size() >= policy.getMaxPerHour()
-                || state.getConsecutive() >= policy.getMaxConsecutive()) {
-            ledger.put(sessionId, state);
+        final int turnCount = record.get().getSessionTotals().getTurnCount();
+        final WakeState state = ledger.update(sessionId, current -> refreshed(current, turnCount, now));
+        if (state.getConsecutive() >= policy.getMaxConsecutive()) {
             if (reported.add(sessionId)) {
-                log.info("Session {} reached its wake limit ({}); its notifications wait for its next turn", sessionId,
-                        policy);
+                log.info("Session {} reached its limit of {} wakes without a turn of its own; its notifications wait"
+                        + " for its next turn", sessionId, policy.getMaxConsecutive());
             }
             return;
         }
-        if (runningHere(sessionId)) {
-            // Its running turn reads them; look again in a moment in case it ends without a tool-using iteration.
-            schedule(sessionId, policy.getDebounce().isZero() ? Duration.ofSeconds(1) : policy.getDebounce());
+        if (state.getRecentWakes().size() >= policy.getMaxPerHour()) {
+            if (reported.add(sessionId)) {
+                log.info("Session {} reached its limit of {} wakes an hour", sessionId, policy.getMaxPerHour());
+            }
+            // A monitor whose entry is waiting enqueues nothing new, so no event would come to look again.
+            schedule(sessionId, Duration.between(now, state.getRecentWakes().get(0).plus(HOUR)));
             return;
         }
-        final List<QueuedInput> drained = drain(sessionId);
+
+        final AgentRuntimeId runtime = candidates.get(0).getAgentRuntimeId();
+        final SubmitRequest.Builder request = SubmitRequest.builder().sessionId(sessionId)
+                .agentRef(record.get().getAgentRef().get()).contextDiscriminator(runtime.discriminator().orElse(null))
+                .initiator(Principal.system());
+        try {
+            customizer.customize(request, record.get());
+        } catch (RuntimeException e) {
+            log.warn("The wake request customizer failed for session {}; not woken: {}", sessionId, e.toString());
+            return;
+        }
+        final String id = sessionId.value();
+        final List<QueuedInput> drained = queue
+                .drainForInjection(
+                        q -> q.getSessionId().filter(id::equals).isPresent() && runtime.equals(q.getAgentRuntimeId())
+                                && policy.getKinds().contains(q.getMetadata().get(KIND_KEY)),
+                        QueuedInputPriority.LATER);
         if (drained.isEmpty()) {
             return;
         }
-        submit(sessionId, record.get().getAgentRef().get(), owner.get(), drained, state, now);
+        submit(sessionId, request, owner.get(), drained, now);
     }
 
-    /** The session's counters, with wakes older than an hour dropped and the streak reset if another turn ran. */
-    private WakeState refreshed(SessionId sessionId, SessionRecordView record, Instant now) {
-        final WakeState stored = ledger.get(sessionId);
+    /** The session's waiting entries this policy wakes for, oldest first. */
+    private List<QueuedInput> candidates(SessionId sessionId) {
+        final String id = sessionId.value();
+        return queue.snapshot().stream().filter(q -> q.getSessionId().filter(id::equals).isPresent())
+                .filter(q -> policy.getKinds().contains(q.getMetadata().get(KIND_KEY))).toList();
+    }
+
+    private Duration recheckDelay() {
+        return policy.getDebounce().compareTo(Duration.ofSeconds(1)) < 0 ? Duration.ofSeconds(1) : policy.getDebounce();
+    }
+
+    /**
+     * The session's counters with wakes older than an hour dropped, and the streak reset if a turn other than a wake's
+     * has run since the last wake's turn ended. While a wake's turn is outstanding a moved turn count is that turn's.
+     */
+    private static WakeState refreshed(WakeState stored, int turnCount, Instant now) {
         final List<Instant> recent = new ArrayList<>();
         for (Instant at : stored.getRecentWakes()) {
             if (at.isAfter(now.minus(HOUR))) {
@@ -254,13 +323,13 @@ public final class IdleSessionWaker implements AutoCloseable {
             }
         }
         int consecutive = stored.getConsecutive();
-        final int turnCount = record.getSessionTotals().getTurnCount();
-        if (stored.getTurnCountAfterWake().isPresent() && turnCount > stored.getTurnCountAfterWake().getAsInt()) {
+        final Integer after = stored.getTurnCountAfterWake().isPresent()
+                ? stored.getTurnCountAfterWake().getAsInt()
+                : null;
+        if (!stored.isOutstanding() && after != null && turnCount > after) {
             consecutive = 0;
-            reported.remove(sessionId);
         }
-        return WakeState.of(recent, consecutive,
-                stored.getTurnCountAfterWake().isPresent() ? stored.getTurnCountAfterWake().getAsInt() : null);
+        return WakeState.of(recent, consecutive, after, stored.isOutstanding());
     }
 
     /** A cost optimisation, never a gate (the router's status is not one): a turn this node is running reads them. */
@@ -273,25 +342,8 @@ public final class IdleSessionWaker implements AutoCloseable {
                 .orElse(false);
     }
 
-    private List<QueuedInput> drain(SessionId sessionId) {
-        final String id = sessionId.value();
-        final List<QueuedInput> candidates = queue.snapshot().stream()
-                .filter(q -> q.getSessionId().filter(id::equals).isPresent())
-                .filter(q -> policy.getKinds().contains(q.getMetadata().get(KIND_KEY))).toList();
-        if (candidates.isEmpty()) {
-            return List.of();
-        }
-        // One runtime per turn, as the executor's own drain: a session is bound to one agent.
-        final AgentRuntimeId runtime = candidates.get(0).getAgentRuntimeId();
-        return queue
-                .drainForInjection(
-                        q -> q.getSessionId().filter(id::equals).isPresent() && runtime.equals(q.getAgentRuntimeId())
-                                && policy.getKinds().contains(q.getMetadata().get(KIND_KEY)),
-                        QueuedInputPriority.LATER);
-    }
-
-    private void submit(SessionId sessionId, String agentRef, Principal owner, List<QueuedInput> drained,
-            WakeState state, Instant now) {
+    private void submit(SessionId sessionId, SubmitRequest.Builder request, Principal owner, List<QueuedInput> drained,
+            Instant now) {
         final Set<String> kinds = new LinkedHashSet<>();
         final StringBuilder input = new StringBuilder();
         String taskId = null;
@@ -311,14 +363,13 @@ public final class IdleSessionWaker implements AutoCloseable {
         if (taskId != null) {
             options.executionAttribute(SubagentTaskCompleted.RECEIVED_TASK_ID_ATTRIBUTE, taskId);
         }
-        final AgentRuntimeId runtime = drained.get(0).getAgentRuntimeId();
-        final SubmitRequest request = SubmitRequest.builder().sessionId(sessionId).agentRef(agentRef)
-                .contextDiscriminator(runtime.discriminator().orElse(null)).userInput(input.toString())
-                .submitOptions(options.build()).idempotencyKey("wake:" + drained.get(0).getUuid())
-                .initiator(Principal.system()).build();
+        // A key per attempt: a retry carries the same entries, and the router keeps a key whose forward failed in
+        // flight for minutes — reusing it would have the retry swallowed as a duplicate.
+        request.userInput(input.toString()).submitOptions(options.build())
+                .idempotencyKey("wake:" + drained.get(0).getUuid() + ":" + UUID.randomUUID());
         final SubmitDisposition disposition;
         try {
-            disposition = router.submit(request);
+            disposition = router.submit(request.build());
         } catch (RuntimeException e) {
             // Set first: putting the entries back fires ENQUEUED, and that must schedule the retry, not a quick wake.
             retryNotBefore.put(sessionId, now.plus(policy.getRetryDelay()));
@@ -329,13 +380,27 @@ public final class IdleSessionWaker implements AutoCloseable {
             return;
         }
         retryNotBefore.remove(sessionId);
-        final List<Instant> recent = new ArrayList<>(state.getRecentWakes());
-        recent.add(now);
-        ledger.put(sessionId, WakeState.of(recent, state.getConsecutive() + 1,
-                state.getTurnCountAfterWake().isPresent() ? state.getTurnCountAfterWake().getAsInt() : null));
         log.debug("Woke session {} for {} ({})", sessionId, kinds, disposition.getKind());
+        try {
+            ledger.update(sessionId, current -> {
+                final List<Instant> recent = new ArrayList<>(current.getRecentWakes());
+                recent.add(now);
+                return WakeState.of(recent, current.getConsecutive() + 1,
+                        current.getTurnCountAfterWake().isPresent() ? current.getTurnCountAfterWake().getAsInt() : null,
+                        true);
+            });
+        } catch (RuntimeException e) {
+            log.warn("Wake ledger could not count the wake of session {}: {}", sessionId, e.toString());
+        }
         final CompletionStage<AgentExecutionResult> turn = disposition.getFuture();
-        turn.whenComplete((result, error) -> settled(sessionId, error));
+        // Back onto the waker's thread: the ledger is changed from one thread, and turn threads stay free.
+        turn.whenComplete((result, error) -> {
+            try {
+                scheduler.execute(() -> settled(sessionId, error));
+            } catch (RejectedExecutionException closing) {
+                log.debug("Wake of session {} settled after close", sessionId);
+            }
+        });
     }
 
     /** After a wake's turn: remember the turn count, so the next wake can tell whether another turn ran since. */
@@ -346,11 +411,12 @@ public final class IdleSessionWaker implements AutoCloseable {
         try {
             final Optional<SessionRecordView> record = records.load(sessionId);
             if (record.isEmpty()) {
+                // Deleted meanwhile: nothing to remember, and nothing to put back into the ledger.
                 return;
             }
-            final WakeState state = ledger.get(sessionId);
-            ledger.put(sessionId, WakeState.of(state.getRecentWakes(), state.getConsecutive(),
-                    record.get().getSessionTotals().getTurnCount()));
+            final int turnCount = record.get().getSessionTotals().getTurnCount();
+            ledger.update(sessionId,
+                    current -> WakeState.of(current.getRecentWakes(), current.getConsecutive(), turnCount, false));
         } catch (RuntimeException e) {
             log.warn("Could not record the turn count after waking session {}: {}", sessionId, e.toString());
         }
@@ -379,6 +445,7 @@ public final class IdleSessionWaker implements AutoCloseable {
         private final SessionRecordStore records;
         private WakePolicy policy = WakePolicy.defaults();
         private WakeLedger ledger;
+        private WakeRequestCustomizer customizer = WakeRequestCustomizer.NONE;
         private Clock clock = Clock.systemUTC();
 
         private Builder(SessionRouter router, MessageQueueManager queue, SessionRecordStore records) {
@@ -404,6 +471,17 @@ public final class IdleSessionWaker implements AutoCloseable {
          */
         public Builder ledger(WakeLedger ledger) {
             this.ledger = ledger;
+            return this;
+        }
+
+        /**
+         * @param customizer
+         *            fills in the live session options and open attributes a reopened session should get, as the host's
+         *            own submits would (must not be null; default: none)
+         * @return this builder
+         */
+        public Builder requestCustomizer(WakeRequestCustomizer customizer) {
+            this.customizer = Objects.requireNonNull(customizer, "customizer must not be null");
             return this;
         }
 

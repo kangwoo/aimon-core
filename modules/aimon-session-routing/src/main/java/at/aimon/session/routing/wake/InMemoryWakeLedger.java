@@ -3,6 +3,7 @@ package at.aimon.session.routing.wake;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.UnaryOperator;
 
 import at.aimon.core.agent.session.SessionId;
 
@@ -21,9 +22,11 @@ public final class InMemoryWakeLedger implements WakeLedger {
     }
 
     @Override
-    public void put(SessionId sessionId, WakeState state) {
+    public WakeState update(SessionId sessionId, UnaryOperator<WakeState> change) {
         Objects.requireNonNull(sessionId, "sessionId must not be null");
-        states.put(sessionId, Objects.requireNonNull(state, "state must not be null"));
+        Objects.requireNonNull(change, "change must not be null");
+        return states.compute(sessionId, (id, current) -> Objects
+                .requireNonNull(change.apply(current != null ? current : WakeState.empty()), "change returned null"));
     }
 
     @Override

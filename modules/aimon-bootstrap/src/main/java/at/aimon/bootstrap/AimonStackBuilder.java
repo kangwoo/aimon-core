@@ -101,6 +101,7 @@ import at.aimon.session.routing.DeploymentMode;
 import at.aimon.session.routing.SessionRouter;
 import at.aimon.session.routing.builder.SessionRouterBuilder;
 import at.aimon.session.routing.wake.IdleSessionWaker;
+import at.aimon.session.routing.wake.WakeRequestCustomizer;
 
 /**
  * Turns an {@link AimonStackSpec} into a running {@link AimonStack}.
@@ -593,7 +594,10 @@ public final class AimonStackBuilder {
         spec.getSession().getWakePolicy()
                 .ifPresent(policy -> waker.set(teardown.own(TeardownPhase.SESSIONS, "idleSessionWaker",
                         IdleSessionWaker.builder(sessionRouter, messageQueueManager, sessionRecordStore).policy(policy)
-                                .ledger(spec.getSession().getWakeLedger().orElse(null)).build())));
+                                .ledger(spec.getSession().getWakeLedger().orElse(null))
+                                .requestCustomizer(
+                                        spec.getSession().getWakeRequestCustomizer().orElse(WakeRequestCustomizer.NONE))
+                                .build())));
         // Registered after the router, so within SESSIONS it stops first: no pass is still deleting while sessions
         // drain. Started with the other background sweepers, in AimonStack.startRuntimes().
         final SegmentSweepSchedule segmentSweep = buildSegmentSweep(spec.getSession(), segmentStore,

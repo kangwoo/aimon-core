@@ -19,6 +19,7 @@ import at.aimon.core.base.ExternallyManaged;
 import at.aimon.session.routing.DeploymentMode;
 import at.aimon.session.routing.wake.WakeLedger;
 import at.aimon.session.routing.wake.WakePolicy;
+import at.aimon.session.routing.wake.WakeRequestCustomizer;
 
 /**
  * Declares how the stack routes and retires live sessions.
@@ -74,6 +75,7 @@ public final class SessionSpec {
     private final List<SessionLifecycleListener> lifecycleListeners;
     private final WakePolicy wakePolicy;
     private final WakeLedger wakeLedger;
+    private final WakeRequestCustomizer wakeRequestCustomizer;
 
     private SessionSpec(Builder builder) {
         this.recordStore = builder.recordStore;
@@ -93,6 +95,7 @@ public final class SessionSpec {
         this.lifecycleListeners = List.copyOf(builder.lifecycleListeners);
         this.wakePolicy = builder.wakePolicy;
         this.wakeLedger = builder.wakeLedger;
+        this.wakeRequestCustomizer = builder.wakeRequestCustomizer;
 
         if (this.drainTimeout.isNegative()) {
             throw new IllegalArgumentException("drainTimeout must not be negative: " + this.drainTimeout);
@@ -372,6 +375,16 @@ public final class SessionSpec {
         return Optional.ofNullable(wakeLedger);
     }
 
+    /**
+     * Returns what fills in the live session options and open attributes of a wake turn that reopens an evicted
+     * session — what the host's own submits would carry for it.
+     *
+     * @return the customizer, or empty for none (a reopened session gets the router's defaults)
+     */
+    public Optional<WakeRequestCustomizer> getWakeRequestCustomizer() {
+        return Optional.ofNullable(wakeRequestCustomizer);
+    }
+
     /** Builder for {@link SessionSpec}. */
     public static final class Builder {
 
@@ -392,6 +405,7 @@ public final class SessionSpec {
         private final List<SessionLifecycleListener> lifecycleListeners = new ArrayList<>();
         private WakePolicy wakePolicy;
         private WakeLedger wakeLedger;
+        private WakeRequestCustomizer wakeRequestCustomizer;
 
         private Builder() {
         }
@@ -420,6 +434,20 @@ public final class SessionSpec {
          */
         public Builder wakeLedger(@ExternallyManaged WakeLedger wakeLedger) {
             this.wakeLedger = wakeLedger;
+            return this;
+        }
+
+        /**
+         * Sets what fills in a wake turn's live session options and open attributes, which the router applies when the
+         * turn reopens an evicted session and keeps until the next eviction. A host whose submits carry per-session
+         * options sets this so a woken session is opened as its own submits would open it. Unused unless waking is on.
+         *
+         * @param wakeRequestCustomizer
+         *            the customizer, or null for none
+         * @return this builder
+         */
+        public Builder wakeRequestCustomizer(WakeRequestCustomizer wakeRequestCustomizer) {
+            this.wakeRequestCustomizer = wakeRequestCustomizer;
             return this;
         }
 

@@ -24,6 +24,7 @@ import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.session.routing.DeploymentMode;
 import at.aimon.session.routing.wake.WakeLedger;
+import at.aimon.session.routing.wake.WakeRequestCustomizer;
 
 /**
  * Selects where session state lives, how the node-local cache is bounded, and — in distributed mode — which
@@ -122,6 +123,9 @@ public class AimonSessionAutoConfiguration {
      *            connection outlives the stack that calls it
      * @param wakeLedgers
      *            the ledger for the idle-session waker's caps, when the application published one
+     * @param wakeRequestCustomizers
+     *            what fills in a wake turn's live session options and open attributes, when the application published
+     *            one
      * @param beanFactory
      *            the context's bean factory, used to register the destruction edges
      * @return the spec
@@ -134,7 +138,7 @@ public class AimonSessionAutoConfiguration {
             ObjectProvider<SessionInbox> inboxes, ObjectProvider<IdempotencyStore> idempotencyStores,
             ObjectProvider<SessionLogSegmentStore> segmentStores,
             ObjectProvider<SessionLifecycleListener> lifecycleListeners, ObjectProvider<WakeLedger> wakeLedgers,
-            ConfigurableListableBeanFactory beanFactory) {
+            ObjectProvider<WakeRequestCustomizer> wakeRequestCustomizers, ConfigurableListableBeanFactory beanFactory) {
         final AimonProperties.SessionProperties session = properties.getSession();
         final SessionSpec.Builder builder = SessionSpec.builder().drainTimeout(session.getShutdownDrainTimeout())
                 .idleTtl(session.getCache().getIdleTtl()).maxCachedSessions(session.getCache().getMaxEntries())
@@ -178,7 +182,8 @@ public class AimonSessionAutoConfiguration {
         builder.lifecycleListeners(ApplicationBeans.resolveAll(lifecycleListeners, SessionLifecycleListener.class,
                 beanFactory, SESSION_SPEC_BEAN));
         builder.wake(session.getWake().toPolicy())
-                .wakeLedger(ApplicationBeans.resolve(wakeLedgers, WakeLedger.class, beanFactory, SESSION_SPEC_BEAN));
+                .wakeLedger(ApplicationBeans.resolve(wakeLedgers, WakeLedger.class, beanFactory, SESSION_SPEC_BEAN))
+                .wakeRequestCustomizer(wakeRequestCustomizers.getIfAvailable());
 
         if (session.getMode() == DeploymentMode.DISTRIBUTED) {
             final List<String> missing = describeMissing(leaseStore, signalBus, inbox, idempotencyStore);

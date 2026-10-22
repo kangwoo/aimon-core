@@ -37,11 +37,13 @@ default — so the agent reacts while nobody is typing. Opt-in: `SessionSpec.wak
   `SessionRouter.submit`, with the drained notifications as its input (wrapped as
   `<system-reminder key="background-wake">`) and the execution attribute `aimon.wake.reason`. `WakePolicy` (kinds —
   `monitor-event` by default, `subagent-task-completed` optional — debounce, hourly and consecutive caps), `WakeLedger`
-  / `InMemoryWakeLedger` for the caps' counters, `WakeState`.
+  (atomic `update`) / `InMemoryWakeLedger` for the caps' counters, `WakeState`.
 - **Runs as the session's owner** (`SubmitOptions.principal`) and counts against budgets and quotas like any turn; a
   session without a recorded owner is never woken. A session this node is running a turn for is left to that turn.
 - **Nothing is lost on a refused submit**: the drained notifications go back into the queue and the session is tried
   again later. Past its caps a session's notifications wait for its next turn.
+- **A reopened session can get the host's options**: `WakeRequestCustomizer` (`SessionSpec.wakeRequestCustomizer`, or a
+  bean) fills in the `LiveSessionOptions` / `OpenAttributes` a wake turn reopening an evicted session should carry.
 - **Not in the CLI yet.**
 
 ### Added: line-by-line shell streaming

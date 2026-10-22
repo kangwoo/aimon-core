@@ -24,6 +24,8 @@ import at.aimon.core.agent.queue.DefaultMessageQueueManager;
 import at.aimon.core.agent.queue.InMemoryMessageQueueRepository;
 import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.queue.QueuedInput;
+import at.aimon.core.agent.queue.QueuedInputPriority;
+import at.aimon.core.agent.session.LiveSessionOptions;
 import at.aimon.core.agent.session.LiveSessionStatus;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.TurnId;
@@ -43,10 +45,12 @@ class IdleSessionWakerTest {
     private static final AgentRuntimeId RUNTIME = AgentRuntimeId.fromName("ops", "acme");
     private static final SessionId SESSION = SessionId.of("session-1");
     private static final Principal ALICE = Principal.user("alice");
+    private static final SessionId FENCE = SessionId.of("fence");
 
     private MessageQueueManager queue;
     private InMemorySessionRecordStore records;
     private FakeRouter router;
+    private InMemoryWakeLedger ledger;
     private IdleSessionWaker waker;
 
     @BeforeEach
@@ -54,7 +58,9 @@ class IdleSessionWakerTest {
         queue = new DefaultMessageQueueManager(new InMemoryMessageQueueRepository());
         records = new InMemorySessionRecordStore();
         records.provision(SESSION, "ops", ALICE);
+        records.provision(FENCE, "ops", ALICE);
         router = new FakeRouter();
+        ledger = new InMemoryWakeLedger();
     }
 
     @AfterEach
@@ -65,7 +71,7 @@ class IdleSessionWakerTest {
     }
 
     private IdleSessionWaker.Builder waker() {
-        return IdleSessionWaker.builder(router, queue, records)
+        return IdleSessionWaker.builder(router, queue, records).ledger(ledger)
                 .policy(WakePolicy.builder().debounce(Duration.ofMillis(50)).build());
     }
 
@@ -82,8 +88,8 @@ class IdleSessionWakerTest {
         queue.enqueue(monitorEvent("Monitor mon_1 (errors) — 1 event:\nERROR one"));
         queue.enqueue(monitorEvent("Monitor mon_1 (errors) — 1 event:\nERROR two"));
 
-        await(() -> router.submits.size() == 1);
-        final SubmitRequest request = router.submits.get(0);
+        await(() -> woken().size() == 1);
+        final SubmitRequest request = woken().get(0);
         assertThat(request.getSessionId()).isEqualTo(SESSION);
         assertThat(request.getAgentRef()).isEqualTo("ops");
         assertThat(request.getContextDiscriminator()).contains("acme");
@@ -107,9 +113,9 @@ class IdleSessionWakerTest {
                 .inputText("typed while busy").build());
         queue.enqueue(QueuedInput.builder().agentRuntimeId(RUNTIME).inputText("runtime only")
                 .metadata(Map.of("kind", "monitor-event")).build());
-        Thread.sleep(300);
+        fence();
 
-        assertThat(router.submits).isEmpty();
+        assertThat(woken()).isEmpty();
         assertThat(queue.snapshot()).hasSize(3);
     }
 
@@ -122,9 +128,9 @@ class IdleSessionWakerTest {
 
         queue.enqueue(QueuedInput.builder().agentRuntimeId(RUNTIME).sessionId(ownerless.value()).inputText("x")
                 .metadata(Map.of("kind", "monitor-event")).build());
-        Thread.sleep(300);
+        fence();
 
-        assertThat(router.submits).isEmpty();
+        assertThat(woken()).isEmpty();
         assertThat(queue.snapshot()).hasSize(1);
     }
 
@@ -137,14 +143,14 @@ class IdleSessionWakerTest {
         waker = waker().build();
 
         queue.enqueue(monitorEvent("while running"));
-        Thread.sleep(300);
+        fence();
 
-        assertThat(router.submits).isEmpty();
+        assertThat(woken()).isEmpty();
         assertThat(queue.snapshot()).hasSize(1);
 
         // The turn ended without reading them: the waker, still looking, wakes the session now that it is idle.
         router.status.set(ClusterSessionStatus.unknown(SESSION));
-        await(() -> router.submits.size() == 1);
+        await(() -> woken().size() == 1);
     }
 
     @Test
@@ -153,12 +159,12 @@ class IdleSessionWakerTest {
         waker = waker().policy(WakePolicy.builder().debounce(Duration.ofMillis(50)).maxPerHour(1).build()).build();
 
         queue.enqueue(monitorEvent("first"));
-        await(() -> router.submits.size() == 1);
+        await(() -> woken().size() == 1);
         bumpTurnCount(1);
         queue.enqueue(monitorEvent("second"));
-        Thread.sleep(300);
+        fence();
 
-        assertThat(router.submits).hasSize(1);
+        assertThat(woken()).hasSize(1);
         assertThat(queue.snapshot()).extracting(QueuedInput::getInputText).containsExactly("second");
     }
 
@@ -168,21 +174,21 @@ class IdleSessionWakerTest {
         waker = waker().policy(WakePolicy.builder().debounce(Duration.ofMillis(50)).maxConsecutive(1).build()).build();
 
         queue.enqueue(monitorEvent("first"));
-        await(() -> router.submits.size() == 1);
+        await(() -> woken().size() == 1);
         // The wake turn ran: one turn on the record, which is what the waker read when it settled.
         bumpTurnCount(1);
         router.complete(0);
-        await(() -> router.settled.get() == 1);
+        await(() -> !ledger.get(SESSION).isOutstanding());
 
         queue.enqueue(monitorEvent("second"));
-        Thread.sleep(300);
-        assertThat(router.submits).hasSize(1);
+        fence();
+        assertThat(woken()).hasSize(1);
 
         // The user's turn: the count moves past what the waker recorded, so the streak is over.
         bumpTurnCount(2);
         queue.enqueue(monitorEvent("third"));
-        await(() -> router.submits.size() == 2);
-        assertThat(router.submits.get(1).getUserInput().asText()).contains("second").contains("third");
+        await(() -> woken().size() == 2);
+        assertThat(woken().get(1).getUserInput().asText()).contains("second").contains("third");
     }
 
     @Test
@@ -195,8 +201,8 @@ class IdleSessionWakerTest {
 
         queue.enqueue(monitorEvent("keep me"));
 
-        await(() -> router.attempts.get() == 2 && router.submits.size() == 1);
-        assertThat(router.submits.get(0).getUserInput().asText()).contains("keep me");
+        await(() -> router.attempts.get() == 2 && woken().size() == 1);
+        assertThat(woken().get(0).getUserInput().asText()).contains("keep me");
         assertThat(queue.snapshot()).isEmpty();
     }
 
@@ -207,9 +213,86 @@ class IdleSessionWakerTest {
 
         queue.enqueue(monitorEvent("x"));
         waker.forget(SESSION);
-        Thread.sleep(400);
+        fence();
 
-        assertThat(router.submits).isEmpty();
+        assertThat(woken()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a retry carries a new idempotency key: the router would drop a reused one as a duplicate")
+    void retryUsesANewIdempotencyKey() {
+        router.failures.set(1);
+        waker = waker()
+                .policy(WakePolicy.builder().debounce(Duration.ofMillis(50)).retryDelay(Duration.ofMillis(200)).build())
+                .build();
+
+        queue.enqueue(monitorEvent("keep me"));
+
+        await(() -> router.attempts.get() == 2 && woken().size() == 1);
+        assertThat(router.keys).hasSize(2).doesNotHaveDuplicates();
+        assertThat(router.keys).allMatch(key -> key.startsWith("wake:"));
+    }
+
+    @Test
+    @DisplayName("while a turn runs here the waker looks again only as long as entries are left")
+    void recheckStopsOnceTheTurnTookThem() throws Exception {
+        router.status.set(ClusterSessionStatus.localHolder(
+                LiveSessionStatus.builder().sessionId(SESSION).phase(LiveSessionStatus.Phase.RUNNING).build(), "n"));
+        waker = waker().policy(WakePolicy.builder().debounce(Duration.ofMillis(20)).build()).build();
+        queue.enqueue(monitorEvent("read by the running turn"));
+        fence();
+
+        // The running turn's own drain takes them; the session then goes idle with nothing left to deliver.
+        queue.drainForInjection(q -> q.getSessionId().isPresent() && q.getSessionId().get().equals(SESSION.value()),
+                QueuedInputPriority.LATER);
+        router.status.set(ClusterSessionStatus.unknown(SESSION));
+        Thread.sleep(1_500);
+        fence();
+
+        assertThat(woken()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("the request customizer supplies reopen options; one that throws leaves the notifications queued")
+    void customizerAppliesOrSkips() throws Exception {
+        final LiveSessionOptions options = LiveSessionOptions.defaults();
+        final AtomicReference<RuntimeException> failure = new AtomicReference<>();
+        waker = waker().requestCustomizer((request, record) -> {
+            // Once: the session under test is woken before the fence (one thread, schedule order).
+            final RuntimeException fail = failure.getAndSet(null);
+            if (fail != null) {
+                throw fail;
+            }
+            request.options(options);
+        }).build();
+
+        queue.enqueue(monitorEvent("first"));
+        await(() -> woken().size() == 1);
+        assertThat(woken().get(0).getOptions()).isSameAs(options);
+
+        failure.set(new IllegalStateException("tenant lookup down"));
+        queue.enqueue(monitorEvent("second"));
+        fence();
+        assertThat(woken()).hasSize(1);
+        assertThat(queue.snapshot()).extracting(QueuedInput::getInputText).contains("second");
+    }
+
+    /**
+     * Waits until a wake of another session has been submitted. The waker runs on one thread in schedule order, so
+     * every wake scheduled before this one has run by then — a negative check that does not depend on a sleep.
+     */
+    private void fence() {
+        final int before = (int) router.submits.stream().filter(r -> r.getSessionId().equals(FENCE)).count();
+        queue.enqueue(QueuedInput.builder().agentRuntimeId(RUNTIME).sessionId(FENCE.value()).inputText("fence")
+                .metadata(Map.of("kind", "monitor-event")).build());
+        await(() -> router.submits.stream().filter(r -> r.getSessionId().equals(FENCE)).count() > before);
+        // Drop the fence's own ledger entry so the fence session never hits a cap across a long test.
+        ledger.remove(FENCE);
+    }
+
+    /** The submits for the session under test, without the fence's. */
+    private List<SubmitRequest> woken() {
+        return router.submits.stream().filter(r -> r.getSessionId().equals(SESSION)).toList();
     }
 
     private void bumpTurnCount(int turnCount) {
@@ -235,6 +318,7 @@ class IdleSessionWakerTest {
     private final class FakeRouter implements SessionRouter {
 
         final List<SubmitRequest> submits = new CopyOnWriteArrayList<>();
+        final List<String> keys = new CopyOnWriteArrayList<>();
         final List<CompletableFuture<at.aimon.core.agent.AgentExecutionResult>> turns = new CopyOnWriteArrayList<>();
         final AtomicInteger attempts = new AtomicInteger();
         final AtomicInteger failures = new AtomicInteger();
@@ -245,6 +329,7 @@ class IdleSessionWakerTest {
         @Override
         public SubmitDisposition submit(SubmitRequest request) {
             attempts.incrementAndGet();
+            request.getIdempotencyKey().ifPresent(keys::add);
             if (failures.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
                 throw new IllegalStateException("router shutting down");
             }
@@ -261,7 +346,7 @@ class IdleSessionWakerTest {
 
         @Override
         public ClusterSessionStatus status(SessionId sessionId) {
-            return status.get();
+            return sessionId.equals(SESSION) ? status.get() : ClusterSessionStatus.unknown(sessionId);
         }
 
         @Override
