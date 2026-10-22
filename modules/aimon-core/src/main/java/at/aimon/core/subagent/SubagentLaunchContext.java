@@ -7,6 +7,8 @@ import java.util.Optional;
 import java.util.function.Consumer;
 
 import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.budget.ExecutionDeadline;
+import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.NoopCancellationSignal;
 import at.aimon.core.agent.queue.MessageQueueManager;
@@ -114,6 +116,9 @@ public final class SubagentLaunchContext {
     private final QuotaGuard quotaGuard;
     private final ForkGoalRenderer forkGoalRenderer;
     private final int forkDepth;
+    private final SubagentExecutionPolicy executionPolicy;
+    private final ExecutionDeadline parentDeadline;
+    private final ContextEngine parentContextEngine;
 
     private SubagentLaunchContext(Builder builder) {
         agentRuntimeId = Objects.requireNonNull(builder.agentRuntimeId, "Agent runtime ID cannot be null");
@@ -151,6 +156,9 @@ public final class SubagentLaunchContext {
             throw new IllegalArgumentException("forkDepth must be >= 1, got: " + builder.forkDepth);
         }
         forkDepth = builder.forkDepth;
+        executionPolicy = builder.executionPolicy;
+        parentDeadline = builder.parentDeadline;
+        parentContextEngine = builder.parentContextEngine;
     }
 
     /**
@@ -468,6 +476,40 @@ public final class SubagentLaunchContext {
     }
 
     /**
+     * Returns the trusted policy the launched fork runs under: its limits, its deadline from launch and how its context
+     * is managed ({@link SubagentExecutionPolicy}). Set by code — {@code TaskTool} sets it from its
+     * {@link SubagentExecutionPolicyResolver} — never from anything the model wrote.
+     *
+     * @return the policy, or empty to launch the fork without one (exactly as before policies existed)
+     */
+    public Optional<SubagentExecutionPolicy> getExecutionPolicy() {
+        return Optional.ofNullable(executionPolicy);
+    }
+
+    /**
+     * Returns the deadline of the execution that spawns the fork, when it has one. The fork's own deadline is the
+     * earlier of its policy's and this, so a fork under a policy can never be given more time than its spawner has left
+     * (a fork without a policy takes no deadline from it). Spawn sites
+     * read it from {@code ToolContextKeys.EXECUTION_DEADLINE}, which a fork running under a deadline publishes.
+     *
+     * @return the spawner's deadline, or empty when it has none
+     */
+    public Optional<ExecutionDeadline> getParentDeadline() {
+        return Optional.ofNullable(parentDeadline);
+    }
+
+    /**
+     * Returns the context engine of the execution that spawns the fork. Used only when the fork's policy asks for it
+     * ({@link SubagentExecutionPolicy#isInheritContextEngine()}); otherwise the fork keeps its executor's own engine.
+     * Spawn sites read it from {@code ToolContextKeys.CONTEXT_ENGINE}.
+     *
+     * @return the spawner's engine, or empty when the spawn site could not see one
+     */
+    public Optional<ContextEngine> getParentContextEngine() {
+        return Optional.ofNullable(parentContextEngine);
+    }
+
+    /**
      * Returns a builder seeded with every field of this launch context, for deriving a variant that shares all borrowed
      * collaborators (registries, stores, model, ...) but overrides selected fields.
      *
@@ -492,7 +534,8 @@ public final class SubagentLaunchContext {
                 .messageQueueManager(messageQueueManager).parentEventSink(parentEventSink)
                 .callerAllowedTools(callerAllowedTools).executionEnvironment(executionEnvironment)
                 .executionEnvironmentProvider(executionEnvironmentProvider).quotaGuard(quotaGuard)
-                .forkGoalRenderer(forkGoalRenderer).forkDepth(forkDepth);
+                .forkGoalRenderer(forkGoalRenderer).forkDepth(forkDepth).executionPolicy(executionPolicy)
+                .parentDeadline(parentDeadline).parentContextEngine(parentContextEngine);
     }
 
     @Override
@@ -530,6 +573,9 @@ public final class SubagentLaunchContext {
         private QuotaGuard quotaGuard;
         private ForkGoalRenderer forkGoalRenderer;
         private int forkDepth = 1;
+        private SubagentExecutionPolicy executionPolicy;
+        private ExecutionDeadline parentDeadline;
+        private ContextEngine parentContextEngine;
 
         private Builder() {
         }
@@ -863,6 +909,42 @@ public final class SubagentLaunchContext {
          */
         public Builder forkDepth(int forkDepth) {
             this.forkDepth = forkDepth;
+            return this;
+        }
+
+        /**
+         * Sets the trusted policy the fork runs under.
+         *
+         * @param executionPolicy
+         *            the policy, or null to launch without one
+         * @return this builder
+         */
+        public Builder executionPolicy(SubagentExecutionPolicy executionPolicy) {
+            this.executionPolicy = executionPolicy;
+            return this;
+        }
+
+        /**
+         * Sets the spawning execution's deadline.
+         *
+         * @param parentDeadline
+         *            the deadline, or null when the spawner has none
+         * @return this builder
+         */
+        public Builder parentDeadline(ExecutionDeadline parentDeadline) {
+            this.parentDeadline = parentDeadline;
+            return this;
+        }
+
+        /**
+         * Sets the spawning execution's context engine.
+         *
+         * @param parentContextEngine
+         *            the engine, or null when none is visible
+         * @return this builder
+         */
+        public Builder parentContextEngine(ContextEngine parentContextEngine) {
+            this.parentContextEngine = parentContextEngine;
             return this;
         }
 

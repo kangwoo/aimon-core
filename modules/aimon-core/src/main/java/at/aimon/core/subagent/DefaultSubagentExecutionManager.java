@@ -8,8 +8,11 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -17,7 +20,9 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +31,8 @@ import at.aimon.core.agent.AgentExecutionRequest;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.budget.CompletionReason;
+import at.aimon.core.agent.budget.ExecutionDeadline;
+import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
@@ -33,6 +40,7 @@ import at.aimon.core.agent.prompt.SystemReminderFormatter;
 import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.queue.QueuedInput;
 import at.aimon.core.agent.queue.QueuedInputPriority;
+import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
@@ -40,12 +48,14 @@ import at.aimon.core.agent.stream.SubagentTaskCompleted;
 import at.aimon.core.agent.tool.ToolExecutionManager;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.agent.tool.permission.AllowedTools;
+import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.event.SubagentStartContext;
 import at.aimon.core.hook.event.SubagentStopContext;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmClient;
+import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.subagent.behavior.SubagentBehavior;
 import at.aimon.core.subagent.behavior.SubagentBehaviorRegistry;
 import at.aimon.core.subagent.behavior.SubagentBehaviorRunner;
@@ -59,6 +69,7 @@ import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.subagent.execution.SubagentExecutor;
 import at.aimon.core.subagent.execution.SubagentOutputSink;
 import at.aimon.core.subagent.execution.SubagentResultFormatter;
+import at.aimon.core.subagent.internal.DeadlineScheduler;
 import at.aimon.core.subagent.task.BackgroundTask;
 import at.aimon.core.subagent.task.BackgroundTaskState;
 import at.aimon.core.subagent.task.BackgroundTaskStore;
@@ -146,6 +157,12 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
      * request resolves its {@link RunningTaskHandle} here to trip the per-task signal and interrupt the worker thread.
      */
     private final RunningTaskRegistry runningTasks = new RunningTaskRegistry();
+
+    /**
+     * Runs that were asked to stop and had not exited when their grace period ran out, by task id. An entry is added
+     * when the grace runs out and removed when the run finally returns ({@link #lingeringRuns()}).
+     */
+    private final Map<String, LingeringSubagentRun> lingering = new ConcurrentHashMap<>();
 
     /**
      * Cross-node cancellation seam (design §4). A {@link #stop(String)} for a task with no live handle on
@@ -728,12 +745,199 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         // Label the fork with its own task id (when enabled) before anything reads the attributes, so the Start hook,
         // the executor's request and the Stop hook see the same map.
         final SubagentLaunchContext launchContext = withTaskIdAttribute(requestedLaunchContext, taskId);
+        // The deadline is anchored here, at launch, before the Start hook runs: a slow hook spends the fork's time.
+        final PolicyRun policyRun = PolicyRun.anchor(launchContext);
         // Foreground path: fire SubagentStart on the calling thread, then run the body. The background path
         // (executeInBackground) fires SubagentStart itself BEFORE dispatch — so the launch is observed on the launching
         // thread, immediately and in order, rather than late on a pool worker — and calls runResolvedSubagent directly.
         fireSubagentStart(launchContext, taskId, target.name(), goal, description, cancellationSignal);
-        return runResolvedSubagent(launchContext, taskId, target, goal, cancellationSignal, outputSink,
-                RunMode.foreground());
+        if (policyRun.deadline == null) {
+            return runResolvedSubagent(launchContext, taskId, target, goal, cancellationSignal, outputSink,
+                    RunMode.foreground(), policyRun);
+        }
+        // A fork under a deadline runs on a thread of its own and is waited for at most its grace period past the
+        // deadline (or past a cancellation), so a tool that ignores both the signal and interrupts cannot hold the
+        // spawner forever. SubagentStop fires here, with whichever result the wait produced.
+        final SubagentExecutionResult result = runWatched(launchContext, taskId, target.name(), cancellationSignal,
+                policyRun, () -> runSubagentBody(launchContext, taskId, target, goal, cancellationSignal, outputSink,
+                        RunMode.foreground(), policyRun));
+        fireSubagentStop(launchContext, taskId, target.name(), result, cancellationSignal);
+        return result;
+    }
+
+    /**
+     * Runs {@code body} on a dedicated thread and waits for it until it returns, or until it has been asked to stop —
+     * its deadline passed, or {@code cancellationSignal} tripped — and its grace period has run out since.
+     *
+     * <p>
+     * Asked to stop, the run's thread is interrupted as well (it is this run's own thread, so the interrupt cannot land
+     * on anyone else's work); the run's executor trips its own signal at the deadline. A run that has not returned when
+     * the grace runs out is not waited for any longer: the caller gets a result that says so
+     * ({@link SubagentExecutionResult#isExitConfirmed()} {@code false}), the run is listed by {@link #lingeringRuns()}
+     * until it returns, and what it eventually returns is logged and dropped. The thread is never stopped by force.
+     *
+     * <p>
+     * An interrupt of the waiting thread — a spawner's cancellation reaching it through the Task tool's terminator —
+     * is a request to stop, not a reason to abandon the run: the wait goes on for the grace period, and the interrupt
+     * is restored before this returns.
+     */
+    private SubagentExecutionResult runWatched(SubagentLaunchContext launchContext, String taskId, String subagentName,
+            CancellationSignal cancellationSignal, PolicyRun policyRun, Supplier<SubagentExecutionResult> body) {
+        final Instant startTime = Instant.now();
+        final CompletableFuture<SubagentExecutionResult> outcome = new CompletableFuture<>();
+        final CompletableFuture<CompletionReason> stopRequested = new CompletableFuture<>();
+        final Thread worker = new Thread(() -> {
+            try {
+                outcome.complete(body.get());
+            } catch (Throwable t) {
+                outcome.completeExceptionally(t);
+            }
+        }, "subagent-fg-" + taskId);
+        worker.setDaemon(true);
+        final DeadlineScheduler.Handle timer = DeadlineScheduler.schedule(policyRun.deadline.remaining(),
+                () -> stopRequested.complete(CompletionReason.WALL_CLOCK_EXCEEDED));
+        final CancellationSignal.Registration cancelReg = cancellationSignal
+                .onCancel(() -> stopRequested.complete(CompletionReason.INTERRUPTED));
+        boolean callerInterrupted = false;
+        try {
+            worker.start();
+            while (!outcome.isDone() && !stopRequested.isDone()) {
+                try {
+                    CompletableFuture.anyOf(outcome, stopRequested).get();
+                } catch (InterruptedException e) {
+                    callerInterrupted = true;
+                    stopRequested.complete(CompletionReason.INTERRUPTED);
+                } catch (ExecutionException e) {
+                    // The run threw; read below from the outcome itself.
+                    break;
+                }
+            }
+            if (!outcome.isDone()) {
+                // The first half of the grace belongs to the tripped signal alone: a fork that is already unwinding —
+                // running its OnStop hooks — must not have them cut off by an interrupt it did not need. Only a fork
+                // still running after that gets its thread interrupted.
+                final long grace = saturatedNanos(policyRun.policy.getExitGracePeriod());
+                final long start = System.nanoTime();
+                callerInterrupted |= awaitUntil(outcome, start + grace / 2);
+                if (!outcome.isDone()) {
+                    worker.interrupt();
+                    callerInterrupted |= awaitUntil(outcome, start + grace);
+                }
+            }
+            if (outcome.isDone()) {
+                return settled(outcome, startTime);
+            }
+            final CompletionReason stopReason = stopRequested.getNow(CompletionReason.INTERRUPTED);
+            return linger(launchContext, taskId, subagentName, stopReason, policyRun, outcome, startTime);
+        } finally {
+            timer.close();
+            cancelReg.remove();
+            if (callerInterrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    /**
+     * Waits for {@code outcome} until {@code endNanos} on {@link System#nanoTime()}. An interrupt of the waiting thread
+     * does not end the wait; it is reported so the caller can restore it.
+     *
+     * @return whether the waiting thread was interrupted
+     */
+    private static boolean awaitUntil(CompletableFuture<SubagentExecutionResult> outcome, long endNanos) {
+        boolean interrupted = false;
+        while (!outcome.isDone()) {
+            final long left = endNanos - System.nanoTime();
+            if (left <= 0) {
+                break;
+            }
+            try {
+                outcome.get(left, TimeUnit.NANOSECONDS);
+            } catch (InterruptedException e) {
+                interrupted = true;
+            } catch (ExecutionException | TimeoutException e) {
+                break;
+            }
+        }
+        return interrupted;
+    }
+
+    private static long saturatedNanos(Duration duration) {
+        try {
+            return duration.toNanos();
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE / 2;
+        }
+    }
+
+    /** The result a finished watched run produced, or a failure result for one that threw. */
+    private SubagentExecutionResult settled(CompletableFuture<SubagentExecutionResult> outcome, Instant startTime) {
+        try {
+            return outcome.join();
+        } catch (RuntimeException e) {
+            final Throwable cause = e.getCause() != null ? e.getCause() : e;
+            return createFailureResult(startTime, "Subagent execution error: " + cause.getMessage());
+        }
+    }
+
+    /**
+     * Records a run that had not exited when its grace ran out, and returns the result that says so. The record is
+     * removed when the run returns; what it returns then is logged and dropped — its caller has already been answered.
+     */
+    @SuppressWarnings("checkstyle:ParameterNumber")
+    private SubagentExecutionResult linger(SubagentLaunchContext launchContext, String taskId, String subagentName,
+            CompletionReason stopReason, PolicyRun policyRun, CompletableFuture<SubagentExecutionResult> outcome,
+            Instant startTime) {
+        recordLingering(launchContext, taskId, subagentName, stopReason, policyRun, outcome, false);
+        final String message = "Execution stopped: " + stopReason.name() + " — the subagent was asked to stop and had"
+                + " not exited " + policyRun.policy.getExitGracePeriod() + " later; it may still be running, so its"
+                + " work is not complete and must not be relaunched while it is";
+        // What the run spent is not known until it returns; the counts here are zero, not its usage.
+        return SubagentExecutionResult
+                .failure(
+                        message, SessionSnapshot.of(SessionId.generate()), ExecutionMetadata.builder().iterationCount(0)
+                                .tokenUsage(TokenUsage.empty()).timestamps(startTime, Instant.now()).build(),
+                        stopReason, null)
+                .withExitUnconfirmed();
+    }
+
+    /**
+     * Lists a run as lingering until it returns. What it returns then is logged and dropped — its caller has already
+     * been answered, or, for a background task, will read the task's own terminal result.
+     */
+    private void recordLingering(SubagentLaunchContext launchContext, String taskId, String subagentName,
+            CompletionReason stopReason, PolicyRun policyRun, CompletableFuture<SubagentExecutionResult> outcome,
+            boolean background) {
+        final LingeringSubagentRun record = LingeringSubagentRun.builder().taskId(taskId).subagentName(subagentName)
+                .agentRuntimeId(launchContext.getAgentRuntimeId()).stopReason(stopReason).background(background)
+                .reportedAt(Instant.now()).build();
+        lingering.put(taskId, record);
+        log.warn(
+                "Subagent '{}' (taskId={}) was asked to stop ({}) and had not exited {} later; it is left to finish"
+                        + " and listed as lingering until it does",
+                subagentName, taskId, stopReason, policyRun.policy.getExitGracePeriod());
+        outcome.whenComplete((late, error) -> {
+            lingering.remove(taskId, record);
+            log.info("Lingering subagent '{}' (taskId={}) exited: {}", subagentName, taskId,
+                    error != null ? error.toString() : late.getCompletionReason());
+        });
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * What the executor enforces. A subagent backed by a code behavior enforces none, and a policy for one is refused
+     * when it runs.
+     */
+    @Override
+    public Set<SubagentPolicyCapability> supportedPolicyCapabilities() {
+        return subagentExecutor.supportedPolicyCapabilities();
+    }
+
+    @Override
+    public List<LingeringSubagentRun> lingeringRuns() {
+        return List.copyOf(lingering.values());
     }
 
     /**
@@ -754,9 +958,24 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
      * @param mode
      *            whether this run is a background task, and when it was queued (recorded on the span)
      */
+    @SuppressWarnings("checkstyle:ParameterNumber")
     private SubagentExecutionResult runResolvedSubagent(SubagentLaunchContext launchContext, String taskId,
             SubagentTarget target, String goal, CancellationSignal cancellationSignal, SubagentOutputSink outputSink,
-            RunMode mode) {
+            RunMode mode, PolicyRun policyRun) {
+        final SubagentExecutionResult result = runSubagentBody(launchContext, taskId, target, goal, cancellationSignal,
+                outputSink, mode, policyRun);
+        fireSubagentStop(launchContext, taskId, target.name(), result, cancellationSignal);
+        return result;
+    }
+
+    /**
+     * {@link #runResolvedSubagent} without the SubagentStop hook: resolves and runs the subagent inside its SUBAGENT
+     * span. Split out so a watched foreground run fires the hook with the result its wait produced, once.
+     */
+    @SuppressWarnings("checkstyle:ParameterNumber")
+    private SubagentExecutionResult runSubagentBody(SubagentLaunchContext launchContext, String taskId,
+            SubagentTarget target, String goal, CancellationSignal cancellationSignal, SubagentOutputSink outputSink,
+            RunMode mode, PolicyRun policyRun) {
         final Instant startTime = Instant.now();
         final String subagentName = target.name();
 
@@ -789,6 +1008,13 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             // registered code behavior receive the same narrowed definition.
             final Subagent subagent = applyCallerCeiling(launchContext, resolved);
 
+            // A policy is enforced as written or not at all. Refused here, before the fork starts, when the executor
+            // cannot enforce one of its limits, when a code behavior would run instead of the loop that enforces them,
+            // or when it asks for the spawner's context engine and none was handed down.
+            final Optional<SubagentBehavior> behavior = subagentBehaviorRegistry.getBehavior(subagentName);
+            final ContextEngine inheritedEngine = checkPolicy(launchContext, policyRun, subagentName,
+                    behavior.isPresent());
+
             // Build execution context (how to execute). The effective cancellation signal is forwarded so a
             // parent-initiated (or per-task stop) cancel cascades into the subagent's ReAct loop and its cooperative
             // tools. The model override (Task tool's `model` arg) is forwarded so it wins over the subagent frontmatter
@@ -804,7 +1030,8 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
                     .knowledgeScope(launchContext.getKnowledgeScope().orElse(null))
                     .toolContextEnrichers(launchContext.getToolContextEnrichers()).outputSink(outputSink)
                     .executionEnvironment(launchContext.getExecutionEnvironment().orElse(null))
-                    .executionEnvironmentProvider(launchContext.getExecutionEnvironmentProvider().orElse(null)).build();
+                    .executionEnvironmentProvider(launchContext.getExecutionEnvironmentProvider().orElse(null))
+                    .contextEngine(inheritedEngine).build();
 
             // Build execution request (what to execute). The parent's LLM call metadata is forwarded so the subagent
             // executor can merge it with subagent-derived defaults (component/feature) and emit attributed usage. The
@@ -823,13 +1050,17 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
                     .quotaGuard(launchContext.getQuotaGuard()).forkDepth(launchContext.getForkDepth())
                     // A fork-mode skill's body, rendered again in the fork's environment when that is not the
                     // spawner's (EE-81).
-                    .forkGoalRenderer(launchContext.getForkGoalRenderer().orElse(null)).build();
+                    .forkGoalRenderer(launchContext.getForkGoalRenderer().orElse(null))
+                    // The policy, unchanged, with its iteration and token caps as the fork's budget, and the deadline
+                    // anchored at launch.
+                    .executionPolicy(policyRun.policy)
+                    .budget(policyRun.policy == null ? null : policyRun.policy.toBudget()).deadline(policyRun.deadline)
+                    .build();
 
             // Execute subagent. A code behavior registered for this name REPLACES the ReAct loop, receiving the SAME
             // context/request (cancellation signal, principal, metadata, tools). When absent, the data subagent runs
             // the unchanged ReAct path — origin-agnostic execution among data subagents is preserved.
             // SubagentStart/Stop hooks and this try/catch error shaping apply to both branches.
-            final Optional<SubagentBehavior> behavior = subagentBehaviorRegistry.getBehavior(subagentName);
             if (subagentSpan != null) {
                 subagentSpan.setAttribute("codeBehavior", String.valueOf(behavior.isPresent()));
             }
@@ -844,9 +1075,50 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             // A real finally: an Error escaping the catches above still closes the span.
             closeSubagentSpan(subagentSpan, result, payloadPolicy);
         }
-
-        fireSubagentStop(launchContext, taskId, subagentName, result, cancellationSignal);
         return result;
+    }
+
+    /**
+     * Refuses a policy that cannot be enforced as written, and returns the spawner's context engine when the policy
+     * inherits it.
+     *
+     * @return the engine the fork runs under in place of its executor's own, or {@code null} to keep the executor's
+     * @throws SubagentSpawnException
+     *             if the policy cannot be enforced for this subagent
+     */
+    private ContextEngine checkPolicy(SubagentLaunchContext launchContext, PolicyRun policyRun, String subagentName,
+            boolean codeBehavior) {
+        final SubagentExecutionPolicy policy = policyRun.policy;
+        if (policy == null) {
+            return null;
+        }
+        if (codeBehavior) {
+            throw policyRefusal(subagentName, policy,
+                    "it is backed by a code behavior, which enforces none of the" + " policy's limits");
+        }
+        final ContextEngine inherited = policy.isInheritContextEngine()
+                ? launchContext.getParentContextEngine()
+                        .orElseThrow(() -> policyRefusal(subagentName, policy,
+                                "it inherits the spawner's context engine and the launch handed down none"))
+                : null;
+        final Set<SubagentPolicyCapability> missing = policy
+                .unsupportedBy(subagentExecutor.supportedPolicyCapabilities(), inherited);
+        if (!missing.isEmpty()) {
+            throw policyRefusal(subagentName, policy, "it would not enforce " + missing);
+        }
+        return inherited;
+    }
+
+    /**
+     * The refusal of a policy that cannot be enforced. The detail — the policy's role and what is missing — is the
+     * operator's to fix, so it goes to the log; the message, which reaches the spawning model through the fork's
+     * result, says only that the subagent cannot run here.
+     */
+    private static SubagentSpawnException policyRefusal(String subagentName, SubagentExecutionPolicy policy,
+            String why) {
+        log.warn("Subagent '{}' refused under execution policy '{}': {}", subagentName, policy.getRole(), why);
+        return new SubagentSpawnException(
+                "Subagent '" + subagentName + "' cannot run under its execution policy in this runtime");
     }
 
     /**
@@ -959,7 +1231,8 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
      */
     private static boolean isBoundedStop(CompletionReason reason) {
         return switch (reason) {
-            case MAX_ITERATIONS, TOKEN_BUDGET_EXCEEDED, COST_BUDGET_EXCEEDED, WALL_CLOCK_EXCEEDED, QUOTA_EXCEEDED ->
+            case MAX_ITERATIONS, TOKEN_BUDGET_EXCEEDED, COST_BUDGET_EXCEEDED, WALL_CLOCK_EXCEEDED,
+                    TOOL_CALL_BUDGET_EXCEEDED, QUOTA_EXCEEDED ->
                 true;
             default -> false;
         };
@@ -1131,6 +1404,10 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         // Same labelling as the foreground entry point (runExecute), for the same reason.
         final SubagentLaunchContext launchContext = withTaskIdAttribute(requestedLaunchContext, taskId);
         final Instant startTime = Instant.now();
+        // Anchored at launch: the wait for a worker counts against the deadline, and a task whose deadline passes in
+        // the
+        // queue does not start when a worker finally takes it.
+        final PolicyRun policyRun = PolicyRun.anchor(launchContext);
 
         // Record a durable PENDING snapshot up front so the task is listable/queryable even while it waits for a
         // worker (bounded pool). The worker flips it to RUNNING when it actually starts.
@@ -1179,7 +1456,8 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
                 taskStore.transition(taskId, BackgroundTaskState.RUNNING);
                 // Background tasks are always dispatched by registered name. SubagentStart already fired above.
                 final SubagentExecutionResult result = runResolvedSubagent(launchContext, taskId,
-                        SubagentTarget.byName(subagentName), goal, handle.getSignal(), outputSink, startedMode);
+                        SubagentTarget.byName(subagentName), goal, handle.getSignal(), outputSink, startedMode,
+                        policyRun);
                 // Persist the finished transcript so Task(resume=<taskId>) can continue it. Background-only —
                 // a foreground run's taskId is never surfaced, so its snapshot would be unreachable.
                 saveSessionSnapshot(launchContext, taskId, subagentName, result);
@@ -1214,6 +1492,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         }
 
         handle.attachFuture(future);
+        watchBackgroundExit(launchContext, taskId, subagentName, policyRun, future);
         future.whenComplete((result, error) -> {
             try {
                 finalizeBackgroundTask(launchContext, handle, coordinator, taskId, subagentName, result, error);
@@ -1227,6 +1506,26 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         // later AgentOutput call reads is the TaskResultStore entry saved by finalizeBackgroundTask before the
         // terminal transition, which is what lets the result outlive this JVM and be read from another node.
         return future;
+    }
+
+    /**
+     * For a background task under a deadline: when the deadline and the grace period after it have both passed and the
+     * task has still not returned, lists it as lingering until it does. Its worker is still occupied and its state
+     * still {@code RUNNING} — both true — and this is what tells a caller that the deadline was not enough to end it.
+     */
+    private void watchBackgroundExit(SubagentLaunchContext launchContext, String taskId, String subagentName,
+            PolicyRun policyRun, CompletableFuture<SubagentExecutionResult> future) {
+        if (policyRun.deadline == null) {
+            return;
+        }
+        final DeadlineScheduler.Handle watch = DeadlineScheduler
+                .schedule(policyRun.deadline.remaining().plus(policyRun.policy.getExitGracePeriod()), () -> {
+                    if (!future.isDone()) {
+                        recordLingering(launchContext, taskId, subagentName, CompletionReason.WALL_CLOCK_EXCEEDED,
+                                policyRun, future, true);
+                    }
+                });
+        future.whenComplete((result, error) -> watch.close());
     }
 
     /**
@@ -1711,6 +2010,33 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             return enqueuedAt == null || workerStartedAt == null
                     ? Optional.empty()
                     : Optional.of(Duration.between(enqueuedAt, workerStartedAt));
+        }
+    }
+
+    /**
+     * A launch's execution policy and the deadline anchored for it at launch: the earlier of the policy's wall clock
+     * and the spawner's deadline. Both {@code null} for a launch without a policy, which keeps every path exactly as
+     * it was; a spawner's deadline alone does not bound a fork that has no policy of its own.
+     */
+    private static final class PolicyRun {
+        private static final PolicyRun NONE = new PolicyRun(null, null);
+
+        private final SubagentExecutionPolicy policy;
+        private final ExecutionDeadline deadline;
+
+        private PolicyRun(SubagentExecutionPolicy policy, ExecutionDeadline deadline) {
+            this.policy = policy;
+            this.deadline = deadline;
+        }
+
+        static PolicyRun anchor(SubagentLaunchContext launchContext) {
+            final SubagentExecutionPolicy policy = launchContext.getExecutionPolicy().orElse(null);
+            if (policy == null) {
+                return NONE;
+            }
+            final ExecutionDeadline own = policy.getMaxWallClock().map(ExecutionDeadline::after).orElse(null);
+            final ExecutionDeadline parent = launchContext.getParentDeadline().orElse(null);
+            return new PolicyRun(policy, own == null ? parent : own.earlierOf(parent));
         }
     }
 

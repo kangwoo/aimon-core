@@ -87,7 +87,8 @@ public class OrcaSubagentToolProvider implements OrcaToolProvider {
         // module-supplied context keys as the main-agent tools.
         final TaskTool taskTool = new TaskTool(agent.getMetadata().getModel(), subagentRegistry, toolRegistry,
                 hookRegistry, subagentExecutionManager, context.getToolContextEnrichers(), taskOutputStore,
-                sessionSnapshotStore, taskResultStore);
+                // The trusted policies the runtime was configured with; none unless a bootstrap supplied them.
+                sessionSnapshotStore, taskResultStore, context.getSubagentExecutionPolicyResolver());
         registry.register(taskTool);
 
         // The execution manager is itself the SubagentTaskController: it supplies both the lifecycle state the tool

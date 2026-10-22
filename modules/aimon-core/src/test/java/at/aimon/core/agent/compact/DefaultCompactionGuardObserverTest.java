@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
@@ -83,6 +84,30 @@ class DefaultCompactionGuardObserverTest {
                 m -> assertThat(m.getTags()).containsEntry(RecordingCompactionObserver.ATTEMPT_TAG, attempt.number())));
         assertThat(attempt.recorded()).containsExactly(decision.getCompactionResult().orElseThrow());
         assertThat(attempt.closes()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("the request's compaction instructions reach the engine as its custom instructions")
+    void compactionInstructionsReachTheEngine() {
+        guard(7_500).maybeCompact(CompactionGuardRequest.builder().transcriptBuffer(buffer).model(MODEL)
+                .hookRegistry(new DefaultHookRegistry()).compactionInstructions("keep pinned SHAs").build());
+        guard(7_500).maybeCompact(request(false));
+
+        assertThat(engine.requests).extracting(CompactionRequest::getCustomInstructions)
+                .containsExactly(Optional.of("keep pinned SHAs"), Optional.empty());
+    }
+
+    @Test
+    @DisplayName("a context engine hands its request's instructions to the guard's AUTO compaction")
+    void contextEngineHandsInstructionsToTheGuard() {
+        at.aimon.core.agent.context.DefaultContextEngine.builder().compactionGuard(guard(7_500))
+                .writeFormat(at.aimon.core.agent.session.transcript.SessionLogFormat.V1).build()
+                .prepare(at.aimon.core.agent.context.ContextRequest.builder().transcriptBuffer(buffer).model(MODEL)
+                        .hookRegistry(new DefaultHookRegistry()).compactionInstructions("keep fragment ranges")
+                        .build());
+
+        assertThat(engine.requests).singleElement()
+                .satisfies(r -> assertThat(r.getCustomInstructions()).contains("keep fragment ranges"));
     }
 
     @Test

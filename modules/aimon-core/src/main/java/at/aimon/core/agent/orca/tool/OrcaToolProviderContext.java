@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Objects;
 
 import at.aimon.core.agent.Agent;
+import at.aimon.core.agent.context.ContextEngine;
 import at.aimon.core.agent.orca.OrcaProviderDependencies;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolRegistry;
@@ -14,6 +15,7 @@ import at.aimon.core.scheduling.ScheduledTaskManager;
 import at.aimon.core.skill.SkillRegistry;
 import at.aimon.core.skill.policy.SkillInvocationPolicy;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentExecutionPolicyResolver;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.subagent.task.SessionSnapshotStore;
 import at.aimon.core.subagent.task.TaskOutputStore;
@@ -176,6 +178,28 @@ public final class OrcaToolProviderContext {
      */
     public TaskResultStore getTaskResultStore() {
         return dependencies.getTaskResultStore();
+    }
+
+    /**
+     * Returns the trusted resolver of the execution policies subagents are launched under
+     * ({@code SubagentExecutionPolicy}). A provider that builds its own {@code TaskTool} applies it with
+     * the {@code TaskTool} constructor that takes a resolver.
+     *
+     * @return the resolver (never null; it resolves nothing when none was configured)
+     */
+    public SubagentExecutionPolicyResolver getSubagentExecutionPolicyResolver() {
+        return dependencies.getSubagentExecutionPolicyResolver();
+    }
+
+    /**
+     * Returns the agent's context engine — the one its turns compact under. Exposed so a provider can see what a fork
+     * inheriting it ({@code SubagentExecutionPolicy#isInheritContextEngine()}) will run under; the fork itself receives
+     * it through its spawner's tool context.
+     *
+     * @return the context engine, may be null when the assembly did not supply one
+     */
+    public ContextEngine getContextEngine() {
+        return dependencies.getContextEngine();
     }
 
     /**

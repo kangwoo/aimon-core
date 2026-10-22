@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/subagent/subagent-development-guide.md
-source_commit: 22ef0ce4
+source_commit: 9a45db56
 ---
 
 # Subagent Development Guide
@@ -24,8 +24,9 @@ markdown file involved. For the design rationale and how the decisions were reac
 9. [A full example](#a-full-example)
 10. [Code-behaviour (custom behavior) subagents](#code-behaviour-custom-behavior-subagents)
 11. [The background fan-out pattern](#the-background-fan-out-pattern)
-12. [Markdown vs a code definition](#markdown-vs-a-code-definition)
-13. [Checklist](#checklist)
+12. [Execution policies (trusted limits)](#execution-policies-trusted-limits)
+13. [Markdown vs a code definition](#markdown-vs-a-code-definition)
+14. [Checklist](#checklist)
 
 ---
 
@@ -550,6 +551,40 @@ it was read; Read it again". To give the model this guidance, put it in the agen
 
 ---
 
+## Execution policies (trusted limits)
+
+**Code** sets the iterations, cumulative tokens, tool calls and wall clock of a subagent launched through `Task`.
+Neither the model's `Task` input nor the subagent definition file reaches the policy. A policy is looked up by the
+subagent's name.
+
+```java
+SubagentExecutionPolicy verifier = SubagentExecutionPolicy.builder("review-verifier")
+        .maxIterations(8).maxToolCalls(20).maxWallClock(Duration.ofSeconds(120)).maxTokens(300_000)
+        .contextTargetTokens(48_000).inheritContextEngine(true)
+        .compactionInstructions("keep finding IDs, pinned SHAs, the fragment ranges read and unfinished ranges verbatim")
+        .build();
+
+// for every agent of a runtime
+runtimeFactory.withSubagentExecutionPolicies(SubagentExecutionPolicyResolver.of(Map.of("verifier", verifier)));
+// or on a Task tool you build yourself
+TaskTool task = new TaskTool(model, subagentRegistry, toolRegistry, hookRegistry, executionManager,
+        enrichers, taskOutputStore, sessionSnapshotStore, taskResultStore, resolver);
+```
+
+- A policy with a limit that cannot be enforced is **refused before launch** — never run silently unbounded.
+- The deadline is measured from launch (a background task's queue wait included) on a monotonic clock, and never
+  exceeds a parent fork's deadline. When it passes, the in-flight LLM call and tool are broken off and the run ends
+  `WALL_CLOCK_EXCEEDED`.
+- A fork that ignores the request to stop is reported after its grace period with `isExitConfirmed() == false` and
+  stays listed by `SubagentExecutionManager#lingeringRuns()`. That result is not a completion; check the list before
+  launching the same work again.
+- The result also comes structured, under the `SubagentOutcomePayload` keys of `ToolResult#getRenderPayload()`.
+
+A subagent without a policy runs exactly as before. For guarantees and limits (token overshoot, uncooperative I/O,
+how usage is summed) see the [execution policy design](../../design/subagent/execution-policy.md).
+
+---
+
 ## Markdown vs a code definition
 
 | Item | `agents/*.md` | `Subagent.builder()` |
@@ -588,6 +623,7 @@ Check these when you add a code subagent.
 ## Related documents
 
 - [Code-based subagent registration design](../../design/subagent/code-defined-registration.md) — the rationale, the alternatives considered, the constraints
+- [Subagent execution policy design](../../design/subagent/execution-policy.md) — trusted limits, deadlines, unconfirmed exits, context wiring
 - [Tool development guide](../tool/tool-development-guide.en.md) — the Tools a subagent uses
 - [SOLID principles](../../project/solid-principles.md)
 - [Built-in Agent/Skill guide](../skill/builtin-agent-skill-guide.en.md) — built-in vs a user override

@@ -19,8 +19,9 @@
 9. [전체 예제](#전체-예제)
 10. [코드-행위(custom behavior) 서브에이전트](#코드-행위custom-behavior-서브에이전트)
 11. [백그라운드 팬아웃(fan-out) 패턴](#백그라운드-팬아웃fan-out-패턴)
-12. [마크다운 vs 코드 정의](#마크다운-vs-코드-정의)
-13. [체크리스트](#체크리스트)
+12. [실행 정책 (trusted limits)](#실행-정책-trusted-limits)
+13. [마크다운 vs 코드 정의](#마크다운-vs-코드-정의)
+14. [체크리스트](#체크리스트)
 
 ---
 
@@ -529,6 +530,38 @@ OrcaAgentExecutor executor = new OrcaAgentExecutorFactory()
 
 ---
 
+## 실행 정책 (trusted limits)
+
+`Task` 로 띄우는 서브에이전트의 iteration·누적 token·도구 호출 수·벽시계를 **코드가** 정합니다. 모델의 `Task`
+입력이나 서브에이전트 정의 파일은 정책에 닿지 않습니다. 정책은 서브에이전트 이름으로 찾습니다.
+
+```java
+SubagentExecutionPolicy verifier = SubagentExecutionPolicy.builder("review-verifier")
+        .maxIterations(8).maxToolCalls(20).maxWallClock(Duration.ofSeconds(120)).maxTokens(300_000)
+        .contextTargetTokens(48_000).inheritContextEngine(true)
+        .compactionInstructions("finding ID, pinned SHA, 본 fragment 범위와 미완료 range 를 그대로 남길 것")
+        .build();
+
+// 런타임의 모든 에이전트에
+runtimeFactory.withSubagentExecutionPolicies(SubagentExecutionPolicyResolver.of(Map.of("verifier", verifier)));
+// 또는 직접 만든 Task 도구에
+TaskTool task = new TaskTool(model, subagentRegistry, toolRegistry, hookRegistry, executionManager,
+        enrichers, taskOutputStore, sessionSnapshotStore, taskResultStore, resolver);
+```
+
+- 강제할 수 없는 한도가 있으면 **띄우기 전에 거부**합니다 — 조용히 무제한으로 실행하지 않습니다.
+- deadline 은 launch 시점부터(백그라운드 큐 대기 포함) monotonic 시계로 재고, 부모 포크의 deadline 을 넘지 않습니다.
+  지나면 진행 중 LLM 호출과 도구를 중단하고 `WALL_CLOCK_EXCEEDED` 로 끝납니다.
+- 멈추라는 요청을 무시하는 포크는 grace 이후 `isExitConfirmed() == false` 로 보고되고
+  `SubagentExecutionManager#lingeringRuns()` 에 남습니다. 그 결과는 완료가 아니며, 같은 작업을 다시 띄우기 전에
+  목록을 확인해야 합니다.
+- 결과는 `ToolResult#getRenderPayload()` 의 `SubagentOutcomePayload` 키로 구조화되어 함께 옵니다.
+
+정책 없는 서브에이전트는 이전과 똑같이 실행됩니다. 보장 범위·한계(token overshoot, 협조하지 않는 I/O, 사용량
+합산 규칙)는 [실행 정책 설계](../../design/subagent/execution-policy.md)를 참조하세요.
+
+---
+
 ## 마크다운 vs 코드 정의
 
 | 항목 | `agents/*.md` | `Subagent.builder()` |
@@ -567,6 +600,7 @@ OrcaAgentExecutor executor = new OrcaAgentExecutorFactory()
 ## 관련 문서
 
 - [코드 기반 서브에이전트 등록 설계](../../design/subagent/code-defined-registration.md) — 설계 근거·대안 검토·제약
+- [서브에이전트 실행 정책 설계](../../design/subagent/execution-policy.md) — trusted 한도·deadline·exit 미확인·context 연결
 - [Tool 개발 가이드](../tool/tool-development-guide.md) — 서브에이전트가 사용하는 Tool
 - [SOLID 원칙](../../project/solid-principles.md)
 - [빌트인 Agent/Skill 가이드](../skill/builtin-agent-skill-guide.md) — 빌트인 vs 사용자 오버라이드

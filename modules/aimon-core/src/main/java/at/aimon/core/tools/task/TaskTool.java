@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
@@ -41,10 +42,14 @@ import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentExecutionPolicy;
+import at.aimon.core.subagent.SubagentExecutionPolicyResolver;
 import at.aimon.core.subagent.SubagentLaunchContext;
+import at.aimon.core.subagent.SubagentPolicyCapability;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.subagent.exception.SubagentNotFoundException;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
+import at.aimon.core.subagent.execution.SubagentOutcomePayload;
 import at.aimon.core.subagent.execution.SubagentResultFormatter;
 import at.aimon.core.subagent.task.ResumableSession;
 import at.aimon.core.subagent.task.ScopedSessionSnapshotStore;
@@ -126,6 +131,7 @@ public class TaskTool extends AbstractTool {
     private final TaskOutputStore taskOutputStore;
     private final SessionSnapshotStore sessionSnapshotStore;
     private final TaskResultStore taskResultStore;
+    private final SubagentExecutionPolicyResolver executionPolicyResolver;
 
     /**
      * Creates a TaskTool without tool-context enrichers (backward-compatible overload).
@@ -263,6 +269,47 @@ public class TaskTool extends AbstractTool {
             HookRegistry hookRegistry, SubagentExecutionManager subagentExecutionManager,
             List<ToolContextEnricher> toolContextEnrichers, TaskOutputStore taskOutputStore,
             SessionSnapshotStore sessionSnapshotStore, TaskResultStore taskResultStore) {
+        this(defaultModel, subagentRegistry, toolRegistry, hookRegistry, subagentExecutionManager, toolContextEnrichers,
+                taskOutputStore, sessionSnapshotStore, taskResultStore, SubagentExecutionPolicyResolver.none());
+    }
+
+    /**
+     * Creates a TaskTool that launches every subagent under the trusted policy {@code executionPolicyResolver} supplies
+     * for its name ({@link SubagentExecutionPolicy}). The policy comes from code and only from code: nothing in the
+     * {@code Task} input reaches it, so a model cannot raise a limit by what it writes, and the subagent definition the
+     * name resolves to cannot either. A name the resolver has no policy for launches exactly as before.
+     *
+     * <p>
+     * A policy is checked against what the execution manager enforces before anything is spawned; a launch whose
+     * policy uses a limit the manager cannot enforce is refused rather than run unbounded.
+     *
+     * @param defaultModel
+     *            the default model for spawned subagents (must not be null)
+     * @param subagentRegistry
+     *            the subagent registry (must not be null)
+     * @param toolRegistry
+     *            the tool registry available to subagents (must not be null)
+     * @param hookRegistry
+     *            the hook registry (must not be null)
+     * @param subagentExecutionManager
+     *            the subagent execution manager (must not be null)
+     * @param toolContextEnrichers
+     *            the enrichers to forward (nullable; treated as empty when absent)
+     * @param taskOutputStore
+     *            the task output store for background live-output streaming (nullable)
+     * @param sessionSnapshotStore
+     *            the session snapshot store enabling resume (nullable)
+     * @param taskResultStore
+     *            the task result store (nullable)
+     * @param executionPolicyResolver
+     *            the trusted policies (must not be null; {@link SubagentExecutionPolicyResolver#none()} for none)
+     */
+    @SuppressWarnings("checkstyle:ParameterNumber")
+    public TaskTool(LlmModel defaultModel, SubagentRegistry subagentRegistry, ToolRegistry toolRegistry,
+            HookRegistry hookRegistry, SubagentExecutionManager subagentExecutionManager,
+            List<ToolContextEnricher> toolContextEnrichers, TaskOutputStore taskOutputStore,
+            SessionSnapshotStore sessionSnapshotStore, TaskResultStore taskResultStore,
+            SubagentExecutionPolicyResolver executionPolicyResolver) {
         super(new DynamicToolDefinitionProvider(TOOL_NAME, ToolCategories.EXECUTION,
                 () -> buildDescription(Objects.requireNonNull(subagentRegistry, "Subagent registry cannot be null")),
                 createInputSchema()));
@@ -276,6 +323,8 @@ public class TaskTool extends AbstractTool {
         this.taskOutputStore = taskOutputStore;
         this.sessionSnapshotStore = sessionSnapshotStore;
         this.taskResultStore = taskResultStore;
+        this.executionPolicyResolver = Objects.requireNonNull(executionPolicyResolver,
+                "Execution policy resolver cannot be null");
     }
 
     /**
@@ -468,9 +517,25 @@ public class TaskTool extends AbstractTool {
             final AgentRuntimeId agentRuntimeId = maybeAgentRuntimeId
                     .orElseThrow(() -> new IllegalStateException("Agent runtime ID not found in tool context"));
 
+            // The trusted policy for the subagent the model named. Checked against what the manager enforces before
+            // anything is spawned: a limit that would be dropped is a refusal, not an unbounded run.
+            final SubagentExecutionPolicy policy = executionPolicyResolver.resolve(subagentName).orElse(null);
+            if (policy != null) {
+                final Set<SubagentPolicyCapability> missing = policy.unsupportedBy(
+                        subagentExecutionManager.supportedPolicyCapabilities(),
+                        context.get(ToolContextKeys.CONTEXT_ENGINE).orElse(null));
+                if (!missing.isEmpty()) {
+                    // The operator's misconfiguration, so the detail goes to the log; the model is told only that
+                    // this subagent cannot be launched here.
+                    log.warn("Task refused: execution policy '{}' for subagent '{}' needs {}, which this runtime does"
+                            + " not enforce", policy.getRole(), subagentName, missing);
+                    return ToolResult.error("Subagent '" + subagentName + "' cannot be launched in this runtime.");
+                }
+            }
+
             // Build the launch context once for reuse
             final SubagentLaunchContext launchContext = buildLaunchContext(context, agentRuntimeId, model,
-                    previousSnapshot);
+                    previousSnapshot, policy);
 
             // Generate unique task ID
             final String taskId = UUID.randomUUID().toString();
@@ -496,11 +561,13 @@ public class TaskTool extends AbstractTool {
                 final CompletableFuture<SubagentExecutionResult> future = subagentExecutionManager
                         .executeInBackground(launchContext, taskId, subagentName, prompt, description);
 
-                return ToolResult.success(String.format(
-                        "Background task launched successfully.\n" + "Task ID: %s\n" + "Subagent: %s\n" + "Task: %s\n\n"
-                                + "Use the " + AgentOutputTool.TOOL_NAME
-                                + " tools with taskId='%s' to retrieve results.",
-                        taskId, subagentName, description, taskId));
+                return ToolResult
+                        .success(String.format(
+                                "Background task launched successfully.\n" + "Task ID: %s\n" + "Subagent: %s\n"
+                                        + "Task: %s\n\n" + "Use the " + AgentOutputTool.TOOL_NAME
+                                        + " tools with taskId='%s' to retrieve results.",
+                                taskId, subagentName, description, taskId))
+                        .withRenderPayload(SubagentOutcomePayload.launched(taskId, subagentName, policy));
             }
 
             // Synchronous (foreground) launch: the subagent runs on this tool's thread. Register a thread-interrupt
@@ -512,7 +579,10 @@ public class TaskTool extends AbstractTool {
             // Format result
             final var formattedResult = formatSubagentResult(result, subagentName, description);
 
-            return ToolResult.success(formattedResult);
+            // The same outcome, structured, beside the text: what a wrapper reads instead of parsing it. Delivering the
+            // result is not the subagent completing — the payload's completionReason and exitConfirmed say which.
+            return ToolResult.success(formattedResult)
+                    .withRenderPayload(SubagentOutcomePayload.of(taskId, subagentName, policy, result));
 
         } catch (IllegalArgumentException e) {
             return ToolResult.error("Invalid parameter: " + e.getMessage());
@@ -540,10 +610,12 @@ public class TaskTool extends AbstractTool {
      *            the caller's model override, or null to use the subagent's own frontmatter
      * @param previousSnapshot
      *            the transcript to resume from, or null for a fresh run
+     * @param policy
+     *            the trusted execution policy, or null to launch without one
      * @return the launch context to launch the subagent with
      */
     private SubagentLaunchContext buildLaunchContext(ToolContext context, AgentRuntimeId agentRuntimeId, String model,
-            SessionSnapshot previousSnapshot) {
+            SessionSnapshot previousSnapshot, SubagentExecutionPolicy policy) {
 
         // Extract execution attributes from tool context for subagent propagation
         final Map<String, Object> executionAttributes = context.get(ToolContextKeys.EXECUTION_ATTRIBUTES_KEY)
@@ -604,7 +676,11 @@ public class TaskTool extends AbstractTool {
                 // The spawning execution's quota guard: the fork is charged to its keys, never resolves its own.
                 .quotaGuard(context.get(ToolContextKeys.QUOTA_GUARD).orElse(null))
                 // One deeper than the calling run, so a dispatcher inside the fork knows how deep it is.
-                .forkDepth(ForkAccess.childDepthOf(context)).build();
+                .forkDepth(ForkAccess.childDepthOf(context))
+                // The trusted policy, and what the spawning run hands down for it: its deadline, which bounds the
+                // fork's, and its context engine, which the fork runs under only when the policy inherits it.
+                .executionPolicy(policy).parentDeadline(context.get(ToolContextKeys.EXECUTION_DEADLINE).orElse(null))
+                .parentContextEngine(context.get(ToolContextKeys.CONTEXT_ENGINE).orElse(null)).build();
     }
 
     /**
@@ -686,6 +762,10 @@ public class TaskTool extends AbstractTool {
 
         SubagentResultFormatter.completionReasonLine(result.getCompletionReason(), result.isSuccess())
                 .ifPresent(line -> output.append(line).append(Constants.NEWLINE));
+        if (!result.isExitConfirmed()) {
+            output.append("Exit: UNCONFIRMED (the subagent may still be running; its work is not complete)")
+                    .append(Constants.NEWLINE);
+        }
 
         return output.toString();
     }

@@ -1,5 +1,9 @@
 package at.aimon.core.subagent.execution;
 
+import java.util.Set;
+
+import at.aimon.core.subagent.SubagentPolicyCapability;
+
 /**
  * Executor interface for subagent execution.
  *
@@ -49,4 +53,19 @@ public interface SubagentExecutor {
      *             if context or request is null
      */
     SubagentExecutionResult execute(SubagentExecutionContext context, SubagentExecutionRequest request);
+
+    /**
+     * Returns the {@link at.aimon.core.subagent.SubagentExecutionPolicy} capabilities this executor enforces. A launch
+     * whose policy uses one outside this set is refused before the fork starts, never run with the limit silently
+     * dropped.
+     *
+     * <p>
+     * The default enforces none, so an executor written before policies existed refuses every policy rather than
+     * ignoring it.
+     *
+     * @return the enforced capabilities (never null)
+     */
+    default Set<SubagentPolicyCapability> supportedPolicyCapabilities() {
+        return Set.of();
+    }
 }

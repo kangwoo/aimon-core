@@ -190,7 +190,8 @@ public final class DefaultContextEngine implements ContextEngine {
                 .executionEnvironment(request.getExecutionEnvironment().orElse(null))
                 .executionCancellation(request.getExecutionCancellation().orElse(null))
                 .budgetForced(request.isBudgetForced()).callMetadata(request.getCallMetadata().orElse(null))
-                .compactionObserver(request.getCompactionObserver()).build());
+                .compactionObserver(request.getCompactionObserver())
+                .compactionInstructions(request.getCompactionInstructions().orElse(null)).build());
         // Read after the guard: a compaction rewrote the buffer in place, and the view is what it left behind.
         return ContextDecision.from(decision, viewOf(request), sizeBefore);
     }
@@ -201,8 +202,10 @@ public final class DefaultContextEngine implements ContextEngine {
         final CompactionDecision decision;
         if (compactionGuard instanceof DefaultCompactionGuard rules) {
             decision = rules.decide(buffer.getSessionId(), request.getSystemPrompt(), before.getMessages(),
-                    request.getModel(), request.isBudgetForced(), forced -> summarizeIntoView(request,
-                            CompactionTrigger.AUTO, null, before, forced ? new BlockingLimit(rules, request) : null));
+                    request.getModel(), request.isBudgetForced(),
+                    forced -> summarizeIntoView(request, CompactionTrigger.AUTO,
+                            request.getCompactionInstructions().orElse(null), before,
+                            forced ? new BlockingLimit(rules, request) : null));
         } else {
             decision = CompactionDecision.none();
         }
