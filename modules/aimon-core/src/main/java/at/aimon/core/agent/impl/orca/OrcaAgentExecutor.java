@@ -2108,7 +2108,7 @@ public class OrcaAgentExecutor
     private int injectQueuedMessages(ExecutionScope scope, List<String> injectedTaskIds) {
         final AgentRuntimeId agentRuntimeId = scope.agentRuntime.getId();
         final String sessionId = scope.transcriptBuffer.getSessionId().value();
-        return injectQueuedMessages(scope, injectedTaskIds, q -> agentRuntimeId.equals(q.getAgentRuntimeId())
+        return drainAndInject(scope, injectedTaskIds, q -> agentRuntimeId.equals(q.getAgentRuntimeId())
                 && q.getSessionId().map(sessionId::equals).orElse(true));
     }
 
@@ -2131,12 +2131,11 @@ public class OrcaAgentExecutor
     private int injectSessionQueuedMessages(ExecutionScope scope) {
         final AgentRuntimeId agentRuntimeId = scope.agentRuntime.getId();
         final String sessionId = scope.transcriptBuffer.getSessionId().value();
-        return injectQueuedMessages(scope, new ArrayList<>(), q -> agentRuntimeId.equals(q.getAgentRuntimeId())
+        return drainAndInject(scope, new ArrayList<>(), q -> agentRuntimeId.equals(q.getAgentRuntimeId())
                 && q.getSessionId().filter(sessionId::equals).isPresent());
     }
 
-    private int injectQueuedMessages(ExecutionScope scope, List<String> injectedTaskIds,
-            Predicate<QueuedInput> filter) {
+    private int drainAndInject(ExecutionScope scope, List<String> injectedTaskIds, Predicate<QueuedInput> filter) {
         injectedTaskIds.clear();
         if (messageQueueManager == null) {
             return 0;
