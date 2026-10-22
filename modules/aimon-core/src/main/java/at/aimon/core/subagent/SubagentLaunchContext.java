@@ -488,7 +488,8 @@ public final class SubagentLaunchContext {
 
     /**
      * Returns the deadline of the execution that spawns the fork, when it has one. The fork's own deadline is the
-     * earlier of its policy's and this, so a fork can never be given more time than its spawner has left. Spawn sites
+     * earlier of its policy's and this, so a fork under a policy can never be given more time than its spawner has left
+     * (a fork without a policy takes no deadline from it). Spawn sites
      * read it from {@code ToolContextKeys.EXECUTION_DEADLINE}, which a fork running under a deadline publishes.
      *
      * @return the spawner's deadline, or empty when it has none

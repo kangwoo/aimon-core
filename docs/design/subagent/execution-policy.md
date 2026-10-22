@@ -208,7 +208,7 @@ unit, limitations 와 UNVERIFIED 결과, 원문을 다시 읽을 식별 정보.
 
 | 항목 | 보장 | 한계 |
 |---|---|---|
-| token | 한도를 넘긴 응답의 도구 batch 도, 다음 LLM 호출도 시작하지 않는다 | 사용량은 응답 후에만 알 수 있어 **한 호출만큼 overshoot** 할 수 있다 |
+| token | 한도를 넘긴 응답의 도구 batch 도, 다음 LLM 호출도 시작하지 않는다 (`TOKEN_BUDGET_EXCEEDED`) | 사용량은 응답 후에만 알 수 있어 **한 호출만큼 overshoot** 할 수 있다 |
 | compaction 비용 | deadline·취소에 걸린다; `COMPACTION` feature 로 별도 집계 | 요약 호출의 token 은 포크의 `maxTokens` 에 **포함되지 않는다** |
 | 도구 호출 | 파이프라인에 넘긴 수가 한도를 넘지 않는다 | 어느 호출을 실행할지는 응답 순서다; 파이프라인이 거절한 호출도 센다 |
 | deadline | 기준은 launch, monotonic; LLM abort·terminator 발화 | 협조하지 않는 I/O 는 멈추지 않는다 — §5.3 의 exit 미확인으로 드러날 뿐이다 |
@@ -218,7 +218,9 @@ unit, limitations 와 UNVERIFIED 결과, 원문을 다시 읽을 식별 정보.
 | context target | warning 문턱으로 낮추는 신호 | target 이 모델의 warning 문턱보다 낮으면 그 사이 구간에서는 compact 되지 않는다 |
 | lingering | 노드 로컬 목록, 실제 exit 시 제거 | 프로세스 재시작을 넘지 않는다 (JVM 스레드에 대한 사실이므로). 재실행 차단은 호출자의 몫이다 (§5.3) |
 | exit 미확인 결과의 사용량 | — | 포크가 반환하기 전이므로 iteration·token·도구 호출 수가 **0** 으로 보고된다. 실제 사용량은 포크가 끝날 때 SUBAGENT span 에 남는다 |
-| 스레드 | — | deadline 포크는 새 스레드에서 돌므로 spawner 의 `ThreadLocal`(예: ambient LLM 태그)을 물려받지 않는다. 명시적으로 전달되는 metadata·signal·principal 은 그대로다 |
+| 상속 engine | passthrough 가 아닌 engine 은 context 축을 지킨다고 본다 | 제3자 engine 이 `budgetForced`·`compactionInstructions` 를 무시하면 그 축은 강제되지 않는다 — `ContextRequest` 계약의 일부다 |
+| 거부 메시지 | 모델에게는 "이 런타임에서 실행 정책으로 띄울 수 없다" 만 | 정책 이름·빠진 축은 WARN 로그에만 남는다 |
+| 스레드 | — | deadline 포크는 새 스레드에서 돌므로 spawner 의 `ThreadLocal`(예: ambient LLM 태그)을 물려받지 않는다. 명시적으로 전달되는 metadata·signal·principal 은 그대로다. 그 스레드에서 던져진 `Error` 는 전파되지 않고 실패 결과가 된다 |
 | 정책 없는 부모 deadline | — | 정책 없는 포크에는 부모 deadline 도 적용하지 않는다 (기존 동작 유지) |
 
 ## 8. 결과 계약
@@ -257,7 +259,6 @@ transcript 에는 가지 않는다. 키: `kind=subagent-outcome`, `taskId`, `sub
 | interrupt 무시 포크의 exit 미확인·lingering 등재·해제, Stop hook 1회 | `DefaultSubagentExecutionManagerPolicyTest` |
 | `budgetForced`(threshold·target), 정책 없을 때 미설정, 요약 지시 전달 | `DefaultSubagentExecutorPolicyTest`, `DefaultCompactionGuardObserverTest` |
 | 닫힌 timer 는 늦게 발화하지 않는다 | `DeadlineSchedulerTest` |
-
 | 실제 Task → `DefaultSubagentExecutionManager` → `DefaultSubagentExecutor` 경로의 도구 한도와 구조화 결과 | `TaskToolExecutionPolicyTest.endToEndThroughTheRealManagerAndExecutor` |
 | deadline 선행 후 부모 취소, 부모 deadline cascade, 블로킹 도구 interrupt, token 초과 batch 미실행 | `DefaultSubagentExecutorPolicyTest` |
 | passthrough engine 에서 context 축 거부, compact 하는 engine 상속 시 수락 | `DefaultSubagentExecutionManagerPolicyTest` |

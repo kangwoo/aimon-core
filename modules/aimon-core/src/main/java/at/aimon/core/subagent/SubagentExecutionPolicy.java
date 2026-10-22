@@ -387,14 +387,15 @@ public final class SubagentExecutionPolicy {
 
         /**
          * @param exitGracePeriod
-         *            how long a fork under a deadline is waited for once asked to stop (must not be negative;
+         *            how long a fork under a deadline is waited for once asked to stop (must be positive;
          *            defaults to {@link #DEFAULT_EXIT_GRACE_PERIOD})
          * @return this builder
          */
         public Builder exitGracePeriod(Duration exitGracePeriod) {
             Objects.requireNonNull(exitGracePeriod, "exitGracePeriod cannot be null");
-            if (exitGracePeriod.isNegative()) {
-                throw new IllegalArgumentException("exitGracePeriod must not be negative, got: " + exitGracePeriod);
+            // Zero would interrupt at once and report every deadline stop unexited.
+            if (exitGracePeriod.isZero() || exitGracePeriod.isNegative()) {
+                throw new IllegalArgumentException("exitGracePeriod must be positive, got: " + exitGracePeriod);
             }
             this.exitGracePeriod = exitGracePeriod;
             return this;

@@ -28,26 +28,48 @@ class DeadlineSchedulerTest {
     @DisplayName("a handle closed first never runs its action, however short the delay")
     void closedNeverRuns() throws Exception {
         final AtomicInteger runs = new AtomicInteger();
-        final CountDownLatch gate = new CountDownLatch(1);
-        // Occupy the timer thread so the action under test is due but cannot start before close().
-        final DeadlineScheduler.Handle blocker = DeadlineScheduler.schedule(Duration.ZERO, () -> {
-            try {
-                gate.await(10, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        });
-        final DeadlineScheduler.Handle handle = DeadlineScheduler.schedule(Duration.ZERO, runs::incrementAndGet);
+        final DeadlineScheduler.Handle handle = DeadlineScheduler.schedule(Duration.ofMillis(300),
+                runs::incrementAndGet);
 
         handle.close();
-        gate.countDown();
+        // A later timer firing proves the timer has passed the closed one's due time.
         final CountDownLatch after = new CountDownLatch(1);
-        DeadlineScheduler.schedule(Duration.ZERO, after::countDown);
+        DeadlineScheduler.schedule(Duration.ofMillis(600), after::countDown);
         assertThat(after.await(10, TimeUnit.SECONDS)).isTrue();
 
         assertThat(runs).hasValue(0);
         assertThat(handle.hasFired()).isFalse();
-        blocker.close();
+    }
+
+    @Test
+    @DisplayName("close() waits for an action that is running, so nothing of it lands after close returns")
+    void closeWaitsForARunningAction() throws Exception {
+        final CountDownLatch entered = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        final AtomicInteger finished = new AtomicInteger();
+        final DeadlineScheduler.Handle handle = DeadlineScheduler.schedule(Duration.ZERO, () -> {
+            entered.countDown();
+            try {
+                release.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            finished.incrementAndGet();
+        });
+        assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+
+        final CountDownLatch closed = new CountDownLatch(1);
+        final Thread closer = new Thread(() -> {
+            handle.close();
+            closed.countDown();
+        });
+        closer.start();
+        assertThat(closed.await(200, TimeUnit.MILLISECONDS)).as("close() must wait for the action").isFalse();
+        release.countDown();
+        assertThat(closed.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(finished).hasValue(1);
+        assertThat(handle.hasFired()).isTrue();
+        handle.close();
     }
 
     @Test

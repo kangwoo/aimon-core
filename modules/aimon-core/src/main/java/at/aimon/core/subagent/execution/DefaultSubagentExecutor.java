@@ -677,7 +677,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                         trace.interrupted();
                         return createInterruptedResult(lc, iterationCount, accumulatedTokens);
                     } else if (lc.toolCalls.isExceeded()) {
-                        // Calls over the cap were answered, not run; stop before the next LLM call is spent.
+                        // Calls over a cap were answered, not run; stop before the next LLM call is spent.
                         return createToolCallBudgetResult(lc, iterationCount, accumulatedTokens);
                     } else if (lc.stalledIterationGuard.recordToolIteration(toolUseResults, truncated)) {
                         return createStalledResult(lc, iterationCount, accumulatedTokens);
@@ -1093,7 +1093,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         context.getExecutionEnvironmentProvider()
                 .ifPresent(p -> builder.put(ToolContextKeys.EXECUTION_ENVIRONMENT_PROVIDER, p));
         // The engine this fork runs under, and its deadline when it has one: a fork it spawns inherits the first on
-        // request and is always held to the second. Both write-once, so an enricher cannot lift the deadline.
+        // request and, when it runs under a policy of its own, is held to the second. Both write-once, so an enricher
+        // cannot lift the deadline.
         builder.put(ToolContextKeys.CONTEXT_ENGINE, engine);
         request.getDeadline().ifPresent(d -> builder.put(ToolContextKeys.EXECUTION_DEADLINE, d));
 
@@ -1261,12 +1262,12 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // The response that carried these calls may itself have spent the last of the budget: its usage is known only
         // now. Then none of them runs; the next iteration boundary ends the fork with the budget's reason, before
         // another LLM call.
-        if (lc.policy != null && lc.budgetTracker.check() == BudgetDecision.STOP) {
-            log.warn(
-                    "Subagent '{}' reached its budget ({}) with the response of iteration {}; its {} tool call(s)"
-                            + " are not run",
-                    lc.subagent().getName(), lc.budgetTracker.getStopReason().orElse(null), iterationCount,
-                    toolUses.size());
+        // Only the token axis: the tracker's iteration count already includes this iteration, so asking it for STOP
+        // would refuse the last allowed iteration's tools.
+        if (lc.tokenBudgetExhausted()) {
+            lc.toolCalls.refuseForTokens();
+            log.warn("Subagent '{}' spent its token budget with the response of iteration {}; its {} tool call(s) are"
+                    + " not run", lc.subagent().getName(), iterationCount, toolUses.size());
             final List<ToolUseResult> refused = new ArrayList<>(toolUses.size());
             for (ToolUse toolUse : toolUses) {
                 refused.add(ToolUseResult.error(toolUse.getId(),
@@ -1619,11 +1620,18 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
     /**
      * Creates the result of a fork that asked for more tool calls than its policy allows:
-     * {@link CompletionReason#TOOL_CALL_BUDGET_EXCEEDED}. The calls over the cap were never run; their error results
+     * {@link CompletionReason#TOOL_CALL_BUDGET_EXCEEDED} — or {@link CompletionReason#TOKEN_BUDGET_EXCEEDED} when the
+     * batch was refused because the response carrying it spent the token budget. The calls over the cap were never run;
+     * their error results
      * are in the transcript.
      */
     private SubagentExecutionResult createToolCallBudgetResult(LoopContext lc, int iterationCount,
             TokenUsage accumulatedTokens) {
+        if (lc.toolCalls.tokensStopped) {
+            // The batch was refused because its response spent the token budget: that budget is what stopped it.
+            return createFailureResult(lc, "Execution stopped: " + CompletionReason.TOKEN_BUDGET_EXCEEDED.name(),
+                    iterationCount, accumulatedTokens, CompletionReason.TOKEN_BUDGET_EXCEEDED);
+        }
         log.info("Subagent '{}' stopped by its tool-call budget: ran {} of {} allowed, refused {}, iterations={}",
                 lc.subagent().getName(), lc.toolCalls.used(), lc.toolCalls.limit, lc.toolCalls.refused(),
                 iterationCount);
@@ -1862,6 +1870,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         private final Integer limit;
         private int used;
         private int refused;
+        /** Whether a batch was refused because the token budget ran out, which then names the fork's stop. */
+        private boolean tokensStopped;
 
         private ToolCallQuota(Integer limit) {
             this.limit = limit;
@@ -1883,9 +1893,14 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             return refused;
         }
 
-        /** Whether a call was refused for the cap — the fork asked for more than it may run. */
+        /** Whether a call was refused for a cap — the fork asked for more than it may run. */
         private boolean isExceeded() {
-            return refused > 0;
+            return refused > 0 || tokensStopped;
+        }
+
+        /** Records a batch refused because the response carrying it spent the token budget. */
+        private void refuseForTokens() {
+            tokensStopped = true;
         }
 
         /** The answer to a call the cap refused: an error result, so the transcript stays well formed and honest. */
@@ -1962,6 +1977,12 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             this.policy = b.policy;
             this.deadline = b.deadline;
             this.toolCalls = b.toolCalls;
+        }
+
+        /** Whether the fork's policy caps tokens and the fork has spent them. */
+        private boolean tokenBudgetExhausted() {
+            return policy != null
+                    && policy.getMaxTokens().filter(max -> budgetTracker.tokens().getTotalTokens() >= max).isPresent();
         }
 
         /** Whether the fork has a deadline and it has passed. */

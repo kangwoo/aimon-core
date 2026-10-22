@@ -152,11 +152,14 @@ class DefaultSubagentExecutorPolicyTest {
         for (int i = 0; i < 5; i++) {
             llm.responses.add(calls("t" + i));
         }
-        final SubagentExecutionResult result = executor(llm).execute(context(registryWith(new CountingTool())),
+        final CountingTool tool = new CountingTool();
+        final SubagentExecutionResult result = executor(llm).execute(context(registryWith(tool)),
                 request(SubagentExecutionPolicy.builder("verifier").maxIterations(2).build(), null));
 
         assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.MAX_ITERATIONS);
         assertThat(llm.calls).hasValue(2);
+        // The last allowed iteration's tool runs: the iteration cap stops the next iteration, not this one's tools.
+        assertThat(tool.runs).hasValue(2);
     }
 
     @Test
@@ -182,7 +185,7 @@ class DefaultSubagentExecutorPolicyTest {
         final BlockingClient llm = new BlockingClient();
 
         final SubagentExecutionResult result = executor(llm).execute(context(new DefaultToolRegistry()),
-                request(policyWithWallClock(), ExecutionDeadline.after(Duration.ofMillis(100))));
+                request(policyWithWallClock(), ExecutionDeadline.after(Duration.ofSeconds(1))));
 
         assertThat(llm.aborted.getCount()).isZero();
         assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.WALL_CLOCK_EXCEEDED);
@@ -224,7 +227,7 @@ class DefaultSubagentExecutorPolicyTest {
 
             final SubagentExecutionResult result = executor(llm).execute(
                     context(new DefaultToolRegistry(), parent.getSignal()),
-                    request(policyWithWallClock(), ExecutionDeadline.after(Duration.ofMillis(100))));
+                    request(policyWithWallClock(), ExecutionDeadline.after(Duration.ofSeconds(1))));
 
             assertThat(parent.getSignal().isCancelled()).isTrue();
             assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.WALL_CLOCK_EXCEEDED);
@@ -266,7 +269,7 @@ class DefaultSubagentExecutorPolicyTest {
         llm.responses.add(LlmResponse.text("never reached"));
 
         final SubagentExecutionResult result = executor(llm).execute(context(registryWith(tool)),
-                request(policyWithWallClock(), ExecutionDeadline.after(Duration.ofMillis(100))));
+                request(policyWithWallClock(), ExecutionDeadline.after(Duration.ofSeconds(1))));
 
         assertThat(tool.interrupted.getCount()).isZero();
         assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.WALL_CLOCK_EXCEEDED);

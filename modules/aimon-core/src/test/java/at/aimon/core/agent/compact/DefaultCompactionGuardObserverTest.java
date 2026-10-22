@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
@@ -93,7 +94,7 @@ class DefaultCompactionGuardObserverTest {
         guard(7_500).maybeCompact(request(false));
 
         assertThat(engine.requests).extracting(CompactionRequest::getCustomInstructions)
-                .containsExactly(java.util.Optional.of("keep pinned SHAs"), java.util.Optional.empty());
+                .containsExactly(Optional.of("keep pinned SHAs"), Optional.empty());
     }
 
     @Test

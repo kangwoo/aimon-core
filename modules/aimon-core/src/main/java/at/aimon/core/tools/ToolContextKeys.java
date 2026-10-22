@@ -440,7 +440,9 @@ public final class ToolContextKeys {
      * <p>
      * Published by a fork running under a deadline (an execution policy with a wall clock). A spawn site reads it into
      * the launch context ({@code SubagentLaunchContext#getParentDeadline()}) so the fork it starts is held to the
-     * earlier of its own policy's deadline and this one: a child is never given more time than its parent has left.
+     * earlier of its own policy's deadline and this one: a child under a policy is never given more time than its
+     * parent
+     * has left (a child without a policy takes no deadline from it and stops with its parent by cancellation).
      * Absent when the run has no deadline — a session's turn among them, whose wall-clock budget is checked between
      * iterations rather than anchored as a deadline.
      *

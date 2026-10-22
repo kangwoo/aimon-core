@@ -126,7 +126,8 @@ class DefaultSubagentExecutionManagerPolicyTest {
                 "task-1", NAME, "verify", "");
 
         assertThat(result.isSuccess()).isFalse();
-        assertThat(result.getErrorMessage()).contains("MAX_TOOL_CALLS").contains("verifier");
+        assertThat(result.getErrorMessage()).contains("cannot run under its execution policy")
+                .doesNotContain("MAX_TOOL_CALLS");
         assertThat(executor.calls).hasValue(0);
         assertThat(manager(executor).supportedPolicyCapabilities()).isEmpty();
     }
@@ -147,7 +148,7 @@ class DefaultSubagentExecutionManagerPolicyTest {
                         .build(), "task-1", NAME, "verify", "");
 
         assertThat(result.isSuccess()).isFalse();
-        assertThat(result.getErrorMessage()).contains("code behavior");
+        assertThat(result.getErrorMessage()).contains("cannot run under its execution policy");
         assertThat(behaviorRuns).hasValue(0);
     }
 
@@ -166,7 +167,7 @@ class DefaultSubagentExecutionManagerPolicyTest {
         final SubagentExecutionResult refused = manager(executor).execute(launch().executionPolicy(inherit).build(),
                 "t2", NAME, "verify", "");
         assertThat(refused.isSuccess()).isFalse();
-        assertThat(refused.getErrorMessage()).contains("context engine");
+        assertThat(refused.getErrorMessage()).contains("cannot run under its execution policy");
 
         manager(executor).execute(launch().parentContextEngine(parentEngine).build(), "t3", NAME, "verify", "");
         assertThat(executor.context.get().getContextEngine()).as("not inherited without the policy asking").isEmpty();
@@ -184,7 +185,7 @@ class DefaultSubagentExecutionManagerPolicyTest {
         final SubagentExecutionResult refused = manager.execute(launch().executionPolicy(own).build(), "t1", NAME,
                 "verify", "");
         assertThat(refused.isSuccess()).isFalse();
-        assertThat(refused.getErrorMessage()).contains("COMPACTION_INSTRUCTIONS");
+        assertThat(refused.getErrorMessage()).contains("cannot run under its execution policy");
 
         final SubagentExecutionPolicy inheriting = SubagentExecutionPolicy.builder("verifier")
                 .compactionInstructions("keep").inheritContextEngine(true).build();
@@ -231,7 +232,9 @@ class DefaultSubagentExecutionManagerPolicyTest {
         release.countDown();
         exited.get(10, TimeUnit.SECONDS);
         awaitTrue(() -> manager.lingeringRuns().isEmpty());
-        // The late result was dropped: the caller had its answer, and SubagentStop fired once.
+        // The late result was dropped: the caller had its answer, and SubagentStop fired once — still once a moment
+        // after the late result landed, when a second firing would have shown.
+        new CountDownLatch(1).await(200, TimeUnit.MILLISECONDS);
         verify(hooks, times(1)).executeSubagentStop(any());
     }
 
@@ -248,7 +251,7 @@ class DefaultSubagentExecutionManagerPolicyTest {
                     }
                 });
         final SubagentExecutionPolicy policy = SubagentExecutionPolicy.builder("verifier")
-                .maxWallClock(Duration.ofMillis(50)).exitGracePeriod(Duration.ofSeconds(10)).build();
+                .maxWallClock(Duration.ofMillis(200)).exitGracePeriod(Duration.ofSeconds(2)).build();
 
         final SubagentExecutionResult result = manager(executor).execute(launch().executionPolicy(policy).build(),
                 "task-1", NAME, "verify", "");

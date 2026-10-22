@@ -137,6 +137,10 @@ public final class ContextRequest {
      * one. A fork under an execution policy passes its policy's
      * ({@code SubagentExecutionPolicy#getCompactionInstructions()}).
      *
+     * <p>
+     * An engine a fork can inherit is expected to honour this and {@link #isBudgetForced()}: a fork policy that sets
+     * either is accepted against any engine other than {@code ContextEngine.passthrough()}.
+     *
      * @return the instructions, or empty for the engine's default summary
      */
     public Optional<String> getCompactionInstructions() {

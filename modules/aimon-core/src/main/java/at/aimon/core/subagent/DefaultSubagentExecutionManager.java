@@ -1093,26 +1093,32 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             return null;
         }
         if (codeBehavior) {
-            throw new SubagentSpawnException(String.format(
-                    "Subagent '%s' cannot run under execution policy '%s': it"
-                            + " is backed by a code behavior, which enforces none of the policy's limits",
-                    subagentName, policy.getRole()));
+            throw policyRefusal(subagentName, policy,
+                    "it is backed by a code behavior, which enforces none of the" + " policy's limits");
         }
         final ContextEngine inherited = policy.isInheritContextEngine()
                 ? launchContext.getParentContextEngine()
-                        .orElseThrow(() -> new SubagentSpawnException(String.format(
-                                "Subagent '%s' cannot run under execution policy '%s': it inherits the spawner's"
-                                        + " context engine and the launch handed down none",
-                                subagentName, policy.getRole())))
+                        .orElseThrow(() -> policyRefusal(subagentName, policy,
+                                "it inherits the spawner's context engine and the launch handed down none"))
                 : null;
         final Set<SubagentPolicyCapability> missing = policy
                 .unsupportedBy(subagentExecutor.supportedPolicyCapabilities(), inherited);
         if (!missing.isEmpty()) {
-            throw new SubagentSpawnException(
-                    String.format("Subagent '%s' cannot run under execution policy '%s': it would not enforce %s",
-                            subagentName, policy.getRole(), missing));
+            throw policyRefusal(subagentName, policy, "it would not enforce " + missing);
         }
         return inherited;
+    }
+
+    /**
+     * The refusal of a policy that cannot be enforced. The detail — the policy's role and what is missing — is the
+     * operator's to fix, so it goes to the log; the message, which reaches the spawning model through the fork's
+     * result, says only that the subagent cannot run here.
+     */
+    private static SubagentSpawnException policyRefusal(String subagentName, SubagentExecutionPolicy policy,
+            String why) {
+        log.warn("Subagent '{}' refused under execution policy '{}': {}", subagentName, policy.getRole(), why);
+        return new SubagentSpawnException(
+                "Subagent '" + subagentName + "' cannot run under its execution policy in this runtime");
     }
 
     /**

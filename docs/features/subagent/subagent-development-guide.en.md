@@ -567,7 +567,8 @@ SubagentExecutionPolicy verifier = SubagentExecutionPolicy.builder("review-verif
 // for every agent of a runtime
 runtimeFactory.withSubagentExecutionPolicies(SubagentExecutionPolicyResolver.of(Map.of("verifier", verifier)));
 // or on a Task tool you build yourself
-TaskTool task = new TaskTool(/* model, registries, manager, enrichers, stores */ ..., resolver);
+TaskTool task = new TaskTool(model, subagentRegistry, toolRegistry, hookRegistry, executionManager,
+        enrichers, taskOutputStore, sessionSnapshotStore, taskResultStore, resolver);
 ```
 
 - A policy with a limit that cannot be enforced is **refused before launch** — never run silently unbounded.
