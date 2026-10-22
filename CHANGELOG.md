@@ -23,6 +23,9 @@ An agent can now watch a long-running source and keep working while its events a
   running turn or before the first LLM call of the next one. An idle session is not woken.
 - **Lifetime** — a monitor ends at its source's end, `MonitorStop`, its timeout, the rate limit, the deletion of its
   session (on the deleting node), or stack shutdown. An execution without a session cannot start one.
+- **Sources follow the stack's switches** — the `shell` source exists only when `Bash` is enabled;
+  `ToolSpec.monitorWebSocketEnabled` / `aimon.tools.monitor.websocket-enabled` turns the `websocket` source off.
+  `MonitorManager.Builder#excludeSource` leaves a kind out.
 
 ### Added: line-by-line shell streaming
 

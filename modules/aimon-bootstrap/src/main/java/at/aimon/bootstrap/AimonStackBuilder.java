@@ -94,6 +94,8 @@ import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.behavior.InMemorySubagentBehaviorRegistry;
 import at.aimon.core.tools.bash.BackgroundBashManager;
 import at.aimon.core.tools.monitor.MonitorManager;
+import at.aimon.core.tools.monitor.ShellMonitorSourceFactory;
+import at.aimon.core.tools.monitor.WebSocketMonitorSourceFactory;
 import at.aimon.session.routing.DeploymentMode;
 import at.aimon.session.routing.SessionRouter;
 import at.aimon.session.routing.builder.SessionRouterBuilder;
@@ -826,6 +828,14 @@ public final class AimonStackBuilder {
         final MonitorManager.Builder builder = MonitorManager.builder(queue)
                 .store(toolSpec.getMonitorStore().orElse(null)).nodeId(nodeId);
         toolSpec.getMonitorSources().forEach(builder::source);
+        // A stack that turned Bash off must not run commands through a monitor instead. The permission delegation to
+        // Bash does not cover this: with no allowed-tools list there are no entries for it to consult.
+        if (!toolSpec.isBashEnabled()) {
+            builder.excludeSource(ShellMonitorSourceFactory.KIND);
+        }
+        if (!toolSpec.isMonitorWebSocketEnabled()) {
+            builder.excludeSource(WebSocketMonitorSourceFactory.KIND);
+        }
         return builder.build();
     }
 

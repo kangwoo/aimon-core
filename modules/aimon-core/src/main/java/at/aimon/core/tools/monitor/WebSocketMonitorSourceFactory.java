@@ -37,7 +37,7 @@ import okio.ByteString;
  * {@value #PING_SECONDS} seconds, so a connection that silently died is noticed rather than waited on until the
  * timeout.
  */
-public final class WebSocketMonitorSourceFactory implements MonitorSourceFactory {
+public final class WebSocketMonitorSourceFactory implements MonitorSourceFactory, AutoCloseable {
 
     /** The kind this factory serves. */
     public static final String KIND = "websocket";
@@ -76,6 +76,17 @@ public final class WebSocketMonitorSourceFactory implements MonitorSourceFactory
         // notices a dead peer, and the manager's timeout is what bounds the whole.
         this.client = WebHttpClientFactory.newBuilder(ssrfGuard, CONNECT_TIMEOUT).readTimeout(Duration.ZERO)
                 .callTimeout(Duration.ZERO).pingInterval(Duration.ofSeconds(PING_SECONDS)).build();
+    }
+
+    /**
+     * Releases the client's threads and pooled connections. Called by the {@link MonitorManager} for the factory it
+     * created; a factory the host registered is the host's to close. Sockets still open are cancelled.
+     */
+    @Override
+    public void close() {
+        client.dispatcher().cancelAll();
+        client.dispatcher().executorService().shutdown();
+        client.connectionPool().evictAll();
     }
 
     @Override
@@ -175,8 +186,10 @@ public final class WebSocketMonitorSourceFactory implements MonitorSourceFactory
 
         @Override
         public void onClosing(WebSocket webSocket, int code, String reason) {
-            webSocket.close(code, null);
             sink.complete("socket closed " + code + (reason == null || reason.isBlank() ? "" : " " + reason));
+            // Echoed as a normal close, not with the peer's code: 1005 ("no status") and the other reserved codes
+            // cannot be sent, and OkHttp would report the attempt as a failure.
+            webSocket.close(1000, null);
         }
 
         @Override

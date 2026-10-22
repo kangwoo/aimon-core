@@ -43,6 +43,10 @@ aimon:
 Every `MonitorSourceFactory` bean is registered as a monitor source (§5), and a `MonitorStore` bean, if there is one,
 records the running monitors (§8).
 
+**Command monitors follow `Bash`.** The built-in `shell` source exists only while `aimon.tools.bash.enabled` is on —
+`Bash` is off by default in Spring Boot, so turning on monitors alone offers `ws` and host sources only. Turn the
+WebSocket source off with `aimon.tools.monitor.websocket-enabled: false`.
+
 ### 2.2 CLI
 
 The `cli` section of `aimon.yaml`:
@@ -64,7 +68,8 @@ AimonStackSpec spec = AimonStackSpec.builder()
         .build();
 ```
 
-The stack builds one `MonitorManager`, shared by every agent runtime, and closes it with the stack.
+The stack builds one `MonitorManager`, shared by every agent runtime, and closes it with the stack. A stack with
+`bashEnabled(false)` has no `shell` source, and `monitorWebSocketEnabled(false)` leaves out the `websocket` source.
 
 ### 2.4 Core only
 
@@ -227,7 +232,7 @@ An agent with an allowed-tools list needs `Monitor` on it to use monitors.
 |-------|----------------|
 | `Monitor` | every form — commands also follow the `Bash` rule below |
 | `Monitor(source:alarms)` | the `alarms` source only |
-| `Monitor(ws:wss://events.example.com/*)` | WebSocket URLs starting with that prefix only (a trailing `*` is the only wildcard) |
+| `Monitor(ws:wss://events.example.com/*)` | WebSocket URLs starting with that prefix only (a trailing `*` is the only wildcard — end it with `/*`: `…example.com*` also matches `…example.com.evil.net`) |
 | `Monitor(tail -f:*)` | commands matching that command pattern only |
 
 **The command form must also pass the `Bash` entries.** An agent allowed `Bash(git:*)` and `Monitor` can monitor

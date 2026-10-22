@@ -139,6 +139,19 @@ class LocalShellStreamingTest {
     }
 
     @Test
+    @DisplayName("an overlong run without a newline is cut at a character boundary, never inside a character")
+    void overlongRunIsCutBetweenCharacters() throws Exception {
+        final List<String> lines = new CopyOnWriteArrayList<>();
+
+        // 25,000 three-byte characters: 75,000 bytes, past the 64 KiB cap, which is not a multiple of three.
+        shell.execute(() -> "printf '%.0s가' $(seq 1 25000)",
+                ExecutionOptions.builder().timeout(Duration.ofSeconds(30)).build(), lines::add);
+
+        assertThat(lines).hasSizeGreaterThanOrEqualTo(2);
+        assertThat(String.join("", lines)).doesNotContain("\uFFFD").hasSize(25_000);
+    }
+
+    @Test
     @DisplayName("a hook's private capture streams too: the tail channel is opened before the file is unlinked")
     void privateIoStreams() throws Exception {
         final List<String> lines = new CopyOnWriteArrayList<>();

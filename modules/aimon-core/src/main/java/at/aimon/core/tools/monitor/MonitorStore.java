@@ -13,6 +13,11 @@ import java.util.Optional;
  * <p>
  * Implementations must be thread-safe. A method that fails throws an unchecked exception: the manager refuses to start
  * a monitor it could not record, and otherwise carries on with what it knows locally.
+ *
+ * <p>
+ * A shared store should expire a record at its {@link MonitorRecord#getDeadline() deadline}: a node that dies does not
+ * remove its records. The manager already treats a record past its deadline as gone, so expiry only reclaims space.
+ * An implementation must not call back into the manager.
  */
 public interface MonitorStore {
 

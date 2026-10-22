@@ -4,8 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -19,6 +22,7 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.queue.DefaultMessageQueueManager;
 import at.aimon.core.agent.queue.InMemoryMessageQueueRepository;
+import at.aimon.core.agent.queue.MessageQueueListener;
 import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.queue.QueuedInput;
 import at.aimon.core.agent.queue.QueuedInputPriority;
@@ -216,7 +220,7 @@ class MonitorManagerTest {
     void recordFromAnotherNodeRunsElsewhere() {
         final InMemoryMonitorStore store = new InMemoryMonitorStore();
         store.putIfAbsent(MonitorRecord.builder().monitorId("mon_00000001").owner(OWNER).nodeId("node-b").kind("x")
-                .description("d").startedAt(java.time.Instant.EPOCH).deadline(java.time.Instant.EPOCH).build());
+                .description("d").startedAt(Instant.EPOCH).deadline(Instant.now().plusSeconds(600)).build());
         manager = builder().store(store).nodeId("node-a").build();
 
         assertThat(manager.stop(OWNER, "mon_00000001")).isEqualTo(MonitorManager.StopOutcome.RUNNING_ELSEWHERE);
@@ -295,6 +299,123 @@ class MonitorManagerTest {
         assertThat(queue.snapshot().get(0).getInputText()).doesNotContain("</system-reminder>");
     }
 
+    @Test
+    @DisplayName("a queue listener that drains synchronously on ENQUEUED does not stall the monitor")
+    void synchronousDrainOnEnqueueIsSeen() {
+        final List<String> delivered = new CopyOnWriteArrayList<>();
+        queue.addListener(event -> {
+            if (event.getChangeType() == MessageQueueListener.ChangeType.ENQUEUED) {
+                queue.drainForInjection(q -> true, QueuedInputPriority.LATER)
+                        .forEach(q -> delivered.add(q.getInputText()));
+            }
+        });
+        manager = builder().build();
+        start(manager, OWNER);
+
+        fake.sink().emit("first");
+        await(() -> delivered.size() == 1);
+        fake.sink().emit("second");
+        await(() -> delivered.size() == 2);
+
+        assertThat(delivered.get(1)).endsWith("second");
+    }
+
+    @Test
+    @DisplayName("a source whose stop blocks does not hold up another monitor's timeout")
+    void blockingStopDoesNotDelayTimers() {
+        final CountDownLatch release = new CountDownLatch(1);
+        final MonitorSourceFactory slow = new MonitorSourceFactory() {
+            @Override
+            public String kind() {
+                return "slow";
+            }
+
+            @Override
+            public String describe() {
+                return "slow — stop blocks";
+            }
+
+            @Override
+            public MonitorSource create(MonitorRequest request) {
+                return sink -> () -> {
+                    try {
+                        release.await(10, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                };
+            }
+        };
+        manager = builder().source(slow).build();
+        try {
+            manager.start(MonitorRequest.builder().owner(OWNER).kind("slow").description("slow")
+                    .timeout(Duration.ofSeconds(1)).build());
+            manager.start(MonitorRequest.builder().owner(OWNER).kind(FakeSourceFactory.KIND).description("quick")
+                    .timeout(Duration.ofSeconds(2)).build());
+
+            await(() -> queue.snapshot().stream().anyMatch(q -> q.getInputText().contains("(quick) ended")));
+        } finally {
+            release.countDown();
+        }
+    }
+
+    @Test
+    @DisplayName("the node-wide cap is enforced across owners")
+    void nodeWideCap() {
+        manager = builder().maxRunning(2).build();
+        start(manager, OWNER);
+        start(manager, BackgroundTaskOwner.of(RUNTIME, SessionId.of("session-2"), null));
+
+        assertThatThrownBy(() -> start(manager, BackgroundTaskOwner.of(RUNTIME, SessionId.of("session-3"), null)))
+                .isInstanceOf(MonitorRequestException.class).hasMessageContaining("This node already runs");
+    }
+
+    @Test
+    @DisplayName("another node's record past its deadline is gone, not running elsewhere")
+    void staleRecordIsNotFound() {
+        final InMemoryMonitorStore store = new InMemoryMonitorStore();
+        store.putIfAbsent(MonitorRecord.builder().monitorId("mon_00000002").owner(OWNER).nodeId("node-b").kind("x")
+                .description("d").startedAt(Instant.EPOCH).deadline(Instant.now().minusSeconds(60)).build());
+        manager = builder().store(store).nodeId("node-a").build();
+
+        assertThat(manager.stop(OWNER, "mon_00000002")).isEqualTo(MonitorManager.StopOutcome.NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("the factory is handed the timeout the manager settled on, default and clamp included")
+    void factorySeesEffectiveTimeout() {
+        manager = builder().defaultTimeout(Duration.ofMinutes(3)).maxTimeout(Duration.ofMinutes(10)).build();
+        start(manager, OWNER);
+        manager.start(MonitorRequest.builder().owner(OWNER).kind(FakeSourceFactory.KIND).description("d")
+                .timeout(Duration.ofHours(2)).build());
+
+        assertThat(fake.timeouts).containsExactly(Duration.ofMinutes(3), Duration.ofMinutes(10));
+    }
+
+    @Test
+    @DisplayName("built-in kinds are created lazily: excluded, replaced or dropped by sources(...) as asked")
+    void builtInKindsAreOptional() {
+        try (MonitorManager excluded = MonitorManager.builder(queue).excludeSource("shell").build()) {
+            assertThat(excluded.sources()).extracting(MonitorSourceFactory::kind).containsExactly("websocket");
+        }
+        try (MonitorManager replaced = MonitorManager.builder(queue).sources(List.of(fake)).build()) {
+            assertThat(replaced.sources()).extracting(MonitorSourceFactory::kind).containsExactly("fake");
+        }
+    }
+
+    @Test
+    @DisplayName("a deleted session's waiting batch is taken back out of the queue")
+    void deletedSessionDiscardsQueuedBatch() {
+        manager = builder().build();
+        start(manager, OWNER);
+        fake.sink().emit("never read");
+        await(() -> queue.snapshot().size() == 1);
+
+        manager.stopSession(SESSION);
+
+        assertThat(queue.snapshot()).isEmpty();
+    }
+
     private static void await(BooleanSupplier condition) {
         final long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
         while (!condition.getAsBoolean()) {
@@ -319,6 +440,7 @@ class MonitorManagerTest {
         final AtomicInteger stops = new AtomicInteger();
         final List<MonitorEventSink> sinks = new CopyOnWriteArrayList<>();
         final AtomicReference<MonitorEventSink> last = new AtomicReference<>();
+        final List<Duration> timeouts = new CopyOnWriteArrayList<>();
         volatile boolean failOnStart;
 
         @Override
@@ -334,6 +456,7 @@ class MonitorManagerTest {
         @Override
         public MonitorSource create(MonitorRequest request) {
             created.incrementAndGet();
+            request.getTimeout().ifPresent(timeouts::add);
             return sink -> {
                 if (failOnStart) {
                     throw new IllegalStateException("cannot connect");

@@ -7,13 +7,16 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
@@ -48,10 +51,10 @@ import at.aimon.core.tools.monitor.exception.MonitorRequestException;
  * <p>
  * <b>Delivery.</b> Events go to the stack's {@link MessageQueueManager} as {@link QueuedInputPriority#NEXT} entries
  * addressed to the owner's session ({@link QueuedInput#getSessionId()}): a running turn reads them at its next
- * tool-using iteration, an idle session at the start of its next turn. A monitor keeps <em>at most one</em> entry in
- * the
- * queue: events that arrive while its entry is still waiting are buffered here and sent as one entry once that one has
- * been drained — so a session that is away for a while comes back to one message per monitor, not hundreds (§6.3). The
+ * tool-using iteration, an idle session at the start of its next turn. A monitor keeps <em>at most one</em> batch
+ * waiting in the queue (its end notice may follow it): events that arrive while its batch is still waiting are buffered
+ * here and sent as one entry once that one has been drained — so a session that is away for a while comes back to one
+ * message per monitor, not hundreds (§6.3). The
  * buffer is bounded; when it overflows the oldest events are dropped and the next message says how many.
  *
  * <p>
@@ -94,6 +97,7 @@ public final class MonitorManager implements AutoCloseable {
     private static final int MAX_ID_ATTEMPTS = 16;
     private static final Pattern KIND = Pattern.compile("[a-z0-9][a-z0-9-]*");
     private static final Duration RATE_WINDOW = Duration.ofMinutes(1);
+    private static final long CLOSE_WAIT_SECONDS = 5;
 
     /** How a monitor ended. */
     private enum Ending {
@@ -132,16 +136,20 @@ public final class MonitorManager implements AutoCloseable {
     private final Duration maxTimeout;
     private final Clock clock;
     private final ScheduledExecutorService scheduler;
+    private final ExecutorService stopper;
+    private final List<AutoCloseable> ownedSources;
     private final Map<String, Running> monitors = new ConcurrentHashMap<>();
     private final Object startLock = new Object();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final MessageQueueListener queueListener = this::onQueueEvent;
 
-    private MonitorManager(Builder builder) {
+    private MonitorManager(Builder builder, Map<String, MonitorSourceFactory> sources,
+            List<AutoCloseable> ownedSources) {
         this.queue = builder.queue;
         this.store = builder.store != null ? builder.store : new InMemoryMonitorStore();
         this.nodeId = builder.nodeId != null ? builder.nodeId : "node-" + UUID.randomUUID();
-        this.sources = Collections.unmodifiableMap(new LinkedHashMap<>(builder.sources));
+        this.sources = Collections.unmodifiableMap(new LinkedHashMap<>(sources));
+        this.ownedSources = List.copyOf(ownedSources);
         this.batchWindow = builder.batchWindow;
         this.maxLineChars = builder.maxLineChars;
         this.maxBufferedEvents = builder.maxBufferedEvents;
@@ -154,6 +162,13 @@ public final class MonitorManager implements AutoCloseable {
         this.clock = builder.clock;
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             final Thread t = new Thread(r, "monitor-timers");
+            t.setDaemon(true);
+            return t;
+        });
+        // Stopping a source can take a while (a process tree's SIGTERM grace, a consumer's close), and it must not
+        // hold up the timer thread every other monitor's batches and timeouts run on.
+        this.stopper = Executors.newCachedThreadPool(r -> {
+            final Thread t = new Thread(r, "monitor-stop");
             t.setDaemon(true);
             return t;
         });
@@ -220,10 +235,13 @@ public final class MonitorManager implements AutoCloseable {
                     + String.join(", ", sources.keySet()) + '.');
         }
         final Duration timeout = clampTimeout(request.getTimeout().orElse(defaultTimeout));
+        // The factory sees the timeout the monitor will actually have, so a source with a limit of its own (the
+        // shell's) sets it past this one and the manager's timer is what ends the monitor.
+        final MonitorRequest effective = request.withTimeout(timeout);
 
         final MonitorSource source;
         try {
-            source = Objects.requireNonNull(factory.create(request), "factory returned no source");
+            source = Objects.requireNonNull(factory.create(effective), "factory returned no source");
         } catch (MonitorRequestException e) {
             throw e;
         } catch (RuntimeException e) {
@@ -283,9 +301,11 @@ public final class MonitorManager implements AutoCloseable {
             log.warn("Monitor store lookup failed for {}: {}", monitorId, e.toString());
             return StopOutcome.NOT_FOUND;
         }
-        return elsewhere.filter(r -> r.getOwner().equals(owner) && !r.getNodeId().equals(nodeId)).isPresent()
-                ? StopOutcome.RUNNING_ELSEWHERE
-                : StopOutcome.NOT_FOUND;
+        // A record past its deadline is a node that died without removing it: nothing runs there any more.
+        final Instant now = clock.instant();
+        return elsewhere.filter(
+                r -> r.getOwner().equals(owner) && !r.getNodeId().equals(nodeId) && r.getDeadline().isAfter(now))
+                .isPresent() ? StopOutcome.RUNNING_ELSEWHERE : StopOutcome.NOT_FOUND;
     }
 
     /**
@@ -331,18 +351,40 @@ public final class MonitorManager implements AutoCloseable {
     }
 
     /**
-     * Stops every monitor without telling the model, and stops listening to the queue. Idempotent.
+     * Stops every monitor without telling the model, and stops listening to the queue. Waits up to
+     * {@value #CLOSE_WAIT_SECONDS} seconds for the sources to stop. Idempotent.
      */
     @Override
     public void close() {
-        if (!closed.compareAndSet(false, true)) {
-            return;
+        final List<Running> toEnd;
+        // Under the start lock, so a monitor is either registered before this snapshot (and ended here) or refused
+        // by start's own check of the flag.
+        synchronized (startLock) {
+            if (!closed.compareAndSet(false, true)) {
+                return;
+            }
+            toEnd = List.copyOf(monitors.values());
         }
         queue.removeListener(queueListener);
-        for (Running running : List.copyOf(monitors.values())) {
+        for (Running running : toEnd) {
             running.end(Ending.SHUTDOWN, null);
         }
         scheduler.shutdownNow();
+        stopper.shutdown();
+        try {
+            if (!stopper.awaitTermination(CLOSE_WAIT_SECONDS, TimeUnit.SECONDS)) {
+                log.warn("Monitor sources were still stopping after {}s", CLOSE_WAIT_SECONDS);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        for (AutoCloseable owned : ownedSources) {
+            try {
+                owned.close();
+            } catch (Exception e) {
+                log.warn("Monitor source factory did not close cleanly: {}", e.toString());
+            }
+        }
     }
 
     private void ensureOpen() {
@@ -360,6 +402,8 @@ public final class MonitorManager implements AutoCloseable {
 
     private MonitorRecord recordNew(MonitorRecord.Builder template) {
         for (int attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt++) {
+            // 32 random bits are enough: ids are found only by their owner, so it is the owner check, not the id's
+            // secrecy, that keeps one session out of another's monitors.
             final String id = ID_PREFIX + String.format("%08x", ThreadLocalRandom.current().nextInt());
             if (monitors.containsKey(id)) {
                 continue;
@@ -403,6 +447,14 @@ public final class MonitorManager implements AutoCloseable {
         }
     }
 
+    private void stopAsync(MonitorHandle handle) {
+        try {
+            stopper.execute(() -> stopQuietly(handle));
+        } catch (RejectedExecutionException e) {
+            stopQuietly(handle);
+        }
+    }
+
     private static void stopQuietly(MonitorHandle handle) {
         try {
             handle.stop();
@@ -424,9 +476,11 @@ public final class MonitorManager implements AutoCloseable {
     }
 
     /**
-     * One running monitor: its buffer, its single queued entry, its timers. Every transition happens under its own
+     * One running monitor: its buffer, its waiting queue entry, its timers. Every transition happens under its own
      * monitor lock and {@code ended} is absorbing, so a source's completion, the timeout and a stop racing each other
-     * end it once. External code — the source's handle — is never called with the lock held.
+     * end it once. Nothing external is called with the lock held: the source's handle is stopped on the manager's
+     * stopper threads, and an entry is queued after the lock is released — with {@code pendingEntry} already set, so a
+     * queue listener that drains it synchronously is seen.
      */
     private final class Running implements MonitorEventSink {
 
@@ -455,9 +509,20 @@ public final class MonitorManager implements AutoCloseable {
         }
 
         void begin(MonitorSource source) {
+            boolean scheduled;
             synchronized (this) {
-                timeoutTask = scheduler.schedule(() -> end(Ending.TIMEOUT, null), timeout.toMillis(),
-                        TimeUnit.MILLISECONDS);
+                try {
+                    timeoutTask = scheduler.schedule(() -> end(Ending.TIMEOUT, null), timeout.toMillis(),
+                            TimeUnit.MILLISECONDS);
+                    scheduled = !ended;
+                } catch (RejectedExecutionException e) {
+                    scheduled = false;
+                }
+            }
+            if (!scheduled) {
+                // close() got here first: it has ended this monitor, or is about to.
+                end(Ending.SHUTDOWN, null);
+                throw new MonitorRequestException("The monitor service is shut down.");
             }
             final MonitorHandle started;
             try {
@@ -474,7 +539,7 @@ public final class MonitorManager implements AutoCloseable {
                 alreadyEnded = ended;
             }
             if (alreadyEnded) {
-                stopQuietly(started);
+                stopAsync(started);
             }
         }
 
@@ -514,6 +579,7 @@ public final class MonitorManager implements AutoCloseable {
 
         void end(Ending ending, String detail) {
             final MonitorHandle toStop;
+            QueuedInput last = null;
             synchronized (this) {
                 if (ended) {
                     return;
@@ -524,15 +590,21 @@ public final class MonitorManager implements AutoCloseable {
                 toStop = handle;
                 if (ending.told) {
                     final String batch = batchText();
-                    final String last = endLine(ending, detail);
-                    enqueue(batch == null ? last : batch + "\n\n" + last);
+                    final String notice = endLine(ending, detail);
+                    last = entry(batch == null ? notice : batch + "\n\n" + notice);
                 }
                 buffer.clear();
             }
+            if (last != null) {
+                enqueue(last);
+            }
             monitors.remove(record.getMonitorId(), this);
             removeRecordQuietly(record.getMonitorId());
+            if (ending == Ending.SESSION_DELETED) {
+                discardQueued();
+            }
             if (toStop != null) {
-                stopQuietly(toStop);
+                stopAsync(toStop);
             }
             log.debug("Monitor {} ended: {}", record.getMonitorId(), ending);
         }
@@ -546,16 +618,40 @@ public final class MonitorManager implements AutoCloseable {
             }
         }
 
-        private synchronized void flush() {
-            if (ended || pendingEntry != null) {
-                return;
-            }
-            final String batch = batchText();
-            if (batch != null) {
-                enqueue(batch);
+        private void flush() {
+            final QueuedInput next;
+            synchronized (this) {
+                if (ended || pendingEntry != null) {
+                    return;
+                }
+                final String batch = batchText();
+                if (batch == null) {
+                    return;
+                }
+                next = entry(batch);
+                pendingEntry = next.getUuid();
                 buffer.clear();
                 bufferedChars = 0;
                 dropped = 0;
+            }
+            if (!enqueue(next)) {
+                synchronized (this) {
+                    if (next.getUuid().equals(pendingEntry)) {
+                        pendingEntry = null;
+                    }
+                }
+            }
+        }
+
+        /** A deleted session will never read what this monitor queued for it; take it back out. */
+        private void discardQueued() {
+            try {
+                queue.drainForInjection(
+                        q -> QUEUED_KIND.equals(q.getMetadata().get(QUEUED_KIND_KEY))
+                                && record.getMonitorId().equals(q.getMetadata().get(QUEUED_MONITOR_ID_KEY)),
+                        QueuedInputPriority.LATER);
+            } catch (RuntimeException e) {
+                log.warn("Monitor {} could not discard its queued events: {}", record.getMonitorId(), e.toString());
             }
         }
 
@@ -614,17 +710,22 @@ public final class MonitorManager implements AutoCloseable {
             return "Monitor " + record.getMonitorId() + " (" + record.getDescription() + ")";
         }
 
-        private void enqueue(String text) {
+        private QueuedInput entry(String text) {
+            return QueuedInput.builder().inputText(SystemReminderFormatter.sanitizeBody(text))
+                    .priority(QueuedInputPriority.NEXT).agentRuntimeId(runtimeId).sessionId(sessionId)
+                    .metadata(Map.of(QUEUED_KIND_KEY, QUEUED_KIND, QUEUED_MONITOR_ID_KEY, record.getMonitorId()))
+                    .build();
+        }
+
+        /** Queues an entry; never called with this monitor's lock held. */
+        private boolean enqueue(QueuedInput entry) {
             try {
-                final QueuedInput entry = QueuedInput.builder().inputText(SystemReminderFormatter.sanitizeBody(text))
-                        .priority(QueuedInputPriority.NEXT).agentRuntimeId(runtimeId).sessionId(sessionId)
-                        .metadata(Map.of(QUEUED_KIND_KEY, QUEUED_KIND, QUEUED_MONITOR_ID_KEY, record.getMonitorId()))
-                        .build();
                 queue.enqueue(entry);
-                pendingEntry = entry.getUuid();
+                return true;
             } catch (RuntimeException e) {
                 log.warn("Monitor {} could not queue its events; they are lost: {}", record.getMonitorId(),
                         e.toString());
+                return false;
             }
         }
 
@@ -640,6 +741,8 @@ public final class MonitorManager implements AutoCloseable {
 
         private final MessageQueueManager queue;
         private final Map<String, MonitorSourceFactory> sources = new LinkedHashMap<>();
+        private boolean replaceDefaults;
+        private final Set<String> excluded = new HashSet<>();
         private MonitorStore store;
         private String nodeId;
         private Duration batchWindow = Duration.ofSeconds(1);
@@ -655,12 +758,10 @@ public final class MonitorManager implements AutoCloseable {
 
         private Builder(MessageQueueManager queue) {
             this.queue = Objects.requireNonNull(queue, "queue must not be null");
-            source(new ShellMonitorSourceFactory());
-            source(new WebSocketMonitorSourceFactory());
         }
 
         /**
-         * Registers a source factory, replacing one of the same kind.
+         * Registers a source factory, replacing one of the same kind — a built-in one included.
          *
          * @param factory
          *            the factory (must not be null)
@@ -688,8 +789,22 @@ public final class MonitorManager implements AutoCloseable {
          */
         public Builder sources(List<? extends MonitorSourceFactory> factories) {
             Objects.requireNonNull(factories, "factories must not be null");
+            replaceDefaults = true;
             sources.clear();
             factories.forEach(this::source);
+            return this;
+        }
+
+        /**
+         * Leaves a kind out — a built-in one, typically: an assembly without {@code Bash} excludes {@code shell}, so a
+         * monitor cannot run the commands the deployment turned off. Wins over {@link #source(MonitorSourceFactory)}.
+         *
+         * @param kind
+         *            the kind to leave out (must not be null)
+         * @return this builder
+         */
+        public Builder excludeSource(String kind) {
+            excluded.add(Objects.requireNonNull(kind, "kind must not be null"));
             return this;
         }
 
@@ -815,10 +930,30 @@ public final class MonitorManager implements AutoCloseable {
         }
 
         /**
+         * Builds the manager. The built-in {@code shell} and {@code websocket} sources are created here — only those
+         * not replaced by a source of the same kind, and none after {@link #sources(List)} — and closed with the
+         * manager.
+         *
          * @return the manager, listening to the queue
          */
         public MonitorManager build() {
-            return new MonitorManager(this);
+            final Map<String, MonitorSourceFactory> resolved = new LinkedHashMap<>();
+            final List<AutoCloseable> owned = new ArrayList<>();
+            if (!replaceDefaults) {
+                if (!sources.containsKey(ShellMonitorSourceFactory.KIND)
+                        && !excluded.contains(ShellMonitorSourceFactory.KIND)) {
+                    resolved.put(ShellMonitorSourceFactory.KIND, new ShellMonitorSourceFactory());
+                }
+                if (!sources.containsKey(WebSocketMonitorSourceFactory.KIND)
+                        && !excluded.contains(WebSocketMonitorSourceFactory.KIND)) {
+                    final WebSocketMonitorSourceFactory webSocket = new WebSocketMonitorSourceFactory();
+                    resolved.put(WebSocketMonitorSourceFactory.KIND, webSocket);
+                    owned.add(webSocket);
+                }
+            }
+            resolved.putAll(sources);
+            resolved.keySet().removeAll(excluded);
+            return new MonitorManager(this, resolved, owned);
         }
 
         private static Duration positive(Duration value, String name) {

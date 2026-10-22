@@ -35,15 +35,12 @@ import at.aimon.core.agent.tool.ToolInput;
  * {@link PermissionSubject.Kind} selects ({@link ToolPattern} for a command, {@link PathPattern} for a path)
  * <li>The tool supplies a {@link CustomToolPermissionRule} → delegate to it
  * <li>Otherwise → <b>deny</b>
+ * <li>Steps 3–5 permitted and the tool delegates a check ({@link ToolPermissionDelegationAware}) → apply steps 2, 3
+ * and 4 once more, to the delegated tool's entries and subject. A {@code Monitor} command must also be admitted by the
+ * {@code Bash} entries; no {@code Bash} entry denies it
  * </ol>
  *
- * <p>
- * A call the steps above permit must then pass the check its tool delegates, if any
- * ({@link ToolPermissionDelegationAware}): the same rules, applied to another tool's entries — a {@code Monitor}
- * command
- * must also be admitted by the {@code Bash} entries.
- *
- * <h2>The last line used to permit</h2>
+ * <h2>Step 6 used to permit</h2>
  *
  * <p>
  * A pattern is configured and nothing can interpret it. That state used to be treated as unrestricted access — the

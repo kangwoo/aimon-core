@@ -917,6 +917,26 @@ class AimonStackBuilderTest {
     }
 
     @Test
+    @DisplayName("a stack without Bash offers no shell monitor; the websocket source has its own switch")
+    void shellMonitorFollowsBash(@TempDir Path workspace) {
+        final AimonStackSpec spec = specFor(workspace, "ops").tools(
+                ToolSpec.builder().bashEnabled(false).monitorEnabled(true).monitorWebSocketEnabled(false).build())
+                .build();
+        try (AimonStack stack = AimonStackBuilder.build(spec)) {
+            final OrcaAgentRuntime runtime = stack.agentRuntimeRegistry().get(AgentRuntimeId.fromName("ops"))
+                    .map(OrcaAgentRuntime.class::cast).orElseThrow();
+            final Tool monitor = runtime.getToolRegistry().findByName(MonitorTool.TOOL_NAME).orElseThrow();
+            final ToolResult refused = monitor.execute(ToolInput.of(Map.of("description", "d", "command", "id")),
+                    ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, runtime.getId())
+                            .put(ToolContextKeys.SESSION_ID, SessionId.of("s")).build());
+            assertThat(refused.isError()).isTrue();
+            assertThat(refused.getContent()).contains("Unknown monitor source 'shell'");
+            assertThat(monitor.getDefinition().getDescription()).doesNotContain("- shell:")
+                    .doesNotContain("- websocket:");
+        }
+    }
+
+    @Test
     @DisplayName("deleting a session through the router stops that session's monitors")
     void sessionDeleteStopsMonitors(@TempDir Path workspace) {
         final AtomicInteger stops = new AtomicInteger();

@@ -58,7 +58,9 @@ import at.aimon.core.tools.monitor.MonitorStore;
  * {@link Builder#monitorEnabled(boolean)} registers {@code Monitor} and {@code MonitorStop} over one
  * application-scoped {@code MonitorManager} that delivers to the stack's message queue. It is off by default: a
  * monitor puts messages into a session's conversation that nobody typed, and a {@code command} monitor runs a shell
- * command for up to half an hour. Host sources ({@link Builder#addMonitorSource(MonitorSourceFactory)}) are how a
+ * command for up to half an hour. The built-in {@code shell} source exists only when Bash does — turning Bash off turns
+ * command monitors off with it, allowed-tools list or not. Host sources
+ * ({@link Builder#addMonitorSource(MonitorSourceFactory)}) are how a
  * stack offers monitors without a shell.
  */
 public final class ToolSpec {
@@ -73,6 +75,7 @@ public final class ToolSpec {
     private final McpServerConfigProvider mcpServerConfigProvider;
     private final BackgroundBashStore backgroundBashStore;
     private final boolean monitorEnabled;
+    private final boolean monitorWebSocketEnabled;
     private final List<MonitorSourceFactory> monitorSources;
     private final MonitorStore monitorStore;
 
@@ -89,6 +92,7 @@ public final class ToolSpec {
         this.mcpServerConfigProvider = builder.mcpServerConfigProvider;
         this.backgroundBashStore = builder.backgroundBashStore;
         this.monitorEnabled = builder.monitorEnabled;
+        this.monitorWebSocketEnabled = builder.monitorWebSocketEnabled;
         this.monitorSources = List.copyOf(builder.monitorSources);
         this.monitorStore = builder.monitorStore;
 
@@ -193,6 +197,16 @@ public final class ToolSpec {
     }
 
     /**
+     * Returns whether the built-in {@code websocket} monitor source is offered. The built-in {@code shell} source
+     * follows {@link #isBashEnabled()} instead: a stack without {@code Bash} offers no command monitor either.
+     *
+     * @return {@code true} when monitors may open WebSockets (the default)
+     */
+    public boolean isMonitorWebSocketEnabled() {
+        return monitorWebSocketEnabled;
+    }
+
+    /**
      * Returns the host's monitor sources, registered beside the built-in {@code shell} one (a host source of the same
      * kind replaces it).
      *
@@ -294,6 +308,7 @@ public final class ToolSpec {
         private McpServerConfigProvider mcpServerConfigProvider;
         private BackgroundBashStore backgroundBashStore;
         private boolean monitorEnabled;
+        private boolean monitorWebSocketEnabled = true;
         private final List<MonitorSourceFactory> monitorSources = new ArrayList<>();
         private MonitorStore monitorStore;
 
@@ -309,6 +324,19 @@ public final class ToolSpec {
          */
         public Builder monitorEnabled(boolean monitorEnabled) {
             this.monitorEnabled = monitorEnabled;
+            return this;
+        }
+
+        /**
+         * Keeps or removes the built-in {@code websocket} monitor source (default: kept). Unused unless monitors are
+         * enabled.
+         *
+         * @param monitorWebSocketEnabled
+         *            whether monitors may open WebSockets
+         * @return this builder
+         */
+        public Builder monitorWebSocketEnabled(boolean monitorWebSocketEnabled) {
+            this.monitorWebSocketEnabled = monitorWebSocketEnabled;
             return this;
         }
 

@@ -96,6 +96,8 @@ public final class ShellMonitorSourceFactory implements MonitorSourceFactory {
                     + " and stop it, so it cannot run a shell monitor. Use Bash with run_in_background for a command"
                     + " that ends on its own.");
         }
+        // The manager hands over the timeout it settled on; the shell's own limit sits past it, so the manager's timer
+        // ends the monitor and says "timed out" rather than the shell's kill reporting a failure.
         final Duration timeout = request.getTimeout().orElse(MonitorManager.MAX_TIMEOUT).plus(SHELL_TIMEOUT_MARGIN);
         return new ShellMonitorSource(environment, command, timeout);
     }

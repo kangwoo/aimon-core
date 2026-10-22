@@ -38,6 +38,10 @@ aimon:
 `MonitorSourceFactory` 빈은 모두 모니터 source 로 등록되고(§5), `MonitorStore` 빈이 있으면 실행 중인 모니터
 기록을 그 저장소에 둔다(§8).
 
+**명령 모니터는 `Bash` 를 따른다.** 내장 `shell` source 는 `aimon.tools.bash.enabled` 가 켜져 있을 때만 있다 —
+Spring Boot 에서 `Bash` 는 기본으로 꺼져 있으므로, 모니터만 켜면 `ws` 와 호스트 source 만 쓸 수 있다. WebSocket
+source 는 `aimon.tools.monitor.websocket-enabled: false` 로 끈다.
+
 ### 2.2 CLI
 
 `aimon.yaml` 의 `cli` 절:
@@ -60,6 +64,8 @@ AimonStackSpec spec = AimonStackSpec.builder()
 ```
 
 스택이 `MonitorManager` 를 하나 만들어 모든 에이전트 런타임이 나눠 쓰게 하고, 스택이 닫힐 때 함께 닫는다.
+`bashEnabled(false)` 인 스택에는 `shell` source 가 없고, `monitorWebSocketEnabled(false)` 는 `websocket` source 를
+뺀다.
 
 ### 2.4 코어만 쓸 때
 
@@ -218,7 +224,7 @@ source 가 지켜야 할 계약:
 |------|-----------|
 | `Monitor` | 모든 형태 — 단, 명령은 아래 `Bash` 규칙을 함께 따른다 |
 | `Monitor(source:alarms)` | `alarms` source 만 |
-| `Monitor(ws:wss://events.example.com/*)` | 그 접두사로 시작하는 WebSocket URL 만 (끝의 `*` 만 와일드카드) |
+| `Monitor(ws:wss://events.example.com/*)` | 그 접두사로 시작하는 WebSocket URL 만 (끝의 `*` 만 와일드카드 — `/*` 로 끝낼 것: `…example.com*` 은 `…example.com.evil.net` 에도 맞는다) |
 | `Monitor(tail -f:*)` | 그 명령 패턴에 맞는 명령만 |
 
 **명령 형태는 `Bash` 항목도 통과해야 한다.** `Bash(git:*)` 와 `Monitor` 를 함께 허용한 에이전트는 `git` 으로

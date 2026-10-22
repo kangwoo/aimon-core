@@ -98,7 +98,8 @@ public final class MonitorRequest {
     }
 
     /**
-     * @return how long the monitor may run, or empty for the manager's default
+     * @return how long the monitor may run; a factory always sees the timeout the manager settled on, a request built
+     *         by a caller may leave it empty for the manager's default
      */
     public Optional<Duration> getTimeout() {
         return Optional.ofNullable(timeout);
@@ -112,6 +113,19 @@ public final class MonitorRequest {
      */
     public ToolContext getContext() {
         return context;
+    }
+
+    /**
+     * Returns this request with another timeout — the one the manager settled on, which is what a factory is given.
+     *
+     * @param newTimeout
+     *            the timeout (must be positive)
+     * @return a copy with that timeout
+     */
+    public MonitorRequest withTimeout(Duration newTimeout) {
+        Objects.requireNonNull(newTimeout, "newTimeout must not be null");
+        return builder().owner(owner).kind(kind).params(params).description(description).timeout(newTimeout)
+                .context(context).build();
     }
 
     /** Builder for {@link MonitorRequest}. */

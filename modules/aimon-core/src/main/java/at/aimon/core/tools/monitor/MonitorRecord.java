@@ -92,6 +92,21 @@ public final class MonitorRecord {
     }
 
     @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        return o instanceof MonitorRecord that && monitorId.equals(that.monitorId) && owner.equals(that.owner)
+                && nodeId.equals(that.nodeId) && kind.equals(that.kind) && description.equals(that.description)
+                && startedAt.equals(that.startedAt) && deadline.equals(that.deadline);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(monitorId, owner, nodeId, kind, description, startedAt, deadline);
+    }
+
+    @Override
     public String toString() {
         return "MonitorRecord{id=" + monitorId + ", kind=" + kind + ", node=" + nodeId + ", owner=" + owner + '}';
     }

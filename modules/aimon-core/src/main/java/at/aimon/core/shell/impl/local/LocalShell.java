@@ -907,6 +907,7 @@ public final class LocalShell implements VirtualShell {
         private final ByteBuffer buffer = ByteBuffer.allocate(STREAM_BUFFER_SIZE);
         private final ByteArrayOutputStream pending = new ByteArrayOutputStream();
         private long position;
+        private boolean readFailureLogged;
 
         LineTail(FileChannel channel, Charset charset, ShellLineListener listener) {
             this.channel = channel;
@@ -927,13 +928,17 @@ public final class LocalShell implements VirtualShell {
                         } else {
                             pending.write(b);
                             if (pending.size() >= MAX_STREAMED_LINE_BYTES) {
-                                emit();
+                                emitOverlong();
                             }
                         }
                     }
                 }
             } catch (IOException e) {
-                log.warn("Failed to read streaming output ({}); later lines may be missing.", e.toString());
+                // Once: this runs every poll interval for as long as the command does.
+                if (!readFailureLogged) {
+                    readFailureLogged = true;
+                    log.warn("Failed to read streaming output ({}); later lines may be missing.", e.toString());
+                }
             }
         }
 
@@ -945,9 +950,48 @@ public final class LocalShell implements VirtualShell {
             }
         }
 
-        private void emit() {
-            String line = pending.toString(charset);
+        /**
+         * Hands over a run that reached the length cap without a line terminator. In UTF-8 the cut backs off to the
+         * start of a character the run ends in the middle of, which stays pending, so no character is split into two
+         * replacement characters.
+         */
+        private void emitOverlong() {
+            final byte[] bytes = pending.toByteArray();
+            int cut = bytes.length;
+            if (StandardCharsets.UTF_8.equals(charset)) {
+                int lead = bytes.length - 1;
+                int continuation = 0;
+                while (lead >= 0 && continuation < 3 && (bytes[lead] & 0xC0) == 0x80) {
+                    lead--;
+                    continuation++;
+                }
+                if (lead >= 0 && continuation < utf8Continuations(bytes[lead])) {
+                    cut = lead;
+                }
+            }
             pending.reset();
+            pending.write(bytes, cut, bytes.length - cut);
+            deliver(new String(bytes, 0, cut, charset));
+        }
+
+        private static int utf8Continuations(byte lead) {
+            if ((lead & 0xE0) == 0xC0) {
+                return 1;
+            }
+            if ((lead & 0xF0) == 0xE0) {
+                return 2;
+            }
+            return (lead & 0xF8) == 0xF0 ? 3 : 0;
+        }
+
+        private void emit() {
+            final String line = pending.toString(charset);
+            pending.reset();
+            deliver(line);
+        }
+
+        private void deliver(String raw) {
+            String line = raw;
             if (line.endsWith("\r")) {
                 line = line.substring(0, line.length() - 1);
             }

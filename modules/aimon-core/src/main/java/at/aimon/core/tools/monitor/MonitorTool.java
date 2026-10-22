@@ -39,10 +39,11 @@ import at.aimon.core.tools.monitor.exception.MonitorRequestException;
  *
  * <p>
  * <b>Permissions.</b> The {@code command} form is judged like {@code Bash}: its subject is the command
- * ({@link PermissionSubject#command(String)}), so {@code Monitor(tail -f *)} reads as it would for {@code Bash}. The
+ * ({@link PermissionSubject#command(String)}), so {@code Monitor(tail -f:*)} reads as it would for {@code Bash}. The
  * other forms have no subject the framework knows — there is no URL kind — so this tool's own rule judges them,
  * matching each configured pattern against {@code ws:<url>} or {@code source:<kind>}; a trailing {@code *} is the only
- * wildcard (§4.4).
+ * wildcard (§4.4). End a URL pattern with {@code /*}: {@code ws:wss://api.example.com*} also matches
+ * {@code wss://api.example.com.evil.net}.
  *
  * <p>
  * A {@code command} must also be admitted by the {@code Bash} entries ({@link ToolPermissionDelegationAware}): a list
@@ -79,7 +80,7 @@ public class MonitorTool extends AbstractTool
      */
     public MonitorTool(MonitorManager manager) {
         super(TOOL_NAME, describe(Objects.requireNonNull(manager, "manager must not be null")),
-                ToolCategories.EXECUTION, createInputSchema());
+                ToolCategories.EXECUTION, createInputSchema(manager.getMaxTimeout()));
         this.manager = manager;
     }
 
@@ -105,14 +106,15 @@ public class MonitorTool extends AbstractTool
         return text.toString();
     }
 
-    private static Map<String, Object> createInputSchema() {
+    private static Map<String, Object> createInputSchema(Duration maxTimeout) {
         final Map<String, Object> properties = new LinkedHashMap<>();
         properties.put("description", Map.of("type", "string", "description",
                 "What is watched, in a few words (shown with every event), e.g. \"errors in deploy.log\""));
         properties.put("timeout_ms",
                 Map.of("type", "integer", "description",
-                        "How long the monitor may run, in milliseconds (min 1000, max 1800000)", "minimum",
-                        MonitorManager.MIN_TIMEOUT.toMillis(), "maximum", MonitorManager.MAX_TIMEOUT.toMillis()));
+                        "How long the monitor may run, in milliseconds (min " + MonitorManager.MIN_TIMEOUT.toMillis()
+                                + ", max " + maxTimeout.toMillis() + ")",
+                        "minimum", MonitorManager.MIN_TIMEOUT.toMillis(), "maximum", maxTimeout.toMillis()));
         properties.put("command",
                 Map.of("type", "string", "description", "Shell command; each line it prints to stdout is one event"));
         properties.put("ws",

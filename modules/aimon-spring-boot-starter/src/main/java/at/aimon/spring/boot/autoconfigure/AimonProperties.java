@@ -2445,6 +2445,25 @@ public class AimonProperties implements InitializingBean {
              */
             private boolean enabled;
 
+            /**
+             * Whether monitors may open WebSockets (the built-in {@code websocket} source; public hosts only). The
+             * built-in {@code shell} source follows {@code aimon.tools.bash.enabled} instead.
+             */
+            private boolean websocketEnabled = true;
+
+            /** @return whether monitors may open WebSockets */
+            public boolean isWebsocketEnabled() {
+                return websocketEnabled;
+            }
+
+            /**
+             * @param websocketEnabled
+             *            whether monitors may open WebSockets
+             */
+            public void setWebsocketEnabled(boolean websocketEnabled) {
+                this.websocketEnabled = websocketEnabled;
+            }
+
             /** @return whether {@code Monitor} and {@code MonitorStop} are registered */
             public boolean isEnabled() {
                 return enabled;

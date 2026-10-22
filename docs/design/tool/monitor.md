@@ -145,8 +145,11 @@ MonitorManager.builder(queue)
 params: {"severity": "critical"}`), 원시 명령이나 URL 을 쓰지 않는다. 연결 정보·자격 증명·필터는 호스트
 코드에 있고, 모델이 그것을 바꿀 수 없다. 운영 자동화에서는 이쪽이 셸보다 안전하고 흔할 것이다.
 
-기본 kind 도 같은 등록 경로를 탄다. `MonitorManager.Builder` 는 `shell` 과 `websocket` 을 기본으로 넣고,
-조립이 `sources(...)` 로 목록 전체를 바꿀 수 있다.
+기본 kind 도 같은 등록 경로를 탄다. `MonitorManager.Builder` 는 `shell` 과 `websocket` 을 기본으로 만들고(빌드
+시점에, 대체되거나 빠진 것은 만들지 않는다), 조립은 `excludeSource(kind)` 로 하나를 빼거나 `sources(...)` 로
+목록 전체를 바꿀 수 있다. **스택은 `Bash` 가 꺼져 있으면 `shell` 을 뺀다.** 허용 도구 목록이 없는 배포에서는
+`Bash` 위임 검사(§4.4)가 돌 항목이 없으므로, 그렇지 않으면 `Bash` 를 끈 배포에서도 모니터로 명령을 돌릴 수
+있게 된다. `websocket` 은 `ToolSpec.monitorWebSocketEnabled` 로 끈다.
 
 ### 4.3 도구 입력
 
@@ -477,4 +480,5 @@ Spring Boot starter 속성과 원격 샌드박스 셸의 `STREAMING`(별도 저�
 | 소유자 타입 (옛 M-1) | `tools.bash.BackgroundBashOwner` 를 빌려 쓴다 | `at.aimon.core.tools.BackgroundTaskOwner` 로 옮기고 이름을 바꿨다 | 두 번째 사용자가 생긴 타입이 bash 패키지에 남으면 이름이 거짓말을 한다 |
 | `command` 의 `Bash` 패턴 상속 (옛 M-3) | 운영자가 `Monitor` 에도 패턴을 적는다 | `ToolPermissionDelegationAware` 로 `Bash` 항목도 통과해야 한다 (§4.4) | 적는 것을 잊으면 `Bash` 제한이 우회된다. 안전한 쪽이 기본이어야 한다 |
 | 세션 삭제 시 중지 (옛 M-4) | 타임아웃까지 돈다 | 삭제한 노드의 모니터는 즉시 멈춘다 (§5.2) | 삭제된 세션에는 알림을 받을 턴이 영영 오지 않는다 |
+| PR 리뷰 반영 | — | `Bash` 를 끄면 `shell` source 도 빠진다. 큐에 넣는 일과 source 중지는 모니터 락 밖에서(중지는 별도 스레드에서) 한다. 오래된 원격 레코드는 "다른 노드에서 실행 중" 이 아니다. source 는 매니저가 정한 타임아웃을 받는다. 삭제된 세션의 대기 항목은 큐에서 걷어낸다 | 리뷰가 찾은 우회·정체·경합. 각각 회귀 테스트가 있다 |
 | 멈춘 모니터의 버퍼 | 정하지 않았다 | `MonitorStop` · 세션 삭제 · 앱 종료 시 버퍼에 남은 이벤트는 버린다 | 모델이 스스로 멈췄거나 받을 턴이 없다. 종료 알림을 보내지 않는 것과 같은 이유 |
