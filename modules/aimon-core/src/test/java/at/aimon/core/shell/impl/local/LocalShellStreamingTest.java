@@ -91,6 +91,13 @@ class LocalShellStreamingTest {
                 ExecutionOptions.builder().timeout(Duration.ofSeconds(10)).redirectErrorStream(true).build(), both);
         assertThat(out).containsExactlyInAnyOrder("out", "err");
         assertThat(err).isEmpty();
+
+        // Isolated: the capture files are unlinked once the process starts, so both tails must already be open.
+        out.clear();
+        shell.execute(() -> "echo out; echo err >&2",
+                ExecutionOptions.builder().timeout(Duration.ofSeconds(10)).isolated(true).build(), both);
+        assertThat(out).containsExactly("out");
+        assertThat(err).containsExactly("err");
     }
 
     @Test

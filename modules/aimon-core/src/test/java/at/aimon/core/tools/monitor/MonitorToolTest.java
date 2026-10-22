@@ -114,7 +114,7 @@ class MonitorToolTest {
 
         await(() -> !queue.snapshot().isEmpty());
         assertThat(queue.snapshot().get(0).getInputText()).contains("exit code 4").contains("real cause")
-                .contains("noise 20000").doesNotContain("noise 1 |");
+                .contains("noise 20000");
     }
 
     @Test

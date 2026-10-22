@@ -103,7 +103,8 @@ public interface VirtualShell extends AutoCloseable {
      * listener the call behaves as {@link #execute(ShellCommand, ExecutionOptions)} does — it blocks until the command
      * ends, honours the timeout and the cancellation signal in {@code options}, and throws the same exceptions. The
      * result's {@link ShellCommandResult#stdout() stdout} may be empty: the lines have already been handed over, and a
-     * shell need not keep them a second time. Standard error is not streamed; it is in the result.
+     * shell need not keep them a second time. Standard error may be streamed too
+     * ({@link ShellLineListener#onStderrLine(String)}); it is in the result either way.
      *
      * <p>
      * A shell may refuse a <em>foreground</em> streamed call it cannot run with the foreground's semantics — a sandbox
