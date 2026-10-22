@@ -42,7 +42,7 @@
 |---|------|--------|
 | D1 | 이벤트 **생산**(source)과 **정책**(배칭·상한·소유권·전달)을 나눈다. 셸은 source 중 하나다 | §3 |
 | D2 | source 는 `MonitorSourceFactory` 로 kind 이름에 등록한다. 기본 제공은 `shell` · `websocket` 둘, 나머지는 호스트가 Java 로 등록한다 | §4 |
-| D3 | 매니저는 application-scoped, 소유권은 `BackgroundBashOwner` 를 그대로 쓴다. 세션이 있는 소유자만 시작할 수 있다 | §5 |
+| D3 | 매니저는 application-scoped, 소유권은 백그라운드 `Bash` 와 같은 `BackgroundTaskOwner` 로 정한다. 세션이 있는 소유자만 시작할 수 있고, 세션이 삭제되면 그 세션의 모니터는 멈춘다 | §5 |
 | D4 | 알림은 기존 메시지 큐(`NEXT`)로 가되, `QueuedInput` 에 선택 필드 `sessionId` 를 더해 **세션을 지정한 항목**으로 넣는다. 세션 지정 항목은 그 세션의 턴만 드레인한다 | §6.1 |
 | D5 | 실행기는 세션 지정 항목을 **턴 시작**에도 드레인한다. CLI 의 턴 뒤 재생은 세션 지정 항목을 건드리지 않는다 | §6.2 |
 | D6 | 큐에는 모니터당 **미드레인 항목을 최대 하나**만 둔다. 나머지 줄은 매니저 버퍼에 모았다가 드레인 뒤 한 항목으로 낸다 | §6.3 |
@@ -102,14 +102,15 @@ public interface MonitorSourceFactory {
 ```
  RUNNING ──emit──▶ RUNNING
     │
-    ├── complete / fail / timeout / suppressed ──▶ ENDED  (종료 알림 1회)
-    └── stop (MonitorStop · 앱 종료) ─────────────▶ ENDED  (알림 없음)
+    ├── complete / fail / timeout / suppressed ───▶ ENDED  (종료 알림 1회)
+    └── stop / session deleted / shutdown ────────▶ ENDED  (알림 없음)
 ```
 
 전이는 모니터마다 하나인 락 아래서 일어나고 `ENDED` 는 흡수 상태다. 그래서 source 스레드의 `complete`,
 타임아웃 타이머, `MonitorStop` 이 동시에 와도 이긴 하나만 전이하고 나머지는 무시된다. **종료 알림은 그
 전이 안에서 대기 버퍼를 먼저 비운 뒤** 붙는다 — 마지막 줄들이 종료 알림보다 늦게 도착하는 일이 없다.
-모델이 스스로 멈춘 경우와 앱 종료를 빼면, 어떤 이유로 끝나든 모델은 종료 알림을 정확히 한 번 받는다.
+모델이 스스로 멈춘 경우(`MonitorStop`), 세션 삭제, 앱 종료를 빼면, 어떤 이유로 끝나든 모델은 종료 알림을
+정확히 한 번 받는다.
 
 ---
 
@@ -182,8 +183,21 @@ params: {"severity": "critical"}`), 원시 명령이나 URL 을 쓰지 않는다
   `ws:<url>` / `source:<kind>` 문자열과 비교하고, 끝의 `*` 만 와일드카드다(예:
   `Monitor(ws:wss://alarms.example.com/*)`, `Monitor(source:alarms)`). 패턴 없는 `Monitor` 항목은 전부 허용
 
-`Bash` 에 걸어 둔 패턴이 `Monitor` 로 우회되지 않게 하려면 운영자가 `Monitor` 에도 패턴을 적어야 한다 —
-권한은 도구 이름별로 설정되기 때문이다(§11 M-3).
+그리고 `command` 형태는 **`Bash` 항목도 통과해야 한다.** 권한은 도구 이름별로 설정되므로, 그대로 두면
+`Bash(git:*)` 와 패턴 없는 `Monitor` 를 함께 허용한 목록에서 모니터가 `Bash` 가 막은 명령을 돌릴 수 있다.
+그래서 `MonitorTool` 은 `ToolPermissionDelegationAware` 를 구현해 "이 호출은 `Bash` 항목에도 이 명령으로
+판정받아야 한다" 고 선언하고, `DefaultToolPermissionValidator` 는 도구 자신의 항목이 허락한 뒤에 그 판정을 한
+번 더 한다.
+
+| 허용 목록 (비어 있지 않을 때) | `Monitor(command=…)` |
+|------|------|
+| `Bash` 항목이 없음 | 거절 — 이 에이전트는 명령을 돌릴 수 없다 |
+| 패턴 없는 `Bash` 만 | 허용 |
+| `Bash(git:*)` 같은 패턴 | 명령이 그 패턴과 맞아야 허용 |
+
+`Monitor` 자신의 항목이 먼저다 — `Bash` 만 있고 `Monitor` 가 없으면 모니터는 쓸 수 없다. 빈 허용 목록은
+어디서나처럼 아무것도 제한하지 않는다. 이 capability 는 모니터 전용이 아니다: 다른 도구의 능력을 대신 쓰는
+도구는 같은 방식으로 그 도구의 패턴을 물려받는다.
 
 ---
 
@@ -205,9 +219,14 @@ params: {"severity": "critical"}`), 원시 명령이나 URL 을 쓰지 않는다
 
 ### 5.2 소유자
 
-소유권은 `BackgroundBashOwner.of(ToolContext)` 를 그대로 쓴다. "누가 시작했는가"를 정하는 규칙이 두 곳에서
-갈라지지 않게 하려는 것이다. 이름이 `Bash` 를 달고 있는 것은 역사적 이유이고, 공용 이름으로 바꾸는 것은
-§11 M-1.
+소유권은 `BackgroundTaskOwner.of(ToolContext)` (`at.aimon.core.tools`) 로 정한다. 백그라운드 `Bash` 작업과 같은
+타입이고, "누가 시작했는가"를 정하는 규칙이 두 곳에서 갈라지지 않게 하려는 것이다. 이 타입은 원래
+`tools.bash.BackgroundBashOwner` 였고 모니터가 두 번째 사용자가 되면서 공용 패키지로 옮겼다
+(`docs/migration/rename-maps.md`).
+
+**세션이 삭제되면 그 세션의 모니터를 멈춘다.** 스택은 세션 라우터의 `SessionLifecycleListener` 로
+`MonitorManager.stopSession(id)` 를 건다. 모델에게 알리지 않는다 — 받을 세션이 없다. 삭제 이벤트는 삭제한
+노드에서만 발화하므로, 다른 노드에서 돌던 그 세션의 모니터는 타임아웃까지 돈다.
 
 **세션이 없는 소유자는 거절한다.** 예약 루틴이나 누구의 턴도 요청하지 않은 포크는 실행이 끝나면 알림을
 받을 주체가 사라진다. 세션의 턴과 세션을 위해 생성된 포크(`INVOKING_SESSION_ID`)는 받아들이고, 포크가
@@ -442,11 +461,8 @@ Spring Boot starter 속성과 원격 샌드박스 셸의 `STREAMING`(별도 저�
 
 ## 11. 열린 항목
 
-| id | 항목 |
-|----|------|
-| M-1 | `BackgroundBashOwner` 를 `BackgroundTaskOwner` 같은 공용 이름으로 옮긴다 — 지금은 모니터가 bash 패키지의 타입을 빌려 쓴다 |
-| M-3 | `Monitor(command)` 의 권한 패턴을 `Bash` 패턴에서 물려받게 할지 — 지금은 도구 이름별로 따로 적어야 한다 |
-| M-4 | 세션이 삭제(`SessionDeletedEvent`)되면 그 세션의 모니터를 멈춘다 — 지금은 타임아웃까지 돈다 |
+없다. 처음 열려 있던 네 항목(M-1 ~ M-4)은 모두 이 브랜치에서 닫혔고, 무엇이 바뀌었는지는 §12 에 있다.
+쉬는 세션 깨우기(§9.1)와 원격 샌드박스 셸의 `STREAMING`(§10)은 열린 항목이 아니라 의식적으로 미룬 것이다.
 
 ---
 
@@ -458,4 +474,7 @@ Spring Boot starter 속성과 원격 샌드박스 셸의 `STREAMING`(별도 저�
 | `QueuedInput.sessionId` 의 타입 | `SessionId` 로 읽힐 수 있게 적었다 | `Optional<String>` | §6.1. 패키지 순환 |
 | 기본 활성화 | 정하지 않았다 | `ToolSpec.monitorEnabled` 기본 꺼짐 | 아무도 입력하지 않은 메시지를 대화에 넣고, `command` 형태는 셸 명령을 최대 30분 돌린다 |
 | 기존 생산자의 세션 지정 (옛 열린 항목 M-2) | 별도 변경으로 미룬다 | 같은 브랜치의 후속 커밋에서 `offerAsync` · 서브에이전트 완료 알림 · `NOW` 리스너를 세션 단위로 바꿨다. CLI 재생 필터는 "세션 지정 없음" 에서 "이 세션 + 모니터 제외" 로 바뀌었다 | §6.1 의 누수는 모니터와 무관하게 있던 버그이고, 필드가 생긴 뒤에는 고치는 비용이 작았다 |
-| 멈춘 모니터의 버퍼 | 정하지 않았다 | `MonitorStop` · 앱 종료 시 버퍼에 남은 이벤트는 버린다 | 모델이 스스로 멈췄거나 받을 턴이 없다. 종료 알림을 보내지 않는 것과 같은 이유 |
+| 소유자 타입 (옛 M-1) | `tools.bash.BackgroundBashOwner` 를 빌려 쓴다 | `at.aimon.core.tools.BackgroundTaskOwner` 로 옮기고 이름을 바꿨다 | 두 번째 사용자가 생긴 타입이 bash 패키지에 남으면 이름이 거짓말을 한다 |
+| `command` 의 `Bash` 패턴 상속 (옛 M-3) | 운영자가 `Monitor` 에도 패턴을 적는다 | `ToolPermissionDelegationAware` 로 `Bash` 항목도 통과해야 한다 (§4.4) | 적는 것을 잊으면 `Bash` 제한이 우회된다. 안전한 쪽이 기본이어야 한다 |
+| 세션 삭제 시 중지 (옛 M-4) | 타임아웃까지 돈다 | 삭제한 노드의 모니터는 즉시 멈춘다 (§5.2) | 삭제된 세션에는 알림을 받을 턴이 영영 오지 않는다 |
+| 멈춘 모니터의 버퍼 | 정하지 않았다 | `MonitorStop` · 세션 삭제 · 앱 종료 시 버퍼에 남은 이벤트는 버린다 | 모델이 스스로 멈췄거나 받을 턴이 없다. 종료 알림을 보내지 않는 것과 같은 이유 |

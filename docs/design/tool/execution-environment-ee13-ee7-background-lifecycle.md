@@ -14,7 +14,7 @@
 >
 > **덧붙임 (2026-10-04, EE-58).** §9 Q4 가 남긴 EE-58(백그라운드 작업의 가시 범위가 런타임이다)은 닫혔다. 작업의 소유자는
 > 이제 런타임과 **세션(세션이 없으면 실행)** 이고, 같은 런타임의 다른 세션은 작업을 읽지도 멈추지도 못한다.
-> `BackgroundBashManager.start` · `find` · `kill` 의 소유자 인자는 `AgentRuntimeId` 가 아니라 `BackgroundBashOwner` 다. 아래
+> `BackgroundBashManager.start` · `find` · `kill` 의 소유자 인자는 `AgentRuntimeId` 가 아니라 `BackgroundTaskOwner` 다. 아래
 > 본문의 "같은 런타임의 어느 세션이든" 서술은 그 시점의 기록이다. 설계는
 > [`execution-environment-ee49-ee51-ee58-isolation-boundary.md`](execution-environment-ee49-ee51-ee58-isolation-boundary.md).
 >

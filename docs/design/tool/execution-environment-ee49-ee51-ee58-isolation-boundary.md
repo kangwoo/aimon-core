@@ -317,28 +317,28 @@ hooks:
 ### 4.3 EE-58 (`tools.bash`)
 
 ```java
-// tools/bash/BackgroundBashOwner.java — 신규, 불변 class + 정적 팩터리
-public final class BackgroundBashOwner {
-    public static BackgroundBashOwner of(ToolContext context);          // §3.3 의 1~4 규칙. 유일한 계산 지점
-    public static BackgroundBashOwner of(AgentRuntimeId runtimeId, SessionId sessionId, ExecutionId executionId);
+// tools/bash/BackgroundTaskOwner.java — 신규, 불변 class + 정적 팩터리
+public final class BackgroundTaskOwner {
+    public static BackgroundTaskOwner of(ToolContext context);          // §3.3 의 1~4 규칙. 유일한 계산 지점
+    public static BackgroundTaskOwner of(AgentRuntimeId runtimeId, SessionId sessionId, ExecutionId executionId);
     public Optional<AgentRuntimeId> getRuntimeId();
     public Optional<SessionId> getSessionId();       // 자기 세션이든 호출한 세션이든 — "누구를 대신하는가"
     public Optional<ExecutionId> getExecutionId();   // 세션이 없을 때만. 둘 다 주어지면 세션이 이기고 실행 id 는 버린다(던지지 않는다)
     // equals/hashCode: 세 필드 전부
 }
 
-// BackgroundBashManager — AgentRuntimeId 인자를 BackgroundBashOwner 로 (깨짐, 옛 오버로드를 남기지 않는다)
-BackgroundBashTask start(BackgroundBashOwner owner, String command, VirtualShell shell, ExecutionOptions options);
-BackgroundBashLookup find(BackgroundBashOwner owner, String taskId);
-BackgroundBashKill kill(BackgroundBashOwner owner, String taskId);
+// BackgroundBashManager — AgentRuntimeId 인자를 BackgroundTaskOwner 로 (깨짐, 옛 오버로드를 남기지 않는다)
+BackgroundBashTask start(BackgroundTaskOwner owner, String command, VirtualShell shell, ExecutionOptions options);
+BackgroundBashLookup find(BackgroundTaskOwner owner, String taskId);
+BackgroundBashKill kill(BackgroundTaskOwner owner, String taskId);
 
 // BackgroundBashRecord — 필드 둘 추가 (선택값)
 Optional<SessionId> getOwnerSessionId();
 Optional<ExecutionId> getOwnerExecutionId();
-BackgroundBashOwner owner();                         // 세 필드로 조립. find 가 비교하는 값
+BackgroundTaskOwner owner();                         // 세 필드로 조립. find 가 비교하는 값
 
 // BackgroundBashTask — ownerRuntimeId 대신 owner
-BackgroundBashOwner getOwner();
+BackgroundTaskOwner getOwner();
 ```
 
 - 팩터리 둘 다 **던지지 않는다.** 세션과 실행 id 가 함께 오면(잘못 조립된 컨텍스트, 둘 다 채운 외부 저장소의 레코드) F10
@@ -377,9 +377,9 @@ BackgroundBashOwner getOwner();
 | `skill/hook/declarative/ShellActionExecutor.java` | 계약 javadoc |
 | `skill/parser/SkillHookSetParser.java` | `failOpen` 파싱 |
 | `config/hook/HookHandlerSpec.java`, `HookRegistryApplier.java` | `failOpen` 필드(엄격한 불리언 검증)와 옵션 전달; 셸 미지원 실행기면 `command` 핸들러 건너뜀 |
-| `tools/bash/BackgroundBashOwner.java` (신규) | §4.3 |
+| `tools/bash/BackgroundTaskOwner.java` (신규) | §4.3 |
 | `tools/bash/BackgroundBashRecord.java`, `BackgroundBashTask.java`, `BackgroundBashManager.java` | 소유자 타입 · 필드 · 비교 |
-| `tools/bash/BashTool.java`, `BashOutputTool.java`, `KillShellTool.java` | `BackgroundBashOwner.of(context)`; javadoc 의 "runtime" 서술 |
+| `tools/bash/BashTool.java`, `BashOutputTool.java`, `KillShellTool.java` | `BackgroundTaskOwner.of(context)`; javadoc 의 "runtime" 서술 |
 | `tools/bash/BackgroundBashStore.java`, `BackgroundBashLookup.java`, `package-info.java` | 계약 문장 |
 
 **다른 모듈.** `aimon-workflow-graaljs` 의 `GraalJsWorkflowTool` — 전경 환경 조립(`:251-252`)에서 컨텍스트의 레지스트리
@@ -464,7 +464,7 @@ BackgroundBashOwner getOwner();
 
 **EE-58**
 
-- `BackgroundBashOwnerTest`(신규): §3.3 의 네 규칙; 포크 컨텍스트(실행 id + 호출 세션)가 부모와 같은 소유자; F10; 세션과
+- `BackgroundTaskOwnerTest`(신규): §3.3 의 네 규칙; 포크 컨텍스트(실행 id + 호출 세션)가 부모와 같은 소유자; F10; 세션과
   실행 id 를 함께 준 3-인자 팩터리와 그런 레코드의 `owner()` 가 던지지 않고 세션 소유자를 낸다.
 - `BackgroundBashManagerTest`: 같은 런타임 · 다른 세션 → `NOT_FOUND`(find · kill, kill 은 취소를 요청하지 않음); 같은 세션 →
   동작; 포크 ↔ 부모 양방향; 루틴 실행 id 끼리 격리; 범위 없는 호출자 ↔ 범위 없는 작업(지금 동작 유지).
@@ -474,7 +474,7 @@ BackgroundBashOwner getOwner();
 - `BackgroundTaskTurnIntegrationTest`: 포크가 띄운 작업을 부모 턴이 `BashOutput`/`KillShell` 한다.
 
 **공통.** `./gradlew checkAll`; ArchUnit(`HookRegistryAccess` 가 `*.impl` 을 끌어오지 않음, 새 타입 이름이 `Session*` 규칙에
-걸리지 않음 — `BackgroundBashOwner` · `SkillScopedHookRegistry` 는 해당 없음).
+걸리지 않음 — `BackgroundTaskOwner` · `SkillScopedHookRegistry` 는 해당 없음).
 
 ## 8. 공개 표면의 변경과 저장소 밖 영향
 
@@ -490,7 +490,7 @@ BackgroundBashOwner getOwner();
 3. `ShellHookOutcome.notObserved()` 제거 → `notRun(cause, detail)`. 사용자 정의 `ShellActionExecutor` 는 원인을 실어야 한다.
 4. **동작 변경**: 가드 이벤트의 셸 훅(스킬 · `hooks.json` 모두)이 명령을 돌리지 못하면 거부한다. timeout 포함. `failOpen: true`
    로 되돌린다. 셸 미지원 실행기로 적용한 `hooks.json` 의 `command` 핸들러는 등록되지 않는다.
-5. `BackgroundBashManager.start/find/kill` 의 소유자 인자가 `BackgroundBashOwner`; `BackgroundBashTask.getOwnerRuntimeId()` →
+5. `BackgroundBashManager.start/find/kill` 의 소유자 인자가 `BackgroundTaskOwner`; `BackgroundBashTask.getOwnerRuntimeId()` →
    `getOwner()`; `BackgroundBashRecord` 에 필드 둘. 사용자 정의 `BackgroundBashStore` 는 새 필드를 보존해야 한다.
 6. **동작 변경**: `BashOutput`/`KillShell` 은 같은 세션(과 그 세션을 대신하는 포크)의 작업만 본다.
 
@@ -542,14 +542,14 @@ BackgroundBashOwner getOwner();
   맞았다. 뷰를 실어 보낼 수 없어서(P16) "소리 없이 가드가 꺼지는 것" 과 "거절" 가운데 거절을 골랐다. 훅을 선언한 FORK 스킬
   안에서 백그라운드 워크플로를 쓰던 사용자에게는 기능 축소다. 관찰 전용 훅은 거절하지 않고 손실을 받아들였는데, 감사 훅을
   가드만큼 무겁게 본다면 그쪽도 거절로 바꿀 수 있다(판정 한 줄).
-- **Q7 — 이름.** `ScopedSkillHookActivator`, `SkillScopedHookRegistry`, `BackgroundBashOwner`, `ShellHookOutcome.Unrun`,
+- **Q7 — 이름.** `ScopedSkillHookActivator`, `SkillScopedHookRegistry`, `BackgroundTaskOwner`, `ShellHookOutcome.Unrun`,
   선언 키 `failOpen` 은 가칭이다. 과제가 예로 든 `failOpen` 은 그대로 썼다.
 - **확인하지 못한 것.** aimon-sandbox · aimon-browser 의 소스(§8 의 영향은 코어 SPI 에서 끌어낸 추론), `docs/overview/scope-model.md` 에 이 셋에 해당하는 행이 있는지. 구현 첫 단계에서 확인할 값이다.
 
 ## 10. 구현이 이 설계에서 벗어난 점
 
 본문은 승인본 그대로이므로, 구현이 다르게 한 것과 본문이 정하지 않아 구현이 정한 것을 여기에 적는다. 이름(Q7)은 본문의
-가칭을 그대로 썼다 — `ScopedSkillHookActivator`, `SkillScopedHookRegistry`, `BackgroundBashOwner`, `ShellHookOutcome.Unrun`,
+가칭을 그대로 썼다 — `ScopedSkillHookActivator`, `SkillScopedHookRegistry`, `BackgroundTaskOwner`, `ShellHookOutcome.Unrun`,
 선언 키 `failOpen`.
 
 ### 10.1 본문과 다르게 한 것
@@ -593,10 +593,10 @@ BackgroundBashOwner getOwner();
 
 ### 10.2 본문이 정하지 않아 구현이 정한 것
 
-- **`BackgroundBashOwner.none()`.** 매니저의 소유자 인자를 nullable 로 두지 않았다 — `start` · `find` · `kill` 은 null 을
+- **`BackgroundTaskOwner.none()`.** 매니저의 소유자 인자를 nullable 로 두지 않았다 — `start` · `find` · `kill` 은 null 을
   거절하고, 런타임 밖의 호출자는 `none()` 을 넘긴다. 소유자 없이 등록하는 옛 API(`registerTask`)가 만든 작업의 소유자도
   `none()` 이다.
-- **`BackgroundBashRecord.Builder.owner(BackgroundBashOwner)`.** 세 필드를 한 번에 싣는다. 필드별 세터도 그대로 있다(저장소
+- **`BackgroundBashRecord.Builder.owner(BackgroundTaskOwner)`.** 세 필드를 한 번에 싣는다. 필드별 세터도 그대로 있다(저장소
   구현이 직렬화한 값을 되돌릴 때 쓴다).
 - **`SkillHookSet.guardEvents()` · `hasGuards()`.** "거부 채널이 있는 이벤트"(P7)가 세 군데(뷰의 가드 판정, 스킬 파서의
   `failOpen` 경고, 문서)에서 필요해 한 곳에 뒀다. 처음에는 넷이었고 지금은 셋이다 — `onStart` 를 뺐다(§10.7, EE-70).
