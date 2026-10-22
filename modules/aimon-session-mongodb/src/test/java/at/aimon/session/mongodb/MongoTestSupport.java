@@ -65,7 +65,7 @@ public final class MongoTestSupport {
         for (String name : List.of(DocumentKeys.COLL_LOCKS, DocumentKeys.COLL_INBOX, DocumentKeys.COLL_IDEMPOTENCY,
                 DocumentKeys.COLL_SIGNALS, DocumentKeys.COLL_BACKGROUND_TASK, DocumentKeys.COLL_SESSION_RECORDS,
                 DocumentKeys.COLL_SESSION_LOG_SEGMENTS, DocumentKeys.COLL_SCHEDULED_TASK_INTERRUPTS,
-                DocumentKeys.COLL_SCHEDULED_TASKS)) {
+                DocumentKeys.COLL_WAKE_LEDGER, DocumentKeys.COLL_SCHEDULED_TASKS)) {
             try {
                 db.getCollection(name).drop();
             } catch (RuntimeException ignored) {
@@ -112,5 +112,10 @@ public final class MongoTestSupport {
         final MongoCollection<Document> tasks = db.getCollection(DocumentKeys.COLL_BACKGROUND_TASK);
         tasks.createIndex(Indexes.ascending(DocumentKeys.F_STATE), new IndexOptions().name("by_state"));
         tasks.createIndex(Indexes.ascending(DocumentKeys.F_CONTEXT_ID), new IndexOptions().name("by_context"));
+
+        // Spelled out for the same reason as the inbox index: it mirrors the one init.js declares.
+        db.createCollection(DocumentKeys.COLL_WAKE_LEDGER);
+        db.getCollection(DocumentKeys.COLL_WAKE_LEDGER).createIndex(Indexes.ascending("expiresAt"),
+                new IndexOptions().name("ttl_expires_at").expireAfter(0L, TimeUnit.SECONDS));
     }
 }

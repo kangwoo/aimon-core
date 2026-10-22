@@ -7,7 +7,7 @@ auto-migration is explicitly out of scope.
 
 ## Apply procedure
 
-Recommended on a fresh database (apply in order — V1, V2, V3):
+Recommended on a fresh database (apply in order — V1, V2, V3, then V4 if you need it):
 
 ```bash
 psql "$DATABASE_URL" -c 'CREATE SCHEMA IF NOT EXISTS aimon_session;'
@@ -17,6 +17,8 @@ psql "$DATABASE_URL" --set=search_path=aimon_session,public \
      -v ON_ERROR_STOP=1 -f V2__session_log_segment.sql
 psql "$DATABASE_URL" --set=search_path=aimon_session,public \
      -v ON_ERROR_STOP=1 -f V3__session_record_owner.sql
+psql "$DATABASE_URL" --set=search_path=aimon_session,public \
+     -v ON_ERROR_STOP=1 -f V4__wake_ledger.sql
 ```
 
 ## Files
@@ -32,7 +34,12 @@ psql "$DATABASE_URL" --set=search_path=aimon_session,public \
   session's owning principal in. Apply it before rolling out the build that ships it:
   that build reads and writes the column on every `provision` and `load`, so without
   it those fail whether or not a host names an owner.
-- `V4__indexes.sql` — **opt-in / future-work, not yet shipped**. Operators add
+- `V4__wake_ledger.sql` — needed only with idle-session waking and a shared ledger
+  (`PostgresWakeLedger`), after V3. The `wake_ledger` table holding each session's wake
+  caps (`docs/design/session/idle-wake.md` §7). Every wake attempt rewrites `updated_at`,
+  so deleting rows a day old resets only the streak of sessions quiet that long; do it on
+  whatever schedule suits you.
+- `V5__indexes.sql` — **opt-in / future-work, not yet shipped**. Operators add
   this only when concrete monitoring thresholds trigger (see
   `docs/design/session/backends.md` §3.4).
 

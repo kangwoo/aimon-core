@@ -1,11 +1,11 @@
-package at.aimon.session.routing.wake;
+package at.aimon.core.agent.session.wake;
 
 import java.util.function.UnaryOperator;
 
 import at.aimon.core.agent.session.SessionId;
 
 /**
- * Where an {@link IdleSessionWaker} keeps its per-session counters — the part that could be shared between nodes so a
+ * Where an {@code IdleSessionWaker} keeps its per-session counters — the part that could be shared between nodes so a
  * session's caps hold across all of them (design §4.3, open item W-2). The default {@link InMemoryWakeLedger} counts
  * per node.
  *

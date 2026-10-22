@@ -1,4 +1,4 @@
-package at.aimon.session.routing.wake;
+package at.aimon.core.agent.session.wake;
 
 import java.util.Map;
 import java.util.Objects;

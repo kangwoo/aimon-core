@@ -89,6 +89,12 @@ public final class DocumentKeys {
      */
     public static final String COLL_SESSION_LOG_SEGMENTS = "session_log_segments";
 
+    /**
+     * Default collection holding the idle-session waker's caps, one document per session (idle-wake §4.3). Frozen from
+     * its first deployment on — pinned by {@code MongoSchemaFreezeTest}: a rename would reset every session's caps.
+     */
+    public static final String COLL_WAKE_LEDGER = "wake_ledger";
+
     /** Mongo {@code _id} field name. */
     public static final String F_ID = "_id";
 

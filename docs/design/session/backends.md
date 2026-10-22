@@ -75,9 +75,10 @@ Mongo 에서 애플리케이션 `Clock` 이 쓰이는 자리는 넷뿐이고 전
 
 ### 3.1 스키마
 
-`V1__init.sql` · `V2__session_log_segment.sql` · `V3__session_record_owner.sql` 를 이 순서로 적용한다. V3 은 `session_record` 에 `owner jsonb`
+`V1__init.sql` · `V2__session_log_segment.sql` · `V3__session_record_owner.sql` 를 이 순서로 적용하고, 쉬는 세션
+깨우기의 상한을 노드 사이에서 공유하면 `V4__wake_ledger.sql` 도 적용한다. V3 은 `session_record` 에 `owner jsonb`
 를 더한다. 이 컬럼을 읽는 빌드는 V3 을 적용하기 전에는 모든 provision · load 가 `column "owner" does not exist` 로 실패한다 — 호스트가 소유자를
-쓰든 안 쓰든. 미래의 인덱스 파일 이름은 `V4__indexes.sql` 로 예약되어 있다(§3.4).
+쓰든 안 쓰든. 미래의 인덱스 파일 이름은 `V5__indexes.sql` 로 예약되어 있다(§3.4) — V3 과 V4 가 차례로 그 자리를 가져갔다.
 
 | 테이블 | 역할 | 핵심 |
 |--------|------|------|
@@ -89,6 +90,7 @@ Mongo 에서 애플리케이션 `Clock` 이 쓰이는 자리는 넷뿐이고 전
 | `background_task` | 태스크 메타데이터 | 태스크 소유자 `Principal` 을 세 컬럼으로 펼침 |
 | `session_record` | 전사 + side field | `transcript` 는 `text`, side field 는 네이티브, `owner` 는 `jsonb` |
 | `session_log_segment` | 봉인된 로그 구간 | `(session_id, segment_id)` 기본키, `payload` 는 `text` |
+| `wake_ledger` | 깨우기 상한 (V4, 선택) | 세션당 1행. `update` 는 READ COMMITTED 의 `SELECT … FOR UPDATE`. 깨우기를 시도할 때마다 `updated_at` 을 쓰므로, 하루 지난 행을 지우면 연속 횟수만 다시 센다 |
 
 **펜싱 카운터를 락 행과 따로 둔다.** 한 테이블이면 락 행이 만료·삭제될 때 카운터도 사라지고, 다음 획득자가 이전 홀더와 같은 토큰을 받아
 펜싱이 무의미해진다.
@@ -175,6 +177,7 @@ LISTEN 커넥션이 풀 밖인 것은 LISTEN 상태가 커넥션에 묶여 있�
 | `background_task` | `by_state`, `by_context` |
 | `session_records` | 전사(문자열) + side field. `owner` 는 하위 문서 |
 | `session_log_segments` | `_id` = `{sessionId, segmentId}`, 최상위 `sessionId` 와 `by_session` 인덱스 |
+| `wake_ledger` | 깨우기 상한(선택). `version` CAS, `ttl_expires_at`(`expireAfterSeconds: 0`) — 마지막 쓰기 1일 뒤 만료 |
 | `scheduled_tasks` · `scheduled_task_interrupts` | 스케줄 태스크 레코드와 노드 간 중지 요청(capped 1 MiB). 세션 컬렉션이 아니다 — 키가 `ScheduledTaskId` |
 
 ### 4.2 복제 세트와 일관성

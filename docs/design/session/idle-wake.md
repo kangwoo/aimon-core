@@ -3,8 +3,10 @@
 > Status: **IMPLEMENTED** — §10 의 1단계(라우터를 쓰는 스택). CLI 는 2단계다. 구현이 설계에서 벗어난 점은 §12.
 >
 > 적용 대상: `aimon-session-routing` — `at.aimon.session.routing.wake` (`IdleSessionWaker`, `WakePolicy`,
-> `WakeLedger`, `InMemoryWakeLedger`) · `aimon-bootstrap` — `SessionSpec` 설정과 조립 · `aimon-spring-boot-starter`
-> — `aimon.session.wake.*`. 선행 설계: [`../tool/monitor.md`](../tool/monitor.md) §9.1 (이 기능을 미룬 이유),
+> `WakeRequestCustomizer`) · `aimon-core` — `at.aimon.core.agent.session.wake` (`WakeLedger`, `WakeState`,
+> `InMemoryWakeLedger`) · `aimon-session-{redis,postgres,mongodb}` — 공유 원장 (`RedisWakeLedger`,
+> `PostgresWakeLedger`, `MongoWakeLedger`) · `aimon-bootstrap` — `SessionSpec` 설정과 조립 ·
+> `aimon-spring-boot-starter` — `aimon.session.wake.*`. 선행 설계: [`../tool/monitor.md`](../tool/monitor.md) §9.1 (이 기능을 미룬 이유),
 > [`routing.md`](routing.md) (제출·턴 게이트·인박스·이벤트 릴레이).
 
 ---
@@ -164,8 +166,20 @@ principal 이 되어 사용량 쿼터·실행 환경·도구 컨텍스트로 간
 **`WakeLedger`.** 세션별 카운터(시간당 깨우기 시각들, 연속 횟수, 마지막으로 본 `turnCount`, `outstanding`)는 멀티
 인스턴스 규칙에 따라 SPI 뒤에 두고, 변경은 원자적 `update(id, 함수)` 로만 한다 — 깨우기와 턴 종료가 같은 세션의 상태를
 바꾸고, 공유 구현에서는 다른 노드도 바꾸므로 읽고 쓰기를 나누면 셈을 잃는다. 기본은 `InMemoryWakeLedger` 다. 이
-노드 안에서는 턴 종료 처리도 깨우기 스레드로 옮겨 한 스레드가 바꾼다. 공유 구현을 주면 노드 사이에서 상한을 공유할 수 있다(§11 W-2).
+노드 안에서는 턴 종료 처리도 깨우기 스레드로 옮겨 한 스레드가 바꾼다. 공유 구현을 주면 노드 사이에서 상한을 공유한다(§7).
 디바운스 타이머는 노드 로컬로 남는다.
+
+**확인과 예약은 한 번에.** 상한 확인과 깨우기 기록을 따로 하면, 원장을 공유하는 두 노드가 같은 세션에서 함께 확인을
+통과하고 둘 다 깨운다. 그래서 확인하는 `update` 가 그 자리에서 깨우기를 **예약**한다 — 한 시간 창에 시각을 넣고, 연속
+횟수와 `outstanding` 을 하나씩 올린다. 드레인한 항목이 없거나 제출이 거절되면 같은 방법으로 되돌린다. `outstanding` 은
+플래그가 아니라 개수다. 두 노드가 각자 깨운 턴을 돌릴 때 먼저 끝난 쪽이 다른 쪽의 표시를 지우면 안 되기 때문이다. 턴이
+끝나지 않은 채 노드가 죽으면 개수가 남는데, 한 시간 창이 비면 0 으로 본다. 깨운 턴은 그 깨우기가 세어진 시간 안에
+시작하므로, 창이 비었다면 남은 개수는 죽은 노드의 것이다.
+
+SPI 는 `aimon-core` 의 `at.aimon.core.agent.session.wake` 에 있다. 다른 세션 SPI(`SessionInbox`, `IdempotencyStore`)와
+같은 이유다 — 공유 구현을 내는 백엔드 모듈은 core 에만 의존하고 라우팅 모듈에는 의존하지 않는다. 계약은
+`aimon-session-testkit` 의 `AbstractWakeLedgerContractTest` 가 고정한다. 가장 중요한 단언은 원자성이다 — 여러
+스레드가 한 세션을 동시에 바꿔도 셈을 잃지 않아야 한다.
 
 ---
 
@@ -177,8 +191,15 @@ principal 이 되어 사용량 쿼터·실행 환경·도구 컨텍스트로 간
 |------|------|
 | 검증 실패 (레코드·바인딩·소유자) | 드레인하기 **전**에 확인하므로 꺼낸 것이 없다 |
 | `submit` 이 동기로 던짐 (`ConflictingAgentException`, 라우터 종료, 인박스 쓰기 실패) | 꺼낸 항목을 같은 uuid·메타데이터로 큐에 되돌린다. 되돌린 직후의 `ENQUEUED` 가 곧바로 다시 깨우지 않도록 그 세션은 30초 뒤로 미룬다 |
-| 인박스로 전달된 제출의 future 가 턴 없이 실패 (TTL, 축출·삭제, 종료 시 NOT_HOLDER) | 알림은 그 제출의 입력 안에 있었으므로 되돌릴 수 없다. WARN 으로 남긴다. 드문 경우이고, 되돌려 다시 제출하면 이미 돈 턴과 겹칠 위험이 있다 |
+| 인박스로 전달된 제출의 future 가 턴 없이 실패 (TTL, 축출·삭제, 종료 시 NOT_HOLDER) | 알림은 그 제출의 입력 안에 있었으므로 되돌릴 수 없다. WARN 으로 남긴다. 드문 경우이고, 되돌려 다시 제출하면 이미 돈 턴과 겹칠 위험이 있다 — 아래 "되돌리지 않는 이유" |
 | 턴이 돌다 실패 (오류·쿼터) | 일반 턴과 같다. 알림은 입력으로 전사에 남았다 |
+
+**되돌리지 않는 이유 (W-3).** 전달된 제출이 실패했다는 것만으로는 그 입력이 턴으로 돌지 **않았다**는 것을 알 수 없다.
+홀더의 `collect` 는 원자적으로 꺼내 가는 연산이라, 릴리스·삭제·EVICT 로 future 가 실패할 때 그 입력은 이미 홀더가
+꺼내 턴을 열었을 수 있다. 인계가 거절된 홀더도 꺼낸 입력의 턴은 돌린다. 그 상태에서 되돌려 다시 제출하면 같은 알림으로
+턴이 두 번 돈다. 건전한 길은 "이 입력은 돌지 않았다" 를 **증명**하는 것이다 — `SessionInbox.purge` 가 지운 항목을
+돌려주고(세 백엔드 모두), EVICT 가 그 턴 id 들을 실어 날라야 한다. SPI 와 와이어가 바뀌므로 별도 작업으로 남긴다.
+시도한 구현(전달 실패를 `ForwardNotRunException` 으로 구분)은 바로 이 이유로 리뷰에서 기각되었다.
 
 ---
 
@@ -198,8 +219,21 @@ principal 이 되어 사용량 쿼터·실행 환경·도구 컨텍스트로 간
 
 큐는 기본적으로 노드 로컬이므로, 알림은 그것을 낸 노드(모니터가 도는 노드)의 큐에만 있고 그 노드의 깨우기만 반응한다.
 그 노드가 세션을 쥐고 있지 않으면 `submit` 은 인박스로 전달되고, 세션을 쥔 노드가 그 입력으로 턴을 연다. 입력이 곧
-알림이므로(§3.2) 이것으로 충분하다. 기본 `InMemoryWakeLedger` 로는 상한을 노드마다 따로 센다 — 1단계에서 받아들이는
-근사이고, 공유 원장이 그 답이다.
+알림이므로(§3.2) 이것으로 충분하다. 기본 `InMemoryWakeLedger` 로는 상한을 노드마다 따로 센다. 모니터가 여러 노드에
+흩어져 있으면 한 세션이 노드 수만큼 상한을 받는다.
+
+**공유 원장.** 세션 백엔드 모듈이 공유 구현을 하나씩 낸다. 호스트가 그것을 `SessionSpec.wakeLedger(...)` 로 넘기거나
+Spring Boot 에서 `WakeLedger` 빈으로 노출하면, 모든 노드가 같은 세션의 같은 상한을 센다.
+
+| 구현 | 저장 | 원자적 `update` | 정리 |
+|------|------|-----------------|------|
+| `RedisWakeLedger` | 세션당 STRING(JSON) `aimon:session:wake:<id>` | 읽고, 함수를 적용하고, 읽은 값이 그대로일 때만 쓰는 Lua CAS. 거절되면 다시 읽는다. 연결을 노드의 모든 스레드가 나눠 쓰므로 `WATCH`/`MULTI` 는 쓸 수 없다 | 쓸 때마다 만료 1일 (`PX`) |
+| `PostgresWakeLedger` | `wake_ledger` 테이블 (`V4__wake_ledger.sql`) | 한 트랜잭션에서 없으면 넣고(`ON CONFLICT DO NOTHING`) `SELECT … FOR UPDATE` 로 행을 잠근 뒤 쓴다 | `updated_at` 인덱스 — 운영자가 오래된 행을 지운다 |
+| `MongoWakeLedger` | `wake_ledger` 컬렉션 (`init.js`) | `version` 필드 CAS. 없으면 insert 하고, 중복 키면 다시 읽는다 | `expiresAt` TTL 인덱스, 쓸 때마다 1일 |
+
+만료가 하루인 이유: 하루 동안 깨우지도 턴을 끝내지도 않은 세션은 한 시간 창에 남은 깨우기가 없다. 잃는 것은 연속
+횟수뿐이고, 하루 조용했다면 다시 세도 된다. 디바운스 타이머와 재시도 지연은 여전히 노드 로컬이다 — 그것들은 상한이
+아니라 이 노드가 언제 다시 볼지에 관한 값이다.
 
 ---
 
@@ -237,7 +271,8 @@ CLI 는 라우터가 아니라 `LiveSession` 을 직접 쓰고, REPL 스레드�
 
 1. **이 PR** — `WakePolicy`, `WakeLedger` / `InMemoryWakeLedger`, `IdleSessionWaker` (`aimon-session-routing`),
    `SessionSpec.wake(...)` 와 조립·teardown·삭제 연결, Spring `aimon.session.wake.*`, 모니터 가이드와 이 문서
-2. **다음** — CLI (`printAbove`), 공유 원장(필요해지면)
+2. **공유 원장** — SPI 를 `aimon-core` 로 옮기고, `AbstractWakeLedgerContractTest`, Redis·Postgres·Mongo 구현 (§7)
+3. **다음** — CLI (`printAbove`)
 
 ---
 
@@ -246,8 +281,8 @@ CLI 는 라우터가 아니라 `LiveSession` 을 직접 쓰고, REPL 스레드�
 | id | 항목 |
 |----|------|
 | W-1 | CLI 깨우기 (§8) |
-| W-2 | 노드 사이에서 상한을 공유하는 `WakeLedger` 구현 (§7) |
-| W-3 | 인박스로 전달된 제출이 턴 없이 실패했을 때 알림을 되살리는 길 (§5) |
+| W-2 | ~~노드 사이에서 상한을 공유하는 `WakeLedger` 구현~~ — 완료 (§7) |
+| W-3 | 인박스로 전달된 제출이 턴 없이 실패했을 때 알림을 되살리는 길. `SessionInbox.purge` 가 지운 항목을 돌려주고 EVICT 가 그 턴 id 를 실어야 한다 — SPI·와이어 변경 (§5) |
 
 ---
 
@@ -257,5 +292,7 @@ CLI 는 라우터가 아니라 `LiveSession` 을 직접 쓰고, REPL 스레드�
 |------|------|------|------|
 | 진행 중인 세션 | 깨우지 않고 그만 (§3.3) | 깨우지 않되 디바운스 간격 뒤 **다시 확인**한다 | 진행 중인 턴이 도구 iteration 없이 답하고 끝나면 알림이 다음 사용자 턴까지 남는다. 새 알림이 오지 않으면 아무도 다시 보지 않으므로, 턴이 끝날 때까지 짧게 다시 본다 |
 | PR 리뷰 반영 | 멱등 키 `wake:<uuid>`, `get`/`put` 원장, 진행 중이면 레코드부터 읽고 재확인, 재오픈 옵션 없음 | 시도마다 새 키(§3.2), 원자적 `update` 와 `outstanding`(§4.3), 진행 중 확인을 먼저 하고 남은 항목이 있을 때만 재확인, `WakeRequestCustomizer`(§3.2), 시간당 상한이 풀릴 때 재확인, close 는 진행 중인 깨우기를 기다린다 | 재시도가 중복으로 삼켜지는 유실, 원장 경합과 제 턴에 의한 초기화, 불필요한 저장소 읽기, 기본값으로 열린 세션 |
+| 확인과 기록 | 확인한 뒤 제출이 성공하면 깨우기를 센다. `outstanding` 은 플래그 | 확인하는 `update` 가 예약하고, 보내지 못하면 되돌린다. `outstanding` 은 개수다(§4.3) | 공유 원장에서는 두 노드가 함께 확인을 통과할 수 있었다. 먼저 끝난 노드가 다른 노드의 턴 표시를 지웠다(PR 리뷰) |
+| 원장의 자리 | `WakeLedger` 는 `aimon-session-routing` 에 | `aimon-core` 의 `at.aimon.core.agent.session.wake` | 공유 구현을 내는 백엔드 모듈은 라우팅 모듈에 의존하지 않는다(다른 세션 SPI 와 같은 규칙). 0.3.4 가 나가기 전에 옮겨 깨지는 사용자가 없다 |
 | 설계 리뷰 반영 | 첫 초안은 드레인 뒤 검증, `status` 를 게이트로, 이벤트로 자기 턴 세기 | 드레인 전 검증 + 실패 시 되돌리기(§5), `status` 는 이 노드가 쥔 세션의 비용 최적화(§3.3), `turnCount` 로 사용자 턴 판정(§4.3) | 리뷰가 찾은 유실·경합·카운터 어긋남 |
 

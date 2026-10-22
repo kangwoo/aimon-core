@@ -36,8 +36,15 @@ default — so the agent reacts while nobody is typing. Opt-in: `SessionSpec.wak
 - **`at.aimon.session.routing.wake`** (new) — `IdleSessionWaker` listens to the message queue and opens the turn through
   `SessionRouter.submit`, with the drained notifications as its input (wrapped as
   `<system-reminder key="background-wake">`) and the execution attribute `aimon.wake.reason`. `WakePolicy` (kinds —
-  `monitor-event` by default, `subagent-task-completed` optional — debounce, hourly and consecutive caps), `WakeLedger`
-  (atomic `update`) / `InMemoryWakeLedger` for the caps' counters, `WakeState`.
+  `monitor-event` by default, `subagent-task-completed` optional — debounce, hourly and consecutive caps),
+  `WakeRequestCustomizer`.
+- **`at.aimon.core.agent.session.wake`** (new, in core so backends can implement it) — `WakeLedger` (atomic `update`) /
+  `InMemoryWakeLedger` for the caps' counters, `WakeState`.
+- **The caps are shared between nodes** with a backend's ledger: `RedisWakeLedger` (Lua compare-and-set, 1-day expiry),
+  `PostgresWakeLedger` (`SELECT … FOR UPDATE`; new operator DDL **`V4__wake_ledger.sql`**, so the unshipped
+  `V4__indexes.sql` is now `V5__indexes.sql`), `MongoWakeLedger` (version compare-and-set; new `wake_ledger` collection
+  with a TTL index in `init.js`). Pass one as `SessionSpec.wakeLedger` or a `WakeLedger` bean; the contract is
+  `AbstractWakeLedgerContractTest` in `aimon-session-testkit`.
 - **Runs as the session's owner** (`SubmitOptions.principal`) and counts against budgets and quotas like any turn; a
   session without a recorded owner is never woken. A session this node is running a turn for is left to that turn.
 - **Nothing is lost on a refused submit**: the drained notifications go back into the queue and the session is tried
