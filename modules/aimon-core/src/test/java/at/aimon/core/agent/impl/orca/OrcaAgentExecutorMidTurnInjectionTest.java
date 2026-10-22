@@ -187,6 +187,76 @@ class OrcaAgentExecutorMidTurnInjectionTest {
         }
     }
 
+    @Test
+    @DisplayName("entry addressed to ANOTHER session of the same runtime is not drained at the iteration tail")
+    void entryAddressedToAnotherSessionIsNotDrained() {
+        final RecordingLlmClient llmClient = new RecordingLlmClient();
+        llmClient.enqueue(LlmResponse.of("calling tool", List.of(ToolUse.of("tu-1", EchoTool.TOOL_NAME, Map.of())),
+                TokenUsage.empty()));
+        llmClient.enqueue(LlmResponse.text("final answer"));
+
+        final MessageQueueManager queueManager = new DefaultMessageQueueManager(new InMemoryMessageQueueRepository());
+        final AgentRuntimeId agentRuntimeId = AgentRuntimeId.of("agent:test-6");
+        queueManager.enqueue(QueuedInput.builder().agentRuntimeId(agentRuntimeId).sessionId("other-session")
+                .inputText("for the other session").build());
+
+        final OrcaAgentExecutor executor = createExecutor(llmClient, queueManager);
+        executor.execute(createContext(agentRuntimeId, toolRegistryWithEcho()),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.generate()).build());
+
+        assertThat(queueManager.snapshot()).extracting(QueuedInput::getInputText)
+                .containsExactly("for the other session");
+        for (List<Message> call : llmClient.messagesPerCall) {
+            for (Message msg : call) {
+                assertThat(msg.getContent()).doesNotContain("for the other session");
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("entry addressed to THIS session is injected before the first LLM call, even in a tool-less turn")
+    void entryAddressedToThisSessionIsInjectedAtTurnStart() {
+        final RecordingLlmClient llmClient = new RecordingLlmClient();
+        llmClient.enqueue(LlmResponse.text("final answer"));
+
+        final MessageQueueManager queueManager = new DefaultMessageQueueManager(new InMemoryMessageQueueRepository());
+        final AgentRuntimeId agentRuntimeId = AgentRuntimeId.of("agent:test-7");
+        final SessionId sessionId = SessionId.generate();
+        queueManager.enqueue(QueuedInput.builder().agentRuntimeId(agentRuntimeId).sessionId(sessionId.value())
+                .inputText("monitor saw an error").build());
+
+        final OrcaAgentExecutor executor = createExecutor(llmClient, queueManager);
+        final OrcaAgentExecutionResult result = executor.execute(createContext(agentRuntimeId, toolRegistryWithEcho()),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(sessionId).build());
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(queueManager.snapshot()).isEmpty();
+        assertThat(llmClient.messagesPerCall).hasSize(1);
+        final List<Message> firstCall = llmClient.messagesPerCall.get(0);
+        final Message last = firstCall.get(firstCall.size() - 1);
+        assertThat(last.getRole()).isEqualTo(Role.USER);
+        assertThat(last.getContent()).contains("<system-reminder key=\"user-mid-turn-message\">")
+                .contains("monitor saw an error");
+    }
+
+    @Test
+    @DisplayName("entry addressed to the runtime alone is NOT taken at turn start — the after-turn replay owns it")
+    void runtimeAddressedEntryIsNotTakenAtTurnStart() {
+        final RecordingLlmClient llmClient = new RecordingLlmClient();
+        llmClient.enqueue(LlmResponse.text("final answer"));
+
+        final MessageQueueManager queueManager = new DefaultMessageQueueManager(new InMemoryMessageQueueRepository());
+        final AgentRuntimeId agentRuntimeId = AgentRuntimeId.of("agent:test-8");
+        queueManager
+                .enqueue(QueuedInput.builder().agentRuntimeId(agentRuntimeId).inputText("typed while busy").build());
+
+        final OrcaAgentExecutor executor = createExecutor(llmClient, queueManager);
+        executor.execute(createContext(agentRuntimeId, toolRegistryWithEcho()),
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.generate()).build());
+
+        assertThat(queueManager.snapshot()).extracting(QueuedInput::getInputText).containsExactly("typed while busy");
+    }
+
     private static int indexOfFirstRole(List<Message> messages, Role role) {
         for (int i = 0; i < messages.size(); i++) {
             if (messages.get(i).getRole() == role) {

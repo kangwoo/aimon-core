@@ -1687,6 +1687,9 @@ public class OrcaAgentExecutor
         final ToolContext toolContext = createToolContext(scope, sessionRegistry, cancellationSignal,
                 messageQueueManager, event -> scope.eventDispatcher.dispatch(event),
                 transcriptManager.getLogReader().orElse(null));
+        // Entries addressed to this session that arrived while it was idle are read by the first LLM call, not left for
+        // the first tool-using iteration's tail (see injectSessionQueuedMessages).
+        injectSessionQueuedMessages(scope);
 
         TokenUsage accumulatedTokens = TokenUsage.empty();
         // Model name for cost attribution — constant for the whole execution, resolved once. Empty (null) when
@@ -2085,7 +2088,9 @@ public class OrcaAgentExecutor
      * This is a no-op when {@link #messageQueueManager} is {@code null}. The drain is scoped by matching
      * {@link QueuedInput#getAgentRuntimeId()} against the active
      * {@link OrcaAgentRuntime#getId() agent runtime id}, so sub-agent or other-agent queue entries are
-     * NOT consumed here. Only {@link QueuedInputPriority#NEXT} (and higher-priority) entries are drained — the
+     * NOT consumed here — and an entry addressed to a session ({@link QueuedInput#getSessionId()}) is consumed only by
+     * an execution of that session. Only {@link QueuedInputPriority#NEXT} (and higher-priority) entries are drained —
+     * the
      * {@link QueuedInputPriority#LATER} tier is left in place. The {@code TURN_END} drain path is owned by CQ-05.
      *
      * <p>
@@ -2101,13 +2106,42 @@ public class OrcaAgentExecutor
      *         loop to tag the next iteration's {@link LoopTransition} as {@link LoopTransitionReason#QUEUED_INPUT}
      */
     private int injectQueuedMessages(ExecutionScope scope, List<String> injectedTaskIds) {
+        final AgentRuntimeId agentRuntimeId = scope.agentRuntime.getId();
+        final String sessionId = scope.transcriptBuffer.getSessionId().value();
+        return injectQueuedMessages(scope, injectedTaskIds, q -> agentRuntimeId.equals(q.getAgentRuntimeId())
+                && q.getSessionId().map(sessionId::equals).orElse(true));
+    }
+
+    /**
+     * Drains, before the first LLM call of the execution, the queued inputs addressed to this execution's session
+     * ({@link QueuedInput#getSessionId()}), and appends them the way
+     * {@link #injectQueuedMessages(ExecutionScope, List)}
+     * does.
+     *
+     * <p>
+     * Without it an entry that arrived while the session was idle would wait for the first tool-using iteration of
+     * some later turn — the iteration tail is the only other drain — and a turn that answers without a tool would
+     * never see it. Entries addressed to the runtime alone are left where they are: a host that replays them after a
+     * turn (the CLI does) owns them, and taking them here would change what that host does.
+     *
+     * @param scope
+     *            the active execution scope; must not be null
+     * @return the number of inputs drained and appended
+     */
+    private int injectSessionQueuedMessages(ExecutionScope scope) {
+        final AgentRuntimeId agentRuntimeId = scope.agentRuntime.getId();
+        final String sessionId = scope.transcriptBuffer.getSessionId().value();
+        return injectQueuedMessages(scope, new ArrayList<>(), q -> agentRuntimeId.equals(q.getAgentRuntimeId())
+                && q.getSessionId().filter(sessionId::equals).isPresent());
+    }
+
+    private int injectQueuedMessages(ExecutionScope scope, List<String> injectedTaskIds,
+            Predicate<QueuedInput> filter) {
         injectedTaskIds.clear();
         if (messageQueueManager == null) {
             return 0;
         }
-        final AgentRuntimeId agentRuntimeId = scope.agentRuntime.getId();
-        final List<QueuedInput> drained = messageQueueManager
-                .drainForInjection(q -> agentRuntimeId.equals(q.getAgentRuntimeId()), QueuedInputPriority.NEXT);
+        final List<QueuedInput> drained = messageQueueManager.drainForInjection(filter, QueuedInputPriority.NEXT);
         if (drained.isEmpty()) {
             return 0;
         }

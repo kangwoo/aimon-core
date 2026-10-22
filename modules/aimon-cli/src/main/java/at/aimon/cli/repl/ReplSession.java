@@ -722,6 +722,11 @@ public class ReplSession {
      * path, preserving the semantic boundary between the two.
      *
      * <p>
+     * An entry addressed to a session ({@link QueuedInput#getSessionId()}) is not replayed. Such an entry — a
+     * background monitor's events, say — is read by the agent at the start of the session's next turn; replaying it
+     * here would start a turn of its own for every one of them, which is waking the agent, not delivering to it.
+     *
+     * <p>
      * {@link #draining} prevents the replay from calling itself: each replayed prompt will re-enter
      * {@code executeAgent} → {@code finally} → {@code drainQueueAfterTurn}, but the outer call already holds the
      * batch in {@code drained}, so the nested call returns immediately and lets the outer loop continue.
@@ -733,7 +738,8 @@ public class ReplSession {
         draining = true;
         try {
             final List<QueuedInput> drained = messageQueueManager.drainForInjection(
-                    q -> agentRuntime.getId().equals(q.getAgentRuntimeId()), QueuedInputPriority.LATER);
+                    q -> agentRuntime.getId().equals(q.getAgentRuntimeId()) && q.getSessionId().isEmpty(),
+                    QueuedInputPriority.LATER);
             for (QueuedInput entry : drained) {
                 replay(entry);
             }

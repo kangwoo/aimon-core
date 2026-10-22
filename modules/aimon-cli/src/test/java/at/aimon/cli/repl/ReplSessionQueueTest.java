@@ -286,6 +286,38 @@ class ReplSessionQueueTest {
         assertThat(queueManager.snapshot()).isEmpty();
     }
 
+    @Test
+    @DisplayName("turn-end drain leaves an entry addressed to a session for that session's next turn")
+    void turnEndDrainLeavesSessionAddressedEntries() {
+        final AgentRuntimeId agentRuntimeId = AgentRuntimeId.of("agent:test-6");
+        final MessageQueueManager queueManager = new DefaultMessageQueueManager(new InMemoryMessageQueueRepository());
+
+        final OrcaAgentExecutor executor = mock(OrcaAgentExecutor.class);
+        final OrcaAgentRuntime context = mock(OrcaAgentRuntime.class);
+        when(context.getId()).thenReturn(agentRuntimeId);
+        when(executor.executeAsync(Mockito.any(), Mockito.any(), Mockito.any())).thenReturn(CompletableFuture
+                .completedFuture(OrcaAgentExecutionResult.success("done", SessionSnapshot.of(SessionId.of("default")),
+                        ExecutionMetadata.simple(Duration.ZERO, Instant.EPOCH, Instant.EPOCH))));
+
+        final CliSettings settings = new CliSettings();
+        final OutputFormatter formatter = new OutputFormatter(settings);
+        final LiveSession liveSession = new DefaultLiveSession(SessionId.of("default"), context, executor,
+                LiveSessionOptions.defaults(), queueManager);
+        final AgentSetupFactory.AgentSetup agentSetup = AgentSetupFactory.AgentSetup.builder().agentExecutor(executor)
+                .agentRuntime(context).outputFormatter(formatter).messageQueueManager(queueManager)
+                .liveSession(liveSession).build();
+        final ReplSession session = new ReplSession(agentSetup, settings, null);
+
+        queueManager.enqueue(QueuedInput.builder().inputText("Monitor mon_1 (errors) — 1 event:\nERROR x")
+                .agentRuntimeId(agentRuntimeId).sessionId("default").build());
+
+        session.processInput("kickoff");
+
+        // Only the kickoff turn ran; the monitor entry was not turned into a turn of its own.
+        Mockito.verify(executor, Mockito.times(1)).executeAsync(Mockito.any(), Mockito.any(), Mockito.any());
+        assertThat(queueManager.snapshot()).hasSize(1);
+    }
+
     /**
      * Builds a {@link CompletionStage} that completes with the result of {@code resultSupplier} only after
      * {@code gate} is counted down. The wait runs on a helper thread so the caller thread is never blocked.
