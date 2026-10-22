@@ -287,7 +287,7 @@ class ReplSessionQueueTest {
     }
 
     @Test
-    @DisplayName("turn-end drain leaves an entry addressed to a session for that session's next turn")
+    @DisplayName("turn-end drain replays this session's follow-ups, and leaves monitor batches and other sessions' entries")
     void turnEndDrainLeavesSessionAddressedEntries() {
         final AgentRuntimeId agentRuntimeId = AgentRuntimeId.of("agent:test-6");
         final MessageQueueManager queueManager = new DefaultMessageQueueManager(new InMemoryMessageQueueRepository());
@@ -309,13 +309,20 @@ class ReplSessionQueueTest {
         final ReplSession session = new ReplSession(agentSetup, settings, null);
 
         queueManager.enqueue(QueuedInput.builder().inputText("Monitor mon_1 (errors) — 1 event:\nERROR x")
-                .agentRuntimeId(agentRuntimeId).sessionId("default").build());
+                .agentRuntimeId(agentRuntimeId).sessionId("default")
+                .metadata(Map.of("kind", "monitor-event", "monitorId", "mon_1")).build());
+        queueManager.enqueue(QueuedInput.builder().inputText("another tab's follow-up").agentRuntimeId(agentRuntimeId)
+                .sessionId("another-session").build());
+        queueManager.enqueue(QueuedInput.builder().inputText("my follow-up").agentRuntimeId(agentRuntimeId)
+                .sessionId("default").build());
 
         session.processInput("kickoff");
 
-        // Only the kickoff turn ran; the monitor entry was not turned into a turn of its own.
-        Mockito.verify(executor, Mockito.times(1)).executeAsync(Mockito.any(), Mockito.any(), Mockito.any());
-        assertThat(queueManager.snapshot()).hasSize(1);
+        // kickoff + this session's follow-up. The monitor batch is left for the next turn's start, and another
+        // session's entry is not this REPL's to replay.
+        Mockito.verify(executor, Mockito.times(2)).executeAsync(Mockito.any(), Mockito.any(), Mockito.any());
+        assertThat(queueManager.snapshot()).extracting(QueuedInput::getInputText)
+                .containsExactlyInAnyOrder("Monitor mon_1 (errors) — 1 event:\nERROR x", "another tab's follow-up");
     }
 
     /**

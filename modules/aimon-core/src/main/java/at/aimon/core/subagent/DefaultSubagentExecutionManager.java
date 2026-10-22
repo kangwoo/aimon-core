@@ -1656,8 +1656,9 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         final SubagentTaskCompleted.Outcome outcome = toOutcome(finalState);
         final String detail = completionDetail(outcome, result, error);
 
-        launchContext.getMessageQueueManager().ifPresent(queue -> enqueueCompletionNotification(queue,
-                launchContext.getAgentRuntimeId(), taskId, subagentName, outcome, detail));
+        launchContext.getMessageQueueManager()
+                .ifPresent(queue -> enqueueCompletionNotification(queue, launchContext.getAgentRuntimeId(),
+                        launchContext.getInvokingSessionId().orElse(null), taskId, subagentName, outcome, detail));
         launchContext.getParentEventSink().ifPresent(sink -> emitCompletionEvent(sink,
                 launchContext.getAgentRuntimeId(), taskId, subagentName, outcome, detail));
     }
@@ -1718,13 +1719,19 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         return trimmed.substring(0, COMPLETION_DETAIL_MAX_CHARS) + "… (truncated)";
     }
 
-    /** Enqueues a {@code NEXT}-priority completion notification for the parent, swallowing any failure. */
-    private void enqueueCompletionNotification(MessageQueueManager queue, AgentRuntimeId agentRuntimeId, String taskId,
-            String subagentName, SubagentTaskCompleted.Outcome outcome, String detail) {
+    /**
+     * Enqueues a {@code NEXT}-priority completion notification for the parent, swallowing any failure. It is addressed
+     * to the session the task was launched for, when there is one: the parent runtime is shared by every session of
+     * its agent, and only that session asked for the task.
+     */
+    private void enqueueCompletionNotification(MessageQueueManager queue, AgentRuntimeId agentRuntimeId,
+            SessionId invokingSessionId, String taskId, String subagentName, SubagentTaskCompleted.Outcome outcome,
+            String detail) {
         try {
             final QueuedInput notification = QueuedInput.builder()
                     .inputText(completionMessageBody(taskId, subagentName, outcome, detail))
-                    .priority(QueuedInputPriority.NEXT).agentRuntimeId(agentRuntimeId).sourceAgentId(subagentName)
+                    .priority(QueuedInputPriority.NEXT).agentRuntimeId(agentRuntimeId)
+                    .sessionId(invokingSessionId != null ? invokingSessionId.value() : null).sourceAgentId(subagentName)
                     .metadata(Map.of(SubagentTaskCompleted.QUEUED_KIND_KEY, SubagentTaskCompleted.QUEUED_KIND,
                             SubagentTaskCompleted.QUEUED_TASK_ID_KEY, taskId, SubagentTaskCompleted.QUEUED_OUTCOME_KEY,
                             outcome.name()))

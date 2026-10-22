@@ -83,7 +83,8 @@ Related scenarios:
 | `uuid` | `UUID` | The identifier — the basis of `equals()` / `hashCode()` |
 | `inputText` | `String` | The original text (cannot be empty) |
 | `priority` | `QueuedInputPriority` | The priority tier (`NEXT` by default) |
-| `agentExecutionContextId` | `AgentRuntimeId` | Which context is to consume this message |
+| `agentRuntimeId` | `AgentRuntimeId` | Which runtime is to consume this message |
+| `sessionId` | `Optional<String>` | Which session is to consume this message (`SessionId.value()`). When empty, any session of that runtime takes it |
 | `sourceAgentId` | `Optional<String>` | The originating sub-agent (empty for the REPL) |
 | `enqueuedAt` | `Instant` | When it was queued |
 | `metadata` | `Map<String,String>` | Arbitrary producer tags (an immutable copy) |
@@ -168,7 +169,8 @@ private void enqueueWhileBusy(String userMessage) {
     QueuedInput queued = QueuedInput.builder()
         .inputText(userMessage)
         .priority(QueuedInputPriority.NEXT)
-        .agentExecutionContextId(agentExecutionContext.getId())
+        .agentRuntimeId(agentRuntime.getId())
+        .sessionId(sessionId.value())
         .build();
     messageQueueManager.enqueue(queued);
 }
@@ -178,9 +180,11 @@ private void enqueueWhileBusy(String userMessage) {
 
 ```java
 // OrcaAgentExecutor#injectQueuedMessages — called at the tail of the ReAct loop
-final AgentRuntimeId contextId = scope.executionContext.getId();
+final AgentRuntimeId runtimeId = scope.agentRuntime.getId();
+final String sessionId = scope.transcriptBuffer.getSessionId().value();
 final List<QueuedInput> drained = messageQueueManager.drainForInjection(
-        q -> contextId.equals(q.getAgentRuntimeId()),
+        q -> runtimeId.equals(q.getAgentRuntimeId())
+                && q.getSessionId().map(sessionId::equals).orElse(true),
         QueuedInputPriority.NEXT);
 
 for (QueuedInput queued : drained) {
@@ -189,7 +193,7 @@ for (QueuedInput queued : drained) {
 }
 ```
 
-**Always include `agentExecutionContextId` in the `filter`.** Leave it out and the main agent and its sub-agents will swallow each other's input.
+**Always include the runtime and the session in the `filter`.** Leave out the runtime and the main agent and its sub-agents swallow each other's input; leave out the session and another session of the same agent takes this session's input — a runtime is per agent, so every session of that agent shares it. An entry addressed to a session is also injected at the start of that session's turn.
 
 ### 3. Consuming the leftovers automatically when the turn ends
 

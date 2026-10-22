@@ -1827,8 +1827,9 @@ public class OrcaAgentExecutor
                 if (iterationCount > 1) {
                     annotateLoopTransition(iterationSpan,
                             resolveLoopTransition(iterationCount, budgetForcedCompaction, injectedLastTail));
-                    annotateReceivedSubagentTasks(iterationSpan, scope.receivedTaskIdsAwaitingRead);
                 }
+                // Iteration 1 too: the turn-start drain can deliver a completion notice its LLM call reads first.
+                annotateReceivedSubagentTasks(iterationSpan, scope.receivedTaskIdsAwaitingRead);
                 try {
 
                     // Query available tools each iteration so newly activated deferred tools are included.
@@ -2131,8 +2132,9 @@ public class OrcaAgentExecutor
     private int injectSessionQueuedMessages(ExecutionScope scope) {
         final AgentRuntimeId agentRuntimeId = scope.agentRuntime.getId();
         final String sessionId = scope.transcriptBuffer.getSessionId().value();
-        return drainAndInject(scope, new ArrayList<>(), q -> agentRuntimeId.equals(q.getAgentRuntimeId())
-                && q.getSessionId().filter(sessionId::equals).isPresent());
+        return drainAndInject(scope, scope.receivedTaskIdsAwaitingRead,
+                q -> agentRuntimeId.equals(q.getAgentRuntimeId())
+                        && q.getSessionId().filter(sessionId::equals).isPresent());
     }
 
     private int drainAndInject(ExecutionScope scope, List<String> injectedTaskIds, Predicate<QueuedInput> filter) {

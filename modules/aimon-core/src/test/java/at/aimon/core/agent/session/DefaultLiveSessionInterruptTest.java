@@ -185,6 +185,35 @@ class DefaultLiveSessionInterruptTest {
     }
 
     @Test
+    @DisplayName("NOW enqueue for the same runtime but ANOTHER session does NOT trip this session's coordinator")
+    void nowPriorityForAnotherSessionIsIgnored() throws Exception {
+        final OrcaAgentRuntime context = createContext();
+        final SessionId sessionId = SessionId.of("m2-now-session");
+        final CapturingStreamingExecutor executor = new CapturingStreamingExecutor();
+        final MessageQueueManager queue = new DefaultMessageQueueManager(new InMemoryMessageQueueRepository());
+
+        try (DefaultLiveSession session = new DefaultLiveSession(sessionId, context, executor,
+                LiveSessionOptions.defaults(), queue)) {
+            final CompletionStage<?> stage = session.submitAsync("hi", e -> {
+            });
+            assertThat(executor.awaitObserverInvoked(1, TimeUnit.SECONDS)).isTrue();
+            final InterruptCoordinator coordinator = executor.capturedCoordinator.get();
+
+            queue.enqueue(QueuedInput.builder().inputText("for the other tab").priority(QueuedInputPriority.NOW)
+                    .agentRuntimeId(context.getId()).sessionId("another-session").build());
+            assertThat(coordinator.getSignal().isCancelled()).isFalse();
+
+            queue.enqueue(QueuedInput.builder().inputText("for me").priority(QueuedInputPriority.NOW)
+                    .agentRuntimeId(context.getId()).sessionId(sessionId.value()).build());
+            assertThat(coordinator.getSignal().getReason()).contains(InterruptReason.NOW_PRIORITY_INPUT);
+
+            executor.completeNext(OrcaAgentExecutionResult.success("done", SessionSnapshot.of(sessionId),
+                    ExecutionMetadata.simple(Duration.ZERO, Instant.EPOCH, Instant.EPOCH)));
+            stage.toCompletableFuture().get(1, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     @DisplayName("interrupt() on an idle session is a silent no-op (no active coordinator)")
     void interruptOnIdleSessionIsNoOp() {
         final OrcaAgentRuntime context = createContext();

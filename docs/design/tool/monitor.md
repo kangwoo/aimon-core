@@ -254,9 +254,10 @@ q -> agentRuntimeId.equals(q.getAgentRuntimeId())
         && q.getSessionId().map(sessionId::equals).orElse(true)
 ```
 
-`sessionId` 가 없는 항목은 지금과 똑같이 동작하므로 기존 생산자(`offerAsync`, 서브에이전트 완료 알림)는
-행동이 바뀌지 않는다. 모니터만 `sessionId` 를 채운다. 기존 두 생산자와 `NOW` 우선순위 리스너
-(`DefaultLiveSession.onQueueEvent`)를 세션 단위로 바꾸는 것은 별도 변경이다(§11 M-2).
+큐에 넣는 쪽은 셋 모두 세션을 지정한다 — 모니터는 소유자의 세션, `DefaultLiveSession.offerAsync` 는 자기
+세션, 서브에이전트 완료 알림은 작업을 띄운 세션(`SubagentLaunchContext.getInvokingSessionId()`, 없으면 지정하지
+않는다). `NOW` 우선순위 리스너(`DefaultLiveSession.onQueueEvent`)도 다른 세션을 지정한 항목에는 반응하지 않는다.
+`sessionId` 가 없는 항목은 예전처럼 runtime 의 어느 세션이든 가져간다 — 호스트가 직접 넣은 항목이 그렇다.
 
 ### 6.2 언제 주입되는가
 
@@ -264,12 +265,13 @@ q -> agentRuntimeId.equals(q.getAgentRuntimeId())
 응답은 그 앞에서 반환한다. 그래서 쉬는 세션에 쌓인 알림은 "다음 턴" 이 아니라 "다음 턴 중 도구를 쓰는
 첫 iteration 끝" 에야 보이고, 바로 답하는 턴은 끝내 보지 못한다. 두 군데를 고친다.
 
-1. **턴 시작 드레인** — 실행기가 첫 LLM 호출 직전에 **세션 지정 항목만** 드레인해 주입한다. 세션 지정이
-   없는 기존 항목은 손대지 않는다 — 그것들은 CLI 재생(아래)의 몫이고, 여기서 가져가면 그 경로의 동작이 바뀐다
-2. **CLI 의 턴 뒤 재생** — `ReplSession.drainQueueAfterTurn` 은 runtime 의 `NEXT`/`LATER` 항목을 전부 꺼내
-   각각을 새 턴으로 재생한다. 그대로 두면 모니터 알림 한 묶음마다 LLM 턴이 하나씩 생기는데, 그것은 §9.1 에서
-   미룬 "깨우기" 를 CLI 에서만 몰래 하는 것이다. 재생 필터에 `q.getSessionId().isEmpty()` 를 더해 세션 지정
-   항목은 남겨 두고, 다음 턴 시작 드레인이 가져가게 한다
+1. **턴 시작 드레인** — 실행기가 첫 LLM 호출 직전에 **이 세션을 지정한 항목만** 드레인해 주입한다. 세션
+   지정이 없는 항목은 손대지 않는다 — 누구의 것인지 모르는 항목을 이 턴이 먼저 가져갈 근거가 없다
+2. **CLI 의 턴 뒤 재생** — `ReplSession.drainQueueAfterTurn` 은 턴이 끝난 직후 남은 항목을 꺼내 각각을 새 턴으로
+   재생한다. 사용자가 턴 도중 입력한 후속 메시지와 서브에이전트 완료 알림에는 맞는 동작이지만, 모니터 알림까지
+   재생하면 묶음마다 LLM 턴이 하나씩 생긴다 — §9.1 에서 미룬 "깨우기" 를 CLI 에서만 몰래 하는 것이다. 그래서
+   재생 필터는 **이 세션의 항목**(이 세션 지정 또는 지정 없음)만 꺼내되 모니터 항목(`metadata.kind =
+   monitor-event`)은 남겨 두고, 다음 턴 시작 드레인이 가져가게 한다
 
 결과적으로 모니터 알림은 진행 중인 턴이면 다음 도구 iteration 끝에서, 쉬는 세션이면 다음 턴의 첫 LLM 호출
 전에 모델에게 간다. 웹·라우팅 경로도 같은 실행기를 쓰므로 같은 보장을 받는다.
@@ -443,7 +445,6 @@ Spring Boot starter 속성과 원격 샌드박스 셸의 `STREAMING`(별도 저�
 | id | 항목 |
 |----|------|
 | M-1 | `BackgroundBashOwner` 를 `BackgroundTaskOwner` 같은 공용 이름으로 옮긴다 — 지금은 모니터가 bash 패키지의 타입을 빌려 쓴다 |
-| M-2 | `offerAsync`, 서브에이전트 완료 알림, `NOW` 우선순위 리스너를 세션 단위로 바꿔 §6.1 의 세션 간 누수를 막는다 |
 | M-3 | `Monitor(command)` 의 권한 패턴을 `Bash` 패턴에서 물려받게 할지 — 지금은 도구 이름별로 따로 적어야 한다 |
 | M-4 | 세션이 삭제(`SessionDeletedEvent`)되면 그 세션의 모니터를 멈춘다 — 지금은 타임아웃까지 돈다 |
 
@@ -456,4 +457,5 @@ Spring Boot starter 속성과 원격 샌드박스 셸의 `STREAMING`(별도 저�
 | WebSocket 클라이언트 | JDK `java.net.http.WebSocket`, rebinding 틈은 남긴다 | OkHttp + `WebHttpClientFactory` 클라이언트, rebinding 도 막는다 | §4.1. 네트워크 인터셉터가 연결된 주소를 검사하는 길이 이미 있었다 |
 | `QueuedInput.sessionId` 의 타입 | `SessionId` 로 읽힐 수 있게 적었다 | `Optional<String>` | §6.1. 패키지 순환 |
 | 기본 활성화 | 정하지 않았다 | `ToolSpec.monitorEnabled` 기본 꺼짐 | 아무도 입력하지 않은 메시지를 대화에 넣고, `command` 형태는 셸 명령을 최대 30분 돌린다 |
+| 기존 생산자의 세션 지정 (옛 열린 항목 M-2) | 별도 변경으로 미룬다 | 같은 브랜치의 후속 커밋에서 `offerAsync` · 서브에이전트 완료 알림 · `NOW` 리스너를 세션 단위로 바꿨다. CLI 재생 필터는 "세션 지정 없음" 에서 "이 세션 + 모니터 제외" 로 바뀌었다 | §6.1 의 누수는 모니터와 무관하게 있던 버그이고, 필드가 생긴 뒤에는 고치는 비용이 작았다 |
 | 멈춘 모니터의 버퍼 | 정하지 않았다 | `MonitorStop` · 앱 종료 시 버퍼에 남은 이벤트는 버린다 | 모델이 스스로 멈췄거나 받을 턴이 없다. 종료 알림을 보내지 않는 것과 같은 이유 |
