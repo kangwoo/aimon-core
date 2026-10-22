@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/features.md
-source_commit: 158e83c
+source_commit: 766b8b47
 ---
 
 # Feature Catalog
@@ -111,7 +111,7 @@ must survive goes on the record side. For the detailed rules see
 | cumulative statistics (turns / iterations / tokens) | `SessionTotals` | core |
 | session ownership election plus fencing between nodes | `SessionLeaseStore`, `SessionStore.claim` | core |
 | multi-node routing / handle cache | `SessionRouter`, `LiveSessionCache`, `LiveSessionOpener` | `aimon-session-routing` |
-| waking idle sessions (a turn per monitor event, opt-in) | `IdleSessionWaker`, `WakePolicy`, `WakeLedger` | `aimon-session-routing` |
+| waking idle sessions (a turn per monitor event, opt-in) | `IdleSessionWaker`, `WakePolicy` · the caps' ledger `WakeLedger` (SPI in core, shared implementations in the session backends) | `aimon-session-routing` |
 | MongoDB backend | — | `aimon-session-mongodb` |
 | PostgreSQL backend | — | `aimon-session-postgres` |
 | Redis backend | — | `aimon-session-redis` |

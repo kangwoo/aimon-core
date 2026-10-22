@@ -27,6 +27,15 @@ ensureCollection("idempotency_entries");
 ensureCollection("conversation_signals", { capped: true, size: 64 * 1024 * 1024 });
 ensureCollection("background_task");
 
+// wake_ledger holds the idle-session waker's caps (MongoWakeLedger), one document per session. Needed only
+// when idle-session waking is on with a shared ledger. A document expires a day after its last write
+// (expiresAt, set by the ledger): by then its hour window is empty and only its streak is forgotten.
+ensureCollection("wake_ledger");
+target.wake_ledger.createIndex(
+    { expiresAt: 1 },
+    { name: "ttl_expires_at", expireAfterSeconds: 0 }
+);
+
 // scheduled_task_interrupts is the change-stream channel for MongoScheduledTaskInterruptBus: one tiny
 // document per stop request. Capped so it never needs sweeping; nodes read the requests from the change
 // stream, not from the collection, so the size bounds storage only (1 MiB is several thousand requests).

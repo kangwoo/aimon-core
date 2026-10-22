@@ -88,6 +88,9 @@ class MongoSchemaFreezeTest {
 
         // Frozen from birth: a rename leaves every stored schedule behind in a collection nothing reads.
         assertThat(DocumentKeys.COLL_SCHEDULED_TASKS).isEqualTo("scheduled_tasks");
+
+        // Frozen from birth: a rename resets every session's wake caps, and a streak cap that resets is no cap.
+        assertThat(DocumentKeys.COLL_WAKE_LEDGER).isEqualTo("wake_ledger");
     }
 
     @Test
@@ -100,6 +103,10 @@ class MongoSchemaFreezeTest {
         assertThat(script).contains("ensureCollection(\"session_records\")");
         assertThat(script).contains("ensureCollection(\"session_log_segments\")");
         assertThat(script).contains("ensureCollection(\"scheduled_tasks\")");
+        assertThat(script).contains("ensureCollection(\"wake_ledger\")");
+        // The TTL index is what bounds the collection: without it a document per session ever woken stays forever.
+        assertThat(script).contains("target.wake_ledger.createIndex( { expiresAt: 1 }, "
+                + "{ name: \"ttl_expires_at\", expireAfterSeconds: 0 } );");
 
         // The signal collection is capped, and that is not decoration: the change-stream bus depends on it. A rename
         // that drops the option provisions an unbounded collection which grows until the disk does.

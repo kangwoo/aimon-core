@@ -23,7 +23,8 @@ import com.zaxxer.hikari.HikariDataSource;
  *
  * <p>
  * The DDL in {@code src/main/resources/db/postgres/} ({@code V1__init.sql}, then {@code V2__session_log_segment.sql},
- * then {@code V3__session_record_owner.sql}, in the order operators apply them) is applied here — and only here — at
+ * then {@code V3__session_record_owner.sql}, then {@code V4__wake_ledger.sql}, in the order operators apply them) is
+ * applied here — and only here — at
  * static-init time via plain JDBC. Production code never executes DDL.
  */
 public final class PostgresTestSupport {
@@ -38,6 +39,7 @@ public final class PostgresTestSupport {
         applySchema(PG, "/db/postgres/V1__init.sql");
         applySchema(PG, "/db/postgres/V2__session_log_segment.sql");
         applySchema(PG, "/db/postgres/V3__session_record_owner.sql");
+        applySchema(PG, "/db/postgres/V4__wake_ledger.sql");
         SHARED = buildHikari(PG, 8);
     }
 
@@ -69,7 +71,7 @@ public final class PostgresTestSupport {
         try (Connection c = SHARED.getConnection(); Statement s = c.createStatement()) {
             s.execute("TRUNCATE conversation_lock, conversation_lock_fence, conversation_signal, "
                     + "conversation_inbox, idempotency_entry, background_task, session_record, "
-                    + "session_log_segment RESTART IDENTITY");
+                    + "session_log_segment, wake_ledger RESTART IDENTITY");
         } catch (SQLException e) {
             throw new IllegalStateException("Failed to truncate test tables", e);
         }

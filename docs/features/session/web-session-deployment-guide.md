@@ -151,6 +151,8 @@ Postgres 를 쓰면 `V3__session_record_owner.sql` 을 먼저 적용한다(§2).
 
 **고아 세그먼트 스윕.** GC 는 세션을 저장할 때만 돌므로, 아무도 다시 열지 않는 세션은 고아를 그대로 둔다 — rewind 가 잘라 낸 세그먼트, 실패한 `/clear` 삭제, 저장되지 못한 봉인, 세그먼트 삭제에 실패한 삭제된 레코드. 그것을 주우려면 저장소 단위 스윕을 켠다: 스타터에서는 `aimon.session.segment-sweep-interval`(예: `1h`), `AimonStackSpec` 에서는 `SessionSpec.segmentSweepInterval(...)`. 설정하지 않으면 꺼져 있다. 세그먼트는 grace — `aimon.session.segment-sweep-grace` / `segmentSweepGrace(...)`, 기본 24시간 — 보다 오래됐고, 세그먼트 목록을 읽은 **뒤에** 읽은 세션 레코드가 그것을 가리키지 않을 때만 지워진다. 스윕은 세션 리스를 쥐지 않고 원시 저장소로 지우는데, 세션 단위 GC 가 안전한 것과 같은 두 이유로 안전하다. 모든 노드에서 한꺼번에 켜도 안전하고, 비용도 곱해지지 않는다: 리스 저장소가 있으면 노드들은 **스윕 리스**(예약 id `aimon:segment-sweep`)를 번갈아 잡아, 클러스터 전체가 간격마다 한 번만 저장소를 훑는다. 리스는 간격 하나만큼 잡고 회차가 끝나도 놓지 않으며, 쥔 노드가 죽으면 리스가 만료된 뒤 다음 노드가 이어받는다. 스윕에는 세그먼트 저장소가 필요하고, 그것 없이 스윕을 설정하면 기동 시 거절한다. 스윕이 페이지를 넘기는 SPI 는 `SessionLogSegmentStore.scanSessions(...)` 이고, 직접 만든 백엔드는 그것을 구현한다(계약은 `AbstractSessionLogSegmentStoreContractTest` 에 있다).
 
+**쉬는 세션 깨우기의 상한.** 깨우기(`aimon.session.wake.enabled`)를 켠 다중 노드 배포는 상한 카운터를 공유하는 `WakeLedger` 를 함께 준다 — 스타터에서는 빈으로, `AimonStackSpec` 에서는 `SessionSpec.wakeLedger(...)` 로. 주지 않으면 노드마다 따로 세므로, 모니터가 흩어진 세션은 노드 수만큼 상한을 받는다. 레코드와 같은 백엔드에 둔다: `RedisWakeLedger`, `PostgresWakeLedger`(테이블 `wake_ledger`, `V4__wake_ledger.sql`), `MongoWakeLedger`(컬렉션 `wake_ledger`, `init.js` 의 TTL 인덱스 포함). 직접 만든 백엔드의 계약은 `AbstractWakeLedgerContractTest` 에 있다. 설계: `docs/design/session/idle-wake.md` §7.
+
 ---
 
 ## 3. 운영 조정값

@@ -1,4 +1,4 @@
-package at.aimon.session.routing.wake;
+package at.aimon.core.agent.session.wake;
 
 import java.time.Instant;
 import java.util.List;
