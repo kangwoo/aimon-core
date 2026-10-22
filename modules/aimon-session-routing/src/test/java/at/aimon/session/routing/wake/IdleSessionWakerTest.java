@@ -39,6 +39,7 @@ import at.aimon.session.routing.ClusterSessionStatus;
 import at.aimon.session.routing.SessionRouter;
 import at.aimon.session.routing.SubmitDisposition;
 import at.aimon.session.routing.SubmitRequest;
+import at.aimon.session.routing.exception.TurnNotRunException;
 
 @DisplayName("IdleSessionWaker — wakes an idle session for its background notifications, within its caps")
 class IdleSessionWakerTest {
@@ -204,6 +205,40 @@ class IdleSessionWakerTest {
         await(() -> router.attempts.get() == 2 && woken().size() == 1);
         assertThat(ledger.get(SESSION).getRecentWakes()).hasSize(1);
         assertThat(ledger.get(SESSION).getOutstanding()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("a wake turn that did not run puts its notifications back, gives the wake back, and wakes again")
+    void notRunTurnIsRetried() {
+        waker = waker().policy(WakePolicy.builder().debounce(Duration.ofMillis(50)).retryDelay(Duration.ofMillis(200))
+                .maxPerHour(1).build()).build();
+
+        queue.enqueue(monitorEvent("keep me"));
+        await(() -> woken().size() == 1);
+        router.turns.get(0).completeExceptionally(new TurnNotRunException(null, TurnNotRunException.Reason.PURGED,
+                "session session-1 was released on node node-B before this turn ran"));
+
+        // Within the hourly cap of one: the first wake was given back.
+        await(() -> woken().size() == 2);
+        assertThat(woken().get(1).getUserInput().asText()).contains("keep me");
+        assertThat(queue.snapshot()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a wake turn that failed after running is not retried: its notifications were its input")
+    void failedTurnIsNotRetried() throws Exception {
+        waker = waker()
+                .policy(WakePolicy.builder().debounce(Duration.ofMillis(50)).retryDelay(Duration.ofMillis(50)).build())
+                .build();
+
+        queue.enqueue(monitorEvent("ran once"));
+        await(() -> woken().size() == 1);
+        router.turns.get(0).completeExceptionally(new IllegalStateException("Forwarded turn t FAILED: boom"));
+        await(() -> !ledger.get(SESSION).isOutstanding());
+        fence();
+
+        assertThat(woken()).hasSize(1);
+        assertThat(queue.snapshot()).isEmpty();
     }
 
     @Test

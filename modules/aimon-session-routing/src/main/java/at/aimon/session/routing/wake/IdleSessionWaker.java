@@ -44,6 +44,7 @@ import at.aimon.session.routing.ClusterSessionStatus;
 import at.aimon.session.routing.SessionRouter;
 import at.aimon.session.routing.SubmitDisposition;
 import at.aimon.session.routing.SubmitRequest;
+import at.aimon.session.routing.exception.TurnNotRunException;
 
 /**
  * Opens a turn for an idle session when a background notification addressed to it arrives — a monitor's events, by
@@ -426,15 +427,23 @@ public final class IdleSessionWaker implements AutoCloseable {
         // Back onto the waker's thread: the ledger is changed from one thread, and turn threads stay free.
         turn.whenComplete((result, error) -> {
             try {
-                scheduler.execute(() -> settled(sessionId, error));
+                scheduler.execute(() -> settled(sessionId, error, drained, now));
             } catch (RejectedExecutionException closing) {
                 log.debug("Wake of session {} settled after close", sessionId);
             }
         });
     }
 
-    /** After a wake's turn: remember the turn count, so the next wake can tell whether another turn ran since. */
-    private void settled(SessionId sessionId, Throwable error) {
+    /**
+     * After a wake's turn: remember the turn count, so the next wake can tell whether another turn ran since — or, when
+     * the turn is known not to have run, put its notifications back and give the wake back (W-3).
+     */
+    private void settled(SessionId sessionId, Throwable error, List<QueuedInput> drained, Instant wokenAt) {
+        final TurnNotRunException notRun = notRun(error);
+        if (notRun != null) {
+            notRun(sessionId, notRun, drained, wokenAt);
+            return;
+        }
         if (error != null) {
             log.warn("The wake turn of session {} did not complete: {}", sessionId, error.toString());
         }
@@ -450,6 +459,47 @@ public final class IdleSessionWaker implements AutoCloseable {
         } catch (RuntimeException e) {
             log.warn("Could not record the turn count after waking session {}: {}", sessionId, e.toString());
         }
+    }
+
+    /**
+     * A wake's turn that no node ran — its message was purged, or refused before it started. The notifications were
+     * only in that turn's input, so they go back into the queue as they were and the wake is given back; the session is
+     * tried again after the retry delay. A session deleted meanwhile keeps nothing: its notifications have no one left
+     * to tell.
+     */
+    private void notRun(SessionId sessionId, TurnNotRunException notRun, List<QueuedInput> drained, Instant wokenAt) {
+        final boolean exists;
+        try {
+            exists = records.load(sessionId).isPresent();
+        } catch (RuntimeException e) {
+            log.warn("The wake turn of session {} did not run ({}), and its record could not be read; its"
+                    + " notifications are lost: {}", sessionId, notRun.getReason(), e.toString());
+            return;
+        }
+        release(sessionId, wokenAt);
+        if (!exists) {
+            log.debug("The wake turn of deleted session {} did not run ({})", sessionId, notRun.getReason());
+            return;
+        }
+        // Set first, as on a refused submit: putting the entries back fires ENQUEUED, which must not wake at once.
+        retryNotBefore.put(sessionId, clock.instant().plus(policy.getRetryDelay()));
+        requeue(drained);
+        schedule(sessionId, policy.getRetryDelay());
+        log.info("The wake turn of session {} did not run ({}); its notifications are back in the queue, retry in {}",
+                sessionId, notRun.getReason(), policy.getRetryDelay());
+    }
+
+    /** The {@link TurnNotRunException} behind a turn's failure, through the wrappers a future adds, or null. */
+    private static TurnNotRunException notRun(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (cause instanceof TurnNotRunException notRun) {
+                return notRun;
+            }
+            if (cause.getCause() == cause) {
+                return null;
+            }
+        }
+        return null;
     }
 
     /** Puts drained entries back as they were — same uuid, same metadata — after a refused submit. */
