@@ -208,20 +208,43 @@ class IdleSessionWakerTest {
     }
 
     @Test
-    @DisplayName("a wake turn that did not run puts its notifications back, gives the wake back, and wakes again")
+    @DisplayName("a wake turn that did not run puts its notifications back and wakes again, still counted")
     void notRunTurnIsRetried() {
-        waker = waker().policy(WakePolicy.builder().debounce(Duration.ofMillis(50)).retryDelay(Duration.ofMillis(200))
-                .maxPerHour(1).build()).build();
+        waker = waker()
+                .policy(WakePolicy.builder().debounce(Duration.ofMillis(50)).retryDelay(Duration.ofMillis(200)).build())
+                .build();
 
         queue.enqueue(monitorEvent("keep me"));
         await(() -> woken().size() == 1);
         router.turns.get(0).completeExceptionally(new TurnNotRunException(null, TurnNotRunException.Reason.PURGED,
                 "session session-1 was released on node node-B before this turn ran"));
 
-        // Within the hourly cap of one: the first wake was given back.
         await(() -> woken().size() == 2);
         assertThat(woken().get(1).getUserInput().asText()).contains("keep me");
         assertThat(queue.snapshot()).isEmpty();
+        // Both attempts count: a refusal that repeated would meet the caps instead of retrying forever.
+        assertThat(ledger.get(SESSION).getRecentWakes()).hasSize(2);
+        assertThat(ledger.get(SESSION).getConsecutive()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("a not-run refusal that keeps repeating stops at the cap")
+    void repeatedNotRunMeetsTheCap() throws Exception {
+        waker = waker().policy(WakePolicy.builder().debounce(Duration.ofMillis(50)).retryDelay(Duration.ofMillis(100))
+                .maxConsecutive(2).build()).build();
+
+        queue.enqueue(monitorEvent("unreadable elsewhere"));
+        for (int attempt = 0; attempt < 2; attempt++) {
+            final int expected = attempt + 1;
+            await(() -> woken().size() == expected);
+            router.turns.get(attempt).completeExceptionally(new TurnNotRunException(null,
+                    TurnNotRunException.Reason.UNREADABLE, "the holder could not decode it"));
+        }
+        await(() -> !queue.snapshot().isEmpty());
+        Thread.sleep(400);
+
+        assertThat(woken()).hasSize(2);
+        assertThat(queue.snapshot()).extracting(QueuedInput::getInputText).containsExactly("unreadable elsewhere");
     }
 
     @Test

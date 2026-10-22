@@ -427,7 +427,7 @@ public final class IdleSessionWaker implements AutoCloseable {
         // Back onto the waker's thread: the ledger is changed from one thread, and turn threads stay free.
         turn.whenComplete((result, error) -> {
             try {
-                scheduler.execute(() -> settled(sessionId, error, drained, now));
+                scheduler.execute(() -> settled(sessionId, error, drained));
             } catch (RejectedExecutionException closing) {
                 log.debug("Wake of session {} settled after close", sessionId);
             }
@@ -436,12 +436,12 @@ public final class IdleSessionWaker implements AutoCloseable {
 
     /**
      * After a wake's turn: remember the turn count, so the next wake can tell whether another turn ran since — or, when
-     * the turn is known not to have run, put its notifications back and give the wake back (W-3).
+     * the turn is known not to have run, put its notifications back (W-3).
      */
-    private void settled(SessionId sessionId, Throwable error, List<QueuedInput> drained, Instant wokenAt) {
+    private void settled(SessionId sessionId, Throwable error, List<QueuedInput> drained) {
         final TurnNotRunException notRun = notRun(error);
         if (notRun != null) {
-            notRun(sessionId, notRun, drained, wokenAt);
+            notRun(sessionId, notRun, drained);
             return;
         }
         if (error != null) {
@@ -463,22 +463,23 @@ public final class IdleSessionWaker implements AutoCloseable {
 
     /**
      * A wake's turn that no node ran — its message was purged, or refused before it started. The notifications were
-     * only in that turn's input, so they go back into the queue as they were and the wake is given back; the session is
-     * tried again after the retry delay. A session deleted meanwhile keeps nothing: its notifications have no one left
-     * to tell.
+     * only in that turn's input, so they go back into the queue as they were and the session is tried again after the
+     * retry delay. The wake stays counted: a refusal that repeats (a peer that cannot read the message, an agent
+     * conflict) must still meet the caps rather than retry forever; only its outstanding mark goes. A session deleted
+     * meanwhile keeps nothing — its notifications have no one left to tell, and its ledger entry is not written back.
      */
-    private void notRun(SessionId sessionId, TurnNotRunException notRun, List<QueuedInput> drained, Instant wokenAt) {
-        final boolean exists;
+    private void notRun(SessionId sessionId, TurnNotRunException notRun, List<QueuedInput> drained) {
         try {
-            exists = records.load(sessionId).isPresent();
+            if (records.load(sessionId).isEmpty()) {
+                log.debug("The wake turn of deleted session {} did not run ({})", sessionId, notRun.getReason());
+                return;
+            }
+            ledger.update(sessionId, current -> WakeState.of(current.getRecentWakes(), current.getConsecutive(),
+                    current.getTurnCountAfterWake().isPresent() ? current.getTurnCountAfterWake().getAsInt() : null,
+                    Math.max(0, current.getOutstanding() - 1)));
         } catch (RuntimeException e) {
-            log.warn("The wake turn of session {} did not run ({}), and its record could not be read; its"
+            log.warn("The wake turn of session {} did not run ({}), and the session could not be checked; its"
                     + " notifications are lost: {}", sessionId, notRun.getReason(), e.toString());
-            return;
-        }
-        release(sessionId, wokenAt);
-        if (!exists) {
-            log.debug("The wake turn of deleted session {} did not run ({})", sessionId, notRun.getReason());
             return;
         }
         // Set first, as on a refused submit: putting the entries back fires ENQUEUED, which must not wake at once.

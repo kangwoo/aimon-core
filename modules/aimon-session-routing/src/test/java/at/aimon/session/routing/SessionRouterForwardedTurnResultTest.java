@@ -327,6 +327,44 @@ class SessionRouterForwardedTurnResultTest {
     }
 
     @Test
+    @DisplayName("a retry under a freed key is its own attempt: a late PURGED for the earlier one does not reach it")
+    void latePurgedDoesNotReachARetryUnderTheSameKey() throws Exception {
+        final TestManagerHarness harness = node("node-B");
+        final SessionId id = SessionId.of("c-fwd-6e");
+
+        final SessionLease outsider = leaseStore.tryAcquire(id, "outsider", Duration.ofSeconds(30)).orElseThrow();
+        try {
+            final SubmitDisposition first = harness.manager().submit(keyed(id, "queued"));
+            assertThat(first.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+            // A peer's purge, before its signals reach this node: the message is removed and the key is freed.
+            assertThat(inbox.collect(id, QueuedInputPriority.LATER).getMessages()).hasSize(1);
+            idempotency.discardReservation(KEY);
+
+            final SubmitDisposition retry = harness.manager().submit(keyed(id, "queued"));
+            assertThat(retry.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+            assertThat(retry.getTurnId()).as("a fresh reservation queues under a turn id of its own")
+                    .isNotEqualTo(first.getTurnId());
+
+            // Now the peer's answers arrive, both naming the first attempt.
+            bus.publish(SessionSignal.builder().sessionId(id).kind(SessionSignal.SignalKind.TURN_RESULT)
+                    .originNodeId("node-A").payload(Map.of("turn", first.getTurnId().value(), "idem", KEY, "outcome",
+                            "PURGED", "message", "session was released on node node-A before this turn ran"))
+                    .build());
+            bus.publish(SessionSignal.builder().sessionId(id).kind(SessionSignal.SignalKind.EVICT)
+                    .originNodeId("node-A")
+                    .payload(Map.of("reason", "SESSION_RELEASED", "purgedTurns", first.getTurnId().value())).build());
+
+            assertThat(awaitFailure(first.getFuture())).isInstanceOf(TurnNotRunException.class);
+            final Throwable retryOutcome = awaitFailure(retry.getFuture());
+            assertThat(retryOutcome).as("the retry's message is queued and may run: no not-run claim for it")
+                    .isNotInstanceOf(TurnNotRunException.class);
+            assertThat(inbox.isEmpty(id)).as("the retry's message is still waiting for a holder").isFalse();
+        } finally {
+            leaseStore.release(outsider);
+        }
+    }
+
+    @Test
     @DisplayName("a holder's NOT_HOLDER answer fails the forward as not run")
     void notHolderAnswerIsNotRun() throws Exception {
         final TestManagerHarness harness = node("node-A");

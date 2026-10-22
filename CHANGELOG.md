@@ -65,8 +65,12 @@ Design: `docs/design/session/routing.md` §11.3.
   removed) instead of purging blind, answers each removed message with the new `TURN_RESULT` code `PURGED` (after giving
   its idempotency key back), and names those turns in the `EVICT` payload (`purgedTurns`) so the answer does not depend
   on signal order. No SPI change. A node one release behind reads `PURGED` as `FAILED` and loses only the proof.
-- **Waking idle sessions recovers its notifications** when a wake's turn did not run: they go back into the queue, the
-  wake is given back, and the session is tried again after the retry delay (open item W-3 of the idle-wake design).
+- **A retry under a freed key is its own attempt**: a submission that queues its own message no longer adopts an earlier
+  forward outstanding for its key (it would have queued under that attempt's turn id, and a late `PURGED` would have
+  claimed "not run" for it), and a failure announced for another turn no longer reaches it by key.
+- **Waking idle sessions recovers its notifications** when a wake's turn did not run: they go back into the queue and the
+  session is tried again after the retry delay; the wake stays counted against the caps, so a refusal that repeats stops
+  there (open item W-3 of the idle-wake design).
 
 ### Added: line-by-line shell streaming
 

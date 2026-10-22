@@ -132,7 +132,14 @@ public final class DefaultSessionRouter implements SessionRouter {
     private static final int MAX_EVICT_TURNS = 256;
 
     /** Collect batches a purge takes before it purges the remainder blind. */
-    private static final int PURGE_COLLECT_BATCHES = 64;
+    private static final int PURGE_COLLECT_BATCHES = 8;
+
+    /**
+     * How many removed messages a purge answers one by one. Each answer is a reservation discard and a publish, made
+     * while a delete holds the gate and the lease; past this the purge stops collecting and purges blind, and the rest
+     * are failed without the proof — the old behaviour, and the safe direction.
+     */
+    private static final int MAX_PURGE_ANSWERS = 256;
 
     /**
      * Holder election, the durable record, and the agent binding behind one door. Node-scoped — see
@@ -525,7 +532,8 @@ public final class DefaultSessionRouter implements SessionRouter {
             // and no inbox entry to point at, so the answer can only arrive addressed by the shared idempotency key.
             // The disposition reports the pending forward's turn id, which is this attempt's own id unless an earlier
             // submission of the same key is already outstanding on this node, in which case both share its future.
-            final PendingForward pending = registerForward(convId, turnId, request.getIdempotencyKey().orElse(null));
+            final PendingForward pending = registerForward(convId, turnId, request.getIdempotencyKey().orElse(null),
+                    false);
             final SubmitDisposition outcome = SubmitDisposition.forwarded(pending.turnId, idem.queuedSyntheticId,
                     pending.future);
             recordOutcome(outcome);
@@ -2168,7 +2176,7 @@ public final class DefaultSessionRouter implements SessionRouter {
         // Registered before the message exists anywhere a peer can see it. The reverse order loses the race it looks
         // immune to: an inbox delivery followed by a peer that drains and announces within microseconds would resolve a
         // turn this node has not started waiting for yet, and the announcement does not come twice.
-        final PendingForward pending = registerForward(convId, turnId, request.getIdempotencyKey().orElse(null));
+        final PendingForward pending = registerForward(convId, turnId, request.getIdempotencyKey().orElse(null), true);
         final InboundMessage message = InboundMessage.builder().sessionId(convId).agentRef(request.getAgentRef())
                 .contextDiscriminator(request.getContextDiscriminator().orElse(null)).userInput(request.getUserInput())
                 .priority(request.getPriority()).turnId(pending.turnId)
@@ -2200,10 +2208,17 @@ public final class DefaultSessionRouter implements SessionRouter {
      * Start waiting for a turn this node will not run itself.
      *
      * <p>
-     * Keyed by turn id, and additionally by idempotency key when there is one. If a submission with that key is already
-     * outstanding here, its entry is <em>reused</em> rather than replaced: the same key means the same input hash and
-     * so
-     * the same answer, and two entries would leave whichever one lost the index unresolvable.
+     * Keyed by turn id, and additionally by idempotency key when there is one. A submission collapsed onto an attempt
+     * in
+     * flight <em>reuses</em> an entry already outstanding here for its key: the same key means the same input hash and
+     * so the same answer, and two entries would leave whichever one lost the index unresolvable.
+     *
+     * <p>
+     * A submission that queues a message of its own never adopts one. It reserved the key afresh, so whatever was
+     * outstanding under it here is an earlier attempt the store no longer knows — and sharing that attempt's turn id
+     * would put this message in the inbox under it, where a late answer for the earlier attempt (a {@code PURGED} that
+     * freed the key before it arrived) would claim "not run" for a message that is queued and will run. It takes the
+     * key index over instead; the earlier attempt stays reachable by its turn id.
      *
      * @param sessionId
      *            the session the turn belongs to (so eviction and delete can fail it)
@@ -2212,15 +2227,24 @@ public final class DefaultSessionRouter implements SessionRouter {
      * @param idempotencyKey
      *            the submission's key, or {@code null} when it had none — such a forward is resolvable only by the
      *            {@code TURN_RESULT} rail or the deadline, because there is nothing durable to poll
+     * @param ownsMessage
+     *            whether the submission queues a message of its own under {@code turnId}, rather than collapsing onto
+     *            an
+     *            attempt in flight
      * @return the entry to wait on (never null)
      */
-    private PendingForward registerForward(SessionId sessionId, TurnId turnId, String idempotencyKey) {
+    private PendingForward registerForward(SessionId sessionId, TurnId turnId, String idempotencyKey,
+            boolean ownsMessage) {
         final PendingForward candidate = new PendingForward(sessionId, turnId, idempotencyKey,
-                System.nanoTime() + idempotencyForwardTtl.toNanos());
+                System.nanoTime() + idempotencyForwardTtl.toNanos(), ownsMessage);
         if (idempotencyKey != null) {
-            final PendingForward existing = forwardsByKey.putIfAbsent(idempotencyKey, candidate);
-            if (existing != null) {
-                return existing;
+            if (ownsMessage) {
+                forwardsByKey.put(idempotencyKey, candidate);
+            } else {
+                final PendingForward existing = forwardsByKey.putIfAbsent(idempotencyKey, candidate);
+                if (existing != null) {
+                    return existing;
+                }
             }
         }
         forwardsByTurn.put(turnId, candidate);
@@ -2370,9 +2394,19 @@ public final class DefaultSessionRouter implements SessionRouter {
         if (byTurn != null) {
             applyOutcome(byTurn, result, failure);
         }
-        if (byKey != null && byKey != byTurn) {
+        if (byKey != null && byKey != byTurn && !anotherAttempt(byKey, turnId, failure)) {
             applyOutcome(byKey, result, failure);
         }
+    }
+
+    /**
+     * Whether a failure announced for {@code turnId} belongs to a different attempt than {@code byKey}, found by the
+     * shared key only: an entry that queued a message of its own, under a turn id other than the announced one. Its own
+     * message has its own outcome to come, so another attempt's failure — "not run" least of all — is not its answer. A
+     * result is still shared: the same key means the same input, so it is the cached answer either way.
+     */
+    private static boolean anotherAttempt(PendingForward byKey, TurnId turnId, Throwable failure) {
+        return failure != null && turnId != null && byKey.ownsMessage && !turnId.equals(byKey.turnId);
     }
 
     private void applyOutcome(PendingForward pending, AgentExecutionResult result, Throwable failure) {
@@ -2439,8 +2473,8 @@ public final class DefaultSessionRouter implements SessionRouter {
      * It collects rather than calling {@link SessionInbox#purge}: {@code collect} removes atomically and returns what
      * it
      * removed, which is exactly the proof a blind delete throws away. A message a holder collects meanwhile is not in
-     * the result — it may run — and is left to the ordinary failure. The loop is bounded; whatever a full run of
-     * batches leaves behind is purged blind and answered without the proof.
+     * the result — it may run — and is left to the ordinary failure. The loop is bounded, in batches and in answers
+     * ({@link #MAX_PURGE_ANSWERS}); whatever it leaves behind is purged blind and failed without the proof.
      *
      * @param sessionId
      *            the session whose inbox to empty
@@ -2450,13 +2484,16 @@ public final class DefaultSessionRouter implements SessionRouter {
      */
     private Set<TurnId> purgeAnnouncing(SessionId sessionId, String reason) {
         final List<InboundMessage> removed = new ArrayList<>();
+        final List<UnreadableEntry> unreadable = new ArrayList<>();
         try {
-            for (int batch = 0; batch < PURGE_COLLECT_BATCHES; batch++) {
+            for (int batch = 0; batch < PURGE_COLLECT_BATCHES
+                    && removed.size() + unreadable.size() < MAX_PURGE_ANSWERS; batch++) {
                 final CollectedBatch collected = inbox.collect(sessionId, QueuedInputPriority.LATER);
                 if (collected.getMessages().isEmpty() && collected.getUnreadable().isEmpty()) {
                     break;
                 }
                 removed.addAll(collected.getMessages());
+                unreadable.addAll(collected.getUnreadable());
             }
             inbox.purge(sessionId);
         } catch (Exception e) {
@@ -2468,6 +2505,8 @@ public final class DefaultSessionRouter implements SessionRouter {
             announceTurnFailure(sessionId, message.getTurnId().orElse(null), message.getIdempotencyKey().orElse(null),
                     TurnResultPayload.Failure.Code.PURGED, reason);
         }
+        // Removed too, and equally never to run; answered the way a drain answers one.
+        unreadable.forEach(entry -> announceUnreadableEntry(sessionId, entry));
         return turns;
     }
 
@@ -2536,14 +2575,17 @@ public final class DefaultSessionRouter implements SessionRouter {
         private final TurnId turnId;
         private final String idempotencyKey;
         private final long deadlineNanos;
+        private final boolean ownsMessage;
         private final CompletableFuture<AgentExecutionResult> future = new CompletableFuture<>();
         private volatile ScheduledFuture<?> pollTask;
 
-        private PendingForward(SessionId sessionId, TurnId turnId, String idempotencyKey, long deadlineNanos) {
+        private PendingForward(SessionId sessionId, TurnId turnId, String idempotencyKey, long deadlineNanos,
+                boolean ownsMessage) {
             this.sessionId = sessionId;
             this.turnId = turnId;
             this.idempotencyKey = idempotencyKey;
             this.deadlineNanos = deadlineNanos;
+            this.ownsMessage = ownsMessage;
         }
     }
 
