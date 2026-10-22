@@ -974,6 +974,11 @@ class AimonStackBuilderTest {
 
             stack.sessionRouter().deleteSession(id);
 
+            // The source is stopped on the monitor manager's stopper threads, not on the deleting thread.
+            final long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+            while (stops.get() == 0 && System.nanoTime() < deadline) {
+                Thread.onSpinWait();
+            }
             assertThat(stops.get()).isEqualTo(1);
         }
     }

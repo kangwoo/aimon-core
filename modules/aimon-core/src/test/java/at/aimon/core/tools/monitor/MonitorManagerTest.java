@@ -150,6 +150,7 @@ class MonitorManagerTest {
 
         assertThat(drainAll()).singleElement().extracting(QueuedInput::getInputText).asString()
                 .contains("ended: the source failed: exit code 2; stderr: boom. 0 events in total.");
+        await(() -> fake.stops.get() == 1); // stopped on the manager's stopper threads
         assertThat(fake.stops.get()).isEqualTo(1);
     }
 
@@ -162,6 +163,7 @@ class MonitorManagerTest {
 
         await(() -> !queue.snapshot().isEmpty());
         assertThat(queue.snapshot().get(0).getInputText()).contains("ended: timed out after 1s");
+        await(() -> fake.stops.get() == 1); // stopped on the manager's stopper threads
         assertThat(fake.stops.get()).isEqualTo(1);
     }
 
@@ -193,6 +195,7 @@ class MonitorManagerTest {
         assertThat(manager.stop(OWNER, record.getMonitorId())).isEqualTo(MonitorManager.StopOutcome.NOT_FOUND);
         Thread.sleep(100);
         assertThat(queue.snapshot()).isEmpty();
+        await(() -> fake.stops.get() == 1); // stopped on the manager's stopper threads
         assertThat(fake.stops.get()).isEqualTo(1);
     }
 
@@ -283,6 +286,7 @@ class MonitorManagerTest {
 
         Thread.sleep(100);
         assertThat(queue.snapshot()).isEmpty();
+        await(() -> fake.stops.get() == 1); // stopped on the manager's stopper threads
         assertThat(fake.stops.get()).isEqualTo(1);
         assertThatThrownBy(() -> start(manager, OWNER)).isInstanceOf(MonitorRequestException.class);
     }
