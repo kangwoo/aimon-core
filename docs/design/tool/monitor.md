@@ -1,7 +1,7 @@
 # 백그라운드 모니터 (Monitor)
 
 > Status: **IMPLEMENTED** — §10 의 네 단계가 모두 들어가 있다. 쉬는 세션 깨우기(§9.1)는 미뤘고, 설계에서
->벗어난 점은 §12 에 있다.
+> 벗어난 점은 §12 에 있다.
 >
 > 적용 대상: `aimon-core` — `at.aimon.core.tools.monitor` (SPI · 매니저 · 도구 · 기본 소스 2종),
 > `at.aimon.core.shell` (`ShellFeature.STREAMING`, `ShellLineListener`), `…shell.impl.local.LocalShell`,
