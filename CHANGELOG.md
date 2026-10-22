@@ -7,6 +7,51 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: background monitors (`Monitor` / `MonitorStop`)
+
+An agent can now watch a long-running source and keep working while its events arrive as messages. Opt-in:
+`ToolSpec.monitorEnabled(true)`, `aimon.tools.monitor.enabled=true`, or `cli.enableMonitor: true`. User guide:
+`docs/features/tool/monitor-guide.md`; design: `docs/design/tool/monitor.md`.
+
+- **`at.aimon.core.tools.monitor`** (new) — `MonitorSource` / `MonitorEventSink` / `MonitorHandle` /
+  `MonitorSourceFactory` SPI, the application-scoped `MonitorManager` (batching, rate limit, timeout up to 30 minutes,
+  caps, at most one waiting queue entry per monitor), `MonitorStore` / `InMemoryMonitorStore`, and the `Monitor` and
+  `MonitorStop` tools (`OrcaMonitorToolProvider`). Built-in sources: `shell` (each stdout line) and `websocket` (each
+  text message, over the SSRF-hardened OkHttp client). A host registers its own kinds —
+  `ToolSpec.Builder#addMonitorSource`, or a `MonitorSourceFactory` bean.
+- **Delivery** — events reach only the session that started the monitor, at the next tool-calling iteration of a
+  running turn or before the first LLM call of the next one. An idle session is not woken.
+- **Lifetime** — a monitor ends at its source's end, `MonitorStop`, its timeout, the rate limit, the deletion of its
+  session (on the deleting node), or stack shutdown. An execution without a session cannot start one.
+
+### Added: line-by-line shell streaming
+
+`ShellFeature.STREAMING` and `VirtualShell#execute(ShellCommand, ExecutionOptions, ShellLineListener)` (default:
+refuses). `LocalShell` implements it by reading its stdout capture file as it grows; `WorkingDirectoryShell` forwards
+it. A shell that wraps another and forwards `supports(...)` must forward the new method too.
+
+### Added: permission delegation
+
+`ToolPermissionDelegationAware` and `PermissionDelegation`: a tool that can do another tool's job names that tool and
+a subject, and `DefaultToolPermissionValidator` also judges the call against that tool's allowed-tools entries. The
+`Monitor` command form delegates to `Bash` — `Bash(git:*)` plus a bare `Monitor` runs only `git` commands, and a list
+without `Bash` runs no command monitor.
+
+### Changed (behaviour change): queued input is addressed to its session
+
+`QueuedInput#getSessionId()` (new, optional). The message queue is one per application and a runtime serves every
+session of its agent, so an entry addressed only to the runtime could be taken by another session's turn.
+`LiveSession#offerAsync` follow-ups and background subagent completion notices now carry their session, the `NOW`
+listener ignores other sessions' entries, and an entry addressed to a session is also drained before the first LLM
+call of that session's turn. A completion notice that arrives while the session is idle is therefore read at the start
+of the next turn instead of being replayed by the CLI as a turn of its own. Entries without a session behave as
+before.
+
+### Renamed: `BackgroundBashOwner` → `BackgroundTaskOwner`
+
+`at.aimon.core.tools.bash.BackgroundBashOwner` is now `at.aimon.core.tools.BackgroundTaskOwner`, shared by background
+`Bash` and monitors. No member changed; no alias. See `docs/migration/rename-maps.md`.
+
 ### Added: trusted execution policies for subagent forks
 
 A fork launched through `Task` can now run under limits supplied by code — never by the model's `Task` input or a
