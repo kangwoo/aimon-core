@@ -7,25 +7,29 @@ import java.util.OptionalInt;
 
 /**
  * What a {@link WakeLedger} remembers about one session: when it was woken in the last hour, how many wakes ran in a
- * row without another turn, the session's turn count when the last wake's turn ended, and whether a wake's turn is
- * still outstanding — while it is, a turn count that moved is that turn's own, not the user's.
+ * row without another turn, the session's turn count when the last wake's turn ended, and how many wakes' turns are
+ * still outstanding — while any is, a turn count that moved is that turn's own, not the user's. A count, not a flag:
+ * with a shared ledger two nodes can each have a wake's turn running, and the first to end must not clear the other.
  *
  * <p>
  * Immutable; thread-safe.
  */
 public final class WakeState {
 
-    private static final WakeState EMPTY = new WakeState(List.of(), 0, null, false);
+    private static final WakeState EMPTY = new WakeState(List.of(), 0, null, 0);
 
     private final List<Instant> recentWakes;
     private final int consecutive;
     private final Integer turnCountAfterWake;
-    private final boolean outstanding;
+    private final int outstanding;
 
-    private WakeState(List<Instant> recentWakes, int consecutive, Integer turnCountAfterWake, boolean outstanding) {
+    private WakeState(List<Instant> recentWakes, int consecutive, Integer turnCountAfterWake, int outstanding) {
         this.recentWakes = List.copyOf(recentWakes);
         if (consecutive < 0) {
             throw new IllegalArgumentException("consecutive must not be negative");
+        }
+        if (outstanding < 0) {
+            throw new IllegalArgumentException("outstanding must not be negative");
         }
         this.consecutive = consecutive;
         this.turnCountAfterWake = turnCountAfterWake;
@@ -49,11 +53,11 @@ public final class WakeState {
      * @param turnCountAfterWake
      *            the session's turn count when the last wake's turn ended, or null if unknown
      * @param outstanding
-     *            whether a wake's turn has been submitted and has not ended yet
+     *            how many wakes' turns have been reserved or submitted and have not ended yet (must not be negative)
      * @return the state
      */
     public static WakeState of(List<Instant> recentWakes, int consecutive, Integer turnCountAfterWake,
-            boolean outstanding) {
+            int outstanding) {
         return new WakeState(Objects.requireNonNull(recentWakes, "recentWakes must not be null"), consecutive,
                 turnCountAfterWake, outstanding);
     }
@@ -80,10 +84,17 @@ public final class WakeState {
     }
 
     /**
-     * @return whether a wake's turn has been submitted and has not ended yet
+     * @return how many wakes' turns have been reserved or submitted and have not ended yet
+     */
+    public int getOutstanding() {
+        return outstanding;
+    }
+
+    /**
+     * @return whether any wake's turn has been reserved or submitted and has not ended yet
      */
     public boolean isOutstanding() {
-        return outstanding;
+        return outstanding > 0;
     }
 
     @Override

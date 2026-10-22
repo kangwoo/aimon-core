@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.function.UnaryOperator;
 
 import org.bson.Document;
+import org.bson.conversions.Bson;
 
 import com.mongodb.ErrorCategory;
 import com.mongodb.MongoException;
@@ -114,12 +115,14 @@ public final class MongoWakeLedger implements WakeLedger {
                     }
                     continue;
                 }
-                final long version = stored.get(F_VERSION, Number.class).longValue();
-                final Document replacement = encode(id, next, version + 1);
-                if (collection
-                        .replaceOne(Filters.and(Filters.eq(DocumentKeys.F_ID, id), Filters.eq(F_VERSION, version)),
-                                replacement)
-                        .getMatchedCount() == 1) {
+                // A document without a version (written by hand, or by an older build) is version 0.
+                final Number storedVersion = stored.get(F_VERSION, Number.class);
+                final long version = storedVersion == null ? 0L : storedVersion.longValue();
+                final Bson sameVersion = storedVersion == null
+                        ? Filters.exists(F_VERSION, false)
+                        : Filters.eq(F_VERSION, version);
+                if (collection.replaceOne(Filters.and(Filters.eq(DocumentKeys.F_ID, id), sameVersion),
+                        encode(id, next, version + 1)).getMatchedCount() == 1) {
                     return next;
                 }
             }
@@ -160,7 +163,7 @@ public final class MongoWakeLedger implements WakeLedger {
                 .append(F_CONSECUTIVE, state.getConsecutive())
                 .append(F_TURN_COUNT_AFTER_WAKE,
                         state.getTurnCountAfterWake().isPresent() ? state.getTurnCountAfterWake().getAsInt() : null)
-                .append(F_OUTSTANDING, state.isOutstanding()).append(F_VERSION, version)
+                .append(F_OUTSTANDING, state.getOutstanding()).append(F_VERSION, version)
                 .append(F_EXPIRES_AT, Date.from(clock.instant().plus(ttl)));
     }
 
@@ -170,7 +173,12 @@ public final class MongoWakeLedger implements WakeLedger {
             recent.add(at.toInstant());
         }
         final Number turnCount = doc.get(F_TURN_COUNT_AFTER_WAKE, Number.class);
-        return WakeState.of(recent, doc.get(F_CONSECUTIVE, Number.class).intValue(),
-                turnCount == null ? null : turnCount.intValue(), Boolean.TRUE.equals(doc.getBoolean(F_OUTSTANDING)));
+        return WakeState.of(recent, intOrZero(doc, F_CONSECUTIVE), turnCount == null ? null : turnCount.intValue(),
+                intOrZero(doc, F_OUTSTANDING));
+    }
+
+    private static int intOrZero(Document doc, String field) {
+        final Number value = doc.get(field, Number.class);
+        return value == null ? 0 : Math.max(0, value.intValue());
     }
 }

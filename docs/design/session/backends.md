@@ -90,7 +90,7 @@ Mongo 에서 애플리케이션 `Clock` 이 쓰이는 자리는 넷뿐이고 전
 | `background_task` | 태스크 메타데이터 | 태스크 소유자 `Principal` 을 세 컬럼으로 펼침 |
 | `session_record` | 전사 + side field | `transcript` 는 `text`, side field 는 네이티브, `owner` 는 `jsonb` |
 | `session_log_segment` | 봉인된 로그 구간 | `(session_id, segment_id)` 기본키, `payload` 는 `text` |
-| `wake_ledger` | 깨우기 상한 (V4, 선택) | 세션당 1행. `update` 는 `SELECT … FOR UPDATE`. `updated_at` 이 하루 지난 행은 지워도 된다 |
+| `wake_ledger` | 깨우기 상한 (V4, 선택) | 세션당 1행. `update` 는 READ COMMITTED 의 `SELECT … FOR UPDATE`. 깨우기를 시도할 때마다 `updated_at` 을 쓰므로, 하루 지난 행을 지우면 연속 횟수만 다시 센다 |
 
 **펜싱 카운터를 락 행과 따로 둔다.** 한 테이블이면 락 행이 만료·삭제될 때 카운터도 사라지고, 다음 획득자가 이전 홀더와 같은 토큰을 받아
 펜싱이 무의미해진다.

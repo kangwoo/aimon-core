@@ -143,7 +143,7 @@ public final class RedisWakeLedger implements WakeLedger {
         if (state.getTurnCountAfterWake().isPresent()) {
             node.put("turnCountAfterWake", state.getTurnCountAfterWake().getAsInt());
         }
-        node.put("outstanding", state.isOutstanding());
+        node.put("outstanding", state.getOutstanding());
         return node.toString();
     }
 
@@ -158,7 +158,6 @@ public final class RedisWakeLedger implements WakeLedger {
         node.path("recentWakes").forEach(millis -> recent.add(Instant.ofEpochMilli(millis.asLong())));
         final JsonNode turnCount = node.get("turnCountAfterWake");
         return WakeState.of(recent, node.path("consecutive").asInt(),
-                turnCount == null || turnCount.isNull() ? null : turnCount.asInt(),
-                node.path("outstanding").asBoolean());
+                turnCount == null || turnCount.isNull() ? null : turnCount.asInt(), node.path("outstanding").asInt());
     }
 }

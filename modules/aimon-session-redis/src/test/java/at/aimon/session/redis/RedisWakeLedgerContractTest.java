@@ -21,18 +21,23 @@ import io.lettuce.core.api.StatefulRedisConnection;
 class RedisWakeLedgerContractTest extends AbstractWakeLedgerContractTest {
 
     private StatefulRedisConnection<String, String> connection;
+    private StatefulRedisConnection<String, String> otherConnection;
     private WakeLedger ledger;
+    private WakeLedger otherNode;
 
     @BeforeEach
     void setUp() {
         RedisTestSupport.flushAll();
         connection = RedisTestSupport.connect();
         ledger = new RedisWakeLedger(connection);
+        otherConnection = RedisTestSupport.connect();
+        otherNode = new RedisWakeLedger(otherConnection);
     }
 
     @AfterEach
     void tearDown() {
         connection.close();
+        otherConnection.close();
     }
 
     @Override
@@ -40,10 +45,15 @@ class RedisWakeLedgerContractTest extends AbstractWakeLedgerContractTest {
         return ledger;
     }
 
+    @Override
+    protected WakeLedger otherNodeLedger() {
+        return otherNode;
+    }
+
     @Test
     @DisplayName("an entry expires a day after its last write")
     void entryCarriesTheExpiry() {
-        ledger.update(SessionId.of("wake-ttl"), current -> WakeState.of(List.of(), 1, null, false));
+        ledger.update(SessionId.of("wake-ttl"), current -> WakeState.of(List.of(), 1, null, 0));
 
         assertThat(connection.sync().pttl(RedisWakeLedger.DEFAULT_KEY_PREFIX + ":wake-ttl"))
                 .isBetween(RedisWakeLedger.DEFAULT_TTL.toMillis() - 60_000, RedisWakeLedger.DEFAULT_TTL.toMillis());

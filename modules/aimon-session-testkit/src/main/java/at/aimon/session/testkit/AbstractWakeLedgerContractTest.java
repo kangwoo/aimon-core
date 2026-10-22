@@ -40,6 +40,16 @@ public abstract class AbstractWakeLedgerContractTest {
      */
     protected abstract WakeLedger ledger();
 
+    /**
+     * A second ledger over the same backend, as another node would hold it — its own connection or client where the
+     * backend has one. The concurrency test splits its writers between the two.
+     *
+     * @return a second ledger over the backend {@link #ledger()} uses; the same one by default
+     */
+    protected WakeLedger otherNodeLedger() {
+        return ledger();
+    }
+
     @Test
     @DisplayName("a session never written reads as the empty state")
     void unknownSessionIsEmpty() {
@@ -50,13 +60,13 @@ public abstract class AbstractWakeLedgerContractTest {
     @DisplayName("every field of an update reads back exactly")
     void updateRoundTrips() {
         final SessionId session = SessionId.of("wake-roundtrip");
-        final WakeState state = WakeState.of(List.of(FIRST, FIRST.plusSeconds(60)), 2, 7, true);
+        final WakeState state = WakeState.of(List.of(FIRST, FIRST.plusSeconds(60)), 2, 7, 3);
 
         final WakeState returned = ledger().update(session, current -> state);
 
         assertThat(returned).isEqualTo(state);
         assertThat(ledger().get(session)).isEqualTo(state);
-        final WakeState cleared = WakeState.of(List.of(), 0, null, false);
+        final WakeState cleared = WakeState.of(List.of(), 0, null, 0);
         ledger().update(session, current -> cleared);
         assertThat(ledger().get(session)).isEqualTo(cleared);
     }
@@ -69,7 +79,7 @@ public abstract class AbstractWakeLedgerContractTest {
 
         ledger().update(session, current -> {
             seen.add(current);
-            return WakeState.of(List.of(FIRST), 1, null, false);
+            return WakeState.of(List.of(FIRST), 1, null, 0);
         });
         ledger().update(session, current -> {
             seen.add(current);
@@ -77,7 +87,7 @@ public abstract class AbstractWakeLedgerContractTest {
         });
 
         assertThat(seen.get(0)).isEqualTo(WakeState.empty());
-        assertThat(seen.get(seen.size() - 1)).isEqualTo(WakeState.of(List.of(FIRST), 1, null, false));
+        assertThat(seen.get(seen.size() - 1)).isEqualTo(WakeState.of(List.of(FIRST), 1, null, 0));
     }
 
     @Test
@@ -85,8 +95,8 @@ public abstract class AbstractWakeLedgerContractTest {
     void removeForgetsOneSession() {
         final SessionId gone = SessionId.of("wake-gone");
         final SessionId kept = SessionId.of("wake-kept");
-        ledger().update(gone, current -> WakeState.of(List.of(FIRST), 1, null, false));
-        ledger().update(kept, current -> WakeState.of(List.of(FIRST), 1, null, false));
+        ledger().update(gone, current -> WakeState.of(List.of(FIRST), 1, null, 0));
+        ledger().update(kept, current -> WakeState.of(List.of(FIRST), 1, null, 0));
 
         ledger().remove(gone);
         ledger().remove(SessionId.of("wake-never-written"));
@@ -96,7 +106,7 @@ public abstract class AbstractWakeLedgerContractTest {
     }
 
     @Test
-    @DisplayName("concurrent updates of one session lose nothing")
+    @DisplayName("concurrent updates of one session, from two nodes, lose nothing")
     void concurrentUpdatesAreAtomic() throws Exception {
         final SessionId session = SessionId.of("wake-concurrent");
         final int threads = 8;
@@ -106,11 +116,12 @@ public abstract class AbstractWakeLedgerContractTest {
         try {
             final List<Future<?>> done = new ArrayList<>();
             for (int t = 0; t < threads; t++) {
+                final WakeLedger node = t % 2 == 0 ? ledger() : otherNodeLedger();
                 done.add(pool.submit(() -> {
                     start.await();
                     for (int i = 0; i < perThread; i++) {
-                        ledger().update(session, current -> WakeState.of(current.getRecentWakes(),
-                                current.getConsecutive() + 1, null, false));
+                        node.update(session, current -> WakeState.of(current.getRecentWakes(),
+                                current.getConsecutive() + 1, null, 0));
                     }
                     return null;
                 }));

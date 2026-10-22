@@ -36,8 +36,9 @@ psql "$DATABASE_URL" --set=search_path=aimon_session,public \
   it those fail whether or not a host names an owner.
 - `V4__wake_ledger.sql` — needed only with idle-session waking and a shared ledger
   (`PostgresWakeLedger`), after V3. The `wake_ledger` table holding each session's wake
-  caps (`docs/design/session/idle-wake.md` §7). Rows whose `updated_at` is a day old no
-  longer affect any cap; delete them on whatever schedule suits you.
+  caps (`docs/design/session/idle-wake.md` §7). Every wake attempt rewrites `updated_at`,
+  so deleting rows a day old resets only the streak of sessions quiet that long; do it on
+  whatever schedule suits you.
 - `V5__indexes.sql` — **opt-in / future-work, not yet shipped**. Operators add
   this only when concrete monitoring thresholds trigger (see
   `docs/design/session/backends.md` §3.4).

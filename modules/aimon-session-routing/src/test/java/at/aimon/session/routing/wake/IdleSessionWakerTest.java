@@ -170,6 +170,43 @@ class IdleSessionWakerTest {
     }
 
     @Test
+    @DisplayName("two nodes sharing a ledger hold the hourly cap between them")
+    void sharedLedgerHoldsTheCapAcrossNodes() throws Exception {
+        final WakePolicy oneAnHour = WakePolicy.builder().debounce(Duration.ofMillis(50)).maxPerHour(1).build();
+        waker = waker().policy(oneAnHour).build();
+        // The other node: its own queue (the notifications its monitors raise), the same ledger.
+        final MessageQueueManager otherQueue = new DefaultMessageQueueManager(new InMemoryMessageQueueRepository());
+        try (IdleSessionWaker other = IdleSessionWaker.builder(router, otherQueue, records).ledger(ledger)
+                .policy(oneAnHour).build()) {
+            queue.enqueue(monitorEvent("here"));
+            otherQueue.enqueue(monitorEvent("there"));
+
+            await(() -> woken().size() == 1);
+            fence();
+            otherQueue.enqueue(QueuedInput.builder().agentRuntimeId(RUNTIME).sessionId(FENCE.value()).inputText("fence")
+                    .metadata(Map.of("kind", "monitor-event")).build());
+            await(() -> router.submits.stream().filter(r -> r.getSessionId().equals(FENCE)).count() == 2);
+
+            assertThat(woken()).hasSize(1);
+            assertThat(queue.snapshot().size() + otherQueue.snapshot().size()).isEqualTo(1);
+        }
+    }
+
+    @Test
+    @DisplayName("a refused submit gives back the wake it took, so the retry is not over the cap")
+    void refusedSubmitGivesTheWakeBack() {
+        router.failures.set(1);
+        waker = waker().policy(WakePolicy.builder().debounce(Duration.ofMillis(50)).retryDelay(Duration.ofMillis(200))
+                .maxPerHour(1).build()).build();
+
+        queue.enqueue(monitorEvent("keep me"));
+
+        await(() -> router.attempts.get() == 2 && woken().size() == 1);
+        assertThat(ledger.get(SESSION).getRecentWakes()).hasSize(1);
+        assertThat(ledger.get(SESSION).getOutstanding()).isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("the consecutive cap resets once another turn has run on the session")
     void consecutiveCapResetsAfterAnotherTurn() throws Exception {
         waker = waker().policy(WakePolicy.builder().debounce(Duration.ofMillis(50)).maxConsecutive(1).build()).build();

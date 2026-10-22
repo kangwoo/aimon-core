@@ -263,24 +263,6 @@ public final class IdleSessionWaker implements AutoCloseable {
             }
             return;
         }
-        final int turnCount = record.get().getSessionTotals().getTurnCount();
-        final WakeState state = ledger.update(sessionId, current -> refreshed(current, turnCount, now));
-        if (state.getConsecutive() >= policy.getMaxConsecutive()) {
-            if (reported.add(sessionId)) {
-                log.info("Session {} reached its limit of {} wakes without a turn of its own; its notifications wait"
-                        + " for its next turn", sessionId, policy.getMaxConsecutive());
-            }
-            return;
-        }
-        if (state.getRecentWakes().size() >= policy.getMaxPerHour()) {
-            if (reported.add(sessionId)) {
-                log.info("Session {} reached its limit of {} wakes an hour", sessionId, policy.getMaxPerHour());
-            }
-            // A monitor whose entry is waiting enqueues nothing new, so no event would come to look again.
-            schedule(sessionId, Duration.between(now, state.getRecentWakes().get(0).plus(HOUR)));
-            return;
-        }
-
         final AgentRuntimeId runtime = candidates.get(0).getAgentRuntimeId();
         final SubmitRequest.Builder request = SubmitRequest.builder().sessionId(sessionId)
                 .agentRef(record.get().getAgentRef().get()).contextDiscriminator(runtime.discriminator().orElse(null))
@@ -291,6 +273,32 @@ public final class IdleSessionWaker implements AutoCloseable {
             log.warn("The wake request customizer failed for session {}; not woken: {}", sessionId, e.toString());
             return;
         }
+        // Check the caps and take the wake in one update: with a shared ledger another node may be checking the same
+        // session, and a check followed by a separate count would let both through. Given back if nothing is sent.
+        final int turnCount = record.get().getSessionTotals().getTurnCount();
+        final boolean[] reserved = new boolean[1];
+        final WakeState state = ledger.update(sessionId, current -> {
+            final WakeState fresh = refreshed(current, turnCount, now);
+            reserved[0] = fresh.getConsecutive() < policy.getMaxConsecutive()
+                    && fresh.getRecentWakes().size() < policy.getMaxPerHour();
+            return reserved[0] ? reserve(fresh, now) : fresh;
+        });
+        if (!reserved[0]) {
+            if (state.getConsecutive() >= policy.getMaxConsecutive()) {
+                if (reported.add(sessionId)) {
+                    log.info("Session {} reached its limit of {} wakes without a turn of its own; its notifications"
+                            + " wait for its next turn", sessionId, policy.getMaxConsecutive());
+                }
+                return;
+            }
+            if (reported.add(sessionId)) {
+                log.info("Session {} reached its limit of {} wakes an hour", sessionId, policy.getMaxPerHour());
+            }
+            // A monitor whose entry is waiting enqueues nothing new, so no event would come to look again.
+            schedule(sessionId, Duration.between(now, state.getRecentWakes().get(0).plus(HOUR)));
+            return;
+        }
+
         final String id = sessionId.value();
         final List<QueuedInput> drained = queue
                 .drainForInjection(
@@ -298,6 +306,7 @@ public final class IdleSessionWaker implements AutoCloseable {
                                 && policy.getKinds().contains(q.getMetadata().get(KIND_KEY)),
                         QueuedInputPriority.LATER);
         if (drained.isEmpty()) {
+            release(sessionId, now);
             return;
         }
         submit(sessionId, request, owner.get(), drained, now);
@@ -329,10 +338,38 @@ public final class IdleSessionWaker implements AutoCloseable {
         final Integer after = stored.getTurnCountAfterWake().isPresent()
                 ? stored.getTurnCountAfterWake().getAsInt()
                 : null;
-        if (!stored.isOutstanding() && after != null && turnCount > after) {
+        // A wake's turn starts inside the hour its wake is counted in; with none left in the window, an outstanding
+        // count is
+        // a node that died before its turn settled, and it must not keep the streak from ever resetting.
+        final int outstanding = recent.isEmpty() ? 0 : stored.getOutstanding();
+        if (outstanding == 0 && after != null && turnCount > after) {
             consecutive = 0;
         }
-        return WakeState.of(recent, consecutive, after, stored.isOutstanding());
+        return WakeState.of(recent, consecutive, after, outstanding);
+    }
+
+    /** The state with a wake taken at {@code now}: counted in the hour, in the streak, and outstanding. */
+    private static WakeState reserve(WakeState fresh, Instant now) {
+        final List<Instant> recent = new ArrayList<>(fresh.getRecentWakes());
+        recent.add(now);
+        return WakeState.of(recent, fresh.getConsecutive() + 1,
+                fresh.getTurnCountAfterWake().isPresent() ? fresh.getTurnCountAfterWake().getAsInt() : null,
+                fresh.getOutstanding() + 1);
+    }
+
+    /** Gives back a wake {@link #reserve reserved} at {@code now} that sent nothing. */
+    private void release(SessionId sessionId, Instant now) {
+        try {
+            ledger.update(sessionId, current -> {
+                final List<Instant> recent = new ArrayList<>(current.getRecentWakes());
+                recent.remove(now);
+                return WakeState.of(recent, Math.max(0, current.getConsecutive() - 1),
+                        current.getTurnCountAfterWake().isPresent() ? current.getTurnCountAfterWake().getAsInt() : null,
+                        Math.max(0, current.getOutstanding() - 1));
+            });
+        } catch (RuntimeException e) {
+            log.warn("Wake ledger could not give back an unsent wake of session {}: {}", sessionId, e.toString());
+        }
     }
 
     /** A cost optimisation, never a gate (the router's status is not one): a turn this node is running reads them. */
@@ -376,6 +413,7 @@ public final class IdleSessionWaker implements AutoCloseable {
         } catch (RuntimeException e) {
             // Set first: putting the entries back fires ENQUEUED, and that must schedule the retry, not a quick wake.
             retryNotBefore.put(sessionId, now.plus(policy.getRetryDelay()));
+            release(sessionId, now);
             requeue(drained);
             schedule(sessionId, policy.getRetryDelay());
             log.warn("Waking session {} was refused ({}); its notifications are back in the queue, retry in {}",
@@ -384,17 +422,6 @@ public final class IdleSessionWaker implements AutoCloseable {
         }
         retryNotBefore.remove(sessionId);
         log.debug("Woke session {} for {} ({})", sessionId, kinds, disposition.getKind());
-        try {
-            ledger.update(sessionId, current -> {
-                final List<Instant> recent = new ArrayList<>(current.getRecentWakes());
-                recent.add(now);
-                return WakeState.of(recent, current.getConsecutive() + 1,
-                        current.getTurnCountAfterWake().isPresent() ? current.getTurnCountAfterWake().getAsInt() : null,
-                        true);
-            });
-        } catch (RuntimeException e) {
-            log.warn("Wake ledger could not count the wake of session {}: {}", sessionId, e.toString());
-        }
         final CompletionStage<AgentExecutionResult> turn = disposition.getFuture();
         // Back onto the waker's thread: the ledger is changed from one thread, and turn threads stay free.
         turn.whenComplete((result, error) -> {
@@ -418,8 +445,8 @@ public final class IdleSessionWaker implements AutoCloseable {
                 return;
             }
             final int turnCount = record.get().getSessionTotals().getTurnCount();
-            ledger.update(sessionId,
-                    current -> WakeState.of(current.getRecentWakes(), current.getConsecutive(), turnCount, false));
+            ledger.update(sessionId, current -> WakeState.of(current.getRecentWakes(), current.getConsecutive(),
+                    turnCount, Math.max(0, current.getOutstanding() - 1)));
         } catch (RuntimeException e) {
             log.warn("Could not record the turn count after waking session {}: {}", sessionId, e.toString());
         }

@@ -16,6 +16,9 @@ import java.util.function.UnaryOperator;
 
 import javax.sql.DataSource;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.wake.WakeLedger;
 import at.aimon.core.agent.session.wake.WakeState;
@@ -35,12 +38,14 @@ import at.aimon.core.agent.session.wake.WakeState;
  */
 public final class PostgresWakeLedger implements WakeLedger {
 
+    private static final Logger log = LoggerFactory.getLogger(PostgresWakeLedger.class);
+
     private static final String COLUMNS = "recent_wakes, consecutive, turn_count_after_wake, outstanding";
 
     private static final String SQL_FIND = "SELECT " + COLUMNS + " FROM wake_ledger WHERE session_id = ?";
 
     private static final String SQL_ENSURE = "INSERT INTO wake_ledger (session_id, " + COLUMNS + ", updated_at) "
-            + "VALUES (?, '{}', 0, NULL, false, ?) ON CONFLICT (session_id) DO NOTHING";
+            + "VALUES (?, '{}', 0, NULL, 0, ?) ON CONFLICT (session_id) DO NOTHING";
 
     private static final String SQL_LOCK = "SELECT " + COLUMNS + " FROM wake_ledger WHERE session_id = ? FOR UPDATE";
 
@@ -94,6 +99,10 @@ public final class PostgresWakeLedger implements WakeLedger {
         Objects.requireNonNull(change, "change must not be null");
         try (Connection c = dataSource.getConnection()) {
             final boolean autoCommit = c.getAutoCommit();
+            final int isolation = c.getTransactionIsolation();
+            // The row lock is what serializes two nodes, and that holds under READ COMMITTED: a stricter level would
+            // turn the wait into a serialization failure, whatever the pool is configured with.
+            c.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
             c.setAutoCommit(false);
             try {
                 final Timestamp now = Timestamp.from(clock.instant());
@@ -107,7 +116,8 @@ public final class PostgresWakeLedger implements WakeLedger {
                     ps.setString(1, sessionId.value());
                     try (ResultSet rs = ps.executeQuery()) {
                         if (!rs.next()) {
-                            throw new IllegalStateException("wake_ledger row of " + sessionId + " vanished under lock");
+                            throw new IllegalStateException(
+                                    "wake_ledger row of " + sessionId + " was removed while being updated");
                         }
                         current = read(rs);
                     }
@@ -121,7 +131,7 @@ public final class PostgresWakeLedger implements WakeLedger {
                     } else {
                         ps.setNull(3, Types.INTEGER);
                     }
-                    ps.setBoolean(4, next.isOutstanding());
+                    ps.setInt(4, next.getOutstanding());
                     ps.setTimestamp(5, now);
                     ps.setString(6, sessionId.value());
                     ps.executeUpdate();
@@ -129,10 +139,19 @@ public final class PostgresWakeLedger implements WakeLedger {
                 c.commit();
                 return next;
             } catch (SQLException | RuntimeException e) {
-                c.rollback();
+                try {
+                    c.rollback();
+                } catch (SQLException rollback) {
+                    e.addSuppressed(rollback);
+                }
                 throw e;
             } finally {
-                c.setAutoCommit(autoCommit);
+                try {
+                    c.setAutoCommit(autoCommit);
+                    c.setTransactionIsolation(isolation);
+                } catch (SQLException restore) {
+                    log.debug("Could not restore the connection after a wake ledger update: {}", restore.toString());
+                }
             }
         } catch (SQLException e) {
             throw new IllegalStateException("Postgres error updating the wake ledger of " + sessionId, e);
@@ -160,7 +179,7 @@ public final class PostgresWakeLedger implements WakeLedger {
         }
         final int turnCount = rs.getInt("turn_count_after_wake");
         final Integer turnCountAfterWake = rs.wasNull() ? null : turnCount;
-        return WakeState.of(recent, rs.getInt("consecutive"), turnCountAfterWake, rs.getBoolean("outstanding"));
+        return WakeState.of(recent, rs.getInt("consecutive"), turnCountAfterWake, rs.getInt("outstanding"));
     }
 
     private static Array millisArray(Connection c, List<Instant> instants) throws SQLException {

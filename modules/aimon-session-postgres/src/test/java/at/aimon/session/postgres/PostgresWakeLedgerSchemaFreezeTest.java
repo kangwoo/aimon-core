@@ -33,7 +33,7 @@ class PostgresWakeLedgerSchemaFreezeTest {
                 .trim();
         assertThat(flattened).isEqualTo("create table if not exists wake_ledger ( session_id text primary key,"
                 + " recent_wakes bigint[] not null, consecutive integer not null, turn_count_after_wake integer,"
-                + " outstanding boolean not null, updated_at timestamptz not null ); create index if not exists"
+                + " outstanding integer not null, updated_at timestamptz not null ); create index if not exists"
                 + " wake_ledger_updated_at on wake_ledger (updated_at);");
     }
 }

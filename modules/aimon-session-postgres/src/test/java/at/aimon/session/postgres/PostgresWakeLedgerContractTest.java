@@ -23,4 +23,10 @@ class PostgresWakeLedgerContractTest extends AbstractWakeLedgerContractTest {
     protected WakeLedger ledger() {
         return ledger;
     }
+
+    /** Its own instance; every update takes its own connection from the pool, as another node's would. */
+    @Override
+    protected WakeLedger otherNodeLedger() {
+        return new PostgresWakeLedger(PostgresTestSupport.dataSource());
+    }
 }
