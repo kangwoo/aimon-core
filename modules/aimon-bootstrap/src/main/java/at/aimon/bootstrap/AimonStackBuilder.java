@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -99,6 +100,7 @@ import at.aimon.core.tools.monitor.WebSocketMonitorSourceFactory;
 import at.aimon.session.routing.DeploymentMode;
 import at.aimon.session.routing.SessionRouter;
 import at.aimon.session.routing.builder.SessionRouterBuilder;
+import at.aimon.session.routing.wake.IdleSessionWaker;
 
 /**
  * Turns an {@link AimonStackSpec} into a running {@link AimonStack}.
@@ -571,8 +573,10 @@ public final class AimonStackBuilder {
         // view over it.
         final StackLiveSessionOpener opener = new StackLiveSessionOpener(agentRuntimeResolver, agentExecutor,
                 messageQueueManager, agentExecutor.getHookExecutionManager(), sessionRecordWrites);
+        // Bound once the waker exists, which needs the router: the router takes its lifecycle listeners up front.
+        final AtomicReference<IdleSessionWaker> waker = new AtomicReference<>();
         final SessionRouter sessionRouter = buildSessionRouter(spec, opener, sessionRecordStore, sessionApprovalStore,
-                segmentStore, monitorManager);
+                segmentStore, monitorManager, waker);
         final Duration drainTimeout = spec.getSession().getDrainTimeout();
         teardown.own(TeardownPhase.SESSIONS, "sessionRouter.closeGracefully(" + drainTimeout + ")",
                 () -> closeRouter(sessionRouter, drainTimeout));
@@ -584,6 +588,12 @@ public final class AimonStackBuilder {
             fencedDeletes.bind(sessionRouter.fencedSegmentStore(fence).orElseThrow(() -> new AimonBootstrapException(
                     "The session router was given a segment store but exposes no fenced view of it")));
         }
+        // Opt-in (SessionSpec#wake). Registered after the router, so within SESSIONS it closes first: nothing is
+        // submitted to a router that is draining.
+        spec.getSession().getWakePolicy()
+                .ifPresent(policy -> waker.set(teardown.own(TeardownPhase.SESSIONS, "idleSessionWaker",
+                        IdleSessionWaker.builder(sessionRouter, messageQueueManager, sessionRecordStore).policy(policy)
+                                .ledger(spec.getSession().getWakeLedger().orElse(null)).build())));
         // Registered after the router, so within SESSIONS it stops first: no pass is still deleting while sessions
         // drain. Started with the other background sweepers, in AimonStack.startRuntimes().
         final SegmentSweepSchedule segmentSweep = buildSegmentSweep(spec.getSession(), segmentStore,
@@ -801,7 +811,8 @@ public final class AimonStackBuilder {
      */
     private static SessionRouter buildSessionRouter(AimonStackSpec spec, StackLiveSessionOpener opener,
             SessionRecordStore sessionRecordStore, SessionApprovalStore sessionApprovalStore,
-            SessionLogSegmentStore segmentStore, MonitorManager monitorManager) {
+            SessionLogSegmentStore segmentStore, MonitorManager monitorManager,
+            AtomicReference<IdleSessionWaker> waker) {
         final SessionSpec session = spec.getSession();
         final SessionRouterBuilder builder = SessionRouter.builder().sessionOpener(opener)
                 .sessionRecordStore(sessionRecordStore).sessionApprovalStore(sessionApprovalStore)
@@ -813,6 +824,13 @@ public final class AimonStackBuilder {
             builder.lifecycleListener(
                     SessionLifecycleListener.whenDeleted(event -> monitorManager.stopSession(event.getSessionId())));
         }
+        // Always registered: the waker is built after the router, and does nothing when there is none.
+        builder.lifecycleListener(SessionLifecycleListener.whenDeleted(event -> {
+            final IdleSessionWaker bound = waker.get();
+            if (bound != null) {
+                bound.forget(event.getSessionId());
+            }
+        }));
         session.getNodeId().ifPresent(builder::nodeId);
         session.getLeaseStore().ifPresent(builder::sessionLeaseStore);
         session.getSignalBus().ifPresent(builder::signalBus);

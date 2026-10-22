@@ -27,11 +27,29 @@ An agent can now watch a long-running source and keep working while its events a
   `ToolSpec.monitorWebSocketEnabled` / `aimon.tools.monitor.websocket-enabled` turns the `websocket` source off.
   `MonitorManager.Builder#excludeSource` leaves a kind out.
 
+### Added: waking idle sessions for background notifications
+
+An idle session can now be woken when a background notification addressed to it arrives — a monitor's events by
+default — so the agent reacts while nobody is typing. Opt-in: `SessionSpec.wake(WakePolicy)` or
+`aimon.session.wake.enabled=true`. Design: `docs/design/session/idle-wake.md`.
+
+- **`at.aimon.session.routing.wake`** (new) — `IdleSessionWaker` listens to the message queue and opens the turn through
+  `SessionRouter.submit`, with the drained notifications as its input (wrapped as
+  `<system-reminder key="background-wake">`) and the execution attribute `aimon.wake.reason`. `WakePolicy` (kinds —
+  `monitor-event` by default, `subagent-task-completed` optional — debounce, hourly and consecutive caps), `WakeLedger`
+  / `InMemoryWakeLedger` for the caps' counters, `WakeState`.
+- **Runs as the session's owner** (`SubmitOptions.principal`) and counts against budgets and quotas like any turn; a
+  session without a recorded owner is never woken. A session this node is running a turn for is left to that turn.
+- **Nothing is lost on a refused submit**: the drained notifications go back into the queue and the session is tried
+  again later. Past its caps a session's notifications wait for its next turn.
+- **Not in the CLI yet.**
+
 ### Added: line-by-line shell streaming
 
 `ShellFeature.STREAMING` and `VirtualShell#execute(ShellCommand, ExecutionOptions, ShellLineListener)` (default:
 refuses). `LocalShell` implements it by reading its stdout capture file as it grows; `WorkingDirectoryShell` forwards
-it. A shell that wraps another and forwards `supports(...)` must forward the new method too.
+it. A shell that wraps another and forwards `supports(...)` must forward the new method too. A shell may refuse a
+foreground streamed call (aimon-sandbox's does, rather than drop `cd`/`export`); stream background work.
 
 ### Added: permission delegation
 

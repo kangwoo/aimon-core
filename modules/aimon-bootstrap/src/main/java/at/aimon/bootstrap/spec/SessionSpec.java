@@ -17,6 +17,8 @@ import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.base.ExternallyManaged;
 import at.aimon.session.routing.DeploymentMode;
+import at.aimon.session.routing.wake.WakeLedger;
+import at.aimon.session.routing.wake.WakePolicy;
 
 /**
  * Declares how the stack routes and retires live sessions.
@@ -70,6 +72,8 @@ public final class SessionSpec {
     private final SessionInbox inbox;
     private final IdempotencyStore idempotencyStore;
     private final List<SessionLifecycleListener> lifecycleListeners;
+    private final WakePolicy wakePolicy;
+    private final WakeLedger wakeLedger;
 
     private SessionSpec(Builder builder) {
         this.recordStore = builder.recordStore;
@@ -87,6 +91,8 @@ public final class SessionSpec {
         this.inbox = builder.inbox;
         this.idempotencyStore = builder.idempotencyStore;
         this.lifecycleListeners = List.copyOf(builder.lifecycleListeners);
+        this.wakePolicy = builder.wakePolicy;
+        this.wakeLedger = builder.wakeLedger;
 
         if (this.drainTimeout.isNegative()) {
             throw new IllegalArgumentException("drainTimeout must not be negative: " + this.drainTimeout);
@@ -347,6 +353,25 @@ public final class SessionSpec {
         return lifecycleListeners;
     }
 
+    /**
+     * Returns the policy under which an idle session is woken for its background notifications — a monitor's events —
+     * by an {@code IdleSessionWaker} over the router (design {@code docs/design/session/idle-wake.md}).
+     *
+     * @return the policy, or empty when idle sessions are not woken (the default)
+     */
+    public Optional<WakePolicy> getWakePolicy() {
+        return Optional.ofNullable(wakePolicy);
+    }
+
+    /**
+     * Returns where the waker keeps its per-session caps. Borrowed: the stack closes nothing it did not build.
+     *
+     * @return the ledger, or empty for an in-memory one (caps counted per node)
+     */
+    public Optional<WakeLedger> getWakeLedger() {
+        return Optional.ofNullable(wakeLedger);
+    }
+
     /** Builder for {@link SessionSpec}. */
     public static final class Builder {
 
@@ -365,8 +390,37 @@ public final class SessionSpec {
         private SessionInbox inbox;
         private IdempotencyStore idempotencyStore;
         private final List<SessionLifecycleListener> lifecycleListeners = new ArrayList<>();
+        private WakePolicy wakePolicy;
+        private WakeLedger wakeLedger;
 
         private Builder() {
+        }
+
+        /**
+         * Wakes idle sessions for their background notifications under {@code policy} (default: not at all). A woken
+         * session runs a turn nobody typed, as its recorded owner — a session without an owner is never woken — and
+         * within the policy's caps.
+         *
+         * @param wakePolicy
+         *            the policy, or null to wake nothing
+         * @return this builder
+         */
+        public Builder wake(WakePolicy wakePolicy) {
+            this.wakePolicy = wakePolicy;
+            return this;
+        }
+
+        /**
+         * Sets where the waker keeps its per-session caps; a shared ledger holds them across nodes. Unused unless
+         * waking is on.
+         *
+         * @param wakeLedger
+         *            the ledger, or null for an in-memory one
+         * @return this builder
+         */
+        public Builder wakeLedger(@ExternallyManaged WakeLedger wakeLedger) {
+            this.wakeLedger = wakeLedger;
+            return this;
         }
 
         /**

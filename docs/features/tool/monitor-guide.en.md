@@ -135,8 +135,16 @@ For the command form:
 | running a turn | when the next tool-calling iteration ends |
 | idle | right before the first LLM call of the **next turn** |
 
-A monitor does **not wake** an idle session. The events wait until the user's next input starts a turn, which reads
-them. The CLI is no different: monitor events are not replayed after a turn but go into the start of the next one.
+By default a monitor does **not wake** an idle session. The events wait until the user's next input starts a turn,
+which reads them. The CLI is no different: monitor events are not replayed after a turn but go into the start of the
+next one.
+
+**With waking turned on** (stacks that use the router: `aimon.session.wake.enabled: true` in Spring Boot, or
+`SessionSpec.wake(WakePolicy)`), a monitor event reaching an idle session opens a turn with the event as its input. The
+turn runs as the session's owner and counts against budgets and quotas like any turn. A session with no recorded owner
+is not woken. Caps keep it from running away — 6 wakes per session an hour, and 3 in a row without a turn of the
+user's (past them, the events stay queued for the next user turn). The CLI does not wake yet. Design:
+[`idle-wake.md`](../../design/session/idle-wake.md).
 
 Events go **only to the session that started the monitor.** Other sessions of the same agent do not receive them.
 
