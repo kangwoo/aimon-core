@@ -70,6 +70,8 @@ import at.aimon.core.scheduling.scheduler.TaskScheduler;
 import at.aimon.core.tools.memory.MemoryRecallTool;
 import at.aimon.core.tools.memory.MemorySearchTool;
 import at.aimon.core.tools.memory.ObserveTool;
+import at.aimon.core.tools.monitor.MonitorStopTool;
+import at.aimon.core.tools.monitor.MonitorTool;
 import at.aimon.core.tools.session.SessionHistoryTool;
 import at.aimon.core.tracing.SpanExporter;
 import at.aimon.core.tracing.SpanType;
@@ -881,6 +883,28 @@ class AimonStackBuilderTest {
         final AimonStackSpec spec = specFor(workspace, "ops").tools(ToolSpec.serverDefaults()).build();
         try (AimonStack stack = AimonStackBuilder.build(spec)) {
             assertThat(stack.teardownPlan()).noneMatch(line -> line.contains(TeardownPhase.BACKGROUND_COMMANDS.name()));
+        }
+    }
+
+    @Test
+    @DisplayName("monitors are opt-in: off, no tools and nothing to close; on, both tools and a BACKGROUND_COMMANDS entry")
+    void monitorToolsAreOptIn(@TempDir Path workspace) {
+        try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").build())) {
+            final OrcaAgentRuntime runtime = stack.agentRuntimeRegistry().get(AgentRuntimeId.fromName("ops"))
+                    .map(OrcaAgentRuntime.class::cast).orElseThrow();
+            assertThat(runtime.getToolRegistry().findByName(MonitorTool.TOOL_NAME)).isEmpty();
+            assertThat(stack.teardownPlan()).noneMatch(line -> line.contains("monitorManager"));
+        }
+        final AimonStackSpec enabled = specFor(workspace, "ops").tools(ToolSpec.builder().monitorEnabled(true).build())
+                .build();
+        try (AimonStack stack = AimonStackBuilder.build(enabled)) {
+            final OrcaAgentRuntime runtime = stack.agentRuntimeRegistry().get(AgentRuntimeId.fromName("ops"))
+                    .map(OrcaAgentRuntime.class::cast).orElseThrow();
+            assertThat(runtime.getToolRegistry().findByName(MonitorTool.TOOL_NAME)).isPresent();
+            assertThat(runtime.getToolRegistry().findByName(MonitorStopTool.TOOL_NAME)).isPresent();
+            final List<String> plan = stack.teardownPlan();
+            assertThat(lineOf(plan, "monitorManager")).isGreaterThan(lineOf(plan, "runtime(agent:ops)"))
+                    .isLessThan(lineOf(plan, "executionEnvironmentProvider"));
         }
     }
 

@@ -147,6 +147,7 @@ IMPORTANT: **세션(`SessionRecord`)과 라이브 세션(`LiveSession`)은 다�
 |------|----------|------|
 | 파일 | `Read`, `Write`, `Edit`, `Grep` | core |
 | 셸 | `Bash`, `BashOutput`, `KillShell` (백그라운드 포함) | core |
+| 모니터 | `Monitor`, `MonitorStop` — 셸 명령·WebSocket·호스트 등록 source 의 이벤트를 메시지로 받는다 (opt-in, `ToolSpec.monitorEnabled`) | core |
 | 웹 | `WebSearch`, `WebFetch` | core |
 | 할 일 | `TodoWrite` | core |
 | 작업 위임 | `Task`, `TaskList`, `TaskStop`, `AgentOutput` | core |

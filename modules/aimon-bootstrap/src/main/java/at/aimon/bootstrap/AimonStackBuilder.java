@@ -92,6 +92,7 @@ import at.aimon.core.skill.render.ShellArgumentTokenizer;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.behavior.InMemorySubagentBehaviorRegistry;
 import at.aimon.core.tools.bash.BackgroundBashManager;
+import at.aimon.core.tools.monitor.MonitorManager;
 import at.aimon.session.routing.DeploymentMode;
 import at.aimon.session.routing.SessionRouter;
 import at.aimon.session.routing.builder.SessionRouterBuilder;
@@ -472,11 +473,18 @@ public final class AimonStackBuilder {
                         BackgroundBashManager.builder().store(toolSpec.getBackgroundBashStore().orElse(null))
                                 .nodeId(spec.getSession().getNodeId().orElse(null)).build())
                 : null;
+        // Opt-in (ToolSpec#monitorEnabled). Application-scoped for the same reason as the task list above, and it
+        // delivers to the stack's one message queue — which is why only the stack can build it.
+        final MonitorManager monitorManager = toolSpec.isMonitorEnabled()
+                ? teardown.own(TeardownPhase.BACKGROUND_COMMANDS, "monitorManager",
+                        monitorManager(toolSpec, messageQueueManager, spec.getSession().getNodeId().orElse(null)))
+                : null;
         final StackAgentRuntimeProvisioner.Builder provisionerBuilder = StackAgentRuntimeProvisioner.builder()
                 .fileSystemSpec(spec.getFileSystem()).executionEnvironmentSpec(spec.getExecutionEnvironment())
-                .toolSpec(toolSpec).backgroundBashManager(backgroundBashManager).runtimeFactory(runtimeFactory)
-                .knowledgeToolsEnabled(knowledgeStore != null).memoryToolProvider(memory.getToolProvider().orElse(null))
-                .agentExecutor(agentExecutor).taskManager(taskManager).skillParser(skillParser)
+                .toolSpec(toolSpec).backgroundBashManager(backgroundBashManager).monitorManager(monitorManager)
+                .runtimeFactory(runtimeFactory).knowledgeToolsEnabled(knowledgeStore != null)
+                .memoryToolProvider(memory.getToolProvider().orElse(null)).agentExecutor(agentExecutor)
+                .taskManager(taskManager).skillParser(skillParser)
                 .credentialStore(spec.getCredentialStore().orElse(null))
                 .credentialStoreFactory(spec.getCredentialStoreFactory().orElse(null))
                 .agentCustomizers(spec.getAgentCustomizers());
@@ -803,6 +811,14 @@ public final class AimonStackBuilder {
         session.getIdempotencyStore().ifPresent(builder::idempotencyStore);
         session.getIdleTtl().ifPresent(builder::idleTtl);
         session.getMaxCachedSessions().ifPresent(builder::maxCachedSessions);
+        return builder.build();
+    }
+
+    /** The stack's monitor manager: the built-in sources plus the host's, over the stack's message queue. */
+    private static MonitorManager monitorManager(ToolSpec toolSpec, MessageQueueManager queue, String nodeId) {
+        final MonitorManager.Builder builder = MonitorManager.builder(queue)
+                .store(toolSpec.getMonitorStore().orElse(null)).nodeId(nodeId);
+        toolSpec.getMonitorSources().forEach(builder::source);
         return builder.build();
     }
 

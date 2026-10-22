@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/scope-model.md
-source_commit: 82bcca3
+source_commit: daaf2ea
 ---
 
 # Scope Model
@@ -22,7 +22,7 @@ stretch of running.
 
 | Scope | Representative components | Identifier | Lifetime |
 |-------|--------------|--------|----------|
-| **Application** | `SchedulingEngine`, `ScheduledTaskManager`, `RoutineExecutor`, `AgentRuntimeRegistry`, `SessionRecordStore`, `SessionLeaseStore`, `SessionInbox`, `SessionSignalBus`, `IdempotencyStore`, `KnowledgeStore`, `CredentialStore`, `BackgroundBashManager`, `BackgroundBashStore`, `UsageLedger` | — | app start ~ shutdown |
+| **Application** | `SchedulingEngine`, `ScheduledTaskManager`, `RoutineExecutor`, `AgentRuntimeRegistry`, `SessionRecordStore`, `SessionLeaseStore`, `SessionInbox`, `SessionSignalBus`, `IdempotencyStore`, `KnowledgeStore`, `CredentialStore`, `BackgroundBashManager`, `BackgroundBashStore`, `MonitorManager`, `MonitorStore`, `UsageLedger` | — | app start ~ shutdown |
 | **Agent** | `AgentRuntime` and what it owns — `ToolRegistry` / `HookRegistry` / `McpClientManager` | `AgentRuntimeId` (`agent:<name>[:<discriminator>]`) | per `(Agent, discriminator)`, held across sessions |
 | **Session** | `SessionRecord`, `SessionTotals`, `budgetOverride`, `SessionTranscript` | `SessionId` | as long as the session exists — **persistent** |
 | **Live session** | `LiveSession`, the message queue, the event publisher | (references the bound `SessionId`) | node-local, **transient** (open ~ `close()`) |
@@ -74,6 +74,7 @@ rules see the `TurnId` entry in [`glossary.en.md` §4](glossary.en.md).
 | `ExecutionEnvironmentProvider` and the shell and working file system it holds | the assembly — bootstrap builds **one per stack** (by default `PerRuntimeLocalEnvironmentProvider`, which picks a workspace per runtime id); the starter uses a single `ExecutionEnvironmentProvider` bean when one exists | whoever built it — bootstrap at stack shutdown (last in `AGENT_RESOURCES`), Spring for a bean. **Evicting a runtime does not close the provider** — it closes the binding below. **`OrcaAgentRuntime.close()` does not close it either** — exception: a provider returned by the `withExecutionEnvironmentProviderFactory` function belongs to that runtime and `close()` closes it (`create(...)` closes it if the build fails) |
 | `RuntimeBinding` (the share a provider holds for one runtime) | the assembly, through `provider.bindRuntime(id)` when it builds the runtime — the runtime itself never binds | whoever built the runtime, together with it (on eviction or stack shutdown, after the runtime and its control store). Closing it **does not stop a running background command**. Two runtimes of one id can overlap, which is why this is a handle and not a callback keyed by id |
 | `BackgroundBashManager` (the list of background `Bash` tasks) and `BackgroundBashStore` | bootstrap builds one per stack (when Bash is enabled) — shared by every runtime's `Bash`, `BashOutput` and `KillShell`. The default of a core-only assembly (`OrcaBashToolProvider()`) is one per tool registry. **The list's lifetime is not a task's visibility** — one task is visible only to the session it was started for (its turns and the forks spawned for it), or, when there is no session, to that execution (`BackgroundBashOwner`) | bootstrap in the `BACKGROUND_COMMANDS` phase at stack shutdown — it stops the commands still running. **Evicting a runtime leaves its tasks alone.** Nobody closes a per-registry manager (its threads are daemons) |
+| `MonitorManager` (background monitors) and `MonitorStore` | bootstrap builds one per stack (only with `ToolSpec.monitorEnabled`) — it delivers into the stack's message queue, so only the stack can build it. Shared by every runtime's `Monitor` and `MonitorStop`. Visibility is the same `BackgroundBashOwner` as `BackgroundBashManager`'s, and **an owner without a session cannot start one** | bootstrap in the `BACKGROUND_COMMANDS` phase at stack shutdown — it stops every source without telling the model. **Evicting a runtime leaves its monitors alone.** One monitor ends at whichever comes first: its source ending, `MonitorStop`, or its timeout (30 minutes at most). A `shell` monitor holds the execution environment it started in, so if a runtime-owned environment provider is closed first, the command ends as a failure |
 | `ExecutionEnvironment` | the provider's `resolve()`, once at the start of each execution | nothing — it is a view, not `Closeable`, and is dropped with the `ToolContext` |
 | `controlFileSystem` (the control store, formerly the runtime's VFS) | the assembly | the assembly |
 | `LiveSession` | `LiveSessionFactory` / the opener | `LiveSession.close()` — **handle resources only** |
