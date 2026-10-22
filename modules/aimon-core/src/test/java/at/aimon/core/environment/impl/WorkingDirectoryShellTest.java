@@ -1,6 +1,7 @@
 package at.aimon.core.environment.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.time.Duration;
@@ -14,7 +15,9 @@ import at.aimon.core.shell.RunDirectory;
 import at.aimon.core.shell.ShellCommand;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.ShellFeature;
+import at.aimon.core.shell.ShellLineListener;
 import at.aimon.core.shell.VirtualShell;
+import at.aimon.core.shell.exception.ShellExecutionException;
 
 class WorkingDirectoryShellTest {
 
@@ -60,9 +63,45 @@ class WorkingDirectoryShellTest {
         assertThat(delegate.lastOptions).isSameAs(options);
     }
 
+    @Test
+    @DisplayName("The streaming execute is forwarded with the branch working directory, listener and all")
+    void streamingExecute_forwardedWithWorkingDirectory() throws Exception {
+        RecordingShell delegate = new RecordingShell();
+        Path branch = tempDir.resolve("branch");
+        WorkingDirectoryShell shell = new WorkingDirectoryShell(delegate, branch);
+        ShellLineListener listener = line -> {
+        };
+
+        shell.execute(() -> "true", ExecutionOptions.defaults(), listener);
+
+        assertThat(delegate.lastOptions.getWorkingDirectory()).isEqualTo(branch.toString());
+        assertThat(delegate.lastListener).isSameAs(listener);
+    }
+
+    @Test
+    @DisplayName("The default streaming execute refuses — a shell that does not stream says so")
+    void defaultStreamingExecute_refuses() {
+        assertThatThrownBy(() -> new RecordingShell().execute(() -> "true", ExecutionOptions.defaults(), line -> {
+        }, true)).isInstanceOf(UnsupportedOperationException.class);
+    }
+
     private static final class RecordingShell implements VirtualShell {
 
         private ExecutionOptions lastOptions;
+        private ShellLineListener lastListener;
+
+        @Override
+        public ShellCommandResult execute(ShellCommand command, ExecutionOptions options, ShellLineListener listener) {
+            lastOptions = options;
+            lastListener = listener;
+            return new ShellCommandResult(0, "", "", Duration.ZERO);
+        }
+
+        /** Reaches the interface's default, which this class overrides above. */
+        ShellCommandResult execute(ShellCommand command, ExecutionOptions options, ShellLineListener listener,
+                boolean useDefault) throws ShellExecutionException {
+            return VirtualShell.super.execute(command, options, listener);
+        }
 
         @Override
         public ShellCommandResult execute(ShellCommand command) {

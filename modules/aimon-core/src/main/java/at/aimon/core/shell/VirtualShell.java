@@ -95,6 +95,35 @@ public interface VirtualShell extends AutoCloseable {
     ShellCommandResult execute(ShellCommand command, ExecutionOptions options) throws ShellExecutionException;
 
     /**
+     * Executes a shell command and hands each line of its standard output to {@code listener} as the command prints
+     * it.
+     *
+     * <p>
+     * Only a shell that declares {@link ShellFeature#STREAMING} implements this; the default refuses. Apart from the
+     * listener the call behaves as {@link #execute(ShellCommand, ExecutionOptions)} does — it blocks until the command
+     * ends, honours the timeout and the cancellation signal in {@code options}, and throws the same exceptions. The
+     * result's {@link ShellCommandResult#stdout() stdout} may be empty: the lines have already been handed over, and a
+     * shell need not keep them a second time. Standard error is not streamed; it is in the result.
+     *
+     * @param command
+     *            the command to execute, must not be null
+     * @param options
+     *            the execution options, must not be null
+     * @param listener
+     *            receives each line of standard output (see {@link ShellLineListener} for the threading contract), must
+     *            not be null
+     * @return the execution result
+     * @throws ShellExecutionException
+     *             as {@link #execute(ShellCommand, ExecutionOptions)}
+     * @throws UnsupportedOperationException
+     *             if this shell does not support streaming
+     */
+    default ShellCommandResult execute(ShellCommand command, ExecutionOptions options, ShellLineListener listener)
+            throws ShellExecutionException {
+        throw new UnsupportedOperationException("Streaming output is not supported by " + getClass().getName());
+    }
+
+    /**
      * Returns the current working directory of this shell.
      *
      * @return the working directory path, or null if not set

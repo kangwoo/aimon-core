@@ -10,6 +10,7 @@ import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCommand;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.ShellFeature;
+import at.aimon.core.shell.ShellLineListener;
 import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.shell.exception.ShellExecutionException;
 
@@ -40,15 +41,26 @@ final class WorkingDirectoryShell implements VirtualShell {
 
     @Override
     public ShellCommandResult execute(ShellCommand command, ExecutionOptions options) throws ShellExecutionException {
+        return delegate.execute(command, inBranch(options));
+    }
+
+    @Override
+    public ShellCommandResult execute(ShellCommand command, ExecutionOptions options, ShellLineListener listener)
+            throws ShellExecutionException {
+        // Forwarded, not inherited: supports() answers for the delegate, so a delegate that streams must stream here.
+        return delegate.execute(command, inBranch(options), listener);
+    }
+
+    private ExecutionOptions inBranch(ExecutionOptions options) {
         if (options.getWorkingDirectory() != null) {
-            return delegate.execute(command, options);
+            return options;
         }
         try {
             Files.createDirectories(workingDirectory);
         } catch (IOException e) {
             throw new UncheckedIOException("Cannot create branch working directory " + workingDirectory, e);
         }
-        return delegate.execute(command, options.toBuilder().workingDirectory(workingDirectory.toString()).build());
+        return options.toBuilder().workingDirectory(workingDirectory.toString()).build();
     }
 
     @Override
