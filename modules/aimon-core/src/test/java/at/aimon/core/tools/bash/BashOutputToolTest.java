@@ -22,6 +22,7 @@ import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.exception.ShellTimeoutException;
+import at.aimon.core.tools.BackgroundTaskOwner;
 import at.aimon.core.tools.ToolContextKeys;
 
 /** Unit tests for {@link BashOutputTool}. */
@@ -393,10 +394,10 @@ class BashOutputToolTest {
     @Test
     void testExecute_KilledTask_ReportsKilledWithItsOutput() throws Exception {
         ControllableShell shell = ControllableShell.cancellable();
-        BackgroundBashTask task = backgroundManager.start(BackgroundBashOwner.none(), "npm run dev", shell,
+        BackgroundBashTask task = backgroundManager.start(BackgroundTaskOwner.none(), "npm run dev", shell,
                 at.aimon.core.shell.ExecutionOptions.defaults());
         shell.awaitStarted();
-        backgroundManager.kill(BackgroundBashOwner.none(), task.getTaskId());
+        backgroundManager.kill(BackgroundTaskOwner.none(), task.getTaskId());
 
         ToolResult result = bashOutputTool.execute(ToolInput.of(Map.of("taskId", task.getTaskId())), context);
 
@@ -410,7 +411,7 @@ class BashOutputToolTest {
         AgentRuntimeId acme = AgentRuntimeId.fromName("ops", "acme");
         AgentRuntimeId globex = AgentRuntimeId.fromName("ops", "globex");
         ControllableShell shell = ControllableShell.cancellable();
-        String taskId = backgroundManager.start(BackgroundBashOwner.of(acme, null, null), "cat secrets", shell,
+        String taskId = backgroundManager.start(BackgroundTaskOwner.of(acme, null, null), "cat secrets", shell,
                 at.aimon.core.shell.ExecutionOptions.defaults()).getTaskId();
         shell.finish("acme only");
 
@@ -440,7 +441,7 @@ class BashOutputToolTest {
                 .put(ToolContextKeys.EXECUTION_ID, ExecutionId.of("fork-1"))
                 .put(ToolContextKeys.INVOKING_SESSION_ID, sessionA).build();
         ControllableShell shell = ControllableShell.cancellable();
-        String taskId = backgroundManager.start(BackgroundBashOwner.of(turnA), "cat secrets", shell,
+        String taskId = backgroundManager.start(BackgroundTaskOwner.of(turnA), "cat secrets", shell,
                 at.aimon.core.shell.ExecutionOptions.defaults()).getTaskId();
         shell.finish("session a only");
 
@@ -464,7 +465,7 @@ class BashOutputToolTest {
         ToolContext turnB = ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, acme)
                 .put(ToolContextKeys.SESSION_ID, SessionId.of("session-b")).build();
         InMemoryBackgroundBashStore shared = new InMemoryBackgroundBashStore();
-        shared.putIfAbsent(BackgroundBashRecord.builder().taskId("bash_0000abcd").owner(BackgroundBashOwner.of(turnA))
+        shared.putIfAbsent(BackgroundBashRecord.builder().taskId("bash_0000abcd").owner(BackgroundTaskOwner.of(turnA))
                 .nodeId("node-b").startedAt(java.time.Instant.now())
                 .expiresAt(java.time.Instant.now().plusSeconds(3600)).build());
         try (BackgroundBashManager nodeA = BackgroundBashManager.builder().store(shared).nodeId("node-a").build()) {

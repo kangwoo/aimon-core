@@ -32,6 +32,7 @@ import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.shell.exception.ShellExecutionException;
 import at.aimon.core.shell.exception.ShellTimeoutException;
 import at.aimon.core.shell.impl.local.LocalShell;
+import at.aimon.core.tools.BackgroundTaskOwner;
 import at.aimon.core.tools.ToolContextKeys;
 
 /** Unit tests for {@link BashTool}. */
@@ -668,9 +669,9 @@ class BashToolTest {
             ToolResult result = startInBackground(manager, owned);
             String taskId = result.getContent().substring(result.getContent().indexOf("bash_")).split("\\s")[0];
 
-            assertThat(manager.find(BackgroundBashOwner.of(acme, null, null), taskId).kind())
+            assertThat(manager.find(BackgroundTaskOwner.of(acme, null, null), taskId).kind())
                     .isEqualTo(BackgroundBashLookup.Kind.LOCAL);
-            assertThat(manager.find(BackgroundBashOwner.none(), taskId).kind())
+            assertThat(manager.find(BackgroundTaskOwner.none(), taskId).kind())
                     .isEqualTo(BackgroundBashLookup.Kind.NOT_FOUND);
         }
     }

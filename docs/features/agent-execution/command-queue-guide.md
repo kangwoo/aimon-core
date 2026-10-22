@@ -78,7 +78,8 @@
 | `uuid` | `UUID` | 식별자 — `equals()` / `hashCode()`의 기준 |
 | `inputText` | `String` | 원문 (비어있을 수 없음) |
 | `priority` | `QueuedInputPriority` | 우선순위 티어 (기본 `NEXT`) |
-| `agentExecutionContextId` | `AgentRuntimeId` | 어느 컨텍스트가 소비할 메시지인지 |
+| `agentRuntimeId` | `AgentRuntimeId` | 어느 런타임이 소비할 메시지인지 |
+| `sessionId` | `Optional<String>` | 어느 세션이 소비할 메시지인지 (`SessionId.value()`). 비어 있으면 그 런타임의 어느 세션이든 가져간다 |
 | `sourceAgentId` | `Optional<String>` | 서브에이전트 origin (REPL이면 empty) |
 | `enqueuedAt` | `Instant` | 큐잉 시각 |
 | `metadata` | `Map<String,String>` | 프로듀서 임의 태그 (불변 복사본) |
@@ -163,7 +164,8 @@ private void enqueueWhileBusy(String userMessage) {
     QueuedInput queued = QueuedInput.builder()
         .inputText(userMessage)
         .priority(QueuedInputPriority.NEXT)
-        .agentExecutionContextId(agentExecutionContext.getId())
+        .agentRuntimeId(agentRuntime.getId())
+        .sessionId(sessionId.value())
         .build();
     messageQueueManager.enqueue(queued);
 }
@@ -173,9 +175,11 @@ private void enqueueWhileBusy(String userMessage) {
 
 ```java
 // OrcaAgentExecutor#injectQueuedMessages — ReAct 루프 tail에서 호출
-final AgentRuntimeId contextId = scope.executionContext.getId();
+final AgentRuntimeId runtimeId = scope.agentRuntime.getId();
+final String sessionId = scope.transcriptBuffer.getSessionId().value();
 final List<QueuedInput> drained = messageQueueManager.drainForInjection(
-        q -> contextId.equals(q.getAgentRuntimeId()),
+        q -> runtimeId.equals(q.getAgentRuntimeId())
+                && q.getSessionId().map(sessionId::equals).orElse(true),
         QueuedInputPriority.NEXT);
 
 for (QueuedInput queued : drained) {
@@ -184,7 +188,7 @@ for (QueuedInput queued : drained) {
 }
 ```
 
-`filter`에 **반드시 `agentExecutionContextId`를 포함**하세요. 포함하지 않으면 메인/서브 에이전트가 서로의 입력을 집어삼킵니다.
+`filter`에 **반드시 런타임과 세션을 포함**하세요. 런타임을 빼면 메인/서브 에이전트가 서로의 입력을 집어삼키고, 세션을 빼면 같은 에이전트의 다른 세션이 이 세션의 입력을 가져갑니다 — 런타임은 에이전트 단위라 그 에이전트의 모든 세션이 공유합니다. 세션을 지정한 항목은 그 세션의 턴 시작에도 주입됩니다.
 
 ### 3. 턴 종료 시 잔여 메시지 자동 소비
 

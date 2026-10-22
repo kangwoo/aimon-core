@@ -48,6 +48,18 @@ public enum ShellFeature {
     CANCELLATION,
 
     /**
+     * Handing a running command's standard output to the caller line by line as it is printed, through
+     * {@link VirtualShell#execute(ShellCommand, ExecutionOptions, ShellLineListener)}.
+     *
+     * <p>
+     * A shell that does not declare it inherits that method's default, which refuses. Output then arrives only in the
+     * result, once the command has ended — which, for a command that does not end on its own ({@code tail -f}), is
+     * never. A shell that wraps another and forwards {@link VirtualShell#supports(ShellFeature)} must forward the
+     * streaming {@code execute} too, or it declares a feature it refuses.
+     */
+    STREAMING,
+
+    /**
      * Running a command {@linkplain ExecutionOptions#isIsolated() isolated}: as a fresh shell of the environment would,
      * reading and saving no per-session state ({@code cd}, {@code export}) and taking no session lock.
      *

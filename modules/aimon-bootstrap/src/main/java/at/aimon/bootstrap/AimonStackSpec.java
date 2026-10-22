@@ -374,12 +374,13 @@ public final class AimonStackSpec {
      * <p>
      * <b>Sharing this one across nodes is not the same move as sharing the approval stores</b>, and the stack
      * does not report a node-local queue as a degradation for that reason. The drain filters on
-     * {@code AgentRuntimeId} and nothing else ({@code OrcaAgentExecutor#injectQueuedMessages}), and a queued
-     * entry carries no {@code SessionId} at all — so on a shared repository the next turn to run for that agent
-     * runtime drains the entry, wherever it is and whichever session it belongs to. Within one node that is
-     * already true and is what the queue is for; across nodes it means a user's follow-up can be injected into
-     * someone else's turn. Share this only when the deployment partitions agent runtimes across nodes, or when
-     * the implementation itself narrows delivery back to the node that accepted the input.
+     * {@code AgentRuntimeId} and, for an entry addressed to one, on its session ({@code QueuedInput#getSessionId()},
+     * {@code OrcaAgentExecutor#injectQueuedMessages}). The framework's own producers — the live session's queued
+     * follow-ups, subagent completion notices, background monitors — all address their session, so on a shared
+     * repository such an entry is taken only by a turn of that session, on whichever node it runs. An entry a host
+     * enqueues without a session is still taken by the next turn of that agent runtime anywhere, which across nodes
+     * can be someone else's turn. Share this only when every producer addresses its session, when the deployment
+     * partitions agent runtimes across nodes, or when the implementation narrows delivery itself.
      *
      * @return the repository, or empty to use the stack default (in-memory, this node only)
      */

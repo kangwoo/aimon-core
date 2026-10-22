@@ -65,6 +65,20 @@ class QueuedInputTest {
         }
 
         @Test
+        @DisplayName("sessionId defaults to empty — the entry is addressed to the runtime alone")
+        void sessionIdDefaultsToEmpty() {
+            assertThat(baseBuilder().build().getSessionId()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("sessionId is kept when given, null clears it, blank is rejected")
+        void sessionIdIsKeptOrRejected() {
+            assertThat(baseBuilder().sessionId("s-1").build().getSessionId()).contains("s-1");
+            assertThat(baseBuilder().sessionId("s-1").sessionId(null).build().getSessionId()).isEmpty();
+            assertThatThrownBy(() -> baseBuilder().sessionId(" ")).isInstanceOf(IllegalArgumentException.class);
+        }
+
+        @Test
         @DisplayName("metadata defaults to an empty map")
         void metadataDefaultsToEmpty() {
             QueuedInput input = baseBuilder().build();

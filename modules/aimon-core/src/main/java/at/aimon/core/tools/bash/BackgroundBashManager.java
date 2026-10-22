@@ -24,6 +24,7 @@ import at.aimon.core.shell.ShellCancellationSource;
 import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.ShellFeature;
 import at.aimon.core.shell.VirtualShell;
+import at.aimon.core.tools.BackgroundTaskOwner;
 
 /**
  * The list of background bash tasks: starts them, finds them again, stops them.
@@ -54,7 +55,7 @@ import at.aimon.core.shell.VirtualShell;
  *
  * <p>
  * <b>Ownership.</b> One application-wide list is visible to every runtime, and a task id (32 random bits) is no
- * boundary. {@link #find} and {@link #kill} answer only the {@linkplain BackgroundBashOwner owner} the task was
+ * boundary. {@link #find} and {@link #kill} answer only the {@linkplain BackgroundTaskOwner owner} the task was
  * started for — the runtime and, within it, the session (a session's turns and the forks spawned for it) or the
  * session-less execution; for any other caller the id does not exist. Two sessions of one runtime do not see each
  * other's tasks. The id-only
@@ -166,7 +167,7 @@ public class BackgroundBashManager implements AutoCloseable {
      * @throws RuntimeException
      *             if the store cannot record the task; the command is then not started
      */
-    public BackgroundBashTask start(BackgroundBashOwner owner, String command, VirtualShell shell,
+    public BackgroundBashTask start(BackgroundTaskOwner owner, String command, VirtualShell shell,
             ExecutionOptions options) {
         Objects.requireNonNull(owner, "Owner cannot be null");
         Objects.requireNonNull(command, "Command cannot be null");
@@ -217,7 +218,7 @@ public class BackgroundBashManager implements AutoCloseable {
         }
     }
 
-    private String recordNewTask(BackgroundBashOwner owner, Duration timeout) {
+    private String recordNewTask(BackgroundTaskOwner owner, Duration timeout) {
         final Instant now = clock.instant();
         for (int attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt++) {
             final String taskId = TASK_ID_PREFIX + UUID.randomUUID().toString().substring(0, TASK_ID_LENGTH);
@@ -268,7 +269,7 @@ public class BackgroundBashManager implements AutoCloseable {
      * Looks a task up on behalf of its owner.
      *
      * <p>
-     * A task started with {@link BackgroundBashOwner#none()} is found by every caller that has no owner either — owner
+     * A task started with {@link BackgroundTaskOwner#none()} is found by every caller that has no owner either — owner
      * matching is the only boundary. An assembly that shares one manager between runtimes must therefore put
      * {@code ToolContextKeys.AGENT_RUNTIME_ID} in every tool context, and the session or execution id with it, as the
      * Orca executors do; a context without them sees, and can stop, every other task that is as unscoped as it is.
@@ -286,7 +287,7 @@ public class BackgroundBashManager implements AutoCloseable {
      * @throws RuntimeException
      *             if this node does not have the task and the store cannot be read
      */
-    public BackgroundBashLookup find(BackgroundBashOwner owner, String taskId) {
+    public BackgroundBashLookup find(BackgroundTaskOwner owner, String taskId) {
         Objects.requireNonNull(owner, "Owner cannot be null");
         Objects.requireNonNull(taskId, "Task ID cannot be null");
 
@@ -326,7 +327,7 @@ public class BackgroundBashManager implements AutoCloseable {
      * @throws RuntimeException
      *             if this node does not have the task and the store cannot be read
      */
-    public BackgroundBashKill kill(BackgroundBashOwner owner, String taskId) {
+    public BackgroundBashKill kill(BackgroundTaskOwner owner, String taskId) {
         final BackgroundBashLookup lookup = find(owner, taskId);
         switch (lookup.kind()) {
             case NOT_FOUND :
@@ -364,7 +365,7 @@ public class BackgroundBashManager implements AutoCloseable {
         Objects.requireNonNull(command, "Command cannot be null");
         Objects.requireNonNull(future, "Future cannot be null");
 
-        final BackgroundBashTask task = new BackgroundBashTask(taskId, command, future, BackgroundBashOwner.none(),
+        final BackgroundBashTask task = new BackgroundBashTask(taskId, command, future, BackgroundTaskOwner.none(),
                 null, null, clock);
         tasks.put(taskId, task);
     }

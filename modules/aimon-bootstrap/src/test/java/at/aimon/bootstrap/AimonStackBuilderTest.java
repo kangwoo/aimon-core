@@ -44,7 +44,11 @@ import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.agent.tool.Tool;
+import at.aimon.core.agent.tool.ToolContext;
+import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
 import at.aimon.core.environment.EnvironmentRequest;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
@@ -67,9 +71,15 @@ import at.aimon.core.scheduling.ScheduledTaskId;
 import at.aimon.core.scheduling.ScheduledTaskInterruptBus;
 import at.aimon.core.scheduling.repository.InMemoryScheduledTaskRepository;
 import at.aimon.core.scheduling.scheduler.TaskScheduler;
+import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.memory.MemoryRecallTool;
 import at.aimon.core.tools.memory.MemorySearchTool;
 import at.aimon.core.tools.memory.ObserveTool;
+import at.aimon.core.tools.monitor.MonitorRequest;
+import at.aimon.core.tools.monitor.MonitorSource;
+import at.aimon.core.tools.monitor.MonitorSourceFactory;
+import at.aimon.core.tools.monitor.MonitorStopTool;
+import at.aimon.core.tools.monitor.MonitorTool;
 import at.aimon.core.tools.session.SessionHistoryTool;
 import at.aimon.core.tracing.SpanExporter;
 import at.aimon.core.tracing.SpanType;
@@ -881,6 +891,95 @@ class AimonStackBuilderTest {
         final AimonStackSpec spec = specFor(workspace, "ops").tools(ToolSpec.serverDefaults()).build();
         try (AimonStack stack = AimonStackBuilder.build(spec)) {
             assertThat(stack.teardownPlan()).noneMatch(line -> line.contains(TeardownPhase.BACKGROUND_COMMANDS.name()));
+        }
+    }
+
+    @Test
+    @DisplayName("monitors are opt-in: off, no tools and nothing to close; on, both tools and a BACKGROUND_COMMANDS entry")
+    void monitorToolsAreOptIn(@TempDir Path workspace) {
+        try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").build())) {
+            final OrcaAgentRuntime runtime = stack.agentRuntimeRegistry().get(AgentRuntimeId.fromName("ops"))
+                    .map(OrcaAgentRuntime.class::cast).orElseThrow();
+            assertThat(runtime.getToolRegistry().findByName(MonitorTool.TOOL_NAME)).isEmpty();
+            assertThat(stack.teardownPlan()).noneMatch(line -> line.contains("monitorManager"));
+        }
+        final AimonStackSpec enabled = specFor(workspace, "ops").tools(ToolSpec.builder().monitorEnabled(true).build())
+                .build();
+        try (AimonStack stack = AimonStackBuilder.build(enabled)) {
+            final OrcaAgentRuntime runtime = stack.agentRuntimeRegistry().get(AgentRuntimeId.fromName("ops"))
+                    .map(OrcaAgentRuntime.class::cast).orElseThrow();
+            assertThat(runtime.getToolRegistry().findByName(MonitorTool.TOOL_NAME)).isPresent();
+            assertThat(runtime.getToolRegistry().findByName(MonitorStopTool.TOOL_NAME)).isPresent();
+            final List<String> plan = stack.teardownPlan();
+            assertThat(lineOf(plan, "monitorManager")).isGreaterThan(lineOf(plan, "runtime(agent:ops)"))
+                    .isLessThan(lineOf(plan, "executionEnvironmentProvider"));
+        }
+    }
+
+    @Test
+    @DisplayName("a stack without Bash offers no shell monitor; the websocket source has its own switch")
+    void shellMonitorFollowsBash(@TempDir Path workspace) {
+        final AimonStackSpec spec = specFor(workspace, "ops").tools(
+                ToolSpec.builder().bashEnabled(false).monitorEnabled(true).monitorWebSocketEnabled(false).build())
+                .build();
+        try (AimonStack stack = AimonStackBuilder.build(spec)) {
+            final OrcaAgentRuntime runtime = stack.agentRuntimeRegistry().get(AgentRuntimeId.fromName("ops"))
+                    .map(OrcaAgentRuntime.class::cast).orElseThrow();
+            final Tool monitor = runtime.getToolRegistry().findByName(MonitorTool.TOOL_NAME).orElseThrow();
+            final ToolResult refused = monitor.execute(ToolInput.of(Map.of("description", "d", "command", "id")),
+                    ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, runtime.getId())
+                            .put(ToolContextKeys.SESSION_ID, SessionId.of("s")).build());
+            assertThat(refused.isError()).isTrue();
+            assertThat(refused.getContent()).contains("Unknown monitor source 'shell'");
+            assertThat(monitor.getDefinition().getDescription()).doesNotContain("- shell:")
+                    .doesNotContain("- websocket:");
+        }
+    }
+
+    @Test
+    @DisplayName("deleting a session through the router stops that session's monitors")
+    void sessionDeleteStopsMonitors(@TempDir Path workspace) {
+        final AtomicInteger stops = new AtomicInteger();
+        final MonitorSourceFactory idle = new MonitorSourceFactory() {
+            @Override
+            public String kind() {
+                return "idle";
+            }
+
+            @Override
+            public String describe() {
+                return "idle — never emits";
+            }
+
+            @Override
+            public MonitorSource create(MonitorRequest request) {
+                return sink -> stops::incrementAndGet;
+            }
+        };
+        final InMemorySessionRecordStore records = new InMemorySessionRecordStore();
+        final SessionId id = SessionId.of("monitored");
+        records.provision(id, "ops", Principal.user("alice"));
+        final AimonStackSpec spec = specFor(workspace, "ops")
+                .session(SessionSpec.builder().recordStore(records).build())
+                .tools(ToolSpec.builder().monitorEnabled(true).addMonitorSource(idle).build()).build();
+
+        try (AimonStack stack = AimonStackBuilder.build(spec)) {
+            final OrcaAgentRuntime runtime = stack.agentRuntimeRegistry().get(AgentRuntimeId.fromName("ops"))
+                    .map(OrcaAgentRuntime.class::cast).orElseThrow();
+            final Tool monitor = runtime.getToolRegistry().findByName(MonitorTool.TOOL_NAME).orElseThrow();
+            final ToolResult started = monitor.execute(ToolInput.of(Map.of("description", "d", "source", "idle")),
+                    ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, runtime.getId())
+                            .put(ToolContextKeys.SESSION_ID, id).build());
+            assertThat(started.isSuccess()).as(started.getContent()).isTrue();
+
+            stack.sessionRouter().deleteSession(id);
+
+            // The source is stopped on the monitor manager's stopper threads, not on the deleting thread.
+            final long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+            while (stops.get() == 0 && System.nanoTime() < deadline) {
+                Thread.onSpinWait();
+            }
+            assertThat(stops.get()).isEqualTo(1);
         }
     }
 

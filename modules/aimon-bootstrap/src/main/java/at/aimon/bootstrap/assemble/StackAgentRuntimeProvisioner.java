@@ -33,6 +33,7 @@ import at.aimon.core.agent.impl.orca.OrcaAgentRuntimeFactory;
 import at.aimon.core.agent.impl.orca.command.OrcaCommandProvider;
 import at.aimon.core.agent.impl.orca.tool.OrcaBashToolProvider;
 import at.aimon.core.agent.impl.orca.tool.OrcaKnowledgeToolProvider;
+import at.aimon.core.agent.impl.orca.tool.OrcaMonitorToolProvider;
 import at.aimon.core.agent.orca.tool.OrcaToolProvider;
 import at.aimon.core.credential.CredentialStore;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
@@ -48,6 +49,7 @@ import at.aimon.core.scheduling.ScheduledTaskManager;
 import at.aimon.core.skill.SkillRegistry;
 import at.aimon.core.skill.parser.SkillParser;
 import at.aimon.core.tools.bash.BackgroundBashManager;
+import at.aimon.core.tools.monitor.MonitorManager;
 
 /**
  * Builds one agent runtime — for the agents named in configuration at startup, and for tenants on first use.
@@ -105,6 +107,7 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
     /** The same object as {@link #environmentProvider} when the stack built the local default, else null. */
     private final PerRuntimeLocalEnvironmentProvider localWorkspaces;
     private final OrcaBashToolProvider bashToolProvider;
+    private final OrcaMonitorToolProvider monitorToolProvider;
 
     private StackAgentRuntimeProvisioner(Builder builder) {
         this.templates = Map.copyOf(builder.templates);
@@ -127,6 +130,9 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
                 .sorted(Comparator.comparingInt(AimonAgentCustomizer::getOrder)).toList();
         this.bashToolProvider = builder.backgroundBashManager != null
                 ? new OrcaBashToolProvider(builder.backgroundBashManager)
+                : null;
+        this.monitorToolProvider = builder.monitorManager != null
+                ? new OrcaMonitorToolProvider(builder.monitorManager)
                 : null;
 
         // Decided once, last, so that nothing above can fail with a provider already built and nobody to close it.
@@ -288,6 +294,11 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
         // search that answers "no knowledge store is configured" to every query the model tries.
         if (knowledgeToolsEnabled) {
             toolProviders.add(new OrcaKnowledgeToolProvider());
+        }
+        // Only the stack can build the monitor tools: their manager delivers to the stack's message queue and outlives
+        // every runtime, so there is no per-registry default to swap out the way Bash has one.
+        if (monitorToolProvider != null) {
+            toolProviders.add(monitorToolProvider);
         }
         // Passed in already built, unlike the knowledge one, because the memory tools take their stores at
         // construction rather than reading them out of the tool context. It arrives null when memory is off and
@@ -664,6 +675,7 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
         private boolean knowledgeToolsEnabled;
         private OrcaToolProvider memoryToolProvider;
         private BackgroundBashManager backgroundBashManager;
+        private MonitorManager monitorManager;
         private List<AimonAgentCustomizer> agentCustomizers = List.of();
 
         private Builder() {
@@ -767,6 +779,19 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
          */
         public Builder backgroundBashManager(BackgroundBashManager backgroundBashManager) {
             this.backgroundBashManager = backgroundBashManager;
+            return this;
+        }
+
+        /**
+         * Sets the stack's monitor manager, over which every runtime registers {@code Monitor} and
+         * {@code MonitorStop}.
+         *
+         * @param monitorManager
+         *            the manager, or null to register no monitor tools
+         * @return this builder
+         */
+        public Builder monitorManager(MonitorManager monitorManager) {
+            this.monitorManager = monitorManager;
             return this;
         }
 

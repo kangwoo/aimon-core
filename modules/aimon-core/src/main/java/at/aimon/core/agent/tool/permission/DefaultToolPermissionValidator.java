@@ -35,9 +35,12 @@ import at.aimon.core.agent.tool.ToolInput;
  * {@link PermissionSubject.Kind} selects ({@link ToolPattern} for a command, {@link PathPattern} for a path)
  * <li>The tool supplies a {@link CustomToolPermissionRule} → delegate to it
  * <li>Otherwise → <b>deny</b>
+ * <li>Steps 3–5 permitted and the tool delegates a check ({@link ToolPermissionDelegationAware}) → apply steps 2, 3
+ * and 4 once more, to the delegated tool's entries and subject. A {@code Monitor} command must also be admitted by the
+ * {@code Bash} entries; no {@code Bash} entry denies it
  * </ol>
  *
- * <h2>The last line used to permit</h2>
+ * <h2>Step 6 used to permit</h2>
  *
  * <p>
  * A pattern is configured and nothing can interpret it. That state used to be treated as unrestricted access — the
@@ -127,6 +130,12 @@ public class DefaultToolPermissionValidator implements ToolPermissionValidator {
         }
 
         final String toolName = tool.getDefinition().getName();
+        final Optional<PermissionDelegation> delegation = delegation(tool, input, context);
+        if (delegation.isPresent() && isAllowedByOwnEntries(tool, input, context, allowedTools)) {
+            return PermissionValidationResult.denied("Tool '" + toolName + "' not allowed ("
+                    + delegation.get().getSubject().describe() + "): it must also be allowed for '"
+                    + delegation.get().getToolName() + "'. Allowed tools: " + AllowedTool.formatList(allowedTools));
+        }
         return PermissionValidationResult
                 .denied(deniedMessage(toolName, buildErrorDetail(tool, input, context), allowedTools));
     }
@@ -184,7 +193,19 @@ public class DefaultToolPermissionValidator implements ToolPermissionValidator {
         if (allowedTools.isEmpty()) {
             return true;
         }
+        if (!isAllowedByOwnEntries(tool, input, context, allowedTools)) {
+            return false;
+        }
+        return delegation(tool, input, context)
+                .map(d -> admits(findMatchingTools(d.getToolName(), allowedTools), d.getSubject())).orElse(true);
+    }
 
+    /** Steps 2–6 of the decision order: the tool's own entries, without what it delegates. */
+    private boolean isAllowedByOwnEntries(Tool tool, ToolInput input, ToolContext context,
+            List<AllowedTool> allowedTools) {
+        if (allowedTools.isEmpty()) {
+            return true;
+        }
         final List<AllowedTool> matchingTools = findMatchingTools(tool.getDefinition().getName(), allowedTools);
 
         if (matchingTools.isEmpty()) {
@@ -254,6 +275,24 @@ public class DefaultToolPermissionValidator implements ToolPermissionValidator {
             case PATH ->
                 matchingTools.stream().anyMatch(at -> at.getPathPattern().map(p -> p.matches(value)).orElse(false));
         };
+    }
+
+    /** The delegated check: no entry denies, bare entries permit, otherwise a pattern must match the subject. */
+    private boolean admits(List<AllowedTool> entries, PermissionSubject subject) {
+        if (entries.isEmpty()) {
+            return false;
+        }
+        if (entries.stream().noneMatch(AllowedTool::hasPattern)) {
+            return true;
+        }
+        return matchesAny(subject, entries);
+    }
+
+    private Optional<PermissionDelegation> delegation(Tool tool, ToolInput input, ToolContext context) {
+        if (tool instanceof ToolPermissionDelegationAware aware) {
+            return Objects.requireNonNullElse(aware.permissionDelegation(input, context), Optional.empty());
+        }
+        return Optional.empty();
     }
 
     private Optional<PermissionSubject> permissionSubject(Tool tool, ToolInput input, ToolContext context) {

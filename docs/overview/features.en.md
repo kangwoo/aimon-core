@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/features.md
-source_commit: d67baad
+source_commit: 158e83c
 ---
 
 # Feature Catalog
@@ -156,6 +156,7 @@ The unit through which an agent interacts with the outside world. The contract i
 |------|----------|------|
 | file | `Read`, `Write`, `Edit`, `Grep` | core |
 | shell | `Bash`, `BashOutput`, `KillShell` (including background) | core |
+| monitor | `Monitor`, `MonitorStop` — events from a shell command, a WebSocket or a host-registered source arrive as messages (opt-in — [guide](../features/tool/monitor-guide.en.md)) | core |
 | web | `WebSearch`, `WebFetch` | core |
 | to-do | `TodoWrite` | core |
 | delegation | `Task`, `TaskList`, `TaskStop`, `AgentOutput` | core |

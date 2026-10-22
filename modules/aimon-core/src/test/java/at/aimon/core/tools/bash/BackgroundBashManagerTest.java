@@ -25,6 +25,7 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.shell.ExecutionOptions;
 import at.aimon.core.shell.ShellCancellation;
+import at.aimon.core.tools.BackgroundTaskOwner;
 import at.aimon.core.tools.ToolContextKeys;
 
 /**
@@ -34,10 +35,10 @@ import at.aimon.core.tools.ToolContextKeys;
 class BackgroundBashManagerTest {
 
     private static final AgentRuntimeId ACME_RUNTIME = AgentRuntimeId.fromName("ops", "acme");
-    private static final BackgroundBashOwner ACME = BackgroundBashOwner.of(ACME_RUNTIME, null, null);
-    private static final BackgroundBashOwner GLOBEX = BackgroundBashOwner.of(AgentRuntimeId.fromName("ops", "globex"),
+    private static final BackgroundTaskOwner ACME = BackgroundTaskOwner.of(ACME_RUNTIME, null, null);
+    private static final BackgroundTaskOwner GLOBEX = BackgroundTaskOwner.of(AgentRuntimeId.fromName("ops", "globex"),
             null, null);
-    private static final BackgroundBashOwner NONE = BackgroundBashOwner.none();
+    private static final BackgroundTaskOwner NONE = BackgroundTaskOwner.none();
     private static final ExecutionOptions OPTIONS = ExecutionOptions.builder().timeout(Duration.ofHours(1))
             .background(true).build();
 
@@ -163,11 +164,11 @@ class BackgroundBashManagerTest {
 
         private final SessionId sessionA = SessionId.of("session-a");
         private final SessionId sessionB = SessionId.of("session-b");
-        private final BackgroundBashOwner turnA = BackgroundBashOwner.of(ACME_RUNTIME, sessionA, null);
-        private final BackgroundBashOwner turnB = BackgroundBashOwner.of(ACME_RUNTIME, sessionB, null);
+        private final BackgroundTaskOwner turnA = BackgroundTaskOwner.of(ACME_RUNTIME, sessionA, null);
+        private final BackgroundTaskOwner turnB = BackgroundTaskOwner.of(ACME_RUNTIME, sessionB, null);
 
-        private BackgroundBashOwner forkOf(SessionId session, String executionId) {
-            return BackgroundBashOwner.of(ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, ACME_RUNTIME)
+        private BackgroundTaskOwner forkOf(SessionId session, String executionId) {
+            return BackgroundTaskOwner.of(ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, ACME_RUNTIME)
                     .put(ToolContextKeys.EXECUTION_ID, ExecutionId.of(executionId))
                     .put(ToolContextKeys.INVOKING_SESSION_ID, session).build());
         }
@@ -216,8 +217,8 @@ class BackgroundBashManagerTest {
         @DisplayName("session-less executions are isolated from each other and from sessions")
         void sessionlessExecutionsAreIsolated() {
             final BackgroundBashManager manager = manager();
-            final BackgroundBashOwner fire1 = BackgroundBashOwner.of(ACME_RUNTIME, null, ExecutionId.of("routine:t:1"));
-            final BackgroundBashOwner fire2 = BackgroundBashOwner.of(ACME_RUNTIME, null, ExecutionId.of("routine:t:2"));
+            final BackgroundTaskOwner fire1 = BackgroundTaskOwner.of(ACME_RUNTIME, null, ExecutionId.of("routine:t:1"));
+            final BackgroundTaskOwner fire2 = BackgroundTaskOwner.of(ACME_RUNTIME, null, ExecutionId.of("routine:t:2"));
             final ControllableShell shell = ControllableShell.cancellable();
             final String taskId = manager.start(fire1, "backup.sh", shell, OPTIONS).getTaskId();
 

@@ -735,6 +735,25 @@ public class BrowserTool extends GenericTool<BrowserInput, String> implements Cu
 
 A tool implementing both is judged **by its subject first**.
 
+### ToolPermissionDelegationAware — when a tool can do another tool's job
+
+Permissions are configured per tool name, so a tool that can do what another tool does becomes a way around that tool's patterns — allow `Bash(git:*)` together with a bare `Monitor`, and `Monitor` can run any shell command. Such a tool declares that "this call must also pass that tool's entries".
+
+```java
+public class MonitorTool extends AbstractTool implements ToolPermissionDelegationAware /* , ... */ {
+
+    @Override
+    public Optional<PermissionDelegation> permissionDelegation(ToolInput input, ToolContext context) {
+        if (input.get("command") instanceof String command && !command.isBlank()) {
+            return Optional.of(PermissionDelegation.to(BashTool.TOOL_NAME, PermissionSubject.command(command)));
+        }
+        return Optional.empty(); // a call that runs no shell command delegates nothing
+    }
+}
+```
+
+The validator judges the call once more against the delegated tool's entries, **after** the tool's own entries have admitted it. No entry for that tool denies (the capability itself was not granted), only bare entries permit, and patterns require the subject to match one. An empty allowed-tools list restricts nothing here either.
+
 ### The AllowedTool format
 
 ```

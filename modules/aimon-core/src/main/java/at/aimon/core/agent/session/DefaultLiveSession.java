@@ -403,6 +403,10 @@ public final class DefaultLiveSession implements LiveSession {
         if (!agentRuntime.getId().equals(input.getAgentRuntimeId())) {
             return;
         }
+        // The runtime serves every session of its agent: an input addressed to another of them is not ours to act on.
+        if (!input.getSessionId().map(sessionId.value()::equals).orElse(true)) {
+            return;
+        }
         interrupt(InterruptReason.NOW_PRIORITY_INPUT);
     }
 
@@ -725,9 +729,11 @@ public final class DefaultLiveSession implements LiveSession {
                 log.debug("Session {} busy but no queue wired; falling back to concurrent submitAsync", sessionId);
                 return SubmitOutcome.executed(submitAsync(input, submitOptions, listener));
             }
+            // Addressed to this session, not only to the runtime: the runtime is shared by every session of the agent,
+            // and another session's turn must not take this user's follow-up.
             final QueuedInput queuedInput = QueuedInput.builder().inputText(text.getText())
                     .priority(QueuedInputPriority.NEXT).agentRuntimeId(agentRuntime.getId())
-                    .submitOptions(submitOptions).build();
+                    .sessionId(sessionId.value()).submitOptions(submitOptions).build();
             messageQueueManager.enqueue(queuedInput);
             // Queue depth observed immediately after enqueue. With a single session-owned producer (host input
             // loop) this equals the 1-based position of the just-enqueued item; under concurrent producers it is

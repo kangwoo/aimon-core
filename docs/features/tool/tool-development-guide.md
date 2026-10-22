@@ -752,6 +752,29 @@ public class BrowserTool extends GenericTool<BrowserInput, String> implements Cu
 
 둘 다 구현한 도구는 **주체를 먼저** 본다.
 
+### ToolPermissionDelegationAware — 다른 도구의 능력을 대신 쓸 때
+
+권한은 도구 이름별로 설정된다. 그래서 다른 도구가 하는 일을 할 수 있는 도구는 그 도구의 패턴을 우회하는 길이
+된다 — `Bash(git:*)` 와 패턴 없는 `Monitor` 를 함께 허용하면 `Monitor` 가 셸 명령을 아무거나 돌릴 수 있다. 이런
+도구는 "이 호출은 그 도구의 항목도 통과해야 한다" 고 선언한다.
+
+```java
+public class MonitorTool extends AbstractTool implements ToolPermissionDelegationAware /* , ... */ {
+
+    @Override
+    public Optional<PermissionDelegation> permissionDelegation(ToolInput input, ToolContext context) {
+        if (input.get("command") instanceof String command && !command.isBlank()) {
+            return Optional.of(PermissionDelegation.to(BashTool.TOOL_NAME, PermissionSubject.command(command)));
+        }
+        return Optional.empty(); // 셸 명령을 돌리지 않는 호출은 위임하지 않는다
+    }
+}
+```
+
+검증기는 도구 자신의 항목이 허락한 **뒤에** 위임된 도구의 항목으로 한 번 더 판정한다. 그 도구의 항목이 없으면
+거부(그 능력 자체가 허용되지 않았다), 패턴 없는 항목뿐이면 허용, 패턴이 있으면 주체가 맞아야 허용이다. 빈 허용
+목록은 여기서도 아무것도 제한하지 않는다.
+
 ### AllowedTool 형식
 
 ```

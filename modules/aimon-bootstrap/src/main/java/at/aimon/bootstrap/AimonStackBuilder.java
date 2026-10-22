@@ -48,6 +48,7 @@ import at.aimon.core.agent.queue.InMemoryMessageQueueRepository;
 import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.quota.QuotaGuardFactory;
 import at.aimon.core.agent.quota.impl.StaticQuotaPolicy;
+import at.aimon.core.agent.session.SessionLifecycleListener;
 import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionCheckpointMailbox;
@@ -92,6 +93,9 @@ import at.aimon.core.skill.render.ShellArgumentTokenizer;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.behavior.InMemorySubagentBehaviorRegistry;
 import at.aimon.core.tools.bash.BackgroundBashManager;
+import at.aimon.core.tools.monitor.MonitorManager;
+import at.aimon.core.tools.monitor.ShellMonitorSourceFactory;
+import at.aimon.core.tools.monitor.WebSocketMonitorSourceFactory;
 import at.aimon.session.routing.DeploymentMode;
 import at.aimon.session.routing.SessionRouter;
 import at.aimon.session.routing.builder.SessionRouterBuilder;
@@ -472,11 +476,18 @@ public final class AimonStackBuilder {
                         BackgroundBashManager.builder().store(toolSpec.getBackgroundBashStore().orElse(null))
                                 .nodeId(spec.getSession().getNodeId().orElse(null)).build())
                 : null;
+        // Opt-in (ToolSpec#monitorEnabled). Application-scoped for the same reason as the task list above, and it
+        // delivers to the stack's one message queue — which is why only the stack can build it.
+        final MonitorManager monitorManager = toolSpec.isMonitorEnabled()
+                ? teardown.own(TeardownPhase.BACKGROUND_COMMANDS, "monitorManager",
+                        monitorManager(toolSpec, messageQueueManager, spec.getSession().getNodeId().orElse(null)))
+                : null;
         final StackAgentRuntimeProvisioner.Builder provisionerBuilder = StackAgentRuntimeProvisioner.builder()
                 .fileSystemSpec(spec.getFileSystem()).executionEnvironmentSpec(spec.getExecutionEnvironment())
-                .toolSpec(toolSpec).backgroundBashManager(backgroundBashManager).runtimeFactory(runtimeFactory)
-                .knowledgeToolsEnabled(knowledgeStore != null).memoryToolProvider(memory.getToolProvider().orElse(null))
-                .agentExecutor(agentExecutor).taskManager(taskManager).skillParser(skillParser)
+                .toolSpec(toolSpec).backgroundBashManager(backgroundBashManager).monitorManager(monitorManager)
+                .runtimeFactory(runtimeFactory).knowledgeToolsEnabled(knowledgeStore != null)
+                .memoryToolProvider(memory.getToolProvider().orElse(null)).agentExecutor(agentExecutor)
+                .taskManager(taskManager).skillParser(skillParser)
                 .credentialStore(spec.getCredentialStore().orElse(null))
                 .credentialStoreFactory(spec.getCredentialStoreFactory().orElse(null))
                 .agentCustomizers(spec.getAgentCustomizers());
@@ -561,7 +572,7 @@ public final class AimonStackBuilder {
         final StackLiveSessionOpener opener = new StackLiveSessionOpener(agentRuntimeResolver, agentExecutor,
                 messageQueueManager, agentExecutor.getHookExecutionManager(), sessionRecordWrites);
         final SessionRouter sessionRouter = buildSessionRouter(spec, opener, sessionRecordStore, sessionApprovalStore,
-                segmentStore);
+                segmentStore, monitorManager);
         final Duration drainTimeout = spec.getSession().getDrainTimeout();
         teardown.own(TeardownPhase.SESSIONS, "sessionRouter.closeGracefully(" + drainTimeout + ")",
                 () -> closeRouter(sessionRouter, drainTimeout));
@@ -790,12 +801,18 @@ public final class AimonStackBuilder {
      */
     private static SessionRouter buildSessionRouter(AimonStackSpec spec, StackLiveSessionOpener opener,
             SessionRecordStore sessionRecordStore, SessionApprovalStore sessionApprovalStore,
-            SessionLogSegmentStore segmentStore) {
+            SessionLogSegmentStore segmentStore, MonitorManager monitorManager) {
         final SessionSpec session = spec.getSession();
         final SessionRouterBuilder builder = SessionRouter.builder().sessionOpener(opener)
                 .sessionRecordStore(sessionRecordStore).sessionApprovalStore(sessionApprovalStore)
                 .sessionLogSegmentStore(segmentStore).mode(session.getMode())
                 .lifecycleListeners(session.getLifecycleListeners());
+        // A deleted session's monitors have nobody left to deliver to. Only this node's are reached: the event fires
+        // on the deleting node alone, and a monitor elsewhere runs to its timeout.
+        if (monitorManager != null) {
+            builder.lifecycleListener(
+                    SessionLifecycleListener.whenDeleted(event -> monitorManager.stopSession(event.getSessionId())));
+        }
         session.getNodeId().ifPresent(builder::nodeId);
         session.getLeaseStore().ifPresent(builder::sessionLeaseStore);
         session.getSignalBus().ifPresent(builder::signalBus);
@@ -803,6 +820,22 @@ public final class AimonStackBuilder {
         session.getIdempotencyStore().ifPresent(builder::idempotencyStore);
         session.getIdleTtl().ifPresent(builder::idleTtl);
         session.getMaxCachedSessions().ifPresent(builder::maxCachedSessions);
+        return builder.build();
+    }
+
+    /** The stack's monitor manager: the built-in sources plus the host's, over the stack's message queue. */
+    private static MonitorManager monitorManager(ToolSpec toolSpec, MessageQueueManager queue, String nodeId) {
+        final MonitorManager.Builder builder = MonitorManager.builder(queue)
+                .store(toolSpec.getMonitorStore().orElse(null)).nodeId(nodeId);
+        toolSpec.getMonitorSources().forEach(builder::source);
+        // A stack that turned Bash off must not run commands through a monitor instead. The permission delegation to
+        // Bash does not cover this: with no allowed-tools list there are no entries for it to consult.
+        if (!toolSpec.isBashEnabled()) {
+            builder.excludeSource(ShellMonitorSourceFactory.KIND);
+        }
+        if (!toolSpec.isMonitorWebSocketEnabled()) {
+            builder.excludeSource(WebSocketMonitorSourceFactory.KIND);
+        }
         return builder.build();
     }
 

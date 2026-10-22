@@ -34,6 +34,7 @@ import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.shell.exception.ShellCancelledException;
 import at.aimon.core.shell.exception.ShellExecutionException;
 import at.aimon.core.shell.exception.ShellTimeoutException;
+import at.aimon.core.tools.BackgroundTaskOwner;
 import at.aimon.core.tools.EnvironmentNotices;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
 
@@ -378,7 +379,7 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
      * The shell is captured here, when the task starts, and the running command keeps it: the task may outlive the
      * execution that started it — and the runtime — and the shell's lifetime is its provider's, not the execution's
      * (design §5.3). The manager runs the command and owns the task, recorded under the owner it was started for
-     * ({@link BackgroundBashOwner#of(ToolContext)}).
+     * ({@link BackgroundTaskOwner#of(ToolContext)}).
      *
      * @param environment
      *            The execution environment, asked for its background ceiling
@@ -394,7 +395,7 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
             ToolContext context) {
         final Optional<Duration> ceiling = backgroundCeiling(environment);
         final long timeoutMs = ceiling.map(BashTool::saturatedMillis).orElse(BACKGROUND_TIMEOUT_MS);
-        final BackgroundBashOwner owner = BackgroundBashOwner.of(context);
+        final BackgroundTaskOwner owner = BackgroundTaskOwner.of(context);
 
         final BackgroundBashTask task;
         try {

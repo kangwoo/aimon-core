@@ -14,6 +14,8 @@ import at.aimon.core.mcp.McpClientFactory;
 import at.aimon.core.mcp.McpServerConfigProvider;
 import at.aimon.core.tools.artifact.ArtifactPolicy;
 import at.aimon.core.tools.bash.BackgroundBashStore;
+import at.aimon.core.tools.monitor.MonitorSourceFactory;
+import at.aimon.core.tools.monitor.MonitorStore;
 
 /**
  * Declares which tools the stack's agent runtimes register.
@@ -49,6 +51,17 @@ import at.aimon.core.tools.bash.BackgroundBashStore;
  * {@link Builder#addProvider(OrcaToolProvider)} (the CLI's GraalJS variant is exactly this) needs the runner
  * without the built-in tool. Conflating them there produces a tool whose every invocation fails at the point of
  * use, having looked correctly configured at startup.
+ *
+ * <h2>Monitors are opt-in</h2>
+ *
+ * <p>
+ * {@link Builder#monitorEnabled(boolean)} registers {@code Monitor} and {@code MonitorStop} over one
+ * application-scoped {@code MonitorManager} that delivers to the stack's message queue. It is off by default: a
+ * monitor puts messages into a session's conversation that nobody typed, and a {@code command} monitor runs a shell
+ * command for up to half an hour. The built-in {@code shell} source exists only when Bash does — turning Bash off turns
+ * command monitors off with it, allowed-tools list or not. Host sources
+ * ({@link Builder#addMonitorSource(MonitorSourceFactory)}) are how a
+ * stack offers monitors without a shell.
  */
 public final class ToolSpec {
 
@@ -61,6 +74,10 @@ public final class ToolSpec {
     private final McpClientFactory mcpClientFactory;
     private final McpServerConfigProvider mcpServerConfigProvider;
     private final BackgroundBashStore backgroundBashStore;
+    private final boolean monitorEnabled;
+    private final boolean monitorWebSocketEnabled;
+    private final List<MonitorSourceFactory> monitorSources;
+    private final MonitorStore monitorStore;
 
     private ToolSpec(Builder builder) {
         this.bashEnabled = builder.bashEnabled;
@@ -74,6 +91,10 @@ public final class ToolSpec {
         this.mcpClientFactory = builder.mcpClientFactory;
         this.mcpServerConfigProvider = builder.mcpServerConfigProvider;
         this.backgroundBashStore = builder.backgroundBashStore;
+        this.monitorEnabled = builder.monitorEnabled;
+        this.monitorWebSocketEnabled = builder.monitorWebSocketEnabled;
+        this.monitorSources = List.copyOf(builder.monitorSources);
+        this.monitorStore = builder.monitorStore;
 
         if ((this.mcpClientFactory == null) != (this.mcpServerConfigProvider == null)) {
             throw new IllegalArgumentException(
@@ -167,6 +188,44 @@ public final class ToolSpec {
     }
 
     /**
+     * Returns whether {@code Monitor} and {@code MonitorStop} are registered.
+     *
+     * @return {@code true} when the stack builds a monitor manager
+     */
+    public boolean isMonitorEnabled() {
+        return monitorEnabled;
+    }
+
+    /**
+     * Returns whether the built-in {@code websocket} monitor source is offered. The built-in {@code shell} source
+     * follows {@link #isBashEnabled()} instead: a stack without {@code Bash} offers no command monitor either.
+     *
+     * @return {@code true} when monitors may open WebSockets (the default)
+     */
+    public boolean isMonitorWebSocketEnabled() {
+        return monitorWebSocketEnabled;
+    }
+
+    /**
+     * Returns the host's monitor sources, registered beside the built-in {@code shell} one (a host source of the same
+     * kind replaces it).
+     *
+     * @return an immutable list, possibly empty
+     */
+    public List<MonitorSourceFactory> getMonitorSources() {
+        return monitorSources;
+    }
+
+    /**
+     * Returns the store the monitor manager records its monitors in.
+     *
+     * @return the store, or empty for an in-memory one — correct for a single node
+     */
+    public Optional<MonitorStore> getMonitorStore() {
+        return Optional.ofNullable(monitorStore);
+    }
+
+    /**
      * Returns whether the opt-in {@code Workflow} tool is registered alongside the subagent tools.
      *
      * @return {@code true} when the Workflow tool is registered
@@ -233,7 +292,7 @@ public final class ToolSpec {
     public String toString() {
         return "ToolSpec[bash=" + bashEnabled + ", workflowTool=" + workflowToolEnabled + ", workflowRunner="
                 + workflowRunnerEnabled + ", additional=" + additionalProviders.size() + ", enrichers="
-                + contextEnrichers.size() + ", mcp=" + isMcpEnabled() + "]";
+                + contextEnrichers.size() + ", mcp=" + isMcpEnabled() + ", monitor=" + monitorEnabled + "]";
     }
 
     /** Builder for {@link ToolSpec}. */
@@ -248,8 +307,63 @@ public final class ToolSpec {
         private McpClientFactory mcpClientFactory;
         private McpServerConfigProvider mcpServerConfigProvider;
         private BackgroundBashStore backgroundBashStore;
+        private boolean monitorEnabled;
+        private boolean monitorWebSocketEnabled = true;
+        private final List<MonitorSourceFactory> monitorSources = new ArrayList<>();
+        private MonitorStore monitorStore;
 
         private Builder() {
+        }
+
+        /**
+         * Registers {@code Monitor} and {@code MonitorStop} (default: off). See the class javadoc.
+         *
+         * @param monitorEnabled
+         *            whether to register the monitor tools
+         * @return this builder
+         */
+        public Builder monitorEnabled(boolean monitorEnabled) {
+            this.monitorEnabled = monitorEnabled;
+            return this;
+        }
+
+        /**
+         * Keeps or removes the built-in {@code websocket} monitor source (default: kept). Unused unless monitors are
+         * enabled.
+         *
+         * @param monitorWebSocketEnabled
+         *            whether monitors may open WebSockets
+         * @return this builder
+         */
+        public Builder monitorWebSocketEnabled(boolean monitorWebSocketEnabled) {
+            this.monitorWebSocketEnabled = monitorWebSocketEnabled;
+            return this;
+        }
+
+        /**
+         * Adds a host monitor source — a kind the model starts by name, with the connection held in the factory.
+         * Unused unless monitors are enabled.
+         *
+         * @param factory
+         *            the factory (must not be null)
+         * @return this builder
+         */
+        public Builder addMonitorSource(MonitorSourceFactory factory) {
+            monitorSources.add(Objects.requireNonNull(factory, "factory must not be null"));
+            return this;
+        }
+
+        /**
+         * Sets where the monitor manager records its monitors. The default is in memory; a shared store lets another
+         * node answer that a monitor runs elsewhere. Unused unless monitors are enabled.
+         *
+         * @param monitorStore
+         *            the store, or null for the in-memory default
+         * @return this builder
+         */
+        public Builder monitorStore(MonitorStore monitorStore) {
+            this.monitorStore = monitorStore;
+            return this;
         }
 
         /**

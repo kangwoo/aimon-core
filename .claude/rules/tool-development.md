@@ -37,6 +37,7 @@ paths:
 ## Permission System
 - The common path is `ToolPermissionSubjectAware` — the tool returns the one value to be judged (`PermissionSubject.command(...)` or `PermissionSubject.path(...)`) and the framework matches it. `BashTool` and the file tools take this path
 - `CustomToolPermissionAware` stays for tools whose permission target is not a single value (`BrowserTool`'s `action:url`). A tool implementing both is judged by its subject first
+- `ToolPermissionDelegationAware` is for a tool that can do another tool's job (`MonitorTool` runs shell commands): it names that tool and a subject, and the call must also pass that tool's entries — no entry denies, bare entries permit, patterns must match. Without it, allowing the tool by name bypasses the other tool's patterns
 - Read the value with `input.get(key) instanceof String s` inside `permissionSubject(...)` — this runs before `execute()`, so `getStringOrNull`'s `IllegalArgumentException` has nowhere to land
 - AllowedTool patterns: `"Read"` (simple), `"Bash(git:*)"` (COMMAND pattern), `"Read(/tmp/**)"` (PATH glob), `"Bash(npm install)"` (exact)
 - An empty subject means "cannot be judged" → **denied** when a pattern is configured. A bare name mixed with a patterned entry for the same name is **not** unlimited

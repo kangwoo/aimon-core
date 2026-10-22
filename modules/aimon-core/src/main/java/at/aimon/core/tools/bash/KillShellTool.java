@@ -13,6 +13,7 @@ import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.tools.BackgroundTaskOwner;
 
 /**
  * Tool for stopping a background bash shell — the counterpart of {@link BashOutputTool}.
@@ -38,7 +39,7 @@ import at.aimon.core.agent.tool.ToolResult;
  * <p>
  * A separate tool rather than a {@code kill} argument on {@code BashOutput}, so that a permission rule can allow
  * reading output without allowing a destructive action. Like {@code BashOutput} it acts for the
- * {@linkplain BackgroundBashOwner owner} worked out from the tool context: the session a command was started for can
+ * {@linkplain BackgroundTaskOwner owner} worked out from the tool context: the session a command was started for can
  * stop it — from its own turns or from a fork spawned for it — and no other session can.
  *
  * <p>
@@ -92,7 +93,7 @@ public class KillShellTool extends AbstractTool {
      * @param input
      *            The input parameters containing taskId
      * @param context
-     *            The execution context; {@link BackgroundBashOwner#of(ToolContext)} of it is whose tasks can be stopped
+     *            The execution context; {@link BackgroundTaskOwner#of(ToolContext)} of it is whose tasks can be stopped
      * @return A success result if the command was stopped or was not running, or an error result if it cannot be
      *         stopped from here, is not found, or parameters are invalid
      * @throws NullPointerException
@@ -109,7 +110,7 @@ public class KillShellTool extends AbstractTool {
                 return ToolResult.error("Task ID cannot be empty");
             }
 
-            final BackgroundBashOwner owner = BackgroundBashOwner.of(context);
+            final BackgroundTaskOwner owner = BackgroundTaskOwner.of(context);
             final BackgroundBashKill kill;
             try {
                 kill = backgroundManager.kill(owner, taskId);

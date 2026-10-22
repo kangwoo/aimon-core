@@ -24,7 +24,10 @@ import com.tngtech.archunit.core.domain.JavaModifier;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 
+import at.aimon.core.agent.queue.DefaultMessageQueueManager;
+import at.aimon.core.agent.queue.InMemoryMessageQueueRepository;
 import at.aimon.core.agent.tool.Tool;
+import at.aimon.core.tools.monitor.MonitorManager;
 
 /**
  * Every built-in tool must declare {@code additionalProperties: false} at the top level of its input schema.
@@ -153,6 +156,11 @@ class BuiltInToolSchemaArchitectureTest {
         }
         if (type == Optional.class) {
             return Optional.empty();
+        }
+        // A real one: the Monitor tool's description reads the manager's timeouts and kinds, which a mock answers
+        // with null.
+        if (type == MonitorManager.class) {
+            return MonitorManager.builder(new DefaultMessageQueueManager(new InMemoryMessageQueueRepository())).build();
         }
         return Mockito.mock(type);
     }

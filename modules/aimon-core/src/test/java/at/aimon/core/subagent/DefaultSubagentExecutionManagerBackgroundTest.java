@@ -300,6 +300,21 @@ class DefaultSubagentExecutionManagerBackgroundTest {
     }
 
     @Test
+    @DisplayName("the completion notice is addressed to the session the task was launched for")
+    void completionNoticeIsAddressedToTheInvokingSession() throws InterruptedException {
+        when(reactExecutor.execute(any(), any())).thenReturn(reactResult("done"));
+        DefaultSubagentExecutionManager manager = newManager(Executors.newSingleThreadExecutor());
+        DefaultMessageQueueManager queue = new DefaultMessageQueueManager(new InMemoryMessageQueueRepository());
+
+        manager.executeInBackground(envBuilder(registryWithExplore()).messageQueueManager(queue)
+                .invokingSessionId(SessionId.of("tab-1")).build(), "t1", SUBAGENT, "go", "").join();
+        awaitTerminal(manager, "t1");
+        awaitAtLeast(() -> queue.snapshot().size(), 1);
+
+        assertThat(queue.snapshot().get(0).getSessionId()).contains("tab-1");
+    }
+
+    @Test
     @DisplayName("a completed background task pushes a NEXT-priority queue notification AND emits a stream event")
     void backgroundCompletionNotifiesParent() throws InterruptedException {
         when(reactExecutor.execute(any(), any())).thenReturn(reactResult("all done here"));
@@ -324,6 +339,8 @@ class DefaultSubagentExecutionManagerBackgroundTest {
                 .contains("AgentOutput").contains("taskId='t1'");
         assertThat(queued.getMetadata()).containsEntry("kind", "subagent-task-completed").containsEntry("taskId", "t1")
                 .containsEntry("outcome", "COMPLETED");
+        // Launched for no session here, so the notice is addressed to the runtime alone.
+        assertThat(queued.getSessionId()).isEmpty();
 
         assertThat(events).hasSize(1).first().isInstanceOf(SubagentTaskCompleted.class);
         SubagentTaskCompleted event = (SubagentTaskCompleted) events.get(0);

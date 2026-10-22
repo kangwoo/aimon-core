@@ -2547,11 +2547,11 @@ PR #205 의 리뷰 뒤로 유예가 끝났을 때 살아 있는 핸들은 부모
 
 ### 닫힘 (2026-10-04)
 
-세션으로 좁혔다. 작업의 소유자는 런타임 하나가 아니라 **(런타임, 세션 또는 실행)** 이고(`BackgroundBashOwner`), `find` 와
+세션으로 좁혔다. 작업의 소유자는 런타임 하나가 아니라 **(런타임, 세션 또는 실행)** 이고(`BackgroundTaskOwner`), `find` 와
 `kill` 은 호출자의 소유자가 작업의 소유자와 **전부 같을 때만** 찾는다. 다르면 `NOT_FOUND` — 없는 id 와 글자까지 같은
 응답이다.
 
-소유자는 작업을 띄운 호출의 `ToolContext` 에서 한 곳(`BackgroundBashOwner.of(context)`)이 정한다:
+소유자는 작업을 띄운 호출의 `ToolContext` 에서 한 곳(`BackgroundTaskOwner.of(context)`)이 정한다:
 
 1. `SESSION_ID` 가 있으면 그 세션 — 세션의 턴.
 2. 없고 `INVOKING_SESSION_ID` 가 있으면 호출한 세션 — 포크. 부모 세션이 포크의 작업을 읽고 멈추고, 그 반대도 된다. 같은
@@ -2570,7 +2570,7 @@ PR #205 의 리뷰 뒤로 유예가 끝났을 때 살아 있는 핸들은 부모
   열리면 "다른 노드에서 도는 작업" 을 듣고, 다른 세션은 어느 노드에서든 "없음" 을 듣는다.
 - **옛 레코드.** 범위 필드가 없는 레코드는 "런타임만" 으로 읽혀 세션을 가진 호출자와 일치하지 않는다 → "없음". 레코드
   수명이 보존 기간(기본 24시간) 안이라 이관 절차를 두지 않았다. 업그레이드 시점에 돌던 백그라운드 명령은 상한까지 돈다.
-- **옛 오버로드를 남기지 않았다.** `start` · `find` · `kill` 의 `AgentRuntimeId` 인자는 `BackgroundBashOwner` 로 바뀌었다.
+- **옛 오버로드를 남기지 않았다.** `start` · `find` · `kill` 의 `AgentRuntimeId` 인자는 `BackgroundTaskOwner` 로 바뀌었다.
   런타임만 받는 오버로드가 곧 닫으려는 구멍이기 때문이다.
 
 착수해 보니 항목의 서술과 달랐던 것.
@@ -2587,7 +2587,7 @@ PR #205 의 리뷰 뒤로 유예가 끝났을 때 살아 있는 핸들은 부모
 남긴 것: 호출자 없는 포크의 작업(→ EE-67), 다른 노드의 작업은 여전히 읽거나 멈출 수 없다(→ EE-53), 저장소에 열거 · 만료가
 없다(→ EE-57), id 추측의 시간 차는 다루지 않았다(범위 밖 요청은 저장소 조회 뒤 같은 문구로 답한다).
 
-테스트: `BackgroundBashOwnerTest`(네 규칙, 포크 = 부모, 둘 다 있으면 세션), `BackgroundBashManagerTest` 의 "Session scope"
+테스트: `BackgroundTaskOwnerTest`(네 규칙, 포크 = 부모, 둘 다 있으면 세션), `BackgroundBashManagerTest` 의 "Session scope"
 (같은 런타임 · 다른 세션은 찾지도 멈추지도 못한다 — **취소 신호가 걸리지 않았다**, 포크 ↔ 부모, 루틴 발화끼리 격리, 다른
 노드, 옛 레코드), `BackgroundBashStoreContractTest.ownershipFieldsRoundTrip`(왕복과 `settle` 뒤), `BashOutputToolTest` ·
 `KillShellToolTest`(다른 세션의 응답이 없는 id 의 응답과 글자까지 같다, 다른 노드의 레코드도 다른 세션에는 "없음"),
@@ -2613,7 +2613,7 @@ PR #205 의 리뷰 뒤로 유예가 끝났을 때 살아 있는 핸들은 부모
 `VirtualShell`)는 그 변경에서 바뀌지 않았다. 따라와야 하는 것은 둘이다. (1) 샌드박스가 `BackgroundBashStore` 를 구현하거나
 레코드를 직렬화한다면 `BackgroundBashRecord` 의 새 필드 둘(`ownerSessionId` · `ownerExecutionId`)을 **그대로 저장하고
 돌려줘야** 한다 — 하나라도 잃으면 그 작업은 주인을 포함해 누구에게도 보이지 않는다. `BackgroundBashManager.start` · `find`
-· `kill` 을 직접 부른다면 소유자 인자가 `BackgroundBashOwner` 다. (2) **행동이 달라져 그쪽 문서에 적을 값**: 샌드박스의
+· `kill` 을 직접 부른다면 소유자 인자가 `BackgroundTaskOwner` 다. (2) **행동이 달라져 그쪽 문서에 적을 값**: 샌드박스의
 `shell()` 이나 `execute` 가 `ExecutionEnvironmentUnavailableException` 을 던지는 순간, 그 실행에서 `preTool` 셸 가드가 걸린
 도구 호출은 전부 사유와 함께 **막힌다**(전에는 통과했다). 환경이 일시적으로 사용 불가인 동안 "가드 걸린 도구가 전부 실패"
 로 보인다는 뜻이다 — 관찰 용도의 훅이라면 `failOpen: true` 를 권하는 문장이 그쪽 가이드에 있어야 한다. 이 덧붙임도 아래와
@@ -2956,7 +2956,7 @@ WARN 후 성공("degrading to success")이고 `McpToolAction` 도 같다. 정책
 이전 발화의 작업에 닿지 못한다. 작업은 환경의 상한(`backgroundCommandTimeout`, 기본 24시간)과 teardown 으로만 끝난다. 세션이
 있는 쪽은 `INVOKING_SESSION_ID` 가 이어 주지만, 세션 없는 계보에는 전달되는 정체성이 없다.
 
-**어디.** `modules/aimon-core/src/main/java/at/aimon/core/tools/bash/BackgroundBashOwner.java` 의 `of(ToolContext)`,
+**어디.** `modules/aimon-core/src/main/java/at/aimon/core/tools/bash/BackgroundTaskOwner.java` 의 `of(ToolContext)`,
 `subagent/execution/DefaultSubagentExecutor.createToolContext`(포크의 `EXECUTION_ID`), `scheduling/RoutineExecutor.buildToolContext`
 (2026-10-04).
 

@@ -54,6 +54,7 @@ import at.aimon.core.agent.stream.SubagentTaskCompleted;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.skill.policy.pending.PendingTurnId;
 import at.aimon.core.skill.policy.pending.PendingTurnRegistry;
+import at.aimon.core.tools.monitor.MonitorManager;
 import at.aimon.core.tracing.SpanType;
 import at.aimon.core.tracing.TraceSpan;
 import at.aimon.core.tracing.TraceSpanStore;
@@ -722,6 +723,12 @@ public class ReplSession {
      * path, preserving the semantic boundary between the two.
      *
      * <p>
+     * Only this session's entries are replayed: those addressed to it ({@link QueuedInput#getSessionId()}) and those
+     * addressed to the runtime alone. A background monitor's events are left where they are — the agent reads them at
+     * the start of the session's next turn; replaying them here would start a turn of its own for every batch, which is
+     * waking the agent, not delivering to it.
+     *
+     * <p>
      * {@link #draining} prevents the replay from calling itself: each replayed prompt will re-enter
      * {@code executeAgent} → {@code finally} → {@code drainQueueAfterTurn}, but the outer call already holds the
      * batch in {@code drained}, so the nested call returns immediately and lets the outer loop continue.
@@ -732,8 +739,13 @@ public class ReplSession {
         }
         draining = true;
         try {
-            final List<QueuedInput> drained = messageQueueManager.drainForInjection(
-                    q -> agentRuntime.getId().equals(q.getAgentRuntimeId()), QueuedInputPriority.LATER);
+            final List<QueuedInput> drained = messageQueueManager
+                    .drainForInjection(
+                            q -> agentRuntime.getId().equals(q.getAgentRuntimeId())
+                                    && q.getSessionId().map(liveSession.getSessionId().value()::equals).orElse(true)
+                                    && !MonitorManager.QUEUED_KIND
+                                            .equals(q.getMetadata().get(MonitorManager.QUEUED_KIND_KEY)),
+                            QueuedInputPriority.LATER);
             for (QueuedInput entry : drained) {
                 replay(entry);
             }

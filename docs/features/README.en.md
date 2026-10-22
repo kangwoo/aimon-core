@@ -60,10 +60,12 @@ The unit through which an agent interacts with the outside world.
 |------|------|
 | [`tool-development-guide.en.md`](tool/tool-development-guide.en.md) | **The canonical text for building a new tool** — the `Tool` contract, schemas, error handling, permissions |
 | [`parallel-tool-execution-guide.en.md`](tool/parallel-tool-execution-guide.en.md) | Running tools in parallel within one batch (`ConcurrencyBehavior`) |
+| [`monitor-guide.en.md`](tool/monitor-guide.en.md) | Background monitors — turning them on, how the agent uses them, when events arrive, writing a host source, permissions and limits |
 | [`browser-tool-guide.en.md`](https://github.com/kangwoo/aimon-browser/blob/main/docs/browser-tool-guide.en.md) | Configuring and using the Playwright-backed `Browser` tool. **Not in this repository** — it moved to [aimon-browser](https://github.com/kangwoo/aimon-browser) with the module |
 
 Design rationale: [`parallel-execution.md`](../design/tool/parallel-execution.md) ·
-[`tool-search.md`](../design/tool/tool-search.md)
+[`tool-search.md`](../design/tool/tool-search.md) ·
+[`monitor.md`](../design/tool/monitor.md)
 
 ## `skill/` — skills
 

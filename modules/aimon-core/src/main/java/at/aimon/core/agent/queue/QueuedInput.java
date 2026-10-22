@@ -43,6 +43,7 @@ public final class QueuedInput {
     private final QueuedInputPriority priority;
     private final AgentRuntimeId agentRuntimeId;
     private final Optional<String> sourceAgentId;
+    private final Optional<String> sessionId;
     private final Instant enqueuedAt;
     private final Map<String, String> metadata;
     private final SubmitOptions submitOptions;
@@ -56,6 +57,7 @@ public final class QueuedInput {
         this.priority = Objects.requireNonNull(builder.priority, "priority cannot be null");
         this.agentRuntimeId = Objects.requireNonNull(builder.agentRuntimeId, "agentRuntimeId cannot be null");
         this.sourceAgentId = Objects.requireNonNull(builder.sourceAgentId, "sourceAgentId cannot be null");
+        this.sessionId = Objects.requireNonNull(builder.sessionId, "sessionId cannot be null");
         this.enqueuedAt = Objects.requireNonNull(builder.enqueuedAt, "enqueuedAt cannot be null");
         final Map<String, String> copy = new HashMap<>(
                 Objects.requireNonNull(builder.metadata, "metadata cannot be null"));
@@ -119,6 +121,25 @@ public final class QueuedInput {
      */
     public Optional<String> getSourceAgentId() {
         return sourceAgentId;
+    }
+
+    /**
+     * The session this input is addressed to, when the producer addressed one.
+     *
+     * <p>
+     * {@link #getAgentRuntimeId()} alone does not name a session: a runtime is agent-scoped and serves every session
+     * of its agent, so an entry carrying only the runtime id may be taken by any of them. An entry that carries a
+     * session id is taken only by an execution of that session, and only such entries are drained at the start of a
+     * turn. An entry without one behaves exactly as entries always have.
+     *
+     * <p>
+     * The value is {@code SessionId.value()}, held as a string because {@code agent.session} already depends on this
+     * package and a typed field would close a package cycle.
+     *
+     * @return the addressed session's id, or empty when the entry is addressed to the runtime alone
+     */
+    public Optional<String> getSessionId() {
+        return sessionId;
     }
 
     /**
@@ -186,8 +207,8 @@ public final class QueuedInput {
             preview = inputText;
         }
         return "QueuedInput{" + "uuid=" + uuid + ", priority=" + priority + ", agentRuntimeId=" + agentRuntimeId
-                + ", sourceAgentId=" + sourceAgentId.orElse(null) + ", enqueuedAt=" + enqueuedAt + ", inputText='"
-                + preview + "'" + '}';
+                + ", sourceAgentId=" + sourceAgentId.orElse(null) + ", sessionId=" + sessionId.orElse(null)
+                + ", enqueuedAt=" + enqueuedAt + ", inputText='" + preview + "'" + '}';
     }
 
     /** Builder for {@link QueuedInput}. */
@@ -198,6 +219,7 @@ public final class QueuedInput {
         private QueuedInputPriority priority = QueuedInputPriority.NEXT;
         private AgentRuntimeId agentRuntimeId;
         private Optional<String> sourceAgentId = Optional.empty();
+        private Optional<String> sessionId = Optional.empty();
         private Instant enqueuedAt = Instant.now();
         private Map<String, String> metadata = Collections.emptyMap();
         private SubmitOptions submitOptions = SubmitOptions.empty();
@@ -262,6 +284,24 @@ public final class QueuedInput {
          */
         public Builder sourceAgentId(String sourceAgentId) {
             this.sourceAgentId = Optional.ofNullable(sourceAgentId);
+            return this;
+        }
+
+        /**
+         * Addresses the input to one session. Do not call this method, or pass {@code null}, to address it to the
+         * runtime alone — see {@link QueuedInput#getSessionId()}.
+         *
+         * @param sessionId
+         *            the session's {@code SessionId.value()}, or {@code null} for none; must not be blank
+         * @return this builder
+         * @throws IllegalArgumentException
+         *             if {@code sessionId} is blank
+         */
+        public Builder sessionId(String sessionId) {
+            if (sessionId != null && sessionId.isBlank()) {
+                throw new IllegalArgumentException("sessionId cannot be blank");
+            }
+            this.sessionId = Optional.ofNullable(sessionId);
             return this;
         }
 

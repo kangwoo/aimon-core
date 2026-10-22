@@ -286,6 +286,45 @@ class ReplSessionQueueTest {
         assertThat(queueManager.snapshot()).isEmpty();
     }
 
+    @Test
+    @DisplayName("turn-end drain replays this session's follow-ups, and leaves monitor batches and other sessions' entries")
+    void turnEndDrainLeavesSessionAddressedEntries() {
+        final AgentRuntimeId agentRuntimeId = AgentRuntimeId.of("agent:test-6");
+        final MessageQueueManager queueManager = new DefaultMessageQueueManager(new InMemoryMessageQueueRepository());
+
+        final OrcaAgentExecutor executor = mock(OrcaAgentExecutor.class);
+        final OrcaAgentRuntime context = mock(OrcaAgentRuntime.class);
+        when(context.getId()).thenReturn(agentRuntimeId);
+        when(executor.executeAsync(Mockito.any(), Mockito.any(), Mockito.any())).thenReturn(CompletableFuture
+                .completedFuture(OrcaAgentExecutionResult.success("done", SessionSnapshot.of(SessionId.of("default")),
+                        ExecutionMetadata.simple(Duration.ZERO, Instant.EPOCH, Instant.EPOCH))));
+
+        final CliSettings settings = new CliSettings();
+        final OutputFormatter formatter = new OutputFormatter(settings);
+        final LiveSession liveSession = new DefaultLiveSession(SessionId.of("default"), context, executor,
+                LiveSessionOptions.defaults(), queueManager);
+        final AgentSetupFactory.AgentSetup agentSetup = AgentSetupFactory.AgentSetup.builder().agentExecutor(executor)
+                .agentRuntime(context).outputFormatter(formatter).messageQueueManager(queueManager)
+                .liveSession(liveSession).build();
+        final ReplSession session = new ReplSession(agentSetup, settings, null);
+
+        queueManager.enqueue(QueuedInput.builder().inputText("Monitor mon_1 (errors) — 1 event:\nERROR x")
+                .agentRuntimeId(agentRuntimeId).sessionId("default")
+                .metadata(Map.of("kind", "monitor-event", "monitorId", "mon_1")).build());
+        queueManager.enqueue(QueuedInput.builder().inputText("another tab's follow-up").agentRuntimeId(agentRuntimeId)
+                .sessionId("another-session").build());
+        queueManager.enqueue(QueuedInput.builder().inputText("my follow-up").agentRuntimeId(agentRuntimeId)
+                .sessionId("default").build());
+
+        session.processInput("kickoff");
+
+        // kickoff + this session's follow-up. The monitor batch is left for the next turn's start, and another
+        // session's entry is not this REPL's to replay.
+        Mockito.verify(executor, Mockito.times(2)).executeAsync(Mockito.any(), Mockito.any(), Mockito.any());
+        assertThat(queueManager.snapshot()).extracting(QueuedInput::getInputText)
+                .containsExactlyInAnyOrder("Monitor mon_1 (errors) — 1 event:\nERROR x", "another tab's follow-up");
+    }
+
     /**
      * Builds a {@link CompletionStage} that completes with the result of {@code resultSupplier} only after
      * {@code gate} is counted down. The wait runs on a helper thread so the caller thread is never blocked.

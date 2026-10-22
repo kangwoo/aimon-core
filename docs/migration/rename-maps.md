@@ -584,6 +584,29 @@ execution's) and its provider. `ExecutionEnvironment`, `EnvironmentDescriptor`, 
 
 ---
 
+## `BackgroundBashOwner` → `BackgroundTaskOwner`
+
+The type that says who a background task belongs to -- the runtime, and within it the session (or, for a
+session-less execution, that execution) -- gained a second user when background monitors arrived
+([`../design/tool/monitor.md`](../design/tool/monitor.md) §5.2). A type shared by `Bash` and `Monitor` that is
+named after one of them and lives in the other's package says something false about both, so it moved to the neutral
+tools package. Its resolution rules (`of(ToolContext)`: own session, then the invoking session, then the execution,
+then the runtime alone) did not change.
+
+| Old | New |
+|-----|-----|
+| `at.aimon.core.tools.bash.BackgroundBashOwner` | `at.aimon.core.tools.BackgroundTaskOwner` |
+| `toString()` prefix `BackgroundBashOwner{` | `BackgroundTaskOwner{` |
+
+No member changed name, and there is no deprecated alias: the type is a `final` value object. A
+`BackgroundBashStore` implementation outside this repository needs only the import changed -- `BackgroundBashRecord`
+still carries the same three ownership fields.
+
+**Not a data migration.** The owner is rebuilt from the record's runtime, session and execution ids; nothing stores
+the type name.
+
+---
+
 ## Related documents
 
 - [`frozen-names.md`](frozen-names.md) -- what was **not** renamed, and why that is a contract

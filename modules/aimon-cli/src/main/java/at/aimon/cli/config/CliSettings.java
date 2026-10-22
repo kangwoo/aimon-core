@@ -29,6 +29,10 @@ public class CliSettings {
     // several sub-agent LLM calls. Enable via `cli.enableWorkflowJs: true`. Independent of enableWorkflow, but either
     // flag enables the per-context WorkflowRunner used by both tools' background mode.
     private boolean enableWorkflowJs = false;
+    // Opt-in for the background Monitor / MonitorStop tools. Off by default: a monitor puts messages into the
+    // conversation that nobody typed, and its command form runs a shell command for up to half an hour. Enable via
+    // `cli.enableMonitor: true`.
+    private boolean enableMonitor = false;
     // The session log format the CLI writes (session-log §7.3): v2 (default) or v1. v2 keeps the log append-only and
     // is what an agent with `context-engine: rolling` needs. The CLI keeps sessions in memory, so there is no older
     // node that could fail to read v2 — the switch exists only so the default stays the format every other assembly
@@ -111,6 +115,14 @@ public class CliSettings {
         this.enableWorkflow = enableWorkflow;
     }
 
+    public boolean isEnableMonitor() {
+        return enableMonitor;
+    }
+
+    public void setEnableMonitor(boolean enableMonitor) {
+        this.enableMonitor = enableMonitor;
+    }
+
     public boolean isEnableWorkflowJs() {
         return enableWorkflowJs;
     }
@@ -144,14 +156,15 @@ public class CliSettings {
                 && showToolCalls == that.showToolCalls && streaming == that.streaming && tracing == that.tracing
                 && tracingCaptureContent == that.tracingCaptureContent
                 && tracingMaxPayloadChars == that.tracingMaxPayloadChars && enableWorkflow == that.enableWorkflow
-                && enableWorkflowJs == that.enableWorkflowJs && sessionLogWriteFormat == that.sessionLogWriteFormat
-                && Objects.equals(prompt, that.prompt);
+                && enableWorkflowJs == that.enableWorkflowJs && enableMonitor == that.enableMonitor
+                && sessionLogWriteFormat == that.sessionLogWriteFormat && Objects.equals(prompt, that.prompt);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(prompt, colorOutput, showIterations, showToolCalls, streaming, tracing,
-                tracingCaptureContent, tracingMaxPayloadChars, enableWorkflow, enableWorkflowJs, sessionLogWriteFormat);
+                tracingCaptureContent, tracingMaxPayloadChars, enableWorkflow, enableWorkflowJs, enableMonitor,
+                sessionLogWriteFormat);
     }
 
     @Override
@@ -160,6 +173,7 @@ public class CliSettings {
                 + showIterations + ", showToolCalls=" + showToolCalls + ", streaming=" + streaming + ", tracing="
                 + tracing + ", tracingCaptureContent=" + tracingCaptureContent + ", tracingMaxPayloadChars="
                 + tracingMaxPayloadChars + ", enableWorkflow=" + enableWorkflow + ", enableWorkflowJs="
-                + enableWorkflowJs + ", sessionLogWriteFormat=" + sessionLogWriteFormat + '}';
+                + enableWorkflowJs + ", enableMonitor=" + enableMonitor + ", sessionLogWriteFormat="
+                + sessionLogWriteFormat + '}';
     }
 }
