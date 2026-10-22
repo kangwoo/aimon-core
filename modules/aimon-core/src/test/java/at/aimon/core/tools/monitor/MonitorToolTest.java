@@ -139,13 +139,14 @@ class MonitorToolTest {
     }
 
     @Test
-    @DisplayName("an unregistered source kind and the unregistered ws form are refused by the manager")
+    @DisplayName("an unregistered source kind is refused; the ws form reaches the websocket source and its policy")
     void unregisteredKinds() {
         final ToolContext context = context(shell);
         assertThat(tool.execute(ToolInput.of(Map.of("description", "d", "source", "kafka")), context).getContent())
                 .contains("Unknown monitor source 'kafka'");
-        assertThat(tool.execute(ToolInput.of(Map.of("description", "d", "ws", Map.of("url", "wss://x"))), context)
-                .getContent()).contains("Unknown monitor source 'websocket'");
+        assertThat(tool
+                .execute(ToolInput.of(Map.of("description", "d", "ws", Map.of("url", "ws://127.0.0.1:1/"))), context)
+                .getContent()).contains("does not allow");
     }
 
     @Test

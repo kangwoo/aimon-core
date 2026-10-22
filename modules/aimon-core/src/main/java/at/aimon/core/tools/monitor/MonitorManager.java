@@ -163,7 +163,7 @@ public final class MonitorManager implements AutoCloseable {
      *
      * @param queue
      *            the queue (must not be null)
-     * @return a new builder with the {@code shell} source registered
+     * @return a new builder with the {@code shell} and {@code websocket} sources registered
      */
     public static Builder builder(MessageQueueManager queue) {
         return new Builder(queue);
@@ -631,6 +631,7 @@ public final class MonitorManager implements AutoCloseable {
         private Builder(MessageQueueManager queue) {
             this.queue = Objects.requireNonNull(queue, "queue must not be null");
             source(new ShellMonitorSourceFactory());
+            source(new WebSocketMonitorSourceFactory());
         }
 
         /**
@@ -653,7 +654,8 @@ public final class MonitorManager implements AutoCloseable {
         }
 
         /**
-         * Replaces every registered factory, the default {@code shell} included, with {@code factories}.
+         * Replaces every registered factory, the default {@code shell} and {@code websocket} included, with
+         * {@code factories}.
          *
          * @param factories
          *            the factories (must not be null; may be empty, which leaves no kind to start)

@@ -68,7 +68,7 @@
 | [`parallel-execution.md`](tool/parallel-execution.md) | `ConcurrencyBehavior` 와 2단 게이트(모델 의도 + 프레임워크 안전성) |
 | [`subagent/parallel-foreground-task.md`](subagent/parallel-foreground-task.md) | (IMPLEMENTED, 승인본, 차이는 §9) `ConcurrencyBehavior.DEDICATED_THREAD` — 전부 `CONCURRENT_SAFE` 가 아니면 순차인 게이트 옆에, 연속된 포그라운드 `Task` 구간만 재사용하지 않는 전용 스레드로 펴는 데코레이터. 정본은 `subagent` 표의 같은 행 |
 | [`tool-search.md`](tool/tool-search.md) | 도구가 많아졌을 때 스키마를 지연 로드하는 검색 계층 |
-| [`monitor.md`](tool/monitor.md) | (PROPOSED) 백그라운드 이벤트 감시 `Monitor` — source(셸·WebSocket·호스트 등록)와 정책의 분리, 세션 단위 큐 전달과 그 과정에서 찾은 세션 간 드레인 누수, 셸 스트리밍 기능, 쉬는 세션 깨우기를 미룬 이유 |
+| [`monitor.md`](tool/monitor.md) | (IMPLEMENTED, 차이는 §12) 백그라운드 이벤트 감시 `Monitor` — source(셸·WebSocket·호스트 등록)와 정책의 분리, 세션 단위 큐 전달과 그 과정에서 찾은 세션 간 드레인 누수, 셸 스트리밍 기능, 쉬는 세션 깨우기를 미룬 이유 |
 | [`execution-environment.md`](tool/execution-environment.md) | (IMPLEMENTED) 도구의 파일 시스템·셸을 실행마다 고르는 `ExecutionEnvironment` — 제어 저장소 분리, 격리를 환경 기능으로, 파일 stamp |
 | [`execution-environment-implementation.md`](tool/execution-environment-implementation.md) | 위 설계의 구현 계획(승인본, 영어) — 코드 위치·단계·ArchUnit 변경·테스트, 그리고 구현이 계획에서 벗어난 점(§10) |
 | [`execution-environment-ee42-workflow-attributes.md`](tool/execution-environment-ee42-workflow-attributes.md) | (IMPLEMENTED) 워크플로 단계가 정의의 `attributes` 를 싣게 한 EE-42 설계(승인본, 영어) — `SubagentDescriptor`, 등록 정의 위에 덮는 병합 규칙, `Workflow` 역할 이름, 그리고 구현이 설계에서 벗어난 점(§8) |

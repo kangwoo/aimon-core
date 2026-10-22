@@ -50,7 +50,7 @@ public class MonitorTool extends AbstractTool implements ToolPermissionSubjectAw
     public static final String TOOL_NAME = "Monitor";
 
     /** Kind started by the {@code ws} field. */
-    public static final String WEBSOCKET_KIND = "websocket";
+    public static final String WEBSOCKET_KIND = WebSocketMonitorSourceFactory.KIND;
 
     private static final Logger log = LoggerFactory.getLogger(MonitorTool.class);
 

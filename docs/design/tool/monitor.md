@@ -1,6 +1,7 @@
 # 백그라운드 모니터 (Monitor)
 
-> Status: **PROPOSED** — 아직 코드가 없다. 범위는 §10 의 네 단계이고, 쉬는 세션 깨우기(§9.1)는 그 뒤로 미룬다.
+> Status: **IMPLEMENTED** — §10 의 네 단계가 모두 들어가 있다. 쉬는 세션 깨우기(§9.1)는 미뤘고, 설계에서
+>벗어난 점은 §12 에 있다.
 >
 > 적용 대상: `aimon-core` — `at.aimon.core.tools.monitor` (SPI · 매니저 · 도구 · 기본 소스 2종),
 > `at.aimon.core.shell` (`ShellFeature.STREAMING`, `ShellLineListener`), `…shell.impl.local.LocalShell`,
@@ -119,15 +120,17 @@ public interface MonitorSourceFactory {
 | kind | 이벤트 단위 | 파라미터 | 대상 검사 |
 |------|-----------|---------|----------|
 | `shell` | stdout 한 줄 | `command` | 실행 환경의 셸이 `STREAMING` 과 `CANCELLATION` 을 선언해야 함(§7) |
-| `websocket` | 텍스트 프레임 하나 (조각 프레임은 합쳐서 한 건) | `url`, `protocols` | `ws`/`wss` 만. `SsrfGuard` 로 사설망 차단 |
+| `websocket` | 텍스트 메시지 하나 (조각 프레임은 합쳐서 한 건) | `url`, `protocols` | `ws`/`wss` 만. `SsrfGuard` 로 사설망 차단 |
 
-바이너리 프레임은 내용 대신 `[binary frame, N bytes]` 한 줄로 알린다. WebSocket 은 JDK
-`java.net.http.WebSocket` 으로 구현해 의존성을 늘리지 않는다.
+바이너리 메시지는 내용 대신 `[binary frame, N bytes]` 한 줄로 알린다. 30초마다 ping 을 보내, 조용히 죽은
+연결을 타임아웃까지 기다리지 않는다.
 
-`SsrfGuard.isSafe(String)` 는 `http`/`https` 외의 스킴을 모두 거절한다. 그래서 검사할 때만 `ws`→`http`,
-`wss`→`https` 로 바꿔 넘긴다. 남는 틈: 가드는 DNS 를 한 번 풀고 JDK WebSocket 은 연결할 때 다시 푼다.
-그 사이 DNS 가 바뀌는 rebinding 은 막지 못한다. `WebFetchTool` 과 같은 수준의 보호이고, 강한 격리가 필요한
-조립은 `websocket` 소스를 등록하지 않으면 된다(§4.2 의 `sources(...)`).
+WebSocket 은 OkHttp 로 연다 — core 가 이미 의존하는 라이브러리이고, `WebHttpClientFactory` 가 만든 클라이언트를
+그대로 쓰기 위해서다. `SsrfGuard.isSafe(String)` 는 `http`/`https` 외의 스킴을 모두 거절하므로, 검사할 때 `ws`→
+`http`, `wss`→`https` 로 바꿔 넘긴다(핸드셰이크는 같은 호스트·포트로 가는 HTTP 요청이다). 그리고 그 클라이언트의
+네트워크 인터셉터(`SsrfRedirectInterceptor`)가 **실제로 연결된 소켓 주소**를 다시 검사한다. 그래서 URL 을 검사한
+뒤 연결 시점에 DNS 가 사설 주소로 바뀌는 rebinding 도 막힌다. 모델이 소켓을 열면 안 되는 조립은 `websocket`
+소스를 등록하지 않으면 된다(§4.2 의 `sources(...)`).
 
 ### 4.2 호스트 등록
 
@@ -242,7 +245,9 @@ agent-scoped 이고 웹 세션들은 한 runtime id 를 공유하므로, 같은 
 가져갈 수 있다(`AimonStackSpec` 의 큐 저장소 javadoc 에도 적혀 있다). 모니터 알림은 세션이 시작한 감시의
 결과라 이 누수를 그대로 둘 수 없다.
 
-`QueuedInput` 에 선택 필드 `sessionId` 를 더하고, 실행기의 드레인 조건을 이렇게 바꾼다.
+`QueuedInput` 에 선택 필드 `sessionId` 를 더하고, 실행기의 드레인 조건을 이렇게 바꾼다. 값은
+`SessionId.value()` 문자열이다 — `agent.session` 이 이미 `agent.queue` 에 의존하므로, 타입 필드로 두면 패키지
+순환이 생긴다(`PackageDependencyArchitectureTest.noCorePackageCycles`).
 
 ```java
 q -> agentRuntimeId.equals(q.getAgentRuntimeId())
@@ -441,3 +446,14 @@ Spring Boot starter 속성과 원격 샌드박스 셸의 `STREAMING`(별도 저�
 | M-2 | `offerAsync`, 서브에이전트 완료 알림, `NOW` 우선순위 리스너를 세션 단위로 바꿔 §6.1 의 세션 간 누수를 막는다 |
 | M-3 | `Monitor(command)` 의 권한 패턴을 `Bash` 패턴에서 물려받게 할지 — 지금은 도구 이름별로 따로 적어야 한다 |
 | M-4 | 세션이 삭제(`SessionDeletedEvent`)되면 그 세션의 모니터를 멈춘다 — 지금은 타임아웃까지 돈다 |
+
+---
+
+## 12. 구현이 설계에서 벗어난 점
+
+| 항목 | 설계 | 구현 | 이유 |
+|------|------|------|------|
+| WebSocket 클라이언트 | JDK `java.net.http.WebSocket`, rebinding 틈은 남긴다 | OkHttp + `WebHttpClientFactory` 클라이언트, rebinding 도 막는다 | §4.1. 네트워크 인터셉터가 연결된 주소를 검사하는 길이 이미 있었다 |
+| `QueuedInput.sessionId` 의 타입 | `SessionId` 로 읽힐 수 있게 적었다 | `Optional<String>` | §6.1. 패키지 순환 |
+| 기본 활성화 | 정하지 않았다 | `ToolSpec.monitorEnabled` 기본 꺼짐 | 아무도 입력하지 않은 메시지를 대화에 넣고, `command` 형태는 셸 명령을 최대 30분 돌린다 |
+| 멈춘 모니터의 버퍼 | 정하지 않았다 | `MonitorStop` · 앱 종료 시 버퍼에 남은 이벤트는 버린다 | 모델이 스스로 멈췄거나 받을 턴이 없다. 종료 알림을 보내지 않는 것과 같은 이유 |

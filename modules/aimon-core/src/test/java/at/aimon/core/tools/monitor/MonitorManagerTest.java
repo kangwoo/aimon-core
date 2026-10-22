@@ -221,7 +221,7 @@ class MonitorManagerTest {
 
         assertThatThrownBy(
                 () -> manager.start(MonitorRequest.builder().owner(OWNER).kind("kafka").description("d").build()))
-                .isInstanceOf(MonitorRequestException.class).hasMessageContaining("Available: shell, fake");
+                .isInstanceOf(MonitorRequestException.class).hasMessageContaining("Available: shell, websocket, fake");
     }
 
     @Test
