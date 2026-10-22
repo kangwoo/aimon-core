@@ -48,6 +48,7 @@ import at.aimon.core.agent.queue.InMemoryMessageQueueRepository;
 import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.quota.QuotaGuardFactory;
 import at.aimon.core.agent.quota.impl.StaticQuotaPolicy;
+import at.aimon.core.agent.session.SessionLifecycleListener;
 import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionCheckpointMailbox;
@@ -569,7 +570,7 @@ public final class AimonStackBuilder {
         final StackLiveSessionOpener opener = new StackLiveSessionOpener(agentRuntimeResolver, agentExecutor,
                 messageQueueManager, agentExecutor.getHookExecutionManager(), sessionRecordWrites);
         final SessionRouter sessionRouter = buildSessionRouter(spec, opener, sessionRecordStore, sessionApprovalStore,
-                segmentStore);
+                segmentStore, monitorManager);
         final Duration drainTimeout = spec.getSession().getDrainTimeout();
         teardown.own(TeardownPhase.SESSIONS, "sessionRouter.closeGracefully(" + drainTimeout + ")",
                 () -> closeRouter(sessionRouter, drainTimeout));
@@ -798,12 +799,18 @@ public final class AimonStackBuilder {
      */
     private static SessionRouter buildSessionRouter(AimonStackSpec spec, StackLiveSessionOpener opener,
             SessionRecordStore sessionRecordStore, SessionApprovalStore sessionApprovalStore,
-            SessionLogSegmentStore segmentStore) {
+            SessionLogSegmentStore segmentStore, MonitorManager monitorManager) {
         final SessionSpec session = spec.getSession();
         final SessionRouterBuilder builder = SessionRouter.builder().sessionOpener(opener)
                 .sessionRecordStore(sessionRecordStore).sessionApprovalStore(sessionApprovalStore)
                 .sessionLogSegmentStore(segmentStore).mode(session.getMode())
                 .lifecycleListeners(session.getLifecycleListeners());
+        // A deleted session's monitors have nobody left to deliver to. Only this node's are reached: the event fires
+        // on the deleting node alone, and a monitor elsewhere runs to its timeout.
+        if (monitorManager != null) {
+            builder.lifecycleListener(
+                    SessionLifecycleListener.whenDeleted(event -> monitorManager.stopSession(event.getSessionId())));
+        }
         session.getNodeId().ifPresent(builder::nodeId);
         session.getLeaseStore().ifPresent(builder::sessionLeaseStore);
         session.getSignalBus().ifPresent(builder::signalBus);

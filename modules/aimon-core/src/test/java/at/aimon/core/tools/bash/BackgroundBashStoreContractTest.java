@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.tools.BackgroundTaskOwner;
 
 /**
  * What every {@link BackgroundBashStore} must do, whatever it is backed by. A store implementation extends this and
@@ -62,7 +63,7 @@ public abstract class BackgroundBashStoreContractTest {
             assertThat(record.getOwnerRuntimeId()).isEmpty();
             assertThat(record.getOwnerSessionId()).isEmpty();
             assertThat(record.getOwnerExecutionId()).isEmpty();
-            assertThat(record.owner()).isEqualTo(BackgroundBashOwner.none());
+            assertThat(record.owner()).isEqualTo(BackgroundTaskOwner.none());
             assertThat(record.getExpiresAt()).isEmpty();
         });
     }
@@ -72,8 +73,8 @@ public abstract class BackgroundBashStoreContractTest {
     void ownershipFieldsRoundTrip() {
         final BackgroundBashStore store = createStore();
         final AgentRuntimeId runtime = AgentRuntimeId.fromName("ops", "acme");
-        final BackgroundBashOwner session = BackgroundBashOwner.of(runtime, SessionId.of("session-a"), null);
-        final BackgroundBashOwner execution = BackgroundBashOwner.of(runtime, null, ExecutionId.of("routine:t:1"));
+        final BackgroundTaskOwner session = BackgroundTaskOwner.of(runtime, SessionId.of("session-a"), null);
+        final BackgroundTaskOwner execution = BackgroundTaskOwner.of(runtime, null, ExecutionId.of("routine:t:1"));
         store.putIfAbsent(running("bash_0000000a").toBuilder().owner(session).build());
         store.putIfAbsent(running("bash_0000000b").toBuilder().owner(execution).build());
 

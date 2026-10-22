@@ -22,6 +22,7 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.shell.ExecutionOptions;
+import at.aimon.core.tools.BackgroundTaskOwner;
 import at.aimon.core.tools.ToolContextKeys;
 
 /** Unit tests for {@link KillShellTool}. */
@@ -48,8 +49,8 @@ class KillShellToolTest {
         manager.close();
     }
 
-    private static BackgroundBashOwner owner(AgentRuntimeId runtimeId) {
-        return BackgroundBashOwner.of(runtimeId, null, null);
+    private static BackgroundTaskOwner owner(AgentRuntimeId runtimeId) {
+        return BackgroundTaskOwner.of(runtimeId, null, null);
     }
 
     private static ToolContext contextOf(AgentRuntimeId runtimeId) {
@@ -169,7 +170,7 @@ class KillShellToolTest {
                 .put(ToolContextKeys.EXECUTION_ID, ExecutionId.of("fork-1"))
                 .put(ToolContextKeys.INVOKING_SESSION_ID, sessionA).build();
         ControllableShell shell = ControllableShell.cancellable();
-        BackgroundBashTask task = manager.start(BackgroundBashOwner.of(turnA), "npm run dev", shell, OPTIONS);
+        BackgroundBashTask task = manager.start(BackgroundTaskOwner.of(turnA), "npm run dev", shell, OPTIONS);
         shell.awaitStarted();
 
         ToolResult otherSession = tool.execute(ToolInput.of(Map.of("taskId", task.getTaskId())), turnB);
@@ -190,7 +191,7 @@ class KillShellToolTest {
     @Test
     @DisplayName("a command on another node is 'not found' for another session, not 'on another node'")
     void testExecute_OtherNodeOtherSession_ReturnsNotFound() {
-        BackgroundBashOwner sessionA = BackgroundBashOwner.of(ACME, SessionId.of("session-a"), null);
+        BackgroundTaskOwner sessionA = BackgroundTaskOwner.of(ACME, SessionId.of("session-a"), null);
         store.putIfAbsent(BackgroundBashRecord.builder().taskId("bash_0000dddd").owner(sessionA).nodeId("node-b")
                 .startedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(3600)).build());
 

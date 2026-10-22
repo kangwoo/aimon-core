@@ -19,9 +19,12 @@ import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.agent.tool.permission.CustomToolPermissionAware;
 import at.aimon.core.agent.tool.permission.CustomToolPermissionRule;
+import at.aimon.core.agent.tool.permission.PermissionDelegation;
 import at.aimon.core.agent.tool.permission.PermissionSubject;
+import at.aimon.core.agent.tool.permission.ToolPermissionDelegationAware;
 import at.aimon.core.agent.tool.permission.ToolPermissionSubjectAware;
-import at.aimon.core.tools.bash.BackgroundBashOwner;
+import at.aimon.core.tools.BackgroundTaskOwner;
+import at.aimon.core.tools.bash.BashTool;
 import at.aimon.core.tools.monitor.exception.MonitorRequestException;
 
 /**
@@ -42,9 +45,18 @@ import at.aimon.core.tools.monitor.exception.MonitorRequestException;
  * wildcard (§4.4).
  *
  * <p>
+ * A {@code command} must also be admitted by the {@code Bash} entries ({@link ToolPermissionDelegationAware}): a list
+ * of {@code Bash(git:*)} and a bare {@code Monitor} does not let a monitor run what {@code Bash} may not, and a list
+ * without {@code Bash} runs no command monitor at all.
+ *
+ * <p>
  * Stateless: every monitor lives in the {@link MonitorManager}.
  */
-public class MonitorTool extends AbstractTool implements ToolPermissionSubjectAware, CustomToolPermissionAware {
+public class MonitorTool extends AbstractTool
+        implements
+            ToolPermissionSubjectAware,
+            CustomToolPermissionAware,
+            ToolPermissionDelegationAware {
 
     /** The tool name. */
     public static final String TOOL_NAME = "Monitor";
@@ -129,7 +141,7 @@ public class MonitorTool extends AbstractTool implements ToolPermissionSubjectAw
                 return ToolResult.error("Invalid parameter: description exceeds " + MAX_DESCRIPTION_LENGTH
                         + " characters — say what is watched in a few words");
             }
-            final MonitorRequest.Builder request = MonitorRequest.builder().owner(BackgroundBashOwner.of(context))
+            final MonitorRequest.Builder request = MonitorRequest.builder().owner(BackgroundTaskOwner.of(context))
                     .description(description).context(context);
             final Optional<String> formError = describeForm(input, request);
             if (formError.isPresent()) {
@@ -215,6 +227,16 @@ public class MonitorTool extends AbstractTool implements ToolPermissionSubjectAw
         // Read raw: this runs before execute(), where nothing would catch a type mismatch.
         if (input.get("command") instanceof String command && !command.isBlank()) {
             return Optional.of(PermissionSubject.command(command));
+        }
+        return Optional.empty();
+    }
+
+    @Override
+    public Optional<PermissionDelegation> permissionDelegation(ToolInput input, ToolContext context) {
+        Objects.requireNonNull(input, "Input cannot be null");
+        Objects.requireNonNull(context, "Context cannot be null");
+        if (input.get("command") instanceof String command && !command.isBlank()) {
+            return Optional.of(PermissionDelegation.to(BashTool.TOOL_NAME, PermissionSubject.command(command)));
         }
         return Optional.empty();
     }

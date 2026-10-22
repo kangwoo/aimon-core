@@ -44,6 +44,11 @@ import at.aimon.core.skill.policy.session.InMemorySessionApprovalStore;
 import at.aimon.core.skill.policy.session.SessionApprovalStore;
 import at.aimon.core.tools.bash.BackgroundBashStore;
 import at.aimon.core.tools.bash.InMemoryBackgroundBashStore;
+import at.aimon.core.tools.monitor.InMemoryMonitorStore;
+import at.aimon.core.tools.monitor.MonitorRequest;
+import at.aimon.core.tools.monitor.MonitorSource;
+import at.aimon.core.tools.monitor.MonitorSourceFactory;
+import at.aimon.core.tools.monitor.MonitorStore;
 
 /**
  * What {@code aimonApplicationContributions} owes the beans it resolves: an order to be destroyed in, and a
@@ -242,6 +247,54 @@ class AimonApplicationContributionsTest {
             assertThat(spec.getTools().getBackgroundBashStore()).isEmpty();
             assertThat(spec.getExecutionEnvironment().getBackgroundCommandTimeout()).isEmpty();
         });
+    }
+
+    @Test
+    @DisplayName("aimon.tools.monitor.enabled, MonitorSourceFactory beans and a MonitorStore bean reach the tool spec")
+    void monitorSettingsReachTheSpec(@TempDir Path workspace) {
+        minimal(workspace).withUserConfiguration(MonitorConfiguration.class)
+                .withPropertyValues("aimon.tools.monitor.enabled=true").run(ctx -> {
+                    final AimonStackSpec spec = ctx.getBean(AimonStackSpec.class);
+                    assertThat(spec.getTools().isMonitorEnabled()).isTrue();
+                    assertThat(spec.getTools().getMonitorSources()).extracting(MonitorSourceFactory::kind)
+                            .containsExactly("alarms");
+                    assertThat(spec.getTools().getMonitorStore()).containsSame(MonitorConfiguration.STORE);
+                });
+        minimal(workspace)
+                .run(ctx -> assertThat(ctx.getBean(AimonStackSpec.class).getTools().isMonitorEnabled()).isFalse());
+    }
+
+    /** Stands in for an application that offers its alarm stream as a monitor source. */
+    @Configuration(proxyBeanMethods = false)
+    static class MonitorConfiguration {
+
+        static final MonitorStore STORE = new InMemoryMonitorStore();
+
+        @Bean
+        MonitorStore monitorStore() {
+            return STORE;
+        }
+
+        @Bean
+        MonitorSourceFactory alarms() {
+            return new MonitorSourceFactory() {
+                @Override
+                public String kind() {
+                    return "alarms";
+                }
+
+                @Override
+                public String describe() {
+                    return "alarms — critical alarms of the platform";
+                }
+
+                @Override
+                public MonitorSource create(MonitorRequest request) {
+                    return sink -> () -> {
+                    };
+                }
+            };
+        }
     }
 
     /** Stands in for an application that shares the background task list between nodes. */

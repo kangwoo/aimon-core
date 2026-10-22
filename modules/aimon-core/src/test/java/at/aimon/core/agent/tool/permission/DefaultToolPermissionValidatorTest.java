@@ -390,6 +390,37 @@ class DefaultToolPermissionValidatorTest {
     // ------------------------------------------------------------------------------------------------------------
 
     /** A tool that does nothing and offers no permission capability. */
+    @Test
+    @DisplayName("a delegating tool must also be admitted by the named tool's entries")
+    void delegationMustAlsoBeAdmitted() {
+        final Tool monitor = new DelegatingTool("Monitor", "Bash");
+        final ToolInput rm = input("command", "rm -rf /");
+        final ToolInput git = input("command", "git status");
+
+        // A bare Monitor next to a restricted Bash: the Bash pattern still governs the command.
+        final List<AllowedTool> restricted = List.of(AllowedTool.parse("Monitor"), AllowedTool.parse("Bash(git:*)"));
+        assertThat(validator.validate(monitor, git, ToolContext.empty(), restricted).isAllowed()).isTrue();
+        final PermissionValidationResult denied = validator.validate(monitor, rm, ToolContext.empty(), restricted);
+        assertThat(denied.isAllowed()).isFalse();
+        assertThat(denied.getErrorMessage()).contains("must also be allowed for 'Bash'").contains("rm -rf /");
+
+        // No Bash entry at all: the agent may not run commands, so the monitor may not either.
+        assertThat(validator.validate(monitor, git, ToolContext.empty(), List.of(AllowedTool.parse("Monitor")))
+                .isAllowed()).isFalse();
+        // A bare Bash entry admits every command.
+        assertThat(validator.validate(monitor, rm, ToolContext.empty(),
+                List.of(AllowedTool.parse("Monitor"), AllowedTool.parse("Bash"))).isAllowed()).isTrue();
+        // The tool's own entries still decide first.
+        assertThat(
+                validator.validate(monitor, git, ToolContext.empty(), List.of(AllowedTool.parse("Bash"))).isAllowed())
+                .isFalse();
+        // No restrictions configured: nothing is delegated either.
+        assertThat(validator.validate(monitor, rm, ToolContext.empty(), List.of()).isAllowed()).isTrue();
+        // A call that delegates nothing is judged on its own entries alone.
+        assertThat(validator.validate(monitor, input("source", "alarms"), ToolContext.empty(),
+                List.of(AllowedTool.parse("Monitor"))).isAllowed()).isTrue();
+    }
+
     private static class PlainTool extends AbstractTool {
 
         PlainTool(String name) {
@@ -413,6 +444,24 @@ class DefaultToolPermissionValidatorTest {
         public Optional<PermissionSubject> permissionSubject(ToolInput input, ToolContext context) {
             return input.get("command") instanceof String command
                     ? Optional.of(PermissionSubject.command(command))
+                    : Optional.empty();
+        }
+    }
+
+    /** Delegates its {@code command} to another tool's entries, the way {@code MonitorTool} delegates to Bash. */
+    private static final class DelegatingTool extends PlainTool implements ToolPermissionDelegationAware {
+
+        private final String delegateTo;
+
+        DelegatingTool(String name, String delegateTo) {
+            super(name);
+            this.delegateTo = delegateTo;
+        }
+
+        @Override
+        public Optional<PermissionDelegation> permissionDelegation(ToolInput input, ToolContext context) {
+            return input.get("command") instanceof String command
+                    ? Optional.of(PermissionDelegation.to(delegateTo, PermissionSubject.command(command)))
                     : Optional.empty();
         }
     }

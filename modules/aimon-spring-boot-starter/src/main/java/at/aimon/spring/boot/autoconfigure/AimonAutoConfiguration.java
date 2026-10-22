@@ -50,6 +50,8 @@ import at.aimon.core.skill.policy.approval.SkillApprovalChannel;
 import at.aimon.core.skill.policy.pending.PendingTurnRegistry;
 import at.aimon.core.skill.policy.session.SessionApprovalStore;
 import at.aimon.core.tools.bash.BackgroundBashStore;
+import at.aimon.core.tools.monitor.MonitorSourceFactory;
+import at.aimon.core.tools.monitor.MonitorStore;
 import at.aimon.core.tracing.TracePayloadPolicy;
 import at.aimon.core.tracing.Tracer;
 import at.aimon.core.tracing.impl.TracingLlmClient;
@@ -417,15 +419,25 @@ public class AimonAutoConfiguration {
          * captured, and a deployment that set {@code payload-capture=none} would otherwise still find response
          * text in its LLM spans.
          */
-        // One parameter per contribution that must stay a plain dependency edge (see above); the two providers are
-        // the eighth and ninth.
+        // One parameter per contribution that must stay a plain dependency edge (see above); the providers are the
+        // eighth to eleventh.
         @SuppressWarnings("checkstyle:ParameterNumber")
         @Bean
         @ConditionalOnMissingBean
         AimonStackSpec aimonStackSpec(AimonProperties properties, LlmClient llmClient, FileSystemSpec fileSystemSpec,
                 SessionSpec sessionSpec, SchedulingSpec schedulingSpec, ApplicationContributions contributions,
                 SliceContributions slices, ObjectProvider<ExecutionEnvironmentProvider> executionEnvironmentProvider,
-                ObjectProvider<BackgroundBashStore> backgroundBashStore) {
+                ObjectProvider<BackgroundBashStore> backgroundBashStore, ObjectProvider<MonitorStore> monitorStore,
+                ObjectProvider<MonitorSourceFactory> monitorSources) {
+            final ToolSpec.Builder tools = ToolSpec.builder().bashEnabled(properties.getTools().getBash().isEnabled())
+                    .artifactPolicy(properties.getTools().getArtifact().toPolicy())
+                    // A bean when the application supplies one — a store shared between nodes — otherwise the
+                    // stack's in-memory default.
+                    .backgroundBashStore(backgroundBashStore.getIfAvailable())
+                    .monitorEnabled(properties.getTools().getMonitor().isEnabled())
+                    .monitorStore(monitorStore.getIfAvailable());
+            // Every MonitorSourceFactory bean is a kind the model can start by name; @Order decides the listing order.
+            monitorSources.orderedStream().forEach(tools::addMonitorSource);
             final Tracer tracer = contributions.getTracer();
             final TracePayloadPolicy payloadPolicy = properties.getTracing().toPayloadPolicy();
             final AimonStackSpec.Builder builder = AimonStackSpec.builder()
@@ -441,12 +453,7 @@ public class AimonAutoConfiguration {
                     .allowedSkillLinkRoots(properties.getSkill().toAllowedLinkRoots())
                     .agentRuntimes(toAgentRuntimeSpec(properties.getAgentRuntime()))
                     .agentCustomizers(contributions.getAgentCustomizers())
-                    .defaultBudget(toBudget(properties.getBudget()))
-                    .tools(ToolSpec.builder().bashEnabled(properties.getTools().getBash().isEnabled())
-                            .artifactPolicy(properties.getTools().getArtifact().toPolicy())
-                            // A bean when the application supplies one — a store shared between nodes — otherwise
-                            // the stack's in-memory default.
-                            .backgroundBashStore(backgroundBashStore.getIfAvailable()).build())
+                    .defaultBudget(toBudget(properties.getBudget())).tools(tools.build())
                     .executionEnvironment(toExecutionEnvironmentSpec(properties.getEnvironment(),
                             executionEnvironmentProvider.getIfAvailable()))
                     .messageQueueRepository(contributions.getMessageQueueRepository()).skillApproval(

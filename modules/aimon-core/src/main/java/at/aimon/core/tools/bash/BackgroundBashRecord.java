@@ -7,6 +7,7 @@ import java.util.Optional;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.tools.BackgroundTaskOwner;
 
 /**
  * What a {@link BackgroundBashStore} keeps about one background command: who started it, on which node it runs and how
@@ -94,8 +95,8 @@ public final class BackgroundBashRecord {
      *
      * @return the owner (never null); never throws, whatever combination the store returned
      */
-    public BackgroundBashOwner owner() {
-        return BackgroundBashOwner.of(ownerRuntimeId, ownerSessionId, ownerExecutionId);
+    public BackgroundTaskOwner owner() {
+        return BackgroundTaskOwner.of(ownerRuntimeId, ownerSessionId, ownerExecutionId);
     }
 
     /** @return the node whose process runs the command */
@@ -200,7 +201,7 @@ public final class BackgroundBashRecord {
          *            the owner (must not be null)
          * @return this builder
          */
-        public Builder owner(BackgroundBashOwner owner) {
+        public Builder owner(BackgroundTaskOwner owner) {
             Objects.requireNonNull(owner, "owner must not be null");
             return ownerRuntimeId(owner.getRuntimeId().orElse(null)).ownerSessionId(owner.getSessionId().orElse(null))
                     .ownerExecutionId(owner.getExecutionId().orElse(null));

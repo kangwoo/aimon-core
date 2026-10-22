@@ -2420,8 +2420,43 @@ public class AimonProperties implements InitializingBean {
 
         private final Artifact artifact = new Artifact();
 
+        private final Monitor monitor = new Monitor();
+
         public Bash getBash() {
             return bash;
+        }
+
+        /** @return the background monitor tools' settings */
+        public Monitor getMonitor() {
+            return monitor;
+        }
+
+        /**
+         * The background {@code Monitor} / {@code MonitorStop} tools. Beans of type {@code MonitorSourceFactory} are
+         * registered as monitor sources the model can start by name, and a {@code MonitorStore} bean replaces the
+         * in-memory record of running monitors.
+         */
+        public static class Monitor {
+
+            /**
+             * Off by default: a monitor puts messages into a conversation that nobody typed, and its command form runs
+             * a shell command for up to half an hour. The command form is further bounded by the {@code Bash}
+             * permission entries.
+             */
+            private boolean enabled;
+
+            /** @return whether {@code Monitor} and {@code MonitorStop} are registered */
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            /**
+             * @param enabled
+             *            whether to register {@code Monitor} and {@code MonitorStop}
+             */
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
         }
 
         public Artifact getArtifact() {

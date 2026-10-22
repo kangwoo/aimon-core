@@ -3,7 +3,7 @@ package at.aimon.core.tools.monitor;
 import java.time.Instant;
 import java.util.Objects;
 
-import at.aimon.core.tools.bash.BackgroundBashOwner;
+import at.aimon.core.tools.BackgroundTaskOwner;
 
 /**
  * What is known about a running monitor beyond the node that runs it: who owns it, where it runs, what kind it is and
@@ -16,7 +16,7 @@ import at.aimon.core.tools.bash.BackgroundBashOwner;
 public final class MonitorRecord {
 
     private final String monitorId;
-    private final BackgroundBashOwner owner;
+    private final BackgroundTaskOwner owner;
     private final String nodeId;
     private final String kind;
     private final String description;
@@ -52,7 +52,7 @@ public final class MonitorRecord {
     /**
      * @return who the monitor was started for (never null)
      */
-    public BackgroundBashOwner getOwner() {
+    public BackgroundTaskOwner getOwner() {
         return owner;
     }
 
@@ -100,7 +100,7 @@ public final class MonitorRecord {
     public static final class Builder {
 
         private String monitorId;
-        private BackgroundBashOwner owner;
+        private BackgroundTaskOwner owner;
         private String nodeId;
         private String kind;
         private String description;
@@ -125,7 +125,7 @@ public final class MonitorRecord {
          *            who the monitor was started for (must not be null)
          * @return this builder
          */
-        public Builder owner(BackgroundBashOwner owner) {
+        public Builder owner(BackgroundTaskOwner owner) {
             this.owner = owner;
             return this;
         }

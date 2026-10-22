@@ -8,7 +8,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.tool.ToolContext;
-import at.aimon.core.tools.bash.BackgroundBashOwner;
+import at.aimon.core.tools.BackgroundTaskOwner;
 
 /**
  * What a monitor was asked for: the kind of source and its parameters, who asked, and for how long.
@@ -19,7 +19,7 @@ import at.aimon.core.tools.bash.BackgroundBashOwner;
  */
 public final class MonitorRequest {
 
-    private final BackgroundBashOwner owner;
+    private final BackgroundTaskOwner owner;
     private final String kind;
     private final Map<String, Object> params;
     private final String description;
@@ -58,7 +58,7 @@ public final class MonitorRequest {
     /**
      * @return who the monitor is started for; its events go to that owner's session (never null)
      */
-    public BackgroundBashOwner getOwner() {
+    public BackgroundTaskOwner getOwner() {
         return owner;
     }
 
@@ -117,7 +117,7 @@ public final class MonitorRequest {
     /** Builder for {@link MonitorRequest}. */
     public static final class Builder {
 
-        private BackgroundBashOwner owner;
+        private BackgroundTaskOwner owner;
         private String kind;
         private final Map<String, Object> params = new LinkedHashMap<>();
         private String description;
@@ -132,7 +132,7 @@ public final class MonitorRequest {
          *            who the monitor is started for (must not be null)
          * @return this builder
          */
-        public Builder owner(BackgroundBashOwner owner) {
+        public Builder owner(BackgroundTaskOwner owner) {
             this.owner = owner;
             return this;
         }

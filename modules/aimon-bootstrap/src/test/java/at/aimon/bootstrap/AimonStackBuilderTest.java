@@ -44,7 +44,11 @@ import at.aimon.core.agent.session.store.InMemorySessionLogSegmentStore;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.agent.tool.Tool;
+import at.aimon.core.agent.tool.ToolContext;
+import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
+import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
 import at.aimon.core.environment.EnvironmentRequest;
 import at.aimon.core.environment.ExecutionEnvironmentProvider;
@@ -67,9 +71,13 @@ import at.aimon.core.scheduling.ScheduledTaskId;
 import at.aimon.core.scheduling.ScheduledTaskInterruptBus;
 import at.aimon.core.scheduling.repository.InMemoryScheduledTaskRepository;
 import at.aimon.core.scheduling.scheduler.TaskScheduler;
+import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.memory.MemoryRecallTool;
 import at.aimon.core.tools.memory.MemorySearchTool;
 import at.aimon.core.tools.memory.ObserveTool;
+import at.aimon.core.tools.monitor.MonitorRequest;
+import at.aimon.core.tools.monitor.MonitorSource;
+import at.aimon.core.tools.monitor.MonitorSourceFactory;
 import at.aimon.core.tools.monitor.MonitorStopTool;
 import at.aimon.core.tools.monitor.MonitorTool;
 import at.aimon.core.tools.session.SessionHistoryTool;
@@ -905,6 +913,48 @@ class AimonStackBuilderTest {
             final List<String> plan = stack.teardownPlan();
             assertThat(lineOf(plan, "monitorManager")).isGreaterThan(lineOf(plan, "runtime(agent:ops)"))
                     .isLessThan(lineOf(plan, "executionEnvironmentProvider"));
+        }
+    }
+
+    @Test
+    @DisplayName("deleting a session through the router stops that session's monitors")
+    void sessionDeleteStopsMonitors(@TempDir Path workspace) {
+        final AtomicInteger stops = new AtomicInteger();
+        final MonitorSourceFactory idle = new MonitorSourceFactory() {
+            @Override
+            public String kind() {
+                return "idle";
+            }
+
+            @Override
+            public String describe() {
+                return "idle — never emits";
+            }
+
+            @Override
+            public MonitorSource create(MonitorRequest request) {
+                return sink -> stops::incrementAndGet;
+            }
+        };
+        final InMemorySessionRecordStore records = new InMemorySessionRecordStore();
+        final SessionId id = SessionId.of("monitored");
+        records.provision(id, "ops", Principal.user("alice"));
+        final AimonStackSpec spec = specFor(workspace, "ops")
+                .session(SessionSpec.builder().recordStore(records).build())
+                .tools(ToolSpec.builder().monitorEnabled(true).addMonitorSource(idle).build()).build();
+
+        try (AimonStack stack = AimonStackBuilder.build(spec)) {
+            final OrcaAgentRuntime runtime = stack.agentRuntimeRegistry().get(AgentRuntimeId.fromName("ops"))
+                    .map(OrcaAgentRuntime.class::cast).orElseThrow();
+            final Tool monitor = runtime.getToolRegistry().findByName(MonitorTool.TOOL_NAME).orElseThrow();
+            final ToolResult started = monitor.execute(ToolInput.of(Map.of("description", "d", "source", "idle")),
+                    ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, runtime.getId())
+                            .put(ToolContextKeys.SESSION_ID, id).build());
+            assertThat(started.isSuccess()).as(started.getContent()).isTrue();
+
+            stack.sessionRouter().deleteSession(id);
+
+            assertThat(stops.get()).isEqualTo(1);
         }
     }
 

@@ -23,7 +23,7 @@ import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.queue.QueuedInput;
 import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.SessionId;
-import at.aimon.core.tools.bash.BackgroundBashOwner;
+import at.aimon.core.tools.BackgroundTaskOwner;
 import at.aimon.core.tools.monitor.exception.MonitorRequestException;
 
 @DisplayName("MonitorManager — batching, one queued entry per monitor, endings, ownership and caps")
@@ -31,7 +31,7 @@ class MonitorManagerTest {
 
     private static final AgentRuntimeId RUNTIME = AgentRuntimeId.of("agent:monitor-test");
     private static final SessionId SESSION = SessionId.of("session-1");
-    private static final BackgroundBashOwner OWNER = BackgroundBashOwner.of(RUNTIME, SESSION, null);
+    private static final BackgroundTaskOwner OWNER = BackgroundTaskOwner.of(RUNTIME, SESSION, null);
 
     private MessageQueueManager queue;
     private FakeSourceFactory fake;
@@ -54,7 +54,7 @@ class MonitorManagerTest {
         return MonitorManager.builder(queue).source(fake).batchWindow(Duration.ofMillis(30));
     }
 
-    private MonitorRecord start(MonitorManager target, BackgroundBashOwner owner) {
+    private MonitorRecord start(MonitorManager target, BackgroundTaskOwner owner) {
         return target.start(MonitorRequest.builder().owner(owner).kind(FakeSourceFactory.KIND)
                 .description("errors in app.log").build());
     }
@@ -182,7 +182,7 @@ class MonitorManagerTest {
     void stopIsOwnerScopedAndSilent() throws Exception {
         manager = builder().build();
         final MonitorRecord record = start(manager, OWNER);
-        final BackgroundBashOwner stranger = BackgroundBashOwner.of(RUNTIME, SessionId.of("session-2"), null);
+        final BackgroundTaskOwner stranger = BackgroundTaskOwner.of(RUNTIME, SessionId.of("session-2"), null);
 
         assertThat(manager.stop(stranger, record.getMonitorId())).isEqualTo(MonitorManager.StopOutcome.NOT_FOUND);
         assertThat(manager.stop(OWNER, record.getMonitorId())).isEqualTo(MonitorManager.StopOutcome.STOPPED);
@@ -190,6 +190,25 @@ class MonitorManagerTest {
         Thread.sleep(100);
         assertThat(queue.snapshot()).isEmpty();
         assertThat(fake.stops.get()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("deleting a session stops its monitors silently and leaves other sessions' alone")
+    void deletedSessionStopsItsMonitors() throws Exception {
+        manager = builder().build();
+        final MonitorRecord mine = start(manager, OWNER);
+        final BackgroundTaskOwner other = BackgroundTaskOwner.of(RUNTIME, SessionId.of("session-2"), null);
+        start(manager, other);
+        fake.sinks.get(0).emit("pending");
+
+        assertThat(manager.stopSession(SESSION)).isEqualTo(1);
+
+        assertThat(manager.running(OWNER)).isEmpty();
+        assertThat(manager.running(other)).hasSize(1);
+        assertThat(manager.stop(OWNER, mine.getMonitorId())).isEqualTo(MonitorManager.StopOutcome.NOT_FOUND);
+        Thread.sleep(100);
+        assertThat(queue.snapshot()).isEmpty();
+        assertThat(manager.stopSession(SESSION)).isZero();
     }
 
     @Test
@@ -207,7 +226,7 @@ class MonitorManagerTest {
     @DisplayName("an owner without a session is refused — nothing would read the events")
     void sessionlessOwnerIsRefused() {
         manager = builder().build();
-        final BackgroundBashOwner routine = BackgroundBashOwner.of(RUNTIME, null, ExecutionId.generate());
+        final BackgroundTaskOwner routine = BackgroundTaskOwner.of(RUNTIME, null, ExecutionId.generate());
 
         assertThatThrownBy(() -> start(manager, routine)).isInstanceOf(MonitorRequestException.class)
                 .hasMessageContaining("needs a session");
@@ -233,7 +252,7 @@ class MonitorManagerTest {
 
         assertThatThrownBy(() -> start(manager, OWNER)).isInstanceOf(MonitorRequestException.class)
                 .hasMessageContaining("limit");
-        start(manager, BackgroundBashOwner.of(RUNTIME, SessionId.of("session-2"), null));
+        start(manager, BackgroundTaskOwner.of(RUNTIME, SessionId.of("session-2"), null));
     }
 
     @Test

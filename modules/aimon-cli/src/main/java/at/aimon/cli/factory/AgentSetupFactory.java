@@ -813,7 +813,8 @@ public class AgentSetupFactory {
         // No memory enricher here any more: MemoryAssembly contributes it, so the memory-shaped half of the tool
         // context and the memory tools that read it are decided in one place instead of two.
         final ToolSpec.Builder builder = ToolSpec.builder().workflowToolEnabled(settings.isEnableWorkflow())
-                .workflowRunnerEnabled(settings.isEnableWorkflow() || settings.isEnableWorkflowJs());
+                .workflowRunnerEnabled(settings.isEnableWorkflow() || settings.isEnableWorkflowJs())
+                .monitorEnabled(settings.isEnableMonitor());
         if (graalJsEngines != null) {
             // Core cannot register this tool itself (it must not depend on the aimon-workflow-graaljs impl module),
             // so the assembly layer adds it. Worktree isolation needs nothing here: an isolated step derives its

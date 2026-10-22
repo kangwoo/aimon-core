@@ -24,6 +24,8 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.permission.AllowedTool;
+import at.aimon.core.agent.tool.permission.DefaultToolPermissionValidator;
+import at.aimon.core.agent.tool.permission.PermissionDelegation;
 import at.aimon.core.agent.tool.permission.PermissionSubject;
 import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.shell.ExecutionOptions;
@@ -32,6 +34,7 @@ import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.ShellFeature;
 import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.shell.impl.local.LocalShell;
+import at.aimon.core.tools.BackgroundTaskOwner;
 import at.aimon.core.tools.ToolContextKeys;
 
 @DisplayName("Monitor / MonitorStop tools — forms, the shell source end to end, permissions")
@@ -112,7 +115,7 @@ class MonitorToolTest {
         final ToolResult stopped = stopTool.execute(ToolInput.of(Map.of("monitorId", id)), context);
 
         assertThat(stopped.isSuccess()).as(stopped.getContent()).isTrue();
-        assertThat(manager.running(at.aimon.core.tools.bash.BackgroundBashOwner.of(context))).isEmpty();
+        assertThat(manager.running(BackgroundTaskOwner.of(context))).isEmpty();
         assertThat(stopTool.execute(ToolInput.of(Map.of("monitorId", id)), context).isError()).isTrue();
     }
 
@@ -171,6 +174,24 @@ class MonitorToolTest {
                 .isFalse();
         assertThat(tool.getCustomPermissionRule().isAllowed(ToolInput.of(Map.of("source", "kafka")), context,
                 List.of(AllowedTool.parse("Monitor")))).isTrue();
+    }
+
+    @Test
+    @DisplayName("a command is also judged by the Bash entries; the other forms delegate nothing")
+    void commandDelegatesToBash() {
+        final ToolContext context = ToolContext.empty();
+        assertThat(tool.permissionDelegation(ToolInput.of(Map.of("command", "tail -f a.log")), context))
+                .contains(PermissionDelegation.to("Bash", PermissionSubject.command("tail -f a.log")));
+        assertThat(tool.permissionDelegation(ToolInput.of(Map.of("source", "alarms")), context)).isEmpty();
+
+        final DefaultToolPermissionValidator validator = new DefaultToolPermissionValidator();
+        final List<AllowedTool> allowed = List.of(AllowedTool.parse("Monitor"), AllowedTool.parse("Bash(git:*)"));
+        assertThat(validator
+                .validate(tool, ToolInput.of(Map.of("description", "d", "command", "rm -rf /")), context, allowed)
+                .isAllowed()).isFalse();
+        assertThat(validator
+                .validate(tool, ToolInput.of(Map.of("description", "d", "command", "git log")), context, allowed)
+                .isAllowed()).isTrue();
     }
 
     private static void await(BooleanSupplier condition) {

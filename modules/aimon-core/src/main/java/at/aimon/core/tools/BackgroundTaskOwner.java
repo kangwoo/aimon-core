@@ -1,4 +1,4 @@
-package at.aimon.core.tools.bash;
+package at.aimon.core.tools;
 
 import java.util.Objects;
 import java.util.Optional;
@@ -7,8 +7,6 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.ToolContext;
-import at.aimon.core.tools.InvokingSessionAccess;
-import at.aimon.core.tools.ToolContextKeys;
 
 /**
  * Who a background command belongs to: the runtime that started it, and within that runtime the session it was
@@ -31,15 +29,15 @@ import at.aimon.core.tools.ToolContextKeys;
  * <p>
  * Immutable; thread-safe.
  */
-public final class BackgroundBashOwner {
+public final class BackgroundTaskOwner {
 
-    private static final BackgroundBashOwner NONE = new BackgroundBashOwner(null, null, null);
+    private static final BackgroundTaskOwner NONE = new BackgroundTaskOwner(null, null, null);
 
     private final AgentRuntimeId runtimeId;
     private final SessionId sessionId;
     private final ExecutionId executionId;
 
-    private BackgroundBashOwner(AgentRuntimeId runtimeId, SessionId sessionId, ExecutionId executionId) {
+    private BackgroundTaskOwner(AgentRuntimeId runtimeId, SessionId sessionId, ExecutionId executionId) {
         this.runtimeId = runtimeId;
         this.sessionId = sessionId;
         // A session and an execution are never both the owner: the session wins, so that a context (or a stored
@@ -52,7 +50,7 @@ public final class BackgroundBashOwner {
      *
      * @return the unscoped owner (never null)
      */
-    public static BackgroundBashOwner none() {
+    public static BackgroundTaskOwner none() {
         return NONE;
     }
 
@@ -66,11 +64,11 @@ public final class BackgroundBashOwner {
      * @throws NullPointerException
      *             if context is null
      */
-    public static BackgroundBashOwner of(ToolContext context) {
+    public static BackgroundTaskOwner of(ToolContext context) {
         Objects.requireNonNull(context, "Context cannot be null");
         final SessionId session = context.get(ToolContextKeys.SESSION_ID)
                 .or(() -> InvokingSessionAccess.invokerOf(context)).orElse(null);
-        return new BackgroundBashOwner(context.get(ToolContextKeys.AGENT_RUNTIME_ID).orElse(null), session,
+        return new BackgroundTaskOwner(context.get(ToolContextKeys.AGENT_RUNTIME_ID).orElse(null), session,
                 context.get(ToolContextKeys.EXECUTION_ID).orElse(null));
     }
 
@@ -86,8 +84,8 @@ public final class BackgroundBashOwner {
      *            the execution that started the command, or null for none; ignored when a session is given
      * @return the owner (never null)
      */
-    public static BackgroundBashOwner of(AgentRuntimeId runtimeId, SessionId sessionId, ExecutionId executionId) {
-        return new BackgroundBashOwner(runtimeId, sessionId, executionId);
+    public static BackgroundTaskOwner of(AgentRuntimeId runtimeId, SessionId sessionId, ExecutionId executionId) {
+        return new BackgroundTaskOwner(runtimeId, sessionId, executionId);
     }
 
     /**
@@ -118,7 +116,7 @@ public final class BackgroundBashOwner {
         if (this == o) {
             return true;
         }
-        if (!(o instanceof BackgroundBashOwner that)) {
+        if (!(o instanceof BackgroundTaskOwner that)) {
             return false;
         }
         return Objects.equals(runtimeId, that.runtimeId) && Objects.equals(sessionId, that.sessionId)
@@ -132,7 +130,7 @@ public final class BackgroundBashOwner {
 
     @Override
     public String toString() {
-        return "BackgroundBashOwner{runtime=" + runtimeId + ", session=" + sessionId + ", execution=" + executionId
+        return "BackgroundTaskOwner{runtime=" + runtimeId + ", session=" + sessionId + ", execution=" + executionId
                 + '}';
     }
 }

@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.session.SessionId;
-import at.aimon.core.tools.bash.BackgroundBashOwner;
+import at.aimon.core.tools.BackgroundTaskOwner;
 import at.aimon.core.tools.monitor.exception.MonitorRequestException;
 import at.aimon.core.tools.web.security.SsrfGuard;
 import at.aimon.core.tools.web.security.SsrfGuardConfig;
@@ -31,7 +31,7 @@ import okio.ByteString;
 @DisplayName("WebSocketMonitorSourceFactory — frames to events, endings, URL checks")
 class WebSocketMonitorSourceFactoryTest {
 
-    private static final BackgroundBashOwner OWNER = BackgroundBashOwner.of(AgentRuntimeId.of("agent:ws"),
+    private static final BackgroundTaskOwner OWNER = BackgroundTaskOwner.of(AgentRuntimeId.of("agent:ws"),
             SessionId.of("s"), null);
 
     private MockWebServer server;

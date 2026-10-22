@@ -12,7 +12,7 @@ import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.tools.bash.BackgroundBashOwner;
+import at.aimon.core.tools.BackgroundTaskOwner;
 
 /**
  * Stops a monitor started with {@link MonitorTool}. Only the owner a monitor was started for finds it; for anyone else
@@ -55,7 +55,7 @@ public class MonitorStopTool extends AbstractTool {
         Objects.requireNonNull(context, "Context cannot be null");
         try {
             final String monitorId = input.getRequiredString("monitorId").strip();
-            final BackgroundBashOwner owner = BackgroundBashOwner.of(context);
+            final BackgroundTaskOwner owner = BackgroundTaskOwner.of(context);
             return switch (manager.stop(owner, monitorId)) {
                 case STOPPED -> ToolResult.success("Monitor " + monitorId + " stopped.");
                 case RUNNING_ELSEWHERE -> ToolResult.error("Monitor " + monitorId
@@ -71,7 +71,7 @@ public class MonitorStopTool extends AbstractTool {
         }
     }
 
-    private String notFound(String monitorId, BackgroundBashOwner owner) {
+    private String notFound(String monitorId, BackgroundTaskOwner owner) {
         final List<MonitorRecord> running = manager.running(owner);
         final StringBuilder text = new StringBuilder("No running monitor ").append(monitorId)
                 .append(" — it may already have ended.");

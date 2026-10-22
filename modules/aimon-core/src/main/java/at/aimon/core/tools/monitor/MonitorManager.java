@@ -32,7 +32,8 @@ import at.aimon.core.agent.queue.MessageQueueListener;
 import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.queue.QueuedInput;
 import at.aimon.core.agent.queue.QueuedInputPriority;
-import at.aimon.core.tools.bash.BackgroundBashOwner;
+import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.tools.BackgroundTaskOwner;
 import at.aimon.core.tools.monitor.exception.MonitorRequestException;
 
 /**
@@ -55,9 +56,9 @@ import at.aimon.core.tools.monitor.exception.MonitorRequestException;
  *
  * <p>
  * <b>Endings.</b> A monitor ends when its source ends, when its timeout passes, when it exceeds the rate limit, when it
- * is stopped, or when the manager closes. The first of these wins and the rest are ignored. The first four are told to
- * the model exactly once, after the last buffered events; a stop is not, since the model asked for it, and neither is a
- * shutdown, which leaves no turn to read it.
+ * is stopped, when its session is deleted, or when the manager closes. The first of these wins and the rest are
+ * ignored. The first four are told to the model exactly once, after the last buffered events; a stop is not, since the
+ * model asked for it, and neither are a deleted session or a shutdown, which leave no turn to read it.
  *
  * <p>
  * <b>Lifetime.</b> Application-scoped, like {@link at.aimon.core.tools.bash.BackgroundBashManager}: a monitor outlives
@@ -96,7 +97,8 @@ public final class MonitorManager implements AutoCloseable {
 
     /** How a monitor ended. */
     private enum Ending {
-        COMPLETED(true), FAILED(true), TIMEOUT(true), SUPPRESSED(true), STOPPED(false), SHUTDOWN(false);
+        COMPLETED(true), FAILED(true), TIMEOUT(true), SUPPRESSED(true), STOPPED(false), SHUTDOWN(
+                false), SESSION_DELETED(false);
 
         private final boolean told;
 
@@ -105,7 +107,7 @@ public final class MonitorManager implements AutoCloseable {
         }
     }
 
-    /** What {@link #stop(BackgroundBashOwner, String)} found. */
+    /** What {@link #stop(BackgroundTaskOwner, String)} found. */
     public enum StopOutcome {
         /** The monitor was running here and is now stopped. */
         STOPPED,
@@ -204,7 +206,7 @@ public final class MonitorManager implements AutoCloseable {
     public MonitorRecord start(MonitorRequest request) {
         Objects.requireNonNull(request, "request must not be null");
         ensureOpen();
-        final BackgroundBashOwner owner = request.getOwner();
+        final BackgroundTaskOwner owner = request.getOwner();
         final String sessionId = owner.getSessionId()
                 .orElseThrow(() -> new MonitorRequestException("A monitor needs a session to deliver its events to,"
                         + " and this execution acts for none (a scheduled routine or a detached fork) — it would end"
@@ -263,7 +265,7 @@ public final class MonitorManager implements AutoCloseable {
      *            the monitor id (must not be null)
      * @return what was found
      */
-    public StopOutcome stop(BackgroundBashOwner owner, String monitorId) {
+    public StopOutcome stop(BackgroundTaskOwner owner, String monitorId) {
         Objects.requireNonNull(owner, "owner must not be null");
         Objects.requireNonNull(monitorId, "monitorId must not be null");
         final Running running = monitors.get(monitorId);
@@ -287,13 +289,36 @@ public final class MonitorManager implements AutoCloseable {
     }
 
     /**
+     * Stops every monitor of a session, without telling anyone — the session is gone. Wired to the session router's
+     * deletion event by the stack; it reaches only the monitors of this node, the node that deleted the session.
+     *
+     * @param sessionId
+     *            the deleted session (must not be null)
+     * @return how many monitors were stopped
+     */
+    public int stopSession(SessionId sessionId) {
+        Objects.requireNonNull(sessionId, "sessionId must not be null");
+        int stopped = 0;
+        for (Running running : List.copyOf(monitors.values())) {
+            if (running.record.getOwner().getSessionId().filter(sessionId::equals).isPresent()) {
+                running.end(Ending.SESSION_DELETED, null);
+                stopped++;
+            }
+        }
+        if (stopped > 0) {
+            log.debug("Stopped {} monitor(s) of deleted session {}", stopped, sessionId);
+        }
+        return stopped;
+    }
+
+    /**
      * Lists the caller's monitors running on this node.
      *
      * @param owner
      *            the caller (must not be null)
      * @return their records, oldest first
      */
-    public List<MonitorRecord> running(BackgroundBashOwner owner) {
+    public List<MonitorRecord> running(BackgroundTaskOwner owner) {
         Objects.requireNonNull(owner, "owner must not be null");
         final List<MonitorRecord> result = new ArrayList<>();
         for (Running running : monitors.values()) {
@@ -580,7 +605,7 @@ public final class MonitorManager implements AutoCloseable {
                 case TIMEOUT -> "timed out after " + describe(timeout);
                 case SUPPRESSED -> "stopped — more than " + maxEventsPerMinute
                         + " events in a minute. Narrow its filter and start it again";
-                case STOPPED, SHUTDOWN -> "stopped";
+                case STOPPED, SHUTDOWN, SESSION_DELETED -> "stopped";
             };
             return header() + " ended: " + what + ". " + plural(received, "event") + " in total.";
         }
