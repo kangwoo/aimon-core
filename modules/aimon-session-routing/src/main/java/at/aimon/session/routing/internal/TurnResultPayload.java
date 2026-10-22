@@ -288,10 +288,22 @@ final class TurnResultPayload {
              * <p>
              * A node one release behind decodes this through {@link Code#parse}, which reports an unknown outcome as
              * {@code FAILED} rather than throwing. That lands on the wrong side of the distinction above, and it is
-             * still the right trade: nothing branches on the code (only the message text differs), the caller is
-             * woken either way, and the alternative for that node is no answer at all until the forward deadline.
+             * still the right trade: a node that reads {@code FAILED} only loses the "not run" proof (its caller gets a
+             * plain failure instead of {@code TurnNotRunException}), the caller is woken either way, and the
+             * alternative
+             * for that node is no answer at all until the forward deadline.
              */
-            UNREADABLE;
+            UNREADABLE,
+            /**
+             * A release or delete of the session removed this message from the inbox before any node collected it, so
+             * no node will ever run it. Announced by the node that removed it, which knows exactly what it removed: the
+             * purge collects the inbox instead of deleting it blind (routing.md §11.3).
+             *
+             * <p>
+             * A node one release behind reads it as {@code FAILED}, the safe direction: it loses the proof, not the
+             * answer.
+             */
+            PURGED;
 
             static Code parse(String raw) {
                 for (Code code : values()) {

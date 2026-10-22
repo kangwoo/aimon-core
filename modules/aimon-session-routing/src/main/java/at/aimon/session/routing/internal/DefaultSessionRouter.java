@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Deque;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -16,6 +17,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.StringJoiner;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -83,6 +85,7 @@ import at.aimon.session.routing.LiveSessionOpener;
 import at.aimon.session.routing.SessionRouter;
 import at.aimon.session.routing.SubmitDisposition;
 import at.aimon.session.routing.SubmitRequest;
+import at.aimon.session.routing.exception.TurnNotRunException;
 import at.aimon.session.routing.metrics.SessionMetrics;
 
 /**
@@ -121,6 +124,22 @@ public final class DefaultSessionRouter implements SessionRouter {
      * shutdown when no live session context is available. Same intent as {@link #WEB_REJECTED_SENTINEL}.
      */
     private static final AgentRuntimeId WEB_EVICTED_SENTINEL = AgentRuntimeId.of("agent:web-evicted");
+
+    /** {@code EVICT} payload key: the turns the evicting node's purge removed, space-separated. */
+    static final String PURGED_TURNS_KEY = "purgedTurns";
+
+    /** How many turn ids an {@code EVICT} names at most; the rest rely on their own {@code PURGED} answers. */
+    private static final int MAX_EVICT_TURNS = 256;
+
+    /** Collect batches a purge takes before it purges the remainder blind. */
+    private static final int PURGE_COLLECT_BATCHES = 8;
+
+    /**
+     * How many removed messages a purge answers one by one. Each answer is a reservation discard and a publish, made
+     * while a delete holds the gate and the lease; past this the purge stops collecting and purges blind, and the rest
+     * are failed without the proof — the old behaviour, and the safe direction.
+     */
+    private static final int MAX_PURGE_ANSWERS = 256;
 
     /**
      * Holder election, the durable record, and the agent binding behind one door. Node-scoped — see
@@ -513,7 +532,8 @@ public final class DefaultSessionRouter implements SessionRouter {
             // and no inbox entry to point at, so the answer can only arrive addressed by the shared idempotency key.
             // The disposition reports the pending forward's turn id, which is this attempt's own id unless an earlier
             // submission of the same key is already outstanding on this node, in which case both share its future.
-            final PendingForward pending = registerForward(convId, turnId, request.getIdempotencyKey().orElse(null));
+            final PendingForward pending = registerForward(convId, turnId, request.getIdempotencyKey().orElse(null),
+                    false);
             final SubmitDisposition outcome = SubmitDisposition.forwarded(pending.turnId, idem.queuedSyntheticId,
                     pending.future);
             recordOutcome(outcome);
@@ -1322,8 +1342,9 @@ public final class DefaultSessionRouter implements SessionRouter {
                 // the at-most-once inbox and no successor will ever collect them. Their submitters are told the node
                 // stopped being the holder, which is the one answer that distinguishes "resubmit this, it never ran"
                 // from a genuine failure.
-                final IllegalStateException notHolder = new IllegalStateException("node " + nodeId
-                        + " stopped holding session " + convId.value() + " before this message could run");
+                final IllegalStateException notHolder = new TurnNotRunException(null,
+                        TurnNotRunException.Reason.NOT_HOLDER, "node " + nodeId + " stopped holding session "
+                                + convId.value() + " before this message could run");
                 if (selfMessage != null && selfFailure == null && pendingQueue.contains(selfMessage)) {
                     selfFailure = notHolder;
                 }
@@ -1951,7 +1972,24 @@ public final class DefaultSessionRouter implements SessionRouter {
         }
         publishTurnOutcome(convId, TurnResultPayload.toFailurePayload(turnId, idempotencyKey, code, message));
         resolveForward(turnId, idempotencyKey, null,
-                new IllegalStateException(describeTurn(turnId, idempotencyKey) + " " + code + ": " + message));
+                turnFailure(turnId, describeTurn(turnId, idempotencyKey) + " " + code + ": " + message, code));
+    }
+
+    /**
+     * The exception a caller waiting on a failed turn receives: {@link TurnNotRunException} when {@code code} proves
+     * that no node ran it, a plain {@link IllegalStateException} otherwise (routing.md §11.3).
+     */
+    private static IllegalStateException turnFailure(TurnId turnId, String message,
+            TurnResultPayload.Failure.Code code) {
+        final TurnNotRunException.Reason notRun = switch (code) {
+            case PURGED -> TurnNotRunException.Reason.PURGED;
+            case NOT_HOLDER -> TurnNotRunException.Reason.NOT_HOLDER;
+            case UNREADABLE -> TurnNotRunException.Reason.UNREADABLE;
+            case REJECTED -> TurnNotRunException.Reason.REJECTED;
+            // FAILED was attempted; HOLDER_LOST may have run partly or fully before its node died.
+            case FAILED, HOLDER_LOST -> null;
+        };
+        return notRun != null ? new TurnNotRunException(turnId, notRun, message) : new IllegalStateException(message);
     }
 
     /**
@@ -2138,7 +2176,7 @@ public final class DefaultSessionRouter implements SessionRouter {
         // Registered before the message exists anywhere a peer can see it. The reverse order loses the race it looks
         // immune to: an inbox delivery followed by a peer that drains and announces within microseconds would resolve a
         // turn this node has not started waiting for yet, and the announcement does not come twice.
-        final PendingForward pending = registerForward(convId, turnId, request.getIdempotencyKey().orElse(null));
+        final PendingForward pending = registerForward(convId, turnId, request.getIdempotencyKey().orElse(null), true);
         final InboundMessage message = InboundMessage.builder().sessionId(convId).agentRef(request.getAgentRef())
                 .contextDiscriminator(request.getContextDiscriminator().orElse(null)).userInput(request.getUserInput())
                 .priority(request.getPriority()).turnId(pending.turnId)
@@ -2170,10 +2208,17 @@ public final class DefaultSessionRouter implements SessionRouter {
      * Start waiting for a turn this node will not run itself.
      *
      * <p>
-     * Keyed by turn id, and additionally by idempotency key when there is one. If a submission with that key is already
-     * outstanding here, its entry is <em>reused</em> rather than replaced: the same key means the same input hash and
-     * so
-     * the same answer, and two entries would leave whichever one lost the index unresolvable.
+     * Keyed by turn id, and additionally by idempotency key when there is one. A submission collapsed onto an attempt
+     * in
+     * flight <em>reuses</em> an entry already outstanding here for its key: the same key means the same input hash and
+     * so the same answer, and two entries would leave whichever one lost the index unresolvable.
+     *
+     * <p>
+     * A submission that queues a message of its own never adopts one. It reserved the key afresh, so whatever was
+     * outstanding under it here is an earlier attempt the store no longer knows — and sharing that attempt's turn id
+     * would put this message in the inbox under it, where a late answer for the earlier attempt (a {@code PURGED} that
+     * freed the key before it arrived) would claim "not run" for a message that is queued and will run. It takes the
+     * key index over instead; the earlier attempt stays reachable by its turn id.
      *
      * @param sessionId
      *            the session the turn belongs to (so eviction and delete can fail it)
@@ -2182,15 +2227,24 @@ public final class DefaultSessionRouter implements SessionRouter {
      * @param idempotencyKey
      *            the submission's key, or {@code null} when it had none — such a forward is resolvable only by the
      *            {@code TURN_RESULT} rail or the deadline, because there is nothing durable to poll
+     * @param ownsMessage
+     *            whether the submission queues a message of its own under {@code turnId}, rather than collapsing onto
+     *            an
+     *            attempt in flight
      * @return the entry to wait on (never null)
      */
-    private PendingForward registerForward(SessionId sessionId, TurnId turnId, String idempotencyKey) {
+    private PendingForward registerForward(SessionId sessionId, TurnId turnId, String idempotencyKey,
+            boolean ownsMessage) {
         final PendingForward candidate = new PendingForward(sessionId, turnId, idempotencyKey,
-                System.nanoTime() + idempotencyForwardTtl.toNanos());
+                System.nanoTime() + idempotencyForwardTtl.toNanos(), ownsMessage);
         if (idempotencyKey != null) {
-            final PendingForward existing = forwardsByKey.putIfAbsent(idempotencyKey, candidate);
-            if (existing != null) {
-                return existing;
+            if (ownsMessage) {
+                forwardsByKey.put(idempotencyKey, candidate);
+            } else {
+                final PendingForward existing = forwardsByKey.putIfAbsent(idempotencyKey, candidate);
+                if (existing != null) {
+                    return existing;
+                }
             }
         }
         forwardsByTurn.put(turnId, candidate);
@@ -2340,9 +2394,19 @@ public final class DefaultSessionRouter implements SessionRouter {
         if (byTurn != null) {
             applyOutcome(byTurn, result, failure);
         }
-        if (byKey != null && byKey != byTurn) {
+        if (byKey != null && byKey != byTurn && !anotherAttempt(byKey, turnId, failure)) {
             applyOutcome(byKey, result, failure);
         }
+    }
+
+    /**
+     * Whether a failure announced for {@code turnId} belongs to a different attempt than {@code byKey}, found by the
+     * shared key only: an entry that queued a message of its own, under a turn id other than the announced one. Its own
+     * message has its own outcome to come, so another attempt's failure — "not run" least of all — is not its answer. A
+     * result is still shared: the same key means the same input, so it is the cached answer either way.
+     */
+    private static boolean anotherAttempt(PendingForward byKey, TurnId turnId, Throwable failure) {
+        return failure != null && turnId != null && byKey.ownsMessage && !turnId.equals(byKey.turnId);
     }
 
     private void applyOutcome(PendingForward pending, AgentExecutionResult result, Throwable failure) {
@@ -2402,10 +2466,97 @@ public final class DefaultSessionRouter implements SessionRouter {
     }
 
     /**
+     * Empties {@code sessionId}'s inbox and answers every message it removed as {@code PURGED} — "not run", which only
+     * the node that removed the message can say (routing.md §11.3).
+     *
+     * <p>
+     * It collects rather than calling {@link SessionInbox#purge}: {@code collect} removes atomically and returns what
+     * it
+     * removed, which is exactly the proof a blind delete throws away. A message a holder collects meanwhile is not in
+     * the result — it may run — and is left to the ordinary failure. The loop is bounded, in batches and in answers
+     * ({@link #MAX_PURGE_ANSWERS}); whatever it leaves behind is purged blind and failed without the proof.
+     *
+     * @param sessionId
+     *            the session whose inbox to empty
+     * @param reason
+     *            the detail each removed turn's caller receives
+     * @return the turn ids the purge removed, for the {@code EVICT} (never null)
+     */
+    private Set<TurnId> purgeAnnouncing(SessionId sessionId, String reason) {
+        final List<InboundMessage> removed = new ArrayList<>();
+        final List<UnreadableEntry> unreadable = new ArrayList<>();
+        try {
+            for (int batch = 0; batch < PURGE_COLLECT_BATCHES
+                    && removed.size() + unreadable.size() < MAX_PURGE_ANSWERS; batch++) {
+                final CollectedBatch collected = inbox.collect(sessionId, QueuedInputPriority.LATER);
+                if (collected.getMessages().isEmpty() && collected.getUnreadable().isEmpty()) {
+                    break;
+                }
+                removed.addAll(collected.getMessages());
+                unreadable.addAll(collected.getUnreadable());
+            }
+            inbox.purge(sessionId);
+        } catch (Exception e) {
+            log.warn("Inbox purge threw for session {}: {}", sessionId, e.toString());
+        }
+        final Set<TurnId> turns = new HashSet<>();
+        for (InboundMessage message : removed) {
+            message.getTurnId().ifPresent(turns::add);
+            announceTurnFailure(sessionId, message.getTurnId().orElse(null), message.getIdempotencyKey().orElse(null),
+                    TurnResultPayload.Failure.Code.PURGED, reason);
+        }
+        // Removed too, and equally never to run; answered the way a drain answers one.
+        unreadable.forEach(entry -> announceUnreadableEntry(sessionId, entry));
+        return turns;
+    }
+
+    /** The {@code EVICT} payload: the reason, and the turns the purge removed (at most {@link #MAX_EVICT_TURNS}). */
+    private static Map<String, Object> evictPayload(Set<TurnId> purged) {
+        if (purged.isEmpty()) {
+            return Map.of("reason", InterruptReason.SESSION_RELEASED.name());
+        }
+        // A flat string, like every payload value (routing.md §6.3). Turns past the cap are still answered by their own
+        // PURGED announcements; the list only spares them from depending on signal order.
+        final StringJoiner joined = new StringJoiner(" ");
+        purged.stream().limit(MAX_EVICT_TURNS).forEach(turn -> joined.add(turn.value()));
+        return Map.of("reason", InterruptReason.SESSION_RELEASED.name(), PURGED_TURNS_KEY, joined.toString());
+    }
+
+    private static Set<TurnId> parsePurgedTurns(Object raw) {
+        if (!(raw instanceof String joined) || joined.isBlank()) {
+            return Set.of();
+        }
+        final Set<TurnId> turns = new HashSet<>();
+        for (String value : joined.trim().split(" +")) {
+            try {
+                turns.add(TurnId.of(value));
+            } catch (RuntimeException ignored) {
+                // A malformed entry proves nothing; its forward falls through to the plain failure.
+            }
+        }
+        return turns;
+    }
+
+    /** Fails, as not run, this node's forwards for {@code sessionId} whose turn a peer's purge removed. */
+    private void failPurgedForwards(SessionId sessionId, Set<TurnId> purged, String reason) {
+        if (purged.isEmpty()) {
+            return;
+        }
+        for (PendingForward pending : forwardsByTurn.values()) {
+            if (pending.sessionId.equals(sessionId) && purged.contains(pending.turnId)) {
+                failForward(pending,
+                        new TurnNotRunException(pending.turnId, TurnNotRunException.Reason.PURGED, reason));
+            }
+        }
+    }
+
+    /**
      * Fail every forward outstanding for one session. Called when the session goes away underneath the
-     * waiting callers — a local release or delete, or the {@code EVICT} that tells this node a peer did one. The queued
-     * message is purged with the inbox in all three cases, so no holder will ever run it and the future would otherwise
-     * sit until the forward deadline.
+     * waiting callers — a local release or delete, or the {@code EVICT} that tells this node a peer did one — after the
+     * forwards proven not run were answered as such ({@link #purgeAnnouncing}, {@link #failPurgedForwards}). What is
+     * left may have been collected by a holder and may have run, so it is failed with a plain
+     * {@link IllegalStateException}: the session is going away and the future would otherwise sit until the forward
+     * deadline, but nothing here can say the input did not run.
      */
     private void failForwardsFor(SessionId sessionId, String reason) {
         for (PendingForward pending : forwardsByTurn.values()) {
@@ -2424,14 +2575,17 @@ public final class DefaultSessionRouter implements SessionRouter {
         private final TurnId turnId;
         private final String idempotencyKey;
         private final long deadlineNanos;
+        private final boolean ownsMessage;
         private final CompletableFuture<AgentExecutionResult> future = new CompletableFuture<>();
         private volatile ScheduledFuture<?> pollTask;
 
-        private PendingForward(SessionId sessionId, TurnId turnId, String idempotencyKey, long deadlineNanos) {
+        private PendingForward(SessionId sessionId, TurnId turnId, String idempotencyKey, long deadlineNanos,
+                boolean ownsMessage) {
             this.sessionId = sessionId;
             this.turnId = turnId;
             this.idempotencyKey = idempotencyKey;
             this.deadlineNanos = deadlineNanos;
+            this.ownsMessage = ownsMessage;
         }
     }
 
@@ -2638,11 +2792,15 @@ public final class DefaultSessionRouter implements SessionRouter {
                 // most one extra prompt.
                 purgeSessionApprovals(convId);
                 statusProjection.remove(convId);
-                // The peer that evicted also purged the inbox, so anything this node forwarded there is gone and no
-                // holder will ever run it. Fail those callers here rather than leaving them to their deadlines, and
-                // drop the doorbell notice for the same reason: it announces messages that peer has already removed.
-                failForwardsFor(convId, "session " + convId.value() + " was released or deleted on node "
-                        + signal.getOriginNodeId() + " before this turn ran");
+                // The peer that evicted also emptied the inbox. Fail this node's callers here rather than leaving them
+                // to their deadlines — as not run where that peer's purge removed their message, plainly where a holder
+                // may have collected it first — and drop the doorbell notice: it announces messages already removed.
+                final String evicted = "session " + convId.value() + " was released or deleted on node "
+                        + signal.getOriginNodeId() + " before this turn ran";
+                // The turns that peer's purge removed did not run, and it says which: the same answer its PURGED
+                // announcements carry, here too so it does not depend on which of the two signals arrives first.
+                failPurgedForwards(convId, parsePurgedTurns(signal.getPayload().get(PURGED_TURNS_KEY)), evicted);
+                failForwardsFor(convId, evicted);
                 forgetDoorbell(convId);
                 emitTerminalInterrupt(convId, reason);
                 eventPublisher.complete(convId);
@@ -2676,8 +2834,9 @@ public final class DefaultSessionRouter implements SessionRouter {
             return;
         }
         final String detail = decoded.failure().map(f -> f.code() + ": " + f.message()).orElse("no result");
-        resolveForward(turnId, idempotencyKey, null,
-                new IllegalStateException(describeTurn(turnId, idempotencyKey) + " " + detail));
+        final String message = describeTurn(turnId, idempotencyKey) + " " + detail;
+        resolveForward(turnId, idempotencyKey, null, decoded.failure().map(f -> turnFailure(turnId, message, f.code()))
+                .orElseGet(() -> new IllegalStateException(message)));
     }
 
     @Override
@@ -2716,12 +2875,11 @@ public final class DefaultSessionRouter implements SessionRouter {
             }
         }
         sessionCache.evict(sessionId);
-        try {
-            inbox.purge(sessionId);
-        } catch (Exception e) {
-            log.warn("Inbox purge threw for session {}: {}", sessionId, e.toString());
-        }
-        // After the purge, so the messages backing these futures are provably gone rather than racing the purge.
+        final Set<TurnId> purged = purgeAnnouncing(sessionId,
+                "session " + sessionId.value() + " was released on node " + nodeId + " before this turn ran");
+        // After the purge, so the messages backing these futures are provably gone rather than racing the purge. What
+        // the purge removed was answered "not run" above; whatever is left here may have been collected — and run —
+        // by a holder, so it is failed without that claim.
         failForwardsFor(sessionId, "session " + sessionId.value() + " was released before this turn ran");
         purgeSessionApprovals(sessionId);
         forgetDoorbell(sessionId);
@@ -2735,7 +2893,7 @@ public final class DefaultSessionRouter implements SessionRouter {
             }
         }
         signalBus.publish(SessionSignal.builder().sessionId(sessionId).kind(SessionSignal.SignalKind.EVICT)
-                .originNodeId(nodeId).payload(Map.of("reason", InterruptReason.SESSION_RELEASED.name())).build());
+                .originNodeId(nodeId).payload(evictPayload(purged)).build());
     }
 
     @Override
@@ -2768,13 +2926,11 @@ public final class DefaultSessionRouter implements SessionRouter {
             // What the listeners are told the record carried. Read before the row goes, because afterwards there is
             // nothing to read, and only when somebody is listening: the read is the whole record, transcript included.
             SessionRecordView recordBeforeDelete = null;
+            Set<TurnId> purged;
             try {
                 sessionCache.evict(sessionId);
-                try {
-                    inbox.purge(sessionId);
-                } catch (Exception e) {
-                    log.warn("Inbox purge threw for session {}: {}", sessionId, e.toString());
-                }
+                purged = purgeAnnouncing(sessionId,
+                        "session " + sessionId.value() + " was deleted on node " + nodeId + " before this turn ran");
                 failForwardsFor(sessionId, "session " + sessionId.value() + " was deleted before this turn ran");
                 // Before the repository row goes: if the delete fails we have dropped approvals for a session that
                 // still exists (one extra prompt), whereas purging afterwards would leak them whenever delete throws.
@@ -2804,8 +2960,7 @@ public final class DefaultSessionRouter implements SessionRouter {
                     }
                 }
                 signalBus.publish(SessionSignal.builder().sessionId(sessionId).kind(SessionSignal.SignalKind.EVICT)
-                        .originNodeId(nodeId).payload(Map.of("reason", InterruptReason.SESSION_RELEASED.name()))
-                        .build());
+                        .originNodeId(nodeId).payload(evictPayload(purged)).build());
             } finally {
                 try {
                     // Decided by recordDeleted, not by reaching the end of the block: once the row is gone the

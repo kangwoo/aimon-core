@@ -53,6 +53,25 @@ default — so the agent reacts while nobody is typing. Opt-in: `SessionSpec.wak
   bean) fills in the `LiveSessionOptions` / `OpenAttributes` a wake turn reopening an evicted session should carry.
 - **Not in the CLI yet.**
 
+### Added: telling a turn that never ran from one that may have (`TurnNotRunException`)
+
+A forwarded turn's failure now says when no node ran it, so its input can be submitted again without running twice.
+Design: `docs/design/session/routing.md` §11.3.
+
+- **`at.aimon.session.routing.exception.TurnNotRunException`** (new, extends `IllegalStateException`) with a `Reason`:
+  `PURGED`, `NOT_HOLDER`, `UNREADABLE`, `REJECTED`. Every other failure stays a plain `IllegalStateException` — it may
+  have run.
+- **A release or delete knows what it purged**: it collects the inbox until empty (atomic removal that returns what it
+  removed) instead of purging blind, answers each removed message with the new `TURN_RESULT` code `PURGED` (after giving
+  its idempotency key back), and names those turns in the `EVICT` payload (`purgedTurns`) so the answer does not depend
+  on signal order. No SPI change. A node one release behind reads `PURGED` as `FAILED` and loses only the proof.
+- **A retry under a freed key is its own attempt**: a submission that queues its own message no longer adopts an earlier
+  forward outstanding for its key (it would have queued under that attempt's turn id, and a late `PURGED` would have
+  claimed "not run" for it), and a failure announced for another turn no longer reaches it by key.
+- **Waking idle sessions recovers its notifications** when a wake's turn did not run: they go back into the queue and the
+  session is tried again after the retry delay; the wake stays counted against the caps, so a refusal that repeats stops
+  there (open item W-3 of the idle-wake design).
+
 ### Added: line-by-line shell streaming
 
 - **`ShellLineListener#onStderrLine`** (default: nothing) — standard error streams too. `LocalShell` follows its stderr

@@ -525,7 +525,8 @@ enum Kind { EXECUTED_LOCALLY, FORWARDED }
 
 두 종류 모두 `TurnId` 와 `CompletionStage<AgentExecutionResult>` 를 필수로 나른다. `FORWARDED` 만 `Optional<InboundMessageId>` 를 더 갖는다.
 전달된 future 는 F7 의 두 경로 중 하나로 완결되고, 다음 경우 예외로 완결된다 — agent 충돌, 세션 축출·삭제, 홀더 유실, 인박스가 그 메시지를
-읽지 못함([`inbox.md`](inbox.md) §4), forward TTL 경과(기본 5분).
+읽지 못함([`inbox.md`](inbox.md) §4), forward TTL 경과(기본 5분). 그중 아무 노드도 돌리지 않았음이 증명되는 것은
+`TurnNotRunException` 이다(§11.3).
 
 이 타입은 `at.aimon.core.agent.session.SubmitOutcome` 과 **의도적으로 다르다.** 후자는 `EXECUTED`/`QUEUED` 로 한 라이브 세션 안에서의
 즉시성을 말하고, 이쪽은 클러스터에서 어느 노드가 돌리는지를 말한다. 축이 다르므로 한 타입으로 겸하면 둘 다 흐려진다.
@@ -539,6 +540,38 @@ enum Kind { EXECUTED_LOCALLY, FORWARDED }
 실패 코드는 **전방 호환**이다. 모르는 `Failure.Code` 이름은 메시지를 보존한 채 `FAILED` 로 디코드한다. 롤링 배포에서 덜 정확한 이유로
 열화될 뿐 시그널이 통째로 드롭되지 않는다. `SignalKind.valueOf` 가 던지는 것과 정반대의 선택이고, 이유는 여기서 잃는 것이 호출자의
 future 이기 때문이다.
+
+---
+
+### 11.3 돌지 않았다는 증명 — `TurnNotRunException`
+
+전달된 턴이 실패했을 때 호출자가 가장 알고 싶은 것은 "다시 보내도 되는가" 다. 대부분의 실패는 그것을 말하지 못한다 — 데드라인,
+예약 소실, 홀더 유실은 입력이 어딘가에서 돌았거나 도는 중일 가능성을 남긴다. 그래서 실패는 둘로 나뉜다.
+
+| 예외 | 언제 | 근거 |
+|---|---|---|
+| `TurnNotRunException` (`at.aimon.session.routing.exception`, `IllegalStateException` 의 하위 타입) | `PURGED` — 릴리스·삭제가 인박스에서 그 메시지를 지움 · `NOT_HOLDER` — 꺼낸 노드가 셧다운 유예를 넘겨 시작하지 못함 · `UNREADABLE` — 꺼낸 노드가 디코드하지 못함 · `REJECTED` — 홀더가 agent 충돌로 거절 | 메시지를 손에 쥔 노드가 직접 말한다 |
+| `IllegalStateException` | 그 밖의 전부 — `FAILED`(시도했고 던짐), `HOLDER_LOST`, forward TTL, 예약 소실, 이미 수거된 메시지의 축출, 셧다운 | 돌았을 수 있다 |
+
+**퍼지는 지운 것을 안다.** 릴리스·삭제는 `SessionInbox.purge` 대신 `collect(id, LATER)` 를 빌 때까지 부르고(최대 8 배치, 256 건), 남은
+것만 `purge` 한다. 상한이 있는 이유는 지운 메시지마다 예약 삭제와 발행이 따르고, 삭제는 그동안 턴 게이트와 리스를 쥐고 있기 때문이다. 상한을
+넘긴 나머지는 예전처럼 증명 없이 실패한다 — 안전한 쪽이다. 읽을 수 없는 항목도 지운 것이므로 드레인과 같이 `UNREADABLE` 로 알린다. `collect` 는 원자적으로 지우면서 지운 것을 돌려주므로, 그 결과가 곧 "아무도 돌리지 않을 메시지" 의 목록이다. SPI 는 바뀌지
+않는다. 같은 순간 홀더가 수거한 메시지는 결과에 없고, 돌았을 수 있으므로 증명 없이 실패한다.
+
+**두 길로 알린다.** 지운 메시지마다 퍼지한 노드가 `PURGED` 를 `TURN_RESULT` 로 알리고(멱등 예약을 먼저 지워 같은 키로 곧바로 재시도할 수
+있게 한다), `EVICT` 페이로드의 `purgedTurns`(공백으로 구분한 턴 id, 최대 256개)에도 싣는다. 받는 노드는 그 목록에 있는 자기 forward 를
+`TurnNotRunException` 으로, 나머지를 일반 실패로 끝낸다. 둘 중 무엇이 먼저 도착해도 같은 답이 나도록 두 번 싣는다 — 시그널 순서에 기대지
+않는다.
+
+**같은 키의 새 시도는 제 턴을 갖는다.** `PURGED` 는 예약을 먼저 지우고 나서 알려지므로, 그 사이 같은 키로 다시 제출하면 새 예약을 얻고
+제 메시지를 인박스에 넣는다. 이전에는 그 노드에 남아 있던 이전 시도의 forward 를 키로 넘겨받아 **이전 턴 id 로** 메시지를 넣었고, 늦게 도착한
+`PURGED` 가 대기 중인 그 메시지에 "돌지 않았다" 를 붙였다. 이제 제 메시지를 넣는 제출은 기존 항목을 넘겨받지 않고 제 턴 id 를 쓰며, 다른
+턴 id 로 알려진 실패는 제 메시지를 가진 항목에 키만으로 닿지 않는다. 진행 중인 시도에 합쳐지는 재시도(`alreadyInFlight`)만 키로 넘겨받는다.
+
+**롤링 배포.** 이전 빌드는 모르는 코드 `PURGED` 를 `FAILED` 로 읽고 `purgedTurns` 를 무시한다. 그 노드의 호출자는 증명만 잃고 답은 받는다
+— 잘못된 쪽(돌지 않았는데 돌았을 수 있다고 함)으로만 열화하고, 반대 방향(돌았는데 돌지 않았다고 함)은 일어나지 않는다.
+
+쓰는 곳: 쉬는 세션 깨우기는 이 예외를 받으면 알림을 큐에 되돌린다([`idle-wake.md`](idle-wake.md) §5).
 
 ---
 

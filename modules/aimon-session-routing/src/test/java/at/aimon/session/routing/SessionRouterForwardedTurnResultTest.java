@@ -20,6 +20,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentExecutionResult;
+import at.aimon.core.agent.queue.QueuedInputPriority;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.idempotency.IdempotencyEntry;
 import at.aimon.core.agent.session.idempotency.IdempotencyStore;
@@ -36,6 +37,7 @@ import at.aimon.core.agent.session.store.SessionLeaseStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.session.store.SessionRecordView;
 import at.aimon.core.base.Principal;
+import at.aimon.session.routing.exception.TurnNotRunException;
 import at.aimon.session.routing.fixture.RequestFixtures;
 import at.aimon.session.routing.fixture.TestLiveSession;
 import at.aimon.session.routing.fixture.TestManagerHarness;
@@ -143,6 +145,7 @@ class SessionRouterForwardedTurnResultTest {
         failWhenReady(session, new RuntimeException("boom"));
 
         assertThat(awaitFailure(forwarded.getFuture())).isInstanceOf(IllegalStateException.class)
+                .as("attempted and threw: not a not-run").isNotInstanceOf(TurnNotRunException.class)
                 .hasMessageContaining("FAILED").hasMessageContaining("boom")
                 .hasMessageContaining(forwarded.getTurnId().value());
         assertThat(local.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
@@ -244,7 +247,7 @@ class SessionRouterForwardedTurnResultTest {
 
         completeWhenReady(session, TestLiveSession.ok("first-done"));
 
-        assertThat(awaitFailure(forwarded.getFuture())).isInstanceOf(IllegalStateException.class)
+        assertThat(awaitFailure(forwarded.getFuture())).isInstanceOf(TurnNotRunException.class)
                 .hasMessageContaining("REJECTED").hasMessageContaining("alpha").hasMessageContaining("beta");
         assertThat(local.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
                 .isEqualTo("first-done");
@@ -269,9 +272,118 @@ class SessionRouterForwardedTurnResultTest {
 
             harness.manager().releaseSession(id);
 
-            assertThat(awaitFailure(forwarded.getFuture())).isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("was released");
+            final Throwable failure = awaitFailure(forwarded.getFuture());
+            assertThat(failure).isInstanceOf(TurnNotRunException.class).hasMessageContaining("was released");
+            assertThat(((TurnNotRunException) failure).getReason()).isEqualTo(TurnNotRunException.Reason.PURGED);
+            assertThat(((TurnNotRunException) failure).getTurnId()).contains(forwarded.getTurnId());
             assertThat(inbox.isEmpty(id)).as("the message backing that future is provably gone").isTrue();
+        } finally {
+            leaseStore.release(outsider);
+        }
+    }
+
+    @Test
+    @DisplayName("a forward whose message was already collected is failed on release without the not-run claim")
+    void releaseDoesNotClaimNotRunForACollectedMessage() throws Exception {
+        final TestManagerHarness harness = node("node-A");
+        final SessionId id = SessionId.of("c-fwd-6b");
+
+        final SessionLease outsider = leaseStore.tryAcquire(id, "outsider", Duration.ofSeconds(30)).orElseThrow();
+        try {
+            final SubmitDisposition forwarded = harness.manager().submit(RequestFixtures.submit(id, "alpha", "queued"));
+            assertThat(forwarded.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+            // The outside holder collects it: from here only that holder can say whether it ran.
+            assertThat(inbox.collect(id, QueuedInputPriority.LATER).getMessages()).hasSize(1);
+
+            harness.manager().releaseSession(id);
+
+            assertThat(awaitFailure(forwarded.getFuture())).isInstanceOf(IllegalStateException.class)
+                    .isNotInstanceOf(TurnNotRunException.class).hasMessageContaining("was released");
+        } finally {
+            leaseStore.release(outsider);
+        }
+    }
+
+    @Test
+    @DisplayName("a purged keyed message gives its idempotency key back, so the same key can be submitted again")
+    void purgeDiscardsTheReservation() throws Exception {
+        final TestManagerHarness harness = node("node-A");
+        final SessionId id = SessionId.of("c-fwd-6c");
+
+        final SessionLease outsider = leaseStore.tryAcquire(id, "outsider", Duration.ofSeconds(30)).orElseThrow();
+        try {
+            final SubmitDisposition forwarded = harness.manager().submit(keyed(id, "queued"));
+            assertThat(forwarded.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+            assertThat(idempotency.find(KEY)).isPresent();
+
+            harness.manager().releaseSession(id);
+
+            assertThat(awaitFailure(forwarded.getFuture())).isInstanceOf(TurnNotRunException.class);
+            assertThat(idempotency.find(KEY)).as("a caller told 'not run' must be able to retry under its key")
+                    .isEmpty();
+        } finally {
+            leaseStore.release(outsider);
+        }
+    }
+
+    @Test
+    @DisplayName("a retry under a freed key is its own attempt: a late PURGED for the earlier one does not reach it")
+    void latePurgedDoesNotReachARetryUnderTheSameKey() throws Exception {
+        final TestManagerHarness harness = node("node-B");
+        final SessionId id = SessionId.of("c-fwd-6e");
+
+        final SessionLease outsider = leaseStore.tryAcquire(id, "outsider", Duration.ofSeconds(30)).orElseThrow();
+        try {
+            final SubmitDisposition first = harness.manager().submit(keyed(id, "queued"));
+            assertThat(first.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+            // A peer's purge, before its signals reach this node: the message is removed and the key is freed.
+            assertThat(inbox.collect(id, QueuedInputPriority.LATER).getMessages()).hasSize(1);
+            idempotency.discardReservation(KEY);
+
+            final SubmitDisposition retry = harness.manager().submit(keyed(id, "queued"));
+            assertThat(retry.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+            assertThat(retry.getTurnId()).as("a fresh reservation queues under a turn id of its own")
+                    .isNotEqualTo(first.getTurnId());
+
+            // Now the peer's answers arrive, both naming the first attempt.
+            bus.publish(SessionSignal.builder().sessionId(id).kind(SessionSignal.SignalKind.TURN_RESULT)
+                    .originNodeId("node-A").payload(Map.of("turn", first.getTurnId().value(), "idem", KEY, "outcome",
+                            "PURGED", "message", "session was released on node node-A before this turn ran"))
+                    .build());
+            bus.publish(SessionSignal.builder().sessionId(id).kind(SessionSignal.SignalKind.EVICT)
+                    .originNodeId("node-A")
+                    .payload(Map.of("reason", "SESSION_RELEASED", "purgedTurns", first.getTurnId().value())).build());
+
+            assertThat(awaitFailure(first.getFuture())).isInstanceOf(TurnNotRunException.class);
+            final Throwable retryOutcome = awaitFailure(retry.getFuture());
+            assertThat(retryOutcome).as("the retry's message is queued and may run: no not-run claim for it")
+                    .isNotInstanceOf(TurnNotRunException.class);
+            assertThat(inbox.isEmpty(id)).as("the retry's message is still waiting for a holder").isFalse();
+        } finally {
+            leaseStore.release(outsider);
+        }
+    }
+
+    @Test
+    @DisplayName("a holder's NOT_HOLDER answer fails the forward as not run")
+    void notHolderAnswerIsNotRun() throws Exception {
+        final TestManagerHarness harness = node("node-A");
+        final SessionId id = SessionId.of("c-fwd-6d");
+
+        final SessionLease outsider = leaseStore.tryAcquire(id, "outsider", Duration.ofSeconds(30)).orElseThrow();
+        try {
+            final SubmitDisposition forwarded = harness.manager().submit(RequestFixtures.submit(id, "alpha", "queued"));
+            assertThat(forwarded.getKind()).isEqualTo(SubmitDisposition.Kind.FORWARDED);
+
+            // Literal keys: the wire shape a departing holder sends.
+            bus.publish(SessionSignal.builder().sessionId(id).kind(SessionSignal.SignalKind.TURN_RESULT)
+                    .originNodeId("outsider").payload(Map.of("turn", forwarded.getTurnId().value(), "outcome",
+                            "NOT_HOLDER", "message", "grace ran out"))
+                    .build());
+
+            final Throwable failure = awaitFailure(forwarded.getFuture());
+            assertThat(failure).isInstanceOf(TurnNotRunException.class).hasMessageContaining("grace ran out");
+            assertThat(((TurnNotRunException) failure).getReason()).isEqualTo(TurnNotRunException.Reason.NOT_HOLDER);
         } finally {
             leaseStore.release(outsider);
         }
@@ -291,9 +403,38 @@ class SessionRouterForwardedTurnResultTest {
 
             releasing.manager().releaseSession(id);
 
-            assertThat(awaitFailure(forwarded.getFuture())).isInstanceOf(IllegalStateException.class)
-                    .as("the EVICT must name the node that purged the inbox").hasMessageContaining("node-A")
-                    .hasMessageContaining("was released or deleted");
+            assertThat(awaitFailure(forwarded.getFuture())).isInstanceOf(TurnNotRunException.class)
+                    .as("the answer must name the node that purged the inbox").hasMessageContaining("node-A")
+                    .hasMessageContaining("was released");
+        } finally {
+            leaseStore.release(outsider);
+        }
+    }
+
+    @Test
+    @DisplayName("an EVICT naming a purged turn fails that forward as not run without waiting for its PURGED answer")
+    void evictListAloneProvesNotRun() throws Exception {
+        final TestManagerHarness harness = node("node-B");
+        final SessionId id = SessionId.of("c-fwd-7b");
+
+        final SessionLease outsider = leaseStore.tryAcquire(id, "outsider", Duration.ofSeconds(30)).orElseThrow();
+        try {
+            final SubmitDisposition forwarded = harness.manager().submit(RequestFixtures.submit(id, "alpha", "queued"));
+            final SubmitDisposition other = harness.manager().submit(RequestFixtures.submit(id, "alpha", "kept"));
+            // Both leave the inbox here; the EVICT below names only the first as purged — the second is as a holder
+            // would have collected it, possibly to run.
+            inbox.collect(id, QueuedInputPriority.LATER);
+
+            // Literal keys: the wire shape of a peer's EVICT whose PURGED answers were lost.
+            bus.publish(SessionSignal.builder().sessionId(id).kind(SessionSignal.SignalKind.EVICT)
+                    .originNodeId("node-A").payload(Map.of("reason", "SESSION_RELEASED", "purgedTurns",
+                            forwarded.getTurnId().value() + " not-a-turn-of-this-node"))
+                    .build());
+
+            assertThat(awaitFailure(forwarded.getFuture())).isInstanceOf(TurnNotRunException.class)
+                    .hasMessageContaining("node-A");
+            assertThat(awaitFailure(other.getFuture())).as("a turn the EVICT does not name keeps no claim")
+                    .isNotInstanceOf(TurnNotRunException.class).hasMessageContaining("was released or deleted");
         } finally {
             leaseStore.release(outsider);
         }
