@@ -55,6 +55,7 @@
 | [`session-store.md`](session/session-store.md) | 영속 SPI 경계(계약은 core, 정책은 routing), `SessionRecordStore` 의 부분 쓰기 primitive 와 `default` 정책, `loadOwner`, 리스 SPI, `SessionStore` 의 claim 순서, 쓰기 펜스(`SessionFence`)와 남는 창, 레코드 저장소 계약 스위트 |
 | [`session-log.md`](session/session-log.md) | transcript 를 append-only 로그 + 뷰 상태로 분리. seq 주소, origin, 봉인과 manifest, 세그먼트 SPI, GC 와 저장소 단위 스윕, `/clear`·rewind, v1/v2 이행 |
 | [`routing.md`](session/routing.md) | sticky 라우팅 없이 세션당 턴을 직렬화하는 멀티 노드 계층 — 세션 수명 리스와 턴 게이트, 시그널 7종, 이벤트 릴레이, 제출 시퀀스, 라이프사이클, 삭제와 삭제 리스너, 계측 |
+| [`idle-wake.md`](session/idle-wake.md) | (IMPLEMENTED, 차이는 §12) 쉬는 세션 깨우기 — 라우터 클라이언트인 `IdleSessionWaker`, 알림을 입력으로 쓰는 이유, 드레인 전 검증과 실패 시 되돌리기, 소유자 권한, `turnCount` 로 사용자 턴을 아는 상한, CLI 를 미룬 이유 |
 | [`inbox.md`](session/inbox.md) | 크로스 노드 우편함 `SessionInbox` — 봉투, `collect` 의 원자성, 한 항목의 디코드 실패를 그 항목에 가두는 격리와 주소 회수, `UNREADABLE`, 우선순위, 기각한 지우기 전 디코드·dead-letter |
 | [`idempotency.md`](session/idempotency.md) | 멱등 제출 — 매트릭스, 두 TTL 과 touch, 예약 홀더, 수집된 메시지의 넘겨받기(승리·거절·알 수 없음), 홀더 유실 회복과 고아 메시지 재-초인종 |
 | [`backends.md`](session/backends.md) | PostgreSQL · MongoDB · Redis 세 백엔드의 스키마·전달 메커니즘·보장 차이, 소유자와 세그먼트의 저장 모양, 선택 기준 |

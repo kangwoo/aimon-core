@@ -105,6 +105,11 @@ public interface VirtualShell extends AutoCloseable {
      * result's {@link ShellCommandResult#stdout() stdout} may be empty: the lines have already been handed over, and a
      * shell need not keep them a second time. Standard error is not streamed; it is in the result.
      *
+     * <p>
+     * A shell may refuse a <em>foreground</em> streamed call it cannot run with the foreground's semantics — a sandbox
+     * shell refuses one rather than run it without keeping its {@code cd} and {@code export}. Stream background work
+     * ({@link ExecutionOptions#isBackground()}), as a background monitor does.
+     *
      * @param command
      *            the command to execute, must not be null
      * @param options

@@ -103,6 +103,7 @@ IMPORTANT: **세션(`SessionRecord`)과 라이브 세션(`LiveSession`)은 다�
 | 누적 통계 (턴 수 / iteration / 토큰) | `SessionTotals` | core |
 | 노드 간 세션 소유권 선출 + 펜싱 | `SessionLeaseStore`, `SessionStore.claim` | core |
 | 멀티 노드 라우팅 / 핸들 캐시 | `SessionRouter`, `LiveSessionCache`, `LiveSessionOpener` | `aimon-session-routing` |
+| 쉬는 세션 깨우기 (모니터 알림으로 턴 열기, opt-in) | `IdleSessionWaker`, `WakePolicy`, `WakeLedger` | `aimon-session-routing` |
 | MongoDB 백엔드 | — | `aimon-session-mongodb` |
 | PostgreSQL 백엔드 | — | `aimon-session-postgres` |
 | Redis 백엔드 | — | `aimon-session-redis` |

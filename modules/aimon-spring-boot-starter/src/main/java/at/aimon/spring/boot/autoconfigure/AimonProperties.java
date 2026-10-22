@@ -6,6 +6,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -32,6 +33,7 @@ import at.aimon.core.tools.artifact.ArtifactPolicy;
 import at.aimon.core.tracing.TracePayloadPolicy;
 import at.aimon.core.tracing.impl.InMemoryTraceSpanStore;
 import at.aimon.session.routing.DeploymentMode;
+import at.aimon.session.routing.wake.WakePolicy;
 
 /**
  * Binding target for the {@code aimon.*} configuration tree.
@@ -2325,6 +2327,8 @@ public class AimonProperties implements InitializingBean {
 
         private final Cache cache = new Cache();
 
+        private final Wake wake = new Wake();
+
         public SessionStoreType getStore() {
             return store;
         }
@@ -2384,6 +2388,112 @@ public class AimonProperties implements InitializingBean {
 
         public Cache getCache() {
             return cache;
+        }
+
+        /** @return the settings for waking idle sessions */
+        public Wake getWake() {
+            return wake;
+        }
+
+        /**
+         * Waking an idle session for its background notifications — a monitor's events — so the agent reacts while
+         * nobody is typing (design {@code docs/design/session/idle-wake.md}). A woken session runs a turn as its
+         * recorded owner; a session without an owner is never woken. A {@code WakeLedger} bean keeps the caps across
+         * nodes.
+         */
+        public static class Wake {
+
+            /** Off by default: a woken session runs LLM calls nobody typed. */
+            private boolean enabled;
+
+            /**
+             * Queue entry kinds that wake a session: {@code monitor-event} (default) and
+             * {@code subagent-task-completed}.
+             */
+            private List<String> kinds = new ArrayList<>(List.of(WakePolicy.MONITOR_EVENTS));
+
+            /** How long notifications are gathered into one turn. */
+            private Duration debounce = WakePolicy.defaults().getDebounce();
+
+            /** The most wakes of one session within an hour. */
+            private int maxPerHour = WakePolicy.DEFAULT_MAX_PER_HOUR;
+
+            /** The most wakes of one session in a row without a turn of the user's in between. */
+            private int maxConsecutive = WakePolicy.DEFAULT_MAX_CONSECUTIVE;
+
+            /** @return whether idle sessions are woken */
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            /**
+             * @param enabled
+             *            whether idle sessions are woken
+             */
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
+
+            /** @return the queue entry kinds that wake a session */
+            public List<String> getKinds() {
+                return kinds;
+            }
+
+            /**
+             * @param kinds
+             *            the queue entry kinds that wake a session
+             */
+            public void setKinds(List<String> kinds) {
+                this.kinds = kinds;
+            }
+
+            /** @return how long notifications are gathered into one turn */
+            public Duration getDebounce() {
+                return debounce;
+            }
+
+            /**
+             * @param debounce
+             *            how long notifications are gathered into one turn
+             */
+            public void setDebounce(Duration debounce) {
+                this.debounce = debounce;
+            }
+
+            /** @return the most wakes of one session within an hour */
+            public int getMaxPerHour() {
+                return maxPerHour;
+            }
+
+            /**
+             * @param maxPerHour
+             *            the most wakes of one session within an hour
+             */
+            public void setMaxPerHour(int maxPerHour) {
+                this.maxPerHour = maxPerHour;
+            }
+
+            /** @return the most wakes in a row without a user turn */
+            public int getMaxConsecutive() {
+                return maxConsecutive;
+            }
+
+            /**
+             * @param maxConsecutive
+             *            the most wakes in a row without a user turn
+             */
+            public void setMaxConsecutive(int maxConsecutive) {
+                this.maxConsecutive = maxConsecutive;
+            }
+
+            /** @return the policy these properties describe, or null when waking is off */
+            public WakePolicy toPolicy() {
+                if (!enabled) {
+                    return null;
+                }
+                return WakePolicy.builder().kinds(new LinkedHashSet<>(kinds)).debounce(debounce).maxPerHour(maxPerHour)
+                        .maxConsecutive(maxConsecutive).build();
+            }
         }
 
         /** Bounds on the node-local live-session cache. */

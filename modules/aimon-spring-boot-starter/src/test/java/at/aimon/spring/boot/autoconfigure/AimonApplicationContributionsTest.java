@@ -49,6 +49,7 @@ import at.aimon.core.tools.monitor.MonitorRequest;
 import at.aimon.core.tools.monitor.MonitorSource;
 import at.aimon.core.tools.monitor.MonitorSourceFactory;
 import at.aimon.core.tools.monitor.MonitorStore;
+import at.aimon.session.routing.wake.WakePolicy;
 
 /**
  * What {@code aimonApplicationContributions} owes the beans it resolves: an order to be destroyed in, and a
@@ -262,6 +263,22 @@ class AimonApplicationContributionsTest {
                 });
         minimal(workspace)
                 .run(ctx -> assertThat(ctx.getBean(AimonStackSpec.class).getTools().isMonitorEnabled()).isFalse());
+    }
+
+    @Test
+    @DisplayName("aimon.session.wake.* becomes the session spec's wake policy; off by default")
+    void wakeSettingsReachTheSpec(@TempDir Path workspace) {
+        minimal(workspace).withPropertyValues("aimon.session.wake.enabled=true",
+                "aimon.session.wake.kinds=monitor-event,subagent-task-completed", "aimon.session.wake.max-per-hour=2",
+                "aimon.session.wake.debounce=5s").run(ctx -> {
+                    final WakePolicy policy = ctx.getBean(AimonStackSpec.class).getSession().getWakePolicy()
+                            .orElseThrow();
+                    assertThat(policy.getKinds()).containsExactlyInAnyOrder("monitor-event", "subagent-task-completed");
+                    assertThat(policy.getMaxPerHour()).isEqualTo(2);
+                    assertThat(policy.getDebounce()).isEqualTo(Duration.ofSeconds(5));
+                });
+        minimal(workspace)
+                .run(ctx -> assertThat(ctx.getBean(AimonStackSpec.class).getSession().getWakePolicy()).isEmpty());
     }
 
     /** Stands in for an application that offers its alarm stream as a monitor source. */
