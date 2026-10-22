@@ -23,7 +23,10 @@ import at.aimon.core.agent.session.inbox.InboundMessageId;
  * A forwarded future can also complete exceptionally without the turn ever running: the holder refuses a message whose
  * {@code agentRef} conflicts with the session's binding, the session is evicted or deleted while the message
  * waits, or nothing resolves it before the forward TTL lapses. That is the point of handing back a real future — the
- * failure reaches the caller instead of stranding them.
+ * failure reaches the caller instead of stranding them. When the turn certainly did not run — the message never reached
+ * the inbox, or was purged with a released, deleted or evicted session — the failure is a
+ * {@link at.aimon.session.routing.exception.ForwardNotRunException}, the one a caller may retry with the same input.
+ * After any other failure it is unknown whether the turn ran.
  *
  * <p>
  * <b>Forwarded results carry no artifacts.</b> The result crossed a node boundary, and

@@ -29,6 +29,7 @@ import at.aimon.core.agent.session.LiveSessionOptions;
 import at.aimon.core.agent.session.LiveSessionStatus;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.TurnId;
+import at.aimon.core.agent.session.inbox.InboundMessageId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.store.SessionTotals;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
@@ -38,6 +39,7 @@ import at.aimon.session.routing.ClusterSessionStatus;
 import at.aimon.session.routing.SessionRouter;
 import at.aimon.session.routing.SubmitDisposition;
 import at.aimon.session.routing.SubmitRequest;
+import at.aimon.session.routing.exception.ForwardNotRunException;
 
 @DisplayName("IdleSessionWaker — wakes an idle session for its background notifications, within its caps")
 class IdleSessionWakerTest {
@@ -277,6 +279,39 @@ class IdleSessionWakerTest {
         assertThat(queue.snapshot()).extracting(QueuedInput::getInputText).contains("second");
     }
 
+    @Test
+    @DisplayName("a forwarded wake that certainly did not run gives its notifications back and is retried")
+    void forwardNotRunIsUndoneAndRetried() {
+        router.forwardFailures.add(new ForwardNotRunException("purged with the session"));
+        waker = waker()
+                .policy(WakePolicy.builder().debounce(Duration.ofMillis(50)).retryDelay(Duration.ofMillis(200)).build())
+                .build();
+
+        queue.enqueue(monitorEvent("give me back"));
+
+        await(() -> woken().size() == 2);
+        assertThat(woken().get(1).getUserInput().asText()).contains("give me back");
+        assertThat(ledger.get(SESSION).getRecentWakes()).as("the undone wake no longer counts").hasSize(1);
+    }
+
+    @Test
+    @DisplayName("a forwarded wake whose fate is unknown is not undone: a second turn would repeat it")
+    void unknownForwardFailureIsNotUndone() {
+        router.forwardFailures.add(new IllegalStateException(
+                new java.util.concurrent.TimeoutException("produced no result within the forward TTL")));
+        waker = waker()
+                .policy(WakePolicy.builder().debounce(Duration.ofMillis(50)).retryDelay(Duration.ofMillis(100)).build())
+                .build();
+
+        queue.enqueue(monitorEvent("maybe ran"));
+        await(() -> woken().size() == 1);
+        await(() -> !ledger.get(SESSION).isOutstanding());
+        fence();
+
+        assertThat(woken()).hasSize(1);
+        assertThat(queue.snapshot()).noneMatch(q -> q.getInputText().contains("maybe ran"));
+    }
+
     /**
      * Waits until a wake of another session has been submitted. The waker runs on one thread in schedule order, so
      * every wake scheduled before this one has run by then — a negative check that does not depend on a sleep.
@@ -319,6 +354,8 @@ class IdleSessionWakerTest {
 
         final List<SubmitRequest> submits = new CopyOnWriteArrayList<>();
         final List<String> keys = new CopyOnWriteArrayList<>();
+        /** Failures the next forwarded submits' futures end with, one each. */
+        final java.util.Queue<RuntimeException> forwardFailures = new java.util.concurrent.ConcurrentLinkedQueue<>();
         final List<CompletableFuture<at.aimon.core.agent.AgentExecutionResult>> turns = new CopyOnWriteArrayList<>();
         final AtomicInteger attempts = new AtomicInteger();
         final AtomicInteger failures = new AtomicInteger();
@@ -335,6 +372,14 @@ class IdleSessionWakerTest {
             }
             submits.add(request);
             final CompletableFuture<at.aimon.core.agent.AgentExecutionResult> turn = new CompletableFuture<>();
+            final RuntimeException forwardFailure = request.getSessionId().equals(SESSION)
+                    ? forwardFailures.poll()
+                    : null;
+            if (forwardFailure != null) {
+                turns.add(turn);
+                turn.completeExceptionally(forwardFailure);
+                return SubmitDisposition.forwarded(TurnId.generate(), InboundMessageId.of("in-1"), turn);
+            }
             turn.whenComplete((r, e) -> settled.incrementAndGet());
             turns.add(turn);
             return SubmitDisposition.executedLocally(TurnId.generate(), turn);

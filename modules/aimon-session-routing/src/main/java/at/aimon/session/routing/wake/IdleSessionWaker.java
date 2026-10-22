@@ -11,6 +11,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -41,6 +42,7 @@ import at.aimon.session.routing.ClusterSessionStatus;
 import at.aimon.session.routing.SessionRouter;
 import at.aimon.session.routing.SubmitDisposition;
 import at.aimon.session.routing.SubmitRequest;
+import at.aimon.session.routing.exception.ForwardNotRunException;
 
 /**
  * Opens a turn for an idle session when a background notification addressed to it arrives — a monitor's events, by
@@ -393,14 +395,54 @@ public final class IdleSessionWaker implements AutoCloseable {
             log.warn("Wake ledger could not count the wake of session {}: {}", sessionId, e.toString());
         }
         final CompletionStage<AgentExecutionResult> turn = disposition.getFuture();
-        // Back onto the waker's thread: the ledger is changed from one thread, and turn threads stay free.
+        // Back onto the waker's thread: the ledger is changed from one thread, and turn threads stay free. The drained
+        // entries are kept until then: a forward that certainly did not run gives them back.
         turn.whenComplete((result, error) -> {
             try {
-                scheduler.execute(() -> settled(sessionId, error));
+                scheduler.execute(() -> {
+                    if (notRun(error)) {
+                        unwake(sessionId, drained, now, error);
+                    } else {
+                        settled(sessionId, error);
+                    }
+                });
             } catch (RejectedExecutionException closing) {
                 log.debug("Wake of session {} settled after close", sessionId);
             }
         });
+    }
+
+    private static boolean notRun(Throwable error) {
+        Throwable cause = error;
+        while (cause instanceof CompletionException && cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+        return cause instanceof ForwardNotRunException;
+    }
+
+    /**
+     * A forwarded wake whose turn certainly did not run: its notifications go back into the queue, the wake no longer
+     * counts against the caps, and the session is tried again after the retry delay. Any other failure of a forwarded
+     * turn leaves it unknown whether it ran, and is not undone — a second turn on the same notifications is worse than
+     * one lost (design §5).
+     */
+    private void unwake(SessionId sessionId, List<QueuedInput> drained, Instant wokenAt, Throwable error) {
+        log.warn("The wake turn of session {} did not run ({}); its notifications are back in the queue", sessionId,
+                error.toString());
+        retryNotBefore.put(sessionId, clock.instant().plus(policy.getRetryDelay()));
+        requeue(drained);
+        try {
+            ledger.update(sessionId, current -> {
+                final List<Instant> recent = new ArrayList<>(current.getRecentWakes());
+                recent.remove(wokenAt);
+                return WakeState.of(recent, Math.max(0, current.getConsecutive() - 1),
+                        current.getTurnCountAfterWake().isPresent() ? current.getTurnCountAfterWake().getAsInt() : null,
+                        false);
+            });
+        } catch (RuntimeException e) {
+            log.warn("Wake ledger could not undo the wake of session {}: {}", sessionId, e.toString());
+        }
+        schedule(sessionId, policy.getRetryDelay());
     }
 
     /** After a wake's turn: remember the turn count, so the next wake can tell whether another turn ran since. */

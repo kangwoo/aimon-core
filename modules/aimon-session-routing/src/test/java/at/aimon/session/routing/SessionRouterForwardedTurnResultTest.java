@@ -36,6 +36,7 @@ import at.aimon.core.agent.session.store.SessionLeaseStore;
 import at.aimon.core.agent.session.store.SessionRecordStore;
 import at.aimon.core.agent.session.store.SessionRecordView;
 import at.aimon.core.base.Principal;
+import at.aimon.session.routing.exception.ForwardNotRunException;
 import at.aimon.session.routing.fixture.RequestFixtures;
 import at.aimon.session.routing.fixture.TestLiveSession;
 import at.aimon.session.routing.fixture.TestManagerHarness;
@@ -143,8 +144,8 @@ class SessionRouterForwardedTurnResultTest {
         failWhenReady(session, new RuntimeException("boom"));
 
         assertThat(awaitFailure(forwarded.getFuture())).isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("FAILED").hasMessageContaining("boom")
-                .hasMessageContaining(forwarded.getTurnId().value());
+                .isNotInstanceOf(ForwardNotRunException.class).hasMessageContaining("FAILED")
+                .hasMessageContaining("boom").hasMessageContaining(forwarded.getTurnId().value());
         assertThat(local.getFuture().toCompletableFuture().get(5, TimeUnit.SECONDS).getFinalAnswer())
                 .as("a failed sibling turn must not take the holder's own answer with it").isEqualTo("first-done");
     }
@@ -269,8 +270,8 @@ class SessionRouterForwardedTurnResultTest {
 
             harness.manager().releaseSession(id);
 
-            assertThat(awaitFailure(forwarded.getFuture())).isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("was released");
+            assertThat(awaitFailure(forwarded.getFuture())).isInstanceOf(ForwardNotRunException.class)
+                    .as("purged before any holder ran it: safe to retry").hasMessageContaining("was released");
             assertThat(inbox.isEmpty(id)).as("the message backing that future is provably gone").isTrue();
         } finally {
             leaseStore.release(outsider);
@@ -291,7 +292,7 @@ class SessionRouterForwardedTurnResultTest {
 
             releasing.manager().releaseSession(id);
 
-            assertThat(awaitFailure(forwarded.getFuture())).isInstanceOf(IllegalStateException.class)
+            assertThat(awaitFailure(forwarded.getFuture())).isInstanceOf(ForwardNotRunException.class)
                     .as("the EVICT must name the node that purged the inbox").hasMessageContaining("node-A")
                     .hasMessageContaining("was released or deleted");
         } finally {
@@ -315,6 +316,7 @@ class SessionRouterForwardedTurnResultTest {
             harness.manager().close();
 
             assertThat(awaitFailure(forwarded.getFuture())).isInstanceOf(IllegalStateException.class)
+                    .isNotInstanceOf(ForwardNotRunException.class).as("another node may still run it: not a safe retry")
                     .hasMessageContaining("shut down before this forwarded turn");
         } finally {
             leaseStore.release(outsider);

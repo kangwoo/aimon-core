@@ -27,6 +27,14 @@ An agent can now watch a long-running source and keep working while its events a
   `ToolSpec.monitorWebSocketEnabled` / `aimon.tools.monitor.websocket-enabled` turns the `websocket` source off.
   `MonitorManager.Builder#excludeSource` leaves a kind out.
 
+### Added: `ForwardNotRunException` — a forwarded turn that certainly did not run
+
+A forwarded submit's future now fails with `at.aimon.session.routing.exception.ForwardNotRunException` (an
+`IllegalStateException`, as before) when its message never reached the inbox or was purged with a released, deleted or
+evicted session — the one forward failure a caller may retry with the same input. The idle-session waker uses it to put
+a wake's notifications back instead of losing them; a failure whose outcome is unknown (forward TTL, lost reservation,
+shutdown) is still not retried.
+
 ### Added: waking idle sessions for background notifications
 
 An idle session can now be woken when a background notification addressed to it arrives — a monitor's events by

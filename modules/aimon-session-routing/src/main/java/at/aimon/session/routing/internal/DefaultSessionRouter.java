@@ -83,6 +83,7 @@ import at.aimon.session.routing.LiveSessionOpener;
 import at.aimon.session.routing.SessionRouter;
 import at.aimon.session.routing.SubmitDisposition;
 import at.aimon.session.routing.SubmitRequest;
+import at.aimon.session.routing.exception.ForwardNotRunException;
 import at.aimon.session.routing.metrics.SessionMetrics;
 
 /**
@@ -2150,8 +2151,9 @@ public final class DefaultSessionRouter implements SessionRouter {
             id = inbox.deliver(message);
         } catch (RuntimeException e) {
             // The message never reached the inbox, so no holder will ever run it: fail the future now instead of
-            // leaving it to time out at the forward deadline.
-            failForward(pending, e);
+            // leaving it to time out at the forward deadline — as not run, which a caller may retry.
+            failForward(pending, new ForwardNotRunException(
+                    "The forwarded turn never reached the inbox of session " + convId.value(), e));
             throw e;
         }
         signalBus.publish(SessionSignal.builder().sessionId(convId).kind(SessionSignal.SignalKind.MESSAGE_ENQUEUED)
@@ -2410,7 +2412,8 @@ public final class DefaultSessionRouter implements SessionRouter {
     private void failForwardsFor(SessionId sessionId, String reason) {
         for (PendingForward pending : forwardsByTurn.values()) {
             if (pending.sessionId.equals(sessionId)) {
-                failForward(pending, new IllegalStateException(reason));
+                // The inbox is purged with the session, so the message is gone before any holder ran it.
+                failForward(pending, new ForwardNotRunException(reason));
             }
         }
     }
