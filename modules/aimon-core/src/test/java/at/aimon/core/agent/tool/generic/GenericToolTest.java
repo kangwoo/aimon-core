@@ -1,6 +1,7 @@
 package at.aimon.core.agent.tool.generic;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
@@ -216,11 +217,10 @@ class GenericToolTest {
             assertThat(result.isError()).isTrue();
             assertThat(result.getContent()).isEqualTo("SIZE_LIMIT: source over 10 MB");
             assertThat(result.isRetryable()).isFalse();
-            assertThat(ToolExecutionException.notRetryable("x", new java.io.IOException("io")).getCause())
-                    .isInstanceOf(java.io.IOException.class);
+            assertThat(ToolExecutionException.notRetryable("x", new IOException("io")).getCause())
+                    .isInstanceOf(IOException.class);
             assertThat(new ToolExecutionException("x").isRetryable()).isTrue();
-            org.assertj.core.api.Assertions.assertThatNullPointerException()
-                    .isThrownBy(() -> ToolExecutionException.notRetryable(null));
+            assertThatNullPointerException().isThrownBy(() -> ToolExecutionException.notRetryable(null));
         }
 
         @Test
@@ -276,7 +276,7 @@ class GenericToolTest {
         void aCheckedExceptionIsCaughtToo() {
             // doExecute is declared `throws Exception` so a tool need not wrap what it calls; execute() being final
             // is what makes that safe, since the no-throw rule is kept in one place rather than by every subclass.
-            ToolResult result = failWith(new java.io.IOException("disk gone"));
+            ToolResult result = failWith(new IOException("disk gone"));
 
             assertThat(result.isError()).isTrue();
             assertThat(result.getContent()).isEqualTo("Unexpected error: disk gone");
