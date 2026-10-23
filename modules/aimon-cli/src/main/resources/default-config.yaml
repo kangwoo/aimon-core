@@ -237,6 +237,7 @@ cli:
   enableWorkflow: false  # Opt-in: register the experimental multi-perspective `Workflow` tool
   enableWorkflowJs: false  # Opt-in: register the GraalJS-scripted `WorkflowJs` tool (module aimon-workflow-graaljs)
   enableMonitor: false  # Opt-in: register the background `Monitor` / `MonitorStop` tools (events arrive as messages)
+  enableWake: false     # Opt-in: an idle prompt is woken by its monitor events — a turn opens with them as input
 #  sessionLogWriteFormat: v2  # v2 (default) | v1 — v2 is what an agent with `context-engine: rolling` needs
 
 # Peer Memory (SK-MEM Stage 9, Honcho-analogue)

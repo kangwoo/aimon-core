@@ -33,6 +33,10 @@ public class CliSettings {
     // conversation that nobody typed, and its command form runs a shell command for up to half an hour. Enable via
     // `cli.enableMonitor: true`.
     private boolean enableMonitor = false;
+    // Opt-in for waking the idle REPL when a background notification addressed to its session arrives — a monitor's
+    // events, by default — so the agent reacts while nobody types (idle-wake design §8). Off by default for the same
+    // reason as the monitor: it starts turns nobody asked for. Enable via `cli.enableWake: true`.
+    private boolean enableWake = false;
     // The session log format the CLI writes (session-log §7.3): v2 (default) or v1. v2 keeps the log append-only and
     // is what an agent with `context-engine: rolling` needs. The CLI keeps sessions in memory, so there is no older
     // node that could fail to read v2 — the switch exists only so the default stays the format every other assembly
@@ -123,6 +127,14 @@ public class CliSettings {
         this.enableMonitor = enableMonitor;
     }
 
+    public boolean isEnableWake() {
+        return enableWake;
+    }
+
+    public void setEnableWake(boolean enableWake) {
+        this.enableWake = enableWake;
+    }
+
     public boolean isEnableWorkflowJs() {
         return enableWorkflowJs;
     }
@@ -157,14 +169,15 @@ public class CliSettings {
                 && tracingCaptureContent == that.tracingCaptureContent
                 && tracingMaxPayloadChars == that.tracingMaxPayloadChars && enableWorkflow == that.enableWorkflow
                 && enableWorkflowJs == that.enableWorkflowJs && enableMonitor == that.enableMonitor
-                && sessionLogWriteFormat == that.sessionLogWriteFormat && Objects.equals(prompt, that.prompt);
+                && enableWake == that.enableWake && sessionLogWriteFormat == that.sessionLogWriteFormat
+                && Objects.equals(prompt, that.prompt);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(prompt, colorOutput, showIterations, showToolCalls, streaming, tracing,
                 tracingCaptureContent, tracingMaxPayloadChars, enableWorkflow, enableWorkflowJs, enableMonitor,
-                sessionLogWriteFormat);
+                enableWake, sessionLogWriteFormat);
     }
 
     @Override
@@ -173,7 +186,7 @@ public class CliSettings {
                 + showIterations + ", showToolCalls=" + showToolCalls + ", streaming=" + streaming + ", tracing="
                 + tracing + ", tracingCaptureContent=" + tracingCaptureContent + ", tracingMaxPayloadChars="
                 + tracingMaxPayloadChars + ", enableWorkflow=" + enableWorkflow + ", enableWorkflowJs="
-                + enableWorkflowJs + ", enableMonitor=" + enableMonitor + ", sessionLogWriteFormat="
-                + sessionLogWriteFormat + '}';
+                + enableWorkflowJs + ", enableMonitor=" + enableMonitor + ", enableWake=" + enableWake
+                + ", sessionLogWriteFormat=" + sessionLogWriteFormat + '}';
     }
 }
