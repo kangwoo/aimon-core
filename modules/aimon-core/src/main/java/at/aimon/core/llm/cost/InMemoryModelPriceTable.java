@@ -65,6 +65,9 @@ public final class InMemoryModelPriceTable implements ModelPriceTable {
                 .registerPrefix("claude-3-7-sonnet", ModelPrice.perMillionUsd(3.00, 15.00, 0.30, 3.75))
                 .registerPrefix("claude-haiku-4", ModelPrice.perMillionUsd(1.00, 5.00, 0.10, 1.25))
                 .registerPrefix("claude-sonnet-4", ModelPrice.perMillionUsd(3.00, 15.00, 0.30, 3.75))
+                // Opus 4.5 dropped to $5 / $25; registered before the claude-opus-4 prefix that would otherwise match
+                // it.
+                .registerPrefix("claude-opus-4-5", ModelPrice.perMillionUsd(5.00, 25.00, 0.50, 6.25))
                 .registerPrefix("claude-opus-4", ModelPrice.perMillionUsd(15.00, 75.00, 1.50, 18.75)).build();
     }
 

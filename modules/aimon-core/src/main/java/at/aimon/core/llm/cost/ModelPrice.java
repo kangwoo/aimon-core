@@ -103,8 +103,11 @@ public final class ModelPrice {
      * Prices the given token usage.
      *
      * <p>
-     * {@code cost = (inputPrice * promptTokens + outputPrice * completionTokens) / 1_000_000}, computed exactly and
-     * rounded to {@link Money#COST_SCALE} decimal places. The {@code totalTokens} field of the usage is intentionally
+     * {@code cost = (inputPrice * (promptTokens - cacheRead - cacheWrite) + cacheReadPrice * cacheRead
+     * + cacheWritePrice * cacheWrite + outputPrice * completionTokens) / 1_000_000}, computed exactly and rounded to
+     * {@link Money#COST_SCALE} decimal places, where a cache term is zero unless it is priced separately (see "Prompt
+     * cache" below) — so with no cache rates it is {@code inputPrice * promptTokens + outputPrice * completionTokens}.
+     * The {@code totalTokens} field of the usage is intentionally
      * ignored: only the prompt/completion split carries a price.
      *
      * <p>

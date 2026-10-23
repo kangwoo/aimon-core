@@ -71,6 +71,50 @@ class ModelPriceCacheTest {
     }
 
     @Test
+    @DisplayName("a write rate without a read rate prices only a measured write separately")
+    void writeRateOnly() {
+        final ModelPrice writeOnly = ModelPrice.builder().inputPricePerMillionTokens(Money.usd(3.00))
+                .outputPricePerMillionTokens(Money.usd(15.00)).cacheWritePricePerMillionTokens(Money.usd(3.75)).build();
+        final TokenUsage usage = TokenUsage.of(1_000_000, 0, 1_000_000).withCacheTokens(300_000, 100_000);
+
+        // 0.9 * 3.00 (reads stay at the input rate) + 0.1 * 3.75 = 2.70 + 0.375
+        assertThat(writeOnly.costOf(usage).getAmount()).isEqualByComparingTo("3.075");
+        assertThat(writeOnly.getCacheReadPricePerMillionTokens()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("only a measured write is priced separately when the read is unmeasured")
+    void onlyWriteMeasured() {
+        final TokenUsage usage = TokenUsage.of(1_000_000, 0, 1_000_000).withCacheTokens(null, 100_000);
+
+        // 0.9 * 3.00 + 0.1 * 3.75 = 3.075
+        assertThat(PRICE.costOf(usage).getAmount()).isEqualByComparingTo("3.075");
+    }
+
+    @Test
+    @DisplayName("cache rates take part in equality, scale-insensitively")
+    void equality() {
+        final ModelPrice sameRates = ModelPrice.builder().inputPricePerMillionTokens(Money.usd(3.00))
+                .outputPricePerMillionTokens(Money.usd(15.00))
+                .cacheReadPricePerMillionTokens(Money.of(new java.math.BigDecimal("0.300"), Money.USD))
+                .cacheWritePricePerMillionTokens(Money.usd(3.75)).build();
+
+        assertThat(sameRates).isEqualTo(PRICE).hasSameHashCodeAs(PRICE);
+        assertThat(ModelPrice.perMillionUsd(3.00, 15.00)).isNotEqualTo(PRICE);
+    }
+
+    @Test
+    @DisplayName("Opus 4.5 resolves to its own price, not the older claude-opus-4 rates")
+    void opus45HasItsOwnPrice() {
+        final ModelPrice opus45 = InMemoryModelPriceTable.withDefaults().priceOf("claude-opus-4-5-20251101")
+                .orElseThrow();
+
+        assertThat(opus45.getInputPricePerMillionTokens().getAmount()).isEqualByComparingTo("5.00");
+        assertThat(InMemoryModelPriceTable.withDefaults().priceOf("claude-opus-4-1").orElseThrow()
+                .getInputPricePerMillionTokens().getAmount()).isEqualByComparingTo("15.00");
+    }
+
+    @Test
     @DisplayName("cache rates must share the input currency")
     void currencyMustMatch() {
         assertThatThrownBy(() -> ModelPrice.builder().inputPricePerMillionTokens(Money.usd(1))
