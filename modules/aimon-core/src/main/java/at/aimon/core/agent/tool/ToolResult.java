@@ -19,6 +19,9 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
  * <li><strong>exception</strong>: Original exception for debugging and type-specific handling
  * <li><strong>renderPayload</strong>: Optional sidecar payload for non-LLM consumers (e.g. rendering hooks). Never
  * serialized to LLM-facing or persistence-facing JSON.
+ * <li><strong>retryable</strong>: Whether calling the tool again could turn this failure into a success. Every result
+ * is retryable unless the tool marked its error with {@link #notRetryable()}. Like the render payload it is a signal
+ * for the framework, never sent to the LLM and never persisted.
  * </ul>
  *
  * <h2>Example Usage</h2>
@@ -38,6 +41,9 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
  *     } catch (FileNotFoundException e) {
  *         return ToolResult.error("File not found: " + path, e);
  *     }
+ *
+ *     // A failure that calling again will not change (the mark is invisible to LLM)
+ *     ToolResult tooLarge = ToolResult.error("SIZE_LIMIT: the source is larger than 10 MB").notRetryable();
  *
  *     // Attach sidecar render payload (invisible to LLM)
  *     ToolResult rendered = ToolResult.success(body)
@@ -62,6 +68,7 @@ public final class ToolResult {
     private final boolean isError;
     private final Exception exception;
     private final Map<String, Object> renderPayload;
+    private final boolean retryable;
 
     /**
      * Creates a new ToolResult.
@@ -74,14 +81,18 @@ public final class ToolResult {
      *            The original exception (nullable, only for errors)
      * @param renderPayload
      *            Optional sidecar payload for non-LLM consumers (nullable)
+     * @param retryable
+     *            Whether calling the tool again could change the outcome; forced to {@code true} for a success
      * @throws NullPointerException
      *             if content is null
      */
-    private ToolResult(String content, boolean isError, Exception exception, Map<String, Object> renderPayload) {
+    private ToolResult(String content, boolean isError, Exception exception, Map<String, Object> renderPayload,
+            boolean retryable) {
         this.content = Objects.requireNonNull(content, "Content cannot be null");
         this.isError = isError;
         this.exception = exception;
         this.renderPayload = renderPayload;
+        this.retryable = retryable || !isError;
     }
 
     /**
@@ -94,7 +105,7 @@ public final class ToolResult {
      *             if content is null
      */
     public static ToolResult success(String content) {
-        return new ToolResult(content, false, null, null);
+        return new ToolResult(content, false, null, null, true);
     }
 
     /**
@@ -107,7 +118,7 @@ public final class ToolResult {
      *             if errorMessage is null
      */
     public static ToolResult error(String errorMessage) {
-        return new ToolResult(errorMessage, true, null, null);
+        return new ToolResult(errorMessage, true, null, null, true);
     }
 
     /**
@@ -127,7 +138,7 @@ public final class ToolResult {
      */
     public static ToolResult error(String errorMessage, Exception exception) {
         Objects.requireNonNull(exception, "Exception cannot be null");
-        return new ToolResult(errorMessage, true, exception, null);
+        return new ToolResult(errorMessage, true, exception, null, true);
     }
 
     /**
@@ -146,7 +157,7 @@ public final class ToolResult {
     public static ToolResult error(Exception exception) {
         Objects.requireNonNull(exception, "Exception cannot be null");
         String message = exception.getMessage() != null ? exception.getMessage() : exception.getClass().getSimpleName();
-        return new ToolResult(message, true, exception, null);
+        return new ToolResult(message, true, exception, null, true);
     }
 
     /**
@@ -176,7 +187,45 @@ public final class ToolResult {
      */
     public ToolResult withRenderPayload(Map<String, Object> payload) {
         Map<String, Object> copy = payload == null ? null : Map.copyOf(payload);
-        return new ToolResult(content, isError, exception, copy);
+        return new ToolResult(content, isError, exception, copy, retryable);
+    }
+
+    /**
+     * Marks this error as not retryable: calling the tool again for the same thing will fail the same way (a source
+     * over a size limit, an authorization the caller does not have), so the framework may stop running the tool for
+     * the rest of the execution.
+     *
+     * <p>
+     * What the framework does with the mark depends on who runs the tool. A subagent fork whose execution policy sets
+     * {@code SubagentExecutionPolicy#getMaxConsecutiveToolFailures()} stops running the tool after the first such
+     * failure instead of after that many in a row. Everywhere else the mark is inert. It is never sent to the LLM and
+     * never persisted — say in {@link #getContent()} what the model should know.
+     *
+     * <p>
+     * On a success this is a no-op that returns this instance: whether a call is worth repeating is a property of a
+     * failure, and building a result must not make a tool throw from {@code execute()}.
+     *
+     * @return a new error ToolResult that is not retryable, or this instance for a success
+     */
+    public ToolResult notRetryable() {
+        if (!isError) {
+            return this;
+        }
+        return new ToolResult(content, true, exception, renderPayload, false);
+    }
+
+    /**
+     * Whether calling the tool again could change this outcome.
+     *
+     * <p>
+     * {@code true} unless the tool marked its error with {@link #notRetryable()}; always {@code true} for a success.
+     * Excluded from Jackson serialization: it is a signal for the framework, not for the LLM or the transcript.
+     *
+     * @return whether this result is retryable
+     */
+    @JsonIgnore
+    public boolean isRetryable() {
+        return retryable;
     }
 
     /**
@@ -256,13 +305,13 @@ public final class ToolResult {
             return false;
         }
         final ToolResult that = (ToolResult) o;
-        return isError == that.isError && content.equals(that.content) && Objects.equals(exception, that.exception)
-                && Objects.equals(renderPayload, that.renderPayload);
+        return isError == that.isError && retryable == that.retryable && content.equals(that.content)
+                && Objects.equals(exception, that.exception) && Objects.equals(renderPayload, that.renderPayload);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(content, isError, exception, renderPayload);
+        return Objects.hash(content, isError, exception, renderPayload, retryable);
     }
 
     @Override
@@ -271,6 +320,8 @@ public final class ToolResult {
                 ? ", exception=" + exception.getClass().getSimpleName() + ": " + exception.getMessage()
                 : "";
         String renderInfo = renderPayload != null ? ", renderPayload=" + renderPayload.keySet() : "";
-        return "ToolResult{isError=" + isError + ", content='" + content + "'" + exceptionInfo + renderInfo + "}";
+        String retryInfo = retryable ? "" : ", retryable=false";
+        return "ToolResult{isError=" + isError + retryInfo + ", content='" + content + "'" + exceptionInfo + renderInfo
+                + "}";
     }
 }

@@ -156,10 +156,28 @@ subagent definition file — and its context can be managed by its spawner's con
 - **Failing tools stop being run** — `maxConsecutiveToolFailures(n)`
   (`SubagentPolicyCapability.MAX_CONSECUTIVE_TOOL_FAILURES`): a tool whose calls failed n times in a row in a fork is
   not run again there; its calls are answered with an error result and take none of the tool-call budget. A success
-  resets the count.
+  resets the count. A failure the tool marks **not retryable** (`ToolResult#notRetryable()`, below) blocks the tool
+  after that one failure instead of n, and the refusal says so ("reported its failure as not retryable"). Without
+  this axis the mark is inert — there is no separate switch.
 - **Result shape** — `resultMaxChars(n)` and `resultTruncation(SubagentResultTruncation)` (new enum: `TAIL`, `HEAD`,
   `HEAD_AND_TAIL`) set how much of the answer the foreground `Task` result inlines and which part it keeps;
   `SubagentResultFormatter#truncate` (new). Without them the result is the 32,000-character tail-keep it was.
+
+### Added: tools can mark a failure as not retryable
+
+A tool that knows a failure will not change on retry (a source over a size limit, a denied authorization) can now say
+so, and a policy fork stops running it at once (above). Guide: `docs/features/tool/tool-development-guide.md`.
+
+- **`ToolResult#notRetryable()` / `#isRetryable()`** (new) — returns a copy of an error marked not retryable; a no-op on
+  a success. Every existing factory still produces a retryable result. `equals` / `hashCode` / `toString` include the
+  flag. `ToolExecutionException.notRetryable(message[, cause])` and `#isRetryable()` (new) do the same for a
+  `GenericTool`'s `doExecute()`.
+- **Carried, not sent** — `ToolExecutionResult#isRetryable()`, `ToolUseResult#notRetryable()` / `#isRetryable()` and
+  `ToolUseResult#withContent(String)` (new; replaces the content and keeps the error status, render payload and flag).
+  The flag is `@JsonIgnore`, no provider converter reads it, and the session snapshot codec does not write it: a result
+  read back from history is retryable. Hook feedback, environment notices and `Message#mapText` keep it; a PostTool
+  output rewrite keeps the tool's mark while the result stays an error (a hook may add the mark, not clear it).
+  `PostToolContext#originalOutput()` / `#currentOutput()` expose it. MCP tool results are always retryable.
 
 ### Changed (behaviour change): `ToolDefinition` keeps the input schema's top-level key order
 

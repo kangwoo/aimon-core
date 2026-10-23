@@ -1,6 +1,7 @@
 package at.aimon.core.agent.tool.exception;
 
 import java.io.Serial;
+import java.util.Objects;
 
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.execution.ToolExecutionResult;
@@ -119,6 +120,9 @@ public class ToolExecutionException extends ToolException {
     @Serial
     private static final long serialVersionUID = 5650681013970454951L;
 
+    /** Whether calling the tool again could succeed; see {@link #notRetryable(String)}. */
+    private final boolean retryable;
+
     /**
      * Creates a new ToolExecutionException with the specified message.
      *
@@ -133,6 +137,7 @@ public class ToolExecutionException extends ToolException {
      */
     public ToolExecutionException(String message) {
         super(message);
+        this.retryable = true;
     }
 
     /**
@@ -155,5 +160,56 @@ public class ToolExecutionException extends ToolException {
      */
     public ToolExecutionException(String message, Throwable cause) {
         super(message, cause);
+        this.retryable = true;
+    }
+
+    private ToolExecutionException(String message, Throwable cause, boolean retryable) {
+        super(message, cause);
+        this.retryable = retryable;
+    }
+
+    /**
+     * Creates a ToolExecutionException for a failure that calling the tool again will not change — a source over a
+     * size limit, an authorization the caller does not have.
+     *
+     * <p>
+     * {@code GenericTool} turns it into {@code ToolResult.error(message).notRetryable()}; see
+     * {@code ToolResult#notRetryable()} for what the framework does with the mark.
+     *
+     * @param message
+     *            The error message the model reads (must not be null)
+     * @return a new, not retryable ToolExecutionException
+     * @throws NullPointerException
+     *             if message is null
+     */
+    public static ToolExecutionException notRetryable(String message) {
+        return new ToolExecutionException(message, null, false);
+    }
+
+    /**
+     * Creates a ToolExecutionException for a failure that calling the tool again will not change, keeping its cause.
+     *
+     * @param message
+     *            The error message the model reads (must not be null)
+     * @param cause
+     *            The underlying cause (must not be null)
+     * @return a new, not retryable ToolExecutionException
+     * @throws NullPointerException
+     *             if message or cause is null
+     * @see #notRetryable(String)
+     */
+    public static ToolExecutionException notRetryable(String message, Throwable cause) {
+        Objects.requireNonNull(cause, "cause cannot be null");
+        return new ToolExecutionException(message, cause, false);
+    }
+
+    /**
+     * Whether calling the tool again could succeed: {@code false} only for an exception created by
+     * {@link #notRetryable(String)}.
+     *
+     * @return whether the failure is retryable
+     */
+    public boolean isRetryable() {
+        return retryable;
     }
 }

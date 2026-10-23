@@ -202,6 +202,19 @@ class GenericToolTest {
 
             assertThat(result.isError()).isTrue();
             assertThat(result.getContent()).isEqualTo("Invalid regex pattern: dangling [");
+            assertThat(result.isRetryable()).isTrue();
+        }
+
+        @Test
+        void aFailureThrownAsNotRetryableIsMarkedSo() {
+            ToolResult result = failWith(ToolExecutionException.notRetryable("SIZE_LIMIT: source over 10 MB"));
+
+            assertThat(result.isError()).isTrue();
+            assertThat(result.getContent()).isEqualTo("SIZE_LIMIT: source over 10 MB");
+            assertThat(result.isRetryable()).isFalse();
+            assertThat(ToolExecutionException.notRetryable("x", new java.io.IOException("io")).getCause())
+                    .isInstanceOf(java.io.IOException.class);
+            assertThat(new ToolExecutionException("x").isRetryable()).isTrue();
         }
 
         @Test

@@ -565,7 +565,9 @@ TaskTool task = new TaskTool(model, subagentRegistry, toolRegistry, hookRegistry
   끝나지 않았다는 뜻입니다(`isSuccess() == true`, 사유는 성공이 아님). 예산·deadline·quota 가 그 호출을 막을
   상황이면 건너뛰고 `MAX_ITERATIONS` 로 끝납니다.
 - `maxConsecutiveToolFailures(n)` — 같은 도구가 n 번 연속 실패하면 그 포크에서는 다시 실행하지 않고 오류로
-  답합니다. 성공하면 그 도구의 횟수가 0 으로 돌아갑니다.
+  답합니다. 성공하면 그 도구의 횟수가 0 으로 돌아갑니다. 도구가 실패를 재시도해도 바뀌지 않는다고 표시하면
+  (`ToolResult.error(...).notRetryable()`) n 을 기다리지 않고 그 한 번으로 막습니다. 이 축이 없는 포크에서
+  그 표시는 아무 일도 하지 않습니다.
 - `resultMaxChars(n)` · `resultTruncation(HEAD | TAIL | HEAD_AND_TAIL)` — foreground `Task` 결과로 부모에게 넘기는
   답의 길이와, 넘칠 때 남길 쪽. 기본은 32,000자 · `TAIL` 입니다. finding 을 앞에 쓰는 서브에이전트라면 `HEAD` 를
   씁니다.

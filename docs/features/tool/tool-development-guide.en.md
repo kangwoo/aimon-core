@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/tool/tool-development-guide.md
-source_commit: ff0e6ff2
+source_commit: ab012834
 ---
 
 # Tool Development Guide
@@ -363,12 +363,36 @@ return ToolResult.error("Failed to read file: " + e.getMessage(), e);
 return ToolResult.error(exception);
 ```
 
+### Failures a retry will not change
+
+Mark a failure that repeating the same call will not change — a size limit (`SIZE_LIMIT`), a denied authorization
+(`AUTH_DENIED`) — with `notRetryable()`. What the model should know still goes in the message: the mark never
+reaches the model.
+
+```java
+return ToolResult.error("SIZE_LIMIT: the source is larger than 10 MB").notRetryable();
+
+// from a GenericTool's doExecute(), as an exception
+throw ToolExecutionException.notRetryable("SIZE_LIMIT: the source is larger than 10 MB");
+```
+
+- **Retryable is the default.** Every existing factory builds a result with `isRetryable() == true`. Calling
+  `notRetryable()` on a success does nothing and returns the same instance.
+- **One place reads the mark.** A subagent fork with a `maxConsecutiveToolFailures` policy blocks the tool after this
+  one failure ([execution policy §4.1](../../design/subagent/execution-policy.md#41-연속-실패한-도구), Korean only).
+  On a main-agent turn and in a fork without that policy it does nothing.
+- **It goes neither to the LLM nor to persisted history.** It is carried as far as `ToolUseResult`, but the provider
+  converters and the session snapshot do not use it. A result read back from history is always retryable.
+- When a PostTool hook rewrites the output, the mark stays as long as the result is still an error. A hook may set the
+  mark itself but cannot clear the tool's.
+
 ### Reading the result
 
 ```java
 String content = result.getContent();         // the message/output
 boolean isError = result.isError();           // whether it is an error
 boolean isSuccess = result.isSuccess();       // whether it succeeded
+boolean retryable = result.isRetryable();     // whether calling again could change it (always true for a success)
 Optional<Exception> ex = result.getException(); // the exception (if any)
 ```
 

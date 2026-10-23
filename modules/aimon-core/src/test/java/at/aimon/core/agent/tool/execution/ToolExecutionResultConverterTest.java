@@ -152,4 +152,31 @@ class ToolExecutionResultConverterTest {
         // Then
         assertThat(result.getRenderPayload()).isNull();
     }
+
+    @Test
+    @DisplayName("Should carry a not-retryable mark from ToolResult through ToolExecutionResult to ToolUseResult")
+    void testToToolUseResult_NotRetryablePropagated() {
+        ToolResult toolResult = ToolResult.error("SIZE_LIMIT: too large").notRetryable()
+                .withRenderPayload(Map.of("kind", "size"));
+        ToolExecutionResult executionResult = ToolExecutionResult.of("tool_nr", toolResult);
+
+        ToolUseResult result = ToolExecutionResultConverter.toToolUseResult(executionResult);
+
+        assertThat(executionResult.isRetryable()).isFalse();
+        assertThat(result.isError()).isTrue();
+        assertThat(result.isRetryable()).isFalse();
+        assertThat(result.getRenderPayload()).containsEntry("kind", "size");
+        assertThat(result.getContent()).isEqualTo("SIZE_LIMIT: too large");
+    }
+
+    @Test
+    @DisplayName("Should keep results retryable by default")
+    void testToToolUseResult_RetryableByDefault() {
+        assertThat(ToolExecutionResultConverter.toToolUseResult(ToolExecutionResult.of("t", ToolResult.error("failed")))
+                .isRetryable()).isTrue();
+        assertThat(ToolExecutionResultConverter.toToolUseResult(ToolExecutionResult.error("t", "failed")).isRetryable())
+                .isTrue();
+        assertThat(ToolExecutionResult.of("t", ToolResult.error("x").notRetryable()))
+                .isNotEqualTo(ToolExecutionResult.of("t", ToolResult.error("x")));
+    }
 }

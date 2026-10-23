@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/subagent/subagent-development-guide.md
-source_commit: f14ff3ea
+source_commit: 81b0ea05
 ---
 
 # Subagent Development Guide
@@ -589,7 +589,9 @@ TaskTool task = new TaskTool(model, subagentRegistry, toolRegistry, hookRegistry
   is an answer, and the work is not finished (`isSuccess() == true`, the reason is not a successful one). When a
   budget, the deadline or a quota would stop that call, it is skipped and the run ends `MAX_ITERATIONS`.
 - `maxConsecutiveToolFailures(n)` — a tool that fails n times in a row is not run again in that fork; its calls are
-  answered with an error. A success resets that tool's count to 0.
+  answered with an error. A success resets that tool's count to 0. When the tool marks a failure as one a retry will
+  not change (`ToolResult.error(...).notRetryable()`), that one failure blocks it, without waiting for n. In a fork
+  without this axis the mark does nothing.
 - `resultMaxChars(n)` · `resultTruncation(HEAD | TAIL | HEAD_AND_TAIL)` — how long the answer handed to the parent as
   the foreground `Task` result may be, and which part to keep when it is longer. The defaults are 32,000 characters
   and `TAIL`. A subagent that writes its findings first wants `HEAD`.

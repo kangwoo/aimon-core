@@ -47,6 +47,7 @@ public final class ToolExecutionResultConverter {
      * <li>toolResult.content → content</li>
      * <li>toolResult.isError → isError</li>
      * <li>toolResult.renderPayload → renderPayload (opaque sidecar)</li>
+     * <li>toolResult.retryable → retryable (framework signal, not sent to the LLM)</li>
      * </ul>
      *
      * @param executionResult
@@ -70,6 +71,9 @@ public final class ToolExecutionResultConverter {
         Map<String, Object> renderPayload = executionResult.getRenderPayload();
         if (renderPayload != null) {
             result = result.withRenderPayload(renderPayload);
+        }
+        if (!executionResult.isRetryable()) {
+            result = result.notRetryable();
         }
         return result;
     }

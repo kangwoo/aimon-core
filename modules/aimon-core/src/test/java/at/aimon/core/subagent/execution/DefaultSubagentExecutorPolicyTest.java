@@ -41,6 +41,8 @@ import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
+import at.aimon.core.hook.HookEventType;
+import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmCancellation;
 import at.aimon.core.llm.LlmClient;
@@ -366,6 +368,134 @@ class DefaultSubagentExecutorPolicyTest {
     }
 
     @Test
+    @DisplayName("a failure the tool reports as not retryable blocks the tool at once, below the policy's limit")
+    void notRetryableFailureBlocksAtOnce() {
+        final UnchangingFailureTool sized = new UnchangingFailureTool();
+        final CountingTool other = new CountingTool();
+        final DefaultToolRegistry registry = registryWith(sized);
+        registry.register(other);
+        final ScriptedClient llm = new ScriptedClient();
+        llm.responses.add(unchangingCall("u1"));
+        llm.responses.add(LlmResponse.of("again", List.of(ToolUse.of("u2", UnchangingFailureTool.NAME, Map.of()),
+                ToolUse.of("p1", CountingTool.NAME, Map.of())), USAGE));
+        llm.responses.add(LlmResponse.of("done without it", List.of(), USAGE));
+
+        final SubagentExecutionResult result = executor(llm).execute(context(registry),
+                request(SubagentExecutionPolicy.builder("worker").maxConsecutiveToolFailures(3).build(), null));
+
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
+        assertThat(sized.runs).hasValue(1);
+        assertThat(other.runs).hasValue(1);
+        assertThat(result.getToolCallCount()).isEqualTo(2);
+        final List<List<ToolUseResult>> batches = toolResultBatches(result);
+        // The model read the tool's own words the first time; the mark reached the executor through the real pipeline.
+        assertThat(batches.get(0).get(0).getContent()).isEqualTo(UnchangingFailureTool.MESSAGE);
+        assertThat(batches.get(0).get(0).isRetryable()).isFalse();
+        assertThat(batches.get(1).get(0).isError()).isTrue();
+        assertThat(batches.get(1).get(0).getContent()).startsWith(
+                "Not run: " + UnchangingFailureTool.NAME + " reported its failure as not retryable in this task");
+        assertThat(batches.get(1).get(1).isError()).isFalse();
+    }
+
+    @Test
+    @DisplayName("without the failure-streak axis a not-retryable failure changes nothing: the tool keeps running")
+    void notRetryableIsInertWithoutTheAxis() {
+        for (SubagentExecutionPolicy policy : new SubagentExecutionPolicy[]{null,
+                SubagentExecutionPolicy.builder("worker").maxToolCalls(10).build()}) {
+            final UnchangingFailureTool sized = new UnchangingFailureTool();
+            final ScriptedClient llm = new ScriptedClient();
+            // Two, not three: three all-error iterations in a row would trip the StalledIterationGuard.
+            llm.responses.add(unchangingCall("u1"));
+            llm.responses.add(unchangingCall("u2"));
+            llm.responses.add(LlmResponse.of("done", List.of(), USAGE));
+
+            final SubagentExecutionResult result = executor(llm).execute(context(registryWith(sized)),
+                    request(policy, null));
+
+            assertThat(result.getCompletionReason()).as("policy %s", policy).isEqualTo(CompletionReason.COMPLETED);
+            assertThat(sized.runs).as("policy %s", policy).hasValue(2);
+            assertThat(toolResultBatches(result)).allSatisfy(
+                    batch -> assertThat(batch.get(0).getContent()).isEqualTo(UnchangingFailureTool.MESSAGE));
+        }
+    }
+
+    @Test
+    @DisplayName("the mark survives the pipeline's rewrites: a PostTool output rewrite and appended hook feedback")
+    void notRetryableSurvivesHookRewrites() {
+        final UnchangingFailureTool sized = new UnchangingFailureTool();
+        final DefaultHookRegistry hooks = new DefaultHookRegistry();
+        // A masking hook that rebuilds the error from scratch, without the mark, and one that only adds a note.
+        hooks.register(HookEventType.POST_TOOL,
+                ctx -> HookResult.withUpdatedOutput(ToolResult.error("[masked] " + ctx.currentOutput().getContent())));
+        hooks.register(HookEventType.POST_TOOL, ctx -> HookResult.withFeedback("audited"));
+        final ScriptedClient llm = new ScriptedClient();
+        llm.responses.add(unchangingCall("u1"));
+        llm.responses.add(unchangingCall("u2"));
+        llm.responses.add(LlmResponse.of("done", List.of(), USAGE));
+
+        final SubagentExecutionResult result = executor(llm).execute(context(registryWith(sized), hooks),
+                request(SubagentExecutionPolicy.builder("worker").maxConsecutiveToolFailures(5).build(), null));
+
+        assertThat(sized.runs).hasValue(1);
+        final List<List<ToolUseResult>> batches = toolResultBatches(result);
+        assertThat(batches.get(0).get(0).getContent()).startsWith("[masked] " + UnchangingFailureTool.MESSAGE)
+                .contains("audited");
+        assertThat(batches.get(1).get(0).getContent()).contains("reported its failure as not retryable");
+    }
+
+    @Test
+    @DisplayName("a PostTool hook may mark an error not retryable itself")
+    void aHookMayMarkAFailureNotRetryable() {
+        final ScriptedOutcomeTool flaky = new ScriptedOutcomeTool(false, false);
+        final DefaultHookRegistry hooks = new DefaultHookRegistry();
+        hooks.register(HookEventType.POST_TOOL,
+                ctx -> ctx.currentOutput().isError()
+                        ? HookResult.withUpdatedOutput(ctx.currentOutput().notRetryable())
+                        : HookResult.success());
+        final ScriptedClient llm = new ScriptedClient();
+        llm.responses.add(flakyCall("f1"));
+        llm.responses.add(flakyCall("f2"));
+        llm.responses.add(LlmResponse.of("done", List.of(), USAGE));
+
+        executor(llm).execute(context(registryWith(flaky), hooks),
+                request(SubagentExecutionPolicy.builder("worker").maxConsecutiveToolFailures(5).build(), null));
+
+        assertThat(flaky.runs).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("a success recorded after a not-retryable failure in the same batch lifts the block")
+    void successInTheSameBatchLiftsTheBlock() {
+        // Every error it returns is marked not retryable (the mark is a no-op on its successes).
+        final ScriptedOutcomeTool mixed = new ScriptedOutcomeTool(false, true, true) {
+            @Override
+            public ToolResult execute(ToolInput input, ToolContext context) {
+                return super.execute(input, context).notRetryable();
+            }
+        };
+        final ScriptedClient llm = new ScriptedClient();
+        // Batch 1: fail (not retryable), then succeed — recorded in order, so the success resets the tool.
+        llm.responses.add(LlmResponse.of("try", List.of(ToolUse.of("a", ScriptedOutcomeTool.NAME, Map.of()),
+                ToolUse.of("b", ScriptedOutcomeTool.NAME, Map.of())), USAGE));
+        llm.responses.add(flakyCall("c"));
+        llm.responses.add(LlmResponse.of("done", List.of(), USAGE));
+
+        executor(llm).execute(context(registryWith(mixed)),
+                request(SubagentExecutionPolicy.builder("worker").maxConsecutiveToolFailures(1).build(), null));
+
+        assertThat(mixed.runs).hasValue(3);
+    }
+
+    private static LlmResponse unchangingCall(String id) {
+        return LlmResponse.of("try", List.of(ToolUse.of(id, UnchangingFailureTool.NAME, Map.of())), USAGE);
+    }
+
+    private static List<List<ToolUseResult>> toolResultBatches(SubagentExecutionResult result) {
+        return result.getConversationHistory().stream().filter(m -> !m.getToolUseResults().isEmpty())
+                .map(Message::getToolUseResults).toList();
+    }
+
+    @Test
     @DisplayName("a deadline that passed before the fork started runs nothing")
     void deadlinePassedBeforeStart() {
         final AtomicLong now = new AtomicLong();
@@ -580,10 +710,18 @@ class DefaultSubagentExecutorPolicyTest {
 
     private static SubagentExecutionContext context(DefaultToolRegistry registry, CancellationSignal parent,
             int maxIterations) {
+        return context(registry, new DefaultHookRegistry(), parent, maxIterations);
+    }
+
+    private static SubagentExecutionContext context(DefaultToolRegistry registry, DefaultHookRegistry hooks) {
+        return context(registry, hooks, NoopCancellationSignal.INSTANCE, 10);
+    }
+
+    private static SubagentExecutionContext context(DefaultToolRegistry registry, DefaultHookRegistry hooks,
+            CancellationSignal parent, int maxIterations) {
         return SubagentExecutionContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test-1"))
                 .subagent(subagent(maxIterations)).defaultModel(LlmModel.builder().name("gpt-4").build())
-                .toolRegistry(registry).hookRegistry(new DefaultHookRegistry()).parentCancellationSignal(parent)
-                .build();
+                .toolRegistry(registry).hookRegistry(hooks).parentCancellationSignal(parent).build();
     }
 
     private static SubagentExecutionRequest request(SubagentExecutionPolicy policy, ExecutionDeadline deadline) {
@@ -597,8 +735,25 @@ class DefaultSubagentExecutorPolicyTest {
         return registry;
     }
 
+    /** Fails every call with an error it marks not retryable, counting the calls. */
+    private static final class UnchangingFailureTool extends AbstractTool {
+        static final String NAME = "Fetch";
+        static final String MESSAGE = "SIZE_LIMIT: the source is larger than 10 MB";
+        final AtomicInteger runs = new AtomicInteger();
+
+        UnchangingFailureTool() {
+            super(NAME, "always too large", Map.of("type", "object", "properties", Map.of(), "required", List.of()));
+        }
+
+        @Override
+        public ToolResult execute(ToolInput input, ToolContext context) {
+            runs.incrementAndGet();
+            return ToolResult.error(MESSAGE).notRetryable();
+        }
+    }
+
     /** Answers each call it runs with the next scripted outcome (true = success), counting the calls. */
-    private static final class ScriptedOutcomeTool extends AbstractTool {
+    private static class ScriptedOutcomeTool extends AbstractTool {
         static final String NAME = "Flaky";
         final Deque<Boolean> outcomes = new ArrayDeque<>();
         final AtomicInteger runs = new AtomicInteger();

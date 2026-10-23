@@ -162,7 +162,11 @@ public final class PostToolContext implements HookContext {
     }
 
     private static ToolResult toToolResult(ToolUseResult tur) {
-        return tur.isError() ? ToolResult.error(tur.getContent()) : ToolResult.success(tur.getContent());
+        if (!tur.isError()) {
+            return ToolResult.success(tur.getContent());
+        }
+        final ToolResult error = ToolResult.error(tur.getContent());
+        return tur.isRetryable() ? error : error.notRetryable();
     }
 
     /**
@@ -199,9 +203,11 @@ public final class PostToolContext implements HookContext {
      */
     public PostToolContext withCurrentOutput(ToolResult newOutput) {
         Objects.requireNonNull(newOutput, "newOutput cannot be null");
-        final ToolUseResult rebuilt = newOutput.isError()
-                ? ToolUseResult.error(toolUse.getId(), newOutput.getContent())
-                : ToolUseResult.success(toolUse.getId(), newOutput.getContent());
+        final ToolUseResult rebuilt = !newOutput.isError()
+                ? ToolUseResult.success(toolUse.getId(), newOutput.getContent())
+                : newOutput.isRetryable()
+                        ? ToolUseResult.error(toolUse.getId(), newOutput.getContent())
+                        : ToolUseResult.error(toolUse.getId(), newOutput.getContent()).notRetryable();
         final Builder b = new Builder().executorType(invokerType).invokerName(invokerName).hookRegistry(hookRegistry)
                 .executionEnvironment(executionEnvironment).executionCancellation(executionCancellation)
                 .toolUse(toolUse).toolUseResult(originalToolUseResult).iterationCount(iterationCount)

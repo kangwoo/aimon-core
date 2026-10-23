@@ -361,12 +361,35 @@ return ToolResult.error("Failed to read file: " + e.getMessage(), e);
 return ToolResult.error(exception);
 ```
 
+### 다시 불러도 바뀌지 않는 실패
+
+크기 제한(`SIZE_LIMIT`)이나 인증 거부(`AUTH_DENIED`)처럼 같은 호출을 되풀이해도 결과가 같은 실패는
+`notRetryable()` 로 표시한다. 모델에게 할 말은 지금처럼 메시지에 쓴다 — 표시는 모델에게 가지 않는다.
+
+```java
+return ToolResult.error("SIZE_LIMIT: the source is larger than 10 MB").notRetryable();
+
+// GenericTool 의 doExecute() 에서는 예외로
+throw ToolExecutionException.notRetryable("SIZE_LIMIT: the source is larger than 10 MB");
+```
+
+- **기본은 재시도 가능이다.** 기존 팩토리는 모두 `isRetryable() == true` 인 결과를 만든다. 성공에 `notRetryable()`
+  을 부르면 아무 일도 하지 않고 같은 인스턴스를 돌려준다.
+- **표시를 읽는 곳은 하나다.** `maxConsecutiveToolFailures` 정책을 가진 서브에이전트 포크는 이 실패 한 번으로 그
+  도구를 막는다([실행 정책 §4.1](../../design/subagent/execution-policy.md#41-연속-실패한-도구)). 메인 에이전트
+  턴과 정책 없는 포크에서는 아무 일도 하지 않는다.
+- **LLM 에도 영속 기록에도 가지 않는다.** `ToolUseResult` 까지 실려 가지만 provider 변환과 세션 snapshot 은
+  이 값을 쓰지 않는다. 기록에서 다시 읽은 결과는 언제나 재시도 가능이다.
+- PostTool hook 이 출력을 바꿔 써도 오류로 남는 한 표시는 유지된다. hook 이 직접 표시할 수는 있지만 도구의 표시를
+  지울 수는 없다.
+
 ### 결과 조회
 
 ```java
 String content = result.getContent();         // 메시지/출력
 boolean isError = result.isError();           // 에러 여부
 boolean isSuccess = result.isSuccess();       // 성공 여부
+boolean retryable = result.isRetryable();     // 다시 불러 바뀔 수 있는 결과인지 (성공은 늘 true)
 Optional<Exception> ex = result.getException(); // 예외 (있는 경우)
 ```
 
