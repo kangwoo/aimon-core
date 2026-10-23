@@ -35,9 +35,16 @@ Central is versioned independently).
 ### Changed: `TokenUsage.getPromptTokens()` is the whole input context on Anthropic
 
 Anthropic's `input_tokens` excludes the prompt cache, so `aimon-llm-anthropic` now adds `cache_read_input_tokens` and
-`cache_creation_input_tokens` back. The prompt count — and with it the total, budget accounting, and
-`ModelPrice.costOf`, which prices every prompt token at the input rate — goes up for calls that hit or fill the cache.
-OpenAI already counted the cache inside its input and is unchanged.
+`cache_creation_input_tokens` back. The prompt count, the total and token-based budgets go up for calls that hit or fill
+the cache. OpenAI already counted the cache inside its input and is unchanged.
+
+### Added: prompt-cache rates on `ModelPrice`
+
+`ModelPrice` takes optional `cacheReadPricePerMillionTokens` / `cacheWritePricePerMillionTokens` (and a four-argument
+`perMillionUsd`). `costOf` prices a cache part at its own rate only when the counter is measured and the rate is set;
+otherwise the prompt is priced at the input rate exactly as before. `InMemoryModelPriceTable.withDefaults()` now carries
+OpenAI cached-input rates and Anthropic cache read (0.1x) / five-minute write (1.25x) rates, so cost estimates for
+cached Anthropic calls are no longer inflated by the whole-context prompt count.
 
 ### Added: background monitors (`Monitor` / `MonitorStop`)
 

@@ -92,21 +92,21 @@ class InMemoryModelPriceTableTest {
         @DisplayName("prices a dated gpt-4o snapshot via prefix")
         void pricesGpt4oSnapshot() {
             assertThat(InMemoryModelPriceTable.withDefaults().priceOf("gpt-4o-2024-08-06"))
-                    .contains(ModelPrice.perMillionUsd(2.50, 10.00));
+                    .contains(ModelPrice.perMillionUsd(2.50, 10.00, 1.25, 0.0));
         }
 
         @Test
         @DisplayName("prices claude-sonnet-4 via prefix")
         void pricesClaudeSonnet4() {
             assertThat(InMemoryModelPriceTable.withDefaults().priceOf("claude-sonnet-4-20250514"))
-                    .contains(ModelPrice.perMillionUsd(3.00, 15.00));
+                    .contains(ModelPrice.perMillionUsd(3.00, 15.00, 0.30, 3.75));
         }
 
         @Test
         @DisplayName("gpt-4o-mini resolves to the mini price, not the base gpt-4o price")
         void miniDoesNotCollideWithBase() {
             assertThat(InMemoryModelPriceTable.withDefaults().priceOf("gpt-4o-mini"))
-                    .contains(ModelPrice.perMillionUsd(0.15, 0.60));
+                    .contains(ModelPrice.perMillionUsd(0.15, 0.60, 0.075, 0.0));
         }
     }
 
