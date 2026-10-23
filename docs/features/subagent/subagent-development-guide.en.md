@@ -595,6 +595,14 @@ TaskTool task = new TaskTool(model, subagentRegistry, toolRegistry, hookRegistry
 - `resultMaxChars(n)` · `resultTruncation(HEAD | TAIL | HEAD_AND_TAIL)` — how long the answer handed to the parent as
   the foreground `Task` result may be, and which part to keep when it is longer. The defaults are 32,000 characters
   and `TAIL`. A subagent that writes its findings first wants `HEAD`.
+- `resultSchema(Map)` · `resultPayloadMaxChars(n)` — a **structured result that is never truncated**. The subagent is
+  offered a `ReportResult` tool whose input schema is this schema (whatever its `allowed-tools` say), and a payload
+  that does not fit is answered with an error that says what to fix. The last payload accepted reaches the parent
+  **whole**: as `SubagentExecutionResult#getStructuredResult()`, as `structuredResult` in the render payload and as a
+  JSON block in the `Task` text (cap 100,000 characters by default). A subagent that reports none gets a
+  `Structured result: MISSING` line and `structuredResultMissing=true` — its work is incomplete. A report does not
+  count against the tool-call cap, and is accepted in the grace round too. Code should read the render payload, not
+  the text.
 
 A subagent without a policy runs exactly as before. For guarantees and limits (token overshoot, uncooperative I/O,
 how usage is summed) see the [execution policy design](../../design/subagent/execution-policy.md).

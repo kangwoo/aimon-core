@@ -41,7 +41,12 @@ public enum SubagentPolicyCapability {
      * Not running a tool that failed too many times in a row
      * ({@link SubagentExecutionPolicy#getMaxConsecutiveToolFailures()}).
      */
-    MAX_CONSECUTIVE_TOOL_FAILURES;
+    MAX_CONSECUTIVE_TOOL_FAILURES,
+    /**
+     * Offering the fork a result-report tool whose payload is validated against a schema and handed to the spawner
+     * untruncated ({@link SubagentExecutionPolicy#getResultSchema()}).
+     */
+    STRUCTURED_RESULT;
 
     /**
      * The capabilities that only mean something when the fork's context engine compacts: the two compaction hints and

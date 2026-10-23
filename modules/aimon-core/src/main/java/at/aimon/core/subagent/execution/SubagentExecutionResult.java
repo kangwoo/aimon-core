@@ -2,6 +2,7 @@ package at.aimon.core.subagent.execution;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -108,7 +109,7 @@ public final class SubagentExecutionResult {
         Objects.requireNonNull(metadata, "Execution metadata cannot be null");
         Objects.requireNonNull(completionReason, "Completion reason cannot be null");
         return new SubagentExecutionResult(finalAnswer, snapshot, metadata, true, null, completionReason, cost, null,
-                null, null, 0, true);
+                null, null, 0, true, null, false);
     }
 
     /**
@@ -174,7 +175,7 @@ public final class SubagentExecutionResult {
         Objects.requireNonNull(metadata, "Execution metadata cannot be null");
         Objects.requireNonNull(completionReason, "Completion reason cannot be null");
         return new SubagentExecutionResult(null, snapshot, metadata, false, errorMessage, completionReason, cost, null,
-                null, null, 0, true);
+                null, null, 0, true, null, false);
     }
 
     /**
@@ -237,13 +238,16 @@ public final class SubagentExecutionResult {
     private final ExecutionEnvironment executionEnvironment;
     private final int toolCallCount;
     private final boolean exitConfirmed;
+    private final Map<String, Object> structuredResult;
+    private final boolean structuredResultRequired;
 
     // One argument per field of an immutable value; bundling them would only move the list.
     @SuppressWarnings("checkstyle:ParameterNumber")
     private SubagentExecutionResult(String finalAnswer, SessionSnapshot snapshot, ExecutionMetadata metadata,
             boolean success, String errorMessage, CompletionReason completionReason, Money cost,
             QuotaViolation quotaViolation, ExecutionId executionId, ExecutionEnvironment executionEnvironment,
-            int toolCallCount, boolean exitConfirmed) {
+            int toolCallCount, boolean exitConfirmed, Map<String, Object> structuredResult,
+            boolean structuredResultRequired) {
         this.finalAnswer = finalAnswer;
         this.snapshot = Objects.requireNonNull(snapshot, "Session snapshot cannot be null");
         this.metadata = Objects.requireNonNull(metadata, "Execution metadata cannot be null");
@@ -256,6 +260,8 @@ public final class SubagentExecutionResult {
         this.executionEnvironment = executionEnvironment;
         this.toolCallCount = toolCallCount;
         this.exitConfirmed = exitConfirmed;
+        this.structuredResult = structuredResult;
+        this.structuredResultRequired = structuredResultRequired;
     }
 
     /**
@@ -410,7 +416,8 @@ public final class SubagentExecutionResult {
     public SubagentExecutionResult withQuotaViolation(QuotaViolation quotaViolation) {
         Objects.requireNonNull(quotaViolation, "Quota violation cannot be null");
         return new SubagentExecutionResult(finalAnswer, snapshot, metadata, success, errorMessage, completionReason,
-                cost, quotaViolation, executionId, executionEnvironment, toolCallCount, exitConfirmed);
+                cost, quotaViolation, executionId, executionEnvironment, toolCallCount, exitConfirmed, structuredResult,
+                structuredResultRequired);
     }
 
     /**
@@ -434,7 +441,8 @@ public final class SubagentExecutionResult {
     public SubagentExecutionResult withExecutionId(ExecutionId executionId) {
         Objects.requireNonNull(executionId, "Execution id cannot be null");
         return new SubagentExecutionResult(finalAnswer, snapshot, metadata, success, errorMessage, completionReason,
-                cost, quotaViolation, executionId, executionEnvironment, toolCallCount, exitConfirmed);
+                cost, quotaViolation, executionId, executionEnvironment, toolCallCount, exitConfirmed, structuredResult,
+                structuredResultRequired);
     }
 
     /**
@@ -462,7 +470,8 @@ public final class SubagentExecutionResult {
     public SubagentExecutionResult withExecutionEnvironment(ExecutionEnvironment executionEnvironment) {
         Objects.requireNonNull(executionEnvironment, "Execution environment cannot be null");
         return new SubagentExecutionResult(finalAnswer, snapshot, metadata, success, errorMessage, completionReason,
-                cost, quotaViolation, executionId, executionEnvironment, toolCallCount, exitConfirmed);
+                cost, quotaViolation, executionId, executionEnvironment, toolCallCount, exitConfirmed, structuredResult,
+                structuredResultRequired);
     }
 
     /**
@@ -489,7 +498,8 @@ public final class SubagentExecutionResult {
             throw new IllegalArgumentException("toolCallCount must not be negative, got: " + toolCallCount);
         }
         return new SubagentExecutionResult(finalAnswer, snapshot, metadata, success, errorMessage, completionReason,
-                cost, quotaViolation, executionId, executionEnvironment, toolCallCount, exitConfirmed);
+                cost, quotaViolation, executionId, executionEnvironment, toolCallCount, exitConfirmed, structuredResult,
+                structuredResultRequired);
     }
 
     /**
@@ -517,7 +527,56 @@ public final class SubagentExecutionResult {
      */
     public SubagentExecutionResult withExitUnconfirmed() {
         return new SubagentExecutionResult(finalAnswer, snapshot, metadata, success, errorMessage, completionReason,
-                cost, quotaViolation, executionId, executionEnvironment, toolCallCount, false);
+                cost, quotaViolation, executionId, executionEnvironment, toolCallCount, false, structuredResult,
+                structuredResultRequired);
+    }
+
+    /**
+     * Gets the structured result the fork reported: the last payload its {@value StructuredResultReport#TOOL_NAME}
+     * tool accepted, which fit the policy's schema and size cap when it was reported. It is carried whatever the
+     * completion reason — a fork stopped by a budget may still have reported — and is never truncated.
+     *
+     * @return the payload (unmodifiable, key order kept), or empty when the fork reported none or was not asked to
+     */
+    public Optional<Map<String, Object>> getStructuredResult() {
+        return Optional.ofNullable(structuredResult);
+    }
+
+    /**
+     * Gets whether the fork's execution policy required a structured result. Together with
+     * {@link #getStructuredResult()} it tells a missing report — required, none accepted — from one never asked for.
+     *
+     * @return whether a structured result was required
+     */
+    public boolean isStructuredResultRequired() {
+        return structuredResultRequired;
+    }
+
+    /**
+     * Returns a copy of this result carrying the structured result the fork reported.
+     *
+     * @param structuredResult
+     *            the accepted payload (must not be null; copied deeply)
+     * @return a new result; the original is unchanged
+     */
+    public SubagentExecutionResult withStructuredResult(Map<String, Object> structuredResult) {
+        Objects.requireNonNull(structuredResult, "Structured result cannot be null");
+        return new SubagentExecutionResult(finalAnswer, snapshot, metadata, success, errorMessage, completionReason,
+                cost, quotaViolation, executionId, executionEnvironment, toolCallCount, exitConfirmed,
+                StructuredResultReport.copyOf(structuredResult), structuredResultRequired);
+    }
+
+    /**
+     * Returns a copy of this result recording whether a structured result was required.
+     *
+     * @param required
+     *            whether the fork's policy required one
+     * @return a new result; the original is unchanged
+     */
+    public SubagentExecutionResult withStructuredResultRequired(boolean required) {
+        return new SubagentExecutionResult(finalAnswer, snapshot, metadata, success, errorMessage, completionReason,
+                cost, quotaViolation, executionId, executionEnvironment, toolCallCount, exitConfirmed, structuredResult,
+                required);
     }
 
     @Override
@@ -534,20 +593,22 @@ public final class SubagentExecutionResult {
                 && Objects.equals(errorMessage, that.errorMessage) && completionReason == that.completionReason
                 && cost.equals(that.cost) && Objects.equals(quotaViolation, that.quotaViolation)
                 && Objects.equals(executionId, that.executionId) && toolCallCount == that.toolCallCount
-                && exitConfirmed == that.exitConfirmed;
+                && exitConfirmed == that.exitConfirmed && Objects.equals(structuredResult, that.structuredResult)
+                && structuredResultRequired == that.structuredResultRequired;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(finalAnswer, snapshot, metadata, success, errorMessage, completionReason, cost,
-                quotaViolation, executionId, toolCallCount, exitConfirmed);
+                quotaViolation, executionId, toolCallCount, exitConfirmed, structuredResult, structuredResultRequired);
     }
 
     @Override
     public String toString() {
         if (success) {
             return "SubagentExecutionResult{" + "success=true" + ", reason=" + completionReason + ", cost=" + cost
-                    + ", executionId=" + executionId + ", metadata=" + metadata + ", answer='"
+                    + ", executionId=" + executionId + ", metadata=" + metadata + ", structuredResult="
+                    + (structuredResult != null) + ", answer='"
                     + (finalAnswer.length() > 100 ? finalAnswer.substring(0, 100) + "..." : finalAnswer) + '\'' + '}';
         } else {
             return "SubagentExecutionResult{" + "success=false" + ", reason=" + completionReason + ", cost=" + cost

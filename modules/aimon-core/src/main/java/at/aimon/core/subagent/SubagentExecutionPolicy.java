@@ -3,12 +3,14 @@ package at.aimon.core.subagent;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.context.ContextEngine;
+import at.aimon.core.subagent.execution.StructuredResultReport;
 
 /**
  * Trusted limits and context settings for one subagent run, supplied by code — never by the model, never by a
@@ -57,6 +59,11 @@ import at.aimon.core.agent.context.ContextEngine;
  * <li>{@link #getResultMaxChars()} and {@link #getResultTruncation()} bound the fork's answer as the {@code Task} tool
  * hands it to the spawning model, and say which part of it to keep. Only the foreground {@code Task} result reads
  * them; they are not something an executor enforces, so they are not among {@link #getCapabilities()}.
+ * <li>{@link #getResultSchema()} opens a result channel that is never truncated: the fork is offered a
+ * {@value StructuredResultReport#TOOL_NAME} tool whose input schema is this one, a call that violates it — or whose
+ * payload is longer than {@link #getResultPayloadMaxChars()} as JSON — is answered with an error the fork can fix, and
+ * the last payload it accepted reaches the spawner whole. A fork that reports none is shown to the spawner as missing
+ * its structured result.
  * </ul>
  *
  * <p>
@@ -66,6 +73,9 @@ public final class SubagentExecutionPolicy {
 
     /** How long a foreground fork is waited for past its deadline when the policy does not say. */
     public static final Duration DEFAULT_EXIT_GRACE_PERIOD = Duration.ofSeconds(5);
+
+    /** How long a structured result may be, as compact JSON, when the policy does not say. */
+    public static final int DEFAULT_RESULT_PAYLOAD_MAX_CHARS = 100_000;
 
     /**
      * @param role
@@ -90,6 +100,8 @@ public final class SubagentExecutionPolicy {
     private final Integer maxConsecutiveToolFailures;
     private final Integer resultMaxChars;
     private final SubagentResultTruncation resultTruncation;
+    private final Map<String, Object> resultSchema;
+    private final int resultPayloadMaxChars;
 
     private SubagentExecutionPolicy(Builder builder) {
         this.role = builder.role;
@@ -106,6 +118,10 @@ public final class SubagentExecutionPolicy {
         this.maxConsecutiveToolFailures = builder.maxConsecutiveToolFailures;
         this.resultMaxChars = builder.resultMaxChars;
         this.resultTruncation = builder.resultTruncation;
+        this.resultSchema = builder.resultSchema;
+        this.resultPayloadMaxChars = builder.resultPayloadMaxChars == null
+                ? DEFAULT_RESULT_PAYLOAD_MAX_CHARS
+                : builder.resultPayloadMaxChars;
     }
 
     /** @return the name the policy is known by */
@@ -199,6 +215,29 @@ public final class SubagentExecutionPolicy {
     }
 
     /**
+     * @return the JSON Schema a structured result must satisfy, when the policy asks the fork for one — an
+     *         unmodifiable copy whose top-level {@code type} is {@code object}
+     */
+    public Optional<Map<String, Object>> getResultSchema() {
+        return Optional.ofNullable(resultSchema);
+    }
+
+    /**
+     * @return whether the fork must report a structured result: the policy has a {@link #getResultSchema() schema}
+     */
+    public boolean requiresStructuredResult() {
+        return resultSchema != null;
+    }
+
+    /**
+     * @return how many characters a structured result may be as compact JSON ({@link #DEFAULT_RESULT_PAYLOAD_MAX_CHARS}
+     *         unless set); meaningful only with a {@link #getResultSchema() schema}
+     */
+    public int getResultPayloadMaxChars() {
+        return resultPayloadMaxChars;
+    }
+
+    /**
      * @return the capabilities this policy uses — what an executor must enforce for the policy to mean what it says
      */
     public Set<SubagentPolicyCapability> getCapabilities() {
@@ -232,6 +271,9 @@ public final class SubagentExecutionPolicy {
         }
         if (maxConsecutiveToolFailures != null) {
             used.add(SubagentPolicyCapability.MAX_CONSECUTIVE_TOOL_FAILURES);
+        }
+        if (resultSchema != null) {
+            used.add(SubagentPolicyCapability.STRUCTURED_RESULT);
         }
         return Collections.unmodifiableSet(used);
     }
@@ -317,14 +359,16 @@ public final class SubagentExecutionPolicy {
                 && Objects.equals(compactionInstructions, that.compactionInstructions)
                 && exitGracePeriod.equals(that.exitGracePeriod) && graceRound == that.graceRound
                 && Objects.equals(maxConsecutiveToolFailures, that.maxConsecutiveToolFailures)
-                && Objects.equals(resultMaxChars, that.resultMaxChars) && resultTruncation == that.resultTruncation;
+                && Objects.equals(resultMaxChars, that.resultMaxChars) && resultTruncation == that.resultTruncation
+                && Objects.equals(resultSchema, that.resultSchema)
+                && resultPayloadMaxChars == that.resultPayloadMaxChars;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(role, maxIterations, maxTokens, maxToolCalls, maxWallClock, compactionTokenThreshold,
                 contextTargetTokens, compactionInstructions, inheritContextEngine, exitGracePeriod, graceRound,
-                maxConsecutiveToolFailures, resultMaxChars, resultTruncation);
+                maxConsecutiveToolFailures, resultMaxChars, resultTruncation, resultSchema, resultPayloadMaxChars);
     }
 
     @Override
@@ -335,7 +379,8 @@ public final class SubagentExecutionPolicy {
                 + contextTargetTokens + ", compactionInstructions=" + (compactionInstructions != null)
                 + ", inheritContextEngine=" + inheritContextEngine + ", exitGracePeriod=" + exitGracePeriod
                 + ", graceRound=" + graceRound + ", maxConsecutiveToolFailures=" + maxConsecutiveToolFailures
-                + ", resultMaxChars=" + resultMaxChars + ", resultTruncation=" + resultTruncation + '}';
+                + ", resultMaxChars=" + resultMaxChars + ", resultTruncation=" + resultTruncation + ", resultSchema="
+                + (resultSchema != null) + ", resultPayloadMaxChars=" + resultPayloadMaxChars + '}';
     }
 
     /**
@@ -356,6 +401,8 @@ public final class SubagentExecutionPolicy {
         private Integer maxConsecutiveToolFailures;
         private Integer resultMaxChars;
         private SubagentResultTruncation resultTruncation = SubagentResultTruncation.TAIL;
+        private Map<String, Object> resultSchema;
+        private Integer resultPayloadMaxChars;
 
         private Builder(String role) {
             Objects.requireNonNull(role, "role cannot be null");
@@ -511,12 +558,46 @@ public final class SubagentExecutionPolicy {
         }
 
         /**
+         * @param resultSchema
+         *            the JSON Schema of the structured result the fork must report through
+         *            {@value StructuredResultReport#TOOL_NAME} (must not be null; its top-level {@code type} must be
+         *            {@code object}, since a tool's input always is). Copied deeply; the copy keeps the key order
+         * @return this builder
+         */
+        public Builder resultSchema(Map<String, Object> resultSchema) {
+            Objects.requireNonNull(resultSchema, "resultSchema cannot be null");
+            if (!"object".equals(resultSchema.get("type"))) {
+                throw new IllegalArgumentException(
+                        "resultSchema must declare \"type\": \"object\" at the top level, got: "
+                                + resultSchema.get("type"));
+            }
+            this.resultSchema = StructuredResultReport.copyOf(resultSchema);
+            return this;
+        }
+
+        /**
+         * @param resultPayloadMaxChars
+         *            how many characters a structured result may be as compact JSON (must be {@code >= 1}; requires
+         *            {@link #resultSchema(Map)} — checked in {@link #build()}; defaults to
+         *            {@link #DEFAULT_RESULT_PAYLOAD_MAX_CHARS})
+         * @return this builder
+         */
+        public Builder resultPayloadMaxChars(int resultPayloadMaxChars) {
+            this.resultPayloadMaxChars = positive("resultPayloadMaxChars", resultPayloadMaxChars);
+            return this;
+        }
+
+        /**
          * @return the policy
          * @throws IllegalArgumentException
          *             if the compaction threshold is not below the token cap — the cap would stop the fork first and
-         *             the hint could never be acted on
+         *             the hint could never be acted on — or if a payload cap is set without a result schema, where it
+         *             would bound nothing
          */
         public SubagentExecutionPolicy build() {
+            if (resultPayloadMaxChars != null && resultSchema == null) {
+                throw new IllegalArgumentException("resultPayloadMaxChars needs a resultSchema to bound");
+            }
             if (compactionTokenThreshold != null && maxTokens != null && compactionTokenThreshold >= maxTokens) {
                 throw new IllegalArgumentException("compactionTokenThreshold (" + compactionTokenThreshold
                         + ") must be below maxTokens (" + maxTokens + ")");

@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,6 +31,82 @@ class JsonTaskResultCodecTest {
         final List<String> names = new ArrayList<>();
         node.fieldNames().forEachRemaining(names::add);
         return names;
+    }
+
+    @Test
+    void roundTripsAStructuredResultWholeAndInOrder() {
+        final Map<String, Object> finding = new LinkedHashMap<>();
+        finding.put("severity", "HIGH");
+        finding.put("line", 42);
+        finding.put("ratio", 0.5);
+        finding.put("blocking", true);
+        finding.put("existingCode", "x".repeat(200_000) + "\n```\n🚀");
+        final Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("findings", List.of(finding, Map.of("severity", "LOW")));
+        payload.put("reviewed", List.of("a.java", "b.java"));
+        final TaskResult result = TaskResult.builder().success(true).finalAnswer("short")
+                .completionReason(CompletionReason.COMPLETED).structuredResult(payload).structuredResultRequired(true)
+                .build();
+
+        final TaskResult decoded = codec.decode(codec.encode(result));
+
+        assertThat(decoded).isEqualTo(result);
+        assertThat(decoded.getStructuredResult()).contains(payload);
+        assertThat(decoded.getStructuredResult().orElseThrow().keySet()).containsExactly("findings", "reviewed");
+        assertThat(decoded.isStructuredResultRequired()).isTrue();
+    }
+
+    @Test
+    void aRequiredResultThatWasNotReportedRoundTrips() {
+        final TaskResult result = TaskResult.builder().success(true).finalAnswer("prose").structuredResultRequired(true)
+                .build();
+
+        final TaskResult decoded = codec.decode(codec.encode(result));
+
+        assertThat(decoded.getStructuredResult()).isEmpty();
+        assertThat(decoded.isStructuredResultRequired()).isTrue();
+    }
+
+    @Test
+    void aResultWithoutAStructuredResultEncodesExactlyAsBefore() throws Exception {
+        final String encoded = codec.encode(TaskResult.builder().success(true).finalAnswer("a").build());
+
+        assertThat(fieldNames(new ObjectMapper().readTree(encoded))).containsExactly("version", "success",
+                "finalAnswer", "completionReason", "iterationCount", "durationMillis", "totalTokens",
+                "summaryTruncated");
+    }
+
+    @Test
+    void anOldRecordReadsAsReportingNoneAndRequiringNone() {
+        final TaskResult decoded = codec.decode("{\"version\":1,\"success\":true,\"finalAnswer\":\"a\","
+                + "\"completionReason\":\"COMPLETED\",\"iterationCount\":1,\"durationMillis\":2,"
+                + "\"totalTokens\":3,\"summaryTruncated\":false}");
+
+        assertThat(decoded.getStructuredResult()).isEmpty();
+        assertThat(decoded.isStructuredResultRequired()).isFalse();
+        assertThat(decoded.getSummary()).isEqualTo("a");
+    }
+
+    @Test
+    void aNewRecordStaysReadableToACodecThatIgnoresTheNewFields() throws Exception {
+        // What an older node does with a newer record: same version, the unknown fields skipped.
+        final String encoded = codec.encode(TaskResult.builder().success(true).finalAnswer("a")
+                .structuredResult(Map.of("findings", List.of())).structuredResultRequired(true).build());
+        final com.fasterxml.jackson.databind.node.ObjectNode root = (com.fasterxml.jackson.databind.node.ObjectNode) new ObjectMapper()
+                .readTree(encoded);
+
+        assertThat(root.path("version").asInt()).isEqualTo(JsonTaskResultCodec.FORMAT_VERSION).isEqualTo(1);
+        root.remove(List.of("structuredResult", "structuredResultRequired"));
+        assertThat(codec.decode(root.toString()).getSummary()).isEqualTo("a");
+    }
+
+    @Test
+    void aStructuredResultThatIsNotAnObjectReadsAsAbsent() {
+        final TaskResult decoded = codec
+                .decode("{\"version\":1,\"success\":true,\"structuredResult\":[1,2],\"futureField\":{}}");
+
+        assertThat(decoded.getStructuredResult()).isEmpty();
+        assertThat(decoded.isSuccess()).isTrue();
     }
 
     @Test

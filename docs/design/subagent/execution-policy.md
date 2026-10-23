@@ -2,12 +2,13 @@
 
 > Status: **IMPLEMENTED** — 코드가 공급하는 trusted 정책으로 포크의 iteration·누적 token·도구 호출 수·deadline 을
 > 제한하고, 포크에 부모의 `ContextEngine`·compaction 힌트·요약 지시를 연결한다. iteration 한도에 닿은 포크의
-> grace round, 연속 실패한 도구의 차단, 부모에게 넘기는 답의 모양도 같은 정책이 정한다. 한계는 §7.
+> grace round, 연속 실패한 도구의 차단, 부모에게 넘기는 답의 모양, 잘리지 않는 구조화 결과 채널도 같은 정책이
+> 정한다. 한계는 §7.
 >
 > 적용 대상: `aimon-core` — `at.aimon.core.subagent`(`SubagentExecutionPolicy`, `SubagentExecutionPolicyResolver`,
 > `SubagentPolicyCapability`, `SubagentResultTruncation`, `LingeringSubagentRun`, `DefaultSubagentExecutionManager`),
 > `…subagent.execution`(`DefaultSubagentExecutor`, `SubagentExecutionRequest`, `SubagentExecutionResult`,
-> `SubagentOutcomePayload`, `SubagentResultFormatter`), `…subagent.internal`(`DeadlineScheduler`),
+> `SubagentOutcomePayload`, `SubagentResultFormatter`, `StructuredResultReport`), `…subagent.internal`(`DeadlineScheduler`),
 > `at.aimon.core.agent.budget` (`ExecutionDeadline`, `CompletionReason.TOOL_CALL_BUDGET_EXCEEDED`,
 > `CompletionReason.MAX_ITERATIONS_GRACE`), `at.aimon.core.agent.context`·`…compact`
 > (`compactionInstructions`), `at.aimon.core.tools.task.TaskTool`, `at.aimon.core.tools.ToolContextKeys`
@@ -52,6 +53,7 @@ manager 까지 예산을 실어 나를 경로도 없었다. 포크를 묶는 것
 | `graceRound` | iteration 한도에서 도구 없는 마지막 호출 1회 (§8.1) | `MAX_ITERATIONS_GRACE` (신규) |
 | `maxConsecutiveToolFailures` | 도구별 연속 실패 수 ≥ 한도면 그 도구를 실행하지 않음 (§4.1) | — (호출을 오류로 답함) |
 | `resultMaxChars`, `resultTruncation` | foreground `Task` 결과의 길이·남길 쪽 (§8.2) | — |
+| `resultSchema`, `resultPayloadMaxChars` | schema 로 검증된 결과를 받는 `ReportResult` 도구, 잘리지 않고 전달 (§8.3) | — (없으면 `Task` 텍스트에 `MISSING`) |
 
 정책이 포크에 닿는 길은 하나다 — 스폰 코드가 `SubagentLaunchContext.executionPolicy` 에 싣는다. `TaskTool` 은
 `SubagentExecutionPolicyResolver` 에게 **모델이 고른 서브에이전트 이름**으로 묻는다. 이름은 모델이 고르지만 그
@@ -84,8 +86,9 @@ manager 까지 예산을 실어 나를 경로도 없었다. 포크를 묶는 것
 - manager 가 실행 시점에 한 번 더 판정한다: 빠진 축, code behavior 로 등록된 이름(behavior 는 어떤 한도도 강제하지
   않는다), 부모 engine 이 없는데 `inheritContextEngine` 을 요구한 경우 — 모두 `SubagentSpawnException` 으로
   실패 결과가 되고 executor 는 호출되지 않는다.
-- 정책 빌더 자체도 `compactionTokenThreshold ≥ maxTokens`(힌트가 영원히 관측되지 않음), 0 이하 값을 `build()`
-  전에 거부한다.
+- 정책 빌더 자체도 `compactionTokenThreshold ≥ maxTokens`(힌트가 영원히 관측되지 않음), 0 이하 값,
+  `resultSchema` 없는 `resultPayloadMaxChars`(아무것도 제한하지 않음), 최상위 `type` 이 `object` 가 아닌
+  `resultSchema`(도구 입력은 언제나 객체다)를 `build()` 전에 거부한다.
 
 정책 없는 launch 는 이전과 바이트 단위로 같은 경로를 탄다 — 호출 스레드, 예산 없음, deadline 없음.
 
@@ -267,6 +270,7 @@ unit, limitations 와 UNVERIFIED 결과, 원문을 다시 읽을 식별 정보.
 | context target | warning 문턱으로 낮추는 신호 | target 이 모델의 warning 문턱보다 낮으면 그 사이 구간에서는 compact 되지 않는다 |
 | lingering | 노드 로컬 목록, 실제 exit 시 제거 | 프로세스 재시작을 넘지 않는다 (JVM 스레드에 대한 사실이므로). 재실행 차단은 호출자의 몫이다 (§5.3) |
 | exit 미확인 결과의 사용량 | — | 포크가 반환하기 전이므로 iteration·token·도구 호출 수가 **0** 으로 보고된다. 실제 사용량은 포크가 끝날 때 SUBAGENT span 에 남는다 |
+| 구조화 결과 | 부모에게 가는 payload 는 보고 시점에 schema 와 길이 상한을 통과한 것뿐이다 (§8.3) | 모양(`required`·`type`·`enum`·미지 키)만 본다 — 범위·`pattern`·조합 키워드는 소비자가 다시 검사해야 한다 |
 | 상속 engine | passthrough 가 아닌 engine 은 context 축을 지킨다고 본다 | 제3자 engine 이 `budgetForced`·`compactionInstructions` 를 무시하면 그 축은 강제되지 않는다 — `ContextRequest` 계약의 일부다 |
 | 거부 메시지 | 모델에게는 "이 런타임에서 실행 정책으로 띄울 수 없다" 만 | 정책 이름·빠진 축은 WARN 로그에만 남는다 |
 | 스레드 | — | deadline 포크는 새 스레드에서 돌므로 spawner 의 `ThreadLocal`(예: ambient LLM 태그)을 물려받지 않는다. 명시적으로 전달되는 metadata·signal·principal 은 그대로다. 그 스레드에서 던져진 `Error` 는 전파되지 않고 실패 결과가 된다 |
@@ -281,7 +285,7 @@ unit, limitations 와 UNVERIFIED 결과, 원문을 다시 읽을 식별 정보.
 `TaskTool` 은 텍스트 옆에 `SubagentOutcomePayload` 를 `ToolResult` render payload 로 붙인다 — 모델과 영속
 transcript 에는 가지 않는다. 키: `kind=subagent-outcome`, `taskId`, `subagent`, `background`,
 `completionReason`, `success`, `exitConfirmed`, `truncated`, `iterations`, `toolCalls`, `totalTokens`,
-`policyRole`. **Tool 전송 성공(`ToolResult.isSuccess()`)은 포크 완료가 아니다** — `completionReason == COMPLETED`
+`policyRole`, 그리고 정책에 결과 schema 가 있을 때만 `structuredResult`·`structuredResultMissing`(§8.3). **Tool 전송 성공(`ToolResult.isSuccess()`)은 포크 완료가 아니다** — `completionReason == COMPLETED`
 이고 `exitConfirmed == true` 일 때만 완료다. 텍스트에는 미완료일 때 `Completion reason:` 줄, exit 미확인일 때
 `Exit: UNCONFIRMED` 줄이 결과 뒤에 붙는다. `COMPLETED` 결과의 텍스트는 이전과 같다.
 
@@ -333,8 +337,108 @@ finding 이 잘린다. foreground 결과는 store 에 남지 않아 되찾을 �
 executor capability 가 아니고(`getCapabilities()` 에 없다), 정책 없는 포크와 백그라운드 `AgentOutput` 결과는
 지금처럼 tail-keep 이다. 백그라운드 결과에는 전체 진행 로그를 다시 읽을 retrieval pointer 가 있다.
 
-잘리지 않는 구조화 결과 채널(포크가 schema 로 검증된 payload 를 보고하는 도구)은 아직 없다 — 그 payload 를
-실행 결과·태스크 store codec·`Task` 출력에 싣는 계약을 따로 설계해야 한다.
+잘라도 되는 것은 자유 텍스트뿐이다. 잃으면 안 되는 finding 은 §8.3 의 구조화 결과로 받는다.
+
+### 8.3 잘리지 않는 구조화 결과
+
+자유 텍스트의 길이와 모양을 아무리 조정해도 답이 예산보다 길면 무언가는 잘린다. 코드 리뷰 worker 처럼 부모가
+**값**(severity·category·path·existingCode·body 의 목록)을 받아야 하는 호출자에게 필요한 것은 잘리지 않고, 형식이
+보장된 별도의 칸이다. 정책의 `resultSchema` 가 그 칸을 연다.
+
+**계약.**
+
+- `resultSchema(Map)` — 결과 payload 의 JSON Schema. 최상위는 `type: object` 여야 한다. `resultPayloadMaxChars(n)` —
+  payload 를 compact JSON 으로 직렬화한 길이의 상한(기본 `DEFAULT_RESULT_PAYLOAD_MAX_CHARS` = 100,000자). 둘 다
+  정책, 즉 코드에서만 온다. 모델 입력과 서브에이전트 정의 파일은 schema 에도 상한에도 닿지 않는다(§2).
+- capability 는 `STRUCTURED_RESULT` 다. 도구를 내놓는 것은 executor 이므로 executor capability 이고
+  `DefaultSubagentExecutor` 가 강제한다. 그 이전에 작성된 executor·code behavior 는 이 정책을 거부한다(§3).
+- 정책에 schema 가 있으면 포크는 **`ReportResult`**(`StructuredResultReport.TOOL_NAME`) 도구를 받는다. 입력 schema 가
+  곧 정책의 schema 다. `allowed-tools`·호출자 ceiling 과 무관하게 제공되고(정책은 trusted 코드다), 도구 파이프라인을
+  거치지 않고 executor 가 직접 처리한다 — PermissionRequest·PreTool·PostTool hook, 권한 질의, side-effect 승인이
+  없다. 레지스트리에 같은 이름의 도구가 있으면 그 포크에서는 정의 목록에서 빠진다(WARN). 정의는 목록의 맨 끝에
+  붙어 기존 도구의 prompt cache prefix 를 바꾸지 않는다.
+- 호출이 오면 executor 가 검증한다. 위반이면 `ToolUseResult.error` 로 **무엇을 고칠지** 돌려주고 아무것도
+  기록하지 않는다 — 포크는 고쳐서 다시 부를 수 있고, 부모는 잘못된 값을 **절대** 보지 않는다. 직렬화 길이가 상한을
+  넘어도 같다. 통과하면 짧은 확인(ack)을 돌려주고 그 payload 를 기록한다. 여러 번 통과하면 **마지막 것**이
+  남는다 — 고쳐 쓴 결과가 앞의 것을 대체하는 것이 자연스러운 쓰임이고, 도구 설명도 그렇게 말한다.
+
+**검증 범위.** 기존 `ToolInputSchemaValidator`(`DefaultToolInputSchemaValidator`) 를 재사용하되, 그 validator 가
+한 단계에서 멈추는 것을 `StructuredResultReport` 가 `properties` 와 `items` 를 따라 재귀하며 단계마다 다시 부른다.
+그래서 모든 깊이에서 `required`·`type`·`enum`·`additionalProperties: false`(미지 키)를 본다. 위반 문장에는
+`findings[2]` 같은 경로가 붙는다. 범위(`minimum`·`maxLength`)·`pattern`·`format` 과 `$ref`·`oneOf` 같은 조합
+키워드는 보지 않는다 — validator 가 정한 "모양은 여기서, 범위는 소비자에서" 와 같은 선이고, 조합 키워드를 쓰는
+속성은 건너뛴다. 소비자가 그 이상을 요구하면 받은 값을 다시 검사해야 한다(§7).
+
+**기존 축과의 관계.**
+
+| 축 | 규칙 | 이유 |
+|---|---|---|
+| `maxToolCalls` (§4) | 세지 않는다. 예산이 바닥난 batch 에서도 처리한다 | 실행되는 도구가 아니라 결과 전달이다. 한도에 닿은 포크가 결과를 못 내면 한도의 목적이 거꾸로 된다 |
+| token 초과 batch (§4) | 처리한다 (다른 호출은 `Not run`) | 같은 이유. payload 는 이미 받은 응답 안에 있다 |
+| `max_tokens` 로 잘린 응답 | 다른 호출과 같이 거부한다 | 잘린 호출의 인자는 온전히 도착하지 않았다 |
+| `maxConsecutiveToolFailures` (§4.1) | 세지 않고, 차단하지도 않는다 | schema 위반은 고치라고 돌려준 것이다. 차단하면 고칠 길이 막힌다 |
+| `StalledIterationGuard` | 결과 그대로 센다 — 통과는 성공(진전), 거부는 오류 | 거부만 반복하는 포크는 다른 실패와 똑같이 멈춰야 한다 |
+| `getToolCallCount()` | 세지 않는다 | 파이프라인에 넘긴 수라는 정의(§4)를 지킨다 |
+
+**batch 순서.** 한 응답에 `ReportResult` 와 일반 도구가 섞이면, 일반 도구는 지금까지와 같은 경로(예산·차단·
+dispatcher)로 돌고 `ReportResult` 는 그 자리에서 처리된다. 결과 목록은 응답 순서 그대로이며 **위치로** 짝짓는다 —
+tool-use id 는 한 응답 안에서 유일하다는 보장이 없다(§4.1 의 차단과 같은 방식). 같은 batch 의 여러 보고는 응답
+순서대로 처리되므로 뒤의 것이 남는다.
+
+**grace round (§8.1).** grace 응답의 tool_use 는 여전히 dispatcher 에 가지 않고 버려진다. 단 하나의 예외가
+`ReportResult` 다 — side effect 가 없으므로 검증해서 통과하면 기록한다. iteration 한도에 닿은 worker 가 그때까지의
+finding 을 구조화해서 넘길 수 있게 하기 위해서다. 정책에 schema 가 있으면 final-round 지시에 그 예외를 알리는
+문장이 붙는다. grace 의 transcript 규칙은 그대로다 — 답 텍스트만 assistant 메시지로 남고, grace 의 tool_use 는
+transcript 에 들어가지 않는다. 텍스트가 비면 이전처럼 `MAX_ITERATIONS` 로 끝나지만 그 round 에서 통과한 payload 는
+결과에 실린다. grace 에서 위반한 보고는 고칠 다음 호출이 없으므로 WARN 만 남기고, 앞서 통과한 payload 가 있으면
+그것이 남는다.
+
+**결과에 싣는 자리.**
+
+- `SubagentExecutionResult#getStructuredResult()` — 마지막으로 통과한 payload (불변 `Map`, 키 순서 유지).
+  `isStructuredResultRequired()` — 정책에 schema 가 있었는지. 완료 사유와 무관하게 실린다: 예산·deadline·오류로 끝난
+  포크라도 통과한 보고가 있으면 함께 온다. 완료 여부는 언제나 `completionReason` 이 말한다.
+- foreground `Task` — render payload 에 `structuredResult`(payload 그대로)와 `structuredResultMissing`(정책이
+  요구했는데 없으면 `true`)를 더한다. 모델이 읽는 텍스트에는 자유 텍스트 답 **뒤**, `Completion reason:` 줄 **앞**에
+  블록을 붙인다.
+
+  ~~~text
+  Structured result (validated against this task's schema; complete, never truncated):
+  ```json
+  {"findings":[...]}
+  ```
+  ~~~
+
+  payload 는 한 줄 compact JSON 이라 줄 머리에서 펜스를 닫을 수 없다. 이 블록은 `resultMaxChars` 예산 밖이며
+  잘리지 않는다(상한은 `resultPayloadMaxChars` 가 보고 시점에 강제했다). 보고가 없으면 같은 자리에
+  `Structured result: MISSING (…)` 한 줄이 붙는다 — 부모는 그 작업을 미완료로 다뤄야 한다. 위치가 `Result:` 와
+  `Completion reason:` 사이인 이유는 `aimon-cli` 의 `SubagentResultDisplayHook` 이 `Status:`·`Result:` 사이에 공백만
+  허용하고, 마지막 줄이 `Completion reason:` 일 때만 사유로 읽기 때문이다. 블록은 CLI 에서 요약의 일부로 보인다.
+- background — `TaskResult` 가 같은 두 값을 갖고 `JsonTaskResultCodec` 이 `structuredResult`(JSON 객체),
+  `structuredResultRequired`(`true` 일 때만) 필드로 저장한다. `AgentOutput` 은 foreground 와 같은 블록·`MISSING`
+  줄을 같은 자리에 쓴다. 저장 상한(`DEFAULT_MAX_SUMMARY_CHARS`)은 자유 텍스트에만 적용된다.
+
+**롤링 업그레이드.** codec 의 형식 버전은 1 그대로다. 구 버전 노드는 미지 최상위 필드를 무시하므로 새 레코드를
+읽다 실패하지 않는다 — 다만 payload 와 `MISSING` 표시를 보지 못하고 자유 텍스트만 보여 준다. 새 노드가 구
+레코드를 읽으면 두 필드가 없으므로 payload 없음·요구 없음이다. 버전을 올리면 구 노드가 새 레코드 전체를 읽지
+못하게 되므로(`Unsupported task result format version`) 올리지 않았다. 형식이 맞지 않는 `structuredResult`(객체가
+아님)는 없는 것으로 읽는다.
+
+**정책 없는 포크.** schema 가 없으면 도구가 제공되지 않고, 위 경로 어느 것도 타지 않는다. `Task`·`AgentOutput`
+텍스트와 render payload, codec 출력은 바이트 단위로 이전과 같다.
+
+**다른 spawn 경로.** 정책을 싣는 것은 `TaskTool` 뿐이다. workflow fan-out·forked skill 은 정책 없이 띄우므로 이
+채널이 없다. code behavior 는 어떤 정책이든 거부된다(§3) — 이 축도 마찬가지다.
+
+**한계.**
+
+- 포크의 자유 텍스트가 같은 머리말을 흉내 낼 수 있다. 텍스트를 읽는 부모 모델에게 블록은 위치(답 뒤, 사유 줄
+  앞)로만 구별된다. **코드는 텍스트가 아니라 render payload 의 `structuredResult` 를 읽어야 한다.**
+- 기록은 그 실행(run) 안에서만 유지된다. `Task(resume=…)` 로 이어 간 백그라운드 포크는 이전 run 에서 통과한 보고를
+  물려받지 않으므로 다시 보고해야 한다(transcript 에는 이전 호출이 남아 있다).
+- exit 미확인 결과(§5.3)는 포크가 반환하기 전에 만들어지므로 payload 가 없다. 정책이 요구했으면 `MISSING` 이다.
+- hook 은 `ReportResult` 호출을 보지 못한다(파이프라인 밖). 진행 로그(`SubagentOutputSink`)에는 호출과 ack/오류가
+  남는다.
 
 ## 9. 검증
 
@@ -356,6 +460,9 @@ executor capability 가 아니고(`getCapabilities()` 에 없다), 정책 없는
 | 재시도 불가 실패의 즉시·순서 무관 차단, 축 없을 때 무효, PostTool 재작성·feedback 뒤에도 유지 | `DefaultSubagentExecutorPolicyTest` |
 | 재시도 불가 표시는 LLM 변환·snapshot 에 없음 | `ToolUseResultRetryableTest`, `JsonSessionSnapshotCodecTest`, `AnthropicMessageConverterTest`, `OpenAIMessageConverterTest` |
 | 결과 길이·남길 쪽(`HEAD`·`HEAD_AND_TAIL`), surrogate 보존 | `SubagentResultFormatterTest`, `TaskToolExecutionPolicyTest` |
+| 구조화 결과: 위반 → 오류로 돌려받고 고쳐서 통과, 32,000자 넘는 답에서도 payload 무손실, 혼합 batch 순서, 한도·차단과의 관계, grace round 의 보고 | `DefaultSubagentExecutorStructuredResultTest`, `StructuredResultReportTest` |
+| 구조화 결과의 `Task` 텍스트·payload·`MISSING`, 정책 없는 결과의 바이트 동일성, capability 거부 | `TaskToolStructuredResultTest`, `DefaultSubagentExecutionManagerPolicyTest` |
+| codec 왕복, 구 레코드·미지 필드 호환, `AgentOutput` 블록, CLI 사유 줄 인식 | `JsonTaskResultCodecTest`, `AgentOutputToolTest`, `SubagentResultDisplayHookTest` |
 
 외부 LLM 호출 없이 fake client 와 latch 를 쓰고, deadline 판정은 조절 가능한 nano clock 으로 검증한다. 다만
 timer 가 실제로 발화하는 경로(블로킹 호출 중단, watchdog, 큐 만료)는 `DeadlineScheduler` 가 시계를 주입받지 않으므로

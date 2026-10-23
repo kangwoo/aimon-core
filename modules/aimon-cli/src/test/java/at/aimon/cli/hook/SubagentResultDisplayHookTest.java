@@ -15,6 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import at.aimon.cli.config.CliSettings;
 import at.aimon.cli.repl.OutputFormatter;
@@ -41,6 +42,7 @@ import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
+import at.aimon.core.subagent.execution.SubagentResultFormatter;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.task.TaskTool;
 
@@ -306,6 +308,46 @@ class SubagentResultDisplayHookTest {
             verify(outputFormatter).displaySubagentResult("", subagent, description, blocked.getStatus(), 3, 300,
                     refusal);
             verify(outputFormatter).displaySubagentCompletionReason("", blocked.getStatus(), reasonLine);
+        }
+
+        @Test
+        @DisplayName("a structured result block keeps the Completion reason line the last one, handed over apart")
+        void aStructuredResultKeepsTheReasonLineLast() {
+            SubagentExecutionResult graced = SubagentExecutionResult
+                    .success(answer, snapshot(), metadata(), CompletionReason.MAX_ITERATIONS_GRACE)
+                    .withStructuredResultRequired(true)
+                    .withStructuredResult(Map.of("findings", List.of(Map.of("severity", "HIGH", "body", "```x"))));
+            String printed = printedByTaskTool(graced);
+            String reasonLine = lastLine(printed);
+
+            hook.execute(createPostToolContext(TaskTool.TOOL_NAME, ToolUseResult.success("tool-1", printed),
+                    InvokerType.MAIN_AGENT));
+
+            assertThat(reasonLine).startsWith("Completion reason: MAX_ITERATIONS_GRACE");
+            ArgumentCaptor<String> summary = ArgumentCaptor.forClass(String.class);
+            verify(outputFormatter).displaySubagentResult(eq(""), eq(subagent), eq(description), eq(graced.getStatus()),
+                    eq(3), eq(300), summary.capture());
+            assertThat(summary.getValue()).startsWith(answer).contains("\"severity\":\"HIGH\"")
+                    .doesNotContain("Completion reason");
+            verify(outputFormatter).displaySubagentCompletionReason("", graced.getStatus(), reasonLine);
+        }
+
+        @Test
+        @DisplayName("a missing structured result line stays in the summary; the reason line is still handed over")
+        void aMissingStructuredResultKeepsTheReasonLineLast() {
+            SubagentExecutionResult stopped = SubagentExecutionResult
+                    .failure("stopped", snapshot(), metadata(), CompletionReason.TOOL_CALL_BUDGET_EXCEEDED)
+                    .withStructuredResultRequired(true);
+            String printed = printedByTaskTool(stopped);
+            String reasonLine = lastLine(printed);
+
+            hook.execute(createPostToolContext(TaskTool.TOOL_NAME, ToolUseResult.success("tool-1", printed),
+                    InvokerType.MAIN_AGENT));
+
+            assertThat(reasonLine).isEqualTo("Completion reason: TOOL_CALL_BUDGET_EXCEEDED");
+            verify(outputFormatter).displaySubagentResult("", subagent, description, stopped.getStatus(), 3, 300,
+                    "stopped\n" + SubagentResultFormatter.STRUCTURED_RESULT_MISSING_LINE);
+            verify(outputFormatter).displaySubagentCompletionReason("", stopped.getStatus(), reasonLine);
         }
 
         @Test

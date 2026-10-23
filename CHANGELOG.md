@@ -163,6 +163,21 @@ subagent definition file — and its context can be managed by its spawner's con
 - **Result shape** — `resultMaxChars(n)` and `resultTruncation(SubagentResultTruncation)` (new enum: `TAIL`, `HEAD`,
   `HEAD_AND_TAIL`) set how much of the answer the foreground `Task` result inlines and which part it keeps;
   `SubagentResultFormatter#truncate` (new). Without them the result is the 32,000-character tail-keep it was.
+- **Structured result, never truncated** — `resultSchema(Map)` and `resultPayloadMaxChars(n)` (default
+  `DEFAULT_RESULT_PAYLOAD_MAX_CHARS`, 100,000; `SubagentPolicyCapability.STRUCTURED_RESULT`). The fork is offered a
+  `ReportResult` tool (`StructuredResultReport.TOOL_NAME`, new) whose input schema is the policy's, whatever its
+  `allowed-tools` say; the executor answers it itself — no hook, permission prompt or approval. A payload is checked
+  with the shared `ToolInputSchemaValidator` at every level of `properties` / `items` (shape only: `required`,
+  `type`, `enum`, `additionalProperties: false`) and against the cap as compact JSON; a violation is answered with
+  an error naming what to fix, so the fork can correct it and the spawner never sees the invalid value. The last
+  accepted payload wins. A report takes none of the tool-call budget, counts for no failure streak, is judged even in
+  a batch that spent the token budget, and is the one call honoured in the grace round. Mixed batches keep the
+  response's order, matched by position. `SubagentExecutionResult#getStructuredResult()` /
+  `isStructuredResultRequired()`; `SubagentOutcomePayload` gains `structuredResult` and `structuredResultMissing`;
+  the `Task` and `AgentOutput` text show the payload as a one-line JSON block after the (possibly truncated) answer
+  and before the `Completion reason:` line, or a `Structured result: MISSING` line. `TaskResult` and
+  `JsonTaskResultCodec` carry both values (format version unchanged: an older node ignores the new fields). A launch
+  whose policy has no result schema behaves, and reads, exactly as before. Design: `execution-policy.md` §8.3.
 
 ### Added: tools can mark a failure as not retryable
 

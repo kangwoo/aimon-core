@@ -25,6 +25,7 @@ import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.subagent.SubagentTaskController;
+import at.aimon.core.subagent.execution.StructuredResultReport;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.subagent.execution.SubagentResultFormatter;
 import at.aimon.core.subagent.task.BackgroundTask;
@@ -141,12 +142,54 @@ class AgentOutputToolTest {
     }
 
     @Test
+    void executeShowsTheStructuredResultWholeBeforeTheReasonLine() {
+        Instant now = Instant.now();
+        ExecutionMetadata metadata = ExecutionMetadata.builder().iterationCount(2)
+                .tokenUsage(TokenUsage.of(40, 60, 100)).timestamps(now, now).build();
+        Map<String, Object> payload = Map.of("findings",
+                List.of(Map.of("severity", "HIGH", "body", "z".repeat(50_000))));
+        resultStore.save("report",
+                TaskResult.from(SubagentExecutionResult
+                        .success("x".repeat(40_000), SessionSnapshot.of(SessionId.generate(), "sys", List.of()),
+                                metadata, CompletionReason.MAX_ITERATIONS_GRACE)
+                        .withStructuredResultRequired(true).withStructuredResult(payload)));
+        controller.add("report", null);
+        controller.settle("report", BackgroundTaskState.COMPLETED);
+
+        ToolResult result = tool.execute(ToolInput.of(Map.of("taskId", "report", "block", false)), ToolContext.empty());
+
+        String content = result.getContent();
+        assertThat(content).contains("chars omitted").contains(SubagentResultFormatter.STRUCTURED_RESULT_HEADER)
+                .contains(StructuredResultReport.toJson(payload));
+        assertThat(content.indexOf("Completion reason: MAX_ITERATIONS_GRACE"))
+                .isGreaterThan(content.indexOf(SubagentResultFormatter.STRUCTURED_RESULT_HEADER));
+    }
+
+    @Test
+    void executeSaysWhenARequiredStructuredResultIsMissing() {
+        Instant now = Instant.now();
+        ExecutionMetadata metadata = ExecutionMetadata.builder().iterationCount(1).tokenUsage(TokenUsage.empty())
+                .timestamps(now, now).build();
+        resultStore.save("missing",
+                TaskResult.from(SubagentExecutionResult
+                        .success("prose", SessionSnapshot.of(SessionId.generate(), "sys", List.of()), metadata)
+                        .withStructuredResultRequired(true)));
+        controller.add("missing", null);
+        controller.settle("missing", BackgroundTaskState.COMPLETED);
+
+        ToolResult result = tool.execute(ToolInput.of(Map.of("taskId", "missing", "block", false)),
+                ToolContext.empty());
+
+        assertThat(result.getContent()).contains(SubagentResultFormatter.STRUCTURED_RESULT_MISSING_LINE);
+    }
+
+    @Test
     void executePrintsNoCompletionReasonForAWholeAnswer() {
         completed("done");
 
         ToolResult result = tool.execute(ToolInput.of(Map.of("taskId", "done", "block", false)), ToolContext.empty());
 
-        assertThat(result.getContent()).doesNotContain("Completion reason");
+        assertThat(result.getContent()).doesNotContain("Completion reason").doesNotContain("Structured result");
     }
 
     @Test

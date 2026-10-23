@@ -1,10 +1,12 @@
 package at.aimon.core.subagent.task;
 
 import java.time.Duration;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.budget.CompletionReason;
+import at.aimon.core.subagent.execution.StructuredResultReport;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.subagent.execution.SubagentResultFormatter;
 
@@ -40,6 +42,12 @@ import at.aimon.core.subagent.execution.SubagentResultFormatter;
  * {@link TaskOutputStore} log.
  *
  * <p>
+ * <b>Structured result.</b> The payload a fork reported under a policy with a result schema
+ * ({@link SubagentExecutionResult#getStructuredResult()}) is kept whole — the storage cap applies to the text only; the
+ * payload was bounded by the policy when it was reported — together with whether one was required, so a reader can
+ * tell a missing report from one never asked for.
+ *
+ * <p>
  * Immutable and thread-safe.
  */
 public final class TaskResult {
@@ -61,6 +69,8 @@ public final class TaskResult {
     private final long durationMillis;
     private final int totalTokens;
     private final boolean summaryTruncated;
+    private final Map<String, Object> structuredResult;
+    private final boolean structuredResultRequired;
 
     private TaskResult(Builder builder) {
         this.success = builder.success;
@@ -71,6 +81,10 @@ public final class TaskResult {
         this.durationMillis = Math.max(0L, builder.durationMillis);
         this.totalTokens = Math.max(0, builder.totalTokens);
         this.summaryTruncated = builder.summaryTruncated;
+        this.structuredResult = builder.structuredResult == null
+                ? null
+                : StructuredResultReport.copyOf(builder.structuredResult);
+        this.structuredResultRequired = builder.structuredResultRequired;
     }
 
     /**
@@ -116,7 +130,9 @@ public final class TaskResult {
                 .errorMessage(error == null ? null : boundedError).completionReason(source.getCompletionReason())
                 .iterationCount(source.getIterationCount())
                 .durationMillis(source.getMetadata().getDuration().toMillis())
-                .totalTokens(source.getMetadata().getTokenUsage().getTotalTokens()).summaryTruncated(truncated).build();
+                .totalTokens(source.getMetadata().getTokenUsage().getTotalTokens()).summaryTruncated(truncated)
+                .structuredResult(source.getStructuredResult().orElse(null))
+                .structuredResultRequired(source.isStructuredResultRequired()).build();
     }
 
     /**
@@ -211,6 +227,20 @@ public final class TaskResult {
         return summaryTruncated;
     }
 
+    /**
+     * @return the structured result the task reported, whole, or empty when it reported none or was not asked to
+     */
+    public Optional<Map<String, Object>> getStructuredResult() {
+        return Optional.ofNullable(structuredResult);
+    }
+
+    /**
+     * @return whether the task's execution policy required a structured result
+     */
+    public boolean isStructuredResultRequired() {
+        return structuredResultRequired;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -223,20 +253,22 @@ public final class TaskResult {
         return success == that.success && iterationCount == that.iterationCount && durationMillis == that.durationMillis
                 && totalTokens == that.totalTokens && summaryTruncated == that.summaryTruncated
                 && Objects.equals(finalAnswer, that.finalAnswer) && Objects.equals(errorMessage, that.errorMessage)
-                && completionReason == that.completionReason;
+                && completionReason == that.completionReason && Objects.equals(structuredResult, that.structuredResult)
+                && structuredResultRequired == that.structuredResultRequired;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(success, finalAnswer, errorMessage, completionReason, iterationCount, durationMillis,
-                totalTokens, summaryTruncated);
+                totalTokens, summaryTruncated, structuredResult, structuredResultRequired);
     }
 
     @Override
     public String toString() {
         return "TaskResult{status=" + getStatus() + ", reason=" + completionReason + ", iterations=" + iterationCount
                 + ", tokens=" + totalTokens + ", durationMs=" + durationMillis + ", summaryChars="
-                + getSummary().length() + (summaryTruncated ? " (truncated)" : "") + "}";
+                + getSummary().length() + (summaryTruncated ? " (truncated)" : "") + ", structuredResult="
+                + (structuredResult != null ? "reported" : structuredResultRequired ? "missing" : "none") + "}";
     }
 
     /** Builder for {@link TaskResult}. */
@@ -250,6 +282,8 @@ public final class TaskResult {
         private long durationMillis;
         private int totalTokens;
         private boolean summaryTruncated;
+        private Map<String, Object> structuredResult;
+        private boolean structuredResultRequired;
 
         private Builder() {
         }
@@ -331,6 +365,26 @@ public final class TaskResult {
          */
         public Builder summaryTruncated(boolean summaryTruncated) {
             this.summaryTruncated = summaryTruncated;
+            return this;
+        }
+
+        /**
+         * @param structuredResult
+         *            the structured result the task reported (nullable; copied deeply)
+         * @return this builder
+         */
+        public Builder structuredResult(Map<String, Object> structuredResult) {
+            this.structuredResult = structuredResult;
+            return this;
+        }
+
+        /**
+         * @param structuredResultRequired
+         *            whether the task's execution policy required a structured result
+         * @return this builder
+         */
+        public Builder structuredResultRequired(boolean structuredResultRequired) {
+            this.structuredResultRequired = structuredResultRequired;
             return this;
         }
 

@@ -420,8 +420,10 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
     /**
      * Enforces the iteration and token caps through the fork's budget, the tool-call cap at dispatch, the deadline
-     * through a timer that trips the fork's cancellation, and the context settings on every context request — the last
-     * only when this executor's own engine compacts; with {@link ContextEngine#passthrough()} (how
+     * through a timer that trips the fork's cancellation, the structured result through the
+     * {@value StructuredResultReport#TOOL_NAME} tool it offers and answers itself, and the context settings on every
+     * context request — the last only when this executor's own engine compacts; with
+     * {@link ContextEngine#passthrough()} (how
      * {@code OrcaAgentExecutorFactory} builds it) they are left out, because they would do nothing.
      *
      * @return the enforced capabilities
@@ -567,8 +569,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
                 // Every exit of the loop passes here, so one stamp names the fork, and the environment it ran in, on
                 // every result it can return.
-                return runReActLoop(lc).withExecutionId(executionId).withExecutionEnvironment(executionEnvironment)
-                        .withToolCallCount(lc.toolCalls.used());
+                final SubagentExecutionResult result = runReActLoop(lc).withExecutionId(executionId)
+                        .withExecutionEnvironment(executionEnvironment).withToolCallCount(lc.toolCalls.used());
+                return withStructuredResult(lc, result);
             } finally {
                 if (deadlineTimer != null) {
                     deadlineTimer.close();
@@ -582,6 +585,24 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 parentCancelReg.remove();
             }
         }
+    }
+
+    /**
+     * Stamps what the fork reported through {@value StructuredResultReport#TOOL_NAME} on its result, whatever the
+     * result is: a fork a budget or an error stopped may still have reported. Without a result schema in the policy
+     * the result is returned as it is.
+     */
+    private static SubagentExecutionResult withStructuredResult(LoopContext lc, SubagentExecutionResult result) {
+        if (!lc.reportsStructuredResult()) {
+            return result;
+        }
+        final SubagentExecutionResult required = result.withStructuredResultRequired(true);
+        if (lc.structuredResult == null) {
+            log.info("Subagent '{}' ended {} without reporting the structured result its policy '{}' requires",
+                    lc.subagent().getName(), result.getCompletionReason(), lc.policy.getRole());
+            return required;
+        }
+        return required.withStructuredResult(lc.structuredResult);
     }
 
     /**
@@ -844,9 +865,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // (createFailureResult reads it) — a cancellation, the deadline or an error included. Taken before the
         // compaction gate below, so such a result also leaves out a compaction the grace round itself triggered.
         lc.beforeGrace = lc.transcriptBuffer.toSnapshot();
+        final String instruction = lc.reportsStructuredResult()
+                ? GRACE_ROUND_INSTRUCTION + StructuredResultReport.GRACE_ROUND_NOTE
+                : GRACE_ROUND_INSTRUCTION;
         lc.transcriptBuffer.addMessage(
-                Message.user(SystemReminderFormatter.wrap(GRACE_ROUND_REMINDER_KEY, GRACE_ROUND_INSTRUCTION)),
-                LogOrigin.SYNTHETIC);
+                Message.user(SystemReminderFormatter.wrap(GRACE_ROUND_REMINDER_KEY, instruction)), LogOrigin.SYNTHETIC);
         final CancellationSignal cancellationSignal = lc.coordinator.getSignal();
         final ContextView view = applyCompactionGate(lc, graceIteration, false);
         final IterationTrace trace = IterationTrace.open(lc, graceIteration);
@@ -880,8 +903,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         lc.budgetTracker.recordTokens(response.getTokenUsage());
         recordCallCost(lc, response);
         if (response.hasToolUses()) {
-            log.info("Subagent '{}' asked for {} tool call(s) in its grace round; none is run", lc.subagent().getName(),
-                    response.getToolUses().size());
+            acceptGraceRoundReports(lc, response.getToolUses(), graceIteration);
         }
         final String text = response.getTextContent();
         if (text == null || text.isBlank()) {
@@ -896,6 +918,49 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         lc.transcriptBuffer.addMessage(Message.assistant(answer).withReasoningTraces(response.getReasoningTraces()));
         lc.beforeGrace = null;
         return createGraceResult(lc, answer, graceIteration, total);
+    }
+
+    /**
+     * Handles the tool calls of a grace round's answer: none is run, except that a
+     * {@value StructuredResultReport#TOOL_NAME} call — it has no effect beyond the fork — is judged and, when it fits,
+     * recorded. A rejected one cannot be fixed, there being no later call; an earlier accepted report stays. Nothing
+     * goes into the transcript: a grace round leaves its text answer there and nothing else.
+     */
+    private static void acceptGraceRoundReports(LoopContext lc, List<ToolUse> toolUses, int graceIteration) {
+        int dropped = 0;
+        for (ToolUse toolUse : toolUses) {
+            if (lc.isReport(toolUse)) {
+                if (judgeReport(lc, toolUse, graceIteration).isError()) {
+                    log.warn("Subagent '{}' reported a structured result in its grace round that was rejected; it "
+                            + "cannot be corrected", lc.subagent().getName());
+                }
+            } else {
+                dropped++;
+            }
+        }
+        if (dropped > 0) {
+            log.info("Subagent '{}' asked for {} tool call(s) in its grace round; none is run", lc.subagent().getName(),
+                    dropped);
+        }
+    }
+
+    /**
+     * Judges one {@value StructuredResultReport#TOOL_NAME} call and records its payload when it fits — the last
+     * accepted one wins. Streamed like a tool call, so the progress log shows the report and its answer.
+     *
+     * @return the answer for the call (never null)
+     */
+    private static ToolUseResult judgeReport(LoopContext lc, ToolUse toolUse, int iterationCount) {
+        stream(lc, "\n→ " + toolUse.getName() + "\n");
+        final StructuredResultReport.Outcome outcome = StructuredResultReport.judge(lc.policy, toolUse);
+        outcome.payload().ifPresentOrElse(payload -> {
+            lc.structuredResult = payload;
+            log.debug("Subagent '{}' structured result accepted in iteration {}", lc.subagent().getName(),
+                    iterationCount);
+        }, () -> log.info("Subagent '{}' structured result rejected in iteration {}: {} problem(s)",
+                lc.subagent().getName(), iterationCount, outcome.violations()));
+        stream(lc, formatStreamedToolResult(toolUse, outcome.answer()));
+        return outcome.answer();
     }
 
     /**
@@ -1348,15 +1413,43 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         final SideEffectLevel ceiling = toolExecutionManager.getMaxSideEffectLevel();
         final Subagent subagent = lc.subagent();
         final Predicate<Tool> admitted = SubagentToolScope.admissionFilter(subagent);
-        final List<ToolDefinition> definitions = lc.sessionRegistry.findAll().stream()
+        final List<ToolDefinition> registered = lc.sessionRegistry.findAll().stream()
                 .filter(tool -> ceiling.permits(tool.getSideEffectLevel())).filter(admitted).map(Tool::getDefinition)
                 .toList();
+        final List<ToolDefinition> definitions = lc.reportsStructuredResult()
+                ? withReportTool(lc, registered, iterationCount)
+                : registered;
         if (definitions.isEmpty() && iterationCount == 1 && subagent.hasToolRestrictions()) {
             log.warn(
                     "Subagent '{}' is offered no tools: its allowed-tools names {} and the side-effect ceiling is {}, "
                             + "leaving nothing from the {} registered tool(s). It will answer without acting.",
                     subagent.getName(), subagent.getAllowedTools(), ceiling, lc.sessionRegistry.findAll().size());
         }
+        return definitions;
+    }
+
+    /**
+     * The fork's tool definitions with the {@value StructuredResultReport#TOOL_NAME} tool its policy asks for, last so
+     * the prefix the other definitions form is unchanged. Offered whatever the subagent's allow-list says — the policy
+     * is trusted code — and in place of a registered tool of the same name, whose calls the executor would answer
+     * itself anyway.
+     */
+    private static List<ToolDefinition> withReportTool(LoopContext lc, List<ToolDefinition> registered,
+            int iterationCount) {
+        final List<ToolDefinition> definitions = new ArrayList<>(registered.size() + 1);
+        for (ToolDefinition definition : registered) {
+            if (StructuredResultReport.TOOL_NAME.equals(definition.getName())) {
+                if (iterationCount == 1) {
+                    log.warn(
+                            "Subagent '{}' has a registered tool named '{}'; its execution policy's report tool "
+                                    + "takes the name in this fork",
+                            lc.subagent().getName(), StructuredResultReport.TOOL_NAME);
+                }
+                continue;
+            }
+            definitions.add(definition);
+        }
+        definitions.add(StructuredResultReport.definition(lc.policy));
         return definitions;
     }
 
@@ -1422,6 +1515,47 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * @return one result per tool use, in the response's order (never null)
      */
     private List<ToolUseResult> executeAdmittedToolUses(LoopContext lc, ToolContext toolContext, List<ToolUse> toolUses,
+            int iterationCount) {
+        if (lc.reportsStructuredResult() && toolUses.stream().anyMatch(lc::isReport)) {
+            return executeAroundReports(lc, toolContext, toolUses, iterationCount);
+        }
+        return executeRegistryToolUses(lc, toolContext, toolUses, iterationCount);
+    }
+
+    /**
+     * Answers each {@value StructuredResultReport#TOOL_NAME} call of a batch itself ({@link #judgeReport}) and runs
+     * the other calls through {@link #executeRegistryToolUses}, keeping the response's order in the results. A report
+     * takes none of the tool-call budget, counts for no failure streak, and is judged even when the token budget is
+     * spent: it runs nothing, and a fork at a limit is the one that most needs to deliver what it has. The reports are
+     * judged after the other calls have run, in the response's order, so the last accepted one wins.
+     */
+    private List<ToolUseResult> executeAroundReports(LoopContext lc, ToolContext toolContext, List<ToolUse> toolUses,
+            int iterationCount) {
+        // Matched back by position, not by tool-use id: an id is not guaranteed unique within a response.
+        final List<ToolUse> others = new ArrayList<>(toolUses.size());
+        for (ToolUse toolUse : toolUses) {
+            if (!lc.isReport(toolUse)) {
+                others.add(toolUse);
+            }
+        }
+        final List<ToolUseResult> ran = others.isEmpty()
+                ? List.of()
+                : executeRegistryToolUses(lc, toolContext, others, iterationCount);
+        final List<ToolUseResult> results = new ArrayList<>(toolUses.size());
+        int next = 0;
+        for (ToolUse toolUse : toolUses) {
+            results.add(lc.isReport(toolUse) ? judgeReport(lc, toolUse, iterationCount) : ran.get(next++));
+        }
+        return results;
+    }
+
+    /**
+     * {@link #executeAdmittedToolUses} for calls of registered tools: the token budget, then the blocked tools, then
+     * the tool-call budget.
+     *
+     * @return one result per tool use, in the response's order (never null)
+     */
+    private List<ToolUseResult> executeRegistryToolUses(LoopContext lc, ToolContext toolContext, List<ToolUse> toolUses,
             int iterationCount) {
         // The response that carried these calls may itself have spent the last of the budget: its usage is known only
         // now. Then none of them runs; the next iteration boundary ends the fork with the budget's reason, before
@@ -2293,6 +2427,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
          * thread.
          */
         private SessionSnapshot beforeGrace;
+        /**
+         * The last structured result the fork's {@value StructuredResultReport#TOOL_NAME} tool accepted, or
+         * {@code null}. Written only on the loop's thread — reports are judged there, never dispatched.
+         */
+        private Map<String, Object> structuredResult;
 
         private LoopContext(Builder b) {
             this.context = b.context;
@@ -2330,6 +2469,16 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         /** Whether the fork's policy asks for a grace round at an iteration limit. */
         private boolean graceRoundEnabled() {
             return policy != null && policy.isGraceRound();
+        }
+
+        /** Whether the fork's policy asks it to report a structured result, and so offers it the report tool. */
+        private boolean reportsStructuredResult() {
+            return policy != null && policy.requiresStructuredResult();
+        }
+
+        /** Whether {@code toolUse} is a call of the report tool this fork is offered. */
+        private boolean isReport(ToolUse toolUse) {
+            return reportsStructuredResult() && StructuredResultReport.TOOL_NAME.equals(toolUse.getName());
         }
 
         /** Whether the fork has a deadline and it has passed. */
