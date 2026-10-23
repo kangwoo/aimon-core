@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/subagent/subagent-development-guide.md
-source_commit: 90923a1d
+source_commit: 5362319e
 ---
 
 # Subagent Development Guide

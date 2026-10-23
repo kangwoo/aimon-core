@@ -474,6 +474,7 @@ transcript 에 들어가지 않는다. 텍스트가 비면 이전처럼 `MAX_ITE
 | passthrough engine 에서 context 축 거부, compact 하는 engine 상속 시 수락 | `DefaultSubagentExecutionManagerPolicyTest` |
 | grace round: 정책·서브에이전트 한도 양쪽, 도구 실행 0회, 같은 도구 목록, 예산 소진 시 생략, 빈 답 | `DefaultSubagentExecutorPolicyTest` |
 | 연속 실패 차단과 성공 시 리셋, 차단된 호출은 도구 호출 수에 없음 | `DefaultSubagentExecutorPolicyTest` |
+| 구조화 결과: schema 검증(type 목록·null 항목·숫자 정규화), 오류 회신·교정, 마지막 보고 우선, grace round·잘린 응답, 위치 매칭, 이름 가림, 필수 표시(시작 전·goal 실패·예외·exit 미확인·풀 거부), codec·`AgentOutput`·`Task` 출력, 정책 없을 때 바이트 동일 | `StructuredResultReportTest`, `DefaultSubagentExecutorStructuredResultTest`, `DefaultSubagentExecutionManagerStructuredResultTest`, `TaskToolStructuredResultTest`, `JsonTaskResultCodecTest`, `AgentOutputToolTest`, `JsonValuesTest` |
 | 재시도 불가 실패의 즉시·순서 무관 차단, 축 없을 때 무효, PostTool 재작성·feedback 뒤에도 유지 | `DefaultSubagentExecutorPolicyTest` |
 | 재시도 불가 표시는 LLM 변환·snapshot 에 없음 | `ToolUseResultRetryableTest`, `JsonSessionSnapshotCodecTest`, `AnthropicMessageConverterTest`, `OpenAIMessageConverterTest` |
 | 결과 길이·남길 쪽(`HEAD`·`HEAD_AND_TAIL`), surrogate 보존 | `SubagentResultFormatterTest`, `TaskToolExecutionPolicyTest` |
