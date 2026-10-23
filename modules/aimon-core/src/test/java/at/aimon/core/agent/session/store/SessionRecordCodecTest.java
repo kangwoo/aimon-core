@@ -150,6 +150,51 @@ class SessionRecordCodecTest {
     }
 
     @Test
+    @DisplayName("measured cache counters survive the totals round trip, and an unmeasured one stays unmeasured")
+    void cacheCountersRoundTrip() {
+        final SessionTotals both = SessionTotals.of(3, 4, TokenUsage.of(1_000, 50, 1_050).withCacheTokens(600, 0));
+        final SessionTotals readOnly = SessionTotals.of(3, 4,
+                TokenUsage.of(1_000, 50, 1_050).withCacheTokens(600, null));
+
+        final SessionTotals decodedBoth = SessionRecordCodec.decodeTotals(SessionRecordCodec.encodeTotals(both));
+        final SessionTotals decodedReadOnly = SessionRecordCodec
+                .decodeTotals(SessionRecordCodec.encodeTotals(readOnly));
+
+        assertThat(decodedBoth).isEqualTo(both);
+        assertThat(decodedBoth.getTokenUsage().getCacheWriteTokens()).hasValue(0);
+        assertThat(decodedReadOnly).isEqualTo(readOnly);
+        assertThat(decodedReadOnly.getTokenUsage().getCacheWriteTokens()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a totals document without cache fields decodes them as unmeasured, not as zero")
+    void totalsWithoutCacheFieldsDecodeAsUnmeasured() {
+        // Every document written before cache counters were persisted has this shape. A 0 here would claim the
+        // session never read the cache, which is the opposite of "we do not know".
+        final String oldFormat = "{\"version\":1,\"turnCount\":2,\"iterations\":5,\"promptTokens\":100,"
+                + "\"completionTokens\":50,\"totalTokens\":150,\"reasoningTokens\":0}";
+
+        final TokenUsage usage = SessionRecordCodec.decodeTotals(oldFormat).getTokenUsage();
+
+        assertThat(usage.getCacheReadTokens()).isEmpty();
+        assertThat(usage.getCacheWriteTokens()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a malformed cache field decodes as unmeasured instead of failing the record")
+    void malformedCacheFieldsDecodeAsUnmeasured() {
+        final String malformed = "{\"version\":1,\"turnCount\":2,\"iterations\":5,\"promptTokens\":100,"
+                + "\"completionTokens\":50,\"totalTokens\":150,\"cacheReadTokens\":-1,"
+                + "\"cacheWriteTokens\":\"12\"}";
+
+        final TokenUsage usage = SessionRecordCodec.decodeTotals(malformed).getTokenUsage();
+
+        assertThat(usage.getPromptTokens()).isEqualTo(100);
+        assertThat(usage.getCacheReadTokens()).isEmpty();
+        assertThat(usage.getCacheWriteTokens()).isEmpty();
+    }
+
+    @Test
     @DisplayName("a totals document written before reasoning tokens existed decodes them as zero")
     void totalsWithoutReasoningTokensDecodeToZero() {
         // Hand-written in the shape a build before this field produced. node.path(...).asInt() is 0 on absence, which

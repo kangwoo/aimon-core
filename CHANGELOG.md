@@ -28,9 +28,11 @@ Central is versioned independently).
   cache writes are a measured `0`; Anthropic writes with a one-hour TTL are left unmeasured).
 - **Migration notes** — the tag keys `service_tier`, `cached_input_tokens`, `cache_write_tokens`, `cache_usage_known`
   and `context_input_tokens` are now reserved: a caller tag under one of them is removed before recording. Use
-  `TokenUsage.isZero()` rather than `equals(TokenUsage.empty())` to ask whether a usage counted anything. The cache
-  counters are not yet persisted by `SessionRecordCodec` or the session-routing payloads, so restored session totals
-  carry them as unmeasured.
+  `TokenUsage.isZero()` rather than `equals(TokenUsage.empty())` to ask whether a usage counted anything.
+- **Persistence** — `SessionRecordCodec` totals (`cacheReadTokens` / `cacheWriteTokens`) and the session-routing
+  `STATUS` / `EVENT` payloads carry the cache counters, written only when measured. A document or map without them —
+  anything written before this change, or by a node not yet upgraded — decodes them as unmeasured, never as `0`, so a
+  session whose stored totals predate this change keeps reporting its cumulative cache counters as unmeasured.
 
 ### Changed: `TokenUsage.getPromptTokens()` is the whole input context on Anthropic
 

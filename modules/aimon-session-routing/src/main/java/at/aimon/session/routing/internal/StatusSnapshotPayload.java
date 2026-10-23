@@ -1,6 +1,7 @@
 package at.aimon.session.routing.internal;
 
 import static at.aimon.session.routing.internal.PayloadValues.asBoolean;
+import static at.aimon.session.routing.internal.PayloadValues.asCounterOrNull;
 import static at.aimon.session.routing.internal.PayloadValues.asInt;
 import static at.aimon.session.routing.internal.PayloadValues.asIntOrZero;
 import static at.aimon.session.routing.internal.PayloadValues.asLong;
@@ -65,6 +66,8 @@ final class StatusSnapshotPayload {
     static final String KEY_COMPLETION_TOKENS = "completionTokens";
     static final String KEY_TOTAL_TOKENS = "totalTokens";
     static final String KEY_REASONING_TOKENS = "reasoningTokens";
+    static final String KEY_CACHE_READ_TOKENS = "cacheReadTokens";
+    static final String KEY_CACHE_WRITE_TOKENS = "cacheWriteTokens";
     static final String KEY_ELAPSED_MILLIS = "elapsedMillis";
     static final String KEY_MAX_ITERATIONS = "maxIterations";
     static final String KEY_MAX_TOKENS = "maxTokens";
@@ -146,16 +149,28 @@ final class StatusSnapshotPayload {
         map.put(KEY_COMPLETION_TOKENS, tokens.getCompletionTokens());
         map.put(KEY_TOTAL_TOKENS, tokens.getTotalTokens());
         map.put(KEY_REASONING_TOKENS, tokens.getReasoningTokens());
+        putCacheCounters(map, tokens);
         return map;
     }
 
     private static SessionTotals totalsFromMap(Map<String, Object> map) {
         // asIntOrZero on the newest key only: a payload written by an old node during a rolling upgrade carries no
         // reasoningTokens, and asInt would NPE and discard the whole snapshot.
-        final TokenUsage tokens = TokenUsage.of(asInt(map.get(KEY_PROMPT_TOKENS)),
-                asInt(map.get(KEY_COMPLETION_TOKENS)), asInt(map.get(KEY_TOTAL_TOKENS)),
-                asIntOrZero(map.get(KEY_REASONING_TOKENS)));
+        final TokenUsage tokens = TokenUsage
+                .of(asInt(map.get(KEY_PROMPT_TOKENS)), asInt(map.get(KEY_COMPLETION_TOKENS)),
+                        asInt(map.get(KEY_TOTAL_TOKENS)), asIntOrZero(map.get(KEY_REASONING_TOKENS)))
+                .withCacheTokens(asCounterOrNull(map.get(KEY_CACHE_READ_TOKENS)),
+                        asCounterOrNull(map.get(KEY_CACHE_WRITE_TOKENS)));
         return SessionTotals.of(asInt(map.get(KEY_TURN_COUNT)), asInt(map.get(KEY_ITERATIONS)), tokens);
+    }
+
+    /**
+     * Cache counters go on the wire only when measured, so an absent key keeps meaning "not measured" — and a map
+     * written by an older node, which has no such keys, decodes the same way.
+     */
+    private static void putCacheCounters(Map<String, Object> map, TokenUsage tokens) {
+        tokens.getCacheReadTokens().ifPresent(v -> map.put(KEY_CACHE_READ_TOKENS, v));
+        tokens.getCacheWriteTokens().ifPresent(v -> map.put(KEY_CACHE_WRITE_TOKENS, v));
     }
 
     private static Map<String, Object> turnToMap(TurnProgress turn) {
@@ -166,6 +181,7 @@ final class StatusSnapshotPayload {
         map.put(KEY_COMPLETION_TOKENS, tokens.getCompletionTokens());
         map.put(KEY_TOTAL_TOKENS, tokens.getTotalTokens());
         map.put(KEY_REASONING_TOKENS, tokens.getReasoningTokens());
+        putCacheCounters(map, tokens);
         map.put(KEY_ELAPSED_MILLIS, turn.getElapsed().toMillis());
         final ExecutionBudget budget = turn.getBudget();
         budget.getMaxIterations().ifPresent(v -> map.put(KEY_MAX_ITERATIONS, v));
@@ -175,9 +191,11 @@ final class StatusSnapshotPayload {
     }
 
     private static TurnProgress turnFromMap(Map<String, Object> map) {
-        final TokenUsage tokens = TokenUsage.of(asInt(map.get(KEY_PROMPT_TOKENS)),
-                asInt(map.get(KEY_COMPLETION_TOKENS)), asInt(map.get(KEY_TOTAL_TOKENS)),
-                asIntOrZero(map.get(KEY_REASONING_TOKENS)));
+        final TokenUsage tokens = TokenUsage
+                .of(asInt(map.get(KEY_PROMPT_TOKENS)), asInt(map.get(KEY_COMPLETION_TOKENS)),
+                        asInt(map.get(KEY_TOTAL_TOKENS)), asIntOrZero(map.get(KEY_REASONING_TOKENS)))
+                .withCacheTokens(asCounterOrNull(map.get(KEY_CACHE_READ_TOKENS)),
+                        asCounterOrNull(map.get(KEY_CACHE_WRITE_TOKENS)));
         final Duration elapsed = Duration.ofMillis(asLong(map.get(KEY_ELAPSED_MILLIS)));
         final ExecutionBudget.Builder budget = ExecutionBudget.builder();
         if (map.containsKey(KEY_MAX_ITERATIONS)) {

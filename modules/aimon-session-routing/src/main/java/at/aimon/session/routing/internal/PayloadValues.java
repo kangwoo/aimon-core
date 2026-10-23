@@ -53,6 +53,26 @@ final class PayloadValues {
         return value == null ? 0 : ((Number) value).intValue();
     }
 
+    /**
+     * Reads a measured-or-not counter, for a field that is written only when measured.
+     *
+     * <p>
+     * Absence here is not a zero, unlike {@link #asIntOrZero(Object)}: it means the value was not measured, or the map
+     * was written by a node that predates the field. A value that is not a non-negative integer is read the same way,
+     * so one malformed counter cannot drop the whole signal.
+     *
+     * @param value
+     *            the raw payload value (may be null)
+     * @return the value as an int, or null when absent or not a non-negative int
+     */
+    static Integer asCounterOrNull(Object value) {
+        if (!(value instanceof Number number)) {
+            return null;
+        }
+        final long counter = number.longValue();
+        return counter >= 0 && counter <= Integer.MAX_VALUE && number.doubleValue() == counter ? (int) counter : null;
+    }
+
     static long asLong(Object value) {
         return ((Number) Objects.requireNonNull(value, "missing numeric field")).longValue();
     }

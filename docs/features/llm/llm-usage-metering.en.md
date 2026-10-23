@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/llm/llm-usage-metering.md
-source_commit: 9d4dcbb1
+source_commit: f444f497
 ---
 
 # LLM Usage Metering Guide
@@ -232,6 +232,11 @@ metadata, they are **removed just before recording**, so they can never be mista
 object the caller passed in is not modified. `ABORTED` events have no usage to report and are not forwarded to the
 four-argument method — just as failed calls never were. To count aborted calls as well, override
 `record(LlmUsageEvent)`.
+
+Session totals (`SessionTotals`) and the cross-node status and event payloads carry the cache counters too. Only
+measured values are written, so a document without those fields — stored before this change, or written by a node not
+yet upgraded — restores them as **unmeasured**, not as `0`. A session that inherits such totals therefore keeps
+reporting its cumulative cache counters as unmeasured.
 
 ## 5. Custom recorders
 

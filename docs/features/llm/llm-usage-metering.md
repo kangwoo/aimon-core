@@ -219,6 +219,10 @@ Anthropic 의 1시간 TTL 쓰기 토큰도 prompt 에는 포함된다. 처리된
 `ABORTED` 이벤트는 보고할 usage 가 없으므로 4-인자 메서드로 전달되지 않는다 — 이전에 실패한 호출이 그랬던 것과 같다.
 abort 된 호출까지 세려면 `record(LlmUsageEvent)` 를 override 한다.
 
+세션 합계(`SessionTotals`)와 노드 사이 상태·이벤트 payload 도 cache 카운터를 싣는다. 측정된 값만 기록하므로,
+그 필드가 없는 문서 — 이 변경 이전에 저장되었거나 아직 업그레이드되지 않은 노드가 쓴 것 — 는 `0` 이 아니라
+**미측정**으로 복원된다. 그래서 이전 합계를 이어받은 세션의 누적 cache 카운터는 계속 미측정으로 남는다.
+
 ## 5. 커스텀 Recorder
 
 `InMemoryLlmUsageRecorder` 외에 Prometheus, OpenTelemetry, DB 등으로 보내려면 `LlmUsageRecorder` 를 직접 구현하면 된다. 구현해야 하는 메서드는 하나뿐이다(tier·cache·시각이 필요하면 §4 의 `record(LlmUsageEvent)` 를 함께 override 한다):

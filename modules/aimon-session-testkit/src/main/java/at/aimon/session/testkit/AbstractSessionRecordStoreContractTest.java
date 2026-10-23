@@ -232,7 +232,8 @@ public abstract class AbstractSessionRecordStoreContractTest {
     void transcriptRoundTripLeavesSideFieldsAlone() {
         final SessionId id = SessionId.of("rec-transcript");
         store().provision(id, "agent-A");
-        store().setTotalsAndBudgetOverride(id, SessionTotals.of(2, 5, TokenUsage.of(10, 20, 30, 7)),
+        store().setTotalsAndBudgetOverride(id,
+                SessionTotals.of(2, 5, TokenUsage.of(10, 20, 30, 7).withCacheTokens(4, null)),
                 ExecutionBudget.builder().maxIterations(9).build());
         store().incrementCompactionFailureCount(id);
 
@@ -255,6 +256,9 @@ public abstract class AbstractSessionRecordStoreContractTest {
         assertThat(view.getCompactionFailureCount()).isEqualTo(1);
         assertThat(view.getSessionTotals().getTurnCount()).isEqualTo(2);
         assertThat(view.getSessionTotals().getTokenUsage().getReasoningTokens()).isEqualTo(7);
+        // A measured cache read and an unmeasured write both survive: the write must not come back as a measured 0.
+        assertThat(view.getSessionTotals().getTokenUsage().getCacheReadTokens()).hasValue(4);
+        assertThat(view.getSessionTotals().getTokenUsage().getCacheWriteTokens()).isEmpty();
         assertThat(view.getBudgetOverride().orElseThrow().getMaxIterations()).contains(9);
     }
 
