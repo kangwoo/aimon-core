@@ -20,6 +20,7 @@ import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
+import at.aimon.core.llm.exception.LlmCallCancelledException;
 import at.aimon.core.llm.streaming.LlmStreamSink;
 import at.aimon.core.llm.streaming.LlmStreamingOptions;
 
@@ -44,9 +45,15 @@ import at.aimon.core.llm.streaming.LlmStreamingOptions;
  * <p>
  * A call that throws records nothing — with one exception, which is the one that can still cost money: when a
  * streaming call fails after the provider started answering (at least one chunk arrived), or a call is cut by its
- * cancellation token after it was sent, an {@link LlmUsageEvent.Outcome#ABORTED ABORTED} event with no usage is
- * recorded, so a recorder can count the call as unpriced rather than not seeing it at all. The exception is rethrown
- * unchanged.
+ * cancellation token after it was sent (an {@link LlmCallCancelledException}), an
+ * {@link LlmUsageEvent.Outcome#ABORTED ABORTED} event with no usage is recorded, so a recorder can count the call as
+ * unpriced rather than not seeing it at all. The exception is rethrown unchanged.
+ *
+ * <p>
+ * "Started answering" is observed through the stream sink, so it is the first chunk a provider <em>forwards</em>. A
+ * stream that fails, without being cancelled, while the provider is still in a phase it does not forward (e.g.
+ * Anthropic thinking with reasoning forwarding off) records nothing. That gap is deliberate: the alternative would
+ * be counting every failed stream, including the ones the provider rejected before doing any work.
  *
  * <h2>Retries</h2>
  *
@@ -175,7 +182,9 @@ public final class MeteringLlmClient implements LlmClient {
             response = call.get();
         } catch (RuntimeException e) {
             final boolean streamStarted = answered != null && answered.get();
-            final boolean cutByToken = !cancelledBeforeSend && cancellation.isCancelled();
+            // Only the cancellation itself counts: a 4xx or validation failure that races a tripping token was never
+            // a call the provider worked on.
+            final boolean cutByToken = !cancelledBeforeSend && e instanceof LlmCallCancelledException;
             if (streamStarted || cutByToken) {
                 record(LlmUsageEvent.builder().provider(delegate.getProviderName())
                         .requestedModel(modelName(modelConfig)).startedAt(startedAt).completedAt(completedAt(startedAt))

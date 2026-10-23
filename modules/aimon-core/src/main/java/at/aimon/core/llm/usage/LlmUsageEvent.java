@@ -102,7 +102,11 @@ public final class LlmUsageEvent {
         if (outcome == Outcome.COMPLETED) {
             this.usage = Objects.requireNonNull(builder.usage, "Usage cannot be null for a completed call");
         } else {
-            this.usage = builder.usage;
+            if (builder.usage != null) {
+                throw new IllegalArgumentException(
+                        "An aborted call carries no usage: a partial count would be priced " + "as the whole bill");
+            }
+            this.usage = null;
         }
     }
 

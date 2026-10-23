@@ -69,7 +69,7 @@ final class OpenAiResponseUsages {
             final TokenUsage counts = TokenUsage.of(Math.toIntExact(inputTokens), Math.toIntExact(outputTokens),
                     Math.toIntExact(Math.max(totalTokens, inputTokens + outputTokens)),
                     Math.toIntExact(reasoningTokens));
-            if (cachedTokens == null || cachedTokens < 0) {
+            if (cachedTokens == null || cachedTokens < 0 || cachedTokens > Integer.MAX_VALUE) {
                 return counts;
             }
             // input_tokens already includes the cached part, so it is the whole input context as TokenUsage defines

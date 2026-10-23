@@ -27,7 +27,8 @@ final class OpenAiChatUsages {
     /**
      * @param usage
      *            the usage document (must not be null)
-     * @return the token usage, {@link TokenUsage#empty()} when a counter is out of {@code int} range
+     * @return the token usage, {@link TokenUsage#empty()} when a counter is missing, malformed or out of {@code int}
+     *         range
      */
     static TokenUsage toTokenUsage(CompletionUsage usage) {
         try {
@@ -40,6 +41,10 @@ final class OpenAiChatUsages {
             return counts.withCacheTokens(cached.intValue(), 0);
         } catch (ArithmeticException e) {
             log.warn("Token count exceeded Integer range; falling back to empty usage: {}", e.getMessage());
+            return TokenUsage.empty();
+        } catch (RuntimeException e) {
+            // A required counter missing or malformed: accounting degrades, as on the Responses path.
+            log.debug("Could not read Chat Completions usage; falling back to empty usage: {}", e.getMessage());
             return TokenUsage.empty();
         }
     }

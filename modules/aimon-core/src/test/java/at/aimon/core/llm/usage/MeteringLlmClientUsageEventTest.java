@@ -27,6 +27,7 @@ import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ServiceTier;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
+import at.aimon.core.llm.exception.LlmCallCancelledException;
 import at.aimon.core.llm.streaming.LlmStreamChunk;
 import at.aimon.core.llm.streaming.LlmStreamSink;
 import at.aimon.core.llm.streaming.LlmStreamingOptions;
@@ -196,7 +197,7 @@ class MeteringLlmClientUsageEventTest {
             final Trippable token = new Trippable();
             delegate.respond(() -> {
                 token.trip();
-                throw new IllegalStateException("cancelled");
+                throw new LlmCallCancelledException("cancelled");
             });
 
             assertThatThrownBy(() -> metering.sendMessage(SystemPromptParts.empty(), List.of(), List.of(),
@@ -204,6 +205,29 @@ class MeteringLlmClientUsageEventTest {
 
             assertThat(recorder.events).singleElement()
                     .satisfies(e -> assertThat(e.getOutcome()).isEqualTo(LlmUsageEvent.Outcome.ABORTED));
+        }
+
+        @Test
+        @DisplayName("a non-cancellation failure racing a tripping token is not mistaken for an abort")
+        void failureRacingTheTokenRecordsNothing() {
+            final Trippable token = new Trippable();
+            delegate.respond(() -> {
+                token.trip();
+                throw new IllegalStateException("400 bad request");
+            });
+
+            assertThatThrownBy(() -> metering.sendMessage(SystemPromptParts.empty(), List.of(), List.of(),
+                    model("gpt-x"), LlmCallMetadata.empty(), token)).hasMessage("400 bad request");
+
+            assertThat(recorder.events).isEmpty();
+        }
+
+        @Test
+        @DisplayName("an aborted event cannot carry a partial usage")
+        void abortedEventRejectsUsage() {
+            assertThatThrownBy(() -> LlmUsageEvent.builder().provider("p").startedAt(T0).completedAt(T0)
+                    .outcome(LlmUsageEvent.Outcome.ABORTED).usage(TokenUsage.of(1, 1, 2)).build())
+                    .isInstanceOf(IllegalArgumentException.class);
         }
 
         @Test

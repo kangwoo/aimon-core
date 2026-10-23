@@ -218,7 +218,8 @@ final class AnthropicStreamingMapper {
     private void onMessageStart(RawMessageStartEvent event) {
         try {
             final Usage usage = event.message().usage();
-            this.inputTokens = usage.inputTokens();
+            // The raw accessor: a missing input counter must not cost the cache counters, model and tier below.
+            usage._inputTokens().asKnown().ifPresent(value -> this.inputTokens = value);
             this.cacheReadTokens = AnthropicUsages.counter(usage._cacheReadInputTokens());
             this.cacheWriteTokens = AnthropicUsages.counter(usage._cacheCreationInputTokens());
             this.cacheWriteSingleRate = AnthropicUsages.cacheWriteSingleRate(usage._cacheCreation());
@@ -361,15 +362,11 @@ final class AnthropicStreamingMapper {
         });
         final MessageDeltaUsage usage = event.usage();
         usage.inputTokens().ifPresent(this::updateInputTokens);
-        // Cumulative like the input counter: authoritative when present, and absent leaves message_start's value.
-        final Long deltaCacheRead = AnthropicUsages.counter(usage._cacheReadInputTokens());
-        if (deltaCacheRead != null) {
-            this.cacheReadTokens = deltaCacheRead;
-        }
-        final Long deltaCacheWrite = AnthropicUsages.counter(usage._cacheCreationInputTokens());
-        if (deltaCacheWrite != null) {
-            this.cacheWriteTokens = deltaCacheWrite;
-        }
+        // Cumulative, so never added: absent leaves message_start's value, and a smaller value (a proxy re-sending 0)
+        // cannot shrink a count message_start already measured.
+        this.cacheReadTokens = cumulative(cacheReadTokens, AnthropicUsages.counter(usage._cacheReadInputTokens()));
+        this.cacheWriteTokens = cumulative(cacheWriteTokens,
+                AnthropicUsages.counter(usage._cacheCreationInputTokens()));
         this.outputTokens = usage.outputTokens();
         // The docs put the thinking breakdown only on the final message_delta, so this is the one place to read it.
         this.thinkingTokens = AnthropicUsages.thinkingTokens(usage);
@@ -431,6 +428,13 @@ final class AnthropicStreamingMapper {
             log.warn("Token count exceeded Integer range; falling back to empty usage: {}", e.getMessage());
             return TokenUsage.empty();
         }
+    }
+
+    private static Long cumulative(Long previous, Long reported) {
+        if (reported == null) {
+            return previous;
+        }
+        return previous == null ? reported : Math.max(previous, reported);
     }
 
     private void updateInputTokens(long value) {

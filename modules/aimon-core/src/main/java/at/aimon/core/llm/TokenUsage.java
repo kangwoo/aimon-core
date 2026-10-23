@@ -204,9 +204,36 @@ public final class TokenUsage {
     }
 
     private static Integer sumCache(Integer left, int leftPrompt, Integer right, int rightPrompt) {
+        if (left == null && right == null) {
+            // Nothing was measured on either side: the sum is not measured either, even when both prompts are zero,
+            // so empty().add(empty()) stays equal to empty().
+            return null;
+        }
         final Integer l = left != null || leftPrompt != 0 ? left : Integer.valueOf(0);
         final Integer r = right != null || rightPrompt != 0 ? right : Integer.valueOf(0);
-        return l == null || r == null ? null : l + r;
+        if (l == null || r == null) {
+            return null;
+        }
+        try {
+            return Math.addExact(l, r);
+        } catch (ArithmeticException e) {
+            // An overflowing counter is no longer a measurement; failing add() over it would fail an accumulator.
+            return null;
+        }
+    }
+
+    /**
+     * Reports whether no token was counted: prompt, completion, total and reasoning are all zero.
+     *
+     * <p>
+     * Use this rather than {@code equals(TokenUsage.empty())} to ask "is there any usage": the cache counters take
+     * part in {@link #equals(Object)}, so a usage with measured-zero cache counters is not equal to {@link #empty()}
+     * while still counting no tokens.
+     *
+     * @return {@code true} if every token count is zero
+     */
+    public boolean isZero() {
+        return promptTokens == 0 && completionTokens == 0 && totalTokens == 0 && reasoningTokens == 0;
     }
 
     /**

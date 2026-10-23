@@ -151,7 +151,7 @@ public final class ExecutionMetadata {
      * @return true if token usage is not empty, false otherwise
      */
     public boolean hasTokenUsage() {
-        return !tokenUsage.equals(TokenUsage.empty());
+        return !tokenUsage.isZero();
     }
 
     /**

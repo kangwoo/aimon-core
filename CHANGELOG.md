@@ -26,6 +26,11 @@ Central is versioned independently).
 - **Providers** — OpenAI (Responses and Chat Completions) and Anthropic report the served model, the applied tier
   (OpenAI `default`→`standard`, `priority`→`fast`; Anthropic `priority` preserved) and the cache counters (OpenAI
   cache writes are a measured `0`; Anthropic writes with a one-hour TTL are left unmeasured).
+- **Migration notes** — the tag keys `service_tier`, `cached_input_tokens`, `cache_write_tokens`, `cache_usage_known`
+  and `context_input_tokens` are now reserved: a caller tag under one of them is removed before recording. Use
+  `TokenUsage.isZero()` rather than `equals(TokenUsage.empty())` to ask whether a usage counted anything. The cache
+  counters are not yet persisted by `SessionRecordCodec` or the session-routing payloads, so restored session totals
+  carry them as unmeasured.
 
 ### Changed: `TokenUsage.getPromptTokens()` is the whole input context on Anthropic
 

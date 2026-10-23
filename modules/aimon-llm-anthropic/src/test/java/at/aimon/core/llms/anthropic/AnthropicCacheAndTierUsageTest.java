@@ -125,6 +125,27 @@ class AnthropicCacheAndTierUsageTest {
     }
 
     @Test
+    @DisplayName("a message_delta re-sending a smaller cache counter cannot shrink the measured value")
+    void deltaCannotShrinkCacheCounters() {
+        final ChunkAggregator aggregator = new ChunkAggregator();
+        new AnthropicStreamingMapper(LlmStreamSink.discarding(), aggregator, "Anthropic", (s, m, a) -> {
+        }, false).consume(Stream.of(AnthropicFixtures.event("""
+                {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant",
+                 "model":"claude-x","content":[],"stop_reason":null,"stop_sequence":null,
+                 "usage":{"input_tokens":10,"cache_read_input_tokens":500,"cache_creation_input_tokens":0,
+                          "output_tokens":1}}}"""), AnthropicFixtures.event("""
+                {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},
+                 "usage":{"output_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":40}}"""),
+                AnthropicFixtures.event("""
+                        {"type":"message_stop"}""")));
+
+        final TokenUsage usage = aggregator.toLlmResponse().getTokenUsage();
+        assertThat(usage.getCacheReadTokens()).hasValue(500);
+        assertThat(usage.getCacheWriteTokens()).hasValue(40);
+        assertThat(usage.getPromptTokens()).isEqualTo(550);
+    }
+
+    @Test
     @DisplayName("streaming reports the same usage, model and tier as the blocking document")
     void streamingMatchesBlocking() {
         final ChunkAggregator aggregator = new ChunkAggregator();
