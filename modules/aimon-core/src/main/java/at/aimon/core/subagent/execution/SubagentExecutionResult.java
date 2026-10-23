@@ -11,6 +11,7 @@ import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.quota.QuotaViolation;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.base.JsonValues;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.llm.Message;
@@ -563,7 +564,7 @@ public final class SubagentExecutionResult {
         Objects.requireNonNull(structuredResult, "Structured result cannot be null");
         return new SubagentExecutionResult(finalAnswer, snapshot, metadata, success, errorMessage, completionReason,
                 cost, quotaViolation, executionId, executionEnvironment, toolCallCount, exitConfirmed,
-                StructuredResultReport.copyOf(structuredResult), structuredResultRequired);
+                JsonValues.immutableCopy(structuredResult), structuredResultRequired);
     }
 
     /**

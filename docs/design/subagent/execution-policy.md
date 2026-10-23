@@ -355,8 +355,9 @@ executor capability 가 아니고(`getCapabilities()` 에 없다), 정책 없는
 - 정책에 schema 가 있으면 포크는 **`ReportResult`**(`StructuredResultReport.TOOL_NAME`) 도구를 받는다. 입력 schema 가
   곧 정책의 schema 다. `allowed-tools`·호출자 ceiling 과 무관하게 제공되고(정책은 trusted 코드다), 도구 파이프라인을
   거치지 않고 executor 가 직접 처리한다 — PermissionRequest·PreTool·PostTool hook, 권한 질의, side-effect 승인이
-  없다. 레지스트리에 같은 이름의 도구가 있으면 그 포크에서는 정의 목록에서 빠진다(WARN). 정의는 목록의 맨 끝에
-  붙어 기존 도구의 prompt cache prefix 를 바꾸지 않는다.
+  없다. 레지스트리에 같은 이름의 도구가 있으면 그 포크에서는 정의 목록에서 빠진다. 이 판정은 매 iteration 의
+  제공 목록마다 한다 — 그런 도구가 나중에(tool search 로 활성화되어) 나타날 수 있기 때문이다 — 그리고 처음 가릴 때
+  포크당 한 번 WARN 을 남긴다. 정의는 목록의 맨 끝에 붙어 기존 도구의 prompt cache prefix 를 바꾸지 않는다.
 - 호출이 오면 executor 가 검증한다. 위반이면 `ToolUseResult.error` 로 **무엇을 고칠지** 돌려주고 아무것도
   기록하지 않는다 — 포크는 고쳐서 다시 부를 수 있고, 부모는 잘못된 값을 **절대** 보지 않는다. 직렬화 길이가 상한을
   넘어도 같다. 통과하면 짧은 확인(ack)을 돌려주고 그 payload 를 기록한다. 여러 번 통과하면 **마지막 것**이
@@ -369,13 +370,22 @@ executor capability 가 아니고(`getCapabilities()` 에 없다), 정책 없는
 키워드는 보지 않는다 — validator 가 정한 "모양은 여기서, 범위는 소비자에서" 와 같은 선이고, 조합 키워드를 쓰는
 속성은 건너뛴다. 소비자가 그 이상을 요구하면 받은 값을 다시 검사해야 한다(§7).
 
+- `type` 은 이름 하나여도, 목록(`["object", "null"]`)이어도 된다. 목록에 `object`·`array` 가 있으면 값이 객체·배열일
+  때 안으로 들어간다. `type` 이 없어도 `properties`·`items` 가 있으면 들어간다.
+- **null.** 객체 멤버의 `null` 은 도구 경로 어디서나처럼 **없음**이다 — 버려지고, required 면 빠졌다고 보고된다.
+  배열 항목의 `null` 은 자리를 지킨 채 남고, 항목 schema 의 `type` 에 `"null"` 이 없으면
+  `Item 'findings[1]' is null, …` 위반이다. 깊은 불변 복사는 `at.aimon.core.base.JsonValues` 가 같은 규칙으로 한다.
+- **숫자.** 검사 전에 payload 를 schema 에 맞춰 정규화한 사본을 만든다. `enum` 값과 수치가 같은 숫자는 그 값이 되고
+  (`1.0` → `1`), `integer` 자리의 소수부 없는 숫자는 정수가 된다(`3.0` → `3`). 공유 validator 의 `enum` 비교는
+  `equals` 라 `1.0` 과 `1` 을 다르게 보는데, 정규화가 그 차이를 먼저 없앤다. 전달되는 것은 이 사본이다.
+
 **기존 축과의 관계.**
 
 | 축 | 규칙 | 이유 |
 |---|---|---|
 | `maxToolCalls` (§4) | 세지 않는다. 예산이 바닥난 batch 에서도 처리한다 | 실행되는 도구가 아니라 결과 전달이다. 한도에 닿은 포크가 결과를 못 내면 한도의 목적이 거꾸로 된다 |
 | token 초과 batch (§4) | 처리한다 (다른 호출은 `Not run`) | 같은 이유. payload 는 이미 받은 응답 안에 있다 |
-| `max_tokens` 로 잘린 응답 | 다른 호출과 같이 거부한다 | 잘린 호출의 인자는 온전히 도착하지 않았다 |
+| `max_tokens` 로 잘린 응답 | 다른 호출과 같이 거부한다 — grace round 의 응답도 (WARN) | 잘린 호출의 인자는 온전히 도착하지 않았다 |
 | `maxConsecutiveToolFailures` (§4.1) | 세지 않고, 차단하지도 않는다 | schema 위반은 고치라고 돌려준 것이다. 차단하면 고칠 길이 막힌다 |
 | `StalledIterationGuard` | 결과 그대로 센다 — 통과는 성공(진전), 거부는 오류 | 거부만 반복하는 포크는 다른 실패와 똑같이 멈춰야 한다 |
 | `getToolCallCount()` | 세지 않는다 | 파이프라인에 넘긴 수라는 정의(§4)를 지킨다 |
@@ -391,13 +401,18 @@ finding 을 구조화해서 넘길 수 있게 하기 위해서다. 정책에 sch
 문장이 붙는다. grace 의 transcript 규칙은 그대로다 — 답 텍스트만 assistant 메시지로 남고, grace 의 tool_use 는
 transcript 에 들어가지 않는다. 텍스트가 비면 이전처럼 `MAX_ITERATIONS` 로 끝나지만 그 round 에서 통과한 payload 는
 결과에 실린다. grace 에서 위반한 보고는 고칠 다음 호출이 없으므로 WARN 만 남기고, 앞서 통과한 payload 가 있으면
-그것이 남는다.
+그것이 남는다. grace 응답이 `max_tokens` 로 잘렸으면 그 안의 보고는 검사하지 않고 버린다(WARN) — 보통 경로에서 잘린
+응답의 호출을 거부하는 것과 같은 규칙이다.
 
 **결과에 싣는 자리.**
 
 - `SubagentExecutionResult#getStructuredResult()` — 마지막으로 통과한 payload (불변 `Map`, 키 순서 유지).
   `isStructuredResultRequired()` — 정책에 schema 가 있었는지. 완료 사유와 무관하게 실린다: 예산·deadline·오류로 끝난
-  포크라도 통과한 보고가 있으면 함께 온다. 완료 여부는 언제나 `completionReason` 이 말한다.
+  포크라도 통과한 보고가 있으면 함께 온다. 완료 여부는 언제나 `completionReason` 이 말한다. `required` 표시는 schema
+  있는 정책의 **모든** 결과에 붙는다 — executor 가 루프 전에 끝낸 결과(시작 전 deadline 만료, goal 렌더 실패)와
+  manager 가 직접 만든 결과(정책 거부, 예외, exit 미확인, 풀이 거절한 백그라운드 태스크)까지. manager 는 정책을 쥐고
+  있으므로 마지막에 한 번 더 찍는다. 그래서 background `TaskResult`·`AgentOutput` 도 그런 결과를 `MISSING` 으로
+  보여 준다.
 - foreground `Task` — render payload 에 `structuredResult`(payload 그대로)와 `structuredResultMissing`(정책이
   요구했는데 없으면 `true`)를 더한다. 모델이 읽는 텍스트에는 자유 텍스트 답 **뒤**, `Completion reason:` 줄 **앞**에
   블록을 붙인다.
@@ -422,7 +437,9 @@ transcript 에 들어가지 않는다. 텍스트가 비면 이전처럼 `MAX_ITE
 읽다 실패하지 않는다 — 다만 payload 와 `MISSING` 표시를 보지 못하고 자유 텍스트만 보여 준다. 새 노드가 구
 레코드를 읽으면 두 필드가 없으므로 payload 없음·요구 없음이다. 버전을 올리면 구 노드가 새 레코드 전체를 읽지
 못하게 되므로(`Unsupported task result format version`) 올리지 않았다. 형식이 맞지 않는 `structuredResult`(객체가
-아님)는 없는 것으로 읽는다.
+아님)는 없는 것으로 읽는다. 왕복은 JSON 값을 지키지만 Java 숫자 타입은 지키지 않는다 — 숫자는 `Integer`·`Long`·
+`BigInteger` 중 담을 수 있는 가장 좁은 것이나 `Double` 로 읽힌다. 그래서 그런 숫자를 담은 `TaskResult` 는 decode 후
+`equals` 가 아닐 수 있다.
 
 **정책 없는 포크.** schema 가 없으면 도구가 제공되지 않고, 위 경로 어느 것도 타지 않는다. `Task`·`AgentOutput`
 텍스트와 render payload, codec 출력은 바이트 단위로 이전과 같다.
@@ -436,7 +453,7 @@ transcript 에 들어가지 않는다. 텍스트가 비면 이전처럼 `MAX_ITE
   앞)로만 구별된다. **코드는 텍스트가 아니라 render payload 의 `structuredResult` 를 읽어야 한다.**
 - 기록은 그 실행(run) 안에서만 유지된다. `Task(resume=…)` 로 이어 간 백그라운드 포크는 이전 run 에서 통과한 보고를
   물려받지 않으므로 다시 보고해야 한다(transcript 에는 이전 호출이 남아 있다).
-- exit 미확인 결과(§5.3)는 포크가 반환하기 전에 만들어지므로 payload 가 없다. 정책이 요구했으면 `MISSING` 이다.
+- exit 미확인 결과(§5.3)는 포크가 반환하기 전에 만들어지므로 payload 가 없다. 정책이 요구했으므로 `MISSING` 이다.
 - hook 은 `ReportResult` 호출을 보지 못한다(파이프라인 밖). 진행 로그(`SubagentOutputSink`)에는 호출과 ack/오류가
   남는다.
 
@@ -462,6 +479,7 @@ transcript 에 들어가지 않는다. 텍스트가 비면 이전처럼 `MAX_ITE
 | 결과 길이·남길 쪽(`HEAD`·`HEAD_AND_TAIL`), surrogate 보존 | `SubagentResultFormatterTest`, `TaskToolExecutionPolicyTest` |
 | 구조화 결과: 위반 → 오류로 돌려받고 고쳐서 통과, 32,000자 넘는 답에서도 payload 무손실, 혼합 batch 순서, 한도·차단과의 관계, grace round 의 보고 | `DefaultSubagentExecutorStructuredResultTest`, `StructuredResultReportTest` |
 | 구조화 결과의 `Task` 텍스트·payload·`MISSING`, 정책 없는 결과의 바이트 동일성, capability 거부 | `TaskToolStructuredResultTest`, `DefaultSubagentExecutionManagerPolicyTest` |
+| manager·executor 가 만든 결과의 `required` 표시(예외, exit 미확인, 시작 전 만료, goal 렌더 실패, background 저장) | `DefaultSubagentExecutionManagerStructuredResultTest`, `DefaultSubagentExecutorStructuredResultTest` |
 | codec 왕복, 구 레코드·미지 필드 호환, `AgentOutput` 블록, CLI 사유 줄 인식 | `JsonTaskResultCodecTest`, `AgentOutputToolTest`, `SubagentResultDisplayHookTest` |
 
 외부 LLM 호출 없이 fake client 와 latch 를 쓰고, deadline 판정은 조절 가능한 nano clock 으로 검증한다. 다만

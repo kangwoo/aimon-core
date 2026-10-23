@@ -168,11 +168,16 @@ subagent definition file — and its context can be managed by its spawner's con
   `ReportResult` tool (`StructuredResultReport.TOOL_NAME`, new) whose input schema is the policy's, whatever its
   `allowed-tools` say; the executor answers it itself — no hook, permission prompt or approval. A payload is checked
   with the shared `ToolInputSchemaValidator` at every level of `properties` / `items` (shape only: `required`,
-  `type`, `enum`, `additionalProperties: false`) and against the cap as compact JSON; a violation is answered with
-  an error naming what to fix, so the fork can correct it and the spawner never sees the invalid value. The last
+  `type`, `enum`, `additionalProperties: false`; a `type` may be a list such as `["object", "null"]`, and a `null`
+  array item is rejected unless its schema allows `null`) and against the cap as compact JSON; numbers are first
+  normalised to the schema (`3.0` → `3` for an `integer`, `1.0` → `1` for an `enum` of `1`). A violation is answered
+  with an error naming what to fix, so the fork can correct it and the spawner never sees the invalid value. The last
   accepted payload wins. A report takes none of the tool-call budget, counts for no failure streak, is judged even in
-  a batch that spent the token budget, and is the one call honoured in the grace round. Mixed batches keep the
-  response's order, matched by position. `SubagentExecutionResult#getStructuredResult()` /
+  a batch that spent the token budget, and is the one call honoured in the grace round — unless that response was
+  cut off at `max_tokens`. Mixed batches keep the response's order, matched by position. Every result of a fork
+  whose policy has a schema is marked as requiring a structured result, including the ones the manager makes itself
+  (refusal, exception, unconfirmed exit, rejected background task). `at.aimon.core.base.JsonValues` (new) makes the
+  deep immutable copies. `SubagentExecutionResult#getStructuredResult()` /
   `isStructuredResultRequired()`; `SubagentOutcomePayload` gains `structuredResult` and `structuredResultMissing`;
   the `Task` and `AgentOutput` text show the payload as a one-line JSON block after the (possibly truncated) answer
   and before the `Completion reason:` line, or a `Structured result: MISSING` line. `TaskResult` and

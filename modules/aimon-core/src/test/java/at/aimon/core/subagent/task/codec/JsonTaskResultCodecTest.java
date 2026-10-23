@@ -110,6 +110,15 @@ class JsonTaskResultCodecTest {
     }
 
     @Test
+    void toStringNamesTheStructuredResultOnlyWhenThereIsOne() {
+        assertThat(TaskResult.builder().success(true).build().toString()).doesNotContain("structuredResult");
+        assertThat(TaskResult.builder().success(true).structuredResultRequired(true).build().toString())
+                .contains("structuredResult=missing");
+        assertThat(TaskResult.builder().success(true).structuredResult(Map.of("a", 1)).build().toString())
+                .contains("structuredResult=reported");
+    }
+
+    @Test
     void encodeRejectsNull() {
         assertThatNullPointerException().isThrownBy(() -> codec.encode(null));
     }

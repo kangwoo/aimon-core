@@ -39,6 +39,12 @@ import at.aimon.core.subagent.task.TaskResult;
  * not an object reads as absent.
  *
  * <p>
+ * A round trip keeps the payload's JSON value but not necessarily its Java number types: a number is read back as
+ * the narrowest of {@code Integer}, {@code Long} and {@code BigInteger} that holds it, or as a {@code Double}. A
+ * {@code Long} that fits an {@code int} comes back an {@code Integer}, and a {@code BigDecimal} a {@code Double}, so a
+ * decoded {@link TaskResult} need not be {@code equals} to the one encoded when its payload held such numbers.
+ *
+ * <p>
  * Stateless and thread-safe: the shared {@link ObjectMapper} is used only for tree building and text I/O.
  */
 public final class JsonTaskResultCodec implements TaskResultCodec {

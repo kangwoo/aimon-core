@@ -453,11 +453,12 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         if (deadline != null && deadline.isExpired()) {
             log.info("Subagent '{}' not started: its deadline ({}) passed before it could run", subagent.getName(),
                     deadline.getBudget());
-            return SubagentExecutionResult.failure(DEADLINE_BEFORE_START_MESSAGE,
-                    SessionSnapshot.of(SessionId.generate()),
-                    ExecutionMetadata.builder().iterationCount(0).tokenUsage(TokenUsage.empty())
-                            .timestamps(Instant.now(), Instant.now()).build(),
-                    CompletionReason.WALL_CLOCK_EXCEEDED, null);
+            return SubagentExecutionResult
+                    .failure(DEADLINE_BEFORE_START_MESSAGE, SessionSnapshot.of(SessionId.generate()),
+                            ExecutionMetadata.builder().iterationCount(0).tokenUsage(TokenUsage.empty())
+                                    .timestamps(Instant.now(), Instant.now()).build(),
+                            CompletionReason.WALL_CLOCK_EXCEEDED, null)
+                    .withStructuredResultRequired(structuredResultRequired(request));
         }
 
         // The fork's run identity. Deliberately not a SessionId: one of those means a durable record plus a
@@ -489,7 +490,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             return SubagentExecutionResult
                     .emptyFailure("Failed to render the fork's goal in its own environment: " + e.getMessage(),
                             Instant.now())
-                    .withExecutionId(executionId).withExecutionEnvironment(executionEnvironment);
+                    .withExecutionId(executionId).withExecutionEnvironment(executionEnvironment)
+                    .withStructuredResultRequired(structuredResultRequired(request));
         }
 
         // Build dynamic system prompt with environment information
@@ -585,6 +587,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 parentCancelReg.remove();
             }
         }
+    }
+
+    /** Whether the request's policy requires a structured result, for a result that ends the fork before its loop. */
+    private static boolean structuredResultRequired(SubagentExecutionRequest request) {
+        return request.getExecutionPolicy().filter(SubagentExecutionPolicy::requiresStructuredResult).isPresent();
     }
 
     /**
@@ -903,7 +910,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         lc.budgetTracker.recordTokens(response.getTokenUsage());
         recordCallCost(lc, response);
         if (response.hasToolUses()) {
-            acceptGraceRoundReports(lc, response.getToolUses(), graceIteration);
+            acceptGraceRoundReports(lc, response, graceIteration);
         }
         final String text = response.getTextContent();
         if (text == null || text.isBlank()) {
@@ -926,10 +933,16 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * recorded. A rejected one cannot be fixed, there being no later call; an earlier accepted report stays. Nothing
      * goes into the transcript: a grace round leaves its text answer there and nothing else.
      */
-    private static void acceptGraceRoundReports(LoopContext lc, List<ToolUse> toolUses, int graceIteration) {
+    private static void acceptGraceRoundReports(LoopContext lc, LlmResponse response, int graceIteration) {
+        // A response cut at max_tokens may have cut a call's arguments, and it does not say which: as on the normal
+        // path (refuseTruncatedToolUses), no call of it is taken, a report included.
+        final boolean truncated = TruncatedResponses.isTruncated(response);
         int dropped = 0;
-        for (ToolUse toolUse : toolUses) {
-            if (lc.isReport(toolUse)) {
+        for (ToolUse toolUse : response.getToolUses()) {
+            if (lc.isReport(toolUse) && truncated) {
+                log.warn("Subagent '{}' reported a structured result in a grace round cut off at max_tokens; it is not"
+                        + " taken", lc.subagent().getName());
+            } else if (lc.isReport(toolUse)) {
                 if (judgeReport(lc, toolUse, graceIteration).isError()) {
                     log.warn("Subagent '{}' reported a structured result in its grace round that was rejected; it "
                             + "cannot be corrected", lc.subagent().getName());
@@ -1417,7 +1430,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 .filter(tool -> ceiling.permits(tool.getSideEffectLevel())).filter(admitted).map(Tool::getDefinition)
                 .toList();
         final List<ToolDefinition> definitions = lc.reportsStructuredResult()
-                ? withReportTool(lc, registered, iterationCount)
+                ? withReportTool(lc, registered)
                 : registered;
         if (definitions.isEmpty() && iterationCount == 1 && subagent.hasToolRestrictions()) {
             log.warn(
@@ -1432,14 +1445,15 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * The fork's tool definitions with the {@value StructuredResultReport#TOOL_NAME} tool its policy asks for, last so
      * the prefix the other definitions form is unchanged. Offered whatever the subagent's allow-list says — the policy
      * is trusted code — and in place of a registered tool of the same name, whose calls the executor would answer
-     * itself anyway.
+     * itself anyway. That is checked on every offer, since such a tool can appear later (activated through tool
+     * search), and warned about once per fork.
      */
-    private static List<ToolDefinition> withReportTool(LoopContext lc, List<ToolDefinition> registered,
-            int iterationCount) {
+    private static List<ToolDefinition> withReportTool(LoopContext lc, List<ToolDefinition> registered) {
         final List<ToolDefinition> definitions = new ArrayList<>(registered.size() + 1);
         for (ToolDefinition definition : registered) {
             if (StructuredResultReport.TOOL_NAME.equals(definition.getName())) {
-                if (iterationCount == 1) {
+                if (!lc.reportToolShadowWarned) {
+                    lc.reportToolShadowWarned = true;
                     log.warn(
                             "Subagent '{}' has a registered tool named '{}'; its execution policy's report tool "
                                     + "takes the name in this fork",
@@ -2432,6 +2446,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
          * {@code null}. Written only on the loop's thread — reports are judged there, never dispatched.
          */
         private Map<String, Object> structuredResult;
+        /**
+         * Whether the fork was warned that its report tool hides a registered tool of the same name — once per fork,
+         * whenever that tool first shows up (it may be activated later, through tool search).
+         */
+        private boolean reportToolShadowWarned;
 
         private LoopContext(Builder b) {
             this.context = b.context;

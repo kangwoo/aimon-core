@@ -1,8 +1,11 @@
 package at.aimon.core.subagent.execution;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -15,6 +18,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.schema.DefaultToolInputSchemaValidator;
 import at.aimon.core.agent.tool.schema.ToolInputSchemaValidator;
+import at.aimon.core.base.JsonValues;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.ToolUseResult;
@@ -23,7 +27,7 @@ import at.aimon.core.subagent.SubagentExecutionPolicy;
 /**
  * The structured result channel of a fork whose execution policy has a
  * {@linkplain SubagentExecutionPolicy#getResultSchema() result schema}: the {@value #TOOL_NAME} tool the fork is
- * offered, how a call to it is judged, and how an accepted payload is copied and written out.
+ * offered, how a call to it is judged, and how an accepted payload is written out.
  *
  * <p>
  * The tool is not a registered {@code Tool}. {@link DefaultSubagentExecutor} offers its definition beside the fork's
@@ -32,12 +36,24 @@ import at.aimon.core.subagent.SubagentExecutionPolicy;
  *
  * <p>
  * <b>What is checked.</b> The schema is checked by the shared {@link ToolInputSchemaValidator}, which stops after one
- * level; this class applies it again at every object it can reach through {@code properties} and {@code items}, so a
- * nested {@code required}, {@code type}, {@code enum} or {@code additionalProperties: false} is enforced too, and each
- * violation names where it is ({@code findings[2]}). Ranges, {@code pattern}, {@code format} and the composition
- * keywords are not — the validator's own line (shape here, ranges in the consumer) — and a property using a
- * composition keyword is skipped. The payload's length as compact JSON is bounded by
- * {@link SubagentExecutionPolicy#getResultPayloadMaxChars()}.
+ * level; this class applies it again at every object and array it can reach through {@code properties} and
+ * {@code items}, so a nested {@code required}, {@code type}, {@code enum} or {@code additionalProperties: false} is
+ * enforced too, and each violation names where it is ({@code findings[2]}). A {@code type} may be a name or a list of
+ * names ({@code ["object", "null"]}); a schema with no {@code type} but with {@code properties} or {@code items} is
+ * looked into all the same. Ranges, {@code pattern}, {@code format} and the composition keywords are not checked — the
+ * validator's own line (shape here, ranges in the consumer) — and a property using a composition keyword is skipped.
+ * The payload's length as compact JSON is bounded by {@link SubagentExecutionPolicy#getResultPayloadMaxChars()}.
+ *
+ * <p>
+ * <b>Nulls.</b> A {@code null} object member is absent, as everywhere on the tool path: it is dropped, and a required
+ * one is reported missing. A {@code null} array item is kept in place and rejected unless the item schema's type lists
+ * {@code "null"}.
+ *
+ * <p>
+ * <b>Numbers.</b> Before it is checked, the payload is copied with its numbers normalised to the schema: a number that
+ * numerically equals one of an {@code enum}'s values becomes that value ({@code 1.0} matches {@code 1}), and a
+ * whole-valued number where the schema says {@code integer} becomes an integer ({@code 3.0} becomes {@code 3}). What is
+ * delivered is that copy.
  *
  * <p>
  * Stateless and thread-safe.
@@ -64,9 +80,15 @@ public final class StructuredResultReport {
     private static final String KEY_TYPE = "type";
     private static final String KEY_PROPERTIES = "properties";
     private static final String KEY_ITEMS = "items";
+    private static final String KEY_REQUIRED = "required";
+    private static final String KEY_ENUM = "enum";
     private static final String TYPE_OBJECT = "object";
     private static final String TYPE_ARRAY = "array";
+    private static final String TYPE_INTEGER = "integer";
+    private static final String TYPE_NULL = "null";
     private static final Set<String> COMPOSITION_KEYWORDS = Set.of("$ref", "oneOf", "anyOf", "allOf", "not");
+    private static final BigDecimal LONG_MIN = BigDecimal.valueOf(Long.MIN_VALUE);
+    private static final BigDecimal LONG_MAX = BigDecimal.valueOf(Long.MAX_VALUE);
 
     private StructuredResultReport() {
     }
@@ -80,8 +102,7 @@ public final class StructuredResultReport {
      */
     static ToolDefinition definition(SubagentExecutionPolicy policy) {
         Objects.requireNonNull(policy, "policy cannot be null");
-        return ToolDefinition.of(TOOL_NAME, DESCRIPTION, policy.getResultSchema()
-                .orElseThrow(() -> new IllegalArgumentException("the policy asks for no structured result")));
+        return ToolDefinition.of(TOOL_NAME, DESCRIPTION, schemaOf(policy));
     }
 
     /**
@@ -96,16 +117,15 @@ public final class StructuredResultReport {
     static Outcome judge(SubagentExecutionPolicy policy, ToolUse toolUse) {
         Objects.requireNonNull(policy, "policy cannot be null");
         Objects.requireNonNull(toolUse, "toolUse cannot be null");
-        final Map<String, Object> schema = policy.getResultSchema()
-                .orElseThrow(() -> new IllegalArgumentException("the policy asks for no structured result"));
-        final List<String> violations = validate(schema, toolUse.getInput());
+        final Map<String, Object> schema = schemaOf(policy);
+        final Map<String, Object> payload = normalise(schema, toolUse.getInput());
+        final List<String> violations = validate(schema, payload);
         if (!violations.isEmpty()) {
             final StringBuilder message = new StringBuilder("Not recorded: the result does not fit this task's "
                     + "schema. Fix the following and call " + TOOL_NAME + " again with the whole result:");
             violations.forEach(violation -> message.append("\n- ").append(violation));
             return new Outcome(ToolUseResult.error(toolUse.getId(), message.toString()), null, violations.size());
         }
-        final Map<String, Object> payload = copyOf(toolUse.getInput());
         final int length = toJson(payload).length();
         if (length > policy.getResultPayloadMaxChars()) {
             return new Outcome(ToolUseResult.error(toolUse.getId(),
@@ -118,8 +138,14 @@ public final class StructuredResultReport {
                 + "delivered as reported; a later " + TOOL_NAME + " call replaces it."), payload, 0);
     }
 
+    private static Map<String, Object> schemaOf(SubagentExecutionPolicy policy) {
+        return policy.getResultSchema()
+                .orElseThrow(() -> new IllegalArgumentException("the policy asks for no structured result"));
+    }
+
     /**
-     * Checks {@code value} against {@code schema} at every level the schema describes.
+     * Checks {@code value} against {@code schema} at every level the schema describes. Numbers are compared as they
+     * are; {@link #judge} normalises them first.
      *
      * @param schema
      *            an object schema (must not be null)
@@ -137,7 +163,12 @@ public final class StructuredResultReport {
 
     private static void validateObject(String path, Map<String, Object> schema, Map<String, Object> value,
             List<String> violations) {
-        VALIDATOR.validate(schema, ToolInput.of(value)).getViolations()
+        // The shared validator checks only a schema whose type is exactly "object"; a union or an absent type that
+        // still describes an object is handed to it in that form.
+        final Map<String, Object> objectSchema = TYPE_OBJECT.equals(schema.get(KEY_TYPE))
+                ? schema
+                : withType(schema, TYPE_OBJECT);
+        VALIDATOR.validate(objectSchema, ToolInput.of(value)).getViolations()
                 .forEach(violation -> violations.add(path.isEmpty() ? violation : "In '" + path + "': " + violation));
         final Map<String, Object> properties = asMap(schema.get(KEY_PROPERTIES));
         if (properties == null) {
@@ -155,71 +186,145 @@ public final class StructuredResultReport {
 
     /**
      * Goes one level into {@code value}: an object is checked against its own schema, an array item by item. The
-     * value's own type was checked by the level above; a value of another type is not looked into.
+     * value's own type was checked by the level above; a value of a type the schema does not look into is left alone.
      */
     private static void validateNested(String path, Map<String, Object> schema, Object value, List<String> violations) {
-        if (schema.keySet().stream().anyMatch(COMPOSITION_KEYWORDS::contains)) {
+        if (usesComposition(schema)) {
             return;
         }
-        final Object type = schema.get(KEY_TYPE);
-        if (TYPE_OBJECT.equals(type) && value instanceof Map<?, ?> map) {
+        final Set<String> types = typesOf(schema);
+        if (value instanceof Map<?, ?> map && describes(types, TYPE_OBJECT, schema, KEY_PROPERTIES)) {
             validateObject(path, schema, asMap(map), violations);
-        } else if (TYPE_ARRAY.equals(type) && value instanceof List<?> list) {
+        } else if (value instanceof List<?> list && describes(types, TYPE_ARRAY, schema, KEY_ITEMS)) {
             final Map<String, Object> itemSchema = asMap(schema.get(KEY_ITEMS));
-            if (itemSchema == null || itemSchema.keySet().stream().anyMatch(COMPOSITION_KEYWORDS::contains)) {
+            if (itemSchema == null || usesComposition(itemSchema)) {
                 return;
             }
             for (int i = 0; i < list.size(); i++) {
-                final String itemPath = path + "[" + i + "]";
-                // The item's own type and enum, through the same validator: a one-property object whose property is
-                // the item, named by its path so the sentence says which item.
-                final Map<String, Object> wrapper = new LinkedHashMap<>();
-                wrapper.put(KEY_TYPE, TYPE_OBJECT);
-                wrapper.put(KEY_PROPERTIES, Map.of(itemPath, itemSchema));
-                wrapper.put("required", List.of(itemPath));
-                final Map<String, Object> wrapped = new LinkedHashMap<>();
-                wrapped.put(itemPath, list.get(i));
-                violations.addAll(VALIDATOR.validate(wrapper, ToolInput.of(wrapped)).getViolations());
-                if (list.get(i) != null) {
-                    validateNested(itemPath, itemSchema, list.get(i), violations);
-                }
+                validateItem(path + "[" + i + "]", itemSchema, list.get(i), violations);
             }
         }
+    }
+
+    private static void validateItem(String itemPath, Map<String, Object> itemSchema, Object item,
+            List<String> violations) {
+        if (item == null) {
+            if (!typesOf(itemSchema).contains(TYPE_NULL)) {
+                violations.add("Item '" + itemPath + "' is null, which its schema does not allow.");
+            }
+            return;
+        }
+        // The item's own type and enum, through the same validator: a one-property object whose property is the item,
+        // named by its path so the sentence says which item.
+        final Map<String, Object> wrapper = new LinkedHashMap<>();
+        wrapper.put(KEY_TYPE, TYPE_OBJECT);
+        wrapper.put(KEY_PROPERTIES, Map.of(itemPath, itemSchema));
+        wrapper.put(KEY_REQUIRED, List.of(itemPath));
+        violations.addAll(VALIDATOR.validate(wrapper, ToolInput.of(Map.of(itemPath, item))).getViolations());
+        validateNested(itemPath, itemSchema, item, violations);
+    }
+
+    /** Whether a schema describes values of {@code type}: it names the type, or names none and has {@code key}. */
+    private static boolean describes(Set<String> types, String type, Map<String, Object> schema, String key) {
+        return types.contains(type) || types.isEmpty() && schema.containsKey(key);
+    }
+
+    /** The type names a schema declares, a single name or a list of them; empty when it declares none. */
+    private static Set<String> typesOf(Map<String, Object> schema) {
+        final Object declared = schema.get(KEY_TYPE);
+        final Set<String> types = new LinkedHashSet<>();
+        if (declared instanceof String name) {
+            types.add(name);
+        } else if (declared instanceof List<?> names) {
+            names.stream().filter(String.class::isInstance).map(String.class::cast).forEach(types::add);
+        }
+        return types;
+    }
+
+    private static Map<String, Object> withType(Map<String, Object> schema, String type) {
+        final Map<String, Object> copy = new LinkedHashMap<>(schema);
+        copy.put(KEY_TYPE, type);
+        return copy;
     }
 
     /**
-     * Copies a JSON-like value deeply into unmodifiable maps and lists, keeping key order. Map entries whose value is
-     * null are dropped, as {@link ToolInput} drops them, so what is delivered is what was checked.
-     *
-     * @param value
-     *            the map to copy (must not be null)
-     * @return the copy (unmodifiable all the way down)
+     * Copies {@code value} deeply and unmodifiably, with its numbers normalised to {@code schema}: a number equal to an
+     * {@code enum} value becomes that value, a whole-valued number where an {@code integer} is declared becomes an
+     * integer. Null members are dropped and null items kept ({@link JsonValues}).
      */
-    public static Map<String, Object> copyOf(Map<String, Object> value) {
-        Objects.requireNonNull(value, "value cannot be null");
-        return copyMap(value);
+    static Map<String, Object> normalise(Map<String, Object> schema, Map<String, Object> value) {
+        return JsonValues.immutableCopy(asMap(normaliseValue(schema, value)));
     }
 
-    private static Map<String, Object> copyMap(Map<?, ?> map) {
-        final Map<String, Object> copy = new LinkedHashMap<>();
-        for (Map.Entry<?, ?> entry : map.entrySet()) {
-            if (entry.getValue() != null) {
-                copy.put(String.valueOf(entry.getKey()), copyValue(entry.getValue()));
-            }
+    private static Object normaliseValue(Map<String, Object> schema, Object value) {
+        if (value == null || schema == null || usesComposition(schema)) {
+            return value;
         }
-        return Collections.unmodifiableMap(copy);
-    }
-
-    private static Object copyValue(Object value) {
         if (value instanceof Map<?, ?> map) {
-            return copyMap(map);
+            final Map<String, Object> properties = asMap(schema.get(KEY_PROPERTIES));
+            final Map<String, Object> copy = new LinkedHashMap<>();
+            map.forEach((key, member) -> copy.put(String.valueOf(key),
+                    normaliseValue(properties == null ? null : asMap(properties.get(String.valueOf(key))), member)));
+            return copy;
         }
         if (value instanceof List<?> list) {
+            final Map<String, Object> itemSchema = asMap(schema.get(KEY_ITEMS));
             final List<Object> copy = new ArrayList<>(list.size());
-            list.forEach(item -> copy.add(item == null ? null : copyValue(item)));
-            return Collections.unmodifiableList(copy);
+            list.forEach(item -> copy.add(normaliseValue(itemSchema, item)));
+            return copy;
+        }
+        if (value instanceof Number number) {
+            return normaliseNumber(schema, number);
         }
         return value;
+    }
+
+    private static Object normaliseNumber(Map<String, Object> schema, Number number) {
+        final BigDecimal decimal = decimalOf(number);
+        if (decimal == null) {
+            return number;
+        }
+        final List<?> allowed = schema.get(KEY_ENUM) instanceof List<?> list ? list : List.of();
+        for (Object candidate : allowed) {
+            if (candidate instanceof Number allowedNumber) {
+                final BigDecimal allowedDecimal = decimalOf(allowedNumber);
+                if (allowedDecimal != null && allowedDecimal.compareTo(decimal) == 0) {
+                    return candidate;
+                }
+            }
+        }
+        if (typesOf(schema).contains(TYPE_INTEGER) && decimal.stripTrailingZeros().scale() <= 0) {
+            final BigInteger whole = decimal.toBigIntegerExact();
+            if (decimal.compareTo(LONG_MIN) < 0 || decimal.compareTo(LONG_MAX) > 0) {
+                return whole;
+            }
+            final long asLong = whole.longValue();
+            return asLong == (int) asLong ? (Object) (int) asLong : (Object) asLong;
+        }
+        return number;
+    }
+
+    /** The exact value of a number, or null for one that has none (NaN, infinity, an unknown Number type's oddity). */
+    private static BigDecimal decimalOf(Number number) {
+        try {
+            if (number instanceof BigDecimal decimal) {
+                return decimal;
+            }
+            if (number instanceof BigInteger integer) {
+                return new BigDecimal(integer);
+            }
+            if (number instanceof Double || number instanceof Float) {
+                final double raw = number.doubleValue();
+                return Double.isFinite(raw) ? BigDecimal.valueOf(raw) : null;
+            }
+            return BigDecimal.valueOf(number.longValue());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static boolean usesComposition(Map<String, Object> schema) {
+        return schema.keySet().stream().anyMatch(COMPOSITION_KEYWORDS::contains);
     }
 
     /**
@@ -254,7 +359,7 @@ public final class StructuredResultReport {
 
         private Outcome(ToolUseResult answer, Map<String, Object> payload, int violations) {
             this.answer = answer;
-            this.payload = payload;
+            this.payload = payload == null ? null : Collections.unmodifiableMap(payload);
             this.violations = violations;
         }
 

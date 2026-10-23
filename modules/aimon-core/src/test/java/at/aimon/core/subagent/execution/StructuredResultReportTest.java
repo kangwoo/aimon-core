@@ -41,8 +41,8 @@ class StructuredResultReportTest {
         final List<String> violations = StructuredResultReport.validate(SCHEMA, payload);
 
         assertThat(violations).anySatisfy(v -> assertThat(v).startsWith("Parameter 'findings[0]' must be an object"))
-                .anySatisfy(v -> assertThat(v).startsWith("In 'findings[1]': Unknown parameter 'severty'."))
-                .anySatisfy(v -> assertThat(v).startsWith("Parameter 'findings[2]' is required"));
+                .anySatisfy(v -> assertThat(v).startsWith("In 'findings[1]': Unknown parameter 'severty'.")).anySatisfy(
+                        v -> assertThat(v).isEqualTo("Item 'findings[2]' is null, which its schema does not allow."));
     }
 
     @Test
@@ -65,6 +65,69 @@ class StructuredResultReportTest {
                 Map.of("tags", List.of("a", "c", 3), "free", List.of(1, "x", Map.of()))))
                 .containsExactly("Parameter 'tags[1]' must be one of [a, b], but was 'c'. The tool was not executed.",
                         "Parameter 'tags[2]' must be a string. The tool was not executed.");
+    }
+
+    @Test
+    @DisplayName("a type given as a list, or left out beside properties/items, is still looked into")
+    void typeListsAndAbsentTypes() {
+        final Map<String, Object> inner = Map.of("properties", Map.of("level", Map.of("type", "string")), "required",
+                List.of("level"));
+        final Map<String, Object> schema = Map.of("type", "object", "properties",
+                Map.of("one",
+                        Map.of("type", List.of("object", "null"), "properties",
+                                Map.of("level", Map.of("type", "string")), "required", List.of("level")),
+                        "many", Map.of("type", List.of("array", "null"), "items", inner), "loose",
+                        Map.of("items", inner)));
+
+        assertThat(StructuredResultReport.validate(schema,
+                Map.of("one", Map.of(), "many", List.of(Map.of("level", 1)), "loose", List.of(Map.of()))))
+                .containsExactlyInAnyOrder(
+                        "In 'one': Parameter 'level' is required (type: string). The tool was not executed.",
+                        "In 'many[0]': Parameter 'level' must be a string. The tool was not executed.",
+                        "In 'loose[0]': Parameter 'level' is required (type: string). The tool was not executed.");
+    }
+
+    @Test
+    @DisplayName("a null array item is rejected unless the item schema's type lists null")
+    void nullItems() {
+        final Map<String, Object> strict = Map.of("type", "object", "properties",
+                Map.of("findings", Map.of("type", "array", "items", Map.of("type", "object"))));
+        final Map<String, Object> nullable = Map.of("type", "object", "properties",
+                Map.of("findings", Map.of("type", "array", "items", Map.of("type", List.of("object", "null")))));
+        final Map<String, Object> payload = Map.of("findings", Arrays.asList(Map.of(), null));
+
+        assertThat(StructuredResultReport.validate(strict, payload))
+                .containsExactly("Item 'findings[1]' is null, which its schema does not allow.");
+        assertThat(StructuredResultReport.validate(nullable, payload)).isEmpty();
+        // Kept in place in the delivered copy.
+        assertThat(StructuredResultReport.normalise(nullable, payload).get("findings")).asList().hasSize(2)
+                .containsNull();
+    }
+
+    @Test
+    @DisplayName("numbers are normalised to the schema: whole values become integers, enum values match numerically")
+    void numbers() {
+        final Map<String, Object> schema = Map.of("type", "object", "properties",
+                Map.of("line", Map.of("type", "integer"), "priority", Map.of("type", "number", "enum", List.of(1, 2)),
+                        "ratio", Map.of("type", "number"), "lines",
+                        Map.of("type", "array", "items", Map.of("type", "integer"))));
+        final Map<String, Object> input = Map.of("line", 3.0, "priority", 1.0, "ratio", 0.5, "lines",
+                List.of(1.0, 5_000_000_000.0, 7L));
+
+        final StructuredResultReport.Outcome outcome = StructuredResultReport.judge(
+                SubagentExecutionPolicy.builder("w").resultSchema(schema).build(),
+                ToolUse.of("r", "ReportResult", input));
+
+        final Map<String, Object> payload = outcome.payload().orElseThrow();
+        assertThat(payload.get("line")).isEqualTo(3);
+        assertThat(payload.get("priority")).isEqualTo(1);
+        assertThat(payload.get("ratio")).isEqualTo(0.5);
+        assertThat(payload.get("lines")).asList().containsExactly(1, 5_000_000_000L, 7);
+        assertThat(StructuredResultReport.toJson(payload)).contains("\"line\":3").contains("\"priority\":1")
+                .doesNotContain("3.0").doesNotContain("1.0");
+        // A fractional value for an integer is still a violation.
+        assertThat(StructuredResultReport.judge(SubagentExecutionPolicy.builder("w").resultSchema(schema).build(),
+                ToolUse.of("r", "ReportResult", Map.of("line", 3.5))).payload()).isEmpty();
     }
 
     @Test

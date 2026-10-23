@@ -6,7 +6,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 import at.aimon.core.agent.budget.CompletionReason;
-import at.aimon.core.subagent.execution.StructuredResultReport;
+import at.aimon.core.base.JsonValues;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.subagent.execution.SubagentResultFormatter;
 
@@ -83,7 +83,7 @@ public final class TaskResult {
         this.summaryTruncated = builder.summaryTruncated;
         this.structuredResult = builder.structuredResult == null
                 ? null
-                : StructuredResultReport.copyOf(builder.structuredResult);
+                : JsonValues.immutableCopy(builder.structuredResult);
         this.structuredResultRequired = builder.structuredResultRequired;
     }
 
@@ -267,8 +267,15 @@ public final class TaskResult {
     public String toString() {
         return "TaskResult{status=" + getStatus() + ", reason=" + completionReason + ", iterations=" + iterationCount
                 + ", tokens=" + totalTokens + ", durationMs=" + durationMillis + ", summaryChars="
-                + getSummary().length() + (summaryTruncated ? " (truncated)" : "") + ", structuredResult="
-                + (structuredResult != null ? "reported" : structuredResultRequired ? "missing" : "none") + "}";
+                + getSummary().length() + (summaryTruncated ? " (truncated)" : "") + structuredResultFragment() + "}";
+    }
+
+    /** The structured result's part of {@link #toString()}: nothing for a task that was never asked for one. */
+    private String structuredResultFragment() {
+        if (structuredResult != null) {
+            return ", structuredResult=reported";
+        }
+        return structuredResultRequired ? ", structuredResult=missing" : "";
     }
 
     /** Builder for {@link TaskResult}. */

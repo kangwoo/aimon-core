@@ -10,7 +10,7 @@ import java.util.Set;
 
 import at.aimon.core.agent.budget.ExecutionBudget;
 import at.aimon.core.agent.context.ContextEngine;
-import at.aimon.core.subagent.execution.StructuredResultReport;
+import at.aimon.core.base.JsonValues;
 
 /**
  * Trusted limits and context settings for one subagent run, supplied by code — never by the model, never by a
@@ -60,7 +60,7 @@ import at.aimon.core.subagent.execution.StructuredResultReport;
  * hands it to the spawning model, and say which part of it to keep. Only the foreground {@code Task} result reads
  * them; they are not something an executor enforces, so they are not among {@link #getCapabilities()}.
  * <li>{@link #getResultSchema()} opens a result channel that is never truncated: the fork is offered a
- * {@value StructuredResultReport#TOOL_NAME} tool whose input schema is this one, a call that violates it — or whose
+ * {@code ReportResult} tool whose input schema is this one, a call that violates it — or whose
  * payload is longer than {@link #getResultPayloadMaxChars()} as JSON — is answered with an error the fork can fix, and
  * the last payload it accepted reaches the spawner whole. A fork that reports none is shown to the spawner as missing
  * its structured result.
@@ -560,7 +560,7 @@ public final class SubagentExecutionPolicy {
         /**
          * @param resultSchema
          *            the JSON Schema of the structured result the fork must report through
-         *            {@value StructuredResultReport#TOOL_NAME} (must not be null; its top-level {@code type} must be
+         *            {@code ReportResult} (must not be null; its top-level {@code type} must be
          *            {@code object}, since a tool's input always is). Copied deeply; the copy keeps the key order
          * @return this builder
          */
@@ -571,7 +571,7 @@ public final class SubagentExecutionPolicy {
                         "resultSchema must declare \"type\": \"object\" at the top level, got: "
                                 + resultSchema.get("type"));
             }
-            this.resultSchema = StructuredResultReport.copyOf(resultSchema);
+            this.resultSchema = JsonValues.immutableCopy(resultSchema);
             return this;
         }
 

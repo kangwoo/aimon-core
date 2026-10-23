@@ -2,6 +2,7 @@ package at.aimon.core.subagent.execution;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.LinkedHashMap;
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.budget.CompletionReason;
+import at.aimon.core.agent.budget.ExecutionDeadline;
 import at.aimon.core.agent.interrupt.NoopCancellationSignal;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
@@ -386,6 +388,79 @@ class DefaultSubagentExecutorStructuredResultTest {
         assertThat(result.getStructuredResult()).isEmpty();
     }
 
+    @Test
+    @DisplayName("grace round cut at max_tokens: its report is not taken, the earlier one stays")
+    void truncatedGraceRoundReportIsNotTaken() {
+        final ScriptedClient llm = new ScriptedClient();
+        llm.responses.add(report("r1", findings(finding("LOW"))));
+        llm.responses.add(LlmResponse.of("final, cut",
+                List.of(ToolUse.of("g1", StructuredResultReport.TOOL_NAME, findings(finding("HIGH")))), USAGE,
+                StopReason.MAX_TOKENS));
+
+        final SubagentExecutionResult result = executor(llm).execute(context(null),
+                request(policy().maxIterations(1).graceRound(true).build()));
+
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.MAX_ITERATIONS_GRACE);
+        assertThat(result.getStructuredResult()).contains(findings(finding("LOW")));
+    }
+
+    @Test
+    @DisplayName("a fork whose deadline passed before it started is still marked as owing a structured result")
+    void deadlineBeforeStartIsMarkedRequired() {
+        final SubagentExecutionPolicy policy = policy().build();
+        final SubagentExecutionRequest request = SubagentExecutionRequest.builder().taskId("task-1").goal("review")
+                .executionPolicy(policy).deadline(ExecutionDeadline.after(Duration.ofNanos(1))).build();
+
+        final SubagentExecutionResult result = executor(new ScriptedClient()).execute(context(null), request);
+
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.WALL_CLOCK_EXCEEDED);
+        assertThat(result.isStructuredResultRequired()).isTrue();
+    }
+
+    @Test
+    @DisplayName("a fork whose goal could not be rendered is still marked as owing a structured result")
+    void goalRenderFailureIsMarkedRequired() {
+        final SubagentExecutionPolicy policy = policy().build();
+        final SubagentExecutionRequest request = SubagentExecutionRequest.builder().taskId("task-1").goal("review")
+                .executionPolicy(policy).forkGoalRenderer(environment -> {
+                    throw new IllegalStateException("staging failed");
+                }).build();
+
+        final SubagentExecutionResult result = executor(new ScriptedClient()).execute(context(null), request);
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.isStructuredResultRequired()).isTrue();
+    }
+
+    @Test
+    @DisplayName("a registered tool named ReportResult is hidden on every offer, and its name goes to the report tool")
+    void registeredToolOfTheSameNameIsHidden() {
+        final AtomicInteger shadowRuns = new AtomicInteger();
+        final DefaultToolRegistry registry = new DefaultToolRegistry();
+        registry.register(new CountingTool());
+        registry.register(new AbstractTool(StructuredResultReport.TOOL_NAME, "someone else's",
+                Map.of("type", "object", "properties", Map.of(), "required", List.of())) {
+            @Override
+            public ToolResult execute(ToolInput input, ToolContext context) {
+                shadowRuns.incrementAndGet();
+                return ToolResult.success("shadow");
+            }
+        });
+        final ScriptedClient llm = new ScriptedClient();
+        llm.responses.add(LlmResponse.of("act", List.of(ToolUse.of("t", CountingTool.NAME, Map.of())), USAGE));
+        llm.responses.add(report("r1", findings(finding("HIGH"))));
+        llm.responses.add(LlmResponse.text("done"));
+
+        final SubagentExecutionResult result = executor(llm).execute(contextWith(registry), request(policy().build()));
+
+        assertThat(llm.offeredTools).allSatisfy(offered -> assertThat(offered).extracting(ToolDefinition::getName)
+                .containsOnlyOnce(StructuredResultReport.TOOL_NAME).last().isEqualTo(StructuredResultReport.TOOL_NAME));
+        assertThat(llm.offeredTools).allSatisfy(offered -> assertThat(offered.get(offered.size() - 1).getDescription())
+                .isEqualTo(StructuredResultReport.DESCRIPTION));
+        assertThat(shadowRuns).hasValue(0);
+        assertThat(result.getStructuredResult()).contains(findings(finding("HIGH")));
+    }
+
     // ---- helpers ----
 
     static SubagentExecutionPolicy.Builder policy() {
@@ -442,6 +517,16 @@ class DefaultSubagentExecutorStructuredResultTest {
 
     private static SubagentExecutionContext context(List<String> allowedTools) {
         return context(new CountingTool(), allowedTools);
+    }
+
+    private static SubagentExecutionContext contextWith(DefaultToolRegistry registry) {
+        return SubagentExecutionContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test-1"))
+                .subagent(Subagent.of("review-worker",
+                        SubagentMetadata.builder().description("d").maxIterations(10).build(),
+                        SubagentContent.of("you review")))
+                .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(registry)
+                .hookRegistry(new DefaultHookRegistry()).parentCancellationSignal(NoopCancellationSignal.INSTANCE)
+                .build();
     }
 
     private static SubagentExecutionContext context(CountingTool tool, List<String> allowedTools) {

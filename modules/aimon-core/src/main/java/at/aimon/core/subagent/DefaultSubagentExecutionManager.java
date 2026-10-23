@@ -825,7 +825,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
                 }
             }
             if (outcome.isDone()) {
-                return settled(outcome, startTime);
+                return policyRun.stamp(settled(outcome, startTime));
             }
             final CompletionReason stopReason = stopRequested.getNow(CompletionReason.INTERRUPTED);
             return linger(launchContext, taskId, subagentName, stopReason, policyRun, outcome, startTime);
@@ -893,12 +893,13 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
                 + " not exited " + policyRun.policy.getExitGracePeriod() + " later; it may still be running, so its"
                 + " work is not complete and must not be relaunched while it is";
         // What the run spent is not known until it returns; the counts here are zero, not its usage.
-        return SubagentExecutionResult
-                .failure(
-                        message, SessionSnapshot.of(SessionId.generate()), ExecutionMetadata.builder().iterationCount(0)
-                                .tokenUsage(TokenUsage.empty()).timestamps(startTime, Instant.now()).build(),
-                        stopReason, null)
-                .withExitUnconfirmed();
+        return policyRun
+                .stamp(SubagentExecutionResult
+                        .failure(message, SessionSnapshot.of(SessionId.generate()),
+                                ExecutionMetadata.builder().iterationCount(0).tokenUsage(TokenUsage.empty())
+                                        .timestamps(startTime, Instant.now()).build(),
+                                stopReason, null)
+                        .withExitUnconfirmed());
     }
 
     /**
@@ -1075,7 +1076,9 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             // A real finally: an Error escaping the catches above still closes the span.
             closeSubagentSpan(subagentSpan, result, payloadPolicy);
         }
-        return result;
+        // Every result of a fork whose policy requires a structured result says so — a refusal, a failure before the
+        // fork started and one that threw included — so a reader can show the report as missing.
+        return policyRun.stamp(result);
     }
 
     /**
@@ -1466,8 +1469,8 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
         } catch (RejectedExecutionException rex) {
             // Bounded pool saturated: settle as FAILED rather than spawning an unbounded thread.
             log.warn("Background subagent task '{}' rejected: pool saturated ({})", taskId, rex.getMessage());
-            final SubagentExecutionResult failure = SubagentExecutionResult
-                    .emptyFailure("Background task rejected: subagent pool saturated", startTime);
+            final SubagentExecutionResult failure = policyRun.stamp(SubagentExecutionResult
+                    .emptyFailure("Background task rejected: subagent pool saturated", startTime));
             // The task never ran, but it was launched — SubagentStart fired — so it leaves a SUBAGENT span, closed
             // before the Stop hook as on the path that ran. First and isolated, so nothing the tracer does can keep
             // the settlement below from running.
@@ -2044,6 +2047,18 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
             final ExecutionDeadline own = policy.getMaxWallClock().map(ExecutionDeadline::after).orElse(null);
             final ExecutionDeadline parent = launchContext.getParentDeadline().orElse(null);
             return new PolicyRun(policy, own == null ? parent : own.earlierOf(parent));
+        }
+
+        /**
+         * Marks {@code result} as owing a structured result when the policy requires one. Results the executor
+         * returns are marked already; the ones the manager makes itself — a refusal, an exception, an unconfirmed
+         * exit, a rejected background task — are not, and would otherwise read as never asked for.
+         */
+        SubagentExecutionResult stamp(SubagentExecutionResult result) {
+            if (policy == null || !policy.requiresStructuredResult() || result.isStructuredResultRequired()) {
+                return result;
+            }
+            return result.withStructuredResultRequired(true);
         }
     }
 

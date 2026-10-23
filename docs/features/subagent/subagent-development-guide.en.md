@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/subagent/subagent-development-guide.md
-source_commit: 81b0ea05
+source_commit: 90923a1d
 ---
 
 # Subagent Development Guide
@@ -601,8 +601,9 @@ TaskTool task = new TaskTool(model, subagentRegistry, toolRegistry, hookRegistry
   **whole**: as `SubagentExecutionResult#getStructuredResult()`, as `structuredResult` in the render payload and as a
   JSON block in the `Task` text (cap 100,000 characters by default). A subagent that reports none gets a
   `Structured result: MISSING` line and `structuredResultMissing=true` — its work is incomplete. A report does not
-  count against the tool-call cap, and is accepted in the grace round too. Code should read the render payload, not
-  the text.
+  count against the tool-call cap, and is accepted in the grace round too (except from a response cut off at
+  `max_tokens`). Only the shape is checked (required, type, enum, unknown keys), and numbers are normalised to the
+  schema (`3.0` → `3`). Code should read the render payload, not the text.
 
 A subagent without a policy runs exactly as before. For guarantees and limits (token overshoot, uncooperative I/O,
 how usage is summed) see the [execution policy design](../../design/subagent/execution-policy.md).
