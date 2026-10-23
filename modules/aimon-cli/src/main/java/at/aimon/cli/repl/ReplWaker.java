@@ -154,10 +154,40 @@ final class ReplWaker implements AutoCloseable {
     }
 
     private void nudgeQuietly() {
+        // No longer pending once it runs: a nudge that finds a cap holding must be able to ask again for later.
+        synchronized (this) {
+            pending = null;
+        }
         try {
             nudge.run();
         } catch (RuntimeException e) {
             log.warn("Could not ask the REPL to wake for its background notifications: {}", e.toString());
+        }
+    }
+
+    /**
+     * Whether {@link #take()} would wake now — something is waiting and no cap holds — without taking anything. The
+     * REPL asks before it gives up its prompt, so a cap does not cost the user a redrawn prompt for every event. Under
+     * the hourly cap it also asks to be nudged again when the oldest wake leaves the hour.
+     *
+     * @return true when a wake is due
+     */
+    synchronized boolean isDue() {
+        final Instant now = clock.instant();
+        pruneOlderThanAnHour(now);
+        if (queue.snapshot().stream().noneMatch(this::wakes) || consecutive >= policy.getMaxConsecutive()) {
+            return false;
+        }
+        if (recentWakes.size() >= policy.getMaxPerHour()) {
+            schedule(Duration.between(now, recentWakes.peekFirst().plus(HOUR)));
+            return false;
+        }
+        return true;
+    }
+
+    private void pruneOlderThanAnHour(Instant now) {
+        while (!recentWakes.isEmpty() && !recentWakes.peekFirst().isAfter(now.minus(HOUR))) {
+            recentWakes.pollFirst();
         }
     }
 
@@ -169,9 +199,7 @@ final class ReplWaker implements AutoCloseable {
      */
     synchronized Optional<Wake> take() {
         final Instant now = clock.instant();
-        while (!recentWakes.isEmpty() && !recentWakes.peekFirst().isAfter(now.minus(HOUR))) {
-            recentWakes.pollFirst();
-        }
+        pruneOlderThanAnHour(now);
         if (queue.snapshot().stream().noneMatch(this::wakes)) {
             return Optional.empty();
         }

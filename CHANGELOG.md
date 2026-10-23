@@ -35,8 +35,8 @@ default — so the agent reacts while nobody is typing. Opt-in: `SessionSpec.wak
 
 - **The CLI wakes too** (`cli.enableWake`, off by default): at an empty prompt the REPL is taken back from JLine — a
   widget called from the waker's timer thread interrupts the read — and the wake's turn runs on the REPL thread like a
-  typed one, so it renders, asks for approvals and answers Ctrl+C the same way. A half-typed line is left alone. Same
-  `WakePolicy` defaults; a prompt of the user's ends the streak.
+  typed one, so it renders, asks for approvals and answers Ctrl+C the same way. A half-typed line is left alone, and so
+  is the prompt while a cap holds. Same `WakePolicy` defaults; a prompt the user types ends the streak.
 
 - **`at.aimon.session.routing.wake`** (new) — `IdleSessionWaker` listens to the message queue and opens the turn through
   `SessionRouter.submit`, with the drained notifications as its input (wrapped as

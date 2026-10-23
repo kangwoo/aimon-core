@@ -19,6 +19,7 @@ import org.jline.reader.LineReaderBuilder;
 import org.jline.reader.UserInterruptException;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -50,6 +51,14 @@ class ReplSessionWakeTest {
 
     private final MessageQueueManager queue = new DefaultMessageQueueManager(new InMemoryMessageQueueRepository());
     private final OrcaAgentExecutor executor = mock(OrcaAgentExecutor.class);
+    private ReplSession repl;
+
+    @AfterEach
+    void tearDown() {
+        if (repl != null) {
+            repl.stopWaking();
+        }
+    }
 
     private ReplSession session(boolean wake) {
         final OrcaAgentRuntime runtime = mock(OrcaAgentRuntime.class);
@@ -61,9 +70,12 @@ class ReplSessionWakeTest {
         settings.setEnableWake(wake);
         final LiveSession liveSession = new DefaultLiveSession(SESSION, runtime, executor,
                 LiveSessionOptions.defaults(), queue);
-        return new ReplSession(AgentSetupFactory.AgentSetup.builder().agentExecutor(executor).agentRuntime(runtime)
+        repl = new ReplSession(AgentSetupFactory.AgentSetup.builder().agentExecutor(executor).agentRuntime(runtime)
                 .outputFormatter(new OutputFormatter(settings)).messageQueueManager(queue).liveSession(liveSession)
                 .build(), settings, null);
+        // What start() does once it has a terminal.
+        repl.startWaking();
+        return repl;
     }
 
     private static QueuedInput monitorEvent(String text) {
@@ -113,10 +125,26 @@ class ReplSessionWakeTest {
         repl.runDueWake();
         Mockito.verify(executor, Mockito.times(3)).executeAsync(Mockito.any(), Mockito.any(), Mockito.any());
 
-        repl.processInput("what happened?");
+        repl.processTyped("what happened?");
         // The prompt's own turn ran; the waiting event is still for a wake, and the streak is over.
         repl.runDueWake();
         Mockito.verify(executor, Mockito.times(5)).executeAsync(Mockito.any(), Mockito.any(), Mockito.any());
+    }
+
+    @Test
+    @DisplayName("a queued entry replayed after a turn is not a prompt of the user's: the streak holds")
+    void replayDoesNotResetTheStreak() {
+        final ReplSession repl = session(true);
+        for (int i = 0; i < 3; i++) {
+            queue.enqueue(monitorEvent("event " + i));
+            repl.runDueWake();
+        }
+        repl.processInput("replayed from the queue");
+        queue.enqueue(monitorEvent("still over the streak"));
+        repl.runDueWake();
+
+        Mockito.verify(executor, Mockito.times(4)).executeAsync(Mockito.any(), Mockito.any(), Mockito.any());
+        assertThat(queue.snapshot()).hasSize(1);
     }
 
     @Test

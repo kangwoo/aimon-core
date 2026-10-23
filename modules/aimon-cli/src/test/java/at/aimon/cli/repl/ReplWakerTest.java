@@ -51,7 +51,8 @@ class ReplWakerTest {
     }
 
     private static WakePolicy quick() {
-        return WakePolicy.builder().debounce(Duration.ofMillis(30)).build();
+        // Long enough that two enqueues in a row land inside one debounce on a busy machine.
+        return WakePolicy.builder().debounce(Duration.ofMillis(200)).build();
     }
 
     private static QueuedInput event(String session, String kind, String text) {
@@ -66,13 +67,13 @@ class ReplWakerTest {
 
         queue.enqueue(event("other", "monitor-event", "not mine"));
         queue.enqueue(event(SESSION.value(), "subagent-task-completed", "not a waking kind"));
-        Thread.sleep(150);
+        Thread.sleep(400);
         assertThat(nudges).hasValue(0);
 
         queue.enqueue(event(SESSION.value(), "monitor-event", "one"));
         queue.enqueue(event(SESSION.value(), "monitor-event", "two"));
         await(() -> nudges.get() == 1);
-        Thread.sleep(100);
+        Thread.sleep(400);
         assertThat(nudges).as("a burst is one nudge").hasValue(1);
     }
 
@@ -101,11 +102,14 @@ class ReplWakerTest {
         queue.enqueue(event(SESSION.value(), "monitor-event", "first"));
         assertThat(waker.take()).isPresent();
         queue.enqueue(event(SESSION.value(), "monitor-event", "second"));
+        assertThat(waker.isDue()).as("the REPL must not give up its prompt for a wake that will not run").isFalse();
         assertThat(waker.take()).as("one wake in a row is the cap").isEmpty();
         assertThat(queue.snapshot()).hasSize(1);
 
         waker.userTurn();
+        assertThat(waker.isDue()).isTrue();
         assertThat(waker.take()).isPresent();
+        assertThat(waker.isDue()).as("nothing left waiting").isFalse();
     }
 
     @Test
@@ -117,9 +121,11 @@ class ReplWakerTest {
         assertThat(waker.take()).isPresent();
         waker.userTurn();
         queue.enqueue(event(SESSION.value(), "monitor-event", "second"));
+        assertThat(waker.isDue()).isFalse();
         assertThat(waker.take()).isEmpty();
 
         clock.advance(Duration.ofMinutes(61));
+        assertThat(waker.isDue()).isTrue();
         assertThat(waker.take()).isPresent();
     }
 

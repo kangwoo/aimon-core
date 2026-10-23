@@ -144,10 +144,11 @@ public class ReplSession {
     private boolean draining;
 
     /**
-     * Wakes the idle session for its background notifications ({@code cli.enableWake}); {@code null} when off. It only
-     * decides when; the wake's turn runs on the REPL thread, at the top of the prompt loop ({@link #runDueWake}).
+     * Wakes the idle session for its background notifications ({@code cli.enableWake}); {@code null} when off, and
+     * outside {@link #start()} — it listens to the application's queue, so it lives exactly as long as the loop. It
+     * only decides when; the wake's turn runs on the REPL thread, at the top of the prompt loop ({@link #runDueWake}).
      */
-    private final ReplWaker waker;
+    private volatile ReplWaker waker;
     /** The reader of {@link #start()}, for the waker's nudge from its timer thread; null outside {@code start()}. */
     private volatile LineReader activeReader;
     /** The thread running {@link #start()}'s loop — the one a wake interrupts out of its prompt. */
@@ -198,10 +199,6 @@ public class ReplSession {
         this.latestPendingTurnId = null;
         this.running = false;
         this.draining = false;
-        this.waker = settings.isEnableWake()
-                ? new ReplWaker(messageQueueManager, agentRuntime.getId(), liveSession.getSessionId(),
-                        WakePolicy.defaults(), Clock.systemUTC(), this::nudgeFromWaker)
-                : null;
         // Seed the session default budget from the CLI-supplied initial budget so session-scoped paths
         // (liveSession.submitAsync) observe the same budget that BudgetCommandHandler exposes through /budget.
         syncSessionBudget();
@@ -230,6 +227,7 @@ public class ReplSession {
 
             this.activeReader = lineReader;
             this.replThread = Thread.currentThread();
+            startWaking();
             lineReader.getWidgets().put(WAKE_WIDGET, () -> wakeWidget(lineReader));
 
             if (skillApprovalChannel != null) {
@@ -243,6 +241,11 @@ public class ReplSession {
             // What the user had typed when a wake took the prompt back; handed to the next prompt.
             String carried = null;
             while (running) {
+                // Whether a wake took the prompt back. Decided — and the interrupt it sent cleared — on every way out
+                // of
+                // the read, including the exceptions: JLine re-raises a pending interrupt on its way out, and left
+                // standing it would cut off the next blocking call on this thread, such as a turn's approval prompt.
+                boolean woke = false;
                 try {
                     runDueWake();
                     StringBuilder multiLineInput = new StringBuilder();
@@ -254,13 +257,12 @@ public class ReplSession {
                         line = lineReader.readLine(settings.getPrompt(), null, carried);
                     } finally {
                         atPrompt = false;
+                        woke = wakeInterrupt.getAndSet(false);
+                        if (woke) {
+                            Thread.interrupted();
+                        }
                     }
                     carried = null;
-                    // A wake that reached the prompt as it was being accepted: the line wins, and its turn reads the
-                    // notifications itself. Clear what the wake left so it cannot interrupt something else.
-                    if (wakeInterrupt.getAndSet(false)) {
-                        Thread.interrupted();
-                    }
                     if (line == null) {
                         break;
                     }
@@ -285,10 +287,10 @@ public class ReplSession {
                         continue;
                     }
 
-                    processInput(input);
+                    processTyped(input);
 
                 } catch (UserInterruptException e) {
-                    if (wakeInterrupt.getAndSet(false)) {
+                    if (woke) {
                         // A wake took the prompt back; the loop's top runs it. Keep anything typed in the meantime.
                         final String partial = e.getPartialLine();
                         carried = partial == null || partial.isEmpty() ? null : partial;
@@ -309,9 +311,7 @@ public class ReplSession {
         } finally {
             this.activeTerminal = null;
             this.activeReader = null;
-            if (waker != null) {
-                waker.close();
-            }
+            stopWaking();
             if (skillApprovalChannel != null) {
                 skillApprovalChannel.unbindLineReader();
             }
@@ -398,10 +398,37 @@ public class ReplSession {
         if (input.startsWith("/")) {
             handleCommand(input);
         } else {
-            if (waker != null) {
-                waker.userTurn();
-            }
             executeAgent(input);
+        }
+    }
+
+    /**
+     * A line the user typed at the prompt. A prompt — not a command, and not an entry replayed from the queue, which
+     * also goes through {@link #processInput} — ends the streak of wakes.
+     */
+    // Package-private so ReplSessionWakeTest can type without a terminal.
+    void processTyped(String input) {
+        final ReplWaker current = waker;
+        if (current != null && !input.startsWith("/")) {
+            current.userTurn();
+        }
+        processInput(input);
+    }
+
+    /** Starts waking when {@code cli.enableWake} is on. Package-private so tests can wake without a terminal. */
+    void startWaking() {
+        if (settings.isEnableWake() && waker == null) {
+            waker = new ReplWaker(messageQueueManager, agentRuntime.getId(), liveSession.getSessionId(),
+                    WakePolicy.defaults(), Clock.systemUTC(), this::nudgeFromWaker);
+        }
+    }
+
+    /** Stops waking: the waker's queue listener and timer go. */
+    void stopWaking() {
+        final ReplWaker current = waker;
+        waker = null;
+        if (current != null) {
+            current.close();
         }
     }
 
@@ -412,10 +439,11 @@ public class ReplSession {
      */
     // Package-private so ReplSessionWakeTest can drive it without a terminal.
     void runDueWake() {
-        if (waker == null) {
+        final ReplWaker current = waker;
+        if (current == null) {
             return;
         }
-        final Optional<ReplWaker.Wake> due = waker.take();
+        final Optional<ReplWaker.Wake> due = current.take();
         if (due.isEmpty()) {
             return;
         }
@@ -447,17 +475,23 @@ public class ReplSession {
 
     /**
      * Runs under JLine's lock while a read is in progress, so the interrupt below reaches the REPL thread inside
-     * {@code readLine} — which turns it into a {@link UserInterruptException} — and nowhere else. Only at the loop's
+     * {@code readLine} — which turns it into a {@link UserInterruptException} — and nowhere else; the loop clears what
+     * is left of it on every way out of the read. Only at the loop's
      * own
      * prompt with nothing typed: a half-typed line is the user's, and its turn will read the notifications anyway.
      */
     private boolean wakeWidget(LineReader reader) {
         final Thread thread = replThread;
-        if (!atPrompt || thread == null) {
+        final ReplWaker current = waker;
+        if (!atPrompt || thread == null || current == null) {
             return true;
         }
         if (reader.getBuffer().length() > 0) {
-            waker.schedule(waker.getPolicy().getDebounce());
+            current.schedule(current.getPolicy().getDebounce());
+            return true;
+        }
+        // Only for a wake that will run: past a cap, giving up the prompt would only redraw it.
+        if (!current.isDue()) {
             return true;
         }
         wakeInterrupt.set(true);
