@@ -80,6 +80,22 @@ public enum CompletionReason {
      */
     TRUNCATED,
     /**
+     * A fork reached an iteration limit and, because its execution policy asks for a grace round
+     * ({@code SubagentExecutionPolicy#isGraceRound()}), made one more LLM call in which no tool ran, to write up what
+     * it had. Its answer is that call's text. Like {@link #TRUNCATED} the result is a success that carries an answer
+     * and {@link #isSuccessful()} is {@code false}: the answer is real, the work it reports on is not finished. A fork
+     * whose grace call was skipped or produced no text ends {@link #MAX_ITERATIONS} instead.
+     *
+     * <p>
+     * Only a fork ends with this reason; a turn has no grace round.
+     *
+     * <p>
+     * Added after the first release of this enum. Its results carry {@code success=true}, so a peer on an older build
+     * reads the name as {@link #COMPLETED} ({@link #fromWireName(String, boolean)}) — during a rolling upgrade a
+     * background task's grace answer read on such a node looks finished.
+     */
+    MAX_ITERATIONS_GRACE,
+    /**
      * A fork did not start because an {@code onStart} hook blocked it: the hook exited 2 or, unless it declares
      * {@code failOpen: true}, its command could not be run at all. Nothing ran — no iteration, no tokens, no
      * {@code onStop} — and the error message carries the hooks' reasons

@@ -23,7 +23,8 @@ import at.aimon.core.subagent.SubagentExecutionPolicy;
  * <li>{@link #TASK_ID}, {@link #SUBAGENT} — which run.
  * <li>{@link #BACKGROUND} — {@code true} for a background launch, which carries nothing else: the run has not ended.
  * <li>{@link #COMPLETION_REASON} — the {@code CompletionReason} name. Only {@code COMPLETED} is a completion.
- * <li>{@link #SUCCESS} — the result's success flag; {@code true} also for {@code TRUNCATED}, so read the reason.
+ * <li>{@link #SUCCESS} — the result's success flag; {@code true} also for {@code TRUNCATED} and
+ * {@code MAX_ITERATIONS_GRACE}, so read the reason.
  * <li>{@link #EXIT_CONFIRMED} — {@code false} when the run had not exited when the result was handed back
  * ({@link SubagentExecutionResult#isExitConfirmed()}).
  * <li>{@link #TRUNCATED} — the final answer was cut off at {@code max_tokens}.

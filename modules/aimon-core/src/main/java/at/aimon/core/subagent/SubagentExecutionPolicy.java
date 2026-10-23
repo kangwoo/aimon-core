@@ -49,6 +49,14 @@ import at.aimon.core.agent.context.ContextEngine;
  * <li>{@link #isInheritContextEngine()} runs the fork under its spawner's context engine instead of the executor's
  * own (which, as built by {@code OrcaAgentExecutorFactory}, never compacts). The engine is shared; what it keeps per
  * conversation — its lock and its failure count — is keyed on the fork's own transcript, so forks stay apart.
+ * <li>{@link #isGraceRound()} gives a fork that reaches an iteration limit — its own {@code max-iterations} or this
+ * policy's {@link #getMaxIterations()} — one more LLM call in which no tool runs, to write up what it has. The fork
+ * then ends {@code MAX_ITERATIONS_GRACE} with that answer, instead of {@code MAX_ITERATIONS} with none.
+ * <li>{@link #getMaxConsecutiveToolFailures()} stops running a tool that failed that many times in a row in this
+ * fork: its later calls are answered with an error result and not run.
+ * <li>{@link #getResultMaxChars()} and {@link #getResultTruncation()} bound the fork's answer as the {@code Task} tool
+ * hands it to the spawning model, and say which part of it to keep. Only the foreground {@code Task} result reads
+ * them; they are not something an executor enforces, so they are not among {@link #getCapabilities()}.
  * </ul>
  *
  * <p>
@@ -78,6 +86,10 @@ public final class SubagentExecutionPolicy {
     private final String compactionInstructions;
     private final boolean inheritContextEngine;
     private final Duration exitGracePeriod;
+    private final boolean graceRound;
+    private final Integer maxConsecutiveToolFailures;
+    private final Integer resultMaxChars;
+    private final SubagentResultTruncation resultTruncation;
 
     private SubagentExecutionPolicy(Builder builder) {
         this.role = builder.role;
@@ -90,6 +102,10 @@ public final class SubagentExecutionPolicy {
         this.compactionInstructions = builder.compactionInstructions;
         this.inheritContextEngine = builder.inheritContextEngine;
         this.exitGracePeriod = builder.exitGracePeriod;
+        this.graceRound = builder.graceRound;
+        this.maxConsecutiveToolFailures = builder.maxConsecutiveToolFailures;
+        this.resultMaxChars = builder.resultMaxChars;
+        this.resultTruncation = builder.resultTruncation;
     }
 
     /** @return the name the policy is known by */
@@ -149,6 +165,40 @@ public final class SubagentExecutionPolicy {
     }
 
     /**
+     * @return whether a fork that reaches an iteration limit gets one final LLM call, in which no tool runs, to write
+     *         up its results. It is skipped — the fork ends {@code MAX_ITERATIONS} as without it — when the fork's
+     *         token, cost or wall-clock budget, its deadline or a usage quota would stop the next call anyway, or when
+     *         it has been cancelled
+     */
+    public boolean isGraceRound() {
+        return graceRound;
+    }
+
+    /**
+     * @return how many times in a row one tool may fail in this fork before its later calls are not run, if bounded.
+     *         Counted per tool name over the calls actually run; a success resets that tool's count
+     */
+    public Optional<Integer> getMaxConsecutiveToolFailures() {
+        return Optional.ofNullable(maxConsecutiveToolFailures);
+    }
+
+    /**
+     * @return how many characters of the fork's answer the foreground {@code Task} result inlines, if the policy
+     *         sets it; otherwise the {@code Task} tool's default applies
+     */
+    public Optional<Integer> getResultMaxChars() {
+        return Optional.ofNullable(resultMaxChars);
+    }
+
+    /**
+     * @return which part of an answer longer than the result budget the foreground {@code Task} result keeps
+     *         ({@link SubagentResultTruncation#TAIL} unless set)
+     */
+    public SubagentResultTruncation getResultTruncation() {
+        return resultTruncation;
+    }
+
+    /**
      * @return the capabilities this policy uses — what an executor must enforce for the policy to mean what it says
      */
     public Set<SubagentPolicyCapability> getCapabilities() {
@@ -176,6 +226,12 @@ public final class SubagentExecutionPolicy {
         }
         if (inheritContextEngine) {
             used.add(SubagentPolicyCapability.INHERIT_CONTEXT_ENGINE);
+        }
+        if (graceRound) {
+            used.add(SubagentPolicyCapability.GRACE_ROUND);
+        }
+        if (maxConsecutiveToolFailures != null) {
+            used.add(SubagentPolicyCapability.MAX_CONSECUTIVE_TOOL_FAILURES);
         }
         return Collections.unmodifiableSet(used);
     }
@@ -259,13 +315,16 @@ public final class SubagentExecutionPolicy {
                 && Objects.equals(compactionTokenThreshold, that.compactionTokenThreshold)
                 && Objects.equals(contextTargetTokens, that.contextTargetTokens)
                 && Objects.equals(compactionInstructions, that.compactionInstructions)
-                && exitGracePeriod.equals(that.exitGracePeriod);
+                && exitGracePeriod.equals(that.exitGracePeriod) && graceRound == that.graceRound
+                && Objects.equals(maxConsecutiveToolFailures, that.maxConsecutiveToolFailures)
+                && Objects.equals(resultMaxChars, that.resultMaxChars) && resultTruncation == that.resultTruncation;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(role, maxIterations, maxTokens, maxToolCalls, maxWallClock, compactionTokenThreshold,
-                contextTargetTokens, compactionInstructions, inheritContextEngine, exitGracePeriod);
+                contextTargetTokens, compactionInstructions, inheritContextEngine, exitGracePeriod, graceRound,
+                maxConsecutiveToolFailures, resultMaxChars, resultTruncation);
     }
 
     @Override
@@ -274,7 +333,9 @@ public final class SubagentExecutionPolicy {
                 + maxTokens + ", maxToolCalls=" + maxToolCalls + ", maxWallClock=" + maxWallClock
                 + ", compactionTokenThreshold=" + compactionTokenThreshold + ", contextTargetTokens="
                 + contextTargetTokens + ", compactionInstructions=" + (compactionInstructions != null)
-                + ", inheritContextEngine=" + inheritContextEngine + ", exitGracePeriod=" + exitGracePeriod + '}';
+                + ", inheritContextEngine=" + inheritContextEngine + ", exitGracePeriod=" + exitGracePeriod
+                + ", graceRound=" + graceRound + ", maxConsecutiveToolFailures=" + maxConsecutiveToolFailures
+                + ", resultMaxChars=" + resultMaxChars + ", resultTruncation=" + resultTruncation + '}';
     }
 
     /**
@@ -291,6 +352,10 @@ public final class SubagentExecutionPolicy {
         private String compactionInstructions;
         private boolean inheritContextEngine;
         private Duration exitGracePeriod = DEFAULT_EXIT_GRACE_PERIOD;
+        private boolean graceRound;
+        private Integer maxConsecutiveToolFailures;
+        private Integer resultMaxChars;
+        private SubagentResultTruncation resultTruncation = SubagentResultTruncation.TAIL;
 
         private Builder(String role) {
             Objects.requireNonNull(role, "role cannot be null");
@@ -398,6 +463,50 @@ public final class SubagentExecutionPolicy {
                 throw new IllegalArgumentException("exitGracePeriod must be positive, got: " + exitGracePeriod);
             }
             this.exitGracePeriod = exitGracePeriod;
+            return this;
+        }
+
+        /**
+         * @param graceRound
+         *            whether a fork that reaches an iteration limit gets one final LLM call, in which no tool runs,
+         *            to write up its results
+         * @return this builder
+         */
+        public Builder graceRound(boolean graceRound) {
+            this.graceRound = graceRound;
+            return this;
+        }
+
+        /**
+         * @param maxConsecutiveToolFailures
+         *            how many times in a row one tool may fail before its later calls are not run (must be
+         *            {@code >= 1})
+         * @return this builder
+         */
+        public Builder maxConsecutiveToolFailures(int maxConsecutiveToolFailures) {
+            this.maxConsecutiveToolFailures = positive("maxConsecutiveToolFailures", maxConsecutiveToolFailures);
+            return this;
+        }
+
+        /**
+         * @param resultMaxChars
+         *            how many characters of the answer the foreground {@code Task} result inlines (must be
+         *            {@code >= 1})
+         * @return this builder
+         */
+        public Builder resultMaxChars(int resultMaxChars) {
+            this.resultMaxChars = positive("resultMaxChars", resultMaxChars);
+            return this;
+        }
+
+        /**
+         * @param resultTruncation
+         *            which part of an answer over the result budget to keep (must not be null; defaults to
+         *            {@link SubagentResultTruncation#TAIL})
+         * @return this builder
+         */
+        public Builder resultTruncation(SubagentResultTruncation resultTruncation) {
+            this.resultTruncation = Objects.requireNonNull(resultTruncation, "resultTruncation cannot be null");
             return this;
         }
 

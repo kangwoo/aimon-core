@@ -1,5 +1,7 @@
 package at.aimon.core.llm;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
@@ -13,6 +15,13 @@ import java.util.Objects;
  * <p>
  * The {@code category} is metadata used for grouping tools when displayed to users (e.g., in CLI listings). It is NOT
  * exposed to the LLM as part of the function-calling schema.
+ *
+ * <p>
+ * The top-level entries of the input schema keep the iteration order of the map they were given, and a provider
+ * converter writes them in that order. The tool list leads every request, so an order that changed from one JVM to the
+ * next would change the prompt-cache prefix with it. Pass a {@link LinkedHashMap} (or another ordered map) to fix the
+ * order; {@code Map.of}, as in the example below, has none to keep. {@link #equals(Object)} compares entries and
+ * ignores their order. Nested maps are held as given and are not copied.
  *
  * <p>
  * Immutable value object.
@@ -82,7 +91,20 @@ public final class ToolDefinition {
         this.name = Objects.requireNonNull(name, "Name cannot be null");
         this.description = Objects.requireNonNull(description, "Description cannot be null");
         this.category = Objects.requireNonNull(category, "Category cannot be null");
-        this.inputSchema = Map.copyOf(Objects.requireNonNull(inputSchema, "Input schema cannot be null"));
+        this.inputSchema = orderedCopy(Objects.requireNonNull(inputSchema, "Input schema cannot be null"));
+    }
+
+    /**
+     * Copies the schema keeping its iteration order — {@code Map.copyOf} would not: its order is salted per JVM. Null
+     * keys and values are rejected, as {@code Map.copyOf} rejects them.
+     */
+    private static Map<String, Object> orderedCopy(Map<String, Object> inputSchema) {
+        final Map<String, Object> copy = new LinkedHashMap<>(inputSchema.size() * 2);
+        for (Map.Entry<String, Object> entry : inputSchema.entrySet()) {
+            copy.put(Objects.requireNonNull(entry.getKey(), "Input schema key cannot be null"), Objects
+                    .requireNonNull(entry.getValue(), () -> "Input schema value cannot be null: " + entry.getKey()));
+        }
+        return Collections.unmodifiableMap(copy);
     }
 
     /**
@@ -118,7 +140,7 @@ public final class ToolDefinition {
     /**
      * Gets the input schema.
      *
-     * @return An immutable map containing the JSON Schema (never null)
+     * @return An immutable map containing the JSON Schema, in the order it was given (never null)
      */
     public Map<String, Object> getInputSchema() {
         return inputSchema;

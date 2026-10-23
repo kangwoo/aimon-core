@@ -102,7 +102,7 @@ at.aimon.core.subagent/
 |------|---------------|
 | 프롬프트 | 허용목록에 **이름이 없는** 도구는 LLM 에 보내는 도구 정의 목록에서 빠진다 — 모델이 애초에 고를 수 없다 |
 | `ToolSearch` | 이 도구도 허용목록의 적용을 받는다. 지연(deferred) 도구를 쓰는 배포에서 허용목록에 `ToolSearch` 를 넣지 않으면 그 도구들에 **닿을 길이 없어진다** |
-| 디스패치 | 그래도 불린 호출은 `ToolPermissionViolationException` 으로 거부된다 |
+| 디스패치 | 그래도 불린 호출은 `ToolPermissionViolationException` 으로 거부되고 **도구는 실행되지 않는다**. PermissionRequest·PreTool hook 은 이 판정보다 먼저 돈다 |
 
 `Bash(git:*)` 같은 **패턴 항목은 그 도구를 계속 노출합니다.** "어떤 인자를 허용하는가" 는 도구 목록으로
 표현할 수 없기 때문입니다 — `Bash` 는 모델에게 보이고, `git` 이 아닌 명령이 디스패치에서 거부됩니다.
@@ -110,6 +110,10 @@ at.aimon.core.subagent/
 허용목록이 **등록된 도구를 하나도 가리키지 않으면**(오타, 배선되지 않은 모듈의 도구, `ToolSearch` 누락)
 서브에이전트는 도구 없이 답합니다 — 그리고 그 실행은 성공으로 기록됩니다. 그때 경고 로그가 남으므로,
 서브에이전트가 아무것도 하지 않고 답만 내놓는다면 그 로그부터 봅니다.
+
+**허용목록이 비어 있으면 "도구 없음" 이 아니라 "제한 없음" 입니다.** 포크가 보는 도구는 띄운 에이전트 런타임의
+레지스트리(MCP·지연 도구 포함) 전체이고, 그것과 따로 상속되는 도구 경로는 없습니다 — 허용목록이 그 전체를
+거릅니다. 띄운 실행에도 허용목록이 있으면 둘의 교집합이 적용되고, 교집합이 비면 포크는 시작되지 않습니다.
 
 ---
 
@@ -556,6 +560,15 @@ TaskTool task = new TaskTool(model, subagentRegistry, toolRegistry, hookRegistry
   `SubagentExecutionManager#lingeringRuns()` 에 남습니다. 그 결과는 완료가 아니며, 같은 작업을 다시 띄우기 전에
   목록을 확인해야 합니다.
 - 결과는 `ToolResult#getRenderPayload()` 의 `SubagentOutcomePayload` 키로 구조화되어 함께 옵니다.
+- `graceRound(true)` — 서브에이전트의 `max-iterations` 나 정책의 `maxIterations` 에 닿으면, 도구를 하나도 실행하지
+  않는 LLM 호출을 한 번 더 해 그때까지의 결과를 쓰게 합니다. 결과는 `MAX_ITERATIONS_GRACE` — 답은 있지만 작업은
+  끝나지 않았다는 뜻입니다(`isSuccess() == true`, 사유는 성공이 아님). 예산·deadline·quota 가 그 호출을 막을
+  상황이면 건너뛰고 `MAX_ITERATIONS` 로 끝납니다.
+- `maxConsecutiveToolFailures(n)` — 같은 도구가 n 번 연속 실패하면 그 포크에서는 다시 실행하지 않고 오류로
+  답합니다. 성공하면 그 도구의 횟수가 0 으로 돌아갑니다.
+- `resultMaxChars(n)` · `resultTruncation(HEAD | TAIL | HEAD_AND_TAIL)` — foreground `Task` 결과로 부모에게 넘기는
+  답의 길이와, 넘칠 때 남길 쪽. 기본은 32,000자 · `TAIL` 입니다. finding 을 앞에 쓰는 서브에이전트라면 `HEAD` 를
+  씁니다.
 
 정책 없는 서브에이전트는 이전과 똑같이 실행됩니다. 보장 범위·한계(token overshoot, 협조하지 않는 I/O, 사용량
 합산 규칙)는 [실행 정책 설계](../../design/subagent/execution-policy.md)를 참조하세요.

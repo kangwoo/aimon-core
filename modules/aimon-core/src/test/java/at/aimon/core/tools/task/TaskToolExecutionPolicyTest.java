@@ -59,6 +59,7 @@ import at.aimon.core.subagent.SubagentExecutionPolicyResolver;
 import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentPolicyCapability;
 import at.aimon.core.subagent.SubagentRegistry;
+import at.aimon.core.subagent.SubagentResultTruncation;
 import at.aimon.core.subagent.execution.DefaultSubagentExecutor;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.subagent.execution.SubagentOutcomePayload;
@@ -178,6 +179,27 @@ class TaskToolExecutionPolicyTest {
 
         assertThat(toolResult.getRenderPayload()).containsEntry(SubagentOutcomePayload.BACKGROUND, true)
                 .doesNotContainKey(SubagentOutcomePayload.COMPLETION_REASON);
+    }
+
+    @Test
+    @DisplayName("a policy's result budget and truncation shape the answer the parent reads")
+    void policyShapesTheInlinedAnswer() {
+        final SubagentExecutionPolicy worker = SubagentExecutionPolicy.builder("review-worker").resultMaxChars(20)
+                .resultTruncation(SubagentResultTruncation.HEAD).build();
+        final TaskTool shaped = new TaskTool(mock(LlmModel.class), mock(SubagentRegistry.class),
+                mock(ToolRegistry.class), mock(HookRegistry.class), manager, List.of(), null, null, null,
+                SubagentExecutionPolicyResolver.of(Map.of("worker", worker)));
+        final Instant now = Instant.now();
+        final String answer = "FINDING-1 FINDING-2 " + "reviewed path\n".repeat(50);
+        when(manager.execute(any(), anyString(), anyString(), anyString(), anyString())).thenReturn(
+                SubagentExecutionResult.success(answer, SessionSnapshot.of(SessionId.generate()), ExecutionMetadata
+                        .builder().iterationCount(1).tokenUsage(TokenUsage.of(1, 1, 2)).timestamps(now, now).build()));
+
+        final ToolResult toolResult = shaped.execute(input("worker"), contextWithId());
+
+        assertThat(toolResult.getContent())
+                .contains("FINDING-1 FINDING-2 \n…[" + (answer.length() - 20) + " chars omitted]…")
+                .doesNotContain("reviewed path");
     }
 
     @Test

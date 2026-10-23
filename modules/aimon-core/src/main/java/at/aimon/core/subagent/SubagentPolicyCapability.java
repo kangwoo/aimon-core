@@ -34,7 +34,14 @@ public enum SubagentPolicyCapability {
     /**
      * Running the fork with its spawner's context engine ({@link SubagentExecutionPolicy#isInheritContextEngine()}).
      */
-    INHERIT_CONTEXT_ENGINE;
+    INHERIT_CONTEXT_ENGINE,
+    /** One final LLM call without tools at an iteration limit ({@link SubagentExecutionPolicy#isGraceRound()}). */
+    GRACE_ROUND,
+    /**
+     * Not running a tool that failed too many times in a row
+     * ({@link SubagentExecutionPolicy#getMaxConsecutiveToolFailures()}).
+     */
+    MAX_CONSECUTIVE_TOOL_FAILURES;
 
     /**
      * The capabilities that only mean something when the fork's context engine compacts: the two compaction hints and
