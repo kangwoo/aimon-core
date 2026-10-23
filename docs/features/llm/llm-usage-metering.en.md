@@ -236,7 +236,8 @@ four-argument method — just as failed calls never were. To count aborted calls
 Session totals (`SessionTotals`) and the cross-node status and event payloads carry the cache counters too. Only
 measured values are written, so a document without those fields — stored before this change, or written by a node not
 yet upgraded — restores them as **unmeasured**, not as `0`. A session that inherits such totals therefore keeps
-reporting its cumulative cache counters as unmeasured.
+reporting its cumulative cache counters as unmeasured. The same goes for a session whose totals an older node rewrote
+during a rolling upgrade, so cumulative cache counters are best-effort until every node runs this version.
 
 ## 5. Custom recorders
 

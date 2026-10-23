@@ -32,7 +32,9 @@ Central is versioned independently).
 - **Persistence** — `SessionRecordCodec` totals (`cacheReadTokens` / `cacheWriteTokens`) and the session-routing
   `STATUS` / `EVENT` payloads carry the cache counters, written only when measured. A document or map without them —
   anything written before this change, or by a node not yet upgraded — decodes them as unmeasured, never as `0`, so a
-  session whose stored totals predate this change keeps reporting its cumulative cache counters as unmeasured.
+  session whose stored totals predate this change keeps reporting its cumulative cache counters as unmeasured. The same
+  holds for a session an old node writes during a rolling upgrade: cumulative cache counters are best-effort until the
+  whole fleet runs this version.
 
 ### Changed: `TokenUsage.getPromptTokens()` is the whole input context on Anthropic
 
