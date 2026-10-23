@@ -2160,8 +2160,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     /**
      * One fork's consecutive failures per tool, which {@code SubagentExecutionPolicy#getMaxConsecutiveToolFailures}
      * bounds. A call that was run and came back an error adds one to its tool's count; one that came back a success
-     * resets
-     * it. A tool whose count has reached the limit is not run again in this fork, so its count never resets after
+     * resets it. A tool whose count has reached the limit is not run again in this fork, so its count never resets
+     * after
      * that. Calls answered without being run — refused for a budget, a cut response or by this class — count for
      * nothing. A permission denial does count: the call reached the tool pipeline and failed there.
      *
@@ -2235,11 +2235,10 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
          */
         private ToolUseResult refusal(ToolUse toolUse) {
             final String why = notRetryable.contains(toolUse.getName())
-                    ? " reported its failure as not retryable"
-                    : " failed " + limit + " time(s) in a row";
-            return ToolUseResult.error(toolUse.getId(),
-                    "Not run: " + toolUse.getName() + why + " in this task and will "
-                            + "not be run again in this task. Continue without it, or finish with what you have.");
+                    ? " reported its failure as not retryable in this task"
+                    : " failed " + limit + " time(s) in a row in this task";
+            return ToolUseResult.error(toolUse.getId(), "Not run: " + toolUse.getName() + why
+                    + " and will not be run again. Continue without it, or finish with what you have.");
         }
     }
 

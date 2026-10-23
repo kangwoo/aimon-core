@@ -119,6 +119,8 @@ manager 까지 예산을 실어 나를 경로도 없었다. 포크를 묶는 것
 - 거부만으로 이루어진 iteration 은 전부 오류이므로 `StalledIterationGuard` 가 센다. 차단된 도구만 계속 부르는
   포크는 그 guard 에 걸려 `ERROR` 로 끝난다.
 - 같은 batch 안에서 같은 도구를 여러 번 부르면 batch 가 끝난 뒤에 센다 — 그 batch 의 호출은 모두 실행된다.
+  연속 실패 **수**는 응답 순서대로 기록되므로 batch 순서를 탄다(실패 뒤 성공이면 0, 성공 뒤 실패면 1). 순서와
+  무관한 것은 아래의 재시도 불가 표시뿐이다.
 
 **재시도해도 바뀌지 않는 실패.** 도구가 그 사실을 이미 아는 경우가 있다(크기 제한, 인증 거부). 그런 도구는 오류를
 `ToolResult.error(...).notRetryable()` 로 돌려준다(`GenericTool` 은 `ToolExecutionException.notRetryable(...)`).
@@ -142,8 +144,9 @@ manager 까지 예산을 실어 나를 경로도 없었다. 포크를 묶는 것
 - **파이프라인의 재작성.** hook feedback 첨부, environment notice, `Message#mapText` 는 `ToolUseResult#withContent`
   로 내용만 바꾸므로 표시가 남는다. PostTool hook 이 출력을 바꿔 쓰면, 결과가 오류로 남는 한 도구의 표시가 유지된다.
   hook 은 표시를 더할 수는 있지만 지울 수는 없다. hook 체인 안에서는 처음부터 다시 만든 출력이 표시를 잃을 수
-  있지만(`originalOutput()` 에는 남는다), 체인이 끝난 뒤 파이프라인이 도구의 표시를 다시 붙인다. compaction 이 만드는 placeholder 결과(microcompact, view
-  projection)는 이미 지난 호출의 기록이므로 표시를 버린다.
+  있지만(`originalOutput()` 에는 남는다), 체인이 끝난 뒤 파이프라인이 도구의 표시를 다시 붙인다.
+- compaction 이 만드는 placeholder 결과(microcompact, view projection)는 이미 지난 호출의 기록이므로 표시를
+  버린다.
 - MCP 도구에는 이 신호가 없다(MCP 결과는 `isError` 만 있다). MCP 도구의 실패는 언제나 재시도 가능이고 n 번 규칙만
   따른다.
 
