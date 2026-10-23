@@ -378,6 +378,9 @@ throw ToolExecutionException.notRetryable("SIZE_LIMIT: the source is larger than
 - **표시를 읽는 곳은 하나다.** `maxConsecutiveToolFailures` 정책을 가진 서브에이전트 포크는 이 실패 한 번으로 그
   도구를 막는다([실행 정책 §4.1](../../design/subagent/execution-policy.md#41-연속-실패한-도구)). 메인 에이전트
   턴과 정책 없는 포크에서는 아무 일도 하지 않는다.
+- **차단은 입력이 아니라 도구 단위다.** 한 번의 재시도 불가 실패가 그 포크에서 그 도구의 이후 호출을 인자와
+  무관하게 모두 막고, 나중의 성공도 풀지 못한다. 이 작업에서 그 도구의 **어떤 호출로도** 고칠 수 없는 실패만
+  표시한다. 다른 인자로 피할 수 있는 실패(다른 경로, 더 작은 범위)는 표시하지 않는다.
 - **LLM 에도 영속 기록에도 가지 않는다.** `ToolUseResult` 까지 실려 가지만 provider 변환과 세션 snapshot 은
   이 값을 쓰지 않는다. 기록에서 다시 읽은 결과는 언제나 재시도 가능이다.
 - PostTool hook 이 출력을 바꿔 써도 오류로 남는 한 표시는 유지된다. hook 이 직접 표시할 수는 있지만 도구의 표시를

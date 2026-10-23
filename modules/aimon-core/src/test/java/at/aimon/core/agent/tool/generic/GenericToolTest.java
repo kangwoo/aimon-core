@@ -215,6 +215,8 @@ class GenericToolTest {
             assertThat(ToolExecutionException.notRetryable("x", new java.io.IOException("io")).getCause())
                     .isInstanceOf(java.io.IOException.class);
             assertThat(new ToolExecutionException("x").isRetryable()).isTrue();
+            org.assertj.core.api.Assertions.assertThatNullPointerException()
+                    .isThrownBy(() -> ToolExecutionException.notRetryable(null));
         }
 
         @Test

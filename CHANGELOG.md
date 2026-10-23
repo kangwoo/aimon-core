@@ -157,7 +157,8 @@ subagent definition file — and its context can be managed by its spawner's con
   (`SubagentPolicyCapability.MAX_CONSECUTIVE_TOOL_FAILURES`): a tool whose calls failed n times in a row in a fork is
   not run again there; its calls are answered with an error result and take none of the tool-call budget. A success
   resets the count. A failure the tool marks **not retryable** (`ToolResult#notRetryable()`, below) blocks the tool
-  after that one failure instead of n, and the refusal says so ("reported its failure as not retryable"). Without
+  after that one failure instead of n, for the rest of the fork — per tool, not per input, and no later success lifts
+  it — and the refusal says so ("reported its failure as not retryable"). Without
   this axis the mark is inert — there is no separate switch.
 - **Result shape** — `resultMaxChars(n)` and `resultTruncation(SubagentResultTruncation)` (new enum: `TAIL`, `HEAD`,
   `HEAD_AND_TAIL`) set how much of the answer the foreground `Task` result inlines and which part it keeps;
@@ -177,7 +178,8 @@ so, and a policy fork stops running it at once (above). Guide: `docs/features/to
   The flag is `@JsonIgnore`, no provider converter reads it, and the session snapshot codec does not write it: a result
   read back from history is retryable. Hook feedback, environment notices and `Message#mapText` keep it; a PostTool
   output rewrite keeps the tool's mark while the result stays an error (a hook may add the mark, not clear it).
-  `PostToolContext#originalOutput()` / `#currentOutput()` expose it. MCP tool results are always retryable.
+  `PostToolContext#originalOutput()` / `#currentOutput()` expose it, and `ToolResult#toToolUseResult(String)` (new)
+  turns a hook's rewritten output back into a `ToolUseResult` with it. MCP tool results are always retryable.
 
 ### Changed (behaviour change): `ToolDefinition` keeps the input schema's top-level key order
 

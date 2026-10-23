@@ -120,8 +120,11 @@ public class ToolExecutionException extends ToolException {
     @Serial
     private static final long serialVersionUID = 5650681013970454951L;
 
-    /** Whether calling the tool again could succeed; see {@link #notRetryable(String)}. */
-    private final boolean retryable;
+    /**
+     * Whether calling the tool again cannot succeed; see {@link #notRetryable(String)}. Stored as the inverse so that a
+     * Java-serialized stream from before the field existed deserializes to the default, retryable.
+     */
+    private final boolean notRetryable;
 
     /**
      * Creates a new ToolExecutionException with the specified message.
@@ -137,7 +140,7 @@ public class ToolExecutionException extends ToolException {
      */
     public ToolExecutionException(String message) {
         super(message);
-        this.retryable = true;
+        this.notRetryable = false;
     }
 
     /**
@@ -160,12 +163,12 @@ public class ToolExecutionException extends ToolException {
      */
     public ToolExecutionException(String message, Throwable cause) {
         super(message, cause);
-        this.retryable = true;
+        this.notRetryable = false;
     }
 
-    private ToolExecutionException(String message, Throwable cause, boolean retryable) {
+    private ToolExecutionException(String message, Throwable cause, boolean notRetryable) {
         super(message, cause);
-        this.retryable = retryable;
+        this.notRetryable = notRetryable;
     }
 
     /**
@@ -183,7 +186,8 @@ public class ToolExecutionException extends ToolException {
      *             if message is null
      */
     public static ToolExecutionException notRetryable(String message) {
-        return new ToolExecutionException(message, null, false);
+        Objects.requireNonNull(message, "message cannot be null");
+        return new ToolExecutionException(message, null, true);
     }
 
     /**
@@ -199,8 +203,9 @@ public class ToolExecutionException extends ToolException {
      * @see #notRetryable(String)
      */
     public static ToolExecutionException notRetryable(String message, Throwable cause) {
+        Objects.requireNonNull(message, "message cannot be null");
         Objects.requireNonNull(cause, "cause cannot be null");
-        return new ToolExecutionException(message, cause, false);
+        return new ToolExecutionException(message, cause, true);
     }
 
     /**
@@ -210,6 +215,6 @@ public class ToolExecutionException extends ToolException {
      * @return whether the failure is retryable
      */
     public boolean isRetryable() {
-        return retryable;
+        return !notRetryable;
     }
 }

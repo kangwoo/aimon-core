@@ -464,26 +464,31 @@ class DefaultSubagentExecutorPolicyTest {
     }
 
     @Test
-    @DisplayName("a success recorded after a not-retryable failure in the same batch lifts the block")
-    void successInTheSameBatchLiftsTheBlock() {
-        // Every error it returns is marked not retryable (the mark is a no-op on its successes).
-        final ScriptedOutcomeTool mixed = new ScriptedOutcomeTool(false, true, true) {
-            @Override
-            public ToolResult execute(ToolInput input, ToolContext context) {
-                return super.execute(input, context).notRetryable();
-            }
-        };
-        final ScriptedClient llm = new ScriptedClient();
-        // Batch 1: fail (not retryable), then succeed — recorded in order, so the success resets the tool.
-        llm.responses.add(LlmResponse.of("try", List.of(ToolUse.of("a", ScriptedOutcomeTool.NAME, Map.of()),
-                ToolUse.of("b", ScriptedOutcomeTool.NAME, Map.of())), USAGE));
-        llm.responses.add(flakyCall("c"));
-        llm.responses.add(LlmResponse.of("done", List.of(), USAGE));
+    @DisplayName("a not-retryable block is sticky: a success of the same tool in the same batch, before or after, lifts nothing")
+    void notRetryableBlockIsStickyWhateverTheBatchOrder() {
+        for (Boolean[] batchOutcomes : List.of(new Boolean[]{false, true}, new Boolean[]{true, false})) {
+            // Every error it returns is marked not retryable (the mark is a no-op on its successes).
+            final ScriptedOutcomeTool mixed = new ScriptedOutcomeTool(batchOutcomes) {
+                @Override
+                public ToolResult execute(ToolInput input, ToolContext context) {
+                    return super.execute(input, context).notRetryable();
+                }
+            };
+            final ScriptedClient llm = new ScriptedClient();
+            llm.responses.add(LlmResponse.of("try", List.of(ToolUse.of("a", ScriptedOutcomeTool.NAME, Map.of()),
+                    ToolUse.of("b", ScriptedOutcomeTool.NAME, Map.of())), USAGE));
+            llm.responses.add(flakyCall("c"));
+            llm.responses.add(LlmResponse.of("done", List.of(), USAGE));
 
-        executor(llm).execute(context(registryWith(mixed)),
-                request(SubagentExecutionPolicy.builder("worker").maxConsecutiveToolFailures(1).build(), null));
+            // A limit the count alone would not reach: only the mark can block.
+            final SubagentExecutionResult result = executor(llm).execute(context(registryWith(mixed)),
+                    request(SubagentExecutionPolicy.builder("worker").maxConsecutiveToolFailures(5).build(), null));
 
-        assertThat(mixed.runs).hasValue(3);
+            final String order = java.util.Arrays.toString(batchOutcomes);
+            assertThat(mixed.runs).as("batch %s", order).hasValue(2);
+            assertThat(toolResultBatches(result).get(1).get(0).getContent()).as("batch %s", order)
+                    .contains("reported its failure as not retryable");
+        }
     }
 
     private static LlmResponse unchangingCall(String id) {

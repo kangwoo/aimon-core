@@ -350,14 +350,11 @@ public final class SingleToolInvoker {
             // post-hook output.
             final var maybeUpdated = hookExecutionManager.finalUpdatedOutput(postToolResults);
             if (maybeUpdated.isPresent()) {
-                final var updated = maybeUpdated.get();
-                if (!updated.isError()) {
-                    return ToolUseResult.success(effectiveToolUse.getId(), updated.getContent());
-                }
                 // A hook rewrites what the model reads, not whether the failure is worth repeating: an error the tool
-                // marked not retryable stays so, and a hook may mark one itself. It cannot clear the tool's mark.
-                final ToolUseResult rewritten = ToolUseResult.error(effectiveToolUse.getId(), updated.getContent());
-                return updated.isRetryable() && toolUseResult.isRetryable() ? rewritten : rewritten.notRetryable();
+                // marked not retryable stays so (notRetryable is a no-op on a success), and a hook may mark one
+                // itself. It cannot clear the tool's mark.
+                final ToolUseResult rewritten = maybeUpdated.get().toToolUseResult(effectiveToolUse.getId());
+                return toolUseResult.isRetryable() ? rewritten : rewritten.notRetryable();
             }
         } catch (Exception e) {
             log.warn("PostTool hook failed for tool '{}', toolUseId={}: {}", effectiveToolUse.getName(),

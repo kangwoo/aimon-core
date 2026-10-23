@@ -6,6 +6,8 @@ import java.util.Optional;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
+import at.aimon.core.llm.ToolUseResult;
+
 /**
  * Represents the result of a tool execution.
  *
@@ -202,6 +204,12 @@ public final class ToolResult {
      * never persisted — say in {@link #getContent()} what the model should know.
      *
      * <p>
+     * <strong>The block is per tool, not per input.</strong> One not-retryable failure stops every later call of the
+     * tool in that fork, whatever its arguments, and a later success does not lift it. Mark only a failure that no call
+     * of this tool could fix in the task at hand; a failure that other arguments could avoid (a different path, a
+     * smaller range) stays retryable.
+     *
+     * <p>
      * On a success this is a no-op that returns this instance: whether a call is worth repeating is a property of a
      * failure, and building a result must not make a tool throw from {@code execute()}.
      *
@@ -212,6 +220,26 @@ public final class ToolResult {
             return this;
         }
         return new ToolResult(content, true, exception, renderPayload, false);
+    }
+
+    /**
+     * The {@link ToolUseResult} for {@code toolUseId} that carries this result's content, error status and
+     * {@link #isRetryable() retryable} flag — and nothing else: the exception and the render payload are not copied.
+     * The one place a {@code ToolResult} supplied outside the execution path (a PostTool hook's rewritten output) is
+     * turned back into a {@code ToolUseResult}; the execution path itself goes through {@code ToolExecutionResult}.
+     *
+     * @param toolUseId
+     *            the id of the tool use this result answers (must not be null)
+     * @return a new ToolUseResult
+     * @throws NullPointerException
+     *             if {@code toolUseId} is null
+     */
+    public ToolUseResult toToolUseResult(String toolUseId) {
+        Objects.requireNonNull(toolUseId, "toolUseId cannot be null");
+        final ToolUseResult result = isError
+                ? ToolUseResult.error(toolUseId, content)
+                : ToolUseResult.success(toolUseId, content);
+        return retryable ? result : result.notRetryable();
     }
 
     /**

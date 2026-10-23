@@ -2167,9 +2167,10 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      *
      * <p>
      * A failure the tool reported as not retryable ({@link ToolUseResult#isRetryable()}, set by
-     * {@code ToolResult#notRetryable()}) blocks its tool at once, whatever the limit: calling it again would fail the
-     * same way. Without a limit the mark is inert, like the count. A success in the same batch, recorded after it,
-     * still resets the tool.
+     * {@code ToolResult#notRetryable()}) blocks its tool at once, whatever the limit, and for the rest of the fork: the
+     * block is sticky, so no success of the same tool — not even one later in the same batch — lifts it, and the
+     * outcome does not depend on the order of a batch. It is per tool, not per input. Without a limit the mark is
+     * inert, like the count.
      *
      * <p>
      * A refusal is an error result, so an iteration whose calls were all refused counts for the
@@ -2183,7 +2184,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         /** The limit, or {@code null} for none. */
         private final Integer limit;
         private final Map<String, Integer> consecutiveFailures = new HashMap<>();
-        /** The tools whose last recorded outcome was a failure they reported as not retryable. */
+        /** The tools that reported a failure as not retryable in this fork; never shrinks. */
         private final Set<String> notRetryable = new HashSet<>();
 
         private ToolFailureStreaks(Integer limit) {
@@ -2201,7 +2202,6 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 }
             } else {
                 consecutiveFailures.remove(toolName);
-                notRetryable.remove(toolName);
             }
         }
 
@@ -2211,7 +2211,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         }
 
         private boolean blocksAny(List<ToolUse> toolUses) {
-            if (limit == null || consecutiveFailures.isEmpty()) {
+            if (limit == null || consecutiveFailures.isEmpty() && notRetryable.isEmpty()) {
                 return false;
             }
             for (ToolUse toolUse : toolUses) {

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/tool/tool-development-guide.md
-source_commit: ab012834
+source_commit: 731f5c21
 ---
 
 # Tool Development Guide
@@ -381,6 +381,9 @@ throw ToolExecutionException.notRetryable("SIZE_LIMIT: the source is larger than
 - **One place reads the mark.** A subagent fork with a `maxConsecutiveToolFailures` policy blocks the tool after this
   one failure ([execution policy §4.1](../../design/subagent/execution-policy.md#41-연속-실패한-도구), Korean only).
   On a main-agent turn and in a fork without that policy it does nothing.
+- **The block is per tool, not per input.** One not-retryable failure stops every later call of that tool in the
+  fork, whatever its arguments, and a later success does not lift it. Mark only a failure that **no call** of the tool
+  could fix in this task. A failure other arguments could avoid (a different path, a smaller range) stays unmarked.
 - **It goes neither to the LLM nor to persisted history.** It is carried as far as `ToolUseResult`, but the provider
   converters and the session snapshot do not use it. A result read back from history is always retryable.
 - When a PostTool hook rewrites the output, the mark stays as long as the result is still an error. A hook may set the

@@ -73,6 +73,23 @@ class ToolResultRetryableTest {
     }
 
     @Test
+    @DisplayName("toToolUseResult carries content, status and the mark, not the payload")
+    void toToolUseResultCarriesTheMark() {
+        final at.aimon.core.llm.ToolUseResult marked = ToolResult.error("AUTH_DENIED").notRetryable()
+                .withRenderPayload(Map.of("k", "v")).toToolUseResult("t1");
+        final at.aimon.core.llm.ToolUseResult success = ToolResult.success("ok").toToolUseResult("t2");
+
+        assertThat(marked.getToolUseId()).isEqualTo("t1");
+        assertThat(marked.isError()).isTrue();
+        assertThat(marked.isRetryable()).isFalse();
+        assertThat(marked.getContent()).isEqualTo("AUTH_DENIED");
+        assertThat(marked.getRenderPayload()).isNull();
+        assertThat(success.isSuccess()).isTrue();
+        assertThat(success.isRetryable()).isTrue();
+        assertThat(ToolResult.error("x").toToolUseResult("t3").isRetryable()).isTrue();
+    }
+
+    @Test
     @DisplayName("Jackson serialization excludes the flag")
     void jsonExcludesTheFlag() throws Exception {
         final String json = MAPPER.writeValueAsString(ToolResult.error("AUTH_DENIED").notRetryable());
