@@ -146,6 +146,28 @@ subagent definition file — and its context can be managed by its spawner's con
 - **Results** — `SubagentExecutionResult#getToolCallCount()`; `TaskTool` attaches a structured
   **`SubagentOutcomePayload`** as the `ToolResult` render payload, and adds an `Exit: UNCONFIRMED` line when the run
   had not exited. A launch without a policy behaves exactly as before.
+- **Grace round** — `SubagentExecutionPolicy.Builder#graceRound(true)` (`SubagentPolicyCapability.GRACE_ROUND`): a
+  fork that reaches its `max-iterations` or the policy's `maxIterations` makes one more LLM call, opened by a fixed
+  final-round reminder, in which no tool runs (the same tool definitions are sent, so the cache prefix holds; any
+  tool call in the answer is dropped). It ends with the new **`CompletionReason.MAX_ITERATIONS_GRACE`** — a success
+  carrying the answer, whose reason is not successful, like `TRUNCATED`. Skipped, ending `MAX_ITERATIONS` as before,
+  when a cancellation, the deadline, a spent budget or a quota would stop the call; also when the call yields no
+  text. An older peer reads the new name as `COMPLETED`, since the result's success flag is set.
+- **Failing tools stop being run** — `maxConsecutiveToolFailures(n)`
+  (`SubagentPolicyCapability.MAX_CONSECUTIVE_TOOL_FAILURES`): a tool whose calls failed n times in a row in a fork is
+  not run again there; its calls are answered with an error result and take none of the tool-call budget. A success
+  resets the count.
+- **Result shape** — `resultMaxChars(n)` and `resultTruncation(SubagentResultTruncation)` (new enum: `TAIL`, `HEAD`,
+  `HEAD_AND_TAIL`) set how much of the answer the foreground `Task` result inlines and which part it keeps;
+  `SubagentResultFormatter#truncate` (new). Without them the result is the 32,000-character tail-keep it was.
+
+### Changed (behaviour change): `ToolDefinition` keeps the input schema's top-level key order
+
+`ToolDefinition` copied its input schema with `Map.copyOf`, whose iteration order is salted per JVM, so the top-level
+keys (`type`, `properties`, `required`, …) reached the provider in an order that changed between processes, and with
+it the prompt-cache prefix the tool list leads. The copy now keeps the order of the map it is given (pass a
+`LinkedHashMap`); it is still unmodifiable and still rejects null keys and values. The Anthropic, OpenAI Chat and
+OpenAI Responses converters write that order, which their tests now pin.
 
 ### Changed (behaviour change): the request principal books every LLM call of a turn or fork
 

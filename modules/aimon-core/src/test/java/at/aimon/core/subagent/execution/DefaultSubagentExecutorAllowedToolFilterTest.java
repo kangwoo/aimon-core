@@ -238,10 +238,19 @@ class DefaultSubagentExecutorAllowedToolFilterTest {
         // the context's full registry (SingleToolInvoker passes spec.getToolRegistry()), independently of what the
         // offer was narrowed to.
         client.responses.add(LlmResponse.of("", List.of(ToolUse.of("t1", "Writer", Map.of()))));
+        final java.util.concurrent.atomic.AtomicInteger writerRuns = new java.util.concurrent.atomic.AtomicInteger();
+        final Tool writer = new AbstractTool("Writer", "Writer description", Map.of("type", "object")) {
+            @Override
+            public ToolResult execute(ToolInput input, ToolContext context) {
+                writerRuns.incrementAndGet();
+                return ToolResult.success("ran Writer");
+            }
+        };
 
-        run(subagentAllowing(List.of("Reader")), client, tool("Reader"), tool("Writer"));
+        run(subagentAllowing(List.of("Reader")), client, tool("Reader"), writer);
 
         assertThat(client.offeredToolNames.get(0)).doesNotContain("Writer");
+        assertThat(writerRuns).as("a call outside allowed-tools is answered, never run").hasValue(0);
         assertThat(client.transcripts).as("the fork made a second call carrying the observation").hasSizeGreaterThan(1);
 
         assertThat(toolObservations(client.transcripts.get(1))).singleElement(as(STRING)).contains("Writer")

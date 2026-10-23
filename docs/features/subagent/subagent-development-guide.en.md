@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/subagent/subagent-development-guide.md
-source_commit: 9a45db56
+source_commit: f14ff3ea
 ---
 
 # Subagent Development Guide
@@ -108,7 +108,7 @@ during a run. Both read the one `Subagent.getAllowedTools()`, so the two cannot 
 |-------|---------------|
 | The prompt | A tool whose **name** is absent from the allow-list is left out of the tool definitions sent to the LLM — the model cannot pick it in the first place |
 | `ToolSearch` | It is subject to the allow-list too. In a deployment using deferred tools, an allow-list that omits `ToolSearch` leaves **no route** to them |
-| Dispatch | A call made anyway is refused with `ToolPermissionViolationException` |
+| Dispatch | A call made anyway is refused with `ToolPermissionViolationException`, and **the tool does not run**. PermissionRequest and PreTool hooks run before this check |
 
 A **pattern entry such as `Bash(git:*)` still offers its tool.** A list of tools cannot say "which arguments" —
 `Bash` stays visible to the model, and a command that is not `git` is refused at dispatch.
@@ -116,6 +116,11 @@ A **pattern entry such as `Bash(git:*)` still offers its tool.** A list of tools
 If an allow-list **matches no registered tool at all** — a typo, a tool from a module that is not wired, a missing
 `ToolSearch` — the subagent answers with no tools, and that execution is still recorded as a success. A warning is
 logged when it happens, so start there if a subagent returns an answer without acting.
+
+**An empty allow-list means "unrestricted", not "no tools".** The tools a fork sees are the whole registry of the
+spawning agent's runtime (MCP and deferred tools included), and no other route hands it tools — the allow-list
+filters all of them. When the spawning run has an allow-list of its own, the intersection of the two applies, and a
+fork whose intersection is empty does not start.
 
 ---
 
@@ -579,6 +584,15 @@ TaskTool task = new TaskTool(model, subagentRegistry, toolRegistry, hookRegistry
   stays listed by `SubagentExecutionManager#lingeringRuns()`. That result is not a completion; check the list before
   launching the same work again.
 - The result also comes structured, under the `SubagentOutcomePayload` keys of `ToolResult#getRenderPayload()`.
+- `graceRound(true)` — when the subagent reaches its `max-iterations` or the policy's `maxIterations`, it gets one
+  more LLM call, in which no tool runs, to write up its results so far. The result is `MAX_ITERATIONS_GRACE` — there
+  is an answer, and the work is not finished (`isSuccess() == true`, the reason is not a successful one). When a
+  budget, the deadline or a quota would stop that call, it is skipped and the run ends `MAX_ITERATIONS`.
+- `maxConsecutiveToolFailures(n)` — a tool that fails n times in a row is not run again in that fork; its calls are
+  answered with an error. A success resets that tool's count to 0.
+- `resultMaxChars(n)` · `resultTruncation(HEAD | TAIL | HEAD_AND_TAIL)` — how long the answer handed to the parent as
+  the foreground `Task` result may be, and which part to keep when it is longer. The defaults are 32,000 characters
+  and `TAIL`. A subagent that writes its findings first wants `HEAD`.
 
 A subagent without a policy runs exactly as before. For guarantees and limits (token overshoot, uncooperative I/O,
 how usage is summed) see the [execution policy design](../../design/subagent/execution-policy.md).

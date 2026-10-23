@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.budget.CompletionReason;
+import at.aimon.core.subagent.SubagentResultTruncation;
 
 class SubagentResultFormatterTest {
 
@@ -114,5 +115,50 @@ class SubagentResultFormatterTest {
         // The quota is the whole execution tree's, so the parent model must not read the stop as "try another fork".
         assertThat(SubagentResultFormatter.completionReasonLine(CompletionReason.QUOTA_EXCEEDED, false))
                 .hasValue("Completion reason: QUOTA_EXCEEDED (" + SubagentResultFormatter.QUOTA_EXCEEDED_HINT + ")");
+    }
+
+    @Test
+    void headKeepsTheBeginningAndMarksWhatFollows() {
+        final String content = "FINDINGS" + "x".repeat(100);
+
+        final String bounded = SubagentResultFormatter.truncate(content, 10, SubagentResultTruncation.HEAD, null);
+
+        assertThat(bounded).isEqualTo("FINDINGSxx\n…[98 chars omitted]…");
+    }
+
+    @Test
+    void headAndTailKeepBothEndsAndMarkTheMiddle() {
+        final String content = "HEAD" + "x".repeat(100) + "TAIL";
+
+        final String bounded = SubagentResultFormatter.truncate(content, 8, SubagentResultTruncation.HEAD_AND_TAIL,
+                "see log");
+
+        assertThat(bounded).isEqualTo("HEAD\n…[100 chars omitted — see log]…\nTAIL");
+    }
+
+    @Test
+    void tailIsTheTailKeepItAlwaysWas() {
+        final String content = "x".repeat(50) + "END";
+
+        assertThat(SubagentResultFormatter.truncate(content, 10, SubagentResultTruncation.TAIL, "p"))
+                .isEqualTo(SubagentResultFormatter.truncateTailKeep(content, 10, "p"));
+        assertThat(SubagentResultFormatter.truncate("short", 10, SubagentResultTruncation.HEAD, null))
+                .isEqualTo("short");
+    }
+
+    @Test
+    void headDoesNotSplitASurrogatePair() {
+        // "a" then an emoji (two chars): a 2-char head would end between its halves.
+        final String content = "a\uD83D\uDE00" + "x".repeat(20);
+
+        final String bounded = SubagentResultFormatter.truncate(content, 2, SubagentResultTruncation.HEAD, null);
+
+        assertThat(bounded).startsWith("a\n…[");
+    }
+
+    @Test
+    void aGraceAnswerSaysItIsWhatTheSubagentHadAtItsLimit() {
+        assertThat(SubagentResultFormatter.completionReasonLine(CompletionReason.MAX_ITERATIONS_GRACE, true)).contains(
+                "Completion reason: MAX_ITERATIONS_GRACE (" + SubagentResultFormatter.MAX_ITERATIONS_GRACE_HINT + ")");
     }
 }

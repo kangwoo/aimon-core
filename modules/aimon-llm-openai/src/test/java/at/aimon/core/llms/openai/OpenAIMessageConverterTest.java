@@ -42,6 +42,50 @@ class OpenAIMessageConverterTest {
     @DisplayName("Tool Schema Conversion")
     class ToolSchemaConversionTests {
 
+        /** A schema whose keys are in no sorted or hashed order, so only an order-keeping path writes them so. */
+        private ToolDefinition orderedTool() {
+            final Map<String, Object> schema = new java.util.LinkedHashMap<>();
+            schema.put("type", "object");
+            schema.put("properties", Map.of("command", Map.of("type", "string")));
+            schema.put("required", List.of("command"));
+            schema.put("additionalProperties", false);
+            schema.put("description", "d");
+            schema.put("title", "t");
+            schema.put("$defs", Map.of());
+            schema.put("minProperties", 1);
+            return ToolDefinition.of("bash", "Bash", schema);
+        }
+
+        private List<String> fieldNames(String json, String... path) throws Exception {
+            com.fasterxml.jackson.databind.JsonNode node = com.openai.core.ObjectMappers.jsonMapper().readTree(json);
+            for (String step : path) {
+                node = node.get(step);
+            }
+            final List<String> names = new java.util.ArrayList<>();
+            node.fieldNames().forEachRemaining(names::add);
+            return names;
+        }
+
+        @Test
+        @DisplayName("Chat Completions writes the schema's keys in the order the definition holds them")
+        void chatWritesSchemaKeysInDefinitionOrder() throws Exception {
+            final ChatCompletionFunctionTool functionTool = converter.convertTools(List.of(orderedTool())).get(0)
+                    .function().get();
+
+            assertThat(fieldNames(com.openai.core.ObjectMappers.jsonMapper().writeValueAsString(functionTool),
+                    "function", "parameters")).containsExactlyElementsOf(orderedTool().getInputSchema().keySet());
+        }
+
+        @Test
+        @DisplayName("Responses writes the schema's keys in the order the definition holds them")
+        void responsesWritesSchemaKeysInDefinitionOrder() throws Exception {
+            final com.openai.models.responses.Tool tool = new OpenAIResponsesMessageConverter()
+                    .convertTools(List.of(orderedTool())).get(0);
+
+            assertThat(fieldNames(com.openai.core.ObjectMappers.jsonMapper().writeValueAsString(tool.asFunction()),
+                    "parameters")).containsExactlyElementsOf(orderedTool().getInputSchema().keySet());
+        }
+
         @Test
         @DisplayName("Should convert basic tool schema with required type field")
         void shouldConvertBasicToolSchema() throws Exception {

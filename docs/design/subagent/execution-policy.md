@@ -1,13 +1,15 @@
 # 서브에이전트 실행 정책 (Subagent Execution Policy)
 
 > Status: **IMPLEMENTED** — 코드가 공급하는 trusted 정책으로 포크의 iteration·누적 token·도구 호출 수·deadline 을
-> 제한하고, 포크에 부모의 `ContextEngine`·compaction 힌트·요약 지시를 연결한다. 한계는 §7.
+> 제한하고, 포크에 부모의 `ContextEngine`·compaction 힌트·요약 지시를 연결한다. iteration 한도에 닿은 포크의
+> grace round, 연속 실패한 도구의 차단, 부모에게 넘기는 답의 모양도 같은 정책이 정한다. 한계는 §7.
 >
 > 적용 대상: `aimon-core` — `at.aimon.core.subagent`(`SubagentExecutionPolicy`, `SubagentExecutionPolicyResolver`,
-> `SubagentPolicyCapability`, `LingeringSubagentRun`, `DefaultSubagentExecutionManager`),
+> `SubagentPolicyCapability`, `SubagentResultTruncation`, `LingeringSubagentRun`, `DefaultSubagentExecutionManager`),
 > `…subagent.execution`(`DefaultSubagentExecutor`, `SubagentExecutionRequest`, `SubagentExecutionResult`,
-> `SubagentOutcomePayload`), `…subagent.internal`(`DeadlineScheduler`), `at.aimon.core.agent.budget`
-> (`ExecutionDeadline`, `CompletionReason.TOOL_CALL_BUDGET_EXCEEDED`), `at.aimon.core.agent.context`·`…compact`
+> `SubagentOutcomePayload`, `SubagentResultFormatter`), `…subagent.internal`(`DeadlineScheduler`),
+> `at.aimon.core.agent.budget` (`ExecutionDeadline`, `CompletionReason.TOOL_CALL_BUDGET_EXCEEDED`,
+> `CompletionReason.MAX_ITERATIONS_GRACE`), `at.aimon.core.agent.context`·`…compact`
 > (`compactionInstructions`), `at.aimon.core.tools.task.TaskTool`, `at.aimon.core.tools.ToolContextKeys`
 > (`EXECUTION_DEADLINE`, `CONTEXT_ENGINE`), `OrcaAgentRuntimeFactory#withSubagentExecutionPolicies`.
 
@@ -47,6 +49,9 @@ manager 까지 예산을 실어 나를 경로도 없었다. 포크를 묶는 것
 | `compactionInstructions` | 모든 AUTO compaction 요약의 custom instructions | — |
 | `inheritContextEngine` | 부모의 `ContextEngine` 으로 실행 | — |
 | `exitGracePeriod` | 정지 요청 후 exit 를 기다리는 시간 (기본 5초) | — |
+| `graceRound` | iteration 한도에서 도구 없는 마지막 호출 1회 (§8.1) | `MAX_ITERATIONS_GRACE` (신규) |
+| `maxConsecutiveToolFailures` | 도구별 연속 실패 수 ≥ 한도면 그 도구를 실행하지 않음 (§4.1) | — (호출을 오류로 답함) |
+| `resultMaxChars`, `resultTruncation` | foreground `Task` 결과의 길이·남길 쪽 (§8.2) | — |
 
 정책이 포크에 닿는 길은 하나다 — 스폰 코드가 `SubagentLaunchContext.executionPolicy` 에 싣는다. `TaskTool` 은
 `SubagentExecutionPolicyResolver` 에게 **모델이 고른 서브에이전트 이름**으로 묻는다. 이름은 모델이 고르지만 그
@@ -100,6 +105,20 @@ manager 까지 예산을 실어 나를 경로도 없었다. 포크를 묶는 것
   경계가 `TOKEN_BUDGET_EXCEEDED` 로 끝낸다(LLM 호출 없이).
 - `SubagentExecutionResult#getToolCallCount()` 는 **도구 파이프라인에 넘긴 수**다 — 예산이 차감되는 수와 같다.
   파이프라인이 그 뒤에 거절한 호출(권한 거부, PreTool 차단)도 센다. 포크가 그 호출에 한도를 썼기 때문이다.
+
+### 4.1 연속 실패한 도구
+
+재시도해도 결과가 같은 실패(크기 제한, 인증 거부)를 모델이 반복 호출하면 iteration 과 token 이 그대로 탄다.
+`maxConsecutiveToolFailures = n` 이면 포크는 도구 이름별로 연속 실패 수를 센다.
+
+- **세는 것은 실제로 실행된 호출뿐이다.** 결과가 오류면 +1, 성공이면 그 도구의 수를 0 으로 되돌린다. 권한 거부도
+  파이프라인에서 실패한 호출이므로 센다. 예산·잘린 응답·이 규칙으로 거부된 호출은 실행되지 않았으므로 세지 않는다.
+- 수가 n 에 닿은 도구의 이후 호출은 dispatcher 에 가지 않는다 — hook·권한 질의·실행 없이 `Not run: <도구> failed
+  n time(s) in a row …` 오류로 답한다. 도구 호출 한도(§4)도 차감하지 않는다. 같은 batch 의 다른 도구는 그대로 돈다.
+- 차단은 그 포크가 끝날 때까지 유지된다. 실행되지 않으니 성공으로 풀릴 일도 없다.
+- 거부만으로 이루어진 iteration 은 전부 오류이므로 `StalledIterationGuard` 가 센다. 차단된 도구만 계속 부르는
+  포크는 그 guard 에 걸려 `ERROR` 로 끝난다.
+- 같은 batch 안에서 같은 도구를 여러 번 부르면 batch 가 끝난 뒤에 센다 — 그 batch 의 호출은 모두 실행된다.
 
 ## 5. Deadline 과 실제 종료
 
@@ -243,9 +262,49 @@ transcript 에는 가지 않는다. 키: `kind=subagent-outcome`, `taskId`, `sub
 | 부모 취소 | `INTERRUPTED` |
 | 실패 | `ERROR`, `BLOCKED` |
 | 출력 잘림 | `TRUNCATED` (`success=true`, `truncated=true`) |
+| 한도에서 정리한 답 | `MAX_ITERATIONS_GRACE` (`success=true`) |
 | exit 미확인 | `exitConfirmed=false` + `lingeringRuns()` 항목 |
 
 결과 공개 직전의 권한 재확인(OU·capability·lease)은 core 의 일이 아니다 — wrapper 의 경계로 남는다.
+
+### 8.1 iteration 한도의 grace round
+
+마지막 iteration 도 보통 iteration 이라, 한도에 걸린 포크는 그때까지 찾은 것을 보고하지 못한 채
+`MAX_ITERATIONS` 로 끝난다. `graceRound` 정책 포크는 한도 — 서브에이전트의 `max-iterations` 든 정책의
+`maxIterations` 든 — 에 닿으면 LLM 호출을 한 번 더 한다.
+
+- 호출 전에 `<system-reminder key="final-round">` 로 고정 지시를 붙인다: 이번이 마지막 응답이고, 도구를 부를 수
+  없으며, 불러도 실행되지 않는다. 지금까지의 결과를 요구된 형식으로 쓰고 못 한 것을 밝혀라.
+- **도구 정의는 그대로 보낸다.** 히스토리에 tool_use 가 있는데 도구를 정의하지 않은 요청을 provider 가 거절할 수
+  있고, 같은 도구 목록이어야 앞선 호출이 쌓은 prompt cache prefix 가 맞는다. 그래서 "도구 없음" 은 정의가 아니라
+  처리로 보장한다 — 응답의 tool_use 는 dispatcher 에 가지 않고 버려지며 텍스트만 답이 된다. 도구 실행은 0회다.
+- 결과는 `MAX_ITERATIONS_GRACE`, `SubagentExecutionResult.success` 모양이다 — 답이 summary 에 있고
+  `isSuccess() == true` 이며 `CompletionReason#isSuccessful()` 은 `false` 다(`TRUNCATED` 와 같은 모양). `Task`
+  텍스트에는 미완료를 알리는 `Completion reason:` 줄이 붙는다. grace 호출은 iteration 으로 세고 예산·quota 에
+  청구된다. 응답이 `max_tokens` 로 잘렸으면 답에 잘림 표시가 붙지만 사유는 그대로다.
+- **건너뛰는 경우**: 취소됨, deadline 지남, 정책 token·요청 예산의 token/cost/벽시계 소진, quota 위반 — 어느 것이든
+  다음 호출을 막을 상황이면 grace 없이 이전처럼 `MAX_ITERATIONS` 로 끝난다(한도가 먼저 왔기 때문). 그래서 grace
+  호출이 token 예산을 넘는 것은 다른 호출과 같은 "한 호출만큼의 overshoot" 뿐이다.
+- **답이 없으면** — 응답 텍스트가 비었거나, 취소가 아닌 오류로 호출이 실패하면 — `MAX_ITERATIONS` 로 끝난다.
+  호출 중 취소·deadline 은 다른 호출과 똑같이 `INTERRUPTED`·`WALL_CLOCK_EXCEEDED` 다. grace 답 이외의 모든 결과는
+  지시를 붙이기 **전**의 transcript 를 돌려준다(그 사이 grace round 가 일으킨 compaction 도 빠진다). 나중에 resume
+  한 포크가 답 없는 final-round 지시를 보지 않도록. 지시는 `LogOrigin.SYNTHETIC` 으로 기록된다.
+- 롤링 업그레이드 중 구 버전 peer 는 이 이름을 모르므로 `success=true` 를 보고 `COMPLETED` 로 읽는다
+  (`fromWireName`). 다른 신규 사유(`ERROR` 로 읽힘)와 달리 완료처럼 보일 수 있다는 뜻이다.
+
+### 8.2 부모에게 넘기는 답의 모양
+
+foreground `Task` 결과는 답을 기본 32,000자로 자르며 **뒤를 남긴다**(`SubagentResultFormatter.truncateTailKeep`).
+결론이 끝에 오는 답에 맞는 기본값이지만, finding 을 앞에 쓰고 검토 경로·한계를 뒤에 쓰는 답에서는 정확히
+finding 이 잘린다. foreground 결과는 store 에 남지 않아 되찾을 경로도 없다.
+
+정책의 `resultMaxChars` 와 `resultTruncation` 이 그 둘을 정한다 — `TAIL`(기본), `HEAD`, `HEAD_AND_TAIL`(절반씩,
+가운데 생략). 생략된 자리에는 언제나 `…[N chars omitted]…` 표시가 남는다. `TaskTool` 이 결과를 쓸 때 읽으므로
+executor capability 가 아니고(`getCapabilities()` 에 없다), 정책 없는 포크와 백그라운드 `AgentOutput` 결과는
+지금처럼 tail-keep 이다. 백그라운드 결과에는 전체 진행 로그를 다시 읽을 retrieval pointer 가 있다.
+
+잘리지 않는 구조화 결과 채널(포크가 schema 로 검증된 payload 를 보고하는 도구)은 아직 없다 — 그 payload 를
+실행 결과·태스크 store codec·`Task` 출력에 싣는 계약을 따로 설계해야 한다.
 
 ## 9. 검증
 
@@ -262,6 +321,9 @@ transcript 에는 가지 않는다. 키: `kind=subagent-outcome`, `taskId`, `sub
 | 실제 Task → `DefaultSubagentExecutionManager` → `DefaultSubagentExecutor` 경로의 도구 한도와 구조화 결과 | `TaskToolExecutionPolicyTest.endToEndThroughTheRealManagerAndExecutor` |
 | deadline 선행 후 부모 취소, 부모 deadline cascade, 블로킹 도구 interrupt, token 초과 batch 미실행 | `DefaultSubagentExecutorPolicyTest` |
 | passthrough engine 에서 context 축 거부, compact 하는 engine 상속 시 수락 | `DefaultSubagentExecutionManagerPolicyTest` |
+| grace round: 정책·서브에이전트 한도 양쪽, 도구 실행 0회, 같은 도구 목록, 예산 소진 시 생략, 빈 답 | `DefaultSubagentExecutorPolicyTest` |
+| 연속 실패 차단과 성공 시 리셋, 차단된 호출은 도구 호출 수에 없음 | `DefaultSubagentExecutorPolicyTest` |
+| 결과 길이·남길 쪽(`HEAD`·`HEAD_AND_TAIL`), surrogate 보존 | `SubagentResultFormatterTest`, `TaskToolExecutionPolicyTest` |
 
 외부 LLM 호출 없이 fake client 와 latch 를 쓰고, deadline 판정은 조절 가능한 nano clock 으로 검증한다. 다만
 timer 가 실제로 발화하는 경로(블로킹 호출 중단, watchdog, 큐 만료)는 `DeadlineScheduler` 가 시계를 주입받지 않으므로

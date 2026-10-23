@@ -40,6 +40,32 @@ class ToolDefinitionTest {
     }
 
     @Test
+    @DisplayName("keeps the schema's top-level key order, which the prompt-cache prefix depends on")
+    void keepsTopLevelKeyOrder() {
+        // Enough keys that a salted Map.copyOf order matching this one by chance is not a realistic pass.
+        final List<String> keys = List.of("type", "properties", "required", "additionalProperties", "description",
+                "title", "$defs", "$schema", "examples", "default", "minProperties", "maxProperties");
+        final Map<String, Object> schema = new java.util.LinkedHashMap<>();
+        for (String key : keys) {
+            schema.put(key, key + "-value");
+        }
+
+        final ToolDefinition tool = ToolDefinition.of("ordered", "Ordered", schema);
+
+        assertThat(tool.getInputSchema().keySet()).containsExactlyElementsOf(keys);
+    }
+
+    @Test
+    @DisplayName("rejects a null schema value, as Map.copyOf did")
+    void rejectsNullSchemaValue() {
+        final Map<String, Object> schema = new java.util.HashMap<>();
+        schema.put("type", null);
+
+        assertThatThrownBy(() -> ToolDefinition.of("test", "Test", schema)).isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("type");
+    }
+
+    @Test
     @DisplayName("Should return immutable schema")
     void shouldReturnImmutableSchema() {
         Map<String, Object> schema = Map.of("type", "object");

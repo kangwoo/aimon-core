@@ -163,6 +163,209 @@ class DefaultSubagentExecutorPolicyTest {
     }
 
     @Test
+    @DisplayName("grace round: at the policy's iteration cap one more call, with no tool run, writes up the result")
+    void graceRoundAtThePolicysIterationCap() {
+        final CountingTool tool = new CountingTool();
+        final ScriptedClient llm = new ScriptedClient();
+        llm.responses.add(calls("t1"));
+        llm.responses.add(calls("t2"));
+        // The model may still ask for a tool in its final round; the call is dropped and only the text is kept.
+        llm.responses.add(LlmResponse.of("FINDING: off-by-one in parse()",
+                List.of(ToolUse.of("t3", CountingTool.NAME, Map.of())), USAGE));
+        final SubagentExecutionPolicy policy = SubagentExecutionPolicy.builder("worker").maxIterations(2)
+                .graceRound(true).build();
+
+        final SubagentExecutionResult result = executor(llm).execute(context(registryWith(tool)),
+                request(policy, null));
+
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.MAX_ITERATIONS_GRACE);
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getSummary()).isEqualTo("FINDING: off-by-one in parse()");
+        assertThat(llm.calls).hasValue(3);
+        assertThat(tool.runs).as("the grace round runs no tool").hasValue(2);
+        assertThat(result.getToolCallCount()).isEqualTo(2);
+        assertThat(result.getIterationCount()).isEqualTo(3);
+        assertThat(result.getMetadata().getTokenUsage().getTotalTokens()).isEqualTo(30);
+        // Same tool list as before — the prompt-cache prefix holds — and the call opens with the final-round reminder.
+        assertThat(llm.offeredTools.get(2)).isEqualTo(llm.offeredTools.get(1));
+        final List<Message> graceRequest = llm.sentMessages.get(2);
+        assertThat(graceRequest.get(graceRequest.size() - 1).getContent())
+                .contains(DefaultSubagentExecutor.GRACE_ROUND_REMINDER_KEY)
+                .contains(DefaultSubagentExecutor.GRACE_ROUND_INSTRUCTION);
+    }
+
+    @Test
+    @DisplayName("grace round: the subagent's own max-iterations gets one too")
+    void graceRoundAtTheSubagentsOwnLimit() {
+        final CountingTool tool = new CountingTool();
+        final ScriptedClient llm = new ScriptedClient();
+        llm.responses.add(calls("t1"));
+        llm.responses.add(calls("t2"));
+        llm.responses.add(LlmResponse.of("partial report", List.of(), USAGE));
+
+        final SubagentExecutionResult result = executor(llm).execute(
+                context(registryWith(tool), NoopCancellationSignal.INSTANCE, 2),
+                request(SubagentExecutionPolicy.builder("worker").graceRound(true).build(), null));
+
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.MAX_ITERATIONS_GRACE);
+        assertThat(result.getSummary()).isEqualTo("partial report");
+        assertThat(llm.calls).hasValue(3);
+    }
+
+    @Test
+    @DisplayName("grace round: skipped when the budget would stop the call anyway")
+    void graceRoundSkippedWhenTheBudgetIsSpent() {
+        final ScriptedClient llm = new ScriptedClient();
+        llm.responses.add(calls("t1"));
+        llm.responses.add(calls("t2"));
+        llm.responses.add(LlmResponse.of("never reached", List.of(), USAGE));
+        final SubagentExecutionPolicy policy = SubagentExecutionPolicy.builder("worker").graceRound(true).build();
+        // A request budget the two calls spend exactly: the limit is reached with nothing left for a third.
+        final SubagentExecutionRequest request = SubagentExecutionRequest.builder().taskId("task-1").goal("review")
+                .executionPolicy(policy)
+                .budget(at.aimon.core.agent.budget.ExecutionBudget.builder().maxTokens(20).build()).build();
+
+        final SubagentExecutionResult result = executor(llm)
+                .execute(context(registryWith(new CountingTool()), NoopCancellationSignal.INSTANCE, 2), request);
+
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.MAX_ITERATIONS);
+        assertThat(llm.calls).hasValue(2);
+    }
+
+    @Test
+    @DisplayName("grace round: no text in it ends the fork MAX_ITERATIONS, without the reminder in its transcript")
+    void graceRoundWithoutAnAnswer() {
+        final ScriptedClient llm = new ScriptedClient();
+        llm.responses.add(calls("t1"));
+        llm.responses.add(LlmResponse.of("", List.of(ToolUse.of("t2", CountingTool.NAME, Map.of())), USAGE));
+
+        final SubagentExecutionResult result = executor(llm).execute(
+                context(registryWith(new CountingTool()), NoopCancellationSignal.INSTANCE, 1),
+                request(SubagentExecutionPolicy.builder("worker").graceRound(true).build(), null));
+
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.MAX_ITERATIONS);
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.getIterationCount()).isEqualTo(2);
+        assertThat(result.getConversationHistory()).noneSatisfy(
+                m -> assertThat(m.getContent()).contains(DefaultSubagentExecutor.GRACE_ROUND_REMINDER_KEY));
+    }
+
+    @Test
+    @DisplayName("grace round: a call that throws hands back the transcript from before the reminder")
+    void graceRoundFailureLeavesNoReminder() {
+        final ScriptedClient llm = new ScriptedClient() {
+            @Override
+            public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
+                    LlmModel modelConfig, LlmCallMetadata metadata) {
+                if (calls.get() == 1) {
+                    calls.incrementAndGet();
+                    throw new IllegalStateException("provider blew up");
+                }
+                return super.sendMessage(systemPrompt, messages, tools, modelConfig, metadata);
+            }
+        };
+        llm.responses.add(calls("t1"));
+
+        final SubagentExecutionResult result = executor(llm).execute(
+                context(registryWith(new CountingTool()), NoopCancellationSignal.INSTANCE, 1),
+                request(SubagentExecutionPolicy.builder("worker").graceRound(true).build(), null));
+
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.ERROR);
+        assertThat(llm.calls).hasValue(2);
+        assertThat(result.getConversationHistory()).isNotEmpty().noneSatisfy(
+                m -> assertThat(m.getContent()).contains(DefaultSubagentExecutor.GRACE_ROUND_REMINDER_KEY));
+    }
+
+    @Test
+    @DisplayName("without a grace round the iteration limit ends the fork as before")
+    void noGraceRoundWithoutThePolicy() {
+        final ScriptedClient llm = new ScriptedClient();
+        llm.responses.add(calls("t1"));
+        llm.responses.add(LlmResponse.of("never reached", List.of(), USAGE));
+
+        final SubagentExecutionResult result = executor(llm).execute(
+                context(registryWith(new CountingTool()), NoopCancellationSignal.INSTANCE, 1),
+                request(SubagentExecutionPolicy.builder("worker").maxToolCalls(5).build(), null));
+
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.MAX_ITERATIONS);
+        assertThat(llm.calls).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("a tool that failed the policy's limit of times in a row is not run again; others still run")
+    void failureStreakStopsRunningTheTool() {
+        final ScriptedOutcomeTool flaky = new ScriptedOutcomeTool(false, false);
+        final CountingTool other = new CountingTool();
+        final DefaultToolRegistry registry = registryWith(flaky);
+        registry.register(other);
+        final ScriptedClient llm = new ScriptedClient();
+        llm.responses.add(flakyCall("f1"));
+        llm.responses.add(flakyCall("f2"));
+        llm.responses.add(LlmResponse.of("again", List.of(ToolUse.of("f3", ScriptedOutcomeTool.NAME, Map.of()),
+                ToolUse.of("p1", CountingTool.NAME, Map.of())), USAGE));
+        llm.responses.add(LlmResponse.of("done without it", List.of(), USAGE));
+
+        final SubagentExecutionResult result = executor(llm).execute(context(registry),
+                request(SubagentExecutionPolicy.builder("worker").maxConsecutiveToolFailures(2).build(), null));
+
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
+        assertThat(flaky.runs).hasValue(2);
+        assertThat(other.runs).hasValue(1);
+        // A refused call is not run, so it takes none of the tool-call count.
+        assertThat(result.getToolCallCount()).isEqualTo(3);
+        final List<ToolUseResult> third = result.getConversationHistory().stream()
+                .filter(m -> !m.getToolUseResults().isEmpty()).toList().get(2).getToolUseResults();
+        assertThat(third.get(0).isError()).isTrue();
+        assertThat(third.get(0).getContent()).startsWith("Not run: " + ScriptedOutcomeTool.NAME + " failed 2");
+        assertThat(third.get(1).isError()).isFalse();
+    }
+
+    @Test
+    @DisplayName("a blocked call and a run call sharing a tool-use id each get their own answer, by position")
+    void blockedCallsAreMatchedByPosition() {
+        final ScriptedOutcomeTool flaky = new ScriptedOutcomeTool(false);
+        final CountingTool other = new CountingTool();
+        final DefaultToolRegistry registry = registryWith(flaky);
+        registry.register(other);
+        final ScriptedClient llm = new ScriptedClient();
+        llm.responses.add(flakyCall("f1"));
+        llm.responses.add(LlmResponse.of("again", List.of(ToolUse.of("dup", ScriptedOutcomeTool.NAME, Map.of()),
+                ToolUse.of("dup", CountingTool.NAME, Map.of())), USAGE));
+        llm.responses.add(LlmResponse.of("done", List.of(), USAGE));
+
+        final SubagentExecutionResult result = executor(llm).execute(context(registry),
+                request(SubagentExecutionPolicy.builder("worker").maxConsecutiveToolFailures(1).build(), null));
+
+        final List<ToolUseResult> second = result.getConversationHistory().stream()
+                .filter(m -> !m.getToolUseResults().isEmpty()).toList().get(1).getToolUseResults();
+        assertThat(second).hasSize(2);
+        assertThat(second.get(0).getContent()).startsWith("Not run");
+        assertThat(second.get(1).isError()).isFalse();
+        assertThat(other.runs).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("a success resets the tool's failure streak")
+    void successResetsTheStreak() {
+        final ScriptedOutcomeTool flaky = new ScriptedOutcomeTool(false, true, false, true);
+        final ScriptedClient llm = new ScriptedClient();
+        for (int i = 0; i < 4; i++) {
+            llm.responses.add(flakyCall("f" + i));
+        }
+        llm.responses.add(LlmResponse.of("done", List.of(), USAGE));
+
+        final SubagentExecutionResult result = executor(llm).execute(context(registryWith(flaky)),
+                request(SubagentExecutionPolicy.builder("worker").maxConsecutiveToolFailures(2).build(), null));
+
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
+        assertThat(flaky.runs).hasValue(4);
+    }
+
+    private static LlmResponse flakyCall(String id) {
+        return LlmResponse.of("try", List.of(ToolUse.of(id, ScriptedOutcomeTool.NAME, Map.of())), USAGE);
+    }
+
+    @Test
     @DisplayName("a deadline that passed before the fork started runs nothing")
     void deadlinePassedBeforeStart() {
         final AtomicLong now = new AtomicLong();
@@ -372,9 +575,15 @@ class DefaultSubagentExecutorPolicyTest {
     }
 
     private static SubagentExecutionContext context(DefaultToolRegistry registry, CancellationSignal parent) {
+        return context(registry, parent, 10);
+    }
+
+    private static SubagentExecutionContext context(DefaultToolRegistry registry, CancellationSignal parent,
+            int maxIterations) {
         return SubagentExecutionContext.builder().agentRuntimeId(AgentRuntimeId.of("agent:test-1"))
-                .subagent(subagent(10)).defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(registry)
-                .hookRegistry(new DefaultHookRegistry()).parentCancellationSignal(parent).build();
+                .subagent(subagent(maxIterations)).defaultModel(LlmModel.builder().name("gpt-4").build())
+                .toolRegistry(registry).hookRegistry(new DefaultHookRegistry()).parentCancellationSignal(parent)
+                .build();
     }
 
     private static SubagentExecutionRequest request(SubagentExecutionPolicy policy, ExecutionDeadline deadline) {
@@ -386,6 +595,24 @@ class DefaultSubagentExecutorPolicyTest {
         final DefaultToolRegistry registry = new DefaultToolRegistry();
         registry.register(tool);
         return registry;
+    }
+
+    /** Answers each call it runs with the next scripted outcome (true = success), counting the calls. */
+    private static final class ScriptedOutcomeTool extends AbstractTool {
+        static final String NAME = "Flaky";
+        final Deque<Boolean> outcomes = new ArrayDeque<>();
+        final AtomicInteger runs = new AtomicInteger();
+
+        ScriptedOutcomeTool(Boolean... outcomes) {
+            super(NAME, "fails on cue", Map.of("type", "object", "properties", Map.of(), "required", List.of()));
+            this.outcomes.addAll(List.of(outcomes));
+        }
+
+        @Override
+        public ToolResult execute(ToolInput input, ToolContext context) {
+            runs.incrementAndGet();
+            return outcomes.removeFirst() ? ToolResult.success("ok") : ToolResult.error("SIZE_LIMIT: too large");
+        }
     }
 
     /** Counts the calls it actually runs and keeps the last context it saw. */
@@ -406,10 +633,12 @@ class DefaultSubagentExecutorPolicyTest {
         }
     }
 
-    /** Answers from a queue and counts its calls. */
+    /** Answers from a queue, counts its calls and records what each was sent. */
     private static class ScriptedClient implements LlmClient {
         final Deque<LlmResponse> responses = new ArrayDeque<>();
         final AtomicInteger calls = new AtomicInteger();
+        final List<List<String>> offeredTools = new CopyOnWriteArrayList<>();
+        final List<List<Message>> sentMessages = new CopyOnWriteArrayList<>();
 
         @Override
         public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
@@ -421,6 +650,8 @@ class DefaultSubagentExecutorPolicyTest {
         public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
                 LlmModel modelConfig, LlmCallMetadata metadata) {
             calls.incrementAndGet();
+            offeredTools.add(tools.stream().map(ToolDefinition::getName).toList());
+            sentMessages.add(List.copyOf(messages));
             return responses.removeFirst();
         }
 

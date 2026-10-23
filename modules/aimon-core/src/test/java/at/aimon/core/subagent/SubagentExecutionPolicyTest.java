@@ -33,6 +33,22 @@ class SubagentExecutionPolicyTest {
     }
 
     @Test
+    @DisplayName("a grace round and a failure streak limit are capabilities; the result shape is not one")
+    void reviewAxes() {
+        final SubagentExecutionPolicy policy = SubagentExecutionPolicy.builder("r").graceRound(true)
+                .maxConsecutiveToolFailures(2).resultMaxChars(1000).resultTruncation(SubagentResultTruncation.HEAD)
+                .build();
+        assertThat(policy.getCapabilities()).containsExactlyInAnyOrder(SubagentPolicyCapability.GRACE_ROUND,
+                SubagentPolicyCapability.MAX_CONSECUTIVE_TOOL_FAILURES);
+        assertThat(policy.getResultMaxChars()).contains(1000);
+        assertThat(policy.getResultTruncation()).isEqualTo(SubagentResultTruncation.HEAD);
+        assertThat(SubagentExecutionPolicy.builder("r").build().getResultTruncation())
+                .isEqualTo(SubagentResultTruncation.TAIL);
+        assertThat(policy).isNotEqualTo(SubagentExecutionPolicy.builder("r").graceRound(true)
+                .maxConsecutiveToolFailures(2).resultMaxChars(1000).build());
+    }
+
+    @Test
     @DisplayName("toBudget carries iterations, tokens and the threshold, not the wall clock")
     void toBudget() {
         final ExecutionBudget budget = SubagentExecutionPolicy.builder("r").maxIterations(8).maxTokens(1000)
@@ -56,6 +72,9 @@ class SubagentExecutionPolicyTest {
                 .withMessageContaining("below maxTokens");
         assertThatIllegalArgumentException()
                 .isThrownBy(() -> SubagentExecutionPolicy.builder("r").exitGracePeriod(Duration.ofSeconds(-1)));
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> SubagentExecutionPolicy.builder("r").maxConsecutiveToolFailures(0));
+        assertThatIllegalArgumentException().isThrownBy(() -> SubagentExecutionPolicy.builder("r").resultMaxChars(0));
     }
 
     @Test

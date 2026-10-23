@@ -179,6 +179,31 @@ class AnthropicMessageConverterTest {
     }
 
     @Test
+    @DisplayName("writes the schema's keys in the order the definition holds them")
+    void writesSchemaKeysInDefinitionOrder() throws Exception {
+        // type and properties are typed fields of the SDK's InputSchema and always lead; the rest follow the map.
+        final Map<String, Object> schema = new java.util.LinkedHashMap<>();
+        schema.put("type", "object");
+        schema.put("properties", Map.of("command", Map.of("type", "string")));
+        schema.put("required", List.of("command"));
+        schema.put("additionalProperties", false);
+        schema.put("description", "d");
+        schema.put("title", "t");
+        schema.put("$defs", Map.of());
+        schema.put("minProperties", 1);
+
+        final List<ToolUnion> tools = converter.convertTools(List.of(ToolDefinition.of("bash", "Bash", schema)));
+
+        final com.fasterxml.jackson.databind.JsonNode inputSchema = com.anthropic.core.ObjectMappers.jsonMapper()
+                .readTree(com.anthropic.core.ObjectMappers.jsonMapper().writeValueAsString(tools.get(0)))
+                .get("input_schema");
+        final List<String> written = new java.util.ArrayList<>();
+        inputSchema.fieldNames().forEachRemaining(written::add);
+        assertThat(written).containsExactly("type", "properties", "required", "additionalProperties", "description",
+                "title", "$defs", "minProperties");
+    }
+
+    @Test
     @DisplayName("Should convert multiple tools")
     void shouldConvertMultipleTools() {
         // Given: Multiple tool definitions

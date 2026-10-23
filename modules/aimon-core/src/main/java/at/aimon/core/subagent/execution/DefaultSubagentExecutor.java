@@ -3,6 +3,7 @@ package at.aimon.core.subagent.execution;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -47,6 +48,7 @@ import at.aimon.core.agent.interrupt.TerminatorRegistrar;
 import at.aimon.core.agent.prompt.Staticness;
 import at.aimon.core.agent.prompt.SystemPromptPart;
 import at.aimon.core.agent.prompt.SystemPromptParts;
+import at.aimon.core.agent.prompt.SystemReminderFormatter;
 import at.aimon.core.agent.quota.QuotaGuard;
 import at.aimon.core.agent.quota.QuotaViolation;
 import at.aimon.core.agent.session.SessionId;
@@ -181,6 +183,17 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
     /** Per-tool-result snippet cap (characters) in the streamed progress log; keeps the log readable. */
     private static final int STREAM_TOOL_RESULT_CAP = 4_000;
+
+    /** The {@code <system-reminder>} key of the instruction that opens a grace round. */
+    static final String GRACE_ROUND_REMINDER_KEY = "final-round";
+
+    /**
+     * What a fork is told before its grace round. Scoped to this one response: a background fork resumed later gets
+     * a fresh iteration budget and its tools back, and this message is still in its history.
+     */
+    static final String GRACE_ROUND_INSTRUCTION = "You have reached this task's iteration limit. This is your final "
+            + "response: no tool can be called in it, and any tool call you make will not be run. Write up your "
+            + "results so far in the format your instructions require, and say what you did not get to.";
 
     private final LlmCallGateway<TranscriptBuffer> gateway;
     private final ToolExecutionManager toolExecutionManager;
@@ -604,7 +617,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             while (iterationCount < lc.maxIterations()) {
                 final BudgetDecision budgetDecision = lc.budgetTracker.check();
                 final Optional<SubagentExecutionResult> stopped = stopBeforeIteration(lc, budgetDecision,
-                        iterationCount, accumulatedTokens);
+                        iterationCount, accumulatedTokens, llmCancellation);
                 if (stopped.isPresent()) {
                     return stopped.get();
                 }
@@ -690,8 +703,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 }
             }
 
-            // Max iterations exceeded
-            throw new MaxIterationsExceededException(lc.maxIterations());
+            // Max iterations exceeded; with a grace round the fork gets one more call to write up what it has.
+            return endAtOwnIterationLimit(lc, iterationCount, accumulatedTokens, llmCancellation);
 
         } catch (CancelledExecutionException e) {
             log.debug("Subagent ReAct loop cancelled: {}", e.getMessage());
@@ -739,12 +752,19 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * the turn, its other forks and the user's other sessions spent counts here too, so a fork is no way around a
      * quota.
      *
+     * <p>
+     * A budget that stops the fork for its iterations ends it through {@link #endAtIterationLimit} when the policy
+     * asks for a grace round, so the policy's {@code maxIterations} gets one the way the subagent's own
+     * {@code max-iterations} does.
+     *
      * @param budgetDecision
      *            the budget tracker's decision for this boundary
+     * @param llmCancellation
+     *            the loop's LLM abort lever, for a grace round's call
      * @return the result that ends the fork here, or empty to run the iteration
      */
     private Optional<SubagentExecutionResult> stopBeforeIteration(LoopContext lc, BudgetDecision budgetDecision,
-            int iterationCount, TokenUsage accumulatedTokens) {
+            int iterationCount, TokenUsage accumulatedTokens, SignalBackedLlmCancellation llmCancellation) {
         if (isCancelledOrInterrupted(lc.coordinator.getSignal())) {
             return Optional.of(createInterruptedResult(lc, iterationCount, accumulatedTokens));
         }
@@ -752,10 +772,149 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             return Optional.of(createDeadlineResult(lc, iterationCount, accumulatedTokens));
         }
         if (budgetDecision == BudgetDecision.STOP) {
+            if (lc.graceRoundEnabled() && lc.budgetTracker.getStopReason()
+                    .filter(reason -> reason == CompletionReason.MAX_ITERATIONS).isPresent()) {
+                return Optional.of(endAtIterationLimit(lc, iterationCount, accumulatedTokens,
+                        "Execution stopped: " + CompletionReason.MAX_ITERATIONS.name(), llmCancellation));
+            }
             return Optional.of(createBudgetStopResult(lc, iterationCount, accumulatedTokens));
         }
         final Optional<QuotaViolation> quotaViolation = lc.quotaGuard.check();
         return quotaViolation.map(violation -> createQuotaStopResult(lc, iterationCount, accumulatedTokens, violation));
+    }
+
+    /**
+     * Ends a fork whose loop ran its subagent's own {@code max-iterations}: through {@link #endAtIterationLimit} under
+     * a policy with a grace round, otherwise by throwing, as the loop always has.
+     *
+     * @throws MaxIterationsExceededException
+     *             when the fork has no grace round
+     */
+    private SubagentExecutionResult endAtOwnIterationLimit(LoopContext lc, int iterationCount,
+            TokenUsage accumulatedTokens, SignalBackedLlmCancellation llmCancellation) {
+        final MaxIterationsExceededException limit = new MaxIterationsExceededException(lc.maxIterations());
+        if (!lc.graceRoundEnabled()) {
+            throw limit;
+        }
+        return endAtIterationLimit(lc, iterationCount, accumulatedTokens, limit.getMessage(), llmCancellation);
+    }
+
+    /**
+     * Ends a fork that reached an iteration limit — its own {@code max-iterations} or its policy's — under a policy
+     * that asks for a grace round: one more LLM call, opened by {@link #GRACE_ROUND_INSTRUCTION}, whose text becomes
+     * the answer of a {@link CompletionReason#MAX_ITERATIONS_GRACE} result.
+     *
+     * <p>
+     * <b>No tool runs in it.</b> The call is sent the same tool definitions as the iteration before it rather than
+     * none: a provider may reject a request whose history holds tool calls but which defines no tools, and an
+     * unchanged tool list keeps the prompt-cache prefix the earlier calls built. What the model is offered therefore
+     * does not stop it asking for a tool; what this method does with the answer does — a tool call in it is dropped,
+     * never dispatched, and only the text is kept.
+     *
+     * <p>
+     * The grace round is skipped, and the fork ends {@link CompletionReason#MAX_ITERATIONS} as it would without one,
+     * when the next call would be stopped anyway ({@link #graceRoundAllowed}). It also ends that way when the call
+     * answers with no text, or fails with an error that is not a cancellation. A cancellation or a deadline during
+     * the call is reported as for any other call. Every result but a grace answer hands back the transcript from before
+     * the instruction ({@code LoopContext#beforeGrace}), so a resumed fork does not find an unanswered final-round
+     * reminder.
+     *
+     * <p>
+     * The call counts as an iteration in the result and is charged to the budget and the quota like any other, so a
+     * grace answer can overshoot a token budget by this one call, as any call can.
+     *
+     * @param iterationCount
+     *            the iterations run before the limit was reached
+     * @param limitMessage
+     *            the message of the {@code MAX_ITERATIONS} result the fork ends with when there is no grace answer
+     * @return the result (never null)
+     */
+    private SubagentExecutionResult endAtIterationLimit(LoopContext lc, int iterationCount,
+            TokenUsage accumulatedTokens, String limitMessage, SignalBackedLlmCancellation llmCancellation) {
+        if (!graceRoundAllowed(lc)) {
+            return createFailureResult(lc, limitMessage, iterationCount, accumulatedTokens,
+                    CompletionReason.MAX_ITERATIONS);
+        }
+        final int graceIteration = iterationCount + 1;
+        log.info("Subagent '{}' reached its iteration limit after {} iterations; running its grace round",
+                lc.subagent().getName(), iterationCount);
+        stream(lc, "\n[iteration " + graceIteration + ": final round, tool calls are not run]\n");
+        // From here every result but a grace answer hands back the transcript as it was before the reminder
+        // (createFailureResult reads it) — a cancellation, the deadline or an error included. Taken before the
+        // compaction gate below, so such a result also leaves out a compaction the grace round itself triggered.
+        lc.beforeGrace = lc.transcriptBuffer.toSnapshot();
+        lc.transcriptBuffer.addMessage(
+                Message.user(SystemReminderFormatter.wrap(GRACE_ROUND_REMINDER_KEY, GRACE_ROUND_INSTRUCTION)),
+                LogOrigin.SYNTHETIC);
+        final CancellationSignal cancellationSignal = lc.coordinator.getSignal();
+        final ContextView view = applyCompactionGate(lc, graceIteration, false);
+        final IterationTrace trace = IterationTrace.open(lc, graceIteration);
+        final LlmResponse response;
+        try {
+            try {
+                response = gateway.sendMessage(lc.systemPromptParts, view.getMessages(),
+                        availableToolDefinitions(lc, graceIteration), lc.modelConfig, trace.metadata, llmCancellation);
+            } finally {
+                llmCancellation.clearAbort();
+            }
+        } catch (LlmClientException e) {
+            trace.fail(e, cancellationSignal);
+            trace.close();
+            if (e instanceof LlmCallCancelledException || isCancelledOrInterrupted(cancellationSignal)
+                    || lc.deadlineExpired()) {
+                throw e;
+            }
+            log.warn("Subagent '{}' grace round failed; ending at its iteration limit: {}", lc.subagent().getName(),
+                    e.getMessage());
+            return createFailureResult(lc, limitMessage, iterationCount, accumulatedTokens,
+                    CompletionReason.MAX_ITERATIONS);
+        } catch (RuntimeException | Error e) {
+            trace.fail(e, cancellationSignal);
+            trace.close();
+            throw e;
+        }
+        trace.close();
+
+        final TokenUsage total = accumulatedTokens.add(response.getTokenUsage());
+        lc.budgetTracker.recordTokens(response.getTokenUsage());
+        recordCallCost(lc, response);
+        if (response.hasToolUses()) {
+            log.info("Subagent '{}' asked for {} tool call(s) in its grace round; none is run", lc.subagent().getName(),
+                    response.getToolUses().size());
+        }
+        final String text = response.getTextContent();
+        if (text == null || text.isBlank()) {
+            log.warn("Subagent '{}' grace round produced no answer; ending at its iteration limit",
+                    lc.subagent().getName());
+            return createFailureResult(lc, limitMessage + " (the final round produced no answer)", graceIteration,
+                    total, CompletionReason.MAX_ITERATIONS);
+        }
+        final String answer = TruncatedResponses.isTruncated(response)
+                ? text + TruncatedResponses.TRUNCATION_MARKER
+                : text;
+        lc.transcriptBuffer.addMessage(Message.assistant(answer).withReasoningTraces(response.getReasoningTraces()));
+        lc.beforeGrace = null;
+        return createGraceResult(lc, answer, graceIteration, total);
+    }
+
+    /**
+     * Whether a fork at its iteration limit may have its grace round: its policy asks for one, and nothing would stop
+     * the call before it is made — a cancellation, the deadline, a token, cost or wall-clock budget spent, or a usage
+     * quota. Each of those ends the fork {@code MAX_ITERATIONS} here, as it did before grace rounds existed: the limit
+     * was reached first.
+     */
+    private static boolean graceRoundAllowed(LoopContext lc) {
+        if (isCancelledOrInterrupted(lc.coordinator.getSignal()) || lc.deadlineExpired() || lc.tokenBudgetExhausted()) {
+            return false;
+        }
+        final BudgetTracker tracker = lc.budgetTracker;
+        final ExecutionBudget budget = tracker.getBudget();
+        if (budget.getMaxTokens().filter(max -> tracker.tokens().getTotalTokens() >= max).isPresent()
+                || budget.getMaxCostUsd().filter(max -> tracker.cost().compareTo(max) >= 0).isPresent()
+                || budget.getMaxWallClockDuration().filter(max -> tracker.elapsed().compareTo(max) >= 0).isPresent()) {
+            return false;
+        }
+        return lc.quotaGuard.check().isEmpty();
     }
 
     /**
@@ -1255,6 +1414,10 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * that lists them in the order it needs them loses the ones it needed least. The refused calls are not handed to
      * the dispatcher at all — no hook, no permission prompt, no execution — and they do not count as run.
      *
+     * <p>
+     * A call of a tool its policy no longer runs ({@link ToolFailureStreaks}) is answered first, the same way, and
+     * takes none of the tool-call budget; the rest go through the budget as described.
+     *
      * @return one result per tool use, in the response's order (never null)
      */
     private List<ToolUseResult> executeAdmittedToolUses(LoopContext lc, ToolContext toolContext, List<ToolUse> toolUses,
@@ -1275,6 +1438,57 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             }
             return refused;
         }
+        if (lc.toolFailures.blocksAny(toolUses)) {
+            return executeAroundBlockedTools(lc, toolContext, toolUses, iterationCount);
+        }
+        return executeWithinCallBudget(lc, toolContext, toolUses, iterationCount);
+    }
+
+    /**
+     * Answers each call of a tool that failed too often in a row with {@link ToolFailureStreaks#refusal} — not run, no
+     * hook, no permission prompt — and runs the others through {@link #executeWithinCallBudget}, keeping the
+     * response's order in the results.
+     */
+    private List<ToolUseResult> executeAroundBlockedTools(LoopContext lc, ToolContext toolContext,
+            List<ToolUse> toolUses, int iterationCount) {
+        // Matched back by position, not by tool-use id: an id is not guaranteed unique within a response.
+        final boolean[] blocked = new boolean[toolUses.size()];
+        final List<ToolUse> runnable = new ArrayList<>(toolUses.size());
+        for (int i = 0; i < toolUses.size(); i++) {
+            blocked[i] = lc.toolFailures.isBlocked(toolUses.get(i).getName());
+            if (!blocked[i]) {
+                runnable.add(toolUses.get(i));
+            }
+        }
+        final List<ToolUseResult> ran = runnable.isEmpty()
+                ? List.of()
+                : executeWithinCallBudget(lc, toolContext, runnable, iterationCount);
+        final List<ToolUseResult> results = new ArrayList<>(toolUses.size());
+        int next = 0;
+        for (int i = 0; i < toolUses.size(); i++) {
+            final ToolUse toolUse = toolUses.get(i);
+            if (!blocked[i]) {
+                results.add(ran.get(next++));
+                continue;
+            }
+            log.info("Subagent '{}' called '{}' in iteration {} after {} consecutive failure(s); not run",
+                    lc.subagent().getName(), toolUse.getName(), iterationCount, lc.toolFailures.limit);
+            stream(lc, "\n→ " + toolUse.getName() + "\n");
+            final ToolUseResult refusal = ToolFailureStreaks.refusal(toolUse, lc.toolFailures.limit);
+            stream(lc, formatStreamedToolResult(toolUse, refusal));
+            results.add(refusal);
+        }
+        return results;
+    }
+
+    /**
+     * Runs as many of {@code toolUses} as the fork's tool-call budget still allows, in order, and answers the rest
+     * with an error result that says they were not run.
+     *
+     * @return one result per tool use, in the response's order (never null)
+     */
+    private List<ToolUseResult> executeWithinCallBudget(LoopContext lc, ToolContext toolContext, List<ToolUse> toolUses,
+            int iterationCount) {
         final int admitted = lc.toolCalls.admit(toolUses.size());
         if (admitted == toolUses.size()) {
             return executeToolUses(lc, toolContext, toolUses, iterationCount);
@@ -1321,11 +1535,16 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // default sequential dispatcher this is 1:1 equivalent to the previous for-loop. The fork's depth goes along so
         // a dedicated-thread dispatcher can decide whether a fork this deep may fan out; any other dispatcher ignores
         // it.
-        return parallelToolDispatcher.dispatch(toolUses, lc.sessionRegistry,
+        final List<ToolUseResult> results = parallelToolDispatcher.dispatch(toolUses, lc.sessionRegistry,
                 DispatchOptions.builder().forkDepth(lc.forkDepth).build(),
                 toolUse -> executeSingleTool(lc, toolContext, toolUse, iterationCount),
                 toolUse -> stream(lc, "\n→ " + toolUse.getName() + "\n"),
                 (toolUse, result) -> stream(lc, formatStreamedToolResult(toolUse, result)));
+        // Back on the loop's thread: every call here was run, so each outcome counts for its tool's streak.
+        for (int i = 0; i < toolUses.size(); i++) {
+            lc.toolFailures.record(toolUses.get(i).getName(), results.get(i));
+        }
+        return results;
     }
 
     /**
@@ -1544,6 +1763,26 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     }
 
     /**
+     * Creates the result of a grace round's answer ({@link #endAtIterationLimit}), firing OnStop hooks with
+     * {@code success=true}. The shape of {@link #createTruncatedResult}: a success, so the answer is the summary,
+     * carrying {@link CompletionReason#MAX_ITERATIONS_GRACE}, which says it is not a finished one.
+     */
+    private SubagentExecutionResult createGraceResult(LoopContext lc, String answer, int iterationCount,
+            TokenUsage accumulatedTokens) {
+        final ExecutionMetadata metadata = buildMetadata(lc, iterationCount, accumulatedTokens);
+        final OnStopContext onStopContext = OnStopContext.builder().executorType(InvokerType.SUBAGENT)
+                .invokerName(lc.subagent().getName()).hookRegistry(lc.hookRegistry())
+                .executionEnvironment(lc.executionEnvironment()).executionCancellation(lc.coordinator.getSignal())
+                .success(true).finalAnswer(answer).metadata(metadata).executionAttributes(lc.executionAttributes)
+                .build();
+        hookExecutionManager.executeOnStop(onStopContext);
+        stream(lc, "\n[final answer]\n" + answer + "\n[completed: " + CompletionReason.MAX_ITERATIONS_GRACE.name()
+                + " after " + iterationCount + " iterations]\n");
+        return SubagentExecutionResult.success(answer, lc.transcriptBuffer.toSnapshot(), metadata,
+                CompletionReason.MAX_ITERATIONS_GRACE, estimateCost(lc, accumulatedTokens));
+    }
+
+    /**
      * Creates an interrupted result. Represented as a failed {@link SubagentExecutionResult} carrying the canonical
      * "Execution interrupted" message and {@link CompletionReason#INTERRUPTED}; OnStop hooks fire with
      * {@code success=false}.
@@ -1753,7 +1992,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      *
      * @param snapshot
      *            the transcript the result carries, or {@code null} for the live buffer as it stands once the OnStop
-     *            hooks have run
+     *            hooks have run — or, once a grace round has begun, for the transcript from before it
      */
     private SubagentExecutionResult createFailureResult(LoopContext lc, String errorMessage, int iterationCount,
             TokenUsage accumulatedTokens, CompletionReason completionReason, SessionSnapshot snapshot) {
@@ -1766,8 +2005,15 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         hookExecutionManager.executeOnStop(onStopContext);
         // Terminal boundary so a background tail observes that the task ended (and why).
         stream(lc, "\n[ended: " + errorMessage + "]\n");
-        return SubagentExecutionResult.failure(errorMessage,
-                snapshot != null ? snapshot : lc.transcriptBuffer.toSnapshot(), metadata, completionReason,
+        final SessionSnapshot handedBack;
+        if (snapshot != null) {
+            handedBack = snapshot;
+        } else if (lc.beforeGrace != null) {
+            handedBack = lc.beforeGrace;
+        } else {
+            handedBack = lc.transcriptBuffer.toSnapshot();
+        }
+        return SubagentExecutionResult.failure(errorMessage, handedBack, metadata, completionReason,
                 estimateCost(lc, accumulatedTokens));
     }
 
@@ -1911,6 +2157,66 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     }
 
     /**
+     * One fork's consecutive failures per tool, which {@code SubagentExecutionPolicy#getMaxConsecutiveToolFailures}
+     * bounds. A call that was run and came back an error adds one to its tool's count; one that came back a success
+     * resets
+     * it. A tool whose count has reached the limit is not run again in this fork, so its count never resets after
+     * that. Calls answered without being run — refused for a budget, a cut response or by this class — count for
+     * nothing. A permission denial does count: the call reached the tool pipeline and failed there.
+     *
+     * <p>
+     * A refusal is an error result, so an iteration whose calls were all refused counts for the
+     * {@link StalledIterationGuard}: a model that keeps calling a blocked tool ends {@code ERROR} once the guard trips.
+     *
+     * <p>
+     * Without a limit it records nothing. Touched only by the loop's thread — outcomes are recorded after a batch has
+     * been dispatched and collected — so it needs no synchronization.
+     */
+    private static final class ToolFailureStreaks {
+        /** The limit, or {@code null} for none. */
+        private final Integer limit;
+        private final Map<String, Integer> consecutiveFailures = new HashMap<>();
+
+        private ToolFailureStreaks(Integer limit) {
+            this.limit = limit;
+        }
+
+        private void record(String toolName, ToolUseResult result) {
+            if (limit == null) {
+                return;
+            }
+            if (result.isError()) {
+                consecutiveFailures.merge(toolName, 1, Integer::sum);
+            } else {
+                consecutiveFailures.remove(toolName);
+            }
+        }
+
+        private boolean isBlocked(String toolName) {
+            return limit != null && consecutiveFailures.getOrDefault(toolName, 0) >= limit;
+        }
+
+        private boolean blocksAny(List<ToolUse> toolUses) {
+            if (limit == null || consecutiveFailures.isEmpty()) {
+                return false;
+            }
+            for (ToolUse toolUse : toolUses) {
+                if (isBlocked(toolUse.getName())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /** The answer to a call of a blocked tool: an error result, so the transcript stays well formed. */
+        private static ToolUseResult refusal(ToolUse toolUse, Integer limit) {
+            return ToolUseResult.error(toolUse.getId(),
+                    "Not run: " + toolUse.getName() + " failed " + limit + " time(s) in a row in this task and will "
+                            + "not be run again in this task. Continue without it, or finish with what you have.");
+        }
+    }
+
+    /**
      * Immutable per-execution loop context. Bundles the values shared across the ReAct loop and tool execution so the
      * loop/tool helpers stay within the project's parameter-count budget. Built once per {@link #execute} call.
      */
@@ -1953,6 +2259,14 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         private final ExecutionDeadline deadline;
         /** The fork's tool-call budget and the count of calls run — the one mutable part, like the budget tracker. */
         private final ToolCallQuota toolCalls;
+        /** The fork's per-tool failure streaks, mutable like {@link #toolCalls}. */
+        private final ToolFailureStreaks toolFailures;
+        /**
+         * The transcript from before the grace round's reminder, while the round runs and has not produced its answer;
+         * {@code null} otherwise. A failure result hands it back instead of the live buffer. Written only on the loop's
+         * thread.
+         */
+        private SessionSnapshot beforeGrace;
 
         private LoopContext(Builder b) {
             this.context = b.context;
@@ -1977,12 +2291,19 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             this.policy = b.policy;
             this.deadline = b.deadline;
             this.toolCalls = b.toolCalls;
+            this.toolFailures = new ToolFailureStreaks(
+                    b.policy == null ? null : b.policy.getMaxConsecutiveToolFailures().orElse(null));
         }
 
         /** Whether the fork's policy caps tokens and the fork has spent them. */
         private boolean tokenBudgetExhausted() {
             return policy != null
                     && policy.getMaxTokens().filter(max -> budgetTracker.tokens().getTotalTokens() >= max).isPresent();
+        }
+
+        /** Whether the fork's policy asks for a grace round at an iteration limit. */
+        private boolean graceRoundEnabled() {
+            return policy != null && policy.isGraceRound();
         }
 
         /** Whether the fork has a deadline and it has passed. */

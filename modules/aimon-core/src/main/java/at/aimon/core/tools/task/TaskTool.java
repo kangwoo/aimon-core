@@ -47,6 +47,7 @@ import at.aimon.core.subagent.SubagentExecutionPolicyResolver;
 import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentPolicyCapability;
 import at.aimon.core.subagent.SubagentRegistry;
+import at.aimon.core.subagent.SubagentResultTruncation;
 import at.aimon.core.subagent.exception.SubagentNotFoundException;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.subagent.execution.SubagentOutcomePayload;
@@ -577,7 +578,7 @@ public class TaskTool extends AbstractTool {
                     description);
 
             // Format result
-            final var formattedResult = formatSubagentResult(result, subagentName, description);
+            final var formattedResult = formatSubagentResult(result, subagentName, description, policy);
 
             // The same outcome, structured, beside the text: what a wrapper reads instead of parsing it. Delivering the
             // result is not the subagent completing — the payload's completionReason and exitConfirmed say which.
@@ -735,15 +736,23 @@ public class TaskTool extends AbstractTool {
      * there would silently stop the CLI rendering subagent results. A {@code COMPLETED} result reads exactly as it
      * always has.
      *
+     * <p>
+     * The answer is bounded to {@link SubagentResultFormatter#DEFAULT_MAX_CHARS}, keeping its tail, unless the
+     * subagent's execution policy names another budget or another part to keep
+     * ({@link SubagentExecutionPolicy#getResultMaxChars()}, {@link SubagentExecutionPolicy#getResultTruncation()}).
+     *
      * @param result
      *            The subagent execution result
      * @param subagentName
      *            The subagent name
      * @param description
      *            The task description
+     * @param policy
+     *            The execution policy the subagent ran under, or null
      * @return A formatted string representation
      */
-    private String formatSubagentResult(SubagentExecutionResult result, String subagentName, String description) {
+    private String formatSubagentResult(SubagentExecutionResult result, String subagentName, String description,
+            SubagentExecutionPolicy policy) {
         final StringBuilder output = new StringBuilder();
 
         output.append("=== Subagent Task Result ===").append(Constants.NEWLINE);
@@ -758,7 +767,14 @@ public class TaskTool extends AbstractTool {
         // results are inlined here rather than recorded in a store, so the truncation marker carries no retrieval
         // pointer.
         output.append("Result:").append(Constants.NEWLINE);
-        output.append(SubagentResultFormatter.truncateTailKeep(result.getSummary(), null)).append(Constants.NEWLINE);
+        final int maxChars = policy == null
+                ? SubagentResultFormatter.DEFAULT_MAX_CHARS
+                : policy.getResultMaxChars().orElse(SubagentResultFormatter.DEFAULT_MAX_CHARS);
+        final SubagentResultTruncation truncation = policy == null
+                ? SubagentResultTruncation.TAIL
+                : policy.getResultTruncation();
+        output.append(SubagentResultFormatter.truncate(result.getSummary(), maxChars, truncation, null))
+                .append(Constants.NEWLINE);
 
         SubagentResultFormatter.completionReasonLine(result.getCompletionReason(), result.isSuccess())
                 .ifPresent(line -> output.append(line).append(Constants.NEWLINE));
