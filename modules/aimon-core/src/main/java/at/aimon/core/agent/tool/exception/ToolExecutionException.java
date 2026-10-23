@@ -176,7 +176,7 @@ public class ToolExecutionException extends ToolException {
      * size limit, an authorization the caller does not have.
      *
      * <p>
-     * {@code GenericTool} turns it into {@code ToolResult.error(message).notRetryable()}; see
+     * {@code GenericTool} turns it into {@code ToolResult.error(message, thisException).notRetryable()}; see
      * {@code ToolResult#notRetryable()} for what the framework does with the mark.
      *
      * @param message

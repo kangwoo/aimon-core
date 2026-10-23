@@ -3,6 +3,7 @@ package at.aimon.core.agent.tool.generic;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -14,7 +15,10 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.exception.ToolExecutionException;
+import at.aimon.core.agent.tool.execution.ToolExecutionResult;
+import at.aimon.core.agent.tool.execution.ToolExecutionResultConverter;
 import at.aimon.core.llm.ToolDefinition;
+import at.aimon.core.llm.ToolUseResult;
 
 /**
  * Tests for {@link GenericTool}.
@@ -217,6 +221,46 @@ class GenericToolTest {
             assertThat(new ToolExecutionException("x").isRetryable()).isTrue();
             org.assertj.core.api.Assertions.assertThatNullPointerException()
                     .isThrownBy(() -> ToolExecutionException.notRetryable(null));
+        }
+
+        @Test
+        void anAnticipatedFailureKeepsItsExceptionAndCauseOnTheResult() {
+            IOException root = new IOException("connection reset");
+            ToolExecutionException thrown = new ToolExecutionException("Search interrupted", root);
+
+            ToolResult result = failWith(thrown);
+
+            assertThat(result.getContent()).isEqualTo("Search interrupted");
+            assertThat(result.isRetryable()).isTrue();
+            assertThat(result.getException()).containsSame(thrown);
+            assertThat(result.getException().orElseThrow().getCause()).isSameAs(root);
+        }
+
+        @Test
+        void aNotRetryableFailureKeepsItsExceptionCauseAndMark() {
+            IOException root = new IOException("403 from upstream");
+            ToolExecutionException thrown = ToolExecutionException.notRetryable("AUTH_DENIED: no access", root);
+
+            ToolResult result = failWith(thrown);
+
+            assertThat(result.getContent()).isEqualTo("AUTH_DENIED: no access");
+            assertThat(result.isRetryable()).isFalse();
+            assertThat(result.getException()).containsSame(thrown);
+            assertThat(result.getException().orElseThrow().getCause()).isSameAs(root);
+        }
+
+        @Test
+        void theAttachedExceptionNeverReachesWhatTheModelReads() {
+            ToolResult result = failWith(
+                    ToolExecutionException.notRetryable("AUTH_DENIED: no access", new IOException("secret detail")));
+
+            ToolExecutionResult executed = ToolExecutionResult.of("tu-1", result);
+            ToolUseResult toModel = ToolExecutionResultConverter.toToolUseResult(executed);
+
+            assertThat(executed.getException()).containsInstanceOf(ToolExecutionException.class);
+            // equals covers every field a ToolUseResult has: exactly what a plain error carries, nothing more.
+            assertThat(toModel).isEqualTo(ToolUseResult.error("tu-1", "AUTH_DENIED: no access").notRetryable());
+            assertThat(toModel.getContent()).doesNotContain("secret detail");
         }
 
         @Test

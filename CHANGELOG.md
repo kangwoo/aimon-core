@@ -201,6 +201,16 @@ so, and a policy fork stops running it at once (above). Guide: `docs/features/to
   `PostToolContext#originalOutput()` / `#currentOutput()` expose it, and `ToolResult#toToolUseResult(String)` (new)
   turns a hook's rewritten output back into a `ToolUseResult` with it. MCP tool results are always retryable.
 
+### Fixed: `GenericTool` keeps the exception a `doExecute()` threw as a `ToolExecutionException`
+
+`GenericTool#execute` turned a `ToolExecutionException` into `ToolResult.error(message)` (`.notRetryable()` when so
+marked) and dropped the exception, so the cause passed to `new ToolExecutionException(message, cause)` or
+`ToolExecutionException.notRetryable(message, cause)` never reached `ToolResult#getException()` /
+`ToolExecutionResult#getException()`. The exception itself is now attached, cause chain included, on both paths — as
+the fallback for any other exception already did. What the model reads is unchanged: the content is still exactly the
+message, the not-retryable mark is kept, the exception is `@JsonIgnore` and never copied into a `ToolUseResult`. The
+log line is unchanged too (WARN, message only, no stack trace).
+
 ### Changed (behaviour change): `ToolDefinition` keeps the input schema's top-level key order
 
 `ToolDefinition` copied its input schema with `Map.copyOf`, whose iteration order is salted per JVM, so the top-level

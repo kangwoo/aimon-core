@@ -46,7 +46,9 @@ import at.aimon.core.llm.ToolDefinition;
  * Two paths, and the difference matters to the model. A {@link ToolExecutionException} is a failure the tool
  * anticipated — an unparseable regex, an interrupted search — and its message reaches the model verbatim, because the
  * tool wrote it for the model. Anything else is a bug, is logged with its stack trace, and reaches the model prefixed
- * as unexpected. Do not throw {@code ToolExecutionException} for a parameter problem the record could have expressed;
+ * as unexpected. Either way the thrown exception is attached to the error result ({@link ToolResult#getException()}),
+ * so a {@code ToolExecutionException}'s cause is not lost; it never reaches the model. Do not throw
+ * {@code ToolExecutionException} for a parameter problem the record could have expressed;
  * declare it in the record instead and let binding say it.
  *
  * <h2>Usage Example</h2>
@@ -182,8 +184,11 @@ public abstract class GenericTool<I, O> extends AbstractTool {
             }
             return result;
         } catch (ToolExecutionException e) {
+            // An anticipated failure: WARN with the message only, no stack trace. The exception itself — and through
+            // it the cause the tool wrapped — rides on the result for whoever inspects it; the model still reads only
+            // the message, since the exception never reaches a ToolUseResult.
             log.warn("Tool '{}' failed: {}", name, e.getMessage());
-            final ToolResult failed = ToolResult.error(e.getMessage());
+            final ToolResult failed = ToolResult.error(e.getMessage(), e);
             return e.isRetryable() ? failed : failed.notRetryable();
         } catch (Exception e) {
             log.error("Unexpected error in tool '{}': {}", name, e.getMessage(), e);
