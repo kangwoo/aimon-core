@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -130,6 +131,44 @@ class DefaultSubagentExecutionManagerPolicyTest {
                 .doesNotContain("MAX_TOOL_CALLS");
         assertThat(executor.calls).hasValue(0);
         assertThat(manager(executor).supportedPolicyCapabilities()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a result schema the executor cannot offer a report tool for is refused before the fork runs")
+    void structuredResultNeedsTheCapability() {
+        final EnumSet<SubagentPolicyCapability> withoutIt = EnumSet.allOf(SubagentPolicyCapability.class);
+        withoutIt.remove(SubagentPolicyCapability.STRUCTURED_RESULT);
+        final RecordingExecutor executor = new RecordingExecutor(withoutIt, (c, r) -> success());
+
+        final SubagentExecutionResult result = manager(executor).execute(launch()
+                .executionPolicy(
+                        SubagentExecutionPolicy.builder("worker").resultSchema(Map.of("type", "object")).build())
+                .build(), "task-1", NAME, "review", "");
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.getErrorMessage()).contains("cannot run under its execution policy");
+        assertThat(executor.calls).hasValue(0);
+    }
+
+    @Test
+    @DisplayName("a result schema for a subagent backed by a code behavior is refused like any other policy")
+    void codeBehaviorRefusesAResultSchema() {
+        final InMemorySubagentBehaviorRegistry behaviors = new InMemorySubagentBehaviorRegistry();
+        final AtomicInteger behaviorRuns = new AtomicInteger();
+        behaviors.register(NAME, (ctx, req, support) -> {
+            behaviorRuns.incrementAndGet();
+            return support.success("done");
+        });
+
+        final SubagentExecutionResult result = new DefaultSubagentExecutionManager(RecordingExecutor.answering(),
+                bgPool, null, behaviors)
+                .execute(launch().executionPolicy(
+                        SubagentExecutionPolicy.builder("worker").resultSchema(Map.of("type", "object")).build())
+                        .build(), "task-1", NAME, "review", "");
+
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.getErrorMessage()).contains("cannot run under its execution policy");
+        assertThat(behaviorRuns).hasValue(0);
     }
 
     @Test

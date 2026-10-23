@@ -30,10 +30,16 @@ import at.aimon.core.subagent.SubagentExecutionPolicy;
  * <li>{@link #TRUNCATED} — the final answer was cut off at {@code max_tokens}.
  * <li>{@link #ITERATIONS}, {@link #TOOL_CALLS}, {@link #TOTAL_TOKENS} — what the run spent.
  * <li>{@link #POLICY_ROLE} — the execution policy it ran under, when there was one.
+ * <li>{@link #STRUCTURED_RESULT} — the structured result the run reported, whole, when its policy asked for one and
+ * it reported one ({@link SubagentExecutionResult#getStructuredResult()}).
+ * <li>{@link #STRUCTURED_RESULT_MISSING} — present only when the policy required a structured result: {@code true}
+ * when the run reported none, which makes its work incomplete whatever the completion reason says.
  * </ul>
  *
  * <p>
- * Values are strings, booleans and integers only.
+ * Values are strings, booleans and integers, except {@link #STRUCTURED_RESULT}, which is the reported payload: an
+ * unmodifiable map of JSON values. A run without a result schema in its policy carries neither of the last two keys,
+ * so its payload is what it always was.
  */
 public final class SubagentOutcomePayload {
 
@@ -63,6 +69,10 @@ public final class SubagentOutcomePayload {
     public static final String TOTAL_TOKENS = "totalTokens";
     /** The execution policy's role, when the run had a policy (string). */
     public static final String POLICY_ROLE = "policyRole";
+    /** The reported structured result (map of JSON values), when there is one. */
+    public static final String STRUCTURED_RESULT = "structuredResult";
+    /** Whether a required structured result is missing (boolean), when one was required. */
+    public static final String STRUCTURED_RESULT_MISSING = "structuredResultMissing";
 
     private SubagentOutcomePayload() {
     }
@@ -91,6 +101,10 @@ public final class SubagentOutcomePayload {
         payload.put(ITERATIONS, result.getIterationCount());
         payload.put(TOOL_CALLS, result.getToolCallCount());
         payload.put(TOTAL_TOKENS, result.getMetadata().getTokenUsage().getTotalTokens());
+        if (requiresStructuredResult(policy, result)) {
+            result.getStructuredResult().ifPresent(structured -> payload.put(STRUCTURED_RESULT, structured));
+            payload.put(STRUCTURED_RESULT_MISSING, result.getStructuredResult().isEmpty());
+        }
         return Map.copyOf(payload);
     }
 
@@ -107,6 +121,22 @@ public final class SubagentOutcomePayload {
      */
     public static Map<String, Object> launched(String taskId, String subagentName, SubagentExecutionPolicy policy) {
         return Map.copyOf(base(taskId, subagentName, policy, true));
+    }
+
+    /**
+     * Whether a structured result was required of a run: its policy has a result schema, or its result says so. The
+     * policy is read too because a result the manager made without the fork returning — one whose exit is unconfirmed
+     * — has no executor to have said so.
+     *
+     * @param policy
+     *            the policy it ran under, or null
+     * @param result
+     *            its result (must not be null)
+     * @return whether a structured result was required
+     */
+    public static boolean requiresStructuredResult(SubagentExecutionPolicy policy, SubagentExecutionResult result) {
+        Objects.requireNonNull(result, "result cannot be null");
+        return result.isStructuredResultRequired() || policy != null && policy.requiresStructuredResult();
     }
 
     private static Map<String, Object> base(String taskId, String subagentName, SubagentExecutionPolicy policy,

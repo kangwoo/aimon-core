@@ -741,6 +741,13 @@ public class TaskTool extends AbstractTool {
      * subagent's execution policy names another budget or another part to keep
      * ({@link SubagentExecutionPolicy#getResultMaxChars()}, {@link SubagentExecutionPolicy#getResultTruncation()}).
      *
+     * <p>
+     * Under a policy with a result schema, the structured result the subagent reported follows the answer whole, as
+     * one line of JSON — or a {@code Structured result: MISSING} line when it reported none
+     * ({@link SubagentResultFormatter#structuredResultBlock}). Both go before the {@code Completion reason:} line,
+     * which
+     * stays the last line the CLI looks for.
+     *
      * @param result
      *            The subagent execution result
      * @param subagentName
@@ -775,6 +782,9 @@ public class TaskTool extends AbstractTool {
                 : policy.getResultTruncation();
         output.append(SubagentResultFormatter.truncate(result.getSummary(), maxChars, truncation, null))
                 .append(Constants.NEWLINE);
+        // Outside the answer's budget and never truncated; before the reason line, which the CLI reads as the last.
+        SubagentResultFormatter.structuredResultBlock(result.getStructuredResult().orElse(null),
+                SubagentOutcomePayload.requiresStructuredResult(policy, result)).ifPresent(output::append);
 
         SubagentResultFormatter.completionReasonLine(result.getCompletionReason(), result.isSuccess())
                 .ifPresent(line -> output.append(line).append(Constants.NEWLINE));

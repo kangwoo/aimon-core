@@ -571,6 +571,14 @@ TaskTool task = new TaskTool(model, subagentRegistry, toolRegistry, hookRegistry
 - `resultMaxChars(n)` · `resultTruncation(HEAD | TAIL | HEAD_AND_TAIL)` — foreground `Task` 결과로 부모에게 넘기는
   답의 길이와, 넘칠 때 남길 쪽. 기본은 32,000자 · `TAIL` 입니다. finding 을 앞에 쓰는 서브에이전트라면 `HEAD` 를
   씁니다.
+- `resultSchema(Map)` · `resultPayloadMaxChars(n)` — **잘리지 않는 구조화 결과**. 서브에이전트는 입력 schema 가
+  이 schema 인 `ReportResult` 도구를 받고(`allowed-tools` 와 무관), 맞지 않는 payload 는 고칠 내용과 함께 오류로
+  돌려받습니다. 마지막으로 통과한 payload 가 `SubagentExecutionResult#getStructuredResult()`, render payload 의
+  `structuredResult`, `Task` 텍스트의 JSON 블록으로 부모에게 **그대로** 갑니다(기본 상한 100,000자). 보고하지
+  않으면 `Structured result: MISSING` 줄과 `structuredResultMissing=true` 가 붙습니다 — 그 작업은 미완료입니다.
+  보고는 도구 호출 한도에 세지 않고, grace round 에서도 받습니다(잘린 응답의 보고는 제외). 검사는 모양(required·
+  type·enum·미지 키)만 보며, 숫자는 schema 에 맞춰 정규화됩니다(`3.0` → `3`). 코드는 텍스트가 아니라 render payload 를
+  읽으세요.
 
 정책 없는 서브에이전트는 이전과 똑같이 실행됩니다. 보장 범위·한계(token overshoot, 협조하지 않는 I/O, 사용량
 합산 규칙)는 [실행 정책 설계](../../design/subagent/execution-policy.md)를 참조하세요.

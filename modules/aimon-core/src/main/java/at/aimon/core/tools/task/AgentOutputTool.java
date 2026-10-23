@@ -382,6 +382,10 @@ public class AgentOutputTool extends AbstractTool {
                 : null;
         output.append("Result:").append(Constants.NEWLINE);
         output.append(SubagentResultFormatter.truncateTailKeep(result.getSummary(), pointer)).append(Constants.NEWLINE);
+        // The structured result, whole, as the foreground Task result shows it — before the reason line.
+        SubagentResultFormatter
+                .structuredResultBlock(result.getStructuredResult().orElse(null), result.isStructuredResultRequired())
+                .ifPresent(output::append);
         // After the result, as the foreground Task result places it (L-25): Status: SUCCESS alone reads a cut answer
         // as a whole one.
         SubagentResultFormatter.completionReasonLine(result.getCompletionReason(), result.isSuccess())

@@ -1,8 +1,11 @@
 package at.aimon.core.subagent.task.codec;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -28,6 +31,20 @@ import at.aimon.core.subagent.task.TaskResult;
  * ({@link CompletionReason#fromWireName(String, boolean)}, which the turn-side decoders share).
  *
  * <p>
+ * <b>Structured result.</b> A reported payload is written as the JSON object {@code structuredResult}, and
+ * {@code structuredResultRequired} only when it is {@code true}, so a result without either encodes exactly as it did
+ * before they existed. The format version stays {@value #FORMAT_VERSION}: an older node ignores the two fields — it
+ * shows the text without the payload rather than failing to read the record, which a version bump would make it do —
+ * and this one reads a record without them as reporting none and requiring none. A {@code structuredResult} that is
+ * not an object reads as absent.
+ *
+ * <p>
+ * A round trip keeps the payload's JSON value but not necessarily its Java number types: a number is read back as
+ * the narrowest of {@code Integer}, {@code Long} and {@code BigInteger} that holds it, or as a {@code Double}. A
+ * {@code Long} that fits an {@code int} comes back an {@code Integer}, and a {@code BigDecimal} a {@code Double}, so a
+ * decoded {@link TaskResult} need not be {@code equals} to the one encoded when its payload held such numbers.
+ *
+ * <p>
  * Stateless and thread-safe: the shared {@link ObjectMapper} is used only for tree building and text I/O.
  */
 public final class JsonTaskResultCodec implements TaskResultCodec {
@@ -46,6 +63,10 @@ public final class JsonTaskResultCodec implements TaskResultCodec {
     private static final String FIELD_DURATION_MILLIS = "durationMillis";
     private static final String FIELD_TOTAL_TOKENS = "totalTokens";
     private static final String FIELD_SUMMARY_TRUNCATED = "summaryTruncated";
+    private static final String FIELD_STRUCTURED_RESULT = "structuredResult";
+    private static final String FIELD_STRUCTURED_RESULT_REQUIRED = "structuredResultRequired";
+    private static final TypeReference<LinkedHashMap<String, Object>> PAYLOAD_TYPE = new TypeReference<>() {
+    };
 
     @Override
     public String encode(TaskResult result) {
@@ -61,6 +82,11 @@ public final class JsonTaskResultCodec implements TaskResultCodec {
             root.put(FIELD_DURATION_MILLIS, result.getDurationMillis());
             root.put(FIELD_TOTAL_TOKENS, result.getTotalTokens());
             root.put(FIELD_SUMMARY_TRUNCATED, result.isSummaryTruncated());
+            result.getStructuredResult()
+                    .ifPresent(payload -> root.set(FIELD_STRUCTURED_RESULT, MAPPER.valueToTree(payload)));
+            if (result.isStructuredResultRequired()) {
+                root.put(FIELD_STRUCTURED_RESULT_REQUIRED, true);
+            }
             return MAPPER.writeValueAsString(root);
         } catch (JsonProcessingException e) {
             throw new TaskResultCodecException("Failed to encode task result: " + e.getMessage(), e);
@@ -87,7 +113,9 @@ public final class JsonTaskResultCodec implements TaskResultCodec {
                     .iterationCount(root.path(FIELD_ITERATION_COUNT).asInt(0))
                     .durationMillis(root.path(FIELD_DURATION_MILLIS).asLong(0L))
                     .totalTokens(root.path(FIELD_TOTAL_TOKENS).asInt(0))
-                    .summaryTruncated(root.path(FIELD_SUMMARY_TRUNCATED).asBoolean(false)).build();
+                    .summaryTruncated(root.path(FIELD_SUMMARY_TRUNCATED).asBoolean(false))
+                    .structuredResult(structuredResult(root))
+                    .structuredResultRequired(root.path(FIELD_STRUCTURED_RESULT_REQUIRED).asBoolean(false)).build();
         } catch (TaskResultCodecException e) {
             throw e;
         } catch (Exception e) {
@@ -98,6 +126,11 @@ public final class JsonTaskResultCodec implements TaskResultCodec {
     private static String optionalText(JsonNode root, String field) {
         final JsonNode value = root.get(field);
         return value == null || value.isNull() || !value.isValueNode() ? null : value.asText();
+    }
+
+    private static Map<String, Object> structuredResult(JsonNode root) {
+        final JsonNode value = root.get(FIELD_STRUCTURED_RESULT);
+        return value == null || !value.isObject() ? null : MAPPER.convertValue(value, PAYLOAD_TYPE);
     }
 
     private static CompletionReason decodeCompletionReason(JsonNode root, boolean success) {

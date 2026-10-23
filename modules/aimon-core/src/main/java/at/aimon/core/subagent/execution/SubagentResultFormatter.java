@@ -1,5 +1,6 @@
 package at.aimon.core.subagent.execution;
 
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -47,7 +48,40 @@ public final class SubagentResultFormatter {
     public static final String MAX_ITERATIONS_GRACE_HINT = "the subagent reached its iteration limit and wrote up "
             + "what it had in a final round without tools; its work is incomplete";
 
+    /** The line that opens a structured result block in a subagent's result text. */
+    public static final String STRUCTURED_RESULT_HEADER = "Structured result (validated against this task's schema; "
+            + "complete, never truncated):";
+
+    /** The line that says a required structured result was not reported. */
+    public static final String STRUCTURED_RESULT_MISSING_LINE = "Structured result: MISSING (this task requires a "
+            + "structured result and the subagent did not report one; treat its work as incomplete)";
+
     private SubagentResultFormatter() {
+    }
+
+    /**
+     * The structured result block of a subagent's result text: what goes after its (possibly truncated) answer and
+     * before its {@code Completion reason:} line — the reported payload as one line of JSON in a fenced block, never
+     * truncated; the {@link #STRUCTURED_RESULT_MISSING_LINE} when one was required and none was reported; nothing
+     * otherwise. Shared by the foreground {@code Task} result and the background {@code AgentOutput} result so the two
+     * say it the same way.
+     *
+     * <p>
+     * The JSON is written on one line, so no line of it can start with the fence and close the block early, whatever
+     * text the payload quotes.
+     *
+     * @param structuredResult
+     *            the reported payload, or null
+     * @param required
+     *            whether one was required
+     * @return the block, each line ending with a newline, or empty
+     */
+    public static Optional<String> structuredResultBlock(Map<String, Object> structuredResult, boolean required) {
+        if (structuredResult != null) {
+            return Optional.of(STRUCTURED_RESULT_HEADER + "\n```json\n"
+                    + StructuredResultReport.toJson(structuredResult) + "\n```\n");
+        }
+        return required ? Optional.of(STRUCTURED_RESULT_MISSING_LINE + "\n") : Optional.empty();
     }
 
     /**
