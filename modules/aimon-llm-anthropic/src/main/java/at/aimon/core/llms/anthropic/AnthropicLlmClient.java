@@ -32,7 +32,6 @@ import com.anthropic.models.messages.StopReason;
 import com.anthropic.models.messages.ThinkingConfigParam;
 import com.anthropic.models.messages.ToolUnion;
 import com.anthropic.models.messages.ToolUseBlock;
-import com.anthropic.models.messages.Usage;
 import com.fasterxml.jackson.core.type.TypeReference;
 
 import at.aimon.core.agent.prompt.SystemPromptParts;
@@ -1024,7 +1023,7 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
 
         final List<ReasoningTrace> traces = AnthropicOutputBlocks.resolve(orderedBlocks, providerName);
         return LlmResponse.of(textContent.toString(), toolUses, tokenUsage, neutralStopReason)
-                .withReasoningTraces(traces);
+                .withReasoningTraces(traces).withServedBy(AnthropicUsages.model(result), servedTier(result));
     }
 
     /**
@@ -1056,16 +1055,20 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
      */
     private TokenUsage extractTokenUsage(com.anthropic.models.messages.Message result) {
         try {
-            Usage usage = result.usage();
-            int inputTokens = (int) usage.inputTokens();
-            int outputTokens = (int) usage.outputTokens();
-            int totalTokens = inputTokens + outputTokens;
-            // Thinking tokens are billed as output tokens, so they are contained in outputTokens rather than added
-            // to it — the fourth counter reports the breakdown and changes no total.
-            return TokenUsage.of(inputTokens, outputTokens, totalTokens, AnthropicUsages.thinkingTokens(usage));
+            // The prompt count is restored to the whole input context (input_tokens excludes the cache) — see
+            // AnthropicUsages.
+            return AnthropicUsages.toTokenUsage(result.usage());
         } catch (Exception e) {
             log.debug("Could not extract token usage: {}", e.getMessage());
             return TokenUsage.empty();
+        }
+    }
+
+    private static at.aimon.core.llm.ServiceTier servedTier(com.anthropic.models.messages.Message result) {
+        try {
+            return AnthropicUsages.serviceTier(result.usage());
+        } catch (RuntimeException e) {
+            return null;
         }
     }
 }

@@ -81,8 +81,38 @@ class OpenAIResponsesUsageTest {
         final TokenUsage usage = usageOf("{\"input_tokens\":100,\"input_tokens_details\":{\"cached_tokens\":10},"
                 + "\"output_tokens\":50,\"output_tokens_details\":{\"reasoning_tokens\":30},\"total_tokens\":150}");
 
-        assertThat(usage).isEqualTo(TokenUsage.of(100, 50, 150, 30));
+        assertThat(usage).isEqualTo(TokenUsage.of(100, 50, 150, 30).withCacheTokens(10, 0));
         assertThat(usage.getReasoningTokens()).isEqualTo(30);
+    }
+
+    @Test
+    @DisplayName("cached_tokens is a subset of input_tokens: the prompt stays the whole input, writes are a measured 0")
+    void cachedTokensAreASubsetOfTheInput() {
+        final TokenUsage usage = usageOf("{\"input_tokens\":300000,\"input_tokens_details\":{\"cached_tokens\":120000},"
+                + "\"output_tokens\":50,\"total_tokens\":300050}");
+
+        assertThat(usage.getPromptTokens()).isEqualTo(300000);
+        assertThat(usage.getCacheReadTokens()).hasValue(120000);
+        assertThat(usage.getCacheWriteTokens()).hasValue(0);
+    }
+
+    @Test
+    @DisplayName("a reported cached_tokens of 0 is a measured zero")
+    void zeroCachedTokensIsMeasured() {
+        final TokenUsage usage = usageOf("{\"input_tokens\":100,\"input_tokens_details\":{\"cached_tokens\":0},"
+                + "\"output_tokens\":50,\"total_tokens\":150}");
+
+        assertThat(usage.getCacheReadTokens()).hasValue(0);
+        assertThat(usage.getCacheWriteTokens()).hasValue(0);
+    }
+
+    @Test
+    @DisplayName("no input_tokens_details leaves both cache counters unmeasured, not zero")
+    void missingCacheDetailsIsUnmeasured() {
+        final TokenUsage usage = usageOf("{\"input_tokens\":100,\"output_tokens\":50,\"total_tokens\":150}");
+
+        assertThat(usage.getCacheReadTokens()).isEmpty();
+        assertThat(usage.getCacheWriteTokens()).isEmpty();
     }
 
     @Test

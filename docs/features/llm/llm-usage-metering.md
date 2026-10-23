@@ -12,6 +12,8 @@
 | `LlmUsageRecorder` | 호출 결과(provider/model/TokenUsage + metadata) 를 받는 싱크 인터페이스 |
 | `MeteringLlmClient` | `LlmClient` 데코레이터. 응답을 가로채 recorder 로 이벤트 발행 |
 | `InMemoryLlmUsageRecorder` | 멀티인스턴스 대응 원칙에 따른 기본 in-memory 구현 |
+| `LlmUsageEvent` | 호출 1건의 측정값(실제 tier, cache 카운터, 실제 모델, 완료 시각·latency) — §4 |
+| `ServiceTier` | 공급자가 실제로 적용한 처리 tier 의 중립 표현 |
 
 provider 구현체(`OpenAILlmClient`, `AnthropicLlmClient`) 는 metering 을 알 필요가 없다. 데코레이터로 감싸기만 하면 된다.
 
@@ -144,9 +146,77 @@ WikiSearchStrategy strategy = LlmRerankSearchStrategy.builder()
 
 이 tags 는 builder 로 지정한 정적 metadata 위에 `LlmCallMetadata.withTags(...)` 로 머지되므로, caller-supplied 기본 tags 와 per-call scope tags 가 모두 보존된다. `wiki.context` 는 실행 컨텍스트마다 고유하므로 high-cardinality 값임에 유의 — 외부 recorder(Prometheus 등) 에서 Prometheus 라벨로 직접 쓰기보다는 로그/트레이스 연결용으로 사용하는 편이 안전하다.
 
-## 4. 커스텀 Recorder
+## 4. 호출별 측정값: tier · cache · 시각
 
-`InMemoryLlmUsageRecorder` 외에 Prometheus, OpenTelemetry, DB 등으로 보내려면 `LlmUsageRecorder` 를 직접 구현하면 된다. 인터페이스는 한 메서드뿐이다:
+호출 단위로 값을 매기려면 토큰 수만으로는 모자란다. 같은 모델이라도 **실제로 적용된 service tier**,
+**cache 에서 읽은/쓴 입력**, **가격이 적용되는 시점**에 따라 값이 달라진다. `MeteringLlmClient` 는 이것들을
+`LlmUsageEvent` 에 담아 `LlmUsageRecorder.record(LlmUsageEvent)` 로 넘긴다.
+
+| 값 | 출처 | 보고되지 않았을 때 |
+|----|------|------------------|
+| `getServiceTier()` | 응답이 보고한 tier — 요청이 아니다 | 비어 있음 (`standard` 로 가정하지 않는다) |
+| `getUsage().getCacheReadTokens()` | 응답의 cache-read 카운터 | 비어 있음 (`0` 으로 가정하지 않는다) |
+| `getUsage().getCacheWriteTokens()` | 응답의 cache-write 카운터 | 비어 있음 |
+| `getServedModel()` | 응답이 보고한 모델 (alias 가 풀린 snapshot 등) | 비어 있음 — `getModel()` 은 요청 모델로 대체 |
+| `getRequestedModel()` | 요청의 `LlmModel`, 없으면 클라이언트 기본 모델 | 비어 있음 |
+| `getStartedAt()` / `getCompletedAt()` / `getLatency()` | `MeteringLlmClient` 의 `Clock` | 항상 있음 |
+
+IMPORTANT: `TokenUsage.getPromptTokens()` 는 **cache 를 포함한 전체 input context** 다. cache-read 와 cache-write 는
+prompt 에 더해지는 값이 아니라 그 **부분집합**이다. 공급자가 uncached input 만 보고하면(Anthropic 의
+`input_tokens`) provider 모듈이 두 cache 카운터를 더해 전체를 복원한다. 그래서 이 값으로 context window 나
+context-length 가격 구간(예: 272000 / 272001 경계)을 고를 수 있다. reasoning 토큰과 마찬가지로 cache 토큰을 따로
+더해 과금하면 두 번 청구된다.
+
+**미측정과 측정된 0 은 다르다.** cache 카운터는 `OptionalInt` 이고, 비어 있으면 "공급자가 알려주지 않았다"는 뜻이다.
+가격을 매길 수 없는 호출을 무료나 uncached 로 매기지 말 것. `TokenUsage.add` 도 한쪽이 미측정이면 합을 미측정으로
+둔다(prompt 가 0 인 쪽 — `TokenUsage.empty()` 누산 시작값 — 은 cache 도 자명하게 0 이므로 예외).
+
+### 4.1 공급자별 정규화
+
+정규화는 provider 모듈이 **명시적으로** 한다. 중립 tier 는 `standard`, `fast`, `flex`, `batch` 넷이며
+(`ServiceTier.isNormalized()`), 대응하는 값이 없는 tier 는 추측하지 않고 보고된 그대로(소문자) 보존한다.
+
+| 공급자 | tier | cache-read | cache-write |
+|--------|------|-----------|-------------|
+| OpenAI (Responses / Chat) | `default`→`standard`, `priority`→`fast`, `flex`, `batch`; `auto` 는 미보고; 그 외(`scale` 등) 보존 | `input_tokens_details.cached_tokens` (`prompt_tokens_details.cached_tokens`) | cache-read 가 보고되면 측정된 `0` (OpenAI 는 cache 쓰기를 과금하지 않는다) |
+| Anthropic | `standard`, `batch`; `priority` 는 `fast` 가 아니므로 그대로 보존 | `cache_read_input_tokens` | `cache_creation_input_tokens`. 단 1시간 TTL 쓰기가 있으면 미측정 — 단일 cache-write 요율로 값을 매길 수 없다 |
+
+Anthropic 의 1시간 TTL 쓰기 토큰도 prompt 에는 포함된다. 처리된 입력이기 때문이다. 빠지는 것은 cache-write 분류뿐이다.
+
+### 4.2 호출 경로와 기록 횟수
+
+- **blocking / streaming / cancellation 토큰이 있는 경로** 모두 같은 `LlmResponse` 에서 같은 이벤트를 만든다.
+  streaming 은 최종 응답에서 **한 번만** 기록한다 — chunk 마다 기록하지 않는다.
+- **retry**: `MeteringLlmClient` 는 자신을 통과한 호출마다 기록한다. 프레임워크의 retry 루프(`LlmCallGateway`)는
+  클라이언트 바깥에 있으므로, 응답이나 abort 를 만든 시도마다 이벤트가 하나씩 생긴다. SDK 내부 재시도(응답 전의
+  429/5xx)는 보이지 않으며 과금되지도 않는다.
+- **실패와 취소**: 예외로 끝난 호출은 기록하지 않는다. 단, 비용이 생겼을 수 있는 경우 — 첫 chunk 가 도착한 뒤
+  실패하거나 취소된 stream, 또는 전송 후 cancellation 토큰으로 끊긴 호출 — 는 usage 가 **비어 있는**
+  `Outcome.ABORTED` 이벤트로 기록한다. 부분 카운트는 전체 청구서처럼 값이 매겨지므로 싣지 않는다. 진입 시점에 이미
+  취소된 토큰은 요청이 나가지 않으므로 기록하지 않는다.
+
+### 4.3 기존 recorder 와의 호환
+
+`record(LlmUsageEvent)` 는 default 메서드다. 4-인자 `record(...)` 만 구현한 기존 recorder 는 그대로 동작하며,
+완료된 호출을 다음 형태로 받는다.
+
+- `model` 인자는 이전과 같이 **요청 모델**이다 — 기존 집계 키가 바뀌지 않는다. 실제 모델은 이벤트에만 있다.
+- `metadata` 의 tags 에 측정값이 실린다(`LlmUsageEvent.toRecordingMetadata()`).
+
+| Tag | 값 | 측정되지 않았을 때 |
+|-----|----|------------------|
+| `service_tier` | 정규화된 tier | 태그 없음 |
+| `cached_input_tokens` | 0 이상의 정수 문자열 | 태그 없음 |
+| `cache_write_tokens` | 0 이상의 정수 문자열 | 태그 없음 |
+
+호출자가 요청 metadata 에 같은 키(및 파생 키 `cache_usage_known`, `context_input_tokens`)를 넣었더라도
+**기록 직전에 제거**되므로 측정값으로 오인될 수 없다. 호출자가 넘긴 metadata 객체 자체는 바뀌지 않는다.
+`ABORTED` 이벤트는 보고할 usage 가 없으므로 4-인자 메서드로 전달되지 않는다 — 이전에 실패한 호출이 그랬던 것과 같다.
+abort 된 호출까지 세려면 `record(LlmUsageEvent)` 를 override 한다.
+
+## 5. 커스텀 Recorder
+
+`InMemoryLlmUsageRecorder` 외에 Prometheus, OpenTelemetry, DB 등으로 보내려면 `LlmUsageRecorder` 를 직접 구현하면 된다. 구현해야 하는 메서드는 하나뿐이다(tier·cache·시각이 필요하면 §4 의 `record(LlmUsageEvent)` 를 함께 override 한다):
 
 ```java
 public final class PrometheusLlmUsageRecorder implements LlmUsageRecorder {
@@ -168,7 +238,7 @@ public final class PrometheusLlmUsageRecorder implements LlmUsageRecorder {
 
 구현체는 별도 모듈에 두고, CLI(또는 사용 측 애플리케이션)에서 wiring 할 때만 의존하도록 한다 — `aimon-core` 는 인터페이스만 안다(멀티인스턴스 설계 원칙).
 
-## 5. 베스트 프랙티스
+## 6. 베스트 프랙티스
 
 - **traceId 는 외부 상관관계 ID와 일치시키기**: 게이트웨이/CLI 가 받는 요청 ID 를 그대로 넣으면 LLM 사용량을 외부 로그와 join 할 수 있다.
 - **principal 은 `at.aimon.core.base.Principal` 사용**: user/group/system/service 구분이 필요하면 그대로 사용. 단순 사용자 ID 만 필요하면 `tags` 에 넣는 편이 가볍다.
@@ -176,9 +246,11 @@ public final class PrometheusLlmUsageRecorder implements LlmUsageRecorder {
 - **데코레이터는 한 겹만**: `MeteringLlmClient(MeteringLlmClient(...))` 처럼 중첩하면 이벤트가 중복 발생한다. 가장 바깥쪽 한 겹에서만 metering 한다.
 - **recorder 예외는 호출 흐름을 깨지 않는다**: `MeteringLlmClient` 가 RuntimeException 을 잡아 WARN 로깅 후 응답을 그대로 반환한다. metering 백엔드 장애가 LLM 호출을 실패시키지 않는다.
 
-## 6. 관련 코드
+## 7. 관련 코드
 
 - 인터페이스/값 객체: `at.aimon.core.llm.LlmCallMetadata`, `at.aimon.core.llm.LlmClient` (overload)
-- Recorder 패키지: `at.aimon.core.llm.usage.*`
+- Recorder 패키지: `at.aimon.core.llm.usage.*` (`LlmUsageEvent` 포함)
+- 측정값 타입: `at.aimon.core.llm.TokenUsage` (cache 카운터), `at.aimon.core.llm.ServiceTier`, `LlmResponse.getServedModel()` / `getServiceTier()`
+- 공급자 정규화: `OpenAiServedBy`, `OpenAiResponseUsages`, `OpenAiChatUsages` (`aimon-llm-openai`), `AnthropicUsages` (`aimon-llm-anthropic`)
 - 헬퍼: `at.aimon.core.llm.usage.LlmCallMetadataResolver` — caller 메타데이터에 자동 보강 필드를 머지
 - 통합 지점: `OrcaAgentExecutor`, `DefaultSubagentExecutor`, `LlmRerankSearchStrategy`, `LlmWikiPageGenerator`

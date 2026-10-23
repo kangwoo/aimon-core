@@ -18,6 +18,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.ReasoningTrace;
+import at.aimon.core.llm.ServiceTier;
 import at.aimon.core.llm.StopReason;
 import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolUse;
@@ -58,6 +59,8 @@ public final class ChunkAggregator {
     private final List<ReasoningTrace> reasoningTraces = new ArrayList<>();
 
     private TokenUsage tokenUsage;
+    private String servedModel;
+    private ServiceTier serviceTier;
     private Optional<String> finishReason = Optional.empty();
     private StopReason stopReason = StopReason.UNKNOWN;
     private boolean closed;
@@ -140,6 +143,32 @@ public final class ChunkAggregator {
             }
             if (argumentsFragment != null && !argumentsFragment.isEmpty()) {
                 slot.arguments.append(argumentsFragment);
+            }
+        }
+    }
+
+    /**
+     * Records the model and service tier the provider reports serving this stream with.
+     *
+     * <p>
+     * Providers report these on different events (Anthropic on {@code message_start}, OpenAI on the terminal
+     * {@code response.completed}), so this may be called at any point, more than once; a {@code null} argument leaves
+     * the value already recorded in place rather than erasing it. The values are attached to the response
+     * {@link #toLlmResponse()} builds — see {@link LlmResponse#withServedBy(String, ServiceTier)}.
+     *
+     * @param model
+     *            the served model, or null when this event did not carry one
+     * @param tier
+     *            the applied tier, already normalized by the provider module, or null when this event did not carry
+     *            one
+     */
+    public void recordServedBy(String model, ServiceTier tier) {
+        synchronized (lock) {
+            if (model != null && !model.isBlank()) {
+                this.servedModel = model;
+            }
+            if (tier != null) {
+                this.serviceTier = tier;
             }
         }
     }
@@ -233,6 +262,8 @@ public final class ChunkAggregator {
         final StopReason reason;
         final List<ToolCallAccumulator> slots;
         final List<ReasoningTrace> traces;
+        final String model;
+        final ServiceTier tier;
         synchronized (lock) {
             if (!closed) {
                 throw new IllegalStateException("Aggregator has not received STREAM_END yet");
@@ -243,6 +274,8 @@ public final class ChunkAggregator {
             reason = stopReason;
             slots = new ArrayList<>(toolCalls.values());
             traces = List.copyOf(reasoningTraces);
+            model = servedModel;
+            tier = serviceTier;
         }
         final List<ToolUse> toolUses = new ArrayList<>(slots.size());
         for (ToolCallAccumulator slot : slots) {
@@ -252,7 +285,8 @@ public final class ChunkAggregator {
             }
             toolUses.add(ToolUse.of(slot.id, slot.name, parseArguments(slot.arguments.toString())));
         }
-        return LlmResponse.of(text, Collections.unmodifiableList(toolUses), usage, reason).withReasoningTraces(traces);
+        return LlmResponse.of(text, Collections.unmodifiableList(toolUses), usage, reason).withReasoningTraces(traces)
+                .withServedBy(model, tier);
     }
 
     /**

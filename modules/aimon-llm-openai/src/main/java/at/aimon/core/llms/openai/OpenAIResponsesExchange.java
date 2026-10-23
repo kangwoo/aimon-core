@@ -117,8 +117,10 @@ final class OpenAIResponsesExchange implements OpenAIEndpointExchange {
             log.warn("OpenAI response was truncated due to max_output_tokens limit");
         }
 
-        return LlmResponse.of(output.getText(), output.getToolUses(),
-                OpenAiResponseUsages.toTokenUsage(response.usage()), stopReason)
-                .withReasoningTraces(captureReasoning ? output.getReasoningTraces() : List.of());
+        return LlmResponse
+                .of(output.getText(), output.getToolUses(), OpenAiResponseUsages.toTokenUsage(response.usage()),
+                        stopReason)
+                .withReasoningTraces(captureReasoning ? output.getReasoningTraces() : List.of())
+                .withServedBy(OpenAiServedBy.model(response), OpenAiServedBy.serviceTier(response));
     }
 }

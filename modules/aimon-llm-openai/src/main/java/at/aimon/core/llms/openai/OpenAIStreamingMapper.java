@@ -128,6 +128,7 @@ final class OpenAIStreamingMapper {
 
     private void onChunk(ChatCompletionChunk chunk) {
         chunk.usage().ifPresent(this::captureUsage);
+        aggregator.recordServedBy(OpenAiServedBy.model(chunk), OpenAiServedBy.serviceTier(chunk));
 
         final List<ChatCompletionChunk.Choice> choices = chunk.choices();
         if (choices == null || choices.isEmpty()) {
@@ -190,13 +191,7 @@ final class OpenAIStreamingMapper {
     }
 
     private void captureUsage(CompletionUsage usage) {
-        try {
-            this.lastUsage = TokenUsage.of(Math.toIntExact(usage.promptTokens()),
-                    Math.toIntExact(usage.completionTokens()), Math.toIntExact(usage.totalTokens()));
-        } catch (ArithmeticException e) {
-            log.warn("Token count exceeded Integer range; falling back to empty usage: {}", e.getMessage());
-            this.lastUsage = TokenUsage.empty();
-        }
+        this.lastUsage = OpenAiChatUsages.toTokenUsage(usage);
     }
 
     private void emitStreamEnd() {

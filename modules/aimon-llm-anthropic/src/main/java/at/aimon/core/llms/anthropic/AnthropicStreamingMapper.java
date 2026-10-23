@@ -27,6 +27,7 @@ import com.anthropic.models.messages.RawMessageStreamEvent;
 import com.anthropic.models.messages.TextDelta;
 import com.anthropic.models.messages.ThinkingBlock;
 import com.anthropic.models.messages.ToolUseBlock;
+import com.anthropic.models.messages.Usage;
 
 import at.aimon.core.llm.LlmCancellation;
 import at.aimon.core.llm.ReasoningTrace;
@@ -96,6 +97,10 @@ final class AnthropicStreamingMapper {
     private long inputTokens;
     private long outputTokens;
     private int thinkingTokens;
+    // Null until reported: an unreported cache counter is unmeasured, not zero.
+    private Long cacheReadTokens;
+    private Long cacheWriteTokens;
+    private boolean cacheWriteSingleRate = true;
     private boolean streamEnded;
 
     // Anthropic uses opaque content-block indices; we track tool_use slots by the block index we saw on
@@ -212,9 +217,14 @@ final class AnthropicStreamingMapper {
 
     private void onMessageStart(RawMessageStartEvent event) {
         try {
-            this.inputTokens = event.message().usage().inputTokens();
+            final Usage usage = event.message().usage();
+            this.inputTokens = usage.inputTokens();
+            this.cacheReadTokens = AnthropicUsages.counter(usage._cacheReadInputTokens());
+            this.cacheWriteTokens = AnthropicUsages.counter(usage._cacheCreationInputTokens());
+            this.cacheWriteSingleRate = AnthropicUsages.cacheWriteSingleRate(usage._cacheCreation());
+            aggregator.recordServedBy(AnthropicUsages.model(event.message()), AnthropicUsages.serviceTier(usage));
         } catch (RuntimeException e) {
-            log.debug("Could not read input tokens from message_start: {}", e.getMessage());
+            log.debug("Could not read usage from message_start: {}", e.getMessage());
         }
     }
 
@@ -351,6 +361,15 @@ final class AnthropicStreamingMapper {
         });
         final MessageDeltaUsage usage = event.usage();
         usage.inputTokens().ifPresent(this::updateInputTokens);
+        // Cumulative like the input counter: authoritative when present, and absent leaves message_start's value.
+        final Long deltaCacheRead = AnthropicUsages.counter(usage._cacheReadInputTokens());
+        if (deltaCacheRead != null) {
+            this.cacheReadTokens = deltaCacheRead;
+        }
+        final Long deltaCacheWrite = AnthropicUsages.counter(usage._cacheCreationInputTokens());
+        if (deltaCacheWrite != null) {
+            this.cacheWriteTokens = deltaCacheWrite;
+        }
         this.outputTokens = usage.outputTokens();
         // The docs put the thinking breakdown only on the final message_delta, so this is the one place to read it.
         this.thinkingTokens = AnthropicUsages.thinkingTokens(usage);
@@ -400,15 +419,14 @@ final class AnthropicStreamingMapper {
     }
 
     private TokenUsage buildTokenUsage() {
-        if (inputTokens == 0 && outputTokens == 0) {
+        if (inputTokens == 0 && outputTokens == 0 && cacheReadTokens == null && cacheWriteTokens == null) {
             return null;
         }
         try {
-            final int in = Math.toIntExact(inputTokens);
-            final int out = Math.toIntExact(outputTokens);
-            // Thinking tokens are billed as output tokens, so the fourth counter reports a breakdown of `out` rather
-            // than adding to the total.
-            return TokenUsage.of(in, out, in + out, thinkingTokens);
+            // The prompt is restored to the whole input context, cache included; thinking tokens stay a breakdown
+            // of the output — see AnthropicUsages.
+            return AnthropicUsages.toTokenUsage(inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens,
+                    cacheWriteSingleRate, thinkingTokens);
         } catch (ArithmeticException e) {
             log.warn("Token count exceeded Integer range; falling back to empty usage: {}", e.getMessage());
             return TokenUsage.empty();
