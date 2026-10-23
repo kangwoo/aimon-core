@@ -50,21 +50,22 @@ public final class InMemoryModelPriceTable implements ModelPriceTable {
      */
     public static InMemoryModelPriceTable withDefaults() {
         return builder()
-                // OpenAI (exact + prefix so dated snapshots such as gpt-4o-2024-08-06 also resolve).
-                .registerPrefix("gpt-4o-mini", ModelPrice.perMillionUsd(0.15, 0.60))
-                .registerPrefix("gpt-4o", ModelPrice.perMillionUsd(2.50, 10.00))
+                // OpenAI (exact + prefix so dated snapshots such as gpt-4o-2024-08-06 also resolve). Cached input is
+                // half price; OpenAI bills no cache writes and reports them as 0, so the write rate is moot (0).
+                .registerPrefix("gpt-4o-mini", ModelPrice.perMillionUsd(0.15, 0.60, 0.075, 0.0))
+                .registerPrefix("gpt-4o", ModelPrice.perMillionUsd(2.50, 10.00, 1.25, 0.0))
                 .registerPrefix("gpt-4-turbo", ModelPrice.perMillionUsd(10.00, 30.00))
-                .registerPrefix("o1-mini", ModelPrice.perMillionUsd(1.10, 4.40))
-                .registerPrefix("o1", ModelPrice.perMillionUsd(15.00, 60.00))
-                // Anthropic Claude.
-                .registerPrefix("claude-3-5-haiku", ModelPrice.perMillionUsd(0.80, 4.00))
-                .registerPrefix("claude-3-5-sonnet", ModelPrice.perMillionUsd(3.00, 15.00))
-                .registerPrefix("claude-3-opus", ModelPrice.perMillionUsd(15.00, 75.00))
-                .registerPrefix("claude-3-haiku", ModelPrice.perMillionUsd(0.25, 1.25))
-                .registerPrefix("claude-3-7-sonnet", ModelPrice.perMillionUsd(3.00, 15.00))
-                .registerPrefix("claude-haiku-4", ModelPrice.perMillionUsd(1.00, 5.00))
-                .registerPrefix("claude-sonnet-4", ModelPrice.perMillionUsd(3.00, 15.00))
-                .registerPrefix("claude-opus-4", ModelPrice.perMillionUsd(15.00, 75.00)).build();
+                .registerPrefix("o1-mini", ModelPrice.perMillionUsd(1.10, 4.40, 0.55, 0.0))
+                .registerPrefix("o1", ModelPrice.perMillionUsd(15.00, 60.00, 7.50, 0.0))
+                // Anthropic Claude: cache reads at 0.1x input, five-minute cache writes at 1.25x input.
+                .registerPrefix("claude-3-5-haiku", ModelPrice.perMillionUsd(0.80, 4.00, 0.08, 1.00))
+                .registerPrefix("claude-3-5-sonnet", ModelPrice.perMillionUsd(3.00, 15.00, 0.30, 3.75))
+                .registerPrefix("claude-3-opus", ModelPrice.perMillionUsd(15.00, 75.00, 1.50, 18.75))
+                .registerPrefix("claude-3-haiku", ModelPrice.perMillionUsd(0.25, 1.25, 0.03, 0.30))
+                .registerPrefix("claude-3-7-sonnet", ModelPrice.perMillionUsd(3.00, 15.00, 0.30, 3.75))
+                .registerPrefix("claude-haiku-4", ModelPrice.perMillionUsd(1.00, 5.00, 0.10, 1.25))
+                .registerPrefix("claude-sonnet-4", ModelPrice.perMillionUsd(3.00, 15.00, 0.30, 3.75))
+                .registerPrefix("claude-opus-4", ModelPrice.perMillionUsd(15.00, 75.00, 1.50, 18.75)).build();
     }
 
     @Override

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/llm/llm-usage-metering.md
-source_commit: 96839e2
+source_commit: 9d4dcbb1
 ---
 
 # LLM Usage Metering Guide
@@ -178,6 +178,12 @@ reasoning tokens, adding cache tokens on top of it would bill them twice.
 provider did not say". Do not price a call you cannot price as free or as uncached. `TokenUsage.add` likewise leaves the
 sum unmeasured when either side is (except for a side with zero prompt tokens — the `TokenUsage.empty()` accumulator
 seed — whose cache counters are trivially zero).
+
+Core's own cost estimate (`ModelPrice.costOf`) follows the same rule. A `ModelPrice` can optionally carry cache-read and
+cache-write rates (`perMillionUsd(in, out, cacheRead, cacheWrite)`), and a cache part leaves the input term to be priced
+at its own rate **only when its counter is measured and the rate is set**. Otherwise the whole prompt is priced at the
+input rate, as before. `InMemoryModelPriceTable.withDefaults()` carries OpenAI cached-input rates and Anthropic cache
+read (0.1x) and write (1.25x) rates.
 
 ### 4.1 Per-provider normalization
 

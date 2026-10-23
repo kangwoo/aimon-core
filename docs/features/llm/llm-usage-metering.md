@@ -171,6 +171,11 @@ context-length 가격 구간(예: 272000 / 272001 경계)을 고를 수 있다. 
 가격을 매길 수 없는 호출을 무료나 uncached 로 매기지 말 것. `TokenUsage.add` 도 한쪽이 미측정이면 합을 미측정으로
 둔다(prompt 가 0 인 쪽 — `TokenUsage.empty()` 누산 시작값 — 은 cache 도 자명하게 0 이므로 예외).
 
+core 의 비용 추정(`ModelPrice.costOf`)도 같은 규칙을 따른다. `ModelPrice` 에 cache-read/cache-write 요율을 선택적으로
+줄 수 있고(`perMillionUsd(in, out, cacheRead, cacheWrite)`), cache 부분은 **카운터가 측정되었고 요율도 있을 때만**
+input 항목에서 빠져 자기 요율로 매겨진다. 그 밖의 경우는 이전처럼 prompt 전체가 input 요율이다.
+`InMemoryModelPriceTable.withDefaults()` 는 OpenAI cached input 과 Anthropic cache read(0.1x)·write(1.25x) 요율을 갖는다.
+
 ### 4.1 공급자별 정규화
 
 정규화는 provider 모듈이 **명시적으로** 한다. 중립 tier 는 `standard`, `fast`, `flex`, `batch` 넷이며
