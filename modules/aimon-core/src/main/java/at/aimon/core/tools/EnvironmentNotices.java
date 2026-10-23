@@ -1,7 +1,6 @@
 package at.aimon.core.tools;
 
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 
 import org.slf4j.Logger;
@@ -41,7 +40,8 @@ public final class EnvironmentNotices {
      * <p>
      * Returns {@code result} itself — the same instance — when there is no environment, it had nothing queued, or
      * draining threw: a notice is auxiliary and must never cost the model the tool result it is waiting on. The
-     * rewritten result keeps {@link ToolUseResult#isError()} and the render payload.
+     * rewritten result keeps {@link ToolUseResult#isError()}, the render payload and
+     * {@link ToolUseResult#isRetryable()}.
      *
      * @param result
      *            the result about to be handed to the model (must not be null)
@@ -68,12 +68,7 @@ public final class EnvironmentNotices {
         if (rendered.isEmpty()) {
             return result;
         }
-        final String merged = rendered + result.getContent();
-        final ToolUseResult rewritten = result.isError()
-                ? ToolUseResult.error(result.getToolUseId(), merged)
-                : ToolUseResult.success(result.getToolUseId(), merged);
-        final Map<String, Object> renderPayload = result.getRenderPayload();
-        return renderPayload == null ? rewritten : rewritten.withRenderPayload(renderPayload);
+        return result.withContent(rendered + result.getContent());
     }
 
     /**

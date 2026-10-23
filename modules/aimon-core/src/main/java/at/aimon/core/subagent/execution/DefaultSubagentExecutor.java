@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -1471,10 +1472,10 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 results.add(ran.get(next++));
                 continue;
             }
-            log.info("Subagent '{}' called '{}' in iteration {} after {} consecutive failure(s); not run",
-                    lc.subagent().getName(), toolUse.getName(), iterationCount, lc.toolFailures.limit);
+            log.info("Subagent '{}' called '{}' in iteration {} after {}; not run", lc.subagent().getName(),
+                    toolUse.getName(), iterationCount, lc.toolFailures.blockCause(toolUse.getName()));
             stream(lc, "\n→ " + toolUse.getName() + "\n");
-            final ToolUseResult refusal = ToolFailureStreaks.refusal(toolUse, lc.toolFailures.limit);
+            final ToolUseResult refusal = lc.toolFailures.refusal(toolUse);
             stream(lc, formatStreamedToolResult(toolUse, refusal));
             results.add(refusal);
         }
@@ -2159,10 +2160,17 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     /**
      * One fork's consecutive failures per tool, which {@code SubagentExecutionPolicy#getMaxConsecutiveToolFailures}
      * bounds. A call that was run and came back an error adds one to its tool's count; one that came back a success
-     * resets
-     * it. A tool whose count has reached the limit is not run again in this fork, so its count never resets after
+     * resets it. A tool whose count has reached the limit is not run again in this fork, so its count never resets
+     * after
      * that. Calls answered without being run — refused for a budget, a cut response or by this class — count for
      * nothing. A permission denial does count: the call reached the tool pipeline and failed there.
+     *
+     * <p>
+     * A failure the tool reported as not retryable ({@link ToolUseResult#isRetryable()}, set by
+     * {@code ToolResult#notRetryable()}) blocks its tool at once, whatever the limit, and for the rest of the fork: the
+     * block is sticky, so no success of the same tool — not even one later in the same batch — lifts it, and the
+     * outcome does not depend on the order of a batch. It is per tool, not per input. Without a limit the mark is
+     * inert, like the count.
      *
      * <p>
      * A refusal is an error result, so an iteration whose calls were all refused counts for the
@@ -2176,6 +2184,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         /** The limit, or {@code null} for none. */
         private final Integer limit;
         private final Map<String, Integer> consecutiveFailures = new HashMap<>();
+        /** The tools that reported a failure as not retryable in this fork; never shrinks. */
+        private final Set<String> notRetryable = new HashSet<>();
 
         private ToolFailureStreaks(Integer limit) {
             this.limit = limit;
@@ -2187,17 +2197,21 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             }
             if (result.isError()) {
                 consecutiveFailures.merge(toolName, 1, Integer::sum);
+                if (!result.isRetryable()) {
+                    notRetryable.add(toolName);
+                }
             } else {
                 consecutiveFailures.remove(toolName);
             }
         }
 
         private boolean isBlocked(String toolName) {
-            return limit != null && consecutiveFailures.getOrDefault(toolName, 0) >= limit;
+            return limit != null
+                    && (notRetryable.contains(toolName) || consecutiveFailures.getOrDefault(toolName, 0) >= limit);
         }
 
         private boolean blocksAny(List<ToolUse> toolUses) {
-            if (limit == null || consecutiveFailures.isEmpty()) {
+            if (limit == null || consecutiveFailures.isEmpty() && notRetryable.isEmpty()) {
                 return false;
             }
             for (ToolUse toolUse : toolUses) {
@@ -2208,11 +2222,23 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
             return false;
         }
 
-        /** The answer to a call of a blocked tool: an error result, so the transcript stays well formed. */
-        private static ToolUseResult refusal(ToolUse toolUse, Integer limit) {
-            return ToolUseResult.error(toolUse.getId(),
-                    "Not run: " + toolUse.getName() + " failed " + limit + " time(s) in a row in this task and will "
-                            + "not be run again in this task. Continue without it, or finish with what you have.");
+        /** Why a blocked tool is blocked, for the log line. */
+        private String blockCause(String toolName) {
+            return notRetryable.contains(toolName)
+                    ? "a failure it reported as not retryable"
+                    : limit + " consecutive failure(s)";
+        }
+
+        /**
+         * The answer to a call of a blocked tool: an error result, so the transcript stays well formed, that says why
+         * the tool is not run.
+         */
+        private ToolUseResult refusal(ToolUse toolUse) {
+            final String why = notRetryable.contains(toolUse.getName())
+                    ? " reported its failure as not retryable in this task"
+                    : " failed " + limit + " time(s) in a row in this task";
+            return ToolUseResult.error(toolUse.getId(), "Not run: " + toolUse.getName() + why
+                    + " and will not be run again. Continue without it, or finish with what you have.");
         }
     }
 

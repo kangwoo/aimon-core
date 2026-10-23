@@ -162,7 +162,11 @@ public final class PostToolContext implements HookContext {
     }
 
     private static ToolResult toToolResult(ToolUseResult tur) {
-        return tur.isError() ? ToolResult.error(tur.getContent()) : ToolResult.success(tur.getContent());
+        if (!tur.isError()) {
+            return ToolResult.success(tur.getContent());
+        }
+        final ToolResult error = ToolResult.error(tur.getContent());
+        return tur.isRetryable() ? error : error.notRetryable();
     }
 
     /**
@@ -191,6 +195,12 @@ public final class PostToolContext implements HookContext {
      * The original tool use result, registry and timestamp are preserved. Used by the hook executor to
      * thread an updated output to subsequent PostTool hooks.
      *
+     * <p>
+     * The current output carries {@link ToolResult#isRetryable()} only as {@code newOutput} does. A hook that builds
+     * its rewrite from scratch ({@code ToolResult.error(masked)}) hands the next hook an output without the tool's
+     * not-retryable mark, which {@link #originalOutput()} still shows. The chain does not need to carry it: the tool
+     * pipeline re-applies the tool's mark to the final rewritten output while that output is still an error.
+     *
      * @param newOutput
      *            The replacement current output (must not be null)
      * @return A new context (never null)
@@ -199,9 +209,7 @@ public final class PostToolContext implements HookContext {
      */
     public PostToolContext withCurrentOutput(ToolResult newOutput) {
         Objects.requireNonNull(newOutput, "newOutput cannot be null");
-        final ToolUseResult rebuilt = newOutput.isError()
-                ? ToolUseResult.error(toolUse.getId(), newOutput.getContent())
-                : ToolUseResult.success(toolUse.getId(), newOutput.getContent());
+        final ToolUseResult rebuilt = newOutput.toToolUseResult(toolUse.getId());
         final Builder b = new Builder().executorType(invokerType).invokerName(invokerName).hookRegistry(hookRegistry)
                 .executionEnvironment(executionEnvironment).executionCancellation(executionCancellation)
                 .toolUse(toolUse).toolUseResult(originalToolUseResult).iterationCount(iterationCount)

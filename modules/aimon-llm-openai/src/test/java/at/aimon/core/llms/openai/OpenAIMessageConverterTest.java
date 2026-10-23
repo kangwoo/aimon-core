@@ -456,6 +456,20 @@ class OpenAIMessageConverterTest {
         }
 
         @Test
+        @DisplayName("A not-retryable mark on a tool result is not sent: the converted message is the same")
+        void notRetryableMarkIsNotSent() throws Exception {
+            Message marked = Message
+                    .toolUseResults(List.of(ToolUseResult.error("call_456", "SIZE_LIMIT: too large").notRetryable()));
+            Message plain = Message.toolUseResults(List.of(ToolUseResult.error("call_456", "SIZE_LIMIT: too large")));
+
+            Map<String, Object> markedMap = serializeToMap(converter.convertMessages(List.of(marked)).get(0));
+            Map<String, Object> plainMap = serializeToMap(converter.convertMessages(List.of(plain)).get(0));
+
+            assertThat(markedMap).isEqualTo(plainMap);
+            assertThat(markedMap.toString()).doesNotContain("etryable");
+        }
+
+        @Test
         @DisplayName("Should convert multiple tool results to multiple tool messages")
         void shouldConvertMultipleToolResults() throws Exception {
             List<ToolUseResult> toolResults = List.of(ToolUseResult.success("call_1", "Result 1"),

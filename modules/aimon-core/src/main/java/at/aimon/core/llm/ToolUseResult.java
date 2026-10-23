@@ -21,6 +21,12 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
  * persistence path.
  *
  * <p>
+ * The {@link #isRetryable() retryable} flag carries the tool's {@code ToolResult#notRetryable()} mark from the tool
+ * pipeline to the executor that ran the call. It is the same kind of sidecar: excluded from Jackson serialization, not
+ * read by any provider converter, not written by the session snapshot codec. A result decoded from history is always
+ * retryable. {@link #withContent(String)} keeps it; the factories start without it.
+ *
+ * <p>
  * Example usage:
  *
  * <pre>
@@ -55,7 +61,7 @@ public final class ToolUseResult {
      *             if toolUseId or content is null
      */
     public static ToolUseResult success(String toolUseId, String content) {
-        return new ToolUseResult(toolUseId, content, false, null);
+        return new ToolUseResult(toolUseId, content, false, null, true);
     }
 
     /**
@@ -70,13 +76,14 @@ public final class ToolUseResult {
      *             if toolUseId or errorMessage is null
      */
     public static ToolUseResult error(String toolUseId, String errorMessage) {
-        return new ToolUseResult(toolUseId, errorMessage, true, null);
+        return new ToolUseResult(toolUseId, errorMessage, true, null, true);
     }
 
     private final String toolUseId;
     private final String content;
     private final boolean isError;
     private final Map<String, Object> renderPayload;
+    private final boolean retryable;
 
     /**
      * Creates a new ToolUseResult.
@@ -89,14 +96,18 @@ public final class ToolUseResult {
      *            Whether this represents an error
      * @param renderPayload
      *            Optional sidecar payload for non-LLM consumers (nullable)
+     * @param retryable
+     *            Whether calling the tool again could change the outcome; forced to {@code true} for a success
      * @throws NullPointerException
      *             if toolUseId or content is null
      */
-    private ToolUseResult(String toolUseId, String content, boolean isError, Map<String, Object> renderPayload) {
+    private ToolUseResult(String toolUseId, String content, boolean isError, Map<String, Object> renderPayload,
+            boolean retryable) {
         this.toolUseId = Objects.requireNonNull(toolUseId, "ToolUse ID cannot be null");
         this.content = Objects.requireNonNull(content, "Content cannot be null");
         this.isError = isError;
         this.renderPayload = renderPayload;
+        this.retryable = retryable || !isError;
     }
 
     /**
@@ -121,7 +132,53 @@ public final class ToolUseResult {
      */
     public ToolUseResult withRenderPayload(Map<String, Object> payload) {
         Map<String, Object> copy = payload == null ? null : Map.copyOf(payload);
-        return new ToolUseResult(toolUseId, content, isError, copy);
+        return new ToolUseResult(toolUseId, content, isError, copy, retryable);
+    }
+
+    /**
+     * Returns a copy of this result with {@code newContent} in place of its content, keeping everything else — the
+     * error status, the render payload and the retryable flag. Use it to rewrite what the model reads (append a
+     * notice, redact) without dropping the sidecars the framework still needs.
+     *
+     * @param newContent
+     *            the replacement content (must not be null)
+     * @return a new ToolUseResult with the content replaced
+     * @throws NullPointerException
+     *             if {@code newContent} is null
+     */
+    public ToolUseResult withContent(String newContent) {
+        Objects.requireNonNull(newContent, "Content cannot be null");
+        return new ToolUseResult(toolUseId, newContent, isError, renderPayload, retryable);
+    }
+
+    /**
+     * Returns a copy of this error marked as not retryable — the carrier of {@code ToolResult#notRetryable()} across
+     * the tool pipeline. A no-op returning this instance for a success.
+     *
+     * <p>
+     * Not sent to the LLM and not persisted: see the class documentation.
+     *
+     * @return a new error ToolUseResult that is not retryable, or this instance for a success
+     */
+    public ToolUseResult notRetryable() {
+        if (!isError) {
+            return this;
+        }
+        return new ToolUseResult(toolUseId, content, true, renderPayload, false);
+    }
+
+    /**
+     * Whether calling the tool again could change this outcome: {@code false} only for an error the tool marked with
+     * {@code ToolResult#notRetryable()}.
+     *
+     * <p>
+     * Excluded from Jackson serialization by {@link JsonIgnore}; a result read back from history is always retryable.
+     *
+     * @return whether this result is retryable
+     */
+    @JsonIgnore
+    public boolean isRetryable() {
+        return retryable;
     }
 
     /**
@@ -183,19 +240,20 @@ public final class ToolUseResult {
             return false;
         }
         final ToolUseResult that = (ToolUseResult) o;
-        return isError == that.isError && toolUseId.equals(that.toolUseId) && content.equals(that.content)
-                && Objects.equals(renderPayload, that.renderPayload);
+        return isError == that.isError && retryable == that.retryable && toolUseId.equals(that.toolUseId)
+                && content.equals(that.content) && Objects.equals(renderPayload, that.renderPayload);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(toolUseId, content, isError, renderPayload);
+        return Objects.hash(toolUseId, content, isError, renderPayload, retryable);
     }
 
     @Override
     public String toString() {
         String renderInfo = renderPayload != null ? ", renderPayload=" + renderPayload.keySet() : "";
-        return "ToolUseResult{toolUseId='" + toolUseId + "', isError=" + isError + ", content='" + content + "'"
-                + renderInfo + "}";
+        String retryInfo = retryable ? "" : ", retryable=false";
+        return "ToolUseResult{toolUseId='" + toolUseId + "', isError=" + isError + retryInfo + ", content='" + content
+                + "'" + renderInfo + "}";
     }
 }

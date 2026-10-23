@@ -119,6 +119,36 @@ manager 까지 예산을 실어 나를 경로도 없었다. 포크를 묶는 것
 - 거부만으로 이루어진 iteration 은 전부 오류이므로 `StalledIterationGuard` 가 센다. 차단된 도구만 계속 부르는
   포크는 그 guard 에 걸려 `ERROR` 로 끝난다.
 - 같은 batch 안에서 같은 도구를 여러 번 부르면 batch 가 끝난 뒤에 센다 — 그 batch 의 호출은 모두 실행된다.
+  연속 실패 **수**는 응답 순서대로 기록되므로 batch 순서를 탄다(실패 뒤 성공이면 0, 성공 뒤 실패면 1). 순서와
+  무관한 것은 아래의 재시도 불가 표시뿐이다.
+
+**재시도해도 바뀌지 않는 실패.** 도구가 그 사실을 이미 아는 경우가 있다(크기 제한, 인증 거부). 그런 도구는 오류를
+`ToolResult.error(...).notRetryable()` 로 돌려준다(`GenericTool` 은 `ToolExecutionException.notRetryable(...)`).
+포크는 그 실패 **한 번**으로 도구를 막는다 — n 번째 연속 실패와 같은 취급이다.
+
+- 거부 메시지가 이유를 말한다: `Not run: <도구> reported its failure as not retryable in this task …`.
+  모델에게는 이 문장과, 앞서 받은 도구 자신의 오류 메시지만 간다. 표시 자체는 가지 않는다.
+- **차단은 도구 단위이고 풀리지 않는다.** 입력과 무관하게 그 포크의 이후 호출이 모두 막힌다. 같은 batch 에 같은
+  도구의 성공이 있어도 앞이든 뒤든 풀리지 않는다 — 결과가 batch 순서에 따라 달라지지 않게 하기 위해서다. 그래서
+  도구는 **이 작업에서 그 도구의 어떤 호출로도 고칠 수 없는** 실패만 표시해야 한다. 다른 인자로 피할 수 있는
+  실패(다른 경로, 더 작은 범위)는 재시도 가능으로 남긴다.
+- **별도 스위치는 두지 않았다.** 표시는 `maxConsecutiveToolFailures` 축이 있을 때만 읽힌다. 축이 없는 포크와 메인
+  에이전트 턴(`OrcaAgentExecutor`)에서는 아무 일도 하지 않는다. 표시는 "이 도구를 더 부르지 마라" 가 아니라 "다시
+  불러도 같다" 는 사실이고, 그것으로 도구를 막을지는 실패 축을 켠 호출자의 선택이기 때문이다. 축 하나를 더 두면
+  capability·사전 거부·조합 규칙만 늘고 막는 장치는 같다. 정책 없는 포크의 동작은 바뀌지 않는다.
+- **표시가 사는 곳.** `ToolResult` → `ToolExecutionResult` → `ToolUseResult` 로 실려 간다. `ToolUseResult` 는 LLM
+  메시지 모델이지만 이 값은 render payload 와 같은 sidecar 다 — `@JsonIgnore` 이고, provider 변환기는 읽지 않고,
+  세션 snapshot codec 은 쓰지 않는다. 연속 실패 수는 포크의 메모리에만 있으므로 영속할 이유가 없다. 기록에서 다시
+  읽은 결과는 언제나 재시도 가능이다(그래서 표시된 결과는 round-trip 뒤 원본과 `equals` 가 아니다 — render
+  payload 와 같다).
+- **파이프라인의 재작성.** hook feedback 첨부, environment notice, `Message#mapText` 는 `ToolUseResult#withContent`
+  로 내용만 바꾸므로 표시가 남는다. PostTool hook 이 출력을 바꿔 쓰면, 결과가 오류로 남는 한 도구의 표시가 유지된다.
+  hook 은 표시를 더할 수는 있지만 지울 수는 없다. hook 체인 안에서는 처음부터 다시 만든 출력이 표시를 잃을 수
+  있지만(`originalOutput()` 에는 남는다), 체인이 끝난 뒤 파이프라인이 도구의 표시를 다시 붙인다.
+- compaction 이 만드는 placeholder 결과(microcompact, view projection)는 이미 지난 호출의 기록이므로 표시를
+  버린다.
+- MCP 도구에는 이 신호가 없다(MCP 결과는 `isError` 만 있다). MCP 도구의 실패는 언제나 재시도 가능이고 n 번 규칙만
+  따른다.
 
 ## 5. Deadline 과 실제 종료
 
@@ -323,6 +353,8 @@ executor capability 가 아니고(`getCapabilities()` 에 없다), 정책 없는
 | passthrough engine 에서 context 축 거부, compact 하는 engine 상속 시 수락 | `DefaultSubagentExecutionManagerPolicyTest` |
 | grace round: 정책·서브에이전트 한도 양쪽, 도구 실행 0회, 같은 도구 목록, 예산 소진 시 생략, 빈 답 | `DefaultSubagentExecutorPolicyTest` |
 | 연속 실패 차단과 성공 시 리셋, 차단된 호출은 도구 호출 수에 없음 | `DefaultSubagentExecutorPolicyTest` |
+| 재시도 불가 실패의 즉시·순서 무관 차단, 축 없을 때 무효, PostTool 재작성·feedback 뒤에도 유지 | `DefaultSubagentExecutorPolicyTest` |
+| 재시도 불가 표시는 LLM 변환·snapshot 에 없음 | `ToolUseResultRetryableTest`, `JsonSessionSnapshotCodecTest`, `AnthropicMessageConverterTest`, `OpenAIMessageConverterTest` |
 | 결과 길이·남길 쪽(`HEAD`·`HEAD_AND_TAIL`), surrogate 보존 | `SubagentResultFormatterTest`, `TaskToolExecutionPolicyTest` |
 
 외부 LLM 호출 없이 fake client 와 latch 를 쓰고, deadline 판정은 조절 가능한 nano clock 으로 검증한다. 다만

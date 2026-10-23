@@ -23,6 +23,7 @@ import at.aimon.core.agent.tool.ToolResult;
  * <li><strong>exception</strong>: Original exception for debugging and type-specific error handling (optional)
  * <li><strong>renderPayload</strong>: Opaque sidecar payload for non-LLM consumers (optional); excluded from Jackson
  * serialization
+ * <li><strong>retryable</strong>: {@link ToolResult#isRetryable()} carried along; excluded from Jackson serialization
  * </ul>
  *
  * <h2>Example Usage</h2>
@@ -64,27 +65,29 @@ public final class ToolExecutionResult {
     private final boolean isError;
     private final Exception exception;
     private final Map<String, Object> renderPayload;
+    private final boolean retryable;
 
     private ToolExecutionResult(String toolExecutionId, ToolResult toolResult) {
         this(toolExecutionId, toolResult.getContent(), toolResult.isError(), toolResult.getException().orElse(null),
-                toolResult.getRenderPayload());
+                toolResult.getRenderPayload(), toolResult.isRetryable());
     }
 
     private ToolExecutionResult(String toolExecutionId, String content, boolean isError) {
-        this(toolExecutionId, content, isError, null, null);
+        this(toolExecutionId, content, isError, null, null, true);
     }
 
     private ToolExecutionResult(String toolExecutionId, String content, boolean isError, Exception exception) {
-        this(toolExecutionId, content, isError, exception, null);
+        this(toolExecutionId, content, isError, exception, null, true);
     }
 
     private ToolExecutionResult(String toolExecutionId, String content, boolean isError, Exception exception,
-            Map<String, Object> renderPayload) {
+            Map<String, Object> renderPayload, boolean retryable) {
         this.toolExecutionId = Objects.requireNonNull(toolExecutionId, "ToolExecution ID cannot be null");
         this.content = Objects.requireNonNull(content, "Content cannot be null");
         this.isError = isError;
         this.exception = exception;
         this.renderPayload = renderPayload;
+        this.retryable = retryable || !isError;
     }
 
     /**
@@ -218,6 +221,20 @@ public final class ToolExecutionResult {
     }
 
     /**
+     * Whether calling the tool again could change this outcome — the originating {@link ToolResult#isRetryable()}, or
+     * {@code true} for a result built here without one.
+     *
+     * <p>
+     * Excluded from Jackson serialization, like {@link #getRenderPayload()}.
+     *
+     * @return whether this result is retryable
+     */
+    @JsonIgnore
+    public boolean isRetryable() {
+        return retryable;
+    }
+
+    /**
      * Checks if this result represents an error.
      *
      * @return true if this is an error result, false otherwise
@@ -244,14 +261,14 @@ public final class ToolExecutionResult {
             return false;
         }
         final ToolExecutionResult that = (ToolExecutionResult) o;
-        return isError == that.isError && Objects.equals(toolExecutionId, that.toolExecutionId)
-                && Objects.equals(content, that.content) && Objects.equals(exception, that.exception)
-                && Objects.equals(renderPayload, that.renderPayload);
+        return isError == that.isError && retryable == that.retryable
+                && Objects.equals(toolExecutionId, that.toolExecutionId) && Objects.equals(content, that.content)
+                && Objects.equals(exception, that.exception) && Objects.equals(renderPayload, that.renderPayload);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(toolExecutionId, content, isError, exception, renderPayload);
+        return Objects.hash(toolExecutionId, content, isError, exception, renderPayload, retryable);
     }
 
     @Override
@@ -260,7 +277,8 @@ public final class ToolExecutionResult {
                 ? ", exception=" + exception.getClass().getSimpleName() + ": " + exception.getMessage()
                 : "";
         String renderInfo = renderPayload != null ? ", renderPayload=" + renderPayload.keySet() : "";
-        return "ToolExecutionResult{toolExecutionId='" + toolExecutionId + "', isError=" + isError + ", content='"
-                + content + "'" + exceptionInfo + renderInfo + "}";
+        String retryInfo = retryable ? "" : ", retryable=false";
+        return "ToolExecutionResult{toolExecutionId='" + toolExecutionId + "', isError=" + isError + retryInfo
+                + ", content='" + content + "'" + exceptionInfo + renderInfo + "}";
     }
 }

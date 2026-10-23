@@ -349,10 +349,7 @@ public final class Message {
         for (ToolUseResult result : toolUseResults) {
             String transformed = Objects.requireNonNull(transform.apply(result.getContent()),
                     "transform returned null");
-            ToolUseResult rebuilt = result.isError()
-                    ? ToolUseResult.error(result.getToolUseId(), transformed)
-                    : ToolUseResult.success(result.getToolUseId(), transformed);
-            newResults.add(rebuilt.withRenderPayload(result.getRenderPayload()));
+            newResults.add(result.withContent(transformed));
         }
         return new Message(this.role, newBlocks, newToolUses, newResults, this.artifacts, this.reasoningTraces);
     }

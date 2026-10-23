@@ -4,7 +4,6 @@ import static at.aimon.core.agent.tool.execution.ToolExecutionResultConverter.to
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -351,10 +350,11 @@ public final class SingleToolInvoker {
             // post-hook output.
             final var maybeUpdated = hookExecutionManager.finalUpdatedOutput(postToolResults);
             if (maybeUpdated.isPresent()) {
-                final var updated = maybeUpdated.get();
-                return updated.isError()
-                        ? ToolUseResult.error(effectiveToolUse.getId(), updated.getContent())
-                        : ToolUseResult.success(effectiveToolUse.getId(), updated.getContent());
+                // A hook rewrites what the model reads, not whether the failure is worth repeating: an error the tool
+                // marked not retryable stays so (notRetryable is a no-op on a success), and a hook may mark one
+                // itself. It cannot clear the tool's mark.
+                final ToolUseResult rewritten = maybeUpdated.get().toToolUseResult(effectiveToolUse.getId());
+                return toolUseResult.isRetryable() ? rewritten : rewritten.notRetryable();
             }
         } catch (Exception e) {
             log.warn("PostTool hook failed for tool '{}', toolUseId={}: {}", effectiveToolUse.getName(),
@@ -375,11 +375,8 @@ public final class SingleToolInvoker {
         }
         final String content = result.getContent();
         final String merged = content.isEmpty() ? block.get() : content + "\n\n" + block.get();
-        final ToolUseResult rewritten = result.isError()
-                ? ToolUseResult.error(result.getToolUseId(), merged)
-                : ToolUseResult.success(result.getToolUseId(), merged);
-        // Carry the sidecar across: it is invisible to the LLM but PostTool consumers and renderers rely on it.
-        final Map<String, Object> renderPayload = result.getRenderPayload();
-        return renderPayload == null ? rewritten : rewritten.withRenderPayload(renderPayload);
+        // withContent carries the sidecars across: the render payload (PostTool consumers and renderers rely on it) and
+        // the retryable flag (a policy fork's failure streaks read it). Both are invisible to the LLM.
+        return result.withContent(merged);
     }
 }

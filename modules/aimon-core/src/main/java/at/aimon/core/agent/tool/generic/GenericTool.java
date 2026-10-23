@@ -183,7 +183,8 @@ public abstract class GenericTool<I, O> extends AbstractTool {
             return result;
         } catch (ToolExecutionException e) {
             log.warn("Tool '{}' failed: {}", name, e.getMessage());
-            return ToolResult.error(e.getMessage());
+            final ToolResult failed = ToolResult.error(e.getMessage());
+            return e.isRetryable() ? failed : failed.notRetryable();
         } catch (Exception e) {
             log.error("Unexpected error in tool '{}': {}", name, e.getMessage(), e);
             return ToolResult.error("Unexpected error: " + e.getMessage(), e);
@@ -196,7 +197,8 @@ public abstract class GenericTool<I, O> extends AbstractTool {
      * <p>
      * Unlike {@code execute}, this <em>may</em> throw — that is the point of it being separate. Throw
      * {@link ToolExecutionException} for a failure the model should read in your own words; anything else is treated
-     * as a bug and reported as unexpected.
+     * as a bug and reported as unexpected. Throw {@link ToolExecutionException#notRetryable(String)} for a failure
+     * that calling again will not change — the result is then {@code ToolResult#notRetryable()}.
      *
      * @param input
      *            the bound parameters (never null)

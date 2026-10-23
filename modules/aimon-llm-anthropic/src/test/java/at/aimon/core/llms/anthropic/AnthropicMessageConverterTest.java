@@ -162,6 +162,19 @@ class AnthropicMessageConverterTest {
     }
 
     @Test
+    @DisplayName("A not-retryable mark on a tool result is not sent: the converted message is the same")
+    void notRetryableMarkIsNotSent() throws Exception {
+        Message marked = Message
+                .toolUseResults(List.of(ToolUseResult.error("call_456", "SIZE_LIMIT: too large").notRetryable()));
+        Message plain = Message.toolUseResults(List.of(ToolUseResult.error("call_456", "SIZE_LIMIT: too large")));
+
+        String markedJson = objectMapper.writeValueAsString(converter.convertMessages(List.of(marked)));
+        String plainJson = objectMapper.writeValueAsString(converter.convertMessages(List.of(plain)));
+
+        assertThat(markedJson).isEqualTo(plainJson).doesNotContain("etryable");
+    }
+
+    @Test
     @DisplayName("Should convert basic tool schema")
     void shouldConvertBasicToolSchema() {
         // Given: A simple bash tool definition

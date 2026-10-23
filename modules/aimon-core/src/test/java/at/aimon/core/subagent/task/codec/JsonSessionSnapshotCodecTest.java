@@ -137,6 +137,26 @@ class JsonSessionSnapshotCodecTest {
     }
 
     @Test
+    void retryableFlagIsNotPersisted() {
+        final ToolUseResult notRetryable = ToolUseResult.error("call_1", "SIZE_LIMIT: too large").notRetryable();
+        final SessionSnapshot snapshot = SessionSnapshot.of(SessionId.of("nr"), null,
+                List.of(Message.toolUseResults(List.of(notRetryable))));
+
+        final String encoded = codec.encode(snapshot);
+        final SessionSnapshot decoded = codec.decode(encoded);
+
+        assertThat(encoded).doesNotContain("etryable");
+        final ToolUseResult decodedResult = decoded.getConversationHistory().get(0).getToolUseResults().get(0);
+        // The flag is a signal for the executor that ran the call, not history: it reads back as retryable.
+        assertThat(decodedResult.isRetryable()).isTrue();
+        assertThat(decodedResult).isEqualTo(ToolUseResult.error("call_1", "SIZE_LIMIT: too large"));
+        // A default (retryable) result still round-trips to an equal value.
+        final SessionSnapshot plain = SessionSnapshot.of(SessionId.of("nr"), null,
+                List.of(Message.toolUseResults(List.of(ToolUseResult.error("call_1", "SIZE_LIMIT: too large")))));
+        assertThat(codec.decode(codec.encode(plain))).isEqualTo(plain);
+    }
+
+    @Test
     void unknownTopLevelFieldsAreIgnored() throws Exception {
         final SessionSnapshot snapshot = SessionSnapshot.of(SessionId.of("fwd"), "sys", List.of(Message.user("hi")));
         final ObjectNode tree = (ObjectNode) mapper.readTree(codec.encode(snapshot));
