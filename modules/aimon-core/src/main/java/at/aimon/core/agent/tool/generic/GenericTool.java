@@ -184,10 +184,12 @@ public abstract class GenericTool<I, O> extends AbstractTool {
             }
             return result;
         } catch (ToolExecutionException e) {
-            // An anticipated failure: WARN with the message only, no stack trace. The exception itself — and through
-            // it the cause the tool wrapped — rides on the result for whoever inspects it; the model still reads only
-            // the message, since the exception never reaches a ToolUseResult.
+            // An anticipated failure: WARN with the message only, no stack trace; the trace, with the cause the tool
+            // wrapped, is logged at DEBUG for an operator who turns it on. The exception itself also rides on the
+            // result for whoever inspects it; the model still reads only the message, since the exception never
+            // reaches a ToolUseResult.
             log.warn("Tool '{}' failed: {}", name, e.getMessage());
+            log.debug("Tool '{}' failure detail", name, e);
             final ToolResult failed = ToolResult.error(e.getMessage(), e);
             return e.isRetryable() ? failed : failed.notRetryable();
         } catch (Exception e) {

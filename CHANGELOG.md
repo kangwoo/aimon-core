@@ -209,7 +209,7 @@ marked) and dropped the exception, so the cause passed to `new ToolExecutionExce
 `ToolExecutionResult#getException()`. The exception itself is now attached, cause chain included, on both paths — as
 the fallback for any other exception already did. What the model reads is unchanged: the content is still exactly the
 message, the not-retryable mark is kept, the exception is `@JsonIgnore` and never copied into a `ToolUseResult`. The
-log line is unchanged too (WARN, message only, no stack trace).
+WARN line is unchanged (message only, no stack trace); the stack trace, cause included, is now logged at DEBUG.
 
 ### Changed (behaviour change): `ToolDefinition` keeps the input schema's top-level key order
 
