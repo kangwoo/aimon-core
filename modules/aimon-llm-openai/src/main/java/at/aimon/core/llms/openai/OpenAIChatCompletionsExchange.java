@@ -109,23 +109,22 @@ final class OpenAIChatCompletionsExchange implements OpenAIEndpointExchange {
             }
         }
 
-        return LlmResponse.of(textContent, toolUses, extractTokenUsage(result), neutralStopReason);
+        return LlmResponse.of(textContent, toolUses, extractTokenUsage(result), neutralStopReason)
+                .withServedBy(OpenAiServedBy.model(result), OpenAiServedBy.serviceTier(result));
     }
 
     /**
      * Extracts token usage from an OpenAI chat completion.
      *
      * <p>
-     * Chat Completions reports no reasoning-token counter, so the three-argument factory is used and
-     * {@link TokenUsage#getReasoningTokens()} stays at zero on this endpoint.
+     * Chat Completions reports no reasoning-token counter, so {@link TokenUsage#getReasoningTokens()} stays at zero on
+     * this endpoint. See {@link OpenAiChatUsages}.
      */
     private static TokenUsage extractTokenUsage(ChatCompletion result) {
         if (result.usage().isEmpty()) {
             return TokenUsage.empty();
         }
 
-        final var usage = result.usage().get();
-        return TokenUsage.of(Math.toIntExact(usage.promptTokens()), Math.toIntExact(usage.completionTokens()),
-                Math.toIntExact(usage.totalTokens()));
+        return OpenAiChatUsages.toTokenUsage(result.usage().get());
     }
 }

@@ -133,6 +133,8 @@ public final class LlmResponse {
     private final TokenUsage tokenUsage;
     private final StopReason stopReason;
     private final List<ReasoningTrace> reasoningTraces;
+    private final String servedModel;
+    private final ServiceTier serviceTier;
 
     /**
      * Creates a new LlmResponse.
@@ -170,11 +172,18 @@ public final class LlmResponse {
      */
     private LlmResponse(String textContent, List<ToolUse> toolUses, TokenUsage tokenUsage, StopReason stopReason,
             List<ReasoningTrace> reasoningTraces) {
+        this(textContent, toolUses, tokenUsage, stopReason, reasoningTraces, null, null);
+    }
+
+    private LlmResponse(String textContent, List<ToolUse> toolUses, TokenUsage tokenUsage, StopReason stopReason,
+            List<ReasoningTrace> reasoningTraces, String servedModel, ServiceTier serviceTier) {
         this.textContent = textContent == null ? "" : textContent;
         this.toolUses = List.copyOf(Objects.requireNonNull(toolUses, "Tool uses cannot be null"));
         this.tokenUsage = Objects.requireNonNullElse(tokenUsage, TokenUsage.empty());
         this.stopReason = Objects.requireNonNull(stopReason, "Stop reason cannot be null");
         this.reasoningTraces = List.copyOf(Objects.requireNonNull(reasoningTraces, "Reasoning traces cannot be null"));
+        this.servedModel = servedModel == null || servedModel.isBlank() ? null : servedModel;
+        this.serviceTier = serviceTier;
     }
 
     /**
@@ -193,7 +202,46 @@ public final class LlmResponse {
      */
     public LlmResponse withReasoningTraces(List<ReasoningTrace> reasoningTraces) {
         Objects.requireNonNull(reasoningTraces, "Reasoning traces cannot be null");
-        return new LlmResponse(textContent, toolUses, tokenUsage, stopReason, reasoningTraces);
+        return new LlmResponse(textContent, toolUses, tokenUsage, stopReason, reasoningTraces, servedModel,
+                serviceTier);
+    }
+
+    /**
+     * Returns a copy of this response naming the model and the service tier the provider reports it actually used.
+     *
+     * <p>
+     * Set by provider modules from the response itself, never from the request: a request for one tier may be served
+     * on another, and a model alias resolves to a dated snapshot. Usage accounting prefers these values over what was
+     * asked for — see {@link at.aimon.core.llm.usage.MeteringLlmClient}.
+     *
+     * @param servedModel
+     *            the model the provider reports, or null/blank when it reported none
+     * @param serviceTier
+     *            the tier the provider reports, already normalized by the provider module, or null when it reported
+     *            none
+     * @return A new LlmResponse with the same content plus the given service information
+     */
+    public LlmResponse withServedBy(String servedModel, ServiceTier serviceTier) {
+        return new LlmResponse(textContent, toolUses, tokenUsage, stopReason, reasoningTraces, servedModel,
+                serviceTier);
+    }
+
+    /**
+     * Gets the model the provider reports having served this response with.
+     *
+     * @return the served model, or empty when the provider did not report one
+     */
+    public Optional<String> getServedModel() {
+        return Optional.ofNullable(servedModel);
+    }
+
+    /**
+     * Gets the service tier the provider reports having applied to this response.
+     *
+     * @return the applied tier, or empty when the provider did not report one
+     */
+    public Optional<ServiceTier> getServiceTier() {
+        return Optional.ofNullable(serviceTier);
     }
 
     /**
@@ -260,7 +308,7 @@ public final class LlmResponse {
      * @return true if token usage is not empty, false otherwise
      */
     public boolean hasTokenUsage() {
-        return !tokenUsage.equals(TokenUsage.empty());
+        return !tokenUsage.isZero();
     }
 
     /**
@@ -289,12 +337,13 @@ public final class LlmResponse {
         final LlmResponse that = (LlmResponse) o;
         return textContent.equals(that.textContent) && toolUses.equals(that.toolUses)
                 && tokenUsage.equals(that.tokenUsage) && stopReason == that.stopReason
-                && reasoningTraces.equals(that.reasoningTraces);
+                && reasoningTraces.equals(that.reasoningTraces) && Objects.equals(servedModel, that.servedModel)
+                && Objects.equals(serviceTier, that.serviceTier);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(textContent, toolUses, tokenUsage, stopReason, reasoningTraces);
+        return Objects.hash(textContent, toolUses, tokenUsage, stopReason, reasoningTraces, servedModel, serviceTier);
     }
 
     @Override

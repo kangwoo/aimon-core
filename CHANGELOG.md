@@ -7,6 +7,38 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: per-call usage measurements — applied tier, prompt cache, timing
+
+`MeteringLlmClient` now records what a per-call price needs, taken from the response rather than the request. Guide:
+`docs/features/llm/llm-usage-metering.md` §4.
+
+- **`LlmUsageEvent`** (new, `at.aimon.core.llm.usage`) and the default method **`LlmUsageRecorder.record(LlmUsageEvent)`**
+  — provider, requested and served model, `TokenUsage`, applied `ServiceTier`, `startedAt` / `completedAt` / latency,
+  and an outcome (`COMPLETED`, or `ABORTED` with no usage for a stream that broke after it started answering or a call
+  cut by its cancellation token). The default forwards completed calls to the existing four-argument method with the
+  measured values as tags (`service_tier`, `cached_input_tokens`, `cache_write_tokens`); caller tags under those keys
+  are removed first. Existing recorders keep working, and still receive the requested model.
+- **`TokenUsage` cache counters** — `withCacheTokens(Integer, Integer)`, `getCacheReadTokens()` /
+  `getCacheWriteTokens()` (`OptionalInt`: unmeasured is distinct from a measured `0`). Both are subsets of the prompt.
+- **`ServiceTier`** (new, `at.aimon.core.llm`) — `standard` / `fast` / `flex` / `batch`, with unknown values preserved.
+  **`LlmResponse.withServedBy(...)`**, `getServedModel()`, `getServiceTier()`; `ChunkAggregator.recordServedBy(...)`
+  for the streaming path. `LlmCallMetadata.withoutTags(Set)`.
+- **Providers** — OpenAI (Responses and Chat Completions) and Anthropic report the served model, the applied tier
+  (OpenAI `default`→`standard`, `priority`→`fast`; Anthropic `priority` preserved) and the cache counters (OpenAI
+  cache writes are a measured `0`; Anthropic writes with a one-hour TTL are left unmeasured).
+- **Migration notes** — the tag keys `service_tier`, `cached_input_tokens`, `cache_write_tokens`, `cache_usage_known`
+  and `context_input_tokens` are now reserved: a caller tag under one of them is removed before recording. Use
+  `TokenUsage.isZero()` rather than `equals(TokenUsage.empty())` to ask whether a usage counted anything. The cache
+  counters are not yet persisted by `SessionRecordCodec` or the session-routing payloads, so restored session totals
+  carry them as unmeasured.
+
+### Changed: `TokenUsage.getPromptTokens()` is the whole input context on Anthropic
+
+Anthropic's `input_tokens` excludes the prompt cache, so `aimon-llm-anthropic` now adds `cache_read_input_tokens` and
+`cache_creation_input_tokens` back. The prompt count — and with it the total, budget accounting, and
+`ModelPrice.costOf`, which prices every prompt token at the input rate — goes up for calls that hit or fill the cache.
+OpenAI already counted the cache inside its input and is unchanged.
+
 ### Added: background monitors (`Monitor` / `MonitorStop`)
 
 An agent can now watch a long-running source and keep working while its events arrive as messages. Opt-in:

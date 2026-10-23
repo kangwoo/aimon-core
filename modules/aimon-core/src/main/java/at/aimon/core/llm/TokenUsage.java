@@ -1,6 +1,7 @@
 package at.aimon.core.llm;
 
 import java.util.Objects;
+import java.util.OptionalInt;
 
 /**
  * Represents token usage information from an LLM API call.
@@ -8,6 +9,14 @@ import java.util.Objects;
  * <p>
  * Contains the number of tokens used for the prompt (input), completion (output), the total token count, and the
  * subset of the completion tokens the provider spent on reasoning.
+ *
+ * <p>
+ * <strong>What {@code promptTokens} counts.</strong> It is the <em>whole</em> input context the provider processed for
+ * the call: uncached input, input read from the prompt cache, and input written to it. A provider whose wire format
+ * reports only the uncached part (Anthropic's {@code input_tokens}) has the provider module add the cache counters
+ * back, so every provider means the same thing by this number and it can be compared against a context window or a
+ * context-length price band. The cache counters, when known, are therefore <em>subsets</em> of
+ * {@code promptTokens}, never additions to it — see {@link #getCacheReadTokens()}.
  *
  * <p>
  * Immutable value object.
@@ -44,7 +53,7 @@ public final class TokenUsage {
      *             if any token count is negative or if totalTokens is less than promptTokens + completionTokens
      */
     public static TokenUsage of(int promptTokens, int completionTokens, int totalTokens) {
-        return new TokenUsage(promptTokens, completionTokens, totalTokens, 0);
+        return new TokenUsage(promptTokens, completionTokens, totalTokens, 0, null, null);
     }
 
     /**
@@ -68,7 +77,7 @@ public final class TokenUsage {
      *             if any token count is negative or if totalTokens is less than promptTokens + completionTokens
      */
     public static TokenUsage of(int promptTokens, int completionTokens, int totalTokens, int reasoningTokens) {
-        return new TokenUsage(promptTokens, completionTokens, totalTokens, reasoningTokens);
+        return new TokenUsage(promptTokens, completionTokens, totalTokens, reasoningTokens, null, null);
     }
 
     /**
@@ -80,13 +89,16 @@ public final class TokenUsage {
      * @return A TokenUsage with all token counts set to 0
      */
     public static TokenUsage empty() {
-        return new TokenUsage(0, 0, 0, 0);
+        return new TokenUsage(0, 0, 0, 0, null, null);
     }
 
     private final int promptTokens;
     private final int completionTokens;
     private final int totalTokens;
     private final int reasoningTokens;
+    // Boxed on purpose: null is "the provider did not report it", which is not the same claim as a measured 0.
+    private final Integer cacheReadTokens;
+    private final Integer cacheWriteTokens;
 
     /**
      * Creates a new TokenUsage.
@@ -99,10 +111,15 @@ public final class TokenUsage {
      *            The total number of tokens (must be >= 0 and >= promptTokens + completionTokens)
      * @param reasoningTokens
      *            The reasoning tokens included in completionTokens (must be >= 0)
+     * @param cacheReadTokens
+     *            The prompt tokens read from the cache, or null when not reported (must be >= 0 when set)
+     * @param cacheWriteTokens
+     *            The prompt tokens written to the cache, or null when not reported (must be >= 0 when set)
      * @throws IllegalArgumentException
      *             if any token count is negative or if totalTokens is less than promptTokens + completionTokens
      */
-    private TokenUsage(int promptTokens, int completionTokens, int totalTokens, int reasoningTokens) {
+    private TokenUsage(int promptTokens, int completionTokens, int totalTokens, int reasoningTokens,
+            Integer cacheReadTokens, Integer cacheWriteTokens) {
         if (promptTokens < 0) {
             throw new IllegalArgumentException("Prompt tokens cannot be negative: " + promptTokens);
         }
@@ -118,6 +135,13 @@ public final class TokenUsage {
         if (reasoningTokens < 0) {
             throw new IllegalArgumentException("Reasoning tokens cannot be negative: " + reasoningTokens);
         }
+        // Same reasoning for the cache counters: >= 0 only, no "read + write <= prompt" check.
+        if (cacheReadTokens != null && cacheReadTokens < 0) {
+            throw new IllegalArgumentException("Cache read tokens cannot be negative: " + cacheReadTokens);
+        }
+        if (cacheWriteTokens != null && cacheWriteTokens < 0) {
+            throw new IllegalArgumentException("Cache write tokens cannot be negative: " + cacheWriteTokens);
+        }
         if (totalTokens < promptTokens + completionTokens) {
             throw new IllegalArgumentException(
                     String.format("Total tokens (%d) must be >= prompt (%d) + completion (%d) tokens", totalTokens,
@@ -127,6 +151,30 @@ public final class TokenUsage {
         this.completionTokens = completionTokens;
         this.totalTokens = totalTokens;
         this.reasoningTokens = reasoningTokens;
+        this.cacheReadTokens = cacheReadTokens;
+        this.cacheWriteTokens = cacheWriteTokens;
+    }
+
+    /**
+     * Returns a copy of this usage carrying the prompt-cache counters the provider reported.
+     *
+     * <p>
+     * Both counters are <em>subsets</em> of {@link #getPromptTokens()}: the provider module is responsible for making
+     * {@code promptTokens} the whole input context, cache included (see the class Javadoc). {@code null} means the
+     * provider did not report that counter — or reported it in a form that cannot be priced with a single rate, such
+     * as Anthropic cache writes split across TTLs — and is deliberately distinct from a measured {@code 0}.
+     *
+     * @param cacheReadTokens
+     *            The prompt tokens served from the cache, or null when not measured (must be &gt;= 0 when set)
+     * @param cacheWriteTokens
+     *            The prompt tokens written to the cache, or null when not measured (must be &gt;= 0 when set)
+     * @return A new TokenUsage with the same counts plus the given cache counters
+     * @throws IllegalArgumentException
+     *             if a cache counter is negative
+     */
+    public TokenUsage withCacheTokens(Integer cacheReadTokens, Integer cacheWriteTokens) {
+        return new TokenUsage(promptTokens, completionTokens, totalTokens, reasoningTokens, cacheReadTokens,
+                cacheWriteTokens);
     }
 
     /**
@@ -134,6 +182,12 @@ public final class TokenUsage {
      *
      * <p>
      * This is useful for accumulating token usage across multiple LLM calls.
+     *
+     * <p>
+     * A cache counter of the sum is known only when it is known on both sides; an unknown side makes the sum unknown,
+     * because adding a measured number to "not measured" does not yield a measured number. The one exception is a side
+     * with no prompt tokens at all (such as the {@link #empty()} accumulator seed): its cache counters are trivially
+     * zero, since they are subsets of the prompt.
      *
      * @param other
      *            The other TokenUsage to add (must not be null)
@@ -144,7 +198,42 @@ public final class TokenUsage {
     public TokenUsage add(TokenUsage other) {
         Objects.requireNonNull(other, "Other TokenUsage cannot be null");
         return new TokenUsage(promptTokens + other.promptTokens, completionTokens + other.completionTokens,
-                totalTokens + other.totalTokens, reasoningTokens + other.reasoningTokens);
+                totalTokens + other.totalTokens, reasoningTokens + other.reasoningTokens,
+                sumCache(cacheReadTokens, promptTokens, other.cacheReadTokens, other.promptTokens),
+                sumCache(cacheWriteTokens, promptTokens, other.cacheWriteTokens, other.promptTokens));
+    }
+
+    private static Integer sumCache(Integer left, int leftPrompt, Integer right, int rightPrompt) {
+        if (left == null && right == null) {
+            // Nothing was measured on either side: the sum is not measured either, even when both prompts are zero,
+            // so empty().add(empty()) stays equal to empty().
+            return null;
+        }
+        final Integer l = left != null || leftPrompt != 0 ? left : Integer.valueOf(0);
+        final Integer r = right != null || rightPrompt != 0 ? right : Integer.valueOf(0);
+        if (l == null || r == null) {
+            return null;
+        }
+        try {
+            return Math.addExact(l, r);
+        } catch (ArithmeticException e) {
+            // An overflowing counter is no longer a measurement; failing add() over it would fail an accumulator.
+            return null;
+        }
+    }
+
+    /**
+     * Reports whether no token was counted: prompt, completion, total and reasoning are all zero.
+     *
+     * <p>
+     * Use this rather than {@code equals(TokenUsage.empty())} to ask "is there any usage": the cache counters take
+     * part in {@link #equals(Object)}, so a usage with measured-zero cache counters is not equal to {@link #empty()}
+     * while still counting no tokens.
+     *
+     * @return {@code true} if every token count is zero
+     */
+    public boolean isZero() {
+        return promptTokens == 0 && completionTokens == 0 && totalTokens == 0 && reasoningTokens == 0;
     }
 
     /**
@@ -189,6 +278,33 @@ public final class TokenUsage {
         return reasoningTokens;
     }
 
+    /**
+     * Gets the prompt tokens the provider served from its prompt cache.
+     *
+     * <p>
+     * A <em>subset</em> of {@link #getPromptTokens()}. Empty when the provider did not report it, which is not the
+     * same as a measured zero: an empty value must not be priced as "no cache reads".
+     *
+     * @return The cache-read token count, or empty when not measured
+     */
+    public OptionalInt getCacheReadTokens() {
+        return cacheReadTokens == null ? OptionalInt.empty() : OptionalInt.of(cacheReadTokens);
+    }
+
+    /**
+     * Gets the prompt tokens the provider wrote to its prompt cache.
+     *
+     * <p>
+     * A <em>subset</em> of {@link #getPromptTokens()}. Empty when the provider did not report it, or reported writes
+     * that a single cache-write rate cannot price (e.g. Anthropic writes with a one-hour TTL). A provider whose API
+     * has no billed cache writes (OpenAI) reports a measured {@code 0} whenever it reports cache reads.
+     *
+     * @return The cache-write token count, or empty when not measured
+     */
+    public OptionalInt getCacheWriteTokens() {
+        return cacheWriteTokens == null ? OptionalInt.empty() : OptionalInt.of(cacheWriteTokens);
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -199,17 +315,21 @@ public final class TokenUsage {
         }
         final TokenUsage that = (TokenUsage) o;
         return promptTokens == that.promptTokens && completionTokens == that.completionTokens
-                && totalTokens == that.totalTokens && reasoningTokens == that.reasoningTokens;
+                && totalTokens == that.totalTokens && reasoningTokens == that.reasoningTokens
+                && Objects.equals(cacheReadTokens, that.cacheReadTokens)
+                && Objects.equals(cacheWriteTokens, that.cacheWriteTokens);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(promptTokens, completionTokens, totalTokens, reasoningTokens);
+        return Objects.hash(promptTokens, completionTokens, totalTokens, reasoningTokens, cacheReadTokens,
+                cacheWriteTokens);
     }
 
     @Override
     public String toString() {
         return "TokenUsage{" + "prompt=" + promptTokens + ", completion=" + completionTokens + ", total=" + totalTokens
-                + ", reasoning=" + reasoningTokens + '}';
+                + ", reasoning=" + reasoningTokens + ", cacheRead=" + cacheReadTokens + ", cacheWrite="
+                + cacheWriteTokens + '}';
     }
 }

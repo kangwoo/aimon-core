@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/llm/llm-usage-metering.md
-source_commit: 82bcca3
+source_commit: 96839e2
 ---
 
 # LLM Usage Metering Guide
@@ -17,6 +17,8 @@ Two components exist so that the token usage an `LlmClient` produces can be attr
 | `LlmUsageRecorder` | The sink interface that receives a call's outcome (provider/model/TokenUsage + metadata) |
 | `MeteringLlmClient` | An `LlmClient` decorator. Intercepts the response and emits an event to the recorder |
 | `InMemoryLlmUsageRecorder` | The default in-memory implementation, following the multi-instance-ready principle |
+| `LlmUsageEvent` | One call's measurements (applied tier, cache counters, actual model, completion time and latency) — §4 |
+| `ServiceTier` | A provider-neutral representation of the processing tier the provider actually applied |
 
 The provider implementations (`OpenAILlmClient`, `AnthropicLlmClient`) do not need to know that metering exists. Wrapping them in the decorator is enough.
 
@@ -151,9 +153,83 @@ On top of that, both components attach the `WikiScope` information as tags on ev
 
 These tags are merged over the static metadata given to the builder via `LlmCallMetadata.withTags(...)`, so both the caller-supplied base tags and the per-call scope tags survive. Note that `wiki.context` is unique per execution context and is therefore a high-cardinality value — rather than using it directly as a Prometheus label in an external recorder, it is safer to use it for correlating logs and traces.
 
-## 4. Custom recorders
+## 4. Per-call measurements: tier · cache · time
 
-To send usage somewhere other than `InMemoryLlmUsageRecorder` — Prometheus, OpenTelemetry, a database — implement `LlmUsageRecorder` yourself. The interface has exactly one method:
+Token counts alone are not enough to price a single call. The same model costs different amounts depending on the
+**service tier actually applied**, the **input read from or written to the cache**, and **the moment the price
+applies**. `MeteringLlmClient` puts these into an `LlmUsageEvent` and hands it to `LlmUsageRecorder.record(LlmUsageEvent)`.
+
+| Value | Source | When not reported |
+|----|------|------------------|
+| `getServiceTier()` | the tier the response reports — not the request | empty (never assumed to be `standard`) |
+| `getUsage().getCacheReadTokens()` | the response's cache-read counter | empty (never assumed to be `0`) |
+| `getUsage().getCacheWriteTokens()` | the response's cache-write counter | empty |
+| `getServedModel()` | the model the response reports (e.g. the snapshot an alias resolved to) | empty — `getModel()` falls back to the requested model |
+| `getRequestedModel()` | the request's `LlmModel`, else the client's default model | empty |
+| `getStartedAt()` / `getCompletedAt()` / `getLatency()` | `MeteringLlmClient`'s `Clock` | always present |
+
+IMPORTANT: `TokenUsage.getPromptTokens()` is the **whole input context, cache included**. Cache reads and cache writes
+are not added to the prompt; they are **subsets** of it. When a provider reports only the uncached input (Anthropic's
+`input_tokens`), the provider module adds the two cache counters back to restore the whole. That is what makes this
+number usable for picking a context window or a context-length price band (e.g. the 272000 / 272001 boundary). As with
+reasoning tokens, adding cache tokens on top of it would bill them twice.
+
+**Unmeasured is not the same as a measured zero.** The cache counters are `OptionalInt`s, and an empty one means "the
+provider did not say". Do not price a call you cannot price as free or as uncached. `TokenUsage.add` likewise leaves the
+sum unmeasured when either side is (except for a side with zero prompt tokens — the `TokenUsage.empty()` accumulator
+seed — whose cache counters are trivially zero).
+
+### 4.1 Per-provider normalization
+
+Normalization is done **explicitly** by the provider module. There are four neutral tiers, `standard`, `fast`, `flex`
+and `batch` (`ServiceTier.isNormalized()`); a tier with no counterpart is not guessed but preserved as reported
+(lower-cased).
+
+| Provider | tier | cache-read | cache-write |
+|--------|------|-----------|-------------|
+| OpenAI (Responses / Chat) | `default`→`standard`, `priority`→`fast`, `flex`, `batch`; `auto` reads as not reported; anything else (`scale`, ...) preserved | `input_tokens_details.cached_tokens` (`prompt_tokens_details.cached_tokens`) | a measured `0` whenever cache-read is reported (OpenAI does not bill cache writes) |
+| Anthropic | `standard`, `batch`; `priority` is not `fast` and is preserved as is | `cache_read_input_tokens` | `cache_creation_input_tokens` — but unmeasured when any write used the one-hour TTL, which a single cache-write rate cannot price |
+
+Anthropic's one-hour-TTL write tokens are still included in the prompt, because they were processed input. Only their
+cache-write classification is withheld.
+
+### 4.2 Call paths and how often they are recorded
+
+- **The blocking, streaming and cancellation-token paths** all build the same event from the same `LlmResponse`. A
+  streaming call is recorded **once**, from its final response — never per chunk.
+- **Retries**: `MeteringLlmClient` records every call that goes through it. The framework's retry loop
+  (`LlmCallGateway`) sits outside the client, so each attempt that produced a response or an abort gets its own event.
+  Retries an SDK makes internally (on a 429/5xx before any response) are invisible here and are not billed.
+- **Failures and cancellation**: a call that ends in an exception is not recorded. The exception is a call that may
+  still have cost money — a stream that fails or is cancelled after its first chunk arrived, or a call cut by its
+  cancellation token after it was sent. Those are recorded as an `Outcome.ABORTED` event whose usage is **empty**; a
+  partial count would be priced as if it were the whole bill, so none is attached. A token already tripped on entry
+  means no request went out, so nothing is recorded.
+
+### 4.3 Compatibility with existing recorders
+
+`record(LlmUsageEvent)` is a default method. An existing recorder that only implements the four-argument `record(...)`
+keeps working, and receives completed calls in this shape:
+
+- the `model` argument is the **requested model**, as before — existing aggregation keys do not change. The actual model
+  is on the event only.
+- the measured values ride in the tags of `metadata` (`LlmUsageEvent.toRecordingMetadata()`).
+
+| Tag | Value | When not measured |
+|-----|----|------------------|
+| `service_tier` | the normalized tier | no tag |
+| `cached_input_tokens` | a non-negative integer string | no tag |
+| `cache_write_tokens` | a non-negative integer string | no tag |
+
+If a caller put the same keys (or the derived keys `cache_usage_known`, `context_input_tokens`) on its request
+metadata, they are **removed just before recording**, so they can never be mistaken for measurements. The metadata
+object the caller passed in is not modified. `ABORTED` events have no usage to report and are not forwarded to the
+four-argument method — just as failed calls never were. To count aborted calls as well, override
+`record(LlmUsageEvent)`.
+
+## 5. Custom recorders
+
+To send usage somewhere other than `InMemoryLlmUsageRecorder` — Prometheus, OpenTelemetry, a database — implement `LlmUsageRecorder` yourself. Only one method has to be implemented (override §4's `record(LlmUsageEvent)` as well when you need the tier, cache and timing):
 
 ```java
 public final class PrometheusLlmUsageRecorder implements LlmUsageRecorder {
@@ -175,7 +251,7 @@ public final class PrometheusLlmUsageRecorder implements LlmUsageRecorder {
 
 Keep such an implementation in its own module and depend on it only where the CLI (or the consuming application) does its wiring — `aimon-core` knows nothing but the interface (the multi-instance design principle).
 
-## 5. Best practices
+## 6. Best practices
 
 - **Make traceId match your external correlation id**: putting the request id your gateway or CLI receives straight into it lets you join LLM usage against your external logs.
 - **Use `at.aimon.core.base.Principal` for principal**: use it as-is when you need the user/group/system/service distinction. If a plain user id is all you need, putting it in `tags` is lighter.
@@ -183,9 +259,11 @@ Keep such an implementation in its own module and depend on it only where the CL
 - **Only one layer of the decorator**: nesting it — `MeteringLlmClient(MeteringLlmClient(...))` — emits every event twice. Meter at the outermost layer only.
 - **An exception from the recorder does not break the call**: `MeteringLlmClient` catches RuntimeException, logs at WARN and returns the response unchanged. An outage in the metering backend does not fail an LLM call.
 
-## 6. Related code
+## 7. Related code
 
 - Interfaces / value objects: `at.aimon.core.llm.LlmCallMetadata`, `at.aimon.core.llm.LlmClient` (the overload)
-- The recorder package: `at.aimon.core.llm.usage.*`
+- The recorder package: `at.aimon.core.llm.usage.*` (including `LlmUsageEvent`)
+- Measurement types: `at.aimon.core.llm.TokenUsage` (cache counters), `at.aimon.core.llm.ServiceTier`, `LlmResponse.getServedModel()` / `getServiceTier()`
+- Provider normalization: `OpenAiServedBy`, `OpenAiResponseUsages`, `OpenAiChatUsages` (`aimon-llm-openai`), `AnthropicUsages` (`aimon-llm-anthropic`)
 - Helper: `at.aimon.core.llm.usage.LlmCallMetadataResolver` — merges the auto-derived fields into the caller's metadata
 - Integration points: `OrcaAgentExecutor`, `DefaultSubagentExecutor`, `LlmRerankSearchStrategy`, `LlmWikiPageGenerator`

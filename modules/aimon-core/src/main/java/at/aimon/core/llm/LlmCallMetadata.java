@@ -4,6 +4,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import at.aimon.core.base.Principal;
 
@@ -171,6 +172,34 @@ public final class LlmCallMetadata {
         copy.traceId = this.traceId;
         copy.tags = new LinkedHashMap<>(this.tags);
         copy.tags.putAll(additionalTags);
+        return new LlmCallMetadata(copy);
+    }
+
+    /**
+     * Returns a new metadata instance without the given tag keys. Other fields are preserved unchanged.
+     *
+     * <p>
+     * Used where a tag key is reserved for a value the framework itself measures (e.g. the usage tags
+     * {@link at.aimon.core.llm.usage.LlmUsageEvent} writes), so a caller-supplied tag of the same name cannot be
+     * mistaken for the measurement.
+     *
+     * @param keys
+     *            the tag keys to drop (must not be null; absent keys are ignored)
+     * @return a new metadata instance without those tags, or this instance when it carries none of them (never null)
+     */
+    public LlmCallMetadata withoutTags(Set<String> keys) {
+        Objects.requireNonNull(keys, "Keys cannot be null");
+        if (keys.stream().noneMatch(tags::containsKey)) {
+            return this;
+        }
+        final Builder copy = new Builder();
+        copy.component = this.component;
+        copy.parentComponent = this.parentComponent;
+        copy.feature = this.feature;
+        copy.principal = this.principal;
+        copy.traceId = this.traceId;
+        copy.tags = new LinkedHashMap<>(this.tags);
+        copy.tags.keySet().removeAll(keys);
         return new LlmCallMetadata(copy);
     }
 

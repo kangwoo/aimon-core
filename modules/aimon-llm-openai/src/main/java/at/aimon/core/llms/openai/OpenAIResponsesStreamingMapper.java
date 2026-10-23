@@ -273,6 +273,7 @@ final class OpenAIResponsesStreamingMapper {
 
         this.terminalSeen = true;
         this.lastUsage = OpenAiResponseUsages.toTokenUsage(response.usage());
+        aggregator.recordServedBy(OpenAiServedBy.model(response), OpenAiServedBy.serviceTier(response));
         this.lastStatus = response.status().map(status -> status._value().asString().orElse(null)).orElse(null);
         this.lastIncompleteReason = response.incompleteDetails().flatMap(Response.IncompleteDetails::reason)
                 .map(reason -> reason._value().asString().orElse(null)).orElse(null);

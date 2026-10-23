@@ -21,7 +21,9 @@ import at.aimon.core.llm.TokenUsage;
  * reached, in the top-level case.
  *
  * <p>
- * So every level is read through its raw {@code JsonField} accessor and an absent value counts as zero. That is the
+ * So every level is read through its raw {@code JsonField} accessor and an absent value counts as zero — except the
+ * prompt-cache counter ({@code input_tokens_details.cached_tokens}), which stays unmeasured when absent, because a
+ * cache counter of zero is a pricing claim. That is the
  * accounting half of a deliberate split: <em>accounting degrades, identity throws</em>. A missing token counter must
  * not fail a call that otherwise succeeded — cost under-reports and the turn completes — whereas a
  * {@code function_call} missing its {@code call_id} is a provider fault that has to surface, and does, because the
@@ -51,6 +53,10 @@ final class OpenAiResponseUsages {
         final long totalTokens = asLongOrZero(reported._totalTokens());
         final long reasoningTokens = reported._outputTokensDetails().asKnown()
                 .map(details -> asLongOrZero(details._reasoningTokens())).orElse(0L);
+        // Unlike the counters above, an absent cache counter is NOT read as zero: "not measured" must stay
+        // distinguishable from "no cache hits", or a consumer would price an unmeasured call as uncached.
+        final Long cachedTokens = reported._inputTokensDetails().asKnown()
+                .flatMap(details -> details._cachedTokens().asKnown()).orElse(null);
 
         try {
             // The same narrowing guard the Chat path already has, applied to the fourth counter too: the SDK reports
@@ -60,9 +66,15 @@ final class OpenAiResponseUsages {
             // total >= prompt + completion and *throws* otherwise, so a document that reports input and output but
             // omits total cannot yield total = 0 -- it would fail the call, which is precisely what this class exists
             // to prevent. Reporting the sum keeps the counters that were actually read and keeps the invariant true.
-            return TokenUsage.of(Math.toIntExact(inputTokens), Math.toIntExact(outputTokens),
+            final TokenUsage counts = TokenUsage.of(Math.toIntExact(inputTokens), Math.toIntExact(outputTokens),
                     Math.toIntExact(Math.max(totalTokens, inputTokens + outputTokens)),
                     Math.toIntExact(reasoningTokens));
+            if (cachedTokens == null || cachedTokens < 0 || cachedTokens > Integer.MAX_VALUE) {
+                return counts;
+            }
+            // input_tokens already includes the cached part, so it is the whole input context as TokenUsage defines
+            // it. OpenAI bills no cache writes: with the read counter measured, the write counter is a measured 0.
+            return counts.withCacheTokens(Math.toIntExact(cachedTokens), 0);
         } catch (ArithmeticException e) {
             log.warn("Token count exceeded Integer range; falling back to empty usage: {}", e.getMessage());
             return TokenUsage.empty();
