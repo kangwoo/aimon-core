@@ -1,6 +1,7 @@
 package at.aimon.cli.repl;
 
 import java.io.IOException;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -13,6 +14,7 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.jline.keymap.KeyMap;
 import org.jline.reader.Binding;
@@ -58,6 +60,8 @@ import at.aimon.core.tools.monitor.MonitorManager;
 import at.aimon.core.tracing.SpanType;
 import at.aimon.core.tracing.TraceSpan;
 import at.aimon.core.tracing.TraceSpanStore;
+import at.aimon.session.routing.wake.IdleSessionWaker;
+import at.aimon.session.routing.wake.WakePolicy;
 
 public class ReplSession {
 
@@ -140,6 +144,26 @@ public class ReplSession {
     private boolean draining;
 
     /**
+     * Wakes the idle session for its background notifications ({@code cli.enableWake}); {@code null} when off. It only
+     * decides when; the wake's turn runs on the REPL thread, at the top of the prompt loop ({@link #runDueWake}).
+     */
+    private final ReplWaker waker;
+    /** The reader of {@link #start()}, for the waker's nudge from its timer thread; null outside {@code start()}. */
+    private volatile LineReader activeReader;
+    /** The thread running {@link #start()}'s loop — the one a wake interrupts out of its prompt. */
+    private volatile Thread replThread;
+    /**
+     * True only while the loop waits at its own prompt — not at a continuation line, not in an approval prompt a turn
+     * opened on the same reader. Only then may a wake take the REPL back.
+     */
+    private volatile boolean atPrompt;
+    /** Set by the wake widget right before it interrupts the prompt, so the loop tells that from a Ctrl+C. */
+    private final AtomicBoolean wakeInterrupt = new AtomicBoolean();
+
+    /** The JLine widget a wake calls from its timer thread; JLine runs it under its own lock, inside a read. */
+    static final String WAKE_WIDGET = "aimon-wake";
+
+    /**
      * ReplSession을 생성한다.
      *
      * <p>
@@ -174,6 +198,10 @@ public class ReplSession {
         this.latestPendingTurnId = null;
         this.running = false;
         this.draining = false;
+        this.waker = settings.isEnableWake()
+                ? new ReplWaker(messageQueueManager, agentRuntime.getId(), liveSession.getSessionId(),
+                        WakePolicy.defaults(), Clock.systemUTC(), this::nudgeFromWaker)
+                : null;
         // Seed the session default budget from the CLI-supplied initial budget so session-scoped paths
         // (liveSession.submitAsync) observe the same budget that BudgetCommandHandler exposes through /budget.
         syncSessionBudget();
@@ -200,6 +228,10 @@ public class ReplSession {
             KeyMap<Binding> keyMap = lineReader.getKeyMaps().get(LineReader.MAIN);
             keyMap.bind(new Reference(LineReader.ACCEPT_LINE), "\033\r"); // Alt+Enter
 
+            this.activeReader = lineReader;
+            this.replThread = Thread.currentThread();
+            lineReader.getWidgets().put(WAKE_WIDGET, () -> wakeWidget(lineReader));
+
             if (skillApprovalChannel != null) {
                 // SK-11.6: hand the very same JLine reader the REPL uses to the inline approval channel so it can
                 // prompt the user synchronously when the pre-flight scanner sees ASK decisions mid-turn. Re-using the
@@ -208,13 +240,27 @@ public class ReplSession {
                 skillApprovalChannel.bindLineReader(lineReader);
             }
 
+            // What the user had typed when a wake took the prompt back; handed to the next prompt.
+            String carried = null;
             while (running) {
                 try {
+                    runDueWake();
                     StringBuilder multiLineInput = new StringBuilder();
                     String line;
 
                     // Read first line
-                    line = lineReader.readLine(settings.getPrompt());
+                    atPrompt = true;
+                    try {
+                        line = lineReader.readLine(settings.getPrompt(), null, carried);
+                    } finally {
+                        atPrompt = false;
+                    }
+                    carried = null;
+                    // A wake that reached the prompt as it was being accepted: the line wins, and its turn reads the
+                    // notifications itself. Clear what the wake left so it cannot interrupt something else.
+                    if (wakeInterrupt.getAndSet(false)) {
+                        Thread.interrupted();
+                    }
                     if (line == null) {
                         break;
                     }
@@ -242,6 +288,15 @@ public class ReplSession {
                     processInput(input);
 
                 } catch (UserInterruptException e) {
+                    if (wakeInterrupt.getAndSet(false)) {
+                        // A wake took the prompt back; the loop's top runs it. Keep anything typed in the meantime.
+                        final String partial = e.getPartialLine();
+                        carried = partial == null || partial.isEmpty() ? null : partial;
+                        // Off the prompt's line, so the wake's banner starts one of its own.
+                        terminal.writer().println();
+                        terminal.flush();
+                        continue;
+                    }
                     // Ctrl+C pressed
                     formatter.displayInfo("\nUse '/quit' or '/exit' to exit the REPL");
                 } catch (EndOfFileException e) {
@@ -253,6 +308,10 @@ public class ReplSession {
             formatter.displayError("Failed to initialize terminal: " + e.getMessage());
         } finally {
             this.activeTerminal = null;
+            this.activeReader = null;
+            if (waker != null) {
+                waker.close();
+            }
             if (skillApprovalChannel != null) {
                 skillApprovalChannel.unbindLineReader();
             }
@@ -339,8 +398,71 @@ public class ReplSession {
         if (input.startsWith("/")) {
             handleCommand(input);
         } else {
+            if (waker != null) {
+                waker.userTurn();
+            }
             executeAgent(input);
         }
+    }
+
+    /**
+     * Runs the wake the waker allows now, if any — on this thread, as a turn like any other, whose input is the
+     * session's background notifications (idle-wake design §8). Called at the top of the prompt loop: after a wake
+     * took the prompt back, and after every turn, which is when notifications that arrived during it are left over.
+     */
+    // Package-private so ReplSessionWakeTest can drive it without a terminal.
+    void runDueWake() {
+        if (waker == null) {
+            return;
+        }
+        final Optional<ReplWaker.Wake> due = waker.take();
+        if (due.isEmpty()) {
+            return;
+        }
+        final ReplWaker.Wake wake = due.get();
+        formatter.displayInfo("[woken: " + wake.getReason() + "]");
+        final SubmitOptions.Builder options = SubmitOptions.builder()
+                .executionAttribute(IdleSessionWaker.WAKE_REASON_ATTRIBUTE, wake.getReason());
+        wake.getTaskId().ifPresent(
+                taskId -> options.executionAttribute(SubagentTaskCompleted.RECEIVED_TASK_ID_ATTRIBUTE, taskId));
+        executeAgent(TextInput.of(wake.getInput()), options.build());
+    }
+
+    /**
+     * The waker's nudge, on its timer thread: asks the prompt to give the REPL back. Calling the widget is the one way
+     * in that JLine makes safe from another thread; when nothing is reading, the REPL is in a turn, and the loop looks
+     * again when that turn ends.
+     */
+    private void nudgeFromWaker() {
+        final LineReader reader = activeReader;
+        if (reader == null) {
+            return;
+        }
+        try {
+            reader.callWidget(WAKE_WIDGET);
+        } catch (IllegalStateException notReading) {
+            log.debug("Wake deferred: the REPL is not at its prompt");
+        }
+    }
+
+    /**
+     * Runs under JLine's lock while a read is in progress, so the interrupt below reaches the REPL thread inside
+     * {@code readLine} — which turns it into a {@link UserInterruptException} — and nowhere else. Only at the loop's
+     * own
+     * prompt with nothing typed: a half-typed line is the user's, and its turn will read the notifications anyway.
+     */
+    private boolean wakeWidget(LineReader reader) {
+        final Thread thread = replThread;
+        if (!atPrompt || thread == null) {
+            return true;
+        }
+        if (reader.getBuffer().length() > 0) {
+            waker.schedule(waker.getPolicy().getDebounce());
+            return true;
+        }
+        wakeInterrupt.set(true);
+        thread.interrupt();
+        return true;
     }
 
     private void handleCommand(String command) {

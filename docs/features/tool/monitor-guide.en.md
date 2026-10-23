@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/tool/monitor-guide.md
-source_commit: fba6ea54
+source_commit: 766b8b47
 ---
 
 # Background Monitor Guide
@@ -54,6 +54,7 @@ The `cli` section of `aimon.yaml`:
 ```yaml
 cli:
   enableMonitor: true
+  enableWake: true   # optional: an idle prompt is woken by monitor events (§4.1)
 ```
 
 ### 2.3 Assembling an `AimonStack` yourself
@@ -143,7 +144,9 @@ next one.
 `SessionSpec.wake(WakePolicy)`), a monitor event reaching an idle session opens a turn with the event as its input. The
 turn runs as the session's owner and counts against budgets and quotas like any turn. A session with no recorded owner
 is not woken. Caps keep it from running away — 6 wakes per session an hour, and 3 in a row without a turn of the
-user's (past them, the events stay queued for the next user turn). The CLI does not wake yet. Design:
+user's (past them, the events stay queued for the next user turn). In the CLI, turn it on with
+`cli.enableWake: true`: at an empty prompt it shows `[woken: monitor-event]` and runs a turn with the events as its
+input. A half-typed line is left alone — send it, and its turn reads the events. Design:
 [`idle-wake.md`](../../design/session/idle-wake.md).
 
 Events go **only to the session that started the monitor.** Other sessions of the same agent do not receive them.

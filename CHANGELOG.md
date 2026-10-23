@@ -31,7 +31,12 @@ An agent can now watch a long-running source and keep working while its events a
 
 An idle session can now be woken when a background notification addressed to it arrives — a monitor's events by
 default — so the agent reacts while nobody is typing. Opt-in: `SessionSpec.wake(WakePolicy)` or
-`aimon.session.wake.enabled=true`. Design: `docs/design/session/idle-wake.md`.
+`aimon.session.wake.enabled=true`, and in the CLI `cli.enableWake: true`. Design: `docs/design/session/idle-wake.md`.
+
+- **The CLI wakes too** (`cli.enableWake`, off by default): at an empty prompt the REPL is taken back from JLine — a
+  widget called from the waker's timer thread interrupts the read — and the wake's turn runs on the REPL thread like a
+  typed one, so it renders, asks for approvals and answers Ctrl+C the same way. A half-typed line is left alone. Same
+  `WakePolicy` defaults; a prompt of the user's ends the streak.
 
 - **`at.aimon.session.routing.wake`** (new) — `IdleSessionWaker` listens to the message queue and opens the turn through
   `SessionRouter.submit`, with the drained notifications as its input (wrapped as

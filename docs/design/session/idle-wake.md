@@ -1,11 +1,11 @@
 # 쉬는 세션 깨우기 (Idle Wake)
 
-> Status: **IMPLEMENTED** — §10 의 1단계(라우터를 쓰는 스택). CLI 는 2단계다. 구현이 설계에서 벗어난 점은 §12.
+> Status: **IMPLEMENTED** — 라우터를 쓰는 스택(§3–§7)과 CLI(§8). 구현이 설계에서 벗어난 점은 §12.
 >
 > 적용 대상: `aimon-session-routing` — `at.aimon.session.routing.wake` (`IdleSessionWaker`, `WakePolicy`,
 > `WakeRequestCustomizer`) · `aimon-core` — `at.aimon.core.agent.session.wake` (`WakeLedger`, `WakeState`,
 > `InMemoryWakeLedger`) · `aimon-session-{redis,postgres,mongodb}` — 공유 원장 (`RedisWakeLedger`,
-> `PostgresWakeLedger`, `MongoWakeLedger`) · `aimon-bootstrap` — `SessionSpec` 설정과 조립 ·
+> `PostgresWakeLedger`, `MongoWakeLedger`) · `aimon-cli` — `ReplWaker` (§8) · `aimon-bootstrap` — `SessionSpec` 설정과 조립 ·
 > `aimon-spring-boot-starter` — `aimon.session.wake.*`. 선행 설계: [`../tool/monitor.md`](../tool/monitor.md) §9.1 (이 기능을 미룬 이유),
 > [`routing.md`](routing.md) (제출·턴 게이트·인박스·이벤트 릴레이).
 
@@ -239,11 +239,31 @@ Spring Boot 에서 `WakeLedger` 빈으로 노출하면, 모든 노드가 같은 
 
 ---
 
-## 8. CLI — 2단계
+## 8. CLI
 
-CLI 는 라우터가 아니라 `LiveSession` 을 직접 쓰고, REPL 스레드가 JLine 입력에서 기다린다. 쉬는 동안 턴을 열면 그
-출력이 입력 줄 위로 끼어든다(`LineReader.printAbove` 로 다시 그려야 한다). 이 UX 문제는 깨우기의 정책과 무관하므로
-1단계에서 뺀다.
+CLI 는 라우터가 아니라 `LiveSession` 을 직접 쓰고, REPL 스레드가 JLine 입력에서 기다린다. `cli.enableWake: true` 로
+켠다(기본 꺼짐).
+
+**턴은 REPL 스레드가 돌린다.** 다른 스레드에서 턴을 열면 출력이 입력 줄에 끼어들고, 그 턴의 승인 프롬프트가 같은 리더로
+두 번째 `readLine` 을 열려 하고, Ctrl+C 가 그 턴에 닿지 않는다. 그래서 깨우기(`ReplWaker`, `aimon-cli`)는 "언제" 만
+정하고, REPL 을 프롬프트에서 **돌려받아** 루프 꼭대기에서 일반 턴처럼 돌린다 — 렌더링·승인·Ctrl+C 가 입력한 턴과 같다.
+
+**프롬프트에서 돌려받는 법.** JLine 은 다른 스레드에서의 위젯 호출(`LineReader.callWidget`)을 자기 잠금 아래에서,
+읽기가 진행 중일 때만 허용한다. 깨우기 위젯은 그 잠금 안에서 REPL 스레드를 인터럽트하고, `readLine` 은 그것을
+`UserInterruptException` 으로 바꾼다(Ctrl+C 와 같은 길이다 — 위젯이 먼저 표시를 세워 둘을 구분한다). 위젯은 루프 **자신의**
+프롬프트에서, 아무것도 입력되지 않았을 때만 인터럽트한다.
+
+- 이어 쓰는 줄(`... `)이나 턴 안의 승인 프롬프트에서는 하지 않는다 — 그 읽기는 루프의 것이 아니다
+- 반쯤 입력한 줄이 있으면 하지 않고 디바운스 뒤에 다시 본다. 사용자가 그 줄을 보내면 그 턴이 알림을 읽는다. 위젯과
+  타자 사이에 들어온 글자는 예외에 실려 오므로 다음 프롬프트에 그대로 되돌린다
+- 읽기가 없으면(턴이 도는 중) 아무것도 하지 않는다 — 루프가 턴이 끝난 뒤 꼭대기에서 다시 본다. 턴 중에 쌓인 알림이
+  그때 남아 있으면 깨운다
+- 줄이 받아들여지는 순간 인터럽트가 겹치면 줄이 이긴다. 루프는 남은 인터럽트 표시를 지워 다른 곳에 닿지 않게 한다
+
+**정책은 같다.** `WakePolicy` 기본값(모니터 알림, 디바운스 2초, 시간당 6회, 연속 3회)이고, 입력은 같은
+`background-wake` 리마인더, 턴 속성도 같은 `aimon.wake.reason` 이다. 세션 하나, 노드 하나이므로 카운터는 원장 없이
+`ReplWaker` 안에 있다. 연속 횟수는 사용자가 프롬프트를 보내면 0 이 된다. 소유자 검사와 전달 실패 처리(§4.2, §5)는
+없다 — CLI 의 턴은 언제나 그 사용자의 것이고, 다른 노드로 전달되지 않는다.
 
 ---
 
@@ -274,7 +294,7 @@ CLI 는 라우터가 아니라 `LiveSession` 을 직접 쓰고, REPL 스레드�
 1. **이 PR** — `WakePolicy`, `WakeLedger` / `InMemoryWakeLedger`, `IdleSessionWaker` (`aimon-session-routing`),
    `SessionSpec.wake(...)` 와 조립·teardown·삭제 연결, Spring `aimon.session.wake.*`, 모니터 가이드와 이 문서
 2. **공유 원장** — SPI 를 `aimon-core` 로 옮기고, `AbstractWakeLedgerContractTest`, Redis·Postgres·Mongo 구현 (§7)
-3. **다음** — CLI (`printAbove`)
+3. **CLI** — `ReplWaker` 와 REPL 의 깨우기 위젯, `cli.enableWake` (§8)
 
 ---
 
@@ -282,7 +302,7 @@ CLI 는 라우터가 아니라 `LiveSession` 을 직접 쓰고, REPL 스레드�
 
 | id | 항목 |
 |----|------|
-| W-1 | CLI 깨우기 (§8) |
+| W-1 | ~~CLI 깨우기~~ — 완료 (§8) |
 | W-2 | ~~노드 사이에서 상한을 공유하는 `WakeLedger` 구현~~ — 완료 (§7) |
 | W-3 | ~~인박스로 전달된 제출이 턴 없이 실패했을 때 알림을 되살리는 길~~ — 완료: 돌지 않았음이 증명된 실패(`TurnNotRunException`)만 되돌린다 (§5) |
 
@@ -295,6 +315,7 @@ CLI 는 라우터가 아니라 `LiveSession` 을 직접 쓰고, REPL 스레드�
 | 진행 중인 세션 | 깨우지 않고 그만 (§3.3) | 깨우지 않되 디바운스 간격 뒤 **다시 확인**한다 | 진행 중인 턴이 도구 iteration 없이 답하고 끝나면 알림이 다음 사용자 턴까지 남는다. 새 알림이 오지 않으면 아무도 다시 보지 않으므로, 턴이 끝날 때까지 짧게 다시 본다 |
 | PR 리뷰 반영 | 멱등 키 `wake:<uuid>`, `get`/`put` 원장, 진행 중이면 레코드부터 읽고 재확인, 재오픈 옵션 없음 | 시도마다 새 키(§3.2), 원자적 `update` 와 `outstanding`(§4.3), 진행 중 확인을 먼저 하고 남은 항목이 있을 때만 재확인, `WakeRequestCustomizer`(§3.2), 시간당 상한이 풀릴 때 재확인, close 는 진행 중인 깨우기를 기다린다 | 재시도가 중복으로 삼켜지는 유실, 원장 경합과 제 턴에 의한 초기화, 불필요한 저장소 읽기, 기본값으로 열린 세션 |
 | 턴 없이 실패한 깨우기 | 되돌릴 수 없다(§5, 이 문서의 1단계) | `TurnNotRunException` 이면 알림을 되돌린다. 깨우기는 센 채로 둔다(§5) | 라우터가 퍼지를 `collect` 로 바꿔 지운 것을 알게 되었고, 그 증명을 타입으로 나른다([`routing.md`](routing.md) §11.3). SPI 변경 없이 된다 — `collect` 가 이미 지운 것을 돌려준다 |
+| CLI | `printAbove` 로 입력 줄 위에 출력을 다시 그리며, 다른 스레드에서 턴을 연다 | REPL 을 프롬프트에서 돌려받아 REPL 스레드에서 턴을 돌린다(§8) | 다른 스레드의 턴은 승인 프롬프트(같은 리더의 두 번째 `readLine`)와 Ctrl+C 를 감당하지 못한다. `printAbove` 는 출력만 고친다 |
 | 확인과 기록 | 확인한 뒤 제출이 성공하면 깨우기를 센다. `outstanding` 은 플래그 | 확인하는 `update` 가 예약하고, 보내지 못하면 되돌린다. `outstanding` 은 개수다(§4.3) | 공유 원장에서는 두 노드가 함께 확인을 통과할 수 있었다. 먼저 끝난 노드가 다른 노드의 턴 표시를 지웠다(PR 리뷰) |
 | 원장의 자리 | `WakeLedger` 는 `aimon-session-routing` 에 | `aimon-core` 의 `at.aimon.core.agent.session.wake` | 공유 구현을 내는 백엔드 모듈은 라우팅 모듈에 의존하지 않는다(다른 세션 SPI 와 같은 규칙). 0.3.4 가 나가기 전에 옮겨 깨지는 사용자가 없다 |
 | 설계 리뷰 반영 | 첫 초안은 드레인 뒤 검증, `status` 를 게이트로, 이벤트로 자기 턴 세기 | 드레인 전 검증 + 실패 시 되돌리기(§5), `status` 는 이 노드가 쥔 세션의 비용 최적화(§3.3), `turnCount` 로 사용자 턴 판정(§4.3) | 리뷰가 찾은 유실·경합·카운터 어긋남 |

@@ -49,6 +49,7 @@ source 는 `aimon.tools.monitor.websocket-enabled: false` 로 끈다.
 ```yaml
 cli:
   enableMonitor: true
+  enableWake: true   # 선택: 쉬는 프롬프트를 모니터 알림이 깨운다(§4.1)
 ```
 
 ### 2.3 `AimonStack` 을 직접 조립할 때
@@ -136,8 +137,10 @@ providers.add(new OrcaMonitorToolProvider(monitors));
 **깨우기를 켜면**(라우터를 쓰는 스택: Spring Boot 의 `aimon.session.wake.enabled: true`, 또는
 `SessionSpec.wake(WakePolicy)`) 쉬는 세션에 모니터 알림이 도착할 때 그 알림을 입력으로 턴이 하나 열린다. 그 턴은 세션
 소유자의 권한으로 돌고 일반 턴처럼 예산·쿼터에 잡힌다. 소유자가 기록되지 않은 세션은 깨우지 않는다. 폭주를 막는 상한이
-있다 — 세션당 시간당 6회, 사용자 턴 없이 연속 3회(넘으면 다음 사용자 턴까지 알림이 큐에 남는다). CLI 는 아직 깨우지
-않는다. 설계는 [`idle-wake.md`](../../design/session/idle-wake.md).
+있다 — 세션당 시간당 6회, 사용자 턴 없이 연속 3회(넘으면 다음 사용자 턴까지 알림이 큐에 남는다). CLI 에서는
+`cli.enableWake: true` 로 켠다. 프롬프트가 비어 있으면 `[woken: monitor-event]` 를 보이고 알림을 입력으로 턴을 돌린다.
+입력하던 줄이 있으면 기다린다 — 그 줄을 보내면 그 턴이 알림을 읽는다. 설계는
+[`idle-wake.md`](../../design/session/idle-wake.md).
 
 알림은 그 모니터를 시작한 **세션에만** 간다. 같은 에이전트의 다른 세션은 받지 않는다.
 
