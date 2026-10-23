@@ -106,7 +106,9 @@ public AbstractTool(ToolDefinitionProvider definitionProvider)
   손으로 쓴 스키마와 손으로 쓴 파라미터 추출이 서로 다른 말을 하는 사고가 구조적으로 불가능해진다
 - **바인딩이 위반을 한 번에 모두 보고한다** — 그것도 실행기의 스키마 게이트와 같은 문장으로
 - **`execute()` 가 `final` 이다** — "예외를 던지지 않는다"는 도구 계약이 하위 클래스의 성실함이 아니라
-  타입으로 강제된다. 구현할 것은 `doExecute(I, ToolContext)` 와 `render(O)` 둘뿐이다
+  타입으로 강제된다. 구현할 것은 `doExecute(I, ToolContext)` 와 `render(O)` 둘뿐이다. `doExecute()` 가 던진
+  예외는 오류 결과의 `getException()` 에 그대로 붙으므로 `ToolExecutionException` 이 감싼 원인(cause)도
+  잃지 않는다. 모델이 읽는 것은 여전히 메시지뿐이다
 
 입력 타입은 `record` 로 쓴다. 이것이 프로젝트의 `class` 선호 규약에 대한 **유일한 예외**이며 범위는
 `GenericTool` 의 입력 DTO 하나뿐이다 — 도메인 타입·값 객체·설정 객체는 포함되지 않는다

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/tool/tool-development-guide.md
-source_commit: 731f5c21
+source_commit: b32b0d88
 ---
 
 # Tool Development Guide
@@ -112,7 +112,9 @@ Choosing `GenericTool` brings three things with it.
   parameter extraction to say different things
 - **The binding reports every violation at once** — and in the same wording as the executor's schema gate
 - **`execute()` is `final`** — the tool contract "it does not throw" is enforced by the type rather than by
-  a subclass's diligence. There are only two things to implement: `doExecute(I, ToolContext)` and `render(O)`
+  a subclass's diligence. There are only two things to implement: `doExecute(I, ToolContext)` and `render(O)`.
+  An exception `doExecute()` throws is attached as is to the error result's `getException()`, so the cause a
+  `ToolExecutionException` wraps is not lost either. The model still reads only the message
 
 Write the input type as a `record`. This is the **only exception** to the project's `class`-preferring convention, and its scope is the input DTO of `GenericTool` alone — domain types, value objects and configuration objects are not included (`.claude/rules/code-style.md`).
 
