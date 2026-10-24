@@ -215,6 +215,34 @@ class StatusSnapshotPayloadTest {
                 .isZero();
     }
 
+    @Test
+    @DisplayName("cache counters round-trip on both maps, and an unmeasured or absent one decodes as unmeasured")
+    void cacheCountersRoundTrip() {
+        final TurnProgress turn = TurnProgress.of(2, TokenUsage.of(10, 5, 15).withCacheTokens(6, null),
+                Duration.ofMillis(250), ExecutionBudget.unlimited());
+        final LiveSessionStatus original = LiveSessionStatus.builder().sessionId(CONV).phase(Phase.RUNNING)
+                .interruptible(true).queueDepth(0).turnProgress(turn)
+                .sessionTotals(SessionTotals.of(4, 9, TokenUsage.of(100, 50, 150).withCacheTokens(60, 0))).build();
+
+        @SuppressWarnings("unchecked")
+        final Map<String, Object> normalized = (Map<String, Object>) normalizeLikeJsonCodec(
+                StatusSnapshotPayload.toPayload(original, 1L, Instant.ofEpochMilli(1L)));
+        final Decoded decoded = StatusSnapshotPayload.fromPayload(CONV, normalized).orElseThrow();
+
+        final TokenUsage totals = decoded.status().getSessionTotals().getTokenUsage();
+        final TokenUsage progress = decoded.status().getTurnProgress().orElseThrow().getTokenUsage();
+        assertThat(totals.getCacheReadTokens()).hasValue(60);
+        assertThat(totals.getCacheWriteTokens()).hasValue(0);
+        assertThat(progress.getCacheReadTokens()).hasValue(6);
+        assertThat(progress.getCacheWriteTokens()).isEmpty();
+
+        // runningStatus() carries no cache counters, which is also what an older node's map looks like.
+        final Decoded old = StatusSnapshotPayload
+                .fromPayload(CONV, StatusSnapshotPayload.toPayload(runningStatus(), 1L, Instant.ofEpochMilli(1L)))
+                .orElseThrow();
+        assertThat(old.status().getSessionTotals().getTokenUsage().getCacheReadTokens()).isEmpty();
+    }
+
     @SuppressWarnings("unchecked")
     private static void stripReasoningKey(Map<String, Object> payload, String outerKey) {
         final Object nested = payload.get(outerKey);

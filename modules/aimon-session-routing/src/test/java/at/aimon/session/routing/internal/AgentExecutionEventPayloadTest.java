@@ -308,6 +308,30 @@ class AgentExecutionEventPayloadTest {
                 .isZero();
     }
 
+    @Test
+    @DisplayName("cache counters round-trip through the JSON codec, and malformed ones decode as unmeasured")
+    void cacheCountersRoundTrip() {
+        final AssistantMessageReceived original = AssistantMessageReceived.builder().timestamp(TS).agentRuntimeId(CTX)
+                .iteration(1).messageSummary("cached")
+                .tokenUsage(TokenUsage.of(120, 30, 150).withCacheTokens(100, null)).build();
+
+        @SuppressWarnings("unchecked")
+        final Map<String, Object> normalized = (Map<String, Object>) normalizeLikeJsonCodec(
+                AgentExecutionEventPayload.toPayload(original, TURN));
+        assertThat(AgentExecutionEventPayload.fromPayload(normalized)).contains(original);
+
+        @SuppressWarnings("unchecked")
+        final Map<String, Object> tokens = new LinkedHashMap<>((Map<String, Object>) normalized.get("tokens"));
+        tokens.put("cacheRead", -5);
+        tokens.put("cacheWrite", 2.5d);
+        final Map<String, Object> malformed = new LinkedHashMap<>(normalized);
+        malformed.put("tokens", tokens);
+        final TokenUsage decoded = ((AssistantMessageReceived) AgentExecutionEventPayload.fromPayload(malformed)
+                .orElseThrow()).getTokenUsage().orElseThrow();
+        assertThat(decoded.getCacheReadTokens()).isEmpty();
+        assertThat(decoded.getCacheWriteTokens()).isEmpty();
+    }
+
     private static List<AgentExecutionEvent> samples() {
         final TokenUsage tokens = TokenUsage.of(120, 30, 150);
         final Map<String, Object> inputSummary = new LinkedHashMap<>();

@@ -83,6 +83,8 @@ public final class SessionRecordCodec {
     private static final String FIELD_COMPLETION_TOKENS = "completionTokens";
     private static final String FIELD_TOTAL_TOKENS = "totalTokens";
     private static final String FIELD_REASONING_TOKENS = "reasoningTokens";
+    private static final String FIELD_CACHE_READ_TOKENS = "cacheReadTokens";
+    private static final String FIELD_CACHE_WRITE_TOKENS = "cacheWriteTokens";
 
     private static final String FIELD_MAX_ITERATIONS = "maxIterations";
     private static final String FIELD_MAX_TOKENS = "maxTokens";
@@ -175,6 +177,10 @@ public final class SessionRecordCodec {
         node.put(FIELD_COMPLETION_TOKENS, usage.getCompletionTokens());
         node.put(FIELD_TOTAL_TOKENS, usage.getTotalTokens());
         node.put(FIELD_REASONING_TOKENS, usage.getReasoningTokens());
+        // Written only when measured: an absent field is how "not measured" survives the round trip, which a stored 0
+        // could not express.
+        usage.getCacheReadTokens().ifPresent(tokens -> node.put(FIELD_CACHE_READ_TOKENS, tokens));
+        usage.getCacheWriteTokens().ifPresent(tokens -> node.put(FIELD_CACHE_WRITE_TOKENS, tokens));
         return node.toString();
     }
 
@@ -198,10 +204,26 @@ public final class SessionRecordCodec {
         final JsonNode node = read(encoded, "session totals");
         // asInt() on a missing path is 0, so a totals document written before reasoning tokens existed decodes with
         // the field at zero and needs no special case here.
-        final TokenUsage usage = TokenUsage.of(node.path(FIELD_PROMPT_TOKENS).asInt(),
-                node.path(FIELD_COMPLETION_TOKENS).asInt(), node.path(FIELD_TOTAL_TOKENS).asInt(),
-                node.path(FIELD_REASONING_TOKENS).asInt());
+        final TokenUsage usage = TokenUsage
+                .of(node.path(FIELD_PROMPT_TOKENS).asInt(), node.path(FIELD_COMPLETION_TOKENS).asInt(),
+                        node.path(FIELD_TOTAL_TOKENS).asInt(), node.path(FIELD_REASONING_TOKENS).asInt())
+                .withCacheTokens(cacheCounter(node, FIELD_CACHE_READ_TOKENS),
+                        cacheCounter(node, FIELD_CACHE_WRITE_TOKENS));
         return SessionTotals.of(node.path(FIELD_TURN_COUNT).asInt(), node.path(FIELD_ITERATIONS).asInt(), usage);
+    }
+
+    /**
+     * A cache counter of a stored totals document, or {@code null} when it was not measured.
+     *
+     * <p>
+     * Unlike the other counters this one must not default to 0: a document written before cache counters were
+     * persisted, or for a session whose provider never reported them, has no such field, and reading that as a
+     * measured 0 would claim the session never touched the cache. A value that is not a non-negative int is treated
+     * the same way rather than failing the whole record.
+     */
+    private static Integer cacheCounter(JsonNode node, String field) {
+        final JsonNode value = node.path(field);
+        return value.isIntegralNumber() && value.canConvertToInt() && value.intValue() >= 0 ? value.intValue() : null;
     }
 
     /**

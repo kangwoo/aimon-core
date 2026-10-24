@@ -1,6 +1,7 @@
 package at.aimon.session.routing.internal;
 
 import static at.aimon.session.routing.internal.PayloadValues.asBoolean;
+import static at.aimon.session.routing.internal.PayloadValues.asCounterOrNull;
 import static at.aimon.session.routing.internal.PayloadValues.asInt;
 import static at.aimon.session.routing.internal.PayloadValues.asIntOrZero;
 import static at.aimon.session.routing.internal.PayloadValues.asList;
@@ -418,14 +419,19 @@ final class AgentExecutionEventPayload {
         map.put("completion", tokens.getCompletionTokens());
         map.put("total", tokens.getTotalTokens());
         map.put("reasoning", tokens.getReasoningTokens());
+        // Only when measured: an absent key is "not measured", which a 0 would misstate.
+        tokens.getCacheReadTokens().ifPresent(v -> map.put("cacheRead", v));
+        tokens.getCacheWriteTokens().ifPresent(v -> map.put("cacheWrite", v));
         return map;
     }
 
     private static TokenUsage tokensFromMap(Map<String, Object> map) {
         // "reasoning" is newer than the other three, so it is read tolerantly: during a rolling upgrade a map written
         // by an old node has no such key, and asInt would NPE on it and drop the whole signal.
-        return TokenUsage.of(asInt(map.get("prompt")), asInt(map.get("completion")), asInt(map.get("total")),
-                asIntOrZero(map.get("reasoning")));
+        return TokenUsage
+                .of(asInt(map.get("prompt")), asInt(map.get("completion")), asInt(map.get("total")),
+                        asIntOrZero(map.get("reasoning")))
+                .withCacheTokens(asCounterOrNull(map.get("cacheRead")), asCounterOrNull(map.get("cacheWrite")));
     }
 
     /**
