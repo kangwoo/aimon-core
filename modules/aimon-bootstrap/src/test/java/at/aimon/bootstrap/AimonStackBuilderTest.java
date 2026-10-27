@@ -586,6 +586,52 @@ class AimonStackBuilderTest {
     }
 
     @Test
+    @DisplayName("the supplied task policy reaches the engine's manager, and survives later with* calls")
+    void suppliedTaskPolicyReachesTheManager(@TempDir Path workspace) {
+        final at.aimon.core.scheduling.ScheduledTaskPolicy policy = new at.aimon.core.scheduling.ScheduledTaskPolicy() {
+        };
+        // The policy first, the rest after: each with* builds a new spec, and none may drop the policy.
+        final SchedulingSpec scheduling = SchedulingSpec.enabled(executor -> NO_OP_SCHEDULER).withTaskPolicy(policy)
+                .withTaskRepository(new InMemoryScheduledTaskRepository())
+                .withExecutionGuard(new at.aimon.core.scheduling.InMemoryScheduledExecutionGuard());
+
+        assertThat(scheduling.getTaskPolicy()).containsSame(policy);
+        try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").scheduling(scheduling).build())) {
+            assertThat(stack.schedulingEngine().orElseThrow().getTaskManager().getTaskPolicy()).isSameAs(policy);
+        }
+        assertThatThrownBy(() -> SchedulingSpec.disabled().withTaskPolicy(policy))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("Scheduling is disabled");
+    }
+
+    @Test
+    @DisplayName("the bound-runtime check can be turned off from the spec, and every with* keeps every other choice")
+    void boundRuntimeValidationAndReconcileIntervalReachTheEngine(@TempDir Path workspace) {
+        final at.aimon.core.scheduling.ScheduledTaskPolicy policy = new at.aimon.core.scheduling.ScheduledTaskPolicy() {
+        };
+        final SchedulingSpec scheduling = SchedulingSpec.enabled(executor -> NO_OP_SCHEDULER).withTaskPolicy(policy)
+                .withBoundRuntimeValidation(false).withReconcileInterval(java.time.Duration.ofSeconds(7))
+                .withUnresolvableRuntimePolicy(at.aimon.core.scheduling.UnresolvableRuntimePolicy.KEEP_SCHEDULED)
+                .withTaskRepository(new InMemoryScheduledTaskRepository());
+
+        assertThat(scheduling.getTaskPolicy()).containsSame(policy);
+        assertThat(scheduling.getBoundRuntimeValidation()).hasValue(false);
+        assertThat(scheduling.getReconcileInterval()).hasValue(java.time.Duration.ofSeconds(7));
+        assertThat(scheduling.getTaskRepository()).isPresent();
+        try (AimonStack stack = AimonStackBuilder.build(specFor(workspace, "ops").scheduling(scheduling).build())) {
+            final ScheduledTask orphan = ScheduledTask.builder().id(ScheduledTaskId.of("orphan")).name("orphan")
+                    .cronExpression("0 3 * * *").owner(Principal.user("ops"))
+                    .boundRuntimeId(at.aimon.core.agent.AgentRuntimeId.fromName("nobody"))
+                    .addStep(RoutineStep.of("Read", "{}")).build();
+
+            stack.schedulingEngine().orElseThrow().getTaskManager().register(orphan);
+
+            assertThat(stack.schedulingEngine().orElseThrow().getTaskManager().listAll()).hasSize(1);
+        }
+        assertThatThrownBy(() -> SchedulingSpec.disabled().withBoundRuntimeValidation(false))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("Scheduling is disabled");
+    }
+
+    @Test
     @DisplayName("routine execution attributes on a disabled spec are refused")
     void routineExecutionAttributesOnDisabledSchedulingAreRefused() {
         assertThatThrownBy(() -> SchedulingSpec.disabled().withRoutineExecutionAttributes((task, id) -> Map.of()))

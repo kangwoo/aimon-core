@@ -1,4 +1,4 @@
-package at.aimon.session.testkit;
+package at.aimon.scheduling.testkit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

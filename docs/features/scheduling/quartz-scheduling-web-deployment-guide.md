@@ -140,7 +140,11 @@ public final class AgentSchedulingBootstrap implements AutoCloseable {
                 .jdbcJobStore(props.jdbcUrl(), props.jdbcDriver())
                 .clustered(true)
                 .clusterCheckinInterval(15_000)
-                .taskExecutor(taskId -> managerRef.get().executeTask(taskId))
+                // 두 메서드 모두 구현한다 — `taskId -> ...` 람다는 발화의 slot 을 버린다
+                .taskExecutor(new ScheduledTaskExecutor() {
+                    @Override public void execute(ScheduledTaskId id) { managerRef.get().executeTask(id); }
+                    @Override public void execute(ScheduledFire fire) { managerRef.get().executeFire(fire); }
+                })
                 .build();
 
         // 3. SchedulingEngine — 외부 scheduler 주입
@@ -185,7 +189,7 @@ public final class AgentSchedulingBootstrap implements AutoCloseable {
 
 - `AgentRuntimeRegistry`는 부트스트랩에서 한 번 생성해서 `SchedulingEngine`과 **세션 개설 경로**가 모두 같은 인스턴스를 보게 한다. `SessionRouterBuilder` 에는 registry 세터가 없다 — 라우터는 runtime 을 직접 다루지 않고, `sessionFactory(LiveSessionFactory)` 의 `ContextBuilder`(또는 `sessionOpener(LiveSessionOpener)` 가 받는 `AgentRuntimeId`)를 통해 간접적으로 닿는다. 그 경로가 별도 registry 를 쓰면 cron 재발화 시 `RoutineExecutor` 가 `boundRuntimeId` 로 agent runtime 을 찾지 못한다.
 - `sessionFactory(...)` 와 `sessionOpener(...)` 는 **정확히 하나만** 설정한다. 둘 다 또는 둘 다 아님은 `build()` 가 거부한다. 호출자 도메인 속성(tenant id 등)을 세션 컨텍스트로 넘겨야 하면 opener 쪽을 쓴다.
-- `taskExecutor`에 넘기는 람다는 `managerRef.get().executeTask(...)` 형태로 **lazy 참조**한다. `QuartzTaskScheduler`와 `ScheduledTaskManager`의 순환 의존을 끊기 위함이다.
+- `taskExecutor`에 넘기는 executor 는 `managerRef.get()` 으로 매니저를 **lazy 참조**한다. `QuartzTaskScheduler`와 `ScheduledTaskManager`의 순환 의존을 끊기 위함이다. 람다가 아니라 두 메서드를 다 구현하는 이유는 Quartz 가 발화마다 넘기는 `ScheduledFire`(예정 발화 시각과 cron slot)를 분산 guard 까지 전하기 위해서다 — 람다는 taskId 쪽만 구현하므로 slot 이 사라진다. 매니저가 이미 있으면 `taskManager.asExecutor()` 가 같은 것이다.
 - `schedulingEngine.close()` 한 번으로 내부의 Quartz scheduler까지 안전하게 내려간다(`SchedulingEngine.close()` → `taskScheduler.shutdown()` → `Scheduler.shutdown(true)` → `RoutineExecutor.shutdown()`). 별도 호출 금지.
 - 종료는 **session router → scheduling engine** 순. 반대로 하면 진행 중이던 turn에서 scheduled task tool이 호출될 때 이미 내려간 엔진을 치게 된다.
 
@@ -247,6 +251,8 @@ QuartzTaskSchedulerBuilder.create()
 | `clusterCheckinInterval` | 20_000ms | 15_000ms | 기본값 대비 failover 속도 향상 |
 | `defaultMaxQuota` (`SchedulingEngineBuilder`) | 10 | agent runtime당 **10–20** | LLM 비용·과도한 cron 등록 방어 |
 | `executionGuard` (`SchedulingEngineBuilder`) | `InMemoryScheduledExecutionGuard` (노드 로컬) | 분산 구현 | 노드 간 중복 발화에 대한 코어 레벨 2차 방어선 |
+| `taskPolicy` (`SchedulingEngineBuilder`) | `ScheduledTaskPolicy.PERMIT_ALL` | 호스트 규칙이 있으면 구현 | routine 단계에는 hook 이 적용되지 않으므로 예약 시점이 유일한 검사 지점이다 |
+| `validateBoundRuntime` (`SchedulingEngineBuilder`) | `true` | `true` 유지 | 해석되지 않는 runtime 에 묶인 작업을 등록 시점에 거부한다 — 발화마다 조용히 실패하지 않게 |
 | `interruptBus` (`SchedulingEngineBuilder`) | `ScheduledTaskInterruptBus.LOCAL_ONLY` (노드 로컬) | 분산 구현 (MongoDB: `MongoScheduledTaskInterruptBus`) | 취소가 **발화한 노드**의 실행까지 멈추게 한다 |
 | `routineExecutionAttributes` (`SchedulingEngineBuilder`) | `RoutineExecutionAttributes.NONE` (속성 없음) | 쓸 때는 공유 저장소를 읽는 구현 | 발화한 노드에서 불리므로, 어느 노드에서 불려도 같은 답을 내야 한다 |
 | `quotaGuardFactory` (`SchedulingEngineBuilder`) | `QuotaGuardFactory.disabled()` (계량 없음) | 실행기에 준 것과 같은 인스턴스, 공유 장부 위에서 | 루틴 단계의 포크를 태스크 소유자의 사용량 쿼터에 기록하고, 다 쓴 소유자의 포크를 첫 LLM 호출 전에 멈춘다 |
@@ -256,6 +262,11 @@ QuartzTaskSchedulerBuilder.create()
 `executionGuard`는 발화 직전에 실행 권한을 묻는 자리다. 기본값은 이 노드 안에서의 겹침만 막으므로, 클러스터에서는
 공유 저장소를 보는 구현을 넘겨야 §7의 "동일 task가 두 노드에서 동시에 실행됐다" 항목이 말하는 2차 방어선이 생긴다.
 스타터에서는 `ScheduledExecutionGuard` 빈 하나로 배선된다(`SchedulingSpec.withExecutionGuard`).
+
+분산 guard 는 taskId 가 아니라 `tryBegin(ScheduledFire)` 의 `getOccurrenceKey()`(task + cron slot)로 리스를 잡아야
+한다. taskId 로 잡으면 겹침만 막는다 — 노드 A 의 실행이 끝나 리스를 놓은 뒤 늦게 도착한 노드 B 의 같은 발화는 다시
+돈다. 구현은 `aimon-scheduling-testkit` 의 `AbstractScheduledExecutionGuardContractTest` 를 `dedupsOccurrences() == true`
+로 통과해야 한다. 설계는 [스케줄 실행 설계](../../design/scheduling/llm-scheduling-agent.md) §6.1.
 
 `interruptBus`는 반대 방향 — 이미 돌고 있는 것을 **멈추는** 자리다. `RoutineExecutor` 의 in-flight 레지스트리는
 노드 로컬이므로, 버스가 없으면 `cancel` 은 취소를 입력한 노드의 실행만 끊는다. 클러스터에서 그 노드는 대개 cron 이
@@ -323,7 +334,7 @@ schedulingEngine.addEventListener(new ScheduledTaskEventListener() {
 
 ### "노드 재시작 후 일시적으로 동일 task가 두 번 실행됐다"
 
-- Misfire 정책이 `FireAndProceed`이므로 의도한 동작이다(`QuartzTaskScheduler`가 cron trigger에 `withMisfireHandlingInstructionFireAndProceed()`를 건다). 멱등이 아닌 task는 `ScheduledTask` 핸들러 내부에서 idempotency key를 검사하도록 작성한다(예: 세션 쪽 `IdempotencyStore` 재사용).
+- Misfire 정책이 `FireAndProceed`이므로 Quartz 수준에서는 의도한 동작이다(`QuartzTaskScheduler`가 cron trigger에 `withMisfireHandlingInstructionFireAndProceed()`를 건다). 복구 발화는 예정 시각이 "지금" 이지만, `QuartzTaskScheduler` 가 그것을 직전 cron 격자점으로 접어 slot 으로 넘긴다. 그래서 occurrence 키로 리스를 잡는 분산 guard 가 있으면 이미 돈 회차의 복구 발화는 거부된다. 없으면 멱등이 아닌 task는 `ScheduledTask` 핸들러 내부에서 idempotency key를 검사하도록 작성한다(예: 세션 쪽 `IdempotencyStore` 재사용).
 
 ### "JDBC JobStore에 잠금(`QRTZ_LOCKS`)이 풀리지 않는다"
 

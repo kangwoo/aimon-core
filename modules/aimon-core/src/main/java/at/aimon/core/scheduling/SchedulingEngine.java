@@ -4,8 +4,12 @@
 
 package at.aimon.core.scheduling;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -68,6 +72,12 @@ public final class SchedulingEngine implements AutoCloseable {
     private final ScheduledTaskInterruptBus.Subscription interruptSubscription;
     private final boolean rehydrateAtStart;
 
+    /** How often {@link ScheduledTaskManager#reconcile()} runs; {@link Duration#ZERO} when it does not. */
+    private final Duration reconcileInterval;
+
+    /** Runs the reconcile pass; created at {@link #start()} only when {@link #reconcileInterval} is positive. */
+    private ScheduledExecutorService reconciler;
+
     /**
      * Creates a new scheduling engine.
      *
@@ -77,13 +87,21 @@ public final class SchedulingEngine implements AutoCloseable {
      */
     SchedulingEngine(ScheduledTaskManager taskManager, RoutineExecutor routineExecutor, TaskScheduler taskScheduler,
             ScheduledTaskEventPublisher eventPublisher, ScheduledTaskInterruptBus interruptBus) {
-        this(taskManager, routineExecutor, taskScheduler, eventPublisher, interruptBus, true);
+        this(taskManager, routineExecutor, taskScheduler, eventPublisher, interruptBus, true, Duration.ZERO);
     }
 
     SchedulingEngine(ScheduledTaskManager taskManager, RoutineExecutor routineExecutor, TaskScheduler taskScheduler,
             ScheduledTaskEventPublisher eventPublisher, ScheduledTaskInterruptBus interruptBus,
             boolean rehydrateAtStart) {
+        this(taskManager, routineExecutor, taskScheduler, eventPublisher, interruptBus, rehydrateAtStart,
+                Duration.ZERO);
+    }
+
+    SchedulingEngine(ScheduledTaskManager taskManager, RoutineExecutor routineExecutor, TaskScheduler taskScheduler,
+            ScheduledTaskEventPublisher eventPublisher, ScheduledTaskInterruptBus interruptBus,
+            boolean rehydrateAtStart, Duration reconcileInterval) {
         this.rehydrateAtStart = rehydrateAtStart;
+        this.reconcileInterval = Objects.requireNonNull(reconcileInterval, "Reconcile interval cannot be null");
 
         this.taskManager = Objects.requireNonNull(taskManager, "Task manager cannot be null");
         this.routineExecutor = Objects.requireNonNull(routineExecutor, "Routine executor cannot be null");
@@ -124,7 +142,44 @@ public final class SchedulingEngine implements AutoCloseable {
         if (rehydrateAtStart) {
             taskManager.scheduleStored(stored);
         }
+        startReconciler();
         log.info("Scheduling engine started");
+    }
+
+    /**
+     * Starts the periodic {@link ScheduledTaskManager#reconcile()} pass, when this engine was built to run one. A pass
+     * that throws — a repository that cannot be read for a moment — is logged and the next pass runs as planned.
+     */
+    private synchronized void startReconciler() {
+        if (reconcileInterval.isZero() || reconciler != null) {
+            return;
+        }
+        reconciler = Executors.newSingleThreadScheduledExecutor(r -> {
+            final Thread thread = new Thread(r, "scheduling-reconciler");
+            thread.setDaemon(true);
+            return thread;
+        });
+        final long millis = reconcileInterval.toMillis();
+        reconciler.scheduleWithFixedDelay(() -> {
+            try {
+                final int changed = taskManager.reconcile();
+                if (changed > 0) {
+                    log.info("Reconciled {} trigger(s) with the task repository", changed);
+                }
+            } catch (RuntimeException e) {
+                log.warn("Trigger reconciliation failed; retrying in {}: {}", reconcileInterval, e.getMessage(), e);
+            }
+        }, millis, millis, TimeUnit.MILLISECONDS);
+        log.info("Trigger reconciliation every {} (per-node scheduler on one node of several)", reconcileInterval);
+    }
+
+    /**
+     * How often this engine converges its triggers on the repository after {@link #start()}.
+     *
+     * @return the interval, or {@link Duration#ZERO} when it does not reconcile
+     */
+    public Duration reconcileInterval() {
+        return reconcileInterval;
     }
 
     /**
@@ -157,6 +212,21 @@ public final class SchedulingEngine implements AutoCloseable {
      */
     @Override
     public void close() {
+        synchronized (this) {
+            if (reconciler != null) {
+                reconciler.shutdownNow();
+                // A pass in flight would otherwise run on against a scheduler being shut down below and log a failure
+                // per task. Bounded: a pass is repository reads and trigger edits, not routine work.
+                try {
+                    if (!reconciler.awaitTermination(5, TimeUnit.SECONDS)) {
+                        log.warn("A trigger reconciliation pass did not finish within 5s of close");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                reconciler = null;
+            }
+        }
         interruptSubscription.close();
         taskScheduler.shutdown();
         routineExecutor.shutdown();

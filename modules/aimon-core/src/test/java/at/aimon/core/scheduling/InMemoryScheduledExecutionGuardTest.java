@@ -63,7 +63,7 @@ class InMemoryScheduledExecutionGuardTest {
     @Test
     @DisplayName("rejects a null task id")
     void rejectsNull() {
-        assertThatThrownBy(() -> guard.tryBegin(null)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> guard.tryBegin((ScheduledTaskId) null)).isInstanceOf(NullPointerException.class);
     }
 
     @Test

@@ -323,6 +323,7 @@ modules/
 │
 ├── aimon-knowledge-opensearch   # OpenSearch 지식 저장소
 ├── aimon-scheduling-quartz      # 분산 cron 스케줄러
+├── aimon-scheduling-testkit     # 공유 스케줄링 SPI 계약 스위트 (배포됨)
 ├── aimon-workflow-graaljs       # GraalJS 스크립트 기반 서브에이전트 워크플로
 ├── aimon-rewake-webhook         # HMAC 검증 HTTP 엔드포인트로 rewake 발화
 

@@ -82,6 +82,7 @@ modules/
 │
 ├── aimon-knowledge-opensearch       # OpenSearch knowledge store
 ├── aimon-scheduling-quartz          # Quartz-based task scheduler (clustered/distributed)
+├── aimon-scheduling-testkit         # Shared scheduling SPI contract suites — repository, history, guard, interrupt bus (published)
 ├── aimon-workflow-graaljs           # GraalJS frontend: JS-scripted subagent workflow
 └── aimon-rewake-webhook             # Javalin HTTP endpoint that fires rewake (HMAC-verified)
 ```

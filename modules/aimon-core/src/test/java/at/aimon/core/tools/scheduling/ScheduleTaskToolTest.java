@@ -23,6 +23,7 @@ import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
 import at.aimon.core.scheduling.ScheduledTask;
 import at.aimon.core.scheduling.ScheduledTaskManager;
+import at.aimon.core.scheduling.ScheduledTaskPolicy;
 import at.aimon.core.scheduling.exception.InvalidCronExpressionException;
 import at.aimon.core.scheduling.exception.QuotaExceededException;
 import at.aimon.core.tools.ToolContextKeys;
@@ -41,6 +42,7 @@ class ScheduleTaskToolTest {
     @BeforeEach
     void setUp() {
         taskManager = mock(ScheduledTaskManager.class);
+        when(taskManager.getTaskPolicy()).thenReturn(ScheduledTaskPolicy.PERMIT_ALL);
         defaultBoundRuntimeId = AgentRuntimeId.of("agent:test-1");
         tool = new ScheduleTaskTool(taskManager, () -> defaultBoundRuntimeId);
     }

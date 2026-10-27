@@ -179,8 +179,8 @@ class ScheduledTaskRehydrationTest {
         final ScheduledTask task = task("real", true);
         stored.save(task);
         final AtomicReference<TaskScheduler> real = new AtomicReference<>();
-        final SchedulingEngine engine = SchedulingEngineBuilder.create().taskRepository(stored)
-                .taskSchedulerFactory(executor -> {
+        final SchedulingEngine engine = SchedulingEngineBuilder.create().validateBoundRuntime(false)
+                .taskRepository(stored).taskSchedulerFactory(executor -> {
                     real.set(new InMemoryTaskScheduler(executor));
                     return real.get();
                 }).build();
@@ -208,8 +208,8 @@ class ScheduledTaskRehydrationTest {
         };
         stored.save(task);
         final RecordingScheduler scheduler = new RecordingScheduler();
-        final SchedulingEngine engine = SchedulingEngineBuilder.create().taskRepository(stored)
-                .taskSchedulerFactory(executor -> scheduler).build();
+        final SchedulingEngine engine = SchedulingEngineBuilder.create().validateBoundRuntime(false)
+                .taskRepository(stored).taskSchedulerFactory(executor -> scheduler).build();
         engines.add(engine);
 
         assertThatThrownBy(engine::start).isInstanceOf(SchedulingException.class);
@@ -255,8 +255,8 @@ class ScheduledTaskRehydrationTest {
         final ScheduledTask task = task("shared", true);
         stored.save(task);
         final RecordingScheduler scheduler = new RecordingScheduler();
-        final SchedulingEngine engine = SchedulingEngineBuilder.create().taskRepository(stored)
-                .taskSchedulerFactory(executor -> scheduler).multiNode(true).build();
+        final SchedulingEngine engine = SchedulingEngineBuilder.create().validateBoundRuntime(false)
+                .taskRepository(stored).taskSchedulerFactory(executor -> scheduler).multiNode(true).build();
         engines.add(engine);
 
         engine.start();
@@ -274,8 +274,8 @@ class ScheduledTaskRehydrationTest {
         stored.save(task);
         final RecordingScheduler scheduler = new RecordingScheduler();
         scheduler.clusterWide = true;
-        final SchedulingEngine engine = SchedulingEngineBuilder.create().taskRepository(stored)
-                .taskSchedulerFactory(executor -> scheduler).multiNode(true).build();
+        final SchedulingEngine engine = SchedulingEngineBuilder.create().validateBoundRuntime(false)
+                .taskRepository(stored).taskSchedulerFactory(executor -> scheduler).multiNode(true).build();
         engines.add(engine);
 
         engine.start();
@@ -291,8 +291,8 @@ class ScheduledTaskRehydrationTest {
         final ScheduledTask task = task("guarded", true);
         stored.save(task);
         final RecordingScheduler scheduler = new RecordingScheduler();
-        final SchedulingEngine engine = SchedulingEngineBuilder.create().taskRepository(stored)
-                .taskSchedulerFactory(executor -> scheduler).multiNode(true)
+        final SchedulingEngine engine = SchedulingEngineBuilder.create().validateBoundRuntime(false)
+                .taskRepository(stored).taskSchedulerFactory(executor -> scheduler).multiNode(true)
                 .executionGuard(new InMemoryScheduledExecutionGuard()).build();
         engines.add(engine);
 
@@ -302,8 +302,8 @@ class ScheduledTaskRehydrationTest {
     }
 
     private SchedulingEngine startedEngine(ScheduledTaskRepository stored, TaskScheduler scheduler, int quota) {
-        final SchedulingEngine engine = SchedulingEngineBuilder.create().taskRepository(stored)
-                .taskSchedulerFactory(executor -> scheduler).defaultMaxQuota(quota).build();
+        final SchedulingEngine engine = SchedulingEngineBuilder.create().validateBoundRuntime(false)
+                .taskRepository(stored).taskSchedulerFactory(executor -> scheduler).defaultMaxQuota(quota).build();
         engines.add(engine);
         engine.start();
         return engine;

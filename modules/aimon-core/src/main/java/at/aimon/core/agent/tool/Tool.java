@@ -279,4 +279,24 @@ public interface Tool {
     default DestructiveBehavior getDestructiveBehavior() {
         return DestructiveBehavior.DESTRUCTIVE;
     }
+
+    /**
+     * Returns the {@link IdempotencyBehavior} this tool declares: whether calling it again with the same input is
+     * equivalent to calling it once.
+     *
+     * <p>
+     * The default is {@link IdempotencyBehavior#NON_IDEMPOTENT}, the conservative end, matching MCP's
+     * {@code idempotentHint}. Like {@link #getDestructiveBehavior()} this is read <b>only when the level is
+     * {@link SideEffectLevel#MUTATING}</b>; a read-only tool is always safe to repeat.
+     *
+     * <p>
+     * {@code RoutineExecutor} is the reader today: it retries a scheduled step only when its tool is read-only or
+     * declares {@link IdempotencyBehavior#IDEMPOTENT}. Declare it for a writing tool whose retry after a timeout cannot
+     * do its write twice.
+     *
+     * @return the tool's idempotency declaration (never null)
+     */
+    default IdempotencyBehavior getIdempotencyBehavior() {
+        return IdempotencyBehavior.NON_IDEMPOTENT;
+    }
 }

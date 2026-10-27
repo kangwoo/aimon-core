@@ -70,6 +70,25 @@ public interface ScheduledTaskEventListener {
     }
 
     /**
+     * Called when a routine run stops early because one of its steps asked it to — its work waits on something
+     * outside the run. Not a failure: no step failed.
+     *
+     * @param event
+     *            the halt event
+     */
+    default void onTaskHalted(TaskHaltedEvent event) {
+    }
+
+    /**
+     * Called when the engine disables a task on its own, for example because its bound runtime cannot be resolved.
+     *
+     * @param event
+     *            the disable event
+     */
+    default void onTaskDisabled(TaskDisabledEvent event) {
+    }
+
+    /**
      * Called when a routine step completes successfully.
      *
      * @param event

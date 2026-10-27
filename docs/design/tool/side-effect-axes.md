@@ -3,7 +3,8 @@
 > Status: **IMPLEMENTED (부분)** — 사다리는 `READ_ONLY < MUTATING` 2단으로 줄었고, 파괴성은
 > `DestructiveBehavior` 라는 **별도 형질**로 나갔다. 승인 게이트의 무조건 질문 분기와 MCP 어노테이션
 > 체인(`McpToolAnnotations` → `McpToolTraits` → `McpTool`), `McpServerConfig.annotationTrust` 까지 들어가 있다.
-> 남은 것은 둘이다 — **인트리 도구의 `NON_DESTRUCTIVE` 감사**(§8.1)와 **멱등성 축**(§8.2).
+> **멱등성 축**(§8.2)도 첫 소비자(routine 재시도)와 함께 들어갔다. 남은 것은 **인트리 도구의 `NON_DESTRUCTIVE`
+> 감사**(§8.1)다.
 >
 > 적용 대상: `aimon-core` — `at.aimon.core.agent.tool` (`SideEffectLevel`, `DestructiveBehavior`, `Tool`),
 > `at.aimon.core.toolinvocation.approval` (`SideEffectApprovalGate`),
@@ -101,13 +102,14 @@ public enum SideEffectLevel { READ_ONLY(0), MUTATING(1) }
 
 // 형질 — 순서 없음. 기본값은 MCP spec 기본값과 같은 쪽(= 최악).
 public enum DestructiveBehavior { NON_DESTRUCTIVE, DESTRUCTIVE }   // default DESTRUCTIVE
+public enum IdempotencyBehavior { NON_IDEMPOTENT, IDEMPOTENT }     // default NON_IDEMPOTENT
 ```
 
 | MCP annotation | AIMON 축 | 형태 | spec 기본값 ↔ AIMON 기본값 |
 |---|---|---|---|
 | `readOnlyHint` | `SideEffectLevel` | 사다리 | `false` ↔ `MUTATING` |
 | `destructiveHint` | `DestructiveBehavior` | 형질 | `true` ↔ `DESTRUCTIVE` |
-| `idempotentHint` | 아직 없음 (§8.2) | 형질 예정 | `false` ↔ (`NON_IDEMPOTENT`) |
+| `idempotentHint` | `IdempotencyBehavior` (§8.2) | 형질 | `false` ↔ `NON_IDEMPOTENT` |
 | `openWorldHint` | 대응 없음 (§8.3) | — | — |
 
 기본값이 양쪽에서 일치하므로 **어댑터의 "어노테이션 없음" 경로에 특수 처리가 없다** — 없으면 그냥 AIMON
@@ -174,9 +176,9 @@ MCP 어노테이션은 **원격 서버가 자기를 서술하는 주장**이고,
 - 판정을 지난 뒤에는 **아래쪽 누구도 MCP 도구와 로컬 도구를 구분하지 못한다.** 신뢰된 읽기 전용 MCP
   도구는 로컬 읽기 전용 도구와 정확히 같은 의미로 읽기 전용이다.
 
-`McpToolAnnotations` 는 `idempotentHint` 와 `openWorldHint` 도 **파싱해서 보관하되 아무 선언도 만들지
-않는다.** 대응 축이 아직 없기 때문이며(§8.2·§8.3), 버리지 않은 것은 §3 과 같은 이유다 — 버려 둔 값은
-축이 생길 때 파서까지 되짚어야 한다.
+`McpToolAnnotations` 는 `openWorldHint` 도 **파싱해서 보관하되 아무 선언도 만들지 않는다.** 대응 축이 아직
+없기 때문이며(§8.3), 버리지 않은 것은 §3 과 같은 이유다 — 버려 둔 값은 축이 생길 때 파서까지 되짚어야 한다.
+`idempotentHint` 가 그 경우였고, 멱등성 축이 생기자 `McpToolTraits.resolve` 에 한 줄이 늘었을 뿐이다(§8.2).
 
 ### 5.2 신뢰는 서버 단위 설정이다
 
@@ -354,19 +356,27 @@ javadoc 에도 박혀 있다 — 감사가 끝나기 전에는 면제선을 `MUT
 실행에 응답할 수 있는 승인 핸들러를 붙이거나(사전 승인 목록, 비대화형 정책 핸들러) 도구를 비파괴적으로
 다시 설계하는 것이다.
 
-### 8.2 멱등성 축 (`IdempotencyBehavior`)
+### 8.2 멱등성 축 (`IdempotencyBehavior`) — 구현됨
 
 ```java
 public enum IdempotencyBehavior { NON_IDEMPOTENT, IDEMPOTENT }   // default NON_IDEMPOTENT
 ```
 
-멱등성 개념은 §1 에서 **폐기된 것이 아니라 이동 대기 중**이다. 사다리에서 뺀 것은 그것이 순서가 아니기
-때문이지 쓸모가 없어서가 아니다. `McpToolAnnotations` 는 `idempotentHint` 를 이미 파싱해 두고 있으므로
-축이 생기면 `McpToolTraits.resolve` 에 한 줄이 는다.
+멱등성 개념은 §1 에서 **폐기된 것이 아니라 이동 대기 중**이었다. 사다리에서 뺀 것은 그것이 순서가 아니기
+때문이지 쓸모가 없어서가 아니다. 만드는 시점은 **첫 소비자가 생길 때**로 정해 두었고, 그 소비자는 routine 재시도다
+— `RoutineExecutor` 가 실패한 단계를 다시 실행해도 되는지 물어본다.
 
-만드는 시점은 **첫 소비자가 생길 때**다 — 도구 재시도나 rewake 리플레이가 "이 도구를 다시 실행해도
-되는가" 를 실제로 물어볼 때. 소비자 없이 축부터 만들면 선언만 쌓이고 아무도 읽지 않는다. 규모는 새 파일
-1개 + `Tool` 의 default 메서드 1개 + `McpToolTraits` 수정 1곳이다.
+| 위치 | 변화 |
+|---|---|
+| `agent/tool/IdempotencyBehavior.java` | 새 형질 |
+| `Tool.getIdempotencyBehavior()` | default `NON_IDEMPOTENT` |
+| `McpToolTraits` / `McpTool` | `TRUST` 일 때 `idempotentHint` 를 읽는다. 읽기 전용으로 정규화되면 `IDEMPOTENT` |
+| `RoutineExecutor` | `READ_ONLY` 이거나 `IDEMPOTENT` 인 도구의 단계만 재시도한다 |
+
+소비 규칙은 파괴성과 같다 — **`MUTATING` 일 때만 읽는다.** 읽기 전용 도구는 반복해도 아무것도 바꾸지 않으므로
+언제나 재시도해도 된다. 기본값이 보수적인 쪽이므로 **선언하지 않은 쓰기 도구는 재시도되지 않는다.** 이것은 동작
+변경이며 의도한 것이다 — timeout 으로 끝난 쓰기를 다시 실행하면 같은 부작용이 두 번 일어난다. 재시도가 필요한 쓰기
+도구는 `IDEMPOTENT` 를 선언한다. 상세는 [스케줄 실행 설계](../scheduling/llm-scheduling-agent.md) §5.4.
 
 ### 8.3 `openWorldHint`
 
@@ -381,6 +391,7 @@ public enum IdempotencyBehavior { NON_IDEMPOTENT, IDEMPOTENT }   // default NON_
 |---|---|
 | 사다리 (2단, `permits()`) | `agent/tool/SideEffectLevel.java` |
 | 파괴성 형질 (2값, default `DESTRUCTIVE`) | `agent/tool/DestructiveBehavior.java` |
+| 멱등성 형질 (2값, default `NON_IDEMPOTENT`) · 그 소비자 | `agent/tool/IdempotencyBehavior.java`, `scheduling/RoutineExecutor.java` (`retryRefusal`) |
 | 도구의 선언 지점 (default 메서드 2개 + 파생 `isReadOnly()`) | `agent/tool/Tool.java` |
 | 실링 — 실행 거부 | `agent/tool/DefaultToolExecutionManager.java` |
 | 실링 — 정의 필터 | `agent/impl/orca/OrcaAgentExecutor.java`, `subagent/execution/DefaultSubagentExecutor.java`, `skill/execution/llm/LlmSkillExecutor.java` |

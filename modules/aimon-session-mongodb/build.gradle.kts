@@ -24,6 +24,8 @@ dependencies {
     // SessionRecordStore, SessionLeaseStore, SessionInbox, SessionSignalBus, IdempotencyStore — lives in
     // aimon-core (SPX, docs/design/session/session-store.md §1.3).
     testImplementation(project(":aimon-session-testkit"))
+    // The scheduled-task repository and interrupt-bus suites, which moved out of the session testkit.
+    testImplementation(project(":aimon-scheduling-testkit"))
 
     testImplementation(libs.testcontainers)
     testImplementation(libs.testcontainers.mongodb)

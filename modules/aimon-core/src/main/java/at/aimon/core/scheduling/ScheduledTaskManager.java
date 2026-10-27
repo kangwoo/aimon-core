@@ -4,28 +4,38 @@
 
 package at.aimon.core.scheduling;
 
+import java.time.DateTimeException;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import at.aimon.core.agent.AgentRuntimeId;
+import at.aimon.core.agent.AgentRuntimeRegistry;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.base.Principal;
 import at.aimon.core.scheduling.cron.UnixCronExpression;
 import at.aimon.core.scheduling.event.ScheduledTaskEventPublisher;
 import at.aimon.core.scheduling.event.TaskCancelledEvent;
+import at.aimon.core.scheduling.event.TaskDisabledEvent;
 import at.aimon.core.scheduling.event.TaskRegisteredEvent;
 import at.aimon.core.scheduling.exception.InvalidCronExpressionException;
 import at.aimon.core.scheduling.exception.QuotaExceededException;
 import at.aimon.core.scheduling.exception.TaskNotFoundException;
 import at.aimon.core.scheduling.exception.UnauthorizedTaskAccessException;
+import at.aimon.core.scheduling.exception.UnresolvableBoundRuntimeException;
 import at.aimon.core.scheduling.quota.TaskQuotaManager;
 import at.aimon.core.scheduling.repository.ScheduledTaskExecutionHistoryRepository;
 import at.aimon.core.scheduling.repository.ScheduledTaskRepository;
+import at.aimon.core.scheduling.scheduler.ScheduledFire;
+import at.aimon.core.scheduling.scheduler.ScheduledTaskExecutor;
 import at.aimon.core.scheduling.scheduler.TaskScheduler;
 
 /**
@@ -48,6 +58,23 @@ public class ScheduledTaskManager {
     private final TaskQuotaManager quotaManager;
     private final ScheduledExecutionGuard executionGuard;
     private final ScheduledTaskInterruptBus interruptBus;
+    /** Resolves bound runtimes for the two checks below; {@code null} turns both off. */
+    private final AgentRuntimeRegistry agentRuntimeRegistry;
+    private final boolean validateBoundRuntime;
+    private final UnresolvableRuntimePolicy unresolvableRuntimePolicy;
+    private final ScheduledTaskPolicy taskPolicy;
+    /** Whether other nodes run fires of the same tasks, so one this node cannot run should be left to them. */
+    private final boolean multiNode;
+
+    /**
+     * Serialises this node's changes to its own triggers: {@link #register}, {@link #cancel}, {@link #setEnabled} and
+     * the {@link #reconcile()} pass. Each pairs a repository write with a trigger change, and a reconcile pass landing
+     * between the two halves of one of them reads the repository's half and acts on it — scheduling a task that
+     * {@code register} is about to schedule (Quartz then refuses the second, and the loser is whichever thread got
+     * there last), or re-scheduling one {@code cancel} has unscheduled but not yet deleted. Node-local because the
+     * triggers are: what other nodes do to theirs is reconciled, not locked against.
+     */
+    private final Object triggerLock = new Object();
 
     /**
      * ScheduledTaskManager를 생성한다. Uses the default in-memory {@link ScheduledExecutionGuard} (prevents overlapping
@@ -84,6 +111,17 @@ public class ScheduledTaskManager {
         quotaManager = Objects.requireNonNull(builder.quotaManager, "Quota manager cannot be null");
         executionGuard = Objects.requireNonNull(builder.executionGuard, "Execution guard cannot be null");
         interruptBus = Objects.requireNonNull(builder.interruptBus, "Interrupt bus cannot be null");
+        agentRuntimeRegistry = builder.agentRuntimeRegistry;
+        validateBoundRuntime = builder.validateBoundRuntime;
+        unresolvableRuntimePolicy = Objects.requireNonNull(builder.unresolvableRuntimePolicy,
+                "Unresolvable runtime policy cannot be null");
+        taskPolicy = Objects.requireNonNull(builder.taskPolicy, "Task policy cannot be null");
+        multiNode = builder.multiNode;
+        if (multiNode && unresolvableRuntimePolicy == UnresolvableRuntimePolicy.DISABLE) {
+            // One node's miss is a fact about that node, and disabling writes it into the repository every node reads.
+            throw new IllegalStateException("UnresolvableRuntimePolicy.DISABLE cannot be used on one node of several:"
+                    + " a runtime one node has not registered yet would disable the task for all of them");
+        }
     }
 
     /**
@@ -119,6 +157,11 @@ public class ScheduledTaskManager {
         private TaskQuotaManager quotaManager;
         private ScheduledExecutionGuard executionGuard = new InMemoryScheduledExecutionGuard();
         private ScheduledTaskInterruptBus interruptBus = ScheduledTaskInterruptBus.LOCAL_ONLY;
+        private AgentRuntimeRegistry agentRuntimeRegistry;
+        private boolean validateBoundRuntime = true;
+        private UnresolvableRuntimePolicy unresolvableRuntimePolicy = UnresolvableRuntimePolicy.KEEP_SCHEDULED;
+        private ScheduledTaskPolicy taskPolicy = ScheduledTaskPolicy.PERMIT_ALL;
+        private boolean multiNode;
 
         private Builder() {
         }
@@ -222,6 +265,74 @@ public class ScheduledTaskManager {
         }
 
         /**
+         * Sets the registry bound runtimes are resolved against. Without one the manager cannot tell whether a task's
+         * runtime exists, so neither {@link #validateBoundRuntime(boolean)} nor
+         * {@link #unresolvableRuntimePolicy(UnresolvableRuntimePolicy)} has any effect. The registry is borrowed: the
+         * manager neither owns nor closes it.
+         *
+         * @param registry
+         *            the registry
+         * @return this builder
+         */
+        public Builder agentRuntimeRegistry(AgentRuntimeRegistry registry) {
+            agentRuntimeRegistry = registry;
+            return this;
+        }
+
+        /**
+         * Sets whether {@link ScheduledTaskManager#register(ScheduledTask)} refuses a task whose bound runtime is not
+         * registered. Defaults to {@code true}; needs {@link #agentRuntimeRegistry(AgentRuntimeRegistry)}.
+         *
+         * @param validate
+         *            whether to check
+         * @return this builder
+         */
+        public Builder validateBoundRuntime(boolean validate) {
+            validateBoundRuntime = validate;
+            return this;
+        }
+
+        /**
+         * Sets what a fire does when its task's bound runtime is not registered. Defaults to
+         * {@link UnresolvableRuntimePolicy#KEEP_SCHEDULED}; needs {@link #agentRuntimeRegistry(AgentRuntimeRegistry)}.
+         *
+         * @param policy
+         *            the policy
+         * @return this builder
+         */
+        public Builder unresolvableRuntimePolicy(UnresolvableRuntimePolicy policy) {
+            unresolvableRuntimePolicy = policy;
+            return this;
+        }
+
+        /**
+         * Sets the host policy the scheduling tools consult. Defaults to {@link ScheduledTaskPolicy#PERMIT_ALL}.
+         *
+         * @param policy
+         *            the policy
+         * @return this builder
+         */
+        public Builder taskPolicy(ScheduledTaskPolicy policy) {
+            taskPolicy = policy;
+            return this;
+        }
+
+        /**
+         * Says other nodes run fires of the same tasks. A fire whose bound runtime this node has not registered is
+         * then left to them — skipped before the {@link ScheduledExecutionGuard} is asked, so it does not claim the
+         * occurrence — rather than run here to fail. {@link UnresolvableRuntimePolicy#DISABLE} is refused in this mode.
+         * Defaults to {@code false}.
+         *
+         * @param multiNode
+         *            whether other nodes fire the same tasks
+         * @return this builder
+         */
+        public Builder multiNode(boolean multiNode) {
+            this.multiNode = multiNode;
+            return this;
+        }
+
+        /**
          * Builds the manager.
          *
          * @return a new manager (never null)
@@ -247,16 +358,41 @@ public class ScheduledTaskManager {
      *             if the owner's quota is exceeded
      * @throws InvalidCronExpressionException
      *             if the cron expression is invalid, or if the installed scheduler cannot express it
+     * @throws IllegalArgumentException
+     *             if the task's timezone is not a zone id {@link ZoneId#of(String)} accepts
+     * @throws UnresolvableBoundRuntimeException
+     *             if the task's bound runtime is not registered and the check is on (see
+     *             {@link Builder#validateBoundRuntime(boolean)})
      */
     public ScheduledTask register(ScheduledTask task) {
         Objects.requireNonNull(task, "Task cannot be null");
 
         // Validate cron expression
         validateCronExpression(task.getCronExpression());
+        zoneOf(task);
+
+        // A task bound to a runtime nobody can resolve would be stored, scheduled and reported as scheduled, and then
+        // fail at every fire with nobody left to tell. This is the last point the caller is still listening.
+        if (validateBoundRuntime && agentRuntimeRegistry != null && !isResolvable(task.getBoundRuntimeId())) {
+            log.warn("Refused to register task '{}': its bound runtime '{}' is not registered", task.getName(),
+                    task.getBoundRuntimeId());
+            throw new UnresolvableBoundRuntimeException(task.getBoundRuntimeId());
+        }
 
         // Check quota
         quotaManager.checkQuota(task.getOwner());
 
+        synchronized (triggerLock) {
+            saveAndSchedule(task);
+        }
+
+        log.info("Registered task '{}' for owner {}", task.getId(), task.getOwner());
+        eventPublisher.publish(new TaskRegisteredEvent(task));
+
+        return task;
+    }
+
+    private void saveAndSchedule(ScheduledTask task) {
         // Save task
         taskRepository.save(task);
         quotaManager.incrementUsage(task.getOwner());
@@ -274,11 +410,19 @@ public class ScheduledTaskManager {
                 throw e;
             }
         }
+    }
 
-        log.info("Registered task '{}' for owner {}", task.getId(), task.getOwner());
-        eventPublisher.publish(new TaskRegisteredEvent(task));
+    /**
+     * Returns the host policy the scheduling tools consult before they schedule, list or cancel a task.
+     *
+     * @return the policy ({@link ScheduledTaskPolicy#PERMIT_ALL} unless one was set)
+     */
+    public ScheduledTaskPolicy getTaskPolicy() {
+        return taskPolicy;
+    }
 
-        return task;
+    private boolean isResolvable(AgentRuntimeId runtimeId) {
+        return agentRuntimeRegistry.get(runtimeId).isPresent();
     }
 
     /**
@@ -373,6 +517,18 @@ public class ScheduledTaskManager {
     public void cancel(ScheduledTaskId taskId, Principal principal) {
         final ScheduledTask task = getById(taskId, principal);
 
+        synchronized (triggerLock) {
+            unscheduleAndDelete(taskId);
+        }
+
+        // Decrement quota
+        quotaManager.decrementUsage(task.getOwner());
+
+        log.info("Cancelled task '{}' by {}", taskId, principal);
+        eventPublisher.publish(new TaskCancelledEvent(task));
+    }
+
+    private void unscheduleAndDelete(ScheduledTaskId taskId) {
         // Unschedule
         taskScheduler.unschedule(taskId);
 
@@ -386,12 +542,6 @@ public class ScheduledTaskManager {
         // Delete from repository
         taskRepository.deleteById(taskId);
         historyRepository.deleteByTaskId(taskId);
-
-        // Decrement quota
-        quotaManager.decrementUsage(task.getOwner());
-
-        log.info("Cancelled task '{}' by {}", taskId, principal);
-        eventPublisher.publish(new TaskCancelledEvent(task));
     }
 
     /**
@@ -495,12 +645,14 @@ public class ScheduledTaskManager {
         }
 
         final ScheduledTask updatedTask = task.withEnabled(enabled);
-        taskRepository.save(updatedTask);
+        synchronized (triggerLock) {
+            taskRepository.save(updatedTask);
 
-        if (enabled) {
-            scheduleTask(updatedTask);
-        } else {
-            taskScheduler.unschedule(taskId);
+            if (enabled) {
+                scheduleTask(updatedTask);
+            } else {
+                taskScheduler.unschedule(taskId);
+            }
         }
 
         log.info("Task '{}' {} by {}", taskId, enabled ? "enabled" : "disabled", principal);
@@ -571,6 +723,12 @@ public class ScheduledTaskManager {
 
     /** The scheduling half of {@link #rehydrate()}; needs a running scheduler. */
     int scheduleStored(List<ScheduledTask> stored) {
+        synchronized (triggerLock) {
+            return scheduleStoredLocked(stored);
+        }
+    }
+
+    private int scheduleStoredLocked(List<ScheduledTask> stored) {
         int scheduled = 0;
         for (ScheduledTask task : stored) {
             final ScheduledTaskId taskId = task.getId();
@@ -589,18 +747,109 @@ public class ScheduledTaskManager {
                 }
                 scheduled++;
             } catch (RuntimeException e) {
-                log.warn("Stored task '{}' could not be scheduled at start and will not fire until it is disabled and"
-                        + " enabled again or the engine restarts: {}", taskId, e.getMessage(), e);
+                log.warn(
+                        "Stored task '{}' could not be scheduled and will not fire until it is scheduled by a later"
+                                + " reconcile pass, disabled and enabled again, or the engine restarts: {}",
+                        taskId, e.getMessage(), e);
             }
         }
         if (scheduled > 0) {
-            log.info("Scheduled {} stored task(s) at start", scheduled);
+            log.info("Scheduled {} stored task(s) this node was not holding", scheduled);
         }
         return scheduled;
     }
 
+    /**
+     * Converges this node's triggers on the repository: schedules each stored, enabled task it is not holding, and —
+     * when the scheduler can list what it holds — unschedules each trigger whose task is gone or disabled.
+     *
+     * <p>
+     * This is what keeps several nodes with per-node schedulers in step. {@link #register}, {@link #cancel} and
+     * {@link #setEnabled} change the triggers of the node they run on and no other, so without it a task registered on
+     * node A fires only on A, and a task cancelled on B keeps a trigger on A that fires — and skips — at every cron
+     * time
+     * until A restarts. Each node has to run this itself: what it corrects is that node's own scheduler, so electing
+     * one
+     * node to run it would converge one node.
+     *
+     * <p>
+     * Every node then holds every task's trigger, so a fire happens on every node and only a
+     * {@link ScheduledExecutionGuard} that sees all of them keeps it to one run. {@link SchedulingEngine} runs this
+     * periodically only in that configuration (see {@link SchedulingEngineBuilder#reconcileInterval}).
+     *
+     * <p>
+     * Idempotent, and it never throws for one task: a task the scheduler refuses, or a trigger it cannot remove, is
+     * logged and left for the next pass. A repository or scheduler listing that fails throws.
+     *
+     * @return how many triggers this call created or removed
+     */
+    public int reconcile() {
+        synchronized (triggerLock) {
+            return reconcileLocked();
+        }
+    }
+
+    private int reconcileLocked() {
+        final List<ScheduledTask> desired = readStoredEnabled();
+        int changed = scheduleStoredLocked(desired);
+
+        final Optional<Set<ScheduledTaskId>> observed = taskScheduler.scheduledTaskIds();
+        if (observed.isEmpty()) {
+            return changed;
+        }
+        final Set<ScheduledTaskId> desiredIds = new HashSet<>();
+        desired.forEach(task -> desiredIds.add(task.getId()));
+        for (ScheduledTaskId taskId : observed.get()) {
+            if (desiredIds.contains(taskId)) {
+                continue;
+            }
+            try {
+                // The desired list is a snapshot too: a task registered since it was read is enabled and wanted.
+                if (taskRepository.findById(taskId).filter(ScheduledTask::isEnabled).isPresent()) {
+                    continue;
+                }
+                taskScheduler.unschedule(taskId);
+                changed++;
+                log.info("Removed trigger of task '{}': it is no longer stored or no longer enabled", taskId);
+            } catch (RuntimeException e) {
+                log.warn("Could not remove the stale trigger of task '{}'; the next pass tries again: {}", taskId,
+                        e.getMessage(), e);
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * Schedules a task's trigger in the task's own time zone. A task without one goes through the two-argument method
+     * and is evaluated in the scheduler's zone, as every task used to be — the zone used to be stored, advertised to
+     * the model, and then dropped on the way here.
+     */
     private void scheduleTask(ScheduledTask task) {
-        taskScheduler.scheduleRecurrently(task.getId(), task.getCronExpression());
+        final Optional<ZoneId> zone = zoneOf(task);
+        if (zone.isPresent()) {
+            taskScheduler.scheduleRecurrently(task.getId(), task.getCronExpression(), zone.get());
+        } else {
+            taskScheduler.scheduleRecurrently(task.getId(), task.getCronExpression());
+        }
+    }
+
+    /**
+     * The task's time zone, or empty when it names none.
+     *
+     * @throws IllegalArgumentException
+     *             if it names one {@link ZoneId#of(String)} does not accept
+     */
+    private static Optional<ZoneId> zoneOf(ScheduledTask task) {
+        final String timezone = task.getTimezone();
+        if (timezone == null || timezone.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(ZoneId.of(timezone.trim()));
+        } catch (DateTimeException e) {
+            throw new IllegalArgumentException(
+                    "Unknown timezone '" + timezone + "': use an IANA zone id such as Asia/Seoul", e);
+        }
     }
 
     /**
@@ -609,9 +858,10 @@ public class ScheduledTaskManager {
      * here.
      *
      * <p>
-     * It is public because an externally supplied scheduler is wired from application code in a different package —
-     * {@code .taskExecutor(taskId -> taskManager.executeTask(taskId))} is the documented wiring for
-     * {@code QuartzTaskSchedulerBuilder} and would not compile otherwise.
+     * It is public because an externally supplied scheduler is wired from application code in a different package.
+     * Wire such a scheduler with {@link #asExecutor()}, not with {@code taskId -> taskManager.executeTask(taskId)}: a
+     * fire reaching this method carries no scheduled time or slot, so an occurrence-keyed
+     * {@link ScheduledExecutionGuard} can only fall back to the task id.
      * </p>
      *
      * <p>
@@ -624,11 +874,37 @@ public class ScheduledTaskManager {
      *            the task to execute
      */
     public void executeTask(ScheduledTaskId taskId) {
+        executeFire(ScheduledFire.untimed(taskId));
+    }
+
+    /**
+     * Executes one fire of a task — {@link #executeTask(ScheduledTaskId)} with the fire's scheduled time and cron slot,
+     * which reach the {@link ScheduledExecutionGuard} so a distributed guard can refuse a late duplicate of an
+     * occurrence that already ran (see {@link ScheduledExecutionGuard#tryBegin(ScheduledFire)}).
+     *
+     * <p>
+     * Never throws, for the reason given on {@link #executeTask(ScheduledTaskId)}.
+     *
+     * @param fire
+     *            the fire to execute
+     */
+    public void executeFire(ScheduledFire fire) {
+        Objects.requireNonNull(fire, "Fire cannot be null");
+        final ScheduledTaskId taskId = fire.getTaskId();
+        if (multiNode && leftToOtherNodes(taskId)) {
+            return;
+        }
         // Idempotency guard: skip if this task is already being executed (overlap / duplicate or multi-node re-fire).
         // The lease is released when the execution finishes (try-with-resources below).
-        final Optional<ScheduledExecutionGuard.ExecutionLease> lease = executionGuard.tryBegin(taskId);
+        final Optional<ScheduledExecutionGuard.ExecutionLease> lease;
+        try {
+            lease = executionGuard.tryBegin(fire);
+        } catch (RuntimeException e) {
+            log.error("Execution guard failed for {}; the fire is skipped: {}", fire, e.getMessage(), e);
+            return;
+        }
         if (lease.isEmpty()) {
-            log.info("Task '{}' skipped: an execution is already in progress (duplicate fire prevented)", taskId);
+            log.info("{} skipped: the execution guard refused it (overlap or duplicate fire prevented)", fire);
             return;
         }
 
@@ -636,6 +912,10 @@ public class ScheduledTaskManager {
             final ScheduledTask task = taskRepository.findById(taskId).orElse(null);
             if (task == null || !task.isEnabled()) {
                 log.warn("Task '{}' not found or disabled, skipping execution", taskId);
+                return;
+            }
+
+            if (disableIfUnresolvable(task)) {
                 return;
             }
 
@@ -669,5 +949,76 @@ public class ScheduledTaskManager {
         } catch (Exception e) {
             log.error("Error executing task '{}': {}", taskId, e.getMessage(), e);
         }
+    }
+
+    /**
+     * On one node of several, decides before the guard is asked whether this node can run the fire at all. A runtime
+     * registered lazily (on the first session for its agent) is missing here until that session arrives, while
+     * another node may hold it; claiming the occurrence here only to fail would take it from that node.
+     */
+    private boolean leftToOtherNodes(ScheduledTaskId taskId) {
+        if (agentRuntimeRegistry == null) {
+            return false;
+        }
+        try {
+            final Optional<ScheduledTask> task = taskRepository.findById(taskId);
+            if (task.isEmpty() || isResolvable(task.get().getBoundRuntimeId())) {
+                return false;
+            }
+            log.warn("Task '{}' skipped on this node: its bound runtime '{}' is not registered here, so the fire is"
+                    + " left to a node that has it", taskId, task.get().getBoundRuntimeId());
+            return true;
+        } catch (RuntimeException e) {
+            // The lease path reads the task again and reports a repository that cannot be read; do not decide here.
+            return false;
+        }
+    }
+
+    /**
+     * Applies {@link UnresolvableRuntimePolicy#DISABLE}: a task whose runtime is gone is disabled rather than left to
+     * fail at every fire.
+     *
+     * @return whether the fire must be skipped
+     */
+    private boolean disableIfUnresolvable(ScheduledTask task) {
+        if (unresolvableRuntimePolicy != UnresolvableRuntimePolicy.DISABLE || agentRuntimeRegistry == null
+                || isResolvable(task.getBoundRuntimeId())) {
+            return false;
+        }
+        final String reason = "bound runtime '" + task.getBoundRuntimeId() + "' is not registered";
+        // Conditional, as every write from a fire is: a cancel that landed meanwhile must stay a cancel.
+        if (!taskRepository.updateIfPresent(task.withEnabled(false))) {
+            return true;
+        }
+        try {
+            taskScheduler.unschedule(task.getId());
+        } catch (RuntimeException e) {
+            log.warn("Task '{}' was disabled but its trigger could not be removed; its fires skip: {}", task.getId(),
+                    e.getMessage(), e);
+        }
+        log.warn("Disabled task '{}': {}. Enable it again once the runtime exists", task.getId(), reason);
+        eventPublisher.publish(new TaskDisabledEvent(task.withEnabled(false), reason));
+        return true;
+    }
+
+    /**
+     * Returns an executor that dispatches a scheduler's fires to this manager, fire time and slot included. Wire an
+     * externally built scheduler with this rather than {@code taskId -> manager.executeTask(taskId)}: a lambda only
+     * implements the task-id half of {@link ScheduledTaskExecutor}, and a fire reaching it loses its slot.
+     *
+     * @return the executor
+     */
+    public ScheduledTaskExecutor asExecutor() {
+        return new ScheduledTaskExecutor() {
+            @Override
+            public void execute(ScheduledTaskId taskId) {
+                executeTask(taskId);
+            }
+
+            @Override
+            public void execute(ScheduledFire fire) {
+                executeFire(fire);
+            }
+        };
     }
 }

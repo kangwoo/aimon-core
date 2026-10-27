@@ -329,6 +329,7 @@ modules/
 │
 ├── aimon-knowledge-opensearch   # OpenSearch knowledge store
 ├── aimon-scheduling-quartz      # Distributed cron scheduler
+├── aimon-scheduling-testkit     # Shared scheduling SPI contract suites (published)
 ├── aimon-workflow-graaljs       # GraalJS-scripted subagent workflow
 ├── aimon-rewake-webhook         # HMAC-verified HTTP endpoint that fires rewake
 

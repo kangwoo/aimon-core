@@ -185,6 +185,51 @@ class UnixCronExpressionTest {
         }
     }
 
+    @Nested
+    @DisplayName("previousOrSameExecution across daylight saving")
+    class FoldAcrossDst {
+
+        private final UnixCronExpression twoThirty = UnixCronExpression.parse("30 2 * * *");
+
+        @ParameterizedTest
+        @ValueSource(strings = {"2026-10-25T02:30+02:00[Europe/Berlin]", "2026-10-25T02:30+01:00[Europe/Berlin]"})
+        @DisplayName("either instant of a repeated wall-clock time is on the grid and folds to itself")
+        void repeatedWallClockTimeIsOnTheGrid(String fire) {
+            final ZonedDateTime t = ZonedDateTime.parse(fire);
+
+            assertThat(twoThirty.previousOrSameExecution(t).map(ZonedDateTime::toInstant)).hasValue(t.toInstant());
+        }
+
+        @Test
+        @DisplayName("a late fire in the repeated hour folds to the latest grid instant not after it")
+        void lateFireInTheRepeatedHour() {
+            final ZonedDateTime lateAfterSecond = ZonedDateTime.parse("2026-10-25T02:45+01:00[Europe/Berlin]");
+            final ZonedDateTime lateAfterFirst = ZonedDateTime.parse("2026-10-25T02:45+02:00[Europe/Berlin]");
+
+            assertThat(twoThirty.previousOrSameExecution(lateAfterSecond).map(ZonedDateTime::toInstant))
+                    .hasValue(ZonedDateTime.parse("2026-10-25T02:30+01:00[Europe/Berlin]").toInstant());
+            assertThat(twoThirty.previousOrSameExecution(lateAfterFirst).map(ZonedDateTime::toInstant))
+                    .hasValue(ZonedDateTime.parse("2026-10-25T02:30+02:00[Europe/Berlin]").toInstant());
+        }
+
+        @Test
+        @DisplayName("every fire the expression produces across both transitions folds to itself")
+        void ownFiresAreFixedPoints() {
+            for (String expression : List.of("30 2 * * *", "0 * * * *", "*/30 * * * *", "15 1 * * *")) {
+                final UnixCronExpression cron = UnixCronExpression.parse(expression);
+                for (String start : List.of("2026-03-28T20:00+01:00[Europe/Berlin]",
+                        "2026-10-24T20:00+02:00[Europe/Berlin]", "2026-10-31T20:00-04:00[America/New_York]")) {
+                    ZonedDateTime fire = ZonedDateTime.parse(start);
+                    for (int i = 0; i < 48; i++) {
+                        fire = cron.nextExecution(fire).orElseThrow();
+                        assertThat(cron.previousOrSameExecution(fire).map(ZonedDateTime::toInstant))
+                                .as("%s at %s", expression, fire).hasValue(fire.toInstant());
+                    }
+                }
+            }
+        }
+    }
+
     private static List<Integer> days(String csv) {
         return Arrays.stream(csv.split(",")).map(String::trim).map(Integer::valueOf).toList();
     }

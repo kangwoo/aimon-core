@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.tool.DestructiveBehavior;
+import at.aimon.core.agent.tool.IdempotencyBehavior;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.mcp.McpServerConfig.AnnotationTrust;
 
@@ -110,10 +111,44 @@ class McpToolTraitsTest {
     }
 
     @Test
-    @DisplayName("untrusted() is the conservative end of both axes")
+    @DisplayName("untrusted() is the conservative end of every axis")
     void untrusted() {
         assertThat(McpToolTraits.untrusted().getSideEffectLevel()).isEqualTo(SideEffectLevel.MUTATING);
         assertThat(McpToolTraits.untrusted().getDestructiveBehavior()).isEqualTo(DestructiveBehavior.DESTRUCTIVE);
+        assertThat(McpToolTraits.untrusted().getIdempotencyBehavior()).isEqualTo(IdempotencyBehavior.NON_IDEMPOTENT);
+    }
+
+    @Nested
+    @DisplayName("idempotentHint")
+    class Idempotency {
+
+        @Test
+        @DisplayName("under TRUST, idempotentHint: true on a writing tool becomes IDEMPOTENT")
+        void trustedHintIsRead() {
+            final McpToolTraits traits = McpToolTraits.resolve(
+                    McpToolAnnotations.builder().readOnlyHint(false).idempotentHint(true).build(),
+                    AnnotationTrust.TRUST);
+
+            assertThat(traits.getIdempotencyBehavior()).isEqualTo(IdempotencyBehavior.IDEMPOTENT);
+        }
+
+        @Test
+        @DisplayName("absent, it defaults to NON_IDEMPOTENT, as in MCP")
+        void absentHintIsNonIdempotent() {
+            final McpToolTraits traits = McpToolTraits.resolve(McpToolAnnotations.builder().readOnlyHint(false).build(),
+                    AnnotationTrust.TRUST);
+
+            assertThat(traits.getIdempotencyBehavior()).isEqualTo(IdempotencyBehavior.NON_IDEMPOTENT);
+        }
+
+        @Test
+        @DisplayName("under IGNORE it is not read")
+        void ignoredHintIsNotRead() {
+            final McpToolTraits traits = McpToolTraits
+                    .resolve(McpToolAnnotations.builder().idempotentHint(true).build(), AnnotationTrust.IGNORE);
+
+            assertThat(traits.getIdempotencyBehavior()).isEqualTo(IdempotencyBehavior.NON_IDEMPOTENT);
+        }
     }
 
     @Test

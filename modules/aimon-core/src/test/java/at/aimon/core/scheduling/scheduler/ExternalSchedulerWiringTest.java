@@ -45,8 +45,8 @@ class ExternalSchedulerWiringTest {
         final ScheduledTaskExecutor executor = taskId -> managerRef.get().executeTask(taskId);
         final CapturingTaskScheduler scheduler = new CapturingTaskScheduler(executor);
 
-        final SchedulingEngine engine = SchedulingEngineBuilder.create().taskRepository(taskRepo)
-                .historyRepository(historyRepo).taskScheduler(scheduler).build();
+        final SchedulingEngine engine = SchedulingEngineBuilder.create().validateBoundRuntime(false)
+                .taskRepository(taskRepo).historyRepository(historyRepo).taskScheduler(scheduler).build();
         try {
             managerRef.set(engine.getTaskManager());
 
