@@ -4,6 +4,8 @@
 
 package at.aimon.core.scheduling;
 
+import java.time.Duration;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
 import at.aimon.core.agent.AgentRuntimeRegistry;
@@ -19,6 +21,7 @@ import at.aimon.core.scheduling.repository.InMemoryScheduledTaskRepository;
 import at.aimon.core.scheduling.repository.ScheduledTaskExecutionHistoryRepository;
 import at.aimon.core.scheduling.repository.ScheduledTaskRepository;
 import at.aimon.core.scheduling.scheduler.InMemoryTaskScheduler;
+import at.aimon.core.scheduling.scheduler.ScheduledFire;
 import at.aimon.core.scheduling.scheduler.ScheduledTaskExecutor;
 import at.aimon.core.scheduling.scheduler.TaskScheduler;
 import at.aimon.core.scheduling.scheduler.TaskSchedulerFactory;
@@ -52,6 +55,9 @@ import at.aimon.core.tracing.Tracer;
  */
 public final class SchedulingEngineBuilder {
 
+    /** How often a node with per-node triggers converges them on the repository, unless configured otherwise. */
+    public static final Duration DEFAULT_RECONCILE_INTERVAL = Duration.ofMinutes(1);
+
     private ScheduledTaskRepository taskRepository;
     private ScheduledTaskExecutionHistoryRepository historyRepository;
     private TaskScheduler taskScheduler;
@@ -68,6 +74,10 @@ public final class SchedulingEngineBuilder {
     private TracePayloadPolicy tracePayloadPolicy;
     private RoutineExecutionAttributes routineExecutionAttributes;
     private QuotaGuardFactory quotaGuardFactory;
+    private boolean validateBoundRuntime = true;
+    private UnresolvableRuntimePolicy unresolvableRuntimePolicy = UnresolvableRuntimePolicy.KEEP_SCHEDULED;
+    private ScheduledTaskPolicy taskPolicy = ScheduledTaskPolicy.PERMIT_ALL;
+    private Duration reconcileInterval = DEFAULT_RECONCILE_INTERVAL;
 
     private SchedulingEngineBuilder() {
     }
@@ -244,8 +254,11 @@ public final class SchedulingEngineBuilder {
      * Says this engine is one node of several that share the task repository.
      *
      * <p>
-     * It changes one thing: whether {@link SchedulingEngine#start()} schedules the tasks it finds stored. On a single
-     * node it always does. On one of several it does only if the scheduler's triggers are shared by the deployment
+     * It changes three things. A fire whose bound runtime this node has not registered is skipped before the guard is
+     * asked, leaving the occurrence to a node that has it; {@link UnresolvableRuntimePolicy#DISABLE} is refused, since
+     * one node's miss would disable the task for all; and — the original one — whether
+     * {@link SchedulingEngine#start()} schedules the tasks it finds stored. On a single node it always does. On one of
+     * several it does only if the scheduler's triggers are shared by the deployment
      * ({@link TaskScheduler#isClusterWide()}) or an {@link #executionGuard} was supplied — otherwise every node would
      * rebuild every trigger and every node would fire every task, with only a node-local guard between them.
      *
@@ -337,6 +350,78 @@ public final class SchedulingEngineBuilder {
     }
 
     /**
+     * Sets whether registering a task whose bound agent runtime is not in the registry is refused.
+     *
+     * <p>
+     * On by default. Such a task used to be stored, scheduled and reported to the model as scheduled, and then fail at
+     * every fire with "No agent runtime registered for binding", which nobody was there to see. With the check on,
+     * {@code schedule_task} returns an error naming the runtime instead. Turn it off only for a host that registers
+     * runtimes lazily <em>and</em> registers tasks before their runtime exists.
+     *
+     * @param validate
+     *            whether to check (default {@code true})
+     * @return this builder
+     */
+    public SchedulingEngineBuilder validateBoundRuntime(boolean validate) {
+        validateBoundRuntime = validate;
+        return this;
+    }
+
+    /**
+     * Sets what a fire does when its task's bound runtime is not registered — keep failing at each fire (the default),
+     * or disable the task and publish a {@code TaskDisabledEvent}. See {@link UnresolvableRuntimePolicy} for why the
+     * default is the former.
+     *
+     * @param policy
+     *            the policy
+     * @return this builder
+     */
+    public SchedulingEngineBuilder unresolvableRuntimePolicy(UnresolvableRuntimePolicy policy) {
+        unresolvableRuntimePolicy = Objects.requireNonNull(policy, "policy cannot be null");
+        return this;
+    }
+
+    /**
+     * Sets the host policy the scheduling tools consult before they schedule, list or cancel a task: which tools a
+     * routine may use, how often it may fire, which runtime it is bound to. Scheduling time is the only place such
+     * rules can be enforced, because routine steps run without hooks. Defaults to
+     * {@link ScheduledTaskPolicy#PERMIT_ALL}.
+     *
+     * @param policy
+     *            the policy
+     * @return this builder
+     */
+    public SchedulingEngineBuilder taskPolicy(ScheduledTaskPolicy policy) {
+        taskPolicy = Objects.requireNonNull(policy, "policy cannot be null");
+        return this;
+    }
+
+    /**
+     * Sets how often a node converges its triggers on the repository ({@link ScheduledTaskManager#reconcile()}).
+     *
+     * <p>
+     * Only used where it is both needed and safe: on one node of several ({@link #multiNode(boolean)}) whose scheduler
+     * holds per-node triggers ({@link TaskScheduler#isClusterWide()} is {@code false}) and which has a supplied
+     * {@link #executionGuard} to keep the resulting fire-on-every-node to one run — one that can see the other nodes,
+     * so not {@link InMemoryScheduledExecutionGuard} or {@link ScheduledExecutionGuard#ALLOW_ALL}. There a task
+     * registered or cancelled
+     * on another node reaches this one within an interval. Anywhere else nothing runs. {@link Duration#ZERO} turns it
+     * off. Defaults to {@link #DEFAULT_RECONCILE_INTERVAL}.
+     *
+     * @param interval
+     *            the interval (must not be negative)
+     * @return this builder
+     */
+    public SchedulingEngineBuilder reconcileInterval(Duration interval) {
+        Objects.requireNonNull(interval, "interval cannot be null");
+        if (interval.isNegative()) {
+            throw new IllegalArgumentException("Reconcile interval must not be negative");
+        }
+        reconcileInterval = interval;
+        return this;
+    }
+
+    /**
      * Builds the scheduling engine.
      *
      * <p>
@@ -404,19 +489,42 @@ public final class SchedulingEngineBuilder {
         // ScheduledTaskManager needs TaskScheduler, and ScheduledTaskManager IS the executor.
         // The hole is dug once, here, so that no caller has to dig its own.
         final AtomicReference<ScheduledTaskManager> taskManagerRef = new AtomicReference<>();
-        final TaskScheduler scheduler = resolveScheduler(taskId -> taskManagerRef.get().executeTask(taskId));
+        // Both halves, so a fire's slot reaches the guard: a lambda would implement only the task-id half.
+        final TaskScheduler scheduler = resolveScheduler(new ScheduledTaskExecutor() {
+            @Override
+            public void execute(ScheduledTaskId taskId) {
+                taskManagerRef.get().executeTask(taskId);
+            }
+
+            @Override
+            public void execute(ScheduledFire fire) {
+                taskManagerRef.get().executeFire(fire);
+            }
+        });
 
         final ScheduledTaskManager taskManager = ScheduledTaskManager.builder().taskRepository(taskRepository)
                 .historyRepository(historyRepository).routineExecutor(routineExecutor).taskScheduler(scheduler)
                 .eventPublisher(eventPublisher).quotaManager(quotaManager).executionGuard(executionGuard)
-                .interruptBus(interruptBus).build();
+                .interruptBus(interruptBus).agentRuntimeRegistry(agentRuntimeRegistry)
+                .validateBoundRuntime(validateBoundRuntime).unresolvableRuntimePolicy(unresolvableRuntimePolicy)
+                .taskPolicy(taskPolicy).multiNode(multiNode).build();
         taskManagerRef.set(taskManager);
 
         // On one node of several, rebuilding the stored tasks' triggers is only safe if a trigger exists once for the
         // whole deployment, or if something that sees the other nodes stops the duplicate fires.
         final boolean rehydrateAtStart = !multiNode || scheduler.isClusterWide() || guardSupplied;
+        // Converging afterwards is needed exactly where triggers are per node and other nodes change the repository,
+        // and safe exactly where rebuilding them is — the supplied guard is what stops every node running every fire.
+        // A supplied guard that is one of the node-local ones sees no other node, so with every node holding every
+        // trigger it would let every node run every fire; reconciling is held back for it.
+        final boolean guardSeesOtherNodes = guardSupplied
+                && !(executionGuard instanceof InMemoryScheduledExecutionGuard)
+                && executionGuard != ScheduledExecutionGuard.ALLOW_ALL;
+        final Duration reconcileEvery = multiNode && !scheduler.isClusterWide() && guardSeesOtherNodes
+                ? reconcileInterval
+                : Duration.ZERO;
         return new SchedulingEngine(taskManager, routineExecutor, scheduler, eventPublisher, interruptBus,
-                rehydrateAtStart);
+                rehydrateAtStart, reconcileEvery);
     }
 
     private TaskScheduler resolveScheduler(ScheduledTaskExecutor executor) {

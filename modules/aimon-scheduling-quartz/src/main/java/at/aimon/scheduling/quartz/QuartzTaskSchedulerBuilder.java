@@ -45,11 +45,11 @@ import at.aimon.core.scheduling.scheduler.ScheduledTaskExecutor;
  * {@code
  * // Simple RAM-based scheduler
  * QuartzTaskScheduler scheduler = QuartzTaskSchedulerBuilder.create()
- *         .taskExecutor(taskId -> taskManager.executeTask(taskId)).threadCount(4).build();
+ *         .taskExecutor(taskManager.asExecutor()).threadCount(4).build();
  *
  * // JDBC-based scheduler for clustering
  * QuartzTaskScheduler scheduler = QuartzTaskSchedulerBuilder.create().instanceName("MyScheduler")
- *         .taskExecutor(taskId -> taskManager.executeTask(taskId)).clustered(true)
+ *         .taskExecutor(taskManager.asExecutor()).clustered(true)
  *         .jdbcJobStore("jdbc:postgresql://localhost/quartz", "org.postgresql.Driver").build();
  * }
  * </pre>
@@ -237,6 +237,13 @@ public final class QuartzTaskSchedulerBuilder {
 
     /**
      * Sets the task executor for executing scheduled tasks by ID.
+     *
+     * <p>
+     * Each fire reaches it as a {@link at.aimon.core.scheduling.scheduler.ScheduledFire} carrying Quartz's scheduled
+     * fire time and its cron slot. Pass {@code ScheduledTaskManager.asExecutor()}, or the executor a
+     * {@code SchedulingEngineBuilder.taskSchedulerFactory} hands over; a {@code taskId -> ...} lambda implements only
+     * the
+     * task-id half and drops the slot a distributed guard needs.
      *
      * @param taskExecutor
      *            the task executor

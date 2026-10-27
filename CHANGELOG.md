@@ -7,6 +7,91 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: a scheduled task's timezone is honoured
+
+`ScheduledTask.timezone` was stored and advertised by `schedule_task`, but never reached a scheduler: every task fired
+in the JVM's zone. `TaskScheduler.scheduleRecurrently(taskId, cron, ZoneId)` (new overload) now carries it; the
+in-memory scheduler computes the next fire in that zone and `QuartzTaskScheduler` sets it on the trigger
+(`inTimeZone`). A task without a timezone still uses the two-argument method. `register` refuses an unknown zone id
+(`IllegalArgumentException`). Design: `docs/design/scheduling/llm-scheduling-agent.md` §4.4.
+
+- **Migration notes** — an external `TaskScheduler` that implements only the two-argument method gets a default that
+  refuses any zone other than the JVM's (`TaskSchedulerException`, and the registration is undone) rather than ignoring
+  it. Override the overload. Tasks already stored with a timezone fire at a different instant after the upgrade if
+  their zone differs from the node's — that is the fix, but it is a change for anyone who had compensated for it.
+  A Quartz JDBC job store keeps triggers created before the upgrade, and the engine does not re-create a trigger that
+  exists, so those keep firing in the JVM's zone until the task is disabled and enabled again (or re-registered).
+
+### Changed: scheduled steps are retried only when the tool is safe to repeat
+
+A failed routine step is now retried only if its tool declares `SideEffectLevel.READ_ONLY` or the new
+`IdempotencyBehavior.IDEMPOTENT`. A tool that declares neither — every writing tool that has not been audited, since
+`MUTATING` and `NON_IDEMPOTENT` are the defaults — runs **once**, whatever the step's `max_retries` says: a timed-out or
+throwing attempt may already have done its write. Design: `docs/design/scheduling/llm-scheduling-agent.md` §5.4,
+`docs/design/tool/side-effect-axes.md` §8.2.
+
+- **`IdempotencyBehavior`** (new, `at.aimon.core.agent.tool`) and **`Tool.getIdempotencyBehavior()`** (default
+  `NON_IDEMPOTENT`). MCP tools read `idempotentHint` under `AnnotationTrust.TRUST` (`McpToolTraits.getIdempotencyBehavior()`).
+- A failure marked `ToolResult.notRetryable()` is no longer retried in a routine either. An attempt that failed before its
+  tool was found (runtime not registered, unknown tool) still keeps its retries.
+- A step whose last attempt timed out reports `StepResult.isOutcomeUnknown()`.
+- `schedule_task` advertised `max_retries` with `"default": 0` while the executor used 3; the schema now says 3.
+- **Migration notes** — a writing tool whose scheduled steps relied on retries must declare
+  `getIdempotencyBehavior()` → `IDEMPOTENT`. Test doubles extending `AbstractTool` that exercise routine retries need the
+  same.
+
+### Added: scheduling host hardening — halt, fire slots, runtime checks, policy, reconcile, testkit
+
+Seven gaps a host found while building scheduled execution on top of `SchedulingEngine`. Design:
+`docs/design/scheduling/llm-scheduling-agent.md` §5.2, §6.1–§6.4.
+
+- **Halting a routine** — `ToolResult.haltingRoutine(reason)` / `getHaltReason()`: the call's work waits on something
+  outside the run (a human approval, say). `RoutineExecutor` records the step as halted (`StepResult.isHalted()`), does
+  not retry it, starts no later step and ends the run with `RoutineResult.halted(...)` (`isHalted()`, `getHaltReason()`),
+  a `TaskHaltedEvent` and history status `HALTED`. Not a failure: no `TaskFailedEvent`. Inert outside routines.
+- **Fire slots for the guard** — `ScheduledFire` (new, `at.aimon.core.scheduling.scheduler`): task id, scheduled fire
+  time, and the cron slot it folds back to (`UnixCronExpression.previousOrSameExecution`). Schedulers call
+  `ScheduledTaskExecutor.execute(ScheduledFire)` (default bridges to the task-id method), the manager calls
+  `ScheduledExecutionGuard.tryBegin(ScheduledFire)` (default bridges to `tryBegin(ScheduledTaskId)`), and
+  `ScheduledTaskManager.executeFire(...)` / `asExecutor()` are the new entry points. `QuartzTaskScheduler` keeps the
+  five-field expression in its job data and folds misfire recoveries back onto the grid in the trigger's zone. A
+  distributed guard keys its lease on `ScheduledFire.getOccurrenceKey()`; `InMemoryScheduledExecutionGuard` keeps its
+  task-id behaviour.
+- **Bound runtime checks** — `register` refuses a task whose bound runtime is not in the registry
+  (`UnresolvableBoundRuntimeException`; `schedule_task` returns it as an error). On by default;
+  `SchedulingEngineBuilder.validateBoundRuntime(false)` turns it off. `unresolvableRuntimePolicy(DISABLE)` disables a
+  stored task whose runtime is gone at fire time and publishes `TaskDisabledEvent`; the default `KEEP_SCHEDULED` keeps
+  today's behaviour, because web hosts register runtimes lazily.
+- **Host policy** — `ScheduledTaskPolicy` (`SchedulingEngineBuilder.taskPolicy(...)`, read by the three scheduling tools
+  through `ScheduledTaskManager.getTaskPolicy()`): `resolveBoundRuntimeId`, `checkSchedule` (sees the task as it would be
+  stored), `checkAccess(LIST | CANCEL)` (narrows ownership only). A policy that throws refuses. The tools' javadoc now
+  says that routine steps run without hooks.
+- **Per-node trigger convergence** — `TaskScheduler.scheduledTaskIds()` (default: cannot list; implemented by the
+  in-memory and Quartz schedulers) and `ScheduledTaskManager.reconcile()`. `SchedulingEngine` runs it every
+  `reconcileInterval` (default 1 minute) only on `multiNode(true)` + per-node scheduler + supplied guard, the same
+  condition under which it rehydrates.
+- **One node of several** (`multiNode(true)`) — a fire whose bound runtime this node has not registered is skipped
+  before the guard is asked, so it does not claim the occurrence from a node that has the runtime;
+  `UnresolvableRuntimePolicy.DISABLE` is refused there (one node's miss would disable the task for all). Register,
+  cancel, enable/disable and the reconcile pass are serialised on a node-local lock. The periodic reconcile does not run
+  behind a supplied node-local guard (`InMemoryScheduledExecutionGuard`, `ALLOW_ALL`).
+- **Daylight saving** — `UnixCronExpression.previousOrSameExecution` treats both instants of a repeated wall-clock time
+  as on the grid, so a Quartz fire in the second one (cron-utils picks the first) folds onto itself rather than onto an
+  hour earlier.
+- **Assembled stacks** — `SchedulingSpec.withTaskPolicy`, `withBoundRuntimeValidation`, `withUnresolvableRuntimePolicy`
+  and `withReconcileInterval`, wired by `AimonStackBuilder`; a `ScheduledTaskPolicy` bean is picked up by the Spring
+  starter. The other three have no starter property — publish your own `SchedulingSpec` bean to set them.
+- **`aimon-scheduling-testkit`** (new, **published**) — `AbstractScheduledTaskRepositoryContractTest` and
+  `AbstractScheduledTaskInterruptBusContractTest` (moved from the unpublished `aimon-session-testkit`; package
+  `at.aimon.session.testkit` → `at.aimon.scheduling.testkit`), plus new
+  `AbstractScheduledTaskExecutionHistoryRepositoryContractTest` and `AbstractScheduledExecutionGuardContractTest`.
+- **Migration notes** — `ScheduledTaskExecutionHistory.Status` has a new constant `HALTED`; a store that maps it by name
+  must accept it. `ScheduledTaskEventListener` gained `onTaskHalted` / `onTaskDisabled` (default no-ops). A call
+  `guard.tryBegin(null)` no longer compiles (two overloads); cast the argument. Tests or hosts that register tasks against
+  runtimes they never register need `validateBoundRuntime(false)` (`SchedulingSpec.withBoundRuntimeValidation(false)` on
+  an assembled stack). Mocks of `ScheduledTaskManager` used with the
+  scheduling tools must stub `getTaskPolicy()`.
+
 ### Added: per-call usage measurements — applied tier, prompt cache, timing
 
 `MeteringLlmClient` now records what a per-call price needs, taken from the response rather than the request. Guide:

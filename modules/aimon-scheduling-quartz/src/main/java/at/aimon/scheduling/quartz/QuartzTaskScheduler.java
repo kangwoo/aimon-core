@@ -4,13 +4,20 @@
 
 package at.aimon.scheduling.quartz;
 
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Properties;
+import java.util.Set;
+import java.util.TimeZone;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.quartz.CronScheduleBuilder;
+import org.quartz.CronTrigger;
 import org.quartz.Job;
 import org.quartz.JobBuilder;
 import org.quartz.JobDataMap;
@@ -29,7 +36,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.scheduling.ScheduledTaskId;
+import at.aimon.core.scheduling.cron.UnixCronExpression;
 import at.aimon.core.scheduling.exception.TaskSchedulerException;
+import at.aimon.core.scheduling.scheduler.ScheduledFire;
 import at.aimon.core.scheduling.scheduler.ScheduledTaskExecutor;
 import at.aimon.core.scheduling.scheduler.TaskScheduler;
 import at.aimon.scheduling.quartz.cron.QuartzCronTranslator;
@@ -80,6 +89,8 @@ public class QuartzTaskScheduler implements TaskScheduler {
     static final String JOB_GROUP = "aimon-tasks";
     private static final String TRIGGER_GROUP = "aimon-triggers";
     private static final String TASK_KEY = "task";
+    /** The task's five-field expression, kept so a fire can be folded onto its grid. */
+    private static final String CRON_KEY = "cron";
     static final String EXECUTOR_CONTEXT_KEY = "scheduledTaskExecutor";
 
     private final Scheduler scheduler;
@@ -207,10 +218,24 @@ public class QuartzTaskScheduler implements TaskScheduler {
         }
     }
 
+    /** Schedules in the JVM's default zone, which is also what Quartz assumes for a trigger given none. */
     @Override
     public void scheduleRecurrently(ScheduledTaskId taskId, String cronExpression) {
+        scheduleRecurrently(taskId, cronExpression, ZoneId.systemDefault());
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * The zone goes onto the Quartz trigger ({@code CronScheduleBuilder.inTimeZone}), so a JDBC job store keeps it and
+     * every node of a cluster fires the trigger at the same instant whatever zone each node runs in.
+     */
+    @Override
+    public void scheduleRecurrently(ScheduledTaskId taskId, String cronExpression, ZoneId zone) {
         Objects.requireNonNull(taskId, "Task ID cannot be null");
         Objects.requireNonNull(cronExpression, "Cron expression cannot be null");
+        Objects.requireNonNull(zone, "Zone cannot be null");
 
         if (!running.get()) {
             throw new TaskSchedulerException("Scheduler is not running");
@@ -228,15 +253,17 @@ public class QuartzTaskScheduler implements TaskScheduler {
 
         try {
             JobDetail jobDetail = JobBuilder.newJob(DelegatingJob.class).withIdentity(taskIdValue, JOB_GROUP)
-                    .usingJobData(TASK_KEY, taskIdValue).storeDurably(false).build();
+                    .usingJobData(TASK_KEY, taskIdValue).usingJobData(CRON_KEY, cronExpression).storeDurably(false)
+                    .build();
 
-            Trigger trigger = TriggerBuilder.newTrigger().withIdentity(taskIdValue, TRIGGER_GROUP).withSchedule(
-                    CronScheduleBuilder.cronSchedule(quartzExpression).withMisfireHandlingInstructionFireAndProceed())
+            Trigger trigger = TriggerBuilder.newTrigger().withIdentity(taskIdValue, TRIGGER_GROUP)
+                    .withSchedule(CronScheduleBuilder.cronSchedule(quartzExpression)
+                            .inTimeZone(TimeZone.getTimeZone(zone)).withMisfireHandlingInstructionFireAndProceed())
                     .build();
 
             scheduler.scheduleJob(jobDetail, trigger);
             // Both forms: the caller can only recognise the one it wrote, and only the other one explains the trigger.
-            LOGGER.info("Scheduled task '{}' with cron '{}' (Quartz: '{}')", taskIdValue, cronExpression,
+            LOGGER.info("Scheduled task '{}' with cron '{}' in {} (Quartz: '{}')", taskIdValue, cronExpression, zone,
                     quartzExpression);
         } catch (SchedulerException e) {
             throw new TaskSchedulerException("Failed to schedule task: " + taskIdValue, e);
@@ -302,6 +329,26 @@ public class QuartzTaskScheduler implements TaskScheduler {
             return scheduler.checkExists(JobKey.jobKey(taskIdValue, JOB_GROUP));
         } catch (SchedulerException e) {
             throw new TaskSchedulerException("Failed to check task existence: " + taskIdValue, e);
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>
+     * Lists AIMON's own job group only, so on a borrowed scheduler the application's jobs are not included. On a
+     * clustered job store the list is the cluster's.
+     */
+    @Override
+    public Optional<Set<ScheduledTaskId>> scheduledTaskIds() {
+        try {
+            final Set<ScheduledTaskId> ids = new HashSet<>();
+            for (JobKey key : scheduler.getJobKeys(GroupMatcher.jobGroupEquals(JOB_GROUP))) {
+                ids.add(ScheduledTaskId.of(key.getName()));
+            }
+            return Optional.of(Set.copyOf(ids));
+        } catch (SchedulerException e) {
+            throw new TaskSchedulerException("Failed to list scheduled tasks", e);
         }
     }
 
@@ -428,8 +475,9 @@ public class QuartzTaskScheduler implements TaskScheduler {
                     throw new JobExecutionException("Task executor not found");
                 }
 
-                JOB_LOGGER.debug("Executing task '{}'", taskId);
-                executor.execute(ScheduledTaskId.of(taskId));
+                final ScheduledFire fire = fireOf(context, ScheduledTaskId.of(taskId), dataMap.getString(CRON_KEY));
+                JOB_LOGGER.debug("Executing {}", fire);
+                executor.execute(fire);
             } catch (JobExecutionException e) {
                 throw e;
             } catch (SchedulerException e) {
@@ -438,6 +486,36 @@ public class QuartzTaskScheduler implements TaskScheduler {
             } catch (Exception e) {
                 JOB_LOGGER.error("Error executing task '{}': {}", taskId, e.getMessage(), e);
                 throw new JobExecutionException("Error executing task: " + taskId, e);
+            }
+        }
+
+        /**
+         * Describes this fire: Quartz's scheduled fire time, folded back onto the task's grid in the trigger's zone.
+         *
+         * <p>
+         * The fold matters for a misfire. This class schedules with fire-and-proceed, so a fire recovered after
+         * downtime arrives with a scheduled time of "now" rather than of the grid point it stands for; folding it back
+         * gives it the same slot the on-time fire on another node carries. A job stored before the expression was kept
+         * in its data (a JDBC store written by an older version) has no expression to fold with, and its scheduled time
+         * is used as the slot — still exact for an on-time fire.
+         */
+        static ScheduledFire fireOf(JobExecutionContext context, ScheduledTaskId taskId, String cronExpression) {
+            if (context.getScheduledFireTime() == null) {
+                return ScheduledFire.untimed(taskId);
+            }
+            final Instant scheduledFor = context.getScheduledFireTime().toInstant();
+            if (cronExpression == null) {
+                return ScheduledFire.of(taskId, scheduledFor, scheduledFor);
+            }
+            final ZoneId zone = context.getTrigger() instanceof CronTrigger cron && cron.getTimeZone() != null
+                    ? cron.getTimeZone().toZoneId()
+                    : ZoneId.systemDefault();
+            try {
+                return ScheduledFire.onGrid(taskId, scheduledFor, UnixCronExpression.parse(cronExpression), zone);
+            } catch (RuntimeException e) {
+                JOB_LOGGER.warn("Could not fold the fire of task '{}' onto its cron grid; using its scheduled time as"
+                        + " the slot: {}", taskId, e.toString());
+                return ScheduledFire.of(taskId, scheduledFor, scheduledFor);
             }
         }
     }

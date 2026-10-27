@@ -9,6 +9,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.time.Instant;
+import java.util.Date;
+import java.util.TimeZone;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -31,6 +34,7 @@ import org.quartz.TriggerKey;
 import at.aimon.core.scheduling.ScheduledTaskId;
 import at.aimon.core.scheduling.exception.InvalidCronExpressionException;
 import at.aimon.core.scheduling.exception.TaskSchedulerException;
+import at.aimon.core.scheduling.scheduler.ScheduledFire;
 import at.aimon.core.scheduling.scheduler.ScheduledTaskExecutor;
 
 class QuartzTaskSchedulerTest {
@@ -63,6 +67,59 @@ class QuartzTaskSchedulerTest {
         if (scheduler != null) {
             scheduler.shutdown();
         }
+    }
+
+    @Test
+    void scheduleRecurrently_PutsTheZoneOnTheTrigger() throws Exception {
+        scheduler.scheduleRecurrently(ScheduledTaskId.of("seoul"), "0 9 * * *", java.time.ZoneId.of("Asia/Seoul"));
+        scheduler.scheduleRecurrently(ScheduledTaskId.of("local"), "0 9 * * *");
+
+        CronTrigger seoul = (CronTrigger) scheduler.getQuartzScheduler()
+                .getTrigger(TriggerKey.triggerKey("seoul", "aimon-triggers"));
+        CronTrigger local = (CronTrigger) scheduler.getQuartzScheduler()
+                .getTrigger(TriggerKey.triggerKey("local", "aimon-triggers"));
+
+        assertThat(seoul.getTimeZone().getID()).isEqualTo("Asia/Seoul");
+        assertThat(local.getTimeZone().toZoneId()).isEqualTo(java.time.ZoneId.systemDefault());
+    }
+
+    /**
+     * Quartz and cron-utils disagree about which instant of a repeated wall-clock time fires when the clocks go back
+     * (Quartz picks the second). Every instant Quartz fires at must still fold onto itself, or an on-time fire would
+     * carry the slot of an earlier one and an occurrence-keyed guard would refuse it.
+     */
+    @Test
+    void everyQuartzFireAcrossDaylightSavingFoldsOntoItself() throws Exception {
+        for (String expression : java.util.List.of("30 2 * * *", "0 2 * * *", "0 * * * *", "*/30 * * * *")) {
+            for (String zone : java.util.List.of("Europe/Berlin", "America/New_York")) {
+                org.quartz.CronExpression quartz = new org.quartz.CronExpression(
+                        at.aimon.scheduling.quartz.cron.QuartzCronTranslator.toQuartz(expression));
+                quartz.setTimeZone(TimeZone.getTimeZone(zone));
+                at.aimon.core.scheduling.cron.UnixCronExpression unix = at.aimon.core.scheduling.cron.UnixCronExpression
+                        .parse(expression);
+                for (String day : java.util.List.of("2026-03-07T20:00", "2026-03-28T20:00", "2026-10-24T20:00",
+                        "2026-10-31T20:00")) {
+                    Date fire = Date
+                            .from(java.time.LocalDateTime.parse(day).atZone(java.time.ZoneId.of(zone)).toInstant());
+                    for (int i = 0; i < 24; i++) {
+                        fire = quartz.getNextValidTimeAfter(fire);
+                        ScheduledFire folded = ScheduledFire.onGrid(ScheduledTaskId.of("t"), fire.toInstant(), unix,
+                                java.time.ZoneId.of(zone));
+                        assertThat(folded.getSlot()).as("%s in %s at %s", expression, zone, fire)
+                                .hasValue(fire.toInstant());
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    void scheduledTaskIds_ListsWhatIsScheduledAndNothingElse() {
+        scheduler.scheduleRecurrently(ScheduledTaskId.of("a"), HOURLY);
+        scheduler.scheduleRecurrently(ScheduledTaskId.of("b"), HALF_PAST);
+        scheduler.unschedule(ScheduledTaskId.of("b"));
+
+        assertThat(scheduler.scheduledTaskIds()).hasValue(java.util.Set.of(ScheduledTaskId.of("a")));
     }
 
     @Test
@@ -355,6 +412,61 @@ class QuartzTaskSchedulerTest {
 
             // Assert
             assertThat(executedId.get()).isEqualTo(ScheduledTaskId.of("delegated-task"));
+        }
+
+        @Test
+        void execute_PassesTheFireFoldedOntoTheCronGrid() throws Exception {
+            QuartzTaskScheduler.DelegatingJob job = new QuartzTaskScheduler.DelegatingJob();
+
+            JobDataMap dataMap = new JobDataMap();
+            dataMap.put("task", "folded-task");
+            dataMap.put("cron", "*/15 * * * *");
+            JobDetail jobDetail = mock(JobDetail.class);
+            when(jobDetail.getJobDataMap()).thenReturn(dataMap);
+
+            AtomicReference<ScheduledFire> fired = new AtomicReference<>();
+            ScheduledTaskExecutor executor = new ScheduledTaskExecutor() {
+                @Override
+                public void execute(ScheduledTaskId taskId) {
+                    throw new AssertionError("the fire overload must be called");
+                }
+
+                @Override
+                public void execute(ScheduledFire fire) {
+                    fired.set(fire);
+                }
+            };
+            SchedulerContext schedulerContext = new SchedulerContext();
+            schedulerContext.put(QuartzTaskScheduler.EXECUTOR_CONTEXT_KEY, executor);
+            Scheduler mockScheduler = mock(Scheduler.class);
+            when(mockScheduler.getContext()).thenReturn(schedulerContext);
+
+            CronTrigger trigger = mock(CronTrigger.class);
+            when(trigger.getTimeZone()).thenReturn(TimeZone.getTimeZone("UTC"));
+            JobExecutionContext jobContext = mock(JobExecutionContext.class);
+            when(jobContext.getJobDetail()).thenReturn(jobDetail);
+            when(jobContext.getScheduler()).thenReturn(mockScheduler);
+            when(jobContext.getTrigger()).thenReturn(trigger);
+            // A misfire recovered with fire-and-proceed: scheduled for "now", off the grid.
+            when(jobContext.getScheduledFireTime()).thenReturn(Date.from(Instant.parse("2026-10-27T10:22:41Z")));
+
+            job.execute(jobContext);
+
+            assertThat(fired.get().getTaskId()).isEqualTo(ScheduledTaskId.of("folded-task"));
+            assertThat(fired.get().getSlot()).hasValue(Instant.parse("2026-10-27T10:15:00Z"));
+        }
+
+        @Test
+        void execute_JobStoredWithoutTheExpressionUsesTheScheduledTimeAsTheSlot() throws Exception {
+            JobDataMap dataMap = new JobDataMap();
+            dataMap.put("task", "legacy-task");
+            JobExecutionContext jobContext = mock(JobExecutionContext.class);
+            when(jobContext.getScheduledFireTime()).thenReturn(Date.from(Instant.parse("2026-10-27T10:15:00Z")));
+
+            ScheduledFire fire = QuartzTaskScheduler.DelegatingJob.fireOf(jobContext, ScheduledTaskId.of("legacy-task"),
+                    null);
+
+            assertThat(fire.getSlot()).hasValue(Instant.parse("2026-10-27T10:15:00Z"));
         }
 
         @Test

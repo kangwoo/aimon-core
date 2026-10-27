@@ -29,13 +29,13 @@
  * {@code
  * // Simple usage with builder
  * QuartzTaskScheduler scheduler = QuartzTaskSchedulerBuilder.create()
- *         .taskExecutor(taskId -> taskManager.executeTask(taskId)).build();
+ *         .taskExecutor(taskManager.asExecutor()).build();
  * scheduler.start();
  * scheduler.scheduleRecurrently(ScheduledTaskId.of("task1"), "0 * * * *");
  *
  * // Clustered setup with JDBC
  * QuartzTaskScheduler scheduler = QuartzTaskSchedulerBuilder.create().instanceName("ClusteredScheduler")
- *         .taskExecutor(taskId -> taskManager.executeTask(taskId))
+ *         .taskExecutor(taskManager.asExecutor())
  *         .jdbcJobStore("jdbc:postgresql://localhost/quartz", "org.postgresql.Driver").clustered(true).build();
  * }
  * </pre>

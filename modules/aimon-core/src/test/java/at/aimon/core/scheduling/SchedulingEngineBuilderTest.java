@@ -46,7 +46,7 @@ class SchedulingEngineBuilderTest {
 
     @Test
     void defaultBuildProducesUsableEngine() {
-        SchedulingEngine engine = SchedulingEngineBuilder.create().build();
+        SchedulingEngine engine = SchedulingEngineBuilder.create().validateBoundRuntime(false).build();
         try {
             assertThat(engine.getTaskManager()).isNotNull();
         } finally {
@@ -56,7 +56,7 @@ class SchedulingEngineBuilderTest {
 
     @Test
     void defaultMaxQuotaRejectsNonPositive() {
-        SchedulingEngineBuilder b = SchedulingEngineBuilder.create();
+        SchedulingEngineBuilder b = SchedulingEngineBuilder.create().validateBoundRuntime(false);
         assertThatIllegalArgumentException().isThrownBy(() -> b.defaultMaxQuota(0));
         assertThatIllegalArgumentException().isThrownBy(() -> b.defaultMaxQuota(-3));
     }
@@ -65,7 +65,8 @@ class SchedulingEngineBuilderTest {
     void customDependenciesAreUsedWhenProvided() {
         TaskScheduler scheduler = mock(TaskScheduler.class);
 
-        SchedulingEngine engine = SchedulingEngineBuilder.create().taskRepository(new InMemoryScheduledTaskRepository())
+        SchedulingEngine engine = SchedulingEngineBuilder.create().validateBoundRuntime(false)
+                .taskRepository(new InMemoryScheduledTaskRepository())
                 .historyRepository(new InMemoryScheduledTaskExecutionHistoryRepository())
                 .eventPublisher(new SimpleScheduledTaskEventPublisher()).quotaManager(new DefaultTaskQuotaManager(5))
                 .agentRuntimeRegistry(new DefaultAgentRuntimeRegistry()).taskScheduler(scheduler).build();
@@ -80,7 +81,8 @@ class SchedulingEngineBuilderTest {
 
     @Test
     void buildWithoutSchedulerCreatesInternalSchedulerLinkedToTaskManager() {
-        SchedulingEngine engine = SchedulingEngineBuilder.create().defaultMaxQuota(3).build();
+        SchedulingEngine engine = SchedulingEngineBuilder.create().validateBoundRuntime(false).defaultMaxQuota(3)
+                .build();
         try {
             engine.start();
             // Engine has its own scheduler; closing should be idempotent and not throw.
@@ -103,7 +105,7 @@ class SchedulingEngineBuilderTest {
             return Optional.empty();
         };
 
-        SchedulingEngine engine = SchedulingEngineBuilder.create().taskRepository(taskRepo)
+        SchedulingEngine engine = SchedulingEngineBuilder.create().validateBoundRuntime(false).taskRepository(taskRepo)
                 .historyRepository(historyRepo).taskScheduler(mock(TaskScheduler.class)).executionGuard(denyingGuard)
                 .build();
         try {
@@ -124,7 +126,7 @@ class SchedulingEngineBuilderTest {
         InMemoryScheduledTaskRepository taskRepo = new InMemoryScheduledTaskRepository();
         InMemoryScheduledTaskExecutionHistoryRepository historyRepo = new InMemoryScheduledTaskExecutionHistoryRepository();
 
-        SchedulingEngine engine = SchedulingEngineBuilder.create().taskRepository(taskRepo)
+        SchedulingEngine engine = SchedulingEngineBuilder.create().validateBoundRuntime(false).taskRepository(taskRepo)
                 .historyRepository(historyRepo).taskScheduler(mock(TaskScheduler.class)).build();
         try {
             ScheduledTask task = newTask();
@@ -141,8 +143,8 @@ class SchedulingEngineBuilderTest {
     @Test
     void tracerReachesTheRoutineExecutor() {
         InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
-        SchedulingEngine engine = SchedulingEngineBuilder.create().taskScheduler(mock(TaskScheduler.class))
-                .tracer(new DefaultTracer(store, SpanExporter.noop())).build();
+        SchedulingEngine engine = SchedulingEngineBuilder.create().validateBoundRuntime(false)
+                .taskScheduler(mock(TaskScheduler.class)).tracer(new DefaultTracer(store, SpanExporter.noop())).build();
         try {
             ScheduledTask task = newTask();
             engine.getTaskManager().register(task);
@@ -179,8 +181,8 @@ class SchedulingEngineBuilderTest {
         RecordingProvider provider = new RecordingProvider();
         registry.register(
                 new ProvidingRuntime(AgentRuntimeId.from(agent), agent, List.of(new ContextCapturingTool()), provider));
-        SchedulingEngineBuilder builder = SchedulingEngineBuilder.create().taskScheduler(mock(TaskScheduler.class))
-                .agentRuntimeRegistry(registry);
+        SchedulingEngineBuilder builder = SchedulingEngineBuilder.create().validateBoundRuntime(false)
+                .taskScheduler(mock(TaskScheduler.class)).agentRuntimeRegistry(registry);
         if (resolver != null) {
             builder.routineExecutionAttributes(resolver);
         }
@@ -221,8 +223,8 @@ class SchedulingEngineBuilderTest {
         ContextCapturingTool tool = new ContextCapturingTool();
         registry.register(
                 new ProvidingRuntime(AgentRuntimeId.from(agent), agent, List.of(tool), new RecordingProvider()));
-        SchedulingEngineBuilder builder = SchedulingEngineBuilder.create().taskScheduler(mock(TaskScheduler.class))
-                .agentRuntimeRegistry(registry);
+        SchedulingEngineBuilder builder = SchedulingEngineBuilder.create().validateBoundRuntime(false)
+                .taskScheduler(mock(TaskScheduler.class)).agentRuntimeRegistry(registry);
         if (factory != null) {
             builder.quotaGuardFactory(factory);
         }
@@ -242,7 +244,8 @@ class SchedulingEngineBuilderTest {
     @Test
     void engineNeverCallsStartOnNullCustomSchedulerWhenNotStarted() {
         TaskScheduler scheduler = mock(TaskScheduler.class);
-        SchedulingEngine engine = SchedulingEngineBuilder.create().taskScheduler(scheduler).build();
+        SchedulingEngine engine = SchedulingEngineBuilder.create().validateBoundRuntime(false).taskScheduler(scheduler)
+                .build();
         try {
             verify(scheduler, never()).start();
         } finally {

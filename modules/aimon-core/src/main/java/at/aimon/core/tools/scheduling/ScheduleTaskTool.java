@@ -24,11 +24,14 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
+import at.aimon.core.scheduling.RoutineStep;
 import at.aimon.core.scheduling.ScheduledTask;
 import at.aimon.core.scheduling.ScheduledTaskId;
 import at.aimon.core.scheduling.ScheduledTaskManager;
+import at.aimon.core.scheduling.ScheduledTaskPolicy;
 import at.aimon.core.scheduling.exception.InvalidCronExpressionException;
 import at.aimon.core.scheduling.exception.QuotaExceededException;
+import at.aimon.core.scheduling.exception.UnresolvableBoundRuntimeException;
 import at.aimon.core.tools.HookRegistryAccess;
 
 /**
@@ -53,6 +56,21 @@ import at.aimon.core.tools.HookRegistryAccess;
  * Inside the fork of a skill whose guard hooks are active the tool refuses: the routine would fire on the runtime's
  * registry, where the skill's hooks are not, so it would be a way to do later, unguarded, what the guards block now
  * (see {@link HookRegistryAccess#activeSkillGuards(ToolContext)}).
+ *
+ * <h2>Routine steps run without hooks</h2>
+ *
+ * <p>
+ * A scheduled step calls its tool directly ({@code RoutineExecutor}): no PreTool or PostTool hook, permission rule or
+ * approval gate sees it. Whatever a host's hooks would refuse in a turn, a routine can do unattended unless it is
+ * refused <em>here</em>, while the model is still in a turn. The host's say is the manager's
+ * {@link ScheduledTaskPolicy}: it picks the runtime the task is bound to
+ * ({@link ScheduledTaskPolicy#resolveBoundRuntimeId}) and may refuse the task as it would be stored — its tools, its
+ * cron cadence, its size ({@link ScheduledTaskPolicy#checkSchedule}). A policy that throws refuses.
+ *
+ * <p>
+ * The bound runtime is then checked to be registered (unless the engine was built with
+ * {@code validateBoundRuntime(false)}): a task bound to a runtime nobody can resolve is refused with an error rather
+ * than reported as scheduled and left to fail at every fire.
  */
 public class ScheduleTaskTool extends AbstractTool {
 
@@ -160,7 +178,10 @@ public class ScheduleTaskTool extends AbstractTool {
                                         + "Restricting day-of-month and day-of-week at the same time means 'either "
                                         + "day' and is not supported by every scheduler backend - use two tasks.",
                                 "examples", List.of("*/5 * * * *", "0 0 * * *", "30 9 * * MON-FRI", "0 3 1 * *")),
-                        "timezone", Map.of("type", "string", "description", "IANA timezone, e.g., Asia/Seoul.",
+                        "timezone",
+                        Map.of("type", "string", "description",
+                                "IANA timezone the cron expression is evaluated in, e.g., Asia/Seoul. "
+                                        + "Omitted: the server's own zone.",
                                 "examples", List.of("Asia/Seoul")))),
                 Map.entry("required", List.of("type", "cron_expression")));
     }
@@ -182,8 +203,11 @@ public class ScheduleTaskTool extends AbstractTool {
                                         + "previous step results. "
                                         + "Example: \"{\\\"message\\\": \\\"Result: $step.0.result\\\"}\""),
                         "max_retries",
-                        Map.of("type", "integer", "minimum", 0, "default", 0, "description",
-                                "Max retries for this step."),
+                        Map.of("type", "integer", "minimum", 0, "default", RoutineStep.DEFAULT_MAX_RETRIES,
+                                "description",
+                                "Max retries for this step. Applied only when the tool is read-only or declares "
+                                        + "itself idempotent; a tool that writes and is not idempotent runs once, "
+                                        + "whatever this says, so a timed-out write is not repeated."),
                         "timeout_ms",
                         Map.of("type", "integer", "minimum", 0, "description", "Optional per-step timeout."))),
                 Map.entry("required", List.of("tool", "tool_params")));
@@ -202,14 +226,25 @@ public class ScheduleTaskTool extends AbstractTool {
             return ToolResult.error(HookRegistryAccess.scheduleRefusal(guardSkills));
         }
 
+        final AgentRuntimeId callerRuntimeId;
         final AgentRuntimeId boundRuntimeId;
         try {
-            boundRuntimeId = context.get(AGENT_RUNTIME_ID).orElseGet(defaultBoundRuntimeIdSupplier);
+            callerRuntimeId = context.get(AGENT_RUNTIME_ID).orElseGet(defaultBoundRuntimeIdSupplier);
         } catch (IllegalStateException e) {
             // Expected configuration error — the executor wiring did not populate AGENT_RUNTIME_ID. Surface this
             // as a tool error at WARN level (not ERROR with stacktrace) per .claude/rules/error-handling.md.
             log.warn("AGENT_RUNTIME_ID is missing in ToolContext: {}", e.getMessage());
             return ToolResult.error("ScheduleTask requires AGENT_RUNTIME_ID in context: " + e.getMessage());
+        }
+
+        final ScheduledTaskPolicy policy = taskManager.getTaskPolicy();
+        try {
+            boundRuntimeId = Objects.requireNonNull(policy.resolveBoundRuntimeId(callerRuntimeId, context),
+                    "the policy resolved no runtime id");
+        } catch (RuntimeException e) {
+            log.error("Scheduled task policy failed to resolve the bound runtime for '{}': {}", callerRuntimeId,
+                    e.getMessage(), e);
+            return ToolResult.error("Failed to schedule task: the scheduling policy failed: " + e.getMessage());
         }
 
         try {
@@ -225,6 +260,14 @@ public class ScheduleTaskTool extends AbstractTool {
                     .boundRuntimeId(boundRuntimeId).agentDefinitionVersion(versionFor(boundRuntimeId)).enabled(true)
                     .build();
 
+            final ScheduledTaskPolicy.Decision decision = PolicyCalls.decide("scheduling '" + request.getName() + "'",
+                    () -> policy.checkSchedule(task, context));
+            if (!decision.isAllowed()) {
+                final String reason = decision.getRefusalReason().orElse("");
+                log.warn("Scheduling '{}' for {} refused by policy: {}", request.getName(), owner, reason);
+                return ToolResult.error("Task not scheduled: " + reason);
+            }
+
             final ScheduledTask registered = taskManager.register(task);
 
             log.info("Scheduled task '{}' with ID '{}' for owner {} (bound to {})", request.getName(), taskId, owner,
@@ -236,6 +279,10 @@ public class ScheduleTaskTool extends AbstractTool {
         } catch (InvalidCronExpressionException e) {
             log.warn("Invalid cron expression: {}", e.getMessage());
             return ToolResult.error("Invalid cron expression: " + e.getMessage());
+        } catch (UnresolvableBoundRuntimeException e) {
+            log.warn("Task not scheduled: {}", e.getMessage());
+            return ToolResult.error("Task not scheduled: " + e.getMessage() + ". Scheduled tasks run on a registered"
+                    + " agent runtime, and this conversation's runtime is not one the scheduler can find.");
         } catch (QuotaExceededException e) {
             log.warn("Quota exceeded: {}", e.getMessage());
             return ToolResult.error("Quota exceeded: " + e.getMessage());

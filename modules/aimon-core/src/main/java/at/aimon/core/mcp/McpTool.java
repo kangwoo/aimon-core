@@ -10,6 +10,7 @@ import at.aimon.core.agent.interrupt.InterruptBehavior;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.DestructiveBehavior;
+import at.aimon.core.agent.tool.IdempotencyBehavior;
 import at.aimon.core.agent.tool.InterruptAccess;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.ToolContext;
@@ -106,6 +107,11 @@ public class McpTool extends AbstractTool {
     @Override
     public DestructiveBehavior getDestructiveBehavior() {
         return traits.getDestructiveBehavior();
+    }
+
+    @Override
+    public IdempotencyBehavior getIdempotencyBehavior() {
+        return traits.getIdempotencyBehavior();
     }
 
     /**

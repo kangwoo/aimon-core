@@ -2,7 +2,7 @@
 
 > Status: **IMPLEMENTED** — `at.aimon.core.scheduling`(main 41 / test 16) + `at.aimon.core.tools.scheduling`(main 4 /
 > test 3) + `aimon-scheduling-quartz`(main 9 / test 9). **작업 정의를 영속하는 저장소 구현은 아직 없다** — 둘 다
-> 인메모리다. `timezone` 은 저장·광고되지만 어느 스케줄러에도 전달되지 않는다. 둘 다 §9.1.
+> 인메모리다(§9.1). `timezone` 은 스케줄러까지 전달된다(§4.4).
 > 클러스터 배포·웹 환경 설정은 [Quartz 스케줄링 웹 배포 가이드](../../features/scheduling/quartz-scheduling-web-deployment-guide.md)
 > 참조 (본 문서는 설계 사양).
 
@@ -61,17 +61,18 @@ LLM ── schedule_task 도구 호출 ─────────────�
     ▼
 ScheduleTaskTool
     ├─ ToolContext 에서 PRINCIPAL(소유자) · AGENT_RUNTIME_ID(바인딩) 추출
+    ├─ ScheduledTaskPolicy.resolveBoundRuntimeId · checkSchedule  ← 호스트 정책 (§6.4)
     └─ AgentDefinitionVersion 스탬프
     │
     ▼
-ScheduledTaskManager ── cron 검증 · 할당량 검사 · 저장 · 스케줄 등록 · 이벤트 발행
+ScheduledTaskManager ── cron 검증 · bound runtime 해석 검증(§6.3) · 할당량 검사 · 저장 · 스케줄 등록 · 이벤트 발행
     │
     ▼
 TaskScheduler (InMemory | Quartz)   ← cron 트리거만. 실행 내용을 모른다
-    │  트리거
+    │  트리거 — ScheduledFire(taskId, 예정 발화 시각, slot)
     ▼
-ScheduledTaskManager.executeTask(taskId)
-    ├─ ScheduledExecutionGuard.tryBegin(taskId) ── 거부되면 그대로 건너뛴다
+ScheduledTaskManager.executeFire(fire)
+    ├─ ScheduledExecutionGuard.tryBegin(fire) ── 거부되면 그대로 건너뛴다 (§6.1)
     │
     ▼
 RoutineExecutor
@@ -242,6 +243,22 @@ Quartz 의 두 일자 필드 중 하나는 반드시 `?` 이므로 반쪽씩은 
 
 ---
 
+### 4.4 시간대 — 작업의 존으로 계산한다
+
+`ScheduledTask.timezone`(IANA 존 id)은 `TaskScheduler.scheduleRecurrently(taskId, cron, zone)` 으로 스케줄러에 간다.
+`"0 9 * * *"` + `Asia/Seoul` 은 노드가 어느 존에서 돌든 서울 시각 09:00 에 발화하고, 그 존의 일광 절약 규칙을 따른다.
+
+| 경우 | 동작 |
+|------|------|
+| 존 없음 | 2인자 `scheduleRecurrently` — 스케줄러(JVM)의 기본 존. 예전과 같다 |
+| 존 있음 | 3인자 오버로드. 인메모리는 그 존에서 다음 실행을 계산하고, Quartz 는 trigger 에 `inTimeZone` 으로 싣는다(JDBC 저장소가 함께 보관) |
+| 모르는 존 id | `register` 가 `IllegalArgumentException` 으로 거부하고 아무것도 저장하지 않는다 |
+| 존을 모르는 외부 스케줄러 | 3인자 default 가 JVM 존이 아닌 존을 **거부**한다. `register` 는 그것을 되돌린다 |
+
+마지막 행이 무시가 아니라 거부인 이유는 이 절이 고친 버그가 바로 무시였기 때문이다. 한때 존은 저장되고 모델에게
+광고되었지만 스케줄러에 닿지 않아, "서울 09:00" 작업이 노드의 존으로 09:00 에 돌았다. Quartz 의 misfire slot
+계산(§6.1)도 trigger 의 존을 쓰므로 같은 존으로 접힌다.
+
 ## 5. 실행
 
 ### 5.1 값 객체
@@ -249,8 +266,8 @@ Quartz 의 두 일자 필드 중 하나는 반드시 `?` 이므로 반쪽씩은 
 | 타입 | 담는 것 | 비고 |
 |------|---------|------|
 | `RoutineStep` | `id`(선택) · `tool` · `toolParams`(JSON 문자열) · `maxRetries`(기본 3) · `retryDelay`(기본 5초) · `timeout`(기본 5분) | `of(tool, params)` / `withRetry(...)` 편의 팩토리 |
-| `StepResult` | `stepIndex` · `step` · `success` · `stdout` · `errorMessage` · `attemptCount` · 시작·완료 시각 | `getDuration()` |
-| `RoutineResult` | `taskId` · `success` · `stepResults` · `errorMessage` · 시작·완료 시각 | `getCompletedStepCount()` / `getTotalStepCount()` |
+| `StepResult` | `stepIndex` · `step` · `success` · `stdout` · `errorMessage` · `attemptCount` · `haltReason` · `outcomeUnknown` · 시작·완료 시각 | `getDuration()` · `isHalted()` · `isOutcomeUnknown()` |
+| `RoutineResult` | `taskId` · `success` · `stepResults` · `errorMessage` · `interruptReason` · `haltReason` · 시작·완료 시각 | `getCompletedStepCount()` / `getTotalStepCount()` · `isCancelled()` · `isHalted()` |
 | `ScheduledTaskExecutionHistory` | 위를 이력으로 접은 것 — `status` · `completedSteps` · `totalSteps` | `fromRoutineResult(id, result)` |
 
 `ScheduledTaskId` 는 UUID 기반 **`final class`** 다(`record` 아님 — 프로젝트 불변성 규약).
@@ -273,6 +290,10 @@ RoutineExecutor.execute(task):
         params["_steps"] = stepOutputs
         result = executeWithRetry(tool, params, context, step)
 
+        IF result 에 halt 표시(ToolResult.haltingRoutine):
+            publish TaskHaltedEvent
+            RETURN RoutineResult.halted(...)       # 재시도 없음 · 이후 단계 없음 · 실패 아님
+
         IF result 가 에러:
             publish StepFailedEvent
             RETURN RoutineResult.failure(...)      # 즉시 중단
@@ -287,6 +308,15 @@ RoutineExecutor.execute(task):
 한 단계가 실패하면 **즉시 중단**한다. 이어서 도는 선택지는 없다 — 다음 단계의 입력이 방금 실패한 단계의
 출력이므로, 계속 돌면 빈 값으로 도는 것과 같다.
 
+**중단(halt)은 실패와 다른 세 번째 끝이다.** 사람 승인을 기다리는 호출처럼, 도구는 할 수 있는 일을 했지만 그 일이
+이 실행 안에서는 끝나지 않는 경우가 있다. 실패로 돌려주면 재시도되어 승인 요청이 쌓이고, 성공으로 돌려주면 다음
+단계가 아직 없는 결과로 돈다. 도구는 결과에 `ToolResult.haltingRoutine(reason)` 을 붙여 이를 알린다. 실행기는 그
+단계를 재시도하지 않고, 이후 단계를 시작하지 않으며, 실행을 `halted` 로 끝낸다. 다음 발화는 평소대로 돈다.
+에이전트 턴에서는 이 표시가 아무 일도 하지 않는다 — 모델은 `content` 를 읽고 스스로 판단한다.
+
+**routine 단계에는 hook 이 적용되지 않는다.** 실행기는 `tool.execute` 를 직접 부른다. PreTool/PostTool hook,
+권한 규칙, 승인 게이트 어느 것도 예약된 단계를 보지 못하므로, 예약된 실행에 규칙을 두려면 등록 시점에 둔다(§6.4).
+
 ### 5.3 템플릿 변수
 
 `toolParams` 안의 `$step.{index}.result`(0-based)가 그 인덱스 단계의 출력으로 치환된다. 정규식은
@@ -300,15 +330,35 @@ RoutineExecutor.execute(task):
 ### 5.4 재시도와 타임아웃
 
 ```
-executeWithRetry(tool, input, context, step):
+executeWithRetry(step):
     attempts = 0
     WHILE attempts <= step.maxRetries:
-        result = timeout 을 걸고 tool.execute(input, context)
-        IF result 성공: RETURN (result, attempts + 1)
-        IF attempts < step.maxRetries: step.retryDelay 만큼 대기
         attempts++
-    RETURN (마지막 result, attempts)
+        tool = 실행 시점 해결                         # 실패하면 아무것도 실행하지 않았으므로 재시도 허용
+        result = timeout 을 걸고 tool.execute(input, context)
+        IF result 가 halt:  RETURN halted
+        IF result 성공:     RETURN success
+        IF tool 이 재시도 불안전 또는 result.notRetryable():  BREAK
+        step.retryDelay 만큼 대기 (취소되면 즉시 깨어남)
+    RETURN failure (마지막 시도가 timeout 이면 outcomeUnknown = true)
 ```
+
+**재시도는 반복해도 안전한 도구에만 한다.** 판정은 도구의 선언이다 — `SideEffectLevel.READ_ONLY` 이거나
+`IdempotencyBehavior.IDEMPOTENT` 를 선언한 도구만 `maxRetries` 를 쓴다. 쓰기 도구의 기본값은 `MUTATING` +
+`NON_IDEMPOTENT` 이므로, **아무것도 선언하지 않은 도구는 한 번만 실행된다.** timeout 이나 예외로 끝난 시도도 실제로는
+쓰기를 끝냈을 수 있고, 다시 실행하면 같은 메시지가 두 번 나가거나 같은 변경이 두 번 적용된다. 이것은 도구의 성질이지
+routine 작성자가 매번 판단할 일이 아니므로 step 설정보다 선언이 우선한다. 축의 정의는
+[도구 부작용 축 분리](../tool/side-effect-axes.md) §8.2.
+
+예외는 둘이다. 도구를 **찾기 전에** 실패한 시도(런타임 미등록, 모르는 도구 이름)는 아무것도 실행하지 않았으므로
+재시도한다 — 늦게 등록되는 런타임이 그 사이에 나타날 수 있다. 반대로 도구가 실패를 `notRetryable()` 로 표시했으면
+멱등 도구라도 재시도하지 않는다. 쿼터에 막힌 시도도 재시도하지 않는다(§3.5).
+
+마지막 시도가 timeout 으로 끝난 단계는 `StepResult.isOutcomeUnknown()` 이 참이다. 실패로 기록되지만 "아무 일도
+일어나지 않았다" 는 뜻은 아니다.
+
+`schedule_task` 스키마가 광고하는 `max_retries` 기본값은 실제 기본값(`RoutineStep.DEFAULT_MAX_RETRIES` = 3)과
+같다. 한때 스키마는 `0` 이라고 적고 실행기는 `3` 을 썼다.
 
 타임아웃은 별도 데몬 풀(`routine-timeout`, `newCachedThreadPool`)에 submit 하고 `Future.get(timeout)` 으로
 기다린 뒤 초과 시 cancel 한다. `RoutineExecutor.shutdown()` 이 이 풀을 닫으며,
@@ -319,8 +369,13 @@ executeWithRetry(tool, input, context, step):
 | 조건 | Status |
 |------|--------|
 | 모든 단계 성공 | `SUCCESS` |
+| 단계가 중단(halt)을 요청 | `HALTED` — `errorMessage` 에 도구가 준 사유 |
+| 인터럽트로 멈춤 | `CANCELLED` |
 | 일부만 성공 | `PARTIAL` |
 | 성공한 단계 없음 | `FAILURE` |
+
+판정 순서는 표의 위에서 아래다. `HALTED` 와 `CANCELLED` 는 실패가 아니다 — 고장 난 단계가 없다. enum 이름으로
+상태를 저장하는 영속 저장소는 `HALTED` 를 받아들여야 한다.
 
 발화 1회마다 이력 1건이 저장되고 `task.lastExecutedAt` 이 갱신된다.
 
@@ -336,6 +391,9 @@ executeWithRetry(tool, input, context, step):
 | `TaskCompletedEvent` | `RoutineResult` | 모든 단계 성공 |
 | `TaskFailedEvent` | `RoutineResult` | 단계 실패 |
 | `TaskCancelledEvent` | — | 취소 |
+| `TaskInterruptedEvent` | `RoutineResult`, `InterruptReason` | 실행 중 인터럽트로 멈춤 |
+| `TaskHaltedEvent` | `RoutineResult`, 사유 | 단계가 중단을 요청(§5.2) — 실패 아님 |
+| `TaskDisabledEvent` | 사유 | 엔진이 스스로 작업을 끔(§6.3 `DISABLE`) |
 | `StepCompletedEvent` | step, stepResult, stepIndex | 개별 단계 성공 |
 | `StepFailedEvent` | step, stepResult, stepIndex | 개별 단계 실패 |
 
@@ -372,6 +430,93 @@ check-and-claim 이며 **노드 로컬**이다 — 겹침은 막고 멀티 노�
 Quartz 를 쓰면 트리거 수준 dedup 이 네이티브로 붙는다. 그래도 이 심은 남는다 — **core 레벨의
 심층 방어이자 주입 지점**이며, Quartz 없이 도는 배포에서는 이것이 유일한 방어다.
 
+### 6.1 taskId 로는 겹침만 막는다 — `ScheduledFire`
+
+taskId 로 잡은 리스는 **겹침**만 막는다. 노드 A 의 실행이 끝나 리스를 놓은 뒤 노드 B 의 같은 발화가 시차를 두고
+도착하면(GC pause, CPU throttling, misfire 복구) B 는 리스를 얻어 한 번 더 실행한다. 리스를 놓지 않으면 다음 발화를
+막는다. taskId 키로는 둘 중 하나를 고를 수밖에 없다.
+
+그래서 스케줄러는 발화를 `ScheduledFire` 로 넘긴다 — taskId, **예정 발화 시각**, 그리고 그 시각을 cron 격자의
+직전 점으로 접은 **slot**. 같은 회차라면 slot 은 모든 노드에서 같고, 늦게 온 발화도 같다. 반드시 **뒤로** 접는다 —
+앞으로 접으면 다음 회차를 가로챈다. `getOccurrenceKey()` 는 `<taskId>@<slot epoch ms>` 이며 분산 guard 의 리스 키로
+쓰라고 있는 것이다.
+
+| 스케줄러 | 예정 발화 시각 | slot |
+|---------|--------------|------|
+| `InMemoryTaskScheduler` | 계산한 다음 실행 시각 | 같은 값 (격자 위) |
+| `QuartzTaskScheduler` | `JobExecutionContext.getScheduledFireTime()` | job data 의 5필드 식을 trigger 의 존에서 `UnixCronExpression.previousOrSameExecution` 으로 접은 값. 식이 없는 옛 job 은 예정 시각 그대로 |
+
+매니저는 언제나 `tryBegin(ScheduledFire)` 를 부른다. 그 default 는 `tryBegin(ScheduledTaskId)` 로 넘기므로 기존 guard 는
+고치지 않아도 그대로 돈다(taskId 의미 그대로). 회차 의미가 필요한 guard 만 새 오버로드를 구현한다. `executeTask(taskId)`
+로 직접 부르거나, `taskId -> ...` 람다로 배선한 스케줄러에서 온 발화는 slot 이 없다 — 람다는 executor 의 taskId 쪽
+절반만 구현하기 때문이다. 외부에서 만든 스케줄러는 `ScheduledTaskManager.asExecutor()` 로 배선한다.
+
+`InMemoryScheduledExecutionGuard` 는 여전히 taskId 로 겹침만 막는다. 한 노드에서는 그것이 위험의 전부다.
+
+**일광 절약 시간.** 격자는 벽시계 시각이다. 시계가 뒤로 가는 날에는 같은 벽시계 시각이 두 번 오고, 스케줄러마다
+어느 쪽에 발화하는지가 다르다 — cron-utils(인메모리)는 첫 번째, Quartz 는 두 번째. 그래서
+`UnixCronExpression.previousOrSameExecution` 은 둘 다 격자 위로 보고(정시 발화는 자기 자신으로 접힌다), 늦은 발화는
+두 순간 중 그보다 늦지 않은 쪽으로 접는다. 시계가 앞으로 가는 날에는 그 시각 자체가 없으므로 고를 것이 없다.
+`QuartzTaskSchedulerTest.everyQuartzFireAcrossDaylightSavingFoldsOntoItself` 가 Quartz 의 실제 발화 시각으로 이것을
+고정한다.
+
+### 6.2 노드별 트리거의 수렴 — `reconcile()`
+
+`register` · `cancel` · `setEnabled` 는 **그 노드의** 스케줄러에서만 트리거를 만들거나 지운다. 클러스터 공유가 아닌
+스케줄러(`isClusterWide() == false`)로 여러 노드를 돌리면 노드 A 에서 만든 작업은 A 에서만 돌고, 노드 B 에서 취소한
+작업은 A 에 트리거가 남아 매 발화 헛돈다.
+
+`ScheduledTaskManager.reconcile()` 은 저장소의 활성 작업(desired)과 스케줄러가 쥔 트리거(observed,
+`TaskScheduler.scheduledTaskIds()`)를 비교해 빠진 것은 걸고 남은 것은 지운다. 목록을 줄 수 없는 스케줄러
+(default 는 빈 `Optional`)에서는 거는 쪽만 한다. **각 노드가 스스로 돌아야 한다** — 고치는 대상이 그 노드의
+스케줄러이므로 리더 락을 걸면 선출된 노드만 수렴한다.
+
+수렴하면 모든 노드가 모든 트리거를 쥐고, 모든 노드가 발화한다. 그 발화를 하나로 줄이는 것은 guard 다. 그래서
+`SchedulingEngine` 은 **`multiNode(true)` + 노드별 스케줄러 + 다른 노드를 보는 guard 주입** 일 때만
+`reconcileInterval`(기본 1분, `Duration.ZERO` 면 끔)마다 이것을 돈다. 주입된 guard 가 노드 로컬인
+`InMemoryScheduledExecutionGuard` 나 `ALLOW_ALL` 이면 돌지 않는다 — 그 guard 로는 모든 노드가 모든 발화를 실행한다.
+
+`register` · `cancel` · `setEnabled` 와 reconcile 패스는 노드 로컬 락 하나로 직렬화된다. 각각이 저장소 쓰기와 트리거
+변경을 짝으로 하므로, 그 사이에 패스가 끼면 저장소 쪽 절반만 보고 움직인다 — `register` 가 걸려던 트리거를 먼저
+걸거나(Quartz 는 두 번째를 거부하고 늦은 쪽이 실패한다), `cancel` 이 내렸지만 아직 지우지 않은 작업을 다시 건다.
+
+### 6.3 bound runtime 해석 검증
+
+`ScheduleTaskTool` 은 ToolContext 의 `AGENT_RUNTIME_ID` 를 바인딩으로 저장한다. 그 id 를 레지스트리가 해석하지
+못하면 작업은 "예약됐다" 고 응답한 뒤 발화마다 `"No agent runtime registered for binding"` 으로 실패한다 — 알릴
+사람이 없는 실패다. 그래서 `register` 는 레지스트리에 없는 런타임에 묶인 작업을 `UnresolvableBoundRuntimeException`
+으로 거부하고, 도구는 그것을 에러로 모델에게 돌려준다. 기본으로 켜져 있으며
+`SchedulingEngineBuilder.validateBoundRuntime(false)` 로 끈다.
+
+이미 저장된 작업이 발화 시점에 해석되지 않을 때는 `UnresolvableRuntimePolicy` 가 정한다.
+
+| 정책 | 동작 |
+|------|------|
+| `KEEP_SCHEDULED` (기본) | 지금처럼 발화하고 첫 단계가 실패한다. 나중에 등록된 런타임을 다음 발화가 집는다 |
+| `DISABLE` | 발화를 건너뛰고, 작업을 끄고 트리거를 지우고, `TaskDisabledEvent` 를 낸다. 레코드는 남는다 |
+
+기본이 `KEEP_SCHEDULED` 인 이유는 늦게 등록되는 런타임이다. 웹 호스트는 그 에이전트의 첫 세션이 열릴 때 런타임을
+등록하므로, 재시작 직후에는 세션이 올 때까지 런타임이 없다. 첫 미스에 끄면 재시작마다 그런 작업이 모두 꺼진다.
+
+**여러 노드 가운데 하나**(`multiNode(true)`)에서는 둘이 달라진다. 이 노드에 런타임이 없는 발화는 guard 에 묻기
+**전에** 건너뛴다 — 여기서 회차를 차지하고 실패하면 그 런타임을 가진 노드가 그 회차를 잃는다. 그리고 `DISABLE` 은
+빌드 시점에 거부된다. 한 노드의 미스는 그 노드의 사실인데, 끄기는 모든 노드가 읽는 저장소에 쓰기 때문이다.
+
+### 6.4 호스트 정책 — `ScheduledTaskPolicy`
+
+routine 단계에는 hook 이 적용되지 않으므로(§5.2) 예약된 실행을 막을 수 있는 자리는 **예약 시점** 하나다. 그 자리를
+호스트에게 여는 SPI 가 `ScheduledTaskPolicy` 다. `SchedulingEngineBuilder.taskPolicy(...)` 로 한 번 넣으면 도구 3종이
+`ScheduledTaskManager.getTaskPolicy()` 로 읽으므로 모든 런타임의 도구가 같은 정책을 쓴다.
+
+| 메서드 | 호출 지점 | 기본 |
+|--------|----------|------|
+| `resolveBoundRuntimeId(callerRuntimeId, context)` | `schedule_task` — 바인딩 결정 | 호출한 턴의 런타임. §6.3 의 검증은 이 결과에 대해 한다 |
+| `checkSchedule(candidate, context)` | `schedule_task` — 등록 직전, 저장될 모습 그대로의 작업으로 | 허용 |
+| `checkAccess(task, LIST \| CANCEL, context)` | `list_scheduled_tasks` · `cancel_scheduled_task` | 허용. 소유자 검사를 **좁힐** 뿐 넓히지 않는다 |
+
+정책이 예외를 던지거나 null 을 돌려주면 **거부**로 다룬다. 예약된 실행에는 이것 말고 다른 방어선이 없으므로 고장 난
+정책이 요청을 통과시키면 안 된다.
+
 ---
 
 ## 7. 조립
@@ -405,6 +550,10 @@ executor 를 만들어야 하므로 **아직 아무도 채우지 않은 가변 �
 | `ScheduledTaskEventPublisher` | `SimpleScheduledTaskEventPublisher` |
 | `TaskQuotaManager` | `StoredTaskQuotaManager(taskRepository, defaultMaxQuota)` — 기본 10 |
 | `ScheduledExecutionGuard` | `InMemoryScheduledExecutionGuard` |
+| `ScheduledTaskPolicy` | `ScheduledTaskPolicy.PERMIT_ALL` |
+| `validateBoundRuntime` | `true` (§6.3) |
+| `UnresolvableRuntimePolicy` | `KEEP_SCHEDULED` (§6.3) |
+| `reconcileInterval` | 1분 — 단 §6.2 의 조건에서만 돈다 |
 | `AgentRuntimeRegistry` | `DefaultAgentRuntimeRegistry` — 단, 실제 배포는 반드시 주입한다 |
 | `TaskScheduler` | `InMemoryTaskScheduler` |
 
@@ -464,6 +613,10 @@ executor 를 만들어야 하므로 **아직 아무도 채우지 않은 가변 �
 | D8 | **도구를 언제 해결하는가** | 실행 시점에 `AgentRuntimeRegistry` 에서 동적으로. 등록과 발화 사이에 도구 구성이 바뀔 수 있고, 바뀌었다면 최신 것이 맞다(D4 와 같은 이유) |
 | D9 | **순환 의존을 누가 끊는가** | `TaskSchedulerFactory`. 호출자가 직접 끊으면 실패가 조용하다 — 트리거는 발화하고 매번 null 에서 죽는다(§7.1) |
 | D10 | **중복 발화 방어를 어디에 두는가** | Quartz 에 맡기지 않고 core 인터페이스로. Quartz 없는 배포에서는 그것이 유일한 방어이고, 있는 배포에서는 심층 방어다(§6) |
+| D11 | **guard 의 키** | taskId 만으로는 겹침과 늦은 중복 중 하나만 막을 수 있으므로 발화에 slot 을 싣는다. slot 은 직전 격자점으로 **뒤로** 접는다(§6.1) |
+| D12 | **어떤 단계를 재시도하는가** | 도구가 반복해도 안전하다고 선언한 것만. 기본값이 `NON_IDEMPOTENT` 이므로 미선언 쓰기 도구는 한 번만 돈다 — step 의 `maxRetries` 보다 선언이 우선한다(§5.4) |
+| D13 | **승인 대기를 어떻게 표현하는가** | 실패도 성공도 아닌 `halted`. 재시도하면 요청이 쌓이고, 진행하면 빈 결과로 돈다(§5.2) |
+| D14 | **예약 규칙을 어디서 두는가** | 도구를 래퍼로 바꾸지 않고 `ScheduledTaskPolicy` 로. 단계에 hook 이 없으므로 예약 시점이 유일한 자리이고, 래퍼는 base 도구가 바뀔 때마다 따라 고쳐야 한다(§6.4) |
 
 ---
 
@@ -474,8 +627,8 @@ executor 를 만들어야 하므로 **아직 아무도 채우지 않은 가변 �
 | 항목 | 현재 | 필요한 것 |
 |------|------|----------|
 | **작업 정의 영속화** | 코어의 `ScheduledTaskRepository` 구현은 인메모리 하나이고, 영속 구현은 `aimon-session-mongodb` 의 `MongoScheduledTaskRepository` 하나다. **기동 시 재등록**은 있다 — `SchedulingEngine.start()` 가 저장된 활성 작업 가운데 스케줄러가 쥐고 있지 않은 것을 다시 건다(`ScheduledTaskManager.rehydrate`). 여러 노드 가운데 하나이고 스케줄러의 트리거가 노드별이면 걸지 않는다(`SchedulingEngineBuilder.multiNode`). 쿼터는 장부 없이 저장소에서 센다(`StoredTaskQuotaManager`). 실행 이력 저장소는 여전히 인메모리뿐이다 | RDB 백엔드, 실행 이력의 영속 구현 |
-| **timezone** | `ScheduledTask.timezone` 에 저장되고 `schedule_task` 스키마가 IANA 존을 광고하지만, `TaskScheduler.scheduleRecurrently(taskId, cronExpression)` 이 표현식만 받으므로 **어느 스케줄러에도 전달되지 않는다.** 인메모리 스케줄러는 시스템 기본 존으로 계산한다 | 시그니처에 존을 태우거나 표현식과 존을 한 값으로 묶는다. 필드를 지우는 선택지는 없다 — 모델에게 이미 광고했다 |
-| **분산 `ScheduledExecutionGuard`** | 인메모리 구현뿐 (노드 로컬) | 공유 락/리스 저장소 기반 구현. 심은 이미 있으므로 구현체 하나를 주입하면 된다(§6) |
+| **분산 `ScheduledExecutionGuard`** | 인메모리 구현뿐 (노드 로컬). SPI 는 slot 을 받는다(§6.1) | 공유 락/리스 저장소 기반 구현. `aimon-scheduling-testkit` 의 `AbstractScheduledExecutionGuardContractTest` 를 `dedupsOccurrences() == true` 로 통과해야 한다 |
+| **작업 변경 이벤트 버스** | 없음 — 노드 간 수렴은 주기 `reconcile()`(§6.2)로만 | register · cancel · enable 을 노드 간에 fan-out 하는 SPI. 놓친 이벤트 때문에 reconcile 은 그대로 둔다 |
 | **작업 수정 API** | 없음 — 취소 후 재등록 | 부분 수정이 정말 필요한지부터. cron 만 바꾸는 것과 routine 을 바꾸는 것은 다른 작업에 가깝다 |
 | **조건부 · 병렬 step** | routine 은 무조건 순차, 실패 시 즉시 중단 | `skipIf` 나 병렬 그룹. 실패 처리 의미를 먼저 정해야 한다 — 병렬 그룹에서 하나가 실패하면 무엇이 `PARTIAL` 인가 |
 
@@ -501,10 +654,13 @@ executor 를 만들어야 하므로 **아직 아무도 채우지 않은 가변 �
 | `at/aimon/core/scheduling/ScheduledTaskManager.java` | 등록·취소·이력·토글의 소유자 검증과 `executeTask` 의 리스 획득 |
 | `at/aimon/core/scheduling/RoutineExecutor.java` | 툴 컨텍스트 구성(§3.2)·드리프트 로깅(§3.4)·순차 실행·재시도·타임아웃 |
 | `at/aimon/core/scheduling/ScheduledExecutionGuard.java` | 멱등성 심의 계약과 `ALLOW_ALL` (§6) |
+| `at/aimon/core/scheduling/scheduler/ScheduledFire.java` | 발화의 slot 과 접는 방향 (§6.1) |
+| `at/aimon/core/scheduling/ScheduledTaskPolicy.java`, `UnresolvableRuntimePolicy.java` | 호스트 정책과 발화 시점 미해석 정책 (§6.3, §6.4) |
+| `modules/aimon-scheduling-testkit/` | 저장소 · 이력 저장소 · guard · 인터럽트 버스의 계약 테스트 (배포 대상) |
 | `at/aimon/core/scheduling/SchedulingEngineBuilder.java` | 기본값 표(§7.2)와 순환 의존을 끊는 실제 코드 |
 | `at/aimon/core/scheduling/cron/UnixCronExpression.java` | 정본 방언의 문법·빠진 것·요일 해석 (§4.1) |
 | `at/aimon/core/scheduling/scheduler/TaskSchedulerFactory.java` | 고리를 어디서 끊어야 하는지에 대한 설명 (§7.1) |
-| `at/aimon/core/scheduling/scheduler/InMemoryTaskScheduler.java` | 재스케줄 방식과 시스템 기본 존 계산 (§9.1 timezone) |
+| `at/aimon/core/scheduling/scheduler/InMemoryTaskScheduler.java` | 재스케줄 방식과 존별 다음 실행 계산 (§4.4) |
 | `at/aimon/core/tools/scheduling/` | LLM 도구 3종 — 스키마, `PRINCIPAL` 해석, 버전 스탬프 |
 | `modules/aimon-scheduling-quartz/cron/QuartzCronTranslator.java` | 두 방언의 차이와 거부 규칙 (§4.2, §4.3) |
 | `modules/aimon-scheduling-quartz/QuartzTaskScheduler.java` | 소유/차용 구분 (§7.3) |

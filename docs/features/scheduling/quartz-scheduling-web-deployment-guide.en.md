@@ -145,7 +145,11 @@ public final class AgentSchedulingBootstrap implements AutoCloseable {
                 .jdbcJobStore(props.jdbcUrl(), props.jdbcDriver())
                 .clustered(true)
                 .clusterCheckinInterval(15_000)
-                .taskExecutor(taskId -> managerRef.get().executeTask(taskId))
+                // Implement both methods — a `taskId -> ...` lambda drops the fire's slot
+                .taskExecutor(new ScheduledTaskExecutor() {
+                    @Override public void execute(ScheduledTaskId id) { managerRef.get().executeTask(id); }
+                    @Override public void execute(ScheduledFire fire) { managerRef.get().executeFire(fire); }
+                })
                 .build();
 
         // 3. the SchedulingEngine — with the external scheduler injected
@@ -190,7 +194,7 @@ public final class AgentSchedulingBootstrap implements AutoCloseable {
 
 - Build `AgentRuntimeRegistry` once in the bootstrap so that `SchedulingEngine` and **the session-opening path** both see the same instance. `SessionRouterBuilder` has no registry setter — the router never handles runtimes directly; it reaches them indirectly through the `ContextBuilder` of `sessionFactory(LiveSessionFactory)` (or the `AgentRuntimeId` that `sessionOpener(LiveSessionOpener)` takes). If that path uses a separate registry, `RoutineExecutor` will not find the agent runtime by `boundRuntimeId` when the cron re-fires.
 - Set **exactly one** of `sessionFactory(...)` and `sessionOpener(...)`. Both, or neither, and `build()` refuses. Use the opener side when caller domain attributes (a tenant id, say) have to reach the session context.
-- The lambda handed to `taskExecutor` refers **lazily**, in the `managerRef.get().executeTask(...)` shape. That is what breaks the circular dependency between `QuartzTaskScheduler` and `ScheduledTaskManager`.
+- The executor handed to `taskExecutor` refers to the manager **lazily**, through `managerRef.get()`. That is what breaks the circular dependency between `QuartzTaskScheduler` and `ScheduledTaskManager`. It implements both methods rather than being a lambda so that the `ScheduledFire` Quartz passes on every fire (scheduled fire time and cron slot) reaches a distributed guard — a lambda implements only the task-id half, and the slot is lost. Where the manager already exists, `taskManager.asExecutor()` is the same thing.
 - One call to `schedulingEngine.close()` brings the Quartz scheduler inside it safely down as well (`SchedulingEngine.close()` → `taskScheduler.shutdown()` → `Scheduler.shutdown(true)` → `RoutineExecutor.shutdown()`). Do not call it separately.
 - Shut down in the order **session router → scheduling engine**. The other way round, a scheduled-task tool called from a turn still in flight hits an engine that is already down.
 
@@ -253,6 +257,8 @@ though. HikariCP loads the driver class while the pool is being configured, so a
 | `clusterCheckinInterval` | 20_000ms | 15_000ms | Faster failover than the default |
 | `defaultMaxQuota` (`SchedulingEngineBuilder`) | 10 | **10–20** per agent runtime | Defends against LLM cost and runaway cron registration |
 | `executionGuard` (`SchedulingEngineBuilder`) | `InMemoryScheduledExecutionGuard` (node-local) | A distributed implementation | The core-level second line of defence against duplicate firing across nodes |
+| `taskPolicy` (`SchedulingEngineBuilder`) | `ScheduledTaskPolicy.PERMIT_ALL` | Implement it if the host has rules | Routine steps run without hooks, so scheduling time is the only place to check |
+| `validateBoundRuntime` (`SchedulingEngineBuilder`) | `true` | Keep `true` | Refuses, at registration, a task bound to a runtime nobody can resolve — instead of failing silently at every fire |
 | `interruptBus` (`SchedulingEngineBuilder`) | `ScheduledTaskInterruptBus.LOCAL_ONLY` (node-local) | A distributed implementation (MongoDB: `MongoScheduledTaskInterruptBus`) | Lets a cancellation also stop the run on **the node that fired** |
 | `routineExecutionAttributes` (`SchedulingEngineBuilder`) | `RoutineExecutionAttributes.NONE` (no attributes) | When used, an implementation that reads a shared store | It is called on the node that fired, so it must give the same answer on whichever node calls it |
 | `quotaGuardFactory` (`SchedulingEngineBuilder`) | `QuotaGuardFactory.disabled()` (nothing metered) | The same instance the executors get, over a shared ledger | Records a routine step's forks against the task owner's usage quota, and stops the forks of an owner who has used it up before their first LLM call |
@@ -260,6 +266,12 @@ though. HikariCP loads the driver class while the pool is being configured, so a
 `defaultMaxQuota` is a ceiling **per agent runtime** (it is ignored if you inject a `TaskQuotaManager` directly).
 
 `executionGuard` is the place where permission to run is asked, immediately before firing. The default only prevents overlap within this node, so in a cluster you have to hand it an implementation that looks at shared storage — that is what creates the second line of defence the "the same task ran on two nodes at once" item in §7 talks about. Under the starter a single `ScheduledExecutionGuard` bean wires it (`SchedulingSpec.withExecutionGuard`).
+
+A distributed guard should take its lease on `getOccurrenceKey()` of `tryBegin(ScheduledFire)` (task + cron slot), not on
+the task id. Keyed on the task id it only prevents overlap: once node A's run finishes and releases the lease, node B's
+late fire of the same occurrence runs again. An implementation should pass `aimon-scheduling-testkit`'s
+`AbstractScheduledExecutionGuardContractTest` with `dedupsOccurrences() == true`. The design is
+[scheduled execution](../../design/scheduling/llm-scheduling-agent.md) §6.1.
 
 `interruptBus` points the other way — it is where something already running is **stopped**. `RoutineExecutor`'s in-flight registry is node-local, so without a bus `cancel` only cuts the runs held by the node the cancellation was entered on. In a cluster that node is usually not the one the cron fired on, and the run over there then works through its remaining steps on behalf of a task that has just been deleted. With the starter, a single `ScheduledTaskInterruptBus` bean wires it (`SchedulingSpec.withInterruptBus`); what the core ships reaches one node (`LOCAL_ONLY`) and one JVM (`InMemoryScheduledTaskInterruptBus`). For the cluster-wide one, a deployment on MongoDB passes `MongoScheduledTaskInterruptBus` from `aimon-session-mongodb` (it needs the capped collection `scheduled_task_interrupts` that `init.js` creates, and a replica set); on any other store the application writes it. The design note is [`interrupt.md` §12.7](../../design/agent-execution/interrupt.md).
 
@@ -309,7 +321,7 @@ Switching on Quartz's own JMX MBean (the `org.quartz.scheduler.jmx.export=true` 
 
 ### "The same task ran twice right after a node restart"
 
-- The misfire policy is `FireAndProceed`, so this is the intended behaviour (`QuartzTaskScheduler` attaches `withMisfireHandlingInstructionFireAndProceed()` to cron triggers). Write non-idempotent tasks so that they check an idempotency key inside the `ScheduledTask` handler (reusing the session side's `IdempotencyStore`, for example).
+- The misfire policy is `FireAndProceed`, so at the Quartz level this is the intended behaviour (`QuartzTaskScheduler` attaches `withMisfireHandlingInstructionFireAndProceed()` to cron triggers). A recovered fire is scheduled for "now", but `QuartzTaskScheduler` folds it back to the previous cron grid point and passes that as its slot, so a distributed guard keyed on the occurrence refuses the recovery fire of an occurrence that already ran. Without one, write non-idempotent tasks so that they check an idempotency key inside the `ScheduledTask` handler (reusing the session side's `IdempotencyStore`, for example).
 
 ### "A lock in the JDBC JobStore (`QRTZ_LOCKS`) won't clear"
 

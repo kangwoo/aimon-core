@@ -3,6 +3,7 @@ package at.aimon.core.mcp;
 import java.util.Objects;
 
 import at.aimon.core.agent.tool.DestructiveBehavior;
+import at.aimon.core.agent.tool.IdempotencyBehavior;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.mcp.McpServerConfig.AnnotationTrust;
 
@@ -13,7 +14,9 @@ import at.aimon.core.mcp.McpServerConfig.AnnotationTrust;
  * <p>
  * This is where the protocol's hints stop being hints. Everything downstream — the side-effect ceiling, the approval
  * gate — reads {@link at.aimon.core.agent.tool.Tool#getSideEffectLevel()} and
- * {@link at.aimon.core.agent.tool.Tool#getDestructiveBehavior()} and cannot tell an MCP tool from a local one, which is
+ * {@link at.aimon.core.agent.tool.Tool#getDestructiveBehavior()} (and the routine executor
+ * {@link at.aimon.core.agent.tool.Tool#getIdempotencyBehavior()}) and cannot tell an MCP tool from a local one, which
+ * is
  * the point: an MCP tool that is trusted to be read-only is read-only in exactly the sense a local tool is. Confining
  * the trust decision to this one resolution is what keeps that true.
  *
@@ -21,15 +24,18 @@ import at.aimon.core.mcp.McpServerConfig.AnnotationTrust;
  *
  * <ul>
  * <li>{@link AnnotationTrust#IGNORE} — the annotations are not read at all. Every tool is
- * {@link SideEffectLevel#MUTATING} + {@link DestructiveBehavior#DESTRUCTIVE}, which is where MCP tools sat before this
+ * {@link SideEffectLevel#MUTATING} + {@link DestructiveBehavior#DESTRUCTIVE} +
+ * {@link IdempotencyBehavior#NON_IDEMPOTENT},
+ * which is where MCP tools sat before this
  * existed, so the default changes nothing about an existing deployment.
- * <li>{@link AnnotationTrust#TRUST} — {@code readOnlyHint} becomes the level and {@code destructiveHint} the
- * destructiveness, each with its MCP default applied when absent.
+ * <li>{@link AnnotationTrust#TRUST} — {@code readOnlyHint} becomes the level, {@code destructiveHint} the
+ * destructiveness and {@code idempotentHint} the idempotency, each with its MCP default applied when absent.
  * </ul>
  *
  * <p>
  * One normalisation: a tool resolved to {@link SideEffectLevel#READ_ONLY} is always
- * {@link DestructiveBehavior#NON_DESTRUCTIVE}, even if the server sent {@code destructiveHint: true} alongside
+ * {@link DestructiveBehavior#NON_DESTRUCTIVE} and {@link IdempotencyBehavior#IDEMPOTENT}, even if the server sent
+ * {@code destructiveHint: true} alongside
  * {@code readOnlyHint: true}. Consumers never read the second axis below {@code MUTATING}, so the combination could
  * only ever be stored, never acted on; storing it anyway would make {@code toString()} and any future reader disagree
  * with the behaviour. Note that this resolves the contradiction in the <em>permissive</em> direction — that is
@@ -42,14 +48,17 @@ import at.aimon.core.mcp.McpServerConfig.AnnotationTrust;
 public final class McpToolTraits {
 
     private static final McpToolTraits UNTRUSTED = new McpToolTraits(SideEffectLevel.MUTATING,
-            DestructiveBehavior.DESTRUCTIVE);
+            DestructiveBehavior.DESTRUCTIVE, IdempotencyBehavior.NON_IDEMPOTENT);
 
     private final SideEffectLevel sideEffectLevel;
     private final DestructiveBehavior destructiveBehavior;
+    private final IdempotencyBehavior idempotencyBehavior;
 
-    private McpToolTraits(SideEffectLevel sideEffectLevel, DestructiveBehavior destructiveBehavior) {
+    private McpToolTraits(SideEffectLevel sideEffectLevel, DestructiveBehavior destructiveBehavior,
+            IdempotencyBehavior idempotencyBehavior) {
         this.sideEffectLevel = sideEffectLevel;
         this.destructiveBehavior = destructiveBehavior;
+        this.idempotencyBehavior = idempotencyBehavior;
     }
 
     /**
@@ -63,7 +72,7 @@ public final class McpToolTraits {
     }
 
     /**
-     * Folds a server's annotations and the trust placed in that server into the two declarations the tool will make.
+     * Folds a server's annotations and the trust placed in that server into the three declarations the tool will make.
      *
      * @param annotations
      *            what the server claimed (must not be null; use {@link McpToolAnnotations#empty()} when it claimed
@@ -82,10 +91,12 @@ public final class McpToolTraits {
             return UNTRUSTED;
         }
         if (annotations.isReadOnly()) {
-            return new McpToolTraits(SideEffectLevel.READ_ONLY, DestructiveBehavior.NON_DESTRUCTIVE);
+            return new McpToolTraits(SideEffectLevel.READ_ONLY, DestructiveBehavior.NON_DESTRUCTIVE,
+                    IdempotencyBehavior.IDEMPOTENT);
         }
         return new McpToolTraits(SideEffectLevel.MUTATING,
-                annotations.isDestructive() ? DestructiveBehavior.DESTRUCTIVE : DestructiveBehavior.NON_DESTRUCTIVE);
+                annotations.isDestructive() ? DestructiveBehavior.DESTRUCTIVE : DestructiveBehavior.NON_DESTRUCTIVE,
+                annotations.isIdempotent() ? IdempotencyBehavior.IDEMPOTENT : IdempotencyBehavior.NON_IDEMPOTENT);
     }
 
     /**
@@ -102,6 +113,15 @@ public final class McpToolTraits {
         return destructiveBehavior;
     }
 
+    /**
+     * Returns the idempotency the tool will declare.
+     *
+     * @return the idempotency (never null)
+     */
+    public IdempotencyBehavior getIdempotencyBehavior() {
+        return idempotencyBehavior;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -110,16 +130,17 @@ public final class McpToolTraits {
         if (!(o instanceof McpToolTraits other)) {
             return false;
         }
-        return sideEffectLevel == other.sideEffectLevel && destructiveBehavior == other.destructiveBehavior;
+        return sideEffectLevel == other.sideEffectLevel && destructiveBehavior == other.destructiveBehavior
+                && idempotencyBehavior == other.idempotencyBehavior;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(sideEffectLevel, destructiveBehavior);
+        return Objects.hash(sideEffectLevel, destructiveBehavior, idempotencyBehavior);
     }
 
     @Override
     public String toString() {
-        return "McpToolTraits{" + sideEffectLevel + "/" + destructiveBehavior + '}';
+        return "McpToolTraits{" + sideEffectLevel + "/" + destructiveBehavior + "/" + idempotencyBehavior + '}';
     }
 }

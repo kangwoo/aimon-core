@@ -19,6 +19,7 @@ import at.aimon.bootstrap.spec.SchedulingSpec;
 import at.aimon.core.scheduling.RoutineExecutionAttributes;
 import at.aimon.core.scheduling.ScheduledExecutionGuard;
 import at.aimon.core.scheduling.ScheduledTaskInterruptBus;
+import at.aimon.core.scheduling.ScheduledTaskPolicy;
 import at.aimon.core.scheduling.repository.ScheduledTaskRepository;
 import at.aimon.core.scheduling.scheduler.ScheduledTaskExecutor;
 import at.aimon.core.scheduling.scheduler.TaskScheduler;
@@ -116,7 +117,8 @@ public class AimonSchedulingAutoConfiguration {
      * same kind, guarding the opposite end — which node is allowed to <em>start</em> a fire. A
      * {@link RoutineExecutionAttributes} bean is the fourth: the host's answer, per routine run, to what
      * {@code SubmitOptions.executionAttribute(...)} answers per turn, so an environment provider can place routine
-     * runs too.
+     * runs too. A {@link ScheduledTaskPolicy} bean is the fifth: the host's rules for what the scheduling tools may
+     * schedule, list and cancel — the only check scheduled work gets, since routine steps run without hooks.
      *
      * @param properties
      *            the bound configuration
@@ -130,6 +132,8 @@ public class AimonSchedulingAutoConfiguration {
      *            the distributed execution guard, when the application published one
      * @param routineAttributes
      *            the routine execution attributes resolver, when the application published one
+     * @param taskPolicies
+     *            the scheduling tools' host policy, when the application published one
      * @param beanFactory
      *            the context's bean factory, used to register the destruction edges
      * @return the spec
@@ -141,7 +145,8 @@ public class AimonSchedulingAutoConfiguration {
             ObjectProvider<ScheduledTaskRepository> repositories,
             ObjectProvider<ScheduledTaskInterruptBus> interruptBuses,
             ObjectProvider<ScheduledExecutionGuard> executionGuards,
-            ObjectProvider<RoutineExecutionAttributes> routineAttributes, ConfigurableListableBeanFactory beanFactory) {
+            ObjectProvider<RoutineExecutionAttributes> routineAttributes,
+            ObjectProvider<ScheduledTaskPolicy> taskPolicies, ConfigurableListableBeanFactory beanFactory) {
         final SchedulingBackend backend = properties.getScheduling().getBackend();
         final TaskSchedulerFactory factory = ApplicationBeans.resolve(factories, TaskSchedulerFactory.class,
                 beanFactory, SCHEDULING_SPEC_BEAN);
@@ -153,8 +158,10 @@ public class AimonSchedulingAutoConfiguration {
                 ScheduledExecutionGuard.class, beanFactory, SCHEDULING_SPEC_BEAN);
         final RoutineExecutionAttributes routineExecutionAttributes = ApplicationBeans.resolve(routineAttributes,
                 RoutineExecutionAttributes.class, beanFactory, SCHEDULING_SPEC_BEAN);
+        final ScheduledTaskPolicy taskPolicy = ApplicationBeans.resolve(taskPolicies, ScheduledTaskPolicy.class,
+                beanFactory, SCHEDULING_SPEC_BEAN);
         final ApplicationSchedulingBeans beans = new ApplicationSchedulingBeans(repository, interruptBus,
-                executionGuard, routineExecutionAttributes);
+                executionGuard, routineExecutionAttributes, taskPolicy);
 
         if (backend == SchedulingBackend.QUARTZ) {
             if (factory == null) {
@@ -196,6 +203,12 @@ public class AimonSchedulingAutoConfiguration {
                     + " bean is defined but " + SCHEDULING_BACKEND + "=" + AimonProperties.asPropertyValue(backend)
                     + " builds no scheduling engine to ask it. Name a backend, or remove the bean.");
         }
+        if (taskPolicy != null) {
+            throw new IllegalStateException("A " + ScheduledTaskPolicy.class.getSimpleName() + " bean is defined but "
+                    + SCHEDULING_BACKEND + "=" + AimonProperties.asPropertyValue(backend)
+                    + " builds no scheduling engine whose tools would consult it. Name a backend, or remove the"
+                    + " bean.");
+        }
         return SchedulingSpec.disabled();
     }
 
@@ -203,9 +216,10 @@ public class AimonSchedulingAutoConfiguration {
         SchedulingSpec result = beans.repository == null ? spec : spec.withTaskRepository(beans.repository);
         result = beans.interruptBus == null ? result : result.withInterruptBus(beans.interruptBus);
         result = beans.executionGuard == null ? result : result.withExecutionGuard(beans.executionGuard);
-        return beans.routineExecutionAttributes == null
+        result = beans.routineExecutionAttributes == null
                 ? result
                 : result.withRoutineExecutionAttributes(beans.routineExecutionAttributes);
+        return beans.taskPolicy == null ? result : result.withTaskPolicy(beans.taskPolicy);
     }
 
     /** The optional application beans a spec carries, any of which may be null. */
@@ -214,13 +228,16 @@ public class AimonSchedulingAutoConfiguration {
         private final ScheduledTaskInterruptBus interruptBus;
         private final ScheduledExecutionGuard executionGuard;
         private final RoutineExecutionAttributes routineExecutionAttributes;
+        private final ScheduledTaskPolicy taskPolicy;
 
         private ApplicationSchedulingBeans(ScheduledTaskRepository repository, ScheduledTaskInterruptBus interruptBus,
-                ScheduledExecutionGuard executionGuard, RoutineExecutionAttributes routineExecutionAttributes) {
+                ScheduledExecutionGuard executionGuard, RoutineExecutionAttributes routineExecutionAttributes,
+                ScheduledTaskPolicy taskPolicy) {
             this.repository = repository;
             this.interruptBus = interruptBus;
             this.executionGuard = executionGuard;
             this.routineExecutionAttributes = routineExecutionAttributes;
+            this.taskPolicy = taskPolicy;
         }
     }
 

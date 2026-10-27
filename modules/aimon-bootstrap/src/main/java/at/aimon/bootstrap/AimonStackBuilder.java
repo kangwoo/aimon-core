@@ -746,6 +746,10 @@ public final class AimonStackBuilder {
         spec.getScheduling().getInterruptBus().ifPresent(builder::interruptBus);
         spec.getScheduling().getExecutionGuard().ifPresent(builder::executionGuard);
         spec.getScheduling().getRoutineExecutionAttributes().ifPresent(builder::routineExecutionAttributes);
+        spec.getScheduling().getTaskPolicy().ifPresent(builder::taskPolicy);
+        spec.getScheduling().getBoundRuntimeValidation().ifPresent(builder::validateBoundRuntime);
+        spec.getScheduling().getUnresolvableRuntimePolicy().ifPresent(builder::unresolvableRuntimePolicy);
+        spec.getScheduling().getReconcileInterval().ifPresent(builder::reconcileInterval);
         // The executors' tracer, so a routine's step that starts a subagent lands in a trace like a turn's tool call
         // does. Borrowed, as the executor factory borrows it — the engine never closes it.
         spec.getExecutor().getTracer().ifPresent(builder::tracer);

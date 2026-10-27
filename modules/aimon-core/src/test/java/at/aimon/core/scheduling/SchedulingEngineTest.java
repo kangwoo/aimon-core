@@ -61,7 +61,7 @@ class SchedulingEngineTest {
 
     @Test
     void registeredListenerReceivesPublishedEventsAndCanBeRemoved() {
-        SchedulingEngine engine = SchedulingEngineBuilder.create().build();
+        SchedulingEngine engine = SchedulingEngineBuilder.create().validateBoundRuntime(false).build();
         try {
             AtomicReference<ScheduledTask> received = new AtomicReference<>();
             ScheduledTaskEventListener listener = new ScheduledTaskEventListener() {
@@ -90,8 +90,8 @@ class SchedulingEngineTest {
     @Test
     void agentRuntimeRegistryProvidedByCallerIsUsed() {
         DefaultAgentRuntimeRegistry registry = new DefaultAgentRuntimeRegistry();
-        SchedulingEngine engine = SchedulingEngineBuilder.create().agentRuntimeRegistry(registry)
-                .historyRepository(new InMemoryScheduledTaskExecutionHistoryRepository())
+        SchedulingEngine engine = SchedulingEngineBuilder.create().validateBoundRuntime(false)
+                .agentRuntimeRegistry(registry).historyRepository(new InMemoryScheduledTaskExecutionHistoryRepository())
                 .taskRepository(new InMemoryScheduledTaskRepository()).quotaManager(new DefaultTaskQuotaManager(2))
                 .build();
         try {

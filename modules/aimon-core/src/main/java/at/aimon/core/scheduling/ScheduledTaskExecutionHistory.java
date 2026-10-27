@@ -47,6 +47,8 @@ public final class ScheduledTaskExecutionHistory {
         final Status status;
         if (result.isSuccess()) {
             status = Status.SUCCESS;
+        } else if (result.isHalted()) {
+            status = Status.HALTED;
         } else if (result.isCancelled()) {
             status = Status.CANCELLED;
         } else if (result.getCompletedStepCount() > 0) {
@@ -57,8 +59,8 @@ public final class ScheduledTaskExecutionHistory {
 
         return builder().id(historyId).taskId(result.getTaskId()).status(status)
                 .completedSteps(result.getCompletedStepCount()).totalSteps(result.getTotalStepCount())
-                .errorMessage(result.getErrorMessage().orElse(null)).startedAt(result.getStartedAt())
-                .completedAt(result.getCompletedAt()).build();
+                .errorMessage(result.getErrorMessage().or(result::getHaltReason).orElse(null))
+                .startedAt(result.getStartedAt()).completedAt(result.getCompletedAt()).build();
     }
 
     /** Builder를 생성한다. */
@@ -136,9 +138,17 @@ public final class ScheduledTaskExecutionHistory {
      * {@code CANCELLED} is not a kind of failure. A run that was interrupted &mdash; by its owner cancelling the task,
      * or by the host shutting down &mdash; carries no fault to attribute to the task, so it is kept apart from
      * {@code FAILURE} and {@code PARTIAL}, which both mean a step did not do what it was asked.
+     *
+     * <p>
+     * {@code HALTED} is not a failure either. A step's tool reported that its work waits on something outside the run
+     * (a human approval, say), and the run stopped there on purpose; the record's error message carries the reason the
+     * tool gave. A durable history store that maps this enum by name has to accept the new constant.
      */
     public enum Status {
-        SUCCESS, FAILURE, PARTIAL, CANCELLED
+        SUCCESS, FAILURE, PARTIAL, CANCELLED,
+
+        /** A step halted the run on purpose; its work waits on something outside the run. */
+        HALTED
     }
 
     /**
