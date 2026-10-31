@@ -20,8 +20,9 @@ import at.aimon.core.scheduling.cron.UnixCronExpression;
  * The task id alone says which work to run but not which occurrence of it this is, and that is the gap a multi-node
  * deployment falls through. Two nodes holding their own triggers fire the same task for the same cron time a little
  * apart; a guard keyed on the task id only stops the second while the first is still running, so once the first has
- * finished and released its lease the second runs it again. Keying on the {@link #getSlot() slot} closes that: both
- * fires carry the same slot, whenever each arrives.
+ * finished and released its lease the second runs it again. Comparing the {@link #getSlot() slot} closes that: both
+ * fires carry the same slot, whenever each arrives, so a guard that remembers the last slot that began refuses the
+ * second.
  *
  * <ul>
  * <li>{@link #getScheduledFireTime()} — when the scheduler intended this fire. On time, a cron grid point; for a fire a
@@ -133,8 +134,10 @@ public final class ScheduledFire {
     }
 
     /**
-     * A key naming this occurrence of the task, the same on every node: {@code <taskId>@<slot epoch millis>}. Intended
-     * as the key of a distributed guard's lease.
+     * A key naming this occurrence of the task, the same on every node: {@code <taskId>@<slot epoch millis>}. For logs
+     * and records about an occurrence. It is not a lease key: a lease per occurrence would let slot S+1 overlap a run
+     * of
+     * S, and would not refuse a misfire older than the last run. See {@code ScheduledExecutionGuard} for what to use.
      *
      * @return the occurrence key, or empty when the slot is unknown
      */

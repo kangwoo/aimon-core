@@ -67,6 +67,15 @@ public final class DocumentKeys {
      */
     public static final String COLL_SCHEDULED_TASKS = "scheduled_tasks";
 
+    /**
+     * Default collection holding one execution guard document per scheduled task, keyed by task id.
+     *
+     * <p>
+     * <b>FROZEN WIRE NAME from its first release.</b> A rename forgets every task's last slot and live lease, so during
+     * a rolling deploy upgraded and un-upgraded nodes each run the same occurrence.
+     */
+    public static final String COLL_SCHEDULED_EXECUTION_GUARDS = "scheduled_execution_guards";
+
     /** Default collection holding background subagent task snapshots, keyed by task id. */
     public static final String COLL_BACKGROUND_TASK = "background_task";
 
@@ -97,6 +106,9 @@ public final class DocumentKeys {
 
     /** Mongo {@code _id} field name. */
     public static final String F_ID = "_id";
+
+    /** Execution guard document — the newest cron slot that began, on any node (omitted until a slotted fire). */
+    public static final String F_LAST_SLOT = "lastSlot";
 
     /** Lock document — current holder identity. */
     public static final String F_HOLDER_ID = "holderId";

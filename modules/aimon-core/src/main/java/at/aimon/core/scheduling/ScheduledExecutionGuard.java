@@ -21,13 +21,18 @@ import at.aimon.core.scheduling.scheduler.ScheduledFire;
  * <h2>Task id or occurrence</h2>
  *
  * <p>
- * The two hazards need different keys. A lease keyed on the task id prevents overlap, but it cannot stop
- * duplication: once node A's run finishes and releases the lease, node B's fire of the same cron time — late by a GC
- * pause, CPU throttling, or a misfire recovery — finds it free and runs the occurrence again. Holding the lease past
- * the
- * run would block the next occurrence instead. {@link #tryBegin(ScheduledFire)} is the way out: the fire carries its
- * {@link ScheduledFire#getSlot() slot}, the same on every node for the same occurrence, so a distributed guard can
- * record "slot S of task T has run" and refuse any later fire of S while granting S+1.
+ * A lease keyed on the task id prevents overlap, but it cannot stop duplication: once node A's run finishes and
+ * releases the lease, node B's fire of the same cron time — late by a GC pause, CPU throttling, or a misfire recovery —
+ * finds it free and runs the occurrence again. Holding the lease past the run would block the next occurrence instead.
+ * A lease keyed on the {@link ScheduledFire#getOccurrenceKey() occurrence} fails the other way: S and S+1 have
+ * different
+ * keys, so a long run of S overlaps S+1, and a misfire older than the last run takes a key nobody holds.
+ *
+ * <p>
+ * A distributed guard needs both halves: <b>one lease per task, and the last slot that began, compared by size.</b>
+ * {@link #tryBegin(ScheduledFire)} makes that possible: the fire carries its {@link ScheduledFire#getSlot() slot}, the
+ * same on every node for the same occurrence, so the guard can refuse any fire at or before the last slot while
+ * granting a newer one once the lease is free.
  *
  * <p>
  * The manager always calls {@link #tryBegin(ScheduledFire)}. Its default forwards to
@@ -39,8 +44,17 @@ import at.aimon.core.scheduling.scheduler.ScheduledFire;
  * <p>
  * Following the project's multi-instance design rule, the guard is an interface with an in-memory default
  * ({@link InMemoryScheduledExecutionGuard}); swapping to a clustered strategy is an implementation change, not a
- * refactor. (For production clustered scheduling the {@code aimon-scheduling-quartz} module provides trigger-level
- * dedup natively; this seam is the core-level defense-in-depth and injection point.)
+ * refactor. {@code MongoScheduledExecutionGuard} in {@code aimon-session-mongodb} is the distributed implementation
+ * that ships, and it dedups occurrences. (The {@code aimon-scheduling-quartz} module also provides trigger-level dedup
+ * natively; there this seam is the core-level defense-in-depth.)
+ *
+ * <h2>Failure</h2>
+ *
+ * <p>
+ * A guard backed by a store can fail. {@code tryBegin} may throw a {@link RuntimeException}, and
+ * {@link ScheduledTaskManager} treats that as a refusal: running a fire unguarded risks the duplicate the guard exists
+ * to stop, while skipping costs one occurrence. {@link ExecutionLease#close()} should not throw; the manager logs it if
+ * it does.
  */
 public interface ScheduledExecutionGuard {
 
@@ -65,8 +79,8 @@ public interface ScheduledExecutionGuard {
 
     /**
      * Attempts to begin one fire of a task. The lease contract is that of {@link #tryBegin(ScheduledTaskId)}. A guard
-     * may additionally refuse a fire whose {@link ScheduledFire#getOccurrenceKey() occurrence} has already run on any
-     * node, which is what stops a late duplicate.
+     * may additionally refuse a fire whose {@link ScheduledFire#getSlot() slot} is not newer than the last one that
+     * began on any node, which is what stops a late duplicate.
      *
      * <p>
      * The default forwards to {@link #tryBegin(ScheduledTaskId)} and ignores the fire's time.

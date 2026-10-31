@@ -89,6 +89,9 @@ class MongoSchemaFreezeTest {
         // Frozen from birth: a rename leaves every stored schedule behind in a collection nothing reads.
         assertThat(DocumentKeys.COLL_SCHEDULED_TASKS).isEqualTo("scheduled_tasks");
 
+        // Frozen from birth: a rename forgets every last slot, so a fleet mid-deploy runs an occurrence twice.
+        assertThat(DocumentKeys.COLL_SCHEDULED_EXECUTION_GUARDS).isEqualTo("scheduled_execution_guards");
+
         // Frozen from birth: a rename resets every session's wake caps, and a streak cap that resets is no cap.
         assertThat(DocumentKeys.COLL_WAKE_LEDGER).isEqualTo("wake_ledger");
     }
@@ -103,6 +106,9 @@ class MongoSchemaFreezeTest {
         assertThat(script).contains("ensureCollection(\"session_records\")");
         assertThat(script).contains("ensureCollection(\"session_log_segments\")");
         assertThat(script).contains("ensureCollection(\"scheduled_tasks\")");
+        assertThat(script).contains("ensureCollection(\"scheduled_execution_guards\")");
+        // No TTL index, and that is load-bearing: expiring a document forgets the slot that refuses a late duplicate.
+        assertThat(script).doesNotContain("target.scheduled_execution_guards.createIndex");
         assertThat(script).contains("ensureCollection(\"wake_ledger\")");
         // The TTL index is what bounds the collection: without it a document per session ever woken stays forever.
         assertThat(script).contains("target.wake_ledger.createIndex( { expiresAt: 1 }, "

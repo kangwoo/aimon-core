@@ -860,8 +860,8 @@ public class ScheduledTaskManager {
      * <p>
      * It is public because an externally supplied scheduler is wired from application code in a different package.
      * Wire such a scheduler with {@link #asExecutor()}, not with {@code taskId -> taskManager.executeTask(taskId)}: a
-     * fire reaching this method carries no scheduled time or slot, so an occurrence-keyed
-     * {@link ScheduledExecutionGuard} can only fall back to the task id.
+     * fire reaching this method carries no scheduled time or slot, so a {@link ScheduledExecutionGuard} that compares
+     * slots can only fall back to the task id.
      * </p>
      *
      * <p>

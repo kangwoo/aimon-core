@@ -20,9 +20,8 @@ import at.aimon.core.scheduling.repository.ScheduledTaskExecutionHistoryReposito
 
 /**
  * What every {@link ScheduledTaskExecutionHistoryRepository} owes the scheduling engine: records read back as
- * written, every {@link Status} — {@code HALTED} included — survives the round trip, newest-first ordering with a
- * limit,
- * and a per-task delete that leaves other tasks alone.
+ * written, the outcome-unknown flag among them, every {@link Status} — {@code HALTED} included — survives the round
+ * trip, newest-first ordering with a limit, and a per-task delete that leaves other tasks alone.
  *
  * <p>
  * A backend joins by subclassing and returning a fresh, empty repository from {@link #repository()}; tag the subclass
@@ -42,7 +41,7 @@ public abstract class AbstractScheduledTaskExecutionHistoryRepositoryContractTes
     @DisplayName("a record reads back with every field as written")
     void roundTrip() {
         final ScheduledTaskExecutionHistory written = record("h1", "task-a", Status.PARTIAL, T0)
-                .errorMessage("step 2 failed").completedSteps(1).totalSteps(3).build();
+                .errorMessage("step 2 failed").outcomeUnknown(true).completedSteps(1).totalSteps(3).build();
 
         repository().save(written);
 
@@ -52,10 +51,20 @@ public abstract class AbstractScheduledTaskExecutionHistoryRepositoryContractTes
             assertThat(read.getCompletedSteps()).isEqualTo(1);
             assertThat(read.getTotalSteps()).isEqualTo(3);
             assertThat(read.getErrorMessage()).hasValue("step 2 failed");
+            assertThat(read.isOutcomeUnknown()).isTrue();
             assertThat(read.getStartedAt()).isEqualTo(T0);
             assertThat(read.getCompletedAt()).isEqualTo(T0.plusSeconds(5));
         });
         assertThat(repository().findById("absent")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a record written without an unknown outcome reads back as known")
+    void outcomeIsKnownByDefault() {
+        repository().save(record("known", "task-a", Status.FAILURE, T0).build());
+
+        assertThat(repository().findById("known"))
+                .hasValueSatisfying(read -> assertThat(read.isOutcomeUnknown()).isFalse());
     }
 
     @Test

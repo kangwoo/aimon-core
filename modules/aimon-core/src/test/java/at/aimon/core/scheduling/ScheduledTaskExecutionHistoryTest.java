@@ -84,6 +84,30 @@ class ScheduledTaskExecutionHistoryTest {
     }
 
     @Test
+    void fromRoutineResultCarriesAnUnknownStepOutcome() {
+        StepResult ok = StepResult.success(0, step, null, 1, t0, t0.plusMillis(500));
+        StepResult timedOut = StepResult.builder().stepIndex(1).step(step).success(false).errorMessage("timed out")
+                .attemptCount(1).outcomeUnknown(true).startedAt(t0.plusMillis(500)).completedAt(t1).build();
+        RoutineResult result = RoutineResult.failure(taskId, List.of(ok, timedOut), "step 2 failed", t0, t1);
+
+        ScheduledTaskExecutionHistory h = ScheduledTaskExecutionHistory.fromRoutineResult("h-5", result);
+
+        assertThat(h.getStatus()).isEqualTo(ScheduledTaskExecutionHistory.Status.PARTIAL);
+        assertThat(h.isOutcomeUnknown()).isTrue();
+        assertThat(h.toString()).contains("outcomeUnknown=true");
+    }
+
+    /** A plain failure proves the tool reported one, which is the difference this field exists to show. */
+    @Test
+    void fromRoutineResultLeavesAKnownFailureKnown() {
+        StepResult fail = StepResult.failure(0, step, "boom", 1, t0, t1);
+        RoutineResult result = RoutineResult.failure(taskId, List.of(fail), "fail", t0, t1);
+
+        assertThat(ScheduledTaskExecutionHistory.fromRoutineResult("h-6", result).isOutcomeUnknown()).isFalse();
+        assertThat(base("h-7").build().isOutcomeUnknown()).as("the builder's default").isFalse();
+    }
+
+    @Test
     void builderRejectsNullRequiredFields() {
         assertThatNullPointerException().isThrownBy(() -> ScheduledTaskExecutionHistory.builder().build());
     }
