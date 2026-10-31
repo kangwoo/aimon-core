@@ -87,9 +87,11 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  * The slot is recorded when the run <em>begins</em>. If the node then dies, that occurrence is not run again by any
  * node:
  * its work may be partly done, or not started at all. This is deliberate. A routine may write, and repeating an unknown
- * amount of it is worse than missing one occurrence, which the next one usually covers. The same goes for an outage: a
- * Mongo failure during {@code tryBegin} throws {@link SchedulingException}, and {@code ScheduledTaskManager} skips that
- * fire rather than run it unguarded. If the write landed and only its acknowledgement was lost, the slot is spent and
+ * amount of it is worse than missing one occurrence, which the next one usually covers. The same goes for an outage:
+ * {@code tryBegin} throws, and {@code ScheduledTaskManager} skips that fire rather than run it unguarded. An error from
+ * Mongo arrives as {@link SchedulingException}; a {@code MongoClient} already closed throws its own
+ * {@link IllegalStateException}, which is not wrapped. If the write landed and only its acknowledgement was lost, the
+ * slot is spent and
  * the lease expires on its own, since no heartbeat is running.
  *
  * <h2>Lease and heartbeat</h2>
@@ -147,6 +149,12 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  * lost in a failover forgets the slot it recorded. The collection comes from {@code db/mongodb/init.js}, though unlike
  * the capped bus channels nothing goes wrong if the first write creates it. Share the collection with one application
  * only; the task id is all a document knows.
+ *
+ * <p>
+ * On per-node schedulers, every node must compute the same slot, so give each task a {@code ScheduledTask.timezone} or
+ * run every node in the same time zone. A task without one fires on the grid of the node's JVM zone: nodes in different
+ * zones then record different slots for what is meant to be one occurrence, each newer than the last, and it runs once
+ * per zone.
  */
 public final class MongoScheduledExecutionGuard implements ScheduledExecutionGuard, AutoCloseable {
 
@@ -215,7 +223,9 @@ public final class MongoScheduledExecutionGuard implements ScheduledExecutionGua
      * Checks the lease only and leaves {@code lastSlot} alone: there is no occurrence to record.
      *
      * @throws SchedulingException
-     *             if Mongo failed; {@code ScheduledTaskManager} skips the fire
+     *             if Mongo reported an error; {@code ScheduledTaskManager} skips the fire
+     * @throws IllegalStateException
+     *             if the {@code MongoClient} is already closed; the manager skips this fire too
      */
     @Override
     public Optional<ExecutionLease> tryBegin(ScheduledTaskId taskId) {
@@ -231,7 +241,9 @@ public final class MongoScheduledExecutionGuard implements ScheduledExecutionGua
      * without a slot falls back to {@link #tryBegin(ScheduledTaskId)}.
      *
      * @throws SchedulingException
-     *             if Mongo failed; {@code ScheduledTaskManager} skips the fire
+     *             if Mongo reported an error; {@code ScheduledTaskManager} skips the fire
+     * @throws IllegalStateException
+     *             if the {@code MongoClient} is already closed; the manager skips this fire too
      */
     @Override
     public Optional<ExecutionLease> tryBegin(ScheduledFire fire) {
@@ -343,8 +355,12 @@ public final class MongoScheduledExecutionGuard implements ScheduledExecutionGua
             try {
                 while (!stop.await(interval, TimeUnit.MILLISECONDS)) {
                     if (!renewOrLogFailure()) {
-                        log.warn("Lost the lease on task '{}': another node holds it, so its run may overlap this one,"
-                                + " which keeps going", taskId);
+                        // close() stops this beat before it clears the holder, so a renewal that matched nothing after
+                        // being stopped ran into its own release: nothing was lost.
+                        if (stop.getCount() > 0) {
+                            log.warn("Lost the lease on task '{}': another node holds it, so its run may overlap this"
+                                    + " one, which keeps going", taskId);
+                        }
                         return;
                     }
                 }

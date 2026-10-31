@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/scheduling/quartz-scheduling-web-deployment-guide.md
-source_commit: 1ad5a060
+source_commit: f1e69259
 ---
 
 # Quartz Scheduling — Deployment Guide for a Web-Based Agent System
@@ -267,14 +267,17 @@ though. HikariCP loads the driver class while the pool is being configured, so a
 
 `executionGuard` is the place where permission to run is asked, immediately before firing. The default only prevents overlap within this node, so in a cluster you have to hand it an implementation that looks at shared storage — that is what creates the second line of defence the "the same task ran on two nodes at once" item in §7 talks about. Under the starter a single `ScheduledExecutionGuard` bean wires it (`SchedulingSpec.withExecutionGuard`).
 
-A distributed guard should take its lease on `getOccurrenceKey()` of `tryBegin(ScheduledFire)` (task + cron slot), not on
-the task id. Keyed on the task id it only prevents overlap: once node A's run finishes and releases the lease, node B's
-late fire of the same occurrence runs again. An implementation should pass `aimon-scheduling-testkit`'s
+A distributed guard should hold **one lease per task and compare the slot from `tryBegin(ScheduledFire)` with the last slot
+that began**. A lease alone only prevents overlap: once node A's run finishes and releases the lease, node B's
+late fire of the same occurrence runs again. A lease per `getOccurrenceKey()` fails the other way: S and S+1 have
+different keys, so runs overlap, and a misfire older than the last run is not refused. An implementation should pass `aimon-scheduling-testkit`'s
 `AbstractScheduledExecutionGuardContractTest` with `dedupsOccurrences() == true`. The design is
 [scheduled execution](../../design/scheduling/llm-scheduling-agent.md) §6.1.
 
 On MongoDB, pass `MongoScheduledExecutionGuard` from `aimon-session-mongodb` as it is. The design is §6.5 of the same document.
-An occurrence runs **at most once**: if the node that began it dies, that occurrence does not run again.
+An occurrence runs **at most once**: if the node that began it dies, that occurrence does not run again. On per-node
+schedulers, set `ScheduledTask.timezone` or run every node in the same time zone: a task without a zone computes its slot
+in the JVM's zone, so on nodes in different zones the same occurrence runs once per zone.
 
 `interruptBus` points the other way — it is where something already running is **stopped**. `RoutineExecutor`'s in-flight registry is node-local, so without a bus `cancel` only cuts the runs held by the node the cancellation was entered on. In a cluster that node is usually not the one the cron fired on, and the run over there then works through its remaining steps on behalf of a task that has just been deleted. With the starter, a single `ScheduledTaskInterruptBus` bean wires it (`SchedulingSpec.withInterruptBus`); what the core ships reaches one node (`LOCAL_ONLY`) and one JVM (`InMemoryScheduledTaskInterruptBus`). For the cluster-wide one, a deployment on MongoDB passes `MongoScheduledTaskInterruptBus` from `aimon-session-mongodb` (it needs the capped collection `scheduled_task_interrupts` that `init.js` creates, and a replica set); on any other store the application writes it. The design note is [`interrupt.md` §12.7](../../design/agent-execution/interrupt.md).
 

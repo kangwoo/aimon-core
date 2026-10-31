@@ -26,7 +26,8 @@ slot that began. Slots are compared by size, so an older misfire is refused too.
 - **Migration notes** — new collection: re-run `db/mongodb/init.js`, or let the first write create it. **Do not add a
   TTL index to it**: a lost document forgets the slot, and a late fire of that occurrence runs again. Nothing changes
   unless you pass the guard. Nodes' clocks must be synchronized, since a slot recorded far in the future refuses that
-  task's fires until real time reaches it.
+  task's fires until real time reaches it. On per-node schedulers, set `ScheduledTask.timezone` or run every node in
+  the same time zone: otherwise nodes compute different slots and the occurrence runs once per zone.
 
 ### Added: scheduled execution history says when a run's outcome is unknown
 
@@ -89,8 +90,8 @@ Seven gaps a host found while building scheduled execution on top of `Scheduling
   `ScheduledExecutionGuard.tryBegin(ScheduledFire)` (default bridges to `tryBegin(ScheduledTaskId)`), and
   `ScheduledTaskManager.executeFire(...)` / `asExecutor()` are the new entry points. `QuartzTaskScheduler` keeps the
   five-field expression in its job data and folds misfire recoveries back onto the grid in the trigger's zone. A
-  distributed guard keys its lease on `ScheduledFire.getOccurrenceKey()`; `InMemoryScheduledExecutionGuard` keeps its
-  task-id behaviour.
+  distributed guard holds one lease per task and compares the fire's slot with the last one that began;
+  `InMemoryScheduledExecutionGuard` keeps its task-id behaviour.
 - **Bound runtime checks** — `register` refuses a task whose bound runtime is not in the registry
   (`UnresolvableBoundRuntimeException`; `schedule_task` returns it as an error). On by default;
   `SchedulingEngineBuilder.validateBoundRuntime(false)` turns it off. `unresolvableRuntimePolicy(DISABLE)` disables a

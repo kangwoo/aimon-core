@@ -100,7 +100,9 @@ class MongoScheduledExecutionGuardIntegrationTest extends AbstractScheduledExecu
         final Document released = document();
         assertThat(released.getDate(DocumentKeys.F_LAST_SLOT)).isEqualTo(Date.from(SLOT));
         assertThat(released.getString(DocumentKeys.F_HOLDER_ID)).isNull();
-        assertThat(released.getDate(DocumentKeys.F_LEASE_EXPIRES_AT)).isBeforeOrEqualTo(Date.from(Instant.now()));
+        // Asked of the server, whose $$NOW stamped it: this machine's clock may be behind the container's.
+        assertThat(collection().find(new Document(DocumentKeys.F_ID, taskId.value()).append("$expr",
+                new Document("$lte", List.of("$" + DocumentKeys.F_LEASE_EXPIRES_AT, "$$NOW")))).first()).isNotNull();
     }
 
     @Test
@@ -259,15 +261,24 @@ class MongoScheduledExecutionGuardIntegrationTest extends AbstractScheduledExecu
     }
 
     @Test
+    @DisplayName("a dead node's lease still refuses other nodes while it lasts")
+    void aDeadNodesLeaseHoldsUntilItExpires() {
+        final MongoScheduledExecutionGuard dead = guard("node-A", LONG_LEASE);
+        dead.tryBegin(fire(SLOT)).orElseThrow();
+        // Closing the guard stops the heartbeat and leaves the lease, which is what a dead node's document looks like.
+        dead.close();
+
+        assertThat(guard("node-B", LONG_LEASE).tryBegin(fire(SLOT.plusSeconds(60)))).isEmpty();
+    }
+
+    @Test
     @DisplayName("once the lease expires with no heartbeat, a dead node's task is free again")
     void aDeadNodesLeaseExpiresOnItsOwn() throws Exception {
         final MongoScheduledExecutionGuard dead = guard("node-A", SHORT_LEASE);
         dead.tryBegin(fire(SLOT)).orElseThrow();
-        // Closing the guard stops the heartbeat and leaves the lease, which is what a dead node's document looks like.
         dead.close();
         final Instant next = SLOT.plusSeconds(60);
         final MongoScheduledExecutionGuard other = guard("node-B", SHORT_LEASE);
-        assertThat(other.tryBegin(fire(next))).as("still within the lease").isEmpty();
 
         awaitTrue(() -> {
             final var granted = other.tryBegin(fire(next));

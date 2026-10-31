@@ -53,7 +53,8 @@ public abstract class AbstractScheduledExecutionGuardContractTest {
     protected abstract ScheduledExecutionGuard guardFor(String nodeName);
 
     /**
-     * Whether the guard keys on {@link ScheduledFire#getOccurrenceKey() occurrences}, so a released slot is not granted
+     * Whether the guard remembers the {@link ScheduledFire#getSlot() slots} that began, so a released slot is not
+     * granted
      * twice. {@code false} — the task-id behaviour of {@code InMemoryScheduledExecutionGuard} — skips that test.
      *
      * @return whether occurrence dedup is part of this guard's contract

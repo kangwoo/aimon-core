@@ -263,13 +263,16 @@ QuartzTaskSchedulerBuilder.create()
 공유 저장소를 보는 구현을 넘겨야 §7의 "동일 task가 두 노드에서 동시에 실행됐다" 항목이 말하는 2차 방어선이 생긴다.
 스타터에서는 `ScheduledExecutionGuard` 빈 하나로 배선된다(`SchedulingSpec.withExecutionGuard`).
 
-분산 guard 는 taskId 가 아니라 `tryBegin(ScheduledFire)` 의 `getOccurrenceKey()`(task + cron slot)로 리스를 잡아야
-한다. taskId 로 잡으면 겹침만 막는다 — 노드 A 의 실행이 끝나 리스를 놓은 뒤 늦게 도착한 노드 B 의 같은 발화는 다시
-돈다. 구현은 `aimon-scheduling-testkit` 의 `AbstractScheduledExecutionGuardContractTest` 를 `dedupsOccurrences() == true`
+분산 guard 는 **task 당 리스 하나를 잡고, `tryBegin(ScheduledFire)` 의 slot 을 마지막으로 시작한 slot 과 크기로 비교해야**
+한다. 리스만 있으면 겹침만 막는다 — 노드 A 의 실행이 끝나 리스를 놓은 뒤 늦게 도착한 노드 B 의 같은 발화는 다시
+돈다. 반대로 `getOccurrenceKey()` 로 회차마다 리스를 잡으면 S 와 S+1 의 키가 달라 실행이 겹치고 더 오래된 misfire 도 거부하지
+못한다. 구현은 `aimon-scheduling-testkit` 의 `AbstractScheduledExecutionGuardContractTest` 를 `dedupsOccurrences() == true`
 로 통과해야 한다. 설계는 [스케줄 실행 설계](../../design/scheduling/llm-scheduling-agent.md) §6.1.
 
 MongoDB 를 쓰면 `aimon-session-mongodb` 의 `MongoScheduledExecutionGuard` 를 그대로 넘기면 된다. 설계는 같은 문서의 §6.5.
-회차는 **최대 한 번** 돈다 — 실행을 시작한 노드가 죽으면 그 회차는 다시 돌지 않는다.
+회차는 **최대 한 번** 돈다 — 실행을 시작한 노드가 죽으면 그 회차는 다시 돌지 않는다. 노드별 스케줄러로 돌린다면
+`ScheduledTask.timezone` 을 지정하거나 모든 노드를 같은 시간대로 맞춘다 — 존이 없는 작업은 JVM 존으로 slot 을 계산하므로,
+시간대가 다른 노드에서는 같은 회차가 시간대마다 한 번씩 돈다.
 
 `interruptBus`는 반대 방향 — 이미 돌고 있는 것을 **멈추는** 자리다. `RoutineExecutor` 의 in-flight 레지스트리는
 노드 로컬이므로, 버스가 없으면 `cancel` 은 취소를 입력한 노드의 실행만 끊는다. 클러스터에서 그 노드는 대개 cron 이
