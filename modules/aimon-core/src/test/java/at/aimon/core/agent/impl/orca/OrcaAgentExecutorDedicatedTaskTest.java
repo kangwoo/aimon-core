@@ -270,12 +270,20 @@ class OrcaAgentExecutorDedicatedTaskTest {
     void lateInterruptNeverReachesTheCaller() throws Exception {
         final CountDownLatch running = new CountDownLatch(1);
         final CountDownLatch returned = new CountDownLatch(1);
+        final CountDownLatch firing = new CountDownLatch(1);
         final SubagentExecutionManager manager = fakeManager(launch -> {
             running.countDown();
             // Cooperative: notice the cancel through the signal, not through an interrupt.
             final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
             while (!launch.getCancellationSignal().isCancelled() && System.nanoTime() < deadline) {
                 Thread.onSpinWait();
+            }
+            // The coordinator trips the signal before it walks its terminators. A Task that returned in that gap would
+            // unregister its terminator, leaving nothing to fire late, so hold it until the terminator has been picked.
+            try {
+                firing.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
             return success();
         });
@@ -291,7 +299,7 @@ class OrcaAgentExecutorDedicatedTaskTest {
         executor.parallelToolDispatcher = dedicated(4);
         final AtomicReference<LateCoordinator> coordinator = new AtomicReference<>();
         executor.interruptCoordinatorFactory = () -> {
-            final LateCoordinator created = new LateCoordinator(returned);
+            final LateCoordinator created = new LateCoordinator(firing, returned);
             coordinator.compareAndSet(null, created);
             return created;
         };
@@ -631,13 +639,16 @@ class OrcaAgentExecutorDedicatedTaskTest {
     /**
      * A coordinator whose terminators fire only once {@code returned} is down — so the interrupt reaches a Task's
      * thread after the Task already returned, the late-interrupt window — and which records the threads they hit.
+     * {@code firing} goes down when a terminator is picked, before it waits.
      */
     private static final class LateCoordinator implements InterruptCoordinator {
         private final DefaultInterruptCoordinator delegate = new DefaultInterruptCoordinator();
+        private final CountDownLatch firing;
         private final CountDownLatch returned;
         private final List<Thread> firedOn = new CopyOnWriteArrayList<>();
 
-        LateCoordinator(CountDownLatch returned) {
+        LateCoordinator(CountDownLatch firing, CountDownLatch returned) {
+            this.firing = firing;
             this.returned = returned;
         }
 
@@ -660,6 +671,7 @@ class OrcaAgentExecutorDedicatedTaskTest {
                 public void register(Terminator terminator) {
                     final Thread target = Thread.currentThread();
                     final Terminator late = () -> {
+                        firing.countDown();
                         try {
                             returned.await(5, TimeUnit.SECONDS);
                         } catch (InterruptedException e) {

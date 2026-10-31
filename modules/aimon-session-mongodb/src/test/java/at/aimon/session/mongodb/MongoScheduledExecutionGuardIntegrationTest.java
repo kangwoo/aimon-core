@@ -206,20 +206,19 @@ class MongoScheduledExecutionGuardIntegrationTest extends AbstractScheduledExecu
     }
 
     @Test
-    @DisplayName("the heartbeat keeps a run's lease alive past its duration, in server time")
+    @DisplayName("the heartbeat keeps moving a run's lease forward")
     void heartbeatRenewsTheLease() throws Exception {
         final MongoScheduledExecutionGuard guard = guard("node-A", SHORT_LEASE);
         final ExecutionLease running = guard.tryBegin(fire(SLOT)).orElseThrow();
-        final Date firstStamp = document().getDate(DocumentKeys.F_LEASE_EXPIRES_AT);
 
-        // Stamps compared with each other and, below, with the server's $$NOW: this machine's clock has no say.
-        awaitTrue(() -> document().getDate(DocumentKeys.F_LEASE_EXPIRES_AT).after(firstStamp),
-                "a beat renews the lease");
-        assertThat(leaseIsAheadOfServer()).isTrue();
-
-        // Several lease durations later, the lease is still held and another node is still refused.
-        Thread.sleep(SHORT_LEASE.multipliedBy(3).toMillis());
-        assertThat(guard("node-B", SHORT_LEASE).tryBegin(fire(SLOT.plusSeconds(60)))).isEmpty();
+        // A stamp at or past "the server's time now, plus a lease" can only come from a renewal made after that moment,
+        // however long this thread was paused in between. Twice, so it is a heartbeat and not one late write. Whether
+        // the lease lapsed during a pause is deliberately not asserted: that measures the machine, not the guard.
+        for (int beat = 0; beat < 2; beat++) {
+            final Date renewedBy = Date.from(serverNow().plus(SHORT_LEASE));
+            awaitTrue(() -> !document().getDate(DocumentKeys.F_LEASE_EXPIRES_AT).before(renewedBy),
+                    "a beat renews the lease");
+        }
         assertThat(document().getString(DocumentKeys.F_HOLDER_ID)).startsWith("node-A/");
 
         running.close();
@@ -327,7 +326,7 @@ class MongoScheduledExecutionGuardIntegrationTest extends AbstractScheduledExecu
     @Test
     @DisplayName("a server-side failure surfaces as SchedulingException")
     void serverFailureIsWrapped() {
-        // A validator that refuses the insert: a write error that is not the duplicate key meaning "refused".
+        // A validator that refuses the upsert's insert: a write error that is not the duplicate key of a racing fire.
         final String validated = "guard_validated";
         final var database = MongoTestSupport.sharedDatabase();
         database.getCollection(validated).drop();
@@ -390,8 +389,8 @@ class MongoScheduledExecutionGuardIntegrationTest extends AbstractScheduledExecu
     }
 
     @Test
-    @DisplayName("the bound is maxSkew from the server's clock: just inside is granted, just outside refused")
-    void boundIsMeasuredFromTheServer() {
+    @DisplayName("the bound is maxSkew ahead: just inside is granted, just outside refused")
+    void boundIsMaxSkewAhead() {
         final Duration skew = Duration.ofHours(1);
         final Duration margin = Duration.ofSeconds(30);
         final MongoScheduledExecutionGuard guard = guardWithSkew("node-A", LONG_LEASE, skew);
@@ -444,8 +443,16 @@ class MongoScheduledExecutionGuardIntegrationTest extends AbstractScheduledExecu
     }
 
     @Test
-    @DisplayName("a first fire's lease is stamped in server time: this document never saw the application's clock")
-    void coldStartLeaseIsInServerTime() {
+    @DisplayName("the longest lease and maxSkew the constructor accepts do not overflow on the server")
+    void longestDurationsAreUsable() {
+        final Duration longest = Duration.ofDays(36_500);
+
+        assertThat(guardWithSkew("node-A", longest, longest).tryBegin(fire(SLOT))).isPresent();
+    }
+
+    @Test
+    @DisplayName("a first fire's lease lasts the lease duration")
+    void coldStartLeaseLastsTheLease() {
         final Duration lease = Duration.ofMinutes(10);
         final Instant before = serverNow();
 
