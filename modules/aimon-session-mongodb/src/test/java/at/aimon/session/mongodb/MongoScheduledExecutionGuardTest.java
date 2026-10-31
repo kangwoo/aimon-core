@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -23,6 +24,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 
 import org.bson.Document;
@@ -245,19 +247,82 @@ class MongoScheduledExecutionGuardTest {
         assertThat(sent).contains(new Document("$add", List.of("$$NOW", maxSkew.toMillis())));
     }
 
+    /** Same reason as the claim above: a container on this machine agrees with this machine's clock. */
     @Test
-    @DisplayName("lease and maxSkew are checked in milliseconds, the unit that reaches the server")
-    void durationsAreValidatedInMilliseconds() {
+    @DisplayName("renewal and release send $$NOW and no date, and match only this lease's holder")
+    void renewalAndReleaseTakeTheirTimeFromTheServer() throws Exception {
+        final AtomicInteger renewals = new AtomicInteger();
+        when(collection.updateOne(any(Bson.class), anyList())).thenAnswer(call -> {
+            renewals.incrementAndGet();
+            return UpdateResult.acknowledged(1L, 1L, null);
+        });
+
+        final ExecutionLease lease = grant();
+        awaitTrue(() -> renewals.get() >= 1, "a beat renews the lease");
+        lease.close();
+        awaitTrue(() -> heartbeatThreads().isEmpty(), "the heartbeat ends with its lease");
+
+        final ArgumentCaptor<Bson> filters = ArgumentCaptor.forClass(Bson.class);
+        final ArgumentCaptor<List<Document>> updates = ArgumentCaptor.captor();
+        verify(collection, atLeast(2)).updateOne(filters.capture(), updates.capture());
+        final List<List<Document>> sent = updates.getAllValues();
+        final Document renewal = new Document("$set", new Document(DocumentKeys.F_LEASE_EXPIRES_AT,
+                new Document("$add", List.of("$$NOW", LEASE.toMillis()))));
+        final Document release = new Document("$set",
+                new Document(DocumentKeys.F_HOLDER_ID, null).append(DocumentKeys.F_LEASE_EXPIRES_AT, "$$NOW"));
+        assertThat(sent).containsOnly(List.of(renewal), List.of(release));
+        assertThat(sent).filteredOn(update -> update.equals(List.of(release))).hasSize(1);
+        assertThat(filters.getAllValues()).allSatisfy(filter -> {
+            assertThat(((Document) filter).getString(DocumentKeys.F_ID)).isEqualTo(taskId.value());
+            assertThat(((Document) filter).getString(DocumentKeys.F_HOLDER_ID)).startsWith("node-A/");
+        });
+    }
+
+    /**
+     * The class javadoc promises two misses before a lease lapses, so beats must come less than half a lease apart.
+     * Delays only stretch a gap, so one short gap anywhere proves the interval, and a slow machine just looks for
+     * longer.
+     */
+    @Test
+    @DisplayName("beats come less than half a lease apart")
+    void beatsFitInsideTheLease() throws Exception {
+        final Duration lease = Duration.ofMillis(600);
+        final long allowedGap = lease.dividedBy(2).toNanos();
+        final AtomicLong lastBeat = new AtomicLong();
+        final AtomicBoolean sawShortGap = new AtomicBoolean();
+        when(collection.updateOne(any(Bson.class), anyList())).thenAnswer(call -> {
+            final long now = System.nanoTime();
+            final long previous = lastBeat.getAndSet(now);
+            if (previous != 0L && now - previous < allowedGap) {
+                sawShortGap.set(true);
+            }
+            return UpdateResult.acknowledged(1L, 1L, null);
+        });
+        guard = new MongoScheduledExecutionGuard(database, "guards", "node-A", lease,
+                MongoScheduledExecutionGuard.DEFAULT_MAX_SKEW);
+
+        final ExecutionLease held = grant();
+
+        awaitTrue(sawShortGap::get, "two beats less than half a lease apart");
+        held.close();
+    }
+
+    @Test
+    @DisplayName("lease and maxSkew are refused below 1ms, the unit that reaches the server, and above 100 years")
+    void durationsAreValidatedInRange() {
         final Duration ok = Duration.ofMinutes(1);
         for (Duration bad : List.of(Duration.ZERO, Duration.ofSeconds(-1), Duration.ofNanos(1),
-                Duration.ofNanos(999_999))) {
+                Duration.ofNanos(999_999), Duration.ofDays(36_500).plusMillis(1), Duration.ofMillis(Long.MAX_VALUE),
+                Duration.ofSeconds(Long.MAX_VALUE))) {
             assertThatThrownBy(() -> new MongoScheduledExecutionGuard(database, "guards", "node-A", ok, bad))
                     .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("maxSkew");
             assertThatThrownBy(() -> new MongoScheduledExecutionGuard(database, "guards", "node-A", bad, ok))
                     .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("lease");
         }
-        final Duration smallest = Duration.ofMillis(1);
-        new MongoScheduledExecutionGuard(database, "guards", "node-A", ok, smallest).close();
+        for (Duration fine : List.of(Duration.ofMillis(1), Duration.ofDays(36_500))) {
+            new MongoScheduledExecutionGuard(database, "guards", "node-A", ok, fine).close();
+            new MongoScheduledExecutionGuard(database, "guards", "node-A", fine, ok).close();
+        }
     }
 
     /** The heartbeat's interval is a third of the lease, so the smallest lease must not make it spin without a wait. */

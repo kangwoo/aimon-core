@@ -206,7 +206,7 @@ class MongoScheduledExecutionGuardIntegrationTest extends AbstractScheduledExecu
     }
 
     @Test
-    @DisplayName("the heartbeat keeps moving a run's lease forward, in server time")
+    @DisplayName("the heartbeat keeps moving a run's lease forward")
     void heartbeatRenewsTheLease() throws Exception {
         final MongoScheduledExecutionGuard guard = guard("node-A", SHORT_LEASE);
         final ExecutionLease running = guard.tryBegin(fire(SLOT)).orElseThrow();
@@ -217,7 +217,7 @@ class MongoScheduledExecutionGuardIntegrationTest extends AbstractScheduledExecu
         for (int beat = 0; beat < 2; beat++) {
             final Date renewedBy = Date.from(serverNow().plus(SHORT_LEASE));
             awaitTrue(() -> !document().getDate(DocumentKeys.F_LEASE_EXPIRES_AT).before(renewedBy),
-                    "a beat renews the lease in server time");
+                    "a beat renews the lease");
         }
         assertThat(document().getString(DocumentKeys.F_HOLDER_ID)).startsWith("node-A/");
 
@@ -440,6 +440,14 @@ class MongoScheduledExecutionGuardIntegrationTest extends AbstractScheduledExecu
                 Date.from(serverNow().plus(Duration.ofDays(30)))));
 
         assertThat(guard("node-A", LONG_LEASE).tryBegin(ScheduledFire.untimed(taskId))).isPresent();
+    }
+
+    @Test
+    @DisplayName("the longest lease and maxSkew the constructor accepts do not overflow on the server")
+    void longestDurationsAreUsable() {
+        final Duration longest = Duration.ofDays(36_500);
+
+        assertThat(guardWithSkew("node-A", longest, longest).tryBegin(fire(SLOT))).isPresent();
     }
 
     @Test

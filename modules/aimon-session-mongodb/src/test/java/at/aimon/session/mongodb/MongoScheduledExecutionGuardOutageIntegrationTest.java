@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.util.Date;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 
 import org.bson.Document;
@@ -110,24 +111,24 @@ class MongoScheduledExecutionGuardOutageIntegrationTest {
     }
 
     @Test
-    @DisplayName("a held lease's heartbeat fails during the outage, survives it, and renews again in server time after")
+    @DisplayName("a held lease's heartbeat fails during the outage, survives it, and renews again after")
     void heartbeatRecoversFromAnOutage() throws Exception {
         guard = guard();
         captureWarnings();
         final ExecutionLease lease = guard.tryBegin(ScheduledFire.of(taskId, SLOT, SLOT)).orElseThrow();
-        final Date stampBeforeOutage = document().getDate(DocumentKeys.F_LEASE_EXPIRES_AT);
 
+        warmConnectionPool();
         pause();
         awaitTrue(() -> warnings.stream().anyMatch(w -> w.getFormattedMessage().contains("Could not renew")),
                 "renewals fail during the outage");
         assertThat(heartbeatThreads()).as("and the heartbeat keeps going").hasSize(1);
         resume();
 
-        awaitTrue(() -> document().getDate(DocumentKeys.F_LEASE_EXPIRES_AT).after(stampBeforeOutage),
-                "the heartbeat renews again once the server is back");
+        // A renewal sent during the outage may land on resume, so only one made after this moment proves recovery: its
+        // stamp is at or past "the server's time now, plus a lease".
         final Date renewedBy = Date.from(serverNow().plus(LEASE));
         awaitTrue(() -> !document().getDate(DocumentKeys.F_LEASE_EXPIRES_AT).before(renewedBy),
-                "and keeps renewing in server time");
+                "the heartbeat renews again once the server is back");
         assertThat(document().getString(DocumentKeys.F_HOLDER_ID)).startsWith("node-A/");
         assertThat(warnings).noneMatch(w -> w.getFormattedMessage().contains("Lost the lease"));
         lease.close();
@@ -150,17 +151,39 @@ class MongoScheduledExecutionGuardOutageIntegrationTest {
         manager.register(task);
         when(routine.execute(any())).thenReturn(RoutineResult.success(taskId, List.of(), SLOT, SLOT));
 
+        warmConnectionPool();
         pause();
         assertThatThrownBy(() -> guard.tryBegin(ScheduledFire.of(taskId, SLOT, SLOT)))
                 .isInstanceOf(SchedulingException.class);
-        assertThatCode(() -> manager.executeFire(ScheduledFire.of(taskId, SLOT, SLOT))).doesNotThrowAnyException();
+        assertThatCode(() -> manager.executeFire(ScheduledFire.of(taskId, SLOT.plusSeconds(60), SLOT.plusSeconds(60))))
+                .doesNotThrowAnyException();
         verify(routine, never()).execute(any());
         resume();
 
+        // Those two writes went out on open connections, so the server may apply them on resume though their callers
+        // were told they failed: the slot is spent, and a lease nobody renews is held until it expires. Whether they
+        // land depends on timing, so nothing here asserts it. Each attempt takes a newer slot and waits out that lease.
+        final AtomicLong attempt = new AtomicLong(1L);
+        final Instant[] ran = new Instant[1];
         awaitTrue(() -> {
-            manager.executeFire(ScheduledFire.of(taskId, SLOT, SLOT));
+            ran[0] = SLOT.plusSeconds(60 * attempt.incrementAndGet());
+            manager.executeFire(ScheduledFire.of(taskId, ran[0], ran[0]));
             return !Mockito.mockingDetails(routine).getInvocations().isEmpty();
-        }, "the fire runs once the server is back");
+        }, "a fire runs once the server is back");
+
+        verify(routine).execute(any());
+        assertThat(document().getDate(DocumentKeys.F_LAST_SLOT)).isEqualTo(Date.from(ran[0]));
+        assertThat(guard.tryBegin(ScheduledFire.of(taskId, SLOT, SLOT))).as("the outage's slot stays behind").isEmpty();
+    }
+
+    /**
+     * A healthy client's pool has idle connections, so a write in an outage goes out on an open socket and can land
+     * when
+     * the server returns. With an empty pool it would fail in the handshake and never leave, which is not the usual
+     * case.
+     */
+    private void warmConnectionPool() {
+        guard.tryBegin(ScheduledTaskId.generate()).orElseThrow().close();
     }
 
     private MongoScheduledExecutionGuard guard() {

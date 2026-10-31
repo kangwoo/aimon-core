@@ -15,8 +15,9 @@ nodes: of all the nodes firing a task, one runs each occurrence, and runs do not
 `reconcile()`. One document per task in the new `scheduled_execution_guards` collection, holding the lease and the last
 slot that began. Slots are compared by size, so an older misfire is refused too. A slot more than `maxSkew` (5 minutes by
 default) ahead of the server's clock is refused and not recorded, with a WARN naming the cause, so one fast clock cannot
-stop a task on every node. With per-node triggers another node then runs that occurrence; with a cluster-wide scheduler,
-an occurrence whose trigger the fast node takes is lost. Design:
+stop a task on every node. With per-node triggers another node then runs that occurrence. With a cluster-wide scheduler
+the occurrence is lost, and since Quartz acquires triggers by the local clock a fast node can take occurrence after
+occurrence until its clock is fixed, so treat that WARN as an alert. Design:
 `docs/design/scheduling/llm-scheduling-agent.md` §6.5.
 
 - **At most once.** The slot is recorded when the run begins, so an occurrence whose node dies is not run again. A Mongo

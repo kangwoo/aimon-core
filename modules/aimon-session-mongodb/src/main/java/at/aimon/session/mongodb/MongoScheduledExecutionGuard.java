@@ -84,8 +84,10 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  * of the server than {@code maxSkew} ({@link #DEFAULT_MAX_SKEW} unless configured) is refused and recorded nowhere.
  * That node's fires of the task are all refused and a WARN names the cause. What happens to the occurrence depends on
  * the scheduler. With per-node triggers, the other nodes' fires still run it. With a cluster-wide scheduler, one
- * occurrence fires on one node only, so if the node with the fast clock takes the trigger, that occurrence is lost and
- * the WARN is all that is left of it. The manager's own log says only that the guard refused, as it does for a normal
+ * occurrence fires on one node only, and that can make a fast clock costly: Quartz acquires a trigger and waits for its
+ * fire time by the local clock, so the fast node can take occurrence after occurrence ahead of the others. Each one it
+ * takes is lost, with the WARN all that is left of it, and that can go on until the clock is fixed. Treat this WARN as
+ * an alert. The manager's own log says only that the guard refused, as it does for a normal
  * duplicate. Finding the cause takes one more read, on the refusal path only.
  *
  * <p>
@@ -199,6 +201,12 @@ public final class MongoScheduledExecutionGuard implements ScheduledExecutionGua
 
     private static final long BEATS_PER_LEASE = 3L;
 
+    /** Below this a duration reaches the server as zero. */
+    private static final Duration SHORTEST_DURATION = Duration.ofMillis(1);
+
+    /** Above some size {@code $$NOW} plus the duration overflows on the server, and then every fire fails. */
+    private static final Duration LONGEST_DURATION = Duration.ofDays(36_500);
+
     private static final String SLOT_AHEAD = "slotAhead";
     private static final String LAST_SLOT_AHEAD = "lastSlotAhead";
 
@@ -236,11 +244,13 @@ public final class MongoScheduledExecutionGuard implements ScheduledExecutionGua
      * @param nodeId
      *            this node's id, used to name lease holders for operators (must not be null)
      * @param lease
-     *            how long a lease lasts without a renewal (must be at least 1ms). Renewed every third of this, so keep
+     *            how long a lease lasts without a renewal (at least 1ms, at most 100 years). Renewed every third of
+     *            this, so keep
      *            it
      *            well above how long a primary election takes, or a failover lets the next occurrence overlap the run
      * @param maxSkew
-     *            how far ahead of the server a fire's slot may be (must be at least 1ms). Refused beyond it. Slots sit
+     *            how far ahead of the server a fire's slot may be (at least 1ms, at most 100 years). Refused beyond it.
+     *            Slots sit
      *            on a
      *            cron grid point at or before their node's clock, so this bounds how fast a clock may run; a value
      *            below
@@ -252,16 +262,18 @@ public final class MongoScheduledExecutionGuard implements ScheduledExecutionGua
         this.collection = database
                 .getCollection(Objects.requireNonNull(collectionName, "collectionName must not be null"));
         this.nodeId = Objects.requireNonNull(nodeId, "nodeId must not be null");
-        this.lease = Objects.requireNonNull(lease, "lease must not be null");
-        // In milliseconds, the unit that reaches the server: anything shorter would be stamped as no lease at all.
-        if (lease.toMillis() < 1L) {
-            throw new IllegalArgumentException("lease must be at least 1ms: " + lease);
-        }
-        this.maxSkew = Objects.requireNonNull(maxSkew, "maxSkew must not be null");
-        if (maxSkew.toMillis() < 1L) {
-            throw new IllegalArgumentException("maxSkew must be at least 1ms: " + maxSkew);
-        }
+        this.lease = requireInRange("lease", lease);
+        this.maxSkew = requireInRange("maxSkew", maxSkew);
         this.collectionName = collectionName;
+    }
+
+    private static Duration requireInRange(String name, Duration duration) {
+        Objects.requireNonNull(duration, name + " must not be null");
+        if (duration.compareTo(SHORTEST_DURATION) < 0 || duration.compareTo(LONGEST_DURATION) > 0) {
+            throw new IllegalArgumentException(
+                    name + " must be between " + SHORTEST_DURATION + " and " + LONGEST_DURATION + ": " + duration);
+        }
+        return duration;
     }
 
     /**
