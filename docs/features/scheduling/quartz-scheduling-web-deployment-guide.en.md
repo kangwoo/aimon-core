@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/scheduling/quartz-scheduling-web-deployment-guide.md
-source_commit: f1e69259
+source_commit: e367e18c
 ---
 
 # Quartz Scheduling — Deployment Guide for a Web-Based Agent System
@@ -277,7 +277,10 @@ different keys, so runs overlap, and a misfire older than the last run is not re
 On MongoDB, pass `MongoScheduledExecutionGuard` from `aimon-session-mongodb` as it is. The design is §6.5 of the same document.
 An occurrence runs **at most once**: if the node that began it dies, that occurrence does not run again. On per-node
 schedulers, set `ScheduledTask.timezone` or run every node in the same time zone: a task without a zone computes its slot
-in the JVM's zone, so on nodes in different zones the same occurrence runs once per zone.
+in the JVM's zone, so on nodes in different zones the same occurrence runs once per zone. A fire from a node whose clock
+is more than `maxSkew` (5 minutes by default) ahead of the server is refused without being recorded and leaves a WARN from
+the guard; other nodes carry on. The driver has no socket timeout by default, so a call to a stalled server keeps blocking:
+set `socketTimeoutMS` well below the lease (30 seconds by default).
 
 `interruptBus` points the other way — it is where something already running is **stopped**. `RoutineExecutor`'s in-flight registry is node-local, so without a bus `cancel` only cuts the runs held by the node the cancellation was entered on. In a cluster that node is usually not the one the cron fired on, and the run over there then works through its remaining steps on behalf of a task that has just been deleted. With the starter, a single `ScheduledTaskInterruptBus` bean wires it (`SchedulingSpec.withInterruptBus`); what the core ships reaches one node (`LOCAL_ONLY`) and one JVM (`InMemoryScheduledTaskInterruptBus`). For the cluster-wide one, a deployment on MongoDB passes `MongoScheduledTaskInterruptBus` from `aimon-session-mongodb` (it needs the capped collection `scheduled_task_interrupts` that `init.js` creates, and a replica set); on any other store the application writes it. The design note is [`interrupt.md` §12.7](../../design/agent-execution/interrupt.md).
 
@@ -327,7 +330,7 @@ Switching on Quartz's own JMX MBean (the `org.quartz.scheduler.jmx.export=true` 
 
 ### "The same task ran twice right after a node restart"
 
-- The misfire policy is `FireAndProceed`, so at the Quartz level this is the intended behaviour (`QuartzTaskScheduler` attaches `withMisfireHandlingInstructionFireAndProceed()` to cron triggers). A recovered fire is scheduled for "now", but `QuartzTaskScheduler` folds it back to the previous cron grid point and passes that as its slot, so a distributed guard keyed on the occurrence refuses the recovery fire of an occurrence that already ran. Without one, write non-idempotent tasks so that they check an idempotency key inside the `ScheduledTask` handler (reusing the session side's `IdempotencyStore`, for example).
+- The misfire policy is `FireAndProceed`, so at the Quartz level this is the intended behaviour (`QuartzTaskScheduler` attaches `withMisfireHandlingInstructionFireAndProceed()` to cron triggers). A recovered fire is scheduled for "now", but `QuartzTaskScheduler` folds it back to the previous cron grid point and passes that as its slot, so a distributed guard that compares slots refuses the recovery fire of an occurrence that already ran. Without one, write non-idempotent tasks so that they check an idempotency key inside the `ScheduledTask` handler (reusing the session side's `IdempotencyStore`, for example).
 
 ### "A lock in the JDBC JobStore (`QRTZ_LOCKS`) won't clear"
 

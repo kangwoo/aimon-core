@@ -13,7 +13,9 @@ Central is versioned independently).
 nodes: of all the nodes firing a task, one runs each occurrence, and runs do not overlap. Supplying it to
 `SchedulingEngineBuilder.executionGuard(...)` on `multiNode(true)` with a per-node scheduler also turns on the periodic
 `reconcile()`. One document per task in the new `scheduled_execution_guards` collection, holding the lease and the last
-slot that began. Slots are compared by size, so an older misfire is refused too. Design:
+slot that began. Slots are compared by size, so an older misfire is refused too. A slot more than `maxSkew` (5 minutes by
+default) ahead of the server's clock is refused and not recorded, with a WARN naming the cause, so one fast clock cannot
+stop a task on every node. Design:
 `docs/design/scheduling/llm-scheduling-agent.md` §6.5.
 
 - **At most once.** The slot is recorded when the run begins, so an occurrence whose node dies is not run again. A Mongo
@@ -25,8 +27,8 @@ slot that began. Slots are compared by size, so an older misfire is refused too.
 - **Lifecycle** — application-scoped and owned by the host: close the engine, then the guard, then the `MongoClient`.
 - **Migration notes** — new collection: re-run `db/mongodb/init.js`, or let the first write create it. **Do not add a
   TTL index to it**: a lost document forgets the slot, and a late fire of that occurrence runs again. Nothing changes
-  unless you pass the guard. Nodes' clocks must be synchronized, since a slot recorded far in the future refuses that
-  task's fires until real time reaches it. On per-node schedulers, set `ScheduledTask.timezone` or run every node in
+  unless you pass the guard. Set `socketTimeoutMS` well below the lease: the driver has none by default, and a call to a
+  stalled server then blocks instead of failing. On per-node schedulers, set `ScheduledTask.timezone` or run every node in
   the same time zone: otherwise nodes compute different slots and the occurrence runs once per zone.
 
 ### Added: scheduled execution history says when a run's outcome is unknown

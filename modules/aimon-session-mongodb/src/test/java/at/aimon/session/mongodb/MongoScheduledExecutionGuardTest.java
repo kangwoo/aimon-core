@@ -1,17 +1,19 @@
 package at.aimon.session.mongodb;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -25,15 +27,19 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.invocation.InvocationOnMock;
 
 import com.mongodb.MongoException;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.FindOneAndUpdateOptions;
 import com.mongodb.client.result.UpdateResult;
 
 import at.aimon.core.scheduling.ScheduledExecutionGuard.ExecutionLease;
 import at.aimon.core.scheduling.ScheduledTaskId;
 import at.aimon.core.scheduling.exception.SchedulingException;
+import at.aimon.core.scheduling.scheduler.ScheduledFire;
+import at.aimon.session.mongodb.internal.DocumentKeys;
 
 /**
  * The failures a test cannot get from a healthy server on demand: a renewal that fails and later recovers, and a claim
@@ -46,18 +52,22 @@ class MongoScheduledExecutionGuardTest {
     /** Beats every 10ms. */
     private static final Duration LEASE = Duration.ofMillis(30);
     private static final long WAIT_TIMEOUT_MS = 10_000L;
+    private static final int DUPLICATE_KEY = 11000;
 
     private final ScheduledTaskId taskId = ScheduledTaskId.generate();
     @SuppressWarnings("unchecked")
     private final MongoCollection<Document> collection = mock(MongoCollection.class);
 
+    private MongoDatabase database;
     private MongoScheduledExecutionGuard guard;
 
     @BeforeEach
     void setUp() {
         final MongoDatabase database = mock(MongoDatabase.class);
         when(database.getCollection(anyString())).thenReturn(collection);
-        guard = new MongoScheduledExecutionGuard(database, "guards", "node-A", LEASE, Clock.systemUTC());
+        this.database = database;
+        guard = new MongoScheduledExecutionGuard(database, "guards", "node-A", LEASE,
+                MongoScheduledExecutionGuard.DEFAULT_MAX_SKEW);
     }
 
     @AfterEach
@@ -137,18 +147,78 @@ class MongoScheduledExecutionGuardTest {
     @DisplayName("a Mongo error while claiming an existing document surfaces as SchedulingException, with no insert")
     void claimFailureIsWrapped() {
         final MongoException failure = new MongoException("not primary");
-        when(collection.findOneAndUpdate(any(Bson.class), anyList())).thenThrow(failure);
+        when(collection.findOneAndUpdate(any(Bson.class), anyList(), any(FindOneAndUpdateOptions.class)))
+                .thenThrow(failure);
 
         assertThatThrownBy(() -> guard.tryBegin(taskId)).isInstanceOf(SchedulingException.class)
                 .hasMessageContaining(taskId.value()).hasCause(failure);
 
-        verify(collection, never()).insertOne(any(Document.class));
         assertThat(heartbeatThreads()).isEmpty();
     }
 
+    @Test
+    @DisplayName("a duplicate key from racing first fires is retried once, and the retry decides")
+    void duplicateKeyIsRetried() {
+        when(collection.findOneAndUpdate(any(Bson.class), anyList(), any(FindOneAndUpdateOptions.class)))
+                .thenThrow(new MongoException(DUPLICATE_KEY, "E11000")).thenAnswer(this::echoHolderAsGranted);
+
+        assertThat(guard.tryBegin(taskId)).isPresent();
+
+        verify(collection, times(2)).findOneAndUpdate(any(Bson.class), anyList(), any(FindOneAndUpdateOptions.class));
+    }
+
+    @Test
+    @DisplayName("a second duplicate key is a failure, not a grant and not a refusal")
+    void repeatedDuplicateKeyIsWrapped() {
+        when(collection.findOneAndUpdate(any(Bson.class), anyList(), any(FindOneAndUpdateOptions.class)))
+                .thenThrow(new MongoException(DUPLICATE_KEY, "E11000"));
+
+        assertThatThrownBy(() -> guard.tryBegin(taskId)).isInstanceOf(SchedulingException.class);
+    }
+
+    @Test
+    @DisplayName("a refusal stays a refusal when finding out why fails")
+    void failedDiagnosisDoesNotChangeARefusal() {
+        when(collection.findOneAndUpdate(any(Bson.class), anyList(), any(FindOneAndUpdateOptions.class)))
+                .thenReturn(new Document(DocumentKeys.F_HOLDER_ID, "someone-else"));
+        when(collection.aggregate(anyList())).thenThrow(new MongoException("not primary"));
+        final Instant slot = Instant.parse("2026-10-27T10:00:00Z");
+
+        assertThat(guard.tryBegin(ScheduledFire.of(taskId, slot, slot))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a grant reads nothing more: finding out why a fire was refused is for refusals")
+    void grantCostsOneRoundTrip() {
+        grant().close();
+
+        verify(collection, never()).aggregate(anyList());
+    }
+
+    @Test
+    @DisplayName("maxSkew must be positive")
+    void maxSkewIsValidated() {
+        for (Duration bad : List.of(Duration.ZERO, Duration.ofSeconds(-1))) {
+            assertThatThrownBy(() -> new MongoScheduledExecutionGuard(database, "guards", "node-A", LEASE, bad))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("maxSkew");
+        }
+        assertThatNullPointerException()
+                .isThrownBy(() -> new MongoScheduledExecutionGuard(database, "guards", "node-A", LEASE, null));
+    }
+
     private ExecutionLease grant() {
-        when(collection.findOneAndUpdate(any(Bson.class), anyList())).thenReturn(new Document());
+        when(collection.findOneAndUpdate(any(Bson.class), anyList(), any(FindOneAndUpdateOptions.class)))
+                .thenAnswer(this::echoHolderAsGranted);
         return guard.tryBegin(taskId).orElseThrow();
+    }
+
+    /** Answers as the server does for a granted fire: with the document naming the holder the pipeline proposed. */
+    @SuppressWarnings("unchecked")
+    private Document echoHolderAsGranted(InvocationOnMock call) {
+        final Document stage = (Document) call.<List<Document>>getArgument(1).get(0);
+        final Document holder = stage.get("$set", Document.class).get(DocumentKeys.F_HOLDER_ID, Document.class);
+        final Document literal = (Document) holder.get("$cond", List.class).get(1);
+        return new Document(DocumentKeys.F_HOLDER_ID, literal.getString("$literal"));
     }
 
     private List<Thread> heartbeatThreads() {

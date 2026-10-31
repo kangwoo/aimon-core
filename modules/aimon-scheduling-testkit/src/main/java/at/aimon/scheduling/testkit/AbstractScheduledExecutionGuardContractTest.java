@@ -32,8 +32,10 @@ import at.aimon.core.scheduling.scheduler.ScheduledFire;
  * <li>Of several concurrent attempts to begin the same task, exactly one is granted.</li>
  * <li>Closing the lease releases it: the next fire of the task is granted.</li>
  * <li>Different tasks do not block each other.</li>
+ * <li>A fire with no slot still respects a live lease, and begins once it is released.</li>
  * <li>A guard that {@link #dedupsOccurrences() dedups occurrences} also refuses a second fire of a slot that already
- * ran, after its lease was released — the late duplicate from another node — while granting the next slot.</li>
+ * ran, after its lease was released — the late duplicate from another node — while granting the next slot. It also
+ * refuses a misfire older than the last slot that began.</li>
  * </ul>
  *
  * <p>
@@ -127,5 +129,32 @@ public abstract class AbstractScheduledExecutionGuardContractTest {
                 .as("same slot, arriving late").isEmpty();
         final Instant nextSlot = slot.plusSeconds(60);
         assertThat(guardFor("node-B").tryBegin(ScheduledFire.of(taskId, nextSlot, nextSlot))).isPresent();
+    }
+
+    @Test
+    @DisplayName("a misfire older than the last occurrence that began is refused")
+    void olderMisfireIsRefused() {
+        Assumptions.assumeTrue(dedupsOccurrences(), "this guard keys on the task id, not on occurrences");
+        final ScheduledTaskId taskId = ScheduledTaskId.of("misfired");
+        final Instant base = Instant.parse("2026-10-27T10:00:00Z");
+        final Instant fifth = base.plusSeconds(5 * 60);
+        final Instant first = base.plusSeconds(60);
+
+        guardFor("node-A").tryBegin(ScheduledFire.of(taskId, fifth, fifth)).orElseThrow().close();
+
+        assertThat(guardFor("node-B").tryBegin(ScheduledFire.of(taskId, first, first))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a fire with no slot waits for a live lease, and begins once it is released")
+    void slotlessFireRespectsTheLease() {
+        final ScheduledTaskId taskId = ScheduledTaskId.of("slotless");
+        final Instant slot = Instant.parse("2026-10-27T10:00:00Z");
+
+        final ExecutionLease lease = guardFor("node-A").tryBegin(ScheduledFire.of(taskId, slot, slot)).orElseThrow();
+        assertThat(guardFor("node-B").tryBegin(ScheduledFire.untimed(taskId))).isEmpty();
+        lease.close();
+
+        assertThat(guardFor("node-B").tryBegin(ScheduledFire.untimed(taskId))).isPresent();
     }
 }

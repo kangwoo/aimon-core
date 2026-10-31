@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -12,6 +11,11 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import org.bson.Document;
 import org.junit.jupiter.api.AfterEach;
@@ -19,6 +23,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoCollection;
@@ -33,6 +38,10 @@ import at.aimon.core.scheduling.exception.SchedulingException;
 import at.aimon.core.scheduling.scheduler.ScheduledFire;
 import at.aimon.scheduling.testkit.AbstractScheduledExecutionGuardContractTest;
 import at.aimon.session.mongodb.internal.DocumentKeys;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 
 /**
  * Runs the shared guard contract against {@link MongoScheduledExecutionGuard} on a real replica set, plus what is
@@ -101,8 +110,7 @@ class MongoScheduledExecutionGuardIntegrationTest extends AbstractScheduledExecu
         assertThat(released.getDate(DocumentKeys.F_LAST_SLOT)).isEqualTo(Date.from(SLOT));
         assertThat(released.getString(DocumentKeys.F_HOLDER_ID)).isNull();
         // Asked of the server, whose $$NOW stamped it: this machine's clock may be behind the container's.
-        assertThat(collection().find(new Document(DocumentKeys.F_ID, taskId.value()).append("$expr",
-                new Document("$lte", List.of("$" + DocumentKeys.F_LEASE_EXPIRES_AT, "$$NOW")))).first()).isNotNull();
+        assertThat(leaseIsAheadOfServer()).isFalse();
     }
 
     @Test
@@ -200,13 +208,14 @@ class MongoScheduledExecutionGuardIntegrationTest extends AbstractScheduledExecu
     @Test
     @DisplayName("the heartbeat keeps a run's lease alive past its duration, in server time")
     void heartbeatRenewsTheLease() throws Exception {
-        // A clock an hour behind makes the cold-start stamp already expired: only a renewal can make this lease hold.
-        final Clock behind = Clock.fixed(Instant.now().minus(Duration.ofHours(1)), java.time.ZoneOffset.UTC);
-        final MongoScheduledExecutionGuard guard = guardWithClock("node-A", SHORT_LEASE, behind);
+        final MongoScheduledExecutionGuard guard = guard("node-A", SHORT_LEASE);
         final ExecutionLease running = guard.tryBegin(fire(SLOT)).orElseThrow();
+        final Date firstStamp = document().getDate(DocumentKeys.F_LEASE_EXPIRES_AT);
 
-        awaitTrue(() -> document().getDate(DocumentKeys.F_LEASE_EXPIRES_AT).after(new Date()),
-                "the first beat restamps the lease in server time");
+        // Stamps compared with each other and, below, with the server's $$NOW: this machine's clock has no say.
+        awaitTrue(() -> document().getDate(DocumentKeys.F_LEASE_EXPIRES_AT).after(firstStamp),
+                "a beat renews the lease");
+        assertThat(leaseIsAheadOfServer()).isTrue();
 
         // Several lease durations later, the lease is still held and another node is still refused.
         Thread.sleep(SHORT_LEASE.multipliedBy(3).toMillis());
@@ -328,7 +337,7 @@ class MongoScheduledExecutionGuardIntegrationTest extends AbstractScheduledExecu
                                 .validator(new Document(DocumentKeys.F_HOLDER_ID, new Document("$exists", false)))));
         try {
             final MongoScheduledExecutionGuard guard = new MongoScheduledExecutionGuard(database, validated, "node-A",
-                    LONG_LEASE, Clock.systemUTC());
+                    LONG_LEASE, MongoScheduledExecutionGuard.DEFAULT_MAX_SKEW);
             extraGuards.add(guard);
 
             assertThatThrownBy(() -> guard.tryBegin(fire(SLOT))).isInstanceOf(SchedulingException.class)
@@ -350,17 +359,169 @@ class MongoScheduledExecutionGuardIntegrationTest extends AbstractScheduledExecu
         }
     }
 
-    private MongoScheduledExecutionGuard guard(String nodeName, Duration lease) {
-        return guardWithClock(nodeName, lease, Clock.systemUTC());
+    @Test
+    @DisplayName("a slot too far ahead of the server is refused, with a WARN, and lastSlot stays where it was")
+    void futureSlotIsRefusedAndNotRecorded() {
+        guard("node-A", LONG_LEASE).tryBegin(fire(SLOT)).orElseThrow().close();
+        final Document before = document();
+        final Instant future = serverNow().plus(Duration.ofDays(1));
+
+        final List<ILoggingEvent> warnings = warningsDuring(
+                () -> assertThat(guard("fast-clock", LONG_LEASE).tryBegin(fire(future))).isEmpty());
+
+        assertThat(document()).isEqualTo(before);
+        assertThat(warnings).singleElement().satisfies(warn -> assertThat(warn.getFormattedMessage())
+                .contains(taskId.value()).contains(future.toString()).contains("ahead of the server"));
+        assertThat(guard("node-B", LONG_LEASE).tryBegin(fire(SLOT.plusSeconds(60)))).as("other nodes carry on")
+                .isPresent();
     }
 
-    private MongoScheduledExecutionGuard guardWithClock(String nodeName, Duration lease, Clock clock) {
+    @Test
+    @DisplayName("a first fire with a slot too far ahead is refused and writes no slot, holder or lease")
+    void firstFireWithAFutureSlotIsRefused() {
+        final Instant future = serverNow().plus(Duration.ofDays(1));
+
+        final List<ILoggingEvent> warnings = warningsDuring(
+                () -> assertThat(guard("fast-clock", LONG_LEASE).tryBegin(fire(future))).isEmpty());
+
+        assertThat(document()).isEqualTo(new Document(DocumentKeys.F_ID, taskId.value()));
+        assertThat(warnings).hasSize(1);
+        assertThat(guard("node-B", LONG_LEASE).tryBegin(fire(SLOT))).as("the bare document blocks nothing").isPresent();
+    }
+
+    @Test
+    @DisplayName("the bound is maxSkew from the server's clock: just inside is granted, just outside refused")
+    void boundIsMeasuredFromTheServer() {
+        final Duration skew = Duration.ofHours(1);
+        final Duration margin = Duration.ofSeconds(30);
+        final MongoScheduledExecutionGuard guard = guardWithSkew("node-A", LONG_LEASE, skew);
+
+        assertThat(guard.tryBegin(fire(serverNow().plus(skew).plus(margin)))).isEmpty();
+        assertThat(document().containsKey(DocumentKeys.F_LAST_SLOT)).isFalse();
+
+        final Instant inside = serverNow().plus(skew).minus(margin);
+        assertThat(guard.tryBegin(fire(inside))).isPresent();
+        assertThat(document().getDate(DocumentKeys.F_LAST_SLOT)).isEqualTo(Date.from(inside));
+    }
+
+    @Test
+    @DisplayName("a normal duplicate is refused without a WARN, so the WARN means a clock")
+    void normalRefusalsDoNotWarn() {
+        guard("node-A", LONG_LEASE).tryBegin(fire(SLOT)).orElseThrow().close();
+
+        final List<ILoggingEvent> warnings = warningsDuring(
+                () -> assertThat(guard("node-B", LONG_LEASE).tryBegin(fire(SLOT))).isEmpty());
+
+        assertThat(warnings).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a document already holding a far-future lastSlot is not repaired: fires are refused, with a WARN")
+    void pollutedDocumentIsReportedNotOverwritten() {
+        final Date polluted = Date.from(serverNow().plus(Duration.ofDays(30)));
+        collection()
+                .insertOne(new Document(DocumentKeys.F_ID, taskId.value()).append(DocumentKeys.F_LAST_SLOT, polluted));
+        final Document before = document();
+
+        final List<ILoggingEvent> warnings = warningsDuring(
+                () -> assertThat(guard("node-A", LONG_LEASE).tryBegin(fire(SLOT))).isEmpty());
+
+        assertThat(document()).isEqualTo(before);
+        assertThat(warnings).singleElement().satisfies(warn -> assertThat(warn.getFormattedMessage())
+                .contains(polluted.toInstant().toString()).contains(DocumentKeys.COLL_SCHEDULED_EXECUTION_GUARDS));
+
+        collection().deleteOne(new Document(DocumentKeys.F_ID, taskId.value()));
+        assertThat(guard("node-A", LONG_LEASE).tryBegin(fire(SLOT))).as("the operator's way out").isPresent();
+    }
+
+    @Test
+    @DisplayName("the bound does not touch a slot-less fire, which has no slot to bound")
+    void slotlessFireIsNotBounded() {
+        collection().insertOne(new Document(DocumentKeys.F_ID, taskId.value()).append(DocumentKeys.F_LAST_SLOT,
+                Date.from(serverNow().plus(Duration.ofDays(30)))));
+
+        assertThat(guard("node-A", LONG_LEASE).tryBegin(ScheduledFire.untimed(taskId))).isPresent();
+    }
+
+    @Test
+    @DisplayName("a first fire's lease is stamped in server time: this document never saw the application's clock")
+    void coldStartLeaseIsInServerTime() {
+        final Duration lease = Duration.ofMinutes(10);
+        final Instant before = serverNow();
+
+        guard("node-A", lease).tryBegin(fire(SLOT)).orElseThrow();
+
+        final Instant stamped = document().getDate(DocumentKeys.F_LEASE_EXPIRES_AT).toInstant();
+        assertThat(stamped).isBetween(before.plus(lease), serverNow().plus(lease));
+    }
+
+    @Test
+    @DisplayName("of concurrent first fires on nodes with their own connections, exactly one is granted, every time")
+    void concurrentFirstFiresGrantOne() throws Exception {
+        final int rounds = 25;
+        final int contenders = 6;
+        final List<MongoScheduledExecutionGuard> nodes = new ArrayList<>();
+        for (int i = 0; i < contenders; i++) {
+            nodes.add(guard("node-" + i, LONG_LEASE));
+        }
+        final ExecutorService pool = Executors.newFixedThreadPool(contenders);
+        try {
+            for (int round = 0; round < rounds; round++) {
+                final ScheduledTaskId contested = ScheduledTaskId.generate();
+                final CountDownLatch go = new CountDownLatch(1);
+                final List<Future<Boolean>> attempts = new ArrayList<>();
+                for (MongoScheduledExecutionGuard node : nodes) {
+                    attempts.add(pool.submit(() -> {
+                        go.await();
+                        return node.tryBegin(ScheduledFire.of(contested, SLOT, SLOT)).isPresent();
+                    }));
+                }
+                go.countDown();
+                int granted = 0;
+                for (Future<Boolean> attempt : attempts) {
+                    granted += attempt.get(30, TimeUnit.SECONDS) ? 1 : 0;
+                }
+                assertThat(granted).as("round %d", round).isEqualTo(1);
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    private MongoScheduledExecutionGuard guard(String nodeName, Duration lease) {
+        return guardWithSkew(nodeName, lease, MongoScheduledExecutionGuard.DEFAULT_MAX_SKEW);
+    }
+
+    private MongoScheduledExecutionGuard guardWithSkew(String nodeName, Duration lease, Duration maxSkew) {
         final MongoClient client = clients.computeIfAbsent(nodeName, n -> MongoTestSupport.newClient());
         final MongoScheduledExecutionGuard guard = new MongoScheduledExecutionGuard(
                 client.getDatabase(MongoTestSupport.DATABASE_NAME), DocumentKeys.COLL_SCHEDULED_EXECUTION_GUARDS,
-                nodeName, lease, clock);
+                nodeName, lease, maxSkew);
         extraGuards.add(guard);
         return guard;
+    }
+
+    /** The clock every decision is made by. This machine's may disagree with the container's. */
+    private static Instant serverNow() {
+        return MongoTestSupport.sharedDatabase().runCommand(new Document("hello", 1)).getDate("localTime").toInstant();
+    }
+
+    private boolean leaseIsAheadOfServer() {
+        return collection().find(new Document(DocumentKeys.F_ID, taskId.value()).append("$expr",
+                new Document("$gt", List.of("$" + DocumentKeys.F_LEASE_EXPIRES_AT, "$$NOW")))).first() != null;
+    }
+
+    private static List<ILoggingEvent> warningsDuring(Runnable action) {
+        final Logger logger = (Logger) LoggerFactory.getLogger(MongoScheduledExecutionGuard.class);
+        final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            action.run();
+        } finally {
+            logger.detachAppender(appender);
+        }
+        return appender.list.stream().filter(event -> event.getLevel() == Level.WARN).toList();
     }
 
     private ScheduledFire fire(Instant slot) {

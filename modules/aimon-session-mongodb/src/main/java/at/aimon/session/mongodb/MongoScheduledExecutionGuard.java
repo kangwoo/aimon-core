@@ -1,6 +1,5 @@
 package at.aimon.session.mongodb;
 
-import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -21,9 +20,10 @@ import org.slf4j.LoggerFactory;
 
 import com.mongodb.ErrorCategory;
 import com.mongodb.MongoException;
-import com.mongodb.MongoWriteException;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.FindOneAndUpdateOptions;
+import com.mongodb.client.model.ReturnDocument;
 
 import at.aimon.core.scheduling.ScheduledExecutionGuard;
 import at.aimon.core.scheduling.ScheduledTaskId;
@@ -50,31 +50,53 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  * <h2>Granting a fire</h2>
  *
  * <p>
- * Two steps, for the reason {@link MongoSessionLeaseStore} gives: MongoDB refuses {@code $expr} / {@code $$NOW} in an
- * upsert's filter.
+ * One {@code findOneAndUpdate} with upsert, whose filter is only the {@code _id}. A fire is granted when the lease has
+ * expired, its slot is no further ahead of the server than {@code maxSkew}, and {@code lastSlot} is before its slot.
+ * All
+ * three are judged by {@code $cond} inside the update pipeline: MongoDB refuses {@code $expr} / {@code $$NOW} in an
+ * upsert's <em>filter</em>, which is why {@link MongoSessionLeaseStore} takes two steps, but not in its pipeline. That
+ * is
+ * a measured fact, on 4.2, 4.4 and 6.0. So there is one round trip whether the document exists or not, and every time
+ * is
+ * the server's {@code $$NOW}: no application clock stamps anything, and the first fire of a task meets the same rules
+ * as
+ * every later one.
  *
- * <ol>
- * <li>{@code findOneAndUpdate} without upsert: the lease has expired <em>and</em> {@code lastSlot} is before this
- * fire's
- * slot. Both conditions and the write are one server-side operation, so a refused fire changes nothing and a granted
- * one
- * moved {@code lastSlot} atomically. Time is the server's {@code $$NOW}, so clock skew between nodes decides nothing.
- * <li>No match means either there is no document yet or the fire was refused. {@code insertOne} tells the two apart
- * with
- * no extra read: it succeeds only when there was no document, and {@code DUPLICATE_KEY} means there was, so the fire
- * was
- * refused. Losing a concurrent insert is the same answer. The cold-start {@code leaseExpiresAt} uses the application
- * clock, as in {@link MongoSessionLeaseStore}, and the first heartbeat restamps it in server time. Until then, on a
- * task's very first fire, a clock further behind the server than the lease lets a newer fire take the lease.
- * </ol>
+ * <p>
+ * The update returns the document as it left it, and the fire was granted if that names this lease as the holder. A
+ * refused fire changes nothing, with one harmless exception: a first fire refused for a slot too far ahead leaves a
+ * bare
+ * {@code {_id}}, which the next fire treats as no lease and no slot. Two first fires can race on the upsert's insert;
+ * the
+ * loser gets a duplicate key and is retried once, when the document exists.
  *
  * <p>
  * Slots are compared by size, not by equality: a misfire older than an occurrence that already began is refused as
- * well,
- * so {@code lastSlot} never moves backwards. A slot refused for overlap does not advance it either, and is not retried:
- * the occurrence is skipped, and the next one starts as soon as the lease is free. Slots come from the nodes' own
- * clocks, so keep them synchronized: a node whose clock runs a day fast records a slot a day ahead, and until real time
- * passes it every other node's fire of that task is refused as old. Delete the document to recover.
+ * well, so {@code lastSlot} never moves backwards. A slot refused for overlap does not advance it either, and is not
+ * retried: the occurrence is skipped, and the next one starts as soon as the lease is free.
+ *
+ * <h2>Slots ahead of the server</h2>
+ *
+ * <p>
+ * Slots come from the nodes' own clocks, and {@code lastSlot} only ever moves forward, so one slot from a node whose
+ * clock ran a day fast would refuse every node's fires for a day, even once that clock was fixed. So a slot further
+ * ahead
+ * of the server than {@code maxSkew} ({@link #DEFAULT_MAX_SKEW} unless configured) is refused and recorded nowhere.
+ * That
+ * node's fires of the task are all refused, other nodes' fires still run, and a WARN names the cause. The manager's own
+ * log says only that the guard refused, as it does for a normal duplicate. Finding the cause takes one more read, on
+ * the
+ * refusal path only.
+ *
+ * <p>
+ * A document that already holds a {@code lastSlot} past the bound is <b>not repaired</b>. Under this check nothing
+ * writes
+ * one, so it means a hand edit, a lowered {@code maxSkew}, or a server clock that moved back. Overwriting it could run
+ * an
+ * occurrence twice: that value replaced the real last slot, so nothing still knows whether the fire in hand already
+ * ran.
+ * Each refusal logs a WARN naming the slot instead, and fires stay refused until the clock reaches it or an operator
+ * who has weighed that risk deletes the document.
  *
  * <p>
  * A fire with no {@link ScheduledFire#getSlot() slot}, and {@link #tryBegin(ScheduledTaskId)}, have no occurrence to
@@ -146,7 +168,16 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  * <p>
  * MongoDB 4.2 or later, for pipeline updates and {@code $$NOW}. Use {@code w=majority} on the URI: an acknowledged
  * write
- * lost in a failover forgets the slot it recorded. The collection comes from {@code db/mongodb/init.js}, though unlike
+ * lost in a failover forgets the slot it recorded. Set {@code socketTimeoutMS} well below the lease: the driver's
+ * default is
+ * no timeout, and against a server paused mid-call an {@code updateOne} was measured still blocked after 60 seconds, so
+ * a
+ * renewal would not fail and retry while the lease lapsed, and {@code tryBegin} or a release would hold its caller.
+ * With
+ * 2 seconds the same call failed after 6, as the driver retries a retryable write, so allow for several times the
+ * value.
+ * It applies to the whole client; if other work on that client cannot take it, give the guard its own. The collection
+ * comes from {@code db/mongodb/init.js}, though unlike
  * the capped bus channels nothing goes wrong if the first write creates it. Share the collection with one application
  * only; the task id is all a document knows.
  *
@@ -163,15 +194,22 @@ public final class MongoScheduledExecutionGuard implements ScheduledExecutionGua
 
     private static final Logger log = LoggerFactory.getLogger(MongoScheduledExecutionGuard.class);
 
+    /** How far ahead of the server a fire's slot may be before it is refused, unless configured. */
+    public static final Duration DEFAULT_MAX_SKEW = Duration.ofMinutes(5);
+
     private static final long BEATS_PER_LEASE = 3L;
 
-    /** Compares older than every slot, for a document no slotted fire has written to. */
-    private static final Date BEFORE_ANY_SLOT = new Date(Long.MIN_VALUE);
+    private static final String SLOT_AHEAD = "slotAhead";
+    private static final String LAST_SLOT_AHEAD = "lastSlotAhead";
+
+    /** Compares older than every slot and lease, for a document that has neither yet. */
+    private static final Date BEFORE_EVERYTHING = new Date(Long.MIN_VALUE);
 
     private final MongoCollection<Document> collection;
     private final String nodeId;
     private final Duration lease;
-    private final Clock clock;
+    private final Duration maxSkew;
+    private final String collectionName;
 
     private final Set<HeldLease> held = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean closed = new AtomicBoolean(false);
@@ -185,7 +223,7 @@ public final class MongoScheduledExecutionGuard implements ScheduledExecutionGua
      *            this node's id, used to name lease holders for operators (must not be null)
      */
     public MongoScheduledExecutionGuard(MongoDatabase database, String nodeId) {
-        this(database, DocumentKeys.COLL_SCHEDULED_EXECUTION_GUARDS, nodeId, DEFAULT_LEASE, Clock.systemUTC());
+        this(database, DocumentKeys.COLL_SCHEDULED_EXECUTION_GUARDS, nodeId, DEFAULT_LEASE, DEFAULT_MAX_SKEW);
     }
 
     /**
@@ -200,11 +238,14 @@ public final class MongoScheduledExecutionGuard implements ScheduledExecutionGua
      * @param lease
      *            how long a lease lasts without a renewal (must be positive). Renewed every third of this, so keep it
      *            well above how long a primary election takes, or a failover lets the next occurrence overlap the run
-     * @param clock
-     *            stamps the first lease of a task only; every later decision uses server time (must not be null)
+     * @param maxSkew
+     *            how far ahead of the server a fire's slot may be (must be positive). Refused beyond it. Slots sit on a
+     *            cron grid point at or before their node's clock, so this bounds how fast a clock may run; a value
+     *            below
+     *            the clock error between nodes and server refuses good fires
      */
     public MongoScheduledExecutionGuard(MongoDatabase database, String collectionName, String nodeId, Duration lease,
-            Clock clock) {
+            Duration maxSkew) {
         Objects.requireNonNull(database, "database must not be null");
         this.collection = database
                 .getCollection(Objects.requireNonNull(collectionName, "collectionName must not be null"));
@@ -213,7 +254,11 @@ public final class MongoScheduledExecutionGuard implements ScheduledExecutionGua
         if (lease.isZero() || lease.isNegative()) {
             throw new IllegalArgumentException("lease must be positive: " + lease);
         }
-        this.clock = Objects.requireNonNull(clock, "clock must not be null");
+        this.maxSkew = Objects.requireNonNull(maxSkew, "maxSkew must not be null");
+        if (maxSkew.isZero() || maxSkew.isNegative()) {
+            throw new IllegalArgumentException("maxSkew must be positive: " + maxSkew);
+        }
+        this.collectionName = collectionName;
     }
 
     /**
@@ -268,7 +313,10 @@ public final class MongoScheduledExecutionGuard implements ScheduledExecutionGua
             return Optional.empty();
         }
         final String holderId = nodeId + '/' + UUID.randomUUID();
-        if (!claimExisting(taskId, holderId, slot) && !claimAbsent(taskId, holderId, slot)) {
+        if (!holderId.equals(claim(taskId, holderId, slot).getString(DocumentKeys.F_HOLDER_ID))) {
+            if (slot != null) {
+                warnIfAheadOfServer(taskId, slot);
+            }
             return Optional.empty();
         }
         final HeldLease granted = new HeldLease(taskId, holderId);
@@ -281,44 +329,81 @@ public final class MongoScheduledExecutionGuard implements ScheduledExecutionGua
         return Optional.of(granted);
     }
 
-    private boolean claimExisting(ScheduledTaskId taskId, String holderId, Date slot) {
+    private Document claim(ScheduledTaskId taskId, String holderId, Date slot) {
         final List<Document> conditions = new ArrayList<>();
-        conditions.add(new Document("$lte", List.of("$" + DocumentKeys.F_LEASE_EXPIRES_AT, "$$NOW")));
+        conditions.add(new Document("$lte", List.of(
+                new Document("$ifNull", List.of("$" + DocumentKeys.F_LEASE_EXPIRES_AT, BEFORE_EVERYTHING)), "$$NOW")));
+        if (slot != null) {
+            conditions.add(new Document("$lte", List.of(slot, furthestAllowedSlot())));
+            conditions.add(new Document("$lt", List
+                    .of(new Document("$ifNull", List.of("$" + DocumentKeys.F_LAST_SLOT, BEFORE_EVERYTHING)), slot)));
+        }
+        final Document granted = new Document("$and", conditions);
         // The holder is $literal because a pipeline $set evaluates its values: a node id beginning with "$" would be
         // read as a field path, and renew and release, which match on the id they were given, would never find it.
-        final Document set = new Document(DocumentKeys.F_HOLDER_ID, new Document("$literal", holderId))
-                .append(DocumentKeys.F_LEASE_EXPIRES_AT, new Document("$add", List.of("$$NOW", lease.toMillis())));
+        final Document set = new Document(DocumentKeys.F_HOLDER_ID,
+                ifGranted(granted, new Document("$literal", holderId), DocumentKeys.F_HOLDER_ID))
+                .append(DocumentKeys.F_LEASE_EXPIRES_AT, ifGranted(granted,
+                        new Document("$add", List.of("$$NOW", lease.toMillis())), DocumentKeys.F_LEASE_EXPIRES_AT));
         if (slot != null) {
-            conditions.add(new Document("$lt",
-                    List.of(new Document("$ifNull", List.of("$" + DocumentKeys.F_LAST_SLOT, BEFORE_ANY_SLOT)), slot)));
-            set.append(DocumentKeys.F_LAST_SLOT, slot);
+            set.append(DocumentKeys.F_LAST_SLOT, ifGranted(granted, slot, DocumentKeys.F_LAST_SLOT));
         }
-        final Document filter = new Document(DocumentKeys.F_ID, taskId.value()).append("$expr",
-                new Document("$and", conditions));
+        final Document filter = new Document(DocumentKeys.F_ID, taskId.value());
+        final List<Document> update = List.of(new Document("$set", set));
+        final FindOneAndUpdateOptions options = new FindOneAndUpdateOptions().upsert(true)
+                .returnDocument(ReturnDocument.AFTER);
         try {
-            return collection.findOneAndUpdate(filter, List.of(new Document("$set", set))) != null;
+            try {
+                return collection.findOneAndUpdate(filter, update, options);
+            } catch (MongoException e) {
+                if (ErrorCategory.fromErrorCode(e.getCode()) != ErrorCategory.DUPLICATE_KEY) {
+                    throw e;
+                }
+                // Two first fires raced on the upsert's insert. The document exists now, so this cannot insert again.
+                return collection.findOneAndUpdate(filter, update, options);
+            }
         } catch (MongoException e) {
             throw new SchedulingException("Mongo error claiming the guard of task '" + taskId + "'", e);
         }
     }
 
-    private boolean claimAbsent(ScheduledTaskId taskId, String holderId, Date slot) {
-        final Date expiresAt = new Date(clock.millis() + lease.toMillis());
-        final Document fresh = new Document(DocumentKeys.F_ID, taskId.value())
-                .append(DocumentKeys.F_HOLDER_ID, holderId).append(DocumentKeys.F_LEASE_EXPIRES_AT, expiresAt);
-        if (slot != null) {
-            fresh.append(DocumentKeys.F_LAST_SLOT, slot);
-        }
+    /** A field keeps its value (or stays absent, for a document being inserted) unless the fire is granted. */
+    private static Document ifGranted(Document granted, Object value, String field) {
+        return new Document("$cond", List.of(granted, value, "$" + field));
+    }
+
+    private Document furthestAllowedSlot() {
+        return new Document("$add", List.of("$$NOW", maxSkew.toMillis()));
+    }
+
+    /**
+     * Tells a refusal caused by a clock from an ordinary one, which is what the extra read on this path is for. Nothing
+     * about the refusal depends on it, so its own failure is only logged.
+     */
+    private void warnIfAheadOfServer(ScheduledTaskId taskId, Date slot) {
+        final Document project = new Document(DocumentKeys.F_LAST_SLOT, 1)
+                .append(SLOT_AHEAD, new Document("$gt", List.of(slot, furthestAllowedSlot()))).append(LAST_SLOT_AHEAD,
+                        new Document("$gt", List.of("$" + DocumentKeys.F_LAST_SLOT, furthestAllowedSlot())));
+        final List<Document> pipeline = List.of(new Document("$match", new Document(DocumentKeys.F_ID, taskId.value())),
+                new Document("$project", project));
         try {
-            collection.insertOne(fresh);
-            return true;
-        } catch (MongoWriteException e) {
-            if (e.getError().getCategory() == ErrorCategory.DUPLICATE_KEY) {
-                return false;
+            final Document found = collection.aggregate(pipeline).first();
+            if (found == null) {
+                return;
             }
-            throw new SchedulingException("Mongo error creating the guard of task '" + taskId + "'", e);
-        } catch (MongoException e) {
-            throw new SchedulingException("Mongo error creating the guard of task '" + taskId + "'", e);
+            if (found.getBoolean(SLOT_AHEAD, false)) {
+                log.warn("Refused the fire of task '{}': its slot {} is more than {} ahead of the server's clock."
+                        + " Nothing was recorded. Check this node's clock.", taskId, slot.toInstant(), maxSkew);
+            }
+            if (found.getBoolean(LAST_SLOT_AHEAD, false)) {
+                log.warn("Refused the fire of task '{}': the recorded last slot {} is more than {} ahead of the"
+                        + " server's clock, so every fire is refused until the clock reaches it. Deleting the task's"
+                        + " document in '{}' ends that, and forgets which occurrences ran: a late fire of a recent one"
+                        + " could run again.", taskId, found.getDate(DocumentKeys.F_LAST_SLOT).toInstant(), maxSkew,
+                        collectionName);
+            }
+        } catch (RuntimeException e) {
+            log.debug("Could not tell why the fire of task '{}' was refused: {}", taskId, e.toString());
         }
     }
 
@@ -358,8 +443,8 @@ public final class MongoScheduledExecutionGuard implements ScheduledExecutionGua
                         // close() stops this beat before it clears the holder, so a renewal that matched nothing after
                         // being stopped ran into its own release: nothing was lost.
                         if (stop.getCount() > 0) {
-                            log.warn("Lost the lease on task '{}': another node holds it, so its run may overlap this"
-                                    + " one, which keeps going", taskId);
+                            log.warn("Lost the lease on task '{}': it is no longer ours, so another run may overlap"
+                                    + " this one, which keeps going", taskId);
                         }
                         return;
                     }

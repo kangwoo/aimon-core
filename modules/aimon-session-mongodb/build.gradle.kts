@@ -30,7 +30,7 @@ dependencies {
     testImplementation(libs.testcontainers)
     testImplementation(libs.testcontainers.mongodb)
     testImplementation(libs.testcontainers.junit.jupiter)
-    testRuntimeOnly(libs.logback.classic)
+    testImplementation(libs.logback.classic)
 }
 
 // Checkstyle baseline: locks the existing warning count so new violations fail the build.
