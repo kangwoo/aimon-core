@@ -97,6 +97,19 @@ class MongoSchemaFreezeTest {
     }
 
     @Test
+    @DisplayName("the execution guard's field names are still the deployed ones")
+    void executionGuardFieldsAreFrozen() {
+        // Not a Java-only detail. The guard reads lastSlot and leaseExpiresAt through $ifNull, so a rename does not
+        // fail:
+        // it makes every stored slot and lease look absent, and mid-deploy an occurrence runs twice or two runs
+        // overlap.
+        // Renewal and release match on holderId, so a rename also strands the lease a node already holds.
+        assertThat(DocumentKeys.F_LAST_SLOT).isEqualTo("lastSlot");
+        assertThat(DocumentKeys.F_LEASE_EXPIRES_AT).isEqualTo("leaseExpiresAt");
+        assertThat(DocumentKeys.F_HOLDER_ID).isEqualTo("holderId");
+    }
+
+    @Test
     @DisplayName("init.js still provisions those same collections")
     void collectionNamesAreFrozenInDdl() {
         assertThat(script).contains("ensureCollection(\"conversation_locks\")");

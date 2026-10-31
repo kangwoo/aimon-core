@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/scheduling/quartz-scheduling-web-deployment-guide.md
-source_commit: e367e18c
+source_commit: e464d67e
 ---
 
 # Quartz Scheduling — Deployment Guide for a Web-Based Agent System
@@ -279,7 +279,8 @@ An occurrence runs **at most once**: if the node that began it dies, that occurr
 schedulers, set `ScheduledTask.timezone` or run every node in the same time zone: a task without a zone computes its slot
 in the JVM's zone, so on nodes in different zones the same occurrence runs once per zone. A fire from a node whose clock
 is more than `maxSkew` (5 minutes by default) ahead of the server is refused without being recorded and leaves a WARN from
-the guard; other nodes carry on. The driver has no socket timeout by default, so a call to a stalled server keeps blocking:
+the guard. On per-node schedulers another node runs that occurrence, but on a scheduler where one occurrence fires on one
+node only, such as a Quartz cluster, an occurrence whose trigger that node takes is lost and the WARN is all that is left. The driver has no socket timeout by default, so a call to a stalled server keeps blocking:
 set `socketTimeoutMS` well below the lease (30 seconds by default).
 
 `interruptBus` points the other way — it is where something already running is **stopped**. `RoutineExecutor`'s in-flight registry is node-local, so without a bus `cancel` only cuts the runs held by the node the cancellation was entered on. In a cluster that node is usually not the one the cron fired on, and the run over there then works through its remaining steps on behalf of a task that has just been deleted. With the starter, a single `ScheduledTaskInterruptBus` bean wires it (`SchedulingSpec.withInterruptBus`); what the core ships reaches one node (`LOCAL_ONLY`) and one JVM (`InMemoryScheduledTaskInterruptBus`). For the cluster-wide one, a deployment on MongoDB passes `MongoScheduledTaskInterruptBus` from `aimon-session-mongodb` (it needs the capped collection `scheduled_task_interrupts` that `init.js` creates, and a replica set); on any other store the application writes it. The design note is [`interrupt.md` §12.7](../../design/agent-execution/interrupt.md).

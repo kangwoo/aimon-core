@@ -82,11 +82,11 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  * clock ran a day fast would refuse every node's fires for a day, even once that clock was fixed. So a slot further
  * ahead
  * of the server than {@code maxSkew} ({@link #DEFAULT_MAX_SKEW} unless configured) is refused and recorded nowhere.
- * That
- * node's fires of the task are all refused, other nodes' fires still run, and a WARN names the cause. The manager's own
- * log says only that the guard refused, as it does for a normal duplicate. Finding the cause takes one more read, on
- * the
- * refusal path only.
+ * That node's fires of the task are all refused and a WARN names the cause. What happens to the occurrence depends on
+ * the scheduler. With per-node triggers, the other nodes' fires still run it. With a cluster-wide scheduler, one
+ * occurrence fires on one node only, so if the node with the fast clock takes the trigger, that occurrence is lost and
+ * the WARN is all that is left of it. The manager's own log says only that the guard refused, as it does for a normal
+ * duplicate. Finding the cause takes one more read, on the refusal path only.
  *
  * <p>
  * A document that already holds a {@code lastSlot} past the bound is <b>not repaired</b>. Under this check nothing
@@ -236,10 +236,12 @@ public final class MongoScheduledExecutionGuard implements ScheduledExecutionGua
      * @param nodeId
      *            this node's id, used to name lease holders for operators (must not be null)
      * @param lease
-     *            how long a lease lasts without a renewal (must be positive). Renewed every third of this, so keep it
+     *            how long a lease lasts without a renewal (must be at least 1ms). Renewed every third of this, so keep
+     *            it
      *            well above how long a primary election takes, or a failover lets the next occurrence overlap the run
      * @param maxSkew
-     *            how far ahead of the server a fire's slot may be (must be positive). Refused beyond it. Slots sit on a
+     *            how far ahead of the server a fire's slot may be (must be at least 1ms). Refused beyond it. Slots sit
+     *            on a
      *            cron grid point at or before their node's clock, so this bounds how fast a clock may run; a value
      *            below
      *            the clock error between nodes and server refuses good fires
@@ -251,12 +253,13 @@ public final class MongoScheduledExecutionGuard implements ScheduledExecutionGua
                 .getCollection(Objects.requireNonNull(collectionName, "collectionName must not be null"));
         this.nodeId = Objects.requireNonNull(nodeId, "nodeId must not be null");
         this.lease = Objects.requireNonNull(lease, "lease must not be null");
-        if (lease.isZero() || lease.isNegative()) {
-            throw new IllegalArgumentException("lease must be positive: " + lease);
+        // In milliseconds, the unit that reaches the server: anything shorter would be stamped as no lease at all.
+        if (lease.toMillis() < 1L) {
+            throw new IllegalArgumentException("lease must be at least 1ms: " + lease);
         }
         this.maxSkew = Objects.requireNonNull(maxSkew, "maxSkew must not be null");
-        if (maxSkew.isZero() || maxSkew.isNegative()) {
-            throw new IllegalArgumentException("maxSkew must be positive: " + maxSkew);
+        if (maxSkew.toMillis() < 1L) {
+            throw new IllegalArgumentException("maxSkew must be at least 1ms: " + maxSkew);
         }
         this.collectionName = collectionName;
     }

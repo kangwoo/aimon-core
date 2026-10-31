@@ -273,7 +273,8 @@ MongoDB 를 쓰면 `aimon-session-mongodb` 의 `MongoScheduledExecutionGuard` �
 회차는 **최대 한 번** 돈다 — 실행을 시작한 노드가 죽으면 그 회차는 다시 돌지 않는다. 노드별 스케줄러로 돌린다면
 `ScheduledTask.timezone` 을 지정하거나 모든 노드를 같은 시간대로 맞춘다 — 존이 없는 작업은 JVM 존으로 slot 을 계산하므로,
 시간대가 다른 노드에서는 같은 회차가 시간대마다 한 번씩 돈다. 시계가 서버보다 `maxSkew`(기본 5분) 넘게 앞선 노드의 발화는 기록 없이
-거부되고 guard 의 WARN 으로 남는다 — 다른 노드는 그대로 돈다. 드라이버 기본값은 소켓 타임아웃이 없어 멈춘 서버에 호출이 계속 막히므로,
+거부되고 guard 의 WARN 으로 남는다. 노드별 스케줄러에서는 다른 노드가 그 회차를 돌리지만, Quartz 클러스터처럼 한 회차가 한 노드에서만
+발화하는 스케줄러에서는 그 노드가 trigger 를 잡은 회차가 사라지고 WARN 만 남는다. 드라이버 기본값은 소켓 타임아웃이 없어 멈춘 서버에 호출이 계속 막히므로,
 `socketTimeoutMS` 를 리스(기본 30초)보다 충분히 짧게 둔다.
 
 `interruptBus`는 반대 방향 — 이미 돌고 있는 것을 **멈추는** 자리다. `RoutineExecutor` 의 in-flight 레지스트리는
