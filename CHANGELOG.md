@@ -7,6 +7,19 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: scheduled execution history says when a run's outcome is unknown
+
+`ScheduledTaskExecutionHistory.isOutcomeUnknown()` (new; builder `outcomeUnknown(boolean)`, default `false`) is true when
+any step of the run reports `StepResult.isOutcomeUnknown()` — its last attempt timed out, so the tool may have done its
+work after all. An operations screen no longer has to parse `errorMessage` to tell such a failure from one the tool
+reported. Design: `docs/design/scheduling/llm-scheduling-agent.md` §5.4.
+
+- **Migration notes** — the in-memory repository needs no change. An external durable
+  `ScheduledTaskExecutionHistoryRepository` must store and read the new field, or every run reads back as known. Rows
+  written before the upgrade have no value; read them as `false`, which is what they would have said had anyone asked:
+  it does not mean they were not timeouts. `AbstractScheduledTaskExecutionHistoryRepositoryContractTest`'s round trip now
+  checks the field.
+
 ### Fixed: a scheduled task's timezone is honoured
 
 `ScheduledTask.timezone` was stored and advertised by `schedule_task`, but never reached a scheduler: every task fired

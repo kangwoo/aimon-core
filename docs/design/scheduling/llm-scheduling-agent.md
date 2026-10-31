@@ -268,7 +268,7 @@ Quartz 의 두 일자 필드 중 하나는 반드시 `?` 이므로 반쪽씩은 
 | `RoutineStep` | `id`(선택) · `tool` · `toolParams`(JSON 문자열) · `maxRetries`(기본 3) · `retryDelay`(기본 5초) · `timeout`(기본 5분) | `of(tool, params)` / `withRetry(...)` 편의 팩토리 |
 | `StepResult` | `stepIndex` · `step` · `success` · `stdout` · `errorMessage` · `attemptCount` · `haltReason` · `outcomeUnknown` · 시작·완료 시각 | `getDuration()` · `isHalted()` · `isOutcomeUnknown()` |
 | `RoutineResult` | `taskId` · `success` · `stepResults` · `errorMessage` · `interruptReason` · `haltReason` · 시작·완료 시각 | `getCompletedStepCount()` / `getTotalStepCount()` · `isCancelled()` · `isHalted()` |
-| `ScheduledTaskExecutionHistory` | 위를 이력으로 접은 것 — `status` · `completedSteps` · `totalSteps` | `fromRoutineResult(id, result)` |
+| `ScheduledTaskExecutionHistory` | 위를 이력으로 접은 것 — `status` · `completedSteps` · `totalSteps` · `outcomeUnknown` | `fromRoutineResult(id, result)` · `isOutcomeUnknown()` |
 
 `ScheduledTaskId` 는 UUID 기반 **`final class`** 다(`record` 아님 — 프로젝트 불변성 규약).
 모든 값 객체가 빌더 + `Objects.requireNonNull` 이고, `ScheduledTask` 의 상태 변경은
@@ -355,7 +355,8 @@ routine 작성자가 매번 판단할 일이 아니므로 step 설정보다 선�
 멱등 도구라도 재시도하지 않는다. 쿼터에 막힌 시도도 재시도하지 않는다(§3.5).
 
 마지막 시도가 timeout 으로 끝난 단계는 `StepResult.isOutcomeUnknown()` 이 참이다. 실패로 기록되지만 "아무 일도
-일어나지 않았다" 는 뜻은 아니다.
+일어나지 않았다" 는 뜻은 아니다. 이력에는 `ScheduledTaskExecutionHistory.isOutcomeUnknown()` 으로 남는다 — 단계 가운데
+하나라도 그러면 참이므로, 운영 화면이 `errorMessage` 문구를 파싱하지 않아도 사람이 확인해야 할 실패를 가려낼 수 있다.
 
 `schedule_task` 스키마가 광고하는 `max_retries` 기본값은 실제 기본값(`RoutineStep.DEFAULT_MAX_RETRIES` = 3)과
 같다. 한때 스키마는 `0` 이라고 적고 실행기는 `3` 을 썼다.

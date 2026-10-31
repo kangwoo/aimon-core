@@ -20,6 +20,7 @@ public final class ScheduledTaskExecutionHistory {
     private final int completedSteps;
     private final int totalSteps;
     private final String errorMessage;
+    private final boolean outcomeUnknown;
     private final Instant startedAt;
     private final Instant completedAt;
 
@@ -30,6 +31,7 @@ public final class ScheduledTaskExecutionHistory {
         completedSteps = builder.completedSteps;
         totalSteps = builder.totalSteps;
         errorMessage = builder.errorMessage;
+        outcomeUnknown = builder.outcomeUnknown;
         startedAt = Objects.requireNonNull(builder.startedAt, "Started at cannot be null");
         completedAt = Objects.requireNonNull(builder.completedAt, "Completed at cannot be null");
     }
@@ -60,6 +62,7 @@ public final class ScheduledTaskExecutionHistory {
         return builder().id(historyId).taskId(result.getTaskId()).status(status)
                 .completedSteps(result.getCompletedStepCount()).totalSteps(result.getTotalStepCount())
                 .errorMessage(result.getErrorMessage().or(result::getHaltReason).orElse(null))
+                .outcomeUnknown(result.getStepResults().stream().anyMatch(StepResult::isOutcomeUnknown))
                 .startedAt(result.getStartedAt()).completedAt(result.getCompletedAt()).build();
     }
 
@@ -90,6 +93,18 @@ public final class ScheduledTaskExecutionHistory {
 
     public Optional<String> getErrorMessage() {
         return Optional.ofNullable(errorMessage);
+    }
+
+    /**
+     * Whether a step of this run ended with its effect unknown ({@link StepResult#isOutcomeUnknown()}): its last
+     * attempt
+     * timed out, so the tool may have done its work after all. The run is still recorded as failed; this says that
+     * "failed" does not prove nothing happened.
+     *
+     * @return {@code true} if a step's effect is unknown
+     */
+    public boolean isOutcomeUnknown() {
+        return outcomeUnknown;
     }
 
     public Instant getStartedAt() {
@@ -128,7 +143,8 @@ public final class ScheduledTaskExecutionHistory {
     @Override
     public String toString() {
         return "ScheduledTaskExecutionHistory{id='" + id + "', taskId='" + taskId + "', status=" + status + ", steps="
-                + completedSteps + '/' + totalSteps + ", duration=" + getDuration() + '}';
+                + completedSteps + '/' + totalSteps + ", duration=" + getDuration()
+                + (outcomeUnknown ? ", outcomeUnknown=true" : "") + '}';
     }
 
     /**
@@ -162,6 +178,7 @@ public final class ScheduledTaskExecutionHistory {
         private int completedSteps;
         private int totalSteps;
         private String errorMessage;
+        private boolean outcomeUnknown;
         private Instant startedAt;
         private Instant completedAt;
 
@@ -201,6 +218,18 @@ public final class ScheduledTaskExecutionHistory {
         /** 에러 메시지를 설정한다. */
         public Builder errorMessage(String errorMessage) {
             this.errorMessage = errorMessage;
+            return this;
+        }
+
+        /**
+         * 단계의 결과를 알 수 없는 실행인지 설정한다.
+         *
+         * @param outcomeUnknown
+         *            단계의 결과를 알 수 없으면 {@code true} (기본값 {@code false})
+         * @return this builder
+         */
+        public Builder outcomeUnknown(boolean outcomeUnknown) {
+            this.outcomeUnknown = outcomeUnknown;
             return this;
         }
 
