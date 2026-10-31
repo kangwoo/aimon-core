@@ -39,8 +39,17 @@ import at.aimon.core.scheduling.scheduler.ScheduledFire;
  * <p>
  * Following the project's multi-instance design rule, the guard is an interface with an in-memory default
  * ({@link InMemoryScheduledExecutionGuard}); swapping to a clustered strategy is an implementation change, not a
- * refactor. (For production clustered scheduling the {@code aimon-scheduling-quartz} module provides trigger-level
- * dedup natively; this seam is the core-level defense-in-depth and injection point.)
+ * refactor. {@code MongoScheduledExecutionGuard} in {@code aimon-session-mongodb} is the distributed implementation
+ * that ships, and it dedups occurrences. (The {@code aimon-scheduling-quartz} module also provides trigger-level dedup
+ * natively; there this seam is the core-level defense-in-depth.)
+ *
+ * <h2>Failure</h2>
+ *
+ * <p>
+ * A guard backed by a store can fail. {@code tryBegin} may throw a {@link RuntimeException}, and
+ * {@link ScheduledTaskManager} treats that as a refusal: running a fire unguarded risks the duplicate the guard exists
+ * to stop, while skipping costs one occurrence. {@link ExecutionLease#close()} should not throw; the manager logs it if
+ * it does.
  */
 public interface ScheduledExecutionGuard {
 

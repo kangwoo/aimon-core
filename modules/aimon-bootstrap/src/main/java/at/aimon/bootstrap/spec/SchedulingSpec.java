@@ -282,6 +282,8 @@ public final class SchedulingSpec {
      * The engine's default prevents a task from overlapping itself on this node only, so in a cluster several nodes'
      * schedulers can fire the same task at the same cron time. A guard backed by a shared lock or lease store grants
      * the fire to exactly one of them — the core-level line of defence behind whatever the scheduler backend does.
+     * {@code MongoScheduledExecutionGuard} in {@code aimon-session-mongodb} is one, or an application's own. The caller
+     * owns it and closes it after the stack.
      *
      * <p>
      * Here for the same reason as {@link #withTaskRepository(ScheduledTaskRepository)} and

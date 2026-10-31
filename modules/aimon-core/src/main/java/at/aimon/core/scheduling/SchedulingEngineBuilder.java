@@ -183,7 +183,9 @@ public final class SchedulingEngineBuilder {
      * <p>
      * If not set, an {@link InMemoryScheduledExecutionGuard} is used: it prevents a task from overlapping itself
      * <em>on this node only</em>. In a scale-out deployment where several nodes schedule the same tasks, pass a
-     * distributed guard (one backed by a shared lock/lease store) so a cron time fires the task on exactly one node.
+     * distributed guard (one backed by a shared lock/lease store, such as {@code MongoScheduledExecutionGuard} in
+     * {@code aimon-session-mongodb}) so a cron time fires the task on exactly one node. The engine does not own a guard
+     * and does not close it.
      * </p>
      *
      * @param guard

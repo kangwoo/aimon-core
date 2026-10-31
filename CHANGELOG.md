@@ -7,6 +7,27 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: a distributed scheduled execution guard on MongoDB
+
+`MongoScheduledExecutionGuard` (new, `aimon-session-mongodb`) is the first `ScheduledExecutionGuard` that sees other
+nodes: of all the nodes firing a task, one runs each occurrence, and runs do not overlap. Supplying it to
+`SchedulingEngineBuilder.executionGuard(...)` on `multiNode(true)` with a per-node scheduler also turns on the periodic
+`reconcile()`. One document per task in the new `scheduled_execution_guards` collection, holding the lease and the last
+slot that began. Slots are compared by size, so an older misfire is refused too. Design:
+`docs/design/scheduling/llm-scheduling-agent.md` §6.5.
+
+- **At most once.** The slot is recorded when the run begins, so an occurrence whose node dies is not run again. A Mongo
+  failure in `tryBegin` skips the fire; `ScheduledTaskManager` already treated a guard exception that way, and that is
+  now in the SPI's javadoc and pinned by a test.
+- **Lease** — 30 seconds by default, renewed by a heartbeat thread per lease, so a dead node holds its tasks for one
+  lease at most while a long run keeps its own. A run that loses its lease (cut off for longer than one) is logged but
+  not stopped: the SPI has no way to.
+- **Lifecycle** — application-scoped and owned by the host: close the engine, then the guard, then the `MongoClient`.
+- **Migration notes** — new collection: re-run `db/mongodb/init.js`, or let the first write create it. **Do not add a
+  TTL index to it**: a lost document forgets the slot, and a late fire of that occurrence runs again. Nothing changes
+  unless you pass the guard. Nodes' clocks must be synchronized, since a slot recorded far in the future refuses that
+  task's fires until real time reaches it.
+
 ### Added: scheduled execution history says when a run's outcome is unknown
 
 `ScheduledTaskExecutionHistory.isOutcomeUnknown()` (new; builder `outcomeUnknown(boolean)`, default `false`) is true when

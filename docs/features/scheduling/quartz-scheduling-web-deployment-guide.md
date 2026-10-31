@@ -268,6 +268,9 @@ QuartzTaskSchedulerBuilder.create()
 돈다. 구현은 `aimon-scheduling-testkit` 의 `AbstractScheduledExecutionGuardContractTest` 를 `dedupsOccurrences() == true`
 로 통과해야 한다. 설계는 [스케줄 실행 설계](../../design/scheduling/llm-scheduling-agent.md) §6.1.
 
+MongoDB 를 쓰면 `aimon-session-mongodb` 의 `MongoScheduledExecutionGuard` 를 그대로 넘기면 된다. 설계는 같은 문서의 §6.5.
+회차는 **최대 한 번** 돈다 — 실행을 시작한 노드가 죽으면 그 회차는 다시 돌지 않는다.
+
 `interruptBus`는 반대 방향 — 이미 돌고 있는 것을 **멈추는** 자리다. `RoutineExecutor` 의 in-flight 레지스트리는
 노드 로컬이므로, 버스가 없으면 `cancel` 은 취소를 입력한 노드의 실행만 끊는다. 클러스터에서 그 노드는 대개 cron 이
 발화한 노드가 아니고, 그러면 저쪽 실행은 방금 삭제된 태스크를 위해 남은 스텝을 끝까지 돌린다. 스타터를 쓰면

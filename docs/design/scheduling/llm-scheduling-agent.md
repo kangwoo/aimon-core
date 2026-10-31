@@ -423,7 +423,10 @@ try (ExecutionLease held = lease.get()) { ... }
 기본 구현 `InMemoryScheduledExecutionGuard` 는 `ConcurrentHashMap.newKeySet()` 위의 원자적
 check-and-claim 이며 **노드 로컬**이다 — 겹침은 막고 멀티 노드 중복은 막지 못한다. 프로젝트의 멀티
 인스턴스 설계 규칙대로 인터페이스 + 인메모리 기본값이므로, 공유 락/리스 저장소 기반 구현을 주입하면
-리팩터링 없이 클러스터로 넘어간다.
+리팩터링 없이 클러스터로 넘어간다. 그 구현이 `aimon-session-mongodb` 의 `MongoScheduledExecutionGuard` 다(§6.5).
+
+guard 저장소가 장애를 내면 **건너뛴다.** `tryBegin` 이 던지는 `RuntimeException` 은 `ScheduledTaskManager.executeFire`
+가 잡아 거부로 다룬다 — 보호 없이 실행하면 guard 가 막으려던 중복을 낼 수 있고, 건너뛰면 잃는 것은 회차 하나다.
 
 `ScheduledExecutionGuard.ALLOW_ALL` 은 모든 요청을 허용하는 상수다 — 심이 생기기 전의 동작을 명시적으로
 원하는 호출자를 위한 것이지 기본값이 아니다.
@@ -517,6 +520,53 @@ routine 단계에는 hook 이 적용되지 않으므로(§5.2) 예약된 실행�
 
 정책이 예외를 던지거나 null 을 돌려주면 **거부**로 다룬다. 예약된 실행에는 이것 말고 다른 방어선이 없으므로 고장 난
 정책이 요청을 통과시키면 안 된다.
+
+### 6.5 분산 구현 — `MongoScheduledExecutionGuard`
+
+task 하나에 문서 하나로 겹침과 늦은 중복을 함께 막는다. 컬렉션은 `scheduled_execution_guards` 다.
+
+```
+{ _id: <taskId>, holderId, leaseExpiresAt, lastSlot }
+```
+
+**획득.** `MongoSessionLeaseStore` 와 같은 두 단계다 — MongoDB 는 upsert 필터의 `$expr` · `$$NOW` 를 거부한다.
+
+1. upsert 없는 `findOneAndUpdate`: 리스가 만료됐고 **`lastSlot` 이 이번 slot 보다 작을 때만** 잡는다. 조건과 쓰기가
+   서버에서 한 연산이므로 거부된 발화는 아무것도 바꾸지 않는다. 시각은 서버의 `$$NOW` 다.
+2. 매치가 없으면 문서가 없거나 거부된 것이다. `insertOne` 이 추가 읽기 없이 둘을 가른다 — 중복 키면 문서가 있었다는
+   뜻이므로 거부다.
+
+| 발화 | 리스 검사 | `lastSlot` 검사 | `lastSlot` 쓰기 |
+|------|----------|----------------|----------------|
+| slot 있음 | 함 | 크기 비교 — 같거나 오래되면 거부 | 이번 slot 으로 |
+| slot 없음, `tryBegin(taskId)` | 함 | 안 함 | 안 함 |
+
+slot 없는 발화가 만든 문서에는 `lastSlot` 이 없고, 다음 slot 발화는 이것을 어떤 slot 보다도 오래된 값으로 본다(`$ifNull`).
+크기 비교이므로 더 오래된 misfire 도 거부되고 `lastSlot` 은 뒤로 가지 않는다. 대신 slot 은 각 노드의 시계에서 오므로 시계가
+크게 앞선 노드가 먼 미래의 slot 을 기록하면, 그 시각이 올 때까지 그 작업의 발화가 모두 거부된다.
+
+**최대 한 번(at-most-once).** slot 은 실행이 **시작할 때** 기록한다. 그 뒤에 노드가 죽으면 그 회차는 어느 노드에서도 다시
+돌지 않는다. Mongo 장애로 `tryBegin` 이 던져도 그 발화는 건너뛴다(§6). 의도된 동작이다(D15).
+
+**heartbeat.** `ExecutionLease` 에는 갱신 수단이 없고 실행 길이에는 상한이 없다. 그래서 guard 가 리스마다 데몬 스레드를 하나
+띄워 리스 길이의 3분의 1마다(기본 리스 30초) `leaseExpiresAt` 을 갱신하고, 리스를 닫으면 스레드도 끝난다. 고정된 긴 리스를
+쓰면 죽은 노드가 그만큼 작업을 붙들고 있으므로 쓰지 않는다. 스레드를 리스마다 두는 이유는 서버가 아플 때 갱신이 드라이버
+타임아웃만큼 막힐 수 있어서다 — 한 작업의 갱신이 다른 작업의 갱신을 늦추면 안 된다.
+
+| 갱신 결과 | 처리 |
+|----------|------|
+| 실패 (예외) | 로그를 남기고 다음 주기에 다시 시도한다. 리스가 끊기기 전에 두 번 놓칠 수 있다 |
+| 다른 holder 가 쥐고 있음 | 로그를 남기고 heartbeat 를 멈춘다. **실행은 계속된다** — SPI 에 멈출 길이 없으므로, 리스보다 긴 단절은 실행 둘을 겹치게 할 수 있다 |
+
+**해제.** 자기 holder 일 때만 `holderId` 를 비우고 `leaseExpiresAt` 을 `$$NOW` 로 찍는다. 문서와 `lastSlot` 은 남긴다. holder id
+는 리스마다 고유하다(`<nodeId>/<uuid>`) — 노드 id 만 쓰면 끊긴 옛 리스가 같은 노드의 새 리스를 풀어 버린다. 홀더를 비우므로
+해제 시점에 이미 날아간 갱신도 매치되지 않아 풀린 리스를 다시 늘리지 못한다. 해제 실패는 로그만 남긴다(리스는 자연
+만료된다). **이 컬렉션에 TTL 인덱스를 두지 않는다** — 문서가 사라지면 `lastSlot` 이 사라져 늦은 중복을 막지 못한다.
+
+**수명.** application-scoped 이고 만든 쪽이 소유한다 — `SchedulingEngine` 도 `AgentRuntime` 도 닫지 않는다. 엔진, guard,
+`MongoClient` 순서로 닫는다. `close()` 는 열린 리스의 heartbeat 를 멈추고 이후 발화를 거부하지만 **리스를 풀지는 않는다** — 그
+실행이 아직 돌 수 있으므로 자연 만료에 맡긴다. 스타터에서는 빈으로 내놓으면 Spring 이 닫고, bootstrap 은
+`SchedulingSpec.withExecutionGuard` 로 받되 닫지 않는다.
 
 ---
 
@@ -618,6 +668,7 @@ executor 를 만들어야 하므로 **아직 아무도 채우지 않은 가변 �
 | D12 | **어떤 단계를 재시도하는가** | 도구가 반복해도 안전하다고 선언한 것만. 기본값이 `NON_IDEMPOTENT` 이므로 미선언 쓰기 도구는 한 번만 돈다 — step 의 `maxRetries` 보다 선언이 우선한다(§5.4) |
 | D13 | **승인 대기를 어떻게 표현하는가** | 실패도 성공도 아닌 `halted`. 재시도하면 요청이 쌓이고, 진행하면 빈 결과로 돈다(§5.2) |
 | D14 | **예약 규칙을 어디서 두는가** | 도구를 래퍼로 바꾸지 않고 `ScheduledTaskPolicy` 로. 단계에 hook 이 없으므로 예약 시점이 유일한 자리이고, 래퍼는 base 도구가 바뀔 때마다 따라 고쳐야 한다(§6.4) |
+| D15 | **분산 guard 의 회차 의미** | 최대 한 번. slot 은 실행이 **시작할 때** 기록하므로 노드가 죽은 회차는 다시 돌지 않는다. routine 은 쓰기를 할 수 있어서, 어디까지 됐는지 모르는 작업을 반복하는 쪽이 한 회차를 놓치는 쪽보다 나쁘다(§6.5) |
 
 ---
 
@@ -628,7 +679,7 @@ executor 를 만들어야 하므로 **아직 아무도 채우지 않은 가변 �
 | 항목 | 현재 | 필요한 것 |
 |------|------|----------|
 | **작업 정의 영속화** | 코어의 `ScheduledTaskRepository` 구현은 인메모리 하나이고, 영속 구현은 `aimon-session-mongodb` 의 `MongoScheduledTaskRepository` 하나다. **기동 시 재등록**은 있다 — `SchedulingEngine.start()` 가 저장된 활성 작업 가운데 스케줄러가 쥐고 있지 않은 것을 다시 건다(`ScheduledTaskManager.rehydrate`). 여러 노드 가운데 하나이고 스케줄러의 트리거가 노드별이면 걸지 않는다(`SchedulingEngineBuilder.multiNode`). 쿼터는 장부 없이 저장소에서 센다(`StoredTaskQuotaManager`). 실행 이력 저장소는 여전히 인메모리뿐이다 | RDB 백엔드, 실행 이력의 영속 구현 |
-| **분산 `ScheduledExecutionGuard`** | 인메모리 구현뿐 (노드 로컬). SPI 는 slot 을 받는다(§6.1) | 공유 락/리스 저장소 기반 구현. `aimon-scheduling-testkit` 의 `AbstractScheduledExecutionGuardContractTest` 를 `dedupsOccurrences() == true` 로 통과해야 한다 |
+| **Mongo 밖의 분산 `ScheduledExecutionGuard`** | `MongoScheduledExecutionGuard` 뿐(§6.5). 다른 백엔드는 인메모리 구현(노드 로컬)만 있다 | Postgres · Redis 구현. `aimon-scheduling-testkit` 의 `AbstractScheduledExecutionGuardContractTest` 를 `dedupsOccurrences() == true` 로 통과해야 한다 |
 | **작업 변경 이벤트 버스** | 없음 — 노드 간 수렴은 주기 `reconcile()`(§6.2)로만 | register · cancel · enable 을 노드 간에 fan-out 하는 SPI. 놓친 이벤트 때문에 reconcile 은 그대로 둔다 |
 | **작업 수정 API** | 없음 — 취소 후 재등록 | 부분 수정이 정말 필요한지부터. cron 만 바꾸는 것과 routine 을 바꾸는 것은 다른 작업에 가깝다 |
 | **조건부 · 병렬 step** | routine 은 무조건 순차, 실패 시 즉시 중단 | `skipIf` 나 병렬 그룹. 실패 처리 의미를 먼저 정해야 한다 — 병렬 그룹에서 하나가 실패하면 무엇이 `PARTIAL` 인가 |
@@ -656,6 +707,7 @@ executor 를 만들어야 하므로 **아직 아무도 채우지 않은 가변 �
 | `at/aimon/core/scheduling/RoutineExecutor.java` | 툴 컨텍스트 구성(§3.2)·드리프트 로깅(§3.4)·순차 실행·재시도·타임아웃 |
 | `at/aimon/core/scheduling/ScheduledExecutionGuard.java` | 멱등성 심의 계약과 `ALLOW_ALL` (§6) |
 | `at/aimon/core/scheduling/scheduler/ScheduledFire.java` | 발화의 slot 과 접는 방향 (§6.1) |
+| `modules/aimon-session-mongodb/.../MongoScheduledExecutionGuard.java` | 분산 guard — 원자 획득, heartbeat, 해제, 수명 (§6.5) |
 | `at/aimon/core/scheduling/ScheduledTaskPolicy.java`, `UnresolvableRuntimePolicy.java` | 호스트 정책과 발화 시점 미해석 정책 (§6.3, §6.4) |
 | `modules/aimon-scheduling-testkit/` | 저장소 · 이력 저장소 · guard · 인터럽트 버스의 계약 테스트 (배포 대상) |
 | `at/aimon/core/scheduling/SchedulingEngineBuilder.java` | 기본값 표(§7.2)와 순환 의존을 끊는 실제 코드 |

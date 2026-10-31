@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/scheduling/quartz-scheduling-web-deployment-guide.md
-source_commit: e8df5f74
+source_commit: 1ad5a060
 ---
 
 # Quartz Scheduling — Deployment Guide for a Web-Based Agent System
@@ -272,6 +272,9 @@ the task id. Keyed on the task id it only prevents overlap: once node A's run fi
 late fire of the same occurrence runs again. An implementation should pass `aimon-scheduling-testkit`'s
 `AbstractScheduledExecutionGuardContractTest` with `dedupsOccurrences() == true`. The design is
 [scheduled execution](../../design/scheduling/llm-scheduling-agent.md) §6.1.
+
+On MongoDB, pass `MongoScheduledExecutionGuard` from `aimon-session-mongodb` as it is. The design is §6.5 of the same document.
+An occurrence runs **at most once**: if the node that began it dies, that occurrence does not run again.
 
 `interruptBus` points the other way — it is where something already running is **stopped**. `RoutineExecutor`'s in-flight registry is node-local, so without a bus `cancel` only cuts the runs held by the node the cancellation was entered on. In a cluster that node is usually not the one the cron fired on, and the run over there then works through its remaining steps on behalf of a task that has just been deleted. With the starter, a single `ScheduledTaskInterruptBus` bean wires it (`SchedulingSpec.withInterruptBus`); what the core ships reaches one node (`LOCAL_ONLY`) and one JVM (`InMemoryScheduledTaskInterruptBus`). For the cluster-wide one, a deployment on MongoDB passes `MongoScheduledTaskInterruptBus` from `aimon-session-mongodb` (it needs the capped collection `scheduled_task_interrupts` that `init.js` creates, and a replica set); on any other store the application writes it. The design note is [`interrupt.md` §12.7](../../design/agent-execution/interrupt.md).
 
