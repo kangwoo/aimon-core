@@ -679,9 +679,10 @@ llm:
   `llm.anthropic.temperature`.
 - **A key the block does not have is refused as unknown.** `llm.anthropic.topP` is not silently ignored.
 - **Some requests are sent without the value, and the client says so once at WARN each time.** A model whose
-  built-in capability row says it takes no sampling parameters (`gpt-5*`, the o-series, some Claude models) gets
-  none of the four. Anthropic does not accept `temperature` on a request that carries a thinking parameter.
-  OpenAI's two penalties have no slot on `/v1/responses`.
+  built-in capability row says it takes no sampling parameters (`gpt-5*`, the o-series) gets none of the four.
+  On Anthropic, `temperature` and `topP` **reach no model** — API 2026-10-21 refuses them, so
+  `llm.anthropic.temperature` is only range-checked and the server default applies. OpenAI's two penalties have
+  no slot on `/v1/responses`.
 - **The key reaches every request that client sends** — not only agent turns: background calls on the same
   client, such as compaction summaries and peer memory, receive this default too when they state no value.
 - **It reaches subagent requests too.** A subagent inherits the starting agent's `model.temperature`,

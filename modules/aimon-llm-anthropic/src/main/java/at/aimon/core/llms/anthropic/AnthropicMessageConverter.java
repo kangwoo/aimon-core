@@ -196,7 +196,7 @@ public class AnthropicMessageConverter {
      */
     private MessageParam convertUserMessage(Message message) {
         if (!message.hasNonTextContentBlocks()) {
-            return MessageParam.builder().role(MessageParam.Role.USER).content(message.getContent()).build();
+            return MessageParam.ofUser(message.getContent());
         }
 
         final List<ContentBlockParam> contentBlocks = new ArrayList<>();
@@ -204,7 +204,7 @@ public class AnthropicMessageConverter {
             contentBlocks.add(toAnthropicBlock(block));
         }
 
-        return MessageParam.builder().role(MessageParam.Role.USER).contentOfBlockParams(contentBlocks).build();
+        return MessageParam.ofUserOfContentBlockParams(contentBlocks);
     }
 
     /**
@@ -241,7 +241,7 @@ public class AnthropicMessageConverter {
         // The pre-thinking fast path, unchanged and still the one a thinking-off deployment takes on every turn: a
         // transcript with no traces reaches the wire exactly as it did before.
         if (!message.hasToolUses() && traces.isEmpty()) {
-            return MessageParam.builder().role(MessageParam.Role.ASSISTANT).content(message.getContent()).build();
+            return MessageParam.ofAssistant(message.getContent());
         }
 
         final List<ContentBlockParam> contentBlocks = new ArrayList<>();
@@ -278,9 +278,9 @@ public class AnthropicMessageConverter {
         if (contentBlocks.isEmpty()) {
             // Every trace was dropped and there was neither text nor a tool use. An empty block list is not a legal
             // message, so fall back to the string form this message would have taken before.
-            return MessageParam.builder().role(MessageParam.Role.ASSISTANT).content(message.getContent()).build();
+            return MessageParam.ofAssistant(message.getContent());
         }
-        return MessageParam.builder().role(MessageParam.Role.ASSISTANT).contentOfBlockParams(contentBlocks).build();
+        return MessageParam.ofAssistantOfContentBlockParams(contentBlocks);
     }
 
     /**
@@ -359,7 +359,7 @@ public class AnthropicMessageConverter {
             contentBlocks.add(ContentBlockParam.ofToolResult(resultBuilder.build()));
         }
 
-        return MessageParam.builder().role(MessageParam.Role.USER).contentOfBlockParams(contentBlocks).build();
+        return MessageParam.ofUserOfContentBlockParams(contentBlocks);
     }
 
     /**

@@ -7,6 +7,23 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed: `aimon-llm-anthropic` is on Anthropic SDK 3 and API version 2026-10-21
+
+`com.anthropic:anthropic-java` moves from 2.71.0 to 3.3.0. SDK 3 sends `anthropic-version: 2026-10-21`, and that version
+answers 400 to `temperature`, `top_p` and `top_k` on every model. Design: `docs/design/llm/request-parameters.md` §3.4.
+
+- **`temperature` and `topP` no longer reach Anthropic.** `LlmModel` values and `llm.anthropic.temperature` /
+  `aimon.llm.anthropic.temperature` are still accepted and range-checked, then omitted with one WARN per value and model.
+  A model where a low `temperature` had an effect, such as Claude Sonnet 4.6, now samples at the server default of 1.0,
+  and nothing replaces it. Models that took only the default, Claude 4.7 and later, sample as before.
+- **The API key is sent as `Authorization: Bearer`, not `X-Api-Key`.** The Anthropic API takes either. A proxy or
+  gateway behind `AnthropicConfig.baseUrl` must accept the new header and the new `anthropic-version`, and must not
+  forward requests to Amazon Bedrock models older than Claude 4.7, where this version is unavailable.
+- **The SDK creates its own OpenTelemetry spans** when an application has registered a global tracer provider (spans
+  hold no request or response content), and adds trace context headers to its requests. `opentelemetry-api` is a new
+  transitive dependency of this module.
+- **The Anthropic SDK is now Apache-2.0** (it was MIT).
+
 ### Added: a distributed scheduled execution guard on MongoDB
 
 `MongoScheduledExecutionGuard` (new, `aimon-session-mongodb`) is the first `ScheduledExecutionGuard` that sees other

@@ -236,9 +236,8 @@ thinking 이 켜지고 그만큼 과금된다.
 거절하고, 생략은 400 을 받을 수 없다. 대가를 숨기지 않는다 — 기본으로 thinking 이 켜진 모델에서 `NONE` 은 thinking 을 끄지
 못한다.
 
-`NONE` 요청은 thinking 파라미터가 없으므로 샘플링 파라미터는 thinking 규칙이 아니라 능력 게이트만 따른다. 표가 샘플링 거부를
-기술한 모델에서는 생략되고, 표가 모르는 모델에 `temperature` 가 설정되어 있으면 실린다
-([`request-parameters.md`](request-parameters.md)).
+샘플링 파라미터는 thinking 과 무관하게 실리지 않는다 — API 2026-10-21 이 모든 모델에서 거절한다
+([`request-parameters.md`](request-parameters.md) §3.4).
 
 ---
 

@@ -160,7 +160,9 @@ WARN 이 남고, 처방은 같다.
 받는 모델이 측정되지 않았기 때문이다 — Anthropic 에서 잴 수 있는 `temperature` · `top_p` · `top_k` 는 모델마다 한꺼번에
 거부되거나 한꺼번에 받아졌고, 두 penalty 는 Anthropic 에 대응물이 없다. 나중에 나누는 것은 빌더 메서드와 getter 를
 더하는 순수 추가다. `temperature` 는 값으로, `top_p` 는 존재로 거부되지만 한 플래그가 둘 다 덮는다 — 그 과대 근사를
-어떻게 다루는지는 [`request-parameters.md`](request-parameters.md).
+어떻게 다루는지는 [`request-parameters.md`](request-parameters.md). **이 플래그를 읽는 것은 이제 OpenAI 클라이언트뿐이다** —
+Anthropic API 2026-10-21 은 모든 모델에서 샘플링을 거절하므로 Anthropic 클라이언트는 행과 무관하게 보내지 않는다(같은 문서
+§3.4). Claude 행의 샘플링 값과 §6.2 의 측정은 `2023-06-01` 에 대한 기록으로 남는다.
 
 **`supportsToolsWithReasoning` 은 엔드포인트 성질이다.** "이 모델은 해석하는 클라이언트가 쓰는 요청 표면에서 도구와
 reasoning 을 함께 받는가" 를 뜻하고, 내장 표는 OpenAI 의 Chat Completions 를 기술한다. `/v1/responses` 에서는 둘이

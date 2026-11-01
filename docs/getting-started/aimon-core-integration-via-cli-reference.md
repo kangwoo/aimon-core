@@ -649,9 +649,9 @@ llm:
   `llm.anthropic.temperature` 로는 아니다.
 - **블록에 없는 키는 모르는 키로 거절된다.** `llm.anthropic.topP` 는 조용히 무시되지 않는다.
 - **값이 실리지 않는 요청이 있고, 그때마다 클라이언트가 한 번 WARN 으로 말한다.** 내장 capability 행이
-  샘플링을 받지 않는다고 적은 모델(`gpt-5*` · o-series · 일부 Claude 모델)에는 넷 다 실리지 않는다. Anthropic 은
-  thinking 파라미터가 실린 요청에 `temperature` 를 함께 받지 않는다. OpenAI 의 두 penalty 는 `/v1/responses`
-  에 자리가 없다.
+  샘플링을 받지 않는다고 적은 모델(`gpt-5*` · o-series)에는 넷 다 실리지 않는다. Anthropic 에는 `temperature` ·
+  `topP` 가 **어느 모델에도 실리지 않는다** — API 2026-10-21 이 거절하므로 `llm.anthropic.temperature` 는 범위
+  검사만 받고 서버 기본값이 적용된다. OpenAI 의 두 penalty 는 `/v1/responses` 에 자리가 없다.
 - **이 키가 닿는 것은 그 클라이언트가 보내는 모든 요청이다** — 에이전트 턴만이 아니라 컴팩션 요약, peer
   memory 처럼 같은 클라이언트를 쓰는 백그라운드 호출도 자기 값을 싣지 않았다면 이 기본값을 받는다.
 - **서브에이전트 요청에도 닿는다.** 서브에이전트는 띄운 에이전트의 `model.temperature` · `model.topP` · 두

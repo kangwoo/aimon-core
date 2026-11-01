@@ -403,8 +403,8 @@ class AnthropicLlmClientTest {
         }
 
         @Test
-        @DisplayName("Should clamp temperature above 1.0 for Anthropic range")
-        void shouldClampTemperatureAbove1() {
+        @DisplayName("Should succeed with a temperature it does not send")
+        void shouldSucceedWithATemperatureItDoesNotSend() {
             // Given: Model config with temp > 1.0 (valid for LlmModel up to 2.0, but not for Anthropic)
             com.anthropic.models.messages.Message anthropicMessage = mockTextResponse("OK");
             when(mockMessageService.create(any(MessageCreateParams.class))).thenReturn(anthropicMessage);
@@ -412,7 +412,7 @@ class AnthropicLlmClientTest {
             AnthropicLlmClient client = createClientWithMock();
             LlmModel modelConfig = LlmModel.builder().temperature(1.5).build();
 
-            // When: Should not throw, temperature clamped silently
+            // When: Should not throw; the value is omitted
             LlmResponse response = client.sendMessage("system", List.of(Message.user("test")), Collections.emptyList(),
                     modelConfig);
 
@@ -421,8 +421,8 @@ class AnthropicLlmClientTest {
         }
 
         @Test
-        @DisplayName("Should accept topP parameter")
-        void shouldAcceptTopPParameter() {
+        @DisplayName("Should succeed with a topP it does not send")
+        void shouldSucceedWithATopPItDoesNotSend() {
             // Given
             com.anthropic.models.messages.Message anthropicMessage = mockTextResponse("OK");
             when(mockMessageService.create(any(MessageCreateParams.class))).thenReturn(anthropicMessage);

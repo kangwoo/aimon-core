@@ -67,8 +67,7 @@ package at.aimon.core.llms.anthropic;
 public enum AnthropicThinkingMode {
 
     /**
-     * Send no {@code thinking} parameter. The request body is what it was before thinking support existed: no
-     * thinking rule touches the sampling parameters, which then follow the model's capability row alone.
+     * Send no {@code thinking} parameter. The request body is what it was before thinking support existed.
      *
      * <p>
      * This does <em>not</em> mean "the model will not think": on the always-on models it will, and those blocks are
@@ -103,8 +102,7 @@ public enum AnthropicThinkingMode {
      * and silence would look exactly like a working configuration.
      *
      * <p>
-     * Registering the deployment's real name in the capability registry is the whole remedy for that, the same one
-     * line that closes the sampling gap.
+     * Registering the deployment's real name in the capability registry is the whole remedy for that.
      *
      * <p>
      * A row saying {@link at.aimon.core.llm.capability.ThinkingDialect#EITHER} is the one case where this mode picks

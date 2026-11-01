@@ -72,8 +72,8 @@ class AnthropicLlmClientRequestTimeoutTest {
 
         ArgumentCaptor<RequestOptions> captor = ArgumentCaptor.forClass(RequestOptions.class);
         verify(mockMessageService).create(any(MessageCreateParams.class), captor.capture());
-        assertThat(captor.getValue().getTimeout()).isNotNull();
-        assertThat(captor.getValue().getTimeout().request()).isEqualTo(Duration.ofSeconds(30));
+        assertThat(captor.getValue().timeout()).isPresent();
+        assertThat(captor.getValue().timeout().orElseThrow().request()).isEqualTo(Duration.ofSeconds(30));
         // Never the single-argument overload when a per-request timeout is set.
         verify(mockMessageService, never()).create(any(MessageCreateParams.class));
     }
@@ -96,8 +96,8 @@ class AnthropicLlmClientRequestTimeoutTest {
 
         ArgumentCaptor<RequestOptions> captor = ArgumentCaptor.forClass(RequestOptions.class);
         verify(mockMessageService).createStreaming(any(MessageCreateParams.class), captor.capture());
-        assertThat(captor.getValue().getTimeout()).isNotNull();
-        assertThat(captor.getValue().getTimeout().request()).isEqualTo(Duration.ofSeconds(90));
+        assertThat(captor.getValue().timeout()).isPresent();
+        assertThat(captor.getValue().timeout().orElseThrow().request()).isEqualTo(Duration.ofSeconds(90));
         verify(mockMessageService, never()).createStreaming(any(MessageCreateParams.class));
     }
 
