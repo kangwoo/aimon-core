@@ -196,6 +196,9 @@ public class AimonProperties implements InitializingBean {
     /** Which thinking dialect Anthropic requests speak. */
     public static final String LLM_ANTHROPIC_THINKING_MODE = LLM_ANTHROPIC + ".thinking-mode";
 
+    /** Which HTTP header carries the Anthropic API key. */
+    public static final String LLM_ANTHROPIC_API_KEY_HEADER = LLM_ANTHROPIC + ".api-key-header";
+
     /** Whether Anthropic requests ask for readable thinking text, and stream it. */
     public static final String LLM_ANTHROPIC_THINKING_DISPLAY = LLM_ANTHROPIC + ".thinking-display";
 
@@ -1812,6 +1815,13 @@ public class AimonProperties implements InitializingBean {
              */
             private Double temperature;
 
+            /**
+             * Which HTTP header carries the API key: {@code authorization} (the default, sent as
+             * {@code Authorization: Bearer}) or {@code x-api-key}, for a gateway that reads nothing else. The
+             * Anthropic API takes either. An unknown value fails startup naming this property.
+             */
+            private String apiKeyHeader;
+
             public String getThinkingMode() {
                 return thinkingMode;
             }
@@ -1836,6 +1846,25 @@ public class AimonProperties implements InitializingBean {
                 this.thinkingDisplay = thinkingDisplay;
             }
 
+            /**
+             * Returns which HTTP header carries the API key.
+             *
+             * @return the written value, or null when not written
+             */
+            public String getApiKeyHeader() {
+                return apiKeyHeader;
+            }
+
+            /**
+             * Sets which HTTP header carries the API key.
+             *
+             * @param apiKeyHeader
+             *            {@code authorization} or {@code x-api-key}
+             */
+            public void setApiKeyHeader(String apiKeyHeader) {
+                this.apiKeyHeader = apiKeyHeader;
+            }
+
             public Boolean getReplayThinkingBlocks() {
                 return replayThinkingBlocks;
             }
@@ -1855,7 +1884,7 @@ public class AimonProperties implements InitializingBean {
              */
             public boolean isEmpty() {
                 return thinkingMode == null && thinkingBudgetTokens == null && thinkingDisplay == null
-                        && replayThinkingBlocks == null && temperature == null;
+                        && replayThinkingBlocks == null && temperature == null && apiKeyHeader == null;
             }
 
             /**

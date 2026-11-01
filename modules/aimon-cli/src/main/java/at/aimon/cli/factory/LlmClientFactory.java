@@ -19,6 +19,7 @@ import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
 import at.aimon.core.llm.capability.ModelCapabilityDeclaration;
+import at.aimon.core.llms.anthropic.AnthropicApiKeyHeader;
 import at.aimon.core.llms.anthropic.AnthropicConfig;
 import at.aimon.core.llms.anthropic.AnthropicLlmClient;
 import at.aimon.core.llms.openai.OpenAIConfig;
@@ -108,6 +109,7 @@ public class LlmClientFactory {
 
         applyThinking(builder, config.getAnthropic());
         applyAnthropicSampling(builder, config.getAnthropic());
+        applyAnthropicApiKeyHeader(builder, config.getAnthropic());
 
         try {
             return builder.build();
@@ -167,6 +169,18 @@ public class LlmClientFactory {
         requireAccepted(ANTHROPIC_KEY + ".temperature",
                 () -> AnthropicConfig.builder().apiKey(PROBE).temperature(temperature).build());
         builder.temperature(temperature);
+    }
+
+    /** {@code llm.anthropic.apiKeyHeader} 를 vendor config 에 옮긴다. <b>적혔을 때만</b> 옮긴다. */
+    private void applyAnthropicApiKeyHeader(AnthropicConfig.Builder builder, AnthropicProviderConfig anthropic) {
+        if (anthropic == null || anthropic.getApiKeyHeader() == null) {
+            return;
+        }
+        final String written = anthropic.getApiKeyHeader();
+        builder.apiKeyHeader(AnthropicApiKeyHeader.fromConfigValue(written)
+                .orElseThrow(() -> new ConfigurationException("Invalid `" + ANTHROPIC_KEY + ".apiKeyHeader` in the LLM "
+                        + "config: `" + written + "` is not an API key header. Accepted values: "
+                        + AnthropicApiKeyHeader.acceptedConfigValues())));
     }
 
     /**

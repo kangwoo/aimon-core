@@ -48,8 +48,10 @@ import at.aimon.core.llm.TokenUsage;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.capability.ModelCapabilities;
+import at.aimon.core.llm.exception.LlmAuthException;
 import at.aimon.core.llm.exception.LlmCallCancelledException;
 import at.aimon.core.llm.exception.LlmClientException;
+import at.aimon.core.llm.exception.LlmInvalidRequestException;
 import at.aimon.core.llm.streaming.ChunkAggregator;
 import at.aimon.core.llm.streaming.LlmStreamSink;
 import at.aimon.core.llm.streaming.LlmStreamingOptions;
@@ -210,7 +212,9 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
      * backend with the key and base URL, the timeout, the retry policy — taken apart because that builder offers no
      * way to wrap the transport it builds, and the abort lever needs this module's decorator
      * ({@link AnthropicAbortableHttpClient}) directly over the SDK's adapter. The adapter is built with the same
-     * timeout the options carry, as the SDK's builder does, and the credential headers are applied the same way.
+     * timeout the options carry, as the SDK's builder does, and the credential headers are applied the same way. An
+     * {@code X-Api-Key} credential is the exception: the backend can only send {@code Authorization: Bearer}, so it is
+     * given no key and the header goes on the options, which the SDK's auth layer passes through untouched.
      *
      * @param config
      *            The Anthropic configuration
@@ -219,7 +223,11 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
      * @return Configured AnthropicClient instance
      */
     private AnthropicClient createAnthropicClient(AnthropicConfig config, UnaryOperator<HttpClient> adapterView) {
-        final AnthropicBackend.Builder backendBuilder = AnthropicBackend.builder().apiKey(config.getApiKey());
+        final boolean bearer = config.getApiKeyHeader() == AnthropicApiKeyHeader.AUTHORIZATION;
+        final AnthropicBackend.Builder backendBuilder = AnthropicBackend.builder();
+        if (bearer) {
+            backendBuilder.apiKey(config.getApiKey());
+        }
         String baseUrl = config.getBaseUrl();
         if (baseUrl != null && !baseUrl.isEmpty()) {
             backendBuilder.baseUrl(baseUrl);
@@ -229,6 +237,9 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
         final ClientOptions.Builder options = ClientOptions.builder().timeout(config.getTimeout());
         // Only when set: an unset value must leave the SDK's own default in place, not a copy of it.
         config.getMaxRetries().ifPresent(options::maxRetries);
+        if (!bearer) {
+            options.putHeader("X-Api-Key", config.getApiKey());
+        }
 
         final OkHttpClient adapter = OkHttpClient.builder().timeout(options.timeout()).backend(backend).build();
         options.baseUrl(backend.baseUrl());
@@ -299,7 +310,7 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
         } catch (com.anthropic.errors.AnthropicException e) {
             log.error("Anthropic SDK error: {}", e.getMessage(), e);
             // Map to the neutral taxonomy (rate-limit/overload/etc.) so retry & fallback policies can act on it.
-            throw AnthropicExceptionMapper.map(e, "Anthropic API call failed");
+            throw mapSdkFailure(e, "Anthropic API call failed");
         } catch (Exception e) {
             log.error("Anthropic API call failed: {}", e.getMessage(), e);
             throw new LlmClientException("Anthropic API call failed: " + e.getMessage(), e);
@@ -418,7 +429,7 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
             }
             log.error("Anthropic SDK streaming error: {}", e.getMessage(), e);
             // Map to the neutral taxonomy (rate-limit/overload/etc.) so retry & fallback policies can act on it.
-            throw AnthropicExceptionMapper.map(e, "Anthropic streaming call failed");
+            throw mapSdkFailure(e, "Anthropic streaming call failed");
         } catch (Exception e) {
             // A cut stream surfaces here as the SDK's I/O failure (caught above as the SDK exception it is), or as the
             // decorator's AnthropicCallAbortedException when it refused or cut an attempt; under a tripped token both
@@ -582,6 +593,36 @@ public class AnthropicLlmClient implements LlmClient, AutoCloseable {
                         + "is deliberate (it is the documented escape from the preserved-thinking prefix check) "
                         + "nothing needs doing; if the tokens are not wanted either, set thinkingMode({}).",
                 config.getThinkingMode(), AnthropicThinkingMode.OFF);
+    }
+
+    /**
+     * Maps an SDK failure to the neutral taxonomy and, behind a gateway, says what about this client it may have
+     * refused.
+     *
+     * <p>
+     * The gateway's answer is the only sign, and it does not say that the header or the API version is why: the same
+     * status has other causes, so these are hints beside the error rather than a change to it. Directly against the
+     * Anthropic API neither applies, which takes both, so nothing is said.
+     */
+    private LlmClientException mapSdkFailure(com.anthropic.errors.AnthropicException failure, String messagePrefix) {
+        final LlmClientException mapped = AnthropicExceptionMapper.map(failure, messagePrefix);
+        final String baseUrl = config.getBaseUrl();
+        if (baseUrl == null || baseUrl.isEmpty()) {
+            return mapped;
+        }
+        if (mapped instanceof LlmAuthException && config.getApiKeyHeader() == AnthropicApiKeyHeader.AUTHORIZATION) {
+            reportDivergence("gatewayRefusedCredential",
+                    "The gateway at baseUrl refused the credential. This client sends the API key as "
+                            + "`Authorization: Bearer`; if the gateway reads only `X-Api-Key`, set apiKeyHeader({}).",
+                    AnthropicApiKeyHeader.X_API_KEY);
+        } else if (mapped instanceof LlmInvalidRequestException) {
+            reportDivergence("gatewayRefusedRequest",
+                    "The gateway at baseUrl answered with an invalid-request error. If its cause is not in the error "
+                            + "itself, note that this client sends `anthropic-version: 2026-10-21`: a gateway must "
+                            + "accept that version, and it is unavailable on Amazon Bedrock for models older than "
+                            + "Claude 4.7.");
+        }
+        return mapped;
     }
 
     /**

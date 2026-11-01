@@ -14,7 +14,7 @@ import at.aimon.core.llms.anthropic.AnthropicThinkingMode;
 
 /**
  * yaml 로 적은 Anthropic 전용 설정 — {@code llm.anthropic} 아래의 thinking 키 넷과 샘플링 기본값 하나
- * ({@code temperature}).
+ * ({@code temperature}), 그리고 API 키를 실을 헤더({@code apiKeyHeader}).
  *
  * <p>
  * thinking 키 넷은 모두 <b>이름이 Anthropic 개념을 담고 있어서</b> 공통 {@code llm.*} 이 아니라 벤더 네임스페이스로 내려왔다 —
@@ -55,6 +55,7 @@ public class AnthropicProviderConfig {
     private AnthropicThinkingDisplay thinkingDisplay;
     private Boolean replayThinkingBlocks;
     private Double temperature;
+    private String apiKeyHeader;
 
     /** AnthropicProviderConfig를 생성한다. */
     public AnthropicProviderConfig() {
@@ -157,6 +158,21 @@ public class AnthropicProviderConfig {
     }
 
     /**
+     * API 키를 어느 헤더로 보낼 것인가 — {@code authorization}(기본) 또는 {@code x-api-key}. {@code X-Api-Key} 만 읽는
+     * 게이트웨이를 위한 키다. {@code OpenAiProviderConfig.getEndpoint()} 와 같은 이유로 문자열이고, 철자를 접는 규칙은
+     * {@code AnthropicApiKeyHeader.fromConfigValue} 한 곳에 있다. 모르는 값은 이 키의 이름으로 기동을 실패시킨다.
+     *
+     * @return 적힌 값, 또는 적지 않았으면 null
+     */
+    public String getApiKeyHeader() {
+        return apiKeyHeader;
+    }
+
+    public void setApiKeyHeader(String apiKeyHeader) {
+        this.apiKeyHeader = apiKeyHeader;
+    }
+
+    /**
      * 이 블록에 적힌 것이 하나도 없는가.
      *
      * <p>
@@ -167,7 +183,7 @@ public class AnthropicProviderConfig {
      */
     public boolean isEmpty() {
         return thinkingMode == null && thinkingBudgetTokens == null && thinkingDisplay == null
-                && replayThinkingBlocks == null && temperature == null;
+                && replayThinkingBlocks == null && temperature == null && apiKeyHeader == null;
     }
 
     @Override
@@ -182,19 +198,20 @@ public class AnthropicProviderConfig {
         return thinkingMode == that.thinkingMode && Objects.equals(thinkingBudgetTokens, that.thinkingBudgetTokens)
                 && thinkingDisplay == that.thinkingDisplay
                 && Objects.equals(replayThinkingBlocks, that.replayThinkingBlocks)
-                && Objects.equals(temperature, that.temperature);
+                && Objects.equals(temperature, that.temperature) && Objects.equals(apiKeyHeader, that.apiKeyHeader);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(thinkingMode, thinkingBudgetTokens, thinkingDisplay, replayThinkingBlocks, temperature);
+        return Objects.hash(thinkingMode, thinkingBudgetTokens, thinkingDisplay, replayThinkingBlocks, temperature,
+                apiKeyHeader);
     }
 
     @Override
     public String toString() {
         return "AnthropicProviderConfig{" + "thinkingMode=" + thinkingMode + ", thinkingBudgetTokens="
                 + thinkingBudgetTokens + ", thinkingDisplay=" + thinkingDisplay + ", replayThinkingBlocks="
-                + replayThinkingBlocks + ", temperature=" + temperature + '}';
+                + replayThinkingBlocks + ", temperature=" + temperature + ", apiKeyHeader=" + apiKeyHeader + '}';
     }
 
     /**

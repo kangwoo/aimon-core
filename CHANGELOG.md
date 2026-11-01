@@ -16,9 +16,14 @@ answers 400 to `temperature`, `top_p` and `top_k` on every model. Design: `docs/
   `aimon.llm.anthropic.temperature` are still accepted and range-checked, then omitted with one WARN per value and model.
   A model where a low `temperature` had an effect, such as Claude Sonnet 4.6, now samples at the server default of 1.0,
   and nothing replaces it. Models that took only the default, Claude 4.7 and later, sample as before.
-- **The API key is sent as `Authorization: Bearer`, not `X-Api-Key`.** The Anthropic API takes either. A proxy or
-  gateway behind `AnthropicConfig.baseUrl` must accept the new header and the new `anthropic-version`, and must not
-  forward requests to Amazon Bedrock models older than Claude 4.7, where this version is unavailable.
+- **The API key is sent as `Authorization: Bearer`, not `X-Api-Key`.** The Anthropic API takes either. For a gateway
+  behind `AnthropicConfig.baseUrl` that reads only the old header, set `apiKeyHeader(X_API_KEY)` —
+  `llm.anthropic.apiKeyHeader: x-api-key` on the CLI, `aimon.llm.anthropic.api-key-header=x-api-key` on the starter.
+- **A gateway must accept `anthropic-version: 2026-10-21`,** and must not forward requests to Amazon Bedrock models
+  older than Claude 4.7, where this version is unavailable; there is no setting to send the old version.
+- **A refusal from a gateway says what to check.** When the server behind `baseUrl` answers 401, 403 or an
+  invalid-request 400, the client adds one WARN per client naming the header or the API version as a possible cause.
+  The exception is unchanged.
 - **The SDK creates its own OpenTelemetry spans** when an application has registered a global tracer provider (spans
   hold no request or response content), and adds trace context headers to its requests. `opentelemetry-api` is a new
   transitive dependency of this module.

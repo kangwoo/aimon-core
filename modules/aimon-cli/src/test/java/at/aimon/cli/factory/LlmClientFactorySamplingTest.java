@@ -14,6 +14,7 @@ import org.junit.jupiter.api.io.TempDir;
 import at.aimon.cli.config.CliConfigLoader;
 import at.aimon.cli.config.LlmProviderConfig;
 import at.aimon.cli.exception.ConfigurationException;
+import at.aimon.core.llms.anthropic.AnthropicApiKeyHeader;
 import at.aimon.core.llms.anthropic.AnthropicConfig;
 import at.aimon.core.llms.openai.OpenAIConfig;
 
@@ -88,6 +89,26 @@ class LlmClientFactorySamplingTest {
         assertThat(none.getFrequencyPenalty()).isEmpty();
         assertThat(one.getTemperature()).contains(0.0);
         assertThat(one.getTopP()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("anthropic: apiKeyHeader reaches AnthropicConfig, and an unknown value fails naming the key")
+    void anthropicApiKeyHeaderReachesTheVendorConfig() throws IOException {
+        final AnthropicConfig written = factory.anthropicConfig(anthropic("""
+                  anthropic:
+                    apiKeyHeader: x-api-key
+                """));
+
+        assertThat(written.getApiKeyHeader()).isEqualTo(AnthropicApiKeyHeader.X_API_KEY);
+        assertThat(factory.anthropicConfig(anthropic("")).getApiKeyHeader())
+                .isEqualTo(AnthropicApiKeyHeader.AUTHORIZATION);
+
+        final LlmProviderConfig unknown = anthropic("""
+                  anthropic:
+                    apiKeyHeader: bearer
+                """);
+        assertThatThrownBy(() -> factory.anthropicConfig(unknown)).isInstanceOf(ConfigurationException.class)
+                .hasMessageContaining("llm.anthropic.apiKeyHeader").hasMessageContaining("x-api-key");
     }
 
     @Test

@@ -440,4 +440,23 @@ class AnthropicConfigTest {
         assertThat(zero.toString()).contains("maxRetries=0");
         assertThat(unset.toString()).contains("maxRetries=null");
     }
+
+    @Test
+    @DisplayName("the API key header defaults to Authorization, joins equals, and never brings the key into toString")
+    void apiKeyHeaderDefaultsAndEquality() {
+        final AnthropicConfig bearer = AnthropicConfig.builder().apiKey("secret-key").build();
+        final AnthropicConfig xApiKey = AnthropicConfig.builder().apiKey("secret-key")
+                .apiKeyHeader(AnthropicApiKeyHeader.X_API_KEY).build();
+
+        assertThat(bearer.getApiKeyHeader()).isEqualTo(AnthropicApiKeyHeader.AUTHORIZATION);
+        assertThat(bearer).isNotEqualTo(xApiKey);
+        assertThat(xApiKey.toString()).contains("X_API_KEY").doesNotContain("secret-key");
+    }
+
+    @Test
+    @DisplayName("a null API key header is refused")
+    void nullApiKeyHeaderIsRefused() {
+        assertThatThrownBy(() -> AnthropicConfig.builder().apiKey("k").apiKeyHeader(null).build())
+                .isInstanceOf(NullPointerException.class).hasMessageContaining("API key header");
+    }
 }

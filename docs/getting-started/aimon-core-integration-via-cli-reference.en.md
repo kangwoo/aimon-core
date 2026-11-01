@@ -683,6 +683,10 @@ llm:
   On Anthropic, `temperature` and `topP` **reach no model** — API 2026-10-21 refuses them, so
   `llm.anthropic.temperature` is only range-checked and the server default applies. OpenAI's two penalties have
   no slot on `/v1/responses`.
+- **`llm.anthropic.apiKeyHeader` chooses the API key's header.** The default, `authorization`, sends
+  `Authorization: Bearer`; `x-api-key` sends `X-Api-Key` alone. The Anthropic API takes both, so only a gateway
+  that reads nothing but `X-Api-Key` needs it. When a gateway behind `baseUrl` answers 401, 403 or 400, the client
+  names the likely causes once at WARN.
 - **The key reaches every request that client sends** — not only agent turns: background calls on the same
   client, such as compaction summaries and peer memory, receive this default too when they state no value.
 - **It reaches subagent requests too.** A subagent inherits the starting agent's `model.temperature`,
