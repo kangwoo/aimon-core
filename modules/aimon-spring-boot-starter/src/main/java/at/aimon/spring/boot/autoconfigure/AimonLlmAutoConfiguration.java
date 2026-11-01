@@ -1,6 +1,7 @@
 package at.aimon.spring.boot.autoconfigure;
 
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_ANTHROPIC;
+import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_ANTHROPIC_API_KEY_HEADER;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_ANTHROPIC_TEMPERATURE;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_ANTHROPIC_THINKING_BUDGET_TOKENS;
 import static at.aimon.spring.boot.autoconfigure.AimonProperties.LLM_ANTHROPIC_THINKING_DISPLAY;
@@ -32,6 +33,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import at.aimon.core.llm.LlmClient;
+import at.aimon.core.llms.anthropic.AnthropicApiKeyHeader;
 import at.aimon.core.llms.anthropic.AnthropicConfig;
 import at.aimon.core.llms.anthropic.AnthropicLlmClient;
 import at.aimon.core.llms.anthropic.AnthropicThinkingDisplay;
@@ -251,6 +253,9 @@ public class AimonLlmAutoConfiguration {
             }
             applyThinking(config, llm.getAnthropic());
             applySampling(config, llm.getAnthropic());
+            if (llm.getAnthropic().getApiKeyHeader() != null) {
+                config.apiKeyHeader(apiKeyHeader(llm.getAnthropic().getApiKeyHeader()));
+            }
             try {
                 return config.build();
             } catch (IllegalArgumentException e) {
@@ -392,6 +397,13 @@ public class AimonLlmAutoConfiguration {
          * @throws IllegalStateException
          *             naming the property and every accepted spelling
          */
+        private static AnthropicApiKeyHeader apiKeyHeader(String value) {
+            return AnthropicApiKeyHeader.fromConfigValue(value)
+                    .orElseThrow(() -> new IllegalStateException(
+                            LLM_ANTHROPIC_API_KEY_HEADER + "=" + value + " is not an API key header. Accepted values: "
+                                    + AnthropicApiKeyHeader.acceptedConfigValues() + "."));
+        }
+
         private static AnthropicThinkingDisplay thinkingDisplay(String value) {
             final String written = value.trim();
             for (AnthropicThinkingDisplay candidate : AnthropicThinkingDisplay.values()) {

@@ -107,6 +107,19 @@ class AnthropicLlmClientIntegrationTest {
         }
     }
 
+    @Test
+    @DisplayName("Should authenticate with the key sent as X-Api-Key")
+    void shouldAuthenticate_WithXApiKeyHeader() throws Exception {
+        AnthropicConfig config = AnthropicConfig.builder().apiKey(System.getenv("ANTHROPIC_KEY"))
+                .apiKeyHeader(AnthropicApiKeyHeader.X_API_KEY).build();
+        try (AnthropicLlmClient xApiKeyClient = new AnthropicLlmClient(config)) {
+            LlmResponse response = xApiKeyClient.sendMessage(SYSTEM_PROMPT, List.of(Message.user("Say 'OK'.")),
+                    Collections.emptyList(), LlmModel.builder().maxTokens(50).build());
+
+            assertThat(response.hasTextContent()).isTrue();
+        }
+    }
+
     @Nested
     @DisplayName("Tool Calling")
     @TestMethodOrder(MethodOrderer.OrderAnnotation.class)

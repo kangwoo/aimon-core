@@ -98,6 +98,14 @@ class AimonConfigurationMetadataTest {
             endpoints.add(endpoint.configValue());
         }
         assertThat(valueCandidates(AimonProperties.LLM_OPENAI_ENDPOINT)).containsExactlyInAnyOrderElementsOf(endpoints);
+        // The sixth, the same shape as the fifth.
+        final List<String> apiKeyHeaders = new ArrayList<>();
+        for (at.aimon.core.llms.anthropic.AnthropicApiKeyHeader header : at.aimon.core.llms.anthropic.AnthropicApiKeyHeader
+                .values()) {
+            apiKeyHeaders.add(header.configValue());
+        }
+        assertThat(valueCandidates(AimonProperties.LLM_ANTHROPIC_API_KEY_HEADER))
+                .containsExactlyInAnyOrderElementsOf(apiKeyHeaders);
     }
 
     /**
@@ -167,13 +175,14 @@ class AimonConfigurationMetadataTest {
         // Locks the reason every other selector is an enum. If a hint block ever appears for one of them, either
         // the processor's behaviour changed or someone hand-wrote metadata that will now drift from the enum.
         // The exceptions are the String-typed selectors, and each is a String for its own reason --
-        // aimon.llm.provider so a third party can contribute a value, the three vendor keys so no signature in
+        // aimon.llm.provider so a third party can contribute a value, the five vendor keys so no signature in
         // this module names a compileOnly vendor type.
         final List<String> hinted = new ArrayList<>();
         METADATA.path("hints").forEach(hint -> hinted.add(hint.path("name").asText()));
         assertThat(hinted).containsExactlyInAnyOrder(AimonProperties.LLM_PROVIDER,
                 AimonProperties.LLM_ANTHROPIC_THINKING_MODE, AimonProperties.LLM_ANTHROPIC_THINKING_DISPLAY,
-                AimonProperties.LLM_OPENAI_REASONING_SUMMARY, AimonProperties.LLM_OPENAI_ENDPOINT);
+                AimonProperties.LLM_OPENAI_REASONING_SUMMARY, AimonProperties.LLM_OPENAI_ENDPOINT,
+                AimonProperties.LLM_ANTHROPIC_API_KEY_HEADER);
     }
 
     @Test

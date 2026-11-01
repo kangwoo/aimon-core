@@ -123,6 +123,8 @@ llm:
 #                                      #   40000 -- and a larger number is sent as max_tokens - 1 with a WARN).
 #                                      #   Raising that ceiling is the agent definition's `model.maxTokens`,
 #                                      #   not a key here.
+#    apiKeyHeader: x-api-key           # `authorization` by default (Authorization: Bearer). `x-api-key` is for
+#                                      #   a gateway at baseUrl that reads nothing else; the Anthropic API takes both.
 #    thinkingDisplay: summarized       # unset by default, and `summarized` is the only value -- ASK for the
 #                                      #   model's thinking text and show it live, dimmed, as it is produced.
 #                                      #   (The server also accepts `omitted`, its own default; it is not offered

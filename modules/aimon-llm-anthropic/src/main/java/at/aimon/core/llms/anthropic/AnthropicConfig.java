@@ -48,6 +48,7 @@ public final class AnthropicConfig {
 
     private final String baseUrl;
     private final String apiKey;
+    private final AnthropicApiKeyHeader apiKeyHeader;
     private final String model;
     private final Double temperature;
     private final int maxTokens;
@@ -63,6 +64,7 @@ public final class AnthropicConfig {
     private AnthropicConfig(Builder builder) {
         this.baseUrl = builder.baseUrl;
         this.apiKey = Objects.requireNonNull(builder.apiKey, "API key cannot be null");
+        this.apiKeyHeader = Objects.requireNonNull(builder.apiKeyHeader, "API key header cannot be null");
         this.model = builder.model;
         this.temperature = builder.temperature;
         this.maxTokens = builder.maxTokens;
@@ -120,6 +122,15 @@ public final class AnthropicConfig {
      */
     public static Builder builder() {
         return new Builder();
+    }
+
+    /**
+     * Gets the HTTP header that carries the API key.
+     *
+     * @return The header ({@link AnthropicApiKeyHeader#AUTHORIZATION} unless one was chosen)
+     */
+    public AnthropicApiKeyHeader getApiKeyHeader() {
+        return apiKeyHeader;
     }
 
     /**
@@ -294,32 +305,33 @@ public final class AnthropicConfig {
         // capability declaration not taking effect" gets no hint from a logged config -- the answer is in the WARN
         // that names the model whose value was dropped, or in its absence.
         return Objects.equals(temperature, that.temperature) && maxTokens == that.maxTokens
-                && Objects.equals(baseUrl, that.baseUrl) && apiKey.equals(that.apiKey) && model.equals(that.model)
-                && timeout.equals(that.timeout) && Objects.equals(maxRetries, that.maxRetries)
-                && reasoningEffort == that.reasoningEffort && thinkingMode == that.thinkingMode
-                && Objects.equals(thinkingBudgetTokens, that.thinkingBudgetTokens)
+                && Objects.equals(baseUrl, that.baseUrl) && apiKey.equals(that.apiKey)
+                && apiKeyHeader == that.apiKeyHeader && model.equals(that.model) && timeout.equals(that.timeout)
+                && Objects.equals(maxRetries, that.maxRetries) && reasoningEffort == that.reasoningEffort
+                && thinkingMode == that.thinkingMode && Objects.equals(thinkingBudgetTokens, that.thinkingBudgetTokens)
                 && thinkingDisplay == that.thinkingDisplay && replayThinkingBlocks == that.replayThinkingBlocks;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(baseUrl, apiKey, model, temperature, maxTokens, timeout, maxRetries, reasoningEffort,
-                thinkingMode, thinkingBudgetTokens, thinkingDisplay, replayThinkingBlocks);
+        return Objects.hash(baseUrl, apiKey, apiKeyHeader, model, temperature, maxTokens, timeout, maxRetries,
+                reasoningEffort, thinkingMode, thinkingBudgetTokens, thinkingDisplay, replayThinkingBlocks);
     }
 
     @Override
     public String toString() {
-        return "AnthropicConfig{" + "baseUrl='" + baseUrl + '\'' + ", model='" + model + '\'' + ", temperature="
-                + temperature + ", maxTokens=" + maxTokens + ", timeout=" + timeout + ", maxRetries=" + maxRetries
-                + ", reasoningEffort=" + reasoningEffort + ", thinkingMode=" + thinkingMode + ", thinkingBudgetTokens="
-                + thinkingBudgetTokens + ", thinkingDisplay=" + thinkingDisplay + ", replayThinkingBlocks="
-                + replayThinkingBlocks + '}';
+        return "AnthropicConfig{" + "baseUrl='" + baseUrl + '\'' + ", apiKeyHeader=" + apiKeyHeader + ", model='"
+                + model + '\'' + ", temperature=" + temperature + ", maxTokens=" + maxTokens + ", timeout=" + timeout
+                + ", maxRetries=" + maxRetries + ", reasoningEffort=" + reasoningEffort + ", thinkingMode="
+                + thinkingMode + ", thinkingBudgetTokens=" + thinkingBudgetTokens + ", thinkingDisplay="
+                + thinkingDisplay + ", replayThinkingBlocks=" + replayThinkingBlocks + '}';
     }
 
     /** Builder for AnthropicConfig. */
     public static final class Builder {
 
         private String apiKey;
+        private AnthropicApiKeyHeader apiKeyHeader = AnthropicApiKeyHeader.AUTHORIZATION;
         private String model = DEFAULT_MODEL;
         private Double temperature;
         private int maxTokens = DEFAULT_MAX_TOKENS;
@@ -432,6 +444,19 @@ public final class AnthropicConfig {
          */
         public Builder maxRetries(Integer maxRetries) {
             this.maxRetries = maxRetries;
+            return this;
+        }
+
+        /**
+         * Sets the HTTP header that carries the API key. Only a gateway behind {@link #baseUrl(String)} that reads
+         * nothing but {@code X-Api-Key} needs this; the Anthropic API takes either.
+         *
+         * @param apiKeyHeader
+         *            The header (must not be null; defaults to {@link AnthropicApiKeyHeader#AUTHORIZATION})
+         * @return This builder
+         */
+        public Builder apiKeyHeader(AnthropicApiKeyHeader apiKeyHeader) {
+            this.apiKeyHeader = apiKeyHeader;
             return this;
         }
 

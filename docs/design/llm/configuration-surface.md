@@ -172,6 +172,7 @@ CLI 의 `default-config.yaml` 은 `reasoningEffort` 와 `acceptedReasoningEffort
 | `thinkingBudgetTokens` | `llm.anthropic.thinkingBudgetTokens` | `aimon.llm.anthropic.thinking-budget-tokens` | — | **벤더** | 이름 — `budget_tokens` 는 Anthropic 요청 본문의 필드다. 뜻 — 다른 벤더는 생각의 양을 토큰 수로 말하지 않는다 |
 | `replayThinkingBlocks` | `llm.anthropic.replayThinkingBlocks` | `aimon.llm.anthropic.replay-thinking-blocks` | — | **벤더** | 이름 — thinking 블록은 Anthropic 의 서명된 콘텐츠 블록이다 |
 | `thinkingDisplay` | `llm.anthropic.thinkingDisplay` | `aimon.llm.anthropic.thinking-display` | — | **벤더** | 이름 — "thinking" 과 Anthropic `thinking` 객체 안의 필드명 `display` |
+| `apiKeyHeader` | `llm.anthropic.apiKeyHeader` | `aimon.llm.anthropic.api-key-header` | — | **벤더** | 뜻 — `X-Api-Key` 와 `Authorization: Bearer` 의 선택은 Anthropic API 의 인증 방식이다. `X-Api-Key` 만 읽는 게이트웨이를 위한 키다 |
 | `reasoningSummary` | `llm.openai.reasoningSummary` | `aimon.llm.openai.reasoning-summary` | `model.reasoningSummary` | **벤더**(배포 키) · 이름은 중립(frontmatter) | 배포 키는 벤더다 — `reasoning.summary` 는 OpenAI 요청 본문의 경로이고, 값 `auto` · `concise` · `detailed` 는 OpenAI 의 어휘다. frontmatter 키는 중립 타입 `ReasoningSummary` 로 읽으며 지금 따르는 provider 는 OpenAI 하나다(Anthropic 은 무시하고 한 번 말한다). frontmatter 에만 `none` 이 있다 — 배포 키는 적지 않는 것으로 끄고, 그 서브트리는 모르는 값을 기동 실패로 거절한다 |
 | `endpoint` | `llm.openai.endpoint` | `aimon.llm.openai.endpoint` | — | **벤더** | 값이 OpenAI 엔드포인트다(`auto` · `chat-completions` · `responses`). `chat-completions` 는 Chat Completions 만 구현한 게이트웨이가 설정만으로 닿는 404 의 출구이고, `responses` 는 모델과 상관없이 모든 요청을 `/v1/responses` 로 보낸다. 적지 않으면 기본값은 `OpenAIConfig` 의 것(`auto`)이다. 철자 접기(대소문자, `-` · `_`)는 `OpenAiEndpoint.fromConfigValue` 한 곳이 하고 두 표면이 그것을 부른다 |
 | `responsesApiEnabled` (폐기 예정) | `llm.openai.responsesApiEnabled` | `aimon.llm.openai.responses-api-enabled` | — | **벤더** | `endpoint` 로 대체되었다 — `false` 는 `chat-completions`, `true` 는 `auto`. 여전히 읽고 기동 때 한 번 WARN 하며, `endpoint` 와 함께 적으면 두 키의 이름으로 기동이 실패한다 |
@@ -367,6 +368,7 @@ provider 모듈의 테스트가 설정 경로가 실제로 쓰는 번역기를 �
 | `reasoningSummary` | `OpenAiReasoningSummary` | `String` — 같음 |
 | `thinkingBudgetTokens` · `replayThinkingBlocks` | `Integer` · `Boolean` | 같음 |
 | `endpoint` | `String` — `OpenAiEndpoint.fromConfigValue` 로 fold (`chat-completions` 를 Jackson 의 enum 바인딩이 받지 못한다) | `String` — 가드된 슬라이스 안에서 같은 메서드로 fold |
+| `apiKeyHeader` | `String` — `AnthropicApiKeyHeader.fromConfigValue` 로 fold (`x-api-key` 와 `x_api_key` 는 같다) | `String` — 같음 |
 | `responsesApiEnabled` (폐기 예정) | `Boolean` — `null` 은 "적지 않음" 이고 기본값은 `OpenAIConfig` 가 정한다 | 같음 |
 | 샘플링 기본값 다섯(`llm.openai` 의 넷 · `llm.anthropic.temperature`) | `Double` — `null` 은 "적지 않음" 이고, 그때 벤더 config 의 필드도 미설정으로 남아 요청에 실리지 않는다 | 같음 |
 

@@ -53,6 +53,7 @@ import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.ReasoningEffort;
 import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
 import at.aimon.core.llm.capability.ModelCapabilityRegistry;
+import at.aimon.core.llms.anthropic.AnthropicApiKeyHeader;
 import at.aimon.core.llms.anthropic.AnthropicConfig;
 import at.aimon.core.llms.anthropic.AnthropicLlmClient;
 import at.aimon.core.llms.anthropic.AnthropicThinkingDisplay;
@@ -393,6 +394,22 @@ class AimonAutoConfigurationTest {
                 .run(ctx -> assertThat(ctx).hasFailed().getFailure()
                         .hasStackTraceContaining(AimonProperties.LLM_ANTHROPIC_THINKING_DISPLAY)
                         .hasStackTraceContaining("summarized"));
+    }
+
+    @Test
+    @DisplayName("the api key header reaches the vendor config; unset leaves the default, and an unknown one fails")
+    void apiKeyHeaderReachesTheAnthropicClient(@TempDir Path workspace) {
+        minimal(workspace).withPropertyValues("aimon.llm.anthropic.api-key-header=x-api-key")
+                .run(ctx -> assertThat(AimonLlmAutoConfiguration.AnthropicConfiguration
+                        .anthropicConfig(ctx.getBean(AimonProperties.class).getLlm()).getApiKeyHeader())
+                        .isEqualTo(AnthropicApiKeyHeader.X_API_KEY));
+        minimal(workspace).run(ctx -> assertThat(AimonLlmAutoConfiguration.AnthropicConfiguration
+                .anthropicConfig(ctx.getBean(AimonProperties.class).getLlm()).getApiKeyHeader())
+                .isEqualTo(AnthropicApiKeyHeader.AUTHORIZATION));
+        minimal(workspace).withPropertyValues("aimon.llm.anthropic.api-key-header=bearer")
+                .run(ctx -> assertThat(ctx).hasFailed().getFailure()
+                        .hasStackTraceContaining(AimonProperties.LLM_ANTHROPIC_API_KEY_HEADER)
+                        .hasStackTraceContaining("x-api-key"));
     }
 
     @Test

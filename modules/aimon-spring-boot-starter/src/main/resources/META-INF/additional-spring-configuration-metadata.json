@@ -44,6 +44,19 @@
       ]
     },
     {
+      "name": "aimon.llm.anthropic.api-key-header",
+      "values": [
+        {
+          "value": "authorization",
+          "description": "The default. The API key is sent as Authorization: Bearer."
+        },
+        {
+          "value": "x-api-key",
+          "description": "The API key is sent as X-Api-Key, for a gateway that reads nothing else."
+        }
+      ]
+    },
+    {
       "name": "aimon.llm.anthropic.thinking-display",
       "values": [
         {
