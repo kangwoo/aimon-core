@@ -87,6 +87,7 @@ Two families of agent tool are built and released separately. Both were part of 
 | Module | Purpose |
 |---|---|
 | `aimon-scheduling-quartz` | Quartz-based `TaskScheduler` for distributed cron scheduling |
+| `aimon-scheduling-testkit` | Contract suites a scheduling backend runs — task and history repositories, execution guard, interrupt bus |
 
 ### Session Persistence
 

@@ -1,4 +1,4 @@
-package at.aimon.session.testkit;
+package at.aimon.scheduling.testkit;
 
 import at.aimon.core.scheduling.repository.InMemoryScheduledTaskRepository;
 import at.aimon.core.scheduling.repository.ScheduledTaskRepository;

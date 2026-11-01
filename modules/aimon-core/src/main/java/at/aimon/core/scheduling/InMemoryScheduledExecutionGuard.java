@@ -12,8 +12,9 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>
  * This is the reference/default implementation and is the correct behavior for a single-instance deployment. It does
- * not coordinate across nodes; a clustered deployment should inject a distributed guard (or use the Quartz scheduler,
- * which dedups at the trigger level) so a task fires once across the cluster rather than once per node.
+ * not coordinate across nodes; a clustered deployment should inject a distributed guard such as
+ * {@code MongoScheduledExecutionGuard} (or use the Quartz scheduler, which dedups at the trigger level) so a task fires
+ * once across the cluster rather than once per node.
  *
  * <p>
  * Thread-safe: the in-flight set is a {@link ConcurrentHashMap}-backed set, so {@code tryBegin} is an atomic

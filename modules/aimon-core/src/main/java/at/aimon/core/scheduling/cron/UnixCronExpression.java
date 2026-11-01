@@ -5,6 +5,7 @@
 package at.aimon.core.scheduling.cron;
 
 import java.time.ZonedDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Collections;
 import java.util.Objects;
 import java.util.Optional;
@@ -219,6 +220,44 @@ public final class UnixCronExpression {
     public Optional<ZonedDateTime> nextExecution(ZonedDateTime after) {
         Objects.requireNonNull(after, "Instant cannot be null");
         return executionTime.nextExecution(after);
+    }
+
+    /**
+     * Returns the latest time this expression fires at or before the given instant — the grid point a fire belongs
+     * to.
+     *
+     * <p>
+     * A fire on time sits on the grid and maps to itself. A fire that came late — a misfire recovered after downtime, a
+     * scheduler that ran behind — sits after its grid point and maps back to it, which is what lets two nodes agree
+     * that
+     * a late fire and an on-time fire of the same slot are one fire. It never maps forward: the next grid point belongs
+     * to the next fire.
+     *
+     * <p>
+     * <b>Daylight saving.</b> The grid is wall-clock time, and when the clocks go back a wall-clock time happens twice.
+     * Schedulers disagree about which of the two instants fires — cron-utils (the in-memory scheduler) picks the first,
+     * Quartz the second — so both count as on the grid: a fire at either maps to itself, and a late fire maps to the
+     * latest of the two that is not after it. When the clocks go forward a wall-clock time does not happen at all and
+     * there is nothing to choose.
+     *
+     * @param atOrBefore
+     *            the instant to search back from; seconds and below are ignored, since the grid is in minutes
+     * @return the grid point, or empty if the expression never fired at or before that instant
+     */
+    public Optional<ZonedDateTime> previousOrSameExecution(ZonedDateTime atOrBefore) {
+        Objects.requireNonNull(atOrBefore, "Instant cannot be null");
+        final ZonedDateTime minute = atOrBefore.truncatedTo(ChronoUnit.MINUTES);
+        // Matching is by wall-clock time, so an instant in the repeated hour matches under either of its offsets.
+        if (executionTime.isMatch(minute) || executionTime.isMatch(minute.withEarlierOffsetAtOverlap())
+                || executionTime.isMatch(minute.withLaterOffsetAtOverlap())) {
+            return Optional.of(minute);
+        }
+        return executionTime.lastExecution(minute).map(found -> {
+            // cron-utils hands back the first of a repeated wall-clock time; the second is the later instant, and
+            // the right answer whenever it is still not after the fire being folded.
+            final ZonedDateTime later = found.withLaterOffsetAtOverlap();
+            return later.isAfter(minute) ? found : later;
+        });
     }
 
     @Override

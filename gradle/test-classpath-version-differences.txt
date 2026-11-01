@@ -50,11 +50,11 @@ aimon-session-redis       | org.jspecify:jspecify | 1.0.0 -> 1.0.1 | Caffeine (v
 
 # --- Accepted (2026-10-06, backlog D-4): Micrometer on aimon-spring-boot-starter -------------------------------------
 # These are code jars, so decision 2's reason does not reach them; the reason is the second one #99 gave for this
-# module in decision 3 — "shipped" is the wrong side to move. 1.16.7 is what spring-context 7.0.9's own POM asks for,
+# module in decision 3 — "shipped" is the wrong side to move. 1.16.8 is what spring-context 7.0.10's own POM asks for,
 # and it is what runtimeClasspath resolves only because this build resolves the starter without Spring Boot's
-# dependency management. Spring Boot 4.1.1, the line the starter targets, manages Micrometer 1.17.1: aimon-sample-app,
-# a Boot application on this starter with no Actuator, resolves micrometer-observation 1.17.1 "selected by rule". The
-# tests get the same 1.17.1 from spring-boot-starter-actuator, which the build file takes on purpose because it
+# dependency management. Spring Boot 4.1.2, the line the starter targets, manages Micrometer 1.17.2: aimon-sample-app,
+# a Boot application on this starter with no Actuator, resolves micrometer-observation 1.17.2 "selected by rule". The
+# tests get the same 1.17.2 from spring-boot-starter-actuator, which the build file takes on purpose because it
 # "carries the Micrometer version Boot manages". So the tests already run on what an application on this Boot line
 # runs, and the lower number is the one no such application sees.
 #
@@ -65,5 +65,5 @@ aimon-session-redis       | org.jspecify:jspecify | 1.0.0 -> 1.0.1 | Caffeine (v
 # it is what ships. Raising what ships instead — a main-scope constraint, or Spring Boot's platform — changes the
 # published POM, which #99 declined to do for this module (decision 3); it is left as a question for whoever next
 # decides how the starter states its Boot baseline.
-aimon-spring-boot-starter | io.micrometer:micrometer-observation | 1.16.7 -> 1.17.1 | Spring Boot 4.1.1 manages 1.17.1, so a Boot application on this starter runs what the tests run; 1.16.7 is spring-context's own request, resolved here without Boot's dependency management. Aligning splits Micrometer (core 1.17.1 over observation 1.16.7) (D-4)
-aimon-spring-boot-starter | io.micrometer:micrometer-commons     | 1.16.7 -> 1.17.1 | Same as micrometer-observation on this module: it arrives only as that jar's dependency, at that jar's version (D-4)
+aimon-spring-boot-starter | io.micrometer:micrometer-observation | 1.16.8 -> 1.17.2 | Spring Boot 4.1.2 manages 1.17.2, so a Boot application on this starter runs what the tests run; 1.16.8 is spring-context's own request, resolved here without Boot's dependency management. Aligning splits Micrometer (core 1.17.2 over observation 1.16.8) (D-4)
+aimon-spring-boot-starter | io.micrometer:micrometer-commons     | 1.16.8 -> 1.17.2 | Same as micrometer-observation on this module: it arrives only as that jar's dependency, at that jar's version (D-4)

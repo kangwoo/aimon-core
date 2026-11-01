@@ -1,4 +1,4 @@
-package at.aimon.session.testkit;
+package at.aimon.scheduling.testkit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -319,8 +319,10 @@ public abstract class AbstractScheduledTaskRepositoryContractTest {
     }
 
     private static SchedulingEngine engine(ScheduledTaskRepository repository, TaskScheduler scheduler) {
-        return SchedulingEngineBuilder.create().taskRepository(repository).taskSchedulerFactory(executor -> scheduler)
-                .build();
+        // What is under test is what the repository keeps, not which runtimes exist, so no runtime is registered and
+        // the registration-time runtime check is off.
+        return SchedulingEngineBuilder.create().validateBoundRuntime(false).taskRepository(repository)
+                .taskSchedulerFactory(executor -> scheduler).build();
     }
 
     private static ScheduledTask task(Principal owner, String name, boolean enabled) {

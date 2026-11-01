@@ -20,8 +20,10 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
+import at.aimon.core.scheduling.ScheduledTask;
 import at.aimon.core.scheduling.ScheduledTaskId;
 import at.aimon.core.scheduling.ScheduledTaskManager;
+import at.aimon.core.scheduling.ScheduledTaskPolicy;
 import at.aimon.core.scheduling.exception.TaskNotFoundException;
 import at.aimon.core.scheduling.exception.UnauthorizedTaskAccessException;
 
@@ -72,6 +74,17 @@ public class CancelScheduledTaskTool extends AbstractTool {
             ScheduledTaskId taskId = ScheduledTaskId.of(input.getRequiredString("task_id"));
 
             Principal principal = context.get(PRINCIPAL).orElseGet(defaultPrincipalSupplier);
+
+            // Ownership first, through the manager's own check, so a policy only ever narrows it.
+            final ScheduledTask task = taskManager.getById(taskId, principal);
+            final ScheduledTaskPolicy.Decision decision = PolicyCalls.decide("cancelling task " + taskId,
+                    () -> taskManager.getTaskPolicy().checkAccess(task, ScheduledTaskPolicy.Access.CANCEL, context));
+            if (!decision.isAllowed()) {
+                log.warn("Cancel of task '{}' by {} refused by policy: {}", taskId, principal,
+                        decision.getRefusalReason().orElse(""));
+                return ToolResult
+                        .error("Cancelling this task is not allowed: " + decision.getRefusalReason().orElse(""));
+            }
 
             taskManager.cancel(taskId, principal);
 

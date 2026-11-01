@@ -107,11 +107,12 @@ class PublishedModuleApiScopeTest {
      * {@code aimon-memory-testkit} is the one entry here that is not an assembly. It is a contract suite, and what it
      * publishes is a base class a backend author extends: the abstract {@code PeerMemory newBackend()} an
      * out-of-repository backend has to override is an aimon-core type, so core belongs on that author's compile
-     * classpath by the same argument the facades use. The other four testkits are absent because they are not
-     * published at all, not because they scope differently.
+     * classpath by the same argument the facades use. {@code aimon-scheduling-testkit} is the same case: its suites'
+     * extension points ({@code repository()}, {@code guard()}, {@code busFor(...)}) return aimon-core scheduling SPIs.
+     * The other testkits are absent because they are not published at all, not because they scope differently.
      */
     private static final List<String> FACADE_MODULES = List.of("aimon-bootstrap", "aimon-spring-boot-starter",
-            "aimon-memory-testkit");
+            "aimon-memory-testkit", "aimon-scheduling-testkit");
 
     /** Never reaches the published POM, so it cannot describe it wrongly. Open to every module. */
     private static final List<String> BUILD_INTERNAL_CONFIGURATIONS = List.of("compileOnly", "testImplementation",
