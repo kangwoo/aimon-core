@@ -15,11 +15,10 @@ import at.aimon.core.llm.capability.ModelCapabilityRegistry;
  * Contains API key, model selection, and client settings.
  *
  * <p>
- * {@code temperature} is <em>unset</em> by default rather than defaulted to a value, and unset means the parameter is
- * not sent at all. Six of the current Claude models reject any non-default {@code temperature}, so the client has to be
- * able to omit one; and it has to be able to tell "the operator asked for 0.0" from "nobody asked" to decide whether
- * the omission is worth a warning. Nothing in this class or the client manufactures a sampling value on the caller's
- * behalf — a request carries one only when somebody put it there.
+ * {@code temperature} no longer reaches a request: API version 2026-10-21 refuses the sampling parameters on every
+ * model, so the client omits the value and reports it once at WARN. It stays settable so a deployment that already
+ * sets it keeps starting, and it stays <em>unset</em> by default so the client can tell "the operator asked for 0.0"
+ * from "nobody asked" when deciding whether the omission is worth a warning.
  *
  * <p>
  * Thread-safe and immutable.
@@ -32,7 +31,7 @@ import at.aimon.core.llm.capability.ModelCapabilityRegistry;
  *     &#64;code
  *     // No model(...): the default model is used. Name one only when another is needed, as an id the Messages API
  *     // serves -- it is sent as written; aliases are not resolved.
- *     AnthropicConfig config = AnthropicConfig.builder().apiKey(System.getenv("ANTHROPIC_KEY")).temperature(0.7)
+ *     AnthropicConfig config = AnthropicConfig.builder().apiKey(System.getenv("ANTHROPIC_KEY"))
  *             .timeout(Duration.ofSeconds(30)).build();
  * }
  * </pre>
@@ -365,7 +364,8 @@ public final class AnthropicConfig {
         }
 
         /**
-         * Sets the temperature (sampling randomness).
+         * Sets the temperature (sampling randomness). The client does not send it: API version 2026-10-21 refuses the
+         * parameter, so setting it earns a WARN and the server's default sampling.
          *
          * @param temperature
          *            The temperature (0.0 to 1.0)

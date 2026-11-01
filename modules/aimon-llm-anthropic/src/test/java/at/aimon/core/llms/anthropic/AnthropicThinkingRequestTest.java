@@ -43,7 +43,7 @@ import ch.qos.logback.core.read.ListAppender;
  * {@code "temperature": null} in the body — and earned the exact 400 this design removes — would pass an
  * {@code isEmpty()} assertion. {@code _body()} is the surface that cannot lie.
  */
-@DisplayName("AnthropicLlmClient - the thinking request parameter and its sampling consequences")
+@DisplayName("AnthropicLlmClient - the thinking request parameter")
 @ExtendWith(MockitoExtension.class)
 class AnthropicThinkingRequestTest {
 
@@ -159,7 +159,7 @@ class AnthropicThinkingRequestTest {
         assertThat(body.get("thinking").get("budget_tokens").asInt()).isEqualTo(4095);
         // Not "temperature is null" — the key is absent. A null would be rejected the same way a value is.
         assertThat(body.has("temperature")).isFalse();
-        assertThat(warnings()).anyMatch(w -> w.contains("incompatible with Anthropic thinking"))
+        assertThat(warnings()).anyMatch(w -> w.startsWith("temperature 0.7"))
                 .anyMatch(w -> w.contains("does not fit under maxTokens"));
     }
 
@@ -191,10 +191,8 @@ class AnthropicThinkingRequestTest {
         final JsonNode extended = send(client(config().thinkingMode(AnthropicThinkingMode.EXTENDED).build()),
                 LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).temperature(0.7).build());
         assertThat(extended.has("thinking")).isFalse();
-        // The consequence stated in the design rather than hidden: with no thinking parameter the thinking-side
-        // omission does not fire, so a configured temperature is still on the wire. What decides whether that is a
-        // rejection is now the capability row — the fixture model is not in the table, so this is the fail-open path.
-        assertThat(extended.get("temperature").asDouble()).isEqualTo(0.7);
+        // Turning thinking off does not bring a configured temperature back: the API version refuses it regardless.
+        assertThat(extended.has("temperature")).isFalse();
 
         final JsonNode adaptive = send(client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).build()),
                 LlmModel.builder().reasoningEffort(ReasoningEffort.NONE).build());
@@ -323,30 +321,7 @@ class AnthropicThinkingRequestTest {
         // Sending a request the server is certain to reject would be worse than not asking for thinking, but doing it
         // silently would be worse still.
         assertThat(warnings()).anyMatch(w -> w.contains("leaves no room"));
-        assertThat(body.get("temperature").asDouble()).isEqualTo(0.7);
-    }
-
-    @Test
-    @DisplayName("top_p outside [0.95, 1.0] is omitted alongside thinking; inside it is sent")
-    void topPIsWindowedWhenThinkingIsOn() {
-        final AnthropicConfig thinking = config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).build();
-
-        final JsonNode narrow = send(client(thinking), LlmModel.builder().topP(0.5).build());
-        assertThat(narrow.has("top_p")).isFalse();
-        assertThat(warnings()).anyMatch(w -> w.contains("outside the [0.95, 1.0] window"));
-
-        logAppender.list.clear();
-        final JsonNode inWindow = send(client(thinking), LlmModel.builder().topP(0.97).build());
-        assertThat(inWindow.get("top_p").asDouble()).isEqualTo(0.97);
-        assertThat(warnings()).noneMatch(w -> w.contains("top_p"));
-    }
-
-    @Test
-    @DisplayName("top_p is untouched when thinking is off, whatever its value")
-    void topPIsUntouchedWithoutThinking() {
-        final JsonNode body = send(client(config().build()), LlmModel.builder().topP(0.5).build());
-
-        assertThat(body.get("top_p").asDouble()).isEqualTo(0.5);
+        assertThat(body.has("temperature")).isFalse();
     }
 
     @Test
@@ -371,7 +346,7 @@ class AnthropicThinkingRequestTest {
         assertThatThrownBy(() -> client.sendMessage("s", List.of(Message.user("hi")), List.of(), model))
                 .hasRootCause(SENTINEL);
 
-        assertThat(warnings()).filteredOn(w -> w.contains("incompatible with Anthropic thinking")).hasSize(1);
+        assertThat(warnings()).filteredOn(w -> w.startsWith("temperature 0.7")).hasSize(1);
         assertThat(warnings()).filteredOn(w -> w.contains("does not fit under maxTokens")).hasSize(1);
     }
 
@@ -418,23 +393,6 @@ class AnthropicThinkingRequestTest {
 
         // Nothing was asked for, so nothing is discarded and there is no cost to name.
         assertThat(warnings()).isEmpty();
-    }
-
-    @Test
-    @DisplayName("the omitted temperature is described differently when the call set it and when the client did")
-    void temperatureOmissionNamesWhoseValueItWas() {
-        send(client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).build()),
-                LlmModel.builder().temperature(0.7).build());
-        assertThat(warnings()).anyMatch(w -> w.startsWith("temperature 0.7 is incompatible"));
-
-        logAppender.list.clear();
-        send(client(config().thinkingMode(AnthropicThinkingMode.ADAPTIVE).temperature(0.4).build()),
-                LlmModel.builder().build());
-
-        // The value came from the client config, not from this call. Naming it "temperature 0.4" would send an
-        // operator looking for it on a request that never carried one, so the sentence says where it came from.
-        assertThat(warnings()).anyMatch(w -> w.startsWith("No temperature was set on this call"))
-                .noneMatch(w -> w.startsWith("temperature 0.4 is incompatible"));
     }
 
     // ---- thinkingDisplay: the ask, and where it does not go ----

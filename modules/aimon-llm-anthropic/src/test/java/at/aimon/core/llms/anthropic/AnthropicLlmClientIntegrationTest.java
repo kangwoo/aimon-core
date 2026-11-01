@@ -263,8 +263,8 @@ class AnthropicLlmClientIntegrationTest {
 
         @Test
         @Order(3)
-        @DisplayName("Should return deterministic response with temperature 0")
-        void shouldReturnDeterministicResponse_WithTemperatureZero() {
+        @DisplayName("Should answer with a temperature it does not send")
+        void shouldAnswer_WithATemperatureItDoesNotSend() {
             // Given
             LlmModel modelConfig = LlmModel.builder().temperature(0.0).maxTokens(20).build();
             String prompt = "What is the capital of France? Answer in one word only.";
@@ -282,7 +282,7 @@ class AnthropicLlmClientIntegrationTest {
 
         @Test
         @Order(4)
-        @DisplayName("Should accept custom temperature value")
+        @DisplayName("Should succeed with a custom temperature value it does not send")
         void shouldAcceptCustomTemperature() {
             // Given
             LlmModel modelConfig = LlmModel.builder().temperature(0.5).maxTokens(50).build();

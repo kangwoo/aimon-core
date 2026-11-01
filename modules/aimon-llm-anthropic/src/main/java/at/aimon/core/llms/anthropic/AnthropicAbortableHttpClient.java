@@ -113,7 +113,7 @@ final class AnthropicAbortableHttpClient implements HttpClient {
         final Optional<AnthropicCallAbort> abort = registry.find(abortKey(request));
         final HttpRequest wire = withoutAbortKey(request);
         if (isAborted(abort)) {
-            closeQuietly(wire.body());
+            wire.body().ifPresent(AnthropicAbortableHttpClient::closeQuietly);
             final CompletableFuture<HttpResponse> refused = new CompletableFuture<>();
             refused.completeExceptionally(
                     new AnthropicCallAbortedException("Anthropic attempt refused before it was sent"));
@@ -157,7 +157,7 @@ final class AnthropicAbortableHttpClient implements HttpClient {
     /** Refuses an attempt that was never handed to the adapter, closing its body as the adapter would have. */
     private static void refuseIfAborted(Optional<AnthropicCallAbort> abort, HttpRequest wire, String when) {
         if (isAborted(abort)) {
-            closeQuietly(wire.body());
+            wire.body().ifPresent(AnthropicAbortableHttpClient::closeQuietly);
             log.debug("Anthropic attempt {} for call {}", when, abort.get().key());
             throw new AnthropicCallAbortedException("Anthropic attempt " + when + ": the call was aborted");
         }
@@ -181,9 +181,6 @@ final class AnthropicAbortableHttpClient implements HttpClient {
     }
 
     private static void closeQuietly(HttpRequestBody body) {
-        if (body == null) {
-            return;
-        }
         try {
             body.close();
         } catch (RuntimeException e) {

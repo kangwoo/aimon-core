@@ -88,19 +88,18 @@ class AnthropicLlmClientParameterDivergenceTest {
     }
 
     @Test
-    @DisplayName("a temperature above Anthropic's range is clamped, and the operator is told at WARN")
-    void outOfRangeTemperatureIsReported() {
+    @DisplayName("a temperature is dropped, not clamped, and the operator is told at WARN")
+    void temperatureIsDroppedAndReported() {
         when(mockMessageService.create(any(MessageCreateParams.class))).thenThrow(SENTINEL);
         AnthropicLlmClient client = client();
 
         send(client, LlmModel.builder().temperature(1.5).build());
 
-        assertThat(warnings()).singleElement().asString().contains("1.5").contains("[0.0, 1.0]");
+        assertThat(warnings()).singleElement().asString().contains("1.5").contains("API version 2026-10-21");
 
-        // The clamp itself, not just the warning about it: 1.5 must not reach the API.
         ArgumentCaptor<MessageCreateParams> captor = ArgumentCaptor.forClass(MessageCreateParams.class);
         verify(mockMessageService).create(captor.capture());
-        assertThat(captor.getValue().temperature()).contains(1.0);
+        assertThat(AnthropicFixtures.bodyTreeOf(captor.getValue()).has("temperature")).isFalse();
     }
 
     @Test
@@ -151,7 +150,7 @@ class AnthropicLlmClientParameterDivergenceTest {
         when(mockMessageService.create(any(MessageCreateParams.class))).thenThrow(SENTINEL);
         AnthropicLlmClient client = client();
 
-        send(client, LlmModel.builder().temperature(0.7).topP(0.9).build());
+        send(client, LlmModel.builder().maxTokens(100).build());
 
         assertThat(warnings()).isEmpty();
     }

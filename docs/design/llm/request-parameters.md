@@ -130,7 +130,7 @@ SDK 의 읽기 접근자(`getOptional`)는 필드가 없는 것(`JsonMissing`)�
 아무도 값을 넣지 않은 요청은 특별한 분기 없이 구조적으로 조용하다 — 억제될 수 있는 값은 전부 누군가 넣은 값이기
 때문이다.
 
-억제가 와이어에서 잃는 것이 없는 이유는 측정에 있다(2026-09-09, 행과 모델별 결론은
+이 절의 측정은 OpenAI 와, Anthropic API `2023-06-01` 의 것이다. Anthropic 의 현재 규칙은 §3.4 다. 억제가 와이어에서 잃는 것이 없는 이유는 측정에 있다(2026-09-09, 행과 모델별 결론은
 [`model-capabilities.md`](model-capabilities.md)). 샘플링을 거절하는 모델은 `temperature` 를 **값으로** 거절한다 —
 기본값 `1.0` 은 받고 다른 값은 400 이다. 생략하면 서버 기본값이 적용되고, 그것이 모델이 받는 유일한 값이다. `top_p` 는
 Anthropic 거절 모델에서 **존재로** 거절된다(`1.0` 도 400). 거절 문구 `` `temperature` is deprecated for this model. `` 는
@@ -155,37 +155,25 @@ Responses 엔드포인트에는 `presence_penalty` · `frequency_penalty` 자리
 설정되어 있으면 `SamplingSink` 가 그것을 삼키지 않고 보고한다 — 설정과 다른 요청이 조용히 성공하는 것이 divergence
 보고가 없애려는 실패다. 엔드포인트별 필드 매핑은 [`openai-responses-path.md`](openai-responses-path.md).
 
-### 3.4 Anthropic — capability 게이트가 thinking 규칙보다 먼저
+### 3.4 Anthropic — 샘플링 파라미터를 보내지 않는다
 
-Anthropic 은 두 게이트를 이 순서로 겹친다.
+Anthropic API 2026-10-21 은 `temperature` · `top_p` · `top_k` 가 실린 요청을 **모델과 값에 상관없이** 400 으로
+거절한다(`temperature: Extra inputs are not permitted`, 2026-11-01 측정 — 같은 요청이 `2023-06-01` 에서는 성공한다). SDK 3
+은 이 버전을 보내고 요청 타입에서 세 파라미터를 없앴다. 그래서 이 provider 에는 게이트가 없다.
 
 ```text
-applySamplingParameters
-  ├─ !supportsSamplingParameters()          ← 바깥: 모델 사실
-  │     temperature · topP 중 값이 있는 것마다 억제 보고, setter 없음, 끝
-  └─ 받는 모델                               ← 안쪽: thinking 규칙
-        thinking 파라미터가 실린 요청: temperature 는 setter 없음 + 보고,
-                                       topP 는 [0.95, 1.0] 안일 때만, 밖이면 생략 + 보고
-        thinking 이 없는 요청:          temperature 가 [0.0, 1.0] 밖이면 범위로 clamp + 보고
+reportOmittedSampling
+  temperature(LlmModel → AnthropicConfig) · topP(LlmModel) 중 값이 있는 것마다 생략 보고, 끝
 ```
 
-- **순서의 이유.** 안쪽 규칙은 샘플링을 받되 thinking 과는 함께 받지 않는 모델의 것이다. 순서를 뒤집으면 adaptive
-  thinking 이 켜진 요청이 창 안의 `top_p: 0.98` 을 거절 모델로 보낸다 — 측정된 400 이다. thinking 이 켜진 요청은
-  이미 `temperature` 를 싣지 않으므로 거절 모델에 남는 노출은 `top_p` 뿐이고, 창 안의 값도 거절되기 때문에 `top_p`
-  도 같은 플래그로 억제한다.
-- **거절 모델에서는 억제 문구가 나온다.** thinking 문구도 참이지만, thinking 을 꺼도 모델이 값을 받지 않으므로 억제
-  문구가 쓸모 있는 쪽이다. thinking 문구는 받는 모델에서만 나온다.
-- **thinking 에 의한 temperature 생략은 두 문구다.** 호출의 `LlmModel` 이 둔 값과 클라이언트 설정이 둔 값을 가른다.
-  앞의 것은 이 호출에서 고른 값이고, 뒤의 것은 이 provider 에 묶인 모든 에이전트에 한 번 설정된 값이라, 운영자가
-  찾아가야 할 자리가 다르다. 어디에도 값이 없으면 아무것도 말하지 않는다.
-- **"안전한" 값으로 대체하지 않는다.** 생략하고 보고할 뿐이다. 대체한 요청은 운영자가 고르지 않은 샘플링으로
-  성공한다.
-- **두 penalty 는 capability 분기 밖에서 "Anthropic 대응물 없음" 으로 보고한다.** Anthropic 에는 대응 파라미터가
-  아예 없다. capability 분기로 보내면 참이고 구체적인 문구가 모호한 문구로 바뀌고, 샘플링을 받는 모델에서는 여전히
-  드롭되는데 침묵하게 된다.
-
-thinking 파라미터가 실리는지는 [`anthropic-thinking.md`](anthropic-thinking.md) 가 정한다. 이 절은 그 결과
-(`thinkingRequested`)를 입력으로 받는다.
+- **capability 행은 이 결정에 관여하지 않는다.** `supportsSamplingParameters()` 는 OpenAI 만 읽는다. Anthropic 행의
+  `true` 도 값을 되살리지 못한다. thinking 도 마찬가지여서 thinking 을 꺼도 값은 실리지 않는다.
+- **값을 설정한 것은 오류가 아니다.** 에이전트 정의의 `model.temperature` 와 `llm.anthropic.temperature` 는 계속
+  받고 범위도 검사한다. `LlmModel` 은 두 provider 가 공유하고, 설정을 거절하면 샘플링 변화가 기동 실패로 바뀐다.
+- **"안전한" 값으로 대체하지 않는다.** 생략하고 보고할 뿐이다.
+- **대가를 숨기지 않는다.** 낮은 `temperature` 가 듣던 모델(예: Claude Sonnet 4.6)은 서버 기본값 `1.0` 으로
+  샘플링되고, 이를 대체할 설정은 없다. 기본값만 받던 모델(Claude 4.7 이후)은 달라지는 것이 없다.
+- **두 penalty 는 "Anthropic 대응물 없음" 으로 보고한다.** Anthropic 에는 대응 파라미터가 아예 없다.
 
 ### 3.5 서브에이전트 요청은 띄운 에이전트의 샘플링 값을 물려받고, 없으면 싣지 않는다
 
@@ -340,11 +328,8 @@ divergence 는 **설정된 값과 다른 설정으로 요청이 성공하는 조
 | 조건 | 클라이언트 | signature |
 |---|---|---|
 | capability 억제(§3.2) | OpenAI 두 엔드포인트 | `temperature=<v>@<model>` · `topP=…` · `presencePenalty=…` · `frequencyPenalty=…` |
-| capability 억제(§3.2) | Anthropic | `temperature=<v>@<model>` · `topP=<v>@<model>` |
+| API 버전에 의한 생략(§3.4) | Anthropic | `temperature=<v>@<model>` · `topP=<v>@<model>` |
 | Responses 에 penalty 자리 없음(§3.3) | OpenAI | `presencePenalty=<v>@<model>#responses` · `frequencyPenalty=…#responses` |
-| thinking 에 의한 temperature 생략(§3.4) | Anthropic | `temperatureOmittedForThinking=<v>` · `clientTemperatureOmittedForThinking=<v>` |
-| thinking 창 밖 `top_p`(§3.4) | Anthropic | `topPOmittedForThinking=<v>` |
-| 범위 밖 temperature clamp(§3.4) | Anthropic | `temperature=<v>` |
 | penalty 대응물 없음(§3.4) | Anthropic | `presencePenalty=<v>` · `frequencyPenalty=<v>` |
 | effort 파라미터가 없는 모델(§4.3) | OpenAI 두 엔드포인트 | `reasoningEffort=<e>@<model>` |
 | Chat 도구 규칙(§4.4) | OpenAI Chat | `reasoningEffortOmitted=<e>@<model>` |

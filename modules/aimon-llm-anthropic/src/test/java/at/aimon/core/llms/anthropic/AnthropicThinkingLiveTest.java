@@ -81,8 +81,8 @@ class AnthropicThinkingLiveTest {
 
     /**
      * Adaptive-only, and one of the six models that reject a non-default {@code temperature}. That second property is
-     * what {@link AdaptiveReachability} is about: it used to make {@code OFF} unreachable, and the capability row is
-     * what makes it reachable now.
+     * what {@link AdaptiveReachability} is about: it used to make {@code OFF} unreachable, and sending no sampling
+     * value is what makes it reachable now.
      */
     private static final String ADAPTIVE_MODEL = "claude-sonnet-5";
 
@@ -256,12 +256,12 @@ class AnthropicThinkingLiveTest {
 
                 // The whole sentence, not the field path. AnthropicThinkingMode's javadoc quotes it verbatim so that
                 // an operator can grep the error text and land there, and only an assertion this wide keeps that
-                // true.
+                // true. The exception message carries the raw response body, so the quotes are JSON-escaped.
                 assertThatThrownBy(
                         () -> client.sendMessage(SYSTEM, List.of(Message.user("hi")), List.of(), minimalEffort()))
                         .isInstanceOf(LlmInvalidRequestException.class)
-                        .hasMessageContaining("\"thinking.type.enabled\" is not supported for this model. "
-                                + "Use \"thinking.type.adaptive\" and \"output_config.effort\" "
+                        .hasMessageContaining("\\\"thinking.type.enabled\\\" is not supported for this model. "
+                                + "Use \\\"thinking.type.adaptive\\\" and \\\"output_config.effort\\\" "
                                 + "to control thinking behavior.");
             }
         }
@@ -327,9 +327,9 @@ class AnthropicThinkingLiveTest {
                 // .hasMessageContaining("`temperature` is deprecated for this model")
                 //
                 // which was true because the config manufactured temperature 0.0 and this model refuses any
-                // non-default value. Two changes remove it: the config no longer invents a value, and the capability
-                // row would suppress one that had been set. The old sentence is kept here because it is why the test
-                // exists — inverting it turns the record of the defect into the guard against its return.
+                // non-default value. The config no longer invents a value, and the client no longer sends one that
+                // had been set. The old sentence is kept here because it is why the test exists — inverting it turns
+                // the record of the defect into the guard against its return.
                 assertThatCode(() -> client.sendMessage(SYSTEM, List.of(Message.user("What is 2 + 3?")), List.of(),
                         LlmModel.builder().build())).doesNotThrowAnyException();
             }
@@ -351,28 +351,11 @@ class AnthropicThinkingLiveTest {
 
                 assertThat(appender.list.stream().filter(event -> event.getLevel() == Level.WARN)
                         .map(ILoggingEvent::getFormattedMessage))
-                        .anyMatch(message -> message.contains("does not accept sampling parameters")
+                        .anyMatch(message -> message.contains("API version 2026-10-21")
                                 && message.contains(ADAPTIVE_MODEL));
             } finally {
                 clientLogger.detachAppender(appender);
                 appender.stop();
-            }
-        }
-
-        @Test
-        @DisplayName("the negative control: with the row removed, the same call is the 400 it always was")
-        void withoutTheCapabilityRowTheSameCallIsRejected() throws Exception {
-            try (AnthropicLlmClient client = new AnthropicLlmClient(
-                    config(ADAPTIVE_MODEL).modelCapabilityRegistry(ModelCapabilityRegistry.EMPTY).build())) {
-
-                // Without this, "the call succeeded" above is equally satisfied by a client that sends nothing for
-                // unrelated reasons — the same asymmetry mutatedSignatureIsRejected exists to close. The exact
-                // sentence matters: a bare "temperature" substring would also pass on a range-validation error.
-                //
-                // This half is rejected at parameter validation, before generation, so it bills nothing.
-                assertThatThrownBy(() -> client.sendMessage(SYSTEM, List.of(Message.user("hi")), List.of(),
-                        LlmModel.builder().temperature(0.7).build())).isInstanceOf(LlmInvalidRequestException.class)
-                        .hasMessageContaining("`temperature` is deprecated for this model");
             }
         }
     }

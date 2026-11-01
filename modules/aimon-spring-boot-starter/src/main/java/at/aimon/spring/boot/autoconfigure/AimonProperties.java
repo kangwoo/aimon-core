@@ -1801,10 +1801,10 @@ public class AimonProperties implements InitializingBean {
              * nothing is put on the request, so this key reaches them.
              *
              * <p>
-             * A value outside the range fails startup naming this property. Two kinds of request are sent without
-             * it, and the client warns once for each: one that carries a thinking parameter, which Anthropic does not
-             * accept together with {@code temperature}, and one to a model whose capability row says it does not
-             * accept sampling parameters.
+             * A value outside the range fails startup naming this property. A value inside it is not sent either:
+             * Anthropic API version 2026-10-21 refuses {@code temperature} on every model, so the client omits it,
+             * warns
+             * once, and the server's default sampling applies.
              *
              * <p>
              * This is the only sampling key in the block. The Anthropic API has no penalties, and the client reads
