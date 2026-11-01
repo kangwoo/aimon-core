@@ -89,8 +89,24 @@ class MongoSchemaFreezeTest {
         // Frozen from birth: a rename leaves every stored schedule behind in a collection nothing reads.
         assertThat(DocumentKeys.COLL_SCHEDULED_TASKS).isEqualTo("scheduled_tasks");
 
+        // Frozen from birth: a rename forgets every last slot, so a fleet mid-deploy runs an occurrence twice.
+        assertThat(DocumentKeys.COLL_SCHEDULED_EXECUTION_GUARDS).isEqualTo("scheduled_execution_guards");
+
         // Frozen from birth: a rename resets every session's wake caps, and a streak cap that resets is no cap.
         assertThat(DocumentKeys.COLL_WAKE_LEDGER).isEqualTo("wake_ledger");
+    }
+
+    @Test
+    @DisplayName("the execution guard's field names are still the deployed ones")
+    void executionGuardFieldsAreFrozen() {
+        // Not a Java-only detail. The guard reads lastSlot and leaseExpiresAt through $ifNull, so a rename does not
+        // fail:
+        // it makes every stored slot and lease look absent, and mid-deploy an occurrence runs twice or two runs
+        // overlap.
+        // Renewal and release match on holderId, so a rename also strands the lease a node already holds.
+        assertThat(DocumentKeys.F_LAST_SLOT).isEqualTo("lastSlot");
+        assertThat(DocumentKeys.F_LEASE_EXPIRES_AT).isEqualTo("leaseExpiresAt");
+        assertThat(DocumentKeys.F_HOLDER_ID).isEqualTo("holderId");
     }
 
     @Test
@@ -103,6 +119,9 @@ class MongoSchemaFreezeTest {
         assertThat(script).contains("ensureCollection(\"session_records\")");
         assertThat(script).contains("ensureCollection(\"session_log_segments\")");
         assertThat(script).contains("ensureCollection(\"scheduled_tasks\")");
+        assertThat(script).contains("ensureCollection(\"scheduled_execution_guards\")");
+        // No TTL index, and that is load-bearing: expiring a document forgets the slot that refuses a late duplicate.
+        assertThat(script).doesNotContain("target.scheduled_execution_guards.createIndex");
         assertThat(script).contains("ensureCollection(\"wake_ledger\")");
         // The TTL index is what bounds the collection: without it a document per session ever woken stays forever.
         assertThat(script).contains("target.wake_ledger.createIndex( { expiresAt: 1 }, "

@@ -65,7 +65,8 @@ public final class MongoTestSupport {
         for (String name : List.of(DocumentKeys.COLL_LOCKS, DocumentKeys.COLL_INBOX, DocumentKeys.COLL_IDEMPOTENCY,
                 DocumentKeys.COLL_SIGNALS, DocumentKeys.COLL_BACKGROUND_TASK, DocumentKeys.COLL_SESSION_RECORDS,
                 DocumentKeys.COLL_SESSION_LOG_SEGMENTS, DocumentKeys.COLL_SCHEDULED_TASK_INTERRUPTS,
-                DocumentKeys.COLL_WAKE_LEDGER, DocumentKeys.COLL_SCHEDULED_TASKS)) {
+                DocumentKeys.COLL_WAKE_LEDGER, DocumentKeys.COLL_SCHEDULED_TASKS,
+                DocumentKeys.COLL_SCHEDULED_EXECUTION_GUARDS)) {
             try {
                 db.getCollection(name).drop();
             } catch (RuntimeException ignored) {
@@ -89,6 +90,7 @@ public final class MongoTestSupport {
         db.getCollection(DocumentKeys.COLL_SESSION_LOG_SEGMENTS).createIndex(Indexes.ascending("sessionId"),
                 new IndexOptions().name("by_session"));
 
+        db.createCollection(DocumentKeys.COLL_SCHEDULED_EXECUTION_GUARDS);
         db.createCollection(DocumentKeys.COLL_SCHEDULED_TASKS);
         // Spelled out for the same reason as the inbox index below.
         db.getCollection(DocumentKeys.COLL_SCHEDULED_TASKS).createIndex(Indexes.ascending("owner.type", "owner.id"),

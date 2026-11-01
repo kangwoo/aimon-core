@@ -23,7 +23,9 @@ import at.aimon.core.scheduling.event.StepCompletedEvent;
 import at.aimon.core.scheduling.event.StepFailedEvent;
 import at.aimon.core.scheduling.event.TaskCancelledEvent;
 import at.aimon.core.scheduling.event.TaskCompletedEvent;
+import at.aimon.core.scheduling.event.TaskDisabledEvent;
 import at.aimon.core.scheduling.event.TaskFailedEvent;
+import at.aimon.core.scheduling.event.TaskHaltedEvent;
 import at.aimon.core.scheduling.event.TaskInterruptedEvent;
 import at.aimon.core.scheduling.event.TaskRegisteredEvent;
 import at.aimon.core.scheduling.event.TaskStartedEvent;
@@ -127,6 +129,39 @@ public class ScheduledTaskEventDisplayListener implements ScheduledTaskEventList
         colorPrintln(plain, () -> ansi().fgCyan().a("[Schedule] ").reset().fgBrightBlack().a("[" + time + "] ").reset()
                 .a("Task stopped: ").fgYellow().a(task.getName()).reset().fgMagenta().bold().a(" \u2298").reset()
                 .fgBrightBlack().a(" (" + reason + ", " + done + "/" + total + " steps, " + durationStr + ")"));
+    }
+
+    /**
+     * Renders a run a step halted on purpose — its work waits on something outside the run. The terminal line for that
+     * run, like {@link #onTaskInterrupted}, and not drawn as a failure.
+     */
+    @Override
+    public void onTaskHalted(TaskHaltedEvent event) {
+        ScheduledTask task = event.getTask();
+        RoutineResult result = event.getResult();
+        String time = TIME_FORMATTER.format(event.getTimestamp());
+        String durationStr = formatDuration(result.getDuration());
+        String reason = event.getReason();
+        int done = result.getTotalStepCount();
+        int total = task.getRoutine().size();
+
+        String plain = "[Schedule] [" + time + "] Task halted: " + task.getName() + " [" + reason + "] (" + done + "/"
+                + total + " steps, " + durationStr + ")";
+        colorPrintln(plain,
+                () -> ansi().fgCyan().a("[Schedule] ").reset().fgBrightBlack().a("[" + time + "] ").reset()
+                        .a("Task halted: ").fgYellow().a(task.getName()).reset().fgBlue().bold().a(" \u23F8").reset()
+                        .fgBrightBlack().a(" (" + reason + ", " + done + "/" + total + " steps, " + durationStr + ")"));
+    }
+
+    @Override
+    public void onTaskDisabled(TaskDisabledEvent event) {
+        ScheduledTask task = event.getTask();
+        String time = TIME_FORMATTER.format(event.getTimestamp());
+        String reason = event.getReason();
+
+        String plain = "[Schedule] [" + time + "] Task disabled: " + task.getName() + " (" + reason + ")";
+        colorPrintln(plain, () -> ansi().fgCyan().a("[Schedule] ").reset().fgBrightBlack().a("[" + time + "] ").reset()
+                .a("Task disabled: ").fgYellow().a(task.getName()).reset().fgBrightBlack().a(" (" + reason + ")"));
     }
 
     @Override

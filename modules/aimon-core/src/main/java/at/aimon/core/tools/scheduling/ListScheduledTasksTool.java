@@ -24,9 +24,14 @@ import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
 import at.aimon.core.scheduling.ScheduledTask;
 import at.aimon.core.scheduling.ScheduledTaskManager;
+import at.aimon.core.scheduling.ScheduledTaskPolicy;
 
 /**
  * Tool for listing scheduled tasks.
+ *
+ * <p>
+ * Lists the caller's own tasks, minus any the manager's {@link ScheduledTaskPolicy} hides
+ * ({@link ScheduledTaskPolicy#checkAccess} with {@link ScheduledTaskPolicy.Access#LIST}).
  */
 public class ListScheduledTasksTool extends AbstractTool {
 
@@ -77,9 +82,16 @@ public class ListScheduledTasksTool extends AbstractTool {
 
             Principal owner = context.get(PRINCIPAL).orElseGet(defaultPrincipalSupplier);
 
-            List<ScheduledTask> tasks = enabledOnly
+            final ScheduledTaskPolicy policy = taskManager.getTaskPolicy();
+            List<ScheduledTask> tasks = (enabledOnly
                     ? taskManager.listEnabledByOwner(owner)
-                    : taskManager.listByOwner(owner);
+                    : taskManager.listByOwner(owner))
+                    .stream()
+                    .filter(task -> PolicyCalls
+                            .decide("listing task " + task.getId(),
+                                    () -> policy.checkAccess(task, ScheduledTaskPolicy.Access.LIST, context))
+                            .isAllowed())
+                    .toList();
 
             if (tasks.isEmpty()) {
                 return ToolResult.success("No scheduled tasks found.");

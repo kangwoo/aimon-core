@@ -22,6 +22,12 @@ import at.aimon.core.agent.interrupt.InterruptReason;
  * {@code isSuccess() == false} like a failure does &mdash; there is no completed routine to hand back &mdash; but it
  * carries an {@link #getInterruptReason() interrupt reason} instead of a fault, and callers that distinguish "this
  * task is broken" from "somebody stopped it" must read that rather than the success flag.
+ *
+ * <p>
+ * A fourth ending is neither: the run was {@link #isHalted() halted} by a step whose tool reported that the work now
+ * waits on something outside the run (a human approval, say). The run ended normally and early; no step failed and
+ * nobody stopped it. Like a cancelled run it reports {@code isSuccess() == false}, and carries a
+ * {@link #getHaltReason() halt reason} instead of a fault.
  */
 public final class RoutineResult {
 
@@ -30,6 +36,7 @@ public final class RoutineResult {
     private final List<StepResult> stepResults;
     private final String errorMessage;
     private final InterruptReason interruptReason;
+    private final String haltReason;
     private final Instant startedAt;
     private final Instant completedAt;
 
@@ -39,6 +46,7 @@ public final class RoutineResult {
         stepResults = builder.stepResults != null ? List.copyOf(builder.stepResults) : List.of();
         errorMessage = builder.errorMessage;
         interruptReason = builder.interruptReason;
+        haltReason = builder.haltReason;
         startedAt = builder.startedAt;
         completedAt = builder.completedAt;
     }
@@ -87,6 +95,31 @@ public final class RoutineResult {
                 .build();
     }
 
+    /**
+     * Creates a halted routine result &mdash; a step's tool asked the run to stop after it, and it did.
+     *
+     * <p>
+     * {@code stepResults} ends with the halted step; the steps after it were never started.
+     *
+     * @param taskId
+     *            the task whose run halted
+     * @param stepResults
+     *            results of the steps attempted, the halted one last
+     * @param haltReason
+     *            the reason the halting step gave (must not be null)
+     * @param startedAt
+     *            when the run started
+     * @param completedAt
+     *            when the run ended
+     * @return the halted result
+     */
+    public static RoutineResult halted(ScheduledTaskId taskId, List<StepResult> stepResults, String haltReason,
+            Instant startedAt, Instant completedAt) {
+        Objects.requireNonNull(haltReason, "Halt reason cannot be null");
+        return builder().taskId(taskId).success(false).stepResults(stepResults).haltReason(haltReason)
+                .startedAt(startedAt).completedAt(completedAt).build();
+    }
+
     /** Builder를 생성한다. */
     public static Builder builder() {
         return new Builder();
@@ -124,6 +157,25 @@ public final class RoutineResult {
         return Optional.ofNullable(interruptReason);
     }
 
+    /**
+     * Reports whether a step halted this run: it ended early and normally, at a step whose work waits on something
+     * outside the run.
+     *
+     * @return {@code true} if the run halted
+     */
+    public boolean isHalted() {
+        return haltReason != null;
+    }
+
+    /**
+     * Returns why a step halted this run.
+     *
+     * @return the halt reason, or empty if the run did not halt
+     */
+    public Optional<String> getHaltReason() {
+        return Optional.ofNullable(haltReason);
+    }
+
     public Instant getStartedAt() {
         return startedAt;
     }
@@ -159,20 +211,21 @@ public final class RoutineResult {
         final RoutineResult that = (RoutineResult) o;
         return success == that.success && taskId.equals(that.taskId) && stepResults.equals(that.stepResults)
                 && Objects.equals(errorMessage, that.errorMessage)
-                && Objects.equals(interruptReason, that.interruptReason) && Objects.equals(startedAt, that.startedAt)
-                && Objects.equals(completedAt, that.completedAt);
+                && Objects.equals(interruptReason, that.interruptReason) && Objects.equals(haltReason, that.haltReason)
+                && Objects.equals(startedAt, that.startedAt) && Objects.equals(completedAt, that.completedAt);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(taskId, success, stepResults, errorMessage, interruptReason, startedAt, completedAt);
+        return Objects.hash(taskId, success, stepResults, errorMessage, interruptReason, haltReason, startedAt,
+                completedAt);
     }
 
     @Override
     public String toString() {
         return "RoutineResult{taskId='" + taskId + "', success=" + success + ", steps=" + getCompletedStepCount() + '/'
                 + getTotalStepCount() + (interruptReason != null ? ", cancelled=" + interruptReason : "")
-                + ", duration=" + getDuration() + '}';
+                + (haltReason != null ? ", halted='" + haltReason + "'" : "") + ", duration=" + getDuration() + '}';
     }
 
     /**
@@ -185,6 +238,7 @@ public final class RoutineResult {
         private List<StepResult> stepResults = new ArrayList<>();
         private String errorMessage;
         private InterruptReason interruptReason;
+        private String haltReason;
         private Instant startedAt;
         private Instant completedAt;
 
@@ -224,6 +278,18 @@ public final class RoutineResult {
         /** 중단 사유를 설정한다. 설정하면 결과가 취소된 실행으로 표시된다. */
         public Builder interruptReason(InterruptReason interruptReason) {
             this.interruptReason = interruptReason;
+            return this;
+        }
+
+        /**
+         * 루틴 중단 사유를 설정한다. 설정하면 결과가 중단(halted)된 실행으로 표시된다.
+         *
+         * @param haltReason
+         *            중단 사유 (중단되지 않았으면 null)
+         * @return 이 빌더
+         */
+        public Builder haltReason(String haltReason) {
+            this.haltReason = haltReason;
             return this;
         }
 

@@ -67,6 +67,15 @@ public final class DocumentKeys {
      */
     public static final String COLL_SCHEDULED_TASKS = "scheduled_tasks";
 
+    /**
+     * Default collection holding one execution guard document per scheduled task, keyed by task id.
+     *
+     * <p>
+     * <b>FROZEN WIRE NAME from its first release.</b> A rename forgets every task's last slot and live lease, so during
+     * a rolling deploy upgraded and un-upgraded nodes each run the same occurrence.
+     */
+    public static final String COLL_SCHEDULED_EXECUTION_GUARDS = "scheduled_execution_guards";
+
     /** Default collection holding background subagent task snapshots, keyed by task id. */
     public static final String COLL_BACKGROUND_TASK = "background_task";
 
@@ -98,13 +107,39 @@ public final class DocumentKeys {
     /** Mongo {@code _id} field name. */
     public static final String F_ID = "_id";
 
-    /** Lock document — current holder identity. */
+    /**
+     * Execution guard document — the newest cron slot that began, on any node (omitted until a slotted fire).
+     *
+     * <p>
+     * <b>FROZEN WIRE KEY from its first release.</b> The guard reads it through {@code $ifNull}, because a document may
+     * legitimately have none, so a rename does not fail: upgraded nodes see no slot at all in every stored document,
+     * and
+     * during a rolling deploy an occurrence that already ran is granted again. Pinned by {@code MongoSchemaFreezeTest}.
+     */
+    public static final String F_LAST_SLOT = "lastSlot";
+
+    /**
+     * Lock and execution guard documents — current holder identity.
+     *
+     * <p>
+     * <b>FROZEN WIRE KEY.</b> Renewal and release match on it, so after a rename a node cannot find the lease it holds:
+     * its heartbeat reports the lease lost and its release does nothing. Pinned by {@code MongoSchemaFreezeTest}.
+     */
     public static final String F_HOLDER_ID = "holderId";
 
     /** Lock document — monotonic fencing token. */
     public static final String F_FENCING_TOKEN = "fencingToken";
 
-    /** Lock document — absolute UTC instant the lease expires. */
+    /**
+     * Lock and execution guard documents — absolute UTC instant the lease expires.
+     *
+     * <p>
+     * <b>FROZEN WIRE KEY.</b> The guard reads it through {@code $ifNull} too, for the bare document a refused first
+     * fire
+     * leaves, so a rename makes every live lease look free: during a rolling deploy upgraded nodes begin runs that
+     * overlap
+     * the ones still going. Pinned by {@code MongoSchemaFreezeTest}.
+     */
     public static final String F_LEASE_EXPIRES_AT = "leaseExpiresAt";
 
     /** Lock document — diagnostic acquisition timestamp. */

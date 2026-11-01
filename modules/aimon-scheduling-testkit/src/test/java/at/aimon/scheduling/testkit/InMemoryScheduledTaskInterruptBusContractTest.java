@@ -1,4 +1,4 @@
-package at.aimon.session.testkit;
+package at.aimon.scheduling.testkit;
 
 import at.aimon.core.scheduling.InMemoryScheduledTaskInterruptBus;
 import at.aimon.core.scheduling.ScheduledTaskInterruptBus;

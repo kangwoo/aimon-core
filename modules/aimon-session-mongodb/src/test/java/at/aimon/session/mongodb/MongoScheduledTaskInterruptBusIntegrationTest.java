@@ -26,9 +26,9 @@ import com.mongodb.client.model.changestream.ChangeStreamDocument;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.scheduling.ScheduledTaskId;
 import at.aimon.core.scheduling.ScheduledTaskInterruptBus;
+import at.aimon.scheduling.testkit.AbstractScheduledTaskInterruptBusContractTest;
 import at.aimon.session.mongodb.internal.DocumentKeys;
 import at.aimon.session.mongodb.internal.ResumeTokenStore;
-import at.aimon.session.testkit.AbstractScheduledTaskInterruptBusContractTest;
 
 /**
  * Runs the shared interrupt bus contract against {@link MongoScheduledTaskInterruptBus} on a real replica set, plus

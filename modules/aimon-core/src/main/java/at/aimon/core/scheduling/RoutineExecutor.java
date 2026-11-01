@@ -52,7 +52,9 @@ import at.aimon.core.agent.quota.QuotaGuardFactory;
 import at.aimon.core.agent.quota.QuotaResolutionContext;
 import at.aimon.core.agent.quota.QuotaViolation;
 import at.aimon.core.agent.quota.exception.QuotaLedgerUnavailableException;
+import at.aimon.core.agent.tool.IdempotencyBehavior;
 import at.aimon.core.agent.tool.InterruptToolKeys;
+import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
@@ -70,6 +72,7 @@ import at.aimon.core.scheduling.event.StepCompletedEvent;
 import at.aimon.core.scheduling.event.StepFailedEvent;
 import at.aimon.core.scheduling.event.TaskCompletedEvent;
 import at.aimon.core.scheduling.event.TaskFailedEvent;
+import at.aimon.core.scheduling.event.TaskHaltedEvent;
 import at.aimon.core.scheduling.event.TaskInterruptedEvent;
 import at.aimon.core.scheduling.event.TaskStartedEvent;
 import at.aimon.core.toolinvocation.ToolCallTracing;
@@ -92,6 +95,33 @@ import at.aimon.core.tracing.Tracer;
  * Tools are resolved at execution time by looking up the task's {@link ScheduledTask#getBoundRuntimeId() bound
  * agent runtime} from the {@link AgentRuntimeRegistry}.
  * </p>
+ *
+ * <h2>Retries</h2>
+ *
+ * <p>
+ * A failed step is attempted again up to {@link RoutineStep#getMaxRetries()} times, but only when repeating it is
+ * known to be safe. A step whose tool is {@link SideEffectLevel#MUTATING} and does not declare
+ * {@link IdempotencyBehavior#IDEMPOTENT} runs once whatever its retry count says: an attempt that timed out or threw
+ * may
+ * still have done its write, and running it again can do that write twice &mdash; a second message, a second change
+ * applied. A failure the tool marked {@link ToolResult#notRetryable()} is not retried either. An attempt that failed
+ * before its tool was found (no runtime registered yet, an unknown tool name) ran nothing and keeps its retries. A
+ * step whose last attempt timed out is recorded as {@link StepResult#isOutcomeUnknown() outcome unknown}.
+ *
+ * <h2>Halting</h2>
+ *
+ * <p>
+ * A tool can end a run early without failing it, by returning a result marked
+ * {@link ToolResult#haltingRoutine(String)} &mdash; its work waits on something outside the run, such as a human
+ * approval. The step is recorded as {@link StepResult#isHalted() halted}, it is not retried, no later step starts, and
+ * the run ends as {@link RoutineResult#halted halted} with a {@link TaskHaltedEvent}. The next fire runs as usual.
+ *
+ * <h2>Hooks do not run here</h2>
+ *
+ * <p>
+ * Steps call {@link Tool#execute} directly. No PreTool or PostTool hook, permission rule or approval gate sees a
+ * scheduled step, so a host's hook-based guards do not cover scheduled work; the place to vet a routine is when it is
+ * scheduled ({@link ScheduledTaskPolicy}).
  *
  * <h2>Cancelling a run in flight</h2>
  *
@@ -446,6 +476,15 @@ public class RoutineExecutor {
             final StepResult stepResult = attempted.get();
             stepResults.add(stepResult);
 
+            if (stepResult.isHalted()) {
+                // A stop that landed while the step ran wins, as it does over a failure: the run was stopped, and
+                // that is the record an operator who pressed stop expects.
+                if (signal.isCancelled()) {
+                    return cancelled(task, stepResults, signal, startedAt);
+                }
+                return halted(task, stepResults, stepResult.getHaltReason().orElseThrow(), startedAt);
+            }
+
             if (stepResult.isSuccess()) {
                 final int stepIndex = i;
                 stepResult.getStdout().ifPresent(stdout -> stepOutputs.put(String.valueOf(stepIndex), stdout));
@@ -498,6 +537,21 @@ public class RoutineExecutor {
         log.info("Routine execution for task '{}' cancelled ({}) after {}/{} step(s)", task.getId(), reason,
                 stepResults.size(), task.getRoutine().size());
         eventPublisher.publish(new TaskInterruptedEvent(task, result, reason));
+
+        return result;
+    }
+
+    /**
+     * Builds and announces the result of a run a step halted on purpose. Not a failure — no {@link TaskFailedEvent},
+     * and no {@code StepFailedEvent} for the halting step.
+     */
+    private RoutineResult halted(ScheduledTask task, List<StepResult> stepResults, String reason, Instant startedAt) {
+        final Instant completedAt = clock.instant();
+        final RoutineResult result = RoutineResult.halted(task.getId(), stepResults, reason, startedAt, completedAt);
+
+        log.info("Routine execution for task '{}' halted at step {}/{}: {}", task.getId(), stepResults.size(),
+                task.getRoutine().size(), reason);
+        eventPublisher.publish(new TaskHaltedEvent(task, result));
 
         return result;
     }
@@ -745,6 +799,7 @@ public class RoutineExecutor {
         final Instant startedAt = clock.instant();
         int attemptCount = 0;
         String lastError = null;
+        boolean lastTimedOut = false;
 
         while (attemptCount <= step.getMaxRetries()) {
             // Retrying a cancelled run spends its whole backoff budget on work nobody is waiting for. The first pass
@@ -756,26 +811,42 @@ public class RoutineExecutor {
             attemptCount++;
             // Each attempt is its own TOOL span: a retry runs the tool again and may start a different subagent.
             final StepAttemptTrace attemptTrace = new StepAttemptTrace(run.trace, stepIndex, attemptCount);
+            // Why this attempt must be the last, or null while a retry is still allowed. Set only once the tool was
+            // found: an attempt that failed before that ran nothing, so repeating it cannot repeat a write.
+            String noRetry = null;
+            lastTimedOut = false;
 
             try {
                 log.debug("Executing step {} (tool: '{}') (attempt {}/{}) for task '{}'", stepIndex, step.getTool(),
                         attemptCount, step.getMaxRetries() + 1, task.getId());
 
-                final ToolResult toolResult = executeWithTimeout(task.getBoundRuntimeId(), step, context, stepOutputs,
-                        coordinator, attemptTrace);
+                final Tool tool = resolveTool(task.getBoundRuntimeId(), step);
+                noRetry = retryRefusal(tool, step.getTool());
+                final ToolResult toolResult = executeWithTimeout(tool, step, context, stepOutputs, coordinator,
+                        attemptTrace);
                 attemptTrace.recordResult(toolResult, signal);
 
+                final Optional<String> haltReason = toolResult.getHaltReason();
+                if (haltReason.isPresent()) {
+                    final Instant completedAt = clock.instant();
+                    return Optional.of(StepResult.halted(stepIndex, step, haltReason.get(), toolResult.getContent(),
+                            attemptCount, startedAt, completedAt));
+                }
                 if (toolResult.isSuccess()) {
                     final Instant completedAt = clock.instant();
                     return Optional.of(StepResult.success(stepIndex, step, toolResult.getContent(), attemptCount,
                             startedAt, completedAt));
-                } else {
-                    lastError = toolResult.getContent();
-                    log.warn("Step {} attempt {} failed for task '{}': {}", stepIndex, attemptCount, task.getId(),
-                            lastError);
                 }
+                lastError = toolResult.getContent();
+                if (noRetry == null && !toolResult.isRetryable()) {
+                    noRetry = "the tool marked the failure as not retryable";
+                }
+                log.warn("Step {} attempt {} failed for task '{}': {}", stepIndex, attemptCount, task.getId(),
+                        lastError);
             } catch (TimeoutException e) {
-                lastError = "Step timed out after " + step.getTimeout();
+                lastError = "Step timed out after " + step.getTimeout() + " (outcome unknown: the tool may have"
+                        + " finished its work after the executor stopped waiting)";
+                lastTimedOut = true;
                 attemptTrace.recordError(lastError);
                 log.warn("Step {} attempt {} timed out for task '{}'", stepIndex, attemptCount, task.getId());
             } catch (Exception e) {
@@ -785,6 +856,12 @@ public class RoutineExecutor {
                         e.getMessage(), e);
             } finally {
                 attemptTrace.close();
+            }
+
+            if (noRetry != null && attemptCount <= step.getMaxRetries()) {
+                log.warn("Step {} of task '{}' is not retried ({} of {} retries unused): {}", stepIndex, task.getId(),
+                        step.getMaxRetries() - attemptCount + 1, step.getMaxRetries(), noRetry);
+                break;
             }
 
             if (attemptCount <= step.getMaxRetries()) {
@@ -809,7 +886,40 @@ public class RoutineExecutor {
         }
 
         final Instant completedAt = clock.instant();
-        return Optional.of(StepResult.failure(stepIndex, step, lastError, attemptCount, startedAt, completedAt));
+        return Optional.of(StepResult.builder().stepIndex(stepIndex).step(step).success(false).errorMessage(lastError)
+                .attemptCount(attemptCount).outcomeUnknown(lastTimedOut).startedAt(startedAt).completedAt(completedAt)
+                .build());
+    }
+
+    /**
+     * Resolves a step's tool from the bound runtime, at execution time, so a runtime registered after the task was
+     * scheduled is found.
+     */
+    private Tool resolveTool(AgentRuntimeId boundRuntimeId, RoutineStep step) {
+        final AgentRuntime agentRuntime = agentRuntimeRegistry.get(boundRuntimeId)
+                .orElseThrow(() -> new IllegalStateException("No agent runtime registered for binding: "
+                        + boundRuntimeId + ". Ensure the context is registered before task execution."));
+        return agentRuntime.findToolByName(step.getTool())
+                .orElseThrow(() -> new IllegalArgumentException("Tool not found: " + step.getTool()));
+    }
+
+    /**
+     * Decides from a tool's declarations whether a failed attempt of it may be repeated.
+     *
+     * <p>
+     * Read-only tools and tools declaring {@link IdempotencyBehavior#IDEMPOTENT} may be; every other tool — including
+     * every tool that declares nothing, since {@code MUTATING} and {@code NON_IDEMPOTENT} are the defaults — may not.
+     * The idempotency axis is read only for a {@code MUTATING} tool, as the axes' consumer rule says.
+     *
+     * @return why the tool must not be retried, or {@code null} if it may be
+     */
+    static String retryRefusal(Tool tool, String toolName) {
+        if (tool.getSideEffectLevel() == SideEffectLevel.READ_ONLY
+                || tool.getIdempotencyBehavior() == IdempotencyBehavior.IDEMPOTENT) {
+            return null;
+        }
+        return "tool '" + toolName + "' writes and does not declare IdempotencyBehavior.IDEMPOTENT, so a"
+                + " repeated attempt could repeat its write";
     }
 
     /**
@@ -927,17 +1037,9 @@ public class RoutineExecutor {
      * to the pool: an attempt that fails before that never ran a tool, so it leaves no TOOL span, and its error reaches
      * the ROUTINE span through the run's result.
      */
-    private ToolResult executeWithTimeout(AgentRuntimeId boundRuntimeId, RoutineStep step, ToolContext context,
+    private ToolResult executeWithTimeout(Tool tool, RoutineStep step, ToolContext context,
             Map<String, String> stepOutputs, InterruptCoordinator coordinator, StepAttemptTrace attemptTrace)
             throws TimeoutException {
-        // Resolve agent runtime at execution time and capture in local variable for thread safety
-        final AgentRuntime agentRuntime = agentRuntimeRegistry.get(boundRuntimeId)
-                .orElseThrow(() -> new IllegalStateException("No agent runtime registered for binding: "
-                        + boundRuntimeId + ". Ensure the context is registered before task execution."));
-
-        final Tool tool = agentRuntime.findToolByName(step.getTool())
-                .orElseThrow(() -> new IllegalArgumentException("Tool not found: " + step.getTool()));
-
         final ToolInput input = buildToolInput(step, stepOutputs);
 
         final InterruptBehavior behavior = tool.getInterruptBehavior();
@@ -1206,7 +1308,9 @@ public class RoutineExecutor {
                 outputs.put("completedSteps", result.getCompletedStepCount());
                 outputs.put("totalSteps", result.getTotalStepCount());
                 root.setOutputs(outputs);
-                if (result.isCancelled()) {
+                if (result.isHalted()) {
+                    root.setAttribute("haltReason", result.getHaltReason().orElse(""));
+                } else if (result.isCancelled()) {
                     root.interrupted();
                 } else if (!result.isSuccess()) {
                     root.error(result.getErrorMessage().orElse("Routine run failed"));

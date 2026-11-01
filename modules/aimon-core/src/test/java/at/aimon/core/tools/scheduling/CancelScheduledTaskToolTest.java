@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.util.Map;
 
@@ -21,6 +22,7 @@ import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
 import at.aimon.core.scheduling.ScheduledTaskId;
 import at.aimon.core.scheduling.ScheduledTaskManager;
+import at.aimon.core.scheduling.ScheduledTaskPolicy;
 import at.aimon.core.scheduling.exception.TaskNotFoundException;
 import at.aimon.core.scheduling.exception.UnauthorizedTaskAccessException;
 
@@ -34,6 +36,7 @@ class CancelScheduledTaskToolTest {
     @BeforeEach
     void setUp() {
         taskManager = mock(ScheduledTaskManager.class);
+        when(taskManager.getTaskPolicy()).thenReturn(ScheduledTaskPolicy.PERMIT_ALL);
         defaultPrincipal = Principal.user("test-user", "Test User");
         tool = new CancelScheduledTaskTool(taskManager, () -> defaultPrincipal);
     }

@@ -24,6 +24,10 @@ import at.aimon.core.llm.ToolUseResult;
  * <li><strong>retryable</strong>: Whether calling the tool again could turn this failure into a success. Every result
  * is retryable unless the tool marked its error with {@link #notRetryable()}. Like the render payload it is a signal
  * for the framework, never sent to the LLM and never persisted.
+ * <li><strong>haltReason</strong>: Set by {@link #haltingRoutine(String)} when the work the call stands for is not
+ * finished and will not finish within this execution (it waits on a human approval, say). A scheduled routine stops
+ * there without retrying; everywhere else it is inert. Like {@code retryable}, never sent to the LLM and never
+ * persisted.
  * </ul>
  *
  * <h2>Example Usage</h2>
@@ -71,6 +75,7 @@ public final class ToolResult {
     private final Exception exception;
     private final Map<String, Object> renderPayload;
     private final boolean retryable;
+    private final String haltReason;
 
     /**
      * Creates a new ToolResult.
@@ -85,16 +90,19 @@ public final class ToolResult {
      *            Optional sidecar payload for non-LLM consumers (nullable)
      * @param retryable
      *            Whether calling the tool again could change the outcome; forced to {@code true} for a success
+     * @param haltReason
+     *            Why a routine running this call must stop after it (nullable)
      * @throws NullPointerException
      *             if content is null
      */
     private ToolResult(String content, boolean isError, Exception exception, Map<String, Object> renderPayload,
-            boolean retryable) {
+            boolean retryable, String haltReason) {
         this.content = Objects.requireNonNull(content, "Content cannot be null");
         this.isError = isError;
         this.exception = exception;
         this.renderPayload = renderPayload;
         this.retryable = retryable || !isError;
+        this.haltReason = haltReason;
     }
 
     /**
@@ -107,7 +115,7 @@ public final class ToolResult {
      *             if content is null
      */
     public static ToolResult success(String content) {
-        return new ToolResult(content, false, null, null, true);
+        return new ToolResult(content, false, null, null, true, null);
     }
 
     /**
@@ -120,7 +128,7 @@ public final class ToolResult {
      *             if errorMessage is null
      */
     public static ToolResult error(String errorMessage) {
-        return new ToolResult(errorMessage, true, null, null, true);
+        return new ToolResult(errorMessage, true, null, null, true, null);
     }
 
     /**
@@ -140,7 +148,7 @@ public final class ToolResult {
      */
     public static ToolResult error(String errorMessage, Exception exception) {
         Objects.requireNonNull(exception, "Exception cannot be null");
-        return new ToolResult(errorMessage, true, exception, null, true);
+        return new ToolResult(errorMessage, true, exception, null, true, null);
     }
 
     /**
@@ -159,7 +167,7 @@ public final class ToolResult {
     public static ToolResult error(Exception exception) {
         Objects.requireNonNull(exception, "Exception cannot be null");
         String message = exception.getMessage() != null ? exception.getMessage() : exception.getClass().getSimpleName();
-        return new ToolResult(message, true, exception, null, true);
+        return new ToolResult(message, true, exception, null, true, null);
     }
 
     /**
@@ -189,7 +197,7 @@ public final class ToolResult {
      */
     public ToolResult withRenderPayload(Map<String, Object> payload) {
         Map<String, Object> copy = payload == null ? null : Map.copyOf(payload);
-        return new ToolResult(content, isError, exception, copy, retryable);
+        return new ToolResult(content, isError, exception, copy, retryable, haltReason);
     }
 
     /**
@@ -219,7 +227,43 @@ public final class ToolResult {
         if (!isError) {
             return this;
         }
-        return new ToolResult(content, true, exception, renderPayload, false);
+        return new ToolResult(content, true, exception, renderPayload, false, haltReason);
+    }
+
+    /**
+     * Marks this result as one a scheduled routine must stop at: the call did what it could, but the work it stands for
+     * is not finished and will not be within this execution — it waits on something outside it, such as a human
+     * approval.
+     *
+     * <p>
+     * That is neither a failure nor a success to a routine. Retrying would pile up a second request for the same
+     * approval, and moving on would feed the next step a result that does not exist yet. So {@code RoutineExecutor}
+     * does neither: it records the step, runs no further step and ends the run as <em>halted</em> with this reason. The
+     * next fire runs as usual. Outside a routine the mark is inert — an agent's model reads {@link #getContent()} and
+     * decides for itself — so say there what the model should know. It is never sent to the LLM and never persisted.
+     *
+     * @param reason
+     *            why the routine has to stop here, for its run record (must not be blank)
+     * @return a new ToolResult carrying the halt reason
+     * @throws IllegalArgumentException
+     *             if {@code reason} is blank
+     */
+    public ToolResult haltingRoutine(String reason) {
+        Objects.requireNonNull(reason, "reason cannot be null");
+        if (reason.isBlank()) {
+            throw new IllegalArgumentException("Halt reason must not be blank");
+        }
+        return new ToolResult(content, isError, exception, renderPayload, retryable, reason);
+    }
+
+    /**
+     * Why a routine running this call must stop after it, as set by {@link #haltingRoutine(String)}.
+     *
+     * @return the halt reason, or empty when the result does not halt a routine
+     */
+    @JsonIgnore
+    public Optional<String> getHaltReason() {
+        return Optional.ofNullable(haltReason);
     }
 
     /**
@@ -334,12 +378,13 @@ public final class ToolResult {
         }
         final ToolResult that = (ToolResult) o;
         return isError == that.isError && retryable == that.retryable && content.equals(that.content)
-                && Objects.equals(exception, that.exception) && Objects.equals(renderPayload, that.renderPayload);
+                && Objects.equals(exception, that.exception) && Objects.equals(renderPayload, that.renderPayload)
+                && Objects.equals(haltReason, that.haltReason);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(content, isError, exception, renderPayload, retryable);
+        return Objects.hash(content, isError, exception, renderPayload, retryable, haltReason);
     }
 
     @Override
@@ -349,7 +394,8 @@ public final class ToolResult {
                 : "";
         String renderInfo = renderPayload != null ? ", renderPayload=" + renderPayload.keySet() : "";
         String retryInfo = retryable ? "" : ", retryable=false";
-        return "ToolResult{isError=" + isError + retryInfo + ", content='" + content + "'" + exceptionInfo + renderInfo
-                + "}";
+        String haltInfo = haltReason != null ? ", haltReason='" + haltReason + "'" : "";
+        return "ToolResult{isError=" + isError + retryInfo + haltInfo + ", content='" + content + "'" + exceptionInfo
+                + renderInfo + "}";
     }
 }
