@@ -44,6 +44,7 @@ import at.aimon.core.agent.quota.impl.DefaultQuotaScopeResolver;
 import at.aimon.core.agent.quota.impl.InMemoryUsageLedger;
 import at.aimon.core.agent.quota.impl.StaticQuotaPolicy;
 import at.aimon.core.agent.tool.AbstractTool;
+import at.aimon.core.agent.tool.IdempotencyBehavior;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
@@ -528,6 +529,12 @@ class RoutineExecutorQuotaTest {
         ScriptedTool(String name, BiFunction<ToolInput, ToolContext, ToolResult> behaviour) {
             super(name, "test tool", Map.of("type", "object", "properties", Map.of()));
             this.behaviour = behaviour;
+        }
+
+        /** Retries are what these tests exercise, and a tool that writes is only retried when it is idempotent. */
+        @Override
+        public IdempotencyBehavior getIdempotencyBehavior() {
+            return IdempotencyBehavior.IDEMPOTENT;
         }
 
         @Override

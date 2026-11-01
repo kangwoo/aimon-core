@@ -51,6 +51,10 @@ public class SimpleScheduledTaskEventPublisher implements ScheduledTaskEventPubl
             listener.onTaskCancelled(e);
         } else if (event instanceof TaskInterruptedEvent e) {
             listener.onTaskInterrupted(e);
+        } else if (event instanceof TaskHaltedEvent e) {
+            listener.onTaskHalted(e);
+        } else if (event instanceof TaskDisabledEvent e) {
+            listener.onTaskDisabled(e);
         } else if (event instanceof StepCompletedEvent e) {
             listener.onStepCompleted(e);
         } else if (event instanceof StepFailedEvent e) {

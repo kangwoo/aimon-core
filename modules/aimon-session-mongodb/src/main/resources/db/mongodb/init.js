@@ -56,6 +56,11 @@ ensureCollection("session_log_segments");
 // scheduled_tasks holds one document per scheduled task (MongoScheduledTaskRepository), keyed by task id.
 ensureCollection("scheduled_tasks");
 
+// scheduled_execution_guards holds one document per task that ever fired (MongoScheduledExecutionGuard): the live
+// lease, and the last slot that began. Do NOT add a TTL index: losing a document forgets the slot, and a late fire of
+// an occurrence that already ran would run it again. Every access is by _id, so it needs no index either.
+ensureCollection("scheduled_execution_guards");
+
 // --- indexes -----------------------------------------------------------------
 //
 // createIndex is idempotent when the spec + name match; we always pass an explicit

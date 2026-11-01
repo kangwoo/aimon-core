@@ -27,6 +27,9 @@ include(
     "aimon-llm-testkit",
     "aimon-rewake-webhook",
     "aimon-scheduling-quartz",
+    // The scheduling SPI contract suites. Published, like `aimon-memory-testkit` below: the durable task stores and
+    // distributed guards they hold to the contract are written by hosts, outside this repository.
+    "aimon-scheduling-testkit",
     "aimon-session-routing",
     // The shared multi-node contract suite for the session backends, the same idea as
     // `aimon-filesystem-testkit` above and not published for the same reasons.
@@ -64,6 +67,7 @@ project(":aimon-llm-capability-testkit").projectDir = file("modules/aimon-llm-ca
 project(":aimon-llm-testkit").projectDir = file("modules/aimon-llm-testkit")
 project(":aimon-rewake-webhook").projectDir = file("modules/aimon-rewake-webhook")
 project(":aimon-scheduling-quartz").projectDir = file("modules/aimon-scheduling-quartz")
+project(":aimon-scheduling-testkit").projectDir = file("modules/aimon-scheduling-testkit")
 project(":aimon-session-routing").projectDir = file("modules/aimon-session-routing")
 project(":aimon-session-testkit").projectDir = file("modules/aimon-session-testkit")
 project(":aimon-session-redis").projectDir = file("modules/aimon-session-redis")

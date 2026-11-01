@@ -50,6 +50,7 @@ body:
         - aimon-memory-testkit
         - aimon-knowledge-opensearch
         - aimon-scheduling-quartz
+        - aimon-scheduling-testkit
         - aimon-workflow-graaljs
         - aimon-rewake-webhook
         - Documentation only

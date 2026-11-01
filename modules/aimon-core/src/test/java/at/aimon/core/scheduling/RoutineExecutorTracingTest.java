@@ -33,6 +33,7 @@ import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.agent.tool.IdempotencyBehavior;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
@@ -568,6 +569,12 @@ class RoutineExecutorTracingTest {
             super(name, "test tool", Map.of("type", "object", "properties", Map.of()));
             this.behavior = behavior;
             this.body = body;
+        }
+
+        /** Retries are what these tests exercise, and a tool that writes is only retried when it is idempotent. */
+        @Override
+        public IdempotencyBehavior getIdempotencyBehavior() {
+            return IdempotencyBehavior.IDEMPOTENT;
         }
 
         @Override

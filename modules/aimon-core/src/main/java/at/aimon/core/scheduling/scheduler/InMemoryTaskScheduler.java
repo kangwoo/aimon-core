@@ -5,10 +5,14 @@
 package at.aimon.core.scheduling.scheduler;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -67,10 +71,17 @@ public class InMemoryTaskScheduler implements TaskScheduler {
         });
     }
 
+    /** Schedules in the JVM's default zone. */
     @Override
     public void scheduleRecurrently(ScheduledTaskId taskId, String cronExpression) {
+        scheduleRecurrently(taskId, cronExpression, ZoneId.systemDefault());
+    }
+
+    @Override
+    public void scheduleRecurrently(ScheduledTaskId taskId, String cronExpression, ZoneId zone) {
         Objects.requireNonNull(taskId, "Task ID cannot be null");
         Objects.requireNonNull(cronExpression, "Cron expression cannot be null");
+        Objects.requireNonNull(zone, "Zone cannot be null");
 
         if (!running.get()) {
             throw new TaskSchedulerException("Scheduler is not running");
@@ -82,11 +93,11 @@ public class InMemoryTaskScheduler implements TaskScheduler {
         unschedule(taskId);
 
         final String taskIdValue = taskId.value();
-        final ScheduledTaskEntry entry = new ScheduledTaskEntry(taskIdValue, cron);
+        final ScheduledTaskEntry entry = new ScheduledTaskEntry(taskIdValue, cron, zone);
         scheduledTasks.put(taskIdValue, entry);
 
         scheduleNextExecution(entry);
-        log.info("Scheduled task '{}' with cron '{}'", taskIdValue, cronExpression);
+        log.info("Scheduled task '{}' with cron '{}' in {}", taskIdValue, cronExpression, zone);
     }
 
     private void scheduleNextExecution(ScheduledTaskEntry entry) {
@@ -100,7 +111,7 @@ public class InMemoryTaskScheduler implements TaskScheduler {
             return;
         }
 
-        final Optional<ZonedDateTime> nextExecution = entry.cron.nextExecution(ZonedDateTime.now());
+        final Optional<ZonedDateTime> nextExecution = entry.cron.nextExecution(ZonedDateTime.now(entry.zone));
 
         if (nextExecution.isEmpty()) {
             log.warn("No next execution time for task '{}'", entry.taskId);
@@ -115,7 +126,9 @@ public class InMemoryTaskScheduler implements TaskScheduler {
         final ScheduledFuture<?> future = scheduledExecutorService.schedule(() -> {
             try {
                 log.debug("Executing task '{}'", entry.taskId);
-                taskExecutor.execute(ScheduledTaskId.of(entry.taskId));
+                // The fire is on the grid by construction, so the slot is the scheduled time itself.
+                final Instant scheduledFor = nextExecution.get().toInstant();
+                taskExecutor.execute(ScheduledFire.of(ScheduledTaskId.of(entry.taskId), scheduledFor, scheduledFor));
             } catch (Exception e) {
                 log.error("Error executing task '{}': {}", entry.taskId, e.getMessage(), e);
             } finally {
@@ -144,6 +157,13 @@ public class InMemoryTaskScheduler implements TaskScheduler {
     public boolean exists(ScheduledTaskId taskId) {
         Objects.requireNonNull(taskId, "Task ID cannot be null");
         return scheduledTasks.containsKey(taskId.value());
+    }
+
+    @Override
+    public Optional<Set<ScheduledTaskId>> scheduledTaskIds() {
+        final Set<ScheduledTaskId> ids = new HashSet<>();
+        scheduledTasks.keySet().forEach(id -> ids.add(ScheduledTaskId.of(id)));
+        return Optional.of(Set.copyOf(ids));
     }
 
     @Override
@@ -184,11 +204,13 @@ public class InMemoryTaskScheduler implements TaskScheduler {
 
         private final String taskId;
         private final UnixCronExpression cron;
+        private final ZoneId zone;
         private volatile ScheduledFuture<?> future;
 
-        ScheduledTaskEntry(String taskId, UnixCronExpression cron) {
+        ScheduledTaskEntry(String taskId, UnixCronExpression cron, ZoneId zone) {
             this.taskId = taskId;
             this.cron = cron;
+            this.zone = zone;
         }
 
         void setFuture(ScheduledFuture<?> future) {

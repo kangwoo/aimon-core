@@ -22,8 +22,8 @@ import at.aimon.core.scheduling.ScheduledTask;
 import at.aimon.core.scheduling.ScheduledTaskId;
 import at.aimon.core.scheduling.exception.SchedulingException;
 import at.aimon.core.scheduling.repository.ScheduledTaskRepository;
+import at.aimon.scheduling.testkit.AbstractScheduledTaskRepositoryContractTest;
 import at.aimon.session.mongodb.internal.DocumentKeys;
-import at.aimon.session.testkit.AbstractScheduledTaskRepositoryContractTest;
 
 /**
  * Runs the shared task repository contract against {@link MongoScheduledTaskRepository} on a real MongoDB, plus what
