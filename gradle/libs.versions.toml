@@ -201,7 +201,7 @@ jsoup = "1.23.2"
 
 # HTTP & Networking
 okhttp = "5.5.1"
-javalin = "7.2.3"
+javalin = "7.2.4"
 
 # AI & LLM
 openai = "4.90.0"
@@ -235,7 +235,7 @@ slf4j = "2.0.20"
 # aimon-session-testkit's shipped and tested versions part again (backlog D-2); below it, aimon-sample-app would pack
 # an older Logback than Boot manages. logback-classic 1.6.3 builds against slf4j 2.0.18, the version above;
 # logback-core follows logback-classic.
-logback = "1.6.5"
+logback = "1.6.6"
 
 # Code quality tools
 checkstyle = "10.12.5"
