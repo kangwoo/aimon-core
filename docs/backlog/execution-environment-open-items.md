@@ -1,11 +1,16 @@
-# 실행 환경 — 등록 항목 118건 (열림 35 · 닫힘 83)
+# 실행 환경 — 등록 항목 119건 (열림 36 · 닫힘 83)
 
 출처는 `ExecutionEnvironment` 구현 작업이다. 설계는 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
 이고, 구현 계획(승인본)과 구현이 그 계획에서 벗어난 점은
-[`../design/tool/execution-environment-implementation.md`](../design/tool/execution-environment-implementation.md) 에 있다.
+옛 `execution-environment-implementation.md`(마지막 판본 `a9f92304`, 지금은 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)) 에 있었다.
 계획의 §9 "Open questions" 는 그 작업이 기본값을 정해 두고 진행한 질문들이고, 설계의 §14 "열린 질문" 은 설계 시점에 남긴
 것이다. 그중 **이 변경 밖으로 결과가 번지는 것**만 여기로 올렸다. 각 항목의 "출처" 줄이 원래 자리(계획 §9 의 `Q번호`, 설계
 §14, 계획 §10 의 차이 목록)를 가리킨다.
+
+2026-11-02 에 이 설계의 기록을 문서 15개로 다시 쓰고 옛 기록 14개를 지웠다. 이 문서의 `옛 이름.md` 와 그 §번호, `출처` 줄, 날짜 붙은
+인용, 닫힌 항목의 `설계 §N` · `계획 §N` · `EE-n 설계 §N` 은 모두 **옛 판본의 번호**다 — 쓴 시점의 기록이므로 고치지 않았다. 읽는 법은
+[`../design/README.md`](../design/README.md#4-옛-경로-대응표) §4 표(`git show <커밋>:docs/design/tool/<파일>`)이고, 경로가 그대로인
+`execution-environment.md` 의 옛 판은 `ab012834` 다. 링크가 걸린 번호와 열린 항목 본문의 파일 이름이 붙은 번호는 새 판이다.
 
 `README.md` 의 규칙대로 **열림/닫힘의 정본은 이 문서**다. 줄 번호는 **마지막 확인 날짜와 함께** 적는다. EE-1~EE-14 의
 인용은 2026-09-28 기준이고, EE-15~EE-25 는 빌드 리뷰 3 의 비차단 지적을 2026-09-29 에 옮긴 것이다(같은 리뷰의 차단 지적과
@@ -19,41 +24,41 @@ EE-33 의 범위를 넓혔으므로 두 항목의 본문도 고쳤다. EE-40 · 
 대조한 리뷰에서 2026-09-29 에 옮긴 것이고, 같은 리뷰가 EE-1 · EE-18 · EE-30 의 본문에 샌드박스 쪽 영향을 더했다. 그
 리뷰가 샌드박스 구현 순서의 선행 조건으로 꼽은 셋(EE-18 · EE-40 · EE-41)은 2026-09-29 에 한 변경(PR #196)에서 닫았고,
 EE-42 는 그 PR 의 리뷰가 남긴 것이고 2026-09-29 에 닫았다. EE-43~EE-45 는 EE-42 의 승인된 설계
-([`../design/tool/execution-environment-ee42-workflow-attributes.md`](../design/tool/execution-environment-ee42-workflow-attributes.md))가
+(옛 `execution-environment-ee42-workflow-attributes.md`(마지막 판본 `ab66f15f`, 지금은 [`../design/tool/execution-environment-placement.md`](../design/tool/execution-environment-placement.md)))가
 남긴 열린 질문 가운데 이 변경 밖으로 결과가 번지는 것이다. 결정 항목 여섯(EE-6 · EE-7 · EE-8 · EE-12 · EE-13 ·
 EE-14)은 2026-09-29 에 메인테이너가 결정했다. 결정은 남은 일을 없애지 않고 확정할 뿐이므로(`README.md` 규칙 넷) 여섯 다 열림으로 센다. 결정 전에 전제를 소스로
 확인했고, 그중 셋(EE-7 · EE-12 · EE-13)은 착수 범위가 항목의 서술보다 크다는 것이 드러나 각 결정문에 적었다.
 워크플로 격리 브랜치를 다룬 다섯(EE-8 · EE-25 · EE-27 · EE-28 · EE-29)은 2026-09-29 에 한 변경에서 닫았다. 그중 EE-8 이
 결정 항목이었으므로 결정됨이되 열린 항목은 이제 다섯이다. 그 변경의 설계와 구현이 설계에서 벗어난 점은
-[`../design/tool/workflow-isolation-hardening.md`](../design/tool/workflow-isolation-hardening.md) 에 있다. EE-46 · EE-47 는
+옛 `workflow-isolation-hardening.md`(마지막 판본 `a9271037`, 지금은 [`../design/tool/execution-environment-isolation.md`](../design/tool/execution-environment-isolation.md)) 에 있었다. EE-46 · EE-47 는
 그 설계의 열린 질문(Q5, Q1 · Q4) 가운데 이 변경 밖으로 결과가 번지는 것을 옮긴 것이다. EE-43~EE-45 는 같은 시기에
 EE-42 를 다룬 변경이 먼저 썼으므로 이 둘은 EE-46 부터 번호를 받았다. 프로비저닝 실패 경로의 누수 둘(EE-21 · EE-23)은
 2026-09-30 에 한 변경에서 닫았다. 훅을 다룬 둘(EE-9 · EE-12)은 2026-10-03 에 한 변경에서 닫았다. 그중 EE-12 가 결정
 항목이었으므로 결정됨이되 열린 항목은 이제 넷이다. 그 변경의 설계와 구현이 설계에서 벗어난 점은
-[`../design/tool/execution-environment-ee9-ee12-hook-environment.md`](../design/tool/execution-environment-ee9-ee12-hook-environment.md)
-에 있다. EE-48~EE-52 는 그 설계의 §8 과 열린 질문(Q1 · Q2 · Q3) 가운데 이 변경 밖으로 결과가 번지는 것을 옮긴 것이다.
+옛 `execution-environment-ee9-ee12-hook-environment.md`(마지막 판본 `0f7a0c73`, 지금은 [`../design/hook/hook-environment.md`](../design/hook/hook-environment.md))
+에 있었다. EE-48~EE-52 는 그 설계의 §8 과 열린 질문(Q1 · Q2 · Q3) 가운데 이 변경 밖으로 결과가 번지는 것을 옮긴 것이다.
 백그라운드 명령의 종료와 수명을 다룬 둘(EE-7 · EE-13)은 2026-10-03 에 한 변경에서 닫았다. 둘 다 결정 항목이었으므로
 결정됨이되 열린 항목은 이제 둘(EE-6 · EE-14)이다. 그 변경의 설계와 구현이 설계에서 벗어난 점은
-[`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md)
-에 있다. EE-53~EE-59 는 그 설계의 §8(EE-53~EE-56), 설계 리뷰(EE-57), 열린 질문(Q4 → EE-58, Q5 · Q1 → EE-59) 가운데 이
+옛 `execution-environment-ee13-ee7-background-lifecycle.md`(마지막 판본 `ab012834`, 지금은 [`../design/tool/background-commands.md`](../design/tool/background-commands.md))
+에 있었다. EE-53~EE-59 는 그 설계의 §8(EE-53~EE-56), 설계 리뷰(EE-57), 열린 질문(Q4 → EE-58, Q5 · Q1 → EE-59) 가운데 이
 변경 밖으로 결과가 번지는 것을 옮긴 것이다. aimon-sandbox 에 미치는 영향은 EE-59 에 모았다. `Environment` 를 없앤
 EE-14 는 2026-10-03 에 닫았다. 결정 항목이었으므로 결정됨이되 열린 항목은 이제 하나(EE-6)다. 그 변경의 설계와 구현이
 설계에서 벗어난 점은
-[`../design/tool/execution-environment-ee14-user-locale.md`](../design/tool/execution-environment-ee14-user-locale.md)
-에 있다. EE-60 · EE-61 은 그 설계가 드러낸 사실(§2.3)과 열린 질문(Q1 → EE-60, Q7 → EE-61) 가운데 이 변경 밖으로 결과가
+옛 `execution-environment-ee14-user-locale.md`(마지막 판본 `82bcca30`, 지금은 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md))
+에 있었다. EE-60 · EE-61 은 그 설계가 드러낸 사실(§2.3)과 열린 질문(Q1 → EE-60, Q7 → EE-61) 가운데 이 변경 밖으로 결과가
 번지는 것을 옮긴 것이고, 외부 저장소에 미치는 영향은 EE-1 에 더했다. EE-62 는 PR #206 의 리뷰가 짚은, 이 변경 전부터 있던 문서
 공백이다. 한 런타임을 나눠 쓰는 실행들 사이의 경계를 다룬 셋(EE-49 · EE-51 · EE-58)은 2026-10-04 에 한 변경에서 닫았다.
 EE-51 은 그 변경 직전에 메인테이너가 방향(fail-closed)을 정한 결정 항목이었고, 결정과 닫힘이 한 변경 안에 있어 "결정됨이되
 열림" 구간을 지나지 않았다. 그 변경의 설계와 구현이 설계에서 벗어난 점은
-[`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md)
-에 있다. EE-63~EE-69 는 그 설계의 §8 과 열린 질문(Q8 → EE-63, Q4 → EE-64, Q3 → EE-66, Q5 → EE-67), 설계 리뷰(EE-69) 가운데
+옛 `execution-environment-ee49-ee51-ee58-isolation-boundary.md`(마지막 판본 `ab012834`, 지금은 [`../design/hook/hook-environment.md`](../design/hook/hook-environment.md))
+에 있었다. EE-63~EE-69 는 그 설계의 §8 과 열린 질문(Q8 → EE-63, Q4 → EE-64, Q3 → EE-66, Q5 → EE-67), 설계 리뷰(EE-69) 가운데
 이 변경 밖으로 결과가 번지는 것을 옮긴 것이고, 외부 저장소에 미치는 영향은 EE-1 과 EE-59 에 더했다. EE-70 · EE-71 은 같은
 변경의 PR(#207) 리뷰가 짚은 것 가운데 사람의 결정이 필요해 고치지 않은 둘이다 — 포크의 `onStart` 결과를 따를지(EE-70), 시작
 시 `hooks.json` 파싱 실패로 시작을 멈출지(EE-71). 같은 리뷰의 나머지 지적은 그 PR 에서 고쳤고 설계 노트 §10.7 에 있다.
 그 둘은 2026-10-04 에 메인테이너가 **막는 쪽**으로 정했고 같은 날 한 변경에서 닫았다 — EE-51 처럼 결정과 닫힘이 한 변경
 안에 있어 "결정됨이되 열림" 구간을 지나지 않았다. 그 변경의 설계와 구현이 설계에서 벗어난 점은
-[`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md)
-에 있다. EE-72~EE-75 는 그 설계의 열린 질문(Q2 → EE-72, Q4 → EE-73, Q3 → EE-74, Q5 · Q6 → EE-75) 가운데 이 변경 밖으로
+옛 `execution-environment-ee70-ee71-fail-closed.md`(마지막 판본 `142dd9ae`, 지금은 [`../design/hook/hook-fail-closed.md`](../design/hook/hook-fail-closed.md))
+에 있었다. EE-72~EE-75 는 그 설계의 열린 질문(Q2 → EE-72, Q4 → EE-73, Q3 → EE-74, Q5 · Q6 → EE-75) 가운데 이 변경 밖으로
 결과가 번지는 것을 옮긴 것이고, 외부 저장소에 미치는 영향은 EE-1 과 EE-59 에 더했다. EE-59 는 2026-10-04 에 aimon-sandbox
 PR #6 이 그쪽 저장소에서 닫았다 — 이 문서의 서술은 추론이었고, 그쪽 소스로 확인하니 여럿이 틀렸다(EE-59 의 닫힘 절). 같은
 변경으로 EE-1 의 샌드박스 쪽도 끝났고, 남은 aimon-browser · aimon-ops 쪽은 같은 날 메인테이너가 이 백로그의 범위에서
@@ -65,14 +70,14 @@ EE-68 은 2026-10-05 에 닫았다. 항목이 열어 둔 두 갈래("적용되�
 
 EE-80 은 2026-10-07 에 닫았다 — 2026-10-05 에 절반(신호를 쥔 발화 자리)을 실었고, 나머지 여섯 이벤트를 이번에 이벤트마다 따로
 정했다. 그 변경의 설계와 구현이 설계에서 벗어난 점은
-[`../design/hook/hook-shell-cancellation-ee80.md`](../design/hook/hook-shell-cancellation-ee80.md) 에 있다. EE-93~EE-97 은 그
+옛 `hook-shell-cancellation-ee80.md`(마지막 판본 `2a1a59b2`, 지금은 [`../design/hook/hook-cancellation.md`](../design/hook/hook-cancellation.md)) 에 있다. EE-93~EE-97 은 그
 설계의 열린 질문(Q5 · Q4 → EE-93, Q2 → EE-94, Q6 → EE-95 · EE-96, Q3 → EE-97) 가운데 이 변경 밖으로 결과가 번지는 것을 옮긴
 것이다.
 
 그 다섯(EE-93~EE-97)은 2026-10-07 에 한 변경에서 항목마다 따로 결론을 냈다 — 셋(EE-94 · EE-95 · EE-97)은 짓고 닫았고,
 EE-93 은 값싼 절반 둘만 짓고 남은 것("도는 슬래시 명령은 멈출 수 없다")으로 좁혀 열어 두었으며, EE-96 은 짓지 않기로 하고
 이유를 적었다. 그 변경의 설계와 구현이 설계에서 벗어난 점은
-[`../design/hook/hook-cancellation-followups-ee93-ee97.md`](../design/hook/hook-cancellation-followups-ee93-ee97.md) 에
+옛 `hook-cancellation-followups-ee93-ee97.md`(마지막 판본 `8613c51b`, 지금은 [`../design/hook/hook-cancellation.md`](../design/hook/hook-cancellation.md)) 에
 있다. EE-98~EE-100 은 그 설계의 열린 질문(Q1 · Q2 → EE-98)과 설계 리뷰(EE-99 · EE-100) 가운데 이 변경 밖으로 결과가 번지는
 것을 옮긴 것이다. EE-98 은 2026-10-08 에 메인테이너가 정했고 같은 변경에서 닫았다 — 기본값을 뒤집고 옵션을 없앴다: 보고
 이벤트의 셸 명령은 인터럽트에 멈추지 않는다. 그 결정이 EE-80 과 EE-97 의 닫힘 노트에 적힌 것 일부를 사실이 아니게 했으므로
@@ -80,12 +85,12 @@ EE-93 은 값싼 절반 둘만 짓고 남은 것("도는 슬래시 명령은 멈
 
 EE-102 는 GitHub 이슈 #252 — 실행 환경 제공자가 "이번 실행" 의 호출자 옵션을 볼 수 없다 — 를 2026-10-17 에 한 변경에서
 등록하고 닫은 것이다. 그 변경의 설계와 구현이 설계에서 벗어난 점은
-[`../design/tool/execution-environment-ee102-request-attributes.md`](../design/tool/execution-environment-ee102-request-attributes.md)
-에 있다. EE-103~EE-105 는 그 설계의 열린 질문(Q1 · Q5 → EE-103, Q6 → EE-104)과 설계 리뷰(EE-105) 가운데 이 변경 밖으로
+옛 `execution-environment-ee102-request-attributes.md`(마지막 판본 `e4b5d91a`, 지금은 [`../design/tool/execution-environment-placement.md`](../design/tool/execution-environment-placement.md))
+에 있었다. EE-103~EE-105 는 그 설계의 열린 질문(Q1 · Q5 → EE-103, Q6 → EE-104)과 설계 리뷰(EE-105) 가운데 이 변경 밖으로
 결과가 번지는 것을 옮긴 것이고, Q3 은 EE-30 에 한 줄로 더했다.
 
 EE-106~EE-108 은 환경의 알림을 모든 도구 결과에 싣게 한 변경(#254, 2026-10-17)의 승인된 설계
-([`../design/tool/execution-environment-notices.md`](../design/tool/execution-environment-notices.md))가 남긴 열린 질문과 그
+(옛 `execution-environment-notices.md`(마지막 판본 `ac200e6f`, 지금은 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)))가 남긴 열린 질문과 그
 설계 리뷰 가운데 이 변경 밖으로 결과가 번지는 것을 옮긴 것이다(Q6 → EE-106, Q2 · Q3 · 리뷰 → EE-107, Q4 → EE-108). 그
 변경 자체는 백로그 항목이 아니었으므로 여기서 닫힌 항목은 없다.
 
@@ -98,22 +103,22 @@ EE-63)에는 트리거가 왔다는 날짜 붙은 줄을 더했다. 결정은 �
 그 셋(EE-48 · EE-52 · EE-81)은 같은 날 메인테이너의 결정 — 훅은 그 훅이 말하는 실행의 환경에서 돌고, 호스트는 실행이 없을
 때만 쓴다 — 으로 한 변경(#273)에서 닫았다. 결정과 닫힘이 한 변경 안에 있어 "결정됨이되 열림" 구간을 지나지 않았다. 그
 변경의 설계(승인본, 영어)와 구현이 설계에서 벗어난 점은
-[`../design/tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md`](../design/tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md)
-에 있다. EE-109~EE-112 는 그 설계의 실패 모드(F12 → EE-109), 새 항목 후보(§8 → EE-110), aimon-sandbox 후속 작업과 열린 질문
+옛 `execution-environment-ee48-ee52-ee81-hooks-in-environment.md`(마지막 판본 `56efb5f6`, 지금은 [`../design/hook/hook-environment.md`](../design/hook/hook-environment.md))
+에 있었다. EE-109~EE-112 는 그 설계의 실패 모드(F12 → EE-109), 새 항목 후보(§8 → EE-110), aimon-sandbox 후속 작업과 열린 질문
 (§8 · Q1 → EE-111, Q3 → EE-112) 가운데 이 변경 밖으로 결과가 번지는 것을 옮긴 것이다.
 
 EE-109 는 2026-10-19 에 한 변경(#275)에서 닫았다. 목표는 메인테이너가 정한 대로 **권한 경계가 아니라 좁히기**였다 — 스테이징
 사본은 매 호출 검증하고, 정책 훅의 파일은 바이트로 셸에 넘겨 그 실행만의 디렉터리에 둔다. 같은 변경에서 EE-111 도 닫았다
 (aimon-sandbox#31 이 aimon-sandbox#32 로 합쳐졌다 — 정리만 남아 있던 항목이다). 그 변경의 설계(승인본, 영어)와 구현이 설계에서
 벗어난 점은
-[`../design/tool/execution-environment-ee109-hook-tamper-narrowing.md`](../design/tool/execution-environment-ee109-hook-tamper-narrowing.md)
-에 있다. EE-113~EE-116 은 그 설계의 권한 경계 조건(§7 → EE-113), aimon-sandbox 후속 작업과 열린 질문(§8 · Q5 · Q7 · Q8 →
+옛 `execution-environment-ee109-hook-tamper-narrowing.md`(마지막 판본 `4be61093`, 지금은 [`../design/hook/hook-tamper-boundary.md`](../design/hook/hook-tamper-boundary.md))
+에 있었다. EE-113~EE-116 은 그 설계의 권한 경계 조건(§7 → EE-113), aimon-sandbox 후속 작업과 열린 질문(§8 · Q5 · Q7 · Q8 →
 EE-114), 그리고 열린 질문 Q6 → EE-115, Q3 → EE-116 을 옮긴 것이다.
 
 aimon-sandbox 가 실행 디렉터리를 구현하며(aimon-sandbox PR #35) 드러난 코어 쪽 후속 넷(F1–F4)은 2026-10-19 에 한 변경(#283)에서
 닫았고, EE-114 아래 "후속" 에 적었다. 그 변경의 설계(승인본, 영어)와 구현이 설계에서 벗어난 점은
-[`../design/tool/execution-environment-283-run-directory-followups.md`](../design/tool/execution-environment-283-run-directory-followups.md)
-에 있다. EE-117 · EE-118 은 그 설계의 열린 질문(Q2 → EE-117, Q4 · Q3 → EE-118)을 옮긴 것이다.
+옛 `execution-environment-283-run-directory-followups.md`(마지막 판본 `c9a12620`, 지금은 [`../design/hook/hook-tamper-boundary.md`](../design/hook/hook-tamper-boundary.md))
+에 있었다. EE-117 · EE-118 은 그 설계의 열린 질문(Q2 → EE-117, Q4 · Q3 → EE-118)을 옮긴 것이다.
 
 ---
 
@@ -191,7 +196,7 @@ EE-70 의 덧붙임)과 aimon-ops 의 테스트 두 곳(`RenderPayloadCollectorH
 
 **왜.** 그 배치에서 로컬 제공자는 `.fileSystem(vfs)` 모드로 돈다. 사본은 원격 VFS 의 `/.aimon-staged/…` 에 쓰이므로 파일
 도구는 읽지만 호스트 `LocalShell` 은 못 본다 — `bash ${AIMON_SKILL_DIR}/x.sh` 가 실패한다. 이 배치에서 셸 경로가 원래
-안 맞던 한계(설계 §1.5)가 명시된 것이다. 그리고 공유 VFS 는 다른 런타임이 쓰는 중일 수 있어 시작 스윕을 하지 않으므로,
+안 맞던 한계(`execution-environment-staging.md` §1)가 명시된 것이다. 그리고 공유 VFS 는 다른 런타임이 쓰는 중일 수 있어 시작 스윕을 하지 않으므로,
 사본은 서로 다른 스킬 버전 수만큼 쌓인다.
 
 **어디.** `modules/aimon-bootstrap/src/main/java/at/aimon/bootstrap/assemble/StackAgentRuntimeProvisioner.java` 의
@@ -426,7 +431,7 @@ EE-56). 저장소에는 죽은 노드의 레코드를 치울 수단이 없다(�
 (실패한 프로비저닝이 바인딩을 닫는다, `provider(...)` 는 스택이 닫고 `shared(...)` 는 닫지 않는다), `AimonStackBuilderTest`
 (계획에 제공자가 하나이고 모든 바인딩 뒤에 닫힌다, `BACKGROUND_COMMANDS` 의 자리).
 
-설계와 구현이 설계에서 벗어난 점: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md).
+설계: [`../design/tool/background-commands.md`](../design/tool/background-commands.md) §5 · §10 (옛 `execution-environment-ee13-ee7-background-lifecycle.md`).
 
 ## EE-8 — 워크플로 브랜치가 쓴 `.aimon/` 파일은 병합에서 거절된다 · **닫힘** *(2026-09-29)*
 
@@ -470,7 +475,7 @@ EE-56). 저장소에는 죽은 노드의 레코드를 치울 수단이 없다(�
 적었는데 참이 아니었다. 스코프가 브랜치 루트의 호스트 경로를 정규화 전에, 대소문자를 구분해 맞췄으므로
 `{ws}/./.worktrees/k/.aimon/x`·`{ws}//.worktrees/k/.aimon/x`·`{ws}/.worktrees/K/.aimon/x` 는
 `.worktrees/k/.worktrees/k/.aimon/x` 로 중첩되어 브랜치 규칙을 비껴갔고, 병합이 그것을 브랜치 `k` 자신의 `.aimon/` 으로
-올렸다. 같은 변경의 후속 커밋이 정규화한 뒤 대소문자를 무시하고 맞추도록 고쳤다(설계 §8.4 DV-7). 여전히 줄지 않는 표기
+올렸다. 같은 변경의 후속 커밋이 정규화한 뒤 대소문자를 무시하고 맞추도록 고쳤다(`execution-environment-isolation.md` §6). 여전히 줄지 않는 표기
 — 브랜치 안에서 `.worktrees/` 를 가리키는 경로 — 는 EE-46 이다. (2) 적용되는 것은 "쓰기 거절" 보다 넓은 `DENY` 다 — 브랜치의 `.aimon/` 은 루트의 것처럼 보이지도
 않는다. 그래서 셸이 거기 쓴 파일은 목록에 나오지 않아 **승격되지 않고 보고되지도 않은 채** 브랜치 디렉터리에 남는다.
 루트 `.aimon/` 에 셸이 쓴 파일과 같은 처지이고, 기각한 "조용히 걸러내기" 와 다른 점은 파일 도구가 그 파일을 모델에게
@@ -765,7 +770,7 @@ EE-24 와 한 변경에서 닫았다. `AgentEnvironmentSnapshot` 에서 필드 �
 보고), `BashToolTurnIntegrationTest.backgroundCommandIsStoppedByKillShell`(한 턴에서 `Bash` → `KillShell` → `BashOutput`),
 `LocalExecutionEnvironmentProviderStagingTest.sweepGraceFollowsALongerBackgroundCeiling`.
 
-설계와 구현이 설계에서 벗어난 점: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md).
+설계: [`../design/tool/background-commands.md`](../design/tool/background-commands.md) §3 (옛 `execution-environment-ee13-ee7-background-lifecycle.md`).
 
 ## EE-14 — `Environment` 에는 `timeZone` 만 남았다 · **닫힘** *(2026-10-03)*
 
@@ -823,7 +828,7 @@ Javadoc 은 아직 `Environment` 를 "working directory, platform, OS version" �
    `ToolPermissionSubjectAware`(경로 주체를 `Environment` 에 대해 푼다고 적었다 — 실제로는
    `ToolContextKeys.EXECUTION_ENVIRONMENT` 의 서술자가 말하는 작업 디렉터리이고, `FilePathSubjects` 에서 확인했다)에
    있었고, `ToolContext` 계열 Javadoc 넷은 `put("environment", …)` 예제를 싣고 있었다. 같은 문장이 가이드
-   (`tool-development-guide.md`)와 설계(`contract-hardening.md`)에도 있어 함께 고쳤다. 가이드의 예제 하나는
+   (`tool-development-guide.md`)와 설계(옛 `contract-hardening.md`)에도 있어 함께 고쳤다. 가이드의 예제 하나는
    `ExecutionEnvironment` 변수를 `"environment"` 키에 넣는 **전부터 틀린** 예제였다.
 4. **와이어 · 영속 포맷에는 나타나지 않는다.** `Environment` 를 필드로 가진 main 타입 가운데 Jackson 이나 `Serializable`
    을 쓰는 것이 없고, 세션 레코드 · 트랜스크립트 · 서브에이전트 태스크 코덱 · 셸 훅 payload 에 참조가 없으며, 설정 · AOT
@@ -851,7 +856,7 @@ AIMON 패키지에 기대지 못하게 하는 것은 전부터 있던 규칙이�
 프롬프트 전문을 단언하던 기존 테스트(`OrcaAgentExecutorSystemPromptTest`, `UserContextMessageBuilderTest`,
 `EnvironmentContextProviderTest`)의 기대 문자열은 한 글자도 고치지 않았다.
 
-설계와 구현이 설계에서 벗어난 점: [`../design/tool/execution-environment-ee14-user-locale.md`](../design/tool/execution-environment-ee14-user-locale.md).
+설계: [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md) §11 · §12 (옛 `execution-environment-ee14-user-locale.md`).
 
 ## EE-15 — 스킬 명령 경로는 스테이징 예외 두 종류만 잡는다 · **닫힘** *(2026-10-05)*
 
@@ -1399,7 +1404,7 @@ not supported: this environment is already the isolated workflow branch 'k' (.wo
 **무엇을.** `Workflow` 와 `GraalJsWorkflow` 의 백그라운드 경로가 쓰는 에이전트 범위 러너에 호출한 실행의 부모 환경을 넘긴다.
 
 **왜.** 그 러너는 부모 환경 없이 만들어진다. 그래서 격리 브랜치 안에서 시작한 백그라운드 워크플로는 기본 워크스페이스를
-기준으로 환경을 해석한다. 이 변경 이전부터 있던 모양이지만 설계 §5.2 의 전달 규칙이 이 생성 경로를 덮지 않는다. 리뷰어가
+기준으로 환경을 해석한다. 이 변경 이전부터 있던 모양이지만 `execution-environment.md` §8 의 전달 규칙이 이 생성 경로를 덮지 않는다. 리뷰어가
 하위 에이전트 보고를 옮긴 것이고 전부를 직접 다시 확인하지는 않았다.
 
 **어디.** `modules/aimon-core/src/main/java/at/aimon/core/agent/impl/orca/OrcaAgentRuntimeFactory.java` 의 에이전트 범위
@@ -1511,7 +1516,7 @@ not supported: this environment is already the isolated workflow branch 'k' (.wo
 PR #195 리뷰 1 이 **macOS 에도 별칭이 있음**을 재현했다 — APFS 는 U+017F `ſ` 를 `s` 로 접으므로, 기본 제공자에서
 `.aimon-ſtaged/…` 쓰기가 받아들여져 스테이징된 스크립트가 바뀌었고, `PathRule.deny(".secrets")` 는 `.ſecrets/key` 로
 읽혔다. 그 절반은 이 변경에서 고쳤다: `VfsPaths.isUnderIgnoreCase` 가 NFKC → 소문자·대문자·소문자 → NFC 로 접은 이름을
-비교한다(`VfsPaths.foldCase`, 구현 문서 §10.2). 첫 수정은 대문자·소문자만 거쳐서 U+1E9E `ẞ` 를 `ß` 에서 멈췄고, APFS 에서
+비교한다(`VfsPaths.foldCase`, `execution-environment-files.md` §4). 첫 수정은 대문자·소문자만 거쳐서 U+1E9E `ẞ` 를 `ß` 에서 멈췄고, APFS 에서
 `.ẞh/id` 가 `deny(".ssh")` 를 우회했다(PR 리뷰 2). 앞에 소문자화를 한 번 더 두어 `ss` 까지 접히게 고쳤다. 리뷰가 APFS 가
 한두 글자 ASCII 이름과 같게 보는 BMP 코드 포인트를 전수 대조해 어긋난 것은 `ẞ` 하나였다 — 짧은 이름에 대해 확인한 것이지
 유니코드 전체에 대해 증명한 것은 아니다. 남은 것은 위의 Windows 전용 별칭이다.
@@ -1997,7 +2002,7 @@ aimon-sandbox 가 정했다 — **부모를 따른다.** 설계 §5.2 의 기본
 
 **남은 것.** CLI · 스타터에는 허용 목록을 정할 설정 키가 없다(EE-87).
 
-## EE-46 — 브랜치 안에서 `.worktrees/` 를 가리키는 경로는 병합에서 브랜치 디렉터리로 승격된다 · **열림**
+## EE-46 — 격리 브랜치 키가 실행 사이에 공유된다 · **열림**
 
 **무엇을.** 브랜치 안의 `.worktrees/` 를 브랜치 목록에서 빼거나 쓰는 시점에 거절한다.
 
@@ -2012,7 +2017,7 @@ aimon-sandbox 가 정했다 — **부모를 따른다.** 설계 §5.2 의 기본
 
 **달라진 것 (2026-09-29, 빌드 리뷰).** 처음 등록할 때 이 항목은 대소문자만 다른 **절대** 경로(`{ws}/.worktrees/K/.aimon/x`)
 도 다뤘다. 그 경로와 `./`·`//` 가 섞인 표기는 같은 변경의 후속 커밋에서 스코프가 정규화한 뒤 대소문자를 무시하고 브랜치
-루트를 벗기도록 고쳐 이제 브랜치 자신의 `.aimon/x` 로 가서 거절된다(설계 §8.4 DV-7). 남은 것은 위 세 가지다. 상대 경로의
+루트를 벗기도록 고쳐 이제 브랜치 자신의 `.aimon/x` 로 가서 거절된다(`execution-environment-isolation.md` §6). 남은 것은 위 세 가지다. 상대 경로의
 `.worktrees/k/…` 를 같은 식으로 벗기지 않은 것은 상대 경로가 이미 브랜치 기준이기 때문이다 — 그것을 벗기면 브랜치 안의
 `.worktrees/k/` 라는 정당한 디렉터리 이름을 빼앗는다. `other` 로 가는 두 표기(상대·절대), 상대 경로 `k`·`K`, 그리고 그 병합 결과는
 임시 테스트로 돌려 확인했고(macOS APFS, 대소문자 비구분), 실행 간 키 공유는 코드를 읽어 확인했다.
@@ -2024,11 +2029,11 @@ aimon-sandbox 가 정했다 — **부모를 따른다.** 설계 §5.2 의 기본
 **언제 다시 볼까.** 중첩 격리를 지원하려 할 때(바깥 브랜치 목록에서 `.worktrees/` 를 숨기는 것이 그 선행 조건이다), 한
 워크스페이스에서 격리 워크플로를 동시에 둘 이상 돌릴 때, 또는 병합이 엉뚱한 브랜치 디렉터리에 파일을 남겼다는 보고가 나올
 때. 가장 싼 처방 — 브랜치 규칙에 `DENY {branchPrefix}/.worktrees` 를 더하는 것 — 은 "브랜치 규칙은 부모의 것" 이라는
-불변식을 깨므로 설계가 기본값으로 고르지 않았다. 셸이 만든 공유 접두어 사본에 쓴 처방(설계 §8.4 DV-6: 스코프가 목록에서
+불변식을 깨므로 설계가 기본값으로 고르지 않았다. 셸이 만든 공유 접두어 사본에 쓴 처방(`execution-environment-isolation.md` §6: 스코프가 목록에서
 뺀다)이 여기에도 후보다 — 브랜치 접두어 아래의 `.worktrees/` 를 목록에서 빼면 규칙을 건드리지 않고 병합에서 제외된다.
 다만 파일 도구로 쓴 것이 조용히 남는다는 점이 다르다(그 사본은 파일 도구로 쓸 수 없다).
 
-출처: [`../design/tool/workflow-isolation-hardening.md`](../design/tool/workflow-isolation-hardening.md) §7 Q5 와 그 설계
+출처: 옛 `workflow-isolation-hardening.md` §7 Q5 와 그 설계
 리뷰(2026-09-29), §8.4 의 빌드 리뷰(2026-09-29).
 
 > **2026-10-05 — 앞의 둘을 닫았다. 항목은 셋째(실행 간 키 공유)로 열려 있다.** 브랜치는 `.worktrees/` 를 가리킬 수 없다 —
@@ -2045,6 +2050,9 @@ aimon-sandbox 가 정했다 — **부모를 따른다.** 설계 §5.2 의 기본
 > `DEFAULT_RUN_ID` 를 쓰고, `isolate` 와 `WorktreeMerge` 는 키로 브랜치를 다시 짓는다고 문서화하며, **프레임워크 안에 브랜치
 > 디렉터리를 치우는 것이 없어** 실행별 키는 무한 증가다. 정리 설계가 먼저다 — in-tree 에는 격리 단계의 출력을 병합하는 코드도
 > 없다(graaljs 프런트엔드는 `isolate` 를 걸지만 병합을 내놓지 않는다).
+>
+> **2026-11-02 — 제목을 열린 범위로 좁혔다.** 옛 제목은 "브랜치 안에서 `.worktrees/` 를 가리키는 경로는 병합에서 브랜치 디렉터리로
+> 승격된다" 다. 그 위험은 위 2026-10-05 절대로 닫혔고, 항목을 열어 두는 것은 실행 간 키 공유다. 위의 **무엇을** · **왜** 는 등록할 때의 글이다.
 
 ## EE-47 — `WorktreeMerge.promote` 는 계보를 밝히지 않는 브랜치를 약한 검사로만 받는다 · **열림**
 
@@ -2052,19 +2060,19 @@ aimon-sandbox 가 정했다 — **부모를 따른다.** 설계 §5.2 의 기본
 밝히지 않는 브랜치를 거부할지 정한다. 같은 키로 두 번 `isolate()` 한 서로 다른 두 객체를 한 번에 넘기는 경우도 함께 본다.
 
 **왜.** `promote` 의 소속 검사(EE-28)는 `isolatedFrom()` 이 빈 브랜치를 부모 자신·파일 시스템 공유·중복 검사만으로
-받는다 — 지금의 샌드박스 제공자가 계보를 밝힐 수 없고, 설계 §13 은 `promote` 가 그 환경에서도 동작하라고 요구하기
+받는다 — 지금의 샌드박스 제공자가 계보를 밝힐 수 없고, `execution-environment.md` §14 는 `promote` 가 그 환경에서도 동작하라고 요구하기
 때문이다. 그래서 다른 부모의 샌드박스 브랜치는 걸러지지 않는다. 그리고 한 키의 두 객체는 동일성 비교에 걸리지 않아
 `FAIL` 정책에서 그 키의 모든 파일을 충돌로 보고한다(데이터 손실은 없다). 지금은 javadoc 에 "각 브랜치를 한 번씩" 이라고만
 적혀 있다.
 
 **어디.** `modules/aimon-core/src/main/java/at/aimon/core/agent/impl/orca/environment/WorktreeMerge.java` 의
 `validateBranches`(175행, 2026-09-29), 설계 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
-§13 의 권장 행, aimon-sandbox 의 `isolate()` 구현.
+§14 의 권장 행, aimon-sandbox 의 `isolate()` 구현.
 
 **언제 다시 볼까.** aimon-sandbox 가 `isolate()` 를 구현하거나 `isolatedFrom()` 을 밝힐 때, 또는 `promote` 를 워크플로
 엔진 밖에서 부르는 코드가 생길 때.
 
-출처: [`../design/tool/workflow-isolation-hardening.md`](../design/tool/workflow-isolation-hardening.md) §7 Q1 · Q4.
+출처: 옛 `workflow-isolation-hardening.md` §7 Q1 · Q4.
 
 ## EE-48 — `hooks.json` 선언 훅의 셸은 여전히 호스트다 · **닫힘** *(2026-10-18)*
 
@@ -2092,15 +2100,14 @@ aimon-sandbox 가 정했다 — **부모를 따른다.** 설계 §5.2 의 기본
 **호스트가 `HookHotReloadBootstrap` 과 샌드박스 제공자를 직접 함께 조립할 때만** 생긴다. 정할 것은 이 항목의 "무엇을"
 그대로다. 거기에 하나가 붙는다 — 그 결정을 지금 내릴지, `hooks.json` 을 싣는 조립이 샌드박스 제공자를 받게 될 때까지 둘지.
 
-출처: [`../design/tool/execution-environment-ee9-ee12-hook-environment.md`](../design/tool/execution-environment-ee9-ee12-hook-environment.md)
+출처: 옛 `execution-environment-ee9-ee12-hook-environment.md`
 §3.3 · §9 Q1.
 
 ### 닫힘 (2026-10-18)
 
 메인테이너가 정했다 — **실행 안 이벤트의 `hooks.json` 명령은 그 실행의 환경에서, 실행 밖 이벤트는 호스트에서 돈다.**
 설계는
-[`../design/tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md`](../design/tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md)
-(#273).
+[`../design/hook/hook-environment.md`](../design/hook/hook-environment.md) §6 (옛 `execution-environment-ee48-ee52-ee81-hooks-in-environment.md`, #273).
 
 - **배치.** `"shell"` 키가 없는 `command` 핸들러는 실행 안 이벤트(`preTool` · `postTool` 과 나머지)에서 실행 환경의 셸로,
   `onSessionStart` · `onSessionEnd` · `onConfigReload` 에서 호스트로 간다. `"shell": "host"` 는 어느 이벤트에서나 호스트에
@@ -2149,7 +2156,7 @@ EE-111(aimon-sandbox 가 격리된 실행을 선언해야 한다,
 
 **언제 다시 볼까.** 샌드박스 제공자를 붙이기 **전**. 세션마다 환경이 다른 제공자가 생기는 순간 격리 경계를 넘는다.
 
-출처: [`../design/tool/execution-environment-ee9-ee12-hook-environment.md`](../design/tool/execution-environment-ee9-ee12-hook-environment.md)
+출처: 옛 `execution-environment-ee9-ee12-hook-environment.md`
 §8.
 
 ### 닫힘 (2026-10-04)
@@ -2199,7 +2206,7 @@ EE-111(aimon-sandbox 가 격리된 실행을 선언해야 한다,
 `GraalJsWorkflowToolTest`), `IsolationBoundaryIntegrationTest.skillHookStaysInsideTheSkillsFork`(한 런타임의 두 세션 — 스킬
 포크와 그 포크의 서브에이전트는 막히고, 같은 시각의 다른 세션과 스킬이 끝난 뒤의 호출 세션은 막히지 않는다).
 
-설계와 구현이 설계에서 벗어난 점: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md).
+설계: [`../design/hook/hook-environment.md`](../design/hook/hook-environment.md) §11 · §12 (옛 `execution-environment-ee49-ee51-ee58-isolation-boundary.md`).
 
 ## EE-50 — 스킬 훅 명령에는 `${AIMON_SKILL_DIR}` 가 없다 · **닫힘** *(2026-10-05)*
 
@@ -2212,11 +2219,11 @@ EE-111(aimon-sandbox 가 격리된 실행을 선언해야 한다,
 스킬의 훅은 받지 못한다. 포크가 다른 환경에 놓이면 스테이징 사본도 스폰한 쪽에만 있다.
 
 **어디.** `modules/aimon-core/src/main/java/at/aimon/core/skill/hook/declarative/SkillHookEnv.java`, 스킬 활성화 경로의
-`stage()` 호출(설계 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md) §4.4).
+`stage()` 호출(설계 [`../design/tool/execution-environment-staging.md`](../design/tool/execution-environment-staging.md) §4).
 
 **언제 다시 볼까.** 스크립트를 부르는 스킬 훅을 처음 쓸 때, 또는 샌드박스 제공자를 붙일 때.
 
-출처: [`../design/tool/execution-environment-ee9-ee12-hook-environment.md`](../design/tool/execution-environment-ee9-ee12-hook-environment.md)
+출처: 옛 `execution-environment-ee9-ee12-hook-environment.md`
 §8.
 
 ### 닫힘 (2026-10-05)
@@ -2252,7 +2259,7 @@ EE-111(aimon-sandbox 가 격리된 실행을 선언해야 한다,
 **언제 다시 볼까.** 스킬 셸 훅을 보안 가드로 쓰는 배포가 생길 때, 또는 샌드박스 제공자를 붙일 때(환경이 사용 불가가 되는
 일이 흔해진다).
 
-출처: [`../design/tool/execution-environment-ee9-ee12-hook-environment.md`](../design/tool/execution-environment-ee9-ee12-hook-environment.md)
+출처: 옛 `execution-environment-ee9-ee12-hook-environment.md`
 §9 Q2 · 설계 리뷰.
 
 **결정 (2026-10-04) — 막는다(fail-closed). 메인테이너가 골랐다.** 가드는 판단할 수 없을 때 막아야 가드다.
@@ -2330,7 +2337,7 @@ WARN), `HookRegistryApplierTest`(셸 미지원 실행기 · 옵션 전달), `Age
 (던지는 실행기 · `NoSuchMethodError` 를 던지는 셸 → 막음, `failOpen` 이면 통과), `ShellActionRunnerTest`(실제 `LocalShell`
 의 시작 실패 사유에 명령이 없다).
 
-설계와 구현이 설계에서 벗어난 점: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md).
+설계: [`../design/hook/hook-fail-closed.md`](../design/hook/hook-fail-closed.md) §2 · §3 (옛 `execution-environment-ee49-ee51-ee58-isolation-boundary.md`).
 
 ## EE-52 — `subagentStart` / `subagentStop` 훅은 스폰한 쪽의 환경을 싣는다 · **닫힘** *(2026-10-18)*
 
@@ -2357,15 +2364,14 @@ WARN), `HookRegistryApplierTest`(셸 미지원 실행기 · 옵션 전달), `Age
 (`DefaultSubagentExecutionManager.java` 의 `fireSubagentStart` `:1023` · `fireSubagentStop` `:1041`, 2026-10-18). 정할 것은 이
 항목의 "무엇을" 그대로다 — EE-81 과 같은 트리거이므로 함께 본다.
 
-출처: [`../design/tool/execution-environment-ee9-ee12-hook-environment.md`](../design/tool/execution-environment-ee9-ee12-hook-environment.md)
+출처: 옛 `execution-environment-ee9-ee12-hook-environment.md`
 §9 Q3.
 
 ### 닫힘 (2026-10-18)
 
 메인테이너가 정했다 — **`subagentStop` 은 포크의 환경을 싣고 거기서 돈다. `subagentStart` 는 스폰한 쪽의 환경이다**(포크의
 환경이 아직 해석되지 않았다). 설계는
-[`../design/tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md`](../design/tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md)
-§2.2 (#273).
+[`../design/hook/hook-environment.md`](../design/hook/hook-environment.md) §13 (옛 `execution-environment-ee48-ee52-ee81-hooks-in-environment.md` §2.2, #273).
 
 - `DefaultSubagentExecutor` 는 실행 id 를 찍던 자리에서 포크의 환경도 결과에 찍는다
   (`SubagentExecutionResult.withExecutionEnvironment` · `getExecutionEnvironment`). 살아 있는 핸들이라 값의 일부가 아니다
@@ -2400,7 +2406,7 @@ WARN), `HookRegistryApplierTest`(셸 미지원 실행기 · 옵션 전달), `Age
 
 **언제 다시 볼까.** 세션이 노드를 옮겨 다니는 배포에서 백그라운드 `Bash` 를 쓸 때.
 
-출처: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md) §3.4 · §8.
+출처: 옛 `execution-environment-ee13-ee7-background-lifecycle.md` §3.4 · §8.
 
 ## EE-54 — 포그라운드 `Bash` 는 여전히 스레드 인터럽트에 기댄다 · **닫힘** *(2026-10-05)*
 
@@ -2416,7 +2422,7 @@ WARN), `HookRegistryApplierTest`(셸 미지원 실행기 · 옵션 전달), `Age
 
 **언제 다시 볼까.** 인터럽트에 반응하지 않는 셸(샌드박스)을 붙일 때.
 
-출처: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md) §3.1 · §8.
+출처: 옛 `execution-environment-ee13-ee7-background-lifecycle.md` §3.1 · §8.
 
 ### 닫힘 (2026-10-05)
 
@@ -2453,8 +2459,8 @@ WARN), `HookRegistryApplierTest`(셸 미지원 실행기 · 옵션 전달), `Age
 테스트(`BashToolInterruptTest`, 앞의 셋은 고치기 전 코드에서 실패했다): `interruptReachesAShellThatIgnoresThreadInterrupts`(스레드
 인터럽트를 무시하는 가짜 셸 — 전에는 3초 timeout), `alreadyTrippedSignalArrivesCancelled`, `listenerDoesNotOutliveTheCommand`,
 `localShellInterruptOutcomeIsUnchanged`(실제 `LocalShell`, pid 가 죽었는지 확인 — 전후 모두 통과). 설계 문서는 동결된 본문 대신
-머리말에 "덧붙임 (2026-10-05, EE-54)" 을 달았고, 살아 있는 명세 [`../design/tool/execution-environment.md`](../design/tool/execution-environment.md)
-§5.3 · §13 을 고쳤다.
+머리말에 "덧붙임 (2026-10-05, EE-54)" 을 달았고, 살아 있는 명세(옛 판 `execution-environment.md` §5.3 · §13, 지금은 [`../design/tool/shell-contract.md`](../design/tool/shell-contract.md) §4 ·
+[`../design/tool/execution-environment.md`](../design/tool/execution-environment.md) §14)를 고쳤다.
 
 ## EE-55 — `LocalShell` 의 트리 종료는 스냅숏 뒤에 태어난 손자를 놓친다 · **열림**
 
@@ -2473,7 +2479,7 @@ PR #205 의 리뷰 뒤로 유예가 끝났을 때 살아 있는 핸들은 부모
 
 **언제 다시 볼까.** `KillShell` 뒤에 포트나 파일을 쥔 프로세스가 남았다는 보고가 있을 때.
 
-출처: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md) §2-2 · §6 · §8.
+출처: 옛 `execution-environment-ee13-ee7-background-lifecycle.md` §2-2 · §6 · §8.
 
 > **2026-10-05 — 좁혔다. 닫지 않았다.** 유예가 끝날 때 살아 있는 부모와 스냅숏의 살아 있는 핸들에서 자손을 **한 번 더** 열거해
 > 늘어난 집합을 SIGKILL 한다(`13effde0`). 유예 중에 태어난 프로세스(TERM 트랩이 fork 한 것, 살아남은 자식 아래에서 태어난 것)가
@@ -2500,14 +2506,14 @@ PR #205 의 리뷰 뒤로 유예가 끝났을 때 살아 있는 핸들은 부모
 옛 task id 를 잃는다. 매니저를 직접 나눠 쓰게 하는 조립은 도구 컨텍스트에 `AGENT_RUNTIME_ID` 를 실어야 한다 — 없으면
 작업에 소유자가 없고, 같은 처지의 모든 호출자가 그 작업을 보고 멈춘다(Orca 실행기는 싣는다). `bindRuntime` 도 어셈블리가 부르는 것이므로 그 조립은 직접 불러야 한다. 런타임이 스스로 바인딩하게
 하지 않은 이유는 부트스트랩이 런타임을 만들기 **전에** 슬롯이 필요하고(제어 저장소), "런타임은 아무것도 닫지 않는다" 는
-원칙(설계 §4.3)에 예외가 하나 더 생기기 때문이다.
+원칙(`execution-environment.md` §4)에 예외가 하나 더 생기기 때문이다.
 
 **어디.** `modules/aimon-core/src/main/java/at/aimon/core/agent/impl/orca/OrcaAgentRuntimeFactory.java` 의
 `defaultToolProviders`, `agent/impl/orca/tool/OrcaBashToolProvider.java`(2026-10-03).
 
 **언제 다시 볼까.** 부트스트랩 없이 여러 런타임을 만들고 없애는 임베더가 생길 때.
 
-출처: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md) §3.3 · §3.4 · §8.
+출처: 옛 `execution-environment-ee13-ee7-background-lifecycle.md` §3.3 · §3.4 · §8.
 
 ## EE-57 — `BackgroundBashStore` 에는 레코드를 열거하거나 만료시킬 수단이 없다 · **열림**
 
@@ -2525,7 +2531,7 @@ PR #205 의 리뷰 뒤로 유예가 끝났을 때 살아 있는 핸들은 부모
 
 **언제 다시 볼까.** `BackgroundBashStore` 의 영속 구현을 처음 만들 때.
 
-출처: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md) 의 설계 리뷰 · §10.3.
+출처: 옛 `execution-environment-ee13-ee7-background-lifecycle.md` 의 설계 리뷰 · §10.3.
 
 ## EE-58 — 백그라운드 작업의 가시 범위가 런타임이라 다른 세션의 명령을 멈출 수 있다 · **닫힘** *(2026-10-04)*
 
@@ -2543,7 +2549,7 @@ PR #205 의 리뷰 뒤로 유예가 끝났을 때 살아 있는 핸들은 부모
 
 **언제 다시 볼까.** 한 런타임을 서로 신뢰하지 않는 여러 사용자가 나눠 쓰는 배포에서 Bash 를 켤 때.
 
-출처: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md) §9 Q4 · 설계 리뷰.
+출처: 옛 `execution-environment-ee13-ee7-background-lifecycle.md` §9 Q4 · 설계 리뷰.
 
 ### 닫힘 (2026-10-04)
 
@@ -2593,7 +2599,7 @@ PR #205 의 리뷰 뒤로 유예가 끝났을 때 살아 있는 핸들은 부모
 `KillShellToolTest`(다른 세션의 응답이 없는 id 의 응답과 글자까지 같다, 다른 노드의 레코드도 다른 세션에는 "없음"),
 `IsolationBoundaryIntegrationTest`(한 런타임의 두 세션 / 포크가 띄운 명령을 부모 턴이 멈춘다).
 
-설계와 구현이 설계에서 벗어난 점: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md).
+설계: [`../design/tool/background-commands.md`](../design/tool/background-commands.md) §8 (옛 `execution-environment-ee49-ee51-ee58-isolation-boundary.md`).
 
 ## EE-59 — aimon-sandbox 가 취소 · 상한 · 바인딩을 구현해야 한다 · **닫힘** *(2026-10-04)*
 
@@ -2630,11 +2636,11 @@ frontmatter 의 `onStart` 셸 가드는 **그 포크를 시작하지 않는다**
 
 **어디.** 외부 저장소. 코어 쪽 계약은 `modules/aimon-core/src/main/java/at/aimon/core/shell/VirtualShell.java`(취소 절),
 `environment/ExecutionEnvironment.java` · `ExecutionEnvironmentProvider.java` · `RuntimeBinding.java`,
-[`../design/tool/execution-environment.md`](../design/tool/execution-environment.md) §13.
+[`../design/tool/execution-environment.md`](../design/tool/execution-environment.md) §14.
 
 **언제 다시 볼까.** 이 변경이 들어간 코어를 aimon-sandbox 가 처음 의존할 때 — EE-1 과 같은 시점이다.
 
-출처: [`../design/tool/execution-environment-ee13-ee7-background-lifecycle.md`](../design/tool/execution-environment-ee13-ee7-background-lifecycle.md) §8 · §9 Q1 · Q5.
+출처: 옛 `execution-environment-ee13-ee7-background-lifecycle.md` §8 · §9 Q1 · Q5.
 
 ### 닫힘 (2026-10-04)
 
@@ -2689,7 +2695,7 @@ CLI `AgentSetupFactory` 의 리로드 훅) 설정으로 줄 길이 없다. 그�
 
 **언제 다시 볼까.** 날짜 · 시각을 사용자의 시간대로 말해야 한다는 요구가 처음 나올 때, 또는 다음 공개 SPI 정리 때.
 
-출처: [`../design/tool/execution-environment-ee14-user-locale.md`](../design/tool/execution-environment-ee14-user-locale.md) §2.3 · §10 Q1.
+출처: 옛 `execution-environment-ee14-user-locale.md` §2.3 · §10 Q1.
 
 > **2026-10-05 — 이 항목의 전제 하나가 출하되는 스택에서는 성립하지 않는다 (EE-78).** 위 "왜" 는 *"모델이 받는 날짜는 사용자
 > 컨텍스트의 `current-date` 하나"* 라고 적는다. 그 블록은 `AgentEnvironmentSnapshotProvider` 가 설정된 실행기에서만 주입되고,
@@ -2733,7 +2739,7 @@ environment" 라고 부른다(`DefaultSubagentExecutionManager`, `TaskTool`). `E
 
 **언제 다시 볼까.** 서브에이전트 SPI 를 다음에 깨뜨릴 때.
 
-출처: [`../design/tool/execution-environment-ee14-user-locale.md`](../design/tool/execution-environment-ee14-user-locale.md) §3.4 · §10 Q7.
+출처: 옛 `execution-environment-ee14-user-locale.md` §3.4 · §10 Q7.
 
 ### 닫힘 (2026-10-05)
 
@@ -2820,7 +2826,7 @@ runId)` 를 부르고, 그 러너의 기반 환경은 런타임을 조립할 때
 왔으므로(샌드박스 제공자가 붙었다, EE-30 의 2026-10-18 줄) 그 결정이 열리면 이 항목도 같은 자리에서 열린다. 같은 러너가
 부모 환경도 스킬 훅의 뷰도 받지 못한다는 원인은 그대로다(`OrcaAgentRuntimeFactory.java` `:1162`, 2026-10-18).
 
-출처: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) §3.1 · §8 · §9 Q8 · 설계 리뷰 1.
+출처: 옛 `execution-environment-ee49-ee51-ee58-isolation-boundary.md` §3.1 · §8 · §9 Q8 · 설계 리뷰 1.
 
 ## EE-64 — 훅 실행기 수준 timeout 의 `FAIL_OPEN` 이 선언 가드의 fail-closed 를 우회한다 · **닫힘** *(2026-10-05)*
 
@@ -2845,7 +2851,7 @@ runId)` 를 부르고, 그 러너의 기반 환경은 런타임을 조립할 때
 **언제 다시 볼까.** 샌드박스 셸이 timeout 을 어떻게 지키는지 확인될 때(EE-59), 또는 `preTool` 정책 기본값을 다시 볼 때.
 선언 훅에만 `FAIL_CLOSED` 를 거는 길(훅이 자기 timeout 동작을 선언한다)도 있다.
 
-출처: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) §6 F5 · §9 Q4.
+출처: 옛 `execution-environment-ee49-ee51-ee58-isolation-boundary.md` §6 F5 · §9 Q4.
 
 ### 닫힘 (2026-10-05)
 
@@ -2880,7 +2886,7 @@ WARN 후 성공("degrading to success")이고 `McpToolAction` 도 같다. 정책
 
 **언제 다시 볼까.** `http` 또는 `mcp` 액션을 가드로 쓰는 배포가 생길 때.
 
-출처: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) §8.
+출처: 옛 `execution-environment-ee49-ee51-ee58-isolation-boundary.md` §8.
 
 ### 닫힘 (2026-10-05)
 
@@ -2934,7 +2940,7 @@ WARN 후 성공("degrading to success")이고 `McpToolAction` 도 같다. 정책
 **언제 다시 볼까.** EE-50 을 고칠 때(스크립트 경로가 안정되면 127 의 의미가 좁아진다), 또는 샌드박스에서 가드 스크립트가
 누락된 채 통과했다는 보고가 있을 때.
 
-출처: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) §9 Q3.
+출처: 옛 `execution-environment-ee49-ee51-ee58-isolation-boundary.md` §9 Q3.
 
 ### 닫힘 (2026-10-05)
 
@@ -2963,7 +2969,7 @@ WARN 후 성공("degrading to success")이고 `McpToolAction` 도 같다. 정책
 **언제 다시 볼까.** 루틴이 포크를 통해 백그라운드 명령을 띄우는 구성이 생길 때, 또는 계보를 잇는 "루트 실행" 정체성이 다른
 이유로 필요해질 때(id 가족에 하나를 더하는 일이라 이 항목만으로는 과하다).
 
-출처: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) §3.3 · §9 Q5.
+출처: 옛 `execution-environment-ee49-ee51-ee58-isolation-boundary.md` §3.3 · §9 Q5.
 
 ## EE-68 — 슬래시 명령으로 부른 스킬은 훅을 활성화하지 않는다 · **닫힘** *(2026-10-05)*
 
@@ -2982,7 +2988,7 @@ WARN 후 성공("degrading to success")이고 `McpToolAction` 도 같다. 정책
 
 **언제 다시 볼까.** 스킬 훅을 보안 가드로 쓰는 배포가 생길 때 — 사용자가 직접 부르는 경로가 더 느슨해서는 안 된다.
 
-출처: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) §8.
+출처: 옛 `execution-environment-ee49-ee51-ee58-isolation-boundary.md` §8.
 
 ### 닫힘 (2026-10-05)
 
@@ -3041,7 +3047,7 @@ INLINE 스킬은 바뀌지 않았다 — `Skill` 도구로 부르든 슬래시�
 **언제 다시 볼까.** EE-63 을 다시 볼 때 함께. 스킬 가드를 "그 스킬이 시작한 모든 일" 에 대한 보장으로 읽는 배포가 생기면
 거절 쪽이 맞다.
 
-출처: [`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) 의 설계 리뷰 2(§10.3).
+출처: 옛 `execution-environment-ee49-ee51-ee58-isolation-boundary.md` 의 설계 리뷰 2(§10.3).
 
 ### 닫힘 (2026-10-05)
 
@@ -3074,7 +3080,7 @@ advisory 피드백만 대화에 붙는다. 메인 실행(`OrcaAgentExecutor`)은
 **언제 다시 볼까.** 스킬 `onStart` 를 가드로 쓰려는 요청이 올 때, 또는 `hooks.json` 의 `onStart` 가 포크에서도 막아야 한다는
 배포가 생길 때. 고치면 `GUARD_EVENTS` 에 `onStart` 를 되돌린다.
 
-출처: PR #207 리뷰 S3 ([`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) §10.7).
+출처: PR #207 리뷰 S3 (옛 `execution-environment-ee49-ee51-ee58-isolation-boundary.md` §10.7).
 
 ### 닫힘 (2026-10-04)
 
@@ -3110,7 +3116,7 @@ advisory 피드백만 대화에 붙는다. 메인 실행(`OrcaAgentExecutor`)은
 `WorkflowToolBackgroundModeTest` · `ScheduleTaskToolTest` · `GraalJsWorkflowToolTest`(`onStart` 만 있는 스킬 아래에서 거절). 새
 테스트는 프로덕션 수정을 되돌려 실패하는 것을 확인했다.
 
-설계: [`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md).
+설계: [`../design/hook/hook-fail-closed.md`](../design/hook/hook-fail-closed.md) §6 (옛 `execution-environment-ee70-ee71-fail-closed.md`).
 
 ## EE-71 — 시작 때 `hooks.json` 파싱이 실패하면 파일 가드가 하나도 없다 · **닫힘** *(2026-10-04)*
 
@@ -3129,7 +3135,7 @@ advisory 피드백만 대화에 붙는다. 메인 실행(`OrcaAgentExecutor`)은
 **언제 다시 볼까.** `hooks.json` 을 보안 가드로 쓰는 배포가 생길 때. 중단이 너무 무겁다면 그 사이의 선택지 — 실패한 계층만
 빼고 나머지는 적용, 또는 모든 가드 이벤트를 막는 "닫힌" 상태로 시작 — 도 같이 볼 것.
 
-출처: PR #207 리뷰 B1 ([`../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md`](../design/tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) §10.7).
+출처: PR #207 리뷰 B1 (옛 `execution-environment-ee49-ee51-ee58-isolation-boundary.md` §10.7).
 
 ### 닫힘 (2026-10-04)
 
@@ -3167,7 +3173,7 @@ WARN 한 줄조차 "의도된 동작" 으로 문서화되어 있었다.
 정상 기동), `HookHotReloadStartupFailureTest`(신규, 스타터 — 호스트 빈 패턴). 새 테스트는 프로덕션 수정을 되돌려 실패하는
 것을 확인했다. `AimonCli` 수준(stderr · 종료 코드)의 테스트는 없다 — `call()` 이 실제 설정 파일을 읽어 테스트 이음매가 없다.
 
-설계: [`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md).
+설계: [`../design/hook/hook-fail-closed.md`](../design/hook/hook-fail-closed.md) §7 (옛 `execution-environment-ee70-ee71-fail-closed.md`).
 
 ## EE-72 — 적용 단계에서 잘못된 `hooks.json` 핸들러는 WARN 후 조용히 빠진다 · **닫힘** *(2026-10-05)*
 
@@ -3190,7 +3196,7 @@ WARN 한 줄조차 "의도된 동작" 으로 문서화되어 있었다.
 **언제 다시 볼까.** `hooks.json` 을 보안 가드로 쓰는 배포가 생길 때, 또는 오타로 가드가 빠진 사례가 보고될 때. 가드 이벤트
 (`preTool` · `onStart` · `preCompact` · `permissionRequest`)의 항목만 엄격하게 보는 길이 있다.
 
-출처: [`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md) §9 Q2.
+출처: 옛 `execution-environment-ee70-ee71-fail-closed.md` §9 Q2.
 
 ### 닫힘 (2026-10-05)
 
@@ -3226,7 +3232,7 @@ LLM 을 부르지 않을 수도 있고, 그 안에서 다시 스폰한 포크는
 **언제 다시 볼까.** `hooks.json` 의 `onStart` 를 "어떤 포크도 이것 없이 시작하지 않는다" 는 보장으로 읽는 배포가 생길 때,
 또는 behavior 서브에이전트가 번들 밖에서 쓰이기 시작할 때.
 
-출처: [`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md) §2 전제 5 · §9 Q4.
+출처: 옛 `execution-environment-ee70-ee71-fail-closed.md` §2 전제 5 · §9 Q4.
 
 ### 닫힘 (2026-10-05)
 
@@ -3254,7 +3260,7 @@ LLM 을 부르지 않을 수도 있고, 그 안에서 다시 스폰한 포크는
 **언제 다시 볼까.** 파일을 바로 고칠 수 없는 배포에서 기동 불가가 보고될 때. 넣는다면 기본은 막는 쪽이고, 켜졌다는 사실이
 기동 로그에 매번 남아야 한다.
 
-출처: [`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md) §3.2 · §9 Q3.
+출처: 옛 `execution-environment-ee70-ee71-fail-closed.md` §3.2 · §9 Q3.
 
 ## EE-75 — EE-70 · EE-71 이 시그니처를 그대로 두느라 남긴 표면 · **닫힘** *(2026-10-05)*
 
@@ -3273,7 +3279,7 @@ LLM 을 부르지 않을 수도 있고, 그 안에서 다시 스폰한 포크는
 **언제 다시 볼까.** 다음 SPI 정리(0.x 의 breaking 묶음) 때, 또는 부모가 "훅이 막았다" 를 프로그램으로 구분해야 하는 독자
 (워크플로의 재시도 정책, 대시보드)가 나올 때.
 
-출처: [`../design/tool/execution-environment-ee70-ee71-fail-closed.md`](../design/tool/execution-environment-ee70-ee71-fail-closed.md) §9 Q5 · Q6.
+출처: 옛 `execution-environment-ee70-ee71-fail-closed.md` §9 Q5 · Q6.
 
 ### 닫힘 (2026-10-05)
 
@@ -3476,7 +3482,7 @@ main 코드가 없고, 스냅숏의 `userLocale` 은 블록을 만드는 쪽이 
 
 **트리거(샌드박스 셸을 붙일 때)를 기다리지 않았다.** 위의 노트가 남긴 여섯 이벤트를 하나의 규칙이 아니라 이벤트마다 따로
 정했다. 설계(승인본)와 구현이 거기서 벗어난 점은
-[`../design/hook/hook-shell-cancellation-ee80.md`](../design/hook/hook-shell-cancellation-ee80.md) 에 있다.
+옛 `hook-shell-cancellation-ee80.md`(마지막 판본 `2a1a59b2`, 지금은 [`../design/hook/hook-cancellation.md`](../design/hook/hook-cancellation.md)) 에 있다.
 
 | 이벤트 | 결정 | 어느 신호 |
 |--------|------|-----------|
@@ -3559,8 +3565,7 @@ main 코드가 없고, 스냅숏의 `userLocale` 은 블록을 만드는 쪽이 
 
 포크 모드 스킬의 본문이 `${AIMON_SKILL_DIR}` 를 쓰면, 포크가 스폰한 쪽과 다른 환경에 놓였을 때 **포크의 환경에서 다시
 렌더된다.** 설계는
-[`../design/tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md`](../design/tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md)
-§2.3 (#273).
+[`../design/tool/execution-environment-staging.md`](../design/tool/execution-environment-staging.md) §12 (옛 `execution-environment-ee48-ee52-ee81-hooks-in-environment.md` §2.3, #273).
 
 - 렌더는 포크의 환경이 존재하는 유일한 자리로 미뤘다 — `DefaultSubagentExecutor.execute` 가 환경을 해석한 직후. 스폰한 쪽은
   `ForkGoalRenderer` 를 넘긴다(`SubagentLaunchContext` → `SubagentExecutionRequest`). 포크의 환경이 부모와 **같은 인스턴스**면
@@ -4161,7 +4166,7 @@ EE-88 이 값을 치르고 배운 것(쓰인 요청은 시한 전체를 갖는�
 
 > **2026-10-07 — 값싼 절반 둘은 지었다. 명령을 인터럽트할 수 있게 하는 일은 하지 않았고, 항목은 그것으로 좁혀 남는다.**
 > 제목도 그에 맞게 바꿨다(옛 제목: "슬래시 명령 턴은 `onStart` 뒤로 인터럽트할 수 없고, 턴은 `onStart` 앞에서도 닿지
-> 않는다"). 설계와 그 뒤의 차이는 [`../design/hook/hook-cancellation-followups-ee93-ee97.md`](../design/hook/hook-cancellation-followups-ee93-ee97.md) §7 · §13.
+> 않는다"). 설계와 그 뒤의 차이는 옛 `hook-cancellation-followups-ee93-ee97.md`(마지막 판본 `8613c51b`, 지금은 [`../design/hook/hook-cancellation.md`](../design/hook/hook-cancellation.md)) §7 · §13.
 >
 > **지은 것 하나 — 플래그가 사실을 말한다 ((b) 가 닫혔다).** `InterruptCoordinator#isClosed()` 가 생겼고(기본 구현은 `false`),
 > `runTurn` 은 명령 흐름에 들어가기 전에 턴의 코디네이터를 닫는다 — 명령 흐름은 그 코디네이터에서 아무것도 읽지 않는다.
@@ -4225,7 +4230,7 @@ EE-88 이 값을 치르고 배운 것(쓰인 요청은 시한 전체를 갖는�
 ### 닫힘 (2026-10-07)
 
 **트리거를 기다리지 않았다.** 고치는 것이 몇 줄이고, 옛 답에 기대는 독자가 없었다 — `CompletionReason.BLOCKED` 로 갈리는
-프로덕션 코드는 없다(main 을 `BLOCKED` 로 셌다). 설계와 그 뒤의 차이는 [`../design/hook/hook-cancellation-followups-ee93-ee97.md`](../design/hook/hook-cancellation-followups-ee93-ee97.md) §6 · §13.
+프로덕션 코드는 없다(main 을 `BLOCKED` 로 셌다). 설계와 그 뒤의 차이는 옛 `hook-cancellation-followups-ee93-ee97.md`(마지막 판본 `8613c51b`, 지금은 [`../design/hook/hook-cancellation.md`](../design/hook/hook-cancellation.md)) §6 · §13.
 
 **지은 것.** ReAct 포크는 `onStart` 체인이 돌아오거나 block 을 던진 **직후에**, 어느 쪽인지 보기 전에 취소를 한 번 읽는다
 (`startFork`). 섰으면 `INTERRUPTED` 와 "Execution interrupted" 로 끝나고, 다른 모든 인터럽트된 포크처럼
@@ -4275,7 +4280,7 @@ resume · 태스크 핸들. 고치기 전에는 넷이 `BLOCKED` 이거나 스�
 **트리거를 기다리지 않았고, 먼저 재라고 한 값은 재지 않았다.** 요약 호출의 길이는 **측정하지 않았다** — 압력 리그의
 기준선([`context-engine-pressure-rig-open-items.md`](context-engine-pressure-rig-open-items.md))에도 그 숫자는 없다. 변경은 그
 숫자에 기대지 않는다: 호출이 길든 짧든 인터럽트가 그것을 기다리지 않게 될 뿐이다. 그 숫자가 필요한 것은 "이것이 얼마나
-아팠는가" 이고, 그것은 여전히 모른다. 설계와 그 뒤의 차이는 [`../design/hook/hook-cancellation-followups-ee93-ee97.md`](../design/hook/hook-cancellation-followups-ee93-ee97.md) §5 · §13.
+아팠는가" 이고, 그것은 여전히 모른다. 설계와 그 뒤의 차이는 옛 `hook-cancellation-followups-ee93-ee97.md`(마지막 판본 `8613c51b`, 지금은 [`../design/hook/hook-cancellation.md`](../design/hook/hook-cancellation.md)) §5 · §13.
 
 **지은 것.** `DefaultCompactionEngine` 은 요청이 신호를 실어 오면 요약 호출을 취소 토큰과 함께 부른다
 (`SignalBackedLlmCancellation` — 그 호출 하나만큼만 살고, 끝나면 신호에서 리스너를 뗀다). 이미 선 신호면 호출하지 않는다.
@@ -4340,7 +4345,7 @@ SDK(anthropic-java 2.65.0, openai-java 4.69.2)는 `StreamResponse.close()` 뒤�
 **언제 다시 볼까.** 인터럽트에 반응하지 않는 셸을 붙인 배포에서, 턴을 스레드 인터럽트로 취소하는 호스트가 생길 때.
 
 > **2026-10-07 — 짓지 않기로 했다. 트리거 대기로 남는다.** 이유는 셋이다. 설계는
-> [`../design/hook/hook-cancellation-followups-ee93-ee97.md`](../design/hook/hook-cancellation-followups-ee93-ee97.md) §8.
+> 옛 `hook-cancellation-followups-ee93-ee97.md`(마지막 판본 `8613c51b`, 지금은 [`../design/hook/hook-cancellation.md`](../design/hook/hook-cancellation.md)) §8.
 >
 > **(1) 트리거에 조건이 둘 필요하고, 저장소 안에서는 둘째가 성립하지 않는다.** 인터럽트에 반응하지 않는 셸 **그리고**
 > `Thread.interrupt()` 만으로 취소하는 호스트. 실행의 스레드를 인터럽트하는 main 의 코드는 둘이고
@@ -4386,7 +4391,7 @@ SDK(anthropic-java 2.65.0, openai-java 4.69.2)는 `StreamResponse.close()` 뒤�
 
 **트리거를 기다리지 않았다.** EE-80 이 아직 릴리스되지 않은 채 `main` 에 있고, 그 상태에서는 정상 종료한 턴의 `onStop` 정리
 명령이 다음 입력의 선점(NOW 우선순위)에 반쯤 돈 채 끊긴다 — 모든 셸에서, 끌 방법 없이. 보고를 기다릴 일이 아니었다.
-설계와 그 뒤의 차이는 [`../design/hook/hook-cancellation-followups-ee93-ee97.md`](../design/hook/hook-cancellation-followups-ee93-ee97.md) §4 · §13.
+설계와 그 뒤의 차이는 옛 `hook-cancellation-followups-ee93-ee97.md`(마지막 판본 `8613c51b`, 지금은 [`../design/hook/hook-cancellation.md`](../design/hook/hook-cancellation.md)) §4 · §13.
 
 **지은 것.** 훅별 옵션 `ignoreInterrupt` — `hooks.json` 에서는 핸들러 키, SKILL.md 에서는 항목 키, 불리언, 기본 `false`.
 보고 이벤트(`onStop` · `subagentStop` · `postCompact` · `postTool` · `permissionDenied` · `subagentStart`)의 **셸 명령**에서만
@@ -4543,8 +4548,8 @@ frontmatter 도 읽고 지나간다(항목 키를 검사하지 않는다). 둘 �
 **확인하지 않은 것.** 실제 `LocalShell` 과 원격 셸에서 보고 명령을 돌리지 않았다(테스트 셸은 두 종류를 흉내 낸다). docker
 계층은 돌리지 않았다. 종료(shutdown) 순서에서 보고 명령을 기다리는 실행이 teardown 을 얼마나 늦추는지는 재지 않았다 —
 훅 풀의 teardown 이 그 명령을 끝내지만 그 단계는 세션과 런타임 뒤에 온다. 설계 문서 둘에는 승인본을 고치지 않고 절을
-더했다([`../design/hook/hook-shell-cancellation-ee80.md`](../design/hook/hook-shell-cancellation-ee80.md) §12,
-[`../design/hook/hook-cancellation-followups-ee93-ee97.md`](../design/hook/hook-cancellation-followups-ee93-ee97.md) §14).
+더했다(옛 `hook-shell-cancellation-ee80.md`(마지막 판본 `2a1a59b2`, 지금은 [`../design/hook/hook-cancellation.md`](../design/hook/hook-cancellation.md)) §12,
+옛 `hook-cancellation-followups-ee93-ee97.md`(마지막 판본 `8613c51b`, 지금은 [`../design/hook/hook-cancellation.md`](../design/hook/hook-cancellation.md)) §14).
 
 **어디** *(2026-10-08)* — `skill/hook/declarative/AbstractDeclarativeShellHook.java`(`ignoresInterrupt`, `runShell`),
 `skill/hook/declarative/DeclarativePostToolHook.java`, `skill/hook/declarative/SignalDetachedHookContext.java`,
@@ -4692,7 +4697,7 @@ the hook returned a verdict" 사유로 끝난다. 같은 정지가 ReAct 포크�
 를 실을지 정한다.
 
 **왜.** EE-102 는 이슈가 말한 대로 포크가 암묵적으로 물려받지 않게 했다 — 포크의 배치는 `parent` 의 몫이고, 물려받으면 포크가
-부모와 다른 격리 단위를 청할 수 있다(설계 §5.2 "포크는 부모의 격리 단위 밖으로 나가지 않는다"). 이슈는 명시적인 길에 대해서는
+부모와 다른 격리 단위를 청할 수 있다(`execution-environment.md` §8 "포크는 부모의 격리 단위 밖으로 나가지 않는다"). 이슈는 명시적인 길에 대해서는
 말하지 않았다. 부모와 같은 격리 단위 안에서 슬롯만 다르게 고르는 제공자라면 실행별 값이 포크에도 쓸모 있을 수 있다.
 
 **어디** *(2026-10-17)* — `subagent/execution/DefaultSubagentExecutor.java`(`resolveExecutionEnvironment`).
@@ -4738,7 +4743,7 @@ the hook returned a verdict" 사유로 끝난다. 같은 정지가 ReAct 포크�
 *(2026-10-17 등록. 출처는 환경 알림 설계 §7 Q2 · Q3 과 그 설계 리뷰. 읽어서 본 것이고 돌려 보지 않았다.)*
 
 **무엇을.** aimon-sandbox 가 `drainNotices()` 를 구현할 때 큐의 범위와 수신 확인을 어떻게 둘지 그쪽 저장소에서 정한다. 코어의
-계약(설계 §8.1 · §13, `ExecutionEnvironment.drainNotices` javadoc)은 "큐는 환경 인스턴스마다, 포크와 공유하지 않는다" 와
+계약(`execution-environment.md` §10.3 · §14, `ExecutionEnvironment.drainNotices` javadoc)은 "큐는 환경 인스턴스마다, 포크와 공유하지 않는다" 와
 "돌려준 것이 곧 전달한 것" 이다.
 
 **왜.** 셋이다. (1) 로컬 제공자처럼 포크에 부모의 인스턴스를 그대로 주는 제공자라면 포크의 첫 `Read` 가 "샌드박스가
@@ -4747,7 +4752,7 @@ the hook returned a verdict" 사유로 끝난다. 같은 정지가 ReAct 포크�
 를 지나므로 비우지만, 결과는 스킬의 스크래치 루프로 가고 그 전사는 끝나면 버려진다. 메인 에이전트의 다음 턴은 듣지 못한다.
 (3) 코어는 최대 한 번이다. 도구가 돌아온 뒤 결과가 기록되기 전에 실행이 버려지면 notice 도 사라지는데, 샌드박스가
 `lastWorkspaceId` 같은 장부를 "비워졌다" 에 맞춰 옮기면 다음 턴은 그 사실을 다시 듣지 못한다. 엿보기/확인의 두 단계
-SPI 는 설계에서 기각했다(§2.2) — 창이 작고, 다음 재생성이 새 notice 를 만든다는 이유다.
+SPI 는 설계에서 기각했다(`execution-environment.md` §2) — 창이 작고, 다음 재생성이 새 notice 를 만든다는 이유다.
 
 **어디** *(2026-10-17)* — `core/subagent/execution/DefaultSubagentExecutor.java`(포크의 `EnvironmentRequest`, 부모 인스턴스를
 그대로 받는 로컬 제공자의 주석), `core/agent/impl/orca/OrcaAgentExecutor.java`(슬래시 스킬 디스패처),
@@ -4842,7 +4847,7 @@ SPI 는 설계에서 기각했다(§2.2) — 창이 작고, 다음 재생성이 
 - **훅 명령의 입출력이 이름 있는 파일을 지나지 않는다(로컬).** `LocalShell` 은 훅 · 격리 명령에서 캡처 파일을 시작 직후 지우고
   열어 둔 채널로 읽으며, stdin 은 파이프로 준다.
 
-샌드박스 쪽(`SandboxShell` 의 `RUN_DIRECTORY` 와 훅 · 격리 모드의 실행 파일 — kangwoo/aimon-sandbox#33)은 EE-114 로 옮겼다.
+샌드박스 쪽(`SandboxShell` 의 `RUN_DIRECTORY` 와 훅 · 격리 모드의 샌드박스 래퍼의 입출력 파일(`run-*`) — kangwoo/aimon-sandbox#33)은 EE-114 로 옮겼다.
 그전까지 샌드박스에서 `AIMON_HOOK_DIR` 을 쓰는 `hooks.json` 핸들러는 돌지 않는다(가드는 막는다). 운영자에게 보이는 변화는
 `CHANGELOG.md` 의 `[Unreleased]` 와 훅 설정 가이드에 적었다.
 
@@ -4891,7 +4896,7 @@ SPI 는 설계에서 기각했다(§2.2) — 창이 작고, 다음 재생성이 
 코어 쪽은 `core/skill/hook/declarative/IsolatedShellActionExecutor.java`. aimon-sandbox 쪽 이슈는 [kangwoo/aimon-sandbox#31](https://github.com/kangwoo/aimon-sandbox/issues/31) 다(2026-10-18 등록, #273
 빌드의 초안 `sandbox-followup.md` 를 옮긴 것).
 
-**언제 다시 볼까.** aimon-sandbox 가 이 기능을 내보낼 때(닫는다), 또는 `hooks.json` 과 샌드박스 제공자를 함께 조립하는 호스트가
+**언제 다시 볼까.** aimon-sandbox 가 이 기능을 담은 릴리스를 낼 때(닫는다), 또는 `hooks.json` 과 샌드박스 제공자를 함께 조립하는 호스트가
 생길 때.
 
 ### 닫힘 (2026-10-19)
@@ -4933,13 +4938,13 @@ EE-113)" 다 — `sandbox-followup` 초안의 본문을 옮긴 것. 셸 SPI 제�
 신호를 보낸다(`TIMEOUT` · `EXECUTION_FAILED` → `failOpen` 가드는 통과). 로컬 제공자에서는 에이전트의 `Bash` 가 JVM 의 uid 라
 `"shell": "host"` 도 지켜지지 않는다.
 
-**경계가 서는 조건**(설계 §7, 전부 성립해야 한다):
+**경계가 서는 조건**(`hook-tamper-boundary.md` §10, 전부 성립해야 한다):
 
 1. 에이전트 uid A 가 root 가 아니고 H 나 root 가 될 수 없다 — `runAsNonRoot`, no-new-privileges, `CAP_SETUID` ·
    `CAP_DAC_OVERRIDE` · `CAP_FOWNER` · `CAP_SYS_PTRACE` · `CAP_KILL` 없음, H 에 닿는 setuid 바이너리 없음.
 2. 훅 exec 가 H ≠ A 로 돈다. OpenSandbox `/command` 의 uid 인자를 쓰려면 execd 가 uid 를 바꿀 수 있어야 하고, 그 권한이 A 의
    프로세스에서 닿지 않아야 한다.
-3. 훅 파일과 실행 파일, 그 **부모 디렉터리**가 H 소유이고 A 가 쓸 수 없다. A 가 `/workspace` 를 가지므로 그 아래의 자리는 이름을
+3. 훅 파일, 실행 디렉터리, 샌드박스 래퍼의 입출력 파일(`run-*`), 그 **부모 디렉터리**가 H 소유이고 A 가 쓸 수 없다. A 가 `/workspace` 를 가지므로 그 아래의 자리는 이름을
    바꿔 치울 수 있다 — H 의 자리는 A 가 쓸 수 있는 트리 밖(`/opt/aimon/hooks`, `/run/aimon`)이어야 한다.
 4. 파일 도구의 소유자 불일치(aimon-sandbox `workspace-sandbox.md` §13.3)를 푼다 — files API 가 A 로 쓰고, 코어의 실행 디렉터리
    업로드는 H 로 써야 한다.
@@ -4968,7 +4973,7 @@ OpenSandbox 쪽 수정이 필요하며 그쪽 비공개 보안 채널로 올릴 
 **언제 다시 볼까.** 다른 트리거(운영자가 신뢰하지 않는 에이전트를 상대로 샌드박스에서 `hooks.json` 가드를 돌리려 할 때)가 오거나,
 위 상류 블로커(조건 1)가 OpenSandbox 에서 닫힐 때.
 
-## EE-114 — aimon-sandbox 가 실행 디렉터리를 선언하고, 훅 · 격리 명령의 실행 파일을 없애야 한다 · **열림**
+## EE-114 — aimon-sandbox 가 실행 디렉터리를 선언하고, 훅 · 격리 명령의 입출력 파일(`run-*`)을 없애야 한다 · **열림**
 
 *(2026-10-19 등록. 출처는 EE-109 설계 §8 과 §10 Q5 · Q7 · Q8. aimon-sandbox 쪽 이슈는
 [kangwoo/aimon-sandbox#33](https://github.com/kangwoo/aimon-sandbox/issues/33) 이며, #275 빌드의 `sandbox-followup.md` 로 그 범위를
@@ -4982,28 +4987,31 @@ OpenSandbox 쪽 수정이 필요하며 그쪽 비공개 보안 채널로 올릴 
 **왜.** EE-109 뒤로 `AIMON_HOOK_DIR` 을 쓰는 `hooks.json` 핸들러는 `RUN_DIRECTORY` 가 없는 셸에서 돌지 않는다
 (`RUN_DIRECTORY_UNSUPPORTED`). 그래서 오늘의 샌드박스(`553be78`)에서는 그런 `preTool` 가드가 일치하는 모든 도구 호출을 막는다
 (`failOpen` 이면 지나간다). 우회는 핸들러마다 `"shell": "host"` 다. 스킬 훅은 매 호출 검증하는 스테이징으로 물러서므로 돌지만,
-확인과 인터프리터가 여는 사이의 경합은 남는다. 실행 파일(`run-*.cmd|.out|.err`)은 백그라운드 루프가 명령이나 판정을 위조할 수
+확인과 인터프리터가 여는 사이의 경합은 남는다. 샌드박스 래퍼의 입출력 파일(`run-*.cmd|.out|.err`)은 백그라운드 루프가 명령이나 판정을 위조할 수
 있는 자리다.
 
-**정할 것.** Q5 — 샌드박스의 비공개 실행 디렉터리를 어디에 둘지(`/workspace/.aimon-shell/.run.*` 는 이미지 계약상 쓸 수 있지만
-#33 류의 감시 루프가 이미 아는 디렉터리다; `${TMPDIR:-/tmp}` 는 워크스페이스 밖이지만 이미지 계약에 없다 — 같은 uid 에게는 둘 다
-닿는다). Q7 — 64 KiB 를 넘는 훅 명령을 거절할지(권장) 업로드 · 다이제스트로 받을지. Q8 — 트레일러가 오면 훅의 백그라운드 자식을
-끝낼지(샌드박스 쪽 동작 변화). 결정됨(샌드박스 #35): 트레일러가 오고 약 0.5초 뒤 그 exec 의 프로세스 그룹을 끝낸다 — 코어 문서는
-#283 F4 가 맞췄다. 메인테이너의 확인은 샌드박스 쪽에서 아직 기다린다.
+**정할 것.** Q8 하나 — 트레일러가 오면 훅의 백그라운드 자식을 끝낼지(샌드박스 쪽 동작 변화). 구현은 트레일러가 오고 약 0.5초 뒤 그
+exec 의 프로세스 그룹을 끝낸다(`TRAILER_KILL_GRACE`, 샌드박스 #35) — 코어 문서는 #283 F4 가 맞췄다. 메인테이너의 확인은 샌드박스 쪽에서
+아직 기다린다(EE-118).
+
+> **2026-11-02 — 구현은 합쳐졌고 릴리스가 남았다. 항목은 그 하나로 열려 있다.** PR #35 는 2026-10-19 에 머지되었고 이슈 #33 은 닫혔다.
+> 태그와 Central 에는 `at.aimon.sandbox:aimon-sandbox` 0.1.0(2026-10-05)뿐이고 이것은 #35 보다 앞선다. 그쪽 `main` 은 `0.1.1-SNAPSHOT` 이고
+> 코어 `0.3.4-SNAPSHOT` 에 핀되어 있어 코어 0.3.4 릴리스 전에는 그쪽 릴리스도 막혀 있다. **닫는 조건은 #35 를 담은 aimon-sandbox 릴리스 하나다.**
+> `main` 에서 처분된 둘: Q5 — 비공개 실행 디렉터리는 `/workspace/.aimon-shell/.run.`(`ShellWrapper.PRIVATE_PREFIX`). Q7 — 64 KiB 를 넘는
+> 훅 명령은 거절한다. 그쪽 설계 `workspace-sandbox-run-directory.md` 가 Q5 · Q7 decided, Q8 pending 으로 적는다.
 
 **어디** *(2026-10-19)* — aimon-sandbox 의 `SandboxShell.supports`(`:609-611`) · `execute`, `ShellWrapper`(`INNER`,
 `INLINE_*_LIMIT`), `SandboxStaging`(주석과 테스트만). 코어 쪽은 끝났다(`IsolatedShellActionExecutor`, `DefaultShellActionExecutor`).
 
-**언제 다시 볼까.** aimon-sandbox 가 이 기능을 내보낼 때(닫는다), 또는 `hooks.json` 과 샌드박스 제공자를 함께 조립하는 호스트가
+**언제 다시 볼까.** aimon-sandbox 가 이 기능을 담은 릴리스를 낼 때(닫는다), 또는 `hooks.json` 과 샌드박스 제공자를 함께 조립하는 호스트가
 `AIMON_HOOK_DIR` 을 쓰려 할 때.
 
 ### 후속 — 코어 #283 (F1–F4) · 닫힘 (2026-10-19)
 
 aimon-sandbox 가 실행 디렉터리를 구현하며([kangwoo/aimon-sandbox#33](https://github.com/kangwoo/aimon-sandbox/issues/33),
 [PR #35](https://github.com/kangwoo/aimon-sandbox/pull/35)) 코어의 계약이 셸이 지켜야 할 것보다 느슨하거나, 셸이 알리는 것보다
-덜 정확한 자리 넷이 나왔다. 코어 쪽은 [#283](https://github.com/kangwoo/aimon-core/issues/283) 에서 닫았다. EE-114 자체는 PR #35
-가 합쳐질 때까지 **열림**이다. 설계와 그 차이는
-[`../design/tool/execution-environment-283-run-directory-followups.md`](../design/tool/execution-environment-283-run-directory-followups.md).
+덜 정확한 자리 넷이 나왔다. 코어 쪽은 [#283](https://github.com/kangwoo/aimon-core/issues/283) 에서 닫았다. EE-114 자체는 그 구현을 담은
+aimon-sandbox 릴리스까지 **열림**이다. 설계는 [`../design/hook/hook-tamper-boundary.md`](../design/hook/hook-tamper-boundary.md) §3 · §4 · §7 (옛 `execution-environment-283-run-directory-followups.md`).
 
 - **F1** — `RunDirectory.Builder.file` 이 둘 수 없는 경로를 미리 거절한다: 제어 문자(`Character.isISOControl` — U+0000–U+001F ·
   U+007F · U+0080–U+009F)가 든 경로와, 파일이면서 다른 경로의 부모 디렉터리인 경로(어느 순서로 더하든). 훅에서는
@@ -5081,3 +5089,21 @@ U+2066–U+2069, ZWJ)와 줄 · 문단 구분자(U+2028 · U+2029)가 든 파일
 **어디** *(2026-10-19)* — `core/shell/ShellFeature.java`, `core/shell/ExecutionOptions.java`, `docs/features/hook/hook-config-guide.md`.
 
 **언제 다시 볼까.** 호스트가 셸마다 그 동작을 알아야 할 때, 또는 메인테이너가 샌드박스 #35 의 Q8 을 다르게 정할 때.
+
+## EE-119 — `failOpen` 훅만 있는 스킬도 끊기는 경로의 도구를 거절당한다 · **열림** *(트리거 대기)*
+
+*(2026-11-02 등록. 출처는 설계 문서 재구성의 충돌 D-8. 읽어서 본 것이고 돌려 보지 않았다.)*
+
+**무엇을.** 활성 스킬이 있을 때 백그라운드 `Workflow` · `WorkflowJs` · `Task` 와 `ScheduleTask` 를 거절하는 판정에서 `failOpen` 훅을 뺄지 정한다.
+
+**왜.** 판정이 이벤트 기준이다. `SkillHookSet.hasGuards` 는 가드 이벤트와 선언된 이벤트만 보고 `failOpen` 을 보지 않으므로, `failOpen: true`
+인 감사용 `preTool` 훅만 가진 스킬도 위 도구를 거절당한다. 같은 훅이 `hooks.json` 에서는 가드가 아니다(`HookRegistryApplier` 의
+`guard = guardEvent && !failOpen`). 과하게 닫히는 쪽이라 지금 위험은 없고, 비용은 감사 훅을 단 스킬이 백그라운드 일을 시작하지 못하는 것이다.
+지금의 동작과 낱말(가드 이벤트 · 가드 훅)은 [`../design/hook/hook-environment.md`](../design/hook/hook-environment.md) §12 와
+[`../design/hook/hook-fail-closed.md`](../design/hook/hook-fail-closed.md) §1 에 있다. 관찰 전용 스킬 훅의 WARN 은 `Workflow` · `WorkflowJs` · `Task` 에만
+있고 `ScheduleTask` 에는 없다 — 좁힐 때 함께 본다.
+
+**어디** *(2026-11-02)* — `core/skill/hook/SkillHookSet.java`, `core/skill/hook/SkillScopedHookRegistry.java`(`activeGuardSkills`),
+`core/config/hook/HookRegistryApplier.java`, `core/tools/HookRegistryAccess.java`, `core/tools/scheduling/ScheduleTaskTool.java`.
+
+**언제 다시 볼까.** 감사용 스킬 훅을 달고 백그라운드 도구를 쓰려는 배치가 나올 때.

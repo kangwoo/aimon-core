@@ -293,7 +293,7 @@ WARN 만 남으며 시계를 고칠 때까지 계속될 수 있다. 이 WARN 은
 불린다. 따라서 **어느 노드에서 불려도 같은 답을 내야 한다**: task 별 배치 정보를 노드 로컬 메모리에 두면 같은 task 가
 발화한 노드에 따라 다른 곳에 배치된다. task 별 값은 공유 저장소에서 `ScheduledTask#getId()` 로 찾아 읽는다. 스타터에서는
 `RoutineExecutionAttributes` 빈 하나로 배선된다(`SchedulingSpec.withRoutineExecutionAttributes`). 설계 근거는
-[`execution-environment-ee102-request-attributes.md`](../../design/tool/execution-environment-ee102-request-attributes.md).
+[`execution-environment-placement.md`](../../design/tool/execution-environment-placement.md) §6.
 
 `quotaGuardFactory`는 LLM **사용량** 쿼터다 — 위의 `defaultMaxQuota`(등록할 수 있는 task 개수)와 다르다. 이것을 주면
 루틴 실행 1회가 소유자를 주체로 guard 하나를 만들고, 단계가 띄운 `Task` · `Workflow` · 포크 스킬이 그 guard 에

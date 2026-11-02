@@ -15,9 +15,10 @@
 7. [JSON Schema 정의](#json-schema-정의)
 8. [에러 처리](#에러-처리)
 9. [권한 시스템](#권한-시스템)
-10. [동시 실행 안전성 (ConcurrencyBehavior)](#동시-실행-안전성-concurrencybehavior)
-11. [전체 예제](#전체-예제)
-12. [체크리스트](#체크리스트)
+10. [부작용 선언](#부작용-선언-sideeffectlevel--destructivebehavior--idempotencybehavior)
+11. [동시 실행 안전성 (ConcurrencyBehavior)](#동시-실행-안전성-concurrencybehavior)
+12. [전체 예제](#전체-예제)
+13. [체크리스트](#체크리스트)
 
 ---
 
@@ -873,6 +874,34 @@ deferred 도구 배포에서 `ToolSearch` 를 빠뜨린 목록이 그렇게 된�
 
 ---
 
+## 부작용 선언 (SideEffectLevel · DestructiveBehavior · IdempotencyBehavior)
+
+도구는 자기가 세상에 무엇을 하는지 세 개의 `default` 메서드로 선언한다. 선언하지 않으면 **최악 쪽**으로 읽힌다.
+
+| 메서드 | 기본값 | 다른 값 |
+|--------|--------|---------|
+| `getSideEffectLevel()` | `MUTATING` | `READ_ONLY` — 도구를 실행한 에이전트 밖의 어떤 것도 바꾸지 않는다 |
+| `getDestructiveBehavior()` | `DESTRUCTIVE` | `NON_DESTRUCTIVE` — 만들거나 덧붙이기만 하고 있던 상태를 덮어쓰거나 지우지 않는다 |
+| `getIdempotencyBehavior()` | `NON_IDEMPOTENT` | `IDEMPOTENT` — 같은 입력으로 다시 불러도 한 번 부른 것과 결과가 같다 |
+
+```java
+@Override
+public SideEffectLevel getSideEffectLevel() {
+    return SideEffectLevel.READ_ONLY;
+}
+```
+
+- **읽기 전용 도구는 `READ_ONLY` 를 선언한다.** 선언하지 않으면 `READ_ONLY` 실링에서 정의가 숨겨지고 실행이 거부되며, routine 단계도 재시도되지 않는다.
+- **거짓으로 낮추지 않는다.** 쓰면서 `READ_ONLY` 를 선언한 도구는 아무것도 바뀌지 않는다고 약속한 모드에서 실행된다. 높게 선언한 대가는 가용성뿐이다.
+- **`DestructiveBehavior` 와 `IdempotencyBehavior` 는 `MUTATING` 일 때만 읽힌다.** `READ_ONLY` 도구에는 선언해도 뜻이 없다.
+- **선언은 도구 단위이고 입력을 보지 않는다.** 가끔 덮어쓰는 도구는 `DESTRUCTIVE` 이고, 일부 입력에서만 멱등인 도구는 `NON_IDEMPOTENT` 다. 호출별 판단은 권한 패턴과 `CustomToolPermissionAware` 규칙의 일이다.
+- **`IDEMPOTENT` 를 선언하면 routine 단계가 재시도된다.** 시간 초과나 예외로 끝난 시도도 쓰기를 마쳤을 수 있으므로, 다시 해도 안전할 때만 선언한다. 멱등은 안전하다는 뜻이 아니다. 두 번 지워도 결과가 같은 삭제는 `IDEMPOTENT` 이면서 `DESTRUCTIVE` 다.
+- **`DESTRUCTIVE` 는 승인 게이트의 면제선을 넘어선다.** `SideEffectApprovalGate` 를 배선한 실행에서 `DESTRUCTIVE` 도구는 면제선과 무관하게 승인을 묻는다.
+
+설계와 이유는 [부작용 축](../../design/tool/side-effect-axes.md) 에 있다.
+
+---
+
 ## 동시 실행 안전성 (ConcurrencyBehavior)
 
 LLM이 한 응답에 여러 `tool_use`를 반환하면, 프레임워크는 **서로 독립적이고 동시 실행해도 안전한 도구들을
@@ -883,7 +912,8 @@ LLM이 한 응답에 여러 `tool_use`를 반환하면, 프레임워크는 **서
 ```java
 public enum ConcurrencyBehavior {
     SEQUENTIAL,        // 기본값 — 절대 병렬화되지 않음
-    CONCURRENT_SAFE    // 같은 배치의 다른 CONCURRENT_SAFE 도구와 동시 실행 안전
+    CONCURRENT_SAFE,   // 같은 배치의 다른 CONCURRENT_SAFE 도구와 동시 실행 안전
+    DEDICATED_THREAD   // 호출마다 전용 스레드가 필요함. 배치 게이트는 SEQUENTIAL 로 읽는다 (예: Task)
 }
 ```
 
@@ -1154,6 +1184,7 @@ public class ReadTool extends AbstractTool {
 - [ ] 선택적 파라미터에 기본값을 제공하였는가?
 - [ ] 의미 있는 에러 메시지를 작성하였는가?
 - [ ] Thread-safe한가?
+- [ ] 부작용을 선언하였는가? (읽기 전용이면 `READ_ONLY`, 쓰는 도구는 `DestructiveBehavior` · `IdempotencyBehavior` 를 검토)
 
 ### 테스트
 

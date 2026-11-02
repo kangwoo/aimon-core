@@ -6,7 +6,7 @@
 > `WakeRequestCustomizer`) · `aimon-core` — `at.aimon.core.agent.session.wake` (`WakeLedger`, `WakeState`,
 > `InMemoryWakeLedger`) · `aimon-session-{redis,postgres,mongodb}` — 공유 원장 (`RedisWakeLedger`,
 > `PostgresWakeLedger`, `MongoWakeLedger`) · `aimon-cli` — `ReplWaker` (§8) · `aimon-bootstrap` — `SessionSpec` 설정과 조립 ·
-> `aimon-spring-boot-starter` — `aimon.session.wake.*`. 선행 설계: [`../tool/monitor.md`](../tool/monitor.md) §9.1 (이 기능을 미룬 이유),
+> `aimon-spring-boot-starter` — `aimon.session.wake.*`. 선행 설계: [`../tool/monitor.md`](../tool/monitor.md) §9.1 (깨우기를 모니터 안에 두지 않은 이유),
 > [`routing.md`](routing.md) (제출·턴 게이트·인박스·이벤트 릴레이).
 
 ---

@@ -396,7 +396,7 @@ modules/aimon-core/src/main/resources/
 ```
 
 `${AIMON_SKILL_DIR}` 는 언제나 **실행 환경이 스킬을 스테이징하고 돌려준 경로**다(`ExecutionEnvironment.stage`,
-설계 [`design/tool/execution-environment.md`](../../design/tool/execution-environment.md) §4.4). 스킬을 처음
+설계 [`design/tool/execution-environment-staging.md`](../../design/tool/execution-environment-staging.md) §12). 스킬을 처음
 쓸 때 스킬 디렉터리가 작업 공간의 `{workspace}/.aimon-staged/<skill-name>/<contentKey>/` 로 복사되고, 렌더러
 (`DefaultSkillContentRenderer`)가 그 경로로 치환한다. 스킬이 어느 저장소에서 왔든 — 사용자 스킬(VFS), 호스트 경로
 (`PathSkillRepository`, 읽기 전용 로컬 VFS 로 읽는다), 클래스패스 — 같다. 그래서 모델의 셸과 파일 도구가 같은

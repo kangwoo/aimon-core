@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/tool/tool-development-guide.md
-source_commit: b32b0d88
+source_commit: a27160e8
 ---
 
 # Tool Development Guide
@@ -20,9 +20,10 @@ This document provides everything you need when developing a Tool in the aimon-c
 7. [Defining the JSON Schema](#defining-the-json-schema)
 8. [Error handling](#error-handling)
 9. [The permission system](#the-permission-system)
-10. [Concurrency safety (ConcurrencyBehavior)](#concurrency-safety-concurrencybehavior)
-11. [A complete example](#a-complete-example)
-12. [Checklist](#checklist)
+10. [Declaring side effects](#declaring-side-effects-sideeffectlevel--destructivebehavior--idempotencybehavior)
+11. [Concurrency safety (ConcurrencyBehavior)](#concurrency-safety-concurrencybehavior)
+12. [A complete example](#a-complete-example)
+13. [Checklist](#checklist)
 
 ---
 
@@ -838,6 +839,34 @@ Finally, **an offer left with no tools at all is logged**. A misspelled name doe
 
 ---
 
+## Declaring side effects (SideEffectLevel · DestructiveBehavior · IdempotencyBehavior)
+
+A tool declares what it does to the world through three `default` methods. Left undeclared, each reads as **the worst case**.
+
+| Method | Default | The other value |
+|--------|--------|---------|
+| `getSideEffectLevel()` | `MUTATING` | `READ_ONLY` — changes nothing outside the executing agent |
+| `getDestructiveBehavior()` | `DESTRUCTIVE` | `NON_DESTRUCTIVE` — only creates or appends, and never overwrites or removes existing state |
+| `getIdempotencyBehavior()` | `NON_IDEMPOTENT` | `IDEMPOTENT` — calling again with the same input leaves the same result as one call |
+
+```java
+@Override
+public SideEffectLevel getSideEffectLevel() {
+    return SideEffectLevel.READ_ONLY;
+}
+```
+
+- **A read-only tool declares `READ_ONLY`.** Otherwise a `READ_ONLY` ceiling hides its definition and refuses to run it, and a routine step using it is not retried.
+- **Do not claim less than the truth.** A tool that writes while declaring `READ_ONLY` runs in a mode that promised nothing would change. Declaring too high costs only availability.
+- **`DestructiveBehavior` and `IdempotencyBehavior` are read only when the level is `MUTATING`.** On a `READ_ONLY` tool they mean nothing.
+- **A declaration is per tool and does not see the input.** A tool that overwrites only sometimes is `DESTRUCTIVE`, and one that is idempotent only for some inputs is `NON_IDEMPOTENT`. Per-call judgement belongs to permission patterns and `CustomToolPermissionAware` rules.
+- **Declaring `IDEMPOTENT` makes a routine step retryable.** An attempt that timed out or threw may still have finished its write, so declare it only when repeating is safe. Idempotent does not mean safe: a delete that gives the same result twice is both `IDEMPOTENT` and `DESTRUCTIVE`.
+- **`DESTRUCTIVE` goes past the approval gate's exemption threshold.** In an execution with `SideEffectApprovalGate` wired in, a `DESTRUCTIVE` tool asks for approval whatever the threshold says.
+
+The design and its reasons are in [side-effect axes](../../design/tool/side-effect-axes.md).
+
+---
+
 <!-- anchor alias: an untranslated Korean design doc links to the canonical heading id -->
 <a id="동시-실행-안전성-concurrencybehavior"></a>
 
@@ -848,7 +877,8 @@ When the LLM returns several `tool_use` entries in one response, the framework c
 ```java
 public enum ConcurrencyBehavior {
     SEQUENTIAL,        // the default — never parallelised
-    CONCURRENT_SAFE    // safe to run alongside other CONCURRENT_SAFE tools in the same batch
+    CONCURRENT_SAFE,   // safe to run alongside other CONCURRENT_SAFE tools in the same batch
+    DEDICATED_THREAD   // each call needs a thread of its own; the batch gate reads it as SEQUENTIAL (e.g. Task)
 }
 ```
 
@@ -1119,6 +1149,7 @@ Check the following items when developing a new Tool.
 - [ ] Do the optional parameters have defaults?
 - [ ] Are the error messages meaningful?
 - [ ] Is it thread-safe?
+- [ ] Are its side effects declared? (`READ_ONLY` if it only reads; for a tool that writes, review `DestructiveBehavior` and `IdempotencyBehavior`)
 
 ### Tests
 

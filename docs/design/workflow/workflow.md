@@ -334,10 +334,10 @@ resume 의 정의는 단순하다: **동일 스크립트를 동일 구조로 재
 **(b) 입력 해시는 검증용** — `inputHash = hash(goal + inline subagent 정의(systemPrompt+model+tools+
 allowedTools+attributes) + resultSchema)`. 키는 **위치**로 식별하고, 로드한 엔트리의 `inputHash` 가 다르면 캐시
 miss 로 간주해 stale 재생을 막는다. subagent **정의 전체**를 해싱한다 — 이름만으로는 서로 다른 subagent
-가 같은 위치에서 충돌한다. `attributes` 도 정의에 든다: 워크플로 스텝이 속성을 싣게 된 뒤로(EE-42) 속성이 바뀌면
-스텝이 다른 실행 환경(슬롯)에 놓이므로, 해시가 그것을 빼면 다른 슬롯에서 계산된 결과를 재생한다. 2026-09-29 현재
-이 해시를 **계산하는** 코드는 main 소스에 없다 — `StepOutcome.inputHash` 는 저장된 값을 디코드할 때만 채워진다
-(`StepOutcomeCodec`). 계산을 붙이는 쪽이 이 목록을 지켜야 한다.
+가 같은 위치에서 충돌한다. `attributes` 도 정의에 든다: 속성이 바뀌면
+스텝이 다른 실행 환경(슬롯)에 놓이므로, 해시가 그것을 빼면 다른 슬롯에서 계산된 결과를 재생한다.
+`DefaultWorkflowContext.inputHash` 가 계산한다. `Subagent.hashCode` 를 거쳐 정의 전체와 `attributes` 를 포함하고
+`isolate` · `nonCacheable` 도 넣는다.
 
 **(c) transcript-free 값** — `StepOutcome` 은 text/structured/totalTokens/costMicros/completionReason/
 inputHash/structureFingerprint 만 담는다. `SessionSnapshot`/`Message`/inline `Subagent` 를
@@ -410,31 +410,23 @@ Semaphore 에서 블록, native stack) → 병리적 설정에서 native-thread 
 
 ### 6.3 worktree 격리
 
-병렬 서브에이전트가 같은 파일을 쓰면 안전 검증 없이는 위험하다. 격리는 **실행 환경의 기능**이다
-([`../tool/execution-environment.md`](../tool/execution-environment.md) §5.2) — 러너는 브랜치마다 부모 환경에서
-파생 환경을 얻는다.
+병렬 서브에이전트가 같은 파일을 쓰면 안전 검증 없이는 위험하다. 격리는 **실행 환경의 기능**이다. 브랜치의 구조와
+경로 규칙, 예약, 병합 검사의 정본은 [`../tool/execution-environment-isolation.md`](../tool/execution-environment-isolation.md)
+이고, 여기에는 러너가 그것을 쓰는 방식만 적는다. 러너는 브랜치마다 부모 환경에서 파생 환경을 얻는다.
 
 ```java
-// DefaultWorkflowContext.resolveEnv (요지)
-ExecutionEnvironment parent = baseEnv.getExecutionEnvironment()
-        .orElseGet(() -> resolveOrUnavailable(baseEnv.getExecutionEnvironmentProvider(), request));
+// DefaultWorkflowContext.resolveLaunchContext (요지)
+ExecutionEnvironment parent = baseLaunchContext.getExecutionEnvironment()
+        .orElseGet(() -> resolveOrUnavailable(baseLaunchContext.getExecutionEnvironmentProvider().orElse(null), request));
 ExecutionEnvironment branch = parent.isolate(branchKey)
-        .orElseThrow(() -> new WorkflowException("... does not support isolation — refusing to run unscoped"));
-return baseEnv.toBuilder().executionEnvironment(branch).build();
+        .orElseThrow(() -> new WorkflowException("... does not support isolation — refusing to run unscoped (C30)"));
+return baseLaunchContext.toBuilder().executionEnvironment(branch).build();
 ```
 
 - **레지스트리 복제 없음** — 파일 툴과 `Bash` 는 생성자가 아니라 실행 환경에서 파일 시스템·셸을 꺼내므로,
   브랜치 환경을 포크의 부모 환경으로 넘기는 것만으로 브랜치의 도구가 브랜치를 본다. `toolRegistry` 는 base 그대로다.
-  옛 `WorktreeEnvironmentFactory` SPI 와 그 기본 구현(레지스트리를 복제해 파일 툴을 재바인딩하던
-  `WorktreeToolEnvironmentFactory`)은 이것으로 대체되어 삭제되었다.
-- **로컬 브랜치** — `LocalExecutionEnvironment.isolate(key)` 는 `.worktrees/<key>/` 에 스코프된
-  `ScopedVirtualFileSystem`(부모의 경로 규칙 위)과, 기본 cwd 를 브랜치 루트로 바꾸는 셸 뷰를 준다. 그래서 이제
-  `Bash` 도 기본 cwd 만큼은 격리된다 — 명령 안의 절대 경로까지 막지는 않는다("파일 도구 + 기본 cwd" 수준). 파생
-  환경은 `durable() == false` 다. 스테이징 영역(`.aimon-staged/`)은 부모와 공유되어 브랜치 목록에 나오지 않는다.
-  부모의 경로 규칙은 브랜치 루트 기준으로 한 번 더 걸린다 — 브랜치 안의 `.aimon/` 쓰기는 쓰는 시점에 거절되고,
-  목록에도 나오지 않는다. 브랜치를 다시 `isolate()` 하면 이유를 담은 오류다(중첩 격리 없음). 브랜치 안에서
-  `.worktrees/` 를 가리키는 경로(다른 브랜치의 디렉터리든 자기 것이든)도 쓰는 시점에 거절된다 — 규칙이 아니라 스코프가
-  그 이름을 예약한 것이다(EE-46).
+- **브랜치가 보는 것** — 로컬 브랜치의 범위("파일 도구 + 기본 cwd")와 `.aimon/` · `.worktrees/` 거절, 중첩 격리 거절은
+  [`../tool/execution-environment-isolation.md`](../tool/execution-environment-isolation.md) §4 · §5 · §7 · §8 에 있다.
 - **disjoint 서브트리** — 구축상 zero-clobber, zero-copy 이며 Local/S3/GridFS 에 균일하게 적용된다.
   `ScopedVirtualFileSystem` 은 `list`/`listRecursive`/`search` **셋 다 결과에서 prefix 를 균일 strip**
   해 round-trip 불변식을 지키고, 파일 툴이 넘기는 **절대 경로 입력**(브랜치 루트의 호스트 경로 포함)도 브랜치
@@ -443,6 +435,8 @@ return baseEnv.toBuilder().executionEnvironment(branch).build();
   브랜치 teardown 이나 `runner.close()` 는 부모의 파일 시스템·셸을 절대 close 하지 않는다 — 소유자는 제공자다.
 - **결정적 브랜치 이름** — 브랜치 키는 결정적 구조 step-path 에서 명명되므로(`[A-Za-z0-9_]+`) 형제/동일-입력
   브랜치가 서브트리를 공유하지 않고 재실행·cross-node 에서 안정적이다. 같은 키로 `isolate` 하면 같은 뷰가 나온다.
+  대가는 실행 사이의 공유다 — 모든 실행의 첫 격리 단계가 `a0` 이므로 두 실행이 `.worktrees/a0` 을 나눠 쓴다
+  ([EE-46](../../backlog/execution-environment-open-items.md), 정리 수단이 먼저다).
 - **격리 착시 없음** — 환경이 `isolate()` 를 지원하지 않거나 거절하면 `isolate = true` 는 첫 사용 시 run-fatal
   `WorkflowException` 이다. 스크립트가 격리를 요청했는데 unscoped 로 실행하지 않는다. 거절에 이유가 있으면(사용
   불가 환경의 원인, 이미 격리 브랜치 안이라는 것) 오류 메시지가 그것을 싣고 원인 예외로 잇는다.
@@ -457,10 +451,8 @@ return baseEnv.toBuilder().executionEnvironment(branch).build();
 
 **병합은 명시적·비자동이다.** `WorktreeMerge.promote(parent, branches, policy)` 가 브랜치 환경 목록을 받아 충돌을
 먼저 훑고 `Policy` 로 고른 뒤 브랜치 파일을 부모로 복사한다. 키만 아는 조립 코드는 `parent.isolate(key).orElseThrow()`
-로 같은 브랜치를 다시 얻는다. 브랜치는 자기 `.aimon/` 아래에 쓸 수 없으므로(쓰는 시점에 거절) 병합이 그런 파일을
-만나지 않는다 — 병합을 통해 제어 평면을 쓰는 통로는 없다. `promote` 는 파일을 읽거나 쓰기 전에 브랜치의 소속을
-확인해 부모 자신·다른 부모의 브랜치·중복을 `IllegalArgumentException` 으로 거부하고, 올릴 곳이 부모의 경로 규칙에
-막히거나 올릴 파일의 메타데이터를 읽을 수 없으면 아무것도 올리지 않는다. N-way 자동병합은 last-writer-wins 은닉과 snapshot 일관성 규칙을
+로 같은 브랜치를 다시 얻는다. 소속 검사와 사전 점검은 [`../tool/execution-environment-isolation.md`](../tool/execution-environment-isolation.md)
+§10 · §11 에 있다. 트리 안에 `promote` 를 부르는 코드는 없고 조립 코드의 몫이며, 코어는 브랜치 디렉터리를 치우지 않는다(같은 문서 §4 · §11). N-way 자동병합은 last-writer-wins 은닉과 snapshot 일관성 규칙을
 요구하므로 과도하다고 판단했다. 복구 가능한 worktree/병합 실패는 `WorkflowException` 을 **절대 상속하지
 않는다** — 실패 `AgentStepResult` 또는 merge-report 데이터로 표현한다. `WorkflowException` 은 진짜
 run-fatal 전용이며, `BoundedFanoutDispatcher` 가 그것만 재-throw 해 run 을 abort 하기 때문이다.
@@ -675,7 +667,7 @@ prelude 를 켠 결정성 모드에서만 resume 를 허용한다.
 | 불변식 | 근거 |
 |---|---|
 | 캐시 hit 스텝도 agent/토큰/비용을 회계에 반영한다 | 안 그러면 runaway backstop 이 조용히 리셋된다 |
-| `isNonCacheable()` 이면 load 와 save 를 **둘 다** 우회한다 | save-only 억제는 stale cacheable 엔트리의 LOAD-replay 를 못 막는다(플래그는 `inputHash` 에 없다) |
+| `isNonCacheable()` 이면 load 와 save 를 **둘 다** 우회한다 | save-only 억제는 stale cacheable 엔트리의 LOAD-replay 를 못 막는다 |
 | replay 는 위치 + `inputHash` + `structureFingerprint` **3중 일치** 시에만 | 동종 시퀀스 shift 오재생 차단 |
 | fingerprint 부재/레거시 outcome 은 replay 하지 않는다 | fail-safe — 재실행은 절대 오답이 아니다 |
 | cross-node 로 나가는 것은 **상태뿐**, typed `T` 는 소유 노드 전용 | `T` 직렬화 경로 없음 |

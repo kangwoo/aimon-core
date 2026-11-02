@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/skill/builtin-agent-skill-guide.md
-source_commit: 897e9741
+source_commit: a6e0c3db
 ---
 
 # Built-in Agent/Skill Guide
@@ -404,8 +404,8 @@ Run the helper: !`python ${AIMON_SKILL_DIR}/scripts/run.py`
 ```
 
 `${AIMON_SKILL_DIR}` is always **the path the execution environment returned when it staged the skill**
-(`ExecutionEnvironment.stage`, design [`design/tool/execution-environment.md`](../../design/tool/execution-environment.md)
-§4.4). On the skill's first use its directory is copied into the workspace at
+(`ExecutionEnvironment.stage`, design [`design/tool/execution-environment-staging.md`](../../design/tool/execution-environment-staging.md)
+§12). On the skill's first use its directory is copied into the workspace at
 `{workspace}/.aimon-staged/<skill-name>/<contentKey>/`, and the renderer (`DefaultSkillContentRenderer`) substitutes that
 path. It is the same whichever repository the skill came from — a user skill (VFS), a host path
 (`PathSkillRepository`, read through a read-only local VFS), or the classpath — so the model's shell and file tools

@@ -93,7 +93,7 @@ IMPORTANT: **마커에 대한 fan-out 은 없다.** `OrcaAgentRuntime.close()` �
 
 이 목록에는 한때 `ownedShell` 이 셋째로 있었다 — 어셈블리가 셸을 주지 않았을 때 런타임이 직접 만든
 셸이다. 실행 환경 설계([`design/tool/execution-environment.md`](../design/tool/execution-environment.md)
-§4.3)로 셸과 작업 파일 시스템의 소유자가 `ExecutionEnvironmentProvider` 하나가 되면서 빠졌다. 런타임은
+§4)로 셸과 작업 파일 시스템의 소유자가 `ExecutionEnvironmentProvider` 하나가 되면서 빠졌다. 런타임은
 제공자를 빌려 쓸 뿐이므로, 목록에 올리는 것이 오히려 잘못이다(§2 표). 예외는 하나다 — 런타임별 제공자 함수
 (`withExecutionEnvironmentProviderFactory`)가 돌려준 제공자는 그 함수를 넘긴 쪽이 닫을 시점을 알 수 없으므로
 런타임이 소유하고, `close()` 가 목록의 다른 항목을 닫은 뒤 마지막으로 닫는다. 그 함수는 호출마다 그 런타임 전용

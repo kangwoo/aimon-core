@@ -135,7 +135,7 @@ id 를 스냅샷하고(그 뒤에 찍으면 방금 쓴 리비전이 목록에 �
 
 ### 4.2 `getMetadata` 는 내용이 바뀌면 달라진다
 
-파일 도구의 낡은 쓰기 방지([`../tool/execution-environment.md`](../tool/execution-environment.md) §7)는 `Read`
+파일 도구의 낡은 쓰기 방지([`../tool/execution-environment-files.md`](../tool/execution-environment-files.md) §5)는 `Read`
 시점과 수정 시점의 `FileMetadata` 를 비교한다. 그래서 계약에 한 줄이 있다 — **내용이 바뀌면 `modifiedAt` 또는
 `getEtag()` 중 하나가 반드시 바뀐다.** 둘 다 있으면 비교는 etag 를 우선한다.
 

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/README.md
-source_commit: bc8715e
+source_commit: ab012834
 ---
 
 # Feature Documentation (Features)
@@ -61,6 +61,7 @@ The unit through which an agent interacts with the outside world.
 | [`tool-development-guide.en.md`](tool/tool-development-guide.en.md) | **The canonical text for building a new tool** — the `Tool` contract, schemas, error handling, permissions |
 | [`parallel-tool-execution-guide.en.md`](tool/parallel-tool-execution-guide.en.md) | Running tools in parallel within one batch (`ConcurrencyBehavior`) |
 | [`monitor-guide.en.md`](tool/monitor-guide.en.md) | Background monitors — turning them on, how the agent uses them, when events arrive, writing a host source, permissions and limits |
+| [`tool-search-guide.en.md`](tool/tool-search-guide.en.md) | Tool search — when to use it, turning it on (hand assembly), how the agent uses it, how long activation lasts, permissions, troubleshooting |
 | [`browser-tool-guide.en.md`](https://github.com/kangwoo/aimon-browser/blob/main/docs/browser-tool-guide.en.md) | Configuring and using the Playwright-backed `Browser` tool. **Not in this repository** — it moved to [aimon-browser](https://github.com/kangwoo/aimon-browser) with the module |
 
 Design rationale: [`parallel-execution.md`](../design/tool/parallel-execution.md) ·

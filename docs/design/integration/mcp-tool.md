@@ -159,7 +159,7 @@ at.aimon.core.mcp/
 
 MCP 스펙의 tool annotation(`readOnlyHint` · `destructiveHint` · `idempotentHint` · `openWorldHint`)은
 **도구가 자기 자신에 대해 하는 주장**이고, 그 주장을 중계하는 것은 AIMON 이 통제하지 않는 서버다.
-그런데 AIMON 에서 `SideEffectLevel.READ_ONLY` 는 장식이 아니다 — 부작용 상한과 승인 게이트가 그것을
+그런데 AIMON 에서 `SideEffectLevel.READ_ONLY` 는 장식이 아니다 — 부작용 실링과 승인 게이트가 그것을
 읽는다. `readOnlyHint: true` 를 거짓으로 신고한 도구는 **묻지 않고 실행된다**.
 
 그래서 신뢰는 값 하나로 해소되고, 그 값은 **서버 단위 설정**이다.
@@ -168,13 +168,13 @@ MCP 스펙의 tool annotation(`readOnlyHint` · `destructiveHint` · `idempotent
 McpToolAnnotations (서버가 신고한 것)  +  AnnotationTrust (그 서버를 얼마나 믿는가)
                           │
                           ▼  McpToolTraits.resolve(...)
-        SideEffectLevel + DestructiveBehavior  ← 여기부터는 로컬 도구와 구분 불가
+        SideEffectLevel + DestructiveBehavior + IdempotencyBehavior  ← 여기부터는 로컬 도구와 구분 불가
 ```
 
 | `AnnotationTrust` | 결과 |
 |-------------------|------|
 | **`IGNORE`** (기본값) | 애노테이션을 파싱해서 들고만 있고 쓰지 않는다. 모든 도구가 `MUTATING` + `DESTRUCTIVE` — 애노테이션을 읽기 전과 정확히 같다 |
-| `TRUST` | `readOnlyHint` 가 레벨이 되고 `destructiveHint` 가 파괴성이 된다 |
+| `TRUST` | `readOnlyHint` 가 레벨이 되고 `destructiveHint` 가 파괴성, `idempotentHint` 가 멱등성이 된다 |
 
 세 가지가 이 설계의 요점이다.
 
@@ -183,7 +183,7 @@ McpToolAnnotations (서버가 신고한 것)  +  AnnotationTrust (그 서버를 
 - **신뢰는 서버 단위이지 정책 인터페이스가 아니다.** 결정할 것이 하나뿐이고 그 하나가 서버마다 다르므로,
   `McpServerConfig` 안에 사는 것이 맞다. 신뢰는 서버를 가로질러 전이되지 않는다.
 - **모순은 관대한 쪽으로 해소한다.** 서버가 `readOnlyHint: true` 와 `destructiveHint: true` 를 함께 보내면
-  `READ_ONLY` + `NON_DESTRUCTIVE` 가 된다. 소비자는 `MUTATING` 아래에서 두 번째 축을 읽지 않으므로
+  `READ_ONLY` + `NON_DESTRUCTIVE` 가 된다. 소비자는 `READ_ONLY` 도구의 두 번째 축을 읽지 않으므로
   모순을 저장해 봐야 `toString()` 과 실제 동작이 어긋날 뿐이고, `TRUST` 를 켠 시점에 이미 둘 중 더 무거운
   주장을 믿기로 한 것이기 때문이다.
 
@@ -371,13 +371,25 @@ IMPORTANT: **그런데 이 리스너를 호출하는 코드가 없다.** `StdioM
 결정할 것이 하나뿐이고 그 하나가 서버마다 다르다. 정책 인터페이스로 만들면 구현체가 결국
 "서버 이름 → 불리언" 맵이 되는데, 그것이 `McpServerConfig` 의 필드다.
 
+신뢰는 도구의 성질도 프로토콜의 성질도 아니고 운영자가 특정 서버에 대해 내리는 판단이다. `McpServerConfig` 는 그런 판단만
+담고, 값이 이미 흐르는 경로(`McpServerConfigProvider` → `OrcaMcpToolProvider` → `McpClientManager.createClient(config)`)에 얹히므로
+새 배선이 없다. "서버 이름 패턴으로 신뢰를 준다" 나 "도구 이름별로 예외를 둔다" 같은 두 번째 규칙이 실제로 요구될 때가 전용 SPI 의
+자리이고, 그때 이 필드는 기본 구현이 읽는 값으로 남는다.
+
 ### D4. 기본값은 `IGNORE` — 기능 추가가 기존 동작을 바꾸지 않는다
 
 `TRUST` 를 기본으로 두면 업그레이드만으로 승인 게이트가 조용히 느슨해진다. 신뢰는 명시적으로 켜는 것이다.
 
+MCP 스펙도 애노테이션을 신뢰할 수 없는 힌트로 규정한다. 서버가 삭제 도구에 `readOnlyHint: true` 를 붙여도 프로토콜은 막지 않는다.
+그래서 서버의 주장을 받아들여 방어선을 낮추는 일은 명시적 opt-in 이어야 한다.
+
+`IGNORE` 의 대가는 가용성이다. 서버가 `readOnlyHint: true` 를 보내도 그 도구는 `MUTATING` 이 되어 `READ_ONLY` 실링에서 숨겨지고 승인
+게이트가 매번 묻는다. 방향이 fail-safe 쪽이라 보안 결함은 아니다.
+
 ### D5. `READ_ONLY` 와 `destructiveHint: true` 의 모순은 관대한 쪽으로 해소한다
 
-§4 참조. 소비자가 읽지 않는 축에 모순을 저장해 두면 표시와 동작이 어긋날 뿐이다.
+§4 참조. 소비자가 읽지 않는 축에 모순을 저장해 두면 표시와 동작이 어긋날 뿐이다. `READ_ONLY` 로 판정된 도구는 언제나
+`NON_DESTRUCTIVE` 이고 `IDEMPOTENT` 다. `McpToolTraits` 가 한 분기에서 둘을 같이 정한다.
 
 ### D6. `McpClientManager` 는 팩토리가 만들고 런타임이 닫는다
 
@@ -403,6 +415,36 @@ MCP 서버 하나가 죽었다고 에이전트 전체가 뜨지 못하면, 선�
 `ToolRegistry` 스냅샷과 LLM 이 이미 본 도구 정의가 어긋나는데, 그 어긋남을 턴 중간에 처리하는 방법이
 정해져 있지 않다. 재조회는 인바운드 알림 경로가 실제로 연결된 뒤의 문제다(§9.1).
 
+### D11. `AnnotationTrust` 는 `IGNORE`, `TRUST` 둘이다
+
+`TRUST` 는 값 하나로 세 축을 함께 정한다 — `readOnlyHint` 가 `SideEffectLevel`, `destructiveHint` 가 `DestructiveBehavior`,
+`idempotentHint` 가 `IdempotencyBehavior` 가 된다. 보수적인 선언만 믿는 값은 기본값과 결과가 같아 뜻이 없다. 낮추는 주장 일부만 믿는
+값(예: 읽기 전용만)은 뜻이 있지만 실사용 사례가 없어 만들지 않는다. 재검토는
+[TC-14](../../backlog/tool-contract-open-items.md) 다.
+
+### D12. 판정은 등록 시 도구당 1회이고, 매니저는 신뢰 값만 보관한다
+
+`McpToolTraits.resolve` 는 `McpClientManager.registerAllTools` 에서 도구당 한 번 돈다. getter 는 호출마다 불리므로 `McpTool` 안에 두면
+매번 다시 판정하게 되고, 도구는 형질을 선언하고 판정은 밖에서 한다는 규칙이 MCP 경로에서 깨진다.
+
+`McpClientManager` 는 config 전체가 아니라 `Map<String, AnnotationTrust>` 만 보관한다. 나머지 필드는 접속에만 쓰이고 `McpClient` 는 연결만
+든다. 등록 시점에 읽을 이유가 없는 값을 보관하면 여기서도 config 를 볼 수 있다는 잘못된 초대가 된다.
+
+### D13. `openWorldHint` 는 파싱해 보관하되 선언을 만들지 않는다
+
+대응 축이 없다. 통째로 채택하면 4번째 축이 따라오므로 읽을 소비자가 나타날 때까지
+미룬다([TC-15](../../backlog/tool-contract-open-items.md)). 소비자가 없는 힌트도 파싱해 보관한다. 버린 값은 축이 생길 때 파서까지 되짚어야
+하기 때문이다.
+
+### D14. 설정 이름은 `annotationTrust` 다
+
+`trusted` 처럼 넓게 지으면 "이 서버를 믿는다" 가 애노테이션과 무관한 결정까지 매달 수 있는 축이 된다. 무엇을 믿는지를 이름에 박아 둔다.
+신뢰해야 할 다른 것이 생기면 별도 필드를 만든다.
+
+### D15. CLI YAML 의 `annotationTrust` 오타는 시작 시점에 실패시킨다
+
+인식하지 못한 값을 `IGNORE` 로 흘리면 안전한 쪽이긴 해도 설정한 쪽이 아니다. 조용히 아무 일도 하지 않는 설정이 더 나쁘다.
+
 ---
 
 ## 9. 남은 것 · 하지 말 것
@@ -422,8 +464,6 @@ MCP 서버 하나가 죽었다고 에이전트 전체가 뜨지 못하면, 선�
 - **시작 예산.** §5.3 의 바운드는 안전망이지 정책이 아니다. 운영자가 "MCP 초기화에 N초 이상 쓰지 말 것"을
   강제할 수 있어야 하는가는 결정되지 않았다. 결정한다면 그것은 새 설정 값이지 `STARTUP_SPAWN_ALLOWANCE`
   의 재해석이 아니다.
-- **`AnnotationTrust` 의 중간 단계.** 지금은 `IGNORE` / `TRUST` 둘뿐이다. "읽기 전용 주장만 믿는다" 같은
-  중간값이 필요한지는 실사용 사례가 나오기 전까지 미룬다.
 
 ### 9.3 하지 말 것
 

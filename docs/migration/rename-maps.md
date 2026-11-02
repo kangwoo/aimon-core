@@ -465,7 +465,7 @@ the host -- working directory, platform, OS version. Those moved to the executio
 what was left was a time zone: a property of the user and the application, not of where commands run. It kept the
 word "environment" beside `ExecutionEnvironment`, and `HookContext` ended up with `getEnvironment()`,
 `getExecutionEnvironment()` and `getEnvironmentDescriptor()` side by side, three different things sharing one word.
-(Design: [`execution-environment-ee14-user-locale.md`](../design/tool/execution-environment-ee14-user-locale.md).)
+(Design: [`execution-environment.md`](../design/tool/execution-environment.md) §12. The record of the change is `git show 82bcca30:docs/design/tool/execution-environment-ee14-user-locale.md`.)
 
 | Old | New |
 |-----|-----|
@@ -512,7 +512,7 @@ Searching for these will find nothing, and that is the answer rather than a miss
 value, a time zone; nothing in the framework read it (the only callers of `getTimeZone()` were unit tests), nothing
 could supply one other than the JVM default, and the user-context block that might have consumed it was removed.
 What remained was a parameter threaded through some sixty main-source files that carried a value to nowhere. (Backlog EE-60;
-the census is in [`execution-environment-ee14-user-locale.md`](../design/tool/execution-environment-ee14-user-locale.md) §12.)
+the census is §12 of `git show 82bcca30:docs/design/tool/execution-environment-ee14-user-locale.md`.)
 
 | Gone | What to do |
 |-----|-----|

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/scope-model.md
-source_commit: 766b8b47
+source_commit: 03b8a8d4
 ---
 
 # Scope Model
@@ -103,7 +103,7 @@ Otherwise it is never closed.
 
 The list once had a third entry, `ownedShell` — the shell the runtime built itself when the
 assembly supplied none. It left when the execution-environment design
-([`design/tool/execution-environment.md`](../design/tool/execution-environment.md) §4.3) made the
+([`design/tool/execution-environment.md`](../design/tool/execution-environment.md) §4) made the
 `ExecutionEnvironmentProvider` the single owner of shells and working file systems. The runtime
 only borrows the provider, so putting it on the list would be the mistake (§2's table). There is one
 exception: a provider returned by a per-runtime provider function (`withExecutionEnvironmentProviderFactory`)
