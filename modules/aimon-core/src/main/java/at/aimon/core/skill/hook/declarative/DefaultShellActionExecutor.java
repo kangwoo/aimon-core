@@ -31,7 +31,7 @@ import at.aimon.core.skill.hook.action.ShellAction;
  *
  * <p>
  * When the context carries no environment the command is <b>not run</b>: there is no host fallback
- * (execution-environment design §15). The skip is logged at WARN and reported as
+ * (hook-environment design §18). The skip is logged at WARN and reported as
  * {@link ShellHookOutcome#notRun} with {@link ShellHookOutcome.Unrun#NO_ENVIRONMENT}; an environment that is present
  * but unavailable reports {@link ShellHookOutcome.Unrun#ENVIRONMENT_UNAVAILABLE}. The executor does not decide what
  * that means — on a blocking chain the hook reads it as a block unless it declared {@code failOpen}.

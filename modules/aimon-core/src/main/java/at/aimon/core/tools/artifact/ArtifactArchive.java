@@ -22,7 +22,7 @@ import at.aimon.core.tools.ToolContextKeys;
 
 /**
  * Registers the files the artifact-aware tools wrote, archiving them into the control store first when the execution
- * environment is not durable (execution-environment design §9.3).
+ * environment is not durable (execution-environment-files design §7).
  *
  * <p>
  * A durable environment's path is registered as it is ({@link ArtifactStorage#WORKSPACE}). A non-durable one — a

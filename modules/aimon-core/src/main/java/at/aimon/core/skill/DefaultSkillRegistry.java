@@ -43,7 +43,8 @@ import at.aimon.core.skill.repository.VfsSkillRepository;
  * </ul>
  *
  * <p>
- * One skill that cannot be loaded does not take the others down (execution-environment design §4.4: "that skill does
+ * One skill that cannot be loaded does not take the others down (execution-environment-staging design §10: "that skill
+ * does
  * not load"). {@link #getAllSkills()} and {@link #reloadAll()} skip a skill whose load fails with a
  * {@link SkillRepositoryException} — a link the link rule refuses, a scan that fails — and log it at WARN;
  * {@link #getSkill(String)} of that skill keeps throwing the exception that says why.
@@ -155,7 +156,7 @@ public class DefaultSkillRegistry implements SkillRegistry {
      * three conventional file categories (rootFiles, scripts, references, assets), the comprehensive {@code files} map
      * (covering arbitrary sub-directories such as {@code templates/}), and the {@link StagedResource} its directory is
      * staged from. The resource is scanned — listed, {@code .stageignore}d and hashed — here, once per (re)load, so
-     * staging never re-reads the directory to decide whether a copy exists (execution-environment design §4.4). A
+     * staging never re-reads the directory to decide whether a copy exists (execution-environment-staging design §3). A
      * repository that finds the skill but gives no staging source is defective, and the skill does not load.
      *
      * @param skillName
@@ -198,7 +199,8 @@ public class DefaultSkillRegistry implements SkillRegistry {
         }
         // A source directory that holds SKILL.md but lists no file at all could not see its own contents (a link it
         // did not follow, say). Staging it would serve an empty copy under ${AIMON_SKILL_DIR} with nothing reporting
-        // it; fail here instead (design §4.4, the link rule). A directory whose .stageignore excluded every file it
+        // it; fail here instead (execution-environment-staging design §10, the link rule). A directory whose
+        // .stageignore excluded every file it
         // lists is what its author asked for, and stages empty.
         if (resource.getFiles().isEmpty() && holdsSkillFile(source) && listsNothing(source)) {
             throw new SkillRepositoryException(String.format(

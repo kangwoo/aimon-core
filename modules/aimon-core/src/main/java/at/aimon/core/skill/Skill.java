@@ -166,7 +166,8 @@ public final class Skill {
     }
 
     /**
-     * Gets the skill's directory as a stageable resource (execution-environment design §4.4): where its files are read
+     * Gets the skill's directory as a stageable resource (execution-environment-staging design §3): where its files are
+     * read
      * from, the exact file set, and the content hash that names the staged copy. {@code ${AIMON_SKILL_DIR}} is always
      * the path an execution environment's {@code stage(...)} returns for it.
      *

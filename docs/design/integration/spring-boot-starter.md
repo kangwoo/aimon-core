@@ -198,7 +198,7 @@ sessions.submit(sessionId, "ops-agent", req.getInput(),
 
 - `OrcaAgentRuntime.close()` 는 정확히 **두 개**(`mcpClientManager`, `workflowRunner`)만 닫는다 — 한때
   셋째였던 `ownedShell` 은 실행 환경 설계([`../tool/execution-environment.md`](../tool/execution-environment.md)
-  §4.3)로 셸의 소유자가 `ExecutionEnvironmentProvider` 가 되면서 사라졌고, 런타임은 그 제공자를 닫지
+  §4)로 셸의 소유자가 `ExecutionEnvironmentProvider` 가 되면서 사라졌고, 런타임은 그 제공자를 닫지
   않는다. agent-scoped `VirtualFileSystem` 도, `ToolRegistry` 가 쥔 `AutoCloseable`
   도구도 닫지 않는다 — 예를 들어 `BashTool` 은 캐시 스레드풀을 소유하고 `close()` 와 `shutdown()` 을
   **둘 다** 노출한다. 같은 처지의 풀 소유자가 최소 다음과 같다: `SessionCheckpointMailbox`,
@@ -784,15 +784,15 @@ aimon:
   tools:
     bash: { enabled: false }          # 서버 기본은 off (§6 D7)
     web:  { enabled: true }
-    artifact:                         # execution-environment §9.3 — Write/Edit 결과를 아티팩트로
+    artifact:                         # execution-environment-files §7 — Write/Edit 결과를 아티팩트로
       enabled: false
       max-file-bytes: 52428800        # 비영속 환경에서 제어 저장소로 보관할 파일당 상한
       max-execution-bytes: 104857600  # 실행당 총 상한
-  environment:                        # execution-environment §4.4 · §9.2
+  environment:                        # execution-environment-staging §8 · execution-environment-files §4
     staging:
       max-bytes: 52428800             # 스킬 디렉터리 하나의 스테이징 상한
     control-writable: false           # true 면 .aimon/ 을 파일 도구에 연다(명시적 opt-in)
-    # background-command-timeout: 12h # execution-environment §5.3 — 백그라운드 Bash 의 상한. 미설정이면 24시간
+    # background-command-timeout: 12h # background-commands §4 — 백그라운드 Bash 의 상한. 미설정이면 24시간
     # ExecutionEnvironmentProvider 빈이 있으면 모든 런타임이 그것을 공유한다(Spring 이 닫는다)
     # BackgroundBashStore 빈이 있으면 백그라운드 작업 목록의 메타데이터를 거기 둔다(기본 in-memory)
   skill:

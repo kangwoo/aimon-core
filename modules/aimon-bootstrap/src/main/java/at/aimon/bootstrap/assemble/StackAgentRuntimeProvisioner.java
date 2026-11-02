@@ -74,7 +74,7 @@ import at.aimon.core.tools.monitor.MonitorManager;
  * <p>
  * The execution environment provider and the list of background commands are the stack's: one of each, alive until
  * the stack closes, so that evicting a tenant neither cuts off the commands it left running nor forgets them
- * (execution-environment design §4.3). A runtime owns its control store and its <i>binding</i> to the provider —
+ * (background-commands design §5). A runtime owns its control store and its <i>binding</i> to the provider —
  * closing the binding is the eviction notice, and the provider then releases that runtime's share only.
  *
  * <h2>Templates</h2>
@@ -350,7 +350,8 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
 
     /**
      * Creates what a runtime reads and writes — its workspace file system and the control store beside it — and binds
-     * the runtime to the stack's execution environment provider (execution-environment design §4.3, §9.2). Everything
+     * the runtime to the stack's execution environment provider (execution-environment design §4,
+     * execution-environment-files design §3.3). Everything
      * created here goes to {@code sink}; the provider and a caller-supplied shared file system do not.
      *
      * <p>

@@ -37,7 +37,7 @@ package at.aimon.core.agent.tool;
  * value here. Recoverability is usually a property of the <em>environment</em> (does this cluster keep snapshots? does
  * this filesystem have a trash?), which the tool cannot honestly declare, and a third value would force every consumer
  * to decide separately whether it triggers approval. A tool that implements the recovery mechanism <em>itself</em> is
- * the case that would justify one; see {@code docs/design/tool/side-effect-axes.md} §6.6.
+ * the case that would justify one; see {@code docs/design/tool/side-effect-axes.md} §6.
  *
  * @see Tool#getDestructiveBehavior()
  * @see SideEffectLevel

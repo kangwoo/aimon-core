@@ -209,7 +209,7 @@ public class OrcaAgentRuntimeFactory {
     private SkillInvocationPolicy skillInvocationPolicy;
     private SkillRegistry preBuiltSkillRegistry;
     private List<ToolContextEnricher> toolContextEnrichers = List.of();
-    // Execution-environment design §4.3/§9: the provider each created runtime resolves its executions' environments
+    // Execution-environment design §4: the provider each created runtime resolves its executions' environments
     // from — the filesystem the model's tools see and the shell Bash runs in. Keyed by runtime id so an assembly can
     // hand each runtime its own provider (bootstrap does) or all of them one. Required: create(...) refuses without
     // it. A shared provider (withExecutionEnvironmentProvider) is borrowed and closed by the assembly that built it;
@@ -448,7 +448,7 @@ public class OrcaAgentRuntimeFactory {
      * {@link OrcaAgentRuntime#close()}, and by {@code create(...)} itself when building the runtime fails after the
      * function answered. The function must therefore return a provider dedicated to that runtime, never one shared
      * with other runtimes — share a provider through {@link #withExecutionEnvironmentProvider} instead, which the
-     * runtime only borrows. (Execution-environment design §4.3; this is the one case where a runtime closes its
+     * runtime only borrows. (Execution-environment design §4.2; this is the one case where a runtime closes its
      * provider, because the caller has no other moment at which to do it.)
      *
      * @param factory
@@ -1056,7 +1056,8 @@ public class OrcaAgentRuntimeFactory {
             ExecutionEnvironmentProvider executionEnvironmentProvider, boolean providerOwned) {
         // Create tool provider context (null-safe: scheduledTaskManager may be null if scheduling is not configured).
         // It carries the control store but no working filesystem or shell: tools read those from the execution's
-        // environment on every call, so no provider can capture them at registration time (design §6).
+        // environment on every call, so no provider can capture them at registration time (execution-environment design
+        // §9).
         final OrcaToolProviderContext context = OrcaToolProviderContext.builder().controlFileSystem(controlFileSystem)
                 .agent(agent).dependencies(providerDependencies).toolContextEnrichers(toolContextEnrichers)
                 .workflowRunner(workflowRunner).build();

@@ -268,7 +268,8 @@ public final class SingleToolInvoker {
     }
 
     /**
-     * The execution environment the tool runs in, for the four tool-scoped hook chains (design §10) and the notice
+     * The execution environment the tool runs in, for the four tool-scoped hook chains (hook-environment design §4) and
+     * the notice
      * drain. Null when the tool context carries none — the hooks then see an empty environment rather than the host,
      * and there is nothing to drain.
      */

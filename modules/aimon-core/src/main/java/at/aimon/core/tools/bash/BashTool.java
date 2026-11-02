@@ -191,7 +191,7 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
      * <p>
      * The tool holds no shell. Each call runs in the shell of the execution's environment
      * ({@code ToolContextKeys.EXECUTION_ENVIRONMENT}); a background command captures that shell when it starts and
-     * keeps it for its whole run (execution-environment design §5.3). The shell is <b>borrowed</b> — its provider
+     * keeps it for its whole run (background-commands design §2). The shell is <b>borrowed</b> — its provider
      * owns and closes it — so this tool never closes it. It holds no thread pool either: a background command runs
      * on the manager's threads, because the command may outlive the runtime this tool instance was registered in.
      *
@@ -378,7 +378,8 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
      * <p>
      * The shell is captured here, when the task starts, and the running command keeps it: the task may outlive the
      * execution that started it — and the runtime — and the shell's lifetime is its provider's, not the execution's
-     * (design §5.3). The manager runs the command and owns the task, recorded under the owner it was started for
+     * (background-commands design §2). The manager runs the command and owns the task, recorded under the owner it was
+     * started for
      * ({@link BackgroundTaskOwner#of(ToolContext)}).
      *
      * @param environment

@@ -73,7 +73,8 @@ public class ReadTool extends AbstractTool implements ToolPermissionSubjectAware
     public static final String TOOL_NAME = "Read";
 
     /**
-     * Typed key for the {@link FileStamp}s of the files read during this execution (execution-environment design §7).
+     * Typed key for the {@link FileStamp}s of the files read during this execution (execution-environment-files design
+     * §5).
      *
      * <p>
      * {@code Read} records each file's stamp under its environment-normalised path; {@code Edit}, and {@code Write}

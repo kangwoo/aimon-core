@@ -473,7 +473,8 @@ public class SkillTool extends AbstractTool {
         }
 
         // Include available files if present. Every path is under the staged copy — the directory the execution's
-        // shell and file tools can both read (execution-environment design §4.4) — never the repository's own path,
+        // shell and file tools can both read (execution-environment-staging design §12) — never the repository's own
+        // path,
         // which lives in the control store. A file .stageignore excluded was never copied and is not listed.
         final Map<String, String> rootFiles = stagedPaths(skill, stagedDir, skill.getRootFiles(), "");
         final Map<String, String> scripts = stagedPaths(skill, stagedDir, skill.getScripts(), "scripts/");

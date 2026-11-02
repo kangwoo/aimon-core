@@ -12,7 +12,7 @@ import at.aimon.core.environment.ExecutionEnvironment;
  * Produces exactly the text the executor's built-in environment block emits, so it can stand in for that block when a
  * caller assembles all system context through a {@link ContextAssembler} rather than relying on the executor's
  * hard-wired segment. The block describes the execution's {@link ExecutionEnvironment} — its descriptor, not the JVM
- * host (execution-environment design §10). It yields nothing when no environment is bound on the request.
+ * host (execution-environment design §11). It yields nothing when no environment is bound on the request.
  *
  * <p>
  * Because the executor still emits its own environment segment by default, this provider is <b>not</b> wired in by

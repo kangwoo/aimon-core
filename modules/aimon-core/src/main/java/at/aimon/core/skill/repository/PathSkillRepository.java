@@ -58,7 +58,8 @@ import at.aimon.core.skill.exception.SkillRepositoryException;
  * </pre>
  *
  * <p>
- * <b>Symbolic links when staging</b> (execution-environment design §4.4). A skill directory, or anything inside it,
+ * <b>Symbolic links when staging</b> (execution-environment-staging design §10). A skill directory, or anything inside
+ * it,
  * may be a symbolic link. Staging follows it when its real path lies inside {@code skillsBasePath} or inside one of
  * the {@linkplain Builder#allowedLinkRoot allowed link roots}; a link that resolves anywhere else makes the skill fail
  * to load with an error naming the link, rather than stage without the files behind it. By default there are no
@@ -82,7 +83,8 @@ public class PathSkillRepository implements SkillRepository {
 
     private final Path skillsBasePath;
 
-    // The staging source (execution-environment design §4.4): a read-only filesystem over the skills directory. Built
+    // The staging source (execution-environment-staging design §9): a read-only filesystem over the skills directory.
+    // Built
     // once and without I/O, so a missing or read-only skills directory behaves exactly as it did before.
     private final VirtualFileSystem sourceFileSystem;
 

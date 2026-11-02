@@ -33,7 +33,8 @@ import at.aimon.core.skill.repository.SkillSource;
 import at.aimon.core.tools.skill.SkillTool;
 
 /**
- * The link rule for staging a host-path skill (execution-environment design §4.4): a symbolic link is followed when
+ * The link rule for staging a host-path skill (execution-environment-staging design §10): a symbolic link is followed
+ * when
  * its real path lies inside the skills directory or an allowed link root, refused otherwise, and a skill whose
  * directory scans to zero files does not load.
  */

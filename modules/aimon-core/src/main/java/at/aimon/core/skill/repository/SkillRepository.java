@@ -132,7 +132,7 @@ public interface SkillRepository {
 
     /**
      * Resolves where a skill's files can be read from to stage them into an execution environment
-     * (execution-environment design §4.4): a read-only view of a filesystem and the skill's directory on it.
+     * (execution-environment-staging design §9): a read-only view of a filesystem and the skill's directory on it.
      *
      * <p>
      * Every repository must answer for every skill it has: {@code ${AIMON_SKILL_DIR}} is always the path

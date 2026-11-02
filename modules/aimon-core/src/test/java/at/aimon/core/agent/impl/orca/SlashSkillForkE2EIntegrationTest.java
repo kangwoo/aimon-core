@@ -147,7 +147,7 @@ class SlashSkillForkE2EIntegrationTest {
      * came out empty and {@code bash ${AIMON_SKILL_DIR}/scripts/x.sh} ran {@code bash /scripts/x.sh}. Driven through
      * the real {@code OrcaAgentExecutor} command flow so the assertion covers the tool context that flow actually
      * builds, not a hand-made one. {@code ${AIMON_SKILL_DIR}} is the copy the runtime's execution environment staged
-     * the skill to (execution-environment design §4.4), not the skill's source directory.
+     * the skill to (execution-environment-staging design §12), not the skill's source directory.
      */
     @Test
     @DisplayName("renders ${AIMON_SKILL_DIR}, ${AIMON_SESSION_ID} and ${AIMON_AGENT_RUNTIME_ID} on the slash path")

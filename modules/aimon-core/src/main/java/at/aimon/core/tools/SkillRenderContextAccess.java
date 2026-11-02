@@ -63,7 +63,7 @@ public final class SkillRenderContextAccess {
      * <p>
      * <b>The skill directory is always a staged path.</b> {@code ${AIMON_SKILL_DIR}} is set to what the run's
      * {@code ExecutionEnvironment.stage(...)} returns for the skill's {@link Skill#getStagedResource() resource}
-     * (execution-environment design §4.4) — a copy the run's shell and file tools can both read — and never to a
+     * (execution-environment-staging design §12) — a copy the run's shell and file tools can both read — and never to a
      * repository path, which the shell may not be able to see. Without a resource (a hand-built skill) there is
      * nothing to stage: it stays unset and renders empty, with a WARN, and the context's environment is not consulted.
      * With a resource and no environment in the context, there is no fallback: this throws.
@@ -127,7 +127,8 @@ public final class SkillRenderContextAccess {
         if (resource.isEmpty()) {
             log.warn("Skill '{}' carries no staged resource; ${{AIMON_SKILL_DIR}} renders empty", skill.getName());
         } else {
-            // No environment is an error, as it is for every tool that needs one (design §3: no host fallback). It
+            // No environment is an error, as it is for every tool that needs one (execution-environment design §2: no
+            // host fallback). It
             // used to be a WARN and an empty ${AIMON_SKILL_DIR}, which renders `bash ${AIMON_SKILL_DIR}/x.sh` as
             // `bash /x.sh` and reports success (EE-20).
             builder.skillBaseDir((environmentGiven ? environment : ExecutionEnvironmentAccess.require(context))

@@ -185,9 +185,27 @@ default void interrupt(TurnId turnId, InterruptReason reason); // 지정한 턴�
 ```
 
 둘 다 `default` no-op 이라 중단을 지원하지 않는 구현은 그대로 둔다. `DefaultLiveSession` 은 활성
-턴의 coordinator 참조를 읽어 `requestInterrupt` 를 호출하고, 세 가지 "못 끊는" 경우를 한 자리에서
-결정한다 — 활성 턴이 없거나(idle), 턴이 아직 ReAct 루프에 진입하지 않아 coordinator 가 없거나
-(슬래시 커맨드 턴), 주소 지정 형태에서 `turnId` 가 활성 턴과 다르거나. 셋 다 debug 로그 + no-op 다.
+턴의 coordinator 참조를 읽어 `requestInterrupt` 를 호출하고, 곧바로 넘기지 못하는 경우를 한 자리에서 결정한다.
+
+| 상황 | 처리 |
+|---|---|
+| 활성 턴이 없다(idle), 주소 지정 형태의 `turnId` 가 활성 턴과 다르다 | debug 로그 + no-op |
+| 턴은 있는데 coordinator 가 아직 공개되지 않았다(프롬프트 렌더, 전사 열기) | 이유를 턴에 쥐고 있다가 공개되는 순간 넘긴다 |
+| 슬래시 명령 턴의 `onStart` 뒤, 턴의 coordinator 가 닫힌 뒤 | 닫힌 coordinator 의 no-op |
+
+쥐고 있는 이유는 먼저 온 것이 이기고, 쥔 뒤에 coordinator 를 다시 읽어 공개와의 경합을 닫는다. 양쪽이 모두 넘겨도
+`requestInterrupt` 가 멱등이라 괜찮다. coordinator 를 공개하기 전에 턴이 던지면 이유는 턴과 함께 사라진다. NOW 입력과
+`close()` 도 이 길을 쓴다. 턴은 coordinator 를 `onStart` 직전에 공개하므로, 쥐고 있던 이유를 받은 턴은 `onStart` 훅을 하나도
+돌리지 않고 `INTERRUPTED` 로 끝난다([`hook-cancellation.md`](../hook/hook-cancellation.md) §4.1). 도는 슬래시 명령을
+인터럽트하는 일은 [EE-93](../../backlog/execution-environment-open-items.md) 이 추적한다.
+
+`LiveSessionStatus#isInterruptible` 은 `coordinator != null && !coordinator.isClosed()` 다. 값은 노드를 넘어가므로
+(`StatusSnapshotPayload`) 사실만 말해야 한다. 슬래시 명령 턴의 `onStart` 뒤와 영속 중인 턴에서는 `false` 다. coordinator 가
+공개되기 전에도 `false` 다. 인터럽트는 쥐고 있지만 공개하지 않을 수도 있는 실행기를 대신해 약속하지 않고, 잠깐 적게 말하는
+쪽을 택한다. 플래그와 달리 `phase` 는 `BudgetTracker` 로 정하므로 `onStart` 중의 턴은 `IDLE` 이면서 interruptible 이다.
+
+플래그를 tracker 에서 끌어오면 인터럽트가 턴을 끝내는 `onStart` 중에 `false` 가 된다. 공개한 핸들을 지우려면 관찰자를 넓혀야 하고,
+세션이 입력이 명령인지 묻는 것은 실행기의 지식을 옮기는 일이다.
 
 주소 지정 형태가 필요한 이유는 경합이다. 사용자가 턴 A 를 끊으려는 사이에 A 가 끝나고 B 가 시작되면
 비주소 형태는 **엉뚱한 턴을 끊는다**. `TurnId` 는 제출 시점에 발급되는 비영속 주소이며 이 확인
@@ -205,7 +223,8 @@ REPL 의 SIGINT 핸들러는 `session.interrupt(USER_SIGINT)` 를 **먼저** 호
 
 `MessageQueueManager` 에 NOW 우선순위 입력이 도착하면 리스너가 세션의
 `interrupt(NOW_PRIORITY_INPUT)` 를 호출한다. `DefaultLiveSession` 이 자기 리스너를 등록하고
-자신의 컨텍스트 id 와 일치할 때만 반응한다.
+자신의 컨텍스트 id 와 일치할 때만 반응한다. 통지는 동기이므로 입력은 그 순간의 활성 턴을 겨눈다. 아직 준비 중인 턴이면 그
+턴이 `INTERRUPTED` 로 끝나고 입력은 큐에 남는다.
 
 여기서 지켜야 할 관계는 **"신호는 중단, 메시지는 다음 턴 주입"** 이다. 인터럽트가 발생해도 큐
 엔트리는 drain 시점까지 큐에 남는다(멱등·crash-safe). drain 은 iteration 끝에서 일괄 수행하고,
@@ -378,6 +397,12 @@ BLOCKED 를 고른 이유는 `TimeoutBehavior.FAIL_CLOSED` 와 같다. 판정이
 BLOCKED 를 강제하지 않는 자문 체인(PostTool·OnStop·세션/서브에이전트 라이프사이클)에서 이 변경은 보고의
 정직함일 뿐이다 — 아무도 얻지 않은 "성공" 대신 "답을 못 받았다" 가 남는다. 이미 끝난 훅은 영향이 없다:
 `FutureTask#get` 은 완료된 값을 플래그와 무관하게 돌려주므로 **진짜로 대기 중이던 것만** BLOCKED 가 된다.
+
+**예외는 기다려 달라고 선언한 훅이다(`ExecutionHook#ignoresInterrupt()`).** 실행기는 그런 훅의 태스크를 취소하지 않고 남은
+예산만큼 기다려 훅 자신의 결과나 평소의 timeout 처리를 돌려준 뒤 플래그를 다시 세운다. 위의 논거를 건드리지 않는다 — 얻는 것은
+"돌지 않고 성공" 이 아니라 실제 판정이고 치르는 것은 시간이다. 선언적 보고 훅의 셸 명령은 언제나 이렇게 선언하므로 위 문단의
+"답을 못 받았다" 는 그 명령에 해당하지 않는다. 규칙은 [`hook-cancellation.md`](../hook/hook-cancellation.md) 가 소유한다. 신호로 온
+인터럽트와 스레드로만 온 인터럽트에서 턴의 결과가 갈리는 것도 그 문서 §4.1 에 있다.
 
 ---
 

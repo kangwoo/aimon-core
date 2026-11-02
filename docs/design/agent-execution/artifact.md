@@ -174,8 +174,8 @@ INTERRUPTED, SUSPENDED, MAX_ITERATIONS, 그리고 커맨드 처리 경로. 실�
 `ToolSpec.artifactPolicy(...)`, 스타터의 `aimon.tools.artifact.enabled=true` 로 켠다. 아티팩트를 쓸 일이 없는 CLI 는
 `artifact` 파라미터가 스키마에 나타나지 않으므로 모델이 볼 일도 없다.
 
-**비영속 환경에서는 보관 사본을 등록한다**([`../tool/execution-environment.md`](../tool/execution-environment.md)
-§9.3). 도구가 쓴 실행 환경이 `durable() == false` 이면(샌드박스 작업 공간, 워크플로 격리 브랜치) 그 경로는 실행
+**비영속 환경에서는 보관 사본을 등록한다**([`../tool/execution-environment-files.md`](../tool/execution-environment-files.md)
+§7). 도구가 쓴 실행 환경이 `durable() == false` 이면(샌드박스 작업 공간, 워크플로 격리 브랜치) 그 경로는 실행
 뒤 사라질 수 있다. 그래서 `ArtifactArchive` 가 등록 전에 파일을 제어 저장소의
 `artifacts/{archiveKey}/{relativePath}` 로 복사하고 **그 경로**를 등록한다. `archiveKey` 는 `ArtifactCollector` 가 실행마다
 갖는 값이다 — 포크는 자기 `ExecutionId`, 턴은 게시하지 않는 `archive:…` 값. 디렉터리 이름으로 쓸 때는

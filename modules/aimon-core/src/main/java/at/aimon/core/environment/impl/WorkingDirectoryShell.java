@@ -21,7 +21,8 @@ import at.aimon.core.shell.exception.ShellExecutionException;
  *
  * <p>
  * This moves the default cwd and nothing else: an absolute path in a command still reaches the whole disk. Local
- * isolation is "file tools + default cwd" (execution-environment design §4.2). The delegate is borrowed and never
+ * isolation is "file tools + default cwd" (execution-environment-isolation design §4). The delegate is borrowed and
+ * never
  * closed.
  */
 final class WorkingDirectoryShell implements VirtualShell {

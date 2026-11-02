@@ -47,7 +47,7 @@ class VfsStepResultCacheTest {
         fileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
         fileSystem.initialize();
         // Built over the control store — the workspace's .aimon/ — as the default base dir is control-root relative
-        // (execution-environment design §9.2); the physical layout this test asserts stays .aimon/step-cache.
+        // (execution-environment-files design §3.2); the physical layout this test asserts stays .aimon/step-cache.
         cache = new VfsStepResultCache(new ScopedVirtualFileSystem(fileSystem, ".aimon"));
     }
 

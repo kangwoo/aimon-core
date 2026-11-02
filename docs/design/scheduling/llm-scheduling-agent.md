@@ -147,7 +147,7 @@ RoutineExecutor
 식별자를 받는다.
 
 **read stamp 는 발화 단위다.** 두 실행기가 실행마다 stamp 맵을 넣듯이 `RoutineExecutor` 도 발화마다 빈 맵을 넣는다
-([`execution-environment.md`](../tool/execution-environment.md) §7). 그래서 routine 의 파일 단계는 턴이나 포크의 파일
+([`execution-environment-files.md`](../tool/execution-environment-files.md) §5). 그래서 routine 의 파일 단계는 턴이나 포크의 파일
 도구와 같은 규칙을 따른다.
 
 - `Edit` 단계는 같은 발화의 앞 단계에서 그 파일을 `Read` 했으면 동작한다. 맵이 없던 때에는 언제나 "읽지 않았다" 로
@@ -348,7 +348,7 @@ executeWithRetry(step):
 `NON_IDEMPOTENT` 이므로, **아무것도 선언하지 않은 도구는 한 번만 실행된다.** timeout 이나 예외로 끝난 시도도 실제로는
 쓰기를 끝냈을 수 있고, 다시 실행하면 같은 메시지가 두 번 나가거나 같은 변경이 두 번 적용된다. 이것은 도구의 성질이지
 routine 작성자가 매번 판단할 일이 아니므로 step 설정보다 선언이 우선한다. 축의 정의는
-[도구 부작용 축 분리](../tool/side-effect-axes.md) §8.2.
+[도구 부작용 축 분리](../tool/side-effect-axes.md) §3.4.
 
 예외는 둘이다. 도구를 **찾기 전에** 실패한 시도(런타임 미등록, 모르는 도구 이름)는 아무것도 실행하지 않았으므로
 재시도한다 — 늦게 등록되는 런타임이 그 사이에 나타날 수 있다. 반대로 도구가 실패를 `notRetryable()` 로 표시했으면

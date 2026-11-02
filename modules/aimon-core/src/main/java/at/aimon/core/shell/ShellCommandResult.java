@@ -113,7 +113,7 @@ public final class ShellCommandResult {
      * printed — "the shell session was reopened; cwd and environment variables were reset", "the environment was
      * recreated; the working directory is empty". {@code Bash} shows them as {@code [environment] ...} lines before
      * the output, never mixed into stderr, which the model reads as the command's own errors. A local shell has none
-     * (execution-environment design §8).
+     * (execution-environment design §10.1).
      *
      * @return the notices (never null; empty by default)
      */

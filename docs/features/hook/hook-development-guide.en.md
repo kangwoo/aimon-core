@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-development-guide.md
-source_commit: 2a1a59b2
+source_commit: 0f7a0c73
 ---
 
 # Hook Development Guide
@@ -563,5 +563,5 @@ public class SecurityAuditHookSetup {
 - [HookEventType.java](../../../modules/aimon-core/src/main/java/at/aimon/core/hook/HookEventType.java)
 - [HookResult.java](../../../modules/aimon-core/src/main/java/at/aimon/core/hook/execution/HookResult.java)
 - [HookRegistry.java](../../../modules/aimon-core/src/main/java/at/aimon/core/hook/HookRegistry.java)
-- [Hook system upgrade design](../../design/hook/hook-system.md) — the Phase 1–5 implementation record
+- [Hook system design](../../design/hook/hook-system.md) — the design rationale for the result and execution models
 - [Tool development guide](../tool/tool-development-guide.en.md)

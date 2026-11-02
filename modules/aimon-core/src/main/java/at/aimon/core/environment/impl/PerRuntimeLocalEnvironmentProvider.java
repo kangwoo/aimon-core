@@ -22,7 +22,7 @@ import at.aimon.core.environment.RuntimeBinding;
 /**
  * One application-scoped provider over many local workspaces: each agent runtime gets its own
  * {@link LocalExecutionEnvironmentProvider}, chosen by {@link EnvironmentRequest#agentRuntimeId()}
- * (execution-environment design §4.3).
+ * (execution-environment design §4.2).
  *
  * <p>
  * The workspace a runtime id maps to is the caller's rule — a function from the id to the local provider for it — and

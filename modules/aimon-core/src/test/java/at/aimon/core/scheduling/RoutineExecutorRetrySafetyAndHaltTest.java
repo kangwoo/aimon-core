@@ -40,7 +40,7 @@ import at.aimon.core.scheduling.event.TaskFailedEvent;
 import at.aimon.core.scheduling.event.TaskHaltedEvent;
 
 /**
- * Which failed steps are retried (side-effect-axes §8.2: only read-only and idempotent tools), and how a step that
+ * Which failed steps are retried (side-effect-axes §3.4: only read-only and idempotent tools), and how a step that
  * halts its routine ends the run.
  */
 class RoutineExecutorRetrySafetyAndHaltTest {

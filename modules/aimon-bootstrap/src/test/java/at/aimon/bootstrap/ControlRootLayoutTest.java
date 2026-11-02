@@ -37,7 +37,8 @@ import at.aimon.core.workflow.impl.VfsStepResultCache;
 
 /**
  * The control store's root moved from "the workspace" to "the workspace's {@code .aimon/}" while every default
- * directory lost its {@code .aimon/} prefix (execution-environment design §9.2). The two halves have to move together:
+ * directory lost its {@code .aimon/} prefix (execution-environment-files design §3.2). The two halves have to move
+ * together:
  * one without the other lands data at {@code .aimon/.aimon/...} and silently orphans what users already have. These
  * tests drive real writes through each control-plane store of a stack-built runtime and check the physical paths.
  */

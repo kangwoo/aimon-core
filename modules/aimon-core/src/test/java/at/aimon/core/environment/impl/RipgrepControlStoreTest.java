@@ -35,7 +35,7 @@ import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.tools.file.GrepTool;
 
 /**
- * The control store stays out of {@code Grep} when {@code rg} answers it (execution-environment design §9.2, §15).
+ * The control store stays out of {@code Grep} when {@code rg} answers it (execution-environment-files design §6).
  * rg's exclusion globs alone do not do it: rg never applies them to a path named on its command line, and a later user
  * glob overrides them. These cases pin both holes shut — once against the real {@code rg} (skipped when it is not on
  * the {@code PATH}), and once against a stand-in {@code rg} that reports a control-store match whatever it is asked,

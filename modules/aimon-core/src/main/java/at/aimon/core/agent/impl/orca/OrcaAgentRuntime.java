@@ -84,7 +84,7 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
     private final List<ToolContextEnricher> toolContextEnrichers;
     private final WorkflowRunner workflowRunner; // nullable - only present when background runs are enabled
     // The provider owns the shells and filesystems behind the environments it resolves (design execution-environment
-    // §4.3). Borrowed by default, and then the assembly that built it closes it; owned only when the factory asked a
+    // §4). Borrowed by default, and then the assembly that built it closes it; owned only when the factory asked a
     // per-runtime function for it (EE-21), because that caller has no other moment to close it. Nullable — a runtime
     // built without one gives every execution an unavailable environment rather than a host fallback.
     private final ExecutionEnvironmentProvider executionEnvironmentProvider;
@@ -164,7 +164,7 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
     /**
      * Returns the control store: agent, skill and command definitions, task outputs and results, snapshots and
      * archived artifacts. The model's file tools never see it; they work in the execution environment instead (design
-     * execution-environment §9).
+     * execution-environment-files §3).
      *
      * @return the control filesystem (never null)
      */
@@ -321,7 +321,7 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
         }
         // The execution environment provider is closed only when this runtime owns it, and last, after the workflow
         // runner that resolves environments from it. A borrowed one is the assembly's to close (design
-        // execution-environment §4.3): a background Bash task that outlives an execution keeps its captured shell
+        // execution-environment §4): a background Bash task that outlives an execution keeps its captured shell
         // for as long as the provider lives.
         if (executionEnvironmentProviderOwned && executionEnvironmentProvider instanceof AutoCloseable closeable) {
             try {

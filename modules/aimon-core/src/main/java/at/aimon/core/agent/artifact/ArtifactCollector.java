@@ -77,7 +77,7 @@ public class ArtifactCollector {
     /**
      * Returns the key that names this execution's directory in the control store's artifact area
      * ({@code /artifacts/{archiveKey}/{relativePath}}), used when an artifact-aware tool archives a file written in a
-     * non-durable environment (execution-environment design §9.3).
+     * non-durable environment (execution-environment-files design §7).
      *
      * @return the archive key (never null)
      */

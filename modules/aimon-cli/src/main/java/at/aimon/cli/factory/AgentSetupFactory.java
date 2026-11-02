@@ -607,7 +607,7 @@ public class AgentSetupFactory {
                 // Supplied, not stack-owned: the REPL keeps a LocalFileSystem-typed handle and today's CLI never
                 // closes it, so enrolling it in AGENT_RESOURCES would change shutdown behaviour. Its .aimon/ subtree
                 // is the control store; the model works in the project directory through a local provider that owns
-                // its own view of it (execution-environment design §9.2) — the control store hidden from the file
+                // its own view of it (execution-environment-files design §3.3) — the control store hidden from the file
                 // tools, skills staged into .aimon-staged/, superseded copies swept at startup. One provider for the
                 // stack, built and closed by it: the workspace is the one project directory whatever the runtime, so
                 // there is nothing to route per runtime id.
@@ -1653,7 +1653,7 @@ public class AgentSetupFactory {
 
     /**
      * The directory the runtime's executions work in — its environment's working directory, which is what the model
-     * is told and where {@code Bash} runs (execution-environment design §10).
+     * is told and where {@code Bash} runs (execution-environment design §11).
      *
      * @param runtime
      *            the runtime

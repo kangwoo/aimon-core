@@ -47,7 +47,7 @@ import at.aimon.core.tools.ExecutionEnvironmentAccess;
  * understands current file content and can construct accurate old_string values. The read is recorded as a
  * {@code FileStamp} in the {@link ToolContext} under {@link ReadTool#FILE_STAMPS_KEY}; an edit is refused when no
  * stamp was recorded in this execution or when the file's current stamp differs from it (it changed since it was
- * read — through a tool, the shell or a person; execution-environment design §7).
+ * read — through a tool, the shell or a person; execution-environment-files design §5).
  *
  * <p>
  * The tool holds no filesystem: it edits through the execution environment's filesystem
@@ -166,7 +166,8 @@ public class EditTool extends AbstractTool implements ToolPermissionSubjectAware
             final ExecutionEnvironment env = ExecutionEnvironmentAccess.require(context);
             final VirtualFileSystem fileSystem = env.fileSystem();
 
-            // CRITICAL: the file must have been read in this execution and must not have changed since (design §7)
+            // CRITICAL: the file must have been read in this execution and must not have changed since
+            // (execution-environment-files design §5)
             final Optional<String> staleEdit = FileStamps.checkBeforeModify(context, env, filePath, true);
             if (staleEdit.isPresent()) {
                 return ToolResult.error(staleEdit.get() + ": " + filePath + ". You MUST use the Read tool before "

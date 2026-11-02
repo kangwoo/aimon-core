@@ -8,7 +8,8 @@ import at.aimon.core.filesystem.FileMetadata;
 
 /**
  * What a file looked like when the model last read it: size, modification time and, when the backend has one, an
- * etag (design §7). {@code Edit}, and {@code Write} over an existing file, refuse to modify a file whose current stamp
+ * etag (execution-environment-files design §5). {@code Edit}, and {@code Write} over an existing file, refuse to modify
+ * a file whose current stamp
  * differs from the recorded one — whatever changed it (another execution, the shell, a person).
  *
  * <p>

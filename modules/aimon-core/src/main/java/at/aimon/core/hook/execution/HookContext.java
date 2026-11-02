@@ -51,7 +51,7 @@ public interface HookContext {
 
     /**
      * The execution environment the firing execution runs in — the same instance its tools reach through
-     * {@code ToolContext} (execution-environment design §10). A hook that runs a command or touches a file on the
+     * {@code ToolContext} (hook-environment design §4). A hook that runs a command or touches a file on the
      * execution's behalf goes through this rather than the JVM host.
      *
      * <p>
@@ -99,7 +99,7 @@ public interface HookContext {
 
     /**
      * Describes where the execution's commands run — its execution environment's descriptor, not the JVM host
-     * (execution-environment design §10). A hook that reasons about platform or paths reads this rather than
+     * (hook-environment design §4). A hook that reasons about platform or paths reads this rather than
      * assuming the host.
      *
      * <p>

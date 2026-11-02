@@ -189,7 +189,7 @@ public final class ExecutionOptions {
      * <p>
      * A shell that runs one command at a time in a persistent session (a sandbox) must not let such a command hold
      * that session, or every later command in it waits; it runs it as a one-shot instead. A shell that starts a new
-     * process per command — {@code LocalShell} — ignores the flag (execution-environment design §5.3).
+     * process per command — {@code LocalShell} — ignores the flag (shell-contract design §3.3).
      *
      * @return {@code true} for a background command
      */

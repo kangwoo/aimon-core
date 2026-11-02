@@ -19,7 +19,7 @@ public final class StackPaths {
 
     /**
      * The control store's directory under a runtime's workspace: agent, skill and command definitions, task outputs,
-     * snapshots. Hidden from the model's file tools (execution-environment design §9.2).
+     * snapshots. Hidden from the model's file tools (execution-environment-files design §3.3).
      */
     public static final String CONTROL_DIRECTORY = ".aimon";
 

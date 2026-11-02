@@ -64,7 +64,7 @@ class OrcaToolProvidersTest {
         ToolRegistry registry = new DefaultToolRegistry();
 
         // No shell exists at registration time any more: Bash runs in the shell of each execution's environment
-        // (execution-environment design §6). So the tools are always registered, and an execution whose environment
+        // (execution-environment design §9). So the tools are always registered, and an execution whose environment
         // has no usable shell gets an error from the call instead of a missing tool.
         provider.registerTools(registry, context(OrcaProviderDependencies.builder().build()));
 

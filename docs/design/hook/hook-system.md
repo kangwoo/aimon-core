@@ -116,7 +116,7 @@ interrupt 하고, 풀 스레드가 다른 풀 스레드를 기다리지 않으�
 이 정책이 없으면 바깥 그물이 먼저 잘라 버려, 액션이 스스로 만들 수 있었던 제대로 된 `HookResult` 대신
 뭉툭한 cancel 이 나간다. 병렬 모드에서 timeout 은 **대기를 제한할 뿐 이미 끝난 작업을 버리지 않는다.**
 
-**그물이 터졌을 때의 뜻도 훅이 선언할 수 있다(EE-64).** 정책의 `TimeoutBehavior` 는 체인 전체의 기본값이고, `DefaultHookExecutionManager` 가
+**그물이 터졌을 때의 뜻도 훅이 선언할 수 있다.** 정책의 `TimeoutBehavior` 는 체인 전체의 기본값이고, `DefaultHookExecutionManager` 가
 이벤트에 주는 기본 정책은 전부 `FAIL_OPEN` 이다(`HookExecutionPolicy.failClosedStopOnBlocked()` 는 호스트가 골라 쓰는 팩토리다). 거부가 목적인 훅에는 틀린 답이다 — 그물에 끊긴 가드는 아무 말도 하지 않았고, 통과시키면 "느려지는 것" 이
 가드를 끄는 방법이 된다. 그래서 `ExecutionHook.getTimeoutBehavior()` 로 훅이 자기 동작을 선언하고, 실행기는
 `timeoutBehaviorFor(hook)` 로 정책보다 그 선언을 따른다. 선언적 가드 훅(`failOpen` 아님)은 `FAIL_CLOSED` 를 선언한다. 정책
@@ -130,39 +130,13 @@ interrupt 하고, 풀 스레드가 다른 풀 스레드를 기다리지 않으�
 `failClosedStopOnBlocked` 정책에서는 그 매핑이 버그를 block 으로 바꾼다 — 의도된 선택이며, 그래서 기본
 정책은 fail-open 이다.
 
-**`FAIL_CLOSED` 를 선언한 훅은 이 매퍼도 타지 않는다.** §3.2 의 선언은 처음에 그물(timeout)에만 걸렸고, 판정 없이 끝나는
-길이 둘 더 남아 있었다 — 풀이 훅을 받지 않는 것(`RejectedExecutionException`: 포화, 또는 닫힌 풀)과 훅 본문이 던지는
-것이다. 선언적 가드는 **액션**이 던진 것은 스스로 잡아 fail-closed 로 읽지만 그 `try` 밖 — matcher 술어, 컨텍스트 접근,
-`Error` — 은 실행기까지 올라왔고, 출하 정책의 매퍼는 그것을 성공으로 읽었다. 그래서 `failsClosedWithoutVerdict(hook)` 이
-참이면 두 경우 모두 BLOCKED 다.
-
-그 길을 실제로 낸 것은 `BashSubcommandPredicate` 였다 — 중첩된 `$(` 마다 재귀해 깊이를 모델이 골랐고,
-`StackOverflowError` 가 난 `Bash(rm *)` 가드는 그 호출을 통과시켰다. 분할기는 이제 깊이(64단계)와 길이(65,536자), 그리고
-짝 없는 따옴표 · 치환의 짝을 찾느라 헛되이 훑는 글자 수에 상한을 두고, 넘는 명령은 나누지 않은 채 **매치로** 답한다. 셋째를
-**개수**가 아니라 훑은 양으로 잰 데는 이유가 있다: `echo "it's …"` 는 줄마다 짝 없는 아포스트로피 하나를 남기고, 개수로 세면
-그런 줄 예순다섯이 든 평범한 스크립트가 모든 `Bash(…)` `deny` 에 걸린다. 그 아포스트로피가 드는 값은 그 문자열의 길이뿐이다. "맞지 않는다" 로 답하면 한 단계 더 중첩하는 것으로 모든 `Bash(…)`
-매처를 비켜 갈 수 있고(셸은 그 명령을 실행한다), 던지면 `postTool` · `failOpen` 훅은 기록 없이 지나간다 — 매처가 정하는
-것은 훅에게 **물을지**뿐이므로, 볼 수 없을 때는 묻는다. 실행기의 분기는 그대로 둔다: matcher 는 `ToolInputPredicate` 이면
-무엇이든 될 수 있다.
-
-같은 원칙이 짝 없는 따옴표에도 걸린다. 분할기는 짝이 없는 따옴표 · 백틱 · `$(` 에서 명령 전체를 한 조각으로 돌려주고
-그만두었고, 그래서 `echo "it's"; rm -rf x` 의 `rm` 이 매처에게 보이지 않았다(큰따옴표 안의 `'` 는 셸에게 글자다). 이제 그
-글자를 글자로 읽고 계속 나누며, 전체도 한 조각으로 함께 둔다 — 전에 맞던 것은 그대로 맞는다. 주석(`#`)은 **대신** 읽지
-않고 **더해서** 읽는다: `#` 가 있는 명령은 주석 안의 따옴표와 치환을 읽지 않는 채로 한 번 더 나누고, 두 읽기의 조각을
-모두 본다. 주석 읽기로 바꿔 치우면 분할기가 주석으로 읽고 셸은 그러지 않는 `#`(큰따옴표 안, 이스케이프된 공백 뒤) 뒤의
-`$(…)` 가 읽히지 않는다 — 셸은 그것을 실행한다. 첫 구현이 그렇게 했고 리뷰의 차등 프로브가 잡았다. 분할기를 고칠 때 볼
-것은 하나다: `main` 의 것과 나란히 돌려 **전에 맞던 것이 여전히 맞는가.** here-document 의 본문(`<<WORD` 다음 줄부터
-`WORD` 인 줄까지)도 그 둘째 읽기가 같은 방식으로 읽는다 — 본문의 아포스트로피가 뒤의 것과 짝지어져 사이의 명령을 가리지
-않게 한다. 셸 파서가 되려는 것이 아니다: 둘째 읽기는 더할 뿐이라, 문서가 아닌 `<<`(시프트)를 문서로 읽어도 잃는 것이 없다.
-
-글롭 자체도 모델이 고른 글에 돈다. `*` 를 `.*` 로 옮긴 정규식은 뒤의 리터럴이 실패하면 앞의 `*` 로 되돌아가 모든 배치를
-시도하므로(`*a*a*b` 대 `a` 8,000자는 100초 안에 끝나지 않았다), `NameOnlyPredicate.compileGlob` 은 두 `*` 사이의 리터럴을
-**첫 출현에서 고정**한다 — 가장 이른 자리가 뒤에 가장 많은 글을 남기므로 잃는 매치가 없다.
-
-같은 선언을 쓰고 새 선언을 만들지 않았다 — "느렸다" · "시작하지 못했다" · "죽었다" 가 서로 다른 값을 가질 수 있으면 열린
-쪽이 곧 우회로이기 때문이다. 반대로 정책의 `timeoutBehavior()` 로는 **떨어지지 않는다**: 아무것도 선언하지 않은 훅의 실패는
-매퍼의 질문이고, `FAIL_CLOSED` timeout 과 관대한 매퍼를 함께 쓰는 정책에서 프로그램 훅의 동작이 바뀌면 안 된다. 사유는
-고정 문자열에 예외의 **타입 이름**만 붙는다(메시지는 싣지 않는다).
+**`FAIL_CLOSED` 를 선언한 훅은 이 매퍼도 타지 않는다.** 선언은 timeout, 풀이 훅을 받지 않는 것(`RejectedExecutionException`:
+포화, 또는 닫힌 풀), 훅 본문이 던지는 것에 똑같이 듣는다(`failsClosedWithoutVerdict`). 선언적 가드는 **액션**이 던진 것은
+스스로 잡아 fail-closed 로 읽지만 그 `try` 밖 — matcher 술어, 컨텍스트 접근, `Error` — 은 실행기까지 올라온다. "느렸다" ·
+"시작하지 못했다" · "죽었다" 가 서로 다른 값을 가질 수 있으면 열린 쪽이 곧 우회로이므로 새 선언을 만들지 않고 같은 선언을
+쓴다. 반대로 정책의 `timeoutBehavior()` 로는 **떨어지지 않는다**: 아무것도 선언하지 않은 훅의 실패는 매퍼의 질문이고,
+`FAIL_CLOSED` timeout 과 관대한 매퍼를 함께 쓰는 정책에서 프로그램 훅의 동작이 바뀌면 안 된다. 사유는 고정 문자열에 예외의
+**타입 이름**만 붙는다(메시지는 싣지 않는다).
 
 닫힌 풀은 종료 순서가 일부러 만드는 상태다(`TeardownPhase.HOOK_EXECUTOR`). 그 단계는 `SESSIONS` · `AGENT_RUNTIMES` 뒤라
 가드를 발화시킬 턴이 남아 있지 않고, 종료 중에 발화하는 `onStop` · `onSessionEnd` 는 아무것도 선언하지 않는 advisory
@@ -170,27 +144,16 @@ interrupt 하고, 풀 스레드가 다른 풀 스레드를 기다리지 않으�
 그 호출은 가드 없이 실행되는 대신 막힌다.
 
 **인터럽트는 이 매퍼를 타지 않는다.** 매퍼가 답하는 질문은 "훅이 *실패*하면 어떻게 할 것인가" 인데,
-인터럽트는 훅의 실패가 아니라 **그 판정을 기다릴 이쪽의 능력**이 끊긴 것이다. 넘겨 버리면 묻지도 않은
-질문에 fail-open 이 적용되고, 결과는 보안 사고다 — 플래그가 살아 있는 스레드에서 `future.get` 은 기다리지
-않고 던지므로 체인의 모든 훅이 **돌지도 않은 채 SUCCESS** 로 보고되고, BLOCKED 를 내려던 PreTool 훅이 조용히
-allow 로 강등된다. 그래서 인터럽트로 끊긴 대기는 정책과 무관하게 BLOCKED 다. 판정이 없다는 것은 진행해도
-좋다는 허가가 없다는 뜻이고, 이 경로는 턴을 모는 스레드가 실제로 인터럽트됐을 때 — 즉 어차피 취소되는
-턴에서만 — 닿는다. 근거와 나머지 방어층은
-[`../agent-execution/interrupt.md`](../agent-execution/interrupt.md) §8 에 있다.
-
-**예외는 하나다 — 기다려 달라고 선언한 훅(`ExecutionHook#ignoresInterrupt()`, EE-97).** 실행기는 그런 훅을 기다리다
-인터럽트를 받으면 태스크를 취소하지 않고, 남은 예산만큼 마저 기다린 뒤 훅 자신의 결과(또는 평소의 timeout 처리)를
-돌려주고 스레드의 플래그를 다시 세운다. 위의 보안 논거를 건드리지 않는다: 그 훅이 얻는 것은 "돌지 않고 성공" 이 아니라
-**실제 판정**이고, 치르는 것은 시간이다. 실행기는 이벤트를 모르므로 선언은 어느 이벤트에서든 듣는다 — 가드에서 선언하면
-중단된 실행이 그 가드를 기다린다. 선언적 셸 훅은 보고 이벤트에서는 언제나 선언하고 가드 이벤트에서는 선언하지
-않는다(§5.2, EE-98). 코드로 등록한 훅은 직접 재정의하지 않는 한 기본값(`false`)이다.
+인터럽트는 훅의 실패가 아니라 **그 판정을 기다릴 이쪽의 능력**이 끊긴 것이다. 그래서 인터럽트로 끊긴 대기는 정책과 무관하게
+BLOCKED 다. 근거는 [`../agent-execution/interrupt.md`](../agent-execution/interrupt.md) §8.7 에 있다. 기다려 달라고 선언한 훅
+(`ExecutionHook#ignoresInterrupt()`)만 예외이고, 그 계약과 선언적 훅의 답은 [`hook-cancellation.md`](hook-cancellation.md) 가
+소유한다.
 
 ---
 
 ## 4. 무엇에 붙일 것인가 — `ToolInputPredicate`
 
-이름만 보는 매처로는 "`Bash` 중 `git push` 만" 같은 것을 표현할 수 없다 — 초기 `ToolMatcher` 가 그랬고,
-그래서 제거됐다. `ToolInputPredicate` 는 이름과 **인자**를 함께 본다.
+이름만 보는 매처로는 "`Bash` 중 `git push` 만" 같은 것을 표현할 수 없다. `ToolInputPredicate` 는 이름과 **인자**를 함께 본다.
 
 | 구현 | 판정 |
 |------|------|
@@ -209,23 +172,47 @@ OR(`|`)** 뿐이다 — `CompositePredicate.and` 는 코드에서만 닿고, 정
 가 이 두 규칙(하위 클래스는 전부 `ToolInputPredicate` 구현일 것 · 허용된 호출자 밖에서 import 금지)을 빌드에서
 강제한다.
 
+### 4.1 매처는 모델이 고른 글 위에서 돈다
+
+매처는 모델이 고른 글에 돌고, 정하는 것은 훅에게 **물을지**뿐이다. 그래서 **볼 수 없을 때는 묻는다.**
+
+**분할기의 상한.** `BashSubcommandPredicate` 의 분할기는 깊이(64단계)와 길이(65,536자), 그리고 짝 없는 따옴표 · 치환의 짝을
+찾느라 헛되이 훑는 글자 수에 상한을 두고, 넘는 명령은 나누지 않은 채 **매치로** 답한다. 깊이를 모델이 고르므로 상한이 필요하다.
+"맞지 않는다" 로 답하면 한 단계 더 중첩하는 것으로 모든 `Bash(…)` 매처를 비켜 갈 수 있고(셸은 그 명령을 실행한다), 던지면
+`postTool` · `failOpen` 훅은 기록 없이 지나간다. 셋째를 **개수**가 아니라 훑은 양으로 재는 이유: `echo "it's …"` 는 줄마다 짝
+없는 아포스트로피 하나를 남기고, 개수로 세면 그런 줄 예순다섯이 든 평범한 스크립트가 모든 `Bash(…)` `deny` 에 걸린다. 그
+아포스트로피가 드는 값은 그 문자열의 길이뿐이다. 실행기의 [§3.3](#33-예외는-정책이-매핑한다--인터럽트는-아니다) 분기는 그대로
+둔다: matcher 는 `ToolInputPredicate` 이면 무엇이든 될 수 있다.
+
+**읽기는 더하기만 한다.** 분할기는 짝이 없는 따옴표 · 백틱 · `$(` 를 글자로 읽고 계속 나누며, 전체도 한 조각으로 함께 둔다.
+그래서 `echo "it's"; rm -rf x` 의 `rm` 이 매처에게 보인다(큰따옴표 안의 `'` 는 셸에게 글자다). 주석(`#`)은 **대신** 읽지 않고
+**더해서** 읽는다: `#` 가 있는 명령은 주석 안의 따옴표와 치환을 읽지 않는 채로 한 번 더 나누고, 두 읽기의 조각을 모두 본다.
+주석 읽기로 대체하면 분할기가 주석으로 읽고 셸은 그러지 않는 `#`(큰따옴표 안, 이스케이프된 공백 뒤) 뒤의 `$(…)` 가 가려진다 —
+셸은 그것을 실행한다. here-document 의 본문(`<<WORD` 다음 줄부터 `WORD` 인 줄까지)도 둘째 읽기가 같은 방식으로 읽어, 본문의
+아포스트로피가 뒤의 것과 짝지어져 사이의 명령을 가리지 않게 한다. 셸 파서가 되려는 것이 아니다: 둘째 읽기는 더할 뿐이라,
+문서가 아닌 `<<`(시프트)를 문서로 읽어도 잃는 것이 없다. 분할기를 고칠 때의 기준은 **전에 맞던 것이 여전히 맞는가**이다.
+
+**글롭.** `*` 를 `.*` 로 옮긴 정규식은 뒤의 리터럴이 실패하면 앞의 `*` 로 되돌아가 모든 배치를 시도한다. 그래서
+`NameOnlyPredicate.compileGlob` 은 두 `*` 사이의 리터럴을 **첫 출현에서 고정**한다 — 가장 이른 자리가 뒤에 가장 많은 글을 남기므로
+잃는 매치가 없다.
+
 ---
 
 ## 5. 선언적 훅 — 설정으로 붙이는 훅
 
 `hooks.json` 과 SKILL.md frontmatter 로 코드 없이 훅을 붙인다. 소스는 4종(`HookConfigSource`)이며
 `USER(10) → PROJECT(20) → LOCAL(30)` 순으로 덮어쓰는 레이어드 3-tier 에 **스코프 격리된** `SKILL(0)` 이
-따로 선다 — 스킬 훅은 우선순위 경쟁에 참여하지 않고 자기 스킬 범위 안에서만 산다. 그 범위는 **그 스킬의 포크와 포크의
-후손**이다: 스킬 훅은 런타임의 `HookRegistry` 에 등록되지 않고, 포크가 디스패치하는 레지스트리 위에 얹힌다
-(`SkillScopedHookRegistry`). 같은 에이전트의 다른 세션과 스킬을 호출한 실행은 그 훅을 보지 못한다.
+따로 선다 — 스킬 훅은 우선순위 경쟁에 참여하지 않고 자기 스킬 범위 안에서만 산다. 범위는
+[`hook-environment.md`](hook-environment.md#11-스킬-훅-범위) 가 소유한다.
 
 핸들러는 셋이다 — 셸(`ShellAction`), HTTP(`HttpAction`), MCP 도구(`McpToolAction`).
 
 ### 5.1 신뢰 경계 — 셸 커맨드는 렌더링하지 않는다
 
 `TemplateRenderer` 는 `${tool_input.X}` / `${env.X}` / `${context.X}` 세 prefix 를 치환하지만
-**HTTP·MCP 액션에만** 적용된다. `ShellAction.command` 는 호스트 셸에 **verbatim** 으로 전달된다 —
-커맨드 안의 `${tool_input.x}` 는 자리표시자가 아니라 셸 변수다.
+**HTTP·MCP 액션에만** 적용된다. `ShellAction.command` 는 그 명령을 돌리는 셸에 **verbatim** 으로 전달된다 — 스킬 훅과
+실행 안의 `hooks.json` 은 실행 환경의 셸, 그 밖은 호스트 셸이다([`hook-environment.md`](hook-environment.md)). 커맨드 안의
+`${tool_input.x}` 는 자리표시자가 아니라 셸 변수다.
 
 이유는 인젝션이다. 모델이 만든 도구 입력을 커맨드 문자열에 문자 치환으로 끼워 넣으면 그 값이 곧 셸
 문법이 된다. 대신 컨텍스트는 **out-of-band** 로만 간다 — `ShellHookPayload` 가 발화 컨텍스트를 JSON 으로
@@ -237,109 +224,9 @@ OR(`|`)** 뿐이다 — `CompositePredicate.and` 는 코드에서만 닿고, 정
 효력이 있는 곳은 결정 채널을 가진 네 이벤트뿐이다 — `preTool`/`onStart`/`preCompact` 는 block,
 `permissionRequest` 는 deny. 나머지는 로그만 남기고 진행한다.
 
-**exit 2 외의 non-zero 는 허용**이다. 깨진 스크립트가 조용한 게이트키퍼가 되면 안 된다. 예외는 셸 자신이 보고하는 두 코드다 —
-**126(실행할 수 없음) · 127(찾지 못함)** 은 스크립트가 돌지 않았다는 뜻이므로 결정 채널을 가진 네 이벤트에서는 아래 "종료
-코드 없음" 과 같이 읽는다(`ShellHookOutcome.asGuardAnswer()`). 스크립트가 스스로 그 코드를 낼 수도 있어 구별되지 않지만,
-가드 스크립트가 없는 환경에서 가드가 통과로 바뀌는 쪽이 더 나쁘다(EE-66).
-
-**종료 코드가 없으면 거부다(fail-closed).** 명령을 돌리지 못했거나 끝나지 않았을 때 — 실행 환경 없음 · 사용 불가, timeout,
-셸 실패 — 실행기는 원인을 실어 보고하고(`ShellHookOutcome.notRun(cause, detail)`), 결정 채널을 가진 네 이벤트의 훅은 그것을
-거부로 읽는다. "스크립트가 틀린 답을 냈다"(non-zero)와 "답을 못 들었다"(종료 코드 없음)를 가르는 것이다: 앞쪽을 막으면 깨진
-감사 스크립트가 게이트키퍼가 되고, 뒤쪽을 통과시키면 가드를 느리게 만들거나 환경을 떨어뜨리는 것으로 가드를 끌 수 있다.
-같은 이벤트가 가드와 감사 두 용도로 쓰이므로 훅마다 `failOpen: true` 로 빠질 수 있다. 사유에는 원인만 싣는다 — 명령
-문자열(비밀이 들어갈 수 있다)도, 푸는 방법(그 글을 읽는 것은 가드를 받는 쪽이다)도 싣지 않는다.
-**`http` · `mcp` 핸들러도 같은 규칙을 탄다(EE-65).** `preTool` 에서 두 실행기는 "판정" 과 "판정 없음" 을 갈라 보고한다
-(`ActionCallOutcome`) — 정책 서버가 `deny` 라고 답한 것은 판정이고, 닿지 못했거나 답을 읽을 수 없는 것은 판정 없음이다.
-판정 없음은 셸의 "종료 코드 없음" 과 같은 자리(`ShellHookVerdicts`)에서 같은 규칙으로 읽는다: 막고, `failOpen: true` 면
-통과한다. `postTool` 은 전처럼 WARN 후 진행한다.
-
-**두 실행기를 누가 배선하는가.** 코어는 실행기를 만들지 않는다 — `HookRegistryApplier` 와 `SkillHookSetParser` 가 받은 것을
-훅에 넘길 뿐이다. 트리 안에서 배선하는 조립은 `aimon-cli` 하나이고(`HookActionExecutors`), `hooks.json` 과 스킬 frontmatter
-양쪽에 같은 실행기를 준다. 순서가 문제였다: 스킬 파서는 번들을 읽기 위해 스택보다 먼저 만들어지고 파싱된 훅은 그때 받은
-실행기를 계속 쥐는데, `McpClientManager` 는 런타임이 만들어진 뒤에야 있다. 그래서 `McpActionExecutor.lateBound(supplier)` 로
-만들어 두고 런타임이 서면 묶는다. 매니저는 agent-scoped 이고 런타임이 닫는다(`AGENT_RUNTIMES`) — 실행기는 빌려 쓸 뿐 닫지
-않으며, Java 17 의 `HttpClient` 에는 닫을 것이 없어 종료 순서에 올릴 항목도 없다. CLI 설정에 MCP 서버가 없으면 MCP 실행기는
-`null` 이다: 항상 실패하는 실행기를 주면 `mcp` 가드가 로드된 뒤 걸리는 호출을 전부 막지만, 없다고 말하면 시작에서 멈춘다.
-
-`aimon-bootstrap` 과 스타터는 배선하지 않는다. 이유는 둘이다. (1) 스택은 런타임을 여러 개 가질 수 있고 `McpClientManager` 는
-런타임마다 하나인데, 실행기는 **발화한 런타임**을 모른다(`attempt` 가 `HookContext` 를 받지 않는다) — 스택 전역 실행기는
-엉뚱한 에이전트의 서버를 부르게 된다. (2) 스킬의 `http` 액션은 호스트 JVM 에서, 호스트의 환경 변수와 네트워크로 나간다.
-CLI 에서는 스킬의 `shell` 액션이 이미 같은 권한으로 도므로 새로 주는 것이 없지만, 실행 환경이 샌드박스인 호스트에서는 스킬
-파일이 샌드박스 밖으로 요청을 보내는 길이 된다. 그 선택은 호스트가 `AimonStackSpec.skillParser` 와
-`HookHotReloadBootstrap.Builder` 로 직접 한다.
-
-**기본 HTTP 클라이언트는 좁게 잡았다.** `HttpActionExecutor.createDefault()` 는 리다이렉트를 따라가지 않고(JDK 클라이언트는
-리다이렉트 대상에 요청 헤더를 다시 보낸다 — `${env.X}` 로 채운 토큰이 설정에 없는 호스트로 가고 그 호스트의 답이 판정이
-된다), 응답 본문을 `MAX_RESPONSE_BYTES`(1 MiB)까지만 읽는다. 둘 다 "판정 없음" 으로 떨어지므로 가드는 닫힌 채 남는다.
-남겨 둔 것은 결정이 필요한 것들이다 — 평문 `http://` 허용, `allowedEnvVars` 가 그 선언 자신이 적는 목록이라는 점, 템플릿
-값이 이스케이프되지 않아 JSON 본문에 모델의 텍스트가 그대로 들어간다는 점. 사용자 문서는 셋을 그대로 적는다
-([`hook-config-guide.md` › `http`](../../features/hook/hook-config-guide.md#http)).
-
-**취소는 "돌리지 못함" 이 아니다(EE-80).** 가드 훅의 셸 명령은 실행의 취소 신호(`HookContext.getExecutionCancellation()`)에
-묶여 돌고, 인터럽트가 오면 그 신호로 멈춘다 — 포그라운드 `Bash` 와 같은 길이다(EE-54). 그렇게 멈춘 명령은
-`Unrun.CANCELLED` 로 보고되고, 가드 이벤트에서는 `failOpen` 이어도 막는다. 훅 실행기가 기다리던 스레드의 인터럽트를
-정책과 무관하게 BLOCKED 로 답하는 것(§3.3)과 같은 이유다: 판정이 없으면 진행 허가도 없고, 이 경로는 실행이 어차피 끝나는
-중일 때만 닿는다. 스레드 인터럽트에 반응하는 셸(`LocalShell`)이 `InterruptedException` 으로 끝낸 것도 같은 원인으로 읽어
-두 종류의 셸에서 결과가 같다.
-
-규칙은 한 문장이다 — **가드 명령은 인터럽트에 언제나 멈추고, 보고 명령은 결코 멈추지 않는다**(EE-98). 갈리는 기준은
-**훅이 무엇을 묻는가**다. 일이 진행되기 전에 묻는 **가드**(`onStart` · `preCompact` · `preTool` · `permissionRequest`)의
-명령은 언제나 신호에 묶인다 — 인터럽트 뒤에 발화한 명령은 시작되지 않고, 돌던 명령은 멈추고, 가드는 막는다. 이미 일어난
-일을 알리는 **보고**(`onStop` · `postCompact` · `subagentStart` · `subagentStop` · `postTool` · `permissionDenied`)의 명령은
-신호를 받지 않는다 — 인터럽트가 명령보다 먼저 왔든 도는 중에 왔든 끝나거나 자기 timeout 이 끝낼 때까지 돈다. 훅 풀의
-teardown 과 프로세스 종료는 여전히 끝낸다(teardown 의 조건은 아래).
-
-보고 쪽에는 처음에 다른 규칙이 있었다(EE-80: "신호가 서기 전까지만 싣는다" — 돌던 명령은 멈추고, 취소 뒤에 시작한 명령은
-끝까지 돈다. 그리고 EE-97 이 훅마다 끄는 `ignoreInterrupt` 를 얹었다). 릴리스 전에 그것을 걷어 낸 이유는 셋이다. 정리가
-끝나는지가 **경합**에 달려 있었다 — 같은 `onStop` 명령이 인터럽트보다 조금 먼저 시작했으면 반쯤 돌다 끊기고, 조금 늦게
-시작했으면 끝까지 돌았다. 그 실패는 **조용했다** — 반쯤 된 정리는 아무 데도 보고되지 않는 반면, 끝까지 도는 명령이 치르는
-것은 timeout 으로 묶인, 눈에 보이는 지연이다. 그리고 신호의 길에서는 릴리스된 동작이 **이쪽**이다 — EE-80 전에는
-`LiveSession.interrupt` 나 선점하는 입력이 턴의 `onStop` 명령에 전하는 것이 없었다.
-
-값은 둘이다. **기다림:** 중단된 실행과 그 뒤에 선 입력이 보고 명령을 기다린다 — 어느 셸에서든, 두 길을 다 막았으므로.
-기다림은 훅 하나의 것이 아니라 **더해진다**: 체인은 훅을 차례로 돌리고, 인터럽트가 왔을 때 아직 시작하지 않은 보고 명령도
-시작해서 끝까지 돌며, 실행이 풀리는 동안 이어서 발화하는 체인(`postTool` → `onStop` → `subagentStop`)이 각자의 것을 더한다.
-훅 하나의 상한은 바깥 그물인 `min(timeout, 10분) + 5초` 다. 그래서 가이드는 보고 훅의 timeout 을 짧게 잡으라고 적는다.
-**스레드의 길에서 릴리스된 동작이 바뀐다:** 릴리스된 훅 실행기는 발화 스레드의 **어떤** 인터럽트에든 훅의 태스크를 취소했고
-로컬 셸은 그 명령을 멈췄다. 보고 훅은 이제 누가 보냈든 그 인터럽트를 넘긴다 — 백그라운드 포크의 `Task.stop`, 워크플로 정지
-(`RunControl.requestStop`), `DefaultSessionRouter.close()` 와 `DefaultSubagentExecutionManager.close()` 의 `shutdownNow()`.
-여섯 보고 이벤트 전부에서다(멈춘 포크가 돌리던 것은 대개 `postTool` 명령이다). 그래서 **종료(shutdown)가 도는 보고 명령을
-기다린다** — 명령이 끝나거나, timeout 이 되거나, 훅 풀의 teardown 단계가 닿을 때까지. 그 teardown 이 명령을 끝내는 것도 스택이
-그 풀을 소유하고(주입된 풀은 닫지 않는다) 셸이 스레드 인터럽트에 반응할 때뿐이다. 반대쪽 옵션("인터럽트에 멈춰라")은 요청이
-올 때까지 두지 않았다(EE-101).
-
-인터럽트가 명령에 닿는 길은 둘이고, 보고 훅은 둘 다 막는다. **신호의 길:** 컨텍스트의 getter 는 그대로다 —
-가드 컨텍스트는 신호를 언제나, 보고 컨텍스트는 서기 전까지만 돌려준다(`CancellationSignals.liveOrEmpty`). 그 답은 **코드로
-쓴 훅**의 것이다: 자기 일을 신호에 묶을지는 그 훅이 정하고, 이미 취소된 실행에서도 시작을 거절당하지 않는다. 선언적 보고
-훅은 그 답을 쓰지 않고, 셸 실행기에게 신호 없는 **뷰**(`SignalDetachedHookContext`)를 넘긴다 — 공개 SPI
-(`ShellActionExecutor.run`)의 시그니처가 그대로이고, 이벤트를 모르는 실행기도 "신호가 있으면 묶는다" 만으로 규칙을 따른다.
-실행기는 그래서 보고 이벤트에서 이벤트 자신의 컨텍스트 타입이 아니라 `HookContext` 를 받는다. **스레드의 길:** 백그라운드
-포크의 정지는 신호를 세우면서 워커 스레드도 인터럽트하고, 훅 실행기는 그것에 훅의 태스크를 취소하는 것으로 답한다. 보고
-훅은 `ignoresInterrupt()` 로 그 취소를 받지 않는다(§3.3 의 예외). 신호만 떼었다면 규칙은 정확히 그것이 필요한 훅 — 로컬
-셸의 `subagentStop` 과 포크의 `onStop` — 에서 듣지 않았을 것이다. 둘 다 설정이 아니라 **이벤트**가 정한다: 설정 키는 없다.
-`postTool` 의 `http` · `mcp` 액션은 애초에 신호에 묶이지 않으며 이 규칙의 대상이 아니다.
-
-발화 지점은 쥐고 있는 신호를 넘길 뿐 아무것도 정하지 않는다.
-
-어느 신호인지는 **그 훅이 누구의 일을 하는가**로 정한다. 턴과 포크의 `onStart` · `onStop` 과 AUTO 압축은 그 실행 자신의
-신호를, `subagentStart` · `subagentStop` 은 스폰한 실행에서 발화하지만 **포크를 다스리는** 신호를 싣는다(포그라운드는 스폰한
-쪽의 것, 백그라운드는 `Task.stop` 이 세우는 태스크의 것). 메인 턴의 신호는 `onStart` 가 발화하기 전에 만들어지고 관찰자에게
-공개된다 — 그 전에는 묶을 신호가 없었고, 그 구간의 인터럽트는 버려졌다. `onStart` 가 도는 동안 신호가 서면 턴은 훅의 block
-여부를 보기 전에 `INTERRUPTED` 로 끝난다: 사용자가 멈춘 것이지 가드가 거절한 것이 아니고, 결과가 돌던 훅의 종류에 달려서는
-안 된다. 포크도 같은 순서로 읽는다(EE-94) — 다만 돌려주는 것은 목표를 넣기 **전의** 전사다: 부모 모델이 쓴 목표가 가드의
-답 없이 저장되어 다음 resume 에서 이력으로 되돌아오면 안 된다. 공개되기도 전에 온 인터럽트는 세션이 이유를 쥐고 있다가
-코디네이터가 공개되는 순간 넘기므로(EE-93), 그 턴도 `onStart` 에서 선 신호를 만나 같은 길로 끝난다 — 다만 이 경우
-실행기는 체인을 내보내기 **전에** 신호를 읽어 `onStart` 훅을 하나도 돌리지 않는다. 첫 셸 가드에서야 멈추면 그 앞의
-프로그래매틱 · `http` · `mcp` 훅이 이미 멈춘 턴을 위해 각자의 timeout 까지 돌기 때문이다. 취소된 `preCompact` 가
-압축을 건너뛰게 해 뷰가 차단 한도를 넘으면 두 실행기는 그것을 창 초과가 아니라 인터럽트로 끝낸다.
-
-비어 있는 것은 배관이 빠진 것이 아니라 **설 수 있는 신호가 없다**는 답이다: 실행 밖 이벤트, 슬래시 명령 턴의 `onStart` 뒤
-(그 `onStop` 과 `/compact` 의 압축 훅 — 명령은 인터럽트할 수 없다, EE-93), rewake 리플레이가 다시 만든 `preCompact`. 결정과
-기각한 대안은 [`hook-shell-cancellation-ee80.md`](hook-shell-cancellation-ee80.md) 에, 그 뒤를 이은 항목들(EE-93~EE-98)의
-것은 [`hook-cancellation-followups-ee93-ee97.md`](hook-cancellation-followups-ee93-ee97.md) 에 있다.
-
-사유 문자열은 `MAX_DENY_REASON_LENGTH`(4000자)로 자른다 — 훅이 스택트레이스를 통째로 뱉어 대화 컨텍스트에
-무제한 주입되는 것을 막는다.
+**exit 2 외의 non-zero 는 허용**이다. 깨진 스크립트가 조용한 게이트키퍼가 되면 안 된다. 스크립트가 돌지 않았다는 뜻인 126 · 127,
+종료 코드가 없는 경우, `http` · `mcp` 의 판정 없음, `failOpen`, 사유의 내용과 길이는 [`hook-fail-closed.md`](hook-fail-closed.md) 가
+소유한다. 인터럽트에 명령이 멈추는지는 [`hook-cancellation.md`](hook-cancellation.md) 가 소유한다.
 
 ### 5.3 훅 id 는 내용에서 파생되고 리로드에 안정적이다
 
@@ -359,11 +246,35 @@ swap 이며, 반영 후 `onConfigReload` 를 발사한다. **프로그래매틱�
 지원하지 않는 Claude Code 이벤트 이름은 조용히 버리지 않고 WARN 한다. 현재 미지원은
 `HookEventName.UNSUPPORTED` 의 셋 — `notification` / `userpromptsubmit` / `stop_hook_active` 뿐이다.
 
+### 5.5 `http` · `mcp` 실행기는 조립이 준다
+
+코어는 실행기를 만들지 않는다 — `HookRegistryApplier` 와 `SkillHookSetParser` 가 받은 것을 훅에 넘길 뿐이다. 트리 안에서
+배선하는 조립은 `aimon-cli` 하나이고(`HookActionExecutors`), `hooks.json` 과 스킬 frontmatter 양쪽에 같은 실행기를 준다. 스킬
+파서는 번들을 읽기 위해 스택보다 먼저 만들어지고 파싱된 훅은 그때 받은 실행기를 계속 쥐는데, `McpClientManager` 는 런타임이
+만들어진 뒤에야 있다. 그래서 `McpActionExecutor.lateBound(supplier)` 로 만들어 두고 런타임이 서면 묶는다. 매니저는
+agent-scoped 이고 런타임이 닫는다(`AGENT_RUNTIMES`) — 실행기는 빌려 쓸 뿐 닫지 않으며, Java 17 의 `HttpClient` 에는 닫을 것이
+없어 종료 순서에 올릴 항목도 없다. CLI 설정에 MCP 서버가 없으면 MCP 실행기는 `null` 이다: 항상 실패하는 실행기를 주면 `mcp`
+가드가 로드된 뒤 걸리는 호출을 전부 막지만, 없다고 말하면 시작에서 멈춘다.
+
+`aimon-bootstrap` 과 스타터는 배선하지 않는다. 이유는 둘이다. (1) 스택은 런타임을 여러 개 가질 수 있고 `McpClientManager` 는
+런타임마다 하나인데, 실행기는 **발화한 런타임**을 모른다(`attempt` 가 `HookContext` 를 받지 않는다) — 스택 전역 실행기는
+엉뚱한 에이전트의 서버를 부르게 된다. (2) 스킬의 `http` 액션은 호스트 JVM 에서, 호스트의 환경 변수와 네트워크로 나간다.
+CLI 에서는 스킬의 `shell` 액션이 이미 같은 권한으로 도므로 새로 주는 것이 없지만, 실행 환경이 샌드박스인 호스트에서는 스킬
+파일이 샌드박스 밖으로 요청을 보내는 길이 된다. 그 선택은 호스트가 `AimonStackSpec.skillParser` 와
+`HookHotReloadBootstrap.Builder` 로 직접 한다.
+
+**기본 HTTP 클라이언트는 좁게 잡는다.** `HttpActionExecutor.createDefault()` 는 리다이렉트를 따라가지 않고(JDK 클라이언트는
+리다이렉트 대상에 요청 헤더를 다시 보낸다 — `${env.X}` 로 채운 토큰이 설정에 없는 호스트로 가고 그 호스트의 답이 판정이
+된다), 응답 본문을 `MAX_RESPONSE_BYTES`(1 MiB)까지만 읽는다. 둘 다 "판정 없음" 으로 떨어지므로 가드는 닫힌 채 남는다.
+결정이 필요해 남겨 둔 것은 셋이다 — 평문 `http://` 허용, `allowedEnvVars` 가 그 선언 자신이 적는 목록이라는 점, 템플릿
+값이 이스케이프되지 않아 JSON 본문에 모델의 텍스트가 그대로 들어간다는 점. 사용자 문서는 셋을 그대로 적는다
+([`hook-config-guide.md` › `http`](../../features/hook/hook-config-guide.md#http)).
+
 ---
 
 ## 6. 레지스트리 표면 — 이벤트당 메서드가 아니라 typed token
 
-이벤트 13개 × (register/unregister/get/clear) = 52개 메서드였던 `HookRegistry` 를 **5개**로 접었다.
+`HookRegistry` 는 이벤트당 메서드를 두지 않고 **5개** 메서드로 모든 이벤트를 받는다.
 
 ```java
 <H extends ExecutionHook<?>> void register(HookEventType<H> type, H hook);
@@ -377,9 +288,8 @@ void clearAll();
 `HookEventType.values()` 가 13개 상수의 canonical 순서를 보장한다. 타입 안전성은 그대로다 —
 `register` 가 `H` 만 넣는다는 invariant 덕분에 unchecked cast 는 `getHooks` 한 군데에만 있다.
 
-효과는 표면 축소가 아니라 **새 이벤트 추가 비용**이다. `HookRegistryReloader` 의 13행 하드코딩
-테이블이 `for (HookEventType<?> t : HookEventType.values())` 한 줄이 되었고, 이벤트를 하나 늘리는 데
-필요한 것은 `HookEventType` 상수 한 줄뿐이다. BC shim 은 두지 않았다(clean break).
+효과는 표면 축소가 아니라 **새 이벤트 추가 비용**이다. 이벤트를 하나 늘리는 데 필요한 것은 `HookEventType` 상수 한 줄뿐이고,
+`HookRegistryReloader` 는 `for (HookEventType<?> t : HookEventType.values())` 로 모든 이벤트를 돈다.
 
 ---
 
@@ -407,27 +317,39 @@ void clearAll();
 
 ---
 
+## 9. 하지 말 것
+
+- **새 이벤트나 advisory 이벤트에 거부권을 기대하지 말 것.** 호출부가 결과를 읽어야 성립한다(§2.1).
+- **`TemplateRenderer` 를 셸 명령에 쓰지 말 것.** 모델이 만든 값이 셸 문법이 된다(§5.1).
+- **`HookExecutionPolicy` 기본값으로 가드를 닫으려 하지 말 것.** 프로그램으로 등록한 훅 전체에 번진다. 훅이 선언한다(§3.2).
+- **매처가 볼 수 없는 명령을 "맞지 않는다" 로 답하지 말 것.** 중첩이 곧 우회로다(§4).
+- **분할기의 읽기를 대체하지 말 것.** 더한다. 줄이면 전에 막던 명령이 지나간다(§4).
+- **같은 클래스를 여러 번 등록하면서 클래스 이름을 id 로 두지 말 것.** rewake 와 핫리로드가 엉뚱한 훅을 건드린다(§5.3).
+
+---
+
 ## 부록: 참조 파일 지도
 
 | 파일 | 확인할 것 |
 |------|----------|
-| `hook/HookEventType.java:44-89` | 13개 상수 = canonical 이벤트 목록 |
+| `hook/HookEventType.java` | 13개 상수 = canonical 이벤트 목록 |
 | `hook/HookRegistry.java` | 5개 메서드 표면 |
 | `hook/execution/Decision.java` · `FlowControl.java` | 두 축의 값 |
-| `hook/execution/HookResult.java:299-304` | 2축 + 부수 채널 4개 |
-| `hook/execution/HookResult.java:270` | `merge` 의 접기 규칙 |
-| `hook/execution/HookExecutionPolicy.java:24,30` | `DEFAULT_TIMEOUT` 30s, `DECLARED_BUDGET_GRACE` 5s |
-| `hook/execution/HookExecutionPolicy.java:41` | `MAX_DECLARED_BUDGET` 10분 clamp |
-| `hook/execution/HookExecutionPolicy.java:107,289` | `stopOnBlocked` 순차 전용, `ExecutionMode` 두 값 |
-| `hook/execution/DefaultHookExecutor.java:310-336` | `submit` + `get(timeout)` + `cancel(true)` |
-| `hook/HookFeedback.java:53,72` | `hook-feedback` 리마인더 키, blocked 결과 제외 |
-| `skill/hook/declarative/TemplateRenderer.java:41,62` | 3개 prefix, 셸 제외 |
+| `hook/execution/HookResult.java` | 2축 + 부수 채널 4개 |
+| `hook/execution/HookResult.java` | `merge` 의 접기 규칙 |
+| `hook/execution/HookExecutionPolicy.java` | `DEFAULT_TIMEOUT` 30s, `DECLARED_BUDGET_GRACE` 5s |
+| `hook/execution/HookExecutionPolicy.java` | `MAX_DECLARED_BUDGET` 10분 clamp |
+| `hook/execution/HookExecutionPolicy.java` | `stopOnBlocked` 순차 전용, `ExecutionMode` 두 값 |
+| `hook/execution/DefaultHookExecutor.java` | `submit` + `get(timeout)` + `cancel(true)` |
+| `hook/HookFeedback.java` | `hook-feedback` 리마인더 키, blocked 결과 제외 |
+| `skill/hook/declarative/TemplateRenderer.java` | 3개 prefix, 셸 제외 |
 | `skill/hook/declarative/predicate/` | 4개 predicate impl + `PredicateParser` |
-| `config/hook/HookConfigSource.java:17-26` | `USER`/`PROJECT`/`LOCAL` 가중치와 격리된 `SKILL` |
-| `skill/hook/declarative/ShellHookOutcome.java:34,45` | `DENY_EXIT_CODE=2`, 사유 4000자 clamp |
-| `skill/hook/declarative/DeclarativeHookId.java:49` | `<class>@<skill>#<discriminator>` |
-| `config/hook/HookEventName.java:53` | 미지원 이벤트 셋 |
+| `config/hook/HookConfigSource.java` | `USER`/`PROJECT`/`LOCAL` 가중치와 격리된 `SKILL` |
+| `skill/hook/declarative/ShellHookOutcome.java` | `DENY_EXIT_CODE=2`, 사유 4000자 clamp |
+| `skill/hook/declarative/DeclarativeHookId.java` | `<class>@<skill>#<discriminator>` |
+| `config/hook/HookEventName.java` | 미지원 이벤트 셋 |
 | `config/hook/HookRegistryReloader.java` | 트랜잭셔널 swap |
+| `skill/hook/action/` · `aimon-cli` 의 `HookActionExecutors` | `http` · `mcp` 실행기와 배선 |
 
 경로는 `modules/aimon-core/src/main/java/at/aimon/core/` 기준이다.
 
@@ -438,5 +360,7 @@ void clearAll();
 - [`.claude/rules/hook-development.md`](../../../.claude/rules/hook-development.md) — 훅 작성 규칙 (이 문서의 규범 대응물)
 - [`hook-config-guide.md`](../../features/hook/hook-config-guide.md) — `hooks.json` 스키마, 4-tier 레이어, 이벤트 매핑 표, 템플릿 변수
 - [`hook-development-guide.md`](../../features/hook/hook-development-guide.md) — 프로그래매틱 훅 작성
+- [`hook-cancellation.md`](hook-cancellation.md) — 인터럽트가 훅의 명령과 실행에 하는 일
+- [`hook-environment.md`](hook-environment.md) · [`hook-fail-closed.md`](hook-fail-closed.md) · [`hook-tamper-boundary.md`](hook-tamper-boundary.md) — 도는 자리, 판단하지 못한 가드, 변조
 - [`async-rewake.md`](async-rewake.md) — 훅이 예약하는 지연 재개
 - [`references/hooks-specification.md`](../../references/hooks-specification.md) — parity 경계 (매핑·확장·미지원)

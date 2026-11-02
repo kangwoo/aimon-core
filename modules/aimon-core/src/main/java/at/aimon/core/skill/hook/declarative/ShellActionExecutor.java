@@ -20,7 +20,7 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * <ul>
  * <li>{@link DefaultShellActionExecutor} — runs the command in the shell of the firing execution's
  * {@linkplain HookContext#getExecutionEnvironment() execution environment}. This is what skill-declared hooks use, so
- * a skill's hook command runs where the same skill's {@code Bash} calls run (execution-environment design §10).
+ * a skill's hook command runs where the same skill's {@code Bash} calls run (hook-environment design §5).
  * <li>{@link HostShellActionExecutor} — runs the command in one fixed shell and ignores the context. Reserved for
  * operator-authored {@code hooks.json}, the only place that can declare events firing outside any execution.
  * <li>{@link NoOpShellActionExecutor} — refuses; intended for default {@code MarkdownSkillParser} wirings that have

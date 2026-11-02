@@ -898,7 +898,8 @@ public class OrcaAgentExecutor
         // as this turn (each fork keyed on its own transcript). Unused by a fork without such a policy.
         builder.put(ToolContextKeys.CONTEXT_ENGINE, scope.agentRuntime.getContextEngine());
 
-        // PAR-05 / execution-environment §7: inject a thread-safe, execution-scoped map of read stamps. It backs the
+        // PAR-05 / execution-environment-files §5: inject a thread-safe, execution-scoped map of read stamps. It backs
+        // the
         // stale-write guard of Edit (and of Write over an existing file), and it is concurrency-safe so parallel
         // CONCURRENT_SAFE Read tools can record stamps without racing. It is created once per execution
         // (createToolContext is called once before the iteration loop), so reads persist across iterations but not
@@ -947,7 +948,7 @@ public class OrcaAgentExecutor
     /**
      * Publishes the execution's environment and the provider it came from. Both keys are write-once and are put
      * before the enrichers run, so an enricher that writes either throws inside its own try/catch and the environment
-     * stays the one the provider resolved (design §5.1).
+     * stays the one the provider resolved (execution-environment design §6).
      */
     private static void putExecutionEnvironment(ToolContext.Builder builder, ExecutionScope scope) {
         builder.put(ToolContextKeys.EXECUTION_ENVIRONMENT, scope.executionEnvironment);
@@ -1093,7 +1094,8 @@ public class OrcaAgentExecutor
 
         final Agent agent = agentRuntime.getAgent();
 
-        // Resolve the execution environment once, before prompt assembly and before any tool runs (design §5.1): the
+        // Resolve the execution environment once, before prompt assembly and before any tool runs
+        // (execution-environment design §6): the
         // environment the prompt describes and the one the tools use are then the same value. A failing or missing
         // provider yields an unavailable environment whose tools fail with the cause — never the host. The request
         // carries the environment.* subset of this turn's execution attributes (issue #252), read from the request
@@ -2320,7 +2322,8 @@ public class OrcaAgentExecutor
                     agentRuntime.getSubagentRegistry(), agentRuntime.getToolRegistry(), agentRuntime.getHookRegistry(),
                     subagentExecutionManager);
             final ToolContext.Builder commandContextBuilder = ToolContext.builder();
-            // The command renders skills, which stage their files through this execution's environment (§4.4).
+            // The command renders skills, which stage their files through this execution's environment
+            // (execution-environment-staging design §12).
             putExecutionEnvironment(commandContextBuilder, scope);
             // The caller's identity, published by hand for the same reason as the keys below: a `/my-skill` fork
             // resolves its execution environment under this principal, and without it the fork's shell and file
@@ -2334,7 +2337,8 @@ public class OrcaAgentExecutor
             if (scope.getHookRegistry() != null) {
                 commandContextBuilder.put(ToolContextKeys.HOOK_REGISTRY, scope.getHookRegistry());
             }
-            // The read stamps an inline skill's Read records and its Edit checks (execution-environment §7), published
+            // The read stamps an inline skill's Read records and its Edit checks (execution-environment-files §5),
+            // published
             // by hand like the keys above (EE-31). Without the map Edit answered "not read" to every call, read or
             // not. Fresh per command, as createToolContext's is fresh per execution: a file read by an earlier turn or
             // an earlier slash command must be read again before this one modifies it.

@@ -10,7 +10,7 @@ import at.aimon.core.filesystem.VirtualFileSystem;
 import at.aimon.core.shell.VirtualShell;
 
 /**
- * The environment an executor publishes when its provider could not resolve one (design §5.1).
+ * The environment an executor publishes when its provider could not resolve one (execution-environment design §7).
  *
  * <p>
  * Every filesystem and shell call throws {@link ExecutionEnvironmentUnavailableException} carrying the cause, and so

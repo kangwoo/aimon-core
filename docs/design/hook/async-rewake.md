@@ -2,7 +2,7 @@
 
 > Status: **IMPLEMENTED** — 시간 트리거와 외부 이벤트 트리거가 모두 들어가 있고, 어셈블리
 > (`AimonStackBuilder`)가 서비스·리스너를 조립한다. 남은 것은 §8 — MCP 브리지의 트랜스포트 배선,
-> 웹훅 서버 부팅, 그리고 멀티 인스턴스용 envelope 영속화다.
+> 웹훅 서버 부팅, 그리고 멀티 인스턴스용 envelope 영속화다. 열림·닫힘은 [등록부](../../backlog/async-rewake-open-items.md)가 소유한다.
 >
 > 적용 대상: `aimon-core` — `at.aimon.core.hook.rewake` (SPI: `RewakeSpec`, `RewakeEnvelope`,
 > `RewakeService`, `RewakeFireListener`, `RewakeCapableRuntime`, `RewakeQuotaManager`,
@@ -17,8 +17,8 @@
 
 훅이 **결정을 미루고 나중에 다시 발화**해야 하는 경우가 있다.
 
-1. **승인 워크플로** — `preTool` 훅이 외부 승인 서비스를 부른다. 몇 분씩 훅 실행기 스레드를 붙잡는 대신
-   5분 뒤에 다시 발화해서 그때 allow/deny 를 정한다
+1. **승인 후속 조치** — `preTool` 훅이 외부 승인 서비스에 요청을 넣는다. 몇 분씩 훅 실행기 스레드를 붙잡는 대신
+   5분 뒤에 다시 발화해서 응답에 따른 후속 조치를 한다. 지금의 호출은 첫 발화의 결정으로 이미 끝났다
 2. **외부 이벤트 대기** — `deploy.complete` 웹훅이 올 때까지 기다렸다가 후속 조치를 한다
 3. **재시도** — `postTool` 훅이 일시적 실패를 보고 15분마다 최대 3회 후속 알림을 예약한다
 
@@ -27,19 +27,19 @@
 
 **하지 않는 것**은 명확하다. rewake 는 **훅을 다시 발화**할 뿐 진행 중이던 LLM 턴이나 도구 실행을
 재개하지 않는다. 원래 호출은 rewake 가 예약되기 전에 이미 결말(ALLOW/DENY/fail-open)이 나 있어야 한다.
+**재발화가 낸 `Decision` 과 `FlowControl` 은 어디에도 쓰이지 않는다** — `DefaultRewakeFireListener` 는 재발화 결과에서
+후속 spec 만 읽는다. 호출을 막을 수 있는 것은 첫 발화의 결정뿐이다.
 분기도 없다 — 한 번의 rewake 는 정확히 하나의 후속 발화를 만든다.
 
 ---
 
 ## 2. 결정 축이 아니라 **직교 채널**이다
 
-첫 설계는 `Decision.ASYNC_REWAKE` 를 추가하는 것이었고, 구현 중에 뒤집혔다.
-
 rewake 는 **살아 있는 턴에게는 관측상 `ALLOW`** 다 — 즉시 디스패치 결과를 바꾸지 않는다. 그것을
 `ALLOW/ASK/DENY` 와 같은 서수에 접으면 `getDecision()` 을 읽는 모든 소비자가 "턴이 진행되는 조건"의
 뜻을 다시 배워야 하고, `Decision` 위의 전순서(`DENY > ASK > ALLOW`)가 망가진다.
 
-그래서 `HookResult` 에 **직교 컬렉션 필드**를 얹었다.
+그래서 `HookResult` 의 **직교 컬렉션 필드**로 둔다.
 
 ```java
 HookResult.asyncRewake(RewakeSpec spec)
@@ -106,7 +106,8 @@ delivery 이지 보장 배달이 아니다.
 재생에 **방어할 수 있는 의미론이 아예 없다.**
 
 재구성된 컨텍스트는 **degraded stand-in** 이다. envelope 의 정체성 + 이벤트별 기본값(카운터 0,
-`CompactionTrigger.MANUAL` 등)으로 만들며, `PRE_TOOL` 재발화에서도 **도구는 실제로 실행되지 않는다.**
+`CompactionTrigger.MANUAL` 등)으로 만들며, `PRE_TOOL` 재발화에서도 **도구는 실제로 실행되지 않는다.** 재발화는 훅의 부수효과와
+후속 예약을 위한 것이다.
 
 ---
 
@@ -147,6 +148,10 @@ Quartz `JobDataMap` 에는 **`envelopeId` 만** 싣는다 — envelope 본문은
 `previous.attemptNumber + 1 > nextSpec.maxAttempts` 면 WARN 후 드롭한다. 체인에는 서비스 바인딩
 (`bindRewakeService`)이 필요하며, 바인딩이 없으면 INFO 로 드롭한다 — 바인딩 없는 리스너를 쓰는 테스트
 픽스처가 원발화는 그대로 관측하게 하기 위해서다.
+
+**cron 후속은 잇지 않는다.** 선언적 훅은 발화마다 자기 spec 을 다시 내는데, 살아 있는 턴과 재발화를 구별할 수 없어 거기서
+거르면 첫 envelope 도 사라진다. 그래서 거르는 자리는 `chainFollowUps` 다. cron 트리거는 스스로 반복하므로, 이으면 계열이
+늘어나는 것이 아니라 갈라져 살아 있는 envelope 가 약 `2^(maxAttempts-1)` 개가 된다.
 
 ---
 
@@ -209,6 +214,8 @@ teardown 순서상 rewake 는 스케줄링 다음이다 — 스케줄된 루틴�
 
 ## 8. 남은 것
 
+열림·닫힘은 [등록부](../../backlog/async-rewake-open-items.md)가 소유한다.
+
 - **MCP 브리지가 트랜스포트에 붙어 있지 않다.** `McpNotificationToRewakeBridge` 는 있지만 실제
   `StdioMcpTransport` 읽기 루프에 등록하는 코드가 인트리에 없다 — MCP 알림 경로는 아직 손으로 배선해야 한다
 - **웹훅 서버를 부팅하는 엔트리포인트가 없다.** `RewakeWebhookServer` 를 시작하는 main 소스가 없다
@@ -237,26 +244,35 @@ teardown 순서상 rewake 는 스케줄링 다음이다 — 스케줄된 루틴�
 
 ---
 
+## 10. 하지 말 것
+
+- **재발화의 결정이 원래 호출을 바꾼다고 설명하지 말 것.** 호출은 이미 끝났고 도구는 다시 돌지 않는다(§1, §4).
+- **envelope 에 살아 있는 컨텍스트를 싣지 말 것.** 정체성만 싣고 발화 시점에 다시 해석한다(§3).
+- **권한 이벤트에 rewake 를 허용하지 말 것.** 디스패치 뒤에 도착하는 권한 결정은 아무것도 막지 못한다(§4).
+- **cron 후속을 잇지 말 것.** 반복 계열이 갈라진다(§5.2).
+
+---
+
 ## 부록: 참조 파일 지도
 
 | 파일 | 확인할 것 |
 |------|----------|
-| `hook/rewake/RewakeSpec.java:32,35` | `DEFAULT_TIMEOUT` 1h, `DEFAULT_MAX_ATTEMPTS` 3 |
-| `hook/rewake/RewakeEnvelope.java:61-73` | envelope 가 싣는 13개 필드 |
-| `hook/rewake/RewakeEnvelopes.java:59` | 권한 이벤트 입구 거부 |
+| `hook/rewake/RewakeSpec.java` | `DEFAULT_TIMEOUT` 1h, `DEFAULT_MAX_ATTEMPTS` 3 |
+| `hook/rewake/RewakeEnvelope.java` | envelope 가 싣는 13개 필드 |
+| `hook/rewake/RewakeEnvelopes.java` | 권한 이벤트 입구 거부 |
 | `hook/rewake/RewakeService.java` | `schedule`(멱등) / `cancel` / `cancelByOriginatingHookId` / `resolve` / `listPending` |
 | `hook/rewake/RewakeCapableRuntime.java` | 재발화용 opt-in SPI |
-| `hook/rewake/impl/DefaultRewakeService.java:66,161` | in-memory pending, cron 거부 |
-| `hook/rewake/impl/DefaultRewakeFireListener.java:182-201` | 재발화 5종 / 드롭 나머지 |
-| `hook/rewake/impl/DefaultRewakeQuotaManager.java:31` | `DEFAULT_MAX_QUOTA` 64 |
+| `hook/rewake/impl/DefaultRewakeService.java` | in-memory pending, cron 거부 |
+| `hook/rewake/impl/DefaultRewakeFireListener.java` | 재발화 5종 / 드롭 나머지, 결과에서 후속 spec 만 읽기, cron 후속 제외 |
+| `hook/rewake/impl/DefaultRewakeQuotaManager.java` | `DEFAULT_MAX_QUOTA` 64 |
 | `hook/rewake/mcp/McpNotificationToRewakeBridge.java` | MCP 알림 → `resolve()` |
 | `config/hook/rewake/RewakeSpecParser.java` | `asyncRewake` 블록 파싱 |
-| `agent/impl/orca/command/OrcaSystemCommandProvider.java:87` | `/rewakes` 조건부 등록 |
+| `agent/impl/orca/command/OrcaSystemCommandProvider.java` | `/rewakes` 조건부 등록 |
 
 경로는 `modules/aimon-core/src/main/java/at/aimon/core/` 기준. 그 밖에 —
 `modules/aimon-scheduling-quartz/…/rewake/QuartzRewakeService.java`(`endAt` cron 상한, misfire, `JobDataMap`),
 `modules/aimon-rewake-webhook/…/webhook/RewakeWebhookConfig.java`(헤더·경로·크리덴셜 기본값),
-`modules/aimon-bootstrap/…/AimonStackBuilder.java:326`(조립).
+`modules/aimon-bootstrap/…/AimonStackBuilder.java`(조립).
 
 ---
 

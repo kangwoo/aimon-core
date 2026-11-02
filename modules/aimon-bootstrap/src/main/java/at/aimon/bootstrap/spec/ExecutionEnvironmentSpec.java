@@ -9,7 +9,7 @@ import at.aimon.core.environment.ExecutionEnvironmentProvider;
 
 /**
  * Declares where each runtime's executions run: the filesystem the model's tools see and the shell {@code Bash} runs
- * in (execution-environment design §4, §9).
+ * in (execution-environment design §3).
  *
  * <p>
  * <b>One provider per stack.</b> Every runtime of the stack resolves its environment from the same provider, which
@@ -126,7 +126,8 @@ public final class ExecutionEnvironmentSpec {
 
     /**
      * Whether the local provider leaves the control store ({@code .aimon/}) visible and writable to the file tools —
-     * the explicit opt-in for letting the model edit its own skills. Off by default (§9.2).
+     * the explicit opt-in for letting the model edit its own skills. Off by default (execution-environment-files design
+     * §4).
      *
      * @return {@code true} to expose the control store
      */

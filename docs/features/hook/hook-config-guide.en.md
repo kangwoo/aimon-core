@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: a6e0c3db
+source_commit: dc928a6a
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -803,9 +803,12 @@ reconstructed at re-firing time, though — `preTool`, `preCompact`, `onSessionS
 `onSessionEnd` and `onConfigReload`. On any other event the spec is ignored with a WARN (the
 hook itself still registers normally). For example:
 
-- Retry in 5 minutes, until an external approval system responds (`delay`)
+- Check an external approval system's response again in 5 minutes (`delay`)
 - Check status on the hour, every hour (`cron`, Quartz environments only)
 - Wake up when an external webhook arrives (`event`)
+
+> ⚠️ **A re-fire's decision does not change the original call.** The original call already ended on the first firing's
+> decision, and a `preTool` re-fire does not run the tool either. The only thing read from a re-fire's result is the next `asyncRewake`.
 
 ```jsonc
 {
@@ -1076,10 +1079,10 @@ tools appear in the model's tool list too, like any other MCP tool.
 
 → Dispatch order: `USER PostTool log` → `PROJECT PreTool deny` → `LOCAL PreTool echo`.
 
-### 6. Waiting for external approval, then retrying automatically (`asyncRewake` + an `event` trigger)
+### 6. Following up on an external approval (`asyncRewake` + an `event` trigger)
 
-Rather than blocking a risky production deployment command outright, wait for an external
-approval webhook and then wake the hook again. If no approval arrives, it times out after an
+Request external approval for a risky production deployment command, and when the approval
+webhook arrives, wake the hook again to follow up. If no approval arrives, it times out after an
 hour.
 
 ```json
@@ -1113,7 +1116,9 @@ hour.
 
 When the external approval system calls
 `RewakeService.resolve("approval", "prod-kubectl-apply", { "decision": "approved" })`, the
-envelope fires, the hook is invoked again, and it decides the final ALLOW/DENY.
+envelope fires and the hook is invoked again. **The ALLOW/DENY of that invocation is not used.** Whether the
+command runs was already decided by the verdict `request_human_approval` returned on the first firing. To stop the
+command before approval, the first firing has to answer `deny`, and rewake does not run a blocked command afterwards.
 
 > ⚠️ The `asyncRewake` block does not go through template rendering, so `event.key` must be a
 > **literal string**. A `${...}` is not substituted and becomes the matching key verbatim.
@@ -1212,6 +1217,6 @@ are in [`aimon-skill-extensions.md`](../../references/aimon-skill-extensions.md)
 ## Related documents
 
 - [Hook Development Guide](hook-development-guide.en.md) — writing hooks programmatically
-- [Hook system upgrade design](../../design/hook/hook-system.md) — why this configuration model looks the way it does
+- [Hook system design](../../design/hook/hook-system.md) — why this configuration model looks the way it does
 - [Async Rewake Design](../../design/hook/async-rewake.md) — the Phase 4A design background
 - [Claude Code hooks.json reference](https://docs.claude.com/en/docs/claude-code/hooks)

@@ -134,7 +134,7 @@ workflowRunner    → close
 마커를 붙이는 것만으로는 아무 일도 일어나지 않는다.
 
 목록은 한때 셋이었다 — 셋째가 어셈블리가 `withShell(...)` 로 셸을 주지 않았을 때 런타임이 직접 만든
-`ownedShell` 이다. 실행 환경 설계([`tool/execution-environment.md`](../tool/execution-environment.md) §4.3)
+`ownedShell` 이다. 실행 환경 설계([`tool/execution-environment.md`](../tool/execution-environment.md) §4)
 가 셸과 작업 파일 시스템의 소유자를 `ExecutionEnvironmentProvider` 하나로 정하면서 빠졌다. 런타임은
 제공자(`OrcaAgentRuntime.getExecutionEnvironmentProvider()`)를 빌려 쓰기만 하고, 제공자는 그것을 만든
 어셈블리가 닫는다 — bootstrap 은 런타임별 teardown sink 로. 그래서 런타임 뒤에서 백그라운드 `Bash`

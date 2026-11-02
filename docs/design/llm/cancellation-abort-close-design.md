@@ -16,7 +16,7 @@
 > `review-2.md`) and the run record the body's wording comes from (`TASK.md`) are not in the repository; §11 says
 > which review notes were taken.
 >
-> It is in English, like [`../hook/hook-cancellation-followups-ee93-ee97.md`](../hook/hook-cancellation-followups-ee93-ee97.md):
+> It is in English, like `../hook/hook-cancellation-followups-ee93-ee97.md`:
 > `docs/design/` is not a translation target (`docs/project/documentation-guide.md` §5.1). The open questions of §10
 > that outlive this change are registered in [`../../backlog/interrupt-open-items.md`](../../backlog/interrupt-open-items.md)
 > (items 6–9).

@@ -137,7 +137,7 @@ class GrepToolTest {
         assertThat(result.getContent()).contains("sandbox went away").doesNotContain("No matches found");
     }
 
-    // content search delegation (execution-environment design §4.1, §6)
+    // content search delegation (execution-environment-files design §6)
 
     @Test
     void testExecute_ContentSearchPresent_IsUsedAndFormattedLikeTheWalk() {

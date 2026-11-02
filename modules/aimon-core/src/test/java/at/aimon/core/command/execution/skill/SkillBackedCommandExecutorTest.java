@@ -250,7 +250,7 @@ class SkillBackedCommandExecutorTest {
      * Regression: the command path used to leave the request's render context at {@link RenderContext#empty()}, so a
      * command-invoked body rendered {@code bash ${AIMON_SKILL_DIR}/scripts/x.sh} as {@code bash /scripts/x.sh}. The
      * stub renders with the real renderer so the assertion is on the text the skill would actually run. The directory
-     * is where the run's execution environment staged the skill (execution-environment design §4.4) — never a
+     * is where the run's execution environment staged the skill (execution-environment-staging design §12) — never a
      * repository path.
      */
     @Test
@@ -271,7 +271,7 @@ class SkillBackedCommandExecutorTest {
     }
 
     /**
-     * Behaviour change (execution-environment design §4.4, §15): a skill that was never scanned into a staged resource
+     * Behaviour change (execution-environment-staging design §9): a skill that was never scanned into a staged resource
      * no longer has its directory derived from a repository resource path — that path lives in the control store,
      * which the model's shell may not see. It renders empty.
      */

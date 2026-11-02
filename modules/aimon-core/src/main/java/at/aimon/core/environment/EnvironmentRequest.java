@@ -92,8 +92,8 @@ public final class EnvironmentRequest {
     }
 
     /**
-     * @return the subagent definition a fork runs — its name and attributes — when the request is for a fork (design
-     *         §5.2)
+     * @return the subagent definition a fork runs — its name and attributes — when the request is for a fork
+     *         (execution-environment-placement design §3)
      */
     public Optional<ForkDefinition> fork() {
         return Optional.ofNullable(fork);

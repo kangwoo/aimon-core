@@ -726,9 +726,12 @@ placeholder 는 `${<prefix>.<name>}` 세 종류뿐이다.
 `onSessionEnd`, `onConfigReload`. 그 외 이벤트에 두면 spec 이 WARN 과 함께 무시된다
 (hook 은 정상 등록된다). 예를 들어:
 
-- 외부 승인 시스템이 응답할 때까지 5 분 후 다시 시도 (`delay`)
+- 외부 승인 시스템의 응답을 5 분 후 다시 확인 (`delay`)
 - 매시 정각마다 상태 체크 (`cron`, Quartz 환경 한정)
 - 외부 webhook 이 도착할 때 깨어남 (`event`)
+
+> ⚠️ **재발화의 결정은 원래 호출을 바꾸지 않는다.** 원래 호출은 첫 발화의 결정으로 이미 끝났고,
+> `preTool` 재발화에서도 도구는 실행되지 않는다. 재발화 결과에서 쓰이는 것은 다음 `asyncRewake` 뿐이다.
 
 ```jsonc
 {
@@ -988,10 +991,10 @@ handler 가 `tool_input.command` 를 직접 검사하게 한다 — [Matcher 문
 
 → 디스패치 순서: `USER PostTool log` → `PROJECT PreTool deny` → `LOCAL PreTool echo`.
 
-### 6. 외부 승인 대기 후 자동 재시도 (`asyncRewake` + `event` 트리거)
+### 6. 외부 승인의 후속 조치 (`asyncRewake` + `event` 트리거)
 
-위험한 prod 배포 명령을 즉시 차단하지 않고, 외부 승인 webhook 이 들어올 때까지
-기다렸다가 다시 hook 을 깨운다. 승인이 도착하지 않으면 1 시간 후 timeout.
+위험한 prod 배포 명령에 외부 승인을 요청해 두고, 승인 webhook 이 들어오면 hook 을 다시 깨워
+후속 조치를 한다. 승인이 도착하지 않으면 1 시간 후 timeout.
 
 ```json
 {
@@ -1023,7 +1026,9 @@ handler 가 `tool_input.command` 를 직접 검사하게 한다 — [Matcher 문
 ```
 
 외부 승인 시스템이 `RewakeService.resolve("approval", "prod-kubectl-apply", { "decision": "approved" })`
-를 호출하면 envelope 이 발사되고 hook 이 다시 호출되어 최종 ALLOW/DENY 를 결정한다.
+를 호출하면 envelope 이 발사되고 hook 이 다시 호출된다. **이 호출의 ALLOW/DENY 는 쓰이지 않는다.** 명령이 실행될지는 첫 발화에서
+`request_human_approval` 이 돌려준 판정이 이미 정했다. 승인 전에 명령을 막으려면 첫 발화가 `deny` 로 답해야 하고, 막힌 명령을
+rewake 가 다시 실행하지는 않는다.
 
 > ⚠️ `asyncRewake` 블록은 템플릿 렌더링을 거치지 않으므로 `event.key` 는 **리터럴 문자열**
 > 이어야 한다. `${...}` 를 써도 치환되지 않고 그대로 매칭 키가 된다.
@@ -1121,6 +1126,6 @@ fork 가 없어 발화하지 않는다. 전체 규칙은 [`aimon-skill-extension
 ## 관련 문서
 
 - [Hook Development Guide](hook-development-guide.md) — 프로그래매틱 hook 작성
-- [Hook System Upgrade 설계](../../design/hook/hook-system.md) — 이 설정 체계가 왜 이렇게 생겼는지
+- [훅 시스템 설계](../../design/hook/hook-system.md) — 이 설정 체계가 왜 이렇게 생겼는지
 - [Async Rewake Design](../../design/hook/async-rewake.md) — Phase 4A 설계 배경
 - [Claude Code hooks.json reference](https://docs.claude.com/en/docs/claude-code/hooks)

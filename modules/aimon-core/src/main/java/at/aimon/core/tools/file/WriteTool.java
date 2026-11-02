@@ -45,7 +45,8 @@ import at.aimon.core.tools.ExecutionEnvironmentAccess;
  *
  * <p>
  * <strong>CRITICAL</strong>: This tools will OVERWRITE existing files. Overwriting an existing file requires that the
- * file was {@code Read} in this execution and has not changed since (execution-environment design §7); a new file needs
+ * file was {@code Read} in this execution and has not changed since (execution-environment-files design §5); a new file
+ * needs
  * no read. For existing files, prefer using Edit tools for targeted modifications.
  *
  * <p>
@@ -165,7 +166,8 @@ public class WriteTool extends AbstractTool implements ToolPermissionSubjectAwar
                 return ToolResult.error("Cannot write to directory: " + filePath + ". Provide a file path instead.");
             }
 
-            // Overwriting an existing file needs a current read stamp (design §7); a new file does not.
+            // Overwriting an existing file needs a current read stamp (execution-environment-files design §5); a new
+            // file does not.
             final Optional<String> staleWrite = FileStamps.checkBeforeModify(context, env, filePath);
             if (staleWrite.isPresent()) {
                 return ToolResult.error(staleWrite.get() + ": " + filePath);

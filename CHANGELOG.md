@@ -1207,7 +1207,7 @@ says they reject. `InMemoryModelCapabilityRegistry.withDefaults()` now carries a
 
 EE-80 (next entry) left five things open. Three are built, one is half built, one is decided against; EE-98 then
 replaced the option EE-97 had built with a rule. The design, what the build changed in it and the reasons are in
-[`docs/design/hook/hook-cancellation-followups-ee93-ee97.md`](docs/design/hook/hook-cancellation-followups-ee93-ee97.md).
+[`docs/design/hook/hook-cancellation-followups-ee93-ee97.md`](docs/design/hook/hook-cancellation.md).
 
 - **A report hook's shell command is never stopped by the execution's interrupt (EE-97, EE-98).** On `onStop`,
   `subagentStop`, `postCompact`, `postTool`, `permissionDenied` and `subagentStart`, a `command` / `shell` action runs
@@ -1350,7 +1350,7 @@ way: their commands are not tied to the signal at all (EE-98, above).
   builder method.
 - **Guards still unbound, because no signal there can trip:** the `preCompact` of a manual `/compact`, a `preCompact`
   chain rebuilt by a rewake replay, and the events outside any execution. The design and what the build changed in it are in
-  [`docs/design/hook/hook-shell-cancellation-ee80.md`](docs/design/hook/hook-shell-cancellation-ee80.md).
+  [`docs/design/hook/hook-shell-cancellation-ee80.md`](docs/design/hook/hook-cancellation.md).
 
 ### Added: tasks that compare the context engines under view pressure (tests only)
 

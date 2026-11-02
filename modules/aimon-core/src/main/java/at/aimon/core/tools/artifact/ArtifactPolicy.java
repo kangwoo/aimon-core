@@ -2,7 +2,7 @@ package at.aimon.core.tools.artifact;
 
 /**
  * Whether the file tools register artifacts, and how much an execution may archive into the control store when its
- * environment is not durable (execution-environment design §9.3). Immutable.
+ * environment is not durable (execution-environment-files design §7). Immutable.
  */
 public final class ArtifactPolicy {
 

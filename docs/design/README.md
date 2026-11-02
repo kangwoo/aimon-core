@@ -64,26 +64,19 @@
 
 | 문서 | 무엇이 있나 |
 |------|------------|
-| [`contract-hardening.md`](tool/contract-hardening.md) | 스키마 게이트, `additionalProperties: false`, `GenericTool` 바인딩 |
+| [`tool-contract.md`](tool/tool-contract.md) | 도구 호출의 계약 — 호출 경로와 관문 순서, JSON `null`, 스키마 검증과 모드, 관문 밖 호출 지점, 권한 판정과 위임, `GenericTool` 바인딩 |
+| [`shell-contract.md`](tool/shell-contract.md) | 셸 SPI 의 계약 — `ExecutionOptions` · `ShellFeature`, 취소 계약, 프로세스 트리 종료와 남는 틈, 훅 명령의 I/O, 스트리밍, `Bash` 가 셸을 쓰는 방식 |
+| [`background-commands.md`](tool/background-commands.md) | 백그라운드 `Bash` — `KillShell`, 환경이 정하는 상한, 애플리케이션 수명의 매니저와 저장소, 소유 범위, 티어다운, 멀티 인스턴스 한계 |
 | [`side-effect-axes.md`](tool/side-effect-axes.md) | 부작용을 하나의 등급이 아니라 축으로 나눈 이유 |
 | [`parallel-execution.md`](tool/parallel-execution.md) | `ConcurrencyBehavior` 와 2단 게이트(모델 의도 + 프레임워크 안전성) |
 | [`subagent/parallel-foreground-task.md`](subagent/parallel-foreground-task.md) | (IMPLEMENTED, 승인본, 차이는 §9) `ConcurrencyBehavior.DEDICATED_THREAD` — 전부 `CONCURRENT_SAFE` 가 아니면 순차인 게이트 옆에, 연속된 포그라운드 `Task` 구간만 재사용하지 않는 전용 스레드로 펴는 데코레이터. 정본은 `subagent` 표의 같은 행 |
 | [`tool-search.md`](tool/tool-search.md) | 도구가 많아졌을 때 스키마를 지연 로드하는 검색 계층 |
-| [`monitor.md`](tool/monitor.md) | (IMPLEMENTED, 차이는 §12) 백그라운드 이벤트 감시 `Monitor` — source(셸·WebSocket·호스트 등록)와 정책의 분리, 세션 단위 큐 전달과 그 과정에서 찾은 세션 간 드레인 누수, 셸 스트리밍 기능, 쉬는 세션 깨우기를 미룬 이유 |
-| [`execution-environment.md`](tool/execution-environment.md) | (IMPLEMENTED) 도구의 파일 시스템·셸을 실행마다 고르는 `ExecutionEnvironment` — 제어 저장소 분리, 격리를 환경 기능으로, 파일 stamp |
-| [`execution-environment-implementation.md`](tool/execution-environment-implementation.md) | 위 설계의 구현 계획(승인본, 영어) — 코드 위치·단계·ArchUnit 변경·테스트, 그리고 구현이 계획에서 벗어난 점(§10) |
-| [`execution-environment-ee42-workflow-attributes.md`](tool/execution-environment-ee42-workflow-attributes.md) | (IMPLEMENTED) 워크플로 단계가 정의의 `attributes` 를 싣게 한 EE-42 설계(승인본, 영어) — `SubagentDescriptor`, 등록 정의 위에 덮는 병합 규칙, `Workflow` 역할 이름, 그리고 구현이 설계에서 벗어난 점(§8) |
-| [`execution-environment-ee9-ee12-hook-environment.md`](tool/execution-environment-ee9-ee12-hook-environment.md) | (IMPLEMENTED) 훅 컨텍스트에 실행 환경을 싣고 스킬 선언 훅의 셸을 실행 환경으로 옮긴 EE-9 · EE-12 설계(승인본) — 이벤트별 발화 지점, `ShellActionExecutor` 가 발화 컨텍스트를 받는 모양, 파싱 시점 거부, 그리고 구현이 설계에서 벗어난 점(§10) |
-| [`execution-environment-ee14-user-locale.md`](tool/execution-environment-ee14-user-locale.md) | (IMPLEMENTED) `Environment` 를 없애고 `timeZone` 을 `at.aimon.core.base.UserLocale` 로 옮긴 EE-14 설계(승인본) — 이름과 패키지를 고른 이유, 접근자 · 키까지 바꾼 범위, 이름이 같지만 건드리지 않은 것, `timeZone` 을 읽는 운영 코드가 없다는 발견, 그리고 구현이 설계에서 벗어난 점(§11). 그 `UserLocale` 은 2026-10-05 에 배관째 지워졌고(EE-60, §12) `SubagentExecutionEnvironment` 는 `SubagentLaunchContext` 가 되었다(EE-61, §13) |
-| [`execution-environment-ee13-ee7-background-lifecycle.md`](tool/execution-environment-ee13-ee7-background-lifecycle.md) | (IMPLEMENTED) 백그라운드 `Bash` 를 끝내는 `KillShell` 과 셸 SPI 의 취소 계약, 환경이 정하는 상한, 그리고 제공자와 작업 목록(`BackgroundBashManager` · `BackgroundBashStore`)을 애플리케이션 수명으로 올린 EE-13 · EE-7 설계(승인본) — 축출 훅이 id 콜백이 아니라 `RuntimeBinding` 핸들인 이유, 기각한 대안, 그리고 구현이 설계에서 벗어난 점(§10) |
-| [`execution-environment-ee49-ee51-ee58-isolation-boundary.md`](tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md) | (IMPLEMENTED) 한 런타임을 나눠 쓰는 실행들 사이의 경계 셋을 닫은 EE-49 · EE-51 · EE-58 설계(승인본) — 스킬 훅을 공유 레지스트리에 등록하지 않고 포크가 받는 레지스트리에 얹는 이유, 명령을 돌리지 못한 가드를 막는 규칙과 훅별 `failOpen`, 백그라운드 작업의 소유자를 (런타임, 세션 또는 실행)으로 넓힌 것, 기각한 대안, 그리고 구현이 설계에서 벗어난 점(§10) |
-| [`execution-environment-ee70-ee71-fail-closed.md`](tool/execution-environment-ee70-ee71-fail-closed.md) | (IMPLEMENTED) 가드가 판단하지 못했는데 일이 진행되던 두 곳을 막은 EE-70 · EE-71 설계(승인본) — 포크가 `onStart` block 에서 시작하지 않고 실패 결과로 끝나는 모양과 `onStop` 을 발화하지 않는 이유, 시작 시 `hooks.json` 로드 실패를 예외로 전파하고 탈출구 스위치를 두지 않은 이유, 경로별(CLI · 호스트) 동작, 기각한 대안, 그리고 구현이 설계에서 벗어난 점(§10) |
-| [`execution-environment-ee102-request-attributes.md`](tool/execution-environment-ee102-request-attributes.md) | (IMPLEMENTED) 이슈 #252 — 메인 턴과 스케줄 루틴의 `environment.*` 실행 속성을 접두사를 떼어 `EnvironmentRequest.requestAttributes()` 로 싣게 한 EE-102 설계(승인본, 영어) — 문자열만 받고 버리지 않는 이유, 포크에 물려주지 않는 이유, 루틴이 태스크 필드가 아니라 호스트 해석기(`RoutineExecutionAttributes`)에서 받는 이유, 기각한 대안, 그리고 구현이 설계에서 벗어난 점(§8) |
-| [`execution-environment-ee48-ee52-ee81-hooks-in-environment.md`](tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md) | (IMPLEMENTED) #273 — `hooks.json` 명령과 포크의 훅·본문이 그 실행의 환경에서 돌게 한 EE-48 · EE-52 · EE-81 설계(승인본, 영어) — 이벤트별 배치 표와 `"shell"` 키, 실행이 없는 발화를 호스트로 보내는 `HookContext.hasExecution()`, 에이전트 상태가 정책 훅에 닿지 않게 한 격리 실행 SPI(`ExecutionOptions.isIsolated()` · `ShellFeature.ISOLATED_EXECUTION`), `AIMON_HOOK_DIR` 스테이징, `subagentStop` 의 포크 환경, 포크에서 다시 렌더하는 스킬 본문, 기각한 대안, 그리고 구현이 설계에서 벗어난 점(§10) |
-| [`execution-environment-ee109-hook-tamper-narrowing.md`](tool/execution-environment-ee109-hook-tamper-narrowing.md) | (IMPLEMENTED) #275 — 에이전트가 실행 환경 안의 정책 훅을 변조할 여지를 좁힌 EE-109 설계(승인본, 영어, aimon-sandbox#33 쪽 설계 포함) — 스테이징 사본을 매 호출 검증하는 `stage()` 계약, 훅 파일을 바이트로 셸에 넘겨 그 실행만의 디렉터리에 두는 실행 디렉터리 SPI(`RunDirectory` · `ShellFeature.RUN_DIRECTORY`), 훅 명령의 입출력을 이름 있는 파일에서 뺀 `LocalShell`, 남는 위험(실행 중인 훅 프로세스)과 진짜 권한 경계의 조건(§7), 샌드박스 후속 작업(§8), 그리고 구현이 설계에서 벗어난 점(§11) |
-| [`execution-environment-283-run-directory-followups.md`](tool/execution-environment-283-run-directory-followups.md) | (IMPLEMENTED) #283 — aimon-sandbox 가 실행 디렉터리를 구현하며(PR #35) 드러난 코어 쪽 후속 넷의 설계(승인본, 영어) — 둘 수 없는 경로(제어 문자 · 파일이면서 디렉터리인 경로)를 미리 거절하는 `RunDirectory.Builder`, 훅의 입력(업로드한 stdin)까지 넓힌 `HOOK_FILES_TAMPERED`, 공개하고 빌더가 강제하는 상한 `RunDirectory.MAX_TOTAL_BYTES`, 실행 환경이 훅이 남긴 백그라운드 작업을 끝낼 수 있다는 문서, 그리고 구현이 설계에서 벗어난 점(§8) |
-| [`execution-environment-notices.md`](tool/execution-environment-notices.md) | (IMPLEMENTED) 환경의 알림을 모든 도구 결과에 싣게 한 #254 설계(승인본, 영어) — `ExecutionEnvironment.drainNotices()` 를 `DefaultToolExecutor` 가 아니라 `SingleToolInvoker` 에서 PostTool 훅 뒤에 비우는 이유, 모델에게 가는 두 디스패치 경로, 기각한 대안(턴 시작 전달 · 두 단계 수신 확인 포함), 그리고 구현이 설계에서 벗어난 점(§8) |
-| [`workflow-isolation-hardening.md`](tool/workflow-isolation-hardening.md) | (IMPLEMENTED, 승인본, 영어, 차이는 §8) 워크플로 격리 브랜치를 다듬은 설계 — 브랜치 루트에 다시 거는 경로 규칙(스코프 **아래**에 두는 이유), 격리 거절의 이유를 싣는 `isolate()`, 중첩 격리를 거절한 근거, `WorktreeMerge.promote` 의 소속 검사와 메타데이터 사전 점검 |
+| [`monitor.md`](tool/monitor.md) | (IMPLEMENTED) 백그라운드 이벤트 감시 `Monitor` — source(셸·WebSocket·호스트 등록)와 정책의 분리, 세션 단위 큐 전달과 `sessionId` 로 막은 세션 간 누수, 깨우기를 모니터 안에 두지 않은 이유(§9.1 — 깨우기는 [`session/idle-wake.md`](session/idle-wake.md)). 셸 스트리밍은 `shell-contract.md` |
+| [`execution-environment.md`](tool/execution-environment.md) | (IMPLEMENTED) 도구의 파일 시스템·셸을 실행마다 고르는 `ExecutionEnvironment` — 타입, 수명과 소유권, 로컬 제공자, `resolve()` 지점, 사용 불가 환경, 포크 계약, 알림 두 채널, 프롬프트 서술, `environment` 동음이의, 샌드박스 제공자 계약 |
+| [`execution-environment-placement.md`](tool/execution-environment-placement.md) | 제공자가 어디서 돌지를 정하는 입력 — 정의 속성과 `environment.*` 실행 속성, 경로별 표, 루틴 해석기, 신뢰 경계, 워크플로 단계 속성 |
+| [`execution-environment-staging.md`](tool/execution-environment-staging.md) | 제어 저장소의 파일을 작업 환경으로 옮기는 스테이징 — 내용 주소, 매 호출 검증, 적재 뒤 바뀐 소스, 스킬 소스, 심볼릭 링크, `AIMON_SKILL_DIR`, 스윕 |
+| [`execution-environment-files.md`](tool/execution-environment-files.md) | 실행 환경의 파일 규칙 — 제어 저장소 경계, 경로 규칙, `FileStamp`, `ContentSearch`, artifact |
+| [`execution-environment-isolation.md`](tool/execution-environment-isolation.md) | 격리 브랜치와 병합 — `isolate` 의 두 답, 브랜치 구조, 경로 규칙 재고정, `.worktrees` 예약, 중첩 거절, 키의 실행 간 공유, `WorktreeMerge.promote` |
 
 ### skill · hook · subagent · workflow — 확장점
 
@@ -92,9 +85,11 @@
 | [`skill/command-unification.md`](skill/command-unification.md) | 슬래시 명령과 스킬을 하나의 진실로 합친 통합 |
 | [`skill/approval-scope.md`](skill/approval-scope.md) | pending → session → agent 승인 체인과 각 스코프의 도달 범위 |
 | [`hook/hook-system.md`](hook/hook-system.md) | 훅 종류, 설정 체계, 실행 순서 |
+| [`hook/hook-environment.md`](hook/hook-environment.md) | 훅이 도는 자리 — 실행 안·밖 분류와 `hasExecution`, `HookContext` 의 환경, 실행기 구성, `hooks.json` 배치 표, 격리 실행, 스킬 훅 범위와 끊기는 경로 거절, `subagentStart` · `subagentStop` 의 환경, 종료 순서 |
+| [`hook/hook-fail-closed.md`](hook/hook-fail-closed.md) | 판단하지 못한 가드 — 명령을 돌리지 못한 가드를 막는 규칙과 `failOpen`, `Unrun` 표, 포크 `onStart` block, `hooks.json` 로드 실패와 탈출구가 없는 이유, 경로별 동작 |
+| [`hook/hook-tamper-boundary.md`](hook/hook-tamper-boundary.md) | 정책 훅 변조의 경계 — 권한 경계가 아니라 좁히기라는 목표 수준, 실행 디렉터리(`RunDirectory`), 호출자별 경로와 스킬 후퇴, 변조 표지, 남는 위험, 진짜 권한 경계의 조건 |
 | [`hook/async-rewake.md`](hook/async-rewake.md) | 외부 이벤트로 에이전트를 다시 깨우는 rewake 봉투와 바운드 |
-| [`hook/hook-shell-cancellation-ee80.md`](hook/hook-shell-cancellation-ee80.md) | (IMPLEMENTED, 승인본, 영어, 차이는 §10) 훅의 셸 명령을 실행의 취소 신호에 묶는 일의 나머지(EE-80) — 이벤트를 가드와 보고로 나눈 것(보고 명령을 신호가 서기 전까지만 묶던 규칙은 EE-98 이 걷어 냈다 — §12), 규칙을 발화 지점이 아니라 컨텍스트의 getter 에 둔 이유, 메인 턴의 코디네이터를 `onStart` 앞으로 올린 것, 신호가 없는 자리(슬래시 명령 · `/compact` · rewake 리플레이 · 실행 밖 이벤트), 기각한 대안 |
-| [`hook/hook-cancellation-followups-ee93-ee97.md`](hook/hook-cancellation-followups-ee93-ee97.md) | (IMPLEMENTED, 승인본, 영어, 차이는 §13) EE-80 이 남긴 다섯 항목(EE-93~EE-97)을 항목마다 따로 결론낸 설계 — 끝나야 하는 보고 명령과 인터럽트가 명령에 닿는 두 길(신호 · 스레드; 승인본의 훅별 옵션은 EE-98 이 "보고 명령은 인터럽트에 멈추지 않는다" 는 규칙으로 바꿨다 — §14), 압축 요약 호출을 신호에 묶고 끊긴 요약을 차단기에서 빼는 것, `onStart` 중에 인터럽트된 포크가 `INTERRUPTED` 로 끝나며 목표 전의 전사를 돌려주는 이유, `isInterruptible` 이 사실을 말하게 한 것과 `onStart` 앞의 인터럽트를 쥐고 있다 넘기는 것, 짓지 않은 둘(도는 슬래시 명령의 인터럽트 · 스레드 인터럽트만으로 온 취소)과 그 이유 |
+| [`hook/hook-cancellation.md`](hook/hook-cancellation.md) | 훅과 인터럽트 — 가드 명령은 멈추고 보고 명령은 멈추지 않는 규칙과 이유, 인터럽트가 닿는 두 길(신호 · 스레드), 이벤트마다 어느 신호인가와 신호가 없는 자리, 인터럽트된 `onStart` · 압축의 실행 결과, 기다림과 종료 지연이라는 값 |
 | [`subagent/execution.md`](subagent/execution.md) | 포크 실행 — 세션 없는 실행의 정체성, 예산, 격리 |
 | [`subagent/background-task-result-persistence.md`](subagent/background-task-result-persistence.md) | 백그라운드 태스크의 **결과**를 저장소로 내린 자리 — 순서 계약, `block=true` 폴링, 크기 정책 |
 | [`subagent/code-defined-registration.md`](subagent/code-defined-registration.md) | 마크다운이 아니라 코드로 서브에이전트를 등록하는 경로 |
@@ -307,10 +302,26 @@
 | `session/session-owner-deletion-event.md` | [`session/session-model.md`](session/session-model.md) · [`session/session-store.md`](session/session-store.md) · [`session/routing.md`](session/routing.md) · [`session/backends.md`](session/backends.md) — 마지막 판본 `08c686e8` |
 | `session/session-owner-narrow-read.md` | [`session/session-store.md`](session/session-store.md) — 마지막 판본 `afe227bc` |
 | `session/session-record-store-contract.md` | [`session/session-store.md`](session/session-store.md) — 마지막 판본 `afe227bc` |
-| `tool-contract-hardening-design.md` | [`tool/contract-hardening.md`](tool/contract-hardening.md) |
+| `tool-contract-hardening-design.md` | [`tool/tool-contract.md`](tool/tool-contract.md) · [`tool/shell-contract.md`](tool/shell-contract.md) |
 | `tool-side-effect-axes-review.md` | [`tool/side-effect-axes.md`](tool/side-effect-axes.md) |
 | `implemented/tool-parallel-execution-design.md` | [`tool/parallel-execution.md`](tool/parallel-execution.md) |
 | `implemented/tool-search-design.md` | [`tool/tool-search.md`](tool/tool-search.md) |
+| `tool/contract-hardening.md` | [`tool/tool-contract.md`](tool/tool-contract.md) · [`tool/shell-contract.md`](tool/shell-contract.md) — 마지막 판본 `13effde0` |
+| `tool/execution-environment-implementation.md` | [`tool/execution-environment.md`](tool/execution-environment.md) · [`tool/execution-environment-staging.md`](tool/execution-environment-staging.md) · [`tool/execution-environment-files.md`](tool/execution-environment-files.md) · [`tool/shell-contract.md`](tool/shell-contract.md) — 마지막 판본 `a9f92304` |
+| `tool/execution-environment-ee42-workflow-attributes.md` | [`tool/execution-environment-placement.md`](tool/execution-environment-placement.md) — 마지막 판본 `ab66f15f` |
+| `tool/execution-environment-ee102-request-attributes.md` | [`tool/execution-environment-placement.md`](tool/execution-environment-placement.md) — 마지막 판본 `e4b5d91a` |
+| `tool/execution-environment-ee14-user-locale.md` | [`tool/execution-environment.md`](tool/execution-environment.md) — 마지막 판본 `82bcca30` |
+| `tool/execution-environment-notices.md` | [`tool/execution-environment.md`](tool/execution-environment.md) — 마지막 판본 `ac200e6f` |
+| `tool/workflow-isolation-hardening.md` | [`tool/execution-environment-isolation.md`](tool/execution-environment-isolation.md) — 마지막 판본 `a9271037` |
+| `tool/execution-environment-ee13-ee7-background-lifecycle.md` | [`tool/background-commands.md`](tool/background-commands.md) · [`tool/shell-contract.md`](tool/shell-contract.md) — 마지막 판본 `ab012834` |
+| `tool/execution-environment-ee49-ee51-ee58-isolation-boundary.md` | [`hook/hook-environment.md`](hook/hook-environment.md) · [`hook/hook-fail-closed.md`](hook/hook-fail-closed.md) · [`tool/background-commands.md`](tool/background-commands.md) — 마지막 판본 `ab012834` |
+| `tool/execution-environment-ee70-ee71-fail-closed.md` | [`hook/hook-fail-closed.md`](hook/hook-fail-closed.md) — 마지막 판본 `142dd9ae` |
+| `tool/execution-environment-ee9-ee12-hook-environment.md` | [`hook/hook-environment.md`](hook/hook-environment.md) · [`tool/execution-environment-staging.md`](tool/execution-environment-staging.md) — 마지막 판본 `0f7a0c73` |
+| `tool/execution-environment-ee48-ee52-ee81-hooks-in-environment.md` | [`hook/hook-environment.md`](hook/hook-environment.md) · [`tool/shell-contract.md`](tool/shell-contract.md) · [`tool/execution-environment-staging.md`](tool/execution-environment-staging.md) — 마지막 판본 `56efb5f6` |
+| `tool/execution-environment-ee109-hook-tamper-narrowing.md` | [`hook/hook-tamper-boundary.md`](hook/hook-tamper-boundary.md) · [`tool/execution-environment-staging.md`](tool/execution-environment-staging.md) — 마지막 판본 `4be61093` |
+| `tool/execution-environment-283-run-directory-followups.md` | [`hook/hook-tamper-boundary.md`](hook/hook-tamper-boundary.md) · [`tool/shell-contract.md`](tool/shell-contract.md) — 마지막 판본 `c9a12620` |
+| `hook/hook-shell-cancellation-ee80.md` | [`hook/hook-cancellation.md`](hook/hook-cancellation.md) — 마지막 판본 `2a1a59b2` |
+| `hook/hook-cancellation-followups-ee93-ee97.md` | [`hook/hook-cancellation.md`](hook/hook-cancellation.md) · [`agent-execution/interrupt.md`](agent-execution/interrupt.md) §6.1 — 마지막 판본 `8613c51b` |
 | `implemented/skill-command-unification-design.md` | [`skill/command-unification.md`](skill/command-unification.md) |
 | `implemented/skill-approval-conversation-scope-design.md` | [`skill/approval-scope.md`](skill/approval-scope.md) |
 | `implemented/hook-system-upgrade-design.md` | [`hook/hook-system.md`](hook/hook-system.md) |
@@ -360,6 +371,9 @@ llm 의 옛 기록 16종은 트리에서 지웠다 — 원문은 표의 마지�
 session 의 옛 기록 5종도 같은 방식으로 지웠다(`git show <커밋>:docs/design/session/<파일>`). 경로가 그대로인 `session-model.md` ·
 `routing.md` · `backends.md` · `session-log.md` 도 내용이 다시 쓰여 옛 절 번호가 맞지 않는다 — 마지막 판본은 각각
 `08c686e8` · `18fe9033` · `dabaafc3` · `2ba9ec61` 이다.
+tool 의 옛 기록 14종도 같은 방식으로 지웠다(`git show <커밋>:docs/design/tool/<파일>`). 경로가 그대로인 `execution-environment.md` ·
+`side-effect-axes.md` · `parallel-execution.md` · `tool-search.md` · `monitor.md` 도 내용이 다시 쓰여 옛 절 번호가 맞지 않는다 — 마지막 판본은 각각
+`ab012834` · `1ad5a060` · `22ef0ce4` · `eec9ccda` · `766b8b47` 이다.
 
 ---
 

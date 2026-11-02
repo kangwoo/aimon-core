@@ -47,7 +47,7 @@ class SkillRenderContextAccessTest {
 
     /**
      * EE-20: a skill with something to stage and a context with no environment to stage it into is an error, not an
-     * empty {@code ${AIMON_SKILL_DIR}} — execution-environment design §3, no host fallback. The tools that need the
+     * empty {@code ${AIMON_SKILL_DIR}} — execution-environment design §2, no host fallback. The tools that need the
      * environment fail the same way ({@link ExecutionEnvironmentAccess#require}).
      */
     @Test

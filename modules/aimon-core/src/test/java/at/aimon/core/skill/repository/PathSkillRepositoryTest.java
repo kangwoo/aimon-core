@@ -312,7 +312,7 @@ class PathSkillRepositoryTest {
     }
 
     // -----------------------------------------------------------------------
-    // resolveSource (staging source, execution-environment design §4.4)
+    // resolveSource (staging source, execution-environment-staging design §9)
     // -----------------------------------------------------------------------
 
     @Test

@@ -32,7 +32,7 @@ import at.aimon.core.tools.bash.KillShellTool;
  * <p>
  * No shell is involved here. {@code Bash} runs each command in the shell of the execution's environment
  * ({@code ToolContextKeys.EXECUTION_ENVIRONMENT}), read on every call, and a background command keeps the shell it
- * started in (execution-environment design §5.3). So the tools are always registered: an execution whose environment
+ * started in (background-commands design §2). So the tools are always registered: an execution whose environment
  * has no usable shell gets an error from the call, not a missing tool.
  *
  * @see OrcaToolProvider

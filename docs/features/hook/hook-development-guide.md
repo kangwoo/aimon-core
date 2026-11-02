@@ -537,5 +537,5 @@ public class SecurityAuditHookSetup {
 - [HookEventType.java](../../../modules/aimon-core/src/main/java/at/aimon/core/hook/HookEventType.java)
 - [HookResult.java](../../../modules/aimon-core/src/main/java/at/aimon/core/hook/execution/HookResult.java)
 - [HookRegistry.java](../../../modules/aimon-core/src/main/java/at/aimon/core/hook/HookRegistry.java)
-- [Hook System Upgrade 설계](../../design/hook/hook-system.md) — Phase 1–5 구현 기록
+- [훅 시스템 설계](../../design/hook/hook-system.md) — 결과 모델과 실행 모델의 설계 근거
 - [Tool 개발 가이드](../tool/tool-development-guide.md)

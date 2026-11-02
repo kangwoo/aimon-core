@@ -32,8 +32,9 @@ import at.aimon.core.shell.impl.local.LocalShell;
 
 /**
  * The default {@link ExecutionEnvironmentProvider}: one local workspace filesystem and one local shell, the same
- * {@link ExecutionEnvironment} for every request (execution-environment design §4.2). A fork's request carries its
- * parent environment, which is returned as-is (§5.2) — a fork of an isolated branch stays in that branch.
+ * {@link ExecutionEnvironment} for every request (execution-environment design §5). A fork's request carries its
+ * parent environment, which is returned as-is (execution-environment design §8) — a fork of an isolated branch stays in
+ * that branch.
  *
  * <p>
  * Two ways to build it:
@@ -48,13 +49,16 @@ import at.aimon.core.shell.impl.local.LocalShell;
  * </ul>
  *
  * <p>
- * <b>Path rules</b> (§9.2). The file tools see the workspace through a {@linkplain VirtualFileSystems#withPathRules
+ * <b>Path rules</b> (execution-environment-files design §4). The file tools see the workspace through a
+ * {@linkplain VirtualFileSystems#withPathRules
  * path-rule filesystem}; by default
  * the control store {@code .aimon/} is hidden and the staging area {@code .aimon-staged/} is read-only. An assembly
- * that wants the model to edit its own skills passes other rules explicitly. The shell is not restricted (§2).
+ * that wants the model to edit its own skills passes other rules explicitly. The shell is not restricted
+ * (execution-environment design §1).
  *
  * <p>
- * <b>Staging</b> (§4.4) copies into {@code {workspace}/.aimon-staged/{name}/{contentKey}/}. In owned
+ * <b>Staging</b> (execution-environment-staging design §3, §13) copies into
+ * {@code {workspace}/.aimon-staged/{name}/{contentKey}/}. In owned
  * {@code workspaceRoot} mode — a directory private to this provider — building the provider sweeps copies that are
  * neither the newest for their name nor younger than {@link Builder#stagingSweepGrace(Duration)} (24 hours by
  * default, the longest a background command can outlive the execution that started it — and raised to

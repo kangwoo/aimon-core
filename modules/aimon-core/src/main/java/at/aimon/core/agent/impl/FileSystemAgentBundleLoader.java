@@ -120,8 +120,8 @@ public final class FileSystemAgentBundleLoader implements AgentBundleLoader {
      * <p>
      * A skill directory under {@code {basePath}/{name}/skills/}, or anything inside one, may be a symbolic link. It is
      * followed when it resolves inside that {@code skills/} directory or inside one of {@code allowedSkillLinkRoots};
-     * a skill with a link that resolves anywhere else does not load, and only that skill (execution-environment
-     * design §4.4). With an empty list — what the other constructors pass — only links within {@code skills/} are
+     * a skill with a link that resolves anywhere else does not load, and only that skill (execution-environment-staging
+     * design §10). With an empty list — what the other constructors pass — only links within {@code skills/} are
      * followed. The list is checked here, before any bundle is read: see
      * {@link VirtualFileSystems#checkedLinkRoots(Collection)} for what is refused.
      *
