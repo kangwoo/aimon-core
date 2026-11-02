@@ -5,5 +5,5 @@
 #   mkdocs serve          # local preview at http://127.0.0.1:8000
 #   mkdocs build --strict # what CI runs
 mkdocs==1.6.1
-mkdocs-material==9.7.7
+mkdocs-material==9.8.0
 mkdocs-static-i18n==1.3.1
