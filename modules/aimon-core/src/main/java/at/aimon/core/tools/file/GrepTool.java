@@ -331,7 +331,7 @@ public class GrepTool extends GenericTool<GrepInput, String> {
      *
      * <p>
      * An unavailable environment is not a failed listing: it propagates, so the model is told why instead of being
-     * told that nothing matched (execution-environment design §5.1).
+     * told that nothing matched (execution-environment design §7).
      */
     private List<String> discoverFiles(VirtualFileSystem fileSystem, String path) {
         try {

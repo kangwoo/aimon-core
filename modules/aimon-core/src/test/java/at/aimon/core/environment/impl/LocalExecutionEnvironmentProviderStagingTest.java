@@ -44,7 +44,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 
-@DisplayName("LocalExecutionEnvironmentProvider staging (execution-environment §4.4)")
+@DisplayName("LocalExecutionEnvironmentProvider staging (execution-environment-staging)")
 class LocalExecutionEnvironmentProviderStagingTest {
 
     @TempDir

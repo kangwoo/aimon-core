@@ -472,8 +472,10 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 ? ExecutionId.of(resumedBuffer.getSessionId().value())
                 : ExecutionId.generate("subagent:" + subagent.getName());
 
-        // Resolve the execution environment once, before the prompt is built and before any tool runs (design §5.1).
-        // The parent environment rides along so the local provider can answer with it unchanged (§5.2); a fork that
+        // Resolve the execution environment once, before the prompt is built and before any tool runs
+        // (execution-environment design §6).
+        // The parent environment rides along so the local provider can answer with it unchanged (execution-environment
+        // design §8); a fork that
         // was handed no provider gets an unavailable environment naming the wiring gap, never the host.
         final ExecutionEnvironment executionEnvironment = resolveExecutionEnvironment(context, request, executionId);
 
@@ -552,7 +554,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 // Per-execution artifact collector so artifact-producing subagent tools have the context key (parity
                 // with the main-agent executor). Surfacing collected artifacts on SubagentExecutionResult is a
                 // follow-up.
-                // Archived artifacts of this fork land under its own execution id (execution-environment §9.3).
+                // Archived artifacts of this fork land under its own execution id (execution-environment-files §7).
                 final ArtifactCollector artifactCollector = new ArtifactCollector(executionId.value());
                 final ToolContext toolContext = createToolContext(context, request, sessionRegistry,
                         coordinator.getSignal(), effectiveMetadata, executionId, artifactCollector,
@@ -1177,7 +1179,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     /**
      * Resolves the fork's execution environment through the provider forwarded from the spawning execution, passing
      * the spawner's environment as the parent and the fork's own definition, so a provider can place each subagent
-     * differently (design §5.2).
+     * differently (execution-environment-placement design §3).
      *
      * <p>
      * The request carries no {@link EnvironmentRequest#requestAttributes() request attributes}, on purpose (issue
@@ -1291,7 +1293,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         builder.put(ToolContextKeys.ARTIFACT_COLLECTOR, artifactCollector);
         builder.put(TodoWriteTool.CONTEXT_ID_KEY, executionId.value());
 
-        // PAR-05 / execution-environment §7: inject a thread-safe, execution-scoped map of read stamps (parity with
+        // PAR-05 / execution-environment-files §5: inject a thread-safe, execution-scoped map of read stamps (parity
+        // with
         // the main-agent executor). A fresh map, not the parent's: a fork does not inherit its parent's reads.
         builder.put(ReadTool.FILE_STAMPS_KEY, new ConcurrentHashMap<>());
 

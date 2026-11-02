@@ -78,7 +78,7 @@ class OrcaAgentRuntimeFactoryMaterializeTest {
 
         Skill demo = registry.getSkill("demo").orElseThrow();
         // The materialized copy is the staging source: ${AIMON_SKILL_DIR} is whatever an environment's stage()
-        // returns for it, never this control-store path itself (execution-environment design §4.4).
+        // returns for it, never this control-store path itself (execution-environment-staging design §9).
         assertThat(demo.getStagedResource()).isPresent();
         assertThat(demo.getStagedResource().get().getSourceFileSystem()).isSameAs(fileSystem);
         assertThat(demo.getStagedResource().get().getSourceDir()).isEqualTo(BUNDLED_SKILLS_DIR + "/demo");

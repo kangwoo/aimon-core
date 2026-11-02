@@ -30,8 +30,9 @@ import at.aimon.core.tools.file.WriteTool;
  *
  * <p>
  * None of the tools is given a filesystem: each reads the execution's environment from its {@code ToolContext} on
- * every call (execution-environment design §6). The only branch left here is the artifact one. The artifact-aware
- * variants archive into the context's control store when an environment is not durable (§9.3).
+ * every call (execution-environment design §9). The only branch left here is the artifact one. The artifact-aware
+ * variants archive into the context's control store when an environment is not durable (execution-environment-files
+ * design §7).
  *
  * @see OrcaToolProvider
  */

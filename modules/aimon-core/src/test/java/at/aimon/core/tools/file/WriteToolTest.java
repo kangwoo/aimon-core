@@ -109,7 +109,7 @@ class WriteToolTest {
         assertThat(result.getContent()).endsWith(" to " + path);
     }
 
-    // stale-write protection (execution-environment design §7)
+    // stale-write protection (execution-environment-files design §5)
 
     @Test
     void testExecute_NewFile_NeedsNoRead() {

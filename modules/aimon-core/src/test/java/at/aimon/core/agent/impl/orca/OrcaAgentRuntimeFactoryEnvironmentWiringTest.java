@@ -48,7 +48,7 @@ import at.aimon.core.workflow.RunId;
 import at.aimon.core.workflow.WorkflowRunner;
 
 /**
- * Pins how {@link OrcaAgentRuntimeFactory} wires the execution environment (execution-environment design §4.3, §6).
+ * Pins how {@link OrcaAgentRuntimeFactory} wires the execution environment (execution-environment design §4, §9).
  *
  * <p>
  * Tool providers get no working filesystem and no shell at registration time — only the control store — so no tool

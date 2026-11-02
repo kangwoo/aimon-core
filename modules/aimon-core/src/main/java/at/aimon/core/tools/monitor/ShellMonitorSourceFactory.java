@@ -38,7 +38,7 @@ import at.aimon.core.tools.monitor.exception.MonitorRequestException;
  *
  * <p>
  * The source keeps the execution environment it was created with, the way a background {@code Bash} command keeps its
- * shell (execution-environment design §5.3), and reads the shell from it when it starts. It holds the environment and
+ * shell (background-commands design §2), and reads the shell from it when it starts. It holds the environment and
  * not the shell because nothing under {@code at.aimon.core.tools} may hold a shell
  * ({@code PackageDependencyArchitectureTest}).
  *

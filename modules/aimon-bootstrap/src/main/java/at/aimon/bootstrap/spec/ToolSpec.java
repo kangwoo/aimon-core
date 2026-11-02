@@ -159,7 +159,7 @@ public final class ToolSpec {
     }
 
     /**
-     * Returns the artifact policy of the file tools (execution-environment design §9.3): whether {@code Write} and
+     * Returns the artifact policy of the file tools (execution-environment-files design §7): whether {@code Write} and
      * {@code Edit} register what they write as downloadable artifacts, and how much a non-durable environment may
      * archive into the control store.
      *

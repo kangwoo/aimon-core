@@ -48,7 +48,8 @@ public final class ExecutionEnvironments {
 
     /**
      * Resolves the execution's environment, turning every failure into an {@link UnavailableExecutionEnvironment}
-     * instead of failing the execution (design §5.1). A {@code null} provider or a {@code null} answer counts as a
+     * instead of failing the execution (execution-environment design §7). A {@code null} provider or a {@code null}
+     * answer counts as a
      * failure. Never falls back to a host environment.
      *
      * @param provider

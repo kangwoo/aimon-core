@@ -248,7 +248,7 @@ public final class S3FileSystem implements VirtualFileSystem {
             HeadObjectResponse response = s3Client.headObject(headObjectRequest);
 
             // The ETag changes with the content, so the file tools' read stamps catch a same-second, same-size
-            // rewrite that the one-second LastModified would miss (execution-environment design §7).
+            // rewrite that the one-second LastModified would miss (execution-environment-files design §5).
             return FileMetadata.builder().path(path).size(response.contentLength()).createdAt(response.lastModified())
                     .modifiedAt(response.lastModified()).mimeType(response.contentType()).etag(response.eTag()).build();
 

@@ -20,7 +20,7 @@ import at.aimon.core.shell.VirtualShell;
 
 /**
  * A workflow branch of a {@link LocalExecutionEnvironment}: its writes land under {@code .worktrees/{branchKey}/}
- * (execution-environment design §4.2, §5.2).
+ * (execution-environment-isolation design §4).
  *
  * <p>
  * <b>What is isolated — file tools and the default cwd, nothing more.</b> The filesystem is a

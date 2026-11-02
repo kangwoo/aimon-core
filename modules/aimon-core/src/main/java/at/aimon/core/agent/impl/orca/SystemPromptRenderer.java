@@ -183,7 +183,7 @@ final class SystemPromptRenderer {
 
     /**
      * Builds the environment block from the <b>execution's</b> descriptor — where its commands actually run, not the
-     * JVM host (execution-environment design §10). On a local environment the text is identical to the block the
+     * JVM host (execution-environment design §11). On a local environment the text is identical to the block the
      * pre-CTX-04 {@link StringBuilder}-based implementation appended. A field the descriptor does not know is left out,
      * and its notes (e.g. why the environment is unavailable) follow as one more line.
      *

@@ -230,7 +230,7 @@ class DefaultToolInputSchemaValidatorTest {
     }
 
     /**
-     * The degradation table of the design's §4.5d, one test per row.
+     * The degradation table of the tool-contract design §4.2, one test per row.
      *
      * <p>
      * These are the tests that keep an unfamiliar MCP server from having its perfectly good calls rejected: every

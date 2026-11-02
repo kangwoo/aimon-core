@@ -9,7 +9,7 @@ import java.util.Objects;
 /**
  * The free-form {@code attributes} of an agent or subagent definition: string keys to string values that the framework
  * carries but never reads, for a component it does not know about — an execution environment provider choosing a
- * sandbox slot from {@code sandbox.slot}, say (execution-environment design §5.2).
+ * sandbox slot from {@code sandbox.slot}, say (execution-environment-placement design §3).
  *
  * <p>
  * One reading for both definition files, so {@code AGENT.md} and {@code agents/*.md} cannot disagree on what the same

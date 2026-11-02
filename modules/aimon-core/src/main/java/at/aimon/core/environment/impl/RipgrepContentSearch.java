@@ -30,7 +30,7 @@ import at.aimon.core.filesystem.VfsPaths;
 
 /**
  * A {@link ContentSearch} that runs {@code rg --json} in a local directory and normalises its output
- * (execution-environment design §4.2, §14 — the result is a value, not rg's wire format).
+ * (execution-environment-files design §6 — the result is a value, not rg's wire format).
  *
  * <p>
  * It searches the way {@code Grep}'s own walk does, so both paths print the same text: {@code --no-ignore --hidden}

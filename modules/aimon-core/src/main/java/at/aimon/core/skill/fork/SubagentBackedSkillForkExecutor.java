@@ -165,7 +165,7 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
                 .callerAllowedTools(CallerAllowedTools.of(toolContext))
                 .invokingSessionId(InvokingSessionAccess.idToPropagate(toolContext).orElse(null))
                 // The fork resolves its own environment from the spawning runtime's provider, with this execution's
-                // environment as its parent (execution-environment design §5.2).
+                // environment as its parent (execution-environment design §8).
                 .executionEnvironment(ExecutionEnvironmentAccess.of(toolContext).orElse(null))
                 .executionEnvironmentProvider(ExecutionEnvironmentAccess.providerOf(toolContext).orElse(null))
                 // The spawning execution's quota guard: the fork is charged to its keys, never resolves its own.

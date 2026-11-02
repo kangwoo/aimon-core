@@ -1,7 +1,7 @@
 package at.aimon.core.agent.artifact;
 
 /**
- * Which store an artifact's {@link FileArtifact#getPath() path} points into (execution-environment design §9.3). A
+ * Which store an artifact's {@link FileArtifact#getPath() path} points into (execution-environment-files design §7). A
  * download endpoint needs to know which one to open.
  */
 public enum ArtifactStorage {

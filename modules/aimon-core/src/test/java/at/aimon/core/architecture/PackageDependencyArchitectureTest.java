@@ -90,7 +90,7 @@ class PackageDependencyArchitectureTest {
      * <p>
      * {@code agent <-> environment} comes from the execution-environment design itself. The request a provider
      * answers names agent identities ({@code Agent}, {@code AgentRuntimeId}, {@code SessionId}, {@code ExecutionId};
-     * §4.1), and prompt assembly renders the execution's {@code EnvironmentDescriptor} (§10). Two guard rules keep it
+     * §3), and prompt assembly renders the execution's {@code EnvironmentDescriptor} (§11). Two guard rules keep it
      * from growing: {@link #environmentSpiDependenciesAreCurated()} bounds the environment side to those identity
      * types, and {@link #onlyAgentContextAndCompactMayReachEnvironmentFromAgentTree()} bounds the agent side to prompt
      * assembly ({@code agent.context}) and compaction ({@code agent.compact}).
@@ -252,7 +252,7 @@ class PackageDependencyArchitectureTest {
     void agentContextMayDependOnHookRegistryOnly() {
         // Narrow carve-out: see PKG_AGENT_CONTEXT. Everything else agent.context needs is in the agent core allow-list.
         // Second carve-out: ContextAssemblyRequest carries the execution's ExecutionEnvironment, and the environment
-        // block renders its EnvironmentDescriptor (execution-environment §5.1, §10). Exact packages, not "..", so
+        // block renders its EnvironmentDescriptor (execution-environment §6.4, §11). Exact packages, not "..", so
         // environment.impl stays forbidden.
         ArchRule rule = classes().that().resideInAPackage(PKG_AGENT_CONTEXT).should()
                 .onlyDependOnClassesThat(JavaClass.Predicates.belongToAnyOf(HookRegistry.class)
@@ -306,7 +306,8 @@ class PackageDependencyArchitectureTest {
         // (at.aimon.core.filesystem) for the shared/persistent step cache, mirroring VfsSessionSnapshotStore. The
         // separate filesystemImplMustNotLeak rule still bars workflow from at.aimon.core.filesystem.impl.
         // Execution-environment addition: an isolated step derives its branch with ExecutionEnvironment.isolate(),
-        // resolving the parent environment through the run's provider when the run has none (§5.2) — the SPI types
+        // resolving the parent environment through the run's provider when the run has none (execution-environment
+        // design §8) — the SPI types
         // and the resolve helper, never environment.impl.
         // Usage-quota addition: a background run carries the submitting execution's QuotaGuard onto its per-run
         // launch context (usage-quota §4.3) — the guard value only, never a ledger or a quota impl.
@@ -402,7 +403,7 @@ class PackageDependencyArchitectureTest {
             + " depend on the VirtualFileSystem SPI in at.aimon.core.filesystem.")
     void filesystemImplMustNotLeakOutsideFilesystemTree() {
         // Carve-out: LocalExecutionEnvironmentProvider is the one in-core assembler that constructs LocalFileSystem
-        // and ScopedVirtualFileSystem for tools (execution-environment design §4.2). Code that needs a read-only view
+        // and ScopedVirtualFileSystem for tools (execution-environment design §5). Code that needs a read-only view
         // of a host directory, or path rules over a filesystem, uses the VirtualFileSystems factory instead.
         ArchRule rule = noClasses().that().resideOutsideOfPackage(PKG_FILESYSTEM_CORE).and()
                 .resideOutsideOfPackage(PKG_ENVIRONMENT_IMPL).should().dependOnClassesThat()
@@ -439,7 +440,8 @@ class PackageDependencyArchitectureTest {
             + " the filesystem and shell implementations and Jackson")
     void environmentSpiDependenciesAreCurated() {
         // Bounds the environment -> agent half of the agent <-> environment baseline cycle to the identities an
-        // EnvironmentRequest names (§4.1). environment never depends on tools or agent.tool: reading the environment
+        // EnvironmentRequest names (execution-environment design §3). environment never depends on tools or agent.tool:
+        // reading the environment
         // out of a ToolContext lives in at.aimon.core.tools.ExecutionEnvironmentAccess.
         ArchRule spi = classes().that().resideInAnyPackage(PKG_ENVIRONMENT_SPI, PKG_ENVIRONMENT_EXCEPTION).should()
                 .onlyDependOnClassesThat(JavaClass.Predicates
@@ -474,7 +476,8 @@ class PackageDependencyArchitectureTest {
             + " tools read both from the execution environment on every call (execution-environment design §15)")
     void toolsHoldNoFileSystemOrShellFields() {
         // One exception, by name: ArtifactArchive holds the control store (not the model's workspace) to archive
-        // artifacts written in a non-durable environment (§9.3). The tools that use it still take their working
+        // artifacts written in a non-durable environment (execution-environment-files design §7). The tools that use it
+        // still take their working
         // filesystem from the context.
         final Set<String> exempt = Set.of("at.aimon.core.tools.artifact.ArtifactArchive");
         final List<String> violations = new ArrayList<>();
@@ -502,7 +505,7 @@ class PackageDependencyArchitectureTest {
     @Test
     @DisplayName("No skill hook or skill parser class holds a VirtualShell in a field or constructor parameter — a"
             + " skill-declared shell action takes its shell from the firing hook context's execution environment"
-            + " (execution-environment design §15)")
+            + " (hook-environment design §18)")
     void skillHooksHoldNoShell() {
         // A shell bound when a skill is parsed is the host's, and outlives every execution it is then used in
         // (EE-12). One exception, by name: HostShellActionExecutor is the fixed-shell executor for operator-authored

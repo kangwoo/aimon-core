@@ -388,7 +388,7 @@ class EditToolTest {
         assertThat(result.isSuccess()).isTrue();
     }
 
-    // stale-write protection (execution-environment design §7)
+    // stale-write protection (execution-environment-files design §5)
 
     @Test
     void testExecute_WithoutRead_IsRefused() throws IOException {

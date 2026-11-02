@@ -24,7 +24,7 @@ class SkillRenderContextsTest {
 
         /**
          * The skill directory is no longer derived here: {@code ${AIMON_SKILL_DIR}} is the path the execution
-         * environment returns when it stages the skill (execution-environment design §4.4), which only
+         * environment returns when it stages the skill (execution-environment-staging design §12), which only
          * {@code SkillRenderContextAccess} can compute. A skill's resource paths — repository paths — must never leak
          * into the context from this side.
          */

@@ -35,7 +35,8 @@ import at.aimon.core.filesystem.exception.InvalidPathException;
  *
  * <p>
  * It exists so that a skill directory on the host ({@code PathSkillRepository}) can be a staging source
- * (execution-environment design §4.4) without the side effects of {@link LocalFileSystem}: it never creates its root,
+ * (execution-environment-staging design §9) without the side effects of {@link LocalFileSystem}: it never creates its
+ * root,
  * never checks that it is writable, and needs no initialisation, so a missing or read-only skills directory (a
  * ConfigMap volume, a {@code readOnlyRootFilesystem} image) works as it did before. A missing root simply has no
  * files. Every mutating method throws {@link UnsupportedOperationException}; the instance holds no resources.
@@ -44,7 +45,8 @@ import at.aimon.core.filesystem.exception.InvalidPathException;
  * Paths are resolved against the root and normalised, and must stay under it.
  *
  * <p>
- * <b>Symbolic links (design §4.4, the link rule).</b> Every method that looks at a path — {@link #read},
+ * <b>Symbolic links (execution-environment-staging design §10, the link rule).</b> Every method that looks at a path —
+ * {@link #read},
  * {@link #exists}, {@link #isDirectory}, {@link #getMetadata}, {@link #list} and {@link #listRecursive} — follows a
  * link, including a linked start directory such as a skill directory installed as
  * {@code skills/foo -> ../shared/foo}, only when its real path lies inside the root or inside one of the operator's

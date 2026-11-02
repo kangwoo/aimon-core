@@ -30,7 +30,7 @@ import java.util.Objects;
  * <b>Not the only {@code null} policy in this codebase.</b> {@code at.aimon.core.workflow.impl.StructuredOutputSupport}
  * validates structured <em>output</em> and treats a {@code null} value as present-but-wrongly-typed — the opposite
  * reading. The two are deliberately separate (different direction, different consumer); see that class and the
- * tool-contract-hardening design §8 before trying to unify them.
+ * tool-contract design §10 before trying to unify them.
  */
 public final class NullSafeMaps {
 

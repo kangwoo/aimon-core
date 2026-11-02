@@ -9,7 +9,7 @@ import at.aimon.core.environment.EnvironmentDescriptor;
  * agent's system prompt, a fork's system prompt and {@link EnvironmentContextProvider} all emit.
  *
  * <p>
- * The block describes where the execution's commands run, not the JVM host (execution-environment design §10). On a
+ * The block describes where the execution's commands run, not the JVM host (execution-environment design §11). On a
  * local environment the text is identical to the block rendered from the host values before. A field the descriptor
  * does not know is left out, and its notes (e.g. why the environment is unavailable) follow as one more line.
  */

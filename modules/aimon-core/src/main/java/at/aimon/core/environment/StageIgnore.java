@@ -5,7 +5,8 @@ import java.util.List;
 import java.util.regex.Pattern;
 
 /**
- * A minimal gitignore-subset matcher for {@code .stageignore} files (design §4.4): globs ({@code *}, {@code **},
+ * A minimal gitignore-subset matcher for {@code .stageignore} files (execution-environment-staging design §8): globs
+ * ({@code *}, {@code **},
  * {@code ?}), directory patterns ({@code dir/}), anchored patterns (containing a {@code /}), {@code !} negation and
  * {@code #} comments. The last matching rule wins, and ignoring a directory ignores everything under it.
  *

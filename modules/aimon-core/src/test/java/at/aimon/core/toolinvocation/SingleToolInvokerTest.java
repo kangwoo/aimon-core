@@ -124,7 +124,7 @@ class SingleToolInvokerTest {
     // --- tests ------------------------------------------------------------------------------------------------------
 
     @Test
-    @DisplayName("pre/post tool hooks see the descriptor of the execution's environment, not the host (design §10)")
+    @DisplayName("pre/post tool hooks see the descriptor of the execution's environment, not the host (hook-environment design §4)")
     void toolHooksCarryTheExecutionEnvironmentDescriptor() {
         givenToolBehavior(InterruptBehavior.NON_INTERRUPTIBLE);
         when(toolExecutionManager.execute(any(), any(), any(), any()))

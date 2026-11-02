@@ -28,7 +28,7 @@ import at.aimon.core.filesystem.VfsPaths;
 import at.aimon.core.filesystem.VirtualFileSystem;
 
 /**
- * Content-addressed staging into a local environment's workspace (execution-environment design §4.4).
+ * Content-addressed staging into a local environment's workspace (execution-environment-staging design).
  *
  * <p>
  * A resource is copied to {@code {stagingRoot}/{name}/{contentKey}/} on the <b>raw</b> workspace filesystem (the
@@ -39,7 +39,7 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  * again otherwise (EE-37, EE-109). Nothing about an earlier check is remembered, because a shell running as the same
  * user can rewrite a copy at any time; the cost is one listing and one read of the copy per call, bounded by the
  * staging limit. What this does not close is the moment between the check and a process opening the files by path
- * (EE-109 record §3). The first copy also writes
+ * (hook-tamper-boundary design §9). The first copy also writes
  * {@code {stagingRoot}/}{@value #GITIGNORE} containing {@code *} unless one exists (EE-4). The copy takes exactly
  * {@link StagedResource#getFiles()}, hashes what it copies with the same algorithm as
  * {@link StagedResource#scan}, and writes the marker last; a size over the limit or an unreadable recorded file fails
@@ -63,7 +63,8 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  * changes again between the second scan and its copy is refused, and the next call starts over. This is only about
  * the <em>first</em> copy: once a copy under the loaded key exists it is what is served, in this process and in any
  * that loaded the same version, and an edit made afterwards is not seen until the registry reads the resource again
- * (design §4.4 — the source is hashed when the registry reads it; later calls check the copy, not the source). What
+ * (execution-environment-staging design §7 — the source is hashed when the registry reads it; later calls check the
+ * copy, not the source). What
  * is staged is the resource's
  * files; whatever the registry parsed from them at load (a skill's rendered body, its tool restrictions and hooks)
  * stays the loaded version until then.

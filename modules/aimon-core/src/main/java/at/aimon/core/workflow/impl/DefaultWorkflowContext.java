@@ -167,8 +167,9 @@ public final class DefaultWorkflowContext implements WorkflowContext {
 
     /**
      * Resolves the launch context a step is launched with. Non-isolated steps use the borrowed base one. An isolated
-     * step asks the execution environment for a branch ({@link ExecutionEnvironment#isolate}, execution-environment
-     * design §5.2) — the parent's environment when the run has one, else one resolved from the runtime's provider (a
+     * step asks the execution environment for a branch ({@link ExecutionEnvironment#isolate},
+     * execution-environment-isolation
+     * design §3) — the parent's environment when the run has one, else one resolved from the runtime's provider (a
      * runtime-level runner has no calling execution). The branch environment becomes the step's parent environment,
      * which the fork's provider hands back unchanged; the tool registry and the cancellation signal are the base launch
      * context's. An environment that cannot isolate fails the run rather than running the branch unscoped (C30); when

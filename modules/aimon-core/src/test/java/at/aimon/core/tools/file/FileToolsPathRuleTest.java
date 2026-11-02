@@ -28,7 +28,7 @@ import ch.qos.logback.core.read.ListAppender;
 
 /**
  * A path rule's refusal reaches the model as a plain tool error — not as "Unexpected error", and not logged at ERROR
- * with a stack trace — because it is an expected answer (execution-environment design §9.2).
+ * with a stack trace — because it is an expected answer (execution-environment-files design §4).
  */
 @DisplayName("File tools answer a path-rule refusal with a plain error")
 class FileToolsPathRuleTest {

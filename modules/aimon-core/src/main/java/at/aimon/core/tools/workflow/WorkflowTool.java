@@ -530,7 +530,7 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
                 .callerAllowedTools(CallerAllowedTools.of(context))
                 .invokingSessionId(InvokingSessionAccess.idToPropagate(context).orElse(null))
                 // The fork resolves its own environment from the spawning runtime's provider, with this execution's
-                // environment as its parent (execution-environment design §5.2).
+                // environment as its parent (execution-environment design §8).
                 .executionEnvironment(ExecutionEnvironmentAccess.of(context).orElse(null))
                 .executionEnvironmentProvider(ExecutionEnvironmentAccess.providerOf(context).orElse(null))
                 // The spawning execution's quota guard: the fork is charged to its keys, never resolves its own.

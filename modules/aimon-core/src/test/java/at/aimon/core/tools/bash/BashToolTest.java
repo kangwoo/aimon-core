@@ -136,7 +136,7 @@ class BashToolTest {
         }
     }
 
-    // Environment notices (execution-environment design §8)
+    // Environment notices (execution-environment design §10.1)
 
     @Test
     void testExecute_Notices_ArePrefixedBeforeStdoutAndNotMixedIntoStderr() {
@@ -339,7 +339,8 @@ class BashToolTest {
     void testExecute_NoMatchExitCode_ReportsTheCodeRatherThanInterpretingIt() {
         // grep exiting 1 on no match is the canonical "non-zero but not broken" case. The tool takes no position on
         // it: the code is reported, the empty output is reported, and whether that counts as failure is left to the
-        // model (and to a future allow-list — design §6.4). Pinned so adding such a list is a visible decision.
+        // model (and to a future allow-list — shell-contract design §8.5). Pinned so adding such a list is a visible
+        // decision.
         stubShell.setNextResult(new ShellCommandResult(1, "", "", Duration.ofMillis(5)));
 
         Map<String, Object> toolUse = Map.of("command", "grep nothing file.txt");

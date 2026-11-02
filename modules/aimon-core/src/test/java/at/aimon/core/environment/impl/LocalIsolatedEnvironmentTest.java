@@ -40,7 +40,7 @@ import at.aimon.core.shell.ShellCommandResult;
 import at.aimon.core.shell.ShellFeature;
 import at.aimon.core.shell.exception.ShellCancelledException;
 
-@DisplayName("LocalIsolatedEnvironment — isolate() of the local environment (execution-environment design §4.2)")
+@DisplayName("LocalIsolatedEnvironment — isolate() of the local environment (execution-environment-isolation design §3)")
 @DisabledOnOs(OS.WINDOWS)
 class LocalIsolatedEnvironmentTest {
 

@@ -23,7 +23,7 @@ import at.aimon.core.agent.session.SessionId;
  *
  * <p>
  * <b>Bash runs in the execution environment's shell.</b> The tool takes its {@code VirtualShell} from the
- * {@code ExecutionEnvironment} of the execution (execution-environment design §4.2, §6), the same environment its file
+ * {@code ExecutionEnvironment} of the execution (execution-environment design §5, §9), the same environment its file
  * tools read and write, so the shell's default working directory is the workspace root — here the node's
  * {@code VirtualFileSystem} root — not the JVM's current directory. {@link #bashRunsInTheNodeRoot} pins that.
  *
@@ -107,7 +107,7 @@ class BashToolTurnIntegrationTest {
                 .filter(observation -> observation.startsWith("/")).findFirst()
                 .orElseThrow(() -> new AssertionError("pwd produced no path-looking observation"));
 
-        // Behaviour change (execution-environment design §1.6/§4.2): the shell and the file tools come from one
+        // Behaviour change (execution-environment design §5): the shell and the file tools come from one
         // environment and see the same files, so the default cwd is the workspace root, not the JVM's directory.
         // Compared as real paths — macOS reports /private/var for a /var temp dir.
         assertThat(Path.of(reported.trim()).toRealPath()).isEqualTo(node.root().toRealPath());

@@ -22,7 +22,7 @@ import at.aimon.core.filesystem.exception.FileNotFoundException;
 
 /**
  * A read-only {@link VirtualFileSystem} view of classpath skills, rooted at a repository's {@code basePath} — the
- * staging source of {@link ClasspathSkillRepository} (execution-environment design §4.4).
+ * staging source of {@link ClasspathSkillRepository} (execution-environment-staging design §9).
  *
  * <p>
  * Paths are relative to {@code basePath} ({@code {skill}/scripts/x.sh}). A skill directory is listed with the same

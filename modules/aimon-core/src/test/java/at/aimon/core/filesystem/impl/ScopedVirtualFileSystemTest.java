@@ -243,7 +243,7 @@ class ScopedVirtualFileSystemTest {
                 });
     }
 
-    // --- shared prefixes and branch host paths (execution-environment design §4.2, stage 4) --------------------
+    // --- shared prefixes and branch host paths (execution-environment-isolation design §6) --------------------
 
     private VirtualFileSystem sharing(Path tempDir) {
         this.basePath = tempDir.toString();

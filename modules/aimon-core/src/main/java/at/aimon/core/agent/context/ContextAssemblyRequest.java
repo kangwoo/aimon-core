@@ -15,7 +15,7 @@ import at.aimon.core.environment.ExecutionEnvironment;
  *
  * <p>
  * The environment is the <b>execution's</b> {@link ExecutionEnvironment}, the same value the execution's tools receive
- * (execution-environment design §5.1): the directory summary, the git branch and the environment block all describe
+ * (execution-environment design §11): the directory summary, the git branch and the environment block all describe
  * where the tools actually run.
  *
  * <p>

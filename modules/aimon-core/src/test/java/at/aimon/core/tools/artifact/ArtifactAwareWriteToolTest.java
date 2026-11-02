@@ -435,7 +435,7 @@ class ArtifactAwareWriteToolTest {
     }
 
     @Nested
-    @DisplayName("Execution environment (execution-environment design §9.3)")
+    @DisplayName("Execution environment (execution-environment-files design §7)")
     class ExecutionEnvironmentDurability {
 
         @Test

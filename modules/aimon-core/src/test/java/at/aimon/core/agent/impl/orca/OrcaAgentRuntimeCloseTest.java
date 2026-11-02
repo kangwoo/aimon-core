@@ -37,7 +37,7 @@ import at.aimon.core.workflow.WorkflowRunner;
  * agent-scoped resource it owns ({@link McpClientManager}, {@link WorkflowRunner}) but must <b>not</b> close the
  * application-scoped {@link KnowledgeStore} (whose lifetime is owned outside the context), nor the
  * {@link ExecutionEnvironmentProvider} it borrows — the provider owns the shells and filesystems behind the
- * environments it resolves (execution-environment design §4.3).
+ * environments it resolves (execution-environment design §4).
  *
  * <p>
  * The {@code WorkflowRunner} cases matter because it is the second of three owned closables: a naive
@@ -212,7 +212,7 @@ class OrcaAgentRuntimeCloseTest {
     }
 
     @Test
-    @DisplayName("close() never closes the execution environment provider or the shell behind it (borrowed, §4.3)")
+    @DisplayName("close() never closes the execution environment provider or the shell behind it (borrowed, execution-environment design §4)")
     void close_neverClosesTheExecutionEnvironmentProvider() throws Exception {
         final LocalExecutionEnvironmentProvider provider = LocalExecutionEnvironmentProvider.builder()
                 .fileSystem(fileSystem).shell(providerShell).contentSearch(false).pathRules(List.of()).build();

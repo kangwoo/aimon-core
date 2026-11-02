@@ -274,7 +274,8 @@ class SkillToolTest {
     @Test
     void testExecute_RenderContext_SkillDirIsNeverDerivedFromRepositoryPaths() {
         // Arrange — a hand-built skill with repository paths but no StagedResource. ${AIMON_SKILL_DIR} used to be
-        // derived from those paths; it now comes only from ExecutionEnvironment.stage() (design §4.4, §15).
+        // derived from those paths; it now comes only from ExecutionEnvironment.stage() (execution-environment-staging
+        // design §12).
         Skill skill = Skill.builder().name("alert-analysis")
                 .metadata(SkillMetadata.builder().name("alert-analysis").description("Analyzes alerts").build())
                 .content(SkillContent.of("Body")).putRootFile("SKILL.md", "/skills/alert-analysis/SKILL.md")
@@ -435,7 +436,7 @@ class SkillToolTest {
         assertThat(result.getContent()).contains("Available Files:");
         assertThat(result.getContent()).contains("Root:");
         // Not staged (hand-built skill, no environment): each file is listed relative to the skill directory. The
-        // repository's own paths never reach the model (execution-environment design §4.4).
+        // repository's own paths never reach the model (execution-environment-staging design §12).
         assertThat(result.getContent()).contains("config.yaml → config.yaml");
         assertThat(result.getContent()).contains("helper.py → helper.py");
         assertThat(result.getContent()).contains("Scripts:");
@@ -1090,7 +1091,8 @@ class SkillToolTest {
 
     @Test
     void testExecute_StagedSkillWithoutEnvironment_ReturnsError() {
-        // EE-20: no environment in the context is an error (design §3), not a success with ${AIMON_SKILL_DIR} empty
+        // EE-20: no environment in the context is an error (execution-environment design §2), not a success with
+        // ${AIMON_SKILL_DIR} empty
         StagedResource resource = StagedResource.builder().sourceFileSystem(new NoFileSystemStub())
                 .sourceDir("skills/deploy").contentKey("k1").name("deploy").build();
         Skill skill = Skill.builder().name("deploy")

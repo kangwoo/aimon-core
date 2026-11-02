@@ -38,7 +38,7 @@ import at.aimon.core.workflow.WorkflowRunner;
  * tools work in or to the shell {@code Bash} runs in: tools read both from the execution's
  * {@code ExecutionEnvironment} ({@code ToolContextKeys.EXECUTION_ENVIRONMENT}) on every call. A registration-time
  * handle would let a provider put them into a tool constructor and fix one environment per agent again
- * (execution-environment design §1.1, §6). {@link #getControlFileSystem()} is the framework's control store, which is
+ * (execution-environment design §9). {@link #getControlFileSystem()} is the framework's control store, which is
  * never exposed to the model's file tools.
  *
  * <p>
@@ -78,7 +78,7 @@ import at.aimon.core.workflow.WorkflowRunner;
  * <li><b>the two that live outside {@code aimon-core}</b> — the very modules this SPI exists for — use one and two:
  * {@code OrcaSandboxToolProvider} read {@code getFileSystem()}, {@code OrcaBrowserToolProvider} that plus
  * {@code getCredentialStore()} — both counts predate the removal of {@code getFileSystem()}/{@code getShell()}
- * (execution-environment design §6), which those two modules have to follow;
+ * (execution-environment design §9), which those two modules have to follow;
  * <li>three reach double digits or close to it ({@code OrcaSubagentToolProvider} 11, {@code OrcaSkillToolProvider} and
  * {@code GraalJsWorkflowToolProvider} 8 each), and they are what the width is actually for — a subagent tool needs the
  * registry, the execution manager, three task stores and the enrichers at once.

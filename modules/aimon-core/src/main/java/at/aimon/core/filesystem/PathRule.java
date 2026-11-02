@@ -3,7 +3,8 @@ package at.aimon.core.filesystem;
 import java.util.Objects;
 
 /**
- * An access rule for one root-anchored directory prefix of a filesystem (execution-environment design §9.2): hide it
+ * An access rule for one root-anchored directory prefix of a filesystem (execution-environment-files design §4): hide
+ * it
  * entirely ({@link Access#DENY}) or allow reads only ({@link Access#READ_ONLY}). The prefix is matched against the
  * {@linkplain VfsPaths#resolveUnder base-relative, normalised} path, on whole segments and ignoring case, so
  * {@code a/../.aimon/x} and {@code .AIMON/x} are caught and {@code .aimon2/x} is not. Immutable.

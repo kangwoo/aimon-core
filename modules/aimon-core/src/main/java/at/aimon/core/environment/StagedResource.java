@@ -18,7 +18,7 @@ import at.aimon.core.filesystem.VirtualFileSystem;
 
 /**
  * A control-plane file set that an {@link ExecutionEnvironment} can {@link ExecutionEnvironment#stage stage} into its
- * own filesystem (design §4.4) — a skill directory, typically.
+ * own filesystem (execution-environment-staging design §3) — a skill directory, typically.
  *
  * <p>
  * <b>The file-set rule is fixed here, once.</b> {@link #scan} lists {@code sourceDir} recursively, drops paths

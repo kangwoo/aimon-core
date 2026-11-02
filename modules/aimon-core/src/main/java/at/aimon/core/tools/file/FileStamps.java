@@ -9,7 +9,8 @@ import at.aimon.core.environment.FileStamp;
 import at.aimon.core.filesystem.VfsPaths;
 
 /**
- * The read-stamp bookkeeping {@code Read}, {@code Edit} and {@code Write} share (execution-environment design §7).
+ * The read-stamp bookkeeping {@code Read}, {@code Edit} and {@code Write} share (execution-environment-files design
+ * §5).
  *
  * <p>
  * Stamps are keyed by the environment-normalised path, not the string the model passed, so {@code a.txt},

@@ -81,7 +81,7 @@ public class ClasspathSkillRepository implements SkillRepository {
 
     private final String basePath;
     private final ClassLoader classLoader;
-    // The staging source (execution-environment design §4.4): the class path walked the way the bundled-skill
+    // The staging source (execution-environment-staging design §9): the class path walked the way the bundled-skill
     // materializer walks it, so a classpath skill stages exactly the files a materialized copy would hold.
     private final ClasspathSkillSourceFileSystem sourceFileSystem;
     private final ClasspathIndexReader indexReader;

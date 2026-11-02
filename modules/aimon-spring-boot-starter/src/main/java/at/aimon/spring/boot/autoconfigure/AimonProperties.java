@@ -2623,8 +2623,8 @@ public class AimonProperties implements InitializingBean {
 
         /**
          * Whether {@code Write}/{@code Edit} register what they write as downloadable artifacts, and how much an
-         * execution whose environment is not durable may archive into the control store (execution-environment
-         * design §9.3).
+         * execution whose environment is not durable may archive into the control store (execution-environment-files
+         * design §7).
          */
         public static class Artifact {
 
@@ -2689,7 +2689,7 @@ public class AimonProperties implements InitializingBean {
 
     /**
      * Where the agents' executions run: the filesystem their file tools see and the shell {@code Bash} runs in
-     * (execution-environment design §4, §9.2). A bean of type {@code ExecutionEnvironmentProvider} replaces the local
+     * (execution-environment design §4). A bean of type {@code ExecutionEnvironmentProvider} replaces the local
      * default for every runtime.
      */
     public static class EnvironmentProperties {

@@ -619,7 +619,7 @@ public class RoutineExecutor {
      * run that has already been stopped. Steps that ignore it are no worse off than before: they finish, and the
      * boundary gate stops the run at the next step.</li>
      * <li>{@link ReadTool#FILE_STAMPS_KEY} &mdash; a fresh, empty read-stamp map per fire, the same thing the two
-     * agent executors put into each of their executions (execution-environment design §7). With it a routine's
+     * agent executors put into each of their executions (execution-environment-files design §5). With it a routine's
      * {@code Edit} step works after a {@code Read} step of the same run, and a {@code Write} step that overwrites an
      * existing file is refused unless that file was read (or written) earlier in the same run. The map is created
      * here and referenced only by this run's context: it is not kept on this executor, on the task or on the runtime,
@@ -676,7 +676,7 @@ public class RoutineExecutor {
 
     /**
      * Resolves the run's execution environment once, from the bound runtime's provider, so a routine's
-     * {@code Bash}/{@code Read} steps run where the agent's executions do (execution-environment design §5.1). A
+     * {@code Bash}/{@code Read} steps run where the agent's executions do (execution-environment design §6). A
      * runtime that is not registered, or that carries no provider, yields an unavailable environment whose tools fail
      * with the cause — a routine never falls back to the host. So does a resolver that failed to answer: its
      * placement intent is unknown, and resolving without it would silently ignore it.

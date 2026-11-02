@@ -194,7 +194,7 @@ public final class WorktreeMerge {
      * Refuses branches that do not belong to {@code parent}, before any file is read or written. Identity, not
      * equality: the local provider hands out one environment instance, and its branches hold that instance. The check
      * does call each environment's {@code fileSystem()}: the local provider's answers without I/O, while another
-     * provider's may provision on first use (execution-environment design §13).
+     * provider's may provision on first use (execution-environment design §14).
      */
     private static void validateBranches(ExecutionEnvironment parent, List<ExecutionEnvironment> branches) {
         for (int i = 0; i < branches.size(); i++) {

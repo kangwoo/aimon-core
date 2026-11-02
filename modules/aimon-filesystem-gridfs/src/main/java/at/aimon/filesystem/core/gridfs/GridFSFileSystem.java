@@ -911,8 +911,8 @@ public final class GridFSFileSystem implements VirtualFileSystem {
     }
 
     /**
-     * The etag of a file document: its content hash when the document carries one, its id otherwise (execution
-     * environment design §7; GridFS's own {@code md5} field is gone from driver 5.x).
+     * The etag of a file document: its content hash when the document carries one, its id otherwise
+     * (execution-environment-files design §5; GridFS's own {@code md5} field is gone from driver 5.x).
      *
      * <p>
      * The file tools' read stamps compare etags. A hash says "changed" only when the bytes did, where the id — a new
