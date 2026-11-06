@@ -124,6 +124,7 @@ import at.aimon.core.hook.event.OnStartContext;
 import at.aimon.core.hook.event.OnStopContext;
 import at.aimon.core.hook.exception.ExecutionBlockedByHookException;
 import at.aimon.core.hook.execution.HookResult;
+import at.aimon.core.internal.ToolDispatchRefusals;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmResponse;
@@ -2798,7 +2799,7 @@ public class OrcaAgentExecutor
     static ToolUseResult dispatchSingleTool(ToolContext toolContext, ToolUse toolUse) {
         final Optional<ToolCallDispatcher> dispatcher = toolContext.get(ToolContextKeys.TOOL_CALL_DISPATCHER);
         if (dispatcher.isEmpty()) {
-            return ToolUseResult.error(toolUse.getId(), ToolDispatchResults.NO_DISPATCHER_MESSAGE);
+            return ToolUseResult.error(toolUse.getId(), ToolDispatchRefusals.NO_DISPATCHER);
         }
         return ToolDispatchResults
                 .toToolUseResult(dispatcher.get().dispatch(toolUse, ToolCallOrigin.direct(), toolContext));

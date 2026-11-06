@@ -4,7 +4,7 @@
 > `aimon-graaljs` (`aimon-workflow-graaljs` 를 개명·재편), `aimon-code-engine-testkit` (새 모듈). 공개 API 호환을 깨는 항목이 있다(§5).
 > 구현된 것은 서술자·제안 문맥·승인 관문·쿼터·도구 선언(조각 B)이고, `ExecuteCode` 와 엔진은 아직 없다. 구현이 본문과 다른 점은 §21.
 > 셸 엔진은 [셸 엔진 문서](programmatic-tool-calling-shell.md), 코드의 도구 호출이 지나는 입구는
-> [도구 호출의 단일 입구](tool-call-dispatcher.md) 가 정한다.
+> [도구 호출의 단일 입구](tool-call-dispatcher.md) 가 정한다(그 문서의 `Status`). 설계에서 아직 정하지 않은 것은 §19 다.
 
 ## 1. 목적과 범위
 
@@ -625,14 +625,15 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 
 ## 17. 강제
 
-설계의 어느 규칙을 빌드가 지키는가. 테스트 목록이 아니라 규칙과 그것을 강제하는 장치의 대응이다.
+설계의 규칙 가운데 빌드가 지켜야 하는 것과, 그것을 지킬 장치에 대한 요구다. 테스트 목록이 아니다 — 아래 장치는 이 설계를 구현할 때
+함께 갖춰야 하는 것이다. 이미 갖춘 장치는 "갖춤" 으로 표시한다(조각 B).
 
-| 규칙 | 강제하는 곳 |
+| 규칙 | 지킬 장치 |
 |---|---|
-| 두 엔진이 같은 계약을 지킨다 — 같은 모양의 프로그램이 같은 관찰을 내고(결정 7), 한도·취소(§13)가 같은 의미다 | 엔진 계약 스위트 `aimon-code-engine-testkit`. 두 엔진이 같은 스위트를 돌린다 |
-| LLM 을 부르거나 포크를 일으키는 도구는 코드에서 불릴 수 없다(결정 15) | ArchUnit (코어, `ProgrammaticToolDeclarationArchitectureTest`) — `at.aimon.core.tools..` 의 도구 중 클래스 그래프가 `LlmClient`·`LlmCallGateway`·`DialecticEngine`·`WikiKnowledgeBase`·`SubagentExecutionManager` 에 닿는 것은 `isCodeCallable()` 을 재정의한다. 그래프 탐색은 이유를 적은 정지 목록(`ToolContextKeys`, `StoreBackedPeerMemory`)에 들어가지 않는다(§21). `aimon-workflow-graaljs` 의 `GraalJsWorkflowTool` 은 그 모듈의 테스트가 확인한다 |
-| 코드의 도구 호출은 단일 입구만 지난다(결정 3) | ArchUnit (코어) — `at.aimon.core.tools.code..` 는 `ToolCallDispatcher` 외 경로로 도구를 부르지 않는다. 입구 규칙 자체는 [단일 입구](tool-call-dispatcher.md) §3 #8. `aimon-graaljs` 는 같은 규칙을 `at.aimon.graaljs.code..` 에 대해 그 모듈의 아키텍처 테스트에 둔다 — 코어 테스트 클래스패스는 그 클래스를 보지 못한다 |
-| 내장 도구는 `dataReach()` 를 명시적으로 선언한다(§7.1) | 내장 도구 전체에 대한 선언 검사 — `ProgrammaticToolDeclarationArchitectureTest` (`at.aimon.core.tools..`, 메모리 deriver 도구, `McpTool`) |
+| 두 엔진이 같은 계약을 지킨다 — 같은 모양의 프로그램이 같은 관찰을 내고(결정 7), 한도·취소(§13)가 같은 의미다 | 엔진 계약 스위트 `aimon-code-engine-testkit`. 두 엔진은 모두 이 스위트를 통과해야 한다 |
+| LLM 을 부르거나 포크를 일으키는 도구는 코드에서 불릴 수 없다(결정 15) | 갖춤 — ArchUnit (코어, `ProgrammaticToolDeclarationArchitectureTest`) — `at.aimon.core.tools..` 의 도구 중 클래스 그래프가 `LlmClient`·`LlmCallGateway`·`DialecticEngine`·`WikiKnowledgeBase`·`SubagentExecutionManager` 에 닿는 것은 `isCodeCallable()` 을 재정의한다. 그래프 탐색은 이유를 적은 정지 목록(`ToolContextKeys`, `StoreBackedPeerMemory`)에 들어가지 않는다(§21). `aimon-workflow-graaljs` 의 `GraalJsWorkflowTool` 은 그 모듈의 테스트가 확인한다 |
+| 코드의 도구 호출은 단일 입구만 지난다(결정 3) | ArchUnit (코어) — `at.aimon.core.tools.code..` 는 `ToolCallDispatcher` 외 경로로 도구를 부를 수 없어야 한다. 입구 규칙 자체는 [단일 입구](tool-call-dispatcher.md) §3 #8. `aimon-graaljs` 는 같은 규칙을 `at.aimon.graaljs.code..` 에 대해 그 모듈의 아키텍처 테스트에 둔다 — 코어 테스트 클래스패스는 그 클래스를 보지 못한다 |
+| 내장 도구는 `dataReach()` 를 명시적으로 선언한다(§7.1) | 갖춤 — 내장 도구 전체에 대한 선언 검사 `ProgrammaticToolDeclarationArchitectureTest` (`at.aimon.core.tools..`, 메모리 deriver 도구, `McpTool`). 재정의하지 않은 내장 도구가 있으면 빌드가 실패한다 |
 | 셸 엔진의 규칙 | [셸 엔진](programmatic-tool-calling-shell.md) §14 |
 
 ---
@@ -641,13 +642,13 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 
 §2.1 의 수치는 이 설계의 근거가 아니다. 기본값(한도, 설명 문구, `auto` 규칙)은 잠정값이고, 아래 측정의 판정이 그것을 정한다.
 
-| 측정 | 방법 | 판정 |
-|---|---|---|
-| 토큰·정확도 | 대표 IT 운영 과제(다중 호스트 상태 수집, 로그 필터링, 메트릭 질의 팬아웃, 순차 진단)를 직접 호출과 PTC 로 각각 실행. 제공자별(Anthropic, OpenAI), 엔진별 | PTC 가 손해인 과제 유형을 설명 지침에 "쓰지 마라" 로 넣는다 |
-| 설명 크기 | opt-in 도구 수 5 / 20 / 50 에서 `ExecuteCode` 설명 토큰 | 선언이 정해 둔 토큰 예산을 넘는 도구 수부터는 선언 대신 `tools.describe(name)` 지연 노출로 바꾼다 |
-| 프롬프트 캐시 | PTC 를 켠 세션과 끈 세션의 캐시 적중률 | 적중률이 떨어지면 설명이 바뀌는 원인(활성화, 환경 종류 변화)을 줄인다 |
-| 실패 유형 | 스크립트 오류 중 결과 파싱, 도구 이름, 인자 형식이 차지하는 비율. Python 선언의 산문 표기와 `TypedDict` 표기 비교 | 비율이 큰 쪽의 렌더링을 바꾼다 |
-| 지연 | 샌드박스에서 중첩 호출 하나와 응답 쓰기 하나의 p50/p99, 순차 N 호출의 총 시간 | 폴링 간격과 설명 지침의 병렬 권고 강도 |
+| 측정 | 판정 |
+|---|---|
+| 토큰·정확도 — 대표 IT 운영 과제에서 직접 호출 대비, 제공자별·엔진별 | PTC 가 손해인 과제 유형을 설명 지침에 "쓰지 마라" 로 넣는다 |
+| 설명 크기 — opt-in 도구 수에 따른 `ExecuteCode` 설명 토큰 | 선언이 정해 둔 토큰 예산을 넘는 도구 수부터는 선언 대신 `tools.describe(name)` 지연 노출로 바꾼다 |
+| 프롬프트 캐시 — PTC 를 켠 세션의 캐시 적중률 | 적중률이 떨어지면 설명이 바뀌는 원인(활성화, 환경 종류 변화)을 줄인다 |
+| 실패 유형 — 스크립트 오류 중 결과 파싱·도구 이름·인자 형식의 비율, 선언 표기별 | 비율이 큰 쪽의 렌더링을 바꾼다 |
+| 지연 — 샌드박스의 중첩 호출 하나와 순차 호출의 총 시간 | 폴링 간격과 설명 지침의 병렬 권고 강도 |
 
 ---
 

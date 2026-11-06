@@ -29,7 +29,7 @@ import org.junit.jupiter.api.Test;
  * <h2>Why a source scan and not ArchUnit</h2>
  *
  * <p>
- * Four of the five {@code internal} packages live outside {@code aimon-core}, and this module's test classpath does
+ * Four of the seven {@code internal} packages live outside {@code aimon-core}, and this module's test classpath does
  * not see them — the dependency points the other way. Reading {@code import} lines from every module's
  * {@code src/main/java} covers all of them from one place. A fully qualified name written in code without an import
  * would slip past; none exists today, and the javadoc mentions that do exist ({@code InboundMessageCodec} names its

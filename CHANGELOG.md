@@ -65,8 +65,8 @@ loop's tool context under the write-once `ToolContextKeys.TOOL_CALL_DISPATCHER`.
   left once the dispatch paths began handing notices on beside the text, and calling it beside a dispatcher would
   drain the queue a second time and splice the notices in a second place. Drain with `EnvironmentNotices.drain` and
   splice through `ToolDispatchResults.toToolUseResult`, which renders them with `EnvironmentNotices.render`.
-- The main loop and a fork's loop answer a tool call whose context has no dispatcher bound with one shared text,
-  `ToolDispatchResults.NO_DISPATCHER_MESSAGE` (new).
+- The main loop and a fork's loop answer a tool call whose context has no dispatcher bound with one shared text. It
+  is internal (`at.aimon.core.internal`), not public API.
 
 ### Changed: `aimon-llm-anthropic` is on Anthropic SDK 3 and API version 2026-10-21
 
