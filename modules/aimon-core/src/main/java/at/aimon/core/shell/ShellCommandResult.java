@@ -3,6 +3,7 @@ package at.aimon.core.shell;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Represents the result of a shell command execution.
@@ -35,6 +36,7 @@ public final class ShellCommandResult {
     private final Duration duration;
     private final boolean outputTruncated;
     private final List<String> notices;
+    private final ShellKillCause killCause;
 
     /**
      * Creates a new shell command result whose captured output is complete.
@@ -106,6 +108,42 @@ public final class ShellCommandResult {
         this.duration = Objects.requireNonNull(duration, "duration");
         this.outputTruncated = outputTruncated;
         this.notices = notices == null ? List.of() : List.copyOf(notices);
+        this.killCause = null;
+    }
+
+    private ShellCommandResult(ShellCommandResult base, ShellKillCause killCause) {
+        this.exitCode = base.exitCode;
+        this.stdout = base.stdout;
+        this.stderr = base.stderr;
+        this.duration = base.duration;
+        this.outputTruncated = base.outputTruncated;
+        this.notices = base.notices;
+        this.killCause = killCause;
+    }
+
+    /**
+     * Returns a copy of this result that says the shell ended the command itself, and why ({@link #killCause()}).
+     *
+     * @param killCause
+     *            why the shell ended the command (must not be null)
+     * @return the copy (never null)
+     * @throws NullPointerException
+     *             if {@code killCause} is null
+     */
+    public ShellCommandResult withKillCause(ShellKillCause killCause) {
+        return new ShellCommandResult(this, Objects.requireNonNull(killCause, "killCause"));
+    }
+
+    /**
+     * Returns why the shell ended the command itself, when it did — a limit of the shell's own, such as a line longer
+     * than the streaming line limit ({@code docs/design/tool/programmatic-tool-calling-shell.md} §13 S8). Empty when
+     * the command ended on its own, whatever its exit code; a timeout and a cancellation are exceptions, not results,
+     * and are not reported here. A local shell never ends a command itself.
+     *
+     * @return the cause, empty when the shell did not end the command
+     */
+    public Optional<ShellKillCause> killCause() {
+        return Optional.ofNullable(killCause);
     }
 
     /**
@@ -203,18 +241,19 @@ public final class ShellCommandResult {
         ShellCommandResult that = (ShellCommandResult) o;
         return exitCode == that.exitCode && outputTruncated == that.outputTruncated
                 && Objects.equals(stdout, that.stdout) && Objects.equals(stderr, that.stderr)
-                && Objects.equals(duration, that.duration) && Objects.equals(notices, that.notices);
+                && Objects.equals(duration, that.duration) && Objects.equals(notices, that.notices)
+                && killCause == that.killCause;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(exitCode, stdout, stderr, duration, outputTruncated, notices);
+        return Objects.hash(exitCode, stdout, stderr, duration, outputTruncated, notices, killCause);
     }
 
     @Override
     public String toString() {
         return "ShellCommandResult{" + "exitCode=" + exitCode + ", stdout.length=" + stdout.length()
                 + ", stderr.length=" + stderr.length() + ", duration=" + duration + ", outputTruncated="
-                + outputTruncated + '}';
+                + outputTruncated + (killCause == null ? "" : ", killCause=" + killCause) + '}';
     }
 }

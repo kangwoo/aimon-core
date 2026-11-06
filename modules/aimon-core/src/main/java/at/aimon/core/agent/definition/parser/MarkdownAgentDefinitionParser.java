@@ -24,6 +24,7 @@ import at.aimon.core.agent.definition.AgentDefinition;
 import at.aimon.core.agent.definition.exception.AgentDefinitionParseException;
 import at.aimon.core.agent.tool.ProgrammaticEngineChoice;
 import at.aimon.core.agent.tool.ProgrammaticToolSettings;
+import at.aimon.core.agent.tool.ShellEngineToolScope;
 import at.aimon.core.agent.tool.exception.InvalidToolSpecException;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.base.DefinitionAttributes;
@@ -493,8 +494,9 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
     }
 
     /**
-     * Extracts {@code programmatic-tools}, {@code programmatic-only} and {@code programmatic-engine}
-     * ({@code docs/design/tool/programmatic-tool-calling.md} §7.2). Kebab-case like {@code allowed-tools}, and for the
+     * Extracts {@code programmatic-tools}, {@code programmatic-only}, {@code programmatic-engine} and
+     * {@code shell-engine-tool-scope} ({@code docs/design/tool/programmatic-tool-calling.md} §7.2). Kebab-case like
+     * {@code allowed-tools}, and for the
      * same reason the camelCase spellings are rejected by name rather than ignored. What can be checked without the
      * tools — the exact-name form and {@code programmatic-only ⊆ programmatic-tools} — is refused here, at load time.
      *
@@ -505,7 +507,8 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
      *             if a value has the wrong shape or the settings are inconsistent
      */
     private ProgrammaticToolSettings extractProgrammatic(Map<String, Object> frontmatter) {
-        for (String camel : List.of("programmaticTools", "programmaticOnly", "programmaticEngine")) {
+        for (String camel : List.of("programmaticTools", "programmaticOnly", "programmaticEngine",
+                "shellEngineToolScope")) {
             if (frontmatter.containsKey(camel)) {
                 throw new AgentDefinitionParseException("Unknown key '" + camel
                         + "'. The programmatic tool calling keys are spelled in kebab-case, like 'allowed-tools'.");
@@ -514,10 +517,11 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
         final List<String> tools = extractNameList(frontmatter, "programmatic-tools");
         final List<String> codeOnly = extractNameList(frontmatter, "programmatic-only");
         final Object engineRaw = frontmatter.get("programmatic-engine");
+        final Object scopeRaw = frontmatter.get("shell-engine-tool-scope");
         if (tools.isEmpty()) {
-            if (!codeOnly.isEmpty() || engineRaw != null) {
-                throw new AgentDefinitionParseException(
-                        "'programmatic-only' and 'programmatic-engine' need 'programmatic-tools'");
+            if (!codeOnly.isEmpty() || engineRaw != null || scopeRaw != null) {
+                throw new AgentDefinitionParseException("'programmatic-only', 'programmatic-engine' and "
+                        + "'shell-engine-tool-scope' need 'programmatic-tools'");
             }
             return ProgrammaticToolSettings.none();
         }
@@ -531,6 +535,14 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
                                     + engineRaw.getClass().getName());
                 }
                 builder.engine(ProgrammaticEngineChoice.parse(engine));
+            }
+            if (scopeRaw != null) {
+                if (!(scopeRaw instanceof String scope)) {
+                    throw new AgentDefinitionParseException(
+                            "Invalid 'shell-engine-tool-scope' value: expected a string, got "
+                                    + scopeRaw.getClass().getName());
+                }
+                builder.shellEngineToolScope(ShellEngineToolScope.parse(scope));
             }
             return builder.build();
         } catch (IllegalArgumentException e) {

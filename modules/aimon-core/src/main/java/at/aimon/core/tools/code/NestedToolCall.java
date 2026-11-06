@@ -23,6 +23,7 @@ final class NestedToolCall {
     private final boolean error;
     private final String refusal;
     private final long durationMillis;
+    private final boolean unattributed;
 
     NestedToolCall(String toolUseId, String toolName, String inputSummary, int resultLength, boolean error,
             String refusal, long durationMillis) {
@@ -33,6 +34,30 @@ final class NestedToolCall {
         this.error = error;
         this.refusal = refusal;
         this.durationMillis = durationMillis;
+        this.unattributed = false;
+    }
+
+    private NestedToolCall(NestedToolCall base) {
+        this.toolUseId = base.toolUseId;
+        this.toolName = base.toolName;
+        this.inputSummary = base.inputSummary;
+        this.resultLength = base.resultLength;
+        this.error = base.error;
+        this.refusal = base.refusal;
+        this.durationMillis = base.durationMillis;
+        this.unattributed = true;
+    }
+
+    /**
+     * A copy marked as possibly not the program's own call: the engine saw a second writer on its channel (shell
+     * engine, {@code docs/design/tool/programmatic-tool-calling-shell.md} §7).
+     */
+    NestedToolCall unattributed() {
+        return new NestedToolCall(this);
+    }
+
+    boolean isUnattributed() {
+        return unattributed;
     }
 
     String toolName() {
@@ -59,6 +84,9 @@ final class NestedToolCall {
             payload.put("refused", refusal);
         }
         payload.put("durationMs", durationMillis);
+        if (unattributed) {
+            payload.put("unattributed", true);
+        }
         return payload;
     }
 }

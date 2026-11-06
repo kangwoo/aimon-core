@@ -21,6 +21,7 @@ import at.aimon.core.agent.tool.ConcurrencyBehavior;
 import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.DestructiveBehavior;
 import at.aimon.core.agent.tool.InterruptToolKeys;
+import at.aimon.core.agent.tool.ShellEngineToolScope;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.ToolCallDispatcher;
 import at.aimon.core.agent.tool.ToolContext;
@@ -72,6 +73,20 @@ public final class ExecuteCodeTool extends AbstractTool {
 
     private final List<CodeExecutionEngine> engines;
     private final CodeExecutionLimits limits;
+    private final ShellEngineToolScope toolScope;
+
+    /**
+     * Creates the tool with the default {@code shell-engine-tool-scope} ({@link ShellEngineToolScope#ENVIRONMENT}).
+     *
+     * @param engines
+     *            the assembled engines, at most one per language (must not be null; may be empty, then the tool is
+     *            never offerable)
+     * @param limits
+     *            the limits every program is held to (must not be null)
+     */
+    public ExecuteCodeTool(List<CodeExecutionEngine> engines, CodeExecutionLimits limits) {
+        this(engines, limits, ShellEngineToolScope.ENVIRONMENT);
+    }
 
     /**
      * Creates the tool.
@@ -81,11 +96,16 @@ public final class ExecuteCodeTool extends AbstractTool {
      *            never offerable)
      * @param limits
      *            the limits every program is held to (must not be null)
+     * @param toolScope
+     *            the application's {@code shell-engine-tool-scope} — the ceiling an agent can only narrow, applied to
+     *            an engine {@linkplain CodeExecutionEngine#isToolScopeBound() bound by it} (must not be null)
      */
-    public ExecuteCodeTool(List<CodeExecutionEngine> engines, CodeExecutionLimits limits) {
+    public ExecuteCodeTool(List<CodeExecutionEngine> engines, CodeExecutionLimits limits,
+            ShellEngineToolScope toolScope) {
         super(TOOL_NAME, STATIC_DESCRIPTION, createInputSchema(limits));
         this.engines = List.copyOf(Objects.requireNonNull(engines, "engines cannot be null"));
         this.limits = Objects.requireNonNull(limits, "limits cannot be null");
+        this.toolScope = Objects.requireNonNull(toolScope, "toolScope cannot be null");
     }
 
     private static Map<String, Object> createInputSchema(CodeExecutionLimits limits) {
@@ -137,7 +157,7 @@ public final class ExecuteCodeTool extends AbstractTool {
     @Override
     public ToolDescriptor describe(ToolOfferContext context) {
         Objects.requireNonNull(context, "context cannot be null");
-        final ExecuteCodePlan plan = ExecuteCodePlan.of(context, engines, TOOL_NAME);
+        final ExecuteCodePlan plan = ExecuteCodePlan.of(context, engines, TOOL_NAME, toolScope);
         if (!plan.isAvailable()) {
             return ToolDescriptor.from(this).offerable(false).build();
         }
@@ -188,7 +208,7 @@ public final class ExecuteCodeTool extends AbstractTool {
         }
 
         // The freeze (decision 13): the set computed here, from this call's offer context, is the program's set.
-        final ExecuteCodePlan plan = ExecuteCodePlan.of(ToolOfferContext.of(context), engines, TOOL_NAME);
+        final ExecuteCodePlan plan = ExecuteCodePlan.of(ToolOfferContext.of(context), engines, TOOL_NAME, toolScope);
         if (!plan.isAvailable()) {
             return ToolResult.error("ExecuteCode is not available here: " + plan.unavailableReason().orElse(""));
         }

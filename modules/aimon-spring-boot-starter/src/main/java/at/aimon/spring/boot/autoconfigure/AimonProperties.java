@@ -22,6 +22,7 @@ import at.aimon.bootstrap.spec.ExecutionEnvironmentSpec;
 import at.aimon.bootstrap.spec.SessionSpec;
 import at.aimon.core.agent.ContextEngineKind;
 import at.aimon.core.agent.session.transcript.SessionLogFormat;
+import at.aimon.core.agent.tool.ShellEngineToolScope;
 import at.aimon.core.filesystem.VirtualFileSystems;
 import at.aimon.core.knowledge.SimpleDocumentChunker;
 import at.aimon.core.llm.ReasoningEffort;
@@ -2570,11 +2571,33 @@ public class AimonProperties implements InitializingBean {
 
         /**
          * Off by default. When on, every engine on the class path is created ({@code aimon-graaljs} adds the
-         * JavaScript one) — GraalJS has no hard guest-heap limit, so a program can exhaust this JVM's memory.
+         * JavaScript one; {@code aimon-core} always adds the Python shell engine, which runs only in a sandboxed
+         * environment) — GraalJS has no hard guest-heap limit, so a program can exhaust this JVM's memory.
          */
         private boolean enabled;
 
+        /**
+         * How far the tools an agent opens to the shell engine (Python in a sandbox) may reach: {@code environment}
+         * (default), {@code host} or {@code unrestricted} ({@code docs/design/tool/programmatic-tool-calling-shell.md}
+         * §12.2). An agent's {@code shell-engine-tool-scope} can only narrow it; {@code unrestricted} is warned at
+         * startup.
+         */
+        private ShellEngineToolScope shellEngineToolScope = ShellEngineToolScope.ENVIRONMENT;
+
         private final Limits limits = new Limits();
+
+        /** @return the application's shell engine tool scope */
+        public ShellEngineToolScope getShellEngineToolScope() {
+            return shellEngineToolScope;
+        }
+
+        /**
+         * @param shellEngineToolScope
+         *            the application's shell engine tool scope
+         */
+        public void setShellEngineToolScope(ShellEngineToolScope shellEngineToolScope) {
+            this.shellEngineToolScope = shellEngineToolScope;
+        }
 
         /** @return whether programmatic tool calling is assembled */
         public boolean isEnabled() {

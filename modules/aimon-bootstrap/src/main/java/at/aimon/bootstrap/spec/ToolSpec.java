@@ -9,6 +9,7 @@ import at.aimon.core.agent.impl.orca.OrcaAgentRuntimeFactory;
 import at.aimon.core.agent.impl.orca.tool.OrcaBashToolProvider;
 import at.aimon.core.agent.impl.orca.tool.OrcaFileToolProvider;
 import at.aimon.core.agent.orca.tool.OrcaToolProvider;
+import at.aimon.core.agent.tool.ShellEngineToolScope;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.mcp.McpClientFactory;
 import at.aimon.core.mcp.McpServerConfigProvider;
@@ -83,6 +84,7 @@ public final class ToolSpec {
     private final MonitorStore monitorStore;
     private final boolean programmaticEnabled;
     private final CodeExecutionLimits programmaticLimits;
+    private final ShellEngineToolScope shellEngineToolScope;
     private final List<CodeExecutionEngine> codeExecutionEngines;
 
     private ToolSpec(Builder builder) {
@@ -106,6 +108,7 @@ public final class ToolSpec {
                 : List.copyOf(builder.codeExecutionEngines);
         this.programmaticEnabled = builder.programmaticEnabled || this.codeExecutionEngines != null;
         this.programmaticLimits = builder.programmaticLimits;
+        this.shellEngineToolScope = builder.shellEngineToolScope;
         // One owner: the stack registers ExecuteCode over this spec's engines. A second provider would put a second
         // ExecuteCode beside it, or warn "no engine assembled" next to a working one.
         if (this.additionalProviders.stream().anyMatch(ExecuteCodeToolProvider.class::isInstance)) {
@@ -337,6 +340,16 @@ public final class ToolSpec {
         return programmaticLimits;
     }
 
+    /**
+     * Returns the application's {@code shell-engine-tool-scope}: how far the tools an agent opens to the shell engine
+     * may reach ({@code docs/design/tool/programmatic-tool-calling-shell.md} §12.2). An agent can only narrow it.
+     *
+     * @return the scope (never null; {@link ShellEngineToolScope#ENVIRONMENT} unless set)
+     */
+    public ShellEngineToolScope getShellEngineToolScope() {
+        return shellEngineToolScope;
+    }
+
     @Override
     public String toString() {
         return "ToolSpec[bash=" + bashEnabled + ", workflowTool=" + workflowToolEnabled + ", workflowRunner="
@@ -363,6 +376,7 @@ public final class ToolSpec {
         private MonitorStore monitorStore;
         private boolean programmaticEnabled;
         private CodeExecutionLimits programmaticLimits = CodeExecutionLimits.defaults();
+        private ShellEngineToolScope shellEngineToolScope = ShellEngineToolScope.ENVIRONMENT;
         private List<CodeExecutionEngine> codeExecutionEngines;
 
         private Builder() {
@@ -404,6 +418,20 @@ public final class ToolSpec {
          */
         public Builder programmaticLimits(CodeExecutionLimits programmaticLimits) {
             this.programmaticLimits = Objects.requireNonNull(programmaticLimits, "programmaticLimits must not be null");
+            return this;
+        }
+
+        /**
+         * Sets the application's {@code shell-engine-tool-scope} (default {@link ShellEngineToolScope#ENVIRONMENT}).
+         * {@link ShellEngineToolScope#UNRESTRICTED} is warned at startup.
+         *
+         * @param shellEngineToolScope
+         *            the scope (must not be null)
+         * @return this builder
+         */
+        public Builder shellEngineToolScope(ShellEngineToolScope shellEngineToolScope) {
+            this.shellEngineToolScope = Objects.requireNonNull(shellEngineToolScope,
+                    "shellEngineToolScope must not be null");
             return this;
         }
 

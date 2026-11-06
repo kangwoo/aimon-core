@@ -108,8 +108,21 @@ public interface VirtualShell extends AutoCloseable {
      *
      * <p>
      * A shell may refuse a <em>foreground</em> streamed call it cannot run with the foreground's semantics — a sandbox
-     * shell refuses one rather than run it without keeping its {@code cd} and {@code export}. Stream background work
-     * ({@link ExecutionOptions#isBackground()}), as a background monitor does.
+     * shell refuses one rather than run it without keeping its {@code cd} and {@code export}. A call is foreground
+     * exactly when it is none of {@linkplain ExecutionOptions#isBackground() background},
+     * {@linkplain ExecutionOptions#isHook() a hook's} and {@linkplain ExecutionOptions#isIsolated() isolated}: the
+     * three
+     * flags each say the command reads and saves no session state, so a shell that streams at all streams all three.
+     * A shell that declares {@link ShellFeature#ISOLATED_EXECUTION} and {@link ShellFeature#STREAMING} therefore runs
+     * an isolated streamed call ({@code docs/design/tool/programmatic-tool-calling-shell.md} §3) — the shell engine of
+     * {@code ExecuteCode} streams its runtime that way, neither background (it does not outlive the call) nor a hook.
+     *
+     * <p>
+     * <b>Lines are capped before they are materialized.</b> A streaming shell bounds the line it hands over before it
+     * holds the line in memory: the local shell hands a run of 64 KiB without a terminator over as a line of its own;
+     * a remote shell that receives events may instead end the command at a larger bound and say so in
+     * {@link ShellCommandResult#killCause()} ({@link ShellKillCause#LINE_LIMIT_EXCEEDED}). Either way a line that does
+     * not end within the bound never reaches the listener whole.
      *
      * @param command
      *            the command to execute, must not be null

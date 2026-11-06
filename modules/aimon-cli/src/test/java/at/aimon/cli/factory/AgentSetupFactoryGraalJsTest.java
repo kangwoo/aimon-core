@@ -108,7 +108,9 @@ class AgentSetupFactoryGraalJsTest {
 
         final ToolSpec spec = factory.buildToolSpec(config, fileSystem, mock(GraalJsEngineHolder.class));
 
-        // The engine goes to the stack, which is the one owner of the ExecuteCode provider (review-2).
+        // The engine goes to the stack, which is the one owner of the ExecuteCode provider (review-2). The CLI hands
+        // it exactly the JavaScript engine: its execution environment is always the local host, where the shell engine
+        // never runs (programmatic-tool-calling-shell design decision 1), so no Python engine is assembled here.
         assertThat(spec.isProgrammaticEnabled()).isTrue();
         assertThat(spec.getCodeExecutionEngines()).hasValueSatisfying(engines -> assertThat(engines).singleElement()
                 .satisfies(engine -> assertThat(engine.language()).isEqualTo("javascript")));

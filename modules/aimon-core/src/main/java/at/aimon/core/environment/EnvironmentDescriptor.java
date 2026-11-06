@@ -1,7 +1,12 @@
 package at.aimon.core.environment;
 
+import java.util.Collection;
+import java.util.Collections;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.regex.Pattern;
 
 /**
  * How an {@link ExecutionEnvironment} describes itself to the model: where commands run and on what platform.
@@ -12,12 +17,22 @@ import java.util.Optional;
  */
 public final class EnvironmentDescriptor {
 
+    /**
+     * The runtime capability of a Python 3 interpreter on the shell's {@code PATH} as {@code python3}, version 3.8 or
+     * later ({@code docs/design/tool/programmatic-tool-calling-shell.md} §10). The shell engine of {@code ExecuteCode}
+     * needs it.
+     */
+    public static final String RUNTIME_PYTHON3 = "python3";
+
+    private static final Pattern RUNTIME_NAME = Pattern.compile("[a-z0-9][a-z0-9._+-]*");
+
     private final String workingDirectory;
     private final String platform;
     private final String osVersion;
     private final String shellName;
     private final String notes;
     private final EnvironmentIsolation isolation;
+    private final Set<String> runtimes;
 
     private EnvironmentDescriptor(Builder builder) {
         this.workingDirectory = Objects.requireNonNull(builder.workingDirectory, "workingDirectory must not be null");
@@ -26,6 +41,7 @@ public final class EnvironmentDescriptor {
         this.shellName = builder.shellName;
         this.notes = builder.notes;
         this.isolation = builder.isolation;
+        this.runtimes = Collections.unmodifiableSet(new TreeSet<>(builder.runtimes));
     }
 
     /**
@@ -81,6 +97,17 @@ public final class EnvironmentDescriptor {
         return Optional.ofNullable(isolation);
     }
 
+    /**
+     * Returns the language runtimes the environment's profile declares its shell can run ({@link #RUNTIME_PYTHON3}) — a
+     * static fact like {@link #isolation()}, read at offer time without running anything. A runtime that is not
+     * declared may still be installed; a caller that needs one does not count on it.
+     *
+     * @return the declared runtimes, sorted and unmodifiable (never null; empty when none is declared)
+     */
+    public Set<String> runtimes() {
+        return runtimes;
+    }
+
     /** @return a new builder */
     public static Builder builder() {
         return new Builder();
@@ -96,19 +123,19 @@ public final class EnvironmentDescriptor {
         }
         return workingDirectory.equals(that.workingDirectory) && Objects.equals(platform, that.platform)
                 && Objects.equals(osVersion, that.osVersion) && Objects.equals(shellName, that.shellName)
-                && Objects.equals(notes, that.notes) && isolation == that.isolation;
+                && Objects.equals(notes, that.notes) && isolation == that.isolation && runtimes.equals(that.runtimes);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(workingDirectory, platform, osVersion, shellName, notes, isolation);
+        return Objects.hash(workingDirectory, platform, osVersion, shellName, notes, isolation, runtimes);
     }
 
     @Override
     public String toString() {
         return "EnvironmentDescriptor{workingDirectory='" + workingDirectory + "', platform=" + platform
                 + ", osVersion=" + osVersion + ", shellName=" + shellName + ", notes=" + notes + ", isolation="
-                + isolation + '}';
+                + isolation + ", runtimes=" + runtimes + '}';
     }
 
     /** Builder for {@link EnvironmentDescriptor}. */
@@ -119,8 +146,43 @@ public final class EnvironmentDescriptor {
         private String shellName;
         private String notes;
         private EnvironmentIsolation isolation;
+        private final Set<String> runtimes = new TreeSet<>();
 
         private Builder() {
+        }
+
+        /**
+         * Declares one language runtime the environment's shell can run ({@link #runtimes()}).
+         *
+         * @param runtime
+         *            the runtime's name, lower case ({@link #RUNTIME_PYTHON3}, {@code node}, ...)
+         * @return this builder
+         * @throws IllegalArgumentException
+         *             if the name is not a lower-case runtime name
+         */
+        public Builder runtime(String runtime) {
+            Objects.requireNonNull(runtime, "runtime must not be null");
+            if (!RUNTIME_NAME.matcher(runtime).matches()) {
+                throw new IllegalArgumentException("Not a runtime name: '" + runtime + "'");
+            }
+            runtimes.add(runtime);
+            return this;
+        }
+
+        /**
+         * Replaces the declared runtimes ({@link #runtimes()}).
+         *
+         * @param runtimes
+         *            the runtimes' names (must not be null)
+         * @return this builder
+         * @throws IllegalArgumentException
+         *             if a name is not a lower-case runtime name
+         */
+        public Builder runtimes(Collection<String> runtimes) {
+            Objects.requireNonNull(runtimes, "runtimes must not be null");
+            this.runtimes.clear();
+            runtimes.forEach(this::runtime);
+            return this;
         }
 
         /**

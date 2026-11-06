@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.regex.Pattern;
 
 /**
@@ -21,6 +22,15 @@ import java.util.regex.Pattern;
  * The builder refuses what no shell could place as given: a path with a control character, a path that is both a
  * file and the parent directory of another, and more than {@link #MAX_TOTAL_BYTES} in all. A shell that declares
  * {@link ShellFeature#RUN_DIRECTORY} can therefore rely on those three without checking them.
+ *
+ * <p>
+ * A file may be marked <b>secret</b> ({@link Builder#secretFile(String, byte[])}): a key the command reads and deletes.
+ * A shell never inlines a secret file into the command line or any other process argument, however small it is — it
+ * transfers it the way it would transfer a file too large to inline (an upload, a write by the host), and deletes any
+ * upload source as soon as the file is placed. An argument stays readable through {@code /proc/<pid>/cmdline} by every
+ * process of the machine for as long as the process runs
+ * ({@code docs/design/tool/programmatic-tool-calling-shell.md} decision 4). A shell that never inlines anything (the
+ * local shell writes every file itself) keeps the mark without doing anything for it.
  */
 public final class RunDirectory {
 
@@ -40,6 +50,7 @@ public final class RunDirectory {
 
     private final String variable;
     private final TreeMap<String, byte[]> files;
+    private final Set<String> secrets;
     private final long totalBytes;
 
     private RunDirectory(Builder builder) {
@@ -48,6 +59,7 @@ public final class RunDirectory {
             throw new IllegalArgumentException("Not an environment variable name: '" + variable + "'");
         }
         this.files = new TreeMap<>(builder.files);
+        this.secrets = Collections.unmodifiableSet(new TreeSet<>(builder.secrets));
         long total = 0;
         for (byte[] bytes : files.values()) {
             total += bytes.length;
@@ -91,6 +103,32 @@ public final class RunDirectory {
     }
 
     /**
+     * Returns whether a file is marked secret: a shell must not inline it into a command line or any other process
+     * argument (class doc).
+     *
+     * @param relPath
+     *            one of {@link #getPaths()}
+     * @return {@code true} if the file is secret
+     * @throws IllegalArgumentException
+     *             if the path is not one of {@link #getPaths()}
+     */
+    public boolean isSecret(String relPath) {
+        if (!files.containsKey(relPath)) {
+            throw new IllegalArgumentException("Not a file of this run directory: '" + relPath + "'");
+        }
+        return secrets.contains(relPath);
+    }
+
+    /**
+     * Returns the files marked secret (class doc).
+     *
+     * @return the secret paths, sorted and unmodifiable (never null; a subset of {@link #getPaths()})
+     */
+    public Set<String> getSecretPaths() {
+        return secrets;
+    }
+
+    /**
      * Returns the size of all files together.
      *
      * @return the total in bytes
@@ -110,7 +148,8 @@ public final class RunDirectory {
 
     @Override
     public String toString() {
-        return "RunDirectory{variable=" + variable + ", files=" + files.size() + ", totalBytes=" + totalBytes + '}';
+        return "RunDirectory{variable=" + variable + ", files=" + files.size() + ", secrets=" + secrets.size()
+                + ", totalBytes=" + totalBytes + '}';
     }
 
     /** A relative path with no empty, {@code .} or {@code ..} segment and no backslash: it stays below its base. */
@@ -155,6 +194,7 @@ public final class RunDirectory {
     public static final class Builder {
         private String variable;
         private final TreeMap<String, byte[]> files = new TreeMap<>();
+        private final Set<String> secrets = new TreeSet<>();
         private long totalBytes;
 
         private Builder() {
@@ -226,6 +266,25 @@ public final class RunDirectory {
             }
             files.put(relPath, bytes.clone());
             totalBytes += bytes.length;
+            return this;
+        }
+
+        /**
+         * Adds one file marked <b>secret</b>: a shell places it without inlining it into any process argument and
+         * deletes any upload source once it is placed (class doc). Otherwise as {@link #file(String, byte[])}, with
+         * the same refusals.
+         *
+         * @param relPath
+         *            the path relative to the directory (as {@link #file(String, byte[])})
+         * @param bytes
+         *            the content (must not be null)
+         * @return this builder
+         * @throws IllegalArgumentException
+         *             as {@link #file(String, byte[])}
+         */
+        public Builder secretFile(String relPath, byte[] bytes) {
+            file(relPath, bytes);
+            secrets.add(relPath);
             return this;
         }
 

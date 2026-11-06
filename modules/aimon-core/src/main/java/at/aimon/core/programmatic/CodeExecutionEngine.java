@@ -59,6 +59,20 @@ public interface CodeExecutionEngine extends AutoCloseable {
     ToolGrade intrinsicGrade();
 
     /**
+     * Returns whether the callable set of this engine is bounded by {@code shell-engine-tool-scope}
+     * ({@code docs/design/tool/programmatic-tool-calling-shell.md} §12.2, design §7.3 step 5): the engine runs code
+     * where
+     * a process co-resident with it can reach its channel to the host and call its tools, so the tools it opens are
+     * limited by how far they reach. The default — an engine whose only way out is the bridge, in the host JVM — is
+     * not bounded.
+     *
+     * @return {@code true} when the tool scope applies
+     */
+    default boolean isToolScopeBound() {
+        return false;
+    }
+
+    /**
      * Runs one program. Never throws for a program's failure — a script error, a timeout, a cancellation and a crossed
      * limit are all in the outcome. Throws only when the host itself is broken.
      *

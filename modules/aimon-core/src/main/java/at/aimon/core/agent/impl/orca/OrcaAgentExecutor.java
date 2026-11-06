@@ -1861,10 +1861,12 @@ public class OrcaAgentExecutor
                     // (programmatic-tool-calling design decision 9).
                     // The agent's programmatic settings and the environment's static facts let ExecuteCode
                     // describe itself for this offer (programmatic-tool-calling design §6.2, §7.3).
-                    final ToolOfferContext offerContext = CodeOfferKeys.putEnvironmentFacts(ToolOfferContext.builder()
-                            .registry(sessionRegistry).admission(agentAdmits).ceiling(maxSideEffectLevel)
-                            .programmatic(scope.getAgent().getMetadata().getProgrammatic())
-                            .agentName(scope.getAgent().getName()), toolContext).build();
+                    final ToolOfferContext offerContext = CodeOfferKeys.putEnvironmentFacts(
+                            ToolOfferContext.builder().registry(sessionRegistry).admission(agentAdmits)
+                                    .ceiling(maxSideEffectLevel)
+                                    .programmatic(scope.getAgent().getMetadata().getProgrammatic())
+                                    .agentName(scope.getAgent().getName()),
+                            toolContext, scope.getAgent().getAllowedTools()).build();
                     final List<ToolDefinition> availableTools = offerContext.offer().stream()
                             .map(ToolDescriptor::getDefinition).toList();
                     final ToolContext iterationToolContext = ToolContext.builder().putAll(toolContext.getContext())

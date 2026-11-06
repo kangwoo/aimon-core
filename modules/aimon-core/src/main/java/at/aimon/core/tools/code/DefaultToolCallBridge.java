@@ -94,6 +94,7 @@ final class DefaultToolCallBridge implements ToolCallBridge {
     private final Set<String> hookFeedback = new LinkedHashSet<>();
     private final Map<CompletableFuture<ToolDispatchResult>, String> inFlight = new ConcurrentHashMap<>();
     private volatile boolean closed;
+    private volatile boolean unattributed;
 
     DefaultToolCallBridge(ToolCallDispatcher dispatcher, ToolContext parentContext, String parentToolUseId,
             String language, List<ToolDescriptor> callable, CodeExecutionLimits limits,
@@ -265,9 +266,23 @@ final class DefaultToolCallBridge implements ToolCallBridge {
         return List.copyOf(inFlight.values());
     }
 
-    /** The calls the program made, in the order they finished. */
+    /** The calls the program made, in the order they finished; all unattributed once an engine said so. */
     synchronized List<NestedToolCall> records() {
-        return List.copyOf(records);
+        if (!unattributed) {
+            return List.copyOf(records);
+        }
+        final List<NestedToolCall> marked = new ArrayList<>(records.size());
+        records.forEach(call -> marked.add(call.unattributed()));
+        return List.copyOf(marked);
+    }
+
+    @Override
+    public void markUnattributed() {
+        if (!unattributed) {
+            unattributed = true;
+            log.warn("ExecuteCode {}: the engine saw a second writer; every nested call of this program is recorded "
+                    + "as unattributed", parentToolUseId);
+        }
     }
 
     /** The environment notices of the nested calls, deduplicated, in first-seen order. */

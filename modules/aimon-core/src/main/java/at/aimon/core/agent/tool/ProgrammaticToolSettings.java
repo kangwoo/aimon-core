@@ -5,6 +5,7 @@ import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -12,7 +13,8 @@ import java.util.Set;
  * code, and the engine it runs that code in ({@code docs/design/tool/programmatic-tool-calling.md} §7.2).
  *
  * <p>
- * The frontmatter keys are {@code programmatic-tools}, {@code programmatic-only} and {@code programmatic-engine}.
+ * The frontmatter keys are {@code programmatic-tools}, {@code programmatic-only}, {@code programmatic-engine} and
+ * {@code shell-engine-tool-scope} (which can only narrow the application's value, shell doc §12.2).
  * Without {@code programmatic-tools} there is no programmatic tool calling at all ({@link #none()}):
  * {@code ExecuteCode}
  * is not offered.
@@ -33,11 +35,13 @@ public final class ProgrammaticToolSettings {
     private final List<String> tools;
     private final Set<String> codeOnly;
     private final ProgrammaticEngineChoice engine;
+    private final ShellEngineToolScope shellEngineToolScope;
 
     private ProgrammaticToolSettings(Builder builder) {
         this.tools = List.copyOf(new LinkedHashSet<>(builder.tools));
         this.codeOnly = Set.copyOf(builder.codeOnly);
         this.engine = Objects.requireNonNull(builder.engine, "engine cannot be null");
+        this.shellEngineToolScope = builder.shellEngineToolScope;
         for (String name : tools) {
             requireExactName(name, "programmatic-tools");
         }
@@ -104,6 +108,16 @@ public final class ProgrammaticToolSettings {
         return engine;
     }
 
+    /**
+     * Returns the agent's {@code shell-engine-tool-scope}: how far the shell engine's callable tools may reach for this
+     * agent. It can only narrow the application's value (shell doc §12.2); a wider value is ignored with a warning.
+     *
+     * @return the agent's scope, empty when the agent leaves it to the application
+     */
+    public Optional<ShellEngineToolScope> getShellEngineToolScope() {
+        return Optional.ofNullable(shellEngineToolScope);
+    }
+
     private static void requireExactName(String name, String key) {
         if (name == null || name.isBlank()) {
             throw new IllegalArgumentException(key + " contains a blank tool name");
@@ -125,18 +139,22 @@ public final class ProgrammaticToolSettings {
         if (!(o instanceof ProgrammaticToolSettings other)) {
             return false;
         }
-        return tools.equals(other.tools) && codeOnly.equals(other.codeOnly) && engine == other.engine;
+        return tools.equals(other.tools) && codeOnly.equals(other.codeOnly) && engine == other.engine
+                && shellEngineToolScope == other.shellEngineToolScope;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(tools, codeOnly, engine);
+        return Objects.hash(tools, codeOnly, engine, shellEngineToolScope);
     }
 
     @Override
     public String toString() {
         return isEnabled()
                 ? "ProgrammaticToolSettings{tools=" + tools + ", codeOnly=" + codeOnly + ", engine=" + engine.wireName()
+                        + (shellEngineToolScope == null
+                                ? ""
+                                : ", shellEngineToolScope=" + shellEngineToolScope.wireName())
                         + '}'
                 : "ProgrammaticToolSettings.none()";
     }
@@ -147,8 +165,21 @@ public final class ProgrammaticToolSettings {
         private final List<String> tools = new ArrayList<>();
         private final Set<String> codeOnly = new LinkedHashSet<>();
         private ProgrammaticEngineChoice engine = ProgrammaticEngineChoice.AUTO;
+        private ShellEngineToolScope shellEngineToolScope;
 
         private Builder() {
+        }
+
+        /**
+         * Sets the agent's {@code shell-engine-tool-scope}, which can only narrow the application's.
+         *
+         * @param shellEngineToolScope
+         *            the scope, or {@code null} to leave it to the application
+         * @return this builder
+         */
+        public Builder shellEngineToolScope(ShellEngineToolScope shellEngineToolScope) {
+            this.shellEngineToolScope = shellEngineToolScope;
+            return this;
         }
 
         /**

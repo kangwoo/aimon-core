@@ -1,9 +1,10 @@
 # 프로그래매틱 도구 호출 — 모델이 쓴 코드가 도구를 부르는 실행 경로
 
-> **Status**: PARTIALLY IMPLEMENTED (B, C) — `aimon-core` (`at.aimon.core.agent.tool`, `at.aimon.core.programmatic`, `at.aimon.core.tools.code`),
-> `aimon-graaljs` (`aimon-workflow-graaljs` 를 개명·재편), `aimon-code-engine-testkit` (새 모듈). 공개 API 호환을 깨는 항목이 있다(§5).
-> 구현된 것은 서술자·제안 문맥·승인 관문·쿼터·도구 선언(조각 B)과 `ExecuteCode`·엔진 SPI·GraalJS 엔진·모듈 개명·계약 스위트(조각 C)다.
-> 셸 엔진(조각 D)은 아직 없다. 구현이 본문과 다른 점은 §21.
+> **Status**: PARTIALLY IMPLEMENTED (B, C, D1) — `aimon-core` (`at.aimon.core.agent.tool`, `at.aimon.core.programmatic`, `at.aimon.core.tools.code`,
+> `at.aimon.core.tools.code.shell`), `aimon-graaljs` (`aimon-workflow-graaljs` 를 개명·재편), `aimon-code-engine-testkit` (새 모듈).
+> 공개 API 호환을 깨는 항목이 있다(§5). 구현된 것은 서술자·제안 문맥·승인 관문·쿼터·도구 선언(조각 B), `ExecuteCode`·엔진 SPI·GraalJS
+> 엔진·모듈 개명·계약 스위트(조각 C), 셸 엔진의 코어 쪽 절반(조각 D1 — 셸 엔진, `RuntimeFileSystem`, `shell-engine-tool-scope`)이다.
+> 셸 엔진을 실제 샌드박스에서 돌리는 `aimon-sandbox` 쪽 절반(조각 D2)은 아직 없다. 구현이 본문과 다른 점은 §21.
 > 셸 엔진은 [셸 엔진 문서](programmatic-tool-calling-shell.md), 코드의 도구 호출이 지나는 입구는
 > [도구 호출의 단일 입구](tool-call-dispatcher.md) 가 정한다(그 문서의 `Status`). 설계에서 아직 정하지 않은 것은 §19 다.
 
@@ -637,7 +638,7 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 
 | 규칙 | 지킬 장치 |
 |---|---|
-| 두 엔진이 같은 계약을 지킨다 — 같은 모양의 프로그램이 같은 관찰을 내고(결정 7), 한도·취소(§13)가 같은 의미다 | 엔진 계약 스위트 `aimon-code-engine-testkit` (`AbstractCodeExecutionEngineContractTest` + 언어별 `EnginePrograms`). 두 엔진은 모두 이 스위트를 통과해야 한다. GraalJS 엔진은 갖춤(`GraalJsCodeEngineContractTest`), 셸 엔진은 조각 D |
+| 두 엔진이 같은 계약을 지킨다 — 같은 모양의 프로그램이 같은 관찰을 내고(결정 7), 한도·취소(§13)가 같은 의미다 | 엔진 계약 스위트 `aimon-code-engine-testkit` (`AbstractCodeExecutionEngineContractTest` + 언어별 `EnginePrograms`). 두 엔진은 모두 이 스위트를 통과해야 한다. GraalJS 엔진은 갖춤(`GraalJsCodeEngineContractTest`), 셸 엔진도 `LocalShell` 위에서 갖춤(`ShellCodeEngineContractTest`, 언어별 프로그램 `PythonPrograms`). `aimon-sandbox` 쪽 실행은 조각 D2 |
 | LLM 을 부르거나 포크를 일으키는 도구는 코드에서 불릴 수 없다(결정 15) | 갖춤 — ArchUnit (코어, `ProgrammaticToolDeclarationArchitectureTest`) — `at.aimon.core.tools..` 의 도구 중 클래스 그래프가 `LlmClient`·`LlmCallGateway`·`DialecticEngine`·`WikiKnowledgeBase`·`SubagentExecutionManager` 에 닿는 것은 `isCodeCallable()` 을 재정의한다. 그래프 탐색은 이유를 적은 정지 목록(`ToolContextKeys`, `StoreBackedPeerMemory`)에 들어가지 않는다(§21). `aimon-graaljs` 의 `GraalJsWorkflowTool` 은 그 모듈의 테스트가 확인한다. `ExecuteCodeTool` 은 `isCodeCallable()=false` 를 선언한다 |
 | 코드의 도구 호출은 단일 입구만 지난다(결정 3) | 갖춤 — ArchUnit (코어, `ProgrammaticToolArchitectureTest`: `tools.code..` 는 `Tool#execute`·`ToolExecutionManager` 를 부르지 않고 `toolinvocation..`·`agent.tool.execution..` 에 의존하지 않는다, `at.aimon.core.programmatic` 은 `tools..`·`impl..` 에 의존하지 않는다; `aimon-graaljs`, `GraalJsModuleArchitectureTest`: `code..`·`internal..` 은 도구·디스패처·실행 관리자를 직접 보지 않고 `ToolCallBridge` 만 쓴다) — `at.aimon.core.tools.code..` 는 `ToolCallDispatcher` 외 경로로 도구를 부를 수 없어야 한다. 입구 규칙 자체는 [단일 입구](tool-call-dispatcher.md) §3 #8. `aimon-graaljs` 는 같은 규칙을 `at.aimon.graaljs.code..` 에 대해 그 모듈의 아키텍처 테스트에 둔다 — 코어 테스트 클래스패스는 그 클래스를 보지 못한다 |
 | 내장 도구는 `dataReach()` 를 명시적으로 선언한다(§7.1) | 갖춤 — 내장 도구 전체에 대한 선언 검사 `ProgrammaticToolDeclarationArchitectureTest` (`at.aimon.core.tools..`, 메모리 deriver 도구, `McpTool`). 재정의하지 않은 내장 도구가 있으면 빌드가 실패한다 |
@@ -688,7 +689,8 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 | A | [단일 입구](tool-call-dispatcher.md) | 구현됨 |
 | B | `ToolDescriptor`·`ToolOfferContext`·`OfferKey`·`DataReach`, `Tool.describe`·`isCodeCallable`·`dataReach`, 세 루프의 제안 문맥, 서술자를 읽는 실링·승인 관문·루틴 재시도, `approvalKey`·`approvalDelegated`·코드 경로 무질의, 공개 `ToolCallQuota`, 내장 도구 선언과 그 검사, MCP `DataReach` | 구현됨 |
 | C | `ExecuteCode`·`ToolCallBridge`·`ToolApiRenderer`, 엔진 SPI(`at.aimon.core.programmatic`), GraalJS 엔진(`at.aimon.graaljs.code`), 모듈 개명 `aimon-graaljs`, 계약 스위트 `aimon-code-engine-testkit`, 에이전트 설정 `programmatic-tools`·`programmatic-only`·`programmatic-engine`, 조립(CLI `programmatic.*`, `ToolSpec.programmaticEnabled`, 스타터 `aimon.programmatic.*`) | 구현됨 |
-| D | 셸 엔진, `RuntimeFileSystem`, `shell-engine-tool-scope` | 미구현 |
+| D1 | 셸 엔진(`at.aimon.core.tools.code.shell`, Python 런타임 `aimon_ptc.py`, HMAC 줄 프로토콜), `RuntimeFileSystem`과 로컬 구현, `RunDirectory` 비밀 파일 표지, `EnvironmentDescriptor` 런타임 능력, `isolated` 스트리밍 계약, `ShellCommandResult.killCause()`(S8 의 코어 절반), `shell-engine-tool-scope`(애플리케이션·에이전트), 조립(부트스트랩·스타터의 `ServiceLoader` 발견) | 구현됨 |
+| D2 | `aimon-sandbox` 쪽 — S1–S9 의 제공자 몫(셸 엔진 문서 §13) | 미구현 (배포된 코어가 필요) |
 
 조각 B 가 본문과 다르게 정한 점:
 
@@ -724,4 +726,26 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 | 설정 표면(§16): GraalJS 엔진 조립은 "`aimon-graaljs` 의존(ServiceLoader)" | bootstrap 은 `ToolSpec.programmaticEnabled(true)`, 스타터는 `aimon.programmatic.enabled=true` 로 켜야 클래스패스의 엔진을 만든다(기본 꺼짐). CLI 한도 키는 `programmatic.limits.wallClockSeconds` 처럼 단위를 이름에 넣었다 | 의존을 더하는 것만으로 게스트 힙 한도가 없는 엔진(§10.3)이 켜지지 않게 한다. CLI 의 `enableJs` 와 같은 opt-in |
 | (본문 없음) `ExecuteCodeToolProvider` 를 누가 등록하는가 | 모든 조립에서 스택 하나가 등록한다. 호출자가 만든 엔진은 `ToolSpec.codeExecutionEngines(...)` 로 넘기고(호출자 소유 — CLI 는 `WorkflowJs` 와 공유하는 홀더 위의 엔진), 아니면 `programmaticEnabled` 일 때 스택이 클래스패스에서 찾아 소유한다. `ToolSpec.addProvider` 나 에이전트 커스터마이저가 `ExecuteCodeToolProvider` 를 더하면 거절한다. 엔진이 없을 때의 "no engine assembled" 경고는 에이전트마다 한 번 | 제공자가 둘이면 `ExecuteCode` 가 두 번 등록되거나, 엔진이 있는데도 엔진 없는 제공자가 "no engine assembled" 를 경고한다(review-2) |
 | 결과가 영원히 오지 않는 `await`(본문 없음) | `SCRIPT_ERROR` "the program awaits a promise that never settles" — 진행 중인 호출이 없고 큐가 비었는데 프로그램이 끝나지 않았을 때 | 그 상태로는 벽시계까지 기다릴 이유가 없다 |
+
+조각 D1 이 본문과 다르게 정한 점(셸 엔진 문서와 겹치는 것은 여기에만 적는다):
+
+| 본문 | 구현 | 이유 |
+|---|---|---|
+| 런타임에 넘기는 `RunDirectory` 는 `aimon_ptc.py`·`main.py`·`key`·`reply_dir` 넷(셸 엔진 §5) | `config.json` 을 하나 더 넣는다 — 호출 가능 도구 이름, 출력·응답·로그 상한, 벽시계 | 런타임이 함수를 정의하고 감시 스레드가 상한을 알아야 한다. 비밀이 아니고 다이제스트 검증을 받는다 |
+| 프로토콜 그림의 `DONE 10`(셸 엔진 §7) | `DONE` 도 줄 형식대로 페이로드를 싣는다 — JSON `{"status", "error"}`, `status` 는 `completed`·`error`·`output_limit`·`violation` | 호스트가 완료·스크립트 오류·출력 상한을 구분해야 한다. 런타임이 응답 파일 검증에 실패하면 `violation` 으로 알리고 끝나며, 호스트는 그것도 `PROTOCOL_VIOLATION` 으로 다룬다 |
+| 감시 스레드는 상한을 넘으면 자기 프로세스 그룹을 끝낸다(셸 엔진 §11) | 끝내기 **전에** 상한까지의 출력, `ERR` 꼬리, `DONE{"status":"output_limit"}` 를 보낸다 | 그룹에는 런타임 자신도 있어 그 뒤에는 보낼 이가 없다. 그러지 않으면 호스트는 `DONE` 없는 종료를 `SCRIPT_ERROR` 로 읽는다 |
+| "`Bash` 에 매치되는 PermissionRequest·PreTool 훅이 없다"(셸 엔진 §4) | 훅 SPI 에는 도구 매처가 없다. `ToolScopedHook`(`at.aimon.core.hook.event`, `mayApplyTo(toolName)`)을 두고, 선언형 `preTool` 훅은 매처(`ToolInputPredicate.mayMatchTool`)로 답한다. 이 인터페이스를 구현하지 않은 훅은 모든 도구에 매치된다고 본다 — 매처가 없는 선언형 `permissionRequest` 훅도 그렇다 | 보수적으로 읽어야 셸 엔진이 `Bash` 를 좁히는 훅을 우회하지 않는다. 코드로 등록한 관찰 전용 훅(CLI 의 `ToolCallDisplayHook` 등)이 있어도 셸 엔진이 막히지만, CLI 는 로컬이라 셸 엔진이 돌지 않는다 |
+| `Bash` 조건의 허용 목록 | 메인 루프만 에이전트의 허용 목록을 제안 문맥에 넘긴다(`CodeOfferKeys.putEnvironmentFacts(builder, context, allowedTools)`). 허용 목록을 넘기지 않은 제안 문맥에서 `Bash` 는 제약 없음이 아니다 | 포크·슬래시 스킬 루프는 `ExecuteCode` 를 제안하지 않는다(조각 C 편차 4) |
+| `shell-engine-tool-scope` 의 애플리케이션 값(셸 엔진 §12.2) | 엔진이 아니라 `ExecuteCodeTool`/`ExecuteCodeToolProvider` 가 받는다(`ToolSpec.shellEngineToolScope`, 스타터 `aimon.programmatic.shell-engine-tool-scope`). 어느 엔진에 적용할지는 SPI `CodeExecutionEngine.isToolScopeBound()` 가 말한다 | `ServiceLoader` 의 엔진 팩토리는 인자가 없어 설정을 받을 수 없다. 한도(`CodeExecutionLimits`)와 같은 길이다 |
+| `unrestricted` 이면 실행마다 `ExecuteCode` span 에 `ptc.tool_scope=unrestricted`(셸 엔진 §12.2) | 하지 않았다. 시작 시 경고는 한다(`ExecuteCodeToolProvider`) | 조각 C 편차 8 과 같다 — 디스패처 경로에 span 이 없다 |
+| CLI 설정 `programmatic.shellEngineToolScope`(§16) | CLI 는 셸 엔진을 조립하지 않고 그 키도 두지 않는다 | CLI 의 실행 환경은 언제나 로컬 호스트이고, 셸 엔진은 샌드박스에서만 돈다(셸 엔진 결정 1). `programmatic-engine: python` 인 에이전트는 "no python engine is assembled" 경고를 받는다 |
+| 오래된 `.aimon-ptc/` 항목의 정리(셸 엔진 §8) | 탐침 명령 안의 `find … -mmin +N -exec rm -rf` 로 한다(N = 기본 최대 벽시계의 두 배, 20분) | `RuntimeFileSystem` 에는 목록 연산이 없다. 탐침은 명령을 돌려도 되는 단계다 |
+| 위반 전에 디스패치된 호출의 "unattributed" 표시(셸 엔진 §7) | SPI `ToolCallBridge.markUnattributed()` 를 더했다. 기록(`renderPayload`)의 모든 중첩 호출에 `unattributed: true` 가 붙는다 | 기록은 브리지가 든다(조각 C 편차 6) |
+| 탐침 결과를 환경 객체에 붙여 둔다(셸 엔진 §4) | 확정된 답(가용, `python3` 없음, 3.8 미만, 파일이 보이지 않음)만 붙여 두고, 셸·파일 시스템 오류로 묻지 못한 경우는 그 호출만 불가로 답한다 | 샌드박스가 잠시 응답하지 않았다고 그 환경 객체에서 셸 엔진을 영영 끄지 않는다 |
+| 응답 쓰기 실패: "재시도한 뒤 실패하면 실행을 끝낸다"(셸 엔진 §7) | 세 번 시도한 뒤 실행을 끝내고 `SCRIPT_ERROR`. 대상이 이미 있으면 재시도 없이 `PROTOCOL_VIOLATION` | 선점은 공격 신호이고 I/O 실패는 아니다 |
+| (본문 없음) `RunDirectory` 의 다이제스트 검증 실패 | `PROTOCOL_VIOLATION` | 런타임 파일을 검증과 실행 사이에 바꾼 두 번째 작성자의 신호다(R5) |
+| `RuntimeFileSystem.delete(path)`(셸 엔진 §3) | 파일이나 디렉터리 트리를 링크를 따라가지 않고 지운다. 로컬 `writeNew` 는 `O_EXCL` 로 만든 임시 파일을 `link(2)` 로 대상에 건다 | 엔진이 실행 디렉터리를 한 번에 지운다. `O_EXCL` 만으로는 읽는 쪽이 절반 쓰인 파일을 볼 수 있다 |
+| S8 의 "원인 필드"(셸 엔진 §13) | `ShellCommandResult.killCause()` → `Optional<ShellKillCause>`(`LINE_LIMIT_EXCEEDED`, `OTHER`), 생성은 `withKillCause` | 기존 생성자를 깨지 않는다. 셸 엔진은 `LINE_LIMIT_EXCEEDED` 를 `PROTOCOL_VIOLATION` 으로 분류한다 |
+| 조립(§5.2, §16) | `aimon-core` 가 셸 엔진의 팩토리를 `ServiceLoader` 에 등록하므로 `programmaticEnabled` 인 부트스트랩·스타터는 늘 Python 엔진을 얻는다. 부트스트랩의 "엔진 없음" 경고는 "JavaScript 엔진 없음"(`aimon-graaljs` 를 더하라)으로 바뀌었다 | Python 엔진은 샌드박스 환경에서만 정적 가용이라 호스트 환경에는 아무것도 바꾸지 않는다 |
+| 언어가 바뀌면 환경 알림(§6.2, 조각 C 편차 9) | 여전히 하지 않았다 | 언어는 세션의 환경 종류(`isolation()`)가 **턴 사이에** 바뀔 때만 바뀐다 — 실행 환경은 실행마다 한 번 정해진다. 직전 언어를 기억하려면 노드 이동을 넘어 살아남는 세션 쪽 상태가 필요하고(scope-model), 트리 안의 제공자 가운데 한 세션의 환경 종류를 바꾸는 것은 없다. 그런 제공자가 생길 때 함께 한다 |
 

@@ -139,6 +139,11 @@ public final class BashSubcommandPredicate implements ToolInputPredicate {
     }
 
     @Override
+    public boolean mayMatchTool(String toolName) {
+        return BASH_TOOL_NAME.equals(toolName);
+    }
+
+    @Override
     public boolean test(String toolName, ToolInput input) {
         Objects.requireNonNull(toolName, "Tool name cannot be null");
         Objects.requireNonNull(input, "Input cannot be null");

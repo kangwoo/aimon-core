@@ -49,6 +49,10 @@ dependencies {
     // declaration, this module's test guards the next link, and both have to agree on what "every declarable key"
     // means. Same (non-)cycle as the two above. Not published, so it reaches no consumer.
     testImplementation(project(":aimon-llm-capability-testkit"))
+
+    // The engine contract suite of ExecuteCode, for the shell engine in this module (programmatic-tool-calling-shell
+    // design §14: core runs it over LocalShell). Same (non-)cycle as the testkits above.
+    testImplementation(project(":aimon-code-engine-testkit"))
 }
 
 // Checkstyle baseline: locks the existing warning count so new violations fail the build.

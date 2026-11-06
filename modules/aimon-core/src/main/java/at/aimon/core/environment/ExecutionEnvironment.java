@@ -112,6 +112,23 @@ public interface ExecutionEnvironment {
     }
 
     /**
+     * Returns the framework's own file access in this environment, outside the path rules
+     * ({@code docs/design/tool/programmatic-tool-calling-shell.md} §3). The shell engine of {@code ExecuteCode} writes
+     * its reply files through it, with an atomic create-new the model's {@link #fileSystem()} cannot express.
+     *
+     * <p>
+     * <b>Framework only.</b> It is never handed to a model tool: a path the path rules deny the model's file tools
+     * ({@code .aimon-ptc/}) is reachable here. Reading it is a static fact — it provisions nothing — so an offer may
+     * ask whether it is present.
+     *
+     * @return the runtime file system, or empty when this environment offers none (the default; the local
+     *         environment offers none, because the shell engine does not run on the host)
+     */
+    default Optional<RuntimeFileSystem> runtimeFileSystem() {
+        return Optional.empty();
+    }
+
+    /**
      * Returns an optional content search that answers {@code Grep} queries without reading files one by one.
      *
      * @return the content search, or empty to let {@code Grep} walk the filesystem itself
