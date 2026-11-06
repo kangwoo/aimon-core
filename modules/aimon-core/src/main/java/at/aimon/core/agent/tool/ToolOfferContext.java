@@ -1,12 +1,19 @@
 package at.aimon.core.agent.tool;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * What one iteration offers the model, and the facts a tool may read to describe itself for that offer.
@@ -35,7 +42,9 @@ import java.util.function.Predicate;
  * tool whose grade depends on the offer answers with its most conservative grade.
  *
  * <p>
- * Iteration-scoped and immutable. The registry it holds may itself grow (a deferred tool activated mid-turn), which is
+ * Iteration-scoped and immutable in everything it says; the one lazily written field is a memo of which tools some
+ * offered tool hosts for code ({@link #isCodeOnly(ToolDescriptor)}), computed from the immutable fields. The registry
+ * it holds may itself grow (a deferred tool activated mid-turn), which is
  * why it is rebuilt every iteration rather than once per execution.
  *
  * @see Tool#describe(ToolOfferContext)
@@ -52,6 +61,11 @@ public final class ToolOfferContext {
     public static final ToolContextKey<ToolOfferContext> CONTEXT_KEY = ToolContextKey.writeOnce("toolOfferContext",
             ToolOfferContext.class);
 
+    private static final Logger log = LoggerFactory.getLogger(ToolOfferContext.class);
+
+    /** Tool names already warned about for an invalid {@code programmatic-only} entry, so the warning comes once. */
+    private static final Set<String> WARNED_CODE_ONLY = ConcurrentHashMap.newKeySet();
+
     private static final ToolOfferContext NONE = new ToolOfferContext(new Builder(), false);
 
     private final boolean offering;
@@ -59,6 +73,10 @@ public final class ToolOfferContext {
     private final Predicate<Tool> admission;
     private final SideEffectLevel ceiling;
     private final Map<OfferKey<?>, Object> attributes;
+    private final ProgrammaticToolSettings programmatic;
+    private final String agentName;
+    /** Memo of {@link #codeHosted()}; the offer context is otherwise immutable. */
+    private volatile Set<String> codeHosted;
 
     private ToolOfferContext(Builder builder, boolean offering) {
         this.offering = offering;
@@ -66,6 +84,8 @@ public final class ToolOfferContext {
         this.admission = builder.admission;
         this.ceiling = builder.ceiling;
         this.attributes = new IdentityHashMap<>(builder.attributes);
+        this.programmatic = builder.programmatic;
+        this.agentName = builder.agentName;
     }
 
     /**
@@ -158,8 +178,18 @@ public final class ToolOfferContext {
     }
 
     /**
-     * Returns the descriptors of the registry's tools this offer makes: admitted, described in this context, and
-     * within the ceiling — in the registry's order. Each tool is described once.
+     * Returns what the agent this offer belongs to opens to model-written code.
+     *
+     * @return the settings (never null); {@link ProgrammaticToolSettings#none()} unless set
+     */
+    public ProgrammaticToolSettings getProgrammatic() {
+        return programmatic;
+    }
+
+    /**
+     * Returns the descriptors of the registry's tools this offer makes: admitted, described in this context, offerable,
+     * within the ceiling, and not withheld as code-only ({@link #isCodeOnly(ToolDescriptor)}) — in the registry's
+     * order. Each tool is described once.
      *
      * @return the offered descriptors (never null); empty without a registry
      */
@@ -167,17 +197,140 @@ public final class ToolOfferContext {
         if (registry == null) {
             return List.of();
         }
-        final List<ToolDescriptor> offered = new ArrayList<>();
+        final List<ToolDescriptor> eligible = new ArrayList<>();
+        final Set<String> hosted = new HashSet<>();
         for (Tool tool : registry.findAll()) {
             if (!admission.test(tool)) {
                 continue;
             }
             final ToolDescriptor descriptor = tool.describe(this);
-            if (permits(descriptor)) {
+            if (descriptor.isOfferable() && permits(descriptor)) {
+                eligible.add(descriptor);
+                hosted.addAll(descriptor.getCodeHostedTools());
+            }
+        }
+        codeHosted = Set.copyOf(hosted);
+        final List<ToolDescriptor> offered = new ArrayList<>(eligible.size());
+        for (ToolDescriptor descriptor : eligible) {
+            if (!isCodeOnly(descriptor)) {
                 offered.add(descriptor);
             }
         }
         return List.copyOf(offered);
+    }
+
+    /**
+     * Returns the descriptors of the named tools that are eligible for this offer — in the registry, admitted,
+     * described in this context, offerable and within the ceiling — before code-only tools are withheld from the direct
+     * offer. This is step 1 of the callable set ({@code docs/design/tool/programmatic-tool-calling.md} §7.3). The
+     * result follows the order of {@code names}; a name with no eligible tool is left out.
+     *
+     * @param names
+     *            the tool names to describe (must not be null)
+     * @return the eligible descriptors (never null); empty without a registry
+     */
+    public List<ToolDescriptor> eligible(Collection<String> names) {
+        Objects.requireNonNull(names, "names cannot be null");
+        if (registry == null) {
+            return List.of();
+        }
+        final List<ToolDescriptor> eligible = new ArrayList<>();
+        for (String name : names) {
+            final Optional<Tool> tool = registry.findByName(name);
+            if (tool.isEmpty() || !admission.test(tool.get())) {
+                continue;
+            }
+            final ToolDescriptor descriptor = tool.get().describe(this);
+            if (descriptor.isOfferable() && permits(descriptor)) {
+                eligible.add(descriptor);
+            }
+        }
+        return List.copyOf(eligible);
+    }
+
+    /**
+     * Returns whether this offer withholds {@code descriptor}'s tool from the direct offer because the agent opens it
+     * only to code ({@code programmatic-only}) <em>and</em> code can actually reach it here: some tool of this same
+     * offer — {@code ExecuteCode} — is offered and lists it among the tools it hosts
+     * ({@link ToolDescriptor#getCodeHostedTools()}). Without that, the entry is ignored and the tool is offered and
+     * callable directly, so an agent never loses a tool because no engine can run here.
+     *
+     * <p>
+     * A tool named there that is not {@link SideEffectLevel#READ_ONLY} is never withheld: a code-only tool has no
+     * direct call to store an approval through, so a mutating one may not be code-only (decision 12 ④) — a warning
+     * says so once per agent and tool.
+     *
+     * @param descriptor
+     *            a descriptor obtained in this context (must not be null)
+     * @return {@code true} when the tool is offered only through code
+     */
+    public boolean isCodeOnly(ToolDescriptor descriptor) {
+        Objects.requireNonNull(descriptor, "descriptor cannot be null");
+        return isNamedCodeOnly(descriptor) && codeHosted().contains(descriptor.getName());
+    }
+
+    /**
+     * Returns whether {@code descriptor}'s tool is named in {@code programmatic-only} and may be code-only — it is
+     * {@link SideEffectLevel#READ_ONLY} — without asking whether code can reach it in this offer. For the tool that
+     * hosts code ({@code ExecuteCode}) while it describes itself, where asking would describe it again; everyone else
+     * reads {@link #isCodeOnly(ToolDescriptor)}.
+     *
+     * @param descriptor
+     *            a descriptor obtained in this context (must not be null)
+     * @return {@code true} when the tool would be code-only wherever code can reach it
+     */
+    public boolean isNamedCodeOnly(ToolDescriptor descriptor) {
+        Objects.requireNonNull(descriptor, "descriptor cannot be null");
+        if (!programmatic.getCodeOnly().contains(descriptor.getName())) {
+            return false;
+        }
+        if (descriptor.getSideEffectLevel() != SideEffectLevel.READ_ONLY) {
+            if (WARNED_CODE_ONLY.add(getAgentName().orElse("") + '\0' + descriptor.getName())) {
+                log.warn(
+                        "Agent '{}': programmatic-only names '{}', which declares {}: a tool that is not READ_ONLY "
+                                + "cannot be offered only through code, so it stays in the direct offer",
+                        getAgentName().orElse("?"), descriptor.getName(), descriptor.getSideEffectLevel());
+            }
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * The tools some offered tool of this offer hosts for code, computed once per offer context — by {@link #offer()}
+     * on the way, or here on first use (a refusal on the direct path).
+     */
+    private Set<String> codeHosted() {
+        Set<String> hosted = codeHosted;
+        if (hosted != null) {
+            return hosted;
+        }
+        if (registry == null || programmatic.getCodeOnly().isEmpty()) {
+            hosted = Set.of();
+        } else {
+            final Set<String> collected = new HashSet<>();
+            for (Tool tool : registry.findAll()) {
+                if (!admission.test(tool)) {
+                    continue;
+                }
+                final ToolDescriptor described = tool.describe(this);
+                if (described != null && described.isOfferable() && permits(described)) {
+                    collected.addAll(described.getCodeHostedTools());
+                }
+            }
+            hosted = Set.copyOf(collected);
+        }
+        codeHosted = hosted;
+        return hosted;
+    }
+
+    /**
+     * Returns the name of the agent this offer belongs to, for operator warnings.
+     *
+     * @return the agent's name, empty when the loop did not set one
+     */
+    public Optional<String> getAgentName() {
+        return Optional.ofNullable(agentName);
     }
 
     /**
@@ -199,7 +352,8 @@ public final class ToolOfferContext {
     @Override
     public String toString() {
         return offering
-                ? "ToolOfferContext{ceiling=" + ceiling + ", attributes=" + attributes.keySet() + '}'
+                ? "ToolOfferContext{ceiling=" + ceiling + ", attributes=" + attributes.keySet()
+                        + (programmatic.isEnabled() ? ", programmatic=" + programmatic : "") + '}'
                 : "ToolOfferContext.none()";
     }
 
@@ -209,8 +363,31 @@ public final class ToolOfferContext {
         private Predicate<Tool> admission = tool -> true;
         private SideEffectLevel ceiling = SideEffectLevel.MUTATING;
         private final Map<OfferKey<?>, Object> attributes = new IdentityHashMap<>();
+        private ProgrammaticToolSettings programmatic = ProgrammaticToolSettings.none();
+        private String agentName;
 
         private Builder() {
+        }
+
+        /**
+         * @param agentName
+         *            the name of the agent the offer belongs to, for operator warnings; {@code null} for none
+         * @return this builder
+         */
+        public Builder agentName(String agentName) {
+            this.agentName = agentName;
+            return this;
+        }
+
+        /**
+         * @param programmatic
+         *            what the agent opens to model-written code (must not be null); defaults to
+         *            {@link ProgrammaticToolSettings#none()}
+         * @return this builder
+         */
+        public Builder programmatic(ProgrammaticToolSettings programmatic) {
+            this.programmatic = Objects.requireNonNull(programmatic, "programmatic cannot be null");
+            return this;
         }
 
         /**

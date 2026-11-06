@@ -12,8 +12,11 @@ import at.aimon.core.agent.orca.tool.OrcaToolProvider;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.mcp.McpClientFactory;
 import at.aimon.core.mcp.McpServerConfigProvider;
+import at.aimon.core.programmatic.CodeExecutionEngine;
+import at.aimon.core.programmatic.CodeExecutionLimits;
 import at.aimon.core.tools.artifact.ArtifactPolicy;
 import at.aimon.core.tools.bash.BackgroundBashStore;
+import at.aimon.core.tools.code.ExecuteCodeToolProvider;
 import at.aimon.core.tools.monitor.MonitorSourceFactory;
 import at.aimon.core.tools.monitor.MonitorStore;
 
@@ -78,6 +81,9 @@ public final class ToolSpec {
     private final boolean monitorWebSocketEnabled;
     private final List<MonitorSourceFactory> monitorSources;
     private final MonitorStore monitorStore;
+    private final boolean programmaticEnabled;
+    private final CodeExecutionLimits programmaticLimits;
+    private final List<CodeExecutionEngine> codeExecutionEngines;
 
     private ToolSpec(Builder builder) {
         this.bashEnabled = builder.bashEnabled;
@@ -95,6 +101,17 @@ public final class ToolSpec {
         this.monitorWebSocketEnabled = builder.monitorWebSocketEnabled;
         this.monitorSources = List.copyOf(builder.monitorSources);
         this.monitorStore = builder.monitorStore;
+        this.codeExecutionEngines = builder.codeExecutionEngines == null
+                ? null
+                : List.copyOf(builder.codeExecutionEngines);
+        this.programmaticEnabled = builder.programmaticEnabled || this.codeExecutionEngines != null;
+        this.programmaticLimits = builder.programmaticLimits;
+        // One owner: the stack registers ExecuteCode over this spec's engines. A second provider would put a second
+        // ExecuteCode beside it, or warn "no engine assembled" next to a working one.
+        if (this.additionalProviders.stream().anyMatch(ExecuteCodeToolProvider.class::isInstance)) {
+            throw new IllegalArgumentException("ExecuteCodeToolProvider is registered by the stack; give it engines "
+                    + "through codeExecutionEngines(...) or programmaticEnabled(true) instead of addProvider");
+        }
 
         if ((this.mcpClientFactory == null) != (this.mcpServerConfigProvider == null)) {
             throw new IllegalArgumentException(
@@ -288,11 +305,44 @@ public final class ToolSpec {
         return mcpClientFactory != null;
     }
 
+    /**
+     * Returns whether programmatic tool calling is assembled: the stack creates every code execution engine on the
+     * class
+     * path ({@code ServiceLoader}, {@code at.aimon.core.programmatic.CodeExecutionEngineFactory}), owns them, and
+     * registers {@code ExecuteCode} over them. An agent still opens tools to code in its own definition
+     * ({@code programmatic-tools}).
+     *
+     * @return whether programmatic tool calling is assembled (default: off)
+     */
+    public boolean isProgrammaticEnabled() {
+        return programmaticEnabled;
+    }
+
+    /**
+     * Returns the engines the caller assembled and owns, when it gave any ({@link Builder#codeExecutionEngines}). The
+     * stack then registers {@code ExecuteCode} over exactly these and does not look on the class path.
+     *
+     * @return the caller's engines, empty when the stack is to discover its own
+     */
+    public Optional<List<CodeExecutionEngine>> getCodeExecutionEngines() {
+        return Optional.ofNullable(codeExecutionEngines);
+    }
+
+    /**
+     * Returns the limits every program run by {@code ExecuteCode} is held to.
+     *
+     * @return the limits (never null; the design's defaults unless set)
+     */
+    public CodeExecutionLimits getProgrammaticLimits() {
+        return programmaticLimits;
+    }
+
     @Override
     public String toString() {
         return "ToolSpec[bash=" + bashEnabled + ", workflowTool=" + workflowToolEnabled + ", workflowRunner="
                 + workflowRunnerEnabled + ", additional=" + additionalProviders.size() + ", enrichers="
-                + contextEnrichers.size() + ", mcp=" + isMcpEnabled() + ", monitor=" + monitorEnabled + "]";
+                + contextEnrichers.size() + ", mcp=" + isMcpEnabled() + ", monitor=" + monitorEnabled
+                + ", programmatic=" + programmaticEnabled + "]";
     }
 
     /** Builder for {@link ToolSpec}. */
@@ -311,8 +361,50 @@ public final class ToolSpec {
         private boolean monitorWebSocketEnabled = true;
         private final List<MonitorSourceFactory> monitorSources = new ArrayList<>();
         private MonitorStore monitorStore;
+        private boolean programmaticEnabled;
+        private CodeExecutionLimits programmaticLimits = CodeExecutionLimits.defaults();
+        private List<CodeExecutionEngine> codeExecutionEngines;
 
         private Builder() {
+        }
+
+        /**
+         * Assembles programmatic tool calling (default: off). See {@link ToolSpec#isProgrammaticEnabled()}.
+         *
+         * @param programmaticEnabled
+         *            whether to create the code execution engines on the class path and register {@code ExecuteCode}
+         * @return this builder
+         */
+        public Builder programmaticEnabled(boolean programmaticEnabled) {
+            this.programmaticEnabled = programmaticEnabled;
+            return this;
+        }
+
+        /**
+         * Assembles programmatic tool calling over engines the caller built and owns — the CLI's GraalJS engine over
+         * the holder it shares with {@code WorkflowJs}, say. Implies {@link #programmaticEnabled(boolean)}; the stack
+         * does not discover engines and does not close these.
+         *
+         * @param codeExecutionEngines
+         *            the engines, at most one per language (must not be null)
+         * @return this builder
+         */
+        public Builder codeExecutionEngines(List<? extends CodeExecutionEngine> codeExecutionEngines) {
+            this.codeExecutionEngines = List
+                    .copyOf(Objects.requireNonNull(codeExecutionEngines, "codeExecutionEngines must not be null"));
+            return this;
+        }
+
+        /**
+         * Sets the limits every program run by {@code ExecuteCode} is held to.
+         *
+         * @param programmaticLimits
+         *            the limits (must not be null)
+         * @return this builder
+         */
+        public Builder programmaticLimits(CodeExecutionLimits programmaticLimits) {
+            this.programmaticLimits = Objects.requireNonNull(programmaticLimits, "programmaticLimits must not be null");
+            return this;
         }
 
         /**

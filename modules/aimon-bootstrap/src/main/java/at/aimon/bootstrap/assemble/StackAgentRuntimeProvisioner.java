@@ -49,6 +49,7 @@ import at.aimon.core.scheduling.ScheduledTaskManager;
 import at.aimon.core.skill.SkillRegistry;
 import at.aimon.core.skill.parser.SkillParser;
 import at.aimon.core.tools.bash.BackgroundBashManager;
+import at.aimon.core.tools.code.ExecuteCodeToolProvider;
 import at.aimon.core.tools.monitor.MonitorManager;
 
 /**
@@ -102,6 +103,7 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
     private final CredentialStoreFactory credentialStoreFactory;
     private final boolean knowledgeToolsEnabled;
     private final OrcaToolProvider memoryToolProvider;
+    private final OrcaToolProvider executeCodeToolProvider;
     private final List<AimonAgentCustomizer> agentCustomizers;
     private final ExecutionEnvironmentProvider environmentProvider;
     /** The same object as {@link #environmentProvider} when the stack built the local default, else null. */
@@ -124,6 +126,7 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
         this.credentialStoreFactory = builder.credentialStoreFactory;
         this.knowledgeToolsEnabled = builder.knowledgeToolsEnabled;
         this.memoryToolProvider = builder.memoryToolProvider;
+        this.executeCodeToolProvider = builder.executeCodeToolProvider;
         // Sorted once, here, rather than at every runtime creation: a hook's position decides what it can see,
         // and re-sorting per tenant would be work done on a request thread to reach the same answer.
         this.agentCustomizers = builder.agentCustomizers.stream()
@@ -307,11 +310,22 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
         if (memoryToolProvider != null) {
             toolProviders.add(memoryToolProvider);
         }
+        // ExecuteCode over the stack's engines, which outlive every runtime (programmatic-tool-calling design §9).
+        if (executeCodeToolProvider != null) {
+            toolProviders.add(executeCodeToolProvider);
+        }
         final List<OrcaCommandProvider> commandProviders = new ArrayList<>(
                 OrcaAgentRuntimeFactory.defaultCommandProviders());
         for (AimonAgentCustomizer customizer : applicable) {
-            toolProviders.addAll(Objects.requireNonNull(customizer.toolProviders(descriptor),
-                    () -> customizer + " returned null tool providers for " + descriptor));
+            final List<OrcaToolProvider> contributed = Objects.requireNonNull(customizer.toolProviders(descriptor),
+                    () -> customizer + " returned null tool providers for " + descriptor);
+            // The stack owns ExecuteCode (ToolSpec.codeExecutionEngines / programmaticEnabled); a customizer's own
+            // provider would register a second one or contradict the stack's "no engine" warning.
+            if (contributed.stream().anyMatch(ExecuteCodeToolProvider.class::isInstance)) {
+                throw new IllegalArgumentException(customizer + " contributes an ExecuteCodeToolProvider for "
+                        + descriptor + "; the stack registers ExecuteCode — configure its engines on ToolSpec");
+            }
+            toolProviders.addAll(contributed);
             commandProviders.addAll(Objects.requireNonNull(customizer.commandProviders(descriptor),
                     () -> customizer + " returned null command providers for " + descriptor));
         }
@@ -675,6 +689,7 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
         private CredentialStoreFactory credentialStoreFactory;
         private boolean knowledgeToolsEnabled;
         private OrcaToolProvider memoryToolProvider;
+        private OrcaToolProvider executeCodeToolProvider;
         private BackgroundBashManager backgroundBashManager;
         private MonitorManager monitorManager;
         private List<AimonAgentCustomizer> agentCustomizers = List.of();
@@ -767,6 +782,17 @@ public final class StackAgentRuntimeProvisioner implements AgentRuntimeProvision
          */
         public Builder memoryToolProvider(OrcaToolProvider memoryToolProvider) {
             this.memoryToolProvider = memoryToolProvider;
+            return this;
+        }
+
+        /**
+         * @param executeCodeToolProvider
+         *            the {@code ExecuteCode} provider over the stack's engines, or null when programmatic tool calling
+         *            is off
+         * @return this builder
+         */
+        public Builder executeCodeToolProvider(OrcaToolProvider executeCodeToolProvider) {
+            this.executeCodeToolProvider = executeCodeToolProvider;
             return this;
         }
 

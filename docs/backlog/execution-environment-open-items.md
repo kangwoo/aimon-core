@@ -1862,7 +1862,7 @@ javadoc 에 적었다).
 조용히 기본 슬롯에 둔다. `SubagentResolver.resolve` 는 위치 인자를 받는 공개 인터페이스라, 인자를 하나 더하면 구현체가
 깨진다 — 작은 서술자 객체를 받도록 바꾸는 편이 낫다.
 
-**어디.** `modules/aimon-workflow-graaljs/src/main/java/at/aimon/workflow/graaljs/InlineSubagentResolver.java`(37~50행,
+**어디.** `modules/aimon-graaljs/src/main/java/at/aimon/graaljs/workflow/InlineSubagentResolver.java`(37~50행,
 2026-09-29), `SubagentResolver.java`, `modules/aimon-core/src/main/java/at/aimon/core/tools/workflow/WorkflowTool.java`
 (367~395행).
 
@@ -1981,7 +1981,7 @@ aimon-sandbox 가 정했다 — **부모를 따른다.** 설계 §5.2 의 기본
 `attributes` 를 광고하지 않는 데서 멈췄다(EE-42 설계 §8). 제공자가 슬롯을 속성만 보고 고르지 않고 자기 정책으로 거르면
 (예: 허용 목록) 이 틈은 제공자 쪽에서 닫힌다.
 
-**어디.** `modules/aimon-workflow-graaljs/src/main/java/at/aimon/workflow/graaljs/AgentTaskMarshaller.java`,
+**어디.** `modules/aimon-graaljs/src/main/java/at/aimon/graaljs/workflow/AgentTaskMarshaller.java`,
 `InlineSubagentResolver.java`, `GraalJsWorkflowTool.java`(2026-09-29).
 
 **언제 다시 볼까.** 슬롯마다 권한이나 비용이 다른 제공자가 생길 때.
@@ -2735,7 +2735,7 @@ environment" 라고 부른다(`DefaultSubagentExecutionManager`, `TaskTool`). `E
 관측 가능한 잘못은 아직 없다 — 타입이 달라 컴파일러가 섞이는 것을 막는다. 비용은 읽는 쪽에 있다.
 
 **어디.** `modules/aimon-core/src/main/java/at/aimon/core/subagent/SubagentExecutionEnvironment.java`(2026-10-03). 공개 SPI 다 —
-`SubagentExecutionManager` 의 메서드 인자이고 `aimon-workflow-graaljs` 와 CLI 가 빌더를 부른다.
+`SubagentExecutionManager` 의 메서드 인자이고 `aimon-graaljs` 와 CLI 가 빌더를 부른다.
 
 **언제 다시 볼까.** 서브에이전트 SPI 를 다음에 깨뜨릴 때.
 
@@ -2810,7 +2810,7 @@ runId)` 를 부르고, 그 러너의 기반 환경은 런타임을 조립할 때
 없고, 실행이 스킬보다 오래 살아 스킬이 끝나면 어차피 층이 꺼진다.
 
 **어디.** `modules/aimon-core/src/main/java/at/aimon/core/tools/workflow/WorkflowTool.java` 의 `runInBackground`,
-`modules/aimon-workflow-graaljs/src/main/java/at/aimon/workflow/graaljs/GraalJsWorkflowTool.java` 의 `runBackground`,
+`modules/aimon-graaljs/src/main/java/at/aimon/graaljs/workflow/GraalJsWorkflowTool.java` 의 `runBackground`,
 `modules/aimon-core/src/main/java/at/aimon/core/tools/HookRegistryAccess.java`(판정과 거절 문구),
 `agent/impl/orca/OrcaAgentRuntimeFactory.java` 의 에이전트 범위 `WorkflowRunners.create`(2026-10-04).
 

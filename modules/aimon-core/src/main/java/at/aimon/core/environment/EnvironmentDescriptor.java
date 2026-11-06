@@ -17,6 +17,7 @@ public final class EnvironmentDescriptor {
     private final String osVersion;
     private final String shellName;
     private final String notes;
+    private final EnvironmentIsolation isolation;
 
     private EnvironmentDescriptor(Builder builder) {
         this.workingDirectory = Objects.requireNonNull(builder.workingDirectory, "workingDirectory must not be null");
@@ -24,6 +25,7 @@ public final class EnvironmentDescriptor {
         this.osVersion = builder.osVersion;
         this.shellName = builder.shellName;
         this.notes = builder.notes;
+        this.isolation = builder.isolation;
     }
 
     /**
@@ -68,6 +70,17 @@ public final class EnvironmentDescriptor {
         return Optional.ofNullable(notes);
     }
 
+    /**
+     * Returns where this environment runs commands relative to the host — a static fact of the environment's profile.
+     * {@code ExecuteCode} reads it at offer time to pick its engine ({@code programmatic-engine: auto}) without
+     * provisioning anything.
+     *
+     * @return the isolation, empty when the environment does not declare it
+     */
+    public Optional<EnvironmentIsolation> isolation() {
+        return Optional.ofNullable(isolation);
+    }
+
     /** @return a new builder */
     public static Builder builder() {
         return new Builder();
@@ -83,18 +96,19 @@ public final class EnvironmentDescriptor {
         }
         return workingDirectory.equals(that.workingDirectory) && Objects.equals(platform, that.platform)
                 && Objects.equals(osVersion, that.osVersion) && Objects.equals(shellName, that.shellName)
-                && Objects.equals(notes, that.notes);
+                && Objects.equals(notes, that.notes) && isolation == that.isolation;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(workingDirectory, platform, osVersion, shellName, notes);
+        return Objects.hash(workingDirectory, platform, osVersion, shellName, notes, isolation);
     }
 
     @Override
     public String toString() {
         return "EnvironmentDescriptor{workingDirectory='" + workingDirectory + "', platform=" + platform
-                + ", osVersion=" + osVersion + ", shellName=" + shellName + ", notes=" + notes + '}';
+                + ", osVersion=" + osVersion + ", shellName=" + shellName + ", notes=" + notes + ", isolation="
+                + isolation + '}';
     }
 
     /** Builder for {@link EnvironmentDescriptor}. */
@@ -104,8 +118,19 @@ public final class EnvironmentDescriptor {
         private String osVersion;
         private String shellName;
         private String notes;
+        private EnvironmentIsolation isolation;
 
         private Builder() {
+        }
+
+        /**
+         * @param isolation
+         *            where the environment runs commands, or null if it does not declare it
+         * @return this builder
+         */
+        public Builder isolation(EnvironmentIsolation isolation) {
+            this.isolation = isolation;
+            return this;
         }
 
         /**

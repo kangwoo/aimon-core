@@ -177,7 +177,8 @@ public final class FileSystemAgentBundleLoader implements AgentBundleLoader {
         final AgentMetadata metadata = AgentMetadata.builder().name(definition.getName()).model(definition.getModel())
                 .maxIterations(definition.getMaxIterations()).tags(definition.getTags())
                 .allowedTools(definition.getAllowedTools()).contextEngine(definition.getContextEngine().orElse(null))
-                .contextPolicy(definition.getContextPolicy()).attributes(definition.getAttributes()).build();
+                .contextPolicy(definition.getContextPolicy()).attributes(definition.getAttributes())
+                .programmatic(definition.getProgrammatic()).build();
         final AgentContent content = AgentContent.builder().systemPrompt(definition.getSystemPrompt())
                 .variables(definition.getVariables()).build();
         return DefaultAgent.builder().metadata(metadata).content(content).build();

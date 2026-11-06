@@ -1,6 +1,8 @@
 package at.aimon.core.agent.tool;
 
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 
 import at.aimon.core.agent.interrupt.InterruptBehavior;
 import at.aimon.core.llm.ToolDefinition;
@@ -49,6 +51,9 @@ public final class ToolDescriptor {
     private final DataReach dataReach;
     private final boolean approvalDelegated;
     private final String approvalKey;
+    private final String approvalVia;
+    private final boolean offerable;
+    private final Set<String> codeHostedTools;
 
     private ToolDescriptor(Builder builder) {
         this.definition = Objects.requireNonNull(builder.definition, "definition cannot be null");
@@ -64,6 +69,9 @@ public final class ToolDescriptor {
         this.dataReach = Objects.requireNonNull(builder.dataReach, "dataReach cannot be null");
         this.approvalDelegated = builder.approvalDelegated;
         this.approvalKey = builder.approvalKey != null ? builder.approvalKey : definition.getName();
+        this.approvalVia = builder.approvalVia;
+        this.offerable = builder.offerable;
+        this.codeHostedTools = Set.copyOf(builder.codeHostedTools);
     }
 
     /**
@@ -226,6 +234,40 @@ public final class ToolDescriptor {
         return approvalKey;
     }
 
+    /**
+     * Returns how the path asking for approval is named in the prompt when the approval key is another tool's — for
+     * the shell engine's {@code ExecuteCode}, {@code "ExecuteCode (Python)"}, so the user reads
+     * {@code 'Bash' — via ExecuteCode (Python)} (decision 11).
+     *
+     * @return the label, empty when the prompt should name only the call
+     */
+    public Optional<String> getApprovalVia() {
+        return Optional.ofNullable(approvalVia);
+    }
+
+    /**
+     * Returns whether this tool may be offered in the context it was described in. A tool whose usefulness depends on
+     * its context ({@code ExecuteCode} without an engine or without a tool to call) says {@code false}, and the offer
+     * leaves it out. Default {@code true}.
+     *
+     * @return {@code false} when the offer must leave the tool out
+     */
+    public boolean isOfferable() {
+        return offerable;
+    }
+
+    /**
+     * Returns the tools model-written code can call through this tool in the context it was described in — for
+     * {@code ExecuteCode}, its callable set. A tool the agent opens only to code is withheld from the direct offer only
+     * when some offered tool hosts it ({@link ToolOfferContext#isCodeOnly(ToolDescriptor)}). Empty for every other
+     * tool.
+     *
+     * @return the hosted tool names (never null, possibly empty)
+     */
+    public Set<String> getCodeHostedTools() {
+        return codeHostedTools;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -238,13 +280,16 @@ public final class ToolDescriptor {
                 && definition.equals(other.definition) && sideEffectLevel == other.sideEffectLevel
                 && destructiveBehavior == other.destructiveBehavior && idempotencyBehavior == other.idempotencyBehavior
                 && concurrencyBehavior == other.concurrencyBehavior && interruptBehavior == other.interruptBehavior
-                && dataReach == other.dataReach && approvalKey.equals(other.approvalKey);
+                && dataReach == other.dataReach && approvalKey.equals(other.approvalKey)
+                && Objects.equals(approvalVia, other.approvalVia) && offerable == other.offerable
+                && codeHostedTools.equals(other.codeHostedTools);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(definition, sideEffectLevel, destructiveBehavior, idempotencyBehavior, concurrencyBehavior,
-                interruptBehavior, codeCallable, dataReach, approvalDelegated, approvalKey);
+                interruptBehavior, codeCallable, dataReach, approvalDelegated, approvalKey, approvalVia, offerable,
+                codeHostedTools);
     }
 
     @Override
@@ -252,7 +297,8 @@ public final class ToolDescriptor {
         return "ToolDescriptor{" + getName() + ": " + sideEffectLevel + "/" + destructiveBehavior + "/"
                 + idempotencyBehavior + ", " + concurrencyBehavior + "/" + interruptBehavior + ", codeCallable="
                 + codeCallable + ", dataReach=" + dataReach + ", approvalDelegated=" + approvalDelegated
-                + ", approvalKey=" + approvalKey + '}';
+                + ", approvalKey=" + approvalKey + (approvalVia == null ? "" : ", approvalVia=" + approvalVia)
+                + (offerable ? "" : ", offerable=false") + '}';
     }
 
     /** Builder for {@link ToolDescriptor}. */
@@ -267,8 +313,41 @@ public final class ToolDescriptor {
         private DataReach dataReach;
         private boolean approvalDelegated;
         private String approvalKey;
+        private String approvalVia;
+        private boolean offerable = true;
+        private Set<String> codeHostedTools = Set.of();
 
         private Builder() {
+        }
+
+        /**
+         * @param codeHostedTools
+         *            the tools code can call through this tool (must not be null); defaults to none
+         * @return this builder
+         */
+        public Builder codeHostedTools(Set<String> codeHostedTools) {
+            this.codeHostedTools = Objects.requireNonNull(codeHostedTools, "codeHostedTools cannot be null");
+            return this;
+        }
+
+        /**
+         * @param approvalVia
+         *            how the prompt names the path asking under another tool's approval key; {@code null} for none
+         * @return this builder
+         */
+        public Builder approvalVia(String approvalVia) {
+            this.approvalVia = approvalVia;
+            return this;
+        }
+
+        /**
+         * @param offerable
+         *            whether the tool may be offered in this context; defaults to {@code true}
+         * @return this builder
+         */
+        public Builder offerable(boolean offerable) {
+            this.offerable = offerable;
+            return this;
         }
 
         /**

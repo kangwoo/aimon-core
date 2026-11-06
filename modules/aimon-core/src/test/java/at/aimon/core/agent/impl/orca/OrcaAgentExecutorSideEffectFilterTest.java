@@ -26,6 +26,8 @@ import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
+import at.aimon.core.programmatic.CodeExecutionLimits;
+import at.aimon.core.tools.code.ExecuteCodeTool;
 
 /**
  * Locks in the executor half of the {@link SideEffectLevel} pair: the definitions the executor hands the LLM are
@@ -129,6 +131,17 @@ class OrcaAgentExecutorSideEffectFilterTest {
                 undeclared);
 
         assertThat(client.firstOffer()).contains("Reader", "Legacy");
+    }
+
+    @Test
+    @DisplayName("a registered ExecuteCode that cannot be offered is not offered, though the ceiling permits it")
+    void nonOfferableExecuteCodeIsNotOffered() {
+        // What every runtime of an assembly with programmatic off carries: ExecuteCode with no engine. Its MUTATING
+        // grade passes the default ceiling, so only the offerability rule keeps it out.
+        final DefinitionCapturingLlmClient client = runWithCeiling(null, tool("Reader", SideEffectLevel.READ_ONLY),
+                new ExecuteCodeTool(List.of(), CodeExecutionLimits.defaults()));
+
+        assertThat(client.firstOffer()).containsExactly("Reader");
     }
 
     /**

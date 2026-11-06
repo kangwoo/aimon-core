@@ -288,7 +288,7 @@ CLI 의 워크스페이스 루트가 무엇인지는 [실행 환경](../tool/exe
 | 전달과 거절 | `ToolContextKeys`, `HookRegistryAccess`, `TaskTool`, `WorkflowTool`, `ScheduleTaskTool`, `SubagentBackedSkillForkExecutor` | `tools/`, `tools/task/`, `tools/workflow/`, `tools/scheduling/`, `skill/fork/` |
 | 포크의 환경 | `DefaultSubagentExecutionManager`, `DefaultSubagentExecutor`, `SubagentExecutionResult` | `subagent/`, `subagent/execution/` |
 | 압축 경로 | `CompactionGuard`, `CompactionGuardRequest`, `DefaultCompactionEngine`, `ContextRequest` | `agent/compact/`, `agent/context/` |
-| 다른 모듈 | `GraalJsWorkflowTool` | `modules/aimon-workflow-graaljs/` |
+| 다른 모듈 | `GraalJsWorkflowTool` | `modules/aimon-graaljs/` |
 | CLI 조립 | `AgentSetupFactory` | `modules/aimon-cli/src/main/java/at/aimon/cli/factory/AgentSetupFactory.java` |
 | 종료 순서 | `TeardownPhase` | `modules/aimon-bootstrap/src/main/java/at/aimon/bootstrap/TeardownPhase.java` |
 | 아키텍처 규칙 | `PackageDependencyArchitectureTest` | `modules/aimon-core/src/test/java/at/aimon/core/architecture/` |

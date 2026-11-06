@@ -24,7 +24,7 @@ public class CliSettings {
     // agent's system prompt and each call fans out to several sub-agent LLM calls. Enable via `cli.enableWorkflow:
     // true`.
     private boolean enableWorkflow = false;
-    // Opt-in for the GraalJS-scripted `WorkflowJs` tool (module aimon-workflow-graaljs). Off by default: it
+    // Opt-in for the GraalJS-scripted `WorkflowJs` tool (module aimon-graaljs). Off by default: it
     // adds a tool to the agent's system prompt and each call runs an author-supplied JS script that fans out to
     // several sub-agent LLM calls. Enable via `cli.enableWorkflowJs: true`. Independent of enableWorkflow, but either
     // flag enables the per-context WorkflowRunner used by both tools' background mode.

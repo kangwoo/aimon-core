@@ -29,6 +29,7 @@ import at.aimon.core.llm.capability.InMemoryModelCapabilityRegistry;
 import at.aimon.core.llm.capability.ModelCapabilityDeclaration;
 import at.aimon.core.llm.capability.ThinkingDialect;
 import at.aimon.core.memory.MemoryInjectionMode;
+import at.aimon.core.programmatic.CodeExecutionLimits;
 import at.aimon.core.tools.artifact.ArtifactPolicy;
 import at.aimon.core.tracing.TracePayloadPolicy;
 import at.aimon.core.tracing.impl.InMemoryTraceSpanStore;
@@ -438,6 +439,8 @@ public class AimonProperties implements InitializingBean {
     private final ContextProperties context = new ContextProperties();
 
     private final Tools tools = new Tools();
+
+    private final Programmatic programmatic = new Programmatic();
 
     private final EnvironmentProperties environment = new EnvironmentProperties();
 
@@ -1135,6 +1138,11 @@ public class AimonProperties implements InitializingBean {
 
     public Tools getTools() {
         return tools;
+    }
+
+    /** @return the programmatic tool calling settings */
+    public Programmatic getProgrammatic() {
+        return programmatic;
     }
 
     public EnvironmentProperties getEnvironment() {
@@ -2548,6 +2556,264 @@ public class AimonProperties implements InitializingBean {
 
             public void setIdleTtl(Duration idleTtl) {
                 this.idleTtl = idleTtl;
+            }
+        }
+    }
+
+    /**
+     * Programmatic tool calling ({@code aimon.programmatic.*}; {@code docs/design/tool/programmatic-tool-calling.md}
+     * §16): whether the stack assembles the code execution engines on the class path and registers
+     * {@code ExecuteCode}, and the limits every program is held to. What an agent opens to code is its own definition
+     * ({@code programmatic-tools}).
+     */
+    public static class Programmatic {
+
+        /**
+         * Off by default. When on, every engine on the class path is created ({@code aimon-graaljs} adds the
+         * JavaScript one) — GraalJS has no hard guest-heap limit, so a program can exhaust this JVM's memory.
+         */
+        private boolean enabled;
+
+        private final Limits limits = new Limits();
+
+        /** @return whether programmatic tool calling is assembled */
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        /**
+         * @param enabled
+         *            whether programmatic tool calling is assembled
+         */
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        /** @return the limits */
+        public Limits getLimits() {
+            return limits;
+        }
+
+        /** {@code aimon.programmatic.limits.*}: each unset key keeps the design's default. */
+        public static class Limits {
+
+            /** The default wall clock of one program (120s). */
+            private Duration wallClock;
+
+            /** The most a program may ask for with {@code timeout_seconds} (600s). */
+            private Duration maxWallClock;
+
+            /** The most tool calls one program may make (200). */
+            private Integer maxNestedCalls;
+
+            /** The most calls one program may make to one MUTATING tool (20). */
+            private Integer maxMutatingCallsPerTool;
+
+            /** The most nested calls running at once (8). */
+            private Integer maxConcurrentCalls;
+
+            /** The JavaScript statement limit (10M). */
+            private Long maxStatements;
+
+            /** The largest arguments of one nested call, in bytes (1 MiB). */
+            private Integer maxArgumentBytes;
+
+            /** The total bytes of tool results one program may take in (16 MiB). */
+            private Long maxResultBytes;
+
+            /** The total output one program may write (4 MiB). */
+            private Long maxScriptOutputBytes;
+
+            /** The longest output the observation keeps (20,000). */
+            private Integer maxObservationChars;
+
+            /** The longest log tail the observation keeps (4,000). */
+            private Integer maxLogChars;
+
+            /** @return the value, or null for the default */
+            public Duration getWallClock() {
+                return wallClock;
+            }
+
+            /**
+             * @param wallClock
+             *            the value, or null for the default
+             */
+            public void setWallClock(Duration wallClock) {
+                this.wallClock = wallClock;
+            }
+
+            /** @return the value, or null for the default */
+            public Duration getMaxWallClock() {
+                return maxWallClock;
+            }
+
+            /**
+             * @param maxWallClock
+             *            the value, or null for the default
+             */
+            public void setMaxWallClock(Duration maxWallClock) {
+                this.maxWallClock = maxWallClock;
+            }
+
+            /** @return the value, or null for the default */
+            public Integer getMaxNestedCalls() {
+                return maxNestedCalls;
+            }
+
+            /**
+             * @param maxNestedCalls
+             *            the value, or null for the default
+             */
+            public void setMaxNestedCalls(Integer maxNestedCalls) {
+                this.maxNestedCalls = maxNestedCalls;
+            }
+
+            /** @return the value, or null for the default */
+            public Integer getMaxMutatingCallsPerTool() {
+                return maxMutatingCallsPerTool;
+            }
+
+            /**
+             * @param maxMutatingCallsPerTool
+             *            the value, or null for the default
+             */
+            public void setMaxMutatingCallsPerTool(Integer maxMutatingCallsPerTool) {
+                this.maxMutatingCallsPerTool = maxMutatingCallsPerTool;
+            }
+
+            /** @return the value, or null for the default */
+            public Integer getMaxConcurrentCalls() {
+                return maxConcurrentCalls;
+            }
+
+            /**
+             * @param maxConcurrentCalls
+             *            the value, or null for the default
+             */
+            public void setMaxConcurrentCalls(Integer maxConcurrentCalls) {
+                this.maxConcurrentCalls = maxConcurrentCalls;
+            }
+
+            /** @return the value, or null for the default */
+            public Long getMaxStatements() {
+                return maxStatements;
+            }
+
+            /**
+             * @param maxStatements
+             *            the value, or null for the default
+             */
+            public void setMaxStatements(Long maxStatements) {
+                this.maxStatements = maxStatements;
+            }
+
+            /** @return the value, or null for the default */
+            public Integer getMaxArgumentBytes() {
+                return maxArgumentBytes;
+            }
+
+            /**
+             * @param maxArgumentBytes
+             *            the value, or null for the default
+             */
+            public void setMaxArgumentBytes(Integer maxArgumentBytes) {
+                this.maxArgumentBytes = maxArgumentBytes;
+            }
+
+            /** @return the value, or null for the default */
+            public Long getMaxResultBytes() {
+                return maxResultBytes;
+            }
+
+            /**
+             * @param maxResultBytes
+             *            the value, or null for the default
+             */
+            public void setMaxResultBytes(Long maxResultBytes) {
+                this.maxResultBytes = maxResultBytes;
+            }
+
+            /** @return the value, or null for the default */
+            public Long getMaxScriptOutputBytes() {
+                return maxScriptOutputBytes;
+            }
+
+            /**
+             * @param maxScriptOutputBytes
+             *            the value, or null for the default
+             */
+            public void setMaxScriptOutputBytes(Long maxScriptOutputBytes) {
+                this.maxScriptOutputBytes = maxScriptOutputBytes;
+            }
+
+            /** @return the value, or null for the default */
+            public Integer getMaxObservationChars() {
+                return maxObservationChars;
+            }
+
+            /**
+             * @param maxObservationChars
+             *            the value, or null for the default
+             */
+            public void setMaxObservationChars(Integer maxObservationChars) {
+                this.maxObservationChars = maxObservationChars;
+            }
+
+            /** @return the value, or null for the default */
+            public Integer getMaxLogChars() {
+                return maxLogChars;
+            }
+
+            /**
+             * @param maxLogChars
+             *            the value, or null for the default
+             */
+            public void setMaxLogChars(Integer maxLogChars) {
+                this.maxLogChars = maxLogChars;
+            }
+
+            /**
+             * Returns the limits as the core value.
+             *
+             * @return the limits (never null)
+             */
+            public CodeExecutionLimits toLimits() {
+                final CodeExecutionLimits.Builder builder = CodeExecutionLimits.builder();
+                if (wallClock != null) {
+                    builder.wallClock(wallClock);
+                }
+                if (maxWallClock != null) {
+                    builder.maxWallClock(maxWallClock);
+                }
+                if (maxNestedCalls != null) {
+                    builder.maxNestedCalls(maxNestedCalls);
+                }
+                if (maxMutatingCallsPerTool != null) {
+                    builder.maxMutatingCallsPerTool(maxMutatingCallsPerTool);
+                }
+                if (maxConcurrentCalls != null) {
+                    builder.maxConcurrentCalls(maxConcurrentCalls);
+                }
+                if (maxStatements != null) {
+                    builder.maxStatements(maxStatements);
+                }
+                if (maxArgumentBytes != null) {
+                    builder.maxArgumentBytes(maxArgumentBytes);
+                }
+                if (maxResultBytes != null) {
+                    builder.maxResultBytes(maxResultBytes);
+                }
+                if (maxScriptOutputBytes != null) {
+                    builder.maxScriptOutputBytes(maxScriptOutputBytes);
+                }
+                if (maxObservationChars != null) {
+                    builder.maxObservationChars(maxObservationChars);
+                }
+                if (maxLogChars != null) {
+                    builder.maxLogChars(maxLogChars);
+                }
+                return builder.build();
             }
         }
     }

@@ -237,10 +237,22 @@ cli:
   showToolCalls: true  # Display tools calls with parameters
   streaming: true      # PSTREAM-11: stream assistant text token-by-token (disable with --no-streaming)
   enableWorkflow: false  # Opt-in: register the experimental multi-perspective `Workflow` tool
-  enableWorkflowJs: false  # Opt-in: register the GraalJS-scripted `WorkflowJs` tool (module aimon-workflow-graaljs)
+  enableWorkflowJs: false  # Opt-in: register the GraalJS-scripted `WorkflowJs` tool (module aimon-graaljs)
   enableMonitor: false  # Opt-in: register the background `Monitor` / `MonitorStop` tools (events arrive as messages)
   enableWake: false     # Opt-in: an idle prompt is woken by its monitor events — a turn opens with them as input
 #  sessionLogWriteFormat: v2  # v2 (default) | v1 — v2 is what an agent with `context-engine: rolling` needs
+
+# Programmatic tool calling (ExecuteCode): model-written code whose function calls are tool calls.
+# An agent opens tools to code in its own AGENT.md (`programmatic-tools`); this section only assembles the engine.
+programmatic:
+  enableJs: false  # Opt-in: assemble the GraalJS engine (module aimon-graaljs). No hard guest-heap limit — see the design
+#  limits:
+#    wallClockSeconds: 120
+#    maxWallClockSeconds: 600
+#    maxNestedCalls: 200
+#    maxMutatingCallsPerTool: 20
+#    maxConcurrentCalls: 8
+#    maxObservationChars: 20000
 
 # Peer Memory (SK-MEM Stage 9, Honcho-analogue)
 # Uncomment and fill all three required fields to enable MemoryRecallTool and the

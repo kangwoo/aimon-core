@@ -20,6 +20,9 @@ public class CliConfig {
     @JsonProperty("memory")
     private MemoryConfig memoryConfig;
 
+    @JsonProperty("programmatic")
+    private ProgrammaticConfig programmaticConfig;
+
     /** CliConfig를 생성한다. */
     public CliConfig() {
     }
@@ -64,6 +67,21 @@ public class CliConfig {
         this.memoryConfig = memoryConfig;
     }
 
+    /**
+     * @return the {@code programmatic} section, or null when absent
+     */
+    public ProgrammaticConfig getProgrammaticConfig() {
+        return programmaticConfig;
+    }
+
+    /**
+     * @param programmaticConfig
+     *            the {@code programmatic} section
+     */
+    public void setProgrammaticConfig(ProgrammaticConfig programmaticConfig) {
+        this.programmaticConfig = programmaticConfig;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -75,17 +93,19 @@ public class CliConfig {
         final CliConfig cliConfig = (CliConfig) o;
         return Objects.equals(llmConfig, cliConfig.llmConfig) && Objects.equals(agentConfig, cliConfig.agentConfig)
                 && Objects.equals(cliSettings, cliConfig.cliSettings) && Objects.equals(mcpConfig, cliConfig.mcpConfig)
-                && Objects.equals(memoryConfig, cliConfig.memoryConfig);
+                && Objects.equals(memoryConfig, cliConfig.memoryConfig)
+                && Objects.equals(programmaticConfig, cliConfig.programmaticConfig);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(llmConfig, agentConfig, cliSettings, mcpConfig, memoryConfig);
+        return Objects.hash(llmConfig, agentConfig, cliSettings, mcpConfig, memoryConfig, programmaticConfig);
     }
 
     @Override
     public String toString() {
         return "CliConfig{" + "llmConfig=" + llmConfig + ", agentConfig=" + agentConfig + ", cliSettings=" + cliSettings
-                + ", mcpConfig=" + mcpConfig + ", memoryConfig=" + memoryConfig + '}';
+                + ", mcpConfig=" + mcpConfig + ", memoryConfig=" + memoryConfig + ", programmaticConfig="
+                + programmaticConfig + '}';
     }
 }

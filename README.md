@@ -70,7 +70,8 @@ over HTTP.
 
 | Module | Purpose |
 |---|---|
-| `aimon-workflow-graaljs` | GraalJS frontend — JS-scripted multi-subagent workflows (`WorkflowJs` tool) |
+| `aimon-graaljs` | GraalJS — the JavaScript engine of programmatic tool calling (`ExecuteCode`) and JS-scripted multi-subagent workflows (`WorkflowJs` tool). Formerly `aimon-workflow-graaljs` |
+| `aimon-code-engine-testkit` | The contract suite every `ExecuteCode` engine runs — observation, results, limits, cancellation |
 
 ### Tools that live in their own repositories
 

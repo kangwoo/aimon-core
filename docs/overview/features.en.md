@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/features.md
-source_commit: 03b8a8d4
+source_commit: e94b5248
 ---
 
 # Feature Catalog
@@ -169,7 +169,8 @@ The unit through which an agent interacts with the outside world. The contract i
 | tool search | `ToolSearch` | core |
 | console | `ConsoleOutput` | core |
 | workflow | `Workflow` | core |
-| workflow (JS script) | `WorkflowJs` | `aimon-workflow-graaljs` |
+| workflow (JS script) | `WorkflowJs` | `aimon-graaljs` |
+| programmatic tool calling | `ExecuteCode` (engine: JavaScript from `aimon-graaljs`) | core |
 | browser | `Browser` | `aimon-browser-playwright` |
 | sandbox | `RunSandbox`, `CopyToSandbox`, `RestartSandbox`, `DeleteSandbox` | `at.aimon.sandbox:*` (separate repository) |
 
@@ -288,7 +289,7 @@ from calling a subagent by itself.
 | run handles · resumption | `RunHandle`, `RunId`, `RunStore`, `StepResultCache` | core |
 | budget / concurrency limits | `WorkflowBudget`, `WorkflowConcurrencyConfig` | core |
 | running isolated in a worktree | `ExecutionEnvironment.isolate()` · `WorktreeMerge` | core |
-| the JS scripting frontend | the `WorkflowJs` tool | `aimon-workflow-graaljs` |
+| the JS scripting frontend | the `WorkflowJs` tool | `aimon-graaljs` |
 
 **When you use it.** When coverage demands sweeping in parallel (an audit, a migration), when
 you need independent perspectives cross-checking each other (a review, a design comparison), or

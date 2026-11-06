@@ -607,6 +607,40 @@ the type name.
 
 ---
 
+## `aimon-workflow-graaljs` → `aimon-graaljs`
+
+The GraalJS module now carries two features on one sandbox base: the JavaScript engine of programmatic tool
+calling (`ExecuteCode`) and the JS-scripted subagent workflow (`WorkflowJs`). The old name described only the
+second (programmatic-tool-calling design decision 16). The module coordinate changes from
+`at.aimon.core:aimon-workflow-graaljs` to **`at.aimon.core:aimon-graaljs`**; the old artifacts stay on Maven
+Central, and no new version is published under the old coordinate. Nothing here is persisted, so there is no
+data to move.
+
+The package splits three ways: the public assembly types stay at the root, the workflow frontend moves to
+`workflow`, and the sandbox helpers become `internal` (usable only inside `at.aimon.graaljs..`).
+
+| Was | Is |
+|-----|-----|
+| `at.aimon.workflow.graaljs.GraalJsEngineHolder` | `at.aimon.graaljs.GraalJsEngineHolder` |
+| `at.aimon.workflow.graaljs.JsSandboxConfig` | `at.aimon.graaljs.JsSandboxConfig` |
+| `at.aimon.workflow.graaljs.exception.JsScriptException` | `at.aimon.graaljs.exception.JsScriptException` |
+| `at.aimon.workflow.graaljs.exception.JsScriptCancelledException` | `at.aimon.graaljs.exception.JsScriptCancelledException` |
+| `at.aimon.workflow.graaljs.GraalJsWorkflowTool` | `at.aimon.graaljs.workflow.GraalJsWorkflowTool` |
+| `at.aimon.workflow.graaljs.GraalJsWorkflowScript` | `at.aimon.graaljs.workflow.GraalJsWorkflowScript` |
+| `at.aimon.workflow.graaljs.SubagentResolver` | `at.aimon.graaljs.workflow.SubagentResolver` |
+| `at.aimon.workflow.graaljs.SubagentDescriptor` | `at.aimon.graaljs.workflow.SubagentDescriptor` |
+| `at.aimon.workflow.graaljs.AgentResultView` | `at.aimon.graaljs.workflow.AgentResultView` |
+| `at.aimon.workflow.graaljs.JsContextFactory` (package-private) | `at.aimon.graaljs.internal.JsContextFactory` |
+| `at.aimon.workflow.graaljs.CancellationWatchdog` (package-private) | `at.aimon.graaljs.internal.CancellationWatchdog` |
+| `at.aimon.workflow.graaljs.JsMarshalling` (package-private) | `at.aimon.graaljs.internal.JsMarshalling` |
+
+The remaining package-private workflow helpers (`AgentTaskMarshaller`, `InlineSubagentResolver`,
+`JsResultMarshaller`, `RunFatalCapture`, `WorkflowBindings`) move to `at.aimon.graaljs.workflow` with their
+names unchanged. New in the same module: `at.aimon.graaljs.code.GraalJsCodeExecutionEngine` and its
+`ServiceLoader` entry `GraalJsCodeEngineFactory`.
+
+---
+
 ## Related documents
 
 - [`frozen-names.md`](frozen-names.md) -- what was **not** renamed, and why that is a contract

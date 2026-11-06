@@ -45,7 +45,7 @@ import com.tngtech.archunit.lang.ArchRule;
  * <em>and</em> counts iterations, so {@code turnId} and {@code iterationCount} are both correct there and no
  * name-shaped rule tells a right one from a wrong one — that is where {@code MAX_CONSECUTIVE_STALLED_TURNS} lived, and
  * only review catches its like. Nor does it reach other modules: it imports {@code at.aimon.core}, so the GraalJS
- * frontend of the workflow tool ({@code at.aimon.workflow.graaljs}) is outside it and was corrected by hand. Prose is
+ * frontend of the workflow tool ({@code at.aimon.graaljs.workflow}) is outside it and was corrected by hand. Prose is
  * out of reach everywhere: the misuse this commemorates was mostly comments and javadoc, which no ArchUnit rule reads.
  * The vocabulary rule itself lives in {@code docs/overview/glossary.md} §4.
  *

@@ -168,6 +168,7 @@ import at.aimon.core.toolinvocation.ToolDispatchResults;
 import at.aimon.core.toolinvocation.TracingCompactionObserver;
 import at.aimon.core.toolinvocation.approval.SideEffectApprovalGate;
 import at.aimon.core.tools.ToolContextKeys;
+import at.aimon.core.tools.code.CodeOfferKeys;
 import at.aimon.core.tools.file.ReadTool;
 import at.aimon.core.tools.session.SessionHistoryTool;
 import at.aimon.core.tools.todo.TodoWriteTool;
@@ -1858,8 +1859,12 @@ public class OrcaAgentExecutor
                     // this iteration's offer context, which is then bound into the iteration's tool context so the
                     // ceiling's refusal and the approval gate judge the very descriptors offered here
                     // (programmatic-tool-calling design decision 9).
-                    final ToolOfferContext offerContext = ToolOfferContext.builder().registry(sessionRegistry)
-                            .admission(agentAdmits).ceiling(maxSideEffectLevel).build();
+                    // The agent's programmatic settings and the environment's static facts let ExecuteCode
+                    // describe itself for this offer (programmatic-tool-calling design §6.2, §7.3).
+                    final ToolOfferContext offerContext = CodeOfferKeys.putEnvironmentFacts(ToolOfferContext.builder()
+                            .registry(sessionRegistry).admission(agentAdmits).ceiling(maxSideEffectLevel)
+                            .programmatic(scope.getAgent().getMetadata().getProgrammatic())
+                            .agentName(scope.getAgent().getName()), toolContext).build();
                     final List<ToolDefinition> availableTools = offerContext.offer().stream()
                             .map(ToolDescriptor::getDefinition).toList();
                     final ToolContext iterationToolContext = ToolContext.builder().putAll(toolContext.getContext())

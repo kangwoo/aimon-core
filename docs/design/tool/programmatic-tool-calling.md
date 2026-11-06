@@ -1,8 +1,9 @@
 # 프로그래매틱 도구 호출 — 모델이 쓴 코드가 도구를 부르는 실행 경로
 
-> **Status**: PARTIALLY IMPLEMENTED (B) — `aimon-core` (`at.aimon.core.agent.tool`, `at.aimon.core.programmatic`, `at.aimon.core.tools.code`),
+> **Status**: PARTIALLY IMPLEMENTED (B, C) — `aimon-core` (`at.aimon.core.agent.tool`, `at.aimon.core.programmatic`, `at.aimon.core.tools.code`),
 > `aimon-graaljs` (`aimon-workflow-graaljs` 를 개명·재편), `aimon-code-engine-testkit` (새 모듈). 공개 API 호환을 깨는 항목이 있다(§5).
-> 구현된 것은 서술자·제안 문맥·승인 관문·쿼터·도구 선언(조각 B)이고, `ExecuteCode` 와 엔진은 아직 없다. 구현이 본문과 다른 점은 §21.
+> 구현된 것은 서술자·제안 문맥·승인 관문·쿼터·도구 선언(조각 B)과 `ExecuteCode`·엔진 SPI·GraalJS 엔진·모듈 개명·계약 스위트(조각 C)다.
+> 셸 엔진(조각 D)은 아직 없다. 구현이 본문과 다른 점은 §21.
 > 셸 엔진은 [셸 엔진 문서](programmatic-tool-calling-shell.md), 코드의 도구 호출이 지나는 입구는
 > [도구 호출의 단일 입구](tool-call-dispatcher.md) 가 정한다(그 문서의 `Status`). 설계에서 아직 정하지 않은 것은 §19 다.
 
@@ -501,6 +502,12 @@ CE 에서는 **게스트 힙**과 CPU 시간에 하드 한도가 없다([워크�
 호출 요약을 싣는다. `TIMED_OUT` · `LIMIT_EXCEEDED` 는 재시도할 수 있다 — 모델이 더 작게 나눠 다시 쓸 수 있다. `PROTOCOL_VIOLATION` 은
 `notRetryable` 이다.
 
+`TIMED_OUT` · `LIMIT_EXCEEDED` 의 메시지는 멈추기 전까지 프로그램이 쓴 표준 출력도 `[output before the stop]` 아래에 싣는다 —
+`COMPLETED` 와 같은 상한(`maxObservationChars`)으로 자른다. 그 프로그램은 고장 난 것이 아니라 바깥에서 멈춘 것이라, 출력이 어디까지
+했는지를 말한다. 모델은 그것으로 남은 일을 나누고, 이미 효과가 난 호출을 다시 하지 않는다. 나머지 상태는 출력을 싣지 않는다 —
+`SCRIPT_ERROR` 에서 고칠 것은 코드이고 고친 프로그램은 처음부터 다시 돌며, `CANCELLED` 는 실행이 끝나는 중이라 읽을 이가 없고,
+`PROTOCOL_VIOLATION` 의 출력은 믿을 수 없다.
+
 ### 12.2 기록과 운영자 신호
 
 | 대상 | 무엇이 남는가 |
@@ -630,9 +637,9 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 
 | 규칙 | 지킬 장치 |
 |---|---|
-| 두 엔진이 같은 계약을 지킨다 — 같은 모양의 프로그램이 같은 관찰을 내고(결정 7), 한도·취소(§13)가 같은 의미다 | 엔진 계약 스위트 `aimon-code-engine-testkit`. 두 엔진은 모두 이 스위트를 통과해야 한다 |
-| LLM 을 부르거나 포크를 일으키는 도구는 코드에서 불릴 수 없다(결정 15) | 갖춤 — ArchUnit (코어, `ProgrammaticToolDeclarationArchitectureTest`) — `at.aimon.core.tools..` 의 도구 중 클래스 그래프가 `LlmClient`·`LlmCallGateway`·`DialecticEngine`·`WikiKnowledgeBase`·`SubagentExecutionManager` 에 닿는 것은 `isCodeCallable()` 을 재정의한다. 그래프 탐색은 이유를 적은 정지 목록(`ToolContextKeys`, `StoreBackedPeerMemory`)에 들어가지 않는다(§21). `aimon-workflow-graaljs` 의 `GraalJsWorkflowTool` 은 그 모듈의 테스트가 확인한다 |
-| 코드의 도구 호출은 단일 입구만 지난다(결정 3) | ArchUnit (코어) — `at.aimon.core.tools.code..` 는 `ToolCallDispatcher` 외 경로로 도구를 부를 수 없어야 한다. 입구 규칙 자체는 [단일 입구](tool-call-dispatcher.md) §3 #8. `aimon-graaljs` 는 같은 규칙을 `at.aimon.graaljs.code..` 에 대해 그 모듈의 아키텍처 테스트에 둔다 — 코어 테스트 클래스패스는 그 클래스를 보지 못한다 |
+| 두 엔진이 같은 계약을 지킨다 — 같은 모양의 프로그램이 같은 관찰을 내고(결정 7), 한도·취소(§13)가 같은 의미다 | 엔진 계약 스위트 `aimon-code-engine-testkit` (`AbstractCodeExecutionEngineContractTest` + 언어별 `EnginePrograms`). 두 엔진은 모두 이 스위트를 통과해야 한다. GraalJS 엔진은 갖춤(`GraalJsCodeEngineContractTest`), 셸 엔진은 조각 D |
+| LLM 을 부르거나 포크를 일으키는 도구는 코드에서 불릴 수 없다(결정 15) | 갖춤 — ArchUnit (코어, `ProgrammaticToolDeclarationArchitectureTest`) — `at.aimon.core.tools..` 의 도구 중 클래스 그래프가 `LlmClient`·`LlmCallGateway`·`DialecticEngine`·`WikiKnowledgeBase`·`SubagentExecutionManager` 에 닿는 것은 `isCodeCallable()` 을 재정의한다. 그래프 탐색은 이유를 적은 정지 목록(`ToolContextKeys`, `StoreBackedPeerMemory`)에 들어가지 않는다(§21). `aimon-graaljs` 의 `GraalJsWorkflowTool` 은 그 모듈의 테스트가 확인한다. `ExecuteCodeTool` 은 `isCodeCallable()=false` 를 선언한다 |
+| 코드의 도구 호출은 단일 입구만 지난다(결정 3) | 갖춤 — ArchUnit (코어, `ProgrammaticToolArchitectureTest`: `tools.code..` 는 `Tool#execute`·`ToolExecutionManager` 를 부르지 않고 `toolinvocation..`·`agent.tool.execution..` 에 의존하지 않는다, `at.aimon.core.programmatic` 은 `tools..`·`impl..` 에 의존하지 않는다; `aimon-graaljs`, `GraalJsModuleArchitectureTest`: `code..`·`internal..` 은 도구·디스패처·실행 관리자를 직접 보지 않고 `ToolCallBridge` 만 쓴다) — `at.aimon.core.tools.code..` 는 `ToolCallDispatcher` 외 경로로 도구를 부를 수 없어야 한다. 입구 규칙 자체는 [단일 입구](tool-call-dispatcher.md) §3 #8. `aimon-graaljs` 는 같은 규칙을 `at.aimon.graaljs.code..` 에 대해 그 모듈의 아키텍처 테스트에 둔다 — 코어 테스트 클래스패스는 그 클래스를 보지 못한다 |
 | 내장 도구는 `dataReach()` 를 명시적으로 선언한다(§7.1) | 갖춤 — 내장 도구 전체에 대한 선언 검사 `ProgrammaticToolDeclarationArchitectureTest` (`at.aimon.core.tools..`, 메모리 deriver 도구, `McpTool`). 재정의하지 않은 내장 도구가 있으면 빌드가 실패한다 |
 | 셸 엔진의 규칙 | [셸 엔진](programmatic-tool-calling-shell.md) §14 |
 
@@ -680,7 +687,8 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 |---|---|---|
 | A | [단일 입구](tool-call-dispatcher.md) | 구현됨 |
 | B | `ToolDescriptor`·`ToolOfferContext`·`OfferKey`·`DataReach`, `Tool.describe`·`isCodeCallable`·`dataReach`, 세 루프의 제안 문맥, 서술자를 읽는 실링·승인 관문·루틴 재시도, `approvalKey`·`approvalDelegated`·코드 경로 무질의, 공개 `ToolCallQuota`, 내장 도구 선언과 그 검사, MCP `DataReach` | 구현됨 |
-| C, D | `ExecuteCode`, 엔진 SPI, GraalJS·셸 엔진, 모듈 개명, 계약 스위트 | 미구현 |
+| C | `ExecuteCode`·`ToolCallBridge`·`ToolApiRenderer`, 엔진 SPI(`at.aimon.core.programmatic`), GraalJS 엔진(`at.aimon.graaljs.code`), 모듈 개명 `aimon-graaljs`, 계약 스위트 `aimon-code-engine-testkit`, 에이전트 설정 `programmatic-tools`·`programmatic-only`·`programmatic-engine`, 조립(CLI `programmatic.*`, `ToolSpec.programmaticEnabled`, 스타터 `aimon.programmatic.*`) | 구현됨 |
+| D | 셸 엔진, `RuntimeFileSystem`, `shell-engine-tool-scope` | 미구현 |
 
 조각 B 가 본문과 다르게 정한 점:
 
@@ -693,3 +701,27 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 | 슬래시 스킬 루프도 iteration 마다 제안 문맥을 짓는다 | 실행당 한 번 짓고 iteration 컨텍스트마다 싣는다. 호출자 컨텍스트에 이미 있는 제안 문맥은 스킬의 것으로 바꾼다 | 스킬의 도구 목록은 실행 중 바뀌지 않는다. 바깥 턴의 제안 문맥을 그대로 복사하면 write-once 키가 두 번 쓰인다 |
 | 승인 질의 문구 "Bash — via ExecuteCode (Python)" (결정 11) | "'Bash' — via 'ExecuteCode(code=…)'" — 키와 호출을 밝히고 언어는 적지 않는다 | 관문은 서술자와 호출만 본다. 언어를 문구에 넣을지는 `ExecuteCode` 가 생기는 조각 C 에서 정한다 |
 | 결정 15 의 클래스 그래프 검사(§17) | 정지 목록 두 개: `ToolContextKeys`(키 상수 레지스트리 — 키 하나를 읽는 것이 그 레지스트리가 이름 붙인 모든 타입에 닿는 것은 아니다), `StoreBackedPeerMemory`(대화용 `DialecticEngine` 을 들지만 메모리 읽기·쓰기 도구는 검색·회상·관찰 쪽만 쓴다) | 클래스 단위 그래프는 둘을 거쳐 거의 모든 도구가 `WikiKnowledgeBase`·`DialecticEngine` 에 닿는다고 읽는다. 목록이 없으면 규칙이 모든 도구에 `false` 를 요구해 무의미해진다 |
+
+조각 C 가 본문과 다르게 정한 점:
+
+| 본문 | 구현 | 이유 |
+|---|---|---|
+| `EnvironmentDescriptor.isolation()` 은 셸 엔진 문서의 S6·조각 D 의 일이다 | 조각 C 가 먼저 넣었다 — `Optional<EnvironmentIsolation>`(`HOST`/`SANDBOXED`). 로컬 환경(`LocalExecutionEnvironment`, 그 격리 분기)은 `HOST` 를 선언한다. 선언하지 않은 환경에서 `auto` 는 엔진을 고르지 않는다(명시적 `javascript` 는 동작한다) | `auto` 규칙(§6.2)이 이 값 없이는 성립하지 않는다. 기본값을 `HOST` 로 두면 아직 선언하지 않은 샌드박스 제공자에서 `auto` 가 GraalJS 를 골라 §14 의 위험을 들인다 — 그래서 미선언은 "모름" 이다 |
+| 제안 불가는 서술 축으로 표현된다(§5.2 `none()` 에서 "제안 불가, 최대 등급") | `ToolDescriptor.isOfferable()` 을 더했다. `ToolOfferContext` 는 `programmatic(...)`(에이전트 설정), `eligible(names)`(§7.3 순서 1), `isCodeOnly(...)` 를 일급으로 든다 — 조각 B 편차 1 의 연장 | "엔진이 없다"·"부를 도구가 없다" 는 실링으로 표현되지 않는다. `MUTATING` 최대 등급만으로는 실링이 `MUTATING` 인 제안에서 `ExecuteCode` 가 나타난다 |
+| 승인 질의 문구 "Bash — via ExecuteCode (Python)" (결정 11, 조각 B 편차 6) | `ToolDescriptor.getApprovalVia()` 를 더했고 `ExecuteCode` 가 엔진 언어로 채운다. 문구는 "'Bash' — via ExecuteCode (Python), 'ExecuteCode(code=…)'" | 관문은 서술자만 보므로 언어가 서술자에 실려야 한다. GraalJS 는 승인을 위임하므로 조각 C 에서 이 문구가 실제로 나오는 경로는 없다 — 셸 엔진(조각 D)이 쓴다 |
+| `programmatic-tools` 는 에이전트 frontmatter(§16) | 메인 루프만 그 설정을 제안 문맥에 싣는다. 포크(서브에이전트)와 슬래시 스킬의 제안 문맥은 설정이 없어 `ExecuteCode` 를 제안하지 않는다. 세 루프 모두 `ToolOfferContext.offer()` 한 계산으로 제안하므로(슬래시 스킬 루프는 실링만 거르던 자체 필터를 버리고 여기로 옮겼다 — review-3) 제안 불가 서술자는 어느 루프에서도 나오지 않는다 | 서브에이전트·스킬 정의에는 이 키가 없고, 부모의 설정을 물려줄지는 본문이 정하지 않았다. 포크 쿼터(결정 14)의 브리지 쪽 `admit(1)` 은 구현·종단 테스트되었지만 트리 안의 포크는 아직 `ExecuteCode` 를 제안하지 않는다 |
+| 중첩 호출의 허용 목록은 `AllowedTools.intersect(부모, 동결된 집합)` (§8.2) | 브리지가 동결된 집합을 이름으로 직접 검사하고, 부모의 허용 목록(인자 패턴 포함)은 바인딩된 디스패처가 그대로 적용한다 | 효과는 교집합과 같다 — 호출은 두 검사를 모두 통과해야 한다. 디스패처 `narrow` 는 레지스트리 부분집합을 요구해 `ExecuteCode` 가 그 레지스트리를 알아야 한다 |
+| `CodeExecutionOutcome` 에 중첩 호출 기록(§9 표) | 기록은 호출을 한 브리지가 든다. 결과에는 상태·출력·로그·반환값·오류 메시지 | 기록은 엔진과 무관하다. 엔진마다 같은 기록을 다시 옮기지 않는다 |
+| 엔진 SPI 의 모양(§9) | `CodeExecutionEngine extends AutoCloseable`(기본 no-op), `ToolCallBridge.limitExceeded()`, `CodeExecutionEngineFactory.create()`, `CodeExecutionEngines.discover/createAll`, 상수 `JAVASCRIPT`·`PYTHON` | 엔진은 Application 수명이라 조립이 닫아야 한다. 엔진은 자식 취소 신호를 보았을 때 그것이 실행 취소인지 브리지가 건 한도(즉시 정지, §8.3)인지 구분해야 `CANCELLED`/`LIMIT_EXCEEDED` 를 고를 수 있다 |
+| 트레이스(§12.2): 중첩 호출마다 TOOL span(부모 `ExecuteCode`, `tool.path=code`), iteration span 의 `ptc.unavailable_reason` | span 은 하지 않았다. `programmatic-tools` 를 둔 에이전트가 `ExecuteCode` 를 제안받지 못한 이유(엔진 미조립 — 조립이 꺼져 있을 때도 —, 고른 언어의 엔진 없음, `auto` 인데 환경이 격리를 선언하지 않음, 엔진 정적 불가, 부를 도구 없음)와 집합에서 빠진 도구는 에이전트·이유마다 한 번 WARN 으로 남는다(`ToolOfferContext.agentName`). 중첩 호출은 `renderPayload` 와 훅으로 남는다 | 디스패처 경로는 span 을 만들지 않는다 — 루프가 만든다. 브리지에서 span 을 열려면 트레이서를 도구 문맥으로 내려야 해 범위가 커진다. 후속 |
+| 언어가 바뀌면 환경 알림(§6.2) | 하지 않았다 | 조각 C 에는 엔진이 하나뿐이라 언어가 바뀔 수 없다. 셸 엔진(조각 D)과 함께 |
+| `programmatic-tools` 의 도구는 deferred 로 둘 수 없다(결정 13) | 강제하지 않는다. 활성화되지 않은 deferred 도구는 레지스트리 조회에서 빠지므로 호출 가능 집합에서 빠지고 경고된다 | 활성화 전에는 그 도구가 제안 자격(§7.3 순서 1)을 갖지 않는다. 집합이 스크립트 안에서 넓어지는 일(결정 13 의 이유)은 일어나지 않는다 |
+| 결정 12 ④ 검사는 도구 등록 시점과 제안 시점(§7.2) | 제안 시점에만 — `programmatic-only` 의 `READ_ONLY` 아닌 도구는 코드 전용으로 빼지 않고 직접 제안에 남긴다(에이전트·도구마다 경고 한 번) | 제안 문맥이 축을 아는 첫 지점이 제안 시점이다. 빼 버리면 그 도구가 어디에도 나오지 않는다 |
+| `programmatic-only` 는 "직접 제안에서 빼고 코드에서만"(§7.2) — 코드 경로가 있다는 전제 | 같은 제안에서 `ExecuteCode` 가 제안되고 그 호출 가능 집합이 그 도구를 담을 때만 빼고 직접 호출을 거절한다(`ToolDescriptor.getCodeHostedTools()`, `ToolOfferContext.isCodeOnly`). `ExecuteCode` 를 제안할 수 없으면 항목을 무시해 도구는 직접 제안·호출된다 | 그러지 않으면 엔진이 없거나(조립 꺼짐, 고른 언어 없음, 격리 미선언) 집합에서 빠진 도구가 에이전트에게서 조용히 사라진다. 제안 필터와 직접 경로의 거절은 여전히 같은 출처(그 제안 문맥)를 읽는다 |
+| GraalJS 응답 상한 1 MiB, 출력 상한 4 MiB(§13.1) | 응답은 `maxArgumentBytes`(1 MiB) 에서 잘라 표시하고, 누적 결과·출력 상한은 문자 수로 센다 | 같은 1 MiB 를 인자·응답에 쓰라는 표의 행 그대로다. 게스트와 호스트 사이에 오가는 것은 문자열이라 바이트로 다시 인코딩해 세지 않는다 |
+| 반환값은 `String(v).slice(0, max + 1)`(§10.2) | 문자열은 그대로, 그 밖의 값은 `JSON.stringify`(실패하면 `String(v)`) 한 뒤 게스트 안에서 자른다. `console.log` 의 인자도 같은 규칙 | `String({a:1})` 은 `[object Object]` 라 모델에게 쓸모가 없다 |
+| 인자 복사 예산(§10.2) | 같은 예산(바이트 + 노드 수)을 `WorkflowJs` 의 결과 복사에도 적용한다 — 16 MiB / 100만 노드 | `JsMarshalling.deepDetach` 를 바꾸라는 본문대로 하면 워크플로 결과도 그 함수를 지난다. 전에는 무제한이었다 |
+| 설정 표면(§16): GraalJS 엔진 조립은 "`aimon-graaljs` 의존(ServiceLoader)" | bootstrap 은 `ToolSpec.programmaticEnabled(true)`, 스타터는 `aimon.programmatic.enabled=true` 로 켜야 클래스패스의 엔진을 만든다(기본 꺼짐). CLI 한도 키는 `programmatic.limits.wallClockSeconds` 처럼 단위를 이름에 넣었다 | 의존을 더하는 것만으로 게스트 힙 한도가 없는 엔진(§10.3)이 켜지지 않게 한다. CLI 의 `enableJs` 와 같은 opt-in |
+| (본문 없음) `ExecuteCodeToolProvider` 를 누가 등록하는가 | 모든 조립에서 스택 하나가 등록한다. 호출자가 만든 엔진은 `ToolSpec.codeExecutionEngines(...)` 로 넘기고(호출자 소유 — CLI 는 `WorkflowJs` 와 공유하는 홀더 위의 엔진), 아니면 `programmaticEnabled` 일 때 스택이 클래스패스에서 찾아 소유한다. `ToolSpec.addProvider` 나 에이전트 커스터마이저가 `ExecuteCodeToolProvider` 를 더하면 거절한다. 엔진이 없을 때의 "no engine assembled" 경고는 에이전트마다 한 번 | 제공자가 둘이면 `ExecuteCode` 가 두 번 등록되거나, 엔진이 있는데도 엔진 없는 제공자가 "no engine assembled" 를 경고한다(review-2) |
+| 결과가 영원히 오지 않는 `await`(본문 없음) | `SCRIPT_ERROR` "the program awaits a promise that never settles" — 진행 중인 호출이 없고 큐가 비었는데 프로그램이 끝나지 않았을 때 | 그 상태로는 벽시계까지 기다릴 이유가 없다 |
+

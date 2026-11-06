@@ -12,6 +12,7 @@ import java.util.Set;
 import at.aimon.core.agent.ContextEngineKind;
 import at.aimon.core.agent.ContextPolicy;
 import at.aimon.core.agent.Version;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.base.DefinitionAttributes;
 import at.aimon.core.llm.LlmModel;
@@ -68,6 +69,7 @@ public final class AgentDefinition {
     private final ContextEngineKind contextEngine;
     private final ContextPolicy contextPolicy;
     private final Map<String, String> attributes;
+    private final ProgrammaticToolSettings programmatic;
 
     /**
      * AgentDefinition을 생성한다.
@@ -87,6 +89,7 @@ public final class AgentDefinition {
         contextEngine = builder.contextEngine;
         contextPolicy = Objects.requireNonNullElse(builder.contextPolicy, ContextPolicy.none());
         attributes = builder.attributes != null ? DefinitionAttributes.copyOf(builder.attributes) : Map.of();
+        programmatic = Objects.requireNonNullElse(builder.programmatic, ProgrammaticToolSettings.none());
     }
 
     /**
@@ -204,6 +207,16 @@ public final class AgentDefinition {
     }
 
     /**
+     * Returns what the frontmatter opens to model-written code ({@code programmatic-tools}, {@code programmatic-only},
+     * {@code programmatic-engine}).
+     *
+     * @return the settings ({@link ProgrammaticToolSettings#none()} when the frontmatter declares none)
+     */
+    public ProgrammaticToolSettings getProgrammatic() {
+        return programmatic;
+    }
+
+    /**
      * Builder for constructing {@link AgentDefinition} instances.
      *
      * <p>
@@ -221,6 +234,7 @@ public final class AgentDefinition {
         private ContextEngineKind contextEngine;
         private ContextPolicy contextPolicy;
         private Map<String, String> attributes;
+        private ProgrammaticToolSettings programmatic;
 
         /**
          * Sets when the agent's context is compacted.
@@ -359,6 +373,18 @@ public final class AgentDefinition {
          */
         public Builder allowedTools(List<AllowedTool> allowedTools) {
             this.allowedTools = allowedTools;
+            return this;
+        }
+
+        /**
+         * Sets what the agent opens to model-written code.
+         *
+         * @param programmatic
+         *            the settings, or {@code null} for none
+         * @return This builder for method chaining
+         */
+        public Builder programmatic(ProgrammaticToolSettings programmatic) {
+            this.programmatic = programmatic;
             return this;
         }
 

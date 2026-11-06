@@ -447,7 +447,7 @@ delegate(메인 실행기라면 풀 디스패처일 수 있다)가 기존 게이
 `SubagentLaunchContext.builder()` 를 `ToolContext` 로부터 만드는 곳은 **넷**이고 전부 같은 한 줄을 받는다:
 `tools/task/TaskTool.java:567` · `tools/workflow/WorkflowTool.java:522` ·
 `skill/fork/SubagentBackedSkillForkExecutor.java:159` ·
-`modules/aimon-workflow-graaljs/src/main/java/at/aimon/workflow/graaljs/GraalJsWorkflowTool.java:267` (별도
+`modules/aimon-graaljs/src/main/java/at/aimon/graaljs/workflow/GraalJsWorkflowTool.java:267` (별도
 모듈 — `ForkAccess` 가 public 이어야 하는 이유) → `.forkDepth(ForkAccess.childDepthOf(context))`. 다섯 번째인
 agent-scoped base 컨텍스트(`agent/impl/orca/OrcaAgentRuntimeFactory.java:1160`, 루틴 · 런타임 러너)는
 `ToolContext` 가 없으므로 기본값 1 을 그대로 둔다. 한 사이트라도 빠지면 비블로킹 허가라 교착은 없지만

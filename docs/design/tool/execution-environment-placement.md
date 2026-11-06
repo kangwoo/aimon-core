@@ -1,6 +1,6 @@
 # 실행 환경 배치 입력 — 제공자가 어디서 돌지를 정하는 값
 
-> **Status**: IMPLEMENTED — `aimon-core`, `aimon-workflow-graaljs`, `aimon-bootstrap`, `aimon-spring-boot-starter`. 열린 항목의 정본은 [등록부](../../backlog/execution-environment-open-items.md)다.
+> **Status**: IMPLEMENTED — `aimon-core`, `aimon-graaljs`, `aimon-bootstrap`, `aimon-spring-boot-starter`. 열린 항목의 정본은 [등록부](../../backlog/execution-environment-open-items.md)다.
 
 ## 1. 정의 속성과 실행 속성
 
@@ -238,5 +238,5 @@ public interface RoutineExecutionAttributes {
 | 루틴 | `RoutineExecutionAttributes`, `RoutineExecutor`, `SchedulingEngineBuilder` | `.../core/scheduling/` |
 | 루틴 조립 | `SchedulingSpec`, `AimonStackBuilder`, `AimonSchedulingAutoConfiguration` | `modules/aimon-bootstrap/src/main/java/at/aimon/bootstrap/`, `modules/aimon-spring-boot-starter/src/main/java/at/aimon/spring/boot/autoconfigure/` |
 | 내장 워크플로 | `WorkflowTool`, `DefaultWorkflowContext` | `.../core/tools/workflow/`, `.../core/workflow/impl/` |
-| GraalJS 프런트엔드 | `SubagentDescriptor`, `SubagentResolver`, `InlineSubagentResolver`, `AgentTaskMarshaller`, `GraalJsWorkflowTool`, `GraalJsWorkflowScript` | `modules/aimon-workflow-graaljs/src/main/java/at/aimon/workflow/graaljs/` |
+| GraalJS 프런트엔드 | `SubagentDescriptor`, `SubagentResolver`, `InlineSubagentResolver`, `AgentTaskMarshaller`, `GraalJsWorkflowTool`, `GraalJsWorkflowScript` | `modules/aimon-graaljs/src/main/java/at/aimon/graaljs/workflow/` |
 | 숨김 정의 | `TaskTool` | `.../core/tools/task/` |

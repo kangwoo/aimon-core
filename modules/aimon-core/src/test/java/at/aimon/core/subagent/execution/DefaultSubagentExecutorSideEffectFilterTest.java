@@ -30,11 +30,13 @@ import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
+import at.aimon.core.programmatic.CodeExecutionLimits;
 import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentContent;
 import at.aimon.core.subagent.SubagentExecutionPolicy;
 import at.aimon.core.subagent.SubagentMetadata;
 import at.aimon.core.tools.ToolContextKeys;
+import at.aimon.core.tools.code.ExecuteCodeTool;
 
 /**
  * Locks in the fork half of the {@link SideEffectLevel} pair: a fork's definition list is filtered by the ceiling of
@@ -130,6 +132,19 @@ class DefaultSubagentExecutorSideEffectFilterTest {
                 tool("Writer", SideEffectLevel.MUTATING));
 
         assertThat(client.firstOffer()).contains("Reader").doesNotContain("Writer");
+    }
+
+    @Test
+    @DisplayName("a registered ExecuteCode that cannot be offered is not offered to the fork, though the ceiling "
+            + "permits it")
+    void nonOfferableExecuteCodeIsNotOffered() {
+        // A fork's offer carries no programmatic settings, and this ExecuteCode has no engine either: its MUTATING
+        // grade passes the default ceiling, so only the offerability rule keeps it out.
+        final DefinitionCapturingLlmClient client = runWithCeiling(new DefaultToolExecutionManager(),
+                tool("Reader", SideEffectLevel.READ_ONLY),
+                new ExecuteCodeTool(List.of(), CodeExecutionLimits.defaults()));
+
+        assertThat(client.firstOffer()).containsExactly("Reader");
     }
 
     @Test

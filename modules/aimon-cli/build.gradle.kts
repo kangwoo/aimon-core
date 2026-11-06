@@ -18,7 +18,7 @@ dependencies {
     implementation(project(":aimon-scheduling-quartz"))
     // Phase 5 GraalJS workflow frontend (opt-in via cli.enableWorkflowJs). Isolates the org.graalvm deps behind
     // this module; the CLI is the assembly layer that registers its WorkflowJs tool.
-    implementation(project(":aimon-workflow-graaljs"))
+    implementation(project(":aimon-graaljs"))
 
     // Quartz Scheduler — needed directly so the CLI can build a dedicated dreamer scheduler instance
     implementation(libs.quartz)
