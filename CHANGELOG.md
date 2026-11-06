@@ -33,6 +33,12 @@ loop's tool context under the write-once `ToolContextKeys.TOOL_CALL_DISPATCHER`.
   .toToolUseResult` splices them); `ToolInvocationSpec` requires `origin(...)`.
 - An ArchUnit rule now allows `ToolExecutionManager#execute` / `#executeAll` to be called only from
   `at.aimon.core.toolinvocation..`.
+- **Removed (breaking):** `EnvironmentNotices.deliver(ToolUseResult, ExecutionEnvironment, String)`. It had no caller
+  left once the dispatch paths began handing notices on beside the text, and calling it beside a dispatcher would
+  drain the queue a second time and splice the notices in a second place. Drain with `EnvironmentNotices.drain` and
+  splice through `ToolDispatchResults.toToolUseResult`, which renders them with `EnvironmentNotices.render`.
+- The main loop and a fork's loop answer a tool call whose context has no dispatcher bound with one shared text,
+  `ToolDispatchResults.NO_DISPATCHER_MESSAGE` (new).
 
 ### Changed: `aimon-llm-anthropic` is on Anthropic SDK 3 and API version 2026-10-21
 

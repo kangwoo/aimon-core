@@ -40,8 +40,8 @@ Python 이다. LLM 제공자가 호스팅하는 실행 컨테이너는 쓰지 �
 | 결과·관측 / 한도·취소 | §12, §13 |
 | 보안 모델 | §14 |
 | 의도적으로 제외하거나 미룬 것 | §15 |
-| 설정 / 테스트 / 평가 / 조각 사이의 의존 | §16 – §19 |
-| 열린 질문, 참고 | §20, §21 |
+| 설정 / 강제 / 평가 | §16 – §18 |
+| 열린 질문, 참고 | §19, §20 |
 
 정본이 따로 있는 주제:
 
@@ -367,7 +367,7 @@ shell-engine-tool-scope: host  # 선택. 애플리케이션 값보다 좁게만 
 | 항목 | 값 |
 |---|---|
 | tool use id | `<ExecuteCode 의 tool use id>#<순번>` |
-| 컨텍스트 | 부모 컨텍스트를 그대로 물려받고 write-once 가 아닌 키(`CURRENT_TOOL_USE_ID_KEY`, `CALLER_ALLOWED_TOOLS`, 취소 신호)만 덮는다 — `SingleToolInvoker` 가 지금 하는 방식이다. 취소 신호는 브리지의 자식 신호(§13.2) |
+| 컨텍스트 | 부모 컨텍스트를 그대로 물려받고 write-once 가 아닌 키(`CURRENT_TOOL_USE_ID_KEY`, `CALLER_ALLOWED_TOOLS`, 취소 신호)만 덮는다 — 직접 경로의 `SingleToolInvoker` 와 같은 방식이다. 취소 신호는 브리지의 자식 신호(§13.2) |
 | 허용 목록 | `AllowedTools.intersect(부모, 동결된 집합)`. 교집합이 비면(`Optional.empty()`) 그 호출을 거절한다 — 빈 목록은 "무제한" 으로 읽히기 때문이다 |
 
 ### 8.3 코드 경로 규칙과 쿼터
@@ -618,23 +618,23 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 
 ---
 
-## 17. 테스트
+## 17. 강제
 
-| 층 | 무엇 |
+설계의 어느 규칙을 빌드가 지키는가. 테스트 목록이 아니라 규칙과 그것을 강제하는 장치의 대응이다.
+
+| 규칙 | 강제하는 곳 |
 |---|---|
-| 엔진 계약 스위트 (`aimon-code-engine-testkit`) | 두 엔진 공통. 순차·병렬 호출, 오류 전파, **같은 모양의 프로그램이 두 엔진에서 같은 관찰을 냄**(표준 출력 규칙), 타임아웃, 취소(중첩 호출 대기 중 취소 포함), 각 한도, 미완료 호출 보고, 출력 폭주 뒤에도 호스트 프로세스가 살아 있음 |
-| GraalJS | `print`·`console.log` 가 `System.out` 에 닿지 않음(`WorkflowJs` 도), ANSI·CRLF 가 든 로그가 이스케이프됨, `new Array(2**31-1)`·공유 참조 DAG 인자가 호스트 할당 전에 거절됨, 거대한 반환 문자열이 게스트에서 잘림, 누적 결과 상한 |
-| 관문·코드 경로 | 승인 관문 **없음** / 기본 임계값 / 임계값 `MUTATING` 세 구성에서: `MUTATING` ∧ `DESTRUCTIVE` 가 집합에 없고 파괴성 기본값을 가진 `READ_ONLY` 도구(`Read`)는 남음, `MUTATING` 스크립트당 상한, 코드 경로 무질의. `approvalDelegated` 는 GraalJS `ExecuteCode` 에만. 셸 엔진 `ExecuteCode` 는 `READ_ONLY` 실링에서 제안되지 않음. **승인 키**: `Bash` 를 거절하면 셸 엔진 `ExecuteCode` 도 거절되고, 한쪽을 허용하면 다른 쪽도 허용되며, 질의 문구가 경로를 밝힘. 마스킹 훅이 코드가 받는 문자열에 적용됨. 포크 쿼터가 중첩 호출을 세고 바닥나면 실행 정지. `programmatic-only` 도구의 직접 호출 거절 |
-| 선언 검사 | 모든 내장 도구가 `dataReach()` 를 명시적으로 재정의한다. MCP 도구의 `dataReach` 가 `annotationTrust`·`openWorldHint` 조합대로 계산됨 |
-| ArchUnit (코어) | `at.aimon.core.tools..` 의 도구 중 클래스 그래프가 `LlmClient`·`LlmCallGateway`·`DialecticEngine`·`WikiKnowledgeBase`·`SubagentExecutionManager` 에 닿는 것은 `isCodeCallable()` 을 재정의한다. `at.aimon.core.tools.code..` 는 `ToolCallDispatcher` 외 경로로 도구를 부르지 않는다. 입구 규칙은 [단일 입구](tool-call-dispatcher.md) §7 |
-| ArchUnit (`aimon-graaljs`) | 같은 규칙을 `at.aimon.graaljs.code..` 에 대해 그 모듈의 아키텍처 테스트에 둔다 — 코어 테스트 클래스패스는 그 클래스를 보지 못한다 |
-| 셸 엔진 | [셸 엔진](programmatic-tool-calling-shell.md) §14 |
+| 두 엔진이 같은 계약을 지킨다 — 같은 모양의 프로그램이 같은 관찰을 내고(결정 7), 한도·취소(§13)가 같은 의미다 | 엔진 계약 스위트 `aimon-code-engine-testkit`. 두 엔진이 같은 스위트를 돌린다 |
+| LLM 을 부르거나 포크를 일으키는 도구는 코드에서 불릴 수 없다(결정 15) | ArchUnit (코어) — `at.aimon.core.tools..` 의 도구 중 클래스 그래프가 `LlmClient`·`LlmCallGateway`·`DialecticEngine`·`WikiKnowledgeBase`·`SubagentExecutionManager` 에 닿는 것은 `isCodeCallable()` 을 재정의한다 |
+| 코드의 도구 호출은 단일 입구만 지난다(결정 3) | ArchUnit (코어) — `at.aimon.core.tools.code..` 는 `ToolCallDispatcher` 외 경로로 도구를 부르지 않는다. 입구 규칙 자체는 [단일 입구](tool-call-dispatcher.md) §3 #8. `aimon-graaljs` 는 같은 규칙을 `at.aimon.graaljs.code..` 에 대해 그 모듈의 아키텍처 테스트에 둔다 — 코어 테스트 클래스패스는 그 클래스를 보지 못한다 |
+| 내장 도구는 `dataReach()` 를 명시적으로 선언한다(§7.1) | 내장 도구 전체에 대한 선언 검사 |
+| 셸 엔진의 규칙 | [셸 엔진](programmatic-tool-calling-shell.md) §14 |
 
 ---
 
 ## 18. 평가
 
-§2.1 의 수치는 이 설계의 근거가 아니다. 다음을 재고, 결과로 기본값(한도, 설명 문구, `auto` 규칙)과 아래 판정을 정한다.
+§2.1 의 수치는 이 설계의 근거가 아니다. 기본값(한도, 설명 문구, `auto` 규칙)은 잠정값이고, 아래 측정의 판정이 그것을 정한다.
 
 | 측정 | 방법 | 판정 |
 |---|---|---|
@@ -646,26 +646,13 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 
 ---
 
-## 19. 조각 사이의 의존
-
-| 조각 | 무엇 | 기대는 것 | 그것 없이 성립하는 것 |
-|---|---|---|---|
-| A | [단일 입구](tool-call-dispatcher.md) 전체 | — | 전부. 구현되었다(그 문서의 `Status`) |
-| B | `ToolOfferContext`·`describe`·`dataReach`·`approvalKey`, 승인 관문의 경로·서술자 인식, 공개 `ToolCallQuota`, `isCodeCallable` 과 그 ArchUnit 검사, MCP `dataReach` 매핑 | A | — |
-| C | `ExecuteCode`, 브리지, GraalJS 엔진, `aimon-graaljs` 개명(내장 출력 끄기, 예산 있는 마샬링, 이벤트 루프), `aimon-code-engine-testkit` | A, B | 셸 엔진 없이 로컬과 샌드박스 모두에서 동작한다(샌드박스에서는 명시적 `javascript` 로) |
-| D, E | 셸 엔진과 전용 uid 모드 | C | [셸 엔진](programmatic-tool-calling-shell.md) §15 |
-
-C 가 들어가는 시점에 샌드박스 에이전트의 `auto` 는 `python` 을 고르지만 셸 엔진이 아직 없으므로 `ExecuteCode` 가 제안되지 않는다.
-
----
-
-## 20. 열린 질문
+## 19. 열린 질문
 
 1. **게스트 힙 한도.** Oracle GraalVM `SandboxPolicy.UNTRUSTED` (힙·CPU 한도)를 선택적으로 지원할지. 런타임이 Oracle GraalVM 이어야 한다.
 
 ---
 
-## 21. 참고
+## 20. 참고
 
 - Anthropic, [Programmatic tool calling](https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling)
   — `allowed_callers`, `caller`, 메시지 형식 제약, 토큰 수치(BrowseComp·DeepSearchQA, 75개 도구, 도구 10–49개, τ²-bench),

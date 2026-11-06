@@ -35,8 +35,9 @@ import at.aimon.core.llm.ToolUse;
  * <pre>
  * {
  *     &#64;code
- *     PreToolContext context = PreToolContext.builder().invokerType(InvokerType.MAIN_AGENT)
- *             .invokerName("default-agent").toolUse(toolUse).iterationCount(3).build();
+ *     PreToolContext context = PreToolContext.builder().executorType(InvokerType.MAIN_AGENT)
+ *             .invokerName("default-agent").origin(ToolCallOrigin.direct()).hookRegistry(hookRegistry)
+ *             .toolUse(toolUse).iterationCount(3).build();
  * }
  * </pre>
  */

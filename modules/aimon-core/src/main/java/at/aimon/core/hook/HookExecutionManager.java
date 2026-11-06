@@ -53,8 +53,9 @@ import at.aimon.core.hook.execution.HookResult;
  *     HookExecutionManager manager = new DefaultHookExecutionManager();
  *
  *     // Execute PreTool hooks before tool execution
- *     PreToolContext context = PreToolContext.builder().invokerType(InvokerType.MAIN_AGENT)
- *             .invokerName("default-agent").hookRegistry(hookRegistry).toolName("ReadTool").build();
+ *     PreToolContext context = PreToolContext.builder().executorType(InvokerType.MAIN_AGENT)
+ *             .invokerName("default-agent").origin(ToolCallOrigin.direct()).hookRegistry(hookRegistry)
+ *             .toolUse(ToolUse.of("toolu_1", "Read", Map.of("file_path", "/etc/hosts"))).build();
  *
  *     List<HookResult> results = manager.executePreTool(context);
  *

@@ -117,7 +117,7 @@ public final class ToolCallOrigin {   // 정적 팩토리 — ToolResult 선례.
 |---|---|
 | 메인 루프 | 바인딩한 `ToolCallDispatcher` 를 컨텍스트에서 꺼내 `DIRECT` 로 부르고 결과를 변환한다. 컨텍스트에 없으면 그 호출에 거절 오류 결과 — 턴은 언제나 묶으므로 손으로 지은 컨텍스트에서만 닿는다 |
 | 포크 루프 | 같음 |
-| 슬래시 명령의 스킬 루프 | `narrow` 한 디스패처만, `SKILL(스킬 이름)` 으로. 없으면 첫 LLM 호출 전에 스킬 실패. `narrow` 가 거절하면(레지스트리가 넓어짐) 같은 실패. 허용 목록 밖 호출과 권한 위반은 그 호출 하나가 오류 결과를 받고 스킬은 계속한다 — 에이전트 자신의 루프와 같은 의미다 |
+| 슬래시 명령의 스킬 루프 | `narrow` 한 디스패처만, `SKILL(스킬 이름)` 으로. 없으면 첫 LLM 호출 전에 스킬 실패. `narrow` 가 거절하면 — 레지스트리가 넓어지거나(원래 레지스트리에 없는 도구, 같은 이름의 다른 도구), 허용 목록이 서로소라 교집합이 비거나(`ToolCallNarrowing.intersect`, 결정 5) — 같은 실패. 허용 목록 밖 호출과 권한 위반은 그 호출 하나가 오류 결과를 받고 스킬은 계속한다 — 에이전트 자신의 루프와 같은 의미다 |
 | rewake 리플레이 | 도구를 실행하지 않고 PreTool 컨텍스트를 `REPLAY` 로 지어 훅만 발화한다 |
 | 루틴 스텝, 메모리 deriver, 위임 실행 | 그대로(스키마 관문 규칙의 기록된 예외). 디스패처를 묶지 않는다 |
 
@@ -138,10 +138,12 @@ public final class ToolCallOrigin {   // 정적 팩토리 — ToolResult 선례.
 
 | 보장 | 테스트 |
 |---|---|
-| 세 루프의 바인딩이 같은 관문을 같은 순서로 지난다(PermissionRequest → 승인 → PreTool → 실행 → PostTool) | `DefaultToolCallDispatcherTest` |
+| 디스패처는 어떤 바인딩 모양(`InvokerType`, 좁히기 여부)으로 지어져도 같은 관문을 같은 순서로 지난다(PermissionRequest → 승인 → PreTool → 실행 → PostTool) | `DefaultToolCallDispatcherTest` |
+| 세 루프가 실제로 디스패처를 묶어 그것으로 호출한다(관문 순서가 아니라 훅이 그 루프의 호출을 보는지로 확인) | `SlashSkillToolDispatchE2EIntegrationTest#hooksSeeTheCallsOrigin`(메인·슬래시), `DefaultSubagentExecutorHookEnvironmentTest#aForksToolHooksSeeADirectCallAtItsIteration`(포크) |
 | 스킬 루프에서 스킬 `allowed-tools` 밖 도구가 실행 시점에 그 호출만 거절되고 스킬은 계속한다 | `LlmSkillExecutorTest`, `SlashSkillToolDispatchE2EIntegrationTest` |
 | `narrow` 는 원래 레지스트리에 없는 도구(원래 허용 목록이 비었을 때 포함)와 같은 이름의 다른 도구를 거절하고, 허용 목록을 넓히지 못하며, 서로소 목록을 거절한다 | `DefaultToolCallDispatcherTest`, `ToolCallDispatchersTest` |
 | 디스패처 없는 컨텍스트에서 스킬 루프는 LLM 을 부르지 않고 실패하며 도구는 돌지 않는다 | `LlmSkillExecutorTest` |
+| 디스패처 없는 컨텍스트에서 메인·포크 루프는 그 호출에 같은 문구의 거절 오류 결과를 준다 | `OrcaAgentExecutorDispatchTest`, `DefaultSubagentExecutorDispatchTest` |
 | `dispatch` 는 던지지 않는다 | `DefaultToolCallDispatcherTest`, `ToolCallDispatchersTest` |
 | 각 경로의 훅 컨텍스트가 맞는 `ToolCallOrigin` 과 iteration 을 받는다(메인 `DIRECT`, 포크 `DIRECT`·`SUBAGENT`, 스킬 `SKILL`) | `DefaultToolCallDispatcherTest`, `SlashSkillToolDispatchE2EIntegrationTest`, `DefaultSubagentExecutorHookEnvironmentTest` |
 | 셸 훅이 `AIMON_TOOL_PATH`·`AIMON_TOOL_PARENT_ID` 를 받는다 | `DeclarativePreToolHookTest`, `DeclarativePostToolHookTest`, `AbstractDeclarativeShellHookTest`(permissionRequest) |

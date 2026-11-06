@@ -1845,13 +1845,13 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     /**
      * Runs one call through the fork's {@link ToolCallDispatcher}, read from the context it was bound into, and turns
      * the result into what the transcript records. A context with no dispatcher is refused rather than run around the
-     * gates; the fork always binds one.
+     * gates; the fork always binds one, so that answer only reaches a caller that built a context by hand.
+     * Package-private for the test that pins that refusal.
      */
-    private static ToolUseResult invokeTool(ToolContext toolContext, ToolUse toolUse, int iterationCount) {
+    static ToolUseResult invokeTool(ToolContext toolContext, ToolUse toolUse, int iterationCount) {
         final Optional<ToolCallDispatcher> dispatcher = toolContext.get(ToolContextKeys.TOOL_CALL_DISPATCHER);
         if (dispatcher.isEmpty()) {
-            return ToolUseResult.error(toolUse.getId(),
-                    "Tool call refused: no tool call dispatcher is bound to this execution");
+            return ToolUseResult.error(toolUse.getId(), ToolDispatchResults.NO_DISPATCHER_MESSAGE);
         }
         // The iteration rides on the context the dispatcher is handed, which puts it on the Pre/PostTool contexts.
         final ToolContext iterationContext = ToolContext.builder().putAll(toolContext.getContext())

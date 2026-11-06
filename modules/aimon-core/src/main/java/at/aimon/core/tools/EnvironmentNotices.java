@@ -1,13 +1,11 @@
 package at.aimon.core.tools;
 
 import java.util.List;
-import java.util.Objects;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.environment.ExecutionEnvironment;
-import at.aimon.core.llm.ToolUseResult;
 
 /**
  * Delivers an execution environment's {@linkplain ExecutionEnvironment#drainNotices() queued notices} to the model, on
@@ -15,9 +13,11 @@ import at.aimon.core.llm.ToolUseResult;
  *
  * <p>
  * The dispatch paths drain once per call ({@link #drain}): the gated pipeline ({@code SingleToolInvoker}) after the
- * PostTool chain, and the explicitly ungated dispatcher. They hand the notices on as a list, and a model-facing loop
- * renders them ({@link #render}) when it records the result. A path whose results go to a routine step or a hook must
- * not drain — that would hand the notice to a reader that is not the model and lose it.
+ * PostTool chain, and the explicitly ungated dispatcher. They hand the notices on as a list beside the text, and a
+ * model-facing loop renders them ({@link #render}) when it records the result, through
+ * {@code ToolDispatchResults.toToolUseResult} — the one place the side channels meet the text. A path whose results go
+ * to a routine step or a hook must not drain — that would hand the notice to a reader that is not the model and lose
+ * it.
  *
  * <p>
  * The notices are rendered the way {@code Bash} renders a command's own {@code ShellCommandResult.notices()}: one
@@ -33,32 +33,6 @@ public final class EnvironmentNotices {
 
     private EnvironmentNotices() {
         throw new AssertionError("This class should not be instantiated");
-    }
-
-    /**
-     * Drains {@code environment} once and returns {@code result} with the notices prepended.
-     *
-     * <p>
-     * Returns {@code result} itself — the same instance — when there is no environment, it had nothing queued, or
-     * draining threw: a notice is auxiliary and must never cost the model the tool result it is waiting on. The
-     * rewritten result keeps {@link ToolUseResult#isError()}, the render payload and
-     * {@link ToolUseResult#isRetryable()}.
-     *
-     * @param result
-     *            the result about to be handed to the model (must not be null)
-     * @param environment
-     *            the environment the call ran against, or {@code null} when the tool context carries none
-     * @param toolName
-     *            the tool's name, for the log line when draining fails, or {@code null} when unknown
-     * @return the result carrying the notices, or {@code result} unchanged
-     */
-    public static ToolUseResult deliver(ToolUseResult result, ExecutionEnvironment environment, String toolName) {
-        Objects.requireNonNull(result, "result must not be null");
-        final String rendered = render(drain(environment, toolName, result.getToolUseId()));
-        if (rendered.isEmpty()) {
-            return result;
-        }
-        return result.withContent(rendered + result.getContent());
     }
 
     /**
