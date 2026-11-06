@@ -37,9 +37,9 @@ import at.aimon.core.llm.ToolUseResult;
  * <pre>
  * {
  *     &#64;code
- *     PostToolContext context = PostToolContext.builder().invokerType(InvokerType.MAIN_AGENT)
- *             .invokerName("default-agent").toolUse(toolUse).toolResult(toolResult)
- *             .iterationCount(3).build();
+ *     PostToolContext context = PostToolContext.builder().executorType(InvokerType.MAIN_AGENT)
+ *             .invokerName("default-agent").origin(ToolCallOrigin.direct()).hookRegistry(hookRegistry)
+ *             .toolUse(toolUse).toolUseResult(toolUseResult).iterationCount(3).build();
  * }
  * </pre>
  */

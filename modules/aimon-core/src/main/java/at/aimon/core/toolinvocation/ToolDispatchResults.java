@@ -22,6 +22,14 @@ import at.aimon.core.tools.EnvironmentNotices;
  */
 public final class ToolDispatchResults {
 
+    /**
+     * The error text a model-facing loop answers a tool call with when its context carries no
+     * {@link at.aimon.core.agent.tool.ToolCallDispatcher}: the call is refused, not run around the gates. The main loop
+     * and a fork's loop share it, so the two cannot drift apart.
+     */
+    public static final String NO_DISPATCHER_MESSAGE = "Tool call refused: no tool call dispatcher is bound to this"
+            + " execution";
+
     private ToolDispatchResults() {
         throw new AssertionError("This class should not be instantiated");
     }

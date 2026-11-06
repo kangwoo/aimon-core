@@ -6,7 +6,6 @@ import static org.mockito.Mockito.when;
 
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
@@ -16,7 +15,6 @@ import org.junit.jupiter.api.Test;
 import at.aimon.core.environment.EnvironmentDescriptor;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.TestExecutionEnvironments;
-import at.aimon.core.llm.ToolUseResult;
 
 @DisplayName("EnvironmentNotices")
 class EnvironmentNoticesTest {
@@ -27,63 +25,50 @@ class EnvironmentNoticesTest {
     }
 
     @Test
-    @DisplayName("prepends one [environment] line per notice, oldest first")
-    void prependsNotices() {
-        final ToolUseResult result = EnvironmentNotices.deliver(ToolUseResult.success("t1", "body"),
-                queueing("first", "second"), "Read");
-
-        assertThat(result.isSuccess()).isTrue();
-        assertThat(result.getToolUseId()).isEqualTo("t1");
-        assertThat(result.getContent()).isEqualTo("[environment] first\n[environment] second\nbody");
+    @DisplayName("drains every queued notice, oldest first")
+    void drainsQueuedNotices() {
+        assertThat(EnvironmentNotices.drain(queueing("first", "second"), "Read", "t1")).containsExactly("first",
+                "second");
     }
 
     @Test
-    @DisplayName("keeps an error an error and carries the render payload across")
-    void preservesErrorAndRenderPayload() {
-        final ToolUseResult original = ToolUseResult.error("t1", "boom").withRenderPayload(Map.of("kind", "diff"));
-
-        final ToolUseResult result = EnvironmentNotices.deliver(original, queueing("reset"), "Edit");
-
-        assertThat(result.isError()).isTrue();
-        assertThat(result.getContent()).isEqualTo("[environment] reset\nboom");
-        assertThat(result.getRenderPayload()).containsEntry("kind", "diff");
-    }
-
-    @Test
-    @DisplayName("drains once: the same environment has nothing for the next result")
+    @DisplayName("drains once: the same environment has nothing for the next call")
     void drainsOnce() {
         final ExecutionEnvironment environment = queueing("reset");
 
-        EnvironmentNotices.deliver(ToolUseResult.success("t1", "a"), environment, "Read");
-        final ToolUseResult original = ToolUseResult.success("t2", "b");
+        EnvironmentNotices.drain(environment, "Read", "t1");
 
-        assertThat(EnvironmentNotices.deliver(original, environment, "Read")).isSameAs(original);
+        assertThat(EnvironmentNotices.drain(environment, "Read", "t2")).isEmpty();
     }
 
     @Test
-    @DisplayName("returns the same instance when there is no environment, nothing queued, or the drain throws")
-    void returnsSameInstanceWhenNothingIsDelivered() {
-        final ToolUseResult original = ToolUseResult.success("t1", "body");
+    @DisplayName("returns no notices when there is no environment, nothing queued, or the drain throws")
+    void emptyWhenNothingIsDrained() {
         final ExecutionEnvironment throwing = mock(ExecutionEnvironment.class);
         when(throwing.drainNotices()).thenThrow(new IllegalStateException("queue unreachable"));
         final ExecutionEnvironment returnsNull = mock(ExecutionEnvironment.class);
         when(returnsNull.drainNotices()).thenReturn(null);
 
-        assertThat(EnvironmentNotices.deliver(original, null, "Read")).isSameAs(original);
-        assertThat(EnvironmentNotices.deliver(original, queueing(), "Read")).isSameAs(original);
-        assertThat(EnvironmentNotices.deliver(original, throwing, "Read")).isSameAs(original);
-        assertThat(EnvironmentNotices.deliver(original, returnsNull, "Read")).isSameAs(original);
+        assertThat(EnvironmentNotices.drain(null, "Read", "t1")).isEmpty();
+        assertThat(EnvironmentNotices.drain(queueing(), "Read", "t1")).isEmpty();
+        assertThat(EnvironmentNotices.drain(throwing, "Read", "t1")).isEmpty();
+        assertThat(EnvironmentNotices.drain(returnsNull, "Read", "t1")).isEmpty();
     }
 
     @Test
-    @DisplayName("an environment that keeps the SPI default never changes a result")
+    @DisplayName("an environment that keeps the SPI default has nothing to drain")
     void defaultDrainIsEmpty() {
-        final ToolUseResult original = ToolUseResult.success("t1", "body");
-
-        assertThat(EnvironmentNotices.deliver(original,
+        assertThat(EnvironmentNotices.drain(
                 TestExecutionEnvironments.withDescriptor(
                         EnvironmentDescriptor.builder().workingDirectory("/w").platform("linux").build()),
-                "Read")).isSameAs(original);
+                "Read", "t1")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("renders one [environment] line per notice, in order")
+    void rendersOneLinePerNotice() {
+        assertThat(EnvironmentNotices.render(List.of("first", "second")))
+                .isEqualTo("[environment] first\n[environment] second\n");
     }
 
     @Test

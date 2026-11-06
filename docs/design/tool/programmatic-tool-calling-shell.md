@@ -291,7 +291,7 @@
 
 ## 15. 조각 사이의 의존
 
-PTC 본 문서 §19 의 조각 C(GraalJS 엔진까지) 위에 얹힌다.
+PTC 본 문서의 조각 C — `ExecuteCode`, 브리지, GraalJS 엔진, `aimon-code-engine-testkit` — 위에 얹힌다.
 
 | 조각 | 무엇 | 기대는 것 |
 |---|---|---|

@@ -259,10 +259,6 @@ public class OrcaAgentExecutor
             = StalledIterationGuard.MAX_CONSECUTIVE_STALLED_ITERATIONS;
     // spotless:on
 
-    /** The answer to a tool call whose context carries no {@link ToolCallDispatcher}: refused, not run ungated. */
-    private static final String NO_DISPATCHER_MESSAGE = "Tool call refused: no tool call dispatcher is bound to this"
-            + " execution";
-
     /**
      * The {@code tool_result} content returned for a {@code tool_use} that never started because the turn was
      * interrupted first. Phrased for the model, which may see it if the conversation is resumed: it explains that the
@@ -2782,7 +2778,8 @@ public class OrcaAgentExecutor
      * <p>
      * The dispatcher owns the per-tool sequence — interrupt-registrar lifecycle, PermissionRequest, the approval gate,
      * PreTool, the tool, PostTool. A context with no dispatcher bound is refused rather than run around the gates; the
-     * turn always binds one, so that answer only reaches a caller that built a context by hand.
+     * turn always binds one, so that answer only reaches a caller that built a context by hand. Package-private for
+     * the test that pins that refusal.
      *
      * @param toolContext
      *            the tool context, carrying the dispatcher and the iteration
@@ -2790,10 +2787,10 @@ public class OrcaAgentExecutor
      *            the tool use request from the LLM
      * @return the tool use result (never null)
      */
-    private static ToolUseResult dispatchSingleTool(ToolContext toolContext, ToolUse toolUse) {
+    static ToolUseResult dispatchSingleTool(ToolContext toolContext, ToolUse toolUse) {
         final Optional<ToolCallDispatcher> dispatcher = toolContext.get(ToolContextKeys.TOOL_CALL_DISPATCHER);
         if (dispatcher.isEmpty()) {
-            return ToolUseResult.error(toolUse.getId(), NO_DISPATCHER_MESSAGE);
+            return ToolUseResult.error(toolUse.getId(), ToolDispatchResults.NO_DISPATCHER_MESSAGE);
         }
         return ToolDispatchResults
                 .toToolUseResult(dispatcher.get().dispatch(toolUse, ToolCallOrigin.direct(), toolContext));
