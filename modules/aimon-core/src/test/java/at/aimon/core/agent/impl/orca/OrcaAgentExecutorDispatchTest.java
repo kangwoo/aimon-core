@@ -15,6 +15,7 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolDispatchResult;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.permission.AllowedTool;
+import at.aimon.core.internal.ToolDispatchRefusals;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.ToolUseResult;
 import at.aimon.core.toolinvocation.ToolDispatchResults;
@@ -48,7 +49,7 @@ class OrcaAgentExecutorDispatchTest {
 
         assertThat(result.isError()).isTrue();
         assertThat(result.getToolUseId()).isEqualTo("t1");
-        assertThat(result.getContent()).isEqualTo(ToolDispatchResults.NO_DISPATCHER_MESSAGE);
+        assertThat(result.getContent()).isEqualTo(ToolDispatchRefusals.NO_DISPATCHER);
     }
 
     @Test
