@@ -59,7 +59,8 @@ import at.aimon.core.tools.ToolContextKeys;
  * followed by the notices and hook feedback the nested calls produced (§12.1). Never throws.
  *
  * <p>
- * Stateless: the engines are application-scoped and owned by the assembly that built them.
+ * Stateless: the engines are application-scoped and owned by the assembly that built them. The only thing it keeps is
+ * the set of operator warnings already logged ({@link WarnOnce}), which belongs to its provider when it has one.
  */
 public final class ExecuteCodeTool extends AbstractTool {
 
@@ -74,6 +75,8 @@ public final class ExecuteCodeTool extends AbstractTool {
     private final List<CodeExecutionEngine> engines;
     private final CodeExecutionLimits limits;
     private final ShellEngineToolScope toolScope;
+    /** The plans' warn-once keys: the provider's when it registered this tool, else this tool's own. */
+    private final WarnOnce warned;
 
     /**
      * Creates the tool with the default {@code shell-engine-tool-scope} ({@link ShellEngineToolScope#ENVIRONMENT}).
@@ -102,10 +105,29 @@ public final class ExecuteCodeTool extends AbstractTool {
      */
     public ExecuteCodeTool(List<CodeExecutionEngine> engines, CodeExecutionLimits limits,
             ShellEngineToolScope toolScope) {
+        this(engines, limits, toolScope, new WarnOnce());
+    }
+
+    /**
+     * Creates the tool with the warn-once keys of its provider, which outlives the agent runtimes it registers tools in
+     * — so a runtime rebuilt after eviction does not warn again.
+     *
+     * @param engines
+     *            the assembled engines (must not be null)
+     * @param limits
+     *            the limits every program is held to (must not be null)
+     * @param toolScope
+     *            the application's {@code shell-engine-tool-scope} (must not be null)
+     * @param warned
+     *            the provider's warn-once keys (must not be null)
+     */
+    ExecuteCodeTool(List<CodeExecutionEngine> engines, CodeExecutionLimits limits, ShellEngineToolScope toolScope,
+            WarnOnce warned) {
         super(TOOL_NAME, STATIC_DESCRIPTION, createInputSchema(limits));
         this.engines = List.copyOf(Objects.requireNonNull(engines, "engines cannot be null"));
         this.limits = Objects.requireNonNull(limits, "limits cannot be null");
         this.toolScope = Objects.requireNonNull(toolScope, "toolScope cannot be null");
+        this.warned = Objects.requireNonNull(warned, "warned cannot be null");
     }
 
     private static Map<String, Object> createInputSchema(CodeExecutionLimits limits) {
@@ -157,7 +179,7 @@ public final class ExecuteCodeTool extends AbstractTool {
     @Override
     public ToolDescriptor describe(ToolOfferContext context) {
         Objects.requireNonNull(context, "context cannot be null");
-        final ExecuteCodePlan plan = ExecuteCodePlan.of(context, engines, TOOL_NAME, toolScope);
+        final ExecuteCodePlan plan = ExecuteCodePlan.of(context, engines, TOOL_NAME, toolScope, warned);
         if (!plan.isAvailable()) {
             return ToolDescriptor.from(this).offerable(false).build();
         }
@@ -208,7 +230,8 @@ public final class ExecuteCodeTool extends AbstractTool {
         }
 
         // The freeze (decision 13): the set computed here, from this call's offer context, is the program's set.
-        final ExecuteCodePlan plan = ExecuteCodePlan.of(ToolOfferContext.of(context), engines, TOOL_NAME, toolScope);
+        final ExecuteCodePlan plan = ExecuteCodePlan.of(ToolOfferContext.of(context), engines, TOOL_NAME, toolScope,
+                warned);
         if (!plan.isAvailable()) {
             return ToolResult.error("ExecuteCode is not available here: " + plan.unavailableReason().orElse(""));
         }
@@ -253,9 +276,11 @@ public final class ExecuteCodeTool extends AbstractTool {
                 outcome = CodeExecutionOutcome.builder().status(CodeExecutionStatus.SCRIPT_ERROR)
                         .errorMessage("the engine failed: " + e.getMessage()).build();
             }
-            // A limit the bridge stopped the program for wins over the cancellation the engine saw.
+            // A limit the bridge stopped the program for (the call limit, the fork quota) wins over every status the
+            // engine saw — the cancellation it caused, and a COMPLETED from a program that caught the refusal (§13.1)
+            // — except a protocol violation, which stays not retryable with its ERROR log (decision 7).
             final Optional<String> limit = bridge.limitExceeded();
-            if (limit.isPresent() && outcome.getStatus() != CodeExecutionStatus.COMPLETED) {
+            if (limit.isPresent() && outcome.getStatus() != CodeExecutionStatus.PROTOCOL_VIOLATION) {
                 outcome = CodeExecutionOutcome.builder().status(CodeExecutionStatus.LIMIT_EXCEEDED)
                         .stdout(outcome.getStdout()).logs(outcome.getLogs()).errorMessage(limit.get()).build();
             }

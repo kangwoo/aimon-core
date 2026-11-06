@@ -4,7 +4,7 @@
 > `at.aimon.core.tools.code.shell`), `aimon-graaljs` (`aimon-workflow-graaljs` 를 개명·재편), `aimon-code-engine-testkit` (새 모듈).
 > 공개 API 호환을 깨는 항목이 있다(§5). 구현된 것은 서술자·제안 문맥·승인 관문·쿼터·도구 선언(조각 B), `ExecuteCode`·엔진 SPI·GraalJS
 > 엔진·모듈 개명·계약 스위트(조각 C), 셸 엔진의 코어 쪽 절반(조각 D1 — 셸 엔진, `RuntimeFileSystem`, `shell-engine-tool-scope`)이다.
-> 셸 엔진을 실제 샌드박스에서 돌리는 `aimon-sandbox` 쪽 절반(조각 D2)은 아직 없다. 구현이 본문과 다른 점은 §21.
+> 셸 엔진을 실제 샌드박스에서 돌리는 `aimon-sandbox` 쪽 절반(조각 D2)은 그 저장소에 있다(aimon-sandbox#49). 구현이 본문과 다른 점은 §21.
 > 셸 엔진은 [셸 엔진 문서](programmatic-tool-calling-shell.md), 코드의 도구 호출이 지나는 입구는
 > [도구 호출의 단일 입구](tool-call-dispatcher.md) 가 정한다(그 문서의 `Status`). 설계에서 아직 정하지 않은 것은 §19 다.
 
@@ -386,7 +386,7 @@ shell-engine-tool-scope: host  # 선택. 애플리케이션 값보다 좁게만 
 | `MUTATING` ∧ `DESTRUCTIVE` 제외 | 호출 가능 집합 계산에서 뺀다. 설명에 나오지 않고, 이름으로 불러도 거절된다. `READ_ONLY` 도구는 파괴성 축이 기본값이어도 남는다 |
 | `MUTATING` 상한 | 스크립트당 도구별로 센다(기본 20). 넘으면 그 도구의 이후 호출을 "limit 20 per script for <tool>; 20 already applied" 로 거절하고, 관찰 요약에 거절 수를 싣는다 |
 | 승인 관문이 있을 때 | 코드 경로는 질의하지 않는다. PermissionRequest 훅과 PreTool 훅의 `ASK` 도 묻지 않고 거절로 해석한다(관문 설정과 무관 — `DefaultHookExecutionManager`). 저장된 승인이 있으면 통과, 없으면 "직접 호출로 먼저 승인받으라" 로 거절한다. 기억은 `approvalKey()` 로 찾는다 |
-| 포크 쿼터 | `ToolCallQuota.admit(1)`. 거절되면 스크립트당 호출 상한을 넘었을 때와 똑같이 **즉시** 실행을 멈추고 `LIMIT_EXCEEDED` 로 끝낸다. 쿼터에 초과를 표시하므로 포크는 다음 iteration 에서 `TOOL_CALL_BUDGET_EXCEEDED` 로 끝난다 |
+| 포크 쿼터 | `ToolCallQuota.admit(1)`. 거절되면 스크립트당 호출 상한을 넘었을 때와 똑같이 **즉시** 실행을 멈추고 `LIMIT_EXCEEDED` 로 끝낸다. 프로그램이 거절을 잡고 끝까지 돌아도 결과는 `LIMIT_EXCEEDED` 다. 쿼터에 초과를 표시하므로 포크는 다음 iteration 에서 `TOOL_CALL_BUDGET_EXCEEDED` 로 끝난다 |
 
 ---
 
@@ -536,7 +536,7 @@ CE 에서는 **게스트 힙**과 CPU 시간에 하드 한도가 없다([워크�
 | 한도 | 기본값 | 넘으면 |
 |---|---|---|
 | 벽시계 | 120초, 설정 상한 600초. `EXECUTION_DEADLINE` 이 더 가까우면 그것 | `TIMED_OUT`, 엔진 정지 |
-| 중첩 호출 수 | 200 | **즉시** 실행 정지, `LIMIT_EXCEEDED` |
+| 중첩 호출 수 | 200 | **즉시** 실행 정지, `LIMIT_EXCEEDED`. 프로그램이 거절을 잡고 끝까지 돌아도 결과는 `LIMIT_EXCEEDED` 다 — 단, 프로토콜 위반은 그대로 `PROTOCOL_VIOLATION` 이다 |
 | `MUTATING` 호출 | 스크립트당 도구별 20 | 그 도구의 이후 호출 거절 (§8.3) |
 | 동시 중첩 호출 | 8 | 대기 (브리지 큐) |
 | JS 문장 수 | 10M | `LIMIT_EXCEEDED` |
@@ -557,8 +557,8 @@ CE 에서는 **게스트 힙**과 CPU 시간에 하드 한도가 없다([워크�
 |---|---|
 | 부모 취소 | 자식이 함께 걸린다. 엔진 정지, 결과 `CANCELLED` |
 | 어떤 이유로든 스크립트가 끝남 (완료, 오류, 타임아웃, await 하지 않은 Promise·태스크) | 자식 신호를 걸고, **모든** 중첩 호출이 끝날 때까지 기다린다(상한 = 남은 벽시계). 직접 경로의 `SEQUENTIAL` 도구가 끝날 때까지 루프를 막는 것과 같은 의미다. 상한을 넘으면 관찰에 "still running when the script ended: <도구 이름들>" 을 적는다 |
-| 브리지 `CLOSED` | 실행이 끝나면 먼저 닫는다. 그 뒤 도착한 결과는 엔진에 넘기지 않고 기록·span 에만 남긴다 — 셸 엔진에서 읽을 런타임이 없는 호스트 결과가 샌드박스에 남지 않게 |
-| 엔진 정지 | GraalJS 는 워치독이 컨텍스트를 닫고 이벤트 루프의 `poll` 이 신호를 본다. 셸 엔진은 셸 취소로 프로세스 트리를 끝낸다(best-effort) |
+| 브리지 `CLOSED` | 실행이 끝나면 먼저 닫는다. 그 뒤 도착한 결과는 엔진에 넘기지 않고 기록·span 에만 남긴다 — 셸 엔진에서 읽을 런타임이 없는 호스트 결과가 샌드박스에 남지 않게. 셸 엔진에서는 실행 자신의 응답 쓰기 관문이 브리지보다 먼저, 엔진 안에서 닫힌다(셸 엔진 §8) |
+| 엔진 정지 | GraalJS 는 워치독이 컨텍스트를 닫고 이벤트 루프의 `poll` 이 신호를 본다. 셸 엔진은 셸 취소로 명령을 끝내고, 런타임의 감시자 프로세스가 런타임의 프로세스 그룹 — 프로그램의 자식들 포함 — 을 끝낸다(셸 엔진 §6, §8). 그룹을 떠난 자손은 best-effort 다 |
 
 ### 13.3 예산·쿼터
 
@@ -654,9 +654,9 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 |---|---|
 | 토큰·정확도 — 대표 IT 운영 과제에서 직접 호출 대비, 제공자별·엔진별 | PTC 가 손해인 과제 유형을 설명 지침에 "쓰지 마라" 로 넣는다 |
 | 설명 크기 — opt-in 도구 수에 따른 `ExecuteCode` 설명 토큰 | 선언이 정해 둔 토큰 예산을 넘는 도구 수부터는 선언 대신 `tools.describe(name)` 지연 노출로 바꾼다 |
-| 프롬프트 캐시 — PTC 를 켠 세션의 캐시 적중률 | 적중률이 떨어지면 설명이 바뀌는 원인(활성화, 환경 종류 변화)을 줄인다 |
+| 프롬프트 캐시 — PTC 를 켠 세션과 끈 세션의 캐시 적중률 | 적중률이 떨어지면 설명이 바뀌는 원인(활성화, 환경 종류 변화)을 줄인다 |
 | 실패 유형 — 스크립트 오류 중 결과 파싱·도구 이름·인자 형식의 비율, 선언 표기별 | 비율이 큰 쪽의 렌더링을 바꾼다 |
-| 지연 — 샌드박스의 중첩 호출 하나와 순차 호출의 총 시간 | 폴링 간격과 설명 지침의 병렬 권고 강도 |
+| 지연 — 샌드박스에서 중첩 호출 하나와 응답 쓰기 하나의 p50/p99, 순차 N 호출의 총 시간 | 폴링 간격과 설명 지침의 병렬 권고 강도 |
 
 ---
 
@@ -690,7 +690,7 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 | B | `ToolDescriptor`·`ToolOfferContext`·`OfferKey`·`DataReach`, `Tool.describe`·`isCodeCallable`·`dataReach`, 세 루프의 제안 문맥, 서술자를 읽는 실링·승인 관문·루틴 재시도, `approvalKey`·`approvalDelegated`·코드 경로 무질의, 공개 `ToolCallQuota`, 내장 도구 선언과 그 검사, MCP `DataReach` | 구현됨 |
 | C | `ExecuteCode`·`ToolCallBridge`·`ToolApiRenderer`, 엔진 SPI(`at.aimon.core.programmatic`), GraalJS 엔진(`at.aimon.graaljs.code`), 모듈 개명 `aimon-graaljs`, 계약 스위트 `aimon-code-engine-testkit`, 에이전트 설정 `programmatic-tools`·`programmatic-only`·`programmatic-engine`, 조립(CLI `programmatic.*`, `ToolSpec.programmaticEnabled`, 스타터 `aimon.programmatic.*`) | 구현됨 |
 | D1 | 셸 엔진(`at.aimon.core.tools.code.shell`, Python 런타임 `aimon_ptc.py`, HMAC 줄 프로토콜), `RuntimeFileSystem`과 로컬 구현, `RunDirectory` 비밀 파일 표지, `EnvironmentDescriptor` 런타임 능력, `isolated` 스트리밍 계약, `ShellCommandResult.killCause()`(S8 의 코어 절반), `shell-engine-tool-scope`(애플리케이션·에이전트), 조립(부트스트랩·스타터의 `ServiceLoader` 발견) | 구현됨 |
-| D2 | `aimon-sandbox` 쪽 — S1–S9 의 제공자 몫(셸 엔진 문서 §13) | 미구현 (배포된 코어가 필요) |
+| D2 | `aimon-sandbox` 쪽 — S1–S9 의 제공자 몫(셸 엔진 문서 §13) | 구현됨 — 그 저장소(aimon-sandbox#49). 그때 드러난 코어 결함 Q-C4 는 [설계 기록](ptc-qc4-and-nonblocking-fixes.md) 으로 고쳤고, 그것을 쓰는 그쪽 후속은 [TC-19](../../backlog/tool-contract-open-items.md) |
 
 조각 B 가 본문과 다르게 정한 점:
 
@@ -733,13 +733,16 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 |---|---|---|
 | 런타임에 넘기는 `RunDirectory` 는 `aimon_ptc.py`·`main.py`·`key`·`reply_dir` 넷(셸 엔진 §5) | `config.json` 을 하나 더 넣는다 — 호출 가능 도구 이름, 출력·응답·로그 상한, 벽시계 | 런타임이 함수를 정의하고 감시 스레드가 상한을 알아야 한다. 비밀이 아니고 다이제스트 검증을 받는다 |
 | 프로토콜 그림의 `DONE 10`(셸 엔진 §7) | `DONE` 도 줄 형식대로 페이로드를 싣는다 — JSON `{"status", "error"}`, `status` 는 `completed`·`error`·`output_limit`·`violation` | 호스트가 완료·스크립트 오류·출력 상한을 구분해야 한다. 런타임이 응답 파일 검증에 실패하면 `violation` 으로 알리고 끝나며, 호스트는 그것도 `PROTOCOL_VIOLATION` 으로 다룬다 |
-| 감시 스레드는 상한을 넘으면 자기 프로세스 그룹을 끝낸다(셸 엔진 §11) | 끝내기 **전에** 상한까지의 출력, `ERR` 꼬리, `DONE{"status":"output_limit"}` 를 보낸다 | 그룹에는 런타임 자신도 있어 그 뒤에는 보낼 이가 없다. 그러지 않으면 호스트는 `DONE` 없는 종료를 `SCRIPT_ERROR` 로 읽는다 |
+| 감시 스레드는 상한을 넘으면 자기 프로세스 그룹을 끝낸다(셸 엔진 §11) | 끝내기 **전에** 상한까지의 출력, `ERR` 꼬리, `DONE{"status":"output_limit"}` 를 보낸다. 그 그룹은 런타임 자신의 것이고, 셸의 그룹에 남은 앵커 아래에 있다 | 그룹에는 런타임 자신도 있어 그 뒤에는 보낼 이가 없다. 그러지 않으면 호스트는 `DONE` 없는 종료를 `SCRIPT_ERROR` 로 읽는다 |
+| 런타임은 `os.setpgid(0, 0)` 로 자기 그룹을 만든다(셸 엔진 §6 의 D1 당시 글) | **Q-C4 수정.** 셸이 띄운 프로세스가 곧바로 fork 해 **앵커**로 셸의 그룹에 남고, 자식이 자기 그룹을 만든 런타임이 된다. 런타임은 키를 읽기 전에 자기 그룹에 **감시자 프로세스**를 (두 번 fork 해서) 띄운다 — 앵커가 쥔 파이프의 읽기 끝만 들고, 앵커가 죽으면 EOF 를 받아 런타임의 그룹을 SIGKILL 한다. 런타임이 끝나면 앵커가 그 그룹을 SIGKILL 한다(정상 완료 포함) | D1 의 런타임은 셸의 그룹을 떠나서, 그룹만 죽이는 제공자(`aimon-sandbox`)의 타임아웃·취소가 닿지 않았다 — `TIMED_OUT`/`CANCELLED` 뒤에도 프로그램이 CPU 를 쓰며 남았다. `LocalShell` 은 트리를 훑어 죽이므로 코어 테스트가 보지 못했다. 감시자를 스레드가 아니라 프로세스로 둔 것은 GIL 때문이다 — 긴 내장 호출 하나가 같은 인터프리터의 스레드를 세운다. 정상 완료의 스윕은 동작 변경이다: 프로그램이 기다리지 않은 백그라운드 프로세스는 더는 살아남지 않는다(§13.2 의 "모든 태스크가 멈춘다" 와 같은 뜻) |
+| (본문 없음) 멈춘 뒤에 도착한 `CALL` 줄 | 실행이 멈추는 중이면(엔진이 스스로 멈춤, 실행 취소, 벽시계 만료) `CALL` 줄은 MAC·seq 를 검증만 하고 브리지에 넘기지 않으며 응답도 쓰지 않는다 | 런타임이 죽는 것은 비동기다. OpenSandbox 에서는 execd 스풀에 이미 든 줄이 멈춘 뒤에도 도착하고, 그것이 도구를 돌리면 "멈춤" 이 호스트에서 멈춤이 아니다 |
 | "`Bash` 에 매치되는 PermissionRequest·PreTool 훅이 없다"(셸 엔진 §4) | 훅 SPI 에는 도구 매처가 없다. `ToolScopedHook`(`at.aimon.core.hook.event`, `mayApplyTo(toolName)`)을 두고, 선언형 `preTool` 훅은 매처(`ToolInputPredicate.mayMatchTool`)로 답한다. 이 인터페이스를 구현하지 않은 훅은 모든 도구에 매치된다고 본다 — 매처가 없는 선언형 `permissionRequest` 훅도 그렇다 | 보수적으로 읽어야 셸 엔진이 `Bash` 를 좁히는 훅을 우회하지 않는다. 코드로 등록한 관찰 전용 훅(CLI 의 `ToolCallDisplayHook` 등)이 있어도 셸 엔진이 막히지만, CLI 는 로컬이라 셸 엔진이 돌지 않는다 |
 | `Bash` 조건의 허용 목록 | 메인 루프만 에이전트의 허용 목록을 제안 문맥에 넘긴다(`CodeOfferKeys.putEnvironmentFacts(builder, context, allowedTools)`). 허용 목록을 넘기지 않은 제안 문맥에서 `Bash` 는 제약 없음이 아니다 | 포크·슬래시 스킬 루프는 `ExecuteCode` 를 제안하지 않는다(조각 C 편차 4) |
 | `shell-engine-tool-scope` 의 애플리케이션 값(셸 엔진 §12.2) | 엔진이 아니라 `ExecuteCodeTool`/`ExecuteCodeToolProvider` 가 받는다(`ToolSpec.shellEngineToolScope`, 스타터 `aimon.programmatic.shell-engine-tool-scope`). 어느 엔진에 적용할지는 SPI `CodeExecutionEngine.isToolScopeBound()` 가 말한다 | `ServiceLoader` 의 엔진 팩토리는 인자가 없어 설정을 받을 수 없다. 한도(`CodeExecutionLimits`)와 같은 길이다 |
 | `unrestricted` 이면 실행마다 `ExecuteCode` span 에 `ptc.tool_scope=unrestricted`(셸 엔진 §12.2) | 하지 않았다. 시작 시 경고는 한다(`ExecuteCodeToolProvider`) | 조각 C 편차 8 과 같다 — 디스패처 경로에 span 이 없다 |
 | CLI 설정 `programmatic.shellEngineToolScope`(§16) | CLI 는 셸 엔진을 조립하지 않고 그 키도 두지 않는다 | CLI 의 실행 환경은 언제나 로컬 호스트이고, 셸 엔진은 샌드박스에서만 돈다(셸 엔진 결정 1). `programmatic-engine: python` 인 에이전트는 "no python engine is assembled" 경고를 받는다 |
-| 오래된 `.aimon-ptc/` 항목의 정리(셸 엔진 §8) | 탐침 명령 안의 `find … -mmin +N -exec rm -rf` 로 한다(N = 기본 최대 벽시계의 두 배, 20분) | `RuntimeFileSystem` 에는 목록 연산이 없다. 탐침은 명령을 돌려도 되는 단계다 |
+| 오래된 `.aimon-ptc/` 항목의 정리(셸 엔진 §8) | 실행마다 런타임이 응답 디렉터리의 부모 `.aimon-ptc/` — 그것만 — 에서 `max(2 × maxWallClock, 20 분)` 보다 오래된 항목을 지운다. 부모의 이름이 `.aimon-ptc` 이고 링크가 아니며 자기 항목이 그 안에 있을 때만 돈다. `probe-*` 는 건너뛴다 | `RuntimeFileSystem` 에는 목록 연산이 없어 호스트가 아니라 샌드박스 안에서 지운다. 처음에는 탐침 명령 안의 `find` 가 고정된 20 분으로 지웠는데, 탐침은 한도를 모르므로 `maxWallClock` 이 20 분을 넘으면 살아 있는 실행을 지울 수 있었다. 나이는 이제 지우는 실행의 설정을 따른다. 설정이 다른 노드가 한 샌드박스를 나눠 쓰는 경우는 [TC-18](../../backlog/tool-contract-open-items.md) |
+| 실행이 끝나면 브리지를 `CLOSED` 로 둔 **뒤에** 엔진이 실행 디렉터리를 지운다(셸 엔진 §8, D1 의 글) | 엔진은 브리지를 닫지 않는다. 실행 자신의 응답 쓰기 관문을 닫고 이미 시작한 쓰기를 기다린 뒤(상한 5 초) 지우며, 브리지는 엔진이 돌아온 뒤 `ExecuteCode` 가 닫는다. 셸 엔진 §8 의 글을 이에 맞췄다 | 브리지는 `ExecuteCode` 가 만들고 소유한다 — 중첩 호출을 남은 벽시계만큼 기다리고 "still running" 이름을 관찰에 싣는 것(§13.2)도 그 소유자의 일이다. 지켜야 하는 불변식은 "실행 디렉터리를 지운 뒤에는 샌드박스에 아무것도 쓰지 않는다" 이고, 샌드박스에 쓰는 것은 실행의 응답 쓰기뿐이다 |
 | 위반 전에 디스패치된 호출의 "unattributed" 표시(셸 엔진 §7) | SPI `ToolCallBridge.markUnattributed()` 를 더했다. 기록(`renderPayload`)의 모든 중첩 호출에 `unattributed: true` 가 붙는다 | 기록은 브리지가 든다(조각 C 편차 6) |
 | 탐침 결과를 환경 객체에 붙여 둔다(셸 엔진 §4) | 확정된 답(가용, `python3` 없음, 3.8 미만, 파일이 보이지 않음)만 붙여 두고, 셸·파일 시스템 오류로 묻지 못한 경우는 그 호출만 불가로 답한다 | 샌드박스가 잠시 응답하지 않았다고 그 환경 객체에서 셸 엔진을 영영 끄지 않는다 |
 | 응답 쓰기 실패: "재시도한 뒤 실패하면 실행을 끝낸다"(셸 엔진 §7) | 세 번 시도한 뒤 실행을 끝내고 `SCRIPT_ERROR`. 대상이 이미 있으면 재시도 없이 `PROTOCOL_VIOLATION` | 선점은 공격 신호이고 I/O 실패는 아니다 |

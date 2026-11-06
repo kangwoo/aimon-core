@@ -1,4 +1,4 @@
-# 도구 계약 — 등록 항목 17건 (열림 16 · 닫힘 1)
+# 도구 계약 — 등록 항목 20건 (열림 19 · 닫힘 1)
 
 출처는 `docs/design/tool/` 의 도구 계약·부작용 축·병렬 실행·도구 검색·모니터 문서가 남긴 작업이다. 설계 문서는 현재 설계만
 적고, 남은 일은 여기에 둔다.
@@ -204,3 +204,47 @@ provider 등록과 `ToolSearchTool` 등록을 조립이 직접 해야 한다. `T
 **어디.** `subagent/execution/DefaultSubagentExecutor.java`, `agent/tool/StreamingToolScheduler.java`.
 
 **언제 다시 볼까.** 서브에이전트 지연이 문제 될 때. 이 트리거는 재료에 없어 등록할 때 정했다.
+
+## TC-18 — 설정이 다른 노드가 나눠 쓰는 샌드박스에서 셸 엔진의 스윕 · **열림**
+
+**무엇을.** `.aimon-ptc/` 스윕의 나이가 설정에 기대지 않게 한다 — 예를 들어 런타임이 실행 중 자기 디렉터리의 mtime 을 주기적으로
+갱신하고(heartbeat) 스윕 나이를 상수로 둔다.
+
+**왜.** 스윕 나이는 지우는 실행의 설정 `max(2 × maxWallClock, 20 분)` 이다. `maxWallClock` 이 서로 다르고 10 분을 넘는 두 프로세스
+(다르게 설정된 노드)가 한 샌드박스를 나눠 쓰면, 짧은 쪽의 실행이 긴 쪽의 살아 있는 실행 디렉터리를 지울 수 있다. 그러면 긴 쪽의
+응답 파일 쓰기가 실패해 그 실행이 `SCRIPT_ERROR` 로 끝난다. heartbeat 는 이 의존을 없애지만, 멈춘 감시 스레드가 살아 있는 실행을
+지우게 하는 자기 실패 모드를 들인다 — 그래서 [설계 기록](../design/tool/ptc-qc4-and-nonblocking-fixes.md) §3 item 5 가 기각했다.
+
+**어디.** `tools/code/shell/ShellCodeExecutionEngine.java` 의 `sweepAge`, 런타임 `aimon_ptc.py` 의 `_sweep`(경로는
+`modules/aimon-core/src/main/resources/at/aimon/core/tools/code/shell/`). 설계는 [셸 엔진](../design/tool/programmatic-tool-calling-shell.md) §8.
+2026-11-06 확인.
+
+**언제 다시 볼까.** 노드마다 `maxWallClock` 이 다른 배포가 한 샌드박스를 나눠 쓰게 될 때, 또는 원인 모를 "reply could not be written"
+이 그런 배포에서 보고될 때.
+
+## TC-19 — `aimon-sandbox` 쪽 Q-C4 후속 · **열림**
+
+**무엇을.** 셸 엔진 런타임이 셸의 프로세스 그룹 종료로 끝나게 된 코어(Q-C4 수정)를 `aimon-sandbox` 에 들인다 — testkit 계층에서 꺼 둔
+엔진 계약 테스트 `wallClock` 과 `bridgeLimitStopsAtOnce` 를 다시 켜고, 워크스페이스 샌드박스 설계 §20 의 Q-C4 항목과 제공자 문서
+§9 Q-C4 를 닫고, `SandboxShell` 과 제공자를 `ExecutionEnvironment.shell()` · `VirtualShell.supports` 의 "아무것도 프로비저닝하지
+않는다" javadoc 에 대어 본다.
+
+**왜.** 고친 코어가 배포되기 전에는 그 저장소가 그것을 쓸 수 없다. 그동안 그쪽의 두 테스트는 꺼져 있고, 문서는 결함이 열려 있다고
+말한다.
+
+**어디.** 저장소 [aimon-sandbox](https://github.com/kangwoo/aimon-sandbox) — `ShellEngineContractTest`, `docs/design/ptc-shell-provider.md`
+§9, `docs/design/workspace-sandbox.md` §20. 코어 쪽은 [설계 기록](../design/tool/ptc-qc4-and-nonblocking-fixes.md) §2. 2026-11-06 확인.
+
+**언제 다시 볼까.** 이 수정을 담은 코어 스냅숏(또는 릴리스)이 배포될 때.
+
+## TC-20 — 셸 엔진 응답 쓰기 드레인 상한의 값 · **열림**
+
+**무엇을.** 실행을 닫을 때 진행 중인 응답 쓰기를 기다리는 상한(5 초)을 실측으로 정한다.
+
+**왜.** 5 초는 "OpenSandbox 에서 응답 쓰기 몇 번" 으로 고른 값이고 재지 않았다. 너무 짧으면 상한을 넘긴 쓰기가 지운 뒤의 실행
+디렉터리에 파일을 남겨 다음 실행의 스윕까지 머물고(WARN), 너무 길면 샌드박스가 멈췄을 때 `ExecuteCode` 가 그만큼 늦게 끝난다.
+`close()` 는 실제로 기다린 시간을 DEBUG 로 남긴다.
+
+**어디.** `tools/code/shell/ShellProgramRun.java` 의 `REPLY_DRAIN`, `close()`. 2026-11-06 확인.
+
+**언제 다시 볼까.** "a reply write was still in flight" WARN 이 운영에서 보일 때, 또는 PTC 지연 측정(PTC 문서 §18)을 할 때.

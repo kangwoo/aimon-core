@@ -7,8 +7,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -17,14 +21,18 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * An {@code internal} package is used only from inside the package tree it belongs to.
+ * An {@code internal} package is used only from inside the package tree it belongs to, and only from the module that
+ * holds it.
  *
  * <p>
  * {@code docs/project/api-stability.md} §2 puts {@code <package>.internal} beside {@code *.impl}: not public API,
  * free to change without notice. For {@code *.impl} that boundary is enforced by
  * {@link PackageDependencyArchitectureTest}; this is the same promise for {@code internal}, which the policy also says
  * the build enforces. {@code at.aimon.session.mongodb.internal.ListenDispatcher} may be imported by anything under
- * {@code at.aimon.session.mongodb}, and by nothing else.
+ * {@code at.aimon.session.mongodb}, and by nothing else, and only from the module that holds it: a package prefix is
+ * not
+ * a boundary on its own, since another module may put classes under the same tree ({@code aimon-graaljs} could declare
+ * {@code at.aimon.core.foo} and import {@code at.aimon.core.internal}).
  *
  * <h2>Why a source scan and not ArchUnit</h2>
  *
@@ -70,22 +78,36 @@ class InternalPackageBoundaryTest {
         List<String> violations = new ArrayList<>();
         List<String> usedExceptions = new ArrayList<>();
         int internalImports = 0;
+        Path modules = REPOSITORY_ROOT.resolve("modules");
+        List<Path> sources = mainSources(modules);
 
-        for (Path source : mainSources(REPOSITORY_ROOT.resolve("modules"))) {
+        // First pass: which modules declare each internal package (X.internal, or a package under it).
+        Map<String, Set<String>> declaringModules = new HashMap<>();
+        for (Path source : sources) {
+            Matcher pkg = PACKAGE.matcher(Files.readString(source));
+            if (!pkg.find()) {
+                continue;
+            }
+            internalRoot(pkg.group(1)).ifPresent(root -> declaringModules.computeIfAbsent(root, k -> new TreeSet<>())
+                    .add(moduleOf(modules, source)));
+        }
+
+        for (Path source : sources) {
             String text = Files.readString(source);
             Matcher pkg = PACKAGE.matcher(text);
             if (!pkg.find()) {
                 continue;
             }
             String importer = pkg.group(1);
-            String module = REPOSITORY_ROOT.resolve("modules").relativize(source).getName(0).toString();
+            String module = moduleOf(modules, source);
 
             Matcher imp = INTERNAL_IMPORT.matcher(text);
             while (imp.find()) {
                 internalImports++;
                 String imported = imp.group(1);
                 String owner = imp.group(2);
-                if (importer.equals(owner) || importer.startsWith(owner + ".")) {
+                Optional<String> reason = violation(module, importer, owner, declaringModules);
+                if (reason.isEmpty()) {
                     continue;
                 }
                 String key = module + ":" + imported;
@@ -94,7 +116,7 @@ class InternalPackageBoundaryTest {
                     continue;
                 }
                 violations.add(REPOSITORY_ROOT.relativize(source) + " (package " + importer + ") imports " + imported
-                        + ", which is internal to " + owner);
+                        + ", which is " + reason.get());
             }
         }
 
@@ -104,6 +126,52 @@ class InternalPackageBoundaryTest {
                 + " module's public types instead, or add a reasoned entry to ALLOWED").isEmpty();
         assertThat(usedExceptions).as("every ALLOWED entry must still match an import — remove the ones that do not")
                 .containsExactlyInAnyOrderElementsOf(ALLOWED.keySet());
+    }
+
+    @Test
+    @DisplayName("The decision: same tree and same module is fine; another module under the same prefix is not")
+    void decision() {
+        Map<String, Set<String>> declaring = Map.of("at.aimon.core.internal", Set.of("aimon-core"),
+                "at.aimon.graaljs.internal", Set.of("aimon-graaljs"));
+
+        assertThat(violation("aimon-core", "at.aimon.core.tools", "at.aimon.core", declaring)).isEmpty();
+        assertThat(violation("aimon-core", "at.aimon.core", "at.aimon.core", declaring)).isEmpty();
+        assertThat(violation("aimon-graaljs", "at.aimon.core.foo", "at.aimon.core", declaring))
+                .hasValueSatisfying(reason -> assertThat(reason).contains("aimon-core"));
+        assertThat(violation("aimon-graaljs", "at.aimon.graaljs.code", "at.aimon.core", declaring))
+                .hasValueSatisfying(reason -> assertThat(reason).contains("internal to at.aimon.core"));
+        assertThat(violation("aimon-core", "at.aimon.core.tools", "at.aimon.core.tools", declaring))
+                .hasValueSatisfying(reason -> assertThat(reason).contains("does not declare"));
+    }
+
+    /**
+     * Why importing {@code owner.internal…} from {@code importerPackage} in {@code importerModule} breaks the
+     * boundary, or empty when it does not: the importer must be in {@code owner}'s package tree <em>and</em> in a
+     * module that declares {@code owner.internal}.
+     */
+    static Optional<String> violation(String importerModule, String importerPackage, String owner,
+            Map<String, Set<String>> declaringModules) {
+        if (!importerPackage.equals(owner) && !importerPackage.startsWith(owner + ".")) {
+            return Optional.of("internal to " + owner);
+        }
+        Set<String> declaring = declaringModules.get(owner + ".internal");
+        if (declaring == null || declaring.isEmpty()) {
+            return Optional.of("internal to a package this repository does not declare (" + owner + ".internal)");
+        }
+        if (!declaring.contains(importerModule)) {
+            return Optional.of("internal to " + owner + " in " + declaring + ", not in " + importerModule);
+        }
+        return Optional.empty();
+    }
+
+    /** The {@code X.internal} package {@code pkg} is, or lies under; empty when it is not internal. */
+    private static Optional<String> internalRoot(String pkg) {
+        int at = (pkg + ".").indexOf(".internal.");
+        return at < 0 ? Optional.empty() : Optional.of(pkg.substring(0, at) + ".internal");
+    }
+
+    private static String moduleOf(Path modules, Path source) {
+        return modules.relativize(source).getName(0).toString();
     }
 
     private static List<Path> mainSources(Path modules) throws IOException {

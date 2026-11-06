@@ -384,9 +384,8 @@ public class LlmSkillExecutor implements SkillExecutor {
     /**
      * The tools the skill's model is offered: {@link ToolOfferContext#offer()} of the skill's offer context — its
      * bounded allow-list, less what is not offerable here (an {@code ExecuteCode} with nothing to run) and what the
-     * tool
-     * execution manager would refuse anyway. The same one computation the main loop and a fork offer through, so no
-     * loop applies an offer rule another skips.
+     * tool execution manager would refuse anyway. The same one computation the main loop and a fork offer through, so
+     * no loop applies an offer rule another skips.
      *
      * <p>
      * The ceiling is read from the manager rather than configured here on purpose: the filter and the refusal then
