@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.hook.event.PreToolContext;
 import at.aimon.core.hook.event.PreToolHook;
+import at.aimon.core.hook.event.ToolScopedHook;
 import at.aimon.core.hook.execution.HookExecutionPolicy.TimeoutBehavior;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.hook.rewake.RewakeSpec;
@@ -61,7 +62,7 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * <p>
  * Immutable; thread-safe as long as the underlying executors are.
  */
-public final class DeclarativePreToolHook implements PreToolHook {
+public final class DeclarativePreToolHook implements PreToolHook, ToolScopedHook {
 
     /** AIMON event name, as it appears in {@code hooks.json} and skill frontmatter. */
     public static final String EVENT_NAME = "preTool";
@@ -219,6 +220,11 @@ public final class DeclarativePreToolHook implements PreToolHook {
                     toolName, e);
             return ShellHookOutcome.notRun(ShellHookOutcome.Unrun.EXECUTION_FAILED, ShellActionRunner.failureDetail(e));
         }
+    }
+
+    @Override
+    public boolean mayApplyTo(String toolName) {
+        return predicate.mayMatchTool(Objects.requireNonNull(toolName, "toolName cannot be null"));
     }
 
     @Override

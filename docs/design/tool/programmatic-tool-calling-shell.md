@@ -1,7 +1,11 @@
 # 프로그래매틱 도구 호출 — 셸 엔진 (`aimon-sandbox`)
 
-> **Status**: PROPOSED — `aimon-core` (`at.aimon.core.tools.code.shell`, `at.aimon.core.environment`, `at.aimon.core.shell`),
-> 외부 저장소 `aimon-sandbox`. 공개 API 호환을 깨는 항목이 있다(§3). 아직 구현되지 않았다. 설계에서 아직 정하지 않은 것은 §15 다.
+> **Status**: PROPOSED (`aimon-sandbox` 쪽 절반) — 코어 쪽 절반은 IMPLEMENTED (조각 D1): `aimon-core` (`at.aimon.core.tools.code.shell`,
+> `at.aimon.core.environment`, `at.aimon.core.shell`). 셸 엔진, Python 런타임과 HMAC 줄 프로토콜, `RuntimeFileSystem` 과 로컬 구현,
+> `RunDirectory` 비밀 파일 표지, 서술자의 런타임 능력, `isolated` 스트리밍 계약, `shell-engine-tool-scope`, S8 의 코어 절반
+> (`ShellCommandResult.killCause()`)이 있고, 엔진 계약 스위트를 `LocalShell` 위에서 통과한다. 외부 저장소 `aimon-sandbox` 의 몫(§13 — 조각
+> D2)은 배포된 코어가 필요해 아직 없다. 공개 API 호환을 깨는 항목이 있다(§3). 구현이 본문과 다른 점은 PTC 본 문서 §21 에 적는다.
+> 설계에서 아직 정하지 않은 것은 §15 다.
 
 ## 1. 목적과 범위
 
@@ -283,15 +287,15 @@
 ## 14. 강제
 
 설계의 규칙 가운데 빌드가 지켜야 하는 것과, 그것을 지킬 장치에 대한 요구다. 테스트 목록이 아니다 — 아래 장치는 셸 엔진을 구현할 때
-함께 갖춰야 하는 것이다.
+함께 갖춰야 하는 것이다. 코어에 이미 갖춘 장치는 "갖춤" 으로 표시한다(조각 D1).
 
 | 규칙 | 지킬 장치 |
 |---|---|
-| 셸 엔진도 PTC 본 문서의 엔진 계약을 지킨다 | 엔진 계약 스위트 `aimon-code-engine-testkit` (PTC 본 문서 §17). 코어는 `LocalShell` 위에서, `aimon-sandbox` 는 자기 testkit(`LocalProcessSandboxProvider`)과 docker 계층에서 이 스위트를 돌려야 한다 — testkit 이 배포 대상인 이유다 |
-| 통로의 줄 규칙과 응답 규칙은 호스트가 다시 강제하고, 어긋나면 `PROTOCOL_VIOLATION` 이다(§7, 결정 2·3·7) | 호스트 쪽 프로토콜 계약 테스트. 정상 런타임이 아니라 **두 번째 작성자**를 흉내 내어 위반을 일으켜야 한다 — 런타임 쪽 규칙은 정상 경로를 맞추기 위한 것일 뿐이라 정상 런타임으로는 호스트의 검증이 시험되지 않는다 |
-| 키는 어떤 프로세스의 명령행에도 나타나지 않는다(결정 4) | 실행 중 샌드박스의 `/proc/*/cmdline` 에 K 가 없음을 확인하는 검사. `aimon-sandbox` 쪽 몫은 §13 S4 |
-| 제안 시점에는 셸 명령이나 파일 쓰기를 하지 않고, `Bash` 를 제약 없이 쓸 수 없는 에이전트에는 셸 엔진 `ExecuteCode` 를 제안하지 않는다(§4) | 제안 경로의 계약 테스트 |
-| 도구 범위는 애플리케이션 값이 상한이고 에이전트는 좁히기만 한다(§12.2, 결정 5) | 호출 가능 집합 계산의 계약 테스트 |
+| 셸 엔진도 PTC 본 문서의 엔진 계약을 지킨다 | 엔진 계약 스위트 `aimon-code-engine-testkit` (PTC 본 문서 §17). 코어는 `LocalShell` 위에서(갖춤 — `ShellCodeEngineContractTest`, Python 프로그램 `PythonPrograms`), `aimon-sandbox` 는 자기 testkit(`LocalProcessSandboxProvider`)과 docker 계층에서 이 스위트를 돌려야 한다 — testkit 이 배포 대상인 이유다. 스위트는 `toolContext()` 로 엔진에 실행 환경을 준다 |
+| 통로의 줄 규칙과 응답 규칙은 호스트가 다시 강제하고, 어긋나면 `PROTOCOL_VIOLATION` 이다(§7, 결정 2·3·7) | 호스트 쪽 프로토콜 계약 테스트. 정상 런타임이 아니라 **두 번째 작성자**를 흉내 내어 위반을 일으켜야 한다 — 런타임 쪽 규칙은 정상 경로를 맞추기 위한 것일 뿐이라 정상 런타임으로는 호스트의 검증이 시험되지 않는다. 갖춤 — `ShellEngineProtocolTest`: 런타임 키를 쥔 셸이 위조 MAC·중복·건너뛴 seq·모르는 TYPE·`DONE` 뒤의 줄·선점된 응답·줄 상한 종료(S8)를 일으킨다 |
+| 키는 어떤 프로세스의 명령행에도 나타나지 않는다(결정 4) | 실행 중 샌드박스의 `/proc/*/cmdline` 에 K 가 없음을 확인하는 검사. 코어 쪽은 갖춤 — 명령이 상수이고 키가 `RunDirectory` 의 비밀 파일임을 확인한다(`ShellEngineProtocolTest`). `aimon-sandbox` 쪽 몫은 §13 S4 |
+| 제안 시점에는 셸 명령이나 파일 쓰기를 하지 않고, `Bash` 를 제약 없이 쓸 수 없는 에이전트에는 셸 엔진 `ExecuteCode` 를 제안하지 않는다(§4) | 제안 경로의 계약 테스트 — 갖춤(`ExecuteCodeShellOfferTest`) |
+| 도구 범위는 애플리케이션 값이 상한이고 에이전트는 좁히기만 한다(§12.2, 결정 5) | 호출 가능 집합 계산의 계약 테스트 — 갖춤(`ExecuteCodeShellOfferTest`) |
 | `isolated` 스트리밍은 포그라운드로 취급되지 않는다(§3) | `aimon-sandbox` 의 계약 테스트 (§13 S7) |
 
 전용 uid 모드의 보장(§12.3)은 그 모드가 생길 때 같은 방식으로 강제할 장치를 정한다.

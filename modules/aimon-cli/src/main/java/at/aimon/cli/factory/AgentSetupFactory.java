@@ -831,6 +831,9 @@ public class AgentSetupFactory {
             // holder; the holder's owner (the stack, SCRIPT_ENGINES) closes it, so the engine owns nothing to close.
             // The stack registers ExecuteCode over it — the one owner of that provider; with programmatic off the
             // stack's provider has no engine and warns for an agent that sets programmatic-tools (§12.2).
+            // Only JavaScript: the CLI's execution environment is always the local host, and the Python shell engine
+            // runs only in a sandbox (programmatic-tool-calling-shell design decision 1), so it is not assembled here.
+            // An agent that asks for programmatic-engine: python is told "no python engine is assembled".
             builder.codeExecutionEngines(List.of(new GraalJsCodeExecutionEngine(graalJsEngines)))
                     .programmaticLimits(config.getProgrammaticConfig().toLimits());
         }

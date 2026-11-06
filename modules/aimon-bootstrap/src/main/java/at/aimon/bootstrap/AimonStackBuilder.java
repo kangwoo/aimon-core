@@ -220,7 +220,9 @@ public final class AimonStackBuilder {
     // adjacent (checkstyle:OverloadMethodsDeclarationOrder) and both callers of this are above it.
     /**
      * Creates every code execution engine on the class path and hands each to {@code teardown}, so the stack closes it
-     * at shutdown with the other script engines. Warns when there is none: {@code ExecuteCode} is then never offered.
+     * at shutdown with the other script engines. The Python (shell) engine is always among them — {@code aimon-core}
+     * registers it — so this warns when the JavaScript one is missing: {@code ExecuteCode} is then never offered on a
+     * host environment.
      */
     private static List<CodeExecutionEngine> ownCodeExecutionEngines(TeardownRegistry teardown) {
         final List<CodeExecutionEngine> engines = CodeExecutionEngines
@@ -228,9 +230,11 @@ public final class AimonStackBuilder {
         for (CodeExecutionEngine engine : engines) {
             teardown.own(TeardownPhase.SCRIPT_ENGINES, "codeExecutionEngine:" + engine.language(), engine);
         }
-        if (engines.isEmpty()) {
-            log.warn("Programmatic tool calling is enabled, but no code execution engine is on the class path (add "
-                    + "aimon-graaljs for JavaScript); ExecuteCode will not be offered");
+        // aimon-core always contributes the Python (shell) engine, which runs only in a sandboxed environment; an
+        // agent on a host environment needs the JavaScript one.
+        if (engines.stream().noneMatch(engine -> CodeExecutionEngine.JAVASCRIPT.equals(engine.language()))) {
+            log.warn("Programmatic tool calling is enabled, but no JavaScript engine is on the class path (add "
+                    + "aimon-graaljs); ExecuteCode is offered only in sandboxed environments, with Python");
         }
         return engines;
     }
@@ -515,7 +519,7 @@ public final class AimonStackBuilder {
         final List<CodeExecutionEngine> codeEngines = toolSpec.getCodeExecutionEngines()
                 .orElseGet(() -> toolSpec.isProgrammaticEnabled() ? ownCodeExecutionEngines(teardown) : List.of());
         final ExecuteCodeToolProvider executeCodeToolProvider = new ExecuteCodeToolProvider(codeEngines,
-                toolSpec.getProgrammaticLimits());
+                toolSpec.getProgrammaticLimits(), toolSpec.getShellEngineToolScope());
         final StackAgentRuntimeProvisioner.Builder provisionerBuilder = StackAgentRuntimeProvisioner.builder()
                 .fileSystemSpec(spec.getFileSystem()).executionEnvironmentSpec(spec.getExecutionEnvironment())
                 .toolSpec(toolSpec).backgroundBashManager(backgroundBashManager).monitorManager(monitorManager)

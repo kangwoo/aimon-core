@@ -84,6 +84,20 @@ public final class CompositePredicate implements ToolInputPredicate {
     }
 
     @Override
+    public boolean mayMatchTool(String toolName) {
+        for (ToolInputPredicate d : delegates) {
+            final boolean may = d.mayMatchTool(toolName);
+            if (op == Op.OR && may) {
+                return true;
+            }
+            if (op == Op.AND && !may) {
+                return false;
+            }
+        }
+        return op == Op.AND;
+    }
+
+    @Override
     public boolean test(String toolName, ToolInput input) {
         Objects.requireNonNull(toolName, "Tool name cannot be null");
         Objects.requireNonNull(input, "Input cannot be null");

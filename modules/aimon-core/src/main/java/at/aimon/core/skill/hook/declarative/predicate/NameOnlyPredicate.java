@@ -58,6 +58,11 @@ public final class NameOnlyPredicate implements ToolInputPredicate {
     }
 
     @Override
+    public boolean mayMatchTool(String toolName) {
+        return test(toolName, ToolInput.of());
+    }
+
+    @Override
     public boolean test(String toolName, ToolInput input) {
         Objects.requireNonNull(toolName, "Tool name cannot be null");
         // input may be ignored — name-only predicates do not consult tool arguments.

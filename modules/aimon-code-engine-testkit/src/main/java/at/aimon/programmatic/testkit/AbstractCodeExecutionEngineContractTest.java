@@ -30,7 +30,8 @@ import at.aimon.core.programmatic.OfferFacts;
  *
  * <p>
  * A subclass supplies the engine ({@link #engine()}, created once per test and closed after it) and the contract's
- * programs in the engine's language ({@link #programs()}). The bridge is a scripted fake; the engine sees only the
+ * programs in the engine's language ({@link #programs()}), and the tool context programs run with when the engine needs
+ * one ({@link #toolContext()}). The bridge is a scripted fake; the engine sees only the
  * {@code at.aimon.core.programmatic} SPI.
  */
 public abstract class AbstractCodeExecutionEngineContractTest {
@@ -54,6 +55,17 @@ public abstract class AbstractCodeExecutionEngineContractTest {
      * @return the programs (never null)
      */
     protected abstract EnginePrograms programs();
+
+    /**
+     * Returns the tool context a program runs with. The default is empty, which is all an engine that runs in the host
+     * JVM needs; an engine that runs code in the execution environment (the shell engine) gets one carrying that
+     * environment.
+     *
+     * @return the context (never null)
+     */
+    protected ToolContext toolContext() {
+        return ToolContext.empty();
+    }
 
     @BeforeEach
     void createEngine() {
@@ -221,7 +233,7 @@ public abstract class AbstractCodeExecutionEngineContractTest {
                 .tools(List.of(ToolDefinition.of(TOOL, "Echoes its input.",
                         Map.of("type", "object", "properties", Map.of("value", Map.of("type", "string"))))))
                 .limits(limits).wallClock(wallClock).cancellation(bridge.signal()).build();
-        return engine.execute(request, bridge, ToolContext.empty());
+        return engine.execute(request, bridge, toolContext());
     }
 
     private ScriptedToolCallBridge succeeding(String text) {

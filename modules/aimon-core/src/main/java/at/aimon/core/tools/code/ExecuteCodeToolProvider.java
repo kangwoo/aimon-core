@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.orca.tool.OrcaToolProvider;
 import at.aimon.core.agent.orca.tool.OrcaToolProviderContext;
+import at.aimon.core.agent.tool.ShellEngineToolScope;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.programmatic.CodeExecutionEngine;
 import at.aimon.core.programmatic.CodeExecutionLimits;
@@ -34,16 +35,43 @@ public final class ExecuteCodeToolProvider implements OrcaToolProvider {
 
     private final List<CodeExecutionEngine> engines;
     private final CodeExecutionLimits limits;
+    private final ShellEngineToolScope toolScope;
 
     /**
+     * Creates the provider with the default {@code shell-engine-tool-scope} ({@link ShellEngineToolScope#ENVIRONMENT}).
+     *
      * @param engines
      *            the assembled engines (must not be null); owned by the caller, closed at shutdown
      * @param limits
      *            the limits every program is held to (must not be null)
      */
     public ExecuteCodeToolProvider(List<CodeExecutionEngine> engines, CodeExecutionLimits limits) {
+        this(engines, limits, ShellEngineToolScope.ENVIRONMENT);
+    }
+
+    /**
+     * Creates the provider. Built once at assembly, so this is where the startup warning for
+     * {@code shell-engine-tool-scope=unrestricted} is logged (shell doc §12.2) — when an engine bound by the scope is
+     * assembled.
+     *
+     * @param engines
+     *            the assembled engines (must not be null); owned by the caller, closed at shutdown
+     * @param limits
+     *            the limits every program is held to (must not be null)
+     * @param toolScope
+     *            the application's {@code shell-engine-tool-scope} (must not be null)
+     */
+    public ExecuteCodeToolProvider(List<CodeExecutionEngine> engines, CodeExecutionLimits limits,
+            ShellEngineToolScope toolScope) {
         this.engines = List.copyOf(Objects.requireNonNull(engines, "engines cannot be null"));
         this.limits = Objects.requireNonNull(limits, "limits cannot be null");
+        this.toolScope = Objects.requireNonNull(toolScope, "toolScope cannot be null");
+        if (toolScope == ShellEngineToolScope.UNRESTRICTED
+                && this.engines.stream().anyMatch(CodeExecutionEngine::isToolScopeBound)) {
+            log.warn("shell-engine-tool-scope is unrestricted: a process co-resident in a sandbox can call every tool "
+                    + "an agent opens to the shell engine, external ones included, while a script runs "
+                    + "(programmatic-tool-calling-shell design §12.2)");
+        }
     }
 
     @Override
@@ -60,6 +88,6 @@ public final class ExecuteCodeToolProvider implements OrcaToolProvider {
             }
             return;
         }
-        registry.register(new ExecuteCodeTool(engines, limits));
+        registry.register(new ExecuteCodeTool(engines, limits, toolScope));
     }
 }

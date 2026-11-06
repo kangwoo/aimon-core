@@ -38,9 +38,17 @@ final class ExecuteCodeDescription {
                         + "whose intermediate results you do not need to read — a loop over many items, filtering a "
                         + "large result, aggregating. For one or two calls in sequence, call the tools directly "
                         + "instead: a program costs more there.\n\n");
-        out.append("- Each function returns a Promise of a string (").append(call)
-                .append("); the format of the string is in the function's description. A failed call rejects with "
-                        + "an error whose message is the tool's error text.\n");
+        if (python) {
+            out.append("- Each function is a coroutine that returns a string (").append(call)
+                    .append("); the format of the string is in the function's description. A failed call raises "
+                            + "ToolError, whose message is the tool's error text. Top-level await is allowed. The "
+                            + "arguments of one call must stay under 64 KiB as JSON; pass a larger input as a file "
+                            + "path.\n");
+        } else {
+            out.append("- Each function returns a Promise of a string (").append(call)
+                    .append("); the format of the string is in the function's description. A failed call rejects "
+                            + "with an error whose message is the tool's error text.\n");
+        }
         out.append("- Standard output is your observation: ").append(print).append(". ").append(stderr)
                 .append(" goes to the log.");
         if (!python) {

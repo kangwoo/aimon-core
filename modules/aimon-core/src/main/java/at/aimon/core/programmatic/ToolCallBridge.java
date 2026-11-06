@@ -44,4 +44,13 @@ public interface ToolCallBridge {
      * @return the reason, empty while the program may go on
      */
     Optional<String> limitExceeded();
+
+    /**
+     * Marks every call the bridge has dispatched for this program, and every one it completes afterwards, as possibly
+     * not the program's own — "unattributed" in the record ({@code docs/design/tool/programmatic-tool-calling-shell.md}
+     * §7). An engine calls it when it detects a second writer on its channel (a protocol violation): calls dispatched
+     * before the detection may have been injected. The default records nothing.
+     */
+    default void markUnattributed() {
+    }
 }

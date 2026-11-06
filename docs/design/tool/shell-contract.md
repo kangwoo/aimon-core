@@ -197,6 +197,12 @@ public final class ShellCancellationSource {    // 거는 쪽. 명령 하나에 
 
 **실행 디렉터리의 로컬 배치.** `java.io.tmpdir` 아래 새 `aimon-run-*` 디렉터리다. POSIX 파일 시스템이면 디렉터리 0700, 파일 0600 이고, 파일은 `CREATE_NEW` 로 쓴다. 명령이 끝나면 어떤 결과든 지운다. 쓴 뒤 다시 읽어 비교하고 다르면 `RunDirectoryIntegrityException` 을 던진다. 이 비교는 쓰기의 자체 점검이지 변조 방어가 아니다. 바이트가 에이전트가 쓸 수 있는 곳을 지나지 않았고, 같은 uid 의 쓰기는 그 뒤에 일어날 수 있다.
 
+**비밀 파일.** `RunDirectory.Builder.secretFile(path, bytes)` 로 넣은 파일은 `secret` 표지를 단다(`isSecret`, `getSecretPaths`).
+`RUN_DIRECTORY` 를 선언한 셸은 표지된 파일을 아무리 작아도 명령 인자나 다른 프로세스 인자에 인라인하지 않고, 인라인하기에 너무 큰
+파일과 같은 길(업로드, 호스트의 직접 쓰기)로 옮기며, 업로드 원본은 배치 직후 지운다. 인자는 프로세스가 도는 내내
+`/proc/<pid>/cmdline` 으로 누구에게나 보이기 때문이다([셸 엔진](programmatic-tool-calling-shell.md) 결정 4). 파일을 모두 자기가 쓰는
+`LocalShell` 은 아무것도 하지 않고 이 조항을 지킨다.
+
 ### 6.2 훅 명령이 남긴 것
 
 셸은 명령이 끝날 때 그 명령이 남긴 것을 끝낼 수 있고, 훅은 백그라운드 작업이 자기보다 오래 산다고 기대하면 안 된다. `LocalShell` 은 정상 종료에서 끝내지 않지만 실행 디렉터리는 곧바로 지운다. `hook` 과 `isolated` 모두 같다.
@@ -224,7 +230,14 @@ public interface ShellLineListener {
 - **stderr.** 결과에 언제나 남고, 셸이 원하면 `onStderrLine` 으로도 넘긴다. 결과의 stderr 는 캡처 상한에서 앞부분만 남으므로, 긴 실행의 마지막 줄이 필요한 호출자는 여기서 모은다.
 - **순서와 스레드.** 스트림 안에서만 순서를 지킨다. 전체 순서가 필요하면 `redirectErrorStream` 을 켠다. 리스너는 한 번에 한 호출만 받으므로 자기 자신에 대한 잠금이 필요 없다.
 - **느리거나 던지는 리스너.** 느린 리스너는 셸의 다음 읽기를 늦출 뿐 명령을 늦추지 않는다. 던지면 그 줄을 잃고 셸은 로그를 남기고 계속한다.
-- **포그라운드.** 셸은 포그라운드의 의미로 돌릴 수 없는 포그라운드 스트리밍 호출을 거절할 수 있다. 호출자는 백그라운드 작업(`isBackground()`)을 스트리밍한다.
+- **포그라운드.** 셸은 포그라운드의 의미로 돌릴 수 없는 포그라운드 스트리밍 호출을 거절할 수 있다. 포그라운드는 정확히
+  `!background && !hook && !isolated` 다 — 세 플래그는 모두 "세션 상태를 읽지도 남기지도 않는다" 는 뜻이므로, 스트리밍하는 셸은
+  셋을 다 스트리밍한다. `ISOLATED_EXECUTION` 과 `STREAMING` 을 함께 선언한 셸은 `isolated` 스트리밍 호출을 돌린다. `ExecuteCode` 의
+  셸 엔진이 런타임을 그렇게 돌린다(백그라운드도 훅도 아니다 — [셸 엔진](programmatic-tool-calling-shell.md) §3).
+- **줄 상한은 물질화하기 전에.** 스트리밍하는 셸은 줄을 메모리에 들기 **전에** 상한을 건다. `LocalShell` 은 개행 없는 64KiB 를
+  한 줄로 넘긴다(§7.1). 이벤트로 출력을 받는 원격 셸은 더 큰 상한에서 명령을 끝내고 결과의
+  `killCause()`(`ShellKillCause.LINE_LIMIT_EXCEEDED`)로 알릴 수 있다. 어느 쪽이든 상한 안에서 끝나지 않는 줄은 리스너에 통째로
+  닿지 않는다.
 
 `Monitor` 의 `shell` source 는 `STREAMING` 과 `CANCELLATION` 을 **둘 다** 선언한 셸에서만 시작한다. 멈출 수 없는 셸에서 끝나지 않는 명령을 돌리면 타임아웃까지 프로세스가 남고, 모델이 `MonitorStop` 에 기대하는 것과 다르다. `STREAMING` 을 선언하지 않은 셸에서 `command` 형태는 실행 시점에 거절된다. 어느 제공자가 선언하는지는 제공자 소관이다.
 
@@ -328,7 +341,7 @@ exit code 는 값이다. `BashTool` 은 한 곳에서 실패 표현을 조립한
 
 | 항목 | 파일 |
 |---|---|
-| SPI | `shell/VirtualShell.java`, `shell/ExecutionOptions.java`, `shell/ShellFeature.java`, `shell/ShellCommand.java`, `shell/ShellCommandResult.java`, `shell/ShellLineListener.java`, `shell/RunDirectory.java` |
+| SPI | `shell/VirtualShell.java`, `shell/ExecutionOptions.java`, `shell/ShellFeature.java`, `shell/ShellCommand.java`, `shell/ShellCommandResult.java`, `shell/ShellKillCause.java`, `shell/ShellLineListener.java`, `shell/RunDirectory.java` |
 | 취소 | `shell/ShellCancellation.java`, `shell/ShellCancellationSource.java`, `shell/NoopShellCancellation.java` |
 | 예외 | `shell/exception/ShellExecutionException.java`, `shell/exception/ShellTimeoutException.java`, `shell/exception/ShellCancelledException.java`, `shell/exception/RunDirectoryIntegrityException.java` |
 | 로컬 구현 | `shell/impl/local/LocalShell.java` |

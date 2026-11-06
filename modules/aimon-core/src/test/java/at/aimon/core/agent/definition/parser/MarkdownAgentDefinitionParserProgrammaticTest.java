@@ -65,4 +65,18 @@ class MarkdownAgentDefinitionParserProgrammaticTest {
         assertThatThrownBy(() -> parse("programmaticTools: Read\n")).isInstanceOf(AgentDefinitionParseException.class)
                 .hasMessageContaining("kebab-case");
     }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("parses shell-engine-tool-scope, which needs programmatic-tools")
+    void shellEngineToolScope() {
+        assertThat(parse("programmatic-tools: Read\nshell-engine-tool-scope: host\n").getProgrammatic()
+                .getShellEngineToolScope()).hasValue(at.aimon.core.agent.tool.ShellEngineToolScope.HOST);
+        assertThat(parse("programmatic-tools: Read\n").getProgrammatic().getShellEngineToolScope()).isEmpty();
+        assertThatThrownBy(() -> parse("programmatic-tools: Read\nshell-engine-tool-scope: everything\n"))
+                .isInstanceOf(AgentDefinitionParseException.class).hasMessageContaining("shell engine tool scope");
+        assertThatThrownBy(() -> parse("shell-engine-tool-scope: host\n"))
+                .isInstanceOf(AgentDefinitionParseException.class).hasMessageContaining("need 'programmatic-tools'");
+        assertThatThrownBy(() -> parse("programmatic-tools: Read\nshellEngineToolScope: host\n"))
+                .isInstanceOf(AgentDefinitionParseException.class).hasMessageContaining("kebab-case");
+    }
 }

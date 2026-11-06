@@ -14,12 +14,14 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import at.aimon.bootstrap.AimonStack;
+import at.aimon.bootstrap.AimonStackSpec;
 import at.aimon.bootstrap.spec.AgentDescriptor;
 import at.aimon.bootstrap.spec.AimonAgentCustomizer;
 import at.aimon.core.agent.impl.orca.OrcaAgentRuntime;
 import at.aimon.core.agent.orca.tool.OrcaToolProvider;
 import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.DestructiveBehavior;
+import at.aimon.core.agent.tool.ShellEngineToolScope;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolDescriptor;
@@ -88,6 +90,20 @@ class AimonProgrammaticTest {
             final OrcaAgentRuntime runtime = stack.runtimes().get(stack.primaryRuntimeId());
             assertThat(runtime.getToolRegistry().findByName(ExecuteCodeTool.TOOL_NAME)).isEmpty();
         });
+    }
+
+    @Test
+    @DisplayName("aimon.programmatic.shell-engine-tool-scope reaches the stack's ToolSpec; environment by default")
+    void shellEngineToolScope(@TempDir Path workspace) {
+        minimal(workspace).run(ctx -> assertThat(ctx.getBean(AimonStackSpec.class).getTools().getShellEngineToolScope())
+                .isEqualTo(ShellEngineToolScope.ENVIRONMENT));
+        minimal(workspace)
+                .withPropertyValues("aimon.programmatic.enabled=true",
+                        "aimon.programmatic.shell-engine-tool-scope=host")
+                .run(ctx -> assertThat(ctx.getBean(AimonStackSpec.class).getTools().getShellEngineToolScope())
+                        .isEqualTo(ShellEngineToolScope.HOST));
+        minimal(workspace).withPropertyValues("aimon.programmatic.shell-engine-tool-scope=everything")
+                .run(ctx -> assertThat(ctx).hasFailed());
     }
 
     @Test

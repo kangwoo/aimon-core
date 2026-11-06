@@ -438,7 +438,8 @@ public class AimonAutoConfiguration {
                     .monitorWebSocketEnabled(properties.getTools().getMonitor().isWebsocketEnabled())
                     .monitorStore(monitorStore.getIfAvailable())
                     .programmaticEnabled(properties.getProgrammatic().isEnabled())
-                    .programmaticLimits(properties.getProgrammatic().getLimits().toLimits());
+                    .programmaticLimits(properties.getProgrammatic().getLimits().toLimits())
+                    .shellEngineToolScope(properties.getProgrammatic().getShellEngineToolScope());
             // Every MonitorSourceFactory bean is a kind the model can start by name; @Order decides the listing order.
             monitorSources.orderedStream().forEach(tools::addMonitorSource);
             final Tracer tracer = contributions.getTracer();

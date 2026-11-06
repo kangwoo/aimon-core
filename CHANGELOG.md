@@ -7,6 +7,52 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: the shell engine of `ExecuteCode` — Python in a sandboxed environment (core half)
+
+Piece D1 of `docs/design/tool/programmatic-tool-calling-shell.md`. A model-written Python program runs as `python3`
+inside a sandboxed execution environment; its tool calls come back to the host as HMAC-authenticated lines with one
+monotonic sequence number, and the host answers with HMAC reply files written through a new runtime file system.
+The `aimon-sandbox` half (piece D2) needs this release of core and is not part of it.
+
+- **No breaking public-API change.** Every addition below is a new type, a new overload or a default method; existing
+  constructors and implementations compile and behave as before.
+- **New engine `at.aimon.core.tools.code.shell.ShellCodeExecutionEngine`** (language `python`) with its runtime
+  `aimon_ptc.py`. Graded and approved as `Bash` (approval key `Bash`, prompt "via ExecuteCode (Python)"), offered only
+  on an environment that declares `SANDBOXED` isolation, the `python3` runtime, a runtime file system and a shell with
+  `STREAMING`, `RUN_DIRECTORY` and `ISOLATED_EXECUTION`, and only to an agent whose `Bash` is unconstrained (named in
+  `allowed-tools` without a pattern, and no `PermissionRequest`/`PreTool` hook that may apply to it). Any line or reply
+  that breaks the protocol ends the run as `PROTOCOL_VIOLATION` (not retryable), records every nested call as
+  unattributed, and disables the engine for that environment object.
+- **Assembly:** `aimon-core` registers the shell engine's `CodeExecutionEngineFactory`, so `aimon-bootstrap` with
+  `ToolSpec.programmaticEnabled(true)` and the starter with `aimon.programmatic.enabled=true` now always get a Python
+  engine next to any JavaScript one. It is statically unavailable outside a sandbox, so a host environment sees no
+  change. The bootstrap's "no engine on the class path" warning became "no JavaScript engine on the class path". The
+  CLI does not assemble the shell engine (its environment is always the local host).
+- **`shell-engine-tool-scope`** (`environment` default / `host` / `unrestricted`) bounds by data reach the tools an
+  agent opens to the shell engine: `ToolSpec.shellEngineToolScope(...)`, starter
+  `aimon.programmatic.shell-engine-tool-scope`, and agent frontmatter `shell-engine-tool-scope`, which can only narrow
+  the application's value. `unrestricted` is warned at startup. New enum `at.aimon.core.agent.tool.ShellEngineToolScope`,
+  `ProgrammaticToolSettings.getShellEngineToolScope()`, and new `ExecuteCodeTool` / `ExecuteCodeToolProvider`
+  constructors that take it (the old ones keep `environment`).
+- **Environment and shell SPI additions:** `at.aimon.core.environment.RuntimeFileSystem` (`writeNew` atomic and
+  create-only, `read` capped without following links, `delete`, `createDirectories`; the local implementation `at.aimon.core.environment.impl.LocalRuntimeFileSystem`)
+  and `ExecutionEnvironment.runtimeFileSystem()` (default empty — never handed to a model tool);
+  `EnvironmentDescriptor.runtimes()` with `RUNTIME_PYTHON3`; `RunDirectory.Builder.secretFile(...)`, `isSecret`,
+  `getSecretPaths` — a shell never inlines a secret file into a process argument; `ShellCommandResult.killCause()` /
+  `withKillCause(...)` with `ShellKillCause` (`LINE_LIMIT_EXCEEDED`, `OTHER`) for a command the shell ended itself; the
+  `VirtualShell` streaming contract now says a call is foreground exactly when it is none of background, hook and
+  isolated, and that a line is capped before it is materialized.
+- **Programmatic SPI additions:** `CodeExecutionEngine.isToolScopeBound()`, `ToolCallBridge.markUnattributed()`, and
+  `OfferFacts` shell features, runtime-file-system presence and `isBashUnconstrained()`. `CodeOfferKeys` gained
+  `SHELL_FEATURES`, `RUNTIME_FILE_SYSTEM`, `BASH_SETTINGS_UNCONSTRAINED` and a `putEnvironmentFacts` overload taking the
+  agent's allow-list (the main loop uses it; without it `Bash` never counts as unconstrained).
+- **Hooks:** `at.aimon.core.hook.event.ToolScopedHook` lets a tool hook say which tools it may act on;
+  `ToolInputPredicate.mayMatchTool(...)` answers it for declarative `preTool` matchers. A hook that does not say is
+  taken to apply to every tool.
+- **`aimon-code-engine-testkit`:** `AbstractCodeExecutionEngineContractTest.toolContext()` (an engine that runs in the
+  execution environment gets one carrying it) and `PythonPrograms`. Core runs the suite on the shell engine over
+  `LocalShell`.
+
 ### Added: `ExecuteCode` — programmatic tool calling with a GraalJS engine; `aimon-workflow-graaljs` is now `aimon-graaljs`
 
 Piece C of `docs/design/tool/programmatic-tool-calling.md`. A program the model writes calls tools as functions; loops,

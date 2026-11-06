@@ -45,4 +45,17 @@ public interface ToolInputPredicate {
      * @return {@code true} when the predicate matches
      */
     boolean test(String toolName, ToolInput input);
+
+    /**
+     * Returns whether some call of {@code toolName} could match — the predicate's answer with the arguments unknown.
+     * It must be conservative: {@code true} whenever any input could match. The default says {@code true} for every
+     * tool.
+     *
+     * @param toolName
+     *            the tool name (must not be null)
+     * @return {@code false} only when no call of the tool can match
+     */
+    default boolean mayMatchTool(String toolName) {
+        return true;
+    }
 }
