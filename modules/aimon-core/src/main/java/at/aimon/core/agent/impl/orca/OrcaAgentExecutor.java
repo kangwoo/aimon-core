@@ -96,6 +96,8 @@ import at.aimon.core.agent.tool.ParallelToolDispatcher;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.StreamingToolScheduler;
 import at.aimon.core.agent.tool.Tool;
+import at.aimon.core.agent.tool.ToolCallDispatcher;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolContextEnrichmentInfo;
@@ -148,7 +150,6 @@ import at.aimon.core.memory.ExecutionMemorySink;
 import at.aimon.core.memory.ExecutionMemoryUpdate;
 import at.aimon.core.memory.MemoryContextProvider;
 import at.aimon.core.memory.MemoryContextRequest;
-import at.aimon.core.skill.execution.SkillToolDispatcher;
 import at.aimon.core.skill.fork.SkillForkExecutor;
 import at.aimon.core.skill.policy.SkillPreflightScanResult;
 import at.aimon.core.skill.policy.SkillPreflightScanner;
@@ -157,9 +158,10 @@ import at.aimon.core.skill.policy.pending.PendingTurn;
 import at.aimon.core.skill.policy.pending.PendingTurnId;
 import at.aimon.core.skill.policy.pending.PendingTurnRegistry;
 import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.toolinvocation.DefaultToolCallDispatcher;
 import at.aimon.core.toolinvocation.SingleToolInvoker;
 import at.aimon.core.toolinvocation.ToolCallTracing;
-import at.aimon.core.toolinvocation.ToolInvocationSpec;
+import at.aimon.core.toolinvocation.ToolDispatchResults;
 import at.aimon.core.toolinvocation.TracingCompactionObserver;
 import at.aimon.core.toolinvocation.approval.SideEffectApprovalGate;
 import at.aimon.core.tools.ToolContextKeys;
@@ -256,6 +258,10 @@ public class OrcaAgentExecutor
     public static final int MAX_CONSECUTIVE_STALLED_ITERATIONS
             = StalledIterationGuard.MAX_CONSECUTIVE_STALLED_ITERATIONS;
     // spotless:on
+
+    /** The answer to a tool call whose context carries no {@link ToolCallDispatcher}: refused, not run ungated. */
+    private static final String NO_DISPATCHER_MESSAGE = "Tool call refused: no tool call dispatcher is bound to this"
+            + " execution";
 
     /**
      * The {@code tool_result} content returned for a {@code tool_use} that never started because the turn was
@@ -875,11 +881,16 @@ public class OrcaAgentExecutor
      *            tool can forward it to a background subagent for best-effort {@code SubagentTaskCompleted} emission.
      * @param logReader
      *            reads the session's sealed ranges, or {@code null} when the transcript manager seals nothing
+     * @param toolCallDispatcher
+     *            the turn's dispatcher, bound under the write-once {@link ToolContextKeys#TOOL_CALL_DISPATCHER}
      * @return The tool context (never null)
      */
+    // Every argument is a distinct per-execution value the context publishes; bundling them would only move the list.
+    @SuppressWarnings("checkstyle:ParameterNumber")
     private static ToolContext createToolContext(ExecutionScope scope, ToolRegistry sessionRegistry,
             CancellationSignal cancellationSignal, MessageQueueManager messageQueueManager,
-            Consumer<AgentExecutionEvent> agentEventSink, SessionLogReader logReader) {
+            Consumer<AgentExecutionEvent> agentEventSink, SessionLogReader logReader,
+            ToolCallDispatcher toolCallDispatcher) {
         final ToolContext.Builder builder = ToolContext.builder();
         builder.put(ToolContextKeys.AGENT_RUNTIME_ID, scope.agentRuntime.getId());
         builder.put(ToolContextKeys.SESSION_ID, scope.transcriptBuffer.getSessionId());
@@ -939,6 +950,9 @@ public class OrcaAgentExecutor
         if (scope.getHookRegistry() != null) {
             builder.put(ToolContextKeys.HOOK_REGISTRY, scope.getHookRegistry());
         }
+        // The gates every tool call of this turn passes. Write-once and before the enrichers, so no enricher can
+        // swap them out.
+        builder.put(ToolContextKeys.TOOL_CALL_DISPATCHER, toolCallDispatcher);
 
         applyEnrichers(builder, scope);
 
@@ -1686,9 +1700,12 @@ public class OrcaAgentExecutor
         // the turn as running, which a turn still in its OnStart hooks or a slash-command turn is not.
         scope.executionRequest.getBudgetObserver().accept(scope.budgetTracker);
 
+        // The turn's single entrance to the tool gates, bound into the turn's context (tool-call-dispatcher design §4).
+        final ToolCallDispatcher toolCallDispatcher = gatedDispatcher(scope.agentRuntime,
+                scope.getExecutionAttributes(), sessionRegistry, coordinator);
         final ToolContext toolContext = createToolContext(scope, sessionRegistry, cancellationSignal,
                 messageQueueManager, event -> scope.eventDispatcher.dispatch(event),
-                transcriptManager.getLogReader().orElse(null));
+                transcriptManager.getLogReader().orElse(null), toolCallDispatcher);
         // Entries addressed to this session that arrived while it was idle are read by the first LLM call, not left for
         // the first tool-using iteration's tail (see injectSessionQueuedMessages).
         injectSessionQueuedMessages(scope);
@@ -1854,7 +1871,7 @@ public class OrcaAgentExecutor
                     final boolean overlapActive = useStreaming && parallelToolDispatcher.supportsEagerDispatch();
                     scope.streamingToolScheduler = overlapActive
                             ? new StreamingToolScheduler(parallelToolDispatcher, sessionRegistry,
-                                    toolRunner(scope, toolContext, iterationCount, coordinator, sessionRegistry))
+                                    toolRunner(scope, toolContext, iterationCount, coordinator))
                             : null;
 
                     final LlmResponse response;
@@ -2369,7 +2386,12 @@ public class OrcaAgentExecutor
                     // /my-skill would run a skill's tools, and spawn a fork-mode skill's subagent, unbounded by the
                     // restriction the agent itself is under.
                     .put(ToolContextKeys.CALLER_ALLOWED_TOOLS, agentRuntime.getAgent().getAllowedTools())
-                    .put(ToolContextKeys.SKILL_TOOL_DISPATCHER_KEY, commandToolDispatcher(scope, commandCoordinator))
+                    // The gates an inline skill's tool calls pass: the agent's own, which the skill loop narrows to
+                    // the skill's registry and allowed-tools. Without it the skill loop refuses to run any tool.
+                    // Stamped MAIN_AGENT: a skill is not a subagent, it is the agent doing what the user asked. The
+                    // agent registry stands in as the session registry, as no per-session view exists outside a turn.
+                    .put(ToolContextKeys.TOOL_CALL_DISPATCHER, gatedDispatcher(agentRuntime,
+                            scope.getExecutionAttributes(), agentRuntime.getToolRegistry(), commandCoordinator))
                     .build();
             return commandTrace.record(commandExecutionManager.execute(executionRequest, transcriptBuffer,
                     agentRuntime.getCommandRegistry(), agentRuntime.getToolRegistry(),
@@ -2382,38 +2404,28 @@ public class OrcaAgentExecutor
     }
 
     /**
-     * Builds the {@link SkillToolDispatcher} bound into the command tool context.
+     * Builds the gated {@link ToolCallDispatcher} for one execution of this agent: the agent's registry and allow-list
+     * (the same list the offer filter reads, so the two cannot disagree about what this agent may call; empty reads as
+     * unrestricted), its hook registry, and the {@code MAIN_AGENT} identity.
      *
-     * <p>
-     * An inline skill invoked as {@code /my-skill} runs its own ReAct loop, and it used to run that loop straight
-     * against the {@code ToolExecutionManager}: same registry as the agent, but reached by a path with no
-     * PermissionRequest hooks, no side-effect approval gate and no Pre/PostTool. Typing a slash was therefore a way to
-     * run a tool the agent itself would have had to ask about. Routing the batch through {@link #singleToolInvoker}
-     * closes that, and does it by reusing the pipeline rather than restating it — the parity risk the shared
-     * pipeline exists to avoid.
-     *
-     * <p>
-     * The invocation is stamped {@code MAIN_AGENT}: a skill is not a subagent, it is the agent doing what the user
-     * asked. The list arrives per call from {@code LlmSkillExecutor}, which hands over the skill's own
-     * {@code allowed-tools} already intersected with the agent's — the ceiling published into this command's tool
-     * context — so the two bounds reach dispatch as one value.
-     *
-     * @param scope
-     *            the execution scope supplying the agent runtime and execution attributes (must not be null)
+     * @param agentRuntime
+     *            the agent runtime supplying registry, allow-list and hooks (must not be null)
+     * @param executionAttributes
+     *            the execution attributes threaded through every hook context (must not be null)
+     * @param sessionRegistry
+     *            the registry the target tool's interrupt behaviour is read from (must not be null)
      * @param coordinator
-     *            the command-scoped interrupt coordinator used to mint per-tool registrars (must not be null)
-     * @return a dispatcher bound to this command's runtime and coordinator (never null)
+     *            the interrupt coordinator per-tool registrars are minted from (must not be null)
+     * @return the dispatcher (never null)
      */
-    private SkillToolDispatcher commandToolDispatcher(ExecutionScope scope, InterruptCoordinator coordinator) {
-        final OrcaAgentRuntime agentRuntime = scope.agentRuntime;
-        return (toolRegistry, toolContext, toolUses, allowedTools, iterationCount) -> toolUses.stream()
-                .map(toolUse -> singleToolInvoker.invoke(ToolInvocationSpec.builder()
-                        .invokerType(InvokerType.MAIN_AGENT).invokerName(agentRuntime.getAgent().getName())
-                        .hookRegistry(agentRuntime.getHookRegistry())
-                        .executionAttributes(scope.getExecutionAttributes()).toolRegistry(toolRegistry)
-                        .sessionRegistry(toolRegistry).allowedTools(allowedTools).coordinator(coordinator)
-                        .toolContext(toolContext).toolUse(toolUse).iterationCount(iterationCount).build()))
-                .toList();
+    private ToolCallDispatcher gatedDispatcher(OrcaAgentRuntime agentRuntime, Map<String, Object> executionAttributes,
+            ToolRegistry sessionRegistry, InterruptCoordinator coordinator) {
+        final Agent agent = agentRuntime.getAgent();
+        return DefaultToolCallDispatcher.builder().invoker(singleToolInvoker).invokerType(InvokerType.MAIN_AGENT)
+                .invokerName(agent.getName()).hookRegistry(agentRuntime.getHookRegistry())
+                .executionAttributes(executionAttributes).toolRegistry(agentRuntime.getToolRegistry())
+                .sessionRegistry(sessionRegistry).allowedTools(agent.getAllowedTools()).coordinator(coordinator)
+                .build();
     }
 
     /**
@@ -2447,8 +2459,7 @@ public class OrcaAgentExecutor
      */
     private List<ToolUseResult> executeToolUses(ExecutionScope scope, ToolContext toolContext, List<ToolUse> toolUses,
             int iterationCount, InterruptCoordinator coordinator, ToolRegistry sessionRegistry) {
-        final Function<ToolUse, ToolUseResult> runner = toolRunner(scope, toolContext, iterationCount, coordinator,
-                sessionRegistry);
+        final Function<ToolUse, ToolUseResult> runner = toolRunner(scope, toolContext, iterationCount, coordinator);
 
         // Streaming-tool overlap (design §11.2): when a per-iteration scheduler eagerly ran the safe prefix of this
         // batch during the token stream, harvest those results (and run any deferred suffix inline on this thread)
@@ -2500,16 +2511,18 @@ public class OrcaAgentExecutor
      * must be answered by exactly one {@code tool_result}, or the provider rejects the conversation on the next turn.
      */
     private Function<ToolUse, ToolUseResult> toolRunner(ExecutionScope scope, ToolContext toolContext,
-            int iterationCount, InterruptCoordinator coordinator, ToolRegistry sessionRegistry) {
-        final ToolContext effectiveToolContext = resolveEffectiveToolContext(scope, toolContext);
+            int iterationCount, InterruptCoordinator coordinator) {
+        // The iteration rides on the context the dispatcher is handed, which puts it on the Pre/PostTool contexts.
+        final ToolContext effectiveToolContext = ToolContext.builder()
+                .putAll(resolveEffectiveToolContext(scope, toolContext).getContext())
+                .put(ToolContextKeys.ITERATION_COUNT, iterationCount).build();
         return toolUse -> {
             if (isInterrupted(coordinator)) {
                 log.debug("Skipping tool_use {} ({}): the turn was interrupted before it started", toolUse.getId(),
                         toolUse.getName());
                 return ToolUseResult.error(toolUse.getId(), INTERRUPTED_TOOL_SKIP_MESSAGE);
             }
-            return executeSingleTool(scope.agentRuntime, effectiveToolContext, toolUse, iterationCount,
-                    scope.getExecutionAttributes(), coordinator, sessionRegistry);
+            return executeSingleTool(effectiveToolContext, toolUse, iterationCount);
         };
     }
 
@@ -2742,19 +2755,15 @@ public class OrcaAgentExecutor
      * ({@code Task}, {@code Workflow}, a fork-mode skill) nests under this call. When tracing is off (no enriched span
      * context in the metadata), no span is created and dispatch runs unchanged with the original context.
      */
-    private ToolUseResult executeSingleTool(OrcaAgentRuntime agentRuntime, ToolContext toolContext, ToolUse toolUse,
-            int iterationCount, Map<String, Object> executionAttributes, InterruptCoordinator coordinator,
-            ToolRegistry sessionRegistry) {
+    private ToolUseResult executeSingleTool(ToolContext toolContext, ToolUse toolUse, int iterationCount) {
         final Tracer.Span toolSpan = ToolCallTracing.open(tracer, toolContext, toolUse, iterationCount,
                 InvokerType.MAIN_AGENT);
         if (toolSpan == null) {
-            return dispatchSingleTool(agentRuntime, toolContext, toolUse, iterationCount, executionAttributes,
-                    coordinator, sessionRegistry);
+            return dispatchSingleTool(toolContext, toolUse);
         }
         try {
-            final ToolUseResult result = dispatchSingleTool(agentRuntime,
-                    ToolCallTracing.contextUnder(toolSpan, toolContext), toolUse, iterationCount, executionAttributes,
-                    coordinator, sessionRegistry);
+            final ToolUseResult result = dispatchSingleTool(ToolCallTracing.contextUnder(toolSpan, toolContext),
+                    toolUse);
             ToolCallTracing.recordOutcome(toolSpan, result, tracePayloadPolicy);
             return result;
         } catch (RuntimeException | Error e) {
@@ -2766,51 +2775,28 @@ public class OrcaAgentExecutor
     }
 
     /**
-     * Executes a single tool use, including pre-tool and post-tool hooks.
+     * Runs one tool call through the turn's {@link ToolCallDispatcher}, read from the context it was bound into, and
+     * turns the result into what the transcript records: the hooks' feedback appended, the environment's notices
+     * prepended ({@link ToolDispatchResults#toToolUseResult}).
      *
      * <p>
-     * Before invoking the tool, the target's {@link Tool#getInterruptBehavior()} is read from
-     * {@code sessionRegistry}. Tools declaring {@link InterruptBehavior#THREAD_INTERRUPT} or
-     * {@link InterruptBehavior#EXTERNALLY_TERMINATED} receive a fresh {@link TerminatorRegistrar} from
-     * {@code coordinator} injected into the enriched {@link ToolContext}, and THREAD_INTERRUPT tools additionally get
-     * a {@code Thread.currentThread()::interrupt} terminator pre-registered. The registrar is always closed in a
-     * finally block so terminators cannot leak into subsequent tool calls. Tools declaring COOPERATIVE or
-     * NON_INTERRUPTIBLE see no registrar in their context; COOPERATIVE tools still observe the turn-scoped
-     * {@link CancellationSignal} injected at the executor level.
+     * The dispatcher owns the per-tool sequence — interrupt-registrar lifecycle, PermissionRequest, the approval gate,
+     * PreTool, the tool, PostTool. A context with no dispatcher bound is refused rather than run around the gates; the
+     * turn always binds one, so that answer only reaches a caller that built a context by hand.
      *
-     * @param agentRuntime
-     *            The agent runtime
      * @param toolContext
-     *            The tool execution context
+     *            the tool context, carrying the dispatcher and the iteration
      * @param toolUse
-     *            The tool use request from LLM
-     * @param iterationCount
-     *            The current iteration count
-     * @param executionAttributes
-     *            The execution attributes
-     * @param coordinator
-     *            The turn-scoped interrupt coordinator used to mint the per-tool registrar (must not be null)
-     * @param sessionRegistry
-     *            The per-session registry used to look up the target tool's {@link InterruptBehavior}
-     *            (must not be null)
-     * @return The tool use result (never null)
+     *            the tool use request from the LLM
+     * @return the tool use result (never null)
      */
-    // checkstyle: ParameterNumber — `coordinator` and `sessionRegistry` thread the interrupt
-    // machinery down to the per-tool invocation site; acknowledged.
-    private ToolUseResult dispatchSingleTool(OrcaAgentRuntime agentRuntime, ToolContext toolContext, ToolUse toolUse,
-            int iterationCount, Map<String, Object> executionAttributes, InterruptCoordinator coordinator,
-            ToolRegistry sessionRegistry) {
-        // Delegate the interrupt-registrar + PermissionRequest/PreTool/execute/PostTool sequence to the shared
-        // pipeline. The main-agent variance is the MAIN_AGENT invoker identity and the agent's own allow-list — the
-        // same list the offer filter reads, so the two cannot disagree about what this agent may call. An agent that
-        // declares none hands over an empty list, which every validator reads as unrestricted.
-        final Agent agent = agentRuntime.getAgent();
-        final ToolInvocationSpec spec = ToolInvocationSpec.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName(agent.getName()).hookRegistry(agentRuntime.getHookRegistry())
-                .executionAttributes(executionAttributes).toolRegistry(agentRuntime.getToolRegistry())
-                .sessionRegistry(sessionRegistry).allowedTools(agent.getAllowedTools()).coordinator(coordinator)
-                .toolContext(toolContext).toolUse(toolUse).iterationCount(iterationCount).build();
-        return singleToolInvoker.invoke(spec);
+    private static ToolUseResult dispatchSingleTool(ToolContext toolContext, ToolUse toolUse) {
+        final Optional<ToolCallDispatcher> dispatcher = toolContext.get(ToolContextKeys.TOOL_CALL_DISPATCHER);
+        if (dispatcher.isEmpty()) {
+            return ToolUseResult.error(toolUse.getId(), NO_DISPATCHER_MESSAGE);
+        }
+        return ToolDispatchResults
+                .toToolUseResult(dispatcher.get().dispatch(toolUse, ToolCallOrigin.direct(), toolContext));
     }
 
     /**

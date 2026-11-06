@@ -37,6 +37,7 @@ import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.DefaultHookRegistry;
@@ -465,9 +466,10 @@ class DeclarativeReportHookInterruptTest {
                 return new Firing<>(
                         new DeclarativePreToolHook("ops", NameOnlyPredicate.ANY, ACTION, shell, null, null, Map.of(),
                                 options),
-                        PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent")
-                                .hookRegistry(new DefaultHookRegistry()).executionCancellation(signal)
-                                .toolUse(ToolUse.of("call-1", "Bash", Map.of())).iterationCount(1).build());
+                        PreToolContext.builder().origin(ToolCallOrigin.direct()).executorType(InvokerType.MAIN_AGENT)
+                                .invokerName("agent").hookRegistry(new DefaultHookRegistry())
+                                .executionCancellation(signal).toolUse(ToolUse.of("call-1", "Bash", Map.of()))
+                                .iterationCount(1).build());
             }
         },
         ON_START {
@@ -493,7 +495,8 @@ class DeclarativeReportHookInterruptTest {
             @Override
             Firing<?> prepare(ShellActionExecutor shell, CancellationSignal signal, DeclarativeHookOptions options) {
                 return new Firing<>(new DeclarativePermissionRequestHook("ops", ACTION, shell, options),
-                        PermissionRequestContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("agent")
+                        PermissionRequestContext.builder().origin(ToolCallOrigin.direct())
+                                .invokerType(InvokerType.MAIN_AGENT).invokerName("agent")
                                 .hookRegistry(new DefaultHookRegistry()).executionCancellation(signal).toolName("Bash")
                                 .toolInput(ToolInput.of(Map.of("command", "ls"))).build());
             }
@@ -512,8 +515,8 @@ class DeclarativeReportHookInterruptTest {
     }
 
     private static PostToolContext postTool(CancellationSignal signal) {
-        return PostToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(new DefaultHookRegistry()).executionCancellation(signal)
+        return PostToolContext.builder().origin(ToolCallOrigin.direct()).executorType(InvokerType.MAIN_AGENT)
+                .invokerName("agent").hookRegistry(new DefaultHookRegistry()).executionCancellation(signal)
                 .toolUse(ToolUse.of("call-1", "Bash", Map.of())).toolUseResult(ToolUseResult.success("call-1", "ok"))
                 .iterationCount(1).build();
     }

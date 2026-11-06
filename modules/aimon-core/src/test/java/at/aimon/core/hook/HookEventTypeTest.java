@@ -9,6 +9,7 @@ import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.event.OnConfigReloadContext;
 import at.aimon.core.hook.event.OnSessionEndContext;
@@ -57,10 +58,12 @@ class HookEventTypeTest {
     void onlyInExecutionContextsCanBeBuiltWithAnEnvironment() {
         // The classification is enforced by shape: an out-of-execution context builder has no executionEnvironment
         // setter, so no firing site can fill one in by mistake.
-        assertThat(List.of(PreToolContext.builder(), PostToolContext.builder(), OnStartContext.builder(),
+        assertThat(List.of(PreToolContext.builder().origin(ToolCallOrigin.direct()),
+                PostToolContext.builder().origin(ToolCallOrigin.direct()), OnStartContext.builder(),
                 OnStopContext.builder(), PreCompactContext.builder(), PostCompactContext.builder(),
-                PermissionRequestContext.builder(), PermissionDeniedContext.builder(), SubagentStartContext.builder(),
-                SubagentStopContext.builder())).allMatch(HookEventTypeTest::acceptsAnExecutionEnvironment);
+                PermissionRequestContext.builder().origin(ToolCallOrigin.direct()), PermissionDeniedContext.builder(),
+                SubagentStartContext.builder(), SubagentStopContext.builder()))
+                .allMatch(HookEventTypeTest::acceptsAnExecutionEnvironment);
         assertThat(List.of(OnSessionStartContext.builder(), OnSessionEndContext.builder(),
                 OnConfigReloadContext.builder())).noneMatch(HookEventTypeTest::acceptsAnExecutionEnvironment);
     }

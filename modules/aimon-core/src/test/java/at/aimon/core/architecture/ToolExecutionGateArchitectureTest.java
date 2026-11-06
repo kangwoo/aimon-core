@@ -15,6 +15,7 @@ import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.lang.ArchRule;
 
 import at.aimon.core.agent.tool.Tool;
+import at.aimon.core.agent.tool.ToolExecutionManager;
 import at.aimon.core.agent.tool.execution.DefaultToolExecutor;
 import at.aimon.core.hook.impl.RecentFilesRestoreHook;
 import at.aimon.core.memory.deriver.ReActLlmDeriver;
@@ -84,6 +85,34 @@ class ToolExecutionGateArchitectureTest {
                 .because("a tool invoked outside DefaultToolExecutor skips schema validation; the five exceptions are"
                         + " recorded in the tool-contract design §5, and a sixth needs the same argument"
                         + " made in writing");
+
+        rule.check(classes);
+    }
+
+    /**
+     * Keeps {@link ToolExecutionManager#execute} and {@link ToolExecutionManager#executeAll} reachable only from
+     * {@code at.aimon.core.toolinvocation..} — the gated dispatcher and the explicitly named ungated one
+     * (tool-call-dispatcher design §3 #8).
+     *
+     * <p>
+     * The schema rule above cannot see this bypass: a caller of the execution manager reaches the tool through
+     * {@link DefaultToolExecutor} and so passes schema validation, while skipping every PermissionRequest, approval,
+     * PreTool and PostTool gate. There is no allow-list here, by design. The only classes outside the package the
+     * rule exempts are the execution manager's own implementations, whose overloads delegate to one another — that is
+     * the manager, not a caller going around the gates.
+     */
+    @Test
+    @DisplayName("ToolExecutionManager#execute / #executeAll are called only from at.aimon.core.toolinvocation..")
+    void toolExecutionManagerIsCalledOnlyFromToolInvocation() {
+        ArchRule rule = noClasses().that().resideOutsideOfPackage("at.aimon.core.toolinvocation..").and()
+                .areNotAssignableTo(ToolExecutionManager.class).should()
+                .accessTargetWhere(describe("ToolExecutionManager#execute or #executeAll, called or referenced",
+                        access -> (access instanceof JavaMethodCall || access instanceof JavaMethodReference)
+                                && ("execute".equals(access.getTarget().getName())
+                                        || "executeAll".equals(access.getTarget().getName()))
+                                && access.getTarget().getOwner().isAssignableTo(ToolExecutionManager.class)))
+                .because("a direct call to the execution manager passes the schema gate but skips the hook and"
+                        + " approval gates; route the call through a ToolCallDispatcher (tool-call-dispatcher design)");
 
         rule.check(classes);
     }

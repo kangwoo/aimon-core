@@ -7,6 +7,7 @@ import java.util.Optional;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.interrupt.CancellationSignal;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.base.Principal;
 import at.aimon.core.environment.ExecutionEnvironment;
@@ -39,6 +40,7 @@ public final class PermissionRequestContext implements HookContext {
 
     private final InvokerType invokerType;
     private final String invokerName;
+    private final ToolCallOrigin origin;
     private final HookRegistry hookRegistry;
     private final ExecutionEnvironment executionEnvironment;
     private final CancellationSignal executionCancellation;
@@ -51,6 +53,7 @@ public final class PermissionRequestContext implements HookContext {
     private PermissionRequestContext(Builder builder) {
         invokerType = Objects.requireNonNull(builder.invokerType, "Invoker type cannot be null");
         invokerName = Objects.requireNonNull(builder.invokerName, "Invoker name cannot be null");
+        origin = Objects.requireNonNull(builder.origin, "Origin cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
         executionEnvironment = builder.executionEnvironment;
         executionCancellation = builder.executionCancellation;
@@ -69,6 +72,16 @@ public final class PermissionRequestContext implements HookContext {
     @Override
     public String getInvokerName() {
         return invokerName;
+    }
+
+    /**
+     * Gets the path the tool call arrived by — the model directly, a program, a slash-command skill's loop, or a rewake
+     * replay — and what that path knows about the call's parent.
+     *
+     * @return the origin (never null)
+     */
+    public ToolCallOrigin getOrigin() {
+        return origin;
     }
 
     @Override
@@ -126,13 +139,15 @@ public final class PermissionRequestContext implements HookContext {
     @Override
     public String toString() {
         return "PermissionRequestContext{" + "invokerType=" + invokerType + ", invokerName='" + invokerName + '\''
-                + ", toolName='" + toolName + '\'' + ", principal=" + principal + ", timestamp=" + timestamp + '}';
+                + ", origin=" + origin.path() + ", toolName='" + toolName + '\'' + ", principal=" + principal
+                + ", timestamp=" + timestamp + '}';
     }
 
     /** Builder for {@link PermissionRequestContext}. */
     public static final class Builder {
         private InvokerType invokerType;
         private String invokerName;
+        private ToolCallOrigin origin;
         private HookRegistry hookRegistry;
         private ExecutionEnvironment executionEnvironment;
         private CancellationSignal executionCancellation;
@@ -166,6 +181,18 @@ public final class PermissionRequestContext implements HookContext {
          */
         public Builder invokerName(String invokerName) {
             this.invokerName = invokerName;
+            return this;
+        }
+
+        /**
+         * Sets the path the tool call arrived by.
+         *
+         * @param origin
+         *            the origin (must not be null)
+         * @return This builder
+         */
+        public Builder origin(ToolCallOrigin origin) {
+            this.origin = origin;
             return this;
         }
 

@@ -1,12 +1,14 @@
 package at.aimon.core.hook.event;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
@@ -16,8 +18,8 @@ class PreToolContextTest {
 
     private static PreToolContext newContext(ToolUse toolUse) {
         final HookRegistry registry = new DefaultHookRegistry();
-        return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(registry)
-                .toolUse(toolUse).iterationCount(1).build();
+        return PreToolContext.builder().origin(ToolCallOrigin.direct()).executorType(InvokerType.MAIN_AGENT)
+                .invokerName("agent").hookRegistry(registry).toolUse(toolUse).iterationCount(1).build();
     }
 
     @Test
@@ -46,5 +48,20 @@ class PreToolContextTest {
         // The rewritten input has to reach the ToolUse itself, not only currentInput(): hooks that read the whole
         // tool_use would otherwise still see the unredacted command.
         assertThat(next.getCurrentToolUse().getInput()).isEqualTo(Map.of("command", "***"));
+    }
+
+    @Test
+    void originIsRequiredAndSurvivesAnInputRewrite() {
+        final ToolUse toolUse = ToolUse.of("id", "Bash", Map.of());
+        assertThatNullPointerException()
+                .isThrownBy(() -> PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent")
+                        .hookRegistry(new DefaultHookRegistry()).toolUse(toolUse).build())
+                .withMessageContaining("Origin");
+
+        final PreToolContext ctx = PreToolContext.builder().origin(ToolCallOrigin.skill("audit"))
+                .executorType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(new DefaultHookRegistry())
+                .toolUse(toolUse).build();
+        assertThat(ctx.withCurrentInput(ToolInput.of(Map.of("x", 1))).getOrigin())
+                .isEqualTo(ToolCallOrigin.skill("audit"));
     }
 }

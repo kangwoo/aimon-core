@@ -31,6 +31,7 @@ import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.event.OnSessionStartContext;
@@ -342,8 +343,8 @@ class DeclarativeHookCancellationTest {
     }
 
     private static PreToolContext preTool(CancellationSignal signal) {
-        return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(new DefaultHookRegistry()).executionCancellation(signal)
+        return PreToolContext.builder().origin(ToolCallOrigin.direct()).executorType(InvokerType.MAIN_AGENT)
+                .invokerName("agent").hookRegistry(new DefaultHookRegistry()).executionCancellation(signal)
                 .toolUse(ToolUse.of("call-1", "Bash", Map.of())).iterationCount(1).build();
     }
 }

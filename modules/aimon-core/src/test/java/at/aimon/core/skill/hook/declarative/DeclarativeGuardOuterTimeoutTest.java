@@ -19,6 +19,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.compact.CompactionTrigger;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
@@ -261,8 +262,9 @@ class DeclarativeGuardOuterTimeoutTest {
     }
 
     private PreToolContext preToolContext() {
-        return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(registry)
-                .toolUse(ToolUse.of("call-1", "Bash", Map.of())).iterationCount(1).build();
+        return PreToolContext.builder().origin(ToolCallOrigin.direct()).executorType(InvokerType.MAIN_AGENT)
+                .invokerName("agent").hookRegistry(registry).toolUse(ToolUse.of("call-1", "Bash", Map.of()))
+                .iterationCount(1).build();
     }
 
     private OnStartContext onStartContext() {
@@ -277,7 +279,8 @@ class DeclarativeGuardOuterTimeoutTest {
     }
 
     private PermissionRequestContext permissionRequestContext() {
-        return PermissionRequestContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(registry).toolName("Bash").toolInput(ToolInput.of(Map.of("command", "ls"))).build();
+        return PermissionRequestContext.builder().origin(ToolCallOrigin.direct()).invokerType(InvokerType.MAIN_AGENT)
+                .invokerName("agent").hookRegistry(registry).toolName("Bash")
+                .toolInput(ToolInput.of(Map.of("command", "ls"))).build();
     }
 }

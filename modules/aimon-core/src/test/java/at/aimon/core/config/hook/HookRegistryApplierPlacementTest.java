@@ -19,6 +19,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -63,7 +64,8 @@ class HookRegistryApplierPlacementTest {
     }
 
     private PreToolContext preTool() {
-        return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(registry)
+        return PreToolContext.builder().origin(ToolCallOrigin.direct()).executorType(InvokerType.MAIN_AGENT)
+                .invokerName("agent").hookRegistry(registry)
                 .executionEnvironment(TestExecutionEnvironments.ofShell(mock(VirtualShell.class)))
                 .toolUse(ToolUse.of("call-1", "Bash", Map.of())).iterationCount(1).build();
     }

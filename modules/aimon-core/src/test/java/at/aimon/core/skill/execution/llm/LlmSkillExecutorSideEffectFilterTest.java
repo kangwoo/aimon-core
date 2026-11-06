@@ -33,6 +33,8 @@ import at.aimon.core.skill.execution.SkillExecutionContext;
 import at.aimon.core.skill.execution.SkillExecutionRequest;
 import at.aimon.core.skill.execution.SkillExecutionResult;
 import at.aimon.core.skill.render.DefaultSkillContentRenderer;
+import at.aimon.core.toolinvocation.ToolCallDispatchers;
+import at.aimon.core.tools.ToolContextKeys;
 
 /**
  * Locks in the slash-command half of the {@link SideEffectLevel} pair: a user-invoked skill runs its own ReAct loop
@@ -117,7 +119,11 @@ class LlmSkillExecutorSideEffectFilterTest {
         final LlmSkillExecutor executor = new LlmSkillExecutor(client, new DefaultSkillContentRenderer(), manager);
         final SkillExecutionContext context = SkillExecutionContext.builder().skill(skill())
                 .defaultModel(LlmModel.builder().build()).toolRegistry(registry)
-                .executionId(ExecutionId.generate("skill:ceiling-test")).build();
+                .executionId(ExecutionId.generate("skill:ceiling-test"))
+                .toolContext(ToolContext.builder()
+                        .put(ToolContextKeys.TOOL_CALL_DISPATCHER, ToolCallDispatchers.ungated(manager, registry))
+                        .build())
+                .build();
 
         return executor.execute(context, SkillExecutionRequest.builder().build());
     }

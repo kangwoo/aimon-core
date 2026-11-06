@@ -21,6 +21,7 @@ import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.event.PreToolContext;
@@ -66,8 +67,9 @@ class RunDirectoryUploadContractTest {
     }
 
     private static HookResult fire(DeclarativePreToolHook hook, VirtualShell shell) {
-        return hook.execute(PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(new DefaultHookRegistry()).executionEnvironment(TestExecutionEnvironments.ofShell(shell))
+        return hook.execute(PreToolContext.builder().origin(ToolCallOrigin.direct())
+                .executorType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(new DefaultHookRegistry())
+                .executionEnvironment(TestExecutionEnvironments.ofShell(shell))
                 .toolUse(ToolUse.of("call-1", "Bash", Map.of())).iterationCount(1).build());
     }
 

@@ -1,7 +1,5 @@
 package at.aimon.core.skill.execution.llm;
 
-import static at.aimon.core.agent.tool.execution.ToolExecutionResultConverter.toToolUseResults;
-
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -24,13 +22,12 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.Tool;
+import at.aimon.core.agent.tool.ToolCallDispatcher;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolExecutionManager;
-import at.aimon.core.agent.tool.ToolRegistry;
-import at.aimon.core.agent.tool.exception.ToolPermissionViolationException;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.agent.tool.permission.AllowedTools;
-import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.llm.LlmClient;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
@@ -47,7 +44,6 @@ import at.aimon.core.skill.execution.SkillExecutionMetadata;
 import at.aimon.core.skill.execution.SkillExecutionRequest;
 import at.aimon.core.skill.execution.SkillExecutionResult;
 import at.aimon.core.skill.execution.SkillExecutor;
-import at.aimon.core.skill.execution.SkillToolDispatcher;
 import at.aimon.core.skill.fork.NoOpSkillForkExecutor;
 import at.aimon.core.skill.fork.SkillForkExecutor;
 import at.aimon.core.skill.fork.SkillForkOutcome;
@@ -56,9 +52,8 @@ import at.aimon.core.skill.hook.SkillHookScope;
 import at.aimon.core.skill.render.RenderContext;
 import at.aimon.core.skill.render.SkillContentRenderer;
 import at.aimon.core.subagent.execution.ForkGoalRenderer;
+import at.aimon.core.toolinvocation.ToolDispatchResults;
 import at.aimon.core.tools.CallerAllowedTools;
-import at.aimon.core.tools.EnvironmentNotices;
-import at.aimon.core.tools.ExecutionEnvironmentAccess;
 import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.SkillRenderContextAccess;
 import at.aimon.core.tools.ToolContextKeys;
@@ -102,19 +97,19 @@ import at.aimon.core.tools.ToolContextKeys;
  * command cannot be interrupted.
  *
  * <p>
- * <b>How tool calls leave this loop.</b> Step 5 does not call the {@link ToolExecutionManager} directly when the caller
- * bound a {@link SkillToolDispatcher} under {@link ToolContextKeys#SKILL_TOOL_DISPATCHER_KEY} — the agent executor does
- * on the user-slash path. The dispatcher runs each call through the same invoker the ReAct loop uses, so the hooks and
- * the side-effect approval gate that stand in front of an agent's tools stand in front of a skill's too. Skipping them
- * was not a decision anyone made; it was what calling the manager directly happened to mean. With no dispatcher bound
- * the executor falls back to the manager, which is the historical behaviour and still correct for a host with no hook
- * registry.
+ * <b>How tool calls leave this loop.</b> Step 5 runs every call through the {@link ToolCallDispatcher} the caller
+ * bound under {@link ToolContextKeys#TOOL_CALL_DISPATCHER} — on the user-slash path, the agent executor's own —
+ * narrowed
+ * to the skill's registry and its {@code allowed-tools} intersected with the caller's. The hooks and the side-effect
+ * approval gate that stand in front of an agent's tools therefore stand in front of a skill's too, and the skill's
+ * {@code allowed-tools} is enforced when a call runs, not only when the offer is filtered. Each call reaches the hooks
+ * as {@link ToolCallOrigin#skill(String) a skill call}. A context with no dispatcher bound is refused before the first
+ * LLM call: nothing falls back to calling the {@link ToolExecutionManager} directly. A test or an embedder with no
+ * hooks binds {@code ToolCallDispatchers.ungated(...)} and says so by name.
  *
  * <p>
- * One consequence worth knowing: on the dispatcher path a permission violation comes back as an error result for that
- * one tool and the skill keeps going, because the invoker catches it per call. On the fallback path
- * {@code executeAll} throws and the whole skill fails with "Permission denied". The dispatcher behaviour is the one the
- * agent has always had.
+ * A denied or failing call comes back as an error result for that one tool and the skill keeps going, as on the
+ * agent's own loop.
  *
  * <p>
  * Thread-safe if all dependencies are thread-safe.
@@ -240,14 +235,19 @@ public class LlmSkillExecutor implements SkillExecutor {
                     scratchTranscriptLabel(context.getExecutionId()), systemPrompt);
             transcriptBuffer.addUserMessage(renderedBody);
 
-            final List<ToolDefinition> filteredTools = offeredTools(skill, allowedTools, context);
+            // The gates of whoever invoked the skill, narrowed to the skill's registry and allow-list, so a skill can
+            // only do less than its caller. Refused before the first LLM call when none is bound: a skill loop never
+            // reaches a tool by a path with no permission hooks and no approval gate in front of it.
+            final Optional<ToolCallDispatcher> boundDispatcher = context.getToolContext()
+                    .get(ToolContextKeys.TOOL_CALL_DISPATCHER);
+            if (boundDispatcher.isEmpty()) {
+                return noDispatcher(skill, accumulatedTokens, startTime);
+            }
+            final ToolCallDispatcher toolDispatcher = boundDispatcher.get().narrow(context.getToolRegistry(),
+                    allowedTools);
+            final ToolCallOrigin origin = ToolCallOrigin.skill(skill.getName());
 
-            // Prefer the per-execution dispatcher the agent executor binds into the command tool context: it runs each
-            // call through the same SingleToolInvoker pipeline the ReAct loop uses, so a skill cannot reach a tool by
-            // a path with no permission hooks and no approval gate in front of it. Absent for embedders with no agent
-            // runtime, where the plain execution manager remains the behaviour.
-            final SkillToolDispatcher toolDispatcher = context.getToolContext()
-                    .get(ToolContextKeys.SKILL_TOOL_DISPATCHER_KEY).orElse(this::dispatchWithoutHooks);
+            final List<ToolDefinition> filteredTools = offeredTools(skill, allowedTools, context);
 
             // The skill loop compacts nothing: it runs on a fresh scratch buffer per execution that never grows long
             // enough to need it. It still asks the engine for the view, so no LLM call reads the transcript directly.
@@ -287,14 +287,13 @@ public class LlmSkillExecutor implements SkillExecutor {
                         .withReasoningTraces(currentResponse.getReasoningTraces());
                 transcriptBuffer.addMessage(assistantMessage);
 
-                final ToolRegistry toolRegistry = context.getToolRegistry();
-                // Use the real execution ToolContext (principal, agent runtime id, filesystem, ...) — the same one
+                // Built on the real execution ToolContext (principal, agent runtime id, filesystem, ...) — the same one
                 // the fork path forwards — rather than an empty context, so user-invoked skill tools run with identity
                 // and environment. SkillExecutionContext guarantees a non-null ToolContext (defaults to empty).
                 final List<ToolUseResult> toolResults = truncated
                         ? refuseTruncatedToolUses(skill, currentResponse, iterationCount)
-                        : toolDispatcher.dispatch(toolRegistry, context.getToolContext(), currentResponse.getToolUses(),
-                                allowedTools, iterationCount);
+                        : dispatch(toolDispatcher, origin, context.getToolContext(), currentResponse.getToolUses(),
+                                iterationCount);
 
                 final Message toolResultMessage = Message.toolUseResults(toolResults);
                 transcriptBuffer.addMessage(toolResultMessage);
@@ -342,9 +341,6 @@ public class LlmSkillExecutor implements SkillExecutor {
             final SkillExecutionMetadata metadata = buildMetadata(iterationCount, accumulatedTokens, startTime);
             return SkillExecutionResult.success(currentResponse.getTextContent(), metadata);
 
-        } catch (ToolPermissionViolationException e) {
-            final SkillExecutionMetadata metadata = buildMetadata(0, accumulatedTokens, startTime);
-            return SkillExecutionResult.failure("Permission denied: " + e.getMessage(), e, metadata);
         } catch (Exception e) {
             final SkillExecutionMetadata metadata = buildMetadata(0, accumulatedTokens, startTime);
             return SkillExecutionResult.failure(e, metadata);
@@ -510,31 +506,41 @@ public class LlmSkillExecutor implements SkillExecutor {
     }
 
     /**
-     * Fallback {@link SkillToolDispatcher}: runs the batch straight through the {@link ToolExecutionManager}.
+     * Runs one response's tool calls through the narrowed dispatcher, in order, and turns each result into what the
+     * scratch transcript records.
      *
      * <p>
-     * This is what every caller got before the agent executor began binding a dispatcher, and it is still right for a
-     * host that has no hook registry to fire against. It skips PermissionRequest / PreTool / PostTool hooks and the
-     * side-effect approval gate, so the allow-list and the manager's ceiling are the only things standing in front of
-     * the tool.
-     *
-     * <p>
-     * {@code iterationCount} is unused here — it exists for hook contexts, and this path fires no hooks.
+     * The context each call runs with is built anew from the caller's: the caller's dispatcher is replaced by the
+     * narrowed one (a tool that dispatches further — a program, a nested skill — is held to the skill's bounds), and
+     * the loop's iteration is published for the Pre/PostTool contexts.
      */
-    private List<ToolUseResult> dispatchWithoutHooks(ToolRegistry toolRegistry, ToolContext toolContext,
-            List<ToolUse> toolUses, List<AllowedTool> allowedTools, int iterationCount) {
-        final List<ToolUseResult> results = toToolUseResults(
-                toolExecutionManager.executeAll(toolRegistry, toolContext, toolUses, allowedTools));
-        // These results feed this loop's LLM just as a bound dispatcher's do, so they carry the environment's notices
-        // too (SingleToolInvoker does it on the dispatcher path). executeAll keeps toolUses' order; the name is only
-        // for the drain's WARN line, so a manager that breaks that contract costs the log its name, not the result.
-        final ExecutionEnvironment environment = ExecutionEnvironmentAccess.of(toolContext).orElse(null);
-        final List<ToolUseResult> delivered = new ArrayList<>(results.size());
-        for (int i = 0; i < results.size(); i++) {
-            final String toolName = i < toolUses.size() ? toolUses.get(i).getName() : null;
-            delivered.add(EnvironmentNotices.deliver(results.get(i), environment, toolName));
+    private static List<ToolUseResult> dispatch(ToolCallDispatcher dispatcher, ToolCallOrigin origin,
+            ToolContext callerContext, List<ToolUse> toolUses, int iterationCount) {
+        final ToolContext.Builder builder = ToolContext.builder();
+        callerContext.getContext().forEach((name, value) -> {
+            if (!ToolContextKeys.TOOL_CALL_DISPATCHER.name().equals(name)) {
+                builder.put(name, value);
+            }
+        });
+        final ToolContext skillContext = builder.put(ToolContextKeys.TOOL_CALL_DISPATCHER, dispatcher)
+                .put(ToolContextKeys.ITERATION_COUNT, iterationCount).build();
+        final List<ToolUseResult> results = new ArrayList<>(toolUses.size());
+        for (ToolUse toolUse : toolUses) {
+            results.add(ToolDispatchResults.toToolUseResult(dispatcher.dispatch(toolUse, origin, skillContext)));
         }
-        return delivered;
+        return results;
+    }
+
+    /**
+     * Refuses an inline skill whose context carries no {@link ToolCallDispatcher}. Fail-closed: without one, the only
+     * way left to run the skill's tools would skip every gate in front of them.
+     */
+    private static SkillExecutionResult noDispatcher(Skill skill, TokenUsage tokens, Instant startTime) {
+        final String message = "Skill '" + skill.getName() + "' cannot run: no tool call dispatcher is bound to its"
+                + " tool context";
+        log.warn("{}", message);
+        return SkillExecutionResult.failure(message, new IllegalStateException(message),
+                buildMetadata(0, tokens, startTime));
     }
 
     /**

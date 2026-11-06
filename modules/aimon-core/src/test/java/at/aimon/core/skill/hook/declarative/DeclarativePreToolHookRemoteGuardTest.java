@@ -28,6 +28,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.event.PreToolContext;
 import at.aimon.core.hook.execution.HookResult;
@@ -363,8 +364,8 @@ class DeclarativePreToolHookRemoteGuardTest {
     }
 
     private static PreToolContext contextFor(String toolName) {
-        return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(new DefaultHookRegistry()).toolUse(ToolUse.of("call-1", toolName, Map.of()))
-                .iterationCount(3).build();
+        return PreToolContext.builder().origin(ToolCallOrigin.direct()).executorType(InvokerType.MAIN_AGENT)
+                .invokerName("default-agent").hookRegistry(new DefaultHookRegistry())
+                .toolUse(ToolUse.of("call-1", toolName, Map.of())).iterationCount(3).build();
     }
 }

@@ -4,16 +4,21 @@
  * <h2>Overview</h2>
  *
  * <p>
- * This package holds the single component both ReAct executors delegate a tool dispatch to:
- * {@link at.aimon.core.toolinvocation.SingleToolInvoker}. It runs the delicate per-tool sequence — interrupt-registrar
- * lifecycle plus PermissionRequest / PreTool / execute / PostTool hooks — that the main-agent executor
- * ({@code OrcaAgentExecutor}) and the subagent executor ({@code DefaultSubagentExecutor}) previously hand-cloned.
+ * This package holds the implementations of the single entrance through which a tool call reaches the gates,
+ * {@link at.aimon.core.agent.tool.ToolCallDispatcher}: the gated
+ * {@link at.aimon.core.toolinvocation.DefaultToolCallDispatcher}, which every gated loop binds into its tool context —
+ * the main agent ({@code OrcaAgentExecutor}), a fork ({@code DefaultSubagentExecutor}) and a slash-command skill
+ * ({@code LlmSkillExecutor}, through {@code narrow}) — and the explicitly named
+ * {@link at.aimon.core.toolinvocation.ToolCallDispatchers#ungated ungated} one. Behind the gated dispatcher sits
+ * {@link at.aimon.core.toolinvocation.SingleToolInvoker}, the delicate per-tool sequence — interrupt-registrar
+ * lifecycle plus PermissionRequest / approval / PreTool / execute / PostTool — assembled from one
+ * {@link at.aimon.core.toolinvocation.ToolInvocationSpec}.
  *
  * <p>
- * Consolidating this logic removes the highest parity/drift risk in the codebase (a divergence in permission-hook
- * ordering or interrupt-registrar cleanup is security-relevant) and makes the pipeline independently testable. Callers
- * vary only through {@link at.aimon.core.toolinvocation.ToolInvocationSpec} — the invoker type / name woven into every
- * hook context and the permission allow-list applied at dispatch.
+ * Keeping this logic in one place removes a parity/drift risk (a divergence in permission-hook ordering or
+ * interrupt-registrar cleanup is security-relevant). It is also the only package allowed to call
+ * {@code ToolExecutionManager#execute} / {@code #executeAll} ({@code ToolExecutionGateArchitectureTest}): a direct call
+ * elsewhere would pass schema validation while skipping every hook and approval gate.
  *
  * <h2>Package placement</h2>
  *

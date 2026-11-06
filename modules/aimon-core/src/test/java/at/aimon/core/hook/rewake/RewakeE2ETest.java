@@ -23,6 +23,7 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.DefaultAgentRuntimeRegistry;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.tool.Tool;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -117,6 +118,8 @@ class RewakeE2ETest {
         assertThat(secondInvocation.get().getCurrentToolUse().getName()).isEqualTo("Bash");
         assertThat(secondInvocation.get().getInvokerName()).isEqualTo(AGENT_NAME);
         assertThat(secondInvocation.get().getHookRegistry()).isSameAs(hookRegistry);
+        // A replay re-fires the hook; the rebuilt context says so rather than passing for a fresh direct call.
+        assertThat(secondInvocation.get().getOrigin()).isEqualTo(ToolCallOrigin.replay());
     }
 
     @Test
@@ -183,8 +186,9 @@ class RewakeE2ETest {
 
     private PreToolContext buildPreToolContext(String toolName, String command) {
         final ToolUse tu = ToolUse.of("e2e-tool-call-1", toolName, java.util.Map.of("command", command));
-        return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName(AGENT_NAME)
-                .hookRegistry(hookRegistry).toolUse(tu).iterationCount(0).timestamp(Instant.now()).build();
+        return PreToolContext.builder().origin(ToolCallOrigin.direct()).executorType(InvokerType.MAIN_AGENT)
+                .invokerName(AGENT_NAME).hookRegistry(hookRegistry).toolUse(tu).iterationCount(0)
+                .timestamp(Instant.now()).build();
     }
 
     /** Minimal {@link AgentRuntime} that opts into rewake re-dispatch. */

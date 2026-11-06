@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.hook.DefaultHookRegistry;
@@ -36,16 +37,17 @@ class DefaultHookExecutorTest {
 
     private static PreToolContext preCtx() {
         final HookRegistry registry = new DefaultHookRegistry();
-        return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(registry)
+        return PreToolContext.builder().origin(ToolCallOrigin.direct()).executorType(InvokerType.MAIN_AGENT)
+                .invokerName("agent").hookRegistry(registry)
                 .toolUse(ToolUse.of("id", "Bash", Map.of("command", "secret"))).iterationCount(1).build();
     }
 
     private static PostToolContext postCtx() {
         final HookRegistry registry = new DefaultHookRegistry();
         final ToolUse tu = ToolUse.of("id", "Bash", Map.of("command", "echo"));
-        return PostToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(registry).toolUse(tu).toolUseResult(ToolUseResult.success("id", "raw-output"))
-                .iterationCount(1).build();
+        return PostToolContext.builder().origin(ToolCallOrigin.direct()).executorType(InvokerType.MAIN_AGENT)
+                .invokerName("agent").hookRegistry(registry).toolUse(tu)
+                .toolUseResult(ToolUseResult.success("id", "raw-output")).iterationCount(1).build();
     }
 
     @Test

@@ -24,6 +24,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.environment.TestExecutionEnvironments;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
@@ -97,7 +98,28 @@ class DeclarativePreToolHookTest {
                 .containsEntry(SkillHookEnv.AIMON_SKILL_NAME, "my-skill")
                 .containsEntry(SkillHookEnv.AIMON_INVOKER_NAME, "default-agent")
                 .containsEntry(SkillHookEnv.AIMON_INVOKER_TYPE, InvokerType.MAIN_AGENT.name())
-                .containsEntry(SkillHookEnv.AIMON_TOOL_NAME, "Bash").containsEntry(SkillHookEnv.AIMON_ITERATION, "3");
+                .containsEntry(SkillHookEnv.AIMON_TOOL_NAME, "Bash").containsEntry(SkillHookEnv.AIMON_ITERATION, "3")
+                .containsEntry(SkillHookEnv.AIMON_TOOL_PATH, "direct")
+                .containsEntry(SkillHookEnv.AIMON_TOOL_PARENT_ID, "");
+    }
+
+    @Test
+    void execute_shellAction_exportsTheCallsOrigin() {
+        RecordingExecutor exec = new RecordingExecutor();
+        DeclarativePreToolHook hook = new DeclarativePreToolHook("my-skill", NameOnlyPredicate.ANY,
+                new ShellAction("echo hi", Duration.ofSeconds(2)), exec);
+
+        hook.execute(PreToolContext.builder().origin(ToolCallOrigin.code("tu-parent", "javascript"))
+                .executorType(InvokerType.MAIN_AGENT).invokerName("default-agent").hookRegistry(REGISTRY)
+                .toolUse(ToolUse.of("id", "Bash", Map.of())).iterationCount(1).build());
+        hook.execute(PreToolContext.builder().origin(ToolCallOrigin.skill("audit")).executorType(InvokerType.MAIN_AGENT)
+                .invokerName("default-agent").hookRegistry(REGISTRY).toolUse(ToolUse.of("id", "Bash", Map.of()))
+                .iterationCount(1).build());
+
+        assertThat(exec.calls.get(0).env).containsEntry(SkillHookEnv.AIMON_TOOL_PATH, "code")
+                .containsEntry(SkillHookEnv.AIMON_TOOL_PARENT_ID, "tu-parent");
+        assertThat(exec.calls.get(1).env).containsEntry(SkillHookEnv.AIMON_TOOL_PATH, "skill")
+                .containsEntry(SkillHookEnv.AIMON_TOOL_PARENT_ID, "");
     }
 
     @ParameterizedTest
@@ -168,9 +190,10 @@ class DeclarativePreToolHookTest {
                 new IsolatedShellActionExecutor(), null, null, Map.of(),
                 DeclarativeHookOptions.builder().failOpen(failOpen).build());
 
-        final HookResult result = hook.execute(PreToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                .invokerName("default-agent").hookRegistry(REGISTRY).toolUse(ToolUse.of("call-1", "Bash", Map.of()))
-                .iterationCount(3).executionEnvironment(TestExecutionEnvironments.ofShell(shell)).build());
+        final HookResult result = hook.execute(PreToolContext.builder().origin(ToolCallOrigin.direct())
+                .executorType(InvokerType.MAIN_AGENT).invokerName("default-agent").hookRegistry(REGISTRY)
+                .toolUse(ToolUse.of("call-1", "Bash", Map.of())).iterationCount(3)
+                .executionEnvironment(TestExecutionEnvironments.ofShell(shell)).build());
 
         assertThat(result.getStatus()).isEqualTo(failOpen ? HookStatus.SUCCESS : HookStatus.BLOCKED);
         if (!failOpen) {
@@ -400,8 +423,9 @@ class DeclarativePreToolHookTest {
     }
 
     private static PreToolContext contextFor(String toolName) {
-        return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).toolUse(ToolUse.of("call-1", toolName, Map.of())).iterationCount(3).build();
+        return PreToolContext.builder().origin(ToolCallOrigin.direct()).executorType(InvokerType.MAIN_AGENT)
+                .invokerName("default-agent").hookRegistry(REGISTRY).toolUse(ToolUse.of("call-1", toolName, Map.of()))
+                .iterationCount(3).build();
     }
 
     private static final class RecordingExecutor implements ShellActionExecutor {

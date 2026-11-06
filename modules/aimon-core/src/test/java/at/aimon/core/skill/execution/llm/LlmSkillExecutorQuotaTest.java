@@ -44,6 +44,7 @@ import at.aimon.core.skill.execution.SkillExecutionContext;
 import at.aimon.core.skill.execution.SkillExecutionRequest;
 import at.aimon.core.skill.execution.SkillExecutionResult;
 import at.aimon.core.skill.render.DefaultSkillContentRenderer;
+import at.aimon.core.toolinvocation.ToolCallDispatchers;
 import at.aimon.core.tools.ToolContextKeys;
 
 /**
@@ -177,7 +178,11 @@ class LlmSkillExecutorQuotaTest {
                 .content(SkillContent.of("Audit the module")).build();
         final SkillExecutionContext context = SkillExecutionContext.builder().skill(skill).defaultModel(model)
                 .toolRegistry(registry).executionId(ExecutionId.generate("skill:test"))
-                .toolContext(ToolContext.builder().put(ToolContextKeys.QUOTA_GUARD, guard).build()).build();
+                .toolContext(ToolContext.builder().put(ToolContextKeys.QUOTA_GUARD, guard)
+                        .put(ToolContextKeys.TOOL_CALL_DISPATCHER,
+                                ToolCallDispatchers.ungated(new DefaultToolExecutionManager(), registry))
+                        .build())
+                .build();
         return executor.execute(context, SkillExecutionRequest.builder().build());
     }
 

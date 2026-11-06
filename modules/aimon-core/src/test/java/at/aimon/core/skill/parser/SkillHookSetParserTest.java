@@ -21,6 +21,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -527,8 +528,8 @@ class SkillHookSetParserTest {
         final SkillHookSet set = parser.parse("deploy", hooks);
 
         final at.aimon.core.hook.event.PreToolContext context = at.aimon.core.hook.event.PreToolContext.builder()
-                .executorType(at.aimon.core.agent.InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(new at.aimon.core.hook.DefaultHookRegistry())
+                .origin(ToolCallOrigin.direct()).executorType(at.aimon.core.agent.InvokerType.MAIN_AGENT)
+                .invokerName("agent").hookRegistry(new at.aimon.core.hook.DefaultHookRegistry())
                 .toolUse(at.aimon.core.llm.ToolUse.of("call-1", "Bash", Map.of())).iterationCount(1).build();
         assertThat(set.getPreToolHooks().get(0).execute(context).getStatus()).isEqualTo(HookStatus.BLOCKED);
         assertThat(set.getPreToolHooks().get(1).execute(context).getStatus()).isEqualTo(HookStatus.SUCCESS);

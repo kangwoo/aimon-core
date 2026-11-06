@@ -19,6 +19,7 @@ import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.command.execution.ExecutionMetadata;
@@ -44,11 +45,12 @@ class ExecutionCancellationContextsTest {
                     .hookRegistry(REGISTRY).executionCancellation(signal).userMessage("hi").build(),
             signal -> PreCompactContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("agent")
                     .hookRegistry(REGISTRY).executionCancellation(signal).trigger(CompactionTrigger.AUTO).build(),
-            signal -> PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent")
-                    .hookRegistry(REGISTRY).executionCancellation(signal).toolUse(TOOL_USE).iterationCount(1).build(),
-            signal -> PermissionRequestContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("agent")
-                    .hookRegistry(REGISTRY).executionCancellation(signal).toolName("Bash")
-                    .toolInput(ToolInput.of(Map.of())).build());
+            signal -> PreToolContext.builder().origin(ToolCallOrigin.direct()).executorType(InvokerType.MAIN_AGENT)
+                    .invokerName("agent").hookRegistry(REGISTRY).executionCancellation(signal).toolUse(TOOL_USE)
+                    .iterationCount(1).build(),
+            signal -> PermissionRequestContext.builder().origin(ToolCallOrigin.direct())
+                    .invokerType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(REGISTRY)
+                    .executionCancellation(signal).toolName("Bash").toolInput(ToolInput.of(Map.of())).build());
 
     private static final List<Function<CancellationSignal, HookContext>> REPORTS = List.of(
             ExecutionCancellationContextsTest::onStop, ExecutionCancellationContextsTest::postCompact,
@@ -135,8 +137,8 @@ class ExecutionCancellationContextsTest {
     }
 
     private static HookContext postTool(CancellationSignal signal) {
-        return PostToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(REGISTRY).executionCancellation(signal).toolUse(TOOL_USE)
+        return PostToolContext.builder().origin(ToolCallOrigin.direct()).executorType(InvokerType.MAIN_AGENT)
+                .invokerName("agent").hookRegistry(REGISTRY).executionCancellation(signal).toolUse(TOOL_USE)
                 .toolUseResult(ToolUseResult.success("call-1", "ok")).iterationCount(1).build();
     }
 

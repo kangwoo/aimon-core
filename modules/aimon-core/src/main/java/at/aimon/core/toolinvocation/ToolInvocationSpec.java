@@ -6,6 +6,7 @@ import java.util.Objects;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.permission.AllowedTool;
@@ -18,10 +19,9 @@ import at.aimon.core.llm.ToolUse;
  * for one {@link ToolUse}.
  *
  * <p>
- * The spec exists so both the main-agent ReAct loop ({@code OrcaAgentExecutor}) and the subagent loop
- * ({@code DefaultSubagentExecutor}) can share the same tool-invocation core without duplicating the delicate hook and
- * interrupt sequencing (removing parity/drift risk). The two callers differ only in a handful of values that this
- * spec captures explicitly:
+ * The spec is assembled in one place, {@link DefaultToolCallDispatcher}, which every gated loop — the main agent, a
+ * fork, a slash-command skill — dispatches through. The loops differ only in a handful of values that this spec
+ * captures explicitly:
  *
  * <ul>
  * <li>{@link #getInvokerType()} / {@link #getInvokerName()} — {@code MAIN_AGENT} vs {@code SUBAGENT} identity woven
@@ -29,6 +29,8 @@ import at.aimon.core.llm.ToolUse;
  * every hook context.
  * <li>{@link #getAllowedTools()} — the main agent runs unrestricted (empty list); a subagent constrains dispatch to its
  * declared allow-list.
+ * <li>{@link #getOrigin()} — the path the call arrived by, woven into the PermissionRequest / PreTool / PostTool
+ * contexts.
  * </ul>
  *
  * <p>
@@ -46,6 +48,7 @@ public final class ToolInvocationSpec {
     private final InterruptCoordinator coordinator;
     private final ToolContext toolContext;
     private final ToolUse toolUse;
+    private final ToolCallOrigin origin;
     private final int iterationCount;
 
     private ToolInvocationSpec(Builder builder) {
@@ -60,6 +63,7 @@ public final class ToolInvocationSpec {
         this.coordinator = Objects.requireNonNull(builder.coordinator, "coordinator cannot be null");
         this.toolContext = Objects.requireNonNull(builder.toolContext, "toolContext cannot be null");
         this.toolUse = Objects.requireNonNull(builder.toolUse, "toolUse cannot be null");
+        this.origin = Objects.requireNonNull(builder.origin, "origin cannot be null");
         this.iterationCount = builder.iterationCount;
     }
 
@@ -118,6 +122,11 @@ public final class ToolInvocationSpec {
         return toolUse;
     }
 
+    /** @return the path the call arrived by, stamped onto the PermissionRequest / PreTool / PostTool contexts. */
+    public ToolCallOrigin getOrigin() {
+        return origin;
+    }
+
     /** @return the current ReAct iteration count, forwarded to Pre/PostTool hook contexts. */
     public int getIterationCount() {
         return iterationCount;
@@ -138,6 +147,7 @@ public final class ToolInvocationSpec {
         private InterruptCoordinator coordinator;
         private ToolContext toolContext;
         private ToolUse toolUse;
+        private ToolCallOrigin origin;
         private int iterationCount;
 
         private Builder() {
@@ -200,6 +210,18 @@ public final class ToolInvocationSpec {
         /** Sets the tool use request being dispatched. */
         public Builder toolUse(ToolUse toolUse) {
             this.toolUse = toolUse;
+            return this;
+        }
+
+        /**
+         * Sets the path the call arrived by.
+         *
+         * @param origin
+         *            the origin, stamped onto the PermissionRequest / PreTool / PostTool contexts (required)
+         * @return this builder
+         */
+        public Builder origin(ToolCallOrigin origin) {
+            this.origin = origin;
             return this;
         }
 

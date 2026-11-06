@@ -10,6 +10,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.hook.event.PermissionDeniedContext;
 import at.aimon.core.hook.event.PermissionDeniedHook;
@@ -36,8 +37,9 @@ class DefaultHookExecutionManagerPermissionTest {
         final HookRegistry registry = mock(HookRegistry.class);
         when(registry.getHooks(HookEventType.PERMISSION_REQUEST)).thenReturn(List.<PermissionRequestHook>of());
 
-        final PermissionRequestContext ctx = PermissionRequestContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).toolName("Bash").toolInput(ToolInput.of()).build();
+        final PermissionRequestContext ctx = PermissionRequestContext.builder().origin(ToolCallOrigin.direct())
+                .invokerType(InvokerType.MAIN_AGENT).invokerName("main").hookRegistry(registry).toolName("Bash")
+                .toolInput(ToolInput.of()).build();
 
         final List<HookResult> results = manager.executePermissionRequest(ctx);
         assertThat(results).hasSize(1);
@@ -53,8 +55,9 @@ class DefaultHookExecutionManagerPermissionTest {
         final HookRegistry registry = mock(HookRegistry.class);
         when(registry.getHooks(HookEventType.PERMISSION_REQUEST)).thenReturn(List.<PermissionRequestHook>of());
 
-        final PermissionRequestContext ctx = PermissionRequestContext.builder().invokerType(InvokerType.MAIN_AGENT)
-                .invokerName("main").hookRegistry(registry).toolName("Bash").toolInput(ToolInput.of()).build();
+        final PermissionRequestContext ctx = PermissionRequestContext.builder().origin(ToolCallOrigin.direct())
+                .invokerType(InvokerType.MAIN_AGENT).invokerName("main").hookRegistry(registry).toolName("Bash")
+                .toolInput(ToolInput.of()).build();
 
         final List<HookResult> results = manager.executePermissionRequest(ctx);
 

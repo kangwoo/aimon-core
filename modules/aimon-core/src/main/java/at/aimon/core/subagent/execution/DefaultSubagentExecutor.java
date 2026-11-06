@@ -63,6 +63,8 @@ import at.aimon.core.agent.tool.InterruptToolKeys;
 import at.aimon.core.agent.tool.ParallelToolDispatcher;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.Tool;
+import at.aimon.core.agent.tool.ToolCallDispatcher;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolContextEnrichmentInfo;
@@ -103,9 +105,10 @@ import at.aimon.core.subagent.SubagentExecutionPolicy;
 import at.aimon.core.subagent.SubagentPolicyCapability;
 import at.aimon.core.subagent.SubagentToolScope;
 import at.aimon.core.subagent.internal.DeadlineScheduler;
+import at.aimon.core.toolinvocation.DefaultToolCallDispatcher;
 import at.aimon.core.toolinvocation.SingleToolInvoker;
 import at.aimon.core.toolinvocation.ToolCallTracing;
-import at.aimon.core.toolinvocation.ToolInvocationSpec;
+import at.aimon.core.toolinvocation.ToolDispatchResults;
 import at.aimon.core.toolinvocation.TracingCompactionObserver;
 import at.aimon.core.toolinvocation.approval.SideEffectApprovalGate;
 import at.aimon.core.tools.ToolContextKeys;
@@ -556,9 +559,10 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 // follow-up.
                 // Archived artifacts of this fork land under its own execution id (execution-environment-files §7).
                 final ArtifactCollector artifactCollector = new ArtifactCollector(executionId.value());
+                // The fork's own entrance to the tool gates, bound into the context it builds for itself.
                 final ToolContext toolContext = createToolContext(context, request, sessionRegistry,
                         coordinator.getSignal(), effectiveMetadata, executionId, artifactCollector,
-                        executionEnvironment, engine);
+                        executionEnvironment, engine, forkDispatcher(context, request, sessionRegistry, coordinator));
 
                 final LoopContext lc = LoopContext.builder().context(context).transcriptBuffer(transcriptBuffer)
                         .executionId(executionId).systemPromptParts(systemPromptParts)
@@ -589,6 +593,20 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 parentCancelReg.remove();
             }
         }
+    }
+
+    /**
+     * The fork's own entrance to the tool gates, bound into the context it builds for itself: the subagent's registry
+     * and allow-list, its hook registry, the {@code SUBAGENT} identity and this execution's coordinator.
+     */
+    private ToolCallDispatcher forkDispatcher(SubagentExecutionContext context, SubagentExecutionRequest request,
+            ToolRegistry sessionRegistry, InterruptCoordinator coordinator) {
+        final Subagent subagent = context.getSubagent();
+        return DefaultToolCallDispatcher.builder().invoker(singleToolInvoker).invokerType(InvokerType.SUBAGENT)
+                .invokerName(subagent.getName()).hookRegistry(context.getHookRegistry())
+                .executionAttributes(request.getExecutionAttributes()).toolRegistry(context.getToolRegistry())
+                .sessionRegistry(sessionRegistry).allowedTools(subagent.getAllowedTools()).coordinator(coordinator)
+                .build();
     }
 
     /** Whether the request's policy requires a structured result, for a result that ends the fork before its loop. */
@@ -1262,6 +1280,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      *            the fork's execution environment, published under the write-once key before the enrichers run
      * @param engine
      *            the context engine the fork runs under, published so a fork it spawns can inherit it
+     * @param toolCallDispatcher
+     *            the fork's dispatcher, bound under the write-once {@link ToolContextKeys#TOOL_CALL_DISPATCHER}
      * @return the tool context (never null)
      */
     // Every argument is a distinct per-execution value the context publishes; bundling them would only move the list.
@@ -1269,7 +1289,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     private ToolContext createToolContext(SubagentExecutionContext context, SubagentExecutionRequest request,
             ToolRegistry sessionRegistry, CancellationSignal cancellationSignal, LlmCallMetadata effectiveMetadata,
             ExecutionId executionId, ArtifactCollector artifactCollector, ExecutionEnvironment executionEnvironment,
-            ContextEngine engine) {
+            ContextEngine engine, ToolCallDispatcher toolCallDispatcher) {
         final ToolContext.Builder builder = ToolContext.builder();
         builder.put(ToolContextKeys.AGENT_RUNTIME_ID, context.getAgentRuntimeId());
         // No SESSION_ID: this run is not a session's turn. The fork used to publish the id it had minted for its own
@@ -1338,6 +1358,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // cannot lift the deadline.
         builder.put(ToolContextKeys.CONTEXT_ENGINE, engine);
         request.getDeadline().ifPresent(d -> builder.put(ToolContextKeys.EXECUTION_DEADLINE, d));
+        // The gates every tool call of this fork passes — its own, not the parent's: this is a new builder, so nothing
+        // of the parent's binding is carried over. Write-once and before the enrichers, so none can swap it out.
+        builder.put(ToolContextKeys.TOOL_CALL_DISPATCHER, toolCallDispatcher);
 
         // Apply forwarded ToolContextEnrichers last, mirroring the main-agent executor, so module-supplied keys are
         // present for subagent tools.
@@ -1804,10 +1827,10 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         final Tracer.Span toolSpan = ToolCallTracing.open(lc.tracer, toolContext, toolUse, iterationCount,
                 InvokerType.SUBAGENT);
         if (toolSpan == null) {
-            return invokeTool(lc, toolContext, toolUse, iterationCount);
+            return invokeTool(toolContext, toolUse, iterationCount);
         }
         try {
-            final ToolUseResult result = invokeTool(lc, ToolCallTracing.contextUnder(toolSpan, toolContext), toolUse,
+            final ToolUseResult result = invokeTool(ToolCallTracing.contextUnder(toolSpan, toolContext), toolUse,
                     iterationCount);
             ToolCallTracing.recordOutcome(toolSpan, result, lc.tracePayloadPolicy);
             return result;
@@ -1819,17 +1842,22 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         }
     }
 
-    private ToolUseResult invokeTool(LoopContext lc, ToolContext toolContext, ToolUse toolUse, int iterationCount) {
-        final Subagent subagent = lc.subagent();
-        // Delegate the interrupt-registrar + PermissionRequest/PreTool/execute/PostTool sequence to the shared
-        // pipeline. The subagent variance is the SUBAGENT invoker identity and its declared allow-list.
-        final ToolInvocationSpec spec = ToolInvocationSpec.builder().invokerType(InvokerType.SUBAGENT)
-                .invokerName(subagent.getName()).hookRegistry(lc.hookRegistry())
-                .executionAttributes(lc.executionAttributes).toolRegistry(lc.context.getToolRegistry())
-                .sessionRegistry(lc.sessionRegistry).allowedTools(subagent.getAllowedTools())
-                .coordinator(lc.coordinator).toolContext(toolContext).toolUse(toolUse).iterationCount(iterationCount)
-                .build();
-        return singleToolInvoker.invoke(spec);
+    /**
+     * Runs one call through the fork's {@link ToolCallDispatcher}, read from the context it was bound into, and turns
+     * the result into what the transcript records. A context with no dispatcher is refused rather than run around the
+     * gates; the fork always binds one.
+     */
+    private static ToolUseResult invokeTool(ToolContext toolContext, ToolUse toolUse, int iterationCount) {
+        final Optional<ToolCallDispatcher> dispatcher = toolContext.get(ToolContextKeys.TOOL_CALL_DISPATCHER);
+        if (dispatcher.isEmpty()) {
+            return ToolUseResult.error(toolUse.getId(),
+                    "Tool call refused: no tool call dispatcher is bound to this execution");
+        }
+        // The iteration rides on the context the dispatcher is handed, which puts it on the Pre/PostTool contexts.
+        final ToolContext iterationContext = ToolContext.builder().putAll(toolContext.getContext())
+                .put(ToolContextKeys.ITERATION_COUNT, iterationCount).build();
+        return ToolDispatchResults
+                .toToolUseResult(dispatcher.get().dispatch(toolUse, ToolCallOrigin.direct(), iterationContext));
     }
 
     /**

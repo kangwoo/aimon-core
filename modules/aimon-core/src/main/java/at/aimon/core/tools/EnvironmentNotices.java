@@ -14,9 +14,10 @@ import at.aimon.core.llm.ToolUseResult;
  * the result of whichever tool call happened to come next (issue #254).
  *
  * <p>
- * Only the model-facing dispatch paths call {@link #deliver}: {@code SingleToolInvoker} after the PostTool chain, and
- * the hook-less fallback of {@code LlmSkillExecutor}. A path whose results go to a script, a routine step or a hook
- * must not — draining there would hand the notice to a reader that is not the model and lose it.
+ * The dispatch paths drain once per call ({@link #drain}): the gated pipeline ({@code SingleToolInvoker}) after the
+ * PostTool chain, and the explicitly ungated dispatcher. They hand the notices on as a list, and a model-facing loop
+ * renders them ({@link #render}) when it records the result. A path whose results go to a routine step or a hook must
+ * not drain — that would hand the notice to a reader that is not the model and lose it.
  *
  * <p>
  * The notices are rendered the way {@code Bash} renders a command's own {@code ShellCommandResult.notices()}: one
@@ -53,22 +54,40 @@ public final class EnvironmentNotices {
      */
     public static ToolUseResult deliver(ToolUseResult result, ExecutionEnvironment environment, String toolName) {
         Objects.requireNonNull(result, "result must not be null");
-        if (environment == null) {
-            return result;
-        }
-        final List<String> notices;
-        try {
-            notices = environment.drainNotices();
-        } catch (RuntimeException e) {
-            log.warn("Draining environment notices failed for tool '{}', toolUseId={}: {}", toolName,
-                    result.getToolUseId(), e.getMessage());
-            return result;
-        }
-        final String rendered = render(notices);
+        final String rendered = render(drain(environment, toolName, result.getToolUseId()));
         if (rendered.isEmpty()) {
             return result;
         }
         return result.withContent(rendered + result.getContent());
+    }
+
+    /**
+     * Drains {@code environment} once and returns what it had queued.
+     *
+     * <p>
+     * Returns an empty list when there is no environment or draining threw: a notice is auxiliary and must never cost
+     * the caller the tool result it is waiting on.
+     *
+     * @param environment
+     *            the environment the call ran against, or {@code null} when the tool context carries none
+     * @param toolName
+     *            the tool's name, for the log line when draining fails, or {@code null} when unknown
+     * @param toolUseId
+     *            the call's id, for the same log line, or {@code null} when unknown
+     * @return the notices (never null)
+     */
+    public static List<String> drain(ExecutionEnvironment environment, String toolName, String toolUseId) {
+        if (environment == null) {
+            return List.of();
+        }
+        try {
+            final List<String> notices = environment.drainNotices();
+            return notices == null ? List.of() : notices;
+        } catch (RuntimeException e) {
+            log.warn("Draining environment notices failed for tool '{}', toolUseId={}: {}", toolName, toolUseId,
+                    e.getMessage());
+            return List.of();
+        }
     }
 
     /**
@@ -79,7 +98,7 @@ public final class EnvironmentNotices {
      *            the notices, or {@code null} for none
      * @return the rendered lines, each ending in a newline, or an empty string
      */
-    static String render(List<String> notices) {
+    public static String render(List<String> notices) {
         if (notices == null || notices.isEmpty()) {
             return "";
         }

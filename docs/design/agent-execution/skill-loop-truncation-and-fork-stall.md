@@ -724,7 +724,7 @@ changed nothing but the refused-only case.
 
 ### 7.6 `skill/execution/llm/LlmSkillExecutorTruncationTest` (new)
 
-Fixtures follow `LlmSkillExecutorTest` (queue-backed stub client, `CountingTool`, a recording `SkillToolDispatcher`):
+Fixtures follow `LlmSkillExecutorTest` (queue-backed stub client, `CountingTool`, a recording `ToolCallDispatcher`):
 
 - **Fallback path:** a cut response calling `CountingTool`, then an answer → tool 0; the second call's last message holds the
   refusal; WARN names the skill, `iteration 1`, the tool name; success.

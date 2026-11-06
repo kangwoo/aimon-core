@@ -239,6 +239,7 @@ public final class DeclarativePostToolHook implements PostToolHook {
         env.put(SkillHookEnv.AIMON_INVOKER_TYPE, context.getInvokerType().name());
         env.put(SkillHookEnv.AIMON_TOOL_NAME, toolName);
         env.put(SkillHookEnv.AIMON_ITERATION, Integer.toString(context.getIterationCount()));
+        SkillHookEnv.putToolOrigin(env, context.getOrigin());
         env.put(SkillHookEnv.AIMON_TOOL_RESULT_STATUS,
                 context.getCurrentToolUseResult().isError() ? "error" : "success");
         return env;
