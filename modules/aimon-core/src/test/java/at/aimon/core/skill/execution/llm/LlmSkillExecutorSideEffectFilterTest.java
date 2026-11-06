@@ -17,7 +17,9 @@ import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
+import at.aimon.core.agent.tool.ToolDescriptor;
 import at.aimon.core.agent.tool.ToolInput;
+import at.aimon.core.agent.tool.ToolOfferContext;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmClient;
@@ -184,5 +186,48 @@ class LlmSkillExecutorSideEffectFilterTest {
         assertThat(result.isSuccess()).isTrue();
         assertThat(writerRan).as("the blocked tool never executed").isFalse();
         assertThat(client.offeredToolNames).as("the loop ran a second iteration after the refusal").hasSize(2);
+    }
+
+    @Test
+    @DisplayName("the skill offers and runs a tool under its own offer context, replacing one the caller bound")
+    void skillBindsItsOwnOfferContext() {
+        final List<ToolOfferContext> ranUnder = new CopyOnWriteArrayList<>();
+        final Tool contextual = new AbstractTool("Contextual", "d", Map.of("type", "object")) {
+            @Override
+            public ToolDescriptor describe(ToolOfferContext context) {
+                return context.isOffering()
+                        ? ToolDescriptor.from(this).sideEffectLevel(SideEffectLevel.READ_ONLY).build()
+                        : ToolDescriptor.of(this);
+            }
+
+            @Override
+            public ToolResult execute(ToolInput input, ToolContext context) {
+                ranUnder.add(ToolOfferContext.of(context));
+                return ToolResult.success("ran");
+            }
+        };
+        final DefaultToolRegistry registry = new DefaultToolRegistry();
+        registry.register(contextual);
+        final DefaultToolExecutionManager manager = new DefaultToolExecutionManager(SideEffectLevel.READ_ONLY);
+        final DefinitionCapturingLlmClient client = new DefinitionCapturingLlmClient(
+                LlmResponse.of("run", List.of(ToolUse.of("call-1", "Contextual", Map.of()))), LlmResponse.text("done"));
+        // The enclosing turn's iteration already bound an offer of its own; the skill must not trip the write-once key.
+        final ToolOfferContext callers = ToolOfferContext.builder().build();
+        final SkillExecutionContext context = SkillExecutionContext.builder().skill(skill())
+                .defaultModel(LlmModel.builder().build()).toolRegistry(registry)
+                .executionId(ExecutionId.generate("skill:offer-test"))
+                .toolContext(ToolContext.builder()
+                        .put(ToolContextKeys.TOOL_CALL_DISPATCHER, ToolCallDispatchers.ungated(manager, registry))
+                        .put(ToolContextKeys.TOOL_OFFER_CONTEXT, callers).build())
+                .build();
+
+        final SkillExecutionResult result = new LlmSkillExecutor(client, new DefaultSkillContentRenderer(), manager)
+                .execute(context, SkillExecutionRequest.builder().build());
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(client.firstOffer()).containsExactly("Contextual");
+        assertThat(ranUnder).hasSize(1);
+        assertThat(ranUnder.get(0)).isNotSameAs(callers);
+        assertThat(ranUnder.get(0).getCeiling()).isEqualTo(SideEffectLevel.READ_ONLY);
     }
 }

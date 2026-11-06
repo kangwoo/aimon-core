@@ -29,7 +29,9 @@ import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.DestructiveBehavior;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.Tool;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolContext;
+import at.aimon.core.agent.tool.ToolDescriptor;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.hook.execution.AskPromptHandler;
@@ -112,7 +114,8 @@ class SideEffectApprovalGateTest {
      * the arguments; the ones that are about the prompt build their own {@link ToolUse}.
      */
     private static Optional<String> ask(SideEffectApprovalGate gate, Tool tool, ToolContext context) {
-        return gate.denialReason(tool, ToolUse.of("call-1", tool.getDefinition().getName(), Map.of()), context);
+        return gate.denialReason(ToolDescriptor.of(tool),
+                ToolUse.of("call-1", tool.getDefinition().getName(), Map.of()), ToolCallOrigin.direct(), context);
     }
 
     private static ToolContext turnContext(String sessionId) {
@@ -308,8 +311,9 @@ class SideEffectApprovalGateTest {
 
         private String promptFor(Tool tool, Map<String, Object> input) {
             final RecordingHandler handler = new RecordingHandler(Decision.ALLOW);
-            new SideEffectApprovalGate(handler).denialReason(tool,
-                    ToolUse.of("call-1", tool.getDefinition().getName(), input), turnContext("s-1"));
+            new SideEffectApprovalGate(handler).denialReason(ToolDescriptor.of(tool),
+                    ToolUse.of("call-1", tool.getDefinition().getName(), input), ToolCallOrigin.direct(),
+                    turnContext("s-1"));
             return handler.prompts.get(0);
         }
 
@@ -364,11 +368,134 @@ class SideEffectApprovalGateTest {
             final SideEffectApprovalGate gate = new SideEffectApprovalGate(handler);
             final Tool bash = tool("Bash", SideEffectLevel.MUTATING);
 
-            gate.denialReason(bash, ToolUse.of("call-1", "Bash", Map.of("command", "ls")), turnContext("s-1"));
-            gate.denialReason(bash, ToolUse.of("call-2", "Bash", Map.of("command", "rm -rf /")), turnContext("s-1"));
+            gate.denialReason(ToolDescriptor.of(bash), ToolUse.of("call-1", "Bash", Map.of("command", "ls")),
+                    ToolCallOrigin.direct(), turnContext("s-1"));
+            gate.denialReason(ToolDescriptor.of(bash), ToolUse.of("call-2", "Bash", Map.of("command", "rm -rf /")),
+                    ToolCallOrigin.direct(), turnContext("s-1"));
 
             assertThat(handler.callCount()).as("the prompt showed one call but the answer bought the tool")
                     .isEqualTo(1);
+        }
+    }
+
+    // --- descriptor and call path ------------------------------------------------------------------------------
+
+    private static ToolUse callOf(ToolDescriptor descriptor) {
+        return ToolUse.of("call-1", descriptor.getName(), Map.of());
+    }
+
+    private static ToolCallOrigin fromCode() {
+        return ToolCallOrigin.code("exec-1", "javascript");
+    }
+
+    @Nested
+    @DisplayName("descriptor and call path (programmatic tool calling decisions 10-12)")
+    class DescriptorAndPath {
+
+        @Test
+        @DisplayName("an approval-delegated descriptor is never asked about, whatever it declares")
+        void approvalDelegated_isNotAsked() {
+            final RecordingHandler handler = new RecordingHandler(Decision.DENY);
+            final SideEffectApprovalGate gate = new SideEffectApprovalGate(handler);
+            final ToolDescriptor delegated = ToolDescriptor.from(tool("ExecuteCode", SideEffectLevel.MUTATING))
+                    .approvalDelegated(true).build();
+
+            assertThat(gate.denialReason(delegated, callOf(delegated), ToolCallOrigin.direct(), turnContext("s-1")))
+                    .isEmpty();
+            assertThat(handler.callCount()).isZero();
+        }
+
+        @Test
+        @DisplayName("the gate judges the descriptor's axes, not the tool's getters")
+        void judgesTheDescriptor() {
+            final RecordingHandler handler = new RecordingHandler(Decision.DENY);
+            final SideEffectApprovalGate gate = new SideEffectApprovalGate(handler);
+            final ToolDescriptor readOnly = ToolDescriptor.from(tool(TOOL_NAME, SideEffectLevel.MUTATING))
+                    .sideEffectLevel(SideEffectLevel.READ_ONLY).build();
+
+            assertThat(gate.denialReason(readOnly, callOf(readOnly), ToolCallOrigin.direct(), turnContext("s-1")))
+                    .isEmpty();
+            assertThat(handler.callCount()).isZero();
+        }
+
+        @Test
+        @DisplayName("a call from code with no remembered answer is refused without a prompt, and nothing is remembered")
+        void codePath_unanswered_isRefusedWithoutAsking() {
+            final RecordingHandler handler = new RecordingHandler(Decision.ALLOW);
+            final InMemoryToolApprovalStore store = new InMemoryToolApprovalStore();
+            final SideEffectApprovalGate gate = new SideEffectApprovalGate(SideEffectLevel.READ_ONLY, handler, store);
+            final ToolDescriptor write = ToolDescriptor.of(tool(TOOL_NAME, SideEffectLevel.MUTATING));
+
+            final Optional<String> refusal = gate.denialReason(write, callOf(write), fromCode(), turnContext("s-1"));
+
+            assertThat(refusal)
+                    .hasValueSatisfying(reason -> assertThat(reason).contains("Call 'Write' directly first"));
+            assertThat(handler.callCount()).isZero();
+            assertThat(store.lookup("session:s-1", TOOL_NAME)).isEmpty();
+        }
+
+        @Test
+        @DisplayName("a call from code passes on an approval the user gave a direct call, and is refused on a decline")
+        void codePath_followsTheRememberedAnswer() {
+            final ToolDescriptor write = ToolDescriptor.of(tool(TOOL_NAME, SideEffectLevel.MUTATING));
+            final ToolDescriptor edit = ToolDescriptor.of(tool("Edit", SideEffectLevel.MUTATING));
+            final RecordingHandler allow = new RecordingHandler(Decision.ALLOW);
+            final InMemoryToolApprovalStore store = new InMemoryToolApprovalStore();
+            final SideEffectApprovalGate gate = new SideEffectApprovalGate(SideEffectLevel.READ_ONLY, allow, store);
+
+            // The user approves Write on a direct call...
+            assertThat(gate.denialReason(write, callOf(write), ToolCallOrigin.direct(), turnContext("s-1"))).isEmpty();
+            // ...so the code path uses that answer, without another prompt.
+            assertThat(gate.denialReason(write, callOf(write), fromCode(), turnContext("s-1"))).isEmpty();
+            assertThat(allow.callCount()).isEqualTo(1);
+
+            store.remember("session:s-1", "Edit", false);
+            assertThat(gate.denialReason(edit, callOf(edit), fromCode(), turnContext("s-1")))
+                    .hasValueSatisfying(reason -> assertThat(reason).contains("not approved by the user"));
+            assertThat(allow.callCount()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("a call from code in a run with no session is refused without a prompt")
+        void codePath_noScope_isRefused() {
+            final RecordingHandler handler = new RecordingHandler(Decision.ALLOW);
+            final SideEffectApprovalGate gate = new SideEffectApprovalGate(handler);
+            final ToolDescriptor write = ToolDescriptor.of(tool(TOOL_NAME, SideEffectLevel.MUTATING));
+
+            assertThat(gate.denialReason(write, callOf(write), fromCode(), ToolContext.empty())).isPresent();
+            assertThat(handler.callCount()).isZero();
+        }
+
+        @Test
+        @DisplayName("an answer is remembered under the approval key, so two tools sharing it share the answer")
+        void approvalKey_isShared() {
+            final RecordingHandler handler = new RecordingHandler(Decision.DENY);
+            final SideEffectApprovalGate gate = new SideEffectApprovalGate(handler);
+            final ToolDescriptor bash = ToolDescriptor.of(tool("Bash", SideEffectLevel.MUTATING));
+            final ToolDescriptor viaCode = ToolDescriptor.from(tool("ExecuteCode", SideEffectLevel.MUTATING))
+                    .approvalKey("Bash").build();
+
+            // Declining Bash...
+            assertThat(gate.denialReason(bash, callOf(bash), ToolCallOrigin.direct(), turnContext("s-1"))).isPresent();
+            // ...declines the tool that shares its key, without a second question.
+            assertThat(gate.denialReason(viaCode, callOf(viaCode), ToolCallOrigin.direct(), turnContext("s-1")))
+                    .hasValueSatisfying(reason -> assertThat(reason).contains("'Bash'"));
+            assertThat(handler.callCount()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("a prompt under another tool's key names that key and the path asking for it")
+        void approvalKey_promptNamesThePath() {
+            final RecordingHandler handler = new RecordingHandler(Decision.ALLOW);
+            final ToolDescriptor viaCode = ToolDescriptor.from(tool("ExecuteCode", SideEffectLevel.MUTATING))
+                    .approvalKey("Bash").build();
+
+            new SideEffectApprovalGate(handler).denialReason(viaCode,
+                    ToolUse.of("call-1", "ExecuteCode", Map.of("code", "print(1)")), ToolCallOrigin.direct(),
+                    turnContext("s-1"));
+
+            assertThat(handler.prompts.get(0)).contains("Allow 'Bash' — via 'ExecuteCode(code=print(1))'?")
+                    .contains("Approving covers every 'Bash' call");
         }
     }
 
@@ -460,9 +587,14 @@ class SideEffectApprovalGateTest {
                 () -> new SideEffectApprovalGate(SideEffectLevel.READ_ONLY, AskPromptHandler.allowAll(), null));
         final Tool write = tool(TOOL_NAME, SideEffectLevel.MUTATING);
         final ToolUse call = ToolUse.of("call-1", TOOL_NAME, Map.of());
-        assertThatNullPointerException().isThrownBy(() -> gate.denialReason(null, call, ToolContext.empty()));
-        assertThatNullPointerException().isThrownBy(() -> gate.denialReason(write, null, ToolContext.empty()));
-        assertThatNullPointerException().isThrownBy(() -> gate.denialReason(write, call, null));
+        final ToolDescriptor descriptor = ToolDescriptor.of(write);
+        final ToolCallOrigin direct = ToolCallOrigin.direct();
+        assertThatNullPointerException().isThrownBy(() -> gate.denialReason(null, call, direct, ToolContext.empty()));
+        assertThatNullPointerException()
+                .isThrownBy(() -> gate.denialReason(descriptor, null, direct, ToolContext.empty()));
+        assertThatNullPointerException()
+                .isThrownBy(() -> gate.denialReason(descriptor, call, null, ToolContext.empty()));
+        assertThatNullPointerException().isThrownBy(() -> gate.denialReason(descriptor, call, direct, null));
     }
 
     // --- concurrent questions ------------------------------------------------------------------------------------
@@ -661,8 +793,8 @@ class SideEffectApprovalGateTest {
             final Tool edit = tool("Edit", SideEffectLevel.MUTATING);
             final ToolUse writeCall = ToolUse.of("w", TOOL_NAME, Map.of("path", "a"));
             try {
-                final Future<Optional<String>> blocked = callers
-                        .submit(() -> gate.denialReason(write, writeCall, turnContext("A")));
+                final Future<Optional<String>> blocked = callers.submit(() -> gate
+                        .denialReason(ToolDescriptor.of(write), writeCall, ToolCallOrigin.direct(), turnContext("A")));
                 assertThat(blockedEntered.await(5, TimeUnit.SECONDS)).isTrue();
 
                 // Another tool in the same scope.

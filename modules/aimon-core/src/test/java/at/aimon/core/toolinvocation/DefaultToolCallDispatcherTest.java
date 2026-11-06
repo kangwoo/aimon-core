@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
+import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.SideEffectLevel;
@@ -109,6 +110,24 @@ class DefaultToolCallDispatcherTest {
         return ToolContext.builder().put(ToolContextKeys.ITERATION_COUNT, iteration).build();
     }
 
+    private static ToolContext sessionContextAt(int iteration) {
+        return ToolContext.builder().put(ToolContextKeys.ITERATION_COUNT, iteration)
+                .put(ToolContextKeys.SESSION_ID, SessionId.of("s-1")).build();
+    }
+
+    @Test
+    @DisplayName("a call from code is never put to the user: unapproved, it is refused before PreTool")
+    void aCallFromCodeIsNeverAsked() {
+        final DefaultToolCallDispatcher dispatcher = dispatcher(InvokerType.MAIN_AGENT, List.of());
+
+        final ToolDispatchResult result = dispatcher.dispatch(write("code"),
+                ToolCallOrigin.code("tu-parent", "javascript"), sessionContextAt(1));
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getText()).contains("calls from code never ask");
+        assertThat(events).containsExactly("permission");
+    }
+
     private static ToolUse write(String id) {
         return ToolUse.of(id, "Write", Map.of());
     }
@@ -140,9 +159,10 @@ class DefaultToolCallDispatcherTest {
         final ToolCallDispatcher dispatcher = dispatcher(InvokerType.MAIN_AGENT, List.of());
         final ToolCallOrigin code = ToolCallOrigin.code("tu-parent", "javascript");
 
-        dispatcher.dispatch(write("a"), ToolCallOrigin.direct(), contextAt(1));
-        dispatcher.dispatch(write("b"), code, contextAt(1));
-        dispatcher.dispatch(write("c"), ToolCallOrigin.skill("audit"), contextAt(1));
+        // One session, so the approval the direct call obtains is what the call from code — which never asks — uses.
+        dispatcher.dispatch(write("a"), ToolCallOrigin.direct(), sessionContextAt(1));
+        dispatcher.dispatch(write("b"), code, sessionContextAt(1));
+        dispatcher.dispatch(write("c"), ToolCallOrigin.skill("audit"), sessionContextAt(1));
 
         final List<ToolCallOrigin> expected = List.of(ToolCallOrigin.direct(), code, ToolCallOrigin.skill("audit"));
         assertThat(permissionOrigins).isEqualTo(expected);

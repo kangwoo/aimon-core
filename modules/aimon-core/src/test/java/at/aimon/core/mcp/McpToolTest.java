@@ -15,10 +15,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.DestructiveBehavior;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
+import at.aimon.core.agent.tool.ToolOfferContext;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.mcp.McpServerConfig.AnnotationTrust;
 import at.aimon.core.mcp.exception.McpTransportException;
@@ -61,6 +63,7 @@ class McpToolTest {
         assertThat(tool.getSideEffectLevel()).isEqualTo(SideEffectLevel.MUTATING);
         assertThat(tool.getDestructiveBehavior()).isEqualTo(DestructiveBehavior.DESTRUCTIVE);
         assertThat(tool.isReadOnly()).isFalse();
+        assertThat(tool.dataReach()).isEqualTo(DataReach.EXTERNAL);
     }
 
     @Test
@@ -75,6 +78,21 @@ class McpToolTest {
         assertThat(trusted.getSideEffectLevel()).isEqualTo(SideEffectLevel.READ_ONLY);
         assertThat(trusted.isReadOnly()).isTrue();
         assertThat(trusted.getDestructiveBehavior()).isEqualTo(DestructiveBehavior.NON_DESTRUCTIVE);
+        // No openWorldHint: MCP's default (open world) applies even under TRUST.
+        assertThat(trusted.dataReach()).isEqualTo(DataReach.EXTERNAL);
+    }
+
+    @Test
+    @DisplayName("A trusted closed-world claim makes the tool HOST — never ENVIRONMENT, it runs on its server")
+    void trustedClosedWorldIsHost() {
+        McpToolSchema closed = McpToolSchema.of("query", "Query", Map.of("type", "object"),
+                McpToolAnnotations.builder().readOnlyHint(true).openWorldHint(false).build());
+
+        McpTool trusted = new McpTool("prometheus", closed, mcpClient,
+                McpToolTraits.resolve(closed.getAnnotations(), AnnotationTrust.TRUST));
+
+        assertThat(trusted.dataReach()).isEqualTo(DataReach.HOST);
+        assertThat(trusted.describe(ToolOfferContext.none()).getDataReach()).isEqualTo(DataReach.HOST);
     }
 
     @Test

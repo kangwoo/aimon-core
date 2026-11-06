@@ -25,11 +25,16 @@ import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
 import at.aimon.core.agent.interrupt.TerminatorRegistrar;
+import at.aimon.core.agent.tool.ConcurrencyBehavior;
+import at.aimon.core.agent.tool.DataReach;
+import at.aimon.core.agent.tool.DestructiveBehavior;
+import at.aimon.core.agent.tool.IdempotencyBehavior;
 import at.aimon.core.agent.tool.InterruptToolKeys;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolContext;
+import at.aimon.core.agent.tool.ToolDescriptor;
 import at.aimon.core.agent.tool.ToolExecutionManager;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
@@ -102,7 +107,14 @@ class SingleToolInvokerTest {
         final Tool tool = mock(Tool.class);
         when(tool.getInterruptBehavior()).thenReturn(behavior);
         when(tool.getSideEffectLevel()).thenReturn(sideEffectLevel);
-        when(tool.getDefinition()).thenReturn(ToolDefinition.of(TOOL_NAME, "test tool", Map.of("type", "object")));
+        final ToolDefinition definition = ToolDefinition.of(TOOL_NAME, "test tool", Map.of("type", "object"));
+        when(tool.getDefinition()).thenReturn(definition);
+        // A mock does not run Tool#describe's default, so the descriptor the approval gate judges is stubbed too.
+        when(tool.describe(any())).thenReturn(ToolDescriptor.builder().definition(definition)
+                .sideEffectLevel(sideEffectLevel).destructiveBehavior(DestructiveBehavior.DESTRUCTIVE)
+                .idempotencyBehavior(IdempotencyBehavior.NON_IDEMPOTENT)
+                .concurrencyBehavior(ConcurrencyBehavior.SEQUENTIAL).interruptBehavior(behavior)
+                .dataReach(DataReach.EXTERNAL).build());
         when(sessionRegistry.findByName(TOOL_NAME)).thenReturn(Optional.of(tool));
     }
 

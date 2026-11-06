@@ -168,13 +168,13 @@ MCP 스펙의 tool annotation(`readOnlyHint` · `destructiveHint` · `idempotent
 McpToolAnnotations (서버가 신고한 것)  +  AnnotationTrust (그 서버를 얼마나 믿는가)
                           │
                           ▼  McpToolTraits.resolve(...)
-        SideEffectLevel + DestructiveBehavior + IdempotencyBehavior  ← 여기부터는 로컬 도구와 구분 불가
+        SideEffectLevel + DestructiveBehavior + IdempotencyBehavior + DataReach  ← 여기부터는 로컬 도구와 구분 불가
 ```
 
 | `AnnotationTrust` | 결과 |
 |-------------------|------|
-| **`IGNORE`** (기본값) | 애노테이션을 파싱해서 들고만 있고 쓰지 않는다. 모든 도구가 `MUTATING` + `DESTRUCTIVE` — 애노테이션을 읽기 전과 정확히 같다 |
-| `TRUST` | `readOnlyHint` 가 레벨이 되고 `destructiveHint` 가 파괴성, `idempotentHint` 가 멱등성이 된다 |
+| **`IGNORE`** (기본값) | 애노테이션을 파싱해서 들고만 있고 쓰지 않는다. 모든 도구가 `MUTATING` + `DESTRUCTIVE` + `EXTERNAL` — 애노테이션을 읽기 전과 정확히 같다 |
+| `TRUST` | `readOnlyHint` 가 레벨이 되고 `destructiveHint` 가 파괴성, `idempotentHint` 가 멱등성, `openWorldHint` 가 데이터 도달 범위가 된다(D13) |
 
 세 가지가 이 설계의 요점이다.
 
@@ -430,11 +430,21 @@ MCP 서버 하나가 죽었다고 에이전트 전체가 뜨지 못하면, 선�
 `McpClientManager` 는 config 전체가 아니라 `Map<String, AnnotationTrust>` 만 보관한다. 나머지 필드는 접속에만 쓰이고 `McpClient` 는 연결만
 든다. 등록 시점에 읽을 이유가 없는 값을 보관하면 여기서도 config 를 볼 수 있다는 잘못된 초대가 된다.
 
-### D13. `openWorldHint` 는 파싱해 보관하되 선언을 만들지 않는다
+### D13. `openWorldHint` 는 데이터 도달 범위(`DataReach`)가 된다 — `HOST` 까지만
 
-대응 축이 없다. 통째로 채택하면 4번째 축이 따라오므로 읽을 소비자가 나타날 때까지
-미룬다([TC-15](../../backlog/tool-contract-open-items.md)). 소비자가 없는 힌트도 파싱해 보관한다. 버린 값은 축이 생길 때 파서까지 되짚어야
-하기 때문이다.
+| `AnnotationTrust` | `openWorldHint` | `DataReach` |
+|---|---|---|
+| `IGNORE` | 무엇이든 | `EXTERNAL` |
+| `TRUST` | `false` | `HOST` |
+| `TRUST` | 없음 또는 `true` | `EXTERNAL` (MCP 기본값) |
+
+**`ENVIRONMENT` 는 될 수 없다.** MCP 도구는 원격 서버에서 돈다. 에이전트의 실행 환경 안에 머무른다는 주장은 서버가 할 수 있는 주장이
+아니므로, 믿어 주는 서버의 닫힌 세계 주장이 얻을 수 있는 최대치는 `HOST` 다. 판정은 다른 세 축과 같이 `McpToolTraits.resolve` 에서
+한 번 한다(D12). `READ_ONLY` 로 정규화되는 모순 처리는 이 축에 닿지 않는다 — 도달 범위는 쓰기 여부와 독립이다.
+
+이 축의 소비자는 [프로그래매틱 도구 호출](../tool/programmatic-tool-calling.md) 이다(§7.1, 백로그
+[TC-15](../../backlog/tool-contract-open-items.md) 해소). 실링과 승인 관문은 읽지 않는다. 소비자가 생기기 전에도 힌트를 파싱해 보관해 둔
+덕에 파서는 바뀌지 않았다.
 
 ### D14. 설정 이름은 `annotationTrust` 다
 

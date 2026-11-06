@@ -1,4 +1,4 @@
-# 도구 계약 — 등록 항목 17건 (열림 17 · 닫힘 0)
+# 도구 계약 — 등록 항목 17건 (열림 16 · 닫힘 1)
 
 출처는 `docs/design/tool/` 의 도구 계약·부작용 축·병렬 실행·도구 검색·모니터 문서가 남긴 작업이다. 설계 문서는 현재 설계만
 적고, 남은 일은 여기에 둔다.
@@ -169,7 +169,7 @@ provider 등록과 `ToolSearchTool` 등록을 조립이 직접 해야 한다. `T
 
 **언제 다시 볼까.** 실사용 사례가 나올 때.
 
-## TC-15 — `openWorldHint` 축 · **열림**
+## TC-15 — `openWorldHint` 축 · **닫힘** *(2026-11-06)*
 
 **무엇을.** `openWorldHint` 에 대응하는 선언을 만든다.
 
@@ -179,6 +179,10 @@ provider 등록과 `ToolSearchTool` 등록을 조립이 직접 해야 한다. `T
 **어디.** `mcp/McpToolAnnotations.java`, `mcp/McpToolTraits.java`.
 
 **언제 다시 볼까.** 그것을 읽을 소비자가 생길 때.
+
+**어떻게 닫았나.** 소비자가 생겼다 — [프로그래매틱 도구 호출](../design/tool/programmatic-tool-calling.md) §7.1 의 데이터 도달 범위.
+넷째 축 `DataReach`(`agent/tool/DataReach.java`, `Tool#dataReach()`)를 두고, `McpToolTraits.resolve` 가 `openWorldHint` 를
+그것으로 옮긴다. 규칙은 [MCP 도구](../design/integration/mcp-tool.md) D13 이다.
 
 ## TC-16 — `PermissionSubject` 의 URL 종류 · **열림**
 

@@ -8,6 +8,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import at.aimon.core.agent.tool.AbstractTool;
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolContextKey;
@@ -314,5 +315,14 @@ public class TodoWriteTool extends AbstractTool {
         return String.format(
                 "Todo list updated: %d total tasks%n" + "  Completed: %d%n" + "  In Progress: %s%n" + "  Pending: %d",
                 todos.size(), completedCount, currentTask, pendingCount);
+    }
+
+    /**
+     * Declares {@link DataReach#HOST}: it reaches host-side state — a store or registry the host owns — and not the
+     * open outside world.
+     */
+    @Override
+    public DataReach dataReach() {
+        return DataReach.HOST;
     }
 }

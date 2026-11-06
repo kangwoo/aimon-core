@@ -12,7 +12,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.Predicate;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -65,10 +64,13 @@ import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolCallDispatcher;
 import at.aimon.core.agent.tool.ToolCallOrigin;
+import at.aimon.core.agent.tool.ToolCallQuota;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolContextEnrichmentInfo;
+import at.aimon.core.agent.tool.ToolDescriptor;
 import at.aimon.core.agent.tool.ToolExecutionManager;
+import at.aimon.core.agent.tool.ToolOfferContext;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.search.ToolSearchCatalog;
 import at.aimon.core.agent.tool.search.ToolSearchRegistry;
@@ -555,15 +557,15 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                             () -> coordinator.requestInterrupt(InterruptReason.BUDGET_EXCEEDED));
             try {
                 final ToolRegistry sessionRegistry = createSessionRegistry(context.getToolRegistry());
-                // Per-execution artifact collector so artifact-producing subagent tools have the context key (parity
-                // with the main-agent executor). Surfacing collected artifacts on SubagentExecutionResult is a
-                // follow-up.
-                // Archived artifacts of this fork land under its own execution id (execution-environment-files §7).
+                // Per-execution artifact collector (parity with the main-agent executor), filed under this fork's own
+                // execution id (execution-environment-files §7). Surfacing them on the result is a follow-up.
                 final ArtifactCollector artifactCollector = new ArtifactCollector(executionId.value());
-                // The fork's own entrance to the tool gates, bound into the context it builds for itself.
+                // The fork's own entrance to the tool gates and its tool-call budget, bound into its own context.
+                final ToolCallQuota toolCalls = toolCallQuotaOf(policy);
                 final ToolContext toolContext = createToolContext(context, request, sessionRegistry,
                         coordinator.getSignal(), effectiveMetadata, executionId, artifactCollector,
-                        executionEnvironment, engine, forkDispatcher(context, request, sessionRegistry, coordinator));
+                        executionEnvironment, engine, forkDispatcher(context, request, sessionRegistry, coordinator),
+                        toolCalls);
 
                 final LoopContext lc = LoopContext.builder().context(context).transcriptBuffer(transcriptBuffer)
                         .executionId(executionId).systemPromptParts(systemPromptParts)
@@ -572,7 +574,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                         .startTime(Instant.now()).toolContext(toolContext).sessionRegistry(sessionRegistry)
                         .coordinator(coordinator).goal(goal).executionAttributes(request.getExecutionAttributes())
                         .forkDepth(request.getForkDepth()).contextEngine(engine).policy(policy).deadline(deadline)
-                        .toolCalls(new ToolCallQuota(policy == null ? null : policy.getMaxToolCalls().orElse(null)))
+                        .toolCalls(toolCalls)
                         // Snapshot the volatile tracing fields once, so one execution traces consistently.
                         .tracer(tracer).tracePayloadPolicy(tracePayloadPolicy).build();
 
@@ -682,11 +684,11 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 final ContextView view = applyCompactionGate(lc, iterationCount,
                         budgetDecision == BudgetDecision.SHOULD_COMPACT || lc.contextTargetReached(lastPromptTokens));
                 // TRACE-01: this iteration's LLM call and tool calls nest under its ITERATION span.
-                final IterationTrace trace = IterationTrace.open(lc, iterationCount);
+                final IterationTrace trace = IterationTrace.open(lc, iterationCount, offerContextOf(lc));
                 try {
-                    // Re-read every iteration so newly activated deferred tools are included. See the method for the
-                    // two things it withholds and why.
-                    final List<ToolDefinition> availableTools = availableToolDefinitions(lc, iterationCount);
+                    // Re-read every iteration so newly activated deferred tools are included; the method says why.
+                    final List<ToolDefinition> availableTools = availableToolDefinitions(lc, trace.offerContext,
+                            iterationCount);
 
                     // Send message to LLM via the gateway (retry/fallback aware, metadata-carrying parts overload). The
                     // LlmCancellation lets a trip abort the in-flight call; clear the per-call abort lever in a finally
@@ -739,7 +741,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                     if (isCancelledOrInterrupted(cancellationSignal)) {
                         trace.interrupted();
                         return createInterruptedResult(lc, iterationCount, accumulatedTokens);
-                    } else if (lc.toolCalls.isExceeded()) {
+                    } else if (lc.toolCalls.isExceeded() || lc.toolCallsStoppedForTokens) {
                         // Calls over a cap were answered, not run; stop before the next LLM call is spent.
                         return createToolCallBudgetResult(lc, iterationCount, accumulatedTokens);
                     } else if (lc.stalledIterationGuard.recordToolIteration(toolUseResults, truncated)) {
@@ -900,12 +902,13 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 Message.user(SystemReminderFormatter.wrap(GRACE_ROUND_REMINDER_KEY, instruction)), LogOrigin.SYNTHETIC);
         final CancellationSignal cancellationSignal = lc.coordinator.getSignal();
         final ContextView view = applyCompactionGate(lc, graceIteration, false);
-        final IterationTrace trace = IterationTrace.open(lc, graceIteration);
+        final IterationTrace trace = IterationTrace.open(lc, graceIteration, offerContextOf(lc));
         final LlmResponse response;
         try {
             try {
                 response = gateway.sendMessage(lc.systemPromptParts, view.getMessages(),
-                        availableToolDefinitions(lc, graceIteration), lc.modelConfig, trace.metadata, llmCancellation);
+                        availableToolDefinitions(lc, trace.offerContext, graceIteration), lc.modelConfig,
+                        trace.metadata, llmCancellation);
             } finally {
                 llmCancellation.clearAbort();
             }
@@ -1283,6 +1286,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      *            the context engine the fork runs under, published so a fork it spawns can inherit it
      * @param toolCallDispatcher
      *            the fork's dispatcher, bound under the write-once {@link ToolContextKeys#TOOL_CALL_DISPATCHER}
+     * @param toolCalls
+     *            the fork's tool-call budget, bound under the write-once {@link ToolContextKeys#TOOL_CALL_QUOTA}
      * @return the tool context (never null)
      */
     // Every argument is a distinct per-execution value the context publishes; bundling them would only move the list.
@@ -1290,7 +1295,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     private ToolContext createToolContext(SubagentExecutionContext context, SubagentExecutionRequest request,
             ToolRegistry sessionRegistry, CancellationSignal cancellationSignal, LlmCallMetadata effectiveMetadata,
             ExecutionId executionId, ArtifactCollector artifactCollector, ExecutionEnvironment executionEnvironment,
-            ContextEngine engine, ToolCallDispatcher toolCallDispatcher) {
+            ContextEngine engine, ToolCallDispatcher toolCallDispatcher, ToolCallQuota toolCalls) {
         final ToolContext.Builder builder = ToolContext.builder();
         builder.put(ToolContextKeys.AGENT_RUNTIME_ID, context.getAgentRuntimeId());
         // No SESSION_ID: this run is not a session's turn. The fork used to publish the id it had minted for its own
@@ -1362,6 +1367,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // The gates every tool call of this fork passes — its own, not the parent's: this is a new builder, so nothing
         // of the parent's binding is carried over. Write-once and before the enrichers, so none can swap it out.
         builder.put(ToolContextKeys.TOOL_CALL_DISPATCHER, toolCallDispatcher);
+        // Its tool-call budget, likewise write-once and before the enrichers: a tool that dispatches calls of its own
+        // admits them here, and no enricher can hand it an unlimited one.
+        builder.put(ToolContextKeys.TOOL_CALL_QUOTA, toolCalls);
 
         // Apply forwarded ToolContextEnrichers last, mirroring the main-agent executor, so module-supplied keys are
         // present for subagent tools.
@@ -1445,16 +1453,17 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      *
      * @param lc
      *            the loop context of the running fork
+     * @param offerContext
+     *            this iteration's offer context ({@link #offerContextOf}), the one bound into its tool context
      * @param iterationCount
      *            the 1-based iteration about to call the LLM
      * @return the definitions to send with the next LLM call
      */
-    private List<ToolDefinition> availableToolDefinitions(LoopContext lc, int iterationCount) {
-        final SideEffectLevel ceiling = toolExecutionManager.getMaxSideEffectLevel();
+    private List<ToolDefinition> availableToolDefinitions(LoopContext lc, ToolOfferContext offerContext,
+            int iterationCount) {
+        final SideEffectLevel ceiling = offerContext.getCeiling();
         final Subagent subagent = lc.subagent();
-        final Predicate<Tool> admitted = SubagentToolScope.admissionFilter(subagent);
-        final List<ToolDefinition> registered = lc.sessionRegistry.findAll().stream()
-                .filter(tool -> ceiling.permits(tool.getSideEffectLevel())).filter(admitted).map(Tool::getDefinition)
+        final List<ToolDefinition> registered = offerContext.offer().stream().map(ToolDescriptor::getDefinition)
                 .toList();
         final List<ToolDefinition> definitions = lc.reportsStructuredResult()
                 ? withReportTool(lc, registered)
@@ -1466,6 +1475,28 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                     subagent.getName(), subagent.getAllowedTools(), ceiling, lc.sessionRegistry.findAll().size());
         }
         return definitions;
+    }
+
+    /**
+     * Builds one iteration's offer context: the fork's registry (re-read, so newly activated deferred tools are in it),
+     * its tool scope as the admission filter, and the execution manager's ceiling — the two bounds the refusals read.
+     * Bound into the iteration's tool context by {@link IterationTrace#open}, so the ceiling's refusal and the approval
+     * gate judge the descriptors this offer was made from (programmatic-tool-calling design decision 9).
+     */
+    private ToolOfferContext offerContextOf(LoopContext lc) {
+        return ToolOfferContext.builder().registry(lc.sessionRegistry)
+                .admission(SubagentToolScope.admissionFilter(lc.subagent()))
+                .ceiling(toolExecutionManager.getMaxSideEffectLevel()).build();
+    }
+
+    /**
+     * The fork's tool budget: capped by the policy's {@code maxToolCalls}, otherwise only counting. Bound into the
+     * fork's tool context too, so a tool that dispatches further calls itself ({@code ExecuteCode}) admits each of them
+     * here (programmatic-tool-calling design decision 14).
+     */
+    private static ToolCallQuota toolCallQuotaOf(SubagentExecutionPolicy policy) {
+        final Integer maxToolCalls = policy == null ? null : policy.getMaxToolCalls().orElse(null);
+        return maxToolCalls == null ? ToolCallQuota.unlimited() : ToolCallQuota.limitedTo(maxToolCalls);
     }
 
     /**
@@ -1604,7 +1635,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         // Only the token axis: the tracker's iteration count already includes this iteration, so asking it for STOP
         // would refuse the last allowed iteration's tools.
         if (lc.tokenBudgetExhausted()) {
-            lc.toolCalls.refuseForTokens();
+            lc.toolCallsStoppedForTokens = true;
             log.warn("Subagent '{}' spent its token budget with the response of iteration {}; its {} tool call(s) are"
                     + " not run", lc.subagent().getName(), iterationCount, toolUses.size());
             final List<ToolUseResult> refused = new ArrayList<>(toolUses.size());
@@ -1672,15 +1703,15 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         log.warn(
                 "Subagent '{}' asked for {} tool call(s) in iteration {} with {} left of its budget of {}; the other"
                         + " {} are not run",
-                lc.subagent().getName(), toolUses.size(), iterationCount, admitted, lc.toolCalls.limit,
-                toolUses.size() - admitted);
+                lc.subagent().getName(), toolUses.size(), iterationCount, admitted,
+                lc.toolCalls.getLimit().orElse(null), toolUses.size() - admitted);
         final List<ToolUseResult> results = new ArrayList<>(toolUses.size());
         if (admitted > 0) {
             results.addAll(executeToolUses(lc, toolContext, toolUses.subList(0, admitted), iterationCount));
         }
         for (ToolUse toolUse : toolUses.subList(admitted, toolUses.size())) {
             stream(lc, "\n→ " + toolUse.getName() + "\n");
-            final ToolUseResult refusal = ToolCallQuota.refusal(toolUse, lc.toolCalls.limit);
+            final ToolUseResult refusal = toolCallBudgetRefusal(toolUse, lc.toolCalls.getLimit().orElse(null));
             stream(lc, formatStreamedToolResult(toolUse, refusal));
             results.add(refusal);
         }
@@ -2047,14 +2078,14 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      */
     private SubagentExecutionResult createToolCallBudgetResult(LoopContext lc, int iterationCount,
             TokenUsage accumulatedTokens) {
-        if (lc.toolCalls.tokensStopped) {
+        if (lc.toolCallsStoppedForTokens) {
             // The batch was refused because its response spent the token budget: that budget is what stopped it.
             return createFailureResult(lc, "Execution stopped: " + CompletionReason.TOKEN_BUDGET_EXCEEDED.name(),
                     iterationCount, accumulatedTokens, CompletionReason.TOKEN_BUDGET_EXCEEDED);
         }
         log.info("Subagent '{}' stopped by its tool-call budget: ran {} of {} allowed, refused {}, iterations={}",
-                lc.subagent().getName(), lc.toolCalls.used(), lc.toolCalls.limit, lc.toolCalls.refused(),
-                iterationCount);
+                lc.subagent().getName(), lc.toolCalls.used(), lc.toolCalls.getLimit().orElse(null),
+                lc.toolCalls.refused(), iterationCount);
         return createFailureResult(lc,
                 "Execution stopped: " + CompletionReason.TOOL_CALL_BUDGET_EXCEEDED.name() + " — ran "
                         + lc.toolCalls.used() + " tool call(s), the policy's limit; " + lc.toolCalls.refused()
@@ -2220,36 +2251,47 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      *
      * <p>
      * When that metadata names no parent (tracing off, or a caller that never enriched it) there is no span, and
-     * {@link #metadata} and {@link #toolContext} are the loop context's own instances — the tracing-off path
-     * allocates nothing.
+     * {@link #metadata} is the loop context's own instance.
+     *
+     * <p>
+     * It also carries the iteration's offer context, which {@link #toolContext} binds under
+     * {@link ToolContextKeys#TOOL_OFFER_CONTEXT} — the loop context's own tool context never carries that key, so each
+     * iteration's copy is its first write.
      */
     private static final class IterationTrace {
         /** The iteration span, or {@code null} when there is no parent to nest under. */
         private final Tracer.Span span;
         private final LlmCallMetadata metadata;
         private final ToolContext toolContext;
+        private final ToolOfferContext offerContext;
 
-        private IterationTrace(Tracer.Span span, LlmCallMetadata metadata, ToolContext toolContext) {
+        private IterationTrace(Tracer.Span span, LlmCallMetadata metadata, ToolContext toolContext,
+                ToolOfferContext offerContext) {
             this.span = span;
             this.metadata = metadata;
             this.toolContext = toolContext;
+            this.offerContext = offerContext;
         }
 
-        private static IterationTrace open(LoopContext lc, int iterationCount) {
+        private static IterationTrace open(LoopContext lc, int iterationCount, ToolOfferContext offerContext) {
             final Tracer.Span span = Spans.startChildOf(lc.tracer, lc.effectiveMetadata, SpanType.ITERATION,
                     "iteration#" + iterationCount, null).orElse(null);
             if (span == null) {
-                return new IterationTrace(null, lc.effectiveMetadata, lc.toolContext);
+                return new IterationTrace(null, lc.effectiveMetadata,
+                        ToolContext.builder().putAll(lc.toolContext.getContext())
+                                .put(ToolContextKeys.TOOL_OFFER_CONTEXT, offerContext).build(),
+                        offerContext);
             }
             span.setAttribute("iteration", String.valueOf(iterationCount));
             span.setAttribute("invokerType", InvokerType.SUBAGENT.name());
             span.setAttribute("subagent", lc.subagent().getName());
             final LlmCallMetadata metadata = Spans.enrichSafely(span, lc.effectiveMetadata);
-            final ToolContext toolContext = metadata == lc.effectiveMetadata
-                    ? lc.toolContext
-                    : ToolContext.builder().putAll(lc.toolContext.getContext())
-                            .put(ToolContextKeys.LLM_CALL_METADATA_KEY, metadata).build();
-            return new IterationTrace(span, metadata, toolContext);
+            final ToolContext.Builder toolContext = ToolContext.builder().putAll(lc.toolContext.getContext())
+                    .put(ToolContextKeys.TOOL_OFFER_CONTEXT, offerContext);
+            if (metadata != lc.effectiveMetadata) {
+                toolContext.put(ToolContextKeys.LLM_CALL_METADATA_KEY, metadata);
+            }
+            return new IterationTrace(span, metadata, toolContext.build(), offerContext);
         }
 
         /**
@@ -2287,54 +2329,10 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         }
     }
 
-    /**
-     * One fork's tool-call budget: how many calls it may run, how many it has run, and whether it asked for more than
-     * it had. Without a limit it only counts. Touched only by the loop's thread — a parallel batch is admitted before
-     * it is dispatched — so it needs no synchronization.
-     */
-    private static final class ToolCallQuota {
-        /** The cap, or {@code null} for none. */
-        private final Integer limit;
-        private int used;
-        private int refused;
-        /** Whether a batch was refused because the token budget ran out, which then names the fork's stop. */
-        private boolean tokensStopped;
-
-        private ToolCallQuota(Integer limit) {
-            this.limit = limit;
-        }
-
-        /** Admits up to {@code requested} calls and returns how many may run; the rest count as refused. */
-        private int admit(int requested) {
-            final int admitted = limit == null ? requested : Math.max(0, Math.min(requested, limit - used));
-            used += admitted;
-            refused += requested - admitted;
-            return admitted;
-        }
-
-        private int used() {
-            return used;
-        }
-
-        private int refused() {
-            return refused;
-        }
-
-        /** Whether a call was refused for a cap — the fork asked for more than it may run. */
-        private boolean isExceeded() {
-            return refused > 0 || tokensStopped;
-        }
-
-        /** Records a batch refused because the response carrying it spent the token budget. */
-        private void refuseForTokens() {
-            tokensStopped = true;
-        }
-
-        /** The answer to a call the cap refused: an error result, so the transcript stays well formed and honest. */
-        private static ToolUseResult refusal(ToolUse toolUse, Integer limit) {
-            return ToolUseResult.error(toolUse.getId(), "Not run: this subagent's tool-call budget (" + limit
-                    + " call(s)) is used up. Finish with what you have.");
-        }
+    /** The answer to a call the cap refused: an error result, so the transcript stays well formed and honest. */
+    private static ToolUseResult toolCallBudgetRefusal(ToolUse toolUse, Integer limit) {
+        return ToolUseResult.error(toolUse.getId(), "Not run: this subagent's tool-call budget (" + limit
+                + " call(s)) is used up. Finish with what you have.");
     }
 
     /**
@@ -2463,8 +2461,16 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         private final SubagentExecutionPolicy policy;
         /** The deadline the fork must be over by, or {@code null}. */
         private final ExecutionDeadline deadline;
-        /** The fork's tool-call budget and the count of calls run — the one mutable part, like the budget tracker. */
+        /**
+         * The fork's tool-call budget and the count of calls run — mutable, like the budget tracker. Shared with the
+         * fork's tool context ({@link ToolContextKeys#TOOL_CALL_QUOTA}), so it is the thread-safe public type.
+         */
         private final ToolCallQuota toolCalls;
+        /**
+         * Whether a batch was refused because the response carrying it spent the token budget, which then names the
+         * fork's stop. Written and read only on the loop's thread.
+         */
+        private boolean toolCallsStoppedForTokens;
         /** The fork's per-tool failure streaks, mutable like {@link #toolCalls}. */
         private final ToolFailureStreaks toolFailures;
         /**

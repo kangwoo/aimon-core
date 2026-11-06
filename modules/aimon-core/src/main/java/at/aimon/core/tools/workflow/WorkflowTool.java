@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.NoopCancellationSignal;
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.InterruptToolKeys;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolContextEnricher;
@@ -537,5 +538,23 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
                 .quotaGuard(context.get(ToolContextKeys.QUOTA_GUARD).orElse(null))
                 // One deeper than the calling run.
                 .forkDepth(ForkAccess.childDepthOf(context)).build();
+    }
+
+    /**
+     * Declares {@link DataReach#EXTERNAL}: the subagents its workflow starts may use any tool their allow-lists grant.
+     */
+    @Override
+    public DataReach dataReach() {
+        return DataReach.EXTERNAL;
+    }
+
+    /**
+     * Not callable from model-written code: it starts subagent forks, which run LLM calls outside a script's limits and
+     * budget ({@code docs/design/tool/programmatic-tool-calling.md}
+     * decision 15).
+     */
+    @Override
+    public boolean isCodeCallable() {
+        return false;
     }
 }

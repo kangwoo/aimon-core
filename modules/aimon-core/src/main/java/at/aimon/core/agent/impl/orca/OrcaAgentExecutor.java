@@ -101,7 +101,9 @@ import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolContextEnrichmentInfo;
+import at.aimon.core.agent.tool.ToolDescriptor;
 import at.aimon.core.agent.tool.ToolExecutionManager;
+import at.aimon.core.agent.tool.ToolOfferContext;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.permission.AllowedTools;
 import at.aimon.core.agent.tool.search.ToolSearchCatalog;
@@ -1852,10 +1854,16 @@ public class OrcaAgentExecutor
                     // Two axes are withheld, and each reads its bound from the same value the refusal reads, so a
                     // filter and a refusal cannot disagree: the side-effect ceiling, and the agent's own
                     // allow-list (the same list dispatchSingleTool hands the execution manager). A tool the model
-                    // could only pick to read a refusal costs it an iteration.
-                    final List<ToolDefinition> availableTools = sessionRegistry.findAll().stream()
-                            .filter(t -> maxSideEffectLevel.permits(t.getSideEffectLevel())).filter(agentAdmits)
-                            .map(Tool::getDefinition).toList();
+                    // could only pick to read a refusal costs it an iteration. Both read the tools' descriptors in
+                    // this iteration's offer context, which is then bound into the iteration's tool context so the
+                    // ceiling's refusal and the approval gate judge the very descriptors offered here
+                    // (programmatic-tool-calling design decision 9).
+                    final ToolOfferContext offerContext = ToolOfferContext.builder().registry(sessionRegistry)
+                            .admission(agentAdmits).ceiling(maxSideEffectLevel).build();
+                    final List<ToolDefinition> availableTools = offerContext.offer().stream()
+                            .map(ToolDescriptor::getDefinition).toList();
+                    final ToolContext iterationToolContext = ToolContext.builder().putAll(toolContext.getContext())
+                            .put(ToolContextKeys.TOOL_OFFER_CONTEXT, offerContext).build();
                     warnOnEmptyToolOffer(scope, availableTools, sessionRegistry, iterationCount);
 
                     // Streaming-tool overlap (design §11): when the executor streams AND the dispatcher
@@ -1868,7 +1876,7 @@ public class OrcaAgentExecutor
                     final boolean overlapActive = useStreaming && parallelToolDispatcher.supportsEagerDispatch();
                     scope.streamingToolScheduler = overlapActive
                             ? new StreamingToolScheduler(parallelToolDispatcher, sessionRegistry,
-                                    toolRunner(scope, toolContext, iterationCount, coordinator))
+                                    toolRunner(scope, iterationToolContext, iterationCount, coordinator))
                             : null;
 
                     final LlmResponse response;
@@ -1975,8 +1983,8 @@ public class OrcaAgentExecutor
                     // checks.
                     final List<ToolUseResult> toolUseResults = truncated
                             ? refuseTruncatedToolUses(scope, response, iterationCount)
-                            : executeToolUses(scope, toolContext, response.getToolUses(), iterationCount, coordinator,
-                                    sessionRegistry);
+                            : executeToolUses(scope, iterationToolContext, response.getToolUses(), iterationCount,
+                                    coordinator, sessionRegistry);
 
                     // Collect artifacts produced during this iteration's tool execution and convert to
                     // MessageArtifact. One snapshot does the slicing — reading the collector twice (size, then

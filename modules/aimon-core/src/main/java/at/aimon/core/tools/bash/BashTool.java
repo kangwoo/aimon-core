@@ -14,6 +14,7 @@ import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.tool.AbstractTool;
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.InterruptAccess;
 import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
@@ -714,5 +715,14 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
      */
     public void shutdown() {
         // Nothing to release.
+    }
+
+    /**
+     * Declares {@link DataReach#ENVIRONMENT}: it runs in the execution environment and reaches nothing the environment
+     * does not already reach.
+     */
+    @Override
+    public DataReach dataReach() {
+        return DataReach.ENVIRONMENT;
     }
 }

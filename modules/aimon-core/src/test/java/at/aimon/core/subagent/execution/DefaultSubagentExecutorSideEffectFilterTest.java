@@ -17,7 +17,9 @@ import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
+import at.aimon.core.agent.tool.ToolDescriptor;
 import at.aimon.core.agent.tool.ToolInput;
+import at.aimon.core.agent.tool.ToolOfferContext;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
@@ -27,9 +29,12 @@ import at.aimon.core.llm.LlmModel;
 import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ToolDefinition;
+import at.aimon.core.llm.ToolUse;
 import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentContent;
+import at.aimon.core.subagent.SubagentExecutionPolicy;
 import at.aimon.core.subagent.SubagentMetadata;
+import at.aimon.core.tools.ToolContextKeys;
 
 /**
  * Locks in the fork half of the {@link SideEffectLevel} pair: a fork's definition list is filtered by the ceiling of
@@ -141,5 +146,87 @@ class DefaultSubagentExecutorSideEffectFilterTest {
                 tool("Reader", SideEffectLevel.READ_ONLY), undeclared);
 
         assertThat(client.firstOffer()).contains("Reader", "Legacy");
+    }
+
+    /** MUTATING by its getters, READ_ONLY in an offering context; records what it ran with. */
+    private static final class ContextualTool extends AbstractTool {
+
+        private final List<ToolContext> ranWith = new CopyOnWriteArrayList<>();
+
+        ContextualTool() {
+            super("Contextual", "static description", Map.of("type", "object"));
+        }
+
+        @Override
+        public ToolDescriptor describe(ToolOfferContext context) {
+            return context.isOffering()
+                    ? ToolDescriptor.from(this).sideEffectLevel(SideEffectLevel.READ_ONLY).build()
+                    : ToolDescriptor.of(this);
+        }
+
+        @Override
+        public ToolResult execute(ToolInput input, ToolContext context) {
+            ranWith.add(context);
+            return ToolResult.success("ran");
+        }
+    }
+
+    @Test
+    @DisplayName("a fork offers and runs a tool under the grade its offer context describes, and binds its quota")
+    void offerContextAndQuotaAreBound() {
+        final ContextualTool tool = new ContextualTool();
+        final DefaultToolRegistry registry = new DefaultToolRegistry();
+        registry.register(tool);
+        final List<List<String>> offers = new CopyOnWriteArrayList<>();
+        final LlmClient client = new LlmClient() {
+            private LlmResponse answer(List<ToolDefinition> tools) {
+                offers.add(tools.stream().map(ToolDefinition::getName).toList());
+                return offers.size() == 1
+                        ? LlmResponse.tools(List.of(ToolUse.of("call-1", "Contextual", Map.of())))
+                        : LlmResponse.text("done");
+            }
+
+            @Override
+            public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
+                    LlmModel modelConfig) {
+                return answer(tools);
+            }
+
+            @Override
+            public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
+                    LlmModel modelConfig, LlmCallMetadata metadata) {
+                return answer(tools);
+            }
+
+            @Override
+            public String getProviderName() {
+                return "Scripted";
+            }
+        };
+        final DefaultSubagentExecutor executor = new DefaultSubagentExecutor(client,
+                new DefaultToolExecutionManager(SideEffectLevel.READ_ONLY), new DefaultHookExecutionManager());
+        final SubagentExecutionContext context = SubagentExecutionContext.builder()
+                .agentRuntimeId(AgentRuntimeId.of("agent:offer-fork"))
+                .subagent(Subagent.of("explorer", SubagentMetadata.builder().description("d").maxIterations(5).build(),
+                        SubagentContent.of("you are explorer")))
+                .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(registry)
+                .hookRegistry(new DefaultHookRegistry()).parentCancellationSignal(NoopCancellationSignal.INSTANCE)
+                .build();
+
+        final SubagentExecutionResult result = executor.execute(context,
+                SubagentExecutionRequest.builder().taskId("task-1").goal("go")
+                        .executionPolicy(SubagentExecutionPolicy.builder("explorer").maxToolCalls(7).build()).build());
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(offers.get(0)).containsExactly("Contextual");
+        assertThat(tool.ranWith).hasSize(1);
+        final ToolContext ran = tool.ranWith.get(0);
+        assertThat(ToolOfferContext.of(ran).isOffering()).isTrue();
+        assertThat(ToolOfferContext.of(ran).getCeiling()).isEqualTo(SideEffectLevel.READ_ONLY);
+        // The fork's tool-call budget is the one a tool that dispatches further calls admits against.
+        assertThat(ran.get(ToolContextKeys.TOOL_CALL_QUOTA)).hasValueSatisfying(quota -> {
+            assertThat(quota.getLimit()).contains(7);
+            assertThat(quota.used()).isEqualTo(1);
+        });
     }
 }

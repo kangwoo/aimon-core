@@ -25,7 +25,9 @@ import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolCallDispatcher;
 import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolContext;
+import at.aimon.core.agent.tool.ToolDescriptor;
 import at.aimon.core.agent.tool.ToolExecutionManager;
+import at.aimon.core.agent.tool.ToolOfferContext;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.agent.tool.permission.AllowedTools;
 import at.aimon.core.llm.LlmClient;
@@ -247,7 +249,11 @@ public class LlmSkillExecutor implements SkillExecutor {
                     allowedTools);
             final ToolCallOrigin origin = ToolCallOrigin.skill(skill.getName());
 
-            final List<ToolDefinition> filteredTools = offeredTools(skill, allowedTools, context);
+            // The skill's tools are fixed for the execution, so one offer context serves every iteration: the offer is
+            // made from it and each iteration's tool context binds it, so the ceiling's refusal and the approval gate
+            // judge the descriptors offered (programmatic-tool-calling design decision 9).
+            final ToolOfferContext offerContext = offerContextOf(allowedTools, context);
+            final List<ToolDefinition> filteredTools = offeredTools(skill, allowedTools, context, offerContext);
 
             // The skill loop compacts nothing: it runs on a fresh scratch buffer per execution that never grows long
             // enough to need it. It still asks the engine for the view, so no LLM call reads the transcript directly.
@@ -292,8 +298,8 @@ public class LlmSkillExecutor implements SkillExecutor {
                 // and environment. SkillExecutionContext guarantees a non-null ToolContext (defaults to empty).
                 final List<ToolUseResult> toolResults = truncated
                         ? refuseTruncatedToolUses(skill, currentResponse, iterationCount)
-                        : dispatch(toolDispatcher, origin, context.getToolContext(), currentResponse.getToolUses(),
-                                iterationCount);
+                        : dispatch(toolDispatcher, origin, offerContext, context.getToolContext(),
+                                currentResponse.getToolUses(), iterationCount);
 
                 final Message toolResultMessage = Message.toolUseResults(toolResults);
                 transcriptBuffer.addMessage(toolResultMessage);
@@ -391,13 +397,16 @@ public class LlmSkillExecutor implements SkillExecutor {
      *            the skill's allow-list, already bounded by the caller's
      * @param context
      *            the execution context supplying the available tools
+     * @param offerContext
+     *            the skill's offer context ({@link #offerContextOf}), whose descriptors are filtered and offered
      * @return the definitions to offer (never null; may be empty)
      */
     private List<ToolDefinition> offeredTools(Skill skill, List<AllowedTool> allowedTools,
-            SkillExecutionContext context) {
-        final SideEffectLevel ceiling = toolExecutionManager.getMaxSideEffectLevel();
+            SkillExecutionContext context, ToolOfferContext offerContext) {
+        final SideEffectLevel ceiling = offerContext.getCeiling();
         final List<ToolDefinition> filteredTools = filterTools(allowedTools, context.getAvailableTools()).stream()
-                .filter(tool -> ceiling.permits(tool.getSideEffectLevel())).map(Tool::getDefinition).toList();
+                .map(tool -> tool.describe(offerContext)).filter(offerContext::permits)
+                .map(ToolDescriptor::getDefinition).toList();
         if (filteredTools.isEmpty() && !allowedTools.isEmpty()) {
             // Either filter alone leaves something; together they can leave nothing — a misspelled allowed-tools
             // entry, or one naming only tools above the ceiling. No provider rejects an empty tools field (all omit
@@ -506,23 +515,39 @@ public class LlmSkillExecutor implements SkillExecutor {
     }
 
     /**
+     * Builds the skill's offer context: the narrowed registry, the skill's bounded allow-list as the admission filter
+     * (by name, as {@link #filterTools} reads it), and the execution manager's ceiling — the bound its refusal reads.
+     */
+    private ToolOfferContext offerContextOf(List<AllowedTool> allowedTools, SkillExecutionContext context) {
+        final Set<String> allowedToolNames = allowedTools.stream().map(AllowedTool::getToolName)
+                .collect(Collectors.toSet());
+        return ToolOfferContext.builder().registry(context.getToolRegistry())
+                .admission(
+                        tool -> allowedToolNames.isEmpty() || allowedToolNames.contains(tool.getDefinition().getName()))
+                .ceiling(toolExecutionManager.getMaxSideEffectLevel()).build();
+    }
+
+    /**
      * Runs one response's tool calls through the narrowed dispatcher, in order, and turns each result into what the
      * scratch transcript records.
      *
      * <p>
      * The context each call runs with is built anew from the caller's: the caller's dispatcher is replaced by the
-     * narrowed one (a tool that dispatches further — a program, a nested skill — is held to the skill's bounds), and
-     * the loop's iteration is published for the Pre/PostTool contexts.
+     * narrowed one (a tool that dispatches further — a program, a nested skill — is held to the skill's bounds), the
+     * caller's offer context, if any, by the skill's, and the loop's iteration is published for the Pre/PostTool
+     * contexts.
      */
     private static List<ToolUseResult> dispatch(ToolCallDispatcher dispatcher, ToolCallOrigin origin,
-            ToolContext callerContext, List<ToolUse> toolUses, int iterationCount) {
+            ToolOfferContext offerContext, ToolContext callerContext, List<ToolUse> toolUses, int iterationCount) {
         final ToolContext.Builder builder = ToolContext.builder();
         callerContext.getContext().forEach((name, value) -> {
-            if (!ToolContextKeys.TOOL_CALL_DISPATCHER.name().equals(name)) {
+            if (!ToolContextKeys.TOOL_CALL_DISPATCHER.name().equals(name)
+                    && !ToolContextKeys.TOOL_OFFER_CONTEXT.name().equals(name)) {
                 builder.put(name, value);
             }
         });
         final ToolContext skillContext = builder.put(ToolContextKeys.TOOL_CALL_DISPATCHER, dispatcher)
+                .put(ToolContextKeys.TOOL_OFFER_CONTEXT, offerContext)
                 .put(ToolContextKeys.ITERATION_COUNT, iterationCount).build();
         final List<ToolUseResult> results = new ArrayList<>(toolUses.size());
         for (ToolUse toolUse : toolUses) {

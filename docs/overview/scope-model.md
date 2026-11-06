@@ -21,9 +21,9 @@ AIMON 컴포넌트의 **수명(lifetime)**, **소유권(ownership)**, **소멸 �
 | **Agent** | `AgentRuntime` 과 그것이 소유한 `ToolRegistry` / `HookRegistry` / `McpClientManager` | `AgentRuntimeId` (`agent:<name>[:<discriminator>]`) | `(Agent, discriminator)` 단위, 세션들을 가로질러 유지 |
 | **Session** | `SessionRecord`, `SessionTotals`, `budgetOverride`, `SessionTranscript` | `SessionId` | 세션이 존재하는 동안 — **영속** |
 | **Live session** | `LiveSession`, 메시지 큐, 이벤트 publisher | (바인딩된 `SessionId` 참조) | 노드 로컬, **일시적** (열기 ~ `close()`) |
-| *(실행 단위)* **Execution** | 에이전트 작업 1회 일반 — **세션이 없을 수도 있다** (서브에이전트 포크, 스킬 포크, rewake 리플레이, 스케줄 루틴) | `ExecutionId` (**세션 없는 실행에만** 발급 — 턴은 `SessionId` + `TurnId` 로 식별된다) | 턴의 상위 개념 |
+| *(실행 단위)* **Execution** | 에이전트 작업 1회 일반 — **세션이 없을 수도 있다** (서브에이전트 포크, 스킬 포크, rewake 리플레이, 스케줄 루틴). 포크의 `ToolCallQuota` | `ExecutionId` (**세션 없는 실행에만** 발급 — 턴은 `SessionId` + `TurnId` 로 식별된다) | 턴의 상위 개념 |
 | *(실행 단위)* **Turn** | `AgentExecutionRequest` / `AgentExecutionResult`, `ExecutionBudget` · `BudgetTracker`(턴 전용은 아니다 — 아래) | `TurnId` (주소 지정용, **비영속**) | 사용자 입력 1건 처리 |
-| *(실행 단위)* **Iteration** | ReAct 루프 1회 (LLM 호출 → 도구 실행 → 관찰) | — | 턴 내부 |
+| *(실행 단위)* **Iteration** | ReAct 루프 1회 (LLM 호출 → 도구 실행 → 관찰). `ToolOfferContext` | — | 턴 내부 |
 
 > 과거 문서의 "3-tier scope" 표현은 영속 세션과 노드 로컬 핸들을 한 칸으로 묶어 세던 시절의
 > 잔재다. 둘은 수명이 다르므로 별도 tier 로 센다. 그 시절 두 칸의 이름은 각각

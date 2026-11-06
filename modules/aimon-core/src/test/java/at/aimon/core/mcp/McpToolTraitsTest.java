@@ -7,6 +7,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.DestructiveBehavior;
 import at.aimon.core.agent.tool.IdempotencyBehavior;
 import at.aimon.core.agent.tool.SideEffectLevel;
@@ -158,5 +159,56 @@ class McpToolTraitsTest {
                 .withMessageContaining("annotations");
         assertThatNullPointerException().isThrownBy(() -> McpToolTraits.resolve(McpToolAnnotations.empty(), null))
                 .withMessageContaining("trust");
+    }
+
+    @Nested
+    @DisplayName("openWorldHint → DataReach (D13)")
+    class Reach {
+
+        @Test
+        @DisplayName("under IGNORE every tool is EXTERNAL, whatever it claims")
+        void ignored() {
+            final McpToolTraits traits = McpToolTraits.resolve(
+                    McpToolAnnotations.builder().readOnlyHint(true).openWorldHint(false).build(),
+                    AnnotationTrust.IGNORE);
+
+            assertThat(traits.getDataReach()).isEqualTo(DataReach.EXTERNAL);
+            assertThat(McpToolTraits.untrusted().getDataReach()).isEqualTo(DataReach.EXTERNAL);
+        }
+
+        @Test
+        @DisplayName("under TRUST, openWorldHint: false is HOST, for a reading and a writing tool alike")
+        void trustedClosedWorldIsHost() {
+            assertThat(
+                    McpToolTraits.resolve(McpToolAnnotations.builder().readOnlyHint(true).openWorldHint(false).build(),
+                            AnnotationTrust.TRUST).getDataReach())
+                    .isEqualTo(DataReach.HOST);
+            assertThat(
+                    McpToolTraits.resolve(McpToolAnnotations.builder().readOnlyHint(false).openWorldHint(false).build(),
+                            AnnotationTrust.TRUST).getDataReach())
+                    .isEqualTo(DataReach.HOST);
+        }
+
+        @Test
+        @DisplayName("under TRUST, an absent or true openWorldHint is EXTERNAL — never ENVIRONMENT")
+        void trustedOpenOrAbsentIsExternal() {
+            assertThat(McpToolTraits.resolve(McpToolAnnotations.empty(), AnnotationTrust.TRUST).getDataReach())
+                    .isEqualTo(DataReach.EXTERNAL);
+            assertThat(McpToolTraits
+                    .resolve(McpToolAnnotations.builder().openWorldHint(true).build(), AnnotationTrust.TRUST)
+                    .getDataReach()).isEqualTo(DataReach.EXTERNAL);
+        }
+
+        @Test
+        @DisplayName("reach takes part in equality")
+        void equality() {
+            final McpToolTraits closed = McpToolTraits.resolve(
+                    McpToolAnnotations.builder().readOnlyHint(true).openWorldHint(false).build(),
+                    AnnotationTrust.TRUST);
+            final McpToolTraits open = McpToolTraits.resolve(McpToolAnnotations.builder().readOnlyHint(true).build(),
+                    AnnotationTrust.TRUST);
+
+            assertThat(closed).isNotEqualTo(open);
+        }
     }
 }

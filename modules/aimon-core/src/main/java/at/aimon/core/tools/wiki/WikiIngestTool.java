@@ -10,6 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.tool.AbstractTool;
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
@@ -156,5 +157,24 @@ public class WikiIngestTool extends AbstractTool {
         }
 
         return sb.toString();
+    }
+
+    /**
+     * Declares {@link DataReach#HOST}: it reaches host-side state — a store or registry the host owns — and not the
+     * open outside world.
+     */
+    @Override
+    public DataReach dataReach() {
+        return DataReach.HOST;
+    }
+
+    /**
+     * Not callable from model-written code: the wiki knowledge base calls an LLM, whose tokens and cost a script's
+     * budget does not see ({@code docs/design/tool/programmatic-tool-calling.md}
+     * decision 15).
+     */
+    @Override
+    public boolean isCodeCallable() {
+        return false;
     }
 }

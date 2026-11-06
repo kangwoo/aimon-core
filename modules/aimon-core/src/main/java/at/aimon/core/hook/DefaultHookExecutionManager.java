@@ -10,6 +10,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.compact.CompactionTrigger;
+import at.aimon.core.agent.tool.ToolCallOrigin;
+import at.aimon.core.agent.tool.ToolCallPath;
 import at.aimon.core.hook.event.OnConfigReloadContext;
 import at.aimon.core.hook.event.OnSessionEndContext;
 import at.aimon.core.hook.event.OnSessionStartContext;
@@ -254,7 +256,17 @@ public class DefaultHookExecutionManager implements HookExecutionManager, AutoCl
      */
     @Override
     public List<HookResult> executePreTool(PreToolContext context) {
-        return promoteAskResults(dispatch(HookEventType.PRE_TOOL, context, preToolPolicy));
+        return promoteAskResults(dispatch(HookEventType.PRE_TOOL, context, preToolPolicy),
+                isCodePath(context.getOrigin()));
+    }
+
+    /**
+     * Whether the call came from model-written code, whose {@link Decision#ASK} is a refusal rather than a prompt: a
+     * script never waits for a person ({@code docs/design/tool/programmatic-tool-calling.md} decision 12, §8.3).
+     */
+    private static boolean isCodePath(ToolCallOrigin origin) {
+        // The contexts' builders require an origin; null only reaches here from a hand-mocked context.
+        return origin != null && origin.getPath() == ToolCallPath.CODE;
     }
 
     /**
@@ -267,8 +279,12 @@ public class DefaultHookExecutionManager implements HookExecutionManager, AutoCl
      * / {@code updatedInput} / {@code updatedOutput} from the original ASK result are preserved on the promoted result
      * so
      * the dispatcher can still surface why the hook had asked.
+     *
+     * <p>
+     * When {@code refuseAsks} is set — the call came from model-written code — no prompt is shown and every ASK becomes
+     * a {@link Decision#DENY}.
      */
-    private List<HookResult> promoteAskResults(List<HookResult> raw) {
+    private List<HookResult> promoteAskResults(List<HookResult> raw, boolean refuseAsks) {
         if (raw.stream().noneMatch(r -> r.getDecision() == Decision.ASK)) {
             return raw;
         }
@@ -279,8 +295,14 @@ public class DefaultHookExecutionManager implements HookExecutionManager, AutoCl
                 continue;
             }
             final String prompt = result.getFeedback().orElse("");
-            final Decision answer = askPromptHandler.resolve(prompt);
-            log.info("Ask hook resolved by handler: prompt='{}' decision={}", prompt, answer);
+            final Decision answer;
+            if (refuseAsks) {
+                answer = Decision.DENY;
+                log.info("Ask hook on a call from code refused without prompting: prompt='{}'", prompt);
+            } else {
+                answer = askPromptHandler.resolve(prompt);
+                log.info("Ask hook resolved by handler: prompt='{}' decision={}", prompt, answer);
+            }
             final HookResult.Builder builder = HookResult.builder().decision(answer);
             if (answer == Decision.DENY) {
                 builder.flowControl(FlowControl.BLOCK);
@@ -361,7 +383,8 @@ public class DefaultHookExecutionManager implements HookExecutionManager, AutoCl
      */
     @Override
     public List<HookResult> executePermissionRequest(PermissionRequestContext context) {
-        return promoteAskResults(dispatch(HookEventType.PERMISSION_REQUEST, context, permissionRequestPolicy));
+        return promoteAskResults(dispatch(HookEventType.PERMISSION_REQUEST, context, permissionRequestPolicy),
+                isCodePath(context.getOrigin()));
     }
 
     /**

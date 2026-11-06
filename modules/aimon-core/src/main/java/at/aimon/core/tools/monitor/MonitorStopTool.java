@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.tool.AbstractTool;
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
@@ -82,5 +83,14 @@ public class MonitorStopTool extends AbstractTool {
             }
         }
         return text.toString();
+    }
+
+    /**
+     * Declares {@link DataReach#ENVIRONMENT}: it runs in the execution environment and reaches nothing the environment
+     * does not already reach.
+     */
+    @Override
+    public DataReach dataReach() {
+        return DataReach.ENVIRONMENT;
     }
 }

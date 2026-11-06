@@ -10,6 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.tool.AbstractTool;
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
@@ -155,5 +156,13 @@ public class WebSearchTool extends AbstractTool {
             sb.append('\n');
         }
         return sb.toString().stripTrailing();
+    }
+
+    /**
+     * Declares {@link DataReach#EXTERNAL}: it searches the open internet.
+     */
+    @Override
+    public DataReach dataReach() {
+        return DataReach.EXTERNAL;
     }
 }

@@ -299,4 +299,62 @@ public interface Tool {
     default IdempotencyBehavior getIdempotencyBehavior() {
         return IdempotencyBehavior.NON_IDEMPOTENT;
     }
+
+    /**
+     * Returns whether model-written code may call this tool through programmatic tool calling.
+     *
+     * <p>
+     * This is a declaration about the tool's contract, not a policy: {@code false} says calling it from code breaks
+     * something — it calls an LLM or starts a fork (nested work that grows outside the script's limits and budget), it
+     * changes the set of tools (which a running script has frozen), or it waits for user input (a script never waits
+     * for
+     * a person). Which tools code may actually call is decided by the agent's {@code programmatic-tools} configuration,
+     * within this declaration ({@code docs/design/tool/programmatic-tool-calling.md} §7, decision 15).
+     *
+     * <p>
+     * The default is {@code true}, except for a {@link ConcurrencyBehavior#DEDICATED_THREAD} tool, which is
+     * {@code false}: such a tool blocks a thread on long-running work (a subagent), the thing decision 15 keeps out of
+     * scripts. An architecture test requires every built-in tool whose class graph reaches an LLM, a fork or the wiki
+     * to override this method.
+     *
+     * @return {@code false} when calling this tool from code breaks its contract
+     */
+    default boolean isCodeCallable() {
+        return getConcurrencyBehavior() != ConcurrencyBehavior.DEDICATED_THREAD;
+    }
+
+    /**
+     * Returns how far the data and network this tool touches reach.
+     *
+     * <p>
+     * The default is {@link DataReach#EXTERNAL}, the conservative end — the same direction as the defaults of
+     * {@link #getSideEffectLevel()} and {@link #getDestructiveBehavior()}. Every built-in tool declares its reach
+     * explicitly; a test checks that.
+     *
+     * @return the tool's reach (never null)
+     */
+    default DataReach dataReach() {
+        return DataReach.EXTERNAL;
+    }
+
+    /**
+     * Describes this tool for one offer: its definition as offered and every axis its consumers read.
+     *
+     * <p>
+     * The offer filters, the side-effect ceiling, the approval gate and the routine executor read this instead of the
+     * individual getters, so they cannot disagree about a tool whose grade depends on its context. The default ignores
+     * the context and returns {@link ToolDescriptor#of(Tool) the getters and the static definition}; the only built-in
+     * tool that overrides it is {@code ExecuteCode}. {@link #getDefinition()} keeps returning the static schema — the
+     * tool-search catalogue and the permission checks read that — and only this method gives a dynamic description.
+     *
+     * <p>
+     * Must not throw, and should be cheap: it runs for every offered tool on every iteration.
+     *
+     * @param context
+     *            the offer being made (must not be null); {@link ToolOfferContext#none()} when there is none
+     * @return the descriptor (never null)
+     */
+    default ToolDescriptor describe(ToolOfferContext context) {
+        return ToolDescriptor.of(this);
+    }
 }

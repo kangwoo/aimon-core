@@ -49,9 +49,9 @@ public enum IdempotencyBehavior { NON_IDEMPOTENT, IDEMPOTENT }     // 기본 NON
 | `readOnlyHint` | `SideEffectLevel` | 사다리 | `false` ↔ `MUTATING` |
 | `destructiveHint` | `DestructiveBehavior` | 형질 | `true` ↔ `DESTRUCTIVE` |
 | `idempotentHint` | `IdempotencyBehavior` | 형질 | `false` ↔ `NON_IDEMPOTENT` |
-| `openWorldHint` | 대응 없음 | — | — |
+| `openWorldHint` | `DataReach` | 사다리 (`ENVIRONMENT` < `HOST` < `EXTERNAL`) | `true` ↔ `EXTERNAL` |
 
-기본값이 양쪽에서 일치하므로 어댑터의 "어노테이션 없음" 경로에 특수 처리가 없다. `openWorldHint` 를 다루는 결정은 [MCP 도구 통합](../integration/mcp-tool.md) 에 있다.
+기본값이 양쪽에서 일치하므로 어댑터의 "어노테이션 없음" 경로에 특수 처리가 없다. `DataReach` 는 이 문서의 세 축과 달리 실링·승인이 읽지 않는다. 읽는 것은 [프로그래매틱 도구 호출](programmatic-tool-calling.md) 이고, 정의는 그 문서 §7.1 이다. `openWorldHint` 를 `DataReach` 로 옮기는 규칙(`TRUST` 이고 `false` 일 때만 `HOST`, MCP 도구는 `ENVIRONMENT` 가 될 수 없다)은 [MCP 도구 통합](../integration/mcp-tool.md) D13 이 정한다.
 
 `DestructiveBehavior` 의 경계는 MCP 와 같은 시험이다. `NON_DESTRUCTIVE` 는 추가만 하는 도구다. 만들고 덧붙이되 있던 상태를 덮어쓰거나 지우거나 무효로 만들지 않는다.
 
@@ -62,16 +62,17 @@ public enum IdempotencyBehavior { NON_IDEMPOTENT, IDEMPOTENT }     // 기본 NON
 이것을 타입으로 막지 않고 소비 규칙으로 막는다. **소비자는 형질을 `MUTATING` 일 때만 읽는다.**
 
 ```java
-// SideEffectApprovalGate.denialReason
-final SideEffectLevel declared = tool.getSideEffectLevel();
-final DestructiveBehavior destructive = declared == SideEffectLevel.MUTATING
-        ? tool.getDestructiveBehavior()
-        : DestructiveBehavior.NON_DESTRUCTIVE;
+// ToolDescriptor.getEffectiveDestructiveBehavior — SideEffectApprovalGate.denialReason 이 읽는 값
+return sideEffectLevel == SideEffectLevel.MUTATING ? destructiveBehavior : DestructiveBehavior.NON_DESTRUCTIVE;
 ```
 
 `READ_ONLY` 면 두 번째 축을 조회하지 않으므로 모순 상태에 도달할 수 없다. 두 선언에 걸치는 유효성 검사가 필요 없고, `Tool.isReadOnly()` 는 `getSideEffectLevel()` 에서 파생된 값으로 남는다.
 
 ### 3.3 누가 무엇을 읽는가
+
+소비자는 도구의 getter 를 직접 읽지 않고 그 iteration 의 `ToolOfferContext` 에서 `Tool.describe` 가 돌려준 `ToolDescriptor` 를
+읽는다. 제안 필터, 실링 거절, 승인 관문이 같은 서술자를 보게 하기 위해서다([프로그래매틱 도구 호출](programmatic-tool-calling.md) 결정 9).
+`describe` 를 재정의하지 않는 도구의 서술자는 getter 그대로다. 제안이 없는 `RoutineExecutor` 는 `ToolOfferContext.none()` 으로 읽는다.
 
 | 소비자 | `SideEffectLevel` | `DestructiveBehavior` | `IdempotencyBehavior` |
 |---|---|---|---|
@@ -82,7 +83,10 @@ final DestructiveBehavior destructive = declared == SideEffectLevel.MUTATING
 
 실링은 `permits()` 하나만 쓴다.
 
-파괴성을 읽는 것은 게이트 하나다. **`DESTRUCTIVE` 면 면제선과 무관하게 묻는다.** 면제선의 어떤 값으로도 이 질문을 끌 수 없다. 면제선은 `SideEffectLevel` 이 순서 있는 축이라서 순서가 있고, 파괴성은 그 축 위에 없다. 아무 프롬프트도 원하지 않는 운영자는 게이트를 구성하지 않는다. 그쪽이 명시적 선택이기 때문이다.
+파괴성을 읽는 것은 게이트 하나다. **`DESTRUCTIVE` 면 면제선과 무관하게 묻는다.** 게이트가 묻지 않는 경우는 둘뿐이다 — 서술자가
+`approvalDelegated` 이면 그 도구 대신 그 도구가 디스패치하는 호출을 하나씩 판정하고, 호출이 코드 경로(`ToolCallPath.CODE`)로 왔으면 기억된
+답만 보고 답이 없으면 거절한다. 답은 도구 이름이 아니라 서술자의 `approvalKey` 로 기억한다(기본값은 도구 이름). 정본은
+[프로그래매틱 도구 호출](programmatic-tool-calling.md) 결정 10–12 다. 면제선의 어떤 값으로도 이 질문을 끌 수 없다. 면제선은 `SideEffectLevel` 이 순서 있는 축이라서 순서가 있고, 파괴성은 그 축 위에 없다. 아무 프롬프트도 원하지 않는 운영자는 게이트를 구성하지 않는다. 그쪽이 명시적 선택이기 때문이다.
 
 읽기 전용인데 `READ_ONLY` 를 선언하지 않은 도구는 `READ_ONLY` 실링에서 숨겨지고 재시도되지 않는다. 확인된 사례는 [TC-8](../../backlog/tool-contract-open-items.md) 이다.
 
