@@ -182,7 +182,7 @@ reload 가 즉시 반영된다. `reloadCommand` / `reloadAll` 도 `SkillRegistry
 부수효과 승인 게이트도 지나지 않았다. 에이전트라면 물어봤을 도구가 사용자가 슬래시를 친 순간 묻지 않고
 실행됐다. 누가 결정한 설계가 아니라 매니저를 직접 부른 것의 부작용이었다.
 
-도구 호출의 단일 입구 `ToolCallDispatcher` 가 그 자리를 메운다(`docs/design/tool/tool-call-dispatcher.md`).
+도구 호출의 단일 입구 `ToolCallDispatcher` 가 그 자리를 메운다([도구 호출 디스패처](../tool/tool-call-dispatcher.md)).
 에이전트 실행기가 자기 디스패처를 `ToolContextKeys.TOOL_CALL_DISPATCHER` 로 커맨드 `ToolContext` 에 싣고,
 스킬 루프는 그것을 `narrow(스킬 레지스트리, 스킬 allowed-tools)` 로 좁혀 호출마다 부른다. 그래서 스킬의
 `allowed-tools` 는 제안 필터만이 아니라 실행 시점에도 강제되고, 훅은 그 호출을 `ToolCallOrigin.skill(이름)` 으로

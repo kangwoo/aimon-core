@@ -282,8 +282,8 @@ public final class SkillHookEnv {
      *            the call's origin (must not be null)
      */
     public static void putToolOrigin(Map<String, String> env, ToolCallOrigin origin) {
-        env.put(AIMON_TOOL_PATH, origin.path().wireName());
-        env.put(AIMON_TOOL_PARENT_ID, origin.parentToolUseId().orElse(""));
+        env.put(AIMON_TOOL_PATH, origin.getPath().wireName());
+        env.put(AIMON_TOOL_PARENT_ID, origin.getParentToolUseId().orElse(""));
     }
 
     /**

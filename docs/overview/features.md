@@ -139,7 +139,7 @@ IMPORTANT: **세션(`SessionRecord`)과 라이브 세션(`LiveSession`)은 다�
 | 지연 로딩 + 검색으로 스키마 노출 | `ToolSearchRegistry`, `ToolSearchStrategy`, `ToolLoadingMode` | core |
 | 도구 권한 검사 | `agent.tool.permission`, `ToolPermissionSubjectAware` | core |
 | 중단 동작 선언 | `InterruptBehavior`, `InterruptAccess` | core |
-| 단발 도구 직접 호출 | `SingleToolInvoker` | core |
+| 도구 호출의 단일 입구 (관문을 지나는 호출 1건, 호출 경로) | `ToolCallDispatcher`, `ToolCallOrigin`, `DefaultToolCallDispatcher` | core |
 | 도구의 실행 환경 (파일 시스템·셸을 실행마다, 스킬 스테이징, 격리) | `ExecutionEnvironment`, `ExecutionEnvironmentProvider`, `LocalExecutionEnvironmentProvider` | core |
 
 ### 3.2 내장 도구

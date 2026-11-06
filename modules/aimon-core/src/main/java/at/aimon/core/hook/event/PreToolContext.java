@@ -196,7 +196,7 @@ public final class PreToolContext implements HookContext {
     @Override
     public String toString() {
         return "PreToolContext{" + "invokerType=" + invokerType + ", invokerName='" + invokerName + '\'' + ", origin="
-                + origin.path() + ", toolName='" + currentToolUse.getName() + '\'' + ", iterationCount="
+                + origin.getPath() + ", toolName='" + currentToolUse.getName() + '\'' + ", iterationCount="
                 + iterationCount + ", timestamp=" + timestamp + ", executionAttributes=" + executionAttributes + '}';
     }
 

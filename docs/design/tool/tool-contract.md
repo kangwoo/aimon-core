@@ -29,6 +29,9 @@ LlmResponse (tool_use)
 ToolUse                        ← JSON null 을 버린다
       │
       ▼
+ToolCallDispatcher             ← 루프가 바인딩한 단일 입구 (DefaultToolCallDispatcher)
+      │
+      ▼
 SingleToolInvoker              ← PermissionRequest 훅 → 승인 게이트 → PreTool 훅 (입력을 고칠 수 있다)
       │
       ▼
@@ -52,8 +55,9 @@ SingleToolInvoker              ← PostTool 훅 → 환경 알림 드레인
 - **허용 목록이 비면 그 검사를 건너뛴다.** 빈 목록은 제한이 없다는 뜻이다.
 - **환경 알림은 맨 마지막에 드레인한다.** 어느 훅도 알림을 보거나 고칠 수 없고, 훅의 셸 명령이 일으킨 알림도 함께 나간다.
 
-`SingleToolInvoker` 는 메인 실행기(`OrcaAgentExecutor`)와 서브에이전트 실행기(`DefaultSubagentExecutor`)가 공유한다. 권한 훅의
-순서가 두 실행기에서 어긋나면 보안 문제가 되므로 순서를 한 컴포넌트에 둔다. 환경 알림의 뜻은
+`SingleToolInvoker` 는 메인 루프(`OrcaAgentExecutor`), 포크 루프(`DefaultSubagentExecutor`), 슬래시 명령의 스킬 루프
+(`LlmSkillExecutor`)가 모두 [도구 호출 디스패처](tool-call-dispatcher.md) `DefaultToolCallDispatcher` 를 거쳐 공유한다. 권한 훅의
+순서가 루프마다 어긋나면 보안 문제가 되므로 순서를 한 컴포넌트에 둔다. 환경 알림의 뜻은
 [실행 환경](execution-environment.md) 이 정한다.
 
 ---

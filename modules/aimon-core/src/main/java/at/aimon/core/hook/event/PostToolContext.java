@@ -234,7 +234,7 @@ public final class PostToolContext implements HookContext {
     @Override
     public String toString() {
         return "PostToolContext{" + "invokerType=" + invokerType + ", invokerName='" + invokerName + '\'' + ", origin="
-                + origin.path() + ", toolName='" + toolUse.getName() + '\'' + ", success="
+                + origin.getPath() + ", toolName='" + toolUse.getName() + '\'' + ", success="
                 + !currentToolUseResult.isError() + ", iterationCount=" + iterationCount + ", timestamp=" + timestamp
                 + ", executionAttributes=" + executionAttributes + '}';
     }

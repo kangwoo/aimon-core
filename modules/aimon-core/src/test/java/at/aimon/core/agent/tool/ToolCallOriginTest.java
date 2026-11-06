@@ -12,20 +12,20 @@ class ToolCallOriginTest {
     @Test
     @DisplayName("each factory sets its path and only the parent that path knows")
     void factoriesSetTheirPath() {
-        assertThat(ToolCallOrigin.direct().path()).isEqualTo(ToolCallPath.DIRECT);
-        assertThat(ToolCallOrigin.replay().path()).isEqualTo(ToolCallPath.REPLAY);
+        assertThat(ToolCallOrigin.direct().getPath()).isEqualTo(ToolCallPath.DIRECT);
+        assertThat(ToolCallOrigin.replay().getPath()).isEqualTo(ToolCallPath.REPLAY);
 
         final ToolCallOrigin code = ToolCallOrigin.code("tu-1", "javascript");
-        assertThat(code.path()).isEqualTo(ToolCallPath.CODE);
-        assertThat(code.parentToolUseId()).contains("tu-1");
-        assertThat(code.language()).contains("javascript");
-        assertThat(code.skillName()).isEmpty();
+        assertThat(code.getPath()).isEqualTo(ToolCallPath.CODE);
+        assertThat(code.getParentToolUseId()).contains("tu-1");
+        assertThat(code.getLanguage()).contains("javascript");
+        assertThat(code.getSkillName()).isEmpty();
 
         final ToolCallOrigin skill = ToolCallOrigin.skill("audit");
-        assertThat(skill.path()).isEqualTo(ToolCallPath.SKILL);
-        assertThat(skill.skillName()).contains("audit");
-        assertThat(skill.parentToolUseId()).isEmpty();
-        assertThat(ToolCallOrigin.direct().parentToolUseId()).isEmpty();
+        assertThat(skill.getPath()).isEqualTo(ToolCallPath.SKILL);
+        assertThat(skill.getSkillName()).contains("audit");
+        assertThat(skill.getParentToolUseId()).isEmpty();
+        assertThat(ToolCallOrigin.direct().getParentToolUseId()).isEmpty();
     }
 
     @Test

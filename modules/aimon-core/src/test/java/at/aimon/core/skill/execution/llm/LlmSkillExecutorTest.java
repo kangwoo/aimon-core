@@ -568,8 +568,8 @@ class LlmSkillExecutorTest {
         final RecordingToolCallDispatcher narrowed = dispatcher.narrowed;
         assertThat(narrowed.toolUses).containsExactly(counterUse);
         assertThat(narrowed.origins).singleElement().satisfies(origin -> {
-            assertThat(origin.path()).isEqualTo(ToolCallPath.SKILL);
-            assertThat(origin.skillName()).contains("test");
+            assertThat(origin.getPath()).isEqualTo(ToolCallPath.SKILL);
+            assertThat(origin.getSkillName()).contains("test");
         });
         // The call runs with a context built from the caller's: same entries, the narrowed dispatcher in place of
         // the caller's, and the loop's iteration.

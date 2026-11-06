@@ -87,7 +87,7 @@ public final class ToolCallOrigin {
      *
      * @return the path (never null)
      */
-    public ToolCallPath path() {
+    public ToolCallPath getPath() {
         return path;
     }
 
@@ -96,7 +96,7 @@ public final class ToolCallOrigin {
      *
      * @return the parent tool-use id, or empty on any other path
      */
-    public Optional<String> parentToolUseId() {
+    public Optional<String> getParentToolUseId() {
         return Optional.ofNullable(parentToolUseId);
     }
 
@@ -105,7 +105,7 @@ public final class ToolCallOrigin {
      *
      * @return the language, or empty on any other path
      */
-    public Optional<String> language() {
+    public Optional<String> getLanguage() {
         return Optional.ofNullable(language);
     }
 
@@ -114,7 +114,7 @@ public final class ToolCallOrigin {
      *
      * @return the skill name, or empty on any other path
      */
-    public Optional<String> skillName() {
+    public Optional<String> getSkillName() {
         return Optional.ofNullable(skillName);
     }
 

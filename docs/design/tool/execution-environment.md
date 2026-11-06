@@ -367,11 +367,14 @@ notice 를 만들지 않는다.
 
 `Bash` 결과에서는 환경의 줄이 먼저, 명령의 줄이 다음, 출력이 마지막이다.
 
-모델에게 가는 경로는 둘이다.
+비우는 자리는 [도구 호출 디스패처](tool-call-dispatcher.md) 둘이고, 붙이는 것은 결과를 모델에게 넘기는 루프다.
 
-- `SingleToolInvoker.invoke` 는 디스패치 전체를 한 번 감싸 전달하므로 모든 종료 경로가 구조적으로 덮이고, 드레인은 도구별
-  terminator 가 닫힌 뒤에 돌아 인터럽트가 닿지 않는다. 메인 에이전트, 서브에이전트, 슬래시 스킬의 디스패처가 이것을 지난다
-- 디스패처가 바인딩되지 않은 스킬 루프(`LlmSkillExecutor` 의 폴백)는 결과마다 전달한다
+- `SingleToolInvoker.invoke` (관문을 지나는 `DefaultToolCallDispatcher` 뒤)는 디스패치 전체를 한 번 감싸 비우므로 모든 종료 경로가
+  구조적으로 덮이고, 드레인은 도구별 terminator 가 닫힌 뒤에 돌아 인터럽트가 닿지 않는다. 메인 에이전트, 서브에이전트, 슬래시
+  스킬의 루프가 이것을 지난다
+- 이름으로 고르는 `ToolCallDispatchers.ungated` 도 호출마다 비운다
+- 비운 notice 는 `ToolDispatchResult` 의 `notices` 목록으로 결과 옆에 나오고, 결과를 전사에 넣는 루프가
+  `ToolDispatchResults.toToolUseResult` 에서 한 번 앞에 붙인다
 
 모델에게 가지 않는 경로인 워크플로 스크립트의 도구 호출, 스케줄 루틴 단계, 훅은 비우지 않는다. 그 notice 는 다음 모델 쪽
 호출까지 남는다.
@@ -400,12 +403,12 @@ notice 를 만들지 않는다.
 
 ### 10.4 실패 처리
 
-`EnvironmentNotices.deliver` 는 전달할 것이 없으면 받은 결과 인스턴스를 그대로 돌려준다. 고쳐 쓴 결과는 `isError`, 렌더 payload,
-`isRetryable` 을 유지한다.
+`EnvironmentNotices.drain` 은 던지지 않고 비울 것이 없으면 빈 목록을 돌려준다. `ToolDispatchResults.toToolUseResult` 가 붙인
+결과는 `isError`, 렌더 payload, `isRetryable` 을 유지한다.
 
 | 경우 | 처리 |
 |---|---|
-| `drainNotices()` 가 던진다 | 도구 이름과 toolUseId 로 WARN 하고 결과를 그대로 돌려준다. notice 는 제공자가 지우기 전에 던졌는지에 따라 남거나 사라진다 |
+| `drainNotices()` 가 던진다 | 도구 이름과 toolUseId 로 WARN 하고 빈 목록을 돌려준다. notice 는 제공자가 지우기 전에 던졌는지에 따라 남거나 사라진다 |
 | `null` 반환, `null`·빈 항목 | 없는 것으로 친다 |
 | 컨텍스트에 환경이 없다 | 비울 것이 없다 |
 | `UnavailableExecutionEnvironment` | 기본값(빈 목록). 원인은 도구의 오류로 이미 간다 |
@@ -468,7 +471,7 @@ notice 를 만들지 않는다.
 - `UnavailableExecutionEnvironment` 와 `ExecutionEnvironments` 는 `impl` 이 아니라 중립 패키지에 있다. 실행기가 읽기 때문이다
 - `ToolContext` 에서 환경을 꺼내는 `ExecutionEnvironmentAccess` 는 `at.aimon.core.tools` 에 있다. 그래서 `environment` 는 `tools` 나
   `agent.tool` 에 의존하지 않는다
-- `EnvironmentNotices` 도 `at.aimon.core.tools` 에 있다. `SingleToolInvoker` 와 `LlmSkillExecutor` 가 이미 이 패키지를 보고, 헬퍼는
+- `EnvironmentNotices` 도 `at.aimon.core.tools` 에 있다. `SingleToolInvoker`, `ToolCallDispatchers`, `ToolDispatchResults` 가 이미 이 패키지를 보고, 헬퍼는
   `environment` 와 `llm.ToolUseResult` 에만 의존한다
 
 ## 14. 샌드박스 제공자와의 계약
@@ -532,7 +535,7 @@ aimon-sandbox 는 `ExecutionEnvironmentProvider` 를 구현한다. 이 표가 �
 | 런타임 소유 | `OrcaAgentRuntimeFactory`, `OrcaAgentRuntime`, `OrcaAgentRuntimeManager` | `.../core/agent/impl/orca/` |
 | 도구 등록 | `OrcaToolProviderContext`, `OrcaBashToolProvider`, `OrcaFileToolProvider` | `.../core/agent/orca/tool/`, `.../core/agent/impl/orca/tool/` |
 | 포크 협력자 | `SubagentLaunchContext`, `SubagentExecutionContext` | `.../core/subagent/`, `.../core/subagent/execution/` |
-| 알림 | `EnvironmentNotices`, `SingleToolInvoker`, `LlmSkillExecutor`, `ShellCommandResult`, `BashTool` | `.../core/tools/`, `.../core/toolinvocation/`, `.../core/skill/execution/llm/`, `.../core/shell/`, `.../core/tools/bash/` |
+| 알림 | `EnvironmentNotices`, `SingleToolInvoker`, `ToolCallDispatchers`, `ToolDispatchResults`, `ShellCommandResult`, `BashTool` | `.../core/tools/`, `.../core/toolinvocation/`, `.../core/shell/`, `.../core/tools/bash/` |
 | 프롬프트 | `EnvironmentBlocks`, `EnvironmentContextProvider`, `SystemPromptRenderer` | `.../core/agent/context/`, `.../core/agent/impl/orca/` |
 | 부트스트랩 | `ExecutionEnvironmentSpec`, `StackAgentRuntimeProvisioner`, `AimonStackBuilder` | `modules/aimon-bootstrap/src/main/java/at/aimon/bootstrap/` |
 | CLI | `AgentSetupFactory` | `modules/aimon-cli/src/main/java/at/aimon/cli/factory/` |

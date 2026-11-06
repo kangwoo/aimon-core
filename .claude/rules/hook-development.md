@@ -56,8 +56,9 @@ veto only recently — before that a declarative `onStart` hook could not veto a
 half the contract: the **firing site** has to read the returned results. Three routes exist; every
 other site drops what it gets. Render through `HookFeedback`, never by hand:
 
-- `PERMISSION_REQUEST` / `PRE_TOOL` / `POST_TOOL` → appended to that tool's result by
-  `SingleToolInvoker`, wrapped in `<system-reminder key="hook-feedback">`. It cannot be a separate
+- `PERMISSION_REQUEST` / `PRE_TOOL` / `POST_TOOL` → collected by `SingleToolInvoker` beside the result
+  (`ToolDispatchResult#getHookFeedback`) and appended to that tool's result by the loop that records it
+  (`ToolDispatchResults.toToolUseResult`), wrapped in `<system-reminder key="hook-feedback">`. It cannot be a separate
   user message: no user turn may sit between a `tool_use` and its `tool_result`.
 - `ON_START` → the **only** lifecycle chain whose feedback becomes a user-role message, appended by
   `OrcaAgentExecutor` and `DefaultSubagentExecutor`.

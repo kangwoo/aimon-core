@@ -21,7 +21,7 @@ Python 이다. LLM 제공자가 호스팅하는 실행 컨테이너는 쓰지 �
 
 | 문서 | 정하는 것 | 이 문서 없이 성립하는가 |
 |---|---|---|
-| [도구 호출의 단일 입구](tool-call-dispatcher.md) | `ToolCallDispatcher`, `ToolCallOrigin`, 스킬 폴백 제거 | 성립한다 — 그 자체로 지금의 관문 결함을 고친다 |
+| [도구 호출의 단일 입구](tool-call-dispatcher.md) | `ToolCallDispatcher`, `ToolCallOrigin`, 스킬 폴백 제거 | 성립한다 — PTC 없이도 슬래시 스킬의 관문 없는 폴백을 없앤다 |
 | 이 문서 | 모델이 보는 표면, 엔진 선택, 호출 가능 집합, 코드 경로 규칙, 엔진 SPI, GraalJS 엔진, 관찰·한도·보안 모델 | 단일 입구에 기댄다 |
 | [셸 엔진](programmatic-tool-calling-shell.md) | 샌드박스 안 Python 실행, 프로토콜, `RuntimeFileSystem`, 같은 uid 의 한계와 도구 범위, `aimon-sandbox` 요구 | 이 문서에 기댄다 |
 
@@ -650,7 +650,7 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 
 | 조각 | 무엇 | 기대는 것 | 그것 없이 성립하는 것 |
 |---|---|---|---|
-| A | [단일 입구](tool-call-dispatcher.md) 전체 | — | 그 자체로 지금의 관문 결함을 고친다 |
+| A | [단일 입구](tool-call-dispatcher.md) 전체 | — | 전부. 구현되었다(그 문서의 `Status`) |
 | B | `ToolOfferContext`·`describe`·`dataReach`·`approvalKey`, 승인 관문의 경로·서술자 인식, 공개 `ToolCallQuota`, `isCodeCallable` 과 그 ArchUnit 검사, MCP `dataReach` 매핑 | A | — |
 | C | `ExecuteCode`, 브리지, GraalJS 엔진, `aimon-graaljs` 개명(내장 출력 끄기, 예산 있는 마샬링, 이벤트 루프), `aimon-code-engine-testkit` | A, B | 셸 엔진 없이 로컬과 샌드박스 모두에서 동작한다(샌드박스에서는 명시적 `javascript` 로) |
 | D, E | 셸 엔진과 전용 uid 모드 | C | [셸 엔진](programmatic-tool-calling-shell.md) §15 |

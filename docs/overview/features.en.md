@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/features.md
-source_commit: 766b8b47
+source_commit: 03b8a8d4
 ---
 
 # Feature Catalog
@@ -148,7 +148,7 @@ The unit through which an agent interacts with the outside world. The contract i
 | lazy loading + exposing the schema through search | `ToolSearchRegistry`, `ToolSearchStrategy`, `ToolLoadingMode` | core |
 | tool permission checking | `agent.tool.permission`, `ToolPermissionSubjectAware` | core |
 | declaring interrupt behaviour | `InterruptBehavior`, `InterruptAccess` | core |
-| invoking a tool directly, once | `SingleToolInvoker` | core |
+| the single entrance for a tool call (one call through the gates, call path) | `ToolCallDispatcher`, `ToolCallOrigin`, `DefaultToolCallDispatcher` | core |
 | the tools' execution environment (file system and shell per execution, skill staging, isolation) | `ExecutionEnvironment`, `ExecutionEnvironmentProvider`, `LocalExecutionEnvironmentProvider` | core |
 
 ### 3.2 Built-in tools

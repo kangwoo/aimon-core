@@ -724,7 +724,7 @@ changed nothing but the refused-only case.
 
 ### 7.6 `skill/execution/llm/LlmSkillExecutorTruncationTest` (new)
 
-Fixtures follow `LlmSkillExecutorTest` (queue-backed stub client, `CountingTool`, a recording `ToolCallDispatcher`):
+Fixtures follow `LlmSkillExecutorTest` (queue-backed stub client, `CountingTool`, a recording `SkillToolDispatcher`):
 
 - **Fallback path:** a cut response calling `CountingTool`, then an answer → tool 0; the second call's last message holds the
   refusal; WARN names the skill, `iteration 1`, the tool name; success.
@@ -1102,3 +1102,20 @@ the reason. The command path still emits no `ExecutionCompleted` event (§3 D1, 
 
 **Measured.** `SlashSkillToolDispatchE2EIntegrationTest`, written first: the inline and the fork-mode case each failed
 with `expected: TRUNCATED but was: COMPLETED`; the uncut control passed before and after.
+
+## 14. After the tool-call dispatcher — the skill loop's fallback is gone
+
+*Appended 2026-11-06, when [`tool-call-dispatcher.md`](../tool/tool-call-dispatcher.md) was built. Nothing above is
+rewritten.*
+
+`SkillToolDispatcher` (§7.6) and the key it was bound under were removed. A slash-command skill's loop now reads
+`ToolContextKeys.TOOL_CALL_DISPATCHER`, narrows it to the skill and dispatches each call through it; with none bound it
+refuses the skill before its first LLM call. So the **fallback path** this document names beside the bound dispatcher
+(§3 D1 and D6, §6 F11, §7.6) — a skill loop with no dispatcher running its tools through the execution manager — no longer exists.
+
+- §6 F11 is superseded: a permission violation in a skill no longer throws and fails the skill. It comes back as an error
+  result for that one call, as on the dispatcher path, and the stall guard reads that result like any other refused call.
+- `LlmSkillExecutorTruncationTest` keeps §7.6's fallback case by binding `ToolCallDispatchers.ungated(...)`, the
+  explicitly named dispatcher with no gates, and its recording dispatcher implements `ToolCallDispatcher`.
+
+The truncation behaviour this document decided is unchanged: a cut response's tool calls still reach no dispatcher.

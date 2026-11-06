@@ -4794,6 +4794,14 @@ SPI 는 설계에서 기각했다(`execution-environment.md` §2) — 창이 작
 > 그 루프에서는 아예 비우지 않을지, 지금 모양을 계약으로 적을지. **언제 다시 볼까** 는 그대로 둔다 — 슬래시 스킬 뒤에
 > 부모가 재생성을 모른다는 보고가 오면 바로.
 
+> **2026-11-06 — 경로의 이름이 바뀌었고 (2) 는 그대로다.** 위 노트가 짚은 `SKILL_TOOL_DISPATCHER_KEY` · `SkillToolDispatcher` 와
+> `EnvironmentNotices.deliver` 경유는 [도구 호출 디스패처](../design/tool/tool-call-dispatcher.md) 로 대체되었다. 지금 인라인
+> 스킬의 도구 호출은 명령 컨텍스트의 `ToolContextKeys.TOOL_CALL_DISPATCHER` 를 `narrow` 한 `DefaultToolCallDispatcher` →
+> `SingleToolInvoker` 로 가고, 거기서 턴의 환경 인스턴스를 비운다(`EnvironmentNotices.drain`). 비운 notice 는
+> `ToolDispatchResult` 옆 목록으로 나와 `LlmSkillExecutor` 가 스크래치 전사에 넣을 때 붙인다(`ToolDispatchResults.toToolUseResult`).
+> 명령 컨텍스트가 턴의 환경 인스턴스를 그대로 싣는 것도 바뀌지 않았으므로, 메인 에이전트의 다음 턴이 그 notice 를 듣지 못한다는
+> (2) 는 그대로 열려 있다.
+
 ## EE-108 — 훅이 `drainNotices()` 를 부르는 것을 막는 것은 문서뿐이다 · **열림** *(트리거 대기)*
 
 *(2026-10-17 등록. 출처는 환경 알림 설계 §7 Q4.)*

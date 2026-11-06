@@ -7,6 +7,33 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed: every model-chosen tool call reaches the gates through one `ToolCallDispatcher`
+
+The main loop, a fork's loop and a slash-command skill's loop now call the tool gates (allow-list, ceiling,
+PermissionRequest, approval, PreTool, the tool, PostTool) through one entrance, `ToolCallDispatcher`, bound into the
+loop's tool context under the write-once `ToolContextKeys.TOOL_CALL_DISPATCHER`. Design:
+`docs/design/tool/tool-call-dispatcher.md`.
+
+- **A slash-command skill with no dispatcher bound is refused, not run ungated.** `LlmSkillExecutor` used to fall back
+  to `ToolExecutionManager.executeAll` when no `SkillToolDispatcher` was bound, skipping every hook and the approval
+  gate. It now fails the skill before its first LLM call. `OrcaAgentExecutor` binds one on every slash command, so an
+  agent sees no difference; an embedder driving `LlmSkillExecutor` itself binds a dispatcher, or
+  `ToolCallDispatchers.ungated(executionManager, registry)` to choose no gates by name.
+- **A skill's `allowed-tools` is enforced when a call runs**, not only when the offer is filtered: the skill loop
+  narrows the bound dispatcher to the skill's registry and allow-list (`ToolCallDispatcher#narrow`). A call outside it,
+  or any permission violation, is an error result for that one call and the skill continues; before, a permission
+  violation on the fallback path failed the whole skill with "Permission denied".
+- **Hooks see the path a call arrived by.** `PreToolContext`, `PostToolContext` and `PermissionRequestContext` carry a
+  required `ToolCallOrigin` (`getOrigin()`; path `DIRECT`, `CODE`, `SKILL` or `REPLAY`), and shell hooks on `preTool`,
+  `postTool` and `permissionRequest` receive `AIMON_TOOL_PATH` and `AIMON_TOOL_PARENT_ID`. A call from a slash-command
+  skill, reported as `MAIN_AGENT` like any other, is now told apart as `SKILL`.
+- **Removed:** `SkillToolDispatcher` and `ToolContextKeys.SKILL_TOOL_DISPATCHER_KEY`. **Breaking:** the three hook
+  context builders require `origin(...)`; `SingleToolInvoker.invoke` returns a `ToolDispatchResult` with the hooks'
+  feedback and the environment's notices beside the text instead of spliced into it (`ToolDispatchResults
+  .toToolUseResult` splices them); `ToolInvocationSpec` requires `origin(...)`.
+- An ArchUnit rule now allows `ToolExecutionManager#execute` / `#executeAll` to be called only from
+  `at.aimon.core.toolinvocation..`.
+
 ### Changed: `aimon-llm-anthropic` is on Anthropic SDK 3 and API version 2026-10-21
 
 `com.anthropic:anthropic-java` moves from 2.71.0 to 3.3.0. SDK 3 sends `anthropic-version: 2026-10-21`, and that version

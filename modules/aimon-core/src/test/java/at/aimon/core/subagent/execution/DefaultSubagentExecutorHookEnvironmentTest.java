@@ -121,15 +121,15 @@ class DefaultSubagentExecutorHookEnvironmentTest {
         final List<String> seen = new ArrayList<>();
         final DefaultHookRegistry hooks = new DefaultHookRegistry();
         hooks.register(HookEventType.PERMISSION_REQUEST, (PermissionRequestHook) context -> {
-            seen.add("permission " + context.getOrigin().path() + " " + context.getInvokerType());
+            seen.add("permission " + context.getOrigin().getPath() + " " + context.getInvokerType());
             return HookResult.success();
         });
         hooks.register(HookEventType.PRE_TOOL, (PreToolHook) context -> {
-            seen.add("pre " + context.getOrigin().path() + " " + context.getIterationCount());
+            seen.add("pre " + context.getOrigin().getPath() + " " + context.getIterationCount());
             return HookResult.success();
         });
         hooks.register(HookEventType.POST_TOOL, (PostToolHook) context -> {
-            seen.add("post " + context.getOrigin().path() + " " + context.getIterationCount());
+            seen.add("post " + context.getOrigin().getPath() + " " + context.getIterationCount());
             return HookResult.success();
         });
 

@@ -345,7 +345,7 @@ HookResult.builder()...build();              // 여러 축을 동시에 설정
 
 | 체인 | feedback 의 행선지 | 렌더 위치 |
 |------|--------------------|-----------|
-| `PERMISSION_REQUEST` / `PRE_TOOL` / `POST_TOOL` | 해당 도구의 결과에 `<system-reminder key="hook-feedback">` 로 덧붙음 | `SingleToolInvoker` |
+| `PERMISSION_REQUEST` / `PRE_TOOL` / `POST_TOOL` | 해당 도구의 결과에 `<system-reminder key="hook-feedback">` 로 덧붙음 | `SingleToolInvoker` 가 결과 옆에 모으고, 결과를 기록하는 루프가 `ToolDispatchResults.toToolUseResult` 로 붙임 |
 | `ON_START` | user role 메시지로 대화에 추가 (같은 래퍼) | `OrcaAgentExecutor`, `DefaultSubagentExecutor` |
 | `PRE_COMPACT` | 메시지가 아니라 **요약 프롬프트의 custom instruction** 으로 합쳐짐 | `DefaultCompactionEngine` |
 

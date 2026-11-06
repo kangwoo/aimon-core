@@ -139,7 +139,7 @@ public final class PermissionRequestContext implements HookContext {
     @Override
     public String toString() {
         return "PermissionRequestContext{" + "invokerType=" + invokerType + ", invokerName='" + invokerName + '\''
-                + ", origin=" + origin.path() + ", toolName='" + toolName + '\'' + ", principal=" + principal
+                + ", origin=" + origin.getPath() + ", toolName='" + toolName + '\'' + ", principal=" + principal
                 + ", timestamp=" + timestamp + '}';
     }
 
