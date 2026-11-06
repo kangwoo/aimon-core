@@ -71,6 +71,9 @@
 | [`parallel-execution.md`](tool/parallel-execution.md) | `ConcurrencyBehavior` 와 2단 게이트(모델 의도 + 프레임워크 안전성) |
 | [`subagent/parallel-foreground-task.md`](subagent/parallel-foreground-task.md) | (IMPLEMENTED, 승인본, 차이는 §9) `ConcurrencyBehavior.DEDICATED_THREAD` — 전부 `CONCURRENT_SAFE` 가 아니면 순차인 게이트 옆에, 연속된 포그라운드 `Task` 구간만 재사용하지 않는 전용 스레드로 펴는 데코레이터. 정본은 `subagent` 표의 같은 행 |
 | [`tool-search.md`](tool/tool-search.md) | 도구가 많아졌을 때 스키마를 지연 로드하는 검색 계층 |
+| [`programmatic-tool-calling.md`](tool/programmatic-tool-calling.md) | (PROPOSED) 모델이 쓴 코드가 관문을 그대로 지나 도구를 부르는 `ExecuteCode` — opt-in 범위, 엔진(GraalJS · 샌드박스 셸), 보안 모델과 같은 uid 한계 |
+| [`programmatic-tool-calling-shell.md`](tool/programmatic-tool-calling-shell.md) | (PROPOSED) PTC 의 셸 엔진 — 샌드박스 안 Python, 인증된 통로와 `RuntimeFileSystem`, 같은 uid 의 한계와 `shell-engine-tool-scope`, `aimon-sandbox` 요구 |
+| [`tool-call-dispatcher.md`](tool/tool-call-dispatcher.md) | (PROPOSED) 도구 호출의 단일 입구 `ToolCallDispatcher` — 관문을 지나는 경로 통합, 스킬 루프의 관문 없는 폴백 제거, 호출 경로 `ToolCallOrigin` |
 | [`monitor.md`](tool/monitor.md) | (IMPLEMENTED) 백그라운드 이벤트 감시 `Monitor` — source(셸·WebSocket·호스트 등록)와 정책의 분리, 세션 단위 큐 전달과 `sessionId` 로 막은 세션 간 누수, 깨우기를 모니터 안에 두지 않은 이유(§9.1 — 깨우기는 [`session/idle-wake.md`](session/idle-wake.md)). 셸 스트리밍은 `shell-contract.md` |
 | [`execution-environment.md`](tool/execution-environment.md) | (IMPLEMENTED) 도구의 파일 시스템·셸을 실행마다 고르는 `ExecutionEnvironment` — 타입, 수명과 소유권, 로컬 제공자, `resolve()` 지점, 사용 불가 환경, 포크 계약, 알림 두 채널, 프롬프트 서술, `environment` 동음이의, 샌드박스 제공자 계약 |
 | [`execution-environment-placement.md`](tool/execution-environment-placement.md) | 제공자가 어디서 돌지를 정하는 입력 — 정의 속성과 `environment.*` 실행 속성, 경로별 표, 루틴 해석기, 신뢰 경계, 워크플로 단계 속성 |

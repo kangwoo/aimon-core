@@ -25,6 +25,7 @@ import at.aimon.core.agent.compact.CompactionMetadata;
 import at.aimon.core.agent.compact.CompactionTrigger;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.DefaultHookRegistry;
@@ -455,8 +456,9 @@ class DeclarativeShellHookBindingTest {
     }
 
     private static PermissionRequestContext permissionRequestContext() {
-        return PermissionRequestContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).toolName("Bash").toolInput(ToolInput.of(Map.of("command", "ls"))).build();
+        return PermissionRequestContext.builder().origin(ToolCallOrigin.direct()).invokerType(InvokerType.MAIN_AGENT)
+                .invokerName("default-agent").hookRegistry(REGISTRY).toolName("Bash")
+                .toolInput(ToolInput.of(Map.of("command", "ls"))).build();
     }
 
     private static PermissionDeniedContext permissionDeniedContext() {

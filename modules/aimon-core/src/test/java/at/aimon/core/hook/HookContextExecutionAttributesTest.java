@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.event.OnStartContext;
 import at.aimon.core.hook.event.OnStopContext;
@@ -150,18 +151,18 @@ class HookContextExecutionAttributesTest {
 
         @Test
         void executionAttributes_set_returnsSetAttributes() {
-            PreToolContext context = PreToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).toolUse(TOOL_USE).iterationCount(1)
-                    .timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS).build();
+            PreToolContext context = PreToolContext.builder().origin(ToolCallOrigin.direct())
+                    .executorType(InvokerType.MAIN_AGENT).invokerName("test-agent").hookRegistry(HOOK_REGISTRY)
+                    .toolUse(TOOL_USE).iterationCount(1).timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS).build();
 
             assertThat(context.getExecutionAttributes()).isEqualTo(TEST_ATTRS);
         }
 
         @Test
         void executionAttributes_notSet_returnsEmptyMap() {
-            PreToolContext context = PreToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).toolUse(TOOL_USE).iterationCount(1)
-                    .timestamp(TIMESTAMP).build();
+            PreToolContext context = PreToolContext.builder().origin(ToolCallOrigin.direct())
+                    .executorType(InvokerType.MAIN_AGENT).invokerName("test-agent").hookRegistry(HOOK_REGISTRY)
+                    .toolUse(TOOL_USE).iterationCount(1).timestamp(TIMESTAMP).build();
 
             assertThat(context.getExecutionAttributes()).isEmpty();
         }
@@ -171,9 +172,9 @@ class HookContextExecutionAttributesTest {
             HashMap<String, Object> mutableMap = new HashMap<>();
             mutableMap.put("key", "value");
 
-            PreToolContext context = PreToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).toolUse(TOOL_USE).iterationCount(1)
-                    .timestamp(TIMESTAMP).executionAttributes(mutableMap).build();
+            PreToolContext context = PreToolContext.builder().origin(ToolCallOrigin.direct())
+                    .executorType(InvokerType.MAIN_AGENT).invokerName("test-agent").hookRegistry(HOOK_REGISTRY)
+                    .toolUse(TOOL_USE).iterationCount(1).timestamp(TIMESTAMP).executionAttributes(mutableMap).build();
 
             mutableMap.put("newKey", "newValue");
 
@@ -182,9 +183,9 @@ class HookContextExecutionAttributesTest {
 
         @Test
         void executionAttributes_returnedMapIsUnmodifiable() {
-            PreToolContext context = PreToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).toolUse(TOOL_USE).iterationCount(1)
-                    .timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS).build();
+            PreToolContext context = PreToolContext.builder().origin(ToolCallOrigin.direct())
+                    .executorType(InvokerType.MAIN_AGENT).invokerName("test-agent").hookRegistry(HOOK_REGISTRY)
+                    .toolUse(TOOL_USE).iterationCount(1).timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS).build();
 
             assertThatThrownBy(() -> context.getExecutionAttributes().put("new", "value"))
                     .isInstanceOf(UnsupportedOperationException.class);
@@ -192,9 +193,9 @@ class HookContextExecutionAttributesTest {
 
         @Test
         void toString_containsExecutionAttributes() {
-            PreToolContext context = PreToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).toolUse(TOOL_USE).iterationCount(1)
-                    .timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS).build();
+            PreToolContext context = PreToolContext.builder().origin(ToolCallOrigin.direct())
+                    .executorType(InvokerType.MAIN_AGENT).invokerName("test-agent").hookRegistry(HOOK_REGISTRY)
+                    .toolUse(TOOL_USE).iterationCount(1).timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS).build();
 
             assertThat(context.toString()).contains("executionAttributes");
         }
@@ -208,18 +209,19 @@ class HookContextExecutionAttributesTest {
 
         @Test
         void executionAttributes_set_returnsSetAttributes() {
-            PostToolContext context = PostToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).toolUse(TOOL_USE).toolUseResult(TOOL_RESULT)
-                    .iterationCount(1).timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS).build();
+            PostToolContext context = PostToolContext.builder().origin(ToolCallOrigin.direct())
+                    .executorType(InvokerType.MAIN_AGENT).invokerName("test-agent").hookRegistry(HOOK_REGISTRY)
+                    .toolUse(TOOL_USE).toolUseResult(TOOL_RESULT).iterationCount(1).timestamp(TIMESTAMP)
+                    .executionAttributes(TEST_ATTRS).build();
 
             assertThat(context.getExecutionAttributes()).isEqualTo(TEST_ATTRS);
         }
 
         @Test
         void executionAttributes_notSet_returnsEmptyMap() {
-            PostToolContext context = PostToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).toolUse(TOOL_USE).toolUseResult(TOOL_RESULT)
-                    .iterationCount(1).timestamp(TIMESTAMP).build();
+            PostToolContext context = PostToolContext.builder().origin(ToolCallOrigin.direct())
+                    .executorType(InvokerType.MAIN_AGENT).invokerName("test-agent").hookRegistry(HOOK_REGISTRY)
+                    .toolUse(TOOL_USE).toolUseResult(TOOL_RESULT).iterationCount(1).timestamp(TIMESTAMP).build();
 
             assertThat(context.getExecutionAttributes()).isEmpty();
         }
@@ -229,9 +231,10 @@ class HookContextExecutionAttributesTest {
             HashMap<String, Object> mutableMap = new HashMap<>();
             mutableMap.put("key", "value");
 
-            PostToolContext context = PostToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).toolUse(TOOL_USE).toolUseResult(TOOL_RESULT)
-                    .iterationCount(1).timestamp(TIMESTAMP).executionAttributes(mutableMap).build();
+            PostToolContext context = PostToolContext.builder().origin(ToolCallOrigin.direct())
+                    .executorType(InvokerType.MAIN_AGENT).invokerName("test-agent").hookRegistry(HOOK_REGISTRY)
+                    .toolUse(TOOL_USE).toolUseResult(TOOL_RESULT).iterationCount(1).timestamp(TIMESTAMP)
+                    .executionAttributes(mutableMap).build();
 
             mutableMap.put("newKey", "newValue");
 
@@ -240,9 +243,10 @@ class HookContextExecutionAttributesTest {
 
         @Test
         void executionAttributes_returnedMapIsUnmodifiable() {
-            PostToolContext context = PostToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).toolUse(TOOL_USE).toolUseResult(TOOL_RESULT)
-                    .iterationCount(1).timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS).build();
+            PostToolContext context = PostToolContext.builder().origin(ToolCallOrigin.direct())
+                    .executorType(InvokerType.MAIN_AGENT).invokerName("test-agent").hookRegistry(HOOK_REGISTRY)
+                    .toolUse(TOOL_USE).toolUseResult(TOOL_RESULT).iterationCount(1).timestamp(TIMESTAMP)
+                    .executionAttributes(TEST_ATTRS).build();
 
             assertThatThrownBy(() -> context.getExecutionAttributes().put("new", "value"))
                     .isInstanceOf(UnsupportedOperationException.class);
@@ -250,9 +254,10 @@ class HookContextExecutionAttributesTest {
 
         @Test
         void toString_containsExecutionAttributes() {
-            PostToolContext context = PostToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("test-agent").hookRegistry(HOOK_REGISTRY).toolUse(TOOL_USE).toolUseResult(TOOL_RESULT)
-                    .iterationCount(1).timestamp(TIMESTAMP).executionAttributes(TEST_ATTRS).build();
+            PostToolContext context = PostToolContext.builder().origin(ToolCallOrigin.direct())
+                    .executorType(InvokerType.MAIN_AGENT).invokerName("test-agent").hookRegistry(HOOK_REGISTRY)
+                    .toolUse(TOOL_USE).toolUseResult(TOOL_RESULT).iterationCount(1).timestamp(TIMESTAMP)
+                    .executionAttributes(TEST_ATTRS).build();
 
             assertThat(context.toString()).contains("executionAttributes");
         }

@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-development-guide.md
-source_commit: 0f7a0c73
+source_commit: 05b4e424
 ---
 
 # Hook Development Guide
@@ -360,7 +360,7 @@ site simply discards the result.
 
 | Chain | Where the feedback goes | Rendered in |
 |------|--------------------|-----------|
-| `PERMISSION_REQUEST` / `PRE_TOOL` / `POST_TOOL` | Appended to that tool's result as `<system-reminder key="hook-feedback">` | `SingleToolInvoker` |
+| `PERMISSION_REQUEST` / `PRE_TOOL` / `POST_TOOL` | Appended to that tool's result as `<system-reminder key="hook-feedback">` | collected beside the result by `SingleToolInvoker`, appended by the loop that records it via `ToolDispatchResults.toToolUseResult` |
 | `ON_START` | Added to the conversation as a user-role message (same wrapper) | `OrcaAgentExecutor`, `DefaultSubagentExecutor` |
 | `PRE_COMPACT` | Not a message — merged into the summarisation prompt as a **custom instruction** | `DefaultCompactionEngine` |
 

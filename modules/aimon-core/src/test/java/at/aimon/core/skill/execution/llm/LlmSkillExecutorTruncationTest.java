@@ -20,7 +20,10 @@ import at.aimon.core.agent.budget.TruncatedResponses;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.Tool;
+import at.aimon.core.agent.tool.ToolCallDispatcher;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolContext;
+import at.aimon.core.agent.tool.ToolDispatchResult;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
@@ -40,8 +43,9 @@ import at.aimon.core.skill.SkillMetadata;
 import at.aimon.core.skill.execution.SkillExecutionContext;
 import at.aimon.core.skill.execution.SkillExecutionRequest;
 import at.aimon.core.skill.execution.SkillExecutionResult;
-import at.aimon.core.skill.execution.SkillToolDispatcher;
 import at.aimon.core.skill.render.DefaultSkillContentRenderer;
+import at.aimon.core.toolinvocation.ToolCallDispatchers;
+import at.aimon.core.toolinvocation.ToolDispatchResults;
 import at.aimon.core.tools.ToolContextKeys;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
@@ -126,7 +130,7 @@ class LlmSkillExecutorTruncationTest {
         llm.responses.add(LlmResponse.of("done", List.of(), USAGE, StopReason.END_TURN));
 
         final SkillExecutionResult result = execute(
-                ToolContext.builder().put(ToolContextKeys.SKILL_TOOL_DISPATCHER_KEY, dispatcher).build(),
+                ToolContext.builder().put(ToolContextKeys.TOOL_CALL_DISPATCHER, dispatcher).build(),
                 new CountingTool());
 
         assertThat(result.isSuccess()).isTrue();
@@ -265,9 +269,18 @@ class LlmSkillExecutorTruncationTest {
                 .metadata(
                         SkillMetadata.builder().name(SKILL).description("truncation fixture").maxIterations(10).build())
                 .content(SkillContent.of("Audit the module")).build();
+        // A context with no dispatcher of its own gets an explicitly ungated one: these tests are about the loop, not
+        // the gates.
+        final ToolContext withDispatcher = toolContext.get(ToolContextKeys.TOOL_CALL_DISPATCHER)
+                .isPresent()
+                        ? toolContext
+                        : ToolContext.builder().putAll(toolContext.getContext())
+                                .put(ToolContextKeys.TOOL_CALL_DISPATCHER,
+                                        ToolCallDispatchers.ungated(new DefaultToolExecutionManager(), registry))
+                                .build();
         final SkillExecutionContext context = SkillExecutionContext.builder().skill(skill)
                 .defaultModel(LlmModel.builder().build()).toolRegistry(registry)
-                .executionId(ExecutionId.generate("skill:test")).toolContext(toolContext).build();
+                .executionId(ExecutionId.generate("skill:test")).toolContext(withDispatcher).build();
         return executor.execute(context, SkillExecutionRequest.builder().build());
     }
 
@@ -314,14 +327,18 @@ class LlmSkillExecutorTruncationTest {
     }
 
     /** Records the calls it is handed and answers each with success, touching no tool. */
-    private static final class RecordingDispatcher implements SkillToolDispatcher {
+    private static final class RecordingDispatcher implements ToolCallDispatcher {
         private final List<ToolUse> dispatched = new ArrayList<>();
 
         @Override
-        public List<ToolUseResult> dispatch(ToolRegistry toolRegistry, ToolContext toolContext, List<ToolUse> toolUses,
-                List<AllowedTool> allowedTools, int iterationCount) {
-            dispatched.addAll(toolUses);
-            return toolUses.stream().map(use -> ToolUseResult.success(use.getId(), "dispatched")).toList();
+        public ToolDispatchResult dispatch(ToolUse toolUse, ToolCallOrigin origin, ToolContext context) {
+            dispatched.add(toolUse);
+            return ToolDispatchResults.of(ToolUseResult.success(toolUse.getId(), "dispatched"), List.of(), List.of());
+        }
+
+        @Override
+        public ToolCallDispatcher narrow(ToolRegistry registry, List<AllowedTool> allowedTools) {
+            return this;
         }
     }
 

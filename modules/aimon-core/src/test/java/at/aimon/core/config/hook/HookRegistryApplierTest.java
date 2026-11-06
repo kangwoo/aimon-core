@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.event.OnSessionStartContext;
@@ -297,8 +298,9 @@ class HookRegistryApplierTest {
               "asyncRewake":{"trigger":{"delay":"5m"},"maxAttempts":2,"reason":"retry"}}]}]}}""";
 
     private static PreToolContext preToolContext(DefaultHookRegistry registry) {
-        return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(registry)
-                .toolUse(ToolUse.of("call-1", "Bash", Map.of())).iterationCount(1).build();
+        return PreToolContext.builder().origin(ToolCallOrigin.direct()).executorType(InvokerType.MAIN_AGENT)
+                .invokerName("agent").hookRegistry(registry).toolUse(ToolUse.of("call-1", "Bash", Map.of()))
+                .iterationCount(1).build();
     }
 
     @Test

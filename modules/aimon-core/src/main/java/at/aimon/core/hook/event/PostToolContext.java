@@ -8,6 +8,7 @@ import java.util.Optional;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.CancellationSignals;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
@@ -54,6 +55,7 @@ public final class PostToolContext implements HookContext {
 
     private final InvokerType invokerType;
     private final String invokerName;
+    private final ToolCallOrigin origin;
     private final HookRegistry hookRegistry;
     private final ExecutionEnvironment executionEnvironment;
     private final CancellationSignal executionCancellation;
@@ -67,6 +69,7 @@ public final class PostToolContext implements HookContext {
     private PostToolContext(Builder builder) {
         invokerType = Objects.requireNonNull(builder.invokerType, "Executor type cannot be null");
         invokerName = Objects.requireNonNull(builder.invokerName, "Executor name cannot be null");
+        origin = Objects.requireNonNull(builder.origin, "Origin cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
         executionEnvironment = builder.executionEnvironment;
         executionCancellation = builder.executionCancellation;
@@ -88,6 +91,16 @@ public final class PostToolContext implements HookContext {
     @Override
     public String getInvokerName() {
         return invokerName;
+    }
+
+    /**
+     * Gets the path the tool call arrived by — the model directly, a program, a slash-command skill's loop, or a rewake
+     * replay — and what that path knows about the call's parent.
+     *
+     * @return the origin (never null)
+     */
+    public ToolCallOrigin getOrigin() {
+        return origin;
     }
 
     @Override
@@ -210,26 +223,27 @@ public final class PostToolContext implements HookContext {
     public PostToolContext withCurrentOutput(ToolResult newOutput) {
         Objects.requireNonNull(newOutput, "newOutput cannot be null");
         final ToolUseResult rebuilt = newOutput.toToolUseResult(toolUse.getId());
-        final Builder b = new Builder().executorType(invokerType).invokerName(invokerName).hookRegistry(hookRegistry)
-                .executionEnvironment(executionEnvironment).executionCancellation(executionCancellation)
-                .toolUse(toolUse).toolUseResult(originalToolUseResult).iterationCount(iterationCount)
-                .timestamp(timestamp).executionAttributes(executionAttributes);
+        final Builder b = new Builder().executorType(invokerType).invokerName(invokerName).origin(origin)
+                .hookRegistry(hookRegistry).executionEnvironment(executionEnvironment)
+                .executionCancellation(executionCancellation).toolUse(toolUse).toolUseResult(originalToolUseResult)
+                .iterationCount(iterationCount).timestamp(timestamp).executionAttributes(executionAttributes);
         b.currentToolUseResult = rebuilt;
         return new PostToolContext(b);
     }
 
     @Override
     public String toString() {
-        return "PostToolContext{" + "invokerType=" + invokerType + ", invokerName='" + invokerName + '\''
-                + ", toolName='" + toolUse.getName() + '\'' + ", success=" + !currentToolUseResult.isError()
-                + ", iterationCount=" + iterationCount + ", timestamp=" + timestamp + ", executionAttributes="
-                + executionAttributes + '}';
+        return "PostToolContext{" + "invokerType=" + invokerType + ", invokerName='" + invokerName + '\'' + ", origin="
+                + origin.getPath() + ", toolName='" + toolUse.getName() + '\'' + ", success="
+                + !currentToolUseResult.isError() + ", iterationCount=" + iterationCount + ", timestamp=" + timestamp
+                + ", executionAttributes=" + executionAttributes + '}';
     }
 
     /** Builder for PostToolContext. */
     public static final class Builder {
         private InvokerType invokerType;
         private String invokerName;
+        private ToolCallOrigin origin;
         private HookRegistry hookRegistry;
         private ExecutionEnvironment executionEnvironment;
         private CancellationSignal executionCancellation;
@@ -264,6 +278,18 @@ public final class PostToolContext implements HookContext {
          */
         public Builder invokerName(String invokerName) {
             this.invokerName = invokerName;
+            return this;
+        }
+
+        /**
+         * Sets the path the tool call arrived by.
+         *
+         * @param origin
+         *            the origin (must not be null)
+         * @return This builder
+         */
+        public Builder origin(ToolCallOrigin origin) {
+            this.origin = origin;
             return this;
         }
 

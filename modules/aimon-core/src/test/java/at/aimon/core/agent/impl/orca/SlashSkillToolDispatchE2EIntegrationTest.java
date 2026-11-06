@@ -26,6 +26,7 @@ import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.Tool;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
@@ -77,13 +78,14 @@ import at.aimon.core.tools.file.WriteTool;
  * ran without asking as soon as the user typed a slash.
  *
  * <p>
- * {@code OrcaAgentExecutor.executeCommand} now binds a {@code SkillToolDispatcher} into the command {@code ToolContext}
- * that routes each call through the same {@code SingleToolInvoker} the ReAct loop uses. These tests pin that from the
- * outside: they drive {@link OrcaAgentExecutor#execute} with a slash invocation and assert on what the hooks saw, so a
- * refactor that drops the {@code SKILL_TOOL_DISPATCHER_KEY} binding fails here rather than silently reopening the hole.
+ * {@code OrcaAgentExecutor.executeCommand} now binds the agent's {@code ToolCallDispatcher} into the command
+ * {@code ToolContext} under {@code TOOL_CALL_DISPATCHER}; the skill loop narrows it to the skill and routes each call
+ * through the same pipeline the ReAct loop uses. These tests pin that from the outside: they drive
+ * {@link OrcaAgentExecutor#execute} with a slash invocation and assert on what the hooks saw, so a refactor that drops
+ * the binding fails here rather than silently reopening the hole.
  *
  * <p>
- * Companion unit coverage lives in {@code LlmSkillExecutorTest} (prefers a bound dispatcher, falls back without one).
+ * Companion unit coverage lives in {@code LlmSkillExecutorTest} (narrows a bound dispatcher, refuses without one).
  */
 @DisplayName("Slash skill tool dispatch e2e (OrcaAgentExecutor)")
 class SlashSkillToolDispatchE2EIntegrationTest {
@@ -150,6 +152,41 @@ class SlashSkillToolDispatchE2EIntegrationTest {
         assertThat(preToolSaw).containsExactly(CountingTool.NAME);
         assertThat(postToolCalls).hasValue(1);
         assertThat(countingTool.executions).isOne();
+    }
+
+    @Test
+    @DisplayName("tool-call-dispatcher §7: a skill's call reaches all three hooks as a SKILL call; a turn's own as DIRECT")
+    void hooksSeeTheCallsOrigin() {
+        final List<ToolCallOrigin> permissionSaw = new ArrayList<>();
+        final List<ToolCallOrigin> preToolSaw = new ArrayList<>();
+        final List<ToolCallOrigin> postToolSaw = new ArrayList<>();
+        hookRegistry.register(HookEventType.PERMISSION_REQUEST, (PermissionRequestHook) context -> {
+            permissionSaw.add(context.getOrigin());
+            return HookResult.success();
+        });
+        hookRegistry.register(HookEventType.PRE_TOOL, (PreToolHook) context -> {
+            preToolSaw.add(context.getOrigin());
+            return HookResult.success();
+        });
+        hookRegistry.register(HookEventType.POST_TOOL, (PostToolHook) context -> {
+            postToolSaw.add(context.getOrigin());
+            return HookResult.success();
+        });
+        skillRegistry.add(inlineSkill("audit", "Audit this: $ARGUMENTS"));
+
+        // The slash path.
+        llmClient.script(LlmResponse.of("Counting", List.of(ToolUse.of("call-1", CountingTool.NAME, Map.of()))),
+                LlmResponse.text("audit complete"));
+        assertThat(executor.execute(createContext(), createRequest("/audit src")).isSuccess()).isTrue();
+        // The turn's own loop.
+        llmClient.script(LlmResponse.of("Counting", List.of(ToolUse.of("call-2", CountingTool.NAME, Map.of()))),
+                LlmResponse.text("counted"));
+        assertThat(executor.execute(createContext(), createRequest("count please")).isSuccess()).isTrue();
+
+        final ToolCallOrigin skill = ToolCallOrigin.skill("audit");
+        assertThat(permissionSaw).containsExactly(skill, ToolCallOrigin.direct());
+        assertThat(preToolSaw).containsExactly(skill, ToolCallOrigin.direct());
+        assertThat(postToolSaw).containsExactly(skill, ToolCallOrigin.direct());
     }
 
     @Test

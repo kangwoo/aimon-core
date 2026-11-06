@@ -36,6 +36,7 @@ import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.event.OnStartHook;
 import at.aimon.core.hook.event.OnStopHook;
+import at.aimon.core.hook.event.PermissionRequestHook;
 import at.aimon.core.hook.event.PostToolHook;
 import at.aimon.core.hook.event.PreToolHook;
 import at.aimon.core.hook.execution.HookResult;
@@ -109,6 +110,32 @@ class DefaultSubagentExecutorHookEnvironmentTest {
         assertThat(seen).hasSize(4).allSatisfy(env -> assertThat(env.orElseThrow()).isSameAs(forkEnvironment));
         // One instance for hooks and tools: a hook's shell action lands where the tool's command would.
         assertThat(probe.seen).isSameAs(forkEnvironment);
+    }
+
+    @Test
+    @DisplayName("tool-call-dispatcher §7: a fork's tool hooks see a DIRECT call from a SUBAGENT, at the fork's iteration")
+    void aForksToolHooksSeeADirectCallAtItsIteration() {
+        final StubLlmClient llm = new StubLlmClient();
+        llm.responses.add(LlmResponse.of("act", List.of(ToolUse.of("t1", ProbeTool.TOOL_NAME, Map.of())), USAGE));
+        llm.responses.add(LlmResponse.of("done", List.of(), USAGE));
+        final List<String> seen = new ArrayList<>();
+        final DefaultHookRegistry hooks = new DefaultHookRegistry();
+        hooks.register(HookEventType.PERMISSION_REQUEST, (PermissionRequestHook) context -> {
+            seen.add("permission " + context.getOrigin().getPath() + " " + context.getInvokerType());
+            return HookResult.success();
+        });
+        hooks.register(HookEventType.PRE_TOOL, (PreToolHook) context -> {
+            seen.add("pre " + context.getOrigin().getPath() + " " + context.getIterationCount());
+            return HookResult.success();
+        });
+        hooks.register(HookEventType.POST_TOOL, (PostToolHook) context -> {
+            seen.add("post " + context.getOrigin().getPath() + " " + context.getIterationCount());
+            return HookResult.success();
+        });
+
+        execute(llm, registryWith(new ProbeTool()), hooks, 10);
+
+        assertThat(seen).containsExactly("permission DIRECT SUBAGENT", "pre DIRECT 1", "post DIRECT 1");
     }
 
     @Test

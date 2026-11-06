@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
@@ -203,8 +204,8 @@ class HttpActionExecutorBodyTimeoutTest {
             final long start = System.nanoTime();
 
             final HookResult blocked = HookResult.merge(manager.executePreTool(PreToolContext.builder()
-                    .executorType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(registry)
-                    .toolUse(ToolUse.of("call-1", "Bash", Map.of())).iterationCount(1).build()));
+                    .origin(ToolCallOrigin.direct()).executorType(InvokerType.MAIN_AGENT).invokerName("agent")
+                    .hookRegistry(registry).toolUse(ToolUse.of("call-1", "Bash", Map.of())).iterationCount(1).build()));
 
             // The action's own deadline answered, not the 30s outer net: the reason is the guard's, with its cause.
             assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(3));

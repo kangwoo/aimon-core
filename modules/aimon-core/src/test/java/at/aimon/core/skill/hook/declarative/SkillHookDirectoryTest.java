@@ -18,6 +18,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.StagedResource;
@@ -75,9 +76,9 @@ class SkillHookDirectoryTest {
     }
 
     private PreToolContext preTool(HookRegistry registry, ExecutionEnvironment env) {
-        return PreToolContext.builder().executorType(InvokerType.SUBAGENT).invokerName("worker").hookRegistry(registry)
-                .executionEnvironment(env).toolUse(ToolUse.of("call-1", "TodoWrite", Map.of())).iterationCount(1)
-                .build();
+        return PreToolContext.builder().origin(ToolCallOrigin.direct()).executorType(InvokerType.SUBAGENT)
+                .invokerName("worker").hookRegistry(registry).executionEnvironment(env)
+                .toolUse(ToolUse.of("call-1", "TodoWrite", Map.of())).iterationCount(1).build();
     }
 
     // --- when the variable is exported -----------------------------------------------------------------------
@@ -272,10 +273,10 @@ class SkillHookDirectoryTest {
                 SkillHookSet.builder().addPostTool(hook).build(), review);
         when(environment.stage(review)).thenThrow(new StagingException("over the limit"));
 
-        final HookResult result = hook.execute(
-                PostToolContext.builder().executorType(InvokerType.SUBAGENT).invokerName("worker").hookRegistry(view)
-                        .executionEnvironment(environment).toolUse(ToolUse.of("call-1", "Read", Map.of()))
-                        .toolUseResult(ToolUseResult.success("call-1", "ok")).iterationCount(1).build());
+        final HookResult result = hook.execute(PostToolContext.builder().origin(ToolCallOrigin.direct())
+                .executorType(InvokerType.SUBAGENT).invokerName("worker").hookRegistry(view)
+                .executionEnvironment(environment).toolUse(ToolUse.of("call-1", "Read", Map.of()))
+                .toolUseResult(ToolUseResult.success("call-1", "ok")).iterationCount(1).build());
 
         assertThat(result.getStatus()).isEqualTo(HookStatus.SUCCESS);
         assertThat(executor.calls).isEmpty();

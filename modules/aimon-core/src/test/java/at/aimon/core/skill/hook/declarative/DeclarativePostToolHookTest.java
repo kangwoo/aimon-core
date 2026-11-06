@@ -11,6 +11,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.PostToolContext;
@@ -49,6 +50,8 @@ class DeclarativePostToolHookTest {
         assertThat(env).containsEntry(SkillHookEnv.AIMON_HOOK_EVENT, "postTool")
                 .containsEntry(SkillHookEnv.AIMON_SKILL_NAME, "my-skill")
                 .containsEntry(SkillHookEnv.AIMON_TOOL_NAME, "Read")
+                .containsEntry(SkillHookEnv.AIMON_TOOL_PATH, "direct")
+                .containsEntry(SkillHookEnv.AIMON_TOOL_PARENT_ID, "")
                 .containsEntry(SkillHookEnv.AIMON_INVOKER_NAME, "default-agent")
                 .containsEntry(SkillHookEnv.AIMON_INVOKER_TYPE, InvokerType.MAIN_AGENT.name())
                 .containsEntry(SkillHookEnv.AIMON_ITERATION, "5")
@@ -87,8 +90,8 @@ class DeclarativePostToolHookTest {
         DeclarativePostToolHook hook = new DeclarativePostToolHook("my-skill", PredicateParser.parse("Bash(rm -rf*)"),
                 new ShellAction("audit.sh", Duration.ofSeconds(1)), exec);
         String nested = "$(".repeat(20_000) + "rm -rf /" + ")".repeat(20_000);
-        PostToolContext context = PostToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                .invokerName("default-agent").hookRegistry(REGISTRY)
+        PostToolContext context = PostToolContext.builder().origin(ToolCallOrigin.direct())
+                .executorType(InvokerType.MAIN_AGENT).invokerName("default-agent").hookRegistry(REGISTRY)
                 .toolUse(ToolUse.of("call-1", "Bash", Map.of("command", nested)))
                 .toolUseResult(ToolUseResult.error("call-1", "Command exceeds maximum length")).iterationCount(5)
                 .build();
@@ -122,9 +125,9 @@ class DeclarativePostToolHookTest {
     }
 
     private static PostToolContext contextFor(String toolName, ToolUseResult result) {
-        return PostToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).toolUse(ToolUse.of("call-1", toolName, Map.of())).toolUseResult(result)
-                .iterationCount(5).build();
+        return PostToolContext.builder().origin(ToolCallOrigin.direct()).executorType(InvokerType.MAIN_AGENT)
+                .invokerName("default-agent").hookRegistry(REGISTRY).toolUse(ToolUse.of("call-1", toolName, Map.of()))
+                .toolUseResult(result).iterationCount(5).build();
     }
 
     private static final class RecordingExecutor implements ShellActionExecutor {

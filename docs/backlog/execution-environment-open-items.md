@@ -4794,6 +4794,14 @@ SPI 는 설계에서 기각했다(`execution-environment.md` §2) — 창이 작
 > 그 루프에서는 아예 비우지 않을지, 지금 모양을 계약으로 적을지. **언제 다시 볼까** 는 그대로 둔다 — 슬래시 스킬 뒤에
 > 부모가 재생성을 모른다는 보고가 오면 바로.
 
+> **2026-11-06 — 경로의 이름이 바뀌었고 (2) 는 그대로다.** 위 노트가 짚은 `SKILL_TOOL_DISPATCHER_KEY` · `SkillToolDispatcher` 와
+> `EnvironmentNotices.deliver` 경유는 [도구 호출 디스패처](../design/tool/tool-call-dispatcher.md) 로 대체되었다. 지금 인라인
+> 스킬의 도구 호출은 명령 컨텍스트의 `ToolContextKeys.TOOL_CALL_DISPATCHER` 를 `narrow` 한 `DefaultToolCallDispatcher` →
+> `SingleToolInvoker` 로 가고, 거기서 턴의 환경 인스턴스를 비운다(`EnvironmentNotices.drain`). 비운 notice 는
+> `ToolDispatchResult` 옆 목록으로 나와 `LlmSkillExecutor` 가 스크래치 전사에 넣을 때 붙인다(`ToolDispatchResults.toToolUseResult`).
+> 명령 컨텍스트가 턴의 환경 인스턴스를 그대로 싣는 것도 바뀌지 않았으므로, 메인 에이전트의 다음 턴이 그 notice 를 듣지 못한다는
+> (2) 는 그대로 열려 있다.
+
 ## EE-108 — 훅이 `drainNotices()` 를 부르는 것을 막는 것은 문서뿐이다 · **열림** *(트리거 대기)*
 
 *(2026-10-17 등록. 출처는 환경 알림 설계 §7 Q4.)*
@@ -4970,8 +4978,16 @@ OpenSandbox 쪽 수정이 필요하며 그쪽 비공개 보안 채널로 올릴 
 훅 신원으로 실행" 표지나 `ShellFeature.HOOK_IDENTITY` — #287), `core/environment/impl/LocalStaging.java`. aimon-sandbox: `SandboxShell`,
 `SandboxStaging`, 이미지 계약.
 
+**같은 블로커에 걸린 설계** *(2026-11-06)*. 프로그래매틱 도구 호출의 셸 엔진 설계([`programmatic-tool-calling-shell.md`](../design/tool/programmatic-tool-calling-shell.md)
+§12, PROPOSED)의 "전용 uid 모드" — PTC 런타임을 에이전트와 다른 uid 로 띄우는 것 — 도 조건 1 에 막혀 있다. 그 설계는 이 블로커가
+있는 동안 같은 uid 를 한계로 두도록 되어 있다. 그 설계 §12.3 은 셸 SPI 의 실행 주체를 훅 전용이 아니라 일반 실행 주체로 요구하므로,
+위 #287 의 `HOOK_IDENTITY` 제안은 착수 전에 그 요구와 함께 다시 본다. 또 그 설계가 찾은 사실 하나가 이 항목의 조건 5 에 닿는다 —
+execd 는 명령 출력을 샌드박스 `$TMPDIR/opensandbox-execd/<id>.{stdout,stderr}` 에 스풀하고 지우지 않으므로, "훅의 출력 파이프는 execd
+로 간다" 는 지금 배치에서 A 가 읽을 수 있는 파일을 지난다.
+
 **언제 다시 볼까.** 다른 트리거(운영자가 신뢰하지 않는 에이전트를 상대로 샌드박스에서 `hooks.json` 가드를 돌리려 할 때)가 오거나,
-위 상류 블로커(조건 1)가 OpenSandbox 에서 닫힐 때.
+위 상류 블로커(조건 1)가 OpenSandbox 에서 닫힐 때, 또는 운영자가 PTC 셸 엔진에서 `shell-engine-tool-scope` 를 넓히지 않고 호스트
+도구를 코드에 열려 할 때.
 
 ## EE-114 — aimon-sandbox 가 실행 디렉터리를 선언하고, 훅 · 격리 명령의 입출력 파일(`run-*`)을 없애야 한다 · **열림**
 

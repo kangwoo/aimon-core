@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -22,11 +23,14 @@ import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.Tool;
+import at.aimon.core.agent.tool.ToolCallDispatcher;
+import at.aimon.core.agent.tool.ToolCallOrigin;
+import at.aimon.core.agent.tool.ToolCallPath;
 import at.aimon.core.agent.tool.ToolContext;
+import at.aimon.core.agent.tool.ToolDispatchResult;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
-import at.aimon.core.agent.tool.exception.ToolPermissionViolationException;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.agent.tool.permission.PermissionSubject;
 import at.aimon.core.agent.tool.permission.ToolPermissionSubjectAware;
@@ -53,7 +57,6 @@ import at.aimon.core.skill.SkillMetadata;
 import at.aimon.core.skill.execution.SkillExecutionContext;
 import at.aimon.core.skill.execution.SkillExecutionRequest;
 import at.aimon.core.skill.execution.SkillExecutionResult;
-import at.aimon.core.skill.execution.SkillToolDispatcher;
 import at.aimon.core.skill.fork.NoOpSkillForkExecutor;
 import at.aimon.core.skill.fork.SkillForkExecutor;
 import at.aimon.core.skill.fork.SkillForkOutcome;
@@ -62,6 +65,8 @@ import at.aimon.core.skill.hook.SkillHookSet;
 import at.aimon.core.skill.render.DefaultSkillContentRenderer;
 import at.aimon.core.skill.render.RenderContext;
 import at.aimon.core.subagent.execution.ForkGoalRenderer;
+import at.aimon.core.toolinvocation.ToolCallDispatchers;
+import at.aimon.core.toolinvocation.ToolDispatchResults;
 import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
@@ -99,7 +104,8 @@ class LlmSkillExecutorTest {
         toolRegistry.register(new MockBashTool());
 
         SkillExecutionContext context = SkillExecutionContext.builder().skill(skill)
-                .defaultModel(LlmModel.builder().build()).toolRegistry(toolRegistry).executionId(runId()).build();
+                .defaultModel(LlmModel.builder().build()).toolRegistry(toolRegistry).executionId(runId())
+                .toolContext(ungatedContext(toolRegistry)).build();
 
         List<String> argsList = arguments == null || arguments.isEmpty() ? List.of() : List.of(arguments);
         SkillExecutionRequest request = SkillExecutionRequest.builder().rawArguments(arguments == null ? "" : arguments)
@@ -204,7 +210,8 @@ class LlmSkillExecutorTest {
     @DisplayName("Should reject tool usage outside the allow-list")
     void shouldRejectUnauthorizedToolUsage() {
         ToolUse unauthorizedTool = ToolUse.of("id", "Write", Map.of());
-        mockLlmClient.setResponse(LlmResponse.of("Using Write", List.of(unauthorizedTool)));
+        mockLlmClient.setResponses(
+                List.of(LlmResponse.of("Using Write", List.of(unauthorizedTool)), LlmResponse.text("Done")));
 
         Skill skill = Skill.builder().name("test")
                 .metadata(SkillMetadata.builder().name("test").description("Test").allowedTools("Read").build())
@@ -212,9 +219,12 @@ class LlmSkillExecutorTest {
 
         SkillExecutionResult result = executeSkill(skill, "");
 
-        assertThat(result.isFailure()).isTrue();
-        assertThat(result.getResponse()).contains("Permission denied");
-        assertThat(result.getError()).get().isInstanceOf(ToolPermissionViolationException.class);
+        // Refused per call, as on the agent's own loop: the call is answered with an error and the skill goes on.
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(toolResultsSent(1)).singleElement().satisfies(answer -> {
+            assertThat(answer.isError()).isTrue();
+            assertThat(answer.getContent()).contains("Write");
+        });
     }
 
     @Test
@@ -236,15 +246,15 @@ class LlmSkillExecutorTest {
     @DisplayName("Should reject Bash command not matching pattern")
     void shouldRejectBashNotMatchingPattern() {
         ToolUse gitPushTool = ToolUse.of("id", "Bash", Map.of("command", "git push"));
-        mockLlmClient.setResponse(LlmResponse.of("Pushing", List.of(gitPushTool)));
+        mockLlmClient.setResponses(List.of(LlmResponse.of("Pushing", List.of(gitPushTool)), LlmResponse.text("Done")));
 
         Skill skill = Skill.builder().name("test").metadata(SkillMetadata.builder().name("test").description("Test")
                 .allowedToolsList(List.of("Bash(git add:*)")).build()).content(SkillContent.of("Task")).build();
 
         SkillExecutionResult result = executeSkill(skill, "");
 
-        assertThat(result.isFailure()).isTrue();
-        assertThat(result.getResponse()).contains("Permission denied");
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(toolResultsSent(1)).singleElement().satisfies(answer -> assertThat(answer.isError()).isTrue());
     }
 
     @Test
@@ -539,31 +549,41 @@ class LlmSkillExecutorTest {
     }
 
     @Test
-    @DisplayName("ToolContext-supplied SkillToolDispatcher runs the batch instead of the execution manager")
-    void toolContextDispatcherRunsTheBatch() {
+    @DisplayName("the bound dispatcher, narrowed to the skill, runs every call as a skill call — not the manager")
+    void boundDispatcherRunsTheBatchNarrowedToTheSkill() {
         final ToolUse counterUse = ToolUse.of("id", "Counter", Map.of("n", 1));
         mockLlmClient.setResponses(List.of(LlmResponse.of("Counting", List.of(counterUse)), LlmResponse.text("Done")));
 
         final CountingTool counter = new CountingTool();
-        final RecordingSkillToolDispatcher dispatcher = new RecordingSkillToolDispatcher();
-        final ToolContext toolContext = ToolContext.builder().put(ToolContextKeys.SKILL_TOOL_DISPATCHER_KEY, dispatcher)
-                .build();
+        final RecordingToolCallDispatcher dispatcher = new RecordingToolCallDispatcher();
+        final ToolContext toolContext = ToolContext.builder().put(ToolContextKeys.TOOL_CALL_DISPATCHER, dispatcher)
+                .put("principalMarker", "kept").build();
 
         final SkillExecutionResult result = executeSkill(counterSkill(), counter, toolContext);
 
         assertThat(result.isSuccess()).isTrue();
-        assertThat(dispatcher.callCount).isOne();
-        assertThat(dispatcher.lastToolUses).containsExactly(counterUse);
-        assertThat(dispatcher.lastToolContext).isSameAs(toolContext);
-        assertThat(dispatcher.lastAllowedTools).hasSize(1);
-        assertThat(dispatcher.lastIterationCount).isZero();
-        // The point of the indirection: the tool did not run behind the invoker's back.
+        assertThat(dispatcher.narrowedTo).isNotNull();
+        assertThat(dispatcher.narrowedTo.findByName("Counter")).isPresent();
+        assertThat(dispatcher.narrowedAllowedTools).extracting(AllowedTool::getToolName).containsExactly("Counter");
+        final RecordingToolCallDispatcher narrowed = dispatcher.narrowed;
+        assertThat(narrowed.toolUses).containsExactly(counterUse);
+        assertThat(narrowed.origins).singleElement().satisfies(origin -> {
+            assertThat(origin.getPath()).isEqualTo(ToolCallPath.SKILL);
+            assertThat(origin.getSkillName()).contains("test");
+        });
+        // The call runs with a context built from the caller's: same entries, the narrowed dispatcher in place of
+        // the caller's, and the loop's iteration.
+        final ToolContext seen = narrowed.contexts.get(0);
+        assertThat(seen.get(ToolContextKeys.TOOL_CALL_DISPATCHER)).containsSame(narrowed);
+        assertThat(seen.get(ToolContextKeys.ITERATION_COUNT)).contains(0);
+        assertThat(seen.getContext()).containsEntry("principalMarker", "kept");
+        // The point of the indirection: the tool did not run behind the dispatcher's back.
         assertThat(counter.executions).isZero();
     }
 
     @Test
-    @DisplayName("No bound dispatcher — the batch falls back to the execution manager and the tool really runs")
-    void absentDispatcherFallsBackToExecutionManager() {
+    @DisplayName("no bound dispatcher — the skill is refused before its first LLM call and no tool runs")
+    void absentDispatcherRefusesTheSkill() {
         final ToolUse counterUse = ToolUse.of("id", "Counter", Map.of("n", 1));
         mockLlmClient.setResponses(List.of(LlmResponse.of("Counting", List.of(counterUse)), LlmResponse.text("Done")));
 
@@ -571,13 +591,44 @@ class LlmSkillExecutorTest {
 
         final SkillExecutionResult result = executeSkill(counterSkill(), counter, ToolContext.empty());
 
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.getError())
+                .hasValueSatisfying(e -> assertThat(e).hasMessageContaining("no tool call dispatcher"));
+        assertThat(mockLlmClient.seen).isEmpty();
+        assertThat(counter.executions).isZero();
+    }
+
+    @Test
+    @DisplayName("an explicitly ungated dispatcher runs the tool")
+    void ungatedDispatcherRunsTheTool() {
+        final ToolUse counterUse = ToolUse.of("id", "Counter", Map.of("n", 1));
+        mockLlmClient.setResponses(List.of(LlmResponse.of("Counting", List.of(counterUse)), LlmResponse.text("Done")));
+
+        final CountingTool counter = new CountingTool();
+
+        final SkillExecutionResult result = executeSkillUngated(counterSkill(), counter, ToolContext.empty());
+
         assertThat(result.isSuccess()).isTrue();
         assertThat(counter.executions).isOne();
     }
 
     @Test
-    @DisplayName("No bound dispatcher — the fallback still hands the skill's LLM the environment's notices, once (#254)")
-    void absentDispatcherDeliversEnvironmentNotices() {
+    @DisplayName("a tool outside the skill's allowed-tools is refused when the call runs, not only left off the offer")
+    void toolOutsideAllowedToolsIsRefusedAtDispatch() {
+        // The skill allows only Counter; the model asks for Bash anyway (it is in the registry, just not offered).
+        final ToolUse bashUse = ToolUse.of("id", "Bash", Map.of("command", "ls"));
+        mockLlmClient.setResponses(List.of(LlmResponse.of("Trying", List.of(bashUse)), LlmResponse.text("Done")));
+        final CountingTool counter = new CountingTool();
+
+        final SkillExecutionResult result = executeSkillUngated(counterSkill(), counter, ToolContext.empty());
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(toolResultsSent(1)).singleElement().satisfies(r -> assertThat(r.isError()).isTrue());
+    }
+
+    @Test
+    @DisplayName("ungated dispatcher still hands the skill's LLM the environment's notices, once (#254)")
+    void ungatedDispatcherDeliversEnvironmentNotices() {
         final ToolUse first = ToolUse.of("id-1", "Counter", Map.of("n", 1));
         final ToolUse second = ToolUse.of("id-2", "Counter", Map.of("n", 2));
         mockLlmClient.setResponses(List.of(LlmResponse.of("Counting", List.of(first)),
@@ -586,7 +637,7 @@ class LlmSkillExecutorTest {
         final ToolContext toolContext = TestExecutionEnvironments.withoutStamps(
                 TestExecutionEnvironments.builder().workingDirectory("/workspace").notices(notices).build());
 
-        final SkillExecutionResult result = executeSkill(counterSkill(), new CountingTool(), toolContext);
+        final SkillExecutionResult result = executeSkillUngated(counterSkill(), new CountingTool(), toolContext);
 
         assertThat(result.isSuccess()).isTrue();
         assertThat(toolResultsSent(1)).singleElement()
@@ -607,12 +658,35 @@ class LlmSkillExecutorTest {
                 .content(SkillContent.of("Task")).build();
     }
 
+    /** A context carrying nothing but an explicitly ungated dispatcher over {@code toolRegistry}. */
+    private static ToolContext ungatedContext(ToolRegistry toolRegistry) {
+        return ToolContext.builder().put(ToolContextKeys.TOOL_CALL_DISPATCHER,
+                ToolCallDispatchers.ungated(new DefaultToolExecutionManager(), toolRegistry)).build();
+    }
+
+    private SkillExecutionResult executeSkillUngated(Skill skill, Tool extraTool, ToolContext toolContext) {
+        final ToolRegistry toolRegistry = registryWith(extraTool);
+        final ToolContext withDispatcher = ToolContext.builder().putAll(toolContext.getContext())
+                .put(ToolContextKeys.TOOL_CALL_DISPATCHER,
+                        ToolCallDispatchers.ungated(new DefaultToolExecutionManager(), toolRegistry))
+                .build();
+        return executeSkill(skill, toolRegistry, withDispatcher);
+    }
+
     private SkillExecutionResult executeSkill(Skill skill, Tool extraTool, ToolContext toolContext) {
+        return executeSkill(skill, registryWith(extraTool), toolContext);
+    }
+
+    private ToolRegistry registryWith(Tool extraTool) {
         final ToolRegistry toolRegistry = new DefaultToolRegistry();
         for (Tool tool : allTools) {
             toolRegistry.register(tool);
         }
         toolRegistry.register(extraTool);
+        return toolRegistry;
+    }
+
+    private SkillExecutionResult executeSkill(Skill skill, ToolRegistry toolRegistry, ToolContext toolContext) {
 
         final SkillExecutionContext context = SkillExecutionContext.builder().skill(skill)
                 .defaultModel(LlmModel.builder().build()).toolRegistry(toolRegistry).executionId(runId())
@@ -760,25 +834,31 @@ class LlmSkillExecutorTest {
     }
 
     /**
-     * Records the batch it was handed and answers success without touching any tool, so a test can tell "the
-     * dispatcher ran the call" apart from "the execution manager ran the call".
+     * Records what it was narrowed to and every call it was handed, and answers success without touching any tool, so
+     * a test can tell "the dispatcher ran the call" apart from "something ran the tool directly".
      */
-    private static final class RecordingSkillToolDispatcher implements SkillToolDispatcher {
-        int callCount;
-        ToolContext lastToolContext;
-        List<ToolUse> lastToolUses;
-        List<AllowedTool> lastAllowedTools;
-        int lastIterationCount = -1;
+    private static final class RecordingToolCallDispatcher implements ToolCallDispatcher {
+        final List<ToolUse> toolUses = new ArrayList<>();
+        final List<ToolCallOrigin> origins = new ArrayList<>();
+        final List<ToolContext> contexts = new ArrayList<>();
+        ToolRegistry narrowedTo;
+        List<AllowedTool> narrowedAllowedTools;
+        RecordingToolCallDispatcher narrowed;
 
         @Override
-        public List<ToolUseResult> dispatch(ToolRegistry toolRegistry, ToolContext toolContext, List<ToolUse> toolUses,
-                List<AllowedTool> allowedTools, int iterationCount) {
-            this.callCount++;
-            this.lastToolContext = toolContext;
-            this.lastToolUses = toolUses;
-            this.lastAllowedTools = allowedTools;
-            this.lastIterationCount = iterationCount;
-            return toolUses.stream().map(use -> ToolUseResult.success(use.getId(), "dispatched")).toList();
+        public ToolDispatchResult dispatch(ToolUse toolUse, ToolCallOrigin origin, ToolContext context) {
+            toolUses.add(toolUse);
+            origins.add(origin);
+            contexts.add(context);
+            return ToolDispatchResults.of(ToolUseResult.success(toolUse.getId(), "dispatched"), List.of(), List.of());
+        }
+
+        @Override
+        public ToolCallDispatcher narrow(ToolRegistry registry, List<AllowedTool> allowedTools) {
+            this.narrowedTo = registry;
+            this.narrowedAllowedTools = allowedTools;
+            this.narrowed = new RecordingToolCallDispatcher();
+            return narrowed;
         }
     }
 

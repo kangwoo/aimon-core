@@ -37,6 +37,7 @@ import at.aimon.cli.config.McpConfig;
 import at.aimon.cli.config.McpServerEntry;
 import at.aimon.cli.exception.ConfigurationException;
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.hook.event.PreToolContext;
 import at.aimon.core.hook.execution.HookResult;
 import at.aimon.core.hook.execution.HookStatus;
@@ -149,9 +150,10 @@ class AgentSetupFactoryRemoteHookTest {
 
     /** Fires {@code preTool} the way a tool call does: the runtime's registry, the executor's hook manager. */
     private static HookResult preTool(AgentSetupFactory.AgentSetup setup, String tool, Map<String, Object> input) {
-        final PreToolContext context = PreToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                .invokerName("default-anthropic").hookRegistry(setup.getAgentRuntime().getHookRegistry())
-                .toolUse(ToolUse.of("call-1", tool, input)).iterationCount(1).build();
+        final PreToolContext context = PreToolContext.builder().origin(ToolCallOrigin.direct())
+                .executorType(InvokerType.MAIN_AGENT).invokerName("default-anthropic")
+                .hookRegistry(setup.getAgentRuntime().getHookRegistry()).toolUse(ToolUse.of("call-1", tool, input))
+                .iterationCount(1).build();
         return HookResult.merge(setup.getAgentExecutor().getHookExecutionManager().executePreTool(context));
     }
 
@@ -292,8 +294,8 @@ class AgentSetupFactoryRemoteHookTest {
         final Skill parsed = parser.parse("sample", skill("  preTool:\n    - matcher: Bash\n      action: { type: http,"
                 + " url: \"" + policyUrl() + "\", timeoutMs: 5000 }\n"));
         final HookResult result = parsed.getMetadata().getHooks().getPreToolHooks().get(0)
-                .execute(PreToolContext.builder().executorType(InvokerType.SUBAGENT).invokerName("sample")
-                        .hookRegistry(new at.aimon.core.hook.DefaultHookRegistry())
+                .execute(PreToolContext.builder().origin(ToolCallOrigin.direct()).executorType(InvokerType.SUBAGENT)
+                        .invokerName("sample").hookRegistry(new at.aimon.core.hook.DefaultHookRegistry())
                         .toolUse(ToolUse.of("call-1", "Bash", Map.of("command", "ls"))).iterationCount(1).build());
 
         assertThat(result.getStatus()).isEqualTo(HookStatus.BLOCKED);

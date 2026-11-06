@@ -14,6 +14,7 @@ import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.quota.QuotaGuard;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
+import at.aimon.core.agent.tool.ToolCallDispatcher;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolContextKey;
 import at.aimon.core.agent.tool.permission.AllowedTool;
@@ -28,7 +29,6 @@ import at.aimon.core.knowledge.wiki.WikiKnowledgeBase;
 import at.aimon.core.knowledge.wiki.WikiKnowledgeBaseAdmin;
 import at.aimon.core.knowledge.wiki.WikiScope;
 import at.aimon.core.llm.LlmCallMetadata;
-import at.aimon.core.skill.execution.SkillToolDispatcher;
 import at.aimon.core.skill.fork.SkillForkExecutor;
 import at.aimon.core.skill.hook.SkillHookActivator;
 
@@ -334,20 +334,33 @@ public final class ToolContextKeys {
             .of("skillHookActivator", SkillHookActivator.class);
 
     /**
-     * Typed key for a per-execution {@link SkillToolDispatcher}.
+     * Typed key for the execution loop's {@link ToolCallDispatcher} — the single entrance through which a tool call
+     * reaches the gates (allow-list, ceiling, PermissionRequest, approval, PreTool, the tool, PostTool).
      *
      * <p>
-     * Set by the agent executor on the user-slash command path so {@code LlmSkillExecutor} runs the tool calls of an
-     * inline skill through the same {@code SingleToolInvoker} pipeline the ReAct loop uses — PermissionRequest hooks,
-     * the side-effect approval gate, PreTool / PostTool — instead of calling the execution manager directly. Without
-     * it, typing {@code /my-skill} was a way to reach the agent's own tools while skipping every gate in front of them.
+     * Bound by the main loop when it builds the turn's context, by a fork when it builds its own context, and by the
+     * agent executor into the hand-built context of a slash command, whose skill loop narrows it to the skill's
+     * registry and {@code allowed-tools}. A consumer that finds it absent refuses to run the call; nothing falls back
+     * to
+     * calling the execution manager directly.
      *
      * <p>
-     * Absent for embedders driving {@code LlmSkillExecutor} without an agent runtime; the executor then falls back to
-     * the plain execution manager, which is what every caller did before this key existed.
+     * Write-once: no site needs to rebind it within one context, because each of the above builds a new context. A
+     * {@link at.aimon.core.agent.tool.ToolContextEnricher ToolContextEnricher} therefore cannot swap the gates out
+     * from under a loop's tools.
      */
-    public static final ToolContextKey<SkillToolDispatcher> SKILL_TOOL_DISPATCHER_KEY = ToolContextKey
-            .of("skillToolDispatcher", SkillToolDispatcher.class);
+    public static final ToolContextKey<ToolCallDispatcher> TOOL_CALL_DISPATCHER = ToolContextKey
+            .writeOnce("toolCallDispatcher", ToolCallDispatcher.class);
+
+    /**
+     * Typed key for the iteration of the loop that dispatches the current tool call.
+     *
+     * <p>
+     * Set by each loop on the context it hands to {@link ToolCallDispatcher#dispatch} (the main loop, a fork, a
+     * slash-command skill loop), and read by the dispatcher for the PreTool / PostTool hook contexts. Absent reads as
+     * {@code 0}. Not write-once: a loop republishes it every iteration.
+     */
+    public static final ToolContextKey<Integer> ITERATION_COUNT = ToolContextKey.of("iterationCount", Integer.class);
 
     /**
      * Typed key for the session-scoped {@link MessageQueueManager}.

@@ -80,6 +80,7 @@ public final class DeclarativePermissionRequestHook extends AbstractDeclarativeS
     @Override
     protected void contributeEnv(PermissionRequestContext context, Map<String, String> env) {
         env.put(SkillHookEnv.AIMON_TOOL_NAME, context.getToolName());
+        SkillHookEnv.putToolOrigin(env, context.getOrigin());
         final Optional<Principal> principal = context.getPrincipal();
         env.put(SkillHookEnv.AIMON_PRINCIPAL_ID, principal.map(Principal::getId).orElse(""));
         env.put(SkillHookEnv.AIMON_PRINCIPAL_TYPE, principal.map(p -> p.getType().name()).orElse(""));

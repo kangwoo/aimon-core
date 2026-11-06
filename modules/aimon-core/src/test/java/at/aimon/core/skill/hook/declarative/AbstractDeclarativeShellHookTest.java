@@ -14,6 +14,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.compact.CompactionTrigger;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.DefaultHookRegistry;
@@ -237,7 +238,10 @@ class AbstractDeclarativeShellHookTest {
                 .containsEntry(SkillHookEnv.AIMON_SKILL_NAME, "my-skill")
                 .containsEntry(SkillHookEnv.AIMON_INVOKER_NAME, "default-agent")
                 .containsEntry(SkillHookEnv.AIMON_INVOKER_TYPE, InvokerType.MAIN_AGENT.name())
-                .containsEntry(SkillHookEnv.AIMON_TOOL_NAME, "Bash");
+                .containsEntry(SkillHookEnv.AIMON_TOOL_NAME, "Bash")
+                .containsEntry(SkillHookEnv.AIMON_TOOL_PATH, "direct")
+                .containsEntry(SkillHookEnv.AIMON_TOOL_PARENT_ID, "");
+        assertThat(call.stdinPayload).contains("\"tool_path\":\"direct\"");
         assertThat(call.stdinPayload).contains("\"hook_event\":\"permissionRequest\"")
                 .contains("\"skill_name\":\"my-skill\"").contains("\"tool_input\":{\"command\":\"ls\"}");
     }
@@ -256,8 +260,9 @@ class AbstractDeclarativeShellHookTest {
     }
 
     private static PermissionRequestContext permissionRequestContext() {
-        return PermissionRequestContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                .hookRegistry(REGISTRY).toolName("Bash").toolInput(ToolInput.of(Map.of("command", "ls"))).build();
+        return PermissionRequestContext.builder().origin(ToolCallOrigin.direct()).invokerType(InvokerType.MAIN_AGENT)
+                .invokerName("default-agent").hookRegistry(REGISTRY).toolName("Bash")
+                .toolInput(ToolInput.of(Map.of("command", "ls"))).build();
     }
 
     private static OnStopContext onStopContext() {

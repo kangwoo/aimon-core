@@ -334,6 +334,7 @@ public final class DeclarativePreToolHook implements PreToolHook {
         env.put(SkillHookEnv.AIMON_INVOKER_TYPE, context.getInvokerType().name());
         env.put(SkillHookEnv.AIMON_TOOL_NAME, toolName);
         env.put(SkillHookEnv.AIMON_ITERATION, Integer.toString(context.getIterationCount()));
+        SkillHookEnv.putToolOrigin(env, context.getOrigin());
         return env;
     }
 

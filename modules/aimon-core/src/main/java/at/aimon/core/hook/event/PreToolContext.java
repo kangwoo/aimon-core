@@ -7,6 +7,7 @@ import java.util.Optional;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.interrupt.CancellationSignal;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookRegistry;
@@ -51,6 +52,7 @@ public final class PreToolContext implements HookContext {
 
     private final InvokerType invokerType;
     private final String invokerName;
+    private final ToolCallOrigin origin;
     private final HookRegistry hookRegistry;
     private final ExecutionEnvironment executionEnvironment;
     private final CancellationSignal executionCancellation;
@@ -63,6 +65,7 @@ public final class PreToolContext implements HookContext {
     private PreToolContext(Builder builder) {
         invokerType = Objects.requireNonNull(builder.invokerType, "Executor type cannot be null");
         invokerName = Objects.requireNonNull(builder.invokerName, "Executor name cannot be null");
+        origin = Objects.requireNonNull(builder.origin, "Origin cannot be null");
         hookRegistry = Objects.requireNonNull(builder.hookRegistry, "Hook registry cannot be null");
         executionEnvironment = builder.executionEnvironment;
         executionCancellation = builder.executionCancellation;
@@ -81,6 +84,16 @@ public final class PreToolContext implements HookContext {
     @Override
     public String getInvokerName() {
         return invokerName;
+    }
+
+    /**
+     * Gets the path the tool call arrived by — the model directly, a program, a slash-command skill's loop, or a rewake
+     * replay — and what that path knows about the call's parent.
+     *
+     * @return the origin (never null)
+     */
+    public ToolCallOrigin getOrigin() {
+        return origin;
     }
 
     @Override
@@ -172,25 +185,26 @@ public final class PreToolContext implements HookContext {
     public PreToolContext withCurrentInput(ToolInput newInput) {
         Objects.requireNonNull(newInput, "newInput cannot be null");
         final ToolUse rebuilt = ToolUse.of(originalToolUse.getId(), originalToolUse.getName(), newInput.toMap());
-        final Builder b = new Builder().executorType(invokerType).invokerName(invokerName).hookRegistry(hookRegistry)
-                .executionEnvironment(executionEnvironment).executionCancellation(executionCancellation)
-                .toolUse(originalToolUse).iterationCount(iterationCount).timestamp(timestamp)
-                .executionAttributes(executionAttributes);
+        final Builder b = new Builder().executorType(invokerType).invokerName(invokerName).origin(origin)
+                .hookRegistry(hookRegistry).executionEnvironment(executionEnvironment)
+                .executionCancellation(executionCancellation).toolUse(originalToolUse).iterationCount(iterationCount)
+                .timestamp(timestamp).executionAttributes(executionAttributes);
         b.currentToolUse = rebuilt;
         return new PreToolContext(b);
     }
 
     @Override
     public String toString() {
-        return "PreToolContext{" + "invokerType=" + invokerType + ", invokerName='" + invokerName + '\''
-                + ", toolName='" + currentToolUse.getName() + '\'' + ", iterationCount=" + iterationCount
-                + ", timestamp=" + timestamp + ", executionAttributes=" + executionAttributes + '}';
+        return "PreToolContext{" + "invokerType=" + invokerType + ", invokerName='" + invokerName + '\'' + ", origin="
+                + origin.getPath() + ", toolName='" + currentToolUse.getName() + '\'' + ", iterationCount="
+                + iterationCount + ", timestamp=" + timestamp + ", executionAttributes=" + executionAttributes + '}';
     }
 
     /** Builder for PreToolContext. */
     public static final class Builder {
         private InvokerType invokerType;
         private String invokerName;
+        private ToolCallOrigin origin;
         private HookRegistry hookRegistry;
         private ExecutionEnvironment executionEnvironment;
         private CancellationSignal executionCancellation;
@@ -224,6 +238,18 @@ public final class PreToolContext implements HookContext {
          */
         public Builder invokerName(String invokerName) {
             this.invokerName = invokerName;
+            return this;
+        }
+
+        /**
+         * Sets the path the tool call arrived by.
+         *
+         * @param origin
+         *            the origin (must not be null)
+         * @return This builder
+         */
+        public Builder origin(ToolCallOrigin origin) {
+            this.origin = origin;
             return this;
         }
 

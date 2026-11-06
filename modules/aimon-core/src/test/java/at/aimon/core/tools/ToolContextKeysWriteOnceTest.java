@@ -29,7 +29,8 @@ class ToolContextKeysWriteOnceTest {
     @DisplayName("every write-once key in ToolContextKeys is write-once before ToolContextKeys is initialised")
     void writeOnceWithoutInitialisingToolContextKeys() throws Exception {
         final List<String> names = writeOnceNames();
-        assertThat(names).contains("executionEnvironment", "executionEnvironmentProvider", "hookRegistry");
+        assertThat(names).contains("executionEnvironment", "executionEnvironmentProvider", "hookRegistry",
+                "toolCallDispatcher");
 
         try (IsolatedLoader isolated = new IsolatedLoader(testClasspath())) {
             final Class<?> keyClass = Class.forName(ToolContextKey.class.getName(), true, isolated);

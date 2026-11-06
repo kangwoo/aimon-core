@@ -30,6 +30,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -463,10 +464,10 @@ class RemoteDecisionShapesTest {
         final HookRegistry registry = new DefaultHookRegistry();
         registry.register(HookEventType.POST_TOOL, hook);
         try (DefaultHookExecutionManager manager = DefaultHookExecutionManager.builder().build()) {
-            return HookFeedback.collectAdvisory(manager.executePostTool(
-                    PostToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("default-agent")
-                            .hookRegistry(registry).toolUse(ToolUse.of("call-1", "Bash", Map.of()))
-                            .toolUseResult(ToolUseResult.success("call-1", "ok")).iterationCount(3).build()));
+            return HookFeedback.collectAdvisory(manager.executePostTool(PostToolContext.builder()
+                    .origin(ToolCallOrigin.direct()).executorType(InvokerType.MAIN_AGENT).invokerName("default-agent")
+                    .hookRegistry(registry).toolUse(ToolUse.of("call-1", "Bash", Map.of()))
+                    .toolUseResult(ToolUseResult.success("call-1", "ok")).iterationCount(3).build()));
         }
     }
 
@@ -475,9 +476,9 @@ class RemoteDecisionShapesTest {
         registry.register(HookEventType.PRE_TOOL, hook);
         try (DefaultHookExecutionManager manager = DefaultHookExecutionManager.builder().askPromptHandler(handler)
                 .build()) {
-            return HookResult.merge(manager.executePreTool(PreToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                    .invokerName("default-agent").hookRegistry(registry).toolUse(ToolUse.of("call-1", "Bash", Map.of()))
-                    .iterationCount(3).build()));
+            return HookResult.merge(manager.executePreTool(PreToolContext.builder().origin(ToolCallOrigin.direct())
+                    .executorType(InvokerType.MAIN_AGENT).invokerName("default-agent").hookRegistry(registry)
+                    .toolUse(ToolUse.of("call-1", "Bash", Map.of())).iterationCount(3).build()));
         }
     }
 }

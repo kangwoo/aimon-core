@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Timeout;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.compact.CompactionTrigger;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.command.execution.ExecutionMetadata;
 import at.aimon.core.hook.DefaultHookExecutionManager;
@@ -269,7 +270,8 @@ class DeclarativeGuardNotRunTest {
     // --- helpers -------------------------------------------------------------------------------------------------
 
     private PreToolContext preToolContext(String command) {
-        return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(registry)
+        return PreToolContext.builder().origin(ToolCallOrigin.direct()).executorType(InvokerType.MAIN_AGENT)
+                .invokerName("agent").hookRegistry(registry)
                 .toolUse(ToolUse.of("call-1", "Bash", Map.of("command", command))).iterationCount(1).build();
     }
 
@@ -293,7 +295,8 @@ class DeclarativeGuardNotRunTest {
     }
 
     private PermissionRequestContext permissionRequestContext() {
-        return PermissionRequestContext.builder().invokerType(InvokerType.MAIN_AGENT).invokerName("agent")
-                .hookRegistry(registry).toolName("Bash").toolInput(ToolInput.of(Map.of("command", "ls"))).build();
+        return PermissionRequestContext.builder().origin(ToolCallOrigin.direct()).invokerType(InvokerType.MAIN_AGENT)
+                .invokerName("agent").hookRegistry(registry).toolName("Bash")
+                .toolInput(ToolInput.of(Map.of("command", "ls"))).build();
     }
 }

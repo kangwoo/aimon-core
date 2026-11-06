@@ -23,6 +23,7 @@ import org.springframework.context.annotation.Configuration;
 
 import at.aimon.bootstrap.AimonStack;
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.base.Principal;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -215,9 +216,9 @@ class AimonLifecycleTest {
         });
 
         stack.agentExecutor().getHookExecutionManager()
-                .executePreTool(PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName(AGENT)
-                        .hookRegistry(registry).toolUse(ToolUse.of("id", "Read", Map.of("file_path", "/tmp/x")))
-                        .iterationCount(1).build());
+                .executePreTool(PreToolContext.builder().origin(ToolCallOrigin.direct())
+                        .executorType(InvokerType.MAIN_AGENT).invokerName(AGENT).hookRegistry(registry)
+                        .toolUse(ToolUse.of("id", "Read", Map.of("file_path", "/tmp/x"))).iterationCount(1).build());
     }
 
     @Test

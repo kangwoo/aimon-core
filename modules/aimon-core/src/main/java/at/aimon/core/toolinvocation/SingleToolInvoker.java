@@ -16,6 +16,7 @@ import at.aimon.core.agent.interrupt.TerminatorRegistrar;
 import at.aimon.core.agent.tool.InterruptToolKeys;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
+import at.aimon.core.agent.tool.ToolDispatchResult;
 import at.aimon.core.agent.tool.ToolExecutionManager;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.environment.ExecutionEnvironment;
@@ -34,14 +35,15 @@ import at.aimon.core.tools.ExecutionEnvironmentAccess;
 import at.aimon.core.tools.ToolContextKeys;
 
 /**
- * Shared per-tool invocation pipeline used by both ReAct executors ({@code OrcaAgentExecutor} for the main agent and
- * {@code DefaultSubagentExecutor} for subagents).
+ * Shared per-tool invocation pipeline behind {@link DefaultToolCallDispatcher}, the gated
+ * {@link at.aimon.core.agent.tool.ToolCallDispatcher ToolCallDispatcher} every gated loop dispatches through — the
+ * main agent ({@code OrcaAgentExecutor}), a fork ({@code DefaultSubagentExecutor}) and a slash-command skill
+ * ({@code LlmSkillExecutor}).
  *
  * <p>
- * The two executors previously hand-cloned this delicate sequence, which is the highest parity/drift risk in the
- * codebase — a divergence in permission-hook ordering or interrupt-registrar lifecycle is security-relevant. Extracting
- * it here makes the pipeline a single, testable component; the callers differ only through {@link ToolInvocationSpec}
- * (invoker identity + permission allow-list).
+ * A divergence in permission-hook ordering or interrupt-registrar lifecycle is security-relevant, so the sequence lives
+ * in one testable component; the callers differ only through {@link ToolInvocationSpec} (invoker identity, permission
+ * allow-list, and the path the call arrived by).
  *
  * <p>
  * The pipeline, per {@link ToolUse}:
@@ -63,8 +65,9 @@ import at.aimon.core.tools.ToolContextKeys;
  * unless a hook blocked it.
  * <li>Fire PostTool hooks (isolated so a hook failure never discards the real tool result), applying any rewritten
  * output.
- * <li>Drain the execution environment's {@linkplain ExecutionEnvironment#drainNotices() queued notices} once and
- * prepend them to the result as {@code [environment]} lines ({@link EnvironmentNotices}). This runs on every exit path,
+ * <li>Drain the execution environment's {@linkplain ExecutionEnvironment#drainNotices() queued notices} once and hand
+ * them on beside the result; a model-facing loop prepends them as {@code [environment]} lines
+ * ({@link ToolDispatchResults#toToolUseResult}). This runs on every exit path,
  * denials and the catch-all included, because each of them hands a result to the model; and it runs last, so no hook
  * sees the notices or can rewrite them, while a notice a hook's own shell command caused still rides out here.
  * </ol>
@@ -140,19 +143,29 @@ public final class SingleToolInvoker {
     /**
      * Runs the shared per-tool pipeline for the invocation described by {@code spec}.
      *
+     * <p>
+     * The hooks' advisory feedback and the environment's notices come back as lists beside the text rather than
+     * spliced into it; {@link ToolDispatchResults#toToolUseResult} splices them for a loop that records the result for
+     * the model.
+     *
      * @param spec
      *            the fully-populated invocation description (must not be null)
-     * @return the tool use result (never null); errors are represented as {@link ToolUseResult#error} rather than
-     *         thrown
+     * @return the dispatch result (never null); errors are represented as error results rather than thrown
      */
-    public ToolUseResult invoke(ToolInvocationSpec spec) {
+    public ToolDispatchResult invoke(ToolInvocationSpec spec) {
         Objects.requireNonNull(spec, "spec cannot be null");
-        // Applied to the one value every exit path of dispatch returns, so no branch can forget it.
-        return EnvironmentNotices.deliver(dispatch(spec), environmentOf(spec), spec.getToolUse().getName());
+        // Advisory notes emitted by any of the three hook chains, collected on every exit path of dispatch. Confined
+        // to this call — the invoker itself stays stateless under concurrent dispatch.
+        final List<String> feedback = new ArrayList<>();
+        final ToolUseResult result = dispatch(spec, feedback);
+        // Drained from the one value every exit path of dispatch returns, so no branch can forget it.
+        final List<String> notices = EnvironmentNotices.drain(environmentOf(spec), spec.getToolUse().getName(),
+                result.getToolUseId());
+        return ToolDispatchResults.of(result, notices, feedback);
     }
 
     /** Steps 1-5 of the pipeline; {@link #invoke} adds the environment's notices to what this returns. */
-    private ToolUseResult dispatch(ToolInvocationSpec spec) {
+    private ToolUseResult dispatch(ToolInvocationSpec spec, List<String> feedback) {
         final ToolUse toolUse = spec.getToolUse();
 
         // Resolve the target tool's interrupt behaviour. Unknown tool names (e.g. a hallucinated name) fall through to
@@ -163,10 +176,6 @@ public final class SingleToolInvoker {
                 .orElse(InterruptBehavior.NON_INTERRUPTIBLE);
         final boolean needsRegistrar = interruptBehavior == InterruptBehavior.THREAD_INTERRUPT
                 || interruptBehavior == InterruptBehavior.EXTERNALLY_TERMINATED;
-
-        // Advisory notes emitted by any of the three hook chains below, appended to the result this invocation returns.
-        // Confined to this call — the invoker itself stays stateless under concurrent dispatch.
-        final List<String> feedback = new ArrayList<>();
 
         final TerminatorRegistrar registrar = needsRegistrar ? spec.getCoordinator().newTerminatorRegistrar() : null;
         try {
@@ -194,7 +203,7 @@ public final class SingleToolInvoker {
                 // Fire PermissionRequest hooks before PreTool. A deny short-circuits dispatch and notifies the
                 // PermissionDenied advisory chain — PreTool/tool execution is skipped.
                 final PermissionRequestContext permissionRequestContext = PermissionRequestContext.builder()
-                        .invokerType(spec.getInvokerType()).invokerName(spec.getInvokerName())
+                        .invokerType(spec.getInvokerType()).invokerName(spec.getInvokerName()).origin(spec.getOrigin())
                         .hookRegistry(spec.getHookRegistry()).executionEnvironment(environmentOf(spec))
                         .executionCancellation(cancellationOf(spec)).toolName(toolUse.getName())
                         .toolInput(ToolInput.of(toolUse.getInput())).executionAttributes(spec.getExecutionAttributes())
@@ -203,7 +212,7 @@ public final class SingleToolInvoker {
                         .executePermissionRequest(permissionRequestContext);
                 feedback.addAll(HookFeedback.collectAdvisory(permissionResults));
                 if (hookExecutionManager.hasBlockedResult(permissionResults)) {
-                    return attachFeedback(denyByPermission(spec, permissionResults), feedback);
+                    return denyByPermission(spec, permissionResults);
                 }
 
                 // Built-in side-effect approval. Runs after the permission chain on purpose: a hook that was going to
@@ -213,16 +222,17 @@ public final class SingleToolInvoker {
                     final Optional<String> refusal = approvalGate.denialReason(targetTool.get(), toolUse,
                             enrichedContext);
                     if (refusal.isPresent()) {
-                        return attachFeedback(denyByApproval(spec, refusal.get()), feedback);
+                        return denyByApproval(spec, refusal.get());
                     }
                 }
 
                 // Execute PreTool hooks
                 final PreToolContext preToolContext = PreToolContext.builder().executorType(spec.getInvokerType())
-                        .invokerName(spec.getInvokerName()).hookRegistry(spec.getHookRegistry())
-                        .executionEnvironment(environmentOf(spec)).executionCancellation(cancellationOf(spec))
-                        .toolUse(toolUse).iterationCount(spec.getIterationCount())
-                        .executionAttributes(spec.getExecutionAttributes()).build();
+                        .invokerName(spec.getInvokerName()).origin(spec.getOrigin())
+                        .hookRegistry(spec.getHookRegistry()).executionEnvironment(environmentOf(spec))
+                        .executionCancellation(cancellationOf(spec)).toolUse(toolUse)
+                        .iterationCount(spec.getIterationCount()).executionAttributes(spec.getExecutionAttributes())
+                        .build();
                 final List<HookResult> preToolResults = hookExecutionManager.executePreTool(preToolContext);
                 feedback.addAll(HookFeedback.collectAdvisory(preToolResults));
 
@@ -248,15 +258,14 @@ public final class SingleToolInvoker {
                     toolUseResult = toToolUseResult(toolExecutionResult);
                 }
 
-                return attachFeedback(applyPostToolHooks(spec, effectiveToolUse, toolUseResult, feedback), feedback);
+                return applyPostToolHooks(spec, effectiveToolUse, toolUseResult, feedback);
             } catch (Exception e) {
                 log.error("Error executing tool use: {}", toolUse.getName(), e);
                 // Advisory notes already collected from the PermissionRequest / PreTool chains describe *this*
                 // dispatch and are the only chance the model has to see them — there is no later call site that
-                // replays them. Attach them to the error result rather than dropping them with the failure. The
-                // result built here is fresh, so this cannot double-attach onto an already-decorated result.
-                return attachFeedback(ToolUseResult.error(toolUse.getId(), "Tool execution error: " + e.getMessage()),
-                        feedback);
+                // replays them. They stay in the accumulator and ride out on the error result rather than being
+                // dropped with the failure.
+                return ToolUseResult.error(toolUse.getId(), "Tool execution error: " + e.getMessage());
             }
         } finally {
             // Close the per-tool registrar so the current-thread interrupt terminator (and any tool-registered
@@ -334,14 +343,14 @@ public final class SingleToolInvoker {
      * result.
      *
      * @param feedback
-     *            accumulator the chain's advisory feedback is appended to; the caller attaches it to the returned
-     *            result (this method cannot, because it returns early on the rewritten-output path)
+     *            accumulator the chain's advisory feedback is appended to; {@link #invoke} hands it on beside the
+     *            returned result
      */
     private ToolUseResult applyPostToolHooks(ToolInvocationSpec spec, ToolUse effectiveToolUse,
             ToolUseResult toolUseResult, List<String> feedback) {
         try {
             final PostToolContext postToolContext = PostToolContext.builder().executorType(spec.getInvokerType())
-                    .invokerName(spec.getInvokerName()).hookRegistry(spec.getHookRegistry())
+                    .invokerName(spec.getInvokerName()).origin(spec.getOrigin()).hookRegistry(spec.getHookRegistry())
                     .executionEnvironment(environmentOf(spec)).executionCancellation(cancellationOf(spec))
                     .toolUse(effectiveToolUse).toolUseResult(toolUseResult).iterationCount(spec.getIterationCount())
                     .executionAttributes(spec.getExecutionAttributes()).build();
@@ -362,22 +371,5 @@ public final class SingleToolInvoker {
                     effectiveToolUse.getId(), e.getMessage());
         }
         return toolUseResult;
-    }
-
-    /**
-     * Returns {@code result} with the collected hook feedback appended as a {@code <system-reminder>} block, or
-     * {@code result} unchanged when no hook had anything to say (or the block could not be rendered — feedback is
-     * auxiliary and must never cost the model the tool result it is waiting on).
-     */
-    private static ToolUseResult attachFeedback(ToolUseResult result, List<String> feedback) {
-        final Optional<String> block = HookFeedback.toReminderBlock(feedback);
-        if (block.isEmpty()) {
-            return result;
-        }
-        final String content = result.getContent();
-        final String merged = content.isEmpty() ? block.get() : content + "\n\n" + block.get();
-        // withContent carries the sidecars across: the render payload (PostTool consumers and renderers rely on it) and
-        // the retryable flag (a policy fork's failure streaks read it). Both are invisible to the LLM.
-        return result.withContent(merged);
     }
 }

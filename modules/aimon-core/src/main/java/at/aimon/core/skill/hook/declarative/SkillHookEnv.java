@@ -1,5 +1,10 @@
 package at.aimon.core.skill.hook.declarative;
 
+import java.util.Map;
+
+import at.aimon.core.agent.tool.ToolCallOrigin;
+import at.aimon.core.agent.tool.ToolCallPath;
+
 /**
  * Environment variable name constants exposed to declarative shell-action hooks (AIMON extension, SK-13).
  *
@@ -30,6 +35,8 @@ package at.aimon.core.skill.hook.declarative;
  * <li>{@link #AIMON_TOOL_NAME} — set on {@code preTool}, {@code postTool}, {@code permissionRequest} and
  * {@code permissionDenied}.
  * <li>{@link #AIMON_ITERATION} — set on {@code preTool} and {@code postTool}.
+ * <li>{@link #AIMON_TOOL_PATH}, {@link #AIMON_TOOL_PARENT_ID} — set on {@code preTool}, {@code postTool} and
+ * {@code permissionRequest}.
  * <li>{@link #AIMON_TOOL_RESULT_STATUS} — set on {@code postTool} only.
  * <li>{@link #AIMON_USER_MESSAGE_LENGTH} — set on {@code onStart} only.
  * <li>{@link #AIMON_SUCCESS} — set on {@code onStop}, {@code subagentStop} and {@code onConfigReload}.
@@ -134,6 +141,20 @@ public final class SkillHookEnv {
 
     /** Tool name being invoked — preTool / postTool / permissionRequest / permissionDenied. */
     public static final String AIMON_TOOL_NAME = "AIMON_TOOL_NAME";
+
+    /**
+     * The path the tool call arrived by — {@code direct}, {@code code}, {@code skill} or {@code replay}
+     * ({@link ToolCallPath#wireName()}) — preTool / postTool / permissionRequest. A script can refuse a call that came
+     * from code while allowing the same tool when the model asked for it directly.
+     */
+    public static final String AIMON_TOOL_PATH = "AIMON_TOOL_PATH";
+
+    /**
+     * The id of the tool call that ran the program, for a call on the {@code code} path; <b>empty on every other
+     * path</b> — preTool / postTool / permissionRequest. Exported empty rather than left unset, so a script reads one
+     * variable the same way on every path.
+     */
+    public static final String AIMON_TOOL_PARENT_ID = "AIMON_TOOL_PARENT_ID";
 
     /** ReAct loop iteration (1-based) — preTool/postTool only. */
     public static final String AIMON_ITERATION = "AIMON_ITERATION";
@@ -251,6 +272,19 @@ public final class SkillHookEnv {
     private static final String TRUNCATION_MARKER_HEAD = "... [truncated, ";
 
     private static final String TRUNCATION_MARKER_TAIL = " chars total]";
+
+    /**
+     * Puts {@link #AIMON_TOOL_PATH} and {@link #AIMON_TOOL_PARENT_ID} for a tool call's origin.
+     *
+     * @param env
+     *            the environment being assembled (must not be null)
+     * @param origin
+     *            the call's origin (must not be null)
+     */
+    public static void putToolOrigin(Map<String, String> env, ToolCallOrigin origin) {
+        env.put(AIMON_TOOL_PATH, origin.getPath().wireName());
+        env.put(AIMON_TOOL_PARENT_ID, origin.getParentToolUseId().orElse(""));
+    }
 
     /**
      * Caps a value that a hook is about to export, so that unbounded model- or user-authored text cannot blow past the

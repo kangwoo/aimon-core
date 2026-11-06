@@ -13,6 +13,7 @@ import at.aimon.core.agent.AgentRuntimeRegistry;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.compact.CompactionTrigger;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.HookRegistry;
@@ -290,9 +291,11 @@ public final class DefaultRewakeFireListener implements RewakeFireListener {
     private PreToolContext buildPreToolContext(RewakeEnvelope envelope, RewakeCapableRuntime capable,
             HookRegistry registry, String toolName, ToolInput toolInput) {
         final ToolUse tu = ToolUse.of("rewake:" + envelope.getEnvelopeId(), toolName, toolInput.toMap());
+        // A replay re-fires the hook for a call recorded earlier; nothing dispatches a tool here, and the origin says
+        // so.
         return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT)
-                .invokerName(envelope.getAgentRuntimeId().agentName()).hookRegistry(registry).toolUse(tu)
-                .iterationCount(0).timestamp(Instant.now()).build();
+                .invokerName(envelope.getAgentRuntimeId().agentName()).origin(ToolCallOrigin.replay())
+                .hookRegistry(registry).toolUse(tu).iterationCount(0).timestamp(Instant.now()).build();
     }
 
     private OnConfigReloadContext buildOnConfigReloadContext(RewakeEnvelope envelope, RewakeCapableRuntime capable,

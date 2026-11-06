@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Timeout;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
@@ -282,7 +283,8 @@ class McpActionExecutorTimeoutTest {
     }
 
     private static PreToolContext preToolContext(HookRegistry registry) {
-        return PreToolContext.builder().executorType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(registry)
-                .toolUse(ToolUse.of("call-1", "Bash", Map.of())).iterationCount(1).build();
+        return PreToolContext.builder().origin(ToolCallOrigin.direct()).executorType(InvokerType.MAIN_AGENT)
+                .invokerName("agent").hookRegistry(registry).toolUse(ToolUse.of("call-1", "Bash", Map.of()))
+                .iterationCount(1).build();
     }
 }

@@ -183,6 +183,8 @@ hooks:
 | `AIMON_INVOKER_TYPE` | `MAIN_AGENT` / `SUBAGENT` | 모든 이벤트 |
 | `AIMON_TOOL_NAME` | 발화 대상 도구 이름 | `preTool`, `postTool` |
 | `AIMON_ITERATION` | 1-based ReAct 루프 인덱스 | `preTool`, `postTool` |
+| `AIMON_TOOL_PATH` | 호출 경로 — `direct` / `code` / `skill` / `replay` (`ToolCallPath`) | `preTool`, `postTool`, `permissionRequest` |
+| `AIMON_TOOL_PARENT_ID` | `code` 경로에서 프로그램을 실행한 도구 호출의 id. 다른 경로에서는 빈 문자열 | `preTool`, `postTool`, `permissionRequest` |
 | `AIMON_TOOL_RESULT_STATUS` | `success` / `error` | `postTool` |
 | `AIMON_USER_MESSAGE_LENGTH` | 원본 사용자 메시지 길이(문자수) | `onStart` |
 | `AIMON_SUCCESS` | `true` / `false` | `onStop` |

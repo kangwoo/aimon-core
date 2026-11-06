@@ -73,7 +73,7 @@ blocked 결과를 걸러 내는 이유).
 
 | 체인 | 렌더링 방식 |
 |------|------------|
-| `permissionRequest` / `preTool` / `postTool` | `SingleToolInvoker` 가 **그 도구의 결과에 덧붙인다** |
+| `permissionRequest` / `preTool` / `postTool` | `SingleToolInvoker` 가 결과 옆 목록으로 모으고, 결과를 전사에 넣는 루프가 **그 도구의 결과에 덧붙인다**(`ToolDispatchResults.toToolUseResult`) |
 | `onStart` | user role 메시지로 덧붙인다 (lifecycle 중 유일) |
 | `preCompact` | 메시지가 아니라 요약 시스템 프롬프트의 custom instruction 으로 접힌다 |
 

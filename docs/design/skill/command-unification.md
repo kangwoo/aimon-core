@@ -9,7 +9,7 @@
 > 적용 대상: `aimon-core` — `at.aimon.core.command`(`DefaultCommandRegistry`,
 > `CommandNameConflictDetector`, `CommandType`), `…command.skill`(어댑터 2종),
 > `…command.execution`(`CompositeCommandExecutor`, `…execution.skill.SkillBackedCommandExecutor`),
-> `at.aimon.core.skill.execution`(`SkillExecutor`·`LlmSkillExecutor`·`SkillToolDispatcher`),
+> `at.aimon.core.skill.execution`(`SkillExecutor`·`LlmSkillExecutor`),
 > `…skill.render`(`DefaultSkillContentRenderer`), `…skill.repository`(`PathSkillRepository` 로더 정책).
 
 ---
@@ -182,15 +182,17 @@ reload 가 즉시 반영된다. `reloadCommand` / `reloadAll` 도 `SkillRegistry
 부수효과 승인 게이트도 지나지 않았다. 에이전트라면 물어봤을 도구가 사용자가 슬래시를 친 순간 묻지 않고
 실행됐다. 누가 결정한 설계가 아니라 매니저를 직접 부른 것의 부작용이었다.
 
-`SkillToolDispatcher` 가 그 자리를 메운다. 에이전트 실행기가 `SKILL_TOOL_DISPATCHER_KEY` 로 구현체를
-`ToolContext` 에 실어 보내고, 스킬 루프는 그것을 통해 **에이전트와 같은 인보커**로 배치를 돌린다.
-협력자를 컨텍스트로 태운 것은 `SkillForkExecutor` 와 같은 이유다 — `CommandExecutionManager` 시그니처는
+도구 호출의 단일 입구 `ToolCallDispatcher` 가 그 자리를 메운다([도구 호출 디스패처](../tool/tool-call-dispatcher.md)).
+에이전트 실행기가 자기 디스패처를 `ToolContextKeys.TOOL_CALL_DISPATCHER` 로 커맨드 `ToolContext` 에 싣고,
+스킬 루프는 그것을 `narrow(스킬 레지스트리, 스킬 allowed-tools)` 로 좁혀 호출마다 부른다. 그래서 스킬의
+`allowed-tools` 는 제안 필터만이 아니라 실행 시점에도 강제되고, 훅은 그 호출을 `ToolCallOrigin.skill(이름)` 으로
+본다. 협력자를 컨텍스트로 태운 것은 `SkillForkExecutor` 와 같은 이유다 — `CommandExecutionManager` 시그니처는
 공개 API 인데, 같은 말을 하려면 훅 레지스트리·환경·인터럽트 코디네이터를 전부 파라미터로 끌고 와야 했다.
 
-디스패처가 없으면(에이전트 런타임 없이 `LlmSkillExecutor` 를 직접 구동하는 임베더) 매니저 직행으로
-폴백한다. **두 경로의 관측 가능한 차이 하나**: 디스패처 경로에서 권한 위반은 그 도구 하나의 에러 결과로
-돌아오고 스킬은 계속 진행하지만, 폴백 경로에서는 `executeAll` 이 던져 스킬 전체가 실패한다. 앞의 것이
-에이전트가 늘 갖고 있던 동작이다.
+디스패처가 없으면 스킬 루프는 **첫 LLM 호출 전에 실행을 거절한다**(fail-closed). 매니저 직행 폴백은 없다.
+에이전트 런타임 없이 `LlmSkillExecutor` 를 구동하는 테스트·임베더는 이름에 드러나는
+`ToolCallDispatchers.ungated(...)` 를 명시적으로 묶는다. 권한 위반은 그 도구 하나의 에러 결과로 돌아오고
+스킬은 계속 진행한다 — 에이전트가 늘 갖고 있던 동작이다.
 
 ---
 
@@ -251,7 +253,6 @@ reload 가 즉시 반영된다. `reloadCommand` / `reloadAll` 도 `SkillRegistry
 | `skill/execution/SkillExecutor.java` | 사용자 호출 실행 SPI |
 | `skill/execution/llm/LlmSkillExecutor.java` | ReAct 루프 · 권한 필터 · 토큰 누적 |
 | `skill/execution/llm/SkillSystemPromptBuilder.java` | 도구 제한이 반영된 시스템 프롬프트 |
-| `skill/execution/SkillToolDispatcher.java` | 훅·승인 게이트를 지나는 도구 배치 디스패치 |
 | `skill/render/DefaultSkillContentRenderer.java` | 단일 패스 렌더 (인자·환경변수·툴 토큰) |
 | `skill/render/ShellArgumentTokenizer.java` | 위치 인자 토큰화 |
 | `skill/InvokePolicy.java` | `{user=false, model=true}` 기본값 |

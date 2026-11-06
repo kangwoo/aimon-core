@@ -34,6 +34,7 @@ import at.aimon.core.skill.execution.SkillExecutionContext;
 import at.aimon.core.skill.execution.SkillExecutionRequest;
 import at.aimon.core.skill.execution.SkillExecutionResult;
 import at.aimon.core.skill.render.DefaultSkillContentRenderer;
+import at.aimon.core.toolinvocation.ToolCallDispatchers;
 import at.aimon.core.tools.ToolContextKeys;
 
 /**
@@ -58,23 +59,25 @@ class LlmSkillExecutorCallerCeilingTest {
 
         private final List<List<String>> offeredToolNames = new CopyOnWriteArrayList<>();
         private final List<LlmResponse> responses = new CopyOnWriteArrayList<>();
+        private final List<List<Message>> seen = new CopyOnWriteArrayList<>();
         private int index;
 
-        private synchronized LlmResponse capture(List<ToolDefinition> tools) {
+        private synchronized LlmResponse capture(List<ToolDefinition> tools, List<Message> messages) {
             offeredToolNames.add(tools.stream().map(ToolDefinition::getName).toList());
+            seen.add(List.copyOf(messages));
             return index < responses.size() ? responses.get(index++) : LlmResponse.text("done");
         }
 
         @Override
         public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
                 LlmModel modelConfig) {
-            return capture(tools);
+            return capture(tools, messages);
         }
 
         @Override
         public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
                 LlmModel modelConfig, LlmCallMetadata metadata) {
-            return capture(tools);
+            return capture(tools, messages);
         }
 
         @Override
@@ -121,7 +124,8 @@ class LlmSkillExecutorCallerCeilingTest {
         registry.register(tool("Bash"));
         registry.register(tool("Write"));
 
-        final ToolContext.Builder toolContext = ToolContext.builder();
+        final ToolContext.Builder toolContext = ToolContext.builder().put(ToolContextKeys.TOOL_CALL_DISPATCHER,
+                ToolCallDispatchers.ungated(new DefaultToolExecutionManager(), registry));
         if (callerAllowed != null) {
             toolContext.put(ToolContextKeys.CALLER_ALLOWED_TOOLS,
                     callerAllowed.stream().map(AllowedTool::parse).toList());
@@ -151,9 +155,15 @@ class LlmSkillExecutorCallerCeilingTest {
 
         final SkillExecutionResult result = run(skillAllowing("Read Bash"), List.of("Read"));
 
-        // The permission violation surfaces as a failed skill execution rather than a ran tool.
-        assertThat(result.isSuccess()).isFalse();
+        // The permission violation answers that one call with an error rather than running the tool, and the skill
+        // carries on, as the agent's own loop does.
+        assertThat(result.isSuccess()).isTrue();
         assertThat(llmClient.firstOffer()).doesNotContain("Bash");
+        final List<Message> second = llmClient.seen.get(1);
+        assertThat(second.get(second.size() - 1).getToolUseResults()).singleElement().satisfies(answer -> {
+            assertThat(answer.isError()).isTrue();
+            assertThat(answer.getContent()).doesNotContain("ran Bash");
+        });
     }
 
     @Test
