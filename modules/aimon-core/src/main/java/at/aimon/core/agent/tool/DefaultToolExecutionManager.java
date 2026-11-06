@@ -152,12 +152,19 @@ public final class DefaultToolExecutionManager implements ToolExecutionManager {
     /**
      * Builds the refusal message for a tool blocked by the side-effect ceiling, or returns null when it may run.
      *
+     * <p>
+     * The level is read from the tool's {@link Tool#describe(ToolOfferContext) descriptor} in the offer context bound
+     * in {@code toolContext} — the one the loop's offer filter read — so a tool whose grade depends on its context is
+     * refused under the grade it was offered with ({@link ToolOfferContext#none()} when no offer is bound).
+     *
      * @param tool
      *            the resolved tool (must not be null)
+     * @param toolContext
+     *            the context of the call (must not be null)
      * @return the refusal message, or null if the tool is permitted
      */
-    private String sideEffectRefusal(Tool tool) {
-        final SideEffectLevel declared = tool.getSideEffectLevel();
+    private String sideEffectRefusal(Tool tool, ToolContext toolContext) {
+        final SideEffectLevel declared = tool.describe(ToolOfferContext.of(toolContext)).getSideEffectLevel();
         if (maxSideEffectLevel.permits(declared)) {
             return null;
         }
@@ -202,7 +209,7 @@ public final class DefaultToolExecutionManager implements ToolExecutionManager {
                 }
 
                 // Refuse tools whose declared side effect exceeds the configured ceiling
-                final String refusal = sideEffectRefusal(resolved.tool());
+                final String refusal = sideEffectRefusal(resolved.tool(), toolContext);
                 if (refusal != null) {
                     results.add(ToolExecutionResult.error(toolUse.getId(), refusal));
                     continue;
@@ -246,7 +253,7 @@ public final class DefaultToolExecutionManager implements ToolExecutionManager {
             }
 
             // Refuse tools whose declared side effect exceeds the configured ceiling
-            final String refusal = sideEffectRefusal(resolved.tool());
+            final String refusal = sideEffectRefusal(resolved.tool(), toolContext);
             if (refusal != null) {
                 return ToolExecutionResult.error(toolUse.getId(), refusal);
             }

@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.tool.AbstractTool;
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
@@ -293,5 +294,14 @@ public class MonitorTool extends AbstractTool
             }
             return pattern.equals(target);
         }
+    }
+
+    /**
+     * Declares {@link DataReach#EXTERNAL}: a {@code ws} or registered-source monitor connects to whatever endpoint it
+     * names.
+     */
+    @Override
+    public DataReach dataReach() {
+        return DataReach.EXTERNAL;
     }
 }

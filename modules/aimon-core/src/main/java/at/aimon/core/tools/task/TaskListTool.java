@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import at.aimon.core.agent.Constants;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.ConcurrencyBehavior;
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
@@ -186,5 +187,14 @@ public class TaskListTool extends AbstractTool {
             return (seconds / 60) + "m " + (seconds % 60) + "s";
         }
         return (seconds / 3600) + "h " + ((seconds % 3600) / 60) + "m";
+    }
+
+    /**
+     * Declares {@link DataReach#HOST}: it reaches host-side state — a store or registry the host owns — and not the
+     * open outside world.
+     */
+    @Override
+    public DataReach dataReach() {
+        return DataReach.HOST;
     }
 }

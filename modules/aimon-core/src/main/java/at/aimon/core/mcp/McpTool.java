@@ -9,6 +9,7 @@ import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.tool.AbstractTool;
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.DestructiveBehavior;
 import at.aimon.core.agent.tool.IdempotencyBehavior;
 import at.aimon.core.agent.tool.InterruptAccess;
@@ -112,6 +113,17 @@ public class McpTool extends AbstractTool {
     @Override
     public IdempotencyBehavior getIdempotencyBehavior() {
         return traits.getIdempotencyBehavior();
+    }
+
+    /**
+     * Declares the reach its traits resolved: {@link DataReach#HOST} for a trusted server that says
+     * {@code openWorldHint: false}, otherwise {@link DataReach#EXTERNAL}. Never {@link DataReach#ENVIRONMENT} — the
+     * tool
+     * runs on its server, not in the agent's execution environment.
+     */
+    @Override
+    public DataReach dataReach() {
+        return traits.getDataReach();
     }
 
     /**

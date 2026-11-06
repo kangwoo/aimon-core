@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/scope-model.md
-source_commit: 03b8a8d4
+source_commit: 05b4e424
 ---
 
 # Scope Model
@@ -26,9 +26,9 @@ stretch of running.
 | **Agent** | `AgentRuntime` and what it owns — `ToolRegistry` / `HookRegistry` / `McpClientManager` | `AgentRuntimeId` (`agent:<name>[:<discriminator>]`) | per `(Agent, discriminator)`, held across sessions |
 | **Session** | `SessionRecord`, `SessionTotals`, `budgetOverride`, `SessionTranscript` | `SessionId` | as long as the session exists — **persistent** |
 | **Live session** | `LiveSession`, the message queue, the event publisher | (references the bound `SessionId`) | node-local, **transient** (open ~ `close()`) |
-| *(execution unit)* **Execution** | one unit of agent work in general — **there may be no session** (subagent fork, skill fork, rewake replay, scheduled routine) | `ExecutionId` (issued **only for sessionless executions** — a turn is identified by `SessionId` + `TurnId`) | the concept above turn |
+| *(execution unit)* **Execution** | one unit of agent work in general — **there may be no session** (subagent fork, skill fork, rewake replay, scheduled routine). A fork's `ToolCallQuota` | `ExecutionId` (issued **only for sessionless executions** — a turn is identified by `SessionId` + `TurnId`) | the concept above turn |
 | *(execution unit)* **Turn** | `AgentExecutionRequest` / `AgentExecutionResult`, `ExecutionBudget` · `BudgetTracker` (not turn-only — see below) | `TurnId` (for addressing, **not persisted**) | processing one user input |
-| *(execution unit)* **Iteration** | one pass of the ReAct loop (LLM call → tool execution → observation) | — | inside a turn |
+| *(execution unit)* **Iteration** | one pass of the ReAct loop (LLM call → tool execution → observation). `ToolOfferContext` | — | inside a turn |
 
 > The "3-tier scope" wording in older documents is a leftover from when the persistent session
 > and the node-local handle were counted in one box. Their lifetimes differ, so they are counted

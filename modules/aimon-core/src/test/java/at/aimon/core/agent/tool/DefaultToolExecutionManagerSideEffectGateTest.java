@@ -183,4 +183,58 @@ class DefaultToolExecutionManagerSideEffectGateTest {
             assertThat(custom.getMaxSideEffectLevel()).isEqualTo(SideEffectLevel.MUTATING);
         }
     }
+
+    @Nested
+    @DisplayName("the level is read from the descriptor in the bound offer context")
+    class ReadsTheDescriptor {
+
+        private static final OfferKey<Boolean> READS_ONLY = OfferKey.of("readsOnly", Boolean.class);
+
+        /** MUTATING by its getters, READ_ONLY in an offer context that says so. */
+        private Tool contextual() {
+            return new AbstractTool("Contextual", "d", Map.of("type", "object")) {
+                @Override
+                public ToolResult execute(ToolInput input, ToolContext context) {
+                    executed.add("Contextual");
+                    return ToolResult.success("ran");
+                }
+
+                @Override
+                public ToolDescriptor describe(ToolOfferContext context) {
+                    return ToolDescriptor.from(this)
+                            .sideEffectLevel(context.get(READS_ONLY).orElse(false)
+                                    ? SideEffectLevel.READ_ONLY
+                                    : SideEffectLevel.MUTATING)
+                            .build();
+                }
+            };
+        }
+
+        @Test
+        @DisplayName("a tool offered as READ_ONLY runs under a READ_ONLY ceiling")
+        void runsUnderTheGradeItWasOfferedWith() {
+            final ToolExecutionManager manager = new DefaultToolExecutionManager(SideEffectLevel.READ_ONLY);
+            final ToolContext context = ToolContext.builder()
+                    .put(ToolOfferContext.CONTEXT_KEY, ToolOfferContext.builder().put(READS_ONLY, true).build())
+                    .build();
+
+            final ToolExecutionResult result = manager.execute(use("Contextual"), context, registryWith(contextual()),
+                    List.of());
+
+            assertThat(result.isError()).isFalse();
+            assertThat(executed).containsExactly("Contextual");
+        }
+
+        @Test
+        @DisplayName("with no offer bound the tool answers for none() — here MUTATING — and is refused")
+        void noOfferBound_isJudgedUnderNone() {
+            final ToolExecutionManager manager = new DefaultToolExecutionManager(SideEffectLevel.READ_ONLY);
+
+            final ToolExecutionResult result = manager.execute(use("Contextual"), ToolContext.empty(),
+                    registryWith(contextual()), List.of());
+
+            assertThat(result.isError()).isTrue();
+            assertThat(executed).isEmpty();
+        }
+    }
 }

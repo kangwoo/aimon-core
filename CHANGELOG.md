@@ -7,6 +7,34 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Changed: tool axes are read from a per-offer `ToolDescriptor`; the approval gate knows the call's path
+
+The groundwork of programmatic tool calling (piece B of `docs/design/tool/programmatic-tool-calling.md`; no
+`ExecuteCode` tool yet).
+
+- **`Tool.describe(ToolOfferContext)` returns a `ToolDescriptor`** — the offered definition plus every axis
+  (side effect, destructiveness, idempotency, concurrency, interrupt, `codeCallable`, `dataReach`, `approvalDelegated`,
+  `approvalKey`). The default is the tool's getters and static definition, so no tool changes. The three loops build a
+  `ToolOfferContext` per iteration, filter their offer through it and bind it into the iteration's tool context
+  (write-once `ToolContextKeys.TOOL_OFFER_CONTEXT`); the side-effect ceiling's refusal, `SideEffectApprovalGate` and
+  `RoutineExecutor`'s retry rule read the descriptor instead of the getters.
+- **New declarations:** `Tool.dataReach()` (`DataReach.ENVIRONMENT` / `HOST` / `EXTERNAL`, default `EXTERNAL`) and
+  `Tool.isCodeCallable()` (default `true`, `false` for `DEDICATED_THREAD`). Every built-in tool declares its reach;
+  `Task`, `Skill`, `Workflow`, `WorkflowJs`, `ToolSearch`, `MemoryChat` and the four `Wiki*` tools are not
+  code-callable. An architecture test enforces both.
+- **MCP:** `McpToolTraits` resolves `openWorldHint` into `DataReach` — `HOST` only for a `TRUST` server that says
+  `false`, otherwise `EXTERNAL` (closes TC-15).
+- **Breaking:** `SideEffectApprovalGate.denialReason(Tool, ToolUse, ToolContext)` is now
+  `denialReason(ToolDescriptor, ToolUse, ToolCallOrigin, ToolContext)`. Answers are remembered under the descriptor's
+  `approvalKey` (the tool name unless a tool says otherwise); an `approvalDelegated` descriptor is never asked about;
+  a call on the `CODE` path is never prompted — a remembered answer decides it and none refuses it.
+- **Hooks:** on the `CODE` path a PermissionRequest or PreTool hook's `ASK` is resolved to a refusal without calling
+  the `AskPromptHandler`.
+- **New public `ToolCallQuota`** (thread-safe). A fork binds its tool-call budget under the write-once
+  `ToolContextKeys.TOOL_CALL_QUOTA`, so a tool that dispatches calls of its own can admit them against it.
+- A mocked `Tool` (Mockito) no longer runs `describe`'s default; tests that mock `Tool` and reach the approval gate
+  stub `describe` too.
+
 ### Changed: every model-chosen tool call reaches the gates through one `ToolCallDispatcher`
 
 The main loop, a fork's loop and a slash-command skill's loop now call the tool gates (allow-list, ceiling,

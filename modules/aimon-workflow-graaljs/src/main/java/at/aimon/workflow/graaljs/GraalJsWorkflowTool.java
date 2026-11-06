@@ -22,6 +22,7 @@ import at.aimon.core.agent.interrupt.InterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.interrupt.NoopCancellationSignal;
 import at.aimon.core.agent.tool.AbstractTool;
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.InterruptToolKeys;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolContextEnricher;
@@ -303,6 +304,24 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         } catch (NoSuchAlgorithmException e) {
             return Integer.toHexString(canonical.hashCode()).toLowerCase(Locale.ROOT);
         }
+    }
+
+    /**
+     * Declares {@link DataReach#EXTERNAL}: the subagents its script starts may use any tool their allow-lists grant,
+     * open-world ones included.
+     */
+    @Override
+    public DataReach dataReach() {
+        return DataReach.EXTERNAL;
+    }
+
+    /**
+     * Not callable from model-written code: it starts subagent forks, which run LLM calls outside a script's limits and
+     * budget ({@code docs/design/tool/programmatic-tool-calling.md} decision 15).
+     */
+    @Override
+    public boolean isCodeCallable() {
+        return false;
     }
 
     /** Builder for the tool's launch-context-building and execution dependencies. */

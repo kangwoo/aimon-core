@@ -14,6 +14,7 @@ import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.Constants;
 import at.aimon.core.agent.tool.AbstractTool;
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
@@ -583,5 +584,23 @@ public class SkillTool extends AbstractTool {
      */
     private List<String> getAvailableSkillNames() {
         return skillRegistry.getAllSkills().stream().filter(SkillTool::isModelInvocable).map(Skill::getName).toList();
+    }
+
+    /**
+     * Declares {@link DataReach#EXTERNAL}: a forked skill runs a subagent that may use any tool its allow-list grants.
+     */
+    @Override
+    public DataReach dataReach() {
+        return DataReach.EXTERNAL;
+    }
+
+    /**
+     * Not callable from model-written code: a forked skill starts a subagent and an inline one rewrites the
+     * conversation, neither of which a script may do ({@code docs/design/tool/programmatic-tool-calling.md}
+     * decision 15).
+     */
+    @Override
+    public boolean isCodeCallable() {
+        return false;
     }
 }

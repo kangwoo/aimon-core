@@ -1,7 +1,8 @@
 # 프로그래매틱 도구 호출 — 모델이 쓴 코드가 도구를 부르는 실행 경로
 
-> **Status**: PROPOSED — `aimon-core` (`at.aimon.core.agent.tool`, `at.aimon.core.programmatic`, `at.aimon.core.tools.code`),
+> **Status**: PARTIALLY IMPLEMENTED (B) — `aimon-core` (`at.aimon.core.agent.tool`, `at.aimon.core.programmatic`, `at.aimon.core.tools.code`),
 > `aimon-graaljs` (`aimon-workflow-graaljs` 를 개명·재편), `aimon-code-engine-testkit` (새 모듈). 공개 API 호환을 깨는 항목이 있다(§5).
+> 구현된 것은 서술자·제안 문맥·승인 관문·쿼터·도구 선언(조각 B)이고, `ExecuteCode` 와 엔진은 아직 없다. 구현이 본문과 다른 점은 §21.
 > 셸 엔진은 [셸 엔진 문서](programmatic-tool-calling-shell.md), 코드의 도구 호출이 지나는 입구는
 > [도구 호출의 단일 입구](tool-call-dispatcher.md) 가 정한다.
 
@@ -42,6 +43,7 @@ Python 이다. LLM 제공자가 호스팅하는 실행 컨테이너는 쓰지 �
 | 의도적으로 제외하거나 미룬 것 | §15 |
 | 설정 / 강제 / 평가 | §16 – §18 |
 | 열린 질문, 참고 | §19, §20 |
+| 구현 현황과 본문과 다른 점 | §21 |
 
 정본이 따로 있는 주제:
 
@@ -155,7 +157,7 @@ Python 이다. LLM 제공자가 호스팅하는 실행 컨테이너는 쓰지 �
 
 | 타입 | 패키지 | 수명 |
 |---|---|---|
-| `ToolDescriptor`, `ToolOfferContext`, `DataReach`, `ToolCallQuota` | `at.aimon.core.agent.tool` | 쿼터는 실행 단위, 제안 문맥은 iteration 하나 |
+| `ToolDescriptor`, `ToolOfferContext`, `OfferKey`, `DataReach`, `ToolCallQuota` | `at.aimon.core.agent.tool` | 쿼터는 실행 단위, 제안 문맥은 iteration 하나 |
 | `CodeExecutionEngine`, `CodeExecutionRequest`, `CodeExecutionOutcome`, `EngineAvailability`, `ToolCallBridge` | `at.aimon.core.programmatic` (중립 SPI) | 엔진은 Application, 브리지는 `ExecuteCode` 호출 하나 |
 | `ExecuteCodeTool`, `ToolApiRenderer`, 제안 문맥의 환경 키 | `at.aimon.core.tools.code` | 상태 없음 |
 | `ShellCodeExecutionEngine` | `at.aimon.core.tools.code.shell` ([셸 엔진](programmatic-tool-calling-shell.md)) | Application |
@@ -199,8 +201,8 @@ Python 이다. LLM 제공자가 호스팅하는 실행 컨테이너는 쓰지 �
 | `ToolDescriptor` | 기존 축 + `codeCallable` + `dataReach` + `approvalDelegated` + `approvalKey` (기본 도구 이름) + 문맥이 반영된 `ToolDefinition` |
 | `ToolOfferContext.none()` | 제안이 없는 호출자용. 그 문맥에서 `ExecuteCode` 는 제안 불가, 최대 등급으로 답한다 |
 | `McpTool` 의 `dataReach` | `annotationTrust=IGNORE` 이면 `EXTERNAL`. `TRUST` 이면 `openWorldHint=false` 일 때 `HOST`, 힌트가 없거나 `true` 이면 `EXTERNAL`. MCP 도구는 원격 서버에서 돌므로 `ENVIRONMENT` 가 될 수 없다. 이로써 [MCP 도구 통합](../integration/mcp-tool.md) D13 이 미룬 네 번째 축(백로그 TC-15)의 소비자가 생긴다 — D13 과 [부작용 축](side-effect-axes.md) 의 `openWorldHint` 행을 함께 고친다 |
-| `ToolCallQuota` | 공개, 스레드 안전. `ToolContextKeys.TOOL_CALL_QUOTA` |
-| `ToolContextKeys.TOOL_OFFER_CONTEXT` | write-once 키. `ToolContextKey.BUILT_IN_WRITE_ONCE_NAMES` 와 `ToolContextKeysWriteOnceTest` 에 추가한다. iteration 마다 `putAll(턴 컨텍스트).put(TOOL_OFFER_CONTEXT, …)` 로 iteration 컨텍스트를 지어 싣는다 — 턴 컨텍스트에는 그 키를 넣지 않는다 |
+| `ToolCallQuota` | 공개, 스레드 안전. `ToolContextKeys.TOOL_CALL_QUOTA` (write-once — enricher 가 무제한 쿼터로 바꿔 끼우지 못하게) |
+| `ToolContextKeys.TOOL_OFFER_CONTEXT` | write-once 키. `ToolContextKey.BUILT_IN_WRITE_ONCE_NAMES` 와 `ToolContextKeysWriteOnceTest` 에 추가한다. iteration 마다 `putAll(턴 컨텍스트).put(TOOL_OFFER_CONTEXT, …)` 로 iteration 컨텍스트를 지어 싣는다 — 턴 컨텍스트에는 그 키를 넣지 않는다. 실링 거절을 하는 `DefaultToolExecutionManager` 는 `agent.tool` 에 있어 `tools` 를 볼 수 없으므로, 키의 정의는 `ToolOfferContext.CONTEXT_KEY` 이고 `ToolContextKeys.TOOL_OFFER_CONTEXT` 는 같은 키다. 읽는 쪽은 `ToolOfferContext.of(ToolContext)` (없으면 `none()`) |
 | `aimon-code-engine-testkit` | 엔진 계약 스위트. `aimon-core` 에 `java-test-fixtures` 를 쓸 수 없으므로 별도 모듈이고, `aimon-sandbox` 가 돌려야 하므로 배포 대상이다(§17) |
 
 개명은 [`rename-maps.md`](../../migration/rename-maps.md) 에 행을 더하고, 모듈 목록과 "옛 좌표는 Central 에 남는다" 는 NOTE 를
@@ -303,7 +305,10 @@ async def Grep(args: dict) -> str:
 | `HOST` | 호스트 쪽 데이터 저장소나 호스트의 자격 증명으로 닿는 닫힌 시스템 | `MemorySearch`, `MemoryRecall`, `KnowledgeSearch`, `SessionHistory`, `TaskList`, 신뢰한 사내 MCP 읽기 도구 |
 | `EXTERNAL` (기본) | 열린 외부 세계 | `WebFetch`, `WebSearch`, 신뢰하지 않은 MCP 도구 |
 
-내장 도구는 모두 `dataReach()` 를 명시적으로 선언한다. §17 이 그것을 검사한다.
+내장 도구는 모두 `dataReach()` 를 명시적으로 선언한다. §17 이 그것을 검사한다. 위 예에 없는 내장 도구의 값: `KillShell`·`MonitorStop` 과
+아티팩트 래퍼 `Edit`·`Write` 는 `ENVIRONMENT`. 스케줄·태스크 조회·`TodoWrite`·`ToolSearch`·`ConsoleOutput`·`Observe`·`MemoryChat`·`Wiki*`·
+메모리 deriver 도구는 `HOST`. `Monitor`(`ws`·등록 소스가 임의 엔드포인트에 닿는다)와 포크를 일으키는 `Task`·`Workflow`·`WorkflowJs`·`Skill`
+(포크가 허용 목록 안의 어떤 도구든 쓸 수 있다)은 `EXTERNAL`.
 
 ### 7.2 에이전트 설정
 
@@ -378,7 +383,7 @@ shell-engine-tool-scope: host  # 선택. 애플리케이션 값보다 좁게만 
 |---|---|
 | `MUTATING` ∧ `DESTRUCTIVE` 제외 | 호출 가능 집합 계산에서 뺀다. 설명에 나오지 않고, 이름으로 불러도 거절된다. `READ_ONLY` 도구는 파괴성 축이 기본값이어도 남는다 |
 | `MUTATING` 상한 | 스크립트당 도구별로 센다(기본 20). 넘으면 그 도구의 이후 호출을 "limit 20 per script for <tool>; 20 already applied" 로 거절하고, 관찰 요약에 거절 수를 싣는다 |
-| 승인 관문이 있을 때 | 코드 경로는 질의하지 않는다. PermissionRequest 훅의 `ASK` 도 거절로 해석한다. 저장된 승인이 있으면 통과, 없으면 "직접 호출로 먼저 승인받으라" 로 거절한다. 기억은 `approvalKey()` 로 찾는다 |
+| 승인 관문이 있을 때 | 코드 경로는 질의하지 않는다. PermissionRequest 훅과 PreTool 훅의 `ASK` 도 묻지 않고 거절로 해석한다(관문 설정과 무관 — `DefaultHookExecutionManager`). 저장된 승인이 있으면 통과, 없으면 "직접 호출로 먼저 승인받으라" 로 거절한다. 기억은 `approvalKey()` 로 찾는다 |
 | 포크 쿼터 | `ToolCallQuota.admit(1)`. 거절되면 스크립트당 호출 상한을 넘었을 때와 똑같이 **즉시** 실행을 멈추고 `LIMIT_EXCEEDED` 로 끝낸다. 쿼터에 초과를 표시하므로 포크는 다음 iteration 에서 `TOOL_CALL_BUDGET_EXCEEDED` 로 끝난다 |
 
 ---
@@ -625,9 +630,9 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 | 규칙 | 강제하는 곳 |
 |---|---|
 | 두 엔진이 같은 계약을 지킨다 — 같은 모양의 프로그램이 같은 관찰을 내고(결정 7), 한도·취소(§13)가 같은 의미다 | 엔진 계약 스위트 `aimon-code-engine-testkit`. 두 엔진이 같은 스위트를 돌린다 |
-| LLM 을 부르거나 포크를 일으키는 도구는 코드에서 불릴 수 없다(결정 15) | ArchUnit (코어) — `at.aimon.core.tools..` 의 도구 중 클래스 그래프가 `LlmClient`·`LlmCallGateway`·`DialecticEngine`·`WikiKnowledgeBase`·`SubagentExecutionManager` 에 닿는 것은 `isCodeCallable()` 을 재정의한다 |
+| LLM 을 부르거나 포크를 일으키는 도구는 코드에서 불릴 수 없다(결정 15) | ArchUnit (코어, `ProgrammaticToolDeclarationArchitectureTest`) — `at.aimon.core.tools..` 의 도구 중 클래스 그래프가 `LlmClient`·`LlmCallGateway`·`DialecticEngine`·`WikiKnowledgeBase`·`SubagentExecutionManager` 에 닿는 것은 `isCodeCallable()` 을 재정의한다. 그래프 탐색은 이유를 적은 정지 목록(`ToolContextKeys`, `StoreBackedPeerMemory`)에 들어가지 않는다(§21). `aimon-workflow-graaljs` 의 `GraalJsWorkflowTool` 은 그 모듈의 테스트가 확인한다 |
 | 코드의 도구 호출은 단일 입구만 지난다(결정 3) | ArchUnit (코어) — `at.aimon.core.tools.code..` 는 `ToolCallDispatcher` 외 경로로 도구를 부르지 않는다. 입구 규칙 자체는 [단일 입구](tool-call-dispatcher.md) §3 #8. `aimon-graaljs` 는 같은 규칙을 `at.aimon.graaljs.code..` 에 대해 그 모듈의 아키텍처 테스트에 둔다 — 코어 테스트 클래스패스는 그 클래스를 보지 못한다 |
-| 내장 도구는 `dataReach()` 를 명시적으로 선언한다(§7.1) | 내장 도구 전체에 대한 선언 검사 |
+| 내장 도구는 `dataReach()` 를 명시적으로 선언한다(§7.1) | 내장 도구 전체에 대한 선언 검사 — `ProgrammaticToolDeclarationArchitectureTest` (`at.aimon.core.tools..`, 메모리 deriver 도구, `McpTool`) |
 | 셸 엔진의 규칙 | [셸 엔진](programmatic-tool-calling-shell.md) §14 |
 
 ---
@@ -665,3 +670,25 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
   — TypeScript API 생성, isolate, 바인딩 RPC, 자격 증명 분리
 - [replicate/replicate-mcp-code-mode](https://github.com/replicate/replicate-mcp-code-mode) — Deno 샌드박스의 단일 코드 도구
 - Wang et al., *Executable Code Actions Elicit Better LLM Agents* (CodeAct, 2024)
+
+---
+
+## 21. 구현 현황
+
+| 조각 | 내용 | 상태 |
+|---|---|---|
+| A | [단일 입구](tool-call-dispatcher.md) | 구현됨 |
+| B | `ToolDescriptor`·`ToolOfferContext`·`OfferKey`·`DataReach`, `Tool.describe`·`isCodeCallable`·`dataReach`, 세 루프의 제안 문맥, 서술자를 읽는 실링·승인 관문·루틴 재시도, `approvalKey`·`approvalDelegated`·코드 경로 무질의, 공개 `ToolCallQuota`, 내장 도구 선언과 그 검사, MCP `DataReach` | 구현됨 |
+| C, D | `ExecuteCode`, 엔진 SPI, GraalJS·셸 엔진, 모듈 개명, 계약 스위트 | 미구현 |
+
+조각 B 가 본문과 다르게 정한 점:
+
+| 본문 | 구현 | 이유 |
+|---|---|---|
+| `ToolOfferContext` 는 타입 키로 속성을 싣는다(§4) | 타입 키(`OfferKey`)에 더해 레지스트리·허용 목록 필터·실링을 일급 필드로 싣고, `offer()` 가 "허용 → `describe` → 실링" 을 한 번에 적용한다 | 세 루프의 제안 필터가 같은 계산을 한 곳에서 하고, §7.3 순서 1(제안 자격)의 출처가 그 문맥이 된다 |
+| `ToolContextKeys.TOOL_OFFER_CONTEXT` (§5.2) | 정의는 `ToolOfferContext.CONTEXT_KEY`, `ToolContextKeys.TOOL_OFFER_CONTEXT` 는 같은 키 | 실링 거절(`DefaultToolExecutionManager`)이 `agent.tool` 에 있어 `tools` 에 의존할 수 없다 |
+| `ToolCallQuota` 키의 write-once 여부는 적지 않았다 | write-once | `QUOTA_GUARD` 와 같은 이유 — enricher 가 무제한 쿼터로 바꿔 끼우지 못하게 |
+| 코드 경로에서 `ASK` 를 거절로 읽는 것은 PermissionRequest 훅(§8.3) | PreTool 훅의 `ASK` 도 | PreTool 의 `ASK` 도 프롬프트를 띄운다. "스크립트는 사람을 기다리지 않는다"(결정 12, §15)는 훅 종류를 가리지 않는다 |
+| 슬래시 스킬 루프도 iteration 마다 제안 문맥을 짓는다 | 실행당 한 번 짓고 iteration 컨텍스트마다 싣는다. 호출자 컨텍스트에 이미 있는 제안 문맥은 스킬의 것으로 바꾼다 | 스킬의 도구 목록은 실행 중 바뀌지 않는다. 바깥 턴의 제안 문맥을 그대로 복사하면 write-once 키가 두 번 쓰인다 |
+| 승인 질의 문구 "Bash — via ExecuteCode (Python)" (결정 11) | "'Bash' — via 'ExecuteCode(code=…)'" — 키와 호출을 밝히고 언어는 적지 않는다 | 관문은 서술자와 호출만 본다. 언어를 문구에 넣을지는 `ExecuteCode` 가 생기는 조각 C 에서 정한다 |
+| 결정 15 의 클래스 그래프 검사(§17) | 정지 목록 두 개: `ToolContextKeys`(키 상수 레지스트리 — 키 하나를 읽는 것이 그 레지스트리가 이름 붙인 모든 타입에 닿는 것은 아니다), `StoreBackedPeerMemory`(대화용 `DialecticEngine` 을 들지만 메모리 읽기·쓰기 도구는 검색·회상·관찰 쪽만 쓴다) | 클래스 단위 그래프는 둘을 거쳐 거의 모든 도구가 `WikiKnowledgeBase`·`DialecticEngine` 에 닿는다고 읽는다. 목록이 없으면 규칙이 모든 도구에 `false` 를 요구해 무의미해진다 |

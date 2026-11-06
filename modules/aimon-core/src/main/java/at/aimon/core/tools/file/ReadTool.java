@@ -15,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.ConcurrencyBehavior;
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
@@ -346,5 +347,14 @@ public class ReadTool extends AbstractTool implements ToolPermissionSubjectAware
     @Override
     public Optional<PermissionSubject> permissionSubject(ToolInput input, ToolContext context) {
         return FilePathSubjects.filePathSubject(input, context);
+    }
+
+    /**
+     * Declares {@link DataReach#ENVIRONMENT}: it runs in the execution environment and reaches nothing the environment
+     * does not already reach.
+     */
+    @Override
+    public DataReach dataReach() {
+        return DataReach.ENVIRONMENT;
     }
 }

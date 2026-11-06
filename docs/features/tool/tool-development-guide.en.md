@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/tool/tool-development-guide.md
-source_commit: a27160e8
+source_commit: 05b4e424
 ---
 
 # Tool Development Guide
@@ -864,6 +864,20 @@ public SideEffectLevel getSideEffectLevel() {
 - **`DESTRUCTIVE` goes past the approval gate's exemption threshold.** In an execution with `SideEffectApprovalGate` wired in, a `DESTRUCTIVE` tool asks for approval whatever the threshold says.
 
 The design and its reasons are in [side-effect axes](../../design/tool/side-effect-axes.md).
+
+### Programmatic tool calling declarations (DataReach · isCodeCallable)
+
+Two more declarations are read when model-written code may call a tool.
+
+| Method | Default | Other values |
+|--------|---------|--------------|
+| `dataReach()` | `EXTERNAL` | `ENVIRONMENT` — runs only inside the execution environment · `HOST` — reaches only host-side stores or closed systems |
+| `isCodeCallable()` | `true` (`false` for a `DEDICATED_THREAD` tool) | `false` — it calls an LLM, starts a fork, changes the tool set, or waits for user input |
+
+- **A built-in tool must declare `dataReach()`.** `ProgrammaticToolDeclarationArchitectureTest` checks it.
+- **A tool that reaches an LLM, the wiki or a fork overrides `isCodeCallable()` to return `false`.** The same test checks it through the class graph.
+
+The definitions are in [programmatic tool calling](../../design/tool/programmatic-tool-calling.md) §7.1 and decision 15.
 
 ---
 

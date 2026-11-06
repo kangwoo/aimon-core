@@ -19,6 +19,7 @@ import at.aimon.core.agent.Agent;
 import at.aimon.core.agent.AgentDefinitionVersion;
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.tool.AbstractTool;
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
@@ -320,5 +321,14 @@ public class ScheduleTaskTool extends AbstractTool {
             return null;
         }
         return agentDefinitionVersion;
+    }
+
+    /**
+     * Declares {@link DataReach#HOST}: it reaches host-side state — a store or registry the host owns — and not the
+     * open outside world.
+     */
+    @Override
+    public DataReach dataReach() {
+        return DataReach.HOST;
     }
 }

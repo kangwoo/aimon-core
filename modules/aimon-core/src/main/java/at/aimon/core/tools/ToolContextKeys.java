@@ -15,8 +15,10 @@ import at.aimon.core.agent.quota.QuotaGuard;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.tool.ToolCallDispatcher;
+import at.aimon.core.agent.tool.ToolCallQuota;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolContextKey;
+import at.aimon.core.agent.tool.ToolOfferContext;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.agent.tool.search.ToolSearchRegistry;
 import at.aimon.core.base.Principal;
@@ -361,6 +363,39 @@ public final class ToolContextKeys {
      * {@code 0}. Not write-once: a loop republishes it every iteration.
      */
     public static final ToolContextKey<Integer> ITERATION_COUNT = ToolContextKey.of("iterationCount", Integer.class);
+
+    /**
+     * Typed key for the {@link ToolOfferContext} of the iteration that dispatches the current tool call.
+     *
+     * <p>
+     * Each loop (the main loop, a fork, a slash-command skill loop) builds one offer context per iteration, filters its
+     * offer through it, and binds it into that iteration's tool context — copied from the turn's or fork's base
+     * context, which never carries this key — so the side-effect ceiling's refusal and the approval gate read the same
+     * {@link at.aimon.core.agent.tool.Tool#describe descriptor} the offer was made from. Absent reads as
+     * {@link ToolOfferContext#none()} ({@link ToolOfferContext#of(ToolContext)}).
+     *
+     * <p>
+     * Write-once, so a {@code ToolContextEnricher} cannot replace it. The same key as
+     * {@link ToolOfferContext#CONTEXT_KEY}, which code in {@code at.aimon.core.agent.tool} reads because that package
+     * may not depend on this one.
+     */
+    public static final ToolContextKey<ToolOfferContext> TOOL_OFFER_CONTEXT = ToolOfferContext.CONTEXT_KEY;
+
+    /**
+     * Typed key for the {@link ToolCallQuota} of the fork that dispatches the current tool call.
+     *
+     * <p>
+     * Bound by a fork into the context it builds for itself; the fork admits each batch the model asks for, and a tool
+     * that dispatches further calls itself ({@code ExecuteCode}) admits each of those here as well, so one call of
+     * such a tool cannot walk past the fork's tool-call limit
+     * ({@code docs/design/tool/programmatic-tool-calling.md} decision 14). Absent on a turn of the main loop, which has
+     * no tool-call limit.
+     *
+     * <p>
+     * Write-once, so a {@code ToolContextEnricher} cannot replace it with an unlimited quota.
+     */
+    public static final ToolContextKey<ToolCallQuota> TOOL_CALL_QUOTA = ToolContextKey.writeOnce("toolCallQuota",
+            ToolCallQuota.class);
 
     /**
      * Typed key for the session-scoped {@link MessageQueueManager}.

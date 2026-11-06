@@ -57,7 +57,9 @@ import at.aimon.core.agent.tool.InterruptToolKeys;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
+import at.aimon.core.agent.tool.ToolDescriptor;
 import at.aimon.core.agent.tool.ToolInput;
+import at.aimon.core.agent.tool.ToolOfferContext;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.ExternallyManaged;
 import at.aimon.core.environment.EnvironmentProviding;
@@ -909,13 +911,16 @@ public class RoutineExecutor {
      * <p>
      * Read-only tools and tools declaring {@link IdempotencyBehavior#IDEMPOTENT} may be; every other tool — including
      * every tool that declares nothing, since {@code MUTATING} and {@code NON_IDEMPOTENT} are the defaults — may not.
-     * The idempotency axis is read only for a {@code MUTATING} tool, as the axes' consumer rule says.
+     * The idempotency axis is read only for a {@code MUTATING} tool, as the axes' consumer rule says. The axes are
+     * read from the tool's {@link Tool#describe descriptor} in {@link ToolOfferContext#none()} — a routine offers
+     * nothing to a model, so a tool whose grade depends on an offer answers with its most conservative one.
      *
      * @return why the tool must not be retried, or {@code null} if it may be
      */
     static String retryRefusal(Tool tool, String toolName) {
-        if (tool.getSideEffectLevel() == SideEffectLevel.READ_ONLY
-                || tool.getIdempotencyBehavior() == IdempotencyBehavior.IDEMPOTENT) {
+        final ToolDescriptor descriptor = tool.describe(ToolOfferContext.none());
+        if (descriptor.getSideEffectLevel() == SideEffectLevel.READ_ONLY
+                || descriptor.getIdempotencyBehavior() == IdempotencyBehavior.IDEMPOTENT) {
             return null;
         }
         return "tool '" + toolName + "' writes and does not declare IdempotencyBehavior.IDEMPOTENT, so a"

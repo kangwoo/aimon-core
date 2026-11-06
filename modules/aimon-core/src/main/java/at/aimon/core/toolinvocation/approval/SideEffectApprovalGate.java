@@ -17,7 +17,10 @@ import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.DestructiveBehavior;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.Tool;
+import at.aimon.core.agent.tool.ToolCallOrigin;
+import at.aimon.core.agent.tool.ToolCallPath;
 import at.aimon.core.agent.tool.ToolContext;
+import at.aimon.core.agent.tool.ToolDescriptor;
 import at.aimon.core.hook.execution.AskPromptHandler;
 import at.aimon.core.hook.execution.Decision;
 import at.aimon.core.llm.ToolUse;
@@ -116,6 +119,23 @@ import at.aimon.core.tools.ToolContextKeys;
  * foreground tasks are enabled), the prompt starts with {@code [task <first 8 chars>]} so the user can tell which of
  * several concurrent forks is asking.
  *
+ * <p>
+ * <b>It judges a descriptor, and knows which path the call came by</b>
+ * ({@code docs/design/tool/programmatic-tool-calling.md} decisions 10–12). The axes come from the
+ * {@link Tool#describe(at.aimon.core.agent.tool.ToolOfferContext) descriptor} of the iteration's offer, the same one
+ * the offer filter and the ceiling read. Three things follow from that:
+ *
+ * <ul>
+ * <li>A descriptor that is {@link ToolDescriptor#isApprovalDelegated() approval-delegated} is never asked about: the
+ * gate judges the calls that tool dispatches instead, one at a time, each on its own descriptor.
+ * <li>Answers are remembered under {@link ToolDescriptor#getApprovalKey()}, not the tool's name. Two tools that are
+ * the same capability share one key, so declining one declines the other and approving one is not a second question.
+ * When the key is not the tool's name, the prompt says which path is asking ({@code 'Bash' — via 'ExecuteCode(...)'}).
+ * <li>A call that came from model-written code ({@link ToolCallPath#CODE}) is <b>never asked about</b>. A script does
+ * not wait for a person: a remembered approval lets the call through, a remembered refusal refuses it, and no answer at
+ * all refuses it with a request to get the tool approved by a direct call first.
+ * </ul>
+ *
  * @see SideEffectLevel
  * @see DestructiveBehavior
  * @see ToolApprovalStore
@@ -182,22 +202,32 @@ public final class SideEffectApprovalGate {
     }
 
     /**
-     * Decides whether {@code tool} may run, prompting the user when its declarations are not exempt — either because
-     * its {@link SideEffectLevel} exceeds the threshold or because it declares
+     * Decides whether the described call may run, prompting the user when its declarations are not exempt — either
+     * because its {@link SideEffectLevel} exceeds the threshold or because it declares
      * {@link DestructiveBehavior#DESTRUCTIVE}, which the threshold does not cover — and this scope has not already
-     * answered.
+     * answered under the descriptor's {@link ToolDescriptor#getApprovalKey() approval key}.
      *
      * <p>
-     * {@code toolUse} is read for the prompt only. The decision keys on the tool, never on its arguments: keying on
-     * arguments would make {@code Bash} a fresh question per command, which is the prompt storm the store exists to
+     * An {@link ToolDescriptor#isApprovalDelegated() approval-delegated} descriptor passes without a question. A call
+     * on
+     * the {@link ToolCallPath#CODE code path} is never asked about: only a remembered answer decides it, and without
+     * one it is refused.
+     *
+     * <p>
+     * {@code toolUse} is read for the prompt only. The decision keys on the approval key, never on the arguments:
+     * keying
+     * on arguments would make {@code Bash} a fresh question per command, which is the prompt storm the store exists to
      * prevent. The user is told as much, because a prompt that shows one call and silently buys the rest is a prompt
      * that misleads.
      *
-     * @param tool
-     *            the resolved tool about to be dispatched (must not be null)
+     * @param descriptor
+     *            the descriptor of the resolved tool about to be dispatched, from the iteration's offer context (must
+     *            not be null)
      * @param toolUse
      *            the call being approved, shown to the user so the question names something concrete (must not be
      *            null); its arguments do not affect the decision or what is remembered
+     * @param origin
+     *            the path the call came by (must not be null)
      * @param context
      *            the tool context of this dispatch, read for the session ids that scope the answer (must not be null)
      * @return {@link Optional#empty()} when the call may proceed, or the reason to refuse it — phrased for the model,
@@ -205,37 +235,50 @@ public final class SideEffectApprovalGate {
      * @throws NullPointerException
      *             if any parameter is null
      */
-    public Optional<String> denialReason(Tool tool, ToolUse toolUse, ToolContext context) {
-        Objects.requireNonNull(tool, "Tool cannot be null");
+    public Optional<String> denialReason(ToolDescriptor descriptor, ToolUse toolUse, ToolCallOrigin origin,
+            ToolContext context) {
+        Objects.requireNonNull(descriptor, "Descriptor cannot be null");
         Objects.requireNonNull(toolUse, "Tool use cannot be null");
+        Objects.requireNonNull(origin, "Origin cannot be null");
         Objects.requireNonNull(context, "Context cannot be null");
 
-        final SideEffectLevel declared = tool.getSideEffectLevel();
+        if (descriptor.isApprovalDelegated()) {
+            // The tool's own run is not the question; each call it dispatches is judged here on its own descriptor.
+            return Optional.empty();
+        }
+        final SideEffectLevel declared = descriptor.getSideEffectLevel();
         // A tool that changes nothing can destroy nothing, so the second axis is not read — and not readable as a
         // contradiction — below MUTATING.
-        final DestructiveBehavior destructive = declared == SideEffectLevel.MUTATING
-                ? tool.getDestructiveBehavior()
-                : DestructiveBehavior.NON_DESTRUCTIVE;
+        final DestructiveBehavior destructive = descriptor.getEffectiveDestructiveBehavior();
         if (destructive == DestructiveBehavior.NON_DESTRUCTIVE && exemptAtOrBelow.permits(declared)) {
             return Optional.empty();
         }
 
-        final String toolName = tool.getDefinition().getName();
+        final String toolName = descriptor.getName();
+        final String approvalKey = descriptor.getApprovalKey();
         final Optional<String> scopeKey = scopeKeyOf(context);
 
-        final Optional<Boolean> remembered = scopeKey.flatMap(key -> store.lookup(key, toolName));
+        final Optional<Boolean> remembered = scopeKey.flatMap(key -> store.lookup(key, approvalKey));
         if (remembered.isPresent()) {
-            return remembered.get() ? Optional.empty() : Optional.of(declinedMessage(toolName, true));
+            return remembered.get() ? Optional.empty() : Optional.of(declinedMessage(approvalKey, true));
         }
 
-        final String prompt = promptFor(labelOf(context), toolName, toolUse, declared, destructive);
+        if (origin.getPath() == ToolCallPath.CODE) {
+            // A script never waits for a person (decision 12 ③): without a remembered answer the call is refused, and
+            // nothing is remembered — the refusal is not the user's.
+            log.info("Tool '{}' called from code refused: no approval remembered under '{}' for scope {}", toolName,
+                    approvalKey, scopeKey.orElse("<none>"));
+            return Optional.of(notApprovedForCodeMessage(toolName, approvalKey));
+        }
+
+        final String prompt = promptFor(labelOf(context), toolName, approvalKey, toolUse, declared, destructive);
         if (scopeKey.isEmpty()) {
             // No scope: nothing to remember and nothing to share — asked every time, as always.
-            return decided(toolName, declared, destructive, scopeKey, channel.resolve(prompt) == Decision.ALLOW);
+            return decided(approvalKey, declared, destructive, scopeKey, channel.resolve(prompt) == Decision.ALLOW);
         }
 
         final String key = scopeKey.get();
-        final String question = key + '\0' + toolName;
+        final String question = key + '\0' + approvalKey;
         while (true) {
             final CompletableFuture<Outcome> mine = new CompletableFuture<>();
             final CompletableFuture<Outcome> prior = inFlight.putIfAbsent(question, mine);
@@ -244,25 +287,25 @@ public final class SideEffectApprovalGate {
                 final Optional<Outcome> shared = awaitShared(prior);
                 if (shared.isEmpty()) {
                     // This run was cancelled while it waited: a refusal, never an approval, and nothing remembered.
-                    return Optional.of(cancelledMessage(toolName));
+                    return Optional.of(cancelledMessage(approvalKey));
                 }
                 if (shared.get() == Outcome.ALLOWED) {
                     return Optional.empty();
                 }
                 if (shared.get() == Outcome.DECLINED) {
-                    return Optional.of(declinedMessage(toolName, false));
+                    return Optional.of(declinedMessage(approvalKey, false));
                 }
                 // The asker got no answer from the user (its run was cancelled or its prompt failed): look again, and
                 // ask for ourselves if the question is still unanswered. The asker may not have cleared its finished
                 // slot yet; clearing it here (only if it is still that slot) keeps us from spinning on it.
                 inFlight.remove(question, prior);
-                final Optional<Boolean> answered = store.lookup(key, toolName);
+                final Optional<Boolean> answered = store.lookup(key, approvalKey);
                 if (answered.isPresent()) {
-                    return answered.get() ? Optional.empty() : Optional.of(declinedMessage(toolName, true));
+                    return answered.get() ? Optional.empty() : Optional.of(declinedMessage(approvalKey, true));
                 }
                 continue;
             }
-            return askAsOwner(mine, key, prompt, toolName, declared, destructive);
+            return askAsOwner(mine, key, prompt, approvalKey, declared, destructive);
         }
     }
 
@@ -270,34 +313,34 @@ public final class SideEffectApprovalGate {
      * Asks the question this caller won the in-flight slot for, remembers the user's answer and hands it to the
      * waiters.
      */
-    private Optional<String> askAsOwner(CompletableFuture<Outcome> mine, String key, String prompt, String toolName,
+    private Optional<String> askAsOwner(CompletableFuture<Outcome> mine, String key, String prompt, String approvalKey,
             SideEffectLevel declared, DestructiveBehavior destructive) {
-        final String question = key + '\0' + toolName;
+        final String question = key + '\0' + approvalKey;
         try {
             // Won the slot, but another caller may have asked, remembered and left between our lookup and now.
-            final Optional<Boolean> answeredMeanwhile = store.lookup(key, toolName);
+            final Optional<Boolean> answeredMeanwhile = store.lookup(key, approvalKey);
             if (answeredMeanwhile.isPresent()) {
                 mine.complete(Outcome.of(answeredMeanwhile.get()));
-                return answeredMeanwhile.get() ? Optional.empty() : Optional.of(declinedMessage(toolName, true));
+                return answeredMeanwhile.get() ? Optional.empty() : Optional.of(declinedMessage(approvalKey, true));
             }
             final boolean allowed = channel.resolve(prompt) == Decision.ALLOW;
             if (Thread.currentThread().isInterrupted()) {
                 // This run was cancelled while it asked: whatever the handler returned (the CLI denies an interrupted
                 // caller without prompting) is not the user's answer, so it is neither remembered nor shared.
                 mine.complete(Outcome.NO_ANSWER);
-                log.info("Approval prompt for tool '{}' cancelled for scope {}; nothing remembered", toolName, key);
-                return Optional.of(cancelledMessage(toolName));
+                log.info("Approval prompt for tool '{}' cancelled for scope {}; nothing remembered", approvalKey, key);
+                return Optional.of(cancelledMessage(approvalKey));
             }
             // Remember before completing, so a waiter that wakes and looks at the store already finds the answer.
-            store.remember(key, toolName, allowed);
+            store.remember(key, approvalKey, allowed);
             mine.complete(Outcome.of(allowed));
-            return decided(toolName, declared, destructive, Optional.of(key), allowed);
+            return decided(approvalKey, declared, destructive, Optional.of(key), allowed);
         } finally {
             if (!mine.isDone()) {
                 // The prompt threw (RuntimeException or Error): never leave a waiter hanging, and do not pass the
                 // failure off as the user's refusal — the waiters ask for themselves. The throwable itself still
                 // propagates to the invoker's catch-all, as it always has.
-                log.warn("Approval prompt for tool '{}' failed for scope {}; waiting calls will ask again", toolName,
+                log.warn("Approval prompt for tool '{}' failed for scope {}; waiting calls will ask again", approvalKey,
                         key);
                 mine.complete(Outcome.NO_ANSWER);
             }
@@ -321,15 +364,16 @@ public final class SideEffectApprovalGate {
         }
     }
 
-    private static Optional<String> decided(String toolName, SideEffectLevel declared, DestructiveBehavior destructive,
-            Optional<String> scopeKey, boolean allowed) {
+    private static Optional<String> decided(String approvalKey, SideEffectLevel declared,
+            DestructiveBehavior destructive, Optional<String> scopeKey, boolean allowed) {
         if (allowed) {
-            log.debug("Tool '{}' ({}/{}) approved for scope {}", toolName, declared, destructive,
+            log.debug("Tool '{}' ({}/{}) approved for scope {}", approvalKey, declared, destructive,
                     scopeKey.orElse("<none>"));
             return Optional.empty();
         }
-        log.info("Tool '{}' ({}/{}) declined for scope {}", toolName, declared, destructive, scopeKey.orElse("<none>"));
-        return Optional.of(declinedMessage(toolName, false));
+        log.info("Tool '{}' ({}/{}) declined for scope {}", approvalKey, declared, destructive,
+                scopeKey.orElse("<none>"));
+        return Optional.of(declinedMessage(approvalKey, false));
     }
 
     /**
@@ -370,13 +414,18 @@ public final class SideEffectApprovalGate {
      * call — the store is keyed by tool, so approving {@code Bash(ls)} approves every later {@code Bash}. Showing the
      * arguments without saying that would be worse than not showing them: it reads as consent to one command.
      */
-    private static String promptFor(String label, String toolName, ToolUse toolUse, SideEffectLevel declared,
-            DestructiveBehavior destructive) {
+    private static String promptFor(String label, String toolName, String approvalKey, ToolUse toolUse,
+            SideEffectLevel declared, DestructiveBehavior destructive) {
         final String what = destructive == DestructiveBehavior.DESTRUCTIVE
                 ? ", so it may overwrite or remove state that already exists"
                 : ", so it may change state outside this agent";
-        return label + "Allow " + renderCall(toolName, toolUse) + "? It declares " + declared + " / " + destructive
-                + what + ". Approving covers every '" + toolName
+        // A tool approved under another tool's key says so, so the user knows which capability they are answering
+        // about and by which path it is asking (decision 11).
+        final String call = approvalKey.equals(toolName)
+                ? renderCall(toolName, toolUse)
+                : "'" + approvalKey + "' — via " + renderCall(toolName, toolUse);
+        return label + "Allow " + call + "? It declares " + declared + " / " + destructive + what
+                + ". Approving covers every '" + approvalKey
                 + "' call for the rest of this session, whatever its arguments.";
     }
 
@@ -407,6 +456,18 @@ public final class SideEffectApprovalGate {
     private static String shorten(String value, int limit) {
         final String oneLine = WHITESPACE.matcher(value).replaceAll(" ").trim();
         return oneLine.length() <= limit ? oneLine : oneLine.substring(0, limit) + "...";
+    }
+
+    /**
+     * The refusal the model sees for a call from code that nobody has approved yet. It names the way out — a direct
+     * call, which can ask — because a script retried as is meets the same refusal.
+     */
+    private static String notApprovedForCodeMessage(String toolName, String approvalKey) {
+        final String what = approvalKey.equals(toolName)
+                ? "'" + toolName + "'"
+                : "'" + approvalKey + "' (as '" + toolName + "')";
+        return "Tool " + what + " needs the user's approval, and calls from code never ask for it. Call '" + toolName
+                + "' directly first so the user can approve it, then run the code again.";
     }
 
     /** The refusal the model sees when its run was cancelled before the user answered. */

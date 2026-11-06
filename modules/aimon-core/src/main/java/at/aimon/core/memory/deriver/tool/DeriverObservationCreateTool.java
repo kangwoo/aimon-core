@@ -13,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.tool.AbstractTool;
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolContextKey;
 import at.aimon.core.agent.tool.ToolInput;
@@ -353,5 +354,14 @@ public class DeriverObservationCreateTool extends AbstractTool {
             }
         }
         return List.copyOf(ids);
+    }
+
+    /**
+     * Declares {@link DataReach#HOST}: it reaches host-side state — a store or registry the host owns — and not the
+     * open outside world.
+     */
+    @Override
+    public DataReach dataReach() {
+        return DataReach.HOST;
     }
 }

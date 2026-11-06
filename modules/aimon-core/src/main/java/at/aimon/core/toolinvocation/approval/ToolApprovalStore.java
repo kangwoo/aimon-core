@@ -52,7 +52,8 @@ public interface ToolApprovalStore {
      * @param scopeKey
      *            the scope the answer was given in (must not be null)
      * @param toolName
-     *            the tool the answer was about (must not be null)
+     *            the approval key of the tool the answer was about (must not be null) — its name, unless its
+     *            {@code ToolDescriptor#getApprovalKey()} names the tool it shares a capability with
      * @return {@code true} if approved, {@code false} if declined, or {@link Optional#empty()} when this scope has not
      *         been asked about this tool yet
      * @throws NullPointerException
@@ -66,7 +67,8 @@ public interface ToolApprovalStore {
      * @param scopeKey
      *            the scope the answer applies to (must not be null)
      * @param toolName
-     *            the tool the answer was about (must not be null)
+     *            the approval key of the tool the answer was about (must not be null) — its name, unless its
+     *            {@code ToolDescriptor#getApprovalKey()} names the tool it shares a capability with
      * @param allowed
      *            {@code true} when the user approved, {@code false} when they declined
      * @throws NullPointerException

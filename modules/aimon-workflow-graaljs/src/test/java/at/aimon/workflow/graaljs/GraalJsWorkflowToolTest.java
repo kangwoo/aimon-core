@@ -18,9 +18,11 @@ import org.mockito.ArgumentCaptor;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.interrupt.InterruptBehavior;
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
+import at.aimon.core.agent.tool.ToolOfferContext;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
@@ -69,6 +71,16 @@ class GraalJsWorkflowToolTest extends AbstractGraalJsRunTest {
 
     private static ToolContext contextWithId() {
         return ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeId.of("agent:test")).build();
+    }
+
+    @Test
+    @DisplayName("it starts forks, so it is not code-callable and reaches EXTERNAL (programmatic tool calling §7.1)")
+    void declaresItsProgrammaticAxes() {
+        final GraalJsWorkflowTool workflow = tool(null);
+
+        assertThat(workflow.isCodeCallable()).isFalse();
+        assertThat(workflow.dataReach()).isEqualTo(DataReach.EXTERNAL);
+        assertThat(workflow.describe(ToolOfferContext.none()).isCodeCallable()).isFalse();
     }
 
     @Test

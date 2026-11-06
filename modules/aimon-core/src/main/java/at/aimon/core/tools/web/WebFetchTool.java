@@ -16,6 +16,7 @@ import at.aimon.core.agent.interrupt.InterruptBehavior;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.ConcurrencyBehavior;
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.InterruptAccess;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.ToolCategories;
@@ -229,5 +230,13 @@ public class WebFetchTool extends AbstractTool {
         sb.append('\n');
         sb.append(content);
         return sb.toString();
+    }
+
+    /**
+     * Declares {@link DataReach#EXTERNAL}: it fetches from the open internet.
+     */
+    @Override
+    public DataReach dataReach() {
+        return DataReach.EXTERNAL;
     }
 }

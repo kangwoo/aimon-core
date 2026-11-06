@@ -16,9 +16,11 @@ import at.aimon.core.agent.interrupt.TerminatorRegistrar;
 import at.aimon.core.agent.tool.InterruptToolKeys;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
+import at.aimon.core.agent.tool.ToolDescriptor;
 import at.aimon.core.agent.tool.ToolDispatchResult;
 import at.aimon.core.agent.tool.ToolExecutionManager;
 import at.aimon.core.agent.tool.ToolInput;
+import at.aimon.core.agent.tool.ToolOfferContext;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.hook.HookExecutionManager;
 import at.aimon.core.hook.HookFeedback;
@@ -218,8 +220,11 @@ public final class SingleToolInvoker {
                 // Built-in side-effect approval. Runs after the permission chain on purpose: a hook that was going to
                 // deny outright should not first cost the user a prompt. Unknown tool names skip it — there is no
                 // declaration to judge, and the execution manager below emits the canonical "tool not found" error.
+                // The gate judges the descriptor of the iteration's offer — the one the offer filter and the ceiling
+                // read — and the path the call came by: a call from code is never put to the user.
                 if (approvalGate != null && targetTool.isPresent()) {
-                    final Optional<String> refusal = approvalGate.denialReason(targetTool.get(), toolUse,
+                    final ToolDescriptor descriptor = targetTool.get().describe(ToolOfferContext.of(enrichedContext));
+                    final Optional<String> refusal = approvalGate.denialReason(descriptor, toolUse, spec.getOrigin(),
                             enrichedContext);
                     if (refusal.isPresent()) {
                         return denyByApproval(spec, refusal.get());

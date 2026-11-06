@@ -900,6 +900,20 @@ public SideEffectLevel getSideEffectLevel() {
 
 설계와 이유는 [부작용 축](../../design/tool/side-effect-axes.md) 에 있다.
 
+### 프로그래매틱 도구 호출 선언 (DataReach · isCodeCallable)
+
+모델이 쓴 코드가 도구를 부를 수 있게 할 때 읽는 선언이 둘 더 있다.
+
+| 메서드 | 기본값 | 다른 값 |
+|--------|--------|---------|
+| `dataReach()` | `EXTERNAL` | `ENVIRONMENT` — 실행 환경 안에서만 돈다 · `HOST` — 호스트 쪽 저장소나 닫힌 시스템에만 닿는다 |
+| `isCodeCallable()` | `true` (`DEDICATED_THREAD` 도구는 `false`) | `false` — LLM 을 부르거나, 포크를 일으키거나, 도구 집합을 바꾸거나, 사용자 입력을 기다린다 |
+
+- **내장 도구는 `dataReach()` 를 반드시 선언한다.** `ProgrammaticToolDeclarationArchitectureTest` 가 검사한다.
+- **LLM·위키·포크에 닿는 도구는 `isCodeCallable()` 을 `false` 로 재정의한다.** 같은 테스트가 클래스 그래프로 검사한다.
+
+정의는 [프로그래매틱 도구 호출](../../design/tool/programmatic-tool-calling.md) §7.1, 결정 15 다.
+
 ---
 
 ## 동시 실행 안전성 (ConcurrencyBehavior)

@@ -6,9 +6,12 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.tool.ToolCallOrigin;
+import at.aimon.core.hook.event.PermissionRequestContext;
 import at.aimon.core.hook.event.PreToolContext;
 import at.aimon.core.hook.event.PreToolHook;
 import at.aimon.core.hook.execution.AskPromptHandler;
@@ -79,6 +82,58 @@ class DefaultHookExecutionManagerAskPromotionTest {
         final List<HookResult> results = manager.executePreTool(stubContext());
 
         assertThat(results).isEqualTo(input);
+    }
+
+    @Test
+    void askOnACallFromCodeIsDeniedWithoutPrompting() {
+        final AtomicInteger prompts = new AtomicInteger();
+        final HookExecutionManager manager = managerWithExecutor(List.of(HookResult.ask("Run risky command?")),
+                prompt -> {
+                    prompts.incrementAndGet();
+                    return Decision.ALLOW;
+                });
+        final PreToolContext context = stubContext();
+        when(context.getOrigin()).thenReturn(ToolCallOrigin.code("exec-1", "javascript"));
+
+        final List<HookResult> results = manager.executePreTool(context);
+
+        assertThat(prompts).hasValue(0);
+        assertThat(results.get(0).getDecision()).isEqualTo(Decision.DENY);
+        assertThat(results.get(0).isBlocked()).isTrue();
+        assertThat(results.get(0).getFeedback()).contains("Run risky command?");
+    }
+
+    @Test
+    void permissionRequestAskOnACallFromCodeIsDeniedWithoutPrompting() {
+        final AtomicInteger prompts = new AtomicInteger();
+        final HookExecutionManager manager = managerWithExecutor(List.of(HookResult.ask("Allow?")), prompt -> {
+            prompts.incrementAndGet();
+            return Decision.ALLOW;
+        });
+        final HookRegistry registry = mock(HookRegistry.class);
+        when(registry.getHooks(HookEventType.PERMISSION_REQUEST)).thenReturn(List.of());
+        final PermissionRequestContext context = mock(PermissionRequestContext.class);
+        when(context.getHookRegistry()).thenReturn(registry);
+        when(context.getOrigin()).thenReturn(ToolCallOrigin.code("exec-1", "javascript"));
+
+        final List<HookResult> results = manager.executePermissionRequest(context);
+
+        assertThat(prompts).hasValue(0);
+        assertThat(results.get(0).isBlocked()).isTrue();
+    }
+
+    @Test
+    void askOnADirectCallStillPrompts() {
+        final AtomicInteger prompts = new AtomicInteger();
+        final HookExecutionManager manager = managerWithExecutor(List.of(HookResult.ask("ok?")), prompt -> {
+            prompts.incrementAndGet();
+            return Decision.ALLOW;
+        });
+        final PreToolContext context = stubContext();
+        when(context.getOrigin()).thenReturn(ToolCallOrigin.direct());
+
+        assertThat(manager.executePreTool(context).get(0).getDecision()).isEqualTo(Decision.ALLOW);
+        assertThat(prompts).hasValue(1);
     }
 
     private static HookExecutionManager managerWithExecutor(List<HookResult> executorOutput,

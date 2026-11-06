@@ -2,6 +2,7 @@ package at.aimon.core.mcp;
 
 import java.util.Objects;
 
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.DestructiveBehavior;
 import at.aimon.core.agent.tool.IdempotencyBehavior;
 import at.aimon.core.agent.tool.SideEffectLevel;
@@ -33,6 +34,15 @@ import at.aimon.core.mcp.McpServerConfig.AnnotationTrust;
  * </ul>
  *
  * <p>
+ * <b>Data reach.</b> {@code openWorldHint} feeds {@link DataReach}, read by programmatic tool calling. Under
+ * {@link AnnotationTrust#IGNORE} the reach is {@link DataReach#EXTERNAL}. Under {@link AnnotationTrust#TRUST} it is
+ * {@link DataReach#HOST} when the server says {@code openWorldHint: false}, and {@link DataReach#EXTERNAL} when the
+ * hint
+ * is absent or {@code true} (the MCP default). It is never {@link DataReach#ENVIRONMENT}: an MCP tool runs on its
+ * server, not inside the agent's execution environment, so the most a trusted closed-world claim can earn is
+ * {@code HOST} ({@code docs/design/integration/mcp-tool.md} D13).
+ *
+ * <p>
  * One normalisation: a tool resolved to {@link SideEffectLevel#READ_ONLY} is always
  * {@link DestructiveBehavior#NON_DESTRUCTIVE} and {@link IdempotencyBehavior#IDEMPOTENT}, even if the server sent
  * {@code destructiveHint: true} alongside
@@ -48,17 +58,19 @@ import at.aimon.core.mcp.McpServerConfig.AnnotationTrust;
 public final class McpToolTraits {
 
     private static final McpToolTraits UNTRUSTED = new McpToolTraits(SideEffectLevel.MUTATING,
-            DestructiveBehavior.DESTRUCTIVE, IdempotencyBehavior.NON_IDEMPOTENT);
+            DestructiveBehavior.DESTRUCTIVE, IdempotencyBehavior.NON_IDEMPOTENT, DataReach.EXTERNAL);
 
     private final SideEffectLevel sideEffectLevel;
     private final DestructiveBehavior destructiveBehavior;
     private final IdempotencyBehavior idempotencyBehavior;
+    private final DataReach dataReach;
 
     private McpToolTraits(SideEffectLevel sideEffectLevel, DestructiveBehavior destructiveBehavior,
-            IdempotencyBehavior idempotencyBehavior) {
+            IdempotencyBehavior idempotencyBehavior, DataReach dataReach) {
         this.sideEffectLevel = sideEffectLevel;
         this.destructiveBehavior = destructiveBehavior;
         this.idempotencyBehavior = idempotencyBehavior;
+        this.dataReach = dataReach;
     }
 
     /**
@@ -90,13 +102,15 @@ public final class McpToolTraits {
         if (trust != AnnotationTrust.TRUST) {
             return UNTRUSTED;
         }
+        final DataReach reach = annotations.isOpenWorld() ? DataReach.EXTERNAL : DataReach.HOST;
         if (annotations.isReadOnly()) {
             return new McpToolTraits(SideEffectLevel.READ_ONLY, DestructiveBehavior.NON_DESTRUCTIVE,
-                    IdempotencyBehavior.IDEMPOTENT);
+                    IdempotencyBehavior.IDEMPOTENT, reach);
         }
         return new McpToolTraits(SideEffectLevel.MUTATING,
                 annotations.isDestructive() ? DestructiveBehavior.DESTRUCTIVE : DestructiveBehavior.NON_DESTRUCTIVE,
-                annotations.isIdempotent() ? IdempotencyBehavior.IDEMPOTENT : IdempotencyBehavior.NON_IDEMPOTENT);
+                annotations.isIdempotent() ? IdempotencyBehavior.IDEMPOTENT : IdempotencyBehavior.NON_IDEMPOTENT,
+                reach);
     }
 
     /**
@@ -122,6 +136,16 @@ public final class McpToolTraits {
         return idempotencyBehavior;
     }
 
+    /**
+     * Returns how far the tool will declare it reaches: {@link DataReach#HOST} only for a trusted server that says
+     * {@code openWorldHint: false}, otherwise {@link DataReach#EXTERNAL}.
+     *
+     * @return the reach (never null)
+     */
+    public DataReach getDataReach() {
+        return dataReach;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -131,16 +155,17 @@ public final class McpToolTraits {
             return false;
         }
         return sideEffectLevel == other.sideEffectLevel && destructiveBehavior == other.destructiveBehavior
-                && idempotencyBehavior == other.idempotencyBehavior;
+                && idempotencyBehavior == other.idempotencyBehavior && dataReach == other.dataReach;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(sideEffectLevel, destructiveBehavior, idempotencyBehavior);
+        return Objects.hash(sideEffectLevel, destructiveBehavior, idempotencyBehavior, dataReach);
     }
 
     @Override
     public String toString() {
-        return "McpToolTraits{" + sideEffectLevel + "/" + destructiveBehavior + "/" + idempotencyBehavior + '}';
+        return "McpToolTraits{" + sideEffectLevel + "/" + destructiveBehavior + "/" + idempotencyBehavior + "/"
+                + dataReach + '}';
     }
 }

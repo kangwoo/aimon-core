@@ -54,10 +54,9 @@ import java.util.Optional;
  * a special case anywhere.
  *
  * <p>
- * {@code idempotentHint} feeds {@link at.aimon.core.agent.tool.IdempotencyBehavior}. {@code openWorldHint} is parsed
- * but
- * feeds no declaration: it (does the tool touch an open-ended external world?) has no AIMON counterpart planned. It is
- * carried rather than dropped so that adding the reader later is not another round of protocol work.
+ * {@code idempotentHint} feeds {@link at.aimon.core.agent.tool.IdempotencyBehavior}, and {@code openWorldHint} feeds
+ * {@link at.aimon.core.agent.tool.DataReach} — {@code HOST} for a trusted server that says {@code false},
+ * {@code EXTERNAL} otherwise (see {@link McpToolTraits}).
  *
  * <p>
  * MCP's {@code title} is deliberately not modelled here — this type is about behaviour, and the display name is not

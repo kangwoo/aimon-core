@@ -26,6 +26,7 @@ import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.ConcurrencyBehavior;
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.InterruptToolKeys;
 import at.aimon.core.agent.tool.ToolCategories;
 import at.aimon.core.agent.tool.ToolContext;
@@ -814,5 +815,24 @@ public class TaskTool extends AbstractTool {
     private boolean isHidden(String subagentName) {
         return subagentRegistry.getSubagent(subagentName).map(subagent -> subagent.getMetadata().isHidden())
                 .orElse(false);
+    }
+
+    /**
+     * Declares {@link DataReach#EXTERNAL}: the subagent it starts may use any tool its allow-list grants, open-world
+     * ones included.
+     */
+    @Override
+    public DataReach dataReach() {
+        return DataReach.EXTERNAL;
+    }
+
+    /**
+     * Not callable from model-written code: it starts a subagent fork, which runs LLM calls outside a script's limits
+     * and budget ({@code docs/design/tool/programmatic-tool-calling.md}
+     * decision 15).
+     */
+    @Override
+    public boolean isCodeCallable() {
+        return false;
     }
 }
