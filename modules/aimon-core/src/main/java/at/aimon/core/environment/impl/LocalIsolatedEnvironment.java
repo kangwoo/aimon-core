@@ -101,6 +101,7 @@ final class LocalIsolatedEnvironment implements ExecutionEnvironment {
                 .platform(parent.descriptor().platform().orElse(null))
                 .osVersion(parent.descriptor().osVersion().orElse(null))
                 .shellName(parent.descriptor().shellName().orElse(null))
+                .isolation(parent.descriptor().isolation().orElse(null))
                 .notes("isolated workflow branch '" + branchKey + "'; file tools and the default working directory are"
                         + " scoped to it, absolute paths in shell commands are not")
                 .build();

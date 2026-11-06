@@ -21,7 +21,6 @@ import at.aimon.core.agent.quota.QuotaViolation;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.tool.SideEffectLevel;
-import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolCallDispatcher;
 import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolContext;
@@ -383,8 +382,11 @@ public class LlmSkillExecutor implements SkillExecutor {
     }
 
     /**
-     * The tools the skill's model is offered: its bounded allow-list, less what the tool execution manager would refuse
-     * anyway.
+     * The tools the skill's model is offered: {@link ToolOfferContext#offer()} of the skill's offer context — its
+     * bounded allow-list, less what is not offerable here (an {@code ExecuteCode} with nothing to run) and what the
+     * tool
+     * execution manager would refuse anyway. The same one computation the main loop and a fork offer through, so no
+     * loop applies an offer rule another skips.
      *
      * <p>
      * The ceiling is read from the manager rather than configured here on purpose: the filter and the refusal then
@@ -404,9 +406,8 @@ public class LlmSkillExecutor implements SkillExecutor {
     private List<ToolDefinition> offeredTools(Skill skill, List<AllowedTool> allowedTools,
             SkillExecutionContext context, ToolOfferContext offerContext) {
         final SideEffectLevel ceiling = offerContext.getCeiling();
-        final List<ToolDefinition> filteredTools = filterTools(allowedTools, context.getAvailableTools()).stream()
-                .map(tool -> tool.describe(offerContext)).filter(offerContext::permits)
-                .map(ToolDescriptor::getDefinition).toList();
+        final List<ToolDefinition> filteredTools = offerContext.offer().stream().map(ToolDescriptor::getDefinition)
+                .toList();
         if (filteredTools.isEmpty() && !allowedTools.isEmpty()) {
             // Either filter alone leaves something; together they can leave nothing — a misspelled allowed-tools
             // entry, or one naming only tools above the ceiling. No provider rejects an empty tools field (all omit
@@ -516,7 +517,16 @@ public class LlmSkillExecutor implements SkillExecutor {
 
     /**
      * Builds the skill's offer context: the narrowed registry, the skill's bounded allow-list as the admission filter
-     * (by name, as {@link #filterTools} reads it), and the execution manager's ceiling — the bound its refusal reads.
+     * (by name), and the execution manager's ceiling — the bound its refusal reads.
+     *
+     * <p>
+     * The admission filter narrows the offer to the names the <b>effective</b> allow-list admits — the skill's own list
+     * already intersected with its caller's, so the offer and the dispatch that follows are bounded by one value and
+     * cannot disagree. The caller's half is what stops an agent's allow-list from ending at a skill: without it,
+     * {@code /my-skill} — or a model call to {@code Skill} — runs that skill's tools under the skill's list alone, so a
+     * skill naming {@code Bash} reaches {@code Bash} inside an agent narrowed to {@code Read, Grep}. It arrives through
+     * the tool context, published by {@code SingleToolInvoker} on the tool-call path and by the agent executor's
+     * command tool context on the user-slash path; absent, it is empty and imposes nothing.
      */
     private ToolOfferContext offerContextOf(List<AllowedTool> allowedTools, SkillExecutionContext context) {
         final Set<String> allowedToolNames = allowedTools.stream().map(AllowedTool::getToolName)
@@ -676,27 +686,5 @@ public class LlmSkillExecutor implements SkillExecutor {
                         + "(caller allows %s, skill allows %s)", skill.getName(), callerAllowed, declaredTools);
         return SkillExecutionResult.failure(message, new IllegalStateException(message),
                 buildMetadata(0, accumulatedTokens, startTime));
-    }
-
-    /**
-     * Narrows the offer to the names the <b>effective</b> allow-list admits — the skill's own list already
-     * intersected with its caller's, so the offer and the dispatch that follows are bounded by one value and cannot
-     * disagree.
-     *
-     * <p>
-     * The caller's half is what stops an agent's allow-list from ending at a skill: without it, {@code /my-skill} —
-     * or a model call to {@code Skill} — runs that skill's tools under the skill's list alone, so a skill naming
-     * {@code Bash} reaches {@code Bash} inside an agent narrowed to {@code Read, Grep}. It arrives through the tool
-     * context, published by {@code SingleToolInvoker} on the tool-call path and by the agent executor's command tool
-     * context on the user-slash path; absent, it is empty and imposes nothing.
-     */
-    private static List<Tool> filterTools(List<AllowedTool> allowedTools, List<Tool> availableTools) {
-        if (allowedTools.isEmpty()) {
-            return availableTools;
-        }
-        final Set<String> allowedToolNames = allowedTools.stream().map(AllowedTool::getToolName)
-                .collect(Collectors.toSet());
-        return availableTools.stream().filter(tool -> allowedToolNames.contains(tool.getDefinition().getName()))
-                .toList();
     }
 }

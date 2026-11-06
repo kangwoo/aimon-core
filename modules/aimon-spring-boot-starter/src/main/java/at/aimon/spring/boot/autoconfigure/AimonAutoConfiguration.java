@@ -436,7 +436,9 @@ public class AimonAutoConfiguration {
                     .backgroundBashStore(backgroundBashStore.getIfAvailable())
                     .monitorEnabled(properties.getTools().getMonitor().isEnabled())
                     .monitorWebSocketEnabled(properties.getTools().getMonitor().isWebsocketEnabled())
-                    .monitorStore(monitorStore.getIfAvailable());
+                    .monitorStore(monitorStore.getIfAvailable())
+                    .programmaticEnabled(properties.getProgrammatic().isEnabled())
+                    .programmaticLimits(properties.getProgrammatic().getLimits().toLimits());
             // Every MonitorSourceFactory bean is a kind the model can start by name; @Order decides the listing order.
             monitorSources.orderedStream().forEach(tools::addMonitorSource);
             final Tracer tracer = contributions.getTracer();

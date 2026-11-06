@@ -154,7 +154,7 @@ IMPORTANT: 헷갈리기 쉬운 두 쌍이 있고, 이 프로젝트는 그 둘을
 | **세션 저장** | `aimon-session-{redis,postgres,mongodb}` · `aimon-session-routing` | 영속과 멀티 노드 라우팅 |
 | **실행 환경** | 둘 다 별도 저장소 — `at.aimon.sandbox:*` ([aimon-sandbox](https://github.com/kangwoo/aimon-sandbox)) · `at.aimon.browser:*` ([aimon-browser](https://github.com/kangwoo/aimon-browser)) | 격리된 명령 실행 도구, 웹 자동화 |
 | **저장/검색** | `aimon-filesystem-{gridfs,s3}` · `aimon-knowledge-opensearch` | VFS 백엔드, RAG |
-| **그 밖** | `aimon-scheduling-quartz` · `aimon-workflow-graaljs` · `aimon-rewake-webhook` | 분산 cron, JS 워크플로, 비동기 깨우기 |
+| **그 밖** | `aimon-scheduling-quartz` · `aimon-graaljs` · `aimon-rewake-webhook` | 분산 cron, JS 워크플로, 비동기 깨우기 |
 | **참조 앱** | `aimon-cli` | 프레임워크를 다 배선해 둔 REPL (게시하지 않음) |
 
 모듈 하나하나의 좌표와 설명은 [리포지토리 README](../README.md) 에, "이런 걸 하고 싶은데 있나?" 는

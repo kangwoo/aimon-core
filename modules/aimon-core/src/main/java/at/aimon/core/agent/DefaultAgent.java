@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.llm.LlmModel;
 
@@ -248,6 +249,19 @@ public final class DefaultAgent implements Agent {
         public Builder attributes(Map<String, String> attributes) {
             ensureMetadataBuilder();
             this.metadataBuilder.attributes(attributes);
+            return this;
+        }
+
+        /**
+         * Sets what this agent opens to model-written code (see {@link AgentMetadata#getProgrammatic()}).
+         *
+         * @param programmatic
+         *            the settings, or {@code null} for none
+         * @return This builder
+         */
+        public Builder programmatic(ProgrammaticToolSettings programmatic) {
+            ensureMetadataBuilder();
+            this.metadataBuilder.programmatic(programmatic);
             return this;
         }
 

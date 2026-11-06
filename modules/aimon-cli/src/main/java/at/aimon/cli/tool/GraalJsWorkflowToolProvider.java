@@ -9,15 +9,15 @@ import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentRegistry;
-import at.aimon.workflow.graaljs.GraalJsEngineHolder;
-import at.aimon.workflow.graaljs.GraalJsWorkflowTool;
+import at.aimon.graaljs.GraalJsEngineHolder;
+import at.aimon.graaljs.workflow.GraalJsWorkflowTool;
 
 /**
  * CLI-side {@link OrcaToolProvider} that registers the {@link GraalJsWorkflowTool} ({@code WorkflowJs}).
  *
  * <p>
  * This provider lives in the CLI assembly layer (not {@code aimon-core}) because {@code aimon-core} must never depend
- * on the {@code aimon-workflow-graaljs} implementation module (dependency-direction rule). It is the scripted mirror of
+ * on the {@code aimon-graaljs} implementation module (dependency-direction rule). It is the scripted mirror of
  * {@code OrcaSubagentToolProvider}'s opt-in {@code WorkflowTool} registration: it pulls the same collaborators (default
  * model, registries, execution manager, context enrichers) from the {@link OrcaToolProviderContext} and
  * adds the app-scoped {@link GraalJsEngineHolder} plus the per-context {@code WorkflowRunner} (for background mode).

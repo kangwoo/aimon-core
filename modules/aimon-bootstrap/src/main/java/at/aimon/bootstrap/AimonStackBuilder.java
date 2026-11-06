@@ -68,6 +68,8 @@ import at.aimon.core.hook.rewake.impl.DefaultRewakeService;
 import at.aimon.core.knowledge.KnowledgeStore;
 import at.aimon.core.llm.cost.CostEstimator;
 import at.aimon.core.llm.cost.TablePricedCostEstimator;
+import at.aimon.core.programmatic.CodeExecutionEngine;
+import at.aimon.core.programmatic.CodeExecutionEngines;
 import at.aimon.core.scheduling.ScheduledTaskManager;
 import at.aimon.core.scheduling.SchedulingEngine;
 import at.aimon.core.scheduling.SchedulingEngineBuilder;
@@ -94,6 +96,7 @@ import at.aimon.core.skill.render.ShellArgumentTokenizer;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.behavior.InMemorySubagentBehaviorRegistry;
 import at.aimon.core.tools.bash.BackgroundBashManager;
+import at.aimon.core.tools.code.ExecuteCodeToolProvider;
 import at.aimon.core.tools.monitor.MonitorManager;
 import at.aimon.core.tools.monitor.ShellMonitorSourceFactory;
 import at.aimon.core.tools.monitor.WebSocketMonitorSourceFactory;
@@ -215,6 +218,23 @@ public final class AimonStackBuilder {
 
     // Sits between build() and assemble() rather than after them, because the two assemble overloads have to be
     // adjacent (checkstyle:OverloadMethodsDeclarationOrder) and both callers of this are above it.
+    /**
+     * Creates every code execution engine on the class path and hands each to {@code teardown}, so the stack closes it
+     * at shutdown with the other script engines. Warns when there is none: {@code ExecuteCode} is then never offered.
+     */
+    private static List<CodeExecutionEngine> ownCodeExecutionEngines(TeardownRegistry teardown) {
+        final List<CodeExecutionEngine> engines = CodeExecutionEngines
+                .createAll(AimonStackBuilder.class.getClassLoader());
+        for (CodeExecutionEngine engine : engines) {
+            teardown.own(TeardownPhase.SCRIPT_ENGINES, "codeExecutionEngine:" + engine.language(), engine);
+        }
+        if (engines.isEmpty()) {
+            log.warn("Programmatic tool calling is enabled, but no code execution engine is on the class path (add "
+                    + "aimon-graaljs for JavaScript); ExecuteCode will not be offered");
+        }
+        return engines;
+    }
+
     private static void closeQuietly(Runnable close, RuntimeException primary) {
         try {
             close.run();
@@ -485,13 +505,24 @@ public final class AimonStackBuilder {
                 ? teardown.own(TeardownPhase.BACKGROUND_COMMANDS, "monitorManager",
                         monitorManager(toolSpec, messageQueueManager, spec.getSession().getNodeId().orElse(null)))
                 : null;
+        // Programmatic tool calling: the engines on the class path (aimon-graaljs registers the JavaScript one with
+        // ServiceLoader), application-scoped and closed with the script engines, after every runtime.
+        // Off, the provider still runs with no engine: it registers nothing but warns for an agent that sets
+        // programmatic-tools, so a misconfiguration is not silent (§12.2).
+        // The stack is the one owner of the ExecuteCode provider in every assembly: engines the caller built
+        // (ToolSpec.codeExecutionEngines — the CLI's shared-holder engine) are used as given and stay the caller's;
+        // otherwise, when enabled, the engines on the class path are created and owned here.
+        final List<CodeExecutionEngine> codeEngines = toolSpec.getCodeExecutionEngines()
+                .orElseGet(() -> toolSpec.isProgrammaticEnabled() ? ownCodeExecutionEngines(teardown) : List.of());
+        final ExecuteCodeToolProvider executeCodeToolProvider = new ExecuteCodeToolProvider(codeEngines,
+                toolSpec.getProgrammaticLimits());
         final StackAgentRuntimeProvisioner.Builder provisionerBuilder = StackAgentRuntimeProvisioner.builder()
                 .fileSystemSpec(spec.getFileSystem()).executionEnvironmentSpec(spec.getExecutionEnvironment())
                 .toolSpec(toolSpec).backgroundBashManager(backgroundBashManager).monitorManager(monitorManager)
                 .runtimeFactory(runtimeFactory).knowledgeToolsEnabled(knowledgeStore != null)
-                .memoryToolProvider(memory.getToolProvider().orElse(null)).agentExecutor(agentExecutor)
-                .taskManager(taskManager).skillParser(skillParser)
-                .credentialStore(spec.getCredentialStore().orElse(null))
+                .memoryToolProvider(memory.getToolProvider().orElse(null))
+                .executeCodeToolProvider(executeCodeToolProvider).agentExecutor(agentExecutor).taskManager(taskManager)
+                .skillParser(skillParser).credentialStore(spec.getCredentialStore().orElse(null))
                 .credentialStoreFactory(spec.getCredentialStoreFactory().orElse(null))
                 .agentCustomizers(spec.getAgentCustomizers());
         for (AgentSpec agentSpec : spec.getAgents()) {

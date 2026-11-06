@@ -18,8 +18,8 @@ import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.llm.LlmModel;
 import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentRegistry;
-import at.aimon.workflow.graaljs.GraalJsEngineHolder;
-import at.aimon.workflow.graaljs.GraalJsWorkflowTool;
+import at.aimon.graaljs.GraalJsEngineHolder;
+import at.aimon.graaljs.workflow.GraalJsWorkflowTool;
 
 /**
  * Unit tests for {@link GraalJsWorkflowToolProvider}, the CLI-side provider that registers the Phase 5

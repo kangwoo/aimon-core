@@ -5,7 +5,7 @@
 > **인라인 서브에이전트 실행 프리미티브**(`SubagentExecutionManager.execute(launchContext, Subagent, goal)`)
 > 위에 얹는다.
 >
-> 적용 대상: `aimon-core` (`at.aimon.core.workflow`), `aimon-workflow-graaljs`
+> 적용 대상: `aimon-core` (`at.aimon.core.workflow`), `aimon-graaljs`
 > Status: **구현 완료** — 아래 5개 능력 전부 main 에 반영됨
 
 이 문서는 워크플로 서브시스템 전체의 설계 근거를 하나로 담는다. 원래는 다섯 개의 반복(Phase 1~5)으로
@@ -18,7 +18,7 @@
 | **구조화 출력·예산** | `AgentTask.resultSchema` → `AgentStepResult.structured()`, 서브에이전트 종료사유 채널, run-scoped `WorkflowBudget` |
 | **백그라운드·resume** | `RunId`/`WorkflowRun`/`RunHandle`, 공용 팬아웃 풀, 구조적 스텝키 기반 `StepResultCache`, 협조적 취소 |
 | **격리·중첩·패턴** | worktree 아날로그 파일 격리, 진짜 중첩 병렬, N-스테이지 `Pipeline` 빌더, `WorkflowPatterns`, 구조-prefix 가드 |
-| **JS 프론트엔드** | `aimon-workflow-graaljs` — JS 리터럴 스크립트가 **동일 프리미티브**를 호출 |
+| **JS 프론트엔드** | `aimon-graaljs` — JS 리터럴 스크립트가 **동일 프리미티브**를 호출 |
 
 ---
 
@@ -92,12 +92,14 @@ at.aimon.core.workflow/                # SPI + 값객체 (중립 표면)
     ├── InMemoryStepResultCache / VfsStepResultCache / ScopedStepResultCache / StepOutcomeCodec
     └── StructuredOutputSupport
 
-at.aimon.workflow.graaljs/             # 별도 모듈 aimon-workflow-graaljs
-├── GraalJsWorkflowScript              # 유일 seam: JS 소스 → WorkflowScript<String>
-├── JsContextFactory / JsSandboxConfig / GraalJsEngineHolder / CancellationWatchdog
-├── WorkflowBindings / AgentTaskMarshaller / JsResultMarshaller / JsMarshalling
-├── AgentResultView / SubagentResolver / SubagentDescriptor / InlineSubagentResolver / RunFatalCapture
-└── GraalJsWorkflowTool
+at.aimon.graaljs/                      # 별도 모듈 aimon-graaljs (ExecuteCode 의 JS 엔진과 공유)
+├── GraalJsEngineHolder / JsSandboxConfig
+├── internal/                          # JsContextFactory / CancellationWatchdog / JsMarshalling (+ ExecuteCode 이벤트 루프)
+└── workflow/
+    ├── GraalJsWorkflowScript          # 유일 seam: JS 소스 → WorkflowScript<String>
+    ├── WorkflowBindings / AgentTaskMarshaller / JsResultMarshaller
+    ├── AgentResultView / SubagentResolver / SubagentDescriptor / InlineSubagentResolver / RunFatalCapture
+    └── GraalJsWorkflowTool
 ```
 
 ### 2.2 스코프 정합
@@ -501,7 +503,7 @@ inputHash 체인 + 팬아웃 childCount fold)를 갖고, `agent()` 의 load 는 
 
 ## 7. GraalJS 프론트엔드
 
-별도 모듈 `aimon-workflow-graaljs`(JDK-17 라인 `graal-sdk` + `js` 23.0.8)가 JS 리터럴 스크립트로
+별도 모듈 `aimon-graaljs`(JDK-17 라인 `graal-sdk` + `js` 23.0.8)가 JS 리터럴 스크립트로
 **동일 프리미티브**를 호출한다. **코어는 무변경이고 5-프리미티브 SPI 는 자라지 않는다.**
 
 ### 7.1 유일한 seam

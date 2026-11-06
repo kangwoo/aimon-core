@@ -1,6 +1,6 @@
 ---
 translated_from: docs/overview/architecture.md
-source_commit: ad0acfb
+source_commit: d67baadf
 ---
 
 # Architecture
@@ -528,7 +528,7 @@ Weaves several subagents together with **deterministic control flow**. You creat
 `WorkflowRunners`, assemble it from `Pipeline` / `Stage` / `AgentTask`, and can resume through
 `RunHandle` and `RunStore`. Budgets are handled by `WorkflowBudget`, concurrency by
 `WorkflowConcurrencyConfig`, and isolation by the execution environment's `ExecutionEnvironment.isolate()`. The JS scripting
-frontend is `aimon-workflow-graaljs`.
+frontend is `aimon-graaljs`.
 
 IMPORTANT (teardown responsibility): `WorkflowRunner` has two variants — the agent-scoped variant
 is created by `OrcaAgentRuntimeFactory` and closed by `OrcaAgentRuntime.close()`, while the

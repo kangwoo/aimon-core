@@ -10,6 +10,7 @@ import java.util.regex.Pattern;
 
 import at.aimon.core.environment.ContentSearch;
 import at.aimon.core.environment.EnvironmentDescriptor;
+import at.aimon.core.environment.EnvironmentIsolation;
 import at.aimon.core.environment.ExecutionEnvironment;
 import at.aimon.core.environment.StagedResource;
 import at.aimon.core.filesystem.PathRule;
@@ -125,7 +126,7 @@ final class LocalExecutionEnvironment implements ExecutionEnvironment {
         final boolean windows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
         return EnvironmentDescriptor.builder().workingDirectory(workingDirectory == null ? "" : workingDirectory)
                 .platform(detectPlatform()).osVersion(System.getProperty("os.version"))
-                .shellName(windows ? "cmd" : "bash").build();
+                .shellName(windows ? "cmd" : "bash").isolation(EnvironmentIsolation.HOST).build();
     }
 
     private static String detectPlatform() {

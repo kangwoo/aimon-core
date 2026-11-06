@@ -22,6 +22,8 @@ import at.aimon.core.agent.ContextPolicy;
 import at.aimon.core.agent.Version;
 import at.aimon.core.agent.definition.AgentDefinition;
 import at.aimon.core.agent.definition.exception.AgentDefinitionParseException;
+import at.aimon.core.agent.tool.ProgrammaticEngineChoice;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.exception.InvalidToolSpecException;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.base.DefinitionAttributes;
@@ -141,10 +143,12 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
             final ContextPolicy contextPolicy = extractContextPolicy(frontmatter);
 
             final Map<String, String> attributes = extractAttributes(frontmatter);
+            final ProgrammaticToolSettings programmatic = extractProgrammatic(frontmatter);
 
             return AgentDefinition.builder().name(name).version(version).model(model).maxIterations(maxIterations)
                     .systemPrompt(body).tags(tags).variables(variables).allowedTools(allowedTools)
-                    .contextEngine(contextEngine).contextPolicy(contextPolicy).attributes(attributes).build();
+                    .contextEngine(contextEngine).contextPolicy(contextPolicy).attributes(attributes)
+                    .programmatic(programmatic).build();
         } catch (AgentDefinitionParseException e) {
             throw e;
         } catch (Exception e) {
@@ -486,6 +490,78 @@ public final class MarkdownAgentDefinitionParser implements AgentDefinitionParse
             allowedTools.add(entry);
         }
         return List.copyOf(allowedTools);
+    }
+
+    /**
+     * Extracts {@code programmatic-tools}, {@code programmatic-only} and {@code programmatic-engine}
+     * ({@code docs/design/tool/programmatic-tool-calling.md} §7.2). Kebab-case like {@code allowed-tools}, and for the
+     * same reason the camelCase spellings are rejected by name rather than ignored. What can be checked without the
+     * tools — the exact-name form and {@code programmatic-only ⊆ programmatic-tools} — is refused here, at load time.
+     *
+     * @param frontmatter
+     *            The frontmatter map
+     * @return the settings (never null; {@link ProgrammaticToolSettings#none()} without {@code programmatic-tools})
+     * @throws AgentDefinitionParseException
+     *             if a value has the wrong shape or the settings are inconsistent
+     */
+    private ProgrammaticToolSettings extractProgrammatic(Map<String, Object> frontmatter) {
+        for (String camel : List.of("programmaticTools", "programmaticOnly", "programmaticEngine")) {
+            if (frontmatter.containsKey(camel)) {
+                throw new AgentDefinitionParseException("Unknown key '" + camel
+                        + "'. The programmatic tool calling keys are spelled in kebab-case, like 'allowed-tools'.");
+            }
+        }
+        final List<String> tools = extractNameList(frontmatter, "programmatic-tools");
+        final List<String> codeOnly = extractNameList(frontmatter, "programmatic-only");
+        final Object engineRaw = frontmatter.get("programmatic-engine");
+        if (tools.isEmpty()) {
+            if (!codeOnly.isEmpty() || engineRaw != null) {
+                throw new AgentDefinitionParseException(
+                        "'programmatic-only' and 'programmatic-engine' need 'programmatic-tools'");
+            }
+            return ProgrammaticToolSettings.none();
+        }
+        try {
+            final ProgrammaticToolSettings.Builder builder = ProgrammaticToolSettings.builder().tools(tools)
+                    .codeOnly(codeOnly);
+            if (engineRaw != null) {
+                if (!(engineRaw instanceof String engine)) {
+                    throw new AgentDefinitionParseException(
+                            "Invalid 'programmatic-engine' value: expected a string, got "
+                                    + engineRaw.getClass().getName());
+                }
+                builder.engine(ProgrammaticEngineChoice.parse(engine));
+            }
+            return builder.build();
+        } catch (IllegalArgumentException e) {
+            throw new AgentDefinitionParseException("Invalid programmatic tool settings: " + e.getMessage(), e);
+        }
+    }
+
+    /** A YAML list or a comma-separated string of names; empty when the key is absent. */
+    private static List<String> extractNameList(Map<String, Object> frontmatter, String key) {
+        final Object raw = frontmatter.get(key);
+        if (raw == null) {
+            return List.of();
+        }
+        final List<String> names = new ArrayList<>();
+        if (raw instanceof String text) {
+            Arrays.stream(text.split(",")).map(String::trim).filter(name -> !name.isEmpty()).forEach(names::add);
+        } else if (raw instanceof List<?> list) {
+            for (Object element : list) {
+                if (!(element instanceof String text)) {
+                    throw new AgentDefinitionParseException("Invalid '" + key + "' entry: expected a string, got "
+                            + (element == null ? "null" : element.getClass().getName()));
+                }
+                if (!text.isBlank()) {
+                    names.add(text.trim());
+                }
+            }
+        } else {
+            throw new AgentDefinitionParseException("Invalid '" + key
+                    + "' value: expected a YAML list or a comma-separated string, got " + raw.getClass().getName());
+        }
+        return names;
     }
 
     /**

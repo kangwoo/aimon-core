@@ -149,8 +149,9 @@ import at.aimon.core.tracing.Tracer;
 import at.aimon.core.tracing.impl.DefaultTracer;
 import at.aimon.core.tracing.impl.InMemoryTraceSpanStore;
 import at.aimon.core.tracing.impl.TracingLlmClient;
+import at.aimon.graaljs.GraalJsEngineHolder;
+import at.aimon.graaljs.code.GraalJsCodeExecutionEngine;
 import at.aimon.scheduling.quartz.dreamer.DreamerJobRegistrar;
-import at.aimon.workflow.graaljs.GraalJsEngineHolder;
 
 public class AgentSetupFactory {
 
@@ -584,11 +585,10 @@ public class AgentSetupFactory {
         final DerivationQueueManager memoryQueue = buildDerivationQueue(memoryDeriver);
         final MemorySpec memorySpec = buildMemorySpec(config.getMemoryConfig(), memoryWiring, representationStore,
                 observationStore, dialecticEngine, memoryQueue);
-        // The app-scoped shared GraalVM engine + watchdog schedulers, built once when cli.enableWorkflowJs
-        // is on and reused by every session's WorkflowJs tool.
+        // The app-scoped shared GraalVM engine + watchdog schedulers, built once when either GraalJS feature is on
+        // (cli.enableWorkflowJs, programmatic.enableJs) and shared by every session's WorkflowJs and ExecuteCode.
         final GraalJsEngineHolder graalJsEngines = config.getCliSettings().isEnableWorkflowJs()
-                ? GraalJsEngineHolder.create()
-                : null;
+                || isProgrammaticJsEnabled(config) ? GraalJsEngineHolder.create() : null;
 
         // SK-11.6: the inline approval channel is built by the stack because it needs the stack's own approval
         // stores — but ReplSession.start() has to bind the JLine terminal to that exact instance, so capture what
@@ -789,6 +789,10 @@ public class AgentSetupFactory {
         }
     }
 
+    private static boolean isProgrammaticJsEnabled(CliConfig config) {
+        return config.getProgrammaticConfig() != null && config.getProgrammaticConfig().isEnableJs();
+    }
+
     /**
      * Translates CLI tool settings into a {@link ToolSpec}.
      *
@@ -803,7 +807,8 @@ public class AgentSetupFactory {
      * @param fileSystem
      *            the workspace file system the WorkflowJs worktree factory branches from
      * @param graalJsEngines
-     *            the shared GraalJS engine holder, or {@code null} when {@code cli.enableWorkflowJs} is off
+     *            the shared GraalJS engine holder, or {@code null} when neither {@code cli.enableWorkflowJs} nor
+     *            {@code programmatic.enableJs} is on
      * @return the spec
      */
     // Package-private (not private) so AgentSetupFactoryGraalJsTest can exercise the cli.enableWorkflowJs wiring
@@ -815,11 +820,19 @@ public class AgentSetupFactory {
         final ToolSpec.Builder builder = ToolSpec.builder().workflowToolEnabled(settings.isEnableWorkflow())
                 .workflowRunnerEnabled(settings.isEnableWorkflow() || settings.isEnableWorkflowJs())
                 .monitorEnabled(settings.isEnableMonitor());
-        if (graalJsEngines != null) {
-            // Core cannot register this tool itself (it must not depend on the aimon-workflow-graaljs impl module),
+        if (graalJsEngines != null && settings.isEnableWorkflowJs()) {
+            // Core cannot register this tool itself (it must not depend on the aimon-graaljs impl module),
             // so the assembly layer adds it. Worktree isolation needs nothing here: an isolated step derives its
             // branch from the execution environment (ExecutionEnvironment.isolate).
             builder.addProvider(new GraalJsWorkflowToolProvider(graalJsEngines));
+        }
+        if (graalJsEngines != null && isProgrammaticJsEnabled(config)) {
+            // ExecuteCode (programmatic-tool-calling design §9): the JavaScript engine runs over the same shared
+            // holder; the holder's owner (the stack, SCRIPT_ENGINES) closes it, so the engine owns nothing to close.
+            // The stack registers ExecuteCode over it — the one owner of that provider; with programmatic off the
+            // stack's provider has no engine and warns for an agent that sets programmatic-tools (§12.2).
+            builder.codeExecutionEngines(List.of(new GraalJsCodeExecutionEngine(graalJsEngines)))
+                    .programmaticLimits(config.getProgrammaticConfig().toLimits());
         }
         if (hasMcpServers(config)) {
             builder.mcp(mcpClientFactory, config.getMcpConfig().toConfigProvider());

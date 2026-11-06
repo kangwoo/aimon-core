@@ -10,6 +10,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.base.DefinitionAttributes;
 import at.aimon.core.llm.LlmModel;
@@ -45,6 +46,7 @@ public final class AgentMetadata {
     private final ContextEngineKind contextEngine;
     private final ContextPolicy contextPolicy;
     private final Map<String, String> attributes;
+    private final ProgrammaticToolSettings programmatic;
 
     private AgentMetadata(Builder builder) {
         this.name = Objects.requireNonNull(builder.name, "Agent name cannot be null");
@@ -58,6 +60,7 @@ public final class AgentMetadata {
         this.contextEngine = builder.contextEngine;
         this.contextPolicy = Objects.requireNonNullElse(builder.contextPolicy, ContextPolicy.none());
         this.attributes = DefinitionAttributes.copyOf(builder.attributes);
+        this.programmatic = Objects.requireNonNullElse(builder.programmatic, ProgrammaticToolSettings.none());
     }
 
     /**
@@ -160,6 +163,18 @@ public final class AgentMetadata {
         return attributes;
     }
 
+    /**
+     * Returns what this agent opens to model-written code, from AGENT.md frontmatter {@code programmatic-tools},
+     * {@code programmatic-only} and {@code programmatic-engine} ({@code docs/design/tool/programmatic-tool-calling.md}
+     * §7.2).
+     *
+     * @return the settings ({@link ProgrammaticToolSettings#none()} when the agent opens nothing — then
+     *         {@code ExecuteCode} is not offered)
+     */
+    public ProgrammaticToolSettings getProgrammatic() {
+        return programmatic;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -172,12 +187,13 @@ public final class AgentMetadata {
         return name.equals(that.name) && maxIterations == that.maxIterations && model.equals(that.model)
                 && tags.equals(that.tags) && allowedTools.equals(that.allowedTools)
                 && contextEngine == that.contextEngine && contextPolicy.equals(that.contextPolicy)
-                && attributes.equals(that.attributes);
+                && attributes.equals(that.attributes) && programmatic.equals(that.programmatic);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(name, maxIterations, model, tags, allowedTools, contextEngine, contextPolicy, attributes);
+        return Objects.hash(name, maxIterations, model, tags, allowedTools, contextEngine, contextPolicy, attributes,
+                programmatic);
     }
 
     @Override
@@ -186,7 +202,8 @@ public final class AgentMetadata {
                 + tags + ", allowedTools=" + allowedTools
                 + (contextEngine != null ? ", contextEngine=" + contextEngine.configValue() : "")
                 + (contextPolicy.isEmpty() ? "" : ", contextPolicy=" + contextPolicy)
-                + (attributes.isEmpty() ? "" : ", attributes=" + attributes) + '}';
+                + (attributes.isEmpty() ? "" : ", attributes=" + attributes)
+                + (programmatic.isEnabled() ? ", programmatic=" + programmatic : "") + '}';
     }
 
     /** Builder for AgentMetadata. */
@@ -198,6 +215,7 @@ public final class AgentMetadata {
         private List<AllowedTool> allowedTools = List.of();
         private ContextEngineKind contextEngine;
         private ContextPolicy contextPolicy;
+        private ProgrammaticToolSettings programmatic;
         private Map<String, String> attributes = Map.of();
 
         private Builder() {
@@ -348,6 +366,18 @@ public final class AgentMetadata {
          */
         public Builder allowedTools(List<AllowedTool> allowedTools) {
             this.allowedTools = List.copyOf(Objects.requireNonNull(allowedTools, "Allowed tools cannot be null"));
+            return this;
+        }
+
+        /**
+         * Sets what this agent opens to model-written code.
+         *
+         * @param programmatic
+         *            the settings; {@code null} means {@link ProgrammaticToolSettings#none()}
+         * @return This builder
+         */
+        public Builder programmatic(ProgrammaticToolSettings programmatic) {
+            this.programmatic = programmatic;
             return this;
         }
 

@@ -15,6 +15,7 @@ import at.aimon.core.agent.interrupt.InterruptBehavior;
 import at.aimon.core.agent.interrupt.TerminatorRegistrar;
 import at.aimon.core.agent.tool.InterruptToolKeys;
 import at.aimon.core.agent.tool.Tool;
+import at.aimon.core.agent.tool.ToolCallPath;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolDescriptor;
 import at.aimon.core.agent.tool.ToolDispatchResult;
@@ -199,6 +200,20 @@ public final class SingleToolInvoker {
             if (registrar != null && interruptBehavior == InterruptBehavior.THREAD_INTERRUPT) {
                 final Thread toolThread = Thread.currentThread();
                 registrar.register(toolThread::interrupt);
+            }
+
+            // A tool the agent opens only to code (programmatic-only) is withheld from the direct offer, but its
+            // name is in ExecuteCode's description, so the model can still ask for it directly. The refusal reads
+            // the same source as the offer filter — the iteration's offer context — so the two cannot disagree.
+            if (spec.getOrigin().getPath() == ToolCallPath.DIRECT && targetTool.isPresent()) {
+                final ToolOfferContext offer = ToolOfferContext.of(enrichedContext);
+                if (offer.getProgrammatic().getCodeOnly().contains(toolUse.getName())
+                        && offer.isCodeOnly(targetTool.get().describe(offer))) {
+                    log.warn("Direct call to code-only tool refused. toolUseId={}, tool={}", toolUse.getId(),
+                            toolUse.getName());
+                    return ToolUseResult.error(toolUse.getId(), "Tool '" + toolUse.getName()
+                            + "' is offered only to code: call it from a program run by ExecuteCode");
+                }
             }
 
             try {

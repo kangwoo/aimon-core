@@ -160,7 +160,8 @@ IMPORTANT: **세션(`SessionRecord`)과 라이브 세션(`LiveSession`)은 다�
 | 도구 검색 | `ToolSearch` | core |
 | 콘솔 | `ConsoleOutput` | core |
 | 워크플로 | `Workflow` | core |
-| 워크플로 (JS 스크립트) | `WorkflowJs` | `aimon-workflow-graaljs` |
+| 워크플로 (JS 스크립트) | `WorkflowJs` | `aimon-graaljs` |
+| 프로그래매틱 도구 호출 | `ExecuteCode` (엔진: `aimon-graaljs` 의 JavaScript) | core |
 | 브라우저 | `Browser` | `aimon-browser-playwright` |
 | 샌드박스 | `RunSandbox`, `CopyToSandbox`, `RestartSandbox`, `DeleteSandbox` | `at.aimon.sandbox:*` (별도 저장소) |
 
@@ -274,7 +275,7 @@ IMPORTANT (알려진 오칭): `OnSessionStartHook` / `OnSessionEndHook` 은 세�
 | 실행 핸들 · 재개 | `RunHandle`, `RunId`, `RunStore`, `StepResultCache` | core |
 | 예산 / 동시성 제한 | `WorkflowBudget`, `WorkflowConcurrencyConfig` | core |
 | 워크트리 격리 실행 | `ExecutionEnvironment.isolate()` · `WorktreeMerge` | core |
-| JS 스크립트 프론트엔드 | `WorkflowJs` 도구 | `aimon-workflow-graaljs` |
+| JS 스크립트 프론트엔드 | `WorkflowJs` 도구 | `aimon-graaljs` |
 
 **언제 쓰나.** 커버리지를 위해 병렬로 훑어야 하거나(감사·마이그레이션), 독립적 관점의 교차 검증이
 필요하거나(리뷰·설계 비교), 한 컨텍스트에 담기지 않는 규모일 때.

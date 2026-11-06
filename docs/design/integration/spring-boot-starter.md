@@ -450,7 +450,7 @@ modules/
 각 모듈에 `gradle.properties`(`POM_ARTIFACT_ID` / `POM_NAME` / `POM_DESCRIPTION`)를 둔다 —
 Maven Central 은 `name` / `description` / `url` 을 요구한다.
 
-> **in-tree 반례 주의**: `aimon-workflow-graaljs` 는 `aimon.publishable` 을 적용했지만 모듈
+> **in-tree 반례 주의**: `aimon-graaljs` 는 `aimon.publishable` 을 적용했지만 모듈
 > `gradle.properties` 가 없어 POM 의 `<name>`/`<description>` 이 비어 있다. 다만 그 모듈이 Central 에
 > 없는 이유는 검증 거부가 아니라 **마지막 릴리스 태그(v0.2.0, 2026-07-13) 이후인 2026-07-24 에
 > 추가되어 아직 릴리스를 거치지 않았기 때문**이다. 실제로 거부되는지는 다음 릴리스 때 드러난다.
@@ -482,7 +482,7 @@ dependencies {
 
 **`checkstyle {}` 블록은 넣지 않는다** — `config/checkstyle/checkstyle.xml:8` 이 `severity=error` 를
 전역 설정하므로 `maxWarnings`(severity=warning 만 셈)는 원리적으로 발동하지 않는다. 가장 최근에 추가된
-두 모듈(`aimon-rewake-webhook`, `aimon-workflow-graaljs`)도 블록이 없다.
+두 모듈(`aimon-rewake-webhook`, `aimon-graaljs`)도 블록이 없다.
 
 ### 3.4 계층별 책임
 

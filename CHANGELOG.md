@@ -7,6 +7,47 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: `ExecuteCode` — programmatic tool calling with a GraalJS engine; `aimon-workflow-graaljs` is now `aimon-graaljs`
+
+Piece C of `docs/design/tool/programmatic-tool-calling.md`. A program the model writes calls tools as functions; loops,
+filters and aggregation stay in the program, and only its output becomes the observation.
+
+- **Breaking — module and package rename.** `aimon-workflow-graaljs` is now **`aimon-graaljs`**
+  (`at.aimon.core:aimon-graaljs`); the old artifacts stay on Maven Central and are not published again. Package
+  `at.aimon.workflow.graaljs` splits into `at.aimon.graaljs` (`GraalJsEngineHolder`, `JsSandboxConfig`),
+  `at.aimon.graaljs.workflow` (`GraalJsWorkflowTool`, `GraalJsWorkflowScript`, `SubagentResolver`, ...),
+  `at.aimon.graaljs.exception` and `at.aimon.graaljs.internal`. Full map: `docs/migration/rename-maps.md`.
+- **Behaviour change in the GraalJS sandbox (`WorkflowJs` too):** the built-in `print` and `console` are switched off
+  and the context's output goes nowhere — before, they wrote to the JVM's `System.out` (the terminal, in the CLI).
+  `WorkflowJs`'s opt-in `console` bridge is unchanged. Values copied out of the guest now carry a byte and node budget
+  (a workflow result: 16 MiB / 1M nodes), so a huge array or a shared-reference DAG is refused instead of exhausting
+  the host heap.
+- **New tool `ExecuteCode`** (`at.aimon.core.tools.code`, registered by `ExecuteCodeToolProvider`). Offered only when
+  the agent opens tools to code in its AGENT.md — new keys `programmatic-tools` (exact names), `programmatic-only`
+  (withheld from the direct offer; `READ_ONLY` tools only) and `programmatic-engine` (`auto` / `javascript` /
+  `python`) — and an engine can run. Nested calls go through the iteration's `ToolCallDispatcher` on the `CODE` path:
+  the same gates as a direct call, never a prompt, a per-script cap on `MUTATING` calls, the fork's `ToolCallQuota`,
+  a nested-call limit, and notices and hook feedback collected after the output. A program that times out or is
+  stopped at a limit keeps the output it printed before the stop in its error result.
+- **New engine SPI `at.aimon.core.programmatic`:** `CodeExecutionEngine`, `ToolCallBridge`, `CodeExecutionRequest`,
+  `CodeExecutionOutcome`, `CodeExecutionLimits`, `EngineAvailability`, `OfferFacts`, `ToolGrade`, and
+  `CodeExecutionEngineFactory` for `ServiceLoader` discovery. `aimon-graaljs` provides
+  `at.aimon.graaljs.code.GraalJsCodeExecutionEngine` and registers its factory.
+- **New published module `aimon-code-engine-testkit`:** `AbstractCodeExecutionEngineContractTest`, the contract every
+  engine runs (observation, string results, catchable failures, fan-out, timeout, cancellation, limits).
+- **Assembly:** CLI `programmatic.enableJs` and `programmatic.limits.*` (the GraalJS engine holder is now built when
+  either `cli.enableWorkflowJs` or `programmatic.enableJs` is on and shared by both); `ToolSpec.programmaticEnabled`
+  / `programmaticLimits` / `codeExecutionEngines` in `aimon-bootstrap` (the stack alone registers `ExecuteCode`: over
+  caller-owned engines, or over engines it finds by `ServiceLoader` and closes in `SCRIPT_ENGINES`; a second
+  `ExecuteCodeToolProvider` from `addProvider` or a customizer is refused); starter
+  `aimon.programmatic.enabled` and `aimon.programmatic.limits.*`. All off by default.
+- **Additive core API:** `EnvironmentDescriptor.isolation()` (`EnvironmentIsolation.HOST` / `SANDBOXED`, empty when
+  undeclared; the local environment declares `HOST`), `AgentMetadata` / `AgentDefinition.getProgrammatic()`,
+  `ToolOfferContext.programmatic(...)` / `eligible(...)` / `isCodeOnly(...)`, `ToolDescriptor.isOfferable()` /
+  `getApprovalVia()`. A direct call to a code-only tool is refused while `ExecuteCode` is offered and can call it; when it cannot be
+  offered, `programmatic-only` is ignored (and the reason is a WARN) so no tool disappears. An approval asked under another tool's key now
+  names the path, e.g. `'Bash' — via ExecuteCode (Python), 'ExecuteCode(code=…)'`.
+
 ### Changed: tool axes are read from a per-offer `ToolDescriptor`; the approval gate knows the call's path
 
 The groundwork of programmatic tool calling (piece B of `docs/design/tool/programmatic-tool-calling.md`; no

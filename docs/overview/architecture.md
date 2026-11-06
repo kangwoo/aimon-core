@@ -502,7 +502,7 @@ id 를 `invokingSessionId` 로 별도 전달한다.
 여러 서브에이전트를 **결정론적 제어 흐름**으로 엮는다. `WorkflowRunners` 로 러너를 만들고
 `Pipeline` / `Stage` / `AgentTask` 로 조립하며, `RunHandle` 과 `RunStore` 로 재개할 수 있다.
 예산은 `WorkflowBudget`, 동시성은 `WorkflowConcurrencyConfig`, 격리는
-실행 환경의 `ExecutionEnvironment.isolate()` 가 담당한다. JS 스크립트 프론트엔드는 `aimon-workflow-graaljs`.
+실행 환경의 `ExecutionEnvironment.isolate()` 가 담당한다. JS 스크립트 프론트엔드는 `aimon-graaljs`.
 
 IMPORTANT (소멸 책임): `WorkflowRunner` 에는 두 변형이 있다 — agent-scoped 변형은
 `OrcaAgentRuntimeFactory` 가 만들고 `OrcaAgentRuntime.close()` 가 닫으며, call-scoped 변형은

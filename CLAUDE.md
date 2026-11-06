@@ -83,7 +83,8 @@ modules/
 ├── aimon-knowledge-opensearch       # OpenSearch knowledge store
 ├── aimon-scheduling-quartz          # Quartz-based task scheduler (clustered/distributed)
 ├── aimon-scheduling-testkit         # Shared scheduling SPI contract suites — repository, history, guard, interrupt bus (published)
-├── aimon-workflow-graaljs           # GraalJS frontend: JS-scripted subagent workflow
+├── aimon-code-engine-testkit        # Shared ExecuteCode engine contract suite (published)
+├── aimon-graaljs                    # GraalJS: the ExecuteCode JavaScript engine + JS-scripted subagent workflow (WorkflowJs)
 └── aimon-rewake-webhook             # Javalin HTTP endpoint that fires rewake (HMAC-verified)
 ```
 
@@ -95,6 +96,13 @@ Central 에 그대로 남아 있고, 이후로는 `at.aimon.sandbox:*` 다. 분�
 의존하지 않는 잎(leaf)** 이었고(역의존 0건), 코어에서 쓰는 것은 공개 SPI 뿐이라 경계가 이미 그어져 있었다.
 반대 방향의 의존은 생기지 않는다: `at.aimon.sandbox..` 는 `ArchitectureRulesTest` 의 금지 패키지 목록에
 `at.aimon.memory..` 와 나란히 남아 있다. 설계 문서도 함께 옮겨 갔다(옛 `docs/design/integration/sandbox.md`).
+
+NOTE: `aimon-workflow-graaljs` 는 `aimon-graaljs` 로 **개명되었다** — 프로그래매틱 도구 호출(`ExecuteCode`)의
+JavaScript 엔진이 워크플로와 같은 GraalJS 샌드박스 기반 위에 들어오면서 모듈 이름이 내용과 어긋났기 때문이다. 패키지도
+`at.aimon.workflow.graaljs` → `at.aimon.graaljs.{workflow,code,internal}` (엔진 홀더·설정은 `at.aimon.graaljs`)로
+갈렸다. 옛 좌표 `at.aimon.core:aimon-workflow-graaljs` 의 아티팩트는 Central 에 그대로 남아 있고, 이후 버전은
+`at.aimon.core:aimon-graaljs` 로만 나온다. 매핑은 `docs/migration/rename-maps.md`, 근거는
+`docs/design/tool/programmatic-tool-calling.md` 결정 16.
 
 NOTE: `aimon-session-routing` has been renamed twice — `aimon-session-web` → `aimon-session-base`
 → `aimon-session-routing`. The first rename only said what the module *was not* (not a web-only

@@ -41,7 +41,10 @@ include(
     // `PeerMemory` backends, and the backend that most needs holding to the contract — `RemotePeerMemory` in the
     // aimon-memory service — lives in another repository and can only run the suite if it can depend on it.
     "aimon-memory-testkit",
-    "aimon-workflow-graaljs",
+    // The engine contract suite of programmatic tool calling. Published, like `aimon-memory-testkit`: the shell
+    // engine's sandbox half is exercised from the aimon-sandbox repository.
+    "aimon-code-engine-testkit",
+    "aimon-graaljs",
     // Samples. Not published and not part of the framework — they are the only place in this build where an
     // *application* exists, and therefore the only place a claim about fat-jar packaging can be tested. They are
     // included flat, like every other project here, rather than nested under a `samples` container: a container
@@ -74,7 +77,8 @@ project(":aimon-session-redis").projectDir = file("modules/aimon-session-redis")
 project(":aimon-session-postgres").projectDir = file("modules/aimon-session-postgres")
 project(":aimon-session-mongodb").projectDir = file("modules/aimon-session-mongodb")
 project(":aimon-memory-testkit").projectDir = file("modules/aimon-memory-testkit")
-project(":aimon-workflow-graaljs").projectDir = file("modules/aimon-workflow-graaljs")
+project(":aimon-code-engine-testkit").projectDir = file("modules/aimon-code-engine-testkit")
+project(":aimon-graaljs").projectDir = file("modules/aimon-graaljs")
 
 project(":aimon-sample-app").projectDir = file("samples/aimon-sample-app")
 project(":aimon-sample-skills-alpha").projectDir = file("samples/aimon-sample-skills-alpha")

@@ -271,7 +271,8 @@ public final class SideEffectApprovalGate {
             return Optional.of(notApprovedForCodeMessage(toolName, approvalKey));
         }
 
-        final String prompt = promptFor(labelOf(context), toolName, approvalKey, toolUse, declared, destructive);
+        final String prompt = promptFor(labelOf(context), toolName, approvalKey, descriptor.getApprovalVia(), toolUse,
+                declared, destructive);
         if (scopeKey.isEmpty()) {
             // No scope: nothing to remember and nothing to share — asked every time, as always.
             return decided(approvalKey, declared, destructive, scopeKey, channel.resolve(prompt) == Decision.ALLOW);
@@ -414,8 +415,8 @@ public final class SideEffectApprovalGate {
      * call — the store is keyed by tool, so approving {@code Bash(ls)} approves every later {@code Bash}. Showing the
      * arguments without saying that would be worse than not showing them: it reads as consent to one command.
      */
-    private static String promptFor(String label, String toolName, String approvalKey, ToolUse toolUse,
-            SideEffectLevel declared, DestructiveBehavior destructive) {
+    private static String promptFor(String label, String toolName, String approvalKey, Optional<String> via,
+            ToolUse toolUse, SideEffectLevel declared, DestructiveBehavior destructive) {
         final String what = destructive == DestructiveBehavior.DESTRUCTIVE
                 ? ", so it may overwrite or remove state that already exists"
                 : ", so it may change state outside this agent";
@@ -423,7 +424,8 @@ public final class SideEffectApprovalGate {
         // about and by which path it is asking (decision 11).
         final String call = approvalKey.equals(toolName)
                 ? renderCall(toolName, toolUse)
-                : "'" + approvalKey + "' — via " + renderCall(toolName, toolUse);
+                : "'" + approvalKey + "' — via " + via.map(path -> path + ", ").orElse("")
+                        + renderCall(toolName, toolUse);
         return label + "Allow " + call + "? It declares " + declared + " / " + destructive + what
                 + ". Approving covers every '" + approvalKey
                 + "' call for the rest of this session, whatever its arguments.";

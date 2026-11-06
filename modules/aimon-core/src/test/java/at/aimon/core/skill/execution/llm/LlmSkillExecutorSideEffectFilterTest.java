@@ -28,6 +28,7 @@ import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
+import at.aimon.core.programmatic.CodeExecutionLimits;
 import at.aimon.core.skill.Skill;
 import at.aimon.core.skill.SkillContent;
 import at.aimon.core.skill.SkillMetadata;
@@ -37,6 +38,7 @@ import at.aimon.core.skill.execution.SkillExecutionResult;
 import at.aimon.core.skill.render.DefaultSkillContentRenderer;
 import at.aimon.core.toolinvocation.ToolCallDispatchers;
 import at.aimon.core.tools.ToolContextKeys;
+import at.aimon.core.tools.code.ExecuteCodeTool;
 
 /**
  * Locks in the slash-command half of the {@link SideEffectLevel} pair: a user-invoked skill runs its own ReAct loop
@@ -113,13 +115,18 @@ class LlmSkillExecutorSideEffectFilterTest {
 
     private static SkillExecutionResult run(DefinitionCapturingLlmClient client, DefaultToolExecutionManager manager,
             Tool... tools) {
+        return run(skill(), client, manager, tools);
+    }
+
+    private static SkillExecutionResult run(Skill skill, DefinitionCapturingLlmClient client,
+            DefaultToolExecutionManager manager, Tool... tools) {
         final DefaultToolRegistry registry = new DefaultToolRegistry();
         for (Tool tool : tools) {
             registry.register(tool);
         }
 
         final LlmSkillExecutor executor = new LlmSkillExecutor(client, new DefaultSkillContentRenderer(), manager);
-        final SkillExecutionContext context = SkillExecutionContext.builder().skill(skill())
+        final SkillExecutionContext context = SkillExecutionContext.builder().skill(skill)
                 .defaultModel(LlmModel.builder().build()).toolRegistry(registry)
                 .executionId(ExecutionId.generate("skill:ceiling-test"))
                 .toolContext(ToolContext.builder()
@@ -229,5 +236,24 @@ class LlmSkillExecutorSideEffectFilterTest {
         assertThat(ranUnder).hasSize(1);
         assertThat(ranUnder.get(0)).isNotSameAs(callers);
         assertThat(ranUnder.get(0).getCeiling()).isEqualTo(SideEffectLevel.READ_ONLY);
+    }
+
+    @Test
+    @DisplayName("a registered ExecuteCode that cannot be offered here is not offered, though the ceiling permits it")
+    void nonOfferableExecuteCodeIsNotOffered() {
+        // No engine, and a skill's offer carries no programmatic settings: ExecuteCode's descriptor is not offerable,
+        // while its MUTATING grade passes the default ceiling — the ceiling alone would let it through.
+        final ExecuteCodeTool executeCode = new ExecuteCodeTool(List.of(), CodeExecutionLimits.defaults());
+
+        final DefinitionCapturingLlmClient unrestricted = new DefinitionCapturingLlmClient(LlmResponse.text("done"));
+        run(unrestricted, new DefaultToolExecutionManager(), tool("Reader", SideEffectLevel.READ_ONLY), executeCode);
+        assertThat(unrestricted.firstOffer()).containsExactly("Reader");
+
+        final Skill naming = Skill.builder().name("coder").metadata(SkillMetadata.builder().name("coder")
+                .description("Runs code").allowedTools("Reader ExecuteCode").build())
+                .content(SkillContent.of("Runs code")).build();
+        final DefinitionCapturingLlmClient named = new DefinitionCapturingLlmClient(LlmResponse.text("done"));
+        run(naming, named, new DefaultToolExecutionManager(), tool("Reader", SideEffectLevel.READ_ONLY), executeCode);
+        assertThat(named.firstOffer()).containsExactly("Reader");
     }
 }
