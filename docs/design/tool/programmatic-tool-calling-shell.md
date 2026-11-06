@@ -1,7 +1,7 @@
 # 프로그래매틱 도구 호출 — 셸 엔진 (`aimon-sandbox`)
 
 > **Status**: PROPOSED — `aimon-core` (`at.aimon.core.tools.code.shell`, `at.aimon.core.environment`, `at.aimon.core.shell`),
-> 외부 저장소 `aimon-sandbox`. 공개 API 호환을 깨는 항목이 있다(§3).
+> 외부 저장소 `aimon-sandbox`. 공개 API 호환을 깨는 항목이 있다(§3). 아직 구현되지 않았다. 설계에서 아직 정하지 않은 것은 §15 다.
 
 ## 1. 목적과 범위
 
@@ -19,7 +19,7 @@
 | 정리, 지연, 이미지 계약, 실행 상한 | §8 – §11 |
 | 같은 uid 의 한계와 도구 범위 | §12 |
 | `aimon-sandbox` 에 필요한 것 | §13 |
-| 테스트, 조각 사이의 의존, 열린 질문 | §14 – §16 |
+| 강제, 열린 질문 | §14, §15 |
 
 용어:
 
@@ -263,6 +263,9 @@
 
 ## 13. `aimon-sandbox` 에 필요한 것
 
+"코어 SPI 에 기댄다" 는 항목은 그 SPI 를 담은 코어가 **배포된 뒤에야** `aimon-sandbox` 에 들어갈 수 있다 — `aimon-sandbox` 는
+배포된 코어에 의존한다. 기대지 않는 항목은 셸 엔진과 무관하게 들어갈 수 있고, 같은 uid 문제의 EE-113 에도 쓸모가 있다.
+
 | # | 무엇 | 코어 SPI 에 기대는가 |
 |---|---|---|
 | S1 | isolated·hook·스트리밍 실행이 끝나면 `init` 이벤트의 command id 로 execd 스풀을 지운다 — 두 배치(`opensandbox-execd/<id>.*`, `$TMPDIR/<id>.*`) 모두. execd `release-1.1.0` 이상은 스스로 지우므로 실제로 바뀌는 것은 `v1.1.0` 이다. `$TMPDIR` 은 execd 프로세스의 값이라 files API 로는 알 수 없고 `/tmp` 로 가정한다 | 아니다 |
@@ -277,35 +280,25 @@
 
 ---
 
-## 14. 테스트
+## 14. 강제
 
-| 층 | 무엇 |
+설계의 규칙 가운데 빌드가 지켜야 하는 것과, 그것을 지킬 장치에 대한 요구다. 테스트 목록이 아니다 — 아래 장치는 셸 엔진을 구현할 때
+함께 갖춰야 하는 것이다.
+
+| 규칙 | 지킬 장치 |
 |---|---|
-| 엔진 계약 스위트 | PTC 본 문서 §17 의 `aimon-code-engine-testkit`. `aimon-sandbox` 의 testkit (`LocalProcessSandboxProvider`)과 docker 계층에서 돌린다. `LocalShell` 위에서도 돌린다(테스트 경로) |
-| 프로토콜 공격 | 64 KiB 를 넘어 두 조각으로 도착한 줄(위반), 256 KiB 를 넘는 줄로 끝난 실행이 `PROTOCOL_VIOLATION` 으로 분류됨(S8), 모델 코드가 통로 줄 모양을 `print` (무시), 모델 코드가 통로 fd 에 MAC 없는 줄을 씀(위반), 스풀 파일에 줄 덧붙이기(위반), 중복·역행·건너뛴 seq(위반), 응답 선점(`writeNew` 실패 → 위반), 응답 바꿔치기와 심볼릭 링크(HMAC·`O_NOFOLLOW` 가 거절), 개행·`\r`·비 UTF-8 바이트를 담은 출력(결과가 바이트 그대로), 64 KiB 경계의 다바이트 문자, 거대한 한 줄(SSE 리더가 끊음), 스크립트 종료 뒤 끝난 중첩 호출의 결과가 샌드박스에 남지 않음, 실행 중 어떤 `/proc/*/cmdline` 에도 K 가 없음, 위반 시 span 이벤트·ERROR 로그·엔진 불가 표시, 실행 뒤 execd 스풀이 지워짐, 출력 폭주 뒤에도 셸 래퍼가 살아 결과를 마무리함 |
-| 가용성 | 제안만 하고 쓰지 않는 턴에서 샌드박스가 프로비저닝되지 않음. 다음 에이전트에 셸 엔진 `ExecuteCode` 가 제안되지 않음: 허용 목록이 비었고 `Bash` 가 등록되지 않음, `Bash(git *)` 처럼 인자 패턴으로 좁힘, `Bash` 에 PreTool·PermissionRequest 훅이 걸림. 원격 VFS 를 빌린 환경(탐침이 불가를 답함) |
-| 도구 범위 | `environment` 에서 `HOST`·`EXTERNAL` 도구가 빠짐, `host` 에서 `EXTERNAL` 이 빠짐, 에이전트 좁히기가 적용되고 넓히기는 무시·경고됨 |
-| 전용 uid 모드 (해제 뒤) | 모델의 `Bash` 가 요청 통로·스풀·`RunDirectory`·응답 디렉터리·execd API 에 닿지 못하고 PTC uid 로 전환할 경로가 없음, 범위가 적용되지 않음 |
+| 셸 엔진도 PTC 본 문서의 엔진 계약을 지킨다 | 엔진 계약 스위트 `aimon-code-engine-testkit` (PTC 본 문서 §17). 코어는 `LocalShell` 위에서, `aimon-sandbox` 는 자기 testkit(`LocalProcessSandboxProvider`)과 docker 계층에서 이 스위트를 돌려야 한다 — testkit 이 배포 대상인 이유다 |
+| 통로의 줄 규칙과 응답 규칙은 호스트가 다시 강제하고, 어긋나면 `PROTOCOL_VIOLATION` 이다(§7, 결정 2·3·7) | 호스트 쪽 프로토콜 계약 테스트. 정상 런타임이 아니라 **두 번째 작성자**를 흉내 내어 위반을 일으켜야 한다 — 런타임 쪽 규칙은 정상 경로를 맞추기 위한 것일 뿐이라 정상 런타임으로는 호스트의 검증이 시험되지 않는다 |
+| 키는 어떤 프로세스의 명령행에도 나타나지 않는다(결정 4) | 실행 중 샌드박스의 `/proc/*/cmdline` 에 K 가 없음을 확인하는 검사. `aimon-sandbox` 쪽 몫은 §13 S4 |
+| 제안 시점에는 셸 명령이나 파일 쓰기를 하지 않고, `Bash` 를 제약 없이 쓸 수 없는 에이전트에는 셸 엔진 `ExecuteCode` 를 제안하지 않는다(§4) | 제안 경로의 계약 테스트 |
+| 도구 범위는 애플리케이션 값이 상한이고 에이전트는 좁히기만 한다(§12.2, 결정 5) | 호출 가능 집합 계산의 계약 테스트 |
+| `isolated` 스트리밍은 포그라운드로 취급되지 않는다(§3) | `aimon-sandbox` 의 계약 테스트 (§13 S7) |
+
+전용 uid 모드의 보장(§12.3)은 그 모드가 생길 때 같은 방식으로 강제할 장치를 정한다.
 
 ---
 
-## 15. 조각 사이의 의존
-
-PTC 본 문서의 조각 C — `ExecuteCode`, 브리지, GraalJS 엔진, `aimon-code-engine-testkit` — 위에 얹힌다.
-
-| 조각 | 무엇 | 기대는 것 |
-|---|---|---|
-| D1 | 코어의 `RuntimeFileSystem` SPI 와 로컬 구현, `RunDirectory` 비밀 파일 표지, 서술자의 `isolation`·런타임 능력, 셸 스트리밍 계약, 셸 엔진, `shell-engine-tool-scope` | PTC 본 문서의 조각 C. `LocalShell` 위의 계약 스위트로 검증된다 |
-| D2 | §13 의 S3–S6, S8 | 배포된 D1 (`aimon-sandbox` 는 배포된 코어에 의존한다) |
-| — | §13 의 S1·S2·S7·S9 | 없음. 지금 할 수 있고, EE-113 에도 쓸모가 있다 |
-| E | 명령별 실행 주체와 전용 uid 모드 | D2, **업스트림 블로커 해소**, EE-113 과 같은 메커니즘 |
-
-D2 가 들어가면 샌드박스 에이전트의 `auto` 설정에서 `ExecuteCode` 가 나타난다. 이 변화와 셸 엔진의 등급(`Bash` 와 같음)은 그 릴리스의
-변경 노트에 적는다.
-
----
-
-## 16. 열린 질문
+## 15. 열린 질문
 
 1. **stdin 통로.** 응답 파일·폴링을 없애려면 OpenSandbox execd 가 실행 중 stdin 을 받아야 한다. 우리 API 호환을 깨도 풀리지 않는
    업스트림 제약이다.

@@ -85,6 +85,7 @@ import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.OnStopContext;
 import at.aimon.core.hook.exception.ExecutionBlockedByHookException;
 import at.aimon.core.hook.execution.HookResult;
+import at.aimon.core.internal.ToolDispatchRefusals;
 import at.aimon.core.knowledge.KnowledgeScope;
 import at.aimon.core.llm.LlmCallMetadata;
 import at.aimon.core.llm.LlmClient;
@@ -1851,7 +1852,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
     static ToolUseResult invokeTool(ToolContext toolContext, ToolUse toolUse, int iterationCount) {
         final Optional<ToolCallDispatcher> dispatcher = toolContext.get(ToolContextKeys.TOOL_CALL_DISPATCHER);
         if (dispatcher.isEmpty()) {
-            return ToolUseResult.error(toolUse.getId(), ToolDispatchResults.NO_DISPATCHER_MESSAGE);
+            return ToolUseResult.error(toolUse.getId(), ToolDispatchRefusals.NO_DISPATCHER);
         }
         // The iteration rides on the context the dispatcher is handed, which puts it on the Pre/PostTool contexts.
         final ToolContext iterationContext = ToolContext.builder().putAll(toolContext.getContext())
