@@ -232,6 +232,66 @@ class ExecuteCodeEndToEndTest {
         assertThat(quota.used()).isEqualTo(2);
     }
 
+    /** A program that catches every refusal and runs to its end: it reports COMPLETED whatever the bridge said. */
+    private static CodeExecutionOutcome callIgnoringRefusals(ToolCallBridge bridge, int count) {
+        final StringBuilder out = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            final ToolDispatchResult result = bridge.callAsync("Read", Map.of("path", "/p")).join();
+            out.append(result.isError() ? "caught\n" : "ok\n");
+        }
+        return ScriptedEngine.completed(out.append("finished\n").toString());
+    }
+
+    @Test
+    @DisplayName("a program that catches the quota refusal and completes is still LIMIT_EXCEEDED, keeping its output")
+    void caughtQuotaRefusalIsLimitExceeded() {
+        engine.program((request, bridge) -> callIgnoringRefusals(bridge, 4));
+        final ToolCallDispatcher dispatcher = dispatcher();
+
+        final ToolDispatchResult result = dispatcher.dispatch(executeCode("tu-1"), ToolCallOrigin.direct(),
+                context(dispatcher, settings("Read"), ToolCallQuota.limitedTo(2)));
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.isRetryable()).isTrue();
+        assertThat(result.getText()).contains("stopped at a limit").contains("[output before the stop]")
+                .contains("finished");
+    }
+
+    @Test
+    @DisplayName("a program that catches the nested-call limit's refusal and completes is still LIMIT_EXCEEDED")
+    void caughtCallLimitRefusalIsLimitExceeded() {
+        registry.unregister(ExecuteCodeTool.TOOL_NAME);
+        registry.register(
+                new ExecuteCodeTool(List.of(engine), CodeExecutionLimits.builder().maxNestedCalls(2).build()));
+        engine.program((request, bridge) -> callIgnoringRefusals(bridge, 4));
+        final ToolCallDispatcher dispatcher = dispatcher();
+
+        final ToolDispatchResult result = dispatcher.dispatch(executeCode("tu-1"), ToolCallOrigin.direct(),
+                context(dispatcher, settings("Read"), null));
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.isRetryable()).isTrue();
+        assertThat(result.getText()).contains("stopped at a limit").contains("[output before the stop]");
+    }
+
+    @Test
+    @DisplayName("a protocol violation is not masked by a bridge limit: it stays PROTOCOL_VIOLATION, not retryable")
+    void violationWinsOverLimit() {
+        engine.program((request, bridge) -> {
+            callIgnoringRefusals(bridge, 4);
+            return CodeExecutionOutcome.builder().status(CodeExecutionStatus.PROTOCOL_VIOLATION)
+                    .errorMessage("protocol violation: forged line").build();
+        });
+        final ToolCallDispatcher dispatcher = dispatcher();
+
+        final ToolDispatchResult result = dispatcher.dispatch(executeCode("tu-1"), ToolCallOrigin.direct(),
+                context(dispatcher, settings("Read"), ToolCallQuota.limitedTo(2)));
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.isRetryable()).isFalse();
+        assertThat(result.getText()).contains("forged line").doesNotContain("stopped at a limit");
+    }
+
     @Test
     @DisplayName("a MUTATING tool is capped per script; the refusals are counted in the summary")
     void writeCap() {

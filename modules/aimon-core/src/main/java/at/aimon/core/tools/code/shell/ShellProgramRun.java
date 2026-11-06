@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.Base64;
 import java.util.Deque;
@@ -36,7 +37,12 @@ import at.aimon.core.shell.ShellLineListener;
  * {@code callAsync} queues them without blocking; replies are written on the engine's executor. A violation is not
  * thrown — the shell would swallow the exception and drop the line — but recorded, and the run is stopped through
  * {@code stop}. Once {@link #close() closed} no reply is written: no runtime is left to read it, and a host result must
- * not be left in the sandbox (§8).
+ * not be left in the sandbox (§8); {@code close()} also waits, within a bound, for the writes already started.
+ *
+ * <p>
+ * Once the run is stopping — it stopped the program itself, the execution was cancelled, or the wall clock ran out —
+ * a {@code CALL} line is still verified but no longer forwarded to the bridge: the runtime is being killed, and a call
+ * it sent on the way out must not run a tool (Q-C4).
  *
  * <p>
  * Thread-safe.
@@ -54,6 +60,10 @@ final class ShellProgramRun implements ShellLineListener {
     private static final int STDERR_TAIL_LINES = 20;
     private static final int STDERR_TAIL_LINE_CHARS = 500;
     private static final int REPLY_WRITE_ATTEMPTS = 3;
+    /** How long {@link #close()} waits for reply writes already started (§8). */
+    static final Duration REPLY_DRAIN = Duration.ofSeconds(5);
+    /** The most bytes an array may hold on every JVM. */
+    private static final long MAX_ARRAY_BYTES = Integer.MAX_VALUE - 8;
 
     /** How the runtime said the program ended ({@code DONE}). */
     static final class Done {
@@ -83,20 +93,58 @@ final class ShellProgramRun implements ShellLineListener {
     private final int maxReplyBytes;
     private final Executor executor;
     private final Runnable stop;
+    private final long deadline;
+    private final Duration replyDrain;
+    private final int maxLogBytes;
 
     private final Object lock = new Object();
     private final ByteArrayOutputStream stdout = new ByteArrayOutputStream();
-    private final StringBuilder logs = new StringBuilder();
+    /** The decoded bytes of every ERR line, trimmed from the front to {@link #maxLogBytes}. */
+    private byte[] logBytes = new byte[0];
     private final Deque<String> stderrTail = new ArrayDeque<>();
     private final AtomicReference<String> violation = new AtomicReference<>();
     private final AtomicReference<String> hostFailure = new AtomicReference<>();
     private long lastSeq;
     private Done done;
     private boolean outputLimitExceeded;
-    private volatile boolean closed;
+    private volatile boolean stopping;
+
+    /** Guards {@link #closed} and {@link #inFlight}: the gate a reply write passes before it touches the sandbox. */
+    private final Object replyGate = new Object();
+    private boolean closed;
+    private int inFlight;
+
+    /** How the run is stopped and timed: the engine's stop, the wall clock's deadline, the reply drain bound. */
+    static final class Control {
+        private final Runnable stop;
+        private final long deadline;
+        private final Duration replyDrain;
+
+        private Control(Runnable stop, long deadline, Duration replyDrain) {
+            this.stop = Objects.requireNonNull(stop, "stop cannot be null");
+            this.deadline = deadline;
+            this.replyDrain = Objects.requireNonNull(replyDrain, "replyDrain cannot be null");
+        }
+
+        /**
+         * @param stop
+         *            stops the shell command
+         * @param deadline
+         *            the {@link System#nanoTime()} at which the run's wall clock runs out; a CALL handled after it is
+         *            not forwarded
+         */
+        static Control of(Runnable stop, long deadline) {
+            return new Control(stop, deadline, REPLY_DRAIN);
+        }
+
+        /** The same control with another drain bound — how long {@link ShellProgramRun#close()} waits. */
+        Control withReplyDrain(Duration replyDrain) {
+            return new Control(stop, deadline, replyDrain);
+        }
+    }
 
     ShellProgramRun(byte[] key, ToolCallBridge bridge, RuntimeFileSystem files, String replyDirectory,
-            CodeExecutionLimits limits, Executor executor, Runnable stop) {
+            CodeExecutionLimits limits, Executor executor, Control control) {
         this.protocol = new PtcProtocol(key);
         this.bridge = Objects.requireNonNull(bridge, "bridge cannot be null");
         this.files = Objects.requireNonNull(files, "files cannot be null");
@@ -105,12 +153,18 @@ final class ShellProgramRun implements ShellLineListener {
         this.maxLogChars = limits.getMaxLogChars();
         this.maxReplyBytes = ShellCodeExecutionEngine.MAX_REPLY_BYTES;
         this.executor = Objects.requireNonNull(executor, "executor cannot be null");
-        this.stop = Objects.requireNonNull(stop, "stop cannot be null");
+        Objects.requireNonNull(control, "control cannot be null");
+        this.stop = control.stop;
+        this.deadline = control.deadline;
+        this.replyDrain = control.replyDrain;
+        // Enough for maxLogChars characters of four bytes each, plus one split character; the clamp keeps an absurd
+        // maxLogChars from overflowing an array.
+        this.maxLogBytes = (int) Math.min(4L * limits.getMaxLogChars() + 4, MAX_ARRAY_BYTES);
     }
 
     @Override
     public void onStdoutLine(String line) {
-        if (closed || violation.get() != null) {
+        if (isClosed() || violation.get() != null) {
             return;
         }
         final Optional<PtcProtocol.Line> verified = protocol.verify(line);
@@ -163,6 +217,11 @@ final class ShellProgramRun implements ShellLineListener {
             violate("a CALL line does not carry a request");
             return;
         }
+        if (stopping || System.nanoTime() - deadline > 0) {
+            // Verified (a forged or out-of-order line was caught above) but not run: the program is being stopped.
+            log.debug("ExecuteCode: CALL {} arrived while the run was stopping; not forwarded", seq);
+            return;
+        }
         final Map<String, Object> args = new LinkedHashMap<>();
         rawArgs.forEach((k, v) -> args.put(String.valueOf(k), v));
         bridge.callAsync(tool, args).whenCompleteAsync((result, failure) -> {
@@ -196,7 +255,7 @@ final class ShellProgramRun implements ShellLineListener {
             }
         }
         if (stopNow) {
-            stop.run();
+            stopRun();
         }
     }
 
@@ -209,10 +268,15 @@ final class ShellProgramRun implements ShellLineListener {
             return;
         }
         synchronized (lock) {
-            logs.append(new String(bytes, StandardCharsets.UTF_8));
-            if (logs.length() > maxLogChars) {
-                logs.delete(0, logs.length() - maxLogChars);
-            }
+            // Bytes, not text: a character split across two ERR lines decodes whole (logs()).
+            final long total = (long) logBytes.length + bytes.length;
+            final int keep = (int) Math.min(total, maxLogBytes);
+            final byte[] next = new byte[keep];
+            final int fromNew = Math.min(bytes.length, keep);
+            final int fromOld = keep - fromNew;
+            System.arraycopy(logBytes, logBytes.length - fromOld, next, 0, fromOld);
+            System.arraycopy(bytes, bytes.length - fromNew, next, fromOld, fromNew);
+            logBytes = next;
         }
     }
 
@@ -235,7 +299,7 @@ final class ShellProgramRun implements ShellLineListener {
     }
 
     private void writeReply(long seq, ToolDispatchResult result) {
-        if (closed) {
+        if (isClosed()) {
             return;
         }
         final byte[] payload = replyPayload(result);
@@ -243,8 +307,11 @@ final class ShellProgramRun implements ShellLineListener {
         final byte[] file = protocol.reply(seq, payload);
         IOException last = null;
         for (int attempt = 1; attempt <= REPLY_WRITE_ATTEMPTS; attempt++) {
-            if (closed) {
-                return;
+            synchronized (replyGate) {
+                if (closed) {
+                    return;
+                }
+                inFlight++;
             }
             try {
                 files.writeNew(path, file);
@@ -254,12 +321,17 @@ final class ShellProgramRun implements ShellLineListener {
                 return;
             } catch (IOException e) {
                 last = e;
-                sleepQuietly(50L * attempt);
+            } finally {
+                synchronized (replyGate) {
+                    inFlight--;
+                    replyGate.notifyAll();
+                }
             }
+            sleepQuietly(50L * attempt);
         }
         log.warn("ExecuteCode: could not write reply {} ({}); ending the program", seq, last.toString());
         if (hostFailure.compareAndSet(null, "the reply to tool call " + seq + " could not be written: " + last)) {
-            stop.run();
+            stopRun();
         }
     }
 
@@ -289,8 +361,13 @@ final class ShellProgramRun implements ShellLineListener {
 
     private void violate(String message) {
         if (violation.compareAndSet(null, message)) {
-            stop.run();
+            stopRun();
         }
+    }
+
+    private void stopRun() {
+        stopping = true;
+        stop.run();
     }
 
     private static void sleepQuietly(long millis) {
@@ -301,9 +378,54 @@ final class ShellProgramRun implements ShellLineListener {
         }
     }
 
-    /** Stops writing replies: the run is over (§8). */
+    /**
+     * Marks the run as stopping from outside — the execution was cancelled: a {@code CALL} line handled from now on is
+     * not forwarded to the bridge.
+     */
+    void markStopping() {
+        stopping = true;
+    }
+
+    /**
+     * Stops writing replies — the run is over (§8) — and waits until every reply write already started has finished,
+     * at most {@link #REPLY_DRAIN}. Once it returns no write starts, and barring that bound none is still running, so
+     * the run directory can be deleted.
+     */
     void close() {
-        closed = true;
+        stopping = true;
+        final long start = System.nanoTime();
+        boolean waited = false;
+        synchronized (replyGate) {
+            closed = true;
+            final long until = start + replyDrain.toNanos();
+            while (inFlight > 0) {
+                final long left = until - System.nanoTime();
+                if (left <= 0) {
+                    log.warn("ExecuteCode: a reply write was still in flight after {} ms; the run directory may stay "
+                            + "until a later sweep", replyDrain.toMillis());
+                    return;
+                }
+                waited = true;
+                try {
+                    replyGate.wait(Math.max(1L, left / 1_000_000L));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    log.warn("ExecuteCode: interrupted while a reply write was in flight; the run directory may "
+                            + "stay until a later sweep");
+                    return;
+                }
+            }
+        }
+        if (waited) {
+            log.debug("ExecuteCode: closing the run waited {} ms for reply writes in flight",
+                    (System.nanoTime() - start) / 1_000_000L);
+        }
+    }
+
+    private boolean isClosed() {
+        synchronized (replyGate) {
+            return closed;
+        }
     }
 
     Optional<String> violation() {
@@ -326,15 +448,28 @@ final class ShellProgramRun implements ShellLineListener {
         }
     }
 
+    /** The program's standard output, without a character the output cap split at its end (§7). */
     String stdout() {
         synchronized (lock) {
-            return stdout.toString(StandardCharsets.UTF_8);
+            final byte[] bytes = stdout.toByteArray();
+            return new String(bytes, 0, Utf8Cut.completeLength(bytes, bytes.length), StandardCharsets.UTF_8);
         }
     }
 
+    /** The last {@code maxLogChars} characters of the program's standard error, decoded once from all ERR lines. */
     String logs() {
         synchronized (lock) {
-            return logs.toString();
+            final int skip = Utf8Cut.leadingContinuations(logBytes, logBytes.length);
+            final int end = Utf8Cut.completeLength(logBytes, logBytes.length);
+            final String text = end > skip ? new String(logBytes, skip, end - skip, StandardCharsets.UTF_8) : "";
+            if (text.length() <= maxLogChars) {
+                return text;
+            }
+            int from = text.length() - maxLogChars;
+            if (Character.isLowSurrogate(text.charAt(from))) {
+                from++;
+            }
+            return text.substring(from);
         }
     }
 

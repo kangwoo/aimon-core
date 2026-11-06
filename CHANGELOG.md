@@ -7,6 +7,44 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Fixed: the shell engine's runtime no longer outlives the shell's kill (Q-C4), and D1/C review follow-ups
+
+`docs/design/tool/ptc-qc4-and-nonblocking-fixes.md`. No public API changes; two javadocs gained a sentence.
+
+- **A timed-out, cancelled or limit-stopped shell-engine run now ends its program and every child the program
+  started.** The runtime used to leave the shell's process group (`os.setpgid(0, 0)`), so a provider that ends a
+  command by killing its process group — `aimon-sandbox` does — never reached it, and `TIMED_OUT` / `CANCELLED` runs kept
+  spinning in the sandbox. The process the shell starts now forks: the parent (the anchor) stays in the shell's group
+  and holds no secret, the child (the runtime) leads a group of its own, and a watchdog process in that group kills it
+  when the anchor dies. A process, not a thread, so a program that holds the GIL in one long builtin cannot delay it.
+  A `CALL` line that arrives once the run is stopping (stopped, cancelled or out of wall clock) is still verified but
+  no longer runs a tool.
+- **Behaviour change:** when a program completes, background processes it started and did not wait for are killed
+  with the runtime's process group. They used to survive `ExecuteCode`. Use `Bash` with `run_in_background` for a
+  process that must outlive the call.
+- **A program that catches the nested-call-limit or fork-quota refusal and runs to its end is `LIMIT_EXCEEDED`,** not
+  `COMPLETED` (§13.1). A protocol violation is no longer masked by a bridge limit: it stays `PROTOCOL_VIOLATION`, not
+  retryable, with its ERROR log.
+- **The sweep of stale `.aimon-ptc/` run directories follows the configured `maxWallClock`.** Each run's runtime sweeps
+  entries older than `max(2 × maxWallClock, 20 min)` under its own reply directory's parent only (a guarded
+  `.aimon-ptc`, never a symlink), instead of the probe sweeping at a fixed 20 minutes — a `maxWallClock` above
+  10 minutes could have had a live run swept. `probe-*` entries are skipped.
+- **Reply writes drain before the run directory is deleted:** closing a run waits (at most 5 s) for a reply write
+  already started, so none lands after the delete.
+- **A large log tail arrives whole:** the runtime sends the stderr tail in 32 KiB `ERR` chunks (one line could pass the
+  64 KiB line limit with a large `maxLogChars`, and the log was then empty), and the host decodes all `ERR` bytes once.
+- **Output and log cuts no longer split a UTF-8 character** into U+FFFD.
+- **Warn-once operator warnings belong to their owner:** `ExecuteCodeToolProvider` keeps the set for its own warning
+  and for every `ExecuteCodeTool` it registers, so two stacks in one JVM each warn and the set goes with the stack. The
+  `programmatic-only` warning of `ToolOfferContext` stays process-wide, bounded at 256 keys.
+- **A tool whose `describe` returns null now fails every offer path alike** — `offer()`, `eligible()` and the code-only
+  check — with an NPE naming the tool. One path used to skip such a tool silently; an agent with a broken third-party
+  tool now fails its iteration instead of losing the tool without a word (`Tool.describe` is "never null").
+- **`ExecutionEnvironment.shell()` and `VirtualShell.supports(...)` javadoc** now say that neither provisions anything:
+  an offer calls both on every iteration.
+- **Build only:** `InternalPackageBoundaryTest` also requires an importer of an `internal` package to be in the module
+  that declares it, not only under the same package prefix.
+
 ### Added: the shell engine of `ExecuteCode` — Python in a sandboxed environment (core half)
 
 Piece D1 of `docs/design/tool/programmatic-tool-calling-shell.md`. A model-written Python program runs as `python3`
@@ -14,8 +52,11 @@ inside a sandboxed execution environment; its tool calls come back to the host a
 monotonic sequence number, and the host answers with HMAC reply files written through a new runtime file system.
 The `aimon-sandbox` half (piece D2) needs this release of core and is not part of it.
 
-- **No breaking public-API change.** Every addition below is a new type, a new overload or a default method; existing
-  constructors and implementations compile and behave as before.
+- **No source- or binary-breaking public-API change.** Every addition below is a new type, a new overload or a default
+  method; existing constructors and implementations compile as before. One behavioural contract change for
+  `VirtualShell` implementors: the streaming contract now says a call is foreground exactly when it is none of
+  background, hook and isolated — so a shell that streams at all must stream an isolated call — and that a line is
+  capped before it is materialized.
 - **New engine `at.aimon.core.tools.code.shell.ShellCodeExecutionEngine`** (language `python`) with its runtime
   `aimon_ptc.py`. Graded and approved as `Bash` (approval key `Bash`, prompt "via ExecuteCode (Python)"), offered only
   on an environment that declares `SANDBOXED` isolation, the `python3` runtime, a runtime file system and a shell with
@@ -39,9 +80,7 @@ The `aimon-sandbox` half (piece D2) needs this release of core and is not part o
   and `ExecutionEnvironment.runtimeFileSystem()` (default empty — never handed to a model tool);
   `EnvironmentDescriptor.runtimes()` with `RUNTIME_PYTHON3`; `RunDirectory.Builder.secretFile(...)`, `isSecret`,
   `getSecretPaths` — a shell never inlines a secret file into a process argument; `ShellCommandResult.killCause()` /
-  `withKillCause(...)` with `ShellKillCause` (`LINE_LIMIT_EXCEEDED`, `OTHER`) for a command the shell ended itself; the
-  `VirtualShell` streaming contract now says a call is foreground exactly when it is none of background, hook and
-  isolated, and that a line is capped before it is materialized.
+  `withKillCause(...)` with `ShellKillCause` (`LINE_LIMIT_EXCEEDED`, `OTHER`) for a command the shell ended itself.
 - **Programmatic SPI additions:** `CodeExecutionEngine.isToolScopeBound()`, `ToolCallBridge.markUnattributed()`, and
   `OfferFacts` shell features, runtime-file-system presence and `isBashUnconstrained()`. `CodeOfferKeys` gained
   `SHELL_FEATURES`, `RUNTIME_FILE_SYSTEM`, `BASH_SETTINGS_UNCONSTRAINED` and a `putEnvironmentFacts` overload taking the

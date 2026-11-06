@@ -12,6 +12,16 @@ are read.
 The program and this runtime are one process, so nothing here is a boundary: every rule below is enforced again by
 the host. These rules only keep the normal path right.
 
+Processes (§6, §8). The process the shell started forks at once and becomes the ANCHOR: it stays in the shell's
+process group, reads no secret, runs no program, keeps the write end of a pipe and waits. Its child is the RUNTIME:
+it makes a process group of its own, so that ending the run itself (output limit, violation) can kill that group
+without killing the shell's wrapper, which still has to finish. Before it reads the key the runtime starts a WATCHDOG
+in its group (forked twice, so the program never sees it as a child of its own): it holds only the pipe's read end and
+reads it; when the anchor dies — the shell's kill reached the command — the read returns EOF and the watchdog kills the
+runtime's group, the program's children included. It is a process, not a thread, so a program that holds the GIL in
+one long builtin cannot delay it. When the runtime ends, the anchor kills its group too, so nothing the program
+started outlives the run, then exits with the runtime's status.
+
 Channel: this process's original stdout. Every line is
 
     <TYPE> <seq> <payload> <hex(HMAC-SHA256(K, "<TYPE> <seq> <payload>"))>
@@ -132,10 +142,14 @@ def _read_tail(path, chars):
             f.seek(0, os.SEEK_END)
             size = f.tell()
             f.seek(max(0, size - chars * 4))
-            text = f.read().decode("utf-8", "replace")
+            data = f.read()
     except OSError:
         return ""
-    return text[-chars:]
+    # A seek into the middle of a character leaves up to three continuation bytes (0b10xxxxxx) in front: drop them.
+    skip = 0
+    while skip < 3 and skip < len(data) and (data[skip] & 0xC0) == 0x80:
+        skip += 1
+    return data[skip:].decode("utf-8", "replace")[-chars:]
 
 
 def _finish(status, error=None):
@@ -160,9 +174,10 @@ def _finish(status, error=None):
     out = _read_head(_state["out"], limit)
     for start in range(0, len(out), OUT_CHUNK_BYTES):
         channel.send("OUT", base64.b64encode(out[start:start + OUT_CHUNK_BYTES]).decode("ascii"))
-    tail = _read_tail(_state["err"], _state["max_log_chars"])
-    if tail:
-        channel.send("ERR", base64.b64encode(tail.encode("utf-8")).decode("ascii"))
+    tail = _read_tail(_state["err"], _state["max_log_chars"]).encode("utf-8")
+    # In chunks, as OUT: one line for a large max_log_chars would pass the line limit and be dropped.
+    for start in range(0, len(tail), OUT_CHUNK_BYTES):
+        channel.send("ERR", base64.b64encode(tail[start:start + OUT_CHUNK_BYTES]).decode("ascii"))
     done = {"status": status}
     if error:
         done["error"] = error[:MAX_ERROR_CHARS]
@@ -172,7 +187,9 @@ def _finish(status, error=None):
 
 
 def _end_process(code):
-    """Ends the run now: this process group when this runtime leads it, or this process alone."""
+    """Ends the run now: the runtime's process group (the watchdog included) when it leads one, or this process alone.
+
+    The group is the runtime's own, never the shell's: the anchor survives and the wrapper finishes (§6)."""
     if _state.get("leader"):
         try:
             os.killpg(os.getpgrp(), signal.SIGKILL)
@@ -301,17 +318,191 @@ def _redirect(fd, path):
     os.close(target)
 
 
-def main():
+def _exit_status(status):
+    if os.WIFSIGNALED(status):
+        return 128 + os.WTERMSIG(status)
+    if os.WIFEXITED(status):
+        return os.WEXITSTATUS(status)
+    return 1
+
+
+def _anchor(pid):
+    """The parent of the runtime: stays in the shell's group, holds the pipe's write end, never reads a secret.
+
+    Waits for the runtime, kills the runtime's group (the watchdog, and whatever the program left running), then exits
+    with the runtime's status. Its death — the shell's kill — is what wakes the watchdog."""
+    # Both sides set the child's group, the classic way to close the race; whichever runs second is a no-op. An error
+    # is ignored: the runtime decides from the result (getpgrp), and the sweep below checks the group exists.
+    try:
+        os.setpgid(pid, pid)
+    except OSError:
+        pass
+    try:
+        grouped = os.getpgid(pid) == pid
+    except OSError:
+        grouped = False
+    status = 1
+    try:
+        if hasattr(os, "waitid"):
+            # The unreaped zombie keeps the group id taken, so the sweep cannot reach anyone else's group.
+            os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)
+            if grouped:
+                _killpg_quietly(pid)
+            status = os.waitpid(pid, 0)[1]
+        else:
+            # No waitid (macOS): reap first. A runtime that died of SIGKILL swept its own group or was reached by a
+            # group or tree kill with the rest of it, so nothing is left and the id may already be free: no sweep.
+            # Otherwise the watchdog normally still lives, which keeps the group, and with it the id, in use.
+            status = os.waitpid(pid, 0)[1]
+            if grouped and not (os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGKILL):
+                _killpg_quietly(pid)
+    finally:
+        os._exit(_exit_status(status))
+
+
+def _killpg_quietly(group):
+    try:
+        os.killpg(group, signal.SIGKILL)
+    except OSError:
+        pass
+
+
+def _open_fds():
+    for directory in ("/proc/self/fd", "/dev/fd"):
+        try:
+            return [int(name) for name in os.listdir(directory)]
+        except (OSError, ValueError):
+            continue
+    try:
+        limit = min(os.sysconf("SC_OPEN_MAX"), 65536)
+    except (OSError, ValueError):
+        limit = 1024
+    return range(limit)
+
+
+def _watchdog(read_end, group):
+    """Single-threaded, no secret, no program: kills the runtime's group once the anchor is gone (EOF on the pipe)."""
+    try:
+        null = os.open(os.devnull, os.O_RDWR)
+        for fd in (0, 1, 2):
+            os.dup2(null, fd)
+        for fd in _open_fds():
+            if fd > 2 and fd != read_end:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        while os.read(read_end, 1):
+            pass
+        os.killpg(group, signal.SIGKILL)
+    except BaseException:
+        pass
+    finally:
+        os._exit(0)
+
+
+def _start_watchdog(read_end):
+    """Forks the watchdog into the runtime's group through an intermediate process, which exits at once and is reaped
+    here: the program then never waits on a child it did not start (os.wait). Raises OSError when a fork fails."""
+    group = os.getpgrp()
+    middle = os.fork()
+    if middle == 0:
+        code = 0
+        try:
+            if os.fork() == 0:
+                _watchdog(read_end, group)
+        except OSError as e:
+            code = (e.errno or 1) & 0xFF or 1
+        except BaseException:
+            code = 1
+        os._exit(code)
+    status = os.waitpid(middle, 0)[1]
+    if not (os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0):
+        code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else 0
+        raise OSError(code, os.strerror(code) if code else "the intermediate process failed")
+
+
+def _split():
+    """Forks the anchor off (it never returns), then sets up the runtime's group and its watchdog."""
+    try:
+        read_end, write_end = os.pipe()
+    except OSError as e:
+        _state["leader"] = False
+        _state["notes"].append("the runtime could not create its pipe (%s); it stays in the shell's process group" % e)
+        return
+    try:
+        pid = os.fork()
+    except OSError as e:
+        os.close(read_end)
+        os.close(write_end)
+        _state["leader"] = False
+        _state["notes"].append("the runtime could not fork (%s); it stays in the shell's process group" % e)
+        return
+    if pid:
+        os.close(read_end)
+        _anchor(pid)
+    os.close(write_end)
     try:
         os.setpgid(0, 0)
-        _state["leader"] = True
     except OSError:
-        _state["leader"] = False
+        pass
+    # From the result, not from whether this call raised: the anchor's setpgid may have done it already.
+    _state["leader"] = os.getpgrp() == os.getpid()
+    if _state["leader"]:
+        try:
+            _start_watchdog(read_end)
+        except OSError as e:
+            _state["watchdog_error"] = "the runtime could not start its watchdog: %s" % e
+    os.close(read_end)
+
+
+def _sweep(reply_dir, age):
+    """Removes entries of .aimon-ptc/ older than `age` seconds: runs that ended without cleaning up (§8). Housekeeping:
+    every error is ignored.
+
+    The root is the reply directory's parent and nothing else. RUN_DIR (this file's directory) is placed by the shell,
+    somewhere unrelated — under a local shell, the system temp directory — and must never be used here."""
+    reply_root = reply_dir.rstrip("/")
+    sweep_root = os.path.dirname(reply_root)
+    own = os.path.basename(reply_root)
+    try:
+        if not os.path.isabs(reply_root) or os.path.basename(sweep_root) != ".aimon-ptc" or not own:
+            return
+        if not stat.S_ISDIR(os.lstat(sweep_root).st_mode):
+            return
+        entries = os.listdir(sweep_root)
+        if own not in entries:
+            return
+    except OSError:
+        return
+    cutoff = time.time() - age
+    for name in entries:
+        if name == own or name.startswith("probe-"):
+            continue
+        path = os.path.join(sweep_root, name)
+        try:
+            info = os.lstat(path)
+            if info.st_mtime >= cutoff:
+                continue
+            if stat.S_ISDIR(info.st_mode):
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                os.unlink(path)
+        except OSError:
+            pass
+
+
+def main():
+    _state["notes"] = []
+    _split()
     _no_dump()
     _state["key"] = _read_and_delete("key")
     _state["reply_dir"] = _read_and_delete("reply_dir").decode("utf-8").strip()
     with open(os.path.join(RUN_DIR, "config.json"), "rb") as f:
         config = json.loads(f.read().decode("utf-8"))
+    if config.get("sweep_age_seconds") is not None:
+        threading.Thread(target=_sweep, args=(_state["reply_dir"], float(config["sweep_age_seconds"])),
+                         name="aimon-ptc-sweep", daemon=True).start()
     with open(os.path.join(RUN_DIR, "main.py"), "rb") as f:
         source = f.read().decode("utf-8")
     _state["max_output_bytes"] = int(config["max_output_bytes"])
@@ -334,6 +525,13 @@ def main():
     os.dup2(devnull, 0)
     os.close(devnull)
     threading.Thread(target=_watch, name="aimon-ptc-watch", daemon=True).start()
+    for note in _state["notes"]:
+        sys.stderr.write("aimon_ptc: %s\n" % note)
+    if _state.get("watchdog_error"):
+        # Running without the watchdog would let the program outlive the shell's kill (Q-C4): refuse, visibly.
+        _finish("error", _state["watchdog_error"])
+        shutil.rmtree(capture, ignore_errors=True)
+        os._exit(0)
 
     program_globals = {
         "__name__": "__main__",

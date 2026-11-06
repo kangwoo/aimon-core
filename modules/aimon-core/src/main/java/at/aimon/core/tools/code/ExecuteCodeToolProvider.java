@@ -2,8 +2,6 @@ package at.aimon.core.tools.code;
 
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,12 +28,15 @@ public final class ExecuteCodeToolProvider implements OrcaToolProvider {
 
     private static final Logger log = LoggerFactory.getLogger(ExecuteCodeToolProvider.class);
 
-    /** Agents already warned about, so the warning is logged once per agent. */
-    private static final Set<String> WARNED = ConcurrentHashMap.newKeySet();
-
     private final List<CodeExecutionEngine> engines;
     private final CodeExecutionLimits limits;
     private final ShellEngineToolScope toolScope;
+    /**
+     * Warnings already logged, so each is logged once per provider: its own (per agent) and the plans' of every tool
+     * it registers. The provider is application-scoped — built once per stack — so the set goes with the stack, and a
+     * runtime rebuilt after eviction does not warn again.
+     */
+    private final WarnOnce warned = new WarnOnce();
 
     /**
      * Creates the provider with the default {@code shell-engine-tool-scope} ({@link ShellEngineToolScope#ENVIRONMENT}).
@@ -81,13 +82,14 @@ public final class ExecuteCodeToolProvider implements OrcaToolProvider {
         final Agent agent = context.getAgent();
         if (engines.isEmpty()) {
             // Once per agent: registerTools runs on every runtime creation, evictions and rebuilds included.
-            if (agent != null && agent.getMetadata().getProgrammatic().isEnabled() && WARNED.add(agent.getName())) {
+            if (agent != null && agent.getMetadata().getProgrammatic().isEnabled()
+                    && warned.first("no-engine\0" + agent.getName())) {
                 log.warn("Agent '{}' sets programmatic-tools, but no code execution engine is assembled "
                         + "(CLI programmatic.enableJs, ToolSpec.programmaticEnabled, starter "
                         + "aimon.programmatic.enabled); " + "ExecuteCode is not registered", agent.getName());
             }
             return;
         }
-        registry.register(new ExecuteCodeTool(engines, limits, toolScope));
+        registry.register(new ExecuteCodeTool(engines, limits, toolScope, warned));
     }
 }

@@ -1,11 +1,14 @@
 # 프로그래매틱 도구 호출 — 셸 엔진 (`aimon-sandbox`)
 
-> **Status**: PROPOSED (`aimon-sandbox` 쪽 절반) — 코어 쪽 절반은 IMPLEMENTED (조각 D1): `aimon-core` (`at.aimon.core.tools.code.shell`,
-> `at.aimon.core.environment`, `at.aimon.core.shell`). 셸 엔진, Python 런타임과 HMAC 줄 프로토콜, `RuntimeFileSystem` 과 로컬 구현,
-> `RunDirectory` 비밀 파일 표지, 서술자의 런타임 능력, `isolated` 스트리밍 계약, `shell-engine-tool-scope`, S8 의 코어 절반
-> (`ShellCommandResult.killCause()`)이 있고, 엔진 계약 스위트를 `LocalShell` 위에서 통과한다. 외부 저장소 `aimon-sandbox` 의 몫(§13 — 조각
-> D2)은 배포된 코어가 필요해 아직 없다. 공개 API 호환을 깨는 항목이 있다(§3). 구현이 본문과 다른 점은 PTC 본 문서 §21 에 적는다.
-> 설계에서 아직 정하지 않은 것은 §15 다.
+> **Status**: IMPLEMENTED — 코어 쪽 절반(조각 D1): `aimon-core` (`at.aimon.core.tools.code.shell`, `at.aimon.core.environment`,
+> `at.aimon.core.shell`). 셸 엔진, Python 런타임과 HMAC 줄 프로토콜, `RuntimeFileSystem` 과 로컬 구현, `RunDirectory` 비밀 파일 표지,
+> 서술자의 런타임 능력, `isolated` 스트리밍 계약, `shell-engine-tool-scope`, S8 의 코어 절반(`ShellCommandResult.killCause()`)이 있고,
+> 엔진 계약 스위트를 `LocalShell` 위에서, 그리고 프로세스 그룹만 죽이는 셸 위에서 통과한다. 외부 저장소 `aimon-sandbox` 의 몫(§13 —
+> 조각 D2)은 aimon-sandbox#49 (`c6f3ece`) 로 들어갔다. 그때 드러난 결함 Q-C4 — 런타임이 셸의 프로세스 그룹을 떠나 제공자의 그룹
+> 종료가 닿지 않던 것 — 는 코어에서 고쳤다(§6, §8, [설계 기록](ptc-qc4-and-nonblocking-fixes.md)). 그 수정을 쓰는 `aimon-sandbox`
+> 쪽 후속(꺼 둔 두 테스트, WS §20 의 Q-C4 항목)은 [TC-19](../../backlog/tool-contract-open-items.md) 다. 소스 호환은 깨지 않는다.
+> `VirtualShell` 구현자에게는 동작 계약 변경이 하나 있다(§3). 구현이 본문과 다른 점은 PTC 본 문서 §21 에 적는다. 설계에서 아직
+> 정하지 않은 것은 §15 다.
 
 ## 1. 목적과 범위
 
@@ -16,7 +19,7 @@
 | 주제 | 절 |
 |---|---|
 | 설계 결정 | §2 |
-| 호환을 깨는 변경 | §3 |
+| 호환성 변경과 추가 | §3 |
 | 실행 환경 위의 엔진, 가용성 | §4 |
 | 배치와 실행, 런타임 | §5, §6 |
 | 프로토콜 | §7 |
@@ -51,14 +54,14 @@
 
 ---
 
-## 3. 호환을 깨는 변경과 추가
+## 3. 호환성 변경과 추가
 
-| 변경 | 전 | 후 |
-|---|---|---|
-| 셸 스트리밍 계약 | `VirtualShell` javadoc: 포그라운드 스트리밍은 거절될 수 있으니 background 로 | "포그라운드 = `!background && !hook && !isolated`". `isolated` 스트리밍을 계약으로 올린다(`aimon-sandbox` 의 `SandboxShell` 은 이미 이렇게 동작한다). 스트리밍 제공자는 줄을 물질화하기 **전에** 상한을 건다. [셸 계약](shell-contract.md) 도 고친다 |
-| `RunDirectory` 비밀 파일 | 모든 실행 파일이 같다. 작으면 셸이 인라인할 수 있다 | 파일 단위 `secret` 표지. 표지된 파일은 명령 인자에 인라인하지 않고 업로드하며, 업로드 원본은 배치 직후 지운다. [셸 계약](shell-contract.md) 의 `RUN_DIRECTORY` 조항에 올린다 |
-| `EnvironmentDescriptor` | 작업 디렉터리·플랫폼·OS 버전·셸 이름·노트 | `isolation()` (`HOST` / `SANDBOXED`)과 제공자가 선언한 런타임 능력(`python3`). 둘 다 프로필에서 정해지는 정적 값이다 |
-| `ExecutionEnvironment` SPI (`aimon-sandbox` 포함) | 경로 규칙을 지나는 `fileSystem()` 만 | `Optional<RuntimeFileSystem> runtimeFileSystem()` — 프레임워크 전용, 경로 규칙 밖, 모델 도구에는 주지 않는다. `RuntimeFileSystem` 은 `at.aimon.core.environment` 의 새 인터페이스다: `writeNew(path, bytes)` (원자적, 대상이 있으면 실패), `read(path, maxBytes)` (상한, 링크를 따라가지 않음), `delete(path)`, `createDirectories(path)`. 코어 `VirtualFileSystem` 에는 쓰기 모드가 없어 이 연산을 표현할 수 없다. 로컬 구현(`O_EXCL` 생성)은 계약 스위트가 쓴다 |
+| 변경 | 종류 | 전 | 후 |
+|---|---|---|---|
+| 셸 스트리밍 계약 | 동작 계약 (구현자) | `VirtualShell` javadoc: 포그라운드 스트리밍은 거절될 수 있으니 background 로 | "포그라운드 = `!background && !hook && !isolated`". `isolated` 스트리밍을 계약으로 올린다(`aimon-sandbox` 의 `SandboxShell` 은 이미 이렇게 동작한다). 스트리밍 제공자는 줄을 물질화하기 **전에** 상한을 건다. [셸 계약](shell-contract.md) 도 고친다 |
+| `RunDirectory` 비밀 파일 | 추가 | 모든 실행 파일이 같다. 작으면 셸이 인라인할 수 있다 | 파일 단위 `secret` 표지. 표지된 파일은 명령 인자에 인라인하지 않고 업로드하며, 업로드 원본은 배치 직후 지운다. [셸 계약](shell-contract.md) 의 `RUN_DIRECTORY` 조항에 올린다 |
+| `EnvironmentDescriptor` | 추가 | 작업 디렉터리·플랫폼·OS 버전·셸 이름·노트 | `isolation()` (`HOST` / `SANDBOXED`)과 제공자가 선언한 런타임 능력(`python3`). 둘 다 프로필에서 정해지는 정적 값이다 |
+| `ExecutionEnvironment` SPI (`aimon-sandbox` 포함) | 추가 (SPI 기본 메서드) | 경로 규칙을 지나는 `fileSystem()` 만 | `Optional<RuntimeFileSystem> runtimeFileSystem()` — 프레임워크 전용, 경로 규칙 밖, 모델 도구에는 주지 않는다. `RuntimeFileSystem` 은 `at.aimon.core.environment` 의 새 인터페이스다: `writeNew(path, bytes)` (원자적, 대상이 있으면 실패), `read(path, maxBytes)` (상한, 링크를 따라가지 않음), `delete(path)`, `createDirectories(path)`. 코어 `VirtualFileSystem` 에는 쓰기 모드가 없어 이 연산을 표현할 수 없다. 로컬 구현(`O_EXCL` 생성)은 계약 스위트가 쓴다 |
 
 ---
 
@@ -112,12 +115,23 @@
 
 시작 단계:
 
-1. `os.setpgid(0, 0)` — 자기 프로세스 그룹을 만든다. 출력 상한 등으로 실행을 끝낼 때 그 그룹만 끝내서, 셸 래퍼가 살아 결과를 마무리한다.
-2. `prctl(PR_SET_DUMPABLE, 0)` (Linux, 실패해도 계속) — 같은 uid 의 비특권 프로세스가 `/proc/<pid>/fd`·`environ`·`mem` 을 열지 못하게
+1. fork — 부모(**앵커**)는 셸의 프로세스 그룹에 남아 파이프의 쓰기 끝을 쥐고 런타임을 기다린다. 키도 프로그램도 읽지 않는다. 자식은
+   자기 프로세스 그룹을 만들고 **런타임**이 된다. 출력 상한 등으로 실행을 끝낼 때 런타임은 그 그룹만 끝내므로, 셸 래퍼가 살아 결과를
+   마무리한다.
+2. 키를 읽기 전에 런타임은 자기 그룹에 **감시자(watchdog)** 를 띄운다 — 두 번 fork 해서, 프로그램이 `os.wait()` 로 기다릴 자식이
+   되지 않게 한다. 감시자는 파이프의 읽기 끝만 쥐고 읽는다. 앵커가 죽으면(셸의 종료가 명령에 닿으면) 읽기가 EOF 를 받고, 감시자가
+   런타임의 그룹 — 프로그램의 자식들 포함 — 을 SIGKILL 한다. 스레드가 아니라 프로세스인 이유는 GIL 이다: 긴 내장 호출 하나로 GIL 을
+   쥔 프로그램(`sum(range(10**12))`)은 같은 인터프리터의 스레드를 그 호출이 끝날 때까지 세운다. 감시자를 띄우지 못하면 런타임은
+   프로그램을 돌리지 않고 `DONE{"status":"error"}` 로 끝낸다.
+3. `prctl(PR_SET_DUMPABLE, 0)` (Linux, 실패해도 계속) — 같은 uid 의 비특권 프로세스가 `/proc/<pid>/fd`·`environ`·`mem` 을 열지 못하게
    한다. 경계가 아니라 비용 상승이다(§12).
-3. `key`·`reply_dir` 을 읽고 지운다.
-4. 원래 stdout(실행의 stdout = 통로)을 런타임 전용 fd 로 옮기고(CLOEXEC), fd 1·2 를 캡처 파일로 돌린다.
-5. 캡처 파일 크기를 100 ms 마다 보는 감시 스레드를 띄운다(§11).
+4. `key`·`reply_dir` 을 읽고 지운다. 오래된 실행 디렉터리를 치우는 스윕 스레드를 띄운다(§8).
+5. 원래 stdout(실행의 stdout = 통로)을 런타임 전용 fd 로 옮기고(CLOEXEC), fd 1·2 를 캡처 파일로 돌린다.
+6. 캡처 파일 크기를 100 ms 마다 보는 감시 스레드를 띄운다(§11).
+
+런타임이 끝나면 — 어떻게 끝났든 — 앵커가 런타임의 그룹을 SIGKILL 하고(감시자와 프로그램이 남긴 프로세스), 런타임의 종료 상태
+(신호로 끝났으면 `128 + 신호`)로 끝난다. fork 자체가 실패하면 런타임은 셸의 그룹에 남은 채 한 프로세스로 돈다 — 셸의 종료는 닿지만
+스스로 끝낼 때 자식이 남을 수 있다.
 
 ---
 
@@ -165,7 +179,7 @@
 | 응답 파일 | `hex(HMAC-SHA256(K, "R" ‖ seq ‖ 0x00 ‖ payload))` + `\n` + payload 원본 바이트. payload 는 `{"text":..., "is_error":..., "retryable":...}`. 런타임은 원본 바이트로 검증한 **뒤에** 파싱한다. 크기 상한 1 MiB (넘으면 잘라서 표시) |
 | 응답 쓰기 | `RuntimeFileSystem.writeNew(path, bytes)` 한 번. OpenSandbox 제공자에서 이것은 임시 이름 업로드 + `ln`(`CREATE_NEW`)으로 원자적이다. 대상이 이미 있으면 누군가 선점한 것이므로 프로토콜 위반이다 |
 | 응답 읽기 | 런타임은 `O_NOFOLLOW` 로 열고 regular file 인지, 크기가 상한 이하인지 확인한 뒤 읽는다 |
-| 결과 | 런타임이 끝에 stdout 캡처를 `OUT` 줄들로, stderr 캡처의 꼬리(4,000자 분량)를 `ERR` 줄로 보내고 `DONE` 을 보낸다. 출력 상한은 **디코딩 후** 바이트로 센다 |
+| 결과 | 런타임이 끝에 stdout 캡처를 `OUT` 줄들로, stderr 캡처의 꼬리(4,000자 분량)를 `ERR` 줄들로 — 둘 다 원본 32 KiB 단위로 — 보내고 `DONE` 을 보낸다. 출력 상한은 **디코딩 후** 바이트로 센다. 호스트는 `ERR` 줄들의 바이트를 모아 한 번 디코딩하고, 상한에서 잘려 끝이나 앞에 남은 UTF-8 문자 조각은 버린다 |
 | 리스너 | 셸 스레드(샌드박스의 SSE 스레드) 위에서 돈다. 파싱·검증과 큐 삽입만 하고 블록하지 않는다. 큐는 상한이 있다. 위반은 리스너가 던지는 방식이 아니라 브리지 상태를 바꾸는 방식으로 처리한다 — `StreamLines` 는 리스너 예외를 삼키고 줄을 버리기 때문이다 |
 | 응답 쓰기 실패 | 재시도한 뒤 실패하면 실행을 끝낸다 |
 | 종료 | `DONE` 없이 0 이 아닌 종료면 `SCRIPT_ERROR` 와 받은 `ERR` 꼬리 |
@@ -175,9 +189,25 @@
 
 ## 8. 정리
 
-실행이 끝나면(성공·실패·취소 모두) 브리지를 `CLOSED` 로 둔 **뒤에** 엔진이 `.aimon-ptc/<run>/` 을 지운다. `CLOSED` 뒤에 도착한 결과는
-응답 파일로 쓰지 않는다(PTC 본 문서 §13.2). 이 디렉터리를 치우는 기존 스윕은 없으므로, 엔진이 환경 객체당 첫 실행 때 `.aimon-ptc/`
-아래에서 벽시계 상한의 두 배보다 오래된 항목을 지운다. `setsid` 로 빠져나간 자손은 셸이 끝내지 못한다(best-effort).
+실행이 끝나면(성공·실패·취소 모두) 엔진은 먼저 실행의 응답 쓰기를 닫고 — 이미 시작한 쓰기는 끝날 때까지(상한 5 초) 기다린다 — 그
+**뒤에** `.aimon-ptc/<run>/` 을 지운다. 브리지는 엔진이 돌아온 뒤 `ExecuteCode` 가 `CLOSED` 로 둔다. 그 사이에 끝난 중첩 호출의 결과는
+실행이 이미 닫혀 있으므로 응답 파일로 쓰이지 않는다(PTC 본 문서 §13.2). 실행이 멈추는 중이면 — 엔진이 스스로 멈췄거나, 실행이
+취소되었거나, 벽시계가 다 되었으면 — 그 뒤에 도착한 `CALL` 줄은 검증만 하고 브리지에 넘기지 않는다.
+
+이 디렉터리를 치우는 기존 스윕은 없으므로, 실행마다 런타임이 시작할 때 **응답 디렉터리의 부모** `.aimon-ptc/` 에서 그 실행의 설정이
+정한 나이 `max(2 × maxWallClock, 20 분)` 보다 오래된 항목을 지운다 — 같은 설정의 살아 있는 실행은 그만큼 오래되지 않는다. 자기
+항목과 `probe-*` 는 건너뛰고, 링크는 따라가지 않고 링크 자체를 지운다. 그 부모의 이름이 `.aimon-ptc` 가 아니거나, 링크이거나, 거기에
+자기 항목이 없으면 아무것도 지우지 않는다. 남는 한계: `maxWallClock` 이 다르고 10 분을 넘는 두 프로세스(다른 설정의 노드)가 한
+샌드박스를 나눠 쓰면 짧은 쪽이 긴 쪽의 실행을 지울 수 있다([TC-18](../../backlog/tool-contract-open-items.md)).
+
+프로세스는 두 가지를 보장한다.
+- **셸의 종료는 런타임의 그룹 전체에 닿는다.** 셸이 명령의 프로세스 그룹을 죽이든(제공자) 트리를 훑어 죽이든(`LocalShell`), 앵커가
+  죽으면 감시자가 런타임과 그 자식들을 죽인다(§6).
+- **실행이 끝나면 앵커가 런타임의 그룹을 죽인다.** 정상 완료도 포함한다 — 프로그램이 띄우고 기다리지 않은 백그라운드 프로세스는
+  `ExecuteCode` 보다 오래 살지 않는다(PTC 본 문서 §13.2). 오래 살 프로세스는 `Bash` 의 `run_in_background` 로 띄운다.
+
+남는 것은 best-effort 다: 프로그램의 자식이 `setsid`·`setpgid` 로 그룹을 떠나면 닿지 않는다. 같은 uid 의 프로그램이 감시자를 죽이는
+것도 막지 못한다 — 경계가 아니다(§12). 그래도 앵커가 살아 있으면 끝의 스윕은 돈다.
 
 ---
 
@@ -203,7 +233,8 @@
 
 ## 11. 실행 상한
 
-런타임의 감시 스레드가 stdout·stderr 캡처 파일의 합계를 100 ms 마다 보고, 상한(4 MiB)을 넘으면 자기 프로세스 그룹을 끝낸다. 모델
+런타임의 감시 스레드가 stdout·stderr 캡처 파일의 합계를 100 ms 마다 보고, 상한(4 MiB)을 넘으면 런타임의 프로세스 그룹(셸의 그룹이
+아니다 — §6)을 끝낸다. 모델
 코드는 fd 1·2 에 직접 쓸 수 있어 쓰기 래퍼로는 막을 수 없기 때문이다. 호스트는 받은 `OUT` 의 디코딩 바이트로 백스톱을 건다.
 
 ---
@@ -297,6 +328,7 @@
 | 제안 시점에는 셸 명령이나 파일 쓰기를 하지 않고, `Bash` 를 제약 없이 쓸 수 없는 에이전트에는 셸 엔진 `ExecuteCode` 를 제안하지 않는다(§4) | 제안 경로의 계약 테스트 — 갖춤(`ExecuteCodeShellOfferTest`) |
 | 도구 범위는 애플리케이션 값이 상한이고 에이전트는 좁히기만 한다(§12.2, 결정 5) | 호출 가능 집합 계산의 계약 테스트 — 갖춤(`ExecuteCodeShellOfferTest`) |
 | `isolated` 스트리밍은 포그라운드로 취급되지 않는다(§3) | `aimon-sandbox` 의 계약 테스트 (§13 S7) |
+| 셸의 종료(그룹 종료든 트리 종료든)와 실행의 끝은 런타임·감시자·앵커·프로그램의 자식을 하나도 남기지 않는다(§6, §8) | 갖춤 — `ShellEngineProcessCleanupTest`: 그룹만 죽이는 셸(`ProcessGroupKillShell`) 위에서 벽시계·취소(GIL 을 쥔 내장 호출 포함)·브리지 한도·출력 상한·정상 완료 뒤 모든 프로세스가 죽었음을 확인한다. 엔진 계약 스위트도 그 셸 위에서 돈다(`ShellCodeEngineGroupKillContractTest`) |
 
 전용 uid 모드의 보장(§12.3)은 그 모드가 생길 때 같은 방식으로 강제할 장치를 정한다.
 

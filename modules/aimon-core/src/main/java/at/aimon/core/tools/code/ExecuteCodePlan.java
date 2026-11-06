@@ -7,7 +7,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,9 +39,6 @@ final class ExecuteCodePlan {
 
     private static final Logger log = LoggerFactory.getLogger(ExecuteCodePlan.class);
 
-    /** (agent, reason) and (agent, tool, reason) keys already warned about, so each is logged once. */
-    private static final Set<String> WARNED = ConcurrentHashMap.newKeySet();
-
     private final CodeExecutionEngine engine;
     private final List<ToolDescriptor> callable;
     private final Set<String> directlyOffered;
@@ -67,17 +63,21 @@ final class ExecuteCodePlan {
      *            {@code ExecuteCode}'s own name, left out of its callable set
      * @param toolScope
      *            the application's {@code shell-engine-tool-scope}, for an engine bound by it (must not be null)
+     * @param warned
+     *            the (agent, reason) and (agent, tool, reason) keys already warned about, owned by the provider or the
+     *            tool (must not be null)
      */
     static ExecuteCodePlan of(ToolOfferContext offer, List<CodeExecutionEngine> engines, String selfName,
-            ShellEngineToolScope toolScope) {
+            ShellEngineToolScope toolScope, WarnOnce warned) {
         Objects.requireNonNull(offer, "offer cannot be null");
         Objects.requireNonNull(toolScope, "toolScope cannot be null");
-        final ExecuteCodePlan plan = compute(offer, engines, selfName, toolScope);
+        Objects.requireNonNull(warned, "warned cannot be null");
+        final ExecuteCodePlan plan = compute(offer, engines, selfName, toolScope, warned);
         // An agent that opens tools to code and does not get ExecuteCode is told why, once per agent and reason
         // (§12.2, §16) — the span attribute ptc.unavailable_reason is not implemented (design §21).
         if (!plan.isAvailable() && offer.isOffering() && offer.getProgrammatic().isEnabled()) {
             final String agent = offer.getAgentName().orElse("?");
-            if (WARNED.add(agent + '\0' + plan.unavailableReason)) {
+            if (warned.first(agent + '\0' + plan.unavailableReason)) {
                 log.warn("Agent '{}' sets programmatic-tools, but ExecuteCode is not offered: {}", agent,
                         plan.unavailableReason);
             }
@@ -86,7 +86,7 @@ final class ExecuteCodePlan {
     }
 
     private static ExecuteCodePlan compute(ToolOfferContext offer, List<CodeExecutionEngine> engines, String selfName,
-            ShellEngineToolScope applicationScope) {
+            ShellEngineToolScope applicationScope, WarnOnce warned) {
         if (!offer.isOffering()) {
             return unavailable("there is no offer to describe it in");
         }
@@ -125,7 +125,7 @@ final class ExecuteCodePlan {
         final List<String> names = new ArrayList<>(settings.getTools());
         names.remove(selfName);
         final ShellEngineToolScope scope = engine.get().isToolScopeBound()
-                ? effectiveScope(offer, settings, applicationScope)
+                ? effectiveScope(offer, settings, applicationScope, warned)
                 : null;
         final List<ToolDescriptor> eligible = offer.eligible(names);
         final List<ToolDescriptor> callable = new ArrayList<>();
@@ -133,13 +133,13 @@ final class ExecuteCodePlan {
         for (ToolDescriptor descriptor : eligible) {
             seen.add(descriptor.getName());
             if (!descriptor.isCodeCallable()) {
-                warnOnce(offer, descriptor.getName(), "it declares that it cannot be called from code");
+                warnOnce(warned, offer, descriptor.getName(), "it declares that it cannot be called from code");
             } else if (descriptor.getSideEffectLevel() == SideEffectLevel.MUTATING
                     && descriptor.getEffectiveDestructiveBehavior() == DestructiveBehavior.DESTRUCTIVE) {
-                warnOnce(offer, descriptor.getName(), "it is MUTATING and DESTRUCTIVE (code-path rule 1)");
+                warnOnce(warned, offer, descriptor.getName(), "it is MUTATING and DESTRUCTIVE (code-path rule 1)");
             } else if (scope != null && !scope.admits(descriptor.getDataReach())) {
                 // Step 5 (§7.3, shell doc §12.2): a co-resident process could call it while the script runs.
-                warnOnce(offer, descriptor.getName(), "its data reach " + descriptor.getDataReach()
+                warnOnce(warned, offer, descriptor.getName(), "its data reach " + descriptor.getDataReach()
                         + " is outside shell-engine-tool-scope " + scope.wireName());
             } else {
                 callable.add(descriptor);
@@ -147,7 +147,8 @@ final class ExecuteCodePlan {
         }
         for (String name : names) {
             if (!seen.contains(name)) {
-                warnOnce(offer, name, "it is not offered here (unknown, outside the allow-list, or above the ceiling)");
+                warnOnce(warned, offer, name,
+                        "it is not offered here (unknown, outside the allow-list, or above the ceiling)");
             }
         }
         if (callable.isEmpty()) {
@@ -169,14 +170,14 @@ final class ExecuteCodePlan {
      * with a warning once per agent (shell doc §12.2).
      */
     private static ShellEngineToolScope effectiveScope(ToolOfferContext offer, ProgrammaticToolSettings settings,
-            ShellEngineToolScope applicationScope) {
+            ShellEngineToolScope applicationScope, WarnOnce warned) {
         final Optional<ShellEngineToolScope> agentScope = settings.getShellEngineToolScope();
         if (agentScope.isEmpty()) {
             return applicationScope;
         }
         if (agentScope.get().min(applicationScope) != agentScope.get()) {
             final String agent = offer.getAgentName().orElse("?");
-            if (WARNED.add(agent + "\0scope-widening")) {
+            if (warned.first(agent + "\0scope-widening")) {
                 log.warn(
                         "Agent '{}' sets shell-engine-tool-scope {}, wider than the application's {}; the "
                                 + "application's applies",
@@ -191,9 +192,9 @@ final class ExecuteCodePlan {
         return new ExecuteCodePlan(null, List.of(), Set.of(), reason);
     }
 
-    private static void warnOnce(ToolOfferContext offer, String toolName, String reason) {
+    private static void warnOnce(WarnOnce warned, ToolOfferContext offer, String toolName, String reason) {
         final String agent = offer.getAgentName().orElse("?");
-        if (WARNED.add(agent + '\0' + toolName + ": " + reason)) {
+        if (warned.first(agent + '\0' + toolName + ": " + reason)) {
             log.warn("Agent '{}': tool '{}' is left out of ExecuteCode's callable set: {}", agent, toolName, reason);
         }
     }

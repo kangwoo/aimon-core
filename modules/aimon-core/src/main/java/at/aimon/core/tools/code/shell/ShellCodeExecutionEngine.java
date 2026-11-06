@@ -97,23 +97,25 @@ public final class ShellCodeExecutionEngine implements CodeExecutionEngine {
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final String RUNTIME_RESOURCE = "aimon_ptc.py";
     private static final Duration PROBE_TIMEOUT = Duration.ofSeconds(30);
-    /** Entries under {@code .aimon-ptc/} older than twice the largest wall clock are swept at the first probe (§8). */
-    private static final Duration DEFAULT_SWEEP_AGE = CodeExecutionLimits.defaults().getMaxWallClock().multipliedBy(2);
+    /**
+     * The least age at which a run's runtime sweeps an entry of {@code .aimon-ptc/} (§8): the default configuration's
+     * twice-the-wall-clock, so a small configured limit cannot sweep a run directory another run has written but not
+     * yet started on a slow sandbox.
+     */
+    static final Duration MIN_SWEEP_AGE = Duration.ofMinutes(20);
 
     private static final ToolGrade GRADE = ToolGrade.builder().sideEffectLevel(SideEffectLevel.MUTATING)
             .destructiveBehavior(DestructiveBehavior.DESTRUCTIVE).dataReach(DataReach.ENVIRONMENT)
             .approvalDelegated(false).approvalKey(BashTool.TOOL_NAME).build();
 
     private final byte[] runtime;
-    private final Duration sweepAge;
     /** Probe answers by environment object identity, held weakly (§4). */
     private final Map<ExecutionEnvironment, EngineAvailability> probes = Collections
             .synchronizedMap(new WeakHashMap<>());
     private final ExecutorService executor;
 
-    private ShellCodeExecutionEngine(Duration sweepAge) {
+    private ShellCodeExecutionEngine() {
         this.runtime = loadRuntime();
-        this.sweepAge = Objects.requireNonNull(sweepAge, "sweepAge cannot be null");
         final AtomicInteger threads = new AtomicInteger();
         this.executor = Executors.newCachedThreadPool(runnable -> {
             final Thread thread = new Thread(runnable, "aimon-ptc-reply-" + threads.incrementAndGet());
@@ -128,7 +130,7 @@ public final class ShellCodeExecutionEngine implements CodeExecutionEngine {
      * @return a new engine; the caller owns it and closes it at shutdown (never null)
      */
     public static ShellCodeExecutionEngine create() {
-        return new ShellCodeExecutionEngine(DEFAULT_SWEEP_AGE);
+        return new ShellCodeExecutionEngine();
     }
 
     private static byte[] loadRuntime() {
@@ -181,8 +183,8 @@ public final class ShellCodeExecutionEngine implements CodeExecutionEngine {
 
     /**
      * Checks, once per environment object, that {@code python3} 3.8 or later runs and sees a file written through the
-     * runtime file system, and sweeps stale run directories (§4, §8). A definite answer is kept; a failure to ask (the
-     * shell or the file system failed) is answered unavailable for this call only.
+     * runtime file system (§4). A definite answer is kept; a failure to ask (the shell or the file system failed) is
+     * answered unavailable for this call only. Stale run directories are swept by each run's runtime, not here (§8).
      */
     @Override
     public EngineAvailability probe(ExecutionEnvironment environment) {
@@ -209,9 +211,7 @@ public final class ShellCodeExecutionEngine implements CodeExecutionEngine {
         try {
             final String command = "command -v python3 >/dev/null 2>&1 || exit 127\n"
                     + "python3 -I -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 3)' || exit 3\n"
-                    + "test -f " + quote(probeFile) + " || exit 4\n" + "find " + quote(root)
-                    + " -mindepth 1 -maxdepth 1 -mmin +" + Math.max(1, sweepAge.toMinutes())
-                    + " -exec rm -rf {} + 2>/dev/null\n" + "exit 0";
+                    + "test -f " + quote(probeFile) + " || exit 4\n" + "exit 0";
             final ShellCommandResult result = environment.shell().execute(() -> command,
                     ExecutionOptions.builder().isolated(true).timeout(PROBE_TIMEOUT).build());
             return switch (result.exitCode()) {
@@ -285,10 +285,15 @@ public final class ShellCodeExecutionEngine implements CodeExecutionEngine {
         }
 
         final ShellCancellationSource stop = ShellCancellationSource.create();
+        final long deadline = System.nanoTime() + request.getWallClock().toNanos();
         final ShellProgramRun run = new ShellProgramRun(key, bridge, files, replyDirectory, limits, executor,
-                stop::cancel);
+                ShellProgramRun.Control.of(stop::cancel, deadline));
         final CancellationSignal signal = request.getCancellation();
-        final CancellationSignal.Registration stopOnCancel = signal.onCancel(stop::cancel);
+        // Stopping first, then the shell's kill: a CALL line still in flight after the cancellation is not forwarded.
+        final CancellationSignal.Registration stopOnCancel = signal.onCancel(() -> {
+            run.markStopping();
+            stop.cancel();
+        });
         final ExecutionOptions options = ExecutionOptions.builder().isolated(true).runDirectory(placed)
                 .timeout(request.getWallClock()).cancellation(stop.token()).charset(StandardCharsets.UTF_8).build();
         ShellEnd end;
@@ -306,7 +311,8 @@ public final class ShellCodeExecutionEngine implements CodeExecutionEngine {
             end = ShellEnd.failed(null, "the environment's shell does not stream: " + e.getMessage());
         } finally {
             stopOnCancel.remove();
-            // CLOSED before the reply directory goes: nothing is written into the sandbox after this (§8, §13.2).
+            // The run's reply writes close, and those already started finish, before the run directory goes: nothing
+            // is written into the sandbox after this (§8). The bridge is closed later by its owner, ExecuteCode.
             run.close();
             deleteQuietly(files, runDirectory);
         }
@@ -436,11 +442,22 @@ public final class ShellCodeExecutionEngine implements CodeExecutionEngine {
         config.put("max_reply_bytes", MAX_REPLY_BYTES + 128);
         config.put("max_log_chars", request.getLimits().getMaxLogChars());
         config.put("wall_clock_seconds", request.getWallClock().toMillis() / 1000.0);
+        config.put("sweep_age_seconds", sweepAge(request.getLimits()).toSeconds());
         try {
             return JSON.writeValueAsBytes(config);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("The runtime's configuration could not be encoded", e);
         }
+    }
+
+    /**
+     * The age past which this run's runtime sweeps an entry of {@code .aimon-ptc/} (§8):
+     * {@code max(2 × maxWallClock, 20 min)}. A run's wall clock never exceeds {@code maxWallClock}, so no live run of
+     * the same configuration is that old.
+     */
+    static Duration sweepAge(CodeExecutionLimits limits) {
+        final Duration twice = limits.getMaxWallClock().multipliedBy(2);
+        return twice.compareTo(MIN_SWEEP_AGE) > 0 ? twice : MIN_SWEEP_AGE;
     }
 
     private static String ptcRoot(ExecutionEnvironment environment) {
@@ -465,7 +482,7 @@ public final class ShellCodeExecutionEngine implements CodeExecutionEngine {
         try {
             files.delete(path);
         } catch (IOException e) {
-            log.warn("ExecuteCode: {} could not be removed ({}); a later probe sweeps it", path, e.toString());
+            log.warn("ExecuteCode: {} could not be removed ({}); a later run sweeps it", path, e.toString());
         }
     }
 

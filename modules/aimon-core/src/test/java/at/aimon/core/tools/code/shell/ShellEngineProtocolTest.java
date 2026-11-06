@@ -269,6 +269,46 @@ class ShellEngineProtocolTest {
         assertThat(Path.of(runDirectory.get())).doesNotExist();
     }
 
+    @Test
+    @DisplayName("cancelled with a call held: a later CALL is not forwarded, and the held call's reply is never written")
+    void cancelledRunForwardsNothingAndWritesNothing() throws Exception {
+        scripted.close();
+        final CompletableFuture<ToolDispatchResult> held = new CompletableFuture<>();
+        final java.util.concurrent.atomic.AtomicInteger forwarded = new java.util.concurrent.atomic.AtomicInteger();
+        final AtomicReference<String> runDirectory = new AtomicReference<>();
+        final ScriptedToolCallBridge signal = ScriptedToolCallBridge.succeedingWith("unused");
+        final ToolCallBridge holding = new ToolCallBridge() {
+            @Override
+            public CompletableFuture<ToolDispatchResult> callAsync(String toolName, Map<String, Object> input) {
+                forwarded.incrementAndGet();
+                return held;
+            }
+
+            @Override
+            public Optional<String> limitExceeded() {
+                return Optional.empty();
+            }
+        };
+        try {
+            final Outcome result = run(holding, (runtime, listener) -> {
+                runDirectory.set(runtime.runDirectory);
+                listener.onStdoutLine(runtime.line("CALL", 1, "{\"tool\":\"Echo\",\"args\":{}}"));
+                signal.cancel();
+                // A line still in flight when the cancellation lands (Q-C4's second symptom).
+                listener.onStdoutLine(runtime.line("CALL", 2, "{\"tool\":\"Echo\",\"args\":{}}"));
+                return runtime.awaitStop();
+            }, CodeExecutionLimits.defaults(), signal);
+            assertThat(result.outcome.getStatus()).isEqualTo(CodeExecutionStatus.CANCELLED);
+            assertThat(forwarded.get()).isEqualTo(1);
+            assertThat(Path.of(runDirectory.get())).doesNotExist();
+            held.complete(ScriptedToolCallBridge.success("too late"));
+            Thread.sleep(200);
+            assertThat(Path.of(runDirectory.get())).as("no reply recreated the run directory").doesNotExist();
+        } finally {
+            signal.close();
+        }
+    }
+
     private void assertViolation(Outcome result) {
         assertThat(result.outcome.getStatus()).isEqualTo(CodeExecutionStatus.PROTOCOL_VIOLATION);
         assertThat(result.outcome.getStatus().isRetryable()).isFalse();
@@ -293,11 +333,16 @@ class ShellEngineProtocolTest {
     }
 
     private Outcome run(ToolCallBridge callBridge, Scenario scenario, CodeExecutionLimits limits) {
+        return run(callBridge, scenario, limits, scripted);
+    }
+
+    private Outcome run(ToolCallBridge callBridge, Scenario scenario, CodeExecutionLimits limits,
+            ScriptedToolCallBridge signalOwner) {
         final ScriptedShell shell = new ScriptedShell(scenario);
         final SandboxedLocalEnvironment environment = new SandboxedLocalEnvironment(realTempDir(), shell);
         final CodeExecutionRequest request = CodeExecutionRequest.builder().toolUseId("toolu_1").code("pass")
                 .tools(List.of(ToolDefinition.of("Echo", "Echoes.", Map.of("type", "object")))).limits(limits)
-                .wallClock(Duration.ofSeconds(20)).cancellation(scripted.signal()).build();
+                .wallClock(Duration.ofSeconds(20)).cancellation(signalOwner.signal()).build();
         final CodeExecutionOutcome outcome = engine.execute(request, callBridge,
                 ToolContext.builder().put(ToolContextKeys.EXECUTION_ENVIRONMENT, environment).build());
         return new Outcome(outcome, environment, shell.command, shell.options);

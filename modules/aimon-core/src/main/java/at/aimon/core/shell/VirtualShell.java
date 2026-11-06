@@ -111,9 +111,9 @@ public interface VirtualShell extends AutoCloseable {
      * shell refuses one rather than run it without keeping its {@code cd} and {@code export}. A call is foreground
      * exactly when it is none of {@linkplain ExecutionOptions#isBackground() background},
      * {@linkplain ExecutionOptions#isHook() a hook's} and {@linkplain ExecutionOptions#isIsolated() isolated}: the
-     * three
-     * flags each say the command reads and saves no session state, so a shell that streams at all streams all three.
-     * A shell that declares {@link ShellFeature#ISOLATED_EXECUTION} and {@link ShellFeature#STREAMING} therefore runs
+     * three flags each say the command reads and saves no session state, so a shell that streams at all streams all
+     * three. A shell that declares {@link ShellFeature#ISOLATED_EXECUTION} and {@link ShellFeature#STREAMING} therefore
+     * runs
      * an isolated streamed call ({@code docs/design/tool/programmatic-tool-calling-shell.md} §3) — the shell engine of
      * {@code ExecuteCode} streams its runtime that way, neither background (it does not outlive the call) nor a hook.
      *
@@ -151,6 +151,10 @@ public interface VirtualShell extends AutoCloseable {
 
     /**
      * Checks if this shell supports a specific feature.
+     *
+     * <p>
+     * A static answer: it runs no command, touches no file and provisions nothing. Offers call it on every iteration
+     * ({@code docs/design/tool/programmatic-tool-calling-shell.md} §4).
      *
      * @param feature
      *            the feature to check, must not be null

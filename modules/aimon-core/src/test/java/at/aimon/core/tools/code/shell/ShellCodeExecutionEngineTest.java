@@ -66,7 +66,7 @@ class ShellCodeExecutionEngineTest {
     }
 
     @Test
-    @DisplayName("the probe finds python3 and a runtime-file-system file from the shell, is cached, and sweeps stale runs")
+    @DisplayName("the probe finds python3 and a runtime-file-system file from the shell, is cached, and sweeps nothing")
     void probe() throws Exception {
         assumeTrue(Python3.available(), "python3 3.8+ is not installed");
         final Path root = tempDir.toRealPath();
@@ -76,7 +76,9 @@ class ShellCodeExecutionEngineTest {
         final EngineAvailability first = engine.probe(environment);
         assertThat(first.isAvailable()).as(first.toString()).isTrue();
         assertThat(engine.probe(environment)).isSameAs(first);
-        assertThat(stale).doesNotExist();
+        // Runs sweep, the probe does not (§8; ShellRuntimeSweepTest).
+        assertThat(stale).exists();
+        Files.delete(stale);
         try (var left = Files.list(root.resolve(ShellCodeExecutionEngine.PTC_DIRECTORY))) {
             assertThat(left).as("the probe file is removed").isEmpty();
         }

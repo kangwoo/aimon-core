@@ -63,7 +63,16 @@ public final class ToolOfferContext {
 
     private static final Logger log = LoggerFactory.getLogger(ToolOfferContext.class);
 
-    /** Tool names already warned about for an invalid {@code programmatic-only} entry, so the warning comes once. */
+    /** How many (agent, tool) pairs are remembered so the invalid-{@code programmatic-only} WARN is logged once. */
+    static final int MAX_CODE_ONLY_WARNINGS = 256;
+
+    /**
+     * The (agent, tool) pairs already warned about for an invalid {@code programmatic-only} entry. Static on purpose,
+     * as {@code DefaultShellActionExecutor}'s fallback set: this context is a per-iteration value, and the only
+     * longer-lived owner it reaches is the {@link ToolRegistry} SPI, which would need a new method on every
+     * implementation for a log line. No behaviour depends on the set, and it is bounded — past the cap the warning is
+     * logged at DEBUG.
+     */
     private static final Set<String> WARNED_CODE_ONLY = ConcurrentHashMap.newKeySet();
 
     private static final ToolOfferContext NONE = new ToolOfferContext(new Builder(), false);
@@ -192,6 +201,10 @@ public final class ToolOfferContext {
      * order. Each tool is described once.
      *
      * @return the offered descriptors (never null); empty without a registry
+     * @throws NullPointerException
+     *             naming the tool, when a tool's {@link Tool#describe(ToolOfferContext)} breaks its contract and
+     *             returns
+     *             null
      */
     public List<ToolDescriptor> offer() {
         if (registry == null) {
@@ -203,7 +216,7 @@ public final class ToolOfferContext {
             if (!admission.test(tool)) {
                 continue;
             }
-            final ToolDescriptor descriptor = tool.describe(this);
+            final ToolDescriptor descriptor = describe(tool);
             if (descriptor.isOfferable() && permits(descriptor)) {
                 eligible.add(descriptor);
                 hosted.addAll(descriptor.getCodeHostedTools());
@@ -228,6 +241,10 @@ public final class ToolOfferContext {
      * @param names
      *            the tool names to describe (must not be null)
      * @return the eligible descriptors (never null); empty without a registry
+     * @throws NullPointerException
+     *             naming the tool, when a tool's {@link Tool#describe(ToolOfferContext)} breaks its contract and
+     *             returns
+     *             null
      */
     public List<ToolDescriptor> eligible(Collection<String> names) {
         Objects.requireNonNull(names, "names cannot be null");
@@ -240,7 +257,7 @@ public final class ToolOfferContext {
             if (tool.isEmpty() || !admission.test(tool.get())) {
                 continue;
             }
-            final ToolDescriptor descriptor = tool.get().describe(this);
+            final ToolDescriptor descriptor = describe(tool.get());
             if (descriptor.isOfferable() && permits(descriptor)) {
                 eligible.add(descriptor);
             }
@@ -285,15 +302,33 @@ public final class ToolOfferContext {
             return false;
         }
         if (descriptor.getSideEffectLevel() != SideEffectLevel.READ_ONLY) {
-            if (WARNED_CODE_ONLY.add(getAgentName().orElse("") + '\0' + descriptor.getName())) {
+            final String key = getAgentName().orElse("") + '\0' + descriptor.getName();
+            if (WARNED_CODE_ONLY.size() < MAX_CODE_ONLY_WARNINGS && WARNED_CODE_ONLY.add(key)) {
                 log.warn(
                         "Agent '{}': programmatic-only names '{}', which declares {}: a tool that is not READ_ONLY "
                                 + "cannot be offered only through code, so it stays in the direct offer",
                         getAgentName().orElse("?"), descriptor.getName(), descriptor.getSideEffectLevel());
+            } else if (!WARNED_CODE_ONLY.contains(key)) {
+                log.debug("Agent '{}': programmatic-only names '{}', which is not READ_ONLY; it stays in the direct "
+                        + "offer", getAgentName().orElse("?"), descriptor.getName());
             }
             return false;
         }
         return true;
+    }
+
+    /** Forgets which invalid {@code programmatic-only} entries were warned about; for tests. */
+    static void resetCodeOnlyWarnings() {
+        WARNED_CODE_ONLY.clear();
+    }
+
+    /**
+     * Describes {@code tool} in this context. Every offer path reads the descriptor through here, so a tool that breaks
+     * {@link Tool#describe(ToolOfferContext)}'s never-null contract fails each of them the same way, naming the tool.
+     */
+    private ToolDescriptor describe(Tool tool) {
+        return Objects.requireNonNull(tool.describe(this),
+                () -> tool.getDefinition().getName() + ".describe returned null");
     }
 
     /**
@@ -313,8 +348,8 @@ public final class ToolOfferContext {
                 if (!admission.test(tool)) {
                     continue;
                 }
-                final ToolDescriptor described = tool.describe(this);
-                if (described != null && described.isOfferable() && permits(described)) {
+                final ToolDescriptor described = describe(tool);
+                if (described.isOfferable() && permits(described)) {
                     collected.addAll(described.getCodeHostedTools());
                 }
             }

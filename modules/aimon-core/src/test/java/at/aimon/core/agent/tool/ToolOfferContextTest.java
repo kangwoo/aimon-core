@@ -3,11 +3,18 @@ package at.aimon.core.agent.tool;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
+
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 
 @DisplayName("ToolOfferContext")
 class ToolOfferContextTest {
@@ -122,5 +129,68 @@ class ToolOfferContextTest {
 
         assertThat(context.get(ENGINE)).contains("javascript");
         assertThat(context.get(sameName)).isEmpty();
+    }
+
+    private static Tool nullDescribing(String name) {
+        return new AbstractTool(name, "d", Map.of("type", "object")) {
+            @Override
+            public ToolResult execute(ToolInput input, ToolContext context) {
+                return ToolResult.success("ok");
+            }
+
+            @Override
+            public ToolDescriptor describe(ToolOfferContext context) {
+                return null;
+            }
+        };
+    }
+
+    @Test
+    @DisplayName("a tool whose describe returns null fails offer(), eligible() and the code-only check alike, by name")
+    void nullDescriptorFailsEveryPath() {
+        final ToolOfferContext context = ToolOfferContext.builder()
+                .registry(registryWith(tool("Read", SideEffectLevel.READ_ONLY), nullDescribing("Broken")))
+                .programmatic(
+                        ProgrammaticToolSettings.builder().tools(List.of("Read")).codeOnly(List.of("Read")).build())
+                .build();
+        final ToolDescriptor read = ToolDescriptor.of(tool("Read", SideEffectLevel.READ_ONLY));
+
+        assertThatThrownBy(context::offer).isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("Broken.describe returned null");
+        assertThatThrownBy(() -> context.eligible(List.of("Broken"))).isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("Broken.describe returned null");
+        assertThatThrownBy(() -> context.isCodeOnly(read)).isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("Broken.describe returned null");
+    }
+
+    @Test
+    @DisplayName("the warning for a mutating programmatic-only tool is logged once, until reset")
+    void codeOnlyWarningOnce() {
+        ToolOfferContext.resetCodeOnlyWarnings();
+        final ToolOfferContext context = ToolOfferContext.builder()
+                .registry(registryWith(tool("Write", SideEffectLevel.MUTATING))).agentName("agent-warn-once")
+                .programmatic(
+                        ProgrammaticToolSettings.builder().tools(List.of("Write")).codeOnly(List.of("Write")).build())
+                .build();
+        final ToolDescriptor write = ToolDescriptor.of(tool("Write", SideEffectLevel.MUTATING));
+        final Logger logger = (Logger) LoggerFactory.getLogger(ToolOfferContext.class);
+        final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            context.isNamedCodeOnly(write);
+            context.isNamedCodeOnly(write);
+            assertThat(warnings(appender)).hasSize(1);
+            ToolOfferContext.resetCodeOnlyWarnings();
+            context.isNamedCodeOnly(write);
+            assertThat(warnings(appender)).hasSize(2);
+        } finally {
+            logger.detachAppender(appender);
+            ToolOfferContext.resetCodeOnlyWarnings();
+        }
+    }
+
+    private static List<ILoggingEvent> warnings(ListAppender<ILoggingEvent> appender) {
+        return appender.list.stream().filter(e -> e.getLevel() == Level.WARN).toList();
     }
 }

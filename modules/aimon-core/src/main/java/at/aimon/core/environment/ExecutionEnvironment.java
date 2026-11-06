@@ -37,6 +37,11 @@ public interface ExecutionEnvironment {
     /**
      * Returns the shell {@code Bash} runs commands in. It sees the same files as {@link #fileSystem()}.
      *
+     * <p>
+     * Returning the shell provisions nothing. An environment that provisions lazily does so on the first command or
+     * file operation, never here, because an offer asks for the shell on every iteration
+     * ({@code docs/design/tool/programmatic-tool-calling-shell.md} §4).
+     *
      * @return the shell (never null)
      */
     VirtualShell shell();
