@@ -50,9 +50,9 @@ import at.aimon.session.routing.fixture.TestManagerHarness;
  * <p>
  * The announcement is addressed by <em>idempotency key alone</em>, and that is the property these tests exist to pin.
  * No surviving node knows the lost {@code TurnId}: the sweeper works from an {@link IdempotencyEntry}, which records
- * the
- * reservation and its holder but not the turn the dead holder was running — that id travelled in the inbox envelope the
- * holder consumed before it died. So both the local resolve and the wire payload have to work with the key on its own.
+ * the reservation and its holder but not the turn the dead holder was running — that id travelled in the inbox envelope
+ * the holder consumed before it died. So both the local resolve and the wire payload have to work with the key on its
+ * own.
  *
  * <p>
  * The same ignorance shapes the recovery <em>event</em>: it goes onto the {@code EVENT} rail with no turn stamp, and is

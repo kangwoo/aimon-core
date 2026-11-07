@@ -21,9 +21,8 @@ import at.aimon.core.agent.session.store.StoredAgentExecutionResult;
  * <p>
  * The failure mode this guards is silent: a payload that decodes to {@link Optional#empty()} raises nothing, it merely
  * leaves the submitting node's caller waiting on the polling fallback (or, with no idempotency key, on its deadline).
- * So
- * every field the manager depends on is asserted individually rather than through an equality check on a rebuilt result
- * object, which {@link AgentExecutionResult} does not define.
+ * So every field the manager depends on is asserted individually rather than through an equality check on a rebuilt
+ * result object, which {@link AgentExecutionResult} does not define.
  */
 @DisplayName("TurnResultPayload flat-map round-trip")
 class TurnResultPayloadTest {

@@ -52,8 +52,7 @@ import at.aimon.session.routing.metrics.SessionMetrics;
  * {@link SessionStore}. The builder does the composing rather than accepting a ready-made store because a store is
  * node-scoped while its two backends are shared: building it here makes "one store per manager" structural instead of
  * something callers have to remember. Two managers over the same Redis and the same repository each get their own
- * store,
- * which is exactly what fencing needs.
+ * store, which is exactly what fencing needs.
  *
  * <p>
  * Operational tunables ({@code idleTtl}, {@code maxCachedSessions}, {@code lockLease}, {@code lockExtendInterval},
@@ -340,8 +339,7 @@ public final class SessionRouterBuilder {
      * This used to be an alias of {@link #lockExtendInterval(Duration)}, which conflated two unrelated decisions: how
      * much renewal-failure headroom the lease has, and how fresh a remote node's view of a running turn is. Tightening
      * observability silently tightened the lease budget, and lengthening the lease silently made status staler. They
-     * are
-     * now independent, and the default merely happens to be the same number.
+     * are now independent, and the default merely happens to be the same number.
      *
      * @param v
      *            the heartbeat cadence

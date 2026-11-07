@@ -93,17 +93,14 @@ public interface SessionRouter extends AutoCloseable {
      * <p>
      * Differs from {@link #interrupt(SessionId, InterruptReason)} in what happens when the named turn is no longer
      * the running one. The unaddressed form stops whatever is running now — correct for an operator stop or an
-     * eviction,
-     * wrong for a user who clicked cancel: by the time the signal crosses the bus their turn may have finished and the
-     * next one started, and the unaddressed form would kill that one instead. This form compares the id against the
-     * active turn and does nothing on a mismatch.
+     * eviction, wrong for a user who clicked cancel: by the time the signal crosses the bus their turn may have
+     * finished and the next one started, and the unaddressed form would kill that one instead. This form compares the
+     * id against the active turn and does nothing on a mismatch.
      *
      * <p>
      * The id is the one from {@link SubmitDisposition#getTurnId()}. A {@code FORWARDED} turn is not running anywhere
-     * yet,
-     * so
-     * interrupting it is a no-op here — cancelling before execution needs the inbox-level withdrawal that arrives with
-     * the turn-result rail, not this call.
+     * yet, so interrupting it is a no-op here — cancelling before execution needs the inbox-level withdrawal that
+     * arrives with the turn-result rail, not this call.
      *
      * @param sessionId
      *            the session (must not be null)
@@ -172,10 +169,8 @@ public interface SessionRouter extends AutoCloseable {
      * A session's handle is node-local and lives only on the lock-holding node, so the result is one of: the live
      * local snapshot when this node is the holder; the last value the holder pushed onto the {@code STATUS} rail when
      * another node holds it; or {@code UNKNOWN} when no node has been observed running it. See
-     * {@link ClusterSessionStatus}
-     * for the provenance and freshness contract. This is observability only — never a control gate; do not
-     * read-then-act
-     * on it (turn admission must still go through {@link #submit(SubmitRequest)}).
+     * {@link ClusterSessionStatus} for the provenance and freshness contract. This is observability only — never a
+     * control gate; do not read-then-act on it (turn admission must still go through {@link #submit(SubmitRequest)}).
      *
      * <p>
      * The default implementation returns {@link ClusterSessionStatus#unknown(SessionId)} so existing

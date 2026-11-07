@@ -122,11 +122,10 @@ final class AgentExecutionEventPayload {
      * <p>
      * Holder-loss recovery is the only producer: the sweeper works from an
      * {@link at.aimon.core.agent.session.idempotency.IdempotencyEntry}, which records the reservation and its holder
-     * but not the turn
-     * the dead holder was running — that id travelled in the inbox envelope the holder consumed before it died. Writing
-     * a
-     * fabricated or borrowed stamp would be worse than writing none, because a receiver demultiplexing per turn would
-     * route the frame to the wrong turn instead of falling back; see {@link #turnIdOf} for the receiving contract.
+     * but not the turn the dead holder was running — that id travelled in the inbox envelope the holder consumed before
+     * it died. Writing a fabricated or borrowed stamp would be worse than writing none, because a receiver
+     * demultiplexing per turn would route the frame to the wrong turn instead of falling back; see {@link #turnIdOf}
+     * for the receiving contract.
      *
      * @param event
      *            the event to flatten (must not be null)
@@ -247,8 +246,7 @@ final class AgentExecutionEventPayload {
 
     /**
      * Rebuilds an {@link AgentExecutionEvent} from a payload produced by {@link #toPayload} and possibly normalized by
-     * a
-     * JSON codec on the way across the bus. Never throws: a null, malformed, or unrecognized payload yields
+     * a JSON codec on the way across the bus. Never throws: a null, malformed, or unrecognized payload yields
      * {@link Optional#empty()} so a corrupt or forward-incompatible signal cannot break the receive path.
      *
      * @param payload
@@ -277,12 +275,10 @@ final class AgentExecutionEventPayload {
      *
      * <p>
      * Returns empty for a payload that carries no usable stamp — a frame built by {@link #toUnstampedPayload} because
-     * its
-     * producer knew no turn, a signal published by a node on an older build, or a malformed value. A receiver that
+     * its producer knew no turn, a signal published by a node on an older build, or a malformed value. A receiver that
      * demultiplexes per turn must treat an unstamped frame as "turn unknown" and fall back to session-wide
-     * delivery
-     * rather than dropping it, otherwise holder-loss recovery goes unheard and a rolling upgrade silently starves
-     * subscribers for as long as one old node is still publishing.
+     * delivery rather than dropping it, otherwise holder-loss recovery goes unheard and a rolling upgrade silently
+     * starves subscribers for as long as one old node is still publishing.
      *
      * @param payload
      *            the decoded signal payload (may be null)

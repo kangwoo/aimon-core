@@ -49,8 +49,8 @@ import at.aimon.session.routing.metrics.SessionMetrics.CacheEvictionReason;
  * <p>
  * <b>Pinning.</b> Eviction and turn execution are otherwise independent: idle-TTL and LRU eviction both close the
  * session from a sweeper thread with no knowledge of whether a turn is running on it, and closing a session mid-turn
- * corrupts that session's history. (The {@code releaseSession} path already guards against this by
- * interrupting and waiting before it evicts; the sweeper paths had no such guard.) A caller that is about to run work
+ * corrupts that session's history. (The {@code releaseSession} path already guards against this by interrupting and
+ * waiting before it evicts; the sweeper paths had no such guard.) A caller that is about to run work
  * on a session therefore takes a pin via {@link #acquire}, and releases it with {@link SessionEntry#unpin()} when the
  * work is done. A pin does two things, and the difference between them is the difference between the two caps:
  *

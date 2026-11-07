@@ -18,13 +18,10 @@ import at.aimon.core.agent.session.idempotency.IdempotencyStore;
  * <p>
  * Before Stage 3b the renewal schedule and the reservation had the same lifetime, so the key could simply be a
  * constructor argument of the renewal tick. Now the schedule belongs to the <em>lease</em>, which outlives any one
- * turn:
- * a schedule started for turn 1 is still running when turn 5 executes. Keeping the key in the tick would mean every
- * turn
- * after the first refreshes a reservation that is already done while its own goes untouched — and the holder-loss
- * sweeper
- * then resets a live turn's key after the secondary TTL, letting the same request execute twice. So the tick reads
- * whatever is bound at the moment it fires.
+ * turn: a schedule started for turn 1 is still running when turn 5 executes. Keeping the key in the tick would mean
+ * every turn after the first refreshes a reservation that is already done while its own goes untouched — and the
+ * holder-loss sweeper then resets a live turn's key after the secondary TTL, letting the same request execute twice. So
+ * the tick reads whatever is bound at the moment it fires.
  *
  * <p>
  * <b>Why more than one.</b> A submitted turn opens a drain pass that also runs whatever the inbox was holding, and both

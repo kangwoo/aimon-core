@@ -19,8 +19,7 @@ import at.aimon.core.agent.session.store.StoredAgentExecutionResult;
 /**
  * Flattens the terminal outcome of one turn to/from a JSON-primitive {@code Map<String, Object>} so the holder node can
  * announce it on the {@link at.aimon.core.agent.session.signal.SessionSignal.SignalKind#TURN_RESULT} rail and the node
- * that
- * accepted the submission can complete the future it handed its caller (routing.md §7.1 F6/F7).
+ * that accepted the submission can complete the future it handed its caller (routing.md §7.1 F6/F7).
  *
  * <p>
  * <b>Why flat primitives.</b> Same reason as {@link AgentExecutionEventPayload} and {@code StatusSnapshotPayload}: the
@@ -31,24 +30,22 @@ import at.aimon.core.agent.session.store.StoredAgentExecutionResult;
  * <p>
  * <b>Two addresses, deliberately.</b> The payload carries the {@link TurnId} and, when the submission had one, its
  * idempotency key. The turn id resolves the normal case. The key exists for the submission that never got a turn of its
- * own: a client retry that arrived while the first attempt was still in flight is collapsed to
- * {@code alreadyInFlight}, so it waits on a turn whose id it was never told. Without the key on this rail that caller
- * would only ever be resolved by the polling fallback.
+ * own: a client retry that arrived while the first attempt was still in flight is collapsed to {@code alreadyInFlight},
+ * so it waits on a turn whose id it was never told. Without the key on this rail that caller would only ever be
+ * resolved by the polling fallback.
  *
  * <p>
  * <b>Either address may be the only one.</b> A failure can also be announced by a node that knows the key but not the
  * turn — holder-loss recovery is the case that exists today. The sweeper works from an
  * {@link at.aimon.core.agent.session.idempotency.IdempotencyEntry}, which records the reservation and its holder but
- * not the turn the
- * dead holder was running: that id lived in the inbox envelope the holder consumed before it died. So
+ * not the turn the dead holder was running: that id lived in the inbox envelope the holder consumed before it died. So
  * {@link #toFailurePayload} accepts a null turn id and this decoder tolerates a payload without one, requiring only
  * that <em>some</em> address is present — a payload with neither reaches nobody, and publishing it would only put
  * undecodable noise on the rail.
  *
  * <p>
  * <b>Artifacts are dropped</b> — see {@link StoredAgentExecutionResult}. A forwarded turn's result reports no
- * artifacts;
- * that is the contract, not a bug to work around (routing.md §11.2).
+ * artifacts; that is the contract, not a bug to work around (routing.md §11.2).
  *
  * <p>
  * <b>Failure codes are forward-tolerant.</b> An unrecognized {@link Failure.Code} name (a newer node's code an older
@@ -188,9 +185,8 @@ final class TurnResultPayload {
     /**
      * A failure's detail message, falling back to the raw outcome name when the payload carries none. Our own encoder
      * always writes one, so this only matters for a newer node's outcome whose payload is shaped differently — and
-     * there
-     * the same reasoning as {@link Failure.Code#parse} applies: failing the waiting caller with a terse reason beats
-     * dropping the signal and leaving it to time out on the polling fallback.
+     * there the same reasoning as {@link Failure.Code#parse} applies: failing the waiting caller with a terse reason
+     * beats dropping the signal and leaving it to time out on the polling fallback.
      */
     private static String failureMessage(Map<String, Object> payload, String outcome) {
         final Object raw = payload.get(KEY_MESSAGE);
@@ -271,9 +267,8 @@ final class TurnResultPayload {
              * it never ran" from {@link #FAILED}'s "this input was attempted and threw". Reserved for messages the
              * departing node had already collected: those are out of the at-most-once inbox, so no successor will ever
              * run them and telling their submitters is the only way they find out. A message still <em>in</em> the
-             * inbox
-             * is handed over instead of failed — announcing this for one would invite a retry alongside the turn a peer
-             * then runs.
+             * inbox is handed over instead of failed — announcing this for one would invite a retry alongside the turn
+             * a peer then runs.
              */
             NOT_HOLDER,
             /**
@@ -290,8 +285,7 @@ final class TurnResultPayload {
              * {@code FAILED} rather than throwing. That lands on the wrong side of the distinction above, and it is
              * still the right trade: a node that reads {@code FAILED} only loses the "not run" proof (its caller gets a
              * plain failure instead of {@code TurnNotRunException}), the caller is woken either way, and the
-             * alternative
-             * for that node is no answer at all until the forward deadline.
+             * alternative for that node is no answer at all until the forward deadline.
              */
             UNREADABLE,
             /**

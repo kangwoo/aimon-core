@@ -112,8 +112,7 @@ public final class TestLiveSession implements LiveSession {
      *
      * <p>
      * The id is installed <em>before</em> the turn-started latch trips inside the delegate, so a test that waits on
-     * that
-     * latch and immediately addresses an interrupt cannot lose the race.
+     * that latch and immediately addresses an interrupt cannot lose the race.
      */
     @Override
     public CompletionStage<AgentExecutionResult> submitAsync(TurnId turnId, String input, SubmitOptions submitOptions,
@@ -247,8 +246,7 @@ public final class TestLiveSession implements LiveSession {
      * Default upper bound for the {@code await*()} polling helpers. These are latch/poll waits that return as soon as
      * the condition holds, so this budget is only ever spent when something is genuinely wrong; it is set generously
      * (well above the ~ms the happy path needs) so a loaded CI runner cannot spuriously time out (issue #18). Prefer
-     * the
-     * no-arg overloads over passing a tight literal.
+     * the no-arg overloads over passing a tight literal.
      */
     public static final long DEFAULT_AWAIT_MS = 5_000L;
 

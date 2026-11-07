@@ -21,24 +21,18 @@ import at.aimon.session.routing.fixture.TestManagerHarness;
  *
  * <p>
  * Until this stage the lease was won in {@code submit} and returned in {@code runTurnLoop}'s {@code finally}, so
- * between
- * turns nobody held the session. Every existing test around holdership passes because its test session
+ * between turns nobody held the session. Every existing test around holdership passes because its test session
  * <em>completes</em> its turn — the tree had no test at all for the state that matters most now: <b>a holder sitting
- * idle
- * with the lease still in hand</b>. That state is what makes a session worth having (the next turn skips the election
- * entirely) and it is also the state that leaks a session to one node forever if the return path is wrong. Hence
- * the
- * two halves below: one asserting the lease survives a turn, and one per way a session can go away asserting that it
- * does
- * not survive the session.
+ * idle with the lease still in hand</b>. That state is what makes a session worth having (the next turn skips the
+ * election entirely) and it is also the state that leaks a session to one node forever if the return path is wrong.
+ * Hence the two halves below: one asserting the lease survives a turn, and one per way a session can go away asserting
+ * that it does not survive the session.
  *
  * <p>
  * The exclusion the turn-scoped lease used to provide as a side effect — a second submission for the same session
  * finding it "held elsewhere" even when the holder was this very node — is now a node-local turn gate. The last test
- * pins
- * that: it would deadlock (message stuck in the inbox) or corrupt (two concurrent turns on one session) if the gate
- * were
- * missing, and {@code TestLiveSession} fails loudly on the latter.
+ * pins that: it would deadlock (message stuck in the inbox) or corrupt (two concurrent turns on one session) if the
+ * gate were missing, and {@code TestLiveSession} fails loudly on the latter.
  */
 @DisplayName("SessionRouter session-scoped lease")
 class SessionRouterSessionLeaseTest {

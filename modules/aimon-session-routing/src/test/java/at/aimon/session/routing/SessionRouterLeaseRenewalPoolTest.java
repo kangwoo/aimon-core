@@ -21,8 +21,7 @@ import at.aimon.session.routing.fixture.TestManagerHarness;
  *
  * <p>
  * {@link at.aimon.session.routing.internal.LeaseRenewer} schedules one fixed-rate task per held lease, all of them on
- * the
- * manager's lease scheduler. Renewal is a call into the lease backend, so a session whose backend stops answering —
+ * the manager's lease scheduler. Renewal is a call into the lease backend, so a session whose backend stops answering —
  * a stalled connection, a lock row another transaction is sitting on — holds the thread that made the call for as long
  * as it hangs. On a single-threaded scheduler that thread is the only one there is, so every other session's renewal
  * tick simply never runs, and each of them loses a lease it was still entitled to. The node then sheds sessions that

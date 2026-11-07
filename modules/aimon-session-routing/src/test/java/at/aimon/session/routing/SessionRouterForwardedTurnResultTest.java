@@ -44,22 +44,19 @@ import at.aimon.session.routing.fixture.TestManagerHarness;
 
 /**
  * The forwarded-turn return path (routing.md §7.1 F0/F3/F6/F7): a submission that loses the session lock is answered
- * by
- * whichever node runs it, and the answer travels back over the {@code TURN_RESULT} rail.
+ * by whichever node runs it, and the answer travels back over the {@code TURN_RESULT} rail.
  *
  * <p>
  * Before this rail existed, {@code FORWARDED} was a dead end — the submitting node handed its caller no future at all,
  * so a client whose request happened to land on a non-holder node simply never learned the outcome. Every test here
  * therefore asserts on {@link SubmitDisposition#getFuture()} of a forwarded disposition, which is the whole point of
- * the
- * stage. What varies is <em>how</em> the outcome gets home: the rail, the polling fallback when the rail loses the
+ * the stage. What varies is <em>how</em> the outcome gets home: the rail, the polling fallback when the rail loses the
  * announcement, or one of the paths that must fail the future because no node will ever run the turn.
  *
  * <p>
  * Two managers over one set of shared SPIs stand in for two cluster nodes, as in
  * {@code SessionRouterSignalSubscriptionTest}: everything a real deployment keeps in a shared backend (lock,
- * rail,
- * inbox, history, idempotency) is shared; only the node identity and the node-local caches differ.
+ * rail, inbox, history, idempotency) is shared; only the node identity and the node-local caches differ.
  */
 @DisplayName("SessionRouter forwarded-turn result rail")
 class SessionRouterForwardedTurnResultTest {
@@ -573,8 +570,7 @@ class SessionRouterForwardedTurnResultTest {
     /**
      * A rail that silently swallows {@code TURN_RESULT} publishes — the in-process stand-in for the announcement being
      * lost in transit or rejected by a subscriber running an older build. Subscriptions pass straight through, so a
-     * node
-     * wired to this bus still hears everything its peers publish.
+     * node wired to this bus still hears everything its peers publish.
      */
     private static final class TurnResultDroppingBus implements SessionSignalBus {
 

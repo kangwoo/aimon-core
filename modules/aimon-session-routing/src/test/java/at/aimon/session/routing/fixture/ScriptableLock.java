@@ -17,15 +17,12 @@ import at.aimon.core.agent.session.store.SessionLeaseStore;
 
 /**
  * Test-only {@link SessionLeaseStore} that delegates to a real backend but lets the test count {@code extend}
- * calls
- * and flip them to start failing on demand.
+ * calls and flip them to start failing on demand.
  *
  * <p>
  * It wraps the <em>backend</em> rather than the {@code SessionStore} above it deliberately: renewal failure has to
- * be
- * injected at the shared authority, which is where a real takeover would be observed. Faking it one layer up would let
- * the
- * store keep believing it holds a lease it lost, which is the opposite of what these tests are checking.
+ * be injected at the shared authority, which is where a real takeover would be observed. Faking it one layer up would
+ * let the store keep believing it holds a lease it lost, which is the opposite of what these tests are checking.
  */
 public final class ScriptableLock implements SessionLeaseStore {
 

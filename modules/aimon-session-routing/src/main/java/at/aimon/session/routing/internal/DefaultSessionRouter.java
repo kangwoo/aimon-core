@@ -95,8 +95,7 @@ import at.aimon.session.routing.metrics.SessionMetrics;
  * <p>
  * The manager is intentionally stateless beyond the per-session collaborators: the session store, inbox,
  * signal bus, and idempotency store are accessed exclusively through their SPIs. Local-only state — session cache,
- * in-process event
- * publisher, signal subscriptions, and per-session idle-sweep scheduler — is owned and closed at
+ * in-process event publisher, signal subscriptions, and per-session idle-sweep scheduler — is owned and closed at
  * {@link #close()}.
  *
  * <p>
@@ -187,8 +186,7 @@ public final class DefaultSessionRouter implements SessionRouter {
 
     /**
      * General-purpose pool: idle sweeps, the holder-loss sweep, {@code STATUS} heartbeats and every forwarded-turn
-     * poll.
-     * Its load grows with the number of live sessions, which is exactly why lease renewal does not run here.
+     * poll. Its load grows with the number of live sessions, which is exactly why lease renewal does not run here.
      */
     private final ScheduledExecutorService scheduler;
 
@@ -244,8 +242,7 @@ public final class DefaultSessionRouter implements SessionRouter {
      * <em>with</em> an idempotency key: {@link #checkIdempotency} returns {@code IdempotencyDecision.empty()} for a
      * keyless submission, which reserves nothing and therefore leaves nothing for the sweeper to notice going stale. A
      * keyless turn whose holder is lost is recovered by no mechanism at all — its caller waits out the forward
-     * deadline.
-     * Deployments that want holder-loss recovery must submit keys.
+     * deadline. Deployments that want holder-loss recovery must submit keys.
      */
     private final HolderLossSweeper holderLossSweeper;
 
@@ -264,10 +261,8 @@ public final class DefaultSessionRouter implements SessionRouter {
      * Distinct from {@link #acceptingSubmits}, and the distinction is what keeps a graceful close graceful.
      * {@code acceptingSubmits=false} only means "take no <em>new</em> work" — the pass already running is counted in
      * {@link #inFlightTurns}, so {@code closeGracefully} is still waiting for it and its queued messages must be run,
-     * not
-     * failed. This flag means the waiting is finished, and so is the only point at which a queued message that was
-     * already
-     * taken out of the at-most-once inbox has to be answered with {@code NOT_HOLDER} instead.
+     * not failed. This flag means the waiting is finished, and so is the only point at which a queued message that was
+     * already taken out of the at-most-once inbox has to be answered with {@code NOT_HOLDER} instead.
      */
     private final AtomicBoolean shutdownForced = new AtomicBoolean();
 
@@ -302,15 +297,14 @@ public final class DefaultSessionRouter implements SessionRouter {
      *
      * <p>
      * Only the node that was the holder when a doorbell rang may relay it. An unconditional relay would let two
-     * draining
-     * nodes bounce the same announcement off each other for as long as both stay subscribed; keyed on having been the
-     * holder, each doorbell yields at most one relay, and answering it with a collect discharges the debt instead.
+     * draining nodes bounce the same announcement off each other for as long as both stay subscribed; keyed on having
+     * been the holder, each doorbell yields at most one relay, and answering it with a collect discharges the debt
+     * instead.
      *
      * <p>
      * Recorded when the doorbell rings rather than when the hand-off runs, because the lease can go back in between —
-     * an
-     * idle-TTL eviction, a peer's yield, a pass that simply ended — and after that "I owed this one" and "never mine"
-     * are indistinguishable.
+     * an idle-TTL eviction, a peer's yield, a pass that simply ended — and after that "I owed this one" and "never
+     * mine" are indistinguishable.
      */
     private final Set<SessionId> doorbellRelayOwed = ConcurrentHashMap.newKeySet();
 
@@ -341,8 +335,7 @@ public final class DefaultSessionRouter implements SessionRouter {
      *
      * <p>
      * The gate does more than serialize turns: it is also what makes "reuse the held lease" safe. Deciding to reuse is
-     * a
-     * check-then-act against {@link #heldLeases}, and the only actor that could invalidate the check mid-flight is a
+     * a check-then-act against {@link #heldLeases}, and the only actor that could invalidate the check mid-flight is a
      * session close returning the lease — which takes this same gate, and declines when a turn holds it (see
      * {@link #returnLeaseWhenIdle}). Membership rather than a lock object so it stays bounded, and so a gate is never
      * left behind for a session nobody is talking to.
@@ -610,13 +603,11 @@ public final class DefaultSessionRouter implements SessionRouter {
 
     /**
      * Decides whether this node runs the submitted turn, and under which lease. Called with the session's turn
-     * gate
-     * held, so the answer cannot go stale between the decision and the turn.
+     * gate held, so the answer cannot go stale between the decision and the turn.
      *
      * @return the lease to run under — the session's existing one when this node is already the holder, a freshly
      *         claimed one otherwise — or {@code null} when the session belongs to a peer and the submission must
-     *         be
-     *         forwarded
+     *         be forwarded
      */
     private HeldLease holdOrClaim(SessionId convId, String requestedAgent, Principal owner, IdempotencyDecision idem,
             long acquireStart) {
@@ -672,8 +663,7 @@ public final class DefaultSessionRouter implements SessionRouter {
 
     /**
      * The whole "this node is not going to run it" path: hand the reservation to whoever does, queue the message,
-     * report
-     * the outcome.
+     * report the outcome.
      */
     private SubmitDisposition forwardToInbox(SubmitRequest request, TurnId turnId, IdempotencyDecision idem) {
         if (idem.acquiredKey != null) {
@@ -699,20 +689,16 @@ public final class DefaultSessionRouter implements SessionRouter {
      *
      * <p>
      * Advisory, not authoritative — {@code SessionStore#claim} is what actually settles the binding, and it does
-     * so
-     * while holding the lease. This read exists for the submissions that never reach {@code claim}'s verdict: one that
-     * loses the election is forwarded to the inbox, and without a pre-check a conflicting {@code agentRef} would sit
-     * there
-     * until some holder drained it and refused it, long after this call returned a perfectly healthy-looking
-     * disposition.
-     * Failing here turns that into an immediate {@link ConflictingAgentException} for the caller.
+     * so while holding the lease. This read exists for the submissions that never reach {@code claim}'s verdict: one
+     * that loses the election is forwarded to the inbox, and without a pre-check a conflicting {@code agentRef} would
+     * sit there until some holder drained it and refused it, long after this call returned a perfectly healthy-looking
+     * disposition. Failing here turns that into an immediate {@link ConflictingAgentException} for the caller.
      *
      * <p>
      * Unlike the cache this replaces, the read is unconditional. The cache made the common case cheaper but had to be
      * invalidated from four places, and a stale positive entry outliving a peer's {@code deleteSession} was enough
-     * to
-     * reject every later submit on this node with a conflict that no longer existed. One record read per submit is not
-     * worth that.
+     * to reject every later submit on this node with a conflict that no longer existed. One record read per submit is
+     * not worth that.
      *
      * @param sessionId
      *            the session being submitted to
@@ -870,8 +856,7 @@ public final class DefaultSessionRouter implements SessionRouter {
      * Claims the right to run work on {@code sessionId} on this node.
      *
      * @return {@code false} when a turn, a drain pass or a delete is already running here, in which case the caller
-     *         must
-     *         touch neither the session nor the lease, and must not call {@link #endTurn}
+     *         must touch neither the session nor the lease, and must not call {@link #endTurn}
      */
     private boolean tryBeginTurn(SessionId sessionId) {
         return activeTurns.add(sessionId);
@@ -972,8 +957,7 @@ public final class DefaultSessionRouter implements SessionRouter {
      * <p>
      * The renewal is attached afterwards rather than passed in because its failure callback has to name the lease it is
      * failing for — {@link #onLeaseLost} must not interrupt a turn that is by then running under the <em>next</em>
-     * lease
-     * for the same session.
+     * lease for the same session.
      */
     private HeldLease installLease(SessionId sessionId, SessionLease lease) {
         final HeldLease held = new HeldLease(lease, new IdempotencyTouchSlot(idempotencyStore));
@@ -1055,16 +1039,14 @@ public final class DefaultSessionRouter implements SessionRouter {
 
     /**
      * Gives a session up because a peer asked for it: drop the live session and, once no turn is using it, hand the
-     * lease
-     * back.
+     * lease back.
      *
      * <p>
      * Before Stage 3b a peer only had to <em>wait</em>. It published {@code INTERRUPT(SESSION_RELEASED)}, the holder's
      * turn stopped, and the turn's own {@code finally} released the lease; the peer's next retry took it. Now that the
      * lease belongs to the session, a stopped turn gives up nothing — a peer's {@code deleteSession} would
-     * broadcast
-     * its yield request to a holder that complied immediately and still spend its entire budget waiting, then fail.
-     * Hence the request has its own kind, {@link SessionSignal.SignalKind#YIELD}: "stop the turn" and "give the
+     * broadcast its yield request to a holder that complied immediately and still spend its entire budget waiting, then
+     * fail. Hence the request has its own kind, {@link SessionSignal.SignalKind#YIELD}: "stop the turn" and "give the
      * session up" are different asks, and only the second one ends with this method.
      *
      * <p>
@@ -1074,8 +1056,7 @@ public final class DefaultSessionRouter implements SessionRouter {
      *
      * <p>
      * The explicit return afterwards covers the case eviction cannot: a lease held with no cached session, where
-     * nothing
-     * closes and so nothing would fire.
+     * nothing closes and so nothing would fire.
      */
     private void yieldSession(SessionId sessionId) {
         sessionCache.evict(sessionId);
@@ -1147,8 +1128,7 @@ public final class DefaultSessionRouter implements SessionRouter {
 
     /**
      * Runs every turn this node is the holder for: the submitted one plus whatever the inbox hands over while the lease
-     * is
-     * held.
+     * is held.
      *
      * @param request
      *            the submission that won the lease
@@ -1157,9 +1137,8 @@ public final class DefaultSessionRouter implements SessionRouter {
      *            caller was told about is the turn that actually runs. Queued messages carry their own id.
      * @param held
      *            the session lease this turn runs under — either won for it or inherited from the session's
-     *            previous
-     *            turn. <b>Not</b> released here: it lives as long as the session does (routing.md §3.2), and the one
-     *            case this method has to put it back is the one where no session ever took it over.
+     *            previous turn. <b>Not</b> released here: it lives as long as the session does (routing.md §3.2), and
+     *            the one case this method has to put it back is the one where no session ever took it over.
      * @param idem
      *            the idempotency decision taken at submit time
      * @param future
@@ -1293,8 +1272,7 @@ public final class DefaultSessionRouter implements SessionRouter {
 
     /**
      * Runs every message in {@code pendingQueue} as its own serialized turn, re-collecting from the inbox after each
-     * one
-     * until nothing is left.
+     * one until nothing is left.
      *
      * <p>
      * <b>{@code submitAsync}, never {@code offerAsync}.</b> Injecting a queued message into the running turn would be
@@ -1449,10 +1427,8 @@ public final class DefaultSessionRouter implements SessionRouter {
      * <p>
      * The gap this closes is narrow and permanent without it. A submission that loses the election is picked up by the
      * holder's post-turn re-collect — unless it lands after that re-collect and before the holder releases the lease,
-     * in
-     * which case the holder is gone and no other node has any reason to look. Nobody would collect the message until
-     * the
-     * session's next submission, which may never come.
+     * in which case the holder is gone and no other node has any reason to look. Nobody would collect the message until
+     * the session's next submission, which may never come.
      *
      * <p>
      * This is a genuine holder for the duration: the lease is renewed and the session is pinned exactly as for a
@@ -1648,8 +1624,7 @@ public final class DefaultSessionRouter implements SessionRouter {
      * <p>
      * Rung by the {@code MESSAGE_ENQUEUED} receiver and directly by {@link #deliverToInbox} — {@link #onSignal} drops
      * self-origin signals, so a node that publishes the doorbell never hears it, which on a single-node deployment
-     * means
-     * nobody does.
+     * means nobody does.
      */
     private void ringDoorbell(SessionId sessionId) {
         // Recorded before the drain check, not after: a doorbell that arrives while a turn is still finishing has to
@@ -1694,13 +1669,9 @@ public final class DefaultSessionRouter implements SessionRouter {
 
     /**
      * Re-ring if a message arrived during the window between a pass's last collect and its lease release. Every node
-     * that
-     * heard the doorbell in that window found the session still held and gave up, so without this the message
-     * waits
-     * for
-     * the session's next submission. Converges: the pass this schedules clears the doorbell before its own
-     * collect,
-     * so a spurious re-ring costs one empty pass and stops.
+     * that heard the doorbell in that window found the session still held and gave up, so without this the message
+     * waits for the session's next submission. Converges: the pass this schedules clears the doorbell before its own
+     * collect, so a spurious re-ring costs one empty pass and stops.
      */
     private void rerunDoorbellIfRung(SessionId sessionId) {
         if (doorbellPending.contains(sessionId)) {
@@ -1716,8 +1687,7 @@ public final class DefaultSessionRouter implements SessionRouter {
      * nobody at all — a worse outcome than the lease TTL the design worried about. The drain pass is skipped here, and
      * every peer that heard the same {@code MESSAGE_ENQUEUED} already found the session held by <em>this</em> node
      * and gave up. Nothing re-rings, so the message waits for the session's next submission — which may never come
-     * —
-     * while the origin's forward waits out the whole {@code idempotencyForwardTtl}.
+     * — while the origin's forward waits out the whole {@code idempotencyForwardTtl}.
      *
      * <p>
      * <b>Why a hand-off rather than the {@code NOT_HOLDER} answer the original routing design asked for (routing.md
@@ -1732,8 +1702,7 @@ public final class DefaultSessionRouter implements SessionRouter {
      * Terminates, and relays once. {@link #yieldSession} ends in {@link #returnLeaseWhenIdle}, whose
      * {@link #rerunDoorbellIfRung} re-enters this method — one level down, with the lease already gone, so that pass
      * publishes and clears {@link #doorbellRelayOwed}; the outer call then finds the debt discharged and returns. A
-     * node
-     * that owes nothing returns at the first check, which is what keeps two draining nodes from volleying the same
+     * node that owes nothing returns at the first check, which is what keeps two draining nodes from volleying the same
      * doorbell.
      */
     private void handOverForDrain(SessionId sessionId) {
@@ -1947,8 +1916,7 @@ public final class DefaultSessionRouter implements SessionRouter {
      * <p>
      * Either address may be null but not both — see {@link TurnResultPayload}. The local {@code resolveForward} is not
      * an optimization: {@link #onSignal} drops signals this node published, so on a single-node deployment, and
-     * whenever
-     * the announcer is also the node whose caller is waiting, the broadcast alone reaches nobody.
+     * whenever the announcer is also the node whose caller is waiting, the broadcast alone reaches nobody.
      *
      * @param turnId
      *            the failed turn, or null when the announcer cannot name it (holder-loss recovery)
@@ -2013,8 +1981,7 @@ public final class DefaultSessionRouter implements SessionRouter {
 
     /**
      * Answer the callers waiting on a turn whose holder was declared lost — the announcing half of holder-loss
-     * recovery,
-     * called by {@link HolderLossSweeper} on the node that won the reservation reset.
+     * recovery, called by {@link HolderLossSweeper} on the node that won the reservation reset.
      *
      * <p>
      * It lives here rather than in the sweeper because the rail and the forward registry do, and it is a turn-scoped
@@ -2042,9 +2009,8 @@ public final class DefaultSessionRouter implements SessionRouter {
 
     /**
      * Deliver a frame the {@link HolderLossSweeper} produced to the session's subscribers on <em>every</em> node,
-     * not
-     * just the one that happened to run the sweep — the sink half of holder-loss recovery, next to the announcing half
-     * above.
+     * not just the one that happened to run the sweep — the sink half of holder-loss recovery, next to the announcing
+     * half above.
      *
      * <p>
      * A caller waiting on the lost turn is failed by the {@code TURN_RESULT} announcement, but a subscriber merely
@@ -2058,8 +2024,7 @@ public final class DefaultSessionRouter implements SessionRouter {
      *
      * <p>
      * The relayed frame carries <b>no turn stamp</b> — {@link AgentExecutionEventPayload#toUnstampedPayload} explains
-     * why
-     * the sweeper cannot supply one. A receiver reads that as "turn unknown" and delivers session-wide, so a
+     * why the sweeper cannot supply one. A receiver reads that as "turn unknown" and delivers session-wide, so a
      * subscriber on a successor node can see a {@code HOLDER_LOST} frame for a turn other than the one it is watching.
      * That is the accepted cost of the news arriving at all, and a much smaller one than the stream-ending
      * {@code EVICT}
@@ -2108,8 +2073,7 @@ public final class DefaultSessionRouter implements SessionRouter {
      * Refuse a queued message that names a different agent than the session is bound to, and tell the node that
      * queued it. Before the {@code TURN_RESULT} rail this only emitted a local {@code RejectedAt} — an event on the
      * holder, where the submitter is not listening — so the submitting caller waited forever for a turn that had
-     * already
-     * been declined.
+     * already been declined.
      */
     private void rejectConflictingMessage(SessionId convId, InboundMessage message, String boundAgent, TurnId turnId,
             String idempotencyKey) {
@@ -2161,9 +2125,8 @@ public final class DefaultSessionRouter implements SessionRouter {
      *
      * <p>
      * The turn id is stamped into the envelope rather than minted by the holder: the caller was already told this id,
-     * so
-     * an interrupt or event subscription naming it has to match the turn the holder eventually runs — even though that
-     * turn runs on a different node, minutes later.
+     * so an interrupt or event subscription naming it has to match the turn the holder eventually runs — even though
+     * that turn runs on a different node, minutes later.
      *
      * @param request
      *            the submission to queue
@@ -2209,9 +2172,8 @@ public final class DefaultSessionRouter implements SessionRouter {
      *
      * <p>
      * Keyed by turn id, and additionally by idempotency key when there is one. A submission collapsed onto an attempt
-     * in
-     * flight <em>reuses</em> an entry already outstanding here for its key: the same key means the same input hash and
-     * so the same answer, and two entries would leave whichever one lost the index unresolvable.
+     * in flight <em>reuses</em> an entry already outstanding here for its key: the same key means the same input hash
+     * and so the same answer, and two entries would leave whichever one lost the index unresolvable.
      *
      * <p>
      * A submission that queues a message of its own never adopts one. It reserved the key afresh, so whatever was
@@ -2229,8 +2191,7 @@ public final class DefaultSessionRouter implements SessionRouter {
      *            {@code TURN_RESULT} rail or the deadline, because there is nothing durable to poll
      * @param ownsMessage
      *            whether the submission queues a message of its own under {@code turnId}, rather than collapsing onto
-     *            an
-     *            attempt in flight
+     *            an attempt in flight
      * @return the entry to wait on (never null)
      */
     private PendingForward registerForward(SessionId sessionId, TurnId turnId, String idempotencyKey,
@@ -2263,10 +2224,8 @@ public final class DefaultSessionRouter implements SessionRouter {
      *
      * <p>
      * The rail is a fire-and-forget broadcast with no replay, and a peer running an older build rejects the whole
-     * signal
-     * because it decodes the kind with {@code SignalKind.valueOf}. Either way the announcement is simply never heard,
-     * so
-     * a forward that has an idempotency key re-reads the store instead of trusting the broadcast:
+     * signal because it decodes the kind with {@code SignalKind.valueOf}. Either way the announcement is simply never
+     * heard, so a forward that has an idempotency key re-reads the store instead of trusting the broadcast:
      *
      * <ul>
      * <li>{@code DONE} — the turn ran somewhere; complete from the cached result.
@@ -2471,9 +2430,8 @@ public final class DefaultSessionRouter implements SessionRouter {
      *
      * <p>
      * It collects rather than calling {@link SessionInbox#purge}: {@code collect} removes atomically and returns what
-     * it
-     * removed, which is exactly the proof a blind delete throws away. A message a holder collects meanwhile is not in
-     * the result — it may run — and is left to the ordinary failure. The loop is bounded, in batches and in answers
+     * it removed, which is exactly the proof a blind delete throws away. A message a holder collects meanwhile is not
+     * in the result — it may run — and is left to the ordinary failure. The loop is bounded, in batches and in answers
      * ({@link #MAX_PURGE_ANSWERS}); whatever it leaves behind is purged blind and failed without the proof.
      *
      * @param sessionId
@@ -2653,8 +2611,7 @@ public final class DefaultSessionRouter implements SessionRouter {
      * {@link #deleteSession(SessionId)} and {@link #closeGracefully(Duration)} — deliberately <em>not</em>
      * when a session is idle-evicted. A node that drops the rail while still holding a cached {@code agentRef} binding
      * would never see the {@code EVICT} that invalidates it, which is exactly the stale-binding defect the
-     * receiver-side
-     * {@code EVICT} handler exists to prevent (the binding cache is positive-only and has no TTL).
+     * receiver-side {@code EVICT} handler exists to prevent (the binding cache is positive-only and has no TTL).
      *
      * @param sessionId
      *            the session whose rail this node must hear (must not be null)
@@ -2688,9 +2645,8 @@ public final class DefaultSessionRouter implements SessionRouter {
      * <p>
      * Resolution order: if this node has the session cached it returns the live local {@code status()}
      * ({@code LOCAL_HOLDER}); otherwise it returns the last snapshot the holder broadcast on the {@code STATUS} rail
-     * and
-     * this node folded into its {@link StatusProjection} ({@code REMOTE_PROJECTION}); otherwise {@code UNKNOWN}. The
-     * projection is only populated for sessions this node is subscribed to — which happens when a client calls
+     * and this node folded into its {@link StatusProjection} ({@code REMOTE_PROJECTION}); otherwise {@code UNKNOWN}.
+     * The projection is only populated for sessions this node is subscribed to — which happens when a client calls
      * {@link #events(SessionId)} here <em>or</em> when this node runs a turn — and only when holder-side
      * {@code STATUS} broadcast is enabled via {@link #setStatusBroadcastEnabled(boolean)}. A node that has neither
      * observed nor served the session honestly reports {@code UNKNOWN}.
@@ -3346,8 +3302,8 @@ public final class DefaultSessionRouter implements SessionRouter {
 
     /**
      * Turn-addressed variant. The session itself decides whether {@code turnId} names the turn it is running, so a
-     * stale
-     * request — the turn settled while the signal was in flight — lands as a no-op instead of cancelling its successor.
+     * stale request — the turn settled while the signal was in flight — lands as a no-op instead of cancelling its
+     * successor.
      */
     private static void safeInterrupt(LiveSession session, TurnId turnId, InterruptReason reason) {
         try {
@@ -3609,8 +3565,7 @@ public final class DefaultSessionRouter implements SessionRouter {
      * <p>
      * {@code reserverId} is non-null exactly when {@code acquiredKey} is, and travels with the decision so every later
      * {@code compareAndReset} / {@code touch} of that key names the attempt that reserved it. Before Stage 3b those
-     * call
-     * sites read the id back off the session lease, which only worked while one string served as both identities.
+     * call sites read the id back off the session lease, which only worked while one string served as both identities.
      */
     private static final class IdempotencyDecision {
         final String acquiredKey;

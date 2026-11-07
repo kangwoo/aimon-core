@@ -43,10 +43,10 @@ import at.aimon.session.routing.fixture.TestManagerHarness;
  *
  * <p>
  * The backends now report such an entry instead of throwing the batch away
- * (<a href="../../../../../../../docs/design/session/inbox.md">inbox.md</a>),
- * but a report nobody acts on is the same silence in a different place. The half that matters to a caller is here:
- * the address that survived the failure is turned back into a turn failure on the rail this router already uses for
- * a message it refused, so the submitter learns in one poll rather than at the five-minute forward deadline.
+ * (<a href="../../../../../../../docs/design/session/inbox.md">inbox.md</a>), but a report nobody acts on is the same
+ * silence in a different place. The half that matters to a caller is here: the address that survived the failure is
+ * turned back into a turn failure on the rail this router already uses for a message it refused, so the submitter
+ * learns in one poll rather than at the five-minute forward deadline.
  *
  * <p>
  * <b>The batch that carries nothing readable is the point.</b> One queued message that cannot be decoded produces

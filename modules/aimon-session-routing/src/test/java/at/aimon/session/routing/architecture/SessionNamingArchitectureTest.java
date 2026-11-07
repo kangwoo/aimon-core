@@ -30,14 +30,12 @@ import com.tngtech.archunit.lang.ArchRule;
  * <p>
  * Two deliberate non-goals. This does not forbid {@code Session} as a name *token* — {@code SessionRecord},
  * {@code SessionTotals} and {@code LiveSessionStatus} are all correct, and a substring rule would ban the vocabulary
- * the
- * restructure just adopted. And it does not constrain packages: {@code at.aimon.core.agent.session} is exactly where
- * these types belong.
+ * the restructure just adopted. And it does not constrain packages: {@code at.aimon.core.agent.session} is exactly
+ * where these types belong.
  *
  * <p>
  * Reach: the importer sees {@code aimon-core} plus {@code aimon-session-routing}, the widest classpath available from
- * any
- * module that can host the rule. Tests are excluded, so a fixture may still be called {@code Session} — the rule is
+ * any module that can host the rule. Tests are excluded, so a fixture may still be called {@code Session} — the rule is
  * about the vocabulary production code teaches.
  */
 @DisplayName("Session lifetime naming architecture")
