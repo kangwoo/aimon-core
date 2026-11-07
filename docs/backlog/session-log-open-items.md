@@ -99,11 +99,11 @@ javadoc 과 session-log §12.4 에 적었다.
 페이지마다 연장하고, 끝나도 놓지 않는다. 쥔 노드는 다음 회차에 리스를 다시 따지 않고 자기 리스를 연장한다 — 다시 따면 자기
 틱과 리스 만료 중 어느 것이 먼저냐에 따라 간격 하나를 건너뛸 수 있었다(닫은 뒤에 고쳤다 — session-log §12.7 의 SL-3 항목과
 `CHANGELOG.md` 의 "Store-wide orphan sweep" 항목). 쥔 노드가 죽으면 연장이 멈추고 만료 뒤 다음 노드가 잇는다 — 잃는 것은
-간격 하나다.
-스택은 리스 저장소를 받으면 자동으로 조정한다(holder id 는 `nodeId`). 테스트: `SessionLogSegmentSweeperTest` 의 coordinated
-테스트들, 실제 Mongo · Postgres · Redis 리스 저장소 위에서 `sweepIfClaimed` 를 연달아 돌리는
-`*SessionLeaseStoreIntegrationTest.sweepHolder*` 셋(연장 · 만료 뒤 · 이어받기 — Redis 는 만료된 키를 잊으므로 만료 뒤에는
-새 토큰으로 다시 딴다), `AimonStackSegmentFencingTest.sweepIsCoordinatedThroughTheLeaseStore`.
+간격 하나다. 스택은 리스 저장소를 받으면 자동으로 조정한다(holder id 는 `nodeId`). 테스트:
+`SessionLogSegmentSweeperTest` 의 coordinated 테스트들, 실제 Mongo · Postgres · Redis 리스 저장소 위에서
+`sweepIfClaimed` 를 연달아 돌리는 `*SessionLeaseStoreIntegrationTest.sweepHolder*` 셋(연장 · 만료 뒤 · 이어받기 — Redis
+는 만료된 키를 잊으므로 만료 뒤에는 새 토큰으로 다시 딴다),
+`AimonStackSegmentFencingTest.sweepIsCoordinatedThroughTheLeaseStore`.
 
 ## SL-4 — Redis 스캔은 standalone 연결만 본다 · **닫힘**
 
