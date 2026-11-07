@@ -18,8 +18,7 @@ import at.aimon.core.agent.session.store.StoredAgentExecutionResult;
  * <p>
  * Only the {@link AgentExecutionResult} subset needed for replay is serialized — see
  * {@link StoredAgentExecutionResult}. The remaining {@link at.aimon.core.agent.session.idempotency.IdempotencyEntry}
- * fields live in
- * their own columns
+ * fields live in their own columns
  * ({@code key, conversation_id, input_hash, status, holder_id, created_at, last_touched_at, expires_at}); only the
  * {@code result_blob} round-trips through JSON.
  *

@@ -24,8 +24,7 @@ import com.zaxxer.hikari.HikariDataSource;
  * <p>
  * The DDL in {@code src/main/resources/db/postgres/} ({@code V1__init.sql}, then {@code V2__session_log_segment.sql},
  * then {@code V3__session_record_owner.sql}, then {@code V4__wake_ledger.sql}, in the order operators apply them) is
- * applied here — and only here — at
- * static-init time via plain JDBC. Production code never executes DDL.
+ * applied here — and only here — at static-init time via plain JDBC. Production code never executes DDL.
  */
 public final class PostgresTestSupport {
 

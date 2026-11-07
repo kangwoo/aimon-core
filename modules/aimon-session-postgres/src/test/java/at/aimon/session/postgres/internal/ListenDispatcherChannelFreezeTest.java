@@ -10,10 +10,9 @@ import org.junit.jupiter.api.Test;
  *
  * <p>
  * This is the one frozen identifier in the module that {@code PostgresSchemaFreezeTest} cannot reach: the channel is
- * not in the DDL, so there is no schema text to compare against. Both ends read
- * {@link ListenDispatcher#CHANNEL}, which is exactly what makes it invisible — a rename moves the listener and the
- * notifier together and every tier stays green, the Docker-tagged integration tests included, because a single-version
- * test fleet always agrees with itself.
+ * not in the DDL, so there is no schema text to compare against. Both ends read {@link ListenDispatcher#CHANNEL}, which
+ * is exactly what makes it invisible — a rename moves the listener and the notifier together and every tier stays
+ * green, the Docker-tagged integration tests included, because a single-version test fleet always agrees with itself.
  *
  * <p>
  * The expectation is written out as a literal rather than routed through the constant. A constant-based assertion
