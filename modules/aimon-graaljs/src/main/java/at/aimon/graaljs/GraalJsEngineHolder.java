@@ -16,8 +16,7 @@ import at.aimon.graaljs.internal.CancellationWatchdog;
 
 /**
  * Application-scoped holder, shared by {@code WorkflowJs} and the {@code ExecuteCode} JavaScript engine, for the
- * shared, thread-safe GraalJS {@link Engine} plus the daemon executors that drive
- * per-run wall-clock watchdogs.
+ * shared, thread-safe GraalJS {@link Engine} plus the daemon executors that drive per-run wall-clock watchdogs.
  *
  * <p>
  * The {@code Engine} is created once and shared across runs so JIT/warm-up cost is amortized; per-run
