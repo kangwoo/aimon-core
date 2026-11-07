@@ -144,7 +144,10 @@ class ShellRuntimeProgramTest {
         final CodeExecutionOutcome outcome = run(ScriptedToolCallBridge.succeedingWith("ok"), "class Holder:\n"
                 + "    def __del__(self):\n" + "        raise ValueError('del boom')\n" + "h = Holder()\n" + "del h\n");
         assertThat(outcome.getStatus()).as(outcome.getLogs()).isEqualTo(CodeExecutionStatus.COMPLETED);
-        assertThat(outcome.getLogs()).contains("Exception ignored in")
+        // The header is CPython's own err_msg, passed through: "Exception ignored in: <function Holder.__del__ ...>"
+        // up to 3.13, "Exception ignored while calling deallocator <function Holder.__del__ ...>" from 3.14. Only
+        // the common part is asserted — what matters here is that the output is program-only.
+        assertThat(outcome.getLogs()).contains("Exception ignored ").contains("<function Holder.__del__ at ")
                 .contains("File \"<program>\", line 3, in __del__").contains("ValueError: del boom");
         assertProgramOnly(outcome.getLogs());
     }
