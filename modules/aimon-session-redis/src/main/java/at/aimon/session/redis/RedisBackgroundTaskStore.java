@@ -32,8 +32,7 @@ import io.lettuce.core.api.sync.RedisCommands;
  * {@link #list(TaskQuery)} enumerates tasks without a full-keyspace {@code SCAN}. {@code put} writes the value and the
  * index entry <em>atomically</em> in a single Lua script, so the two can never diverge (a crashed node can no longer
  * leave a snapshot that is invisible to {@code list} / the reaper). {@code remove} deletes the value before dropping
- * the
- * index entry, so the only crash residue is a stale index entry, which is self-healed on the next {@code list} (a
+ * the index entry, so the only crash residue is a stale index entry, which is self-healed on the next {@code list} (a
  * missing value drops the id from the index).
  *
  * <p>
@@ -41,16 +40,14 @@ import io.lettuce.core.api.sync.RedisCommands;
  * {@link #heartbeat(String, java.time.Instant)} evolve exactly one field of the snapshot ({@code state}/{@code endTime}
  * for a transition, {@code lastHeartbeat} for a heartbeat), but Redis stores the snapshot as one opaque JSON string. To
  * keep those single-field writes atomic — matching the field-scoped updates of the in-memory
- * ({@code computeIfPresent}),
- * Mongo ({@code $set}) and Postgres ({@code UPDATE SET column}) backends — the write is guarded by an optimistic
- * compare-and-set: a small Lua script re-checks terminality <em>and</em> that the stored value is byte-identical to the
- * snapshot this call read, then overwrites. If a concurrent writer changed the snapshot in between (e.g. a heartbeat
- * racing the owning node's PENDING→RUNNING transition), the CAS is refused and the operation re-reads the fresh
- * snapshot
- * and re-applies its field, so no concurrent non-terminal update is ever clobbered. Once a task is
- * {@link BackgroundTaskState#isTerminal() terminal}, no further transition or heartbeat is applied, so a completion and
- * a concurrent stop can never both win. All backend errors surface as {@link IllegalStateException} — the Redis SDK
- * exception never crosses the module boundary.
+ * ({@code computeIfPresent}), Mongo ({@code $set}) and Postgres ({@code UPDATE SET column}) backends — the write is
+ * guarded by an optimistic compare-and-set: a small Lua script re-checks terminality <em>and</em> that the stored value
+ * is byte-identical to the snapshot this call read, then overwrites. If a concurrent writer changed the snapshot in
+ * between (e.g. a heartbeat racing the owning node's PENDING→RUNNING transition), the CAS is refused and the operation
+ * re-reads the fresh snapshot and re-applies its field, so no concurrent non-terminal update is ever clobbered. Once a
+ * task is {@link BackgroundTaskState#isTerminal() terminal}, no further transition or heartbeat is applied, so a
+ * completion and a concurrent stop can never both win. All backend errors surface as {@link IllegalStateException} —
+ * the Redis SDK exception never crosses the module boundary.
  */
 public final class RedisBackgroundTaskStore implements BackgroundTaskStore {
 

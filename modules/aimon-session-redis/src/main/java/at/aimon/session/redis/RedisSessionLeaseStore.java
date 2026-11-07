@@ -36,14 +36,12 @@ import io.lettuce.core.api.sync.RedisCommands;
  *
  * <p>
  * Backend failures ({@link RedisException}) are wrapped as {@link SessionLeaseException}; held-by-another-holder
- * is
- * signaled by an empty {@link Optional} from {@link #tryAcquire}.
+ * is signaled by an empty {@link Optional} from {@link #tryAcquire}.
  *
  * <p>
  * The class name predates the {@code ConversationLock} &rarr; {@code SessionLeaseStore} rename and is kept on
  * purpose: {@code RedisKeyPrefixFreezeTest} pins {@link #DEFAULT_KEY_PREFIX} to this type, and renaming the class
- * without
- * a key migration would silently strand every lock key already in Redis.
+ * without a key migration would silently strand every lock key already in Redis.
  */
 public final class RedisSessionLeaseStore implements SessionLeaseStore {
 
@@ -138,8 +136,7 @@ public final class RedisSessionLeaseStore implements SessionLeaseStore {
     /**
      * Parses {@code "{holderId}:{token}|{ttlMillis}"}. Splitting from the right is what makes this safe: the token and
      * the TTL are numeric, and {@code tryAcquire} rejects a holder id containing {@code ':'}, so the last two
-     * separators
-     * always delimit exactly those two fields no matter what the holder id looks like.
+     * separators always delimit exactly those two fields no matter what the holder id looks like.
      */
     private LeaseHolder parseHolder(String raw) {
         final int ttlSep = raw.lastIndexOf('|');
