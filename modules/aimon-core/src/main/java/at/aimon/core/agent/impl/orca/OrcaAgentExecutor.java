@@ -2394,7 +2394,8 @@ public class OrcaAgentExecutor
             // The tracer beside the command span's metadata, so a tool that makes calls of its own (ExecuteCode in an
             // inline skill) opens their TOOL spans under the command span.
             if (commandTrace.traced()) {
-                commandContextBuilder.put(ToolContextKeys.TRACER, commandTracer);
+                commandContextBuilder.put(ToolContextKeys.TRACER, commandTracer)
+                        .put(ToolContextKeys.TRACE_PAYLOAD_POLICY, commandPayloadPolicy);
             }
             final ToolContext commandToolContext = commandContextBuilder
                     .put(ToolContextKeys.AGENT_RUNTIME_ID, agentRuntime.getId())
@@ -2599,9 +2600,8 @@ public class OrcaAgentExecutor
      * TRACE-01: when tracing is active, give tools the active (ITERATION) span's metadata so TOOL spans nest under the
      * current iteration; {@link #executeSingleTool} then rotates it once more so a subagent a tool spawns nests under
      * that tool's span. A no-op tracer returns the same metadata instance, so the tool context is passed through
-     * unchanged
-     * (zero overhead when tracing is off). With tracing on, the tracer is bound beside the metadata
-     * ({@link ToolContextKeys#TRACER}).
+     * unchanged (zero overhead when tracing is off). With tracing on, the tracer and this executor's payload policy are
+     * bound beside the metadata ({@link ToolContextKeys#TRACER}, {@link ToolContextKeys#TRACE_PAYLOAD_POLICY}).
      */
     private ToolContext resolveEffectiveToolContext(ExecutionScope scope, ToolContext toolContext) {
         final LlmCallMetadata iterationMetadata = scope.activeSpan.enrich(scope.llmCallMetadata);
@@ -2614,6 +2614,11 @@ public class OrcaAgentExecutor
         // their TOOL spans under its own (§12.2). Write-once: bound only where the copied context lacks it.
         if (toolContext.get(ToolContextKeys.TRACER).isEmpty()) {
             builder.put(ToolContextKeys.TRACER, tracer);
+        }
+        // The payload policy beside it, under the same absent-only guard: the key is write-once too, and nested spans
+        // record what this executor's direct spans record.
+        if (toolContext.get(ToolContextKeys.TRACE_PAYLOAD_POLICY).isEmpty()) {
+            builder.put(ToolContextKeys.TRACE_PAYLOAD_POLICY, tracePayloadPolicy);
         }
         return builder.build();
     }

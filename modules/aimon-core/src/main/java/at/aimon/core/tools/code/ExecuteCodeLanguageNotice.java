@@ -37,6 +37,18 @@ import at.aimon.core.tools.EnvironmentNotices;
  * then the newest known marker.
  *
  * <p>
+ * An {@code ExecuteCode} call whose result is an <em>error</em> without a summary line did not run a program at all,
+ * so it is skipped without counting as unreadable: every program that ran gets an observation ending in the summary,
+ * failures included, so an error without one was produced before any program started — an invalid parameter, a
+ * language not available here, a failed probe, or a refusal made outside the tool (a PreTool hook, a permission deny,
+ * an approval rejection, schema validation). The error flag is read from the view, which keeps it when it elides or
+ * summarizes a body, and from the log when the view dropped the result. The residual: a program that did run but ends
+ * in an error without a summary reads as "did not run" — a PostTool hook that rewrote the error and dropped the
+ * summary, an {@code Error} (not a {@code RuntimeException}) thrown out of the engine and turned into a generic error
+ * by the pipeline, or a result the loop synthesized after a turn interrupt. The cost is a missed notice line, never a
+ * permission effect.
+ *
+ * <p>
  * Stateless; all methods are static.
  */
 public final class ExecuteCodeLanguageNotice {
@@ -61,13 +73,13 @@ public final class ExecuteCodeLanguageNotice {
      *            the conversation this iteration sends to the model — the context engine's view, not the log (must not
      *            be null)
      * @param loggedResult
-     *            looks a tool result's content up in the log by its tool-use id, for a body the view elided (must not
-     *            be null)
+     *            looks a tool result up in the log by its tool-use id, for a body the view elided or a result it
+     *            dropped (must not be null)
      * @param offered
      *            this iteration's {@code ExecuteCode} descriptor, offered (must not be null)
      * @return the notice text, without the {@code [environment] } prefix, or empty
      */
-    public static Optional<String> check(List<Message> view, Function<String, Optional<String>> loggedResult,
+    public static Optional<String> check(List<Message> view, Function<String, Optional<ToolUseResult>> loggedResult,
             ToolDescriptor offered) {
         Objects.requireNonNull(view, "view cannot be null");
         Objects.requireNonNull(loggedResult, "loggedResult cannot be null");
@@ -77,18 +89,18 @@ public final class ExecuteCodeLanguageNotice {
         }
         final String now = ExecuteCodeDescription.displayName(language.get());
         // Tool results come after the tool_use they answer, so a backwards scan meets them first.
-        final Map<String, String> viewResults = new HashMap<>();
+        final Map<String, ToolUseResult> viewResults = new HashMap<>();
         boolean unreadable = false;
         for (int i = view.size() - 1; i >= 0; i--) {
             final Message message = view.get(i);
             final List<ToolUseResult> results = message.getToolUseResults();
             for (int r = results.size() - 1; r >= 0; r--) {
                 final ToolUseResult result = results.get(r);
-                final String content = result.getContent() == null ? "" : result.getContent();
-                viewResults.put(result.getToolUseId(), content);
-                final Optional<String> noticed = noticedLanguage(content)
-                        .or(() -> loggedResult.apply(result.getToolUseId()).filter(logged -> !logged.equals(content))
-                                .flatMap(ExecuteCodeLanguageNotice::noticedLanguage));
+                final String content = contentOf(result);
+                viewResults.put(result.getToolUseId(), result);
+                final Optional<String> noticed = noticedLanguage(content).or(() -> loggedResult
+                        .apply(result.getToolUseId()).map(ExecuteCodeLanguageNotice::contentOf)
+                        .filter(logged -> !logged.equals(content)).flatMap(ExecuteCodeLanguageNotice::noticedLanguage));
                 if (noticed.isPresent()) {
                     return verdict(now, noticed.get());
                 }
@@ -99,13 +111,23 @@ public final class ExecuteCodeLanguageNotice {
                 if (!ExecuteCodeTool.TOOL_NAME.equals(toolUse.getName())) {
                     continue;
                 }
-                final String inView = viewResults.get(toolUse.getId());
-                final Optional<String> ran = Optional.ofNullable(inView).flatMap(ExecuteCodeLanguageNotice::languageOf)
-                        .or(() -> loggedResult.apply(toolUse.getId()).flatMap(ExecuteCodeLanguageNotice::languageOf));
+                final ToolUseResult inView = viewResults.get(toolUse.getId());
+                final Optional<ToolUseResult> logged = loggedResult.apply(toolUse.getId());
+                final Optional<String> ran = Optional.ofNullable(inView).map(ExecuteCodeLanguageNotice::contentOf)
+                        .flatMap(ExecuteCodeLanguageNotice::languageOf)
+                        .or(() -> logged.map(ExecuteCodeLanguageNotice::contentOf)
+                                .flatMap(ExecuteCodeLanguageNotice::languageOf));
                 if (ran.isPresent()) {
                     return verdict(now, ran.get());
                 }
-                unreadable = true;
+                // An error without a summary did not run a program (class javadoc). The view's flag decides when the
+                // result is in view: elision and summary spans replace a body, never the error flag (ViewProjection).
+                final boolean refused = inView != null
+                        ? inView.isError()
+                        : logged.map(ToolUseResult::isError).orElse(false);
+                if (!refused) {
+                    unreadable = true;
+                }
             }
         }
         return unreadable
@@ -120,11 +142,12 @@ public final class ExecuteCodeLanguageNotice {
      *
      * @param log
      *            supplies the messages of the session's log, append-only (must not be null)
-     * @return the lookup (never null); not thread-safe, for the one iteration that asked for it
+     * @return the lookup (never null), giving the logged result — its content and error flag; not thread-safe, for
+     *         the one iteration that asked for it
      */
-    public static Function<String, Optional<String>> loggedResults(Supplier<List<Message>> log) {
+    public static Function<String, Optional<ToolUseResult>> loggedResults(Supplier<List<Message>> log) {
         Objects.requireNonNull(log, "log cannot be null");
-        final Map<String, String> byId = new HashMap<>();
+        final Map<String, ToolUseResult> byId = new HashMap<>();
         final boolean[] read = {false};
         return toolUseId -> {
             if (!read[0]) {
@@ -132,7 +155,7 @@ public final class ExecuteCodeLanguageNotice {
                 for (Message message : log.get()) {
                     for (ToolUseResult result : message.getToolUseResults()) {
                         if (result.getContent() != null) {
-                            byId.put(result.getToolUseId(), result.getContent());
+                            byId.put(result.getToolUseId(), result);
                         }
                     }
                 }
@@ -182,6 +205,10 @@ public final class ExecuteCodeLanguageNotice {
             start = end + 1;
         }
         return Optional.empty();
+    }
+
+    private static String contentOf(ToolUseResult result) {
+        return result.getContent() == null ? "" : result.getContent();
     }
 
     private static Optional<String> verdict(String now, String before) {

@@ -16,8 +16,8 @@ public enum ShellKillCause {
     /**
      * A single line of output exceeded the shell's line limit, so the shell ended the command before materializing
      * the line (the streaming contract on
-     * {@link VirtualShell#execute(ShellCommand, ExecutionOptions, ShellLineListener)}).
-     * Both streams are then truncated.
+     * {@link VirtualShell#execute(ShellCommand, ExecutionOptions, ShellLineListener)}). Both streams are then
+     * truncated.
      */
     LINE_LIMIT_EXCEEDED,
 

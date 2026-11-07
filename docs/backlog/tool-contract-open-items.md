@@ -1,4 +1,4 @@
-# 도구 계약 — 등록 항목 29건 (열림 27 · 닫힘 2)
+# 도구 계약 — 등록 항목 31건 (열림 25 · 닫힘 6)
 
 출처는 `docs/design/tool/` 의 도구 계약·부작용 축·병렬 실행·도구 검색·모니터 문서가 남긴 작업이다. 설계 문서는 현재 설계만
 적고, 남은 일은 여기에 둔다.
@@ -237,7 +237,7 @@ provider 등록과 `ToolSearchTool` 등록을 조립이 직접 해야 한다. `T
 
 **언제 다시 볼까.** 이 수정을 담은 코어 스냅숏(또는 릴리스)이 배포될 때.
 
-## TC-20 — 셸 엔진 응답 쓰기 드레인 상한의 값 · **열림**
+## TC-20 — 셸 엔진 응답 쓰기 드레인 상한의 값 · **닫힘** *(2026-11-07)*
 
 **무엇을.** 실행을 닫을 때 진행 중인 응답 쓰기를 기다리는 상한(5 초)을 실측으로 정한다.
 
@@ -248,6 +248,20 @@ provider 등록과 `ToolSearchTool` 등록을 조립이 직접 해야 한다. `T
 **어디.** `tools/code/shell/ShellProgramRun.java` 의 `REPLY_DRAIN`, `close()`. 2026-11-06 확인.
 
 **언제 다시 볼까.** "a reply write was still in flight" WARN 이 운영에서 보일 때, 또는 PTC 지연 측정(PTC 문서 §18)을 할 때.
+
+**어떻게 닫았나.** 재고 2 초로 줄였다([남은 일 설계](../design/tool/ptc-leftovers-core.md) §1.12). **전제가 달랐다** — 상한이 묶는
+것은 "응답 쓰기 몇 번" 이 아니라 **이미 진행 중인 쓰기마다 시도 한 번**이다. `writeReply` 는 관문을 시도 하나에만 쥐고 다음 시도 전에
+`closed` 를 다시 보므로, 닫힌 뒤에는 재시도도 그 사이의 대기도 시작하지 않고, 진행 중인 쓰기들은 나란히 돈다. 그래서 값은 가장 느린
+백엔드의 쓰기 한 번에 넉넉한 상한이면 된다. `close()` 가 기다린 시간을 돌려주게 하고(패키지 비공개), 게이트된 측정
+`ShellReplyDrainMeasurementTest`(`AIMON_MEASURE=1`)로 `LocalShell` 위에서 프로그램 200 개(각각 응답을 기다리지 않는 호출 8 개를 쏘고
+바로 끝나며, 도구는 0–20 ms 뒤에 답한다)를 네 계열로 돌렸다(2026-11-07, macOS). 로컬: 쓰기 p50 0 · p99 1 · 최대 1 ms, `close()` 대기
+최대 0 ms. 쓰기에 50 ms 를 더하면 쓰기 p99 62 ms · 대기 최대 61 ms, 250 ms 를 더하면 쓰기 최대 262 ms · 대기 최대 262 ms, 꼬리가 긴
+지연(대개 20–60 ms, 50 번에 한 번 0.8–1.2 s)이면 쓰기 p99 1,070 ms · 대기 p99 68 · 최대 1,070 ms — 어느 계열에서도 대기가 그 계열에서
+가장 느린 쓰기 하나를 넘지 않았다(테스트가 "+50 ms 이내" 로 단언한다). 2 초인 이유는 비대칭이다: 상한을 넘기면 WARN 하나와 지워질 실행
+디렉터리의 파일 하나(다음 스윕이 지운다)이고, 너무 길면 멈춘 샌드박스에서 모든 `ExecuteCode` 결과가 그만큼 늦는다. 2 초는 250 ms 원격
+쓰기의 8 배, 꼬리 계열 최악의 약 두 배다. WARN 은 아직 진행 중인 쓰기 수를 말한다. **잴 수 없었던 것**: 실제 OpenSandbox 의 응답 쓰기
+지연 — `aimon-sandbox` 는 다른 저장소이고 돌아가는 샌드박스가 필요하다. 다시 볼 계기는 위의 그대로 운영에서 보이는 WARN 이다.
+검사: `ShellProgramRunTest`(`close()` 가 돌려주는 대기), `ShellReplyDrainMeasurementTest`.
 
 ## TC-21 — 주석 줄바꿈 가드를 PTC 밖으로 넓힌다 · **열림**
 
@@ -262,7 +276,7 @@ provider 등록과 `ToolSearchTool` 등록을 조립이 직접 해야 한다. `T
 
 **언제 다시 볼까.** 다른 패키지에서 같은 줄바꿈이 리뷰 지적으로 나올 때 — 그 패키지를 범위에 넣는다.
 
-## TC-22 — 중첩 호출 span 의 결과 내용 기록 · **열림**
+## TC-22 — 중첩 호출 span 의 결과 내용 기록 · **닫힘** *(2026-11-07)*
 
 **무엇을.** `ExecuteCode` 의 중첩 호출 TOOL span 이 결과 내용을 담을지 고르는 도구 문맥 키를 `TRACER` 옆에 둔다(지금은
 `TracePayloadPolicy.summaryOnly()` 고정 — `isError` · `contentChars` 만).
@@ -274,6 +288,14 @@ provider 등록과 `ToolSearchTool` 등록을 조립이 직접 해야 한다. `T
 [기능 마무리 설계](../design/tool/ptc-features-core.md) A.5.2. 2026-11-07 확인.
 
 **언제 다시 볼까.** 코드 경로 호출의 결과를 trace 에서 봐야 하는 디버깅 요청이 올 때.
+
+**어떻게 닫았나.** 도구 문맥 키 `ToolContextKeys.TRACE_PAYLOAD_POLICY`(write-once)를 `TRACER` 가 묶이는 모든 자리 — 메인 루프의
+iteration 문맥(같은 "없을 때만" 조건으로), 슬래시 명령 문맥, 포크의 iteration 문맥, 루틴 스텝 문맥 — 에 그 실행기의 정책으로 묶고,
+브리지가 그것을 읽는다. 키가 없으면 요약만이라 `TRACER` 만 묶는 임베더는 바뀌는 것이 없다. 정책은 하나다 — 내용 기록을 켠 운영자는 같은
+도구의 결과를 직접 경로에서 이미 받고, 상한은 같은 `truncate` 다([남은 일 설계](../design/tool/ptc-leftovers-core.md) §1.11, OQ-3).
+"중첩 결과는 크고 민감할 수 있다" 는 왜의 문장은 참이지만, 그 판단은 이미 직접 경로에서 운영자가 내린 것이었다.
+검사: `DefaultToolCallBridgeTracingTest#payloadPolicyCapturesContent`·`#payloadPolicyAbsentIsSummaryOnly`,
+`OrcaAgentExecutorTracingTest#payloadPolicyBoundBesideTheTracer` 와 슬래시 명령·포크·루틴의 트레이싱 테스트.
 
 ## TC-23 — 슬래시 스킬 루프의 ITERATION · TOOL span · **열림**
 
@@ -358,7 +380,7 @@ event loop")으로 시작했다. 설명은 "Functions:" 아래에 `async def` �
 열한 개 중 다섯이 `asyncio.run` 등으로 실패하고 출력 없이 끝난 프로그램을 되풀이하다 `MAX_ITERATIONS` 에서 멈췄다 — 약한 모델의
 한계로 보고 기본 모델(OQ-B2)은 두었다. 검사: `ExecuteCodeToolTest#descriptionSaysWhereFunctionsComeFrom`.
 
-## TC-28 — 스크립트 오류의 마지막 줄이 캐럿만일 수 있다 · **열림**
+## TC-28 — 스크립트 오류의 마지막 줄이 캐럿만일 수 있다 · **닫힘** *(2026-11-07)*
 
 **무엇을.** `ExecuteCodeObservation.failure` 가 오류 메시지의 마지막 줄만 싣는 규칙을, 마지막 줄이 소스 발췌의 캐럿(`^`)일 때는 메시지
 줄(예: GraalJS 의 `SyntaxError: … Expected …`)을 싣도록 고친다.
@@ -372,7 +394,13 @@ event loop")으로 시작했다. 설명은 "Functions:" 아래에 `async def` �
 
 **언제 다시 볼까.** TC-27 과 함께 — 둘 다 모델이 스크립트 오류에서 회복하는 비용이다.
 
-## TC-29 — 모델이 보는 `[logs]` 에 호스트 경로가 실린다 · **열림**
+**어떻게 닫았나.** **고칠 곳은 코어 하나였다** — 어디 줄이 함께 적은 GraalJS 엔진의 메시지는 이미 맞았고, 코어가 고른 줄이 틀렸다.
+`ExecuteCodeObservation.lastLine` 을 `errorLine` 으로 바꿨다: 세 줄 이상이고 마지막 줄이 캐럿 줄이면 첫 줄(메시지 줄)을 싣고, 소스
+줄과 캐럿을 두 칸 들여 정렬을 지킨 채 붙인다. 소스 줄이 200 자를 넘으면(압축된 코드) 메시지 줄만. 그 밖의 메시지는 마지막 줄 규칙
+그대로다. 엔진은 바꾸지 않았고, 코어가 기대는 메시지 모양을 `aimon-graaljs` 의 테스트가 고정한다. 검사: `ExecuteCodeObservationTest`,
+`GraalJsCodeExecutionEngineTest#syntaxErrorMessageShape`, `GraalJsSyntaxErrorObservationTest`(관찰에 `SyntaxError`·`Expected`).
+
+## TC-29 — 모델이 보는 `[logs]` 에 호스트 경로가 실린다 · **닫힘** *(2026-11-07)*
 
 **무엇을.** `ExecuteCode` 관찰의 `[logs]` 절(셸 엔진의 stderr 꼬리)에서 런타임 자신의 프레임과 호스트 경로를 걷어 낼지 정한다.
 
@@ -385,3 +413,44 @@ event loop")으로 시작했다. 설명은 "Functions:" 아래에 `async def` �
 2026-11-07 확인(PR 2 리뷰 1 의 비차단 지적).
 
 **언제 다시 볼까.** TC-28 과 함께.
+
+**어떻게 닫았나.** 출처에서 고쳤다 — 런타임이 잡히지 않은 예외를 **프로그램 자신의 프레임만**으로 찍는다(`<program>` 프레임과 그 코드
+줄, 예외 줄; 예외 사슬은 다섯 단계까지). 같은 출력이 다섯 자리에 걸린다: 메인 스레드, `threading.excepthook`, `sys.unraisablehook`,
+`asyncio` 로거, `warnings.showwarning`. 도구 함수·`call_tool` 의 코드 객체는 파일 이름이 `<runtime>` 이라 태스크 repr 에도 런타임 경로가
+실리지 않는다([셸 엔진](../design/tool/programmatic-tool-calling-shell.md) §6). `appendSideChannels` 에서 경로를 지우는 길은 기각했다 —
+`[logs]` 는 임의의 프로그램 출력이라 데이터와 런타임 프레임을 정규식이 가르지 못한다. **남은 구멍 하나**: `DONE` 없이 끝난 실행은 셸
+자신의 stderr 꼬리를 `[logs]` 로 싣는다 — TC-31. 검사: `ShellRuntimeProgramTest`(어느 로그에도 `aimon_ptc` 와 절대 `.py` 경로가 없다).
+실제 모델 E2E(2026-11-07, `gpt-4o`·`gpt-4o-mini` × JavaScript·Python)는 네 실행 모두 프로그램 하나로 통과해 오류 경로를 밟지 않았다.
+
+## TC-30 — 호출자 천장이 포크의 PTC 를 없앨 때 iteration span 이 이유를 싣지 않는다 · **열림**
+
+**무엇을.** 포크 자신의 정의는 `programmatic-tools` 로 opt-in 했는데 호출자의 실효 설정이 그것을 "아무것도 없음" 으로 좁혀
+`ExecuteCode` 가 제안되지 않을 때, 그 포크의 iteration span 에도 `ptc.unavailable_reason` 을 싣는다.
+
+**왜.** 지금은 싣지 않는다. 포크의 제안 문맥이 이미 좁혀진 설정(`none`)을 들고, `ExecuteCodePlan` 은 제안 문맥이 코드에 도구를 여는
+에이전트에만 이유를 보고하기 때문이다(`reportedReason`). 운영자에게 알리는 것은 `DefaultSubagentExecutionManager` 의 WARN("caller
+allows none") 하나뿐이고, 그것도 서브에이전트 이름마다 JVM 에 한 번이다 — trace 만 보는 사람은 그 포크가 왜 코드를 못 썼는지 알 수
+없다. [남은 일 설계](../design/tool/ptc-leftovers-core.md) §1.9 경우 3 은 이 속성이 있다고 보고 테스트를 적었다가 빌드에서 틀린
+전제로 드러났다(§4).
+
+**어디.** `tools/code/ExecuteCodePlan.java` 의 `of` · `reportedReason`, `subagent/DefaultSubagentExecutionManager.java` 의
+`applyProgrammaticCeiling`, `subagent/execution/DefaultSubagentExecutor.java` 의 `IterationTrace`. 고정한 테스트는
+`NestedForkProgrammaticCeilingE2EIntegrationTest#middleForkWithoutPtc`. 2026-11-07 확인.
+
+**언제 다시 볼까.** 포크가 `ExecuteCode` 를 못 받은 이유를 trace 로 찾는 요청이 올 때 — 또는 TC-23(슬래시 스킬 루프의 span)과 함께.
+
+## TC-31 — `DONE` 없이 끝난 셸 엔진 실행의 `[logs]` 에 셸 stderr 가 실린다 · **열림**
+
+**무엇을.** 런타임이 `DONE` 없이 끝났을 때 셸 자신의 stderr 꼬리(`ShellProgramRun.shellStderr()`)를 모델이 보는 `[logs]` 로 싣는 대신
+호스트 로그에만 남길지 정한다.
+
+**왜.** `ShellCodeExecutionEngine.classify` 는 `DONE` 없는 종료에서 런타임이 보낸 로그가 비었으면 셸 stderr 를 결과의 `logs` 로 쓴다
+(`logs.isEmpty() ? stderr : logs`). TC-29 가 런타임의 출력을 프로그램 프레임만으로 줄였지만, 런타임이 출력기를 설치하기 전에 죽거나
+(`main` 앞부분의 예외) `python3` 자체가 실패하면 그 traceback 이 실행 디렉터리의 호스트 경로를 실은 채 모델에게 간다. 드문 경로이고
+모델이 원인을 알아야 할 수도 있어(`python3` 이 없음) 이 변경에서는 고치지 않았다([남은 일 설계](../design/tool/ptc-leftovers-core.md)
+§1.7, §4).
+
+**어디.** `tools/code/shell/ShellCodeExecutionEngine.java` 의 `classify`, `tools/code/shell/ShellProgramRun.java` 의 `shellStderr`.
+2026-11-07 확인.
+
+**언제 다시 볼까.** `DONE` 없는 종료가 운영에서 보일 때, 또는 TC-19 의 `aimon-sandbox` 쪽 후속과 함께.

@@ -60,8 +60,21 @@ final class ShellProgramRun implements ShellLineListener {
     private static final int STDERR_TAIL_LINES = 20;
     private static final int STDERR_TAIL_LINE_CHARS = 500;
     private static final int REPLY_WRITE_ATTEMPTS = 3;
-    /** How long {@link #close()} waits for reply writes already started (§8). */
-    static final Duration REPLY_DRAIN = Duration.ofSeconds(5);
+    /**
+     * How long {@link #close()} waits for reply writes already started (§8): a generous bound on one reply write on
+     * the slowest supported backend — past it a write is stalled, not slow.
+     *
+     * <p>
+     * The cost is asymmetric. A drain that gives up costs a WARN and one file in a run directory that is deleted
+     * anyway, which the next run's sweep removes; a drain that is too long costs every {@code ExecuteCode} result on a
+     * stalled sandbox that many seconds, in front of the user. Measured (backlog TC-20,
+     * {@code ShellReplyDrainMeasurementTest}, 200 programs per series ending with 8 replies in flight): a local write
+     * took p99 1 ms; with 50 ms, 250 ms and heavy-tailed added latency, no {@code close()} waited longer than the
+     * slowest single write of its series (heavy-tailed: write max 1.07 s, wait max 1.07 s). 2 s is 8× a 250 ms remote
+     * write and about twice the heavy-tailed worst case. A real remote sandbox's write latency could not be measured
+     * here; the WARN seen in operation is the reason to revisit.
+     */
+    static final Duration REPLY_DRAIN = Duration.ofSeconds(2);
     /** The most bytes an array may hold on every JVM. */
     private static final long MAX_ARRAY_BYTES = Integer.MAX_VALUE - 8;
 
@@ -384,8 +397,15 @@ final class ShellProgramRun implements ShellLineListener {
      * Stops writing replies — the run is over (§8) — and waits until every reply write already started has finished,
      * at most {@link #REPLY_DRAIN}. Once it returns no write starts, and barring that bound none is still running, so
      * the run directory can be deleted.
+     *
+     * <p>
+     * What it waits for is one {@code writeNew} attempt per write in flight: {@link #writeReply} holds the gate around
+     * a single attempt and re-checks {@code closed} before the next, so the wait is bounded by the slowest of the
+     * attempts already started, which run in parallel — not by the retries or their sleeps.
+     *
+     * @return how long it waited for writes in flight: zero when none was, at most the drain bound
      */
-    void close() {
+    Duration close() {
         stopping = true;
         final long start = System.nanoTime();
         boolean waited = false;
@@ -395,25 +415,27 @@ final class ShellProgramRun implements ShellLineListener {
             while (inFlight > 0) {
                 final long left = until - System.nanoTime();
                 if (left <= 0) {
-                    log.warn("ExecuteCode: a reply write was still in flight after {} ms; the run directory may stay "
-                            + "until a later sweep", replyDrain.toMillis());
-                    return;
+                    log.warn("ExecuteCode: {} reply write(s) still in flight after {} ms; the run directory may stay "
+                            + "until a later sweep", inFlight, replyDrain.toMillis());
+                    return Duration.ofNanos(System.nanoTime() - start);
                 }
                 waited = true;
                 try {
                     replyGate.wait(Math.max(1L, left / 1_000_000L));
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                    log.warn("ExecuteCode: interrupted while a reply write was in flight; the run directory may "
-                            + "stay until a later sweep");
-                    return;
+                    log.warn("ExecuteCode: interrupted while {} reply write(s) were in flight; the run directory may "
+                            + "stay until a later sweep", inFlight);
+                    return Duration.ofNanos(System.nanoTime() - start);
                 }
             }
         }
-        if (waited) {
-            log.debug("ExecuteCode: closing the run waited {} ms for reply writes in flight",
-                    (System.nanoTime() - start) / 1_000_000L);
+        if (!waited) {
+            return Duration.ZERO;
         }
+        final Duration waitedFor = Duration.ofNanos(System.nanoTime() - start);
+        log.debug("ExecuteCode: closing the run waited {} ms for reply writes in flight", waitedFor.toMillis());
+        return waitedFor;
     }
 
     private boolean isClosed() {

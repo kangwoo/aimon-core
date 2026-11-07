@@ -178,9 +178,9 @@ public class ShellExecutionException extends Exception {
 
     /**
      * Returns the facts the environment tells the model about this call, the same as
-     * {@link ShellCommandResult#notices()} on a result — for instance that the shell session was
-     * recreated before the command ran, so the working directory is back at its start. A command that failed or timed
-     * out may still have run in a changed environment, and the model needs to know that as much as after a success.
+     * {@link ShellCommandResult#notices()} on a result — for instance that the shell session was recreated before the
+     * command ran, so the working directory is back at its start. A command that failed or timed out may still have run
+     * in a changed environment, and the model needs to know that as much as after a success.
      *
      * @return the notices (never null; empty by default)
      */

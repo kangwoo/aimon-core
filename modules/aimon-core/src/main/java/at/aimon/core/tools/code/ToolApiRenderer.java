@@ -19,7 +19,8 @@ import at.aimon.core.programmatic.CodeExecutionEngine;
  * Deterministic: tools are sorted by name and properties keep the schema's order, so the description — and the prompt
  * cache built on it — only changes when the callable set does. A tool that is also offered directly gets a one-line
  * signature that points at the direct tool's schema, so its schema is not paid for twice; a code-only tool gets its
- * arguments spelled out. A name that is not an identifier ({@code mcp__server__tool-name}) is called by index.
+ * arguments spelled out. A name that is not an identifier ({@code mcp__server__tool-name}) is called by index; in
+ * Python, so is a name the runtime cannot bind as a function ({@link #PYTHON_RESERVED}, a keyword, a dunder name).
  *
  * <p>
  * Stateless.
@@ -29,6 +30,26 @@ public final class ToolApiRenderer {
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_$][A-Za-z0-9_$]*");
     private static final Pattern PY_IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
     private static final int MAX_DESCRIPTION_CHARS = 400;
+
+    /**
+     * The names the Python runtime binds as globals of its own, so a tool of one of these names is not bound as a
+     * function and is rendered in the {@code call_tool("name", args)} form instead. The other half is the
+     * {@code program_globals} literal in {@code aimon_ptc.py} — its keys that do not start with {@code __};
+     * {@code ToolApiRendererTest} holds the two together. {@code __name__} and {@code __builtins__} are covered by a
+     * rule instead: every name that starts with {@code __} is rendered through {@code call_tool}.
+     *
+     * <p>
+     * A tool named after a Python builtin ({@code print}, {@code len}, {@code open}) is still bound — the runtime's
+     * rule is "not a keyword and not one of its own globals" — and so shadows the builtin inside the program. That is
+     * the runtime's long-standing behaviour, not changed here.
+     */
+    public static final Set<String> PYTHON_RESERVED = Set.of("ToolError", "call_tool", "asyncio", "json");
+
+    /** Python's hard keywords ({@code keyword.kwlist}), which cannot name a function. */
+    private static final Set<String> PYTHON_KEYWORDS = Set.of("False", "None", "True", "and", "as", "assert", "async",
+            "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from",
+            "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try",
+            "while", "with", "yield");
 
     private ToolApiRenderer() {
         throw new AssertionError("This class should not be instantiated");
@@ -75,9 +96,19 @@ public final class ToolApiRenderer {
         out.append("): Promise<string>\n");
     }
 
+    /**
+     * Whether the Python runtime binds {@code name} as a global function: an identifier that is not a keyword, not one
+     * of the runtime's own globals and not a dunder name — the runtime's {@code name.isidentifier() and not
+     * keyword.iskeyword(name) and name not in program_globals}.
+     */
+    static boolean pythonBindable(String name) {
+        return PY_IDENTIFIER.matcher(name).matches() && !PYTHON_KEYWORDS.contains(name)
+                && !PYTHON_RESERVED.contains(name) && !name.startsWith("__");
+    }
+
     private static void renderPython(StringBuilder out, ToolDefinition tool, boolean direct) {
         final String name = tool.getName();
-        if (!PY_IDENTIFIER.matcher(name).matches()) {
+        if (!pythonBindable(name)) {
             out.append("# await call_tool(\"").append(name).append("\", args) -> str — ").append(shortDescription(tool))
                     .append('\n');
             return;

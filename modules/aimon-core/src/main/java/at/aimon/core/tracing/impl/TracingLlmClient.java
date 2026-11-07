@@ -205,14 +205,11 @@ public final class TracingLlmClient implements LlmClient {
 
     /**
      * Sets a streaming attribute, swallowing a failing span: the stream must not depend on the tracer, and on the
-     * chunk path the chunk is still forwarded to the caller's sink.
+     * chunk path the chunk is still forwarded to the caller's sink. Logged at DEBUG only
+     * ({@link Spans#setAttributeQuietly}), as the first-chunk time is set on every streamed call.
      */
     private static void setAttributeSafely(Tracer.Span span, String key, String value) {
-        try {
-            span.setAttribute(key, value);
-        } catch (RuntimeException e) {
-            log.debug("Setting span attribute '{}' failed: {}", key, e.getMessage());
-        }
+        Spans.setAttributeQuietly(span, key, value);
     }
 
     /**

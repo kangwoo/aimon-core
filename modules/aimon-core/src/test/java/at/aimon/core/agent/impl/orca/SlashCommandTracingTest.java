@@ -297,6 +297,8 @@ class SlashCommandTracingTest {
         tools.register(executeCode);
         executor.execute(runtime(probe, tools), request("/probe"));
         assertThat(probe.toolContext.get(ToolContextKeys.TRACER)).isPresent();
+        // TC-22: the executor's payload policy rides beside the tracer.
+        assertThat(probe.toolContext.get(ToolContextKeys.TRACE_PAYLOAD_POLICY)).isPresent();
 
         final ToolOfferContext offer = ToolOfferContext.builder().registry(tools).programmatic(ProgrammaticToolSettings
                 .builder().tools(List.of("Echo")).engine(ProgrammaticEngineChoice.JAVASCRIPT).build()).build();

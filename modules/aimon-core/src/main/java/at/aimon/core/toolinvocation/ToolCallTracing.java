@@ -11,6 +11,7 @@ import at.aimon.core.llm.ToolUse;
 import at.aimon.core.llm.ToolUseResult;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.ToolSpans;
+import at.aimon.core.tracing.Spans;
 import at.aimon.core.tracing.TracePayloadPolicy;
 import at.aimon.core.tracing.Tracer;
 
@@ -59,9 +60,9 @@ public final class ToolCallTracing {
         if (span == null) {
             return null;
         }
-        span.setAttribute("iteration", String.valueOf(iterationCount));
-        span.setAttribute("invokerType", invokerType.name());
-        span.setAttribute(ToolSpans.PATH, ToolSpans.PATH_DIRECT);
+        Spans.setAttributeSafely(span, "iteration", String.valueOf(iterationCount));
+        Spans.setAttributeSafely(span, "invokerType", invokerType.name());
+        Spans.setAttributeSafely(span, ToolSpans.PATH, ToolSpans.PATH_DIRECT);
         return span;
     }
 

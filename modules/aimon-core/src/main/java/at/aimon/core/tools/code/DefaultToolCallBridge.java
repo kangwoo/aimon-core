@@ -45,6 +45,7 @@ import at.aimon.core.programmatic.CodeExecutionLimits;
 import at.aimon.core.programmatic.ToolCallBridge;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.ToolSpans;
+import at.aimon.core.tracing.Spans;
 import at.aimon.core.tracing.TracePayloadPolicy;
 import at.aimon.core.tracing.Tracer;
 
@@ -248,7 +249,10 @@ final class DefaultToolCallBridge implements ToolCallBridge {
                             ToolCallOrigin.code(parentToolUseId, language),
                             span == null ? context : ToolSpans.contextUnder(span, context));
             if (span != null) {
-                ToolSpans.recordOutcome(span, result.isError(), result.getText(), TracePayloadPolicy.summaryOnly());
+                // The run's payload policy (§12.2): nested spans record what the direct spans record. Absent is
+                // summary only, as before the key existed.
+                ToolSpans.recordOutcome(span, result.isError(), result.getText(),
+                        context.get(ToolContextKeys.TRACE_PAYLOAD_POLICY).orElse(TracePayloadPolicy.summaryOnly()));
             }
             return result;
         } catch (RuntimeException | Error e) {
@@ -258,7 +262,8 @@ final class DefaultToolCallBridge implements ToolCallBridge {
             throw e;
         } finally {
             if (span != null) {
-                span.close();
+                // Fail-safe, so a span that throws on close cannot replace the dispatch's own exception.
+                Spans.closeSafely(span);
             }
         }
     }

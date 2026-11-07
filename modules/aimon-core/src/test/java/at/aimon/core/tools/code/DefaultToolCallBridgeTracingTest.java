@@ -30,6 +30,7 @@ import at.aimon.core.tracing.SpanContext;
 import at.aimon.core.tracing.SpanExporter;
 import at.aimon.core.tracing.SpanStatus;
 import at.aimon.core.tracing.SpanType;
+import at.aimon.core.tracing.TracePayloadPolicy;
 import at.aimon.core.tracing.TraceSpan;
 import at.aimon.core.tracing.Tracer;
 import at.aimon.core.tracing.impl.DefaultTracer;
@@ -173,6 +174,58 @@ class DefaultToolCallBridgeTracingTest {
         assertThat(nestedSpans()).hasSize(3).extracting(TraceSpan::getSpanId).doesNotHaveDuplicates();
     }
 
+    @Test
+    @DisplayName("a span whose setAttribute, setOutputs, error and close all throw: calls still succeed, and a failing"
+            + " dispatch's own exception is what the program sees, not the close's (A3)")
+    void throwingSpanNeverFailsACall() {
+        final ToolContext broken = ToolContext.builder().put(ToolContextKeys.TRACER, new BrokenSpanTracer(tracer))
+                .put(ToolContextKeys.LLM_CALL_METADATA_KEY, executeCodeSpan.enrich(LlmCallMetadata.empty())).build();
+        final DefaultToolCallBridge bridge = bridge(dispatcher((toolUse, context) -> {
+            if (toolUse.getInput().containsKey("fail")) {
+                throw new IllegalStateException("dispatch failed");
+            }
+            return ToolDispatchResult.builder().toolUseId(toolUse.getId()).text("ok").build();
+        }), broken, CodeExecutionLimits.defaults());
+        final ToolDispatchResult ok = bridge.callAsync("Read", Map.of()).join();
+        assertThat(ok.isError()).isFalse();
+        assertThat(ok.getText()).isEqualTo("ok");
+        final ToolDispatchResult failed = bridge.callAsync("Read", Map.of("fail", true)).join();
+        assertThat(failed.isError()).isTrue();
+        assertThat(failed.getText()).contains("dispatch failed").doesNotContain("span is broken");
+        // A refusal records on a span too: it must not fail either.
+        assertThat(bridge.callAsync("Write", Map.of()).join().isError()).isTrue();
+        bridge.close(Duration.ofSeconds(1));
+    }
+
+    @Test
+    @DisplayName("TRACE_PAYLOAD_POLICY capturing content: the nested span's outputs carry the content, truncated (TC-22)")
+    void payloadPolicyCapturesContent() {
+        final ToolContext capturing = ToolContext.builder().putAll(parentContext.getContext())
+                .put(ToolContextKeys.TRACE_PAYLOAD_POLICY, TracePayloadPolicy.full(4)).build();
+        final DefaultToolCallBridge bridge = bridge(dispatcher(
+                (toolUse, context) -> ToolDispatchResult.builder().toolUseId(toolUse.getId()).text("abcdefgh").build()),
+                capturing, CodeExecutionLimits.defaults());
+        bridge.callAsync("Read", Map.of()).join();
+        bridge.close(Duration.ofSeconds(1));
+        assertThat(nestedSpans()).singleElement()
+                .satisfies(span -> assertThat(span.getOutputs()).hasValueSatisfying(outputs -> {
+                    assertThat(outputs(outputs)).containsEntry("contentChars", 8).containsKey("content");
+                    assertThat((String) outputs(outputs).get("content")).startsWith("abcd").isNotEqualTo("abcdefgh");
+                }));
+    }
+
+    @Test
+    @DisplayName("TRACE_PAYLOAD_POLICY absent: summary only, as before the key (TC-22)")
+    void payloadPolicyAbsentIsSummaryOnly() {
+        final DefaultToolCallBridge bridge = bridge(dispatcher(
+                (toolUse, context) -> ToolDispatchResult.builder().toolUseId(toolUse.getId()).text("abcdefgh").build()),
+                parentContext, CodeExecutionLimits.defaults());
+        bridge.callAsync("Read", Map.of()).join();
+        bridge.close(Duration.ofSeconds(1));
+        assertThat(nestedSpans()).singleElement().satisfies(span -> assertThat(span.getOutputs())
+                .hasValueSatisfying(outputs -> assertThat(outputs(outputs)).doesNotContainKey("content")));
+    }
+
     private List<TraceSpan> nestedSpans() {
         return store.byTrace(executeCodeSpan.context().getTraceId()).stream().filter(
                 span -> span.getParentSpanId().filter(executeCodeSpan.context().getSpanId()::equals).isPresent())
@@ -233,6 +286,36 @@ class DefaultToolCallBridgeTracingTest {
         @Override
         public Span startChild(SpanContext parent, SpanType type, String name, Map<String, Object> inputs) {
             throw new IllegalStateException("tracer is broken");
+        }
+    }
+
+    /**
+     * A tracer whose spans are real for their position (context, enrich) but throw on every recording call and on
+     * close, as a span with a broken exporter would.
+     */
+    private static final class BrokenSpanTracer implements Tracer {
+        private final Tracer real;
+
+        BrokenSpanTracer(Tracer real) {
+            this.real = real;
+        }
+
+        @Override
+        public Span startRoot(String sessionId, SpanType type, String name, Map<String, Object> inputs) {
+            return broken(real.startRoot(sessionId, type, name, inputs));
+        }
+
+        @Override
+        public Span startChild(SpanContext parent, SpanType type, String name, Map<String, Object> inputs) {
+            return broken(real.startChild(parent, type, name, inputs));
+        }
+
+        private static Span broken(Span span) {
+            return (Span) java.lang.reflect.Proxy.newProxyInstance(Span.class.getClassLoader(),
+                    new Class<?>[]{Span.class}, (proxy, method, args) -> switch (method.getName()) {
+                        case "context", "enrich", "hashCode", "equals", "toString" -> method.invoke(span, args);
+                        default -> throw new IllegalStateException("span is broken");
+                    });
         }
     }
 }

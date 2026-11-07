@@ -29,7 +29,8 @@ import at.aimon.core.tracing.Tracer;
  *
  * <p>
  * The parent of a span is read from the tool context's {@link ToolContextKeys#LLM_CALL_METADATA_KEY} metadata; there is
- * no thread-local. Every start goes through {@link Spans#startChildSafely}, so a throwing tracer never fails a call.
+ * no thread-local. Every start goes through {@link Spans#startChildSafely} and every recording through the
+ * {@code Spans.*Safely} helpers, so a throwing tracer or span never fails a call.
  *
  * <p>
  * Stateless; all methods are static.
@@ -142,9 +143,9 @@ public final class ToolSpans {
         if (policy.capturesContent() && content != null) {
             outputs.put("content", policy.truncate(content));
         }
-        toolSpan.setOutputs(outputs);
+        Spans.setOutputsSafely(toolSpan, outputs);
         if (isError) {
-            toolSpan.error(content);
+            Spans.errorSafely(toolSpan, content);
         }
     }
 
@@ -165,9 +166,9 @@ public final class ToolSpans {
         final boolean cancelled = failure instanceof CancelledExecutionException || toolContext
                 .get(InterruptToolKeys.CANCELLATION_SIGNAL).map(CancellationSignal::isCancelled).orElse(false);
         if (cancelled) {
-            toolSpan.interrupted();
+            Spans.interruptedSafely(toolSpan);
         } else {
-            toolSpan.error(failure);
+            Spans.errorSafely(toolSpan, failure);
         }
     }
 }

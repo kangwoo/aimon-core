@@ -269,6 +269,8 @@ class RoutineExecutorTracingTest {
         final TraceSpan consumerSpan = toolSpan(task, "Consumer");
         // The tracer rides beside the metadata, so a step tool that makes calls of its own traces them (§12.2).
         assertThat(consumer.context.get().get(ToolContextKeys.TRACER)).contains(tracer);
+        // TC-22: and the run's payload policy beside it.
+        assertThat(consumer.context.get().get(ToolContextKeys.TRACE_PAYLOAD_POLICY)).isPresent();
         assertThat(consumer.context.get().get(ToolContextKeys.TOOL_SPAN)).isPresent();
         assertThat(inputs(consumerSpan)).containsEntry("toolParams", "{\"q\":\"$step.0.result\"}")
                 .doesNotContainKey("input");
@@ -373,6 +375,7 @@ class RoutineExecutorTracingTest {
 
         assertThat(capture.context.get().get(ToolContextKeys.LLM_CALL_METADATA_KEY)).isEmpty();
         assertThat(capture.context.get().get(ToolContextKeys.TRACER)).isEmpty();
+        assertThat(capture.context.get().get(ToolContextKeys.TRACE_PAYLOAD_POLICY)).isEmpty();
         assertThat(store.bySession("routine:" + task.getId().value())).isEmpty();
     }
 

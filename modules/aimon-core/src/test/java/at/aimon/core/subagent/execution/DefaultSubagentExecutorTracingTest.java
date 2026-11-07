@@ -148,6 +148,7 @@ class DefaultSubagentExecutorTracingTest {
         assertThat(parentSeenByTool.getSpanId()).isEqualTo(toolSpan.getSpanId());
         // The fork's tracer and the call's own span ride beside it, for a tool that makes calls of its own (§12.2).
         assertThat(probe.contexts.get(0).get(ToolContextKeys.TRACER)).isPresent();
+        assertThat(probe.contexts.get(0).get(ToolContextKeys.TRACE_PAYLOAD_POLICY)).isPresent();
         assertThat(probe.contexts.get(0).get(ToolContextKeys.TOOL_SPAN)).isPresent();
         assertThat(toolSpan.getAttributes()).containsEntry("tool.path", "direct");
     }

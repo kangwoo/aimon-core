@@ -113,17 +113,24 @@ class ShellProgramRunTest {
     }
 
     @Test
-    @DisplayName("close() waits for a reply write in flight, and returns once it finishes")
+    @DisplayName("close() waits for a reply write in flight, returns once it finishes, and reports the wait")
     void closeDrainsWriteInFlight() throws Exception {
         final ShellProgramRun run = run();
         run.onStdoutLine(protocol.line("CALL", 1, CALL));
         assertThat(files.entered.await(10, TimeUnit.SECONDS)).isTrue();
-        final Future<?> closing = executor.submit(run::close);
+        final Future<Duration> closing = executor.submit(run::close);
         Thread.sleep(200);
         assertThat(closing.isDone()).as("close() returned while a write was in flight").isFalse();
         files.release.countDown();
-        closing.get(10, TimeUnit.SECONDS);
+        // About the write's remaining time: at least the 200 ms it was held while close() waited.
+        assertThat(closing.get(10, TimeUnit.SECONDS)).isBetween(Duration.ofMillis(150), Duration.ofSeconds(5));
         assertThat(files.writes).containsExactly("/w/.aimon-ptc/x/r/1");
+    }
+
+    @Test
+    @DisplayName("close() with nothing in flight returns zero")
+    void closeWithNothingInFlight() {
+        assertThat(run().close()).isZero();
     }
 
     @Test
@@ -152,9 +159,11 @@ class ShellProgramRunTest {
         logger.addAppender(appender);
         try {
             final long start = System.nanoTime();
-            executor.submit(run::close).get(10, TimeUnit.SECONDS);
+            final Duration waited = executor.submit(run::close).get(10, TimeUnit.SECONDS);
             assertThat(Duration.ofNanos(System.nanoTime() - start)).isBetween(Duration.ofMillis(250),
                     Duration.ofSeconds(5));
+            // Capped at the drain bound (plus scheduling slack), not the stalled write's time.
+            assertThat(waited).isBetween(Duration.ofMillis(300), Duration.ofSeconds(2));
         } catch (TimeoutException e) {
             throw new AssertionError("close() did not honour its bound", e);
         } finally {
@@ -162,7 +171,7 @@ class ShellProgramRunTest {
         }
         assertThat(appender.list).anySatisfy(event -> {
             assertThat(event.getLevel()).isEqualTo(Level.WARN);
-            assertThat(event.getFormattedMessage()).contains("still in flight");
+            assertThat(event.getFormattedMessage()).contains("1 reply write(s) still in flight");
         });
     }
 

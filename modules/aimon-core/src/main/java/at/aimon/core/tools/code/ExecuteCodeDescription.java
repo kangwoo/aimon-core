@@ -39,14 +39,15 @@ final class ExecuteCodeDescription {
                         + "large result, aggregating. For one or two calls in sequence, call the tools directly "
                         + "instead: a program costs more there.\n\n");
         if (python) {
-            // The functions are injected, and the program already runs inside an event loop: say both, because
-            // real models otherwise guess `from functions import ...` and `asyncio.run(...)` (backlog TC-27).
+            // The functions are injected (real models otherwise guess `from functions import ...`, backlog TC-27).
+            // The runtime starts an event loop only for a program with top-level await, so a program's own
+            // asyncio.run(main()) works too, and asyncio and json are pre-imported (ptc-leftovers-core §1.5).
             out.append("- The functions below are already defined as globals: call them directly and do not import "
                     + "them. Each is a coroutine that returns a string (").append(call)
                     .append("); the format of the string is in the function's description — parse it yourself, for "
                             + "example with json.loads, when it is JSON. A failed call raises ToolError, whose message "
-                            + "is the tool's error text. The program already runs inside an event loop: use top-level "
-                            + "await, and never call asyncio.run(). The "
+                            + "is the tool's error text. Use top-level await (a program without top-level await may "
+                            + "run its own asyncio.run(main()) instead). asyncio and json are already imported. The "
                             + "arguments of one call must stay under 64 KiB as JSON; pass a larger input as a file "
                             + "path.\n");
         } else {

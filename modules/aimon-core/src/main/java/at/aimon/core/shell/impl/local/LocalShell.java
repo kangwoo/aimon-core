@@ -83,10 +83,9 @@ import at.aimon.core.shell.exception.ShellTimeoutException;
  * has: the child holds its own descriptors, this class reads through its own, and nothing else can find the files
  * afterwards. On Windows a file another process holds open cannot be deleted, so the unlink fails (logged at DEBUG)
  * and the capture files keep their names until the command ends; the stdin pipe below holds there too. Its stdin goes
- * through a pipe that a daemon thread writes and closes, so the payload never sits in a
- * file. What is left is the moment between creating the capture files and starting the process, on 0600 files with
- * random names; anything written there is truncated by the child's redirect. Model-facing commands keep the stdin
- * file, which cannot block.
+ * through a pipe that a daemon thread writes and closes, so the payload never sits in a file. What is left is the
+ * moment between creating the capture files and starting the process, on 0600 files with random names; anything written
+ * there is truncated by the child's redirect. Model-facing commands keep the stdin file, which cannot block.
  *
  * <p>
  * Example usage:
