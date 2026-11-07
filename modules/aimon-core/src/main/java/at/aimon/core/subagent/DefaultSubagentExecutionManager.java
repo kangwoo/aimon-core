@@ -488,9 +488,9 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
     /**
      * Creates a new DefaultSubagentExecutionManager (LlmClient convenience) with an explicit
      * {@link SubagentBackgroundExecutionOptions} bundle grouping the background {@link ExecutorService},
-     * {@link BackgroundTaskStore}, cross-node {@link TaskStopSignal} (design §4) and optional
-     * {@link TaskLeaseConfig} zombie-recovery (design §4). This is the constructor the factory uses when a
-     * scale-out bootstrap supplies a shared task store and/or a stop signal and/or lease recovery.
+     * {@link BackgroundTaskStore}, cross-node {@link TaskStopSignal} (design §4) and optional {@link TaskLeaseConfig}
+     * zombie-recovery (design §4). This is the constructor the factory uses when a scale-out bootstrap supplies a
+     * shared task store and/or a stop signal and/or lease recovery.
      *
      * @param llmClient
      *            The LLM client used to build the default {@link DefaultSubagentExecutor} (must not be null)
@@ -516,12 +516,10 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
      *
      * <p>
      * Replaces the previously unbounded {@code newCachedThreadPool}: at most
-     * {@link SubagentBackgroundConfig#getMaxConcurrency()}
-     * background subagents run at once, with a backing queue bounded by
-     * {@link SubagentBackgroundConfig#getQueueCapacity()}
-     * (effectively unbounded by default, so bursts queue rather than being rejected). When a finite queue saturates,
-     * {@code supplyAsync} rejects and {@link #executeInBackground} settles the task as {@code FAILED} rather than
-     * spawning an unbounded thread.
+     * {@link SubagentBackgroundConfig#getMaxConcurrency()} background subagents run at once, with a backing queue
+     * bounded by {@link SubagentBackgroundConfig#getQueueCapacity()} (effectively unbounded by default, so bursts queue
+     * rather than being rejected). When a finite queue saturates, {@code supplyAsync} rejects and
+     * {@link #executeInBackground} settles the task as {@code FAILED} rather than spawning an unbounded thread.
      *
      * @param config
      *            the background pool configuration (must not be null)
@@ -539,8 +537,7 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
     /**
      * Builds the legacy unbounded, cached daemon thread pool for background subagent execution. Used when no
      * {@link SubagentBackgroundConfig} is supplied (byte-for-byte the prior default behaviour) — thread count grows
-     * with
-     * demand and idle threads are reclaimed.
+     * with demand and idle threads are reclaimed.
      *
      * @return an unbounded, daemon-threaded cached executor service
      */
@@ -1686,10 +1683,8 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
      *
      * <ul>
      * <li><b>Message queue (guaranteed, model-facing):</b> when the launch context carries a
-     * {@link MessageQueueManager},
-     * a
-     * {@link QueuedInputPriority#NEXT}-priority notification scoped to the parent {@link AgentRuntimeId} is
-     * enqueued, so the parent's ReAct loop drains and injects it on its next iteration.
+     * {@link MessageQueueManager}, a {@link QueuedInputPriority#NEXT}-priority notification scoped to the parent
+     * {@link AgentRuntimeId} is enqueued, so the parent's ReAct loop drains and injects it on its next iteration.
      * <li><b>Stream event (best-effort, observability):</b> when the launch context carries a parent event sink, a
      * {@link SubagentTaskCompleted} event is emitted for live CLI display / web SSE. It is dropped when no listener is
      * attached (the parent is idle) — the queued notification remains the guaranteed path.

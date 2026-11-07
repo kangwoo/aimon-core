@@ -17,10 +17,9 @@ import at.aimon.core.llm.ReasoningEffort;
  * A declaration is the whole row for its name (see
  * {@link InMemoryModelCapabilityRegistry#withDefaultsExtendedBy(java.util.Map)}), so a flag it does not state is
  * registered at {@link ModelCapabilities#unknown()}'s value — not at what the built-in row said. When the name is one
- * the built-in table already describes, that is a regression nobody asked for: declaring only
- * {@code thinkingDialect} for a {@code claude-sonnet-5} name hands {@code temperature} back to a model measured to
- * answer it with HTTP 400. This type does not change that rule. It finds the flags the rule dropped and writes the
- * sentence that names them.
+ * the built-in table already describes, that is a regression nobody asked for: declaring only {@code thinkingDialect}
+ * for a {@code claude-sonnet-5} name hands {@code temperature} back to a model measured to answer it with HTTP 400.
+ * This type does not change that rule. It finds the flags the rule dropped and writes the sentence that names them.
  *
  * <p>
  * <b>What counts as dropped.</b> A flag the built-in row sets to something other than the fail-open value

@@ -29,8 +29,7 @@ import at.aimon.core.tracing.Tracer;
  *
  * <p>
  * Fail-safe: {@link Span#close()} swallows all errors (WARN logged) so tracing never breaks execution. {@link Clock}
- * and
- * the id generator are injectable for deterministic tests.
+ * and the id generator are injectable for deterministic tests.
  *
  * <p>
  * TRACE-02: an optional {@link SpanRedactor} (default {@link SpanRedactor#noop()}) masks the {@code inputs}/

@@ -25,10 +25,9 @@ import java.util.Objects;
  * Scalar values (text, numbers, booleans) become their text. A list, a null value, an empty nested map, a blank key,
  * the same key written both nested and dotted, and a key that is both a value and a group ({@code sandbox: x} beside
  * {@code sandbox.slot: y}) are errors rather than dropped or kept ambiguous: an attribute is read by something that is
- * not here to
- * complain, so one silently lost would surface as a sandbox picked by default with nobody knowing why. The same key
- * written twice at one level is not caught here — the definition parsers keep YAML's default of letting the last one
- * win.
+ * not here to complain, so one silently lost would surface as a sandbox picked by default with nobody knowing why. The
+ * same key written twice at one level is not caught here — the definition parsers keep YAML's default of letting the
+ * last one win.
  *
  * <p>
  * <b>Quote values that are not plain text.</b> The parsers read YAML 1.1, which types unquoted scalars before this

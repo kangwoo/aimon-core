@@ -12,10 +12,10 @@
  * <p>
  * Publication is at-least-once: receivers must tolerate the same signal arriving twice. Handlers run on the bus's
  * delivery thread and must not block — long work belongs on the subscriber's own dispatcher. Splitting the
- * high-frequency observability kinds ({@code EVENT}, {@code STATUS}) away from the control kinds
- * ({@code INTERRUPT}, {@code EVICT}, {@code MESSAGE_ENQUEUED}) is a fan-out optimization implementations may make —
- * the Redis bus does, on two channel namespaces — and never a routing constraint at this SPI level. Subscribers
- * receive every kind and filter on {@code getKind()}.
+ * high-frequency observability kinds ({@code EVENT}, {@code STATUS}) away from the control kinds ({@code INTERRUPT},
+ * {@code EVICT}, {@code MESSAGE_ENQUEUED}) is a fan-out optimization implementations may make — the Redis bus does, on
+ * two channel namespaces — and never a routing constraint at this SPI level. Subscribers receive every kind and filter
+ * on {@code getKind()}.
  *
  * <h2>Why this lives in aimon-core</h2>
  *

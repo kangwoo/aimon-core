@@ -182,8 +182,7 @@ public final class SubagentExecutionResult {
     /**
      * Creates a successful result with no recorded transcript: an empty {@link SessionSnapshot} and zero-cost
      * {@link ExecutionMetadata} ({@code iterationCount=0}, no tokens) timestamped from {@code startTime} to now. Used
-     * by
-     * execution paths that produce no ReAct transcript (e.g. code-behavior subagents). Callers that ran a real
+     * by execution paths that produce no ReAct transcript (e.g. code-behavior subagents). Callers that ran a real
      * transcript should use {@link #success(String, SessionSnapshot, ExecutionMetadata)} instead.
      *
      * @param finalAnswer
@@ -201,9 +200,8 @@ public final class SubagentExecutionResult {
     /**
      * Creates a failed result with no recorded transcript: an empty {@link SessionSnapshot} and zero-cost
      * {@link ExecutionMetadata} ({@code iterationCount=0}, no tokens) timestamped from {@code startTime} to now. Used
-     * by
-     * paths that fail before producing a transcript (manager-level dispatch failures, code-behavior failures). Callers
-     * that ran a real transcript should use {@link #failure(String, SessionSnapshot, ExecutionMetadata)}.
+     * by paths that fail before producing a transcript (manager-level dispatch failures, code-behavior failures).
+     * Callers that ran a real transcript should use {@link #failure(String, SessionSnapshot, ExecutionMetadata)}.
      *
      * @param errorMessage
      *            The error message (must not be null)
@@ -366,8 +364,7 @@ public final class SubagentExecutionResult {
      *
      * <p>
      * Unlike {@link #isSuccess()} (which collapses every non-completion into {@code false}), this distinguishes a
-     * normal
-     * {@link CompletionReason#COMPLETED} finish from budget stops ({@code MAX_ITERATIONS},
+     * normal {@link CompletionReason#COMPLETED} finish from budget stops ({@code MAX_ITERATIONS},
      * {@code TOKEN_BUDGET_EXCEEDED},
      * ...), interruption and plain errors — the signal an workflow judge / loop-until-dry driver needs to tell
      * "needs another pass" from "genuinely failed".
@@ -510,8 +507,7 @@ public final class SubagentExecutionResult {
      * Always {@code true} except for one case: a foreground fork under a deadline that was asked to stop — the deadline
      * passed, or its spawner cancelled it — and was still running when its grace period ran out. Its result is handed
      * back anyway, with this {@code false}, so the spawner is not blocked forever by a tool that ignores interrupts;
-     * the
-     * run itself goes on until it returns, listed meanwhile by
+     * the run itself goes on until it returns, listed meanwhile by
      * {@link at.aimon.core.subagent.SubagentExecutionManager#lingeringRuns()}. Such a result is never a completion: do
      * not treat its work as done, and do not launch the same work again while it is listed.
      *

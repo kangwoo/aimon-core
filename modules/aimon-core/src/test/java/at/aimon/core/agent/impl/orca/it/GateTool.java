@@ -19,8 +19,7 @@ import at.aimon.core.agent.tool.ToolResult;
  *
  * <p>
  * <b>Why this exists and {@link RendezvousTool} does not serve.</b> A test that interrupts a running turn needs the
- * turn
- * to be provably <em>mid-flight</em> when the interrupt arrives, and needs to control the moment it resumes. A
+ * turn to be provably <em>mid-flight</em> when the interrupt arrives, and needs to control the moment it resumes. A
  * {@link java.util.concurrent.CyclicBarrier} cannot give the second half: it releases both parties at the same instant,
  * so the test thread and the turn thread run on from the same point and the interrupt races the loop's
  * post-tool interrupt check. The two latches here split that into the two moments a targeting test must distinguish —

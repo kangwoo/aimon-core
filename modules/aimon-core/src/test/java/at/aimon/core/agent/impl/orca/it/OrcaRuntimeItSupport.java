@@ -473,9 +473,8 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
          * This is the only way an integration test can interrupt a turn. {@code LiveSession.interrupt(TurnId,
          * InterruptReason)} is the production entry point, but it is a <b>layer above</b> this harness — a live session
          * holds the coordinator of whatever turn is currently active and forwards to it. The harness drives the
-         * executor
-         * directly, so it takes the same coordinator from the request builder's observer hook, which is what the live
-         * session itself ultimately trips.
+         * executor directly, so it takes the same coordinator from the request builder's observer hook, which is what
+         * the live session itself ultimately trips.
          *
          * <p>
          * The observer runs on the <b>executing thread</b> before the loop starts, so it must not block. Capture the
@@ -506,10 +505,10 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
          * single turn, but three things live <b>only</b> on the handle and are invisible from a turn's result:
          * {@link DefaultLiveSession#interrupt(at.aimon.core.agent.session.TurnId,
          * at.aimon.core.agent.interrupt.InterruptReason) turn-targeted interruption} (the executor has no notion of
-         * which turn a coordinator belongs to),
-         * {@code OnSessionStart} / {@code OnSessionEnd} hooks (fired by the handle's constructor and {@code close()},
-         * never by the executor), and the write-back of {@code SessionTotals} / {@code budgetOverride} into the
-         * {@link SessionRecordStore} at end of turn. Tests for those must go through here.
+         * which turn a coordinator belongs to), {@code OnSessionStart} / {@code OnSessionEnd} hooks (fired by the
+         * handle's constructor and {@code close()}, never by the executor), and the write-back of {@code SessionTotals}
+         * / {@code budgetOverride} into the {@link SessionRecordStore} at end of turn. Tests for those must go through
+         * here.
          *
          * <p>
          * The full seven-arg constructor is used with a null {@code MessageQueueManager}: with no queue wired, a
@@ -732,8 +731,7 @@ final class OrcaRuntimeItSupport implements AutoCloseable {
         /**
          * Writes {@code json} to the node's {@code .aimon/hooks.json} and loads it through
          * {@code HookHotReloadBootstrap}, as an assembly that wires {@code hooks.json} does. Host-placed commands run
-         * on
-         * a {@code LocalShell} rooted at {@code hostDir} &mdash; a directory other than the workspace, so a test can
+         * on a {@code LocalShell} rooted at {@code hostDir} &mdash; a directory other than the workspace, so a test can
          * see from the files a command writes where it ran &mdash; and the watcher is closed with the node.
          */
         Options hooksJson(String json, Path hostDir) {

@@ -27,8 +27,7 @@ final class StepOutcomeCodec {
     /**
      * Format version stamped into every encoded object; {@link #decode} rejects any other value. Bumped to 2
      * for the {@code structureFingerprint} field — a persisted v1 object fails the version check and degrades to a
-     * cache
-     * miss (re-execution), so there is no legacy fingerprint-less replay window (design §6.5).
+     * cache miss (re-execution), so there is no legacy fingerprint-less replay window (design §6.5).
      */
     static final int FORMAT_VERSION = 2;
 

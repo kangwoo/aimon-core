@@ -106,12 +106,11 @@ public interface LlmClient {
      *
      * <p>
      * Providers that support provider-specific caching hints (for example, Anthropic's {@code cache_control}
-     * breakpoint)
-     * <b>MAY override</b> this method to attach cache boundaries at part seams — typically at transitions between
-     * {@link at.aimon.core.agent.prompt.Staticness#STATIC STATIC} /
-     * {@link at.aimon.core.agent.prompt.Staticness#SEMI_STATIC
-     * SEMI_STATIC} parts and the trailing {@link at.aimon.core.agent.prompt.Staticness#DYNAMIC DYNAMIC} parts — to
-     * maximize cache hit rates without changing the LLM-visible prompt text.
+     * breakpoint) <b>MAY override</b> this method to attach cache boundaries at part seams — typically at transitions
+     * between {@link at.aimon.core.agent.prompt.Staticness#STATIC STATIC} /
+     * {@link at.aimon.core.agent.prompt.Staticness#SEMI_STATIC SEMI_STATIC} parts and the trailing
+     * {@link at.aimon.core.agent.prompt.Staticness#DYNAMIC DYNAMIC} parts — to maximize cache hit rates without
+     * changing the LLM-visible prompt text.
      *
      * @param systemPromptParts
      *            The structured system prompt as an ordered list of parts (must not be null)
@@ -276,8 +275,8 @@ public interface LlmClient {
      * header wait or mid-stream cuts that call's HTTP transport immediately instead of waiting for the next chunk. The
      * lever must cut the transport only — never close the stream, which the consumer thread does once its read has
      * unwound — and must keep the SDK from re-sending the cancelled request. Decorators in the call chain <b>MUST
-     * override</b> it and
-     * forward {@code cancellation}, otherwise the token is silently dropped before it reaches the provider.
+     * override</b> it and forward {@code cancellation}, otherwise the token is silently dropped before it reaches the
+     * provider.
      *
      * @param systemPromptParts
      *            structured system prompt (must not be null)

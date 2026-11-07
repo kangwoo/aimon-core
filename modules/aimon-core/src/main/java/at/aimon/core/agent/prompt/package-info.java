@@ -6,9 +6,8 @@
  * <p>
  * This package introduces a structured representation of an agent's system prompt as an ordered list of immutable
  * {@link at.aimon.core.agent.prompt.SystemPromptPart parts}, rather than a single concatenated {@code String}. Each
- * part
- * carries metadata describing how static it is across sessions, which lets downstream LLM providers attach cache hints
- * (for example, Anthropic's {@code cache_control} or OpenAI prompt caching markers) at fine-grained boundaries.
+ * part carries metadata describing how static it is across sessions, which lets downstream LLM providers attach cache
+ * hints (for example, Anthropic's {@code cache_control} or OpenAI prompt caching markers) at fine-grained boundaries.
  *
  * <h2>Key Concepts</h2>
  *

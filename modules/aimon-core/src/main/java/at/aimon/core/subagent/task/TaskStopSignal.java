@@ -8,8 +8,7 @@ import java.util.function.Consumer;
  * <p>
  * A background task's live execution handle ({@code RunningTaskHandle}) exists only on the node that started it, so a
  * {@code Task.stop(taskId)} issued on <em>another</em> node cannot reach it directly. This interface is the pub/sub
- * seam
- * that carries a stop request to whichever node owns the running task: the receiving node calls
+ * seam that carries a stop request to whichever node owns the running task: the receiving node calls
  * {@link #broadcastStop(String)}, every node (including the sender) is delivered the {@code taskId} through its
  * {@link #subscribe(Consumer) subscription}, and the owning node trips its local handle.
  *
@@ -59,8 +58,7 @@ public interface TaskStopSignal {
 
     /**
      * Handle for an active {@link #subscribe(Consumer) subscription}. Closing it detaches the handler; closing more
-     * than
-     * once is a no-op.
+     * than once is a no-op.
      */
     interface Subscription extends AutoCloseable {
 

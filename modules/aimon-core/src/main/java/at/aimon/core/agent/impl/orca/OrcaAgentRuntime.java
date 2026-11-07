@@ -290,9 +290,9 @@ public final class OrcaAgentRuntime implements AgentRuntime, RewakeCapableRuntim
      * connections / spawned stdio processes are released, then the agent-scoped {@link WorkflowRunner}, then — only
      * when this runtime owns it (built from {@code withExecutionEnvironmentProviderFactory}) — the
      * {@link ExecutionEnvironmentProvider}. A borrowed provider is left open. A second call does nothing.
-     * {@link KnowledgeStore} is <b>application-scoped</b> and is
-     * deliberately <i>not</i> closed here — closing it would violate the {@code ApplicationScoped} marker contract on
-     * {@code KnowledgeStore} and break the store for any other agent that shares it.
+     * {@link KnowledgeStore} is <b>application-scoped</b> and is deliberately <i>not</i> closed here — closing it would
+     * violate the {@code ApplicationScoped} marker contract on {@code KnowledgeStore} and break the store for any other
+     * agent that shares it.
      *
      * <p>
      * The list below is hardcoded on purpose: there is no fan-out over the {@code AgentScoped} marker, so a new

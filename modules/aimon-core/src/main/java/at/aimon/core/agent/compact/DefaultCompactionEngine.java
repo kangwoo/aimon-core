@@ -53,9 +53,8 @@ import at.aimon.core.llm.token.TokenEstimator;
  * an instruction, and is reported by the block paths above instead).
  * <li>Atomically replace the transcript buffer with the design-§4.5 marker pair: a boundary {@code USER} message
  * carrying JSON metadata wrapped in {@link CompactBoundary#boundaryOpen}/{@link CompactBoundary#boundaryClose},
- * followed
- * by a summary {@code USER} message wrapped in {@link CompactBoundary#summaryOpen}/{@link CompactBoundary#summaryClose}
- * with a "Continue from here." trailer.
+ * followed by a summary {@code USER} message wrapped in {@link CompactBoundary#summaryOpen}/{@link
+ * CompactBoundary#summaryClose} with a "Continue from here." trailer.
  * <li>Invoke {@code PostCompactHook}s with the new memory and metadata.
  * </ol>
  *

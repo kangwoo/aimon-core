@@ -29,9 +29,8 @@ import at.aimon.core.subagent.DefaultSubagentExecutionManager;
  * The direct-core embedding path of {@code docs/getting-started/embedding-agent-in-application.md} §A (review 2,
  * blocking 3). The manager used to default to a factory without an {@code ExecutionEnvironmentProvider}, so the guide's
  * snippet built fine and then failed on the first {@code getOrCreateRuntime(...)}. It now refuses at build time, and
- * the guide's corrected snippet — a provider over the workspace, the control root passed to
- * {@code getOrCreateRuntime} — builds a runtime that finds the skills an embedder already keeps under
- * {@code {workspace}/.aimon/skills}.
+ * the guide's corrected snippet — a provider over the workspace, the control root passed to {@code getOrCreateRuntime}
+ * — builds a runtime that finds the skills an embedder already keeps under {@code {workspace}/.aimon/skills}.
  */
 @DisplayName("OrcaAgentRuntimeManager — direct-core embedding")
 class OrcaAgentRuntimeManagerEmbeddingTest {

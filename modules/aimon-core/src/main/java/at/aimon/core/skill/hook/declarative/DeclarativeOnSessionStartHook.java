@@ -15,9 +15,8 @@ import at.aimon.core.skill.hook.action.ShellAction;
  *
  * <p>
  * onSessionStart hooks are non-blocking by interface contract — only {@link ShellAction} is supported here. Deny
- * actions
- * are rejected at parse time. There is no matcher: the action runs unconditionally on every session-start event for as
- * long as the enclosing skill is active.
+ * actions are rejected at parse time. There is no matcher: the action runs unconditionally on every session-start event
+ * for as long as the enclosing skill is active.
  *
  * <p>
  * Immutable; thread-safe as long as the executor is.

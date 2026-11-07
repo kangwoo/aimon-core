@@ -39,13 +39,12 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  * again otherwise (EE-37, EE-109). Nothing about an earlier check is remembered, because a shell running as the same
  * user can rewrite a copy at any time; the cost is one listing and one read of the copy per call, bounded by the
  * staging limit. What this does not close is the moment between the check and a process opening the files by path
- * (hook-tamper-boundary design §9). The first copy also writes
- * {@code {stagingRoot}/}{@value #GITIGNORE} containing {@code *} unless one exists (EE-4). The copy takes exactly
- * {@link StagedResource#getFiles()}, hashes what it copies with the same algorithm as
- * {@link StagedResource#scan}, and writes the marker last; a size over the limit or an unreadable recorded file fails
- * with {@link StagingException}, the partial copy removed and no marker written, so an incomplete or mislabelled copy
- * is never served and the next call retries. A resource holding two files whose names differ only by case is refused
- * the same way when the workspace kept one file for both (EE-38).
+ * (hook-tamper-boundary design §9). The first copy also writes {@code {stagingRoot}/}{@value #GITIGNORE} containing
+ * {@code *} unless one exists (EE-4). The copy takes exactly {@link StagedResource#getFiles()}, hashes what it copies
+ * with the same algorithm as {@link StagedResource#scan}, and writes the marker last; a size over the limit or an
+ * unreadable recorded file fails with {@link StagingException}, the partial copy removed and no marker written, so an
+ * incomplete or mislabelled copy is never served and the next call retries. A resource holding two files whose names
+ * differ only by case is refused the same way when the workspace kept one file for both (EE-38).
  *
  * <p>
  * <b>A source that changed since it was loaded (EE-3).</b> The content key was computed when the registry read the
@@ -64,10 +63,8 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  * the <em>first</em> copy: once a copy under the loaded key exists it is what is served, in this process and in any
  * that loaded the same version, and an edit made afterwards is not seen until the registry reads the resource again
  * (execution-environment-staging design §7 — the source is hashed when the registry reads it; later calls check the
- * copy, not the source). What
- * is staged is the resource's
- * files; whatever the registry parsed from them at load (a skill's rendered body, its tool restrictions and hooks)
- * stays the loaded version until then.
+ * copy, not the source). What is staged is the resource's files; whatever the registry parsed from them at load (a
+ * skill's rendered body, its tool restrictions and hooks) stays the loaded version until then.
  *
  * <p>
  * <b>A resource that was over the limit when it was loaded.</b> Its recorded size refuses it before anything is
@@ -540,8 +537,7 @@ final class LocalStaging {
 
     /**
      * The source does not hold what the resource's content key names, or may not (EE-3). Never leaves this class: the
-     * caller scans
-     * the source again and either stages what is there or throws a {@link StagingException}.
+     * caller scans the source again and either stages what is there or throws a {@link StagingException}.
      */
     private static final class SourceChangedException extends RuntimeException {
 

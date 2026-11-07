@@ -25,11 +25,10 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  * ignored by {@code sourceDir/.stageignore} ({@link StageIgnore}), fails on any remaining entry it cannot read (a
  * copy without it would be missing a file under {@code ${AIMON_SKILL_DIR}} with nothing reporting it), and records
  * exactly the relative paths it hashed in {@link #getFiles()}. The {@link #getContentKey() content key} is the SHA-256
- * (16 hex characters)
- * of the sorted {@code relPath + '\0' + bytes + '\0'} entries. A provider's {@code stage()} copies <b>exactly</b>
- * {@link #getFiles()} and nothing else; if one of those files cannot be read at copy time, or the bytes it copies no
- * longer hash to the content key, it fails without writing the {@code .staged} marker, so an incomplete or mislabelled
- * copy is never served.
+ * (16 hex characters) of the sorted {@code relPath + '\0' + bytes + '\0'} entries. A provider's {@code stage()}
+ * copies <b>exactly</b> {@link #getFiles()} and nothing else; if one of those files cannot be read at copy time, or the
+ * bytes it copies no longer hash to the content key, it fails without writing the {@code .staged} marker, so an
+ * incomplete or mislabelled copy is never served.
  *
  * <p>
  * A source needs only the read side of {@link VirtualFileSystem}: {@code exists}, {@code isDirectory},

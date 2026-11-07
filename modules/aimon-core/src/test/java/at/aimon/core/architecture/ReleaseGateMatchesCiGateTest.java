@@ -30,12 +30,11 @@ import org.junit.jupiter.api.io.TempDir;
  *
  * <p>
  * CI, {@code scripts/release.sh} and the {@code /release} skill are three hand-maintained statements of one list of
- * Gradle tasks, and nothing made them agree. They drifted once already: the release gate ran
- * {@code test spotlessCheck} while CI ran {@code checkAll}, so checkstyle — and the BOM's own {@code verifyBom} —
- * never gated a publish. The justification carried in the script was that checkstyle had "pre-existing warnings",
- * which was never true of this build: checkstyle here is {@code severity=error} with {@code maxErrors=0} and an empty
- * suppressions file, so it has no warning tier to accumulate. A stale comment outlived the condition it described
- * because no check read it.
+ * Gradle tasks, and nothing made them agree. They drifted once already: the release gate ran {@code test spotlessCheck}
+ * while CI ran {@code checkAll}, so checkstyle — and the BOM's own {@code verifyBom} — never gated a publish. The
+ * justification carried in the script was that checkstyle had "pre-existing warnings", which was never true of this
+ * build: checkstyle here is {@code severity=error} with {@code maxErrors=0} and an empty suppressions file, so it has
+ * no warning tier to accumulate. A stale comment outlived the condition it described because no check read it.
  *
  * <p>
  * Then it happened a second time, in prose. When {@code integrationTest} and {@code packagingTest} moved inside both
@@ -113,15 +112,14 @@ import org.junit.jupiter.api.io.TempDir;
  * class gated on a variable that is already refused, which is not a change the refusal needs. Two sandbox classes
  * gated on {@code AIMON_DOCKER_IT} and {@code AIMON_KUBERNETES_IT} used to sit outside the census on purpose, and the
  * script refused neither variable — backlog {@code LA-2}, dissolved when those modules moved to their own repository
- * and took both classes along. Nothing checks that the script calls nothing but
- * {@code git} before its pre-flight checks: today it calls nothing else, and the stub records only {@code git}. The
- * provider modules' test sources are inputs of this module's {@code test} task — its build script declares the same
- * {@code aimon-llm-*} tree this census walks, so widening the census means widening that declaration — and a change
- * to them re-runs this module's whole {@code test} task, not only this class. The tag scan's sources are not: they are
- * every test source in the repository, and declaring them would re-run this module's suite after a test edit in any
- * module. So a local build that changes only the {@code @Tag}s of another module whose test sources are not inputs —
- * one outside {@code modules/aimon-llm-*}, or a sample — can report this test {@code UP-TO-DATE}; CI builds from a
- * fresh checkout and does not.
+ * and took both classes along. Nothing checks that the script calls nothing but {@code git} before its pre-flight
+ * checks: today it calls nothing else, and the stub records only {@code git}. The provider modules' test sources are
+ * inputs of this module's {@code test} task — its build script declares the same {@code aimon-llm-*} tree this census
+ * walks, so widening the census means widening that declaration — and a change to them re-runs this module's whole
+ * {@code test} task, not only this class. The tag scan's sources are not: they are every test source in the repository,
+ * and declaring them would re-run this module's suite after a test edit in any module. So a local build that changes
+ * only the {@code @Tag}s of another module whose test sources are not inputs — one outside {@code modules/aimon-llm-*},
+ * or a sample — can report this test {@code UP-TO-DATE}; CI builds from a fresh checkout and does not.
  *
  * <p>
  * Shell and YAML rather than bytecode is why this is plain JUnit and not ArchUnit, following the precedent set by

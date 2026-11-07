@@ -9,8 +9,7 @@ import java.util.Objects;
  * <p>
  * In a scale-out deployment a background subagent task's execution lives only on the node that spawned it, while its
  * {@link BackgroundTask} metadata is shared through a {@link BackgroundTaskStore}. If that node crashes mid-run, its
- * task
- * would otherwise stay {@code RUNNING} in the shared store forever — a zombie. Lease recovery closes that gap:
+ * task would otherwise stay {@code RUNNING} in the shared store forever — a zombie. Lease recovery closes that gap:
  *
  * <ul>
  * <li>the owning node stamps a {@link BackgroundTask#getLastHeartbeat() heartbeat} on every non-terminal task it owns,

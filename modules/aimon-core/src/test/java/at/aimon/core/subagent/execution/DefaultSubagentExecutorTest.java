@@ -602,9 +602,9 @@ class DefaultSubagentExecutorTest {
 
     /**
      * LLM client that exercises the cancellation-aware overload the way a real provider does under cancellation: it
-     * captures
-     * the {@link LlmCancellation} the gateway forwards, registers an abort lever via {@link LlmCancellation#onCancel},
-     * and can actively abort the in-flight call by throwing {@link LlmCallCancelledException}.
+     * captures the {@link LlmCancellation} the gateway forwards, registers an abort lever via
+     * {@link LlmCancellation#onCancel}, and can actively abort the in-flight call by throwing
+     * {@link LlmCallCancelledException}.
      */
     private static final class CancellationAwareLlmClient implements LlmClient {
         private final AtomicReference<LlmCancellation> capturedToken = new AtomicReference<>();

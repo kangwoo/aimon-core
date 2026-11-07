@@ -266,9 +266,8 @@ public final class SkillMetadata {
      *
      * <p>
      * Always {@code null} for {@link ExecutionMode#INLINE}. Always non-null and non-blank for
-     * {@link ExecutionMode#FORK}
-     * (validated at build time). Resolution to an actual SubAgent happens at execute time, not at load time, so the
-     * referenced agent does not need to exist when the skill is parsed.
+     * {@link ExecutionMode#FORK} (validated at build time). Resolution to an actual SubAgent happens at execute time,
+     * not at load time, so the referenced agent does not need to exist when the skill is parsed.
      *
      * @return The SubAgent name, or {@code null} when mode is {@code INLINE}
      */

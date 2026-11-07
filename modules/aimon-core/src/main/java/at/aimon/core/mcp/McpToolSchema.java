@@ -101,8 +101,7 @@ public final class McpToolSchema {
      *
      * <p>
      * The returned Map is the complete JSON Schema object ({@code type}, {@code properties}, {@code required}, etc.).
-     * It
-     * does not contain only {@code properties}.
+     * It does not contain only {@code properties}.
      *
      * @return input JSON Schema (immutable)
      */

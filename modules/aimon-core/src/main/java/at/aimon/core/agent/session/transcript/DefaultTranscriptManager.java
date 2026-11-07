@@ -199,9 +199,8 @@ public class DefaultTranscriptManager implements TranscriptManager {
      *
      * <p>
      * Seals first, then drains any pending mid-turn checkpoint — including the one a landed seal raises — so this write
-     * is the last one for the session. The predecessor
-     * of {@link SessionCheckpointMailbox} only drained on the {@link #saveSilently} path, which left this one
-     * racing a late background write.
+     * is the last one for the session. The predecessor of {@link SessionCheckpointMailbox} only drained on the
+     * {@link #saveSilently} path, which left this one racing a late background write.
      *
      * <p>
      * Preserves the persisted {@code compactionFailureCount} from any existing record so that the in-memory

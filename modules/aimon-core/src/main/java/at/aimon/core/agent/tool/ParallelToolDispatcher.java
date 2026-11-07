@@ -26,8 +26,8 @@ import at.aimon.core.llm.ToolUseResult;
  * <li>parallel execution is enabled (see {@link ToolConcurrencyConfig});</li>
  * <li>the batch contains more than one tool ({@code toolUses.size() > 1});</li>
  * <li>every tool in the batch resolves in {@code registry} and declares {@link ConcurrencyBehavior#CONCURRENT_SAFE}
- * with
- * a parallelisable {@link at.aimon.core.agent.interrupt.InterruptBehavior} (NON_INTERRUPTIBLE or COOPERATIVE).</li>
+ * with a parallelisable {@link at.aimon.core.agent.interrupt.InterruptBehavior} (NON_INTERRUPTIBLE or
+ * COOPERATIVE).</li>
  * </ul>
  * Any unmet condition (including an unregistered/hallucinated tool name, or a single {@code SEQUENTIAL} tool) makes the
  * whole batch fall back to sequential execution.

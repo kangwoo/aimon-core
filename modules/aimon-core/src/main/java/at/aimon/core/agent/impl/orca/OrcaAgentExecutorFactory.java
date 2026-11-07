@@ -382,12 +382,10 @@ public class OrcaAgentExecutorFactory {
 
     /**
      * PAR-06: configures batch-parallel tool execution. When set to an {@link ToolConcurrencyConfig#isEnabled()
-     * enabled}
-     * config, the built {@link OrcaAgentExecutor} runs batches whose tools are all
+     * enabled} config, the built {@link OrcaAgentExecutor} runs batches whose tools are all
      * {@link at.aimon.core.agent.tool.ConcurrencyBehavior#CONCURRENT_SAFE CONCURRENT_SAFE} on a bounded worker pool.
-     * When
-     * {@code null} (the default) or {@link ToolConcurrencyConfig#disabled() disabled}, the executor keeps its default
-     * sequential dispatcher and behaviour is unchanged.
+     * When {@code null} (the default) or {@link ToolConcurrencyConfig#disabled() disabled}, the executor keeps its
+     * default sequential dispatcher and behaviour is unchanged.
      *
      * <p>
      * Each {@code create(...)} call builds its own executor-scoped dispatcher (and therefore its own worker pool when
@@ -532,8 +530,7 @@ public class OrcaAgentExecutorFactory {
     /**
      * Bounds background subagent execution. When set, {@link #createDefaultSubagentExecutionManager} builds a
      * bounded daemon thread pool ({@link SubagentBackgroundConfig#getMaxConcurrency() maxConcurrency} threads, backed
-     * by
-     * a queue of {@link SubagentBackgroundConfig#getQueueCapacity() queueCapacity}) instead of the legacy unbounded
+     * by a queue of {@link SubagentBackgroundConfig#getQueueCapacity() queueCapacity}) instead of the legacy unbounded
      * cached pool, so a burst of {@code run_in_background} tasks cannot spawn threads without limit. When {@code null}
      * (the default) the unbounded cached pool is retained (no behaviour change).
      *
@@ -548,8 +545,7 @@ public class OrcaAgentExecutorFactory {
 
     /**
      * Installs a multi-instance-ready {@link BackgroundTaskStore} for background task metadata (listing/status).
-     * When
-     * {@code null} (the default) a node-local {@link InMemoryBackgroundTaskStore} is used. Supply a shared-backend
+     * When {@code null} (the default) a node-local {@link InMemoryBackgroundTaskStore} is used. Supply a shared-backend
      * implementation to make {@code TaskList}/{@code AgentOutput} observe tasks across instances in a scale-out
      * deployment.
      *
@@ -770,8 +766,7 @@ public class OrcaAgentExecutorFactory {
      * Applies the post-construction executor overrides configured on this factory: the executor-scoped parallel
      * dispatcher (when an enabled {@link ToolConcurrencyConfig} was set), the {@link Tracer}, the
      * {@link TracePayloadPolicy}, the {@link CostEstimator}, the {@link QuotaGuardFactory}, and the
-     * {@link ContextAssembler}. Each is left at the
-     * executor's default when the corresponding override is unset.
+     * {@link ContextAssembler}. Each is left at the executor's default when the corresponding override is unset.
      */
     private OrcaAgentExecutor applyExecutorOverrides(OrcaAgentExecutor executor) {
         ParallelToolDispatcher dispatcher = null;

@@ -14,8 +14,7 @@ import at.aimon.core.subagent.SubagentExecutionPolicy;
  * <p>
  * The text is for the model; this is for code. A wrapper that has to tell a finished verification from one a budget
  * stopped, or a delivered result from a completed run, reads these keys rather than parsing the text. The payload is
- * not sent to
- * the model and is not part of the core conversation persistence; like any render payload it is handed to
+ * not sent to the model and is not part of the core conversation persistence; like any render payload it is handed to
  * {@code PostToolHook}s, which see it under {@link #KIND} {@code = }{@link #KIND_VALUE} and may ignore it.
  *
  * <ul>

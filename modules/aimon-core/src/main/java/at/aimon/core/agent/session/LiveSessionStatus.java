@@ -35,9 +35,8 @@ import at.aimon.core.llm.TokenUsage;
  * the turn's enforced {@link ExecutionBudget}, present only while a turn is running against an executor that
  * publishes its {@link at.aimon.core.agent.budget.BudgetTracker}.
  * <li>{@link #getSessionTotals() sessionTotals} — running totals (turn count, iterations, token usage)
- * accumulated
- * across all completed turns of the session; zero until the first turn finishes. Counts completed turns only — fold in
- * the live {@link #getTurnProgress() turnProgress} for an "including the current turn" figure.
+ * accumulated across all completed turns of the session; zero until the first turn finishes. Counts completed turns
+ * only — fold in the live {@link #getTurnProgress() turnProgress} for an "including the current turn" figure.
  * </ul>
  *
  * <p>
@@ -162,9 +161,8 @@ public final class LiveSessionStatus {
 
     /**
      * Returns the session-cumulative totals accumulated across all <em>completed</em> turns (turn count,
-     * iterations,
-     * token usage). Never null — reports zeros before any turn finishes. Counts completed turns only; to include the
-     * in-flight turn, fold in {@link #getTurnProgress()}.
+     * iterations, token usage). Never null — reports zeros before any turn finishes. Counts completed turns only; to
+     * include the in-flight turn, fold in {@link #getTurnProgress()}.
      *
      * @return the session totals (never null)
      */

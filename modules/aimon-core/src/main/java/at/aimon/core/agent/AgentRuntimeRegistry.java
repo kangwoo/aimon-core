@@ -17,8 +17,7 @@ import java.util.Optional;
  * <li>the scheduling engine, which resolves the agent context bound to a {@code ScheduledTask} on cron re-fires (the
  * agent-scoped contract is what makes those re-fires safe),</li>
  * <li>the wiki / knowledge layer, which resolves the agent context to obtain its
- * {@link at.aimon.core.filesystem.VirtualFileSystem
- * VirtualFileSystem}, and</li>
+ * {@link at.aimon.core.filesystem.VirtualFileSystem VirtualFileSystem}, and</li>
  * <li>session bootstraps, which look up the shared context rather than creating per-session instances.</li>
  * </ul>
  *

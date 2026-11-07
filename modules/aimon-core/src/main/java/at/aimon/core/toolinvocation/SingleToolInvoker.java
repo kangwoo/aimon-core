@@ -54,25 +54,22 @@ import at.aimon.core.tools.ToolContextKeys;
  * <li>Resolve the target tool's {@link InterruptBehavior} from the tool registry. Tools declaring
  * {@link InterruptBehavior#THREAD_INTERRUPT} or {@link InterruptBehavior#EXTERNALLY_TERMINATED} receive a fresh
  * {@link TerminatorRegistrar} from the coordinator injected into the enriched context; THREAD_INTERRUPT tools also get
- * a
- * {@code Thread.currentThread()::interrupt} terminator pre-registered. The registrar is always closed in a finally
- * block
- * so terminators cannot leak into the next tool call. Unknown tool names fall through to NON_INTERRUPTIBLE so the
+ * a {@code Thread.currentThread()::interrupt} terminator pre-registered. The registrar is always closed in a finally
+ * block so terminators cannot leak into the next tool call. Unknown tool names fall through to NON_INTERRUPTIBLE so the
  * registrar allocation is skipped and the downstream manager produces the canonical "tool not found" error.
  * <li>Fire PermissionRequest hooks; a deny short-circuits dispatch and notifies the PermissionDenied advisory chain.
  * <li>Consult the {@link SideEffectApprovalGate}, when one is configured, so a tool that declares a side effect is not
  * run until the user has approved it. Placed after the hook chain deliberately: a hook that would deny outright should
  * not first cost the user a prompt. A denial here notifies the same PermissionDenied chain.
  * <li>Fire PreTool hooks (which may rewrite the input) then execute the tool against the spec's registry and
- * allow-list,
- * unless a hook blocked it.
+ * allow-list, unless a hook blocked it.
  * <li>Fire PostTool hooks (isolated so a hook failure never discards the real tool result), applying any rewritten
  * output.
  * <li>Drain the execution environment's {@linkplain ExecutionEnvironment#drainNotices() queued notices} once and hand
  * them on beside the result; a model-facing loop prepends them as {@code [environment]} lines
- * ({@link ToolDispatchResults#toToolUseResult}). This runs on every exit path,
- * denials and the catch-all included, because each of them hands a result to the model; and it runs last, so no hook
- * sees the notices or can rewrite them, while a notice a hook's own shell command caused still rides out here.
+ * ({@link ToolDispatchResults#toToolUseResult}). This runs on every exit path, denials and the catch-all included,
+ * because each of them hands a result to the model; and it runs last, so no hook sees the notices or can rewrite them,
+ * while a notice a hook's own shell command caused still rides out here.
  * </ol>
  *
  * <p>
@@ -300,9 +297,8 @@ public final class SingleToolInvoker {
 
     /**
      * The execution environment the tool runs in, for the four tool-scoped hook chains (hook-environment design §4) and
-     * the notice
-     * drain. Null when the tool context carries none — the hooks then see an empty environment rather than the host,
-     * and there is nothing to drain.
+     * the notice drain. Null when the tool context carries none — the hooks then see an empty environment rather than
+     * the host, and there is nothing to drain.
      */
     private static ExecutionEnvironment environmentOf(ToolInvocationSpec spec) {
         return ExecutionEnvironmentAccess.of(spec.getToolContext()).orElse(null);

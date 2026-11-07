@@ -7,9 +7,8 @@
  * {@link at.aimon.core.toolinvocation.approval.SideEffectApprovalGate} reads a tool's own
  * {@link at.aimon.core.agent.tool.SideEffectLevel} declaration and requires a user to confirm anything that writes,
  * remembering the answer in a {@link at.aimon.core.toolinvocation.approval.ToolApprovalStore} so a scope is asked at
- * most once per tool. It is evaluated inside
- * {@link at.aimon.core.toolinvocation.SingleToolInvoker} — the single pipeline the main agent and subagent forks both
- * dispatch through — so a fork cannot route around it.
+ * most once per tool. It is evaluated inside {@link at.aimon.core.toolinvocation.SingleToolInvoker} — the single
+ * pipeline the main agent and subagent forks both dispatch through — so a fork cannot route around it.
  *
  * <h2>Two side-effect controls, not one</h2>
  *

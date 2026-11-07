@@ -46,8 +46,7 @@ public final class WikiLog {
 
     /**
      * Returns the total number of log entries in the wiki, which may be larger than the size of {@link #getEntries()}
-     * if
-     * a limit was applied.
+     * if a limit was applied.
      *
      * @return the total entry count (>= 0)
      */

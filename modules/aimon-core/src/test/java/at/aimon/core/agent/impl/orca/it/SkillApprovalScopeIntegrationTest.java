@@ -50,9 +50,8 @@ import at.aimon.core.subagent.Subagent;
  * The second is subtler and lives inside the base rule. {@code RuleBasedSkillInvocationPolicy} defaults
  * {@code safeByDefault} to <b>true</b>, and its notion of a safe skill is "inline execution, no hooks" — which is
  * exactly what an ordinary seeded {@code SKILL.md} is. A grant test built on {@code builder().build()} would allow the
- * skill through the base rule and stay green with the session store removed. Hence
- * {@link #denyingBase()}: {@code safeByDefault(false)} plus an explicit {@code DENY}, so ALLOW can only have come from
- * a store.
+ * skill through the base rule and stay green with the session store removed. Hence {@link #denyingBase()}:
+ * {@code safeByDefault(false)} plus an explicit {@code DENY}, so ALLOW can only have come from a store.
  *
  * <h2>What a refusal looks like, and what it does not</h2>
  *

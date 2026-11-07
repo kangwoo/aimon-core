@@ -55,16 +55,12 @@ final class ShellActionRunner {
      *            extra environment variables (never null)
      *            <p>
      *            When the firing context belongs to an execution, the command is tied to that execution's cancellation
-     *            signal:
-     *            an interrupt stops the command through its own {@link ExecutionOptions#getCancellation()
-     *            cancellation}, which
-     *            is the stop a shell declares it honours, instead of relying on the shell to answer a thread interrupt
-     *            (a
-     *            remote shell's blocking call need not). The listener lives exactly as long as the shell call &mdash;
-     *            the
-     *            execution's signal outlives the command, and a later interrupt must find nothing of it. Either road is
-     *            reported as {@link ShellHookOutcome.Unrun#CANCELLED}, so the result is the same on both kinds of
-     *            shell.
+     *            signal: an interrupt stops the command through its own {@link ExecutionOptions#getCancellation()
+     *            cancellation}, which is the stop a shell declares it honours, instead of relying on the shell to
+     *            answer a thread interrupt (a remote shell's blocking call need not). The listener lives exactly as
+     *            long as the shell call &mdash; the execution's signal outlives the command, and a later interrupt must
+     *            find nothing of it. Either road is reported as {@link ShellHookOutcome.Unrun#CANCELLED}, so the result
+     *            is the same on both kinds of shell.
      *
      * @param stdinPayload
      *            JSON document for standard input, or null

@@ -62,10 +62,9 @@ public final class CommandExecutionResult {
 
     /**
      * Creates a successful execution result whose response is a final answer the provider cut off at its output-token
-     * limit. The partial text is kept — it ends in the truncation marker
-     * ({@code TruncatedResponses.TRUNCATION_MARKER}) — and {@link #isTruncated()} says it is not whole, so the turn
-     * that
-     * ran the command ends {@code CompletionReason.TRUNCATED} instead of {@code COMPLETED}.
+     * limit. The partial text is kept — it ends in the truncation marker ({@code TruncatedResponses.TRUNCATION_MARKER})
+     * — and {@link #isTruncated()} says it is not whole, so the turn that ran the command ends
+     * {@code CompletionReason.TRUNCATED} instead of {@code COMPLETED}.
      *
      * @param response
      *            The partial response, marker included (must not be null)

@@ -15,8 +15,7 @@ import at.aimon.core.agent.session.transcript.SessionSnapshot;
 
 /**
  * Verifies that {@link ScopedSessionSnapshotStore} confines resume loads to the bound agent runtime
- * while
- * passing saves and evictions straight through.
+ * while passing saves and evictions straight through.
  */
 class ScopedSessionSnapshotStoreTest {
 

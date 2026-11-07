@@ -50,8 +50,8 @@ import at.aimon.core.llm.content.ImageContentBlock;
  * <p>
  * {@link #aRetriedTurnCompletes} alone would stay green if the rewind were deleted and the retry were a plain
  * resubmission — which is precisely the regression worth catching, because it is invisible in the result and shows up
- * only later as a model contradicting itself.
- * {@link #aRetryLeavesNoTraceOfTheInterruptedAttempt} is the test that fails in that world.
+ * only later as a model contradicting itself. {@link #aRetryLeavesNoTraceOfTheInterruptedAttempt} is the test that
+ * fails in that world.
  *
  * <h2>Why the re-open case is here</h2>
  *

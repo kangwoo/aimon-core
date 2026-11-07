@@ -9,8 +9,7 @@ import java.util.Optional;
  * <p>
  * Mirrors {@link at.aimon.core.subagent.MutableSubagentRegistry}. Register a behavior under the SAME name as its
  * {@link at.aimon.core.subagent.Subagent} data entry; {@link SubagentBehaviorRegistrar} does both in one call to keep
- * the
- * names from drifting.
+ * the names from drifting.
  *
  * @see SubagentBehaviorRegistry
  * @see InMemorySubagentBehaviorRegistry

@@ -13,14 +13,12 @@ import at.aimon.core.agent.session.exception.SessionLeaseException;
  * Formerly {@code at.aimon.session.base.spi.ConversationLock}. Two things changed besides the name: {@link #findHolder}
  * is new, and holder identity is now expected to be <em>node-derived and stable</em> rather than derived per thread and
  * per turn. Every shipped backend evaluates only lease <em>expiry</em> on acquire and never compares holder identity,
- * so
- * a stable holder id does not make acquisition re-entrant: a second concurrent acquire from the same node still loses,
- * exactly as a different node would.
+ * so a stable holder id does not make acquisition re-entrant: a second concurrent acquire from the same node still
+ * loses, exactly as a different node would.
  *
  * <p>
  * Implementations are shared across every node in a deployment and are therefore application-scoped. Do not confuse
- * this
- * with {@link SessionStore}, whose default implementation is <em>node</em>-scoped because it tracks which leases
+ * this with {@link SessionStore}, whose default implementation is <em>node</em>-scoped because it tracks which leases
  * the local node holds.
  *
  * <h2>Fencing-token contract</h2>
@@ -61,17 +59,15 @@ public interface SessionLeaseStore {
      *
      * <p>
      * Implementations must return empty unless the session is held <em>right now</em> — a lease that has lapsed,
-     * or
-     * that was explicitly released, is not a holder even if the backend still keeps its record around to preserve the
-     * fencing counter. This is the one liveness check with uniform semantics across all backends, which is why it, and
-     * not {@link #extend}, is what {@link SessionStore#records()} uses to re-prove holdership before a write.
+     * or that was explicitly released, is not a holder even if the backend still keeps its record around to preserve
+     * the fencing counter. This is the one liveness check with uniform semantics across all backends, which is why it,
+     * and not {@link #extend}, is what {@link SessionStore#records()} uses to re-prove holdership before a write.
      *
      * <p>
      * Two legitimate uses, and one illegitimate one. A <b>holder</b> may compare the returned {@code holderId} and
      * {@code fencingToken} against a lease it already won, to confirm it has not been superseded. A <b>non-holder</b>
-     * may
-     * read it to name the holder — to address a hand-off at it, or to reject a request with something more useful than
-     * "not you". What a non-holder must never do is treat "the holder is me-shaped" or "there is no holder" as
+     * may read it to name the holder — to address a hand-off at it, or to reject a request with something more useful
+     * than "not you". What a non-holder must never do is treat "the holder is me-shaped" or "there is no holder" as
      * permission to write: the only thing that grants write rights is a {@link SessionLease} won from
      * {@link #tryAcquire}, because only that is atomic against a competing acquirer.
      *

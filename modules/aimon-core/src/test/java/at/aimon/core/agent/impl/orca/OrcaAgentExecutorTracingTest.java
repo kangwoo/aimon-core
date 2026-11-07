@@ -970,8 +970,7 @@ class OrcaAgentExecutorTracingTest {
 
     /**
      * The compaction fixtures here run a one-message turn, which only in-place compaction summarizes — the version-2
-     * view
-     * keeps the tail verbatim and has nothing before it. The attribution under test is the same on both paths.
+     * view keeps the tail verbatim and has nothing before it. The attribution under test is the same on both paths.
      */
     private static DefaultTranscriptManager versionOneTranscripts() {
         return new DefaultTranscriptManager(new InMemorySessionRecordStore(), SessionCheckpointMailbox.disabled(),

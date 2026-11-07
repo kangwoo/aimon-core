@@ -70,8 +70,7 @@ import at.aimon.core.tools.ExecutionEnvironmentAccess;
  *
  * <p>
  * Thread-safe: {@link VirtualShell} implementations are required to be thread-safe, and this tool keeps no
- * per-execution
- * state of its own.
+ * per-execution state of its own.
  *
  * <p>
  * <b>Process teardown belongs to the shell.</b> This tool does not wrap the foreground call in a future — it blocks
@@ -380,8 +379,7 @@ public class BashTool extends AbstractTool implements ToolPermissionSubjectAware
      * The shell is captured here, when the task starts, and the running command keeps it: the task may outlive the
      * execution that started it — and the runtime — and the shell's lifetime is its provider's, not the execution's
      * (background-commands design §2). The manager runs the command and owns the task, recorded under the owner it was
-     * started for
-     * ({@link BackgroundTaskOwner#of(ToolContext)}).
+     * started for ({@link BackgroundTaskOwner#of(ToolContext)}).
      *
      * @param environment
      *            The execution environment, asked for its background ceiling

@@ -117,10 +117,10 @@ public final class MemorySearchQuery {
      *
      * <p>
      * Only meaningful against a backend whose {@link MemorySearcher#narrowsBySession()} is {@code true}; one that
-     * cannot narrow must reject it rather than search every session, for the same reason
-     * {@link #getMinScore()} is rejected rather than dropped — a caller who asked for a narrower result and was not
-     * told it could not be given one reads the wider result as the narrow one. The store-backed default cannot
-     * narrow, because the store method underneath it has no session axis.
+     * cannot narrow must reject it rather than search every session, for the same reason {@link #getMinScore()} is
+     * rejected rather than dropped — a caller who asked for a narrower result and was not told it could not be given
+     * one reads the wider result as the narrow one. The store-backed default cannot narrow, because the store method
+     * underneath it has no session axis.
      *
      * @return the session id, or empty for a cross-session search
      */

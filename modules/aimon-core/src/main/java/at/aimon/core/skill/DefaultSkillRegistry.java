@@ -44,8 +44,7 @@ import at.aimon.core.skill.repository.VfsSkillRepository;
  *
  * <p>
  * One skill that cannot be loaded does not take the others down (execution-environment-staging design §10: "that skill
- * does
- * not load"). {@link #getAllSkills()} and {@link #reloadAll()} skip a skill whose load fails with a
+ * does not load"). {@link #getAllSkills()} and {@link #reloadAll()} skip a skill whose load fails with a
  * {@link SkillRepositoryException} — a link the link rule refuses, a scan that fails — and log it at WARN;
  * {@link #getSkill(String)} of that skill keeps throwing the exception that says why.
  *

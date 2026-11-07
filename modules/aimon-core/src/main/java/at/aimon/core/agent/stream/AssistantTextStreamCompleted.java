@@ -31,8 +31,7 @@ import at.aimon.core.llm.TokenUsage;
  * <li>{@link #getTokenUsage()} — token-usage breakdown when reported by the provider; never-null {@link Optional}
  * <li>{@link #getFinishReason()} — provider-reported finish reason (e.g., {@code "stop"}, {@code "length"},
  * {@code "tool_calls"}) or the synthetic {@code "interrupted"} marker when the executor cancelled the stream;
- * never-null
- * {@link Optional}
+ * never-null {@link Optional}
  * </ul>
  *
  * <p>

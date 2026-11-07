@@ -12,8 +12,7 @@ import java.util.stream.Collectors;
  * <p>
  * Represents a structured system prompt as a list of parts. The ordering is significant: the parts are emitted in the
  * order supplied, and {@link #concatenated()} joins them in that order. Instances are immutable —
- * {@link #append(SystemPromptPart)}
- * returns a new {@code SystemPromptParts} without mutating the receiver.
+ * {@link #append(SystemPromptPart)} returns a new {@code SystemPromptParts} without mutating the receiver.
  *
  * <h2>Example</h2>
  *

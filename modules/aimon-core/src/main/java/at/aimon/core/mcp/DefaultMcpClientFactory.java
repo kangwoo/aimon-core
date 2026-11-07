@@ -15,14 +15,12 @@ import at.aimon.core.mcp.transport.StdioMcpTransport;
  *
  * <p>
  * Creates the appropriate {@link McpTransport} based on the transport type specified in {@link McpServerConfig},
- * creates
- * a {@link DefaultMcpClient}, and performs the MCP protocol initialization handshake.
+ * creates a {@link DefaultMcpClient}, and performs the MCP protocol initialization handshake.
  *
  * <h2>Resource Cleanup</h2>
  * <p>
  * If McpClient creation or initialization fails after the Transport has been created, the Transport is closed before
- * the
- * exception is propagated to prevent resource leaks.
+ * the exception is propagated to prevent resource leaks.
  *
  * @see McpClientFactory
  */

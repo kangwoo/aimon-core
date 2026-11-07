@@ -43,8 +43,8 @@ public final class GeneratedPage {
 
         /**
          * Combine this generated page with the existing page at the target path. When no {@code WikiPageMerger} is
-         * wired the storage layer treats {@code MERGE} as {@link #REPLACE} but logs at DEBUG so the
-         * difference is observable in test runs.
+         * wired the storage layer treats {@code MERGE} as {@link #REPLACE} but logs at DEBUG so the difference is
+         * observable in test runs.
          */
         MERGE,
 

@@ -48,8 +48,7 @@ public final class RedactionPattern {
 
     /**
      * Creates a pattern with a custom replacement string. Use {@code $0}, {@code $1}, etc. to reference capturing
-     * groups
-     * (standard {@link java.util.regex.Matcher#replaceAll(String)} semantics).
+     * groups (standard {@link java.util.regex.Matcher#replaceAll(String)} semantics).
      *
      * @param name
      *            Logical name (must not be null/blank)

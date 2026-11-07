@@ -33,8 +33,8 @@ import at.aimon.core.subagent.execution.SubagentExecutionResult;
 /**
  * Verifies that {@link OrcaAgentExecutorFactory#withCostEstimator(at.aimon.core.llm.cost.CostEstimator)} is threaded
  * into the {@code DefaultSubagentExecutor} the factory builds inside its subagent execution manager — the seam an
- * workflow run drives its subagents through. Without this wiring the aggregate USD cost of a run
- * would always be zero regardless of the estimator installed on the main executor.
+ * workflow run drives its subagents through. Without this wiring the aggregate USD cost of a run would always be zero
+ * regardless of the estimator installed on the main executor.
  */
 @DisplayName("OrcaAgentExecutorFactory threads the cost estimator into the subagent execution path")
 class OrcaAgentExecutorFactorySubagentCostTest {

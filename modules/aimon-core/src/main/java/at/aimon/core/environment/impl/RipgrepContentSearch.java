@@ -38,10 +38,9 @@ import at.aimon.core.filesystem.VfsPaths;
  * ({@code DENY}) prefix. The exclusion globs alone do not keep the control store out — rg never applies them to a path
  * named on its command line, and a later user glob overrides them — so a target at or under a hidden prefix is refused
  * (the walk then answers, and finds nothing, as the path-rule filesystem hides it), and every reported path under one
- * is dropped. Context lines are rebuilt per match exactly as the walk
- * builds them. Multiline queries are not answered (rg reports multiline matches as whole line blocks, which the walk
- * does not); like any other failure — rg missing, a pattern rg rejects, a non-UTF-8 file — that throws, and
- * {@code Grep} walks the filesystem instead.
+ * is dropped. Context lines are rebuilt per match exactly as the walk builds them. Multiline queries are not answered
+ * (rg reports multiline matches as whole line blocks, which the walk does not); like any other failure — rg missing, a
+ * pattern rg rejects, a non-UTF-8 file — that throws, and {@code Grep} walks the filesystem instead.
  *
  * <p>
  * The target is also checked by its real path: a symbolic link named as the target (rg follows those, though never one

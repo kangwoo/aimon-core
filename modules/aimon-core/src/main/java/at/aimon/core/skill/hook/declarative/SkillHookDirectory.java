@@ -23,9 +23,9 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * Shared by the three places that assemble a shell hook's environment ({@link AbstractDeclarativeShellHook},
  * {@link DeclarativePreToolHook}, {@link DeclarativePostToolHook}) so they cannot decide differently when there is a
  * skill directory. They run the command through {@link #run}, which hands what {@link #resourceFor} answers to
- * {@link ShellActionExecutor#run(ShellAction, HookContext, Map, String, Optional)},
- * and the executor gives the variable its value (EE-109): the bytes of the skill as a run directory where the shell
- * can place one ({@link HookRunFiles}), otherwise a staged copy ({@link #stageInto}).
+ * {@link ShellActionExecutor#run(ShellAction, HookContext, Map, String, Optional)}, and the executor gives the variable
+ * its value (EE-109): the bytes of the skill as a run directory where the shell can place one ({@link HookRunFiles}),
+ * otherwise a staged copy ({@link #stageInto}).
  *
  * <p>
  * <b>Resolved at fire time, in the firing execution's environment.</b> A skill's hooks fire in the skill's fork and in
@@ -82,8 +82,8 @@ final class SkillHookDirectory {
     /**
      * Runs a declarative hook's shell action through its executor, with the skill directory when
      * {@link #resourceFor} finds one. A command that gets none goes through the four-argument
-     * {@link ShellActionExecutor#run(ShellAction, HookContext, Map, String)}, exactly
-     * as before EE-109, so an executor that never learned the skill-directory overload sees no change for it.
+     * {@link ShellActionExecutor#run(ShellAction, HookContext, Map, String)}, exactly as before EE-109, so an executor
+     * that never learned the skill-directory overload sees no change for it.
      *
      * @param executor
      *            the hook's executor (never null)

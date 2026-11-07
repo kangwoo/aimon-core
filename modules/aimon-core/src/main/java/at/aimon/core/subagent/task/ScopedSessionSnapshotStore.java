@@ -12,13 +12,13 @@ import at.aimon.core.agent.session.transcript.SessionSnapshot;
  *
  * <p>
  * Background task ids are globally unique, so a shared {@link SessionSnapshotStore} holds the resumable
- * transcripts
- * of every concurrently-running agent in one flat keyspace. Addressing a transcript by id alone never collides, but it
- * does not <em>isolate</em> agents: without scoping, one agent could {@code Task(resume=<taskId>)} another agent's
- * transcript merely by knowing its id, grafting the foreign agent's full ReAct history (and whatever it contains) into
- * its own execution. This decorator closes that cross-agent read/hijack gap by returning a loaded transcript only when
- * its recorded {@code agentRuntimeId} equals the bound context; a transcript owned by another context — or one with no
- * recorded context (unverifiable ownership) — loads as {@link Optional#empty()}, exactly as an unknown id would.
+ * transcripts of every concurrently-running agent in one flat keyspace. Addressing a transcript by id alone never
+ * collides, but it does not <em>isolate</em> agents: without scoping, one agent could {@code Task(resume=<taskId>)}
+ * another agent's transcript merely by knowing its id, grafting the foreign agent's full ReAct history (and whatever it
+ * contains) into its own execution. This decorator closes that cross-agent read/hijack gap by returning a loaded
+ * transcript only when its recorded {@code agentRuntimeId} equals the bound context; a transcript owned by another
+ * context — or one with no recorded context (unverifiable ownership) — loads as {@link Optional#empty()}, exactly as an
+ * unknown id would.
  *
  * <p>
  * This mirrors {@code ScopedSubagentTaskController} on the control plane: both key isolation off the task's stored

@@ -14,8 +14,7 @@ import java.util.Set;
  *
  * <p>
  * Separates reads from writes (CQRS): execution code depends on this interface; only bootstrap/registration code
- * depends
- * on {@link MutableSubagentBehaviorRegistry}.
+ * depends on {@link MutableSubagentBehaviorRegistry}.
  *
  * @see MutableSubagentBehaviorRegistry
  * @see InMemorySubagentBehaviorRegistry

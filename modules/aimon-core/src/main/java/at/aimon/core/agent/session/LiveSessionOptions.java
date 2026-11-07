@@ -103,8 +103,7 @@ public final class LiveSessionOptions {
 
     /**
      * Returns a copy of these options with only the {@link ExecutionBudget} replaced, preserving the
-     * {@link #getLocale()
-     * locale} and {@link #getSourceAgentId() source agent id}.
+     * {@link #getLocale() locale} and {@link #getSourceAgentId() source agent id}.
      *
      * <p>
      * Used by {@link DefaultLiveSession} to apply a runtime budget override (e.g. a REPL {@code /budget} command) or a

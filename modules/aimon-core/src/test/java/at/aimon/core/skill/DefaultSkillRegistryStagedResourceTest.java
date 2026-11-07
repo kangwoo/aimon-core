@@ -31,8 +31,7 @@ import at.aimon.core.skill.repository.VfsSkillRepository;
 
 /**
  * Tests that DefaultSkillRegistry enriches a loaded skill with its files and the {@link StagedResource} its directory
- * is
- * staged from (execution-environment-staging design §9) — whatever repository the skill came from.
+ * is staged from (execution-environment-staging design §9) — whatever repository the skill came from.
  */
 class DefaultSkillRegistryStagedResourceTest {
 

@@ -34,9 +34,9 @@
  * <li>{@link at.aimon.core.agent.queue.MessageQueueManager} — facade with listener fan-out and
  * batch-drain semantics; the entry point for Orca/REPL integration.
  * <li>{@link at.aimon.core.agent.queue.MessageQueueListener} — single-method observer carrying an
- * {@link at.aimon.core.agent.queue.MessageQueueListener.Event Event}
- * whose {@link at.aimon.core.agent.queue.MessageQueueListener.ChangeType ChangeType} discriminates
- * {@code ENQUEUED} / {@code DRAINED} / {@code REMOVED}.
+ * {@link at.aimon.core.agent.queue.MessageQueueListener.Event Event} whose
+ * {@link at.aimon.core.agent.queue.MessageQueueListener.ChangeType ChangeType} discriminates {@code ENQUEUED} /
+ * {@code DRAINED} / {@code REMOVED}.
  * <li>{@link at.aimon.core.agent.queue.LoggingMessageQueueListener} — reference observer that logs every event at
  * DEBUG and keeps per-change-type counters; register it as the default metrics source or use it as a template for a
  * Micrometer/OpenTelemetry binding.

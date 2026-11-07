@@ -8,8 +8,7 @@ import at.aimon.core.agent.tool.Tool;
  * <p>
  * This is the escape hatch, not the usual answer. A tool that can name one value it is about to act on — a command, a
  * path — should implement {@link ToolPermissionSubjectAware} instead and let the framework match it. Reach for a rule
- * only when the decision genuinely cannot be reduced to one value of one
- * {@link PermissionSubject.Kind}.
+ * only when the decision genuinely cannot be reduced to one value of one {@link PermissionSubject.Kind}.
  *
  * <p>
  * The one in-tree case is {@code Browser}: it is judged on an action and a URL together, spelled {@code open:*} in a

@@ -48,9 +48,8 @@ public final class Subagent {
      * <p>
      * The builder produces a {@link Subagent} value object identical to one parsed from an equivalent
      * {@code agents/*.md} file: it delegates to {@link SubagentMetadata#builder()} and
-     * {@link SubagentContent#of(String)}
-     * and reuses the same {@code AllowedTool} parsing. Unset optional fields fall back to the exact defaults the
-     * markdown parser relies on (e.g. {@code maxIterations} defaults to 1000; unset
+     * {@link SubagentContent#of(String)} and reuses the same {@code AllowedTool} parsing. Unset optional fields fall
+     * back to the exact defaults the markdown parser relies on (e.g. {@code maxIterations} defaults to 1000; unset
      * {@code model}/{@code whenToUse}
      * stay {@code null}; no tool restrictions when {@code tools} is unset).
      *
@@ -193,8 +192,7 @@ public final class Subagent {
 
         /**
          * Sets the allowed tools from raw specification strings (e.g. {@code "Read"}, {@code "Bash(git:*)"}), parsed
-         * via
-         * the same path as markdown {@code allowed-tools}. When unset, the subagent has no tool restrictions.
+         * via the same path as markdown {@code allowed-tools}. When unset, the subagent has no tool restrictions.
          *
          * @param tools
          *            the tool-specification strings

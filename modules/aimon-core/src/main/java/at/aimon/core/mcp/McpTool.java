@@ -118,8 +118,7 @@ public class McpTool extends AbstractTool {
     /**
      * Declares the reach its traits resolved: {@link DataReach#HOST} for a trusted server that says
      * {@code openWorldHint: false}, otherwise {@link DataReach#EXTERNAL}. Never {@link DataReach#ENVIRONMENT} — the
-     * tool
-     * runs on its server, not in the agent's execution environment.
+     * tool runs on its server, not in the agent's execution environment.
      */
     @Override
     public DataReach dataReach() {
@@ -212,8 +211,7 @@ public class McpTool extends AbstractTool {
      * from this call can arrive any more, and one that already did is taken back there: the flag is cleared, and set
      * again when the thread was already interrupted as the call began. So the thread's flag still only ever means an
      * interrupt of that thread from outside, whoever owns the thread. Clearing can swallow such an outside interrupt
-     * when it lands during the call in the same
-     * instant the signal trips; the execution is cancelled either way.
+     * when it lands during the call in the same instant the signal trips; the execution is cancelled either way.
      *
      * <p>
      * One instance serves one call on one thread.

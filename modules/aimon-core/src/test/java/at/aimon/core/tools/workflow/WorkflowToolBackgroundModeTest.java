@@ -42,8 +42,8 @@ import at.aimon.core.workflow.exception.BackgroundRunRefusedException;
 
 /**
  * Covers {@link WorkflowTool}'s background-run branch: without a runner it returns an error (never throws); with
- * an
- * injected runner it submits the run and returns the run id immediately, never touching the foreground execution path.
+ * an injected runner it submits the run and returns the run id immediately, never touching the foreground execution
+ * path.
  */
 @DisplayName("WorkflowTool — background run mode")
 class WorkflowToolBackgroundModeTest {

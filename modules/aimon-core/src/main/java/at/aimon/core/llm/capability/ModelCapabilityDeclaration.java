@@ -152,8 +152,8 @@ public final class ModelCapabilityDeclaration {
     /**
      * @return whether the declaration states {@link ModelCapabilities#acceptedReasoningEfforts()} in full, and what it
      *         says. Empty when the declaration used the {@link #lowestReasoningEffort()} shorthand instead, or stated
-     *         no ladder at all — this getter reports what was <em>written</em>, and
-     *         {@link #capabilities()} is where the two spellings meet
+     *         no ladder at all — this getter reports what was <em>written</em>, and {@link #capabilities()} is where
+     *         the two spellings meet
      */
     public Optional<Set<ReasoningEffort>> acceptedReasoningEfforts() {
         return Optional.ofNullable(acceptedReasoningEfforts);

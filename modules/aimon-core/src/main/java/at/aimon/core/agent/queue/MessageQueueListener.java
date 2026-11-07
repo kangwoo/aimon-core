@@ -15,9 +15,8 @@ import java.util.Objects;
  * <p>
  * Listeners are invoked synchronously on the thread that triggered the state change. Implementations should therefore
  * return quickly and must tolerate being called from any thread (REPL input thread, Orca loop thread, scheduling
- * thread,
- * etc.). Exceptions thrown by a listener are caught and logged by the manager and do <b>not</b> propagate to the
- * producer or to other listeners.
+ * thread, etc.). Exceptions thrown by a listener are caught and logged by the manager and do <b>not</b> propagate to
+ * the producer or to other listeners.
  *
  * @see MessageQueueManager
  */
@@ -49,8 +48,7 @@ public interface MessageQueueListener {
 
         /**
          * Reserved for explicit out-of-band removals (e.g. cancellation flows). Not emitted by the default manager yet
-         * —
-         * callers that implement custom removal paths may publish this change type via a future hook.
+         * — callers that implement custom removal paths may publish this change type via a future hook.
          */
         REMOVED
     }

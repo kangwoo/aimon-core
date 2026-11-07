@@ -7,10 +7,9 @@ import at.aimon.core.base.DefinitionAttributes;
 
 /**
  * What an {@link ExecutionEnvironmentProvider} is told about the subagent definition a fork runs
- * (execution-environment-placement
- * design §3): its name and its free-form attributes. A provider's binding policy reads these to decide where the
- * fork runs — a workspace sandbox picks the slot from {@code sandbox.slot}, say — the way it reads
- * {@link EnvironmentRequest#agent()} for a main turn.
+ * (execution-environment-placement design §3): its name and its free-form attributes. A provider's binding policy reads
+ * these to decide where the fork runs — a workspace sandbox picks the slot from {@code sandbox.slot}, say — the way it
+ * reads {@link EnvironmentRequest#agent()} for a main turn.
  *
  * <p>
  * A value of its own rather than the subagent itself: the subagent package already depends on this one, so carrying

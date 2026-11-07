@@ -10,8 +10,7 @@ import java.util.Optional;
  * This type exists to close a leak in the shape it replaces. Previously a caller ran binding validation
  * ({@code BindingResolver.resolveAndValidate}) and holder election ({@code ConversationLock.tryAcquire}) as two
  * independent steps, in that order — so the agent binding was checked by a node that had not yet won the right to act
- * on
- * the answer, and two nodes could validate against the same "unbound" state before either of them wrote a binding. A
+ * on the answer, and two nodes could validate against the same "unbound" state before either of them wrote a binding. A
  * single call that returns one of these three answers cannot be interleaved that way.
  *
  * <p>
@@ -86,9 +85,8 @@ public sealed interface ClaimResult permits ClaimResult.Acquired, ClaimResult.He
          * Empty is a real and expected outcome, not a defect: the identity is read a moment <em>after</em> the failed
          * acquire, so a holder that released in between leaves nothing to report. Returning an empty {@code Optional}
          * says that honestly instead of inventing a holder name. Callers that only need "not me" — the submit path,
-         * which
-         * forwards to the inbox either way — can ignore this entirely; callers that want to address a hand-off at the
-         * holder must handle its absence by retrying the claim.
+         * which forwards to the inbox either way — can ignore this entirely; callers that want to address a hand-off at
+         * the holder must handle its absence by retrying the claim.
          */
         public Optional<LeaseHolder> getHolder() {
             return Optional.ofNullable(holder);

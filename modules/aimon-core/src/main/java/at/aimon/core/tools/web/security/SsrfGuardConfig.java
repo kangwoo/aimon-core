@@ -15,9 +15,8 @@ import java.util.Set;
  * <p>
  * <b>Secure by default.</b> {@link #secure()} (and the no-arg {@link SsrfGuard} constructor) enables protection with an
  * empty allow-list, so existing behaviour is unchanged. The {@link #isEnabled() enabled} flag and
- * {@link #getAllowedHosts()
- * allow-list} only ever <em>weaken</em> protection and are intended for trusted environments or internal-host testing —
- * use them deliberately.
+ * {@link #getAllowedHosts() allow-list} only ever <em>weaken</em> protection and are intended for trusted environments
+ * or internal-host testing — use them deliberately.
  */
 public final class SsrfGuardConfig {
 

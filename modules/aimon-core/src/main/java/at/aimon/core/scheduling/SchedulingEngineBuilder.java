@@ -258,11 +258,11 @@ public final class SchedulingEngineBuilder {
      * <p>
      * It changes three things. A fire whose bound runtime this node has not registered is skipped before the guard is
      * asked, leaving the occurrence to a node that has it; {@link UnresolvableRuntimePolicy#DISABLE} is refused, since
-     * one node's miss would disable the task for all; and — the original one — whether
-     * {@link SchedulingEngine#start()} schedules the tasks it finds stored. On a single node it always does. On one of
-     * several it does only if the scheduler's triggers are shared by the deployment
-     * ({@link TaskScheduler#isClusterWide()}) or an {@link #executionGuard} was supplied — otherwise every node would
-     * rebuild every trigger and every node would fire every task, with only a node-local guard between them.
+     * one node's miss would disable the task for all; and — the original one — whether {@link SchedulingEngine#start()}
+     * schedules the tasks it finds stored. On a single node it always does. On one of several it does only if the
+     * scheduler's triggers are shared by the deployment ({@link TaskScheduler#isClusterWide()}) or an
+     * {@link #executionGuard} was supplied — otherwise every node would rebuild every trigger and every node would fire
+     * every task, with only a node-local guard between them.
      *
      * @param multiNode
      *            whether other nodes run an engine over the same repository (default {@code false})
@@ -406,9 +406,8 @@ public final class SchedulingEngineBuilder {
      * holds per-node triggers ({@link TaskScheduler#isClusterWide()} is {@code false}) and which has a supplied
      * {@link #executionGuard} to keep the resulting fire-on-every-node to one run — one that can see the other nodes,
      * so not {@link InMemoryScheduledExecutionGuard} or {@link ScheduledExecutionGuard#ALLOW_ALL}. There a task
-     * registered or cancelled
-     * on another node reaches this one within an interval. Anywhere else nothing runs. {@link Duration#ZERO} turns it
-     * off. Defaults to {@link #DEFAULT_RECONCILE_INTERVAL}.
+     * registered or cancelled on another node reaches this one within an interval. Anywhere else nothing runs.
+     * {@link Duration#ZERO} turns it off. Defaults to {@link #DEFAULT_RECONCILE_INTERVAL}.
      *
      * @param interval
      *            the interval (must not be negative)

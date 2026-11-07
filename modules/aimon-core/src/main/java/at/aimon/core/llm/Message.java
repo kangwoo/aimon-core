@@ -262,8 +262,7 @@ public final class Message {
      *
      * <p>
      * Creates an immutable copy of this message with the given artifacts. This is useful for attaching artifact
-     * metadata
-     * after tool execution completes.
+     * metadata after tool execution completes.
      *
      * @param artifacts
      *            The file artifacts to attach (must not be null)

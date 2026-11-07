@@ -24,8 +24,7 @@ import at.aimon.core.llm.cost.Money;
  *
  * <p>
  * Every other class in this suite drives turns that succeed, so all of them would stay green with the budget tracker
- * and
- * the iteration ceiling deleted outright. This one covers the abnormal exits: the four {@link ExecutionBudget}
+ * and the iteration ceiling deleted outright. This one covers the abnormal exits: the four {@link ExecutionBudget}
  * dimensions, and the agent's own iteration ceiling.
  *
  * <h2>The assertion that carries the weight is the call count</h2>
@@ -85,8 +84,8 @@ class TurnTerminationIntegrationTest {
      *
      * <p>
      * Each test below asserts that <em>fewer</em> calls were made than this. That comparison is the whole
-     * falsifiability
-     * argument — a stopped turn and a turn whose script was one entry short are indistinguishable without it.
+     * falsifiability argument — a stopped turn and a turn whose script was one entry short are indistinguishable
+     * without it.
      */
     @Test
     @DisplayName("the same script without a budget makes both model calls and answers")
@@ -227,8 +226,7 @@ class TurnTerminationIntegrationTest {
      * consistent with a working ceiling that was never reached and with a cost axis that is not plumbed through at all;
      * only a run that actually reaches {@code COST_BUDGET_EXCEEDED} distinguishes them. The estimator prices every call
      * at one cent flat, so the first response spends the whole ceiling and the check at the top of iteration 2 stops
-     * the
-     * turn.
+     * the turn.
      */
     @Test
     @DisplayName("with a cost estimator wired, a cost budget ends the turn before the next model call")

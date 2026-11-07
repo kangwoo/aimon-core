@@ -186,8 +186,7 @@ public final class ContentQuery {
         /**
          * @param cancellation
          *            polled while the search runs; {@code true} means the caller no longer wants the answer (defaults
-         *            to
-         *            never)
+         *            to never)
          * @return this builder
          */
         public Builder cancellation(BooleanSupplier cancellation) {

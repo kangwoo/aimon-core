@@ -45,14 +45,12 @@ public final class Stage<I, C> {
      * Runs the accumulated pipeline: each item's whole stage chain becomes one thunk fanned out via
      * {@link WorkflowContext#parallel}. Items run concurrently, stages within an item run sequentially, and there
      * is no barrier between stages across items (wall-clock = slowest single-item chain when top-level and
-     * pool-capacity
-     * permit). The returned list matches input order.
+     * pool-capacity permit). The returned list matches input order.
      *
      * @param ctx
      *            the run context (must not be null)
      * @return the per-item results in input order (never null; a chain that throws yields {@code null} at that
-     *         position,
-     *         mirroring {@link WorkflowContext#parallel})
+     *         position, mirroring {@link WorkflowContext#parallel})
      */
     public List<C> run(WorkflowContext ctx) {
         Objects.requireNonNull(ctx, "ctx cannot be null");

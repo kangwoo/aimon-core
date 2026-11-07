@@ -8,8 +8,7 @@ import java.util.Objects;
  * <p>
  * This is the <em>safety</em> axis: what the tool does to the world. It is deliberately separate from
  * {@link ConcurrencyBehavior}, which is the <em>thread-safety</em> axis (whether two tools may run at the same
- * instant).
- * The two correlate but neither can be derived from the other:
+ * instant). The two correlate but neither can be derived from the other:
  *
  * <ul>
  * <li>a {@link #READ_ONLY} tool may still be {@link ConcurrencyBehavior#SEQUENTIAL} — for example when it contends on a
@@ -21,8 +20,7 @@ import java.util.Objects;
  * <p>
  * Tools declare their level through {@link Tool#getSideEffectLevel()}. The declaration follows the same pattern as
  * {@link ConcurrencyBehavior} and {@link at.aimon.core.agent.interrupt.InterruptBehavior}: the tool states a
- * capability,
- * and a separate component decides how to act on it. Consumers in this codebase are the
+ * capability, and a separate component decides how to act on it. Consumers in this codebase are the
  * {@code DefaultToolExecutionManager} gate (which refuses to execute tools exceeding a configured ceiling),
  * {@code OrcaAgentExecutor} (which withholds their definitions from the LLM entirely), and
  * {@link at.aimon.core.toolinvocation.approval.SideEffectApprovalGate} (which asks the user).

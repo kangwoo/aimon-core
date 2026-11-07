@@ -16,8 +16,7 @@ import at.aimon.core.mcp.exception.McpTransportException;
  * <h2>MCP Protocol Initialization</h2>
  * <p>
  * After connection, the MCP protocol requires an {@code initialize} handshake where client and server exchange
- * supported
- * capabilities. Call {@link #initialize()} explicitly to perform initialization. Calling other methods before
+ * supported capabilities. Call {@link #initialize()} explicitly to perform initialization. Calling other methods before
  * initialization throws {@link IllegalStateException}.
  *
  * <h2>Thread Safety</h2>

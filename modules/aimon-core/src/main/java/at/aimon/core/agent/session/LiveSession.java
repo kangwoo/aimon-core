@@ -19,13 +19,12 @@ import at.aimon.core.agent.stream.AgentExecutionEvent;
  *
  * <p>
  * {@code LiveSession} is the node-local session handle introduced by SESSION-01 of the pipeline adoption plan. Each
- * instance owns a fixed {@link SessionId}, an underlying
- * {@link at.aimon.core.agent.AgentRuntime} and the executor required to run ReAct turns against that context.
- * Callers submit user input turn by turn through {@link #submit(String)}, or through the
- * {@link at.aimon.core.agent.input.UserInput} overload of the same name when the turn is started by an image, a
- * document or a combination of both; the transcript is preserved across calls via the store wired into the underlying
- * executor, so history-aware features such as CTX-03 (transcript buffer compaction) and CQ-03 (mid-turn injection)
- * continue to work transparently.
+ * instance owns a fixed {@link SessionId}, an underlying {@link at.aimon.core.agent.AgentRuntime} and the executor
+ * required to run ReAct turns against that context. Callers submit user input turn by turn through
+ * {@link #submit(String)}, or through the {@link at.aimon.core.agent.input.UserInput} overload of the same name when
+ * the turn is started by an image, a document or a combination of both; the transcript is preserved across calls via
+ * the store wired into the underlying executor, so history-aware features such as CTX-03 (transcript buffer compaction)
+ * and CQ-03 (mid-turn injection) continue to work transparently.
  *
  * <h2>Lifecycle</h2>
  *
@@ -36,11 +35,11 @@ import at.aimon.core.agent.stream.AgentExecutionEvent;
  * {@link LiveSessionOptions} is injected when the internally-built request would otherwise be unbounded.
  * <li><b>Close</b> — {@link #close()} releases <em>session-scoped</em> resources only (the mid-turn input-queue
  * subscription, the live interrupt-coordinator and budget-tracker references), then fires {@code OnSessionEnd}.
- * Anything marked {@link at.aimon.core.base.AgentScoped} or
- * {@link at.aimon.core.base.ApplicationScoped} is <b>never</b> touched — including the {@code AgentRuntime} itself,
- * its {@code McpClientManager}, and the {@code KnowledgeStore} / {@code SchedulingEngine} /
- * {@code ScheduledTaskManager} / {@code RoutineExecutor}. They outlive this session and are torn down only at
- * application shutdown or explicit agent removal. See {@code CLAUDE.md} "Scope &amp; Scheduling Lifecycle".
+ * Anything marked {@link at.aimon.core.base.AgentScoped} or {@link at.aimon.core.base.ApplicationScoped}
+ * is <b>never</b> touched — including the {@code AgentRuntime} itself, its {@code McpClientManager}, and the
+ * {@code KnowledgeStore} / {@code SchedulingEngine} / {@code ScheduledTaskManager} / {@code RoutineExecutor}. They
+ * outlive this session and are torn down only at application shutdown or explicit agent removal. See {@code CLAUDE.md}
+ * "Scope &amp; Scheduling Lifecycle".
  * </ul>
  *
  * <h2>Thread-safety</h2>
@@ -209,8 +208,8 @@ public interface LiveSession extends AutoCloseable {
      *
      * <p>
      * Convenience overload equivalent to
-     * {@link #submitAsync(String, SubmitOptions, java.util.function.Consumer) submitAsync(input,
-     * SubmitOptions.empty(), listener)}.
+     * {@link #submitAsync(String, SubmitOptions, java.util.function.Consumer) submitAsync(input, SubmitOptions.empty(),
+     * listener)}.
      *
      * @param input
      *            the raw user input (must not be null)
@@ -290,8 +289,7 @@ public interface LiveSession extends AutoCloseable {
      *
      * <p>
      * Behaviourally identical to {@link #submitAsync(String, SubmitOptions, Consumer)} — the only difference is that
-     * the
-     * turn's identity is chosen by the caller instead of issued internally. Use this overload when the id has to be
+     * the turn's identity is chosen by the caller instead of issued internally. Use this overload when the id has to be
      * known <em>before</em> the turn runs: a dispatcher that has already stamped the id onto an inbox envelope or a
      * cross-node event payload, or a caller that wants to hold the id in order to later call
      * {@link #interrupt(TurnId, InterruptReason)} on exactly this turn and no other.
@@ -511,16 +509,14 @@ public interface LiveSession extends AutoCloseable {
      * <p>
      * This is the addressed form of {@link #interrupt(InterruptReason)}. The unaddressed form trips whatever turn is
      * running when the call lands, which is correct for administrative cancellation (eviction, shutdown, lease loss)
-     * but
-     * wrong for a user who meant "stop the turn I submitted": between the user's click and the interrupt reaching the
-     * holder node, that turn may have finished and the next one may already be running. Passing the id makes the
+     * but wrong for a user who meant "stop the turn I submitted": between the user's click and the interrupt reaching
+     * the holder node, that turn may have finished and the next one may already be running. Passing the id makes the
      * mismatch observable to the implementation, which then leaves the innocent turn alone.
      *
      * <p>
      * A mismatch — or an idle session — is a silent no-op; implementations must not throw. Callers that need to know
      * whether the interrupt landed cannot learn it from this method (the answer is inherently racy); they should
-     * observe
-     * the turn's terminal event instead.
+     * observe the turn's terminal event instead.
      *
      * <p>
      * The default implementation is a no-op, matching {@link #interrupt(InterruptReason)}.

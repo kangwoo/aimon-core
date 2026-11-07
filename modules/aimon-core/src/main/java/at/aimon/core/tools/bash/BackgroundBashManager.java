@@ -58,9 +58,8 @@ import at.aimon.core.tools.BackgroundTaskOwner;
  * boundary. {@link #find} and {@link #kill} answer only the {@linkplain BackgroundTaskOwner owner} the task was
  * started for — the runtime and, within it, the session (a session's turns and the forks spawned for it) or the
  * session-less execution; for any other caller the id does not exist. Two sessions of one runtime do not see each
- * other's tasks. The id-only
- * methods ({@link #getTask}, {@link #readNewOutput} …) are not scoped — they serve callers that hold the manager
- * directly, not the tools.
+ * other's tasks. The id-only methods ({@link #getTask}, {@link #readNewOutput} …) are not scoped — they serve callers
+ * that hold the manager directly, not the tools.
  *
  * <p>
  * <b>Retention.</b> A finished task is dropped, record and all, once it has been finished for longer than the

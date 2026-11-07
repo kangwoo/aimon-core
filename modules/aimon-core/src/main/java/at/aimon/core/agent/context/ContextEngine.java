@@ -60,8 +60,7 @@ public interface ContextEngine {
      * @param instructions
      *            caller-supplied advisory guidance for the summary, or {@code null} for none
      * @return the compaction outcome (never null, unless a delegated
-     *         {@link at.aimon.core.agent.compact.CompactionEngine}
-     *         itself returned null)
+     *         {@link at.aimon.core.agent.compact.CompactionEngine} itself returned null)
      * @throws NullPointerException
      *             if {@code request} is null
      */

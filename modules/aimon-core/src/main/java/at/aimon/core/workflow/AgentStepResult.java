@@ -50,8 +50,7 @@ public final class AgentStepResult {
      *            the underlying subagent execution result (must not be null)
      * @param structured
      *            the parsed, schema-validated structured output, or {@code null} when none (no schema, or
-     *            parse/validate
-     *            failed)
+     *            parse/validate failed)
      * @return a new step result
      */
     public static AgentStepResult of(AgentTask task, SubagentExecutionResult raw, Map<String, Object> structured) {

@@ -94,8 +94,7 @@ public final class AdaptiveAgentBundleLoader implements AgentBundleLoader {
      * Creates a new AdaptiveAgentBundleLoader with custom dependencies and a default {@link MarkdownSkillParser}.
      * Frontmatter {@code shell} hook actions on bundled skills will fail at parse time; use
      * {@link #AdaptiveAgentBundleLoader(String, AgentDefinitionParser, ClassLoader, SkillParser)} to inject a parser
-     * wired with a {@link at.aimon.core.skill.hook.declarative.DefaultShellActionExecutor
-     * DefaultShellActionExecutor}.
+     * wired with a {@link at.aimon.core.skill.hook.declarative.DefaultShellActionExecutor DefaultShellActionExecutor}.
      *
      * @param basePath
      *            the classpath base path for agent directories (must not be null)
@@ -171,8 +170,8 @@ public final class AdaptiveAgentBundleLoader implements AgentBundleLoader {
      *
      * <p>
      * Detects the resource protocol by looking up the agent definition URL. If the resource is on the local filesystem
-     * ({@code file://} protocol), composes {@link FileSystemAgentBundleLoader} over
-     * {@link ClasspathAgentBundleLoader}. Otherwise, uses {@link ClasspathAgentBundleLoader} alone.
+     * ({@code file://} protocol), composes {@link FileSystemAgentBundleLoader} over {@link ClasspathAgentBundleLoader}.
+     * Otherwise, uses {@link ClasspathAgentBundleLoader} alone.
      *
      * @param name
      *            the agent name (must not be null)

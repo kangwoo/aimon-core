@@ -31,9 +31,9 @@ import at.aimon.core.agent.session.TurnId;
  * This is the first class in the suite to go through a {@link DefaultLiveSession} rather than driving the executor
  * directly, because turn targeting does not exist below that line: the executor knows only the one
  * {@code InterruptCoordinator} of the turn it is running, and has no way to answer "is this the turn the caller
- * meant?".
- * That question is answered by {@link DefaultLiveSession#interrupt(TurnId, InterruptReason)} comparing against the
- * {@link DefaultLiveSession#currentTurnId() active turn id}, so the assertions here have to be made against the handle.
+ * meant?". That question is answered by {@link DefaultLiveSession#interrupt(TurnId, InterruptReason)} comparing against
+ * the {@link DefaultLiveSession#currentTurnId() active turn id}, so the assertions here have to be made against the
+ * handle.
  *
  * <h2>Why the drop case is the test that matters</h2>
  *
@@ -167,8 +167,7 @@ class TurnInterruptIntegrationTest {
      * <p>
      * A fresh {@link TurnId#generate()} stands in for the realistic case: a cancel issued against a turn that has
      * already settled, arriving while its successor runs. Forwarding it would kill an innocent turn, and no assertion
-     * in
-     * {@link #anInterruptAimedAtTheActiveTurnEndsIt} would notice.
+     * in {@link #anInterruptAimedAtTheActiveTurnEndsIt} would notice.
      */
     @Test
     @DisplayName("an interrupt aimed at a different turn is dropped and the active turn finishes")

@@ -10,10 +10,9 @@ import at.aimon.core.hook.HookRegistry;
  * The base {@code AgentRuntime} interface deliberately stays minimal — exposing only the agent and tools.
  * Re-dispatching a hook on a rewake fire needs one more piece: the {@link HookRegistry} (to locate the originating
  * hook). Rather than promote that concern onto the base interface and force every existing impl / test stub to grow,
- * the rewake
- * listener queries this opt-in SPI via
- * {@link at.aimon.core.agent.AgentRuntimeRegistry#getAs(at.aimon.core.agent.AgentRuntimeId, Class)
- * registry.getAs(...)} and skips contexts that do not support it (logged WARN).
+ * the rewake listener queries this opt-in SPI via
+ * {@link at.aimon.core.agent.AgentRuntimeRegistry#getAs(at.aimon.core.agent.AgentRuntimeId, Class) registry.getAs(...)}
+ * and skips contexts that do not support it (logged WARN).
  *
  * <p>
  * Production implementations (notably {@code OrcaAgentRuntime}) implement this interface; lightweight test

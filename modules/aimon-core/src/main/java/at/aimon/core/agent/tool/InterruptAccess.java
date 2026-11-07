@@ -51,8 +51,8 @@ public final class InterruptAccess {
 
     /**
      * Returns the {@link TerminatorRegistrar} stored in the given context, if any. Tools whose declared
-     * {@link InterruptBehavior} is {@link InterruptBehavior#NON_INTERRUPTIBLE} or
-     * {@link InterruptBehavior#COOPERATIVE} should not expect a registrar to be present.
+     * {@link InterruptBehavior} is {@link InterruptBehavior#NON_INTERRUPTIBLE} or {@link InterruptBehavior#COOPERATIVE}
+     * should not expect a registrar to be present.
      *
      * @param context
      *            the tool context (must not be null)

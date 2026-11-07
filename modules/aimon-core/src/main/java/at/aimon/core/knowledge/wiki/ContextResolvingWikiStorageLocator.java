@@ -14,8 +14,7 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  * <p>
  * This class is the standard adapter for the common pattern "the wiki's filesystem is owned by the agent execution
  * context, look it up by the scope's agentRuntimeId". It knows nothing about which agent runtime owns the context —
- * that is
- * the resolver's job. Typical resolvers extract the VFS from a registry of agent runtimes:
+ * that is the resolver's job. Typical resolvers extract the VFS from a registry of agent runtimes:
  *
  * <pre>{@code
  * // Generic — works with any agent context implementation that exposes a VFS:

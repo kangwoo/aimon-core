@@ -5,11 +5,10 @@ package at.aimon.core.llm;
  *
  * <p>
  * This is the {@code llm}-package counterpart of {@code at.aimon.core.agent.interrupt.CancellationSignal}. It is
- * defined
- * here — rather than reusing the agent-side signal — because the {@code at.aimon.core.llm} package may only depend on
- * {@code at.aimon.core.base} and {@code at.aimon.core.agent.prompt} (enforced by ArchUnit). Referencing the agent-side
- * signal from {@link LlmClient} would create an {@code llm -> agent.interrupt} back-edge and break the build. The two
- * worlds are joined at the executor boundary by a small adapter.
+ * defined here — rather than reusing the agent-side signal — because the {@code at.aimon.core.llm} package may only
+ * depend on {@code at.aimon.core.base} and {@code at.aimon.core.agent.prompt} (enforced by ArchUnit). Referencing the
+ * agent-side signal from {@link LlmClient} would create an {@code llm -> agent.interrupt} back-edge and break the
+ * build. The two worlds are joined at the executor boundary by a small adapter.
  *
  * <p>
  * Semantics:
@@ -28,10 +27,9 @@ package at.aimon.core.llm;
  *
  * <p>
  * Providers that support active abort register their SDK-specific abort lever through {@link #onCancel(Runnable)} at
- * the
- * start of a call. Providers (and gateways/decorators) that do not support abort simply ignore the token and fall back
- * to iteration-boundary cancellation — the default overloads on {@link LlmClient} do exactly this, so no provider is
- * required to change.
+ * the start of a call. Providers (and gateways/decorators) that do not support abort simply ignore the token and fall
+ * back to iteration-boundary cancellation — the default overloads on {@link LlmClient} do exactly this, so no provider
+ * is required to change.
  */
 public interface LlmCancellation {
 

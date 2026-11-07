@@ -89,19 +89,18 @@ public final class ModelCapabilities {
      * Each flag falls out of that one rule. Sampling parameters a caller set are sent, because withholding them from a
      * model nobody has described would be fail-<em>closed</em>. No reasoning effort is sent, because that is a
      * parameter the framework would have to invent. Tools are not treated as conflicting with reasoning, because
-     * clamping without evidence is a restriction nobody asked for. The accepted reasoning rungs are
-     * {@code MINIMAL} through {@link ReasoningEffort#HIGH}, which withholds only {@link ReasoningEffort#NONE} — the
-     * rung most likely to be absent, though measurement has stopped short of calling it universally absent: every
-     * OpenAI o-series name probed on 2026-09-09 rejects it with a message naming the model, and {@code gpt-5-nano}
-     * rejected it too, while {@code gpt-5.6-terra} <em>accepts</em> it and now states so in a row of its own. So this
-     * default is a trade rather than a free choice, and it is made on the asymmetry of the two mistakes: withholding
-     * a rung a model does have costs a reported omission and leaves the server's own default in force, while sending
-     * a rung it does not have costs a 400 that fails the turn. A model that really does start at {@code NONE} is
-     * describable — register a row with {@code lowestReasoningEffort(NONE)}, or with
-     * {@code acceptedReasoningEfforts(...)} when the ladder has a gap in it rather than a floor. The thinking dialect
-     * is {@link ThinkingDialect#UNKNOWN}, which is the only one of the seven that is not a permission at all: both
-     * real dialects are a 400 on the model that speaks <em>only</em> the other, so the fail-open value here has to be
-     * the <em>absence</em> of the fact rather than one of its values.
+     * clamping without evidence is a restriction nobody asked for. The accepted reasoning rungs are {@code MINIMAL}
+     * through {@link ReasoningEffort#HIGH}, which withholds only {@link ReasoningEffort#NONE} — the rung most likely to
+     * be absent, though measurement has stopped short of calling it universally absent: every OpenAI o-series name
+     * probed on 2026-09-09 rejects it with a message naming the model, and {@code gpt-5-nano} rejected it too, while
+     * {@code gpt-5.6-terra} <em>accepts</em> it and now states so in a row of its own. So this default is a trade
+     * rather than a free choice, and it is made on the asymmetry of the two mistakes: withholding a rung a model does
+     * have costs a reported omission and leaves the server's own default in force, while sending a rung it does not
+     * have costs a 400 that fails the turn. A model that really does start at {@code NONE} is describable — register a
+     * row with {@code lowestReasoningEffort(NONE)}, or with {@code acceptedReasoningEfforts(...)} when the ladder has a
+     * gap in it rather than a floor. The thinking dialect is {@link ThinkingDialect#UNKNOWN}, which is the only one of
+     * the seven that is not a permission at all: both real dialects are a 400 on the model that speaks <em>only</em>
+     * the other, so the fail-open value here has to be the <em>absence</em> of the fact rather than one of its values.
      * A reasoning summary is <em>allowed</em>, which is the same rule reaching the opposite boolean from
      * {@link #supportsReasoningEffort()}: a summary is only ever on a request because somebody set it, so withholding
      * it would be the fail-closed half. That default is also never consulted for a model nobody has described —
@@ -178,9 +177,9 @@ public final class ModelCapabilities {
      * <p>
      * This is the provider-neutral fact, not an endpoint: OpenAI's answer to it is "use {@code /v1/responses} and
      * replay the reasoning items", Anthropic's is "send the thinking blocks back", and neither vocabulary belongs in
-     * this type. A client that reads {@code true} is expected to capture
-     * {@link at.aimon.core.llm.ReasoningTrace}s from the response and replay its own on the next request; a client
-     * that reads {@code false} behaves exactly as it did before this flag existed.
+     * this type. A client that reads {@code true} is expected to capture {@link at.aimon.core.llm.ReasoningTrace}s from
+     * the response and replay its own on the next request; a client that reads {@code false} behaves exactly as it did
+     * before this flag existed.
      *
      * @return {@code true} when reasoning traces round-trip for this model
      */
@@ -227,11 +226,11 @@ public final class ModelCapabilities {
      * <p>
      * The axis this field describes is <em>mutually exclusive for most models</em> — each real dialect is an HTTP 400
      * on a model that speaks only the other — so unlike the five flags above it has no safe fail-open <em>value</em>.
-     * What makes it safe is that two of the four constants are not dialects at all:
-     * {@link ThinkingDialect#UNKNOWN} means <em>this table cannot answer</em>, and a client reading it leaves
-     * whatever the caller configured exactly as it was, which is the behaviour every model had before this field
-     * existed. {@link ThinkingDialect#EITHER} is the measured exception to the exclusivity — a model that accepts
-     * both shapes — and it exists so that "measured to take either" and "not described" stop being the same value.
+     * What makes it safe is that two of the four constants are not dialects at all: {@link ThinkingDialect#UNKNOWN}
+     * means <em>this table cannot answer</em>, and a client reading it leaves whatever the caller configured exactly as
+     * it was, which is the behaviour every model had before this field existed. {@link ThinkingDialect#EITHER} is the
+     * measured exception to the exclusivity — a model that accepts both shapes — and it exists so that "measured to
+     * take either" and "not described" stop being the same value.
      *
      * <p>
      * Vendor-shaped, like {@link #supportsToolsWithReasoning()} and for the same reason: one table is read by every
@@ -256,11 +255,10 @@ public final class ModelCapabilities {
      *
      * <p>
      * The flag exists for the gateway case rather than for first-party OpenAI. A model served through an
-     * OpenAI-compatible gateway that a deployment has declared
-     * {@link #supportsReasoningTraceRoundTrip()} {@code true} for is one this framework will send to the Responses
-     * endpoint; if that gateway implements {@code reasoning.effort} but rejects {@code reasoning.summary}, the
-     * request is a 400 while the sibling parameter beside it is guarded twice. This is the per-model lever for that,
-     * because the ask itself is per <em>client</em>.
+     * OpenAI-compatible gateway that a deployment has declared {@link #supportsReasoningTraceRoundTrip()} {@code true}
+     * for is one this framework will send to the Responses endpoint; if that gateway implements
+     * {@code reasoning.effort} but rejects {@code reasoning.summary}, the request is a 400 while the sibling parameter
+     * beside it is guarded twice. This is the per-model lever for that, because the ask itself is per <em>client</em>.
      *
      * <p>
      * Deliberately <strong>not</strong> folded into {@link #supportsReasoningTraceRoundTrip()}. That flag means

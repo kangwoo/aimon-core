@@ -84,11 +84,11 @@ public final class SkillHookEnv {
      *
      * <p>
      * The value is a directory made for that one firing (EE-109): the skill's files, as the registry loaded them,
-     * placed by the shell the command runs in, outside the workspace (under the local provider, an
-     * {@code aimon-run-*} directory under {@code java.io.tmpdir}), and removed when the command ends. It is not the
-     * path a skill body gets as {@code ${AIMON_SKILL_DIR}}, does not persist between firings, and a script must not
-     * write next to itself expecting to find the file again. On a shell that cannot place such a directory, and for
-     * a skill over the run-directory limit, it is what the firing execution's {@code ExecutionEnvironment.stage(...)}
+     * placed by the shell the command runs in, outside the workspace (under the local provider, an {@code aimon-run-*}
+     * directory under {@code java.io.tmpdir}), and removed when the command ends. It is not the path a skill body gets
+     * as {@code ${AIMON_SKILL_DIR}}, does not persist between firings, and a script must not write next to itself
+     * expecting to find the file again. On a shell that cannot place such a directory, and for a skill over the
+     * run-directory limit, it is what the firing execution's {@code ExecutionEnvironment.stage(...)}
      * returned instead: a staged copy, checked on every firing. Either way it is decided when the hook fires, not
      * carried over from the skill's activation, because the hook fires in the skill's fork (or an execution that fork
      * started), which may be placed in a different environment from the one that invoked the skill.

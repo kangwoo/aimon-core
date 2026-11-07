@@ -57,8 +57,7 @@ import at.aimon.core.subagent.DefaultSubagentRegistry;
  * <p>
  * The existing single-threaded tests each copy-paste a {@code createExecutor}/{@code createContext} pair plus an
  * {@code ArrayList}-backed scripted {@code LlmClient} that is <b>not</b> thread-safe ({@code responses.remove(0)} with
- * no
- * synchronization — see {@code OrcaAgentExecutorParallelToolTest.RecordingLlmClient}). Driving several
+ * no synchronization — see {@code OrcaAgentExecutorParallelToolTest.RecordingLlmClient}). Driving several
  * {@code execute()}
  * turns through <b>one shared executor</b> concurrently therefore needs a different foundation, which this class
  * provides:
@@ -224,8 +223,7 @@ final class OrcaAgentExecutorTestSupport {
      * Routing key is the {@link LlmCallMetadata#getTraceId() trace id}, which the executor defaults to
      * {@code sessionId.value()}. When metadata is absent (the legacy 4-arg overload) it falls back to scanning the
      * message list for a registered session marker — the {@link #request(SessionId) request helper} embeds
-     * the
-     * session id in the user input, so both routing paths resolve to the same key.
+     * the session id in the user input, so both routing paths resolve to the same key.
      *
      * <ul>
      * <li>{@link #script(String, LlmResponse...)} — an ordered per-session script consumed by an
@@ -369,8 +367,8 @@ final class OrcaAgentExecutorTestSupport {
 
     /**
      * A {@link ConcurrencyBehavior#CONCURRENT_SAFE} tool whose {@code execute} blocks on a shared
-     * {@link CyclicBarrier};
-     * it records whether it rendezvoused, which only happens if every sibling in the batch runs concurrently.
+     * {@link CyclicBarrier}; it records whether it rendezvoused, which only happens if every sibling in the batch runs
+     * concurrently.
      */
     static final class BarrierTool extends AbstractTool {
         private final CyclicBarrier barrier;

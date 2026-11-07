@@ -6,9 +6,9 @@ import java.util.regex.Pattern;
 
 /**
  * A minimal gitignore-subset matcher for {@code .stageignore} files (execution-environment-staging design §8): globs
- * ({@code *}, {@code **},
- * {@code ?}), directory patterns ({@code dir/}), anchored patterns (containing a {@code /}), {@code !} negation and
- * {@code #} comments. The last matching rule wins, and ignoring a directory ignores everything under it.
+ * ({@code *}, {@code **}, {@code ?}), directory patterns ({@code dir/}), anchored patterns (containing a {@code /}),
+ * {@code !} negation and {@code #} comments. The last matching rule wins, and ignoring a directory ignores everything
+ * under it.
  *
  * <p>
  * Both local and sandbox providers honour {@code .stageignore}, so the matcher belongs to the SPI rather than to any

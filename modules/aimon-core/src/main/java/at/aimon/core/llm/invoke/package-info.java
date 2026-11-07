@@ -8,8 +8,8 @@
  * This package is <strong>consumer-side</strong>: it composes the exception taxonomy in
  * {@code at.aimon.core.llm.exception}
  * and the policy models in {@code at.aimon.core.llm.retry} into a runtime
- * {@link at.aimon.core.llm.invoke.LlmCallGateway}
- * that upper-layer agents can invoke via the same signature as {@link at.aimon.core.llm.LlmClient}.
+ * {@link at.aimon.core.llm.invoke.LlmCallGateway} that upper-layer agents can invoke via the same signature as
+ * {@link at.aimon.core.llm.LlmClient}.
  *
  * <h2>Core Types</h2>
  * <ul>

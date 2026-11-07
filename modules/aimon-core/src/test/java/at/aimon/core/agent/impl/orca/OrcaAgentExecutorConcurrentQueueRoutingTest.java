@@ -25,20 +25,17 @@ import at.aimon.core.llm.Message;
 
 /**
  * The mid-turn queue drain is scoped by {@link AgentRuntimeId}, not by session. Two sessions
- * belonging
- * to two <b>different</b> agent runtimes share one {@link OrcaAgentExecutor} and one
+ * belonging to two <b>different</b> agent runtimes share one {@link OrcaAgentExecutor} and one
  * {@link MessageQueueManager}; when both turns hit their iteration-tail drain at the same instant, each must pick up
- * only
- * the queued input addressed to <b>its own</b> context and never steal or duplicate the other context's entry.
+ * only the queued input addressed to <b>its own</b> context and never steal or duplicate the other context's entry.
  *
  * <p>
  * Both turns are pinned together inside their first tool on a shared {@link CyclicBarrier}, so their subsequent
  * {@code drainForInjection} calls genuinely race on the shared queue. The test then inspects the exact message list
- * that
- * went on the wire for each session's second iteration and asserts strict, mutually-exclusive routing: context A's
+ * that went on the wire for each session's second iteration and asserts strict, mutually-exclusive routing: context A's
  * turn sees {@code inject-for-A} and never {@code inject-for-B}, and vice versa. A drain that ignored the context
- * filter,
- * or a repository that mis-handled concurrent removal, would surface as a stolen, missing, or duplicated injection.
+ * filter, or a repository that mis-handled concurrent removal, would surface as a stolen, missing, or duplicated
+ * injection.
  */
 @DisplayName("OrcaAgentExecutor concurrent context-scoped queue drain routing")
 class OrcaAgentExecutorConcurrentQueueRoutingTest {
@@ -108,9 +105,9 @@ class OrcaAgentExecutorConcurrentQueueRoutingTest {
     /**
      * The mirror case, and the one that actually occurs in production: <b>one</b> agent-scoped context with
      * <b>two</b> concurrent sessions. Because {@link at.aimon.core.agent.queue.QueuedInput} carries only an
-     * {@link AgentRuntimeId} and no session id, and the context is shared across every session
-     * against the same {@code (agent, discriminator)} pair (see {@code .claude/rules/scheduling.md}), both turns'
-     * drain filters match <b>both</b> entries.
+     * {@link AgentRuntimeId} and no session id, and the context is shared across every session against the same
+     * {@code (agent, discriminator)} pair (see {@code .claude/rules/scheduling.md}), both turns' drain filters
+     * match <b>both</b> entries.
      *
      * <p>
      * What the framework still guarantees is the safety half — each entry is consumed <b>exactly once</b> across the

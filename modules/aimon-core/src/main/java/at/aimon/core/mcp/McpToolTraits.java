@@ -17,18 +17,16 @@ import at.aimon.core.mcp.McpServerConfig.AnnotationTrust;
  * gate — reads {@link at.aimon.core.agent.tool.Tool#getSideEffectLevel()} and
  * {@link at.aimon.core.agent.tool.Tool#getDestructiveBehavior()} (and the routine executor
  * {@link at.aimon.core.agent.tool.Tool#getIdempotencyBehavior()}) and cannot tell an MCP tool from a local one, which
- * is
- * the point: an MCP tool that is trusted to be read-only is read-only in exactly the sense a local tool is. Confining
- * the trust decision to this one resolution is what keeps that true.
+ * is the point: an MCP tool that is trusted to be read-only is read-only in exactly the sense a local tool is.
+ * Confining the trust decision to this one resolution is what keeps that true.
  *
  * <h2>Resolution</h2>
  *
  * <ul>
  * <li>{@link AnnotationTrust#IGNORE} — the annotations are not read at all. Every tool is
  * {@link SideEffectLevel#MUTATING} + {@link DestructiveBehavior#DESTRUCTIVE} +
- * {@link IdempotencyBehavior#NON_IDEMPOTENT},
- * which is where MCP tools sat before this
- * existed, so the default changes nothing about an existing deployment.
+ * {@link IdempotencyBehavior#NON_IDEMPOTENT}, which is where MCP tools sat before this existed, so the default changes
+ * nothing about an existing deployment.
  * <li>{@link AnnotationTrust#TRUST} — {@code readOnlyHint} becomes the level, {@code destructiveHint} the
  * destructiveness and {@code idempotentHint} the idempotency, each with its MCP default applied when absent.
  * </ul>
@@ -37,8 +35,7 @@ import at.aimon.core.mcp.McpServerConfig.AnnotationTrust;
  * <b>Data reach.</b> {@code openWorldHint} feeds {@link DataReach}, read by programmatic tool calling. Under
  * {@link AnnotationTrust#IGNORE} the reach is {@link DataReach#EXTERNAL}. Under {@link AnnotationTrust#TRUST} it is
  * {@link DataReach#HOST} when the server says {@code openWorldHint: false}, and {@link DataReach#EXTERNAL} when the
- * hint
- * is absent or {@code true} (the MCP default). It is never {@link DataReach#ENVIRONMENT}: an MCP tool runs on its
+ * hint is absent or {@code true} (the MCP default). It is never {@link DataReach#ENVIRONMENT}: an MCP tool runs on its
  * server, not inside the agent's execution environment, so the most a trusted closed-world claim can earn is
  * {@code HOST} ({@code docs/design/integration/mcp-tool.md} D13).
  *

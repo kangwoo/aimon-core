@@ -27,12 +27,11 @@ import at.aimon.core.llm.Role;
  * <p>
  * {@link CompactionTurnIntegrationTest} stops where the rewrite happens: it proves the transcript is replaced mid-turn
  * and that the model's next call in <em>that same turn</em> goes out compacted. It never runs a second turn. That
- * leaves
- * the question a compacted session actually exists to answer — <em>does the next turn continue from the summary?</em> —
- * untested, and the gap is not academic: the rewrite lands in the executor's turn-scoped {@code TranscriptBuffer}, and
- * whether it reaches the durable record is a separate write on a separate path. A compaction that shrank the buffer but
- * left the record holding the original messages would pass every assertion in the sibling class and still lose the
- * whole point of compacting.
+ * leaves the question a compacted session actually exists to answer — <em>does the next turn continue from the
+ * summary?</em> — untested, and the gap is not academic: the rewrite lands in the executor's turn-scoped
+ * {@code TranscriptBuffer}, and whether it reaches the durable record is a separate write on a separate path. A
+ * compaction that shrank the buffer but left the record holding the original messages would pass every assertion in the
+ * sibling class and still lose the whole point of compacting.
  *
  * <h2>Two triggers, one continuation</h2>
  *

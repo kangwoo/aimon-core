@@ -29,9 +29,8 @@ import at.aimon.core.memory.PeerView;
  * <p>
  * The adapter buffers observation content per-subject and re-emits it through
  * an internal in-memory {@link StagingFileSystem} into
- * {@link KnowledgeStore#reindex(KnowledgeScope, KnowledgeSource, IndexOptions)}.
- * Search calls are translated to {@link KnowledgeStore#search} and the
- * resulting document paths are mapped back to {@link ObservationId}.
+ * {@link KnowledgeStore#reindex(KnowledgeScope, KnowledgeSource, IndexOptions)}. Search calls are translated to
+ * {@link KnowledgeStore#search} and the resulting document paths are mapped back to {@link ObservationId}.
  *
  * <p>
  * <b>This is the verification implementation</b>. Every {@code save}/{@code delete}

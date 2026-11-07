@@ -101,12 +101,11 @@ public final class OrcaAgentExecutionRequest implements AgentExecutionRequest {
      *
      * <p>
      * The individual values are already spread across this request — principal, system-prompt variables, execution
-     * attributes, LLM call metadata — so this looks redundant, and for execution it is: no
-     * code path reads it to run the turn. It is carried because those fields cannot be folded back into the options
-     * they came from. Defaults have been applied by then, so an option that was never named is indistinguishable from
-     * one named with the default value, and a retry rebuilt from the flattened fields would pin a component and trace
-     * id that were meant to be re-derived. Keeping the original is the only way a second attempt can be submitted the
-     * way the first one was.
+     * attributes, LLM call metadata — so this looks redundant, and for execution it is: no code path reads it to run
+     * the turn. It is carried because those fields cannot be folded back into the options they came from. Defaults have
+     * been applied by then, so an option that was never named is indistinguishable from one named with the default
+     * value, and a retry rebuilt from the flattened fields would pin a component and trace id that were meant to be
+     * re-derived. Keeping the original is the only way a second attempt can be submitted the way the first one was.
      *
      * @return the submit options, {@link SubmitOptions#empty()} when the caller supplied none (never null)
      */
@@ -396,8 +395,7 @@ public final class OrcaAgentExecutionRequest implements AgentExecutionRequest {
          * <p>
          * The agent executor merges this value with auto-derived defaults (component=agent name, feature="react-loop",
          * traceId=sessionId) before passing it to the LLM client. Caller-supplied fields always win on collision,
-         * except
-         * {@code principal}: a request principal ({@link #principal(Principal)}) wins over the one set here.
+         * except {@code principal}: a request principal ({@link #principal(Principal)}) wins over the one set here.
          *
          * @param llmCallMetadata
          *            the metadata (can be null, defaults to {@link LlmCallMetadata#empty()})

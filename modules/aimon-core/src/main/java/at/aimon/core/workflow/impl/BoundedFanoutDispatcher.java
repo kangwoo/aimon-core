@@ -48,10 +48,9 @@ import at.aimon.core.workflow.exception.WorkflowException;
  * <p>
  * <b>Run-fatal carve-out (deviation from the source):</b> the source isolates <em>every</em> runner failure into an
  * error result. This engine instead re-throws any {@link WorkflowException} (a framework-level control signal,
- * e.g.
- * the agent-count backstop) out of {@link #dispatch} rather than substituting it via {@code onError}, so a run-fatal
- * condition is not silently swallowed on the fan-out path. Ordinary execution failures (any other throwable, or a
- * {@code null} return) are still isolated into {@code onError.apply(item, throwable)}.
+ * e.g. the agent-count backstop) out of {@link #dispatch} rather than substituting it via {@code onError}, so a
+ * run-fatal condition is not silently swallowed on the fan-out path. Ordinary execution failures (any other throwable,
+ * or a {@code null} return) are still isolated into {@code onError.apply(item, throwable)}.
  *
  * <p>
  * The type parameters live on {@link #dispatch} rather than the class, so one instance handles every {@code <I, R>}

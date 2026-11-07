@@ -8,8 +8,8 @@
  * {@link at.aimon.core.llm.LlmCallMetadata} at construction time. Use when a component owns its identity tags
  * (e.g. {@code component=memory}) and wants them attached unconditionally without ThreadLocal indirection.</li>
  * <li>{@link at.aimon.core.llm.tagging.TaggingLlmClient} — reads the per-thread
- * {@link at.aimon.core.llm.tagging.LlmCallMetadataHolder}. Use to flow caller-supplied context tags
- * (tenant, traceId, etc.) through code paths that cannot thread metadata explicitly.</li>
+ * {@link at.aimon.core.llm.tagging.LlmCallMetadataHolder}. Use to flow caller-supplied context tags (tenant, traceId,
+ * etc.) through code paths that cannot thread metadata explicitly.</li>
  * </ul>
  *
  * <p>

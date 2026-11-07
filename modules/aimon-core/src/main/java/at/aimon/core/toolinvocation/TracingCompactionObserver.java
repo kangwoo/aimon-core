@@ -212,8 +212,7 @@ public final class TracingCompactionObserver implements CompactionObserver {
      * Whether a failure is the cancel's own doing: the summary call was cancelled ({@link LlmCallCancelledException} or
      * {@link CancelledExecutionException} anywhere in the cause chain), or a PreCompact hook the cancel interrupted
      * blocked the compaction. Checked only while the signal is tripped, so a provider error that merely coincides with
-     * a
-     * cancel stays ERROR — the rule {@code TracingLlmClient} applies to the summary call's own span.
+     * a cancel stays ERROR — the rule {@code TracingLlmClient} applies to the summary call's own span.
      */
     private static boolean causedByCancel(Throwable error) {
         for (Throwable t = error; t != null; t = t.getCause() == t ? null : t.getCause()) {

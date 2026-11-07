@@ -35,11 +35,10 @@ import at.aimon.core.workflow.WorkflowRunner;
  *
  * <p>
  * <b>No working filesystem, no shell.</b> This context deliberately offers no handle to the filesystem the model's
- * tools work in or to the shell {@code Bash} runs in: tools read both from the execution's
- * {@code ExecutionEnvironment} ({@code ToolContextKeys.EXECUTION_ENVIRONMENT}) on every call. A registration-time
- * handle would let a provider put them into a tool constructor and fix one environment per agent again
- * (execution-environment design §9). {@link #getControlFileSystem()} is the framework's control store, which is
- * never exposed to the model's file tools.
+ * tools work in or to the shell {@code Bash} runs in: tools read both from the execution's {@code ExecutionEnvironment}
+ * ({@code ToolContextKeys.EXECUTION_ENVIRONMENT}) on every call. A registration-time handle would let a provider put
+ * them into a tool constructor and fix one environment per agent again (execution-environment design §9).
+ * {@link #getControlFileSystem()} is the framework's control store, which is never exposed to the model's file tools.
  *
  * <p>
  * Example usage:

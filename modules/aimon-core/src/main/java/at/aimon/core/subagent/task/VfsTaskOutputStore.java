@@ -53,9 +53,8 @@ public final class VfsTaskOutputStore implements TaskOutputStore {
 
     /**
      * Default base directory for task output segment logs, relative to the root of the filesystem the store is built
-     * over — the
-     * <b>control</b> store, whose root is {@code {project}/.aimon/} in a local assembly, so the physical location is
-     * {@code {project}/.aimon/task-output} as before the control store was split from the workspace.
+     * over — the <b>control</b> store, whose root is {@code {project}/.aimon/} in a local assembly, so the physical
+     * location is {@code {project}/.aimon/task-output} as before the control store was split from the workspace.
      */
     public static final String DEFAULT_BASE_DIR = "task-output";
 
@@ -223,8 +222,7 @@ public final class VfsTaskOutputStore implements TaskOutputStore {
 
     /**
      * Reconstructs the total character length from the on-disk segments (used when no in-memory cursor exists, e.g. on
-     * a
-     * reader node). Contiguity means the total equals the last segment's start plus its length.
+     * a reader node). Contiguity means the total equals the last segment's start plus its length.
      */
     private long reconstructLength(String taskId) {
         final List<Long> starts = listSegmentStarts(taskId);

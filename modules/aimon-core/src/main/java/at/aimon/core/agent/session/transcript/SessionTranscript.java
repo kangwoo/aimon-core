@@ -26,9 +26,8 @@ import at.aimon.core.llm.Message;
  * <p>
  * <strong>Appending is O(n).</strong> {@link #append(Message)} copies the backing list, so building a transcript one
  * message at a time is quadratic. That is the right trade here — this type sits on the persistence and copy paths,
- * where whole transcripts are handed around, not appended to. The append-heavy hot path is
- * {@link TranscriptBuffer}, which keeps a mutable list on purpose and bridges to persistence via
- * {@link SessionSnapshot}.
+ * where whole transcripts are handed around, not appended to. The append-heavy hot path is {@link TranscriptBuffer},
+ * which keeps a mutable list on purpose and bridges to persistence via {@link SessionSnapshot}.
  *
  * <p>
  * <strong>The log is one value.</strong> Everything but the prompt — entries, seqs, rewind point, format — is held as

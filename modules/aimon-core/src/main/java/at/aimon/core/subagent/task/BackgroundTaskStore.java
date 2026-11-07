@@ -69,16 +69,13 @@ public interface BackgroundTaskStore {
      * <b>Guard-and-return semantics:</b> if the task is unknown, or is already in a
      * {@link BackgroundTaskState#isTerminal() terminal} state, this is a no-op and returns {@link Optional#empty()}.
      * Otherwise the task's {@link BackgroundTask#getLastHeartbeat() last heartbeat} is set to {@code at} and the
-     * updated
-     * snapshot is returned. Only the heartbeat is evolved — state, times and offset are untouched.
+     * updated snapshot is returned. Only the heartbeat is evolved — state, times and offset are untouched.
      *
      * <p>
      * The owning node calls this periodically (via {@link TaskHeartbeatPublisher}) for every task it is still running,
-     * so
-     * that a {@link ZombieTaskReaper} on any node can distinguish a live task (fresh heartbeat) from one whose owner
-     * has
-     * crashed (heartbeat aged past the lease TTL). The terminal guard mirrors {@link #transition} so a heartbeat can
-     * never resurrect a task that completed or was stopped concurrently.
+     * so that a {@link ZombieTaskReaper} on any node can distinguish a live task (fresh heartbeat) from one whose owner
+     * has crashed (heartbeat aged past the lease TTL). The terminal guard mirrors {@link #transition} so a heartbeat
+     * can never resurrect a task that completed or was stopped concurrently.
      *
      * @param taskId
      *            the task identifier (must not be null)

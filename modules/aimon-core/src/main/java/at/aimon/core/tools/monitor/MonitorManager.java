@@ -54,8 +54,8 @@ import at.aimon.core.tools.monitor.exception.MonitorRequestException;
  * tool-using iteration, an idle session at the start of its next turn. A monitor keeps <em>at most one</em> batch
  * waiting in the queue (its end notice may follow it): events that arrive while its batch is still waiting are buffered
  * here and sent as one entry once that one has been drained — so a session that is away for a while comes back to one
- * message per monitor, not hundreds (§6.3). The
- * buffer is bounded; when it overflows the oldest events are dropped and the next message says how many.
+ * message per monitor, not hundreds (§6.3). The buffer is bounded; when it overflows the oldest events are dropped and
+ * the next message says how many.
  *
  * <p>
  * <b>Endings.</b> A monitor ends when its source ends, when its timeout passes, when it exceeds the rate limit, when it

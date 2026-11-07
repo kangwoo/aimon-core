@@ -8,9 +8,8 @@ import java.util.UUID;
  *
  * <p>
  * A {@link SessionId} identifies the durable session and a {@link LiveSession} is the node-local handle
- * that
- * runs turns against it; neither of them can say <em>which</em> turn a signal, event, or interrupt belongs to. That gap
- * is what this type closes. Two places need it:
+ * that runs turns against it; neither of them can say <em>which</em> turn a signal, event, or interrupt belongs to.
+ * That gap is what this type closes. Two places need it:
  *
  * <ul>
  * <li><b>Event demultiplexing.</b> The cross-node event relay is created per turn, so every
@@ -29,9 +28,8 @@ import java.util.UUID;
  * <p>
  * <b>Not {@code PendingTurnId}.</b> {@code at.aimon.core.skill.policy.pending.PendingTurnId} names a turn that is
  * <em>suspended</em> awaiting user approval and is issued only if that suspension happens; it is user-visible and is
- * the
- * handle for {@code /approve}. A {@code TurnId} is issued for every turn at submit time regardless of outcome. The two
- * are unrelated identifiers for the same turn.
+ * the handle for {@code /approve}. A {@code TurnId} is issued for every turn at submit time regardless of outcome. The
+ * two are unrelated identifiers for the same turn.
  *
  * <p>
  * Instances are immutable and safe to use as map keys.

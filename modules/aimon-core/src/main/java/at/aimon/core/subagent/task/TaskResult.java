@@ -18,11 +18,10 @@ import at.aimon.core.subagent.execution.SubagentResultFormatter;
  * <p>
  * <b>Why a projection and not {@link SubagentExecutionResult} itself.</b> A live result carries a whole
  * {@link at.aimon.core.agent.session.transcript.SessionSnapshot} — the subagent's full ReAct transcript, including
- * every
- * tool result and any binary content block it saw. Persisting that verbatim would repeat, in a new place, the record
- * bloat the session store was reshaped to avoid, and it would <em>double-store</em> the transcript: the background path
- * already saves the same snapshot per {@code taskId} through {@link SessionSnapshotStore}. So this type keeps exactly
- * what a caller asking "what did the task produce?" needs and drops the rest.
+ * every tool result and any binary content block it saw. Persisting that verbatim would repeat, in a new place, the
+ * record bloat the session store was reshaped to avoid, and it would <em>double-store</em> the transcript: the
+ * background path already saves the same snapshot per {@code taskId} through {@link SessionSnapshotStore}. So this type
+ * keeps exactly what a caller asking "what did the task produce?" needs and drops the rest.
  *
  * <p>
  * <b>What is dropped.</b> The transcript (available from {@link SessionSnapshotStore} under the same {@code taskId},
@@ -36,9 +35,8 @@ import at.aimon.core.subagent.execution.SubagentResultFormatter;
  * <b>Size policy.</b> {@link #from(SubagentExecutionResult)} bounds the answer/error text to
  * {@link #DEFAULT_MAX_SUMMARY_CHARS} characters, keeping the tail (agent conclusions land at the end) and marking the
  * elision, with {@link #isSummaryTruncated()} recording that it happened. This is a <em>storage</em> cap and is
- * distinct
- * from — and deliberately larger than — {@link SubagentResultFormatter#DEFAULT_MAX_CHARS}, the cap applied again when
- * the text is inlined into a parent agent's context. Anything cut here is still recoverable from the task's
+ * distinct from — and deliberately larger than — {@link SubagentResultFormatter#DEFAULT_MAX_CHARS}, the cap applied
+ * again when the text is inlined into a parent agent's context. Anything cut here is still recoverable from the task's
  * {@link TaskOutputStore} log.
  *
  * <p>

@@ -143,9 +143,8 @@ public class ScheduledTaskManager {
      *
      * <p>
      * The four required collaborators have no defaults and are null-checked on {@link #build()}. The two that do have
-     * defaults are the seams a cluster replaces — {@link ScheduledExecutionGuard} and
-     * {@link ScheduledTaskInterruptBus} — and both default to the single-node answer, so a deployment that never
-     * scales out never has to name them.
+     * defaults are the seams a cluster replaces — {@link ScheduledExecutionGuard} and {@link ScheduledTaskInterruptBus}
+     * — and both default to the single-node answer, so a deployment that never scales out never has to name them.
      */
     public static final class Builder {
 
@@ -767,10 +766,8 @@ public class ScheduledTaskManager {
      * This is what keeps several nodes with per-node schedulers in step. {@link #register}, {@link #cancel} and
      * {@link #setEnabled} change the triggers of the node they run on and no other, so without it a task registered on
      * node A fires only on A, and a task cancelled on B keeps a trigger on A that fires — and skips — at every cron
-     * time
-     * until A restarts. Each node has to run this itself: what it corrects is that node's own scheduler, so electing
-     * one
-     * node to run it would converge one node.
+     * time until A restarts. Each node has to run this itself: what it corrects is that node's own scheduler, so
+     * electing one node to run it would converge one node.
      *
      * <p>
      * Every node then holds every task's trigger, so a fire happens on every node and only a

@@ -88,8 +88,7 @@ public final class AgentTask {
     /**
      * @return the JSON Schema (as a nested {@code Map}) the subagent's output should conform to, if structured output
      *         is requested. When present, the runner augments the goal with a JSON-emit instruction and
-     *         parses/validates
-     *         the final answer into {@link AgentStepResult#structured()}.
+     *         parses/validates the final answer into {@link AgentStepResult#structured()}.
      */
     public Optional<Map<String, Object>> getResultSchema() {
         return Optional.ofNullable(resultSchema);
@@ -98,8 +97,7 @@ public final class AgentTask {
     /**
      * @return {@code true} if this step runs against an isolated per-branch filesystem view (worktree isolation,
      *         design §6.3). Requires an execution environment that supports {@code isolate()}, else the step is
-     *         run-fatal.
-     *         Implies {@link #isNonCacheable()}.
+     *         run-fatal. Implies {@link #isNonCacheable()}.
      */
     public boolean isIsolate() {
         return isolate;
@@ -108,10 +106,8 @@ public final class AgentTask {
     /**
      * @return {@code true} if this step must never be memoized or replayed from the {@code StepResultCache}. The single
      *         authoritative cache-bypass predicate (design §6.3): {@code true} when {@link #isIsolate()} is set,
-     *         or
-     *         when the caller explicitly marks a base-VFS-mutating step (e.g. a merge/promotion step) non-cacheable so
-     *         a
-     *         transcript-free replay cannot silently drop its file writes.
+     *         or when the caller explicitly marks a base-VFS-mutating step (e.g. a merge/promotion step) non-cacheable
+     *         so a transcript-free replay cannot silently drop its file writes.
      */
     public boolean isNonCacheable() {
         return nonCacheable;

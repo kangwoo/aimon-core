@@ -16,8 +16,7 @@ import at.aimon.core.llm.TokenUsage;
  * <p>
  * When the model is known, the estimate is {@code price.costOf(usage)}. When it is unknown, the call is priced at
  * {@link Money#zeroUsd() zero} and a warning is logged <em>once per model name</em> — so an unpriced model is visible
- * in
- * the logs without flooding them on every iteration of a ReAct loop.
+ * in the logs without flooding them on every iteration of a ReAct loop.
  *
  * <p>
  * Stateless with respect to pricing; the only mutable state is the thread-safe set that de-duplicates the

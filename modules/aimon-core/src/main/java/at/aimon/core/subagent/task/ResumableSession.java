@@ -20,18 +20,15 @@ import at.aimon.core.agent.session.transcript.SessionSnapshot;
  * {@code subagent_name} would silently graft one subagent's history under another's system prompt and tool allowlist.
  * <li><b>Owning context.</b> Background task ids are globally unique, so a shared {@link SessionSnapshotStore}
  * holds the transcripts of every concurrently-running agent in one flat keyspace. The {@code agentRuntimeId} records
- * which
- * {@link AgentRuntimeId} produced the transcript so a resume can be confined to the caller's own context — one
+ * which {@link AgentRuntimeId} produced the transcript so a resume can be confined to the caller's own context — one
  * agent must not be able to resume (and thereby read + hijack) another agent's transcript merely by knowing its task
- * id.
- * Scoping is enforced by {@code ScopedSessionSnapshotStore}.
+ * id. Scoping is enforced by {@code ScopedSessionSnapshotStore}.
  * </ul>
  *
  * <p>
  * Immutable value object: {@code subagentName} and {@code snapshot} are non-null; {@code agentRuntimeId} is optional
- * (absent
- * for transcripts recorded by a non-Orca path, or by an older store version that predates context tagging). There are
- * no setters.
+ * (absent for transcripts recorded by a non-Orca path, or by an older store version that predates context tagging).
+ * There are no setters.
  */
 public final class ResumableSession {
 

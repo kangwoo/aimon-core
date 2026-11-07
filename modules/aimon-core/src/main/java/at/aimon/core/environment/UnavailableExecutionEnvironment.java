@@ -15,9 +15,9 @@ import at.aimon.core.shell.VirtualShell;
  * <p>
  * Every filesystem and shell call throws {@link ExecutionEnvironmentUnavailableException} carrying the cause, and so
  * do {@link #stage} and {@link #isolate}; tools turn it into a {@code ToolResult.error}, and a workflow runner quotes
- * it when it refuses an isolated step. The {@link #descriptor()} does not throw: its
- * {@code notes} say "execution environment unavailable: {cause}", so the model learns why before its first tool
- * call. A turn that needs no files or shell is unaffected. There is no path back to the host environment.
+ * it when it refuses an isolated step. The {@link #descriptor()} does not throw: its {@code notes} say "execution
+ * environment unavailable: {cause}", so the model learns why before its first tool call. A turn that needs no files or
+ * shell is unaffected. There is no path back to the host environment.
  */
 public final class UnavailableExecutionEnvironment implements ExecutionEnvironment {
 

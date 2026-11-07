@@ -16,8 +16,7 @@ package at.aimon.core.workflow;
  * <li>{@link #getMaxConcurrency()} sizes the shared worker pool — the global host-protection ceiling.</li>
  * <li>{@link #getPerBatchMax()} caps how many tasks of a <em>single</em> {@code parallel}/{@code pipeline} call may
  * occupy the shared pool at once, so one fat fan-out cannot monopolise every worker and starve a concurrent run. It
- * must
- * be in {@code [1, maxConcurrency]} and defaults to {@code maxConcurrency}.</li>
+ * must be in {@code [1, maxConcurrency]} and defaults to {@code maxConcurrency}.</li>
  * </ul>
  *
  * <p>
@@ -191,8 +190,7 @@ public final class WorkflowConcurrencyConfig {
      * <li><b>Whole-pool {@code perBatchMax}</b> ({@code perBatchMax == maxConcurrency} — the default, and equivalently
      * an explicit {@code enabled(n, n)}) — auto-derived to an equal share
      * {@code max(1, min(maxConcurrency - 1, floor(maxConcurrency / maxConcurrentRuns)))}, so it is always strictly
-     * below
-     * {@code maxConcurrency} (leaving headroom for a concurrent run) and satisfies the sizing rule
+     * below {@code maxConcurrency} (leaving headroom for a concurrent run) and satisfies the sizing rule
      * {@code maxConcurrency >= maxConcurrentRuns x perBatchMax} (except when there are more runs than workers, where it
      * floors to 1 and runs share the pool FIFO).
      * </ul>

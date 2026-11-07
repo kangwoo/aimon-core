@@ -66,8 +66,7 @@ import at.aimon.core.subagent.DefaultSubagentRegistry;
  * <p>
  * The existing terminal-path suites ({@code OrcaAgentExecutorBudgetTest}, {@code OrcaAgentExecutorInterruptTest},
  * {@code OrcaAgentExecutorStalledIterationTest}, {@code OrcaAgentExecutorLoopTransitionTest}) assert only the
- * resulting
- * {@link CompletionReason}; none inspects the session. These tests close that gap so a refactor of the
+ * resulting {@link CompletionReason}; none inspects the session. These tests close that gap so a refactor of the
  * tool-dispatch path cannot silently produce an unresumable session while every other test still passes.
  */
 @DisplayName("OrcaAgentExecutor terminal conversation well-formedness (tool_use/tool_result pairing)")

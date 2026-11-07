@@ -57,9 +57,9 @@ import at.aimon.core.workflow.exception.BackgroundRunRefusedException;
  *
  * <p>
  * This is the built-in LLM-facing consumer of the workflow subsystem: the workflow is a fixed Java
- * {@link WorkflowScript} rather than a caller-supplied script. Each perspective is an inline
- * {@link Subagent} whose system prompt scopes it to one angle; the sub-agents run through the same
- * {@link SubagentExecutionManager} (and therefore the same LLM) as the main agent's tools.
+ * {@link WorkflowScript} rather than a caller-supplied script. Each perspective is an inline {@link Subagent} whose
+ * system prompt scopes it to one angle; the sub-agents run through the same {@link SubagentExecutionManager} (and
+ * therefore the same LLM) as the main agent's tools.
  *
  * <p>
  * <b>Placing the built-in steps.</b> Each step's subagent is built here, not taken from the registry, so it has no
@@ -560,8 +560,7 @@ public class WorkflowTool extends GenericTool<WorkflowInput, String> {
 
     /**
      * Not callable from model-written code: it starts subagent forks, which run LLM calls outside a script's limits and
-     * budget ({@code docs/design/tool/programmatic-tool-calling.md}
-     * decision 15).
+     * budget ({@code docs/design/tool/programmatic-tool-calling.md} decision 15).
      */
     @Override
     public boolean isCodeCallable() {

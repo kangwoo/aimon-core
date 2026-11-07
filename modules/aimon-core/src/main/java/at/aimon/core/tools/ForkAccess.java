@@ -14,8 +14,8 @@ import at.aimon.core.agent.tool.ToolContext;
  * Exists for the same reason {@link CallerAllowedTools} and {@link InvokingSessionAccess} do: the values are read at a
  * handful of spawn and display sites, and every site must agree on what <b>absence</b> means. An absent
  * {@link ToolContextKeys#FORK_DEPTH} means depth 0 — an execution with no fork ancestor (a session's turn, a routine, a
- * rewake replay). An absent
- * {@link #TASK_ID_ATTRIBUTE} means the run is not a fork, or the parallel foreground task feature is off.
+ * rewake replay). An absent {@link #TASK_ID_ATTRIBUTE} means the run is not a fork, or the parallel foreground task
+ * feature is off.
  */
 public final class ForkAccess {
 

@@ -394,9 +394,8 @@ public final class SubagentLaunchContext {
      * <p>
      * This is the observability half of the completion notification: the sink forwards to the parent
      * {@code OrcaAgentExecutor}'s {@code EventEmitter}, so any live {@code agent.stream} listener (CLI display, web
-     * SSE)
-     * sees the completion. It is best-effort — when the parent is idle at completion time no listener is attached and
-     * the event is dropped; the queued notification (see {@link #getMessageQueueManager()}) remains the guaranteed,
+     * SSE) sees the completion. It is best-effort — when the parent is idle at completion time no listener is attached
+     * and the event is dropped; the queued notification (see {@link #getMessageQueueManager()}) remains the guaranteed,
      * model-facing path. When absent, no event is emitted.
      *
      * @return an {@link Optional} holding the event sink, or empty if none was forwarded
@@ -486,9 +485,9 @@ public final class SubagentLaunchContext {
     /**
      * Returns how many forks deep the fork launched with this context is: 1 for a fork its spawner started from a run
      * with no fork ancestor (a session's turn, a routine, a rewake replay), the spawner's own depth plus one for a fork
-     * started inside a fork.
-     * Spawn sites that have a {@code ToolContext} set it from {@code ForkAccess.childDepthOf(context)}; a context
-     * nobody labelled keeps the default 1, because a fork is at least one deep.
+     * started inside a fork. Spawn sites that have a {@code ToolContext} set it from
+     * {@code ForkAccess.childDepthOf(context)}; a context nobody labelled keeps the default 1, because a fork is at
+     * least one deep.
      *
      * @return the fork depth (always &gt;= 1)
      */
@@ -510,8 +509,8 @@ public final class SubagentLaunchContext {
     /**
      * Returns the deadline of the execution that spawns the fork, when it has one. The fork's own deadline is the
      * earlier of its policy's and this, so a fork under a policy can never be given more time than its spawner has left
-     * (a fork without a policy takes no deadline from it). Spawn sites
-     * read it from {@code ToolContextKeys.EXECUTION_DEADLINE}, which a fork running under a deadline publishes.
+     * (a fork without a policy takes no deadline from it). Spawn sites read it from
+     * {@code ToolContextKeys.EXECUTION_DEADLINE}, which a fork running under a deadline publishes.
      *
      * @return the spawner's deadline, or empty when it has none
      */
@@ -537,9 +536,8 @@ public final class SubagentLaunchContext {
      * <p>
      * The primary use is a <b>per-run</b> derivation in background workflow (design §5.1): a run derives
      * {@code baseLaunchContext.toBuilder().cancellationSignal(runCoordinatorSignal).build()} so its fan-out subagents
-     * observe
-     * that run's stop signal — sharing the borrowed collaborators unchanged, so the runner still never owns or closes
-     * them.
+     * observe that run's stop signal — sharing the borrowed collaborators unchanged, so the runner still never owns or
+     * closes them.
      *
      * @return a builder pre-populated from this instance
      */

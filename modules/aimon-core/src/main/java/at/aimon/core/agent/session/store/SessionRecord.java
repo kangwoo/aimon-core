@@ -33,8 +33,8 @@ import at.aimon.core.llm.Message;
  *
  * <p>
  * <strong>Note:</strong> This class is not thread-safe. If concurrent access is required, external synchronization must
- * be provided. (The transcript it holds <em>is</em> immutable, so a reference read out of
- * {@link #getTranscript()} is safe to share.)
+ * be provided. (The transcript it holds <em>is</em> immutable, so a reference read out of {@link #getTranscript()} is
+ * safe to share.)
  *
  * <p>
  * Example usage:
@@ -512,8 +512,7 @@ public class SessionRecord implements SessionRecordView {
      * <p>
      * Restored on session open to seed the in-memory accumulator that backs {@code LiveSessionStatus} reporting
      * (completed turns, cumulative iterations, cumulative tokens). Never null; defaults to
-     * {@link SessionTotals#empty()}
-     * on a freshly created record.
+     * {@link SessionTotals#empty()} on a freshly created record.
      *
      * @return the cumulative session totals (never null)
      */
@@ -527,8 +526,7 @@ public class SessionRecord implements SessionRecordView {
      *
      * <p>
      * Intended for the persistence layer to write the absolute folded totals at end-of-turn. Application code should
-     * not
-     * use this directly.
+     * not use this directly.
      *
      * @param sessionTotals
      *            the new cumulative totals (must not be null)

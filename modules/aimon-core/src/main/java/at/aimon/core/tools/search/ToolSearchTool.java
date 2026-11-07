@@ -209,8 +209,7 @@ public class ToolSearchTool extends AbstractTool {
 
     /**
      * Not callable from model-written code: it activates deferred tools, changing the tool set a running script has
-     * frozen ({@code docs/design/tool/programmatic-tool-calling.md}
-     * decision 15).
+     * frozen ({@code docs/design/tool/programmatic-tool-calling.md} decision 15).
      */
     @Override
     public boolean isCodeCallable() {

@@ -125,8 +125,7 @@ public final class SystemReminderFormatter {
 
     /**
      * Neutralizes any reserved {@code <system-reminder} / {@code </system-reminder>} marker inside a would-be body so
-     * it
-     * can be safely passed to {@link #wrap(String, String)} without tripping {@link #validateBody(String)}.
+     * it can be safely passed to {@link #wrap(String, String)} without tripping {@link #validateBody(String)}.
      *
      * <p>
      * Use this for bodies assembled from untrusted or free-form text (e.g. a subagent's own summary/error message) that

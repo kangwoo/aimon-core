@@ -47,8 +47,7 @@ import at.aimon.core.llm.Role;
  * <p>
  * <b>Thread safety:</b> Mutator and reader methods are {@code synchronized} on this instance, so concurrent access
  * from the {@link SessionCheckpointMailbox} writer thread does not race with the agent's main ReAct loop
- * thread.
- * {@link at.aimon.core.agent.compact.CompactionGuard}'s per-{@code SessionId} lock continues to serialize
+ * thread. {@link at.aimon.core.agent.compact.CompactionGuard}'s per-{@code SessionId} lock continues to serialize
  * {@link #replaceWith(java.util.List)} against concurrent compaction attempts at the agent layer.
  *
  * <p>
@@ -112,9 +111,8 @@ public class TranscriptBuffer {
 
     /**
      * Entries sealed out of the record while this buffer was alive. Not persisted and not part of
-     * {@link #getMessages()};
-     * kept so {@link #messagesSinceIngestMark()} can still hand the execution's sealed messages to memory (session-log
-     * §5.3).
+     * {@link #getMessages()}; kept so {@link #messagesSinceIngestMark()} can still hand the execution's sealed messages
+     * to memory (session-log §5.3).
      */
     private final List<SessionLogEntry> sealedInMemory = new ArrayList<>();
 
@@ -190,9 +188,8 @@ public class TranscriptBuffer {
      * <p>
      * Creates a defensive copy of the provided messages list. The messages become a version-1 log — seqs
      * {@code 0..n-1}, every entry {@link LogOrigin#CONVERSATION}. Each initial message receives the current clock
-     * instant as
-     * its timestamp — original timestamps from a prior session are not preserved through this entry point. Use
-     * {@link #fromSnapshot(SessionSnapshot)} for snapshot rehydration semantics.
+     * instant as its timestamp — original timestamps from a prior session are not preserved through this entry point.
+     * Use {@link #fromSnapshot(SessionSnapshot)} for snapshot rehydration semantics.
      *
      * @param sessionId
      *            The session id (must not be null)
@@ -347,9 +344,8 @@ public class TranscriptBuffer {
      * <p>
      * This is the "is this session being resumed" question. Nothing in the framework asks it at present — its one
      * caller, the user-context block, is gone — and it is kept as part of the public transcript API. Synthetic user
-     * messages do not answer it, and neither
-     * does the number of seqs handed out: a new session whose first turn was interrupted and rewound has used seqs
-     * but holds no conversation.
+     * messages do not answer it, and neither does the number of seqs handed out: a new session whose first turn was
+     * interrupted and rewound has used seqs but holds no conversation.
      *
      * @return true if a live conversation user message exists
      * @see SessionLogState#hasConversation()
@@ -642,9 +638,8 @@ public class TranscriptBuffer {
      * <p>
      * Used by {@link at.aimon.core.agent.compact.TimeBasedMicrocompact} to rewrite a single message (typically a tool
      * result whose content is being scrubbed) without disturbing the timestamp side-channel. The entry keeps its seq
-     * and origin. The original timestamp is
-     * intentionally retained so that subsequent microcompact passes can recognise the slot as already aged out and skip
-     * it as idempotent.
+     * and origin. The original timestamp is intentionally retained so that subsequent microcompact passes can recognise
+     * the slot as already aged out and skip it as idempotent.
      *
      * @param index
      *            zero-based index of the message to replace

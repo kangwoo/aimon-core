@@ -129,9 +129,9 @@ public final class RevokeApprovalsCommand extends SystemCommand implements Direc
 
     /**
      * Resolves the session this command runs in. Reads the
-     * {@link at.aimon.core.agent.session.transcript.TranscriptBuffer}
-     * rather than the tool context because the command execution path always carries the memory, while the tool context
-     * only carries the keys the executor chose to forward.
+     * {@link at.aimon.core.agent.session.transcript.TranscriptBuffer} rather than the tool context because the command
+     * execution path always carries the memory, while the tool context only carries the keys the executor chose to
+     * forward.
      */
     private static SessionId resolveSessionId(CommandExecutionContext context) {
         if (context.getTranscriptBuffer() == null) {

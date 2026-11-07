@@ -13,8 +13,7 @@ import at.aimon.core.subagent.Subagent;
  *
  * <p>
  * Regression guard: {@code max-iterations} used to be parsed but never wired into the metadata, so the ReAct
- * cap
- * silently stayed at the default. {@code when-to-use} is likewise surfaced on the metadata.
+ * cap silently stayed at the default. {@code when-to-use} is likewise surfaced on the metadata.
  */
 class MarkdownSubagentParserTest {
 

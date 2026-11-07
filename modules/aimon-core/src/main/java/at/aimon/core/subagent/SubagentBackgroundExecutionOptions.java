@@ -12,8 +12,8 @@ import at.aimon.core.subagent.task.TaskStopSignal;
 /**
  * Immutable holder grouping the cohesive "background execution + multi-instance recovery" parameters of
  * {@link DefaultSubagentExecutionManager}: the background {@link ExecutorService}, the durable
- * {@link BackgroundTaskStore},
- * the cross-node {@link TaskStopSignal}, and the optional zombie-recovery {@link TaskLeaseConfig}.
+ * {@link BackgroundTaskStore}, the cross-node {@link TaskStopSignal}, and the optional zombie-recovery
+ * {@link TaskLeaseConfig}.
  *
  * <p>
  * The bundle keeps the single-node defaults byte-for-byte identical to the previous constructor behaviour: when a task

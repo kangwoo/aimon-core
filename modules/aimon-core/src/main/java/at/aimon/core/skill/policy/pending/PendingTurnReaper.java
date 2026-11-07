@@ -26,8 +26,7 @@ import org.slf4j.LoggerFactory;
  * <p>
  * Each sweep delegates to {@link PendingTurnRegistry#removeExpired(java.time.Instant) registry.removeExpired(now)}; the
  * registry is responsible for thread-safe eviction. The reaper itself only owns the periodic trigger and a
- * single-thread
- * daemon executor.
+ * single-thread daemon executor.
  *
  * <p>
  * Multi-instance deployments must take care that the configured registry is shared (or partitioned), since otherwise

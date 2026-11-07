@@ -34,8 +34,8 @@ public final class VirtualFileSystems {
     /**
      * Returns a read-only filesystem over a host directory whose symbolic links may also resolve into
      * {@code allowedLinkRoots} (execution-environment-staging design §10, the link rule). {@link #readOnlyLocal(Path)}
-     * is this with no allowed
-     * link roots: a link must then resolve inside {@code root}, and one that does not fails the listing or the read.
+     * is this with no allowed link roots: a link must then resolve inside {@code root}, and one that does not fails the
+     * listing or the read.
      *
      * @param root
      *            the directory to expose (must not be null; need not exist)
@@ -68,8 +68,7 @@ public final class VirtualFileSystems {
 
     /**
      * Wraps a filesystem so {@link PathRule}s apply to it by root-anchored prefix (execution-environment-files design
-     * §4).
-     * This is how any provider — not only the local one — keeps the staging area read-only and the control
+     * §4). This is how any provider — not only the local one — keeps the staging area read-only and the control
      * store hidden from the model's file tools, sharing one implementation of path normalisation and case/Unicode
      * folding instead of each provider writing its own.
      *

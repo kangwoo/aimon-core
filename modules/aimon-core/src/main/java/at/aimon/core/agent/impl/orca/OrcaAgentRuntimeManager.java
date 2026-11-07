@@ -28,9 +28,9 @@ import at.aimon.core.scheduling.ScheduledTaskManager;
  * Provides thread-safe creation and retrieval of agent runtimes using per-id locking. The id is derived
  * deterministically from the {@link AgentBundle}'s agent (and an optional {@code discriminator}) via
  * {@link AgentRuntimeId#from(at.aimon.core.agent.Agent)} /
- * {@link AgentRuntimeId#from(at.aimon.core.agent.Agent, String) from(Agent, String)} so that the
- * <b>(agent, discriminator) pair</b> identifies an agent runtime, not the session. Locking ensures the same
- * id is never created concurrently while allowing parallel creation for different ids.
+ * {@link AgentRuntimeId#from(at.aimon.core.agent.Agent, String) from(Agent, String)} so that the <b>(agent,
+ * discriminator) pair</b> identifies an agent runtime, not the session. Locking ensures the same id is never created
+ * concurrently while allowing parallel creation for different ids.
  *
  * <p>
  * Bootstrap callers (CLI: {@code AgentSetupFactory}; Web: {@code LiveSessionOpener}) invoke

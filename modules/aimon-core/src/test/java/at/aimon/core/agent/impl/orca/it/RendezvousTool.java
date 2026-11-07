@@ -21,9 +21,8 @@ import at.aimon.core.agent.tool.ToolResult;
  * <p>
  * <b>Why this exists.</b> A concurrency test that only starts two turns together proves nothing about overlap: a
  * {@code CountDownLatch} released before {@code executor.execute(...)} gates the <em>submission</em>, and the first
- * turn
- * can still run to completion before the second thread is even scheduled. The test then passes on a purely sequential
- * execution and would keep passing if the runtime serialised every turn behind one lock.
+ * turn can still run to completion before the second thread is even scheduled. The test then passes on a purely
+ * sequential execution and would keep passing if the runtime serialised every turn behind one lock.
  *
  * <p>
  * Calling this tool in the middle of both scripts closes that hole. Neither turn can pass the barrier until the other

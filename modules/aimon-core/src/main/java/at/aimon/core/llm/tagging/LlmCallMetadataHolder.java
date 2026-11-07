@@ -11,15 +11,13 @@ import at.aimon.core.llm.LlmCallMetadata;
  *
  * <p>
  * Used by {@link TaggingLlmClient} to attach attribution tags to LLM calls that flow through code paths which cannot
- * thread metadata explicitly (legacy callers, library-internal components, the metadata-less 4-arg
- * {@code sendMessage} overload).
+ * thread metadata explicitly (legacy callers, library-internal components, the metadata-less 4-arg {@code sendMessage}
+ * overload).
  *
  * <p>
  * Scopes are stack-based via {@link #push(LlmCallMetadata)}: nested pushes shadow outer values and
- * {@link Scope#close()}
- * restores the previous top. Callers should always use try-with-resources to guarantee cleanup, otherwise leaked
- * entries
- * will surface on later reuse of the same thread (e.g. pooled executors).
+ * {@link Scope#close()} restores the previous top. Callers should always use try-with-resources to guarantee cleanup,
+ * otherwise leaked entries will surface on later reuse of the same thread (e.g. pooled executors).
  *
  * <p>
  * Example:

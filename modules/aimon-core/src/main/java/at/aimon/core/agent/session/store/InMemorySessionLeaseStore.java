@@ -16,14 +16,13 @@ import at.aimon.core.agent.session.SessionId;
  *
  * <p>
  * The default for single-node deployments and the backend every unit test uses. Lease expiry is evaluated lazily at
- * each
- * entry point — there is no background sweeper, so an expired entry lingers in the map until somebody asks about it.
+ * each entry point — there is no background sweeper, so an expired entry lingers in the map until somebody asks about
+ * it.
  *
  * <p>
  * Fencing tokens come from one process-global monotonic counter shared by all sessions. That is stronger than the
  * SPI requires (which is per-session monotonicity) and it is why {@link #release} may delete the entry outright:
- * the
- * counter does not live in the entry, so removing it cannot walk a token backwards.
+ * the counter does not live in the entry, so removing it cannot walk a token backwards.
  *
  * <p>
  * Formerly {@code at.aimon.session.base.spi.inmemory.InMemoryConversationLock}. Behaviour is unchanged except for the
@@ -92,8 +91,7 @@ public final class InMemorySessionLeaseStore implements SessionLeaseStore {
      * <p>
      * Token comparison only, with no expiry predicate: a lease that lapsed without a successor is renewed and thereby
      * resurrected. That is within the SPI contract — {@code extend} is not a liveness check — and it matches the
-     * Postgres
-     * and Mongo backends. Callers that need liveness use {@link #findHolder}.
+     * Postgres and Mongo backends. Callers that need liveness use {@link #findHolder}.
      */
     @Override
     public boolean extend(SessionLease lease, Duration duration) {

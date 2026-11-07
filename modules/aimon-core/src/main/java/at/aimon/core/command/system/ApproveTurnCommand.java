@@ -43,9 +43,9 @@ import at.aimon.core.skill.policy.session.SessionApprovalStore;
  * Nothing drops it automatically; the user revokes it with {@code /revoke --agent} ({@link RevokeApprovalsCommand}),
  * or the owner of the runtime does so by destroying it. The same widening happens without the flag when the turn
  * carries no session, because there is then no narrower store to write to — a fallback kept for entries an embedder
- * registered itself, since no suspension the framework performs omits the session
- * ({@link PendingTurn#getSessionId()}). Subagent forks never appear here at all — they cannot suspend a turn for
- * approval, and instead inherit the spawning session's decision through {@code invokingSessionId}.
+ * registered itself, since no suspension the framework performs omits the session ({@link PendingTurn#getSessionId()}).
+ * Subagent forks never appear here at all — they cannot suspend a turn for approval, and instead inherit the spawning
+ * session's decision through {@code invokingSessionId}.
  *
  * <p>
  * Usage:

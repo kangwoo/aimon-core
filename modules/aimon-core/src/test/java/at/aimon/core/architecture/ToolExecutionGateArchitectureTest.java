@@ -32,8 +32,7 @@ import at.aimon.core.tools.artifact.ArtifactAwareWriteTool;
  * running it. Anything that invokes a tool without going through the executor skips that check — so the value of the
  * gate is exactly the length of this list. The rule's real purpose is not to forbid the five exceptions below but to
  * <b>make the sixth one an argument</b>: adding a name here should send the author back to the tool-contract design §5,
- * where
- * the reason each of these stays out of the gate is recorded (blast radius, not correctness).
+ * where the reason each of these stays out of the gate is recorded (blast radius, not correctness).
  *
  * <h2>Class literals, not package strings</h2>
  *

@@ -50,12 +50,11 @@ import at.aimon.core.filesystem.VirtualFileSystem;
  *
  * <p>
  * <b>Multi-instance caveat</b>: the per-scope lock map is a process-local
- * {@link java.util.concurrent.ConcurrentHashMap}.
- * In a scale-out deployment where two JVM instances share the same underlying {@link VirtualFileSystem} and
- * both operate on the same scope, this map does NOT coordinate between JVMs — two concurrent ingests from
- * different JVMs on the same scope can produce torn index/log writes. Multi-instance deployments that need
- * true cross-process safety must either (a) route all writes for a given scope to a single JVM instance, or
- * (b) rely on atomic write semantics provided by the underlying VFS backend (e.g., a GridFS or S3
+ * {@link java.util.concurrent.ConcurrentHashMap}. In a scale-out deployment where two JVM instances share the same
+ * underlying {@link VirtualFileSystem} and both operate on the same scope, this map does NOT coordinate between JVMs —
+ * two concurrent ingests from different JVMs on the same scope can produce torn index/log writes. Multi-instance
+ * deployments that need true cross-process safety must either (a) route all writes for a given scope to a single JVM
+ * instance, or (b) rely on atomic write semantics provided by the underlying VFS backend (e.g., a GridFS or S3
  * conditional-write implementation). This is consistent with the multi-instance design rule: the storage
  * interface is what makes scale-out possible, not this class's in-memory locks.
  *

@@ -104,8 +104,7 @@ import at.aimon.core.tracing.Tracer;
  * A failed step is attempted again up to {@link RoutineStep#getMaxRetries()} times, but only when repeating it is
  * known to be safe. A step whose tool is {@link SideEffectLevel#MUTATING} and does not declare
  * {@link IdempotencyBehavior#IDEMPOTENT} runs once whatever its retry count says: an attempt that timed out or threw
- * may
- * still have done its write, and running it again can do that write twice &mdash; a second message, a second change
+ * may still have done its write, and running it again can do that write twice &mdash; a second message, a second change
  * applied. A failure the tool marked {@link ToolResult#notRetryable()} is not retried either. An attempt that failed
  * before its tool was found (no runtime registered yet, an unknown tool name) ran nothing and keeps its retries. A
  * step whose last attempt timed out is recorded as {@link StepResult#isOutcomeUnknown() outcome unknown}.
@@ -259,8 +258,8 @@ public class RoutineExecutor {
      *
      * <p>
      * 결정론적 테스트를 위해 {@link Clock}을 주입할 수 있다. 프로덕션 코드에서는 일반적으로
-     * {@link #RoutineExecutor(AgentRuntimeRegistry, ScheduledTaskEventPublisher)} 오버로드를 통해
-     * {@link Clock#systemUTC()}을 사용한다.
+     * {@link #RoutineExecutor(AgentRuntimeRegistry, ScheduledTaskEventPublisher)} 오버로드를 통해 {@link Clock#systemUTC()}을
+     * 사용한다.
      */
     public RoutineExecutor(@ExternallyManaged AgentRuntimeRegistry agentRuntimeRegistry,
             ScheduledTaskEventPublisher eventPublisher, Clock clock) {
@@ -941,8 +940,7 @@ public class RoutineExecutor {
      * nothing, costs one ledger read per successful metered run, and also fires when the last step's fork overshot the
      * limit &mdash; the next run's forks will stop either way. The guard cannot tell whether the run's steps started
      * any LLM work, so a routine of token-free steps logs it too, and the message says "may". A ledger that cannot be
-     * read is skipped quietly: the
-     * run is over, and the forks already reported their own ledger failures.
+     * read is skipped quietly: the run is over, and the forks already reported their own ledger failures.
      */
     private static void warnIfCompletedOverQuota(ScheduledTask task, QuotaGuard guard) {
         if (!guard.isEnabled()) {
@@ -967,9 +965,9 @@ public class RoutineExecutor {
      * Only an attempt whose own error carries a quota stop ({@link #QUOTA_STOP_PREFIX}) &mdash; a fork or skill the
      * guard stopped &mdash; is a candidate, so a step that spends no usage keeps every retry it was configured with
      * even while its owner is over quota. The guard then confirms the violation still stands. The message is worded as
-     * a turn's quota stop
-     * ({@code OrcaAgentExecutor#handleQuotaStop}), so logs and alerts match one string, and keeps the attempt's error.
-     * A fail-closed ledger that fails here gives no answer, so the retry goes ahead and meets the ledger itself.
+     * a turn's quota stop ({@code OrcaAgentExecutor#handleQuotaStop}), so logs and alerts match one string, and keeps
+     * the attempt's error. A fail-closed ledger that fails here gives no answer, so the retry goes ahead and meets the
+     * ledger itself.
      *
      * @param lastError
      *            the failed attempt's error
@@ -1035,11 +1033,10 @@ public class RoutineExecutor {
      * <p>
      * Only tools that declare themselves terminable get a {@link TerminatorRegistrar}, which is the framework's
      * cooperative-first rule applied here: a tool that has not said it can be stopped mid-call is left to finish, and
-     * the run's step-boundary gate is what stops the routine. For a
-     * {@link InterruptBehavior#THREAD_INTERRUPT} step the terminator cancels the step's future — the tool runs on a
-     * pool worker rather than on this thread, so cancelling the future is what "interrupt the tool thread" means
-     * here. {@link InterruptBehavior#EXTERNALLY_TERMINATED} steps register their own handle through the registrar on
-     * their {@link ToolContext}.
+     * the run's step-boundary gate is what stops the routine. For a {@link InterruptBehavior#THREAD_INTERRUPT} step the
+     * terminator cancels the step's future — the tool runs on a pool worker rather than on this thread, so cancelling
+     * the future is what "interrupt the tool thread" means here. {@link InterruptBehavior#EXTERNALLY_TERMINATED} steps
+     * register their own handle through the registrar on their {@link ToolContext}.
      *
      * <p>
      * The attempt's TOOL span opens once the tool is found and its input is resolved, right before the tool is handed

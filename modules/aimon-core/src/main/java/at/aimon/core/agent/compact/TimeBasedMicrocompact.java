@@ -29,8 +29,7 @@ import at.aimon.core.llm.ToolUseResult;
  *
  * <p>
  * Re-running the pass over the same memory is a no-op: a tool result whose content already equals the placeholder is
- * skipped. The associated message timestamp is preserved (see
- * {@link TranscriptBuffer#replaceMessageAt(int, Message)})
+ * skipped. The associated message timestamp is preserved (see {@link TranscriptBuffer#replaceMessageAt(int, Message)})
  * so a subsequent invocation still recognises the slot as aged out.
  *
  * <h2>Selection rule</h2>
@@ -38,10 +37,10 @@ import at.aimon.core.llm.ToolUseResult;
  * <p>
  * For each message {@code i} in {@link TranscriptBuffer#getMessages()} with role {@code TOOL} (i.e.
  * {@link Message#hasToolResults()} is true), the pass examines the parallel
- * {@link TranscriptBuffer#getMessageTimestamps()
- * timestamp} entry. If {@code clock.instant().minus(maxAge)} is at or after that timestamp, every contained
- * {@link ToolUseResult#getContent()} is replaced with {@link #CLEARED_PLACEHOLDER}. The most recent {@code keepRecent}
- * tool messages are always retained verbatim — they are typically still being reasoned about by the agent.
+ * {@link TranscriptBuffer#getMessageTimestamps() timestamp} entry. If {@code clock.instant().minus(maxAge)} is at or
+ * after that timestamp, every contained {@link ToolUseResult#getContent()} is replaced with
+ * {@link #CLEARED_PLACEHOLDER}. The most recent {@code keepRecent} tool messages are always retained verbatim — they
+ * are typically still being reasoned about by the agent.
  *
  * <p>
  * Stateless after construction; thread-safe (the only mutable state lives in the {@link TranscriptBuffer} passed in,

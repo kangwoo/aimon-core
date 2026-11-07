@@ -20,8 +20,8 @@ import java.util.Optional;
  * across sessions. An unbounded map would let a long-running agent that fans out many {@code Task} subagents accumulate
  * results until it exhausts the heap — precisely the leak the old holder had, since nothing ever called its
  * {@code removeTask}. The map is capped at {@link #DEFAULT_MAX_RESULTS}; once exceeded, the least-recently-used result
- * is evicted and the task reads back as one that produced no result. This mirrors
- * {@link InMemorySessionSnapshotStore}, which bounds the transcripts saved under the same task ids.
+ * is evicted and the task reads back as one that produced no result. This mirrors {@link InMemorySessionSnapshotStore},
+ * which bounds the transcripts saved under the same task ids.
  *
  * <p>
  * Thread-safe: {@code save}/{@code load}/{@code evict} synchronize on the backing map, so a subagent thread saving a

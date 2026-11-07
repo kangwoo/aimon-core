@@ -142,8 +142,7 @@ final class ScriptedLlmClient implements LlmClient {
      * <p>
      * {@code DefaultCompactionEngine} traces its summary call with the buffer's session id, so without a key of its own
      * it would consume the session's next scripted response mid-turn. Script this key to control the summary text;
-     * leave
-     * it unscripted and the global fallback answers, which is enough whenever the test only cares that compaction
+     * leave it unscripted and the global fallback answers, which is enough whenever the test only cares that compaction
      * happened.
      *
      * <p>
@@ -162,8 +161,7 @@ final class ScriptedLlmClient implements LlmClient {
      * <p>
      * Re-scripting a route <b>rewinds</b> it: the new script is read from its first entry. Keeping the old cursor would
      * silently skip as many entries as the previous script had already consumed, so a test that re-scripts mid-run
-     * would
-     * get responses from the middle of its new script with nothing to indicate it.
+     * would get responses from the middle of its new script with nothing to indicate it.
      */
     ScriptedLlmClient script(String sessionId, LlmResponse... responses) {
         final List<Responder> responders = new ArrayList<>(responses.length);
@@ -308,9 +306,8 @@ final class ScriptedLlmClient implements LlmClient {
      *
      * <p>
      * This is a test-authoring error, not a runtime condition: the runtime made an LLM call the test did not
-     * anticipate.
-     * Answering it from the global fallback instead would let an extra iteration, a mis-routed fork, or a summariser
-     * call landing on the wrong key pass as a green run whose final answer happens to be {@code "done"}.
+     * anticipate. Answering it from the global fallback instead would let an extra iteration, a mis-routed fork, or a
+     * summariser call landing on the wrong key pass as a green run whose final answer happens to be {@code "done"}.
      */
     static final class ScriptExhaustedException extends IllegalStateException {
 

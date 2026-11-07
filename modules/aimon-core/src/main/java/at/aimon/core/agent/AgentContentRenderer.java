@@ -111,11 +111,10 @@ public final class AgentContentRenderer {
      * <p>
      * <b>Extension point.</b> The default implementation here treats the rendered output as opaque and wraps it in a
      * single {@link Staticness#STATIC STATIC} part with {@link #AGENT_CONTENT_KIND kind {@code "agent-content"}}.
-     * Future
-     * specialised renderers that can cleanly separate static regions (for example, the agent identity) from dynamic
-     * ones (for example, per-request variables) <b>should</b> override this method to emit multiple parts with more
-     * precise staticness classifications. Doing so enables downstream provider adapters to place cache boundaries at
-     * the right seams.
+     * Future specialised renderers that can cleanly separate static regions (for example, the agent identity) from
+     * dynamic ones (for example, per-request variables) <b>should</b> override this method to emit multiple parts with
+     * more precise staticness classifications. Doing so enables downstream provider adapters to place cache boundaries
+     * at the right seams.
      *
      * @param content
      *            the AgentContent to render (must not be null)

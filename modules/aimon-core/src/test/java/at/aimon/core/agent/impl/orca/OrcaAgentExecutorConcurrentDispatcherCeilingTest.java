@@ -22,10 +22,8 @@ import at.aimon.core.llm.LlmResponse;
 /**
  * Locks in that the executor-scoped {@link DefaultParallelToolDispatcher} enforces a <b>global</b> concurrency ceiling
  * that holds across turns, not merely within a single batch. The dispatcher is an agent-scoped singleton shared by
- * every
- * session on the executor, so when two sessions each fire a batch of {@code CONCURRENT_SAFE} tools at the
- * same
- * time, the total number of tools executing simultaneously across both batches must never exceed the configured
+ * every session on the executor, so when two sessions each fire a batch of {@code CONCURRENT_SAFE} tools at the
+ * same time, the total number of tools executing simultaneously across both batches must never exceed the configured
  * {@code maxConcurrency}.
  *
  * <p>

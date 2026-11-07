@@ -45,13 +45,11 @@ import at.aimon.core.skill.hook.declarative.predicate.NameOnlyPredicate;
  *
  * <p>
  * {@code docs/overview/scope-model.md} §6 lists {@code OnSessionStartHook} / {@code OnSessionEndHook} as known
- * misnomers:
- * they fire on {@link DefaultLiveSession} <b>open and close</b>, not on the lifetime of the session record. Because one
- * {@code SessionRecord} may be served by many live handles over time (idle eviction, restart, node handoff), a hook
- * that
- * reads its own name and assumes "once per session" is wrong — it will fire again every time the session is picked back
- * up. {@link #reopeningTheSameSessionFiresOnSessionStartAgain} is the test that states this out loud; if the hooks are
- * ever rescoped to match their names, it is the test that must be deliberately changed.
+ * misnomers: they fire on {@link DefaultLiveSession} <b>open and close</b>, not on the lifetime of the session record.
+ * Because one {@code SessionRecord} may be served by many live handles over time (idle eviction, restart, node
+ * handoff), a hook that reads its own name and assumes "once per session" is wrong — it will fire again every time the
+ * session is picked back up. {@link #reopeningTheSameSessionFiresOnSessionStartAgain} is the test that states this out
+ * loud; if the hooks are ever rescoped to match their names, it is the test that must be deliberately changed.
  *
  * <h2>Turn scope is pinned against session scope, not on its own</h2>
  *

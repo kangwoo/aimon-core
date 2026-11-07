@@ -7,8 +7,7 @@ import java.util.Objects;
  *
  * <p>
  * A Principal can be a user, group, system, or service. This class is used for ownership tracking and access control
- * for
- * scheduled tasks.
+ * for scheduled tasks.
  *
  * <h2>Principal Types</h2>
  * <ul>

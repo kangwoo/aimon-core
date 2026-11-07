@@ -25,12 +25,11 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * {@code onSessionEnd}, {@code subagentStart}, {@code subagentStop}, {@code preCompact}, {@code postCompact},
  * {@code permissionRequest}, {@code permissionDenied}, {@code onConfigReload}) does exactly the same three things —
  * export the shared {@code AIMON_*} environment (with {@code AIMON_SKILL_DIR} when a skill declared the hook, see
- * {@link SkillHookDirectory}), run the command with a JSON payload on stdin, re-attach any
- * configured rewake spec — and differs only in the event name and the handful of event-specific variables.
- * Subclasses supply those two things, plus a {@link #vetoResult(String)} override on the three that can act on a
- * veto ({@code onStart} and {@code preCompact} block, {@code permissionRequest} denies), and nothing else. On those
- * three a command that produced no exit status is a veto too, unless the hook declared {@code failOpen} — see
- * {@link ShellHookVerdicts}.
+ * {@link SkillHookDirectory}), run the command with a JSON payload on stdin, re-attach any configured rewake spec — and
+ * differs only in the event name and the handful of event-specific variables. Subclasses supply those two things, plus
+ * a {@link #vetoResult(String)} override on the three that can act on a veto ({@code onStart} and {@code preCompact}
+ * block, {@code permissionRequest} denies), and nothing else. On those three a command that produced no exit status is
+ * a veto too, unless the hook declared {@code failOpen} — see {@link ShellHookVerdicts}.
  *
  * <p>
  * {@code preTool} and {@code postTool} deliberately do <b>not</b> extend this: they carry a matcher predicate and can

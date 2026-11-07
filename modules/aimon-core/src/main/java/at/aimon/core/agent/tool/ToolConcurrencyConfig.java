@@ -5,8 +5,8 @@ package at.aimon.core.agent.tool;
  *
  * <p>
  * Controls whether the {@link ParallelToolDispatcher} is allowed to run independent
- * {@link ConcurrencyBehavior#CONCURRENT_SAFE
- * CONCURRENT_SAFE} tools from the same LLM batch in parallel, and the upper bound on how many run at once.
+ * {@link ConcurrencyBehavior#CONCURRENT_SAFE CONCURRENT_SAFE} tools from the same LLM batch in parallel, and the upper
+ * bound on how many run at once.
  *
  * <p>
  * The default ({@link #disabled()}) keeps parallel execution <em>off</em>: dispatchers configured with it always take

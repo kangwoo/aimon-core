@@ -5,15 +5,13 @@ package at.aimon.core.subagent;
  *
  * <p>
  * Background subagent tasks ({@code Task(run_in_background=true)}) previously ran on an <em>unbounded</em> cached
- * thread
- * pool, so a burst of spawns could create an unbounded number of concurrent ReAct loops (each with its own LLM traffic
- * and sandbox footprint). This config bounds that: {@link #getMaxConcurrency()} caps how many background subagents run
- * at once, and {@link #getQueueCapacity()} bounds how many may wait.
+ * thread pool, so a burst of spawns could create an unbounded number of concurrent ReAct loops (each with its own LLM
+ * traffic and sandbox footprint). This config bounds that: {@link #getMaxConcurrency()} caps how many background
+ * subagents run at once, and {@link #getQueueCapacity()} bounds how many may wait.
  *
  * <p>
  * The {@link #defaults() default} is deliberately conservative for concurrency ({@code min(4, availableProcessors)})
- * but
- * uses an effectively unbounded queue, so it caps thread/LLM fan-out without rejecting bursts — reproducing the old
+ * but uses an effectively unbounded queue, so it caps thread/LLM fan-out without rejecting bursts — reproducing the old
  * "everything eventually runs" behaviour while removing the unbounded-thread hazard. Bound the queue explicitly to make
  * the pool shed load (reject) under saturation instead.
  *

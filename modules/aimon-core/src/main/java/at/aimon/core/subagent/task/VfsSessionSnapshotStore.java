@@ -26,8 +26,7 @@ import at.aimon.core.subagent.task.codec.SessionSnapshotCodec;
  * <p>
  * This is the shared/persistent alternative to {@link InMemorySessionSnapshotStore}: because a
  * {@link VirtualFileSystem} can be a GridFS or S3 backend, a subagent whose terminal transcript is saved on one node
- * can
- * be resumed by a {@code Task(resume=<taskId>)} on <em>another</em> node. It composes the
+ * can be resumed by a {@code Task(resume=<taskId>)} on <em>another</em> node. It composes the
  * {@link SessionSnapshotCodec} prerequisite (which serializes the {@link SessionSnapshot} value graph) with a
  * thin owner-tag envelope so the persisted record carries the same {@link ResumableSession} pairing as the
  * in-memory store.
@@ -65,9 +64,9 @@ public final class VfsSessionSnapshotStore implements SessionSnapshotStore {
 
     /**
      * Default base directory for per-task session snapshot objects, relative to the root of the filesystem the store is
-     * built over — the
-     * <b>control</b> store, whose root is {@code {project}/.aimon/} in a local assembly, so the physical location is
-     * {@code {project}/.aimon/task-snapshot} as before the control store was split from the workspace.
+     * built over — the <b>control</b> store, whose root is {@code {project}/.aimon/} in a local assembly, so the
+     * physical location is {@code {project}/.aimon/task-snapshot} as before the control store was split from the
+     * workspace.
      */
     public static final String DEFAULT_BASE_DIR = "task-snapshot";
 

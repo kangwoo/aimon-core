@@ -27,8 +27,8 @@ import at.aimon.core.skill.hook.action.McpToolAction;
  * Resolves the target server via {@link McpClientManager} at call time, renders the args template via
  * {@link TemplateRenderer}, and invokes {@link McpClient#callTool}. The {@link McpCallResult} is mapped to a
  * {@link HookResult} using the same JSON contract as the HTTP executor &mdash; if the result content is a JSON object
- * it is read by {@link DecisionDocument} &mdash; the native fields only (see below); otherwise
- * the call is treated as side-effect only and {@link HookResult#success()} is returned.
+ * it is read by {@link DecisionDocument} &mdash; the native fields only (see below); otherwise the call is treated as
+ * side-effect only and {@link HookResult#success()} is returned.
  *
  * <p>
  * <b>Verdict or no verdict.</b> {@link #attempt} tells the two apart, because a guard has to (see
@@ -55,12 +55,12 @@ import at.aimon.core.skill.hook.action.McpToolAction;
  * <p>
  * <b>Timeout.</b> The action's {@link McpToolAction#getTimeout() timeout} bounds the call. {@link McpClient#callTool}
  * takes none, so the deadline is kept here ({@link CallDeadline}, the mechanism the HTTP executor uses for the same
- * purpose): when it passes, the calling thread is interrupted, which is how a
- * request is told to stop ({@code StdioMcpTransport} polls for its response and gives up on an interrupt), and the
- * outcome is {@code TIMEOUT} &mdash; no verdict. The interrupt is this executor's own and is taken back before
- * returning, so the thread's interrupt flag is left as the call found it. No thread is created per call: the deadline
- * rides on the JDK's shared delay scheduler and is cancelled when the call ends &mdash; by returning, by throwing, or
- * with an {@link Error} that this method lets through.
+ * purpose): when it passes, the calling thread is interrupted, which is how a request is told to stop
+ * ({@code StdioMcpTransport} polls for its response and gives up on an interrupt), and the outcome is {@code TIMEOUT}
+ * &mdash; no verdict. The interrupt is this executor's own and is taken back before returning, so the thread's
+ * interrupt flag is left as the call found it. No thread is created per call: the deadline rides on the JDK's shared
+ * delay scheduler and is cancelled when the call ends &mdash; by returning, by throwing, or with an {@link Error} that
+ * this method lets through.
  *
  * <p>
  * The server's {@code requestTimeout} (per server, 30s by default) still applies underneath, so <em>the smaller of

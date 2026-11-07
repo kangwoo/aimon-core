@@ -3,12 +3,11 @@
  *
  * <p>
  * {@link at.aimon.core.agent.session.idempotency.IdempotencyStore} keyed by an opaque client key, holding an
- * {@link at.aimon.core.agent.session.idempotency.IdempotencyEntry} that is either
- * {@code IN_FLIGHT} or {@code DONE}. First arrival wins via
- * {@link at.aimon.core.agent.session.idempotency.IdempotencyStore#putIfAbsent putIfAbsent}, whose
- * {@link at.aimon.core.agent.session.idempotency.PutResult} tells a retry it lost the race and hands it the entry
- * that won; {@code markDone} then caches the final
- * {@link at.aimon.core.agent.AgentExecutionResult} so the retry gets an answer rather than a second execution.
+ * {@link at.aimon.core.agent.session.idempotency.IdempotencyEntry} that is either {@code IN_FLIGHT} or {@code DONE}.
+ * First arrival wins via {@link at.aimon.core.agent.session.idempotency.IdempotencyStore#putIfAbsent putIfAbsent},
+ * whose {@link at.aimon.core.agent.session.idempotency.PutResult} tells a retry it lost the race and hands it the entry
+ * that won; {@code markDone} then caches the final {@link at.aimon.core.agent.AgentExecutionResult} so the retry gets
+ * an answer rather than a second execution.
  *
  * <h2>Two TTLs, and why</h2>
  *

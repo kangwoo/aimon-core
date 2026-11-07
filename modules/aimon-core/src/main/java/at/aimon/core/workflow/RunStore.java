@@ -87,8 +87,7 @@ public interface RunStore {
      * <p>
      * <b>Guard-and-return semantics:</b> if the run is unknown, or is already terminal, this is a no-op and returns
      * {@link Optional#empty()}. Otherwise the run's {@link WorkflowRun#getLastHeartbeat() last heartbeat} is set
-     * to
-     * {@code at} and the updated snapshot is returned. Only the heartbeat is evolved. The terminal guard mirrors
+     * to {@code at} and the updated snapshot is returned. Only the heartbeat is evolved. The terminal guard mirrors
      * {@link #transition} so a heartbeat can never resurrect a run that completed or was stopped concurrently.
      *
      * @param runId

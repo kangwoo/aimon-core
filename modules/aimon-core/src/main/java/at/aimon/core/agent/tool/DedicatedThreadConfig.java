@@ -98,8 +98,7 @@ public final class DedicatedThreadConfig {
     /**
      * @return the fork depth from which executions stop fanning out: an execution fans out only when its fork depth is
      *         below this. Default {@value #DEFAULT_MAX_FORK_DEPTH} (only an execution with no fork ancestor: a
-     *         session's turn, a
-     *         routine, a rewake replay).
+     *         session's turn, a routine, a rewake replay).
      */
     public int getMaxForkDepth() {
         return maxForkDepth;

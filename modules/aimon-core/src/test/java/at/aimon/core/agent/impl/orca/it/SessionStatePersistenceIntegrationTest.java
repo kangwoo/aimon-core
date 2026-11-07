@@ -28,10 +28,9 @@ import at.aimon.core.agent.session.store.SessionTotals;
  * <p>
  * These are the only pieces of live-session state the scope model says must outlive the handle
  * ({@code docs/overview/scope-model.md} §3), and the reason is the 1 : 0..N shape — a {@code SessionRecord} may be
- * served
- * by many {@link DefaultLiveSession} handles over its life, as idle eviction, a restart or a node handoff each replace
- * the handle without ending the session. State kept only on the handle disappears at each of those points, silently and
- * with no failure anywhere.
+ * served by many {@link DefaultLiveSession} handles over its life, as idle eviction, a restart or a node handoff each
+ * replace the handle without ending the session. State kept only on the handle disappears at each of those points,
+ * silently and with no failure anywhere.
  *
  * <h2>Every test here crosses a handle boundary, because that is where the bug lives</h2>
  *
@@ -39,8 +38,7 @@ import at.aimon.core.agent.session.store.SessionTotals;
  * Accumulation <em>within</em> one handle would keep working if both fields were plain instance state — the whole class
  * of defect this covers is invisible until a second handle opens on the same {@code SessionId}. So
  * {@link #totalsAccumulateAcrossTurnsOnOneHandle} exists only as the control that says the accumulator works at all,
- * and
- * every other test opens a second handle and asserts against that.
+ * and every other test opens a second handle and asserts against that.
  *
  * <h2>A restored budget is asserted by what it does, not by what it reads back</h2>
  *

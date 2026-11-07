@@ -50,11 +50,9 @@ import at.aimon.core.shell.impl.local.LocalShell;
  *
  * <p>
  * <b>Path rules</b> (execution-environment-files design §4). The file tools see the workspace through a
- * {@linkplain VirtualFileSystems#withPathRules
- * path-rule filesystem}; by default
- * the control store {@code .aimon/} is hidden and the staging area {@code .aimon-staged/} is read-only. An assembly
- * that wants the model to edit its own skills passes other rules explicitly. The shell is not restricted
- * (execution-environment design §1).
+ * {@linkplain VirtualFileSystems#withPathRules path-rule filesystem}; by default the control store {@code .aimon/} is
+ * hidden and the staging area {@code .aimon-staged/} is read-only. An assembly that wants the model to edit its own
+ * skills passes other rules explicitly. The shell is not restricted (execution-environment design §1).
  *
  * <p>
  * <b>Staging</b> (execution-environment-staging design §3, §13) copies into
@@ -64,8 +62,7 @@ import at.aimon.core.shell.impl.local.LocalShell;
  * default, the longest a background command can outlive the execution that started it — and raised to
  * {@link Builder#backgroundCommandTimeout(Duration)} when that is longer, for the same reason), and marker-less
  * directories older than that (interrupted copies). A borrowed, possibly shared filesystem is never swept: another
- * runtime may be
- * using any copy on it. Copies there accumulate, bounded by the number of distinct skill versions.
+ * runtime may be using any copy on it. Copies there accumulate, bounded by the number of distinct skill versions.
  *
  * <p>
  * <b>Content search</b>: when {@code rg} is on the {@code PATH} (checked once at build time without starting a

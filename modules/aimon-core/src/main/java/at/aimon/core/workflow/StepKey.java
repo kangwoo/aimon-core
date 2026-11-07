@@ -13,9 +13,8 @@ import at.aimon.core.agent.AgentRuntimeId;
  * program-order coordinate that is stable across re-executions regardless of fan-out scheduling: each path level's
  * owning thread assigns a program-order construct ordinal ({@code agent}&rarr;{@code a<n>}, {@code parallel}&rarr;
  * {@code p<n>}, {@code pipeline}&rarr;{@code q<n>}), and a fan-out child additionally carries its list index. So
- * sibling
- * constructs never collide (distinct ordinals) and identical-input parallel branches never collide (distinct list
- * indices). This key holds that path opaquely as a string; the path is <em>built</em> by the run context
+ * sibling constructs never collide (distinct ordinals) and identical-input parallel branches never collide (distinct
+ * list indices). This key holds that path opaquely as a string; the path is <em>built</em> by the run context
  * ({@code DefaultWorkflowContext}) — this type only composes and compares it.
  *
  * <p>
@@ -80,8 +79,7 @@ public final class StepKey {
 
     /**
      * @return the canonical composite value {@code <runId>/<agentRuntimeId|->/<path>}, suitable as a map key or
-     *         cache-file
-     *         name (never null or blank)
+     *         cache-file name (never null or blank)
      */
     public String value() {
         return value;

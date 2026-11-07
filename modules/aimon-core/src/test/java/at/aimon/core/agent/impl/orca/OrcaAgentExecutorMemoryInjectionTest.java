@@ -42,8 +42,7 @@ import at.aimon.core.subagent.DefaultSubagentExecutionManager;
  * <p>
  * Most cases invoke {@code buildSystemPromptParts} directly so they do not depend on the LLM/ReAct loop — they are
  * structural checks on the prompt assembly path that the auto-injection wiring traverses. The last case runs a real
- * turn
- * instead, because what it checks — that the <b>executing turn's</b> session and caller reach the provider — is
+ * turn instead, because what it checks — that the <b>executing turn's</b> session and caller reach the provider — is
  * precisely what the direct seam cannot show.
  */
 @DisplayName("OrcaAgentExecutor system prompt — memory auto-injection")

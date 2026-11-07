@@ -365,8 +365,7 @@ public class TaskTool extends AbstractTool {
     /**
      * Builds the tools description including available subagents. A definition marked
      * {@linkplain at.aimon.core.subagent.SubagentMetadata#isHidden() hidden} is left out: it is registered to be looked
-     * up by name (a
-     * {@code Workflow} role, a GraalJS {@code agentType}), not to be offered to the model.
+     * up by name (a {@code Workflow} role, a GraalJS {@code agentType}), not to be offered to the model.
      *
      * @param registry
      *            The subagent registry
@@ -747,8 +746,7 @@ public class TaskTool extends AbstractTool {
      * Under a policy with a result schema, the structured result the subagent reported follows the answer whole, as
      * one line of JSON — or a {@code Structured result: MISSING} line when it reported none
      * ({@link SubagentResultFormatter#structuredResultBlock}). Both go before the {@code Completion reason:} line,
-     * which
-     * stays the last line the CLI looks for.
+     * which stays the last line the CLI looks for.
      *
      * @param result
      *            The subagent execution result
@@ -829,8 +827,7 @@ public class TaskTool extends AbstractTool {
 
     /**
      * Not callable from model-written code: it starts a subagent fork, which runs LLM calls outside a script's limits
-     * and budget ({@code docs/design/tool/programmatic-tool-calling.md}
-     * decision 15).
+     * and budget ({@code docs/design/tool/programmatic-tool-calling.md} decision 15).
      */
     @Override
     public boolean isCodeCallable() {

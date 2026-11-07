@@ -7,10 +7,10 @@ import java.util.List;
  *
  * <p>
  * This is the seam the executor talks to. It generalises the previously hard-wired environment block into a
- * refreshable, injectable pipeline: the concrete sources live behind
- * {@link ContextProvider} implementations (environment, git status, directory summary, user extensions, ...), keeping
- * the executor agnostic to what context exists and how it is derived (multi-instance friendly — swapping the assembler
- * is a wiring change, never a code change in the loop).
+ * refreshable, injectable pipeline: the concrete sources live behind {@link ContextProvider} implementations
+ * (environment, git status, directory summary, user extensions, ...), keeping the executor agnostic to what context
+ * exists and how it is derived (multi-instance friendly — swapping the assembler is a wiring change, never a code
+ * change in the loop).
  *
  * <p>
  * The framework default is {@link #NOOP}, which assembles nothing — so context assembly is entirely opt-in and wiring

@@ -8,9 +8,9 @@ import java.util.Optional;
  * <p>
  * This closes the last node-local hole in the background-task surface. Lifecycle metadata lives in
  * {@link BackgroundTaskStore} and the incremental progress log in {@link TaskOutputStore}, both of which a scale-out
- * deployment can share; until this SPI existed, the result itself lived only in a node-local
- * {@code CompletableFuture} holder, so a task started on one node was listable and stoppable from another but its
- * output was not retrievable there, and a restart lost it entirely.
+ * deployment can share; until this SPI existed, the result itself lived only in a node-local {@code CompletableFuture}
+ * holder, so a task started on one node was listable and stoppable from another but its output was not retrievable
+ * there, and a restart lost it entirely.
  *
  * <p>
  * <b>One result per task, written once.</b> Unlike the append-only {@link TaskOutputStore}, a task settles exactly once

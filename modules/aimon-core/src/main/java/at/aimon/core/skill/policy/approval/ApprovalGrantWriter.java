@@ -27,12 +27,12 @@ import at.aimon.core.skill.policy.session.SessionApprovalStore;
  * <p>
  * <b>The session-less escalation.</b> A session-scoped grant ({@link ApprovalScope#SESSION}) with no
  * {@link SessionId} to scope it to is written to the {@link AgentApprovalStore} instead. That is not a choice this
- * class is free to make differently:
- * {@link SkillApprovalChannel} states that "an implementation MUST write a concrete ALLOW or DENY for every requested
- * skill into a place the active SkillInvocationPolicy chain reads" before returning, and its {@code sessionId}
- * parameter names the same fallback — "A channel that stores session-scoped decisions must fall back to agent scope
- * when this is null". Skipping the write would leave the skill at ASK, which {@code SkillTool} refuses; for a denial
- * that is the same outcome, but for an allow-list grant it would silently turn a configured ALLOW into a refusal.
+ * class is free to make differently: {@link SkillApprovalChannel} states that "an implementation MUST write a concrete
+ * ALLOW or DENY for every requested skill into a place the active SkillInvocationPolicy chain reads" before returning,
+ * and its {@code sessionId} parameter names the same fallback — "A channel that stores session-scoped decisions must
+ * fall back to agent scope when this is null". Skipping the write would leave the skill at ASK, which {@code SkillTool}
+ * refuses; for a denial that is the same outcome, but for an allow-list grant it would silently turn a configured ALLOW
+ * into a refusal.
  *
  * <p>
  * The escalation is nevertheless a widening — the entry reaches every session of that {@link AgentRuntimeId}, has no

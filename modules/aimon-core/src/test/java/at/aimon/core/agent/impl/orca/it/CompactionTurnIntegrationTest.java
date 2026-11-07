@@ -47,8 +47,8 @@ import at.aimon.core.llm.ModelContextLimits;
  *
  * <p>
  * So the fixture is sized deliberately <b>between the two bands</b>: above
- * {@link ModelContextLimits#getWarningThreshold
- * warning}, below {@link ModelContextLimits#getAutoCompactThreshold auto-compact}. That is what makes the pair of tests
+ * {@link ModelContextLimits#getWarningThreshold warning}, below
+ * {@link ModelContextLimits#getAutoCompactThreshold auto-compact}. That is what makes the pair of tests
  * here mutually falsifying — the same script must <em>not</em> compact without a budget
  * ({@link #withoutABudgetHintTheSameTranscriptIsLeftAlone}) and <em>must</em> compact with one
  * ({@link #aBudgetHintCompactsTheTranscriptMidTurn}). If the fixture ever drifts out of the band, one of the two fails

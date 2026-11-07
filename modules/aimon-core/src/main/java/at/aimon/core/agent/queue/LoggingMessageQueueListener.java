@@ -16,9 +16,8 @@ import org.slf4j.LoggerFactory;
  * <p>
  * This listener is the default observability hook for the mid-turn command queue described in
  * {@code docs/features/agent-execution/command-queue-guide.md}. It is intentionally kept small and allocation-light so
- * it can be enabled
- * unconditionally — one log line per event at DEBUG (or INFO for the first few events, see {@link #onEvent(Event)}) and
- * a pair of {@link LongAdder} counters updated under the hood.
+ * it can be enabled unconditionally — one log line per event at DEBUG (or INFO for the first few events, see
+ * {@link #onEvent(Event)}) and a pair of {@link LongAdder} counters updated under the hood.
  *
  * <p>
  * Projects that need richer metrics (Micrometer, OpenTelemetry, …) should use this class as a template: implement

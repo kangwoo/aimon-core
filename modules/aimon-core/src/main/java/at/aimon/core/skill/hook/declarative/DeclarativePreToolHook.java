@@ -33,14 +33,13 @@ import at.aimon.core.skill.hook.action.ShellAction;
  * for it: a deny always has its verdict, so the flag could only open the cases where the hook itself was not run or
  * its matcher threw, and those block.
  * <li>{@link ShellAction} → executed via the supplied {@link ShellActionExecutor}, with the firing context as a JSON
- * document on standard input (see {@code ShellHookPayload}). Exit code
- * {@link ShellHookOutcome#DENY_EXIT_CODE} vetoes the tool and feeds stderr back to the model as the reason; any other
- * exit code allows it (Claude Code parity), except the two the shell reports for a command it could not start. A
- * command that gave <em>no</em> answer — no execution environment, a timeout, a shell failure, a skill directory
- * that could not be given to {@code AIMON_SKILL_DIR} (see {@link SkillHookDirectory}), or exit
- * {@value ShellHookOutcome#NOT_EXECUTABLE_EXIT_CODE} / {@value ShellHookOutcome#NOT_FOUND_EXIT_CODE} (not
- * executable / not found) — blocks the tool as well (fail-closed), unless the hook declared {@code failOpen}; see
- * {@link ShellHookVerdicts}.
+ * document on standard input (see {@code ShellHookPayload}). Exit code {@link ShellHookOutcome#DENY_EXIT_CODE} vetoes
+ * the tool and feeds stderr back to the model as the reason; any other exit code allows it (Claude Code parity), except
+ * the two the shell reports for a command it could not start. A command that gave <em>no</em> answer — no execution
+ * environment, a timeout, a shell failure, a skill directory that could not be given to {@code AIMON_SKILL_DIR} (see
+ * {@link SkillHookDirectory}), or exit {@value ShellHookOutcome#NOT_EXECUTABLE_EXIT_CODE} /
+ * {@value ShellHookOutcome#NOT_FOUND_EXIT_CODE} (not executable / not found) — blocks the tool as well (fail-closed),
+ * unless the hook declared {@code failOpen}; see {@link ShellHookVerdicts}.
  * <li>{@link HttpAction} → request issued via {@link HttpActionExecutor}; the JSON response can carry an
  * {@code allow}/{@code deny}/{@code defer} decision &mdash; or the Claude Code spelling of one, {@code ask} included,
  * see {@link DecisionDocument} &mdash; and an optional {@code updatedInput}.
@@ -86,9 +85,9 @@ public final class DeclarativePreToolHook implements PreToolHook, ToolScopedHook
      *
      * <p>
      * The HTTP and MCP executors default to {@code null} (an HTTP/MCP action then has no verdict and blocks, see the
-     * class javadoc) and the env snapshot
-     * defaults to {@code Map.of()}. Callers that need {@code ${env.X}} substitution in HTTP/MCP actions must use the
-     * 7-arg constructor and pass an explicit env snapshot (typically {@code System.getenv()} at bootstrap time).
+     * class javadoc) and the env snapshot defaults to {@code Map.of()}. Callers that need {@code ${env.X}} substitution
+     * in HTTP/MCP actions must use the 7-arg constructor and pass an explicit env snapshot (typically
+     * {@code System.getenv()} at bootstrap time).
      *
      * @param skillName
      *            the skill name (must not be null)
@@ -195,9 +194,8 @@ public final class DeclarativePreToolHook implements PreToolHook, ToolScopedHook
      * A guard cut off by the executor's outer net blocks: this hook declares {@link TimeoutBehavior#FAIL_CLOSED}, so
      * an action that does not keep its own deadline — a shell without cancellation, an MCP client that does not
      * answer the interrupt the MCP executor's deadline sends — cannot turn the guard into a pass under the event
-     * policy's
-     * {@code FAIL_OPEN}. A hook that declared {@code failOpen} declares nothing and takes the policy's answer —
-     * except one whose action is a {@link DenyAction}, on which {@code failOpen} is not read.
+     * policy's {@code FAIL_OPEN}. A hook that declared {@code failOpen} declares nothing and takes the policy's answer
+     * — except one whose action is a {@link DenyAction}, on which {@code failOpen} is not read.
      */
     @Override
     public Optional<TimeoutBehavior> getTimeoutBehavior() {

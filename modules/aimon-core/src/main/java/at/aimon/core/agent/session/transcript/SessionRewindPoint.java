@@ -19,9 +19,8 @@ import at.aimon.core.agent.input.UserInput;
  * <p>
  * So the trail is removed only when someone asks to retry, and this is the record of how far back to go.
  * {@link #getSeq()} is the seq the turn's first entry received — the log's {@code nextSeq} <em>before</em> the turn
- * added anything — and
- * {@link #getUserInput()} is what started it, kept here rather than looked up by index because the messages in between
- * are not all distinguishable by role — the injected context blocks carry the user role too.
+ * added anything — and {@link #getUserInput()} is what started it, kept here rather than looked up by index because the
+ * messages in between are not all distinguishable by role — the injected context blocks carry the user role too.
  *
  * <p>
  * <b>The request, not its rendering.</b> What is kept is the {@link UserInput} the turn was submitted with, not the

@@ -13,8 +13,7 @@
  * {@code claude-*} models that refuse {@code temperature}, {@code top_p} and {@code top_k} and speak the adaptive
  * thinking dialect (six of them measured, plus the documentation-derived {@code claude-mythos} family) — and one
  * instance of it is consulted by both provider clients. That is what the neutral name was for: the question "what does
- * this model's request surface accept" has the
- * same meaning whoever is asking it.
+ * this model's request surface accept" has the same meaning whoever is asking it.
  *
  * <p>
  * Two rules govern everything here.

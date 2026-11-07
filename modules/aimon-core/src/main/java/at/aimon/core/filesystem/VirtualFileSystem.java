@@ -514,8 +514,8 @@ public interface VirtualFileSystem extends AutoCloseable {
      * <p>
      * The default implementation ignores {@code path} and reports the whole VFS, which is the honest answer for a
      * backend that cannot scope: over-reporting a quota is safe, under-reporting is not. Backends able to answer per
-     * subtree should override it — a shared bucket carved into per-agent prefixes by
-     * {@code ScopedVirtualFileSystem} is otherwise unable to tell one tenant's usage from every tenant's.
+     * subtree should override it — a shared bucket carved into per-agent prefixes by {@code ScopedVirtualFileSystem} is
+     * otherwise unable to tell one tenant's usage from every tenant's.
      *
      * @param path
      *            Directory to summarize; a path naming the VFS root summarizes everything

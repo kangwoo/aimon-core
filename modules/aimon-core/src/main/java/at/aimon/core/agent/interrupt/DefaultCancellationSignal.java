@@ -18,8 +18,8 @@ import org.slf4j.LoggerFactory;
  *
  * <p>
  * The implementation uses a single intrinsic lock to serialise the transition from "not cancelled" to "cancelled" so
- * every registered listener fires exactly once in registration order. {@link #isCancelled()} and
- * {@link #getReason()} are lock-free reads of a {@code volatile} reference for minimum observation cost.
+ * every registered listener fires exactly once in registration order. {@link #isCancelled()} and {@link #getReason()}
+ * are lock-free reads of a {@code volatile} reference for minimum observation cost.
  */
 public final class DefaultCancellationSignal implements CancellationSignal {
 

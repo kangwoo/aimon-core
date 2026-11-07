@@ -326,9 +326,8 @@ public class ReadTool extends AbstractTool implements ToolPermissionSubjectAware
     /**
      * Declares {@link SideEffectLevel#READ_ONLY}. {@code Read} opens the file for reading and never writes through
      * the {@link VirtualFileSystem}. The one write it does perform — recording the stamp in the
-     * {@link #FILE_STAMPS_KEY}
-     * map — is execution-scoped bookkeeping that {@code EditTool} consults, and is expressly exempt (see
-     * {@link SideEffectLevel#READ_ONLY}).
+     * {@link #FILE_STAMPS_KEY} map — is execution-scoped bookkeeping that {@code EditTool} consults, and is expressly
+     * exempt (see {@link SideEffectLevel#READ_ONLY}).
      */
     @Override
     public SideEffectLevel getSideEffectLevel() {
@@ -341,8 +340,7 @@ public class ReadTool extends AbstractTool implements ToolPermissionSubjectAware
      *
      * <p>
      * Empty when the call cannot be judged: no {@code file_path}, or a relative one with no execution environment in
-     * the
-     * context to resolve it against. A configured pattern then denies the call rather than guessing.
+     * the context to resolve it against. A configured pattern then denies the call rather than guessing.
      */
     @Override
     public Optional<PermissionSubject> permissionSubject(ToolInput input, ToolContext context) {

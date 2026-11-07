@@ -4,8 +4,8 @@
  * <p>
  * This package generalises the previously hard-wired environment block into a refreshable, injectable pipeline. A
  * {@link at.aimon.core.agent.context.ContextAssembler} runs a list of
- * {@link at.aimon.core.agent.context.ContextProvider
- * providers} and returns an ordered list of {@link at.aimon.core.agent.context.ContextBlock blocks}, each tagged with a
+ * {@link at.aimon.core.agent.context.ContextProvider providers} and returns an ordered list of
+ * {@link at.aimon.core.agent.context.ContextBlock blocks}, each tagged with a
  * {@link at.aimon.core.agent.context.ContextBlockKind kind} that tells the executor where to inject it (system prompt,
  * ahead of the first user message, or as a between-turn attachment).
  *
@@ -24,8 +24,7 @@
  *
  * <p>
  * The package also holds the {@link at.aimon.core.agent.context.ContextEngine} SPI — the one place that decides what
- * the
- * LLM sees of the session log ({@link at.aimon.core.agent.context.ContextRequest},
+ * the LLM sees of the session log ({@link at.aimon.core.agent.context.ContextRequest},
  * {@link at.aimon.core.agent.context.ContextDecision}, {@link at.aimon.core.agent.context.ContextView}) — with its two
  * engines ({@link at.aimon.core.agent.context.DefaultContextEngine},
  * {@link at.aimon.core.agent.context.RollingContextEngine}) and the deterministic
