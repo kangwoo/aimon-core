@@ -174,12 +174,10 @@ final class OpenAIStreamingMapper {
 
     /**
      * Surfaces each not-yet-emitted, completed tool_call slot in {@code [emittedToolUseUpTo+1, upToIndexInclusive]} as
-     * a
-     * TOOL_USE_READY, in ascending index order (the same order they appear in the final response). Finalizing is a
+     * a TOOL_USE_READY, in ascending index order (the same order they appear in the final response). Finalizing is a
      * non-mutating read of the aggregator; {@code toLlmResponse()} stays the authoritative builder. A slot missing its
      * id/name yields no chunk but still advances the cursor — {@code toLlmResponse()} skips such a slot too, so it
-     * never
-     * becomes an un-harvested tool.
+     * never becomes an un-harvested tool.
      */
     private void emitToolUsesReadyThrough(int upToIndexInclusive) {
         for (int i = emittedToolUseUpTo + 1; i <= upToIndexInclusive; i++) {

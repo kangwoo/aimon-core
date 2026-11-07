@@ -23,11 +23,10 @@ import at.aimon.core.llm.TokenUsage;
  * <p>
  * So every level is read through its raw {@code JsonField} accessor and an absent value counts as zero — except the
  * prompt-cache counter ({@code input_tokens_details.cached_tokens}), which stays unmeasured when absent, because a
- * cache counter of zero is a pricing claim. That is the
- * accounting half of a deliberate split: <em>accounting degrades, identity throws</em>. A missing token counter must
- * not fail a call that otherwise succeeded — cost under-reports and the turn completes — whereas a
- * {@code function_call} missing its {@code call_id} is a provider fault that has to surface, and does, because the
- * tool-call accessors are read normally.
+ * cache counter of zero is a pricing claim. That is the accounting half of a deliberate split: <em>accounting degrades,
+ * identity throws</em>. A missing token counter must not fail a call that otherwise succeeded — cost under-reports and
+ * the turn completes — whereas a {@code function_call} missing its {@code call_id} is a provider fault that has to
+ * surface, and does, because the tool-call accessors are read normally.
  */
 final class OpenAiResponseUsages {
 

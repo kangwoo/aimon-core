@@ -32,8 +32,8 @@ import at.aimon.core.llm.token.TokenEstimator;
  * <p>
  * Use this estimator when targeting an OpenAI chat-completion model — it returns BPE-accurate counts for text rather
  * than the byte-length heuristic used by {@link HeuristicTokenEstimator}. The structural overheads (per-message,
- * per-request, image/document fixed costs) follow the conventions documented in the
- * <a href="https://github.com/openai/openai-cookbook/blob/main/examples/How_to_count_tokens_with_tiktoken.ipynb">OpenAI
+ * per-request, image/document fixed costs) follow the conventions documented in the <a
+ * href="https://github.com/openai/openai-cookbook/blob/main/examples/How_to_count_tokens_with_tiktoken.ipynb">OpenAI
  * tokens cookbook</a>.
  *
  * <h2>Model resolution</h2>

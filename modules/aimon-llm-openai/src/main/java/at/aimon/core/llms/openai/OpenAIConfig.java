@@ -220,8 +220,7 @@ public final class OpenAIConfig {
      * <p>
      * <b>The Chat Completions path has no counterpart.</b> A deployment whose model routes there — because the model
      * does not support the reasoning round trip under {@link OpenAiEndpoint#AUTO}, or because {@link #getEndpoint()} is
-     * {@link OpenAiEndpoint#CHAT_COMPLETIONS} — gets no ask and
-     * no channel, and the client says so once.
+     * {@link OpenAiEndpoint#CHAT_COMPLETIONS} — gets no ask and no channel, and the client says so once.
      *
      * @return Optional containing the configured summary level, or empty when none was configured — in which case no
      *         {@code reasoning.summary} is sent and no reasoning text reaches the sink
