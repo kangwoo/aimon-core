@@ -42,8 +42,7 @@ class QuartzTaskSchedulerTest {
     /**
      * Every cron literal here is in the five-field dialect this scheduler's callers write, because that is the dialect
      * the interface promises. This file used to hold Quartz expressions throughout — which is how the mismatch
-     * survived:
-     * the backend was only ever tested with input no caller could produce.
+     * survived: the backend was only ever tested with input no caller could produce.
      */
     private static final String HOURLY = "0 * * * *";
 

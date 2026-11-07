@@ -84,8 +84,8 @@ class AgentScopedRuntimeIdAcrossInstancesTest {
     /**
      * Cross-node bootstrap: both nodes register their own AEC for the same agent (deterministic id). A
      * {@link SchedulingEngine} on each side wires
-     * {@link SchedulingEngineBuilder#agentRuntimeRegistry(at.aimon.core.agent.AgentRuntimeRegistry)}
-     * to its <i>local</i> registry, and the same {@code boundRuntimeId} is therefore resolvable from either side.
+     * {@link SchedulingEngineBuilder#agentRuntimeRegistry(at.aimon.core.agent.AgentRuntimeRegistry)} to
+     * its <i>local</i> registry, and the same {@code boundRuntimeId} is therefore resolvable from either side.
      */
     @Test
     void bothNodesResolveTheSameBoundRuntimeId() {

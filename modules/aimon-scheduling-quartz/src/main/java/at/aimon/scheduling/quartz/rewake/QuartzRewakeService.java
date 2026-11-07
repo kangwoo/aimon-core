@@ -48,17 +48,15 @@ import at.aimon.scheduling.quartz.cron.QuartzCronTranslator;
  * {@code withMisfireHandlingInstructionFireNow()}): a missed one-shot fires as soon as the scheduler is
  * back up.
  * <li><b>Cron triggers</b> — the trigger carries the framework's five-field expression, which
- * {@link QuartzCronTranslator} converts to Quartz's six-field dialect before it reaches
- * {@code CronScheduleBuilder}; the {@link RewakeTriggerCron#getZone() time zone} passes through unchanged.
- * Translation happens <i>before</i> any service state is touched, so an expression Quartz cannot express
- * (both day fields restricted — five-field cron unions them, Quartz cannot) leaves the envelope map as it
- * was. Bounded on both axes:
- * the Quartz trigger gets {@code endAt(firstScheduledAt + timeout)} so the scheduler stops firing once
- * the per-spec {@link RewakeEnvelope#getTimeout() timeout} window elapses, and {@link RewakeJob#execute}
- * bumps {@link RewakeEnvelope#getAttemptNumber() attemptNumber} after every fire and cancels the Quartz
- * job once the next attempt would exceed {@link RewakeEnvelope#getMaxAttempts() maxAttempts} (per-fire
- * cap; cron schedules have no native Quartz repeat-count). Misfire policy is
- * {@code CronTrigger.MISFIRE_INSTRUCTION_FIRE_ONCE_NOW} (via
+ * {@link QuartzCronTranslator} converts to Quartz's six-field dialect before it reaches {@code CronScheduleBuilder};
+ * the {@link RewakeTriggerCron#getZone() time zone} passes through unchanged. Translation happens <i>before</i> any
+ * service state is touched, so an expression Quartz cannot express (both day fields restricted — five-field cron unions
+ * them, Quartz cannot) leaves the envelope map as it was. Bounded on both axes: the Quartz trigger gets
+ * {@code endAt(firstScheduledAt + timeout)} so the scheduler stops firing once the per-spec
+ * {@link RewakeEnvelope#getTimeout() timeout} window elapses, and {@link RewakeJob#execute} bumps
+ * {@link RewakeEnvelope#getAttemptNumber() attemptNumber} after every fire and cancels the Quartz job once the next
+ * attempt would exceed {@link RewakeEnvelope#getMaxAttempts() maxAttempts} (per-fire cap; cron schedules have no native
+ * Quartz repeat-count). Misfire policy is {@code CronTrigger.MISFIRE_INSTRUCTION_FIRE_ONCE_NOW} (via
  * {@code withMisfireHandlingInstructionFireAndProceed()}): a missed scheduled fire is replayed once
  * immediately and the cron schedule then resumes. In both cases the envelope's
  * {@link RewakeEnvelope#getFirstScheduledAt() firstScheduledAt} lets downstream code decide whether the
@@ -72,10 +70,10 @@ import at.aimon.scheduling.quartz.cron.QuartzCronTranslator;
  * <b>Persistence (MVP scope).</b> The canonical envelope state is held in a {@link ConcurrentHashMap}
  * inside this service — Quartz {@link JobDataMap} only carries the {@code envelopeId}. That keeps
  * polymorphic JSON serialization of {@link at.aimon.core.hook.HookEventType HookEventType},
- * {@link at.aimon.core.agent.tool.ToolInput ToolInput}, and the {@link RewakeTrigger} sealed family
- * out of this iteration. The trade-off: pending envelopes do <i>not</i> survive JVM restart even when a
- * persistent Quartz {@code JobStore} is configured. Full envelope persistence is tracked as a follow-up
- * (see {@code docs/design/hook/async-rewake.md} §8).
+ * {@link at.aimon.core.agent.tool.ToolInput ToolInput}, and the {@link RewakeTrigger} sealed family out of this
+ * iteration. The trade-off: pending envelopes do <i>not</i> survive JVM restart even when a persistent Quartz
+ * {@code JobStore} is configured. Full envelope persistence is tracked as a follow-up (see
+ * {@code docs/design/hook/async-rewake.md} §8).
  *
  * <p>
  * <b>Lifecycle.</b> Application-scoped per AIMON's three-tier scope model. The caller supplies a started
