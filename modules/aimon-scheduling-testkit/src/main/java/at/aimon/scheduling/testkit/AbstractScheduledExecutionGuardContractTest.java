@@ -40,8 +40,8 @@ import at.aimon.core.scheduling.scheduler.ScheduledFire;
  *
  * <p>
  * A backend joins by subclassing, handing out guards from {@link #guardFor(String)} — one per node over the same
- * backing store, or the same instance for both names for a node-local guard — and tagging itself
- * {@code @Tag("docker")} if it needs a daemon.
+ * backing store, or the same instance for both names for a node-local guard — and tagging itself {@code @Tag("docker")}
+ * if it needs a daemon.
  */
 public abstract class AbstractScheduledExecutionGuardContractTest {
 
@@ -56,8 +56,8 @@ public abstract class AbstractScheduledExecutionGuardContractTest {
 
     /**
      * Whether the guard remembers the {@link ScheduledFire#getSlot() slots} that began, so a released slot is not
-     * granted
-     * twice. {@code false} — the task-id behaviour of {@code InMemoryScheduledExecutionGuard} — skips that test.
+     * granted twice. {@code false} — the task-id behaviour of {@code InMemoryScheduledExecutionGuard} — skips that
+     * test.
      *
      * @return whether occurrence dedup is part of this guard's contract
      */
