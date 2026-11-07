@@ -501,8 +501,8 @@ public class OutputFormatter {
      *
      * <p>
      * Collapsing it, toggling it, or giving it a scrollback region of its own is out of scope by design
-     * ({@code docs/design/llm/streaming.md} §8.2): the channel ships, and what a terminal does
-     * with it beyond dimmed, distinct text is a separate decision.
+     * ({@code docs/design/llm/streaming.md} §8.2): the channel ships, and what a terminal does with it beyond dimmed,
+     * distinct text is a separate decision.
      */
     public void displayAssistantReasoningDelta(AssistantReasoningDelta event) {
         Objects.requireNonNull(event, "event cannot be null");

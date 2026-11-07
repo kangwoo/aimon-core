@@ -121,9 +121,9 @@ class AgentSetupFactoryLogWriteFormatTest {
      * The end-to-end claim behind the switch: a rolling agent does not only start on the CLI with {@code v2}, it runs
      * turns there. One real turn goes through the CLI's own live session against a stub model; then the turn's opening
      * entries — with a bulky message after them, to clear the minimum sealable size — are hidden and saved, which seals
-     * them into the in-memory segment store the CLI paired with the in-memory
-     * records, and the log reader reads the whole session back without a gap. The seal is driven by hand rather than
-     * by the rolling engine's own compaction, which needs a context window the stub turn does not fill.
+     * them into the in-memory segment store the CLI paired with the in-memory records, and the log reader reads the
+     * whole session back without a gap. The seal is driven by hand rather than by the rolling engine's own compaction,
+     * which needs a context window the stub turn does not fill.
      */
     @Test
     @DisplayName("with v2 a rolling agent runs a real turn on the CLI, and its log seals and reads back whole")

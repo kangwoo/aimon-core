@@ -29,8 +29,7 @@ import at.aimon.core.subagent.execution.SubagentLlmDefaults;
  *
  * <p>
  * "Serves" is judged the way #92's startup check judges it: the resolved name is the main agent's own, or belongs to
- * the
- * same vendor family. A bare alias such as {@code haiku} belongs to no family, so it fails here.
+ * the same vendor family. A bare alias such as {@code haiku} belongs to no family, so it fails here.
  */
 @DisplayName("Bundled subagents' resolved models")
 class BundledSubagentModelTest {

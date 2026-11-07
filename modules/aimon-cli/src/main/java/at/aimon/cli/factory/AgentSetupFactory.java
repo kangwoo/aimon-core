@@ -1029,9 +1029,9 @@ public class AgentSetupFactory {
     /**
      * Builds the file-backend maintenance scheduler when peer memory is enabled on the {@code file} backend,
      * otherwise returns {@code null}. The scheduler periodically purges soft-deleted observations and old
-     * representations past their retention windows and compacts the append logs, so disk usage and
-     * restart-replay cost stay bounded independently of the (optional) Dreamer. Only the file stores are
-     * {@link Compactable}; the in-memory backend and any future backends return {@code null} here.
+     * representations past their retention windows and compacts the append logs, so disk usage and restart-replay cost
+     * stay bounded independently of the (optional) Dreamer. Only the file stores are {@link Compactable}; the in-memory
+     * backend and any future backends return {@code null} here.
      *
      * <p>
      * Application-scoped per the multi-instance design rules — owned by {@link AgentSetup} and stopped on
@@ -1394,8 +1394,7 @@ public class AgentSetupFactory {
 
     /**
      * Builds the {@link LlmDeriver} consumed by the application-scope derivation queue. Returns {@code null} when
-     * memory
-     * is disabled or the representation/observation stores are not wired.
+     * memory is disabled or the representation/observation stores are not wired.
      *
      * <p>
      * The {@code observationStore} is hoisted to factory scope by {@link #create(CliConfig)} so the deriver and the

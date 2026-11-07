@@ -102,9 +102,9 @@ public class ReplSession {
     private final MessageQueueManager messageQueueManager;
     /**
      * Pending-turn registry shared with the executor's pre-flight scanner. Read by the SIGINT path
-     * ({@link #requestInterruptWithFallback}) to drop the just-suspended turn captured in
-     * {@link #latestPendingTurnId} so abandoned turns are not left for the timeout reaper. May be {@code null} in
-     * legacy test setups that skip SK-11 wiring.
+     * ({@link #requestInterruptWithFallback}) to drop the just-suspended turn captured in {@link #latestPendingTurnId}
+     * so abandoned turns are not left for the timeout reaper. May be {@code null} in legacy test setups that skip SK-11
+     * wiring.
      */
     private final PendingTurnRegistry pendingTurnRegistry;
     /**
@@ -172,10 +172,10 @@ public class ReplSession {
      *
      * <p>
      * Busy-state bookkeeping (previously implemented locally via {@code QueryGuard}) is now owned by
-     * {@link LiveSession#offerAsync}: the session CAS-acquires its own busy flag and returns a
-     * {@link SubmitOutcome} that tells this class whether the turn ran inline or was enqueued. The
-     * {@link MessageQueueManager} obtained from {@code agentSetup} is the same instance wired into the session, so
-     * mid-turn inputs the Orca loop injects (CQ-03) and inputs enqueued by the session (SESSION-04) share one queue.
+     * {@link LiveSession#offerAsync}: the session CAS-acquires its own busy flag and returns a {@link SubmitOutcome}
+     * that tells this class whether the turn ran inline or was enqueued. The {@link MessageQueueManager} obtained from
+     * {@code agentSetup} is the same instance wired into the session, so mid-turn inputs the Orca loop injects (CQ-03)
+     * and inputs enqueued by the session (SESSION-04) share one queue.
      */
     public ReplSession(AgentSetupFactory.AgentSetup agentSetup, CliSettings settings, ExecutionBudget initialBudget) {
         Objects.requireNonNull(agentSetup, "agentSetup cannot be null");
@@ -476,9 +476,8 @@ public class ReplSession {
     /**
      * Runs under JLine's lock while a read is in progress, so the interrupt below reaches the REPL thread inside
      * {@code readLine} — which turns it into a {@link UserInterruptException} — and nowhere else; the loop clears what
-     * is left of it on every way out of the read. Only at the loop's
-     * own
-     * prompt with nothing typed: a half-typed line is the user's, and its turn will read the notifications anyway.
+     * is left of it on every way out of the read. Only at the loop's own prompt with nothing typed: a half-typed line
+     * is the user's, and its turn will read the notifications anyway.
      */
     private boolean wakeWidget(LineReader reader) {
         final Thread thread = replThread;
@@ -753,9 +752,9 @@ public class ReplSession {
     /**
      * Blocks until the streaming agent execution completes, routing the outcome to the same code paths the synchronous
      * implementation used: {@link OutputFormatter#displayResult} on normal completion,
-     * {@link OutputFormatter#displayError}
-     * on failure, and a dedicated "[Aborted]" info line on user-initiated cancellation. SIGINT handler setup/teardown
-     * is paired around the wait so we never leave a stale handler after the turn.
+     * {@link OutputFormatter#displayError} on failure, and a dedicated "[Aborted]" info line on user-initiated
+     * cancellation. SIGINT handler setup/teardown is paired around the wait so we never leave a stale handler after the
+     * turn.
      */
     private void awaitAndRender(CompletableFuture<AgentExecutionResult> future) {
         final Terminal terminal = this.activeTerminal;
