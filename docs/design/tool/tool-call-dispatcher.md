@@ -52,6 +52,7 @@
 | 3 | 바인딩에 고정하는 것 | 레지스트리, 세션 레지스트리, 허용 목록, `SingleToolInvoker`, 훅 레지스트리, 실행 속성, 인터럽트 코디네이터, `InvokerType`·이름. 호출마다 받는 것은 `ToolUse`, 호출 경로, 컨텍스트. 턴 안에서 바뀌는 iteration 번호는 write-once 가 아닌 컨텍스트 키 `ToolContextKeys.ITERATION_COUNT` 로 싣고, 없으면 `0` 으로 읽는다 | 루프마다 다른 것은 만들 때 정해지고, 호출마다 다른 것만 인자로 남는다. PreTool/PostTool 훅은 iteration 번호를 받아야 하는데, 인자로 올리면 코드 경로처럼 iteration 이 없는 소비자도 값을 지어내야 한다 | 모든 것을 호출마다: `ToolInvocationSpec` 을 그대로 SPI 로 올리는 것이다 |
 | 4 | 배치와 스트리밍 | 디스패처 밖, 루프에 남긴다 — 메인 루프의 스트리밍 선실행(`StreamingToolScheduler`)·harvest, 포크의 배치 전 쿼터 승인, 병렬 게이트 | 루프마다 의미가 다르다. 루프는 배치를 나눈 뒤 호출마다 `dispatch` 를 부른다 | `dispatchAll`: 세 루프의 차이를 옵션으로 흡수해야 한다 |
 | 5 | 좁히기 | `narrow(registry, allowedTools)` — 새 레지스트리의 모든 도구가 원래 레지스트리에 같은 이름의 같은(`equals`) 도구로 있어야 하고, 허용 목록은 `AllowedTools.intersect`. 교집합이 비면(서로소) `IllegalArgumentException` — 빈 목록은 "무제한" 으로 읽히기 때문이다. 좁힌 디스패처는 새 레지스트리에서 인터럽트 동작도 읽는다(원래 레지스트리와 같은 인스턴스면 원래 세션 레지스트리를 유지). `ungated` 도 같은 검사를 공유한다(`ToolCallNarrowing`) | 슬래시 명령의 스킬 루프가 스킬 레지스트리와 스킬 `allowed-tools` 로 좁힌다. 원래 허용 목록이 비어 "무제한" 이어도 레지스트리가 넓어지면 안 된다. 같은 이름의 다른 구현은 원래 없던 도구다 | 레지스트리 교체 허용: 원래 없던 도구가 실행된다. 빈 교집합을 빈 목록으로: 가장 엄격한 짝이 가장 느슨한 것으로 뒤집힌다 |
+| 5a | 좁히기는 programmatic 설정도 나른다 | `narrow(registry, allowedTools, programmatic)` — 좁힌 디스패처가 호출마다 `ToolContextKeys.CALLER_PROGRAMMATIC` 으로 싣는 설정은 `programmatic.narrowedBy(이 디스패처의 설정)` 이다. 결과가 비면 `none()` 이고 오류가 아니다 — 빈 허용 목록과 달리 `none()` 은 "아무것도 없음" 으로만 읽힌다. `DefaultToolCallDispatcher.Builder.programmatic` 은 필수다 | 스킬 안에서 띄운 포크는 스킬의 실효 설정으로 좁혀져야 한다([PTC](programmatic-tool-calling.md) §21 B-DV1). 그 값이 디스패처에 있고 스펙은 `dispatch` 한 곳에서만 지어지므로, 스킬 루프에 닿는 길은 좁히기뿐이다 | 호출자의 설정을 그대로 둔다: PTC 없는 스킬이 포크에게 호출자의 PTC 를 준다. 스킬이 컨텍스트 키를 따로 싣는다: 디스패처가 이미 가진 값에 두 번째 출처가 생기고 아무 도구나 그 키를 실을 수 있다. 2-인자 `narrow` 를 기본 메서드로 남긴다: 이 디스패처의 설정을 남기면 위 누수, `none()` 을 넣으면 기존 호출자의 포크가 조용히 바뀐다 |
 | 6 | 호출 경로 | `ToolCallOrigin` (`DIRECT` / `CODE` / `SKILL` / `REPLAY`)을 호출마다 받아 PermissionRequest·PreTool·PostTool 훅 컨텍스트에 싣는다. `PermissionDeniedContext` 에는 싣지 않는다. `InvokerType` 과는 직교한다 | 훅이 "코드에서 온 `Bash` 는 막는다" 같은 정책을 쓸 수 있어야 하고, 슬래시 명령의 스킬 경로는 `InvokerType` 만으로는 `MAIN_AGENT` 와 구분되지 않는다. `InvokerType` 은 누가, 경로는 어떤 경로로다. PermissionDenied 는 결정이 끝난 뒤의 알림 체인이라 경로에 따라 갈라질 정책이 없다 | `InvokerType` 확장: 두 축이 섞인다. 바인딩에 고정: 한 바인딩이 여러 경로를 섬긴다(포크의 디스패처는 포크 루프와 그 루프가 돌리는 코드 둘 다) |
 | 7 | 결과 | `ToolDispatchResult` — 원래 호출의 `toolUseId`, 텍스트, 알림·훅 피드백(문자열 목록), 오류·재시도·렌더 페이로드. `ToolUseResult` 로의 변환(`ToolDispatchResults.toToolUseResult`)은 루프가 트랜스크립트에 넣을 때 한 번 — 피드백은 뒤에 `<system-reminder>` 블록으로, 알림은 앞에 `[environment]` 줄로 붙인다 | 알림·피드백을 결과 텍스트에 붙이는 것은 결과를 모델에게 넘기는 루프의 몫이다. 다른 소비자(코드 호출)는 그것을 따로 모은다 | `ToolUseResult` 반환: 붙인 뒤에는 떼어 낼 수 없다 |
 | 8 | 강제 | ArchUnit — `ToolExecutionManager.execute`·`executeAll` 의 호출과 메서드 참조는 `at.aimon.core.toolinvocation..` 에서만. 호출 지점 허용 목록은 없다. `ToolExecutionManager` 구현 클래스 자신은 자기 오버로드끼리 위임하므로 면제한다 | 스키마 관문 규칙이 잡지 못하는 우회를 잡는다. 허용 목록을 두면 다음 예외가 한 줄로 들어온다 | 규약만으로: 다음 우회가 조용히 생긴다 |
@@ -65,16 +66,20 @@ public interface ToolCallDispatcher {
     /** Never throws. Denials, unknown tools and failures come back as error results. */
     ToolDispatchResult dispatch(ToolUse toolUse, ToolCallOrigin origin, ToolContext context);
 
-    /** Can only do less: every tool in the new registry must exist in this one; the allow-list is intersected. */
-    ToolCallDispatcher narrow(ToolRegistry registry, List<AllowedTool> allowedTools);
+    /**
+     * Can only do less: every tool in the new registry must exist in this one; the allow-list is intersected, and so
+     * are the programmatic settings published to every call (CALLER_PROGRAMMATIC) — an empty result is none().
+     */
+    ToolCallDispatcher narrow(ToolRegistry registry, List<AllowedTool> allowedTools,
+            ProgrammaticToolSettings programmatic);
 }
 ```
 
 | 지점 | 디스패처 |
 |---|---|
-| 메인 루프 | 턴 컨텍스트를 지을 때 넣는다. 에이전트 레지스트리·허용 목록, 턴의 세션 레지스트리, `MAIN_AGENT` |
-| 포크 | 컨텍스트를 새 빌더로 지을 때 자기 것을 넣는다. 서브에이전트 레지스트리·허용 목록, `SUBAGENT`. 부모의 것은 물려받지 않는다 |
-| 슬래시 명령의 스킬 루프 | 에이전트 실행기가 커맨드 컨텍스트에 넣은 디스패처(에이전트의 관문, `MAIN_AGENT`. 턴 밖이라 세션 레지스트리 자리에 에이전트 레지스트리)를 스킬 루프가 `narrow(스킬 레지스트리, 스킬 allowed-tools ∩ 호출자 허용 목록)` 한다. 스킬의 `allowed-tools` 가 제안 필터만이 아니라 실행 시점에도 강제된다. 스킬 루프가 도구에 건네는 컨텍스트에는 원래 디스패처 대신 좁힌 디스패처가 들어가, 더 디스패치하는 도구도 스킬의 범위에 묶인다. `LlmSkillExecutor` 는 `SingleToolInvoker` 를 모른다 |
+| 메인 루프 | 턴 컨텍스트를 지을 때 넣는다. 에이전트 레지스트리·허용 목록·programmatic 설정, 턴의 세션 레지스트리, `MAIN_AGENT` |
+| 포크 | 컨텍스트를 새 빌더로 지을 때 자기 것을 넣는다. 서브에이전트 레지스트리·허용 목록, 호출자로 좁힌 실효 programmatic 설정, `SUBAGENT`. 부모의 것은 물려받지 않는다 |
+| 슬래시 명령의 스킬 루프 | 에이전트 실행기가 커맨드 컨텍스트에 넣은 디스패처(에이전트의 관문, `MAIN_AGENT`. 턴 밖이라 세션 레지스트리 자리에 에이전트 레지스트리)를 스킬 루프가 `narrow(스킬 레지스트리, 스킬 allowed-tools ∩ 호출자 허용 목록, 스킬 자신의 programmatic 설정 ∩ 호출자)` 한다. 스킬의 `allowed-tools` 가 제안 필터만이 아니라 실행 시점에도 강제된다. 스킬 루프가 도구에 건네는 컨텍스트에는 원래 디스패처 대신 좁힌 디스패처가 들어가, 더 디스패치하는 도구도 스킬의 범위에 묶인다. `LlmSkillExecutor` 는 `SingleToolInvoker` 를 모른다 |
 
 `ToolContextKeys.TOOL_CALL_DISPATCHER` 는 write-once 키다(`ToolContextKey.BUILT_IN_WRITE_ONCE_NAMES`, `ToolContextKeysWriteOnceTest`).
 메인·포크 루프는 그것을 enricher 보다 먼저 넣으므로 `ToolContextEnricher` 가 관문을 바꿔 끼울 수 없다. 다시 묶어야 하는 지점은 없다 —
@@ -131,6 +136,7 @@ public final class ToolCallOrigin {   // 정적 팩토리 — ToolResult 선례.
 | 훅 컨텍스트에 호출 경로 | 없음 | `PreToolContext` · `PostToolContext` · `PermissionRequestContext` 의 빌더가 `origin(ToolCallOrigin)` 을 필수로 받는다. 직접 짓는 호출부(`DefaultRewakeFireListener`, 훅을 직접 시험하는 코드)도 바뀐다 |
 | `SingleToolInvoker.invoke` | `ToolUseResult` 반환, 피드백과 알림을 붙인 채 | `ToolDispatchResult` 반환, 피드백과 알림은 옆 목록. `ToolInvocationSpec` 은 `origin` 을 필수로 받는다 |
 | 루프의 도구 실행 | 각 루프가 `ToolInvocationSpec` 을 조립 | 디스패처 구현 하나 |
+| 좁히기가 programmatic 설정을 나른다(결정 5a, PTC 기능 마무리 PR 2) | `narrow(registry, allowedTools)` | `narrow(registry, allowedTools, programmatic)` — 2-인자 형은 없어졌다(기본 메서드로도 남기지 않는다). 구현은 인자를 더하고 자기 설정보다 넓은 설정을 싣지 않는다. programmatic 설정을 넘길 뜻이 없는 호출자는 `ProgrammaticToolSettings.none()`. `DefaultToolCallDispatcher.Builder.programmatic(...)` 은 새로 생겼고 필수다(없으면 `build()` 가 던진다). `ToolCallDispatchers.ungated(manager, registry, programmatic)` 이 새로 생겼고, 2-인자 `ungated` 는 `none()` 을 싣는다 |
 
 ---
 
@@ -142,6 +148,7 @@ public final class ToolCallOrigin {   // 정적 팩토리 — ToolResult 선례.
 | 세 루프가 실제로 디스패처를 묶어 그것으로 호출한다(관문 순서가 아니라 훅이 그 루프의 호출을 보는지로 확인) | `SlashSkillToolDispatchE2EIntegrationTest#hooksSeeTheCallsOrigin`(메인·슬래시), `DefaultSubagentExecutorHookEnvironmentTest#aForksToolHooksSeeADirectCallAtItsIteration`(포크) |
 | 스킬 루프에서 스킬 `allowed-tools` 밖 도구가 실행 시점에 그 호출만 거절되고 스킬은 계속한다 | `LlmSkillExecutorTest`, `SlashSkillToolDispatchE2EIntegrationTest` |
 | `narrow` 는 원래 레지스트리에 없는 도구(원래 허용 목록이 비었을 때 포함)와 같은 이름의 다른 도구를 거절하고, 허용 목록을 넓히지 못하며, 서로소 목록을 거절한다 | `DefaultToolCallDispatcherTest`, `ToolCallDispatchersTest` |
+| `narrow` 는 programmatic 설정을 넓히지 못하고, 모든 `dispatch` 가 디스패처의 설정을 `CALLER_PROGRAMMATIC` 으로 싣는다(호출자가 미리 넣은 값은 덮인다) | `DefaultToolCallDispatcherTest`, `ToolCallDispatchersTest`, `SlashSkillProgrammaticCeilingE2EIntegrationTest` |
 | 디스패처 없는 컨텍스트에서 스킬 루프는 LLM 을 부르지 않고 실패하며 도구는 돌지 않는다 | `LlmSkillExecutorTest` |
 | 디스패처 없는 컨텍스트에서 메인·포크 루프는 그 호출에 같은 문구의 거절 오류 결과를 준다 | `OrcaAgentExecutorDispatchTest`, `DefaultSubagentExecutorDispatchTest` |
 | `dispatch` 는 던지지 않는다 | `DefaultToolCallDispatcherTest`, `ToolCallDispatchersTest` |

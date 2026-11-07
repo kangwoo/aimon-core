@@ -126,6 +126,7 @@ import at.aimon.core.memory.reconciler.DefaultReconciler;
 import at.aimon.core.memory.reconciler.Reconciler;
 import at.aimon.core.memory.redaction.DefaultRedactionPolicy;
 import at.aimon.core.memory.redaction.RedactionPolicy;
+import at.aimon.core.programmatic.CodeExecutionEngine;
 import at.aimon.core.scheduling.SchedulingEngine;
 import at.aimon.core.shell.VirtualShell;
 import at.aimon.core.shell.impl.local.LocalShell;
@@ -140,6 +141,7 @@ import at.aimon.core.skill.policy.pending.PendingTurn;
 import at.aimon.core.skill.policy.pending.PendingTurnRegistry;
 import at.aimon.core.skill.render.ShellArgumentTokenizer;
 import at.aimon.core.subagent.SubagentRegistry;
+import at.aimon.core.tools.code.shell.ShellCodeExecutionEngine;
 import at.aimon.core.tools.console.ConsoleOutputTool;
 import at.aimon.core.tracing.SpanExporter;
 import at.aimon.core.tracing.SpanRedactor;
@@ -589,6 +591,7 @@ public class AgentSetupFactory {
         // (cli.enableWorkflowJs, programmatic.enableJs) and shared by every session's WorkflowJs and ExecuteCode.
         final GraalJsEngineHolder graalJsEngines = config.getCliSettings().isEnableWorkflowJs()
                 || isProgrammaticJsEnabled(config) ? GraalJsEngineHolder.create() : null;
+        final ShellCodeExecutionEngine shellEngine = shellEngineIfEnabled(config);
 
         // SK-11.6: the inline approval channel is built by the stack because it needs the stack's own approval
         // stores — but ReplSession.start() has to bind the JLine terminal to that exact instance, so capture what
@@ -624,7 +627,8 @@ public class AgentSetupFactory {
                 // above, and AimonStackSpec rejects having both. The CLI supplies neither instead of both.
                 .executor(ExecutorSpec.builder().streaming(config.getCliSettings().isStreaming()).tracer(tracer)
                         .tracePayloadPolicy(tracePayloadPolicy).build())
-                .tools(buildToolSpec(config, fileSystem, graalJsEngines)).scheduling(SchedulingSpec.enabled())
+                .tools(buildToolSpec(config, fileSystem, graalJsEngines, shellEngine))
+                .scheduling(SchedulingSpec.enabled())
                 // A factory rather than an instance: the wiki locator resolves each scope's VFS through the runtime
                 // registry, which only exists once the builder has created it. The raw llmClient is deliberate —
                 // wiki generation is background work and carries no turn span context.
@@ -634,24 +638,14 @@ public class AgentSetupFactory {
         try {
             stack = AimonStackBuilder.build(spec);
         } catch (RuntimeException e) {
-            // These three predate the stack, so they are on nobody's teardown plan yet; everything the builder itself
-            // created is released by its own failure path. The queue joined the list when it became a material of the
-            // memory backend and had to be built ahead of MemorySpec: buildDerivationQueue starts its worker pool, so
-            // a boot that fails here would otherwise leave one running for the life of the process.
-            closeSuppressing(graalJsEngines, e);
-            closeSuppressing(hookConfigShell, e);
-            if (memoryQueue != null) {
-                // Guarded rather than left to closeSuppressing's null check, for the reason enrollMemorySubsystem
-                // gives: a method reference on a null receiver throws before the call is ever made.
-                closeSuppressing(memoryQueue::stop, e);
-            }
+            releasePreStackResources(e, graalJsEngines, shellEngine, hookConfigShell, memoryQueue);
             throw e;
         }
         try {
             return decorate(config, stack, agentBundle, fileSystem, hookConfigShell, graalJsEngines,
                     new CliDecorations(outputFormatter, approvalChannel.get(), traceSpanStore, llmClient, hookActions,
-                            new CliMemoryDecorations(memoryWiring, representationStore, observationStore, memoryQueue,
-                                    memoryModelName)));
+                            shellEngine, new CliMemoryDecorations(memoryWiring, representationStore, observationStore,
+                                    memoryQueue, memoryModelName)));
         } catch (RuntimeException | Error e) {
             // decorate enrolls as it goes, so the stack's teardown plan releases whatever was built before it threw.
             // An Error (a missing class on the hot-reload path, say) leaves the same half-built stack, so it is
@@ -676,6 +670,9 @@ public class AgentSetupFactory {
         // Closed after the agent runtime, so no WorkflowJs script can still be resolving against a
         // half-closed engine. TeardownPhase, not this call order, is what puts it there.
         stack.own(TeardownPhase.SCRIPT_ENGINES, "graalJsEngines", graalJsEngines);
+        // Enrolled first thing, so a later decorate failure releases it with the stack; the same phase as the holder,
+        // after every runtime, so no program is still running on it. Null when programmatic.enablePython is off.
+        stack.own(TeardownPhase.SCRIPT_ENGINES, "shellCodeExecutionEngine", cli.shellEngine);
         stack.own(TeardownPhase.HOOK_CONFIG_SHELL, "hookConfigShell", hookConfigShell);
 
         final OrcaAgentExecutor agentExecutor = stack.agentExecutor();
@@ -794,6 +791,49 @@ public class AgentSetupFactory {
     }
 
     /**
+     * Releases what {@code create} built before the stack, when the stack fails to build. These predate the stack, so
+     * they are on nobody's teardown plan yet; everything the builder itself created is released by its own failure
+     * path. The queue joined the list when it became a material of the memory backend and had to be built ahead of
+     * MemorySpec: buildDerivationQueue starts its worker pool, so a boot that fails here would otherwise leave one
+     * running for the life of the process. The shell engine joined it when the CLI began to assemble it: it owns
+     * reply-writer threads.
+     */
+    private static void releasePreStackResources(RuntimeException inFlight, GraalJsEngineHolder graalJsEngines,
+            ShellCodeExecutionEngine shellEngine, LocalShell hookConfigShell, DerivationQueueManager memoryQueue) {
+        closeSuppressing(graalJsEngines, inFlight);
+        closeSuppressing(shellEngine, inFlight);
+        closeSuppressing(hookConfigShell, inFlight);
+        if (memoryQueue != null) {
+            // Guarded rather than left to closeSuppressing's null check, for the reason enrollMemorySubsystem
+            // gives: a method reference on a null receiver throws before the call is ever made.
+            closeSuppressing(memoryQueue::stop, inFlight);
+        }
+    }
+
+    /**
+     * The Python (shell) {@code ExecuteCode} engine when {@code programmatic.enablePython} is on, else {@code null}.
+     * CLI-owned like the GraalJS holder, and it owns reply-writer threads: {@code create} closes it when the stack
+     * fails to build, and {@code decorate} enrolls it on the teardown plan.
+     */
+    private ShellCodeExecutionEngine shellEngineIfEnabled(CliConfig config) {
+        return isProgrammaticPythonEnabled(config) ? newShellCodeExecutionEngine() : null;
+    }
+
+    /**
+     * Creates the Python (shell) {@code ExecuteCode} engine. A seam so a test can see the engine the CLI owns closed,
+     * both at shutdown and when the stack fails to build.
+     *
+     * @return a new engine the caller owns (never null)
+     */
+    ShellCodeExecutionEngine newShellCodeExecutionEngine() {
+        return ShellCodeExecutionEngine.create();
+    }
+
+    private static boolean isProgrammaticPythonEnabled(CliConfig config) {
+        return config.getProgrammaticConfig() != null && config.getProgrammaticConfig().isEnablePython();
+    }
+
+    /**
      * Translates CLI tool settings into a {@link ToolSpec}.
      *
      * <p>
@@ -809,11 +849,15 @@ public class AgentSetupFactory {
      * @param graalJsEngines
      *            the shared GraalJS engine holder, or {@code null} when neither {@code cli.enableWorkflowJs} nor
      *            {@code programmatic.enableJs} is on
+     * @param shellEngine
+     *            the Python (shell) {@code ExecuteCode} engine, or {@code null} when {@code programmatic.enablePython}
+     *            is off; the caller owns and closes it
      * @return the spec
      */
     // Package-private (not private) so AgentSetupFactoryGraalJsTest can exercise the cli.enableWorkflowJs wiring
     // branch directly, mirroring the sibling buildDerivationQueue/buildMemoryMaintenance test seams.
-    ToolSpec buildToolSpec(CliConfig config, LocalFileSystem fileSystem, GraalJsEngineHolder graalJsEngines) {
+    ToolSpec buildToolSpec(CliConfig config, LocalFileSystem fileSystem, GraalJsEngineHolder graalJsEngines,
+            ShellCodeExecutionEngine shellEngine) {
         final CliSettings settings = config.getCliSettings();
         // No memory enricher here any more: MemoryAssembly contributes it, so the memory-shaped half of the tool
         // context and the memory tools that read it are decided in one place instead of two.
@@ -826,16 +870,26 @@ public class AgentSetupFactory {
             // branch from the execution environment (ExecutionEnvironment.isolate).
             builder.addProvider(new GraalJsWorkflowToolProvider(graalJsEngines));
         }
+        // ExecuteCode (programmatic-tool-calling design §9). Engines passed here suppress the stack's class-path
+        // discovery, so the CLI lists each one it wants. The stack registers ExecuteCode over them — the one owner of
+        // that provider; with no engine the stack's provider warns for an agent that sets programmatic-tools (§12.2).
+        final List<CodeExecutionEngine> codeEngines = new ArrayList<>();
         if (graalJsEngines != null && isProgrammaticJsEnabled(config)) {
-            // ExecuteCode (programmatic-tool-calling design §9): the JavaScript engine runs over the same shared
-            // holder; the holder's owner (the stack, SCRIPT_ENGINES) closes it, so the engine owns nothing to close.
-            // The stack registers ExecuteCode over it — the one owner of that provider; with programmatic off the
-            // stack's provider has no engine and warns for an agent that sets programmatic-tools (§12.2).
-            // Only JavaScript: the CLI's execution environment is always the local host, and the Python shell engine
-            // runs only in a sandbox (programmatic-tool-calling-shell design decision 1), so it is not assembled here.
-            // An agent that asks for programmatic-engine: python is told "no python engine is assembled".
-            builder.codeExecutionEngines(List.of(new GraalJsCodeExecutionEngine(graalJsEngines)))
-                    .programmaticLimits(config.getProgrammaticConfig().toLimits());
+            // The JavaScript engine runs over the same shared holder; the holder's owner (the stack, SCRIPT_ENGINES)
+            // closes it, so the engine owns nothing to close.
+            codeEngines.add(new GraalJsCodeExecutionEngine(graalJsEngines));
+        }
+        if (shellEngine != null) {
+            // The Python shell engine runs only in a sandboxed environment (programmatic-tool-calling-shell design
+            // decision 1), and the CLI's environment is always the local host, so here it is inert: an agent that asks
+            // for programmatic-engine: python is told why it cannot run rather than that no engine is assembled, and a
+            // future sandboxed CLI environment needs no assembly change. Opt-in, like enableJs (B-DV2).
+            codeEngines.add(shellEngine);
+        }
+        if (!codeEngines.isEmpty()) {
+            // The limits and the tool scope apply to every assembled engine, not to one of them.
+            builder.codeExecutionEngines(codeEngines).programmaticLimits(config.getProgrammaticConfig().toLimits())
+                    .shellEngineToolScope(config.getProgrammaticConfig().toShellEngineToolScope());
         }
         if (hasMcpServers(config)) {
             builder.mcp(mcpClientFactory, config.getMcpConfig().toConfigProvider());
@@ -921,6 +975,7 @@ public class AgentSetupFactory {
         private final TraceSpanStore traceSpanStore;
         private final LlmClient llmClient;
         private final HookActionExecutors hookActions;
+        private final ShellCodeExecutionEngine shellEngine;
         private final MemoryWiring memoryWiring;
         private final RepresentationStore representationStore;
         private final ObservationStore observationStore;
@@ -929,12 +984,13 @@ public class AgentSetupFactory {
 
         private CliDecorations(OutputFormatter outputFormatter, InteractiveSkillApprovalChannel skillApprovalChannel,
                 TraceSpanStore traceSpanStore, LlmClient llmClient, HookActionExecutors hookActions,
-                CliMemoryDecorations memory) {
+                ShellCodeExecutionEngine shellEngine, CliMemoryDecorations memory) {
             this.outputFormatter = outputFormatter;
             this.skillApprovalChannel = skillApprovalChannel;
             this.traceSpanStore = traceSpanStore;
             this.llmClient = llmClient;
             this.hookActions = hookActions;
+            this.shellEngine = shellEngine;
             this.memoryWiring = memory.memoryWiring;
             this.representationStore = memory.representationStore;
             this.observationStore = memory.observationStore;

@@ -15,6 +15,7 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
@@ -206,5 +207,20 @@ class SubagentLaunchContextTest {
         public void reloadAll() {
             // no-op
         }
+    }
+
+    @Test
+    void callerProgrammatic_defaultsToNone_andToBuilderCopiesIt() {
+        final SubagentLaunchContext plain = SubagentLaunchContext.builder().agentRuntimeId(CONTEXT_ID)
+                .subagentRegistry(SUBAGENT_REGISTRY).toolRegistry(TOOL_REGISTRY).hookRegistry(HOOK_REGISTRY)
+                .defaultModel(DEFAULT_MODEL).build();
+        final ProgrammaticToolSettings settings = ProgrammaticToolSettings.builder().tools(List.of("Read")).build();
+
+        assertThat(plain.getCallerProgrammatic()).isEqualTo(ProgrammaticToolSettings.none());
+        assertThat(plain.toBuilder().build().getCallerProgrammatic()).isEqualTo(ProgrammaticToolSettings.none());
+        final SubagentLaunchContext set = plain.toBuilder().callerProgrammatic(settings).build();
+        assertThat(set.getCallerProgrammatic()).isEqualTo(settings);
+        assertThat(set.toBuilder().build().getCallerProgrammatic()).isEqualTo(settings);
+        assertThatThrownBy(() -> plain.toBuilder().callerProgrammatic(null)).isInstanceOf(NullPointerException.class);
     }
 }

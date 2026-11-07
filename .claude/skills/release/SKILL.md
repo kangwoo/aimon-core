@@ -93,7 +93,10 @@ above it (`0.3.1-SNAPSHOT` + `minor` → `0.4.0`, `0.4.0-SNAPSHOT` + `minor` →
 - Quality gate = `checkAll integrationTest packagingTest jacocoTestCoverageVerification` — the same
   set `.github/workflows/build.yml` runs, so a release never passes a narrower gate than a PR.
   `ReleaseGateMatchesCiGateTest` enforces the match, because the two lists drifted once already.
-  No tier in this build is opt-in any more: every `@Tag` is a CI step and a gate task.
+  No tagged tier in this build is opt-in any more: every `@Tag` is a CI step and a gate task.
+  Two untagged tiers stay out on purpose, because each bills a provider and is nondeterministic:
+  the provider-key live classes (they skip unless a key is set) and `:aimon-cli:llmTest`, the
+  real-model ExecuteCode E2E. Neither is in the gate; CONTRIBUTING.md says how to run them.
 - **Release bodies are capped at 125,000 characters.** GitHub rejects a longer body with a 422 that
   fails the whole `gh release create` call — publishing *nothing*, not even the missing-section
   pointer. `scripts/cap-release-notes.py` truncates on a line boundary and links to the full section,

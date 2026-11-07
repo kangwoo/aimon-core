@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.*;
 
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
+import at.aimon.core.agent.tool.ShellEngineToolScope;
 import at.aimon.core.subagent.Subagent;
 
 /**
@@ -109,5 +111,30 @@ class MarkdownSubagentParserTest {
 
         assertThat(subagent.getMetadata().isHidden()).isTrue();
         assertThat(subagent.getMetadata().getAttributes()).containsEntry("sandbox.slot", "isolated");
+    }
+
+    @Test
+    void parse_ProgrammaticFrontmatter_FlowsIntoMetadata() {
+        String md = """
+                ---
+                description: Reader
+                programmatic-tools: Read, Grep
+                shell-engine-tool-scope: environment
+                ---
+
+                You read.
+                """;
+
+        Subagent subagent = parser.parse("reader", md);
+
+        assertThat(subagent.getMetadata().getProgrammatic().getTools()).containsExactly("Read", "Grep");
+        assertThat(subagent.getMetadata().getProgrammatic().getShellEngineToolScope())
+                .hasValue(ShellEngineToolScope.ENVIRONMENT);
+    }
+
+    @Test
+    void parse_NoProgrammaticFrontmatter_MetadataIsNone() {
+        assertThat(parser.parse("plain", "Just a body.").getMetadata().getProgrammatic())
+                .isEqualTo(ProgrammaticToolSettings.none());
     }
 }

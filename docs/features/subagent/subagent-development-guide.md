@@ -148,6 +148,7 @@ Subagent dbTriage = Subagent.builder()
 | `maxIterations(int)` | | `1000` |
 | `attributes(Map<String, String>)` | | 빈 맵 (마크다운 `attributes:` 블록을 점 표기 키로 펼친 것과 같다 — 예: `sandbox.slot`. 코어는 싣기만 하고, 실행 환경 제공자 같은 외부 구성 요소가 읽는다) |
 | `hidden(boolean)` | | `false` (마크다운 `hidden: true` 와 같다. 모델에게서 숨긴다 — `Task` 도구의 목록에 나오지 않고 모델이 이름을 대도 거절된다. 레지스트리는 그 이름을 그대로 찾아 주므로 `Workflow` 역할 · `WorkflowJs` 의 `agentType` · fork 스킬의 `agent:` 는 전처럼 쓴다. 마크다운에서는 따옴표 없는 `true` / `false` 만 받고 그 밖의 값은 파싱 오류다) |
+| `programmatic(ProgrammaticToolSettings)` | | `ProgrammaticToolSettings.none()` (마크다운 `programmatic-tools` · `programmatic-only` · `programmatic-engine` · `shell-engine-tool-scope` 와 같다. 포크는 이 선언을 **호출자의 실효 설정으로 좁힌 것**만 쓴다 — 호출자가 PTC 를 켜지 않았으면 `ExecuteCode` 를 받지 못한다. 규칙은 [PTC 설계](../../design/tool/programmatic-tool-calling.md) §7.2) |
 
 > **도구 문자열 포맷**은 마크다운 `allowed-tools` 와 동일하다: `"Read"`, `"Bash(git:*)"`, `"Bash(npm install)"` 등.
 > 내부적으로 `AllowedTool.parse(...)`를 거치므로 파싱 로직이 중복되지 않는다.
@@ -167,7 +168,7 @@ Subagent.builder().name("plain").systemPrompt("You are a plain agent.").build();
 You are a plain agent.
 ```
 
-둘 다 `maxIterations=1000`, `model=null`, `whenToUse=null`, 도구 제한 없음, 속성 없음(빈 `attributes`), 숨김 아님(`hidden=false`)이 됩니다.
+둘 다 `maxIterations=1000`, `model=null`, `whenToUse=null`, 도구 제한 없음, 속성 없음(빈 `attributes`), 숨김 아님(`hidden=false`), 코드에 여는 도구 없음(`programmatic=none()`)이 됩니다.
 마크다운의 `attributes:` 블록(예: `attributes:` 아래 `sandbox:` → `slot: build`)은 코드의
 `.attributes(Map.of("sandbox.slot", "build"))` 와 같습니다.
 

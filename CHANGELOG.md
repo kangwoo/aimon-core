@@ -7,6 +7,52 @@ Central is versioned independently).
 
 ## [Unreleased]
 
+### Added: `ExecuteCode` in forks and slash skills; the CLI assembles the shell engine; a real-model E2E harness
+
+`docs/design/tool/ptc-features-core.md` Part B (PR 2). **One breaking SPI change** — `ToolCallDispatcher.narrow` — listed
+first.
+
+- **Breaking:** `ToolCallDispatcher.narrow(ToolRegistry, List<AllowedTool>)` is now
+  `narrow(ToolRegistry, List<AllowedTool>, ProgrammaticToolSettings)`. The narrowed dispatcher publishes
+  `programmatic.narrowedBy(<its own settings>)` to every call as `ToolContextKeys.CALLER_PROGRAMMATIC`, the ceiling of any
+  fork the call spawns. A subagent started from inside a slash skill is therefore bounded by the skill's programmatic
+  settings, not by the agent's. Implementations add the parameter and must not return settings wider than their own.
+  Callers that do not mean to pass programmatic settings pass `ProgrammaticToolSettings.none()`.
+  `DefaultToolCallDispatcher.Builder.programmatic(...)` is new and required (`build()` throws without it).
+  `ToolCallDispatchers.ungated(manager, registry, programmatic)` is new; the two-argument `ungated` publishes `none()`.
+- **Forks and slash skills can offer `ExecuteCode`** (ptc §7.2, §21 B-DV1). Subagent definitions (frontmatter and
+  `Subagent.Builder.programmatic`) and skill frontmatter take the same four keys as an agent — `programmatic-tools`,
+  `programmatic-only`, `programmatic-engine`, `shell-engine-tool-scope`. What a fork or skill uses is its own declaration
+  narrowed by its caller's effective settings (`ProgrammaticToolSettings.narrowedBy`): tools intersected, code-only tools
+  united, an explicit engine conflict is none, the narrower tool scope. A caller without programmatic tool calling is a
+  ceiling of nothing, so a fork under a non-PTC agent is never offered `ExecuteCode`; a misconfigured definition is warned
+  about once per subagent. A fork-mode skill uses its target subagent's declaration, narrowed by the skill's own keys when
+  it has any; an inline skill without keys is a ceiling of nothing for the forks it spawns. The fork loop's iteration span
+  now carries `ptc.unavailable_reason` too.
+- **New API:** `ProgrammaticToolSettings.narrowedBy(...)` and `hasEngineConflict(...)`; `ProgrammaticFrontmatter`
+  (the frontmatter reading the agent, subagent and skill parsers share; the agent parser's messages are unchanged);
+  `SubagentMetadata.getProgrammatic()` / `Builder.programmatic(...)`, `Subagent.Builder.programmatic(...)`,
+  `SubagentContentResult.getProgrammatic()` / `withProgrammatic(...)`, `SubagentToolScope.withProgrammatic(...)`;
+  `SkillMetadata.getProgrammatic()` / `Builder.programmatic(...)`; `ToolContextKeys.CALLER_PROGRAMMATIC` and
+  `CallerProgrammatic.of(...)` (absent means none — the opposite of `CallerAllowedTools`);
+  `SubagentLaunchContext.getCallerProgrammatic()` / `Builder.callerProgrammatic(...)` (default none).
+- **Changed: the `ExecuteCode` description says where the functions come from.** Python: the functions are predefined
+  globals (do not import them), the program already runs inside an event loop (use top-level `await`, never
+  `asyncio.run()`), and a JSON result is parsed with `json.loads`. JavaScript: a JSON result is parsed with
+  `JSON.parse`. Real models guessed `from functions import …` and `asyncio.run(...)` without it (ptc §21).
+- **`ExecuteCode`'s render payload gains `stdout`** (and `returnValue` when the program produced one) — what the program
+  printed before the observation cut it. It is never sent to the model.
+- **CLI:** `programmatic.enablePython` (default `false`) assembles the Python shell engine beside the JavaScript one, and
+  `programmatic.shellEngineToolScope` (`environment` by default; a bad value fails the configuration load naming the key)
+  reaches the stack. On the CLI's local host the Python engine is inert — an agent asking for
+  `programmatic-engine: python` is told why it cannot run. The engine is CLI-owned and closed at shutdown and when the
+  stack fails to build. `programmatic.limits` now apply whichever engines are assembled.
+- **Real-model E2E harness:** `OPENAI_KEY_FILE=<path> ./gradlew :aimon-cli:llmTest` (or `OPENAI_KEY` / `ANTHROPIC_KEY`)
+  runs an agent whose only way to two host tools is `ExecuteCode`, on the GraalJS engine and on the shell engine over a
+  local environment that declares itself sandboxed, and asserts that the model's program dispatched at least two nested
+  calls covering both tools in a single program and that only what it printed came back. Not part of `test`, `checkAll`, CI or the release gate; see
+  CONTRIBUTING.md, "Real-model ExecuteCode E2E".
+
 ### Added: `ExecuteCode` tracing spans and the language-change notice; shell-engine and review follow-ups
 
 `docs/design/tool/ptc-features-core.md` (PR 1). No public API is removed or changed incompatibly; the additions are

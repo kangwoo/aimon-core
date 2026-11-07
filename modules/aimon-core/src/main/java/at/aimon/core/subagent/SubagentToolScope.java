@@ -5,6 +5,7 @@ import java.util.Objects;
 import java.util.function.Predicate;
 
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.permission.AllowedTool;
@@ -120,12 +121,38 @@ public final class SubagentToolScope {
     public static Subagent withAllowedTools(Subagent subagent, List<AllowedTool> allowedTools) {
         Objects.requireNonNull(subagent, "Subagent cannot be null");
         Objects.requireNonNull(allowedTools, "Allowed tools cannot be null");
+        return rebuilt(subagent, allowedTools, subagent.getMetadata().getProgrammatic());
+    }
+
+    /**
+     * Returns the subagent with its programmatic tool calling settings replaced, keeping every other field.
+     *
+     * <p>
+     * How a caller's programmatic ceiling reaches a fork, the way {@link #withAllowedTools} carries its allow-list:
+     * the fork's offer and its dispatcher both read the settings off the {@code Subagent}, so they cannot disagree.
+     *
+     * @param subagent
+     *            the subagent to rebase (must not be null)
+     * @param programmatic
+     *            the settings to put in place of its own (must not be null)
+     * @return a new subagent identical but for the settings
+     * @throws NullPointerException
+     *             if either argument is null
+     */
+    public static Subagent withProgrammatic(Subagent subagent, ProgrammaticToolSettings programmatic) {
+        Objects.requireNonNull(subagent, "Subagent cannot be null");
+        Objects.requireNonNull(programmatic, "Programmatic settings cannot be null");
+        return rebuilt(subagent, subagent.getMetadata().getAllowedTools(), programmatic);
+    }
+
+    private static Subagent rebuilt(Subagent subagent, List<AllowedTool> allowedTools,
+            ProgrammaticToolSettings programmatic) {
         final SubagentMetadata metadata = subagent.getMetadata();
         return Subagent.of(subagent.getName(),
                 SubagentMetadata.builder().description(metadata.getDescription()).whenToUse(metadata.getWhenToUse())
                         .model(metadata.getModel()).maxIterations(metadata.getMaxIterations())
                         .attributes(metadata.getAttributes()).hidden(metadata.isHidden()).allowedTools(allowedTools)
-                        .build(),
+                        .programmatic(programmatic).build(),
                 subagent.getContent());
     }
 }

@@ -9,6 +9,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.ToolCallDispatcher;
 import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolContext;
@@ -38,7 +39,8 @@ class DefaultSubagentExecutorDispatchTest {
         }
 
         @Override
-        public ToolCallDispatcher narrow(ToolRegistry registry, List<AllowedTool> allowedTools) {
+        public ToolCallDispatcher narrow(ToolRegistry registry, List<AllowedTool> allowedTools,
+                ProgrammaticToolSettings programmatic) {
             throw new UnsupportedOperationException("not narrowed in this test");
         }
     }

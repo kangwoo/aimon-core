@@ -45,6 +45,7 @@ import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.stream.SubagentTaskCompleted;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.ToolExecutionManager;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.agent.tool.permission.AllowedTools;
@@ -127,6 +128,12 @@ import at.aimon.core.tracing.Tracer;
  */
 public final class DefaultSubagentExecutionManager implements SubagentExecutionManager, AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(DefaultSubagentExecutionManager.class);
+
+    /** The most programmatic-ceiling warning keys kept; past it a warning is logged at DEBUG. */
+    private static final int MAX_PROGRAMMATIC_WARNINGS = 1024;
+
+    /** {@code name\0caller-ceiling} and {@code name\0engine-conflict} keys already warned about. */
+    private static final Set<String> WARNED_PROGRAMMATIC = ConcurrentHashMap.newKeySet();
 
     /** Max characters kept in a background completion notification detail before truncation. */
     private static final int COMPLETION_DETAIL_MAX_CHARS = 500;
@@ -1258,13 +1265,17 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
      *
      * @param launchContext
      *            the launch context carrying the caller's allow-list
-     * @param subagent
+     * @param resolved
      *            the resolved subagent
-     * @return the subagent bound by both lists
+     * @return the subagent bound by both lists, and by the caller's programmatic settings
      * @throws SubagentSpawnException
      *             if the two allow-lists have nothing in common
      */
-    private Subagent applyCallerCeiling(SubagentLaunchContext launchContext, Subagent subagent) {
+    private Subagent applyCallerCeiling(SubagentLaunchContext launchContext, Subagent resolved) {
+        // The programmatic ceiling first, before the early return below: an empty allow-list ceiling means
+        // "unrestricted", but an absent programmatic ceiling means none(). Returning early would hand a caller with no
+        // allow-list its fork's own programmatic settings unnarrowed.
+        final Subagent subagent = applyProgrammaticCeiling(launchContext.getCallerProgrammatic(), resolved);
         final List<AllowedTool> ceiling = launchContext.getCallerAllowedTools();
         if (ceiling.isEmpty()) {
             return subagent;
@@ -1277,6 +1288,53 @@ public final class DefaultSubagentExecutionManager implements SubagentExecutionM
                             + "(caller allows %s, subagent allows %s)", subagent.getName(), ceiling, own));
         }
         return SubagentToolScope.withAllowedTools(subagent, effective.get());
+    }
+
+    /**
+     * Narrows the subagent's programmatic tool calling settings by its caller's ({@code programmatic-tool-calling.md}
+     * §21, B-DV1): a fork offers {@code ExecuteCode} only when its own definition opts in and its caller allows it. A
+     * definition that opts in and is left with nothing is a misconfiguration an operator should be able to find, so it
+     * is warned about once per subagent.
+     *
+     * @param callerProgrammatic
+     *            the caller's effective settings; {@link ProgrammaticToolSettings#none()} when it has none
+     * @param subagent
+     *            the resolved subagent
+     * @return the subagent carrying its effective settings (the same instance when nothing changes)
+     */
+    static Subagent applyProgrammaticCeiling(ProgrammaticToolSettings callerProgrammatic, Subagent subagent) {
+        final ProgrammaticToolSettings own = subagent.getMetadata().getProgrammatic();
+        final ProgrammaticToolSettings effective = own.narrowedBy(callerProgrammatic);
+        if (effective.equals(own)) {
+            return subagent;
+        }
+        if (own.isEnabled() && !effective.isEnabled()) {
+            warnProgrammaticCeiling(subagent.getName(), own, callerProgrammatic);
+        }
+        return SubagentToolScope.withProgrammatic(subagent, effective);
+    }
+
+    private static void warnProgrammaticCeiling(String name, ProgrammaticToolSettings own,
+            ProgrammaticToolSettings caller) {
+        final boolean engineConflict = caller.isEnabled() && own.hasEngineConflict(caller)
+                && own.getTools().stream().anyMatch(caller.getTools()::contains);
+        final String key = name + '\0' + (engineConflict ? "engine-conflict" : "caller-ceiling");
+        if (WARNED_PROGRAMMATIC.size() >= MAX_PROGRAMMATIC_WARNINGS || !WARNED_PROGRAMMATIC.add(key)) {
+            log.debug("Subagent '{}' is offered no ExecuteCode under its caller's programmatic settings", name);
+            return;
+        }
+        if (engineConflict) {
+            log.warn("Subagent '{}' sets programmatic-engine {}, but its caller uses {}; it is offered no ExecuteCode",
+                    name, own.getEngine().wireName(), caller.getEngine().wireName());
+        } else {
+            log.warn("Subagent '{}' sets programmatic-tools {}, but its caller allows none of them; it is offered no "
+                    + "ExecuteCode", name, own.getTools());
+        }
+    }
+
+    /** Forgets which programmatic-ceiling warnings were logged; for tests. */
+    static void resetProgrammaticWarnings() {
+        WARNED_PROGRAMMATIC.clear();
     }
 
     /**

@@ -74,7 +74,7 @@ class AgentSetupFactoryGraalJsTest {
         settings.setEnableWorkflowJs(true);
         final GraalJsEngineHolder engines = mock(GraalJsEngineHolder.class);
 
-        final ToolSpec spec = factory.buildToolSpec(config, fileSystem, engines);
+        final ToolSpec spec = factory.buildToolSpec(config, fileSystem, engines, null);
 
         assertThat(spec.resolveProviders()).anyMatch(GraalJsWorkflowToolProvider.class::isInstance);
     }
@@ -84,7 +84,7 @@ class AgentSetupFactoryGraalJsTest {
     void enablesRunnerWithoutBuiltInWorkflowTool() {
         settings.setEnableWorkflowJs(true);
 
-        final ToolSpec spec = factory.buildToolSpec(config, fileSystem, mock(GraalJsEngineHolder.class));
+        final ToolSpec spec = factory.buildToolSpec(config, fileSystem, mock(GraalJsEngineHolder.class), null);
 
         assertThat(spec.isWorkflowRunnerEnabled()).isTrue();
         assertThat(spec.isWorkflowToolEnabled()).isFalse();
@@ -93,7 +93,7 @@ class AgentSetupFactoryGraalJsTest {
     @Test
     @DisplayName("omits the WorkflowJs provider when no GraalJS engine holder is wired")
     void omitsWorkflowJsProviderWhenEnginesNull() {
-        final ToolSpec spec = factory.buildToolSpec(config, fileSystem, null);
+        final ToolSpec spec = factory.buildToolSpec(config, fileSystem, null, null);
 
         assertThat(spec.resolveProviders()).noneMatch(GraalJsWorkflowToolProvider.class::isInstance);
         assertThat(spec.isWorkflowRunnerEnabled()).isFalse();
@@ -106,11 +106,11 @@ class AgentSetupFactoryGraalJsTest {
         programmatic.setEnableJs(true);
         when(config.getProgrammaticConfig()).thenReturn(programmatic);
 
-        final ToolSpec spec = factory.buildToolSpec(config, fileSystem, mock(GraalJsEngineHolder.class));
+        final ToolSpec spec = factory.buildToolSpec(config, fileSystem, mock(GraalJsEngineHolder.class), null);
 
         // The engine goes to the stack, which is the one owner of the ExecuteCode provider (review-2). The CLI hands
-        // it exactly the JavaScript engine: its execution environment is always the local host, where the shell engine
-        // never runs (programmatic-tool-calling-shell design decision 1), so no Python engine is assembled here.
+        // it exactly the JavaScript engine: the Python shell engine is opt-in (programmatic.enablePython, off by
+        // default; AgentSetupFactoryShellEngineTest), so with the defaults no Python engine is assembled.
         assertThat(spec.isProgrammaticEnabled()).isTrue();
         assertThat(spec.getCodeExecutionEngines()).hasValueSatisfying(engines -> assertThat(engines).singleElement()
                 .satisfies(engine -> assertThat(engine.language()).isEqualTo("javascript")));
@@ -127,7 +127,7 @@ class AgentSetupFactoryGraalJsTest {
         when(config.getProgrammaticConfig()).thenReturn(programmatic);
         final LocalFileSystem realFileSystem = new LocalFileSystem(new LocalFileSystemConfig(workspace.toString()));
         realFileSystem.initialize();
-        final ToolSpec tools = factory.buildToolSpec(config, realFileSystem, mock(GraalJsEngineHolder.class));
+        final ToolSpec tools = factory.buildToolSpec(config, realFileSystem, mock(GraalJsEngineHolder.class), null);
         final LlmClient stub = new LlmClient() {
             @Override
             public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> defs,
@@ -159,7 +159,7 @@ class AgentSetupFactoryGraalJsTest {
     @Test
     @DisplayName("programmatic.enableJs off: the spec carries no engine and the CLI adds no ExecuteCode provider")
     void programmaticOffLeavesItToTheStack() {
-        final ToolSpec spec = factory.buildToolSpec(config, fileSystem, null);
+        final ToolSpec spec = factory.buildToolSpec(config, fileSystem, null, null);
 
         assertThat(spec.isProgrammaticEnabled()).isFalse();
         assertThat(spec.getCodeExecutionEngines()).isEmpty();

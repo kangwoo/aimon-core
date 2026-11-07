@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.base.DefinitionAttributes;
 
 /**
@@ -27,6 +28,7 @@ public final class SubagentContentResult {
     private final String systemPrompt;
     private final Map<String, String> attributes;
     private final boolean hidden;
+    private final ProgrammaticToolSettings programmatic;
 
     /**
      * Creates a new SubagentContentResult.
@@ -77,10 +79,11 @@ public final class SubagentContentResult {
         this.maxIterations = maxIterations;
         this.systemPrompt = Objects.requireNonNull(systemPrompt, "System prompt cannot be null");
         this.hidden = false;
+        this.programmatic = ProgrammaticToolSettings.none();
     }
 
-    /** Copies {@code base} with its {@code hidden} flag replaced. */
-    private SubagentContentResult(SubagentContentResult base, boolean hidden) {
+    /** Copies {@code base} with its {@code hidden} flag and programmatic settings replaced. */
+    private SubagentContentResult(SubagentContentResult base, boolean hidden, ProgrammaticToolSettings programmatic) {
         this.attributes = base.attributes;
         this.description = base.description;
         this.whenToUse = base.whenToUse;
@@ -89,6 +92,7 @@ public final class SubagentContentResult {
         this.maxIterations = base.maxIterations;
         this.systemPrompt = base.systemPrompt;
         this.hidden = hidden;
+        this.programmatic = Objects.requireNonNull(programmatic, "programmatic cannot be null");
     }
 
     /**
@@ -100,7 +104,19 @@ public final class SubagentContentResult {
      * @return a result identical but for the flag (never null)
      */
     public SubagentContentResult withHidden(boolean hidden) {
-        return new SubagentContentResult(this, hidden);
+        return new SubagentContentResult(this, hidden, programmatic);
+    }
+
+    /**
+     * Returns this result with the definition's programmatic tool calling settings set. The constructors leave them
+     * {@link ProgrammaticToolSettings#none()}; the parser calls this with what the frontmatter says.
+     *
+     * @param programmatic
+     *            the parsed settings (must not be null)
+     * @return a result identical but for the settings (never null)
+     */
+    public SubagentContentResult withProgrammatic(ProgrammaticToolSettings programmatic) {
+        return new SubagentContentResult(this, hidden, programmatic);
     }
 
     public String getDescription() {
@@ -151,6 +167,16 @@ public final class SubagentContentResult {
         return hidden;
     }
 
+    /**
+     * Returns the parsed {@code programmatic-tools} / {@code programmatic-only} / {@code programmatic-engine} /
+     * {@code shell-engine-tool-scope} settings.
+     *
+     * @return the settings (never null; {@link ProgrammaticToolSettings#none()} when the frontmatter sets none)
+     */
+    public ProgrammaticToolSettings getProgrammatic() {
+        return programmatic;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -163,12 +189,14 @@ public final class SubagentContentResult {
         return Objects.equals(description, that.description) && Objects.equals(whenToUse, that.whenToUse)
                 && Objects.equals(tools, that.tools) && Objects.equals(model, that.model)
                 && Objects.equals(maxIterations, that.maxIterations) && Objects.equals(systemPrompt, that.systemPrompt)
-                && attributes.equals(that.attributes) && hidden == that.hidden;
+                && attributes.equals(that.attributes) && hidden == that.hidden
+                && programmatic.equals(that.programmatic);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(description, whenToUse, tools, model, maxIterations, systemPrompt, attributes, hidden);
+        return Objects.hash(description, whenToUse, tools, model, maxIterations, systemPrompt, attributes, hidden,
+                programmatic);
     }
 
     @Override

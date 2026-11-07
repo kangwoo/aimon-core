@@ -2,24 +2,37 @@ package at.aimon.core.tools.code;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
 
+import at.aimon.core.agent.DefaultAgent;
 import at.aimon.core.agent.InvokerType;
+import at.aimon.core.agent.impl.orca.OrcaAgentExecutionRequest;
+import at.aimon.core.agent.impl.orca.OrcaAgentExecutionResult;
+import at.aimon.core.agent.impl.orca.OrcaAgentExecutor;
+import at.aimon.core.agent.impl.orca.OrcaAgentExecutorFactory;
+import at.aimon.core.agent.impl.orca.OrcaAgentRuntime;
 import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptReason;
 import at.aimon.core.agent.session.SessionId;
+import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
+import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
 import at.aimon.core.agent.tool.InterruptToolKeys;
@@ -30,9 +43,18 @@ import at.aimon.core.agent.tool.ToolCallPath;
 import at.aimon.core.agent.tool.ToolCallQuota;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolDispatchResult;
+import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolOfferContext;
+import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.command.DefaultCommandRegistry;
 import at.aimon.core.environment.EnvironmentDescriptor;
 import at.aimon.core.environment.EnvironmentIsolation;
+import at.aimon.core.environment.ExecutionEnvironment;
+import at.aimon.core.environment.StagedResource;
+import at.aimon.core.environment.TestExecutionEnvironments;
+import at.aimon.core.filesystem.VirtualFileSystem;
+import at.aimon.core.filesystem.impl.local.LocalFileSystem;
+import at.aimon.core.filesystem.impl.local.LocalFileSystemConfig;
 import at.aimon.core.hook.DefaultHookExecutionManager;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
@@ -41,15 +63,37 @@ import at.aimon.core.hook.event.PostToolHook;
 import at.aimon.core.hook.event.PreToolHook;
 import at.aimon.core.hook.execution.Decision;
 import at.aimon.core.hook.execution.HookResult;
+import at.aimon.core.llm.LlmCallMetadata;
+import at.aimon.core.llm.LlmClient;
+import at.aimon.core.llm.LlmModel;
+import at.aimon.core.llm.LlmResponse;
+import at.aimon.core.llm.Message;
+import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.ToolUse;
 import at.aimon.core.programmatic.CodeExecutionLimits;
 import at.aimon.core.programmatic.CodeExecutionOutcome;
 import at.aimon.core.programmatic.CodeExecutionStatus;
 import at.aimon.core.programmatic.ToolCallBridge;
+import at.aimon.core.shell.VirtualShell;
+import at.aimon.core.skill.Skill;
+import at.aimon.core.skill.SkillRegistry;
+import at.aimon.core.subagent.InMemorySubagentRegistry;
+import at.aimon.core.subagent.Subagent;
+import at.aimon.core.subagent.SubagentExecutionManager;
+import at.aimon.core.subagent.SubagentRegistry;
+import at.aimon.core.subagent.execution.SubagentOutcomePayload;
 import at.aimon.core.toolinvocation.DefaultToolCallDispatcher;
 import at.aimon.core.toolinvocation.SingleToolInvoker;
 import at.aimon.core.toolinvocation.approval.SideEffectApprovalGate;
 import at.aimon.core.tools.ToolContextKeys;
+import at.aimon.core.tools.ToolSpans;
+import at.aimon.core.tools.task.TaskTool;
+import at.aimon.core.tracing.SpanExporter;
+import at.aimon.core.tracing.SpanType;
+import at.aimon.core.tracing.TraceSpan;
+import at.aimon.core.tracing.Tracer;
+import at.aimon.core.tracing.impl.DefaultTracer;
+import at.aimon.core.tracing.impl.InMemoryTraceSpanStore;
 
 /**
  * {@code ExecuteCode} over the real gated pipeline — dispatcher, approval gate, hooks, execution manager — with a
@@ -58,6 +102,9 @@ import at.aimon.core.tools.ToolContextKeys;
  */
 @DisplayName("ExecuteCode end to end — CODE path through the real gates")
 class ExecuteCodeEndToEndTest {
+
+    @TempDir
+    Path tempDir;
 
     private final List<String> events = new CopyOnWriteArrayList<>();
     private final List<ToolCallOrigin> preToolOrigins = new CopyOnWriteArrayList<>();
@@ -111,7 +158,8 @@ class ExecuteCodeEndToEndTest {
                 new DefaultHookExecutionManager(), gate);
         return DefaultToolCallDispatcher.builder().invoker(invoker).invokerType(InvokerType.MAIN_AGENT)
                 .invokerName("agent").hookRegistry(hookRegistry).executionAttributes(Map.of()).toolRegistry(registry)
-                .sessionRegistry(registry).allowedTools(List.of()).coordinator(coordinator).build();
+                .sessionRegistry(registry).allowedTools(List.of()).coordinator(coordinator)
+                .programmatic(ProgrammaticToolSettings.none()).build();
     }
 
     private ToolContext context(ToolCallDispatcher dispatcher, ProgrammaticToolSettings settings, ToolCallQuota quota) {
@@ -384,5 +432,183 @@ class ExecuteCodeEndToEndTest {
 
         assertThat(result.getText()).contains("done").contains("10 tool calls (Read x10)");
         assertThat(read.calls).hasSize(10);
+    }
+
+    // ---------------------------------------------------------------- fork variant (PTC design B.6, "End to end")
+
+    private static final String MAIN_PROMPT = "E2E-MAIN-PROMPT";
+    private static final String FORK_PROMPT = "E2E-FORK-PROMPT";
+
+    @Test
+    @DisplayName("fork: the main agent calls Task, the fork's ExecuteCode makes 2 nested calls — the fork's quota counts"
+            + " them and their TOOL spans (tool.path=code) parent under the fork's ExecuteCode span")
+    void forkExecuteCodeCountsQuotaAndNestsSpans() {
+        final InMemoryTraceSpanStore store = new InMemoryTraceSpanStore();
+        final Tracer tracer = new DefaultTracer(store, SpanExporter.noop());
+        final ForkRoutingLlm llm = new ForkRoutingLlm();
+        // Only the factory is told about the tracer: it reaches the subagent manager and executor it builds.
+        final OrcaAgentExecutor executor = new OrcaAgentExecutorFactory().withTracer(tracer).create(llm,
+                new DefaultTranscriptManager(new InMemorySessionRecordStore()));
+        final InMemorySubagentRegistry subagents = new InMemorySubagentRegistry();
+        subagents.register(Subagent.builder().name("coder").systemPrompt(FORK_PROMPT).maxIterations(3)
+                .tools(List.of(ExecuteCodeTool.TOOL_NAME, "Read")).programmatic(settings("Read")).build());
+        final CapturingTaskTool task = new CapturingTaskTool(subagents, registry, hookRegistry,
+                executor.getSubagentExecutionManager());
+        registry.register(task);
+        engine.program((request, bridge) -> callInOrder(bridge, List.of("Read", "Read")));
+
+        final OrcaAgentExecutionResult result = executor.execute(forkRuntime(subagents),
+                OrcaAgentExecutionRequest.builder().userInput("go").sessionId(SessionId.of("s-fork")).build());
+
+        assertThat(result.isSuccess()).isTrue();
+        // The fork was offered ExecuteCode (its own opt-in, under the main agent's ceiling) and ran it.
+        assertThat(llm.forkTools).isNotEmpty();
+        assertThat(llm.forkTools.get(0)).extracting(ToolDefinition::getName).contains(ExecuteCodeTool.TOOL_NAME);
+        assertThat(llm.forkObservation).contains("OK Read:/p").contains("2 tool calls (Read x2)");
+        assertThat(read.calls).hasSize(2);
+
+        // Quota: the fork counts its own ExecuteCode call and both nested calls.
+        assertThat(task.lastResult).isNotNull();
+        final Map<String, Object> payload = task.lastResult.getRenderPayload();
+        assertThat(payload).containsEntry(SubagentOutcomePayload.TOOL_CALLS, 3);
+
+        // Spans: SUBAGENT → ITERATION → TOOL(ExecuteCode) → TOOL(Read, tool.path=code) x2.
+        final List<TraceSpan> spans = store.bySession("s-fork");
+        final TraceSpan subagent = spans.stream().filter(s -> s.getType() == SpanType.SUBAGENT).findFirst()
+                .orElseThrow();
+        final Set<String> forkIterations = spans.stream().filter(s -> s.getType() == SpanType.ITERATION)
+                .filter(s -> s.getParentSpanId().orElse("").equals(subagent.getSpanId())).map(TraceSpan::getSpanId)
+                .collect(Collectors.toSet());
+        final TraceSpan forkExecuteCode = spans.stream()
+                .filter(s -> s.getType() == SpanType.TOOL && s.getName().equals(ExecuteCodeTool.TOOL_NAME))
+                .filter(s -> forkIterations.contains(s.getParentSpanId().orElse(""))).findFirst().orElseThrow();
+        assertThat(forkExecuteCode.getAttributes()).containsEntry(ToolSpans.PATH, ToolSpans.PATH_DIRECT)
+                .containsEntry("invokerType", "SUBAGENT");
+        final List<TraceSpan> nested = spans.stream()
+                .filter(s -> s.getType() == SpanType.TOOL && s.getName().equals("Read")).toList();
+        assertThat(nested).hasSize(2).allSatisfy(span -> {
+            assertThat(span.getParentSpanId()).contains(forkExecuteCode.getSpanId());
+            assertThat(span.getAttributes()).containsEntry(ToolSpans.PATH, ToolSpans.PATH_CODE);
+        });
+    }
+
+    private OrcaAgentRuntime forkRuntime(SubagentRegistry subagents) {
+        final LocalFileSystem fileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
+        fileSystem.initialize();
+        final ExecutionEnvironment host = new HostEnvironment(TestExecutionEnvironments.of(fileSystem));
+        return OrcaAgentRuntime.builder()
+                .agent(DefaultAgent.builder().name("MainAgent").maxIterations(4).systemPrompt(MAIN_PROMPT)
+                        .model(LlmModel.builder().name("gpt-4").build()).programmatic(settings("Read")).build())
+                .toolRegistry(registry).hookRegistry(hookRegistry)
+                .commandRegistry(new DefaultCommandRegistry(fileSystem, ".aimon/commands")).subagentRegistry(subagents)
+                .skillRegistry(new EmptySkillRegistry()).controlFileSystem(fileSystem)
+                .executionEnvironmentProvider(request -> request.parent().orElse(host)).build();
+    }
+
+    /** Task, keeping the result it returned so the test can read the fork's outcome payload. */
+    private static final class CapturingTaskTool extends TaskTool {
+        private volatile ToolResult lastResult;
+
+        CapturingTaskTool(SubagentRegistry subagents, DefaultToolRegistry registry, DefaultHookRegistry hooks,
+                SubagentExecutionManager manager) {
+            super(LlmModel.builder().name("gpt-4").build(), subagents, registry, hooks, manager);
+        }
+
+        @Override
+        public ToolResult execute(ToolInput input, ToolContext context) {
+            final ToolResult result = super.execute(input, context);
+            lastResult = result;
+            return result;
+        }
+    }
+
+    /** Main: Task(coder), then text. Fork: ExecuteCode, then text, keeping the observation and its offered tools. */
+    private static final class ForkRoutingLlm implements LlmClient {
+        private final List<List<ToolDefinition>> forkTools = new CopyOnWriteArrayList<>();
+        private volatile String forkObservation = "";
+
+        @Override
+        public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
+                LlmModel modelConfig) {
+            return sendMessage(systemPrompt, messages, tools, modelConfig, LlmCallMetadata.empty());
+        }
+
+        @Override
+        public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
+                LlmModel modelConfig, LlmCallMetadata metadata) {
+            final boolean sawResult = messages.stream().anyMatch(Message::hasToolResults);
+            if (systemPrompt.contains(FORK_PROMPT)) {
+                forkTools.add(List.copyOf(tools));
+                if (sawResult) {
+                    messages.stream().filter(Message::hasToolResults)
+                            .forEach(m -> m.getToolUseResults().forEach(r -> forkObservation += r.getContent()));
+                    return LlmResponse.text("fork done");
+                }
+                return LlmResponse.of("", List.of(executeCode("f-1")));
+            }
+            if (sawResult) {
+                return LlmResponse.text("main done");
+            }
+            return LlmResponse.of("", List.of(ToolUse.of("m-1", "Task",
+                    Map.of("subagent_name", "coder", "prompt", "run code", "description", "run code"))));
+        }
+
+        @Override
+        public String getProviderName() {
+            return "ForkRouting";
+        }
+    }
+
+    /** The test environment, declaring HOST isolation so {@code programmatic-engine: auto} picks JavaScript. */
+    private static final class HostEnvironment implements ExecutionEnvironment {
+        private final ExecutionEnvironment delegate;
+
+        HostEnvironment(ExecutionEnvironment delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public VirtualFileSystem fileSystem() {
+            return delegate.fileSystem();
+        }
+
+        @Override
+        public VirtualShell shell() {
+            return delegate.shell();
+        }
+
+        @Override
+        public EnvironmentDescriptor descriptor() {
+            return EnvironmentDescriptor.builder().workingDirectory(delegate.descriptor().workingDirectory())
+                    .isolation(EnvironmentIsolation.HOST).build();
+        }
+
+        @Override
+        public String stage(StagedResource resource) {
+            return delegate.stage(resource);
+        }
+    }
+
+    /** No skills. */
+    private static final class EmptySkillRegistry implements SkillRegistry {
+        @Override
+        public Optional<Skill> getSkill(String skillName) {
+            return Optional.empty();
+        }
+
+        @Override
+        public List<Skill> getAllSkills() {
+            return List.of();
+        }
+
+        @Override
+        public void reloadSkill(String skillName) {
+            // no-op
+        }
+
+        @Override
+        public void reloadAll() {
+            // no-op
+        }
     }
 }

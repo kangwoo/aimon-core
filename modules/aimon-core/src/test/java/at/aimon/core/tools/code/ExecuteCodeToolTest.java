@@ -141,6 +141,25 @@ class ExecuteCodeToolTest {
     }
 
     @Test
+    @DisplayName("the Python description says the functions are predefined globals and the program is already in an"
+            + " event loop; both say results are strings to parse (TC-27)")
+    void descriptionSaysWhereFunctionsComeFrom() {
+        final ExecuteCodeTool python = new ExecuteCodeTool(List.of(new ScriptedEngine(CodeExecutionEngine.PYTHON,
+                ToolGrade.builder().sideEffectLevel(SideEffectLevel.MUTATING)
+                        .destructiveBehavior(DestructiveBehavior.DESTRUCTIVE).dataReach(DataReach.ENVIRONMENT)
+                        .approvalKey("Bash").build())),
+                CodeExecutionLimits.defaults());
+        final String pythonText = python.describe(offer(tools("Read"), EnvironmentIsolation.SANDBOXED)).getDefinition()
+                .getDescription();
+        assertThat(pythonText).contains("already defined as globals").contains("do not import them")
+                .contains("never call asyncio.run()").contains("json.loads")
+                .contains("Functions (already defined; do not import them):");
+        final String javaScriptText = tool.describe(offer(tools("Read"), EnvironmentIsolation.HOST)).getDefinition()
+                .getDescription();
+        assertThat(javaScriptText).contains("JSON.parse").doesNotContain("asyncio");
+    }
+
+    @Test
     @DisplayName("a code-only tool is withheld from the direct offer and rendered with its arguments; a direct one is"
             + " rendered as a one-line pointer")
     void codeOnlyRendering() {

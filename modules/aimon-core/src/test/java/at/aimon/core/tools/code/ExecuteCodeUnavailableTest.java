@@ -118,7 +118,8 @@ class ExecuteCodeUnavailableTest {
             final DefaultToolCallDispatcher dispatcher = DefaultToolCallDispatcher.builder().invoker(invoker)
                     .invokerType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(new DefaultHookRegistry())
                     .executionAttributes(Map.of()).toolRegistry(registry).sessionRegistry(registry)
-                    .allowedTools(List.of()).coordinator(coordinator).build();
+                    .allowedTools(List.of()).coordinator(coordinator).programmatic(ProgrammaticToolSettings.none())
+                    .build();
             final ToolContext context = ToolContext.builder()
                     .put(ToolContextKeys.TOOL_OFFER_CONTEXT, offer(registry, isolation, "a")).build();
             return dispatcher.dispatch(ToolUse.of("t", "Grep", Map.of("path", "/p")), ToolCallOrigin.direct(), context);

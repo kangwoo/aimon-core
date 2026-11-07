@@ -14,6 +14,8 @@ import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.agent.tool.ProgrammaticEngineChoice;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
@@ -39,6 +41,7 @@ import at.aimon.core.skill.render.DefaultSkillContentRenderer;
 import at.aimon.core.toolinvocation.ToolCallDispatchers;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.code.ExecuteCodeTool;
+import at.aimon.core.tools.code.ScriptedEngine;
 
 /**
  * Locks in the slash-command half of the {@link SideEffectLevel} pair: a user-invoked skill runs its own ReAct loop
@@ -255,5 +258,65 @@ class LlmSkillExecutorSideEffectFilterTest {
         final DefinitionCapturingLlmClient named = new DefinitionCapturingLlmClient(LlmResponse.text("done"));
         run(naming, named, new DefaultToolExecutionManager(), tool("Reader", SideEffectLevel.READ_ONLY), executeCode);
         assertThat(named.firstOffer()).containsExactly("Reader");
+    }
+
+    /** Explicit engine, since the skill's context has no execution environment to declare host or sandbox. */
+    private static ProgrammaticToolSettings jsSettings(String... tools) {
+        return ProgrammaticToolSettings.builder().tools(List.of(tools)).engine(ProgrammaticEngineChoice.JAVASCRIPT)
+                .build();
+    }
+
+    /** Runs a skill with the given programmatic settings under a caller publishing {@code caller} (null: absent). */
+    private static List<String> firstOfferUnderCaller(ProgrammaticToolSettings skillProgrammatic,
+            ProgrammaticToolSettings caller) {
+        final DefaultToolExecutionManager manager = new DefaultToolExecutionManager();
+        final DefaultToolRegistry registry = new DefaultToolRegistry();
+        registry.register(tool("Reader", SideEffectLevel.READ_ONLY));
+        registry.register(new ExecuteCodeTool(List.of(ScriptedEngine.javascript()), CodeExecutionLimits.defaults()));
+        final Skill skill = Skill.builder().name("probe").metadata(
+                SkillMetadata.builder().name("probe").description("probe").programmatic(skillProgrammatic).build())
+                .content(SkillContent.of("probe")).build();
+        final ToolContext.Builder toolContext = ToolContext.builder().put(ToolContextKeys.TOOL_CALL_DISPATCHER,
+                ToolCallDispatchers.ungated(manager, registry,
+                        caller == null ? ProgrammaticToolSettings.none() : caller));
+        if (caller != null) {
+            toolContext.put(ToolContextKeys.CALLER_PROGRAMMATIC, caller);
+        }
+        final DefinitionCapturingLlmClient client = new DefinitionCapturingLlmClient(LlmResponse.text("done"));
+        final SkillExecutionResult result = new LlmSkillExecutor(client, new DefaultSkillContentRenderer(), manager)
+                .execute(SkillExecutionContext.builder().skill(skill).defaultModel(LlmModel.builder().build())
+                        .toolRegistry(registry).executionId(ExecutionId.generate("skill:ptc-test"))
+                        .toolContext(toolContext.build()).build(), SkillExecutionRequest.builder().build());
+
+        assertThat(result.isSuccess()).isTrue();
+        return client.firstOffer();
+    }
+
+    @Test
+    @DisplayName("ExecuteCode is offered to a slash skill when both the skill and its caller open tools to code")
+    void executeCodeOfferedWhenSkillAndCallerAllow() {
+        assertThat(firstOfferUnderCaller(jsSettings("Reader"), jsSettings("Reader", "Grep"))).contains("Reader",
+                ExecuteCodeTool.TOOL_NAME);
+    }
+
+    @Test
+    @DisplayName("ExecuteCode is not offered to a skill without programmatic keys, though its caller has them")
+    void notOfferedWithoutSkillKeys() {
+        assertThat(firstOfferUnderCaller(ProgrammaticToolSettings.none(), jsSettings("Reader")))
+                .containsExactly("Reader");
+    }
+
+    @Test
+    @DisplayName("ExecuteCode is not offered to a skill whose caller has no programmatic settings")
+    void notOfferedWithoutCallerSettings() {
+        assertThat(firstOfferUnderCaller(jsSettings("Reader"), null)).containsExactly("Reader");
+        assertThat(firstOfferUnderCaller(jsSettings("Reader"), ProgrammaticToolSettings.none()))
+                .containsExactly("Reader");
+    }
+
+    @Test
+    @DisplayName("ExecuteCode is not offered when the skill's and caller's tools do not meet")
+    void notOfferedWhenDisjoint() {
+        assertThat(firstOfferUnderCaller(jsSettings("Reader"), jsSettings("Grep"))).containsExactly("Reader");
     }
 }

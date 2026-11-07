@@ -22,6 +22,7 @@ import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.ExecutionId;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolCallDispatcher;
 import at.aimon.core.agent.tool.ToolCallOrigin;
@@ -29,6 +30,7 @@ import at.aimon.core.agent.tool.ToolCallPath;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolDispatchResult;
 import at.aimon.core.agent.tool.ToolInput;
+import at.aimon.core.agent.tool.ToolOfferContext;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.agent.tool.permission.AllowedTool;
@@ -833,6 +835,69 @@ class LlmSkillExecutorTest {
         }
     }
 
+    private static ProgrammaticToolSettings ptc(String... tools) {
+        return ProgrammaticToolSettings.builder().tools(List.of(tools)).build();
+    }
+
+    private static Skill counterSkill(ProgrammaticToolSettings programmatic) {
+        return Skill
+                .builder().name("test").metadata(SkillMetadata.builder().name("test").description("Test")
+                        .allowedTools("Counter").programmatic(programmatic).build())
+                .content(SkillContent.of("Task")).build();
+    }
+
+    /** Runs a skill that makes one Counter call through a recording dispatcher, and returns that dispatcher. */
+    private RecordingToolCallDispatcher runUnderCaller(Skill skill, ProgrammaticToolSettings callerProgrammatic) {
+        mockLlmClient.setResponses(List.of(LlmResponse.of("Counting", List.of(ToolUse.of("id", "Counter", Map.of()))),
+                LlmResponse.text("Done")));
+        final RecordingToolCallDispatcher dispatcher = new RecordingToolCallDispatcher();
+        final ToolContext.Builder toolContext = ToolContext.builder().put(ToolContextKeys.TOOL_CALL_DISPATCHER,
+                dispatcher);
+        if (callerProgrammatic != null) {
+            toolContext.put(ToolContextKeys.CALLER_PROGRAMMATIC, callerProgrammatic);
+        }
+        final SkillExecutionResult result = executeSkill(skill, new CountingTool(), toolContext.build());
+        assertThat(result.isSuccess()).isTrue();
+        return dispatcher;
+    }
+
+    @Test
+    @DisplayName("a skill without programmatic keys narrows the dispatcher with none(), whatever its caller has")
+    void skillWithoutProgrammaticNarrowsWithNone() {
+        final RecordingToolCallDispatcher dispatcher = runUnderCaller(counterSkill(), ptc("Read", "Grep"));
+
+        assertThat(dispatcher.narrowedProgrammatic).isEqualTo(ProgrammaticToolSettings.none());
+    }
+
+    @Test
+    @DisplayName("a skill's programmatic settings are narrowed by its caller's before they reach narrow")
+    void skillProgrammaticNarrowedByCaller() {
+        final RecordingToolCallDispatcher dispatcher = runUnderCaller(counterSkill(ptc("Read")), ptc("Read", "Grep"));
+
+        assertThat(dispatcher.narrowedProgrammatic).isEqualTo(ptc("Read"));
+    }
+
+    @Test
+    @DisplayName("a caller without CALLER_PROGRAMMATIC is a ceiling of nothing")
+    void absentCallerProgrammaticIsNone() {
+        final RecordingToolCallDispatcher dispatcher = runUnderCaller(counterSkill(ptc("Read")), null);
+
+        assertThat(dispatcher.narrowedProgrammatic).isEqualTo(ProgrammaticToolSettings.none());
+    }
+
+    @Test
+    @DisplayName("the offer context carries the same effective settings handed to narrow, and names the skill")
+    void offerContextMatchesNarrowedProgrammatic() {
+        final RecordingToolCallDispatcher dispatcher = runUnderCaller(counterSkill(ptc("Read", "Grep")),
+                ptc("Grep", "Read", "Glob"));
+
+        final ToolOfferContext offer = dispatcher.narrowed.contexts.get(0).get(ToolContextKeys.TOOL_OFFER_CONTEXT)
+                .orElseThrow();
+        assertThat(dispatcher.narrowedProgrammatic).isEqualTo(ptc("Read", "Grep"));
+        assertThat(offer.getProgrammatic()).isEqualTo(dispatcher.narrowedProgrammatic);
+        assertThat(offer.getAgentName()).contains("skill:test");
+    }
+
     /**
      * Records what it was narrowed to and every call it was handed, and answers success without touching any tool, so
      * a test can tell "the dispatcher ran the call" apart from "something ran the tool directly".
@@ -843,6 +908,7 @@ class LlmSkillExecutorTest {
         final List<ToolContext> contexts = new ArrayList<>();
         ToolRegistry narrowedTo;
         List<AllowedTool> narrowedAllowedTools;
+        ProgrammaticToolSettings narrowedProgrammatic;
         RecordingToolCallDispatcher narrowed;
 
         @Override
@@ -854,9 +920,11 @@ class LlmSkillExecutorTest {
         }
 
         @Override
-        public ToolCallDispatcher narrow(ToolRegistry registry, List<AllowedTool> allowedTools) {
+        public ToolCallDispatcher narrow(ToolRegistry registry, List<AllowedTool> allowedTools,
+                ProgrammaticToolSettings programmatic) {
             this.narrowedTo = registry;
             this.narrowedAllowedTools = allowedTools;
+            this.narrowedProgrammatic = programmatic;
             this.narrowed = new RecordingToolCallDispatcher();
             return narrowed;
         }

@@ -317,7 +317,7 @@ public final class ExecuteCodeTool extends AbstractTool {
                     bridge.notices(), bridge.hookFeedback(), stillRunning, total, limits));
             result = outcome.getStatus().isRetryable() ? error : error.notRetryable();
         }
-        return result.withRenderPayload(renderPayload(code, engine.language(), outcome.getStatus(), calls));
+        return result.withRenderPayload(renderPayload(code, engine.language(), outcome, calls));
     }
 
     /**
@@ -344,15 +344,22 @@ public final class ExecuteCodeTool extends AbstractTool {
         return wallClock;
     }
 
-    private static Map<String, Object> renderPayload(String code, String language, CodeExecutionStatus status,
+    /**
+     * The sidecar payload a UI renders and a test inspects; never sent to the model. {@code stdout} (and
+     * {@code returnValue}, when the program produced one) are what the program printed, before the observation cut
+     * them to its budget, so a check can compare the model-visible result with what the program actually produced.
+     */
+    private static Map<String, Object> renderPayload(String code, String language, CodeExecutionOutcome outcome,
             List<NestedToolCall> calls) {
         final List<Map<String, Object>> rendered = new ArrayList<>(calls.size());
         calls.forEach(call -> rendered.add(call.toPayload()));
         final Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("language", language);
         payload.put("code", code);
-        payload.put("status", status.name());
+        payload.put("status", outcome.getStatus().name());
         payload.put("calls", rendered);
+        payload.put("stdout", outcome.getStdout());
+        outcome.getReturnValue().ifPresent(value -> payload.put("returnValue", value));
         return payload;
     }
 }

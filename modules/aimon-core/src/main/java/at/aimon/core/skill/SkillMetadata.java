@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.skill.hook.SkillHookSet;
 
@@ -82,6 +83,8 @@ public final class SkillMetadata {
     private final String forkAgentName;
     // AIMON extension: hooks active only while this skill is being invoked (per SkillHookActivator)
     private final SkillHookSet hooks;
+    // What the skill opens to model-written code (AIMON extension)
+    private final ProgrammaticToolSettings programmatic;
 
     private SkillMetadata(Builder builder) {
         name = Objects.requireNonNull(builder.name, "Name cannot be null");
@@ -96,6 +99,7 @@ public final class SkillMetadata {
         executionMode = builder.executionMode == null ? ExecutionMode.INLINE : builder.executionMode;
         forkAgentName = resolveForkAgentName(executionMode, builder.forkAgentName);
         hooks = builder.hooks == null ? SkillHookSet.empty() : builder.hooks;
+        programmatic = Objects.requireNonNull(builder.programmatic, "programmatic cannot be null");
     }
 
     private static String resolveForkAgentName(ExecutionMode mode, String raw) {
@@ -287,6 +291,21 @@ public final class SkillMetadata {
         return hooks;
     }
 
+    /**
+     * Gets what the skill opens to model-written code (AIMON extension): its {@code programmatic-tools},
+     * {@code programmatic-only}, {@code programmatic-engine} and {@code shell-engine-tool-scope} frontmatter keys.
+     *
+     * <p>
+     * This is the skill's own opt-in. What it is offered is this narrowed by its caller's settings: an inline skill
+     * offers {@code ExecuteCode} only when both allow it, and the result is also the ceiling of every fork the skill
+     * spawns. A fork-mode skill narrows its target subagent's settings by these when it declares any.
+     *
+     * @return The settings (never null; {@link ProgrammaticToolSettings#none()} unless declared)
+     */
+    public ProgrammaticToolSettings getProgrammatic() {
+        return programmatic;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -301,13 +320,14 @@ public final class SkillMetadata {
                 && Objects.equals(compatibility, that.compatibility) && Objects.equals(metadata, that.metadata)
                 && Objects.equals(allowedTools, that.allowedTools) && Objects.equals(argumentNames, that.argumentNames)
                 && Objects.equals(invokePolicy, that.invokePolicy) && executionMode == that.executionMode
-                && Objects.equals(forkAgentName, that.forkAgentName) && Objects.equals(hooks, that.hooks);
+                && Objects.equals(forkAgentName, that.forkAgentName) && Objects.equals(hooks, that.hooks)
+                && programmatic.equals(that.programmatic);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(name, description, license, compatibility, metadata, allowedTools, argumentNames,
-                invokePolicy, maxIterations, executionMode, forkAgentName, hooks);
+                invokePolicy, maxIterations, executionMode, forkAgentName, hooks, programmatic);
     }
 
     @Override
@@ -316,7 +336,8 @@ public final class SkillMetadata {
                 + license + '\'' + ", compatibility='" + compatibility + '\'' + ", metadata=" + metadata
                 + ", allowedTools='" + allowedTools + '\'' + ", argumentNames=" + argumentNames + ", invokePolicy="
                 + invokePolicy + ", maxIterations=" + maxIterations + ", executionMode=" + executionMode
-                + ", forkAgentName='" + forkAgentName + '\'' + ", hooks=" + hooks + '}';
+                + ", forkAgentName='" + forkAgentName + '\'' + ", hooks=" + hooks
+                + (programmatic.isEnabled() ? ", programmatic=" + programmatic : "") + '}';
     }
 
     /** Builder for SkillMetadata. */
@@ -333,6 +354,7 @@ public final class SkillMetadata {
         private ExecutionMode executionMode;
         private String forkAgentName;
         private SkillHookSet hooks;
+        private ProgrammaticToolSettings programmatic = ProgrammaticToolSettings.none();
 
         private Builder() {
         }
@@ -550,6 +572,19 @@ public final class SkillMetadata {
          */
         public Builder hooks(SkillHookSet hooks) {
             this.hooks = hooks;
+            return this;
+        }
+
+        /**
+         * Sets what the skill opens to model-written code (AIMON extension; see
+         * {@link SkillMetadata#getProgrammatic()}).
+         *
+         * @param programmatic
+         *            The settings (must not be null); {@link ProgrammaticToolSettings#none()} by default
+         * @return This builder
+         */
+        public Builder programmatic(ProgrammaticToolSettings programmatic) {
+            this.programmatic = Objects.requireNonNull(programmatic, "programmatic cannot be null");
             return this;
         }
 

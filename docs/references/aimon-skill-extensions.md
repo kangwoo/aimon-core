@@ -220,6 +220,32 @@ SkillMetadata metadata = SkillMetadata.builder().name("review").description("...
 
 ---
 
+## programmatic-tools · programmatic-only · programmatic-engine · shell-engine-tool-scope — 코드에 여는 도구
+
+```yaml
+allowed-tools: [ExecuteCode, Read, Grep, Task]
+programmatic-tools: [Read, Grep]   # ExecuteCode 의 프로그램이 부를 수 있는 도구. 정확한 이름
+programmatic-only: [Grep]          # 직접 제안에서 빼고 코드에서만 (선택)
+programmatic-engine: auto          # 선택
+shell-engine-tool-scope: host      # 선택. 애플리케이션 값보다 좁게만
+```
+
+- 에이전트 frontmatter 와 같은 네 키, 같은 검사다(`ProgrammaticFrontmatter` — camelCase 철자는 거절, `programmatic-only` ⊆
+  `programmatic-tools`, 나머지 셋은 `programmatic-tools` 없이 쓸 수 없다). 위반은 `SkillParseException`.
+- 기본값: 없음 — 스킬은 코드에 아무것도 열지 않는다(`SkillMetadata.getProgrammatic()` 이 `none()`).
+- **실효 설정 = 스킬 선언 ∩ 호출자.** 인라인 스킬이 쓰는 설정은 이 선언을 호출자(메인 에이전트)의 실효 설정으로 좁힌 것이다.
+  호출자가 PTC 를 켜지 않았으면 스킬도 `ExecuteCode` 를 받지 못한다. 좁히기 규칙은
+  [PTC 설계](../design/tool/programmatic-tool-calling.md) §7.2.
+- **스킬이 띄우는 포크의 천장이기도 하다.** 인라인 스킬 안에서 `Task` 로 띄운 서브에이전트는 자기 선언을 이 스킬의 실효 설정으로
+  좁힌 것만 쓴다. 키를 선언하지 않은 인라인 스킬은 그 포크에게 "아무것도 없음" 이다 — 에이전트가 PTC 를 켰어도.
+- **포크 모드(`execution.mode: fork`)는 다르다.** 스킬이 곧 포크이므로 대상 서브에이전트(`execution.agent`)의 선언을 쓰고, 스킬이
+  키를 선언했을 때만 그것으로 한 번 더 좁힌다. 호출자의 설정이 천장인 것은 같다.
+- 적용 시점: 사용자가 `/스킬` 로 호출한 인라인 스킬의 ReAct 루프와 포크 모드 스킬의 포크. 모델이 `Skill` 도구로 부른 인라인
+  스킬은 루프 없이 지시문만 메인 턴에 주입되므로, 그때는 에이전트 자신의 설정이 적용된다.
+- `ExecuteCode` 도 `allowed-tools` 에 있어야 제안된다 — 허용 목록이 먼저 거른다.
+
+---
+
 ## 호환성 노트
 
 - 표준 frontmatter만 사용하는 스킬은 모든 AIMON 버전에서 그대로 동작한다.

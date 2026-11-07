@@ -8,6 +8,7 @@ import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import at.aimon.core.agent.tool.ProgrammaticFrontmatter;
 import at.aimon.core.skill.ExecutionMode;
 import at.aimon.core.skill.InvokePolicy;
 import at.aimon.core.skill.Skill;
@@ -134,7 +135,8 @@ public class MarkdownSkillParser implements SkillParser {
             // Build metadata
             final SkillMetadata.Builder metadataBuilder = SkillMetadata.builder().name(name).description(description)
                     .license(license).compatibility(compatibility).metadata(metadata).allowedTools(allowedTools)
-                    .argumentNames(argumentNames).invokePolicy(invokePolicy).maxIterations(maxIterations).hooks(hooks);
+                    .argumentNames(argumentNames).invokePolicy(invokePolicy).maxIterations(maxIterations).hooks(hooks)
+                    .programmatic(ProgrammaticFrontmatter.parse(frontmatter));
             applyExecution(frontmatter, metadataBuilder);
             final SkillMetadata skillMetadata = metadataBuilder.build();
             if (skillMetadata.getExecutionMode() == ExecutionMode.INLINE && !hooks.isEmpty()) {

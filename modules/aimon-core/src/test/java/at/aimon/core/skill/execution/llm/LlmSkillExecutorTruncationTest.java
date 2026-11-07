@@ -19,6 +19,7 @@ import at.aimon.core.agent.budget.StalledIterationGuard;
 import at.aimon.core.agent.budget.TruncatedResponses;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolCallDispatcher;
 import at.aimon.core.agent.tool.ToolCallOrigin;
@@ -337,7 +338,8 @@ class LlmSkillExecutorTruncationTest {
         }
 
         @Override
-        public ToolCallDispatcher narrow(ToolRegistry registry, List<AllowedTool> allowedTools) {
+        public ToolCallDispatcher narrow(ToolRegistry registry, List<AllowedTool> allowedTools,
+                ProgrammaticToolSettings programmatic) {
             return this;
         }
     }

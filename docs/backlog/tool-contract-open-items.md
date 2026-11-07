@@ -1,4 +1,4 @@
-# 도구 계약 — 등록 항목 23건 (열림 22 · 닫힘 1)
+# 도구 계약 — 등록 항목 29건 (열림 27 · 닫힘 2)
 
 출처는 `docs/design/tool/` 의 도구 계약·부작용 축·병렬 실행·도구 검색·모니터 문서가 남긴 작업이다. 설계 문서는 현재 설계만
 적고, 남은 일은 여기에 둔다.
@@ -285,4 +285,103 @@ provider 등록과 `ToolSearchTool` 등록을 조립이 직접 해야 한다. `T
 **어디.** `skill/execution/llm/LlmSkillExecutor.java`, `agent/impl/orca/CommandTrace.java`. 설계는
 [기능 마무리 설계](../design/tool/ptc-features-core.md) A.5.4 · §1.3, [PTC](../design/tool/programmatic-tool-calling.md) §21. 2026-11-07 확인.
 
-**언제 다시 볼까.** 슬래시 스킬이 `ExecuteCode` 를 제안받게 될 때(PTC PR 2) — 그때 이유를 남길 자리가 필요해진다.
+**언제 다시 볼까.** 슬래시 스킬이 `ExecuteCode` 를 제안받게 될 때(PTC PR 2) — 그때 이유를 남길 자리가 필요해진다. PR 2 에서 그렇게
+되었다(2026-11-07): 포크 루프는 이 속성을 갖췄고 슬래시 스킬 루프만 남았다. 이제 다시 볼 때다.
+
+## TC-24 — 호출자가 PTC 를 켜지 않은 곳에서 쓸 수 있는 서브에이전트 · **열림**
+
+**무엇을.** 서브에이전트·스킬 정의가 호출자의 programmatic 설정과 상관없이 `ExecuteCode` 를 쓸 수 있게 하는 선언(예:
+`programmatic-tools: inherit` 같은 표지, 또는 운영자가 허용하는 "자기 선언만" 모드)을 둘지 정한다.
+
+**왜.** PTC 기능 마무리 PR 2 는 가장 좁은 규칙을 골랐다 — 실효 = 자기 선언 ∩ 호출자이고, PTC 없는 호출자는 "아무것도 없음" 이다(편차
+B-DV1, OQ-B5). 그래서 코드로만 일하도록 만든 서브에이전트는 PTC 를 켜지 않은 메인 에이전트 아래에서는 `ExecuteCode` 를 받지 못하고,
+운영자는 메인 에이전트에도 `programmatic-tools` 를 열어야 한다. 넓히는 쪽의 선언은 "에이전트는 좁히기만" 과 부딪히므로 운영자 수준의
+허가가 필요하다.
+
+**어디.** `agent/tool/ProgrammaticToolSettings.java` 의 `narrowedBy`, `subagent/DefaultSubagentExecutionManager.java` 의
+`applyProgrammaticCeiling`. 설계는 [기능 마무리 설계](../design/tool/ptc-features-core.md) B.1.1, [PTC](../design/tool/programmatic-tool-calling.md)
+§7.2 · §21. 2026-11-07 확인.
+
+**언제 다시 볼까.** `caller-ceiling` 경고("sets programmatic-tools, but its caller allows none of them")가 실제 배치에서 보고될 때.
+
+## TC-25 — 스킬·포크 안에서 띄운 백그라운드 `Workflow` 실행의 천장 · **열림**
+
+**무엇을.** `WorkflowTool` 의 백그라운드 실행이 그것을 띄운 실행(슬래시 스킬, 포크)의 허용 목록과 programmatic 설정을 천장으로 받게
+한다.
+
+**왜.** 백그라운드 실행은 런타임의 기본 런처(`OrcaAgentRuntimeFactory` 의 워크플로 기반 `SubagentLaunchContext`)로 돌아, 에이전트의
+허용 목록·programmatic 설정으로만 좁혀진다. 슬래시 스킬이나 포크가 띄운 백그라운드 실행은 그 스킬·포크보다 넓을 수 있다. 허용 목록의
+기존 동작이고, PTC 에서는 워크플로 서브에이전트가 programmatic 설정을 갖지 않아 지금은 효과가 없다(편차 B-DV1 의 예외).
+
+**어디.** `tools/workflow/WorkflowTool.java` 의 `runInBackground`, `agent/impl/orca/OrcaAgentRuntimeFactory.java` 의 워크플로 런처.
+설계는 [기능 마무리 설계](../design/tool/ptc-features-core.md) §2. 2026-11-07 확인.
+
+**언제 다시 볼까.** 워크플로 서브에이전트가 programmatic 설정을 갖게 될 때(`InlineSubagentResolver` 가 그것을 복사하기 시작할 때),
+또는 백그라운드 런처를 호출마다 짓게 될 때.
+
+## TC-26 — 모델이 부른 인라인 스킬에는 스킬 루프가 없다 · **열림**
+
+**무엇을.** 모델이 `Skill` 도구로 부른 인라인 스킬도 스킬 자신의 허용 목록과 programmatic 설정을 실행 시점에 지키게 할지 정한다.
+
+**왜.** `SkillTool` 은 인라인 스킬의 지시문을 메인 턴에 주입할 뿐이라(`LlmSkillExecutor` 루프는 사용자 `/스킬` 경로에만 있다), 그
+턴에서 일어나는 도구 호출과 그 턴이 띄운 포크의 천장은 에이전트다. PTC 기능 마무리 PR 2 의 설계는 모델이 부른 경우도 스킬로 좁혀진다고
+보았지만(B.6 사례 2), 그 경로에는 좁힐 루프가 없다 — 테스트는 실제 동작(포크가 에이전트의 설정을 받는다)을 고정한다. 허용 목록에서도
+같은 비대칭이 이미 있다.
+
+**어디.** `tools/skill/SkillTool.java` 의 인라인 분기, `skill/execution/llm/LlmSkillExecutor.java`. 설계는
+[기능 마무리 설계](../design/tool/ptc-features-core.md) §2, 테스트 `SlashSkillProgrammaticCeilingE2EIntegrationTest`. 2026-11-07 확인.
+
+**언제 다시 볼까.** 스킬의 `allowed-tools` 를 모델 호출 경로에서도 강제하자는 요청이 올 때 — 둘은 같은 변경이다.
+
+## TC-27 — Python `ExecuteCode` 설명이 함수를 어디서 얻는지 말하지 않는다 · **닫힘** *(2026-11-07)*
+
+**무엇을.** Python 엔진의 `ExecuteCode` 설명(`ExecuteCodeDescription`, `ToolApiRenderer.renderPython`)에 함수가 이미 정의된 전역이라
+`import` 하지 않는다는 것과, 프로그램이 이미 이벤트 루프 안에서 돈다는 것(`asyncio.run` 을 부르지 말고 최상위 `await` 를 쓴다)을 적는다.
+
+**왜.** 실제 모델 E2E(`:aimon-cli:llmTest`, 2026-11-07)에서 `gpt-4o-mini` 와 `gpt-4o` 가 셸 변형의 첫 프로그램들을
+`from functions import GetHostStatus, GetHostLoad`(`ModuleNotFoundError`)나 `asyncio.run(main())`("cannot be called from a running
+event loop")으로 시작했다. 설명은 "Functions:" 아래에 `async def` 선언을 나열할 뿐이라 모델이 모듈을 추측한다. `gpt-4o` 는 같은 오류로
+네 번 실패해 중첩 호출 0 으로 끝났고, `gpt-4o-mini` 는 열 번째 호출에서야 통과했다. [PTC](../design/tool/programmatic-tool-calling.md)
+§18 의 "실패 유형 → 렌더링을 바꾼다" 그대로다. 문구는 모델이 보는 텍스트라 바꾸면 실제 모델로 다시 재야 한다.
+
+**어디.** `tools/code/ExecuteCodeDescription.java`, `tools/code/ToolApiRenderer.java`. 하네스는 CONTRIBUTING.md 의
+"Real-model ExecuteCode E2E". 2026-11-07 확인.
+
+**언제 다시 볼까.** 다음에 실제 모델 E2E 를 돌릴 수 있을 때 — 문구를 고치고 같은 하네스로 전후를 잰다.
+
+**어떻게 닫았나.** 같은 PR 2 의 리뷰 1 뒤에 고쳤다. Python 설명의 첫 항목이 "함수는 이미 전역으로 정의되어 있으니 import 하지 말고 바로
+부른다", "프로그램은 이미 이벤트 루프 안에서 돈다 — 최상위 `await` 를 쓰고 `asyncio.run()` 을 부르지 않는다", "문자열이 JSON 이면
+`json.loads` 로 직접 파싱한다" 를 말하고, 목록 머리말은 "Functions (already defined; do not import them):" 다. JavaScript 설명에도
+"`JSON.parse` 로 직접 파싱한다" 를 더했다(`gpt-4o-mini` 가 JSON 문자열 결과를 객체로 읽은 실패). 같은 하네스로 잰 전후 —
+`gpt-4o` Python: 고치기 전 프로그램 넷이 모두 `from functions import …` 로 실패(중첩 호출 0), 고친 뒤 프로그램 하나가 중첩 호출 8 번을
+모두 성공하고 답이 맞았다. `gpt-4o-mini` 는 JavaScript 가 프로그램 하나·호출 10 번·정답으로 바뀌었고, Python 은 여전히 프로그램
+열한 개 중 다섯이 `asyncio.run` 등으로 실패하고 출력 없이 끝난 프로그램을 되풀이하다 `MAX_ITERATIONS` 에서 멈췄다 — 약한 모델의
+한계로 보고 기본 모델(OQ-B2)은 두었다. 검사: `ExecuteCodeToolTest#descriptionSaysWhereFunctionsComeFrom`.
+
+## TC-28 — 스크립트 오류의 마지막 줄이 캐럿만일 수 있다 · **열림**
+
+**무엇을.** `ExecuteCodeObservation.failure` 가 오류 메시지의 마지막 줄만 싣는 규칙을, 마지막 줄이 소스 발췌의 캐럿(`^`)일 때는 메시지
+줄(예: GraalJS 의 `SyntaxError: … Expected …`)을 싣도록 고친다.
+
+**왜.** 실제 모델 E2E(2026-11-07)에서 GraalJS 구문 오류가 모델에게 `ExecuteCode script error:  ^` 로만 갔다 — 무엇이 틀렸는지가
+빠졌다. 구문 오류 메시지는 "메시지, 소스 줄, 캐럿" 순의 여러 줄이라 마지막 줄 규칙이 정확히 쓸모없는 줄을 고른다. 모델은 다음
+프로그램을 다시 썼지만 이유를 모른 채였다.
+
+**어디.** `tools/code/ExecuteCodeObservation.java` 의 `lastLine`, GraalJS 엔진의 오류 메시지 구성(`aimon-graaljs` 의
+`at.aimon.graaljs.code`). 2026-11-07 확인.
+
+**언제 다시 볼까.** TC-27 과 함께 — 둘 다 모델이 스크립트 오류에서 회복하는 비용이다.
+
+## TC-29 — 모델이 보는 `[logs]` 에 호스트 경로가 실린다 · **열림**
+
+**무엇을.** `ExecuteCode` 관찰의 `[logs]` 절(셸 엔진의 stderr 꼬리)에서 런타임 자신의 프레임과 호스트 경로를 걷어 낼지 정한다.
+
+**왜.** 실제 모델 E2E(2026-11-07)에서 Python 스크립트 오류의 traceback 이 그대로 모델에게 갔다 —
+`/var/folders/…/aimon-run-…/aimon_ptc.py` 의 런타임 프레임과 사용자의 pyenv 경로까지. 모델에게 쓸모 있는 것은 `<program>` 프레임과
+마지막 예외 줄뿐이고, 나머지는 토큰을 쓰며 호스트 배치를 드러낸다. 샌드박스에서는 경로가 샌드박스 안의 것이라 덜하지만 로컬 실행에서는
+그대로다. TC-28 과 같은 "모델에게 가는 오류 텍스트" 문제다.
+
+**어디.** `tools/code/ExecuteCodeObservation.java` 의 `appendSideChannels`, 셸 엔진 런타임 `aimon_ptc.py` 의 traceback 출력.
+2026-11-07 확인(PR 2 리뷰 1 의 비차단 지적).
+
+**언제 다시 볼까.** TC-28 과 함께.

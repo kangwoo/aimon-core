@@ -1174,14 +1174,16 @@ public class OrcaAgentRuntimeFactory {
         // that uses it, so there is no one session whose skill approvals it could inherit. The per-call runners
         // built inside WorkflowTool / GraalJsWorkflowTool do carry it, because those are built per invocation from the
         // calling execution's ToolContext.
-        // The agent's allow-list is read from the agent rather than from a ToolContext, unlike the per-call runners:
-        // this one is agent-scoped and has no calling execution to read from. Same ceiling either way — every run it
-        // spawns is a run of this agent's.
+        // The agent's allow-list and programmatic settings are read from the agent rather than from a ToolContext,
+        // unlike the per-call runners: this one is agent-scoped and has no calling execution to read from. Same
+        // ceiling either way — every run it spawns is a run of this agent's. (A background Workflow run started from
+        // inside a slash skill or a fork goes through this runner too, so it is ceilinged by the agent, not by that
+        // skill or fork — B-DV1 names this exception.)
         final SubagentLaunchContext baseLaunchContext = SubagentLaunchContext.builder().agentRuntimeId(agentRuntimeId)
                 .subagentRegistry(subagentRegistry).toolRegistry(toolRegistry).hookRegistry(hookRegistry)
                 .defaultModel(agent.getMetadata().getModel()).toolContextEnrichers(toolContextEnrichers)
-                .callerAllowedTools(agent.getAllowedTools()).executionEnvironmentProvider(executionEnvironmentProvider)
-                .build();
+                .callerAllowedTools(agent.getAllowedTools()).callerProgrammatic(agent.getMetadata().getProgrammatic())
+                .executionEnvironmentProvider(executionEnvironmentProvider).build();
         return WorkflowRunners.create(subagentExecutionManager, baseLaunchContext,
                 WorkflowRunnerOptions.builder().stepResultCache(WorkflowRunners.inMemoryStepResultCache()).build());
     }

@@ -350,6 +350,23 @@ shell-engine-tool-scope: host  # 선택. 애플리케이션 값보다 좁게만 
 코드 경로에서는 `READ_ONLY` 도구만 쓸 수 있다(파괴성 축은 `MUTATING` 일 때만 읽히므로 `Read`·`Grep` 은 남는다). 쓰기 도구를 코드에
 열려면 그 도구의 파괴성을 감사해 `NON_DESTRUCTIVE` 를 선언해야 한다(백로그 TC-7 의 인트리 도구 감사와 같은 작업).
 
+**서브에이전트와 스킬.** 서브에이전트 정의(frontmatter, `Subagent` 빌더)와 스킬 frontmatter 도 같은 네 키를 받는다. 포크나 슬래시
+스킬이 실제로 쓰는 설정은 **자기 선언을 호출자의 실효 설정으로 좁힌 것**이다(`ProgrammaticToolSettings.narrowedBy`, §21 B-DV1).
+호출자는 메인 에이전트, 중첩 포크라면 부모 포크, 슬래시 스킬 안에서 띄운 포크라면 그 스킬이다. PTC 가 없는 호출자는 "아무것도 없음"
+이라는 천장이라, 그 아래 포크는 자기 정의가 무엇을 열든 `ExecuteCode` 를 받지 못한다 — 빈 허용 목록이 "제한 없음" 인 것과 반대로
+닫힌 쪽이다.
+
+| 필드 | 좁히기 |
+|---|---|
+| `programmatic-tools` | 자기 ∩ 호출자, 자기 순서. 비면 PTC 없음 |
+| `programmatic-only` | (자기 ∪ 호출자) ∩ 위 결과. 호출자가 직접 호출에서 뺀 도구는 포크에서도 빠진다 — 허용 목록은 "부를 수 있지만 코드로만" 을 말하지 못한다 |
+| `programmatic-engine` | `auto` 는 상대를 따른다. 같으면 그 값, 서로 다른 명시 값(`javascript` 대 `python`)이면 PTC 없음(서브에이전트마다 경고 한 번) |
+| `shell-engine-tool-scope` | 둘 중 좁은 쪽. 애플리케이션 값은 그 뒤에 따로 적용된다 |
+
+포크 모드 스킬(`execution: {mode: fork, agent: X}`)은 대상 서브에이전트 `X` 의 선언을 쓰고, 스킬이 키를 선언했으면 그것으로 한 번
+더 좁힌다 — 포크 모드에서는 스킬이 곧 포크이기 때문이다. 인라인 스킬은 키를 선언하지 않으면 그 스킬이 띄우는 포크에게 "아무것도
+없음" 이다. 이 비대칭은 의도다(§21 B-DV1).
+
 ### 7.3 호출 가능 집합
 
 다음 순서로 계산한다.
@@ -628,12 +645,13 @@ CE 에서는 **게스트 힙**과 CPU 시간에 하드 한도가 없다([워크�
 
 | 설정 | 에이전트 frontmatter | `AimonStack` / 스타터 `aimon.programmatic.*` | CLI | 기본값 |
 |---|---|---|---|---|
-| `programmatic-tools` | ✓ (`Agent` 빌더 포함) | — | — | 없음 (PTC 꺼짐) |
+| `programmatic-tools` | ✓ (`Agent` 빌더 포함). 서브에이전트·스킬 frontmatter 도 — 자기 선언 ∩ 호출자(§7.2) | — | — | 없음 (PTC 꺼짐) |
 | `programmatic-only` | ✓ | — | — | 없음 |
 | `programmatic-engine` | ✓ | — | — | `auto` |
 | `shell-engine-tool-scope` | 좁히기만 | `shellEngineToolScope` / `shell-engine-tool-scope` | `programmatic.shellEngineToolScope` | `environment` |
 | 한도 (§13.1), 관찰 상한 | — | `limits.*` | `programmatic.limits.*` | §13.1 |
 | GraalJS 엔진 조립 | — | `aimon-graaljs` 의존 (ServiceLoader) | `programmatic.enableJs` | 꺼짐 |
+| 셸(Python) 엔진 조립 | — | `aimon-core` 가 등록 (ServiceLoader) | `programmatic.enablePython` | 꺼짐 (CLI), 켜짐 (`programmaticEnabled` 인 스택) |
 
 CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전트 단위 설정은 "무엇을 코드에 열 것인가", 애플리케이션 단위 설정은
 "이 배치가 무엇을 허용하는가" 다. 에이전트 값은 애플리케이션 값을 넓힐 수 없다.
@@ -669,6 +687,9 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 | 프롬프트 캐시 — PTC 를 켠 세션과 끈 세션의 캐시 적중률 | 적중률이 떨어지면 설명이 바뀌는 원인(활성화, 환경 종류 변화)을 줄인다 |
 | 실패 유형 — 스크립트 오류 중 결과 파싱·도구 이름·인자 형식의 비율, 선언 표기별 | 비율이 큰 쪽의 렌더링을 바꾼다 |
 | 지연 — 샌드박스에서 중첩 호출 하나와 응답 쓰기 하나의 p50/p99, 순차 N 호출의 총 시간 | 폴링 간격과 설명 지침의 병렬 권고 강도 |
+
+실제 모델로 `ExecuteCode` 를 돌리는 opt-in 하네스(`./gradlew :aimon-cli:llmTest`, CONTRIBUTING.md 의 "Real-model ExecuteCode E2E")가
+"실패 유형" 을 손으로 확인하는 곳이고, 위 측정을 더할 자리다. 실행마다 `LIVE-E2E …` 한 줄(모델, 엔진, 결과, 중첩 호출 수, 토큰)을 남긴다.
 
 ---
 
@@ -723,7 +744,7 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 | `EnvironmentDescriptor.isolation()` 은 셸 엔진 문서의 S6·조각 D 의 일이다 | 조각 C 가 먼저 넣었다 — `Optional<EnvironmentIsolation>`(`HOST`/`SANDBOXED`). 로컬 환경(`LocalExecutionEnvironment`, 그 격리 분기)은 `HOST` 를 선언한다. 선언하지 않은 환경에서 `auto` 는 엔진을 고르지 않는다(명시적 `javascript` 는 동작한다) | `auto` 규칙(§6.2)이 이 값 없이는 성립하지 않는다. 기본값을 `HOST` 로 두면 아직 선언하지 않은 샌드박스 제공자에서 `auto` 가 GraalJS 를 골라 §14 의 위험을 들인다 — 그래서 미선언은 "모름" 이다 |
 | 제안 불가는 서술 축으로 표현된다(§5.2 `none()` 에서 "제안 불가, 최대 등급") | `ToolDescriptor.isOfferable()` 을 더했다. `ToolOfferContext` 는 `programmatic(...)`(에이전트 설정), `eligible(names)`(§7.3 순서 1), `isCodeOnly(...)` 를 일급으로 든다 — 조각 B 편차 1 의 연장 | "엔진이 없다"·"부를 도구가 없다" 는 실링으로 표현되지 않는다. `MUTATING` 최대 등급만으로는 실링이 `MUTATING` 인 제안에서 `ExecuteCode` 가 나타난다 |
 | 승인 질의 문구 "Bash — via ExecuteCode (Python)" (결정 11, 조각 B 편차 6) | `ToolDescriptor.getApprovalVia()` 를 더했고 `ExecuteCode` 가 엔진 언어로 채운다. 문구는 "'Bash' — via ExecuteCode (Python), 'ExecuteCode(code=…)'" | 관문은 서술자만 보므로 언어가 서술자에 실려야 한다. GraalJS 는 승인을 위임하므로 조각 C 에서 이 문구가 실제로 나오는 경로는 없다 — 셸 엔진(조각 D)이 쓴다 |
-| `programmatic-tools` 는 에이전트 frontmatter(§16) | 메인 루프만 그 설정을 제안 문맥에 싣는다. 포크(서브에이전트)와 슬래시 스킬의 제안 문맥은 설정이 없어 `ExecuteCode` 를 제안하지 않는다. 세 루프 모두 `ToolOfferContext.offer()` 한 계산으로 제안하므로(슬래시 스킬 루프는 실링만 거르던 자체 필터를 버리고 여기로 옮겼다 — review-3) 제안 불가 서술자는 어느 루프에서도 나오지 않는다 | 서브에이전트·스킬 정의에는 이 키가 없고, 부모의 설정을 물려줄지는 본문이 정하지 않았다. 포크 쿼터(결정 14)의 브리지 쪽 `admit(1)` 은 구현·종단 테스트되었지만 트리 안의 포크는 아직 `ExecuteCode` 를 제안하지 않는다 |
+| `programmatic-tools` 는 에이전트 frontmatter(§16) | 메인 루프만 그 설정을 제안 문맥에 싣는다. 포크(서브에이전트)와 슬래시 스킬의 제안 문맥은 설정이 없어 `ExecuteCode` 를 제안하지 않는다. 세 루프 모두 `ToolOfferContext.offer()` 한 계산으로 제안하므로(슬래시 스킬 루프는 실링만 거르던 자체 필터를 버리고 여기로 옮겼다 — review-3) 제안 불가 서술자는 어느 루프에서도 나오지 않는다 | 서브에이전트·스킬 정의에는 이 키가 없고, 부모의 설정을 물려줄지는 본문이 정하지 않았다. 포크 쿼터(결정 14)의 브리지 쪽 `admit(1)` 은 구현·종단 테스트되었지만 트리 안의 포크는 아직 `ExecuteCode` 를 제안하지 않는다. **기능 마무리 PR 2 에서 구현했다** — 아래 그 표의 B-DV1 |
 | 중첩 호출의 허용 목록은 `AllowedTools.intersect(부모, 동결된 집합)` (§8.2) | 브리지가 동결된 집합을 이름으로 직접 검사하고, 부모의 허용 목록(인자 패턴 포함)은 바인딩된 디스패처가 그대로 적용한다 | 효과는 교집합과 같다 — 호출은 두 검사를 모두 통과해야 한다. 디스패처 `narrow` 는 레지스트리 부분집합을 요구해 `ExecuteCode` 가 그 레지스트리를 알아야 한다 |
 | `CodeExecutionOutcome` 에 중첩 호출 기록(§9 표) | 기록은 호출을 한 브리지가 든다. 결과에는 상태·출력·로그·반환값·오류 메시지 | 기록은 엔진과 무관하다. 엔진마다 같은 기록을 다시 옮기지 않는다 |
 | 엔진 SPI 의 모양(§9) | `CodeExecutionEngine extends AutoCloseable`(기본 no-op), `ToolCallBridge.limitExceeded()`, `CodeExecutionEngineFactory.create()`, `CodeExecutionEngines.discover/createAll`, 상수 `JAVASCRIPT`·`PYTHON` | 엔진은 Application 수명이라 조립이 닫아야 한다. 엔진은 자식 취소 신호를 보았을 때 그것이 실행 취소인지 브리지가 건 한도(즉시 정지, §8.3)인지 구분해야 `CANCELLED`/`LIMIT_EXCEEDED` 를 고를 수 있다 |
@@ -749,10 +770,10 @@ CLI 설정은 기존 관례(`enableWorkflowJs`)대로 camelCase 다. 에이전�
 | 런타임은 `os.setpgid(0, 0)` 로 자기 그룹을 만든다(셸 엔진 §6 의 D1 당시 글) | **Q-C4 수정.** 셸이 띄운 프로세스가 곧바로 fork 해 **앵커**로 셸의 그룹에 남고, 자식이 자기 그룹을 만든 런타임이 된다. 런타임은 키를 읽기 전에 자기 그룹에 **감시자 프로세스**를 (두 번 fork 해서) 띄운다 — 앵커가 쥔 파이프의 읽기 끝만 들고, 앵커가 죽으면 EOF 를 받아 런타임의 그룹을 SIGKILL 한다. 런타임이 끝나면 앵커가 그 그룹을 SIGKILL 한다(정상 완료 포함) | D1 의 런타임은 셸의 그룹을 떠나서, 그룹만 죽이는 제공자(`aimon-sandbox`)의 타임아웃·취소가 닿지 않았다 — `TIMED_OUT`/`CANCELLED` 뒤에도 프로그램이 CPU 를 쓰며 남았다. `LocalShell` 은 트리를 훑어 죽이므로 코어 테스트가 보지 못했다. 감시자를 스레드가 아니라 프로세스로 둔 것은 GIL 때문이다 — 긴 내장 호출 하나가 같은 인터프리터의 스레드를 세운다. 정상 완료의 스윕은 동작 변경이다: 프로그램이 기다리지 않은 백그라운드 프로세스는 더는 살아남지 않는다(§13.2 의 "모든 태스크가 멈춘다" 와 같은 뜻) |
 | (본문 없음) 멈춘 뒤에 도착한 `CALL` 줄 | 실행이 멈추는 중이면(엔진이 스스로 멈춤, 실행 취소, 벽시계 만료) `CALL` 줄은 MAC·seq 를 검증만 하고 브리지에 넘기지 않으며 응답도 쓰지 않는다 | 런타임이 죽는 것은 비동기다. OpenSandbox 에서는 execd 스풀에 이미 든 줄이 멈춘 뒤에도 도착하고, 그것이 도구를 돌리면 "멈춤" 이 호스트에서 멈춤이 아니다 |
 | "`Bash` 에 매치되는 PermissionRequest·PreTool 훅이 없다"(셸 엔진 §4) | 훅 SPI 에는 도구 매처가 없다. `ToolScopedHook`(`at.aimon.core.hook.event`, `mayApplyTo(toolName)`)을 두고, 선언형 `preTool` 훅은 매처(`ToolInputPredicate.mayMatchTool`)로 답한다. 이 인터페이스를 구현하지 않은 훅은 모든 도구에 매치된다고 본다 — 매처가 없는 선언형 `permissionRequest` 훅도 그렇다 | 보수적으로 읽어야 셸 엔진이 `Bash` 를 좁히는 훅을 우회하지 않는다. 코드로 등록한 관찰 전용 훅(CLI 의 `ToolCallDisplayHook` 등)이 있어도 셸 엔진이 막히지만, CLI 는 로컬이라 셸 엔진이 돌지 않는다 |
-| `Bash` 조건의 허용 목록 | 메인 루프만 에이전트의 허용 목록을 제안 문맥에 넘긴다(`CodeOfferKeys.putEnvironmentFacts(builder, context, allowedTools)`). 허용 목록을 넘기지 않은 제안 문맥에서 `Bash` 는 제약 없음이 아니다 | 포크·슬래시 스킬 루프는 `ExecuteCode` 를 제안하지 않는다(조각 C 편차 4) |
+| `Bash` 조건의 허용 목록 | 메인 루프만 에이전트의 허용 목록을 제안 문맥에 넘긴다(`CodeOfferKeys.putEnvironmentFacts(builder, context, allowedTools)`). 허용 목록을 넘기지 않은 제안 문맥에서 `Bash` 는 제약 없음이 아니다 | 포크·슬래시 스킬 루프는 `ExecuteCode` 를 제안하지 않는다(조각 C 편차 4). **PR 2 에서 구현했다** — 포크는 자기 실효(호출자로 좁힌) 허용 목록을, 슬래시 스킬은 호출자와 교집합한 허용 목록을 넘긴다 |
 | `shell-engine-tool-scope` 의 애플리케이션 값(셸 엔진 §12.2) | 엔진이 아니라 `ExecuteCodeTool`/`ExecuteCodeToolProvider` 가 받는다(`ToolSpec.shellEngineToolScope`, 스타터 `aimon.programmatic.shell-engine-tool-scope`). 어느 엔진에 적용할지는 SPI `CodeExecutionEngine.isToolScopeBound()` 가 말한다 | `ServiceLoader` 의 엔진 팩토리는 인자가 없어 설정을 받을 수 없다. 한도(`CodeExecutionLimits`)와 같은 길이다 |
 | `unrestricted` 이면 실행마다 `ExecuteCode` span 에 `ptc.tool_scope=unrestricted`(셸 엔진 §12.2) | D1 에서는 하지 않았고 [기능 마무리](ptc-features-core.md)(PR 1)에서 구현했다 — 범위에 묶인 엔진의 실행마다 실효 값(아래 A-DV1). 시작 시 경고(`ExecuteCodeToolProvider`)는 그대로다 | D1 당시: 조각 C 편차 8 과 같았다 — 디스패처 경로에 span 이 없었다 |
-| CLI 설정 `programmatic.shellEngineToolScope`(§16) | CLI 는 셸 엔진을 조립하지 않고 그 키도 두지 않는다 | CLI 의 실행 환경은 언제나 로컬 호스트이고, 셸 엔진은 샌드박스에서만 돈다(셸 엔진 결정 1). `programmatic-engine: python` 인 에이전트는 "no python engine is assembled" 경고를 받는다 |
+| CLI 설정 `programmatic.shellEngineToolScope`(§16) | CLI 는 셸 엔진을 조립하지 않고 그 키도 두지 않는다 | CLI 의 실행 환경은 언제나 로컬 호스트이고, 셸 엔진은 샌드박스에서만 돈다(셸 엔진 결정 1). `programmatic-engine: python` 인 에이전트는 "no python engine is assembled" 경고를 받는다. **PR 2 에서 `programmatic.enablePython` 뒤에 조립하고 그 키를 두었다** — 아래 B-DV2 |
 | 오래된 `.aimon-ptc/` 항목의 정리(셸 엔진 §8) | 실행마다 런타임이 응답 디렉터리의 부모 `.aimon-ptc/` — 그것만 — 에서 `max(2 × maxWallClock, 20 분)` 보다 오래된 항목을 지운다. 부모의 이름이 `.aimon-ptc` 이고 링크가 아니며 자기 항목이 그 안에 있을 때만 돈다. `probe-*` 는 건너뛴다 | `RuntimeFileSystem` 에는 목록 연산이 없어 호스트가 아니라 샌드박스 안에서 지운다. 처음에는 탐침 명령 안의 `find` 가 고정된 20 분으로 지웠는데, 탐침은 한도를 모르므로 `maxWallClock` 이 20 분을 넘으면 살아 있는 실행을 지울 수 있었다. 나이는 이제 지우는 실행의 설정을 따른다. 설정이 다른 노드가 한 샌드박스를 나눠 쓰는 경우는 [TC-18](../../backlog/tool-contract-open-items.md) |
 | 실행이 끝나면 브리지를 `CLOSED` 로 둔 **뒤에** 엔진이 실행 디렉터리를 지운다(셸 엔진 §8, D1 의 글) | 엔진은 브리지를 닫지 않는다. 실행 자신의 응답 쓰기 관문을 닫고 이미 시작한 쓰기를 기다린 뒤(상한 5 초) 지우며, 브리지는 엔진이 돌아온 뒤 `ExecuteCode` 가 닫는다. 셸 엔진 §8 의 글을 이에 맞췄다 | 브리지는 `ExecuteCode` 가 만들고 소유한다 — 중첩 호출을 남은 벽시계만큼 기다리고 "still running" 이름을 관찰에 싣는 것(§13.2)도 그 소유자의 일이다. 지켜야 하는 불변식은 "실행 디렉터리를 지운 뒤에는 샌드박스에 아무것도 쓰지 않는다" 이고, 샌드박스에 쓰는 것은 실행의 응답 쓰기뿐이다 |
 | 위반 전에 디스패치된 호출의 "unattributed" 표시(셸 엔진 §7) | SPI `ToolCallBridge.markUnattributed()` 를 더했다. 기록(`renderPayload`)의 모든 중첩 호출에 `unattributed: true` 가 붙는다 | 기록은 브리지가 든다(조각 C 편차 6) |
@@ -769,8 +790,19 @@ PTC 기능 마무리 PR 1([설계 기록](ptc-features-core.md) — 트레이스
 | 본문 | 구현 | 이유 |
 |---|---|---|
 | `unrestricted` 이면 `ptc.tool_scope`(셸 엔진 §12.2) | **A-DV1.** 범위에 묶인 엔진의 실행마다 실효 값을 싣는다 | 상위 집합이다. `environment`·`host` 로 좁힌 실행도 trace 에서 보인다 |
-| iteration span 의 `ptc.unavailable_reason`(§12.2) | **A-DV2.** 메인 루프만. 슬래시 스킬 루프에는 ITERATION·TOOL span 이 없어 그 속성도 없다 — 그 스킬의 `ExecuteCode` 가 낸 중첩 호출은 COMMAND span 아래에 붙는다. 포크 루프는 PR 2(포크가 `ExecuteCode` 를 제안받을 때)에서 | 스킬 루프에 트레이서를 들이는 것은 이 변경의 범위 밖이다 — [TC-23](../../backlog/tool-contract-open-items.md) |
+| iteration span 의 `ptc.unavailable_reason`(§12.2) | **A-DV2.** 메인 루프만. 슬래시 스킬 루프에는 ITERATION·TOOL span 이 없어 그 속성도 없다 — 그 스킬의 `ExecuteCode` 가 낸 중첩 호출은 COMMAND span 아래에 붙는다. 포크 루프는 PR 2 에서 갖췄다(포크의 iteration span 에도 같은 속성) | 스킬 루프에 트레이서를 들이는 것은 이 변경의 범위 밖이다 — [TC-23](../../backlog/tool-contract-open-items.md) |
 | §12.1 의 요약 줄 `[ExecuteCode: …]` | **A-DV3.** `[ExecuteCode (Python): …]` — 언어를 싣는다 | §6.2 의 알림이 읽는 영속 표지다 |
 | "같은 세션의 직전 언어"(§6.2) | **A-DV4.** 세션 필드 없이 view 의 가장 새로운 읽을 수 있는 표지에서 읽는다. 읽을 수 없는 프로그램만 보이면 보수적 알림을 한 번. 첫 도구 결과에 싣고, 도구 호출이 없는 iteration 은 미룬다 | `SessionRecord` 필드는 코덱과 세 백엔드에 걸친 스키마 변경이고, `LiveSession` 필드는 노드 이동에서 사라진다. 대화가 이미 그 사실을 증명한다 |
 | 중첩 호출마다 TOOL span(§12.2) | **A-DV5.** 브리지가 디스패처 앞에서 거절한 호출도 길이 0 의 span(`ptc.refused`) | trace 가 `renderPayload` 와 같은 호출을 나열한다 |
 | `tool.path=code`(§12.2) | **A-DV6.** 직접 호출의 TOOL span 에도 `tool.path=direct` | 두 경로를 같은 속성으로 거른다 |
+
+PTC 기능 마무리 PR 2([설계 기록](ptc-features-core.md) Part B — 포크·슬래시 스킬의 `ExecuteCode`, CLI 셸 엔진 조립, 실제 모델 E2E)가
+본문과 다르게 정한 점:
+
+| 본문 | 구현 | 이유 |
+|---|---|---|
+| (본문 없음) 서브에이전트·스킬이 PTC 를 쓰는가, 부모 설정을 물려주는가 | **B-DV1.** 자기 정의가 opt-in 하고 호출자의 실효 설정이 허용할 때만: 실효 = 자기 `.narrowedBy(호출자)`(§7.2 의 표). PTC 없는 호출자는 "아무것도 없음"(닫힌 쪽). "호출자" 에는 슬래시 스킬도 든다 — 스킬 안에서 띄운 포크는 스킬의 실효 설정으로 좁혀지고, 그 값은 `ToolCallDispatcher.narrow(registry, allowedTools, programmatic)` 이 실어 나른다(호환을 깨는 SPI 변경, [단일 입구](tool-call-dispatcher.md) §6). 포크 모드 스킬은 대상 서브에이전트의 선언을 쓰고 스킬이 키를 선언했을 때만 더 좁히지만, 인라인 스킬은 키가 없으면 그 스킬이 띄우는 포크에게 "아무것도 없음" 이다. 예외 둘: 백그라운드 `Workflow` 실행은 런타임의 기본 런처(에이전트의 설정)로 돌아 그것을 띄운 스킬·포크가 아니라 에이전트로 좁혀진다 — 허용 목록의 기존 동작과 같다. 모델이 부른 `Skill` 이 인라인 스킬이면 스킬 루프가 없고 지시문이 메인 턴에 주입될 뿐이라, 그 턴에서 띄운 포크의 천장은 에이전트다 | 본문이 정하지 않았고 TASK 가 "에이전트는 좁히기만" 과 맞는 가장 좁은 규칙을 요구했다. 그대로 물려주면 정의가 opt-in 하지 않은 도구가 생기고, 자기 정의만 보면 PTC 를 켜지 않은 운영자 아래에서 코드가 돈다. 스킬 루프가 호출마다 에이전트의 설정을 실어 보내면 PTC 없는 스킬이 포크에게 에이전트의 PTC 를 준다 — 그래서 값은 디스패처에 있고 좁히기가 그것을 나른다 |
+| CLI 셸 엔진(조각 D1 편차 "CLI 는 셸 엔진을 조립하지 않고") | **B-DV2.** `programmatic.enablePython`(기본 꺼짐) 뒤에 조립하고 `programmatic.shellEngineToolScope` 를 둔다. 엔진은 CLI 소유로, 스택 종료(`SCRIPT_ENGINES`)와 스택 생성 실패 경로 모두에서 닫힌다. 한도·범위는 조립된 엔진 전체에 적용된다 | 스택처럼 늘 켜면 로컬에서 돌 수 없는 엔진에 응답 스레드가 생긴다. CLI 의 `enableJs` 와 같은 opt-in. 조립해 두면 `programmatic-engine: python` 인 에이전트가 "엔진이 없다" 대신 "여기서는 돌 수 없다" 는 정확한 이유를 받고, 샌드박스 환경이 생겨도 조립을 다시 바꿀 필요가 없다 |
+| 실제 모델 E2E 를 `:aimon-core:llmTest` 로(TASK) | **B-DV3.** `:aimon-cli:llmTest`. 태그 없는 클래스에 `@EnabledIfSystemProperty(aimon.llmTest)` 를 달고 그 속성은 이 태스크만 넣는다 — `test`·`checkAll`·CI·릴리스 게이트 밖 | 코어 테스트 클래스패스는 LLM 클라이언트를 보지 못한다. 태그를 쓰면 `ReleaseGateMatchesCiGateTest` 가 게이트 태스크를 요구하는데, CI 에서 도는 것이 바로 피해야 할 일이다 |
+| `renderPayload` 의 키(§12.1) | `stdout`(관찰이 자르기 전의 표준 출력)과, 있으면 `returnValue` 를 더했다 | E2E 가 "프로그램이 출력한 것만 돌아왔다" 를 기계적으로 확인한다. 모델에게는 보내지 않는다 |
+| `ExecuteCode` 설명 지침(§6) | Python: 함수는 이미 정의된 전역이라 import 하지 않는다, 프로그램은 이미 이벤트 루프 안에서 돈다(최상위 `await`, `asyncio.run()` 금지), JSON 문자열은 `json.loads` 로 직접 파싱한다. 목록 머리말 "Functions (already defined; do not import them):". JavaScript: JSON 문자열은 `JSON.parse` 로 직접 파싱한다 | 실제 모델 E2E 에서 두 모델이 `from functions import …`·`asyncio.run(...)` 으로 시작했고, `gpt-4o-mini` 는 JSON 문자열 결과를 객체로 읽었다. §18 의 "실패 유형 → 렌더링을 바꾼다" 그대로이며, 같은 하네스로 전후를 쟀다([TC-27](../../backlog/tool-contract-open-items.md)) |

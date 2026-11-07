@@ -37,6 +37,7 @@ import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.tools.CallerAllowedTools;
+import at.aimon.core.tools.CallerProgrammatic;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
 import at.aimon.core.tools.ForkAccess;
 import at.aimon.core.tools.HookRegistryAccess;
@@ -275,7 +276,7 @@ public final class GraalJsWorkflowTool extends AbstractTool {
                 .hookRegistry(HookRegistryAccess.of(context).orElse(hookRegistry)).defaultModel(defaultModel)
                 .executionAttributes(executionAttributes).parentLlmCallMetadata(parentMetadata)
                 .cancellationSignal(parentSignal).principal(principal).toolContextEnrichers(toolContextEnrichers)
-                .callerAllowedTools(CallerAllowedTools.of(context))
+                .callerAllowedTools(CallerAllowedTools.of(context)).callerProgrammatic(CallerProgrammatic.of(context))
                 .invokingSessionId(InvokingSessionAccess.idToPropagate(context).orElse(null))
                 // The fork resolves its own environment from the spawning runtime's provider, with this execution's
                 // environment as its parent (execution-environment design §8).

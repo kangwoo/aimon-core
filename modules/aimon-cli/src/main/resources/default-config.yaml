@@ -246,6 +246,10 @@ cli:
 # An agent opens tools to code in its own AGENT.md (`programmatic-tools`); this section only assembles the engine.
 programmatic:
   enableJs: false  # Opt-in: assemble the GraalJS engine (module aimon-graaljs). No hard guest-heap limit — see the design
+  # Opt-in: assemble the Python shell engine. It runs only in a sandboxed execution environment, so on the CLI's
+  # local host it is inert and an agent asking for `programmatic-engine: python` is told why it cannot run.
+  enablePython: false
+#  shellEngineToolScope: environment  # how far the shell engine's callable tools may reach: environment|host|unrestricted
 #  limits:
 #    wallClockSeconds: 120
 #    maxWallClockSeconds: 600

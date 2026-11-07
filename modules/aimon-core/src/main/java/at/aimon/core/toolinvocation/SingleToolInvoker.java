@@ -185,10 +185,12 @@ public final class SingleToolInvoker {
             // Enrich tool context with current toolUseId, the allow-list this invocation is held to, and, when
             // applicable, the per-tool terminator registrar. The allow-list is published from the same value handed
             // to the execution manager below, so a tool that spawns work (Task, the workflow tools, a skill fork)
-            // can bound that work by what its own caller may do without a second, drifting source for it.
+            // can bound that work by what its own caller may do without a second, drifting source for it. The
+            // programmatic settings travel the same way: the loop's own, so a fork it spawns is ceilinged by them.
             final ToolContext.Builder enrichedBuilder = ToolContext.builder().putAll(spec.getToolContext().getContext())
                     .put(ToolContextKeys.CURRENT_TOOL_USE_ID_KEY, toolUse.getId())
-                    .put(ToolContextKeys.CALLER_ALLOWED_TOOLS, spec.getAllowedTools());
+                    .put(ToolContextKeys.CALLER_ALLOWED_TOOLS, spec.getAllowedTools())
+                    .put(ToolContextKeys.CALLER_PROGRAMMATIC, spec.getProgrammatic());
             if (registrar != null) {
                 enrichedBuilder.put(InterruptToolKeys.TERMINATOR_REGISTRAR, registrar);
             }

@@ -259,7 +259,10 @@ fi
 # machine with no browser cache -- 280 MB, 94s. It left with aimon-browser-playwright when that module moved to
 # its own repository, and so did the demand: this script now asks for a Docker daemon and nothing else.
 #
-# No tier is opt-in any more. Every @Tag in this build is a CI step and a gate task.
+# No tagged tier is opt-in any more. Every @Tag in this build is a CI step and a gate task. Two untagged tiers
+# stay out on purpose, because each bills a provider: the provider-key live classes (they skip without a key, and
+# this script refuses to start while one is set) and :aimon-cli:llmTest, the real-model ExecuteCode E2E, which only
+# that task's system property enables.
 log "Quality gate: checkAll + integrationTest + packagingTest + coverage floor"
 $GRADLE checkAll integrationTest packagingTest jacocoTestCoverageVerification
 ok "Quality gate passed"

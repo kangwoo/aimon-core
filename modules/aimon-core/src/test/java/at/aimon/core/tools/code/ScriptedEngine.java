@@ -17,8 +17,11 @@ import at.aimon.core.programmatic.OfferFacts;
 import at.aimon.core.programmatic.ToolCallBridge;
 import at.aimon.core.programmatic.ToolGrade;
 
-/** A test engine whose "program" is a Java function over the bridge. */
-final class ScriptedEngine implements CodeExecutionEngine {
+/**
+ * A test engine whose "program" is a Java function over the bridge. Public so tests in other packages (the loop e2e
+ * tests under {@code agent.impl.orca}) can assemble an {@code ExecuteCodeTool} over it.
+ */
+public final class ScriptedEngine implements CodeExecutionEngine {
 
     static final ToolGrade DELEGATING = ToolGrade.builder().sideEffectLevel(SideEffectLevel.READ_ONLY)
             .destructiveBehavior(DestructiveBehavior.NON_DESTRUCTIVE).dataReach(DataReach.ENVIRONMENT)
@@ -36,7 +39,7 @@ final class ScriptedEngine implements CodeExecutionEngine {
         this.grade = grade;
     }
 
-    static ScriptedEngine javascript() {
+    public static ScriptedEngine javascript() {
         return new ScriptedEngine(JAVASCRIPT, DELEGATING);
     }
 

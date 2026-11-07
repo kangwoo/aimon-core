@@ -5,6 +5,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.base.DefinitionAttributes;
 
@@ -43,6 +44,7 @@ public final class SubagentMetadata {
     private final int maxIterations; // Maximum ReAct loop iterations
     private final Map<String, String> attributes; // Free-form, flattened; carried, never read by the framework
     private final boolean hidden; // Not offered to the model, and refused if the model names it
+    private final ProgrammaticToolSettings programmatic; // What the subagent opens to model-written code
 
     private SubagentMetadata(Builder builder) {
         this.description = builder.description;
@@ -52,6 +54,7 @@ public final class SubagentMetadata {
         this.maxIterations = builder.maxIterations;
         this.attributes = DefinitionAttributes.copyOf(builder.attributes);
         this.hidden = builder.hidden;
+        this.programmatic = Objects.requireNonNull(builder.programmatic, "programmatic cannot be null");
     }
 
     public String getDescription() {
@@ -115,6 +118,22 @@ public final class SubagentMetadata {
     }
 
     /**
+     * Returns what this subagent opens to model-written code: its {@code programmatic-tools},
+     * {@code programmatic-only}, {@code programmatic-engine} and {@code shell-engine-tool-scope} frontmatter keys.
+     *
+     * <p>
+     * As resolved from a definition this is the subagent's own opt-in. Once a fork is launched, the definition it runs
+     * with carries the effective value instead — this one narrowed by the caller's ({@link
+     * ProgrammaticToolSettings#narrowedBy(ProgrammaticToolSettings)}), so a fork offers {@code ExecuteCode} only when
+     * both its definition and its caller allow it.
+     *
+     * @return the settings (never null); {@link ProgrammaticToolSettings#none()} unless set
+     */
+    public ProgrammaticToolSettings getProgrammatic() {
+        return programmatic;
+    }
+
+    /**
      * Checks if this metadata has tools restrictions.
      *
      * @return true if there are tools defined, false otherwise
@@ -134,19 +153,22 @@ public final class SubagentMetadata {
         final SubagentMetadata that = (SubagentMetadata) o;
         return maxIterations == that.maxIterations && Objects.equals(description, that.description)
                 && Objects.equals(whenToUse, that.whenToUse) && Objects.equals(allowedTools, that.allowedTools)
-                && Objects.equals(model, that.model) && attributes.equals(that.attributes) && hidden == that.hidden;
+                && Objects.equals(model, that.model) && attributes.equals(that.attributes) && hidden == that.hidden
+                && programmatic.equals(that.programmatic);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(description, whenToUse, allowedTools, model, maxIterations, attributes, hidden);
+        return Objects.hash(description, whenToUse, allowedTools, model, maxIterations, attributes, hidden,
+                programmatic);
     }
 
     @Override
     public String toString() {
         return "SubagentMetadata{" + "description='" + description + '\'' + ", whenToUse='" + whenToUse + '\''
                 + ", allowedTools=" + allowedTools + ", model='" + model + '\'' + ", maxIterations=" + maxIterations
-                + (attributes.isEmpty() ? "" : ", attributes=" + attributes) + (hidden ? ", hidden=true" : "") + '}';
+                + (attributes.isEmpty() ? "" : ", attributes=" + attributes) + (hidden ? ", hidden=true" : "")
+                + (programmatic.isEnabled() ? ", programmatic=" + programmatic : "") + '}';
     }
 
     /** Builder for SubagentMetadata. */
@@ -158,6 +180,7 @@ public final class SubagentMetadata {
         private int maxIterations = DEFAULT_MAX_ITERATIONS;
         private Map<String, String> attributes = Map.of();
         private boolean hidden;
+        private ProgrammaticToolSettings programmatic = ProgrammaticToolSettings.none();
 
         /** description을 설정한다. */
         public Builder description(String description) {
@@ -229,6 +252,18 @@ public final class SubagentMetadata {
          */
         public Builder hidden(boolean hidden) {
             this.hidden = hidden;
+            return this;
+        }
+
+        /**
+         * Sets what the subagent opens to model-written code (see {@link SubagentMetadata#getProgrammatic()}).
+         *
+         * @param programmatic
+         *            the settings (must not be null); {@link ProgrammaticToolSettings#none()} by default
+         * @return This builder instance
+         */
+        public Builder programmatic(ProgrammaticToolSettings programmatic) {
+            this.programmatic = Objects.requireNonNull(programmatic, "programmatic cannot be null");
             return this;
         }
 

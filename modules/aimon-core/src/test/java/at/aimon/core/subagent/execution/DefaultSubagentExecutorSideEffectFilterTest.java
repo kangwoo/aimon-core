@@ -14,6 +14,8 @@ import at.aimon.core.agent.interrupt.NoopCancellationSignal;
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.agent.tool.ProgrammaticEngineChoice;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
@@ -37,6 +39,7 @@ import at.aimon.core.subagent.SubagentExecutionPolicy;
 import at.aimon.core.subagent.SubagentMetadata;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.code.ExecuteCodeTool;
+import at.aimon.core.tools.code.ScriptedEngine;
 
 /**
  * Locks in the fork half of the {@link SideEffectLevel} pair: a fork's definition list is filtered by the ceiling of
@@ -243,5 +246,95 @@ class DefaultSubagentExecutorSideEffectFilterTest {
             assertThat(quota.getLimit()).contains(7);
             assertThat(quota.used()).isEqualTo(1);
         });
+    }
+
+    /** Records the full definitions offered on the first {@code sendMessage} and answers with plain text. */
+    private static List<ToolDefinition> firstOfferToFork(ProgrammaticToolSettings forkProgrammatic, Tool... tools) {
+        final DefaultToolRegistry registry = new DefaultToolRegistry();
+        for (Tool tool : tools) {
+            registry.register(tool);
+        }
+        final List<List<ToolDefinition>> offers = new CopyOnWriteArrayList<>();
+        final LlmClient client = new LlmClient() {
+            @Override
+            public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> defs,
+                    LlmModel modelConfig) {
+                offers.add(List.copyOf(defs));
+                return LlmResponse.text("done");
+            }
+
+            @Override
+            public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> defs,
+                    LlmModel modelConfig, LlmCallMetadata metadata) {
+                return sendMessage(systemPrompt, messages, defs, modelConfig);
+            }
+
+            @Override
+            public String getProviderName() {
+                return "OfferCapturing";
+            }
+        };
+        final DefaultSubagentExecutor executor = new DefaultSubagentExecutor(client, new DefaultToolExecutionManager(),
+                new DefaultHookExecutionManager());
+        // The fork carries its effective settings: the execution manager narrows them by the caller's before this.
+        final SubagentExecutionContext context = SubagentExecutionContext.builder()
+                .agentRuntimeId(AgentRuntimeId.of("agent:ptc-fork"))
+                .subagent(Subagent.of("reader",
+                        SubagentMetadata.builder().description("d").maxIterations(5).programmatic(forkProgrammatic)
+                                .build(),
+                        SubagentContent.of("you are reader")))
+                .defaultModel(LlmModel.builder().name("gpt-4").build()).toolRegistry(registry)
+                .hookRegistry(new DefaultHookRegistry()).parentCancellationSignal(NoopCancellationSignal.INSTANCE)
+                .build();
+
+        final SubagentExecutionResult result = executor.execute(context,
+                SubagentExecutionRequest.builder().taskId("task-1").goal("go").build());
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(offers).isNotEmpty();
+        return offers.get(0);
+    }
+
+    private static List<String> names(List<ToolDefinition> definitions) {
+        return definitions.stream().map(ToolDefinition::getName).toList();
+    }
+
+    /** Explicit engine, since this fork has no execution environment to declare host or sandbox. */
+    private static ProgrammaticToolSettings jsSettings(String... tools) {
+        return ProgrammaticToolSettings.builder().tools(List.of(tools)).engine(ProgrammaticEngineChoice.JAVASCRIPT)
+                .build();
+    }
+
+    private static ExecuteCodeTool executeCode() {
+        return new ExecuteCodeTool(List.of(ScriptedEngine.javascript()), CodeExecutionLimits.defaults());
+    }
+
+    @Test
+    @DisplayName("ExecuteCode is offered to a fork whose effective programmatic settings open tools to code")
+    void executeCodeOfferedWhenOwnAndCallerAllow() {
+        final List<ToolDefinition> offer = firstOfferToFork(jsSettings("Reader"),
+                tool("Reader", SideEffectLevel.READ_ONLY), executeCode());
+
+        assertThat(names(offer)).contains("Reader", ExecuteCodeTool.TOOL_NAME);
+    }
+
+    @Test
+    @DisplayName("ExecuteCode is not offered to a fork whose definition does not opt in")
+    void notOfferedWithoutOwnOptIn() {
+        final List<ToolDefinition> offer = firstOfferToFork(ProgrammaticToolSettings.none(),
+                tool("Reader", SideEffectLevel.READ_ONLY), executeCode());
+
+        assertThat(names(offer)).containsExactly("Reader");
+    }
+
+    @Test
+    @DisplayName("the fork's ExecuteCode can call exactly the tools its effective settings name")
+    void callableSetIsWhatTheSettingsSay() {
+        final List<ToolDefinition> offer = firstOfferToFork(jsSettings("Reader"),
+                tool("Reader", SideEffectLevel.READ_ONLY), tool("Grepper", SideEffectLevel.READ_ONLY), executeCode());
+
+        final ToolDefinition executeCode = offer.stream()
+                .filter(definition -> definition.getName().equals(ExecuteCodeTool.TOOL_NAME)).findFirst().orElseThrow();
+        assertThat(executeCode.getDescription()).contains("tools.Reader(").doesNotContain("tools.Grepper(");
     }
 }
