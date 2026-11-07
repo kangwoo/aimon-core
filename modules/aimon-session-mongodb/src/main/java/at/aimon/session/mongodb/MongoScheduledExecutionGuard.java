@@ -52,23 +52,17 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  * <p>
  * One {@code findOneAndUpdate} with upsert, whose filter is only the {@code _id}. A fire is granted when the lease has
  * expired, its slot is no further ahead of the server than {@code maxSkew}, and {@code lastSlot} is before its slot.
- * All
- * three are judged by {@code $cond} inside the update pipeline: MongoDB refuses {@code $expr} / {@code $$NOW} in an
+ * All three are judged by {@code $cond} inside the update pipeline: MongoDB refuses {@code $expr} / {@code $$NOW} in an
  * upsert's <em>filter</em>, which is why {@link MongoSessionLeaseStore} takes two steps, but not in its pipeline. That
- * is
- * a measured fact, on 4.2, 4.4 and 6.0. So there is one round trip whether the document exists or not, and every time
- * is
- * the server's {@code $$NOW}: no application clock stamps anything, and the first fire of a task meets the same rules
- * as
- * every later one.
+ * is a measured fact, on 4.2, 4.4 and 6.0. So there is one round trip whether the document exists or not, and every
+ * time is the server's {@code $$NOW}: no application clock stamps anything, and the first fire of a task meets the same
+ * rules as every later one.
  *
  * <p>
  * The update returns the document as it left it, and the fire was granted if that names this lease as the holder. A
  * refused fire changes nothing, with one harmless exception: a first fire refused for a slot too far ahead leaves a
- * bare
- * {@code {_id}}, which the next fire treats as no lease and no slot. Two first fires can race on the upsert's insert;
- * the
- * loser gets a duplicate key and is retried once, when the document exists.
+ * bare {@code {_id}}, which the next fire treats as no lease and no slot. Two first fires can race on the upsert's
+ * insert; the loser gets a duplicate key and is retried once, when the document exists.
  *
  * <p>
  * Slots are compared by size, not by equality: a misfire older than an occurrence that already began is refused as
@@ -80,25 +74,21 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  * <p>
  * Slots come from the nodes' own clocks, and {@code lastSlot} only ever moves forward, so one slot from a node whose
  * clock ran a day fast would refuse every node's fires for a day, even once that clock was fixed. So a slot further
- * ahead
- * of the server than {@code maxSkew} ({@link #DEFAULT_MAX_SKEW} unless configured) is refused and recorded nowhere.
- * That node's fires of the task are all refused and a WARN names the cause. What happens to the occurrence depends on
- * the scheduler. With per-node triggers, the other nodes' fires still run it. With a cluster-wide scheduler, one
- * occurrence fires on one node only, and that can make a fast clock costly: Quartz acquires a trigger and waits for its
- * fire time by the local clock, so the fast node can take occurrence after occurrence ahead of the others. Each one it
- * takes is lost, with the WARN all that is left of it, and that can go on until the clock is fixed. Treat this WARN as
- * an alert. The manager's own log says only that the guard refused, as it does for a normal
- * duplicate. Finding the cause takes one more read, on the refusal path only.
+ * ahead of the server than {@code maxSkew} ({@link #DEFAULT_MAX_SKEW} unless configured) is refused and recorded
+ * nowhere. That node's fires of the task are all refused and a WARN names the cause. What happens to the occurrence
+ * depends on the scheduler. With per-node triggers, the other nodes' fires still run it. With a cluster-wide scheduler,
+ * one occurrence fires on one node only, and that can make a fast clock costly: Quartz acquires a trigger and waits for
+ * its fire time by the local clock, so the fast node can take occurrence after occurrence ahead of the others. Each one
+ * it takes is lost, with the WARN all that is left of it, and that can go on until the clock is fixed. Treat this WARN
+ * as an alert. The manager's own log says only that the guard refused, as it does for a normal duplicate. Finding the
+ * cause takes one more read, on the refusal path only.
  *
  * <p>
  * A document that already holds a {@code lastSlot} past the bound is <b>not repaired</b>. Under this check nothing
- * writes
- * one, so it means a hand edit, a lowered {@code maxSkew}, or a server clock that moved back. Overwriting it could run
- * an
- * occurrence twice: that value replaced the real last slot, so nothing still knows whether the fire in hand already
- * ran.
- * Each refusal logs a WARN naming the slot instead, and fires stay refused until the clock reaches it or an operator
- * who has weighed that risk deletes the document.
+ * writes one, so it means a hand edit, a lowered {@code maxSkew}, or a server clock that moved back. Overwriting it
+ * could run an occurrence twice: that value replaced the real last slot, so nothing still knows whether the fire in
+ * hand already ran. Each refusal logs a WARN naming the slot instead, and fires stay refused until the clock reaches it
+ * or an operator who has weighed that risk deletes the document.
  *
  * <p>
  * A fire with no {@link ScheduledFire#getSlot() slot}, and {@link #tryBegin(ScheduledTaskId)}, have no occurrence to
@@ -109,14 +99,12 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  *
  * <p>
  * The slot is recorded when the run <em>begins</em>. If the node then dies, that occurrence is not run again by any
- * node:
- * its work may be partly done, or not started at all. This is deliberate. A routine may write, and repeating an unknown
- * amount of it is worse than missing one occurrence, which the next one usually covers. The same goes for an outage:
- * {@code tryBegin} throws, and {@code ScheduledTaskManager} skips that fire rather than run it unguarded. An error from
- * Mongo arrives as {@link SchedulingException}; a {@code MongoClient} already closed throws its own
+ * node: its work may be partly done, or not started at all. This is deliberate. A routine may write, and repeating an
+ * unknown amount of it is worse than missing one occurrence, which the next one usually covers. The same goes for an
+ * outage: {@code tryBegin} throws, and {@code ScheduledTaskManager} skips that fire rather than run it unguarded. An
+ * error from Mongo arrives as {@link SchedulingException}; a {@code MongoClient} already closed throws its own
  * {@link IllegalStateException}, which is not wrapped. If the write landed and only its acknowledgement was lost, the
- * slot is spent and
- * the lease expires on its own, since no heartbeat is running.
+ * slot is spent and the lease expires on its own, since no heartbeat is running.
  *
  * <h2>Lease and heartbeat</h2>
  *
@@ -124,11 +112,9 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  * A run has no bound on its length and {@link ExecutionLease} has no way to report progress, so the guard renews the
  * lease itself: every granted lease has a daemon thread that restamps {@code leaseExpiresAt} every third of the lease
  * duration, and that ends when the lease is closed. A long fixed lease would be simpler, and a dead node would then
- * hold
- * its tasks for that long; with the heartbeat a dead node holds them for one lease duration at most. One thread per
- * lease
- * rather than one shared by the guard because a renewal can block on a sick server for as long as the driver's timeouts
- * allow, and one task's renewal must not make another's late.
+ * hold its tasks for that long; with the heartbeat a dead node holds them for one lease duration at most. One thread
+ * per lease rather than one shared by the guard because a renewal can block on a sick server for as long as the
+ * driver's timeouts allow, and one task's renewal must not make another's late.
  *
  * <p>
  * A failed renewal is logged and retried at the next beat, which allows two misses before the lease lapses. A renewal
@@ -141,9 +127,8 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  *
  * <p>
  * Closing a lease clears {@code holderId} and stamps {@code leaseExpiresAt} with {@code $$NOW}, only while this lease
- * is
- * still the holder, so a lease that lapsed cannot release its successor's. The holder id is unique per lease for that
- * reason: a node's id alone would let a node's old lease release its own new one. Clearing it also means a renewal
+ * is still the holder, so a lease that lapsed cannot release its successor's. The holder id is unique per lease for
+ * that reason: a node's id alone would let a node's old lease release its own new one. Clearing it also means a renewal
  * already on the wire when the lease closes matches nothing and cannot extend a released lease. A failed release is
  * logged and never reaches the caller; the lease expires on its own.
  *
@@ -157,31 +142,24 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  *
  * <p>
  * Application-scoped, like the {@code SchedulingEngine} it is given to, and owned by whoever built it: neither the
- * engine
- * nor an agent runtime closes it. Close the engine first, then this, then the {@code MongoClient}. {@link #close()}
- * stops
- * the heartbeats of the leases still open and refuses further fires; it does not release those leases, because their
- * runs may still be going, so they expire by themselves. A host that never calls it leaks nothing past the last lease,
- * as
- * each heartbeat ends with its lease and is a daemon. The {@link MongoDatabase} belongs to the caller.
+ * engine nor an agent runtime closes it. Close the engine first, then this, then the {@code MongoClient}.
+ * {@link #close()} stops the heartbeats of the leases still open and refuses further fires; it does not release those
+ * leases, because their runs may still be going, so they expire by themselves. A host that never calls it leaks nothing
+ * past the last lease, as each heartbeat ends with its lease and is a daemon. The {@link MongoDatabase} belongs to the
+ * caller.
  *
  * <h2>Prerequisites</h2>
  *
  * <p>
  * MongoDB 4.2 or later, for pipeline updates and {@code $$NOW}. Use {@code w=majority} on the URI: an acknowledged
- * write
- * lost in a failover forgets the slot it recorded. Set {@code socketTimeoutMS} well below the lease: the driver's
- * default is
- * no timeout, and against a server paused mid-call an {@code updateOne} was measured still blocked after 60 seconds, so
- * a
- * renewal would not fail and retry while the lease lapsed, and {@code tryBegin} or a release would hold its caller.
- * With
- * 2 seconds the same call failed after 6, as the driver retries a retryable write, so allow for several times the
- * value.
- * It applies to the whole client; if other work on that client cannot take it, give the guard its own. The collection
- * comes from {@code db/mongodb/init.js}, though unlike
- * the capped bus channels nothing goes wrong if the first write creates it. Share the collection with one application
- * only; the task id is all a document knows.
+ * write lost in a failover forgets the slot it recorded. Set {@code socketTimeoutMS} well below the lease: the driver's
+ * default is no timeout, and against a server paused mid-call an {@code updateOne} was measured still blocked after 60
+ * seconds, so a renewal would not fail and retry while the lease lapsed, and {@code tryBegin} or a release would hold
+ * its caller. With 2 seconds the same call failed after 6, as the driver retries a retryable write, so allow for
+ * several times the value. It applies to the whole client; if other work on that client cannot take it, give the guard
+ * its own. The collection comes from {@code db/mongodb/init.js}, though unlike the capped bus channels nothing goes
+ * wrong if the first write creates it. Share the collection with one application only; the task id is all a document
+ * knows.
  *
  * <p>
  * On per-node schedulers, every node must compute the same slot, so give each task a {@code ScheduledTask.timezone} or
@@ -245,16 +223,12 @@ public final class MongoScheduledExecutionGuard implements ScheduledExecutionGua
      *            this node's id, used to name lease holders for operators (must not be null)
      * @param lease
      *            how long a lease lasts without a renewal (at least 1ms, at most 100 years). Renewed every third of
-     *            this, so keep
-     *            it
-     *            well above how long a primary election takes, or a failover lets the next occurrence overlap the run
+     *            this, so keep it well above how long a primary election takes, or a failover lets the next occurrence
+     *            overlap the run
      * @param maxSkew
      *            how far ahead of the server a fire's slot may be (at least 1ms, at most 100 years). Refused beyond it.
-     *            Slots sit
-     *            on a
-     *            cron grid point at or before their node's clock, so this bounds how fast a clock may run; a value
-     *            below
-     *            the clock error between nodes and server refuses good fires
+     *            Slots sit on a cron grid point at or before their node's clock, so this bounds how fast a clock may
+     *            run; a value below the clock error between nodes and server refuses good fires
      */
     public MongoScheduledExecutionGuard(MongoDatabase database, String collectionName, String nodeId, Duration lease,
             Duration maxSkew) {

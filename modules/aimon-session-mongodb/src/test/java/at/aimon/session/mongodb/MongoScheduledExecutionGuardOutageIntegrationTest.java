@@ -178,9 +178,8 @@ class MongoScheduledExecutionGuardOutageIntegrationTest {
 
     /**
      * A healthy client's pool has idle connections, so a write in an outage goes out on an open socket and can land
-     * when
-     * the server returns. With an empty pool it would fail in the handshake and never leave, which is not the usual
-     * case.
+     * when the server returns. With an empty pool it would fail in the handshake and never leave, which is not the
+     * usual case.
      */
     private void warmConnectionPool() {
         guard.tryBegin(ScheduledTaskId.generate()).orElseThrow().close();

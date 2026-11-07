@@ -33,9 +33,9 @@ import at.aimon.session.mongodb.internal.ScheduledTaskDocumentCodec;
  * <p>
  * One document per task in {@code scheduled_tasks}, keyed by the task id. {@link #save} is an upsert;
  * {@link #updateIfPresent} is a single {@code replaceOne} without upsert, which is the atomic "replace only if it is
- * still stored" the SPI demands — the server matches and writes in one operation, so a concurrent
- * {@link #deleteById} either lands before it (nothing matches, nothing is written) or after it (the replaced document
- * is deleted), and never between.
+ * still stored" the SPI demands — the server matches and writes in one operation, so a concurrent {@link #deleteById}
+ * either lands before it (nothing matches, nothing is written) or after it (the replaced document is deleted), and
+ * never between.
  *
  * <h2>What this is half of</h2>
  *

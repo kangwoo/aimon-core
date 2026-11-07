@@ -44,10 +44,10 @@ import at.aimon.session.mongodb.internal.SessionSignalCodec;
  * <p>
  * Publishes signals as documents inserted into the capped {@code conversation_signals} collection: {@link #publish}
  * with one {@code insertOne}, {@link #publishAll} with one ordered {@code insertMany} for the whole list, which is what
- * keeps a turn's event stream from costing a round trip per text delta. A single
- * background watcher thread per bus instance opens one change-stream cursor with a static
- * {@code $match: { operationType: "insert" }} pipeline; the dispatcher routes incoming inserts to subscribers by
- * looking up the {@code sessionId} field in an in-memory subscriber map.
+ * keeps a turn's event stream from costing a round trip per text delta. A single background watcher thread per bus
+ * instance opens one change-stream cursor with a static {@code $match: { operationType: "insert" }} pipeline; the
+ * dispatcher routes incoming inserts to subscribers by looking up the {@code sessionId} field in an in-memory
+ * subscriber map.
  *
  * <p>
  * <strong>Implementation note (deviation from design §4.2 "Multiplexing"):</strong> single persistent cursor with

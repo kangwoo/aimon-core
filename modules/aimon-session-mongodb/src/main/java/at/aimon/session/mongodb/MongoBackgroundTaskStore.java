@@ -46,10 +46,8 @@ import at.aimon.session.mongodb.internal.DocumentKeys;
  *
  * <p>
  * The runtime never creates the collection or its indexes — operators apply {@code db/mongodb/init.js} once per
- * cluster.
- * If the indexes are missing, {@link #list(TaskQuery)} still works but degrades to a collection scan. All backend
- * errors
- * surface as {@link IllegalStateException}; the Mongo SDK exception never crosses the module boundary.
+ * cluster. If the indexes are missing, {@link #list(TaskQuery)} still works but degrades to a collection scan. All
+ * backend errors surface as {@link IllegalStateException}; the Mongo SDK exception never crosses the module boundary.
  */
 public final class MongoBackgroundTaskStore implements BackgroundTaskStore {
 
@@ -162,8 +160,7 @@ public final class MongoBackgroundTaskStore implements BackgroundTaskStore {
 
     /**
      * Applies a {@code $set} to the task only while it is non-terminal, returning the updated snapshot or empty when
-     * the
-     * task is unknown or already terminal.
+     * the task is unknown or already terminal.
      */
     private Optional<BackgroundTask> applyGuardedUpdate(String taskId, Document set) {
         final Bson filter = Filters.and(Filters.eq(DocumentKeys.F_ID, taskId),
