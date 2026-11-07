@@ -44,6 +44,9 @@ import at.aimon.core.llm.ToolUse;
 import at.aimon.core.programmatic.CodeExecutionLimits;
 import at.aimon.core.programmatic.ToolCallBridge;
 import at.aimon.core.tools.ToolContextKeys;
+import at.aimon.core.tools.ToolSpans;
+import at.aimon.core.tracing.TracePayloadPolicy;
+import at.aimon.core.tracing.Tracer;
 
 /**
  * The bridge of one {@code ExecuteCode} call ({@code docs/design/tool/programmatic-tool-calling.md} §8, §9, §13): the
@@ -63,6 +66,13 @@ import at.aimon.core.tools.ToolContextKeys;
  * than handed to the program inside a result.
  *
  * <p>
+ * When the run is traced ({@link ToolContextKeys#TRACER}), every call the program asks for gets a {@code TOOL} span
+ * under the {@code ExecuteCode} call's own (§12.2): one around the dispatch, closed on the bridge's thread whatever the
+ * bridge's state, so a result that arrives after {@code CLOSED} is still recorded there (§13.2); and a zero-length one,
+ * marked {@code ptc.refused}, for a call refused before the dispatcher. Nested spans carry the outcome's summary only,
+ * never the result's content: that is data the program filters, often bulk.
+ *
+ * <p>
  * Thread-safe. One per {@code ExecuteCode} call; {@link #close(Duration)} once.
  */
 final class DefaultToolCallBridge implements ToolCallBridge {
@@ -78,6 +88,7 @@ final class DefaultToolCallBridge implements ToolCallBridge {
     private final Map<String, ToolDescriptor> callable;
     private final CodeExecutionLimits limits;
     private final ToolCallQuota quota;
+    private final CodeSpanAttributes.Nested spans;
 
     private final DefaultInterruptCoordinator child = new DefaultInterruptCoordinator();
     private final CancellationSignal.Registration parentRegistration;
@@ -110,6 +121,7 @@ final class DefaultToolCallBridge implements ToolCallBridge {
         this.callable = Map.copyOf(byName);
         this.limits = Objects.requireNonNull(limits, "limits cannot be null");
         this.quota = parentContext.get(ToolContextKeys.TOOL_CALL_QUOTA).orElse(null);
+        this.spans = CodeSpanAttributes.nested(parentContext, parentToolUseId, language);
         this.parentRegistration = parentSignal == null
                 ? CancellationSignal.Registration.NONE
                 : parentSignal.onCancel(() -> child.requestInterrupt(InterruptReason.PARENT_CANCELLED));
@@ -224,14 +236,31 @@ final class DefaultToolCallBridge implements ToolCallBridge {
     }
 
     private ToolDispatchResult dispatch(String toolUseId, String toolName, Map<String, Object> input) {
-        if (child.getSignal().isCancelled()) {
-            return error(toolUseId, "Tool call cancelled before it ran");
-        }
+        final Tracer.Span span = spans.open(toolUseId, toolName, input);
         final ToolContext context = ToolContext.builder().putAll(parentContext.getContext())
                 .put(ToolContextKeys.CURRENT_TOOL_USE_ID_KEY, toolUseId)
                 .put(InterruptToolKeys.CANCELLATION_SIGNAL, child.getSignal()).build();
-        return dispatcher.dispatch(ToolUse.of(toolUseId, toolName, input),
-                ToolCallOrigin.code(parentToolUseId, language), context);
+        try {
+            final ToolDispatchResult result = child.getSignal().isCancelled()
+                    ? error(toolUseId, "Tool call cancelled before it ran")
+                    // Rotated under the call's span, so what the tool starts (a fork) nests under it.
+                    : dispatcher.dispatch(ToolUse.of(toolUseId, toolName, input),
+                            ToolCallOrigin.code(parentToolUseId, language),
+                            span == null ? context : ToolSpans.contextUnder(span, context));
+            if (span != null) {
+                ToolSpans.recordOutcome(span, result.isError(), result.getText(), TracePayloadPolicy.summaryOnly());
+            }
+            return result;
+        } catch (RuntimeException | Error e) {
+            if (span != null) {
+                ToolSpans.recordFailure(span, e, context);
+            }
+            throw e;
+        } finally {
+            if (span != null) {
+                span.close();
+            }
+        }
     }
 
     /**
@@ -306,6 +335,7 @@ final class DefaultToolCallBridge implements ToolCallBridge {
             String kind, String message) {
         final ToolDispatchResult refused = error(toolUseId, message);
         record(new NestedToolCall(toolUseId, toolName, summarize(input), message.length(), true, kind, 0));
+        spans.refused(toolUseId, toolName, input, kind, message);
         return CompletableFuture.completedFuture(refused);
     }
 

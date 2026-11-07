@@ -16,6 +16,11 @@ import at.aimon.core.programmatic.CodeExecutionStatus;
  * hook feedback, logs — and a one-line summary of the calls.
  *
  * <p>
+ * The summary is the last line of every observation, success or error, and names the program's language
+ * ({@code [ExecuteCode (Python): …]}): it is the persisted marker {@link ExecuteCodeLanguageNotice} reads to tell
+ * whether the conversation's earlier programs were in another language (§6.2).
+ *
+ * <p>
  * Stateless.
  */
 final class ExecuteCodeObservation {
@@ -28,8 +33,11 @@ final class ExecuteCodeObservation {
     }
 
     /** The text of a completed program. */
-    static String success(CodeExecutionOutcome outcome, List<NestedToolCall> calls, List<String> notices,
-            List<String> hookFeedback, List<String> stillRunning, Duration elapsed, CodeExecutionLimits limits) {
+    // Every argument is a distinct part of the observation; bundling them would only move the list.
+    @SuppressWarnings("checkstyle:ParameterNumber")
+    static String success(String language, CodeExecutionOutcome outcome, List<NestedToolCall> calls,
+            List<String> notices, List<String> hookFeedback, List<String> stillRunning, Duration elapsed,
+            CodeExecutionLimits limits) {
         final int maxObservationChars = limits.getMaxObservationChars();
         final int maxLogChars = limits.getMaxLogChars();
         final StringBuilder out = new StringBuilder();
@@ -43,7 +51,7 @@ final class ExecuteCodeObservation {
             out.append(cut(value, left));
         });
         appendSideChannels(out, notices, hookFeedback, outcome.getLogs(), maxLogChars);
-        appendSummary(out, calls, stillRunning, elapsed);
+        appendSummary(out, language, calls, stillRunning, elapsed);
         return out.toString();
     }
 
@@ -52,8 +60,11 @@ final class ExecuteCodeObservation {
      * {@code LIMIT_EXCEEDED} — keeps the standard output it printed before the stop, cut at the same limit as a
      * completed program's; the other statuses carry none (§12.1).
      */
-    static String failure(CodeExecutionOutcome outcome, List<NestedToolCall> calls, List<String> notices,
-            List<String> hookFeedback, List<String> stillRunning, Duration elapsed, CodeExecutionLimits limits) {
+    // Every argument is a distinct part of the observation; bundling them would only move the list.
+    @SuppressWarnings("checkstyle:ParameterNumber")
+    static String failure(String language, CodeExecutionOutcome outcome, List<NestedToolCall> calls,
+            List<String> notices, List<String> hookFeedback, List<String> stillRunning, Duration elapsed,
+            CodeExecutionLimits limits) {
         final int maxLogChars = limits.getMaxLogChars();
         final StringBuilder out = new StringBuilder("ExecuteCode ").append(describe(outcome.getStatus()));
         outcome.getErrorMessage().map(ExecuteCodeObservation::lastLine)
@@ -69,7 +80,7 @@ final class ExecuteCodeObservation {
             }
         }
         appendSideChannels(out, notices, hookFeedback, outcome.getLogs(), maxLogChars);
-        appendSummary(out, calls, stillRunning, elapsed);
+        appendSummary(out, language, calls, stillRunning, elapsed);
         return out.toString();
     }
 
@@ -101,16 +112,16 @@ final class ExecuteCodeObservation {
         }
     }
 
-    private static void appendSummary(StringBuilder out, List<NestedToolCall> calls, List<String> stillRunning,
-            Duration elapsed) {
+    private static void appendSummary(StringBuilder out, String language, List<NestedToolCall> calls,
+            List<String> stillRunning, Duration elapsed) {
         if (!stillRunning.isEmpty()) {
             out.append("\n\nstill running when the script ended: ").append(String.join(", ", stillRunning));
         }
-        out.append(out.length() == 0 ? "" : "\n\n").append(summary(calls, elapsed));
+        out.append(out.length() == 0 ? "" : "\n\n").append(summary(language, calls, elapsed));
     }
 
-    /** {@code [ExecuteCode: 14 tool calls (Read x12, Grep x2), 1 error, 2 refused by write cap, 3.2s]}. */
-    static String summary(List<NestedToolCall> calls, Duration elapsed) {
+    /** {@code [ExecuteCode (Python): 14 tool calls (Read x12, Grep x2), 1 error, 2 refused by write cap, 3.2s]}. */
+    static String summary(String language, List<NestedToolCall> calls, Duration elapsed) {
         final Map<String, Integer> byTool = new LinkedHashMap<>();
         int errors = 0;
         final Map<String, Integer> refusals = new LinkedHashMap<>();
@@ -122,7 +133,8 @@ final class ExecuteCodeObservation {
                 errors++;
             }
         }
-        final StringBuilder out = new StringBuilder("[ExecuteCode: ").append(calls.size())
+        final StringBuilder out = new StringBuilder("[ExecuteCode (")
+                .append(ExecuteCodeDescription.displayName(language)).append("): ").append(calls.size())
                 .append(calls.size() == 1 ? " tool call" : " tool calls");
         if (!byTool.isEmpty()) {
             final StringBuilder tools = new StringBuilder();

@@ -43,6 +43,13 @@ import at.aimon.programmatic.testkit.ScriptedToolCallBridge;
  * name, by refusing a symlink and by finding its own entry there. Before this change the sweep ran in the probe at a
  * fixed 20 minutes, so of the engine cases only "an entry past the age is removed" fails on the old code (it never
  * probes); the others guard the new rule.
+ *
+ * <p>
+ * The runtime joins the sweep, within a bound, before it sends {@code DONE}, so the programs here end at once: a case
+ * that expects an entry to stay would pass trivially if the sweep had not run. So each one proves the sweep did run —
+ * a case with a valid root places a <em>canary</em> past that run's age, which must be gone, and a guard case, which
+ * has no root for a canary, reads the line the runtime writes to the {@code sweep_trace} file named in its {@code
+ * config.json}.
  */
 @DisplayName("aimon_ptc.py — the sweep of stale run directories")
 class ShellRuntimeSweepTest {
@@ -105,18 +112,22 @@ class ShellRuntimeSweepTest {
     }
 
     @Test
-    @DisplayName("maxWallClock 30 minutes: an entry 25 minutes old may be a live run and stays")
+    @DisplayName("maxWallClock 30 minutes: an entry 25 minutes old may be a live run and stays; one 61 minutes old goes")
     void ageFollowsMaxWallClock() throws Exception {
         final Path live = backdated(Files.createDirectories(ptc.resolve("live")), Duration.ofMinutes(25));
+        final Path canary = backdated(Files.createDirectories(ptc.resolve("canary")), Duration.ofMinutes(61));
         run(CodeExecutionLimits.builder().maxWallClock(Duration.ofMinutes(30)).build());
+        assertThat(canary).as("the sweep ran").doesNotExist();
         assertThat(live).exists();
     }
 
     @Test
-    @DisplayName("maxWallClock 5 seconds: the 20-minute floor keeps an entry one minute old")
+    @DisplayName("maxWallClock 5 seconds: the 20-minute floor keeps an entry one minute old; one 21 minutes old goes")
     void floor() throws Exception {
         final Path recent = backdated(Files.createDirectories(ptc.resolve("recent")), Duration.ofMinutes(1));
+        final Path canary = backdated(Files.createDirectories(ptc.resolve("canary")), Duration.ofMinutes(21));
         run(CodeExecutionLimits.builder().wallClock(Duration.ofSeconds(5)).maxWallClock(Duration.ofSeconds(5)).build());
+        assertThat(canary).as("the sweep ran").doesNotExist();
         assertThat(recent).exists();
     }
 
@@ -127,11 +138,12 @@ class ShellRuntimeSweepTest {
         final Path tmp = Path.of(System.getProperty("java.io.tmpdir")).toRealPath();
         tmpSibling = backdated(Files.writeString(tmp.resolve("aimon-sweep-test-" + UUID.randomUUID()), "keep"),
                 Duration.ofMinutes(25));
+        final Path canary = backdated(Files.writeString(ptc.resolve("canary"), "x"), Duration.ofMinutes(25));
         final String code = "import os, sys\nopen('run_parent', 'w').write("
-                + "os.path.realpath(os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0])))))\n"
-                + "import time\ntime.sleep(0.5)\n";
+                + "os.path.realpath(os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0])))))\n";
         assertThat(run(code, CodeExecutionLimits.defaults()).getStatus()).isEqualTo(CodeExecutionStatus.COMPLETED);
         assertThat(Path.of(Files.readString(root.resolve("run_parent"))).toRealPath()).isEqualTo(tmp);
+        assertThat(canary).as("the sweep ran, in .aimon-ptc").doesNotExist();
         assertThat(tmpSibling).exists();
     }
 
@@ -141,7 +153,7 @@ class ShellRuntimeSweepTest {
         final Path parent = Files.createDirectories(root.resolve("elsewhere"));
         Files.createDirectories(parent.resolve("own"));
         final Path old = backdated(Files.createDirectories(parent.resolve("old")), Duration.ofMinutes(25));
-        runRuntimeDirectly(parent.resolve("own").toString());
+        assertThat(runRuntimeDirectly(parent.resolve("own").toString())).isEqualTo("basename");
         assertThat(old).exists();
     }
 
@@ -153,7 +165,7 @@ class ShellRuntimeSweepTest {
         final Path old = backdated(Files.createDirectories(real.resolve("old")), Duration.ofMinutes(25));
         final Path linked = Files.createDirectories(root.resolve("work")).resolve(".aimon-ptc");
         Files.createSymbolicLink(linked, real);
-        runRuntimeDirectly(linked.resolve("own").toString());
+        assertThat(runRuntimeDirectly(linked.resolve("own").toString())).isEqualTo("symlink");
         assertThat(old).exists();
     }
 
@@ -161,7 +173,7 @@ class ShellRuntimeSweepTest {
     @DisplayName("a reply directory without its own entry in .aimon-ptc sweeps nothing")
     void ownEntryMissing() throws Exception {
         final Path old = backdated(Files.createDirectories(ptc.resolve("old")), Duration.ofMinutes(25));
-        runRuntimeDirectly(ptc.resolve("missing").toString());
+        assertThat(runRuntimeDirectly(ptc.resolve("missing").toString())).isEqualTo("own-missing");
         assertThat(old).exists();
     }
 
@@ -174,13 +186,13 @@ class ShellRuntimeSweepTest {
         backdated(target, Duration.ofMinutes(25));
         final Path link = Files.createSymbolicLink(ptc.resolve("link"), target);
         backdateLink(link, Duration.ofMinutes(25));
-        runRuntimeDirectly(ptc.resolve("own").toString());
+        assertThat(runRuntimeDirectly(ptc.resolve("own").toString())).isEqualTo("swept 1");
         assertThat(Files.exists(link, LinkOption.NOFOLLOW_LINKS)).isFalse();
         assertThat(precious).exists();
     }
 
     private CodeExecutionOutcome run(CodeExecutionLimits limits) {
-        return run("import time\ntime.sleep(0.5)\n", limits);
+        return run("pass\n", limits);
     }
 
     private CodeExecutionOutcome run(String code, CodeExecutionLimits limits) {
@@ -191,15 +203,20 @@ class ShellRuntimeSweepTest {
                 .put(ToolContextKeys.EXECUTION_ENVIRONMENT, new SandboxedLocalEnvironment(root)).build());
     }
 
-    /** Runs the runtime with a hand-written run directory, so a guard is tested without an engine hook. */
-    private void runRuntimeDirectly(String replyDirectory) throws Exception {
+    /**
+     * Runs the runtime with a hand-written run directory, so a guard is tested without an engine hook, and returns the
+     * line the sweep wrote to its trace: the guard that stopped it, or {@code swept N}.
+     */
+    private String runRuntimeDirectly(String replyDirectory) throws Exception {
         final Path run = Files.createDirectories(root.resolve("run-" + UUID.randomUUID()));
         try (InputStream in = ShellCodeExecutionEngine.class.getResourceAsStream("aimon_ptc.py")) {
             Files.write(run.resolve("aimon_ptc.py"), in.readAllBytes());
         }
-        Files.writeString(run.resolve("main.py"), "import time\ntime.sleep(0.5)\n");
+        final Path trace = root.resolve("trace-" + UUID.randomUUID());
+        Files.writeString(run.resolve("main.py"), "pass\n");
         Files.writeString(run.resolve("config.json"), "{\"tools\":[],\"max_output_bytes\":1000,"
-                + "\"max_reply_bytes\":1000,\"max_log_chars\":100,\"wall_clock_seconds\":10,\"sweep_age_seconds\":1200}");
+                + "\"max_reply_bytes\":1000,\"max_log_chars\":100,\"wall_clock_seconds\":10,\"sweep_age_seconds\":1200,"
+                + "\"sweep_trace\":\"" + trace + "\"}");
         Files.writeString(run.resolve("key"), HexFormat.of().formatHex(new byte[16]));
         Files.writeString(run.resolve("reply_dir"), replyDirectory);
         final Process process = new ProcessBuilder("python3", "-I", "-u", run.resolve("aimon_ptc.py").toString())
@@ -207,6 +224,8 @@ class ShellRuntimeSweepTest {
                 .redirectError(ProcessBuilder.Redirect.DISCARD).start();
         assertThat(process.waitFor(30, TimeUnit.SECONDS)).isTrue();
         assertThat(process.exitValue()).isZero();
+        assertThat(trace).as("the sweep wrote its trace before DONE").exists();
+        return Files.readString(trace).strip();
     }
 
     private static Path backdated(Path path, Duration age) throws IOException {

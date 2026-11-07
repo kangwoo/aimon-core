@@ -2,8 +2,10 @@ package at.aimon.core.agent.tool;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -22,9 +24,8 @@ import org.slf4j.LoggerFactory;
  * Every loop that offers tools to a model — the main loop, a fork, a slash-command skill loop — builds one of these per
  * iteration and both filters its offer through it and binds it into the iteration's tool context under
  * {@link #CONTEXT_KEY} ({@code ToolContextKeys.TOOL_OFFER_CONTEXT}). The offer filter, the side-effect ceiling's
- * refusal
- * and the approval gate then all read the same {@link Tool#describe(ToolOfferContext) descriptor}, so a tool whose
- * grade depends on its context cannot be offered under one grade and judged under another
+ * refusal and the approval gate then all read the same {@link Tool#describe(ToolOfferContext) descriptor}, so a tool
+ * whose grade depends on its context cannot be offered under one grade and judged under another
  * ({@code docs/design/tool/programmatic-tool-calling.md} decision 9).
  *
  * <p>
@@ -42,10 +43,11 @@ import org.slf4j.LoggerFactory;
  * tool whose grade depends on the offer answers with its most conservative grade.
  *
  * <p>
- * Iteration-scoped and immutable in everything it says; the one lazily written field is a memo of which tools some
- * offered tool hosts for code ({@link #isCodeOnly(ToolDescriptor)}), computed from the immutable fields. The registry
- * it holds may itself grow (a deferred tool activated mid-turn), which is
- * why it is rebuilt every iteration rather than once per execution.
+ * Iteration-scoped and immutable in everything it says; the lazily written fields are a memo of which tools some
+ * offered tool hosts for code ({@link #isCodeOnly(ToolDescriptor)}), computed from the immutable fields, and the
+ * reasons the last {@link #offer()} recorded for tools it left out ({@link #getUnavailableReasons()}). The registry it
+ * holds may itself grow (a deferred tool activated mid-turn), which is why it is rebuilt every iteration rather than
+ * once per execution.
  *
  * @see Tool#describe(ToolOfferContext)
  * @see ToolDescriptor
@@ -86,6 +88,8 @@ public final class ToolOfferContext {
     private final String agentName;
     /** Memo of {@link #codeHosted()}; the offer context is otherwise immutable. */
     private volatile Set<String> codeHosted;
+    /** What the last {@link #offer()} recorded: tool name to why it is not offerable. */
+    private volatile Map<String, String> unavailableReasons = Map.of();
 
     private ToolOfferContext(Builder builder, boolean offering) {
         this.offering = offering;
@@ -203,8 +207,7 @@ public final class ToolOfferContext {
      * @return the offered descriptors (never null); empty without a registry
      * @throws NullPointerException
      *             naming the tool, when a tool's {@link Tool#describe(ToolOfferContext)} breaks its contract and
-     *             returns
-     *             null
+     *             returns null
      */
     public List<ToolDescriptor> offer() {
         if (registry == null) {
@@ -212,6 +215,7 @@ public final class ToolOfferContext {
         }
         final List<ToolDescriptor> eligible = new ArrayList<>();
         final Set<String> hosted = new HashSet<>();
+        final Map<String, String> reasons = new LinkedHashMap<>();
         for (Tool tool : registry.findAll()) {
             if (!admission.test(tool)) {
                 continue;
@@ -220,9 +224,12 @@ public final class ToolOfferContext {
             if (descriptor.isOfferable() && permits(descriptor)) {
                 eligible.add(descriptor);
                 hosted.addAll(descriptor.getCodeHostedTools());
+            } else if (!descriptor.isOfferable()) {
+                descriptor.getUnavailableReason().ifPresent(reason -> reasons.put(descriptor.getName(), reason));
             }
         }
         codeHosted = Set.copyOf(hosted);
+        unavailableReasons = Collections.unmodifiableMap(reasons);
         final List<ToolDescriptor> offered = new ArrayList<>(eligible.size());
         for (ToolDescriptor descriptor : eligible) {
             if (!isCodeOnly(descriptor)) {
@@ -243,8 +250,7 @@ public final class ToolOfferContext {
      * @return the eligible descriptors (never null); empty without a registry
      * @throws NullPointerException
      *             naming the tool, when a tool's {@link Tool#describe(ToolOfferContext)} breaks its contract and
-     *             returns
-     *             null
+     *             returns null
      */
     public List<ToolDescriptor> eligible(Collection<String> names) {
         Objects.requireNonNull(names, "names cannot be null");
@@ -357,6 +363,17 @@ public final class ToolOfferContext {
         }
         codeHosted = hosted;
         return hosted;
+    }
+
+    /**
+     * Returns why each admitted tool the last {@link #offer()} left out as not offerable is not offerable, for the
+     * tools that said so ({@link ToolDescriptor#getUnavailableReason()}) — {@code ExecuteCode}'s reason in an agent
+     * that opens tools to code, which the loop records on the iteration's span ({@code ptc.unavailable_reason}).
+     *
+     * @return tool name to reason, in registry order (never null); empty before the first {@code offer()}
+     */
+    public Map<String, String> getUnavailableReasons() {
+        return unavailableReasons;
     }
 
     /**

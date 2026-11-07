@@ -87,9 +87,8 @@
  *
  * <p>
  * <strong>Important:</strong> These exceptions indicate <em>execution failures</em> (process startup errors, timeouts,
- * cancellation),
- * NOT command failures. Commands that run but return non-zero exit codes complete successfully and return a
- * {@link at.aimon.core.shell.ShellCommandResult} with {@code isFailure() == true}.
+ * cancellation), NOT command failures. Commands that run but return non-zero exit codes complete successfully and
+ * return a {@link at.aimon.core.shell.ShellCommandResult} with {@code isFailure() == true}.
  *
  * <h2>Design Principles</h2>
  *

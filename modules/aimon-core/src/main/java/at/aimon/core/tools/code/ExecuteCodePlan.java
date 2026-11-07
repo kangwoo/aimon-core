@@ -43,13 +43,17 @@ final class ExecuteCodePlan {
     private final List<ToolDescriptor> callable;
     private final Set<String> directlyOffered;
     private final String unavailableReason;
+    private final ShellEngineToolScope toolScope;
+    private final boolean reported;
 
     private ExecuteCodePlan(CodeExecutionEngine engine, List<ToolDescriptor> callable, Set<String> directlyOffered,
-            String unavailableReason) {
+            String unavailableReason, ShellEngineToolScope toolScope, boolean reported) {
         this.engine = engine;
         this.callable = callable;
         this.directlyOffered = directlyOffered;
         this.unavailableReason = unavailableReason;
+        this.toolScope = toolScope;
+        this.reported = reported;
     }
 
     /**
@@ -72,17 +76,18 @@ final class ExecuteCodePlan {
         Objects.requireNonNull(offer, "offer cannot be null");
         Objects.requireNonNull(toolScope, "toolScope cannot be null");
         Objects.requireNonNull(warned, "warned cannot be null");
-        final ExecuteCodePlan plan = compute(offer, engines, selfName, toolScope, warned);
-        // An agent that opens tools to code and does not get ExecuteCode is told why, once per agent and reason
-        // (§12.2, §16) — the span attribute ptc.unavailable_reason is not implemented (design §21).
-        if (!plan.isAvailable() && offer.isOffering() && offer.getProgrammatic().isEnabled()) {
-            final String agent = offer.getAgentName().orElse("?");
-            if (warned.first(agent + '\0' + plan.unavailableReason)) {
-                log.warn("Agent '{}' sets programmatic-tools, but ExecuteCode is not offered: {}", agent,
-                        plan.unavailableReason);
-            }
+        final ExecuteCodePlan computed = compute(offer, engines, selfName, toolScope, warned);
+        if (computed.isAvailable() || !offer.isOffering() || !offer.getProgrammatic().isEnabled()) {
+            return computed;
         }
-        return plan;
+        // An agent that opens tools to code and does not get ExecuteCode is told why: in the log once per agent and
+        // reason, and on every iteration's span through the descriptor (§12.2, §16).
+        final String agent = offer.getAgentName().orElse("?");
+        if (warned.first(agent + '\0' + computed.unavailableReason)) {
+            log.warn("Agent '{}' sets programmatic-tools, but ExecuteCode is not offered: {}", agent,
+                    computed.unavailableReason);
+        }
+        return new ExecuteCodePlan(null, List.of(), Set.of(), computed.unavailableReason, null, true);
     }
 
     private static ExecuteCodePlan compute(ToolOfferContext offer, List<CodeExecutionEngine> engines, String selfName,
@@ -162,7 +167,7 @@ final class ExecuteCodePlan {
                 direct.add(descriptor.getName());
             }
         }
-        return new ExecuteCodePlan(engine.get(), List.copyOf(callable), Set.copyOf(direct), null);
+        return new ExecuteCodePlan(engine.get(), List.copyOf(callable), Set.copyOf(direct), null, scope, false);
     }
 
     /**
@@ -189,7 +194,7 @@ final class ExecuteCodePlan {
     }
 
     private static ExecuteCodePlan unavailable(String reason) {
-        return new ExecuteCodePlan(null, List.of(), Set.of(), reason);
+        return new ExecuteCodePlan(null, List.of(), Set.of(), reason, null, false);
     }
 
     private static void warnOnce(WarnOnce warned, ToolOfferContext offer, String toolName, String reason) {
@@ -207,6 +212,20 @@ final class ExecuteCodePlan {
     /** Why it cannot, when it cannot. */
     Optional<String> unavailableReason() {
         return Optional.ofNullable(unavailableReason);
+    }
+
+    /**
+     * Why it cannot, when the agent should be told: it opens tools to code and is offering, so the reason goes on the
+     * iteration's span ({@code ptc.unavailable_reason}). Empty for an agent without {@code programmatic-tools}, which
+     * would otherwise carry the attribute on every iteration.
+     */
+    Optional<String> reportedReason() {
+        return reported ? Optional.of(unavailableReason) : Optional.empty();
+    }
+
+    /** The effective {@code shell-engine-tool-scope}, present when the engine is bound by it. */
+    Optional<ShellEngineToolScope> toolScope() {
+        return Optional.ofNullable(toolScope);
     }
 
     /** The engine (present when available). */

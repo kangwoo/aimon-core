@@ -21,8 +21,19 @@ import at.aimon.core.agent.compact.DefaultCompactionGuard;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.store.InMemorySessionRecordStore;
 import at.aimon.core.agent.session.transcript.DefaultTranscriptManager;
+import at.aimon.core.agent.tool.AbstractTool;
+import at.aimon.core.agent.tool.DataReach;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.agent.tool.DestructiveBehavior;
+import at.aimon.core.agent.tool.ProgrammaticEngineChoice;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
+import at.aimon.core.agent.tool.SideEffectLevel;
+import at.aimon.core.agent.tool.ToolContext;
+import at.aimon.core.agent.tool.ToolDispatchResult;
+import at.aimon.core.agent.tool.ToolInput;
+import at.aimon.core.agent.tool.ToolOfferContext;
+import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
@@ -45,6 +56,15 @@ import at.aimon.core.llm.LlmResponse;
 import at.aimon.core.llm.Message;
 import at.aimon.core.llm.ToolDefinition;
 import at.aimon.core.llm.token.HeuristicTokenEstimator;
+import at.aimon.core.programmatic.CodeExecutionEngine;
+import at.aimon.core.programmatic.CodeExecutionLimits;
+import at.aimon.core.programmatic.CodeExecutionOutcome;
+import at.aimon.core.programmatic.CodeExecutionRequest;
+import at.aimon.core.programmatic.CodeExecutionStatus;
+import at.aimon.core.programmatic.EngineAvailability;
+import at.aimon.core.programmatic.OfferFacts;
+import at.aimon.core.programmatic.ToolCallBridge;
+import at.aimon.core.programmatic.ToolGrade;
 import at.aimon.core.skill.ExecutionMode;
 import at.aimon.core.skill.InvokePolicy;
 import at.aimon.core.skill.Skill;
@@ -57,6 +77,9 @@ import at.aimon.core.subagent.SubagentContent;
 import at.aimon.core.subagent.SubagentMetadata;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.tools.ToolContextKeys;
+import at.aimon.core.tools.ToolSpans;
+import at.aimon.core.tools.code.CodeSpanAttributes;
+import at.aimon.core.tools.code.ExecuteCodeTool;
 import at.aimon.core.tracing.SpanContext;
 import at.aimon.core.tracing.SpanExporter;
 import at.aimon.core.tracing.SpanStatus;
@@ -260,6 +283,39 @@ class SlashCommandTracingTest {
     }
 
     /**
+     * A-DV2: the skill loop opens no ITERATION or TOOL spans, but the command's context carries the tracer beside the
+     * COMMAND span's metadata, so the calls an inline skill's {@code ExecuteCode} program makes are traced under the
+     * COMMAND span. Run here with that context, as the skill loop's per-call context copies it.
+     */
+    @Test
+    @DisplayName("A-DV2: ExecuteCode under a slash command: its nested calls are TOOL spans under the COMMAND span")
+    void executeCodeUnderTheCommandSpan() {
+        final DefaultToolRegistry tools = new DefaultToolRegistry();
+        tools.register(new EchoTool());
+        final ExecuteCodeTool executeCode = new ExecuteCodeTool(List.of(new EchoingEngine()),
+                CodeExecutionLimits.defaults());
+        tools.register(executeCode);
+        executor.execute(runtime(probe, tools), request("/probe"));
+        assertThat(probe.toolContext.get(ToolContextKeys.TRACER)).isPresent();
+
+        final ToolOfferContext offer = ToolOfferContext.builder().registry(tools).programmatic(ProgrammaticToolSettings
+                .builder().tools(List.of("Echo")).engine(ProgrammaticEngineChoice.JAVASCRIPT).build()).build();
+        final ToolResult result = executeCode.execute(ToolInput.of(Map.of("code", "scripted")),
+                ToolContext.builder().putAll(probe.toolContext.getContext())
+                        .put(ToolContextKeys.TOOL_OFFER_CONTEXT, offer)
+                        .put(ToolContextKeys.CURRENT_TOOL_USE_ID_KEY, "skill-tu").build());
+
+        assertThat(result.isSuccess()).as(result.getContent()).isTrue();
+        final List<TraceSpan> spans = store.bySession(SESSION);
+        final TraceSpan command = only(spans, SpanType.COMMAND);
+        final TraceSpan echo = only(spans, SpanType.TOOL);
+        assertThat(echo.getName()).isEqualTo("Echo");
+        assertThat(echo.getParentSpanId()).contains(command.getSpanId());
+        assertThat(echo.getAttributes()).containsEntry(ToolSpans.PATH, ToolSpans.PATH_CODE)
+                .containsEntry(CodeSpanAttributes.PARENT_TOOL_USE_ID, "skill-tu");
+    }
+
+    /**
      * Tracing off, the command's tools get the turn's metadata untouched. The turn's own metadata instance is not
      * observable from outside the executor, so this asserts what it must be — the turn defaults with no reserved span
      * tags — rather than instance identity.
@@ -307,6 +363,10 @@ class SlashCommandTracingTest {
     }
 
     private OrcaAgentRuntime runtime(SystemCommand command) {
+        return runtime(command, new DefaultToolRegistry());
+    }
+
+    private OrcaAgentRuntime runtime(SystemCommand command, DefaultToolRegistry tools) {
         environmentProvider = LocalExecutionEnvironmentProvider.builder().workspaceRoot(tempDir.resolve("workspace"))
                 .contentSearch(false).build();
         final LocalFileSystem fileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
@@ -317,9 +377,9 @@ class SlashCommandTracingTest {
         return OrcaAgentRuntime.builder()
                 .agent(DefaultAgent.builder().name("TestAgent").maxIterations(2).systemPrompt("You are a test agent")
                         .model(LlmModel.builder().name("gpt-4").build()).build())
-                .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry())
-                .commandRegistry(commandRegistry).subagentRegistry(subagentRegistry).skillRegistry(skillRegistry)
-                .controlFileSystem(fileSystem).executionEnvironmentProvider(environmentProvider).build();
+                .toolRegistry(tools).hookRegistry(new DefaultHookRegistry()).commandRegistry(commandRegistry)
+                .subagentRegistry(subagentRegistry).skillRegistry(skillRegistry).controlFileSystem(fileSystem)
+                .executionEnvironmentProvider(environmentProvider).build();
     }
 
     private static Skill forkSkill(String name, String agentName, String body) {
@@ -334,6 +394,7 @@ class SlashCommandTracingTest {
     private static final class ProbeCommand extends SystemCommand implements DirectExecutable {
         private LlmCallMetadata metadata;
         private boolean observerPresent;
+        private ToolContext toolContext;
 
         ProbeCommand() {
             super("probe", "records its tool context");
@@ -343,7 +404,57 @@ class SlashCommandTracingTest {
         public CommandExecutionResult execute(CommandExecutionContext context, DirectCommandExecutionRequest request) {
             metadata = context.getToolContext().get(ToolContextKeys.LLM_CALL_METADATA_KEY).orElse(null);
             observerPresent = context.getToolContext().get(ToolContextKeys.COMPACTION_OBSERVER).isPresent();
+            toolContext = context.getToolContext();
             return CommandExecutionResult.success("probed");
+        }
+    }
+
+    /** A read-only tool code may call. */
+    private static final class EchoTool extends AbstractTool {
+        EchoTool() {
+            super("Echo", "echo tool", Map.of("type", "object", "properties", Map.of(), "required", List.of()));
+        }
+
+        @Override
+        public SideEffectLevel getSideEffectLevel() {
+            return SideEffectLevel.READ_ONLY;
+        }
+
+        @Override
+        public DestructiveBehavior getDestructiveBehavior() {
+            return DestructiveBehavior.NON_DESTRUCTIVE;
+        }
+
+        @Override
+        public ToolResult execute(ToolInput input, ToolContext context) {
+            return ToolResult.success("echo");
+        }
+    }
+
+    /** A scripted JavaScript engine whose program calls Echo once. */
+    private static final class EchoingEngine implements CodeExecutionEngine {
+        @Override
+        public String language() {
+            return JAVASCRIPT;
+        }
+
+        @Override
+        public EngineAvailability staticAvailability(OfferFacts facts) {
+            return EngineAvailability.available();
+        }
+
+        @Override
+        public ToolGrade intrinsicGrade() {
+            return ToolGrade.builder().sideEffectLevel(SideEffectLevel.READ_ONLY)
+                    .destructiveBehavior(DestructiveBehavior.NON_DESTRUCTIVE).dataReach(DataReach.ENVIRONMENT)
+                    .approvalDelegated(true).build();
+        }
+
+        @Override
+        public CodeExecutionOutcome execute(CodeExecutionRequest request, ToolCallBridge bridge, ToolContext context) {
+            final ToolDispatchResult result = bridge.callAsync("Echo", Map.of()).join();
+            return CodeExecutionOutcome.builder().status(CodeExecutionStatus.COMPLETED).stdout(result.getText())
+                    .build();
         }
     }
 

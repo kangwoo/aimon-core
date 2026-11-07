@@ -20,6 +20,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -167,8 +168,12 @@ import at.aimon.core.toolinvocation.ToolCallTracing;
 import at.aimon.core.toolinvocation.ToolDispatchResults;
 import at.aimon.core.toolinvocation.TracingCompactionObserver;
 import at.aimon.core.toolinvocation.approval.SideEffectApprovalGate;
+import at.aimon.core.tools.EnvironmentNotices;
 import at.aimon.core.tools.ToolContextKeys;
 import at.aimon.core.tools.code.CodeOfferKeys;
+import at.aimon.core.tools.code.CodeSpanAttributes;
+import at.aimon.core.tools.code.ExecuteCodeLanguageNotice;
+import at.aimon.core.tools.code.ExecuteCodeTool;
 import at.aimon.core.tools.file.ReadTool;
 import at.aimon.core.tools.session.SessionHistoryTool;
 import at.aimon.core.tools.todo.TodoWriteTool;
@@ -1867,8 +1872,15 @@ public class OrcaAgentExecutor
                                     .programmatic(scope.getAgent().getMetadata().getProgrammatic())
                                     .agentName(scope.getAgent().getName()),
                             toolContext, scope.getAgent().getAllowedTools()).build();
-                    final List<ToolDefinition> availableTools = offerContext.offer().stream()
-                            .map(ToolDescriptor::getDefinition).toList();
+                    final List<ToolDescriptor> offered = offerContext.offer();
+                    final List<ToolDefinition> availableTools = offered.stream().map(ToolDescriptor::getDefinition)
+                            .toList();
+                    // Why ExecuteCode was left out, for an agent that opens tools to code (§12.2).
+                    CodeSpanAttributes.annotateIteration(iterationSpan, offerContext);
+                    // Whether ExecuteCode's language changed since the programs the model can still see (§6.2),
+                    // read from the conversation this iteration sends; delivered on its first tool result.
+                    final Optional<String> languageNotice = languageNotice(scope, compactionDecision.getView(),
+                            offered);
                     final ToolContext iterationToolContext = ToolContext.builder().putAll(toolContext.getContext())
                             .put(ToolContextKeys.TOOL_OFFER_CONTEXT, offerContext).build();
                     warnOnEmptyToolOffer(scope, availableTools, sessionRegistry, iterationCount);
@@ -1991,7 +2003,7 @@ public class OrcaAgentExecutor
                     final List<ToolUseResult> toolUseResults = truncated
                             ? refuseTruncatedToolUses(scope, response, iterationCount)
                             : executeToolUses(scope, iterationToolContext, response.getToolUses(), iterationCount,
-                                    coordinator, sessionRegistry);
+                                    coordinator, sessionRegistry, languageNotice);
 
                     // Collect artifacts produced during this iteration's tool execution and convert to
                     // MessageArtifact. One snapshot does the slicing — reading the collector twice (size, then
@@ -2379,6 +2391,11 @@ public class OrcaAgentExecutor
             // is no command span and no key, so the context is the one built before the key existed.
             commandTrace.compactionObserver(commandTracer, commandPayloadPolicy)
                     .ifPresent(observer -> commandContextBuilder.put(ToolContextKeys.COMPACTION_OBSERVER, observer));
+            // The tracer beside the command span's metadata, so a tool that makes calls of its own (ExecuteCode in an
+            // inline skill) opens their TOOL spans under the command span.
+            if (commandTrace.traced()) {
+                commandContextBuilder.put(ToolContextKeys.TRACER, commandTracer);
+            }
             final ToolContext commandToolContext = commandContextBuilder
                     .put(ToolContextKeys.AGENT_RUNTIME_ID, agentRuntime.getId())
                     // The session id belongs here too: a `/my-skill` invocation of a fork-mode skill spawns a
@@ -2470,8 +2487,15 @@ public class OrcaAgentExecutor
      * @return The list of tool use results (never null)
      */
     private List<ToolUseResult> executeToolUses(ExecutionScope scope, ToolContext toolContext, List<ToolUse> toolUses,
-            int iterationCount, InterruptCoordinator coordinator, ToolRegistry sessionRegistry) {
+            int iterationCount, InterruptCoordinator coordinator, ToolRegistry sessionRegistry,
+            Optional<String> languageNotice) {
         final Function<ToolUse, ToolUseResult> runner = toolRunner(scope, toolContext, iterationCount, coordinator);
+        // The language notice rides on the first tool result in tool_use order, deterministic under parallel dispatch.
+        // It is applied where each result is published (ToolResultReady) and to the returned list alike: the event
+        // stream sees every result before this method returns, so prepending afterwards would miss it.
+        final UnaryOperator<ToolUseResult> deliver = languageNotice.isEmpty() || toolUses.isEmpty()
+                ? UnaryOperator.identity()
+                : noticeOn(toolUses.get(0).getId(), languageNotice.get());
 
         // Streaming-tool overlap (design §11.2): when a per-iteration scheduler eagerly ran the safe prefix of this
         // batch during the token stream, harvest those results (and run any deferred suffix inline on this thread)
@@ -2482,7 +2506,7 @@ public class OrcaAgentExecutor
         // batch-dispatch path unchanged.
         final StreamingToolScheduler scheduler = scope.streamingToolScheduler;
         if (scheduler != null && scheduler.hasAnyEager()) {
-            return harvestEagerToolUses(scope, iterationCount, toolUses, runner, scheduler, sessionRegistry);
+            return harvestEagerToolUses(scope, iterationCount, toolUses, runner, scheduler, sessionRegistry, deliver);
         }
 
         // PAR-03: delegate batch execution to the dispatcher. The gate (inside the dispatcher) consults
@@ -2492,7 +2516,35 @@ public class OrcaAgentExecutor
         // owns Pre/PostTool hooks, permission checks, and interrupt registration.
         return parallelToolDispatcher.dispatch(toolUses, sessionRegistry, runner,
                 toolUse -> scope.eventDispatcher.emitToolUseStarted(iterationCount, toolUse),
-                (toolUse, result) -> scope.eventDispatcher.emitToolResultReady(iterationCount, toolUse, result));
+                (toolUse, result) -> scope.eventDispatcher.emitToolResultReady(iterationCount, toolUse,
+                        deliver.apply(result)))
+                .stream().map(deliver).toList();
+    }
+
+    /**
+     * The language-change notice for this iteration, when {@code ExecuteCode} is offered and its language differs from
+     * the newest known marker in the view the iteration sends ({@link ExecuteCodeLanguageNotice}).
+     */
+    private static Optional<String> languageNotice(ExecutionScope scope, ContextView view,
+            List<ToolDescriptor> offered) {
+        for (ToolDescriptor descriptor : offered) {
+            if (ExecuteCodeTool.TOOL_NAME.equals(descriptor.getName())) {
+                return ExecuteCodeLanguageNotice.check(view.getMessages(),
+                        ExecuteCodeLanguageNotice.loggedResults(scope.transcriptBuffer::getMessages), descriptor);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Returns what puts {@code notice} at the head of the result answering {@code toolUseId}, rendered as an
+     * environment notice ({@link EnvironmentNotices#render}), and leaves every other result as it is.
+     */
+    private static UnaryOperator<ToolUseResult> noticeOn(String toolUseId, String notice) {
+        final String rendered = EnvironmentNotices.render(List.of(notice));
+        return result -> toolUseId.equals(result.getToolUseId())
+                ? result.withContent(rendered + (result.getContent() == null ? "" : result.getContent()))
+                : result;
     }
 
     /**
@@ -2541,15 +2593,24 @@ public class OrcaAgentExecutor
     /**
      * TRACE-01: when tracing is active, give tools the active (ITERATION) span's metadata so TOOL spans nest under the
      * current iteration; {@link #executeSingleTool} then rotates it once more so a subagent a tool spawns nests under
-     * that tool's span. A no-op tracer returns the same metadata instance, so
-     * the tool context is passed through unchanged (zero overhead when tracing is off).
+     * that tool's span. A no-op tracer returns the same metadata instance, so the tool context is passed through
+     * unchanged
+     * (zero overhead when tracing is off). With tracing on, the tracer is bound beside the metadata
+     * ({@link ToolContextKeys#TRACER}).
      */
     private ToolContext resolveEffectiveToolContext(ExecutionScope scope, ToolContext toolContext) {
         final LlmCallMetadata iterationMetadata = scope.activeSpan.enrich(scope.llmCallMetadata);
-        return iterationMetadata == scope.llmCallMetadata
-                ? toolContext
-                : ToolContext.builder().putAll(toolContext.getContext())
-                        .put(ToolContextKeys.LLM_CALL_METADATA_KEY, iterationMetadata).build();
+        if (iterationMetadata == scope.llmCallMetadata) {
+            return toolContext;
+        }
+        final ToolContext.Builder builder = ToolContext.builder().putAll(toolContext.getContext())
+                .put(ToolContextKeys.LLM_CALL_METADATA_KEY, iterationMetadata);
+        // The tracer beside the metadata that names a span, so a tool that makes calls of its own (ExecuteCode) opens
+        // their TOOL spans under its own (§12.2). Write-once: bound only where the copied context lacks it.
+        if (toolContext.get(ToolContextKeys.TRACER).isEmpty()) {
+            builder.put(ToolContextKeys.TRACER, tracer);
+        }
+        return builder.build();
     }
 
     /**
@@ -2567,24 +2628,26 @@ public class OrcaAgentExecutor
      * dispatcher keeps the inline loop byte for byte.
      */
     private List<ToolUseResult> harvestEagerToolUses(ExecutionScope scope, int iterationCount, List<ToolUse> toolUses,
-            Function<ToolUse, ToolUseResult> runner, StreamingToolScheduler scheduler, ToolRegistry sessionRegistry) {
+            Function<ToolUse, ToolUseResult> runner, StreamingToolScheduler scheduler, ToolRegistry sessionRegistry,
+            UnaryOperator<ToolUseResult> deliver) {
         final List<ToolUseResult> results = new ArrayList<>(toolUses.size());
         final int tailStart = parallelToolDispatcher.routesHarvestTail()
                 ? deferredTailStart(toolUses, scheduler)
                 : toolUses.size();
         for (ToolUse toolUse : toolUses.subList(0, tailStart)) {
             scope.eventDispatcher.emitToolUseStarted(iterationCount, toolUse);
-            final ToolUseResult result = scheduler.hasEager(toolUse.getId())
+            final ToolUseResult result = deliver.apply(scheduler.hasEager(toolUse.getId())
                     ? scheduler.joinEager(toolUse)
-                    : runToolOnCallingThread(runner, toolUse);
+                    : runToolOnCallingThread(runner, toolUse));
             scope.eventDispatcher.emitToolResultReady(iterationCount, toolUse, result);
             results.add(result);
         }
         if (tailStart < toolUses.size()) {
-            results.addAll(parallelToolDispatcher.dispatch(List.copyOf(toolUses.subList(tailStart, toolUses.size())),
-                    sessionRegistry, runner,
-                    toolUse -> scope.eventDispatcher.emitToolUseStarted(iterationCount, toolUse),
-                    (toolUse, result) -> scope.eventDispatcher.emitToolResultReady(iterationCount, toolUse, result)));
+            parallelToolDispatcher.dispatch(List.copyOf(toolUses.subList(tailStart, toolUses.size())), sessionRegistry,
+                    runner, toolUse -> scope.eventDispatcher.emitToolUseStarted(iterationCount, toolUse),
+                    (toolUse, result) -> scope.eventDispatcher.emitToolResultReady(iterationCount, toolUse,
+                            deliver.apply(result)))
+                    .forEach(result -> results.add(deliver.apply(result)));
         }
         return results;
     }

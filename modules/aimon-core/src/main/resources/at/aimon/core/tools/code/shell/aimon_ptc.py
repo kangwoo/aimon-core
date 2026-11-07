@@ -57,6 +57,7 @@ OUT_CHUNK_BYTES = 32 * 1024
 MAX_ERROR_CHARS = 4000
 POLL_DELAYS = (0.005, 0.005, 0.01, 0.02, 0.04, 0.08)
 POLL_MAX = 0.1
+SWEEP_JOIN_SECONDS = 2.0
 
 
 class ToolError(Exception):
@@ -153,7 +154,14 @@ def _read_tail(path, chars):
 
 
 def _finish(status, error=None):
-    """Sends the captured output, the log tail and DONE, once. Returns whether this call was the one."""
+    """Sends the captured output, the log tail and DONE, once. Returns whether this call was the one.
+
+    First it waits, at most SWEEP_JOIN_SECONDS, for the sweep: os._exit after DONE would otherwise cut it off before it
+    ran for a short program (§8). The callers are the main thread, _watch and _violation on the program's thread; the
+    sweep thread never takes _finish_lock and never calls this, so the join cannot deadlock on any of them."""
+    sweep = _state.get("sweep")
+    if sweep is not None and not _finished.is_set() and sweep is not threading.current_thread():
+        sweep.join(SWEEP_JOIN_SECONDS)
     with _finish_lock:
         if _finished.is_set():
             return False
@@ -456,26 +464,45 @@ def _split():
     os.close(read_end)
 
 
-def _sweep(reply_dir, age):
+def _trace(path, line):
+    """Appends one line to the sweep trace, a test seam named only in config.json (written by the host)."""
+    if not path:
+        return
+    try:
+        with open(path, "a") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
+def _sweep(reply_dir, age, trace=None):
     """Removes entries of .aimon-ptc/ older than `age` seconds: runs that ended without cleaning up (§8). Housekeeping:
     every error is ignored.
 
     The root is the reply directory's parent and nothing else. RUN_DIR (this file's directory) is placed by the shell,
-    somewhere unrelated — under a local shell, the system temp directory — and must never be used here."""
+    somewhere unrelated — under a local shell, the system temp directory — and must never be used here.
+
+    `trace`, when given, names a file that gets one line: the guard that stopped the sweep (basename, symlink,
+    own-missing, error) or "swept N". Only tests set it; the engine's config.json never carries it."""
     reply_root = reply_dir.rstrip("/")
     sweep_root = os.path.dirname(reply_root)
     own = os.path.basename(reply_root)
     try:
         if not os.path.isabs(reply_root) or os.path.basename(sweep_root) != ".aimon-ptc" or not own:
+            _trace(trace, "basename")
             return
         if not stat.S_ISDIR(os.lstat(sweep_root).st_mode):
+            _trace(trace, "symlink")
             return
         entries = os.listdir(sweep_root)
         if own not in entries:
+            _trace(trace, "own-missing")
             return
     except OSError:
+        _trace(trace, "error")
         return
     cutoff = time.time() - age
+    swept = 0
     for name in entries:
         if name == own or name.startswith("probe-"):
             continue
@@ -488,8 +515,10 @@ def _sweep(reply_dir, age):
                 shutil.rmtree(path, ignore_errors=True)
             else:
                 os.unlink(path)
+            swept += 1
         except OSError:
             pass
+    _trace(trace, "swept %d" % swept)
 
 
 def main():
@@ -501,8 +530,12 @@ def main():
     with open(os.path.join(RUN_DIR, "config.json"), "rb") as f:
         config = json.loads(f.read().decode("utf-8"))
     if config.get("sweep_age_seconds") is not None:
-        threading.Thread(target=_sweep, args=(_state["reply_dir"], float(config["sweep_age_seconds"])),
-                         name="aimon-ptc-sweep", daemon=True).start()
+        # Joined (bounded) by _finish, so a run that ends by itself does not cut the sweep off.
+        sweep = threading.Thread(target=_sweep, args=(_state["reply_dir"], float(config["sweep_age_seconds"]),
+                                                     config.get("sweep_trace")),
+                                 name="aimon-ptc-sweep", daemon=True)
+        _state["sweep"] = sweep
+        sweep.start()
     with open(os.path.join(RUN_DIR, "main.py"), "rb") as f:
         source = f.read().decode("utf-8")
     _state["max_output_bytes"] = int(config["max_output_bytes"])

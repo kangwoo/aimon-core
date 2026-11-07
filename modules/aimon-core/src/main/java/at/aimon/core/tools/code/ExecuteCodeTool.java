@@ -40,6 +40,7 @@ import at.aimon.core.programmatic.EngineAvailability;
 import at.aimon.core.programmatic.ToolGrade;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
 import at.aimon.core.tools.ToolContextKeys;
+import at.aimon.core.tools.ToolSpans;
 
 /**
  * {@code ExecuteCode} — runs a program the model wrote, whose function calls are tool calls
@@ -181,7 +182,9 @@ public final class ExecuteCodeTool extends AbstractTool {
         Objects.requireNonNull(context, "context cannot be null");
         final ExecuteCodePlan plan = ExecuteCodePlan.of(context, engines, TOOL_NAME, toolScope, warned);
         if (!plan.isAvailable()) {
-            return ToolDescriptor.from(this).offerable(false).build();
+            // The reason only for an agent that opens tools to code: the loop records it on the iteration's span.
+            return ToolDescriptor.from(this).offerable(false).unavailableReason(plan.reportedReason().orElse(null))
+                    .build();
         }
         final CodeExecutionEngine engine = plan.engine().orElseThrow();
         final ToolGrade intrinsic = engine.intrinsicGrade();
@@ -203,7 +206,7 @@ public final class ExecuteCodeTool extends AbstractTool {
                 ExecuteCodeDescription.render(engine.language(), plan, limits), getDefinition().getInputSchema());
         final ToolDescriptor.Builder builder = ToolDescriptor.from(this).definition(definition).sideEffectLevel(level)
                 .destructiveBehavior(destructive).dataReach(reach).approvalDelegated(intrinsic.isApprovalDelegated())
-                .codeHostedTools(callableNames(plan));
+                .codeHostedTools(callableNames(plan)).codeLanguage(engine.language());
         intrinsic.getApprovalKey().ifPresent(key -> builder.approvalKey(key)
                 .approvalVia(TOOL_NAME + " (" + ExecuteCodeDescription.displayName(engine.language()) + ")"));
         return builder.build();
@@ -236,6 +239,7 @@ public final class ExecuteCodeTool extends AbstractTool {
             return ToolResult.error("ExecuteCode is not available here: " + plan.unavailableReason().orElse(""));
         }
         final CodeExecutionEngine engine = plan.engine().orElseThrow();
+        annotateSpan(context, engine, plan);
         final Optional<ToolCallDispatcher> dispatcher = context.get(ToolContextKeys.TOOL_CALL_DISPATCHER);
         if (dispatcher.isEmpty()) {
             return ToolResult.error("ExecuteCode refused: no tool call dispatcher is bound to this execution");
@@ -299,8 +303,8 @@ public final class ExecuteCodeTool extends AbstractTool {
         }
         final ToolResult result;
         if (outcome.getStatus() == CodeExecutionStatus.COMPLETED) {
-            result = ToolResult.success(ExecuteCodeObservation.success(outcome, calls, bridge.notices(),
-                    bridge.hookFeedback(), stillRunning, total, limits));
+            result = ToolResult.success(ExecuteCodeObservation.success(engine.language(), outcome, calls,
+                    bridge.notices(), bridge.hookFeedback(), stillRunning, total, limits));
         } else {
             if (outcome.getStatus() == CodeExecutionStatus.PROTOCOL_VIOLATION) {
                 log.error("ExecuteCode {}: protocol violation: {}", toolUseId,
@@ -309,11 +313,23 @@ public final class ExecuteCodeTool extends AbstractTool {
                 log.info("ExecuteCode {} ended {}: {}", toolUseId, outcome.getStatus(),
                         ModelText.forLog(outcome.getErrorMessage().orElse("")));
             }
-            final ToolResult error = ToolResult.error(ExecuteCodeObservation.failure(outcome, calls, bridge.notices(),
-                    bridge.hookFeedback(), stillRunning, total, limits));
+            final ToolResult error = ToolResult.error(ExecuteCodeObservation.failure(engine.language(), outcome, calls,
+                    bridge.notices(), bridge.hookFeedback(), stillRunning, total, limits));
             result = outcome.getStatus().isRetryable() ? error : error.notRetryable();
         }
         return result.withRenderPayload(renderPayload(code, engine.language(), outcome.getStatus(), calls));
+    }
+
+    /**
+     * Sets {@code ptc.language} on this call's span and, for an engine bound by it, {@code ptc.tool_scope} — on every
+     * bound run, not only {@code unrestricted}, so {@code environment} and {@code host} are visible too (§12.2; design
+     * deviation A-DV1).
+     */
+    private static void annotateSpan(ToolContext context, CodeExecutionEngine engine, ExecuteCodePlan plan) {
+        ToolSpans.currentSpan(context).ifPresent(span -> {
+            span.setAttribute(CodeSpanAttributes.LANGUAGE, engine.language());
+            plan.toolScope().ifPresent(scope -> span.setAttribute(CodeSpanAttributes.TOOL_SCOPE, scope.wireName()));
+        });
     }
 
     private Duration wallClockOf(Integer timeoutSeconds, ToolContext context) {

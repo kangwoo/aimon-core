@@ -13,8 +13,7 @@
  *
  * <ul>
  * <li><strong>Unix shells:</strong> Runs commands through the configured Unix shell. A {@code cmd.exe} branch exists
- * but
- * Windows is not a supported platform — see "Platform scope" below
+ * but Windows is not a supported platform — see "Platform scope" below
  * <li><strong>File-backed capture:</strong> The child's stdout/stderr are redirected to per-execution temp files, so no
  * pipe fd is inherited and no reader thread can be left blocked by a backgrounded child
  * <li><strong>Timeout support:</strong> Configurable command execution timeouts with graceful termination

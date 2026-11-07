@@ -162,7 +162,7 @@ class ExecuteCodeEndToEndTest {
         assertThat(result.isError()).as(result.getText()).isFalse();
         assertThat(prompts).isEmpty();
         assertThat(result.getText()).contains("OK Read:/p").contains("[hook feedback]").contains("audited Read")
-                .contains("[ExecuteCode: 1 tool call (Read x1)");
+                .contains("[ExecuteCode (JavaScript): 1 tool call (Read x1)");
         assertThat(preToolOrigins).hasSize(2);
         final ToolCallOrigin nested = preToolOrigins.get(1);
         assertThat(nested.getPath()).isEqualTo(ToolCallPath.CODE);
