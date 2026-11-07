@@ -58,8 +58,8 @@ import at.aimon.bootstrap.AimonStack;
  * The gap is 4096 rather than the 2048 the design first named, because 2048 is not free: it is exactly where
  * {@code WebServerStartStopLifecycle} sits. Beans that share a phase land in one {@code LifecycleGroup} and are
  * ordered within it by nothing more than the bean factory's iteration order, so the tie would have made "runtimes
- * before the socket" a coincidence rather than a guarantee. The design's error was reading
- * {@code MAX_VALUE - 1024} as the web server's phase; that is the graceful-shutdown lifecycle, one step above it.
+ * before the socket" a coincidence rather than a guarantee. The design's error was reading {@code MAX_VALUE - 1024} as
+ * the web server's phase; that is the graceful-shutdown lifecycle, one step above it.
  *
  * <h2>Why stop does nothing</h2>
  *

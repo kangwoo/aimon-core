@@ -13,9 +13,9 @@ import at.aimon.core.llm.ToolDefinition;
  *
  * <p>
  * The slice tests assemble a real stack but never run a turn, so the only thing this has to do is exist and be
- * distinguishable from the vendor clients the starter would otherwise build. Deliberately not
- * {@link AutoCloseable}: the destroy-method audit asserts which beans Spring would close, and a closeable stub
- * would make that assertion pass for the wrong reason.
+ * distinguishable from the vendor clients the starter would otherwise build. Deliberately not {@link AutoCloseable}:
+ * the destroy-method audit asserts which beans Spring would close, and a closeable stub would make that assertion pass
+ * for the wrong reason.
  */
 class StubLlmClient implements LlmClient {
 
