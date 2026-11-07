@@ -1,6 +1,6 @@
 ---
 translated_from: docs/features/hook/hook-config-guide.md
-source_commit: dc928a6a
+source_commit: 05b4e424
 ---
 
 # Hook Configuration Guide (`hooks.json`)
@@ -442,10 +442,10 @@ cannot be run, the fork ends without a single LLM call and its parent receives
 `Execution blocked by OnStart hook [SUBAGENT/<name>]: <reason>` (`Task` reports `Status: FAILURE`, a skill reports
 `Skill fork failed for '<skill>': …`, a background task settles as `FAILED`). The fork's completion reason is `BLOCKED`,
 not `ERROR` — read it from the `Completion reason: BLOCKED` line of a `Task` result or a workflow step's
-`completionReason`. A hook that was only meant to check user
-input should branch on `AIMON_INVOKER_TYPE` in its script — `MAIN_AGENT` for the main turn, `SUBAGENT` for a fork. That
-is the only way to exempt forks: `failOpen: true` lets a hook through **only when its command could not run**, and an
-exit 2 still blocks. A subagent whose name has a code behavior (`SubagentBehavior`) registered is no exception — it does
+`completionReason`. A hook that was only meant to check user input should branch on `AIMON_INVOKER_TYPE` in its script —
+`MAIN_AGENT` for the main turn, `SUBAGENT` for a fork. That is the only way to exempt forks: `failOpen: true` lets a
+hook through **only when its command could not run**, and an exit 2 still blocks. A subagent whose name has a code
+behavior (`SubagentBehavior`) registered is no exception — it does
 not run the ReAct loop, but `onStart` fires before the behavior is invoked, and a block means the behavior never runs.
 
 **When the command could not run (fail-closed).** If a `command` handler on one of the four events above **produces no
@@ -539,17 +539,16 @@ only, and with the two exceptions below. Read: `hookSpecificOutput.permissionDec
 template renders, not the input JSON Claude Code sends, and a non-2xx is neither a refusal nor a pass but no verdict. An
 `mcp` handler **does not read** these spellings — an MCP tool result is not written for Claude Code, so only `decision`
 (`block` included), `reason`, `feedback` and the top-level `updatedInput` are read there. When one document carries
-several spellings and they
-disagree, **the strictest is the verdict**: refuse > unreadable > ask > allow. `decision: allow` next to
-`permissionDecision: deny` is a refusal. The refusal reason shown to the model comes only from the partner of the field
-that refused — neither the reason of a field that did not refuse (the `reason` next to `decision: allow`) nor `feedback`,
-`systemMessage` or `additionalContext` ever becomes the reason. `updatedInput` is applied only on an allow, and when its
-two places hold different values neither is picked: that is no verdict. An `ask` is turned
-into allow or refuse by the hook execution manager's `AskPromptHandler`: unless the host supplied one it **refuses**,
-and the environment variable `AIMON_HOOK_ASK_DEFAULT=allow` changes that default to allow. An `ask` is a verdict, so
-`failOpen` does not open it. `permissionDecision: defer`, unlike `decision: defer`, is no verdict — Claude Code's `defer`
-means "hold this tool call until the calling application resumes it", there is no means to do that, and so it is not
-read as running the tool.
+several spellings and they disagree, **the strictest is the verdict**: refuse > unreadable > ask > allow.
+`decision: allow` next to `permissionDecision: deny` is a refusal. The refusal reason shown to the model comes only from
+the partner of the field that refused — neither the reason of a field that did not refuse (the `reason` next to
+`decision: allow`) nor `feedback`, `systemMessage` or `additionalContext` ever becomes the reason. `updatedInput` is
+applied only on an allow, and when its two places hold different values neither is picked: that is no verdict. An `ask`
+is turned into allow or refuse by the hook execution manager's `AskPromptHandler`: unless the host supplied one it
+**refuses**, and the environment variable `AIMON_HOOK_ASK_DEFAULT=allow` changes that default to allow. An `ask` is a
+verdict, so `failOpen` does not open it. `permissionDecision: defer`, unlike `decision: defer`, is no verdict — Claude
+Code's `defer` means "hold this tool call until the calling application resumes it", there is no means to do that, and
+so it is not read as running the tool.
 
 On `postTool` a missing verdict still leaves a WARN and proceeds, as before. A refusal has nothing to block and also
 proceeds with a WARN, and an `ask` has nobody to ask and is read as an allow — the model is given the response's
@@ -612,12 +611,11 @@ If the response has the shape `{decision, reason, feedback, updatedInput}`, it i
 four fields are all that is read** — `decision` is `allow`, `defer`, `deny`, or `block` as a synonym of `deny`, and
 Claude Code's spellings (`hookSpecificOutput`, `continue`, `stopReason`, `systemMessage`) are not looked at, whatever
 they hold. A tool result that has a field named `continue` (a pagination flag, a continuation token) is not a verdict
-for that. The line
-between a verdict and "no verdict" is the same as for `http`: a result that came back without an error is a verdict
-(empty content, plain text and JSON that is not an object allow; a JSON object is read as a decision document), while a
-server that is not registered or not connected, a transport error, an `isError` result (`call failed`), a decision
-document that cannot be read (`response could not be read`) and an executor that is not wired are **no verdict** — on
-`preTool` that blocks, and `"failOpen": true` lets it through.
+for that. The line between a verdict and "no verdict" is the same as for `http`: a result that came back without an
+error is a verdict (empty content, plain text and JSON that is not an object allow; a JSON object is read as a decision
+document), while a server that is not registered or not connected, a transport error, an `isError` result
+(`call failed`), a decision document that cannot be read (`response could not be read`) and an executor that is not
+wired are **no verdict** — on `preTool` that blocks, and `"failOpen": true` lets it through.
 The `timeout` of an `mcp` handler (10 seconds by default) **ends the call.** When it passes, the request in flight is
 stopped and the result is **no verdict** (`timed out: no response within <n>ms`) — on `preTool` that blocks
 (`"failOpen": true` lets it through), on `postTool` it leaves a WARN and proceeds. The `requestTimeout` configured per

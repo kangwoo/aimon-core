@@ -138,8 +138,8 @@ IMPORTANT: **어떤 도구가 등록되는지는 백엔드가 무엇을 할 수 
 
 `MemoryChat` 은 이 규칙이 생기기 전까지 **CLI 에서만** 등록되었습니다 — `MemorySpec` 에 `DialecticEngine` 을 담을
 자리가 없어서, 스타터로 부팅한 배포는 백엔드가 무엇이든 그 도구를 쓸 수 없었습니다. 지금은 CHAT 티어가 있으면
-등록되고, 없으면 `memory-chat` degradation 이 대신 오릅니다.
-네 도구 모두 다음 **ToolContext 키**를 공유합니다(`MemoryToolContextKeys`) — 보통 `MemoryToolContextEnricher` 가 채웁니다:
+등록되고, 없으면 `memory-chat` degradation 이 대신 오릅니다. 네 도구 모두 다음 **ToolContext 키**를
+공유합니다(`MemoryToolContextKeys`) — 보통 `MemoryToolContextEnricher` 가 채웁니다:
 
 | 키 상수 | 키 이름 | 타입 | 비고 |
 |--------|--------|------|------|

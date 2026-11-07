@@ -489,8 +489,8 @@ Claude Code 의 `PreToolUse` 용으로 만든 정책 엔드포인트의 **응답
 **요청**은 맞춰 주지 않는다: 본문은 이 handler 의 `body` 템플릿이 만든 것이고 Claude Code 가 보내는 입력 JSON 이 아니며,
 non-2xx 는 거부도 통과도 아닌 판정 없음이다. `mcp` handler 는 이 철자들을 **읽지 않는다** — MCP 도구 결과는 Claude Code
 용으로 쓰인 것이 아니어서, 그쪽에서는 `decision`(`block` 포함) · `reason` · `feedback` · 최상위 `updatedInput` 만 읽는다.
-한 문서에 여러 철자가 있고 서로 다르면 **가장 엄한 쪽**이
-판정이다: 거부 > 읽을 수 없음 > 묻는다 > 허용. `decision: allow` 옆에 `permissionDecision: deny` 가 있으면 거부다.
+한 문서에 여러 철자가 있고 서로 다르면 **가장 엄한 쪽**이 판정이다: 거부 > 읽을 수 없음 > 묻는다 > 허용.
+`decision: allow` 옆에 `permissionDecision: deny` 가 있으면 거부다.
 모델에게 보이는 거부 사유는 거부한 필드의 짝에서만 온다 — 거부하지 않은 필드의 사유(`decision: allow` 옆의 `reason`)도,
 `feedback` · `systemMessage` · `additionalContext` 도 사유가 되지 않는다. `updatedInput` 은 허용일 때만 적용하고, 두 자리에
 서로 다른 값이 있으면 어느 쪽도 고르지 않고 판정 없음으로 읽는다. `ask` 는 hook 실행 관리자의 `AskPromptHandler` 가 허용 · 거부로 바꾼다: 호스트가 넣지 않았으면

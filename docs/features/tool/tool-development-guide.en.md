@@ -563,11 +563,10 @@ private static Map<String, Object> createInputSchema() {
   build time and there is no exclusion list — but **its scope is the `at.aimon.core.tools` package**.
   Built-in tools living elsewhere (`at.aimon.core.memory.deriver.tool`, the GraalJS tools, and — in
   repositories of their own — `at.aimon.sandbox.tool` and the Playwright tools) follow the same rule, but
-  this test does not protect them. Scoping it by
-  package convention is deliberate, and the reason is in the test's javadoc — scanning every subtype of
-  `Tool` catches `at.aimon.core.mcp.McpTool`, whose advertised schema is the server's, not ours. The check
-  looks at **the top-level map only** — attaching the key to array item schemas alone leaves the place
-  where the model's call is actually checked empty, so it does not pass.
+  this test does not protect them. Scoping it by package convention is deliberate, and the reason is in the test's
+  javadoc — scanning every subtype of `Tool` catches `at.aimon.core.mcp.McpTool`, whose advertised schema is the
+  server's, not ours. The check looks at **the top-level map only** — attaching the key to array item schemas alone
+  leaves the place where the model's call is actually checked empty, so it does not pass.
 - **Do not touch third-party schemas such as MCP's.** The validator does not ask "who made this tool";
   it decides purely on **strict if the key is present, lenient if it is not**. Turning strictness on is the
   schema owner's declaration to make.
