@@ -43,11 +43,14 @@ import at.aimon.core.tools.ForkAccess;
 import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.InvokingSessionAccess;
 import at.aimon.core.tools.ToolContextKeys;
+import at.aimon.core.tools.workflow.BackgroundSubmissions;
+import at.aimon.core.workflow.BackgroundSubmission;
 import at.aimon.core.workflow.RunId;
 import at.aimon.core.workflow.WorkflowBudget;
 import at.aimon.core.workflow.WorkflowRunner;
 import at.aimon.core.workflow.WorkflowRunnerOptions;
 import at.aimon.core.workflow.WorkflowRunners;
+import at.aimon.core.workflow.exception.BackgroundRunRefusedException;
 import at.aimon.graaljs.GraalJsEngineHolder;
 import at.aimon.graaljs.JsSandboxConfig;
 import at.aimon.graaljs.exception.JsScriptException;
@@ -203,12 +206,21 @@ public final class GraalJsWorkflowTool extends AbstractTool {
         }
         // Fire-and-forget on the shared runner's own base launch context and bootstrap budget: a background run does
         // NOT inherit the invoking execution's context id, principal, or cancellation signal (mirrors WorkflowTool).
-        // The run id is derived from the full request so an identical in-flight request is joined idempotently.
-        final RunId runId = RunId.from(RUN_SCRIPT_NAME, discriminator(source, args));
+        // The run id is derived from the full request and the caller's ceiling, so an identical in-flight request from
+        // the same caller is joined idempotently and one from a narrower caller is not.
+        final BackgroundSubmission submission = BackgroundSubmissions.of(context);
+        final RunId runId = RunId.from(RUN_SCRIPT_NAME, discriminator(source, args) + "-" + submission.ceilingDigest());
         final GraalJsWorkflowScript script = new GraalJsWorkflowScript(source, args, sandbox, engines, subagentResolver,
                 NoopCancellationSignal.INSTANCE);
-        // The exception: the run is charged to this execution's quota, or it would be a way around it.
-        backgroundRunner.runInBackground(script, runId, context.get(ToolContextKeys.QUOTA_GUARD).orElse(null));
+        // The exceptions: the run is charged to this execution's quota, or it would be a way around it, and is bounded
+        // by the calling loop's ceiling, or a skill or fork could escape its own (TC-25). A refusal is reported as
+        // itself, not as an invalid parameter.
+        try {
+            backgroundRunner.runInBackground(script, runId, submission);
+        } catch (BackgroundRunRefusedException e) {
+            log.info("WorkflowJs (background) refused: {}", e.getMessage());
+            return ToolResult.error(e.getMessage());
+        }
         log.debug("WorkflowJs (background): runId='{}'", runId.value());
         return ToolResult.success("Started background JS workflow run '" + runId.value()
                 + "'. Track it with the /runs command (or /runs status " + runId.value() + ").");

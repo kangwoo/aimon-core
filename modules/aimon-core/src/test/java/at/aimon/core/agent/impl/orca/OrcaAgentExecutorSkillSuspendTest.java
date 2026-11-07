@@ -28,6 +28,11 @@ import at.aimon.core.agent.stream.AgentExecutionEvent;
 import at.aimon.core.agent.stream.SkillTurnSuspendedEvent;
 import at.aimon.core.agent.tool.DefaultToolExecutionManager;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.agent.tool.SideEffectLevel;
+import at.aimon.core.agent.tool.Tool;
+import at.aimon.core.agent.tool.ToolContext;
+import at.aimon.core.agent.tool.ToolInput;
+import at.aimon.core.agent.tool.ToolResult;
 import at.aimon.core.base.Principal;
 import at.aimon.core.command.DefaultCommandExecutionManager;
 import at.aimon.core.command.DefaultCommandRegistry;
@@ -53,6 +58,8 @@ import at.aimon.core.skill.Skill;
 import at.aimon.core.skill.SkillContent;
 import at.aimon.core.skill.SkillMetadata;
 import at.aimon.core.skill.SkillRegistry;
+import at.aimon.core.skill.fork.NoOpSkillForkExecutor;
+import at.aimon.core.skill.hook.NoOpSkillHookActivator;
 import at.aimon.core.skill.policy.SkillInvocationDecision;
 import at.aimon.core.skill.policy.SkillInvocationPolicy;
 import at.aimon.core.skill.policy.SkillInvocationRequest;
@@ -60,8 +67,10 @@ import at.aimon.core.skill.policy.SkillPreflightScanner;
 import at.aimon.core.skill.policy.pending.InMemoryPendingTurnRegistry;
 import at.aimon.core.skill.policy.pending.PendingTurn;
 import at.aimon.core.skill.policy.pending.PendingTurnRegistry;
+import at.aimon.core.skill.render.NoOpSkillContentRenderer;
 import at.aimon.core.subagent.DefaultSubagentExecutionManager;
 import at.aimon.core.subagent.DefaultSubagentRegistry;
+import at.aimon.core.tools.skill.SkillTool;
 
 /** Integration tests for SK-11.4: pre-flight scan + atomic suspend in {@link OrcaAgentExecutor}. */
 @DisplayName("OrcaAgentExecutor SK-11.4 skill pre-flight scan & suspend")
@@ -322,6 +331,128 @@ class OrcaAgentExecutorSkillSuspendTest {
     }
 
     @Test
+    @DisplayName("TC-26: an approval-requiring skill in a turn an inline skill has narrowed does not suspend — it fails"
+            + " closed, the pre-flight scan is skipped, and the turn stays narrowed to its end")
+    void narrowedTurnNeverSuspends() {
+        final SequencedLlmClient llmClient = new SequencedLlmClient();
+        llmClient.enqueue(LlmResponse.of("activating A",
+                List.of(ToolUse.of("tu-1", "Skill", Map.of("skill", "narrow-a", "args", ""))),
+                TokenUsage.of(10, 10, 20)));
+        llmClient.enqueue(LlmResponse.of("activating B",
+                List.of(ToolUse.of("tu-2", "Skill", Map.of("skill", "deploy", "args", ""))),
+                TokenUsage.of(10, 10, 20)));
+        llmClient.enqueue(LlmResponse.of("done", List.of(), TokenUsage.of(5, 5, 10)));
+
+        final InMemoryPendingTurnRegistry registry = new InMemoryPendingTurnRegistry();
+        final SkillRegistry skills = narrowingSkills();
+        final CapturingPolicy scannerPolicy = new CapturingPolicy(SkillInvocationDecision.ALLOW) {
+            @Override
+            public SkillInvocationDecision check(SkillInvocationRequest request) {
+                super.check(request);
+                return "deploy".equals(request.getSkill().getName())
+                        ? SkillInvocationDecision.ASK
+                        : SkillInvocationDecision.ALLOW;
+            }
+        };
+        final SkillPreflightScanner scanner = new SkillPreflightScanner(scannerPolicy, skills);
+
+        final OrcaAgentExecutor executor = createExecutor(llmClient, scanner, registry);
+        final OrcaAgentRuntime runtime = createContext(narrowingTools(skills));
+        final OrcaAgentExecutionResult result = executor.execute(runtime,
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.generate()).build());
+
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.COMPLETED);
+        assertThat(registry.listByAgentRuntime(runtime.getId())).isEmpty();
+        // Consulted for A in iteration 1 (not yet narrowed), skipped for B in iteration 2 (narrowed).
+        assertThat(scannerPolicy.requests).extracting(r -> r.getSkill().getName()).containsExactly("narrow-a");
+        assertThat(result.getConversationHistory().stream().flatMap(m -> m.getToolUseResults().stream())
+                .filter(r -> r.getToolUseId().equals("tu-2"))).singleElement().satisfies(answer -> {
+                    assertThat(answer.isError()).isTrue();
+                    assertThat(answer.getContent()).contains("ask for it again in a new turn");
+                });
+        // Iteration 1 offered everything; iterations 2 and 3 only what A allows.
+        assertThat(llmClient.offered).hasSize(3);
+        assertThat(names(llmClient.offered.get(0))).containsExactlyInAnyOrder("Skill", "Read", "Grep");
+        assertThat(names(llmClient.offered.get(1))).containsExactlyInAnyOrder("Skill", "Read");
+        assertThat(names(llmClient.offered.get(2))).containsExactlyInAnyOrder("Skill", "Read");
+    }
+
+    @Test
+    @DisplayName("TC-26 control: an approval-requiring skill before any narrowing still suspends the turn")
+    void approvalBeforeNarrowingStillSuspends() {
+        final SequencedLlmClient llmClient = new SequencedLlmClient();
+        llmClient.enqueue(LlmResponse.of("activating B",
+                List.of(ToolUse.of("tu-1", "Skill", Map.of("skill", "deploy", "args", ""))),
+                TokenUsage.of(10, 10, 20)));
+        llmClient.enqueue(LlmResponse.of("unexpected", List.of(), TokenUsage.of(5, 5, 10)));
+
+        final InMemoryPendingTurnRegistry registry = new InMemoryPendingTurnRegistry();
+        final SkillRegistry skills = narrowingSkills();
+        final SkillPreflightScanner scanner = new SkillPreflightScanner(
+                new MapBackedPolicy(
+                        Map.of("narrow-a", SkillInvocationDecision.ALLOW, "deploy", SkillInvocationDecision.ASK)),
+                skills);
+
+        final OrcaAgentRuntime runtime = createContext(narrowingTools(skills));
+        final OrcaAgentExecutionResult result = createExecutor(llmClient, scanner, registry).execute(runtime,
+                OrcaAgentExecutionRequest.builder().userInput("hi").sessionId(SessionId.generate()).build());
+
+        assertThat(result.getCompletionReason()).isEqualTo(CompletionReason.SUSPENDED);
+        assertThat(registry.listByAgentRuntime(runtime.getId())).hasSize(1);
+    }
+
+    /** Skill {@code narrow-a} (inline, allowed-tools [Read, Skill]) and {@code deploy}, which needs approval. */
+    private static SkillRegistry narrowingSkills() {
+        final TestSkillRegistry registry = new TestSkillRegistry();
+        registry.add(Skill.builder().name("narrow-a").metadata(
+                SkillMetadata.builder().name("narrow-a").description("narrows").allowedTools("Read Skill").build())
+                .content(SkillContent.of("A body")).build());
+        registry.add(Skill.builder().name("deploy")
+                .metadata(SkillMetadata.builder().name("deploy").description("needs approval").build())
+                .content(SkillContent.of("deploy body")).build());
+        return registry;
+    }
+
+    /** Skill (A allowed, deploy asks), Read and Grep. */
+    private static DefaultToolRegistry narrowingTools(SkillRegistry skills) {
+        final DefaultToolRegistry tools = new DefaultToolRegistry();
+        tools.register(new SkillTool(skills, new NoOpSkillContentRenderer(), new NoOpSkillForkExecutor(),
+                new NoOpSkillHookActivator(), new MapBackedPolicy(
+                        Map.of("narrow-a", SkillInvocationDecision.ALLOW, "deploy", SkillInvocationDecision.ASK))));
+        tools.register(new NamedTool("Read"));
+        tools.register(new NamedTool("Grep"));
+        return tools;
+    }
+
+    private static List<String> names(List<ToolDefinition> tools) {
+        return tools.stream().map(ToolDefinition::getName).toList();
+    }
+
+    /** A read-only tool that answers with its name. */
+    private static final class NamedTool implements Tool {
+        private final String name;
+
+        NamedTool(String name) {
+            this.name = name;
+        }
+
+        @Override
+        public ToolDefinition getDefinition() {
+            return ToolDefinition.of(name, name + " tool", Map.of("type", "object", "properties", Map.of()));
+        }
+
+        @Override
+        public SideEffectLevel getSideEffectLevel() {
+            return SideEffectLevel.READ_ONLY;
+        }
+
+        @Override
+        public ToolResult execute(ToolInput input, ToolContext context) {
+            return ToolResult.success(name + " ok");
+        }
+    }
+
+    @Test
     @DisplayName("constructor rejects scanner without a pending-turn registry")
     void constructorRejectsScannerWithoutRegistry() {
         final SequencedLlmClient llmClient = new SequencedLlmClient();
@@ -333,12 +464,16 @@ class OrcaAgentExecutorSkillSuspendTest {
     }
 
     private OrcaAgentRuntime createContext() {
+        return createContext(new DefaultToolRegistry());
+    }
+
+    private OrcaAgentRuntime createContext(DefaultToolRegistry toolRegistry) {
         final LocalFileSystem fileSystem = new LocalFileSystem(new LocalFileSystemConfig(tempDir.toString()));
         fileSystem.initialize();
         return OrcaAgentRuntime.builder()
                 .agent(DefaultAgent.builder().name("TestAgent").maxIterations(10).systemPrompt("You are a test agent")
                         .build())
-                .toolRegistry(new DefaultToolRegistry()).hookRegistry(new DefaultHookRegistry())
+                .toolRegistry(toolRegistry).hookRegistry(new DefaultHookRegistry())
                 .commandRegistry(new DefaultCommandRegistry(fileSystem, ".aimon/commands"))
                 .subagentRegistry(new DefaultSubagentRegistry(fileSystem, ".aimon/agents"))
                 .skillRegistry(new TestSkillRegistry()).controlFileSystem(fileSystem)
@@ -420,7 +555,7 @@ class OrcaAgentExecutorSkillSuspendTest {
     }
 
     /** {@link SkillInvocationPolicy} that records every request it sees and answers with one fixed decision. */
-    private static final class CapturingPolicy implements SkillInvocationPolicy {
+    private static class CapturingPolicy implements SkillInvocationPolicy {
         private final List<SkillInvocationRequest> requests = new CopyOnWriteArrayList<>();
         private final SkillInvocationDecision decision;
 
@@ -439,6 +574,8 @@ class OrcaAgentExecutorSkillSuspendTest {
     private static final class SequencedLlmClient implements LlmClient {
         private final List<LlmResponse> responses = new ArrayList<>();
         private final Duration delay = Duration.ZERO;
+        /** The tools offered to each call, in order. */
+        private final List<List<ToolDefinition>> offered = new CopyOnWriteArrayList<>();
 
         void enqueue(LlmResponse response) {
             responses.add(response);
@@ -453,6 +590,7 @@ class OrcaAgentExecutorSkillSuspendTest {
         @Override
         public LlmResponse sendMessage(String systemPrompt, List<Message> messages, List<ToolDefinition> tools,
                 LlmModel modelConfig, LlmCallMetadata metadata) {
+            offered.add(List.copyOf(tools));
             if (!delay.isZero()) {
                 try {
                     Thread.sleep(delay.toMillis());

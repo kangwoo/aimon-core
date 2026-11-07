@@ -361,6 +361,10 @@ DefaultSubagentExecutor ── QUOTA_GUARD 를 그대로 다시 싣는다 ──
 물려받는 것은 **이 하나뿐**이다 — 나머지를 물려받지 않는 이유는 그대로이고, 쿼터만은 물려받지 않으면 우회로라서다.
 `workflow` 패키지의 ArchUnit 허용 목록(`workflowMayDependOnlyOnSubagentSpiTypes`)에 `QuotaGuard` 한 타입이 더해졌다.
 
+그 뒤 이 메서드는 `runInBackground(script, runId, BackgroundSubmission)` 으로 바뀌었다. 백그라운드 실행은 쿼터 가드에 더해 제출한
+루프의 허용 목록과 programmatic 설정도 받아, 실행기가 기본 launch context 를 그것으로 좁힌다 — 그것도 물려받지 않으면 스킬·포크가 자기
+천장을 넘는 우회로라서다([PTC](../tool/programmatic-tool-calling.md) §7.2, [TC-25](../../backlog/tool-contract-open-items.md)).
+
 `OrcaAgentRuntimeFactory` 의 기본 launch context 자체는 비활성 guard 를 갖는다. 거기에는 물려줄 호출한 실행이 없다.
 앱 코드가 그 runner 를 직접 부르는 경우, 그리고 같은 이유로 `RoutineExecutor` 의 단계가 띄우는 포크는 1단계에서
 계량되지 않는다 — `UQ-2`.

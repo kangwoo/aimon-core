@@ -197,7 +197,10 @@ class ShellRuntimeSweepTest {
         Files.createDirectories(ptc.resolve("own"));
         final Duration took = timeRuntime(ptc.resolve("own").toString(),
                 "import time\nprint('x' * 2000, flush=True)\ntime.sleep(10)\n", 1000);
-        assertThat(took).isLessThan(Duration.ofMillis(1500));
+        // Joining would hold DONE for the whole 2 s join (the seam delays the sweep 5 s), so anything under 2 s means
+        // no join. The bound is the join itself, not a guess at process start-up, so a loaded runner has the most
+        // room the claim allows.
+        assertThat(took).isLessThan(Duration.ofSeconds(2));
     }
 
     @Test
@@ -205,7 +208,9 @@ class ShellRuntimeSweepTest {
     void completionJoinsTheSweep() throws Exception {
         Files.createDirectories(ptc.resolve("own"));
         final Duration took = timeRuntime(ptc.resolve("own").toString(), "pass\n", 1000);
-        assertThat(took).isBetween(Duration.ofSeconds(2), Duration.ofMillis(3000));
+        // At least the 2 s join, and clearly under the 5 s the seam delays the sweep — the join is bounded. The upper
+        // bound leaves 2.5 s for process start-up on a loaded runner.
+        assertThat(took).isBetween(Duration.ofSeconds(2), Duration.ofMillis(4500));
     }
 
     private CodeExecutionOutcome run(CodeExecutionLimits limits) {

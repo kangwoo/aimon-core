@@ -23,9 +23,11 @@ import at.aimon.core.agent.interrupt.CancellationSignal;
 import at.aimon.core.agent.interrupt.DefaultInterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
 import at.aimon.core.agent.interrupt.InterruptReason;
-import at.aimon.core.agent.quota.QuotaGuard;
+import at.aimon.core.agent.tool.permission.AllowedTool;
+import at.aimon.core.agent.tool.permission.AllowedTools;
 import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.subagent.SubagentLaunchContext;
+import at.aimon.core.workflow.BackgroundSubmission;
 import at.aimon.core.workflow.RunHandle;
 import at.aimon.core.workflow.RunId;
 import at.aimon.core.workflow.RunQuery;
@@ -39,6 +41,7 @@ import at.aimon.core.workflow.WorkflowRun;
 import at.aimon.core.workflow.WorkflowRunState;
 import at.aimon.core.workflow.WorkflowRunner;
 import at.aimon.core.workflow.WorkflowScript;
+import at.aimon.core.workflow.exception.BackgroundRunRefusedException;
 
 /**
  * Default {@link WorkflowRunner}. Application-scoped: constructed once at bootstrap with borrowed collaborators (a
@@ -211,13 +214,17 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
 
     @Override
     public <T> RunHandle<T> runInBackground(WorkflowScript<T> script, RunId runId) {
-        return runInBackground(script, runId, null);
+        return runInBackground(script, runId, BackgroundSubmission.none());
     }
 
     @Override
-    public <T> RunHandle<T> runInBackground(WorkflowScript<T> script, RunId runId, QuotaGuard quotaGuard) {
+    public <T> RunHandle<T> runInBackground(WorkflowScript<T> script, RunId runId, BackgroundSubmission submission) {
         Objects.requireNonNull(script, "script cannot be null");
         Objects.requireNonNull(runId, "runId cannot be null");
+        Objects.requireNonNull(submission, "submission cannot be null");
+        // Narrowed BEFORE the claim below: a refusal thrown after it would leave a non-terminal store entry with no
+        // registration, and every later submit of the id would fail as "active but is not hosted on this node".
+        final SubagentLaunchContext perRunBase = narrowedBase(submission);
         // The RunStore is the authoritative idempotency gate: putIfAbsentOrTerminal atomically claims the id when
         // it is absent or terminal, so at most one submit dispatches per non-terminal window. A losing submit returns
         // the existing live handle. finalizeRun writes the store terminal state BEFORE removing the registry entry, so
@@ -230,7 +237,7 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
                 baseLaunchContext.getPrincipal().orElse(null), baseLaunchContext.getAgentRuntimeId(), Instant.now());
         for (int attempts = 0; attempts < MAX_RESUBMIT_STORE_ATTEMPTS; attempts++) {
             if (runStore.putIfAbsentOrTerminal(pending)) {
-                return dispatch(script, runId, quotaGuard != null ? quotaGuard : baseLaunchContext.getQuotaGuard());
+                return dispatch(script, runId, perRunBase);
             }
             for (int spins = 0; spins < RESUBMIT_REGISTRY_SPINS; spins++) {
                 final Optional<RunningRunRegistry.Entry> existing = runningRuns.find(runId);
@@ -243,12 +250,39 @@ public final class DefaultWorkflowRunner implements WorkflowRunner {
         throw new IllegalStateException("run " + runId + " is active but is not hosted on this node");
     }
 
-    private <T> RunHandle<T> dispatch(WorkflowScript<T> script, RunId runId, QuotaGuard quotaGuard) {
+    /**
+     * The base launch context narrowed by what the submission carries (WorkflowRunner#runInBackground(...,
+     * BackgroundSubmission)): the submitter's quota guard in place of the base's, the intersection of the two
+     * allow-lists, and the submitter's programmatic settings narrowed by the base's (monotone, so {@code none} stays
+     * {@code none}). A run can then do only what both the agent and its submitter may.
+     *
+     * @throws BackgroundRunRefusedException
+     *             if the two allow-lists share no tool
+     */
+    private SubagentLaunchContext narrowedBase(BackgroundSubmission submission) {
+        final SubagentLaunchContext.Builder builder = baseLaunchContext.toBuilder()
+                .quotaGuard(submission.getQuotaGuard().orElse(baseLaunchContext.getQuotaGuard()));
+        if (submission.getCallerAllowedTools().isPresent()) {
+            final List<AllowedTool> base = baseLaunchContext.getCallerAllowedTools();
+            final List<AllowedTool> submitted = submission.getCallerAllowedTools().get();
+            final List<AllowedTool> bounded = AllowedTools.intersect(base, submitted)
+                    .orElseThrow(() -> new BackgroundRunRefusedException(
+                            "background run refused: the caller's allow-list and the agent's share no tool (caller"
+                                    + " allows " + submitted + ", agent allows " + base + ")"));
+            builder.callerAllowedTools(bounded);
+        }
+        submission.getCallerProgrammatic().ifPresent(submitted -> builder
+                .callerProgrammatic(submitted.narrowedBy(baseLaunchContext.getCallerProgrammatic())));
+        return builder.build();
+    }
+
+    private <T> RunHandle<T> dispatch(WorkflowScript<T> script, RunId runId, SubagentLaunchContext perRunBase) {
         // Per-run coordinator + launch context: the run's fan-out subagents observe THIS run's cancellation signal,
-        // and are charged to the submitting execution's quota (WorkflowRunner#runInBackground(..., QuotaGuard)).
+        // and run under the base narrowed by the submission — its quota guard and its ceiling
+        // (WorkflowRunner#runInBackground(..., BackgroundSubmission)).
         final InterruptCoordinator coordinator = new DefaultInterruptCoordinator();
-        final SubagentLaunchContext perRunLaunchContext = baseLaunchContext.toBuilder()
-                .cancellationSignal(coordinator.getSignal()).quotaGuard(quotaGuard).build();
+        final SubagentLaunchContext perRunLaunchContext = perRunBase.toBuilder()
+                .cancellationSignal(coordinator.getSignal()).build();
         final RunControl control = new RunControl(coordinator, null);
         final CompletableFuture<T> future = new CompletableFuture<>();
         final RunHandle<T> handle = new RunHandle<>(runId, future);

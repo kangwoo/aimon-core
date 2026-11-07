@@ -137,6 +137,7 @@ public final class ToolCallOrigin {   // 정적 팩토리 — ToolResult 선례.
 | `SingleToolInvoker.invoke` | `ToolUseResult` 반환, 피드백과 알림을 붙인 채 | `ToolDispatchResult` 반환, 피드백과 알림은 옆 목록. `ToolInvocationSpec` 은 `origin` 을 필수로 받는다 |
 | 루프의 도구 실행 | 각 루프가 `ToolInvocationSpec` 을 조립 | 디스패처 구현 하나 |
 | 좁히기가 programmatic 설정을 나른다(결정 5a, PTC 기능 마무리 PR 2) | `narrow(registry, allowedTools)` | `narrow(registry, allowedTools, programmatic)` — 2-인자 형은 없어졌다(기본 메서드로도 남기지 않는다). 구현은 인자를 더하고 자기 설정보다 넓은 설정을 싣지 않는다. programmatic 설정을 넘길 뜻이 없는 호출자는 `ProgrammaticToolSettings.none()`. `DefaultToolCallDispatcher.Builder.programmatic(...)` 은 새로 생겼고 필수다(없으면 `build()` 가 던진다). `ToolCallDispatchers.ungated(manager, registry, programmatic)` 이 새로 생겼고, 2-인자 `ungated` 는 `none()` 을 싣는다 |
+| 모델이 부른 인라인 스킬의 천장(PTC 남은 일 PR 2, TC-26) | 인라인 스킬은 디스패처를 바꾸지 않는다 — 그 턴의 호출과 포크는 에이전트의 천장 아래 | 세 루프가 실행마다 `ToolContextKeys.INLINE_SKILL_CEILING`(write-once)을 묶고, 인라인 스킬이 그것을 좁히면 다음 iteration 부터 그 iteration 의 도구 문맥에서 `TOOL_CALL_DISPATCHER` 를 루프 디스패처의 `narrow(같은 레지스트리, 스냅샷의 허용 목록, 스냅샷의 programmatic)` 로 바꾼다(`InlineSkillNarrowing`, 버전마다 한 번 짓는다). 키가 write-once 라 iteration 문맥은 턴 문맥에서 그 키를 **뺀** 복사본에 좁힌 디스패처를 넣어 만든다. 같은 레지스트리를 넘기므로 `narrow` 는 원래 세션 레지스트리를 유지한다. 슬래시 스킬 루프는 호출자의 천장 키를 복사하지 않고 자기 것을 새로 넣는다([PTC](programmatic-tool-calling.md) §7.2) |
 
 ---
 
@@ -149,6 +150,7 @@ public final class ToolCallOrigin {   // 정적 팩토리 — ToolResult 선례.
 | 스킬 루프에서 스킬 `allowed-tools` 밖 도구가 실행 시점에 그 호출만 거절되고 스킬은 계속한다 | `LlmSkillExecutorTest`, `SlashSkillToolDispatchE2EIntegrationTest` |
 | `narrow` 는 원래 레지스트리에 없는 도구(원래 허용 목록이 비었을 때 포함)와 같은 이름의 다른 도구를 거절하고, 허용 목록을 넓히지 못하며, 서로소 목록을 거절한다 | `DefaultToolCallDispatcherTest`, `ToolCallDispatchersTest` |
 | `narrow` 는 programmatic 설정을 넓히지 못하고, 모든 `dispatch` 가 디스패처의 설정을 `CALLER_PROGRAMMATIC` 으로 싣는다(호출자가 미리 넣은 값은 덮인다) | `DefaultToolCallDispatcherTest`, `ToolCallDispatchersTest`, `SlashSkillProgrammaticCeilingE2EIntegrationTest` |
+| 인라인 스킬이 좁힌 실행은 다음 iteration 부터 좁힌 디스패처로 호출하고, 그 디스패처가 실은 `CALLER_*` 가 뒤에 띄운 포크·백그라운드 실행의 천장이 된다. 같은 응답의 호출은 좁히기 전 천장으로 돈다 | `SlashSkillProgrammaticCeilingE2EIntegrationTest`(메인·포크·슬래시), `InlineSkillCeilingTest`, `OrcaAgentExecutorSkillSuspendTest` |
 | 디스패처 없는 컨텍스트에서 스킬 루프는 LLM 을 부르지 않고 실패하며 도구는 돌지 않는다 | `LlmSkillExecutorTest` |
 | 디스패처 없는 컨텍스트에서 메인·포크 루프는 그 호출에 같은 문구의 거절 오류 결과를 준다 | `OrcaAgentExecutorDispatchTest`, `DefaultSubagentExecutorDispatchTest` |
 | `dispatch` 는 던지지 않는다 | `DefaultToolCallDispatcherTest`, `ToolCallDispatchersTest` |

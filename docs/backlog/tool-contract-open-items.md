@@ -1,4 +1,4 @@
-# 도구 계약 — 등록 항목 31건 (열림 25 · 닫힘 6)
+# 도구 계약 — 등록 항목 31건 (열림 21 · 닫힘 10)
 
 출처는 `docs/design/tool/` 의 도구 계약·부작용 축·병렬 실행·도구 검색·모니터 문서가 남긴 작업이다. 설계 문서는 현재 설계만
 적고, 남은 일은 여기에 둔다.
@@ -297,7 +297,7 @@ iteration 문맥(같은 "없을 때만" 조건으로), 슬래시 명령 문맥, 
 검사: `DefaultToolCallBridgeTracingTest#payloadPolicyCapturesContent`·`#payloadPolicyAbsentIsSummaryOnly`,
 `OrcaAgentExecutorTracingTest#payloadPolicyBoundBesideTheTracer` 와 슬래시 명령·포크·루틴의 트레이싱 테스트.
 
-## TC-23 — 슬래시 스킬 루프의 ITERATION · TOOL span · **열림**
+## TC-23 — 슬래시 스킬 루프의 ITERATION · TOOL span · **닫힘** *(2026-11-07)*
 
 **무엇을.** `LlmSkillExecutor` 의 루프가 iteration 마다 ITERATION span 을, 도구 호출마다 TOOL span 을 COMMAND span 아래에 연다.
 
@@ -310,7 +310,17 @@ iteration 문맥(같은 "없을 때만" 조건으로), 슬래시 명령 문맥, 
 **언제 다시 볼까.** 슬래시 스킬이 `ExecuteCode` 를 제안받게 될 때(PTC PR 2) — 그때 이유를 남길 자리가 필요해진다. PR 2 에서 그렇게
 되었다(2026-11-07): 포크 루프는 이 속성을 갖췄고 슬래시 스킬 루프만 남았다. 이제 다시 볼 때다.
 
-## TC-24 — 호출자가 PTC 를 켜지 않은 곳에서 쓸 수 있는 서브에이전트 · **열림**
+**어떻게 닫았나.** `LlmSkillExecutor` 가 LLM 호출마다 호출자의 메타데이터가 가리키는 span(사용자 슬래시 경로에서는 COMMAND span) 아래에
+`iteration#k` ITERATION span 을 열고 — 속성 `iteration`, `invokerType=MAIN_AGENT`, `skill=<이름>`, 그 버전의 제안에서 읽은
+`ptc.unavailable_reason` — 그 응답의 도구 호출마다 TOOL span(`tool.path=direct`, `skill`)을 그 아래에 연다. 호출의 문맥은 TOOL span 을
+가리키도록 돌려, 스킬의 `ExecuteCode` 가 낸 중첩 호출은 COMMAND span 이 아니라 그 호출의 TOOL span 아래에 붙는다(편차 A-DV2 는 그렇게
+바뀌었다). LLM 호출은 메타데이터 오버로드로 보내되 span 위치만 싣는다(`Spans.traceCarrier`) — 전에는 귀속이 없었고, 턴의 귀속을 실으면
+사용량이 다른 곳에 매겨진다. `InvokerType` 에 새 값은 두지 않았다. 모든 span 연산은 `Spans.*Safely` 라 트레이서가 던져도 스킬은 계속하고,
+트레이서가 없거나 부모가 없으면 아무것도 열지 않는다([남은 일 설계](../design/tool/ptc-leftovers-core.md) §2.1, §5). 검사:
+`LlmSkillExecutorTracingTest`(트리·속성·LLM 메타데이터·`ExecuteCode` 중첩·`ptc.unavailable_reason`·최대 iteration 의 오류·트레이싱 꺼짐·
+사용량 귀속). 무엇을의 "iteration 마다" 는 정확히는 "LLM 호출마다" 다 — 마지막 답의 호출도 자기 span 을 갖는다.
+
+## TC-24 — 호출자가 PTC 를 켜지 않은 곳에서 쓸 수 있는 서브에이전트 · **닫힘** *(2026-11-07)*
 
 **무엇을.** 서브에이전트·스킬 정의가 호출자의 programmatic 설정과 상관없이 `ExecuteCode` 를 쓸 수 있게 하는 선언(예:
 `programmatic-tools: inherit` 같은 표지, 또는 운영자가 허용하는 "자기 선언만" 모드)을 둘지 정한다.
@@ -326,7 +336,22 @@ B-DV1, OQ-B5). 그래서 코드로만 일하도록 만든 서브에이전트는 
 
 **언제 다시 볼까.** `caller-ceiling` 경고("sets programmatic-tools, but its caller allows none of them")가 실제 배치에서 보고될 때.
 
-## TC-25 — 스킬·포크 안에서 띄운 백그라운드 `Workflow` 실행의 천장 · **열림**
+**어떻게 닫았나.** **결정: 두지 않는다** — 서브에이전트 쪽의 `programmatic-tools: inherit` 같은 표지도, 운영자가 허용하는 "자기 선언만"
+모드도. 전제는 소스로 확인했다(README 규칙 4): PTC 없는 호출자는 정말 "아무것도 없음" 이고(`narrowedBy` 가 한쪽이라도 꺼져 있으면
+`none()`), 운영자는 메인 에이전트에 `programmatic-tools` **와** 허용 목록의 `ExecuteCode` 를 함께 열어야 한다 — 포크의 허용 목록도 호출자의
+것과 교집합이기 때문이다. 설계 문서는 넓히기를 주장하지 않는다(PTC §7.2, §21 B-DV1 "이 비대칭은 의도다"). 이유는 넷이다.
+첫째, 모든 천장 — 허용 목록, 부작용 상한, programmatic 설정, 그리고 이번의 TC-25 · TC-26 — 은 "루트 에이전트의 운영자가 정한 것이 그
+아래 전부를 묶는다" 위에 서 있다. 스스로 여는 자식 하나가 다른 모든 천장을 "자식 정의를 다 읽어 봐야 아는 것" 으로 만든다. 둘째,
+요청하는 운영자 수준의 허가는 이미 있고 루트에 있다 — 메인 에이전트에 `programmatic-tools` 를 여는 것이 그 허가다. 자식 쪽 두 번째
+손잡이는 같은 허가를 루트가 아닌 곳에 보이게 해, 에이전트 파일 하나를 읽고 천장을 아는 감사 경로를 약하게 한다. 셋째, 서브에이전트
+정의는 사용자 계층에서 온다(사용자 `agents/*.md`, 스킬 frontmatter). 운영자가 아닌 사람이 쓸 수 있는 파일이 §7.1 과 `DataReach` 가 일부러
+막은 코드 경로의 데이터 범위를 여는 길이 된다. 넷째, 계기가 오지 않았다 — 실제 배치에서 `caller-ceiling` WARN 이 보고된 적이 없다.
+**남는 것(등록하지 않는다).** "자식에게만 PTC" — 루트 자신의 모델은 `ExecuteCode` 를 받지 않고 포크만 받게 하는 것은 지금 표현할 수 없다.
+필요해지면 불변식을 지키는 모양은 자식 쪽 허가가 아니라 **루트 쪽** 설정(예: 천장으로는 싣되 제안하지는 않는 루트의
+`programmatic-tools`)이다. 여기서 설계하지 않는다([남은 일 설계](../design/tool/ptc-leftovers-core.md) §2.4). 정했고 할 일이 남지 않았으므로
+닫힘이다(README 규칙 4).
+
+## TC-25 — 스킬·포크 안에서 띄운 백그라운드 `Workflow` 실행의 천장 · **닫힘** *(2026-11-07)*
 
 **무엇을.** `WorkflowTool` 의 백그라운드 실행이 그것을 띄운 실행(슬래시 스킬, 포크)의 허용 목록과 programmatic 설정을 천장으로 받게
 한다.
@@ -341,7 +366,21 @@ B-DV1, OQ-B5). 그래서 코드로만 일하도록 만든 서브에이전트는 
 **언제 다시 볼까.** 워크플로 서브에이전트가 programmatic 설정을 갖게 될 때(`InlineSubagentResolver` 가 그것을 복사하기 시작할 때),
 또는 백그라운드 런처를 호출마다 짓게 될 때.
 
-## TC-26 — 모델이 부른 인라인 스킬에는 스킬 루프가 없다 · **열림**
+**어떻게 닫았나.** 제출이 제출자의 천장을 싣고 실행기가 자기 기본 런치 문맥을 그것으로 좁힌다. 새 값 `workflow.BackgroundSubmission`
+(쿼터 가드, 호출자의 허용 목록, 호출자의 programmatic 설정 — 없으면 기본 문맥의 것)을 `Workflow` · `WorkflowJs` 가
+`tools.workflow.BackgroundSubmissions.of(ToolContext)` 로 짓고, `WorkflowRunner.runInBackground(script, runId, QuotaGuard)` 는
+`runInBackground(script, runId, BackgroundSubmission)` 로 **바뀌었다**(호환을 깨는 변경, CHANGELOG). `DefaultWorkflowRunner` 는 실행을
+점유하기 **전에** 허용 목록을 교집합으로, programmatic 설정을 제출자의 것을 기본 문맥의 것으로 좁힌 값으로 만든다 — 점유 뒤에 던지면 같은
+id 의 다음 제출이 모두 "이 노드에 없다" 로 실패한다. 둘이 겹치지 않으면 `BackgroundRunRefusedException` 이고, 두 도구는 그것을 "잘못된
+매개변수" 가 아니라 거절로 보고한다. 같은 요청이 더 좁은 호출자에게서 오면 넓은 실행에 합류하지 않도록 두 도구가 실행 id 에 천장의
+다이제스트(`ceilingDigest()`)를 붙인다. 호출마다 실행기를 짓는 대안은 기각 — 실행은 호출보다 오래 살아야 하고 풀과 재개 캐시는 에이전트
+단위다([남은 일 설계](../design/tool/ptc-leftovers-core.md) §2.2, §5). 검사: `DefaultWorkflowRunnerBackgroundTest`(교집합·단조성·점유 전
+거절·기본 메서드 위임), `WorkflowToolBackgroundModeTest` · `GraalJsWorkflowToolTest`(천장 둘이면 id 둘, 하나면 합류, 거절 문구),
+`BackgroundWorkflowCeilingE2EIntegrationTest`(허용 목록 `[Read, Workflow]` 인 슬래시 스킬의 백그라운드 실행 — 서브에이전트의
+`callerAllowedTools` ⊆ `[Read, Workflow]`). 왜의 "지금은 효과가 없다" 는 programmatic 쪽에만 맞다 — 허용 목록 쪽은 지금 효과가 있고,
+programmatic 쪽은 워크플로 서브에이전트가 그 설정을 갖게 되는 변경이 이 구멍을 다시 열지 못하게 미리 이어 둔 것이다.
+
+## TC-26 — 모델이 부른 인라인 스킬에는 스킬 루프가 없다 · **닫힘** *(2026-11-07)*
 
 **무엇을.** 모델이 `Skill` 도구로 부른 인라인 스킬도 스킬 자신의 허용 목록과 programmatic 설정을 실행 시점에 지키게 할지 정한다.
 
@@ -354,6 +393,20 @@ B-DV1, OQ-B5). 그래서 코드로만 일하도록 만든 서브에이전트는 
 [기능 마무리 설계](../design/tool/ptc-features-core.md) §2, 테스트 `SlashSkillProgrammaticCeilingE2EIntegrationTest`. 2026-11-07 확인.
 
 **언제 다시 볼까.** 스킬의 `allowed-tools` 를 모델 호출 경로에서도 강제하자는 요청이 올 때 — 둘은 같은 변경이다.
+
+**어떻게 닫았나.** 좁히기만 하는 실행 단위 천장을 두고, `SkillTool` 이 좁히고 루프가 iteration 경계에서 읽는다. 새 타입
+`agent.tool.InlineSkillCeiling`(허용 목록, programmatic 설정, 좁힌 스킬들, 버전)을 메인 루프(턴마다, 에이전트의 값에서), 포크(실행마다,
+실효 범위에서), 슬래시 스킬 루프(실행마다, 스킬의 실효 값에서)가 도구 문맥 키 `ToolContextKeys.INLINE_SKILL_CEILING`(write-once)으로
+묶는다. 인라인 활성화는 허용 목록을 교집합으로, programmatic 설정을 스킬의 선언을 현재 값으로 좁힌 것으로 바꾸고(키가 없는 스킬은
+`none()` — 슬래시 경로와 같다, OQ-1), 겹치지 않으면 지시문 없이 도구 오류로 거절한다. 루프는 다음 iteration 부터 제안·환경 사실·디스패처를
+스냅샷으로 다시 만든다(`toolinvocation.InlineSkillNarrowing`). 환경 사실을 스냅샷의 허용 목록으로 다시 계산하므로, `Bash` 를 패턴으로
+좁힌 스킬 뒤에는 셸 엔진이 꺼진다. 좁혀진 디스패처가 `CALLER_*` 를 싣기 때문에 그 뒤에 띄운 포크와 백그라운드 실행(TC-25)도 스킬로
+좁혀진다. 같은 응답의 호출은 이미 제안된 천장으로 돌고, 좁혀진 턴은 승인 대기로 멈추지 않는다 — 멈춘 실행을 이어 가는 다음 실행은
+에이전트의 천장에서 시작하므로, 그 턴의 승인 필요 스킬은 "새 턴에서 다시 요청하라" 는 오류로 닫힌다. 모델은 스킬 결과의 한 줄로
+좁혀진 사실을 듣는다([남은 일 설계](../design/tool/ptc-leftovers-core.md) §2.3, §5, PTC §7.2). 검사: `InlineSkillCeilingTest`,
+`SkillToolTest`, `SlashSkillProgrammaticCeilingE2EIntegrationTest`(경우 2 가 뒤집혔다 — 모델이 부른 `Skill(probe)` 뒤의 포크는 이제 스킬로
+좁혀진다. 다음 iteration 의 제안, 같은 응답의 호출, 포크 루프, 메인·포크·슬래시 루프의 패턴 `Bash`), `OrcaAgentExecutorSkillSuspendTest`
+(좁혀진 턴은 멈추지 않는다, 좁히기 전은 멈춘다). 무엇을이 "정할지" 라고 물은 것은 정했다 — 강제한다. 좁히기만 하므로 결정보다 구현의 일이었다.
 
 ## TC-27 — Python `ExecuteCode` 설명이 함수를 어디서 얻는지 말하지 않는다 · **닫힘** *(2026-11-07)*
 

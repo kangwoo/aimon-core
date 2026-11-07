@@ -15,9 +15,11 @@ import at.aimon.core.agent.quota.QuotaGuard;
 import at.aimon.core.agent.quota.QuotaLimit;
 import at.aimon.core.agent.quota.impl.InMemoryUsageLedger;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookEventType;
 import at.aimon.core.hook.event.PostToolHook;
@@ -29,12 +31,14 @@ import at.aimon.core.skill.hook.SkillScopedHookRegistry;
 import at.aimon.core.subagent.InMemorySubagentRegistry;
 import at.aimon.core.subagent.SubagentExecutionManager;
 import at.aimon.core.tools.ToolContextKeys;
+import at.aimon.core.workflow.BackgroundSubmission;
 import at.aimon.core.workflow.RunHandle;
 import at.aimon.core.workflow.RunId;
 import at.aimon.core.workflow.RunQuery;
 import at.aimon.core.workflow.WorkflowRun;
 import at.aimon.core.workflow.WorkflowRunner;
 import at.aimon.core.workflow.WorkflowScript;
+import at.aimon.core.workflow.exception.BackgroundRunRefusedException;
 
 /**
  * Covers {@link WorkflowTool}'s background-run branch: without a runner it returns an error (never throws); with
@@ -226,6 +230,54 @@ class WorkflowToolBackgroundModeTest {
         assertThat(runner.recordedRunId).isNotNull();
     }
 
+    @Test
+    @DisplayName("TC-25: the submission carries the calling loop's allow-list and programmatic settings")
+    void backgroundRunCarriesTheCallersCeiling() {
+        final RecordingRunner runner = new RecordingRunner();
+        final ProgrammaticToolSettings programmatic = ProgrammaticToolSettings.builder().tools(List.of("Read")).build();
+
+        tool(runner).execute(ToolInput.of(Map.of("prompt", "x", "mode", "background")),
+                ToolContext.builder().put(ToolContextKeys.CALLER_ALLOWED_TOOLS, List.of(AllowedTool.parse("Read")))
+                        .put(ToolContextKeys.CALLER_PROGRAMMATIC, programmatic).build());
+
+        assertThat(runner.recordedSubmission.getCallerAllowedTools()).contains(List.of(AllowedTool.parse("Read")));
+        assertThat(runner.recordedSubmission.getCallerProgrammatic()).contains(programmatic);
+    }
+
+    @Test
+    @DisplayName("TC-25: the same request from two ceilings gets two run ids; from one ceiling, one (joined)")
+    void runIdReflectsTheCallersCeiling() {
+        final RecordingRunner runner = new RecordingRunner();
+        final WorkflowTool tool = tool(runner);
+        final ToolContext narrow = ToolContext.builder()
+                .put(ToolContextKeys.CALLER_ALLOWED_TOOLS, List.of(AllowedTool.parse("Read"))).build();
+        final ToolContext narrowAgain = ToolContext.builder()
+                .put(ToolContextKeys.CALLER_ALLOWED_TOOLS, List.of(AllowedTool.parse("Read"))).build();
+
+        tool.execute(ToolInput.of(Map.of("prompt", "same", "mode", "background")), ToolContext.empty());
+        final RunId agentWide = runner.recordedRunId;
+        tool.execute(ToolInput.of(Map.of("prompt", "same", "mode", "background")), narrow);
+        final RunId narrowed = runner.recordedRunId;
+        tool.execute(ToolInput.of(Map.of("prompt", "same", "mode", "background")), narrowAgain);
+        final RunId narrowedAgain = runner.recordedRunId;
+
+        assertThat(narrowed.value()).isNotEqualTo(agentWide.value());
+        assertThat(narrowedAgain.value()).isEqualTo(narrowed.value());
+    }
+
+    @Test
+    @DisplayName("TC-25: a refused submission is a tool error that reads as a refusal, not as a failure")
+    void refusedSubmissionIsAToolError() {
+        final RecordingRunner runner = new RecordingRunner();
+        runner.refusal = "background run refused: the caller's allow-list and the agent's share no tool";
+
+        final ToolResult result = tool(runner).execute(ToolInput.of(Map.of("prompt", "x", "mode", "background")),
+                ToolContext.empty());
+
+        assertThat(result.isError()).isTrue();
+        assertThat(result.getContent()).contains("background run refused").doesNotContain("Workflow failed");
+    }
+
     private WorkflowTool tool(WorkflowRunner backgroundRunner) {
         return new WorkflowTool(model, new InMemorySubagentRegistry(), new DefaultToolRegistry(),
                 new DefaultHookRegistry(), mock(SubagentExecutionManager.class), List.of(), backgroundRunner);
@@ -239,10 +291,18 @@ class WorkflowToolBackgroundModeTest {
 
         private RunId recordedRunId;
         private QuotaGuard recordedQuotaGuard;
+        private BackgroundSubmission recordedSubmission;
+        /** When set, every submission is refused with this message, as a runner whose ceilings are disjoint does. */
+        private String refusal;
 
         @Override
-        public <T> RunHandle<T> runInBackground(WorkflowScript<T> script, RunId runId, QuotaGuard quotaGuard) {
-            this.recordedQuotaGuard = quotaGuard;
+        public <T> RunHandle<T> runInBackground(WorkflowScript<T> script, RunId runId,
+                BackgroundSubmission submission) {
+            if (refusal != null) {
+                throw new BackgroundRunRefusedException(refusal);
+            }
+            this.recordedSubmission = submission;
+            this.recordedQuotaGuard = submission.getQuotaGuard().orElse(null);
             return runInBackground(script, runId);
         }
 

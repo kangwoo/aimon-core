@@ -139,16 +139,22 @@ class ShellRuntimeProgramTest {
     }
 
     @Test
-    @DisplayName("an unraisable exception (a __del__ that raises): program-only")
+    @DisplayName("an unraisable exception (a __del__ that raises inside the stdlib): program-only — the runtime's hook,"
+            + " not CPython's default, printed it")
     void unraisableProgramOnly() throws IOException {
+        // The __del__ raises from inside json (pre-imported), so the exception's traceback has stdlib frames under the
+        // interpreter's install path. CPython's default unraisable hook prints those frames, absolute paths included;
+        // only the runtime's hook drops them. A __del__ that raised in its own frame could not tell the two apart:
+        // its traceback is program-only either way.
         final CodeExecutionOutcome outcome = run(ScriptedToolCallBridge.succeedingWith("ok"), "class Holder:\n"
-                + "    def __del__(self):\n" + "        raise ValueError('del boom')\n" + "h = Holder()\n" + "del h\n");
+                + "    def __del__(self):\n" + "        json.dumps(object())\n" + "h = Holder()\n" + "del h\n");
         assertThat(outcome.getStatus()).as(outcome.getLogs()).isEqualTo(CodeExecutionStatus.COMPLETED);
         // The header is CPython's own err_msg, passed through: "Exception ignored in: <function Holder.__del__ ...>"
         // up to 3.13, "Exception ignored while calling deallocator <function Holder.__del__ ...>" from 3.14. Only
-        // the common part is asserted — what matters here is that the output is program-only.
+        // the common part is asserted.
         assertThat(outcome.getLogs()).contains("Exception ignored ").contains("<function Holder.__del__ at ")
-                .contains("File \"<program>\", line 3, in __del__").contains("ValueError: del boom");
+                .contains("File \"<program>\", line 3, in __del__")
+                .contains("TypeError: Object of type object is not JSON serializable").doesNotContain("encoder.py");
         assertProgramOnly(outcome.getLogs());
     }
 

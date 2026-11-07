@@ -14,6 +14,7 @@ import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.quota.QuotaGuard;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
+import at.aimon.core.agent.tool.InlineSkillCeiling;
 import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.ToolCallDispatcher;
 import at.aimon.core.agent.tool.ToolCallQuota;
@@ -384,6 +385,25 @@ public final class ToolContextKeys {
      * may not depend on this one.
      */
     public static final ToolContextKey<ToolOfferContext> TOOL_OFFER_CONTEXT = ToolOfferContext.CONTEXT_KEY;
+
+    /**
+     * Typed key for the {@link InlineSkillCeiling} of the execution that dispatches the current tool call: its tool
+     * ceiling as the model-invoked inline skills it activated have narrowed it.
+     *
+     * <p>
+     * Bound once per execution by the loop that runs it — the main loop per turn, starting at the agent's allow-list
+     * and
+     * programmatic settings; a fork, starting at its effective scope; a slash skill's loop, starting at the skill's
+     * effective values. {@code SkillTool} narrows it when it activates an inline skill, and the loop applies the
+     * narrowing from its next iteration ({@code docs/design/tool/programmatic-tool-calling.md} §7.2). Absent — an
+     * embedder calling {@code SkillTool} outside those loops — an inline skill narrows nothing, the behaviour before
+     * the key existed.
+     *
+     * <p>
+     * Write-once, so a {@code ToolContextEnricher} cannot replace it with an untouched one.
+     */
+    public static final ToolContextKey<InlineSkillCeiling> INLINE_SKILL_CEILING = ToolContextKey
+            .writeOnce("inlineSkillCeiling", InlineSkillCeiling.class);
 
     /**
      * Typed key for the {@link ToolCallQuota} of the fork that dispatches the current tool call.

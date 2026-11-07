@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -24,6 +25,7 @@ import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
 import at.aimon.core.agent.tool.ToolOfferContext;
 import at.aimon.core.agent.tool.ToolResult;
+import at.aimon.core.agent.tool.permission.AllowedTool;
 import at.aimon.core.hook.DefaultHookRegistry;
 import at.aimon.core.hook.HookRegistry;
 import at.aimon.core.hook.event.PostToolHook;
@@ -37,6 +39,8 @@ import at.aimon.core.subagent.Subagent;
 import at.aimon.core.subagent.SubagentLaunchContext;
 import at.aimon.core.subagent.SubagentRegistry;
 import at.aimon.core.tools.ToolContextKeys;
+import at.aimon.core.workflow.BackgroundSubmission;
+import at.aimon.core.workflow.RunId;
 import at.aimon.core.workflow.WorkflowBackgroundConfig;
 import at.aimon.core.workflow.WorkflowRunner;
 import at.aimon.core.workflow.WorkflowRunnerOptions;
@@ -331,6 +335,46 @@ class GraalJsWorkflowToolTest extends AbstractGraalJsRunTest {
             assertThat(result.isSuccess()).isTrue();
             assertThat(result.getContent()).contains("/runs").contains("graaljs");
         }
+    }
+
+    @Test
+    @DisplayName("TC-25: the same background request from two ceilings gets two run ids; from one ceiling, one")
+    void backgroundRunIdReflectsTheCallersCeiling() {
+        final WorkflowRunner backgroundRunner = mock(WorkflowRunner.class);
+        final GraalJsWorkflowTool workflow = tool(backgroundRunner);
+        final ToolInput input = ToolInput.of(Map.of("script", "return 1;", "mode", "background"));
+
+        workflow.execute(input, contextWithId());
+        workflow.execute(input, withCallerAllowedTools("Read"));
+        workflow.execute(input, withCallerAllowedTools("Read"));
+
+        final ArgumentCaptor<RunId> runIds = ArgumentCaptor.forClass(RunId.class);
+        verify(backgroundRunner, times(3)).runInBackground(any(), runIds.capture(), any(BackgroundSubmission.class));
+        assertThat(runIds.getAllValues().get(1)).isNotEqualTo(runIds.getAllValues().get(0));
+        assertThat(runIds.getAllValues().get(2)).isEqualTo(runIds.getAllValues().get(1));
+    }
+
+    @Test
+    @DisplayName("TC-25: a background run whose caller shares no tool with the agent is refused as a refusal, not as an"
+            + " invalid parameter")
+    void disjointBackgroundCeilingIsRefused() {
+        final WorkflowRunnerOptions options = WorkflowRunnerOptions.builder()
+                .backgroundConfig(WorkflowBackgroundConfig.of(1)).build();
+        try (WorkflowRunner backgroundRunner = WorkflowRunners.create(manager,
+                env().toBuilder().callerAllowedTools(List.of(AllowedTool.parse("Read"))).build(), options)) {
+            final ToolResult result = tool(backgroundRunner).execute(
+                    ToolInput.of(Map.of("script", "return 1;", "mode", "background")), withCallerAllowedTools("Bash"));
+
+            assertThat(result.isError()).isTrue();
+            assertThat(result.getContent()).startsWith("background run refused:").doesNotContain("Invalid parameter");
+        }
+    }
+
+    private static ToolContext withCallerAllowedTools(String... tools) {
+        return ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeId.of("agent:test"))
+                .put(ToolContextKeys.CALLER_ALLOWED_TOOLS,
+                        java.util.Arrays.stream(tools).map(AllowedTool::parse).toList())
+                .build();
     }
 
     @Test

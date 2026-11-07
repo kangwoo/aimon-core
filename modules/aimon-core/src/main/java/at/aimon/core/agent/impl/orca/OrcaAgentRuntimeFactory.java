@@ -1176,9 +1176,10 @@ public class OrcaAgentRuntimeFactory {
         // calling execution's ToolContext.
         // The agent's allow-list and programmatic settings are read from the agent rather than from a ToolContext,
         // unlike the per-call runners: this one is agent-scoped and has no calling execution to read from. Same
-        // ceiling either way — every run it spawns is a run of this agent's. (A background Workflow run started from
-        // inside a slash skill or a fork goes through this runner too, so it is ceilinged by the agent, not by that
-        // skill or fork — B-DV1 names this exception.)
+        // ceiling either way — every run it spawns is a run of this agent's. A background Workflow run started from
+        // inside a slash skill, a fork or an inline-skill-narrowed turn goes through this runner too; the submitting
+        // tool hands it that loop's ceiling (BackgroundSubmission) and the runner narrows this base by it, so such a
+        // run is bounded by the skill or fork as well as by the agent (TC-25).
         final SubagentLaunchContext baseLaunchContext = SubagentLaunchContext.builder().agentRuntimeId(agentRuntimeId)
                 .subagentRegistry(subagentRegistry).toolRegistry(toolRegistry).hookRegistry(hookRegistry)
                 .defaultModel(agent.getMetadata().getModel()).toolContextEnrichers(toolContextEnrichers)
