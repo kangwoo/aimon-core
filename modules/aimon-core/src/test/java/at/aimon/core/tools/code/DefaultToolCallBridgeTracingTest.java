@@ -13,6 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.ToolCallDispatcher;
 import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolContext;
@@ -207,7 +208,8 @@ class DefaultToolCallBridgeTracingTest {
             }
 
             @Override
-            public ToolCallDispatcher narrow(ToolRegistry registry, List<AllowedTool> allowedTools) {
+            public ToolCallDispatcher narrow(ToolRegistry registry, List<AllowedTool> allowedTools,
+                    ProgrammaticToolSettings programmatic) {
                 return this;
             }
         };

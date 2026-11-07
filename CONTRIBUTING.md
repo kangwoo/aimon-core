@@ -185,6 +185,42 @@ it is found by whoever runs the tier next. If that is you, fix it or open an iss
 past it. Why the tier has no scheduled run, and what would change that, is recorded in
 [`docs/backlog/live-api-test-tier.md`](docs/backlog/live-api-test-tier.md).
 
+#### Real-model ExecuteCode E2E
+
+One more tier calls a real model, and it is opt-in by task rather than by key: it runs `ExecuteCode`
+end to end through a real stack and asserts what the model's program did.
+
+```bash
+OPENAI_KEY_FILE=<path to a file holding the key> ./gradlew :aimon-cli:llmTest
+# or OPENAI_KEY=... and/or ANTHROPIC_KEY=... (ANTHROPIC_API_KEY is accepted too)
+```
+
+- **Only `:aimon-cli:llmTest` runs it.** The classes (`ExecuteCodeJsLiveE2ETest`, `ExecuteCodeShellLiveE2ETest`) carry
+  `@EnabledIfSystemProperty(aimon.llmTest)`, and only that task sets the property. `test`, `checkAll`, CI and the release
+  gate compile them and skip them, even with a key exported. The task always re-runs; no `--rerun` needed.
+- **Keys.** `OPENAI_KEY` wins when set; otherwise `OPENAI_KEY_FILE` names a file read in place and trimmed — never copied
+  or printed. A set but missing, unreadable or empty `OPENAI_KEY_FILE` **fails** the run, naming the variable and path,
+  rather than skipping it. A provider with no key is skipped; with no key at all every test is skipped and the task exits 0.
+- **What it asserts.** The agent can reach two host tools only through `ExecuteCode` (`programmatic-only`). The model must
+  write **one** program whose nested calls — at least two, dispatched and answered without error — cover both tools, with
+  TOOL spans (`tool.path=code`) under that program's `ExecuteCode` span; two programs calling one tool each do not add
+  up to a pass; no host tool may be called directly; each result's summary line must name the engine's language;
+  and every raw-output marker in a result must be one the program printed. Whether the final answer names the right hosts
+  is logged, not asserted.
+- **The result line.** Every run prints one line per provider and engine, pass or fail:
+  `LIVE-E2E provider=openai model=gpt-4o-mini engine=javascript result=PASS executeCodeCalls=1 nestedCallsBestProgram=10 nestedCallsAllPrograms=10 perProgram=[10] inputTokens=… outputTokens=… completion=COMPLETED answerMatches=true`,
+  with each program's own numbers (`LIVE-E2E program #n … dispatched= succeeded= tools=[…] status=…`) printed above it.
+  On failure the conversation, the render payloads and the span tree are printed too; none of them carries a key.
+- **Models.** `gpt-4o-mini` and `claude-haiku-4-5-20251001` by default; override with `AIMON_LLM_TEST_OPENAI_MODEL` /
+  `AIMON_LLM_TEST_ANTHROPIC_MODEL` when a weak model will not write code.
+- **The shell variant runs model-written Python on this host.** It needs `python3` ≥ 3.8 (it skips without), runs on a
+  local environment that *declares* itself sandboxed, and the model may also call `Bash` directly. After the stack closes
+  it checks that no `aimon_ptc.py` process from the run directories it recorded is left; a subprocess the program
+  `exec`s itself is not matched, so `pgrep -f aimon_ptc.py` after a run is still worth doing.
+- **Billed and nondeterministic, never in CI.** Keep runs few, and do not re-run only to turn a flaky result green. Its
+  keyless twin, `ExecuteCodeLiveFixtureTest`, runs the same fixture with a scripted model in every ordinary build, so a
+  fixture regression fails `test` before any billed run.
+
 ### Quality Checks
 
 Before pushing:

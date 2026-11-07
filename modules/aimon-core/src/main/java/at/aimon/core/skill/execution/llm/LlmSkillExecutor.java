@@ -20,6 +20,7 @@ import at.aimon.core.agent.quota.QuotaGuard;
 import at.aimon.core.agent.quota.QuotaViolation;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.TranscriptBuffer;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.SideEffectLevel;
 import at.aimon.core.agent.tool.ToolCallDispatcher;
 import at.aimon.core.agent.tool.ToolCallOrigin;
@@ -55,9 +56,11 @@ import at.aimon.core.skill.render.SkillContentRenderer;
 import at.aimon.core.subagent.execution.ForkGoalRenderer;
 import at.aimon.core.toolinvocation.ToolDispatchResults;
 import at.aimon.core.tools.CallerAllowedTools;
+import at.aimon.core.tools.CallerProgrammatic;
 import at.aimon.core.tools.HookRegistryAccess;
 import at.aimon.core.tools.SkillRenderContextAccess;
 import at.aimon.core.tools.ToolContextKeys;
+import at.aimon.core.tools.code.CodeOfferKeys;
 
 /**
  * LLM-based implementation of {@link SkillExecutor}.
@@ -229,6 +232,7 @@ public class LlmSkillExecutor implements SkillExecutor {
                 return disjointAllowLists(skill, callerAllowed, declaredTools, accumulatedTokens, startTime);
             }
             final List<AllowedTool> allowedTools = bounded.get();
+            final ProgrammaticToolSettings programmatic = effectiveProgrammatic(skill, context);
             final String systemPrompt = systemPromptBuilder.build(allowedTools);
 
             final TranscriptBuffer transcriptBuffer = new TranscriptBuffer(
@@ -244,13 +248,13 @@ public class LlmSkillExecutor implements SkillExecutor {
                 return noDispatcher(skill, accumulatedTokens, startTime);
             }
             final ToolCallDispatcher toolDispatcher = boundDispatcher.get().narrow(context.getToolRegistry(),
-                    allowedTools);
+                    allowedTools, programmatic);
             final ToolCallOrigin origin = ToolCallOrigin.skill(skill.getName());
 
             // The skill's tools are fixed for the execution, so one offer context serves every iteration: the offer is
             // made from it and each iteration's tool context binds it, so the ceiling's refusal and the approval gate
             // judge the descriptors offered (programmatic-tool-calling design decision 9).
-            final ToolOfferContext offerContext = offerContextOf(allowedTools, context);
+            final ToolOfferContext offerContext = offerContextOf(allowedTools, programmatic, skill, context);
             final List<ToolDefinition> filteredTools = offeredTools(skill, allowedTools, context, offerContext);
 
             // The skill loop compacts nothing: it runs on a fresh scratch buffer per execution that never grows long
@@ -514,6 +518,16 @@ public class LlmSkillExecutor implements SkillExecutor {
     }
 
     /**
+     * The skill's effective programmatic settings: its own opt-in narrowed by its caller's. Computed once per execution
+     * and handed to both consumers — the offer and the narrowed dispatcher, which publishes it to every call as the
+     * ceiling of any fork the skill spawns — so what the skill is offered and what bounds its forks cannot drift apart.
+     * A skill without programmatic keys is {@code none()}: a ceiling of "nothing" (B-DV1).
+     */
+    private static ProgrammaticToolSettings effectiveProgrammatic(Skill skill, SkillExecutionContext context) {
+        return skill.getMetadata().getProgrammatic().narrowedBy(CallerProgrammatic.of(context.getToolContext()));
+    }
+
+    /**
      * Builds the skill's offer context: the narrowed registry, the skill's bounded allow-list as the admission filter
      * (by name), and the execution manager's ceiling — the bound its refusal reads.
      *
@@ -525,14 +539,21 @@ public class LlmSkillExecutor implements SkillExecutor {
      * skill naming {@code Bash} reaches {@code Bash} inside an agent narrowed to {@code Read, Grep}. It arrives through
      * the tool context, published by {@code SingleToolInvoker} on the tool-call path and by the agent executor's
      * command tool context on the user-slash path; absent, it is empty and imposes nothing.
+     *
+     * <p>
+     * The skill's effective programmatic settings and the environment's static facts let {@code ExecuteCode} describe
+     * itself for this offer; the {@code Bash} fact reads the same effective allow-list. The agent name is
+     * {@code skill:<name>}, so an operator warning names the skill.
      */
-    private ToolOfferContext offerContextOf(List<AllowedTool> allowedTools, SkillExecutionContext context) {
+    private ToolOfferContext offerContextOf(List<AllowedTool> allowedTools, ProgrammaticToolSettings programmatic,
+            Skill skill, SkillExecutionContext context) {
         final Set<String> allowedToolNames = allowedTools.stream().map(AllowedTool::getToolName)
                 .collect(Collectors.toSet());
-        return ToolOfferContext.builder().registry(context.getToolRegistry())
+        return CodeOfferKeys.putEnvironmentFacts(ToolOfferContext.builder().registry(context.getToolRegistry())
                 .admission(
                         tool -> allowedToolNames.isEmpty() || allowedToolNames.contains(tool.getDefinition().getName()))
-                .ceiling(toolExecutionManager.getMaxSideEffectLevel()).build();
+                .ceiling(toolExecutionManager.getMaxSideEffectLevel()).programmatic(programmatic)
+                .agentName("skill:" + skill.getName()), context.getToolContext(), allowedTools).build();
     }
 
     /**

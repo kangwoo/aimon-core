@@ -2415,6 +2415,10 @@ public class OrcaAgentExecutor
                     // /my-skill would run a skill's tools, and spawn a fork-mode skill's subagent, unbounded by the
                     // restriction the agent itself is under.
                     .put(ToolContextKeys.CALLER_ALLOWED_TOOLS, agentRuntime.getAgent().getAllowedTools())
+                    // The agent's programmatic settings, by hand for the same reason: the ceiling an inline skill's own
+                    // opt-in is narrowed by. The same value gatedDispatcher binds below, so a skill sees one caller
+                    // ceiling whether the user typed /skill or the model called Skill.
+                    .put(ToolContextKeys.CALLER_PROGRAMMATIC, agentRuntime.getAgent().getMetadata().getProgrammatic())
                     // The gates an inline skill's tool calls pass: the agent's own, which the skill loop narrows to
                     // the skill's registry and allowed-tools. Without it the skill loop refuses to run any tool.
                     // Stamped MAIN_AGENT: a skill is not a subagent, it is the agent doing what the user asked. The
@@ -2435,7 +2439,8 @@ public class OrcaAgentExecutor
     /**
      * Builds the gated {@link ToolCallDispatcher} for one execution of this agent: the agent's registry and allow-list
      * (the same list the offer filter reads, so the two cannot disagree about what this agent may call; empty reads as
-     * unrestricted), its hook registry, and the {@code MAIN_AGENT} identity.
+     * unrestricted), its hook registry, its programmatic settings (published to every call as the ceiling of the forks
+     * it spawns), and the {@code MAIN_AGENT} identity.
      *
      * @param agentRuntime
      *            the agent runtime supplying registry, allow-list and hooks (must not be null)
@@ -2454,7 +2459,7 @@ public class OrcaAgentExecutor
                 .invokerName(agent.getName()).hookRegistry(agentRuntime.getHookRegistry())
                 .executionAttributes(executionAttributes).toolRegistry(agentRuntime.getToolRegistry())
                 .sessionRegistry(sessionRegistry).allowedTools(agent.getAllowedTools()).coordinator(coordinator)
-                .build();
+                .programmatic(agent.getMetadata().getProgrammatic()).build();
     }
 
     /**

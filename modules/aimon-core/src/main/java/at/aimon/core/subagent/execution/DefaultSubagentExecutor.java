@@ -115,6 +115,8 @@ import at.aimon.core.toolinvocation.ToolDispatchResults;
 import at.aimon.core.toolinvocation.TracingCompactionObserver;
 import at.aimon.core.toolinvocation.approval.SideEffectApprovalGate;
 import at.aimon.core.tools.ToolContextKeys;
+import at.aimon.core.tools.code.CodeOfferKeys;
+import at.aimon.core.tools.code.CodeSpanAttributes;
 import at.aimon.core.tools.file.ReadTool;
 import at.aimon.core.tools.todo.TodoWriteTool;
 import at.aimon.core.tracing.SpanType;
@@ -600,7 +602,9 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
 
     /**
      * The fork's own entrance to the tool gates, bound into the context it builds for itself: the subagent's registry
-     * and allow-list, its hook registry, the {@code SUBAGENT} identity and this execution's coordinator.
+     * and allow-list, its hook registry, the {@code SUBAGENT} identity and this execution's coordinator. Its
+     * programmatic settings are the fork's effective ones — the definition's opt-in already narrowed by the caller's
+     * in {@code applyCallerCeiling} — published to every call as the ceiling of any fork this one spawns.
      */
     private ToolCallDispatcher forkDispatcher(SubagentExecutionContext context, SubagentExecutionRequest request,
             ToolRegistry sessionRegistry, InterruptCoordinator coordinator) {
@@ -609,7 +613,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 .invokerName(subagent.getName()).hookRegistry(context.getHookRegistry())
                 .executionAttributes(request.getExecutionAttributes()).toolRegistry(context.getToolRegistry())
                 .sessionRegistry(sessionRegistry).allowedTools(subagent.getAllowedTools()).coordinator(coordinator)
-                .build();
+                .programmatic(subagent.getMetadata().getProgrammatic()).build();
     }
 
     /** Whether the request's policy requires a structured result, for a result that ends the fork before its loop. */
@@ -687,8 +691,7 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 final IterationTrace trace = IterationTrace.open(lc, iterationCount, offerContextOf(lc));
                 try {
                     // Re-read every iteration so newly activated deferred tools are included; the method says why.
-                    final List<ToolDefinition> availableTools = availableToolDefinitions(lc, trace.offerContext,
-                            iterationCount);
+                    final List<ToolDefinition> availableTools = availableToolDefinitions(lc, trace, iterationCount);
 
                     // Send message to LLM via the gateway (retry/fallback aware, metadata-carrying parts overload). The
                     // LlmCancellation lets a trip abort the in-flight call; clear the per-call abort lever in a finally
@@ -907,8 +910,8 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
         try {
             try {
                 response = gateway.sendMessage(lc.systemPromptParts, view.getMessages(),
-                        availableToolDefinitions(lc, trace.offerContext, graceIteration), lc.modelConfig,
-                        trace.metadata, llmCancellation);
+                        availableToolDefinitions(lc, trace, graceIteration), lc.modelConfig, trace.metadata,
+                        llmCancellation);
             } finally {
                 llmCancellation.clearAbort();
             }
@@ -1451,20 +1454,26 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * {@code findAll()} only ever grows, and both bounds are fixed for the execution, so an offer empty here is empty
      * for every later iteration.
      *
+     * <p>
+     * Once the offer is made, the iteration span records why {@code ExecuteCode} was left out, for a fork that opens
+     * tools to code (§12.2) — the reason is known only after the offer.
+     *
      * @param lc
      *            the loop context of the running fork
-     * @param offerContext
-     *            this iteration's offer context ({@link #offerContextOf}), the one bound into its tool context
+     * @param trace
+     *            this iteration's trace, whose offer context ({@link #offerContextOf}) is the one bound into its tool
+     *            context
      * @param iterationCount
      *            the 1-based iteration about to call the LLM
      * @return the definitions to send with the next LLM call
      */
-    private List<ToolDefinition> availableToolDefinitions(LoopContext lc, ToolOfferContext offerContext,
-            int iterationCount) {
+    private List<ToolDefinition> availableToolDefinitions(LoopContext lc, IterationTrace trace, int iterationCount) {
+        final ToolOfferContext offerContext = trace.offerContext;
         final SideEffectLevel ceiling = offerContext.getCeiling();
         final Subagent subagent = lc.subagent();
         final List<ToolDefinition> registered = offerContext.offer().stream().map(ToolDescriptor::getDefinition)
                 .toList();
+        trace.annotateUnavailableCode();
         final List<ToolDefinition> definitions = lc.reportsStructuredResult()
                 ? withReportTool(lc, registered)
                 : registered;
@@ -1482,11 +1491,20 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
      * its tool scope as the admission filter, and the execution manager's ceiling — the two bounds the refusals read.
      * Bound into the iteration's tool context by {@link IterationTrace#open}, so the ceiling's refusal and the approval
      * gate judge the descriptors this offer was made from (programmatic-tool-calling design decision 9).
+     *
+     * <p>
+     * The fork's effective programmatic settings and the environment's static facts let {@code ExecuteCode} describe
+     * itself for this offer, as the main turn's does. The settings are the definition's opt-in narrowed by the
+     * caller's, and the {@code Bash} fact reads the fork's effective (caller-narrowed) allow-list.
      */
     private ToolOfferContext offerContextOf(LoopContext lc) {
-        return ToolOfferContext.builder().registry(lc.sessionRegistry)
-                .admission(SubagentToolScope.admissionFilter(lc.subagent()))
-                .ceiling(toolExecutionManager.getMaxSideEffectLevel()).build();
+        final Subagent subagent = lc.subagent();
+        return CodeOfferKeys.putEnvironmentFacts(
+                ToolOfferContext.builder().registry(lc.sessionRegistry)
+                        .admission(SubagentToolScope.admissionFilter(subagent))
+                        .ceiling(toolExecutionManager.getMaxSideEffectLevel())
+                        .programmatic(subagent.getMetadata().getProgrammatic()).agentName(subagent.getName()),
+                lc.toolContext, subagent.getAllowedTools()).build();
     }
 
     /**
@@ -2294,6 +2312,16 @@ public class DefaultSubagentExecutor implements SubagentExecutor {
                 toolContext.put(ToolContextKeys.LLM_CALL_METADATA_KEY, metadata).put(ToolContextKeys.TRACER, lc.tracer);
             }
             return new IterationTrace(span, metadata, toolContext.build(), offerContext);
+        }
+
+        /**
+         * Sets {@code ptc.unavailable_reason} on the iteration span when the offer left {@code ExecuteCode} out for a
+         * fork that opens tools to code. Called after the offer was made, which is when the reason is known.
+         */
+        private void annotateUnavailableCode() {
+            if (span != null) {
+                CodeSpanAttributes.annotateIteration(span, offerContext);
+            }
         }
 
         /**

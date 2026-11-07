@@ -14,6 +14,7 @@ import at.aimon.core.agent.queue.MessageQueueManager;
 import at.aimon.core.agent.quota.QuotaGuard;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.ToolCallDispatcher;
 import at.aimon.core.agent.tool.ToolCallQuota;
 import at.aimon.core.agent.tool.ToolContext;
@@ -452,6 +453,24 @@ public final class ToolContextKeys {
     @SuppressWarnings("unchecked")
     public static final ToolContextKey<List<AllowedTool>> CALLER_ALLOWED_TOOLS = ToolContextKey.of("callerAllowedTools",
             (Class<List<AllowedTool>>) (Class<?>) List.class);
+
+    /**
+     * Typed key for the programmatic tool calling settings of the run that is making this tool call.
+     *
+     * <p>
+     * Published by {@code SingleToolInvoker} (and the ungated dispatcher) from the dispatcher that ran the call, so it
+     * is always the settings of the loop whose gates ran it: the agent's on the main path, the fork's effective
+     * settings on a fork, the skill's effective settings on its inline path. The user-slash command context publishes
+     * the agent's by hand. It is overwritten on every call, so a caller cannot pre-seed it.
+     *
+     * <p>
+     * Read it only to <b>pass it on</b>, like {@link #CALLER_ALLOWED_TOOLS}: spawning code puts it on the
+     * {@code SubagentLaunchContext} it builds, and the fork's own settings are narrowed by it. Unlike the allow-list,
+     * <b>absence means none</b> &mdash; a caller without programmatic tool calling is a ceiling of "nothing". Use
+     * {@link CallerProgrammatic#of(ToolContext)} rather than reading the key directly.
+     */
+    public static final ToolContextKey<ProgrammaticToolSettings> CALLER_PROGRAMMATIC = ToolContextKey
+            .of("callerProgrammatic", ProgrammaticToolSettings.class);
 
     /**
      * Typed key for the {@link QuotaGuard} of the execution tree the tool runs in.

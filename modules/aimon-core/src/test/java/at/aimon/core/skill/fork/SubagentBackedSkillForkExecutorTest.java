@@ -22,6 +22,7 @@ import at.aimon.core.agent.budget.CompletionReason;
 import at.aimon.core.agent.budget.TruncatedResponses;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.permission.AllowedTool;
@@ -431,5 +432,61 @@ class SubagentBackedSkillForkExecutorTest {
         assertThat(outcome.getErrorMessage()).get().asString().contains("nothing in common").contains("Read")
                 .contains("Write");
         verify(subagentExecutionManager, never()).executeInline(any(), any(), any(), any(), any());
+    }
+
+    private static ProgrammaticToolSettings ptc(String... tools) {
+        return ProgrammaticToolSettings.builder().tools(List.of(tools)).build();
+    }
+
+    private static Skill forkSkillWithProgrammatic(String agentName, ProgrammaticToolSettings programmatic) {
+        return Skill.builder().name("review")
+                .metadata(SkillMetadata.builder().name("review").description("Review code")
+                        .executionMode(ExecutionMode.FORK).forkAgentName(agentName).programmatic(programmatic).build())
+                .content(SkillContent.of("body")).build();
+    }
+
+    private static Subagent subagentWithProgrammatic(String name, ProgrammaticToolSettings programmatic) {
+        return Subagent.builder().name(name).systemPrompt("you are " + name).programmatic(programmatic).build();
+    }
+
+    @Test
+    void fork_SkillWithProgrammaticKeys_NarrowsTheTargetsSettings() {
+        final Subagent forked = captureForkedSubagent(subagentWithProgrammatic("code-reviewer", ptc("Read", "Grep")),
+                forkSkillWithProgrammatic("code-reviewer", ptc("Grep", "Glob")));
+
+        assertThat(forked.getMetadata().getProgrammatic()).isEqualTo(ptc("Grep"));
+        assertThat(forked.getName()).isEqualTo("code-reviewer");
+    }
+
+    @Test
+    void fork_SkillWithProgrammaticKeys_CannotOpenCodeToATargetThatDoesNotOptIn() {
+        final Subagent forked = captureForkedSubagent(
+                subagentWithProgrammatic("code-reviewer", ProgrammaticToolSettings.none()),
+                forkSkillWithProgrammatic("code-reviewer", ptc("Read")));
+
+        assertThat(forked.getMetadata().getProgrammatic()).isEqualTo(ProgrammaticToolSettings.none());
+    }
+
+    @Test
+    void fork_SkillWithoutProgrammaticKeys_LeavesTheTargetsOwnSettings() {
+        final Subagent forked = captureForkedSubagent(subagentWithProgrammatic("code-reviewer", ptc("Read", "Grep")),
+                forkSkill("code-reviewer"));
+
+        assertThat(forked.getMetadata().getProgrammatic()).isEqualTo(ptc("Read", "Grep"));
+    }
+
+    @Test
+    void fork_CarriesTheCallersProgrammaticSettingsOntoTheEnvironmentAsACeiling() {
+        final SubagentLaunchContext env = captureEnvFor(
+                ToolContext.builder().put(ToolContextKeys.AGENT_RUNTIME_ID, AgentRuntimeIds.testCtx("ctx-42"))
+                        .put(ToolContextKeys.CALLER_PROGRAMMATIC, ptc("Read")).build());
+
+        assertThat(env.getCallerProgrammatic()).isEqualTo(ptc("Read"));
+    }
+
+    @Test
+    void fork_WithoutCallerProgrammaticSettings_ImposesNone() {
+        assertThat(captureEnvFor(contextWithExecutionId("ctx-42")).getCallerProgrammatic())
+                .isEqualTo(ProgrammaticToolSettings.none());
     }
 }

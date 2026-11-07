@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.ToolCallDispatcher;
 import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolContext;
@@ -27,7 +28,8 @@ import at.aimon.core.tools.ToolContextKeys;
  * <p>
  * The binding fixes what is the same for every call of one loop: the registry the tool is executed against, the
  * session registry its interrupt behaviour is read from, the allow-list, the invoker, the hook registry, the
- * execution attributes, the interrupt coordinator, and the invoker identity stamped on the hook contexts. What varies
+ * execution attributes, the interrupt coordinator, the invoker identity stamped on the hook contexts, and the
+ * programmatic settings published to each call as {@link ToolContextKeys#CALLER_PROGRAMMATIC}. What varies
  * per call is an argument of {@link #dispatch}; the loop's iteration is read from the context
  * ({@link ToolContextKeys#ITERATION_COUNT}, {@code 0} when absent).
  *
@@ -47,6 +49,7 @@ public final class DefaultToolCallDispatcher implements ToolCallDispatcher {
     private final ToolRegistry sessionRegistry;
     private final List<AllowedTool> allowedTools;
     private final InterruptCoordinator coordinator;
+    private final ProgrammaticToolSettings programmatic;
 
     private DefaultToolCallDispatcher(Builder builder) {
         this.invoker = Objects.requireNonNull(builder.invoker, "invoker cannot be null");
@@ -59,6 +62,7 @@ public final class DefaultToolCallDispatcher implements ToolCallDispatcher {
         this.sessionRegistry = Objects.requireNonNull(builder.sessionRegistry, "sessionRegistry cannot be null");
         this.allowedTools = List.copyOf(Objects.requireNonNull(builder.allowedTools, "allowedTools cannot be null"));
         this.coordinator = Objects.requireNonNull(builder.coordinator, "coordinator cannot be null");
+        this.programmatic = Objects.requireNonNull(builder.programmatic, "programmatic cannot be null");
     }
 
     /**
@@ -79,8 +83,8 @@ public final class DefaultToolCallDispatcher implements ToolCallDispatcher {
             final ToolInvocationSpec spec = ToolInvocationSpec.builder().invokerType(invokerType)
                     .invokerName(invokerName).hookRegistry(hookRegistry).executionAttributes(executionAttributes)
                     .toolRegistry(toolRegistry).sessionRegistry(sessionRegistry).allowedTools(allowedTools)
-                    .coordinator(coordinator).toolContext(context).toolUse(toolUse).origin(origin)
-                    .iterationCount(context.get(ToolContextKeys.ITERATION_COUNT).orElse(0)).build();
+                    .coordinator(coordinator).programmatic(programmatic).toolContext(context).toolUse(toolUse)
+                    .origin(origin).iterationCount(context.get(ToolContextKeys.ITERATION_COUNT).orElse(0)).build();
             return invoker.invoke(spec);
         } catch (RuntimeException e) {
             // The pipeline answers failures inside the hook sequence itself; what reaches here failed around it (the
@@ -98,19 +102,21 @@ public final class DefaultToolCallDispatcher implements ToolCallDispatcher {
      * this dispatcher's own registry, in which case the session registry is kept.
      */
     @Override
-    public ToolCallDispatcher narrow(ToolRegistry registry, List<AllowedTool> allowedTools) {
+    public ToolCallDispatcher narrow(ToolRegistry registry, List<AllowedTool> allowedTools,
+            ProgrammaticToolSettings programmatic) {
         Objects.requireNonNull(registry, "registry cannot be null");
         Objects.requireNonNull(allowedTools, "allowedTools cannot be null");
+        Objects.requireNonNull(programmatic, "programmatic cannot be null");
         ToolCallNarrowing.requireSubset(toolRegistry, registry);
         final List<AllowedTool> bounded = ToolCallNarrowing.intersect(this.allowedTools, allowedTools);
         return toBuilder().toolRegistry(registry).sessionRegistry(registry == toolRegistry ? sessionRegistry : registry)
-                .allowedTools(bounded).build();
+                .allowedTools(bounded).programmatic(programmatic.narrowedBy(this.programmatic)).build();
     }
 
     private Builder toBuilder() {
         return builder().invoker(invoker).invokerType(invokerType).invokerName(invokerName).hookRegistry(hookRegistry)
                 .executionAttributes(executionAttributes).toolRegistry(toolRegistry).sessionRegistry(sessionRegistry)
-                .allowedTools(allowedTools).coordinator(coordinator);
+                .allowedTools(allowedTools).coordinator(coordinator).programmatic(programmatic);
     }
 
     /** Builder for {@link DefaultToolCallDispatcher}. */
@@ -125,6 +131,7 @@ public final class DefaultToolCallDispatcher implements ToolCallDispatcher {
         private ToolRegistry sessionRegistry;
         private List<AllowedTool> allowedTools;
         private InterruptCoordinator coordinator;
+        private ProgrammaticToolSettings programmatic;
 
         private Builder() {
         }
@@ -234,6 +241,21 @@ public final class DefaultToolCallDispatcher implements ToolCallDispatcher {
          */
         public Builder coordinator(InterruptCoordinator coordinator) {
             this.coordinator = coordinator;
+            return this;
+        }
+
+        /**
+         * Sets the programmatic settings of the agent, fork or skill whose loop this dispatcher gates. They are
+         * published to every call as {@link ToolContextKeys#CALLER_PROGRAMMATIC}, the ceiling of any fork the call
+         * spawns. Required, with no default, so a site that forgets it fails rather than publishing
+         * {@link ProgrammaticToolSettings#none()} by accident.
+         *
+         * @param programmatic
+         *            the settings (must not be null)
+         * @return this builder
+         */
+        public Builder programmatic(ProgrammaticToolSettings programmatic) {
+            this.programmatic = programmatic;
             return this;
         }
 

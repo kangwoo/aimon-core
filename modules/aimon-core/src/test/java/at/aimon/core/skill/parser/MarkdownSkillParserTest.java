@@ -5,6 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.tool.ProgrammaticEngineChoice;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
+import at.aimon.core.agent.tool.ShellEngineToolScope;
 import at.aimon.core.skill.ExecutionMode;
 import at.aimon.core.skill.InvokePolicy;
 import at.aimon.core.skill.Skill;
@@ -424,5 +427,35 @@ class MarkdownSkillParserTest {
         assertThatThrownBy(() -> parser.parse("sample", source)).isInstanceOf(SkillParseException.class)
                 .hasMessageContaining("description").hasMessageContaining("Integer")
                 .hasMessageNotContaining("Unexpected error");
+    }
+
+    @Test
+    void parse_ProgrammaticKeys_ReachSkillMetadata() {
+        final Skill skill = parser.parse("sample",
+                skillSource("programmatic-tools: [Read, Grep]\nprogrammatic-only: Grep\nprogrammatic-engine: python\n"
+                        + "shell-engine-tool-scope: host\n"));
+
+        final ProgrammaticToolSettings settings = skill.getMetadata().getProgrammatic();
+        assertThat(settings.getTools()).containsExactly("Read", "Grep");
+        assertThat(settings.getCodeOnly()).containsExactly("Grep");
+        assertThat(settings.getEngine()).isEqualTo(ProgrammaticEngineChoice.PYTHON);
+        assertThat(settings.getShellEngineToolScope()).hasValue(ShellEngineToolScope.HOST);
+    }
+
+    @Test
+    void parse_NoProgrammaticKeys_IsNone() {
+        assertThat(parser.parse("sample", skillSource("")).getMetadata().getProgrammatic())
+                .isEqualTo(ProgrammaticToolSettings.none());
+    }
+
+    @Test
+    void parse_BadProgrammaticKeys_ThrowsSkillParseException() {
+        assertThatThrownBy(() -> parser.parse("sample", skillSource("programmatic-tools: mcp__x__*\n")))
+                .isInstanceOf(SkillParseException.class).hasMessageContaining("exact tool name")
+                .hasMessageNotContaining("Unexpected error");
+        assertThatThrownBy(() -> parser.parse("sample", skillSource("programmatic-engine: python\n")))
+                .isInstanceOf(SkillParseException.class).hasMessageContaining("need 'programmatic-tools'");
+        assertThatThrownBy(() -> parser.parse("sample", skillSource("programmaticTools: Read\n")))
+                .isInstanceOf(SkillParseException.class).hasMessageContaining("kebab-case");
     }
 }

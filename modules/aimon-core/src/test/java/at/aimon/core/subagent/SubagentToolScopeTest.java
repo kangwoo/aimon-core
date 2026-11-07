@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 
 import at.aimon.core.agent.tool.AbstractTool;
 import at.aimon.core.agent.tool.DefaultToolRegistry;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.Tool;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolInput;
@@ -198,5 +199,48 @@ class SubagentToolScopeTest {
         final Subagent hidden = Subagent.builder().name("workflow-judge").systemPrompt("p").hidden(true).build();
 
         assertThat(SubagentToolScope.withAllowedTools(hidden, java.util.List.of()).getMetadata().isHidden()).isTrue();
+    }
+
+    private static final ProgrammaticToolSettings READ_GREP = ProgrammaticToolSettings.builder()
+            .tools(List.of("Read", "Grep")).build();
+
+    @Test
+    @DisplayName("Subagent.Builder.programmatic reaches the metadata; unset it is none()")
+    void builderProgrammaticReachesMetadata() {
+        assertThat(Subagent.builder().name("r").systemPrompt("p").programmatic(READ_GREP).build().getMetadata()
+                .getProgrammatic()).isEqualTo(READ_GREP);
+        assertThat(Subagent.builder().name("r").systemPrompt("p").build().getMetadata().getProgrammatic())
+                .isEqualTo(ProgrammaticToolSettings.none());
+        assertThatNullPointerException().isThrownBy(() -> Subagent.builder().programmatic(null));
+    }
+
+    @Test
+    @DisplayName("withAllowedTools keeps the subagent's programmatic settings")
+    void withAllowedToolsCopiesProgrammatic() {
+        final Subagent subagent = Subagent.builder().name("r").systemPrompt("p").tools(List.of("Read", "Grep"))
+                .programmatic(READ_GREP).build();
+
+        final Subagent rebased = SubagentToolScope.withAllowedTools(subagent, List.of(AllowedTool.parse("Read")));
+
+        assertThat(rebased.getMetadata().getProgrammatic()).isEqualTo(READ_GREP);
+        assertThat(rebased.getAllowedTools()).extracting(AllowedTool::getToolName).containsExactly("Read");
+    }
+
+    @Test
+    @DisplayName("withProgrammatic replaces only the programmatic settings")
+    void withProgrammaticReplacesOnlyIt() {
+        final Subagent subagent = Subagent.builder().name("r").description("d").whenToUse("w").model("m")
+                .maxIterations(7).attributes(Map.of("team", "ops")).hidden(true).tools(List.of("Read", "Grep"))
+                .systemPrompt("prompt").programmatic(READ_GREP).build();
+        final ProgrammaticToolSettings readOnly = ProgrammaticToolSettings.builder().tools(List.of("Read")).build();
+
+        final Subagent replaced = SubagentToolScope.withProgrammatic(subagent, readOnly);
+
+        assertThat(replaced.getMetadata().getProgrammatic()).isEqualTo(readOnly);
+        assertThat(replaced.getName()).isEqualTo(subagent.getName());
+        assertThat(replaced.getContent()).isEqualTo(subagent.getContent());
+        assertThat(SubagentToolScope.withProgrammatic(replaced, READ_GREP).getMetadata())
+                .isEqualTo(subagent.getMetadata());
+        assertThatNullPointerException().isThrownBy(() -> SubagentToolScope.withProgrammatic(subagent, null));
     }
 }

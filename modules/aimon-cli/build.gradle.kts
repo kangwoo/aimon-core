@@ -78,6 +78,31 @@ configurations {
     testRuntimeClasspath { shouldResolveConsistentlyWith(shipped) }
 }
 
+// The real-model ExecuteCode E2E (CONTRIBUTING.md, "Real-model ExecuteCode E2E"). Billed and nondeterministic, so it
+// is a task of its own that nothing depends on: not `check`, not `checkAll`, not CI, not the release gate. The live
+// classes carry @EnabledIfSystemProperty(aimon.llmTest) and only this task sets it, so the plain `test` task compiles
+// them and skips them even when a provider key is exported. Untagged on purpose: a tag would have to be a gate task
+// (ReleaseGateMatchesCiGateTest.everyTestTagIsGated), and running in CI is exactly what this tier must not do.
+// The key reaches the test JVM through the environment the build runs in (OPENAI_KEY / OPENAI_KEY_FILE /
+// ANTHROPIC_KEY); nothing here copies it.
+//     OPENAI_KEY_FILE=<path to a file holding the key> ./gradlew :aimon-cli:llmTest
+val llmTest by tasks.registering(Test::class) {
+    description = "Runs ExecuteCode against a real model (needs OPENAI_KEY/OPENAI_KEY_FILE and/or ANTHROPIC_KEY). " +
+        "Not part of check, checkAll or CI."
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform()
+    filter { includeTestsMatching("*LiveE2ETest") }
+    systemProperty("aimon.llmTest", "true")
+    // Always re-run: a billed, nondeterministic run is never up to date.
+    outputs.upToDateWhen { false }
+    testLogging {
+        showStandardStreams = true
+        events("passed", "skipped", "failed")
+    }
+}
+
 // Create executable JAR with all dependencies
 tasks.jar {
     dependsOn(configurations.runtimeClasspath)

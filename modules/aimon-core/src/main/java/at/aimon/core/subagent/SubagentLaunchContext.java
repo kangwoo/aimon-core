@@ -16,6 +16,7 @@ import at.aimon.core.agent.quota.QuotaGuard;
 import at.aimon.core.agent.session.SessionId;
 import at.aimon.core.agent.session.transcript.SessionSnapshot;
 import at.aimon.core.agent.stream.AgentExecutionEvent;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.ToolContextEnricher;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.permission.AllowedTool;
@@ -111,6 +112,7 @@ public final class SubagentLaunchContext {
     private final MessageQueueManager messageQueueManager;
     private final Consumer<AgentExecutionEvent> parentEventSink;
     private final List<AllowedTool> callerAllowedTools;
+    private final ProgrammaticToolSettings callerProgrammatic;
     private final ExecutionEnvironment executionEnvironment;
     private final ExecutionEnvironmentProvider executionEnvironmentProvider;
     private final QuotaGuard quotaGuard;
@@ -148,6 +150,7 @@ public final class SubagentLaunchContext {
         messageQueueManager = builder.messageQueueManager;
         parentEventSink = builder.parentEventSink;
         callerAllowedTools = List.copyOf(builder.callerAllowedTools);
+        callerProgrammatic = builder.callerProgrammatic;
         executionEnvironment = builder.executionEnvironment;
         executionEnvironmentProvider = builder.executionEnvironmentProvider;
         quotaGuard = builder.quotaGuard != null ? builder.quotaGuard : QuotaGuard.disabled();
@@ -418,6 +421,24 @@ public final class SubagentLaunchContext {
     }
 
     /**
+     * Returns the programmatic tool calling settings of the run that is spawning this one, which the spawned run cannot
+     * exceed.
+     *
+     * <p>
+     * A ceiling, not a grant: {@code DefaultSubagentExecutionManager} narrows the target's own settings by it
+     * ({@link ProgrammaticToolSettings#narrowedBy(ProgrammaticToolSettings)}), so a fork offers {@code ExecuteCode}
+     * only when both its definition and its caller allow it. Spawning code fills it from
+     * {@link at.aimon.core.tools.CallerProgrammatic#of}. <b>Unlike {@link #getCallerAllowedTools()}, absence is
+     * fail-closed</b>: a launch context built without it imposes {@link ProgrammaticToolSettings#none()}, and the fork
+     * is offered no {@code ExecuteCode}.
+     *
+     * @return the caller's settings (never null); {@link ProgrammaticToolSettings#none()} unless set
+     */
+    public ProgrammaticToolSettings getCallerProgrammatic() {
+        return callerProgrammatic;
+    }
+
+    /**
      * Returns the spawning execution's environment, which the fork's provider receives as
      * {@code EnvironmentRequest.parent} (design §5.2). The local provider answers with it unchanged, so a fork of an
      * isolated workflow branch works in that branch.
@@ -532,10 +553,11 @@ public final class SubagentLaunchContext {
                 .taskOutputStore(taskOutputStore).taskResultStore(taskResultStore)
                 .sessionSnapshotStore(sessionSnapshotStore).previousSnapshot(previousSnapshot)
                 .messageQueueManager(messageQueueManager).parentEventSink(parentEventSink)
-                .callerAllowedTools(callerAllowedTools).executionEnvironment(executionEnvironment)
-                .executionEnvironmentProvider(executionEnvironmentProvider).quotaGuard(quotaGuard)
-                .forkGoalRenderer(forkGoalRenderer).forkDepth(forkDepth).executionPolicy(executionPolicy)
-                .parentDeadline(parentDeadline).parentContextEngine(parentContextEngine);
+                .callerAllowedTools(callerAllowedTools).callerProgrammatic(callerProgrammatic)
+                .executionEnvironment(executionEnvironment).executionEnvironmentProvider(executionEnvironmentProvider)
+                .quotaGuard(quotaGuard).forkGoalRenderer(forkGoalRenderer).forkDepth(forkDepth)
+                .executionPolicy(executionPolicy).parentDeadline(parentDeadline)
+                .parentContextEngine(parentContextEngine);
     }
 
     @Override
@@ -568,6 +590,7 @@ public final class SubagentLaunchContext {
         private MessageQueueManager messageQueueManager;
         private Consumer<AgentExecutionEvent> parentEventSink;
         private List<AllowedTool> callerAllowedTools = List.of();
+        private ProgrammaticToolSettings callerProgrammatic = ProgrammaticToolSettings.none();
         private ExecutionEnvironment executionEnvironment;
         private ExecutionEnvironmentProvider executionEnvironmentProvider;
         private QuotaGuard quotaGuard;
@@ -849,6 +872,22 @@ public final class SubagentLaunchContext {
         public Builder callerAllowedTools(List<AllowedTool> callerAllowedTools) {
             this.callerAllowedTools = List
                     .copyOf(Objects.requireNonNull(callerAllowedTools, "Caller allowed tools cannot be null"));
+            return this;
+        }
+
+        /**
+         * Sets the programmatic tool calling settings of the spawning run, imposed as a ceiling on the run this launch
+         * context describes. Unset, the ceiling is {@link ProgrammaticToolSettings#none()} (fail-closed).
+         *
+         * @param callerProgrammatic
+         *            the caller's settings (must not be null)
+         * @return this builder
+         * @throws NullPointerException
+         *             if callerProgrammatic is null
+         */
+        public Builder callerProgrammatic(ProgrammaticToolSettings callerProgrammatic) {
+            this.callerProgrammatic = Objects.requireNonNull(callerProgrammatic,
+                    "Caller programmatic settings cannot be null");
             return this;
         }
 

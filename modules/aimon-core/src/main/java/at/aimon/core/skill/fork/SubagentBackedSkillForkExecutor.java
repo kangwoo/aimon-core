@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 
 import at.aimon.core.agent.AgentRuntimeId;
 import at.aimon.core.agent.budget.CompletionReason;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolRegistry;
 import at.aimon.core.agent.tool.permission.AllowedTool;
@@ -28,6 +29,7 @@ import at.aimon.core.subagent.SubagentToolScope;
 import at.aimon.core.subagent.execution.ForkGoalRenderer;
 import at.aimon.core.subagent.execution.SubagentExecutionResult;
 import at.aimon.core.tools.CallerAllowedTools;
+import at.aimon.core.tools.CallerProgrammatic;
 import at.aimon.core.tools.ExecutionEnvironmentAccess;
 import at.aimon.core.tools.ForkAccess;
 import at.aimon.core.tools.HookRegistryAccess;
@@ -135,7 +137,16 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
                             + "(skill allows %s, subagent allows %s)",
                     skill.getName(), agentName, skillAllowed, target.getMetadata().getAllowedTools()));
         }
-        final Subagent effectiveTarget = SubagentToolScope.withAllowedTools(target, effective.get());
+        final Subagent allowListBound = SubagentToolScope.withAllowedTools(target, effective.get());
+        // Programmatic tool calling follows the subagent: in fork mode the skill *is* the fork, so a skill without
+        // programmatic keys defers to its target's opt-in, and one that declares them narrows it. The caller's
+        // settings are the ceiling either way, applied by the execution manager as for any fork. (An inline skill is
+        // different: without keys it is a ceiling of "nothing" for the forks it spawns — B-DV1.)
+        final ProgrammaticToolSettings skillProgrammatic = skill.getMetadata().getProgrammatic();
+        final Subagent effectiveTarget = skillProgrammatic.isEnabled()
+                ? SubagentToolScope.withProgrammatic(allowListBound,
+                        allowListBound.getMetadata().getProgrammatic().narrowedBy(skillProgrammatic))
+                : allowListBound;
 
         final AgentRuntimeId agentRuntimeId = toolContext.get(ToolContextKeys.AGENT_RUNTIME_ID).orElse(null);
         if (agentRuntimeId == null) {
@@ -163,6 +174,7 @@ public final class SubagentBackedSkillForkExecutor implements SkillForkExecutor 
                 .hookRegistry(HookRegistryAccess.of(toolContext).orElse(hookRegistry)).defaultModel(defaultModel)
                 .executionAttributes(executionAttributes).parentLlmCallMetadata(parentMetadata).principal(principal)
                 .callerAllowedTools(CallerAllowedTools.of(toolContext))
+                .callerProgrammatic(CallerProgrammatic.of(toolContext))
                 .invokingSessionId(InvokingSessionAccess.idToPropagate(toolContext).orElse(null))
                 // The fork resolves its own environment from the spawning runtime's provider, with this execution's
                 // environment as its parent (execution-environment design §8).

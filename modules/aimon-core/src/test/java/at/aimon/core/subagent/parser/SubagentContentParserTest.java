@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.*;
 
 import org.junit.jupiter.api.Test;
 
+import at.aimon.core.agent.tool.ProgrammaticEngineChoice;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
+
 class SubagentContentParserTest {
 
     @Test
@@ -290,5 +293,55 @@ class SubagentContentParserTest {
 
         assertThatThrownBy(() -> new SubagentContentParser().parse(content)).isInstanceOf(SubagentParseException.class)
                 .hasMessageContaining("sandbox.slot").hasMessageContaining("twice");
+    }
+
+    @Test
+    void parse_ProgrammaticKeys_ReachResult() {
+        String content = """
+                ---
+                description: Reader
+                programmatic-tools:
+                  - Read
+                  - Grep
+                programmatic-only: Grep
+                programmatic-engine: javascript
+                ---
+                Body
+                """;
+
+        ProgrammaticToolSettings settings = new SubagentContentParser().parse(content).getProgrammatic();
+
+        assertThat(settings.getTools()).containsExactly("Read", "Grep");
+        assertThat(settings.getCodeOnly()).containsExactly("Grep");
+        assertThat(settings.getEngine()).isEqualTo(ProgrammaticEngineChoice.JAVASCRIPT);
+    }
+
+    @Test
+    void parse_NoProgrammaticKeys_IsNone() {
+        assertThat(new SubagentContentParser().parse("---\ndescription: x\n---\nBody").getProgrammatic())
+                .isEqualTo(ProgrammaticToolSettings.none());
+        assertThat(new SubagentContentParser().parse("Just a body").getProgrammatic())
+                .isEqualTo(ProgrammaticToolSettings.none());
+    }
+
+    @Test
+    void parse_ProgrammaticAndHidden_BothKept() {
+        SubagentContentResult result = new SubagentContentParser()
+                .parse("---\nhidden: true\nprogrammatic-tools: Read\n---\nBody");
+
+        assertThat(result.isHidden()).isTrue();
+        assertThat(result.getProgrammatic().getTools()).containsExactly("Read");
+    }
+
+    @Test
+    void parse_BadProgrammaticKeys_ThrowsSubagentParseException() {
+        SubagentContentParser parser = new SubagentContentParser();
+
+        assertThatThrownBy(() -> parser.parse("---\nprogrammatic-tools: Read\nprogrammatic-only: Grep\n---\nBody"))
+                .isInstanceOf(SubagentParseException.class).hasMessageContaining("subset");
+        assertThatThrownBy(() -> parser.parse("---\nprogrammatic-tools: Read\nprogrammatic-engine: ruby\n---\nB"))
+                .isInstanceOf(SubagentParseException.class).hasMessageContaining("unknown programmatic engine");
+        assertThatThrownBy(() -> parser.parse("---\nprogrammaticTools: Read\n---\nBody"))
+                .isInstanceOf(SubagentParseException.class).hasMessageContaining("kebab-case");
     }
 }

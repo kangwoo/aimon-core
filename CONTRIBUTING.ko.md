@@ -1,6 +1,6 @@
 ---
 translated_from: CONTRIBUTING.md
-source_commit: 1ad5a060
+source_commit: 8a42dc81
 ---
 
 # AIMON Core 기여 가이드
@@ -185,6 +185,40 @@ export 되어 있는 동안에는 — 이 계층을 위해서든 CLI 를
 시작합니다 — 그리고 그것은 다음에 이 계층을 돌리는 사람이 발견합니다. 그게 당신이라면 지나치지 말고
 고치거나 이슈를 여세요. 이 계층에 정기 실행이 없는 이유와 무엇이 그것을 바꿀지는
 [`docs/backlog/live-api-test-tier.md`](docs/backlog/live-api-test-tier.md) 에 기록되어 있습니다.
+
+#### 실제 모델 ExecuteCode E2E
+
+실제 모델을 부르는 계층이 하나 더 있다. 이 계층은 키가 아니라 태스크로 켠다. 실제 스택으로 `ExecuteCode` 를 끝까지 돌리고, 모델이
+쓴 프로그램이 한 일을 검증한다.
+
+```bash
+OPENAI_KEY_FILE=<키를 담은 파일 경로> ./gradlew :aimon-cli:llmTest
+# 또는 OPENAI_KEY=... 그리고/또는 ANTHROPIC_KEY=... (ANTHROPIC_API_KEY 도 받는다)
+```
+
+- **`:aimon-cli:llmTest` 만 돌린다.** 클래스(`ExecuteCodeJsLiveE2ETest`, `ExecuteCodeShellLiveE2ETest`)에는
+  `@EnabledIfSystemProperty(aimon.llmTest)` 가 붙어 있고, 그 속성은 이 태스크만 넣는다. `test`·`checkAll`·CI·릴리스 게이트는 키가
+  내보내져 있어도 이 클래스를 컴파일만 하고 건너뛴다. 태스크는 언제나 다시 돈다 — `--rerun` 이 필요 없다.
+- **키.** `OPENAI_KEY` 가 있으면 그것을 쓴다. 없으면 `OPENAI_KEY_FILE` 이 가리키는 파일을 그 자리에서 읽어 앞뒤 공백을 걷는다 —
+  복사하지도 출력하지도 않는다. `OPENAI_KEY_FILE` 이 설정되었는데 파일이 없거나 읽을 수 없거나 비었으면 건너뛰지 않고
+  **실패**하며, 변수 이름과 경로만 말한다. 키가 없는 제공자는 건너뛰고, 키가 하나도 없으면 모든 테스트를 건너뛴 채 0 으로 끝난다.
+- **검증하는 것.** 에이전트는 두 호스트 도구에 `ExecuteCode` 로만 닿는다(`programmatic-only`). 모델은 **프로그램 하나**로 두 도구를
+  모두 덮는 중첩 호출을 — 디스패치되어 오류 없이 답한 것으로 — 두 번 이상 해야 하고, 그 호출의 TOOL span(`tool.path=code`)이 그
+  프로그램의 `ExecuteCode` span 아래에 있어야 한다. 도구 하나씩 부른 프로그램 둘을 더해서는 통과하지 않는다. 호스트 도구를 직접 부르면 안 되고, 각 결과의 요약 줄은 엔진의 언어를 말해야 하며, 결과에 든 원시 출력 표지는 모두
+  프로그램이 출력한 것이어야 한다. 최종 답이 맞는 호스트를 대는지는 로그로만 남기고 검증하지 않는다.
+- **결과 줄.** 실행마다 제공자·엔진당 한 줄을 통과·실패와 상관없이 출력한다:
+  `LIVE-E2E provider=openai model=gpt-4o-mini engine=javascript result=PASS executeCodeCalls=1 nestedCallsBestProgram=10 nestedCallsAllPrograms=10 perProgram=[10] inputTokens=… outputTokens=… completion=COMPLETED answerMatches=true`.
+  그 위에 프로그램마다의 수치(`LIVE-E2E program #n … dispatched= succeeded= tools=[…] status=…`)를 출력한다.
+  실패하면 대화, 렌더 페이로드, span 트리도 출력한다. 어느 것에도 키는 없다.
+- **모델.** 기본은 `gpt-4o-mini` 와 `claude-haiku-4-5-20251001` 이다. 약한 모델이 코드를 쓰지 않으면
+  `AIMON_LLM_TEST_OPENAI_MODEL` / `AIMON_LLM_TEST_ANTHROPIC_MODEL` 로 바꾼다.
+- **셸 변형은 모델이 쓴 Python 을 이 호스트에서 돌린다.** `python3` 3.8 이상이 필요하고(없으면 건너뛴다), 스스로 샌드박스라고
+  *선언*한 로컬 환경에서 돌며, 모델이 `Bash` 를 직접 부를 수도 있다. 스택이 닫힌 뒤에는 기록해 둔 실행 디렉터리의
+  `aimon_ptc.py` 프로세스가 남지 않았는지 확인한다. 프로그램이 스스로 `exec` 한 하위 프로세스는 맞추지 못하므로, 실행 뒤
+  `pgrep -f aimon_ptc.py` 는 여전히 해 볼 만하다.
+- **과금되고 비결정적이며 CI 에서는 돌지 않는다.** 실행은 적게 하고, 불안정한 결과를 초록으로 바꾸려고만 다시 돌리지 않는다.
+  키 없는 짝 `ExecuteCodeLiveFixtureTest` 가 같은 픽스처를 스크립트 모델로 모든 일반 빌드에서 돌리므로, 픽스처가 깨지면 과금되는
+  실행 전에 `test` 가 실패한다.
 
 ### 품질 검사
 

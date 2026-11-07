@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.permission.AllowedTool;
 
 /**
@@ -159,6 +160,7 @@ public final class Subagent {
         private Integer maxIterations;
         private Map<String, String> attributes;
         private boolean hidden;
+        private ProgrammaticToolSettings programmatic;
 
         private Builder() {
         }
@@ -237,6 +239,21 @@ public final class Subagent {
             return this;
         }
 
+        /**
+         * Sets what the subagent opens to model-written code, the code equivalent of the markdown
+         * {@code programmatic-tools} / {@code programmatic-only} / {@code programmatic-engine} /
+         * {@code shell-engine-tool-scope} keys (see {@link SubagentMetadata#getProgrammatic()}). A fork offers
+         * {@code ExecuteCode} only when its caller allows it too. When unset, the subagent opens nothing to code.
+         *
+         * @param programmatic
+         *            the settings (must not be null)
+         * @return this builder
+         */
+        public Builder programmatic(ProgrammaticToolSettings programmatic) {
+            this.programmatic = Objects.requireNonNull(programmatic, "programmatic cannot be null");
+            return this;
+        }
+
         /** Sets the maximum ReAct loop iterations. When unset, defaults to 1000 (markdown parity). */
         public Builder maxIterations(int maxIterations) {
             this.maxIterations = maxIterations;
@@ -274,6 +291,9 @@ public final class Subagent {
                 metadataBuilder.attributes(attributes);
             }
             metadataBuilder.hidden(hidden);
+            if (programmatic != null) {
+                metadataBuilder.programmatic(programmatic);
+            }
             return new Subagent(name, metadataBuilder.build(), SubagentContent.of(systemPrompt));
         }
     }

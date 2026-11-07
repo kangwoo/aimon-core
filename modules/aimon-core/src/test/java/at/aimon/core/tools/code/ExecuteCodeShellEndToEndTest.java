@@ -108,7 +108,7 @@ class ExecuteCodeShellEndToEndTest {
                         gate))
                 .invokerType(InvokerType.MAIN_AGENT).invokerName("agent").hookRegistry(new DefaultHookRegistry())
                 .executionAttributes(Map.of()).toolRegistry(registry).sessionRegistry(registry).allowedTools(allowed)
-                .coordinator(coordinator).build();
+                .coordinator(coordinator).programmatic(ProgrammaticToolSettings.none()).build();
         final ToolContext base = ToolContext.builder().put(ToolContextKeys.EXECUTION_ENVIRONMENT, environment).build();
         final ToolOfferContext offer = CodeOfferKeys.putEnvironmentFacts(ToolOfferContext.builder().registry(registry)
                 .admission(AllowedTools.admissionFilter(allowed))

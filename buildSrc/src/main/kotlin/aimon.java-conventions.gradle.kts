@@ -125,6 +125,11 @@ tasks.withType<Test>().configureEach {
 // aimon-llm-openai are that shape deliberately, because they need a secret and bill every run; CONTRIBUTING.md's
 // "Live-API tests" says how to run them and why `--rerun` is required. Two more classes of that shape, gated on
 // AIMON_DOCKER_IT and AIMON_KUBERNETES_IT, left this build with the sandbox modules.
+//
+// One more untagged tier stays out of every gate deliberately: the real-model ExecuteCode E2E in aimon-cli
+// (`*LiveE2ETest`). Its classes are gated on the system property `aimon.llmTest`, which only the dedicated
+// `:aimon-cli:llmTest` task sets, so `test` skips them even with a key exported — billed, nondeterministic, never in
+// CI. A tag would have to be a gate task (ReleaseGateMatchesCiGateTest), which is exactly what this tier must not be.
 tasks.named<Test>("test") {
     useJUnitPlatform {
         excludeTags("docker")

@@ -47,7 +47,7 @@ import org.junit.jupiter.api.Test;
  *
  *
 <p>
- * The sources of {@code aimon-graaljs}, {@code aimon-code-engine-testkit} and the docs are not inputs of this module's
+ * The sources of {@code aimon-graaljs}, {@code aimon-code-engine-testkit}, {@code aimon-cli} and the docs are not inputs of this module's
  * {@code test} task, for the reason {@code ReleaseGateMatchesCiGateTest} gives: declaring them would re-run core's
  * tests after any edit there. After an edit only in those trees the task can be {@code UP-TO-DATE} locally;
  * {@code --rerun} or CI, which always runs from clean, catches it.
@@ -73,7 +73,15 @@ class CommentReflowTest {
             Map.entry(CORE_TEST + "tools/code", "test mirror"), Map.entry(CORE_TEST + "shell", "test mirror"),
             Map.entry(CORE_TEST + "architecture/InternalPackageBoundaryTest.java", "a named site of the C review"),
             Map.entry("modules/aimon-graaljs/src/main/java/at/aimon/graaljs/code", "the JavaScript engine"),
-            Map.entry("modules/aimon-code-engine-testkit/src/main/java", "the engine contract suite"));
+            Map.entry("modules/aimon-code-engine-testkit/src/main/java", "the engine contract suite"),
+            Map.entry(CORE_MAIN + "agent/tool/ToolCallDispatcher.java", "the SPI that carries the caller's settings"),
+            Map.entry(CORE_MAIN + "agent/tool/ProgrammaticToolSettings.java", "the settings and their narrowing"),
+            Map.entry(CORE_MAIN + "agent/tool/ProgrammaticFrontmatter.java", "the shared frontmatter reading"),
+            Map.entry(CORE_MAIN + "toolinvocation/ToolCallDispatchers.java", "the ungated dispatcher's PTC wiring"),
+            Map.entry(CORE_MAIN + "tools/CallerProgrammatic.java", "the caller-ceiling accessor"),
+            Map.entry("modules/aimon-cli/src/main/java/at/aimon/cli/config/ProgrammaticConfig.java",
+                    "the CLI's PTC configuration"),
+            Map.entry("modules/aimon-cli/src/test/java/at/aimon/cli/e2e", "the real-model E2E harness"));
 
     /**
      * The PTC design documents. {@code docs/design/} is not translated (documentation guide §5.1), so there is no

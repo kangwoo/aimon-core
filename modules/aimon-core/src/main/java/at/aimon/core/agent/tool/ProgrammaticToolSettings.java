@@ -118,6 +118,75 @@ public final class ProgrammaticToolSettings {
         return Optional.ofNullable(shellEngineToolScope);
     }
 
+    /**
+     * Returns these settings bounded by {@code ceiling}, the effective settings of the caller a fork or slash skill
+     * runs under ({@code programmatic-tool-calling.md} §21, B-DV1): a definition opts in, and its caller can only
+     * narrow that.
+     *
+     * <ul>
+     * <li>{@code tools}: the intersection, in this order. An empty intersection is {@link #none()}: a caller without
+     * programmatic tool calling is a ceiling of "nothing", unlike an empty allow-list, which reads as unrestricted.
+     * <li>{@code codeOnly}: the union of both sides, kept to the intersected tools. A tool the caller withholds from
+     * direct use stays withheld — the allow-list cannot say "callable, but only through code".
+     * <li>{@code engine}: {@link ProgrammaticEngineChoice#AUTO} defers to the other side; two different explicit
+     * choices are {@link #none()}.
+     * <li>{@code shellEngineToolScope}: the narrower of the two present.
+     * </ul>
+     *
+     * <p>
+     * Idempotent: {@code x.narrowedBy(c).narrowedBy(c)} equals {@code x.narrowedBy(c)}.
+     *
+     * @param ceiling
+     *            the caller's effective settings (must not be null)
+     * @return the bounded settings (never null; {@link #none()} when nothing is left)
+     */
+    public ProgrammaticToolSettings narrowedBy(ProgrammaticToolSettings ceiling) {
+        Objects.requireNonNull(ceiling, "ceiling cannot be null");
+        if (!isEnabled() || !ceiling.isEnabled()) {
+            return NONE;
+        }
+        final List<String> both = new ArrayList<>();
+        for (String name : tools) {
+            if (ceiling.tools.contains(name)) {
+                both.add(name);
+            }
+        }
+        if (both.isEmpty() || hasEngineConflict(ceiling)) {
+            return NONE;
+        }
+        final Set<String> withheld = new LinkedHashSet<>();
+        for (String name : both) {
+            if (codeOnly.contains(name) || ceiling.codeOnly.contains(name)) {
+                withheld.add(name);
+            }
+        }
+        final ShellEngineToolScope scope;
+        if (shellEngineToolScope == null) {
+            scope = ceiling.shellEngineToolScope;
+        } else if (ceiling.shellEngineToolScope == null) {
+            scope = shellEngineToolScope;
+        } else {
+            scope = shellEngineToolScope.min(ceiling.shellEngineToolScope);
+        }
+        return builder().tools(both).codeOnly(withheld)
+                .engine(engine == ProgrammaticEngineChoice.AUTO ? ceiling.engine : engine).shellEngineToolScope(scope)
+                .build();
+    }
+
+    /**
+     * Returns whether these settings and {@code other} each name an explicit engine and the two differ — the case in
+     * which {@link #narrowedBy(ProgrammaticToolSettings)} gives {@link #none()} however many tools they share.
+     *
+     * @param other
+     *            the other settings (must not be null)
+     * @return {@code true} for {@code javascript} against {@code python}
+     */
+    public boolean hasEngineConflict(ProgrammaticToolSettings other) {
+        Objects.requireNonNull(other, "other cannot be null");
+        return engine != ProgrammaticEngineChoice.AUTO && other.engine != ProgrammaticEngineChoice.AUTO
+                && engine != other.engine;
+    }
+
     private static void requireExactName(String name, String key) {
         if (name == null || name.isBlank()) {
             throw new IllegalArgumentException(key + " contains a blank tool name");

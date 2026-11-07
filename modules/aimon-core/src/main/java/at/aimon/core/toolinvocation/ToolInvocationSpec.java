@@ -6,6 +6,7 @@ import java.util.Objects;
 
 import at.aimon.core.agent.InvokerType;
 import at.aimon.core.agent.interrupt.InterruptCoordinator;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.agent.tool.ToolCallOrigin;
 import at.aimon.core.agent.tool.ToolContext;
 import at.aimon.core.agent.tool.ToolRegistry;
@@ -46,6 +47,7 @@ public final class ToolInvocationSpec {
     private final ToolRegistry sessionRegistry;
     private final List<AllowedTool> allowedTools;
     private final InterruptCoordinator coordinator;
+    private final ProgrammaticToolSettings programmatic;
     private final ToolContext toolContext;
     private final ToolUse toolUse;
     private final ToolCallOrigin origin;
@@ -61,6 +63,7 @@ public final class ToolInvocationSpec {
         this.sessionRegistry = Objects.requireNonNull(builder.sessionRegistry, "sessionRegistry cannot be null");
         this.allowedTools = Objects.requireNonNull(builder.allowedTools, "allowedTools cannot be null");
         this.coordinator = Objects.requireNonNull(builder.coordinator, "coordinator cannot be null");
+        this.programmatic = Objects.requireNonNull(builder.programmatic, "programmatic cannot be null");
         this.toolContext = Objects.requireNonNull(builder.toolContext, "toolContext cannot be null");
         this.toolUse = Objects.requireNonNull(builder.toolUse, "toolUse cannot be null");
         this.origin = Objects.requireNonNull(builder.origin, "origin cannot be null");
@@ -112,6 +115,14 @@ public final class ToolInvocationSpec {
         return coordinator;
     }
 
+    /**
+     * @return the programmatic settings of the loop running the call, published to it as
+     *         {@code ToolContextKeys.CALLER_PROGRAMMATIC}; {@link ProgrammaticToolSettings#none()} unless set.
+     */
+    public ProgrammaticToolSettings getProgrammatic() {
+        return programmatic;
+    }
+
     /** @return the base tool context enriched (per invocation) with the current tool-use id and any registrar. */
     public ToolContext getToolContext() {
         return toolContext;
@@ -145,6 +156,7 @@ public final class ToolInvocationSpec {
         private ToolRegistry sessionRegistry;
         private List<AllowedTool> allowedTools;
         private InterruptCoordinator coordinator;
+        private ProgrammaticToolSettings programmatic = ProgrammaticToolSettings.none();
         private ToolContext toolContext;
         private ToolUse toolUse;
         private ToolCallOrigin origin;
@@ -198,6 +210,18 @@ public final class ToolInvocationSpec {
         /** Sets the turn-scoped interrupt coordinator. */
         public Builder coordinator(InterruptCoordinator coordinator) {
             this.coordinator = coordinator;
+            return this;
+        }
+
+        /**
+         * Sets the programmatic settings published to the call; {@code none()} by default (fail-closed).
+         *
+         * @param programmatic
+         *            the settings of the loop running the call (must not be null)
+         * @return this builder
+         */
+        public Builder programmatic(ProgrammaticToolSettings programmatic) {
+            this.programmatic = programmatic;
             return this;
         }
 

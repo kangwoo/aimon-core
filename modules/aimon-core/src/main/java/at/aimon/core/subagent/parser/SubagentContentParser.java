@@ -13,6 +13,8 @@ import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
 
+import at.aimon.core.agent.tool.ProgrammaticFrontmatter;
+import at.aimon.core.agent.tool.ProgrammaticToolSettings;
 import at.aimon.core.base.DefinitionAttributes;
 import at.aimon.core.base.text.YamlDuplicateKeys;
 
@@ -202,7 +204,16 @@ public class SubagentContentParser {
         }
 
         return new SubagentContentResult(description, whenToUse, tools, model, maxIterations, systemPrompt, attributes)
-                .withHidden(parseHidden(yamlData));
+                .withHidden(parseHidden(yamlData)).withProgrammatic(parseProgrammatic(yamlData));
+    }
+
+    /** Parses the programmatic tool calling keys, shared with the agent and skill parsers. */
+    private static ProgrammaticToolSettings parseProgrammatic(Map<String, Object> yamlData) {
+        try {
+            return ProgrammaticFrontmatter.parse(yamlData);
+        } catch (IllegalArgumentException e) {
+            throw new SubagentParseException(e.getMessage(), e);
+        }
     }
 
     /**

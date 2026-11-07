@@ -12,9 +12,9 @@ import at.aimon.core.llm.ToolUse;
  * <p>
  * An execution loop builds one and binds it into the {@link ToolContext} it runs its tools with, under
  * {@code ToolContextKeys.TOOL_CALL_DISPATCHER}. Everything that is fixed for the loop — the registries, the allow-list,
- * the hooks, the interrupt coordinator, the invoker identity — is fixed by the binding; what varies per call is an
- * argument. Batching, streaming and parallelism stay in the loop: the loop splits the batch and calls
- * {@link #dispatch} once per call.
+ * the hooks, the interrupt coordinator, the invoker identity, the programmatic settings published to each call — is
+ * fixed by the binding; what varies per call is an argument. Batching, streaming and parallelism stay in the loop: the
+ * loop splits the batch and calls {@link #dispatch} once per call.
  *
  * <p>
  * A consumer that needs one and finds none bound refuses rather than falling back to calling the tool directly. A test
@@ -47,14 +47,25 @@ public interface ToolCallDispatcher {
      * for the allow-list, but never for the registry: a registry holding a tool this one does not is refused either
      * way.
      *
+     * <p>
+     * Its programmatic settings — published to every call as {@code ToolContextKeys.CALLER_PROGRAMMATIC}, and so the
+     * ceiling of any fork a call spawns — become {@code programmatic.narrowedBy(<this dispatcher's settings>)}
+     * ({@link ProgrammaticToolSettings#narrowedBy(ProgrammaticToolSettings)}). An empty result is
+     * {@link ProgrammaticToolSettings#none()}, not an error: unlike an empty allow-list, {@code none()} reads as
+     * "nothing", never as "unrestricted". An implementation must never publish settings wider than its own.
+     *
      * @param registry
      *            the narrower registry (must not be null)
      * @param allowedTools
      *            the allow-list to intersect with; empty means no further restriction (must not be null)
+     * @param programmatic
+     *            the programmatic settings of the loop the narrowed dispatcher serves, to intersect with this
+     *            dispatcher's; pass {@link ProgrammaticToolSettings#none()} to open nothing to code (must not be null)
      * @return the narrowed dispatcher (never null)
      * @throws IllegalArgumentException
      *             if {@code registry} holds a tool this dispatcher's registry does not, or the two allow-lists have
      *             nothing in common
      */
-    ToolCallDispatcher narrow(ToolRegistry registry, List<AllowedTool> allowedTools);
+    ToolCallDispatcher narrow(ToolRegistry registry, List<AllowedTool> allowedTools,
+            ProgrammaticToolSettings programmatic);
 }

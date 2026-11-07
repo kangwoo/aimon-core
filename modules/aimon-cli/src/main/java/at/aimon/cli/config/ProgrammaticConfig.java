@@ -5,13 +5,15 @@ import java.util.Objects;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import at.aimon.core.agent.tool.ShellEngineToolScope;
 import at.aimon.core.programmatic.CodeExecutionLimits;
 
 /**
  * CLI-side configuration of programmatic tool calling ({@code programmatic.*} in {@code aimon.yaml};
- * {@code docs/design/tool/programmatic-tool-calling.md} §16): whether the GraalJS engine of {@code ExecuteCode} is
- * assembled, and the limits every program is held to. What an agent opens to code is the agent's own frontmatter
- * ({@code programmatic-tools}), not this.
+ * {@code docs/design/tool/programmatic-tool-calling.md} §16): which engines of {@code ExecuteCode} are assembled —
+ * GraalJS JavaScript ({@code enableJs}) and the Python shell engine ({@code enablePython}) — how far the shell engine's
+ * callable tools may reach ({@code shellEngineToolScope}), and the limits every program is held to. What an agent opens
+ * to code is the agent's own frontmatter ({@code programmatic-tools}), not this.
  *
  * <p>
  * camelCase like the rest of the CLI configuration ({@code enableWorkflowJs}). Setters exist for Jackson.
@@ -21,10 +23,16 @@ public class ProgrammaticConfig {
     @JsonProperty("enableJs")
     private boolean enableJs;
 
+    @JsonProperty("enablePython")
+    private boolean enablePython;
+
+    @JsonProperty("shellEngineToolScope")
+    private String shellEngineToolScope = ShellEngineToolScope.ENVIRONMENT.wireName();
+
     @JsonProperty("limits")
     private Limits limits;
 
-    /** Creates an empty configuration: the engine off, the default limits. */
+    /** Creates an empty configuration: both engines off, the {@code environment} scope, the default limits. */
     public ProgrammaticConfig() {
     }
 
@@ -41,6 +49,66 @@ public class ProgrammaticConfig {
      */
     public void setEnableJs(boolean enableJs) {
         this.enableJs = enableJs;
+    }
+
+    /**
+     * @return whether the Python shell {@code ExecuteCode} engine is assembled
+     */
+    public boolean isEnablePython() {
+        return enablePython;
+    }
+
+    /**
+     * @param enablePython
+     *            whether the Python shell {@code ExecuteCode} engine is assembled. It runs only in a sandboxed
+     *            execution environment; on the CLI's local host it is assembled but reports why it cannot run
+     */
+    public void setEnablePython(boolean enablePython) {
+        this.enablePython = enablePython;
+    }
+
+    /**
+     * @return the configured {@code shellEngineToolScope} as written ({@code environment} unless set)
+     */
+    public String getShellEngineToolScope() {
+        return shellEngineToolScope;
+    }
+
+    /**
+     * Sets how far the shell engine's callable tools may reach, validated here so a bad value fails the configuration
+     * load and names the key.
+     *
+     * @param shellEngineToolScope
+     *            {@code environment}, {@code host} or {@code unrestricted}; null for {@code environment}
+     * @throws IllegalArgumentException
+     *             if the value is none of those
+     */
+    public void setShellEngineToolScope(String shellEngineToolScope) {
+        final String value = shellEngineToolScope == null
+                ? ShellEngineToolScope.ENVIRONMENT.wireName()
+                : shellEngineToolScope;
+        parseScope(value);
+        this.shellEngineToolScope = value;
+    }
+
+    /**
+     * Returns {@code shellEngineToolScope} as the core value.
+     *
+     * @return the scope (never null)
+     * @throws IllegalArgumentException
+     *             if the value is not a scope, naming the key
+     */
+    public ShellEngineToolScope toShellEngineToolScope() {
+        return parseScope(shellEngineToolScope);
+    }
+
+    private static ShellEngineToolScope parseScope(String value) {
+        try {
+            return ShellEngineToolScope.parse(value);
+        } catch (IllegalArgumentException e) {
+            // No cause, deliberately: Jackson reports the root cause of a failed setter, which would drop the key.
+            throw new IllegalArgumentException("programmatic.shellEngineToolScope: " + e.getMessage());
+        }
     }
 
     /**
@@ -72,17 +140,20 @@ public class ProgrammaticConfig {
     @Override
     public boolean equals(Object o) {
         return this == o || (o instanceof ProgrammaticConfig other && enableJs == other.enableJs
+                && enablePython == other.enablePython
+                && Objects.equals(shellEngineToolScope, other.shellEngineToolScope)
                 && Objects.equals(limits, other.limits));
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(enableJs, limits);
+        return Objects.hash(enableJs, enablePython, shellEngineToolScope, limits);
     }
 
     @Override
     public String toString() {
-        return "ProgrammaticConfig{enableJs=" + enableJs + ", limits=" + limits + '}';
+        return "ProgrammaticConfig{enableJs=" + enableJs + ", enablePython=" + enablePython + ", shellEngineToolScope="
+                + shellEngineToolScope + ", limits=" + limits + '}';
     }
 
     /** {@code programmatic.limits.*}: every key optional, each at its {@link CodeExecutionLimits} default. */
